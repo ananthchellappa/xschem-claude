@@ -486,7 +486,7 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::edit_variables $key]
 
   menu $top.mb.outputs -tearoff 0
-  $top.mb add cascade -label Outputs -menu $top.mb.outputs
+  $top.mb add cascade -label [ase::ui::lbl_outputs] -menu $top.mb.outputs
   menu $top.mb.outputs.saved -tearoff 0
   # Select On Design (item 08): click mode on the design schematic — wire /
   # net-label clicks queue v(<net>), source clicks queue i(<inst>); the To Be
@@ -499,7 +499,7 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::select_on_design $key {save 1 plot 1}]
   $top.mb.outputs add cascade -label {To Be Plotted} \
     -menu $top.mb.outputs.plotted
-  $top.mb.outputs add command -label "Save All\u2026" \
+  $top.mb.outputs add command -label [ase::ui::lbl_save_all] \
     -command [list ase::ui::save_all_dialog $key]
 
   menu $top.mb.sim -tearoff 0
@@ -2861,6 +2861,75 @@ proc ase::ui::listdlg_delete {key which} {
 # ⚠ THE GRID ROWS ARE HARDCODED. opparams takes row 2, so Levels moved to 3
 # and the button bar to 4. The widget PATHS (.allv .alli .levels
 # .btns.proceed) are what the dialog suites drive, and they are unchanged.
+# --- 0650 / R-0653-d req 2: ONE SOURCE FOR THE THREE LABELS ------------------
+# "The menu path must be derived from the live menu, or asserted against it --
+# never hardcoded prose. Real labels carry ellipses: `Save All\u2026`. A hardcoded
+# 'Outputs > Save All' that drops the ellipsis or misses a cascade level is a
+# wrong direction printed with authority, which is worse than printing none."
+#
+# The SHIPPED gate-off nudge was exactly that failure -- it said
+# "Tick Outputs > Save All > Save device OP parameters", dropping both the
+# ellipsis and the parenthetical the checkbutton actually carries. So the menu
+# entry (:502), the dialog checkbutton (:2879) and the printed remedy are now all
+# built from these three procs: invariant I1 applied to a LABEL rather than to a
+# vector name. W1r/W1u/W1t in tests/headless/test_ase_window.tcl read the labels
+# back off the REAL widgets, so a constant-compared-to-constant tautology cannot
+# pass.
+#
+# ⚠ "ONE SOURCE" IS NOT YET TRUE OF THE WHOLE FILE, and the heading overclaimed
+# until this line was added. `ase::ui::save_all_report_discard` (below, ~:3016)
+# STILL hardcodes both labels and both spellings have already DRIFTED -- measured
+# in one process: the nudge prints `Outputs > Save All… > Save device OP
+# parameters (gm, gds, vth, ...)` while the discard prints `Outputs > Save All`
+# and `'Save device OP parameters'`, i.e. `string match` against BOTH constants
+# returns 0. The discard is one of the four messages issue 0650's acceptance A3
+# names by name. Filed as issue 0661; the older `*Outputs*Save All*` matcher rows
+# do NOT catch it (SAB-N7 proved that), so the fix needs a W1t-shaped row.
+proc ase::ui::lbl_outputs {}        { return {Outputs} }
+proc ase::ui::lbl_save_all {}       { return "Save All\u2026" }
+proc ase::ui::lbl_save_op_params {} { return {Save device OP parameters (gm, gds, vth, ...)} }
+
+# The remedy path a notice prints, composed from those three. `>`-separated
+# because that is what the shipped sentence used and what the user reads as a
+# menu path; nothing else in the path may contain a `>`.
+proc ase::ui::remedy_op_params_menu {} {
+  return "[ase::ui::lbl_outputs] > [ase::ui::lbl_save_all] > [ase::ui::lbl_save_op_params]"
+}
+
+# --- 0650 / R-0653-d req 3: ONE WRITER FOR THE THREE BLANKETS ----------------
+# "The command must invoke THE SAME PROC THE MENU INVOKES, not poke the state
+# underneath it." The menu's own entry is `Save All\u2026` -> save_all_dialog, which
+# is a DIALOG and commits nothing; the proc that actually commits the tick was
+# save_all_ok, which reads dlg() and therefore cannot be run headlessly or pasted
+# into the CIW. So the commit is extracted HERE, and both paths call it:
+#   * save_all_ok  -- reads the checkbutton records, then calls this;
+#   * save_op_params_on -- the pasteable remedy: reads the CURRENT blankets, then
+#     calls this with opparams forced on.
+# SAB-N6 is the discriminator that keeps them honest: neutralizing this one proc
+# must redden the existing Save All OK rows TOO, not only the remedy row.
+#
+# ⚠ OFF IS `{}`, NEVER `0`. `save_op_params` is in ase::omit_if_empty, and an
+# empty value is what keeps the key OUT of ase::state_serialize -- which is what
+# keeps the 104 committed .state files byte-identical (F3/G3/R4/V4/R2). A literal
+# 0 here would write the key into every state a user ever saves.
+proc ase::ui::save_all_apply {key allv alli opparams} {
+  set st [ase::session_state $key]
+  dict set st save_all_v [expr {$allv ? 1 : 0}]
+  dict set st save_all_i [expr {$alli ? 1 : 0}]
+  if {$opparams} { dict set st save_op_params 1 } else { dict set st save_op_params {} }
+  ase::session_update $key $st
+  ase::ui::populate $key    ;# the Save Options auto-cells react (item 06); no-op with no window
+  return 1
+}
+
+# The printed remedy itself. Takes ONLY the session key, because that is all a
+# notice can name -- and it goes through the shared writer above, so the other
+# two blankets keep the values the user left them at (F19r).
+proc ase::ui::save_op_params_on {key} {
+  set cur [ase::ui::save_all_current $key]
+  return [ase::ui::save_all_apply $key [dict get $cur allv] [dict get $cur alli] 1]
+}
+
 proc ase::ui::save_all_dialog {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
@@ -2876,7 +2945,7 @@ proc ase::ui::save_all_dialog {key} {
     -variable ::ase::ui::dlg($key,allv)
   checkbutton $w.alli -text {Save all terminal currents} \
     -variable ::ase::ui::dlg($key,alli)
-  checkbutton $w.opparams -text {Save device OP parameters (gm, gds, vth, ...)} \
+  checkbutton $w.opparams -text [ase::ui::lbl_save_op_params] \
     -variable ::ase::ui::dlg($key,opparams)
   grid $w.allv -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   grid $w.alli -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
@@ -2904,22 +2973,13 @@ proc ase::ui::save_all_ok {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
   if {![winfo exists [dict get $wins $key].saveall]} { return }
-  set st [ase::session_state $key]
-  dict set st save_all_v \
-    [expr {[info exists dlg($key,allv)] && $dlg($key,allv) ? 1 : 0}]
-  dict set st save_all_i \
-    [expr {[info exists dlg($key,alli)] && $dlg($key,alli) ? 1 : 0}]
-  ## OFF IS `{}`, NEVER `0`. `save_op_params` is in ase::omit_if_empty, and an
-  ## empty value is what keeps the key OUT of ase::state_serialize — which is
-  ## what keeps the 104 committed .state files byte-identical (F3/G3/R4/V4/R2).
-  ## A literal 0 here would write the key into every state a user ever saves.
-  if {[info exists dlg($key,opparams)] && $dlg($key,opparams)} {
-    dict set st save_op_params 1
-  } else {
-    dict set st save_op_params {}
-  }
-  ase::session_update $key $st
-  ase::ui::populate $key    ;# the Save Options auto-cells react (item 06)
+  ## 0650 / R-0653-d req 3: the three blankets are written by ONE proc, which the
+  ## printed remedy (ase::ui::save_op_params_on) also calls. This path's only job
+  ## is to turn the checkbutton records into that call.
+  ase::ui::save_all_apply $key \
+    [expr {[info exists dlg($key,allv)] && $dlg($key,allv) ? 1 : 0}] \
+    [expr {[info exists dlg($key,alli)] && $dlg($key,alli) ? 1 : 0}] \
+    [expr {[info exists dlg($key,opparams)] && $dlg($key,opparams) ? 1 : 0}]
   ## 0648: the CLOSE half, never save_all_cancel. The OK path must not be able
   ## to emit a discard notice by accident, and "the diff happens to be empty by
   ## now" is not a thing to depend on.

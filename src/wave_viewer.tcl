@@ -732,17 +732,15 @@ namespace eval wviewer {
 # Scope, deliberately: only the TAB messages route through here. Converting the
 # ~120 pane-only ciw_echo sites in this file is 0207's own deferred item 2 and
 # would collide with everything else in flight.
+# ⚠ 0650: THIS PROC AND ase::echo WERE THE SAME EIGHT LINES OF CODE -- the
+# channel had TWO builders before this step, which is invariant I1's exact
+# prohibition, and a drift between them would have failed SILENTLY. The body now
+# lives once, in `xschem::notify` (src/ciw.tcl). Name, signature and every call
+# site here are unchanged; ::xschem::notify is resolved at CALL time because
+# ciw.tcl is sourced after this file (src/xschem.tcl:14648 vs :14610).
 proc wviewer::echo {msg {tag {}}} {
-  # pane half first, unconditionally: the tests that capture notices rename
-  # ::ciw_echo, and an empty message still echoes a blank line.
-  if {[info commands ::ciw_echo] ne {}} { catch {::ciw_echo $msg $tag} }
-  if {$msg eq {}} return
-  set msg [string trimright $msg "\n"]        ;# log_output supplies the terminator
-  if {$msg eq {}} return
-  # a TRAILING BACKSLASH would make the logged `#= ` line swallow the next one
-  if {[string index $msg end] eq "\\"} { append msg { } }
-  if {$tag eq {error}} { catch {xschem log_action -error $msg} } \
-  else                 { catch {xschem log_action -result $msg} }
+  if {[catch {::xschem::notify $msg -tag $tag} r]} { return 0 }
+  return $r
 }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from

@@ -148,3 +148,53 @@ in rough order of blast radius:
   user can see without opening another window.
 - Headless runs are unaffected; no suite that renames `::ciw_echo` changes count.
 - The success line, the nudge, the refusal and the discard all reach the new sink.
+
+---
+
+## OUTCOME 2026-08-23 — the channel LANDED (status **E**); the session-window sink did NOT (issue 0655)
+
+### ⚠ THIS ISSUE'S OWN MECHANISM SENTENCE IS FALSE, AND CORRECTING IT WAS THE FIX
+
+The sink table above says `ciw_echo` *"No-ops silently when shut
+(src/ciw.tcl:120-121)"*. **Measured false.** `src/ciw.tcl:53` is
+`wm protocol .ciw WM_DELETE_WINDOW {wm withdraw .ciw}`, so closing the CIW
+**withdraws** it: `.ciw` and `.ciw.l.t` still **exist**, `winfo ismapped` is 0,
+and `ciw_echo` happily writes into the invisible widget — the pane text GREW.
+`src/xschem.tcl:16703` already said so in a comment.
+
+Consequence, and it is the whole reason to write this down: a fallback whose
+condition is `winfo exists` would evaluate **true in exactly the user's
+situation**, never fire, and **pass review**. The predicate is `winfo ismapped`
+(`xschem::notify_ciw_visible`). Sabotaging it back to this issue's literal
+sentence reddens PS14+PS15 — measured twice, independently.
+
+The genuine `ciw_echo` no-op cases are `--nogui` (no `winfo`) and `--nolog`
+(`ciw_create` is skipped, `src/xschem.tcl:16705`).
+
+### What shipped
+
+`xschem::notify` in `src/ciw.tcl` — four sinks, a `::xschem::notify_last` headless
+witness whose `sinks` field names only the sinks that really succeeded, the
+generalised R-0653-c latch (`notify_latch_{ok,rearm,reset}`), and the R-0653-d
+remedy fields. `ase::echo` **and** `wviewer::echo` — byte-identical copies of each
+other, a standing invariant-I1 breach *before* this step — are one-line delegates.
+
+Acceptance, against the rows above:
+* *"With the CIW closed, a netlist that emits no OP cards produces a message the
+  user can see"* — **met for a withdrawn / iconified / never-created CIW**
+  (PS14/PS15, 6/6 on a quiet tree). **Not met for a CIW that is merely stacked
+  behind the design window** — `ismapped 1`, `viewable 1`, statusbar untouched.
+  Filed as **0659**.
+* *"Headless runs are unaffected; no suite that renames `::ciw_echo` changes
+  count"* — **met**. Every baseline count is unmoved.
+* *"The success line, the nudge, the refusal and the discard all reach the new
+  sink"* — **met mechanically** (all four go through `ase::echo`), but the
+  **discard still prints hardcoded, drifted menu prose** (**0661**), and volume
+  means only the **last** of several notices survives on the fallback (**0660**).
+
+### Still open, from this issue
+
+**0655** (the session-window sink — this issue's actual title) is **not** closed:
+`ase::echo` carries only `(msg, tag)` and has no session target. Also open:
+**0658** (a missing channel silences everything, the durable log included),
+**0659**, **0660**, **0661**, **0654**. Fixed in the same pass: **0656**, **0657**.

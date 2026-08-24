@@ -555,6 +555,144 @@ check "F19l 0648 NON-VACUITY CONTROL: a gate-OFF netlist says nothing about\
   [llength [f_matches $f19l_msgs {*card(s) added*}]] 0
 cx {ase::op_cards_nudge_reset}
 
+# ============================================================================
+# F19o-F19s -- ISSUE 0650 / R-0653-d: THE NUDGE MUST CARRY AN EXECUTABLE REMEDY
+# ============================================================================
+# The shipped nudge ends in hardcoded prose:
+#   "Tick Outputs > Save All > Save device OP parameters to annotate them"
+# and R-0653-d req 2 forbids exactly that shape -- the LIVE menu label is
+# `Save All…` (ase_window.tcl:502) and the LIVE checkbutton is
+# `Save device OP parameters (gm, gds, vth, ...)` (:2879), so the shipped
+# sentence already drops the ellipsis and the parenthetical. "A hardcoded path
+# that drops the ellipsis or misses a cascade level is a wrong direction printed
+# with authority, which is worse than printing none."
+#
+# The three requirements are ACCEPTANCE ITEMS, and each has a row here:
+#   req 1  a test EXECUTES the printed command, never string-compares it  -> F19p
+#          (the trap it exists for is ase_window.tcl:2912, "OFF IS `{}`, NEVER
+#          `0`": a remedy printing `save_op_params 0` looks right and is wrong,
+#          and only execution catches it)                                 -> F19q
+#   req 2  the menu path is derived from / asserted against the LIVE menu -> W1t
+#          in test_ase_window.tcl; F19o owns the shape (3 cascade segments)
+#   req 3  the command invokes THE SAME PROC THE MENU INVOKES             -> F19r
+#          (proved indirectly: the remedy must go through the three-blanket
+#          writer, so it cannot have disturbed save_all_v / save_all_i; SAB-N6
+#          is the discriminator -- neutralizing that one writer must redden the
+#          existing Save All OK rows TOO, or the two paths were never the same
+#          proc and req 3 is unmet)
+#
+# F19s pins that the nudge travels through the 0650 channel at all, so the
+# statusbar/popup sinks proven in PS14-PS19 are reachable from THIS message and
+# not only from a synthetic one.
+#
+# NOTE these rows need NO ngspice: netlisting alone emits the cards (measured,
+# 6 on this cell), so they sit ABOVE the auto_execok guard where F11-F18 live.
+
+## One field of the ::xschem::notify_last witness, with a SPEAKING placeholder
+## when the witness (or the key) is absent.
+proc f_nfield {k} {
+  if {![info exists ::xschem::notify_last]} { return NO-notify_last }
+  if {[catch {dict get $::xschem::notify_last $k} v]} { return NO-KEY-$k }
+  return $v
+}
+
+# The session the remedy will name: the DESIGN cellview's own key, because the
+# printed command has nothing else to address (ase::echo carries no session
+# target -- that gap is filed as issue 0655).
+cx {ase::op_cards_nudge_reset}
+catch {unset ::xschem::notify_last}
+set f19o_key [cx {ase::session_key {*}[ase::op_cards_nudge_key $stoff]}]
+cx {ase::session_open $f19o_key $statefile}
+set f19o_dir [file normalize [file join $scratch runoff_o]]
+set f19o_st [cx {ase::session_state $f19o_key}]
+catch {dict set f19o_st rundir $f19o_dir ; ase::session_update $f19o_key $f19o_st}
+
+# --- F19o: the remedy is carried as FIELDS with the right SHAPE --------------
+set f19o_n    [f_nudges [cx {ase::session_state $f19o_key}]]
+set f19o_menu [f_nfield menu]
+set f19o_cmd  [f_nfield command]
+check "F19o 0653 R-0653-d the gate-off nudge carries a REMEDY: a 3-segment menu\
+ path and a syntactically complete command, as DISTINCT fields" \
+  [list $f19o_n \
+        [expr {[info exists ::xschem::notify_last] ? 1 : 0}] \
+        [llength [split $f19o_menu >]] \
+        [expr {$f19o_cmd ne {} && ![string match {NO-*} $f19o_cmd] \
+               && [info complete $f19o_cmd] ? 1 : 0}]] \
+  {1 1 3 1}
+
+# --- F19p: R-0653-d REQ 1 -- EXECUTE the printed command --------------------
+# `ciw_exec` (src/ciw.tcl:250) runs `uplevel #0 $cmd`, so THE PRINTED STRING IS
+# THE CONTRACT and this row runs it exactly the way the CIW entry field would.
+# It must not merely set a key: the acceptance is that the very next netlist of
+# the very same cellview emits real cards.
+set f19p_v0 [cx {ase::state_get [ase::session_state $f19o_key] save_all_v 0}]
+set f19p_i0 [cx {ase::state_get [ase::session_state $f19o_key] save_all_i 0}]
+set f19p_rc [catch {uplevel #0 $f19o_cmd} f19p_err]
+set f19p_gate [cx {ase::op_gate_on \
+  [ase::state_get [ase::session_state $f19o_key] save_op_params {}]}]
+set f19p_v1 [cx {ase::state_get [ase::session_state $f19o_key] save_all_v 0}]
+set f19p_i1 [cx {ase::state_get [ase::session_state $f19o_key] save_all_i 0}]
+set f19p_dir [file normalize [file join $scratch runon_p]]
+set f19p_st [cx {ase::session_state $f19o_key}]
+catch {dict set f19p_st rundir $f19p_dir}
+set f19p_cards -1
+if {![catch {ase::netlist $f19p_st} f19p_nl]} {
+  set f19p_cards 0
+  catch {
+    set fh [open $f19p_nl r] ; set f19p_txt [read $fh] ; close $fh
+    set f19p_cards [llength [f_cards [cx {ase::op_cards_for $f19p_txt}]]]
+  }
+}
+check "F19p 0653 R-0653-d REQ 1: EXECUTING the printed command (never comparing\
+ it) turns the gate on AND makes the next netlist of that cellview emit cards" \
+  [list $f19p_rc $f19p_gate [expr {$f19p_cards > 0 ? 1 : 0}]] {0 1 1}
+if {$f19p_rc} { puts "  F19p exec error: $f19p_err (command was {$f19o_cmd})" }
+
+# --- F19q: the `{}`-NEVER-`0` trap, on the SERIALIZED form -------------------
+# ase_window.tcl:2912: `save_op_params` is in ase::omit_if_empty, so OFF must
+# stay `{}`. A remedy (or a shared writer) that normalises OFF to a literal 0
+# writes the key into every .state the user saves and reddens the 104 committed
+# byte-identical fixtures (F3/G3/R4/V4/R2). ON must appear; OFF must vanish.
+set f19q_on [cx {ase::state_serialize [ase::session_state $f19o_key]}]
+set f19q_orc [catch {ase::ui::save_all_apply $f19o_key $f19p_v1 $f19p_i1 0} f19q_err]
+set f19q_off [cx {ase::state_serialize [ase::session_state $f19o_key]}]
+check "F19q 0648 the shared writer keeps OFF as `{}`: ON serializes\
+ `save_op_params 1`, OFF omits the key entirely (never a literal 0)" \
+  [list [expr {[regexp {save_op_params\s+1} $f19q_on] ? 1 : 0}] \
+        $f19q_orc \
+        [expr {[string first save_op_params $f19q_off] >= 0 ? 1 : 0}] \
+        [cx {ase::state_get [ase::session_state $f19o_key] save_op_params {}}]] \
+  {1 0 0 {}}
+
+# --- F19r: R-0653-d REQ 3 -- the remedy went through the MENU'S OWN writer ---
+# "The command must invoke THE SAME PROC THE MENU INVOKES, not poke the state
+# underneath it." The observable consequence: the Save All path writes all THREE
+# blankets together, so a remedy that went through it left save_all_v and
+# save_all_i exactly as it found them. Non-vacuous -- the gate value is in the
+# same tuple, so a remedy that did nothing at all cannot pass this row.
+check "F19r 0653 R-0653-d REQ 3: the executed remedy turned the gate ON and left\
+ save_all_v / save_all_i untouched (it went through the three-blanket writer)" \
+  [list $f19p_gate $f19p_v1 $f19p_i1] [list 1 $f19p_v0 $f19p_i0]
+
+# --- F19s: the nudge really travels through the 0650 channel ----------------
+# Without this row PS14-PS19 prove the sinks work for a SYNTHETIC notice while
+# the one message the user actually needed could still be on the old path.
+cx {ase::op_cards_nudge_reset}
+catch {unset ::xschem::notify_last}
+set f19s_dir [file normalize [file join $scratch runoff_s]]
+set f19s_st [ase::state_load $statefile]
+dict set f19s_st rundir $f19s_dir
+f_nudges $f19s_st
+check "F19s 0650 the gate-off nudge travels through xschem::notify (its own\
+ record names it, untagged, with the remedy attached)" \
+  [list [expr {[string match {ASE: device operating-point parameters*} \
+                 [f_nfield msg]] ? 1 : 0}] \
+        [f_nfield tag] \
+        [expr {[f_nfield command] ne {} && ![string match {NO-*} [f_nfield command]] ? 1 : 0}]] \
+  {1 {} 1}
+cx {ase::session_close $f19o_key}
+cx {ase::op_cards_nudge_reset}
+
 # --- F18: the BEFORE state, pinned exactly (the non-vacuity control) ---------
 if {[auto_execok ngspice] eq {}} {
   puts "SKIPPED: F11-F18/F20 run legs (ngspice not found)"

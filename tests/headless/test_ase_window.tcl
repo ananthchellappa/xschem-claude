@@ -13,7 +13,10 @@
 #          temperature toolbar entry, themed widgets (locked palette + named
 #          fonts); W1m the v2 menu tree; W1p the three v2 treeview panes
 #          (columns, seeded rows, blank Value/Save Options, NO inline +/-);
-#          W1s the action strip; W1c the per-pane context menus; re-open
+#          W1s the action strip; W1r/W1u/W1t (issue 0650, R-0653-d req 2)
+#          the OP-card remedy's menu path asserted against the LIVE
+#          Outputs entry and the LIVE Save All checkbutton, never
+#          against prose; W1c the per-pane context menus; re-open
 #          raises (no new number); W3 double-click row -> variable editor
 #          dialog -> dirty -> real-menu Save State; W3t temperature
 #          round-trip/validation; W3s single-pane selection; W3c checkbox
@@ -494,6 +497,75 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "W1m Session menu entries (v2, no Revert)" $sess \
     {{Design Window} {Load State} {Save State} -- Close}
+
+  # ==========================================================================
+  # W1r/W1s/W1t -- ISSUE 0650 / R-0653-d REQ 2: THE REMEDY PATH IS ASSERTED
+  #                AGAINST THE LIVE WIDGETS, NEVER AGAINST PROSE
+  # ==========================================================================
+  # "The menu path must be derived from the live menu, or asserted against it —
+  # never hardcoded prose. Real labels carry ellipses: `Save All…`. A
+  # hardcoded 'Outputs > Save All' that drops the ellipsis or misses a cascade
+  # level is a wrong direction printed with authority, which is worse than
+  # printing none." The SHIPPED nudge is already that failure: ase.tcl echoes
+  # "Tick Outputs > Save All > Save device OP parameters", dropping both the
+  # ellipsis and the parenthetical the checkbutton actually carries.
+  #
+  # So: three label constants become the single source (invariant I1 applied to
+  # a label instead of a vector name), the MENU and the DIALOG are built from
+  # them, and these rows read the labels back off the REAL widgets. A
+  # constant-compared-to-constant tautology cannot pass -- W1t's expectation is
+  # built from `entrycget -label` and `cget -text`, not from the constants.
+  proc w_cx {script} {
+    if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+    return $r
+  }
+
+  # W1r: the LIVE Outputs entry that opens the Save All dialog
+  set w1r_live {}
+  set w1r_want [list ase::ui::save_all_dialog $key]
+  for {set i 0} {$i <= [$top.mb.outputs index end]} {incr i} {
+    if {[$top.mb.outputs type $i] eq {separator}} { continue }
+    if {[w_cx {$top.mb.outputs entrycget $i -command}] eq $w1r_want} {
+      set w1r_live [$top.mb.outputs entrycget $i -label]
+    }
+  }
+  set w1r_cascade {}
+  for {set i 0} {$i <= [$top.mb index end]} {incr i} {
+    if {[$top.mb type $i] eq {separator}} { continue }
+    if {[w_cx {$top.mb entrycget $i -menu}] eq "$top.mb.outputs"} {
+      set w1r_cascade [$top.mb entrycget $i -label]
+    }
+  }
+  check "W1r 0653 R-0653-d the Outputs cascade and its Save All entry are built\
+ FROM the shared label constants (live widget == constant)" \
+    [list $w1r_cascade $w1r_live \
+          [w_cx {ase::ui::lbl_outputs}] [w_cx {ase::ui::lbl_save_all}]] \
+    [list Outputs "Save All…" Outputs "Save All…"]
+
+  # W1u: the LIVE checkbutton inside the Save All dialog. (The plan called this
+  # row W1s; `W1s` is already this suite's action-strip prefix at :606-607, so
+  # it is W1u here -- a duplicated prefix is how a row gets read as covered
+  # when it was never run.)
+  set w1s_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  set w1s_text [w_cx {$w1s_w.opparams cget -text}]
+  catch {ase::ui::save_all_close $key}          ;# teardown that says nothing
+  update idletasks
+  check "W1u 0653 R-0653-d the Save All dialog's OP-parameters checkbutton is\
+ built FROM the shared constant, parenthetical included" \
+    [list $w1s_text [w_cx {ase::ui::lbl_save_op_params}]] \
+    [list {Save device OP parameters (gm, gds, vth, ...)} \
+          {Save device OP parameters (gm, gds, vth, ...)}]
+
+  # W1t: the composed remedy path, segment by segment, against those widgets
+  set w1t_path [w_cx {ase::ui::remedy_op_params_menu}]
+  set w1t_seg {}
+  foreach s [split $w1t_path >] { lappend w1t_seg [string trim $s] }
+  check "W1t 0653 R-0653-d REQ 2: the printed menu path is exactly the three\
+ LIVE labels, in order -- no dropped ellipsis, no missing cascade level" \
+    [list [llength $w1t_seg] [lindex $w1t_seg 0] [lindex $w1t_seg 1] \
+          [lindex $w1t_seg 2]] \
+    [list 3 $w1r_cascade $w1r_live $w1s_text]
 
   # W1p: the v2 pane model — EXACTLY three treeview panes, spec columns,
   # seeded rows, blank Value/Save Options pre-run, NO inline +/- buttons

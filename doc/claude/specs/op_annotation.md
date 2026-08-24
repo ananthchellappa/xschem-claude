@@ -1133,18 +1133,40 @@ in one deck are harmless. And nothing rewrites, re-wraps, sorts or dedupes a car
 on the way through: the card is **bare** (**R4**, invariant **I1**), the wrapper
 is the read shape.
 
-**Every degraded path is reported** through `ase::echo`, which feeds both the ASE
-pane and `Xschem.log`: the card count on success; every `op_annot::last_warnings`
+**Every degraded path is reported** through `ase::echo` — which, since issue
+**0650** (2026-08-23), is a one-line delegate to **`xschem::notify`**
+(`src/ciw.tcl`), the one notification builder. ⚠ The sentence that stood here
+before was wrong in a way that mattered: `ase::echo` does **not** feed the ASE
+session window (`grep -c ciw_echo src/ase_window.tcl` = **0**, against 61 lines
+that call `ase::echo`). It fed the **CIW** pane and `Xschem.log`, and with the
+CIW closed it reached **zero visible sinks** — measured on the user's own
+configuration, and that silence is the whole of issue 0648. `xschem::notify`
+adds a budgeted `[xschem get top_path].statusbar.12` fallback when the CIW is not
+visible and an opt-in non-blocking popup (`::notify_style popup`); the ASE
+session window **still** has no sink (issue **0655**), and a CIW that is merely
+stacked behind the design window still reaches none of the visible ones (issue
+**0659**). What is reported: the card count on success; every `op_annot::last_warnings`
 entry as an error (they previously reached only `write_save_file`); an error when
 nothing below the cell produced a card; an error when `save_cards` raised — it is
 **caught**, never propagated, because `ase_window.tcl` turns a raise into a red
 session status and an opt-in annotation extra may not break *Netlist and Run*;
 an error on a render-time cache miss; and, when the gate is off and an `op`
 analysis is enabled, one line naming the checkbox. That last one is 0617's
-report-what-was-not-delivered channel at the emit end. ⚠ Three defects in this
-reporting are filed and **not** fixed: **0635** (a refusal reports two
+report-what-was-not-delivered channel at the emit end, and since 0650 it no
+longer *hardcodes* the checkbox prose: the path is composed from
+`ase::ui::lbl_outputs` / `lbl_save_all` / `lbl_save_op_params`
+(`src/ase_window.tcl:2878-2880`), the same three constants the live menu entry and
+the live dialog checkbutton are built from, and it carries a **pasteable**
+`ase::ui::save_op_params_on <key>` that commits through the *same* writer the
+menu's OK button commits through (`ase::ui::save_all_apply`). ⚠ Defects in this
+reporting that are filed and **not** fixed: **0635** (a refusal reports two
 contradictory sentences), **0636** (the nudge has no opt-out), **0637** (a
-truthy-not-`1` gate is silently off; the count assumes an `@` prefix).
+truthy-not-`1` gate is silently off; the count assumes an `@` prefix),
+**0658** (a missing `xschem::notify` silences every one of these lines, the
+durable log line included), **0660** (the statusbar fallback is last-writer-wins,
+so the per-device `last_warnings` lines can never survive to it, and its short
+form carries no remedy) and **0661** (`save_all_report_discard` still prints
+hardcoded, drifted menu prose).
 
 **On a DIRTY sheet the ASE path emits nothing and says so** — provisional,
 pending the 0628/**0632** ruling, filed as **0633**. This is deliberately *not*
@@ -1828,8 +1850,8 @@ wins, **I8/0604's report is the other half** — the hyphen says *which*, the re
 
 ### 5.1 Shipped and unratified — the questions this run owes a human
 
-Collected here, in one place, so they can be answered in one sitting. **TWELVE
-rows, one per issue file** *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
+Collected here, in one place, so they can be answered in one sitting. **THIRTEEN
+rows, one per issue file** *(0650 added 2026-08-23 by the 0650 crew)* *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
 count. Every file named below was verified to exist on disk by the S12 write-up
 agent (2026-08-21).
 
@@ -1857,6 +1879,8 @@ authority has signed it off*.
 
 | **0633** | ratification, **provisional** | **with unsaved edits on the sheet, the ASE path emits NO device OP save cards at all** — not even in the `modified=1 + autosave_backup=1` case that `op_annot::save_cards` itself walks today. S4 took the safe side of the 0628/0632 matrix rather than manufacturing its ruling, and reports the refusal. **Refuse as shipped, or walk anyway and accept the ancestor-`~` rewrite (0632)?** — S4's E question, and it should be answered *together with* 0628/0632, not separately. |
 | **0636** | ratification | the gate-off nudge — one `ase::echo` line naming *Outputs → Save All → Save device OP parameters* — fires on **every** `op` netlist for **every** user, with no opt-out, including designs where nothing is annotatable. It is 0617's report-what-was-not-delivered channel, and it is also a new line in every existing OP user's pane and log. **Keep it unconditional, latch it once per session, or give it an `xschemrc` off switch?** |
+
+| **0650** | ratification | **`xschem::notify` writes a red, 28-character short form into the DRAWING window's `.statusbar.12` whenever the CIW is not visible.** That field is shared with `*BUSY*` (`hilight.c:2201`), is cleared **unconditionally** by `propagate_logic()` (`hilight.c:2305`), is red for *every* tag including a plain success line, and is last-writer-wins (issue 0654, issue 0660). Two rulings are wanted. **(a)** Is the drawing window's statusbar the right can't-miss fallback, or should it be a permanent notice segment in the **ASE session window** the user is actually looking at when they press *Netlist and Run* (issue **0655** — not built, because `ase::echo` carries no session target)? **(b)** Should `::notify_style` ship **`ciw`** (implemented, per R-0653-a) or **`popup`**? Implemented as ruled pending the answer. |
 
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:

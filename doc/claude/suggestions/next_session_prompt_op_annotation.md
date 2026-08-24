@@ -8,6 +8,177 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅⚠ 0650 — LANDED 2026-08-23 (status **E**, and the adversary landed six hits). THE ONE NOTIFICATION CHANNEL
+
+**Not a plan step** — an eyes-on batch item. Read this before any step that has
+something to tell the user, because the way to say it changed.
+
+### What was measured BEFORE
+
+On :99, with the CIW closed the way a user closes it (its real
+`WM_DELETE_WINDOW` handler), a gate-off netlist reached **zero visible sinks**:
+
+```
+GUI-4 after closing: .ciw ismapped                     0
+GUI-8 ciw pane GREW while invisible                    1
+GUI-9 statusbar.12 text AFTER notice                   {}
+GUI-13 VISIBLE SINKS REACHED                           0
+```
+
+The only surviving trace was one `#! ` line in a log file nobody was reading.
+That is issue 0648's report from the outside.
+
+### What landed
+
+`xschem::notify` in **`src/ciw.tcl`** (top of file, above `ciw_create`) —
+
+```
+xschem::notify <msg> ?-tag {}|error? ?-short S? ?-menu M? ?-command C? ?-once SUBJ? ?-state K?
+```
+
+four sinks (CIW pane · action-log file · a budgeted `.statusbar.12` fallback when
+the CIW is not visible · an opt-in non-blocking `.xschem_notify` popup under
+`::notify_style popup`), a `::xschem::notify_last` dict as the headless witness,
+and `xschem::notify_latch_{ok,rearm,reset}` as the generalised R-0653-c
+suppression latch. `ase::echo` and `wviewer::echo` — which were **byte-identical
+copies of each other**, a standing invariant-I1 breach — are now one-line
+delegates.
+
+### ⚠ FIVE THINGS THAT BIND EVERY LATER CREW
+
+1. **There is now ONE notifier. Call `::xschem::notify`; never write a second
+   one, and never tee inside `ciw_echo`** — it has ~190 direct call sites and a
+   tee there doubles every asserted notice count
+   (`test_ase_locked_wire_pick_0160:126`, `test_sod_pick_no_select_0204:138/295`
+   assert `llength $::notices == 1`).
+2. **`src/ciw.tcl` is sourced AFTER `ase.tcl` / `ase_window.tcl` /
+   `wave_viewer.tcl`** (`src/xschem.tcl:14648` vs `:14606/:14608/:14610`). Runtime
+   calls are fine; a **source-time** notify from those files fails. No Tcl home
+   helps an `xschemrc` — the rc is read before all of them.
+3. **0650's and 0653's own mechanism sentence is FALSE, and the correction is
+   load-bearing.** They say the CIW *"No-ops silently when shut"*. It does not:
+   `src/ciw.tcl:53` is `wm protocol .ciw WM_DELETE_WINDOW {wm withdraw .ciw}`, so
+   after a close `.ciw.l.t` still **exists** and `ciw_echo` writes into the
+   invisible widget. A fallback conditioned on `winfo exists` is dead code in
+   exactly the user's situation **and it passes review**. The predicate is
+   `winfo ismapped` (`xschem::notify_ciw_visible`), pinned by PS17. Sabotaging it
+   back to `winfo exists` reddens PS14+PS15 — measured twice, independently.
+4. **`ismapped` still cannot see occlusion.** A CIW that is open but stacked
+   behind the design window measures `ismapped 1`, `viewable 1`, and gets
+   `sinks = ciw log` with the statusbar untouched — the user's exact complaint,
+   in an ordinary arrangement (**issue 0659**). Narrow any "cannot go silent"
+   claim to *withdrawn / iconified / never-created* until that is closed.
+5. **`.statusbar.12` is a ~28-character, silently clipping, shared, self-clearing,
+   per-toplevel field** (**issue 0654**). Address it as
+   `[xschem get top_path].statusbar.12` — **not** `xschem get topwindow`, which
+   returns `.` and builds `..statusbar.12`; `src/xschem.tcl:14146` already ships
+   that bug for `.statusbar.7`. Budget every short form through
+   `xschem::notify_short`.
+
+### The R-0653-d pattern, for anyone printing a remedy
+
+Do not hardcode menu prose. `ase::ui::lbl_outputs` / `lbl_save_all` /
+`lbl_save_op_params` (`src/ase_window.tcl:2878-2880`) are what the **menu entry
+(:489/:502) and the dialog checkbutton (:2938) are built from**, and
+`remedy_op_params_menu` composes them; `W1r/W1u/W1t` in
+`tests/headless/test_ase_window.tcl` read the labels back off the **real widgets**
+so a constant-compared-to-constant tautology cannot pass. And the printed
+command must land in the proc the **menu's OK** lands in —
+`ase::ui::save_all_apply` is that single writer, with `save_all_ok` and the
+pasteable `save_op_params_on` both calling it. SAB-N6 is the discriminator:
+neutralizing `save_all_apply` reddened the new remedy rows **and** six
+pre-existing Save All OK rows in `test_ase_dialogs`, which is the proof they are
+one path.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | L2 | the channel lives in `src/ciw.tcl` | a new `src/notify.tcl` — forces `src/Makefile.in` + `./configure` + a rebuild on a pure-Tcl step, and issue 0424 is the recorded startup segfault from getting that ceremony wrong |
+| D2 | L2 | predicate = `winfo ismapped` | `winfo exists`, which is 0650's own literal text and is dead code when withdrawn |
+| D3 | L2 | sink 3 = `.statusbar.12` via `top_path` | `.statusbar.1` via `xschem statusmsg` — `scheduler.c:53` **drops** an ordinary statusmsg while a hold is live, so a channel whose contract is "cannot go silent" would be silenceable by an unrelated gate message |
+| D5 | L2 | popup = one reusable **non-blocking** toplevel | `alert_` (`xschem.tcl:11954`) — fixed `.alert` path + `tkwait`; `op_cards_capture` fires up to six notices inside Netlist-and-Run, so a modal stalls the run and the second notice raises `window name .alert already exists` |
+| D7 | L1 (I1) | generalise the 0648 latch; the nudge site keeps calling `ase::op_cards_nudge_ok` and does **not** pass `-once` | moving the nudge onto `-once` — it bypasses the `::ase_op_card_nudge` off switch (F19c) |
+| D10 | L3 | ship `::notify_style ciw` with the statusbar fallback | — user-visible, unratified: **status E**, question in the ledger row |
+
+### THE SABOTAGE MATRIX — 8 variants, 6 exact, 1 superset, **2 predicted reds that did not appear**
+
+| variant | predicted | observed |
+|---|---|---|
+| N1 statusbar sink no-ops | PS14, PS15 | **exact** |
+| N2 predicate back to `winfo exists` | PS14, PS15 | **exact** (independently reproduced) |
+| N3 short form = identity | NT9, NT10, PS15 | **exact** — and PS14 correctly stayed green, so PS14/PS15 are genuinely independent legs |
+| N4 latch never latches | NT11-13, F19b/c/h | **superset**: 7 red; **F19c did NOT red** |
+| N5 latch never re-arms | NT12, F19g, F19i | **exact** |
+| N6 the single writer made inert | F19p/q/r + the menu-OK rows | **exact in substance**: 3 + **6 in `test_ase_dialogs`** (the plan named `test_ase_window`, which has no commit-path row at all) |
+| N7 remedy back to hardcoded prose | W1t, F19o | **exact** |
+| N8 popup no-ops | PS18, NT3 | **PS18 only; NT3 did NOT red** |
+
+⚠ **The two misses are worth more than the six hits.**
+
+* **F19c cannot red on a latch sabotage, structurally.** `ase::op_cards_nudge_ok`
+  checks the `::ase_op_card_nudge` off switch and returns **before** it ever calls
+  `notify_latch_ok`, and F19c sets that variable to 0. F19c covers the off switch
+  only. (That the nesting order is off-switch-first / latch-last is the 0636 rule,
+  so this miss actually confirms the implementation kept it.)
+* **NT3 is immune to popup sabotage by construction, and this one IS a coverage
+  hole.** `nt_spy_sinks` (`test_ase_core.tcl:1051`) renames `::xschem::notify_popup`
+  away and installs a spy, so NT3 asserts **dispatch**, not behaviour. The popup
+  sink's real mechanism is witnessed by **PS18 alone**, and PS18 lives in
+  `test_ase_log_seam_0207`, which reports `RESULT: SKIP` under the default
+  `--nogui --pipe -q --nolog`. **Run the suites the default way and
+  `::notify_style popup` has ZERO behavioural coverage.**
+
+### ⚠ FOUR SUITES REPORT `SKIP` HEADLESS — RUN THEM ON :99 OR YOU DIFF A SKIP AGAINST A SKIP
+
+`test_sod_pick_no_select_0204` (66), `test_ase_dirty` (41),
+`test_annot_show_menu` (25), `test_statusmsg_hold_0248` (7) and
+`test_ase_log_seam_0207` (32) all print `RESULT: SKIP` with **zero checks** under
+`--nogui --pipe -q --nolog`. The first is the suite asserting the one-notice
+budget; the last is the only witness for the whole statusbar-and-popup half of
+this feature. Invocation of record:
+
+```
+tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script tests/headless/<t>.tcl
+# and for the two logdir suites (test_ase_log_seam_0207, test_wave_tabs):
+d=$(mktemp -d); tests/headless/devdisplay.sh exec env XSCHEM_AL_LOGDIR=$d \
+  ./src/xschem --pipe -q --logdir $d --script tests/headless/<t>.tcl
+```
+
+### ⚠ SERIALIZE THE SABOTAGE LEG AGAINST THE VERIFY LEG
+
+Both verify agents saw `PS14 -> {1 0 0}` / `PS15 -> {0 1 1}` and one of them
+recorded it as an **unexplained 4/4 flake in the step's headline row**. It was
+not a flake: that signature is exactly what SAB-N1 and SAB-N2 produce, and the
+other agent timestamped a concurrent sabotage agent mutating `src/ciw.tcl`
+during the sweep (N1, then N4 21:42, N5 21:43, N6 21:44, N7 21:45, N8 21:46).
+The write-up pass re-ran the suite **6/6 green** on a quiet tree, on top of the
+adversary's own 38/38. A crew that runs sabotage and verification concurrently
+against one working tree measures a tree that is changing under it.
+
+### STILL OPEN — the adversary landed six hits; **two were fixed in the write-up pass, four are filed**
+
+| issue | what | status |
+|---|---|---|
+| **0656** | a whitespace-only notice **blanked** a parked `.statusbar.12` notice (and could blank a live `*BUSY*`) — the moved body lost `ase::echo`'s second early return | **FIXED** in the write-up pass |
+| **0657** | `sinks` claimed `log` with **no log file open** — `log_action` never reports a closed log, so the witness lied | **FIXED** in the write-up pass |
+| **0658** | a missing `::xschem::notify` silences `ase::echo` **completely, the durable log included** — measured `sinks reached = ''`. Before 0650 the log write was inline and had no cross-file dependency | OPEN — the inline-duplicate fix would re-create the I1 breach 0650 just deleted |
+| **0659** | mapped-but-occluded CIW → zero visible sinks | OPEN |
+| **0660** | the fallback is **last-writer-wins** (3 notices → only the last survives; the per-device under-emission warnings can never reach it) and its short form carries **no remedy** | OPEN |
+| **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
+| 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
+
+**Number the next issue from 0662.**
+
+### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
+
+`tests/headless/devdisplay.sh status` reports **`wm: openbox (Openbox)` live on
+:99** and `which openbox` resolves. CLAUDE.md and MEMORY.md still say it is not
+installed and the arm runs WM-less; commit `0c288551` already records that it was
+installed since. Every `:99` number in this block was taken with openbox live.
+
+---
+
 ## ⚠ 0617 (display half) — ATTEMPTED, REFUTED, REVERTED 2026-08-23. READ BEFORE RETRYING IT
 
 **Not a plan step.** 0618 and the riders 0635/0636 from the same crew **landed**;

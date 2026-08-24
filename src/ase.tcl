@@ -131,16 +131,23 @@ namespace eval ase {
 #    No format gate catches this: test_selflog_output's source-ability leg accumulates
 #    with `info complete`, which treats a leading `#` as a comment and returns 1 even
 #    for a trailing backslash. Only test_ase_log_seam_0207's PS12 sees it.
+# --- 0650: ONE builder, and this is no longer it -----------------------------
+# Everything above still describes the BODY -- it just lives in
+# `xschem::notify` (src/ciw.tcl) now, moved verbatim, because the channel had
+# TWO byte-identical builders before this step (this proc and wviewer::echo,
+# src/wave_viewer.tcl:735) and invariant I1 forbids exactly that. ase::echo
+# keeps its name, its `{msg {tag {}}}` signature and its 61+ call sites; the
+# remedy fields (-menu/-command), the short form and the state-keyed latch are
+# reached by calling ::xschem::notify DIRECTLY at the sites that have something
+# to say with them (ase::op_cards_capture is the first).
+#
+# ⚠ ciw.tcl is sourced AFTER this file (src/xschem.tcl:14648 vs :14606), so this
+# resolves ::xschem::notify at CALL time and a SOURCE-TIME ase::echo would fail.
+# No call site makes one. Catch'd for the same reason both halves always were:
+# a broken message may never break a pick or a netlist.
 proc ase::echo {msg {tag {}}} {
-  # pane half first, unconditionally and unchanged: the tests that capture ASE
-  # notices rename ::ciw_echo, and an empty message still echoed a blank line.
-  if {[info commands ::ciw_echo] ne {}} { catch {::ciw_echo $msg $tag} }
-  if {$msg eq {}} return
-  set msg [string trimright $msg "\n"]            ;# log_output supplies the terminator
-  if {$msg eq {}} return
-  if {[string index $msg end] eq "\\"} { append msg { } }
-  if {$tag eq {error}} { catch {xschem log_action -error $msg} } \
-  else                 { catch {xschem log_action -result $msg} }
+  if {[catch {::xschem::notify $msg -tag $tag} r]} { return 0 }
+  return $r
 }
 
 # dict get with a default (states are open dicts: keys may be absent).
@@ -531,13 +538,16 @@ proc ase::op_cards_note_refusal {netlistpath} {
 # action, by ase::run, and by anything that re-netlists — measured at three
 # times in one session on one cell — and the nudge has nothing new to say the
 # second time.
-namespace eval ase { variable op_nudged [dict create] }
+## 0650: THE STORAGE MOVED. R-0653-c says to GENERALISE this latch, not to write
+## a second one, so it is now xschem::notify_latch_* (src/ciw.tcl) keyed on
+## {subject state} with subject `opcards`. The three procs below keep their
+## names, their signatures, the `::ase_op_card_nudge` off switch and
+## op_cards_nudge_reset as the test seam -- only the dict went away.
 
 # The test seam, and the honest way to re-arm it for a user who wants reminding:
 # forget every cellview already nudged.
 proc ase::op_cards_nudge_reset {} {
-  variable op_nudged
-  set op_nudged [dict create]
+  ::xschem::notify_latch_reset opcards
 }
 
 # --- 0648: ONE gate normaliser, ONE latch-key builder ------------------------
@@ -574,8 +584,7 @@ proc ase::op_cards_nudge_key {state} {
 # NOT op_cards_nudge_reset — that forgets EVERY cellview and stays the test
 # seam. Writes nothing into the state (the `{}`-never-`0` landmine).
 proc ase::op_cards_nudge_rearm {state} {
-  variable op_nudged
-  catch { dict unset op_nudged [ase::op_cards_nudge_key $state] }
+  catch { ::xschem::notify_latch_rearm opcards [ase::op_cards_nudge_key $state] }
   return
 }
 
@@ -600,15 +609,14 @@ proc ase::op_cards_gate_changed {old new} {
 # sequence the gate is OFF on both runs (the tick never committed), so
 # (cellview, off) would be the same key twice and run 2 would still be silent.
 proc ase::op_cards_nudge_ok {state} {
-  variable op_nudged
   if {[info exists ::ase_op_card_nudge]} {
     if {[catch {expr {$::ase_op_card_nudge ? 1 : 0}} on]} { set on 1 }
     if {!$on} { return 0 }
   }
-  set k [ase::op_cards_nudge_key $state]
-  if {[dict exists $op_nudged $k]} { return 0 }
-  dict set op_nudged $k 1
-  return 1
+  ## 0650: the take is the generalised latch's, keyed on (opcards, cellview).
+  ## The off switch above stays HERE and is deliberately NOT expressed as
+  ## notify's `-once`: -once would bypass ::ase_op_card_nudge entirely.
+  return [::xschem::notify_latch_ok opcards [ase::op_cards_nudge_key $state]]
 }
 
 # How many device OP save cards a block carries. Named callee so the success
@@ -659,9 +667,24 @@ proc ase::op_cards_capture {state netlistpath} {
     ## so the two gates are NESTED rather than &&-ed into one condition.
     if {$have && [ase::op_analysis_enabled $state]} {
       if {[ase::op_cards_nudge_ok $state]} {
-        ase::echo "ASE: device operating-point parameters (gm, gds, vth, ...) were\
- NOT saved in this deck. Tick Outputs > Save All > Save device OP parameters to\
- annotate them (issue 0617)."
+        ## 0650 / R-0653-d: A NOTICE THAT REPORTS A NON-DELIVERY MUST CARRY THE
+        ## REMEDY, and the remedy travels as FIELDS, never as prose. The shipped
+        ## sentence said "Tick Outputs > Save All > Save device OP parameters",
+        ## which already dropped the menu entry's ellipsis AND the checkbutton's
+        ## parenthetical -- a wrong direction printed with authority, which is
+        ## worse than printing none. The path now comes from the same three label
+        ## constants the menu and the dialog are BUILT from (invariant I1 applied
+        ## to a label), and the command is the one the menu's OK path calls, so a
+        ## test can EXECUTE it rather than string-compare it.
+        set opk {}
+        catch { set opk [ase::session_key {*}[ase::op_cards_nudge_key $state]] }
+        set opcmd {}
+        if {$opk ne {}} { set opcmd [list ase::ui::save_op_params_on $opk] }
+        set opmenu {}
+        catch { set opmenu [ase::ui::remedy_op_params_menu] }
+        ::xschem::notify "ASE: device operating-point parameters (gm, gds, vth,\
+ ...) were NOT saved in this deck (issue 0617)." \
+          -short {no OP params saved} -menu $opmenu -command $opcmd
       }
     }
     return {}

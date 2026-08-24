@@ -17,6 +17,14 @@
 #   E* run:         real ngspice batch end-to-end (Id ~ 4.096837e-04, leg
 #                   SKIPPED if ngspice absent), missing-binary clean error via
 #                   a fake backend, unknown-simulator clean error
+#   NT* notify:     issue 0650 -- the `xschem::notify` channel ase::echo is
+#                   rewired onto: one builder, the call-time ::notify_style
+#                   read, the one-::ciw_echo-per-notice budget, the empty-message
+#                   blank line, the R-0653-d remedy fields, the 28-char short
+#                   form and the generalised (subject, state) suppression latch.
+#                   The Tk sinks (.statusbar.12 fallback, opt-in popup) are
+#                   PS14-PS19 in test_ase_log_seam_0207.tcl -- a --nolog suite
+#                   has neither a statusbar nor a CIW to witness them with.
 #
 # The nfet fixture (nfet_test_claude MINUS its corner + simulator_commands
 # instances) is embedded verbatim below and written into a scratch
@@ -968,6 +976,307 @@ check "E4b 0618 run_done still accepts THREE arguments (test_ase_cosim's shape)"
   [list $e4b_rc $e4b_err] {0 {}}
 check_true "E4b 0618 with no metadata the file is execute(data,last), byte for byte" \
   [string equal [e_slurp $e4b_log] $::execute(data,last)]
+
+
+# ============================================================================
+# NT -- ISSUE 0650: `xschem::notify`, THE ONE NOTIFICATION CHANNEL
+# ============================================================================
+# Measured 2026-08-23 on the user's own configuration: with the CIW closed, a
+# gate-off netlist reaches ZERO visible sinks. `ase::echo` (src/ase.tcl:134) has
+# exactly two -- `::ciw_echo` and `xschem log_action` -- and the GUI half of the
+# measurement recorded `.statusbar.12` = {} before AND after the notice,
+# `.statusbar.1` unchanged, no popup raised, and the only surviving trace one
+# `#! ` line in a log file nobody was reading. That is issue 0648's report from
+# the outside: "I re-ran the sim and still don't get OP info", with no mention
+# of any message, because there was none to mention.
+#
+# ⚠ 0650's AND 0653's OWN MECHANISM SENTENCE IS FALSE, and PS17 in
+# tests/headless/test_ase_log_seam_0207.tcl pins the refutation. 0650's sink
+# table says `ciw_echo` "No-ops silently when shut (src/ciw.tcl:120-121)";
+# 0653 says "The CIW is a closable toplevel. Closed -> silent no-op." Measured:
+# src/ciw.tcl:53 is `wm protocol .ciw WM_DELETE_WINDOW {wm withdraw .ciw}`, so
+# after a close `.ciw` and `.ciw.l.t` still EXIST, `ismapped` is 0, and ciw_echo
+# happily writes into the invisible widget. A `winfo exists` predicate would
+# make the whole fallback sink dead code in EXACTLY the user's situation, and it
+# would pass review. The predicate is `winfo ismapped`.
+#
+# These rows are the HEADLESS half of the channel: ONE builder (invariant I1),
+# the call-time style read (invariant I5), the one-::ciw_echo-per-notice budget
+# that the exact-count assertions in test_ase_locked_wire_pick_0160:126 and
+# test_sod_pick_no_select_0204:138 depend on, the load-bearing empty-message
+# blank line, the remedy fields carried as DISTINCT fields (R-0653-d), the
+# 28-character short-form budget, and the generalised state-keyed suppression
+# latch (R-0653-c). The Tk halves -- the `.statusbar.12` fallback and the opt-in
+# popup -- are PS14-PS19 in test_ase_log_seam_0207.tcl, because no --nolog
+# suite has a statusbar or a CIW to witness them with.
+
+## Same shape as test_ase_final's `cx`: a raise becomes a value, so one missing
+## proc reddens one row instead of aborting every row after it.
+proc nt_cx {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+  return $r
+}
+
+## One field of the ::xschem::notify_last witness, with a SPEAKING placeholder
+## when the witness (or the key) is absent -- a bare `dict get` on a missing
+## variable reports "dict element in quotes ...", which names the wrong defect.
+proc nt_field {k} {
+  if {![info exists ::xschem::notify_last]} { return NO-notify_last }
+  if {[catch {dict get $::xschem::notify_last $k} v]} { return NO-KEY-$k }
+  return $v
+}
+
+## Collect every ::ciw_echo call a body makes, as {line tag} pairs. Restores
+## ::ciw_echo on EVERY exit path including a raising body (f_nudges' engine in
+## test_ase_final.tcl). A body that raises returns {ERR <message>} -- llength 2,
+## never llength 1 -- so a missing channel can never look like a single notice.
+proc nt_capture {body} {
+  set ::nt_echo {}
+  set saved 0
+  if {[info commands ::ciw_echo] ne {}} {
+    rename ::ciw_echo ::nt_saved_ciw_echo ; set saved 1
+  }
+  proc ::ciw_echo {line {tag {}}} { lappend ::nt_echo [list $line $tag] }
+  set rc [catch {uplevel 1 $body} e]
+  catch {rename ::ciw_echo {}}
+  if {$saved} { catch {rename ::nt_saved_ciw_echo ::ciw_echo} }
+  if {$rc} { return [list ERR $e] }
+  return $::nt_echo
+}
+
+## Spy on the two STYLE-SELECTED sinks, so "which sink did this notice pick"
+## is observable with no Tk at all. Installs NOTHING when the real proc is
+## absent -- in particular it never creates the ::xschem namespace, or NT0
+## would be asserting its own side effect.
+proc nt_spy_sinks {} {
+  set ::nt_spy_popup {} ; set ::nt_spy_sbar {}
+  set ::nt_had_popup 0  ; set ::nt_had_sbar 0
+  if {[info commands ::xschem::notify_popup] ne {}} {
+    rename ::xschem::notify_popup ::xschem::notify_popup_ntsaved
+    set ::nt_had_popup 1
+    proc ::xschem::notify_popup {args} { lappend ::nt_spy_popup $args ; return 0 }
+  }
+  if {[info commands ::xschem::notify_statusbar] ne {}} {
+    rename ::xschem::notify_statusbar ::xschem::notify_statusbar_ntsaved
+    set ::nt_had_sbar 1
+    proc ::xschem::notify_statusbar {args} { lappend ::nt_spy_sbar $args ; return 0 }
+  }
+}
+proc nt_unspy_sinks {} {
+  if {$::nt_had_popup} {
+    catch {rename ::xschem::notify_popup {}}
+    catch {rename ::xschem::notify_popup_ntsaved ::xschem::notify_popup}
+  }
+  if {$::nt_had_sbar} {
+    catch {rename ::xschem::notify_statusbar {}}
+    catch {rename ::xschem::notify_statusbar_ntsaved ::xschem::notify_statusbar}
+  }
+}
+
+# ⚠ SAMPLED FIRST, BEFORE ANY ROW BELOW TOUCHES EITHER. NT3 assigns
+# ::notify_style and nt_spy_sinks can create procs inside ::xschem; a row that
+# reads them afterwards would be asserting its own assignment (the F19d idiom
+# in test_ase_final.tcl).
+set nt_ns_before    [namespace exists ::xschem]
+set nt_style_before [expr {[info exists ::notify_style] ? $::notify_style : {NO-VAR}}]
+
+# --- NT0: the command and the namespace must coexist -------------------------
+# `xschem` is a Tcl COMMAND created in C (Tcl_CreateCommand, src/xinit.c) and
+# the channel is named `xschem::notify`, i.e. a NAMESPACE of the same name.
+# They do coexist (measured in a standalone tclsh), but the dispatcher is the
+# whole product's front door -- if naming the namespace ever shadowed it, every
+# suite in this directory would die at once, so pin it here where the failure
+# is one line instead of 300.
+check "NT0 0650 the ::xschem NAMESPACE and the `xschem` COMMAND coexist" \
+  [list $nt_ns_before [nt_cx {xschem get top_path}] \
+        [expr {[nt_cx {xschem get schname}] ne {} ? 1 : 0}]] \
+  {1 {} 1}
+
+# --- NT1: ONE builder, and every named callee a sabotage must be able to hit --
+# Invariant I1. Each sink and each policy fragment is a NAMED proc so a
+# sabotage leg can neutralize exactly one of them (SAB-N1/N2/N3/N4/N5/N8) and
+# see exactly which rows notice.
+set nt1_missing {}
+foreach p {::xschem::notify ::xschem::notify_ciw_visible ::xschem::notify_statusbar
+           ::xschem::notify_popup ::xschem::notify_short ::xschem::notify_record
+           ::xschem::notify_latch_ok ::xschem::notify_latch_rearm
+           ::xschem::notify_latch_reset} {
+  if {[info commands $p] eq {}} { lappend nt1_missing $p }
+}
+check "NT1 0650 xschem::notify and every named callee exist" $nt1_missing {}
+
+# --- NT2: R-0653-a, the ruled default ----------------------------------------
+# `set ::notify_style {ciw|popup}`, default `ciw`. The `set_ne` idiom
+# (ase.tcl:185's ::ase_op_card_nudge, ase.tcl:177's ::ase_eng_notation) so a
+# user rc that set it BEFORE this file was sourced still wins.
+check "NT2 0653 R-0653-a ::notify_style defaults to `ciw` at source time" \
+  $nt_style_before ciw
+
+# --- NT3: invariant I5 -- the style is read at CALL time, not cached ----------
+# "A user's register in their own rc overrides the PDK's, and takes effect on
+# redraw -- no restart, no rebuild." The same rule for the same reason here: an
+# rc is sourced BEFORE ciw.tcl (src/xschem.tcl:14599 note), but a user may also
+# set it from the CIW entry field mid-session and must not have to restart.
+nt_spy_sinks
+nt_capture {::xschem::notify {NT3 style probe A}}
+set nt3_popup_ciw [llength $::nt_spy_popup]
+set ::notify_style popup
+set ::nt_spy_popup {}
+nt_capture {::xschem::notify {NT3 style probe B}}
+set nt3_popup_popup [llength $::nt_spy_popup]
+set ::notify_style ciw
+nt_unspy_sinks
+check "NT3 0653 I5 the style is read at CALL time: setting ::notify_style popup\
+ after the proc was defined selects the popup sink on the very next notice" \
+  [list $nt3_popup_ciw $nt3_popup_popup] {0 1}
+
+# --- NT4: THE NOTICE BUDGET -- one notify, exactly one ::ciw_echo ------------
+# ⚠ LOAD-BEARING FOR TWO OTHER SUITES. test_ase_locked_wire_pick_0160:126 and
+# test_sod_pick_no_select_0204:138/295 assert `llength $::notices == 1`, and
+# 0204:313 asserts an EMPTY list. A notify that emits a short form AND a long
+# form to the pane, or that tees inside ciw_echo, reddens both of them from a
+# distance. Golden pair, not a count: the pane copy is byte-identical to the
+# argument and the default tag is empty.
+check "NT4 0650 ONE xschem::notify produces EXACTLY ONE ::ciw_echo call, with the\
+ message byte-identical" \
+  [nt_capture {::xschem::notify {NT4 one line only}}] \
+  [list [list {NT4 one line only} {}]]
+
+# --- NT5: the empty-message blank line is a CONTRACT, not an accident --------
+# ase.tcl:135-137 says so in the source, and PS10 in test_ase_log_seam_0207
+# pins the other half (an empty message logs NOTHING -- the landmine where
+# `xschem log_action -result` with a missing value wrote the literal line
+# `-result` and aborted a replay `source`). A notify that filters empties
+# before the pane changes shipped behaviour.
+check "NT5 0650 xschem::notify {} still echoes ONE blank pane line" \
+  [nt_capture {::xschem::notify {}}] [list [list {} {}]]
+
+# --- NT6: the trailing-backslash pad is on the LOGGED copy ONLY --------------
+# PS12's rule, moved with the builder: `#= foo\` swallows the FOLLOWING log
+# line on replay, so the logged copy gets a pad -- and the PANE copy must stay
+# byte-identical to the argument, which is what this row owns. (The log half
+# needs a real --logdir; it lives in PS12/PS12d.)
+check "NT6 0650 a trailing backslash is NOT padded in the pane copy" \
+  [nt_capture {::xschem::notify "NT6 trailing backslash \\"}] \
+  [list [list "NT6 trailing backslash \\" {}]]
+
+# --- NT7: the tag routes both halves -----------------------------------------
+check "NT7 0650 -tag error reaches ::ciw_echo tagged `error`; the default tag is {}" \
+  [list [nt_capture {::xschem::notify {NT7 err} -tag error}] \
+        [nt_capture {::xschem::notify {NT7 ok}}]] \
+  [list [list [list {NT7 err} error]] [list [list {NT7 ok} {}]]]
+
+# --- NT8: R-0653-d -- the remedy travels as FIELDS, not as prose -------------
+# "The signature must carry them as distinct fields, not baked into the message
+# string, or the tests cannot execute the command separately from rendering the
+# text." So: the rendered line carries both (the user reads one sentence), and
+# `msg`, `menu` and `command` stay separable in the witness (a test executes the
+# command without parsing the sentence -- F19p does exactly that).
+set nt8_menu {Outputs > Save All… > Save device OP parameters}
+set nt8_cmd  {ase::ui::save_op_params_on {lib/cell/view}}
+nt_capture [list ::xschem::notify {NT8 the gate is off} -menu $nt8_menu -command $nt8_cmd]
+set nt8_line [nt_field line]
+check "NT8 0653 R-0653-d -menu and -command are DISTINCT fields in\
+ ::xschem::notify_last, and the rendered line carries both" \
+  [list [nt_field msg] [nt_field menu] [nt_field command] \
+        [expr {[string first $nt8_menu $nt8_line] >= 0 ? 1 : 0}] \
+        [expr {[string first $nt8_cmd  $nt8_line] >= 0 ? 1 : 0}]] \
+  [list {NT8 the gate is off} $nt8_menu $nt8_cmd 1 1]
+
+# --- NT9: the short-form budget, ONE builder ---------------------------------
+# ⚠ `.statusbar.12` CLIPS SILENTLY. Measured twice on this box at
+# `wm geometry . 1000x800` with a live mouse readout in `.statusbar.1`: the
+# widget gets 199px / first clip at char 30, and 314px / first clip at char 42,
+# depending on what else is in the bar. Tk warns about nothing. 28 is the floor
+# of the two measurements; the wall itself is recorded as issue 0654. This is
+# issue 0639's defect class (an unbudgeted line into a fixed field) in a field
+# an order of magnitude smaller, so the budget gets ONE builder and a row of
+# its own rather than living inside the sink (invariant I1).
+set nt9_short [nt_cx {::xschem::notify_short {} [string repeat x 300]}]
+check "NT9 0654 notify_short caps a 300-char message at exactly 28 chars ending `...`" \
+  [list [string length $nt9_short] [string range $nt9_short end-2 end]] {28 ...}
+
+# --- NT10: an explicit short form wins, and control characters are collapsed --
+# A Tk label renders an embedded newline as a box glyph, not a line break.
+check "NT10 0654 notify_short returns an explicit -short verbatim when it fits,\
+ and collapses newlines/tabs to spaces" \
+  [list [nt_cx {::xschem::notify_short {no OP save cards} \
+                  {a much longer sentence that would be clipped}}] \
+        [nt_cx {::xschem::notify_short {} "two\nlines\tover"}]] \
+  {{no OP save cards} {two lines over}}
+
+# --- NT11: R-0653-c generalised -- the latch is per (SUBJECT, STATE) ---------
+# "Suppress an identical notice while the underlying state is unchanged; re-arm
+# when it changes." 0648's latch (ase::op_cards_nudge_ok) is keyed on the design
+# cellview; the ruling says GENERALISE it, do not write a second one, so the
+# storage moves here and ase::op_cards_nudge_* become thin wrappers over subject
+# `opcards` (F19/F19b/F19c/F19g/F19h/F19i/F19n in test_ase_final are the fence
+# that proves the wrappers kept their semantics).
+nt_cx {::xschem::notify_latch_reset A}
+nt_cx {::xschem::notify_latch_reset B}
+check "NT11 0653 R-0653-c the latch is keyed on (subject, STATE), not on subject\
+ alone: take, hold, and a DIFFERENT state still speaks" \
+  [list [nt_cx {::xschem::notify_latch_ok A k1}] \
+        [nt_cx {::xschem::notify_latch_ok A k1}] \
+        [nt_cx {::xschem::notify_latch_ok A k2}]] \
+  {1 0 1}
+
+# --- NT12: rearm gives back EXACTLY ONE turn; reset is per subject ------------
+# An unconditional clear is 0636's three-identical-lines-per-session defect, and
+# a reset that forgot to be subject-scoped would let one subsystem's re-arm free
+# every other subsystem's held notice.
+nt_cx {::xschem::notify_latch_ok B kb}
+nt_cx {::xschem::notify_latch_rearm A k1}
+set nt12a [list [nt_cx {::xschem::notify_latch_ok A k1}] \
+                [nt_cx {::xschem::notify_latch_ok A k1}]]
+nt_cx {::xschem::notify_latch_reset A}
+set nt12b [list [nt_cx {::xschem::notify_latch_ok A k1}] \
+                [nt_cx {::xschem::notify_latch_ok B kb}]]
+check "NT12 0653 rearm gives back EXACTLY ONE turn, and reset frees ONE subject\
+ (subject B's held key stays held)" [list $nt12a $nt12b] {{1 0} {1 0}}
+
+# --- NT13: a SUPPRESSED notice reaches NO sink at all ------------------------
+# Sub-decision D7, recorded because it contradicts 0650's sink table ("log:
+# always"): suppression is TOTAL, the log included. That is byte-identical to
+# shipped behaviour -- ase::op_cards_capture consults the latch BEFORE echoing
+# anything at all -- and the alternative (a suppressed notice still logging)
+# would make `grep` on Xschem.log disagree with what the user was told.
+nt_cx {::xschem::notify_latch_reset opcards}
+set nt13a [nt_capture {::xschem::notify {NT13 first} -once opcards -state {lib cell view}}]
+set nt13b [nt_capture {::xschem::notify {NT13 second} -once opcards -state {lib cell view}}]
+set nt13r [nt_cx {::xschem::notify {NT13 third} -once opcards -state {lib cell view}}]
+check "NT13 0653 a suppressed -once/-state notice returns 0 and reaches NO sink" \
+  [list $nt13a $nt13b $nt13r] [list [list [list {NT13 first} {}]] {} 0]
+
+# --- NT14: headless safety -- no sink RAISES, no Tk-only sink is CLAIMED -----
+# 0653: "Under --nogui there is no Tk; the log sink must still fire and no sink
+# may raise. ciw_echo already guards on `info commands winfo`; the pop-up and
+# statusbar sinks must too, or every headless suite dies at the first notice."
+# The `sinks` field is what makes that assertable with no display: it lists the
+# sinks a notice ACTUALLY reached, so "the statusbar was skipped" is a value
+# rather than an absence of evidence.
+set nt14_rc [catch {::xschem::notify {NT14 headless safety}} nt14_err]
+set nt14_sinks [nt_field sinks]
+check "NT14 0650 headless: no sink raises, and neither Tk-only sink is claimed" \
+  [list $nt14_rc \
+        [nt_cx {expr {[lsearch -exact $nt14_sinks statusbar] >= 0 ? 1 : 0}}] \
+        [nt_cx {expr {[lsearch -exact $nt14_sinks popup] >= 0 ? 1 : 0}}]] \
+  {0 0 0}
+
+# --- NT15: the REJECTED sink stays rejected ----------------------------------
+# `.statusbar.1` via `xschem statusmsg`/`-hold` was the other candidate and is
+# ruled out (decision D3): scheduler.c:53 DROPS an ordinary statusmsg while a
+# hold is live, so a channel whose whole contract is "cannot go silent" would be
+# silenceable by an unrelated gate message; and arming the 5 s hold ourselves
+# would suppress the coordinate readout and every gate/prompt line after every
+# ASE notice -- six times in one netlist. Non-vacuous: the notice really fired.
+xschem statusmsg {NT15 SENTINEL}
+set nt15_hold0 [xschem get statusmsg_hold]
+set nt15_seen [nt_capture {::xschem::notify {NT15 a notice must not touch statusbar.1}}]
+check "NT15 0650 a notice leaves `xschem get statusmsg` and statusmsg_hold\
+ untouched (the rejected .statusbar.1 sink stays rejected)" \
+  [list [llength $nt15_seen] [xschem get statusmsg] [xschem get statusmsg_hold]] \
+  [list 1 {NT15 SENTINEL} $nt15_hold0]
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

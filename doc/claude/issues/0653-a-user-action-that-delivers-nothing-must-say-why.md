@@ -217,3 +217,32 @@ forget a sink.
 ## Still out of scope, deliberately
 
 A notice that PERFORMS the remedy. Ruled out by R-0653-d.
+
+---
+
+## 2026-08-23 — R-0653-a/c/d partially delivered by the 0650 crew, and ONE SENTENCE HERE IS REFUTED
+
+**Refuted, verbatim:** *"The CIW is a closable toplevel. Closed -> silent no-op."*
+It is not. `src/ciw.tcl:53` is
+`wm protocol .ciw WM_DELETE_WINDOW {wm withdraw .ciw}` — a close **withdraws**,
+`.ciw.l.t` survives, and `ciw_echo` keeps writing into the invisible widget
+(measured: the pane text grew). A sink-selection rule built on "the CIW exists"
+is dead code in exactly the user's situation. The live predicate is
+`winfo ismapped`. See issue 0650's OUTCOME section.
+
+**Delivered:** R-0653-a (`::notify_style`, default `ciw`, read at call time so an
+rc override needs no restart — invariant I5). R-0653-c (the 0648 latch
+**generalised**, not duplicated: storage in `xschem::notify_latch_{ok,rearm,reset}`
+keyed on `{subject state}`; `ase::op_cards_nudge_{ok,rearm,reset}` survive as thin
+wrappers keeping the `::ase_op_card_nudge` off switch and the test seam).
+R-0653-d for the **nudge**: label constants the live menu and dialog are built
+from, and a pasteable command that commits through
+`ase::ui::save_all_apply` — the same writer the menu's OK button uses.
+
+**NOT delivered, and each is filed:** R-0653-d for the **discard** notice, which
+still hardcodes drifted prose (**0661**). A channel that *cannot* go silent —
+it can, when the CIW is mapped but occluded (**0659**), and it goes fully silent
+including the durable log if `xschem::notify` is unavailable (**0658**). The
+statusbar carrier drops the remedy and keeps only the last of several notices
+(**0660**). The annotation consumer (0653's "second" half — the six causes in
+`op_annot::text`) is untouched and still owed.
