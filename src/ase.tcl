@@ -3065,6 +3065,91 @@ proc ase::no_session_notice {} {
   }
 }
 
+# --- 0683: THE BINDING GUARD ON THE TWO STOCK ANNOTATION ENTRY POINTS ---------
+#
+# THE USER'S RULING, 2026-08-25, verbatim:
+#
+#   "Refuse without a bound session. Both stock items check for a live bound
+#    session and refuse with a clear message naming the ASE-L path if there is
+#    none."
+#
+# The two items are `Waves > Op Annotate` and
+# `Simulation > Graphs > Annotate Operating Point into schematic`
+# (src/xschem.tcl). The trade was stated in the question and accepted: stock
+# xschem with no ASE-L can no longer annotate at all. This is the entry half of
+# the fix ONLY -- a producer-side guard does nothing about a mask that is
+# ALREADY on, which is why issue 0688 (the mask now belongs to the loaded ROOT
+# sheet, src/actions.c annot_show_set / annot_show_check_root) had to land first.
+# Read 0688 section 2 before touching either half.
+#
+# THE PREDICATE IS `ase::session_for_current` ALONE -- a session bound to this
+# design or to one of its ancestors. NOT `session && ase::has_results`: the
+# ruling's words are "a live bound session", and `Op Annotate` exists precisely
+# to let the user point at ANY raw file through the chooser, so results already
+# loaded IN the session are not a precondition for the gesture. The narrower
+# predicate also refuses less of a shipped feature, which is the smaller blast
+# radius on a user-visible removal.
+#
+# Returns 1 when the caller may proceed. Returns 0 AFTER speaking the refusal --
+# the caller must not add a second message, or issue 0168's one-spelling rule is
+# broken by the guard's own users.
+proc ase::annot_binding_ok {{menupath {}}} {
+  set k {}
+  catch {set k [ase::session_for_current]}
+  if {$k ne {}} { return 1 }
+  ase::annot_no_binding_notice $menupath
+  return 0
+}
+
+# The refusal itself. ONE sentence: what did not happen, why, and where the
+# function lives now.
+#
+# ⚠ WHY THIS IS A NEW PROC AND NOT `ase::no_session_notice` (~:3036), which is
+# the one honest report for "session_for_current found nothing" and which issue
+# 0168 says must not acquire a second spelling. Two reasons, and the second is
+# the binding one:
+#   * DIFFERENT SCOPE. no_session_notice answers "no session for this design".
+#     This answers "the menu item you just clicked did not annotate, and here is
+#     the item that would" -- it names the CLICKED path, which no_session_notice
+#     has no way to know. Same subject, different question; not a second spelling.
+#   * IT MUST CARRY R-0653-d's FIELDS. no_session_notice goes through
+#     `ase::echo` -> `xschem::notify_safe`, and notify_safe DROPS -menu and
+#     -command (issue 0674). A remedy that travels as prose cannot be EXECUTED by
+#     a test or pasted by a user, which is the whole of req 1. Giving
+#     no_session_notice those fields would change all six of its shipped call
+#     sites; adding them here changes none.
+#
+# ⚠ THE REMEDY IS DERIVED, NEVER TYPED. `annot_remedy_menu` composes it from the
+# same two label constants the menubar is BUILT from (src/xschem.tcl), so the
+# printed path cannot drift from the widget -- issue 0661 is the measured example
+# of that drift, one word apart and entirely plausible. The command is
+# `ase::launch_for_current`, which is exactly what `Tools > Launch ASE-L` invokes:
+# ciw_exec runs `uplevel #0 $cmd`, so a printed remedy is an executable contract
+# and issue 0679 is the precedent for printing one that does not resolve.
+#
+# ⚠ THE SHORT FORM NAMES ASE-L, AND THAT IS A CONTRACT. Under `--nolog` with no
+# CIW the ONLY sink is `.statusbar.12`, which receives the 28-character short
+# form and never the rendered sentence (src/ciw.tcl notify_short). A short form
+# that did not name ASE-L would reach that user as an unexplained blank, which is
+# the state the ruling exists to prevent.
+#
+# ⚠ CAUGHT, like the other direct `::xschem::notify` site in this file (~:757).
+# This is a DIRECT call on the channel, not a delegate call, so notify_safe's
+# guarantee does not cover it; issue 0674 is the standing class.
+proc ase::annot_no_binding_notice {menupath} {
+  set what $menupath
+  if {$what eq {}} { set what {annotation} }
+  set remedy {}
+  catch {set remedy [annot_remedy_menu]}
+  catch {
+    ::xschem::notify "ASE: $what did NOT annotate -- annotation is driven by\
+ ASE-L and no ASE-L session is bound to this design or to any of its parents." \
+      -tag error -short {not annotated: no ASE-L} \
+      -menu $remedy -command {ase::launch_for_current}
+  }
+  return 0
+}
+
 # Register a BLANK untitled session bound to design {lib cell schview} (Tools >
 # Launch ASE-L). Distinct from session_open (which loads a .state file): NO file
 # on disk (path {}), state = state_default (already carrying ::ASE_DEFAULT_MODELS

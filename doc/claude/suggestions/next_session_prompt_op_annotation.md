@@ -8,6 +8,162 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅⚠ 0688 + 0683 — LANDED 2026-08-25 (status **E**, and the adversary REFUTED the broad claim). THE MASK NOW BELONGS TO A SHEET, AND STOCK ANNOTATION REFUSES WITHOUT ASE-L
+
+**Read this before touching `annot_show`, either stock annotation menu item, or any
+"is this design bound to a session" predicate.** Two halves, landed in this order
+because the order is the whole lesson.
+
+### ⚠⚠ THE ONE THING TO CARRY: THE NARROW CLAIM IS TRUE, THE BROAD ONE IS NOT
+
+The item's honest claim is **"the plain-`File > Open` sequence ends clean and both
+stock producers refuse"**. It is **not** "the orphan is unreachable". The adversary
+pass refuted the broad claim and the write-up agent reproduced the refutation
+independently on the committed tree:
+
+```
+WU| W1 A            annot_show=3 annot_root=dut.sch
+WU| W2 (new tab)    annot_show=3 annot_root=      sch0=untitled.sch
+WU| W2 after OPEN B annot_show=3 annot_root=      sch0=decoy.sch
+```
+
+`File > Create new window/tab` (Ctrl+T) and `File > Open in new window` (Alt+O) hand
+the new context the mask through the process-global Tcl var with a **NULL stamp**,
+and a NULL stamp is deliberately left alone (it is indistinguishable from an
+`xschemrc`-set mask). So the clear is **permanently inert** in that window and the
+full orphan — annotated, 0 sessions, both stock entries refusing so neither can clear
+it — reproduces end to end through sanctioned doors. Filed as **0809**, with three
+candidate repairs in its §5. **That is the next step in this thread.**
+
+### WHAT LANDED
+
+| half | where | what |
+|---|---|---|
+| **0688 — the lifetime (C)** | `xschem.h`, `actions.c`, `save.c`, `scheduler.c`, `xinit.c` | `char *annot_root` stamps `xctx->sch[0]` when the mask is armed; `annot_show_set()` is THE one C writer; `annot_show_check_root()` clears when the stamp no longer names `sch[0]`; called from `load_schematic()`'s tail and from `annot_show_sync_cache()`; `xschem get annot_root` is the witness |
+| **0683 — the entry (pure Tcl)** | `ase.tcl`, `xschem.tcl` | `ase::annot_binding_ok` + `ase::annot_no_binding_notice`; seven `annot_lbl_*` constants the menubar is now BUILT from; both producer bodies WRAPPED in `if {…} { … }` with the guard first |
+
+### ⚠ SIX THINGS THIS BINDS FOR EVERY LATER STEP
+
+1. **`xschem set annot_show` is the ONLY armed-and-stamped road.** Anything that
+   writes `::annot_show` in Tcl, or `xctx->annot_show` in C, without going through
+   `annot_show_set()` produces a mask the lifetime machinery cannot see. That is not
+   a style rule — it is 0809's entire mechanism. If you add a mask writer, route it
+   through the setter or you have added a leak.
+2. **The discriminator is `sch[0]`, never `sch[currsch]`.** Descend and `go_back`
+   KEEP the mask by design (0688 §1). Sabotage variant SAB-B widened it to the
+   current sheet and reddened Y4, Y6 **and O25** — O25 is a per-sibling hierarchy
+   numbering row that had nothing to do with this item, which is a useful reminder
+   of how far a mask change reaches.
+3. **The mask-writer FENCE COUNTS are pinned by four committed rows and you will
+   trip them.** `grep -c 'xschem set annot_show'` must stay **2** in `src/xschem.tcl`
+   and **1** in `src/ase_window.tcl` (`test_op_annot` N22/N22b, `test_annot_show_menu`
+   B6/B10). A guard must therefore **WRAP** an existing body, never add a statement.
+   Any new Tcl-side mask clear must route through `ase::ui::annot_apply` or live in C.
+4. **Row C3 reads the live `-command` script TEXT and compares offsets**, so **no
+   comment inside either producer body may contain the name of a later statement**.
+   The implement agent's first draft mentioned `select_raw` inside the guard's own
+   comment and reddened C3 for a purely editorial reason. This will bite again.
+5. **NEVER prove a notice reached anyone with `notify_last sinks` or `notify`'s
+   return.** Measured twice, independently, on this tree: in a `--nogui` process with
+   `llength [info commands winfo]` = 0, `sinks` still reads `{ciw log}`, and `notify`
+   returned `1` in *every* arm including the one with no on-screen sink at all. That
+   is **0675**, live. The three honest reads are `.ciw.l.t` text containment under X,
+   `[xschem get top_path].statusbar.12 -text` (**not** `xschem get topwindow`, which
+   builds `..statusbar.12`), and a grep of the `--logdir` `Xschem.log` FILE. The
+   worst arm — `--nolog` on `:99`, no CIW, no log — leaves the **statusbar short form
+   as the only sink**, so any short form you write must be self-explanatory inside 28
+   characters.
+6. **A raw legitimately survives a `File > Open`.** The 0688 clear opens no file, and
+   rows Y7/Y7b pin that against a raw truncated on disk. Do not "tidy up" by
+   clearing the raw registry alongside the mask — that is precisely the reverted
+   attempt's data-loss regression, and issue **0807** shows the shipped
+   `annotate_op` already destroys the attached OP database on a truncated read.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+* **D1 (L2)** key on `xctx->sch[0]`. Rejected: 0688 §4.3's literal *"so `xschem load`
+  drops it"* (it would clear on same-path reloads that O22/O23 depend on), and
+  `sch[currsch]` (clears on descend, which §1 records as a deliberate KEEP).
+* **D2 (L2)** the stamp is written ONLY by the setter, never adopted lazily.
+  Rejected: adopt-on-first-sight — **measured** that startup `sch[0]` is
+  `<launchdir>/untitled.sch` and the rc sync runs before the CLI load, so an adopting
+  sync would stamp `untitled.sch` and then silently clear an `xschemrc`-set mask.
+  ⚠ This decision is also what makes **0809** hard: a leaked mask and an rc-set mask
+  are the same NULL stamp, so any repair must *distinguish* them, not merge them.
+* **D3 (L1, I1)** ONE C writer. Rejected: an inline `xctx->annot_show = 0;
+  tclsetintvar(...)` at the clear site.
+* **D4 (L2)** the refusal predicate is `ase::session_for_current` ALONE. Rejected:
+  `session && ase::has_results` (the reverted attempt's predicate) — the ruling says
+  "a live bound session", and `Op Annotate` exists to point at ANY raw.
+* **D5 (L2)** a NEW proc `ase::annot_no_binding_notice`. Rejected: reusing
+  `ase::no_session_notice` — it routes through `notify_safe`, which DROPS
+  `-menu`/`-command` (0674), and giving it those fields touches all six call sites.
+* **D6 (L2)** the guard WRAPS and sits above `select_raw`. Rejected: an early
+  `return` from a Tk `-command`, and a guard below the modal chooser.
+* **D7 (L2)** no `info commands ::ase::annot_binding_ok` fallback. Rejected: a
+  fallback that fails OPEN would silently restore the capability the ruling removed.
+* **D8 (L2)** **0686 left OPEN** — see its new §7 for the three reasons and for what
+  changed under it (a clear can now go through the C setter and need not resolve a
+  session to a window at all).
+* **D9 (L3, USER-VISIBLE, UNRATIFIED — this item's E question)** a root-sheet change
+  turns annotation OFF, **including a mask set by the cadence `6` / `Alt-6` chords**.
+  Rule debt `[0688]` records it.
+
+### THE SABOTAGE MATRIX — 8 variants, trustworthy, **4 predicted reds did not appear**
+
+| variant | predicted | observed |
+|---|---|---|
+| SAB-A `annot_show_check_root` neutered | 6 | **8** (bonus Y7b, L23) |
+| SAB-B discriminator widened to `sch[currsch]` | 2 | **3** (bonus O25) |
+| SAB-C the `save.c` seam re-pointed at a no-op | 3 | **1** — only Y11, a grep row |
+| SAB-D `annot_show_set` neutered (superset) | superset | 55 + 3 + 1; **Y1 stayed green** |
+| SAB-E `annot_binding_ok` stuck TRUE | 5 | **6** (bonus C4b); C3 correctly green |
+| SAB-F the notice proc neutered | 4 | **5**; **C4 correctly green** — it still refuses, nobody is told, C5 catches it |
+| SAB-G the remedy drifted one word | 1 | **exactly 1** — C6 is not a tautology |
+| SAB-H the guard reordered below `select_raw`, Waves body only | 2 | **3**; C9 green, so the two bodies are covered independently |
+
+⚠ **SAB-C is a finding, not a pass.** Y5, L22 and L24 all stayed GREEN with the
+`save.c` seam removed, because `xschem load` reaches `calc_drawing_bbox()`
+(`actions.c:4983`) whose third statement is `annot_show_sync_cache()`
+(`actions.c:4994`) — the "no bulk eval in between" those rows are written around is
+performed by the load itself. Filed as **0808**, which also records that **Y1** is
+satisfied by a stale ambient `::annot_show` rather than by anything it sets (SAB-D
+proved it), and that Y2/Y3 chain off Y1 and inherit the weakness. **Fix Y1 before
+trusting the KEEP half of that suite.**
+
+### TIERS
+
+T1 rc=0, 32/32 at `Total num fail: 0` · T2 `HARNESS: PASS`, 6/6 goldens ·
+`test_op_annot` 335 → **349** · `test_ase_launch` 22 → **28** ·
+`test_annot_show_menu` (`:99`) 10 → **22** · `test_ase_window` 214 ·
+`test_ase_dialogs` 174 · `test_ase_final` 79 X / 79 `--nogui` · `test_ase_core` 172.
+No regressions. **Run `test_ase_core` with `--nolog`** — NT17/NT18 are written for
+that arm and legitimately red without it (0804's class).
+
+### NEW ISSUES FILED BY THIS CREW: 0807, 0808, 0809, 0810, 0811
+
+* **0809** — the refutation. The mask leaks into a new window/tab with a NULL stamp.
+  **This is 0688's unfinished half and the next step in this thread.**
+* **0807** — `annotate_op` destroys the attached OP database on a truncated raw and
+  returns `TCL_OK` with the path. Live at HEAD, untouched by this item, and it is the
+  command **both** guarded entry points call. 0685 §4 blames the reverted workaround
+  and is wrong: that workaround widened the loss, it did not create it.
+* **0808** — Y5/L22/L24 claim to pin the `load_schematic` seam and do not; plus Y1's
+  stale-var weakness.
+* **0810** — bare `strcmp` on the stamp: `./`, `//`, `../` and symlinked spellings of
+  the SAME file false-clear the mask. Fails safe, but reads as flakiness.
+* **0811** — only `load_schematic()` got the deterministic clear; `Save As` and
+  `clear_schematic()` lag until the next bulk evaluation. Read with 0808.
+
+### The E question this owes the user
+
+> Annotation is now dropped when a window's ROOT schematic changes — `File > Open`,
+> `Save As`, `Clear Schematic` — **including a mask you set with the cadence `6` /
+> `Alt-6` chords**; descend/`go_back`, same-file reloads and an `xschemrc`-set mask
+> all keep it. Is that right, or should a chord-set mask survive `File > Open`?
+
+---
+
 ## ✅ 0689 + 0690 (+ 0698) — **LANDED 2026-08-25. T1's BASELINE IS NOW ZERO, AND "T1 3 FAIL — pre-existing" IS RETIRED**
 
 **Not a plan step — harness truth.** No product behaviour changed: `git diff src/` is
@@ -1654,7 +1810,14 @@ matrix, still-open list), spec **§4.6a** and `specs/ase_l.md` Results.
     **0692** — see the block above.)*
     ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.
 
-## ⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED 2026-08-25. READ BEFORE RETRYING EITHER
+## ⚠ 0683 + 0684 — ATTEMPT 1: REFUTED, REVERTED 2026-08-25. READ BEFORE RETRYING EITHER
+
+> ⚠ **SUPERSEDED IN PART, 2026-08-25.** **0683 was RULED by the user and FIXED the
+> same day** by the 0688+0683 item — see that block at the top of this file, and
+> 0683 §8. This block is kept because its diagnosis ("0683 is a lifetime problem")
+> is exactly what attempt 2 followed, and because **0684 is still its own thread**.
+> Do not read the "reverted" heading as meaning 0683 is still open.
+
 
 **Not a plan step.** The blocking sibling pair 0682 left behind — annotation and its
 ASE-L session are not actually bound. A complete fix was implemented, reached **22 +

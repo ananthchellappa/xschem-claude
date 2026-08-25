@@ -1333,6 +1333,60 @@ void annot_show_sync_cache(void)
    * BACKLAYER -- the annotation would silently paint in the background colour. */
   s = tclgetvar("annot_voltage_layer");
   if(s && s[0]) xctx->annot_voltage_layer = atoi(s);
+  /* 0688 -- THE BACKSTOP. A root-sheet change that never runs load_schematic()
+   * (clear_schematic() composes a fresh untitled name IN PLACE, save.c:4850) is
+   * invisible to the deterministic seam in save.c, so the pull above is followed
+   * by the same check. Placed AFTER the pull deliberately: the pull is what makes
+   * the C field agree with the Tcl var, and clearing before it would be undone by
+   * it. */
+  annot_show_check_root();
+}
+
+/* 0688 -- THE ONE C WRITER OF THE MASK (invariant I1). Every `xschem set
+ * annot_show` lands here, so "the mask is on" and "this is the sheet it was armed
+ * for" are ONE fact written in ONE place. Two independent builders of that pair is
+ * precisely the silent drift I1 exists to forbid, and it is what let the reverted
+ * 0683 attempt clear a mask it had never stamped.
+ *
+ * The stamp is xctx->sch[0], the window's ROOT sheet -- NOT sch[currsch]. Descend
+ * and go_back deliberately KEEP the mask ("this window is in annotate mode",
+ * issue 0688 section 1) and sch[0] does not move under either, so keying on the
+ * root is descend-safe by construction rather than by a special case.
+ *
+ * mask 0 FREES the stamp: an unarmed mask has nothing to belong to, and leaving a
+ * stale path there would make the next arm-by-rc look like an armed-and-stamped
+ * one. */
+void annot_show_set(int mask)
+{
+  if(!xctx) return;
+  xctx->annot_show = mask;
+  tclsetintvar("annot_show", xctx->annot_show);
+  if(mask) my_strdup(_ALLOC_ID_, &xctx->annot_root, xctx->sch[0]);
+  else     my_strdup(_ALLOC_ID_, &xctx->annot_root, NULL);
+}
+
+/* 0688 -- THE CLEAR. "Is this mask still about the sheet that is loaded?" If the
+ * root moved, the annotation goes with it.
+ *
+ * ⚠ IT TOUCHES NO WAVEFORM DATABASE, AND THAT IS THE POINT. The reverted attempt
+ * cleared op/dc/tran at the session path and RE-READ; when the re-read hit a raw
+ * ngspice was mid-rewrite (readable but truncated) the user's loaded database was
+ * destroyed and nothing replaced it. This writes one int, one Tcl var and one
+ * path stamp and never opens a file. A raw legitimately stays in the registry
+ * across a File > Open -- coming back to the first sheet answers out of memory.
+ *
+ * A NULL stamp is "never armed through the setter" and is left ALONE: an
+ * `set annot_show 1` in the user's xschemrc (honoured at xinit.c:3839) never
+ * passes through annot_show_set, so it is never stamped and must never be
+ * cleared. That is decision D2 and it is what keeps this fix inside the 0683
+ * ruling's scope. */
+void annot_show_check_root(void)
+{
+  if(!xctx) return;
+  if(!xctx->annot_show) return;
+  if(!xctx->annot_root) return;
+  if(xctx->sch[0] && !strcmp(xctx->annot_root, xctx->sch[0])) return;
+  annot_show_set(0);
 }
 
 /* 0615 -- THE COLOUR HALF, ONE helper for all SIX colour sites (draw.c x2,

@@ -566,6 +566,7 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->fill_type);
   my_free(_ALLOC_ID_, &xctx->format);
   my_free(_ALLOC_ID_, &xctx->custom_format);
+  my_free(_ALLOC_ID_, &xctx->annot_root); /* 0688: the annotation mask's root stamp */
   /* Gesture-scoped state that survives if the ctx is torn down MID-GESTURE (closing a tab or the
    * window during a drag). This funnel does not run clear_schematic()/abort_operation() first, so
    * whatever a live move START allocated is otherwise lost with the ctx.
@@ -939,6 +940,11 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->case_insensitive = 0;
   xctx->show_hidden_texts = 0;
   xctx->annot_show = 0; /* S7: annotation classes off by default (decision D2) */
+  /* 0688: the ROOT sheet the mask above was armed for. NULL == never armed
+   * through `xschem set annot_show`, which is also what an xschemrc-set mask
+   * looks like -- and it must stay that way, or the first real load would clear
+   * it (decision D2). Written only by annot_show_set(), freed with the ctx. */
+  xctx->annot_root = NULL;
   /* 0615: the layer CONTENT-classified node voltages paint in. 9 is #ffffff on the
    * default dark palette -- the user's ratified choice. Per-context, exactly like
    * annot_show, and mirrored in Tcl (src/xschem.tcl set_ne + tctx::global_list). */

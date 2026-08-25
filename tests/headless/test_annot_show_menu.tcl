@@ -236,6 +236,420 @@ check "B10 src/ase_window.tcl carries exactly one mask writer, inside ase::ui::a
             [regexp {xschem set annot_show} [proc_src $S_ASE ase::ui::annot_apply]]] \
       {1 1}
 
+
+# ======================================================================== C ==
+# ISSUE 0683, THE RULING — BOTH STOCK ITEMS REFUSE WITHOUT A BOUND SESSION,
+# AND THE REFUSAL IS PROVED TO HAVE REACHED A SINK.
+# ============================================================================
+# The user ruled on 2026-08-25, verbatim:
+#
+#   "Refuse without a bound session. Both stock items check for a live bound
+#    session and refuse with a clear message naming the ASE-L path if there is
+#    none."
+#
+# The trade was stated in the question and accepted: stock xschem with no ASE-L
+# can no longer annotate at all. TWO ALTERNATIVES WERE EXPLICITLY REJECTED —
+# making the two items TOGGLE, and DELETING them — and C1 pins both rejections,
+# because "greyed out" and "gone" are the two shapes a hurried fix reaches for.
+#
+# ⚠ THE REFUSAL MESSAGE IS THE RISKIEST PART OF THIS ITEM, NOT ITS POLISH. The
+# channel it goes through has open defects (0674, 0675, 0677, 0699, 0800), and
+# 0675 is exactly the hazard: a channel can pass its OWN liveness test and reach
+# nobody. A refusal nobody sees is WORSE than the bug being fixed — the menu item
+# then does nothing at all, with no explanation.
+#
+# MEASURED ON THIS TREE, 2026-08-25, and it is why C5 is written the way it is:
+# under `--pipe -q --nolog` on :99, with `winfo exists .ciw` = 0 and
+# `xschem get actionlog_filename` = {}, a notify still records
+# `sinks {ciw statusbar}` and STILL RETURNS 1. Both witnesses lie. The only
+# honest question is "did the text land in something a person can read", so
+# every row below reads WIDGET TEXT and FILE BYTES:
+#
+#   sink 1  .ciw.l.t                            (exists under `--pipe -q`)
+#   sink 3  [xschem get top_path].statusbar.12   (the --nolog arm's only sink)
+#   sink 2  [xschem get actionlog_filename]      (exists under --logdir)
+#
+# ⚠ `[xschem get top_path]`, NEVER `xschem get topwindow` — the latter answers
+# "." and builds `..statusbar.12`, which does not exist (src/ciw.tcl:132).
+#
+# ⚠ THE MARKER IS `ASE-L`, AND THAT IS A CONTRACT ON THE MESSAGE, NOT A TEST
+# CONVENIENCE. In the shipped `--nolog` arm the ONLY sink is `.statusbar.12`,
+# which receives the 28-character SHORT form (xschem::notify_short) and never the
+# rendered sentence. So a refusal whose short form does not name ASE-L reaches
+# the user as an unexplained blank, which is the state the ruling exists to
+# prevent. Both the long line and the short form must carry it.
+#
+#   C0  a live sink exists in THIS process          <- green before (precondition)
+#   C1  both entries still exist, both still normal <- green before (the two
+#                                                      rejected options)
+#   C2  the labels are ONE source, read off the widgets  <- red before
+#   C3  the guard is FIRST in each -command body    <- red before
+#   C4  the refusal: mask untouched, no file dialog <- red before
+#   C4b the refusal touches no loaded raw           <- red before
+#   C5  THE REFUSAL REACHED A SINK                  <- red before
+#   C6  the remedy is DERIVED from the live labels  <- red before
+#   C7  the printed remedy EXECUTES                 <- red before
+#   C8  POSITIVE: with a session the item still works <- green before
+#   C9  the OTHER entry names its OWN path          <- red before
+# ============================================================================
+
+set C_HERE [file normalize [file dirname [info script]]]
+source [file join $C_HERE scratch.tcl]
+set C_SCRATCH [test_scratch annot_show_menu]
+
+## --- fixture: one registered lib, one cell, one annotator, one op raw --------
+file mkdir [file join $C_SCRATCH annotlib]
+set f [open [file join $C_SCRATCH annotlib c_probe.sym] w]
+puts $f "v {xschem version=3.4.7RC file_version=1.2}"
+puts $f "G {}"
+puts $f "K \{type=zzs7probe\ntemplate=\"name=zp1\"\}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "L 4 0 0 0 10 {}"
+puts $f "T \{ZZC0683TEXT\} 5 5 0 0 0.2 0.2 \{layer=15\nhide=op\}"
+close $f
+file mkdir [file join $C_SCRATCH aselib c_dut schematic]
+set f [open [file join $C_SCRATCH aselib c_dut schematic c_dut.sch] w]
+puts $f "v {xschem version=3.4.7RC file_version=1.2}"
+puts $f "G {}"
+puts $f "K {}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "N 250 -330 420 -330 {}"
+puts $f "C \{annotlib/c_probe\} 0 0 0 0 \{name=CD1\}"
+puts $f "C \{devices/lab_wire\} 330 -330 0 0 \{name=la lab=a\}"
+close $f
+set f [open [file join $C_SCRATCH library.defs] w]
+puts $f "DEFINE aselib [file join $C_SCRATCH aselib]"
+puts $f "DEFINE annotlib [file join $C_SCRATCH annotlib]"
+puts $f "DEFINE devices [file join $REPO xschem_libs_newsym devices]"
+close $f
+set ::XSCHEM_LIBRARY_DEFS [file join $C_SCRATCH library.defs]
+set ::library_registry_defs_only 1
+set ::XSCHEM_LIBRARY_PATH {}
+set C_DUT [file normalize [file join $C_SCRATCH aselib c_dut schematic c_dut.sch]]
+set C_RAW [file join $C_SCRATCH c_op.raw]
+set f [open $C_RAW w]
+puts -nonewline $f "Title: 0683 refusal fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\tv(a)\tvoltage
+\t1\tv(gnd)\tvoltage
+Values:
+0\t3.14
+\t0.0
+"
+close $f
+
+## --- the three readable sinks, read as TEXT and BYTES, never as `sinks` ------
+proc c_ciw_text {} {
+  if {[winfo exists .ciw.l.t]} { return [.ciw.l.t get 1.0 end] }
+  return {}
+}
+proc c_sb_path {} {
+  if {[catch {xschem get top_path} tp]} { return {} }
+  return "$tp.statusbar.12"
+}
+proc c_sb_text {} {
+  set w [c_sb_path]
+  if {$w eq {} || ![winfo exists $w]} { return {} }
+  if {[catch {$w cget -text} t]} { return {} }
+  return $t
+}
+proc c_log_path {} {
+  if {[catch {xschem get actionlog_filename} p]} { return {} }
+  return $p
+}
+proc c_log_text {{from 0}} {
+  set p [c_log_path]
+  if {$p eq {} || ![file isfile $p]} { return {} }
+  set fd [open $p r] ; seek $fd $from ; set d [read $fd] ; close $fd
+  return $d
+}
+proc c_log_size {} {
+  set p [c_log_path]
+  if {$p eq {} || ![file isfile $p]} { return 0 }
+  return [file size $p]
+}
+## Which of the three sinks EXIST in this process.
+proc c_live_sinks {} {
+  set out {}
+  if {[winfo exists .ciw.l.t]} { lappend out ciw }
+  set w [c_sb_path] ; if {$w ne {} && [winfo exists $w]} { lappend out statusbar }
+  if {[c_log_path] ne {}} { lappend out log }
+  return $out
+}
+## How many of the three currently HOLD <needle> anywhere.
+proc c_sinks_holding {needle} {
+  set n 0
+  if {[string first $needle [c_ciw_text]] >= 0} { incr n }
+  if {[string first $needle [c_sb_text]]  >= 0} { incr n }
+  if {[string first $needle [c_log_text]] >= 0} { incr n }
+  return $n
+}
+
+## A live menu entry's -label / -command, or a self-naming marker.
+proc c_lbl {m idx} {
+  if {![winfo exists $m] || $idx < 0} { return NO-ENTRY }
+  if {[catch {$m entrycget $idx -label} l]} { return NO-LABEL }
+  return $l
+}
+proc c_cmd {m idx} {
+  if {![winfo exists $m] || $idx < 0} { return {} }
+  if {[catch {$m entrycget $idx -command} c]} { return {} }
+  return $c
+}
+## Call a zero-argument label proc, or answer a marker if it is not defined.
+## ⚠ NEVER `catch {...} r` around an undefined proc name and then compare — an
+## `invalid command name` message would be the value compared, and any golden
+## that happened to be empty would pass. The marker is distinctive.
+proc c_proc {name} {
+  if {[llength [info procs $name]] == 0 && [llength [info procs ::$name]] == 0} {
+    return NO-PROC:$name
+  }
+  if {[catch {uplevel #0 [list $name]} r]} { return RAISED:$name }
+  return $r
+}
+proc c_notify_field {f} {
+  if {![info exists ::xschem::notify_last]} { return NO-RECORD }
+  if {[catch {dict get $::xschem::notify_last $f} v]} { return NO-FIELD }
+  return $v
+}
+
+set C_MW  .menubar.waves
+set C_MG  .menubar.simulation.graph
+set C_MT  .menubar.tools
+set C_IW  [entry_index $C_MW {Op Annotate}]
+set C_IG  [entry_index $C_MG {Annotate Operating Point into schematic}]
+set C_IT  [entry_index $C_MT {Launch ASE-L}]
+set C_ITOP_TOOLS [entry_index .menubar {Tools}]
+set C_ITOP_WAVES [entry_index .menubar {Waves}]
+set C_ITOP_SIM   [entry_index .menubar {Simulation}]
+set C_IGRAPHS    [entry_index .menubar.simulation {Graphs}]
+
+# --- C0: this process HAS a sink. One self-naming red beats three mysterious --
+# Without it, a run launched with `--nolog` and no CIW would fail C5 for a reason
+# that has nothing to do with the refusal.
+puts "C0 live sinks in this process: {[c_live_sinks]} (log: {[c_log_path]})"
+check "C0 PRECONDITION at least one notify sink is live in this process" \
+  [expr {[llength [c_live_sinks]] > 0 ? 1 : 0}] 1
+
+# --- C1: the two REJECTED options, pinned -----------------------------------
+# TOGGLE was rejected (it would put a second working annotation control outside
+# ASE-L, a partial retreat from 0682) and DELETION was rejected (the refusal
+# message is more useful than a missing menu, because it says where the function
+# went). So both entries must still EXIST, must still be plain `command` entries
+# rather than checkbuttons, and must still be -state normal: greying them out is
+# the deletion the user turned down, wearing a different hat.
+check "C1 both stock entries still exist, still plain commands, still enabled" \
+  [list [expr {$C_IW >= 0 ? 1 : 0}] [$C_MW type $C_IW] [$C_MW entrycget $C_IW -state] \
+        [expr {$C_IG >= 0 ? 1 : 0}] [$C_MG type $C_IG] [$C_MG entrycget $C_IG -state]] \
+  {1 command normal 1 command normal}
+
+# --- C2: R-0653-d req 2 — the labels are ONE source --------------------------
+# ⚠ BOTH HALVES ARE NEEDED, AND test_ase_window W1t IS THE PRECEDENT. The
+# LITERAL half catches a constant that was renamed out from under the menu; the
+# CONSTANT half catches prose hardcoded in the refusal that has drifted from the
+# widget. A constant compared against a constant is a tautology and would pass
+# over both. Issue 0661 is the standing example of exactly that drift, one word
+# apart and still plausible.
+check "C2 the three labels the refusal names are read off the REAL widgets and match the constants" \
+  [list [c_lbl $C_MW $C_IW] [expr {[c_proc annot_lbl_op_annotate] eq [c_lbl $C_MW $C_IW] ? 1 : 0}] \
+        [c_lbl $C_MG $C_IG] [expr {[c_proc annot_lbl_annotate_op] eq [c_lbl $C_MG $C_IG] ? 1 : 0}] \
+        [c_lbl $C_MT $C_IT] [expr {[c_proc annot_lbl_launch_ase] eq [c_lbl $C_MT $C_IT] ? 1 : 0}]] \
+  {{Op Annotate} 1 {Annotate Operating Point into schematic} 1 {Launch ASE-L} 1}
+
+# --- C3: the guard is the FIRST statement of each body -----------------------
+# ⚠ READ OFF THE LIVE `-command` SCRIPT, so it is slice-proof by construction:
+# there is no whole-file `.*?` to walk out of one proc and into another (the
+# failure that kept N22b and B10 green over dead code — `.` matches a newline in
+# Tcl). Position matters as much as presence: `select_raw` is a MODAL
+# tk_getOpenFile (src/xschem.tcl:14518) and it also rewrites the global
+# `netlist_dir` merely by being read, so a refused user must never reach it
+# (issue 0683 §7).
+proc c_guard_first {cmd} {
+  set g [string first {ase::annot_binding_ok} $cmd]
+  set s [string first {select_raw} $cmd]
+  set m [string first {xschem set annot_show} $cmd]
+  if {$g < 0} { return 0 }
+  if {$s >= 0 && $g > $s} { return 0 }
+  if {$m >= 0 && $g > $m} { return 0 }
+  return 1
+}
+set C_CW [c_cmd $C_MW $C_IW]
+set C_CG [c_cmd $C_MG $C_IG]
+check "C3 both bodies call the binding guard, and call it BEFORE select_raw and the mask write" \
+  [list [expr {[string first {ase::annot_binding_ok} $C_CW] >= 0 ? 1 : 0}] [c_guard_first $C_CW] \
+        [expr {[string first {ase::annot_binding_ok} $C_CG] >= 0 ? 1 : 0}] [c_guard_first $C_CG]] \
+  {1 1 1 1}
+
+# --- the select_raw counting stub -------------------------------------------
+# ⚠ NOT OPTIONAL PLUMBING. `select_raw` is modal under X; invoking either entry
+# with no guard and no stub HANGS the suite (issue 0803's class). It is also the
+# measurement: a call count of 0 is the positive proof the guard sits above it.
+set ::c_sel_calls 0
+set ::c_sel_ret $C_RAW
+if {[llength [info procs select_raw]]} { rename select_raw c_real_select_raw }
+proc select_raw {args} { incr ::c_sel_calls ; return $::c_sel_ret }
+
+foreach _ck [dict keys [set ::ase::sessions]] {
+  catch {ase::ui::close $_ck} ; catch {ase::session_close $_ck}
+}
+xschem load $C_DUT
+update
+
+# --- C4: THE REFUSAL --------------------------------------------------------
+catch {xschem set annot_show 0}
+catch {xschem raw clear}
+set ::c_sel_calls 0
+catch {$C_MW invoke $C_IW}
+update
+check "C4 with no session, Waves > Op Annotate changes nothing and never opens the file dialog" \
+  [list [dict size [set ::ase::sessions]] [xschem get annot_show] \
+        $::c_sel_calls [op_annot::_annotated]] \
+  {0 0 0 0}
+
+# --- C4b: the refusal must not disturb a database the user already has -------
+# ⚠ `op_annot::_annotated` IS NOT AN ELEMENT HERE, and that is a correction to
+# the plan rather than an omission: measured (src/op_annot.tcl:781) it reads
+# `live_cursor2_backannotate`, `xschem raw loaded` and `xschem raw annot` and
+# NEVER the mask, so with a raw deliberately attached it answers 1 whatever the
+# refusal did. The honest claim is that the attached values are untouched.
+catch {xschem annotate_op $C_RAW}
+set c4b_v0 [expr {[catch {xschem raw value v(a) -1} _r] ? "RAISED" : $_r}]
+set c4b_l0 [expr {[catch {xschem raw loaded} _r] ? "RAISED" : $_r}]
+catch {xschem set annot_show 0}
+set ::c_sel_calls 0
+catch {$C_MW invoke $C_IW}
+update
+check "C4b the refusal touches no loaded waveform database" \
+  [list [xschem get annot_show] $::c_sel_calls $c4b_v0 $c4b_l0 \
+        [expr {[catch {xschem raw value v(a) -1} _r] ? "RAISED" : $_r}] \
+        [expr {[catch {xschem raw loaded} _r] ? "RAISED" : $_r}]] \
+  {0 0 3.14 0 3.14 0}
+
+# --- C5: THE REFUSAL REACHED A SINK -----------------------------------------
+# ⚠ NEVER `dict get $::xschem::notify_last sinks` AND NEVER notify's RETURN.
+# Both were measured lying on this exact tree, in a process with no CIW and no
+# log file: `sinks` read {ciw statusbar} and the return was 1. This row reads the
+# widget text and the file bytes, asserts the marker was NOT already present
+# anywhere (so a leftover cannot make the after-check vacuous), and then asserts
+# at least one sink GREW to contain it.
+## ⚠ THE BEFORE-CHECK IS SCOPED TO THE REGION PAST THE SNAPSHOT, AND THAT IS A
+## CORRECTION MADE WHEN THE ROW FIRST WENT GREEN, NOT A WEAKENING. The row as
+## first written asked `c_sinks_holding` over the WHOLE accumulated sink text.
+## Two of the three sinks are APPEND-ONLY (the CIW pane and the durable log
+## file), and C4 and C4b above have already refused -- visibly, which is the
+## point of the whole section -- so that form reads 2 in a CORRECT build and 0
+## only while the refusal is broken. It reddened for the exact opposite of the
+## reason it was written. The teeth are in the SECOND element either way: the
+## marker must appear in text that did not exist before the invoke.
+catch {[c_sb_path] configure -text {}}
+set c5_ciw0 [string length [c_ciw_text]]
+set c5_log0 [c_log_size]
+set c5_before 0
+if {[string first {ASE-L} [string range [c_ciw_text] $c5_ciw0 end]] >= 0} { incr c5_before }
+if {[string first {ASE-L} [c_sb_text]] >= 0}                             { incr c5_before }
+if {[string first {ASE-L} [c_log_text $c5_log0]] >= 0}                   { incr c5_before }
+catch {xschem set annot_show 0}
+set ::c_sel_calls 0
+catch {$C_MW invoke $C_IW}
+update
+set c5_new 0
+if {[string first {ASE-L} [string range [c_ciw_text] $c5_ciw0 end]] >= 0} { incr c5_new }
+if {[string first {ASE-L} [c_sb_text]] >= 0}                             { incr c5_new }
+if {[string first {ASE-L} [c_log_text $c5_log0]] >= 0}                   { incr c5_new }
+puts "C5 sinks that newly carry the marker: $c5_new of [llength [c_live_sinks]] live\
+ (statusbar now {[c_sb_text]})"
+check "C5 the refusal REACHED a readable sink — widget text and file bytes, never `sinks`" \
+  [list $c5_before [expr {$c5_new >= 1 ? 1 : 0}]] {0 1}
+
+# --- C6: the remedy is DERIVED, not prose -----------------------------------
+# ⚠ COMPARED AGAINST THE LIVE WIDGET LABELS, NOT AGAINST annot_remedy_menu. A
+# row that asked "does the printed path equal the proc that printed it" is a
+# tautology and stays green while the menu is renamed underneath it — that is
+# issue 0661's measured drift class. `>`-separated because that is the shipped
+# convention (src/ase_window.tcl:3180, ase::ui::remedy_op_params_menu).
+set C_REMEDY "[c_lbl .menubar $C_ITOP_TOOLS] > [c_lbl $C_MT $C_IT]"
+set C_PATH_W "[c_lbl .menubar $C_ITOP_WAVES] > [c_lbl $C_MW $C_IW]"
+set C_PATH_G "[c_lbl .menubar $C_ITOP_SIM] > [c_lbl .menubar.simulation $C_IGRAPHS] > [c_lbl $C_MG $C_IG]"
+## Printed, not assumed: if the composition itself is wrong every row below reds
+## for a reason that has nothing to do with the refusal.
+puts "C6 composed from live widgets: remedy {$C_REMEDY} waves {$C_PATH_W} graphs {$C_PATH_G}"
+check "C6 R-0653-d the remedy names the LIVE Tools > Launch ASE-L path and a pasteable command" \
+  [list [expr {[c_notify_field menu] eq $C_REMEDY ? 1 : 0}] \
+        [c_notify_field command] \
+        [expr {[string first $C_PATH_W [c_notify_field line]] >= 0 ? 1 : 0}]] \
+  [list 1 {ase::launch_for_current} 1]
+
+# --- C7: R-0653-d req 1 — the printed command is EXECUTED, never compared ----
+# `ciw_exec` runs `uplevel #0 $cmd` (src/ciw.tcl:598), so a printed remedy IS an
+# executable contract. Issue 0679 is the precedent for what goes wrong when it is
+# not run: a remedy naming a key the session was never registered under.
+set c7_cmd [c_notify_field command]
+set c7_rc  [catch {uplevel #0 $c7_cmd} c7_res]
+update
+check "C7 the remedy the user is told to paste actually creates the bound session" \
+  [list $c7_rc [dict size [set ::ase::sessions]] \
+        [expr {[ase::session_for_current] ne {} ? 1 : 0}]] \
+  {0 1 1}
+
+# --- C8: THE POSITIVE TWIN ---------------------------------------------------
+# A suite that only asserts refusal has not tested this. C4/C4b/C5/C6/C9 are all
+# negative claims and a patch that simply broke the menu item satisfies every one
+# of them.
+catch {xschem set annot_show 0}
+catch {xschem raw clear}
+set ::c_sel_calls 0
+catch {$C_MW invoke $C_IW}
+update
+check "C8 POSITIVE with the session live the entry works exactly as it always did" \
+  [list $::c_sel_calls [xschem get annot_show] \
+        [expr {[catch {xschem raw value v(a) -1} _r] ? "RAISED" : $_r}] \
+        [op_annot::_annotated]] \
+  {1 3 3.14 1}
+
+# --- C9: the OTHER entry names its OWN path ---------------------------------
+# A copy-paste that passed the Waves path to the Graphs body would satisfy every
+# row above. Both halves are asserted: the Graphs path present AND the Waves path
+# absent.
+## ⚠ `ase::session_for_current` RETURNS {key level lib cell view}, NOT A BARE
+## KEY (src/ase.tcl:3022), and `ase::session_close` takes a key -- handed the
+## list it fails `dict exists` and returns 0 with the session STILL ALIVE. The
+## row as first written did exactly that and then measured the entry ANNOTATING
+## (annot_show 3, select_raw called once), i.e. it reported a missing refusal
+## that was actually a live session it had failed to close. Both closers get
+## the key, and the teardown is asserted rather than assumed.
+set c9_key [lindex [ase::session_for_current] 0]
+catch {ase::ui::close $c9_key} ; catch {ase::session_close $c9_key}
+update
+check "C9a PRECONDITION the session really is gone before the Graphs entry is tried" \
+  [list [dict size [set ::ase::sessions]] [ase::session_for_current]] {0 {}}
+catch {xschem set annot_show 0}
+catch {xschem raw clear}
+set ::c_sel_calls 0
+catch {$C_MG invoke $C_IG}
+update
+check "C9 Simulation > Graphs refuses too, and names its OWN menu path" \
+  [list [xschem get annot_show] $::c_sel_calls \
+        [expr {[string first $C_PATH_G [c_notify_field line]] >= 0 ? 1 : 0}] \
+        [expr {[string first $C_PATH_W [c_notify_field line]] >= 0 ? 1 : 0}]] \
+  {0 0 1 0}
+
+# --- restore -----------------------------------------------------------------
+rename select_raw {}
+if {[llength [info procs c_real_select_raw]]} { rename c_real_select_raw select_raw }
+foreach _ck [dict keys [set ::ase::sessions]] {
+  catch {ase::ui::close $_ck} ; catch {ase::session_close $_ck}
+}
+catch {xschem raw clear}
+catch {xschem set annot_show 0}
 # ------------------------------------------------------------------- cleanup --
 set ::autosave_backup $::saved_autosave_0601   ;# issue 0601
 

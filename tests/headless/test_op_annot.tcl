@@ -10090,6 +10090,359 @@ set XSCHEM_LIBRARY_PATH $W_LIBS
   incr fail
 }
 
+# =============================================================================
+# SECTION Y — ISSUE 0688: THE MASK BELONGS TO THE LOADED ROOT SHEET, NOT TO THE
+#             WINDOW. THE LIFETIME HALF OF THE 0683 RULING.
+# =============================================================================
+# ⚠ WHY THIS SECTION EXISTS, AND WHY IT COMES BEFORE THE REFUSAL ROWS IN
+# tests/headless/test_annot_show_menu.tcl. The user's 2026-08-25 ruling on 0683
+# ("both stock items refuse without a bound session") was ATTEMPTED ONCE AND
+# REVERTED, because 0683 is not an ENTRY problem: `annot_show` is per-WINDOW
+# (`tctx::global_list`, src/xschem.tcl:14009) while an ASE-L session's only
+# handle on its design is a CELLVIEW PATH, so an ordinary `File > Open` in the
+# design window leaves the mask at 3 while every session-side reader answers 0.
+# Measured on this tree, sanctioned doors only (issue 0688 §2): annotate from
+# ASE-L, open another cell, close the session, reopen the first cell -> mask 3,
+# real numbers on the sheet, 0 sessions, and 0 of 6 menubar entries able to
+# clear it. A producer-side guard does nothing about a mask that is ALREADY on.
+#
+# The fix under test keys the mask on the window's ROOT sheet (`xctx->sch[0]`):
+# one stamp written by the ONE C setter, one checker that clears the mask when
+# the root moves. So this section's rows split into two halves that must be read
+# together:
+#
+#   THE KEEP (Y1 Y2 Y3 Y4 Y9) — GREEN BEFORE THE CHANGE, ON PURPOSE. They are
+#   the counterweight the 0682 crew's anti-hollow rule demands: a negative claim
+#   ("the orphan is unreachable") needs a positive twin, or "cleared the mask on
+#   every load and called it fixed" passes the whole section. Y4 in particular is
+#   what forbids keying on `sch[currsch]` — 0688 §1 records descend+go_back
+#   KEEPING the mask as deliberate, and re-measured here it does.
+#
+#   THE CLEAR (Y5 Y6 Y7 Y7b Y8 Y10 Y11 Y12) — RED BEFORE THE CHANGE.
+#
+# ⚠ THE DATA-LOSS FENCE, AND IT IS NOT THEORETICAL. The reverted attempt's
+# `annot_drop_stale` cleared op/dc/tran at the session path and RE-READ; when the
+# re-read hit a raw ngspice was mid-rewrite (readable but truncated) the user's
+# loaded database was destroyed and nothing replaced it. Y7 and Y7b are that
+# scenario: the clear must write one int, one Tcl var and one path stamp, and
+# must not so much as look at the raw. MEASURED HERE FIRST, so the goldens are
+# facts and not hopes: a different-file `xschem load` already de-associates the
+# raw from the new sheet (`xschem raw loaded` -> -1) while KEEPING the registry
+# entry — `xschem raw rawfile` still names the file and loading the first sheet
+# again answers 3.14 from memory. That survival is the thing the attempt broke,
+# so Y7/Y7b assert it directly rather than asserting "loaded is unchanged",
+# which no implementation could satisfy.
+# =============================================================================
+
+if {[catch {
+
+set Y_LIB [file join $scratch ylib]
+file delete -force $Y_LIB
+file mkdir $Y_LIB
+
+## The annotator under test is a `hide=op` text — the same probe shape section L
+## uses (opa_l_mkprobe), rebuilt here so section Y cannot silently depend on
+## section L's fixture ordering. Its instance bbox is 0 wide when bit0 is clear
+## and ~57 wide when it is set; NO row hardcodes the width (it is a font metric
+## and moves between --nogui and a display -- section L measured the identical
+## symbol at 63 headless and 64 on :99, because text_bbox goes through cairo's
+## font metrics when a display exists).
+proc opa_y_mkprobe {dir name} {
+  set f [open [file join $dir $name] w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "K \{type=zzs7probe\ntemplate=\"name=zp1\"\}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  puts $f "L 4 0 0 0 10 {}"
+  puts $f "T \{ZZY0688TEXT\} 5 5 0 0 0.2 0.2 \{layer=15\nhide=op\}"
+  close $f
+}
+opa_y_mkprobe $Y_LIB y_hid_op.sym
+set f [open [file join $Y_LIB y_leaf.sym] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+close $f
+foreach {fn body} [list \
+    y_a.sch    "C \{y_hid_op.sym\} 0 0 0 0 \{name=YA1\}" \
+    y_b.sch    "C \{y_hid_op.sym\} 0 0 0 0 \{name=YB1\}" \
+    y_leaf.sch "C \{y_hid_op.sym\} 0 0 0 0 \{name=YL1\}" \
+    y_top.sch  "C \{y_leaf.sym\} 120 0 0 0 \{name=x1\}"] {
+  set f [open [file join $Y_LIB $fn] w]
+  puts $f "v {xschem version=3.4.6 file_version=1.2}"
+  puts $f "G {}"
+  puts $f "V {}"
+  puts $f "S {}"
+  puts $f "E {}"
+  puts $f $body
+  close $f
+}
+## One Operating Point point carrying v(a) = 3.14 — the value issue 0688 §2's
+## transcript names, so a reader can line the two up.
+set Y_GOLD [file join $scratch y_op_gold.raw]
+set f [open $Y_GOLD w]
+puts -nonewline $f "Title: Y 0688 fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\tv(a)\tvoltage
+\t1\tv(gnd)\tvoltage
+Values:
+0\t3.14
+\t0.0
+"
+close $f
+set Y_RAW [file join $scratch y_op_live.raw]
+file copy -force $Y_GOLD $Y_RAW
+
+set Y_A   [file normalize [file join $Y_LIB y_a.sch]]
+set Y_B   [file normalize [file join $Y_LIB y_b.sch]]
+set Y_TOP [file normalize [file join $Y_LIB y_top.sch]]
+
+# ⚠ UNQUALIFIED, per this file's header note: a `set ::XSCHEM_LIBRARY_PATH` is
+# INERT (the write trace at src/xschem.tcl:16527 compares the unqualified name).
+set XSCHEM_LIBRARY_PATH $Y_LIB
+
+set Y_TCL [file join $repo src xschem.tcl]
+
+# ---------------------------------------------------------------------------
+# Y0 — FIXTURE, asserted and not assumed. Without it every "the mask is off"
+# row below would be satisfied by a sheet whose text never rendered at all.
+# ---------------------------------------------------------------------------
+xschem load $Y_A
+opa_l_annot 0 ; set y_w0 [opa_l_w YA1]
+opa_l_annot 3 ; set Y_W  [opa_l_w YA1]
+opa_l_annot 0
+check {Y0 FIXTURE y_a.sch: one hide=op probe, invisible at mask 0 and wide at mask 3} \
+  [list [xschem get instances] $y_w0 [expr {$Y_W > 40 ? 1 : 0}] \
+        [expr {[string match {*y_a.sch} [xschem get schname 0]] ? 1 : 0}]] \
+  {1 0 1 1}
+
+# ===========================================================================
+# THE KEEP — GREEN BEFORE THE CHANGE. Read this block as the answer to
+# "did you just clear the mask on every load and call it a fix?"
+# ===========================================================================
+
+# ⚠ CONTROL. `Session > Design Window` re-loads the SAME cellview through the
+# same `xschem load` (src/ase_window.tcl:4366), and rows O22/O23 above depend on
+# a same-path reload not disturbing anything. A discriminator that compared
+# anything other than the path would red here.
+xschem load $Y_A
+catch {xschem set annot_show 1}
+xschem load $Y_A
+check {Y1 KEEP a same-path `xschem load` leaves the mask alone} \
+  [rcall {xschem get annot_show}] {0 1}
+
+# The O22 isolator's precondition, promoted from silent to asserted: with
+# remove_symbols() out of the picture the mask must still survive.
+xschem load -keep_symbols $Y_A
+check {Y2 KEEP `xschem load -keep_symbols` on the same path leaves the mask alone} \
+  [rcall {xschem get annot_show}] {0 1}
+
+# O20/O21's path.
+set y3rc [catch {xschem reload}]
+check {Y3 KEEP `xschem reload` leaves the mask alone} \
+  [list $y3rc [rcall {xschem get annot_show}]] {0 {0 1}}
+
+# ⚠ THE ROW THAT FORBIDS `sch[currsch]`. 0688 §1 records descend+go_back KEEPING
+# the mask as deliberate ("this window is in annotate mode"), and re-measured on
+# this tree it does. currsch is folded in so a descend that never happened
+# cannot satisfy the row by leaving the mask where it was.
+xschem load $Y_TOP
+catch {xschem set annot_show 3}
+xschem unselect_all
+set y4sel [catch {xschem select instance 0 fast nodraw}]
+set y4dsc [catch {xschem descend 1 2}]
+set y4in  [list [xschem get currsch] [xschem get annot_show]]
+catch {xschem go_back 2}
+set y4out [list [xschem get currsch] [xschem get annot_show]]
+check {Y4 KEEP descend and go_back both keep the mask — the root sheet never moved} \
+  [list $y4sel $y4dsc $y4in $y4out] {0 0 {1 3} {0 3}}
+
+# ===========================================================================
+# THE CLEAR — RED BEFORE THE CHANGE
+# ===========================================================================
+
+# ⚠ THE 0688 DEFECT ITSELF, AND THE SEAM IT PINS. Read with NO bulk eval in
+# between: `xschem get annot_show` must already answer 0 the instant the load
+# returns. A fix that only rode `annot_show_sync_cache()` would leave the mask
+# at 3 for every reader until the next `update_all_sym_bboxes`, and the ASE-L
+# menu PULL half (N22c) reads it exactly that way.
+xschem load $Y_A
+catch {xschem set annot_show 3}
+set y5pre [xschem get annot_show]
+xschem load $Y_B
+check {Y5 0688 `File > Open` of a DIFFERENT cell drops the mask, immediately} \
+  [list $y5pre [xschem get annot_show] [file tail [xschem get schname]]] \
+  {3 0 y_b.sch}
+
+# ⚠ THE DISCRIMINATOR IS THE ROOT, NOT THE CURRENT SHEET. Both elements are
+# needed: the first alone is satisfied by a stamp that merely equals whatever is
+# loaded now, and the second alone is satisfied by a stamp that is always empty.
+xschem load $Y_TOP
+catch {xschem set annot_show 3}
+set y6root [rcall {xschem get annot_root}]
+set y6a [expr {[lindex $y6root 0] == 0 && [lindex $y6root 1] ne {} \
+               && [lindex $y6root 1] eq [xschem get schname 0]}]
+xschem unselect_all
+catch {xschem select instance 0 fast nodraw}
+catch {xschem descend 1 2}
+set y6b [expr {[xschem get currsch] == 1 \
+               && [rcall {xschem get annot_root}] eq $y6root}]
+catch {xschem go_back 2}
+check {Y6 the stamp is the ROOT sheet and does not move while descended} \
+  [list [expr {$y6a ? 1 : 0}] [expr {$y6b ? 1 : 0}]] {1 1}
+
+# ⚠ THE DATA-LOSS FENCE. The clear touches ONE int, ONE Tcl var and ONE path
+# stamp. It must not clear, re-read or re-attach any raw — that is the reverted
+# attempt's regression (0683 §7 refutation 3). MEASURED at HEAD and the goldens
+# encode the measurement: a different-file load de-associates the raw from the
+# NEW sheet (`raw loaded` -> -1) but KEEPS the registry entry, so `raw rawfile`
+# is unchanged and loading the first sheet again answers 3.14 out of memory.
+file copy -force $Y_GOLD $Y_RAW
+xschem load $Y_A
+catch {xschem annotate_op $Y_RAW}
+set y7l0 [rcall {xschem raw loaded}]
+set y7v0 [rcall {xschem raw value v(a) -1}]
+set y7f0 [rcall {xschem raw rawfile}]
+catch {xschem set annot_show 3}
+xschem load $Y_B
+set y7mask [xschem get annot_show]
+set y7f1 [rcall {xschem raw rawfile}]
+xschem load $Y_A
+check {Y7 the clear destroys no waveform database: the registry entry and the value survive} \
+  [list $y7mask [expr {$y7f0 eq $y7f1 ? 1 : 0}] \
+        $y7l0 $y7v0 [rcall {xschem raw loaded}] [rcall {xschem raw value v(a) -1}]] \
+  [list 0 1 {0 0} {0 3.14} {0 0} {0 3.14}]
+
+# ⚠ THE TRUNCATED-RAW CASE THE BRIEF DEMANDS BE PROVED, NOT ARGUED. ngspice
+# mid-rewrite leaves a file that is readable and short; the reverted attempt
+# re-read it, got nothing, and had already thrown the good database away. Here
+# the file on disk is mutilated WHILE the database is attached, and the clear
+# then runs. Nothing may re-read the file, so the in-memory value must still be
+# 3.14 when the first sheet comes back.
+file copy -force $Y_GOLD $Y_RAW
+xschem load $Y_A
+catch {xschem annotate_op $Y_RAW}
+catch {xschem set annot_show 3}
+set _yfh [open $Y_RAW r] ; set _yd [read $_yfh] ; close $_yfh
+set _yfh [open $Y_RAW w] ; puts -nonewline $_yfh [string range $_yd 0 60] ; close $_yfh
+xschem load $Y_B
+set y7bmask [xschem get annot_show]
+xschem load $Y_A
+check {Y7b a raw TRUNCATED on disk mid-flight is never re-read by the clear} \
+  [list $y7bmask [expr {[file size $Y_RAW] < 120 ? 1 : 0}] \
+        [rcall {xschem raw loaded}] [rcall {xschem raw value v(a) -1}]] \
+  [list 0 1 {0 0} {0 3.14}]
+file copy -force $Y_GOLD $Y_RAW
+
+# ⚠ ANTI-HOLLOW. A checker wedged at 0 — or a setter that stopped writing the C
+# field — satisfies Y5 perfectly and breaks the feature. This row re-arms the
+# mask on the NEW sheet and reads the annotator's own bbox back.
+xschem load $Y_A
+catch {xschem set annot_show 3}
+xschem load $Y_B
+set y8a [xschem get annot_show]
+opa_l_annot 3
+set y8w [opa_l_w YB1]
+check {Y8 ANTI-HOLLOW the mask still ARMS on the new sheet and the annotator paints} \
+  [list $y8a [xschem get annot_show] [expr {$y8w > 40 ? 1 : 0}]] {0 3 1}
+opa_l_annot 0
+
+# ⚠ PRODUCER (c) IS OUTSIDE THE RULING AND MUST STAY WORKING (decision D2). A
+# `set annot_show 1` in the user's xschemrc is honoured at src/xinit.c:3839 and
+# never passes through the C setter, so it is never stamped and must never be
+# cleared. This row is also the whole argument against an "adopt the current
+# root on first sight" sync: at startup `xschem get schname 0` is
+# <launchdir>/untitled.sch and the rc sync runs BEFORE the CLI file is loaded, so
+# an adopting sync would stamp untitled.sch and silently kill producer (c) at the
+# first real load.
+catch {xschem set annot_show 0}
+xschem load $Y_A
+set ::annot_show 1
+xschem update_all_sym_bboxes
+set y9a [xschem get annot_show]
+xschem load $Y_B
+check {Y9 KEEP an rc-set mask that never went through the setter is never stamped, so never cleared} \
+  [list $y9a [xschem get annot_show]] {1 1}
+catch {xschem set annot_show 0} ; set ::annot_show 0
+
+# ---------------------------------------------------------------------------
+# SOURCE CONTRACTS — what no runtime row in a --nogui process can see
+# ---------------------------------------------------------------------------
+
+# ⚠ THE 0683 HALF, ASSERTED FROM HERE BECAUSE THE MENU ROWS NEED A DISPLAY.
+# tests/headless/test_annot_show_menu.tcl owns the behaviour (rows C0-C9); this
+# row only pins that BOTH stock producers are guarded and neither was forgotten,
+# and that the guard was added by WRAPPING the two existing bodies rather than by
+# adding a third writer — N22/N22b and test_annot_show_menu B6/B10 pin the
+# writer counts at {2 in xschem.tcl, 1 in ase_window.tcl}.
+check {Y10 both stock producers carry the binding guard, and no third mask writer appeared} \
+  [list [opa_n_grep $Y_TCL {xschem set annot_show}] \
+        [opa_n_grep $Y_TCL {ase::annot_binding_ok}]] \
+  {2 2}
+
+# ⚠ INVARIANT I1, IN C. One builder of "the mask and its stamp"
+# (annot_show_set), one checker (annot_show_check_root) reached from exactly two
+# call sites: the deterministic load seam in save.c and the sync-cache backstop
+# in actions.c. Three occurrences = definition + those two calls. A second writer
+# of the Tcl mirror, or a third clear site, reds here — which is the drift I1
+# exists to forbid and which no behavioural row can see.
+set Y_CSRC [lsort [glob -nocomplain [file join $repo src *.c]]]
+set y11w 0 ; set y11c 0
+foreach _yf $Y_CSRC {
+  incr y11w [opa_n_grep $_yf {tclsetintvar\("annot_show"}]
+  incr y11c [opa_n_grep $_yf {annot_show_check_root\(}]
+}
+check {Y11 I1 exactly one C writer of the Tcl mirror, and the root checker has exactly two call sites} \
+  [list $y11w $y11c] {1 3}
+
+# ⚠ THE BACKSTOP, ON A ROOT CHANGE THAT NEVER RUNS load_schematic().
+# `clear_schematic()` (src/actions.c:4850) frees xctx->sch[currsch] and composes
+# a fresh untitled name IN PLACE — measured, it never calls load_schematic, so
+# the save.c seam cannot see it and only the pull in annot_show_sync_cache() can.
+# `autosave_backup` is parked for the duration (issue 0601): the cleared buffer
+# is named <launchdir>/untitled.sch and a set_modify(1) on it would drop a `~`
+# file in the repo ROOT, which is what tests/headless/test_no_untitled_litter.tcl
+# reds on.
+set y12save $::autosave_backup
+set ::autosave_backup 0
+xschem load $Y_A
+catch {xschem set annot_show 3}
+set y12pre [xschem get schname 0]
+catch {xschem clear force}
+set y12moved [expr {[xschem get schname 0] ne $y12pre ? 1 : 0}]
+set y12imm [xschem get annot_show]
+xschem update_all_sym_bboxes
+set y12aft [xschem get annot_show]
+xschem load $Y_A
+set ::autosave_backup $y12save
+check {Y12 a root change that never runs load_schematic is caught by the sync-cache backstop} \
+  [list $y12moved $y12aft] {1 0}
+
+# ------------------------------------------------------------------ cleanup --
+catch {xschem raw clear}
+catch {xschem set annot_show 0}
+set ::annot_show 0
+set XSCHEM_LIBRARY_PATH $W_LIBS
+
+} yerr]} {
+  puts "UNEXPECTED ERROR (section Y): $yerr"
+  incr fail
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

@@ -2,7 +2,9 @@
 
 STATUS: OPEN — measured 2026-08-25 by the 0683+0684 crew (scout and measure passes,
 both independently). A fix was implemented and then **reverted with the rest of that
-attempt** because it does not hold (see §4). Filed, not fixed.
+attempt** because it does not hold (see §4). Filed, not fixed. **Deliberately left
+open again by the 0688+0683 item on 2026-08-25 — read §7 for why, and for what
+changed under this issue's feet.**
 FOUND IN: `ase::ui::close`, `src/ase_window.tcl:300-330`.
 RELATED: [0683](0683-annotation-is-reachable-with-no-bound-ase-l-session.md) — this is
 a producer its §3 table does not list; [0688](0688-the-annotation-mask-outlives-the-schematic-so-window-keyed-binding-cannot-hold.md).
@@ -79,3 +81,34 @@ or the raise has to be suppressed on the teardown path.
 ## 6. Still open
 
 All of it.
+
+---
+
+## 7. ⚠ DELIBERATELY LEFT OPEN by the 0688+0683 item, 2026-08-25 (its decision D8)
+
+The 0688+0683 crew folded neither this issue's clear nor any part of it in. Recorded
+here so a later crew does not read the silence as an oversight. Rung **L2**;
+rejected alternative: folding `annot_clear_on_close` back in.
+
+Three reasons, in order of weight:
+
+1. **The state it leaves is now RECOVERABLE by the road the tool itself names.**
+   0683's landed refusal message tells the user, in a sentence carrying an
+   executable command, to run `Tools > Launch ASE-L` — after which
+   `Results > Annotate` unticks. Before that message existed, this was a dead end.
+2. **A headless row could not live in the suite that owns the item.**
+   `ase::ui::close` early-returns on `![dict exists $wins $key]` and `--nogui` never
+   runs `ase::ui::open`, so it is a measured **no-op** headless. A row calling it and
+   seeing the mask unchanged has measured nothing.
+3. **It is separately numbered**, and §5's own unresolved sub-problem (the clear
+   raising the design window during `prompt_all_on_quit`) is a user-visible side
+   effect nobody has eyeballed.
+
+⚠ **What DID change under this issue's feet:** the mask is now stamped with the root
+sheet it was armed for (0688's `annot_show_set`), so a clear placed here no longer
+has to resolve a session to a window at all — it can go through the C setter. §4's
+refutation ("it does not hold") was about `annot_design_win`, and that dependency is
+now avoidable. Re-read §4 before retrying; the shape that failed is not the only one
+left. Note also that in a **leaked** window
+([0809](0809-the-annotation-mask-leaks-into-a-new-window-with-a-null-stamp.md)) the
+mask carries a NULL stamp, so a stamped-mask clear will not reach it either.

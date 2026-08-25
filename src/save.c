@@ -4541,6 +4541,23 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   my_free(_ALLOC_ID_, &ffname);
   if(reset_undo == 1) tcleval("eval_load_file_postprocess");
   xctx->no_autosave = save_no_autosave;
+  /* 0688 -- THE DETERMINISTIC SEAM. The annotation mask belongs to the ROOT sheet
+   * it was armed for (xctx->annot_root, stamped by annot_show_set in actions.c);
+   * when a load has replaced that root, the annotation goes with it. Here rather
+   * than only in annot_show_sync_cache() because `xschem get annot_show` must
+   * already read 0 the instant this returns -- the ASE-L menu PULL and every
+   * scripted reader look before the next bulk bbox evaluation.
+   *
+   * DESCEND-SAFE BY CONSTRUCTION, not by a special case: descend_schematic() and
+   * go_back() come through here with currsch > 0 and never move sch[0], so the
+   * comparison cannot fire on them. 0688 section 1 records descend+go_back KEEPING
+   * the mask as deliberate. Same-path reloads (Session > Design Window, `xschem
+   * reload`, `load -keep_symbols`) keep it for the same reason.
+   *
+   * It reads and writes only the mask, its Tcl mirror and its stamp -- no raw is
+   * cleared, re-read or re-attached (the reverted 0683 attempt's data-loss
+   * regression, 0683 section 7). */
+  annot_show_check_root();
   return ret;
 }
 

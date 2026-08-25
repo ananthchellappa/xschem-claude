@@ -15072,6 +15072,54 @@ proc fluid_trace_menu_update {m} {
 ## plus the anti-hollow rows that the replacement exists), and
 ## test_op_annot.tcl N22/N22b/N22c (which writer lives in which file).
 
+# --- 0683 / R-0653-d req 2: THE ANNOTATION MENU LABELS, ONE SOURCE ------------
+#
+# The user's 2026-08-25 ruling on issue 0683 is "both stock items check for a live
+# bound session and refuse with a clear message naming the ASE-L path if there is
+# none". A refusal that names a menu path has to name the path the user can
+# actually see, so the two entry labels, the remedy entry's label and the four
+# cascade labels above them are DEFINED HERE and the menubar below is BUILT from
+# them -- the printed sentence and the widget cannot drift apart because they are
+# the same string.
+#
+# ⚠ THE DRIFT THIS PREVENTS IS MEASURED, NOT HYPOTHETICAL. src/ase_window.tcl's
+# `lbl_outputs` / `lbl_save_all` / `lbl_save_op_params` (~:3173) were added for
+# exactly this reason after a remedy printed `Outputs > Save All` while the menu
+# read `Outputs > Save All… > Save device OP parameters (gm, gds, vth, ...)` --
+# one word off, entirely plausible, and `string match` against both constants
+# returned 0 (issue 0661). This is that pattern, ported.
+#
+# ⚠ THE CONSTANTS MUST KEEP RETURNING THE STRINGS THE MENUS ARE LOOKED UP BY:
+# tests/headless/test_annot_show_menu.tcl rows C2/C6 read the labels back OFF THE
+# LIVE WIDGETS and compare them to BOTH these procs AND the literal goldens, which
+# is what stops a constant-vs-constant tautology (the test_ase_window W1t
+# discipline). Renaming an entry is a deliberate act; doing it here moves the
+# refusal message with it.
+#
+# `>`-separated, because that is the shipped convention for a printed menu path
+# (ase::ui::remedy_op_params_menu) and nothing in these labels contains a `>`.
+proc annot_lbl_waves        {} { return {Waves} }
+proc annot_lbl_op_annotate  {} { return {Op Annotate} }
+proc annot_lbl_simulation   {} { return {Simulation} }
+proc annot_lbl_graphs       {} { return {Graphs} }
+proc annot_lbl_annotate_op  {} { return {Annotate Operating Point into schematic} }
+proc annot_lbl_tools        {} { return {Tools} }
+proc annot_lbl_launch_ase   {} { return {Launch ASE-L} }
+
+## The two stock annotation entry points, as the user reads them in the menubar.
+proc annot_menu_path_waves_op {} {
+  return "[annot_lbl_waves] > [annot_lbl_op_annotate]"
+}
+proc annot_menu_path_graphs_op {} {
+  return "[annot_lbl_simulation] > [annot_lbl_graphs] > [annot_lbl_annotate_op]"
+}
+## WHERE THE FUNCTION WENT. The ruling's own words: the refusal message is more
+## useful than a missing menu "because it tells the user where the function
+## went", so this path is the message's payload and not decoration.
+proc annot_remedy_menu {} {
+  return "[annot_lbl_tools] > [annot_lbl_launch_ase]"
+}
+
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
   global XSCHEM_SHAREDIR tabbed_interface simulate_bg OS sim
@@ -15103,13 +15151,13 @@ proc build_widgets { {topwin {} } } {
 
   $topwin.menubar add cascade -label "Layers" -menu $topwin.menubar.layers
   menu $topwin.menubar.layers -tearoff 0 -takefocus 0
-  $topwin.menubar add cascade -label "Tools" -menu $topwin.menubar.tools
+  $topwin.menubar add cascade -label [annot_lbl_tools] -menu $topwin.menubar.tools
   menu $topwin.menubar.tools -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Symbol" -menu $topwin.menubar.sym
   menu $topwin.menubar.sym -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Highlight" -menu $topwin.menubar.hilight
   menu $topwin.menubar.hilight -tearoff 0 -takefocus 0
-  $topwin.menubar add cascade -label "Simulation" -menu $topwin.menubar.simulation
+  $topwin.menubar add cascade -label [annot_lbl_simulation] -menu $topwin.menubar.simulation
   menu $topwin.menubar.simulation -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Help" -menu $topwin.menubar.help
   menu $topwin.menubar.help -tearoff 0 -takefocus 0
@@ -15362,7 +15410,7 @@ proc build_widgets { {topwin {} } } {
      simulate_from_button
   }
 
-  $topwin.menubar add cascade -label "Waves" -background {#888888} \
+  $topwin.menubar add cascade -label [annot_lbl_waves] -background {#888888} \
     -activebackground orange -menu $topwin.menubar.waves
   menu  $topwin.menubar.waves -tearoff 0 -takefocus 0
   $topwin.menubar.waves add command -label {External viewer} -command {waves external}
@@ -15370,35 +15418,63 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.waves add command -label Clear -command {xschem raw_clear}
   $topwin.menubar.waves add separator
   $topwin.menubar.waves add command -label {Load first analysis found} -command {waves {}}
-  $topwin.menubar.waves add command -label {Op Annotate} -command {
-       set tctx::retval [select_raw [xschem get topwindow]]
-       set show_hidden_texts 1
-       # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
-       # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
-       # show_hidden_texts entirely (its decision D3), so this item used to
-       # produce a loaded raw and a STILL-DARK annotator -- measured, the
-       # carrier's bbox never grew.
-       # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
-       # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
-       # voltage and branch current XSCHEM's native OP back-annotation paints. An
-       # "Op Annotate" that loaded the raw and then hid the voltages it had just
-       # resolved would be a worse first run than the dark annotator this line was
-       # written to fix. Deliberately a HARD SET and not an OR: this item is a
-       # one-click "annotate this cell", not one of the two additive chords. The
-       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
-       # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
-       # writers of this mask.
-       xschem set annot_show 3
-       if {$tctx::retval ne {}} {
-         xschem annotate_op $tctx::retval
-       } else {
-         xschem annotate_op
-       }
-       # Bboxes change when hidden texts appear: the `Show hidden texts`
-       # checkbutton's own pair, and annot_show_sync_cache() rides inside the
-       # first of them (scheduler.c), so no extra sync call is needed.
-       xschem update_all_sym_bboxes
-       xschem redraw
+  $topwin.menubar.waves add command -label [annot_lbl_op_annotate] -command {
+     # --- ISSUE 0683, THE USER'S RULING OF 2026-08-25 -------------------------
+     #   "Refuse without a bound session. Both stock items check for a live bound
+     #    session and refuse with a clear message naming the ASE-L path if there
+     #    is none."
+     # The trade was stated in the question and accepted: stock xschem with no
+     # ASE-L can no longer annotate at all. Two alternatives were explicitly
+     # rejected -- making this entry a TOGGLE (a second working annotation control
+     # outside ASE-L, a partial retreat from issue 0682's ruling) and DELETING it
+     # (the refusal is more useful than a missing menu, because it says where the
+     # function went). So the entry stays enabled and the guard is a WRAP.
+     #
+     # ⚠ IT IS THE FIRST STATEMENT OF THE BODY, AND THAT IS FUNCTIONAL. The raw
+     # chooser called just below pops a MODAL tk_getOpenFile (~:14518) and
+     # rewrites the global `netlist_dir` merely by being read; a refused user must
+     # not be made to answer a file dialog first (issue 0683 section 7). The test
+     # that pins the ORDER reads this script's own text, so no name of a later
+     # statement may appear in this comment.
+     #
+     # ⚠ A WRAP, NOT AN EARLY `return`. This script is evaluated at global level
+     # by Tk, where a TCL_RETURN out of a -command is not a documented no-op; and
+     # the wrap is what keeps the mask-writer count in this file at 2, which four
+     # committed rows pin (test_op_annot N22/N22b, test_annot_show_menu B6/B10).
+     #
+     # The guard speaks the refusal itself -- see ase::annot_no_binding_notice in
+     # src/ase.tcl for why that message is a new proc rather than a second
+     # spelling of ase::no_session_notice.
+     if {[ase::annot_binding_ok [annot_menu_path_waves_op]]} {
+         set tctx::retval [select_raw [xschem get topwindow]]
+         set show_hidden_texts 1
+         # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
+         # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
+         # show_hidden_texts entirely (its decision D3), so this item used to
+         # produce a loaded raw and a STILL-DARK annotator -- measured, the
+         # carrier's bbox never grew.
+         # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
+         # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
+         # voltage and branch current XSCHEM's native OP back-annotation paints. An
+         # "Op Annotate" that loaded the raw and then hid the voltages it had just
+         # resolved would be a worse first run than the dark annotator this line was
+         # written to fix. Deliberately a HARD SET and not an OR: this item is a
+         # one-click "annotate this cell", not one of the two additive chords. The
+         # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+         # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
+         # writers of this mask.
+         xschem set annot_show 3
+         if {$tctx::retval ne {}} {
+           xschem annotate_op $tctx::retval
+         } else {
+           xschem annotate_op
+         }
+         # Bboxes change when hidden texts appear: the `Show hidden texts`
+         # checkbutton's own pair, and annot_show_sync_cache() rides inside the
+         # first of them (scheduler.c), so no extra sync call is needed.
+         xschem update_all_sym_bboxes
+         xschem redraw
+     }
   }
   $topwin.menubar.waves add command -label Op -command {waves op}
   $topwin.menubar.waves add command -label Dc -command {waves dc}
@@ -15600,7 +15676,7 @@ proc build_widgets { {topwin {} } } {
       -selectcolor $selectcolor -variable pin_rename_propagate
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
-  $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
+  $topwin.menubar.tools add command -label [annot_lbl_launch_ase] -command "ase::launch_for_current"
   $topwin.menubar.tools add command -label "Calculator" -command "calc::open"
   # PLAN item 12: the schematic -> Signal Browser mirror of the viewer's
   # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
@@ -15757,7 +15833,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.simulation add separator
 
 
-  $topwin.menubar.simulation add cascade -label "Graphs" -menu $topwin.menubar.simulation.graph
+  $topwin.menubar.simulation add cascade -label [annot_lbl_graphs] -menu $topwin.menubar.simulation.graph
   menu $topwin.menubar.simulation.graph -tearoff 0 -takefocus 0
   $topwin.menubar.simulation.graph add checkbutton -label {Auto highlight plotted nets} \
    -selectcolor $selectcolor  -variable auto_hilight_graph_nodes
@@ -15767,36 +15843,64 @@ proc build_widgets { {topwin {} } } {
 tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get current_name]]].raw tran\"
 "
   }
-  $topwin.menubar.simulation.graph add command -label "Annotate Operating Point into schematic" \
+  $topwin.menubar.simulation.graph add command -label [annot_lbl_annotate_op] \
     -command {
-       set tctx::retval [select_raw [xschem get topwindow]]
-       set show_hidden_texts 1
-       # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
-       # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
-       # show_hidden_texts entirely (its decision D3), so this item used to
-       # produce a loaded raw and a STILL-DARK annotator -- measured, the
-       # carrier's bbox never grew.
-       # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
-       # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
-       # voltage and branch current XSCHEM's native OP back-annotation paints. An
-       # "Op Annotate" that loaded the raw and then hid the voltages it had just
-       # resolved would be a worse first run than the dark annotator this line was
-       # written to fix. Deliberately a HARD SET and not an OR: this item is a
-       # one-click "annotate this cell", not one of the two additive chords. The
-       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
-       # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
-       # writers of this mask.
-       xschem set annot_show 3
-       if {$tctx::retval ne {}} {
-         xschem annotate_op $tctx::retval
-       } else {
-         xschem annotate_op
-       }
-       # Bboxes change when hidden texts appear: the `Show hidden texts`
-       # checkbutton's own pair, and annot_show_sync_cache() rides inside the
-       # first of them (scheduler.c), so no extra sync call is needed.
-       xschem update_all_sym_bboxes
-       xschem redraw
+     # --- ISSUE 0683, THE USER'S RULING OF 2026-08-25 -------------------------
+     #   "Refuse without a bound session. Both stock items check for a live bound
+     #    session and refuse with a clear message naming the ASE-L path if there
+     #    is none."
+     # The trade was stated in the question and accepted: stock xschem with no
+     # ASE-L can no longer annotate at all. Two alternatives were explicitly
+     # rejected -- making this entry a TOGGLE (a second working annotation control
+     # outside ASE-L, a partial retreat from issue 0682's ruling) and DELETING it
+     # (the refusal is more useful than a missing menu, because it says where the
+     # function went). So the entry stays enabled and the guard is a WRAP.
+     #
+     # ⚠ IT IS THE FIRST STATEMENT OF THE BODY, AND THAT IS FUNCTIONAL. The raw
+     # chooser called just below pops a MODAL tk_getOpenFile (~:14518) and
+     # rewrites the global `netlist_dir` merely by being read; a refused user must
+     # not be made to answer a file dialog first (issue 0683 section 7). The test
+     # that pins the ORDER reads this script's own text, so no name of a later
+     # statement may appear in this comment.
+     #
+     # ⚠ A WRAP, NOT AN EARLY `return`. This script is evaluated at global level
+     # by Tk, where a TCL_RETURN out of a -command is not a documented no-op; and
+     # the wrap is what keeps the mask-writer count in this file at 2, which four
+     # committed rows pin (test_op_annot N22/N22b, test_annot_show_menu B6/B10).
+     #
+     # The guard speaks the refusal itself -- see ase::annot_no_binding_notice in
+     # src/ase.tcl for why that message is a new proc rather than a second
+     # spelling of ase::no_session_notice.
+     if {[ase::annot_binding_ok [annot_menu_path_graphs_op]]} {
+         set tctx::retval [select_raw [xschem get topwindow]]
+         set show_hidden_texts 1
+         # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
+         # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
+         # show_hidden_texts entirely (its decision D3), so this item used to
+         # produce a loaded raw and a STILL-DARK annotator -- measured, the
+         # carrier's bbox never grew.
+         # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
+         # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
+         # voltage and branch current XSCHEM's native OP back-annotation paints. An
+         # "Op Annotate" that loaded the raw and then hid the voltages it had just
+         # resolved would be a worse first run than the dark annotator this line was
+         # written to fix. Deliberately a HARD SET and not an OR: this item is a
+         # one-click "annotate this cell", not one of the two additive chords. The
+         # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+         # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
+         # writers of this mask.
+         xschem set annot_show 3
+         if {$tctx::retval ne {}} {
+           xschem annotate_op $tctx::retval
+         } else {
+           xschem annotate_op
+         }
+         # Bboxes change when hidden texts appear: the `Show hidden texts`
+         # checkbutton's own pair, and annot_show_sync_cache() rides inside the
+         # first of them (scheduler.c), so no extra sync call is needed.
+         xschem update_all_sym_bboxes
+         xschem redraw
+     }
     }
   # doc/claude/specs/op_annotation.md §4.4 — the PDK-neutral OP-parameter
   # carrier. Every moving part lives in the proc called below (src/op_annot.tcl)

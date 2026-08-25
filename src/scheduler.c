@@ -4131,6 +4131,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->annot_show), TCL_VOLATILE);
           }
+          /* (xschem get annot_root) issue 0688: the ROOT schematic the annotation
+           * mask was armed for, or "" when the mask is off or was never armed
+           * through `xschem set annot_show` (an xschemrc `set annot_show` is not
+           * stamped -- decision D2). This is the witness for "the mask belongs to
+           * the loaded sheet": nothing else a script can read distinguishes an
+           * armed-here mask from one left over from another cellview. */
+          else if(!strcmp(argv[2], "annot_root")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->annot_root ? xctx->annot_root : "", TCL_VOLATILE);
+          }
           /* (xschem get annot_voltage_layer) the layer a CONTENT-classified node
            * voltage renders in, overriding the text's own layer= (issue 0615).
            * Default 9. Out of [1, cadlayers) means no override. See the shared
@@ -11749,8 +11759,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
            * pull silently discards it, which is why the GUI never calls that one. */
           else if(!strcmp(argv[2], "annot_show")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-            xctx->annot_show = atoi(argv[3]);
-            tclsetintvar("annot_show", xctx->annot_show);
+            /* 0688: THE one C writer (actions.c). It writes the C field, the Tcl
+             * mirror and the xctx->annot_root stamp -- "the mask is on" and "this
+             * is the sheet it was armed for" are one fact, written in one place,
+             * so a later File > Open can tell the mask no longer belongs here.
+             * Writing the two fields inline again would be the second builder
+             * invariant I1 forbids. */
+            annot_show_set(atoi(argv[3]));
           }
           /* set annot_voltage_layer <n> (issue 0615): the layer a CONTENT-classified
            * node voltage renders in. Writes BOTH the C field and the Tcl mirror, for

@@ -262,8 +262,49 @@ baseline.** *(✅ both FIXED 2026-08-25 — see §6e; T1 is now at zero.)* Next 
 number at the time: **0693** (see §6b).
 
 Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, block
-"⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED"; issue **0683 §7** and **0684 §7**;
-spec §6a/§6b.
+"⚠ 0683 + 0684 — ATTEMPT 1"; issue **0683 §7** and **0684 §7**; spec §6a/§6b.
+
+## 6a-bis. ✅⚠ 0688 + 0683 — ATTEMPT 2 LANDED 2026-08-25 (status E). THE USER RULED, AND HALF THE LIFETIME IS FIXED
+
+The user ruled on 0683 personally: **"refuse without a bound session"**, accepting in
+writing that *stock xschem with no ASE-L can no longer annotate at all*. Toggle and
+deletion were both rejected. Attempt 2 followed §6a's own diagnosis and fixed the
+**lifetime first**:
+
+* **0688 (C).** The mask is stamped with the window's ROOT sheet
+  (`xctx->annot_root`); `annot_show_set()` is the one C writer;
+  `annot_show_check_root()` drops the mask when the root moves. `File > Open` now
+  turns annotation off; descend/`go_back`, same-file reloads and an `xschemrc`-set
+  mask keep it. The clear opens **no file** — the reverted attempt's data-loss shape
+  has no analogue here, and rows Y7/Y7b prove it against a raw truncated on disk.
+* **0683 (Tcl).** Both stock items wrap their body in `ase::annot_binding_ok` and
+  refuse with a derived, pasteable, **provably visible** message. The reachability
+  was proved by reading SINKS — `.ciw.l.t`, `.statusbar.12`, the `Xschem.log` file —
+  never `notify_last sinks` (measured lying: `{ciw log}` in a process with no Tk) and
+  never `notify`'s return (measured `1` in every arm).
+
+Suites: `test_op_annot` 335 → **349**, `test_ase_launch` 22 → **28**,
+`test_annot_show_menu` 10 → **22**; T1/T2 and the five ASE suites unmoved.
+
+⚠ **BUT THE ADVERSARY REFUTED THE BROAD CLAIM, AND THE WRITE-UP AGENT REPRODUCED IT.**
+`File > Create new window/tab` and `File > Open in new window` hand the new context
+the mask through the process-global Tcl var with a **NULL stamp**, so the clear is
+inert there and the full orphan reproduces end to end through sanctioned doors. The
+honest claim is *"the plain-`File > Open` sequence ends clean and both stock producers
+refuse"*, **not** *"the orphan is unreachable"*. Filed as **0809** — this is 0688's
+unfinished half and the next step in this thread.
+
+Filed by this crew: **0807** (`annotate_op` destroys the attached OP database on a
+truncated raw and reports success — live at HEAD, and it is the command both guarded
+entries call), **0808** (three rows claim to pin the `load_schematic` seam and do not;
+plus Y1's stale-var weakness), **0809** (the refutation), **0810** (bare `strcmp` on
+the stamp: `./`, `//`, `../` and symlinked spellings of the SAME file false-clear),
+**0811** (only `load_schematic` got the deterministic clear; `Save As` lags). Next
+free number: **0812**.
+
+**0686 stays OPEN on purpose** (decision D8) — its new §7 records why, and what
+changed under it. The E question this owes the user is in §6a-bis's plan block:
+*should a mask set with the cadence `6` / `Alt-6` chords survive `File > Open`?*
 
 ## 6b. ✅ 0679 — FIXED 2026-08-25. THE ONE ITEM ON THAT QUEUE THE USER PERSONALLY HIT
 
@@ -469,7 +510,7 @@ all 131 bare-banner sites. `test_audit_classifier` 50 → **69**. 0690's ruling:
 **tree** was right, confirmed five ways before a byte moved; 0455's *delete the
 directory* remedy is annotated **REFUTED** (140 tracked files). **0698 was three
 suites, not one** — `test_ase_final`, `test_ase_final_gf180`, `test_ase_core` — fixed
-on the **suite** side, `src/ase.tcl` untouched so the OPEN 0683/0684 ruling stands.
+on the **suite** side, `src/ase.tcl` untouched so the then-OPEN 0683/0684 ruling stood. *(0683 was ruled and fixed later the same day — see §6a-bis; 0684 is still its own thread.)*
 
 Filed by this crew: **0802** (full_audit scores a pass banner followed by a death as
 PASS — run_regression is now deliberately stricter than the CI reader), **0803**

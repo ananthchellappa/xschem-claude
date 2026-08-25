@@ -1,9 +1,12 @@
 # 0688 — `annot_show` outlives the schematic that was annotated, so any binding keyed on "which cellview is in which window" cannot hold
 
-STATUS: OPEN — measured 2026-08-25 by the 0683+0684 crew's adversary pass, and
-independently re-measured by the write-up pass on a clean tree. **Filed, not fixed.**
-This is **the reason the 0683+0684 fix attempt was refuted and reverted** — read it
-before retrying either issue.
+STATUS: **PARTIALLY FIXED 2026-08-25 (status E). §6 is what landed.** The mask now
+belongs to the window's ROOT sheet and `File > Open` drops it — in the window that
+armed it. It is **still reachable** in a window that inherited the mask through the
+Tcl-var pull: that half is
+[0809](0809-the-annotation-mask-leaks-into-a-new-window-with-a-null-stamp.md), and
+it is why the item shipped E and not x. The original measurement below (§1–§5) is
+kept verbatim; it is the reason the 0683+0684 attempt 1 was reverted.
 FOUND IN: `annot_show` ownership (`actions.c:1321-1325` `annot_show_sync_cache()`,
 `tctx::global_list`), and every consumer that resolves a session to a window by
 cellview path (`ase::ui::annot_design_win`, `src/ase_window.tcl:2218`).
@@ -97,7 +100,84 @@ the state they exist for.
 4. **Any retry must run `vc/atk4.tcl`'s five steps as a test row.** The attempt
    shipped 22 + 207 + 342 green checks and every one of them passed over this.
 
-## 5. Still open
+## 5. Still open (as of the 2026-08-25 filing)
 
 Everything above. Nothing was fixed; the fix attempt that exposed it was reverted in
 full (see [0683](0683-annotation-is-reachable-with-no-bound-ase-l-session.md) §7).
+
+---
+
+## 6. ✅ WHAT LANDED, 2026-08-25 — §4's candidate (3), refined by measurement
+
+§4 point 3 named the shape: *"treat `annot_show` as belonging to the loaded sheet,
+so `xschem load` drops it"*. That is what was built, with one refinement §4 did not
+have: the discriminator is the window's **ROOT** sheet `xctx->sch[0]`, not the
+current sheet, because §1 records descend + `go_back` KEEPING the mask as
+deliberate and `sch[0]` does not move under either. Descend-safety is therefore by
+construction rather than by a special case. Sabotage variant **SAB-B** (the
+discriminator widened to `sch[xctx->currsch]`) exists to catch a regression to the
+wrong one, and reddened Y4, Y6 and O25.
+
+| piece | file | what |
+|---|---|---|
+| `char *annot_root` | `src/xschem.h` (beside `annot_show`) | the root sheet the mask was armed for; per-`Xschem_ctx`, NOT mirrored in Tcl |
+| `annot_show_set(int)` | `src/actions.c` | **the one C writer (I1)** — C field + Tcl mirror + stamp, one fact in one place |
+| `annot_show_check_root(void)` | `src/actions.c` | the clear, through that same setter, when the stamp no longer names `sch[0]` |
+| call site 1 | `src/save.c` `load_schematic()` tail | the deterministic seam |
+| call site 2 | `src/actions.c` `annot_show_sync_cache()`, after the pull | the backstop |
+| `xschem get annot_root` | `src/scheduler.c` | the test witness |
+| free + NULL init | `src/xinit.c` | ctx teardown and `alloc_xschem_data` |
+
+### The AFTER, against §2's transcript
+
+```
+L22  File > Open another cell  ->  {annot_show 0, op_annot::_annotated 0}   (was {3 1})
+L24  reopen the cell           ->  {0 0 {} 0}                               (was {3 1 '' 0})
+L20  POSITIVE the sanctioned road still annotates  ->  {1 1 3 3 3.14 1 1}
+L25  POSITIVE relaunch ASE-L on the same cell and re-annotate  ->  {1 3 3.14 1}
+Y5   different-cell load drops the mask immediately  ->  {3 0 y_b.sch}
+Y1/Y2/Y3/Y4/Y9  the KEEP half: same-path load, -keep_symbols, reload,
+                descend+go_back, and an rc-set (never-stamped) mask all keep it
+Y7/Y7b  the clear touches NO waveform database, including a raw truncated on disk
+```
+
+### ⚠ IT TOUCHES NO RAW DATABASE, DELIBERATELY
+
+The reverted attempt's data-loss regression (§7 of 0683, refutation 3) cleared
+`op`/`dc`/`tran` at the session path and RE-READ; over a raw ngspice was
+mid-rewrite the user's database was destroyed. This clear writes one int, one Tcl
+var and one path and **never opens a file**. Rows Y7 and Y7b prove it against
+exactly that file state. Note separately that the command both guarded entry points
+*call* still has that defect at HEAD — issue
+[0807](0807-annotate-op-destroys-the-attached-op-database-on-a-truncated-raw.md).
+
+### The stamp is written ONLY by the setter (decision D2)
+
+Never adopted lazily. Measured: at startup `xschem get schname 0` is
+`<launchdir>/untitled.sch` and the rc sync (`xinit.c:3839`) runs BEFORE the CLI file
+is loaded, so an adopting sync would stamp `untitled.sch` and the first real load
+would then silently clear an `xschemrc`-set `annot_show` — killing producer (c),
+which the 0683 ruling does not touch. Row **Y9** pins it.
+
+That decision is also exactly what
+[0809](0809-the-annotation-mask-leaks-into-a-new-window-with-a-null-stamp.md) runs
+into: a NULL stamp means "never armed through the setter", and a leaked mask looks
+identical to an rc-set one. The two cases have to be distinguished, not merged.
+
+## 7. STILL OPEN after the partial fix
+
+* **[0809](0809-the-annotation-mask-leaks-into-a-new-window-with-a-null-stamp.md)** —
+  the mask leaks into a new window/tab with a NULL stamp, so the clear is inert
+  there and §2's orphan reproduces through `File > Open in new window`. **This is
+  the unfinished half of this issue.**
+* **[0810](0810-annot-root-is-compared-with-a-bare-strcmp-so-a-respelled-path-false-clears.md)** —
+  bare `strcmp` on the stamp: `./`, `//`, `../` and symlinked spellings of the SAME
+  file false-clear the mask.
+* **[0811](0811-only-load-schematic-got-the-deterministic-annotation-clear.md)** —
+  only `load_schematic()` got the deterministic clear; `Save As` and
+  `clear_schematic()` are lagged until the next bulk evaluation.
+* **[0808](0808-y5-l22-l24-claim-to-pin-the-load-schematic-seam-and-do-not.md)** —
+  the mirror image: three rows claim to pin the `load_schematic` seam and do not,
+  because the load reaches `annot_show_sync_cache()` on its own. Read with 0811.
+* §4 point 4's requirement is met: `vc/atk4.tcl`'s five steps are now rows
+  **L20–L25** in `tests/headless/test_ase_launch.tcl`.

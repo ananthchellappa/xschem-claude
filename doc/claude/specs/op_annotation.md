@@ -2119,7 +2119,11 @@ wins, **I8/0604's report is the other half** — the hyphen says *which*, the re
 
 ### 5.1 Shipped and unratified — the questions this run owes a human
 
-Collected here, in one place, so they can be answered in one sitting. **FIFTEEN
+Collected here, in one place, so they can be answered in one sitting. ⚠ **THE COUNT IN
+THIS SENTENCE IS STALE AND HAS BEEN FOR SEVERAL CREWS** — it reads FIFTEEN and the
+table holds more; crews have added rows without touching it, so it can no longer be
+used as the completeness check it was written to be. Count the table, not this line.
+**FIFTEEN
 rows, one per issue file** *(0663 added 2026-08-24 by the 0663 crew)* *(0658 added 2026-08-24 by the 0658 crew)* *(0650 added 2026-08-23 by the 0650 crew)* *(0621 added 2026-08-22 by the 0614+0615 crew; 0627 and 0628 added 2026-08-22 by the S3 crew)* — 0424 was **closed** and 0429 **superseded** on 2026-08-22, and their rows are kept, struck, rather than deleted, so the count still checks — a reader can check the list is complete by that
 count. Every file named below was verified to exist on disk by the S12 write-up
 agent (2026-08-21).
@@ -2139,8 +2143,9 @@ authority has signed it off*.
 | **0447** | ratification | `op_annot::text` **raises** on a malformed descriptor list while its own header says it never does. Accepted alongside 0446 by S6b (decision D6). |
 | **0457** | ~~ratification~~ **ANSWERED, THEN REVERSED** | `annot_show` had no stock, non-`cadence_style_rc` control. 0457(b) ruled a `View > Show / Hide` checkbutton pair (2026-08-22, shipped two days); issue **0682** reversed the placement (2026-08-24) — the control is ASE-L `Results > Annotate`, greyed unless the bound session has a result. |
 | **0682** | ratification | the ASE-L implementation itself: checkbutton-vs-command, the mask left per-design-context rather than per-session, `ase::has_results` as the greying predicate, and the decision that ticking a bit ON **attaches** the session's raw when the design has none (decision D8). |
-| **0683** | defect, filed | the orphan state the 0682 ruling says must not exist **is reachable**: five producers set a non-zero mask with no ASE-L session bound. Blocking sibling of 0682 — until it lands, a stock user who clicks either `Annotate Operating Point` item is annotated ON with no menu that turns it off. |
+| **0683** | ~~defect, filed~~ **RULED 2026-08-25, FIXED the same day** | the orphan state the 0682 ruling says must not exist **was reachable**: producers set a non-zero mask with no ASE-L session bound. The user ruled *"refuse without a bound session"*, accepting in writing that **stock xschem with no ASE-L can no longer annotate at all**; toggle and deletion were both rejected. Both stock items now refuse with a derived, pasteable message (§6c). **No ratification is owed on this row** — the user answered it personally. What is NOT closed is the ruling's *intent*: issue **0809** leaks the mask into a new window/tab, so an annotated-with-no-session state is still reachable through `File > Open in new window`. |
 | **0684** | defect, filed | 0682's decision-D8 raw-attach arm guards on `xschem raw loaded` >= 0, which answers "is SOME database attached" rather than "are THIS session's CURRENT results attached". Measured: ngspice overwrites one stable raw path in place, so a second run keeps the FIRST run's numbers on screen (**invariant I3's own phrase**), and an ordinary waveform graph's `raw_read` (`annot_p` = -1) blocks the attach entirely so the mask goes on and nothing renders. The fabricated `0` does **not** reach pixels — every C consumer gates on `annot_p >= 0` — so it is a dead-looking control, not a lie on screen. |
+| **0688** | ratification, **NEW 2026-08-25** | **a root-sheet change now switches annotation OFF.** `File > Open`, `Save As` and `Clear Schematic` drop the mask in the window that armed it, because 0683's ruling is unenforceable while the mask outlives the sheet it was armed for (§6b). Descend / `go_back`, same-file reloads and an `xschemrc` `set annot_show` all KEEP it. ⚠ The part nobody has ratified: this also drops a mask the user set deliberately with the cadence **`6` / `Alt-6`** chords, which the 0683 ruling does not mention and issue 0688 §4.3 says outright the user must be asked about. Implemented at rung **L3** — no key was found that an ordinary `File > Open` cannot walk around, and 0688 §2's transcript is the proof. **Should a chord-set mask survive `File > Open`?** ⚠ Note the answer interacts with issue **0809**: a *leaked* mask (new window/tab, NULL stamp) is dropped by nothing at all today, so "drop it everywhere" and "keep chord masks" are not the only two positions. |
 | **0475** | ratification | the 40 shipped sky130 FET symbols' annotation texts are gated behind **`hide=true`** rather than `hide=op`. S10b measured `hide=op` and **refuted** it (both `hide=op` and the overlay answer to `annot_show` bit 0, so a `hide=op` text becomes visible exactly when its replacement does), then shipped `hide=true`. S10b's E question. |
 | **0476** | ratification | annotation texts **outside** sky130 that answer to no visibility knob at all — including the `annotate_params.sym` carrier's IHP ancestor. |
 | **0479** | ratification | a cursor placed **outside** the data holds the endpoint and says nothing. S11 deliberately kept the graphless path identical to the graph path (invariant I1) rather than blanking, because no row compares the two. S11's E question. |
@@ -2498,22 +2503,116 @@ is not a boolean — `sch_waves_loaded()` returns the hierarchy **level** (landm
 — and it answers "is SOME database attached here", not "are THIS session's CURRENT
 results attached here". Issue **0684**.
 
-### ⚠ 6b. `annot_show` outlives the schematic that was annotated — measured 2026-08-25
+### ⚠ 6b. `annot_show` outlives the schematic that was annotated — measured 2026-08-25, **PARTIALLY FIXED the same day**
 
 `annot_show` is per-**context**, and a context is a **window**, not a schematic:
-`xschem load <other>.sch` in the same window leaves the mask exactly where it was, as
-does descend + `go_back`. That is ordinary `tctx::global_list` behaviour and is not
-itself a defect.
+`xschem load <other>.sch` in the same window used to leave the mask exactly where it
+was, as does descend + `go_back`. The descend behaviour is ordinary
+`tctx::global_list` behaviour and is not a defect; the `File > Open` half was.
 
-It becomes one for any binding written on top of it, because a session's only handle
-on a design is a **cellview path** — so the instant the user opens a different cell in
-that window, every session-side read of the mask returns 0 while the mask is really 3,
-and every session-side clear silently no-ops. **A binding keyed on
+It became one for any binding written on top of it, because a session's only handle
+on a design is a **cellview path** — so the instant the user opened a different cell
+in that window, every session-side read of the mask returned 0 while the mask was
+really 3, and every session-side clear silently no-op'd. **A binding keyed on
 cellview→window cannot hold.** Issue **0688**; it is the reason the first fix attempt
 for 0683/0684 was reverted.
 
-Design consequence: 0683 is a **lifetime** problem, not an entry problem. Guarding the
-producers does nothing about a mask that is already on.
+Design consequence, and it still stands: 0683 is a **lifetime** problem, not an entry
+problem. Guarding the producers does nothing about a mask that is already on. That
+is why 0688 was fixed FIRST and 0683's guard second.
+
+#### What the mask belongs to now (landed 2026-08-25)
+
+**The window's ROOT sheet.** `xctx->annot_root` (`src/xschem.h`, beside
+`annot_show`) stamps `xctx->sch[0]` at the moment the mask is armed;
+`annot_show_check_root()` (`src/actions.c`) drops the mask when the stamp no longer
+names `sch[0]`, and is called from `load_schematic()`'s tail (`src/save.c`) and from
+`annot_show_sync_cache()`.
+
+Three properties of that choice are load-bearing and must not be "simplified" away:
+
+* **`sch[0]`, not `sch[currsch]`.** Descend and `go_back` deliberately KEEP the mask
+  ("this window is in annotate mode"), and neither moves `sch[0]`, so descend-safety
+  is by construction rather than by a special case. Rows Y4/Y6 pin it.
+* **ONE C writer (invariant I1).** `annot_show_set()` writes the C field, the Tcl
+  mirror and the stamp together. Two independent builders of "the mask is on" and
+  "this is the sheet it was armed for" is exactly the silent drift I1 forbids.
+* **The stamp is never adopted lazily** (decision D2). At startup
+  `xschem get schname 0` is `<launchdir>/untitled.sch` and the rc sync
+  (`xinit.c:3839`) runs BEFORE the CLI file is loaded, so an adopting sync would
+  stamp `untitled.sch` and the first real load would silently clear an
+  `xschemrc`-set `annot_show`. So an rc-set mask is never stamped and never cleared;
+  a mask set through `xschem set annot_show` always is.
+
+**The clear touches NO waveform database.** One int, one Tcl var, one path; it never
+opens a file. That is the direct lesson of the reverted attempt, whose
+`annot_drop_stale` re-read a raw ngspice was mid-rewrite and destroyed the user's
+loaded database. A raw legitimately stays in the registry across a `File > Open`.
+
+#### ⚠ THE HALF THAT IS NOT FIXED — issue 0809
+
+`annot_show_set()`'s header claims the mask and its stamp are "ONE fact written in
+ONE place". **They are not.** `annot_show_sync_cache()` pulls
+`xctx->annot_show = tclgetintvar("annot_show")` (`actions.c:1325`, pre-existing and
+unchanged), and `::annot_show` is one process-global Tcl var shared by every window
+while `annot_root` is per-context. A **new window or tab** therefore inherits the
+mask with a **NULL** stamp, and a NULL stamp is left alone on purpose (it is
+indistinguishable from the rc case above), so the clear is permanently inert there.
+
+Measured: `File > Create new window/tab` and `File > Open in new window` both
+reproduce the full orphan end to end. Issue **0809**; the shape of a repair, and why
+it cannot simply merge the two NULL-stamp cases, is in its §5.
+
+Two narrower gaps, both measured, both filed: the stamp is compared with a bare
+`strcmp`, so `./`, `//`, `../` and symlinked spellings of the SAME file false-clear
+(**0810**); and only `load_schematic()` got the deterministic clear, so `Save As`
+and `clear_schematic()` lag until the next bulk evaluation (**0811**, read with
+**0808**, which measures that the `load_schematic` seam is itself partly redundant
+because the load reaches `annot_show_sync_cache()` on its own).
+
+### ⚠ 6c. The two stock annotation menu items REFUSE without a bound ASE-L session (2026-08-25)
+
+The user's ruling on issue **0683**, verbatim: *"Refuse without a bound session.
+Both stock items check for a live bound session and refuse with a clear message
+naming the ASE-L path if there is none."* The trade was stated in the question and
+accepted: **stock xschem with no ASE-L can no longer annotate at all.** Making the
+items toggle, and deleting them outright, were both explicitly rejected.
+
+`Waves > Op Annotate` and `Simulation > Graphs > Annotate Operating Point into
+schematic` (`src/xschem.tcl`) each have their whole body wrapped in
+`if {[ase::annot_binding_ok [<menu path>]]} { … }`. Four things about that shape are
+deliberate:
+
+* **The guard is the FIRST statement, above `select_raw`.** That chooser pops a
+  modal `tk_getOpenFile` and rewrites the global `netlist_dir` merely by being read;
+  a refused user must not be made to answer a file dialog. Row C3 pins the ORDER by
+  reading the live `-command` text, so **no comment in either body may name a later
+  statement**.
+* **A WRAP, not an early `return`.** Tk evaluates a `-command` at global level,
+  where a `TCL_RETURN` is not a documented no-op — and the wrap is what holds the
+  mask-writer counts at {2 in `xschem.tcl`, 1 in `ase_window.tcl`} that four
+  committed rows pin.
+* **The predicate is `ase::session_for_current` ALONE**, not `session &&
+  has_results`. The ruling's words are "a live bound session", and `Op Annotate`
+  exists to let the user point at ANY raw through the chooser.
+* **No `info commands` fallback.** A fallback would fail OPEN and silently restore
+  the capability the ruling removed, in the one configuration nobody tests.
+
+The refusal is a **new** proc `ase::annot_no_binding_notice` beside
+`ase::no_session_notice`, not a second spelling of it (issue 0168): different scope
+— it names the CLICKED menu path, which `no_session_notice` cannot know — and it
+must carry R-0653-d's `-menu`/`-command` fields, which `notify_safe` DROPS
+(issue 0674). Its menu path is composed from the `annot_lbl_*` constants the menubar
+is itself BUILT from, so the printed path and the widget cannot drift (the
+`ase_window.tcl` `lbl_*` pattern, ported; issue 0661 is the measured drift).
+
+⚠ **Prove a refusal REACHED A SINK, never that `notify` returned.** Measured on this
+tree, twice, independently: in a `--nogui` process with no Tk at all,
+`dict get $::xschem::notify_last sinks` reads `{ciw log}` — claiming a CIW sink that
+cannot exist — and `::xschem::notify` returns `1` in every arm including one with no
+on-screen sink whatsoever. That is issue **0675**, live. The only honest reads are
+`.ciw.l.t` text containment, `[xschem get top_path].statusbar.12 -text`, and a grep
+of the `--logdir` `Xschem.log` file.
 
 ---
 

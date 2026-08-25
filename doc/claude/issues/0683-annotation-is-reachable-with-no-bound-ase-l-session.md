@@ -1,7 +1,8 @@
 # 0683 — annotation is reachable with NO bound ASE-L session (the orphan state)
 
-STATUS: **STILL OPEN. Fix ATTEMPTED 2026-08-25, REFUTED and REVERTED the same day —
-read §7 before retrying.** Blocking sibling of
+STATUS: **FIXED 2026-08-25 (attempt 2, status E) — both stock items now refuse.
+Read §8 for what landed and what it does NOT cover.** §7 records the reverted
+attempt 1 and is kept because its inventory is still the reference. Blocking sibling of
 [0682](0682-annotation-visibility-belongs-in-ase-l-results-annotate.md).
 Related: 0457, 0614, 0621, 0678, 0682, [0684](0684-annot-ensure-loaded-guards-on-the-wrong-predicate.md)
 (the other half of "annotation and its session are not actually bound": 0683 is annotation
@@ -202,3 +203,91 @@ hazard here**: a channel can pass its own liveness test and reach nobody. A
 refusal nobody sees is *worse* than the bug being fixed, because the menu item
 then does nothing at all with no explanation. Any implementation must prove the
 refusal REACHED a sink, not that `notify` returned.
+
+
+---
+
+## 8. ✅ ATTEMPT 2 (2026-08-25) — LANDED. What the ruling bought, and what it did not
+
+Implemented by the 0688+0683 crew, in the ruling's order: **0688 first (the
+lifetime), then this (the entry)**. Attempt 1 failed because it treated 0683 as an
+entry problem; §7's "Binding on attempt 2" was followed literally.
+
+### The BEFORE, quoted from the measure agent (2026-08-25, real menubar widgets under X)
+
+```
+BEFORE| sessions registered = 0
+BEFORE| ase::annot_binding_ok exists = 0
+BEFORE| A entry -state = normal
+BEFORE| A annot_show AFTER invoke = 3
+BEFORE| A CIW grew by (chars) = 0
+BEFORE| B annot_show AFTER invoke = 3
+BEFORE| B CIW grew by (chars) = 0
+   '#! ' notice lines: 0
+```
+
+Both entries drove the mask 0 → 3 with zero sessions, attached the raw, and **said
+nothing**: CIW +0 chars, statusbar `-text` empty, durable log 0 notice lines. The
+measure agent also stubbed `select_raw` and recorded `select_raw was called = 1` in
+both legs — positive proof no guard sat above the modal file chooser.
+
+### The AFTER
+
+```
+C4  no session: annot_show 0, select_raw call count 0, op_annot::_annotated 0
+C5  a sink NEWLY carries the marker after the invoke  ->  {0 1}
+C7  uplevel #0 [dict get $::xschem::notify_last command]  ->  sessions 1
+C8  with that session live, the SAME entry annotates: select_raw 1, mask 3, v(a) 3.14
+```
+
+The rendered sentence, derived end to end:
+
+> `ASE: Waves > Op Annotate did NOT annotate -- annotation is driven by ASE-L and
+> no ASE-L session is bound to this design or to any of its parents.
+> Fix: Tools > Launch ASE-L. CIW command: ase::launch_for_current`
+
+### What landed
+
+| piece | file | what |
+|---|---|---|
+| `ase::annot_binding_ok {{menupath {}}}` | `src/ase.tcl` | 1 iff `ase::session_for_current` yields a key; else speaks the refusal and returns 0 |
+| `ase::annot_no_binding_notice {menupath}` | `src/ase.tcl` | ONE `::xschem::notify` carrying `-tag error`, `-short {not annotated: no ASE-L}`, `-menu`, `-command` |
+| `annot_lbl_*` ×7 + `annot_menu_path_waves_op` / `annot_menu_path_graphs_op` / `annot_remedy_menu` | `src/xschem.tcl` | the label constants the menubar is now BUILT from, so the printed path and the widget are one string |
+| both producer bodies | `src/xschem.tcl` | WRAPPED whole in `if {[ase::annot_binding_ok …]} { … }`, guard first, **above** `select_raw` |
+
+Both rejected options are pinned by row **C1**: the entries still exist (deletion
+rejected) and are plain `-state normal` commands, not checkbuttons (toggle
+rejected).
+
+### ⚠ THE RULING'S "what this does NOT settle" WAS THE RIGHT WORRY, AND IT WAS PAID
+
+0675 is **live and reproducible**, and both the measure and the adversary pass hit
+it independently: in a `--nogui` process with `llength [info commands winfo]` = 0,
+`dict get $::xschem::notify_last sinks` still reads `{ciw log}`, and
+`::xschem::notify`'s return value was `1` in **every** arm including the one with no
+on-screen sink at all. A row asserting reachability through either would pass
+identically whether the refusal reached a human or reached nobody.
+
+So every reachability row reads a **sink**: `.ciw.l.t` text containment under X,
+`[xschem get top_path].statusbar.12 -text` with the CIW absent or withdrawn, and a
+grep of the `--logdir` `Xschem.log` file. The hardest arm was measured: `--nolog`
+on `:99` with `winfo exists .ciw` = 0 and `actionlog_filename` empty — the
+statusbar read back `not annotated: no ASE-L` verbatim. Sabotage variant **SAB-F**
+(the notice proc neutered, the guard left working) is the discriminator: the item
+still refuses, **C4 stays green**, and C5/C6/C7/C9 go red. A refusal nobody sees is
+detectable.
+
+The one remaining visibility hole is pre-existing and out of this item's fence:
+issue **0659** — a CIW that is mapped but stacked *behind* the design window.
+
+### What this does NOT cover
+
+The ruling's intent — no annotated-with-no-session state — is **not yet true**.
+[0809](0809-the-annotation-mask-leaks-into-a-new-window-with-a-null-stamp.md): the
+mask leaks into a new window/tab with a NULL stamp, and the orphan reproduces end
+to end through `File > Open in new window`. This item's honest claim is *"the
+plain-`File > Open` sequence ends clean and both stock producers refuse"*.
+
+And [0686](0686-ase-ui-close-leaves-the-design-annotated-after-the-session-is-gone.md)
+was deliberately left open (decision **D8**) — the state it leaves is recoverable by
+the road the new refusal message names.

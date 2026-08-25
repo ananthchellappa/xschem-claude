@@ -2243,6 +2243,20 @@ typedef struct {
                    * (hide=voltage and content-classified node voltages). Independent of
                    * show_hidden_texts (decision D3). See text_hidden() in actions.c and
                    * the grouping in annot_class_mask beside it MIRRORED IN TCL*/
+  char *annot_root; /* 0688: the ROOT schematic (xctx->sch[0]) the mask above was
+                   * armed for, my_strdup'd, NULL when the mask is off or when it
+                   * was never armed through the C setter. The mask is per-CONTEXT
+                   * (a WINDOW), but an ASE-L session's only handle on its design is
+                   * a cellview PATH, so `File > Open` in the design window used to
+                   * leave the mask on over a completely different sheet with every
+                   * session-side reader answering 0 -- annotation nobody could turn
+                   * off. This stamp is what makes "the mask belongs to THAT sheet"
+                   * a fact the load path can check. Written ONLY by annot_show_set()
+                   * and never adopted lazily (decision D2: at startup sch[0] is
+                   * <launchdir>/untitled.sch and the rc sync runs BEFORE the CLI
+                   * file loads, so an adopting sync would stamp untitled.sch and
+                   * then silently clear an `set annot_show` done in xschemrc).
+                   * NOT mirrored in Tcl; read back with `xschem get annot_root`. */
   int annot_voltage_layer; /* 0615: the layer a CONTENT-classified node voltage renders
                    * in, overriding the symbol text's own layer=. Default 9 (#ffffff on
                    * the default dark palette, which is what the user asked for; #00aaaa
@@ -3219,6 +3233,17 @@ extern int text_hidden(int flags, int ctx);
  * -1 == "no override, use the layer you already computed". */
 extern int annot_text_layer(int flags, int ctx);
 extern void annot_show_sync_cache(void);
+/* 0688 -- THE ONE C WRITER of the annotation mask (invariant I1), and the one
+ * checker that drops it when the window's ROOT sheet changes underneath it.
+ * annot_show_set() writes xctx->annot_show, the Tcl mirror ::annot_show AND the
+ * xctx->annot_root stamp, so no caller can arm the mask without recording what
+ * it was armed for. annot_show_check_root clears the mask (through that same
+ * setter) when the stamp no longer names xctx->sch[0]; it is called from the
+ * deterministic load seam in save.c and from annot_show_sync_cache() as the
+ * backstop for root changes that never run load_schematic(). It touches NO
+ * waveform database -- one int, one Tcl var and one path. */
+extern void annot_show_set(int mask);
+extern void annot_show_check_root(void);
 /* ---------------------------------------------------------------------------
  * S9 -- THE DRAW-TIME OP-ANNOTATION OVERLAY (doc/claude/specs/op_annotation.md).
  * ONE shared reader, three thin call sites (draw.c, svgdraw.c, psprint.c). Every
