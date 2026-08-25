@@ -221,3 +221,69 @@ report if the honest fix needs it.
 | 4 | 0689 + 0690 | queued |
 | 5 | 0672 + 0673 | queued |
 | — | 0683 + 0688 | NOT queued — needs the user's ruling |
+
+
+---
+
+## 0691 + 0692 — SHIPPED `3df8eda0`, with a residual its own crew escalated
+
+Verified by the lead: **test_ase_window 208, test_ase_dialogs 172, test_op_annot
+342, test_ase_final 78 — all pass**, counts matching, no sabotage residue.
+
+Both filed defects are closed. The sweep clause found **three more** instances of
+the fabricated-witness class — **0693** (`design_window` / `raise_window_entry`
+report a raise they never verified), **0694** (`toggle_flag` discards the write's
+answer and returns nothing), **0696**. That class is now at six known instances on
+this branch, which is past the point of fixing them one at a time; a systematic
+pass is worth queueing once the user's ruling backlog clears.
+
+### The crew raised the severity of its own residual before shipping
+
+`0695` was filed as a cosmetic display lag. The same crew's write-up pass struck
+through its own sentence — *"the display lag is not a data-loss defect once OK and
+ESC are honest"* — and marked the issue **BLOCKING**, because the lag has a data
+consequence reachable through two shipped menu items:
+
+```
+WU-B2  box_at_open=1  load_rc=1  live_after_load=0  box_still=1  ok_rc=1  gate_after_ok=0
+```
+
+**The user sees a TICKED box, presses OK, and the setting goes OFF.** Before last
+night the dialog was WYSIWYG-but-stale; now the widget and the action *disagree*.
+That is a worse failure than the one 0692 fixed.
+
+An agent contradicting its own earlier finding, in writing, before it could do
+harm, is the behaviour this process exists to produce. Recorded so the pattern is
+visible and not just the defect.
+
+### Why this was fixed rather than banked for the ruling
+
+The crew asked whether to land the display refresh as a follow-up or hold 0692
+until the checkbutton follows live state. **Neither — it goes now.** "What the
+user sees must be what OK writes" is not a product choice with two defensible
+answers; it is a defect with one. The genuinely open part (how "touched" is
+tracked once the variable can move underneath the user) is inside the fix and is
+being decided by measurement, with the rejected alternatives stated.
+
+The user's ruling backlog is for decisions only they can make. Padding it with a
+defect that has one right answer would waste the morning they set aside.
+
+## Dispatched: 0695 + 0696 — `wvydub20r`
+
+Together because both hinge on the same question — what the dialog treats as the
+user's intent versus the live state — and separate fixes risk two incompatible
+answers to it. **0696 is also new as of `3df8eda0`**: ESC now prints a discard
+notice for a setting that did apply and is still applied.
+
+| # | item | state |
+|---|---|---|
+| ~~0682~~ | | DONE `4d4d745d` |
+| ~~0683+0684~~ | | REFUTED + REVERTED `85cd3e7e`, both OPEN |
+| ~~0679~~ | | DONE `cef8706a` |
+| ~~0691+0692~~ | | DONE `3df8eda0` |
+| 1 | **0695 + 0696** | **IN FLIGHT** `wvydub20r` |
+| 2 | 0674 + 0675 + 0677 | queued |
+| 3 | 0681 | queued |
+| 4 | 0689 + 0690 | queued |
+| 5 | 0672 + 0673 | queued |
+| — | 0683 + 0688 | NOT queued — needs the user's ruling |
