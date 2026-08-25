@@ -44,3 +44,49 @@ If 0682 lands complete, 0683 stays at #3 on its own merits.
 3. Every commit of the night re-verified independently, not on the crew's own
    report. `94c507fc` shipped with its issue header still reading `Status: OPEN`;
    that was caught by reading the file, not by trusting the summary.
+
+
+---
+
+## Re-ordered 00:12, after 0682 reported
+
+0682 landed as `4d4d745d` and was re-verified independently (test_annot_show_menu
+10, test_ase_window 199, test_op_annot 342 — all pass on a second run, net
+coverage across the three 543 -> 544). Its handling of the deletion trap was
+correct and is worth copying: rows B1-B8 assert the View pair is GONE, and B9/B10
+assert the replacement OWNER EXISTS, so "B1-B8 pass while B9/B10 fail" is
+detectably *deleted a control and built nothing*.
+
+**But it shipped a hole, and the queue is re-ordered for it.**
+
+`Waves > Op Annotate` (`src/xschem.tcl:15391`, `:15408`) still turns annotation
+ON, while the View pair that used to turn it off is gone and the ASE-L entries are
+greyed without a session raw. **The tree can currently reach "annotated ON, no
+menu anywhere turns it off"** — which is issue 0457's original complaint,
+reinstated by the commit meant to honour the ruling that replaced it.
+
+Its crew also filed **0684**: `ase::ui::annot_ensure_loaded` guards on *raw
+loaded*, so it can display the **previous run's** operating-point numbers
+indefinitely, and an unrelated waveform raw blocks the attach entirely. Stale
+numbers presented as current is the worst failure mode an analog tool has, and a
+worse invariant-I3 violation than the blank I3 was written about.
+
+| # | item | change |
+|---|---|---|
+| 1 | ~~0682~~ | **DONE**, `4d4d745d`, independently verified |
+| 2 | **0683 + 0684 as ONE crew** | **PROMOTED**, dispatched 00:12 as `w0yjvej6p`. 0684's header calls 0683 "the other half"; fixing either alone leaves the binding half-done |
+| 3 | 0679 | slides from #2 |
+| 4 | 0674 + 0675 + 0677 | unchanged |
+| 5 | 0681 | unchanged |
+| 6 | 0672 + 0673 | unchanged |
+
+The 0683+0684 crew is told explicitly: **if the only way it can find to close 0683
+is a `View > Show / Hide` entry, it must STOP and report that**, not ship it. The
+user ruled that menu out; a crew quietly restoring it to reach green would be
+this branch's defining defect committed on purpose.
+
+## For the morning, in one line
+
+The tree has a **live user-visible regression** between `4d4d745d` and whatever
+closes 0683: annotation can be switched on with no menu to switch it off. If the
+0683+0684 crew does not land cleanly, that is the first thing to look at.
