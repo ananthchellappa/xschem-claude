@@ -1,8 +1,15 @@
 # 0678 — a voltage source's current is device OP info, so it belongs to `6`, not `Alt-6`
 
-Status: OPEN. **A RULING REVERSAL, not a coding slip** — the code does exactly what
-decision D4 said. Reported by the user 2026-08-24 from the 0614/0615 eyes-on look.
-Related: 0613 (where the wrong grouping entered), 0614, 0615, 0621.
+Status: **FIXED 2026-08-24, commit `94c507fc`** — shipped and independently
+re-verified (test_op_annot 342 ALL PASS, test_annot_show_menu 26 ALL PASS,
+test_launch_context ALL PASS, on :99 with openbox 3.6.1 live). **A RULING
+REVERSAL, not a coding slip** — the code did exactly what decision D4 said.
+Reported by the user 2026-08-24 from the 0614/0615 eyes-on look.
+Residual filed as **0681** (three shipped floaters moved chord with no test row,
+under a committed test comment that says none moved). The View-menu label question
+this issue raised is **MOOT** under **0682**, which moves the control out of the
+View menu entirely; its rule debt stands until the user clears it.
+Related: 0613 (where the wrong grouping entered), 0614, 0615, 0621, 0681, 0682.
 
 ## The user's report, verbatim
 
