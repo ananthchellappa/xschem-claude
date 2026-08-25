@@ -228,3 +228,70 @@ The dump directory is the oracle: reproduce hard, then check whether a **new**
 * The driver's speculation that the action-log replay failed to reproduce "because the
   log records the command, not the event" was **plausible but not the reason**. The
   reason is that `:99` and `:0` are different servers that do not crash.
+
+---
+
+## 2026-08-24 17:51 — the server log names the failure, and it is not GL
+
+Crash #10 landed at 17:49 (`vcxsrv.exe.24188.dmp`). VcXsrv rotates its log on
+restart, so the crashing run survives verbatim as
+`/mnt/c/Users/anant/AppData/Local/Temp/VCXSrv.0.log.old`. Its tail:
+
+```
+Using Composite redirection
+winCreateDIB: CreateDIBSection() failed        <- x27
+winBltExposedWindowRegionShadowGDI - BitBlt failed: 0x6
+winCreateDIB: CreateDIBSection() failed
+```
+
+Then the process is gone. That is the whole story of the run: everything before
+`Using Composite redirection` is ordinary startup, and every line after it is a
+GDI allocation failing.
+
+* `CreateDIBSection()` is the Win32 call that allocates a device-independent
+  bitmap. Under `-compositewm` VcXsrv allocates one per redirected window and
+  reallocates on resize. Zooming a schematic churns the backing pixmap.
+* `BitBlt failed: 0x6` is `ERROR_INVALID_HANDLE` — the blit is reading the DIB
+  that the preceding `CreateDIBSection` failed to produce. So the server keeps
+  running against a null handle for a few frames and then dies.
+
+**This displaces the earlier `Wgl="True"` hypothesis, which a test had already
+disproven.** It also corrects a claim made in this file from the Aug-15
+`vcxsrv_dbg.log`: that GL was falling back to `swrast`. Both the crashing run and
+the current one print
+
+```
+(II) 670 pixel formats reported by wglGetPixelFormatAttribivARB
+(II) GLX: Initialized Win32 native WGL GL provider for screen 0
+```
+
+— native WGL, not software. The `IGLX: swrast` lines belong to a *different*
+configuration from Aug 15 and should not have been carried forward as evidence
+about this crash.
+
+### The single-variable test now running
+
+Server restarted 17:50 with the user's original flags plus one addition:
+
+```
+-multiwindow -clipboard -primary -ac -wgl -nocompositewm
+```
+
+`-nocompositewm` is independent of `-multiwindow` (confirmed against the flag
+list), so multi-window mode is retained — the user's normal working layout is
+unchanged, which matters because a config they would not actually use cannot
+falsify anything about the config they do.
+
+Confirmation the flag took: the new `VCXSrv.0.log` has **no** `Using Composite
+redirection` line.
+
+Falsification plan, one variable per round:
+
+| round | change from the user's original | predicted if DIB churn is the cause |
+|---|---|---|
+| 1 | `+ -nocompositewm` | survives |
+| 2 | back to `-compositewm` alone | crashes again (positive control) |
+| 3 | `-swcursor` | no effect |
+
+Round 2 is not optional. A survival in round 1 with no positive control is the
+same shape of non-result as the four invalid drive attempts recorded above.
