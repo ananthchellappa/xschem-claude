@@ -111,7 +111,38 @@ three-term test and is the obvious donor.
    the load where the new data actually arrives, and makes the tick cheap again.
    Largest blast radius: it changes what a completed run does to the design.
 
-Recommendation, unratified: **(1)**, because it is the only one that keeps both of
+### ⚠ THE USER ASKED THE RIGHT QUESTION AND IT REFUTES THIS SECTION'S FRAMING
+
+2026-08-25, asked to choose, the user did not pick one:
+
+> A run that finishes is an event. It should trigger such things as these updates
+> of annotation info, etc. What does "run-just-finished" currently trigger?
+
+Measured, `ase::ui::run_finished` (`src/ase_window.tcl:4623`), on exit code 0:
+
+```tcl
+ase::session_setattr $key results [ase::last_result]
+ase::ui::refresh_output_values $key
+ase::ui::set_status $key ok
+after idle [list ase::ui::auto_plot_idle $key]
+```
+
+It **already** re-reads the results, refreshes the output values, and auto-plots.
+**Annotation is the only consumer of new results that is NOT on this event.**
+
+Option (3) is therefore described wrongly above. "Largest blast radius ... it
+changes what a completed run does to the design" is false: a completed run already
+updates outputs and redraws plots. Putting annotation there makes it
+**consistent**, not exceptional — and it is the only option that removes the
+staleness question instead of managing it, because the tick stops being a data
+operation at all.
+
+**Direction taken: (3)**, on the user's reasoning, in the absence of an objection.
+The residual to MEASURE rather than assume: whether a completed run should refresh
+annotation on a design whose annotation is currently OFF (cheap and harmless, or a
+surprise?).
+
+Superseded recommendation, kept for the record: **(1)**, because it is the only one that keeps both of
 D8's promises (the numbers are live, and a good database is never thrown away),
 and because the correct predicate already exists and would otherwise be a fourth
 copy of a question this codebase already asks three ways.
