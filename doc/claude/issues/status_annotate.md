@@ -123,6 +123,17 @@ Three days of work built a real notification channel (0650, 0658) and it is
   **cannot** carry the menu-path-plus-command sentence ruling R-0653-d requires.
 * **0664 / 0665 / 0666** — introduced by 0658's own fix. One notice can write
   **two** durable lines, and can claim "DEGRADED" while the channel is fully live.
+* **0674 / 0675 / 0677** — batched and **attempted 2026-08-25; reverted** (§6d).
+  Still open. **0675 is the one that makes the rest matter**: the announcement
+  measures PROC IDENTITY, not SINK REACHABILITY, so the channel can be ALIVE by
+  its own test and reach nobody, silently. Measured at HEAD: `degraded=0`,
+  `notify` returns 1, witness `sinks={ciw log}`, and **zero** sinks reached.
+* **0800** — the popup sink is the one nothing measures: an **iconified**
+  `.xschem_notify` is still recorded as a reached sink. Bears on ratification
+  [0650](b) — a ruling for `::notify_style popup` makes it the *only* on-screen
+  sink.
+* **0699** — `notify_log` returns 1 and the witness names `log` while
+  `actionlog_suppress` discards every byte. The sink the table calls "always".
 
 Net effect: **the machinery to tell you why an annotation is blank now exists,
 and there is no reliable place for it to appear.** That is the single most
@@ -381,10 +392,56 @@ arm replaces a clean session's state from disk without firing the notify hook �
 0695's symptom survives on that one path, and the title's dirty marker and status
 bar do not refresh either) and **0698** (`test_ase_final` passes `--nogui` and
 aborts under X; pre-existing, and invisible because the branch baseline only ever
-ran it headless). **Next free number: 0699 — and after 0699 it is 0800.**
+ran it headless). **Next free number: 0699** *(now 0802 — see §6d)*.
 
 Full record: issues `0695-*.md` / `0696-*.md` (both §RESOLUTION), plan block
 "✅⚠ 0695+0696 — LANDED 2026-08-25", spec §0692 and the ratification table.
+
+## 6d. 0674 + 0675 + 0677 — attempted, refuted, reverted 2026-08-25
+
+The notify-channel cluster, batched deliberately: **four crews had filed 24 issues
+against this one channel and closed 6**, each seeing only its own slice and each
+filing the next crew's work. Batching was right. The fix was not.
+
+A complete pure-Tcl implementation reached **188 / 55 / 23 / 79 / 214 / 174** ALL
+PASS across six suites with a trustworthy 8-variant sabotage matrix, then failed
+its own acceptance under adversarial probing and was **reverted in full**. `src/`
+is byte-identical to `e9232ec3`; suites re-verified after the revert at
+**172 / 48 / 22 / 78 / 214 / 174**; T1 and T2 unmoved; no build run or needed.
+
+It built exactly what the brief asked for — **ONE** predicate,
+`xschem::notify_reach`, answering "can a notice reach a human right now" per sink
+over `visible | blind | dead | off`, consumed by both sink gates and all three
+announcements, plus a third voice (`NOTICE CHANNEL UNREACHABLE`), one channel
+exit, two **existing** I1 breaches collapsed, and 0662 closed.
+
+**The refutation, re-measured by the write-up agent before reverting:** three arms
+probed the widget actually written; the **fourth asserted**. The popup arm never
+looked at `.xschem_notify`. So in the shipped opt-in `popup` style, with the other
+sinks destroyed and one ordinary click (`wm iconify`), the channel passed its
+**own new test**, returned "delivered", named a sink, reached nobody, and said
+nothing — verbatim the state the brief demanded the red phase construct. The
+item's whole subject survived into its own fix as a better-hidden instance.
+
+The 1885-line diff is preserved and re-appliable at
+`doc/claude/evidence/0674_0675_0677_attempt/`. **Most of it is right.**
+
+Filed by this crew: **0699** (`notify_log` claims the durable sink while
+`actionlog_suppress` discards every byte), **0800** (the popup mark claims an
+iconified popup — HEAD-level, 0662's shape one sink over) and **0801**
+(`test_ase_window` is load-sensitive: 2 red in 48 runs, and 3/3 red on **pristine**
+code under 12-way load). **Next free number: 0802.** ⚠ The sequence across the
+reserved block is **0698 · 0699 · 0800 · 0801 · 0802** — never 0700.
+
+Rule debts **[0650] [0655] [0664] [0677]** restated, never answered; three `look`
+debts added. Nothing cleared, converted or discharged.
+
+Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, block
+"❌ 0674+0675+0677 — ATTEMPTED, MEASURED GREEN, AND REVERTED"; issues **0674**,
+**0675**, **0677** (each §2026-08-25); spec §the notify channel + ratification
+row 0650.
+
+---
 
 ## 7. A note on elapsed time, so the next long run is not a mystery
 

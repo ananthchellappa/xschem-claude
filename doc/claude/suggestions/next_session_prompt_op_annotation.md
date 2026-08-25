@@ -8,6 +8,141 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ❌ 0674+0675+0677 — **ATTEMPTED, MEASURED GREEN, AND REVERTED 2026-08-25 (status F)**. THE NOTIFY CHANNEL IS STILL UNFIXED
+
+**Not a plan step.** The notify-channel cluster, batched deliberately: four crews
+had filed **24 issues against this one channel and closed 6**, each seeing only
+its own slice and each filing the next crew's work. Batching was right. **The fix
+was not, and it is reverted — `src/` is byte-identical to `e9232ec3`.**
+
+### READ THIS BEFORE YOU TOUCH THE CHANNEL AGAIN
+
+The attempt built exactly what the brief asked for: **ONE** predicate,
+`xschem::notify_reach`, answering "can a notice reach a human right now" as a
+per-sink `{state reason}` dict over `visible | blind | dead | off`, consumed by
+sink 1's mark, by `notify_ciw_visible`, and by all three announcements; plus a
+third voice (`NOTICE CHANNEL UNREACHABLE`), `notify_done` as the channel's one
+exit, `notify_log_open`/`notify_line` collapsing two **existing** I1 breaches,
+`notify_safe` widened to `{msg args}`, and 0662 closed. Six suites green:
+`test_ase_core` 172→**188**, `test_ase_log_seam_0207` 48→**55**,
+`test_startup_guard_0663` 22→**23**, `test_ase_final` 78→**79**,
+`test_ase_window` 214, `test_ase_dialogs` 174. Sabotage 8 variants, trustworthy.
+
+**It was refuted by its own adversary leg, and the write-up agent re-measured the
+refutation before reverting.** Three arms probed the widget actually written. The
+**fourth asserted**: the popup arm was `!$tk → dead(no-Tk); else → visible`, and
+never looked at `.xschem_notify`. On `:99`, openbox live, in the shipped opt-in
+`popup` style, with the other two sinks destroyed and **one ordinary click**:
+
+```
+AFTER-ICONIFY: exists=1 mapped=0 state=iconic
+degraded=0
+reach=sinks now: ciw=dead(no-pane) log=blind(...) statusbar=dead(no-widget) popup=visible
+notify_returned=1   witness_sinks={log popup}
+NOTICE CHANNEL UNREACHABLE = 0   DEGRADED = 0   FAULT = 0
+```
+
+The channel passes its **own new test**, reports delivered, names a sink, and
+reaches nobody **in silence** — verbatim the state the brief demanded the red
+phase construct. The whole point of the item survived into the shipped code as a
+new, better-hidden instance of itself.
+
+**The diff is preserved and re-appliable:**
+`doc/claude/evidence/0674_0675_0677_attempt/rejected_attempt.patch` (1885 lines).
+**Most of it is right. Start from it, do not start over.**
+
+### WHAT A LATER CREW MUST CARRY
+
+1. **THE ARM YOU DO NOT TEST IS THE ARM THAT IS WRONG.** No committed row ever
+   exercised `popup=visible` — `grep -rn 'popup=visible' tests/headless/*.tcl` = 0
+   hits. NT32 ran `--nogui` (so its popup golden was `off(style-ciw)`), PS37 pinned
+   the style to `ciw`. Every arm of a predicate needs a row on its **`visible`**
+   branch, not only its dead ones.
+2. **A SINK PREDICATE MUST PROBE THE WIDGET THAT IS ACTUALLY WRITTEN.** That was
+   the cluster's original lesson (`notify_ciw_visible` probed `.ciw` while
+   `ciw_echo` writes `.ciw.l.t`) and the attempt **re-committed it one sink over**.
+   Filed as **0800**, which is HEAD-level: `notify_popup` returns 1 into an
+   iconified toplevel and sink 4's mark is ungated at HEAD too.
+3. **THREE SABOTAGE ROWS WERE OVER-PREDICTED** — real coverage holes, all still
+   true of the patch. `PS39` asserts only against the value `notify_reach_line`
+   *returned*, so muting the third voice cannot redden it. `PS40`'s non-vacuity
+   term counts **all three** markers together, so the UNREACHABLE line can vanish
+   entirely while it passes. `NTD16`'s tuple is only
+   `{child-status rc ret log-count}`, so stripping `{*}$args` leaves it green —
+   it proves delivery, never that the **options arrived**.
+4. **THE LATCH NEVER RE-ARMS ON A RETURN.** `notify_latch_ok` stores
+   `{subject state}` forever, so unreachable → reachable → unreachable announces
+   **once, total**. PS38 tested only the forward direction, and the source comment
+   asserted the opposite of the behaviour. Decide which you mean and test it.
+5. **WIDENING `notify_safe` TO `{msg args}` HAS TWO EDGES.** It forwards
+   `{*}$args` into a channel that **raises on an unknown option**, so a typo at any
+   call site writes a durable `NOTICE CHANNEL FAULT` and silently downgrades the
+   notice to the bootstrap, losing `-short`/`-menu`/`-command` (measured). And
+   moving `ase.tcl:778` onto it **deleted that site's local `catch`** while
+   `notify_safe`'s own first statement (`xschem::notify_mark_reset`) is uncaught —
+   a missing helper then costs the whole OP-card block, which is 0674's failure
+   through a different door. Both callers (`ase.tcl:181`,
+   `wave_viewer.tcl:773`) pass the tag **positionally** and must move in the same
+   commit or the tag becomes an option name.
+6. **ANCHORS ARE STALE IN ALL THREE ISSUE FILES, AND CORRECT IN THE SCOUT REPORT.**
+   `proc xschem::notify` is `ciw.tcl:256` (issues say 246); `ciw_echo` is
+   `ciw.tcl:464` (issues say 120–121); the one direct product call site is
+   `ase.tcl:778` (0674 says 692); the caught `source ciw.tcl` is `xschem.tcl:15003`
+   (issues say 14854); `ciw_create` is `xschem.tcl:17038` (issues say 16705/16920).
+7. **`NT22`, `NT23` AND `NT29` REQUIRE THE FALSE `ciw` MARK.** Any fix that stops
+   sink 1 claiming an unreachable pane reddens all three. Re-anchor them on a
+   **seeded** `notify_mark` value (a value no sink could have produced), not on
+   `[llength [nt_progress]] > 0`. NT23 was missed by the red phase and caught only
+   on the first suite run.
+8. **`actionlog_suppress` IS INVISIBLE FROM TCL** — setter only
+   (`scheduler.c:11733`), no getter — so the durable sink cannot be verified from
+   Tcl at all. Issue **0699**. Render it as an admission
+   (`log=blind(open,UNVERIFIED issue 0699)`), never as liveness.
+9. **NUMBER NEW ISSUES FROM 0801.** This crew filed **0699** (the
+   `actionlog_suppress` hole) and **0800** (the iconified-popup mark).
+   ⚠ **0700–0799 IS RESERVED — the sequence is 0698, 0699, 0800, 0801.**
+10. **CONCURRENT AGENTS MUTATED `src/xschem.tcl` DURING THIS RUN, FOR THE THIRD RUN
+    RUNNING.** The adversary's first two `test_ase_core` runs reproduced SAB-N13's
+    exact predicted reds while the shipped source had the `catch`. Every number in
+    this block was re-taken against a private `XSCHEM_SHAREDIR` snapshot with
+    `md5sum` verified. **Give sabotage its own tree, or serialize it.**
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | **L1 (I1)** | **ONE** `notify_reach`, four arms, consumed by every announcement and both sink gates | the four near-copies at HEAD — the arrangement that let four crews file 24 issues on one channel |
+| D2 | **L1 (I1)** | `notify_log_open` / `notify_line` collapse the **existing** duplicate `actionlog_filename` and message-render expressions | leaving them and adding a third copy inside `notify_reach` |
+| D3 | **L1 (I3)** | the completion branch records the REAL short/line, sentinel **`UNMEASURED`** when a builder is absent | today's hard-coded `{}` — a real empty short and "I did not look" become indistinguishable |
+| D4 | L2 | third voice `NOTICE CHANNEL UNREACHABLE` — contains **neither** golden substring | reusing FAULT (breaks six committed counts); one aggregate sentence (0497 rule 2 head-on) |
+| D5 | L2 | 0677(c) closed by a **static row** proving no sink writer can notify | a runtime depth counter — a raise between inc and dec mis-accounts the channel permanently, inside the one proc whose subject is surviving raises |
+| D6 | **L2 → overturned** | popup arm = Tk-presence | **THIS WAS THE DEFECT.** It must be `winfo exists .xschem_notify.t` / `winfo ismapped .xschem_notify`, and sink 4's mark gated on it |
+| D7 | **F** | **revert everything; commit only the write-up** | landing it as E — the adversary refuted the central claim, and "green suites" is exactly the evidence this cluster keeps producing while the channel lies |
+
+**Status F.** Nothing shipped to `src/`. Baseline re-verified **after** the revert:
+`test_ase_core` **172**, `test_ase_final` **78** (`--nogui`), `test_ase_window`
+**214**, `test_ase_dialogs` **174**, `test_startup_guard_0663` **22**,
+`test_ase_log_seam_0207` **48** — all ALL PASS, `grep -rn SABOTAGE src/` = 0.
+
+Rule debts **[0650] [0655] [0664] [0677]** were **RESTATED, never answered** — and
+[0650](b) is now sharper: a ruling for `::notify_style popup` promotes the one
+**unmeasured** sink (issue 0800) to the only on-screen one. Three `look` debts
+added by the Implement agent stand; **nothing was cleared, converted or
+discharged.**
+
+### STILL OPEN
+
+| # | what | where |
+|---|---|---|
+| 1 | the whole cluster — **all three issues remain OPEN** | `0674`, `0675`, `0677` |
+| 2 | the popup sink's mark claims an **iconified** popup (HEAD-level) | **issue 0800** |
+| 3 | `notify_log` claims the durable sink while `actionlog_suppress` discards every byte | **issue 0699** |
+| 4 | occlusion is **unmeasurable** — `ismapped`=1 for a CIW stacked behind the design window, so the vocabulary is REACHABLE, never SEEN | **issue 0659** |
+| 5 | the fallback's home, `::notify_style`'s default, FAULT-vs-DEGRADED wording, the no-log wording | rule debts `[0650] [0655] [0664] [0677]` |
+| 6 | `test_ase_window` showed **2 intermittent failures in 48 runs** (rows W1v2/W1v/W1x/W1z/W1za/W1zd), 0/28 on pristine, and fails 3/3 on **both** arms under 12-way load (`W7`) — a load-sensitive suite, **not** this item | unfiled; number from **0801** |
+
+---
+
 ## ✅⚠ 0695+0696 — LANDED 2026-08-25 (status **E**). THE BOX THAT FOLLOWS, AND THE ESC NOTICE THAT STOPPED LYING
 
 **Not a plan step.** Both were the 0691+0692 crew's own declared residuals, filed

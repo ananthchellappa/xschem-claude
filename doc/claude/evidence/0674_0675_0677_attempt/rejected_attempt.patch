@@ -1,0 +1,1885 @@
+diff --git a/src/ase.tcl b/src/ase.tcl
+index 7a02833c..d4d57590 100644
+--- a/src/ase.tcl
++++ b/src/ase.tcl
+@@ -178,7 +178,7 @@ namespace eval ase {
+ ## stderr is never counted as one (0658 D9), so 0 is the honest answer -- never
+ ## a 0 that merely means "I did not check".
+ proc ase::echo {msg {tag {}}} {
+-  if {[catch {::xschem::notify_safe $msg $tag} r]} {
++  if {[catch {::xschem::notify_safe $msg -tag $tag} r]} {
+     catch {puts stderr "xschem: notice channel unavailable: $r" ; flush stderr}
+     return 0
+   }
+@@ -764,21 +764,20 @@ proc ase::op_cards_capture {state netlistpath} {
+         if {$opk ne {}} { set opcmd [list ase::ui::save_op_params_on $opk] }
+         set opmenu {}
+         catch { set opmenu [ase::ui::remedy_op_params_menu] }
+-        ## ⚠ CAUGHT (issues 0664/0665, decision D10). This is a DIRECT call
+-        ## on the channel, not a delegate call, so notify_safe's guarantee does
+-        ## not cover it -- and src/ase.tcl:802's `catch {ase::op_cards_capture
+-        ## ...}` would swallow a raise here TOGETHER WITH THE ENTIRE OP-CARD
+-        ## BLOCK, silently killing the user's actually-reported 0617 nudge.
+-        ## 0665's fix adds a statement to the channel's ENTRY, so the hazard is
+-        ## one this change creates. notify_safe is NOT the answer here: it drops
+-        ## -short/-menu/-command, which R-0653-d keeps as distinct fields. The
+-        ## general class (every direct ::xschem::notify site carrying a remedy
+-        ## has no safe wrapper) is issue 0674.
+-        catch {
+-          ::xschem::notify "ASE: device operating-point parameters (gm, gds,\
+- vth, ...) were NOT saved in this deck (issue 0617)." \
+-            -short {no OP params saved} -menu $opmenu -command $opcmd
+-        }
++        ## ⚠ THE SAFE DELEGATE, AND NO `catch` OF ITS OWN (issue 0674).
++        ## This was a DIRECT call on the channel wrapped in a bare `catch`,
++        ## because notify_safe's `{msg {tag {}}}` signature could not carry
++        ## -short/-menu/-command -- the fields R-0653-d keeps DISTINCT. Measured:
++        ## with the channel raising, that shape landed ZERO durable lines, and
++        ## the catch here plus the `catch {ase::op_cards_capture ...}` below
++        ## destroyed the evidence twice over, silently killing the user's own
++        ## 0617 gate-off nudge. notify_safe now takes `{msg args}` and forwards
++        ## the whole notice; it never raises, so a catch here would only hide
++        ## the next defect. test_ase_final F19s3 drives this exact site with the
++        ## channel replaced by a raiser.
++        ::xschem::notify_safe "ASE: device operating-point parameters (gm, gds,\
++ vth, ...) were NOT saved in this deck (issue 0617)." -tag {} \
++          -short {no OP params saved} -menu $opmenu -command $opcmd
+       }
+     }
+     return {}
+diff --git a/src/ciw.tcl b/src/ciw.tcl
+index d8181af1..bcb80386 100644
+--- a/src/ciw.tcl
++++ b/src/ciw.tcl
+@@ -89,11 +89,24 @@ set_ne notify_style {ciw}
+ # Is the CIW pane actually IN FRONT OF THE USER? Not `winfo exists` -- see the
+ # refutation above. Under --nogui `winfo` itself is undefined; under --nolog
+ # ciw_create is never called (xschem.tcl:16705), so `.ciw` does not exist.
++#
++# ⚠ IT NO LONGER PROBES ANYTHING ITSELF (issue 0675). It asked the TOPLEVEL
++# `.ciw` while ciw_echo writes into the TEXT WIDGET `.ciw.l.t` -- two widget
++# paths for one fact, and the drift was silent: with `.ciw` still MAPPED and its
++# pane DESTROYED this answered 1, sink 3 was skipped, and the notice reached
++# NOBODY while notify_channel_degraded said the channel was fine. That is the
++# user's own measured state. There is now ONE predicate that answers "can a
++# notice reach a human right now" -- xschem::notify_reach, invariant I1 -- and
++# this is a THIN READER of its `ciw` arm, not a fourth near-copy of it.
++#
++# Re-measured on :99 with openbox 3.6.1 live: `winfo ismapped` for `.ciw` and
++# for `.ciw.l.t` is IDENTICAL across open (1/1), withdrawn (0/0) and iconified
++# (0/0), so every committed sink-selection row is unmoved
++# (PS14/PS16/PS17/PS19/PS24/PS25/PS26/PS34). Exactly ONE state changes, and it
++# is the one that was broken.
+ proc xschem::notify_ciw_visible {} {
+-  if {![llength [info commands winfo]]} { return 0 }
+-  if {![winfo exists .ciw]} { return 0 }
+-  if {[catch {winfo ismapped .ciw} m]} { return 0 }
+-  return [expr {$m ? 1 : 0}]
++  if {[catch {dict get [xschem::notify_reach] ciw} a]} { return 0 }
++  return [expr {[lindex $a 0] eq {visible} ? 1 : 0}]
+ }
+ 
+ # THE SHORT-FORM BUDGET, one builder, two consumers (invariant I1: the sink and
+@@ -287,22 +300,35 @@ proc xschem::notify {msg args} {
+     if {![xschem::notify_latch_ok $once $state]} { return 0 }
+   }
+ 
+-  ## the rendered sentence: message, then the remedy, in that order
+-  set line $msg
+-  if {$msg ne {}} {
+-    if {$menu ne {}}    { append line " Fix: $menu." }
+-    if {$command ne {}} { append line " CIW command: $command" }
+-  }
++  ## the rendered sentence: message, then the remedy, in that order.
++  ##
++  ## ⚠ THE BUILDER LIVES IN src/xschem.tcl (invariant I1, issue 0677 (b)).
++  ## notify_safe's completion branch has to render the SAME sentence for its
++  ## witness, and it used to hard-code the RAW message instead -- a second
++  ## builder that 0674's widening (a delegate that can now carry -menu and
++  ## -command) is precisely what would have made visible.
++  set line [xschem::notify_line $msg $menu $command]
+ 
+   ## SINK 1 -- the CIW pane. First, unconditional, catch'd, and resolved by NAME
+   ## at call time (that is the rename-able spy point every ASE suite stubs).
++  ##
++  ## ⚠ THE CALL IS UNCONDITIONAL; THE *CLAIM* IS NOT (issue 0662). Marking
++  ## `ciw` because ::ciw_echo merely FAILED TO RAISE meant nothing at all:
++  ## ciw_echo's first statement is a SILENT `return` when `.ciw.l.t` is absent,
++  ## so `sinks {ciw}` was measured in a --nogui session with no Tk and no pane.
++  ## The mark now asks the ONE predicate whether a pane existed to receive the
++  ## text. `blind` STILL COUNTS -- a withdrawn pane really does receive it
++  ## (PS17/PS19 pin that Tk fact); only `dead` is a lie.
+   if {[info commands ::ciw_echo] ne {}} {
+-    if {![catch {::ciw_echo $line $tag}]} { set sinks [xschem::notify_mark ciw] }
++    set pane dead
++    catch {set pane [lindex [dict get [xschem::notify_reach] ciw] 0]}
++    if {![catch {::ciw_echo $line $tag}] && $pane ne {dead}} {
++      set sinks [xschem::notify_mark ciw]
++    }
+   }
+ 
+   if {$msg eq {}} {
+-    xschem::notify_record $tag $msg $line {} $menu $command $sinks
+-    return 1
++    return [xschem::notify_done $tag $msg $line {} $menu $command $sinks]
+   }
+ 
+   ## SINK 2 -- the action log FILE.
+@@ -333,8 +359,7 @@ proc xschem::notify {msg args} {
+   if {[info exists ::notify_style]} { set style $::notify_style }
+   set shortform [xschem::notify_short $short $msg]
+   if {[string trim $line] eq {}} {
+-    xschem::notify_record $tag $msg $line $shortform $menu $command $sinks
+-    return 1
++    return [xschem::notify_done $tag $msg $line $shortform $menu $command $sinks]
+   }
+   if {$style eq {popup}} {
+     if {[xschem::notify_popup $line $tag]} { set sinks [xschem::notify_mark popup] }
+@@ -353,8 +378,7 @@ proc xschem::notify {msg args} {
+     if {[xschem::notify_statusbar $shortform $tag]} { set sinks [xschem::notify_mark statusbar] }
+   }
+ 
+-  xschem::notify_record $tag $msg $line $shortform $menu $command $sinks
+-  return 1
++  return [xschem::notify_done $tag $msg $line $shortform $menu $command $sinks]
+ }
+ 
+ ## Command history state (Up/Down in the entry). hist_pos == llength(history)
+diff --git a/src/wave_viewer.tcl b/src/wave_viewer.tcl
+index 48860a3b..bcb1f3e3 100644
+--- a/src/wave_viewer.tcl
++++ b/src/wave_viewer.tcl
+@@ -770,7 +770,7 @@ namespace eval wviewer {
+ ## stderr is never counted as one (0658 D9), so 0 is the honest answer -- never
+ ## a 0 that merely means "I did not check".
+ proc wviewer::echo {msg {tag {}}} {
+-  if {[catch {::xschem::notify_safe $msg $tag} r]} {
++  if {[catch {::xschem::notify_safe $msg -tag $tag} r]} {
+     catch {puts stderr "xschem: notice channel unavailable: $r" ; flush stderr}
+     return 0
+   }
+diff --git a/src/xschem.tcl b/src/xschem.tcl
+index fb416749..416d2d13 100644
+--- a/src/xschem.tcl
++++ b/src/xschem.tcl
+@@ -14709,6 +14709,188 @@ proc xschem::notify_mark_reset {} {
+   return {}
+ }
+ 
++## ---------------------------------------------------------------------------
++## THE ONE REACHABILITY PREDICATE, AND ITS TWO RENDERERS  (issues 0674/0675/0677)
++## ---------------------------------------------------------------------------
++## THE DEFECT, IN ONE SENTENCE (issue 0675): every liveness test this channel
++## owned measured PROC IDENTITY, and the question is SINK REACHABILITY. A
++## channel can be ALIVE by its own test and reach nobody -- measured three ways:
++##
++##   * `--nogui --nolog`: notify_channel_degraded 0, `xschem::notify` returns 1,
++##     the witness reads `sinks {ciw}`, with no Tk, no `.ciw.l.t` and no log;
++##   * on :99 with the CIW toplevel MAPPED and its text pane DESTROYED: the same
++##     three answers, the `.statusbar.12` fallback SKIPPED, and neither
++##     announcement in the log;
++##   * a ciw.tcl that fails PART-WAY through: three materially different failure
++##     points emitting the IDENTICAL `NOTICE CHANNEL FAULT` sentence, while
++##     `::ciw_echo` is present in one of them and absent in the others.
++##
++## FOUR NEAR-COPIES made that possible -- one question, four answers, and their
++## drift was silent (invariant I1): notify_ciw_visible probed the TOPLEVEL
++## `.ciw`; sink 1 marked `ciw` whenever `::ciw_echo` merely FAILED TO RAISE (and
++## ciw_echo's first statement is a SILENT `return` when `.ciw.l.t` is absent);
++## notify_statusbar probed its own widget; notify_channel_degraded asked
++## `info body`. TWO of them looked at `.ciw` while the writer writes `.ciw.l.t`.
++##
++## So: ONE predicate, and every consumer asks IT -- notify_ciw_visible (the
++## sink-3 gate), sink 1's mark, and all three announcements.
++##
++## ⚠ THE VOCABULARY IS REACHABLE, NEVER SEEN, and the difference is not
++## pedantry. `winfo ismapped` is 1 for a CIW stacked BEHIND the design window
++## (issue 0659, re-measured), 1 for a sash collapsed to zero height, and says
++## nothing at all about whether anyone is at the desk. This predicate can prove
++## a sink DEAD; it can NEVER prove a live sink was READ. `visible` therefore
++## means "a person could see it now", and that is the strongest honest claim
++## available from Tcl.
++
++## IS THE DURABLE LOG OPEN? -- THE ONE spelling of that test (invariant I1).
++##
++## ⚠ IT EXISTED TWICE BEFORE THIS PROC: byte-equivalent copies inside
++## notify_log's 0657 honesty gate and inside notify_degraded_once's no-log
++## branch -- an I1 breach shipped inside the very fix that cites I1, and this
++## expression is precisely where the `log` claim is either honest or a lie
++## (0657: `sinks = ciw log` reported under --nolog with no log at all). Adding a
++## third copy inside notify_reach would have made it three. ONE proc, THREE
++## consumers (test_ase_core NT40 fences exactly that).
++proc xschem::notify_log_open {} {
++  if {[catch {xschem get actionlog_filename} lf]} { return 0 }
++  return [expr {$lf ne {} ? 1 : 0}]
++}
++
++## THE ONE RENDERER of message + remedy (R-0653-d, invariant I1). Moved verbatim
++## out of src/ciw.tcl's channel so notify_safe's completion branch can record
++## the REAL rendered line instead of building a second copy of it -- which is
++## issue 0677 (b), and which 0674's widening (a delegate that can now carry
++## -menu/-command) is exactly what makes live.
++proc xschem::notify_line {msg menu command} {
++  set line $msg
++  if {$msg ne {}} {
++    if {$menu ne {}}    { append line " Fix: $menu." }
++    if {$command ne {}} { append line " CIW command: $command" }
++  }
++  return $line
++}
++
++## CAN A NOTICE REACH A HUMAN RIGHT NOW? -- one dict, four arms, four states.
++##
++##   ciw log statusbar popup  ->  {state reason}
++##
++##   state   visible : a person could see it NOW (never "did see it")
++##           blind   : the sink RECEIVES the text and no eye is on it -- a
++##                     withdrawn pane, a durable log file
++##           dead    : the sink is not there at all
++##           off     : ::notify_style did not select this sink for THIS notice
++##   reason  a token, or {} when `visible` needs no qualifier
++##
++## ⚠ THE REASON ORDER IS LOAD-BEARING, most-specific first. `no-ciw_echo` before
++## `no-Tk` is the ONLY thing that distinguishes a mid-file-broken ciw.tcl from a
++## plain headless run inside one `--nogui` child -- which is 0497 rule 2 (split
++## by CAUSE, never one aggregate) enforced inside a single sentence, and the one
++## fact HEAD's identical FAULT announcements never mentioned.
++##
++## ⚠ THE PANE ARM PROBES `.ciw.l.t`, THE WIDGET ciw_echo REALLY WRITES, never
++## the toplevel `.ciw`. Re-measured on :99 with openbox live: `ismapped` for the
++## two paths is IDENTICAL across open (1/1), withdrawn (0/0) and iconified
++## (0/0), so every committed sink-selection row is unmoved. Exactly ONE state
++## changes, and it is the user's: a mapped toplevel whose pane is gone.
++##
++## ⚠ THE LOG ARM IS NEVER `visible` -- a file is a record, not an audience --
++## and it ADMITS what Tcl cannot see. `actionlog_suppress` (src/util.c:540 gates
++## on it; src/scheduler.c:11733 is a SETTER with no getter) silently discards
++## every line while notify_log still returns 1, measured. Issue 0699 carries it;
++## until then the arm says UNVERIFIED rather than asserting liveness.
++##
++## It NEVER raises, and it reads ::notify_style at CALL time (invariant I5).
++proc xschem::notify_reach {} {
++  set degraded 1
++  catch {set degraded [xschem::notify_channel_degraded]}
++  set tk [expr {[llength [info commands winfo]] ? 1 : 0}]
++  set style ciw
++  if {[info exists ::notify_style]} { set style $::notify_style }
++  set d [dict create]
++
++  ## SINK 1 -- the CIW log pane. A degraded channel short-circuits every Tk arm,
++  ## which is what turns the DEGRADED sentence's "(no CIW pane, no status field,
++  ## no popup)" from an assertion into a measurement (issue 0664).
++  if {$degraded} {
++    dict set d ciw [list dead degraded-channel]
++  } elseif {[info commands ::ciw_echo] eq {}} {
++    dict set d ciw [list dead no-ciw_echo]
++  } elseif {!$tk} {
++    dict set d ciw [list dead no-Tk]
++  } elseif {[catch {winfo exists .ciw.l.t} e] || !$e} {
++    dict set d ciw [list dead no-pane]
++  } elseif {[catch {winfo ismapped .ciw.l.t} m] || !$m} {
++    dict set d ciw [list blind unmapped]
++  } else {
++    dict set d ciw [list visible {}]
++  }
++
++  ## SINK 2 -- the durable action log.
++  if {[xschem::notify_log_open]} {
++    dict set d log [list blind {open,UNVERIFIED issue 0699}]
++  } else {
++    dict set d log [list dead no-file]
++  }
++
++  ## SINK 3 -- the drawing window's shared red status field, addressed as
++  ## `[xschem get top_path].statusbar.12` and NEVER bare (a bare path posts to
++  ## the MAIN window while the user works in `.x1`).
++  if {$degraded} {
++    dict set d statusbar [list dead degraded-channel]
++  } elseif {!$tk} {
++    dict set d statusbar [list dead no-Tk]
++  } else {
++    set sw {}
++    if {![catch {xschem get top_path} tp]} { set sw "$tp.statusbar.12" }
++    if {$sw eq {} || [catch {winfo exists $sw} e] || !$e} {
++      dict set d statusbar [list dead no-widget]
++    } elseif {[catch {winfo ismapped $sw} m] || !$m} {
++      dict set d statusbar [list blind unmapped]
++    } else {
++      dict set d statusbar [list visible {}]
++    }
++  }
++
++  ## SINK 4 -- the opt-in non-blocking popup. `degraded-channel` OUTRANKS the
++  ## style gate deliberately: with the log-only fallback live the popup is not
++  ## merely unselected, it is gone, and the arm should say which.
++  if {$degraded} {
++    dict set d popup [list dead degraded-channel]
++  } elseif {$style ne {popup}} {
++    dict set d popup [list off style-ciw]
++  } elseif {!$tk} {
++    dict set d popup [list dead no-Tk]
++  } else {
++    dict set d popup [list visible {}]
++  }
++  return $d
++}
++
++## THE ONE RENDERER of that dict, and it is ONE PHYSICAL LINE.
++##
++## ⚠ NO EMBEDDED NEWLINE, EVER. log_output() (src/util.c:536) prefixes every
++## physical newline with its own `#! `, so a two-line inventory silently becomes
++## TWO durable lines -- 0665's one-notice-two-lines defect wearing a new coat,
++## and it reddens test_startup_guard_0663 SG14 from a distance.
++##
++##   sinks now: ciw=dead(no-pane) log=blind(open,UNVERIFIED issue 0699) ...
++proc xschem::notify_reach_line {} {
++  if {[catch {xschem::notify_reach} d]} { return {sinks now: UNMEASURED} }
++  set out {}
++  foreach s {ciw log statusbar popup} {
++    set st UNMEASURED ; set rs {}
++    if {[dict exists $d $s]} {
++      set a [dict get $d $s]
++      set st [lindex $a 0]
++      set rs [lindex $a 1]
++    }
++    ## ⚠ ${st} IS BRACED: a bare `$st(...)` is an ARRAY REFERENCE to Tcl.
++    if {$rs eq {}} { lappend out "$s=$st" } else { lappend out "$s=${st}($rs)" }
++  }
++  return "sinks now: [join $out { }]"
++}
++
+ ## IS THE LIVE NOTICE CHANNEL THE LOG-ONLY FALLBACK? -- the MEASUREMENT behind
+ ## the announcement (issue 0664, which is 0652's defect class: a report that
+ ## LIES). The old announcement asserted "notices are LOG-ONLY from here on (no
+@@ -14723,10 +14905,22 @@ proc xschem::notify_mark_reset {} {
+ ## same discriminator test_ase_core NT16 and test_ase_log_seam_0207 PS20 already
+ ## use to prove the bootstrap was OVERRIDDEN, so the product and the tests now
+ ## measure the identical fact.
++##
++## ⚠ A COMMENT IS NOT AN IMPLEMENTATION (issue 0677 (d)). `info body`
++## INCLUDES COMMENTS, so a body that merely MENTIONS the name in a comment --
++## one line, on byte-for-byte identical code -- flipped this answer from 0 to 1
++## and with it every announcement, to the false DEGRADED claim. Measured. The
++## comment lines are dropped before the grep; the real wrapper is a `return`
++## and survives it (test_ase_core NT34 pins both halves in one row).
+ proc xschem::notify_channel_degraded {} {
+   if {[info commands ::xschem::notify] eq {}} { return 1 }
+   if {[catch {info body ::xschem::notify} b]}  { return 1 }
+-  return [expr {[string first notify_bootstrap $b] >= 0 ? 1 : 0}]
++  set code {}
++  foreach l [split $b \n] {
++    if {[string index [string trimleft $l] 0] eq {#}} continue
++    lappend code $l
++  }
++  return [expr {[string first notify_bootstrap [join $code \n]] >= 0 ? 1 : 0}]
+ }
+ 
+ ## THE ONE DURABLE-LOG WRITER, consumed by ciw.tcl's sink 2 AND by the bootstrap
+@@ -14752,7 +14946,7 @@ proc xschem::notify_log {line tag} {
+   set lmsg [string trimright $line "\n"]   ;# log_output supplies the terminator
+   if {$lmsg eq {}} { return 0 }
+   if {[string index $lmsg end] eq "\\"} { append lmsg { } }
+-  set logopen [expr {![catch {xschem get actionlog_filename} lf] && $lf ne {}}]
++  set logopen [xschem::notify_log_open]
+   if {$tag eq {error}} {
+     if {[catch {xschem log_action -error $lmsg}]}  { return 0 }
+   } else {
+@@ -14810,7 +15004,7 @@ proc xschem::notify_degraded_once {cause} {
+     set l "NOTICE CHANNEL FAULT: $cause. Measured: the live xschem::notify is\
+  the full channel, not the log-only fallback. NOT measured, and therefore NOT\
+  claimed: which sinks any later notice reaches -- if this cause persists, later\
+- notices can keep missing a sink with no further word."
++ notices can keep missing a sink with no further word. [xschem::notify_reach_line]"
+     catch {puts stderr "xschem: $l" ; flush stderr}
+     catch {xschem::notify_log $l error}
+     return 1
+@@ -14821,7 +15015,7 @@ proc xschem::notify_degraded_once {cause} {
+   ## `--logdir`) there is no action log AT ALL (src/util.c:351), so "notices are
+   ## LOG-ONLY from here on" would be false in exactly the way 0657's
+   ## `sinks = log` with no log open was false. Say where they really go.
+-  if {![catch {xschem get actionlog_filename} lf] && $lf ne {}} {
++  if {[xschem::notify_log_open]} {
+     set l "NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW\
+  pane, no status field, no popup, no remedy). Cause: $cause"
+   } else {
+@@ -14829,11 +15023,86 @@ proc xschem::notify_degraded_once {cause} {
+  with no --logdir), so notices reach STDERR ONLY from here on (no CIW pane, no\
+  status field, no popup, no remedy). Cause: $cause"
+   }
++  append l " [xschem::notify_reach_line]"
+   catch {puts stderr "xschem: $l" ; flush stderr}
+   catch {xschem::notify_log $l error}
+   return 1
+ }
+ 
++## THE THIRD VOICE -- ALIVE, UNDEGRADED, AND REACHING NOBODY  (issue 0675).
++##
++## THE STATE NEITHER EXISTING SENTENCE CAN DESCRIBE, and it is the user's own:
++## the CIW toplevel mapped with its text pane destroyed. Not DEGRADED (the live
++## `::xschem::notify` is the full four-sink channel), not a FAULT (nothing
++## raised) -- so at HEAD the channel returned 1, the witness named a sink, and
++## the log carried no word of any kind about a notice that reached no human.
++## 0497 rule 2 is split by CAUSE, never one aggregate: a third cause gets a
++## third sentence, not a re-wording of one of the other two.
++##
++## ⚠ THE MARKER CONTAINS NEITHER GOLDEN SUBSTRING. `NOTICE CHANNEL DEGRADED`
++## and `NOTICE CHANNEL FAULT` are grepped literally by NTD1/4/6/9/11/12,
++## PS20/23/27/29/32/33 and SG14/SG18, and their ABSENCE is asserted by several
++## of them. `UNREACHABLE` is a third word on purpose.
++##
++## THREE TERMS, AND EACH ONE EXCLUDES A WRONG FIX:
++##   * NOT the bootstrap -- the DEGRADED sentence already owns that state and
++##     already says where notices go;
++##   * Tk IS live -- a `--nogui` session has no visible sink by construction,
++##     and announcing there would add a line to every headless batch run and a
++##     SECOND `#! ` line to the degraded child SG14 counts (0497 rule 1);
++##   * no arm is `visible` -- `blind` still counts as unreachable (a withdrawn
++##     pane RECEIVES the text and no eye is on it), which is the distinction
++##     the whole predicate exists to make.
++##
++## LATCHED ON THE MEASURED INVENTORY, through the EXISTING generalised latch
++## (0653's, subject `reach`) rather than a third bespoke one-shot: one line per
++## DISTINCT reachable set, re-armed the moment that set changes. A per-notice
++## alert is exactly what 0497 rule 1 forbids; a session-wide one-shot would go
++## silent on a state the user has not been told about.
++##
++## Returns 1 the one time it actually spoke.
++proc xschem::notify_unreachable_once {} {
++  if {[catch {xschem::notify_channel_degraded} deg] || $deg} { return 0 }
++  if {![llength [info commands winfo]]} { return 0 }
++  if {[catch {xschem::notify_reach} d]} { return 0 }
++  foreach s [dict keys $d] {
++    if {[lindex [dict get $d $s] 0] eq {visible}} { return 0 }
++  }
++  set inv [xschem::notify_reach_line]
++  set turn 0
++  catch {set turn [xschem::notify_latch_ok reach $inv]}
++  if {!$turn} { return 0 }
++  set l "NOTICE CHANNEL UNREACHABLE: that notice reached no sink a person can\
++ see. The channel itself is intact and nothing raised -- every showable sink is\
++ gone or hidden, so further notices in this state are logged and NOT shown.\
++ $inv"
++  catch {puts stderr "xschem: $l" ; flush stderr}
++  catch {xschem::notify_log $l error}
++  return 1
++}
++
++## THE CHANNEL'S ONE EXIT (invariant I1). src/ciw.tcl's notify had THREE
++## `notify_record ...; return 1` tails -- the empty-message exit, the
++## whitespace-only exit and the normal one -- and PS31 exists because a fix that
++## covered only the third was shipped once already. The third voice has to fire
++## from ALL of them or it fires from none, so the tails became one proc.
++##
++## ⚠ THE SEAM SHAPE IS UNCHANGED. notify_record is still the LAST thing the
++## channel does, so renaming it away still raises at the channel's last
++## statement -- which is the case NT22/NTD8/PS28/PS31 were written for, and the
++## case that produced 0665's double durable line.
++##
++## ⚠ THE ANNOUNCEMENT IS CAUGHT, and that is issue 0677 (a)'s lesson applied
++## before it can happen again: an uncaught announce unwinds a notice that has
++## ALREADY been delivered, and the caller's own catch then reports that nothing
++## reached any sink. The record is written FIRST, so the witness stands even if
++## the voice fails.
++proc xschem::notify_done {tag msg line short menu command sinks} {
++  xschem::notify_record $tag $msg $line $short $menu $command $sinks
++  catch {xschem::notify_unreachable_once}
++  return 1
++}
++
+ ## THE DEGRADED CHANNEL. Signature-compatible with xschem::notify so a caller
+ ## needs no knowledge of which one it reached, but deliberately SMALLER: -tag
+ ## (and -cause, which only the delegate fallback passes) are honoured, EVERY
+@@ -14920,21 +15189,61 @@ proc xschem::notify_latch_reset {subject} { return }
+ ## -- "exactly one ::ciw_echo per notify" is a committed fence (PS8/PS19,
+ ## test_ase_locked_wire_pick_0160:175, test_sod_pick_no_select_0204:138/295) and
+ ## the sink that just raised is the least safe call in the program to repeat.
+-proc xschem::notify_safe {msg {tag {}}} {
++##
++## ⚠ THE SIGNATURE IS `{msg args}`, NOT `{msg {tag {}}}` (issue 0674). The old
++## one could carry a tag and nothing else, so a call site with a REMEDY --
++## -short/-menu/-command, which R-0653-d keeps as DISTINCT fields -- had no safe
++## wrapper at all and called `::xschem::notify` DIRECTLY inside a bare `catch`.
++## Measured: with the channel raising, that shape lands ZERO durable lines and
++## its own catch destroys the evidence, taking the user's 0617 gate-off nudge
++## with it. Widening THIS proc is a three-line change; widening either delegate
++## would have been a 164-site one, and `notify_bootstrap` already accepts-and-
++## ignores unknown options, so `{*}$args` forwards into the fallback safely.
++##
++## ⚠ BOTH POSITIONAL CALLERS MOVED IN THE SAME COMMIT OR THE TAG BECOMES AN
++## OPTION NAME: src/ase.tcl's ase::echo and src/wave_viewer.tcl's wviewer::echo
++## now pass `-tag $tag`. They are the only two, and they are fenced by
++## test_ase_core NT38.
++##
++## ⚠ THE COMPLETION BRANCH MEASURES INSTEAD OF FABRICATING (issue 0677 (b)). It
++## used to write the witness with a HARD-CODED `{}` short form and the RAW
++## message as the rendered line, for a notice whose real short form and real
++## remedy-carrying line both exist and are both buildable -- invariant I3 in a
++## text field: a genuinely empty short form and "I did not look" must not be
++## indistinguishable. It asks the SHIPPED builders (one of each, invariant I1),
++## and only a genuinely absent builder yields the sentinel `UNMEASURED`.
++##
++## ⚠ AND THE ANNOUNCEMENT IS CAUGHT (issue 0677 (a)) -- the sixth appearance of
++## one class in this batch, a report that LIES about what it did. Uncaught, a
++## raise out of notify_degraded_once unwound this branch, the delegate's own
++## catch fired, and a notice whose durable line was ALREADY on disk was reported
++## as `0` -- nothing reached any sink. Measured. One word closes it.
++proc xschem::notify_safe {msg args} {
+   variable notify_progress
+   ## A FRESH record for THIS call, before anything can consult it. Without this
+   ## a delegate whose ::xschem::notify is ABSENT would inherit whatever a direct
+   ## call left behind and skip a durable write that never happened.
+   xschem::notify_mark_reset
+-  if {![catch {::xschem::notify $msg -tag $tag} r]} { return $r }
++  if {![catch {::xschem::notify $msg {*}$args} r]} { return $r }
+   set done $notify_progress   ;# a namespace variable: it SURVIVED the unwind
+   if {[lsearch -exact $done log] >= 0} {
+-    catch {xschem::notify_record $tag $msg $msg {} {} {} $done}
+-    xschem::notify_degraded_once "xschem::notify raised AFTER delivering to\
+- [list $done]: $r"
++    set tag {} ; set short {} ; set menu {} ; set command {}
++    foreach {o v} $args {
++      switch -exact -- $o {
++        -tag     { set tag $v }
++        -short   { set short $v }
++        -menu    { set menu $v }
++        -command { set command $v }
++      }
++    }
++    set sf UNMEASURED ; catch {set sf [xschem::notify_short $short $msg]}
++    set ln UNMEASURED ; catch {set ln [xschem::notify_line $msg $menu $command]}
++    catch {xschem::notify_record $tag $msg $ln $sf $menu $command $done}
++    catch {xschem::notify_degraded_once "xschem::notify raised AFTER delivering to\
++ [list $done]: $r"}
+     return [llength $done]
+   }
+-  if {[catch {::xschem::notify_bootstrap $msg -tag $tag -cause $r} b]} { return 0 }
++  if {[catch {::xschem::notify_bootstrap $msg {*}$args -cause $r} b]} { return 0 }
+   return $b
+ }
+ # Operating-point annotation: the ONE raw-vector name builder (op_annot::vector) that
+diff --git a/tests/headless/test_ase_core.tcl b/tests/headless/test_ase_core.tcl
+index 170f67c1..19d83c6f 100644
+--- a/tests/headless/test_ase_core.tcl
++++ b/tests/headless/test_ase_core.tcl
+@@ -1133,6 +1133,18 @@ check "NT0 0650 the ::xschem NAMESPACE and the `xschem` COMMAND coexist" \
+ # `notify_channel_degraded` is the MEASUREMENT that turns the degradation
+ # announcement from a hard-coded claim into a fact. Renaming or removing any of
+ # them reddens this row; adding a proc never does.
++#
++# ⚠ ISSUES 0674/0675/0677 ADD SIX MORE, and the first of them is the whole of
++# 0675 -- see the NT30-NT41 block below. `notify_reach` is THE ONE PREDICATE
++# that answers "can a notice reach a human right now" (the four near-copies it
++# replaces are catalogued there); `notify_reach_line` is its ONE renderer;
++# `notify_log_open` collapses the byte-equal `actionlog_filename` expression
++# that xschem.tcl already spells TWICE (an I1 breach inside the very fix that
++# cites I1 -- NT40); `notify_line` is the ONE renderer of message+remedy, moved
++# out of ciw.tcl so notify_safe's completion branch stops building a second
++# copy of it (NT36); `notify_done` is the channel's ONE exit (NT41); and
++# `notify_unreachable_once` is the THIRD VOICE, for the state neither existing
++# sentence can describe -- alive, undegraded, and reaching nobody.
+ set nt1_missing {}
+ foreach p {::xschem::notify ::xschem::notify_ciw_visible ::xschem::notify_statusbar
+            ::xschem::notify_popup ::xschem::notify_short ::xschem::notify_record
+@@ -1141,10 +1153,13 @@ foreach p {::xschem::notify ::xschem::notify_ciw_visible ::xschem::notify_status
+            ::xschem::notify_bootstrap ::xschem::notify_safe
+            ::xschem::notify_log ::xschem::notify_degraded_once
+            ::xschem::notify_mark ::xschem::notify_mark_reset
+-           ::xschem::notify_channel_degraded} {
++           ::xschem::notify_channel_degraded
++           ::xschem::notify_reach ::xschem::notify_reach_line
++           ::xschem::notify_log_open ::xschem::notify_line
++           ::xschem::notify_done ::xschem::notify_unreachable_once} {
+   if {[info commands $p] eq {}} { lappend nt1_missing $p }
+ }
+-check "NT1 0650+0658+0665 xschem::notify and every named callee exist" $nt1_missing {}
++check "NT1 0650+0658+0665+0675 xschem::notify and every named callee exist" $nt1_missing {}
+ 
+ # --- NT2: R-0653-a, the ruled default ----------------------------------------
+ # `set ::notify_style {ciw|popup}`, default `ciw`. The `set_ne` idiom
+@@ -1669,21 +1684,132 @@ proc nt_rearm_latches {} {
+   catch {set ::xschem::notify_fault 0}
+ }
+ 
++## ---------------------------------------------------------------------------
++## THE REACHABILITY PREDICATE, READ DEFENSIVELY (issues 0674/0675/0677)
++## ---------------------------------------------------------------------------
++## `xschem::notify_reach` does not exist at HEAD, so every reader here follows
++## nt_cx's rule: a raise becomes a VALUE, and the row that names the predicate
++## reddens alone instead of aborting the 100 rows after it.
++proc nt_reach {} {
++  if {[catch {::xschem::notify_reach} d]} { return "ERR: $d" }
++  return $d
++}
++## ONE arm, as its {state reason} pair, with a SPEAKING placeholder (nt_field's
++## idiom -- a bare `dict get` on a missing key names the wrong defect).
++proc nt_arm {k} {
++  set d [nt_reach]
++  if {[string match {ERR: *} $d]} { return $d }
++  if {[catch {dict get $d $k} v]} { return NO-ARM-$k }
++  return $v
++}
++proc nt_reach_line {} {
++  if {[catch {::xschem::notify_reach_line} l]} { return "ERR: $l" }
++  return $l
++}
++## The arms a notice could LAND in: every arm whose state is neither `dead`
++## (the sink is not there) nor `off` (the style did not select it).
++##
++## ⚠ `blind` LANDS. A withdrawn CIW pane really does RECEIVE the text (PS17
++## pins that Tk fact), and a durable log really is written -- neither reaches a
++## human eye. RECEIVED and REACHABLE are different words and this suite uses
++## both of them on purpose; `visible` is the only state that claims an audience,
++## and even it claims REACHABLE and never SEEN (occlusion, issue 0659, is not
++## measurable from Tcl).
++proc nt_landed {} {
++  set d [nt_reach]
++  if {[string match {ERR: *} $d]} { return $d }
++  set out {}
++  foreach s {ciw log statusbar popup} {
++    if {![dict exists $d $s]} continue
++    set st [lindex [dict get $d $s] 0]
++    if {$st eq {dead} || $st eq {off}} continue
++    lappend out $s
++  }
++  return $out
++}
++
++## THE COMPLETION BRANCH, MADE REACHABLE HEADLESS (issue 0677 (a)/(b)).
++## notify_safe enters it only when the surviving record already names `log` --
++## and this suite runs --nolog, where the real sink 2 can NEVER put it there
++## (notify_log's 0657 honesty gate returns 0 with no file open). So the stub IS
++## the record state: mark the durable sink, then raise the way a bug living
++## after sink 2 raises. Restores ::xschem::notify on every exit path.
++proc nt_log_then_raise {body} {
++  set had [expr {[info commands ::xschem::notify] ne {}}]
++  if {$had} { rename ::xschem::notify ::nt_saved_notify_lr }
++  proc ::xschem::notify {msg args} {
++    ::xschem::notify_mark_reset
++    ::xschem::notify_mark log
++    return -code error {NT a simulated bug AFTER the durable sink had fired}
++  }
++  set rc [catch {uplevel 1 $body} e]
++  catch {rename ::xschem::notify {}}
++  if {$had} { catch {rename ::nt_saved_notify_lr ::xschem::notify} }
++  if {$rc} { return [list ERR $e] }
++  return $e
++}
++## Run $body with the ANNOUNCEMENT itself raising -- 0677 (a)'s exact shape.
++## notify_safe's completion branch calls notify_degraded_once UNCAUGHT
++## (src/xschem.tcl:14933), so a raise there unwinds a notice that has ALREADY
++## been delivered and the delegate's own catch then reports 0 sinks.
++proc nt_raising_degraded_once {body} {
++  set had [expr {[info commands ::xschem::notify_degraded_once] ne {}}]
++  if {$had} { rename ::xschem::notify_degraded_once ::nt_saved_dego }
++  proc ::xschem::notify_degraded_once {cause} {
++    return -code error {NT35 the announcement itself raised}
++  }
++  set rc [catch {uplevel 1 $body} e]
++  catch {rename ::xschem::notify_degraded_once {}}
++  if {$had} { catch {rename ::nt_saved_dego ::xschem::notify_degraded_once} }
++  if {$rc} { return [list ERR $e] }
++  return $e
++}
++## Run $body with ::xschem::notify_style pinned to $s, restoring the ambient
++## value (NT2 sampled it; NT3 already proved it is read at CALL time).
++proc nt_with_style {s body} {
++  set had [info exists ::notify_style]
++  if {$had} { set old $::notify_style }
++  set ::notify_style $s
++  set rc [catch {uplevel 1 $body} e]
++  if {$had} { set ::notify_style $old } else { unset -nocomplain ::notify_style }
++  if {$rc} { return [list ERR $e] }
++  return $e
++}
++
+ # --- NT22: THE RECORD MUST SURVIVE THE RAISE ---------------------------------
+ # The brief's hard requirement: "a record kept in a local that unwinds with the
+ # error is useless. Prove it survives with a test that raises at the LAST
+ # statement of the channel, not the first -- that is the case that produced the
+ # double line." A DIRECT ::xschem::notify call, so nothing downstream can write
+ # the record afterwards and this row measures the channel alone.
++#
++# ⚠ RE-ANCHORED BY ISSUE 0662/0675, AND THE OLD ANCHOR WAS THE DEFECT. HEAD's
++# third term was `[lsearch -exact [nt_progress] ciw] >= 0`, i.e. this row
++# REQUIRED the record to name the CIW pane -- in a --nogui session with no Tk,
++# no `.ciw.l.t` and no pane to write to. It passed because sink 1 marks `ciw`
++# whenever `::ciw_echo` merely FAILS TO RAISE (src/ciw.tcl:313-316) and
++# ciw_echo's first statement is a SILENT `return` when the widget is absent
++# (src/ciw.tcl:464-470). So the committed row was pinning the lie in place.
++#
++# The row's real subject is unchanged -- THE RECORD SURVIVES THE UNWIND -- and
++# it is now asserted against the ONE predicate instead of against a hard-coded
++# sink name: what the record holds must equal what notify_reach says a notice
++# could LAND in, which under --nogui --nolog is the empty list. An empty record
++# is not a weaker assertion than {ciw}; it is the true one, and the two accounts
++# are compared so neither can drift (invariant I1). The non-vacuity term stays:
++# `::ciw_echo` IS present, so a record that names no pane is a MEASUREMENT of
++# the pane's absence and not an artefact of a missing proc.
+ set NT22_MSG {NT22 the sinks-fired record must survive the unwind}
+ nt_no_record {set ::nt22_rc [catch {::xschem::notify $::NT22_MSG -tag error} ::nt22_e]}
+-check "NT22 0665 the channel RECORDS WHAT IT DID in a namespace variable that\
+- SURVIVES the unwind: with notify_record gone it raises at its LAST statement\
+- and the record still names the sink that had already fired" \
++check "NT22 0665/0662 the channel RECORDS WHAT IT DID in a namespace variable\
++ that SURVIVES the unwind: with notify_record gone it raises at its LAST\
++ statement, the record still stands, and what it holds is exactly the set of\
++ arms notify_reach says a notice could land in -- EMPTY here, because there is\
++ no Tk and no log, while ::ciw_echo is demonstrably present" \
+   [list $nt22_rc [expr {[info exists ::xschem::notify_progress] ? 1 : 0}] \
+-        [expr {[lsearch -exact [nt_progress] ciw] >= 0 ? 1 : 0}] \
++        [nt_progress] [nt_landed] \
+         [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]] \
+-  [list 1 1 1 1]
++  [list 1 1 {} {} 1]
+ note "NT22 record after the raise" [nt_progress]
+ note "NT22 raise message"          [expr {[info exists ::nt22_e] ? $::nt22_e : {NO-RAISE}}]
+ 
+@@ -1694,7 +1820,19 @@ note "NT22 raise message"          [expr {[info exists ::nt22_e] ? $::nt22_e : {
+ # reading `log` from a notice that succeeded minutes ago, then skips a durable
+ # write that never happened. That is a G1 regression, not a 0665 fix.
+ ::xschem::notify {NT23 a healthy notice fills the record}
+-set nt23_filled [expr {([nt_progress] ne {NO-RECORD} && [llength [nt_progress]] > 0) ? 1 : 0}]
++## ⚠ THE NON-VACUITY TERM IS SEEDED, NOT BORROWED -- 0662/0675, and it is
++## NT22's re-anchor one row later. HEAD read the record left by the healthy
++## notice above and required it to be NON-EMPTY, which under --nogui (no Tk, no
++## `.ciw.l.t`) could only ever be satisfied by the FALSE `ciw` mark sink 1 made
++## whenever ::ciw_echo merely failed to raise. The honest record of that notice
++## is EMPTY, so this row was pinning the lie in place exactly as NT22 was.
++## The term is now seeded through the ONE appender: a record that genuinely
++## stands, which the option-parse raise must then clear. The row's subject is
++## unchanged -- the reset is at the channel's FIRST statement, so a raise in
++## OPTION PARSING can never leave the PREVIOUS call's record standing -- and the
++## seeded form is the stronger version of it, because it holds a value no sink
++## could have put there.
++set nt23_filled [expr {[llength [::xschem::notify_mark NT23SEED]] > 0 ? 1 : 0}]
+ set nt23_optrc  [catch {::xschem::notify {NT23 option probe} -no_such_option x}]
+ check "NT23 0665 the record is RESET at notify's FIRST statement, before option\
+  parsing and before the latch gate: a raise in OPTION PARSING leaves an EMPTY\
+@@ -1795,12 +1933,389 @@ check "NT28 0666 BOTH delegates carry the guarantee in their own body (a catch\
+ # keep ciw.tcl's local `sinks` and MIRROR each lappend into a namespace list:
+ # two accounts of one fact, whose drift is SILENT. This row reddens the moment
+ # they can differ.
+-::xschem::notify {NT29 one healthy notice, one account}
++#
++# ⚠ RE-ANCHORED BY 0662/0675 FOR NT22's REASON, AND ONE TERM HAD TO GO. HEAD's
++# second term was `$nt29_sinks ne {}` -- "the witness names at least one sink"
++# -- which under --nogui can only ever be satisfied by the false `ciw` mark.
++# The honest account of a notice made with no Tk and no log is the EMPTY list,
++# and this row now proves the harder thing: that all THREE accounts agree even
++# when the answer is "nothing". The delivery return value (1, not 0) is the
++# non-vacuity term -- the notice really was made; it just reached nobody, which
++# is precisely what 0675 exists to make sayable.
++catch {unset ::xschem::notify_last}
++set nt29_rc [nt_cx {::xschem::notify {NT29 one healthy notice, one account}}]
+ set nt29_sinks [nt_field sinks]
+-check "NT29 0665 I1 ONE ACCOUNT: after a healthy notice the surviving record IS\
+- the witness's own `sinks` list, so the two cannot drift" \
+-  [list [nt_progress] [expr {$nt29_sinks ne {} ? 1 : 0}]] \
+-  [list $nt29_sinks 1]
++check "NT29 0665/0675 I1 ONE ACCOUNT: after a healthy notice the surviving\
++ record, the witness's own `sinks` list and notify_reach's landed arms are the\
++ SAME list -- provable even when that list is empty, which under --nogui --nolog\
++ it is" \
++  [list [nt_progress] $nt29_sinks [nt_landed] $nt29_rc] \
++  [list {} {} {} 1]
++# ---------------------------------------------------------------------------
++# NT30-NT41 / NTD13-NTD16 -- ISSUES 0674 / 0675 / 0677: CAN A NOTICE REACH A
++# HUMAN RIGHT NOW?
++# ---------------------------------------------------------------------------
++# FOUR crews have now filed 24 issues against this one channel and closed 6,
++# each seeing only its own slice. These rows treat it as ONE subject.
++#
++# THE DEFECT, IN ONE SENTENCE (issue 0675): every liveness test in the channel
++# measures PROC IDENTITY, and the question is SINK REACHABILITY. A channel can
++# be ALIVE by its own test and reach nobody.
++#
++# MEASURED AT HEAD, THREE WAYS, AND ALL THREE ARE REPRODUCED BELOW OR IN
++# test_ase_log_seam_0207.tcl:
++#   * `--nogui --nolog`: notify_channel_degraded = 0, `xschem::notify` returns 1,
++#     the witness reads `sinks {ciw}` -- with no Tk, no `.ciw.l.t` and no log
++#     file. ZERO sinks reached, and nothing said. (NT22, NT29, NT30, NT31.)
++#   * `:99` with the CIW toplevel MAPPED and its text pane DESTROYED:
++#     notify_channel_degraded = 0, the witness reads `sinks {ciw log}`, the
++#     `.statusbar.12` fallback is SKIPPED, and the log carries neither
++#     announcement. (test_ase_log_seam_0207 PS35/PS37.)
++#   * a ciw.tcl that fails PART-WAY through: three materially different failure
++#     points produce the IDENTICAL `NOTICE CHANNEL FAULT: ...` sentence, which
++#     never mentions that `::ciw_echo` is 0/0/1 across them. (NTD13-NTD15.)
++#
++# THE FOUR NEAR-COPIES THAT MAKE IT POSSIBLE -- one question, four answers:
++#   1. `notify_ciw_visible` (src/ciw.tcl:92) probes the TOPLEVEL `.ciw`;
++#   2. sink 1 (src/ciw.tcl:313-316) marks `ciw` whenever `::ciw_echo` merely
++#      FAILS TO RAISE, and ciw_echo (src/ciw.tcl:464-470) opens with a SILENT
++#      `return` when `.ciw.l.t` is absent -- so the mark means nothing at all;
++#   3. `notify_statusbar` (src/ciw.tcl:132) probes its own widget;
++#   4. `notify_channel_degraded` (src/xschem.tcl:14726) asks `info body`.
++# Two of those look at `.ciw`, one at `.ciw.l.t`, one at a proc's source text.
++# Invariant I1 says ONE builder; this is four, and their drift is silent.
++#
++# ============================ THE CONTRACT ==================================
++# These rows are RED-FIRST and the shapes below are BINDING on the fix.
++#
++# `xschem::notify_reach` -> a dict with EXACTLY the four keys
++#     ciw  log  statusbar  popup
++# each mapped to a two-element {state reason} list.
++#     state  : visible | blind | dead | off
++#              visible = a human could see it NOW (never "did see it" -- see the
++#                        occlusion note below);
++#              blind   = the sink RECEIVES the text and no human eye is on it
++#                        (a withdrawn pane, a durable log file);
++#              dead    = the sink is not there at all;
++#              off     = ::notify_style did not select this sink for THIS notice.
++#     reason : a token, or {} when the state needs no qualifier (`visible`).
++# Reasons, MOST-SPECIFIC-FIRST, and the ordering is load-bearing -- it is the
++# only thing that distinguishes a mid-file-broken ciw.tcl from a plain headless
++# run inside one `--nogui` child (NTD15):
++#     ciw       : degraded-channel | no-ciw_echo | no-Tk | no-pane | unmapped
++#     log       : no-file (dead) | open (blind)   -- log is NEVER `visible`:
++#                 a file is a record, not an audience
++#     statusbar : degraded-channel | no-Tk | no-widget | unmapped
++#     popup     : degraded-channel | style-ciw (off) | no-Tk
++# It NEVER raises, it reads `::notify_style` at CALL time (invariant I5, NT32),
++# and a degraded channel short-circuits every Tk arm to dead(degraded-channel)
++# (NT33), which is what turns the DEGRADED sentence's "(no CIW pane, no status
++# field, no popup)" from an assertion into a measurement.
++#
++# `xschem::notify_reach_line` -> ONE line, no embedded newline (log_output
++# prefixes every physical newline with its own `#! `, so a two-line clause
++# becomes two durable lines and reddens SG14):
++#     sinks now: ciw=<c> log=<l> statusbar=<s> popup=<p>
++# where each clause is `state` when the reason is {} and `state(reason)`
++# otherwise. The log clause carries its own caveat, because `actionlog_suppress`
++# is invisible from Tcl (setter only, src/scheduler.c:11733 -- issue 0699):
++#     log=blind(open,UNVERIFIED issue 0699)
++#
++# WHAT CANNOT BE MEASURED, so the vocabulary is REACHABLE and never SEEN:
++# occlusion (issue 0659 -- a CIW stacked behind the design window reads
++# `ismapped` 1 on BOTH widget paths), a sash collapsed to zero height, and
++# whether anyone is at the desk. The predicate can prove a sink DEAD; it can
++# never prove a live sink was READ.
++#
++# ⚠ GREEN BEFORE THE CHANGE, deliberately (a control in PS16/PS17's sense):
++# NT37 -- no shipped sink writer emits a notice today, and 0677 (c)'s own
++# acceptance allows "a row proves nesting is impossible" instead of a runtime
++# depth counter. It exists to STAY green, and to redden the moment someone adds
++# the notice-inside-a-sink that would make notify_progress double-count.
++#
++# EVERY OTHER ROW HERE IS RED AT HEAD.
++
++# --- NT30: the predicate answers, and never raises ---------------------------
++# The base case, and the one every other row stands on: four arms, four honest
++# answers, in a session that has none of the four sinks. `off(style-ciw)` on the
++# popup arm is the STYLE gate showing through -- the shipped default is `ciw`
++# (NT2), so a popup sink is not merely absent, it was never selected.
++set nt30_rc  [catch {::xschem::notify_reach} nt30_e]
++set nt30_d   [nt_reach]
++set nt30_keys [expr {[string match {ERR: *} $nt30_d] ? $nt30_d : [lsort [dict keys $nt30_d]]}]
++check "NT30 0675 THE ONE PREDICATE, headless: notify_reach answers for all four\
++ sinks without raising -- no Tk, no log file, and the popup sink not even\
++ selected by the shipped style" \
++  [list $nt30_rc [nt_arm ciw] [nt_arm log] [nt_arm statusbar] [nt_arm popup] \
++        $nt30_keys [nt_reach_line]] \
++  [list 0 {dead no-Tk} {dead no-file} {dead no-Tk} {off style-ciw} \
++        {ciw log popup statusbar} \
++        {sinks now: ciw=dead(no-Tk) log=dead(no-file) statusbar=dead(no-Tk) popup=off(style-ciw)}]
++note "NT30 reach line" [nt_reach_line]
++if {$nt30_rc} { note "NT30 notify_reach raised" $nt30_e }
++
++# --- NT31: 0675's HEADLINE, headless half -----------------------------------
++# IDENTITY SAYS ALIVE, REACHABILITY SAYS DEAD, IN THE SAME BREATH. `::ciw_echo`
++# is renamed away and NOTHING else is touched: `::xschem::notify` is still the
++# full four-sink channel, so notify_channel_degraded still reads 0 -- correctly,
++# because that proc measures a real fact and keeps measuring it (NT24 depends on
++# it). What must change is that the channel no longer treats that 0 as an answer
++# to "can a notice reach anyone".
++#
++# ⚠ THE REASON TOKEN IS THE POINT, not merely the `dead` state. `no-ciw_echo`
++# and `no-Tk` are two different causes of one dead sink, and 0497 rule 2 (split
++# by cause, never one aggregate) is what NTD15 then measures across processes.
++set nt31_deg  NO-RUN
++set nt31_arm  NO-RUN
++set nt31_had_echo [expr {[info commands ::ciw_echo] ne {}}]
++if {$nt31_had_echo} { rename ::ciw_echo ::nt31_saved_ciw_echo }
++set nt31_deg [nt_cx {::xschem::notify_channel_degraded}]
++set nt31_arm [nt_arm ciw]
++if {$nt31_had_echo} { catch {rename ::nt31_saved_ciw_echo ::ciw_echo} }
++check "NT31 0675 IDENTITY vs REACHABILITY, in one breath: with ::ciw_echo gone\
++ the channel is still the full four-sink one (notify_channel_degraded 0) while\
++ the pane sink is measurably DEAD, and the predicate names WHICH cause" \
++  [list $nt31_had_echo $nt31_deg $nt31_arm \
++        [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]] \
++  [list 1 0 {dead no-ciw_echo} 1]
++
++# --- NT32: I5 -- the style is read at CALL time, in the predicate too --------
++# NT3's rule, one layer down. A predicate that cached ::notify_style at source
++# time would report the popup sink `off` for a user who switched to it from the
++# CIW entry field mid-session -- and the announcement built on it would then be
++# wrong about the one sink that was actually live.
++set nt32_ciw   [nt_with_style ciw   {nt_arm popup}]
++set nt32_popup [nt_with_style popup {nt_arm popup}]
++set nt32_back  [nt_with_style ciw   {nt_arm popup}]
++check "NT32 0675 I5 notify_reach reads ::notify_style at CALL time: the popup\
++ arm flips from off(style-ciw) to its own Tk answer and back across three\
++ consecutive calls, with no restart and no re-source" \
++  [list $nt32_ciw $nt32_popup $nt32_back] \
++  [list {off style-ciw} {dead no-Tk} {off style-ciw}]
++
++# --- NT33: the DEGRADED sentence's parenthetical becomes a MEASUREMENT -------
++# `NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW pane, no
++# status field, no popup, no remedy)` asserts an inventory. With the bootstrap
++# live that inventory is TRUE -- and today nothing measures it, which is exactly
++# the class 0664 was filed about. The wrapper is INSTALLED and NEVER CALLED
++# (NT16's rule: a call would burn the once-latch and make NTD4/PS23 read their
++# own side effect).
++set nt33 NO-RUN
++if {[info commands ::xschem::notify] ne {}} {
++  rename ::xschem::notify ::nt_saved_notify33
++  proc ::xschem::notify {msg args} { return [xschem::notify_bootstrap $msg {*}$args] }
++  set nt33 [list [nt_cx {::xschem::notify_channel_degraded}] \
++                 [nt_arm ciw] [nt_arm statusbar] [nt_arm popup]]
++  catch {rename ::xschem::notify {}}
++  catch {rename ::nt_saved_notify33 ::xschem::notify}
++}
++check "NT33 0675/0664 with the LOG-ONLY bootstrap installed every Tk arm reads\
++ dead(degraded-channel): the degraded sentence's inventory is a MEASUREMENT,\
++ and `degraded-channel` outranks the style gate so the popup arm says WHY it is\
++ gone rather than that it was merely not selected" \
++  $nt33 \
++  [list 1 {dead degraded-channel} {dead degraded-channel} {dead degraded-channel}]
++
++# --- NT34: 0677 (d) -- A COMMENT MUST NOT MAKE THE CHANNEL LOOK DEGRADED -----
++# `info body` INCLUDES COMMENTS, and notify_channel_degraded greps the body for
++# the literal `notify_bootstrap`. Measured: prepending ONE COMMENT LINE that
++# merely MENTIONS the name flips the answer from 0 to 1 on byte-for-byte
++# identical code -- and with it every announcement, to the false DEGRADED claim.
++# The real wrapper must still read 1, in the same row, or a fix that simply
++# stopped looking would pass.
++set nt34_before [nt_cx {::xschem::notify_channel_degraded}]
++set nt34_commented NO-RUN
++set nt34_realboot  NO-RUN
++if {[info commands ::xschem::notify] ne {}} {
++  set nt34_body [info body ::xschem::notify]
++  set nt34_args [info args ::xschem::notify]
++  rename ::xschem::notify ::nt_saved_notify34
++  ## the SAME code, with one comment line in front of it
++  proc ::xschem::notify {msg args} "## see xschem::notify_bootstrap for the degraded form\n$nt34_body"
++  set nt34_commented [nt_cx {::xschem::notify_channel_degraded}]
++  catch {rename ::xschem::notify {}}
++  proc ::xschem::notify {msg args} { return [xschem::notify_bootstrap $msg {*}$args] }
++  set nt34_realboot [nt_cx {::xschem::notify_channel_degraded}]
++  catch {rename ::xschem::notify {}}
++  catch {rename ::nt_saved_notify34 ::xschem::notify}
++}
++check "NT34 0677(d) a COMMENT is not an implementation: adding one comment line\
++ naming notify_bootstrap to the LIVE channel leaves notify_channel_degraded at\
++ 0, while the genuine wrapper still reads 1" \
++  [list $nt34_before $nt34_commented $nt34_realboot \
++        [nt_cx {::xschem::notify_channel_degraded}]] \
++  [list 0 0 1 0]
++
++# --- NT35: 0677 (a) -- AN UNCAUGHT ANNOUNCE INSIDE THE COMPLETION BRANCH -----
++# The sixth appearance of this class in one batch (0652, 0664, 0679, 0691, 0693,
++# 0694): a report that LIES about what it did. notify_safe's completion branch
++# exists precisely to say "the durable line is already on disk"; it then calls
++# notify_degraded_once UNCAUGHT (src/xschem.tcl:14933), so a raise there unwinds
++# the branch, ase::echo's own catch fires, and a DELIVERED notice is reported as
++# `0` -- nothing reached any sink. Measured at HEAD: ase::echo returned 0 while
++# the record still named `log`. One `catch` closes it.
++nt_rearm_latches
++set NT35_MSG {NT35 a notice whose announcement raised must still count its sinks}
++set ::nt35_r NO-RUN
++nt_log_then_raise {
++  nt_raising_degraded_once { set ::nt35_r [::ase::echo $::NT35_MSG error] }
++}
++check "NT35 0677(a) the completion branch reports what REALLY happened even\
++ when the ANNOUNCEMENT raises: the record survived naming the durable sink, so\
++ the honest answer is 1, never 0" \
++  [list $::nt35_r [nt_progress]] [list 1 log]
++note "NT35 record after the announce raised" [nt_progress]
++
++# --- NT36: 0677 (b) -- THE FABRICATED WITNESS -------------------------------
++# The same branch writes the witness with a HARD-CODED `{}` short form and the
++# RAW message as the rendered line (src/xschem.tcl:14932), for a notice whose
++# real short form and real remedy-carrying line both exist and are both
++# buildable. Invariant I3's rule for a text field: a real empty short form and
++# "I did not look" must not be indistinguishable -- so the branch measures, and
++# only a genuinely absent builder may yield the sentinel `UNMEASURED`.
++#
++# The two goldens are the SHIPPED builders' own contracts, spelled out here so a
++# second copy of either (which is what 0674's widening invites) reddens:
++#   notify_short : 28-char budget, `[string range $s 0 24]...`  (src/ciw.tcl:112)
++#   notify_line  : "$msg Fix: $menu. CIW command: $command"     (src/ciw.tcl:~292)
++nt_rearm_latches
++catch {unset ::xschem::notify_last}
++set NT36_MSG  {NT36 the completion branch must record the REAL short form}
++set NT36_MENU {ASE-L > Outputs > Save All...}
++set NT36_CMD  {ase::ui::save_op_params_on nt36}
++set ::nt36_r NO-RUN
++nt_log_then_raise {
++  nt_raising_degraded_once {
++    set ::nt36_r [nt_cx {::xschem::notify_safe $::NT36_MSG -tag error \
++                           -menu $::NT36_MENU -command $::NT36_CMD}]
++  }
++}
++check "NT36 0677(b) THE FABRICATED WITNESS: the completion branch records the\
++ REAL short form (notify_short's own 28-char budget) and the REAL rendered line\
++ (message + remedy), never a hard-coded {} and never the bare message" \
++  [list $::nt36_r [nt_field short] [nt_field line] [nt_field menu] [nt_field command]] \
++  [list 1 {NT36 the completion branc...} \
++        "$NT36_MSG Fix: $NT36_MENU. CIW command: $NT36_CMD" \
++        $NT36_MENU $NT36_CMD]
++note "NT36 witness" [expr {[info exists ::xschem::notify_last] ? $::xschem::notify_last : {NO-WITNESS}}]
++
++# --- NT37: 0677 (c) -- NESTING IS IMPOSSIBLE BY CONSTRUCTION ----------------
++# ⚠ GREEN BEFORE THE CHANGE, deliberately, and it is the whole answer to (c).
++# A notice emitted from INSIDE a sink writer re-enters the channel, whose first
++# statement resets ::xschem::notify_progress -- so the outer notice's record is
++# destroyed mid-flight and the sinks are counted twice (measured:
++# notify_progress = {ciw log ciw log} from ONE outer call). 0677's own
++# acceptance allows "or a row proves nesting is impossible" INSTEAD of a runtime
++# depth counter, and the counter is the worse option: a raise between increment
++# and decrement would leave the channel permanently mis-accounted, inside the
++# one proc whose entire subject is surviving raises.
++# So: a STATIC fence. It is green today and it reddens the day someone adds the
++# notice-inside-a-sink that would make the mechanism reachable.
++set nt37_bad {}
++foreach p {::ciw_echo ::xschem::notify_statusbar ::xschem::notify_popup
++           ::xschem::notify_log ::xschem::notify_record} {
++  if {[catch {info body $p} b]} { lappend nt37_bad "$p:NO-PROC" ; continue }
++  if {[regexp {xschem::notify[^_a-zA-Z0-9]} $b]}    { lappend nt37_bad "$p:calls-notify" }
++  foreach tok {ase::echo wviewer::echo notify_safe notify_degraded_once
++               notify_unreachable_once} {
++    if {[string first $tok $b] >= 0} { lappend nt37_bad "$p:$tok" }
++  }
++}
++check "NT37 0677(c) NO SHIPPED SINK WRITER EMITS A NOTICE, so the channel can\
++ never re-enter itself and double-count its own record -- proved by\
++ construction, not guarded by a counter that a raise would corrupt" \
++  $nt37_bad {}
++
++# --- NT38: 0674 -- THE SAFE DELEGATE MUST BE ABLE TO CARRY A REMEDY ---------
++# `notify_safe`'s signature is `{msg {tag {}}}`, so it CANNOT carry
++# -short/-menu/-command -- which is precisely why src/ase.tcl:778 calls
++# `::xschem::notify` DIRECTLY inside a bare `catch`, and why the user's own 0617
++# gate-off nudge is swallowed whole when the channel raises. Widening THIS proc
++# is a three-line change; widening either delegate would be a 164-site one.
++#
++# ⚠ THE TWO POSITIONAL CALLERS MOVE IN THE SAME COMMIT OR THE TAG BECOMES AN
++# OPTION NAME. src/ase.tcl:181 and src/wave_viewer.tcl:773 both pass `$tag`
++# positionally; with `{msg args}` that silently makes the tag an option, so the
++# last two terms fence both delegate bodies on the `-tag` form. Their own
++# `{msg {tag {}}}` contracts are NOT widened (0666's inline-guard rule keeps
++# their bodies duplicated on purpose -- NT19/NT28 own that).
++set nt38_args [nt_cx {info args ::xschem::notify_safe}]
++catch {unset ::xschem::notify_last}
++set NT38_MENU {ASE-L > Outputs > Save All...}
++set NT38_CMD  {ase::ui::save_op_params_on nt38}
++set nt38_rc [nt_cx {::xschem::notify_safe {NT38 a notice carrying a full remedy} \
++                      -tag error -short NT38SHORT -menu $NT38_MENU -command $NT38_CMD}]
++set nt38_ase [nt_cx {info body ::ase::echo}]
++set nt38_wv  [nt_cx {info body ::wviewer::echo}]
++check "NT38 0674 xschem::notify_safe carries the WHOLE notice: its signature is\
++ {msg args}, a call carrying -short/-menu/-command records all three as\
++ DISTINCT witness fields (R-0653-d), and both delegates pass their tag as -tag\
++ so the widening cannot turn it into an option name" \
++  [list $nt38_args [nt_field tag] [nt_field short] [nt_field menu] [nt_field command] \
++        [expr {[string first {-tag} $nt38_ase] >= 0 ? 1 : 0}] \
++        [expr {[string first {-tag} $nt38_wv]  >= 0 ? 1 : 0}]] \
++  [list {msg args} error NT38SHORT $NT38_MENU $NT38_CMD 1 1]
++note "NT38 notify_safe returned" $nt38_rc
++
++# --- NT39: 0674's ACCEPTANCE GREP -- no unguarded direct site is left -------
++# The declared coverage hole, measured: exactly ONE product call site outside
++# the channel's own two files, src/ase.tcl:778 (0674 says :692; it has drifted),
++# wrapped in a `catch` that no test in test_ase_window or test_ase_final
++# falsifies. `::xschem::notify_safe` and `::xschem::notify_bootstrap` are NOT
++# matched -- the pattern requires a non-word character right after `notify`.
++set nt39_bad {}
++foreach f [lsort [glob -nocomplain [file join $repo src *.tcl]]] {
++  set tail [file tail $f]
++  if {$tail eq {ciw.tcl} || $tail eq {xschem.tcl}} continue
++  if {[catch {open $f r} fd]} { lappend nt39_bad "$tail:UNREADABLE" ; continue }
++  set body [read $fd] ; close $fd
++  set n 0
++  foreach l [split $body \n] {
++    incr n
++    if {[string index [string trimleft $l] 0] eq {#}} continue
++    if {[regexp {::xschem::notify[^_a-zA-Z0-9]} $l]} { lappend nt39_bad "$tail:$n" }
++  }
++}
++check "NT39 0674 NO NON-COMMENT LINE outside src/ciw.tcl and src/xschem.tcl\
++ calls ::xschem::notify directly: every product site goes through the safe\
++ delegate, so a raising channel can never take its caller with it" \
++  $nt39_bad {}
++
++# --- NT40: I1 ON THE LOG GATE -- one expression, not three ------------------
++# src/xschem.tcl:14755 and :14824 are TWO BYTE-EQUIVALENT copies of the
++# `actionlog_filename` open test, shipped, inside the very fix that cites
++# invariant I1. Adding a third inside notify_reach would make it three, and
++# 0657's whole lesson is that this expression is where the `log` claim is
++# either honest or a lie. ONE proc, three consumers.
++set nt40_open  [nt_cx {info body ::xschem::notify_log_open}]
++set nt40_log   [nt_cx {info body ::xschem::notify_log}]
++set nt40_deg   [nt_cx {info body ::xschem::notify_degraded_once}]
++set nt40_reach [nt_cx {info body ::xschem::notify_reach}]
++check "NT40 0675 I1 xschem::notify_log_open is THE ONE `is the durable log\
++ open` expression: notify_log, notify_degraded_once and notify_reach all ask\
++ IT, and not one of the three re-spells actionlog_filename" \
++  [list [expr {[string first actionlog_filename $nt40_open]  >= 0 ? 1 : 0}] \
++        [expr {[string first actionlog_filename $nt40_log]   >= 0 ? 1 : 0}] \
++        [expr {[string first actionlog_filename $nt40_deg]   >= 0 ? 1 : 0}] \
++        [expr {[string first actionlog_filename $nt40_reach] >= 0 ? 1 : 0}]] \
++  [list 1 0 0 0]
++
++# --- NT41: notify_done is the channel's ONE EXIT ----------------------------
++# src/ciw.tcl's notify has THREE `notify_record ...; return 1` tails -- the
++# empty-message exit, the whitespace-only exit and the normal one (PS31 exists
++# because a fix that covered only the third was shipped once already). The third
++# voice has to fire from ALL of them or it fires from none, so the tails become
++# one proc. The seam shape is unchanged: notify_done is still the LAST statement,
++# so renaming notify_record away still raises exactly where NT22/NTD8/PS28/PS31
++# need it to.
++set nt41_body [nt_cx {info body ::xschem::notify}]
++check "NT41 0675 the channel has ONE exit: notify's body carries exactly three\
++ xschem::notify_done calls and no bare notify_record call, so no exit can grow\
++ a fourth account of what happened" \
++  [list [regexp -all {notify_done} $nt41_body] \
++        [regexp -all {notify_record} $nt41_body]] \
++  [list 3 0]
++
+ # ---------------------------------------------------------------------------
+ # NTD1-NTD7 -- THE REAL DEGRADED STATE, IN A CHILD PROCESS
+ # ---------------------------------------------------------------------------
+@@ -2114,6 +2629,189 @@ check "NTD12 0664 G5 the FAULT does NOT burn the degraded latch: when the same\
+ note "NTD12 the DEGRADED line" [ntd_line_with $ntd11_log {NOTICE CHANNEL DEGRADED}]
+ note "NTD12 the FAULT line"    [ntd_line_with $ntd11_log {NOTICE CHANNEL FAULT}]
+ 
++# ---------------------------------------------------------------------------
++# NTD13-NTD16 -- 0675 AND 0674 WHERE ONLY A CHILD PROCESS CAN SEE THEM
++# ---------------------------------------------------------------------------
++# NTD11's farm breaks ciw.tcl at its LAST line: every proc in the file is
++# defined, so the channel is fully live and `::ciw_echo` works. NTD1's farm
++# breaks it at its FIRST: nothing is defined and the bootstrap wins. 0675's
++# table names a THIRD shape that neither covers and that no committed row
++# reaches -- ciw.tcl failing PART-WAY THROUGH, where `::xschem::notify` is the
++# full four-sink channel and `::ciw_echo` DOES NOT EXIST. The channel is alive
++# by its own test and its first sink is dead for the whole session.
++#
++# MEASURED AT HEAD: three farms broken at three materially different points
++# emit the IDENTICAL `NOTICE CHANNEL FAULT: src/ciw.tcl failed to source: ...`
++# sentence, while `::ciw_echo` is 0 / 0 / 1 across them. The one fact that
++# distinguishes them is the one the announcement never mentions -- 0497 rule 2
++# (split by CAUSE, never one aggregate) violated inside a single sentence.
++#
++# ⚠ THE FARMS CUT BY CONTENT, NEVER BY LINE NUMBER. This very batch rewrites
++# `xschem::notify`'s body, and a hard-coded "truncate after line 358" would
++# silently start cutting somewhere else and turn these rows into a measurement
++# of nothing. The anchors are the `proc` lines themselves, and NTD13/NTD14
++# assert that the anchor was FOUND (a farm built from an empty string would
++# otherwise look like a clean pass).
++#
++# ⚠ HEADLESS ONLY, DELIBERATELY. An X share-farm child with a MID-FILE-truncated
++# ciw.tcl HUNG when the Scout measured it -- two minutes, seven live xschem
++# processes, no output -- suspected issue 0669 (a modal messagebox stalls an
++# unattended GUI startup). The GUI leg of these rows is UNMEASURED and stays
++# out; test_ase_log_seam_0207 PS35/PS37 own the X half of 0675 with widgets
++# destroyed in-session instead.
++#
++# ⚠ ASSERTED ON THE CHILD'S STDOUT, not only its log (NTD5/NTD7/NTD10's idiom).
++# Issue 0676 is open: share_farm_child intermittently reads no Xschem.log, which
++# reds every log-reading row at once. The announcement goes to BOTH, so stdout
++# is the non-flaky witness and the log count rides along as a note.
++
++## Truncate ciw.tcl just BEFORE a named proc and make the source FAIL there.
++## Returns {} when the anchor is not found, so the row can say so.
++proc ntd_truncate_before {body anchor} {
++  set i [string first $anchor $body]
++  if {$i < 0} { return {} }
++  return "[string range $body 0 [expr {$i - 1}]]\
++\nerror {0675 deliberate failure PART-WAY through ciw.tcl}\n"
++}
++proc ntd_outlines {r} { return [split [string trimright [dict get $r -out] \n] \n] }
++
++set ntd_mid_a_body [ntd_truncate_before $ntd_ciw_body "\nproc ciw_create "]
++set ntd_mid_b_body [ntd_truncate_before $ntd_ciw_body "\nproc ciw_echo "]
++
++set ntd_inner_mid {
++  proc ntd_mark {k v} { puts "NTD-MARK $k=$v" ; flush stdout }
++  ## boot=1 only if the live ::xschem::notify IS the bootstrap wrapper -- the
++  ## same discriminator NT16/PS20/NTD8 use. In these farms it must be 0.
++  ntd_mark boot [expr {[catch {info body ::xschem::notify} b] || \
++                       [string match {*notify_bootstrap*} $b] ? 1 : 0}]
++  ntd_mark ciw_echo [expr {[info commands ::ciw_echo] ne {} ? 1 : 0}]
++  ntd_mark create   [expr {[info commands ::ciw_create] ne {} ? 1 : 0}]
++  ntd_mark reach    [expr {[catch {::xschem::notify_reach_line} l] ? {ERR} : $l}]
++  exit 0
++}
++set ntd_mid_a [share_farm_child \
++  [share_farm $repo [file join $scratch farm_mid_a] [list ciw.tcl $ntd_mid_a_body]] \
++  [file join $scratch ntd_mid_a] $ntd_inner_mid]
++set ntd_mid_b [share_farm_child \
++  [share_farm $repo [file join $scratch farm_mid_b] [list ciw.tcl $ntd_mid_b_body]] \
++  [file join $scratch ntd_mid_b] $ntd_inner_mid]
++set ntd_mid_a_out [ntd_outlines $ntd_mid_a]
++set ntd_mid_b_out [ntd_outlines $ntd_mid_b]
++note "NTD13 child status" [dict get $ntd_mid_a -status]
++note "NTD14 child status" [dict get $ntd_mid_b -status]
++note "NTD13 FAULT line"   [ntd_line_with $ntd_mid_a_out {NOTICE CHANNEL FAULT}]
++note "NTD14 FAULT line"   [ntd_line_with $ntd_mid_b_out {NOTICE CHANNEL FAULT}]
++note "NTD13 reach mark"   [ntd_get [dict get $ntd_mid_a -out] reach]
++
++# --- NTD13: THE MID-FILE STATE, AND WHAT THE ANNOUNCEMENT OWES IT -----------
++# The channel is the FULL four-sink one (boot 0) and its first sink is dead for
++# the whole session (ciw_echo 0). `NOTICE CHANNEL FAULT` is the right marker --
++# nothing is degraded, the live notify is not the fallback -- and the sentence
++# must now NAME the dead sink instead of leaving the user to guess.
++check "NTD13 0675 a ciw.tcl that fails PART-WAY THROUGH leaves the FULL channel\
++ with a DEAD first sink: the child starts, ::ciw_echo is absent while\
++ ::xschem::notify is not the bootstrap, exactly ONE FAULT and NO DEGRADED line\
++ are announced, and the FAULT line NAMES the cause as ciw=dead(no-ciw_echo)" \
++  [list [expr {$ntd_mid_a_body ne {} ? 1 : 0}] \
++        [dict get $ntd_mid_a -status] \
++        [ntd_get [dict get $ntd_mid_a -out] boot] \
++        [ntd_get [dict get $ntd_mid_a -out] ciw_echo] \
++        [ntd_get [dict get $ntd_mid_a -out] create] \
++        [share_farm_count $ntd_mid_a_out {NOTICE CHANNEL FAULT}] \
++        [share_farm_count $ntd_mid_a_out {NOTICE CHANNEL DEGRADED}] \
++        [expr {[string first {ciw=dead(no-ciw_echo)} \
++                 [ntd_line_with $ntd_mid_a_out {NOTICE CHANNEL FAULT}]] >= 0 ? 1 : 0}]] \
++  [list 1 0 0 0 0 1 0 1]
++
++# --- NTD14: THE SECOND MID-FILE POINT -- same sink, same sentence -----------
++# ciw_create IS defined here and ciw_echo still is not. The two failure points
++# differ by a proc that is NOT a sink, so the inventory must read IDENTICALLY --
++# 0497 rule 2 cuts both ways: split by cause, and do not invent a distinction
++# where there is none.
++check "NTD14 0675 a ciw.tcl that fails LATER still loses the same SINK:\
++ ciw_create is present, ::ciw_echo is not, and the announcement names exactly\
++ the same measured cause as NTD13" \
++  [list [expr {$ntd_mid_b_body ne {} ? 1 : 0}] \
++        [dict get $ntd_mid_b -status] \
++        [ntd_get [dict get $ntd_mid_b -out] boot] \
++        [ntd_get [dict get $ntd_mid_b -out] ciw_echo] \
++        [ntd_get [dict get $ntd_mid_b -out] create] \
++        [share_farm_count $ntd_mid_b_out {NOTICE CHANNEL FAULT}] \
++        [expr {[string first {ciw=dead(no-ciw_echo)} \
++                 [ntd_line_with $ntd_mid_b_out {NOTICE CHANNEL FAULT}]] >= 0 ? 1 : 0}]] \
++  [list 1 0 0 0 1 1 1]
++
++# --- NTD15: 0675's DISCRIMINATOR -- ONE SENTENCE, TWO MEASURED CAUSES -------
++# THE ROW THE WHOLE ISSUE IS ABOUT. NTD11's END-truncated farm and NTD13's
++# MID-truncated one both announce `NOTICE CHANNEL FAULT ... ciw.tcl`, and at
++# HEAD those two lines are byte-identical. They are not the same state: the END
++# farm HAS ::ciw_echo and lost the pane only because a --nogui child has no Tk;
++# the MID farm lost the writer itself and would have no pane on a DISPLAY
++# either. A user reading the log cannot tell those apart, and the fix is not to
++# add a second announcement (0497 rule 1) but to make the ONE sentence carry the
++# measured cause.
++set ntd_end_out [ntd_outlines $ntd_end]
++set ntd15_end [ntd_line_with $ntd_end_out {NOTICE CHANNEL FAULT}]
++set ntd15_mid [ntd_line_with $ntd_mid_a_out {NOTICE CHANNEL FAULT}]
++note "NTD15 END-farm FAULT line" $ntd15_end
++## ⚠ THE INJECTED CAUSE TEXT IS THE TEST'S, NOT THE PRODUCT'S. The two farms
++## carry different `error {...}` strings (this suite's fixtures), so a raw
++## comparison of the two announcements would read "different" at HEAD for a
++## reason that says nothing about the channel. Blank the fixture text out and
++## what remains is the product's own sentence -- byte-identical at HEAD across
++## two materially different states, which is the whole of 0675's complaint.
++proc ntd_fault_nocause {l} {
++  return [string map [list {0675 deliberate failure PART-WAY through ciw.tcl} CAUSE \
++                           {0664 deliberate failure at the END of ciw.tcl}   CAUSE] $l]
++}
++check "NTD15 0675 THE DISCRIMINATOR: the END-truncated farm reports\
++ ciw=dead(no-Tk) and the MID-truncated one ciw=dead(no-ciw_echo) -- one\
++ sentence, two different MEASURED causes. With this suite's own injected cause\
++ text blanked out, HEAD's two announcements are byte-identical and the fix's\
++ must not be" \
++  [list [expr {[string first {ciw=dead(no-Tk)}       $ntd15_end] >= 0 ? 1 : 0}] \
++        [expr {[string first {ciw=dead(no-ciw_echo)} $ntd15_end] >= 0 ? 1 : 0}] \
++        [expr {[string first {ciw=dead(no-ciw_echo)} $ntd15_mid] >= 0 ? 1 : 0}] \
++        [expr {[string first {ciw=dead(no-Tk)}       $ntd15_mid] >= 0 ? 1 : 0}] \
++        [expr {$ntd15_end ne {} && \
++               [ntd_fault_nocause $ntd15_end] eq [ntd_fault_nocause $ntd15_mid] ? 1 : 0}]] \
++  [list 1 0 1 0 0]
++
++# --- NTD16: 0674's DURABLE HALF -- a remedy survives a raising channel ------
++# src/ase.tcl:778's shape, in a child that HAS a durable log, with the channel
++# replaced by a raiser. At HEAD the site is a bare `catch {::xschem::notify ...
++# -short -menu -command}` and the notice is lost entirely; through the widened
++# notify_safe the bootstrap still writes THE one durable line and nothing raises
++# into the caller. `ret` is asserted alongside the log count so an Xschem.log
++# that issue 0676 failed to write reds LOUDLY instead of silently.
++set NTD_674 {NTD16-0674 a remedy-carrying notice must survive a raising channel}
++set ntd_inner_674 [string map [list @M@ $NTD_674] {
++  proc ntd_mark {k v} { puts "NTD-MARK $k=$v" ; flush stdout }
++  rename ::xschem::notify ::ntd_saved_notify674
++  proc ::xschem::notify {args} {
++    return -code error {NTD16 a simulated bug inside the channel itself}
++  }
++  set rc [catch {::xschem::notify_safe {@M@} -tag error -short NTD16SHORT \
++                   -menu {ASE-L > Outputs > Save All...} \
++                   -command {ase::ui::save_op_params_on ntd16}} r]
++  ntd_mark rc  $rc
++  ntd_mark ret $r
++  catch {rename ::xschem::notify {}}
++  catch {rename ::ntd_saved_notify674 ::xschem::notify}
++  exit 0
++}]
++set ntd_674 [share_farm_child $ntd_farm_ok [file join $scratch ntd_674] $ntd_inner_674]
++note "NTD16 child status" [dict get $ntd_674 -status]
++note "NTD16 ret"          [ntd_get [dict get $ntd_674 -out] ret]
++check "NTD16 0674 with the channel RAISING, a notice carrying\
++ -short/-menu/-command through xschem::notify_safe still leaves EXACTLY ONE\
++ durable line and does not raise into its caller" \
++  [list [dict get $ntd_674 -status] \
++        [ntd_get [dict get $ntd_674 -out] rc] \
++        [ntd_get [dict get $ntd_674 -out] ret] \
++        [share_farm_count [dict get $ntd_674 -log] $NTD_674]] \
++  [list 0 0 1 1]
++
+ } bigerr]} {
+   puts "UNEXPECTED ERROR: $bigerr"
+   incr fail
+diff --git a/tests/headless/test_ase_final.tcl b/tests/headless/test_ase_final.tcl
+index 6ef6e0db..863c5aef 100644
+--- a/tests/headless/test_ase_final.tcl
++++ b/tests/headless/test_ase_final.tcl
+@@ -860,6 +860,114 @@ check "F19s 0650/0679 the gate-off nudge travels through xschem::notify and\
+         [f_nfield command]] \
+   [list [list $f19o_key] 1 1 {} [list ase::ui::save_op_params_on $f19o_key]]
+ 
++# --- F19s3: 0674 -- THE NUDGE MUST SURVIVE A RAISING CHANNEL ----------------
++# ⚠ THE ROW NAME IS s3, NOT s2. `F19s2` is TAKEN by issue 0679's refusal-to-guess
++# row (~:936) in this same suite.
++#
++# THE USER'S OWN MESSAGE, on the one call site 0674 is about. src/ase.tcl:778
++# (the issue says :692; it has drifted) is the ONLY direct `::xschem::notify`
++# call in any product file outside the channel's own two, and it is direct
++# because `notify_safe`'s `{msg {tag {}}}` signature cannot carry
++# -short/-menu/-command -- which R-0653-d keeps as DISTINCT fields. Its own
++# comment says so, and names this as issue 0674's general class.
++#
++# WHAT THAT COSTS, measured: the site is wrapped in a bare `catch`, and it sits
++# inside `catch {ase::op_cards_capture $state $nl}` (ase.tcl:889). So a raise
++# anywhere in the channel takes the notice AND destroys the evidence -- twice
++# over, silently. F19s proves the nudge travels through a HEALTHY channel;
++# nothing in this suite or in test_ase_window falsifies the catch, which is
++# exactly the declared coverage hole (`grep -c 'rename ::xschem::notify '` is 0
++# in both files).
++#
++# THE WITNESS IS THE BOOTSTRAP, not the pane: with the channel raising, a notice
++# that survives is one that reached `xschem::notify_bootstrap`, carrying its
++# remedy fields intact through notify_safe's `{*}$args` forwarding. At HEAD the
++# spy sees the OTHER ase::echo notices of the same netlist and NOT this one --
++# which is the defect stated as a measurement.
++
++## Run $script with the channel RAISING at its first statement and the degraded
++## bootstrap SPIED, capturing every notice that got that far as {msg args...}.
++## Restores both on every exit path.
++proc f_boot_spy {script} {
++  set ::f_boot {}
++  set hadn [expr {[info commands ::xschem::notify] ne {}}]
++  if {$hadn} { rename ::xschem::notify ::f_saved_notify_r }
++  proc ::xschem::notify {args} {
++    return -code error {F19s3 a simulated bug inside the channel itself}
++  }
++  set hadb [expr {[info commands ::xschem::notify_bootstrap] ne {}}]
++  if {$hadb} { rename ::xschem::notify_bootstrap ::f_saved_boot }
++  proc ::xschem::notify_bootstrap {msg args} {
++    lappend ::f_boot [linsert $args 0 $msg] ; return 0
++  }
++  set rc [catch {uplevel 1 $script} e]
++  catch {rename ::xschem::notify {}}
++  if {$hadn} { catch {rename ::f_saved_notify_r ::xschem::notify} }
++  catch {rename ::xschem::notify_bootstrap {}}
++  if {$hadb} { catch {rename ::f_saved_boot ::xschem::notify_bootstrap} }
++  if {$rc} { return [list ERR $e] }
++  return $e
++}
++## just the 0617 gate-off nudges out of that capture (a netlist emits others)
++proc f_boot_nudge {} {
++  set out {}
++  foreach c $::f_boot {
++    if {[string match {ASE: device operating-point parameters*} [lindex $c 0]]} {
++      lappend out $c
++    }
++  }
++  return $out
++}
++## one option's value out of a captured {-o v -o v} tail
++proc f_optval {tail o} {
++  foreach {k v} $tail { if {$k eq $o} { return $v } }
++  return NO-OPTION
++}
++
++cx {ase::op_cards_nudge_reset}
++catch {unset ::xschem::notify_last}
++set f19s3_dir [file normalize [file join $scratch runoff_s3]]
++set f19s3_st [ase::state_load $statefile]
++dict set f19s3_st rundir $f19s3_dir
++## NON-VACUITY FIRST, and it is not decoration: without it a red row could mean
++## "this state makes no nudge at all" (a consumed latch, a changed gate) rather
++## than "the raise ate it". One HEALTHY netlist of the SAME state, F19s's own
++## collector, then the latch is re-armed for the spied run.
++cx {ase::op_cards_nudge_reset}
++set f19s3_ctrl [f_nudges $f19s3_st]
++cx {ase::op_cards_nudge_reset}
++set ::f19s3_nl NO-RUN
++set f19s3_run  [f_boot_spy { set ::f19s3_nl [cx {ase::netlist $::f19s3_st}] }]
++set f19s3_call [f_boot_nudge]
++set f19s3_tail [expr {[llength $f19s3_call] == 1 ? [lrange [lindex $f19s3_call 0] 1 end] : {}}]
++## the static half: after 0674 no NON-COMMENT line of src/ase.tcl calls the
++## channel directly (test_ase_core NT39 owns the whole-tree form)
++set f19s3_direct 0
++if {![catch {open [file join $repo src ase.tcl] r} f19s3_fd]} {
++  set f19s3_body [read $f19s3_fd] ; close $f19s3_fd
++  foreach l [split $f19s3_body \n] {
++    if {[string index [string trimleft $l] 0] eq {#}} continue
++    if {[regexp {::xschem::notify[^_a-zA-Z0-9]} $l]} { incr f19s3_direct }
++  }
++}
++check "F19s3 0674 THE USER'S OWN NUDGE SURVIVES A RAISING CHANNEL: the netlist\
++ completes, the gate-off notice reaches the degraded bootstrap exactly once\
++ with its -short/-menu/-command intact, and src/ase.tcl no longer calls\
++ ::xschem::notify directly at all" \
++  [list $f19s3_ctrl \
++        [expr {[string match {ERR *} $f19s3_run] ? 0 : 1}] \
++        [expr {[string match {ERR: *} $::f19s3_nl] ? 0 : 1}] \
++        [llength $f19s3_call] \
++        [f_optval $f19s3_tail -short] \
++        [llength [split [f_optval $f19s3_tail -menu] >]] \
++        [f_optval $f19s3_tail -command] \
++        $f19s3_direct] \
++  [list 1 1 1 1 {no OP params saved} 3 [list ase::ui::save_op_params_on $f19o_key] 0]
++puts "note: F19s3 captured nudge = {$f19s3_call}"
++puts "note: F19s3 notices that reached the bootstrap = {[llength $::f_boot]}"
++flush stdout
++cx {ase::op_cards_nudge_reset}
++
+ # ============================================================================
+ # F19y/F19x/F19s2 -- 0679: THE LOOKUP, AND THE REFUSAL TO GUESS
+ # ============================================================================
+diff --git a/tests/headless/test_ase_log_seam_0207.tcl b/tests/headless/test_ase_log_seam_0207.tcl
+index 641205f1..08207d60 100644
+--- a/tests/headless/test_ase_log_seam_0207.tcl
++++ b/tests/headless/test_ase_log_seam_0207.tcl
+@@ -1007,6 +1007,350 @@ check "PS34 0650 G2 NON-REGRESSION OF SINK SELECTION: with the CIW MAPPED the\
+                 $ps34_closed_sb ne {NO-WIDGET} && $ps34_closed_sb ne {NO-TEXT}) ? 1 : 0}]] \
+   [list 1 PS34-SENTINEL 1 1 1]
+ 
++# ============================================================================
++# PS35-PS41 -- ISSUES 0674/0675/0677: A CHANNEL THAT IS ALIVE BY ITS OWN TEST
++# AND REACHES NOBODY
++# ============================================================================
++# THE USER'S OWN STATE, MEASURED ON :99 WITH openbox LIVE (issue 0675, "BEFORE-B"):
++# the CIW toplevel MAPPED, its text pane DESTROYED. Then --
++#   notify_channel_degraded = 0   (the channel passes its OWN liveness test)
++#   xschem::notify           = 1   ("delivered")
++#   notify_last sinks        = {ciw log}
++#   .statusbar.12            = still its sentinel   (the fallback was SKIPPED)
++#   the durable log          = ZERO `NOTICE CHANNEL DEGRADED`, ZERO `... FAULT`
++# A notice reached no human being and the channel said nothing about it.
++#
++# THE MECHANISM, and it is two widget paths for one fact: `notify_ciw_visible`
++# (src/ciw.tcl:92) probes the TOPLEVEL `.ciw`, while `ciw_echo` (src/ciw.tcl:464)
++# writes to the TEXT WIDGET `.ciw.l.t`. Destroy the pane and the gate at
++# src/ciw.tcl:344 still answers "the CIW is in front of the user", so sink 3 --
++# the can't-miss fallback PS14 exists to prove -- is skipped. Meanwhile sink 1
++# marks `ciw` because `::ciw_echo` merely FAILED TO RAISE (issue 0662).
++#
++# ⚠ WHY THIS IS NOT PS14/PS17's DEFECT AGAIN. PS17 pins the Tk fact that a CLOSE
++# only WITHDRAWS, so `winfo exists` is the wrong predicate and `ismapped` is the
++# right one. That is still true and PS36 re-asserts it. What 0675 adds is that
++# `ismapped` is being asked about the WRONG WIDGET. I re-measured `ismapped` for
++# `.ciw` and `.ciw.l.t` across open / withdrawn / iconified: 1/1, 0/0, 0/0 --
++# IDENTICAL, so PS14/PS16/PS17/PS19/PS24/PS25/PS26/PS34 do not move. Exactly ONE
++# state changes, and it is the user's: mapped toplevel, destroyed pane.
++#
++# THE CONTRACT for `notify_reach` / `notify_reach_line` / the third voice is
++# written out in full at the head of the NT30-NT41 block in
++# tests/headless/test_ase_core.tcl. The two goldens these rows depend on:
++#   sinks now: ciw=<c> log=<l> statusbar=<s> popup=<p>     (ONE line, no newline)
++#   log=blind(open,UNVERIFIED issue 0699)                  (actionlog_suppress is
++#       invisible from Tcl -- setter only, src/scheduler.c:11733 -- so the log
++#       arm ADMITS the uncertainty instead of asserting liveness)
++#
++# THE THIRD VOICE. `NOTICE CHANNEL UNREACHABLE` -- it contains NEITHER golden
++# substring, so NTD1/NTD4/NTD6/NTD9/NTD11/NTD12, PS20/PS23/PS27/PS29/PS32/PS33
++# and SG14/SG18 are untouched. It is a THIRD sentence and not a re-wording of
++# either existing one because the state is a third state: not DEGRADED (the live
++# channel is the full four-sink one) and not a FAULT (nothing raised). 0497 rule
++# 2 -- split by cause, never one aggregate -- and 0497 rule 1 -- count per pass,
++# never alert per item, which is PS38's subject.
++#
++# ⚠ WORDING IS NOT SETTLED HERE. The FAULT-vs-DEGRADED wording and the no-log
++# wording are the user's rule debts [0664] and [0677], and these measurements
++# sharpen rather than answer them: PS37's state is a FOURTH one in which NEITHER
++# existing sentence fires at all. So these rows assert the MARKER, the measured
++# inventory and the line count -- never the prose around them.
++#
++# ⚠ THE PARENT'S OWN WIDGETS ARE DESTROYED AND REBUILT HERE, deliberately: an X
++# share-farm child with a mid-file-broken ciw.tcl HUNG when this was measured
++# (two minutes, seven live xschem processes, no output -- suspected issue 0669),
++# so the GUI half of 0675 is reproduced in-session. `.statusbar.12` is recreated
++# from src/xschem.tcl:15904's own `label ... -fg red -text {}`; its PACK ORDER in
++# the bar is not restored, which is why these rows are LAST in the file.
++
++## the reachability predicate, read defensively (nt_cx / ps_cx's rule)
++proc ps_reach {} {
++  if {[catch {::xschem::notify_reach} d]} { return "ERR: $d" }
++  return $d
++}
++proc ps_arm {k} {
++  set d [ps_reach]
++  if {[string match {ERR: *} $d]} { return $d }
++  if {[catch {dict get $d $k} v]} { return NO-ARM-$k }
++  return $v
++}
++proc ps_reach_line {} {
++  if {[catch {::xschem::notify_reach_line} l]} { return "ERR: $l" }
++  return $l
++}
++## the first NEW log line carrying $s, so a row can assert WHAT was said
++proc ps_newline_with {n0 s} {
++  foreach l [newlines $n0] { if {[string first $s $l] >= 0} { return $l } }
++  return {}
++}
++## rebuild the drawing window's shared status field after a row has destroyed
++## it (src/xschem.tcl:15904 + :14479)
++proc sbar_rebuild {} {
++  if {[winfo exists [sbar_path]]} { return 1 }
++  if {[catch {label [sbar_path] -fg red -text {}}]} { return 0 }
++  catch {pack [sbar_path] -side left}
++  update idletasks
++  return [expr {[winfo exists [sbar_path]] ? 1 : 0}]
++}
++## rebuild the CIW pane after a row has destroyed it
++proc ciw_rebuild {} {
++  catch {destroy .ciw}
++  catch {ciw_create}
++  update idletasks ; update
++  return [expr {[winfo exists .ciw.l.t] ? 1 : 0}]
++}
++
++# --- PS35: 0675's HEADLINE -- THE USER'S OWN STATE, ON A REAL DISPLAY -------
++# RED AT HEAD, and it is the row that makes the other two issues matter: the
++# CIW toplevel is MAPPED, its pane is GONE, and today the notice reaches nobody
++# while every self-test says the channel is fine. After the fix the can't-miss
++# fallback fires -- which is PS14's contract, in a state PS14 cannot reach.
++ciw_show
++sbar_set PS35-SENTINEL
++catch {destroy .ciw.l}
++update idletasks ; update
++set ps35_n0 [llength [loglines]]
++set ps35_top_exists [expr {[winfo exists .ciw] ? 1 : 0}]
++set ps35_top_mapped [expr {[winfo ismapped .ciw] ? 1 : 0}]
++set ps35_pane_gone  [expr {[winfo exists .ciw.l.t] ? 0 : 1}]
++set ps35_deg        [ps_cx {::xschem::notify_channel_degraded}]
++set ps35_arm        [ps_arm ciw]
++set ps35_visible    [ps_cx {::xschem::notify_ciw_visible}]
++ase::echo $PS_LONG error
++update idletasks
++set ps35_sb [sbar_text]
++note "PS35 statusbar after the notice" $ps35_sb
++note "PS35 reach line"                 [ps_reach_line]
++check "PS35 0675 THE HEADLINE: with the CIW toplevel still MAPPED and its TEXT\
++ PANE destroyed, the channel is undegraded by its own test, the pane sink is\
++ measurably dead, notify_ciw_visible no longer claims the user can see it, and\
++ the notice reaches [sbar_path]" \
++  [list $ps35_top_exists $ps35_top_mapped $ps35_pane_gone $ps35_deg \
++        $ps35_arm $ps35_visible \
++        [expr {($ps35_sb ne {PS35-SENTINEL} && $ps35_sb ne {} && \
++                $ps35_sb ne {NO-WIDGET} && $ps35_sb ne {NO-TEXT}) ? 1 : 0}]] \
++  [list 1 1 1 0 {dead no-pane} 0 1]
++
++# --- PS36: THE DISCRIMINATOR -- a LIVE pane still owns the notice -----------
++# PS16's fence, re-asserted through the new gate. Without it PS35 would pass for
++# a fallback that writes `.statusbar.12` unconditionally -- which would stomp
++# *BUSY* (src/hilight.c:2201) on every ASE notice and make a shared field ASE's
++# private one. The predicate must say `visible` here, with an EMPTY reason: the
++# vocabulary is REACHABLE, never SEEN (occlusion, issue 0659, is not measurable).
++set ps36_rebuilt [ciw_rebuild]
++ciw_show
++sbar_set PS36-SENTINEL
++set PS36_MSG {PS36-0675 a live pane still owns the notice}
++ase::echo $PS36_MSG error
++update idletasks
++check "PS36 0675 NON-REGRESSION: with the pane alive and mapped the identical\
++ notice reaches the pane exactly once and leaves the shared statusbar ALONE --\
++ the .ciw -> .ciw.l.t move changes exactly ONE state, and this is not it" \
++  [list $ps36_rebuilt [expr {[winfo ismapped .ciw.l.t] ? 1 : 0}] \
++        [ps_arm ciw] [pane_count $PS36_MSG] [sbar_text]] \
++  [list 1 1 {visible {}} 1 PS36-SENTINEL]
++
++# --- PS37: ZERO HUMAN SINKS, AND THE CHANNEL MUST SAY SO --------------------
++# RED AT HEAD: measured, the channel returns 1, the witness names a sink, and
++# the log carries no announcement of any kind. This is the state neither
++# existing sentence describes -- the live notify is the FULL channel (not
++# DEGRADED) and nothing raised (not a FAULT) -- so it needs the third voice.
++# The session must survive its own status field being destroyed, which is
++# asserted here rather than assumed.
++ps_rearm_latches
++catch {::xschem::notify_latch_reset reach}
++catch {destroy .ciw.l}
++catch {destroy [sbar_path]}
++catch {destroy .xschem_notify}
++update idletasks ; update
++set ps37_n0     [llength [loglines]]
++set ps37_pane   [expr {[winfo exists .ciw.l.t] ? 1 : 0}]
++set ps37_sbw    [expr {[winfo exists [sbar_path]] ? 1 : 0}]
++set ps37_style  [expr {[info exists ::notify_style] ? $::notify_style : {NO-VAR}}]
++set ps37_deg    [ps_cx {::xschem::notify_channel_degraded}]
++## ⚠ CAPTURED INSIDE THE STATE, before anything is restored -- PS39 asserts
++## every clause of THIS string against probes taken in the same instant.
++set ps37_line   [ps_reach_line]
++set ps37_armc   [ps_arm ciw]
++set ps37_arms   [ps_arm statusbar]
++set ps37_armp   [ps_arm popup]
++set ps37_arml   [ps_arm log]
++set ps37_logf   [expr {[xschem get actionlog_filename] ne {} ? 1 : 0}]
++set PS37_MSG {PS37-0675 a notice that reaches no human at all}
++set ps37_r      [ps_cx {ase::echo $::PS37_MSG error}]
++update idletasks
++set ps37_alive  [ps_cx {xschem get current_name}]
++set ps37_ann    [ps_newline_with $ps37_n0 {NOTICE CHANNEL UNREACHABLE}]
++note "PS37 reach line"     $ps37_line
++note "PS37 announcement"   $ps37_ann
++note "PS37 new log lines"  [newlines $ps37_n0]
++check "PS37 0675 ZERO HUMAN SINKS: with the CIW pane AND the shared status\
++ field destroyed and the shipped `ciw` style, the notice still reaches the\
++ durable log and EXACTLY ONE `NOTICE CHANNEL UNREACHABLE` line says so -- it\
++ carries the measured inventory, it contains NEITHER golden substring, and the\
++ session survives" \
++  [list $ps37_pane $ps37_sbw $ps37_style $ps37_deg $ps37_logf \
++        [ps_newcount $ps37_n0 {NOTICE CHANNEL UNREACHABLE}] \
++        [expr {[string first {sinks now:} $ps37_ann] >= 0 ? 1 : 0}] \
++        [expr {[string first {NOTICE CHANNEL DEGRADED} $ps37_ann] >= 0 ? 1 : 0}] \
++        [expr {[string first {NOTICE CHANNEL FAULT}    $ps37_ann] >= 0 ? 1 : 0}] \
++        [ps_newcount $ps37_n0 {NOTICE CHANNEL DEGRADED}] \
++        [ps_newcount $ps37_n0 {NOTICE CHANNEL FAULT}] \
++        [expr {[string match {ERR: *} $ps37_alive] ? 0 : 1}]] \
++  [list 0 0 ciw 0 1 1 1 0 0 0 0 1]
++
++# --- PS39: EVERY CLAUSE IS TRUE AT THE MOMENT IT IS SAID --------------------
++# 0664 is issue 0652's defect class -- a report that LIES -- and the answer to
++# it cannot be a second report that asserts. So each clause of the inventory
++# captured INSIDE PS37's state is paired with an INDEPENDENT per-widget probe
++# taken in the same instant, in one tuple, so a clause that is merely plausible
++# cannot pass. (PS39 asserts on PS37's captured values and changes no state.)
++check "PS39 0675 THE INVENTORY IS A MEASUREMENT: captured inside the\
++ unreachable state, every clause of `sinks now:` matches an independent probe\
++ of the same widget in the same instant -- and the log arm ADMITS what Tcl\
++ cannot see (actionlog_suppress, issue 0699) instead of claiming liveness" \
++  [list [expr {[string first {sinks now: } $ps37_line] == 0 ? 1 : 0}] \
++        $ps37_armc \
++        [expr {[string first {ciw=dead(no-pane)} $ps37_line] >= 0 ? 1 : 0}] \
++        $ps37_arms \
++        [expr {[string first {statusbar=dead(no-widget)} $ps37_line] >= 0 ? 1 : 0}] \
++        $ps37_armp \
++        [expr {[string first {popup=off(style-ciw)} $ps37_line] >= 0 ? 1 : 0}] \
++        [expr {[string first {log=blind(open,UNVERIFIED issue 0699)} $ps37_line] >= 0 ? 1 : 0}] \
++        [expr {[string first "\n" $ps37_line] >= 0 ? 1 : 0}]] \
++  [list 1 {dead no-pane} 1 {dead no-widget} 1 {off style-ciw} 1 1 0]
++
++# --- PS38: 0497 RULE 1 -- COUNT PER PASS, NEVER ALERT PER ITEM -------------
++# The third voice is latched on the REACHABLE SET, not on the session and not on
++# the notice. Three passes in one row, because each alone would admit a wrong
++# fix: five more notices in the IDENTICAL state must add nothing (a per-notice
++# alert is what 0497 forbids); a genuinely DIFFERENT unreachable set must
++# re-arm and speak once (a session-wide one-shot would go quiet on a state the
++# user has not been told about); and a state with a VISIBLE sink must say
++# nothing at all (an announcement that never stops is noise, not information).
++#
++# The second pass is the sharp one: the pane is REBUILT and then WITHDRAWN, so
++# it RECEIVES every notice while no human can see it -- `blind`, not `dead`.
++# That is the distinction the whole predicate exists to make.
++set ps38_n0 [llength [loglines]]
++foreach i {1 2 3 4 5} { catch {ase::echo "PS38-0675 further unreachable notice $i" error} }
++update idletasks
++set ps38_same [ps_newcount $ps38_n0 {NOTICE CHANNEL UNREACHABLE}]
++set ps38_vol  [ps_newcount $ps38_n0 {PS38-0675 further unreachable notice}]
++
++set ps38_n1 [llength [loglines]]
++set ps38_rebuilt [ciw_rebuild]
++set ps38_withdrawn [ciw_close_via_wm]
++catch {ase::echo {PS38-0675 a DIFFERENT unreachable set: the pane receives, nobody sees} error}
++update idletasks
++set ps38_changed [ps_newcount $ps38_n1 {NOTICE CHANNEL UNREACHABLE}]
++set ps38_arm_blind [ps_arm ciw]
++
++set ps38_n2 [llength [loglines]]
++set ps38_shown [ciw_show]
++catch {ase::echo {PS38-0675 and with a visible sink there is nothing to announce} error}
++update idletasks
++set ps38_reachable [ps_newcount $ps38_n2 {NOTICE CHANNEL UNREACHABLE}]
++check "PS38 0675/0497 rule 1 the third voice is LATCHED ON THE REACHABLE SET:\
++ five further notices in the identical state add ZERO lines (while all five are\
++ still logged), a genuinely different unreachable set -- a pane that RECEIVES\
++ and cannot be SEEN -- re-arms it for exactly ONE more, and a state with a\
++ visible sink announces nothing" \
++  [list $ps38_same $ps38_vol $ps38_rebuilt $ps38_withdrawn $ps38_arm_blind \
++        $ps38_changed $ps38_shown $ps38_reachable] \
++  [list 0 5 1 1 {blind unmapped} 1 1 0]
++
++## restore the drawing window's status field before the file-shape rows
++set ps_sbar_back [sbar_rebuild]
++note "PS37-PS39 statusbar rebuilt" $ps_sbar_back
++
++# --- PS40: ONE ANNOUNCEMENT, ONE DURABLE LINE ------------------------------
++# `log_output` (src/util.c:536) prefixes EVERY physical newline with its own
++# `#! `, so an inventory carrying an embedded newline silently becomes a second
++# durable line -- which would redden SG14 in test_startup_guard_0663.tcl (that
++# row counts the broken-ciw child's `#! ` total as exactly 1) and would be
++# 0665's two-lines-for-one-notice defect wearing a new coat. Asserted on the
++# WHOLE log, over every announcement this suite has provoked: no orphan
++# inventory line, every announcement `#! `-prefixed, and every one of them
++# carrying its measurement.
++set ps40_orphan 0 ; set ps40_unpref 0 ; set ps40_ann 0 ; set ps40_ann_inv 0
++foreach l [loglines] {
++  set ps40_inv [expr {[string first {sinks now:} $l] >= 0}]
++  set ps40_m 0
++  foreach m {{NOTICE CHANNEL DEGRADED} {NOTICE CHANNEL FAULT} {NOTICE CHANNEL UNREACHABLE}} {
++    if {[string first $m $l] >= 0} { set ps40_m 1 }
++  }
++  if {$ps40_m} {
++    incr ps40_ann
++    if {$ps40_inv} { incr ps40_ann_inv }
++    if {[string range $l 0 2] ne {#! }} { incr ps40_unpref }
++  } elseif {$ps40_inv} { incr ps40_orphan }
++}
++note "PS40 announcements in the log" [list $ps40_ann with-inventory $ps40_ann_inv]
++check "PS40 0665/0675 EACH ANNOUNCEMENT IS EXACTLY ONE DURABLE LINE: every\
++ `NOTICE CHANNEL ...` line in the whole log is `#! `-prefixed and carries its\
++ own measured inventory, and no inventory ever appears on a line of its own" \
++  [list $ps40_orphan $ps40_unpref [expr {$ps40_ann > 0 ? 1 : 0}] \
++        [expr {$ps40_ann == $ps40_ann_inv ? 1 : 0}]] \
++  [list 0 0 1 1]
++
++# --- PS41: 0674 -- THE REMEDY-CARRYING SITE, WITH A REAL LOG ----------------
++# src/ase.tcl:778's shape (0674 says :692; it has drifted). It is a DIRECT
++# `catch {::xschem::notify ... -short -menu -command}` because notify_safe's
++# `{msg {tag {}}}` signature cannot carry a remedy -- so the user's own 0617
++# gate-off nudge is swallowed whole, with its own catch destroying the evidence,
++# the moment the channel raises. Both halves in one row: through the widened
++# delegate the healthy path keeps every field DISTINCT (R-0653-d) and renders
++# ONE durable sentence, and the raising path still leaves its line and does not
++# raise into its caller.
++ciw_show
++ps_rearm_latches
++set PS41_MSG  {PS41-0674 the gate-off nudge must survive a raising channel}
++set PS41_MENU {ASE-L > Outputs > Save All...}
++set PS41_CMD  {ase::ui::save_op_params_on ps41}
++catch {unset ::xschem::notify_last}
++set ps41_n0 [llength [loglines]]
++set ps41_rc [ps_cx {::xschem::notify_safe $PS41_MSG -tag error -short PS41SHORT \
++                      -menu $PS41_MENU -command $PS41_CMD}]
++update idletasks
++## ⚠ CAPTURED HERE, NOT IN THE `check` BELOW. The witness is ONE slot: the
++## raising half of this row makes a SECOND notice, which reaches the degraded
++## bootstrap and overwrites `::xschem::notify_last` with its own fresh record --
++## and degraded mode deliberately carries NO short form and NO remedy (0658's
++## scope limit, fenced by test_ase_core NT18). Reading the fields after that
++## call would measure the bootstrap's record while claiming to measure the
++## healthy channel's, which is this cluster's own defect class wearing a test's
++## clothes. The HEALTHY half is asserted where it is true.
++set ps41_short [ps_field short]
++set ps41_menuf [ps_field menu]
++set ps41_cmdf  [ps_field command]
++set ps41_line "#! $PS41_MSG Fix: $PS41_MENU. CIW command: $PS41_CMD"
++
++set PS41_MSG2 {PS41-0674 and the same notice with the channel RAISING}
++set ps41_n1 [llength [loglines]]
++set ::ps41_rc2  NO-RUN
++set ::ps41_done 0
++set ps41_raise [ps_raising_notify {
++  set ::ps41_rc2  [ps_cx {::xschem::notify_safe $::PS41_MSG2 -tag error \
++                            -short PS41SHORT2 -menu $::PS41_MENU -command $::PS41_CMD}]
++  set ::ps41_done 1
++}]
++update idletasks
++note "PS41 healthy return" $ps41_rc
++note "PS41 raising return" $::ps41_rc2
++note "PS41 new log lines"  [newlines $ps41_n1]
++check "PS41 0674 THE SAFE DELEGATE CARRIES THE WHOLE NOTICE: healthy, it keeps\
++ -short/-menu/-command as DISTINCT witness fields and renders ONE durable\
++ sentence carrying the remedy; with the channel RAISING, the call itself does\
++ not raise and the notice still leaves exactly one durable line" \
++  [list $ps41_short $ps41_menuf $ps41_cmdf \
++        [ps_newcount $ps41_n0 $ps41_line] \
++        $ps41_done \
++        [expr {[string match {ERR: *} $::ps41_rc2] ? 0 : 1}] \
++        [ps_newcount $ps41_n1 $PS41_MSG2]] \
++  [list PS41SHORT $PS41_MENU $PS41_CMD 1 1 1 1]
++
+ # leave the session as we found it: CIW visible, status field clear
+ sbar_set {}
+ ciw_show
+diff --git a/tests/headless/test_startup_guard_0663.tcl b/tests/headless/test_startup_guard_0663.tcl
+index 5f603dcc..140552fd 100644
+--- a/tests/headless/test_startup_guard_0663.tcl
++++ b/tests/headless/test_startup_guard_0663.tcl
+@@ -339,17 +339,59 @@ check "SG13 0663 R6 hard form: a healthy startup writes ZERO `#! ` lines to the\
+ # the C backstop never fires: one announcement, ONE durable line, 0658's shipped
+ # output byte-unchanged. The `#! ` total is the anti-0665 half -- one notice
+ # must not become two durable lines.
++#
++# ⚠ EXTENDED BY ISSUE 0675, AND THE `#! ` TOTAL IS WHY IT IS EXTENDED HERE
++# RATHER THAN ROWED SEPARATELY. The degraded sentence asserts an inventory --
++# "(no CIW pane, no status field, no popup, no remedy)" -- and measures none of
++# it. 0675 makes it a MEASUREMENT by appending the one reachability line. That
++# append must ride on the SAME durable line: `log_output` (src/util.c:536)
++# prefixes every physical newline with its own `#! `, so an inventory carrying
++# an embedded newline would turn this child's one announcement into TWO durable
++# lines and redden the last term of this very row. A second ANNOUNCEMENT would
++# do the same, which is 0497 rule 1 (count per pass, never alert per item)
++# enforced inside one sentence. Contract for the line's shape: the head of the
++# NT30-NT41 block in tests/headless/test_ase_core.tcl.
++## the first log line carrying $s, so a row (or a note) can show WHAT was said
++proc sg_log_line_with {r s} {
++  foreach l [dict get $r -log] { if {[string first $s $l] >= 0} { return $l } }
++  return {}
++}
+ set sg_ciw [sg_run ciw [list ciw.tcl $SG_BOOM]]
+-check "SG14 0663 the 0658 CONTROL: a broken ciw.tcl still starts (exit 0),\
+- writes EXACTLY ONE `NOTICE CHANNEL DEGRADED` line and no STARTUP ABORTED, and\
+- the log gains exactly ONE `#! ` line in total -- the C backstop does not fire\
+- and does not double-announce" \
++note "SG14 the DEGRADED line" [sg_log_line_with $sg_ciw {NOTICE CHANNEL DEGRADED}]
++check "SG14 0663/0675 the 0658 CONTROL: a broken ciw.tcl still starts (exit 0),\
++ writes EXACTLY ONE `NOTICE CHANNEL DEGRADED` line and no STARTUP ABORTED, that\
++ line now carries the MEASURED inventory naming every Tk sink\
++ dead(degraded-channel), and the log STILL gains exactly ONE `#! ` line in\
++ total -- the C backstop does not fire, and the measurement does not become a\
++ second durable line" \
+   [list [dict get $sg_ciw -status] \
+         [sg_out_count $sg_ciw SG-ALIVE] \
+         [sg_log_count $sg_ciw {NOTICE CHANNEL DEGRADED}] \
+         [sg_log_count $sg_ciw {STARTUP ABORTED}] \
++        [sg_log_glob $sg_ciw {*NOTICE CHANNEL DEGRADED*sinks now:*}] \
++        [sg_log_glob $sg_ciw {*ciw=dead(degraded-channel)*}] \
++        [sg_log_glob $sg_ciw {*statusbar=dead(degraded-channel)*}] \
++        [sg_log_glob $sg_ciw {*popup=dead(degraded-channel)*}] \
+         [sg_log_count $sg_ciw {#! }]] \
+-  [list 0 1 1 0 1]
++  [list 0 1 1 0 1 1 1 1 1]
++
++# --- SG22: 0675 -- THE THIRD VOICE IS SILENT WHERE IT MUST BE ---------------
++# ⚠ GREEN BEFORE THE CHANGE (vacuously -- the marker does not exist yet) and it
++# must be green AFTER for a REASON, which is why it is committed: a `--nogui`
++# session has no Tk at all, so "no sink is visible" is its NORMAL condition and
++# not a fault to announce. A third voice that fired on reachability alone would
++# add a line to EVERY headless batch run -- and, in the degraded child, a second
++# `#! ` line that reddens SG14 directly above. The firing condition is
++# narrower: the live channel is NOT the bootstrap, AND Tk is live, AND no arm is
++# visible. Both farms here fail the first or the second term.
++check "SG22 0675 the third voice does NOT fire where no human sink was ever\
++ possible: a HEALTHY headless farm and a DEGRADED headless one both write ZERO\
++ `NOTICE CHANNEL UNREACHABLE` lines, to the log and to stderr alike" \
++  [list [sg_log_count $sg_clean {NOTICE CHANNEL UNREACHABLE}] \
++        [sg_out_count $sg_clean {NOTICE CHANNEL UNREACHABLE}] \
++        [sg_log_count $sg_ciw   {NOTICE CHANNEL UNREACHABLE}] \
++        [sg_out_count $sg_ciw   {NOTICE CHANNEL UNREACHABLE}]] \
++  [list 0 0 0 0]
+ 
+ # =============================================================================
+ # R7 -- THE SAME ON A DISPLAY  (SG15-SG19)
