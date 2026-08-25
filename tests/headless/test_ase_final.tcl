@@ -40,8 +40,14 @@
 # mutation is the rundir override into the scratch dir (hermetic run
 # location through the public schema — no sim content is added anywhere).
 #
-# True headless (no X). Run from the repo ROOT:
-#   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_final.tcl
+# RUNS IN BOTH ARMS, with the SAME checks and the same verdict (issue 0698 --
+# this suite used to pass headless and abort under X, and that asymmetry was
+# carried in briefs as folklore instead of being fixed). Run from the repo ROOT:
+#   headless:  ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_final.tcl
+#   display:   tests/headless/run_suites.sh test_ase_final
+# Under X the design window is bound explicitly before the first ase::netlist
+# (ase_design_window.tcl); headless, ase::netlist self-loads and that arm of the
+# guard stays the thing under test. Nothing else differs between the two.
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -55,6 +61,7 @@ proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 source [file join $here scratch.tcl]
+source [file join $here ase_design_window.tcl]  ;# ase_bind_design_window (issue 0698)
 set scratch [test_scratch ase_final]
 
 set cellroot  [file join $repo sky130A xschem_libs sky130_tests test_nfet_final]
@@ -107,6 +114,38 @@ check_true "F5 .sch has no .control" [expr {![string match {*.control*} $schtext
 # --- F6: netlist through the public API (hermetic rundir, decision D7) -------
 set rundir [file normalize [file join $scratch run]]
 dict set st rundir $rundir
+# --- 0698: the design window must be BOUND before the first ase::netlist -----
+# ase::netlist (src/ase.tcl:866-874) self-loads the design ONLY when no display
+# exists; under X it refuses with "design ... is not the current schematic" and
+# this suite fell into its UNEXPECTED ERROR catch-all with most of its checks
+# never reached. The guard is CORRECT -- it must never clobber an open GUI
+# window -- so the wrong side is the suite, which never opens the design window
+# the guard's GUI arm documents (Session > Design Window).
+#
+# THE BIND BELONGS ABOVE THIS ROW; this row is its postcondition. It must also
+# stay AFTER the scratch library.defs block: bound earlier, the symbol resolves
+# against the ambient registry and the XM1 row below fails instead -- a failure
+# that looks nothing like this one.
+#
+# The path is resolved through `xschem cellview_path`, the SAME accessor
+# ase::netlist compares against, so the row and the guard cannot disagree about
+# which file "the design" is. Headless the expectation is vacuously true, and
+# deliberately so: there the guard's own self-load arm is what must stay
+# exercised, and an unconditional bind would silently stop exercising it.
+ase_bind_design_window $st
+set _d698 [dict get $st design]
+set _v698 schematic
+if {[dict exists $_d698 view] && [dict get $_d698 view] ne {}} { set _v698 [dict get $_d698 view] }
+set _p698 [file normalize [xschem cellview_path \
+             [dict get $_d698 lib]/[dict get $_d698 cell] $_v698]]
+set _c698 [file normalize [xschem get schname]]
+if {![info exists ::has_x] || $_c698 eq $_p698} {
+  set _b698 bound
+} else {
+  set _b698 "UNBOUND (current=[file tail $_c698])"
+}
+check "F6 design window bound before the first netlist (0698)" $_b698 bound
+
 set nl [ase::netlist $st]
 check "F6 netlist path" $nl [file join $rundir test_nfet_final.spice]
 check_true "F6 netlist file exists" [file isfile $nl]

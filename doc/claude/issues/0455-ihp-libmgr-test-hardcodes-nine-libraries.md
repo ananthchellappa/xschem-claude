@@ -1,6 +1,24 @@
 # 0455 — test_ihp_sg13g2_libmgr hard-codes 9 libraries and a 10th is committed
 
-Status: OPEN (measured, not fixed)
+> **RESOLVED 2026-08-25 — DUPLICATE of issue 0690, fixed there.** The golden now
+> lists 10 and the suite reports `OVERALL: ok (67 checks)`. Filed four times in all
+> (0421, 0455, 0491, 0690).
+>
+> ⚠ **THIS FILE'S FIRST DIAGNOSIS IS REFUTED, AND IT IS RECORDED HERE SO NOBODY ACTS
+> ON IT LATER.** It originally read the directory as untracked litter and pointed at
+> **deleting it** — which would have destroyed **140 tracked files across 49 cells**
+> to make one test green. This file already corrected itself once (below); the
+> 0689+0690 crew re-confirmed the correction five independent ways before touching the
+> golden, per the driver's rule that *a golden updated to match a broken tree is worse
+> than a stale golden*. `sg13g2_tests_ase` is the **migrated ASE-L testbench library**
+> and it stays.
+>
+> One remedy this file offered is also refuted: **"or make it a superset test"**. The
+> check is deliberately **exact-equality**, which is what would catch a library
+> genuinely leaking into the workarea; widening it to a superset would convert this
+> red into a permanent lie. See 0690 §8.
+
+Status: **RESOLVED as a duplicate of 0690** (2026-08-25). Was: OPEN (measured, not fixed)
 Found: S8 of doc/claude/specs/op_annotation.md, baseline measurement on branch `annotate`.
 
 `cd tests && tclsh run_regression.tcl` reports a real check failure:

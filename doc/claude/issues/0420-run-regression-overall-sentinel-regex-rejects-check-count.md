@@ -1,6 +1,16 @@
 # 0420 - run_regression.tcl's OVERALL sentinel regex rejects a passing suite that prints its check count
 
-Status: OPEN (measured, not fixed)
+> **RESOLVED 2026-08-25 — DUPLICATE of issue 0689, fixed there.**
+> This defect was filed **four** times (0420, 0492, 0629, 0689) and waved through as
+> "T1 3 FAIL — pre-existing" every time. Nobody fixed it; everybody re-derived it.
+> The fix is `tests/banner_rule.tcl` (`banner_complete` / `banner_died` /
+> `regression_case_failed`), with `run_regression.tcl` as a consumer and
+> `test_audit_classifier.tcl` section K (19 rows) locking it. **T1 went 3 counted
+> FAIL lines → 0 in the same commit.** ⚠ The relaxation alone would have been a
+> regression — see 0689 §4 — so it shipped paired with a column-0 death predicate.
+> Read `doc/claude/issues/0689-*.md`; nothing below needs re-deriving.
+
+Status: **RESOLVED as a duplicate of 0689** (2026-08-25). Was: OPEN (measured, not fixed)
 Found: 2026-08-16, S1 baseline measurement of the `annotate` branch (Measure agent).
 Not caused by the operating-point-annotation work; pre-existing on this branch.
 

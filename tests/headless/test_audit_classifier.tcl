@@ -526,5 +526,200 @@ regexp {grep -qE '(\^\(RESULT: SKIP[^']*)'} $rs -> rs_re
 check "C44 run_suites.sh's skip regexp is line-anchored and identical to is_skip's" \
       [list [expr {$fa_re ne ""}] [expr {$rs_re ne ""}] [expr {$fa_re eq $rs_re}]] {1 1 1}
 
+
+# ---------------------------------------------------------------------------
+# K. THE THIRD READER'S BANNER RULE (issues 0689 + 0802).
+#
+# tests/run_regression.tcl is the one reader of the three that carries a PRIVATE
+# copy of the completion-banner shape, and its copy is anchored at BOTH ends
+# (:117). Two shipped suites end their run with a check COUNT appended to the
+# banner, so the copy can never match them: both are scored a HARNESS failure
+# while every one of their own checks passed. That standing red has been filed
+# four times (0420, 0492, 0629, 0689) and waved through as furniture every time.
+#
+# THE CONTRACT THIS SECTION LOCKS, in tests/banner_rule.tcl:
+#   1. banner_complete  -- the banner counts WHOLE-LINE, an optional
+#      parenthesised trailer is tolerated, and every failure spelling is
+#      rejected. Same rule as run_suites.sh:155, which already ships it as an
+#      ERE; K18 asserts the two agree fixture-for-fixture rather than
+#      byte-for-byte, so either may be re-spelled but neither may drift.
+#   2. banner_died      -- a column-0 crash marker is a death REGARDLESS of what
+#      banner was printed before it. Measured during this item: a suite that
+#      prints a bare banner and THEN dies exits 0 and is scored a silent PASS
+#      today, for all 131 bare-banner sites. Relaxing the anchor without this
+#      predicate would move the two counted suites into that same hole -- a
+#      quieter harness, not a better one.
+#   3. regression_case_failed -- exit 0 AND a completion banner AND no death.
+#      A nonzero child code still beats any banner (0016 Part 4: the arm that
+#      catches a binary that never launched is the child code, and it is not
+#      touched here).
+#
+# DELIBERATE DIVERGENCE, FILED AS 0802: full_audit.sh:315-316 guards its
+# Tcl_AppInit arm with `&& ! is_pass`, so a pass banner followed by a death is
+# scored PASS there. banner_died carries no such clause. K9-K12 lock the
+# stricter behaviour; the laxer one is filed, not fixed, because changing
+# full_audit's classification moves section H, which is in the CI gate list.
+#
+# RED BEFORE THE IMPLEMENTATION: tests/banner_rule.tcl does not exist, so the
+# probe reports NO_RULE_FILE for every behavioural row, and run_regression.tcl
+# still carries its private copy (K17).
+#
+# AUTHORING CONSTRAINT (the same one this file's header states): no fixture blob
+# and no check NAME below may carry the literal banner or death text at column 0
+# of this suite's own stdout. Fixtures live in variables and only ever reach the
+# log through `flat`; the names say "completion banner" / "death marker".
+# ---------------------------------------------------------------------------
+set BR [file join $repo tests banner_rule.tcl]
+
+# Out-of-process on a bare tclsh, deliberately: run_regression.tcl is a tclsh
+# script, so a banner_rule.tcl that needed anything from xschem's interpreter
+# would pass an in-process probe and break the only consumer there is.
+set BR_PROBE_SRC {
+  if {[catch {source [lindex $argv 0]} e]} { puts "VERDICT=NO_RULE_FILE"; exit 0 }
+  set mode [lindex $argv 1]
+  set body [lindex $argv 2]
+  set ec   [lindex $argv 3]
+  set r ""
+  switch -exact -- $mode {
+    complete { set c [catch {banner_complete $body} r] }
+    died     { set c [catch {banner_died $body} r] }
+    failed   { set c [catch {regression_case_failed $ec $body} r] }
+    default  { puts "VERDICT=BADMODE"; exit 0 }
+  }
+  if {$c} { puts "VERDICT=NO_PROC"; exit 0 }
+  if {[catch {expr {$r ? "YES" : "NO"}} v]} { set v NONBOOL }
+  puts "VERDICT=$v"
+}
+set BR_PROBE [file join $scratch banner_probe.tcl]
+set f [open $BR_PROBE w]; puts $f $BR_PROBE_SRC; close $f
+set TCLSH [lindex [auto_execok tclsh] 0]
+if {$TCLSH eq {}} { set TCLSH tclsh }
+
+proc banner_probe {mode body {ec 0}} {
+  global BR BR_PROBE TCLSH
+  set out ""
+  catch {exec $TCLSH $BR_PROBE $BR $mode $body $ec 2>@1} out
+  if {[regexp {VERDICT=([A-Za-z_]+)} $out -> w]} { return $w }
+  return "<no-verdict: [flat $out]>"
+}
+proc banner_complete {body}      { return [banner_probe complete $body] }
+proc banner_died     {body}      { return [banner_probe died $body] }
+proc case_failed     {ec body}   { return [banner_probe failed $body $ec] }
+
+# --- fixtures: every shape tests/headless/*.tcl actually emits ---------------
+set RPRE "Using run time directory XSCHEM_SHAREDIR = /repo/src\nSourcing /repo/src/xschemrc init file"
+
+# the bare banner: 131 emitter sites
+set R_BARE   "$RPRE\nok:   something  (ok)\nOVERALL: ok"
+# test_pdk_launcher.tcl:119 -- the measured false red
+set R_C30    "$RPRE\nok:   something  (ok)\nOVERALL: ok (30 checks)"
+# test_ihp_sg13g2_libmgr.tcl:195 once its golden catches up with the tree (0690)
+set R_C67    "$RPRE\nok:   something  (ok)\nOVERALL: ok (67 checks)"
+# test_dblclick_connected_grow.tcl:334, test_select_same_net_by_label.tcl:259
+set R_DBL    "$RPRE\nok:   something  (ok)\nOVERALL: ok  (all checks passed)"
+# the counted failure spelling the two counted suites print when they fail
+set R_FAILED "$RPRE\nFAIL: x -> {1} (exp {0}) : FAIL\nOVERALL: 1 FAILED (65 passed)"
+# test_wire_split / test_crossview_paste / test_pin_type_edit
+set R_NOTOK  "$RPRE\nok:   something  (ok)\nOVERALL: notok"
+# the trailing-words trap: 0629's proposed {^OVERALL: ok} accepts this
+set R_OKAY   "$RPRE\nok:   something  (ok)\nOVERALL: okay then"
+# the word-boundary trap: 0492's proposed \M form accepts this
+set R_TAB    "$RPRE\nOVERALL: ok\tand then some"
+# the banner quoted inside a check name -- whole-line rule, same contract as F
+set R_FORGED "$RPRE\nok:   the suite ends by printing OVERALL: ok (30 checks)  (ok)"
+
+# a suite that reported and THEN died: exit 0, banner present, death at column 0
+set R_DIE_BARE  "$RPRE\nok:   something  (ok)\nOVERALL: ok\nTcl_AppInit() error: can not execute /tmp/probe.tcl, please fix:"
+set R_DIE_FATAL "$RPRE\nok:   something  (ok)\nFATAL: signal 11 caught, exiting"
+# both death literals present, but only ever mid-line
+set R_DIE_MID   "$RPRE\nok:   a log may quote Tcl_AppInit() error mid-line  (ok)\nok:   and FATAL: signal too  (ok)\nOVERALL: ok"
+# died before it ever reported
+set R_NOBANNER  "$RPRE\nok:   something  (ok)\nok:   another  (ok)"
+
+# --- K1-K4: what MUST be accepted -------------------------------------------
+check "K1 completion banner, bare (the 131-site shape)"        [banner_complete $R_BARE] YES
+check "K2 completion banner + a check count (0689's false red)" [banner_complete $R_C30] YES
+check "K3 completion banner + the post-0690 ihp count"          [banner_complete $R_C67] YES
+check "K4 completion banner + a double-space trailer"           [banner_complete $R_DBL] YES
+
+# --- K5-K8: what MUST be rejected -------------------------------------------
+check "K5 counted failure spelling is not a completion"      [banner_complete $R_FAILED] NO
+check "K6 the notok failure spelling is not a completion"    [banner_complete $R_NOTOK]  NO
+check "K7 trailing words after the banner are not a completion (0629/0492 traps)" \
+      [list [banner_complete $R_OKAY] [banner_complete $R_TAB]] {NO NO}
+check "K8 the banner forged inside a check name is not a completion" \
+      [banner_complete $R_FORGED] NO
+
+# --- K9-K11: the death predicate --------------------------------------------
+check "K9 appinit death literal at column 0 is a death"      [banner_died $R_DIE_BARE]  YES
+check "K10 fatal-signal literal at column 0 is a death"      [banner_died $R_DIE_FATAL] YES
+check "K11 a clean log, and both literals mid-line only, are not deaths" \
+      [list [banner_died $R_BARE] [banner_died $R_DIE_MID]] {NO NO}
+
+# --- K12-K16: the composite verdict -----------------------------------------
+check "K12 exit 0 + banner + a death marker -> FAILED (the hollow pass)" \
+      [case_failed 0 $R_DIE_BARE] YES
+check "K13 exit 0 + counted banner + no death -> not failed (0689 proper)" \
+      [case_failed 0 $R_C30] NO
+check "K14 nonzero exit + an empty log -> FAILED (0016 Part 4 arm intact)" \
+      [case_failed 1 {}] YES
+check "K15 exit 0 + no banner at all -> FAILED (died before reporting)" \
+      [case_failed 0 $R_NOBANNER] YES
+check "K16 exit 127 + a counted banner -> FAILED (child code beats any banner)" \
+      [case_failed 127 $R_C30] YES
+
+# --- K17: the single-builder lock -------------------------------------------
+# The defect survived four filings because the shape was copied, not shared.
+# run_regression.tcl must CALL the shared predicate and keep no private copy.
+set RR [file join $repo tests run_regression.tcl]
+set rr ""
+if {[catch {set fh [open $RR r]; set rr [read $fh]; close $fh} e]} { set rr "<unreadable: $e>" }
+set rr_code {}
+foreach ln [split $rr \n] { if {![regexp {^[ \t]*#} $ln]} { lappend rr_code $ln } }
+set rr_code [join $rr_code \n]
+check "K17 run_regression sources the shared rule and keeps no private copy" \
+      [list [regexp {banner_rule\.tcl} $rr_code] \
+            [regexp {regression_case_failed} $rr_code] \
+            [regexp {regexp[^\n]*OVERALL: ok} $rr_code]] {1 1 0}
+
+# --- K18: two-reader equivalence, by VERDICT not by spelling ----------------
+# run_suites.sh cannot source a Tcl file, so its copy of the rule stays an ERE.
+# Extract it from the source and run it, exactly as C44 does for the skip rule.
+set RS [file join $repo tests headless run_suites.sh]
+set rs ""
+if {[catch {set fh [open $RS r]; set rs [read $fh]; close $fh} e]} { set rs "<unreadable: $e>" }
+set rs_re ""
+regexp {grep -qE '(\^OVERALL: ok[^']*)'} $rs -> rs_re
+proc grep_ere {re blob} {
+  if {$re eq {}} { return "<no-ere>" }
+  if {[catch {exec grep -qE -- $re << $blob}]} { return NO }
+  return YES
+}
+set k18_tcl {}; set k18_sh {}
+foreach fx [list $R_BARE $R_C30 $R_C67 $R_DBL $R_FAILED $R_NOTOK $R_OKAY $R_FORGED] {
+  lappend k18_tcl [banner_complete $fx]
+  lappend k18_sh  [grep_ere $rs_re $fx]
+}
+check "K18 banner_complete and run_suites.sh's ERE agree on all 8 fixtures" \
+      [list [expr {$rs_re ne {}}] $k18_tcl] [list 1 $k18_sh]
+
+# --- K19: the death literals are full_audit.sh's own, extracted from source --
+# Not a spelling comparison: full_audit's arms are shell EREs and banner_died is
+# a Tcl regexp. Build the fixtures FROM full_audit's literals and assert the Tcl
+# predicate fires on them, so a re-spelling on either side stays honest and a
+# widening on one side alone reddens here.
+set fa_fatal ""; set fa_appinit ""
+regexp {line_has '(\^FATAL: signal)'} $fa -> fa_fatal
+regexp {line_has '(\^Tcl_AppInit\\\(\\\) error)'} $fa -> fa_appinit
+proc ere_to_line {e} {
+  set s [string range $e 1 end]            ;# drop the ^ anchor
+  return [string map [list {\(} ( {\)} )] $s]
+}
+set k19_f ""; set k19_a ""
+if {$fa_fatal   ne ""} { set k19_f [banner_died "ok:   x  (ok)\n[ere_to_line $fa_fatal] 11 caught, exiting"] }
+if {$fa_appinit ne ""} { set k19_a [banner_died "ok:   x  (ok)\n[ere_to_line $fa_appinit]: can not execute /tmp/probe.tcl, please fix:"] }
+check "K19 the death predicate fires on full_audit's own two crash literals" \
+      [list [expr {$fa_fatal ne {}}] [expr {$fa_appinit ne {}}] $k19_f $k19_a] {1 1 YES YES}
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

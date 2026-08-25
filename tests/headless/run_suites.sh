@@ -131,9 +131,15 @@ for _r in $(seq 1 "$REPEAT"); do
     # the only one of the three that could not read the older run_regression
     # sentinel, so a suite printing "OVERALL: ok" and no RESULT: line scored
     # NORESULT here forever while passing every one of its own checks (the
-    # inverse of issue 0147). tests/run_regression.tcl:115 requires the anchored
-    # {^OVERALL: ok$} and :116 also demands exit 0; tests/headless/full_audit.sh
-    # accepts both banners at :121 and, at :131, classifies a self-skip FIRST.
+    # inverse of issue 0147). The Tcl reader now shares ONE rule file:
+    # tests/banner_rule.tcl defines banner_complete (this same shape), banner_died
+    # and regression_case_failed, and tests/run_regression.tcl calls them instead of
+    # keeping the private both-ends-anchored copy that false-redded every counted
+    # suite for four filings (0420, 0492, 0629, 0689). tests/headless/full_audit.sh
+    # accepts both banners in is_pass and classifies a self-skip FIRST.
+    # NAMED BY PROC, NEVER BY LINE NUMBER -- the refs here used to say
+    # "run_regression.tcl:115/:116" and were already pointing two lines off, which
+    # is the same drift that let the defect survive.
     #
     #   * WHOLE LINE, never a substring, so the string inside a check's own
     #     message cannot forge a pass. A trailing "(N checks)" is tolerated
@@ -143,7 +149,7 @@ for _r in $(seq 1 "$REPEAT"); do
     #     unreadable as the NORESULT it replaces: "notok" (test_wire_split,
     #     test_crossview_paste, test_pin_type_edit), "OVERALL: FAIL"
     #     (test_add_pin_lib_symbol_view) and "OVERALL: N FAILED" (the two above).
-    #   * EXIT 0 is required on the pass arm, as run_regression.tcl:116 does: a
+    #   * EXIT 0 is required on the pass arm, as regression_case_failed does: a
     #     suite that prints the banner and then dies is not a pass -- it is a FAIL
     #     naming the exit code, not a "binary never reported" NORESULT.
     #

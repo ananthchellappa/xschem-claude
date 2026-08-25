@@ -258,7 +258,8 @@ producer), **0687** (`test_backannotate_digital` litter + a guard that misses it
 **0688** (the reason for the revert), **0689** (`run_regression.tcl`'s sentinel
 false-reds a suite printing a count), **0690** (`test_ihp_sg13g2_libmgr`'s golden is
 one library behind). **0689 + 0690 are all three FAIL lines in this branch's T1
-baseline.** Next free number: **0693** (see §6b).
+baseline.** *(✅ both FIXED 2026-08-25 — see §6e; T1 is now at zero.)* Next free
+number at the time: **0693** (see §6b).
 
 Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, block
 "⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED"; issue **0683 §7** and **0684 §7**;
@@ -392,7 +393,8 @@ arm replaces a clean session's state from disk without firing the notify hook �
 0695's symptom survives on that one path, and the title's dirty marker and status
 bar do not refresh either) and **0698** (`test_ase_final` passes `--nogui` and
 aborts under X; pre-existing, and invisible because the branch baseline only ever
-ran it headless). **Next free number: 0699** *(now 0802 — see §6d)*.
+ran it headless) *(✅ 0698 FIXED 2026-08-25, and it was three suites — see §6e)*.
+**Next free number: 0699** *(now 0806 — see §6e)*.
 
 Full record: issues `0695-*.md` / `0696-*.md` (both §RESOLUTION), plan block
 "✅⚠ 0695+0696 — LANDED 2026-08-25", spec §0692 and the ratification table.
@@ -430,7 +432,8 @@ Filed by this crew: **0699** (`notify_log` claims the durable sink while
 `actionlog_suppress` discards every byte), **0800** (the popup mark claims an
 iconified popup — HEAD-level, 0662's shape one sink over) and **0801**
 (`test_ase_window` is load-sensitive: 2 red in 48 runs, and 3/3 red on **pristine**
-code under 12-way load). **Next free number: 0802.** ⚠ The sequence across the
+code under 12-way load). **Next free number: 0802** *(now 0806 — the 0689+0690+0698
+crew filed 0802-0805; see §6e)*. ⚠ The sequence across the
 reserved block is **0698 · 0699 · 0800 · 0801 · 0802** — never 0700.
 
 Rule debts **[0650] [0655] [0664] [0677]** restated, never answered; three `look`
@@ -440,6 +443,48 @@ Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, bloc
 "❌ 0674+0675+0677 — ATTEMPTED, MEASURED GREEN, AND REVERTED"; issues **0674**,
 **0675**, **0677** (each §2026-08-25); spec §the notify channel + ratification
 row 0650.
+
+---
+
+## 6e. ✅ 0689 + 0690 (+ 0698) — FIXED 2026-08-25. T1'S BASELINE IS NOW ZERO
+
+**"T1 3 FAIL — pre-existing" is retired.** Those three lines were **not** the tree:
+two were `run_regression.tcl`'s completion sentinel false-redding a suite that
+appends a check count to its banner (**0689**), and one was a golden one library
+behind its own tracked `library.defs` (**0690**). Between them, **eight** issue files
+had been filed — 0420/0492/0629/0689 and 0421/0455/0491/0690 — and every crew report
+for days waved the count through. Nobody fixed them; everybody re-derived them.
+
+**T1: 3 counted FAIL lines → 0.** The three non-counting `NOGOLD` notes remain,
+unchanged; they verify nothing and never did. `git diff src/` is **empty** — no
+product change, no build.
+
+What landed: the banner rule moved into `tests/banner_rule.tcl` (`banner_complete` /
+`banner_died` / `regression_case_failed`), a port of `run_suites.sh:155`'s ERE, with
+`run_regression.tcl` as a consumer. ⚠ **0689's own recommended fix is refuted**: a
+counted banner followed by a death was caught only *by accident* (the count broke the
+anchor), so relaxing alone would have converted it to a silent pass — it shipped
+paired with a column-0 death predicate that also closes a hollow-pass hole live for
+all 131 bare-banner sites. `test_audit_classifier` 50 → **69**. 0690's ruling: the
+**tree** was right, confirmed five ways before a byte moved; 0455's *delete the
+directory* remedy is annotated **REFUTED** (140 tracked files). **0698 was three
+suites, not one** — `test_ase_final`, `test_ase_final_gf180`, `test_ase_core` — fixed
+on the **suite** side, `src/ase.tcl` untouched so the OPEN 0683/0684 ruling stands.
+
+Filed by this crew: **0802** (full_audit scores a pass banner followed by a death as
+PASS — run_regression is now deliberately stricter than the CI reader), **0803**
+(`execute`'s modal dialog **hangs** any suite under X: 600 s vs 3.5 s headless; fixed
+test-side), **0804** (`test_ase_core` NT14 asserts headless-only behaviour in both
+arms; arm-gated to an announced SKIP, deliberately not widened while the notify
+channel is mid-ruling) and **0805** (full_audit's `is_pass` is prefix-anchored, so it
+accepts trailing junk the other two readers reject — latent). **Next free number:
+0806.**
+
+No ledger debt added: nothing here needed a user ruling and there is no pixel
+deliverable. Nothing cleared, converted or discharged.
+
+Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, block
+"✅ 0689 + 0690 (+ 0698)"; issues **0689 §4-§9**, **0690 §4-§10**, **0698** (widened).
 
 ---
 

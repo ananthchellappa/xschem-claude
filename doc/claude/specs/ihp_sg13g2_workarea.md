@@ -40,7 +40,9 @@ ihp-sg13g2/
 │   ├── library.defs                 # the registry (cds.lib analog)
 │   ├── sg13g2_pr/        <cell>/{symbol,schematic}/<cell>.ext   (41)
 │   ├── sg13g2_stdcells/  <cell>/{symbol,schematic}/<cell>.ext   (80)
-│   └── sg13g2_tests/     <cell>/{symbol,schematic}/<cell>.ext   (49)
+│   ├── sg13g2_tests/     <cell>/{symbol,schematic}/<cell>.ext   (49)
+│   └── sg13g2_tests_ase/ <cell>/{symbol,schematic,ngspice_state1}/  (49)
+│                         # the migrated ASE-L testbench library (c69b88de)
 ├── models/               verbatim copy of libs.tech/ngspice/models (32 files, 436 KB)
 ├── osdi/                 compiled Verilog-A modules (4 files, ~2 MB)
 ├── cadence_style_rc      the launch rc (single --script)
@@ -52,7 +54,7 @@ ihp-sg13g2/
 `devices` and the five general libs are NOT copied: `library.defs` registers them
 repo-relative against the repo's already-migrated newsym tree
 (`DEFINE devices ../../xschem_libs_newsym/devices`, etc.), so the Library Manager lists
-**9 libraries**. Repo-relative links are valid while `ihp-sg13g2/` lives inside the repo.
+**10 libraries**. Repo-relative links are valid while `ihp-sg13g2/` lives inside the repo.
 
 ## Regeneration
 
@@ -135,12 +137,14 @@ GF180MCU at 12 (2), IHP at 12 (4) — each inserted before `Netlist` as intended
 
 ## Validation (2026-08-02)
 
-- Registry: headless `library_list` = exactly the 9 intended libs; the general libs
-  resolve outside `ihp-sg13g2/`, the three PDK libs inside it.
+- Registry: headless `library_list` = exactly the 10 intended libs; the general libs
+  resolve outside `ihp-sg13g2/`, the **four** PDK libs inside it (`sg13g2_pr`,
+  `sg13g2_stdcells`, `sg13g2_tests`, `sg13g2_tests_ase` — the tenth joined in
+  c69b88de and the golden caught up only in the 0689+0690 commit, issue 0690).
 - Netlist: all **49** benches netlist with **0** unresolved symbols, and no bare model
   `.lib` and no un-expanded `$::MODELS_NGSPICE` remain in any output.
 - GUI: launches, Library Manager opens, IHP menu present with its 4 entries.
-- Regression smoke: `tests/headless/test_ihp_sg13g2_libmgr.tcl` (66 checks, registered in
+- Regression smoke: `tests/headless/test_ihp_sg13g2_libmgr.tcl` (67 checks, registered in
   `run_regression.tcl` hcases). Sabotage-verified twice: drop a DEFINE → 3 FAILED;
   un-prefix one `drc=` call → 1 FAILED.
 

@@ -81,6 +81,7 @@ proc summarize_all {fn fd} {
 }
 
 source test_utility.tcl  ;# defines $xschem_cmd (used by the headless cases below) + helpers
+source banner_rule.tcl   ;# banner_complete / banner_died / regression_case_failed (issue 0689)
 
 set a [catch "open \"$log_fn\" w" fd]
 if {!$a} {
@@ -97,15 +98,32 @@ foreach tc $tcases {
     summarize_all ${tc}.log $fd
     puts "Finish source ${tc}.tcl"
   }
-  # Headless hilight self-checks driven directly through the built binary (needs xschem to
-  # resolve its share dir: installed, or a source-tree run with XSCHEM_SHAREDIR set). Each case
-  # prints "... : FAIL" per failed check (counted by summarize_all's FAIL$ grep), exits 0 only on
-  # success, and prints a final "OVERALL: ok" sentinel. A pass requires BOTH: exit code 0 AND the
-  # sentinel present. The exit code alone is NOT enough -- xschem --nogui --pipe exits 0 on an
-  # uncaught MID-SCRIPT Tcl error, so a case that aborts after printing only "ok" lines would
-  # otherwise be a hollow pass; the missing sentinel catches it. A startup crash (missing share
-  # dir) exits nonzero and also lacks the sentinel. On either miss we synthesize a FAIL line so
-  # summarize_all counts the case as failed regardless of log contents.
+  # Headless self-checks driven directly through the built binary (needs xschem to resolve its
+  # share dir: installed, or a source-tree run with XSCHEM_SHAREDIR set). Each case prints
+  # "... : FAIL" per failed check (counted by summarize_all's FAIL$ grep) and ends with a
+  # completion banner.
+  #
+  # THE CONTRACT (issue 0689, and the rule itself lives in banner_rule.tcl so the three readers
+  # cannot drift): a case passes only if ALL THREE hold --
+  #   1. exit code 0                       -- a startup crash (missing share dir) exits nonzero;
+  #                                           a binary that never launched raises a
+  #                                           non-CHILDSTATUS error and lands here as 1.
+  #   2. a whole-line completion banner    -- tolerating the "(N checks)" trailer that seven
+  #                                           suites in this tree append. The OLD predicate here
+  #                                           was anchored at both ends and scored those a
+  #                                           HARNESS failure while every check passed; that
+  #                                           false red was filed four times before it was fixed.
+  #   3. no column-0 death marker          -- and THIS is the half that was missing. The exit
+  #                                           code alone is NOT enough: xschem --nogui --pipe
+  #                                           exits 0 on an uncaught MID-SCRIPT Tcl error. The
+  #                                           banner alone is NOT enough either, which the old
+  #                                           comment here wrongly claimed -- a case that printed
+  #                                           a bare banner and THEN died satisfied it and was
+  #                                           scored a silent pass. summarize_all never saw that
+  #                                           death line either (it neither ends in FAIL nor
+  #                                           starts with FATAL).
+  # On any miss we synthesize a FAIL line so summarize_all counts the case as failed regardless
+  # of log contents, and the line names which of the three conditions gave way.
   foreach hc $hcases {
     puts "Start ${hc}.tcl (headless)"
     set childcode 0
@@ -113,11 +131,13 @@ foreach tc $tcases {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
-    set sentinel 0
-    if {![catch {open ${hc}.log r} rf]} { set body [read $rf]; close $rf; set sentinel [regexp -line {^OVERALL: ok$} $body] }
-    if {$childcode != 0 || !$sentinel} {
+    set body ""
+    if {![catch {open ${hc}.log r} rf]} { set body [read $rf]; close $rf }
+    set sentinel [banner_complete $body]
+    set died     [banner_died $body]
+    if {[regression_case_failed $childcode $body]} {
       set af [open ${hc}.log a]
-      puts $af "HARNESS: ${hc} did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel) -- crashed, aborted mid-script, or a check failed: FAIL"
+      puts $af "HARNESS: ${hc} did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- crashed, aborted mid-script, or a check failed: FAIL"
       close $af
     }
     summarize_all ${hc}.log $fd

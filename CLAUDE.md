@@ -73,6 +73,30 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   leading `FATAL` is counted. `couldn't execute "xschem"` or `exit 127` anywhere
   means the binary never launched and *nothing in that run is meaningful*
   (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
+- **T1's baseline is ZERO counted failures, as of the 0689+0690 commit.** For days
+  every crew report carried "T1 3 FAIL — pre-existing" and every reader, the lead
+  included, waved it through. Two of those three were the completion sentinel
+  false-redding a suite that appends a check count to its banner (0689, filed
+  **four** times: 0420, 0492, 0629, 0689); the third was a golden one library
+  behind its own tracked `library.defs` (0690, filed **four** times: 0421, 0455,
+  0491, 0690). Eight issue files, nobody fixing, everybody re-deriving. **A
+  standing red is a defect, not furniture** — it is the one place a real
+  regression hides in plain sight, and this branch has already shipped two
+  defects past twenty-eight passing checks. If T1 is not at zero, say which case
+  and why, per case; never carry a count forward as a known quantity.
+- **The banner rule lives in `tests/banner_rule.tcl`** (`banner_complete`,
+  `banner_died`, `regression_case_failed`) and `run_regression.tcl` is a
+  *consumer* of it. The two shell readers (`run_suites.sh`, `full_audit.sh`) keep
+  their own EREs because `/bin/sh` cannot source Tcl;
+  `test_audit_classifier.tcl` **section K** locks the Tcl rule against
+  `run_suites.sh`'s ERE and against `full_audit.sh`'s two crash literals, by
+  verdict. `full_audit.sh`'s *pass* arm is **not** locked and is only
+  prefix-anchored, so it still accepts trailing junk the other two reject — latent
+  (no suite emits it), filed as **0805**.
+  A case passes only on **exit 0 AND a whole-line completion banner AND no
+  column-0 death marker** — the exit code alone is not enough (`--nogui --pipe`
+  exits 0 on an uncaught mid-script Tcl error) and neither is the banner (a suite
+  that reported and *then* died used to score a silent pass).
 - `xschemtest.tcl` is a broader functional/perf harness, run as
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.

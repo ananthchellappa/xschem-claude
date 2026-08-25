@@ -8,6 +8,139 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅ 0689 + 0690 (+ 0698) — **LANDED 2026-08-25. T1's BASELINE IS NOW ZERO, AND "T1 3 FAIL — pre-existing" IS RETIRED**
+
+**Not a plan step — harness truth.** No product behaviour changed: `git diff src/` is
+**empty**, no build, no `./configure`. What changed is whether this project's own test
+signal can be believed.
+
+**T1 `run_regression.tcl`: 3 counted FAIL lines → 0.** The 3 non-counting `NOGOLD`
+notes (`create_save`, `open_close`, `netlisting`) are unchanged — they have no committed
+baseline and verify nothing, exactly as before.
+
+### THE THING TO CARRY FORWARD, ABOVE EVERYTHING ELSE
+
+Every crew report for days carried **"T1 3 FAIL — pre-existing"** and every reader, the
+lead included, waved it through. Those three lines were **0689** (twice) and **0690**
+(once). **Eight issue files describe them**: 0420, 0492, 0629, 0689 for the sentinel and
+0421, 0455, 0491, 0690 for the golden. Nobody fixed them; everybody re-derived them.
+**A standing red is not furniture — it is the one place a real regression hides in plain
+sight**, and this branch has already shipped two defects past twenty-eight passing
+checks. `CLAUDE.md`'s Tests section now records the zero baseline, so no future report
+can carry a count forward as a known quantity.
+
+### WHAT LANDED
+
+1. **The banner rule is one shared file: `tests/banner_rule.tcl`** — `banner_complete`,
+   `banner_died`, `regression_case_failed`. `run_regression.tcl` is now a **consumer**;
+   its private `{^OVERALL: ok$}` is gone. `banner_complete` is the **Tcl port of the
+   already-shipped ERE at `run_suites.sh:155`**, not an invention.
+2. **⚠ THE RELAXATION ALONE WOULD HAVE BEEN A REGRESSION, AND 0689 §3'S OWN
+   RECOMMENDATION IS REFUTED.** Measured: a suite printing a **counted** banner and then
+   dying was caught only **by accident** (the count broke the anchor, not the death), and
+   `xschem --nogui --pipe` **exits 0** on an uncaught mid-script Tcl error. Relax alone
+   and that case flips FAIL → silent PASS. It shipped paired with `banner_died`
+   (`^FATAL: signal` / `^Tcl_AppInit() error`, column 0), which also closes a
+   pre-existing hollow-pass hole that was live for all **131** bare-banner sites.
+3. **The 0016 Part 4 distinction is intact**: `couldn't execute "xschem"` / `exit 127`
+   are deliberately NOT in the death set; the child-code arm and the `xschemtest` guard
+   are byte-unchanged; K14/K16 lock it.
+4. **0690's ruling: the TREE was right, the GOLDEN was stale.** `sg13g2_tests_ase` is
+   the migrated ASE-L testbench library — a tracked `DEFINE` from ancestor c69b88de, 140
+   tracked files, 49 cells — and `test_sky130a_libmgr.tcl:47-52` had already made the
+   identical change for sky130 (11 → 12, citing 15bb25ef). The check stays
+   **exact-equality**; **0455's "delete the directory" and "make it a superset" remedies
+   are both annotated REFUTED** in that file.
+5. **0698 was THREE suites, not one.** `test_ase_final`, `test_ase_final_gf180` and
+   `test_ase_core` all passed headless and died under X on the same refusal. Fixed on the
+   **suite** side via `tests/headless/ase_design_window.tcl` (`ase_bind_design_window`,
+   gated on `[info exists ::has_x]`, path via `xschem cellview_path`). **Not one byte of
+   `src/ase.tcl` moved**, so the OPEN 0683/0684 ruling is not pre-empted.
+
+### WHAT THIS BINDS FOR EVERY LATER STEP AND CREW
+
+1. **REPORT T1 AS A NUMBER AGAINST ZERO.** If T1 is not at 0 counted FAIL/GOLD?/RESULT?/
+   FATAL lines, name each case and diagnose it in one line. Never write "pre-existing"
+   again without the case identity beside it.
+2. **A SUITE THAT PASSES HEADLESS AND DIES UNDER X IS A PARTIAL MEASUREMENT.** Three ASE
+   suites were in that state for weeks because `full_audit.sh:163` pins them `--nogui`,
+   so CI only ever ran the green arm. **Run the X arm** —
+   `tests/headless/run_suites.sh <suite>` — before calling an ASE change done.
+3. **`test_ase_core` is 173 headless and 172 under X, and that is correct.** The one
+   difference is an *announced* `SKIPPED: NT14 headless-only sink safety …` (issue 0804).
+   Do not read it as a lost check, and do not "fix" it by widening NT14 — that would
+   assert something unmeasured about the notify channel, which is mid-ruling.
+4. **⚠ ARM-TO-ARM DIFFS ONLY, NEVER ACROSS.** `test_ase_window` is **31** headless and
+   **214** on a display; `test_ase_dialogs` is **21** headless and **174**. Both are ALL
+   PASS in both arms. A brief quoting "214 / 174" is quoting the DISPLAY arm. Running
+   them `--nogui` and seeing 31 is a legitimate self-skip, not a catastrophic regression.
+5. **THE ORDERING TRAP IN THE ASE BIND IS LOAD-BEARING.** `ase_bind_design_window` must
+   be called **inside** each suite's big `catch` and **after** its scratch `library.defs`
+   block. Earlier, the symbol resolves against the ambient registry and the guard's GUI
+   arm netlists the mis-resolved buffer: measured `FAIL: F6 netlist contains XM1 -> {0}`,
+   77 passed / 1 failed — a failure that looks nothing like the bug it came from.
+6. **`execute` POPS A MODAL DIALOG UNDER X AND WILL HANG YOUR SUITE** (`xschem.tcl:352`,
+   issue **0803**). Any test leg that launches a missing binary with a display present
+   waits forever — measured 3.5 s headless vs killed at **600 s** on `:99`. **A hang is
+   worse than a red for an unattended crew.** Wrap that one call in `ase_no_modal`.
+7. **THE BIND ROWS ARE VACUOUSLY TRUE HEADLESS** and `full_audit.sh` still pins all three
+   suites `--nogui` (deliberate, decision D10). So no automated gate can fail them; the
+   repaired X arm is guarded only by a human typing `run_suites.sh`. Unpinning is the
+   follow-up, and it is unmeasured on the CI box.
+8. **DO NOT SAY "THE THREE READERS AGREE".** They do not, and it is measured:
+   `full_audit.sh`'s `is_pass` is only prefix-anchored, so it accepts `OVERALL: okay then`
+   and `OVERALL: ok<TAB>junk` that `banner_complete` and `run_suites.sh` reject (issue
+   **0805**, latent — no suite emits either shape). Section K locks the Tcl rule against
+   `run_suites.sh`'s ERE and against full_audit's two **crash literals**, and nothing
+   more.
+9. **RUN_REGRESSION IS NOW DELIBERATELY STRICTER THAN CI'S READER** (issue **0802**):
+   full_audit guards the same `Tcl_AppInit` literal with `&& ! is_pass`, so a pass banner
+   followed by a death is still a PASS there. Land 0802 and 0805 together — same
+   function, same file.
+10. **GIVE SABOTAGE ITS OWN TREE, OR SERIALIZE IT.** For the fourth run running,
+    concurrent agents mutated shared files mid-measurement (this crew caught SAB-1/5/6
+    live on disk and SAB-8 flipping mid-run). Every number in this block was taken either
+    before the sabotage window or after the tree settled, with md5 guards.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | **L1 (I1 by analogy)** | one shared rule file, `run_regression` a consumer | inline regexp + a spelling lock — no callee to rename, and the red phase could assert only spelling |
+| D2 | L2 | port `run_suites.sh:155`'s ERE verbatim in Tcl | 0629's `{^OVERALL: ok}` / 0492's `\M` form — both additionally accept trailing junk (measured) |
+| D3 | L2 | relaxation ships **only** with a death predicate | 0689 §3's own unpaired recommendation — quieter, not better |
+| D4 | L2 | `banner_died` unconditional, no `&& ! is_pass` | mirroring full_audit — re-opens the hollow-pass hole; divergence **filed as 0802** |
+| D5 | L2 | `couldn't execute` / `exit 127` stay OUT of the death set | folding them in "for symmetry" — blurs 0016 Part 4 |
+| D6 | L2 ×5 confirmations | bump the golden to 10 | **deleting the 140-file library** (0455's first diagnosis); widening to a superset (0324's artefact) |
+| D7 | L2 | one additive row proving the tenth library is real | expect-list-only — answers 0690 §2 in prose alone |
+| D8 | L2 | fix 0698 on the **suite** side, all three suites | the `test_placement_wire_gate` self-skip idiom — zero checks under X, and it makes the folklore permanent |
+| D9 | **L1 (I1)** | resolve via `xschem cellview_path`, the accessor `ase::netlist` compares against | each suite's own `$schfile` literal — a second builder of one path |
+| D10 | L2 | leave `full_audit.sh:163`'s `--nogui` pinning alone | unpinning in a harness-trust commit — changes what CI runs, unmeasured, exposes the 0801 flake |
+
+### TIERS
+
+`test_audit_classifier` 50 → **69** (19 new K rows, CI-gated suite still green) ·
+`test_ihp_sg13g2_libmgr` `1 FAILED (65 passed)` → **ok (67 checks)** ·
+`test_pdk_launcher` **30**, unchanged, and no longer HARNESS-failed ·
+`test_ase_final` 78 → **79** in BOTH arms · `test_ase_final_gf180` 33 → **34** in both ·
+`test_ase_core` 172 → **173** headless / **172** on `:99` (one announced skip) ·
+`test_ase_window` 31 / 214 and `test_ase_dialogs` 21 / 174, unmoved ·
+`test_sky130a_libmgr` 18, `test_gf180mcud_libmgr` 29, unmoved ·
+**T1 3 FAIL → 0** · T2 `HARNESS: PASS` 6/6 unmoved · **no build**.
+
+### NEW ISSUES FILED BY THIS CREW: 0802–0805
+
+| # | what | status |
+|---|---|---|
+| **0802** | `full_audit.sh` scores a pass banner followed by a death marker as PASS (`&& ! is_pass`) | OPEN, measured |
+| **0803** | `execute`'s modal dialog on a failed launch **hangs** any suite under X | FIXED test-side (`ase_no_modal`); product side deliberately untouched |
+| **0804** | `test_ase_core` NT14 asserts headless-only behaviour in both arms | FIXED test-side (announced arm-gated skip); notify channel untouched |
+| **0805** | `full_audit.sh`'s `is_pass` is prefix-anchored, accepting trailing junk the other two readers reject | OPEN, measured, latent |
+
+**Number new issues from 0806.**
+
+---
+
 ## ❌ 0674+0675+0677 — **ATTEMPTED, MEASURED GREEN, AND REVERTED 2026-08-25 (status F)**. THE NOTIFY CHANNEL IS STILL UNFIXED
 
 **Not a plan step.** The notify-channel cluster, batched deliberately: four crews
@@ -214,6 +347,9 @@ unmoved (`CONTRAST-A notices=1`, `CONTRAST-B notices=0`).
    follow having fired, and item 4 is a shipped writer that does not fire it, so
    0692 would come back as a *lost write* instead of degrading to a pixel lag.
 6. **`test_ase_final` PASSES `--nogui` AND ABORTS UNDER X — filed as 0698.**
+   ✅ **FIXED 2026-08-25**, and it was **three** suites (`test_ase_final`,
+   `test_ase_final_gf180`, `test_ase_core`) — see the 0689+0690 block at the head.
+   The standing advice below is still exactly right, so it stays:
    `RESULT: ALL PASS (78 checks)` headless versus `RESULT: 1 FAILED (9 passed)` on
    `:99` with `UNEXPECTED ERROR: ase: design sky130_tests/test_nfet_final is not the
    current schematic`. **Pre-existing** — proved twice by restoring
@@ -265,7 +401,7 @@ answers it by measurement.*
 |---|---|---|
 | 1 | the ruling above — **rule debt [0692](a)–(d)**, restated not answered | `rule 0692` |
 | 2 | **`ase::session_open`'s refresh arm still moves the state without firing notify** — 0695's symptom survives on that one path | **issue 0697** |
-| 3 | `test_ase_final` green `--nogui`, aborts under X | **issue 0698** |
+| 3 | `test_ase_final` green `--nogui`, aborts under X | **issue 0698 — FIXED 2026-08-25**, and it was THREE suites (`test_ase_final`, `test_ase_final_gf180`, `test_ase_core`) |
 | 4 | the discard sentence still says "was NOT applied" for a discarded **untick** | **issue 0661** (pre-existing prose drift, out of scope) |
 | 5 | **ZERO `:0` coverage** — every GUI number here is `:99`/openbox 3.6.1 | `look` debt + `suite` debts |
 
@@ -877,7 +1013,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0699.** (**the 0695+0696 crew filed 0697 and 0698**; **the 0691+0692 crew filed 0693-0696**; **the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0806.** *(the 0689+0690+0698 crew filed **0802-0805**;)* (**the 0695+0696 crew filed 0697 and 0698**; **the 0691+0692 crew filed 0693-0696**; **the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -1640,10 +1776,12 @@ works is `grep -rn 'proc .*_real {' src/` — expect 0. Adopt it in the next bri
 | **0686** | `ase::ui::close` leaves the design annotated — the sixth orphan producer | OPEN (downstream of 0688) |
 | **0687** | `test_backannotate_digital` litters `untitled~.sch` while reporting ALL PASS, and `test_no_untitled_litter` misses a **pre-existing** one | OPEN |
 | **0688** | `annot_show` outlives the schematic, so cellview→window binding cannot hold — **the reason this attempt was reverted** | OPEN |
-| **0689** | `run_regression.tcl:117`'s `^OVERALL: ok$` sentinel false-reds any suite printing a count (`test_pdk_launcher` is green and reported FAIL) | OPEN |
-| **0690** | `test_ihp_sg13g2_libmgr`'s 9-library golden is one behind the tree (`sg13g2_tests_ase`) | OPEN |
+| **0689** | `run_regression.tcl:117`'s `^OVERALL: ok$` sentinel false-reds any suite printing a count (`test_pdk_launcher` is green and reported FAIL) | **FIXED 2026-08-25** — `tests/banner_rule.tcl`; see the 0689+0690 block at the head |
+| **0690** | `test_ihp_sg13g2_libmgr`'s 9-library golden is one behind the tree (`sg13g2_tests_ase`) | **FIXED 2026-08-25** — the tree was right, the golden was stale |
 
-**0689 and 0690 together are all three FAIL lines in this branch's T1 baseline.** T1 =
+**0689 and 0690 together were all three FAIL lines in this branch's T1 baseline —
+⚠ SUPERSEDED 2026-08-25: both are fixed and T1's baseline is now ZERO counted
+failures.** As measured then, T1 =
 3 FAIL / 0 GOLD? / 0 RESULT? / 0 FATAL / 3 NOGOLD is the number to diff against; a 4th
 FAIL line is a real regression.
 
@@ -4728,7 +4866,10 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0699**. *(Updated by the 0695+0696 crew, 2026-08-25: it filed **0697** — `ase::session_open`'s refresh arm mutates the state without firing the notify hook — and **0698** — `test_ase_final` passes `--nogui` and aborts under X.)* *(Updated by the 0691+0692 crew, 2026-08-25: it filed **0693**, **0694**, **0695** and **0696**.)* *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0806**. *(Updated by the 0689+0690+0698 crew, 2026-08-25:
+it filed **0802**, **0803**, **0804** and **0805**, and CLOSED 0689, 0690 and 0698 —
+T1's baseline is now ZERO counted failures; see the block at the head of this file.)*
+*(Was: from 0699.)* *(Updated by the 0695+0696 crew, 2026-08-25: it filed **0697** — `ase::session_open`'s refresh arm mutates the state without firing the notify hook — and **0698** — `test_ase_final` passes `--nogui` and aborts under X.)* *(Updated by the 0691+0692 crew, 2026-08-25: it filed **0693**, **0694**, **0695** and **0696**.)* *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were

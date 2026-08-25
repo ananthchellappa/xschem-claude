@@ -32,8 +32,19 @@
 # untracked workarea cells. The model path is injected via the STATE (never
 # hardcoded in ase.tcl), pointing at the tracked sky130A workarea models file.
 #
-# True headless (no X). Run from the repo ROOT:
-#   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_core.tcl
+# RUNS IN BOTH ARMS, with the same VERDICT (issue 0698 -- this suite used to pass
+# headless and abort under X, and that asymmetry was carried in briefs as folklore
+# instead of being fixed). Run from the repo ROOT:
+#   headless:  ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_core.tcl
+#   display:   tests/headless/run_suites.sh test_ase_core
+# Under X the design window is bound explicitly before the first ase::netlist
+# (ase_design_window.tcl); headless, ase::netlist self-loads and that arm of the
+# guard stays the thing under test.
+#
+# The CHECK COUNTS differ by exactly one, and it is announced rather than silent:
+# 173 headless, 172 under X, because NT14's own premise is "there is no Tk" and it
+# prints `SKIPPED: NT14 headless-only sink safety (a display is present; see 0804)`
+# when a display exists. That is the ONLY difference between the two arms.
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -50,6 +61,7 @@ set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 set models  [file join $repo sky130A models libs.tech combined sky130.lib.spice]
 source [file join $here scratch.tcl]
+source [file join $here ase_design_window.tcl]  ;# ase_bind_design_window (issue 0698)
 ## issue 0658: a throw-away XSCHEM_SHAREDIR + a CHILD xschem launched against it,
 ## the only honest reproduction of "src/ciw.tcl failed to load" (NTD1-NTD7).
 source [file join $here sharefarm.tcl]
@@ -765,6 +777,38 @@ check "F4 gate restored -> 104u again" [ase::format_value 1.04e-4] 104u
 # --- N1: ase::netlist on the scratch fixture ---------------------------------
 set rundir [file normalize [file join $scratch run]]
 set st [nfet_state $models $rundir]
+# --- 0698: the design window must be BOUND before the first ase::netlist -----
+# ase::netlist (src/ase.tcl:866-874) self-loads the design ONLY when no display
+# exists; under X it refuses with "design ... is not the current schematic" and
+# this suite fell into its UNEXPECTED ERROR catch-all with most of its checks
+# never reached. The guard is CORRECT -- it must never clobber an open GUI
+# window -- so the wrong side is the suite, which never opens the design window
+# the guard's GUI arm documents (Session > Design Window).
+#
+# THE BIND BELONGS ABOVE THIS ROW; this row is its postcondition. It must also
+# stay AFTER the scratch library.defs block: bound earlier, the symbol resolves
+# against the ambient registry and the XM1 row below fails instead -- a failure
+# that looks nothing like this one.
+#
+# The path is resolved through `xschem cellview_path`, the SAME accessor
+# ase::netlist compares against, so the row and the guard cannot disagree about
+# which file "the design" is. Headless the expectation is vacuously true, and
+# deliberately so: there the guard's own self-load arm is what must stay
+# exercised, and an unconditional bind would silently stop exercising it.
+ase_bind_design_window $st
+set _d698 [dict get $st design]
+set _v698 schematic
+if {[dict exists $_d698 view] && [dict get $_d698 view] ne {}} { set _v698 [dict get $_d698 view] }
+set _p698 [file normalize [xschem cellview_path \
+             [dict get $_d698 lib]/[dict get $_d698 cell] $_v698]]
+set _c698 [file normalize [xschem get schname]]
+if {![info exists ::has_x] || $_c698 eq $_p698} {
+  set _b698 bound
+} else {
+  set _b698 "UNBOUND (current=[file tail $_c698])"
+}
+check "N1 design window bound before the first netlist (0698)" $_b698 bound
+
 set nl [ase::netlist $st]
 check "N1 netlist path" $nl [file join $rundir nfet_clean.spice]
 check_true "N1 netlist file exists" [file isfile $nl]
@@ -914,7 +958,10 @@ ase::register_backend fakesim [dict create \
 set e2dir [file normalize [file join $scratch run_e2]]
 set st [nfet_state $models $e2dir]
 dict set st simulator fakesim
-set caught [catch {ase::run $st} err]
+# ase_no_modal: under X the failed launch pops a modal tk_messageBox that nobody
+# can click and the suite hangs here forever (issue 0803). Suppressed for this
+# ONE call, restored immediately, same assertion in both arms.
+ase_no_modal {set caught [catch {ase::run $st} err]}
 check "E2 missing binary raises an error" $caught 1
 check_true "E2 error is the clean ase message" [string match "ase:*" $err]
 
@@ -1296,13 +1343,25 @@ check "NT13 0653 a suppressed -once/-state notice returns 0 and reaches NO sink"
 # The `sinks` field is what makes that assertable with no display: it lists the
 # sinks a notice ACTUALLY reached, so "the statusbar was skipped" is a value
 # rather than an absence of evidence.
-set nt14_rc [catch {::xschem::notify {NT14 headless safety}} nt14_err]
-set nt14_sinks [nt_field sinks]
-check "NT14 0650 headless: no sink raises, and neither Tk-only sink is claimed" \
-  [list $nt14_rc \
-        [nt_cx {expr {[lsearch -exact $nt14_sinks statusbar] >= 0 ? 1 : 0}}] \
-        [nt_cx {expr {[lsearch -exact $nt14_sinks popup] >= 0 ? 1 : 0}}]] \
-  {0 0 0}
+# ARM-GATED (issue 0804). This row's premise is its own first word: with no Tk,
+# a Tk-only sink must not be claimed. Under X the statusbar sink IS legitimately
+# claimed and the row measures {0 1 0} -- correct behaviour, scored a failure.
+# It was invisible until the 0698 bind let this suite reach line 1300 under X at
+# all. SKIPPED rather than widened: an expectation that accepts the statusbar
+# sink under X would be asserting something unmeasured about the notify channel,
+# and that channel is mid-ruling (0674/0675/0677/0699/0800). A skip asserts
+# nothing new and loses no headless coverage.
+if {[info exists ::has_x]} {
+  puts "SKIPPED: NT14 headless-only sink safety (a display is present; see 0804)"
+} else {
+  set nt14_rc [catch {::xschem::notify {NT14 headless safety}} nt14_err]
+  set nt14_sinks [nt_field sinks]
+  check "NT14 0650 headless: no sink raises, and neither Tk-only sink is claimed" \
+    [list $nt14_rc \
+          [nt_cx {expr {[lsearch -exact $nt14_sinks statusbar] >= 0 ? 1 : 0}}] \
+          [nt_cx {expr {[lsearch -exact $nt14_sinks popup] >= 0 ? 1 : 0}}]] \
+    {0 0 0}
+}
 
 # --- NT15: the REJECTED sink stays rejected ----------------------------------
 # `.statusbar.1` via `xschem statusmsg`/`-hold` was the other candidate and is

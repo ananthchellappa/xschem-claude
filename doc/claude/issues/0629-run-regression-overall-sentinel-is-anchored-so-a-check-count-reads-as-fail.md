@@ -1,6 +1,16 @@
 # 0629 — `run_regression.tcl`'s `OVERALL: ok` sentinel is anchored, so a PASSING suite that prints its check count is reported FAIL
 
-STATUS: **OPEN.** Measured 2026-08-22 on branch `annotate` at `4853cbd2` by the
+> **RESOLVED 2026-08-25 — DUPLICATE of issue 0689, fixed there.**
+> This defect was filed **four** times (0420, 0492, 0629, 0689) and waved through as
+> "T1 3 FAIL — pre-existing" every time. Nobody fixed it; everybody re-derived it.
+> The fix is `tests/banner_rule.tcl` (`banner_complete` / `banner_died` /
+> `regression_case_failed`), with `run_regression.tcl` as a consumer and
+> `test_audit_classifier.tcl` section K (19 rows) locking it. **T1 went 3 counted
+> FAIL lines → 0 in the same commit.** ⚠ The relaxation alone would have been a
+> regression — see 0689 §4 — so it shipped paired with a column-0 death predicate.
+> Read `doc/claude/issues/0689-*.md`; nothing below needs re-deriving.
+
+STATUS: **RESOLVED as a duplicate of 0689** (2026-08-25). Was: **OPEN.** Measured 2026-08-22 on branch `annotate` at `4853cbd2` by the
 S3 crew's Measure agent, and re-confirmed by the Implement agent. **Pre-existing
 and unrelated to op_annot** — filed here because it makes one of T1's three FAIL
 lines a lie, and every future crew reading `results.log` will trip on it.

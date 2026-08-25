@@ -1392,6 +1392,17 @@ are a **name-set diff of the emitted cards against the raw header** and a
 **real-number assertion on the rendered rows** — `tests/headless/test_ase_final.tcl`
 rows F10a–F20, with F18 as the gate-off control that keeps them non-vacuous.
 
+⚠ **Until 2026-08-25 that evidence was a HEADLESS-ONLY measurement.** `test_ase_final`
+aborted at its tenth check under a real display — `ase: design … is not the current
+schematic` — so rows F10a–F20 had never run with X present (issue **0698**, which was
+measured to be three suites: `test_ase_final`, `test_ase_final_gf180` and
+`test_ase_core`, all three pinned `--nogui` in `full_audit.sh:163`, which is why CI
+never saw it). Fixed on the suite side: `tests/headless/ase_design_window.tcl` binds the
+design window before the first `ase::netlist` when `::has_x` is set. The acceptance rows
+above now carry the same verdict in **both** arms — `ALL PASS (79)` headless and on
+`:99`. Nothing in `src/ase.tcl` moved; its guard is adjacent to the OPEN 0683/0684
+ruling.
+
 ### 4.4 Getting the block onto the screen — two carriers
 
 **Carrier 1: the annotator symbol.** A PDK-neutral `annotate_params.sym`,
