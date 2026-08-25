@@ -162,3 +162,62 @@ the ledger instead of a write-up.
 | 4 | 0689 + 0690 | **added** — harness truth; they are why T1's 3 FAIL is noise |
 | 5 | 0672 + 0673 | queued |
 | — | 0683 + 0688 | **NOT queued** — needs the user's ruling first |
+
+
+---
+
+## 0679 — SHIPPED and verified, `cef8706a`
+
+Both halves of the user's bench defect are closed, and the lead re-ran the suites
+rather than taking the report: **test_ase_window 202, test_op_annot 342,
+test_annot_show_menu 10, test_ase_final 76 — all pass**, counts matching.
+
+```
+REMEDY CMD : ase::ui::save_op_params_on .../ngspice_state1   KEY MATCH 1 (was 0)
+gate after 1 (was 0)         save_all_apply(bogus key) : 0   (was a fabricated 1)
+```
+
+The `ALSO CHECK, because the same shape is likely nearby` clause in that brief
+paid for itself: it turned up **0691**, `do_load_state_from` fabricating its
+witness exactly as `save_all_apply` did. Third instance of that class on this
+branch. Worth keeping the clause in future briefs.
+
+### The crew scoped its own new issue honestly, which is the notable part
+
+**0692** is a window the 0679 fix itself opened: an open `Save All` dialog is a
+snapshot (`dlg($key,opparams)` written once at creation, `populate` never touches
+it), so the CIW remedy turns the gate on behind it and OK writes the stale `0`
+back. Measured `seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0 ok_rc=1
+gate_after_ok=0`.
+
+It would have been easy to file that as "the user's bug is still broken." The
+write-up says the opposite, unprompted:
+
+> the user's own reported order (CIW first, *then* open the menu) is fine and is
+> what 0679's acceptance covers. This is the other order.
+
+And it names the trap in its own fix: `save_all_ok` returning `1` is **honest** —
+it really did write what the dialog held. Nothing lies. The staleness is the
+defect, so "make it report failure" would be the wrong repair. That instruction is
+carried into the next brief verbatim.
+
+## Dispatched: 0691 + 0692 as one crew — `wk24gne8q`
+
+Both small, both `src/ase_window.tcl`, both the same family. Ahead of the notify
+cluster because 0692 is causally downstream of a commit that landed tonight and
+can silently undo a fix the user just applied.
+
+Fenced explicitly: **do not widen into 0648's diff/cancel rework** — stop and
+report if the honest fix needs it.
+
+| # | item | state |
+|---|---|---|
+| ~~0682~~ | | DONE `4d4d745d` |
+| ~~0683+0684~~ | | REFUTED + REVERTED `85cd3e7e`, both OPEN |
+| ~~0679~~ | | **DONE `cef8706a`**, verified |
+| 1 | **0691 + 0692** | **IN FLIGHT** `wk24gne8q` |
+| 2 | 0674 + 0675 + 0677 | queued |
+| 3 | 0681 | queued |
+| 4 | 0689 + 0690 | queued |
+| 5 | 0672 + 0673 | queued |
+| — | 0683 + 0688 | NOT queued — needs the user's ruling |
