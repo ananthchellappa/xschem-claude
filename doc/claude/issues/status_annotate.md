@@ -339,10 +339,52 @@ Filed by this crew and NOT fixed: **0693** (`design_window` +
 sentence in 0691 that cleared `raise_window_entry`), **0694** (`toggle_flag`,
 widened to the real class: **13** discarded `ase::session_update` call sites, the
 OK handler of nearly every ASE-L editor dialog), **0695** and **0696**.
-**Next free number: 0697.**
+**Next free number: 0697.** *(now 0699 — see §6c)*
 
 Full record: issues `0691-*.md` / `0692-*.md` (both §AFTER), plan block
 "✅⚠ 0691+0692 — LANDED 2026-08-25", spec §0692 and the ratification table.
+
+## 6c. ✅ 0695 + 0696 — the box that follows, and the ESC notice that stopped lying
+
+**LANDED 2026-08-25, status E. Pure Tcl, ONE product file, no rebuild.** These
+were the two residuals §6b shipped with, fixed the same day as **one item**
+because both ask one question: *what does this dialog consider the user's intent,
+once the checkbutton's value can move underneath them?*
+
+**0695** — an open `Save All` dialog's checkbuttons now **follow** a write that
+lands behind them, painted from the very dict OK will write, so what you see is
+what OK writes. Measured through two shipped menu items:
+`WU-B2 … box_still=1 → 0` with `gate_after_ok=0` unchanged — the fix is that the
+**box** moved, not that the gate did.
+
+**0696** — the ESC arm stopped reporting a discard for a setting that DID apply.
+Hand-tick a box, let an external write set the same blanket to the same value,
+press ESC: `notices 1 → 0`, `gate_after_esc=1` unchanged. The two contrast arms did
+not move (a plain hand tick still reports exactly once; an untouched dialog is
+still silent).
+
+**The mechanism, because it binds anything that touches this dialog:** "touched" is
+now an **event on the widget** (`-command`), never a value diff — measured in both
+directions, a value diff either silently discards the user's own tick or reinstates
+0692's phantom notice. The as-opened `seed` record is **deleted**.
+
+Suites **214 / 174 / 341 / 78** ALL PASS (`test_ase_window` +6, `test_ase_dialogs`
++2); T1/T2 unmoved.
+
+⚠ **What is still owed to you.** Rule debt **[0692]** was RESTATED, not answered:
+the box now moves under your eyes **with no word said** — acceptable, or should the
+tool SAY the dialog raced? A `look` debt names four bench gestures (the two fixes
+plus two controls that must not move). **Suites green, please look.**
+
+Filed by this crew and NOT fixed: **0697** (`ase::session_open`'s re-open refresh
+arm replaces a clean session's state from disk without firing the notify hook — so
+0695's symptom survives on that one path, and the title's dirty marker and status
+bar do not refresh either) and **0698** (`test_ase_final` passes `--nogui` and
+aborts under X; pre-existing, and invisible because the branch baseline only ever
+ran it headless). **Next free number: 0699 — and after 0699 it is 0800.**
+
+Full record: issues `0695-*.md` / `0696-*.md` (both §RESOLUTION), plan block
+"✅⚠ 0695+0696 — LANDED 2026-08-25", spec §0692 and the ratification table.
 
 ## 7. A note on elapsed time, so the next long run is not a mystery
 

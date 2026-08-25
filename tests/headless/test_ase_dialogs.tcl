@@ -1118,38 +1118,106 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "GE10h 0648 ZERO STATE MUTATION survives the fix: tick + WM close still\
  leaves the state byte-identical" \
     [ase::state_serialize [ase::session_state $key]] $snap
-  # GE10i -- ISSUE 0692: THE AS-OPENED SEED RECORD SURVIVES NO TEARDOWN PATH.
-  # GREEN AT HEAD and deliberately so (a guard, not evidence): at HEAD there is
-  # no `seed` record to leak. It is the ONLY guard that record will ever have.
-  # `ase::ui::save_all_close` (ase_window.tcl:3342-3350) unsets exactly
+  # GE10i -- ISSUES 0692/0695: THE PER-KEY TOUCH RECORD SURVIVES NO TEARDOWN
+  # PATH. GREEN AT HEAD and deliberately so (a guard, not evidence): at HEAD
+  # there is no such record to leak -- the three checkbuttons carry no -command
+  # and "the user touched this box" is a value diff. It is RETARGETED from the
+  # as-opened `seed` record 0692 introduced, which 0695 deletes: once the touch
+  # is an event on the widget the seed has no reader left, and a row asserting a
+  # record nothing can create asserts nothing (test_ase_window W1zb term 5 pins
+  # the deletion itself). This record is the ONLY guard it will ever have:
+  # `ase::ui::save_all_close` (ase_window.tcl:3453-3466) unsets exactly
   # allv/alli/opparams and every existing cleanup row -- GE10 and GE10g above --
-  # checks exactly those three, so a leaked seed would outlive OK, ESC AND the
-  # window-manager close with ZERO rows red, and would then poison the next
-  # dialog for this key: 0692 wearing the fix's clothes. It lives in this suite
-  # because this is where 0648's WM-close protocol is owned.
+  # checks exactly those three, so a leaked touch record would outlive OK, ESC
+  # AND the window-manager close with ZERO rows red, and would then make the
+  # next dialog for this key believe a box was hand-ticked. It lives in this
+  # suite because this is where 0648's WM-close protocol is owned.
   # The OK arm deliberately touches nothing, so its commit is idempotent and
-  # GE10h's byte-identical-state contract above is not disturbed.
+  # GE10h's byte-identical-state contract above is not disturbed; the ESC and WM
+  # arms DO tick a box first, so the record they must clean is a non-empty one --
+  # `alli`, not `opparams`, so the OP-card nudge is left to GE10f which owns it.
   set ge10i {}
   $top.mb.outputs invoke "Save All…"
   update
   catch {$top.saveall.btns.proceed invoke}
   update
-  lappend ge10i [info exists ::ase::ui::dlg($key,seed)]
+  lappend ge10i [info exists ::ase::ui::dlg($key,touched)]
   $top.mb.outputs invoke "Save All…"
   update
+  catch {$top.saveall.alli invoke}
   send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
-  lappend ge10i [info exists ::ase::ui::dlg($key,seed)]
+  lappend ge10i [info exists ::ase::ui::dlg($key,touched)]
   $top.mb.outputs invoke "Save All…"
   update
+  catch {$top.saveall.alli invoke}
   catch {uplevel #0 [cx {wm protocol $top.saveall WM_DELETE_WINDOW}]}
   update
-  lappend ge10i [info exists ::ase::ui::dlg($key,seed)]
-  check "GE10i 0692 the as-opened seed record is unset by ALL THREE teardown\
+  lappend ge10i [info exists ::ase::ui::dlg($key,touched)]
+  check "GE10i 0695 the per-key touch record is unset by ALL THREE teardown\
  paths -- OK, ESC, and the window-manager close protocol" $ge10i {0 0 0}
+
+  # GE10j -- ISSUE 0695: THE TOUCH RECORD IS CLEARED AT OPEN, NOT ONLY AT CLOSE.
+  # `ase::ui::dialog_frame` (ase_window.tcl:1391) DESTROYS an existing toplevel
+  # of the same name with NO cancel, so re-opening Save All from the menu while
+  # one is already up runs no teardown at all. A `touched` record that survived
+  # that would make the fresh dialog believe a box was hand-ticked -- and a box
+  # the dialog believes was hand-ticked is exactly the box that must NOT follow
+  # an external write. The leak is therefore invisible on OK (a touched field
+  # resolves to its own displayed value, which at open IS the live value) and
+  # shows up only here: the fresh dialog's box must still follow.
+  # RED AT HEAD for 0695's plain reason -- nothing follows yet.
+  set ge10j_st [ase::session_state $key]
+  set ge10j_off $ge10j_st
+  dict set ge10j_off save_op_params {}
+  cx {ase::session_update $key $ge10j_off}
+  $top.mb.outputs invoke "Save All…"
+  update
+  catch {$top.saveall.opparams invoke}      ;# a hand tick, then ABANDONED
+  $top.mb.outputs invoke "Save All…"        ;# re-open: destroy, no cancel, no teardown
+  update
+  set ge10j_touched [cx {ase::ui::save_all_touched $key}]
+  set ge10j_box0 [cx {set [$top.saveall.opparams cget -variable]}]
+  cx {ase::ui::save_op_params_on $key}      ;# external write, behind the FRESH dialog
+  update
+  set ge10j_box1 [cx {set [$top.saveall.opparams cget -variable]}]
+  catch {destroy $top.saveall}
+  foreach ge10j_r {allv alli opparams seed touched} {
+    catch {array unset ::ase::ui::dlg $key,$ge10j_r}
+  }
+  cx {ase::session_update $key $ge10j_st}
+  update
+  check "GE10j 0695 a hand tick ABANDONED by re-opening the dialog does not\
+ follow the user into the fresh one: its touched set is empty and its box still\
+ follows an external write" \
+    [list $ge10j_touched $ge10j_box0 $ge10j_box1] {{} 0 1}
+
+  # GE10k -- ISSUE 0695: THE TOUCH IS AN EVENT ON THE WIDGET, AND IT IS WIRED ON
+  # ALL THREE BOXES. Measured at HEAD: every one of the three checkbuttons reads
+  # `command={}` -- there is no touch event at all, which is precisely why "the
+  # user changed this box" had to be a value diff, and a value diff cannot
+  # survive a box that follows the live value (test_ase_window W1ze owns that
+  # half). Structural on purpose: this is the only row that fails loudly if a
+  # later edit re-adds a checkbutton without its -command, and it pins `invoke`'s
+  # empty return, which every G5/GE10 hand-tick gesture in this suite relies on.
+  $top.mb.outputs invoke "Save All…"
+  update
+  set ge10k {}
+  foreach ge10k_f {allv alli opparams} {
+    lappend ge10k [cx {$top.saveall.$ge10k_f cget -command}]
+  }
+  lappend ge10k [cx {$top.saveall.opparams invoke}]
+  catch {$top.saveall.opparams invoke}      ;# un-tick: leave the state alone
+  send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
+  check "GE10k 0695 every Save All checkbutton reports its own hand tick through\
+ ase::ui::save_all_mark_touched, and invoke still returns the empty string the\
+ existing gestures rely on" $ge10k \
+    [list [list ase::ui::save_all_mark_touched $key allv] \
+          [list ase::ui::save_all_mark_touched $key alli] \
+          [list ase::ui::save_all_mark_touched $key opparams] {}]
 
   # leave no half-open dialog behind on a tree where GE10g could not close it
   catch {destroy $top.saveall}
-  foreach ge10_r {allv alli opparams seed} {
+  foreach ge10_r {allv alli opparams seed touched} {
     catch {array unset ::ase::ui::dlg $key,$ge10_r}
   }
   update

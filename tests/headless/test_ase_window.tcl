@@ -810,6 +810,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {set v [dict get [ase::ui::save_all_current $key] $f]}
     return $v
   }
+  # a checkbutton AS THE USER SEES IT -- read off the widget's own -variable and
+  # never off a state dict. Issue 0695's entire subject is the GAP between those
+  # two readings ("shows on, writes off"), so a row that reads only the state
+  # cannot see it at all. W1v's idiom, given a name because six rows below use it.
+  proc w_box {w f} {
+    set v {NO-WIDGET}
+    catch {set v [set [$w.$f cget -variable]]}
+    return $v
+  }
   # the exact configuration the user ran: OP gate OFF, an enabled `op` analysis
   proc w_gate_off {key} {
     set st [ase::session_state $key]
@@ -829,11 +838,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {set w1x_cmd [dict get $::xschem::notify_last command]}
 
   # W1x: THE FAILING ORDER -- open, leave open, remedy behind it, press OK ----
-  # `box_before_ok` is PINNED AT 0 AS A KNOWN RESIDUAL, not as desired
-  # behaviour: the open dialog's checkbutton still displays the pre-write value
-  # until it is reopened. That is issue 0695. Flip this term to 1 when 0695
-  # lands; until then OK and ESC are correct about the state while the pixels
-  # are not, and the term exists so the residual cannot be forgotten.
+  # ⚠ 0695: `box_before_ok` (3rd term) WAS PINNED AT 0 as a known residual --
+  # the open dialog's checkbutton kept displaying the pre-write value until it
+  # was reopened -- with the instruction "flip this term to 1 when 0695 lands".
+  # It is FLIPPED here. The box must follow the write that landed behind it, so
+  # the value OK writes is the value the user was looking at. W1zc/W1zc2 below
+  # own that claim through the OTHER external writer (Session > Load State) and
+  # through 0695 acceptance row 4; this term keeps the ORIGINAL 0692 gesture
+  # honest about its own pixels, which is where the residual was recorded.
   set w1x_w [w_cx {ase::ui::save_all_dialog $key}]
   update idletasks
   set w1x_seed {NO-WIDGET}
@@ -847,9 +859,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update idletasks
   check "W1x 0692 THE OTHER ORDER: a Save All dialog opened BEFORE the printed\
  remedy and OK'd after it must NOT write its stale snapshot back -- the gate the\
- remedy turned on is still on (3rd term = the 0695 display residual)" \
+ remedy turned on is still on, and the checkbutton the user is looking at\
+ agrees with it (3rd term = 0695, flipped from its pinned 0)" \
     [list $w1x_seed $w1x_gate_rem $w1x_box $w1x_ok [w_blanket $key opparams]] \
-    {0 1 0 1 1}
+    {0 1 1 1 1}
 
   # W1y: NON-VACUITY -- the dialog's own boxes still commit ------------------
   # GREEN AT HEAD, deliberately (a control, not evidence): it is what stops the
@@ -940,27 +953,185 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $w1za_take $w1za_hold $w1za_take2 $w1za_hold2 $w1za_rearm2] \
     {1 0 1 0 1}
 
-  # W1zb: RECORD HYGIENE -- GREEN AT HEAD, and the ONLY guard the new seed
-  # record will ever have. `save_all_close` (:3342-3350) unsets exactly
-  # allv/alli/opparams, and every existing cleanup row (test_ase_dialogs GE10,
-  # GE10g) checks exactly those three. A per-key `seed` record that outlived a
-  # teardown would survive OK, ESC and the WM close with ZERO rows red and then
-  # poison the NEXT dialog for this key -- 0692 wearing the fix's clothes.
+  # ==========================================================================
+  # W1zc/W1zc2/W1zf/W1zd/W1ze/W1zg -- ISSUES 0695 + 0696: THE BOX FOLLOWS, AND
+  # THE ESC NOTICE STOPS LYING
+  # ==========================================================================
+  # 0695 and 0696 are ONE item because they ask ONE question: what does this
+  # dialog consider the user's INTENT, once the checkbutton's linked variable
+  # can move underneath the user. Measured at HEAD on :99 with openbox 3.6.1
+  # live, driving shipped menu items and reading the REAL widget:
+  #   WU-B2 box_at_open=1 load_rc=1 live_after_load=0 box_still=1 ok_rc=1
+  #         gate_after_ok=0     <- the user SEES a ticked box and OK writes OFF
+  #   WU-B1 seedbox=0 remedy_rc=1 gate=1 pending={opparams} notices=1
+  #         gate_after_esc=1    <- ESC says "'Save device OP parameters' was NOT
+  #                                applied" about a gate that IS applied, and
+  #                                re-arms the OP-card nudge on the way out
+  # Both of the external writers the issues name are driven for real below: the
+  # pasted CIW remedy ($w1x_cmd, captured from the notice the product printed)
+  # and `Session > Load State` (ase::ui::do_load_state_from, ase_window.tcl:3697).
+  #
+  # ⚠ THE 0695 ASSERTION IS NOT `gate_after_ok == 1`. Once the box follows, the
+  # box correctly reads 0 and OK correctly writes 0; the honest claim is "the box
+  # equals the live value after the external write" AND "what OK wrote equals
+  # what the box was showing" (0695 acceptance row 4) -- W1zc and W1zc2.
+
+  # W1zc: 0695, FAILING ORDER 1 -- Session > Load State behind an open dialog --
+  # TWO boxes move in OPPOSITE directions in the same import (the OP gate 1 -> 0
+  # and `Save all voltages` 0 -> 1), so the row cannot pass on a refresh that
+  # always answers 0, or one that only ever moves one box.
+  set w1zc_st [w_cx {ase::session_state $key}]
+  catch {dict set w1zc_st save_op_params 1}
+  catch {dict set w1zc_st save_all_v 0}
+  w_cx {ase::session_update $key $w1zc_st}
+  set w1zc_file $w1zc_st
+  catch {dict set w1zc_file save_op_params {}}   ;# the IMPORTED state: gate OFF
+  catch {dict set w1zc_file save_all_v 1}        ;#                     allv ON
+  set w1zc_path [file join $scratch w1zc.state]
+  w_cx {ase::state_save $w1zc_path $w1zc_file}
+  set w1zc_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  set w1zc_op0 [w_box $w1zc_w opparams]
+  set w1zc_av0 [w_box $w1zc_w allv]
+  set w1zc_load [w_cx {ase::ui::do_load_state_from $key $w1zc_path}]
+  update idletasks
+  set w1zc_live [w_blanket $key opparams]
+  set w1zc_op1 [w_box $w1zc_w opparams]
+  set w1zc_av1 [w_box $w1zc_w allv]
+  # W1zf's two terms are read HERE, while the dialog is still open: OK tears the
+  # records down and there is no later moment at which they exist.
+  set w1zf_touched [w_cx {ase::ui::save_all_touched $key}]
+  set w1zf_disc    [w_cx {ase::ui::save_all_discarded $key}]
+  set w1zc_ok [w_cx {$w1zc_w.btns.proceed invoke}]      ;# press OK for real
+  update idletasks
+  set w1zc_gate [w_blanket $key opparams]
+  check "W1zc 0695 THE OTHER EXTERNAL WRITER: a `Session > Load State` behind an\
+ open Save All must MOVE the checkbuttons it moved -- the OP gate box down AND\
+ the `Save all voltages` box up -- and OK must then write exactly what those\
+ boxes are showing" \
+    [list $w1zc_op0 $w1zc_av0 $w1zc_load $w1zc_live $w1zc_op1 $w1zc_av1 \
+          $w1zc_ok $w1zc_gate [w_blanket $key allv]] \
+    {1 0 1 0 0 1 1 0 1}
+
+  # W1zc2: 0695 ACCEPTANCE ROW 4, STATED AS ITSELF -- "OK must not write a value
+  # the user cannot see". The EQUALITY is the assertion, not a literal 1, so the
+  # row stays honest whichever way the live value happened to move.
+  check "W1zc2 0695 acceptance row 4: what OK wrote EQUALS what the checkbutton\
+ was displaying when it was pressed" \
+    [list [expr {$w1zc_gate eq $w1zc_op1 ? 1 : 0}] $w1zc_op1 $w1zc_gate] \
+    [list 1 $w1zc_op1 $w1zc_op1]
+
+  # W1zf: THE FOLLOW IS NOT A TOUCH -- the mechanism behind W1za's symptom.
+  # ⚠ TERM 1 IS GREEN AT HEAD and is a REGRESSION GUARD, not evidence: at HEAD
+  # nothing follows, so nothing can be mistaken for a hand tick. What it guards
+  # is measured (probe_hazard H1): a checkbutton that follows the live value
+  # while "touched" stays a diff against the as-opened value makes the FOLLOWED
+  # box read as touched, which re-creates the phantom discard 0692 removed.
+  # Term 2 is 0696's own recommended predicate -- reported as discarded only
+  # when the field is touched AND the box differs from the LIVE value -- and it
+  # does not exist at HEAD.
+  check "W1zf 0695/0696 an external write that MOVES a box is not a hand tick:\
+ neither the touched set nor the discard set names a field the user never\
+ touched" [list $w1zf_touched $w1zf_disc] {{} {}}
+
+  # W1zd: 0696, THE WU-B1 GESTURE -- the user hand-ticks the box AND an external
+  # write sets the same blanket to the same value; ESC. Nothing was lost: the
+  # gate IS on and STAYS on, so the 0648 discard sentence must not be printed and
+  # the OP-card nudge must not be re-armed. Terms 4/5 are W1za2's latch
+  # precondition folded in, so the `no re-arm` term cannot pass on a dead latch.
+  w_gate_off $key
+  set w1zd_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  catch {$w1zd_w.opparams invoke}             ;# THE USER'S HAND
+  catch {uplevel #0 $w1x_cmd}                 ;# ...and the remedy, to the SAME value
+  update idletasks
+  w_cx {ase::op_cards_nudge_reset}
+  set w1zd_take [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  set w1zd_hold [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  set w1zd_e [w_aecho_spy {catch {$w1zd_w.btns.cancel invoke}}]
+  update idletasks
+  set w1zd_n     [w_echoed_n $w1zd_e {*NOT applied*}]
+  set w1zd_gate  [w_blanket $key opparams]
+  set w1zd_rearm [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  check "W1zd 0696 THE ESC ARM STOPS LYING: a box the user ticked BY HAND that\
+ an external write ALSO set to the same value is NOT reported as discarded and\
+ does NOT re-arm the OP-card nudge -- the gate is on, and it stays on" \
+    [list $w1zd_n $w1zd_gate $w1zd_rearm $w1zd_take $w1zd_hold] {0 1 0 1 0}
+
+  # W1ze: THE HAZARD A NAIVE FIX CREATES -- the discriminator between a touch
+  # that is an EVENT on the widget and a touch that is a diff against the
+  # as-opened value. Measured (probe_hazard H2, with src/ untouched and the
+  # follow simulated by writing the linked variable, which is provably what a
+  # follow does): with the box following and `touched` still a seed diff, the
+  # user's own tick back to 1 reads as UNTOUCHED (dlg 1 eq seed 1), resolve
+  # answers 0 and OK writes the gate OFF -- 0695 inverted and strictly worse.
+  # At HEAD this row is red for the plainer reason that nothing follows at all.
+  set w1ze_st [w_cx {ase::session_state $key}]
+  catch {dict set w1ze_st save_op_params 1}
+  w_cx {ase::session_update $key $w1ze_st}
+  set w1ze_file $w1ze_st
+  catch {dict set w1ze_file save_op_params {}}
+  set w1ze_path [file join $scratch w1ze.state]
+  w_cx {ase::state_save $w1ze_path $w1ze_file}
+  set w1ze_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  set w1ze_box0 [w_box $w1ze_w opparams]
+  w_cx {ase::ui::do_load_state_from $key $w1ze_path}
+  update idletasks
+  set w1ze_follow [w_box $w1ze_w opparams]
+  catch {$w1ze_w.opparams invoke}             ;# the user's hand, AFTER the follow
+  set w1ze_hand [w_box $w1ze_w opparams]
+  catch {$w1ze_w.btns.proceed invoke}
+  update idletasks
+  check "W1ze 0695 A FOLLOWED BOX THE USER THEN TICKS BACK BY HAND STILL WINS:\
+ the box follows the import down, the user ticks it back up, and OK writes the\
+ tick -- a `touched` defined as a diff against the as-opened value loses it\
+ silently" \
+    [list $w1ze_box0 $w1ze_follow $w1ze_hand [w_blanket $key opparams]] \
+    {1 0 1 1}
+
+  # W1zg: THE FOLLOW'S ONLY LIFELINE. `ase::session_notify` (ase.tcl:71, set at
+  # ase_window.tcl:277) is a SINGLE-SLOT variable, and it is the seam both
+  # issues above hang off: it is fired by session_update/save/load/revert/adopt
+  # AFTER the state is stored, so ONE registration covers both external writers.
+  # Anything that overwrites that slot silently disables the follow with no
+  # other row red, which is why this is asserted structurally.
+  check "W1zg 0695 the session-notify hook is the ONE seam the follow hangs off,\
+ and the refresh it must call is a real proc" \
+    [list [w_cx {set ::ase::session_notify}] \
+          [expr {[info procs ::ase::ui::save_all_refresh] ne {} ? 1 : 0}]] \
+    [list ase::ui::session_changed 1]
+
+  # W1zb: RECORD HYGIENE -- the ONLY guard the per-key `touched` record will
+  # ever have. `save_all_close` (:3453-3466) unsets exactly allv/alli/opparams
+  # (+ the seed), and every existing cleanup row (test_ase_dialogs GE10, GE10g)
+  # checks exactly those three. A `touched` record that outlived a teardown
+  # would survive OK, ESC and the WM close with ZERO rows red and then make the
+  # NEXT dialog for this key believe a box was hand-ticked -- which is the box
+  # that must NOT follow an external write, i.e. 0695 wearing the fix's clothes.
   # `ase::ui::close`'s `array unset dlg $key,*` (:318) hides it further.
+  # ⚠ TERM 5 IS RED AT HEAD ON PURPOSE, and pins the decision: once "the user
+  # touched this box" is an EVENT on the widget, the as-opened `seed` record has
+  # no reader left and must not be created at all. It is read WHILE THE DIALOG IS
+  # OPEN, which is the only moment a live seed record is visible -- read after
+  # the close it would be 0 either way and would discriminate nothing.
   set w1zb_w [w_cx {ase::ui::save_all_dialog $key}]
   update idletasks
+  set w1zb_seed_open [info exists ::ase::ui::dlg($key,seed)]
   w_cx {ase::ui::save_all_close $key}
-  check "W1zb 0692 record hygiene: save_all_close leaves NO dlg record for this\
- key -- allv, alli, opparams AND the as-opened seed" \
+  check "W1zb 0695 record hygiene: save_all_close leaves NO dlg record for this\
+ key -- allv, alli, opparams AND the touched set -- and no as-opened seed record\
+ is created in the first place" \
     [list [info exists ::ase::ui::dlg($key,allv)] \
           [info exists ::ase::ui::dlg($key,alli)] \
           [info exists ::ase::ui::dlg($key,opparams)] \
-          [info exists ::ase::ui::dlg($key,seed)]] {0 0 0 0}
+          [info exists ::ase::ui::dlg($key,touched)] \
+          $w1zb_seed_open] {0 0 0 0 0}
 
   # leave nothing of this block behind: no dialog, no dlg record (the restore
   # below puts the session state and the panes back)
   catch {ase::ui::save_all_close $key}
-  foreach w1z_rec {allv alli opparams seed} {
+  foreach w1z_rec {allv alli opparams seed touched} {
     catch {array unset ::ase::ui::dlg $key,$w1z_rec}
   }
   update idletasks

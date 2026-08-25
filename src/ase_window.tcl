@@ -3265,16 +3265,30 @@ proc ase::ui::save_all_dialog {key} {
   set dlg($key,allv)     [dict get $cur allv]
   set dlg($key,alli)     [dict get $cur alli]
   set dlg($key,opparams) [dict get $cur opparams]
-  ## 0692: remember what the boxes looked like AS OPENED, from the SAME $cur
-  ## the three records above came from (invariant I1 — a second reading of the
-  ## blankets here is how a phantom diff gets born). See save_all_touched.
-  ase::ui::save_all_seed $key $cur
+  ## 0695: THE TOUCH SET, CLEARED EXPLICITLY AT OPEN — not merely at close.
+  ## `ase::ui::dialog_frame` (:1391) DESTROYS an existing toplevel of this name
+  ## with NO cancel, so re-opening Save All from the menu while one is already
+  ## up runs no teardown at all. A touch record that survived that would make
+  ## the fresh dialog believe a box was hand-ticked, and a box the dialog
+  ## believes was hand-ticked is exactly the box that must NOT follow an
+  ## external write. Guarded by GE10j (this clear) and W1zb/GE10i (the close).
+  ## It REPLACES 0692's as-opened `seed` record — see save_all_mark_touched.
+  set dlg($key,touched) {}
+  ## 0695: EACH BOX REPORTS ITS OWN HAND TICK. Before this the three
+  ## checkbuttons carried `command={}` — there was no touch EVENT at all, which
+  ## is why "the user changed this box" had to be a value diff, and a value diff
+  ## cannot survive a box that follows the live value (save_all_mark_touched
+  ## carries the measurement). Pinned structurally by GE10k, which is the only
+  ## row that fails loudly if a later edit re-adds a box without its -command.
   checkbutton $w.allv -text {Save all voltages} \
-    -variable ::ase::ui::dlg($key,allv)
+    -variable ::ase::ui::dlg($key,allv) \
+    -command [list ase::ui::save_all_mark_touched $key allv]
   checkbutton $w.alli -text {Save all terminal currents} \
-    -variable ::ase::ui::dlg($key,alli)
+    -variable ::ase::ui::dlg($key,alli) \
+    -command [list ase::ui::save_all_mark_touched $key alli]
   checkbutton $w.opparams -text [ase::ui::lbl_save_op_params] \
-    -variable ::ase::ui::dlg($key,opparams)
+    -variable ::ase::ui::dlg($key,opparams) \
+    -command [list ase::ui::save_all_mark_touched $key opparams]
   grid $w.allv -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   grid $w.alli -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   grid $w.opparams -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
@@ -3319,6 +3333,16 @@ proc ase::ui::save_all_ok {key} {
   ## takes the user's value for a box they TOUCHED and the LIVE value for one
   ## they did not. save_all_ok's `1` was honest before and still is; what it
   ## writes is no longer stale.
+  ## ⚠ 0695, THE ORDER ON THIS PATH, AND WHY IT IS SAFE:
+  ##   resolve -> apply -> save_all_commit -> session_update -> session_notify
+  ##   -> ase::ui::save_all_refresh -> (back here) save_all_close
+  ## So a refresh DOES fire against this dialog one statement before it is
+  ## destroyed. It is idempotent BY CONSTRUCTION, not by luck: it recomputes the
+  ## same `save_all_resolve`, whose touched fields answer the boxes' own values
+  ## and whose untouched fields answer the live state apply has just written —
+  ## the same dict, painted back onto the same boxes. Reordering resolve AFTER
+  ## apply would break exactly that, and would also make OK depend on the follow
+  ## having fired; keep them in this order.
   set vals [ase::ui::save_all_resolve $key]
   set rc [ase::ui::save_all_apply $key \
     [dict get $vals allv] [dict get $vals alli] [dict get $vals opparams]]
@@ -3333,12 +3357,15 @@ proc ase::ui::save_all_ok {key} {
 # ONE normaliser, FOUR consumers (invariant I1) — still one builder, which is
 # the half of I1 that matters. ⚠ CORRECTED 2026-08-25 (0692): this said "TWO
 # consumers ... save_all_cancel diffs the pending records against it", and after
-# 0692 that second clause is FALSE — save_all_cancel diffs against the AS-OPENED
-# seed, through save_all_touched. The live call sites are now:
-#   :3253 save_op_params_on (the pasted remedy)   :3264 save_all_dialog's seed
-#   :3401 save_all_touched's no-seed fallback     :3428 save_all_resolve's live
-# read. A stale docstring surviving the very commit that fixed one is exactly
-# how the 0692 window opened; the adversary pass caught this one two lines away.
+# 0692 that second clause is FALSE — save_all_cancel does not diff this at all
+# any more. ⚠ CORRECTED AGAIN 2026-08-25 (0695/0696), because the 0692 wording
+# ("diffs against the AS-OPENED seed, through save_all_touched") went stale in
+# its turn: there is no seed. The live call sites are now THREE —
+#   save_op_params_on (the pasted remedy)   save_all_dialog's three records
+#   save_all_resolve's live read            save_all_discarded's live compare
+# — four readers, still ONE reading. A stale docstring surviving the very commit
+# that fixed one is exactly how the 0692 window opened; that has now happened to
+# this same comment twice, which is itself the argument for one normaliser.
 proc ase::ui::save_all_current {key} {
   set st [ase::session_state $key]
   return [list \
@@ -3347,65 +3374,90 @@ proc ase::ui::save_all_current {key} {
     opparams [ase::op_gate_on [ase::state_get $st save_op_params {}]]]
 }
 
-# --- 0692: THE AS-OPENED SNAPSHOT, AND WHAT "THE USER TOUCHED" MEANS ---------
-# `dlg($key,allv|alli|opparams)` are written in exactly ONE place — the three
-# lines in save_all_dialog — at dialog CREATION time, and `ase::ui::populate`
-# never touches them. So an OPEN Save All dialog is a snapshot of the three
-# blankets as they were when it opened, and nothing in the product could
-# refresh it. After 0679 the pasted CIW remedy is a writer aimed straight at
-# one of those blankets, so the 0679 fix is what created this window. Measured
-# through the real widget on :99 (openbox live):
-#   PROBE0692 seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0 ok_rc=1
-#             gate_after_ok=0        <- the stale 0 written back over the remedy
-#   PROBE0692C ... phantom_discard_notices=1 gate_after_esc=1
-#             <- and on ESC the dialog TELLS the user the thing it did not undo
-#                "was NOT applied", and re-arms the OP-card nudge on the way out
+# --- 0692/0695: WHAT "THE USER TOUCHED THIS BOX" MEANS ----------------------
+# `dlg($key,allv|alli|opparams)` are the three checkbuttons' linked variables.
+# Until 0695 they were written in exactly ONE place — the three lines in
+# save_all_dialog — at dialog CREATION time, and `ase::ui::populate` never
+# touched them. So an OPEN Save All dialog was a frozen snapshot of the three
+# blankets and nothing in the product could refresh it. After 0679 the pasted
+# CIW remedy became a writer aimed straight at one of those blankets, and
+# `Session > Load State` was always another, so the 0679 fix is what opened the
+# window. 0692 made OK and ESC correct about the STATE, by diffing the records
+# against an as-opened SEED. 0695 is the residual that left, measured through
+# two SHIPPED menu items on :99 with openbox 3.6.1 live:
+#   WU-B2 box_at_open=1 load_rc=1 live_after_load=0 box_still=1 ok_rc=1
+#         gate_after_ok=0   <- the user SEES a ticked box and OK writes it OFF
+# Read that carefully: before 0692 the dialog was WYSIWYG-but-stale; after it
+# the WIDGET AND THE ACTION DISAGREE, which is the worse failure of the two.
+# The repair is `save_all_refresh` below — the box follows the live value, so
+# what the user sees is what OK will write.
 #
-# ⚠ NOTHING LIED. `save_all_ok`'s `1` was truthful — it really did write what
-# the dialog held. The defect was that what the dialog held was stale, so the
-# repair is to the STALENESS and not to any return value (that distinction is
-# what separates this from 0679/0691).
+# ⚠ AND THE MOMENT THE BOX CAN MOVE UNDERNEATH THE USER, A VALUE DIFF CANNOT
+# MEAN "THE USER CHANGED THIS BOX" ANY MORE. That is measured on this binary,
+# in BOTH directions, with src/ untouched and the follow simulated by writing
+# the linked variable (which is provably what a follow does):
+#   H2  the box follows to 0, the user hand-ticks it back to 1 -> dlg(1) eq
+#       seed(1) -> touched={} -> resolve answers 0 -> gate_after_ok=0:
+#       THE USER'S OWN TICK IS SILENTLY DISCARDED (0695 inverted, and worse)
+#   H1  an untouched box follows an external write -> touched={opparams} ->
+#       ESC prints a discard for a box nobody touched: 0692 REINSTATED
+# So the touch is an EVENT ON THE WIDGET, recorded by the three checkbuttons'
+# own `-command`, and never a diff. Measured Tk seam (TK1/TK2/TK3, in the
+# array-element `-variable` shape ASE actually uses): writing the linked
+# variable moves the DISPLAY and does NOT fire `-command`, while `invoke` DOES.
+# A programmatic follow is therefore invisible here, and every existing suite
+# hand tick — all of which use `invoke` — still registers as a hand tick.
 #
-# OPTION 2 of the three the issue listed, and its own recommendation: keep a
-# per-key record of the AS-OPENED values and diff against THAT.
-#   * REJECTED option 1 (re-seed inside `save_all_commit`): it would put a
-#     widget side effect into the shared writer the pasted remedy calls, it
-#     would silently move a box the user had just ticked by hand and not yet
-#     OK'd (the issue's own ⚠), and it would change what 0679's SAB-N6
-#     sabotage proves.
-#   * REJECTED option 3 (refuse/report on OK): loudest, and it turns a working
-#     gesture into an error the user cannot act on.
-# RESIDUAL, FILED NOT HIDDEN (issue 0695): the open dialog's checkbutton still
-# DISPLAYS the pre-write value until it is reopened. OK and ESC are now correct
-# about the state; the pixels are not. Row W1x pins that term at 0 explicitly.
-proc ase::ui::save_all_seed {key cur} {
+# ⚠ THE AS-OPENED SEED IS DELETED. `ase::ui::save_all_seed` / `dlg($key,seed)`
+# had exactly two readers and both are replaced above. Its own docstring said
+# the no-seed fallback existed for "a dlg record poked in directly with no
+# dialog, which several suites do" — measured FALSE: no product path and no
+# suite writes those three records without a dialog (the only direct pokes are
+# `dlg($key,anen|antype)`, for Choose Analyses). A fallback documented as live
+# and measured as dead is the family of defect this branch keeps meeting, so it
+# goes rather than staying as a speculative branch. COST ACCEPTED: SAB-0692-B
+# ("stub save_all_seed to a no-op" as an exact revert-0692 discriminator) no
+# longer exists; SAB-0695-A/B/E replace it, and W1zb's 5th term pins the
+# deletion itself so this cannot quietly grow back.
+#
+# ⚠ A TOUCHED FIELD STAYS TOUCHED, even when the live value later drifts to
+# equal what the user set. The box the user put their hand on must never move
+# again under that hand. "Re-cleaning" a field once live catches up reads well
+# for the ESC notice and re-opens H2 for OK, because the field would go back to
+# following. The ESC half is solved at the CONSUMER instead, by
+# `save_all_discarded`, which changes nothing about what OK writes.
+proc ase::ui::save_all_mark_touched {key field} {
   variable dlg
-  set dlg($key,seed) $cur
+  ## ONLY while a dialog is up: a stray `invoke` arriving after teardown must
+  ## not resurrect the record `save_all_close` has just dropped.
+  if {![info exists dlg($key,touched)]} { return {} }
+  if {[lsearch -exact $dlg($key,touched) $field] < 0} {
+    lappend dlg($key,touched) $field
+  }
+  ## ⚠ RETURNS THE EMPTY STRING, AND THAT IS A CONTRACT. A checkbutton's
+  ## `invoke` returns its -command's result, and every hand-tick gesture in the
+  ## suites is written as a bare `$w.opparams invoke`. GE10k pins it.
+  ## It also writes NOTHING to the session state — GE10h's byte-identical
+  ## contract (tick + WM close leaves the state untouched) depends on that.
+  return {}
 }
 
 # THE ONE DEFINITION OF "THE USER CHANGED THIS BOX", with TWO consumers
-# (invariant I1): the OK reconcile below and save_all_cancel's discard diff.
-# Two independent readings are exactly how :3386 drifted into reporting a
-# phantom discard for a box nobody touched.
+# (invariant I1): `save_all_resolve`'s OK reconcile, and `save_all_discarded`'s
+# cancel notice. Two independent readings are exactly how the ESC arm drifted
+# into reporting a phantom discard for a box nobody touched.
 #
-# ⚠ THE FALLBACK IS HEAD'S BEHAVIOUR ON PURPOSE. With no seed record — a dlg
-# record poked in directly with no dialog, which several suites do — this is
-# the live diff it has always been, so the change is strictly additive and
-# SAB-0692-B (stub save_all_seed to a no-op) is an exact "revert 0692"
-# discriminator. The comparison stays the raw `ne` HEAD used, NOT a `? 1 : 0`
-# normalisation, so a non-boolean poked record cannot start throwing here.
+# The recorded list, FILTERED to fields that still have a dlg record, so a
+# half-torn-down dialog cannot name a box that no longer exists. Its evidence
+# changed with 0695 — from "differs from the as-opened seed" to "the widget's
+# own -command fired" — but its name, signature and role did not.
 proc ase::ui::save_all_touched {key} {
   variable dlg
-  if {[info exists dlg($key,seed)]} {
-    set ref $dlg($key,seed)
-  } elseif {[catch {ase::ui::save_all_current $key} ref]} {
-    return {}
-  }
+  if {![info exists dlg($key,touched)]} { return {} }
   set out {}
   foreach f {allv alli opparams} {
     if {![info exists dlg($key,$f)]} { continue }
-    if {![dict exists $ref $f]} { continue }
-    if {$dlg($key,$f) ne [dict get $ref $f]} { lappend out $f }
+    if {[lsearch -exact $dlg($key,touched) $f] >= 0} { lappend out $f }
   }
   return $out
 }
@@ -3442,6 +3494,83 @@ proc ase::ui::save_all_resolve {key} {
   return $out
 }
 
+# --- 0695: THE BOX FOLLOWS, BY PAINTING THE SAME DICT OK WILL WRITE ----------
+# INVARIANT I1 IN ITS EXACT SHAPE: ONE builder (`save_all_resolve`), TWO
+# consumers — the widget and the OK write (`save_all_ok`) — so what the user is
+# looking at and what OK will write CANNOT drift silently. That is the whole
+# point: 0695's failure was two answers to one question.
+#
+# ⚠ IT PAINTS `save_all_resolve`, NOT `save_all_current`. Painting the raw live
+# state would give the widget a second, independent definition of what the
+# dialog means (I1's silent-failure mode, and how the ESC arm drifted in the
+# first place) and it would MOVE A BOX THE USER HAD TOUCHED. With resolve, a
+# touched box is left alone for free — resolve answers that box's own value for
+# it — and an untouched box lands on exactly the value OK is going to write.
+#
+# ⚠ THE REFRESH CANNOT MARK ANYTHING TOUCHED. It writes the linked variables,
+# and a variable write provably does NOT fire a checkbutton's `-command`
+# (measured TK1/TK3); only `invoke` does. That is the property that keeps H1
+# (a followed box read as a hand tick -> 0692's phantom discard) impossible.
+#
+# TOTAL NO-OP unless a Save All dialog for THIS key is really up:
+# `ase::ui::session_changed` is reached from EVERY `ase::session_update` of
+# EVERY key — pane edits, the temperature FocusOut, toggle_flag — so the guards
+# are the proc's main body, not paranoia.
+proc ase::ui::save_all_refresh {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  if {[catch {winfo exists [dict get $wins $key].saveall} ex] || !$ex} { return }
+  foreach f {allv alli opparams} {
+    if {![info exists dlg($key,$f)]} { return }
+  }
+  if {[catch {ase::ui::save_all_resolve $key} vals]} { return }
+  foreach f {allv alli opparams} {
+    if {[dict exists $vals $f]} { set dlg($key,$f) [dict get $vals $f] }
+  }
+  return
+}
+
+# --- 0696: WHAT THE CANCEL ARM IS ALLOWED TO CALL "DISCARDED" ----------------
+# Measured at HEAD, i.e. AFTER 0692 narrowed the cancel diff to the as-opened
+# seed — this notice is NEW as of that commit:
+#   WU-B1 seedbox=0 remedy_rc=1 gate=1 pending={opparams} notices=1
+#         gate_after_esc=1
+#   "ASE: Save All was closed without OK — 'Save device OP parameters' was NOT
+#    applied. Reopen Outputs > Save All and press OK."
+# The gesture: the user hand-ticks the box AND an external write sets the same
+# blanket to the SAME value; ESC. Nothing was lost — the gate IS on and STAYS
+# on — and the dialog tells the user to redo work that is already done, and
+# re-arms the OP-card nudge on the way out. A notice that reports the OPPOSITE
+# of what happened is worse than no notice at all.
+#
+# 0648's diff/cancel model is NOT reworked (that model is the scope fence):
+# `save_all_report_discard` and the nudge re-arm are untouched, only the
+# PREDICATE feeding them changes. 0648's own sentence already said it — "a
+# change THE USER MADE and LOST is stated" — and the missing half is that a
+# change the user made and the WORLD AGREED WITH was not lost. So: TOUCHED
+# **AND** still differing from the LIVE value.
+#
+# Its OWN named proc rather than an inline filter in save_all_cancel, so the
+# narrowing is independently neutralizable — SAB-0696-D is exactly "return the
+# raw touched list", and it must redden W1zd and nothing else. That is the
+# 0679/0691 precedent for honesty living in a stub-able callee.
+#
+# The contrast arms this must NOT move, both measured: a plain hand tick with
+# the live value still 0, dropped by ESC, is STILL reported exactly once
+# (GE10c/GE10d/GE10f/GE10g, W1za's hand arm); an UNTOUCHED dialog with an
+# external write behind it is STILL silent (0692's fix, W1za's ext arm).
+proc ase::ui::save_all_discarded {key} {
+  variable dlg
+  if {[catch {ase::ui::save_all_current $key} live]} { return {} }
+  set out {}
+  foreach f [ase::ui::save_all_touched $key] {
+    ## no live reading for this field -> cannot prove it survived; say so.
+    if {![dict exists $live $f]} { lappend out $f; continue }
+    if {$dlg($key,$f) ne [dict get $live $f]} { lappend out $f }
+  }
+  return $out
+}
+
 # One-line registrar for a dialog's window-manager close button. Called ONLY
 # from save_all_dialog (see the comment there for why not from dialog_frame).
 proc ase::ui::dialog_close_protocol {w cmd} {
@@ -3455,11 +3584,15 @@ proc ase::ui::save_all_close {key} {
   array unset dlg $key,allv
   array unset dlg $key,alli
   array unset dlg $key,opparams
-  ## 0692: AND THE AS-OPENED SEED. A leaked seed would outlive OK, ESC and the
-  ## WM close with zero rows red and then poison the NEXT dialog for this key
-  ## — 0692 wearing the fix's clothes. Guarded by W1zb and GE10i, which are the
-  ## only rows that will ever see it.
-  array unset dlg $key,seed
+  ## 0695: AND THE PER-KEY TOUCH SET (this replaced 0692's as-opened seed). A
+  ## leaked touch record would outlive OK, ESC and the WM close with zero rows
+  ## red and then make the NEXT dialog for this key believe a box was
+  ## hand-ticked — and a box the dialog believes was hand-ticked is exactly the
+  ## box that must NOT follow an external write, i.e. 0695 wearing the fix's
+  ## clothes. Guarded by W1zb and GE10i, which are the only rows that will ever
+  ## see it; save_all_dialog clears it at OPEN too, for the re-open path that
+  ## runs no teardown at all (GE10j).
+  array unset dlg $key,touched
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].saveall}
   }
@@ -3506,8 +3639,19 @@ proc ase::ui::save_all_cancel {key} {
   ## fence): it is the sentence 0648 already wrote — "a change THE USER MADE and
   ## lost is stated" — finally measured as written. GE10c/GE10d/GE10f/GE10g,
   ## which all drive a REAL hand tick, are untouched by it.
+  ##
+  ## ⚠ 0696: AND "TOUCHED" IS NOT ENOUGH EITHER. The seed diff above still
+  ## reported a hand-ticked box as discarded when an external write had set the
+  ## same blanket to the SAME value — a NEW false notice, measured
+  ## `WU-B1 pending={opparams} notices=1 gate_after_esc=1`: told the user their
+  ## setting was NOT applied about a gate that IS applied. `save_all_discarded`
+  ## is the narrowing: touched AND still differing from the LIVE value.
+  ##
+  ## ⚠ THE NUDGE RE-ARM READS THE SAME NARROWED LIST. Keying the re-arm off the
+  ## raw touched set would silence the sentence and still fire the nudge, which
+  ## is 0696 half-fixed and arguably more confusing than not fixing it.
   set pending {}
-  catch { set pending [ase::ui::save_all_touched $key] }
+  catch { set pending [ase::ui::save_all_discarded $key] }
   ## D6: only the OP-card box re-arms the nudge. A discarded allv/alli tick is
   ## reported but must not re-nudge — the nudge is about this gate and nothing
   ## else, and re-nudging for an unrelated blanket is 0636 noise for nothing.
@@ -4062,6 +4206,22 @@ proc ase::ui::status_text {key} {
 proc ase::ui::session_changed {key} {
   ase::ui::refresh_title $key
   ase::ui::refresh_status $key
+  ## 0695: AND AN OPEN Save All DIALOG FOLLOWS THE WRITE THAT LANDED BEHIND IT.
+  ## LAST, so a broken refresh cannot cost the title/status their update. This
+  ## hook is the ONE seam that covers BOTH external writers the issue names —
+  ## the pasted CIW remedy (save_op_params_on -> save_all_commit) and
+  ## `Session > Load State` (do_load_state_from -> load_state_commit) — because
+  ## both funnel through `ase::session_update`, which fires it AFTER the state
+  ## is stored. `save_all_refresh` is a total no-op when no such dialog is up.
+  ## ⚠ `ase::session_notify` (ase.tcl:71, set at :277) is a SINGLE-SLOT
+  ## variable: anything that overwrites it disables the follow with no other row
+  ## red. W1zg asserts the slot and the callee structurally, for that reason.
+  ## ⚠ KNOWN GAP, FILED AS 0697 rather than widened into here:
+  ## `ase::session_open`'s re-open refresh arm (ase.tcl:2696) replaces a clean
+  ## session's whole state from disk and fires nothing, so a re-launch onto the
+  ## same cellview moves the live state without moving the box (or the dirty
+  ## marker, or the status bar).
+  ase::ui::save_all_refresh $key
 }
 
 # --- Session menu ------------------------------------------------------------

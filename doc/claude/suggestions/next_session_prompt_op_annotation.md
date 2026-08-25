@@ -8,6 +8,134 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅⚠ 0695+0696 — LANDED 2026-08-25 (status **E**). THE BOX THAT FOLLOWS, AND THE ESC NOTICE THAT STOPPED LYING
+
+**Not a plan step.** Both were the 0691+0692 crew's own declared residuals, filed
+hours earlier with the measurement already done; this crew verified them (did not
+re-derive), fixed both as **ONE item**, and swept. **Pure Tcl, ONE product file
+(`src/ase_window.tcl`), no rebuild** — `find src/ -maxdepth 1 \( -name '*.c' -o
+-name '*.h' -o -name '*.y' -o -name '*.l' \) -newer src/xschem` empty,
+`src/Makefile.in` untouched. Full record: `doc/claude/issues/0695-*.md` (decisions,
+sabotage matrix, residuals) and `0696-*.md`.
+
+BEFORE and AFTER, the SAME probe, on `:99` with **openbox 3.6.1 live**:
+
+```
+BEFORE  WU-B2 box_at_open=1 load_rc=1 live_after_load=0 box_still=1 ok_rc=1 gate_after_ok=0
+        WU-B1 seedbox=0 remedy_rc=1 gate=1 pending={opparams} notices=1   (gate_after_esc=1)
+AFTER   WU-B2 box_at_open=1 load_rc=1 live_after_load=0 box_still=0 ok_rc=1 gate_after_ok=0
+        WU-B1 seedbox=0 remedy_rc=1 gate=1 pending={opparams} notices=0   (gate_after_esc=1)
+```
+
+Read `WU-B2` correctly: `gate_after_ok` **stayed 0 and that is the fix** — the
+point is that `box_still` went to 0 too, so OK writes what the user was looking at.
+`gate_after_ok=1` would have been the WRONG assertion. Both contrast arms are
+unmoved (`CONTRAST-A notices=1`, `CONTRAST-B notices=0`).
+`test_ase_window` 208→**214**, `test_ase_dialogs` 172→**174**, `test_op_annot` 335
+(`--nogui`) / 341 (`:99`), `test_ase_final` 78 (`--nogui`), `test_ase_core` 172,
+`test_ase_persist` 17, `test_wave_crossdb_trace` 56 — all ALL PASS.
+
+### WHAT A LATER CREW MUST CARRY
+
+1. **"TOUCHED" IS NOW AN EVENT ON THE WIDGET, NOT A VALUE DIFF, AND THAT IS
+   LOAD-BEARING.** The three checkbuttons carry
+   `-command [list ase::ui::save_all_mark_touched $key <field>]`; before this they
+   carried `command={}` and there was **no touch event in the product at all**.
+   Measured Tk seam on this binary, in the array-element `-variable` shape ASE
+   uses: **writing the linked variable moves the display and does NOT fire
+   `-command`; `invoke` DOES.** That is what makes a programmatic follow invisible
+   to the touch flag, and it is why every existing suite hand tick (all `invoke`)
+   still registers. **Do not "simplify" the touch flag back into a value diff** —
+   it was measured to fail in both directions: `H2` a followed box hand-ticked back
+   reads as untouched and the user's own tick is **silently discarded**; `H1` a
+   followed box reads as touched and **0692's phantom discard returns**.
+2. **THE SEED IS GONE, AND SO IS ITS "FAIL-OPEN" WARNING.** `ase::ui::save_all_seed`
+   / `dlg($key,seed)` are deleted. The 0691+0692 block's item 2 ("the fix is
+   fail-open to its own bug … if you add a second way to open it, seed it") is
+   **superseded**: there is nothing to seed. Its replacement — a dialog opened
+   without `save_all_dialog` gets no touch set, `save_all_mark_touched` refuses to
+   create one, so every box reads untouched and simply follows live. **If you add a
+   second way to open it, clear `dlg($key,touched)` there.** Also dead:
+   **SAB-0692-B** (stub `save_all_seed`) — use SAB-0695-A/B/E.
+3. **THE FOLLOW HANGS OFF ONE SINGLE-SLOT HOOK.** `ase::ui::session_changed` gained
+   one line, `ase::ui::save_all_refresh $key`, called **last**. `ase::session_notify`
+   (`ase.tcl:71`, set at `ase_window.tcl:277`) is a **single-slot variable** —
+   anything that overwrites it kills the follow with no row red (W1zg is the only
+   guard) — and `session_notify_fire` wraps the hook in a `catch`, so an unrelated
+   throw in `refresh_title`/`refresh_status` silently re-opens 0695. Verified
+   synthetically (`FRAG-1 WYSIWYG=0`); no natural trigger found in four attempts.
+4. **⚠ 0695's SYMPTOM IS STILL REACHABLE ON A SHIPPED PATH — issue 0697.**
+   `ase::session_open`'s re-open refresh arm (`src/ase.tcl:2696`) replaces a clean
+   session's whole state from disk and never fires the notify:
+   `ATK-2 box_at_open=1 live_after_reopen=0 gate_after_ok=0 WYSIWYG=0`, identical
+   before and after this fix. Reachable from `library_manager.tcl:453` and
+   `xschem.tcl:6196`. It also means the title's dirty marker and the status bar do
+   not refresh on that gesture. **Not fixed here** (it changes the notify contract
+   for every open/raise path — scope fence). Whoever takes it: `:2696` and `:3081`
+   are the only two `dict set sessions $key … state` writers that skip the fire, and
+   `:3081` creates a brand-new session, so `:2696` is the whole gap.
+5. **`save_all_ok` STILL WRITES THE RECONCILE, NOT THE BOXES — ON PURPOSE.** Purest
+   WYSIWYG (resolve-from-the-boxes) was **rejected**: it would make OK depend on the
+   follow having fired, and item 4 is a shipped writer that does not fire it, so
+   0692 would come back as a *lost write* instead of degrading to a pixel lag.
+6. **`test_ase_final` PASSES `--nogui` AND ABORTS UNDER X — filed as 0698.**
+   `RESULT: ALL PASS (78 checks)` headless versus `RESULT: 1 FAILED (9 passed)` on
+   `:99` with `UNEXPECTED ERROR: ase: design sky130_tests/test_nfet_final is not the
+   current schematic`. **Pre-existing** — proved twice by restoring
+   `git show HEAD:src/ase_window.tcl` and re-measuring — and invisible until now
+   because the branch baseline only ever ran that suite `--nogui`. **A green
+   `--nogui` number for an ASE suite is a partial measurement; run the X arm too.**
+7. **THE BASELINE NUMBERS IN THE 0691+0692 BLOCK ARE OFF FOR `test_op_annot`.** It
+   records 342; measured here it is **335 `--nogui` / 341 on `:99`**, ALL PASS in
+   both, the 6-check delta being the X-gated arms M1, M2, O14, O36, O38, W29. 342
+   matches neither arm. Use 335/341.
+8. **NUMBER NEW ISSUES FROM 0699.** This crew filed **0697** (the non-notifying
+   `session_open` refresh arm) and **0698** (`test_ase_final`'s X-only abort).
+   ⚠ **0700–0799 IS RESERVED — after 0699 the next number is 0800.**
+9. **CONCURRENT SABOTAGE CORRUPTED A VERIFY PASS AGAIN, FOR THE SECOND RUN
+   RUNNING.** The adversary's first probe execution returned a transcript matching
+   **SAB-0695-E** on all nine arms — another agent had a variant installed in
+   `src/ase_window.tcl` at that moment. It was caught only because the numbers
+   matched a known sabotage's signature. Every reported number was re-taken with
+   `md5sum src/ase_window.tcl` verified identical before and after, 11/11
+   consistent. **Serialize sabotage against verify, or give sabotage its own tree,
+   and checksum THROUGHOUT a run rather than at its ends.**
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | **L1 (I1)** | **"touched" is a widget `-command` EVENT**, one definition for both consumers | keep the seed/value diff and follow only untouched boxes — smaller, and **refuted by measurement** (`H2` loses the user's own tick; `H1` reinstates 0692) |
+| D2 | L2 | a **touched field stays touched** even when live drifts to equal it | "re-cleaning" it once live catches up: re-opens `H2` for OK. The ESC half is solved at the CONSUMER instead |
+| D3 | **L1 (I1)** | the follow paints **`save_all_resolve`'s** output — ONE builder, TWO consumers (widget + OK write) | painting `save_all_current`: moves a touched box, and gives the widget a second definition of the dialog's meaning |
+| D4 | L2 + L1 | the seam is **`ase::ui::session_changed`**, one line, last | 0692's option 1 (re-seed in `save_all_commit`): changes what SAB-N6 proves and **would not cover `Session > Load State` at all** |
+| D5 | L2 | **delete** the as-opened seed | keeping a fallback whose docstring claimed "several suites do" and which was measured **dead** |
+| D6 | L2 | OK keeps the **per-field reconcile** | resolve-from-the-boxes — see item 5 above |
+| D7 | L2 | the non-notifying writer is **filed (0697), not fixed** | fixing it: it changes the notify contract for every open/raise path |
+| D8 | **L3** | ship it, status **E** | — user-visible, unratified |
+
+**Status E.** Rule debt **[0692]** was **RESTATED with the correction** (rule debts
+dedupe by id, so a re-add restates rather than discharges — verified afterwards
+that exactly one `[0692]` row remains), and a new `look` debt names all four bench
+gestures verbatim. **Nothing was cleared, converted or discharged.**
+**The question:** *the box now moves under the user's eyes with no word said — is
+that acceptable, or should the tool SAY the dialog raced? And a net-zero hand
+gesture (tick then untick) now counts as TOUCHED, so the box wins over the live
+value — the spec's 0692 row listed the opposite as an open sub-question and this
+answers it by measurement.*
+
+### STILL OPEN
+
+| # | what | where |
+|---|---|---|
+| 1 | the ruling above — **rule debt [0692](a)–(d)**, restated not answered | `rule 0692` |
+| 2 | **`ase::session_open`'s refresh arm still moves the state without firing notify** — 0695's symptom survives on that one path | **issue 0697** |
+| 3 | `test_ase_final` green `--nogui`, aborts under X | **issue 0698** |
+| 4 | the discard sentence still says "was NOT applied" for a discarded **untick** | **issue 0661** (pre-existing prose drift, out of scope) |
+| 5 | **ZERO `:0` coverage** — every GUI number here is `:99`/openbox 3.6.1 | `look` debt + `suite` debts |
+
+---
+
 ## ✅⚠ 0691+0692 — LANDED 2026-08-25 (status **E**). THE FABRICATED WITNESS, ONE PROC OVER, AND THE DIALOG THAT WENT STALE
 
 **Not a plan step.** Both were filed by the 0679 crew hours earlier with the
@@ -29,8 +157,9 @@ AFTER: `0`, `0`, `gate_after_ok=1`, `phantom_discard_notices=0`.
 
 ### WHAT A LATER CREW MUST CARRY (this is the part that changes your work)
 
-1. **⚠ THE 0692 FIX SHIPS WITH TWO MEASURED RESIDUALS. Read them before you touch
-   the Save All dialog.**
+1. **⚠ THE 0692 FIX SHIPPED WITH TWO MEASURED RESIDUALS — BOTH FIXED 2026-08-25
+   as ONE item; see the 0695+0696 block above. Read them before you touch the Save
+   All dialog, because the *mechanism* they changed is binding.**
    * **0695 is BLOCKING, not cosmetic** — it was filed as a display lag and the
      write-up pass measured that framing false. Because an *untouched* box now
      takes the LIVE value while the checkbutton does **not** follow the live
@@ -48,11 +177,14 @@ AFTER: `0`, `0`, `gate_after_ok=1`, `phantom_discard_notices=0`.
      gesture and wrong for that one. The fix is to narrow the **cancel consumer
      only** (report a field when it differs from the seed **and** from live), never
      to revert `save_all_cancel` to HEAD's live diff.
-2. **THE 0692 FIX IS FAIL-OPEN TO ITS OWN BUG.** `save_all_touched` deliberately
-   falls back to HEAD's live diff when `dlg($key,seed)` is absent. Any future path
-   that shows this dialog **without going through `save_all_dialog`** silently
-   reinstates 0692 **with zero rows red**. W1x/W1za are the only structural guard.
-   If you add a second way to open it, seed it.
+2. ~~**THE 0692 FIX IS FAIL-OPEN TO ITS OWN BUG.** … If you add a second way to
+   open it, seed it.~~ **SUPERSEDED 2026-08-25 by 0695: THERE IS NO SEED.**
+   `save_all_seed` / `dlg($key,seed)` are deleted (the fallback was measured dead
+   while its own docstring claimed "several suites do"). A dialog opened without
+   `save_all_dialog` now gets no touch set at all, `save_all_mark_touched` refuses
+   to create one, and every box therefore reads untouched and simply follows the
+   live value. **If you add a second way to open it, clear `dlg($key,touched)`
+   there.** SAB-0692-B is dead with it.
 3. **⚠ SAB-N6 IS NO LONGER A CLEAN DISCRIMINATOR FOR THE 0679 SEAM.** Predicted 4
    red (F19v/F19w/W1v/W1w), observed **12** — it also reddens
    F19p/F19q/F19r/F19u **and the four 0692 rows**, because every Save All write
@@ -87,7 +219,9 @@ AFTER: `0`, `0`, `gate_after_ok=1`, `phantom_discard_notices=0`.
    (restore fits inside one suite's run window, so end-to-end checksums pass).
    **Serialize sabotage against verify, or give sabotage its own tree**, and
    sample the file checksum *throughout* a run, not at its ends.
-9. **NUMBER NEW ISSUES FROM 0697** — this crew filed **0693** (`design_window` +
+9. ~~**NUMBER NEW ISSUES FROM 0697**~~ *(superseded — from **0699**; the
+   0695+0696 crew filed 0697 and 0698. ⚠ 0700–0799 is RESERVED, so after 0699 the
+   next number is 0800.)* — this crew filed **0693** (`design_window` +
    `raise_window_entry`), **0694** (`toggle_flag`, widened to the 13-site class),
    **0695** (the display residual, raised to blocking) and **0696** (the new ESC
    false notice).
@@ -115,8 +249,8 @@ the checkbutton follows the live state?*
 | # | what | where |
 |---|---|---|
 | 1 | **E4 unratified**, and the **net-zero hand gesture** (tick-then-untick loses to live) is in the same ruling but not in the debt's wording | `rule 0692` |
-| 2 | **an open dialog can show ON and write OFF** | **issue 0695** (blocking) |
-| 3 | **a new false "NOT applied" notice** on hand-tick + external write + ESC | **issue 0696** |
+| 2 | ~~an open dialog can show ON and write OFF~~ **FIXED 2026-08-25** — but the symptom survives on `ase::session_open`'s refresh arm | ~~0695~~ → **issue 0697** |
+| 3 | ~~a new false "NOT applied" notice~~ **FIXED 2026-08-25** | ~~issue 0696~~ |
 | 4 | `design_window` / `raise_window_entry` report a raise they never verified | **issue 0693** |
 | 5 | the discarded-`session_update` class, **13 sites** | **issue 0694** |
 | 6 | rule debt **[0679]** (return 0 + echo vs RAISE; OK closing on a failed apply) — the ESC-arm work bears on its second half, **restated not answered** | `rule 0679` |
@@ -608,7 +742,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0697.** (**the 0691+0692 crew filed 0693-0696**; **the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0699.** (**the 0695+0696 crew filed 0697 and 0698**; **the 0691+0692 crew filed 0693-0696**; **the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -4459,7 +4593,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0697**. *(Updated by the 0691+0692 crew, 2026-08-25: it filed **0693**, **0694**, **0695** and **0696**.)* *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0699**. *(Updated by the 0695+0696 crew, 2026-08-25: it filed **0697** — `ase::session_open`'s refresh arm mutates the state without firing the notify hook — and **0698** — `test_ase_final` passes `--nogui` and aborts under X.)* *(Updated by the 0691+0692 crew, 2026-08-25: it filed **0693**, **0694**, **0695** and **0696**.)* *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were
