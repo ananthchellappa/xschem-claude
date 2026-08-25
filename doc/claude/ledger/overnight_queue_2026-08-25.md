@@ -90,3 +90,75 @@ this branch's defining defect committed on purpose.
 The tree has a **live user-visible regression** between `4d4d745d` and whatever
 closes 0683: annotation can be switched on with no menu to switch it off. If the
 0683+0684 crew does not land cleanly, that is the first thing to look at.
+
+
+---
+
+## 03:00 — 0683+0684 came back REFUTED, and that is the crew working
+
+Status **F**. The crew's own adversary pass refuted the fix; the crew reverted it
+in full and committed **only the write-up** (`85cd3e7e`). Verified by the lead
+rather than taken on report: `git diff 4d4d745d HEAD -- src/` is **empty**, no
+`SABOTAGE` strings, no `_real` shims, and the three suites re-run green at
+10 / 199 / 342.
+
+**A crew that ships nothing because its own adversary killed the fix is the
+process working, not a wasted run.** Three refutations, each re-measured on a
+clean tree before the revert:
+
+1. **The 0683 orphan is still reachable through sanctioned doors** — annotate
+   from ASE-L, `File > Open` another cell, `Session > Close`, reopen: `annot_show`
+   = 3, `v(a)` = 3.14 painting, **0 of 6 menubar entries clear it**.
+2. **0684's headline acceptance fails on the primary gesture** — `111` stays on
+   the sheet while the file on disk says `222`. Worse, the three rows written to
+   catch exactly this (W1a18/19/20) all untick first, **so none of them could
+   ever have seen it**. A test that cannot fail.
+3. **The fix introduced a NEW data-loss regression** — `annot_drop_stale` cleared
+   op/dc/tran at the session path, and when the re-read failed (ngspice mid-rewrite,
+   file readable but truncated) it destroyed the user's loaded waveform database,
+   where the old guard had survived.
+
+Six issues filed: **0685–0690**. Two of them are harness-truth defects worth more
+than they look — **0689** (the regression completion sentinel false-reds a suite
+that prints a count) and **0690** (`test_ihp_sg13g2_libmgr`'s golden is one library
+behind the tree). Between them they explain the standing "3 T1 FAIL" that every
+run has been waving away as pre-existing.
+
+**Root cause of 0683, now named: issue 0688.** `annot_show` is per-**WINDOW**,
+while a session's only handle on its design is a **CELLVIEW PATH**. So
+`annot_mask` read 0 while the mask was 3, and both the close-clear and the ASE-L
+untick silently no-opped. It is a *lifetime* problem, not an entry problem — which
+is why attempt 1 failed and why attempt 2 must start at 0688.
+
+### Why attempt 2 was NOT dispatched tonight
+
+The crew surfaced a trade **the user was never asked about**: under that fix, both
+ASE-L Annotate items go dead on stock xschem for anyone who never opens ASE-L.
+That is a user-visible ruling, not an implementation detail. Re-running unattended
+would mean choosing it on their behalf, at 3 a.m., in the same area that just
+produced a data-loss regression.
+
+Recorded as a corrected rule debt instead — see below.
+
+### A false statement was in the user's own queue, and is corrected
+
+The Implement agent recorded rule debt `[0683]` reading **"0683+0684 SHIPPED"**
+*before* the refutation. The revert left that claim standing in the morning queue.
+Rule debts dedupe by id, and `owed.sh`'s own design treats a re-add as restating
+one open question rather than discharging it — so `[0683]` has been **restated**
+with the correction and the three things that actually need a ruling. **Nothing
+was cleared.** The report-that-lies class does not get an exemption for landing in
+the ledger instead of a write-up.
+
+## Queue as it now stands
+
+| # | item | state |
+|---|---|---|
+| ~~0682~~ | | DONE `4d4d745d`, verified |
+| ~~0683+0684~~ | | **REFUTED + REVERTED** `85cd3e7e`; both still OPEN, awaiting ruling |
+| 1 | **0679** | **IN FLIGHT** from 03:0x, `wcv7yljjg` |
+| 2 | 0674 + 0675 + 0677 | queued |
+| 3 | 0681 | queued |
+| 4 | 0689 + 0690 | **added** — harness truth; they are why T1's 3 FAIL is noise |
+| 5 | 0672 + 0673 | queued |
+| — | 0683 + 0688 | **NOT queued** — needs the user's ruling first |
