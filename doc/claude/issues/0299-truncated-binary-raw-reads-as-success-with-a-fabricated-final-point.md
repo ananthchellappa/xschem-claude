@@ -1,6 +1,10 @@
 # 0299 — a truncated BINARY raw reads as a success with a fabricated final point
 
-**Status:** OPEN.
+**Status:** OPEN. A fix (`res = 0; break;` at both sites) was written under item 0807 on
+2026-08-25, measured sound, then **reverted with the rest of that item** — see
+[0807](0807-annotate-op-destroys-the-attached-op-database-on-a-truncated-raw.md) §7.
+Anchors `:702`/`:738` below have **drifted**; locate the two `fread` sites by name inside
+`read_raw_data_block()`.
 **Area:** `src/save.c` — the binary arm of `read_raw_data_block()` (`:702` in the
 sweep pre-count pass, `:738` in the store pass).
 **Found:** 2026-08-09, by the five-lens adversarial review of the issue 0213 fix.
@@ -139,3 +143,33 @@ default, but a killed long simulation is precisely the case where a user wants t
 should be revisited to match, since the argument applies equally there. What is not
 defensible is the present answer: report success and serve a point that was never in the
 file.
+
+
+---
+
+## Addendum, 2026-08-25 (item 0807) — measured, and the cost of "refuse" is larger than it looks
+
+0807 needed this fixed to have any effect at all: ngspice writes **binary** raws by default,
+so the user's reported bench case goes through this arm, and a swap-only-on-success fix in
+`annotate_op` swaps happily because this read *reports success*.
+
+Two measurements worth keeping:
+
+* **The asymmetry is total.** ASCII truncation is all-or-nothing — at 14 truncation offsets
+  of a 194-byte op raw and 10 of a 197-byte 5-point tran raw, every short read already
+  failed. Binary truncation **never** failed. The same condition gets opposite answers
+  purely from the encoding the simulator chose.
+* **Refusing is not free, and this is the number the decision needs.** A real
+  `/usr/local/bin/ngspice-46+` **59-point binary transient missing 3 bytes** currently loads
+  all 59 points with the last one fabricated; under the `res = 0; break;` fix it loads
+  **nothing at all**. Well-formed files were confirmed unaffected: op (267 B), tran (2148 B,
+  59 pts), ac (4177 B, 61 pts), concatenated pairs, and each with 16 bytes of trailing junk
+  all still read with unchanged point counts — **trailing junk is not truncation**.
+
+**The open question is therefore user-facing and unratified**, which is why item 0807 came
+back status **E**: *a binary raw from a simulation killed mid-write today loads with its last
+point fabricated and plots; should it instead refuse and plot nothing?* Refusing is right for
+a 1-point op raw — there is no 99% of one point. For a long transient polled while ngspice is
+still writing it, refusing turns a slightly-wrong plot into no plot. The one-line alternative
+(`raw->npoints[raw->datasets] = p`) is in the same place, and adopting it obliges revisiting
+the ASCII arm to match.

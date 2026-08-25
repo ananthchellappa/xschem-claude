@@ -2503,6 +2503,52 @@ is not a boolean — `sch_waves_loaded()` returns the hierarchy **level** (landm
 — and it answers "is SOME database attached here", not "are THIS session's CURRENT
 results attached here". Issue **0684**.
 
+#### 6a-bis. Five more, measured 2026-08-25 during the 0807 attempt (which was REVERTED)
+
+Item 0807 built the "read first, replace only on success" fix for fact (4) above, measured
+every tier green, and **reverted it** — see `doc/claude/issues/0807-*.md` §7. These five facts
+outlived the revert and are properties of the shipped registry, not of that patch.
+
+6. **`raw_read` leaves the database CURRENT BUT UNREGISTERED.** The verb reads straight into
+   `xctx->raw` after clearing the registry, so `extra_raw_n == 0` while a database is live and
+   answering. **Any registry helper that iterates `extra_raw_arr[0 .. n)` silently misses it**,
+   and `extra_rawfile()`'s base-insert will later adopt that entry — at which point the
+   same-path dedup in fact (2) fires against it. This is the shipped `load_raw` path from the
+   Simulation menu, and it is what refuted 0807's fix: the first `annotate_op` after a
+   `raw_read` served **the previous run's numbers and reported success**, violating **I3**'s
+   literal wording (*"not the previous run's number"*).
+7. **`xschem raw info` REGISTERS the database as a side effect.** It is `extra_rawfile(4, ...)`
+   and the base-insert runs **before** the what-dispatch, so merely *asking* what is loaded
+   changes `extra_raw_n` from 0 to 1. A probe that calls `raw info` first therefore **cannot
+   observe fact (6)**; it measures a state it created. Trustworthy probes in that window:
+   `xschem raw loaded`, catch-wrapped `xschem raw value <v> -1`, `raw rawfile` / `raw sim_type`,
+   and `ngspice::ngspice_data`. `raw info` is also **multi-line** — a first-line grep drops the
+   registry listing and keeps only `<idx> current`.
+8. **`xschem raw switch op` is a ROTATE, not a query.** With a non-numeric argument it falls to
+   `extra_rawfile()`'s "switch to next" arm and returns 1 whenever `extra_raw_n > 0`, never
+   asking about the type at all. Measured answering **1 with only a tran raw loaded and no op
+   anywhere**. It is not a witness for "is an operating point attached"; build no acceptance
+   row on it.
+9. **ASCII and BINARY truncation behave OPPOSITELY** (issue 0299). Measured at 14 truncation
+   offsets of a 194-byte op raw and 10 of a 197-byte 5-point tran raw: **every** short ASCII
+   read fails, and **no** short binary read does — the binary arm only warns and serves a
+   fabricated final point (once `6.7903865e-315`, straight out of the reused buffer).
+   **ngspice writes binary by default**, so any raw-robustness acceptance built on an ASCII
+   fixture alone tests the encoding the user does not have. Trailing junk after a complete data
+   block is **not** truncation and still reads.
+10. **The `array unset ngspice::ngspice_data` in the `annotate_op` branch is redundant.**
+    `update_op()` unsets and rebuilds that array wholly from `xctx->raw` — it is the sole owner
+    (**I1**, one owner). The branch's own copy therefore does nothing on success and is the
+    entire Tcl-side half of the data loss on failure.
+
+**What this reinforces about I3.** I3 says a missing vector renders **blank** — "not 0, not NaN
+on screen, **not the previous run's number**." 0807's revert is the strongest evidence yet that
+the last clause is the load-bearing one: a fix that eliminated the blank-screen data loss but
+substituted a stale-but-plausible number was rejected outright, because **a wrong number that
+reports success is worse than a database that visibly vanished.** The same principle is
+`save.c` RULING **D5-1** and the IHP prototype's `sg13g2_raw_or_double`, which returns `""`
+rather than a number it cannot stand behind.
+
 ### ⚠ 6b. `annot_show` outlives the schematic that was annotated — measured 2026-08-25, **PARTIALLY FIXED the same day**
 
 `annot_show` is per-**context**, and a context is a **window**, not a schematic:

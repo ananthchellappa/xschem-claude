@@ -1,0 +1,1111 @@
+DO NOT APPLY THIS PATCH AS-IS. IT IS REVERTED WORK, KEPT AS A STARTING POINT.
+
+0807 attempt 1 — reverted 2026-08-25 by the write-up agent.
+
+WHY IT WAS REVERTED: it introduced a REGRESSION on the shipped `load_raw` route.
+After `xschem raw_read <file>` the database is CURRENT but UNREGISTERED
+(extra_raw_n == 0), so extra_rawfile_detach() finds nothing and returns NULL; no
+detach happens, extra_rawfile()'s base-insert then adopts the live entry into
+arr[0] and the rawfile+sim_type dedup takes "already loaded: switch to it" WITH
+NO READ. The first annotate_op after a raw_read therefore publishes the PREVIOUS
+run's numbers and returns "1" (success). Measured on this exact tree:
+
+  WU| step1 raw_read run1   rc=1
+  WU| step2 annotate SAME  result=<1>  v(a)=3.1399999 v(b)=1.5  ngdata_v(b)=1.5   WANT 8.0/4.0
+  WU| step3 annotate again result=<1>  v(a)=5.5500002 v(b)=2.22   WANT 5.55/2.22
+
+That is invariant I3's forbidden case by its literal words ("not the previous
+run's number"), on the route the Simulation menu actually uses, and it is a
+REGRESSION: HEAD's destroy freed the base-inserted entry, so HEAD's read was real.
+
+THE GAP IS ~3 LINES, in extra_rawfile_detach() (src/save.c): when
+extra_raw_n == 0 && xctx->raw matches file/type, detach xctx->raw ITSELF
+(detached = xctx->raw; xctx->raw = NULL;) instead of returning NULL.
+
+Everything else in this patch was measured sound. See
+doc/claude/issues/0807-*.md sections 6-9 for the full record, the sabotage
+matrix and the residual risks. Re-verify from scratch; do not trust this diff.
+
+--- 8< --- the diff as it stood, HEAD 56c861de --- 8< ---
+
+diff --git a/src/save.c b/src/save.c
+index 743a2312..34fc4cf1 100644
+--- a/src/save.c
++++ b/src/save.c
+@@ -675,6 +675,22 @@ static int read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
+       if(binary) {
+         if(fread(tmp, sizeof(double), rawvars, fd) != rawvars) {
+            dbg(0, "Warning: binary block is not of correct size\n");
++           /* issue 0299, reached from 0807: the SAME condition the ascii arm
++            * below calls a failure -- this point did not deliver rawvars
++            * values, i.e. the simulator was still writing when we opened the
++            * file. Warning and carrying on left the untouched tail of the
++            * REUSED `tmp` buffer holding the previous point's numbers (or,
++            * measured, uninitialised heap: 6.7903865e-315), and every caller
++            * downstream saw a full length dataset. A plausible wrong number is
++            * exactly what save.c RULING D5-1 and spec invariant I3 forbid, and
++            * the operating point annotation renders it onto the schematic.
++            * REJECTED alternative (0299's own): keep the points actually read,
++            * raw->npoints[raw->datasets] = p, so a killed long transient still
++            * plots 99% of itself -- there is no 99% of a one point operating
++            * point, and it would re-create this same disagreement in the other
++            * direction. */
++           res = 0;
++           break;
+         }
+       } else {
+         if(read_raw_ascii_point(ac, tmp, rawvars, fd) != rawvars) {
+@@ -711,6 +727,10 @@ static int read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
+     if(binary) {
+       if(fread(tmp, sizeof(double), rawvars, fd) != rawvars) {
+         dbg(0, "Warning: binary block is not of correct size\n");
++        res = 0; /* issue 0299: a short binary point is a read failure, exactly
++                  * as the ascii arm below has treated it since issue 0213. See
++                  * the long note at the pre-count pass above. */
++        break;
+       }
+     } else {
+       if(read_raw_ascii_point(ac, tmp, rawvars, fd) != rawvars) {
+@@ -930,10 +950,19 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+       n = sscanf(line, "No. of Data Rows : %d", &npoints);
+       if(n < 1) {
+         dbg(0, "read_dataset(): WARNING (No. of Data Rows): malformed raw file, aborting, line:\n%s\n", line);
+-        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+-        /* free_rawfile(rawptr, 0, 0); */
++        /* issue 0316, reached from 0807: this used to call
++         * extra_rawfile(3, NULL, NULL, -1.0, -1.0) -- CLEAR EVERYTHING -- and
++         * then jump PAST this function's own cleanup. Two defects in one line:
++         * a raw file that is merely SHORT (ngspice still writing it) deleted
++         * every database the user had loaded, including ones unrelated to the
++         * file being opened; and when the registry was not empty the clear-all
++         * never saw the half built Raw, which leaked (253,152 bytes, measured).
++         * `break` instead: the `if(exit_status != 1) free_rawfile(rawptr, ...)`
++         * below discards the half built Raw and NOTHING else, which is what the
++         * two data block aborts above already do (issue 0213). All six abort
++         * paths now agree. */
+         exit_status = 0;
+-        goto read_dataset_done;
++        break;
+       }
+       if(sim_type) {
+         my_realloc(_ALLOC_ID_, &raw->npoints, (raw->datasets+1) * sizeof(int));
+@@ -963,10 +992,9 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+ 
+       if(n < 1) {
+         dbg(0, "read_dataset(): WARNING (No. Variables): malformed raw file, aborting, line:\n%s\n", line);
+-        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+-        /* free_rawfile(rawptr, 0, 0); */
++        /* issue 0316: same abort shape as the first one above. */
+         exit_status = 0;
+-        goto read_dataset_done;
++        break;
+       }
+       if(sim_type) {
+         raw->nvars = nvars;
+@@ -977,10 +1005,9 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+       n = sscanf(line, "No. Points: %d", &npoints);
+       if(n < 1) {
+         dbg(0, "read_dataset(): WARNING (No. Points): malformed raw file, aborting, line:\n%s\n", line);
+-        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+-        /* free_rawfile(rawptr, 0, 0); */
++        /* issue 0316: same abort shape as the first one above. */
+         exit_status = 0;
+-        goto read_dataset_done;
++        break;
+       }
+       if(sim_type) {
+         my_realloc(_ALLOC_ID_, &raw->npoints, (raw->datasets+1) * sizeof(int));
+@@ -1000,10 +1027,9 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+       n = sscanf(line, "%*[\t]%d%*[\t]%[^\t]", &i, varname); /* read index and name of saved waveform */
+       if(n < 2) {
+         dbg(0, "read_dataset(): WARNING (Variables): malformed raw file, aborting, line:\n%s\n", line);
+-        extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+-        /* free_rawfile(rawptr, 0, 0); */
++        /* issue 0316: same abort shape as the first one above. */
+         exit_status = 0;
+-        goto read_dataset_done;
++        break;
+       }
+       strtolower(varname);
+       /* transform ':' hierarchy separators (Xyce) to '.' */
+@@ -1289,7 +1315,10 @@ int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, doub
+         }
+       }
+     } else {
+-      /* free_rawfile(rawptr, 0, 0); */ /* do not free: already done in read_dataset()->extra_rawfile() */
++      /* do not free here: read_dataset() disposes of its own half built Raw
++       * on every failing path (issue 0316 moved the four malformed-header
++       * aborts onto that same cleanup; they used to delegate it to an
++       * extra_rawfile(3, NULL, ...) clear-all that also wiped the registry) */
+       if(!no_warning) {
+         dbg(0, "raw_read(): no useful data found\n");
+       }
+@@ -1384,6 +1413,22 @@ int raw_deletevar(const char *name)
+   return ret;
+ }
+ 
++/* Make room in xctx->extra_raw_arr for one more entry. This was written out
++ * three times -- new_rawfile(), extra_rawfile() and (as of issue 0807)
++ * extra_rawfile_reattach() -- and the registry bookkeeping
++ * (extra_idx / extra_prev_idx / extra_raw_n / extra_raw_size / extra_raw_arr)
++ * is state only this file touches. A second copy of its allocation rule is the
++ * silent-drift shape spec invariant I1 is about, so there is one. */
++static void extra_raw_room(void)
++{
++  if(xctx->extra_raw_n >= xctx->extra_raw_size) {
++    int old_size = xctx->extra_raw_size;
++    xctx->extra_raw_size += 20;
++    my_realloc(_ALLOC_ID_, &xctx->extra_raw_arr, sizeof(Raw *) * xctx->extra_raw_size);
++    memset(xctx->extra_raw_arr + old_size, 0, sizeof(Raw *) * (xctx->extra_raw_size - old_size));
++  }
++}
++
+ /* create a new raw file with '(max - min) / step' points with only a sweep variable in it. */
+ int new_rawfile(const char *name, const char *type, const char *sweepvar,
+                        double start, double end, double step)
+@@ -1394,12 +1439,7 @@ int new_rawfile(const char *name, const char *type, const char *sweepvar,
+   int number = (int)floor((end - start) / step) + 1;
+ 
+   /* allocate xctx->extra_raw_arr array */
+-  if(xctx->extra_raw_n >= xctx->extra_raw_size) {
+-    int old_size = xctx->extra_raw_size;
+-    xctx->extra_raw_size += 20; 
+-    my_realloc(_ALLOC_ID_, &xctx->extra_raw_arr, sizeof(Raw *) * xctx->extra_raw_size);
+-    memset(xctx->extra_raw_arr + old_size, 0, sizeof(Raw *) * (xctx->extra_raw_size - old_size));
+-  }
++  extra_raw_room();
+ 
+   /* if not already done insert base raw file (if there is one) into xctx->extra_raw_arr[0] */
+   if(xctx->raw && xctx->extra_raw_n == 0) {
+@@ -1739,12 +1779,7 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+   if(what == 0) return 0;
+ 
+   /* allocate xctx->extra_raw_arr array */
+-  if(xctx->extra_raw_n >= xctx->extra_raw_size) {
+-    int old_size = xctx->extra_raw_size;
+-    xctx->extra_raw_size += 20; 
+-    my_realloc(_ALLOC_ID_, &xctx->extra_raw_arr, sizeof(Raw *) * xctx->extra_raw_size);
+-    memset(xctx->extra_raw_arr + old_size, 0, sizeof(Raw *) * (xctx->extra_raw_size - old_size));
+-  }
++  extra_raw_room();
+ 
+   /* if not already done insert base raw file (if there is one) into xctx->extra_raw_arr[0] */
+   if(xctx->raw && xctx->extra_raw_n == 0) {
+@@ -2012,6 +2047,97 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+   return ret;
+ }
+ 
++/* ---------------------------------------------------------------------------
++ * DETACH / REATTACH / DISCARD -- the "do not destroy what you cannot replace"
++ * primitives (issue 0807, and save.c RULING D5-1 states the rule).
++ *
++ * `xschem annotate_op` used to FREE the currently loaded 1-point op/dc database
++ * and only then try to open the new file. When the open failed -- ngspice mid
++ * rewrite, so the raw is readable but SHORT -- nothing replaced what had been
++ * deleted, the user's loaded database was simply gone, and the command still
++ * reported success. The fix is not "read into a scratch Raw and adopt it":
++ * read_rawfile_by_type() refuses any destination other than &xctx->raw for the
++ * non-spice types, and raw_read() on a foreign destination still runs
++ * set_modify(-2), the Waves cue repaint and the graph_flags & 4 backannotate
++ * block against the OLD xctx->raw. It is "take the entry OUT of the registry
++ * without freeing it, do the ordinary read, then free it (success) or put it
++ * back (failure)".
++ *
++ * Taking it out rather than leaving it in place is what keeps issue 0685 shut:
++ * extra_rawfile()'s read arm dedups on rawfile + sim_type and, on a hit,
++ * switches to the cached entry WITHOUT READING -- and ngspice overwrites one
++ * stable path every run, so an entry left in the registry would go on answering
++ * with the previous run's numbers.
++ * --------------------------------------------------------------------------- */
++
++/* Remove the rawfile+sim_type entry from the registry WITHOUT freeing it, and
++ * return it; NULL if there is no such entry. `file` and `type` are compared
++ * verbatim (no `subst`, unlike extra_rawfile()'s lookups): the caller has the
++ * strings out of the entry itself. Post-state is the one the clear arm uses --
++ * indexes back to 0, xctx->raw at entry 0, or NULL when the registry empties.
++ * extra_raw_arr is NOT freed and extra_raw_size NOT zeroed even at n == 0,
++ * because something is going back in; every arm of extra_rawfile() guards on
++ * extra_raw_n, so "n == 0 with a live array" is a state they all tolerate. */
++Raw *extra_rawfile_detach(const char *file, const char *type)
++{
++  int i, found = -1;
++  Raw *raw;
++
++  if(!xctx || !file || !type || !xctx->extra_raw_arr) return NULL;
++  for(i = 0; i < xctx->extra_raw_n; i++) {
++    /* the same NULL skips as extra_rawfile()'s lookup loops (issue 0306) */
++    if(xctx->extra_raw_arr[i] && xctx->extra_raw_arr[i]->rawfile &&
++       xctx->extra_raw_arr[i]->sim_type &&
++       !strcmp(xctx->extra_raw_arr[i]->rawfile, file) &&
++       !strcmp(xctx->extra_raw_arr[i]->sim_type, type)) {
++      found = i;
++      break;
++    }
++  }
++  if(found < 0) return NULL;
++  raw = xctx->extra_raw_arr[found];
++  for(i = found; i < xctx->extra_raw_n - 1; i++) {
++    xctx->extra_raw_arr[i] = xctx->extra_raw_arr[i + 1];
++  }
++  xctx->extra_raw_n--;
++  xctx->extra_raw_arr[xctx->extra_raw_n] = NULL;
++  xctx->extra_idx = 0;
++  xctx->extra_prev_idx = 0;
++  xctx->raw = xctx->extra_raw_n ? xctx->extra_raw_arr[0] : NULL;
++  dbg(1, "extra_rawfile_detach(): %s %s, extra_raw_n=%d\n", file, type, xctx->extra_raw_n);
++  return raw;
++}
++
++/* Put a detached entry back and make it current again. The Raw* is the SAME
++ * allocation, so annot_overlay_sync()'s epoch (it keys on the pointer, level,
++ * nvars, annot_p) is bit identical to what it was before the failed call and
++ * the blocks already rendered on screen are still the right ones -- which is
++ * why the failure path needs no draw(). */
++int extra_rawfile_reattach(Raw *raw)
++{
++  if(!xctx || !raw) return 0;
++  extra_raw_room();
++  xctx->extra_raw_arr[xctx->extra_raw_n] = raw;
++  xctx->extra_prev_idx = xctx->extra_idx;
++  xctx->extra_idx = xctx->extra_raw_n;
++  xctx->extra_raw_n++;
++  xctx->raw = raw;
++  update_waves_menu_cue(); /* the failed read's free_rawfile() greyed it */
++  dbg(1, "extra_rawfile_reattach(): extra_raw_n=%d\n", xctx->extra_raw_n);
++  return 1;
++}
++
++/* Free a detached entry, once its replacement is safely in hand. ORDER MATTERS:
++ * free_rawfile() paints the Waves cue grey unconditionally and by this point a
++ * good database IS loaded, so the cue has to be re-asked afterwards -- the same
++ * reason extra_rawfile()'s two restore branches call it. */
++void extra_rawfile_discard(Raw **rawptr)
++{
++  if(!rawptr || !*rawptr) return;
++  free_rawfile(rawptr, 0, 1);
++  update_waves_menu_cue();
++}
++
+ int update_op()
+ {
+   int res = 0, p = 0, i;
+diff --git a/src/scheduler.c b/src/scheduler.c
+index 743d58b5..76ae0e0a 100644
+--- a/src/scheduler.c
++++ b/src/scheduler.c
+@@ -2342,6 +2342,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
+       int res = 0;
+       char sim_type[256] = "";
+       char f[PATH_MAX + 100];
++      Raw *detached = NULL; /* issue 0807: the previous database, held OUT of the
++                             * registry across the read and freed only if the
++                             * read succeeds */
+       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+ 
+       if(argc > 4) {
+@@ -2406,14 +2409,37 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
+         return TCL_OK;
+       }
+ 
+-      tclsetboolvar("live_cursor2_backannotate", 1);
+-      /* delete previously loaded OP */
+-      if(xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
++      /* DETACH the previously loaded OP -- do NOT delete it (issue 0807).
++       *
++       * This used to be extra_rawfile(3, ...), i.e. FREE it, immediately
++       * followed by `array unset ngspice::ngspice_data`, and only THEN the read
++       * below. On a raw that is readable but SHORT (ngspice mid rewrite, a
++       * killed run, a full disk) nothing replaced what had been deleted:
++       * measured, `xschem raw loaded` went 0 -> -1, `xschem raw value v(a) -1`
++       * went from 3.14 to a raise, ngspice::ngspice_data went empty -- and the
++       * command answered TCL_OK with the path, so no caller could tell. Three
++       * agents reproduced it independently before it was filed.
++       *
++       * Detach keeps the Raw alive but out of the registry, so:
++       *   - the op -> dc -> tran reads below are BYTE IDENTICAL to what they
++       *     were, including extra_rawfile()'s rawfile+sim_type dedup, which
++       *     cannot match a detached entry -- issue 0685 stays shut, a
++       *     re-annotate of the same path really re-reads it;
++       *   - on failure the SAME allocation goes back (extra_rawfile_reattach),
++       *     so cursor_b_val[], the Tcl mirror and annot_overlay_sync()'s epoch
++       *     are all exactly as this call found them and no draw() is needed.
++       *
++       * The `array unset ngspice::ngspice_data` that stood here is DELETED, not
++       * moved: update_op() (save.c) unsets and rebuilds that array wholly from
++       * xctx->raw, so the line was redundant on success and was the entire
++       * Tcl-side half of the loss on failure.
++       *
++       * The sim_type NULL guard is new too: the two strcmp()s below it had
++       * none, and a registry entry with a NULL sim_type is reachable. */
++      if(xctx->raw && xctx->raw->rawfile && xctx->raw->sim_type && xctx->raw->allpoints == 1 &&
+          (!strcmp(xctx->raw->sim_type, "op") || !strcmp(xctx->raw->sim_type, "dc"))) {
+-        res = extra_rawfile(3, xctx->raw->rawfile, xctx->raw->sim_type, -1.0, -1.0);
++        detached = extra_rawfile_detach(xctx->raw->rawfile, xctx->raw->sim_type);
+       }
+-      tcleval("array unset ngspice::ngspice_data");
+-
+ 
+       if(sim_type[0]) {
+         res = extra_rawfile(1, f, sim_type, -1.0, -1.0);
+@@ -2428,13 +2454,44 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
+         }
+       }
+       if(res == 1) {
++        /* the replacement is in hand: now, and only now, the old one goes */
++        if(detached) extra_rawfile_discard(&detached);
+         if(level >= 0) {
+           xctx->raw->level = level;
+           my_strdup2(_ALLOC_ID_, &xctx->raw->schname, xctx->sch[level]);
+         }
++        /* this used to be set BEFORE the read, so a FAILED annotate threw the
++         * shipped Waves checkbutton on for a call that published nothing -- and
++         * annot_overlay_sync() folds the flag into its epoch, so it also flushed
++         * the render cache. A failure must leave the state it found (0807). */
++        tclsetboolvar("live_cursor2_backannotate", 1);
+         update_op();
+         draw();
+-      }
++      } else if(detached) {
++        extra_rawfile_reattach(detached);
++        detached = NULL;
++        dbg(0, "annotate_op(): %s could not be read: keeping the previously annotated database\n", f);
++      } else {
++        dbg(0, "annotate_op(): %s could not be read\n", f);
++      }
++      /* THE ANSWER, and it is the LAST thing this branch does -- draw() above
++       * reaches annot_overlay_sync(), whose `info commands ::op_annot::text`
++       * used to be what a caller received as this command's "result". The two
++       * strings it left ("::op_annot::text" on success, the substituted path or
++       * the empty string on failure) were the residue of unrelated internal
++       * evals, which is why they differed and why neither meant anything.
++       * "1"/"0" + TCL_OK is the convention the `raw_read` verb and
++       * `raw read`/`raw switch`/`raw clear` already use. NOT TCL_ERROR: four
++       * shipped callers do not catch (src/xschem.tcl new-window carry-over,
++       * hi_descend's new-window arm, and the two copies of Simulation > Graphs >
++       * Annotate Operating Point, which are Tk -command bodies where a raise
++       * becomes a bgerror modal).
++       * The RULING D5-3 digital refusal above is deliberately NOT part of this:
++       * it is a no-op with a minted sentence for a result, asserted as such by
++       * test_backannotate_digital BA20/BA21/BA27, and it returns before any of
++       * this runs. */
++      Tcl_SetResult(interp, my_itoa(res == 1), TCL_VOLATILE);
++      return TCL_OK;
+     }
+ 
+     /* arc [x y r a b layer prop]
+diff --git a/src/xschem.h b/src/xschem.h
+index 18e8ad6b..60dba2cd 100644
+--- a/src/xschem.h
++++ b/src/xschem.h
+@@ -2406,6 +2406,13 @@ extern int  get_raw_index(const char *node, Int_hashentry **entry_ret);
+ extern void free_rawfile(Raw **rawptr, int dr, int no_warning);
+ extern int update_op();
+ extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);
++/* issue 0807: take a registry entry out WITHOUT freeing it, put it back, or
++ * free it once its replacement is in hand. See the block comment above
++ * extra_rawfile_detach() in save.c -- destroy-then-read is what lost the user's
++ * loaded operating point database on a truncated raw. */
++extern Raw *extra_rawfile_detach(const char *file, const char *type);
++extern int extra_rawfile_reattach(Raw *raw);
++extern void extra_rawfile_discard(Raw **rawptr);
+ extern int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, double sweep1, double sweep2);
+ extern int table_read(const char *f);
+ /* VCD (Value Change Dump) -> Raw. Same contract as table_read(): xctx->raw must be NULL
+diff --git a/tests/headless/test_op_annot.tcl b/tests/headless/test_op_annot.tcl
+index cc4a0d4d..9ad601d1 100644
+--- a/tests/headless/test_op_annot.tcl
++++ b/tests/headless/test_op_annot.tcl
+@@ -10443,6 +10443,418 @@ set XSCHEM_LIBRARY_PATH $W_LIBS
+   incr fail
+ }
+ 
++
++# =============================================================================
++# SECTION Z — ISSUE 0807: A FAILED `annotate_op` MUST DESTROY NOTHING, AND MUST
++#             SAY THAT IT FAILED. Folds in 0299 (a truncated BINARY raw reads as
++#             success) and 0316 (read_dataset's malformed-header aborts wipe the
++#             whole registry), because neither half of the item's acceptance can
++#             go green without them.
++# =============================================================================
++# ⚠ THE DEFECT, MEASURED AT HEAD 56c861de ON THE UNPATCHED BINARY, NOT ARGUED.
++# src/scheduler.c:2409-2415 forces `live_cursor2_backannotate` on, FREES the
++# currently loaded 1-point op/dc entry (extra_rawfile(3, ...)) and `array
++# unset`s ngspice::ngspice_data — and only THEN opens the new file. When the
++# open fails (ngspice mid-rewrite: readable but short) nothing replaces what was
++# deleted:
++#
++#   good 184-byte 1-point op raw attached -> `raw loaded` 0, v(a) 3.14, v(b)
++#   2.71, ngspice_data 4 entries, registry `0 current | 0 <good.raw> op`
++#   annotate_op <same file truncated to 40 bytes> -> `raw loaded` -1, `raw value
++#   v(a) -1` RAISES "No raw file loaded", ngspice_data EMPTY, registry EMPTY,
++#   and rc=0 with the PATH as the result.
++#
++# THE RETURN VALUE IS NOT A RETURN VALUE, IT IS RESIDUE. Nothing in the branch
++# sets it. On success it is `::op_annot::text`, left by the
++# `info commands ::op_annot::text` inside annot_overlay_sync() (actions.c:1717)
++# reached through draw(); on failure it is whatever the last internal tcleval
++# left — the path (save.c:1813's `subst {<file>}`) for a missing or mid-header
++# file, and the EMPTY STRING for a `No. Points:` abort. Three different residues,
++# none of them an answer. Every row below that asserts a return asserts the
++# string "1" or "0" — the convention `raw_read` already uses
++# (scheduler.c:10581) and `raw read`/`raw switch`/`raw clear` at :10298/:10310/
++# :10333 — never the residue, because testing residue is testing nothing.
++#
++# ⚠ HALF A ROW IS HALF A TEST. The item has two independent halves and the
++# sabotage table has to be able to tell them apart, so Z1 asserts the RETURN and
++# nothing else, Z2 asserts the DATABASE and nothing else, and Z3 asserts the Tcl
++# mirror on its own (deleting scheduler.c:2415's `array unset` is independently
++# falsifiable from keeping the Raw alive).
++#
++# ⚠ THE ENCODING MATTERS, AND THE ASCII-ONLY MEASUREMENT IN ISSUE 0807 MISSES
++# THE USER'S BENCH CASE. ngspice writes BINARY raws by default. save.c's binary
++# short-fread arms only WARN (`Warning: binary block is not of correct size`)
++# while the ascii arm two lines below each fails (issue 0213), so a truncated
++# BINARY op raw reads as SUCCESS and serves invented numbers: measured here,
++# v(a)=3.14 CORRECT and v(b)=0 FABRICATED, with the registry switched over to
++# the truncated file. That is invariant I3 / save.c RULING D5-1's forbidden case
++# — a plausible wrong number on a schematic — and a swap-only-on-success fix
++# swaps happily, because the read says success. Z8/Z9 are that case. Issue 0299.
++#
++# ⚠ AND THE READER CAN WIPE THE REGISTRY FROM UNDER ANY CALLER. read_dataset()'s
++# four malformed-header aborts call `extra_rawfile(3, NULL, NULL, ...)` — clear
++# EVERYTHING — before returning failure (issue 0316). So a raw truncated inside
++# `No. Points:` or inside the `Variables:` index list destroys the tran database
++# too, no matter how careful annotate_op is. Z5/Z6 are that case, and they are
++# the rows that cannot go green from scheduler.c alone.
++#
++# ROWS THAT ARE GREEN BEFORE THE CHANGE — CONTROLS, NOT EVIDENCE: Z11 (the
++# digital refusal sentence must NOT become "0"/"1"; it is the boundary the new
++# result may not cross, and test_backannotate_digital BA20/BA21/BA27 assert it
++# from the other side) and Z14 (invariant I4: a failed annotate writes nothing
++# to the schematic). Z12's value half is green too and its return half is not;
++# the row asserts both together on purpose, because "the same path is re-read"
++# (issue 0685) and "the call says so" are one user-visible answer.
++# =============================================================================
++
++if {[catch {
++
++set Z_DIR [file join $scratch zraw]
++file delete -force $Z_DIR
++file mkdir $Z_DIR
++
++## Byte-exact fixtures: `puts` would translate line endings and the binary rows
++## below count bytes, so every write goes through one binary-mode writer.
++proc opa_z_wr {path body} {
++  set fp [open $path w]
++  fconfigure $fp -translation binary
++  puts -nonewline $fp $body
++  close $fp
++}
++
++## The registry, PARSED WHOLE. `xschem raw info` is a MULTI-LINE result whose
++## first line is "<idx> current" and whose remaining lines are "<idx> <path>
++## <type>". A first-line-only read silently drops the entire registry — the
++## trap this item's measurement recorded — so every row here goes through this,
++## which ignores the "current" line by shape (2 words, not 3) and returns the
++## SORTED entry list so a restore that lands at a different index still passes
++## while one that appends a duplicate does not.
++proc opa_z_reg {} {
++  set r [rcall {xschem raw info}]
++  if {[lindex $r 0] != 0} { return [list ERR [lindex $r 1]] }
++  set out {}
++  foreach ln [split [lindex $r 1] "\n"] {
++    if {[catch {llength $ln} n]} continue
++    if {$n != 3} continue
++    lappend out "[file tail [lindex $ln 1]] [lindex $ln 2]"
++  }
++  return [lsort $out]
++}
++## One entry of the Tcl mirror, or `-` when it is absent. update_op()
++## (src/save.c:2015) is the only writer; scheduler.c:2415 is the only other
++## toucher and it only ever deletes.
++proc opa_z_ng {k} {
++  if {[info exists ::ngspice::ngspice_data($k)]} { return $::ngspice::ngspice_data($k) }
++  return -
++}
++## The result of an annotate, as a string. Not [lindex $x 0]: the rc has always
++## been 0 and always will be (TCL_ERROR is rejected — four uncaught shipped
++## callers, two of them Tk -command bodies where a raise becomes a bgerror
++## modal, i.e. issue 0803's suite-hanging shape).
++proc opa_z_ann {args} { return [lindex [rcall [linsert $args 0 xschem annotate_op]] 1] }
++
++set Z_SCH [file normalize [file join $Z_DIR z.sch]]
++opa_z_wr $Z_SCH "v {xschem version=3.4.6 file_version=1.2}\nG {}\nV {}\nS {}\nE {}\n"
++
++## One Operating Point point, two vectors. 3.14 and 2.71 read back EXACTLY
++## (measured), so the goldens below are literals and not tolerances.
++set Z_HDR "Title: 0807 fixture
++Date: Mon Jan 1 00:00:00 2026
++Plotname: Operating Point
++Flags: real
++No. Variables: 2
++No. Points: 1
++Variables:
++\t0\tv(a)\tvoltage
++\t1\tv(b)\tvoltage
++"
++set Z_TXT "${Z_HDR}Values:\n0\t3.14\n\t2.71\n\n"
++set Z_GOOD [file normalize [file join $Z_DIR z_good.raw]]
++opa_z_wr $Z_GOOD $Z_TXT
++
++## THREE truncations, each cut at a named landmark rather than at a magic
++## offset, because they take three DIFFERENT paths through the reader:
++##   Z_T40   40 bytes -- inside the `Date:` line. The reader never reaches a
++##           Plotname, gives up with "no useful data found", and extra_rawfile's
++##           own restore arm is the thing that should have saved the caller.
++##           This is the brief's own 40-byte case.
++##   Z_TPTS  cut immediately after `No. Points:` -- read_dataset's n<1 abort,
++##           which today ALSO clears the whole registry (issue 0316).
++##   Z_TVAR  cut two bytes into the first `Variables:` index line, leaving the
++##           line "\t0" -- read_dataset's other abort, same clear-all.
++set Z_T40  [file normalize [file join $Z_DIR z_t40.raw]]
++set Z_TPTS [file normalize [file join $Z_DIR z_tpts.raw]]
++set Z_TVAR [file normalize [file join $Z_DIR z_tvar.raw]]
++opa_z_wr $Z_T40  [string range $Z_TXT 0 39]
++opa_z_wr $Z_TPTS [string range $Z_TXT 0 [expr {[string first {No. Points:} $Z_TXT] + 10}]]
++opa_z_wr $Z_TVAR [string range $Z_TXT 0 [expr {[string first "\t0\tv(a)" $Z_TXT] + 1}]]
++
++## A 3-point transient, so the MIXED arrangement the item names can exist: a
++## waveform database AND a 1-point op database attached at once.
++set Z_TRAN [file normalize [file join $Z_DIR z_tran.raw]]
++opa_z_wr $Z_TRAN "Title: 0807 tran fixture
++Plotname: Transient Analysis
++Flags: real
++No. Variables: 2
++No. Points: 3
++Variables:
++\t0\ttime\ttime
++\t1\tv(a)\tvoltage
++Values:
++0\t0.0
++\t9.0
++
++1\t1e-9
++\t9.1
++
++2\t2e-9
++\t9.2
++
++"
++
++## THE USER'S ENCODING. `binary format d` is the native little-endian double
++## ngspice writes after a `Binary:` line; the truncated twin keeps ONE of the
++## two doubles, i.e. it is cut between two variables of the single point.
++set Z_BLOB ""
++foreach _zd {3.14 2.71} { append Z_BLOB [binary format d $_zd] }
++set Z_BGOOD [file normalize [file join $Z_DIR z_bgood.raw]]
++set Z_BTRUN [file normalize [file join $Z_DIR z_btrunc.raw]]
++opa_z_wr $Z_BGOOD "${Z_HDR}Binary:\n$Z_BLOB"
++opa_z_wr $Z_BTRUN "${Z_HDR}Binary:\n[string range $Z_BLOB 0 7]"
++
++set Z_LIVE [file normalize [file join $Z_DIR z_live.raw]]
++set Z_KEEPLIVE [expr {[info exists ::live_cursor2_backannotate] ? $::live_cursor2_backannotate : 1}]
++
++xschem load $Z_SCH
++catch {xschem raw clear}
++
++# ---------------------------------------------------------------------------
++# Z0 — FIXTURE AND ANTI-HOLLOW. Everything below asserts that a FAILURE changes
++# nothing; without this row a fix that makes every annotate fail passes them
++# all. Asserts the return AND the three places a successful load is visible.
++# ---------------------------------------------------------------------------
++set z0r [opa_z_ann $Z_GOOD 0]
++check {Z0 FIXTURE a good 1-point ASCII op raw annotates, and the call REPORTS success} \
++  [list $z0r [rcall {xschem raw loaded}] [rcall {xschem raw value v(a) -1}] \
++        [rcall {xschem raw value v(b) -1}] [opa_z_ng v(a)] [opa_z_reg]] \
++  [list 1 {0 0} {0 3.14} {0 2.71} 3.14 [list [list z_good.raw op]]]
++
++# ---------------------------------------------------------------------------
++# Z1 — THE RETURN HALF, ALONE. Nothing about the database is asserted here, so
++# a fix that saves the database and still cannot say it failed reds exactly this
++# row.
++#
++# ⚠ BOTH RETURNS IN ONE ROW, AND THAT IS NOT TIDINESS. A residue can COINCIDE
++# with the value a row wants: measured on this unpatched tree, `annotate_op
++# <truncated>` leaves the path as its result under --nogui but leaves the string
++# "0" under X — so a row asserting the failure value ALONE passes green on a
++# display against a command that answers nothing at all. Asserting the success
++# and the failure answer TOGETHER cannot be satisfied by one residue, because
++# the two calls would have to leave two different, both-correct leftovers.
++# ---------------------------------------------------------------------------
++set z1ok [opa_z_ann $Z_GOOD 0]
++set z1r  [opa_z_ann $Z_T40 0]
++check {Z1 annotate_op ANSWERS: 1 for the load that worked, 0 for the truncated one} \
++  [list $z1ok $z1r] {1 0}
++
++# ---------------------------------------------------------------------------
++# Z2 — THE DATABASE HALF, ALONE, after the very call Z1 made. The registry is
++# compared WHOLE (opa_z_reg parses every line), so an implementation that leaves
++# the good entry listed but no longer current still has to satisfy Z7's twin.
++# ---------------------------------------------------------------------------
++check {Z2 ...and the previously annotated database is STILL attached and readable} \
++  [list [rcall {xschem raw loaded}] [rcall {xschem raw value v(a) -1}] \
++        [rcall {xschem raw value v(b) -1}] [rcall {xschem raw rawfile}] [opa_z_reg]] \
++  [list {0 0} {0 3.14} {0 2.71} [list 0 $Z_GOOD] [list [list z_good.raw op]]]
++
++# ---------------------------------------------------------------------------
++# Z3 — THE TCL MIRROR, ALONE. `array unset ngspice::ngspice_data` at
++# scheduler.c:2415 is redundant on success (update_op() unsets and rebuilds the
++# array itself, save.c:2018) and is the whole Tcl-side half of the loss on
++# failure. Its own row, so deleting that ONE line is independently falsifiable.
++# ---------------------------------------------------------------------------
++check {Z3 ...and ngspice::ngspice_data still holds the values it published} \
++  [list [opa_z_ng v(a)] [opa_z_ng v(b)]] {3.14 2.71}
++
++# ---------------------------------------------------------------------------
++# Z4 — THE MISSING FILE. test_op_annot's own section-N comment block has
++# recorded this case IN PROSE since it was written ("`xschem annotate_op
++# <missing>` leaves `raw loaded` -1 and every row blank, returns rc=0 and says
++# nothing") and there has never been a committed row. Two rows, same split as
++# Z1/Z2.
++# ---------------------------------------------------------------------------
++set z4ok [opa_z_ann $Z_GOOD 0]
++set z4r  [opa_z_ann /nonexistent-0807.raw 0]
++check {Z4 a MISSING raw reports failure, and the good load before it reported success} \
++  [list $z4ok $z4r] {1 0}
++check {Z4b ...and does not destroy the database either} \
++  [list [rcall {xschem raw value v(a) -1}] [rcall {xschem raw rawfile}] [opa_z_reg]] \
++  [list {0 3.14} [list 0 $Z_GOOD] [list [list z_good.raw op]]]
++
++# ---------------------------------------------------------------------------
++# Z5 — THE MIXED CASE, MID-VARIABLE. A tran waveform database AND the op
++# database attached at once; the failed annotate must destroy NEITHER. Measured
++# unpatched: BOTH go, because read_dataset's `Variables:` abort clears the whole
++# registry on its way out (issue 0316) — `raw loaded` -1, `raw info` empty.
++# ---------------------------------------------------------------------------
++catch {xschem raw clear}
++set z5t [rcall {xschem raw read $Z_TRAN tran}]
++set z5a [opa_z_ann $Z_GOOD 0]
++set z5r [opa_z_ann $Z_TVAR 0]
++check {Z5 MIXED a mid-variable truncation destroys neither the tran nor the op database} \
++  [list $z5t $z5a $z5r [opa_z_reg] [rcall {xschem raw value v(a) -1}]] \
++  [list {0 1} 1 0 [list [list z_good.raw op] [list z_tran.raw tran]] {0 3.14}]
++
++# ---------------------------------------------------------------------------
++# Z6 — THE MIXED CASE, MID-HEADER (`No. Points:`). The same claim through
++# read_dataset's OTHER abort, and the row that cannot go green from
++# src/scheduler.c alone no matter how the detach is written. Note the residue
++# this one leaves is the EMPTY STRING, not the path — a third spelling of "no
++# answer", and the reason no row here tests residue.
++# ---------------------------------------------------------------------------
++catch {xschem raw clear}
++set z6t [rcall {xschem raw read $Z_TRAN tran}]
++set z6a [opa_z_ann $Z_GOOD 0]
++set z6r [opa_z_ann $Z_TPTS 0]
++check {Z6 MIXED a mid-header truncation destroys neither, and reports failure} \
++  [list $z6t $z6a $z6r [opa_z_reg]] \
++  [list {0 1} 1 0 [list [list z_good.raw op] [list z_tran.raw tran]]]
++
++# ---------------------------------------------------------------------------
++# Z7 — THE VALUE ACCESSOR, IN THE MIXED ARRANGEMENT. Surviving the registry is
++# not enough: `xschem raw value <v> -1` reads the CURRENT database, so an op
++# entry that is listed but not current falls through to the tran's point 0 and
++# answers a FABRICATED 0 for v(a) instead of 3.14. Measured unpatched in exactly
++# that shape (the mid-Date truncation leaves the tran current and v(a) reads 0),
++# which is why this is a row and not a clause of Z5.
++# ---------------------------------------------------------------------------
++check {Z7 MIXED the op database is still the CURRENT one, so v(a) is 3.14 and not the tran's 0} \
++  [list [rcall {xschem raw sim_type}] [rcall {xschem raw rawfile}] \
++        [rcall {xschem raw value v(a) -1}]] \
++  [list {0 op} [list 0 $Z_GOOD] {0 3.14}]
++
++# ---------------------------------------------------------------------------
++# Z8 — THE BINARY CONTROL. Without it every binary survival row could pass on a
++# tree that refuses binary raws outright, and the 0299 fix folded into this item
++# is exactly the kind of change that could do that by accident.
++# ---------------------------------------------------------------------------
++catch {xschem raw clear}
++set z8r [opa_z_ann $Z_BGOOD 0]
++check {Z8 CONTROL a well-formed BINARY 1-point op raw annotates and reads back both vectors} \
++  [list $z8r [rcall {xschem raw value v(a) -1}] [rcall {xschem raw value v(b) -1}]] \
++  [list 1 {0 3.14} {0 2.71}]
++
++# ---------------------------------------------------------------------------
++# Z9 — THE USER'S ACTUAL BENCH CASE. ngspice mid-rewrite of a BINARY raw. The
++# unpatched tree answers with the SUCCESS residue, adopts the truncated file
++# into the registry and serves v(b)=0 — a plausible wrong number on a schematic,
++# which invariant I3 and save.c RULING D5-1 both name as worse than nothing.
++# ---------------------------------------------------------------------------
++set z9r [opa_z_ann $Z_BTRUN 0]
++check {Z9 a truncated BINARY raw reports failure and leaves the good binary database in place} \
++  [list $z9r [rcall {xschem raw value v(a) -1}] [rcall {xschem raw value v(b) -1}] \
++        [rcall {xschem raw rawfile}] [opa_z_reg]] \
++  [list 0 {0 3.14} {0 2.71} [list 0 $Z_BGOOD] [list [list z_bgood.raw op]]]
++
++# ---------------------------------------------------------------------------
++# Z10 — ANTI-HOLLOW, AT THE END. After nine failures in a row, a good file must
++# still load and still say so. A fix that simply refuses everything cannot get
++# past this.
++# ---------------------------------------------------------------------------
++set z10r [opa_z_ann $Z_GOOD 0]
++check {Z10 ANTI-HOLLOW after every failure above, a good raw still annotates and reports success} \
++  [list $z10r [rcall {xschem raw value v(a) -1}] [rcall {xschem raw rawfile}]] \
++  [list 1 {0 3.14} [list 0 $Z_GOOD]]
++
++# ---------------------------------------------------------------------------
++# Z11 — CONTROL, GREEN BEFORE THE CHANGE: the boundary the new result may not
++# cross. RULING D5-3's refusal (scheduler.c:2404-2407) is a deliberate no-op,
++# not a failure, and its sentence IS the documented result;
++# test_backannotate_digital BA20/BA21/BA27 assert that sentence and BA25/BA2a
++# assert an analog raw does not match it. A blanket 0/1 for the whole branch
++# reds three shipped rows in another file, so the 0/1 belongs on the LOAD paths
++# only.
++# ---------------------------------------------------------------------------
++set z11r [opa_z_ann $Z_GOOD 0 vcd]
++check {Z11 CONTROL the digital refusal still answers its SENTENCE, not a number} \
++  [list [string match -nocase {*is a digital results database*} $z11r] \
++        [expr {($z11r eq {0} || $z11r eq {1}) ? 1 : 0}]] \
++  {1 0}
++
++# ---------------------------------------------------------------------------
++# Z12 — THE 0685 FENCE. The destroy exists because extra_rawfile()'s dedup
++# (save.c:1819-1827) matches on rawfile+sim_type and, on a hit, switches to the
++# cached entry WITHOUT READING — and ngspice overwrites one stable path every
++# run. A detach that leaves the old entry in the registry would answer 3.14
++# forever. The value half is green today; the return half is not, and they are
++# asserted together because "the file was really re-read" and "the call said so"
++# are one answer to the user.
++# ---------------------------------------------------------------------------
++catch {xschem raw clear}
++opa_z_wr $Z_LIVE $Z_TXT
++set z12a [opa_z_ann $Z_LIVE 0]
++set z12v0 [rcall {xschem raw value v(a) -1}]
++opa_z_wr $Z_LIVE [string map {3.14 9.99} $Z_TXT]
++set z12b [opa_z_ann $Z_LIVE 0]
++check {Z12 0685 a re-annotate of the SAME path really re-reads it: 3.14 then 9.99} \
++  [list $z12a $z12v0 $z12b [rcall {xschem raw value v(a) -1}]] \
++  [list 1 {0 3.14} 1 {0 9.99}]
++
++# ---------------------------------------------------------------------------
++# Z13 — A FAILURE ARMS NOTHING. scheduler.c:2409 forces the shipped Waves
++# checkbutton `live_cursor2_backannotate` on BEFORE any read, so today a failed
++# annotate throws a user-visible switch on behalf of a call that published
++# nothing — and actions.c:1698 folds that flag into the overlay epoch, so it
++# also flushes the render cache. The second half is the anti-hollow twin: a
++# SUCCESS must still arm it.
++# ---------------------------------------------------------------------------
++catch {xschem raw clear}
++catch {xschem annotate_op $Z_GOOD 0}
++set ::live_cursor2_backannotate 0
++catch {xschem annotate_op $Z_T40 0}
++set z13f $::live_cursor2_backannotate
++set ::live_cursor2_backannotate 0
++catch {xschem annotate_op $Z_GOOD 0}
++set z13s $::live_cursor2_backannotate
++check {Z13 a FAILED annotate does not arm live_cursor2_backannotate, a successful one does} \
++  [list $z13f $z13s] {0 1}
++
++# ---------------------------------------------------------------------------
++# Z14 — CONTROL, INVARIANT I4, GREEN BEFORE THE CHANGE: the overlay never
++# modifies the schematic, and neither may the restore path. Here so that a
++# detach/reattach implemented via anything that touches the drawing (a
++# set_modify, a placed instance) reds one legible row.
++# ---------------------------------------------------------------------------
++xschem load $Z_SCH
++catch {xschem raw clear}
++catch {xschem annotate_op $Z_GOOD 0}
++set z14a [rcall {xschem get modified}]
++catch {xschem annotate_op $Z_T40 0}
++check {Z14 CONTROL I4 neither a successful nor a failed annotate modifies the schematic} \
++  [list $z14a [rcall {xschem get modified}]] {{0 0} {0 0}}
++
++# ---------------------------------------------------------------------------
++# Z15 — THE REGISTRY SHAPE. Count only, before and after, so a restore that
++# appends a DUPLICATE entry (the failure mode a detach invites) reds here even
++# though every value row above would still pass.
++# ---------------------------------------------------------------------------
++catch {xschem raw clear}
++catch {xschem raw read $Z_TRAN tran}
++catch {xschem annotate_op $Z_GOOD 0}
++set z15n0 [llength [opa_z_reg]]
++catch {xschem annotate_op $Z_T40 0}
++check {Z15 a failed annotate leaves the registry with exactly the entries it found} \
++  [list $z15n0 [llength [opa_z_reg]]] {2 2}
++
++# ------------------------------------------------------------------ cleanup --
++catch {xschem raw clear}
++set ::live_cursor2_backannotate $Z_KEEPLIVE
++
++} zerr]} {
++  puts "UNEXPECTED ERROR (section Z): $zerr"
++  incr fail
++}
++
+ # --- verdict -----------------------------------------------------------------
+ if {$fail == 0} {
+   puts "RESULT: ALL PASS ($npass checks)"
+diff --git a/tests/headless/test_raw_ascii_point_bounds.tcl b/tests/headless/test_raw_ascii_point_bounds.tcl
+index b5863395..99d2dba8 100644
+--- a/tests/headless/test_raw_ascii_point_bounds.tcl
++++ b/tests/headless/test_raw_ascii_point_bounds.tcl
+@@ -38,6 +38,10 @@
+ #   L   non finite values (`nan`, `-inf`, `nan(0x1)`, ...). A C library prints
+ #       these as WORDS, so bound 2 must accept them or one of them costs the
+ #       whole file -- while `nancy` and `information` stay non-values.
++#   M   the BINARY arm of the same function, which only WARNS where every group
++#       above fails -- a truncated binary block reads as success and serves
++#       spliced or uninitialised numbers (issue 0299, reached from 0807). Both
++#       fread sites: the store pass and the sweep pre-count pass.
+ #
+ # NOT covered here, on purpose: skip_raw_ascii_points(), the sibling that walks
+ # past a dataset xschem did not ask for. It has the same two weaknesses this
+@@ -601,6 +605,114 @@ eqcheck L14-bare-nan-in-the-same-slot-reads [load1 $tmp/nanword.raw] 1
+ eqcheck L15-and-keeps-both-points [pcall xschem raw points] 2
+ eqcheck L16-recovers [load1 $tmp/good.raw] 1
+ 
++# ---------------------------------------------------------------------------
++# M -- THE BINARY ARM OF THE SAME FUNCTION, WHICH DISAGREES WITH EVERY GROUP
++#      ABOVE. doc/claude/issues/0299, reached from 0807.
++#
++#      read_raw_data_block() has two arms over one loop. The ascii arm (group D,
++#      group F) treats a short point as a read FAILURE -- `res = 0; break;`. The
++#      binary arm, eight lines above it, only prints "Warning: binary block is
++#      not of correct size" and carries on with whatever the previous iteration
++#      left in the reused `tmp` buffer. So the SAME condition -- the simulator
++#      was still writing when we opened the file -- is a refusal in ascii and a
++#      SUCCESS CARRYING INVENTED NUMBERS in binary, and ngspice writes binary by
++#      default.
++#
++#      MEASURED on the unfixed tree with the fixtures below: a 3-point binary
++#      tran raw cut one double short reads 1, reports 3 points, and serves
++#      v(out)[2] = 2 -- the PREVIOUS point's value, spliced in silently (the
++#      true value is 3). Cut on a whole-point boundary it reads 1 and serves
++#      point 1's pair as point 2. On other truncations the same buffer has
++#      produced 6.7903865e-315, i.e. uninitialised heap. A plausible wrong
++#      number is precisely what save.c RULING D5-1 and spec invariant I3 forbid,
++#      and the operating-point annotation in issue 0807 renders it onto the
++#      schematic.
++#
++#      THE DECISION, AND THE ALTERNATIVE IT REJECTS: refuse the file, matching
++#      the ascii arm. 0299's own second option -- keep the points actually read
++#      (`raw->npoints[raw->datasets] = p`) so a killed long transient still
++#      plots 99% of itself -- is rejected here because there is no 99% of a
++#      one-point operating point, and because it would re-create the
++#      ascii/binary disagreement in the other direction. That is a shipped
++#      waveform-viewer behaviour and the ruling is recorded in the issue.
++#
++#      M6/M7 cover the OTHER fread site: the sweep1/sweep2 pre-count pass runs
++#      the same reader over the same points before rewinding, and has its own
++#      copy of the warn-only arm. Without them a fix applied to one site only
++#      would still pass M1-M5.
++# ---------------------------------------------------------------------------
++## ⚠ BYTE-EXACT WRITES, AND `wr` ABOVE IS NOT ONE. A Tcl file channel encodes
++## on the way out (utf-8 is the system encoding here), so `binary format d`
++## bytes above 0x7f come back MANGLED: measured, the "well-formed" twin below
++## then reads time[2] as -5.1172466e-199 and the fixture proves nothing. Only
++## the binary fixtures need this; every group above writes pure ascii.
++proc wrb {path body} {
++  set fp [open $path w]
++  fconfigure $fp -translation binary
++  puts -nonewline $fp $body
++  close $fp
++}
++set binhdr "Title: binary tran fixture
++Plotname: Transient Analysis
++Flags: real
++No. Variables: 2
++No. Points: 3
++Variables:
++\t0\ttime\ttime
++\t1\tv(out)\tvoltage
++Binary:
++"
++set binblob ""
++foreach {_t _v} {0.0 1.0 1e-9 2.0 2e-9 3.0} {
++  append binblob [binary format d $_t] [binary format d $_v]
++}
++# 6 doubles = 3 complete points; the truncations keep 5 (cut BETWEEN the two
++# variables of the last point) and 4 (cut ON a point boundary).
++wrb $tmp/bin_good.raw "$binhdr$binblob"
++wrb $tmp/bin_mid.raw "$binhdr[string range $binblob 0 39]"
++wrb $tmp/bin_whole.raw "$binhdr[string range $binblob 0 31]"
++wrb $tmp/bin_junk.raw "$binhdr${binblob}TRAILING JUNK\n"
++
++# M1 is the claim; M2 is what stops the claim from being satisfied by refusing
++# every binary raw ever written.
++eqcheck M1-short-binary-point-refuses [load1 $tmp/bin_mid.raw] 0
++eqcheck M2-well-formed-binary-still-reads [load1 $tmp/bin_good.raw] 1
++eqcheck M2b-points [pcall xschem raw points] 3
++nearcheck M2c-last-point-time [pcall xschem raw value time 2] 2e-9
++nearcheck M2d-last-point-value [pcall xschem raw value v(out) 2] 3.0
++
++# THE "mid-variable vs mid-point" QUESTION, STATED AS A ROW. A file holding
++# N-1 COMPLETE points under a header that claims N is still truncated: the
++# unfixed reader answers 1 and serves point 1's pair as point 2.
++eqcheck M3-whole-point-truncation-also-refuses [load1 $tmp/bin_whole.raw] 0
++
++# NO FABRICATED SURVIVOR. A refusal that left a half populated Raw behind --
++# still answering the header's point count -- would be the same defect wearing
++# a 0 return. `raw value` RAISES when nothing is attached, which is what pcall
++# renders as ERR:.
++eqcheck M4-refusal-leaves-nothing-loaded [load1 $tmp/bin_mid.raw] 0
++eqcheck M4b-not-loaded [pcall xschem raw loaded] -1
++check M4c-value-raises [string match {ERR:*} [pcall xschem raw value v(out) 0]] \
++  "(v(out)\[0\]='[pcall xschem raw value v(out) 0]' want a raise, i.e. nothing attached)"
++
++# TRAILING JUNK IS NOT TRUNCATION. The data block is complete; what follows it
++# is somebody else's problem and must not cost the file.
++eqcheck M5-trailing-junk-still-reads [load1 $tmp/bin_junk.raw] 1
++eqcheck M5b-junk-points [pcall xschem raw points] 3
++nearcheck M5c-junk-last-value [pcall xschem raw value v(out) 2] 3.0
++
++# THE SWEEP PRE-COUNT PASS, the second warn-only fread. `xschem raw read <f>
++# <type> <sweep1> <sweep2>` takes the branch that walks the block once to count
++# the points inside the window, rewinds, and reads it again.
++catch {xschem raw clear}
++eqcheck M6-short-binary-refuses-in-the-precount-pass \
++  [pcall xschem raw read $tmp/bin_mid.raw tran 0.0 3e-9] 0
++catch {xschem raw clear}
++eqcheck M7-well-formed-binary-still-reads-with-a-sweep-window \
++  [pcall xschem raw read $tmp/bin_good.raw tran 0.0 3e-9] 1
++eqcheck M7b-sweep-points [pcall xschem raw points] 3
++eqcheck M8-recovers [load1 $tmp/good.raw] 1
++
+ catch {xschem raw clear}
+ catch {test_scratch_drop $tmp}
+ puts "----"
+diff --git a/tests/headless/test_raw_read_failure_0306.tcl b/tests/headless/test_raw_read_failure_0306.tcl
+index 3f88cd6b..889a3f0c 100644
+--- a/tests/headless/test_raw_read_failure_0306.tcl
++++ b/tests/headless/test_raw_read_failure_0306.tcl
+@@ -32,6 +32,12 @@
+ #          fall-through path. Filed as issue 0316; deliberately NOT fixed here
+ #          (a third instance of the same shape, in a third function).
+ #
++#          ⚠ THAT PARAGRAPH IS NOW OUT OF DATE IN ONE RESPECT AND STILL TRUE IN
++#          THE OTHERS: rows R1..R5 below DO pin the four aborts, because issue
++#          0807 (a failed `annotate_op` must destroy nothing) cannot be closed
++#          while the reader itself wipes the registry. The leak half is still
++#          not asserted here — only the data loss is.
++#
+ #  PART 2  the `set raw_level` arm of xschem_cmds_s (src/scheduler.c) range-checks
+ #          n but never tested xctx->raw. Both shipped callers — open_sub_schematic
+ #          and hi_descend's new-window arm — emit it on the line IMMEDIATELY after
+@@ -688,6 +694,108 @@ eqcheck {S11 CONTROL getter symmetry: with nothing loaded the getter answers -1}
+ # check: pre-fix that is the SIGSEGV itself, and a parent that dies scores the
+ # whole row CRASH with no ids. C14 makes exactly that assertion, in a child.
+ 
++
++# ===========================================================================
++# R1..R5 — issue 0316, THE THIRD INSTANCE OF THIS FILE'S OWN SHAPE, promoted
++# from the CAVEAT paragraph in the header to committed rows because issue 0807
++# cannot be closed without it.
++#
++# read_dataset() (src/save.c) has FOUR malformed-header aborts — `No. of Data
++# Rows :`, `No. Variables:`, `No. Points:` and the `Variables:` index/name line
++# — and each of them, on its way out, calls
++#
++#     extra_rawfile(3, NULL, NULL, -1.0, -1.0);   /* clear EVERYTHING */
++#
++# before returning failure. So a raw file that is merely SHORT — ngspice was
++# still writing it — makes the READER delete every database the user had
++# loaded, including ones in no way related to the file being opened. The two
++# data-block aborts eight lines away do it correctly: they `break` and let the
++# function's own `if(exit_status != 1) free_rawfile(rawptr, ...)` discard the
++# half-built Raw and nothing else.
++#
++# MEASURED unfixed, all four fixtures, with a good 2-point tran loaded first:
++# the read answers 0 (so this is not a lying return), and `xschem raw loaded`
++# goes to -1, `xschem raw info` goes EMPTY and `xschem raw value v(out) 1`
++# raises "No raw file loaded". The good file is untouched on disk and was never
++# even mentioned.
++#
++# WHY IT LIVES IN THIS FILE AND NOT IN test_op_annot.tcl: the subject is
++# raw_read()'s own failure hygiene, which is this file's subject, and the rows
++# are in-process because the defect is data loss, not a crash — no child
++# harness needed. test_op_annot.tcl's Z5/Z6 assert the CONSEQUENCE for
++# annotate_op's mixed tran+op arrangement, and those two rows cannot go green
++# from src/scheduler.c alone no matter how the detach there is written.
++# ===========================================================================
++set rgood [file join $tmp r_good.raw]
++wr $rgood "Title: good tran
++Plotname: Transient Analysis
++Flags: real
++No. Variables: 2
++No. Points: 2
++Variables:
++\t0\ttime\ttime
++\t1\tv(out)\tvoltage
++Values:
++0\t0.0
++\t1.0
++
++1\t1e-9
++\t2.0
++
++"
++## Each fixture is a well-formed header with ONE line mutilated the way a
++## mid-write truncation mutilates it: the keyword is there, the number is not.
++set rhdr "Title: malformed
++Plotname: Transient Analysis
++Flags: real
++"
++set rvars "Variables:
++\t0\ttime\ttime
++\t1\tv(out)\tvoltage
++Values:
++0\t0.0
++\t1.0
++
++"
++wr $tmp/r_novars.raw   "${rhdr}No. Variables:\nNo. Points: 1\n$rvars"
++wr $tmp/r_nopoints.raw "${rhdr}No. Variables: 2\nNo. Points:\n$rvars"
++wr $tmp/r_norows.raw   "${rhdr}No. Variables: 2\nNo. of Data Rows :\n$rvars"
++wr $tmp/r_novarline.raw "${rhdr}No. Variables: 2\nNo. Points: 1\nVariables:\n\t0\n\t1\tv(out)\tvoltage\nValues:\n0\t0.0\n\t1.0\n\n"
++
++## ONE ROW PER ABORT SITE, deliberately: a fix applied to three of the four
++## leaves one row red instead of hiding inside a single "malformed headers"
++## verdict. Every row asserts the failing read STILL ANSWERS 0 as well, so a
++## "fix" that made these files load would red here rather than pass.
++proc r_keeps {id f} {
++  global rgood
++  rclear
++  set g [pcall xschem raw read $rgood tran]
++  set r [pcall xschem raw read $f tran]
++  set kept [info_has $rgood tran]
++  set lv [pcall xschem raw loaded]
++  set v [pcall xschem raw value v(out) 1]
++  check $id [expr {$g eq {1} && $r eq {0} && $kept && $lv ne {} && $lv >= 0 && $v eq {2}}] \
++    "(good-read='$g' want '1'; malformed-read='$r' want '0'; registry-kept=$kept want 1;\
++ loaded='$lv' want >=0; v(out)\[1\]='$v' want '2'; info='[string map [list \n { | }] [rinfo]]')"
++}
++r_keeps {R1 a malformed `No. Variables:` does not delete the loaded database} $tmp/r_novars.raw
++r_keeps {R2 a malformed `No. Points:` does not either} $tmp/r_nopoints.raw
++r_keeps {R3 nor a malformed `No. of Data Rows :`} $tmp/r_norows.raw
++r_keeps {R4 nor a malformed `Variables:` index line} $tmp/r_novarline.raw
++
++# THE CRASH CANARY, this file's own theme: the abort leaves state behind, and
++# the next operation is where a bad restore lands. Reaching the check is half
++# of it; the other half is that the ops still answer.
++rclear
++pcall xschem raw read $rgood tran
++pcall xschem raw read $tmp/r_novarline.raw tran
++set r5a [pcall xschem raw switch 0]
++set r5b [pcall xschem raw value time 0]
++set r5c [expr {[rinfo] ne {}}]
++check {R5 CANARY the operations after a malformed-header abort all return} \
++  [expr {$r5a eq {1} && $r5b eq {0} && $r5c}] \
++  "(switch='$r5a' want '1'; value='$r5b' want '0'; info-non-empty=$r5c want 1)"
++
+ rclear
+ catch {test_scratch_drop $tmp}
+ puts "----"
+diff --git a/utils/annot_mode.tcl b/utils/annot_mode.tcl
+index 0745470c..5354f7c0 100644
+--- a/utils/annot_mode.tcl
++++ b/utils/annot_mode.tcl
+@@ -333,6 +333,14 @@ proc cadence::annot_mode {mode} {
+         }
+         ## RE-ASKED, never taken from annotate_op's rc: measured, it returns 0
+         ## for a file that does not exist and for one that will not parse.
++        ##
++        ## ⚠ SINCE ISSUE 0807 annotate_op's RESULT is a real witness ("1"/"0",
++        ## the rc is still always 0), and a failed annotate no longer destroys
++        ## the database it found. This re-ask stays correct anyway, and stays
++        ## for a reason: this branch is only reached when `loaded < 0`, i.e.
++        ## with NOTHING attached, so a surviving database cannot make the
++        ## re-ask report a failure as `loaded`. Do not re-derive that; it was
++        ## measured when 0807 landed.
+         set after -1
+         catch {set after [xschem raw loaded]}
+         if {[string is integer -strict $after] && $after >= 0} {

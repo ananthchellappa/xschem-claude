@@ -8,6 +8,119 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ❌ 0807 — **ATTEMPTED, EVERY TIER GREEN, WHOLE SABOTAGE MATRIX CAUGHT, AND REVERTED 2026-08-25 (status F)**. THE DATA LOSS IS STILL LIVE
+
+**Not a plan step.** `src/`, `tests/` and `utils/` are byte-identical to `56c861de`.
+The reverted diff is kept at **`doc/claude/evidence/0807-attempt1-reverted.patch.txt`**
+and the full record — decisions, sabotage matrix, residual risks — is in
+**`doc/claude/issues/0807-*.md` §6-§12. §11 is binding on whoever retries it.**
+
+### ⚠⚠ READ THIS BEFORE YOU TOUCH `annotate_op` OR THE RAW REGISTRY
+
+The attempt was, as far as its own acceptance went, a success: destroy-then-read
+became detach-then-read-then-dispose, the return value became a real `"1"`/`"0"`,
+0299 and 0316 were folded in, **T1 32/32, T2 PASS, `test_op_annot` 349→366 headless /
+355→372 on `:99`, valgrind `definitely lost: 0`, and all seven sabotage variants were
+caught.** The user's reported bench case — good db attached, same path overwritten
+mid-write — was genuinely fixed, ASCII and binary.
+
+**It was reverted because it introduced a worse defect on a shipped route**, which
+only the adversary's A/B against HEAD found and which **no suite could see**:
+
+```
+WU| step1 raw_read run1   rc=1
+WU| step2 annotate SAME  result=<1>  v(a)=3.1399999 v(b)=1.5  ngdata_v(b)=1.5   WANT 8.0/4.0
+WU| step3 annotate again result=<1>  v(a)=5.5500002 v(b)=2.22   WANT 5.55/2.22
+```
+
+`proc load_raw` (`src/xschem.tcl`, reached from the Simulation menu) does
+`raw_clear` + `raw_read`, and **`raw_read` reads straight into `xctx->raw`, bypassing
+the registry** — so the database is *current but unregistered*, `extra_raw_n == 0`.
+`extra_rawfile_detach()` searched only the registry, found nothing, detached nothing;
+`extra_rawfile()`'s base-insert then adopted the live entry and the same-path dedup
+took *"already loaded: switch to it"* **with no read**. Result: **the first annotate
+after a `raw_read` publishes the previous run's numbers and returns success.** That is
+invariant **I3** by its literal words — *"not the previous run's number"* — and it is a
+**regression**, because HEAD's destroy freed that same base-inserted entry so HEAD's
+read was real.
+
+**The lesson, and it is the transferable one: trading "the database vanishes and the
+screen goes blank" for "the schematic shows last run's numbers and reports success" is
+not a fix — it is the same defect moved somewhere harder to see.** Every suite stayed
+green because only the *first* annotate after a `raw_read` is affected.
+
+### WHAT A LATER CREW MUST CARRY
+
+1. **`raw_read` leaves the database CURRENT BUT UNREGISTERED (`extra_raw_n == 0`).**
+   Any registry helper that searches only `extra_raw_arr[0 .. n)` misses it, and that
+   state is reachable from the shipped Simulation menu. The gap in the reverted diff
+   was ~3 lines in `extra_rawfile_detach()`: when `extra_raw_n == 0 && xctx->raw`
+   matches, detach `xctx->raw` **itself**.
+2. **`xschem raw info` REGISTERS the database as a side effect.** It is
+   `extra_rawfile(4, ...)`, and the base-insert runs **before** the what-dispatch. A
+   test that probes with `raw info` first **cannot see** defect (1) — the adversary
+   measured a false green exactly that way. Probe with `xschem raw loaded`,
+   catch-wrapped `xschem raw value <v> -1`, `raw rawfile` / `raw sim_type`, and
+   `ngspice::ngspice_data`.
+3. **`xschem raw switch op` is a ROTATE, not a query.** It returns 1 whenever
+   `extra_raw_n > 0` and never asks about the type. Build no acceptance row on it.
+   `raw info` is **multi-line** — a first-line grep silently drops the registry.
+4. **ASCII and BINARY truncation behave OPPOSITELY today** (issue 0299): every short
+   ASCII read already fails; **no** short binary read does. ngspice writes binary by
+   default, so any raw-robustness acceptance that uses only an ASCII fixture is
+   testing the encoding the user does not have.
+5. **`grep -rn SABOTAGE` and `nm | grep _sab` are BOTH blind to an inlined static
+   one-call sabotage helper.** The adversary spent a whole attack measuring a
+   confident wrong answer against a SAB-7 build both checks called clean. Verify a
+   sabotage restore by picking a behaviour the **source** pins exactly and confirming
+   the **binary** agrees.
+6. **Serialize the sabotage leg against the verify leg.** Verify-A was scheduled
+   concurrently with Sabotage in the same tree, caught `make` relinking the binary
+   underneath its tests (5503008 → 5503144 → 5503008 bytes) and a live
+   `extra_rawfile_reattach_sab` at `scheduler.c:2471`, and had to **withdraw two whole
+   T1 runs** (12 FAIL and a `permission denied` on a `-rwxr-xr-x` binary — exec racing
+   the relink). Neither was a code defect. This is the second crew to pay for this.
+7. **The digital-refusal branch (RULING D5-3) is a boundary, not a failure.**
+   `test_backannotate_digital` BA20/BA21/BA27 assert its exact sentence as the interp
+   result. Set any new `"1"`/`"0"` result on the **load paths only**; `"1"` cannot
+   match `*is a digital results database*`, and all five rows stayed green that way.
+8. **`update_op()` is the sole owner of `ngspice::ngspice_data`** (it unsets and
+   rebuilds it wholly from `xctx->raw`). The `array unset` in the `annotate_op` branch
+   is therefore redundant on success and is the entire Tcl-side half of the loss on
+   failure — deleting that one line fixes half the defect on its own, and a sabotage
+   variant restoring it reddened exactly one row.
+
+### NEW ISSUES FILED BY THIS CREW: 0812, 0813, 0814
+
+* **0814** — `annotate_op` adopts a **cached same-path entry instead of reading**, and
+  reports success: with `<path> tran` already in the registry, `annotate_op <path>` on a
+  40-byte truncated file serves the previous run's transient point 0 as the operating
+  point. **This is the shipped ASE/wave-viewer arrangement**, and it means 0807's
+  acceptance is unmet whenever the two databases share a path — rows using two
+  *different* paths are blind to it.
+* **0812** — a crafted filename **executes Tcl** through `extra_rawfile()`'s
+  `tclvareval("subst {", file, "}")`. Measured `PWNED=1` through `annotate_op` itself.
+  `scheduler.c`'s claim that this hazard is closed for `annotate_op` is true of its own
+  line and **false one frame down**.
+* **0813** — the `raw_read` verb is the same destroy-then-read shape with a **wider**
+  blast radius (it clears the whole registry first).
+
+**0299 and 0316 remain OPEN** — their fixes were built, measured sound (0316's
+253,152-byte leak went to `definitely lost: 0`) and reverted with the rest. Both carry
+addenda recording what was learned; **0316 can be taken on its own** and was not the
+reason for the revert.
+
+### The E question this owes the user
+
+**Should a binary raw from a simulation killed mid-write keep loading with its last
+point fabricated (today), or refuse and plot nothing?** Refusing is right for a 1-point
+op raw — there is no 99% of one point. But the measured cost is real: a **59-point
+ngspice binary transient missing 3 bytes** loads all 59 today and **nothing** under the
+fix. The one-line alternative (`raw->npoints[datasets] = p`) sits in the same place.
+Recorded against issue **0299**.
+
+---
+
 ## ✅⚠ 0688 + 0683 — LANDED 2026-08-25 (status **E**, and the adversary REFUTED the broad claim). THE MASK NOW BELONGS TO A SHEET, AND STOCK ANNOTATION REFUSES WITHOUT ASE-L
 
 **Read this before touching `annot_show`, either stock annotation menu item, or any
