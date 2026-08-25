@@ -345,3 +345,71 @@ Live log confirms `Using Composite redirection` is back (count 1). Dumps at 10 a
 arming time. The prediction under test is that the same hand-driven case now
 crashes again; if it does not, round 1 proves nothing and the survival was luck
 or an unmeasured co-variable.
+
+### Round 2 result — CRASHED. Root cause confirmed in both directions.
+
+The user re-ran the same hand-driven case on the original flags and got the
+crash. Objective state taken immediately after:
+
+* server **down** (`xdpyinfo` fails)
+* new dump `vcxsrv.exe.18080.dmp` at 18:06
+* live log 1398 lines
+
+Counted across all three runs of the same user action on the same schematic:
+
+| line | crash 17:49 | round 1 (no composite) | round 2 (composite) |
+|---|---|---|---|
+| `Using Composite redirection` | 1 | 0 | 1 |
+| `winCreateDIB: CreateDIBSection() failed` | 27 | **0** | **1303** |
+| `winBltExposedWindowRegionShadowGDI - BitBlt failed` | 2 | **0** | **15** |
+| server afterwards | down | **up** | **down** |
+
+Remove composite redirection, the failures and the crash both vanish; put it
+back, both return, an order of magnitude worse. That is a controlled result in
+both directions, which is what the four invalid drive attempts recorded earlier
+in this file never produced.
+
+**ROOT CAUSE: VcXsrv's composite-redirection window manager exhausts GDI
+resources.** Under `-compositewm` the server allocates a device-independent
+bitmap per redirected window and reallocates on resize. Zooming a schematic
+churns the backing pixmap; `CreateDIBSection()` starts failing; the server keeps
+blitting against handles it never got (`BitBlt failed: 0x6` =
+`ERROR_INVALID_HANDLE`) and eventually dies. xschem then observes connection loss
+and exits through `_XIOError` — which is why the gdb backtrace held no xschem
+frames and why nothing reproduced on Xvfb or WSLg.
+
+**NOT AN XSCHEM DEFECT.** No code change in this repo is indicated. What xschem
+does — repeated full-canvas redraws on zoom against a multi-window X server — is
+ordinary X client behaviour.
+
+### The fix, applied 2026-08-24
+
+`/mnt/c/Users/anant/Documents/config.xlaunch`, one attribute:
+
+```diff
+-ExtraParams=""
++ExtraParams="-nocompositewm"
+```
+
+Backup at `config.xlaunch.bak-precomposite`. `WindowMode="MultiWindow"` and
+`Wgl="True"` are untouched — `-nocompositewm` is independent of multi-window
+mode, so the user's normal layout and native WGL are both retained. The running
+server was restarted with the same flag.
+
+### A defect in the measuring instrument, recorded so it does not mislead later
+
+`scratchpad/vcx.sh dumps` counts files in `%LOCALAPPDATA%\CrashDumps`. Windows
+caps that directory (`DumpCount`, default 10) and **evicts the oldest**. The
+round-2 crash therefore left the count at 10 -> 10 while a new dump had in fact
+appeared. A future round trusting the count would read a fresh crash as a
+survival — the exact false-negative this issue has already been burned by.
+**Use dump timestamps, never the count.**
+
+### Residual questions, not blocking
+
+* Whether `-compositewm` is *needed* for anything the user relies on. Nothing
+  observed so far degrades without it, but that is absence of evidence over one
+  session; watch for transparency/shaped-window artefacts.
+* Whether the GDI ceiling is per-process or system-wide, i.e. whether a large
+  enough schematic re-crashes even without redirection. Round 1 held under the
+  user's normal working load; it was not pushed to a limit deliberately.
