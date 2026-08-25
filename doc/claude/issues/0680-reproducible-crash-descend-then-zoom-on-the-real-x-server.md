@@ -413,3 +413,58 @@ survival — the exact false-negative this issue has already been burned by.
 * Whether the GDI ceiling is per-process or system-wide, i.e. whether a large
   enough schematic re-crashes even without redirection. Round 1 held under the
   user's normal working load; it was not pushed to a limit deliberately.
+
+### Round 3 — instrumented crash. The residual question is answered.
+
+The user agreed to one more deliberate crash so the GDI pool could be sampled
+through it. Server armed on the original flags 18:22, `GetGuiResources` polled at
+2 Hz, crash at 18:23:23 (dump written; newest dump moved 18:06 -> 18:23).
+
+The machine's ceiling is the Windows default, read from the registry rather than
+assumed:
+
+```
+GDIProcessHandleQuota    REG_DWORD    0x2710      (= 10000)
+```
+
+| phase | duration | GDI objects | shape |
+|---|---|---|---|
+| idle | — | 22 | — |
+| client attached, ordinary use | 22 s | 217 -> 507 | **bounded**, oscillating ±1 |
+| sustained redraw | **11 s** | 507 -> **10000** | **monotonic, zero releases** |
+| dead | — | — | dump written |
+
+~860 GDI objects per second with nothing freed, terminating at exactly 10000.
+
+`GR_USEROBJECTS` stayed at 45–48 and kernel handles peaked at 613, so this is the
+GDI pool specifically and not general handle exhaustion.
+
+**This retires the second residual question above** ("whether the GDI ceiling is
+per-process or system-wide"): it is per-process, it is the documented default
+quota, and the workload reaches it in eleven seconds. It also **corrects the
+emphasis of the earlier entries in this file**. `CreateDIBSection() failed` is
+where the pool is *already empty* — 74 failures in this run, 1303 in the longer
+uninstrumented one, both merely the tail. The defect is whatever allocates ~9500
+GDI objects in eleven seconds without a matching free, and that is upstream's to
+find.
+
+Server restored to `-nocompositewm` immediately after; `config.xlaunch` already
+carries the flag.
+
+Evidence archived in `scratchpad/vcxlogs/`: `round3_gdi_samples.csv` (73 samples),
+`round3_compositewm_CRASHED_instrumented.log` (108 lines), plus the round-1 and
+round-2 logs.
+
+#### A self-inflicted measurement error, caught
+
+The archive step and the server-restart step were issued as **parallel** tool
+calls. The restart rotates `VCXSrv.0.log` to `.log.old`, so the copy raced the
+rotation and captured a 78-line file with `composite=0` and zero DIB failures —
+which would have read as *the instrumented crash produced no failures at all*.
+Caught only because those counts contradicted a run that had just killed the
+server, and re-archived correctly (108 lines, composite=1, 74 failures).
+
+Same lesson as the dump-count cap recorded above: **the instruments in this
+investigation have now produced three false readings** (the dump counter, four
+invalid drive attempts, this log race). Anything that arrives as a suspiciously
+clean result gets checked against a second signal before it is believed.

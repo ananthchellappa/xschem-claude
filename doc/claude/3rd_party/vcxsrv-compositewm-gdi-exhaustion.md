@@ -1,7 +1,7 @@
 # VcXsrv — server dies during sustained redraw in `-multiwindow` when composite redirection is on
 
 **Upstream**: https://github.com/marchaesen/vcxsrv
-**Status**: drafted 2026-08-24, **NOT FILED**. Filing needs the maintainer's go-ahead.
+**Status**: drafted 2026-08-24, instrumented same day, **NOT FILED**. Filing needs the maintainer's go-ahead.
 **Our issue**: `doc/claude/issues/0680-reproducible-crash-descend-then-zoom-on-the-real-x-server.md`
 **Duplicate check**: no exact match found (see *Prior art* below).
 
@@ -118,22 +118,77 @@ i.e. no client-side leak. So the churn is more likely in the server's own
 per-window backing store, or in glyph/pixmap handling under redirection, and we
 are not going to guess further in a bug report.
 
-**Directly measurable, if a maintainer wants it**: Windows caps a process at
-10,000 GDI objects by default. `GetGuiResources(hProcess, GR_GDIOBJECTS)` sampled
-against `vcxsrv.exe` during the workload would settle whether this is a monotonic
-leak or a burst. An idle server on these flags sits at **GDI=21**. From WSL:
+**Now measured** — see the next section. It is a **burst, not a slow leak**, and
+it terminates at exactly the documented per-process GDI ceiling.
 
-```powershell
-powershell.exe -NoProfile -Command "Add-Type -Namespace W -Name U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern uint GetGuiResources(IntPtr h, uint f);'; \$p=Get-Process vcxsrv; '{0} GDI={1} USER={2}' -f \$p.Id, [W.U]::GetGuiResources(\$p.Handle,0), [W.U]::GetGuiResources(\$p.Handle,1)"
+## The GDI curve, measured 2026-08-24 18:22–18:23
+
+`GetGuiResources(hProcess, GR_GDIOBJECTS)` sampled against `vcxsrv.exe` at 2 Hz
+across a full crash, from idle through death. The registry ceiling on this machine
+is the Windows default:
+
+```
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows
+    GDIProcessHandleQuota    REG_DWORD    0x2710      (= 10000)
 ```
 
-We have not run this under a crashing session yet; it costs the reporter one more
-deliberate crash and we did not want to claim a number we had not taken.
+### Two regimes, and the boundary is sharp
+
+| phase | wall clock | GDI objects | behaviour |
+|---|---|---|---|
+| idle, no client | 18:22:47 | **22** | — |
+| client attached, ordinary use | 18:22:50 – 18:23:09 (**22 s**) | 217 → **507** | **bounded**; oscillates ±1 around 502–507, i.e. allocation and release are balanced |
+| sustained redraw | 18:23:09 – 18:23:20 (**11 s**) | 507 → **10000** | **monotonic**; not one release in the entire climb |
+| process gone | 18:23:23 | — | new crash dump written |
+
+Raw deltas over the runaway phase (2 Hz, `+n` = objects gained since previous sample):
+
+```
+18:23:09    507
+18:23:09   1180   +673
+18:23:10   1274    +94
+18:23:10   1350    +76
+18:23:11   1727   +377
+18:23:12   2352   +625
+18:23:13   3581  +1229
+18:23:13   4658  +1077
+18:23:14   5494   +836
+18:23:15   5992   +335
+18:23:15   6644   +652
+18:23:16   7349   +705
+18:23:16   7928   +579
+18:23:17   8323   +395
+18:23:18   8646   +163
+18:23:19   9151   +486
+18:23:19   9514   +363
+18:23:20   9662   +148
+18:23:20  10000   +338      <- ceiling, exactly
+```
+
+Roughly **860 GDI objects per second, sustained, with zero releases**, from a
+healthy steady state of ~500.
+
+### Three things this settles
+
+1. **It is not a gradual leak.** The server sat at a flat ~500 for 22 seconds of
+   ordinary interaction, releasing as fast as it allocated. Whatever the redraw
+   path does, it takes a different branch — one with no matching free.
+2. **It is GDI specifically.** `GR_USEROBJECTS` stayed flat at **45–48** and the
+   kernel handle count peaked at **613** across the whole run. Only the GDI pool
+   moves.
+3. **`CreateDIBSection() failed` is the symptom, not the cause.** In this run the
+   log carries 74 of them, first at line 30 — they begin *after* the pool is
+   exhausted. The 1303 seen in an earlier uninstrumented run is just a longer
+   tail. **The bug to find is whatever allocated ~9500 GDI objects in 11 seconds
+   without freeing one**, not the allocation that eventually failed.
+
+Sample data and both logs are archived alongside this report and are available.
 
 ## Available on request
 
-Ten minidumps (2.9–5.0 MB each) and the full 1398-line log of the crashing run,
-plus the clean log of the surviving one. **Not attached here**: dumps of an X
+Minidumps (2.9–5.0 MB each), the 1398-line log of the uninstrumented crashing
+run, the 108-line log of the instrumented one, the clean log of the surviving run,
+and the raw 2 Hz GDI sample CSV. **Not attached here**: dumps of an X
 server carry window titles and possibly window contents, so they should be
 reviewed before being handed to anyone.
 
