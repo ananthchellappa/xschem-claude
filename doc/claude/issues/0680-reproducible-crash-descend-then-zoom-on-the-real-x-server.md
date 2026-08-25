@@ -295,3 +295,53 @@ Falsification plan, one variable per round:
 
 Round 2 is not optional. A survival in round 1 with no positive control is the
 same shape of non-result as the four invalid drive attempts recorded above.
+
+### Round 1 result — SURVIVED, and the log discriminates cleanly
+
+The user drove the reproduction case by hand under
+`-multiwindow -clipboard -primary -ac -wgl -nocompositewm`:
+
+> With current VcXsrv — which I believe is using -nocompositewm — not able to get
+> it to crash VcXsrv by zooming in/out displaying OP info, etc.. X server is
+> stable and robust
+
+Objective corroboration, taken before the server was cycled for round 2:
+
+* crash dumps **10 -> 10** (no new `vcxsrv.exe.*.dmp`)
+* server still answering `xdpyinfo`
+* live log carried **no** `Using Composite redirection`
+
+The surviving run's log is archived at
+`scratchpad/vcxlogs/round1_nocompositewm_SURVIVED.log`. Counted against the
+crashing run:
+
+| line | crashing run (`.log.old`, 17:49) | round 1, survived |
+|---|---|---|
+| `Using Composite redirection` | 1 | **0** |
+| `winCreateDIB: CreateDIBSection() failed` | 27 | **0** |
+| `winBltExposedWindowRegionShadowGDI - BitBlt failed` | 2 | **0** |
+| `winMultiWindowWMProc - Error code: 3 (Window)` | present | **35** |
+
+Two things follow, and the second is a correction.
+
+1. The GDI-exhaustion signature is **perfectly discriminating** so far: every
+   `CreateDIBSection` failure ever seen sits downstream of composite redirection,
+   and removing redirection removes all of them along with the crash.
+2. **The `winMultiWindowWMProc - Error code: 3 (Window)` errors are not part of
+   this.** They appear 35 times in a run that survived a full zoom session. An
+   earlier note in this file put them alongside the composite line as if they
+   were joint evidence; they are ambient multi-window WM noise and should be
+   ignored for this issue.
+
+### Round 2 — the positive control, armed 2026-08-24
+
+Server restarted on the user's **original** flags, the single change reverted:
+
+```
+-multiwindow -clipboard -primary -ac -wgl
+```
+
+Live log confirms `Using Composite redirection` is back (count 1). Dumps at 10 at
+arming time. The prediction under test is that the same hand-driven case now
+crashes again; if it does not, round 1 proves nothing and the survival was luck
+or an unmeasured co-variable.
