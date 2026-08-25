@@ -11,13 +11,37 @@ question. Related: 0613, 0457(b).
 ## THE QUESTION FOR THE USER, IN ONE LINE
 
 > Should `annot_show` default to **0** — node voltages and branch currents OFF at
-> startup until you press `Alt-6` / tick View > Show node voltage / branch current
-> annotation / use Waves > Op Annotate — or to **2**, i.e. node voltages ON at
-> startup exactly as every XSCHEM before 0614, with the chords and the View pair
-> still owning them?
+> startup until you ask for them — or to a value that restores what every XSCHEM
+> before 0614 did, i.e. node voltages ON at startup, with the chords and the View
+> pair still owning them?
 
-Both are one line. Shipped as 0; `set annot_show 2` in `~/.xschem/xschemrc`
+Both are one line. Shipped as 0; a `set annot_show <n>` in `~/.xschem/xschemrc`
 reverses it with no rebuild.
+
+### ⚠ 2026-08-24 — 0678 CHANGED THIS QUESTION'S ARITHMETIC. READ BEFORE RULING.
+
+The paragraph above used to read *"until you press `Alt-6` / tick View > Show node
+voltage / branch current annotation"*, and *"or to **2**, i.e. node voltages ON at
+startup exactly as every XSCHEM before 0614"*. **All three of those clauses became
+false** when [0678](0678-branch-currents-are-gated-by-alt-6-but-belong-to-6.md) moved
+the branch-current class from bit1 to bit0:
+
+| the old wording said | after 0678 |
+|---|---|
+| `Alt-6` restores node voltages **and branch currents** | `Alt-6` restores **node voltages only**; branch currents need `6` |
+| tick *"View > Show node voltage / branch current annotation"* | **that entry no longer exists** — the pair is now *"Show device OP / branch current annotation"* (bit0) and *"Show node voltage annotation"* (bit1) |
+| **2** == pre-0614 stock behaviour | **3** is the pre-0614 equivalent. Mask 2 restores the node voltages but **not** the branch currents, which were also always-on before 0614 |
+
+So the real choice is now **three-way**, and it is the write-up agent's reading of
+the same question, not a new ruling:
+
+* **0** — nothing at startup (shipped);
+* **2** — node voltages at startup, branch currents still behind `6`;
+* **3** — the true pre-0614 restoration: node voltages **and** branch currents on,
+  which is what a user upgrading from stock XSCHEM would recognise.
+
+Nothing else in this issue changes: the mechanism, the `set_ne`-vs-`xinit.c:941`
+trap and the `tctx::global_list` requirement are all unaffected.
 
 ## Why the question exists at all
 

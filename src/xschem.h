@@ -413,9 +413,16 @@ typedef int Tcl_Size;
  *     `hide=voltage` on the same record must still follow bit1;
  *   - the COLOUR override (0615) applies to TEXT_ANNOT_VOLTAGE only: a text whose
  *     author typed `hide=voltage` chose its own `layer=` and keeps it.
- * TEXT_ANNOT_CURRENT joins the voltage SWITCH (0613 lists branch currents among what
- * survives Ctrl-6) but takes NO colour override -- layer 17 `#00ffcc` in both
- * palettes, 84 shipped records. That is decision D4, written down as 0615 demands.
+ * TEXT_ANNOT_CURRENT follows bit0, ANNOT_SHOW_OP (`6`), and takes NO colour override
+ * -- layer 17 `#00ffcc` in both palettes, 84 shipped records. ⚠ THAT IS ISSUE 0678
+ * REVERSING HALF OF DECISION D4. 0614 read 0613's "surviving Ctrl-6" list, saw branch
+ * currents in it beside the node voltages, and put both classes on bit1 -- grouping
+ * them by where the number comes from in the raw. The user drove a real sky130 bench
+ * on 2026-08-24 and grouped them by what the number is ABOUT: a source's branch
+ * current is that DEVICE's terminal current, device OP info like a FET's id, so it
+ * belongs to `6`. `Ctrl-6 -> nothing` still holds -- mask 0 clears both bits. The
+ * COLOUR half of D4 was not reversed. The one place the grouping is written down is
+ * annot_class_mask in actions.c; see doc/claude/issues/0678-*.md.
  * The implicit class is set ONLY when the `hide=` chain set no bit at all, so the
  * nine tracked records carrying BOTH hide=true and a bare token keep answering
  * show_hidden_texts alone (invariant I7). */
@@ -884,9 +891,10 @@ typedef struct
               *                              gated by annot_show, painted in
               *                              annot_voltage_layer -- issues 0614/0615)
               * bit 9 : TEXT_ANNOT_CURRENT  (implicit content class: branch current,
-              *                              gated by annot_show, keeps its own layer)
+              *                              gated by annot_show BIT0 -- device OP
+              *                              info, issue 0678 -- keeps its own layer)
               * recomputed by set_text_flags() from prop_ptr AND from txt_ptr (bits 8/9
-              * carry the implicit content class, issue 0614), never serialised */
+              * carry the implicit content class, issues 0614/0678), never serialised */
   unsigned int id; /* session-stable identity, stamped at birth in store.c
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is
@@ -2230,9 +2238,11 @@ typedef struct {
   void (*clear_undo)(void);
   int case_insensitive; /* for case insensitive compare where needed MIRRORED IN TCL*/
   int show_hidden_texts; /* force show texts that have hide=true attribute set MIRRORED IN TCL*/
-  int annot_show; /* annotation-class visibility mask: bit0 device OP info (hide=op),
-                   * bit1 node voltages (hide=voltage). Independent of show_hidden_texts
-                   * (decision D3). See text_hidden() in actions.c MIRRORED IN TCL*/
+  int annot_show; /* annotation-class visibility mask: bit0 device OP info (hide=op AND
+                   * content-classified branch currents, issue 0678), bit1 node voltages
+                   * (hide=voltage and content-classified node voltages). Independent of
+                   * show_hidden_texts (decision D3). See text_hidden() in actions.c and
+                   * the grouping in annot_class_mask beside it MIRRORED IN TCL*/
   int annot_voltage_layer; /* 0615: the layer a CONTENT-classified node voltage renders
                    * in, overriding the symbol text's own layer=. Default 9 (#ffffff on
                    * the default dark palette, which is what the user asked for; #00aaaa

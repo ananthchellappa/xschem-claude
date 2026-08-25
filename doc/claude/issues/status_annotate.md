@@ -207,14 +207,18 @@ Worth stating, because the issue count hides it.
 * The OP-annotation feature works end to end on a real bench. Measured on
   `tb_bandgap`: `id = 4.944u | gm = 7.749u | gds = 9.592u | vgs = 1.805 |
   vth = 1.017`, with node voltages surviving (365 before, 365 after).
-* The chords behave as ruled: `6` adds OP info, `Alt-6` adds node voltages,
-  `Ctrl-6` clears — two additive setters and one clear-all, never a toggle.
+* The chords behave as ruled: `6` adds OP info **and branch currents**, `Alt-6`
+  adds node voltages **alone**, `Ctrl-6` clears — two additive setters and one
+  clear-all, never a toggle. ⚠ **The branch-current membership was REVERSED on
+  2026-08-24 (issue 0678)** after the user drove the real bench: it used to ride
+  `Alt-6` with the node voltages. A device's terminal current is device OP info;
+  a node voltage is a property of the net. Colour is unchanged (layer 17).
 * ngspice does **not** need modifying. A bare `show` in a `.control` block dumps
   every OP parameter of every device (spec §3.1, rule R5); save cards stay
   primary because `show` is operating-point only.
 * Tiers at HEAD: `test_ase_core` **172** · `test_ase_log_seam_0207` **48** ·
   `test_startup_guard_0663` 22 · `test_ase_final` 67 · `test_ase_dialogs`
-  166 · `test_ase_window` 182 · `test_ase_cosim` 341 · `test_op_annot` 330/336 ·
+  166 · `test_ase_window` 182 · `test_ase_cosim` 341 · `test_op_annot` **335** ·
   T2 6/6. T1's 3 FAIL are pre-existing and unrelated, as is `test_ciw`'s 1
   (issue 0670). (`test_ase_core` 159→172 and the seam 41→48 on 2026-08-24, the
   0664+0665+0666 crew.) ⚠ `test_ase_core`'s NTD block reads spawned children's

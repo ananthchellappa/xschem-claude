@@ -24,32 +24,44 @@ of that switch is `0`, which is the part nobody has ratified yet (issue 0621).**
 
 Before this change, `@spice_get_voltage` texts on `lab_pin` / `ipin` / `opin` /
 `vdd` / `lab_wire` / `ngspice_probe` — and the branch currents on `ammeter` /
-`capa` / `ind` / `diode` / `isource` / `bsource` / `cccs` — appeared the moment a
-raw was loaded, whatever the annotation mask said. That was the complaint in 0613
+`capa` / `ind` / `diode` / `isource` / `bsource` / `cccs` / `vsource` — appeared the
+moment a raw was loaded, whatever the annotation mask said. That was the complaint in 0613
 ("node voltages are already displayed without asking for them") **and** the reason
 `Ctrl-6` did not mean "everything off": it cleared the device OP blocks and left
 every node voltage painted. Both halves are the same defect, and fixing it means
 the voltages now follow `annot_show` bit 1.
 
+⚠ **The two classes are on DIFFERENT bits (issue 0678).** Node voltages follow
+bit 1 (`Alt-6`); **branch currents follow bit 0 (`6`)**, beside the device OP
+blocks. 0614 first put both on bit 1; the user drove a real sky130 bench on
+2026-08-24 and ruled the other way — a source's branch current is *that device's*
+terminal current, i.e. device OP info like a FET's `id`, while a node voltage is a
+property of the *net*. `Ctrl-6` still clears both, because it clears both bits.
+
 ### Three ways to get them back
 
 ```tcl
-# 1. the chord, in a cadence_style_rc session
-Alt-6                    ;# adds node voltages; press 6 as well for device OP blocks
+# 1. the chords, in a cadence_style_rc session
+Alt-6                    ;# adds node voltages
+6                        ;# adds device OP blocks AND branch currents
 
 # 2. the stock menu, no profile needed
-View > Show node voltage / branch current annotation
+View > Show node voltage annotation                 ;# bit 1
+View > Show device OP / branch current annotation   ;# bit 0
 
 # 3. permanently, in ~/.xschem/xschemrc
-set annot_show 2         ;# voltages + currents on from startup
-set annot_show 3         ;# ... and device OP blocks too
+set annot_show 2         ;# node voltages on from startup
+set annot_show 1         ;# device OP blocks + branch currents on from startup
+set annot_show 3         ;# ... both -- and THIS is the pre-0614 stock behaviour,
+                         ;#     not 2: before 0614 the node voltages AND the branch
+                         ;#     currents were both always-on (issue 0621)
 ```
 
 ### The chords are ADDITIVE now, which is not how they used to work
 
 | chord | what it does | what it does NOT do |
 |---|---|---|
-| `6` | `annot_show \|= 1` — adds device OP blocks | never removes node voltages; **not a toggle** — press it twice and nothing changes |
+| `6` | `annot_show \|= 1` — adds device OP blocks **and branch currents** (issue 0678) | never removes node voltages; **not a toggle** — press it twice and nothing changes |
 | `Alt-6` | `annot_show \|= 2` — adds node voltages | never removes OP blocks |
 | `Ctrl-6` | `annot_show = 0` | — this is the **only** off switch |
 

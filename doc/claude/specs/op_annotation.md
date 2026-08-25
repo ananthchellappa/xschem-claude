@@ -1602,8 +1602,12 @@ The message matrix, as built. **⚠ RE-KEYED 2026-08-22 (0614): the line is word
 off the RESULTING MASK, not off the mode.** Under additive semantics a mode-worded
 line lies — `Alt-6` from a clean start produces voltages alone while `opvolt` would
 still have said "device OP info + node voltages". Note the deliberate wording split:
-the status line says "node voltages" where the View checkbutton says "node voltage
+the status line says "node voltages" where the View checkbutton said "node voltage
 / branch current" (terser on a transient surface, complete on the discoverable one).
+**⚠ Issue 0678 made mask 2's wording exact rather than terse**: the branch currents
+moved to bit0, the View pair is now "Show device OP / branch current annotation" /
+"Show node voltage annotation", and these four status strings are byte-identical to
+what they were (rows N3/N5/N6/N8/N9/N10/N10b/N15/N23 unchanged).
 
 | state | line |
 |---|---|
@@ -1754,7 +1758,7 @@ match is made on the text **left of the first `'('`**. That rule is what survive
 | class | spellings |
 |---|---|
 | `TEXT_ANNOT_VOLTAGE` (bit 256) | `@spice_get_voltage`, `@spice_get_voltage(…)`, `@spice_get_diff_voltage`, `@#<pin>:spice_get_voltage` (+ its `(…)` form) |
-| `TEXT_ANNOT_CURRENT` (bit 512) | `@spice_get_current`, `@spice_get_current_<ident>` (+ their `(…)` forms) |
+| `TEXT_ANNOT_CURRENT` (bit 512) | `@spice_get_current`, `@spice_get_current_<ident>` (+ their `(…)` forms) — gated by **bit0** since 0678 |
 
 * **`@spice_get_current<n>` DOES NOT EXIST** and is not classified. There is no
   branch for it anywhere in `token.c`; its only appearance in the whole tree is a
@@ -1790,14 +1794,39 @@ bit**:
   user who never annotates.
 
 The predicate gained **one** leading branch, and **no eleventh visibility site
-exists**:
+exists**. As 0614 shipped it, both content classes left through one test:
 
 ```c
-if(flags & (TEXT_ANNOT_VOLTAGE|TEXT_ANNOT_CURRENT)) {
+if(flags & (TEXT_ANNOT_VOLTAGE|TEXT_ANNOT_CURRENT)) {   /* 0614, superseded */
   if(ctx == TEXT_CTX_INSTANCE || (flags & TEXT_FLOATER))
     return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
 }
 ```
+
+**⚠ Issue 0678 split that in two**, because a source's branch current is *that
+device's* terminal current — device OP info, like a FET's `id` — while a node
+voltage is a property of the *net*, and the user ruled on a real bench that they
+answer to different chords. The grouping now lives in **one named place**, shaped
+like its colour twin `annot_text_layer(flags, ctx)` so the two cannot drift
+(invariant **I1**), with invariant **I7**'s `ctx` term *inside* it so a split
+cannot silently drop a copy of the guard:
+
+```c
+static int annot_class_mask(int flags, int ctx)
+{
+  if(ctx != TEXT_CTX_INSTANCE && !(flags & TEXT_FLOATER)) return 0;
+  if(flags & TEXT_ANNOT_VOLTAGE) return ANNOT_SHOW_VOLTAGE;   /* bit1, Alt-6 */
+  if(flags & TEXT_ANNOT_CURRENT) return ANNOT_SHOW_OP;        /* bit0, `6`   */
+  return 0;
+}
+/* ... in text_hidden(): */
+int m = annot_class_mask(flags, ctx);
+if(m) return (xctx->annot_show & m) ? 0 : 1;
+```
+
+`Ctrl-6 → nothing` survives untouched: mask 0 clears both bits. Rows U6 / U31 /
+U32 / U33 / U35 of `tests/headless/test_op_annot.tcl` and A4 / A5 / A19 of
+`test_annot_show_menu.tcl` own this.
 
 All ten `text_hidden()` callers inherit it — including `select.c:709`, which is
 what shrinks the carrier's bbox back, and `actions.c:1475` (the S9b overlay's own
@@ -1841,12 +1870,19 @@ Four `text_hidden()` sites must **NOT** get a colour override: `draw.c:1135`
 (`inst_text_bbox`), `select.c:709` (`symbol_bbox`) and `actions.c:4796`
 (`calc_drawing_bbox`) — all geometry or GC-parameterised.
 
-**Branch currents JOIN the switch (bit1) and KEEP layer 17.** 0613's
+**Branch currents JOIN the switch and KEEP layer 17.** 0613's
 surviving-`Ctrl-6` list contains them, so "`Ctrl-6` → nothing" is false without
 them; and layer 17 is `#00ffcc` in **both** palettes across 84 shipped records,
 already distinct from both 15 and the new 9, while the user's request named
 voltages only. Rejected: a third mask bit (`Alt-6` would become 7 — a fourth state
 against a three-row ruling table); folding currents into `annot_voltage_layer`.
+**⚠ WHICH switch changed with issue 0678 — bit0, not bit1.** 0614 read that
+surviving-`Ctrl-6` list and grouped the two classes by *where the number comes
+from in the raw*; the user drove a real sky130 bench 2026-08-24 and grouped them
+by *what the number is about*. Only the VISIBILITY half of that decision moved.
+The COLOUR half is exactly as written here — `annot_text_layer()` tests
+`TEXT_ANNOT_VOLTAGE` alone, so currents keep layer 17 — and `Ctrl-6 → nothing`
+still holds, since mask 0 clears both bits.
 
 Result, one fixture, four masks: `#ffffff` node voltage (layer 9), `#ff7777` OP
 block (15), `#00ffcc` branch current (17) — three distinct colours where the user
@@ -1948,6 +1984,53 @@ what a schematic *shows*, so almost every choice is user-visible.
 change; see the S12 block of the plan for what else that step still owes.)*
 
 ---
+
+### ⚠ 0678 — what the reversal measured about I1 and I7 (2026-08-24)
+
+**I1 held, and the step tightened it.** The content class → `annot_show` bit mapping
+was a folded expression inline in `text_hidden()`; it is now the single named helper
+`annot_class_mask(flags, ctx)` (`src/actions.c`), deliberately shaped like its colour
+twin `annot_text_layer(flags, ctx)` beside it so the visibility answer and the colour
+answer cannot drift apart. Row **U35** asserts the structure, not just the behaviour:
+`annot_class_mask(` occurs exactly **2×** in `actions.c` (definition + its one call)
+and the folded `TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT` occurs **0×** tree-wide.
+⚠ Read U35 narrowly: its count element matches a **literal string**, so it cannot see
+a *shadowing reimplementation* (rename the real helper, put a same-named stub in
+front) — measured, it stayed green under two such sabotage variants that the
+behavioural rows caught. It guards an added or removed **call**, not a second body.
+
+**⚠ I1 IS WEAKER THAN THIS SECTION STATES, and 0678 neither caused nor worsened it.**
+The invariant says one name builder; there are **two**, in two languages.
+`op_annot::_wrap` (`src/op_annot.tcl`) hand-mirrors the `iprefix`/`ipostfix`
+convention of `get_fqdevice()` (`src/token.c`), and `op_annot.tcl` says so in its own
+comment. The C display path is a second builder by any reading of I1. Recorded here
+because a later step that trusts the invariant literally will be surprised; closing
+it is out of scope for a visibility gate.
+
+**I7 held — and its `ctx` guard is now structurally undroppable.** Splitting one test
+into two answers would have meant writing `ctx == TEXT_CTX_INSTANCE || (flags &
+TEXT_FLOATER)` twice; instead the term lives **inside** `annot_class_mask()`. This
+matters more than it reads: measured before the change, a schematic-own NON-floater
+`T {@spice_get_current} … {layer=17}` renders the **literal string** at all four
+masks, and nothing in the tree guarded that (row U27 covered the voltage spelling
+only). Sabotage variant SB3 dropped the guard and reddened **exactly** U27 and the new
+U33, nothing else.
+
+**⚠ I7's FLOATER half has a shipped population this spec has never named — issue
+0681.** The two schematic-own spellings take *opposite* branches of the same guard,
+and the suite guards only the one that ships nowhere:
+
+| shape | ships in | guarded by |
+|---|---|---|
+| schematic-own **NON**-floater | **no** tracked sheet | **U33** |
+| schematic-own **FLOATER** | `ngspice/solar_panel.sch:269,270`, `ngspice/pv_ngspice.sch:68` | **nothing** |
+
+All three shipped floaters resolve and **moved from `Alt-6` to `6`** with 0678
+(measured — correct, and the intended consequence). A fourth record,
+`pcb/pcb_current_protection_embed.sch:440`, carries `hide=true`, so the `hide=` chain
+wins and it never gets an implicit class at all. ⚠ An earlier draft of U33's comment
+asserted the census was **zero** and that no shipped sheet would move; both halves
+were false — it re-used U27's census, which is correctly scoped to the non-floater.
 
 ## 6. Landmines
 

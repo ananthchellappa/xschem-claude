@@ -325,7 +325,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0678.** (0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0682.** (0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -764,7 +764,7 @@ predicate and one draw pass. They change things every remaining step touches.
 | `Ctrl-6` | `annot_show = 0` | unchanged — the **only** off switch |
 | bit1 (`ANNOT_SHOW_VOLTAGE`) | gated **nothing** (`hide=voltage` = 0 files in the tree) | gates a **content-derived implicit class** on `@spice_get_voltage` / `@spice_get_current*` texts |
 | node voltage colour | layer 15 — **identical to the OP block** | layer **9** via the new config var `annot_voltage_layer` (`#ffffff` dark, `#00aaaa` light) |
-| branch currents | layer 17, ungated | layer 17 (**kept**), now gated by bit1 |
+| branch currents | layer 17, ungated | layer 17 (**kept**), gated by ~~bit1~~ **bit0 — REVERSED 2026-08-24, issue 0678, see the block below** |
 | Waves > Op Annotate menu | `xschem set annot_show 1` | `3` (a **hard set** — its semantics differ from the chords, deliberately) |
 | `xschem get/set annot_voltage_layer` | rc=0, silently did nothing | real, per-context, mirrored in Tcl |
 
@@ -803,7 +803,15 @@ classifier and the colour.
      `@spice_get_diff_voltage` are real and were missing from every list;
    * the implicit class is added **only when the `hide=` chain set no bit**, and
      a **schematic-own** text is classified **only when it is a floater**. Both
-     guards are invariant **I7**; removing either regresses a non-annotating user;
+     guards are invariant **I7**; removing either regresses a non-annotating user.
+     ⚠ **Since 0678 both guards live inside `annot_class_mask(flags, ctx)`
+     (`actions.c`), which is now the ONLY place in the tree that maps a content
+     class to an `annot_show` bit.** Do not re-inline it: the folded expression
+     `TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT` must stay at **zero** occurrences,
+     and row **U35** asserts exactly that;
+   * ⚠ **the two flags no longer answer the same chord** — `TEXT_ANNOT_VOLTAGE`
+     → bit1 (`Alt-6`), `TEXT_ANNOT_CURRENT` → **bit0 (`6`)**. A later step that
+     reasons about "the annotation class" as one thing will be wrong;
    * `editprop.c` now re-runs `set_text_flags()` on a **content-only** edit. Any
      new path that rewrites `txt_ptr` must do the same or the class goes stale.
 
@@ -834,6 +842,10 @@ classifier and the colour.
 
 7. **THE MASK'S RESTING VALUE NOW DECIDES WHETHER STOCK LIVE BACK-ANNOTATION
    APPEARS AT ALL** — it is shipped at 0, and issue **0621** is the ratification.
+   ⚠ **0678 CHANGED THAT QUESTION'S ARITHMETIC and 0621's file has been corrected:
+   the pre-0614 restoration is now mask 3, not mask 2** (mask 2 brings back the node
+   voltages but not the branch currents, which were also always-on before 0614).
+   A crew that quotes the old two-way "0 or 2" phrasing is quoting a dead sentence.
    ⚠ The value a user experiences is the **`set_ne` line in `src/xschem.tcl`**,
    not `xinit.c:941`: a new tab inherits from the Tcl mirror, so the C
    initialiser only ever applies to the **first** context of a session. A step
@@ -861,6 +873,113 @@ classifier and the colour.
    false).
 
 10. **NUMBER NEW ISSUES FROM 0648.** *(Live line as of 2026-08-23: the 0614+0615 item consumed 0621–0625, S3 filed 0626–0632, S4 filed 0633–0637, the 0617+0618 crew filed 0638–0642, and the 0616 crew filed 0643–0647.)*
+
+---
+
+## ✅ 0678 — LANDED 2026-08-24 (status **E**). IT REVERSES ONE ROW OF THE TABLE ABOVE
+
+**Not a plan step.** A **RULING REVERSAL**, not a coding slip: the code did exactly
+what 0614's decision **D4** said, and the user drove the real bench on 2026-08-24 and
+ruled the other way —
+
+> *"ALT-6 is doing its job for node voltages - but it's also displaying OP info of
+> voltage sources - namely their current. That should be controlled by 6 key, not
+> Alt-6. Otherwise, Alt-6 and 6 and Ctrl-6 behave as expected."*
+
+**A device's terminal current is device OP info; a node voltage is a property of the
+net.** The chords split on *what the number is about*, not on where it comes from in
+the raw. So `TEXT_ANNOT_CURRENT` moved from `ANNOT_SHOW_VOLTAGE` to `ANNOT_SHOW_OP`.
+
+| | before 0678 | after |
+|---|---|---|
+| `6` (bit0) | device OP blocks | device OP blocks **+ branch currents** |
+| `Alt-6` (bit1) | node voltages **+ branch currents** | node voltages **alone** |
+| `Ctrl-6` | clears both | **unchanged** — mask 0 clears both bits |
+| branch-current **colour** | layer 17 | **layer 17, unchanged** — `annot_text_layer()` still tests the voltage flag alone, so 0615's colour half was NOT reversed |
+| View > Show labels | *"Show device OP annotation"* / *"Show node voltage / branch current annotation"* | *"Show device OP / branch current annotation"* / *"Show node voltage annotation"* |
+
+`test_op_annot` **330 → 335** ALL PASS · `test_annot_show_menu` **25 → 26** ALL PASS ·
+`test_launch_context` **15** ALL PASS, file untouched · T1 3 FAIL (pre-existing, see
+below) and T2 6/6 both unmoved. Full record: issue **0678**, spec **§4.8**.
+
+### ⚠ WHAT THIS BINDS FOR EVERY LATER STEP
+
+1. **THE GROUPING NOW LIVES IN EXACTLY ONE PLACE.**
+   `annot_class_mask(int flags, int ctx)` in `src/actions.c`, immediately above
+   `text_hidden()` and shaped like its colour twin `annot_text_layer(flags, ctx)`
+   so the two cannot drift (invariant **I1**). `text_hidden()` is now
+   `int m = annot_class_mask(flags, ctx); if(m) return (xctx->annot_show & m) ? 0 : 1;`.
+   **Invariant I7's `ctx` term lives INSIDE the helper on purpose** — two parallel
+   `if`s would mean writing the guard twice and a dropped copy silently blanks a
+   literal string a user typed. Row **U35** pins `annot_class_mask(` at exactly 2
+   occurrences and the folded flag test at 0.
+
+2. **`ANNOT_SHOW_OP` NOW HAS THREE PRODUCER CLASSES, NOT TWO** — explicit
+   `hide=op`, the S9b draw-time overlay (`actions.c`, a literal `HIDE_TEXT_OP`), and
+   now the implicit `TEXT_ANNOT_CURRENT`. A step that counts what `6` paints must
+   count all three.
+
+3. **AN EXPLICIT `hide=` STILL BEATS THE IMPLICIT CLASS.** A text whose author typed
+   `hide=voltage` on `@spice_get_current` content still follows **bit1**. That is
+   deliberate and it is *why the two classes need two bits* — but it means
+   *"branch currents belong to `6`"* has an authorable exception.
+
+4. **THREE SHIPPED SHEETS CHANGED CHORD AND NO ROW GUARDS THEIR SHAPE — issue 0681.**
+   `xschem_library/ngspice/solar_panel.sch:269,270` and `pv_ngspice.sch:68` carry
+   schematic-own **FLOATER** `@spice_get_current` records. They resolve and follow
+   bit0 now (measured — correct). **U33 guards the NON-floater spelling, which ships
+   in no sheet at all**; the shape that ships in three has no row. 0681 carries the
+   fixture, the four-record census and the red-phase variants a fix needs.
+   ⚠ U33's original comment claimed the census was *zero* and that no shipped sheet
+   would move; that was false in both halves and the comment has been corrected.
+
+5. **`cadence::_annot_msg`'s FOUR STATUS STRINGS ARE DELIBERATELY BYTE-IDENTICAL.**
+   Mask 2's *"node voltages"* became exact rather than terse. Adding *"+ branch
+   currents"* to mask 1 would churn nine committed goldens for no user gain — that is
+   0614's own decision **D9** and it survives the reversal. **Do not "tidy" them.**
+
+6. **0623 IS NOT FIXED AND MUST NOT BE CLAIMED AS FIXED.** `nmos4.sym`'s bare
+   `@spice_get_current` is whole-string classified and moved to bit0 with everything
+   else (correct — a FET's terminal current is device OP info). 0623's actual defect,
+   the `tcleval(vgs=… vds=…)` composites at `nmos4.sym:56-57` surviving `Ctrl-6` in
+   the OP block's colour, is a **different mechanism** — those carry no class bit at
+   all — and is still open. Rows U12/U13 pin it.
+
+7. **0625 IS THE RECORD FOR THE `-` PLACEHOLDER, AND 0678 MOVED IT TO THE `6` KEY.**
+   0678's acceptance row 4 asserted a missing vector renders *"BLANK, not absent"*.
+   Measured: it renders **neither** — the `<text>` element is present with content
+   `-`, the C token path's convention since long before `annot_show`. That is
+   **already filed as 0625**; the implementing agent re-derived it independently and
+   reserved a fresh number before this was caught. **No new issue was filed for it.**
+   Row **U34** now pins `-` as a golden, so whoever closes 0625 must update U34 with
+   the fix or the fix reds it.
+
+8. **STATUS E — TWO DEBTS ARE OPEN AND THE PIXELS ARE UNSEEN.** `draw.c` has no
+   headless oracle; every measurement went through `svgdraw.c` and `psprint.c`.
+   `look` debt `[0678_branch_currents_moved_from_Alt-6_to_6]` and `rule` debt
+   `[0678]` (the View label wording). ⚠ **The already-open look debt
+   `[0614_0615_on_screen…]` and rule debt `[0614]` describe the PRE-reversal table
+   ("Alt-6 both") and are STALE for the branch-current half** — their node-voltage
+   and colour halves still stand. Do not clear one against the other.
+
+9. **THE TWO PRE-EXISTING T1 FAILURES ARE NOT A REGRESSION AND NOT PRODUCT DEFECTS.**
+   `headless/test_ihp_sg13g2_libmgr` (its hard-coded 9-library list never learned
+   about `ihp-sg13g2/xschem_libs/sg13g2_tests_ase`, gained in `bf83fa95`) and
+   `headless/test_pdk_launcher` (**its own log ends `OVERALL: ok (30 checks)` — all
+   30 PASSED**; `run_regression.tcl:117`'s anchored `^OVERALL: ok$` cannot match the
+   ` (30 checks)` suffix, so the harness synthesises a FAIL). ⚠ **Read T1 out of
+   `tests/results.log`, not `run_regression.tcl`'s stdout** — stdout carries only
+   Start/Finish lines and greps clean, which reads as a false improvement.
+
+10. **NUMBER NEW ISSUES FROM 0682.** *(This item filed **0681**; 0679 and 0680 were
+    taken by concurrent crews in the same run.)* ⚠ **0700–0799 is RESERVED** — after
+    0699 the next number is **0800**.
+
+11. **A WORKTREE HAZARD, measured during this run.** A sabotage agent rebuilding
+    `src/xschem` mid-run moved the binary underneath a concurrently-measuring agent,
+    which then read a sabotage build's behaviour as a product defect. **Record
+    `ls -l src/xschem` before AND after any measurement while another agent is live**,
+    and never share a scratch dir whose drivers hard-code their own output paths.
 
 ---
 
@@ -3824,7 +3943,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0638**. *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0682**. *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were

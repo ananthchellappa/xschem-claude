@@ -6705,8 +6705,15 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
 # ============================================================================
 # RED before (18): U1 U2 U3 U6 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23
 #                  U25 U26 U28 U30
-# GREEN before AND after (12), every one load-bearing and NONE of them evidence
-# that 0614/0615 happened:
+#
+# ⚠ AND RED AGAIN, AFTER ISSUE 0678 REVERSED DECISION D4 (4): U31 U34 U35 — and
+# U6, WHOSE GOLDEN FLIPPED, {0 0 1 1} -> {0 1 0 1}. U6 was green against the
+# shipped D4 code and is red against it now, deliberately: that flip IS 0678,
+# not a fixture drift. See the branch-current block below for the reversal, and
+# rows U31/U32 for the user's own sheet.
+#
+# GREEN before AND after (14), every one load-bearing and NONE of them evidence
+# that 0614/0615/0678 happened:
 #   U4  bit0 already works (S7). It is here so a fix that moved the OP block
 #       instead of the voltages reds a named row.
 #   U5  non-vacuity: without it U3 passes on an exporter that draws nothing.
@@ -6721,6 +6728,19 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
 #   U29 an EXPLICIT hide=voltage on that same non-floater context still follows
 #       bit1: the floater guard U27 demands must apply to the IMPLICIT class
 #       only, never to the class an author typed.
+#   U32 0678's acceptance row 3, on the USER'S OWN SHEET: `Ctrl-6` still clears
+#       the voltage source's branch current AND the node voltage, and mask 3
+#       still shows both. Green before and after — bit0 and bit1 are both 0 at
+#       mask 0 whichever bit owns the currents — and it is here so that a
+#       reversal which re-pointed the gate at NOTHING reds a NAMED row instead
+#       of leaving `Ctrl-6 -> nothing` quietly false again.
+#   U33 invariant I7 for the CURRENT spelling — THE GAP U27 LEAVES. U27 covers
+#       `@spice_get_voltage` only. 0678 splits one gate into two answers, and
+#       the `ctx == TEXT_CTX_INSTANCE || (flags & TEXT_FLOATER)` term has to be
+#       carried into BOTH; a dropped copy silently deletes a literal string the
+#       user typed. Measured before the change: a schematic-own NON-FLOATER
+#       `T {@spice_get_current} … {layer=17}` renders the LITERAL token at all
+#       four masks, exactly as the voltage spelling does.
 #
 # ⚠ TWO OF THE FOUR NEW ROWS ARE ABOUT THE PRIOR ART'S TWO KNOWN HOLES. U30
 # counts the EXACT call in each back end because a stopped crew's partial patch
@@ -6729,16 +6749,40 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
 # omits, which a literal reading of that list leaves unfixed.
 #
 # ============================================================================
-# ⚠ BRANCH CURRENTS: THE DECISION 0615 DEMANDS IN WRITING, AS ROW U17
+# ⚠ BRANCH CURRENTS: DECISION D4 WAS RULED THE OTHER WAY, AND ISSUE 0678
+#   REVERSED IT. THE VISIBILITY HALF MOVED; THE COLOUR HALF DID NOT.
 # ============================================================================
-# `@spice_get_current*` JOINS the voltage class for VISIBILITY (bit1) — 0613
-# lists branch currents among what survives Ctrl-6, so `Ctrl-6 -> nothing` is
-# false without them, and U6 is that half — and KEEPS ITS OWN LAYER for COLOUR
-# (17 in both palettes, `#00ffcc`; 84 shipped records rely on it). U17 states
-# both halves and discriminates the two rejected alternatives: a third mask bit
-# (Alt-6 would become 7, a fourth state, against a ruling whose table has three
-# rows) and folding currents into annot_voltage_layer (which erases the 15-vs-17
-# distinction the user already has).
+# WHAT D4 SAID (and what rows U6/U17 were first written against):
+#   `@spice_get_current*` JOINS the voltage class for VISIBILITY (bit1) — 0613
+#   lists branch currents among what survives Ctrl-6, so `Ctrl-6 -> nothing` is
+#   false without them — and KEEPS ITS OWN LAYER for COLOUR (17 in both
+#   palettes, `#00ffcc`; 84 shipped records rely on it).
+#
+# WHAT THE USER MEASURED ON A REAL sky130 BENCH, 2026-08-24 (issue 0678):
+#   "ALT-6 is doing its job for node voltages - but it's also displaying OP info
+#    of voltage sources - namely their current. That should be controlled by 6
+#    key, not Alt-6. Otherwise, Alt-6 and 6 and Ctrl-6 behave as expected."
+#
+# So D4 grouped the two classes by WHERE THE NUMBER COMES FROM in the raw. The
+# user groups them by WHAT THE NUMBER IS ABOUT: a source's branch current is
+# that DEVICE's terminal current — device OP info, like a FET's id — while a
+# node voltage is a property of the NET. They answer to different chords.
+#
+# WHAT MOVED, AND WHAT DID NOT:
+#   VISIBILITY  TEXT_ANNOT_CURRENT is gated by ANNOT_SHOW_OP (bit0, `6`).
+#               Rows U6 and U31. `Ctrl-6 -> nothing` is STILL true — mask 0
+#               clears bit0 too — and U32 is that half as its own row.
+#   COLOUR      unchanged. annot_text_layer() tests TEXT_ANNOT_VOLTAGE only, so
+#               currents keep layer 17. U17 is untouched and stays GREEN: its
+#               third element still holds because mask 3 sets BOTH bits.
+#
+# STILL REJECTED, for the same reasons: a third mask bit (Alt-6 would become 7,
+# a fourth state, against a ruling table with three rows that the bench has now
+# CONFIRMED correct) and folding currents into annot_voltage_layer (which erases
+# the 15-vs-17 distinction the user already has). ALSO REJECTED: merging
+# TEXT_ANNOT_VOLTAGE and TEXT_ANNOT_CURRENT into one bit — they are two bits
+# precisely so that a re-pointing like this one is a one-line change. Row U35
+# is that sentence made executable.
 
 set U_VP  {1200 900 -200 -300 700 200}
 set U_PVP {1600 1000 400 -700 1400 100}
@@ -6831,6 +6875,20 @@ proc opa_u_ccalls {path name} {
   set fd [open $path r] ; set d [read $fd] ; close $fd
   return [llength [regexp -all -inline -- "${name}\\(" $d]]
 }
+## Occurrences of a LITERAL substring in one file, or NO-FILE. opa_u_ccalls's
+## sibling for a claim that is about an EXPRESSION rather than a call — U35
+## asserts that the FOLDED `TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT` test is
+## gone from actions.c, and there is no `(` to hang opa_u_ccalls on.
+## ⚠ A COMMENT COUNTS TOO, and that is the cheap direction to be wrong in: a
+## comment can only make this row FAIL while the code is right, never pass
+## while the code is wrong.
+proc opa_u_ctext {path needle} {
+  if {![file isfile $path]} { return NO-FILE }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0 ; set i 0
+  while {[set i [string first $needle $d $i]] >= 0} { incr n ; incr i }
+  return $n
+}
 ## -> {n_set_ne n_in_global_list} for <var> in src/xschem.tcl. opa_l_tclmirror
 ## with the variable name lifted out; L28 keeps its own copy so a change here
 ## cannot silently move what that row measures.
@@ -6893,6 +6951,16 @@ set U_DEFLAY [rcall {xschem get annot_voltage_layer}]
 #            `@spice_get_voltage` (renders the LITERAL token today, measured)
 #            and an explicit `hide=voltage`, with a layer-4 and a layer-15
 #            reference beside them.
+# u_vs.sch   ISSUE 0678's SHEET, and it is the USER'S CASE LITERALLY: one
+#            shipped devices/vsource.sym V1 (whose `T {@spice_get_current} …
+#            {layer=17}` at vsource.sym:42 is the exact record the user was
+#            looking at), one lab_pin node voltage on the same sheet so the two
+#            content classes can be told apart in ONE export, and the layer-15
+#            reference. ⚠ NOT ADDED TO u_acc.sch: a sixth instance there reds
+#            row X14 (`[xschem get instances]` 5 -> 6) and shifts every byte
+#            length U1/U2/U26 measure. The branch current u_acc.sch already
+#            carries is a `capa.sym` — 0678 is about a SOURCE, so the sheet
+#            carries a source.
 # u_pv.sch   the two spellings 0614's list omits, U28: `@#0:spice_get_voltage`
 #            (bus_tap.sym:37's form, token.c:4315) and `@spice_get_diff_voltage`
 #            (token.c:5094). Its nets are named by u_lab.sym — lab_pin.sym MINUS
@@ -7007,13 +7075,20 @@ puts $f "C \{u_l15.sym\} 200 -100 0 0 \{name=ul15\}"
 puts $f "T \{ZZUEDITMARK\} 0 -160 0 0 0.4 0.4 \{floater=true layer=4\}"
 close $f
 
-## U27/U29's sheet: SCHEMATIC-OWN texts, which is a different context from
+## U27/U29/U33's sheet: SCHEMATIC-OWN texts, which is a different context from
 ## every other sheet here. Measured on this tree, with a raw loaded or without:
 ## a NON-FLOATER `T {@spice_get_voltage}` renders the LITERAL STRING
 ## `@spice_get_voltage` (get_text_floater() translates only floaters), while the
 ## SAME token in a SYMBOL emits no element at all. The layer-4 reference sits
 ## beside the explicit hide=voltage so U29 can say "kept its own colour" without
 ## naming a palette constant.
+## ⚠ THE CURRENT SPELLING AND ITS LAYER-17 REFERENCE ARE ISSUE 0678's (U33).
+## Before 0678 both content classes left this predicate through ONE `if`, so
+## U27 guarded both by accident. 0678 splits it in two and the ctx term has to
+## be carried into BOTH branches; a dropped copy blanks a literal string the
+## user typed, and nothing in the tree would have seen it. Measured before the
+## change: this record renders `@spice_get_current` at all four masks, in
+## layer 17.
 set f [open [file join $lib u_own.sch] w]
 puts $f "v {xschem version=3.4.6 file_version=1.2}"
 puts $f "G {}"
@@ -7024,6 +7099,8 @@ puts $f "C \{u_l15.sym\} 300 -100 0 0 \{name=ul15\}"
 puts $f "T \{@spice_get_voltage\} 0 -200 0 0 0.4 0.4 \{layer=15\}"
 puts $f "T \{ZZUOWNHV\} 0 -240 0 0 0.4 0.4 \{layer=4\nhide=voltage\}"
 puts $f "T \{ZZUOWN4\} 0 -280 0 0 0.4 0.4 \{layer=4\}"
+puts $f "T \{@spice_get_current\} 0 -160 0 0 0.4 0.4 \{layer=17\}"
+puts $f "T \{ZZUOWN17\} 0 -120 0 0 0.4 0.4 \{layer=17\}"
 close $f
 
 ## U28's fixture. u_lab.sym is devices/lab_pin.sym MINUS its own
@@ -7098,6 +7175,63 @@ Values:
 "
 close $f
 set U_RAW [file join $scratch u_op.raw]
+
+## ===========================================================================
+## ISSUE 0678's FIXTURE — THE USER'S CASE, LITERALLY
+## ===========================================================================
+## One SHIPPED devices/vsource.sym. Its `T {@spice_get_current} 20 -6.25 0 0
+## 0.2 0.2 {layer=17}` (vsource.sym:42) is the exact record the user was looking
+## at when they reported that `Alt-6` was showing a source's current. One
+## lab_pin on net `d` puts a NODE VOLTAGE on the same sheet, so one export tells
+## the two content classes apart; the layer-15 reference keeps a colour claim
+## available without naming a palette constant.
+set f [open [file join $lib u_vs.sch] w]
+puts $f "v {xschem version=3.4.6 file_version=1.2}"
+puts $f "G {}"
+puts $f "V {}"
+puts $f "S {}"
+puts $f "E {}"
+puts $f "N 0 -60 0 -30 \{lab=d\}"
+puts $f "N 0 30 0 60 \{lab=GND\}"
+puts $f "C \{vsource.sym\} 0 0 0 0 \{name=V1 value=5\}"
+puts $f "C \{lab_pin.sym\} 0 -60 0 0 \{name=up1 lab=d\}"
+puts $f "C \{gnd.sym\} 0 60 0 0 \{name=l1 lab=GND\}"
+puts $f "C \{u_l15.sym\} 300 -100 0 0 \{name=ul15\}"
+close $f
+## `i(v1)` is the shape get_fqdevice() builds for a TOP-LEVEL v-prefixed device
+## (token.c:4553), not a guess: measured on this tree, the vsource's
+## `@spice_get_current` renders `-321u` out of exactly this vector.
+set f [open [file join $scratch u_vs.raw] w]
+puts -nonewline $f "Title: 0678 fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\ti(v1)\tcurrent
+\t1\tv(d)\tvoltage
+Values:
+0\t-3.21e-04
+\t1.8
+"
+close $f
+## The SAME raw MINUS the branch-current vector — invariant I3's raw, for U34.
+set f [open [file join $scratch u_vs2.raw] w]
+puts -nonewline $f "Title: 0678 fixture, no i(v1)
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 1
+No. Points: 1
+Variables:
+\t0\tv(d)\tvoltage
+Values:
+0\t1.8
+"
+close $f
+set U_VSRAW  [file join $scratch u_vs.raw]
+set U_VSRAW2 [file join $scratch u_vs2.raw]
 ## ⚠ ITS OWN SYMBOL TYPE. `nmos` would clobber the sky130 descriptor sections P,
 ## S and Q left in the store; `zzu614` collides with nothing.
 proc opa_u_devproc {instname model path spiceprefix} { return {@m.xmu1.mu} }
@@ -7177,10 +7311,48 @@ check {U5 NON-VACUITY at mask 3 the voltage really is the raw's v(d), rendered} 
 
 # ⚠ THE HALF THAT MAKES `Ctrl-6 -> nothing` TRUE. 0613's surviving list is
 # `1.8 VCC … and branch currents 4.854u 2.43u …` — the currents are in it, so a
-# fix that classified only voltages leaves Ctrl-6 still painting.
+# fix that classified only voltages leaves Ctrl-6 still painting. That is still
+# true and mask 0 is still the row that says so; what CHANGED is which of the
+# two ADDITIVE bits brings them back.
+#
+# ⚠ THE GOLDEN FLIPPED WITH ISSUE 0678, {0 0 1 1} -> {0 1 0 1}, AND THAT IS THE
+# WHOLE STEP. 0614's decision D4 put TEXT_ANNOT_CURRENT on the voltage switch
+# because both numbers come out of the same raw. The user drove a real sky130
+# bench on 2026-08-24 and ruled the other way: a source's branch current is that
+# DEVICE's terminal current, i.e. device OP info, so it belongs to `6` (bit0)
+# beside the id=/gm= block, not to `Alt-6`. `Ctrl-6 -> nothing` survives the move
+# untouched — mask 0 clears bit0 as well — and rows U31/U32 make both halves of
+# that on the user's own sheet, with a SOURCE rather than this fixture's capa.
+# This row is the same claim on the capa: whatever bit the currents follow, they
+# must follow it for EVERY device that carries the token.
 set u_c {} ; foreach m {0 1 2 3} { lappend u_c [lindex [opa_u_has $u_s($m) 12.5u] 0] }
-check {U6 0614 the branch current follows the SAME switch: OFF at masks 0 and 1, ON at 2 and 3} \
-  $u_c {0 0 1 1}
+check {U6 0678 the branch current follows bit0 (device OP info): OFF at masks 0 and 2, ON at 1 and 3} \
+  $u_c {0 1 0 1}
+
+# ===========================================================================
+# U35 — 0678's `DO NOT FOLD THE TWO FLAGS TOGETHER`, MADE EXECUTABLE
+# ===========================================================================
+# ⚠ THE ONE ROW THAT SURVIVES A RENDER-LEVEL COINCIDENCE. Every other 0678 row
+# reads pixels; this one reads the source, because the issue's own landmine is
+# structural: TEXT_ANNOT_VOLTAGE (bit 8) and TEXT_ANNOT_CURRENT (bit 9) are two
+# separate bits (xschem.h:422-423) PRECISELY so that re-pointing one class is a
+# one-line change, and the defect 0678 fixes is a single `if` that folded them
+# back into one test:
+#
+#     if(flags & (TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT)) { … ANNOT_SHOW_VOLTAGE … }
+#
+# So: the folded expression must be GONE from actions.c, and the answer to
+# "which annot_show bit owns this content class" must live in exactly ONE named
+# place — `annot_class_mask()`, defined once and called once, shaped like its
+# colour twin annot_text_layer(flags, ctx) so the two cannot drift (invariant
+# I1). The `ctx` term rides INSIDE it, which is what makes invariant I7's
+# exemption structurally undroppable rather than a line someone must remember
+# to copy — U33 is the render-level half of that.
+# Measured before the change: {0 1}.
+check {U35 0678 the grouping lives in ONE named place and the folded flag test is gone} \
+  [list [opa_u_ccalls [file join $repo src actions.c] annot_class_mask] \
+        [opa_u_ctext  [file join $repo src actions.c] {TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT}]] \
+  {2 0}
 
 # ===========================================================================
 # U7 / U8 — INVARIANT I7: WITH NO RAW LOADED, NOTHING MOVES
@@ -7357,7 +7529,11 @@ check {U16 OFF SWITCH an out-of-range annot_voltage_layer restores the text's ow
 # ===========================================================================
 # U17 — THE BRANCH-CURRENT DECISION, WRITTEN AS A CHECK (0615 demands it)
 # ===========================================================================
-# DECIDED: currents share the voltage SWITCH (U6) and keep their own COLOUR.
+# DECIDED: currents follow bit0 for VISIBILITY (U6, and issue 0678 reversed D4
+# to put them there) and keep their own COLOUR. ⚠ THIS ROW IS UNAFFECTED BY THAT
+# REVERSAL and stays GREEN: annot_text_layer() tests TEXT_ANNOT_VOLTAGE alone,
+# so the colour half of D4 was never in question, and every element below is
+# read at mask 3, where BOTH bits are set and both classes render.
 # Layer 17 is `#00ffcc` in BOTH palettes and 84 shipped records rely on it; the
 # 15-vs-17 distinction is one the user already has and folding it away would be
 # a loss, not a fix. The third element is what discriminates: point
@@ -7535,6 +7711,38 @@ check {U29 an EXPLICIT hide=voltage on a schematic-own NON-floater still follows
         [expr {[opa_u_fill $u_owns(3) ZZUOWNHV] ne [opa_u_fill $u_owns(3) ZZU15MARK]}]] \
   {0 0 1 1 1 1}
 
+# ⚠ U33 — THE SAME GUARD FOR THE CURRENT SPELLING, AND IT IS THE GAP U27
+# LEAVES. GREEN BEFORE AND AFTER, and it is a REGRESSION guard for issue 0678,
+# not evidence of it. Before 0678 both content classes left text_hidden()
+# through ONE `if`, so the single `ctx == TEXT_CTX_INSTANCE || (flags &
+# TEXT_FLOATER)` term covered both and U27 guarded this record by accident.
+# 0678 gives the two classes two different answers; the ctx term has to reach
+# BOTH, and a dropped copy blanks — at masks 0 and 2 — a literal string the
+# user typed on their sheet years ago. Measured before the change: present at
+# all four masks, in layer 17.
+#
+# ⚠ CORRECTED BY THE 0678 WRITE-UP (issue 0681). AN EARLIER DRAFT OF THIS
+# COMMENT CLAIMED the U27 census found "ZERO shipped schematic-own bare
+# `@spice_get_current` records, so no shipped sheet would move". BOTH HALVES
+# ARE FALSE, and the mistake was re-using U27's sentence for a shape it does
+# not cover. U27's census is scoped to the NON-FLOATER, where zero is right.
+# The real census of `@spice_get_current` in xschem_library/*.sch is FOUR:
+# solar_panel.sch:269 {layer=7 name=L2}, solar_panel.sch:270 {layer=7 name=C1}
+# and pv_ngspice.sch:68 {layer=15 name=Rs} are real FLOATERS, and all THREE
+# move from `Alt-6` to `6` with 0678 (correctly -- measured, they resolve and
+# follow bit0); pcb_current_protection_embed.sch:440 carries hide=true, so
+# annot_class_free() is false and it gets no implicit class at all.
+# CONSEQUENCE FOR THIS ROW: U33 guards the shape that ships in NO sheet, and
+# the shape that ships in THREE -- the schematic-own FLOATER -- has no row at
+# all. That gap is issue 0681, with the fixture and the measurement.
+set u_ownc {} ; foreach m {0 1 2 3} { lappend u_ownc [lindex [opa_u_has $u_owns($m) [list @spice_get_current]] 0] }
+check {U33 I7 a schematic-own NON-floater bare @spice_get_current renders LITERALLY at all four masks, in its own layer} \
+  [list $u_ownc \
+        [expr {[opa_u_fill $u_owns(0) @spice_get_current] eq [opa_u_fill $u_owns(0) ZZUOWN17] &&
+               [opa_u_fill $u_owns(3) @spice_get_current] eq [opa_u_fill $u_owns(3) ZZUOWN17] &&
+               [opa_u_fill $u_owns(3) ZZUOWN17] ne [opa_u_fill $u_owns(3) ZZU15MARK]}]] \
+  {{1 1 1 1} 1}
+
 # ===========================================================================
 # U28 — THE TWO SPELLINGS 0614's FIVE-ITEM LIST OMITS
 # ===========================================================================
@@ -7565,6 +7773,79 @@ check {U28 `@#<pin>:spice_get_voltage` and `@spice_get_diff_voltage` follow bit1
         [expr {[opa_u_fill $u_pvs(3) -1.5] ne [opa_u_fill $u_pvs(3) ZZU15MARK]}] \
         [expr {[opa_u_fill $u_pvs(3) 1.8]  eq [opa_u_fill $u_pvs(3) -1.5]}]] \
   {0 {0 0 1 1} {0 0 1 1} 1 1 1}
+
+# ===========================================================================
+# U31 / U32 / U34 — ISSUE 0678, ON THE USER'S OWN SHEET
+# ===========================================================================
+# ⚠ WHY A SEPARATE SHEET AND NOT u_acc.sch. u_acc.sch's only branch current is
+# a `capa.sym`, and 0678 is about a SOURCE — the user's words are "it's also
+# displaying OP info of voltage sources - namely their current". Adding a sixth
+# instance to u_acc.sch reds row X14 (`[xschem get instances]` 5 -> 6) and
+# shifts every byte length U1/U2/U26 measure, so u_vs.sch carries the shipped
+# devices/vsource.sym instead, with a lab_pin on the same sheet so ONE export
+# separates the two content classes.
+#
+# THE RULING, AS THE USER GAVE IT ON A REAL sky130 BENCH (2026-08-24):
+#   `6`      device OP info — the id=/gm= block AND a device's branch current
+#   `Alt-6`  node voltages
+#   `Ctrl-6` neither
+# and the two setters stay ADDITIVE, which the bench CONFIRMED working and
+# tests/headless/test_launch_context.tcl owns as key events.
+catch {xschem raw clear}
+xschem load [file join $lib u_vs.sch]
+set u_vs_ann [lindex [rcall [list xschem annotate_op $U_VSRAW]] 0]
+foreach m {0 1 2 3} { set u_vss($m) [opa_u_pr svg $m u_vs$m.svg] }
+set u_vs_i {} ; foreach m {0 1 2 3} { lappend u_vs_i [lindex [opa_u_has $u_vss($m) -321u] 0] }
+set u_vs_v {} ; foreach m {0 1 2 3} { lappend u_vs_v [lindex [opa_u_has $u_vss($m) 1.8] 0] }
+
+# ⚠ THE DEFECT AS THE USER HIT IT, IN ONE ROW, AND IT NEEDS BOTH HALVES. A row
+# that only asserted "the current follows bit0" would also pass on a change that
+# moved the NODE VOLTAGES to bit0 as well — i.e. on the reversal folded the
+# wrong way, which is a worse regression than the defect. So the second element
+# is the current and the third is the voltage, read from the SAME four exports.
+# Measured before the change: {0 {0 0 1 1} {0 0 1 1}} — the two classes are
+# indistinguishable, which is precisely the report.
+check {U31 0678 ACCEPTANCE: the source's branch current follows `6` (bit0) while the node voltage on the same sheet follows `Alt-6` (bit1)} \
+  [list $u_vs_ann $u_vs_i $u_vs_v] \
+  {0 {0 1 0 1} {0 0 1 1}}
+
+# ⚠ GREEN BEFORE AND AFTER, AND THE REVERSAL'S NAMED SAFETY ROW. `Ctrl-6 ->
+# nothing` is 0613's finding and 0614's whole reason for existing; moving a
+# content class from one additive bit to the other must not put a number back on
+# a cleared sheet, and must not take one off a fully-on sheet. Mask 3 is the
+# non-vacuity: without it "absent at mask 0" is satisfied by an exporter that
+# draws nothing at all. This is the row that reds if the gate is re-pointed at
+# NOTHING (a `return 0` where a mask belongs).
+check {U32 0678 `Ctrl-6` still clears BOTH classes, and mask 3 still shows both} \
+  [list [lindex $u_vs_i 0] [lindex $u_vs_v 0] [lindex $u_vs_i 3] [lindex $u_vs_v 3]] \
+  {0 0 1 1}
+
+# ⚠ INVARIANT I3 — A MISSING VECTOR MUST NOT RENDER THE PREVIOUS RUN'S NUMBER.
+# 0678's acceptance row 4 asks for this on the chord the currents now answer to.
+# Re-annotate the SAME sheet from a raw that carries `v(d)` and no `i(v1)`, and
+# export at mask 1 again.
+#
+# ⚠ WHAT IT ACTUALLY RENDERS, MEASURED ON THIS TREE, BECAUSE THE ACCEPTANCE
+# GUESSES AND THE GUESS IS WRONG. 0678 row 4 says the row "renders the current
+# row BLANK, not absent". It renders NEITHER: the element is present and its
+# content is the LITERAL PLACEHOLDER `-`. That is not op_annot's doing and not
+# this step's to change — it is the C token path's long-standing convention
+# (`valstr = "-"` at token.c:4366/4478/4866/4968/5072/5140/5279), the same
+# string a `@spice_get_current` has printed for a missing vector since long
+# before annot_show existed. The part of I3 that MATTERS holds exactly: `-321u`
+# is gone, so no stale number survives a re-annotation. The fourth element pins
+# the placeholder as a golden rather than leaving it to a comment, so a later
+# change that turns it into a blank, a `0` or a `NaN` reds a named row.
+# Measured before the change: {0 0 0 0} — the first and last elements are red
+# only because mask 1 shows no current at all yet, which is the 0678 defect.
+catch {xschem raw clear}
+set u_vs2_ann [lindex [rcall [list xschem annotate_op $U_VSRAW2]] 0]
+set u_vs2_s [opa_u_pr svg 1 u_vs2_1.svg]
+check {U34 I3 0678 re-annotating from a raw with no i(v1) drops the number: `-321u` gone, the C placeholder `-` in its place} \
+  [list $u_vs2_ann [lindex $u_vs_i 1] \
+        [lindex [opa_u_has $u_vs2_s [list -321u]] 0] \
+        [lindex [opa_u_has $u_vs2_s [list -]] 0]] \
+  {0 1 0 1}
 
 # ===========================================================================
 # U22 — THE CLASS IS A FUNCTION OF THE CONTENT, AND CONTENT CAN CHANGE

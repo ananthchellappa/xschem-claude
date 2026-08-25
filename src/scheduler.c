@@ -4123,8 +4123,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
           }
           /* (xschem get annot_show) annotation-class visibility mask: bit0 device OP
-           * info (hide=op), bit1 node voltages (hide=voltage). See the shared text
-           * visibility predicate in actions.c, and doc/claude/specs/op_annotation.md. */
+           * info -- hide=op AND content-classified branch currents (issue 0678) --
+           * bit1 node voltages (hide=voltage and content-classified node voltages).
+           * See the shared text visibility predicate in actions.c and the grouping in
+           * annot_class_mask beside it, and doc/claude/specs/op_annotation.md. */
           else if(!strcmp(argv[2], "annot_show")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->annot_show), TCL_VOLATILE);
@@ -11739,8 +11741,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             actionlog_suppress = atoi(argv[3]);
             if(actionlog_suppress < 0) actionlog_suppress = 0;
           }
-          /* set annot_show <mask>: annotation-class visibility (bit0 hide=op device OP
-           * info, bit1 hide=voltage node voltages). Writes BOTH the C field and the Tcl
+          /* set annot_show <mask>: annotation-class visibility (bit0 device OP info --
+           * hide=op plus content-classified branch currents, issue 0678; bit1 node
+           * voltages -- hide=voltage plus content-classified node voltages). Writes
+           * BOTH the C field and the Tcl
            * mirror (decision D4) -- show_hidden_texts' setter writes only C and the next
            * pull silently discards it, which is why the GUI never calls that one. */
           else if(!strcmp(argv[2], "annot_show")) {

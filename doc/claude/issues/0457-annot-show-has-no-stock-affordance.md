@@ -150,6 +150,9 @@ The two questions arrive together, so the answers sit together.
 
 ```
 Show device OP annotation      -> annot_show bit0 (ANNOT_SHOW_OP)
+  (⚠ both labels changed since: 0614 then 0678. As shipped today they read
+   "Show device OP / branch current annotation" (bit0) and
+   "Show node voltage annotation" (bit1) -- see doc/claude/issues/0678-*.md.)
 Show node voltage annotation   -> annot_show bit1 (ANNOT_SHOW_VOLTAGE)
 ```
 

@@ -220,10 +220,15 @@ proc cadence::_annot_scan {} {
 ## showing voltages alone. It also had no wording at all for mask 2, the state the
 ## ruling just created. The first argument is therefore the MASK.
 ##
-## ⚠ THE WORDING IS DELIBERATELY TERSER THAN THE View MENU'S. The checkbutton is
-## the discoverable surface and names bit1's whole domain ("Show node voltage /
-## branch current annotation"); this line is transient and says "node voltages",
-## which is what every committed golden string already says.
+## ⚠ THE WORDING IS DELIBERATELY TERSER THAN THE View MENU'S, AND ISSUE 0678 MADE
+## IT STRICTLY TRUE RATHER THAN MERELY TERSE. Until 0678 bit1 also gated branch
+## currents, so mask 2's "node voltages" understated the checkbutton's "Show node
+## voltage / branch current annotation". The user reversed that on a real bench
+## 2026-08-24: the currents moved to bit0 and the menu pair is now "Show device OP /
+## branch current annotation" / "Show node voltage annotation". These four strings
+## are deliberately UNCHANGED -- mask 2 is now exact, and mask 1's "device OP info"
+## stays terse for the currents the way it always did for the id=/gm= block. Every
+## committed golden string (rows N3/N5/N6/N8/N9/N10/N10b/N15/N23) is byte-identical.
 proc cadence::_annot_msg {mask state path types} {
   if {![string is integer -strict $mask]} { set mask 0 }
   switch -exact -- [expr {$mask & 3}] {

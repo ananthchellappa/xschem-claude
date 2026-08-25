@@ -1,5 +1,31 @@
 # 0625 — a missing vector renders `-`, not blank, which contradicts invariant I3 — and 0615 just made it WHITE
 
+## ⚠ 2026-08-24 — 0678 MOVED THE HYPHENS TO A DIFFERENT KEY (still open, still not fixed)
+
+[0678](0678-branch-currents-are-gated-by-alt-6-but-belong-to-6.md) re-pointed the
+implicit **branch-current** class from `ANNOT_SHOW_VOLTAGE` (bit1, `Alt-6`) to
+`ANNOT_SHOW_OP` (bit0, `6`). Nothing about *this* issue changed — the placeholder is
+still `-`, still C-side, still `token.c` — but **the chord it appears on did**, for
+every `@spice_get_current*` record. Same count of hyphens, different key.
+
+Two consequences worth recording before anyone re-measures this:
+
+* the `-` is now **more prominent**, because it lands on the chord a user reaches for
+  most. A sheet whose deck lacks `.option savecurrents` will, on `6`, put a `-` beside
+  every current-bearing device *alongside* the `id=`/`gm=` block. That is I3-correct
+  in the sense that matters (a placeholder, not a plausible wrong number) and it was
+  equally true on `Alt-6` before — but whether it reads as clutter is a **look**, and
+  it rides 0678's open look debt;
+* the 0678 crew **re-measured this independently and reached the same answer**, not
+  knowing 0625 existed: re-annotating from a raw that lacks `i(v1)` leaves the
+  `<text>` element present with content `-`, and the previous run's `-321u` is gone.
+  Row **U34** of `tests/headless/test_op_annot.tcl` now pins `-` as a golden, so a
+  later change that turns it into a blank, a `0` or a `NaN` reds a named row. **That
+  row is this issue's regression guard — whoever closes 0625 must update U34 with the
+  fix, or the fix reds it.**
+
+---
+
 ## ⚠ 2026-08-23 — LEFT OPEN DELIBERATELY by the 0617+0618 crew, and here is the evidence
 
 The 0617+0618 brief asked this crew to decide and record whether its work closes 0625

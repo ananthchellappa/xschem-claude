@@ -286,9 +286,13 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 #
 # TWO ADDITIVE SETTERS AND ONE CLEAR-ALL. Ruled by the user 2026-08-22 (issue 0614);
 # this table replaced a three-state cascade whose two lower rows were wrong:
-#   6       annot_show |= 1   ADD device OP info      (bit1 untouched)
-#   Alt-6   annot_show |= 2   ADD node voltages and branch currents (bit0 untouched)
+#   6       annot_show |= 1   ADD device OP info AND branch currents (bit1 untouched)
+#   Alt-6   annot_show |= 2   ADD node voltages    (bit0 untouched)
 #   Ctrl-6  annot_show  = 0   clear BOTH -- the ONLY off switch
+# (The branch currents sat on `Alt-6` until issue 0678: the user drove a real bench
+# 2026-08-24 and ruled that a source's current is that DEVICE's OP info, so it
+# belongs to `6`. Only the MEMBERSHIP moved -- the three rows above are the ruling
+# the same bench confirmed correct, and the mask arithmetic did not change.)
 # So `6` never turns anything off and is not a toggle (press it twice, nothing
 # moves; press it with voltages on, they stay on), and `Alt-6` from a clean start
 # gives mask 2 -- voltages ALONE, which the old cascade could not reach.

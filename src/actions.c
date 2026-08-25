@@ -1356,9 +1356,16 @@ void annot_show_sync_cache(void)
  * to -- every shipped node-voltage carrier spells layer=15 explicitly, so respecting
  * it would make 0615 a no-op.
  *
- * BRANCH CURRENTS ARE NOT HERE (decision D4): TEXT_ANNOT_CURRENT joins the voltage
- * SWITCH and keeps layer 17, `#00ffcc` in both palettes across 84 shipped records --
- * a distinction the user already has, and folding it away would be a loss, not a fix.
+ * BRANCH CURRENTS ARE NOT HERE, AND THAT HALF SURVIVED THE REVERSAL (issue 0678).
+ * Decision D4 of 0614 ruled two things about `@spice_get_current*`: that it followed
+ * the voltage SWITCH, and that it kept its own layer 17 (`#00ffcc` in both palettes,
+ * 84 shipped records). The user drove a real sky130 bench on 2026-08-24 and reversed
+ * the FIRST half only -- a source's branch current is that DEVICE's terminal current,
+ * device OP info, so its VISIBILITY answers to `6` (bit0), not `Alt-6`. See
+ * annot_class_mask below, and doc/claude/issues/0678-*.md. The COLOUR half is
+ * untouched and this function still tests TEXT_ANNOT_VOLTAGE alone: the 15-vs-17
+ * distinction is one the user already has, and folding it away would be a loss, not
+ * a fix.
  *
  * THE ctx GUARD IS INVARIANT I7's, and it is the same one text_hidden() applies:
  * a schematic-own NON-FLOATER bare token is a literal string the user typed, not an
@@ -1376,28 +1383,58 @@ int annot_text_layer(int flags, int ctx)
   return xctx->annot_voltage_layer;
 }
 
+/* 0678 -- WHICH annot_show BIT OWNS AN IMPLICIT CONTENT CLASS. Returns the mask bit
+ * to test, or 0 for "no implicit class here". Shaped exactly like its colour twin
+ * annot_text_layer(flags, ctx) above so the two answers cannot drift (invariant I1),
+ * and it is the ONE place the grouping is written down: the two flag bits (xschem.h
+ * 422-423) are separate PRECISELY so re-pointing a class is this one line, and
+ * 0678 forbids folding them back into a single test.
+ *
+ * THE GROUPING, AND WHY IT CHANGED. Decision D4 of issue 0614 put both classes on
+ * the voltage switch, grouping them by WHERE THE NUMBER COMES FROM in the raw. The
+ * user drove a real sky130 bench on 2026-08-24 and grouped them by WHAT THE NUMBER
+ * IS ABOUT -- "ALT-6 is doing its job for node voltages - but it's also displaying
+ * OP info of voltage sources - namely their current. That should be controlled by 6
+ * key, not Alt-6." A source's branch current is that DEVICE's terminal current,
+ * exactly like a FET's id; a node voltage is a property of the NET. So:
+ *   TEXT_ANNOT_VOLTAGE -> ANNOT_SHOW_VOLTAGE  (bit1, `Alt-6`)  net quantity
+ *   TEXT_ANNOT_CURRENT -> ANNOT_SHOW_OP       (bit0, `6`)      device OP info
+ * `Ctrl-6 -> nothing` (issue 0613) is unaffected: mask 0 clears both bits.
+ * Only the VISIBILITY half moved -- annot_text_layer() still tests the voltage flag
+ * alone, so currents keep layer 17. See doc/claude/issues/0678-*.md.
+ *
+ * ⚠ THE ctx TERM IS INVARIANT I7's AND IT LIVES IN HERE ON PURPOSE. Splitting the
+ * old single test into two answers would otherwise mean writing the same guard
+ * twice, and a dropped copy silently deletes a literal string a user typed. Measured
+ * on this tree with no raw loaded: a SYMBOL text `@spice_get_voltage` emits no
+ * element at all, so classifying it costs literally nothing -- but a SCHEMATIC-OWN
+ * NON-FLOATER `T {@spice_get_voltage} ... {layer=15}` renders the LITERAL STRING,
+ * because get_text_floater() translates only floaters. Blanking that at mask 0 would
+ * be a text that has sat on their sheet for years vanishing because of a mask they
+ * never touched. The same is true of the `@spice_get_current` spelling (measured;
+ * tests/headless/test_op_annot.tcl rows U27 and U33). The exemption is for the
+ * IMPLICIT class ONLY -- an author who typed `hide=voltage` on a top-level text
+ * declared a class explicitly and still follows bit1, which is why the two classes
+ * need two different bits. */
+static int annot_class_mask(int flags, int ctx)
+{
+  if(ctx != TEXT_CTX_INSTANCE && !(flags & TEXT_FLOATER)) return 0;
+  if(flags & TEXT_ANNOT_VOLTAGE) return ANNOT_SHOW_VOLTAGE;
+  if(flags & TEXT_ANNOT_CURRENT) return ANNOT_SHOW_OP;
+  return 0;
+}
+
 /* 1 == this text must not be drawn. ctx is TEXT_CTX_INSTANCE when iterating a
  * symbol's text[] while drawing an instance, TEXT_CTX_SCHEMATIC when iterating the
  * schematic's own xctx->text[]. */
 int text_hidden(int flags, int ctx)
 {
-  /* 0614: the IMPLICIT content class, tested FIRST and never both with an explicit
-   * one (set_text_flags only adds it when the `hide=` chain set no bit).
-   *
-   * ⚠ THE ctx TERM IS INVARIANT I7 AND IT IS NOT COSMETIC. Measured on this tree with
-   * no raw loaded: a SYMBOL text `@spice_get_voltage` emits no element at all, so
-   * classifying it costs literally nothing -- but a SCHEMATIC-OWN NON-FLOATER
-   * `T {@spice_get_voltage} ... {layer=15}` renders the LITERAL STRING, because
-   * get_text_floater() translates only floaters. That literal is a string the user
-   * typed and is not an annotation; blanking it at mask 0 would be a text that has
-   * sat on their sheet for years vanishing because of a mask they never touched.
-   * The exemption is for the IMPLICIT class ONLY -- an author who typed
-   * `hide=voltage` on a top-level text declared a class explicitly and still follows
-   * bit1, which is why the two classes need two different bits. */
-  if(flags & (TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT)) {
-    if(ctx == TEXT_CTX_INSTANCE || (flags & TEXT_FLOATER))
-      return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
-  }
+  /* 0614/0678: the IMPLICIT content class, tested FIRST and never both with an
+   * explicit one (set_text_flags only adds it when the `hide=` chain set no bit, so
+   * a text carrying a class bit carries no HIDE_TEXT* bit and m == 0 falls through to
+   * exactly the tests the old single `if` fell through to). */
+  int m = annot_class_mask(flags, ctx);
+  if(m) return (xctx->annot_show & m) ? 0 : 1;
   if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
   if(flags & HIDE_TEXT_VOLTAGE) return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
   if(xctx->show_hidden_texts) return 0;

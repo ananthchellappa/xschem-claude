@@ -59,19 +59,43 @@ proc entry_index {m label} {
 ## instead, and the rows below name it in their goldens.
 proc entry_type {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m type $i] }
 proc entry_var  {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m entrycget $i -variable] }
-# ⚠ THE SECOND LABEL CHANGED WITH ISSUE 0614, AND THE LABEL IS THE POINT.
+proc entry_label {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m entrycget $i -label] }
+## The same lookup keyed on the -variable rather than the label. A19 needs it:
+## a row about WHAT THE LABELS SAY cannot find its entries BY their labels, or
+## the two halves of the claim collapse into one.
+proc entry_index_var {m var} {
+  for {set i 0} {$i <= [$m index end]} {incr i} {
+    if {[catch {$m entrycget $i -variable} v]} { continue }
+    if {$v eq $var} { return $i }
+  }
+  return -1
+}
+# ⚠ BOTH LABELS CHANGED WITH ISSUE 0678, AND THE LABEL IS THE POINT.
 # Bit 1 used to gate `hide=voltage` and nothing else -- a token no shipped symbol
-# carried, so the box governed an empty set. Under 0614 it owns the CONTENT-
-# classified annotations: every `@spice_get_voltage` / `@#n:spice_get_voltage` /
-# `@spice_get_diff_voltage` node voltage AND every `@spice_get_current*` branch
-# current. A control must name what it governs, so the label says both. (Decision
-# D4 of that pass: the currents share this SWITCH and keep their own layer-17
-# COLOUR -- see tests/headless/test_op_annot.tcl row U17.)
+# carried, so the box governed an empty set. 0614 gave it the CONTENT-classified
+# annotations and, by its decision D4, gave it BOTH classes: node voltages and
+# branch currents, hence the old label "Show node voltage / branch current
+# annotation".
+#
+# The user drove a real sky130 bench on 2026-08-24 and reversed D4 (issue 0678):
+# a source's branch current is that DEVICE's terminal current -- device OP info,
+# like a FET's id -- so it belongs to bit0 (`6`), beside the id=/gm= block, while
+# bit1 (`Alt-6`) keeps the node voltages alone. A control must name what it
+# governs and must not name what it does not, so BOTH labels move together:
+#   bit0  "Show device OP / branch current annotation"
+#   bit1  "Show node voltage annotation"
+# Leaving them as they were would make the one discoverable surface a lie in the
+# same commit that fixes the behaviour -- 0614's own status-line defect, again.
+# The render half of the same reversal is tests/headless/test_op_annot.tcl rows
+# U6 / U31 / U32; this file owns the control surface. ⚠ THE EXACT WORDING IS AN
+# UNRATIFIED USER-VISIBLE DECISION and is on the owed ledger as a `rule` debt
+# pointing at doc/claude/issues/0678-*.md; if the user rules differently, this
+# string and src/xschem.tcl's move together and A19 is what keeps them together.
 set i_hid [entry_index $M "Show hidden texts"]
-set i_op  [entry_index $M "Show device OP annotation"]
-set i_v   [entry_index $M "Show node voltage / branch current annotation"]
-check "A4 'Show device OP annotation' entry exists"    [expr {$i_op >= 0}] 1
-check "A5 'Show node voltage / branch current annotation' entry exists"  [expr {$i_v  >= 0}] 1
+set i_op  [entry_index $M "Show device OP / branch current annotation"]
+set i_v   [entry_index $M "Show node voltage annotation"]
+check "A4 'Show device OP / branch current annotation' entry exists"    [expr {$i_op >= 0}] 1
+check "A5 'Show node voltage annotation' entry exists"  [expr {$i_v  >= 0}] 1
 check "A6 both sit directly under 'Show hidden texts'" \
       [list [expr {$i_op - $i_hid}] [expr {$i_v - $i_hid}]] {1 2}
 check "A7 both are checkbuttons, not commands" \
@@ -81,6 +105,23 @@ check "A8 they drive the derived vars, not the mask directly" \
       {annot_show_op annot_show_voltage}
 check "A9 the submenu re-derives on open (-postcommand)" \
       [string match {*annot_show_menu_sync*} [$M cget -postcommand]] 1
+
+# ⚠ A19 -- THE RELABEL AS A CLAIM, NOT A STRING EDIT. A4/A5 assert that two
+# particular sentences exist; on their own they are satisfiable by a later
+# tidy-up that swaps the two labels back and updates this file to match, and
+# nothing would notice. This row states the PROPERTY 0678 actually rules on:
+# the two checkbuttons PARTITION the two content classes -- exactly one of them
+# names branch currents, and it is the one wired to the bit that gates them.
+# ⚠ IT FINDS ITS ENTRIES BY -variable, NOT BY LABEL, deliberately: a row about
+# what the labels say must not depend on the labels to locate them, or a missing
+# entry answers 0 and reads as a pass on the half that expects 0.
+# Measured before the change: {0 1} -- the wrong box names the branch currents.
+set i_opv [entry_index_var $M annot_show_op]
+set i_vv  [entry_index_var $M annot_show_voltage]
+check "A19 0678 the labels PARTITION the classes: bit0's names branch currents, bit1's does not" \
+      [list [string match {*branch current*} [entry_label $M $i_opv]] \
+            [string match {*branch current*} [entry_label $M $i_vv]]] \
+      {1 0}
 
 # ------------------------------------------------------------------- PULL ----
 # The mask is the authority. Whoever wrote it -- a menu item, a cadence chord, a
@@ -130,9 +171,12 @@ check "A14 mask 2 is reachable from the menu (chords cannot make it)" \
 # works. This row is here because 0614's acceptance names it out loud ("the
 # 0457(b) View-menu pair drives the same three states"), and because after 0614
 # those three masks MEAN something they did not mean before:
-#   op=1 v=0 -> 1  device OP blocks only, node voltages and branch currents OFF
+#   op=1 v=0 -> 1  device OP blocks AND branch currents, node voltages OFF
 #   op=1 v=1 -> 3  both
 #   op=0 v=0 -> 0  neither
+# (the first line is issue 0678's reversal of 0614's decision D4 -- the branch
+#  currents moved from bit1 to bit0; the mask ARITHMETIC did not move at all,
+#  which is why every row in this file but A4/A5/A19 is untouched.)
 # i.e. the stock menu pair reaches every state `6` / `Alt-6` / `Ctrl-6` reach,
 # for the vast majority of users whose xschemrc never sources cadence_style_rc
 # (it ships commented out at src/xschemrc:767). The RENDER half of the same

@@ -15511,10 +15511,17 @@ proc build_widgets { {topwin {} } } {
   # issue 0457(b): the stock control for the annot_show mask. Placed here, next to
   # `Show hidden texts`, because that is the entry FAQ Q48 already sends users to
   # when their sky130 id=/gm= texts vanish -- the two questions arrive together.
-  $topwin.menubar.view.show add checkbutton -label "Show device OP annotation" \
+  # ⚠ THE TWO LABELS PARTITION THE TWO CONTENT CLASSES, and issue 0678 moved the
+  # line between them: a source's branch current is that DEVICE's terminal current
+  # (device OP info, like a FET's id), so it is gated by bit0, while bit1 keeps the
+  # node voltages alone. A control must name what it governs and must not name what
+  # it does not -- leaving the old pair would make the one discoverable surface a lie
+  # in the same commit that fixed the behaviour. tests/headless/test_annot_show_menu.tcl
+  # rows A4/A5/A19 pin both strings; the render half is test_op_annot.tcl U6/U31/U32.
+  $topwin.menubar.view.show add checkbutton -label "Show device OP / branch current annotation" \
          -variable annot_show_op \
          -selectcolor $selectcolor -command {annot_show_menu_apply}
-  $topwin.menubar.view.show add checkbutton -label "Show node voltage / branch current annotation" \
+  $topwin.menubar.view.show add checkbutton -label "Show node voltage annotation" \
          -variable annot_show_voltage \
          -selectcolor $selectcolor -command {annot_show_menu_apply}
   $topwin.menubar.view.show add checkbutton -label "Draw grid axes"  -variable draw_grid_axes \
@@ -16479,9 +16486,11 @@ set_ne live_cursor2_backannotate 1
 set_ne cursor_2_hook {}
 set_ne draw_window 0
 set_ne show_hidden_texts 0
-## S7 annotation classes: visibility mask for texts carrying hide=op (bit0, device
-## operating-point info) / hide=voltage (bit1, node voltages). MIRRORED IN C as
-## xctx->annot_show; see text_hidden() in src/actions.c and
+## S7 annotation classes: visibility mask. bit0 = device operating-point info --
+## hide=op texts AND content-classified branch currents (`@spice_get_current*`, issue
+## 0678: a device's terminal current is device OP info). bit1 = node voltages --
+## hide=voltage texts and content-classified node voltages. MIRRORED IN C as
+## xctx->annot_show; see text_hidden()/annot_class_mask in src/actions.c and
 ## doc/claude/specs/op_annotation.md. Default 0 = annotations off at rest; put
 ## `set annot_show 1` in ~/.xschem/xschemrc to have them on from startup.
 set_ne annot_show 0
