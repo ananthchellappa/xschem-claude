@@ -287,3 +287,76 @@ notice for a setting that did apply and is still applied.
 | 4 | 0689 + 0690 | queued |
 | 5 | 0672 + 0673 | queued |
 | — | 0683 + 0688 | NOT queued — needs the user's ruling |
+
+
+---
+
+## 0695 + 0696 — SHIPPED `28d7fa28`, both halves closed
+
+Verified by the lead: **test_ase_window 214, test_ase_dialogs 174, test_ase_final
+78 (--nogui)** — all pass, **0** sabotage strings in `src/`.
+
+```
+WU-B2   box_still=1 -> 0     the box followed the live value; OK wrote what was shown
+WU-B1   notices=1  -> 0      ESC stopped reporting a discard for a setting that applied
+```
+
+Both contrast cases (`CONTRAST-A notices=1`, `CONTRAST-B notices=0`) stayed put, so
+the fix did not over-correct into silencing real discards. The sabotage matrix was
+properly targeted rather than blunt: stubbing `save_all_discarded` to the pre-fix
+predicate reddened **W1zd only** and left dialogs at 174, while a full revert of
+`ase_window.tcl` reddened all 8 new/edited rows.
+
+Two issues filed. **0698** is one the lead hit personally at the start of this
+session and misread as a regression: `test_ase_final` passes `--nogui` and ABORTS
+under X. It is now a filed defect with a measurement instead of session folklore,
+and it is carried into subsequent briefs as a "do not report this as a regression"
+note.
+
+### The ruling it banked is genuinely the user's
+
+> The Save All box now MOVES under your eyes when a write lands behind the dialog,
+> with no word said — and a net-zero hand gesture (tick then untick) now counts as
+> touched, so the box wins over the live value.
+
+Silent reconcile versus telling the user the dialog raced is a product decision
+with two defensible answers, so it was banked rather than chosen. That is the
+correct line, and the contrast with 0695 — which had one right answer and was
+fixed instead of banked — is the distinction worth keeping.
+
+## Dispatched: 0674 + 0675 + 0677 — `w7a4l55ca`
+
+The notify cluster, batched **on purpose**. Four crews have filed 24 issues
+against this one channel and closed 6, each seeing only its own slice and each
+filing the next crew's work. The brief tells this crew to treat the channel as one
+subject rather than three tickets, and hands it the map (four sinks;
+`ciw_echo`'s silent return when the widget is absent is the root of most of it) so
+it does not spend a scout pass rebuilding what four crews already know.
+
+**0675 is the sharp one**: the FAULT/DEGRADED announcement measures PROC IDENTITY
+when the question is SINK REACHABILITY. A channel can be ALIVE by its own test and
+reach nobody. The RED phase is required to construct exactly that state.
+
+0497's two design rules are restated as binding: count per pass never alert per
+item; split by cause never one aggregate.
+
+| # | item | state |
+|---|---|---|
+| ~~0682~~ | | DONE `4d4d745d` |
+| ~~0683+0684~~ | | REFUTED + REVERTED `85cd3e7e`, both OPEN |
+| ~~0679~~ | | DONE `cef8706a` |
+| ~~0691+0692~~ | | DONE `3df8eda0` |
+| ~~0695+0696~~ | | DONE `28d7fa28` |
+| 1 | **0674 + 0675 + 0677** | **IN FLIGHT** `w7a4l55ca` from 06:45 |
+| 2 | 0681 | queued |
+| 3 | 0689 + 0690 | queued |
+| 4 | 0672 + 0673 | queued |
+| — | 0683 + 0688 | NOT queued — needs the user's ruling |
+| — | the fabricated-witness class (0693, 0694, 0697 + 3 fixed) | **six instances now** — wants a systematic pass, not another one-off |
+
+## The night in one line, for the morning
+
+**Five commits, all verified by re-running the suites rather than reading the
+report; one crew refuted its own fix and reverted cleanly; the ledger is at 23
+rule / 27 look and one live regression (0682's) is still open on the user's
+ruling.**
