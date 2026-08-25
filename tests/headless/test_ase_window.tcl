@@ -770,6 +770,201 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           $::w1w_live_rc $w1w_live_gone [llength $w1w_live_echo]] \
     {0 1 1 error 1 1 0}
 
+  # ==========================================================================
+  # W1x/W1y/W1z/W1za/W1za2/W1zb -- ISSUE 0692: THE OTHER ORDER, ON THE REAL
+  # WIDGET
+  # ==========================================================================
+  # W1v above drives the order the user REPORTED -- paste the remedy, THEN open
+  # the menu -- and it is green at HEAD with 0692 fully live. This block drives
+  # the order the 0679 fix itself created, and which therefore did not exist
+  # before 2026-08-24: the dialog is opened FIRST and LEFT OPEN, the remedy runs
+  # behind it, and OK is pressed. Measured at HEAD on :99 with openbox live:
+  #   PROBE0692 seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0 ok_rc=1
+  #             gate_after_ok=0
+  # -- the stale snapshot is written back and the remedy is silently undone.
+  #
+  # ⚠ NOTHING LIES HERE. `save_all_ok`'s `1` is honest: it really did write what
+  # the dialog held. What the dialog held was stale. `dlg($key,opparams)` is
+  # written in exactly ONE place -- ase_window.tcl:3267, at dialog CREATION time
+  # -- and `ase::ui::populate` (:1274-1310) never touches `dlg`, so an open
+  # dialog is a snapshot and nothing in the product can refresh it. So no row
+  # here asserts that OK reports failure; they assert the STALENESS is gone.
+  #
+  # OK and Cancel are pressed through the REAL buttons: `$w.btns.proceed invoke`
+  # runs the widget's own -command AND returns its result, so the gesture and
+  # the rc are one event. ase::ui::dialog_buttons (:1407-1415) wires the ESC
+  # binding and the Cancel button to the identical cancelcmd, and a generated
+  # <Key-Escape> is the WSLg-flaky half of that pair.
+
+  # how many spied ase::echo messages match $pat -- a COUNT, not a boolean:
+  # "the discard is stated" and "stated ONCE" are different claims and a
+  # duplicated sentence is its own defect (test_ase_dialogs' d_echoed_n idiom)
+  proc w_echoed_n {echoes pat} {
+    set n 0
+    foreach e $echoes { if {[string match -nocase $pat [lindex $e 1]]} { incr n } }
+    return $n
+  }
+  # a blanket AS THE STATE HOLDS IT, never as the dialog holds it
+  proc w_blanket {key f} {
+    set v {NO-DICT}
+    catch {set v [dict get [ase::ui::save_all_current $key] $f]}
+    return $v
+  }
+  # the exact configuration the user ran: OP gate OFF, an enabled `op` analysis
+  proc w_gate_off {key} {
+    set st [ase::session_state $key]
+    catch {dict set st save_op_params {}}
+    catch {dict set st analyses \
+      {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}}
+    ase::session_update $key $st
+  }
+
+  # the printed remedy, captured the way W1v captures it (never hand-built:
+  # a hand-built command cannot see a drift in what the notice actually prints)
+  w_gate_off $key
+  w_cx {ase::op_cards_nudge_reset}
+  catch {unset ::xschem::notify_last}
+  w_cx {ase::op_cards_capture [ase::session_state $key] [file join $scratch w1x.spice]}
+  set w1x_cmd {}
+  catch {set w1x_cmd [dict get $::xschem::notify_last command]}
+
+  # W1x: THE FAILING ORDER -- open, leave open, remedy behind it, press OK ----
+  # `box_before_ok` is PINNED AT 0 AS A KNOWN RESIDUAL, not as desired
+  # behaviour: the open dialog's checkbutton still displays the pre-write value
+  # until it is reopened. That is issue 0695. Flip this term to 1 when 0695
+  # lands; until then OK and ESC are correct about the state while the pixels
+  # are not, and the term exists so the residual cannot be forgotten.
+  set w1x_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  set w1x_seed {NO-WIDGET}
+  catch {set w1x_seed [set [$w1x_w.opparams cget -variable]]}
+  set w1x_rrc [catch {uplevel #0 $w1x_cmd} w1x_res]     ;# ciw_exec's own seam
+  set w1x_gate_rem [w_blanket $key opparams]
+  set w1x_box {NO-WIDGET}
+  catch {set w1x_box [set [$w1x_w.opparams cget -variable]]}
+  set w1x_ok {NO-BUTTON}
+  catch {set w1x_ok [$w1x_w.btns.proceed invoke]}       ;# press OK for real
+  update idletasks
+  check "W1x 0692 THE OTHER ORDER: a Save All dialog opened BEFORE the printed\
+ remedy and OK'd after it must NOT write its stale snapshot back -- the gate the\
+ remedy turned on is still on (3rd term = the 0695 display residual)" \
+    [list $w1x_seed $w1x_gate_rem $w1x_box $w1x_ok [w_blanket $key opparams]] \
+    {0 1 0 1 1}
+
+  # W1y: NON-VACUITY -- the dialog's own boxes still commit ------------------
+  # GREEN AT HEAD, deliberately (a control, not evidence): it is what stops the
+  # 0692 fix being "OK now ignores the dialog". No external write anywhere.
+  w_gate_off $key
+  set w1y_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  catch {$w1y_w.opparams invoke}
+  catch {$w1y_w.btns.proceed invoke}
+  update idletasks
+  set w1y_on [w_blanket $key opparams]
+  set w1y_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  catch {$w1y_w.opparams invoke}
+  catch {$w1y_w.btns.proceed invoke}
+  update idletasks
+  check "W1y 0692 NON-VACUITY: with no external write at all, a box ticked BY\
+ HAND in the open dialog still commits on OK, and a hand un-tick still turns it\
+ back off" \
+    [list $w1y_on [w_blanket $key opparams]] {1 0}
+
+  # W1z: THE RECONCILE IS PER-FIELD -- both gestures survive ONE OK ----------
+  # The user's hand on one box and an external write on another, in the same
+  # open dialog. A fix that simply re-reads the live state on OK loses the hand
+  # tick; a fix that keeps writing the snapshot loses the remedy. The untouched
+  # third blanket must not move either way.
+  w_gate_off $key
+  set w1z_st [w_cx {ase::session_state $key}]
+  catch {dict set w1z_st save_all_v 0}
+  w_cx {ase::session_update $key $w1z_st}
+  set w1z_alli0 [w_blanket $key alli]
+  set w1z_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  catch {$w1z_w.allv invoke}                  ;# the user's hand, on ANOTHER box
+  catch {uplevel #0 $w1x_cmd}                 ;# the remedy, behind the dialog
+  catch {$w1z_w.btns.proceed invoke}
+  update idletasks
+  check "W1z 0692 the OK reconcile is PER-FIELD: the box the user ticked by hand\
+ wins AND the box an external write moved behind the dialog survives, in one OK,\
+ with the untouched third blanket left exactly as it was" \
+    [list [w_blanket $key allv] [w_blanket $key alli] [w_blanket $key opparams]] \
+    [list 1 $w1z_alli0 1]
+
+  # W1za: THE ESC ARM -- 0692's measured SECOND symptom ----------------------
+  # Measured at HEAD:
+  #   PROBE0692C seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0
+  #              phantom_discard_notices=1 gate_after_esc=1
+  #   "ASE: Save All was closed without OK — 'Save device OP parameters' was NOT
+  #    applied. Reopen Outputs > Save All and press OK."
+  # Read `gate_after_esc=1`: ESC correctly mutated nothing, the gate IS on, the
+  # remedy DID apply -- and the dialog tells the user it did not, and re-arms the
+  # OP-card nudge on the way out. On this path the user is told to redo work that
+  # is already done. `save_all_cancel` (:3383-3386) diffs the pending records
+  # against the LIVE state, which meant "the user changed it" only while nothing
+  # could change live behind an open dialog.
+  # (ii) is the contrast arm and is GREEN at HEAD: a REAL hand tick discarded by
+  # ESC must still be reported -- 0648's GE10c/GE10d contract must survive.
+  w_gate_off $key
+  set w1za_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  catch {uplevel #0 $w1x_cmd}                 ;# external write, boxes untouched
+  w_cx {ase::op_cards_nudge_reset}
+  set w1za_take [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  set w1za_hold [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  set w1za_e1 [w_aecho_spy {catch {$w1za_w.btns.cancel invoke}}]
+  update idletasks
+  set w1za_n_ext  [w_echoed_n $w1za_e1 {*NOT applied*}]
+  set w1za_gate   [w_blanket $key opparams]
+  set w1za_rearm  [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  w_gate_off $key
+  set w1za_w2 [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  catch {$w1za_w2.opparams invoke}            ;# a REAL hand tick, then dropped
+  w_cx {ase::op_cards_nudge_reset}
+  set w1za_take2 [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  set w1za_hold2 [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  set w1za_e2 [w_aecho_spy {catch {$w1za_w2.btns.cancel invoke}}]
+  update idletasks
+  set w1za_n_hand [w_echoed_n $w1za_e2 {*Save device OP parameters*NOT applied*}]
+  set w1za_rearm2 [w_cx {ase::op_cards_nudge_ok [ase::session_state $key]}]
+  check "W1za 0692 THE ESC ARM: a dialog whose boxes the user never touched\
+ emits NO discard notice and re-arms NO nudge when an EXTERNAL write moved the\
+ gate behind it (and the gate stays on) -- while a REAL hand tick dropped by the\
+ same gesture is still reported exactly once, naming the box" \
+    [list $w1za_n_ext $w1za_rearm $w1za_gate $w1za_n_hand] {0 0 1 1}
+  check "W1za2 0692 the W1za latch precondition, so its `no re-arm` term cannot\
+ pass on a dead latch: take, hold, and the HAND arm really does re-arm" \
+    [list $w1za_take $w1za_hold $w1za_take2 $w1za_hold2 $w1za_rearm2] \
+    {1 0 1 0 1}
+
+  # W1zb: RECORD HYGIENE -- GREEN AT HEAD, and the ONLY guard the new seed
+  # record will ever have. `save_all_close` (:3342-3350) unsets exactly
+  # allv/alli/opparams, and every existing cleanup row (test_ase_dialogs GE10,
+  # GE10g) checks exactly those three. A per-key `seed` record that outlived a
+  # teardown would survive OK, ESC and the WM close with ZERO rows red and then
+  # poison the NEXT dialog for this key -- 0692 wearing the fix's clothes.
+  # `ase::ui::close`'s `array unset dlg $key,*` (:318) hides it further.
+  set w1zb_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  w_cx {ase::ui::save_all_close $key}
+  check "W1zb 0692 record hygiene: save_all_close leaves NO dlg record for this\
+ key -- allv, alli, opparams AND the as-opened seed" \
+    [list [info exists ::ase::ui::dlg($key,allv)] \
+          [info exists ::ase::ui::dlg($key,alli)] \
+          [info exists ::ase::ui::dlg($key,opparams)] \
+          [info exists ::ase::ui::dlg($key,seed)]] {0 0 0 0}
+
+  # leave nothing of this block behind: no dialog, no dlg record (the restore
+  # below puts the session state and the panes back)
+  catch {ase::ui::save_all_close $key}
+  foreach w1z_rec {allv alli opparams seed} {
+    catch {array unset ::ase::ui::dlg $key,$w1z_rec}
+  }
+  update idletasks
+
   # restore the pre-W1v session state AND the panes built from it: every row
   # below reads the treeviews this state seeds
   w_cx {ase::session_update $key $w1v_st0}

@@ -287,15 +287,62 @@ Suites **76 / 202 / 172 / 342 / 10** ALL PASS (`test_ase_final` +9 rows,
 plus one sentence?) and one **`look`** debt: everything was proven on Xvfb `:99`
 against `test_nfet_final`; **please repeat your own gesture on `tb_bandgap`.**
 
-Filed by that crew and NOT fixed: **0691** (`do_load_state_from` fabricates its
-witness the same way; `do_save_state_as` and `ase::session_close` are weaker arms)
-and **0692** (a `Save All` dialog left **open** while you paste the remedy
-snapshots the old value and writes it back on OK — silently undoing the remedy,
-while OK's `1` is perfectly truthful. The 0679 fix is what creates that window).
-**Next free number: 0693.**
+Filed by that crew and **since FIXED (2026-08-25)**: **0691** (`do_load_state_from`
+fabricates its witness the same way; `do_save_state_as` and `ase::session_close`
+are weaker arms) and **0692** (a `Save All` dialog left **open** while you paste
+the remedy snapshots the old value and writes it back on OK — silently undoing the
+remedy, while OK's `1` is perfectly truthful. The 0679 fix is what creates that
+window). See §6b.
 
 Full record: issue `0679-*.md` (§FIXED), plan block
 "✅⚠ 0679 — LANDED 2026-08-25", spec §I1 and the ratification table.
+
+## 6b. 0691 + 0692 — the fabricated witness one proc over, and the stale dialog
+
+**LANDED 2026-08-25, status E. Pure Tcl, no rebuild.** Both were filed by the
+0679 crew with the measurement already done; this crew verified, fixed and swept.
+
+**0691** — three procs stopped manufacturing a `1`: `do_load_state_from` (through
+a new named seam `ase::ui::load_state_commit`, the twin of 0679's
+`save_all_commit`), `ase::session_close`, and `do_save_state_as` (which now
+**refuses before any write**, through a new `ase::session_exists`). Measured
+`do_load_state_from(BOGUS) 1 → 0`, `session_close(NEVER_HELD) 1 → 0`.
+⚠ `do_save_state_as` was worse than filed: for an unknown key `session_path`
+returns `{}` — the same marker as a registered-but-UNTITLED session (issue 0141) —
+so it ran the adopt arm, **created a view and wrote a state file to disk**, and
+returned 1.
+
+**0692** — an open `Save All` dialog is no longer a snapshot. OK now reconciles
+per field (the user's value for a box they touched, the LIVE value for one they
+did not) and ESC diffs against the as-opened seed. `gate_after_ok 0 → 1`;
+`phantom_discard_notices 1 → 0`. `save_all_ok`'s `1` was honest throughout and was
+**not** changed — the repair is to the staleness.
+
+**THE SWEEP**: 29 procs ending in an unconditional `return 0/1`; 3 fixed, 2 issues
+filed covering 3 procs, 6 measured honest, ~20 recorded as unexercised rather than
+implied clean.
+
+Suites **208 / 172 / 78 / 342 / 10** ALL PASS (`test_ase_window` +6,
+`test_ase_dialogs` +6, `test_ase_final` +2); T1/T2 unmoved.
+
+⚠ **It shipped with two measured residuals, and one of them is blocking.**
+**0695** — an *untouched* box takes the live value but the checkbutton does not
+follow it, so an open dialog can DISPLAY a ticked box while OK writes it **off**
+(reached with `Save All` open, then `Session > Load State`, then OK). That deck
+then goes out with no OP save cards while the dialog says they are on, so 0695 is
+**not** the cosmetic lag it was first filed as. **0696** — a *new* false "NOT
+applied" notice on hand-tick + external write + ESC, a gesture HEAD was silent
+about.
+
+Filed by this crew and NOT fixed: **0693** (`design_window` +
+`raise_window_entry` report a raise they never verified — this **refutes** a
+sentence in 0691 that cleared `raise_window_entry`), **0694** (`toggle_flag`,
+widened to the real class: **13** discarded `ase::session_update` call sites, the
+OK handler of nearly every ASE-L editor dialog), **0695** and **0696**.
+**Next free number: 0697.**
+
+Full record: issues `0691-*.md` / `0692-*.md` (both §AFTER), plan block
+"✅⚠ 0691+0692 — LANDED 2026-08-25", spec §0692 and the ratification table.
 
 ## 7. A note on elapsed time, so the next long run is not a mystery
 

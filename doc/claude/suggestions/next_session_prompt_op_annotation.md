@@ -8,6 +8,122 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅⚠ 0691+0692 — LANDED 2026-08-25 (status **E**). THE FABRICATED WITNESS, ONE PROC OVER, AND THE DIALOG THAT WENT STALE
+
+**Not a plan step.** Both were filed by the 0679 crew hours earlier with the
+measurement already done; this crew verified, fixed and swept. **Pure Tcl, no
+rebuild.** Full record: `doc/claude/issues/0691-*.md`, `0692-*.md`.
+
+Measured BEFORE, byte for byte:
+
+```
+do_load_state_from(BOGUS)  = 1      <- fabricated (session_update(BOGUS) = 0, honest)
+session_close(NEVER_HELD)  = 1      <- fabricated
+PROBE0692  seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0 ok_rc=1 gate_after_ok=0
+PROBE0692C ... phantom_discard_notices=1 gate_after_esc=1
+```
+
+AFTER: `0`, `0`, `gate_after_ok=1`, `phantom_discard_notices=0`.
+`test_ase_window` 202→208, `test_ase_dialogs` 166→172, `test_ase_final` 76→78,
+`test_op_annot` 342, `test_annot_show_menu` 10 — all ALL PASS.
+
+### WHAT A LATER CREW MUST CARRY (this is the part that changes your work)
+
+1. **⚠ THE 0692 FIX SHIPS WITH TWO MEASURED RESIDUALS. Read them before you touch
+   the Save All dialog.**
+   * **0695 is BLOCKING, not cosmetic** — it was filed as a display lag and the
+     write-up pass measured that framing false. Because an *untouched* box now
+     takes the LIVE value while the checkbutton does **not** follow the live
+     value, an open dialog can DISPLAY a ticked box while OK writes it **off**:
+     `WU-B2 box_at_open=1 load_rc=1 live_after_load=0 box_still=1 ok_rc=1
+     gate_after_ok=0`, reached with two shipped menu items (`Save All` open, then
+     `Session > Load State`, then OK). HEAD wrote **on** here. `op_cards_capture`
+     gates the whole OP-card block on `save_op_params`, so that deck goes out
+     with no OP save cards while the dialog says they are on.
+   * **0696 is a NEW false notice this fix created** — `save_all_touched` answers
+     *"differs from the seed"*, which is **not** *"the user's change was lost"*.
+     Hand-tick + an external write to the same value + ESC prints "'Save device OP
+     parameters' was NOT applied" while `gate_after_esc=1`. HEAD was silent here.
+     Do **not** record the ESC arm as "now honest" — it is honest for the reported
+     gesture and wrong for that one. The fix is to narrow the **cancel consumer
+     only** (report a field when it differs from the seed **and** from live), never
+     to revert `save_all_cancel` to HEAD's live diff.
+2. **THE 0692 FIX IS FAIL-OPEN TO ITS OWN BUG.** `save_all_touched` deliberately
+   falls back to HEAD's live diff when `dlg($key,seed)` is absent. Any future path
+   that shows this dialog **without going through `save_all_dialog`** silently
+   reinstates 0692 **with zero rows red**. W1x/W1za are the only structural guard.
+   If you add a second way to open it, seed it.
+3. **⚠ SAB-N6 IS NO LONGER A CLEAN DISCRIMINATOR FOR THE 0679 SEAM.** Predicted 4
+   red (F19v/F19w/W1v/W1w), observed **12** — it also reddens
+   F19p/F19q/F19r/F19u **and the four 0692 rows**, because every Save All write
+   funnels through `save_all_commit`. Mechanically expected, but the plan's claim
+   of "no new coupling to the 0692 rows" is **refuted**. Read its red set as a
+   superset, not as a pointer at one seam.
+4. **THE SWEEP'S SYNTACTIC PATTERN IS NARROWER THAN THE DEFECT CLASS.** "Every
+   proc whose last statement is an unconditional `return 1/0`" was completed (29
+   procs, one survivor: `raise_window_entry`, filed 0693). But the *class* —
+   a write whose answer nobody reads — has **thirteen** `ase::session_update` call
+   sites in `src/ase_window.tcl`, i.e. the OK handler of nearly every ASE-L editor
+   dialog. Enumerated in **0694**. **A future sweep should grep the discarded
+   WRITE, not the trailing `return`.**
+5. **0691 CONTAINS A SENTENCE THAT IS NOW REFUTED.** Its "Cleared by measurement,
+   do NOT re-file" section says `raise_window_entry` "is a 'done' signal, not a
+   witness". Right about the key lookup, **wrong about the mechanism**: against a
+   bogus entry the bare `xschem new_schematic switch` does not throw, nothing is
+   raised, and it reports `1`. Filed as **0693** with `design_window`, one issue
+   because fixing either alone proves nothing.
+6. **`{}` IS STILL NEVER `0`.** Both new paths (`save_all_resolve`, the hand
+   untick) were driven and round-trip through `save_all_current` /
+   `save_all_apply`'s untouched expression: `LM save_op_params_value={}
+   serialized_has_key=0`. The 104 byte-identical `.state` files are safe. Any
+   further reconcile work must keep that route.
+7. **A `dlg` RECORD LEAKS SILENTLY.** `save_all_close` unsets `allv`/`alli`/
+   `opparams`/`seed`; nothing else would ever catch a leaked record poisoning the
+   NEXT dialog for that key. **Any new per-key record needs an unset there and a
+   row** — W1zb and GE10i are the only ones that will ever see it.
+8. **⚠ CONCURRENT SABOTAGE CORRUPTED TWO VERIFY PASSES IN THIS RUN.** Verify-A
+   first read 6 FAILED in each of two suites and Verify-C first read the fix as
+   inert — both were a sabotage agent editing `src/ase*.tcl` underneath them
+   (restore fits inside one suite's run window, so end-to-end checksums pass).
+   **Serialize sabotage against verify, or give sabotage its own tree**, and
+   sample the file checksum *throughout* a run, not at its ends.
+9. **NUMBER NEW ISSUES FROM 0697** — this crew filed **0693** (`design_window` +
+   `raise_window_entry`), **0694** (`toggle_flag`, widened to the 13-site class),
+   **0695** (the display residual, raised to blocking) and **0696** (the new ESC
+   false notice).
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| E1 | L2 | 0692 takes the issue's own **option 2** — per-key `seed` record + per-field reconcile on OK | option 1 (re-seed inside `save_all_commit`): a widget side effect in the shared writer the pasted remedy calls, it would silently move a hand-ticked box, and it changes what SAB-N6 proves. option 3 (refuse/report on OK): turns a working gesture into an error |
+| E2 | **L1 (I1)** | the **cancel arm is fixed in the same change**, through the one `save_all_touched` definition | leaving it and filing: it would ship a fix for OK while ESC keeps printing a measured-false "NOT applied" |
+| E3 | L2 | a **missing seed falls back to HEAD's live diff** | "no seed ⇒ nothing touched" — it would silently make a directly-poked record inert and redden suites for the wrong reason |
+| E4 | **L3** | on a conflict **the user's hand wins, silently** | announcing the race — that is `rule 0692` on the ledger, unratified |
+| E5 | L2 | 0691 uses a **named commit seam** (`load_state_commit`), with its own sentence | an inline `return [session_update …]` — no callee to stub short of `session_update`, which reddens the whole session model and discriminates nothing |
+| E6 | L2 | `do_save_state_as` gets an **early registration guard** (new `ase::session_exists`) | measuring the adopt after the fact — the file is already on disk by then. ⚠ `session_path` returns `{}` for BOTH an unknown key and a registered-but-UNTITLED session (issue 0141); that conflation is the whole defect |
+| E7 | L2 | `session_close` made honest **although every caller discards it** | leaving it "harmless" — third instance of the 0652 class in three days |
+
+**E4 is user-visible and unratified → status E**; `rule 0692` and a `look` debt
+are on the ledger. **The question:** *an untouched box now takes the LIVE value,
+so an open dialog can show a ticked box while OK writes it OFF (0695) — ratify
+the silent per-field reconcile and land 0695 as a follow-up, or hold 0692 until
+the checkbutton follows the live state?*
+
+### STILL OPEN
+
+| # | what | where |
+|---|---|---|
+| 1 | **E4 unratified**, and the **net-zero hand gesture** (tick-then-untick loses to live) is in the same ruling but not in the debt's wording | `rule 0692` |
+| 2 | **an open dialog can show ON and write OFF** | **issue 0695** (blocking) |
+| 3 | **a new false "NOT applied" notice** on hand-tick + external write + ESC | **issue 0696** |
+| 4 | `design_window` / `raise_window_entry` report a raise they never verified | **issue 0693** |
+| 5 | the discarded-`session_update` class, **13 sites** | **issue 0694** |
+| 6 | rule debt **[0679]** (return 0 + echo vs RAISE; OK closing on a failed apply) — the ESC-arm work bears on its second half, **restated not answered** | `rule 0679` |
+| 7 | **ZERO `:0` coverage** — every GUI number here is `:99`/openbox 3.6.1 | `look` debt + the standing `suite test_ase_window` debt |
+
+---
+
 ## ✅⚠ 0679 — LANDED 2026-08-25 (status **E**). THE ONLY ITEM ON THAT QUEUE THE USER PERSONALLY HIT
 
 **Not a plan step.** The user drove the shipped feature on a real sky130 bench,
@@ -69,7 +185,7 @@ register under the STATE view, and **(b)** `save_all_apply` ended in a hardcoded
    the latch and the tool goes permanently silent about that cellview. Measured:
    `run1 nudges 1 / told 1 / run2 nudges 0`. Anything that writes a session by key
    inherits this; fixing the key fixed it, and F19u pins it.
-7. **NUMBER NEW ISSUES FROM 0693** — this crew filed **0691** (`do_load_state_from`
+7. ~~**NUMBER NEW ISSUES FROM 0693**~~ *(superseded — from **0697**, see the 0691+0692 block above)* — this crew filed **0691** (`do_load_state_from`
    fabricates its witness the same way; `do_save_state_as` and `ase::session_close`
    are the weaker arms) and **0692** (a stale open `Save All` dialog silently
    reverts the remedy: `seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0 ok_rc=1
@@ -132,8 +248,8 @@ rows never execute (`grep -c G2` = 0 under sabotage vs 4 at baseline).
 | # | what | where |
 |---|---|---|
 | 1 | **D6/D7 unratified** — return-0-and-echo vs raise; OK closing on a failed apply | `rule 0679` on the ledger |
-| 2 | a **stale open Save All dialog reverts the remedy** (OK's `1` is truthful, the setting is lost) | **issue 0692** |
-| 3 | `do_load_state_from` / `do_save_state_as` / `ase::session_close` fabricate witnesses | **issue 0691** |
+| 2 | ~~a **stale open Save All dialog reverts the remedy**~~ **FIXED 2026-08-25** — but it shipped with two residuals, **0695** (blocking) and **0696** | **issue 0692**, see the block above |
+| 3 | ~~`do_load_state_from` / `do_save_state_as` / `ase::session_close` fabricate witnesses~~ **FIXED 2026-08-25**, all three | **issue 0691** |
 | 4 | the **ambiguity refusal is silent about itself** — no sentence says a command was withheld | 0679 §Still open |
 | 5 | the **confident-wrong-match window** if a future caller ever holds a state across an event-loop turn before netlisting | 0679 §Still open |
 | 6 | `save_all_apply` can still **raise** on a *registered* key with a malformed state, and from the menu that is a **bgerror** | 0679 §Still open |
@@ -492,7 +608,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0693.** (**the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0697.** (**the 0691+0692 crew filed 0693-0696**; **the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -4343,7 +4459,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0693**. *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0697**. *(Updated by the 0691+0692 crew, 2026-08-25: it filed **0693**, **0694**, **0695** and **0696**.)* *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were

@@ -1246,10 +1246,73 @@ truthy-not-`1` gate is silently off; the count assumes an `@` prefix),
 **0660** (the statusbar fallback is last-writer-wins,
 so the per-device `last_warnings` lines can never survive to it, and its short
 form carries no remedy), **0661** (`save_all_report_discard` still prints
-hardcoded, drifted menu prose) and, new with the 0679 fix, **0692** (a `Save All`
+hardcoded, drifted menu prose) and, new with the 0679 fix, ~~**0692**~~ (a `Save All`
 dialog left **open** while the remedy is pasted snapshots the old gate at creation
 time and writes it back on OK, silently reverting the remedy — and OK's `1` is
-truthful, which is what makes it hard to see).
+truthful, which is what makes it hard to see) — **0692 is FIXED, 2026-08-25**; see
+the next paragraph, and note it shipped with two residuals of its own.
+
+⚠ **AN OPEN `Save All` DIALOG IS NO LONGER A SNAPSHOT (issue 0692, fixed
+2026-08-25) — AND THE RECONCILE IT SHIPPED IS BINDING ON ANYTHING THAT WRITES
+THOSE THREE BLANKETS.** `dlg($key,allv|alli|opparams)` used to be written in
+exactly one place, at dialog creation time, so a write landing behind an open
+dialog was reverted by OK (`PROBE0692 … gate_after_ok=0`) and falsely reported as
+"NOT applied" by ESC (`phantom_discard_notices=1` while `gate_after_esc=1`). What
+ships now, all in `src/ase_window.tcl` and all local to that dialog:
+
+* `save_all_seed` (`:3381`) stores the **as-opened** normalised dict as one record
+  `dlg($key,seed)`, taken from the same `ase::ui::save_all_current` call the three
+  checkbutton records come from — **still ONE normaliser (I1)**, now four
+  consumers;
+* `save_all_touched` (`:3397`) is **the one definition of "the user changed this
+  box"**, with two consumers (the OK reconcile and the ESC discard diff). Two
+  independent readings are exactly how the ESC arm drifted into a phantom notice;
+* `save_all_resolve` (`:3426`) is the OK-path **per-field** reconcile: the user's
+  value for a box they touched, the **LIVE** value for one they did not. It feeds
+  the *unchanged* `save_all_apply`, so `{}`-never-`0` is preserved by construction
+  (measured: `LM save_op_params_value={} serialized_has_key=0`);
+* `save_all_commit`, `save_all_apply`, `save_all_current` and `save_op_params_on`
+  are **untouched** — the 0679 seam and its sabotage meaning are intact.
+
+Three things a later change must not undo:
+
+1. **⚠ THIS IS FAIL-OPEN TO THE BUG.** With no `dlg($key,seed)`, `save_all_touched`
+   falls back to the old live diff on purpose (so directly-poked records behave as
+   they always did). **A future path that shows this dialog without going through
+   `save_all_dialog` silently reinstates 0692 with zero rows red.** Seed it.
+2. **Any new per-key `dlg` record must be unset in `save_all_close` (`:3453`)**
+   and pinned by a row. A leaked record survives OK, ESC and the WM close with
+   nothing red and then poisons the next dialog for that key.
+3. **`save_all_ok`'s `1` was honest before this and is honest now.** Nothing here
+   was made to report failure; the repair was to the *staleness*. That distinction
+   is what separates 0692 from 0679/0691, and a future reader who "fixes" it by
+   reporting failure has misread it.
+
+**It shipped with two measured residuals, both filed:** **0695** — an *untouched*
+box takes the live value but the checkbutton does not follow it, so an open dialog
+can DISPLAY a ticked box while OK writes it **off** (`WU-B2 box_at_open=1
+live_after_load=0 box_still=1 gate_after_ok=0`, reached with `Save All` open then
+`Session > Load State`). Because `ase::op_cards_capture` gates the whole OP-card
+block on `save_op_params`, that deck goes out with **no OP save cards** while the
+dialog says they are on — so 0695 is **blocking, not cosmetic**, and the spec
+records that its original "cosmetic" framing was wrong. And **0696** — a *new*
+false "NOT applied" notice on hand-tick + external write to the same value + ESC,
+a gesture HEAD was silent about, because `save_all_touched` answers *"differs from
+the seed"* rather than *"the user's change was lost"*.
+
+⚠ **AND THE WITNESSES IN THE SESSION MODEL ARE NOW MEASURED (issue 0691, fixed
+2026-08-25).** `ase::ui::do_load_state_from` returns `ase::session_update`'s
+answer through a new named seam `ase::ui::load_state_commit` (`:3745`, the twin of
+`save_all_commit`) with one `error`-tagged sentence naming the key;
+`ase::session_close` (`src/ase.tcl:2822`) returns 0 for a key it never held; and
+`ase::ui::do_save_state_as` (`:3931`) now **refuses before any write** when no
+session is registered, through a new `ase::session_exists` (`src/ase.tcl:2836`).
+⚠ That last one matters beyond its return: `ase::session_path` yields `{}` for
+**both** an unknown key **and** a registered-but-UNTITLED session (issue 0141), and
+that conflation is what let an unknown key run the untitled-adopt arm, create a
+view and write a defaults-state file to disk while reporting success. **Use
+`ase::session_exists` for "is a session registered", never `session_path eq {}`.**
+
 
 **On a DIRTY sheet the ASE path emits nothing and says so** — provisional,
 pending the 0628/**0632** ruling, filed as **0633**. This is deliberately *not*
@@ -2020,11 +2083,12 @@ authority has signed it off*.
 | **0663** | ratification | **when one of xschem's OWN fifteen shipped Tcl helpers fails to source, xschem now REFUSES TO START** — it names the failing file in one line on stderr and in the durable action log (`STARTUP ABORTED: … Failing file: <helper> line N. Cause: …`) and exits **1**. Before: SIGSEGV, exit **139**, and the `error {...}` shape named the helper *nowhere*. Fixed in C at one call site, `src/xinit.c:3571`; `src/xschem.tcl` untouched. The ruling wanted: **(a)** announce-and-**continue**, giving a degraded editor with `cadlayers=0`, `undo_type` NULL, no colours, no menus, no bindings and no undo — that can still be told to SAVE a schematic (issue **0619** is already open in exactly that state); or **(b)** announce-and-**abort**, which is what shipped, deliberately against the driver's recommendation because a subtly wrong tool is worse than a refusal. ⚠ Two scope facts a ruling needs: a broken **PDK helper / `xschemrc`** is UNAFFECTED and still exits 0 (only the one `xschem.tcl` call site is guarded), and (a) is not reachable from C at all — it would have to be a Tcl-side fix, which `status_annotate.md` §5 forbade. Implemented as (b) pending the answer. |
 | **0664+0665+0666** | ratification | **a notice channel failure now speaks TWO different sentences, and the choice is measured.** When the live `::xschem::notify` IS the log-only bootstrap the user gets the golden `NOTICE CHANNEL DEGRADED` line; when it is the full channel and merely *raised*, the user gets a **new** `NOTICE CHANNEL FAULT` line on its own one-shot latch, so a fault can never eat the announcement that belongs to a real degradation (at HEAD it did: the false positive burnt the latch and the genuine degradation announced nothing). Two rulings are wanted. **(a)** Is a second marker right, or should a live-channel raise be **silent** (0423's standing objection says no: a silent continue hides the problem) or re-use the DEGRADED marker (rejected — `NTD1`/`PS20` assert its absence in the healthy case and `NTD4`/`PS23` count exactly one, so re-use breaks four committed rows and re-tells 0664's lie in a new voice)? **(b)** With **no durable log open** (`--nolog`, or `--nogui` with no `--logdir`) the DEGRADED sentence now says *"no durable log is open … so notices reach STDERR ONLY from here on"* instead of *"notices are LOG-ONLY"* — is naming stderr right, when stderr is deliberately **not** counted as a sink (0658 D9)? ⚠ One scope fact a ruling needs: the discriminator measures **proc identity, not sink reachability**, so a `ciw.tcl` failing between `:256` and `:464` is announced as a FAULT while the CIW pane is dead for the whole session (issue **0675**). Implemented as ruled pending the answer. |
 | **0679** | ratification | **the pasteable remedy now REPORTS FAILURE INSTEAD OF FABRICATING SUCCESS, and the shape of that report is the unratified part.** `ase::ui::save_all_apply` used to end in a hardcoded `return 1`; it now returns `ase::session_update`'s answer through `ase::ui::save_all_commit` (`src/ase_window.tcl:3240`), and on failure echoes **one** `error`-tagged sentence naming the key (`ase: no ASE-L session is open under '<key>'; the Save All settings were NOT applied.`). Two questions. **(a)** When the pasted `ase::ui::save_op_params_on <key>` cannot find a session, should it **return 0 and echo one line** — as shipped — or **RAISE**, so `ciw_exec` red-tags it through `ciw_echo $res error` (`src/ciw.tcl:602-603`)? Raising was rejected at rung L3 because it turns a value-returning proc into a throwing one, needs `catch` at every future caller including `save_all_ok`, 0666 already records raises leaking out of the echo family, and it lands in the same `#!` error-to-log path where `test_ciw` is already 1-red at HEAD. **(b)** `ase::ui::save_all_ok` now returns the rc but **still closes the dialog** on a failed apply — the alternative, holding it open, was rejected because a user cannot repair a session that is gone from inside that dialog. Implemented as ruled, pending the answer. |
+| **0692** | ratification | **an OPEN `Save All` dialog now RECONCILES a race instead of reverting it, and it does so SILENTLY.** `ase::ui::save_all_resolve` (`src/ase_window.tcl:3426`) writes, per field, the user's value for a box they **touched** and the **LIVE** value for one they did not — so a write landing behind the open dialog (the pasted `save_op_params_on` remedy is exactly such a writer since 0679) is no longer undone by OK, and ESC no longer claims it "was NOT applied". Three questions, one ruling. **(a)** Should the tool instead **SAY the dialog raced** (0692's option 3) rather than resolving it without a word? **(b)** The reverse conflict — the user hand-**unticks** a box while an external write ticks it — is resolved in the user's favour, silently; announce it? **(c)** ⚠ **and the one that may block:** because an *untouched* box takes the live value while the checkbutton does **not** follow the live value, an open dialog can **DISPLAY a ticked box while OK writes it OFF** (`WU-B2 box_at_open=1 live_after_load=0 box_still=1 gate_after_ok=0`, reached with `Save All` open then `Session > Load State`). `op_cards_capture` gates the whole OP-card block on `save_op_params`, so that deck goes out with no OP save cards while the dialog says they are on. **Ratify the silent per-field reconcile and land issue 0695's display refresh as a follow-up, or hold 0692 until the checkbutton follows the live state?** Option 1 (re-seed inside `save_all_commit`) was rejected at rung L2: a widget side effect inside the shared writer the remedy calls, and it would silently move a box the user had just ticked by hand. Also open, in the same ruling but **not** in the ledger debt's wording: a **net-zero** hand gesture (tick then untick) returns the record to the seed, so the field reads as untouched and the live value wins over the box the user is looking at. |
 
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:
 implement the least-surprising option, then hand the user the exact question.
-Twelve such questions in one feature is itself a signal — this feature changes
+Thirteen such questions in one feature is itself a signal — this feature changes
 what a schematic *shows*, so almost every choice is user-visible.
 
 *(Collected by the S12 write-up agent. The S12 implement agent produced no

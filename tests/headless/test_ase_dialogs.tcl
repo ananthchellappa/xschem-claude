@@ -204,6 +204,33 @@ proc d_echoed_n {pat} {
   return $n
 }
 
+# The same spy one channel further in, on `ase::echo` itself. `d_echo_arm`
+# above parks ::ciw_echo; the 0691 failure lines are emitted by ase::echo
+# (ase.tcl:180) -- do_load_state_from's own unloadable-FILE arm already calls
+# it directly -- so they are read HERE. Copied verbatim in shape from
+# tests/headless/test_ase_window.tcl's w_aecho_spy (each test is its own
+# process: helpers are copied, not shared-sourced).
+proc d_aecho_spy {script} {
+  set ::d_aecho {}
+  if {[info commands ::d_saved_ase_echo] eq {}} {
+    if {[info commands ::ase::echo] ne {}} { rename ::ase::echo ::d_saved_ase_echo }
+    proc ::ase::echo {msg {tag {}}} { lappend ::d_aecho [list $tag $msg] ; return 1 }
+  }
+  catch {uplevel 1 $script}
+  if {[info commands ::d_saved_ase_echo] ne {}} {
+    catch {rename ::ase::echo {}}
+    rename ::d_saved_ase_echo ::ase::echo
+  }
+  return $::d_aecho
+}
+# just the `error`-tagged pairs of a d_aecho_spy result -- "it said something"
+# and "it said ONE error-tagged sentence" are different claims (issue 0635)
+proc d_aecho_errors {echoes} {
+  set out {}
+  foreach e $echoes { if {[lindex $e 0] eq {error}} { lappend out $e } }
+  return $out
+}
+
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
@@ -314,6 +341,31 @@ catch {set f [::open $p2 r]; set c2 [read $f]; close $f}
 check "H3 created file carries this session's serialization" \
   $c2 "[ase::state_serialize [ase::session_state $key]]\n"
 
+# --- H3b (0691 SWEEP): do_save_state_as REFUSES a key nobody is under --------
+# 0691's "weaker second arm". Measured at HEAD, headless: an unknown key makes
+# `ase::session_path` return {} -- the SAME value that marks an untitled session
+# -- so control reaches the `own eq {}` adopt arm at ase_window.tcl:3800-3805.
+# library_new_view CREATES the view, a defaults-state file is written into it,
+# `ase::session_adopt` returns 0 into a discarded value (:3804) and the proc
+# ends in its hardcoded `return 1` (:3815):
+#   H3B catch=0 res=1
+#   H3B viewpath = .../aselib/nfet_clean/ngspice_stateH3B/nfet_clean.state
+#   H3B echoes   = {{} {ase: state saved to aselib/nfet_clean/ngspice_stateH3B}}
+# The lie and the bogus view arrive together, so the row pins both: refusing
+# BEFORE any write removes the manufactured 1 and the litter in one guard.
+set h3b_key {H3B-NO-SESSION}
+set h3b_e [d_aecho_spy \
+  {set ::h3b_rc [ase::ui::do_save_state_as $h3b_key aselib nfet_clean ngspice_stateH3B]}]
+set h3b_err [d_aecho_errors $h3b_e]
+check "H3b 0691 do_save_state_as REFUSES a key no session is under: returns 0,\
+ creates NO view (and therefore no state file), and says so exactly once tagged\
+ error" \
+  [list [expr {[info exists ::h3b_rc] ? $::h3b_rc : {NO-RETURN}}] \
+        [expr {[xschem cellview_path aselib/nfet_clean ngspice_stateH3B] ne {} ? 1 : 0}] \
+        [llength $h3b_err] \
+        [expr {[llength $h3b_err] == 1 ? [lindex $h3b_err 0 0] : {NO-ONE-LINE}}]] \
+  {0 0 1 error}
+
 # --- H4: do_load_state_from imports content + dirty (D10) --------------------
 # import the differing stateB content (seeded in the fixture)
 check "H4 session clean before the import" [ase::session_dirty $key] 0
@@ -325,6 +377,56 @@ check "H4 do_load_state_from imports content" \
 check "H4 session dirty after the import" [ase::session_dirty $key] 1
 ase::session_revert $key
 check "H4 revert leaves the session clean" [ase::session_dirty $key] 0
+
+# --- H4b/H4c/H4d (0691): the witness, the sentence, and the ONE sentence -----
+# `ase::ui::do_load_state_from` (ase_window.tcl:3575-3587) is honest about the
+# FILE (:3576-3579) and never about the KEY: `ase::session_update`'s answer is
+# discarded at :3580 and the proc ends in a hardcoded `return 1` at :3586 --
+# the identical shape 0679 just fixed one proc over in `save_all_apply`.
+# Measured at HEAD, headless, at the same commit as the repaired twin:
+#   session_update(BOGUS)      = 0    <- honest
+#   do_load_state_from(BOGUS)  = 1    <- fabricated
+#   save_all_apply(BOGUS)      = 0    <- 0679's repair holding
+# So "Load State into a session that is gone" reports success, changes nothing
+# and says nothing.
+set h4_key {H4B-NO-SESSION}
+set h4b_bad  [d_aecho_spy {set ::h4b_badrc  [ase::ui::do_load_state_from $h4_key $bpath]}]
+set h4b_good [d_aecho_spy {set ::h4b_goodrc [ase::ui::do_load_state_from $key $bpath]}]
+check "H4b 0691 do_load_state_from reports FAILURE for a key no session is under\
+ and SUCCESS for the registered one -- both arms from the SAME loadable file in\
+ one tuple, so a proc hardwired to either value fails one half" \
+  [list [expr {[info exists ::h4b_badrc] ? $::h4b_badrc : {NO-RETURN}}] \
+        [expr {[info exists ::h4b_goodrc] ? $::h4b_goodrc : {NO-RETURN}}]] \
+  {0 1}
+
+set h4c_err [d_aecho_errors $h4b_bad]
+check "H4c 0691 the refused import is NOT SILENT: exactly one ase::echo, tagged\
+ error, naming the key it could not find -- and the successful import says\
+ nothing at all" \
+  [list [llength $h4c_err] \
+        [expr {[llength $h4c_err] == 1 ? [lindex $h4c_err 0 0] : {NO-ONE-LINE}}] \
+        [expr {[llength $h4c_err] == 1 &&
+               [string first $h4_key [lindex $h4c_err 0 1]] >= 0 ? 1 : 0}] \
+        [llength $h4b_good]] \
+  {1 error 1 0}
+
+# H4d: GREEN AT HEAD, and the row that stops the fix growing a SECOND sentence.
+# The unloadable-FILE arm already emits one error-tagged line; the new
+# unknown-KEY arm must be mutually exclusive with it, not additive.
+set h4d [d_aecho_spy \
+  {set ::h4d_rc [ase::ui::do_load_state_from $key [file join $scratch h4d-no-such.state]]}]
+set h4d_err [d_aecho_errors $h4d]
+check "H4d 0691 THE ECHO DOES NOT DOUBLE-FIRE: an unloadable FILE into a\
+ REGISTERED key still returns 0 with exactly one error-tagged line" \
+  [list [expr {[info exists ::h4d_rc] ? $::h4d_rc : {NO-RETURN}}] \
+        [llength $h4d_err] \
+        [expr {[llength $h4d_err] == 1 ? [lindex $h4d_err 0 0] : {NO-ONE-LINE}}]] \
+  {0 1 error}
+
+# H4b's registered arm re-imported stateB: leave the session exactly as the H4
+# block left it, so the GUI legs below open on a clean session.
+ase::session_revert $key
+check "H4d the H block leaves the session clean again" [ase::session_dirty $key] 0
 
 # drop the H session so the GUI legs exercise a fresh window build
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
@@ -1016,9 +1118,38 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "GE10h 0648 ZERO STATE MUTATION survives the fix: tick + WM close still\
  leaves the state byte-identical" \
     [ase::state_serialize [ase::session_state $key]] $snap
+  # GE10i -- ISSUE 0692: THE AS-OPENED SEED RECORD SURVIVES NO TEARDOWN PATH.
+  # GREEN AT HEAD and deliberately so (a guard, not evidence): at HEAD there is
+  # no `seed` record to leak. It is the ONLY guard that record will ever have.
+  # `ase::ui::save_all_close` (ase_window.tcl:3342-3350) unsets exactly
+  # allv/alli/opparams and every existing cleanup row -- GE10 and GE10g above --
+  # checks exactly those three, so a leaked seed would outlive OK, ESC AND the
+  # window-manager close with ZERO rows red, and would then poison the next
+  # dialog for this key: 0692 wearing the fix's clothes. It lives in this suite
+  # because this is where 0648's WM-close protocol is owned.
+  # The OK arm deliberately touches nothing, so its commit is idempotent and
+  # GE10h's byte-identical-state contract above is not disturbed.
+  set ge10i {}
+  $top.mb.outputs invoke "Save All…"
+  update
+  catch {$top.saveall.btns.proceed invoke}
+  update
+  lappend ge10i [info exists ::ase::ui::dlg($key,seed)]
+  $top.mb.outputs invoke "Save All…"
+  update
+  send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
+  lappend ge10i [info exists ::ase::ui::dlg($key,seed)]
+  $top.mb.outputs invoke "Save All…"
+  update
+  catch {uplevel #0 [cx {wm protocol $top.saveall WM_DELETE_WINDOW}]}
+  update
+  lappend ge10i [info exists ::ase::ui::dlg($key,seed)]
+  check "GE10i 0692 the as-opened seed record is unset by ALL THREE teardown\
+ paths -- OK, ESC, and the window-manager close protocol" $ge10i {0 0 0}
+
   # leave no half-open dialog behind on a tree where GE10g could not close it
   catch {destroy $top.saveall}
-  foreach ge10_r {allv alli opparams} {
+  foreach ge10_r {allv alli opparams seed} {
     catch {array unset ::ase::ui::dlg $key,$ge10_r}
   }
   update

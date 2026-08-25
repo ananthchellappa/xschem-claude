@@ -943,6 +943,52 @@ check "F19s2 0679 THE REFUSAL TO GUESS: when no single session resolves --\
 
 cx {ase::op_cards_nudge_reset}
 
+# ============================================================================
+# F20a/F20b -- 0691: ase::session_close's WITNESS THAT CANNOT FAIL
+# ============================================================================
+# ⚠ THESE ARE NOT SUB-ROWS OF F20. F20 (bottom of this file) is invariant I4,
+# the design-buffer control; these two are the 0691 sweep's third arm, and they
+# sit HERE because this is exactly where the F19 block's own session keys have
+# just been torn down and the registry is empty again.
+#
+# `ase::session_close` (ase.tcl:2803-2807) is
+#   if {[dict exists $sessions $key]} { dict unset sessions $key } ; return 1
+# Measured at HEAD, headless, at the same commit as 0679's repaired twin:
+#   F20A live=1 second=1 never=1
+# It reports success for a key it never held, and for a second close of a key
+# it already dropped. Inert TODAY -- its one production caller
+# (ase_window.tcl:310, inside ase::ui::close, behind that proc's own
+# `dict exists $wins` guard) discards the value and no test asserts it -- which
+# is precisely what makes it cheap to fix and dangerous to leave: the next
+# caller that reads it inherits the lie. Third instance of issue 0652's class
+# in three days (0664, 0677, 0679).
+set f20_key    {F20A-SWEEP-KEY}
+set f20_before [f_regkeys]
+cx {ase::session_open $f20_key $statefile}
+set f20_live   [cx {ase::session_close $f20_key}]
+set f20_second [cx {ase::session_close $f20_key}]
+set f20_never  [cx {ase::session_close F20A-NEVER-REGISTERED}]
+check "F20a 0691 ase::session_close is a MEASURED witness: 1 for a live key, 0\
+ for a SECOND close of the same key, 0 for one it never held -- and the registry\
+ is left exactly as this row found it (F18's BEFORE state is downstream)" \
+  [list $f20_live $f20_second $f20_never [f_regkeys]] \
+  [list 1 0 0 $f20_before]
+
+# F20b: NON-VACUITY -- the honest close still really unregisters. The two
+# registry terms are GREEN AT HEAD (the `dict unset` has always worked); the
+# accessor term is the registration predicate the GUI layer has never had and
+# which the 0691 fix adds beside session_path/session_state, so at HEAD it
+# reads NO-PROC. Without this row the fix could be a lookup that forgot to
+# unset.
+set f20b_ex {NO-PROC}
+catch {set f20b_ex [ase::session_exists $f20_key]}
+check "F20b 0691 NON-VACUITY: after the honest close the key is really gone --\
+ ase::session_exists says 0, session_state reads {} and the registry dict no\
+ longer holds it" \
+  [list $f20b_ex [cx {ase::session_state $f20_key}] \
+        [expr {[dict exists $::ase::sessions $f20_key] ? 1 : 0}]] \
+  {0 {} 0}
+
 # --- F18: the BEFORE state, pinned exactly (the non-vacuity control) ---------
 if {[auto_execok ngspice] eq {}} {
   puts "SKIPPED: F11-F18/F20 run legs (ngspice not found)"

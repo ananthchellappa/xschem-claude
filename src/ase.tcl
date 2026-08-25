@@ -2800,10 +2800,42 @@ proc ase::session_revert {key} {
 }
 
 # Unregister a session (window close). Unknown keys are a no-op.
+#
+# ⚠ 0691: THE RETURN IS MEASURED, NOT MANUFACTURED. This proc used to end in a
+# hardcoded `return 1` after a guarded `dict unset`, so it reported success for
+# a key it never held and for a second close of a key it had already dropped
+# (measured at HEAD: live=1 second=1 never=1). A witness that cannot fail is not
+# a witness — issue 0652's class, the same shape 0679 repaired in
+# `ase::ui::save_all_apply` and this pass repaired in
+# `ase::ui::do_load_state_from`.
+#
+# It is INERT today, deliberately recorded as such: the one production caller
+# (ase_window.tcl:310, inside `ase::ui::close`) discards the value, and no test
+# asserted it before F20a. That is what makes the fix cheap — and what made
+# leaving it dangerous, because the next caller to read it would inherit the
+# lie. ⚠ `ase::ui::close` now has two guards in a row (its own
+# `dict exists $wins` check, then this answer). They are NOT the same predicate
+# — a window can be gone while the session is live — so do not wire them
+# together.
+#
+# Returns 1 when a session was dropped, 0 for a key it never held.
 proc ase::session_close {key} {
   variable sessions
-  if {[dict exists $sessions $key]} { dict unset sessions $key }
+  if {![dict exists $sessions $key]} { return 0 }
+  dict unset sessions $key
   return 1
+}
+
+# Is a session registered under this key? The registration predicate the GUI
+# layer never had: before this, callers that needed it either poked
+# `$::ase::sessions` directly (several suites still do) or inferred it from
+# `ase::session_path` returning {} — which is WRONG, because {} is also the
+# marker for a registered-but-UNTITLED session (issue 0141). That conflation is
+# exactly how `ase::ui::do_save_state_as` came to run its untitled-adopt arm for
+# a key nobody was under (0691's weaker second arm). Returns 1 or 0.
+proc ase::session_exists {key} {
+  variable sessions
+  return [expr {[dict exists $sessions $key] ? 1 : 0}]
 }
 
 # Extra per-session attributes (e.g. the GUI's live run_id). Stored on the
