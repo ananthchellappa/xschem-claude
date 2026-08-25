@@ -1,7 +1,9 @@
 # 0680 — reproducible crash: descend two levels, then zoom in and out, on the user's real X server
 
-Status: OPEN, **NOT YET REPRODUCED BY THE DRIVER**. Reported by the user 2026-08-24
-as "very predictable". Awaiting the terminal stderr, which is the missing evidence.
+Status: **RESOLVED — NOT AN XSCHEM DEFECT.** The X SERVER crashes; xschem dies as
+collateral. Root-caused 2026-08-24 from the user's `_XIOError` backtrace plus eight
+VcXsrv crash dumps on the Windows side. Kept open only until the user confirms the
+VcXsrv configuration change holds.
 
 ## The user's report
 
@@ -129,3 +131,100 @@ server from both `:0` (Xwayland) and `:99` (Xvfb); see CLAUDE.md's three-server 
 If this is an Xlib protocol error, it may be reachable only there, and issue **0413**
 (`backing_store=NotUseful`, look debt still open on that exact server) is in the same
 neighbourhood: both are about what the real server does on expose/redraw.
+
+
+## ROOT CAUSE, 2026-08-24 — VcXsrv is crashing, not xschem
+
+The user's gdb backtrace stopped at **`_XIOError`**, not `_XError`. That distinction
+is the whole answer: `_XError` is a protocol error (a bad request WE sent), while
+`_XIOError` is **connection loss** — Xlib discovering the socket to the server is
+gone. Its default handler prints `XIO: fatal IO error ...` and calls `exit(1)`, which
+is exactly why there was never a signal, never a core, and never a dmesg entry.
+
+```
+#0  _XIOError              libX11
+#1  _XReply                libX11
+#2  XSync                  libX11
+#3  Tk_DeleteErrorHandler  libtk
+#4  Tk_DrawChars           libtk
+#5-7 ??                    libtk
+#8  TclServiceIdle         libtcl
+#9  Tcl_DoOneEvent         libtcl
+#10 Tk_MainLoop            libtk
+#11 Tk_MainEx              libtk
+#12 main                   main.c:148
+```
+
+**Not one xschem frame.** The tree had just been rebuilt with `-g` specifically to
+resolve our frames, and there were none to resolve.
+
+⚠ **`Tk_DrawChars` is a red herring, and chasing it would cost a day.** With an I/O
+error the frame that DETECTS the loss is not the frame that CAUSED it — X is
+asynchronous, so `XSync` here is merely the first place that tried to read a reply
+and found the socket dead. Tk was doing an unrelated idle text redraw.
+
+### The Windows-side evidence, one dump per crash
+
+`/mnt/c/Users/anant/AppData/Local/CrashDumps/`:
+
+```
+vcxsrv.exe.27036.dmp   15:45     Xschem.log.7   15:45
+vcxsrv.exe.14572.dmp   15:52     Xschem.log.8   15:52
+vcxsrv.exe.19360.dmp   15:55     Xschem.log.9   15:55
+vcxsrv.exe.29624.dmp   15:56     fltrace log    15:56
+vcxsrv.exe.13336.dmp   15:57     Xschem.log.2   15:57
+vcxsrv.exe.23736.dmp   16:38
+vcxsrv.exe.14164.dmp   17:02     the gdb run
+```
+
+Eight dumps, exact 1:1 correspondence with every xschem log that ends mid-zoom. The
+server dies; xschem notices and exits cleanly. Every "xschem crash" on this bench was
+this.
+
+### Why it survived on :99 and :0
+
+Not a timing accident and not the scripted-vs-event difference the earlier sections
+guessed at: **Xvfb and Xwayland simply are not the process that was crashing.** See
+CLAUDE.md's three-server table — `$DISPLAY` is VcXsrv over TCP and is a wholly
+separate program from the other two.
+
+### The suspect configuration
+
+`C:\Users\anant\Documents\config.xlaunch`:
+
+```xml
+WindowMode="MultiWindow"  Wgl="True"  DisableAC="True"  Clipboard="True"
+```
+
+`Wgl="True"` is Native OpenGL, and two measurements indict it:
+
+* the server's own log falls back to software GL regardless — `IGLX: Loaded and
+  initialized swrast`, `GLX: Initialized DRISWRAST GL provider` — so `-wgl` is buying
+  nothing here;
+* the dumps carry **`nvcontainer.exe`, `nvsphelper64.exe`, `nvxdsync.exe`**, i.e.
+  NVIDIA's ICD loaded into the VcXsrv process, which `-wgl` is what pulls in.
+
+**xschem uses no GLX at all** (Xlib plus optional Cairo, all software), so turning it
+off costs nothing.
+
+Secondary suspect if that does not settle it: `MultiWindow` plus `Using Composite
+redirection` (also in the server log), with `winMultiWindowWMProc - Error code: 3
+(Window), Major opcode: 18 (ChangeProperty)` in `vcxsrv_dbg.log`.
+
+A no-Native-GL launcher was written to `config_nowgl.xlaunch` beside the original,
+which was left untouched. One attribute differs.
+
+### Verification is objective, not a feeling
+
+The dump directory is the oracle: reproduce hard, then check whether a **new**
+`vcxsrv.exe.*.dmp` appeared. "It felt stable" is not the test.
+
+## What this invalidates in the sections above
+
+* The "capture recipe defeats itself" finding about `| tee` and `cli_opt_detach`
+  **stands** and is worth keeping — it is a real trap and cost two runs.
+* The plan to force `XSynchronize` and hunt a bad request **is moot**. There is no bad
+  request; there is a dying server.
+* The driver's speculation that the action-log replay failed to reproduce "because the
+  log records the command, not the event" was **plausible but not the reason**. The
+  reason is that `:99` and `:0` are different servers that do not crash.
