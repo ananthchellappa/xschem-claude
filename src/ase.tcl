@@ -1196,6 +1196,31 @@ proc ase::last_rawfile {key} {
   return {}
 }
 
+# "Session `key` has simulation results" -- ONE named boolean, ONE implementation
+# (issue 0682 decision D3).
+#
+# This is a facade, deliberately: `[ase::last_rawfile $key] ne {}` was ALREADY the
+# shipped test for exactly this question at three call sites
+# (ase_window.tcl :2077, :3392 -- whose own comment reads `file existence ==
+# "has results"` -- and :3904). 0682 needs the same question asked in two more
+# places (whether ASE-L's `Results > Annotate` entries are live, and issue 0683's
+# reasoning about the orphan state), and a predicate written out longhand in five
+# places drifts SILENTLY when one copy learns something the others do not -- the
+# same argument invariant I1 makes for op_annot::vector. So the name exists and
+# the expression does not get copied again.
+#
+# ⚠ SESSION-SCOPED AND FILE-BASED, and that is the right scope for a menu hung off
+# an ASE-L window. The two neighbouring predicates are CONTEXT-scoped and answer a
+# different question: `xschem raw loaded` (scheduler.c:10325) asks whether a
+# database is attached to the CURRENT xschem context -- read from a plain Tk
+# toplevel it measures whichever design happens to be current -- and
+# op_annot::_annotated (op_annot.tcl:781) additionally requires that the annotation
+# already be live, which would grey the control precisely when the user wants to
+# turn annotation ON.
+proc ase::has_results {key} {
+  return [expr {[ase::last_rawfile $key] ne {}}]
+}
+
 # --- Mixed-signal co-simulation (spec section E) -----------------------------
 # doc/claude/specs/mixed_signal_signal_browser.md section E. Everything here is
 # Tk-free and headless-testable (tests/headless/test_ase_cosim.tcl).

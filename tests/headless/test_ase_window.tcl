@@ -13,6 +13,15 @@
 #          temperature toolbar entry, themed widgets (locked palette + named
 #          fonts); W1m the v2 menu tree; W1p the three v2 treeview panes
 #          (columns, seeded rows, blank Value/Save Options, NO inline +/-);
+#          W1a the `Results > Annotate` visibility pair (issue 0682): the
+#          widget shape at W1m, then the DESIGN context's annot_show mask
+#          driven through them (greying by the ase::has_results predicate,
+#          the -postcommand PULL incl. from a FOREIGN context, bit-wise
+#          PUSH incl. the off-ramp, the refused-switch path, and the
+#          raw-attach arm) -- this file is the behavioural owner of the
+#          control the user's 2026-08-24 ruling moved OUT of the schematic's
+#          View menu; tests/headless/test_annot_show_menu.tcl keeps only the
+#          deletion half;
 #          W1s the action strip; W1r/W1u/W1t (issue 0650, R-0653-d req 2)
 #          the OP-card remedy's menu path asserted against the LIVE
 #          Outputs entry and the LIVE Save All checkbutton, never
@@ -436,7 +445,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # calculator item 13, wired to the BARE calc::open with no session key —
   # R101 makes the Calculator one per process, unlike every ase::ui:: entry
   # beside it); Results > Direct Plot LIVE since item 13 (wired to
-  # ase::ui::direct_plot); the Annotate entries stay disabled; the Simulation
+  # ase::ui::direct_plot); Results > Annotate LIVE since issue 0682 (the two
+  # checkbuttons, rows W1a1-W1a4 here and W1a5-W1a16 after W4); the Simulation
   # tree; no Revert
   set mlabels {}
   for {set i 0} {$i <= [$top.mb index end]} {incr i} {
@@ -475,10 +485,88 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [expr {[$top.mb.results entrycget {Direct Plot} -state] ne {disabled}}]
   check_true "W1m Results Direct Plot has a command" \
     [expr {[$top.mb.results entrycget {Direct Plot} -command] ne {}}]
-  check "W1m Results Annotate OP info disabled" \
-    [$top.mb.results.annotate entrycget {Operating Point info} -state] disabled
-  check "W1m Results Annotate DC Node Voltages disabled" \
-    [$top.mb.results.annotate entrycget {DC Node Voltages} -state] disabled
+  # ========================================================================
+  # W1a1-W1a4 -- ISSUE 0682: `Results > Annotate` IS NOW THE ONLY ANNOTATION
+  #              VISIBILITY CONTROL IN THE PROGRAM
+  # ========================================================================
+  # ⚠ THESE TWO ROWS READ `-state disabled` FROM THE ASE-L v2 MENU TREE
+  # UNTIL 2026-08-24, AND THE EXPECTATION GENUINELY CHANGED -- the same shape
+  # as the W1m Calculator row above. The two entries were built as
+  # `add command ... -state disabled` placeholders (ase_window.tcl:530-535) and
+  # the ase_l spec called them "(DEFERRED) ... Menu entries may exist disabled".
+  # Probed on 2026-08-24 they were deader than that: type=command,
+  # state=disabled, -command={} (an EMPTY string, not merely inert), no
+  # -variable option at all, and the submenu carried no -postcommand. Nothing
+  # anywhere in src/ called entryconfigure on them.
+  #
+  # On a real sky130 bench the user ruled, verbatim: "What is View > Show? We
+  # want to be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+  # Operating Point Info", and "results (including OP info) only make sense when
+  # there is a result loaded - meaning an ASE-L is active, to which this
+  # schematic is 'bound'". That REVERSES the 2026-08-22 ruling that put the same
+  # control in the schematic's `View > Show / Hide` (issue 0457(b)); it is a
+  # change of destination, not a repair of a mistake.
+  #
+  # So the placeholders become live checkbuttons, and the deleted View pair's
+  # suite (tests/headless/test_annot_show_menu.tcl) keeps only the DELETION
+  # half. THIS file is the behavioural owner: W1a1-W1a4 pin the widget shape
+  # here, and W1a5-W1a16 (after W4, where the design is actually loaded into a
+  # window) drive the mask and the render gate. A run that passes W1a1-W1a4 and
+  # skips the rest has asserted that two menu labels exist, which is not a test
+  # of this feature.
+  #
+  # ⚠ CHECKBUTTON, NOT COMMAND (decision D1). The two bits are booleans
+  # (xschem.h:431), text_hidden() gates them independently (actions.c:1437-1439),
+  # and all four mask states are coherent and reachable. `add command` cannot
+  # display state, and state is the entire content of a visibility control. The
+  # only counter-evidence was that the stubs were authored as `add command` --
+  # that is the authorship of a placeholder, not a menu convention.
+  set AM $top.mb.results.annotate
+  ## Markers instead of raises: `entrycget -variable` on a `command` entry
+  ## raises `unknown option`, and under --pipe an uncaught raise inside the big
+  # catch ends the file -- a one-word regression would read as a total collapse.
+  proc am_get {m label opt} {
+    if {![winfo exists $m]} { return NO-MENU }
+    if {[catch {$m entrycget $label $opt} v]} { return NO-SUCH-OPTION }
+    return $v
+  }
+  proc am_type {m label} {
+    if {![winfo exists $m]} { return NO-MENU }
+    if {[catch {$m type $label} v]} { return NO-ENTRY }
+    return $v
+  }
+  check "W1a1 both Annotate entries are checkbuttons, not commands" \
+    [list [am_type $AM {Operating Point info}] [am_type $AM {DC Node Voltages}]] \
+    {checkbutton checkbutton}
+  # ⚠ THE TICK VARIABLE IS SESSION-KEYED. The ASE-L window is a plain Tk
+  # toplevel (ase_window.tcl:265), not an xschem drawing context, and there can
+  # be several sessions open at once; a bare ::annot_show_op would make every
+  # session's menu show the last one's state.
+  check "W1a2 they are wired to the session-keyed ticks and to ase::ui::annot_apply" \
+    [list [am_get $AM {Operating Point info} -variable] \
+          [am_get $AM {Operating Point info} -command] \
+          [am_get $AM {DC Node Voltages} -variable] \
+          [am_get $AM {DC Node Voltages} -command]] \
+    [list ::ase::ui::annot($key,op)   [list ase::ui::annot_apply $key op] \
+          ::ase::ui::annot($key,volt) [list ase::ui::annot_apply $key volt]]
+  # ⚠ A PULL IS NOT OPTIONAL (decision D4, invariant I5). The three chords,
+  # both `Annotate Operating Point` menu items and a user's own rc all write the
+  # mask without telling any menu, so a design that needs every writer to
+  # remember this menu shows a stale tick on the first chord press. Same
+  # reasoning that put a -postcommand on the deleted View submenu.
+  check "W1a3 the Annotate submenu re-derives on open (-postcommand)" \
+    [expr {[winfo exists $AM] ? [$AM cget -postcommand] : {NO-MENU}}] \
+    [list ase::ui::annot_menu_sync $key]
+  # ⚠ GREEN BEFORE THE CHANGE AND KEPT ANYWAY -- a CONTROL, not evidence.
+  # The entries are built disabled today (as dead placeholders) and must stay
+  # built disabled after (as live checkbuttons whose predicate has not been
+  # asked yet); the -postcommand always runs before the submenu is usable, so
+  # it costs the user nothing. A build that shipped them `normal` would let a
+  # click reach the mask before anyone asked whether results exist.
+  check "W1a4 both are BUILT -state disabled (nothing is live before the predicate is asked)" \
+    [list [am_get $AM {Operating Point info} -state] \
+          [am_get $AM {DC Node Voltages} -state]] \
+    {disabled disabled}
   set slabels {}
   for {set i 0} {$i <= [$top.mb.sim index end]} {incr i} {
     lappend slabels [$top.mb.sim entrycget $i -label]
@@ -952,6 +1040,281 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       # non-WSLg display), not an intermittent stall.
       puts "SKIPPED: W4 raise assertion (WSLg stackorder stall after 5 product-path attempts)"
     }
+
+    # ======================================================================
+    # W1a5-W1a16 -- ISSUE 0682: THE ASE-L ANNOTATE PAIR ACTUALLY DRIVES THE
+    #               DESIGN CONTEXT'S MASK (the render gate, not a label)
+    # ======================================================================
+    # HERE, not up at W1m, because these rows need the design LOADED INTO A
+    # WINDOW: the mask (`annot_show`) is per DESIGN CONTEXT, and W4 is the first
+    # point in this file where such a context holds the session's schematic.
+    #
+    # ⚠ WHY A MENU IN A PLAIN TOPLEVEL NEEDS ITS OWN MACHINERY. The ASE-L window
+    # is a `toplevel` (ase_window.tcl:265), not an xschem drawing context. A
+    # `-command {xschem set annot_show N}` hung off `.aseN` therefore writes into
+    # whatever xschem context happens to be CURRENT when the user clicks -- which
+    # after any tab switch is not the session's design. So the control must (a)
+    # READ the design's mask without switching (the -postcommand runs while the
+    # menu is posting; a menu that mutates program state and moves focus while
+    # posting can unpost itself), and (b) WRITE it only after a VERIFIED switch
+    # into the design. Landmine 17 (wave_viewer.tcl:1352-1355):
+    # `xschem new_schematic switch` SILENTLY NO-OPS while the current context's
+    # semaphore is raised, so a blind write lands the mask in a FOREIGN
+    # schematic. W1a12/W1a13 are the two halves of that, and they are the rows
+    # a naive "just call xschem set" implementation fails.
+    #
+    # ⚠ GROUND TRUTH IS TAKEN BY SWITCHING, NEVER BY READING tctx::. The product
+    # reads a non-current window's mask out of the `::tctx::<win_path>` snapshot;
+    # if this file asserted against the same snapshot the two would agree by
+    # construction. `a_ctx_eval` switches into a context, asks
+    # `xschem get annot_show`, and switches back -- the same answer the renderer
+    # gets, arrived at independently.
+    #
+    # ⚠ THE PREDICATE IS STUBBED AT ITS ONE IMPLEMENTATION, NOT AT THE FACADE.
+    # `ase::has_results $key` is a named boolean over `[ase::last_rawfile $key]
+    # ne {}` (the shipped "this session has results" test at ase_window.tcl:2077,
+    # :3392 and :3904). These rows rename `ase::last_rawfile`, so the real
+    # `ase::has_results` body runs -- a sabotage that pins the facade to 1 still
+    # reds W1a5/W1a6.
+
+    ## Evaluate <script> with <win> current, then restore the caller's context.
+    ## Returns a MARKER rather than raising: a refused switch (landmine 17) must
+    ## red one row legibly, not abort the file inside the big catch.
+    proc a_ctx_eval {win script} {
+      set cur [xschem get current_win_path]
+      if {$cur ne $win} { catch {xschem new_schematic switch $win} ; update }
+      if {[xschem get current_win_path] ne $win} { return "SWITCH-FAILED($win)" }
+      if {[catch {uplevel 1 $script} r]} { set r "ERR: $r" }
+      if {[xschem get current_win_path] ne $cur} {
+        catch {xschem new_schematic switch $cur} ; update
+      }
+      return $r
+    }
+    proc a_mask {win} { return [a_ctx_eval $win {xschem get annot_show}] }
+    proc a_setmask {win v} { return [a_ctx_eval $win [list xschem set annot_show $v]] }
+    ## `xschem raw index` RAISES ("No raw file loaded") with nothing attached --
+    ## measured -- so it can never be called bare from a golden.
+    proc a_rawidx_here {vec} {
+      if {[catch {xschem raw index $vec} r]} { return -1 }
+      return $r
+    }
+    proc a_rawidx {win vec} { return [a_ctx_eval $win [list a_rawidx_here $vec]] }
+    proc a_cx {script} {
+      if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+      return $r
+    }
+
+    # the design's win_path (`xschem windows` field 0 IS the context path and IS
+    # the tctx array name -- measured 2026-08-24)
+    set dwin {}
+    foreach e [xschem windows] {
+      if {[file normalize [lindex $e 4]] eq $schpath} { set dwin [lindex $e 0] }
+    }
+    check_true "W1a5f fixture: the design's window path resolved" [expr {$dwin ne {}}]
+
+    # two OP raws in the scratch dir: the SESSION's (what the stubbed predicate
+    # hands back) and a DISTINGUISHABLE one carrying a sentinel vector, so
+    # W1a16 can tell "left alone" from "reloaded".
+    proc a_mkraw {path v0} {
+      set f [open $path w]
+      puts -nonewline $f "Title: 0682 fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\t$v0\tvoltage
+\t1\tv(b)\tvoltage
+Values:
+0\t1.0
+\t2.0
+"
+      close $f
+    }
+    set a_rawS [file join $scratch a0682_session.raw]
+    set a_rawB [file join $scratch a0682_sentinel.raw]
+    a_mkraw $a_rawS {v(a)}
+    a_mkraw $a_rawB {v(sentinel16)}
+
+    set ::a_rawstub {}
+    rename ase::last_rawfile a_last_rawfile_saved
+    proc ase::last_rawfile {key} { return $::a_rawstub }
+
+    # ---- the predicate is FALSE: no results for this session -------------
+    set ::a_rawstub {}
+    catch {$AM entryconfigure {Operating Point info} -state normal}
+    catch {$AM entryconfigure {DC Node Voltages}     -state normal}
+    set a_r5 [a_cx {ase::ui::annot_menu_sync $key}]
+    check "W1a5 no results: the postcommand DISABLES both entries (poisoned to normal first)" \
+      [list [am_get $AM {Operating Point info} -state] \
+            [am_get $AM {DC Node Voltages} -state] $a_r5] \
+      {disabled disabled {}}
+
+    # ⚠ THE SECOND ELEMENT IS THE ANTI-HOLLOW HALF. "Invoking it moves no mask"
+    # is satisfied by an entry that does nothing at all, which is exactly the
+    # state this issue is fixing; pairing it with the entry's own state means
+    # the row can only pass over a control that is disabled ON PURPOSE.
+    a_setmask $dwin 1
+    a_cx {$AM invoke {Operating Point info}}
+    check "W1a6 no results: the entry is disabled AND invoking it moves no mask" \
+      [list [am_get $AM {Operating Point info} -state] [a_mask $dwin]] \
+      {disabled 1}
+
+    # ---- the predicate is TRUE: this session has a raw on disk -----------
+    set ::a_rawstub $a_rawS
+    catch {$AM entryconfigure {Operating Point info} -state disabled}
+    catch {$AM entryconfigure {DC Node Voltages}     -state disabled}
+    set a_r7 [a_cx {ase::ui::annot_menu_sync $key}]
+    check "W1a7 results present: the postcommand ENABLES both entries (poisoned to disabled first)" \
+      [list [am_get $AM {Operating Point info} -state] \
+            [am_get $AM {DC Node Voltages} -state] $a_r7] \
+      {normal normal {}}
+
+    # ---- PUSH: bit-wise, so the clicked entry touches only its own bit ---
+    # ⚠ THIS IS DECISION D6 AND IT IS THE ROW A "compose the whole mask from
+    # both ticks" implementation FAILS. The ticks were painted by a PULL that
+    # ran before any context switch, so composing from both can write a stale
+    # OTHER bit over the design's real value.
+    a_setmask $dwin 2
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    set a_m8 [a_mask $dwin]
+    check "W1a8 ticking OP info sets bit0 and PRESERVES bit1 (2 -> 3)" $a_m8 3
+    # The off-ramp: before 0457(b) nothing in the stock tree could turn
+    # annotation off, and 0682 must not reintroduce that by moving the control
+    # to a surface that only turns it on.
+    # ⚠ THE GOLDEN CARRIES BOTH ENDS OF THE ROUND TRIP ON PURPOSE. `2 -> 3 -> 2`
+    # aliases: a control that does NOTHING leaves the mask at 2 and a bare
+    # `[a_mask $dwin] == 2` reads as a pass. Measured against the unmodified
+    # binary this row was GREEN for exactly that reason. Asserting {3 2} means
+    # the un-tick can only pass if the tick worked first.
+    a_cx {$AM invoke {Operating Point info}}
+    check "W1a9 unticking it clears bit0 and still preserves bit1 (3 -> 2): the off-ramp" \
+      [list $a_m8 [a_mask $dwin]] {3 2}
+    # mask 2 (node voltages on, device OP off) is a state `6` / `Alt-6` /
+    # `Ctrl-6` cannot reach -- they emit 1, 3 and 0 only.
+    a_setmask $dwin 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {DC Node Voltages}}
+    check "W1a10 mask 2 is reachable from ASE-L (the three chords cannot make it)" \
+      [a_mask $dwin] 2
+
+    # ---- PULL over a poison ---------------------------------------------
+    a_setmask $dwin 1
+    set ::ase::ui::annot($key,op) 9 ; set ::ase::ui::annot($key,volt) 9
+    a_cx {ase::ui::annot_menu_sync $key}
+    check "W1a11 PULL: design mask 1 -> the ticks re-derive to {1 0} over a 9/9 poison" \
+      [list [a_cx {set ::ase::ui::annot($key,op)}] \
+            [a_cx {set ::ase::ui::annot($key,volt)}]] \
+      {1 0}
+
+    # ---- a FOREIGN current context ---------------------------------------
+    set a_decoy [file join $scratch decoy_0682.sch]
+    set f [open $a_decoy w]
+    puts -nonewline $f "v {xschem version=3.4.7RC file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nN 0 0 100 0 {}\n"
+    close $f
+    set a_pre_nwin [llength [xschem windows]]
+    catch {xschem new_schematic create {} $a_decoy}
+    update
+    set a_dec [xschem get current_win_path]
+    check_true "W1a12f fixture: the decoy tab is a foreign, CURRENT context" \
+      [expr {$a_dec ne {} && $a_dec ne $dwin && \
+             [file normalize [xschem get schname]] ne $schpath}]
+
+    a_setmask $dwin 1
+    a_setmask $a_dec 3
+    set ::ase::ui::annot($key,op) 9 ; set ::ase::ui::annot($key,volt) 9
+    a_cx {ase::ui::annot_menu_sync $key}
+    # third element: the PULL must NOT move the current context (decision D7).
+    check "W1a12 FOREIGN PULL: the ticks report the DESIGN's mask (1), not the current one's (3)" \
+      [list [a_cx {set ::ase::ui::annot($key,op)}] \
+            [a_cx {set ::ase::ui::annot($key,volt)}] \
+            [expr {[xschem get current_win_path] eq $a_dec}]] \
+      {1 0 1}
+
+    # ⚠ THE DECOY IS SET TO 0 SO THE TWO OUTCOMES CANNOT ALIAS. Design 1 -> 3
+    # and decoy 0 -> 0 is {3 0}; a push that landed in the CURRENT context
+    # instead reads {1 2}. With the decoy left at 3 both answers would contain a
+    # 3 and the row would be far weaker.
+    a_setmask $dwin 1
+    a_setmask $a_dec 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {DC Node Voltages}}
+    check "W1a13 FOREIGN PUSH: the DESIGN's mask gains bit1, the decoy's is untouched" \
+      [list [a_mask $dwin] [a_mask $a_dec]] {3 0}
+
+    # ---- the switch REFUSED (landmine 17's silent no-op, made explicit) ---
+    # ⚠ THE DESIGN IS SET TO 3, NOT 1, SO THE SNAP-BACK CANNOT ALIAS. The tick
+    # this row watches is bit1, so the expected value after the refusal is 1 --
+    # something a BROKEN mask reader cannot produce. With the design at 1 the
+    # expected tick was 0, and a reader stuck at 0 (sabotage variant S5) gives
+    # the same 0: measured 2026-08-25, S5 neutralised ase::ui::annot_mask
+    # completely and this row stayed GREEN.
+    a_setmask $dwin 3
+    a_setmask $a_dec 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    catch {rename ase::ui::annot_goto_design a_goto_saved}
+    proc ase::ui::annot_goto_design {key} { return 0 }
+    a_cx {$AM invoke {DC Node Voltages}}
+    # the third element is the load-bearing one: Tk has ALREADY flipped the tick
+    # variable by the time -command runs, so a refusal that writes nothing but
+    # leaves the tick flipped shows the user an OFF box over an ON mask.
+    check "W1a14 unreachable design: NO context's mask moves, and the tick snaps back" \
+      [list [a_mask $dwin] [a_mask $a_dec] \
+            [a_cx {set ::ase::ui::annot($key,volt)}]] \
+      {3 0 1}
+    catch {rename ase::ui::annot_goto_design {}}
+    catch {rename a_goto_saved ase::ui::annot_goto_design}
+
+    # ---- the raw-attach arm (decision D8) --------------------------------
+    # ⚠ MEASURED: `grep -rn 'annotate_op|raw_read' src/ase.tcl src/ase_window.tcl
+    # src/wave_viewer.tcl` returns NOTHING -- ASE-L never loads a raw into the
+    # DESIGN context (wviewer attaches into the viewer's own). So after a real
+    # Netlist-and-Run the design has no database, and a visibility-only control
+    # would tick ON and render blanks (invariant I3), i.e. a control that looks
+    # dead on the very next bench run.
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    set a_pre15 [a_ctx_eval $dwin {xschem raw loaded}]
+    a_setmask $dwin 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    check "W1a15 ticking a bit ON attaches the session's raw when the design has none" \
+      [list [expr {$a_pre15 < 0}] \
+            [expr {[a_ctx_eval $dwin {xschem raw loaded}] >= 0}]] \
+      {1 1}
+
+    # ⚠ THE FIRST ELEMENT IS THE ANTI-HOLLOW HALF: "the DB was not replaced" is
+    # trivially true of a control that does nothing, so the row also demands
+    # that the invoke actually moved the mask.
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_ctx_eval $dwin [list catch [list xschem annotate_op $a_rawB 0]]
+    set a_pre16 [a_rawidx $dwin {v(sentinel16)}]
+    a_setmask $dwin 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {DC Node Voltages}}
+    check "W1a16 the invoke ran (mask -> 2) AND a loaded database is never thrown away" \
+      [list [a_mask $dwin] \
+            [expr {$a_pre16 >= 0}] \
+            [expr {[a_rawidx $dwin {v(sentinel16)}] >= 0}]] \
+      {2 1 1}
+
+    # ---- teardown: this leg must leave W5-W8 the world they see today -----
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_setmask $dwin 0
+    catch {rename ase::last_rawfile {}}
+    catch {rename a_last_rawfile_saved ase::last_rawfile}
+    catch {array unset ::ase::ui::annot $key,*}
+    catch {xschem new_schematic switch $a_dec} ; update
+    catch {xschem new_schematic destroy $a_dec} ; update
+    catch {xschem new_schematic switch $dwin} ; update
+    catch {file delete $a_decoy}
+    check "W1a17 teardown: decoy gone, design current, no raw attached, mask 0, predicate real" \
+      [list [llength [xschem windows]] \
+            [expr {[file normalize [xschem get schname]] eq $schpath}] \
+            [xschem raw loaded] [xschem get annot_show] \
+            [llength [info procs a_last_rawfile_saved]]] \
+      [list $a_pre_nwin 1 -1 0 0]
 
     # W5: Simulation > Netlist > Recreate writes the artifact (no viewer);
     # Display opens the read-only textwindow on it

@@ -325,7 +325,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0682.** (0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0685.** (0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -876,6 +876,94 @@ classifier and the colour.
 
 ---
 
+## ✅ 0682 — LANDED 2026-08-25 (status **E**). THE ANNOTATION VISIBILITY CONTROL IS NOW ASE-L-ONLY; THE VIEW PAIR IS DELETED
+
+**Not a plan step.** A **SECOND RULING REVERSAL**, one day after 0678 and by the same
+user on the same sky130 bench. Asked which wording the `View > Show / Hide`
+checkbutton should carry (that was rule debt `[0678]`), the user rejected the premise:
+
+> *"What is View > Show? We want to be like Cadence. It needs to ONLY be in
+> ASE-L > Results > Annotate > Operating Point Info."*
+>
+> *"results (including OP info) only make sense when there is a result loaded -
+> meaning an ASE-L is active, to which this schematic is 'bound'. We're trying to be
+> the same as Cadence. Departures from legacy Xschem are OK."*
+
+This reverses **0457(b)** (the same user, 2026-08-22, which put the pair in the View
+menu). Record it as a change of DESTINATION, not a repair: 0457(b) answered the
+question it was asked — *where can this control live with no new C code* — correctly.
+
+| | before 0682 | after |
+|---|---|---|
+| the control | `View > Show / Hide`, two checkbuttons, always live | **ASE-L `Results > Annotate`**, two checkbuttons, **greyed unless the session has a result** |
+| the labels | *"Show device OP / branch current annotation"* / *"Show node voltage annotation"* | **Cadence's own**: *"Operating Point info"* / *"DC Node Voltages"* |
+| ASE-L `Results > Annotate` | two `add command … -state disabled` stubs, `-command` an EMPTY string, nothing ever `entryconfigure`d them | live, session-keyed, with a `-postcommand` PULL |
+| `annot_show_menu_sync` / `_apply` | `src/xschem.tcl`, 3 call sites, all the View pair | **deleted**, headstone comment in their place |
+| ticking a bit ON | visibility only | **also attaches the session's raw** when the design context has none (decision D8) — ⚠ see issue **0684** |
+
+`test_ase_window` **182 → 199** ALL PASS · `test_annot_show_menu` **26 → 10** (the
+file's SUBJECT was reversed, not shrunk — see below) · `test_op_annot` **335 → 335**
+ALL PASS · T1 3 FAIL / 3 NOGOLD and T2 6/6 both unmoved. **Pure Tcl, no build.**
+Full record: issue **0682** (implementation record, decisions D1–D10, sabotage
+matrix, still-open list), spec **§4.6a** and `specs/ase_l.md` Results.
+
+### ⚠ WHAT THIS BINDS FOR EVERY LATER STEP
+
+1. **THERE IS NO LONGER ANY STOCK MENU THAT TURNS ANNOTATION OFF unless an ASE-L
+   session is bound.** Issue **0683** is a BLOCKING sibling, not tidy-up: five
+   producers reach a non-zero mask with no session — `Waves > Op Annotate`
+   (xschem.tcl ~:15380), `Simulation > Graphs > Annotate …` (~:15780), an rc's
+   `set annot_show 1` (xinit.c:3839), `cadence::annot_mode`'s `netlist_dir`
+   fallback, and (until now) the View pair. A step that adds a sixth producer is
+   making 0683 worse. **Any later step that wants a visibility affordance must put
+   it in ASE-L, not in the schematic's menus.**
+2. **`annot_show` OWNERSHIP IS MEASURED AND IT IS NOT WHAT THE OLD COMMENT SAID.**
+   `xctx->annot_show` is a per-frame **pull-cache** of the ONE global Tcl var
+   (`annot_show_sync_cache()`, actions.c:1321-1325, at all eight bulk-eval entry
+   points); per-context behaviour comes from `annot_show` being in
+   `tctx::global_list`, so a tab switch swaps the var and snapshots the outgoing one
+   into `::tctx::<win_path>(annot_show)`. Consequences that bind: a bare
+   `set ::annot_show N` leaves the C field stale until the next bulk eval (write
+   through `xschem set`), and **reading a NON-CURRENT window's mask is
+   `::tctx::<win_path>(annot_show)`** — measured exact, because every writer writes
+   the current xctx.
+3. **⚠ DO NOT ADD A HEADLESS ROW THAT ASSERTS PER-CONTEXT ISOLATION OF THE MASK.**
+   Measured: under `--nogui` the tctx restore aborts (`can't read
+   "toolbar_visible"`) and the mask DOES leak across contexts; under real Tk on `:99`
+   it does not. A `--nogui` row asserting either polarity is testing the harness.
+4. **AN ASE-L WINDOW IS A PLAIN Tk TOPLEVEL, NOT AN XSCHEM CONTEXT.** Any ASE-L menu
+   entry that writes xschem state must reach the session's design context and
+   **VERIFY** it (landmine 17: `new_schematic switch` silently no-ops under a raised
+   semaphore). `ase::ui::annot_goto_design` is now the worked example; the raise mode
+   is `ifhidden`, never `always` (0616: a WSLg re-map + ~32px NW creep per call).
+5. **`ase::has_results {key}` (src/ase.tcl) is THE session-scoped "results exist"
+   predicate.** It is a named facade over `[ase::last_rawfile $key] ne {}`, which was
+   already the shipped test at three call sites. Do not write a fourth copy, and do
+   not substitute `xschem raw loaded` or `op_annot::_annotated` — both are
+   CONTEXT-scoped and answer a different question.
+6. **0678's LABEL PARTITION IS GONE ON PURPOSE (decision D9).** Cadence's two names
+   do not split the content classes (bit0 = device OP info **and** branch currents).
+   Old row A19 has no successor. Rule debt `[0678]` is therefore **moot** — leave it
+   standing; only the user may clear it.
+7. **⚠⚠ A TEST-WRITING LESSON THAT APPLIES TO EVERY STEP IN THIS PLAN, NOT JUST THIS
+   ONE: `.` MATCHES A NEWLINE IN TCL `regexp`.** Three source-contract rows (B10,
+   N22b, N22c) carried comments claiming that anchoring on `proc <name> \{` made a
+   renamed-to-`..._real` no-op shim unsatisfiable. **Measured false**: the `.*?` ran
+   out of the live shim's header straight into the real body below it, and the rows
+   stayed GREEN over completely dead code. A fourth row (W1a14) stayed green by
+   **aliasing** — it expected tick `0` while the design mask was 1, and a reader
+   stuck at 0 produces the same 0. Both classes are repaired here and the repair
+   re-measured under the same sabotage. **The pattern to copy:** slice the proc's own
+   body out first (`proc_src` / `opa_proc_src` in the two test files), and never let
+   an expected value be a number a broken implementation returns by default.
+8. **`set_ne annot_show 0` STAYS** (that is the mask default, issue 0621, not a
+   control). `annot_show_op` / `annot_show_voltage` no longer exist anywhere.
+9. **The `6` / `Alt-6` / `Ctrl-6` chords are untouched and must stay so** — they write
+   the mask themselves through `cadence::annot_mode` and never went through the
+   deleted procs. 0678 confirmed all three on a real bench.
+10. **NUMBER NEW ISSUES FROM 0685.** *(This item filed **0683** and **0684**.)*
+    ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.
+
 ## ✅ 0678 — LANDED 2026-08-24 (status **E**). IT REVERSES ONE ROW OF THE TABLE ABOVE
 
 **Not a plan step.** A **RULING REVERSAL**, not a coding slip: the code did exactly
@@ -971,7 +1059,7 @@ below) and T2 6/6 both unmoved. Full record: issue **0678**, spec **§4.8**.
    `tests/results.log`, not `run_regression.tcl`'s stdout** — stdout carries only
    Start/Finish lines and greps clean, which reads as a false improvement.
 
-10. **NUMBER NEW ISSUES FROM 0682.** *(This item filed **0681**; 0679 and 0680 were
+10. **NUMBER NEW ISSUES FROM 0685.** *(This item filed **0681**; 0679 and 0680 were
     taken by concurrent crews in the same run.)* ⚠ **0700–0799 is RESERVED** — after
     0699 the next number is **0800**.
 
@@ -3943,7 +4031,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0682**. *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0685**. *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were

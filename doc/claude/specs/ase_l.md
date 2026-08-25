@@ -469,9 +469,24 @@ the schematic's name, not the simulator's.
   Run (uses EXISTING netlist — supports hand-edited decks); Stop; Log
   (reopen log window); Options… (simulator-specific options dialog,
   minimal for now).
-- **Results** — Direct Plot (DEFERRED: command mode, click signals on
-  schematic, queue, ESC → plot); Annotate > Operating Point info (DEFERRED);
-  Annotate > DC Node Voltages (DEFERRED). Menu entries may exist disabled.
+- **Results** — Direct Plot (**LIVE since item 13**: command mode, click
+  signals on schematic, queue, ESC → plot); Annotate > Operating Point info
+  and Annotate > DC Node Voltages (**LIVE since issue 0682**, and this menu is
+  now the ONLY annotation visibility control in the program — the user reversed
+  0457(b)'s `View > Show / Hide` placement on a real sky130 bench: "We want to
+  be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+  Operating Point Info"). Two **checkbuttons** over the two `annot_show` bits,
+  session-keyed, **greyed by `ase::has_results`** — an entry is live only while
+  this session has a raw on disk, because "results only make sense when there is
+  a result loaded". The submenu carries a `-postcommand` PULL (the three cadence
+  chords and both `Annotate Operating Point` menu items write the mask without
+  telling any menu), the PUSH reaches the design through a **verified**
+  `new_schematic switch` (landmine 17 — a blind one lands the mask in a foreign
+  schematic), and ticking a bit ON attaches the session's raw when the design
+  context has none — **but that last arm is measured wrong and is filed as issue
+  0684**: it guards on `xschem raw loaded`, so a second run's numbers never reach
+  the screen and an unrelated waveform-graph raw blocks it silently. See
+  `doc/claude/issues/0682-*.md` and `0684-*.md`.
 - **Tools** — Waveform Viewer (raise-or-open THE waveform viewer bound to
   this ASE-L session — `wviewer::open` is per-token idempotent, so a session
   never gets two viewer windows; same seam as the `~` strip button);

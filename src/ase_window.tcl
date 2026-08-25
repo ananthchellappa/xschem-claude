@@ -89,6 +89,12 @@ namespace eval ase::ui {
   variable edrow;   array set edrow {}
   # edchk(key,plot|save): the output editor's checkbutton variables
   variable edchk;   array set edchk {}
+  # annot(key,op|volt): the `Results > Annotate` checkbutton variables (issue
+  # 0682). SESSION-KEYED, not two globals: the ASE-L window is a plain toplevel
+  # and several sessions can be open at once, so a bare ::annot_show_op would
+  # make every session's menu show the last one's state. Re-derived from the
+  # DESIGN context's mask by the submenu's -postcommand; cleaned in close.
+  variable annot;   array set annot {}
   # dlg(key,...): per-window records of the item-07 dialog layer — Choose
   # Analyses antype/anen/anextra, Save All allv/alli, the Design/Save-As
   # combo full-value lists (dlib/dcell/dview/salib), and the list-dialog row
@@ -294,7 +300,7 @@ proc ase::ui::open {key lib cell view} {
 proc ase::ui::close {key} {
   variable wins; variable wnum; variable meta; variable idlebg
   variable loglen; variable selclear; variable edrow; variable edchk
-  variable dlg
+  variable dlg; variable annot
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
   ase::ui::drop_trace $key
@@ -310,6 +316,7 @@ proc ase::ui::close {key} {
   catch {unset selclear($key)}
   array unset edrow $key,*
   array unset edchk $key,*
+  array unset annot $key,*
   array unset dlg $key,*
   catch {destroy $top}
   # item 13 (D10): the session's waveform viewer dies with the session
@@ -521,17 +528,51 @@ proc ase::ui::build {key top} {
 
   # Results: Direct Plot is LIVE (item 13) — the Select-On-Design click mode
   # in the `plot` flavor: clicks queue traces, ESC opens/raises the session's
-  # waveform viewer with a new stacked graph. The Annotate entries stay
-  # disabled (spec: "Menu entries may exist disabled").
+  # waveform viewer with a new stacked graph.
+  #
+  # ⚠ ANNOTATE IS LIVE SINCE ISSUE 0682, AND IT IS NOW THE ONLY ANNOTATION
+  # VISIBILITY CONTROL IN THE PROGRAM. Both entries were `add command ...
+  # -state disabled` placeholders for as long as this menu has existed (the
+  # ase_l spec: "(DEFERRED) ... Menu entries may exist disabled"), and probed
+  # they were deader than that -- `-command` was an EMPTY string and nothing
+  # anywhere called entryconfigure on them. Driving the shipped feature on a
+  # real sky130 bench the user ruled, verbatim: "What is View > Show? We want
+  # to be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+  # Operating Point Info", and "results (including OP info) only make sense
+  # when there is a result loaded - meaning an ASE-L is active, to which this
+  # schematic is 'bound'". That REVERSES issue 0457(b) (the same user, two days
+  # earlier, put the pair in the schematic's `View > Show / Hide`); 0457(b)
+  # answered the question it was asked, so this is a change of destination and
+  # not a repair. The View pair is deleted in the same change.
+  #
+  # CHECKBUTTON, not command (decision D1): the two bits are booleans
+  # (xschem.h:431), text_hidden() gates them independently (actions.c:1437-1439)
+  # and all four mask states are coherent and reachable. `add command` cannot
+  # display state, and state is the entire content of a visibility control.
+  #
+  # BUILT DISABLED on purpose. Nothing is live until the predicate
+  # (ase::has_results) has been asked, and the -postcommand always runs before
+  # the submenu can be used, so this costs the user nothing while making it
+  # impossible for a click to reach the mask before anyone asked whether
+  # results exist.
+  #
+  # THE LABELS ARE THE USER'S OWN TWO STRINGS (decision D9) and Cadence's:
+  # `Operating Point info` / `DC Node Voltages`. Consequence, recorded rather
+  # than hidden: the deleted View pair's labels PARTITIONED the two content
+  # classes (issue 0678 -- bit0 covers device OP info AND branch currents),
+  # and these do not. That partition property has no successor here.
   menu $top.mb.results -tearoff 0
   $top.mb add cascade -label Results -menu $top.mb.results
   $top.mb.results add command -label {Direct Plot} \
     -command [list ase::ui::direct_plot $key]
-  menu $top.mb.results.annotate -tearoff 0
-  $top.mb.results.annotate add command -label {Operating Point info} \
-    -state disabled
-  $top.mb.results.annotate add command -label {DC Node Voltages} \
-    -state disabled
+  menu $top.mb.results.annotate -tearoff 0 \
+    -postcommand [list ase::ui::annot_menu_sync $key]
+  $top.mb.results.annotate add checkbutton -label {Operating Point info} \
+    -variable ::ase::ui::annot($key,op) -state disabled \
+    -command [list ase::ui::annot_apply $key op]
+  $top.mb.results.annotate add checkbutton -label {DC Node Voltages} \
+    -variable ::ase::ui::annot($key,volt) -state disabled \
+    -command [list ase::ui::annot_apply $key volt]
   $top.mb.results add cascade -label Annotate -menu $top.mb.results.annotate
 
   # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
@@ -2101,6 +2142,250 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
 # mode (D2) but kept self-documenting.
 proc ase::ui::direct_plot {key {do_raise 1}} {
   ase::ui::select_on_design $key {save 0 plot 1} plot $do_raise
+}
+
+# --- Results > Annotate: the annotation visibility control (issue 0682) ------
+#
+# THE WHOLE PROBLEM IN ONE SENTENCE: the mask this menu governs (`annot_show`)
+# is per DESIGN CONTEXT, and an ASE-L window is a plain Tk toplevel
+# (ase_window.tcl `toplevel $top`), not an xschem drawing context. So a
+# a `-command` that wrote the mask directly, hung off `.aseN`, writes into whatever
+# xschem context happens to be CURRENT when the user clicks -- which after any
+# tab switch is not the session's design. Everything below exists to make the
+# menu READ and WRITE the DESIGN's mask instead of the current one's.
+#
+# OWNERSHIP, MEASURED 2026-08-24 rather than assumed (0682 §4 asks for exactly
+# this): `xctx->annot_show` (xschem.h:2241) is per-context, but
+# annot_show_sync_cache() (actions.c:1321-1325) does
+# `xctx->annot_show = tclgetintvar("annot_show")` at all eight bulk-evaluation
+# entry points -- the C field is a per-frame PULL-CACHE of the one global Tcl
+# var. Probe: after setting the mask to 3, a bare `set ::annot_show 0` still
+# read back 3, and one `xschem update_all_sym_bboxes` made it 0. What makes the
+# mask nevertheless behave per-context is that `annot_show` is a member of
+# tctx::global_list (xschem.tcl), so the tab/window switch swaps the Tcl var and
+# snapshots the outgoing one into `::tctx::<win_path>(...)`.
+#
+# DECISION D2, and it is why nothing here is session-scoped: the mask STAYS per
+# design context. Making it per-ASE-session means teaching that C pull, at all
+# eight entry points, where a session's value lives -- and it would make `6` and
+# this menu's tick describe different things, which is worse than the problem.
+# The ASE-L control REACHES the session's design context instead.
+
+# The `xschem windows` entry path of the window holding session `key`'s design,
+# or {} when no window holds it. Same resolution ORDER as raise_design_editor --
+# exact `current_name` first, then a window DESCENDED into the design (issue
+# 0168) -- so the window this reads is the window annot_goto_design switches to.
+proc ase::ui::annot_design_win {key} {
+  set dpath [ase::ui::design_path $key]
+  if {$dpath eq {}} { return {} }
+  set wins {}
+  if {[catch {xschem windows} wins]} { return {} }
+  foreach e $wins {
+    if {[catch {file normalize [lindex $e 4]} p]} { continue }
+    if {$p eq $dpath} { return [lindex $e 0] }
+  }
+  foreach e $wins {
+    foreach sp [lindex $e 6] {
+      if {$sp eq {}} { continue }
+      if {[catch {file normalize $sp} p]} { continue }
+      if {$p eq $dpath} { return [lindex $e 0] }
+    }
+  }
+  return {}
+}
+
+# The DESIGN context's annot_show mask, WITHOUT switching context (decision D7).
+# 0 when the design is not open anywhere, or anything is unreadable.
+#
+# ⚠ NO CONTEXT SWITCH HERE, deliberately: the one caller is a menu
+# -postcommand, i.e. code that runs while the menu is POSTING, and a switch
+# does save_ctx/restore_ctx/housekeeping_ctx and moves focus -- a menu that
+# mutates program state and moves focus while posting can unpost itself.
+#
+# ⚠ AND NOT $::annot_show EITHER: the Tcl mirror describes whichever context
+# wrote it last, not the one this menu is about. For a NON-current window the
+# honest source is that window's tctx snapshot -- `xschem windows` field 0 is
+# both the win_path and the tctx array name (measured 2026-08-24: with .x1.drw
+# non-current holding mask 2, `::tctx::.x1.drw(annot_show)` read exactly 2 while
+# the current .drw read 0). The snapshot is EXACT, not approximate: every writer
+# writes the CURRENT xctx, so a non-current window's mask cannot move between
+# its save_ctx and this read.
+proc ase::ui::annot_mask {key} {
+  set win [ase::ui::annot_design_win $key]
+  if {$win eq {}} { return 0 }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  set m {}
+  if {$cur ne {} && $cur eq $win} {
+    if {[catch {xschem get annot_show} m]} { return 0 }
+  } else {
+    if {[catch {set ::tctx::${win}(annot_show)} m]} { return 0 }
+  }
+  if {![string is integer -strict $m]} { return 0 }
+  return $m
+}
+
+# The submenu's -postcommand: GREY the two entries by the predicate, then PULL
+# the two ticks out of the design's mask.
+#
+# ⚠ A PULL IS NOT OPTIONAL (decision D4, invariant I5). The three cadence chords
+# (utils/annot_mode.tcl), both `Annotate Operating Point` menu items and a user's
+# own rc all write this mask without telling any menu, so a design that needed
+# every writer to remember this menu would show a stale tick the first time
+# anyone pressed `6`. Same reasoning that put a -postcommand on the View submenu
+# this control replaces.
+#
+# GREYING uses ase::has_results (ase.tcl), the ONE named predicate -- the same
+# one issue 0683's reasoning about the orphan state names, so the two cannot
+# drift apart.
+proc ase::ui::annot_menu_sync {key} {
+  variable wins
+  variable annot
+  if {![dict exists $wins $key]} { return }
+  set m [dict get $wins $key].mb.results.annotate
+  if {[catch {winfo exists $m} ex] || !$ex} { return }
+  set hr 0
+  catch {set hr [ase::has_results $key]}
+  set st [expr {$hr ? {normal} : {disabled}}]
+  catch {$m entryconfigure {Operating Point info} -state $st}
+  catch {$m entryconfigure {DC Node Voltages}     -state $st}
+  set mask [ase::ui::annot_mask $key]
+  set annot($key,op)   [expr {($mask & 1) ? 1 : 0}]
+  set annot($key,volt) [expr {($mask & 2) ? 1 : 0}]
+  return
+}
+
+# Make session `key`'s design the CURRENT xschem context and VERIFY it. 1 on
+# success, 0 when no window holds the design or the switch was refused.
+#
+# ⚠ LANDMINE 17 (wave_viewer.tcl:1352-1355): `xschem new_schematic switch`
+# SILENTLY NO-OPS while the current context's semaphore is raised. A blind
+# switch followed by a write lands the mask in a FOREIGN schematic -- an
+# annotation toggle that silently annotates somebody else's sheet. So the switch
+# is verified by comparing `xschem get current_win_path`, exactly as
+# wviewer::switch_ctx does.
+#
+# `ifhidden`, not `always` (issue 0616): the `always` arm re-MAPs the toplevel,
+# which on WSLg costs a ~32px NW creep per call -- a design window that jumped
+# on every tick would be its own defect. A hidden or minimised design window is
+# still brought back.
+#
+# It never OPENS a window: `Session > Design Window` is the seam that does that,
+# and loading a schematic as a side effect of a visibility toggle would be a
+# surprise out of all proportion to the gesture.
+proc ase::ui::annot_goto_design {key} {
+  set win [ase::ui::annot_design_win $key]
+  if {$win eq {}} { return 0 }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  if {$cur ne {} && $cur eq $win} { return 1 }
+  set dpath [ase::ui::design_path $key]
+  if {$dpath eq {}} { return 0 }
+  catch {ase::ui::raise_design_editor $dpath ifhidden}
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  return [expr {$cur ne {} && $cur eq $win}]
+}
+
+# Attach the session's raw to the DESIGN context when it has none (decision D8).
+# Caller must already be IN the design context.
+#
+# ⚠ WHY A VISIBILITY CONTROL LOADS ANYTHING AT ALL. MEASURED:
+# `grep -rn 'annotate_op|raw_read' src/ase.tcl src/ase_window.tcl
+# src/wave_viewer.tcl` returns NOTHING -- ASE-L never loads a raw into the DESIGN
+# context (the waveform viewer attaches into its OWN context). So after a real
+# `Netlist and Run` the design has no database, and a visibility-only tick would
+# turn annotation on and render BLANKS (invariant I3), i.e. a control that looks
+# dead on the very next bench run. That is the class of defect this batch is
+# made of.
+#
+# ⚠ A LOADED DATABASE IS NEVER THROWN AWAY. `xschem raw loaded` >= 0 means this
+# context already has one -- possibly the very run the user is looking at -- and
+# replacing it would be a data loss caused by a menu tick.
+#
+# ⚠⚠ AND THAT GUARD IS MEASURED WRONG -- SEE ISSUE 0684, FILED NOT FIXED.
+# `raw loaded` >= 0 answers "is SOME database attached", not "are THIS session's
+# CURRENT results attached", and two things fall out of it. (a) ngspice
+# overwrites ONE stable raw path (`<rundir>/<cell>_ase.raw`) in place, so after a
+# second run this early-return keeps the FIRST run's numbers on screen forever --
+# invariant I3's own phrase, "not the previous run's number". (b) An ordinary
+# waveform graph's `xschem raw_read` leaves `raw loaded` = 0 with `raw annot` =
+# -1, so this returns without annotating, the mask goes on and NOTHING renders,
+# and this is the one path here that echoes nothing. The question meant here is
+# answered by `xschem raw annot` plus "is this the session's raw" --
+# op_annot::_annotated (op_annot.tcl:781) already ships the three-term test.
+# Do not "tidy" this comment away; fix 0684.
+proc ase::ui::annot_ensure_loaded {key} {
+  set ld -1
+  catch {set ld [xschem raw loaded]}
+  if {[string is integer -strict $ld] && $ld >= 0} { return }
+  set path {}
+  catch {set path [ase::last_rawfile $key]}
+  if {$path eq {}} { return }
+  # the hierarchy LEVEL the raw refers to, from the same seam
+  # cadence::_annot_raw_candidate uses (utils/annot_mode.tcl), so the two cannot
+  # disagree about level semantics. Unknown -> let annotate_op decide.
+  set level {}
+  set s {}
+  catch {set s [ase::session_for_current]}
+  if {[llength $s] >= 2 && [lindex $s 0] eq $key} { set level [lindex $s 1] }
+  if {$level ne {}} {
+    if {[catch {xschem annotate_op $path $level} e]} {
+      catch {::ase::echo "ase: cannot annotate '$path': $e" error}
+    }
+  } else {
+    if {[catch {xschem annotate_op $path} e]} {
+      catch {::ase::echo "ase: cannot annotate '$path': $e" error}
+    }
+  }
+  return
+}
+
+# The two checkbuttons' -command: PUSH the clicked bit into the DESIGN's mask.
+#
+# ⚠ BIT-WISE FROM THE DESIGN'S LIVE VALUE (decision D6), never composed from
+# both ticks. The ticks were painted by a PULL that ran BEFORE any context
+# switch, so composing the whole mask from both of them can write a stale OTHER
+# bit over the design's real value. The View pair this replaces could compose
+# from both because pair and mask lived in the same context; this one does not.
+#
+# ⚠ ON A REFUSAL, THE TICK IS SNAPPED BACK. Tk has ALREADY flipped the variable
+# by the time -command runs, so a refusal that merely writes nothing leaves the
+# user looking at a ticked box over an un-annotated schematic.
+#
+# The mask is written THROUGH `xschem set` (S7 decision D4): a bare
+# `set ::annot_show` leaves the C field stale until the next bulk sync. The bbox
+# pass is not optional either -- an annotation block changes the instance's own
+# bbox (select.c:709), the same reason `Show hidden texts` carries one.
+#
+# ⚠ THE DESIGN IS LEFT CURRENT ON PURPOSE -- this is NOT the wave_viewer
+# enter_ctx/leave_ctx LOAN (issue 0173), and it must not be "fixed" into one.
+# That bracket exists because switching into a VIEWER rewrites the viewer's wm
+# title from its nameless read-only buffer; here the destination is the user's
+# own design, and the gesture means "show me these numbers on that schematic".
+# Putting the context back would leave the annotated sheet behind whatever was
+# current when the user clicked.
+proc ase::ui::annot_apply {key which} {
+  variable annot
+  set bit [expr {$which eq {op} ? 1 : 2}]
+  if {![ase::ui::annot_goto_design $key]} {
+    catch {::ase::echo "ase: cannot reach this session's design window (not open,\
+ or the context switch was refused) -- Session > Design Window opens it" error}
+    ase::ui::annot_menu_sync $key
+    return
+  }
+  set cur 0
+  if {[catch {xschem get annot_show} cur]} { set cur 0 }
+  if {![string is integer -strict $cur]} { set cur 0 }
+  set want 0
+  if {[info exists annot($key,$which)] && $annot($key,$which)} { set want 1 }
+  set new [expr {($cur & ~$bit) | ($want ? $bit : 0)}]
+  xschem set annot_show $new
+  if {$new != 0} { ase::ui::annot_ensure_loaded $key }
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  ase::ui::annot_menu_sync $key
+  return
 }
 
 # `~` strip button / raise-or-open the session's waveform viewer (item 13,

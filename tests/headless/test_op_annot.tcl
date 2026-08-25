@@ -3475,6 +3475,24 @@ proc opa_n_grep {path re} {
   foreach l [split $d \n] { if {[regexp -- $re $l]} { incr n } }
   return $n
 }
+## The source text of ONE proc: from its `proc <name> {` header (column 0) up to
+## the next such header, or end of file. {} when the proc is absent.
+##
+## ⚠ WHY THE SLICE. Rows N22b/N22c used to match `proc <name> \{.*?<needle>`
+## against the WHOLE file and claimed in their own comments that this made a
+## renamed-to-`..._real` no-op shim unsatisfiable. MEASURED FALSE 2026-08-25
+## (issue 0682 sabotage variants S1 and S5): `.` matches a newline in Tcl, so the
+## `.*?` ran from the shim's header into the real body below it and both rows
+## stayed green over dead code. Cut the body out first.
+proc opa_proc_src {src name} {
+  set s "\n$src"
+  set i [string first "\nproc $name \{" $s]
+  if {$i < 0} { return {} }
+  set rest [string range $s [expr {$i + 1}] end]
+  set j [string first "\nproc " $rest]
+  if {$j < 0} { return $rest }
+  return [string range $rest 0 $j]
+}
 ## -> {mode has-trailing-break} for one `bind .drw <chord>` line of the rc.
 ## The `break` half is not decoration: measured with `event generate`, Ctrl-6
 ## without it still reaches callback.c:7272 and selects drawing layer 6.
@@ -3534,10 +3552,17 @@ if {[catch {
 set N_SRC   [file join $repo utils annot_mode.tcl]
 set N_RC    [file join $repo src cadence_style_rc]
 set N_TCL   [file join $repo src xschem.tcl]
+## issue 0682: the mask's THIRD writer moved OUT of src/xschem.tcl and into
+## src/ase_window.tcl, so the "where does each writer live" guard now needs
+## both files. Keeping only $N_TCL would let the ASE-L writer be deleted
+## without a single row noticing.
+set N_ASE   [file join $repo src ase_window.tcl]
 ## issue 0457(b): rows N22b/N22c assert WHERE each writer lives, not merely how
 ## many there are, so the guard survives a legitimate fourth writer being added.
 set N_TCL_SRC {}
 if {![catch {open $N_TCL r} _nfh]} { set N_TCL_SRC [read $_nfh] ; close $_nfh }
+set N_ASE_SRC {}
+if {![catch {open $N_ASE r} _afh]} { set N_ASE_SRC [read $_afh] ; close $_afh }
 
 # ===========================================================================
 # N — THE SURFACE, AND THE THREE SOURCE GREPS. No fixture, nothing loaded.
@@ -3639,33 +3664,54 @@ check {N21 the mask is written through `xschem set annot_show`, never a bare `se
 # measured, that path yields a loaded raw and a carrier bbox of 29x22, i.e. a
 # still-dark annotator. The cascade never runs headless, so this is a K15-style
 # source guard.
-# ⚠ THE COUNT MOVED 2 -> 3 ON 2026-08-22, and it is a legitimate writer, not a
-# leak. Issue 0457(b): `annot_show_menu_apply` is the View > Show checkbutton
-# pair's push half. Before it, BOTH writers in the stock tree set the mask to 1
-# and nothing anywhere cleared it, so a user who clicked either Annotate-OP item
-# could not undo it without editing xschemrc and restarting.
+# ⚠ THE COUNT MOVED 2 -> 3 ON 2026-08-22 (issue 0457(b)) AND 3 -> 2+1 ON
+# 2026-08-24 (issue 0682). The user REVERSED 0457(b) on a real sky130 bench:
+# annotation visibility belongs ONLY in ASE-L `Results > Annotate`, never in the
+# schematic's `View > Show / Hide` ("We want to be like Cadence"). So the third
+# writer -- `annot_show_menu_apply`, the View pair's push half -- is DELETED
+# from src/xschem.tcl, and its successor `ase::ui::annot_apply` lives in
+# src/ase_window.tcl. This is a REVERSAL, not a repair: 0457(b) answered the
+# question it was asked.
 #
 # A bare whole-file count is a fragile shape -- it reds for every legitimate
-# writer -- so the row now names all three and asserts them STRUCTURALLY as well
-# as by count. Adding a fourth writer without listing it here still reds, which is
-# the guard this row exists to be.
-check {N22 the three shipped writers of the mask, by count} \
-  [opa_n_grep $N_TCL {xschem set annot_show}] 3
+# writer -- so the row names every writer, IN BOTH FILES, and asserts them
+# STRUCTURALLY as well as by count. Adding a fourth writer anywhere without
+# listing it here still reds, which is the guard this row exists to be.
+# ⚠ THE SECOND ELEMENT IS THE ANTI-HOLLOW HALF: without it, deleting the
+# View pair and building NOTHING in its place would satisfy this row.
+check {N22 the shipped writers of the mask, by count and by file} \
+  [list [opa_n_grep $N_TCL {xschem set annot_show}] \
+        [opa_n_grep $N_ASE {xschem set annot_show}]] \
+  {2 1}
 # ⚠ THE TWO Op-Annotate BODIES MOVED 1 -> 3 ON 2026-08-22 (issue 0614). Under
 # the ruling, mask 1 shows device OP blocks and HIDES node voltages; these two
 # shipped menu items exist to show the classic OP back-annotation, so leaving
 # them at 1 would make them hide the very numbers they are named after. Their
 # own in-place comment named this moment ("deliberately NOT 3 … the moment bit1
-# gets producers"), and 0614 is that moment. The third writer,
-# annot_show_menu_apply, composes the mask from the two checkbuttons and is
-# unchanged. The COUNT above stays 3.
+# gets producers"), and 0614 is that moment. The third element was
+# `proc annot_show_menu_apply` until 0682 and is now the ASE-L push half; it is
+# matched inside the SLICED body of ase::ui::annot_apply (opa_proc_src), because
+# the anchored-regexp form this row used to carry was measured to match straight
+# through a no-op shim into a renamed `..._real` body.
 check {N22b ...and each one is where it is supposed to be} \
   [list [regexp {Op Annotate.*?xschem set annot_show 3} $N_TCL_SRC] \
         [regexp {Annotate Operating Point into schematic.*?xschem set annot_show 3} $N_TCL_SRC] \
-        [regexp {proc annot_show_menu_apply.*?xschem set annot_show} $N_TCL_SRC]] \
+        [regexp {xschem set annot_show} [opa_proc_src $N_ASE_SRC ase::ui::annot_apply]]] \
   {1 1 1}
-check {N22c the pair's PULL half reads the mask through `xschem get`, not the Tcl mirror} \
-  [regexp {proc annot_show_menu_sync.*?xschem get annot_show} $N_TCL_SRC] 1
+# ⚠ RE-POINTED BY 0682. The PULL half is no longer `annot_show_menu_sync`
+# reading `xschem get annot_show` in its own context -- the ASE-L window is a
+# plain Tk toplevel, not an xschem drawing context, so the menu must read the
+# DESIGN's mask. The three elements are: the postcommand delegates to the one
+# mask reader; that reader uses `xschem get annot_show` for the current-context
+# case; and it uses the `tctx::` per-window snapshot for the foreign-context
+# case. Reading $::annot_show instead would report whichever context wrote last
+# (measured: after a bare `set ::annot_show 0` the C field still read 3 until
+# the next bulk eval).
+check {N22c the ASE-L PULL half reads the DESIGN's mask, never the Tcl mirror} \
+  [list [regexp {ase::ui::annot_mask} [opa_proc_src $N_ASE_SRC ase::ui::annot_menu_sync]] \
+        [regexp {xschem get annot_show} [opa_proc_src $N_ASE_SRC ase::ui::annot_mask]] \
+        [regexp {tctx::} [opa_proc_src $N_ASE_SRC ase::ui::annot_mask]]] \
+  {1 1 1}
 
 # ===========================================================================
 # FIXTURE — one annotatable device, the SHIPPED carrier, its hide=true twin

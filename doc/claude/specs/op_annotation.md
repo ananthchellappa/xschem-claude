@@ -1605,9 +1605,15 @@ still have said "device OP info + node voltages". Note the deliberate wording sp
 the status line says "node voltages" where the View checkbutton said "node voltage
 / branch current" (terser on a transient surface, complete on the discoverable one).
 **⚠ Issue 0678 made mask 2's wording exact rather than terse**: the branch currents
-moved to bit0, the View pair is now "Show device OP / branch current annotation" /
+moved to bit0, the View pair became "Show device OP / branch current annotation" /
 "Show node voltage annotation", and these four status strings are byte-identical to
 what they were (rows N3/N5/N6/N8/N9/N10/N10b/N15/N23 unchanged).
+**⚠ THE VIEW PAIR ITSELF IS GONE (issue 0682, 2026-08-24)** — the user reversed
+0457(b)'s placement and the control now lives in ASE-L `Results > Annotate` as
+*Operating Point info* (bit0) / *DC Node Voltages* (bit1). Cadence's two names do
+**not** partition the content classes the way the deleted pair's did, so the
+wording split described above no longer has a second side; the status lines are
+unchanged.
 
 | state | line |
 |---|---|
@@ -1638,7 +1644,11 @@ resolved is a worse first run than the dark annotator the line was written to fi
 Note this is a **hard SET**, whose semantics differ from the two additive chords)
 and run the bbox/redraw pair. That is the only route to this
 feature for a non-cadence user; whether the mask deserves a first-class stock
-control is the open question in issue **0457**.
+control was the open question in issue **0457**. **Answered twice**: 0457(b)
+(2026-08-22) put a checkbutton pair in `View > Show / Hide`, and issue **0682**
+(2026-08-24) reversed that on a real sky130 bench — the control is ASE-L
+`Results > Annotate` and nothing else, greyed until the bound session has a
+result. See §4.6a.
 
 **Not yet done here:** the "nothing annotatable" scan names decorations and
 relabels unresolvable symbols (`logo`, `missing`, `vsource` …) — issue **0460**,
@@ -1825,8 +1835,10 @@ if(m) return (xctx->annot_show & m) ? 0 : 1;
 ```
 
 `Ctrl-6 → nothing` survives untouched: mask 0 clears both bits. Rows U6 / U31 /
-U32 / U33 / U35 of `tests/headless/test_op_annot.tcl` and A4 / A5 / A19 of
-`test_annot_show_menu.tcl` own this.
+U32 / U33 / U35 of `tests/headless/test_op_annot.tcl` own this. (The class
+*labels* used to be owned by `test_annot_show_menu.tcl` rows A4/A5/A19; issue
+0682 deleted the View pair those rows described, and A19's "the two labels
+PARTITION the classes" property has **no successor** — see §4.6a.)
 
 All ten `text_hidden()` callers inherit it — including `select.c:709`, which is
 what shrinks the carrier's bbox back, and `actions.c:1475` (the S9b overlay's own
@@ -1956,7 +1968,10 @@ authority has signed it off*.
 | **0444** | ratification, **narrowed by D9** | a registered `pinexpr` whose @-token abuts `)` can never produce a number. The C tokenisation is unchanged — but under D9 **no shipped descriptor carries a `pinexpr`**, so this is now a trap for a user writing her own, not something between a stock user and her numbers. *(Note: this is the **swallowed closing paren** — the "stray space" is the symptom in §4.4's symbol text, not the defect.)* |
 | **0446** | ratification, **off the shipped path by D9** | a pin expression fabricates **`0`** when one terminal is GND and the other net is absent from the raw — an I3 fabrication reachable from a flat schematic and the wrong `.raw`. Accepted in writing by S6b (decision D5) and pinned by row **K16**, which asserts the wrong behaviour on purpose. |
 | **0447** | ratification | `op_annot::text` **raises** on a malformed descriptor list while its own header says it never does. Accepted alongside 0446 by S6b (decision D6). |
-| **0457** | ratification | `annot_show` has no stock, non-`cadence_style_rc` control — a user not on that profile has no shipped way to reach the mask. S8's E question. |
+| **0457** | ~~ratification~~ **ANSWERED, THEN REVERSED** | `annot_show` had no stock, non-`cadence_style_rc` control. 0457(b) ruled a `View > Show / Hide` checkbutton pair (2026-08-22, shipped two days); issue **0682** reversed the placement (2026-08-24) — the control is ASE-L `Results > Annotate`, greyed unless the bound session has a result. |
+| **0682** | ratification | the ASE-L implementation itself: checkbutton-vs-command, the mask left per-design-context rather than per-session, `ase::has_results` as the greying predicate, and the decision that ticking a bit ON **attaches** the session's raw when the design has none (decision D8). |
+| **0683** | defect, filed | the orphan state the 0682 ruling says must not exist **is reachable**: five producers set a non-zero mask with no ASE-L session bound. Blocking sibling of 0682 — until it lands, a stock user who clicks either `Annotate Operating Point` item is annotated ON with no menu that turns it off. |
+| **0684** | defect, filed | 0682's decision-D8 raw-attach arm guards on `xschem raw loaded` >= 0, which answers "is SOME database attached" rather than "are THIS session's CURRENT results attached". Measured: ngspice overwrites one stable raw path in place, so a second run keeps the FIRST run's numbers on screen (**invariant I3's own phrase**), and an ordinary waveform graph's `raw_read` (`annot_p` = -1) blocks the attach entirely so the mask goes on and nothing renders. The fabricated `0` does **not** reach pixels — every C consumer gates on `annot_p >= 0` — so it is a dead-looking control, not a lie on screen. |
 | **0475** | ratification | the 40 shipped sky130 FET symbols' annotation texts are gated behind **`hide=true`** rather than `hide=op`. S10b measured `hide=op` and **refuted** it (both `hide=op` and the overlay answer to `annot_show` bit 0, so a `hide=op` text becomes visible exactly when its replacement does), then shipped `hide=true`. S10b's E question. |
 | **0476** | ratification | annotation texts **outside** sky130 that answer to no visibility knob at all — including the `annotate_params.sym` carrier's IHP ancestor. |
 | **0479** | ratification | a cursor placed **outside** the data holds the endpoint and says nothing. S11 deliberately kept the graphless path identical to the graph path (invariant I1) rather than blanking, because no row compares the two. S11's E question. |

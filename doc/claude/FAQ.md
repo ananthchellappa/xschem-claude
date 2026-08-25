@@ -45,9 +45,16 @@ property of the *net*. `Ctrl-6` still clears both, because it clears both bits.
 Alt-6                    ;# adds node voltages
 6                        ;# adds device OP blocks AND branch currents
 
-# 2. the stock menu, no profile needed
-View > Show node voltage annotation                 ;# bit 1
-View > Show device OP / branch current annotation   ;# bit 0
+# 2. the menu, in the ASE-L session this schematic is bound to (issue 0682)
+ASE-L > Results > Annotate > DC Node Voltages       ;# bit 1
+ASE-L > Results > Annotate > Operating Point info   ;# bit 0
+#    ⚠ THE `View > Show / Hide` PAIR IS GONE since 2026-08-24. It shipped for two
+#    days (issue 0457(b)) and the same user reversed the placement on a real
+#    sky130 bench: "We want to be like Cadence. It needs to ONLY be in ASE-L >
+#    Results > Annotate > Operating Point Info", because "results (including OP
+#    info) only make sense when there is a result loaded". Both entries are GREYED
+#    until the session has a raw on disk, and ticking one attaches that raw to the
+#    design if nothing is loaded there yet.
 
 # 3. permanently, in ~/.xschem/xschemrc
 set annot_show 2         ;# node voltages on from startup

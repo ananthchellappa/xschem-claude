@@ -1,13 +1,43 @@
-# Issue 0457(b) — `annot_show` gets a stock View-menu control.
+# Issue 0682 — annotation visibility lives ONLY in ASE-L `Results > Annotate`.
 #
-# Before this landed, EVERY writer in the stock tree turned annotation ON:
-#   src/xschem.tcl  `Op Annotate`      -> xschem set annot_show 1
-#   src/xschem.tcl  `Annotate Operating Point into schematic` -> same
-#   src/xschem.tcl  set_ne annot_show 0   <- the startup default, not a control
-# so a user who clicked either menu item could not undo it without editing
-# ~/.xschem/xschemrc and restarting. The three chords do turn it off, but
-# cadence_style_rc ships COMMENTED OUT at src/xschemrc:767, so a stock user has
-# never had them. Ruled by the user 2026-08-22; see doc/claude/issues/0457-*.md.
+# ⚠ THIS FILE WAS THE 0457(b) VIEW-MENU SUITE UNTIL 2026-08-24, AND ITS SUBJECT
+# WAS REVERSED, NOT REPAIRED. On 2026-08-22 the same user ruled that
+# `annot_show` needed a stock affordance and put a checkbutton pair in
+# `View > Show / Hide` (issue 0457(b)); rows A1-A19 of this file pinned those
+# two entries, their labels, their -postcommand and the two procs behind them.
+# On 2026-08-24, driving the shipped feature on a real sky130 bench, the same
+# user reversed that placement, verbatim:
+#
+#   "What is View > Show? We want to be like Cadence. It needs to ONLY be in
+#    ASE-L > Results > Annotate > Operating Point Info."
+#   "results (including OP info) only make sense when there is a result loaded
+#    - meaning an ASE-L is active, to which this schematic is 'bound'."
+#
+# 0457(b) answered the question it was asked; this is a change of destination.
+# See doc/claude/issues/0682-*.md.
+#
+# ⚠ WHAT HAPPENED TO ROWS A1-A19, STATED OUT LOUD BECAUSE DELETING THEM QUIETLY
+# IS THE DEFECT CLASS THIS PROJECT HAS SHIPPED BEFORE (a suite green over a
+# control nobody can reach). They are REPLACED, and they are replaced in two
+# different places:
+#   * The DELETION half — the View pair is gone, its two procs are gone, its
+#     -postcommand is gone, its derived vars are gone — is rows B1-B8 below.
+#     Every one of them is a NEGATIVE claim, which is exactly why B9/B10 exist.
+#   * The BEHAVIOURAL half — A10-A14/A18's PULL, PUSH, mask arithmetic and
+#     off-ramp — moved WHOLE to tests/headless/test_ase_window.tcl rows
+#     W1a1-W1a16, because the surface it belongs to is an ASE-L session window
+#     and this file has no session. B9 asserts that owner exists; a run in which
+#     B1-B8 pass and B9/B10 fail has deleted a control and built nothing.
+#   * A19 (the two labels PARTITION the content classes, issue 0678) has NO
+#     successor and that is a ratified consequence, not an oversight: decision
+#     D9 keeps the user's own two label strings, `Operating Point info` and
+#     `DC Node Voltages`, and Cadence's names do not partition by our classes.
+#     Rule debt [0678] is MOOT under this ruling but only the USER may clear it.
+#
+# ⚠ THE THREE CHORDS ARE NOT TOUCHED. `6` / `Alt-6` / `Ctrl-6`
+# (src/cadence_style_rc:317-319) were confirmed correct on a real bench (0678);
+# they write the mask themselves via cadence::annot_mode (utils/annot_mode.tcl),
+# never through the deleted procs, so nothing here can reach them.
 #
 # NEEDS A DISPLAY — the subject is Tk menu entries. Do NOT run under --nogui.
 #   tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --script \
@@ -36,176 +66,177 @@ proc check {name got want} {
 }
 
 set M .menubar.view.show
-set topwin ""
 
-# ---------------------------------------------------------------- presence ---
-check "A1 annot_show_menu_sync is defined"  [llength [info procs annot_show_menu_sync]]  1
-check "A2 annot_show_menu_apply is defined" [llength [info procs annot_show_menu_apply]] 1
-check "A3 the View>Show submenu exists"     [winfo exists $M] 1
-
-# The two entries, and that they sit with `Show hidden texts` rather than at the
-# far end of the menu -- the placement is the point (FAQ Q48 sends users there).
+## ⚠ A MISSING ENTRY MUST RED ONE ROW, NOT ABORT THE FILE. `$M type -1` raises
+## `bad menu entry index "-1"`, and under --pipe that stops Tcl_AppInit dead:
+## measured (0457(b) era), a single renamed label took one row out and every row
+## after it never ran at all, so a one-word change read as a total collapse.
+## These return markers instead, and the rows below name them in their goldens.
 proc entry_index {m label} {
+  if {![winfo exists $m]} { return -1 }
   for {set i 0} {$i <= [$m index end]} {incr i} {
     if {[catch {$m entrycget $i -label} l]} { continue }
     if {$l eq $label} { return $i }
   }
   return -1
 }
-## ⚠ A MISSING ENTRY MUST RED ONE ROW, NOT ABORT THE FILE. `$M type -1` raises
-## `bad menu entry index "-1"`, and under --pipe that stops Tcl_AppInit dead:
-## measured, a single renamed label took A7 out and rows A8-A18 never ran at
-## all, so a one-word change read as a total collapse. These two return a marker
-## instead, and the rows below name it in their goldens.
-proc entry_type {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m type $i] }
-proc entry_var  {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m entrycget $i -variable] }
-proc entry_label {m i} { if {$i < 0} { return NO-ENTRY } ; return [$m entrycget $i -label] }
-## The same lookup keyed on the -variable rather than the label. A19 needs it:
-## a row about WHAT THE LABELS SAY cannot find its entries BY their labels, or
-## the two halves of the claim collapse into one.
+## The same lookup keyed on the -variable rather than the label. B2 needs it: a
+## deletion claim must not depend on the deleted thing's LABEL to look for it,
+## or a mere relabelling reads as a removal.
 proc entry_index_var {m var} {
+  if {![winfo exists $m]} { return -1 }
   for {set i 0} {$i <= [$m index end]} {incr i} {
     if {[catch {$m entrycget $i -variable} v]} { continue }
     if {$v eq $var} { return $i }
   }
   return -1
 }
-# ⚠ BOTH LABELS CHANGED WITH ISSUE 0678, AND THE LABEL IS THE POINT.
-# Bit 1 used to gate `hide=voltage` and nothing else -- a token no shipped symbol
-# carried, so the box governed an empty set. 0614 gave it the CONTENT-classified
-# annotations and, by its decision D4, gave it BOTH classes: node voltages and
-# branch currents, hence the old label "Show node voltage / branch current
-# annotation".
-#
-# The user drove a real sky130 bench on 2026-08-24 and reversed D4 (issue 0678):
-# a source's branch current is that DEVICE's terminal current -- device OP info,
-# like a FET's id -- so it belongs to bit0 (`6`), beside the id=/gm= block, while
-# bit1 (`Alt-6`) keeps the node voltages alone. A control must name what it
-# governs and must not name what it does not, so BOTH labels move together:
-#   bit0  "Show device OP / branch current annotation"
-#   bit1  "Show node voltage annotation"
-# Leaving them as they were would make the one discoverable surface a lie in the
-# same commit that fixes the behaviour -- 0614's own status-line defect, again.
-# The render half of the same reversal is tests/headless/test_op_annot.tcl rows
-# U6 / U31 / U32; this file owns the control surface. ⚠ THE EXACT WORDING IS AN
-# UNRATIFIED USER-VISIBLE DECISION and is on the owed ledger as a `rule` debt
-# pointing at doc/claude/issues/0678-*.md; if the user rules differently, this
-# string and src/xschem.tcl's move together and A19 is what keeps them together.
-set i_hid [entry_index $M "Show hidden texts"]
-set i_op  [entry_index $M "Show device OP / branch current annotation"]
-set i_v   [entry_index $M "Show node voltage annotation"]
-check "A4 'Show device OP / branch current annotation' entry exists"    [expr {$i_op >= 0}] 1
-check "A5 'Show node voltage annotation' entry exists"  [expr {$i_v  >= 0}] 1
-check "A6 both sit directly under 'Show hidden texts'" \
-      [list [expr {$i_op - $i_hid}] [expr {$i_v - $i_hid}]] {1 2}
-check "A7 both are checkbuttons, not commands" \
-      [list [entry_type $M $i_op] [entry_type $M $i_v]] {checkbutton checkbutton}
-check "A8 they drive the derived vars, not the mask directly" \
-      [list [entry_var $M $i_op] [entry_var $M $i_v]] \
-      {annot_show_op annot_show_voltage}
-check "A9 the submenu re-derives on open (-postcommand)" \
-      [string match {*annot_show_menu_sync*} [$M cget -postcommand]] 1
-
-# ⚠ A19 -- THE RELABEL AS A CLAIM, NOT A STRING EDIT. A4/A5 assert that two
-# particular sentences exist; on their own they are satisfiable by a later
-# tidy-up that swaps the two labels back and updates this file to match, and
-# nothing would notice. This row states the PROPERTY 0678 actually rules on:
-# the two checkbuttons PARTITION the two content classes -- exactly one of them
-# names branch currents, and it is the one wired to the bit that gates them.
-# ⚠ IT FINDS ITS ENTRIES BY -variable, NOT BY LABEL, deliberately: a row about
-# what the labels say must not depend on the labels to locate them, or a missing
-# entry answers 0 and reads as a pass on the half that expects 0.
-# Measured before the change: {0 1} -- the wrong box names the branch currents.
-set i_opv [entry_index_var $M annot_show_op]
-set i_vv  [entry_index_var $M annot_show_voltage]
-check "A19 0678 the labels PARTITION the classes: bit0's names branch currents, bit1's does not" \
-      [list [string match {*branch current*} [entry_label $M $i_opv]] \
-            [string match {*branch current*} [entry_label $M $i_vv]]] \
-      {1 0}
-
-# ------------------------------------------------------------------- PULL ----
-# The mask is the authority. Whoever wrote it -- a menu item, a cadence chord, a
-# user's rc -- the boxes must agree the next time the menu opens.
-foreach {mask want_op want_v} {0 0 0   1 1 0   2 0 1   3 1 1} {
-  xschem set annot_show $mask
-  set ::annot_show_op 9 ; set ::annot_show_voltage 9   ;# poison, so a no-op sync reds
-  annot_show_menu_sync
-  check "A10 PULL mask=$mask -> boxes" \
-        [list $::annot_show_op $::annot_show_voltage] [list $want_op $want_v]
+## Every label in a menu and, recursively, in its cascades. B3 searches the
+## WHOLE View tree, not just `Show / Hide`: "we moved it one submenu over" must
+## not read as "we removed it".
+proc menu_tree_labels {m} {
+  set out {}
+  if {![winfo exists $m]} { return $out }
+  for {set i 0} {$i <= [$m index end]} {incr i} {
+    if {![catch {$m entrycget $i -label} l]} { lappend out $l }
+    if {![catch {$m entrycget $i -menu} sub] && $sub ne {} && [winfo exists $sub]} {
+      foreach s [menu_tree_labels $sub] { lappend out $s }
+    }
+  }
+  return $out
+}
+## Count the lines of <path> matching <re>; -1 when the file is absent, so a
+## missing file reds one row instead of raising out of the file.
+proc src_grep {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] { if {[regexp -- $re $l]} { incr n } }
+  return $n
+}
+proc src_slurp {path} {
+  if {![file isfile $path]} { return {} }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  return $d
+}
+## The source text of ONE proc: from its `proc <name> {` header (column 0) up to
+## the next such header, or end of file. {} when the proc is absent.
+##
+## ⚠ THIS EXISTS BECAUSE `.` MATCHES A NEWLINE IN TCL REGEXP. Row B10 used to
+## read `[regexp {proc ase::ui::annot_apply \{.*?xschem set annot_show} $S_ASE]`
+## and its own comment claimed that anchoring made a no-op shim unsatisfiable.
+## MEASURED 2026-08-25 (issue 0682 sabotage variant S1) that claim was FALSE: with
+## a live `proc ase::ui::annot_apply {key which} {}` shim above a renamed
+## `..._real` body, the `.*?` spans the newline from the shim's header into the
+## real body and the row stayed GREEN over a completely dead control -- the exact
+## hollow-guard failure this file exists to prevent. SLICE FIRST, THEN MATCH.
+proc proc_src {src name} {
+  set s "\n$src"
+  set i [string first "\nproc $name \{" $s]
+  if {$i < 0} { return {} }
+  set rest [string range $s [expr {$i + 1}] end]
+  set j [string first "\nproc " $rest]
+  if {$j < 0} { return $rest }
+  return [string range $rest 0 $j]
 }
 
-# ------------------------------------------------------------------- PUSH ----
-foreach {op v want} {0 0 0   1 0 1   0 1 2   1 1 3} {
-  set ::annot_show_op $op ; set ::annot_show_voltage $v
-  annot_show_menu_apply
-  check "A11 PUSH op=$op volt=$v -> mask" [xschem get annot_show] $want
-}
+set REPO [file normalize [file join [file dirname [info script]] .. ..]]
+set F_XS  [file join $REPO src xschem.tcl]
+set F_ASE [file join $REPO src ase_window.tcl]
+set S_XS  [src_slurp $F_XS]
+set S_ASE [src_slurp $F_ASE]
 
-# The mask is an INT (S7 decision D4). A Tk checkbutton may hold a non-1/0 truthy
-# value; it must be normalised, never passed through as `true`/`on`/`yes`.
-set ::annot_show_op true ; set ::annot_show_voltage 0
-annot_show_menu_apply
-check "A12 a Tk-truthy 'true' normalises to the INT 1" [xschem get annot_show] 1
+# ======================================================================== B ==
+# THE DELETION. Every row here is a NEGATIVE claim; B9/B10 are the positive
+# counterweight and must be read together with them.
+# ============================================================================
 
-# ------------------------------------------------ THE OFF-RAMP, the whole point
-# Reproduce what the two `Op Annotate` menu items do, then turn it off from the
-# menu. Before 0457(b) nothing in the stock tree could perform this second step.
-xschem set annot_show 1
-annot_show_menu_sync
-check "A13 after an Op-Annotate-shaped write the OP box is ticked" $::annot_show_op 1
-set ::annot_show_op 0
-annot_show_menu_apply
-check "A13b unticking it turns annotation OFF (the off-ramp)" [xschem get annot_show] 0
+# ⚠ THE OVER-DELETION GUARD, AND IT IS GREEN BEFORE THE CHANGE ON PURPOSE.
+# `View > Show / Hide` is a real submenu with real unrelated entries
+# (`Show hidden texts` among them, src/xschem.tcl). Only the two annotation
+# checkbuttons and the -postcommand they needed come out; a diff that took the
+# whole submenu with them would satisfy B2-B5 perfectly.
+check "B1 the View>Show/Hide submenu survives, with its unrelated entries" \
+      [list [winfo exists $M] [expr {[entry_index $M "Show hidden texts"] >= 0}]] \
+      {1 1}
 
-# ------------------------------------------------ the state the chords cannot reach
-# 6 / Ctrl-6 / Alt-6 emit masks 1, 0 and 3 only (utils/annot_mode.tcl). The pair
-# can also produce 2 -- node voltages with device OP info off. text_hidden() gates
-# the two classes on separate bits, so the state is coherent and deliberate.
-set ::annot_show_op 0 ; set ::annot_show_voltage 1
-annot_show_menu_apply
-check "A14 mask 2 is reachable from the menu (chords cannot make it)" \
-      [xschem get annot_show] 2
+check "B2 no View>Show entry is wired to the mask's derived vars (searched BY -variable)" \
+      [list [entry_index_var $M annot_show_op] [entry_index_var $M annot_show_voltage]] \
+      {-1 -1}
 
-# ------------------------------------------- 0614: THE THREE CHORDS, FROM HERE
-# ⚠ GREEN BEFORE AND AFTER 0614 -- the plumbing is 0457(b)'s and it already
-# works. This row is here because 0614's acceptance names it out loud ("the
-# 0457(b) View-menu pair drives the same three states"), and because after 0614
-# those three masks MEAN something they did not mean before:
-#   op=1 v=0 -> 1  device OP blocks AND branch currents, node voltages OFF
-#   op=1 v=1 -> 3  both
-#   op=0 v=0 -> 0  neither
-# (the first line is issue 0678's reversal of 0614's decision D4 -- the branch
-#  currents moved from bit1 to bit0; the mask ARITHMETIC did not move at all,
-#  which is why every row in this file but A4/A5/A19 is untouched.)
-# i.e. the stock menu pair reaches every state `6` / `Alt-6` / `Ctrl-6` reach,
-# for the vast majority of users whose xschemrc never sources cadence_style_rc
-# (it ships commented out at src/xschemrc:767). The RENDER half of the same
-# claim is test_op_annot.tcl rows U1-U6; this file owns the control surface.
-set a18 {}
-foreach {op v} {1 0   1 1   0 0} {
-  set ::annot_show_op $op ; set ::annot_show_voltage $v
-  annot_show_menu_apply
-  lappend a18 [xschem get annot_show]
-}
-check "A18 0614 the View pair reaches the three chord states (6 / Alt-6 / Ctrl-6)" $a18 {1 3 0}
+# The third element is the anti-hollow half: a walk that returned nothing would
+# make the two 0s meaningless.
+set vlabels [menu_tree_labels .menubar.view]
+check "B3 neither annotation label survives anywhere in the WHOLE View menu tree" \
+      [list [expr {[lsearch -exact $vlabels {Show device OP / branch current annotation}] >= 0}] \
+            [expr {[lsearch -exact $vlabels {Show node voltage annotation}] >= 0}] \
+            [expr {[llength $vlabels] > 5}]] \
+      {0 0 1}
 
-# ------------------------------------------------------------- source contract
-set fh [open [file join [file dirname [info script]] .. .. src xschem.tcl] r]
-set src [read $fh] ; close $fh
+# The two procs existed ONLY to serve the View pair — measured, exactly three
+# call sites in src/, all of them that pair (the -postcommand and the two
+# -commands). The chords call `xschem set annot_show` themselves.
+check "B4 the View pair's two procs are gone" \
+      [list [llength [info procs annot_show_menu_sync]] \
+            [llength [info procs annot_show_menu_apply]]] \
+      {0 0}
+
+check "B5 the View>Show submenu no longer carries the pair's -postcommand" \
+      [string match {*annot_show_menu_sync*} [$M cget -postcommand]] 0
+
+# ---------------------------------------------------------- source contract --
+# ⚠ A RUNTIME ROW CANNOT SEE A DELETION THAT LEFT DEAD CODE BEHIND. B4/B5 pass
+# over a proc that is defined but never reached; these greps do not.
+check "B6 src/xschem.tcl keeps exactly the two Op-Annotate writers of the mask" \
+      [list [src_grep $F_XS {xschem set annot_show}] \
+            [regexp {Op Annotate.*?xschem set annot_show 3} $S_XS] \
+            [regexp {Annotate Operating Point into schematic.*?xschem set annot_show 3} $S_XS]] \
+      {2 1 1}
+
+check "B7 the derived vars annot_show_op / annot_show_voltage are gone from src/xschem.tcl" \
+      [list [src_grep $F_XS {annot_show_op}] [src_grep $F_XS {annot_show_voltage}]] \
+      {0 0}
+
 # S7 decision D4: writing the mask must go THROUGH `xschem set`; a bare
-# `set ::annot_show N` leaves the C field stale until the next bulk sync.
-check "A15 apply writes through 'xschem set annot_show'" \
-      [regexp {proc annot_show_menu_apply.*?xschem set annot_show} $src] 1
-check "A16 no bare 'set ::annot_show <int>' anywhere in xschem.tcl" \
-      [regexp {\n\s*set ::annot_show\s+[0-9]} $src] 0
-# The bbox pass is load-bearing: an annotation block changes the instance's own
-# bbox (16 wide blank vs 186 wide populated, select.c:709).
-check "A17 apply runs update_all_sym_bboxes" \
-      [regexp {proc annot_show_menu_apply.*?update_all_sym_bboxes} $src] 1
+# `set ::annot_show N` leaves the C field stale until the next bulk sync
+# (measured: `xschem get` still read 3 after `set ::annot_show 0`, until one
+# `xschem update_all_sym_bboxes`). Kept on BOTH files now that the writer moved.
+check "B8 no bare 'set ::annot_show <int>' in either file" \
+      [list [src_grep $F_XS {^\s*set\s+::annot_show\s+[0-9]}] \
+            [src_grep $F_ASE {^\s*set\s+::annot_show\s+[0-9]}]] \
+      {0 0}
+
+# ======================================================================== B ==
+# THE REPLACEMENT EXISTS. Without these two rows, deleting the View pair and
+# building NOTHING passes B1-B8 with full marks — which is precisely the
+# failure this project has shipped before.
+# ============================================================================
+
+# The behavioural owner is tests/headless/test_ase_window.tcl rows W1a1-W1a17:
+# they open a real ASE-L session window and drive the DESIGN context's mask
+# through the two `Results > Annotate` entries. This row only asserts that the
+# three named seams exist, so a green run here can never be mistaken for
+# evidence that the control works.
+check "B9 the ASE-L replacement's three seams are defined (behaviour: test_ase_window W1a)" \
+      [list [llength [info procs ase::has_results]] \
+            [llength [info procs ase::ui::annot_apply]] \
+            [llength [info procs ase::ui::annot_menu_sync]]] \
+      {1 1 1}
+
+# ⚠ SLICED, NOT ANCHORED -- and the difference was measured, not reasoned about.
+# The sabotage protocol for this crew neutralises a callee by renaming it to
+# `..._real` and leaving a live no-op shim. The earlier form of this row used one
+# regexp anchored on `proc ase::ui::annot_apply \{` with a `.*?` reaching for the
+# writer, and because `.` matches a NEWLINE in Tcl that `.*?` walked straight out
+# of the shim and into the `_real` body: the row passed with the control fully
+# dead (0682 variant S1). proc_src now cuts the proc's OWN body out first, so the
+# second element can only be satisfied by a writer inside the shipped proc.
+check "B10 src/ase_window.tcl carries exactly one mask writer, inside ase::ui::annot_apply" \
+      [list [src_grep $F_ASE {xschem set annot_show}] \
+            [regexp {xschem set annot_show} [proc_src $S_ASE ase::ui::annot_apply]]] \
+      {1 1}
 
 # ------------------------------------------------------------------- cleanup --
-xschem set annot_show 0
-annot_show_menu_sync
 set ::autosave_backup $::saved_autosave_0601   ;# issue 0601
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } else { puts "RESULT: $fail FAILED ($npass passed)" }

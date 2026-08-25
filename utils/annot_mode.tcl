@@ -220,15 +220,25 @@ proc cadence::_annot_scan {} {
 ## showing voltages alone. It also had no wording at all for mask 2, the state the
 ## ruling just created. The first argument is therefore the MASK.
 ##
-## ⚠ THE WORDING IS DELIBERATELY TERSER THAN THE View MENU'S, AND ISSUE 0678 MADE
+## ⚠ THE WORDING WAS DELIBERATELY TERSER THAN THE View MENU'S, AND ISSUE 0678 MADE
 ## IT STRICTLY TRUE RATHER THAN MERELY TERSE. Until 0678 bit1 also gated branch
 ## currents, so mask 2's "node voltages" understated the checkbutton's "Show node
 ## voltage / branch current annotation". The user reversed that on a real bench
-## 2026-08-24: the currents moved to bit0 and the menu pair is now "Show device OP /
+## 2026-08-24: the currents moved to bit0, and the menu pair read "Show device OP /
 ## branch current annotation" / "Show node voltage annotation". These four strings
 ## are deliberately UNCHANGED -- mask 2 is now exact, and mask 1's "device OP info"
 ## stays terse for the currents the way it always did for the id=/gm= block. Every
 ## committed golden string (rows N3/N5/N6/N8/N9/N10/N10b/N15/N23) is byte-identical.
+##
+## ⚠ THAT MENU PAIR NO LONGER EXISTS (issue 0682, same day, same bench): annotation
+## visibility moved to ASE-L `Results > Annotate` -- *Operating Point info* (bit0) /
+## *DC Node Voltages* (bit1) -- and the `View > Show / Hide` pair was deleted. So
+## there is no longer a second, wordier surface for these lines to be terser THAN.
+## They stay as they are: the comparison is gone, the reasoning that made each
+## string exact is not, and churning committed goldens to chase a deleted menu
+## would be change for its own sake. Note the ASE-L labels are Cadence's and do
+## NOT partition the two content classes, so they could not have served as the
+## reference wording anyway.
 proc cadence::_annot_msg {mask state path types} {
   if {![string is integer -strict $mask]} { set mask 0 }
   switch -exact -- [expr {$mask & 3}] {

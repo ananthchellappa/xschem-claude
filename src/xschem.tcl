@@ -15042,53 +15042,35 @@ proc fluid_trace_menu_update {m} {
   catch {$m entryconfigure {*FLUID trace} -label $lab}
 }
 
-## doc/claude/specs/op_annotation.md step S8 / issue 0457(b), ruled by the user
-## 2026-08-22: `annot_show` gets a stock View-menu control. Until this landed the
-## only writers in the stock tree were the two `Op Annotate` items, and BOTH of
-## them set the mask to 1 -- there was no off-ramp short of editing xschemrc and
-## restarting. The three chords do turn it off but live in cadence_style_rc, which
-## ships commented out at src/xschemrc:767.
+## ISSUE 0682 -- THE VIEW-MENU PAIR THAT LIVED HERE IS GONE, AND THIS NOTE IS
+## ITS HEADSTONE so the next person does not "restore" it.
 ##
-## `annot_show` is a BITMASK (ANNOT_SHOW_OP 1, ANNOT_SHOW_VOLTAGE 2, xschem.h:400)
-## and a Tk checkbutton wants a boolean, so the pair rides on two derived vars.
+## `annot_show_menu_sync` (PULL, the View > Show submenu's -postcommand) and
+## `annot_show_menu_apply` (PUSH, both checkbuttons' -command) existed ONLY to
+## serve the `View > Show / Hide` annotation pair added by issue 0457(b) on
+## 2026-08-22 -- measured, exactly three call sites in src/, all of them that
+## pair. On 2026-08-24, driving the shipped feature on a real sky130 bench, the
+## same user REVERSED that placement, verbatim: "What is View > Show? We want to
+## be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+## Operating Point Info", and "results (including OP info) only make sense when
+## there is a result loaded - meaning an ASE-L is active, to which this schematic
+## is 'bound'". 0457(b) answered the question it was asked (where can this control
+## live with no new C code); this is a change of DESTINATION, not a repair.
 ##
-## PULL is a -postcommand on the submenu, NOT a call planted next to every writer.
-## There are four writers today -- the two menu items and the three cadence chords
-## (utils/annot_mode.tcl) -- and invariant I5 lets a user's own rc add more, so a
-## design that needs every writer to remember the menu would drift out of sync the
-## first time someone wrote one.
+## The control now lives in src/ase_window.tcl as `ase::ui::annot_apply` /
+## `annot_menu_sync` / `annot_mask` / `annot_goto_design` / `annot_ensure_loaded`,
+## hung off the session window's `Results > Annotate` submenu, greyed by
+## `ase::has_results` (src/ase.tcl). It has to do more than these two procs did,
+## because an ASE-L window is a plain Tk toplevel and the mask is per DESIGN
+## CONTEXT -- see the header there.
 ##
-## Reading through `xschem get` rather than $::annot_show is deliberate: the mask
-## is PER-CONTEXT (xctx->annot_show), so under the tabbed interface the Tcl mirror
-## describes whichever window last wrote it, not the one whose menu is opening.
-proc annot_show_menu_sync {} {
-  if {[catch {xschem get annot_show} m]} { return }
-  if {![string is integer -strict $m]} { return }
-  set ::annot_show_op      [expr {($m & 1) ? 1 : 0}]
-  set ::annot_show_voltage [expr {($m & 2) ? 1 : 0}]
-}
-
-## PUSH. Writes THROUGH `xschem set` (S7 decision D4): a bare `set ::annot_show`
-## leaves the C field stale until the next bulk sync, and the mask is an INT, so a
-## Tk boolean must be normalised to 1/0 rather than passed as `true`/`on`.
+## THE THREE CHORDS ARE UNAFFECTED: `6` / `Alt-6` / `Ctrl-6` (cadence_style_rc)
+## write the mask themselves through cadence::annot_mode (utils/annot_mode.tcl),
+## never through these procs. Issue 0678 confirmed all three on a real bench.
 ##
-## The bbox pass is not optional -- an annotation block changes the instance's own
-## bbox (measured 16 wide blank vs 186 wide populated, select.c:709), the same
-## reason the `Show hidden texts` neighbour carries it.
-##
-## NOTE the pair reaches all four masks, and so do the chords -- since 0614 the
-## three chords are two ADDITIVE setters and one clear-all (`6` |= 1, `Alt-6` |= 2,
-## `Ctrl-6` = 0), so `Ctrl-6` then `Alt-6` produces mask 2 (node voltages with
-## device OP info OFF) too. This comment used to say mask 2 was menu-only, which
-## was true only while `Alt-6` force-set bit0. text_hidden() gates the two classes
-## on separate bits, so every one of the four states is coherent; a checkbox pair
-## that silently refused one of its four combinations would be the worse bug.
-proc annot_show_menu_apply {} {
-  xschem set annot_show \
-    [expr {($::annot_show_op ? 1 : 0) | ($::annot_show_voltage ? 2 : 0)}]
-  xschem update_all_sym_bboxes
-  xschem redraw
-}
+## Guards: tests/headless/test_annot_show_menu.tcl rows B1-B10 (the deletion,
+## plus the anti-hollow rows that the replacement exists), and
+## test_op_annot.tcl N22/N22b/N22c (which writer lives in which file).
 
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
@@ -15403,8 +15385,9 @@ proc build_widgets { {topwin {} } } {
        # resolved would be a worse first run than the dark annotator this line was
        # written to fix. Deliberately a HARD SET and not an OR: this item is a
        # one-click "annotate this cell", not one of the two additive chords. The
-       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and the
-       # View > Show pair are the other writers of this mask.
+       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+       # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
+       # writers of this mask.
        xschem set annot_show 3
        if {$tctx::retval ne {}} {
          xschem annotate_op $tctx::retval
@@ -15482,8 +15465,7 @@ proc build_widgets { {topwin {} } } {
 
   $topwin.menubar.view add cascade -label "Show / Hide" \
        -menu $topwin.menubar.view.show
-  menu $topwin.menubar.view.show -tearoff 0 -takefocus 0 \
-     -postcommand annot_show_menu_sync ;# issue 0457(b)
+  menu $topwin.menubar.view.show -tearoff 0 -takefocus 0
 
   $topwin.menubar.view.show add checkbutton -label "Show ERC Info window" \
     -selectcolor $selectcolor -variable show_infowindow -command {
@@ -15508,22 +15490,6 @@ proc build_widgets { {topwin {} } } {
      "
   $topwin.menubar.view.show add checkbutton -label "Show hidden texts"  -variable show_hidden_texts \
          -selectcolor $selectcolor -command {xschem update_all_sym_bboxes; xschem redraw}
-  # issue 0457(b): the stock control for the annot_show mask. Placed here, next to
-  # `Show hidden texts`, because that is the entry FAQ Q48 already sends users to
-  # when their sky130 id=/gm= texts vanish -- the two questions arrive together.
-  # ⚠ THE TWO LABELS PARTITION THE TWO CONTENT CLASSES, and issue 0678 moved the
-  # line between them: a source's branch current is that DEVICE's terminal current
-  # (device OP info, like a FET's id), so it is gated by bit0, while bit1 keeps the
-  # node voltages alone. A control must name what it governs and must not name what
-  # it does not -- leaving the old pair would make the one discoverable surface a lie
-  # in the same commit that fixed the behaviour. tests/headless/test_annot_show_menu.tcl
-  # rows A4/A5/A19 pin both strings; the render half is test_op_annot.tcl U6/U31/U32.
-  $topwin.menubar.view.show add checkbutton -label "Show device OP / branch current annotation" \
-         -variable annot_show_op \
-         -selectcolor $selectcolor -command {annot_show_menu_apply}
-  $topwin.menubar.view.show add checkbutton -label "Show node voltage annotation" \
-         -variable annot_show_voltage \
-         -selectcolor $selectcolor -command {annot_show_menu_apply}
   $topwin.menubar.view.show add checkbutton -label "Draw grid axes"  -variable draw_grid_axes \
          -selectcolor $selectcolor -command {xschem redraw}
   $topwin.menubar.prop add command -label "Edit" -command "xschem edit_prop" -accelerator Q
@@ -15817,8 +15783,9 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
        # resolved would be a worse first run than the dark annotator this line was
        # written to fix. Deliberately a HARD SET and not an OR: this item is a
        # one-click "annotate this cell", not one of the two additive chords. The
-       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and the
-       # View > Show pair are the other writers of this mask.
+       # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+       # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
+       # writers of this mask.
        xschem set annot_show 3
        if {$tctx::retval ne {}} {
          xschem annotate_op $tctx::retval
@@ -16503,11 +16470,6 @@ set_ne annot_show 0
 ## Any index outside [1, cadlayers) is the documented off switch: put
 ## `set annot_voltage_layer -1` in ~/.xschem/xschemrc for the pre-0615 look.
 set_ne annot_voltage_layer 9
-## issue 0457(b): the View > Show checkbutton pair's derived booleans. Seeded from
-## the mask so an rc that sets `annot_show 1` opens with the box already ticked;
-## the submenu's -postcommand re-derives them on every open thereafter.
-set_ne annot_show_op      [expr {($annot_show & 1) ? 1 : 0}]
-set_ne annot_show_voltage [expr {($annot_show & 2) ? 1 : 0}]
 set_ne en_pin_select 0
 set_ne incr_hilight 1
 set_ne enable_stretch 0
