@@ -137,10 +137,54 @@ updates outputs and redraws plots. Putting annotation there makes it
 staleness question instead of managing it, because the tick stops being a data
 operation at all.
 
-**Direction taken: (3)**, on the user's reasoning, in the absence of an objection.
-The residual to MEASURE rather than assume: whether a completed run should refresh
-annotation on a design whose annotation is currently OFF (cheap and harmless, or a
-surprise?).
+### THE RESIDUAL WAS A BADLY POSED QUESTION, AND THE USER SAID SO
+
+The lead asked whether a finished run should "refresh annotation" on a design
+whose annotation is OFF. The user answered:
+
+> depends on what you mean by "refresh". The annotations are currently off. When
+> the user asks for annotations to be displayed, the updated data from the
+> just-finished simulation is what will be displayed. How does your question
+> arise?
+
+It arose because **attaching a raw is not a neutral act**: `annotate_op` releases
+the loaded op/dc database and `array unset`s `ngspice::ngspice_data` *before*
+reading the new file — the very path [0807](0807-annotate-op-destroys-the-attached-op-database-on-a-truncated-raw.md)
+proves can destroy it outright. So "attach at run completion" means firing a
+destructive data operation the moment a run ends, whether or not anything needs
+the result, while the user may be looking at a different database in a graph.
+The question was really *"is it acceptable to do that when nothing needs it yet?"*
+and it was dressed up as a question about display.
+
+**The user's answer is an INVARIANT, not a mechanism**: *turn annotation on ->
+see the just-finished run's data.* That is a guarantee about the TICK. It does
+not require an eager attach at all.
+
+### DIRECTION TAKEN — smaller than all three options above
+
+Measured: `ase::run_done` (`src/ase.tcl:1177`) already stamps
+`last_run = {results ... exitcode ... log ... diagnostics ...}`, and
+`ase::ui::run_finished` already writes it onto the session with
+`ase::session_setattr $key results [ase::last_result]`. **The fact "which raw is
+this session's current result" therefore already exists the instant a run ends.**
+
+| when | what happens |
+|---|---|
+| run finishes | already stamps `results` on the session — **no change needed** |
+| tick ON | compare what is ATTACHED against that stamp; attach only if they differ |
+| tick OFF | nothing |
+
+This satisfies the user's invariant exactly, and:
+
+* the database is never swapped while nothing is displaying it — which matters
+  because that swap can fail destructively (0807);
+* the common case (stamp matches what is attached) costs a comparison, so the
+  slow-menu-click objection against option (1) does not apply;
+* a large raw is re-read only when it is genuinely a different result.
+
+Options (1), (2) and (3) are all superseded and kept above for the record. (3)'s
+fatal flaw, which the crew that filed it did not see: it fires the destructive
+path at a moment nobody asked for it.
 
 Superseded recommendation, kept for the record: **(1)**, because it is the only one that keeps both of
 D8's promises (the numbers are live, and a good database is never thrown away),
