@@ -167,3 +167,38 @@ that survived anyway.
 * The attempt's patch is kept out of the tree at
   `/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_0683+0684/rejected/0683_0684_attempt.patch`
   (same-day artifact only). The proc inventory above is the durable part.
+
+
+---
+
+## RULING — the user, 2026-08-25
+
+Presented with the measured state (two stock menu items switch annotation ON —
+`Waves > Op Annotate` at `src/xschem.tcl:15391` and
+`Simulation > Graphs > Annotate Operating Point into schematic` at `:15789` — while
+every OFF-ramp is conditional on a live ASE-L session, on the cadence profile, or
+on an rc edit), the user chose:
+
+> **Refuse without a bound session.**
+>
+> Both stock items check for a live bound session and refuse with a clear message
+> naming the ASE-L path if there is none.
+
+**The trade is accepted explicitly**, having been stated in the question: *stock
+xschem with no ASE-L can no longer annotate at all.* That was the part 0682's
+ruling did not cover — 0682 settled where the CONTROL lives; this settles whether
+stock xschem keeps the CAPABILITY. It does not.
+
+The other two options were rejected: making the stock items TOGGLE (it would put a
+second working annotation control outside ASE-L, a partial retreat from 0682), and
+REMOVING both items outright (the refusal message is more useful than a missing
+menu, because it tells the user where the function went).
+
+### What this ruling does NOT settle
+
+The refusal has to be delivered through the notification channel, and that channel
+has open defects — 0674, 0675, 0677, 0699, 0800 — of which **0675 is exactly the
+hazard here**: a channel can pass its own liveness test and reach nobody. A
+refusal nobody sees is *worse* than the bug being fixed, because the menu item
+then does nothing at all with no explanation. Any implementation must prove the
+refusal REACHED a sink, not that `notify` returned.
