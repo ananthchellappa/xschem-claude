@@ -1,6 +1,7 @@
 # 0684 — ASE-L's raw-attach arm guards on `raw loaded`, so it can show the PREVIOUS run's numbers forever, and an unrelated waveform raw blocks it entirely
 
-STATUS: OPEN — measured 2026-08-25 by issue 0682's adversary pass. **Filed, not fixed.**
+STATUS: **STILL OPEN. Fix ATTEMPTED 2026-08-25, REFUTED and REVERTED the same day —
+read §7 before retrying.** Originally measured 2026-08-25 by issue 0682's adversary pass.
 FOUND IN: `ase::ui::annot_ensure_loaded` (`src/ase_window.tcl`), shipped by
 [0682](0682-annotation-visibility-belongs-in-ase-l-results-annotate.md) decision D8.
 RELATED: [0683](0683-annotation-is-reachable-with-no-bound-ase-l-session.md) (the other half of
@@ -123,3 +124,82 @@ copy of a question this codebase already asks three ways.
 | 2 | a `raw_read` database present with `annot_p` = -1, tick ON -> the session's raw is annotated and the numbers render (today: nothing renders and nothing is said) |
 | 3 | a database that IS this session's current annotated raw -> the tick does NOT re-read it |
 | 4 | the failure path still echoes through `ase::echo`, never silently |
+
+---
+
+## 7. ⚠ ATTEMPT 1 (2026-08-25) — REFUTED AND REVERTED. READ BEFORE RETRYING
+
+Fixed together with [0683](0683-annotation-is-reachable-with-no-bound-ase-l-session.md)
+(the two are one defect) and reverted together. The full proc inventory and the
+0683-side refutations are in **0683 §7**; this section records only what it settles
+about 0684.
+
+### What the attempt got right, and should be re-used
+
+The one-line `[xschem raw loaded] >= 0 -> return` guard was replaced by
+`ase::ui::annot_attached_current {key np}`, which **calls** `op_annot::_annotated`
+rather than copying its three terms a fourth time (invariant **I1**), and adds two
+terms the old guard lacked: path identity (`file normalize [xschem raw rawfile]`
+against the session's normalized path) and a freshness stamp
+`annot($key,src)` = `{normpath mtime size}`. Every term is catch-wrapped and
+**every catch falls to 0 = RE-ATTACH, never to `return`** (invariant **I3**) —
+`xschem raw rawfile` and `xschem raw annot` both RAISE with nothing attached, and an
+early return on an unanswerable question is exactly how the shipped guard shows run
+1's numbers forever. The attach is verified by re-asking `op_annot::_annotated`,
+never by trusting `annotate_op`'s return: measured, `xschem annotate_op /nonexistent`
+returns the path string with `TCL_OK` and nothing attached.
+
+Defect **B** (§3, an unrelated waveform raw blocks the attach) was genuinely closed by
+this and stayed closed under adversarial probing. Sabotage S3 (predicate always
+satisfied — the shipped defect's exact behaviour) turned 6 rows red; S4 (always
+re-attach) turned the no-needless-re-read row red. Both halves of the predicate were
+therefore load-bearing.
+
+### What it did NOT close: the headline case, on the primary gesture
+
+The brief's requirement was *"annotate, re-run the simulation, and prove the displayed
+numbers are the NEW ones or blank, never the old ones"* — **no untick in that
+sentence**. Measured against the shipped bodies, no sabotage live:
+
+```
+A1 after the tick: raw value v(a) -1   = 111  (run 1 = 111)
+A2 the file on disk now says v(a)      = 222
+A2 (no tick, no untick -- annotation is simply still ON)
+A2 raw value v(a) -1                   = 111  <<< 111 = STALE ON THE SHEET
+A2 op_annot::_annotated                = 1  (1 = the overlay paints)
+A3 calling ase::ui::run_finished K (the 0684 'exactness' seam)
+A3 raw value v(a) -1                   = 111  <<< still 111
+A4 ONLY an untick+retick repairs it:   = 222
+```
+
+`ase::ui::annot_ensure_loaded` is the **only** re-attach and `annot_apply` its only
+caller, so nothing refreshes without a tick. `run_finished` drops the *stamp*, so the
+cache stops lying — but the **screen** keeps painting the previous run's number, which
+is invariant I3's forbidden case in its own words. The three rows that were written
+for this (W1a18/W1a19/W1a20) all untick then re-tick, so none of them can see it.
+
+**Binding on attempt 2:** the fix has to reach the *display*, not just the next tick.
+`run_finished` is the seam; what it must do is re-attach-or-blank, not merely
+invalidate. That is close to §5's rejected option (3), and §5's reason for rejecting
+it (blast radius) now has to be weighed against the fact that option (1) alone does
+not satisfy 0684's own headline.
+
+### Two sentences of §5 that measurement refutes
+
+* The shipped D8 comment's *"A LOADED DATABASE IS NEVER THROWN AWAY … replacing it
+  would be a data loss caused by a menu tick"*, which §5 leans on to reject option (2),
+  is **too strong**. Measured: `annotate_op` ADDS a database and only moves the CURRENT
+  pointer; it destroys the previous one **only** when that one is a 1-point `op`/`dc`
+  (`scheduler.c:2410-2414`). The waveform graph the warning is written about is never
+  lost. The real loss is another corner's operating point.
+* But the attempt's own repair overshot in the other direction and **created** a data
+  loss where none existed — see
+  [0685](0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md) §4.
+  Both facts have to be held at once: `annotate_op` is safer than the comment claims,
+  and a blanket `raw clear` before it is not.
+
+### Known limitation the attempt hit and could not remove
+
+`file mtime` is 1-second resolution, so a same-second rewrite of identical size is
+invisible to the stamp. Only ASE-L's own `run_finished` closes that hole; a re-run
+driven from a terminal or from `Simulation > Netlist and Run` does not go through it.

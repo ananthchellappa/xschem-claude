@@ -15,10 +15,11 @@ So the filing sequence is:
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
 ```
 
-Highest filed on `annotate` as of 2026-08-24: **0677** (0668-0673 filed by the
-0663 crew; **0674-0677 by the 0664+0665+0666 crew**). The next number is
-**0678**.
+Highest filed on `annotate` as of 2026-08-25: **0690** (0668-0673 filed by the
+0663 crew; 0674-0677 by the 0664+0665+0666 crew; 0681 by the 0678 crew; 0679/0680
+by concurrent crews; 0683-0684 by the 0682 crew; **0685-0690 by the 0683+0684
+crew**). The next number is **0691**.
 
 `status.md` covers the fluid-editing branch and its 02xx numbering.
-`status_annotate.md` covers this branch, 0600–0673. They do not share a number
+`status_annotate.md` covers this branch, 0600–0690. They do not share a number
 space.

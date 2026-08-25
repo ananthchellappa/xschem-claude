@@ -2286,6 +2286,66 @@ were false — it re-used U27's census, which is correctly scoped to the non-flo
 
 ---
 
+### ⚠ 6a. `annotate_op` and the raw registry — measured 2026-08-25 (0683+0684)
+
+Five facts about the attach path, all measured on the in-tree binary during the
+0683+0684 attempt. Four of them contradict something that was previously written
+down or assumed, which is why they are here and not in a crew report.
+
+1. **`annotate_op` ADDS a database; it does not replace one.** It moves the CURRENT
+   pointer, and destroys the previous database **only** when that one is itself a
+   1-point `op`/`dc` (`scheduler.c:2410-2414`). Measured: attach a 3-point tran by
+   `raw_read`, then `annotate_op` a 1-point op raw — `xschem raw info` afterwards
+   lists **both**, index 1 current.
+   ⚠ This **refutes** the claim in `ase_window.tcl`'s D8 header that *"a loaded
+   database is never thrown away"* being the reason to reject an unconditional
+   re-attach. The waveform graph that warning is written about is never lost. The
+   only real loss is another corner's operating point.
+2. **`annotate_op` will hand back a STALE in-memory copy** when the same path is
+   already in the registry under the same sim_type and the current database is not a
+   1-point op/dc: `extra_rawfile()`'s dedup (`save.c:1819-1826`) matches
+   rawfile+sim_type and takes the "switch to it" branch **with no read**. Issue
+   **0685**. Precondition is exact — see the next point.
+3. **`xschem raw read` ADDS to the registry; `xschem raw_read` REPLACES slot 0.**
+   Only the adding form can leave a same-path entry behind, so a probe written with
+   `raw_read` measures the defect in (2) as absent. This cost the 0683+0684 crew a
+   contradiction between two of its own passes.
+4. **`annotate_op` never fails loudly.** `xschem annotate_op /nonexistent` returns the
+   **path string** with `TCL_OK` and nothing attached; and it is *destructive before
+   open* (`scheduler.c:2411-2415` clears the previous OP and unsets
+   `ngspice::ngspice_data` **before** trying the new file). Verify an attach by
+   re-asking `op_annot::_annotated`, never by the return code. `xschem raw rawfile`
+   and `xschem raw annot` both **RAISE** with nothing attached, so every probe of them
+   must be catch-wrapped — and per **I3** an unanswerable term must fall to
+   "re-attach", never to "assume attached".
+5. **`annotate_op` force-enables `live_cursor2_backannotate`** (`scheduler.c:2409`).
+   So `op_annot::_annotated`'s first term cannot be used to detect that the user
+   turned the live-probe checkbutton off: the attach turns it back on.
+
+**Corollary for any "is the right thing attached?" predicate:** `xschem raw loaded`
+is not a boolean — `sch_waves_loaded()` returns the hierarchy **level** (landmine 4)
+— and it answers "is SOME database attached here", not "are THIS session's CURRENT
+results attached here". Issue **0684**.
+
+### ⚠ 6b. `annot_show` outlives the schematic that was annotated — measured 2026-08-25
+
+`annot_show` is per-**context**, and a context is a **window**, not a schematic:
+`xschem load <other>.sch` in the same window leaves the mask exactly where it was, as
+does descend + `go_back`. That is ordinary `tctx::global_list` behaviour and is not
+itself a defect.
+
+It becomes one for any binding written on top of it, because a session's only handle
+on a design is a **cellview path** — so the instant the user opens a different cell in
+that window, every session-side read of the mask returns 0 while the mask is really 3,
+and every session-side clear silently no-ops. **A binding keyed on
+cellview→window cannot hold.** Issue **0688**; it is the reason the first fix attempt
+for 0683/0684 was reverted.
+
+Design consequence: 0683 is a **lifetime** problem, not an entry problem. Guarding the
+producers does nothing about a mask that is already on.
+
+---
+
 ## 7. Out of scope (named, so it is not accidentally assumed)
 
 * Voltages on **unlabelled** nets. Today a voltage needs a label/pin/probe

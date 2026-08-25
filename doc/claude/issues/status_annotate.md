@@ -225,6 +225,34 @@ Worth stating, because the issue count hides it.
   `Xschem.log` and flaked **once in 20 runs** — issue **0676**, a harness
   fragility, not a product defect.
 
+## 6a. 0683 + 0684 — attempted, refuted, reverted 2026-08-25
+
+The binding pair 0682 left behind. A complete pure-Tcl fix reached **22 / 207 / 342**
+ALL PASS with a fully trustworthy 8-variant sabotage matrix, then failed its own
+acceptance under adversarial probing and was **reverted in full**. Suites are back at
+**10 / 199 / 341**; T1 and T2 unmoved; no build was run or needed.
+
+Three refutations, each re-measured on a clean tree: (1) the orphan state is still
+reachable through sanctioned doors — annotate from ASE-L, `File > Open` another cell,
+close the session — because `annot_show` is per-**window** while a session's handle on
+its design is a **cellview path** (issue **0688**); (2) 0684's headline case, a re-run
+with annotation simply left on, still paints the previous run's number — the three
+rows written for it all untick first, so none could see it; (3) the 0685 workaround
+destroyed a loaded waveform database when the re-read failed, where the old guard had
+survived.
+
+Filed by that crew: **0685** (`annotate_op` reuses a stale registry database at the
+same path), **0686** (`ase::ui::close` leaves the design annotated — the sixth orphan
+producer), **0687** (`test_backannotate_digital` litter + a guard that misses it),
+**0688** (the reason for the revert), **0689** (`run_regression.tcl`'s sentinel
+false-reds a suite printing a count), **0690** (`test_ihp_sg13g2_libmgr`'s golden is
+one library behind). **0689 + 0690 are all three FAIL lines in this branch's T1
+baseline.** Next free number: **0691**.
+
+Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, block
+"⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED"; issue **0683 §7** and **0684 §7**;
+spec §6a/§6b.
+
 ## 7. A note on elapsed time, so the next long run is not a mystery
 
 Two crews have appeared to take 5–7 hours. Both were the **Windows host sleeping

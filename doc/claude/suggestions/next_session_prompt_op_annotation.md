@@ -325,7 +325,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0685.** (0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0691.** (**the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -961,8 +961,152 @@ matrix, still-open list), spec **§4.6a** and `specs/ase_l.md` Results.
 9. **The `6` / `Alt-6` / `Ctrl-6` chords are untouched and must stay so** — they write
    the mask themselves through `cadence::annot_mode` and never went through the
    deleted procs. 0678 confirmed all three on a real bench.
-10. **NUMBER NEW ISSUES FROM 0685.** *(This item filed **0683** and **0684**.)*
+10. **NUMBER NEW ISSUES FROM 0691.** *(This item filed **0683** and **0684**; the
+    0683+0684 crew then filed **0685-0690** — see the block above.)*
     ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.
+
+## ⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED 2026-08-25. READ BEFORE RETRYING EITHER
+
+**Not a plan step.** The blocking sibling pair 0682 left behind — annotation and its
+ASE-L session are not actually bound. A complete fix was implemented, reached **22 +
+207 + 342 ALL PASS** with a fully trustworthy 8-variant sabotage matrix, was refuted
+by the adversary pass on three counts, re-measured on a clean tree by the write-up
+pass, and **reverted in full**. `test_annot_show_menu` / `test_ase_window` /
+`test_op_annot` are back at their baseline **10 / 199 / 341**; T1 3 FAIL / 3 NOGOLD and
+T2 6/6 unmoved. Nothing shipped. Pure Tcl throughout — **no build was run or needed**.
+
+### THE ONE THING TO INHERIT: 0683 IS A LIFETIME PROBLEM, NOT AN ENTRY PROBLEM
+
+`annot_show` is per-**context**, and a context is a **window**, not a schematic. A
+plain `File > Open` in the design window leaves the mask exactly where it was — while
+the ASE-L session's only handle on that design is a **cellview path**. So the moment
+the user opens another cell there, every session-side read of the mask returns `0`
+while it is really `3`, and every session-side clear silently no-ops.
+
+The attempt guarded both producers and cleared the mask in `ase::ui::close`. Both are
+defeated by that one gesture. Measured on the fixed tree, no sabotage live, sanctioned
+doors only:
+
+```
+STEP 1  ASE-L Results>Annotate on design D      annot_show=3  v(a)=3.14  _annotated=1
+STEP 2  File > Open a different cell, SAME window   annot_show=3  annot_mask K=0
+STEP 3  Session > Close    annot_clear_on_close returned 0   (it cleared nothing)
+STEP 4  File > Open design D again
+        annot_show = 3    raw loaded = 0    _annotated = 1    v(a) = 3.14
+STEP 5  session_for_current='' · 0 sessions · no cadence::annot_mode
+        menubar entries that CLEAR it = 0 of 6
+```
+
+That is issue **0457**'s complaint verbatim, *after* the fix. Filed as **0688**, and it
+is the first thing attempt 2 has to solve. The candidate nobody tried: clear the mask
+where the **schematic** changes (the `xschem load` path in C), not where the session
+ends — unratified, and it changes what `File > Open` does to a mode the user set.
+
+### THE OTHER TWO REFUTATIONS
+
+* **0684's headline case is not closed by the tick-based fix.** The brief asked to
+  *"annotate, re-run the simulation, and prove the displayed numbers are the NEW ones
+  or blank"* — no untick in that sentence. Measured: after a re-run at the same path
+  the sheet still paints `111` while the file says `222`, and `run_finished` (the
+  "exactness" seam) drops the **stamp** but not the **display**. Only untick+re-tick
+  repairs it — and all three rows written for this (W1a18/W1a19/W1a20) untick, so none
+  could see it. Attempt 2's fix has to reach the display, which pulls 0684 §5's
+  rejected option (3) back onto the table.
+* **The 0685 workaround caused a data-loss regression.** `annot_drop_stale` cleared
+  `op`/`dc`/`tran` at the session path before re-reading; when the re-read then failed
+  (ngspice mid-rewrite — file readable but truncated) the user's loaded waveform
+  database was **destroyed**, where the old guard had survived. `file readable` is not
+  a parse check. Drop only the sim_type you are about to read, or verify first.
+
+### AND A TRADE THE USER WAS NEVER ASKED ABOUT
+
+With the binding guard live, `Waves > Op Annotate` and `Simulation > Graphs > Annotate
+Operating Point` become **dead on stock xschem** for anyone who never opens ASE-L, even
+with a perfectly good `.raw` on disk. Rule debt `[0683]` is standing; when it is
+ratified the user must be shown *that* cost, not just the predicate question — the
+attempt traded away a working upstream feature and did not get the orphan closed in
+return.
+
+### WHAT WAS RIGHT AND SHOULD BE RE-USED (the shape, not the key)
+
+Eight named procs, all pure Tcl, all sabotageable by rename-to-shim:
+`ase::annot_binding_ok` · `ase::no_results_notice` · `ase::ui::annot_entry_state`
+(never grey away an entry whose bit is already on) · `ase::ui::annot_attached_current`
+(**calls** `op_annot::_annotated` per **I1** instead of a fourth longhand copy, plus
+path identity, plus an mtime+size stamp; every catch falls to RE-ATTACH, never to
+`return`, per **I3**) · `ase::ui::annot_stamp` (written only after the attach is
+VERIFIED by re-asking `op_annot::_annotated`) · `ase::ui::annot_drop_stale` ·
+`ase::ui::annot_clear_on_close` · `ase::ui::annot_notify_displaced`. The guard belongs
+**above** `select_raw` (`src/xschem.tcl:14518`) — it pops a modal `tk_getOpenFile` and
+rewrites the global `netlist_dir` as a side effect of being *read*, so a refusal below
+it makes the user answer a file dialog before being told no. Defect **B** of 0684 (an
+unrelated waveform raw blocking the attach) was genuinely closed and stayed closed
+under adversarial probing. Mask-writer counts held at 2 / 1, so N22 and B6/B10 never
+moved. Full inventory: issue **0683 §7**. The patch is kept out of the tree at
+`/tmp/…/scratch_0683+0684/rejected/0683_0684_attempt.patch` (same-day artifact only).
+
+### FIVE ANCHOR / FACT CORRECTIONS THAT BIND ANY LATER STEP
+
+1. **0683 §3's producer anchors were stale.** `src/xschem.tcl:15408` is `Waves > Sp`;
+   `:15804`/`:15822` are comment lines. The two real mask writes are **`:15391`**
+   (`Waves > Op Annotate`, body `:15373-15402`) and **`:15789`**
+   (`Simulation > Graphs > Annotate Operating Point`, body `:15770-15800`).
+2. **There is a SIXTH orphan producer**, absent from 0683's five-row table:
+   `ase::ui::close` (`ase_window.tcl:300-330`) unsets `annot($key,*)` and never clears
+   the design's mask. Issue **0686**.
+3. **`annotate_op` ADDS a database and only moves the CURRENT pointer**; it destroys
+   the previous one **only** when that one is a 1-point `op`/`dc`
+   (`scheduler.c:2410-2414`). This **refutes** the D8 comment's "a loaded database is
+   never thrown away" as an argument. Spec §6a.
+4. **`xschem raw read` ADDS to the registry; `xschem raw_read` REPLACES slot 0.** A
+   probe written with the wrong one measures issue **0685** as absent — it produced a
+   direct contradiction between two passes of this same crew. Spec §6a.
+5. **`annotate_op` force-enables `live_cursor2_backannotate`** (`scheduler.c:2409`),
+   so that term of `op_annot::_annotated` cannot detect a user who turned the
+   live-probe checkbutton off. And `xschem annotate_op /nonexistent` returns the path
+   string with `TCL_OK`: verify an attach by re-asking, never by rc.
+
+### PROCESS, AND IT COST TWO PASSES
+
+**Do not schedule the sabotage leg concurrently with a verify leg in one working
+tree.** Verify-A's first T3 batch reported 5 failures in `test_annot_show_menu` that
+were a live S1 shim in `src/ase.tcl`, not a defect; it caught this only by
+timestamping the other agent's process and re-running everything on a quiet tree. The
+same warning is already in the 0650 block — it recurred anyway.
+
+**And the mandated restore receipt is structurally blind.** The protocol neutralises
+by renaming the callee to a live no-op shim and forbids a `/* SABOTAGE */` marker, so
+`grep -rn SABOTAGE src/` returns 0 **while shims are live**. The receipt that actually
+works is `grep -rn 'proc .*_real {' src/` — expect 0. Adopt it in the next brief.
+
+### NEW ISSUES FILED BY THIS CREW: 0685–0690
+
+| issue | what | status |
+|---|---|---|
+| **0685** | `annotate_op` hands back a stale registry database at the same path (`extra_rawfile` dedup, no read) — exposed callers include both Annotate menu items, `utils/annot_mode.tcl` and `sg13g2_raw_or_double`, which has no gate at all | OPEN (C fix) |
+| **0686** | `ase::ui::close` leaves the design annotated — the sixth orphan producer | OPEN (downstream of 0688) |
+| **0687** | `test_backannotate_digital` litters `untitled~.sch` while reporting ALL PASS, and `test_no_untitled_litter` misses a **pre-existing** one | OPEN |
+| **0688** | `annot_show` outlives the schematic, so cellview→window binding cannot hold — **the reason this attempt was reverted** | OPEN |
+| **0689** | `run_regression.tcl:117`'s `^OVERALL: ok$` sentinel false-reds any suite printing a count (`test_pdk_launcher` is green and reported FAIL) | OPEN |
+| **0690** | `test_ihp_sg13g2_libmgr`'s 9-library golden is one behind the tree (`sg13g2_tests_ase`) | OPEN |
+
+**0689 and 0690 together are all three FAIL lines in this branch's T1 baseline.** T1 =
+3 FAIL / 0 GOLD? / 0 RESULT? / 0 FATAL / 3 NOGOLD is the number to diff against; a 4th
+FAIL line is a real regression.
+
+### TIER DISCIPLINE THIS CREW HAD TO LEARN THE HARD WAY
+
+* **Run `test_ase_core` and `test_ase_final` under `--nogui`, never under X.** Under
+  `DISPLAY=:99` they abort early with *"ase: design <lib>/<cell> is not the current
+  schematic"* (103 / 9 checks instead of 172 / 67). That is operator error, not a
+  failure.
+* **Run `test_backannotate_digital` LAST or from a scratch cwd**, and check the repo
+  root for `untitled~.sch` before `test_ase_core`, or C11 goes red for a reason
+  unrelated to whatever you are testing (issue 0687).
+
+**NUMBER NEW ISSUES FROM 0691.** ⚠ 0700–0799 is RESERVED — after 0699 go to **0800**.
+
+---
 
 ## ✅ 0678 — LANDED 2026-08-24 (status **E**). IT REVERSES ONE ROW OF THE TABLE ABOVE
 
@@ -4031,7 +4175,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0685**. *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0691**. *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were

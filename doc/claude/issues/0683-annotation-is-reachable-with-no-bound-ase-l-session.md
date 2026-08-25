@@ -1,6 +1,7 @@
 # 0683 — annotation is reachable with NO bound ASE-L session (the orphan state)
 
-STATUS: **MEASURED 2026-08-24. Filed, not fixed.** Blocking sibling of
+STATUS: **STILL OPEN. Fix ATTEMPTED 2026-08-25, REFUTED and REVERTED the same day —
+read §7 before retrying.** Blocking sibling of
 [0682](0682-annotation-visibility-belongs-in-ase-l-results-annotate.md).
 Related: 0457, 0614, 0621, 0678, 0682, [0684](0684-annot-ensure-loaded-guards-on-the-wrong-predicate.md)
 (the other half of "annotation and its session are not actually bound": 0683 is annotation
@@ -39,6 +40,19 @@ agents independently:
   committed suite proves it.
 
 ## 3. The producers, all five
+
+> ⚠ **There are SIX, and two anchors below are stale.** Re-measured 2026-08-25:
+> `ase::ui::close` (`src/ase_window.tcl:300-330`) is a sixth producer of the orphan
+> STATE — it tears the session down and never clears the mask. Filed as
+> [0686](0686-ase-ui-close-leaves-the-design-annotated-after-the-session-is-gone.md).
+> And this section's file:line anchors for producers (a) and (b) are wrong:
+> `src/xschem.tcl:15408` is `Waves > Sp`, and `:15804`/`:15822` are comment lines in
+> the next menu item. The two real mask writes are **`:15391`** (`Waves > Op Annotate`,
+> body `:15373-15402`) and **`:15789`** (`Simulation > Graphs > Annotate Operating
+> Point into schematic`, body `:15770-15800`) — `grep -n 'xschem set annot_show 3'`
+> returns exactly those two, and both bodies are straight-line with no predicate
+> ahead of the write.
+
 
 None of these involves ASE-L:
 
@@ -86,3 +100,70 @@ decision.
 * With a session: (a) and (b) behave exactly as today (mask 3 + `annotate_op`).
 * `tests/headless/test_op_annot.tcl` section L keeps working — it drives the mask
   directly, which is a scripted call, not a producer.
+
+---
+
+## 7. ⚠ ATTEMPT 1 (2026-08-25) — REFUTED AND REVERTED. READ BEFORE RETRYING
+
+A full fix for 0683 **and** [0684](0684-annot-ensure-loaded-guards-on-the-wrong-predicate.md)
+was implemented, tested and reverted in one run. It reached 22 + 207 + 342 green
+checks with a fully trustworthy sabotage matrix (8/8 variants, every predicted red
+observed, plus 9 unpredicted ones) and was then refuted by the adversary pass on
+three independent counts, all re-measured by the write-up pass on a clean tree.
+
+### What it built (pure Tcl, no build; the shape is mostly right)
+
+| proc | file | what |
+|---|---|---|
+| `ase::annot_binding_ok` | `ase.tcl` | 1 iff `session_for_current` yields a key AND `ase::has_results $key`; else speaks one refusal and returns 0 |
+| `ase::no_results_notice` | `ase.tcl` | the second refusal wording, beside the shipped `no_session_notice` |
+| `ase::ui::annot_entry_state` | `ase_window.tcl` | `normal` when the session has results **or** the entry's bit is already set — never grey away an off switch |
+| `ase::ui::annot_attached_current` | `ase_window.tcl` | calls `op_annot::_annotated` (I1, not a fourth copy) + path identity + freshness stamp; every catch falls to RE-ATTACH, never to `return` |
+| `ase::ui::annot_stamp` | `ase_window.tcl` | `annot($key,src)` = `{normpath mtime size}`, written only after the attach is VERIFIED by re-asking `op_annot::_annotated` |
+| `ase::ui::annot_drop_stale` | `ase_window.tcl` | the [0685](0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md) workaround — **this one caused a regression, see below** |
+| `ase::ui::annot_clear_on_close` | `ase_window.tcl` | [0686](0686-ase-ui-close-leaves-the-design-annotated-after-the-session-is-gone.md)'s clear, through the existing writer |
+| `ase::ui::annot_notify_displaced` | `ase_window.tcl` | echoes before `annotate_op` destroys another 1-point op/dc db |
+
+Both producer bodies were wrapped whole in `if {[ase::annot_binding_ok]} { … }`,
+with the guard **above** `select_raw` so a refused user never answers a modal file
+dialog (`select_raw` also rewrites the global `netlist_dir` as a side effect of being
+read). The mask-writer counts held: 2 in `xschem.tcl`, 1 in `ase_window.tcl`, so
+`test_op_annot` N22 and `test_annot_show_menu` B6/B10 stayed green untouched.
+
+### Why it was reverted — three refutations, each re-measured on the clean tree
+
+1. **The orphan is still reachable, end to end, through sanctioned doors only.**
+   Annotate from ASE-L → `File > Open` another cell in the design window →
+   `Session > Close` → open the original cell again. Final state: `annot_show = 3`,
+   `raw loaded = 0`, `op_annot::_annotated = 1`, `xschem raw value v(a) -1 = 3.14`,
+   `session_for_current = ''`, 0 sessions, no `cadence::annot_mode`, and **0 of 6**
+   annotation-ish menubar entries that clear the mask. Root cause and full transcript:
+   [0688](0688-the-annotation-mask-outlives-the-schematic-so-window-keyed-binding-cannot-hold.md).
+   The binding was keyed on cellview→window, and `File > Open` defeats it.
+2. **The ASE-L off switch fails in the same state**, for the same reason —
+   `annot_apply` → `annot_goto_design` returns 0, echoes *"cannot reach this session's
+   design window"*, and the mask stays 3.
+3. **A new data-loss regression.** `annot_drop_stale` cleared `op`/`dc`/`tran` at the
+   session path; when the re-read then failed (ngspice mid-rewrite — readable but
+   truncated), the user's loaded waveform database was destroyed and nothing replaced
+   it. The old guard survived that scenario. Detail in
+   [0685](0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md) §4.
+
+Plus a trade the user was never asked about: with the guard in place, both
+`Waves > Op Annotate` and `Simulation > Graphs > Annotate Operating Point` become
+**dead on stock xschem** for a user who never opens ASE-L, even with a perfectly good
+`.raw` on disk. That is a working upstream feature deleted, in exchange for an orphan
+that survived anyway.
+
+### Binding on attempt 2
+
+* **Fix [0688](0688-the-annotation-mask-outlives-the-schematic-so-window-keyed-binding-cannot-hold.md) first.**
+  0683 is a **lifetime** problem, not an entry problem. A producer-side guard does
+  nothing about a mask that is already on, and every session-keyed clear is defeated
+  by an ordinary `File > Open`.
+* **The refusal predicate is a separate, unratified user-visible decision** and it
+  should be put to the user *with* the cost above, not on its own.
+* **`vc/atk4.tcl`'s five steps must be a test row.** 571 green checks passed over it.
+* The attempt's patch is kept out of the tree at
+  `/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_0683+0684/rejected/0683_0684_attempt.patch`
+  (same-day artifact only). The proc inventory above is the durable part.
