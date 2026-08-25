@@ -247,11 +247,55 @@ producer), **0687** (`test_backannotate_digital` litter + a guard that misses it
 **0688** (the reason for the revert), **0689** (`run_regression.tcl`'s sentinel
 false-reds a suite printing a count), **0690** (`test_ihp_sg13g2_libmgr`'s golden is
 one library behind). **0689 + 0690 are all three FAIL lines in this branch's T1
-baseline.** Next free number: **0691**.
+baseline.** Next free number: **0693** (see §6b).
 
 Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, block
 "⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED"; issue **0683 §7** and **0684 §7**;
 spec §6a/§6b.
+
+## 6b. ✅ 0679 — FIXED 2026-08-25. THE ONE ITEM ON THAT QUEUE THE USER PERSONALLY HIT
+
+You ran without "Save device OP parameters" checked, got the notice, pasted the
+command it printed, **were told `1`**, and the box was still unticked. Both halves
+of that are now fixed, pure Tcl, no rebuild.
+
+```
+BEFORE                                                   AFTER
+REGISTERED sky130_tests_ase/tb_bandgap/ngspice_state1     unchanged
+PRINTED    sky130_tests_ase/tb_bandgap/schematic          .../ngspice_state1
+update_rc 0  apply_rc 1  gate_real 0                      gate really goes to 1
+```
+
+**(a)** The remedy key was *built* from the state's DESIGN cellview while every
+session registers under its STATE view — two independent constructions of one
+string, which could never agree for any session on any cell. It is now a **lookup
+in the registry** (`ase::op_cards_remedy_key`), and when it cannot resolve exactly
+one session it prints the menu path and **no command** rather than a key nobody is
+under. **(b)** `ase::ui::save_all_apply` ended in a hardcoded `return 1`, so the
+`1` you read was manufactured; it now returns `ase::session_update`'s answer and
+echoes one error line naming the key when it fails. `save_all_ok` was audited the
+same way.
+
+**A third symptom nobody had recorded**: because the 0648 re-arm sits *below*
+`session_update`'s early return, the failed remedy also ate the latch — after
+following the advice you would **never be told again** for that cellview. Fixed by
+the same change (`run1 nudges 1 / told 1 / run2 nudges 0` → the re-arm lands).
+
+Suites **76 / 202 / 172 / 342 / 10** ALL PASS (`test_ase_final` +9 rows,
+`test_ase_window` +3 GUI rows); T1/T2 unmoved. Status **E** — one ruling is owed
+(should a failed paste **raise** so the CIW red-tags it, rather than return `0`
+plus one sentence?) and one **`look`** debt: everything was proven on Xvfb `:99`
+against `test_nfet_final`; **please repeat your own gesture on `tb_bandgap`.**
+
+Filed by that crew and NOT fixed: **0691** (`do_load_state_from` fabricates its
+witness the same way; `do_save_state_as` and `ase::session_close` are weaker arms)
+and **0692** (a `Save All` dialog left **open** while you paste the remedy
+snapshots the old value and writes it back on OK — silently undoing the remedy,
+while OK's `1` is perfectly truthful. The 0679 fix is what creates that window).
+**Next free number: 0693.**
+
+Full record: issue `0679-*.md` (§FIXED), plan block
+"✅⚠ 0679 — LANDED 2026-08-25", spec §I1 and the ratification table.
 
 ## 7. A note on elapsed time, so the next long run is not a mystery
 

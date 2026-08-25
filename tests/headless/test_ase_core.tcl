@@ -398,12 +398,26 @@ set c_blines [lrange [split $c_block "\n"] 0 end-1]
 
 # C0: the seam exists at all. Every row below reads as `ERR: invalid command
 # name ...` until it does, so this row names the cause once.
+#
+# ⚠ ISSUE 0679 ADDED THREE NAMES. The remedy the gate-off nudge prints must
+# address a key the REGISTRY holds, not one it reconstructs from the design
+# cellview (`ase::op_cards_nudge_key` is the 0648 LATCH key and stays exactly
+# where it is -- F19f pins it, ase.tcl:622/:654 consume it). So the remedy gets
+# its OWN key source and it is a LOOKUP: `ase::op_cards_remedy_key` resolving
+# through `ase::sessions_for_state` (exact live-state match) then
+# `ase::sessions_for_design` (the plural form `ase::session_for_design` becomes
+# the first element of -- invariant I1, ONE lookup implementation, two
+# consumers). Naming them here means a tree without the seam reds ONE row that
+# says why, instead of a dozen reading `ERR: invalid command name`.
 set c_missing {}
 foreach c {::ase::op_cards_capture ::ase::op_cards_for ::ase::op_cards_put
-           ::ase::op_cards_clear ::ase::design_is_dirty} {
+           ::ase::op_cards_clear ::ase::design_is_dirty
+           ::ase::op_cards_remedy_key ::ase::sessions_for_state
+           ::ase::sessions_for_design} {
   if {[info commands $c] eq {}} { lappend c_missing $c }
 }
-check "C0 the S4 op-cards seam exists" $c_missing {}
+check "C0 the S4 op-cards seam exists (0679: the remedy's registry lookup too)" \
+  $c_missing {}
 
 # C4: nothing cached -> the deck is byte-identical to the D1 golden. The feature
 # is inert when it has nothing to say. (Already green before S4 lands; it is the

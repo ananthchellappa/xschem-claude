@@ -3202,9 +3202,48 @@ proc ase::ui::save_all_apply {key allv alli opparams} {
   dict set st save_all_v [expr {$allv ? 1 : 0}]
   dict set st save_all_i [expr {$alli ? 1 : 0}]
   if {$opparams} { dict set st save_op_params 1 } else { dict set st save_op_params {} }
-  ase::session_update $key $st
+  ## ⚠ 0679: THE RETURN IS MEASURED, NOT MANUFACTURED. This line used to be a
+  ## bare `ase::session_update $key $st` with the answer discarded and the proc
+  ## ending in a hardcoded `return 1`.
+  set rc [ase::ui::save_all_commit $key $st]
   ase::ui::populate $key    ;# the Save Options auto-cells react (item 06); no-op with no window
-  return 1
+  return $rc
+}
+
+# THE ONE WRITE, AND IT IS ALLOWED TO FAIL (issue 0679).
+#
+# `ase::session_update` is honest -- its docstring says "Returns 1, or 0 for an
+# unknown key" (ase.tcl:2667-2668) and it does exactly that. save_all_apply
+# used to throw that answer away and return a hardcoded `1`. That fabricated 1
+# is what the user read in the CIW after pasting the printed remedy, and it is
+# why they trusted a command that had changed nothing:
+#   update_rc 0   <- ase::session_update: "unknown key"
+#   apply_rc  1   <- ase::ui::save_all_apply: "success"
+#   gate_real 0   <- the gate never moved
+# A witness that cannot fail is not a witness (issue 0652's class, third
+# occurrence after 0664 and 0677).
+#
+# Its OWN named proc, not an inline `return [ase::session_update ...]`: the
+# honesty has to be independently neutralizable, and an inline return offers no
+# callee to stub short of session_update itself, which reddens the whole
+# session model and discriminates nothing (SAB-0679-B / -B2).
+#
+# ON FAILURE, ONE SENTENCE (issue 0635's rule), tagged `error`, naming the key
+# it could not find. `ciw_exec` echoes a command's value as a bare result
+# (ciw.tcl:602-605), so an honest `0` alone is barely better than the lie for
+# the user at the keyboard. The remedy still RETURNS 0 rather than RAISING --
+# raising would red-tag it through `ciw_echo $res error` but turns a
+# value-returning proc into a throwing one and needs `catch` at every caller;
+# that choice is user-visible and unratified, so it is recorded as a `rule`
+# debt on 0679 rather than taken silently. The echo is caught because issue
+# 0666 records the echo family raising into its caller.
+proc ase::ui::save_all_commit {key st} {
+  set rc [ase::session_update $key $st]
+  if {!$rc} {
+    catch {::ase::echo "ase: no ASE-L session is open under '$key'; the Save\
+ All settings were NOT applied." error}
+  }
+  return $rc
 }
 
 # The printed remedy itself. Takes ONLY the session key, because that is all a
@@ -3254,21 +3293,31 @@ proc ase::ui::save_all_dialog {key} {
   return $w
 }
 
+# ⚠ 0679 AUDITED THIS CALLER, which the issue named specifically: it discarded
+# save_all_apply's return too, so making the writer honest without touching OK
+# would have left the MENU'S OWN path closing the dialog silently on a failed
+# apply -- R-0653-d req 3 guaranteeing only that both paths lie identically.
+# It now RETURNS the apply's answer, and its two early guards return a real 0
+# instead of falling off the end. THE DIALOG STILL CLOSES ON FAILURE: a user
+# cannot repair a session that is gone from inside that dialog, so holding it
+# open would only strand them; the non-silence lives in the shared writer's one
+# error line, which this path inherits precisely because it shares the writer.
 proc ase::ui::save_all_ok {key} {
   variable wins; variable dlg
-  if {![dict exists $wins $key]} { return }
-  if {![winfo exists [dict get $wins $key].saveall]} { return }
+  if {![dict exists $wins $key]} { return 0 }
+  if {![winfo exists [dict get $wins $key].saveall]} { return 0 }
   ## 0650 / R-0653-d req 3: the three blankets are written by ONE proc, which the
   ## printed remedy (ase::ui::save_op_params_on) also calls. This path's only job
   ## is to turn the checkbutton records into that call.
-  ase::ui::save_all_apply $key \
+  set rc [ase::ui::save_all_apply $key \
     [expr {[info exists dlg($key,allv)] && $dlg($key,allv) ? 1 : 0}] \
     [expr {[info exists dlg($key,alli)] && $dlg($key,alli) ? 1 : 0}] \
-    [expr {[info exists dlg($key,opparams)] && $dlg($key,opparams) ? 1 : 0}]
+    [expr {[info exists dlg($key,opparams)] && $dlg($key,opparams) ? 1 : 0}]]
   ## 0648: the CLOSE half, never save_all_cancel. The OK path must not be able
   ## to emit a discard notice by accident, and "the diff happens to be empty by
   ## now" is not a thing to depend on.
   ase::ui::save_all_close $key
+  return $rc
 }
 
 # --- 0648: the three blankets AS THE STATE HOLDS THEM, normalised to 0/1 -----

@@ -8,6 +8,139 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ✅⚠ 0679 — LANDED 2026-08-25 (status **E**). THE ONLY ITEM ON THAT QUEUE THE USER PERSONALLY HIT
+
+**Not a plan step.** The user drove the shipped feature on a real sky130 bench,
+followed the tool's own printed advice, was told it worked, and got nothing.
+Both halves are fixed; **pure Tcl, no rebuild**. Full record:
+`doc/claude/issues/0679-*.md`.
+
+Their report, 2026-08-24, verbatim:
+
+> I did a run without "Save device OP parameters" checked … when I entered the
+> suggested command into the CIW (**and get a 1 as result**), if I go into the
+> Menu : ASE-L > Outputs > Save All, **I don't see that box checked** after doing
+> `ase::ui::save_op_params_on sky130_tests_ase/tb_bandgap/schematic`
+
+```
+REGISTERED : sky130_tests_ase/tb_bandgap/ngspice_state1     <- what the registry holds
+PRINTED    : sky130_tests_ase/tb_bandgap/schematic          <- what the notice named
+update_rc 0   apply_rc 1   gate_real 0
+```
+
+Two defects: **(a)** the remedy key was *built* from the DESIGN view while sessions
+register under the STATE view, and **(b)** `save_all_apply` ended in a hardcoded
+`return 1`, so the `1` the user read was manufactured, not measured.
+
+### WHAT BINDS A LATER STEP
+
+1. **`ase::op_cards_nudge_key` (`src/ase.tcl:608`) IS NOT A SESSION KEY AND MUST
+   NOT BECOME ONE.** It is the 0648 LATCH key (this state's *design* cellview,
+   consumed at `:622` re-arm / `:654` take, pinned by F19f). The remedy now has its
+   own source, **`ase::op_cards_remedy_key` (`:648`)** — a **lookup in the
+   registry**, never a second construction. If you need "the session key for this
+   state", call that; if you need "has this cellview had its nudge", call the other.
+   The file carries a ⚠ comment at both saying so.
+2. **A NEW SHARED REVERSE LOOKUP, AND `session_for_design` IS NOW DERIVED FROM IT.**
+   `ase::sessions_for_design {lib cell view}` (`:2913`) returns **every** match in
+   registry order; `ase::sessions_for_state {state}` (`:2938`) returns every key
+   whose live state serialises equal to `$state`; and
+   `ase::session_for_design` (`:2955`) is literally `lindex [...] 0`. Its
+   **first-match** contract is depended on **by name** — `test_ase_launch` L7 `:146`
+   / `:186`, `test_wave_modes:2163`, `test_wave_sigbrowser_i12:760` — so add to the
+   plural form, never re-implement the singular one (invariant I1).
+3. **THE WRITE SEAM MOVED DOWN ONE LEVEL.** `ase::ui::save_all_commit {key st}`
+   (`src/ase_window.tcl:3240`) is now the single write, it **returns
+   `session_update`'s answer**, and on failure it echoes **one** `error`-tagged
+   sentence naming the key. `save_all_apply` (`:3200`) returns that rc;
+   `save_all_ok` (`:3305`) now returns it too and its early guards return a real
+   `0`. Anything printing a new remedy should route through `save_all_commit`, not
+   re-open `save_all_apply`.
+4. **THE `{}`-NEVER-`0` LANDMINE SURVIVED THE REWRITE AND MUST KEEP SURVIVING.**
+   `save_op_params` OFF stores `{}` (omitted by `state_serialize`), never a literal
+   `0`. A `0` there lands in all 104 committed `.state` files and reddens
+   F3/G3/R4/V4/R2/F19q.
+5. **R-0653-d HAS A FOURTH REQUIREMENT NOW** — see "The R-0653-d pattern" section
+   below, which this item rewrote. Requirements 1-3 were all met and the feature was
+   still broken for the user.
+6. **THE SILENCE SYMPTOM IS A PROPERTY OF `session_update`, NOT OF THE REMEDY.**
+   The 0648 re-arm sits *below* `session_update`'s `if {![dict exists $sessions
+   $key]} { return 0 }` (`ase.tcl:2716`), so **any** write with a bad key also eats
+   the latch and the tool goes permanently silent about that cellview. Measured:
+   `run1 nudges 1 / told 1 / run2 nudges 0`. Anything that writes a session by key
+   inherits this; fixing the key fixed it, and F19u pins it.
+7. **NUMBER NEW ISSUES FROM 0693** — this crew filed **0691** (`do_load_state_from`
+   fabricates its witness the same way; `do_save_state_as` and `ase::session_close`
+   are the weaker arms) and **0692** (a stale open `Save All` dialog silently
+   reverts the remedy: `seed=0 remedy_rc=1 gate_after_remedy=1 box_still=0 ok_rc=1
+   gate_after_ok=0`, driven end to end — and **the 0679 fix is what creates that
+   window**).
+
+### ⚠ TWO HARNESS FACTS THIS CREW PAID FOR TWICE
+
+* **`grep -rn SABOTAGE src/` DOES NOT DETECT THIS CREW'S OWN SABOTAGE.** The
+  technique renames the callee to `<proc>_sabreal` and appends a no-op stub, which
+  contains no such comment. That grep read 0 the entire time the tree was
+  neutralized, and a verify pass recorded **10 spurious failures** from a tree
+  changing under it. **Assert `grep -rn '_sabreal' src/` and a
+  `git diff --numstat` fingerprint instead**, and never run the sabotage leg
+  concurrently with a verify leg on one working tree.
+* **DO NOT SWEEP GUI SUITES WITH A BARE `xvfb-run -a`** — it has **no window
+  manager**, and `test_ase_log_seam_0207` reads 2 FAILED (PS24/PS26b, both
+  `wm iconify` rows) purely from that. On the WM-backed dev display `:99`
+  (openbox 3.6.1 live): ALL PASS 48. Also: `test_ase_final`, `test_ase_core` and
+  `test_ase_final_gf180` are **`--nogui`-only** — under X they die with
+  `ase: design ... is not the current schematic`.
+
+### DECISIONS (ladder rung, and the rejected alternative)
+
+| # | rung | decision | rejected |
+|---|---|---|---|
+| D1 | **L1 (I1)** | the remedy gets its own key source, and it is a **registry lookup** | retargeting `op_cards_nudge_key` — it is the 0648 latch key; re-scoping it is 0648's own defect |
+| D2 | L2 | resolve **exact-state → unique-design → `{}`** | first-match (names a plausible **sibling**, repeating this issue's class); exact-only (drops the mutated-state case the suites exercise) |
+| D3 | L2 | nothing resolves → **menu path, NO command** | printing a key nobody is under, i.e. HEAD. R-0653-d req 2's *"a wrong direction printed with authority is worse than printing none"* governs the command field harder than the menu field, because `ciw_exec` (`ciw.tcl:598`) **executes** it |
+| D4 | L2 | reverse lookup **at the notice site** | threading the key down `netlist`→`run`→`op_cards_capture` — three public signatures, and `test_ase_core:402` pins the command set |
+| D5 | L2 | the honest return via a **named seam** | an inline `return [session_update …]` — no callee to stub, so the honesty could not be sabotage-tested |
+| **D6** | **L3** | on failure **echo one error line + return 0** | (i) bare `0`, honest but mute; (ii) **raise** — turns a value-returning proc into a throwing one, needs `catch` at every caller, and 0666 already records raises leaking out of the echo family |
+| D7 | L2 | `save_all_ok` returns the rc but **still closes** the dialog | holding it open — a user cannot repair a vanished session from inside it |
+| D8 | **L1 (I1)** | `session_for_design` = `lindex [sessions_for_design …] 0` | a second private loop — the exact two-builders shape this issue is about |
+
+**D6 + D7 are user-visible and unratified → status E**; a `rule 0679` debt and a
+`look` debt are on the ledger. **The question:** *when the pasted
+`save_op_params_on <key>` cannot find a session, should it return `0` and echo one
+error line (as shipped) or **raise**, so `ciw_exec` red-tags it?*
+
+### SABOTAGE — 7 variants, 5 exact, 2 supersets, **1 predicted red that did not appear + 1 that could not run**
+
+| variant | observed |
+|---|---|
+| A (`op_cards_remedy_key`→`{}`) / A2 (**the shipped bug verbatim**) | supersets of the prediction. **A2 left the F19o SHAPE row GREEN — that is the proof shape-only coverage was the hole** |
+| B (write, then `return 1`) / B2 (return kept, **report** dropped) | **exact**, and they discriminate each other: B2 reds only F19w/W1w, so the "not silent" row does not ride on the return value |
+| C (`save_all_apply`→`return 1`, the SAB-N6 control) | superset. F19p **and** W1w both red → R-0653-d req 3 holds |
+| D (`sessions_for_design`→`{}`) | reds `test_ase_launch` L7/G1, `test_wave_modes` MG10, **31** rows in `test_wave_sigbrowser_i12`; F19t/F19p/W1v held → the exact-state route is independent |
+| E (`sessions_for_state`→`{}`) | **exact — F19y only.** The sharpest discriminator in the set |
+
+⚠ **The two misses.** **F19p2 cannot see an always-1 writer travelling a *good*
+key** (under SAB-C both its terms are legitimately 1) — the mechanism is covered by
+F19v, but do not cite F19p2 as the fabricated-witness guard. And
+**`test_ase_launch:214` (G2) is not an independent guard**: under SAB-D the suite
+**aborts** at `invalid command name ".body.ana.tv"` right after G1, so all four G2
+rows never execute (`grep -c G2` = 0 under sabotage vs 4 at baseline).
+
+### STILL OPEN
+
+| # | what | where |
+|---|---|---|
+| 1 | **D6/D7 unratified** — return-0-and-echo vs raise; OK closing on a failed apply | `rule 0679` on the ledger |
+| 2 | a **stale open Save All dialog reverts the remedy** (OK's `1` is truthful, the setting is lost) | **issue 0692** |
+| 3 | `do_load_state_from` / `do_save_state_as` / `ase::session_close` fabricate witnesses | **issue 0691** |
+| 4 | the **ambiguity refusal is silent about itself** — no sentence says a command was withheld | 0679 §Still open |
+| 5 | the **confident-wrong-match window** if a future caller ever holds a state across an event-loop turn before netlisting | 0679 §Still open |
+| 6 | `save_all_apply` can still **raise** on a *registered* key with a malformed state, and from the menu that is a **bgerror** | 0679 §Still open |
+| 7 | **ZERO `:0` coverage** for W1v/W1v2/W1w; the user's report is a real bench | `look` debt + the standing `suite test_ase_window` debt |
+
+---
+
 ## ✅⚠ 0663 — LANDED 2026-08-24 (status **E**). THE STARTUP SEGFAULT IS DEAD AS A CLASS, IN C
 
 **Not a plan step** — the eyes-on batch's first item, and `status_annotate.md` §5's
@@ -234,18 +367,52 @@ delegates.
 
 ### The R-0653-d pattern, for anyone printing a remedy
 
+⚠ **UPDATED 2026-08-25 BY 0679, WHICH THIS PATTERN DID NOT CATCH. There is now a
+FOURTH requirement, and it is the one the user actually got bitten by.**
+
 Do not hardcode menu prose. `ase::ui::lbl_outputs` / `lbl_save_all` /
-`lbl_save_op_params` (`src/ase_window.tcl:2878-2880`) are what the **menu entry
-(:489/:502) and the dialog checkbutton (:2938) are built from**, and
-`remedy_op_params_menu` composes them; `W1r/W1u/W1t` in
-`tests/headless/test_ase_window.tcl` read the labels back off the **real widgets**
-so a constant-compared-to-constant tautology cannot pass. And the printed
-command must land in the proc the **menu's OK** lands in —
-`ase::ui::save_all_apply` is that single writer, with `save_all_ok` and the
-pasteable `save_op_params_on` both calling it. SAB-N6 is the discriminator:
-neutralizing `save_all_apply` reddened the new remedy rows **and** six
-pre-existing Save All OK rows in `test_ase_dialogs`, which is the proof they are
-one path.
+`lbl_save_op_params` (**`src/ase_window.tcl:3173-3175`** — the `:2878-2880` this
+paragraph used to say had drifted) are what the **menu entry (:510) and the dialog
+checkbutton (:3273) are built from**, and `remedy_op_params_menu` (`:3180`)
+composes them; `W1r/W1u/W1t` in `tests/headless/test_ase_window.tcl` read the
+labels back off the **real widgets** so a constant-compared-to-constant tautology
+cannot pass. And the printed command must land in the proc the **menu's OK** lands
+in — `ase::ui::save_all_apply` (**`:3200`**) is that single writer, with
+`save_all_ok` (`:3305`) and the pasteable `save_op_params_on` (`:3252`) both
+calling it. SAB-N6 is the discriminator: neutralizing `save_all_apply` reddened the
+new remedy rows **and** six pre-existing Save All OK rows in `test_ase_dialogs`,
+which is the proof they are one path. *(0679's SAB-C re-ran that control against
+the rewritten writer: still exact in substance — the remedy row F19p **and** the
+menu OK row W1w both went red.)*
+
+**REQ 4 (new, 0679): THE KEY IN THE PRINTED COMMAND MUST BE LOOKED UP IN THE
+REGISTRY, NEVER CONSTRUCTED — AND THE TEST MUST TAKE ITS KEY FROM THE REGISTRY
+TOO.** Requirements 1-3 were all *met* and the remedy was still broken end to end:
+it named `<lib>/<cell>/schematic` (the **design** view, from
+`ase::op_cards_nudge_key`) while every session is registered under
+`<lib>/<cell>/ngspice_state1` (the **state** view, `ase::open_state`,
+`ase.tcl:2839`). Two independent CONSTRUCTIONS of one key — **invariant I1 one
+level up** — which drifted, silently, because the proc the command called returned
+a hardcoded `1`.
+
+The shipped resolver is `ase::op_cards_remedy_key` (`src/ase.tcl:648`):
+exact-live-state match → else the unique session on the design cellview → else
+`{}`, and on `{}` **the notice prints the menu path and no command at all**.
+`ase::op_cards_nudge_key` (`:608`) stays the 0648 LATCH key and must **not** be
+merged with it — retargeting it re-scopes the latch, which is the defect 0648 was
+filed for.
+
+⚠ **AND THE COVERAGE LESSON, WHICH IS THE PART THAT GENERALISES.** The 0658 crew's
+remedy row executed the printed command against a key **it had built itself with
+the same wrong builder the product used**, so both sides carried the same wrong
+view, the round trip closed, and `test_ase_final` was **ALL PASS (67)** with the
+defect live on the user's bench. A remedy test **must** take its key from
+`dict keys $::ase::sessions` (or register through `ase::open_state` and read it
+back) and must assert the **effect** — `ase::op_gate_on`, or on the GUI side the
+live checkbutton's own `-variable` — **never the return value**. 0679's SAB-A2
+reintroduces the shipped bug verbatim and the *shape* row (menu path present,
+command syntactically complete) **stays green**: that green is the direct proof
+that shape-and-completeness coverage is not enough.
 
 ### DECISIONS (ladder rung, and the rejected alternative)
 
@@ -325,7 +492,7 @@ against one working tree measures a tree that is changing under it.
 | **0661** | `ase::ui::save_all_report_discard` **still prints hardcoded, drifted menu prose** — one of the four messages 0650's acceptance A3 names by name, 90 lines from the constants | OPEN — R-0653-d req 2 is met for the nudge and unmet for the discard |
 | 0654 / 0655 | the `.statusbar.12` field's four properties; the ASE session window still has no sink | OPEN (filed by the implement pass) |
 
-**Number the next issue from 0691.** (**the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
+**Number the next issue from 0693.** (**the 0679 crew filed 0691 and 0692**; **the 0683+0684 crew filed 0685-0690**; 0662-0667 were taken by the 0658 crew; 0668-0673 by the 0663 crew; **0674-0677 by the 0664+0665+0666 crew**; 0678 was the eyes-on reversal and its crew filed **0681**; 0679 and 0680 went to concurrent crews in the same run; **the 0682 crew filed 0683 and 0684**.) ⚠ **0700-0799 is RESERVED** — after 0699 the next number is 0800, and 0500-0599 belongs to the fluid-editing branch. See `doc/claude/issues/NUMBERING.md`.
 
 ### ⚠ CLAUDE.md's 0645 paragraph is stale on this box
 
@@ -961,8 +1128,9 @@ matrix, still-open list), spec **§4.6a** and `specs/ase_l.md` Results.
 9. **The `6` / `Alt-6` / `Ctrl-6` chords are untouched and must stay so** — they write
    the mask themselves through `cadence::annot_mode` and never went through the
    deleted procs. 0678 confirmed all three on a real bench.
-10. **NUMBER NEW ISSUES FROM 0691.** *(This item filed **0683** and **0684**; the
-    0683+0684 crew then filed **0685-0690** — see the block above.)*
+10. **NUMBER NEW ISSUES FROM 0693.** *(This item filed **0683** and **0684**; the
+    0683+0684 crew then filed **0685-0690**; the 0679 crew filed **0691** and
+    **0692** — see the block above.)*
     ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.
 
 ## ⚠ 0683 + 0684 — ATTEMPTED, REFUTED, REVERTED 2026-08-25. READ BEFORE RETRYING EITHER
@@ -4175,7 +4343,7 @@ New from S7: issues **0452**, **0453**, **0454**. S7's own weak leg is its
 sabotage matrix, **2 of 11** (the sabotage agent produced no report); the nine
 unrun variants are tabulated in the S7 block, ready to re-run.
 
-Number new issues from **0691**. *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
+Number new issues from **0693**. *(Updated by the 0679 crew, 2026-08-25: it filed **0691** and **0692**.)* *(Updated by the 0683+0684 crew, 2026-08-25: it filed 0685-0690 and its fix was REVERTED — see that block.)* *(Updated by the 0682 crew, 2026-08-25: it filed 0683 and 0684.)* *(Updated by the 0678 crew, 2026-08-24: it filed 0681; 0679/0680 went to concurrent crews. ⚠ 0700–0799 is RESERVED — after 0699 go to 0800.)* *(Updated by S4, 2026-08-23: it filed 0633–0637; 0634 was filed by S4's red agent.)* *(Updated by the 0614+0615 crew, 2026-08-22: the
 eyes-on batch took 0613–0618, X0619/0620 followed, and this item filed 0621–0625.)*
 *(Updated by S12b, 2026-08-21: it filed 0486
 and 0487.)* *(Updated by S12, 2026-08-21: 0484/0485 were

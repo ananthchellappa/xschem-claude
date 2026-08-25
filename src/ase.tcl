@@ -615,6 +615,48 @@ proc ase::op_cards_nudge_key {state} {
   return $k
 }
 
+# THE KEY THE PRINTED REMEDY NAMES (issue 0679) -- a LOOKUP IN THE REGISTRY,
+# never a second construction of a key.
+#
+# ⚠ THIS IS NOT op_cards_nudge_key ABOVE, AND THE TWO MUST NOT BE MERGED.
+# op_cards_nudge_key is the 0648 LATCH key: this state's DESIGN cellview,
+# {lib cell view} with view `schematic`, consumed at :622 (re-arm) and :654
+# (take) and pinned by test_ase_final F19f. Re-scoping it is the defect 0648
+# was filed for. A SESSION, meanwhile, is registered under the STATE view --
+# `ase::session_key $lib $cell $view` in ase::open_state (~:2798), view
+# `ngspice_state1`.
+#
+# Issue 0679 is what happened when the remedy built its key from the first of
+# those while the registry held the second. Measured on the user's bench:
+#   REGISTERED: sky130_tests_ase/tb_bandgap/ngspice_state1
+#   REMEDYKEY : sky130_tests_ase/tb_bandgap/schematic
+# The notice printed `ase::ui::save_op_params_on <lib>/<cell>/schematic`,
+# ciw_exec (ciw.tcl:598 `uplevel #0 $cmd`) executed it against a key nobody was
+# ever under, and the proc it called reported success anyway. Two independent
+# CONSTRUCTIONS of one key -- invariant I1 one level up -- and the drift was
+# silent. A lookup cannot drift from the registry, because it reads it.
+#
+# Resolution order, AND IT REFUSES TO GUESS:
+#   1. exactly one session whose live state IS this state  -> that key;
+#   2. else exactly one session on this state's design cellview -> that key;
+#   3. else {} -- and op_cards_capture then prints the menu path with NO CIW
+#      command. R-0653-d req 2's own sentence, "a wrong direction printed with
+#      authority is worse than printing none", was written about the menu path;
+#      it governs the command field at least as hard, because ciw_exec makes
+#      the command the executable one of the two.
+# Never raises: the whole body is caught and falls back to {}.
+proc ase::op_cards_remedy_key {state} {
+  set k {}
+  catch {
+    set hit [ase::sessions_for_state $state]
+    if {[llength $hit] != 1} {
+      set hit [ase::sessions_for_design {*}[ase::op_cards_nudge_key $state]]
+    }
+    if {[llength $hit] == 1} { set k [lindex $hit 0] }
+  }
+  return $k
+}
+
 # Give this state's cellview its turn back. Never raises, idempotent, and it is
 # NOT op_cards_nudge_reset — that forgets EVERY cellview and stays the test
 # seam. Writes nothing into the state (the `{}`-never-`0` landmine).
@@ -711,8 +753,13 @@ proc ase::op_cards_capture {state netlistpath} {
         ## constants the menu and the dialog are BUILT from (invariant I1 applied
         ## to a label), and the command is the one the menu's OK path calls, so a
         ## test can EXECUTE it rather than string-compare it.
-        set opk {}
-        catch { set opk [ase::session_key {*}[ase::op_cards_nudge_key $state]] }
+        ## ⚠ 0679: THE KEY IS LOOKED UP IN THE REGISTRY, NOT REBUILT HERE.
+        ## `ase::session_key {*}[ase::op_cards_nudge_key $state]` -- what this
+        ## line used to be -- names the DESIGN cellview while every session is
+        ## registered under its STATE view, so the printed command addressed a
+        ## key no session was ever under. See ase::op_cards_remedy_key (~:617)
+        ## for why op_cards_nudge_key must NOT be retargeted instead.
+        set opk [ase::op_cards_remedy_key $state]
         set opcmd {}
         if {$opk ne {}} { set opcmd [list ase::ui::save_op_params_on $opk] }
         set opmenu {}
@@ -2852,19 +2899,61 @@ proc ase::design_of_current {} {
   return $r
 }
 
-# The session key (if any) whose state.design targets {lib cell view}. Used by
-# Launch to RAISE rather than duplicate a session already on this design.
-proc ase::session_for_design {lib cell view} {
+# EVERY session key whose state.design targets {lib cell view}, in registry
+# (insertion) order.
+#
+# ⚠ ONE LOOKUP IMPLEMENTATION, TWO CONSUMERS (invariant I1). Launch's
+# ase::session_for_design below is exactly this list's FIRST element, and issue
+# 0679's remedy-key resolver (ase::op_cards_remedy_key, ~:617) uses the PLURAL
+# form because it has to tell "exactly one" from "more than one": a reverse
+# lookup that silently returned the first of several would print a plausible
+# SIBLING session's key and repeat 0679's own defect class -- advice that
+# half-works. A second private loop inside the resolver would be the exact
+# two-builders shape that issue is about.
+proc ase::sessions_for_design {lib cell view} {
   variable sessions
+  set out {}
   dict for {k entry} $sessions {
     set d [ase::state_get [dict get $entry state] design]
     if {[dict exists $d lib]  && [dict get $d lib]  eq $lib  \
      && [dict exists $d cell] && [dict get $d cell] eq $cell \
      && [dict exists $d view] && [dict get $d view] eq $view} {
-      return $k
+      lappend out $k
     }
   }
-  return {}
+  return $out
+}
+
+# EVERY session key whose LIVE state IS $state, compared through the canonical
+# serialization ase::session_dirty uses (total, and it cannot raise on a
+# well-formed state; a state that will not serialize resolves to no match
+# rather than to a wrong one).
+#
+# This is the EXACT route issue 0679's remedy key resolves through first, and
+# on the user's bench it is the one that fires: the GUI's two netlist entry
+# points (ase_window.tcl:4139 Netlist, :4309 Netlist-and-Run) pass
+# `ase::session_state $key` verbatim into ase::netlist / ase::run, and
+# ase::netlist forwards that same dict unmodified to ase::op_cards_capture
+# (:842). So the answer is measured, not inferred from the design cellview.
+proc ase::sessions_for_state {state} {
+  variable sessions
+  set out {}
+  if {[catch {ase::state_serialize $state} want]} { return {} }
+  dict for {k entry} $sessions {
+    if {[catch {ase::state_serialize [dict get $entry state]} s]} { continue }
+    if {$s eq $want} { lappend out $k }
+  }
+  return $out
+}
+
+# The session key (if any) whose state.design targets {lib cell view}. Used by
+# Launch to RAISE rather than duplicate a session already on this design.
+# FIRST match wins, and that contract is depended on by name (test_ase_launch
+# L7 :146 / :186 / :214, test_wave_modes:2163, test_wave_sigbrowser_i12:760),
+# so it is preserved exactly by being element 0 of the plural lookup above --
+# never re-implemented here.
+proc ase::session_for_design {lib cell view} {
+  return [lindex [ase::sessions_for_design $lib $cell $view] 0]
 }
 
 # The ASE-L session bound to the current schematic OR to any of its ANCESTORS in

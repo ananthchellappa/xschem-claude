@@ -655,6 +655,128 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [lindex $w1t_seg 2]] \
     [list 3 $w1r_cascade $w1r_live $w1s_text]
 
+  # ==========================================================================
+  # W1v/W1v2/W1w -- ISSUE 0679: THE USER'S GESTURE, ON THE REAL WIDGET
+  # ==========================================================================
+  # The bench report, 2026-08-24, verbatim: "I did a run without 'Save device OP
+  # parameters' checked, and, when I tried to display OP info with 6, I get the
+  # required message in the CIW. However, when I entered the suggested command
+  # into the CIW (and get a 1 as result), if I go into the Menu : ASE-L >
+  # Outputs > Save All, I don't see that box checked".
+  #
+  # THIS IS THE ROW THE HEADLESS SUITE CANNOT WRITE. The user's acceptance is a
+  # CHECKBUTTON, so it is read here off the live widget through its own
+  # `-variable` -- the same variable `save_all_dialog` seeds from
+  # `save_all_current` -- and NOT from the remedy's return value. A row that
+  # asserted the return was 1 would have passed against the shipped bug: the 1
+  # is manufactured by a hardcoded `return 1` at ase_window.tcl:3207.
+  #
+  # And the GUI is exactly where the two namespaces diverge: the session is
+  # registered under the STATE view (`aselib/nfet_clean/ngspice_state1`, from
+  # ase::open_state -> ase::session_key $lib $cell $view, ase.tcl:2798) while
+  # the shipped remedy is built from the DESIGN view
+  # (`aselib/nfet_clean/schematic`, ase.tcl:714 -> op_cards_nudge_key).
+  proc w_aecho_spy {script} {
+    set ::w_aecho {}
+    if {[info commands ::w_saved_ase_echo] eq {}} {
+      if {[info commands ::ase::echo] ne {}} { rename ::ase::echo ::w_saved_ase_echo }
+      proc ::ase::echo {msg {tag {}}} { lappend ::w_aecho [list $tag $msg] ; return 1 }
+    }
+    catch {uplevel 1 $script}
+    if {[info commands ::w_saved_ase_echo] ne {}} {
+      catch {rename ::ase::echo {}}
+      rename ::w_saved_ase_echo ::ase::echo
+    }
+    return $::w_aecho
+  }
+
+  # the restore point for every row in this block (the panes below are read
+  # from this state, so nothing here may leave it changed)
+  set w1v_st0 [w_cx {ase::session_state $key}]
+
+  # gate OFF + an enabled `op` analysis: the exact configuration the user ran
+  set w1v_st $w1v_st0
+  catch {dict set w1v_st save_op_params {}}
+  catch {dict set w1v_st analyses \
+    {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}}
+  w_cx {ase::session_update $key $w1v_st}
+  w_cx {ase::op_cards_nudge_reset}
+  catch {unset ::xschem::notify_last}
+  w_cx {ase::op_cards_capture [ase::session_state $key] [file join $scratch w1v.spice]}
+  set w1v_cmd {}
+  catch {set w1v_cmd [dict get $::xschem::notify_last command]}
+  set w1v_menu {}
+  catch {set w1v_menu [dict get $::xschem::notify_last menu]}
+
+  # W1v2: the key the printed command names is one the REGISTRY holds ---------
+  set w1v_k {}
+  catch {set w1v_k [lindex $w1v_cmd 1]}
+  set w1v_regkeys {}
+  catch {set w1v_regkeys [dict keys $::ase::sessions]}
+  check "W1v2 0679 the printed remedy names a key the session is REGISTERED\
+ under (the state view), not the design view it was built from" \
+    [list [expr {[lsearch -exact $w1v_regkeys $w1v_k] >= 0 ? 1 : 0}] \
+          [expr {$w1v_k eq $key ? 1 : 0}] $w1v_k] \
+    [list 1 1 $key]
+
+  # W1v: EXECUTE it the way ciw_exec does, then READ THE BOX ------------------
+  set w1v_rc [catch {uplevel #0 $w1v_cmd} w1v_res]
+  set w1v_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  set w1v_box {NO-WIDGET}
+  catch {set w1v_box [set [$w1v_w.opparams cget -variable]]}
+  set w1v_cur {NO-DICT}
+  catch {set w1v_cur [dict get [ase::ui::save_all_current $key] opparams]}
+  catch {ase::ui::save_all_close $key}
+  update idletasks
+  check "W1v 0679 THE USER'S GESTURE: pasting the printed remedy leaves the LIVE\
+ Outputs > Save All checkbutton TICKED (read off the widget's own -variable,\
+ never from the remedy's return value)" \
+    [list [expr {$w1v_cmd ne {} ? 1 : 0}] $w1v_rc $w1v_box $w1v_cur \
+          [llength [split $w1v_menu >]]] \
+    {1 0 1 1 3}
+
+  # W1w: THE OK-PATH AUDIT the issue demands ---------------------------------
+  # `ase::ui::save_all_ok` (ase_window.tcl:3257-3271) discards save_all_apply's
+  # return too, so making the writer honest without touching OK would leave the
+  # menu's own path closing the dialog silently on a failed apply. The session
+  # is dropped from the REGISTRY only (`ase::session_close` is a bare
+  # `dict unset`; `wins` is untouched, so the dialog and its OK guard survive)
+  # -- i.e. exactly the state the user's remedy addressed.
+  # ⚠ THE `0` IN THE DEAD ARM IS AN ACCIDENT AT HEAD, NOT A WITNESS: today
+  # save_all_ok returns whatever `save_all_close` happened to leave behind. The
+  # discriminating terms are the error line and the LIVE arm's 1.
+  set w1w_st [w_cx {ase::session_state $key}]
+  set w1w_dead_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  w_cx {ase::session_close $key}
+  set w1w_dead_echo [w_aecho_spy {set ::w1w_dead_rc [ase::ui::save_all_ok $key]}]
+  update idletasks
+  set w1w_dead_gone [expr {![winfo exists $w1w_dead_w] ? 1 : 0}]
+  # put the session back before the live arm (registry only; the window and its
+  # `wins` entry never went away)
+  w_cx {ase::session_open $key $spath}
+  w_cx {ase::session_update $key $w1w_st}
+  set w1w_live_w [w_cx {ase::ui::save_all_dialog $key}]
+  update idletasks
+  set w1w_live_echo [w_aecho_spy {set ::w1w_live_rc [ase::ui::save_all_ok $key]}]
+  update idletasks
+  set w1w_live_gone [expr {![winfo exists $w1w_live_w] ? 1 : 0}]
+  check "W1w 0679 THE MENU'S OWN OK PATH REPORTS THE SAME TRUTH: OK on a session\
+ that is gone returns 0 and says so exactly once; OK on a live one returns 1 and\
+ says nothing -- and both still close the dialog" \
+    [list $::w1w_dead_rc $w1w_dead_gone [llength $w1w_dead_echo] \
+          [expr {[llength $w1w_dead_echo] == 1 ? [lindex $w1w_dead_echo 0 0] : {NO-ONE-LINE}}] \
+          $::w1w_live_rc $w1w_live_gone [llength $w1w_live_echo]] \
+    {0 1 1 error 1 1 0}
+
+  # restore the pre-W1v session state AND the panes built from it: every row
+  # below reads the treeviews this state seeds
+  w_cx {ase::session_update $key $w1v_st0}
+  w_cx {ase::ui::populate $key}
+  w_cx {ase::op_cards_nudge_reset}
+  update idletasks
+
   # W1p: the v2 pane model — EXACTLY three treeview panes, spec columns,
   # seeded rows, blank Value/Save Options pre-run, NO inline +/- buttons
   check_true "W1p exactly the three v2 panes" [expr {
