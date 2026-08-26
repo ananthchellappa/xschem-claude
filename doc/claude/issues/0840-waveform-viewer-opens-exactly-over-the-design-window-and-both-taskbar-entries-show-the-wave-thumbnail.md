@@ -196,3 +196,80 @@ with no `open-RETURN` means it threw after.
    borrow the untitled machinery it should at least not borrow the **name**.
    Whether the fix is a distinct buffer name or a suppressed title is an
    unratified user-visible decision — `rule` debt.
+
+---
+
+# ADDENDUM 2026-08-26 — the shove had THREE reasons not to work, and the third was the real one
+
+The user's `window_report` census (`/tmp/Xschem.log.2`) finally made this measurable
+instead of anecdotal. Two censuses, 700 ms apart, from one viewer open:
+
+```
+#= window_report viewer-open  ...
+#=   .     stack=2  normal  1110x761+3628+358  'xschem [3] - tb_bandgap.sch (read-only)'
+#=   .x1   stack=5  normal  1110x761+3676+406  'Waveforms tb_bandgap (ngspice_state1)'
+
+#= window_report viewer-open+ ...
+#=   .     stack=2  normal  1110x761+3628+358  'xschem [3] - tb_bandgap.sch (read-only)'
+#=   .x1   stack=5  normal  1110x761+3628+358  'Waveforms tb_bandgap (ngspice_state1)'
+```
+
+`+3676+406` is `+3628+358` plus exactly 48 in both axes — **the shove fired.** And 700 ms
+later the viewer is pixel-identical to the design window again. The shove was not missing;
+it was being **undone**.
+
+## The third reason: `raise_activate_toplevel` re-maps, and a re-map forgets
+
+Traced by intercepting every Tcl-side `wm geometry` during a real
+`ase::open_state sky130_tests_ase tb_bandgap ngspice_state1` on `:99`:
+
+```
+#= GEO SET .x1 -> 1110x740+0+285   (from: raise_activate_toplevel)
+```
+
+`raise_activate_toplevel` performs issue 0054's WSLg idiom — `wm withdraw` then
+`wm deiconify` — and re-requests the geometry it captured. Its own comment already said
+the quiet part: *"best-effort; this WM ignores it for client placement"*. A **re-mapped
+window is placed where the program originally asked**, and the program originally asked
+(via `set_geom`, reading the `untitled.sch` slot) for the design window's exact spot.
+
+That also explains why the two censuses disagree: `viewer-open` reads Tk's just-issued
+**request**, `viewer-open+` reads the WM's **answer**.
+
+The user's own geometry store shows the seed:
+
+```
+sky130A/.../tb_bandgap.sch   1110x761+3628+358
+untitled.sch                 1110x761+3628+358    <- the same, and the viewer's buffer name
+```
+
+## Fix
+
+* `wviewer::uncover` **verifies its own work**: after applying the offset it re-checks
+  300 ms later. The re-check is just another `uncover` — if the shove held, the pair is no
+  longer congruent, it returns 0 and stops by itself. Bounded (`verify` defaults to 2) so
+  an insistent WM is argued with twice, not for the rest of the session.
+* The call moved from before `raise_activate_toplevel` to after it, so the viewer does not
+  spend ~300 ms sitting on the schematic before being corrected.
+
+## Three new rows, and one honest gap
+
+* **U8** — a shove that is undone is re-applied. This is the row that carries the fix.
+* **U9 / U9b** — positive twins: once it sticks the window is left alone, and an insistent
+  WM (congruence restored on every tick) is argued with at most a few times.
+* **U10** — the full field sequence with the *real* `raise_activate_toplevel` in it.
+
+⚠ **The ordering is NOT pinned.** Moving the `uncover` call back to before the re-map
+leaves every row green, because the verification repairs it either way. The reorder is an
+improvement; the verification is the fix. Sabotage removing the verification reds U8 and
+U10; making it unbounded reds U9b.
+
+## Earlier in the same day, for the record
+
+Two further reasons the shove was inert, both fixed and both real:
+
+1. it decided **at creation time**, when `wm geometry` still reports the *requested*
+   geometry, so it compared a not-yet-placed window and returned 0 (fixed: wait for the
+   map, bounded retries);
+2. it demanded an **exact string match**, while 0647's own measurement was one pixel apart
+   (fixed: same size and same corner within 8 px).

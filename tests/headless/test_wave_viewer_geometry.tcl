@@ -185,6 +185,86 @@ if {[info exists ::has_x]} {
   }
   ck "U7  ... and once it IS mapped the deferred shove fires" {$moved == 1}
 
+  # ⚠ THE SHOVE MUST SURVIVE BEING UNDONE, which is the half that cost a week.
+  # raise_activate_toplevel does `wm withdraw` + `wm deiconify` (issue 0054's WSLg
+  # re-map) and its own comment says the WM ignores the geometry it re-requests "for
+  # client placement" -- so a re-mapped window goes back where the PROGRAM originally
+  # asked, throwing the shove away with nothing noticing. The user's log.2 caught it
+  # exactly: viewer-open read the shoved +3676+406 out of Tk's request, viewer-open+
+  # read +3628+358 -- congruent with the design window -- out of the WM's answer.
+  wm geometry .zz1 400x300+100+100
+  wm geometry .zz9 400x300+100+100
+  update idletasks
+  wviewer::uncover .zz1 .zz9
+  update idletasks
+  wm geometry .zz1 400x300+100+100     ;# <- the re-map putting it back, simulated
+  update idletasks
+  set reshoved 0
+  for {set t 0} {$t < 2500} {incr t 60} {
+    update ; after 60
+    if {[wm geometry .zz1] ne {400x300+100+100}} { set reshoved 1 ; break }
+  }
+  ck "U8  a shove that is UNDONE gets re-applied (the WM answered late, or re-mapped)" \
+     {$reshoved == 1}
+
+  # POSITIVE TWIN: bounded. A verifier that never gives up would fight a window manager
+  # that genuinely insists on a position, and the window would jitter for the session.
+  set g_settled [wm geometry .zz1]
+  set jitter 0
+  for {set t 0} {$t < 2000} {incr t 100} {
+    update ; after 100
+    if {[wm geometry .zz1] ne $g_settled} { set jitter 1 ; break }
+  }
+  ck "U9  POSITIVE TWIN: once it has stuck the window is LEFT ALONE, not nudged forever" \
+     {$jitter == 0}
+
+  # ⚠ AND THE FIGHT MUST END. U9 above only proves the chain stops when the shove
+  # HOLDS -- which it does for free, because a non-congruent pair returns 0 and
+  # reschedules nothing. The case that needs a bound is a window manager that puts the
+  # window back every single time: without one, uncover and the WM trade moves for the
+  # rest of the session and the viewer jitters. Simulated here by restoring congruence
+  # on every tick and counting how often the shove comes back.
+  wm geometry .zz1 400x300+100+100
+  wm geometry .zz9 400x300+100+100
+  update idletasks
+  wviewer::uncover .zz1 .zz9
+  set reshoves 0
+  for {set t 0} {$t < 3000} {incr t 100} {
+    update ; after 100
+    if {[wm geometry .zz1] ne {400x300+100+100}} {
+      incr reshoves
+      wm geometry .zz1 400x300+100+100
+      update idletasks
+    }
+  }
+  ck "U9b POSITIVE TWIN: an INSISTENT window manager is argued with a few times, not\
+ forever (bounded verification)" {$reshoves <= 4}
+
+  # U10: the FIELD SEQUENCE end to end, with the real raise_activate_toplevel in it --
+  # shove, WSLg re-map (withdraw + deiconify), WM puts the window back on top, and the
+  # shove has to come back. This is what log.2 recorded happening and not recovering.
+  wm geometry .zz1 400x300+100+100
+  wm geometry .zz9 400x300+100+100
+  update idletasks
+  wviewer::uncover .zz1 .zz9
+  update idletasks
+  catch {raise_activate_toplevel .zz1}       ;# the real re-map, not a stand-in
+  wm geometry .zz1 400x300+100+100           ;# ... and the WM's own placement answer
+  update idletasks
+  set recovered 0
+  for {set t 0} {$t < 2500} {incr t 60} {
+    update ; after 60
+    if {[wm geometry .zz1] ne {400x300+100+100}} { set recovered 1 ; break }
+  }
+  ck "U10 the full field sequence recovers: shove, real raise_activate_toplevel re-map,\
+ WM puts it back, shove returns" {$recovered == 1}
+  # ⚠ WHAT IS **NOT** PINNED HERE, said out loud. wviewer::open now calls uncover AFTER
+  # raise_activate_toplevel rather than before it, which avoids a ~300ms window with the
+  # viewer sitting on the schematic. Nothing above catches that ordering: moving the call
+  # back to where it was leaves every row green, because the verification chain repairs
+  # it either way. The ordering is an improvement, the VERIFICATION is the fix, and U8 is
+  # the row that carries it.
+
   destroy .zz1 ; destroy .zz9
 } else {
   puts "SKIP: no X connection (has_x=0) — groups K and U need real toplevels"

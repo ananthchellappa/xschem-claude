@@ -1133,7 +1133,7 @@ proc wviewer::geom_key {win} {
 # the window it was launched from, step it off. Congruence is the whole defect
 # -- a viewer merely NEAR the design window is fine, one exactly on top of it
 # reads as the schematic having vanished.
-proc wviewer::uncover {top from {tries 4}} {
+proc wviewer::uncover {top from {tries 4} {verify 2}} {
   if {$top eq {} || $from eq {}} { return 0 }
   if {![winfo exists $top] || ![winfo exists $from]} { return 0 }
   # ⚠ NOT AT CREATION TIME -- AND THAT IS WHY THIS SHOVE NEVER FIRED IN THE FIELD.
@@ -1146,7 +1146,7 @@ proc wviewer::uncover {top from {tries 4}} {
   # So wait for the map, then decide. Bounded retries; a viewer the user has already
   # dragged simply will not be congruent by the time we look, which is the right answer.
   if {![winfo ismapped $top] || ![winfo ismapped $from]} {
-    if {$tries > 0} { after 120 [list wviewer::uncover $top $from [expr {$tries - 1}]] }
+    if {$tries > 0} { after 120 [list wviewer::uncover $top $from [expr {$tries - 1}] $verify] }
     return 0
   }
   set gt {}; set gf {}
@@ -1174,6 +1174,15 @@ proc wviewer::uncover {top from {tries 4}} {
   if {$nx < 0} { set nx 0 }
   if {$ny < 0} { set ny 0 }
   catch {wm geometry $top ${w}x${h}+${nx}+${ny}}
+  # ⚠ AND CHECK THAT IT STUCK. `wm geometry` is a REQUEST; the window manager answers
+  # in its own time and may decline -- which is exactly how this shove was lost for
+  # days, undone by the withdraw/deiconify re-map without anything noticing. So look
+  # again shortly. The re-check is just another uncover: if the shove held, the two
+  # windows are no longer congruent and it returns 0 and stops by itself. Bounded, so
+  # a WM that genuinely insists on this position is argued with twice, not forever.
+  if {$verify > 0} {
+    after 300 [list wviewer::uncover $top $from 1 [expr {$verify - 1}]]
+  }
   return 1
 }
 
@@ -1282,10 +1291,19 @@ proc wviewer::open {token} {
   # every other context, and it is never cleared -- a viewer stays a viewer.
   catch {xschem set wave_viewer 1}
   dict set windows $token [dict create top $top win_path $wp]
-  # issue 0840: never land exactly on the window we were launched from. Done
-  # AFTER the registry entry so geom_key can already recognise $top.
+  # issue 0840: never land exactly on the window we were launched from. The registry
+  # entry above must come first so geom_key can already recognise $top.
+  #
+  # ⚠ THE SHOVE IS NOT DONE HERE ANY MORE, and that was the second reason it never
+  # worked. raise_activate_toplevel (further down, and unavoidable -- issue 0054's
+  # WSLg re-map) does `wm withdraw` + `wm deiconify`, and its own comment says the
+  # WM ignores the geometry it then re-requests "for client placement". A re-mapped
+  # window gets put back where the PROGRAM originally asked for it, which is the
+  # congruent spot set_geom chose. So a shove applied before that cycle is thrown
+  # away by it. Measured in the user's log.2: `viewer-open` (right after the raise)
+  # read the shoved +3676+406 out of Tk's request, and `viewer-open+` 700ms later
+  # read +3628+358 -- pixel-identical to the design window -- out of the WM's answer.
   set _fromtop [expr {$before eq {.drw} ? {.} : [string range $before 0 end-4]}]
-  catch {wviewer::uncover $top $_fromtop}
   wviewer::diag "open-FRESH      token=$token top=$top from=$_fromtop"
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
@@ -1410,6 +1428,10 @@ proc wviewer::open {token} {
   # open_viewer, auto_plot, restore) — none want a viewer opening behind.
   raise_activate_toplevel $top
   catch {focus $top}
+  # issue 0840, after the re-map (see the note at the registry entry above): only now
+  # is the window in the place the WM has actually chosen, so only now can congruence
+  # be judged. uncover re-verifies its own work, because the WM may answer late.
+  catch {wviewer::uncover $top $_fromtop}
   wviewer::diag "open-RETURN     token=$token top=$top"
   # ⚠ AN UNCONDITIONAL CENSUS, twice, at the one moment that matters.
   #
