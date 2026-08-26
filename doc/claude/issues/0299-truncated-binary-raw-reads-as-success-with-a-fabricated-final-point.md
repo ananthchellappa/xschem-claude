@@ -1,5 +1,24 @@
 # 0299 — a truncated BINARY raw reads as a success with a fabricated final point
 
+> ⚠ **ATTEMPT 2 (2026-08-26): THE LEAD'S op/tran SPLIT WAS IMPLEMENTED AND MEASURED SOUND,
+> THEN REVERTED WITH ITS ITEM.** Shipped as one owner —
+> `static int raw_keep_short_block(int p) { return p > 0; }` consulted at **both** binary
+> `fread` sites — with `if(res) raw->npoints[datasets] = short_read ? p : npoints;`.
+> Net rule: *a fabricated point is never published, and a genuine point is never thrown
+> away.* `test_raw_ascii_point_bounds` 90 → 118 checks, all green, and both halves proved
+> independently falsifiable (a sabotage variant that always refuses reds the salvage rows
+> while leaving the refusal rows green, and vice versa). The ASCII arm was not touched.
+>
+> **THE RULING IS STILL THE USER'S AND IS STILL UNPAID.** Two measurements narrow it:
+> a 1-point op raw cut in its only point has `p == 0`, so there is nothing to salvage —
+> and `npoints = p` there would manufacture a zero-point dataset, which **SIGSEGVs**
+> `update_op()` ([0836](0836-update-op-segfaults-on-a-zero-point-database.md)). An
+> 89-point binary tran missing its last 3 bytes keeps 88 points **byte-identical** to the
+> intact file. So `p > 0` is an argument, not a preference. The narrowed question for the
+> user: *ratify the split (refuse when nothing is salvageable, keep the points actually
+> read otherwise), or refuse uniformly?*
+
+
 **Status:** OPEN. A fix (`res = 0; break;` at both sites) was written under item 0807 on
 2026-08-25, measured sound, then **reverted with the rest of that item** — see
 [0807](0807-annotate-op-destroys-the-attached-op-database-on-a-truncated-raw.md) §7.

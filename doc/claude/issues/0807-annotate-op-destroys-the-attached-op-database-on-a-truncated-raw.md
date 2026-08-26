@@ -286,6 +286,16 @@ and verify the *binary* agrees before trusting any measurement.
    found". Reattach at the original index, or write the weaker invariant down
    explicitly.
 6. **Sabotage must be verified against the binary, not the source** (§10).
+7. **THIS FIX CANNOT SHIP WITHOUT [0836](0836-update-op-segfaults-on-a-zero-point-database.md)'s
+   GUARD, and the 0814 fixture must be a LIVE ngspice header.** Added by attempt 2,
+   which was reverted for exactly this (§13). Any fix that makes the fallback legs
+   perform a *real* read — which is what closing 0814 means — will read the
+   `No. Points: 0` header ngspice leaves on disk for the **whole duration** of a run,
+   succeed with zero points, and SIGSEGV in `update_op()`. At HEAD the dedup never
+   opens that file, so HEAD cannot crash there; the fix is what makes it reachable.
+   Land the `npoints`/`allpoints` guard in the same commit. And note that a
+   *garbage* fixture **cannot** catch this — garbage fails every leg and returns 0.
+   The fixture must be a well-formed header declaring zero points.
 
 ## 12. Still open
 
@@ -313,3 +323,123 @@ All of the original defect. Plus, from attempt 1's review:
   `keep_symbols`/`sch_path` handling, and a failed annotate left `currsch`,
   `sch_path` and `xschem get modified` untouched at level 0 — but nobody measured a
   descended annotate.
+
+
+## 13. Attempt 2 — reverted 2026-08-26 (status F). Correct, tier-green, and INCOMPLETE
+
+The full diff, with a long header explaining it, is kept at
+**`doc/claude/evidence/0807-attempt2-reverted.patch.txt`**. Read that before
+attempt 3; most of it is re-usable as-is once §11.7 is satisfied.
+
+### What it built
+
+**It stashed the whole registry across the read** instead of detaching one entry.
+Three new primitives in `save.c` (`extra_rawfile_stash` / `_unstash(keep)` /
+`_publish(raw, also_drop)`) plus a `Raw_stash` struct: `xctx->extra_raw_arr`,
+`extra_raw_n`, `extra_raw_size`, `extra_idx`, `extra_prev_idx` **and** `xctx->raw`
+go aside for the duration of the read, nothing is freed, and a failure restores all
+six fields verbatim. `annotate_op` lost its destroy-before-read and its
+`array unset ngspice::ngspice_data`, moved `live_cursor2_backannotate` into the
+success arm, and ended with `Tcl_SetResult(interp, my_itoa(res == 1), ...)`.
+`raw_read` (0813) got the same primitives. 0299 shipped as one owner
+(`raw_keep_short_block(p) { return p > 0; }`, both binary `fread` sites) and 0316
+was folded in.
+
+This shape beats attempt 1's detach on its own terms and **§11's first six
+constraints were all met**:
+
+* **§11.1** — there is nothing to match, so the unregistered-`xctx->raw` case that
+  killed attempt 1 cannot arise: the live database is *part of* the stash, so
+  `extra_rawfile()`'s base-insert has nothing to adopt and its dedup nothing to find.
+  The §7 row measured **8.0 / 4.0** (run 2's numbers), where attempt 1 gave 3.14/1.5.
+* **§11.5** — met *exactly* rather than approximately: six fields restored verbatim,
+  so the whole multi-line `raw info` and a `raw switch_back` round trip are identical
+  across a failed annotate.
+* **§11.2/3/4** — honoured in the new rows; the binary fixture is row AA9.
+
+Tiers, all independently re-measured by Verify-A against a byte-guarded pristine
+snapshot: `test_op_annot` 358 → **384**, `test_raw_read_failure_0306` 63 → **73**,
+`test_raw_ascii_point_bounds` 90 → **118**, every other suite unchanged, T1 zero
+counted failures, T2 `HARNESS: PASS`. The eight-variant sabotage matrix was caught,
+each variant proved against the **binary** per §11.6.
+
+### Why it was reverted — it makes 0836 reachable in the shipped arrangement
+
+**ngspice writes `No. Points: 0` into the header at the start of a run and backfills
+it only at the end.** So for the entire duration of a simulation the raw on disk is a
+legitimate, untruncated, **zero-point** file. `read_dataset()` reads it as a success
+(`res == 1`, `points == 0`); `my_realloc(..., 0)` frees and NULLs every
+`raw->values[v]` (`util.c:1330-1334`); `update_op()`'s only guard is
+`if(xctx->raw && xctx->raw->values)` and it then dereferences `values[i][0]`.
+That is [0836](0836-update-op-segfaults-on-a-zero-point-database.md).
+
+**0299's change is not in this path** — `npoints` comes from the header, so the store
+loop never runs, no `fread` happens and `raw_keep_short_block()` is never consulted.
+Verified: no `binary block is not of correct size` warning appears.
+
+The differential is what makes it a **regression** and not merely an inherited defect.
+Shape: `<P> tran` is already registered, ngspice re-runs and rewrites `P`, the user
+hits Annotate while it is running. **This is the shipped ASE / wave-viewer
+arrangement** — `ase.tcl` and `wave_viewer.tcl` load with `xschem raw read`, which
+appends, and ngspice overwrites one stable path every run.
+
+* **At HEAD** the tran leg's `rawfile`+`sim_type` dedup (`save.c:1849-1856`) matches
+  and `save.c:1885-1889` adopts the cached entry **with no read**. HEAD never opens
+  the file, so **it cannot crash**. It publishes the previous run's point 0 and
+  reports success — that is 0814, the defect being fixed. Measured at HEAD:
+
+      WU| F2 after : loaded=0 rawfile=Q.raw sim=tran v(a)=7.77 ngdata=5  result=<::op_annot::text>
+
+* **With the patch** the registry is stashed, the dedup cannot match, so every leg
+  performs a real read — which is *precisely* how it closes 0814 "by construction".
+  The real read of a live zero-point header then succeeds and `update_op()` dies:
+
+      WU| S1 registered  loaded=0 sim=tran
+      WU| S2 Q.raw is now a LIVE (0-point header) raw
+      extra_rawfile() read: .../Q.raw not found or no "op" analysis
+      extra_rawfile() read: .../Q.raw not found or no "dc" analysis
+      Raw file data read: .../Q.raw
+      points=0, vars=3, datasets=1 sim_type=tran
+      FATAL: signal 11
+
+The A/B is airtight **by construction** and does not depend on the fixture: HEAD
+never opens the file in this shape, so no file content can crash it; the patch always
+opens it, so any zero-point header crashes it.
+
+Note the crash class is *not* new — HEAD reaches the same `update_op()` deref through
+the same `annotate_op` door whenever the path is **not** already registered, which is
+the commoner case (source-confirmed: HEAD's tran leg is a real
+`extra_rawfile(1, f, "tran", ...)` and its success arm calls `update_op()` with no
+`npoints` check). What the patch removes is the dedup that *accidentally masked* the
+crash in the registered shape. That is why the verdict is **incomplete, not wrong**.
+
+### How it was found, and the process gap
+
+By the **Verify-C adversary**, which drove a real still-being-written 2.9 MB ngspice
+raw (`live.tcl`) rather than a crafted one, hit the crash, and then **died before
+writing a report** — the crew's summary recorded "verify-C produced nothing". The
+finding was recovered by the write-up agent from the adversary's leftover
+`live_fix.out`, and then reproduced minimally with a twelve-line hand-written header.
+Verify-B likewise produced no report (its sabotage evidence survives only in the
+Implement agent's own transcript, corroborated incidentally by Verify-A, which
+accidentally measured two SAB builds mid-run and diagnosed them from source diffs).
+
+**Lesson for the run harness, not for the code:** an adversary that crashes is not an
+adversary that found nothing. Its scratch directory must be swept before a status is
+assigned. Had it not been, this would have shipped green.
+
+### What attempt 3 should do
+
+1. **Land 0836's guard first, or in the same commit** — an `npoints`/`allpoints`
+   check before `update_op()` dereferences `values[i][0]`, plus a decision on what a
+   zero-point database *means* to `annotate_op` (recommend: treat it as "nothing was
+   published", answer `0`, leave the previous database attached — invariant I3).
+2. **Then re-apply `0807-attempt2-reverted.patch.txt`**, which needs no rework.
+3. **Fix the 0814 fixture**: row AA19 used 40 bytes of garbage, which fails every leg
+   and returns 0 — it passes on a tree that crashes. Use a well-formed
+   `No. Points: 0` header, and add the live-raw row as an acceptance row in its own
+   right.
+4. Consider whether a zero-point read should be refused **in the reader** rather than
+   guarded in `update_op()`. That is a wider blast radius (the wave viewer may want to
+   attach a running sim's raw and watch it fill) and is a **user-visible ruling** — do
+   not decide it unilaterally.

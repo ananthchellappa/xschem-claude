@@ -1,5 +1,16 @@
 # 0316 — `read_dataset()`'s malformed-header aborts leak the half-built `Raw` and destroy the loaded database
 
+> ⚠ **ATTEMPT 2 (2026-08-26) FIXED THIS AGAIN AND WAS REVERTED FOR AN UNRELATED REASON.**
+> The four malformed-header aborts dropped their `extra_rawfile(3, NULL, ...)` clear-all
+> and their `goto read_dataset_done` became `break`, so `read_dataset()`'s own
+> `if(exit_status != 1) free_rawfile(...)` runs. **The fifth `goto` (the nvars mismatch)
+> was deliberately left alone.** Valgrind on the abort path reported **0 definitely-lost
+> bytes** (the 253,152-byte leak) and 0 errors. Rows R1–R6 in
+> `test_raw_read_failure_0306` cover it. **Nothing about 0316's own fix is in doubt** —
+> it was reverted only because the same patch made
+> [0836](0836-update-op-segfaults-on-a-zero-point-database.md) reachable. See 0807 §13.
+
+
 **Status:** OPEN. Measured on branch `fluid-editing` at the 0306 fix commit. A fix was written
 under item 0807 on 2026-08-25 (the recommended variant: `break` into the function's own
 `free_rawfile()`), **confirmed to close both the data loss and the leak**, then **reverted with

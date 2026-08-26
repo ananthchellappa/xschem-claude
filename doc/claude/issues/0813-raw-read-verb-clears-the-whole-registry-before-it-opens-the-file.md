@@ -1,5 +1,15 @@
 # 0813 — the `raw_read` verb is destroy-then-read too, and it clears the WHOLE registry
 
+> ⚠ **ATTEMPT 2 (2026-08-26) FIXED THIS AND WAS REVERTED FOR AN UNRELATED REASON.**
+> The registry-stash fix closed 0813 cleanly — a failed `raw_read` left both attached
+> databases alive and its honest `0` unchanged, with the success post-state
+> byte-identical to HEAD (rows D1/D2, `test_raw_read_failure_0306` 63 → 73 checks, all
+> green). It was reverted only because the same patch made
+> [0836](0836-update-op-segfaults-on-a-zero-point-database.md) reachable through
+> `annotate_op`. **Nothing about 0813's own fix is in doubt.** The diff is kept at
+> `doc/claude/evidence/0807-attempt2-reverted.patch.txt`; see 0807 §13.
+
+
 STATUS: **OPEN — stub claimed by the 0807 implement agent, 2026-08-25. Measured by the
 0807 scout, not fixed.**
 FOUND IN: `src/scheduler.c`, the `raw_read` verb (the `extra_rawfile(3, NULL, ...)`

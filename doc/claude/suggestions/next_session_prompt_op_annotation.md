@@ -393,7 +393,76 @@ everything else unchanged.
 ---
 
 
-## ❌ 0807 — **ATTEMPTED, EVERY TIER GREEN, WHOLE SABOTAGE MATRIX CAUGHT, AND REVERTED 2026-08-25 (status F)**. THE DATA LOSS IS STILL LIVE
+## ❌ 0807+0813+0814 — **ATTEMPT 2 ALSO REVERTED, 2026-08-26 (status F). THE BLOCKER IS NOW [0836](../issues/0836-update-op-segfaults-on-a-zero-point-database.md), AND IT IS A SMALL FIX**
+
+**READ THIS BEFORE THE ATTEMPT-1 SECTION BELOW — it supersedes the plan of attack.**
+
+Attempt 2 did **not** repeat attempt 1's mistake. It stashed the whole registry across
+the read (rather than detaching one entry), met **all six** of 0807 §11's binding
+constraints, and measured the §7 anti-hollow row at **8.0 / 4.0** — run 2's numbers,
+where attempt 1 gave 3.14/1.5. Tiers: `test_op_annot` 358 → **384**,
+`test_raw_read_failure_0306` 63 → **73**, `test_raw_ascii_point_bounds` 90 → **118**,
+T1 zero, T2 PASS, every other suite unchanged, eight-variant sabotage matrix caught,
+valgrind clean. **The diff needs no rework and is kept at
+`doc/claude/evidence/0807-attempt2-reverted.patch.txt`.**
+
+It was reverted for **one reason**, and it is the thing to fix first:
+
+> **ngspice writes `No. Points: 0` into the raw header at the start of a run and
+> backfills it only at the end.** For the *entire duration* of a simulation the file on
+> disk is a well-formed, untruncated, **zero-point** raw. Reading it succeeds with
+> `points == 0`; `my_realloc(..., 0)` NULLs every `raw->values[v]`; `update_op()` guards
+> only the outer array and then dereferences `values[i][0]`. **SIGSEGV.** That is 0836.
+
+Why that is fatal *to this item specifically*: **closing 0814 means making the fallback
+legs perform a real read.** At HEAD the same-path dedup adopts the cached entry and
+never opens the file, so HEAD cannot crash in the shipped ASE/wave-viewer shape — it
+merely publishes last run's numbers and lies about it. The fix removes the dedup that
+was *accidentally masking* the crash. So the trade on that route is "stale numbers
+reported as success" → "segfault", which is not a trade an unattended crew may make.
+
+Measured A/B, airtight by construction (HEAD never opens the file, so no file content
+can crash it; the patch always opens it, so any zero-point header does):
+
+```
+HEAD    WU| F2 after : loaded=0 rawfile=Q.raw sim=tran v(a)=7.77 ngdata=5  result=<::op_annot::text>
+PATCH   WU| S1 registered  loaded=0 sim=tran
+        WU| S2 Q.raw is now a LIVE (0-point header) raw
+        Raw file data read: .../Q.raw
+        points=0, vars=3, datasets=1 sim_type=tran
+        FATAL: signal 11
+```
+
+### THE ORDER FOR ATTEMPT 3 — do not re-plan this, just do it
+
+1. **Fix 0836 first** (or in the same commit): an `npoints`/`allpoints` check before
+   `update_op()` dereferences `values[i][0]`, and decide what a zero-point database
+   *means* to `annotate_op` — recommend "nothing was published", answer `0`, leave the
+   previous database attached (invariant **I3**).
+2. **Re-apply `0807-attempt2-reverted.patch.txt`.** It is correct as it stands.
+3. **Fix the 0814 fixture.** Attempt 2's row AA19 used 40 bytes of garbage — garbage
+   fails every leg and returns `0`, so **that row passes on a tree that crashes**. Use a
+   well-formed `No. Points: 0` header, and add the live-raw case as its own row.
+4. The 0299 split and the 0316 fold-in were both measured sound and are **not** in
+   doubt; they came out only because they rode in the same commit.
+
+### ⚠ TWO PROCESS LESSONS FROM THIS RUN, BINDING ON EVERY LATER STEP
+
+* **An adversary that crashes is not an adversary that found nothing.** Verify-B and
+  Verify-C both returned *no report* this run; the crew summary recorded "produced
+  nothing — treat as untrustworthy / untested". Verify-C had in fact **found the
+  segfault** and left the transcript in its scratch directory before dying. It was
+  recovered only because the write-up agent swept
+  `/tmp/.../scratch_<item>_advC/` by hand. **Sweep the adversary's scratch before
+  assigning a status.** Had it not been swept, this would have shipped green.
+* **A negative fixture must fail the way the real world fails.** "Overwrite the path
+  with garbage" and "overwrite the path with a running simulation's header" look like
+  the same test and are not: the first fails every read, the second *succeeds* with
+  zero points. The user's bench case is the second one.
+
+---
+
+## ❌ 0807 — **ATTEMPT 1: EVERY TIER GREEN, WHOLE SABOTAGE MATRIX CAUGHT, AND REVERTED 2026-08-25 (status F)**
 
 **Not a plan step.** `src/`, `tests/` and `utils/` are byte-identical to `56c861de`.
 The reverted diff is kept at **`doc/claude/evidence/0807-attempt1-reverted.patch.txt`**

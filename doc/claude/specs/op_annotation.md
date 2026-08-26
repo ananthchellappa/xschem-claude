@@ -2488,8 +2488,8 @@ down or assumed, which is why they are here and not in a crew report.
    Only the adding form can leave a same-path entry behind, so a probe written with
    `raw_read` measures the defect in (2) as absent. This cost the 0683+0684 crew a
    contradiction between two of its own passes.
-4. **`annotate_op` never fails loudly.** `xschem annotate_op /nonexistent` returns the
-   **path string** with `TCL_OK` and nothing attached; and it is *destructive before
+4. **`annotate_op` never fails loudly.** `xschem annotate_op /nonexistent` answers with
+   `TCL_OK` and nothing attached; and it is *destructive before
    open* (`scheduler.c:2411-2415` clears the previous OP and unsets
    `ngspice::ngspice_data` **before** trying the new file). Verify an attach by
    re-asking `op_annot::_annotated`, never by the return code. `xschem raw rawfile`
@@ -2505,7 +2505,7 @@ is not a boolean — `sch_waves_loaded()` returns the hierarchy **level** (landm
 — and it answers "is SOME database attached here", not "are THIS session's CURRENT
 results attached here". Issue **0684**.
 
-#### 6a-bis. Five more, measured 2026-08-25 during the 0807 attempt (which was REVERTED)
+#### 6a-bis. Six more, measured during the 0807 attempts (BOTH of which were REVERTED)
 
 Item 0807 built the "read first, replace only on success" fix for fact (4) above, measured
 every tier green, and **reverted it** — see `doc/claude/issues/0807-*.md` §7. These five facts
@@ -2542,6 +2542,38 @@ outlived the revert and are properties of the shipped registry, not of that patc
     `update_op()` unsets and rebuilds that array wholly from `xctx->raw` — it is the sole owner
     (**I1**, one owner). The branch's own copy therefore does nothing on success and is the
     entire Tcl-side half of the data loss on failure.
+
+⚠ **CORRECTION TO FACT (4), MEASURED 2026-08-26 — `annotate_op` DOES NOT RETURN THE PATH
+STRING, AND NEVER DID ON THIS TREE.** The branch calls `Tcl_SetResult()` **nowhere**; the
+interpreter result is whatever the last internal `tcleval()` left behind. Measured at HEAD
+`ebc2cfd5`: the literal `::op_annot::text` on success and the **empty string** on every
+failure (missing file, truncated ASCII, truncated header). Issue 0812's
+`resolve_rawfile_path()` had already removed `extra_rawfile()`'s `subst` side effect that
+used to deposit the path — the comment at `save.c:1769-1775` says so. The stale "path string"
+claim is repeated in 0807 §1/§2, in `tests/headless/test_op_annot.tcl` and in
+`utils/annot_mode.tcl`; treat all of them as wrong. **The trap this creates is sharper than
+the documented one:** empty-on-failure / non-empty-on-success *looks* like a usable signal and
+is not one — the 0814 shape returns the success residue while having read nothing. Verify an
+attach by re-asking `op_annot::_annotated`, never by the result.
+
+11. **A RUNNING SIMULATION'S RAW IS A WELL-FORMED ZERO-POINT FILE, AND READING IT IS A
+    SEGFAULT** — measured 2026-08-26, issue **0836**, and the reason 0807 attempt 2 was
+    reverted. `ngspice` writes `No. Points: 0` into the header when it opens the raw and
+    backfills the real count only when the run ends, so for the **whole duration** of a
+    simulation the file on disk parses cleanly and yields `points == 0`. `read_dataset()`
+    reports success; the store loop never executes, so **no truncation logic is involved**;
+    `my_realloc(..., 0)` frees and NULLs every `raw->values[v]` (`util.c:1330-1334`); and
+    `update_op()` — whose only guard is `if(xctx->raw && xctx->raw->values)` — dereferences
+    `values[i][0]`.
+
+    This interacts with fact (2) in a way that is binding on any future fix: **the stale-copy
+    dedup is currently the only thing preventing that crash** in the shipped ASE/wave-viewer
+    arrangement, where one stable path is overwritten every run and is already registered.
+    HEAD never opens the file there, so HEAD cannot crash; it publishes last run's numbers and
+    reports success. **Closing the dedup hole (0685/0814) without guarding `update_op()` first
+    converts a wrong answer into a segfault.** Fix 0836 in the same commit, and never write a
+    negative fixture as "garbage bytes" — garbage fails every leg and returns 0, so such a row
+    passes on a crashing tree. The fixture must be a well-formed zero-point header.
 
 **What this reinforces about I3.** I3 says a missing vector renders **blank** — "not 0, not NaN
 on screen, **not the previous run's number**." 0807's revert is the strongest evidence yet that

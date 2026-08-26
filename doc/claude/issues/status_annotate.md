@@ -659,3 +659,54 @@ One **rule** debt against **0829** (recorded by the Implement agent) and one
 **suite** debt for `test_wave_sigsearch` on `:0`. **Nothing was cleared, converted
 or discharged.** The 0831 finding is a *defect*, not a user decision, so it was
 filed rather than added to the user's queue.
+
+---
+
+## 0807+0813+0814 — attempt 2, **REVERTED 2026-08-26, status F**
+
+The registry-stash fix was built, measured green on every tier, and reverted. Full
+record in **`doc/claude/issues/0807-*.md` §13**; the diff, which needs no rework, is
+at **`doc/claude/evidence/0807-attempt2-reverted.patch.txt`**.
+
+**It did not repeat attempt 1's mistake.** All six of §11's binding constraints were
+met, and the §7 anti-hollow row measured **8.0 / 4.0** (run 2's numbers) where attempt
+1 gave 3.14/1.5. `test_op_annot` 358 → 384, `test_raw_read_failure_0306` 63 → 73,
+`test_raw_ascii_point_bounds` 90 → 118, T1 zero, T2 PASS, all other suites unchanged.
+
+**It was reverted for one reason: it makes [0836] reachable in the shipped
+arrangement.** ngspice leaves `No. Points: 0` in the raw header for the whole duration
+of a run; closing 0814 means the fallback legs really read; a real read of that header
+succeeds with zero points and `update_op()` segfaults. At HEAD the same-path dedup
+never opens the file, so HEAD cannot crash there — it publishes last run's numbers and
+lies. The fix therefore trades *"stale numbers reported as success"* for *"segfault"*
+on the ASE/wave-viewer route, which is not a trade an unattended crew may make.
+
+Not rounded up to **x** or **E**: the tree is back at HEAD and nothing of the fix
+shipped, which is F by definition. **0836 is now the blocker, and it is a small fix** —
+guard `update_op()`, then re-apply the patch.
+
+### How it was found — a process lesson, not a code one
+
+By the **Verify-C adversary**, driving a real still-being-written 2.9 MB ngspice raw.
+It **crashed before writing a report**, and the crew summary recorded "verify-C
+produced nothing — treat the claim as UNREFUTED-UNTESTED". Verify-B likewise returned
+nothing. The finding was recovered only because the write-up agent swept the
+adversary's scratch directory by hand and read `live_fix.out`. **An adversary that
+crashes is not an adversary that found nothing; sweep its scratch before assigning a
+status.** Without that sweep this would have shipped green.
+
+### Also filed by this crew
+
+**0836** (`update_op()` SIGSEGVs on a zero-point database — filed by the Measure agent
+through a sweep-window door, widened here to the live-raw door, and now blocking) and
+**0837** (the `raw` dispatcher arm captures `Raw *raw = xctx->raw` before its own
+`if(!xctx)` guard and then mixes it with the live pointer, so `raw switch` from a tran
+into a 1-point op never calls `update_op()`). **The next free number is 0838.**
+
+### Ledger
+
+Three **rule** debts touched, **none cleared, converted or discharged**: **0299**
+restated (the split was implemented, measured sound, and reverted — so the question is
+untouched and still the user's), **0807** restated (its two user-visible changes are
+now *proposed for attempt 3*, not shipped), and **0836** added new (guard the consumers
+or refuse the read?). Counts went 25 → 26 rule; **look 43 and suite 14 unchanged**.

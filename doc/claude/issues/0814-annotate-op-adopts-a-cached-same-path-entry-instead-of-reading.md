@@ -1,5 +1,20 @@
 # 0814 — `annotate_op` adopts a cached same-path entry instead of reading, and reports success
 
+> ⚠ **ATTEMPT 2 (2026-08-26) CLOSED THIS *BY CONSTRUCTION* AND WAS REVERTED BECAUSE OF IT.**
+> Stashing the whole registry across the read means the rawfile+sim_type dedup has nothing
+> to match, so all three fallback legs perform a **real** read and a cached `<path> tran`
+> entry can no longer be published as this run's operating point. That worked (rows
+> AA19/AA20). But a real read of the path ngspice is *currently writing* reads a
+> well-formed `No. Points: 0` header, succeeds with zero points, and SIGSEGVs in
+> `update_op()` — [0836](0836-update-op-segfaults-on-a-zero-point-database.md). At HEAD the
+> dedup never opens that file, so HEAD cannot crash there. **Fixing 0814 therefore requires
+> 0836 fixed in the same commit.** See 0807 §13 and constraint §11.7.
+>
+> ⚠ **AND THE FIXTURE MATTERS.** Attempt 2's row AA19 overwrote the path with 40 bytes of
+> garbage. Garbage fails every leg and returns `0`, so that row passes on a tree that
+> crashes. Any acceptance row for 0814 must use a **well-formed zero-point header**.
+
+
 STATUS: **OPEN — measured 2026-08-25, filed not fixed.**
 FOUND IN: `src/save.c`, `extra_rawfile()`'s spice rawfile+sim_type dedup loop
 ("file not already loaded: read it and switch to it" — the `else` arm takes the
