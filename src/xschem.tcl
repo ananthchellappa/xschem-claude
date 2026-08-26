@@ -5719,6 +5719,38 @@ proc force_window_repaint {win {tries 0}} {
 # come back: `-topmost` toggle (no drift but no raise), `wm iconify` (stuck minimized in tray),
 # a user-set flag. The trailing `xschem activate_window` (_NET_ACTIVE_WINDOW) is a no-op on
 # Weston but helps real EWMH WMs / the title-bar active tint. Callers add their own focus. (0054)
+# ⚠ issue 0843: A DROPPED RE-MAP USED TO LOSE THE WINDOW OUTRIGHT, and nothing
+# noticed. The mapped arm below is `wm withdraw` + `wm deiconify` -- the WSLg
+# idiom of issue 0054, because a plain `raise` is an inert no-op there once a
+# window is mapped. But issue 0616 already records that that WM is *documented
+# to DROP a re-map*, and the withdraw is not conditional on the deiconify
+# succeeding: withdraw always works, deiconify may not, and the net effect is a
+# window the user was looking at a moment ago that is simply GONE.
+#
+# The user hit it twice on `Session > Design Window`, which passes the default
+# `always` raise_mode precisely because it is the documented recovery for a
+# missing window -- so the one command whose job is to bring a window back was
+# the one most likely to make one disappear.
+#
+# VERIFY, DEFERRED. Not a synchronous check: `winfo ismapped` reflects Tk's view
+# of the last MapNotify, so an immediate read races the server's reply and would
+# false-negative on a re-map that is merely in flight. And an `update` here would
+# re-enter -- this proc is called from menu commands, focus handlers and the
+# viewer open path. `after` is the idiom the surrounding code already uses for
+# exactly this (ase_window.tcl's `after 120 force_window_repaint`, issue 0052).
+#
+# The recovery is deliberately dumb -- deiconify again, then `wm state normal`
+# -- because the failure being recovered from is the WM ignoring a request, and
+# the only useful response to that is to ask again.
+proc _remap_verify {top {tries 2}} {
+  if {![winfo exists $top]} return
+  if {[winfo ismapped $top]} return
+  catch { wm deiconify $top }
+  catch { wm state $top normal }
+  catch { raise $top }
+  if {$tries > 1} { after 250 [list _remap_verify $top [expr {$tries - 1}]] }
+}
+
 proc raise_activate_toplevel {top} {
   global has_x
   if { ![info exists has_x] || !$has_x } return
@@ -5728,8 +5760,10 @@ proc raise_activate_toplevel {top} {
     wm withdraw $top
     wm deiconify $top
     catch { wm geometry $top $geo }   ;# best-effort; this WM ignores it for client placement
+    after 150 [list _remap_verify $top]   ;# issue 0843: the withdraw is not undone by a dropped deiconify
   } else {
     catch { wm deiconify $top }       ;# never mapped / withdrawn: a deiconify maps + raises it
+    after 150 [list _remap_verify $top]   ;# issue 0843: same request, same WM, same risk
   }
   raise $top
   catch { xschem activate_window [winfo id $top] }
