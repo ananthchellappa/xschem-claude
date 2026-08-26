@@ -13545,22 +13545,28 @@ proc readonly_notice {} {
 # saying is which window you are in NOW, not that the rule exists. Called from the single
 # read-only convergence point in scheduler.c, and only for an INTERACTIVE (-gui) open, so
 # scripted loads and action-log replays stay silent.
+#
+# ⚠ THE SENTENCE IS THE USER'S, VERBATIM, AND IT IS SHORT ON PURPOSE. The first
+# version explained the whole rule -- which three doors do this, and why -- and the
+# user's verdict on reading it was "full line is too much". A notice fired on EVERY
+# reopen, EVERY session, is read once and skimmed forever; length is what turns it
+# from a fact into noise. So: what happened, and what to do about it. Nothing else.
+#
+# That is also why `-menu`/`-command` are NOT passed. They are text-only options
+# (src/ciw.tcl xschem::notify appends " Fix: <menu>." and " CIW command: <cmd>" to
+# the rendered line) and they were most of the length that was objected to. The
+# remedy lives INSIDE the sentence instead, which is the same information in half
+# the words. Do not "restore" them here -- that silently re-lengthens the line.
+#
+# The filename is deliberately gone with them: the notice fires at the instant you
+# open the thing, so the name it would repeat is the name you just picked.
 proc reopen_readonly_notice {{name {}}} {
-  set what [file tail $name]
-  if {$what eq {}} { set what {This view} }
-  # The Edit menu row is always there (its label flips, xschem.tcl toggle_readonly_menu);
-  # Ctrl-2 exists only in cadence-compatible mode (cadence::make_editable). So name the
-  # menu unconditionally and the key only when it is really bound -- an accelerator named
-  # in a mode that does not bind it is a remedy that does not work.
-  set remedy {Edit > Make Editable}
-  if {[info exists ::cadence_compat] && $::cadence_compat} {
-    append remedy { (Ctrl-2)}
-  }
+  # `name` is unused -- kept in the signature because scheduler.c passes the loaded
+  # path and a future recipient (a per-window sink) would want it. See the note above
+  # for why the sentence does not spend words on it.
   catch {
-    ::xschem::notify "$what opened READ-ONLY -- the default for the reopen shortcuts\
- (Open Most Recent, Open Last Closed, File > Open Recent). Edits are refused until you\
- make it editable." \
-      -short {opened read-only} -menu $remedy -command {toggle_readonly}
+    ::xschem::notify {Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed} \
+      -short {opened read-only}
   }
   return
 }

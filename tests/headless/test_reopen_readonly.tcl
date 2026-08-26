@@ -84,22 +84,29 @@ rename ::xschem::notify ::xschem::_notify_real
 proc ::xschem::notify {msg args} { lappend ::notified [linsert $args 0 $msg] ; return 1 }
 proc cap {script} { set ::notified {} ; uplevel 1 $script ; return $::notified }
 proc first_ro {} {
-  foreach n $::notified { if {[string match {*READ-ONLY*} [lindex $n 0]]} { return $n } }
+  foreach n $::notified { if {[string match {*Read-Only*} [lindex $n 0]]} { return $n } }
   return {}
-}
-proc menu_of {n} {
-  set i [lsearch -exact $n -menu]
-  if {$i < 0} { return {} }
-  return [lindex $n [expr {$i + 1}]]
 }
 set ::cadence_compat 0
 
 cap {xschem load -gui -readonly $fa}
 set n [first_ro]
+set sentence {Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed}
 check "R11 an interactive reopen ANNOUNCES the read-only open" [expr {$n ne {}}] "(=> [lindex $n 0])"
-check "R12 the notice names the file that was opened" [string match {a.sch *} [lindex $n 0]] {}
-check "R13 the notice carries the remedy menu" [expr {[menu_of $n] eq {Edit > Make Editable}}] "(=> [menu_of $n])"
+check "R12 the notice is the user's ratified sentence, verbatim" [expr {[lindex $n 0] eq $sentence}] "(=> [lindex $n 0])"
+check "R13 the remedy is INSIDE the sentence (menu and key)" \
+  [expr {[string match {*Edit > Make Editable*} [lindex $n 0]] && [string match {*Ctrl-2*} [lindex $n 0]]}] {}
 check "R14 the notice carries a short form for the statusbar" [expr {[lsearch -exact $n -short] >= 0}] {}
+
+# ⚠ THE LENGTH GUARD, and it is the whole point of this revision. The first version of the
+# notice explained the rule -- three door names and a reason -- and the user's verdict on
+# reading it was "full line is too much". -menu/-command are TEXT options: xschem::notify
+# appends " Fix: <menu>." and " CIW command: <cmd>" to the rendered line, and passing them
+# is how the sentence silently grows back. So assert both the absence and the size.
+check "R14a no -menu/-command tail (they re-lengthen the rendered line)" \
+  [expr {[lsearch -exact $n -menu] < 0 && [lsearch -exact $n -command] < 0}] "(=> $n)"
+check "R14b the sentence stays short (<= 70 chars)" [expr {[string length [lindex $n 0]] <= 70}] \
+  "(len=[string length [lindex $n 0]])"
 
 # negative twin A: a SCRIPTED load (no -gui) must stay silent -- a replay must not narrate.
 cap {xschem load -readonly $fa}
@@ -109,14 +116,17 @@ check "R15 a scripted -readonly load announces NOTHING" [expr {[first_ro] eq {}}
 cap {xschem load -gui $fa}
 check "R16 a plain -gui load announces NOTHING" [expr {[first_ro] eq {}}] "(=> [first_ro])"
 
-# the accelerator is named ONLY where it is bound: Ctrl-2 is cadence::make_editable, cadence mode
-# only. A remedy that names a key the session does not bind is a remedy that does not work.
+# The sentence does NOT vary by mode. An earlier revision named Ctrl-2 only under
+# cadence_compat, on the theory that the key is cadence-only -- but the Edit menu itself
+# advertises `Ctrl+2` unconditionally (xschem.tcl toggle_readonly_menu), so a conditional
+# here would have made the notice and the menu disagree about the same key. One claim.
 set ::cadence_compat 1
 cap {xschem load -gui -readonly $fa}
-check "R17 cadence mode names Ctrl-2 in the remedy" [string match {*Ctrl-2*} [menu_of [first_ro]]] "(=> [menu_of [first_ro]])"
+set nc [lindex [first_ro] 0]
 set ::cadence_compat 0
 cap {xschem load -gui -readonly $fa}
-check "R17b legacy mode does NOT name Ctrl-2" [expr {![string match {*Ctrl-2*} [menu_of [first_ro]]]}] "(=> [menu_of [first_ro]])"
+check "R17 the sentence does not vary with cadence_compat" [expr {$nc eq [lindex [first_ro] 0]}] \
+  "(cadence='$nc' legacy='[lindex [first_ro] 0]')"
 
 # the read-only state itself must still be reached by the announcing path (the notice is an
 # ADDITION, not a replacement -- a door that only talks is worse than one that only acts).

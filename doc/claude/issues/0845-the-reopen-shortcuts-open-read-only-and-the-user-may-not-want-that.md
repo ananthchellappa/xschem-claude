@@ -91,40 +91,61 @@ Put to the user separately; answer: **"Yes, add loudness."**
 The reopen doors now announce themselves through the house notify channel — CIW
 pane, the durable action log, and the short form in the statusbar:
 
-> `a.sch opened READ-ONLY — the default for the reopen shortcuts (Open Most
-> Recent, Open Last Closed, File > Open Recent). Edits are refused until you make
-> it editable. Fix: Edit > Make Editable (Ctrl-2). CIW command: toggle_readonly`
+> `Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed`
 
 short form: `opened read-only`.
 
+### The sentence was cut once, by the user, after reading it
+
+The first version explained the whole rule — *"… — the default for the reopen
+shortcuts (Open Most Recent, Open Last Closed, File > Open Recent). Edits are
+refused until you make it editable."* — plus the channel's own `Fix: …` and
+`CIW command: …` tails. The user's verdict on reading it: **"full line is too
+much"**, and they wrote the replacement themselves. It is used verbatim.
+
+Two things that make the short form stay short, both guarded:
+
+* **`-menu`/`-command` are not passed.** They are TEXT options — `xschem::notify`
+  appends `" Fix: <menu>."` and `" CIW command: <cmd>"` to the rendered line — and
+  they were most of the length objected to. The remedy lives inside the sentence
+  instead. Restoring them is the silent way this grows back, so R14a asserts
+  their absence and R14b caps the sentence at 70 characters (it is 61).
+* **The filename went with them.** The notice fires at the instant you open the
+  thing, so the name it would repeat is the name you just picked.
+
 `reopen_readonly_notice` (`xschem.tcl`, beside `readonly_notice`), called from
-the single convergence point in `scheduler.c`. Four decisions worth keeping:
+the single convergence point in `scheduler.c`. Three decisions worth keeping:
 
 * **Not latched.** No `-once`. The fact worth saying is *which window you are in
-  now*, not that the rule exists. The user will see it every session; that is the
-  point, and it is also the thing their eyes should judge (look debt recorded).
+  now*, not that the rule exists. You will see it every session; that is the
+  point, and it is the thing that most needed the sentence to be short.
 * **`!force` only** — an interactive `-gui` open. A scripted load or an
   action-log replay stays silent. R15 is the twin.
 * **Outside the `!xctx->readonly` branch.** A non-writable file reopened through
   one of these doors is *already* read-only from `save.c:4497`, so a notice
   nested in the state change would go silent for exactly the file the user is
-  least able to edit. R19 is the twin, and sabotage SB-3 (nesting it) reds R19
-  alone.
-* **`Ctrl-2` is named only in cadence-compatible mode**, where
-  `cadence::make_editable` actually binds it. The `Edit > Make Editable` row
-  always exists, so that half is unconditional. An accelerator named in a mode
-  that does not bind it is a remedy that does not work. R17/R17b are the pair.
+  least able to edit. R19 is the twin, and SB-3 (nesting it) reds R19 alone.
 
-Sabotage, five variants, each reddening its own rows and nothing else:
+**One claim about `Ctrl-2`, not two.** An earlier revision named the key only
+under `cadence_compat`, on the theory that `cadence::make_editable` is
+cadence-only. But the Edit menu already advertises `Ctrl+2` unconditionally
+(`xschem.tcl` `toggle_readonly_menu`), so a conditional here would have made the
+notice and the menu disagree about the same key. R17 pins that they agree. (No
+in-tree file binds `Ctrl-2`; the binding comes from the user's own rc. If that
+turns out to be unbound in legacy mode, the menu is the thing making the claim
+and it predates this work.)
+
+Sabotage, six variants, each reddening its own rows and nothing else:
 
 | variant | reds |
 |---|---|
 | drop the `!force` gate | R15 |
-| remove the announcement | R11 R12 R13 R14 R17 R19 |
+| remove the announcement | R11 R12 R13 R14 R19 R20 |
 | nest it inside the state change | R19 |
-| name Ctrl-2 unconditionally | R13 R17b |
-| drop the remedy from the notice | R13 R17 |
+| re-add `-menu`/`-command` | R14a |
+| go back to the long sentence | R12 R14b |
+| strip the remedy from the sentence | R12 R13 |
 
-21 checks, ALL PASS. Every sink was **stubbed** — `::xschem::notify` is replaced
+23 checks, ALL PASS. Every sink was **stubbed** — `::xschem::notify` is replaced
 by a recorder — so nothing here proves the sentence renders. That is a `look`
 debt and a `suite` debt, both recorded.
