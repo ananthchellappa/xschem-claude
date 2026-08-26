@@ -1,6 +1,18 @@
 # 0612 — an OP-annotation session kills VcXsrv, with 0413's fix active
 
-STATUS: **OPEN — reproduced TWICE by the user on the real screen, 2026-08-22.**
+STATUS: **RESOLVED 2026-08-26 — NOT AN XSCHEM DEFECT. This is [0680](0680-reproducible-crash-descend-then-zoom-on-the-real-x-server.md).**
+The X server died of **GDI handle exhaustion under VcXsrv's composite-redirection
+window manager**, which is why it reproduced on the real screen and never on Xvfb —
+Xvfb has no composite WM. Root-caused 2026-08-25 with a three-run control (composite
+off: 0 failures, server up; composite on: 1303 `CreateDIBSection() failed`, server
+down) and a GDI sample showing 507 -> 10000 handles in 11 s with zero releases,
+terminating at the documented `GDIProcessHandleQuota`. Fixed by adding
+`-nocompositewm` to the user's `config.xlaunch`. **No xschem change was needed and
+none should be made for this.** Found by the backlog triage of 2026-08-26, which
+correctly read this file's status line and could not know the cause had been found
+under a different number.
+
+STATUS (original): **OPEN — reproduced TWICE by the user on the real screen, 2026-08-22.**
 Not reproducible on Xvfb. Related: **0413** (same symptom, different cause, marked
 FIXED and its fix verified active here), 0457(b), spec §S9b.
 
