@@ -35,12 +35,28 @@ check "R3 plain load after -readonly is editable again" [expr {[xschem get reado
 set fa [file join $dir a.sch] ; set fb [file join $dir b.sch]
 file copy -force $lib $fa ; file copy -force $lib $fb
 file attributes $fa -permissions 0644 ; file attributes $fb -permissions 0644
-xschem load $fa            ;# fa becomes recent, then we move off it so it is the "last opened" not-loaded
+set fc [file join $dir c.sch]
+file copy -force $lib $fc ; file attributes $fc -permissions 0644
+# The recents list is HARD-GATED OFF in a --nogui/--pipe session (no_recent_files, issue 0119 --
+# xinit.c sets it for every test harness), so a plain `xschem load` here records NOTHING. Feeding
+# the resolver that way left it reading the USER's persisted $USER_CONF_DIR/recent_files, and R10
+# then asserted whatever that file happened to hold on this machine -- a standing red that says
+# nothing about the code. Drive tctx::recentfile DIRECTLY: it is the variable get_lastopened reads,
+# and setting it writes no user file (write_recent_file stays gated).
+# NOTE the ORDER: fb is the HEAD and fb is what gets loaded, so returning fa REQUIRES the
+# skip-the-loaded-entry step to run. With fa at the head the check would pass without it.
+set tctx::recentfile [list $fb $fa]
 xschem load $fb
 check "R8 plain load of fb is editable" [expr {[xschem get readonly] == 0}] "(ro=[xschem get readonly])"
 set got [xschem load -lastopened]   ;# == the keyboard reopen path, WITHOUT an explicit -readonly
 check "R9 -lastopened (keyboard reopen) implies READ mode" [expr {[xschem get readonly] == 1}] "(ro=[xschem get readonly])"
-check "R10 -lastopened resolved to the prior file (fa)" [expr {[file tail $got] eq {a.sch}}] "(=> $got)"
+check "R10 -lastopened skips the loaded head (fb) and resolves to fa" [expr {[file tail $got] eq {a.sch}}] "(=> $got)"
+# Positive twin for R10 (issue 0839): the skip is CONDITIONAL, not an unconditional "never index 0".
+# With nothing in the list loaded, the head itself must come back.
+xschem load $fc
+set tctx::recentfile [list $fa $fb]
+set got2 [xschem load -lastopened]
+check "R10b -lastopened returns the HEAD when the head is not loaded" [expr {[file tail $got2] eq {a.sch}}] "(=> $got2)"
 
 # ---- (2) wiring: the reopen shortcuts carry -readonly; File > Open (file_chooser_place) does not ----
 proc slurp {p} { set fd [open $p r] ; set s [read $fd] ; close $fd ; return $s }
