@@ -597,7 +597,8 @@ Two further rules that fall out of the same measurement:
   `op_annot::devpath` with `string map`) are both accepted and give the same
   string. **`@path` is canonical** — C resolves it for free. The Tcl pass is
   `string map` and never `subst`: a template is user data, and `subst` would
-  execute any `[...]` in it. (Consequence: `string map` also rewrites a literal
+  execute any `[...]` in it. (And a *guarded* `subst` would too — see §6d: with
+  `-nocommands`, `$a([...])` still runs.) (Consequence: `string map` also rewrites a literal
   `$pathological`.)
 * `translate` runs a trailing `expr(…)` / `expr_eng(…)` / `tcleval(…)` pass
   (`token.c:5424-5432`; measured: `translate M1 {expr(1+1)}` → `2`), so a
@@ -2659,6 +2660,48 @@ cannot exist — and `::xschem::notify` returns `1` in every arm including one w
 on-screen sink whatsoever. That is issue **0675**, live. The only honest reads are
 `.ciw.l.t` text containment, `[xschem get top_path].statusbar.12 -text`, and a grep
 of the `--logdir` `Xschem.log` file.
+
+### ⚠ 6d. A path is DATA, and `subst` is NOT a sanitizer in ANY flag combination — measured 2026-08-25 (0812)
+
+Every raw-file path the annotation pipeline touches is still handed to a Tcl evaluator at
+HEAD: `save.c` `extra_rawfile()` builds `subst { <file> }` (six call sites), `draw.c`
+`node_token_split()` does the same with a graph `node=` field read out of a `.sch`, and
+`scheduler.c` splices paths into `regsub {^~/} {<path>} {<home>/}` at thirteen verbs. A
+filename containing `}` closes the brace group and the rest of the name **runs as Tcl** —
+measured `PWNED=1` on **18 of 18** entry points, including `xschem annotate_op` **with no
+argument**, where the payload lives in the *simulation directory* name and nobody typed a
+path.
+
+**The correction this spec needs**, because §4.2 and §4.3a already say "`string map`,
+never `subst`, a template is user data" and someone will reasonably read that as
+"a guarded `subst` would be fine":
+
+> **A guarded `subst` is not fine.** `subst -nobackslashes -nocommands` suppresses only
+> *top-level* command substitution. A command substitution inside a variable **array
+> index** — `$name([...])` — still executes, because a variable reference's index is
+> itself fully substituted. Measured in `tclsh 8.6.13`: `subst -nobackslashes -nocommands
+> {$a([set ::S 1])}` sets `::S`, and on a real XSCHEM binary a raw file named
+> `$a([exec touch OWNED]).raw` **ran `touch`** — for a path that did not exist on disk,
+> because the resolver runs before any `stat()`.
+
+So the rule for this feature, and for any later step that resolves a path, a net name or a
+property value: **expand what you recognise, in C** (`$name` / `${name}` / `$ns::name` via
+`Tcl_GetVar2Ex`, everything else copied literally), or pass the string to Tcl as a **list
+element or a variable** (`save.c` `backannot_refuse_digital()` is the in-tree precedent).
+Never as script text, and never through `subst`.
+
+Two constraints on the eventual fix, both measured: **variable expansion must survive**
+(nine `draw.c`/`callback.c` sites hand `extra_rawfile()` a graph `rawfile=` attribute
+unsubstituted and the shipped corpus spells it `$netlist_dir/…`), and **one resolver must
+serve read/switch/clear** and be idempotent on its own output, because the `extra_raw_arr`
+registry is keyed by `strcmp()` on what the read arm stored and `annotate_op` feeds an
+already-resolved `xctx->raw->rawfile` back through the clear arm.
+
+A fix was built, measured green on 32 new checks and all five sabotage variants, and
+**reverted** when the adversary pass drove the array-index shape: `doc/claude/issues/0812-*.md`
+§1-§10 (§4 binding on the retry), diff at `doc/claude/evidence/0812-attempt1-reverted.patch.txt`.
+Related and also live: **0815** (`compare_schematics` segfaults under `--nogui`), **0816**
+(nine more `regsub` splices), **0817** (the `tclvareval` brace groups).
 
 ---
 

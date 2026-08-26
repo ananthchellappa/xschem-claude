@@ -8,6 +8,80 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 ---
 
+## ❌ 0812 — **ATTEMPTED, EVERY TIER GREEN, ALL FIVE SABOTAGE VARIANTS CAUGHT, ADVERSARY REFUTED IT, REVERTED 2026-08-25 (status F)**. THE CODE INJECTION IS STILL LIVE
+
+**Not a plan step.** `src/` and `tests/` are byte-identical to the commit before the
+attempt (rebuilt and re-verified: T1 32/32 fail=0, T2 6/6, `test_op_annot` 355,
+`test_raw_read_dispatch` 51, `test_node_token_split` 168, `test_annot_show_menu` 22,
+`test_ase_launch` 44 — all back at the baseline of record on `:99` with openbox live).
+The reverted diff is kept at **`doc/claude/evidence/0812-attempt1-reverted.patch.txt`**
+and the full record is **`doc/claude/issues/0812-*.md` §1-§10; §4 is binding on whoever
+retries it.**
+
+### ⚠⚠ THE ONE FACT THAT MUST PROPAGATE, TO EVERY STEP THAT TOUCHES A PATH OR A NAME
+
+**`subst -nobackslashes -nocommands` IS NOT A SANITIZER.** `-nocommands` suppresses only
+*top-level* `[...]`. A command substitution inside a **variable array index** —
+`$name([...])` — still runs, because the index of a variable reference is itself fully
+substituted. Measured, `tclsh 8.6.13`, brace-quoted so the outer parse cannot be blamed:
+
+```
+array-index            S=1  -> ERR: can't read "a(1)": no such variable
+array-index-ns         S=1  -> ERR: can't read "::ns::a(1)": no such variable
+braced-var             S=0  -> ERR: can't read "[set ::S 1]": no such variable
+top-level-cmd          S=0  -> [set ::S 1]
+```
+
+And on the attempt's own binary, a **real file** named `$a([exec<TAB>touch<TAB><dir>/OWNED]).raw`:
+
+```
+AIDX-rawread     PWNED=1  r=1
+AIDX-annotate_op PWNED=1  r=::op_annot::text
+AIDX-exec        OWNED exists=1        (the file did NOT exist on disk — the resolver
+                                        runs before any stat(), so a non-existent name
+                                        is enough to run exec touch)
+```
+
+The attempt closed 15 of the repro's 18 probes and fixed four *broken* ordinary cases
+(`[`, `\`, `$undefined`, `~/` through `raw read`) — and was still a full local ACE. **The
+only safe shape is an explicit C-side expander**: scan for `$name` / `${name}` /
+`$ns::name`, look each up with `Tcl_GetVar2Ex`, copy everything else literally, and never
+hand the string to any evaluator. See 0812 §4.
+
+### WHAT A LATER CREW MUST CARRY
+
+1. **Variable expansion must survive any fix.** Nine `draw.c`/`callback.c` sites hand
+   `extra_rawfile()` a graph `rawfile=` attribute **unsubstituted**, and the shipped
+   corpus spells it `$netlist_dir/…` (`xschem_library/ngspice/autozero_comp.sch`,
+   `.../solar_panel.sch`, `xschem_library/examples/cmos_example.sch`). 0812's own
+   sentence *"Either drop it (the callers already have resolved paths)"* is **refuted**.
+2. **One resolver, called once, idempotent on its own output.** The `extra_raw_arr`
+   registry is keyed by `strcmp()` on what the READ arm stored; `annotate_op` feeds an
+   already-resolved `xctx->raw->rawfile` back through the CLEAR arm; `src/ase.tcl` does a
+   read/clear pair on one path and is the first thing that breaks if the arms disagree.
+3. **Three payload shapes, and they are not interchangeable.** `q}; set ::SC_PWNED 1;
+   list {a.raw` for the `subst` sink; `x} {y} {z}; set ::SC_PWNED 1; list {a` (no slash)
+   for the `regsub` sink; `$a([set ::SC_PWNED 1]).raw` for the array-index sink. Add an
+   `[exec …]` row asserting a **host side effect**, and a row on a path that does not
+   exist. The crew's 32 new rows used only the first two shapes and were **ALL PASS with
+   the defect live**.
+4. **A full sabotage matrix proves the tests bind the code you wrote — not the code you
+   did not think to write.** All five variants were caught while the fix was exploitable.
+5. **Four ordinary cases are broken at HEAD and are defects in their own right**: through
+   `xschem raw read`, `br[1].raw` → 0 with the filename silently **blanked**,
+   `back\slash.raw` → 0 (opened as `backslash.raw`), `pay$undefined.raw` → 0 blanked,
+   `~/probe.raw` → 0. The blanking is `my_strncpy` of a **failed** `tclresult()`. Fix them
+   with the resolver; do **not** "fix" the injection by refusing unusual filenames.
+6. **Verify and Sabotage must not run concurrently.** Verify-A's first T3 batch showed
+   8/8 suites red with SAB-4's exact signature because a Sabotage agent rebuilt the binary
+   underneath it mid-batch (`src/xschem` mtime 17:09 → 17:29). Bracket every measured
+   batch with an md5 of the binary.
+7. **`xschem compare_schematics <path>` segfaults under `--nogui`** (exit 139) at HEAD,
+   found while probing — issue **0815**, not injection, untouched by all of this.
+
+---
+
+
 ## ❌ 0807 — **ATTEMPTED, EVERY TIER GREEN, WHOLE SABOTAGE MATRIX CAUGHT, AND REVERTED 2026-08-25 (status F)**. THE DATA LOSS IS STILL LIVE
 
 **Not a plan step.** `src/`, `tests/` and `utils/` are byte-identical to `56c861de`.
@@ -101,7 +175,10 @@ green because only the *first* annotate after a `raw_read` is affected.
 * **0812** — a crafted filename **executes Tcl** through `extra_rawfile()`'s
   `tclvareval("subst {", file, "}")`. Measured `PWNED=1` through `annotate_op` itself.
   `scheduler.c`'s claim that this hazard is closed for `annotate_op` is true of its own
-  line and **false one frame down**.
+  line and **false one frame down**. ⚠ **Attempted and reverted 2026-08-25 — still live,
+  and the sweep since found it wider: 18/18 entry points, two sinks, and a seventh site in
+  `draw.c` `node_token_split()` that fires on a plain `xschem load evil.sch` under X. See
+  the ❌ 0812 block at the top of this file; 0815, 0816 and 0817 were filed off it.**
 * **0813** — the `raw_read` verb is the same destroy-then-read shape with a **wider**
   blast radius (it clears the whole registry first).
 
