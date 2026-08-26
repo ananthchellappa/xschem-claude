@@ -153,6 +153,21 @@ proc cadence::_annot_raw_candidate {} {
       [llength [info commands ::ase::last_rawfile]]} {
     if {![catch {::ase::session_for_current} s] && [llength $s] >= 2} {
       if {![catch {::ase::last_rawfile [lindex $s 0]} p] && $p ne {}} {
+        ## ⚠ issue 0838: this chord is the OTHER door into the same data, and it
+        ## has no session gate of any kind (deliberately — see the file header),
+        ## so greying ASE-L's `Results > Annotate` while leaving `6` live would
+        ## make that menu a decoration. The session says whether its raw still
+        ## describes the deck on disk; a stale one is reported, never annotated.
+        ##
+        ## ⚠ AND IT DOES NOT FALL THROUGH TO THE netlist_dir ARM. That arm would
+        ## reach for `$netlist_dir/$cell.raw` — very often the SAME stale file
+        ## under another name — and turn a refusal into a silent success. When a
+        ## session owns this sheet, its answer is the answer.
+        set stale 0
+        if {[llength [info commands ::ase::results_stale]]} {
+          catch {set stale [::ase::results_stale [lindex $s 0]]}
+        }
+        if {$stale} { return [list $p [lindex $s 1] stale] }
         return [list $p [lindex $s 1] ase]
       }
     }
@@ -259,6 +274,8 @@ proc cadence::_annot_msg {mask state path types} {
     failed  { append m " -- COULD NOT LOAD $path" }
     noraw   { append m " -- NO RAW FILE: $path" }
     nopath  { append m " -- NO RAW FILE for this cell" }
+    stale   { append m " -- STALE RESULTS NOT USED: [file tail $path] is older than\
+                        the deck it describes; the last run did not produce it. Re-run." }
   }
   if {$state ne {off} && [llength $types]} {
     set shown $types
@@ -321,7 +338,12 @@ proc cadence::annot_mode {mode} {
       set cand [cadence::_annot_raw_candidate]
       set path [lindex $cand 0]
       set lvl  [lindex $cand 1]
-      if {$path eq {}} {
+      if {[lindex $cand 2] eq {stale}} {
+        ## issue 0838. The path is REPORTED (the user needs to know which file
+        ## was refused) but nothing is loaded and the mask, already written
+        ## above, simply renders the `-` placeholders invariant I3 asks for.
+        set state stale
+      } elseif {$path eq {}} {
         set state nopath
       } elseif {![file exists $path]} {
         set state noraw

@@ -1,6 +1,13 @@
 # 0838 — a FAILED run leaves `Results > Annotate` live, and annotating then paints the PREVIOUS run's numbers
 
-Status: **OPEN — measured on the real bench 2026-08-26, reported by the user.**
+Status: **FIXED 2026-08-26.** The predicate is now
+`ase::results_stale` (`src/ase.tcl`) and it gates all three doors: the menu
+greying, the menu tick's raw-attach, and the `6`/`Alt-6` chords.
+`tests/headless/test_results_freshness.tcl`, 20 checks, ALL PASS; five sabotages
+red the right rows including the over-tightening direction. Verified against the
+user's OWN artifacts: `results_stale = 1`, `has_results = 0`, `last_rawfile`
+still non-empty. Originally measured on the real bench 2026-08-26, reported by
+the user.
 Severity: **HIGH. Silent wrong data.** The tool showed operating-point numbers for
 a netlist that had just failed to simulate, with no visual difference from a good
 run. This is the worst failure class an analog tool has.
@@ -86,6 +93,42 @@ got one; nobody asked whether file existence answers it.
 `variable last_run`, which is (a) a **single** namespace variable, not per
 session, and (b) **in memory only**. It does not survive the relaunch, which is
 the case the user hit twice. The durable evidence has to come off the filesystem.
+
+## As fixed (2026-08-26)
+
+The predicate is spelled **`ase::results_stale`**, a POSITIVE claim, not
+`results_current`. That is not cosmetic. A `current`-shaped predicate has to
+answer 0 for *"unknown session key"*, *"no state dict"*, *"unreadable mtime"* —
+and 0 there means REFUSE, so it silently conflates *"I don't know"* with *"it's
+stale"*. Measured during implementation: the `current` spelling made
+`cadence::_annot_raw_candidate` report `stale` for any session whose state it
+could not resolve, which reddened `test_op_annot` row N11 (whose fixture stubs
+`ase::last_rawfile` but not the new seam). Two callers want opposite defaults
+from the unknown case and only the positive spelling gives both what they want.
+
+Three doors, one predicate:
+
+| door | file | behaviour on a stale raw |
+|---|---|---|
+| menu greying | `ase::has_results` → `ase.tcl` | both entries **disabled** |
+| the tick's raw-attach | `ase::ui::annot_ensure_loaded` → `ase_window.tcl` | refuses, and `ase::echo`s why |
+| the `6` / `Alt-6` chords | `cadence::_annot_raw_candidate` → `annot_mode.tcl` | new `stale` state + status message |
+
+⚠ **The chord door does NOT fall through to the `netlist_dir` arm on a refusal.**
+That arm reaches for `$netlist_dir/$cell.raw` — very often the same stale file
+under another name — and falling through would have turned the refusal into a
+silent success.
+
+⚠ **`ase::last_rawfile` was deliberately left LOOSE.** Its three other callers
+(`ase_window.tcl` :2118, :4035, :4583) are all waveform-plotting paths, and
+plotting the last good run's traces after a failed netlist is legitimate.
+Refusing that would have traded this defect for a regression. Row **W1** pins it:
+`last_rawfile` still returns the stale raw while `has_results` refuses the very
+same file.
+
+`ase::deck_file` was added as the one owner of `<rundir>/<cell>_ase.spice`, and
+`ase::run`'s render site (`ase.tcl:995`) now goes through it, so the compared
+path cannot drift from the written one.
 
 ## Fix — the invariant
 

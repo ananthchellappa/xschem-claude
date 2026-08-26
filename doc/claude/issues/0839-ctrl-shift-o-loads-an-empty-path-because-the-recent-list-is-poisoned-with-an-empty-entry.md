@@ -1,6 +1,9 @@
 # 0839 — `Ctrl+Shift+O` intermittently loads nothing: the recent-files list is poisoned with an EMPTY entry, and it poisons itself
 
-Status: **OPEN — measured 2026-08-26, reported by the user.** Two defects, one
+Status: **FIXED 2026-08-26, commit `56f261eb`** — four guards,
+`tests/headless/test_reopen_recent.tcl` 16 checks ALL PASS in-tree and on `:99`,
+each guard independently falsified (SB1→R1/R2, SB2→R5/R5b, SB3→R7/R8/R8b,
+SB4→R9). Measured 2026-08-26, reported by the user. Two defects, one
 self-perpetuating loop. Related: 0022 (brace-safe load), 0119 (`update_recent_files`
 gating).
 

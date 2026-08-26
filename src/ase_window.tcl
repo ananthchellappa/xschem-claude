@@ -2322,6 +2322,22 @@ proc ase::ui::annot_ensure_loaded {key} {
   set path {}
   catch {set path [ase::last_rawfile $key]}
   if {$path eq {}} { return }
+  # ⚠ issue 0838: A STALE RAW IS NOT ATTACHED. `last_rawfile` answers "the raw
+  # path, if the file exists" and deliberately stays that loose — the three
+  # WAVEFORM callers (:2118, :4035, :4583) are right to plot an old raw, and
+  # refusing to plot last good run's traces after a failed netlist would be a
+  # regression. ANNOTATION is the opposite case: a number painted onto a
+  # schematic carries no provenance and no timestamp, so an out-of-date one is
+  # indistinguishable from a live one. This is the door the user came through —
+  # a failed run, then `6`, then id=/gm= from a run five minutes and one netlist
+  # earlier. Ask the named predicate, and SAY SO rather than silently drawing
+  # nothing.
+  set stale 0
+  catch {set stale [ase::results_stale $key]}
+  if {$stale} {
+    catch {::ase::echo "ase: [file tail $path] is OLDER than the deck it describes — the last run did not produce it. Not annotating stale results; re-run first." error}
+    return
+  }
   # the hierarchy LEVEL the raw refers to, from the same seam
   # cadence::_annot_raw_candidate uses (utils/annot_mode.tcl), so the two cannot
   # disagree about level semantics. Unknown -> let annotate_op decide.

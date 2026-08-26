@@ -471,6 +471,22 @@ proc ase::rundir {state} {
   return [set_netlist_dir 0]
 }
 
+# <rundir>/<cell>_ase.spice — the deck ase::run writes immediately before it
+# launches the simulator (:995 renders into exactly this path, through this
+# proc, so the two cannot drift). Named because issue 0838 needs to COMPARE it
+# with the raw, and a second inline `file join [ase::rundir …] ${cell}_ase.spice`
+# would go stale the day the naming changes.
+#
+# {} rather than an error for a state with no cell: every caller here is a
+# predicate on a menu -postcommand or a key press, and neither may raise.
+proc ase::deck_file {state} {
+  if {$state eq {} || ![dict exists $state design cell]} { return {} }
+  set cell [dict get $state design cell]
+  set rd {}
+  if {[catch {ase::rundir $state} rd]} { return {} }
+  return [file join $rd ${cell}_ase.spice]
+}
+
 # --- The op_annot device-OP save cards: capture at netlist, consume at render -
 #
 # doc/claude/specs/op_annotation.md section 3 + plan step S4, issue 0617. The
@@ -992,7 +1008,7 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   }
 
   set deck [$render_deck $state $netlist_text]
-  set deckpath [file join $rd ${cell}_ase.spice]
+  set deckpath [ase::deck_file $state]      ;# ONE owner of this path (issue 0838)
   set f [open $deckpath w]
   puts -nonewline $f $deck
   close $f
@@ -1265,7 +1281,71 @@ proc ase::last_rawfile {key} {
 # already be live, which would grey the control precisely when the user wants to
 # turn annotation ON.
 proc ase::has_results {key} {
-  return [expr {[ase::last_rawfile $key] ne {}}]
+  if {[ase::last_rawfile $key] eq {}} { return 0 }
+  return [expr {[ase::results_stale $key] ? 0 : 1}]
+}
+
+# "Session `key`'s raw is OLDER than the deck it claims to describe" — issue 0838.
+#
+# A raw file DESCRIBES A DECK. It is usable as this session's results iff it is
+# at least as new as the deck it claims to describe:
+#
+#     mtime(<rundir>/<cell>_ase.raw) >= mtime(<rundir>/<cell>_ase.spice)
+#
+# ⚠ WHY THIS EXISTS. `has_results` used to be `[file isfile <raw>]` and nothing
+# more, and the user hit the consequence on the bench: with every analysis
+# unticked, `Netlist and Run` wrote a fresh deck, ngspice refused it ("Error:
+# incomplete or empty netlist … no simulations run!", exit 1) and left the
+# PREVIOUS run's raw untouched on disk. File existence still said "has results",
+# so `Results > Annotate` stayed live and annotating painted 08:52's operating
+# point onto 08:57's netlist — with nothing on screen to distinguish it from a
+# good run. Measured: raw 5m28s OLDER than the deck. Silent wrong data is the
+# worst failure this tool has, and file existence cannot see it.
+#
+# ⚠ THE EXIT CODE CANNOT DO THIS JOB. ase::run_finished does record it, but into
+# a SINGLE namespace variable (ase.tcl:61 `variable last_run`) that is neither
+# per-session nor persistent — so it is gone the moment xschem restarts, which is
+# the case the user hit twice. The evidence has to come off the filesystem.
+#
+# ⚠ NO DECK -> CURRENT, deliberately. A rundir holding a raw and no deck is a
+# saved-results session; there is nothing to contradict the raw, and refusing it
+# would break the legitimate "open last week's results and read them" flow that
+# Cadence also allows. The test only ever fires when a deck EXISTS and is NEWER.
+#
+# ⚠ THIS IS NOT A CONTENT CHECK, and must not be mistaken for one. A raw that is
+# newer than its deck can still be a well-formed ZERO-POINT file — ngspice writes
+# `No. Points: 0` at the start of a run and backfills at the end (issue 0299) —
+# and reading one crashes update_op (issue 0836). 0838 guards what is OFFERED;
+# 0836 guards what is READ. The two compose and neither replaces the other.
+# ASE's own decks `write` the raw from inside .control at the END of the run, so
+# the streaming case does not arise on this route; it does on hand-written ones.
+# ⚠ IT IS A POSITIVE CLAIM, AND THAT IS WHY IT IS SPELLED "stale" RATHER THAN
+# "current". Every arm that cannot JUDGE -- unknown session key, no state, no
+# deck on disk, an unreadable mtime -- answers 0, "I have no evidence against
+# this raw", never "condemn it". A `current`-shaped predicate has to answer 0 in
+# those same cases and 0 there means REFUSE, so it silently conflates "I don't
+# know" with "it's stale" -- measured: it made cadence::_annot_raw_candidate
+# report `stale` for any session whose state it could not resolve. Two callers
+# want opposite defaults from the unknown case and only the positive spelling
+# gives both of them what they want:
+#
+#   has_results        -- last_rawfile has ALREADY answered the existence half,
+#                         so an unresolvable session is 0 there regardless;
+#   the `6` chord      -- holds a real path from a real session and must not
+#                         refuse it on an inability to look up a state dict.
+proc ase::results_stale {key} {
+  set state [ase::session_state $key]
+  if {$state eq {}} { return 0 }
+  set rf {}
+  if {[catch {ase::last_rawfile $key} rf]} { return 0 }
+  if {$rf eq {}} { return 0 }
+  set deck [ase::deck_file $state]
+  if {$deck eq {} || ![file isfile $deck]} { return 0 }   ;# nothing to contradict it
+  set rt 0
+  set dt 0
+  if {[catch {file mtime $rf} rt]}   { return 0 }
+  if {[catch {file mtime $deck} dt]} { return 0 }
+  return [expr {$rt < $dt}]
 }
 
 # --- Mixed-signal co-simulation (spec section E) -----------------------------
