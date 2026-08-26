@@ -123,3 +123,38 @@ census before shipping, not an assumption.
 3. The `.sch` quoting fact of §4 is exercised, so the row cannot pass by truncation.
 4. `raw_is_loaded` (`:4842`) is dealt with as 0821 decides — its zero callers make
    deletion defensible, but that is 0821's call, not this issue's.
+
+---
+
+## 7. The verification harness, and a trap inside it
+
+Built by the lead 2026-08-25 21:58, in the session scratchpad under `inj/verify/`:
+`mkfix.sh` (writes both fixtures), `verify.tcl` (attack), `counter.tcl`
+(counterweight). Baselined at HEAD, where it must read:
+
+```
+ATTACK_VERDICT=PWNED  distinct_fired=3  (OWNED_AUTOLOAD OWNED_RAWFILE OWNED_SIMTYPE)
+COUNTERWEIGHT=PASS
+```
+
+⚠ **The first draft of `verify.tcl` reported `ATTACK_VERDICT=CLEAN fired=0` on
+the same run whose own output listed three fired payloads.** The verdict was
+computed after the `clean` that resets state between stages, so it measured the
+cleanup rather than the defect. It was caught **only because the probe was
+baselined against a known-positive first** — at HEAD, where the answer had to be
+PWNED. Against a patched tree it would have printed a confident false green over
+a live hole.
+
+Two rules follow, and they are cheap:
+
+1. **Latch the verdict at each stage, before any cleanup.** `verify.tcl` now
+   accumulates into `::TOTAL` at the moment of measurement.
+2. **Baseline every probe against a tree where you already know the answer.** A
+   probe that has only ever been run against the fix cannot distinguish "fixed"
+   from "broken probe". This is the same discipline as a sabotage matrix, applied
+   to the measuring instrument instead of the code.
+
+Also recorded: `graph_fill_listbox` **is** defined under `--nogui`, but calling it
+fires nothing — it reaches `.graphdialog.center.left.search get` and throws before
+the substitutions. So **stage 1 (replaying the three reads directly) is the
+load-bearing test**, and a stage-2 skip or silence must never be read as a pass.
