@@ -12,7 +12,9 @@ Every measurement quoted below was taken on branch `annotate` (branched from
 
 **Not a plan step.** The record is **`doc/claude/issues/0812-*.md`** (§1-§10 are attempt 1;
 **§11-§17 are the retry** — decisions with ladder rungs, the sabotage matrix including the
-predicted red that did NOT appear, and what is still open). Attempt 1's reverted diff is
+predicted red that did NOT appear, and what is still open; **§18 is the late adversary
+pass**, which did NOT refute the fix but DID refute two of its comments and found a live
+Tcl-side sibling, issue **0821**). Attempt 1's reverted diff is
 still at `doc/claude/evidence/0812-attempt1-reverted.patch.txt`; everything in it except
 its sanitizer core was ported verbatim and is now shipped.
 
@@ -46,11 +48,22 @@ literal. **A sanitizer you have reasoned about but not attacked is not a sanitiz
 |---|---|---|
 | `expand_tilde(s,dest,n)` | leading `~/` → `home_dir`, pure C, nothing else | the drop-in for every remaining `regsub {^~/} {…} {…}` + `tcleval()` splice — **issue 0816**, nine in `scheduler.c` (2980, 7611, 7767, 7835, 8132, 8989, 9028, 9831, 11183) + `xinit.c:3235` |
 | `expand_tcl_vars(s,dest,n)` | a **C byte scanner**: `$name` / `${name}` / `$ns::name` looked up with `Tcl_GetVar2Ex(..., TCL_GLOBAL_ONLY)`, **every** other byte copied verbatim (`{ } [ ] ; \ ( )` included), `(` never an index opener, a value never rescanned, an undefined reference copied as its own literal text | the drop-in wherever a `tclvareval("subst {", x, "}")` exists only to expand variables — **issue 0817** |
-| `resolve_rawfile_path(s,dest,n)` | the two composed; **THE** raw-file path resolver, idempotent on its own output | the raw-file family only |
+| `resolve_rawfile_path(s,dest,n)` | the two composed; **THE** raw-file path resolver. Idempotent on every spelling that ships — **not in general** (issue 0820: a defined variable whose VALUE contains a `$` expands on a second pass, and a graph `%` rawfile field *is* resolved twice) | the raw-file family only |
 
-**The only safety claim any comment makes about them is grep-checkable**: the sole Tcl API
-the resolver calls is `Tcl_GetVar2Ex`, a hash lookup. Write your claim that way or do not
-write it — attempt 1 was reverted for a comment, not only for a bug.
+**The safety claim any comment makes about them must be grep-checkable**: the resolver
+**PARSES NOTHING** and the sole Tcl API it calls is `Tcl_GetVar2Ex`. Write your claim that
+way or do not write it — attempt 1 was reverted for a comment, not only for a bug.
+
+⚠ **AND DO NOT WRITE "`Tcl_GetVar2Ex`, A HASH LOOKUP. THERE IS NO EVALUATOR IN THE PATH".**
+The retry shipped exactly that sentence and the adversary refuted it: `Tcl_GetVar2Ex` is a
+variable **read**, and a `trace … read` on the named global is an arbitrary Tcl script that
+runs on it *and* can rewrite the value the read returns (measured: `exec touch` created a
+host file and the resolved path became `/etc/plain.raw`). The true statement is *"this
+resolver adds no evaluator; the only evaluator it can still reach is one the user attached
+with `trace … read`, and none ships"* — issue **0819**, pinned by **GUARD3** in
+`tests/headless/test_raw_read_dispatch.tcl`, which scans `src/*.tcl` for a read trace.
+**That is two consecutive attempts at this fix undone by a comment claiming more than the
+code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence itself.
 
 ### WHAT A LATER CREW MUST CARRY
 
@@ -87,15 +100,34 @@ write it — attempt 1 was reverted for a comment, not only for a bug.
    Bracket every measured batch with an `md5sum src/xschem` before and after — the retry's
    Verify-A did, discarded the poisoned batch, and re-measured.
 8. **`(` is no longer an array-index opener in a rawfile spelling.** `$a(1)` now means the
-   value of `a` followed by the literal `(1)`. Measured cost in the shipped corpus: zero
-   (`grep -rn '\$env(' --include=*.sch --include=*.sym` is empty tree-wide). This is a
-   **user-visible** change and it is the ruling this step returned as status **E** — see
-   0812 §16.
+   value of `a` followed by the literal `(1)` — **and so `$env(HOME)/x.raw` no longer
+   resolves** (measured `rc=0`; it worked at HEAD). Measured cost in the shipped corpus:
+   still zero (`grep -rn '\$env(' --include=*.sch --include=*.sym` is empty tree-wide).
+   This is a **user-visible** change and it is the ruling this step returned as status
+   **E** — see 0812 §16. If you reuse `expand_tcl_vars()` for 0817, you inherit this
+   decision; say so in your own write-up rather than letting it spread silently.
 9. **Still open in this family**: **0816** (nine `regsub` splices outside the raw family +
    `xinit.c`), **0817** (the `tclvareval` brace groups of file-derived strings), **0818**
    (the top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a
-   `$var`-spelled path — deliberate, decision D5), and **0815**
-   (`xschem compare_schematics <path>` segfaults under `--nogui`, not injection).
+   `$var`-spelled path — deliberate, decision D5), **0819** (the read-trace edge above),
+   **0820** (the double-pass non-idempotence above), **0821** (⚠ **a LIVE Tcl-side splice
+   of the same shape**: `src/xschem.tcl:4775` `graph_fill_listbox` runs
+   `eval uplevel #0 {subst $rawfile}` over a `.sch` `rawfile=` attribute — measured
+   executing, 7 call sites, the Graph dialog; `:4842` `raw_is_loaded` is the same shape and
+   is dead code, delete it), and **0815** (`xschem compare_schematics <path>` segfaults
+   under `--nogui`, not injection). **0821 belongs in the 0816/0817 sweep** — it is the
+   same defect class, in Tcl, and it is reachable by opening a dialog on someone else's
+   schematic.
+10. **⚠ REBUILD AT THE TOP OF YOUR ITEM.** The 0812-retry write-up corrected three C
+   comment blocks (`util.c`, `draw.c`, `xschem.h`) and could not build — crew rule 2 gives
+   `make` to the Implement agent alone — so `find src -maxdepth 1 -newer src/xschem`
+   reports **3 files**. The binary (`md5 cbf8784a…`) is **not** stale; the diff is
+   comment-only and the receipt is in 0812 §18.2. One `make` restores the 0-file invariant.
+11. **Run the adversary pass BEFORE the write-up agent.** On the retry it ran *after* the
+   commit landed. It did not refute the fix — but it refuted two of its comments and found
+   0821, which cost a second write-up cycle and a second round of source edits on a
+   "finished" item. An adversary pass is what refuted attempt 1 while four suites were ALL
+   PASS; it is not an optional garnish and it is not useful late.
 
 ---
 

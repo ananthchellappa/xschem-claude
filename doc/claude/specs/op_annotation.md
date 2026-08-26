@@ -2165,6 +2165,7 @@ authority has signed it off*.
 | **0664+0665+0666** | ratification | **a notice channel failure now speaks TWO different sentences, and the choice is measured.** When the live `::xschem::notify` IS the log-only bootstrap the user gets the golden `NOTICE CHANNEL DEGRADED` line; when it is the full channel and merely *raised*, the user gets a **new** `NOTICE CHANNEL FAULT` line on its own one-shot latch, so a fault can never eat the announcement that belongs to a real degradation (at HEAD it did: the false positive burnt the latch and the genuine degradation announced nothing). Two rulings are wanted. **(a)** Is a second marker right, or should a live-channel raise be **silent** (0423's standing objection says no: a silent continue hides the problem) or re-use the DEGRADED marker (rejected — `NTD1`/`PS20` assert its absence in the healthy case and `NTD4`/`PS23` count exactly one, so re-use breaks four committed rows and re-tells 0664's lie in a new voice)? **(b)** With **no durable log open** (`--nolog`, or `--nogui` with no `--logdir`) the DEGRADED sentence now says *"no durable log is open … so notices reach STDERR ONLY from here on"* instead of *"notices are LOG-ONLY"* — is naming stderr right, when stderr is deliberately **not** counted as a sink (0658 D9)? ⚠ One scope fact a ruling needs: the discriminator measures **proc identity, not sink reachability**, so a `ciw.tcl` failing between `:256` and `:464` is announced as a FAULT while the CIW pane is dead for the whole session (issue **0675**). Implemented as ruled pending the answer. |
 | **0679** | ratification | **the pasteable remedy now REPORTS FAILURE INSTEAD OF FABRICATING SUCCESS, and the shape of that report is the unratified part.** `ase::ui::save_all_apply` used to end in a hardcoded `return 1`; it now returns `ase::session_update`'s answer through `ase::ui::save_all_commit` (`src/ase_window.tcl:3240`), and on failure echoes **one** `error`-tagged sentence naming the key (`ase: no ASE-L session is open under '<key>'; the Save All settings were NOT applied.`). Two questions. **(a)** When the pasted `ase::ui::save_op_params_on <key>` cannot find a session, should it **return 0 and echo one line** — as shipped — or **RAISE**, so `ciw_exec` red-tags it through `ciw_echo $res error` (`src/ciw.tcl:602-603`)? Raising was rejected at rung L3 because it turns a value-returning proc into a throwing one, needs `catch` at every future caller including `save_all_ok`, 0666 already records raises leaking out of the echo family, and it lands in the same `#!` error-to-log path where `test_ciw` is already 1-red at HEAD. **(b)** `ase::ui::save_all_ok` now returns the rc but **still closes the dialog** on a failed apply — the alternative, holding it open, was rejected because a user cannot repair a session that is gone from inside that dialog. Implemented as ruled, pending the answer. |
 | **0692** | ratification, **RESTATED 2026-08-25 after 0695+0696 shipped** (rule debts dedupe by id — the row was re-added with this correction, NOT discharged) | **an OPEN `Save All` dialog RECONCILES a race instead of reverting it, and it does so SILENTLY.** `ase::ui::save_all_resolve` writes, per field, the user's value for a box they **touched** and the **LIVE** value for one they did not — so a write landing behind the open dialog (the pasted `save_op_params_on` remedy is exactly such a writer since 0679) is no longer undone by OK, and ESC no longer claims it "was NOT applied". **⚠ THE HALF THAT MADE THIS ALARMING IS NOW FIXED, WHICH SHARPENS THE QUESTION RATHER THAN ANSWERING IT:** sub-question (c) below was *"an open dialog can DISPLAY a ticked box while OK writes it OFF"* — that is **issue 0695, fixed 2026-08-25**. The boxes now FOLLOW the live value for any field the user has not touched (`save_all_refresh`, painted from the very `save_all_resolve` dict OK will write), so **the user can SEE the race resolve** instead of pressing OK on a box that disagrees with the action; and the ESC arm stopped reporting a discard for a setting that DID apply (**0696**, `save_all_discarded` = touched AND still differing from live). Four questions, one ruling, and only you can settle them. **(a)** Should the tool **SAY the dialog raced** — a word, a highlight, anything — or is a checkbutton that silently moves under the user's eyes enough? **(b)** The reverse conflict — the user hand-**unticks** a box while an external write ticks it — is STILL resolved in the user's favour, silently; announce it? **(c)** ~~an open dialog can show ON and write OFF~~ **ANSWERED BY 0695** — replaced by its successor: **is a checkbutton that MOVES WHILE YOU ARE LOOKING AT IT acceptable at all**, or should an untouched box the live state contradicts be *flagged* rather than moved? **(d)** ⚠ **ANSWERED BY MEASUREMENT, AND THIS ROW'S OLD WORDING SAID THE OPPOSITE.** It used to read: *"a **net-zero** hand gesture (tick then untick) returns the record to the seed, so the field reads as untouched and the live value wins over the box the user is looking at"*. Since 0695 **"touched" is an EVENT on the widget, not a value diff**, so a net-zero gesture counts as TOUCHED and **the box the user is looking at wins over the live value**. That was not a preference: with a box that can move underneath the user, a value diff makes the user's own hand tick read as untouched and **silently discards it** (`H2`: `touched={}` → resolve answers `0` → `gate_after_ok=0`). Ratify the reversal, or say which way it should go. Rejected at rung L2: "re-cleaning" a touched field once live catches up (it re-opens `H2` for OK), and painting `save_all_current` instead of `save_all_resolve` (two independent definitions of the dialog's meaning — invariant I1's silent-failure mode). Earlier and still rejected: option 1, re-seeding inside `save_all_commit` — a widget side effect inside the shared writer the remedy calls, and it would not have covered `Session > Load State` at all. |
+| **0812** | ratification, **NEW 2026-08-25** | **a raw-file path stopped being Tcl.** The injection is fixed (§6d) and the fix is a C byte scanner, so `(` is **no longer an array-index opener** in a rawfile spelling: `$a(1)` now means the value of `a` followed by a literal `(1)`, **and `$env(HOME)/x.raw` no longer resolves** where it did at HEAD (measured `rc=0`). Nothing in the shipped corpus uses either spelling (`grep -rn '\$env(' --include=*.sch --include=*.sym` is empty tree-wide), and excluding parens from every name is what makes *"no array index is ever parsed"* a property of the scanner rather than a claim about a Tcl entry point — which is precisely what attempt 1 could not state truthfully. **Should a rawfile path keep Tcl array-element syntax?** Implemented as *dropped*, at rung **L2**, pending the answer. Three further user-visible changes come with it and are **not** in question: odd-but-legal names (`br[1].raw`, `back\slash.raw`, `pay$undefined.raw`, `~/x.raw`) start working where they were silently blanked; a `\` is no longer eaten; and `extra_rawfile()` no longer leaves the resolved path in the Tcl interpreter result (no caller read it). Issue **0812** §16. |
 
 **Why these accumulated rather than blocking.** Every one of them was found by a
 step that had already shipped its behaviour, under decision-ladder rung **L3**:
@@ -2703,19 +2704,33 @@ API a later step should reuse** (`src/util.c`, declared in `src/xschem.h`):
 |---|---|
 | `expand_tilde(s,dest,n)` | leading `~/` → `home_dir`, pure C. The one tilde expander; the `annotate_op` branch's private two-`my_snprintf` copy folded into it. |
 | `expand_tcl_vars(s,dest,n)` | a **C byte scanner**. Recognises `$name`, `${name}`, `$ns::name`, looks each up with `Tcl_GetVar2Ex(..., TCL_GLOBAL_ONLY)`, and copies **every** other byte verbatim — `{ } [ ] ; \ ( )` included. `(` is never an index opener; a value is never rescanned; an undefined reference is copied as its own literal text. |
-| `resolve_rawfile_path(s,dest,n)` | the two composed. Idempotent on its own output. |
+| `resolve_rawfile_path(s,dest,n)` | the two composed. Idempotent on every spelling that ships — **not in general**: a *defined* variable whose VALUE contains a `$` expands on a second pass, and a graph `%` rawfile field IS resolved twice (issue **0820**). |
 
-**The only safety claim these carry is grep-checkable**: the sole Tcl API called is
-`Tcl_GetVar2Ex`, a hash lookup. State a safety property that way or do not state it —
-attempt 1 was reverted for a comment as much as for a bug.
+**The safety claim these carry must be grep-checkable**: the resolver **parses nothing**
+and the sole Tcl API called is `Tcl_GetVar2Ex`. State a safety property that way or do not
+state it — attempt 1 was reverted for a comment as much as for a bug.
+
+> ⚠ **AND THE RETRY SHIPPED ITS OWN FALSE VERSION OF THIS SENTENCE, WHICH IS WHY IT IS
+> WORDED THAT WAY NOW.** The comment first shipped said "`Tcl_GetVar2Ex`, **which is a hash
+> lookup. There is no evaluator in the path**". A `Tcl_GetVar2Ex` is a variable *read*, and
+> a `trace … read` attached to that global is an arbitrary Tcl script that runs on the read
+> **and can rewrite the value it returns** — measured on the fixed binary: a read trace on
+> `::trapvar` fired from `xschem raw read {$trapvar/plain.raw}`, `exec touch` created a host
+> file, and the resolved path became `/etc/plain.raw`. The mitigation is that **no read
+> trace ships** (all 9 `trace add variable` sites in `src/*.tcl` are `write`; no
+> `Tcl_TraceVar` in `src/*.c`), now pinned by **GUARD3** in
+> `tests/headless/test_raw_read_dispatch.tcl`. Issue **0819**. Two consecutive attempts at
+> this one fix were undone by a comment claiming more than the code delivers; the lesson
+> generalizes to every safety sentence in this spec.
 
 Two constraints on the fix, both measured and both **honoured**: **variable expansion had to
 survive** (nine `draw.c`/`callback.c` sites hand `extra_rawfile()` a graph `rawfile=`
 attribute unsubstituted and the shipped corpus spells it `$netlist_dir/…`; all three shipped
 schematics were loaded after the fix and all three resolve), and **one resolver serves
-read/switch/clear** and is idempotent on its own output, because the `extra_raw_arr` registry
-is keyed by `strcmp()` on what the read arm stored and `annotate_op` feeds an
-already-resolved `xctx->raw->rawfile` back through the clear arm.
+read/switch/clear**, because the `extra_raw_arr` registry is keyed by `strcmp()` on what the
+read arm stored and `annotate_op` feeds an already-resolved `xctx->raw->rawfile` back
+through the clear arm. That second constraint holds for every shipped spelling but **not in
+general** — see issue **0820** above and the `resolve_rawfile_path` row.
 
 The **anti-hollow** half is also delivered rather than merely warned about: through
 `xschem raw read`, `br[1].raw`, `back\slash.raw`, `pay$undefined.raw` and `~/probe.raw` were
@@ -2724,10 +2739,22 @@ all **0** before (three of them with the filename silently **blanked** — a `my
 
 Attempt 1 (built, green on 32 new checks and all five sabotage variants, **reverted** when the
 adversary drove the array-index shape) is `doc/claude/issues/0812-*.md` §1-§10; the retry is
-§11-§17. Still live: **0815** (`compare_schematics` segfaults under `--nogui`), **0816** (nine
-more `regsub` splices), **0817** (the `tclvareval` brace groups), **0818** (the top-level
-`raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled path — left
-alone on purpose, decision D5).
+§11-§17, and **§18 is the adversary pass on the retry** — which did *not* refute the fix and
+*did* refute two of its comments. Still live: **0815** (`compare_schematics` segfaults under
+`--nogui`), **0816** (nine more `regsub` splices), **0817** (the `tclvareval` brace groups),
+**0818** (the top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a
+`$var`-spelled path — left alone on purpose, decision D5), **0819** (the read-trace edge),
+**0820** (the double-pass non-idempotence), and **0821** — ⚠ **a LIVE Tcl-side splice of the
+same shape that this section is about**: `src/xschem.tcl:4775` `graph_fill_listbox` runs
+`eval uplevel #0 {subst $rawfile}` over a `.sch` `rawfile=` attribute, measured executing,
+seven call sites, reached by opening the Graph dialog on someone else's schematic. The C
+family is fixed; **the Tcl layer in front of it is not**.
+
+**The `(` decision is user-visible and is the ruling this item returned as status E**
+(0812 §16): `$a(1)` in a rawfile spelling now means the value of `a` followed by a literal
+`(1)`, **and `$env(HOME)/x.raw` therefore no longer resolves** where it did at HEAD.
+Measured cost in the shipped corpus is zero, but any later step that reuses
+`expand_tcl_vars()` inherits that decision and must say so.
 
 ---
 

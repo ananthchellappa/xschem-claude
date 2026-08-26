@@ -375,6 +375,33 @@ guard_disarm_regsub
 check GUARD2-no-regsub-splice [expr {[llength $::GUARD_REGSUB] == 0}] \
   "(a `regsub {^~/} ...` splice ran [llength $::GUARD_REGSUB] time(s): {[join $::GUARD_REGSUB { | }]})"
 
+## GUARD3 — issue 0819. The resolver's only Tcl call is Tcl_GetVar2Ex, which is
+## a variable READ, and a variable read RUNS ANY `trace ... read` attached to
+## that global. Measured on this tree: a read trace on `::trapvar` fired from
+## `xschem raw read {$trapvar/plain.raw}`, did `exec touch` (host file created)
+## and REWROTE the resolved path to /etc/plain.raw. The reason that gadget has
+## no target is an accident of the current tree — every shipped trace is a
+## `write` trace — and nothing pinned it, so a single `trace ... read` added in
+## passing would silently re-arm a .sch-reachable evaluator with no suite going
+## red. This row is that pin. It cannot cover a user's own ~/.xschem/xschemrc:
+## by the time that file runs, the user has already executed their own Tcl.
+set ::GUARD3_HITS {}
+foreach _f [glob -nocomplain [file join [file normalize [file join [file dirname [info script]] .. ..]] src *.tcl]] {
+  set _fd [open $_f r]; set _b [read $_fd]; close $_fd
+  set _ln 0
+  foreach _l [split $_b "\n"] {
+    incr _ln
+    if {[regexp {trace\s+add\s+variable\s+\S+\s+(\S+)} $_l -> _ops] && [string match *read* $_ops]} {
+      lappend ::GUARD3_HITS "[file tail $_f]:$_ln"
+    } elseif {[regexp {trace\s+variable\s+\S+\s+([rwu]+)\s} $_l -> _ops] && [string match *r* $_ops]} {
+      lappend ::GUARD3_HITS "[file tail $_f]:$_ln (legacy)"
+    }
+  }
+}
+check GUARD3-no-shipped-read-trace [expr {[llength $::GUARD3_HITS] == 0}] \
+  "(a Tcl variable READ TRACE ships in src/*.tcl, so the path resolver can reach\
+ an evaluator after all — issue 0819: [join $::GUARD3_HITS { | }])"
+
 # --- the subst sink, save.c extra_rawfile() --------------------------------
 xschem raw clear
 set inj1 [inj_probe xschem raw read $INJ_SUBST tran]

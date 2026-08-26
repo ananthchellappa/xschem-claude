@@ -818,12 +818,30 @@ FILE *my_fopen(const char *f, const char *m)
  * That is why nothing below calls subst, Tcl_SubstObj, Tcl_ParseVar or
  * Tcl_EvalObjv. The scanner is plain C.
  *
- * THE ONE SAFETY CLAIM MADE HERE, AND IT IS GREP-CHECKABLE: the only Tcl API
- * this file's resolver calls is Tcl_GetVar2Ex(), which is a hash lookup. There
- * is no evaluator in the path. Every byte of the input that is not part of a
- * RECOGNISED, DEFINED variable reference is copied through verbatim -- `{` `}`
- * `[` `]` `;` `\` `(` `)` newline and quote included -- and a variable's VALUE
- * is appended verbatim and never rescanned.
+ * THE SAFETY CLAIM MADE HERE, AND IT IS GREP-CHECKABLE: the only Tcl API this
+ * file's resolver calls is Tcl_GetVar2Ex(), and the resolver PARSES NOTHING --
+ * every byte of the input that is not part of a RECOGNISED, DEFINED variable
+ * reference is copied through verbatim -- `{` `}` `[` `]` `;` `\` `(` `)`
+ * newline and quote included -- and a variable's VALUE is appended verbatim
+ * and never rescanned. That is the whole of it.
+ *
+ * ⚠ AND HERE IS WHAT THAT CLAIM IS NOT, because an earlier revision of this
+ * very block said "Tcl_GetVar2Ex, which is a hash lookup. There is no
+ * evaluator in the path" AND THAT WAS FALSE -- the same shape of false safety
+ * comment that got attempt 1 reverted. A Tcl variable READ IS AN EVALUATOR
+ * WHENEVER A READ TRACE IS ATTACHED TO THE VARIABLE. Measured on this tree
+ * (issue 0819):
+ *     trace add variable ::trapvar read rtr    ;# rtr does `exec touch ...`
+ *     xschem raw read {$trapvar/plain.raw} tran
+ *       -> the trace RAN (host file created) and rewrote the resolved path,
+ *          and the engine then reported `failed to open file /etc/plain.raw`
+ * So the honest statement is: THIS RESOLVER ADDS NO EVALUATOR, and the only
+ * evaluator it can still reach is one the user attached to a global with
+ * `trace ... read`. NONE SHIPS: all 9 `trace add variable` sites in src/*.tcl
+ * are `write` traces, pinned by GUARD3 in test_raw_read_dispatch.tcl. A user's
+ * own ~/.xschem/xschemrc is Tcl and could add one; at that point they have
+ * already executed their own code, so this is a sharp edge to record, not a
+ * hole to close here.
  *
  * WHAT SURVIVES ON PURPOSE. Tcl VARIABLE substitution is load-bearing, not
  * decoration: nine draw.c/callback.c sites hand extra_rawfile() a graph
@@ -926,9 +944,11 @@ const char *expand_tilde(const char *s, char *dest, int destsize)
  *             trailing -- a colon run is consumed only when a name character
  *             follows it. NAME must be non-empty.
  *
- * The lookup is Tcl_GetVar2Ex(interp, NAME, NULL, TCL_GLOBAL_ONLY): a hash
- * lookup, the only Tcl API called here, and no TCL_LEAVE_ERR_MSG so the
- * interpreter result is not touched. A defined variable's value is appended
+ * The lookup is Tcl_GetVar2Ex(interp, NAME, NULL, TCL_GLOBAL_ONLY): the only
+ * Tcl API called here, with no TCL_LEAVE_ERR_MSG so the interpreter result is
+ * not touched. It is a variable READ, which is NOT the same thing as a hash
+ * lookup -- a `trace ... read` on the named global runs on it (issue 0819).
+ * No read trace ships; GUARD3 pins that. A defined variable's value is appended
  * VERBATIM and is never rescanned (a value that itself contains a `$` is data).
  * An undefined one is copied through as its own literal text by
  * append_unresolved_ref().
@@ -1028,14 +1048,24 @@ const char *expand_tcl_vars(const char *s, char *dest, int destsize)
  * registry off the string the READ arm stored and compare it with strcmp() --
  * if the arms resolved differently, `xschem raw clear $f` would stop matching
  * what `xschem raw read $f` stored (src/ase.tcl does exactly that pair).
- * It is IDEMPOTENT on its own output, which the registry needs because
- * scheduler.c's annotate_op branch feeds an already-resolved
- * xctx->raw->rawfile back through the clear arm: the output carries no leading
- * `~/`, and a `$` that survives to the output survived by being UNRESOLVABLE,
- * so the second pass leaves it alone too. The one residual, unchanged from
- * HEAD and unfixable by a resolver: if that variable becomes DEFINED between
- * the two calls, the second resolution differs. Nothing shipped can hit it --
- * `$netlist_dir/x.raw` resolves to an absolute path with no `$` left in it. */
+ * It is IDEMPOTENT ON EVERY SPELLING THAT SHIPS, which is what the registry
+ * needs: scheduler.c's annotate_op branch feeds an already-resolved
+ * xctx->raw->rawfile back through the clear arm, the output carries no leading
+ * `~/`, and `$netlist_dir/x.raw` resolves to an absolute path with no `$` left
+ * in it. Checks KEY1/KEY3, tests/headless/test_raw_read_dispatch.tcl.
+ *
+ * ⚠ IT IS NOT IDEMPOTENT IN GENERAL, and an earlier revision of this block
+ * claimed it was, for a reason that is wrong: it said a `$` reaching the
+ * output "survived by being UNRESOLVABLE, so the second pass leaves it alone".
+ * A `$` also reaches the output when a DEFINED variable's VALUE contains one,
+ * because a value is never rescanned -- which is the safety property itself.
+ * Measured (issue 0820): with ::lvl2 holding the literal text `$lvl1`,
+ * resolving `$lvl2` yields `$lvl1`, and resolving THAT yields the path. The
+ * live two-pass route is a graph `%` rawfile field (node_token_split() resolves
+ * it, then extra_rawfile() resolves it again), so such a spelling loads under a
+ * registry key that a one-pass `xschem raw clear <same spelling>` cannot match.
+ * Unchanged from HEAD -- HEAD's `subst` did not rescan a value either and the
+ * double pass predates this fix -- and no shipped spelling reaches it. */
 const char *resolve_rawfile_path(const char *s, char *dest, int destsize)
 {
   char tilde_expanded[PATH_MAX + 100];

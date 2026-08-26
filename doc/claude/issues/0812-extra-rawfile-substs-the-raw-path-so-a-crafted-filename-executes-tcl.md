@@ -481,7 +481,13 @@ The fix changes behaviour a user can see, and no prior ratification covers it:
    blanked the filename.
 2. A `\` in a path is **no longer eaten** (plain `subst` ate it; the scanner copies it).
 3. **`$a(1)` in a rawfile spelling stops being a Tcl array lookup** and becomes
-   `<value of a>(1)` — decision D2.
+   `<value of a>(1)` — decision D2. ⚠ **And that includes `$env(HOME)/x.raw`**, which is
+   the spelling a user is far more likely to have typed than a bare `$a(1)`: measured
+   `rc=0` after the fix, and it worked at HEAD through `subst`. Cost in the shipped tree is
+   still genuinely zero (`grep -rn '\$env(' --include=*.sch --include=*.sym` is empty
+   tree-wide; the one `$env(HOME)` in `doc/xschem_man/developer_info.html:1879` sits inside
+   a `sim(...)` command string, a different mechanism). An earlier draft of this ruling
+   named only `$a(1)`, which understated what the user is actually ruling on.
 4. `extra_rawfile()` **no longer leaves the resolved path in the Tcl interpreter result**.
    That leftover was measured nondeterministic at HEAD (`r=::op_annot::text` on an ordinary
    call — whatever ran last), no caller in `src/*.tcl` reads it and no test pins it either
@@ -489,9 +495,9 @@ The fix changes behaviour a user can see, and no prior ratification covers it:
 
 Items 1, 2 and 4 are unambiguous improvements. **Item 3 is the question:**
 
-> **Should a raw-file path keep Tcl array-element syntax (`$a(1)`), given that nothing in
-> the shipped corpus uses it and that keeping it is what makes the sanitizer impossible to
-> state simply?**
+> **Should a raw-file path keep Tcl array-element syntax — `$a(1)`, and with it
+> `$env(HOME)/x.raw` — given that nothing in the shipped corpus uses either and that
+> keeping them is what makes the sanitizer impossible to state simply?**
 
 Answering "keep it" means re-admitting an index grammar that must then be proven inert;
 answering "drop it" is what shipped. **No new rule debt was filed** — the item brief says a
@@ -499,10 +505,12 @@ security fix should need none — so this paragraph *is* the record.
 
 ## 17. STILL OPEN
 
-* **⚠ NO ADVERSARY PASS RAN ON THE RETRY.** Verify-C produced nothing; the claim was
-  handed to the write-up agent as *UNREFUTED-UNTESTED*. **That is the single most
-  significant caveat on this fix**, because an adversary pass is precisely what refuted
-  attempt 1 while its four suites were ALL PASS. The write-up agent substituted its own
+* **⚠ SUPERSEDED BY §18 — an adversary pass DID run, late.** When §17 was first written
+  Verify-C had produced nothing and the claim was handed over as *UNREFUTED-UNTESTED*. A
+  real adversary pass arrived after commit `3ab11016` had landed; it did **not** refute the
+  central claim, and it **did** refute two comments the fix shipped. See **§18**. The
+  paragraph below is kept as written, because the substitute probe it describes is still
+  evidence. The write-up agent substituted its own
   13-shape probe on the shipped binary rather than reporting nothing, all dead, all
   asserting the host side effect where one applies: a variable **value** containing
   `[exec touch …]` (never rescanned — the engine tried to open a file literally named
@@ -528,10 +536,14 @@ security fix should need none — so this paragraph *is* the record.
   `xschem raw_read` (decision D5, deliberate).
 * **0815** — `xschem compare_schematics <path>` segfaults under `--nogui` (exit 139).
   Pre-existing, not injection, measured identical before and after.
-* **Documented residual, unchanged from HEAD and unfixable by any resolver**: a `$` that
-  survives resolution survived by being **unresolvable**, so if that variable later becomes
-  **defined**, a second resolution differs and the registry `strcmp()` key misses. Nothing
-  shipped can reach it (`$netlist_dir/x.raw` resolves to an absolute path with no `$` left).
+* **⚠ THIS BULLET WAS WRONG AND IS NOW ISSUE 0820.** It said the only way a `$` reaches
+  the output is by being **unresolvable**, so that only an undefined→defined race could
+  break idempotence. False: a `$` also reaches the output when a **defined** variable's
+  VALUE contains one, because a value is never rescanned — which is the safety property
+  itself. Measured, and the live two-pass route (a graph `%` rawfile field, resolved by
+  `node_token_split()` and again by `extra_rawfile()`) does load an entry whose key a
+  one-pass `xschem raw clear` cannot match. Unchanged from HEAD, no shipped spelling reaches
+  it, comments corrected — **doc/claude/issues/0820-*.md**.
 * **Measurement-integrity, and it happened AGAIN**: Verify-A and Verify-B ran concurrently,
   and Verify-B rebuilt the binary at least three times mid-measurement. Verify-A's first T1
   showed a non-reproducible `open_close FATAL:11` (1888 vs 1899 result files) and a stray
@@ -543,3 +555,102 @@ security fix should need none — so this paragraph *is* the record.
   binary actually in the tree and measured by everyone downstream is `cbf8784a…`
   (source-vs-binary freshness verified: `find src -maxdepth 1 -newer src/xschem` = 0 files).
   A stale number in a report, not a stale binary.
+
+## 18. THE ADVERSARY PASS — ran late, did NOT refute the fix, DID refute two of its comments
+
+Verify-C ran after commit `3ab11016` had landed, against the committed binary
+(`md5 cbf8784a`, `git diff 3ab11016 HEAD -- src/ tests/` empty). **`refuted: false`.**
+
+### 18.1 What it attacked, and found dead
+
+* **11 name-form shapes the crew's own rows never ran**, each asserting the sentinel AND an
+  `[exec touch]` host file: `${a[exec touch F]}` (a name carrying a command substitution
+  and no parens, so the name really is looked up), `${a([exec …])}`,
+  `${::nsx::a([exec …])}`, `$$a([exec …])`, a payload delivered through a **defined
+  variable's VALUE**, backslash-brace `q\};…`, an embedded newline, a double-quote payload,
+  `$undefined[exec …]`, and a 600-character name (over the 512-byte `namebuf`) followed by
+  `[exec …]`. **All dead: `P=0`, `hostfiles={}` on every one.**
+* The same shapes **through the arms a dead registry would skip** — `raw switch`,
+  `raw clear`, `raw table_read`, `raw vcd_read` with a database preloaded, then the
+  regsub-shaped and array-index payloads through all four top-level verbs. **12/12 dead.**
+* **`annotate_op` with no argument** and the payload in `netlist_dir`, in three shapes.
+  Dead.
+* **The `.sch` route end to end with host-side-effect assertions** — `[exec touch]` in the
+  `%` rawfile field, in the `%` sim_type field, inside a `${name}`, and behind a brace
+  escape; loaded from disk, redrawn, fullyzoom'd. Sentinel 0 and hostfile 0 on all four.
+  (The crew's own NINJ rows check only a sentinel; this is the stronger version.)
+* **Anti-hollow, 15/15** literal-name loads including `paren(1).raw`, `curly{x}.raw`,
+  `semi;colon.raw`, `quote".raw`, `dollar$.raw`, `brace${x.raw`, TAB, `amp&and.raw` and an
+  embedded newline; **six** variable spellings resolve; the three shipped `$netlist_dir`
+  schematics confirmed independently.
+* **Bounds**: a 9000-character value, 800 chained references, names at exactly 511 and 512
+  bytes (511 resolves, 512 falls to literal — the documented `namebuf` boundary), nested
+  `${${a1}}` emitted literally, UTF-8, empty argument, bare `$`, bare `~`. No crash, no
+  execution, no truncation into a different real path.
+* **Arm semantics** the hoist could have silently changed: `raw switch 2` / `raw switch 0` /
+  `raw clear 3` still read the RAW argument via `atoi()`; `raw switch <path>` with no type
+  still falls through to the switch-to-next arm.
+* **Scope fence** re-verified: the four raw-family regsub splices gone, the nine 0816 sites
+  and `xinit.c:3235` byte-identical, `db_path_safe`'s guard regexp byte-identical.
+
+### 18.2 What it refuted — two shipped comments, and that is the same failure attempt 1 died of
+
+1. **`Tcl_GetVar2Ex` is not "a hash lookup" and the path is not evaluator-free.** A Tcl
+   **read trace** on the named global runs on it, and can rewrite the value the read
+   returns. Measured: `exec touch` created a host file and the resolved path became
+   `/etc/plain.raw`. Mitigation measured too — all 9 shipped `trace add variable` sites are
+   `write` traces, zero read traces, and no `Tcl_TraceVar` in `src/*.c`.
+   → **doc/claude/issues/0819-*.md**. Comments in `src/util.c` and `src/xschem.h` corrected;
+   the mitigation is now pinned by **GUARD3** in `test_raw_read_dispatch.tcl`, whose teeth
+   were demonstrated (adding one read trace to `src/xschem.tcl` reds it).
+2. **`resolve_rawfile_path()` is not idempotent in general**, and the reason the comment
+   gave was wrong. → **doc/claude/issues/0820-*.md**; §17's bullet corrected in place;
+   comments in `src/util.c`, `src/xschem.h`, `src/draw.c` and `src/wave_viewer.tcl`
+   corrected.
+
+**Both were comment-only defects — no compiled token changed.** Receipt:
+`git diff -U0 -- src/util.c src/draw.c src/xschem.h` filtered to lines not beginning with
+`*`, `/*` or `*/` is **empty**.
+
+> ⚠ **CONSEQUENCE FOR THE NEXT CREW'S FRESHNESS CHECK, SAID OUT LOUD SO NOBODY IS MISLED.**
+> The write-up agent is **not permitted to build** (crew rule 2 — only the Implement agent
+> runs `make`), so those three files now have an **mtime newer than `src/xschem`** and
+> `find src -maxdepth 1 -newer src/xschem` reports **3 files** instead of 0. The binary is
+> **not** stale: `md5 cbf8784a…` is the same binary every §12 and §18 number was measured
+> on, before and after these edits, and the only changed bytes are inside comment blocks.
+> **Rebuild at the top of the next item** — it costs nothing and restores the 0-file
+> invariant. Do not read the 3 as evidence that a measurement described code not in the
+> tree; the receipt above is the discriminator.
+
+### 18.3 What it found that is a new defect elsewhere
+
+* **`src/xschem.tcl:4775` `graph_fill_listbox` splices a `.sch` `rawfile=` attribute into a
+  Tcl script and it EXECUTES** — live GUI code, 7 call sites. `:4842` `raw_is_loaded` has
+  the same shape and is dead code. → **doc/claude/issues/0821-*.md**, and note that 0821
+  *corrects* the adversary's own reading of `:4775` (it substitutes the .sch-derived LOCAL,
+  not a global — measured `res=LOCAL1 HIT=1`), which makes it worse than reported, not
+  better. Outside this item's scope fence; it belongs with 0816/0817.
+
+### 18.4 Residual risks it raised that are recorded elsewhere and NOT fixed
+
+* GUARD1 counts invocations of the `subst` **command**, so a future C-level
+  `Tcl_SubstObj`/`Tcl_ParseVar` would pass it silently. The property that actually holds is
+  structural — no `(`/`)` can ever enter `namebuf`, so no index is ever parsed — and is only
+  checkable by reading `expand_tcl_vars()`. The suite says so; restating it here because it
+  is the one row a reader is most likely to over-trust.
+* The dropped interp-result side effect is unpinned in **both** directions (§16 item 4).
+* The `~` contradiction between `draw.c` and `wave_viewer.tcl` is **settled**: the `%`
+  rawfile field **is** tilde-expanded, because `node_token_split()` calls
+  `resolve_rawfile_path()`, which calls `expand_tilde()`. `wave_viewer.tcl` was wrong and
+  is corrected.
+* The mandated annotation invariants I1–I7 are untouched by this diff — it constructs no
+  vector name anywhere; `op_annot::vector` (`src/op_annot.tcl:635`) remains the single
+  builder. Verified rather than assumed, but **not** independently re-derived.
+
+### 18.5 The one thing this pass changes about how the family is worked
+
+An adversary pass that arrives **after** the commit is still worth having — it found two
+false comments and one live defect elsewhere — but it cost a second write-up cycle and a
+second set of source edits on a "finished" item. **Run Verify-C before the write-up agent,
+and never concurrently with Sabotage.** That is now two consecutive items where agent
+concurrency corrupted or delayed measurement (§17, last two bullets).

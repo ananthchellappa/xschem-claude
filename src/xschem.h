@@ -3212,17 +3212,23 @@ extern int tclvareval(const char *script, ...);
  *                       copies EVERY other byte through verbatim -- `{` `}`
  *                       `[` `]` `;` `\` `(` `)` included. `(` is never an index
  *                       opener; an undefined reference is copied as its own
- *                       literal text. There is NO evaluator: the only Tcl API
- *                       it calls is Tcl_GetVar2Ex, a hash lookup. It is NOT
+ *                       literal text. It ADDS no evaluator and PARSES nothing;
+ *                       the only Tcl API it calls is Tcl_GetVar2Ex. That is a
+ *                       variable READ, not a hash lookup: a user's
+ *                       `trace ... read` on the named global still runs on it
+ *                       (issue 0819; none ships, GUARD3 pins it). It is NOT
  *                       named subst_tcl_value(), and it does not call subst --
  *                       the first attempt at this fix used
  *                       `subst -nobackslashes -nocommands` and was refuted by
  *                       `$a([exec touch X])`, whose command substitution runs
  *                       inside the ARRAY INDEX no matter which -no* flags are
  *                       passed.
- * resolve_rawfile_path() the two composed: THE raw-file path resolver, and
- *                       idempotent on its own output because the extra_raw_arr
- *                       registry keys off it with strcmp().
+ * resolve_rawfile_path() the two composed: THE raw-file path resolver. The
+ *                       extra_raw_arr registry keys off its output with
+ *                       strcmp(), so it is idempotent on every spelling that
+ *                       ships -- but NOT in general: a defined variable whose
+ *                       VALUE contains a `$` expands on a second pass, and a
+ *                       graph `%` rawfile field IS resolved twice (issue 0820).
  * Each writes at most destsize bytes into dest (NUL included) and returns dest.
  * See the comment block above them in util.c for what is and is NOT
  * guaranteed. Reusable beyond the raw-file family: expand_tilde() is the

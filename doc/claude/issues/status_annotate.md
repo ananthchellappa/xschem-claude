@@ -299,8 +299,10 @@ truncated raw and reports success — live at HEAD, and it is the command both g
 entries call), **0808** (three rows claim to pin the `load_schematic` seam and do not;
 plus Y1's stale-var weakness), **0809** (the refutation), **0810** (bare `strcmp` on
 the stamp: `./`, `//`, `../` and symlinked spellings of the SAME file false-clear),
-**0811** (only `load_schematic` got the deterministic clear; `Save As` lags). Next
-free number: **0812**.
+**0811** (only `load_schematic` got the deterministic clear; `Save As` lags). ~~Next
+free number: **0812**.~~ **Superseded 2026-08-25**: 0812-0814 (the 0807 crew), 0815-0817
+(the 0812 attempt-1 crew), 0818 (0812-retry), and **0819-0821** from 0812-retry's late
+adversary pass — **the next free number is 0822**. See `NUMBERING.md`.
 
 **0686 stays OPEN on purpose** (decision D8) — its new §7 records why, and what
 changed under it. The E question this owes the user is in §6a-bis's plan block:

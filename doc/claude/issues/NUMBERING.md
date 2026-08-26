@@ -33,3 +33,15 @@ are filed too; **the next number is 0806**.
 `status_annotate.md` covers this branch, 0600–0698. They do not share a number
 space. `status_annotate.md` §6d records the 0800/0801 filings; 0802-0805 came from
 the 0689+0690+0698 harness-trust commit.
+
+**2026-08-25, item 0812-retry write-up.** The block has moved a long way past the
+paragraph above, which stopped at 0806. Filed since: **0807-0811** (the 0688+0683 crew),
+**0812-0814** (the 0807 crew), **0815-0817** (the 0812 attempt-1 crew), **0818** (the
+0812-retry plan agent), and **0819-0821** by this write-up, from the late adversary pass on
+0812-retry — **0819** (`Tcl_GetVar2Ex` fires READ TRACES, so the resolver's "no evaluator"
+comment was false; mitigation pinned by GUARD3), **0820** (a graph `%` rawfile field is
+resolved twice, so `resolve_rawfile_path()` is not idempotent in general and read/clear can
+disagree about a registry key), **0821** (⚠ a LIVE Tcl-side splice of the same shape:
+`src/xschem.tcl:4775` `graph_fill_listbox` runs `subst` over a `.sch` `rawfile=` attribute).
+**The next free number is 0822.** 0500-0599 and 0700-0799 remain reserved for other
+branches.

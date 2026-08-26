@@ -2514,8 +2514,14 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
 #     guard below is UNCHANGED: this proc is a conservative filter over a field
 #     that also has separator and tokenizer rules (3), the viewer never needs
 #     such a path, and a false reject costs a suffix while a false accept costs
-#     a silently mis-parsed field. `~` is NOT expanded here (it is by
-#     extra_rawfile, but the `%` field is not that argument).
+#     a silently mis-parsed field. `~/` IS expanded in this field: an earlier
+#     revision of this line said it was not, and that was wrong --
+#     node_token_split() (draw.c) resolves the `%` rawfile field with
+#     resolve_rawfile_path(), which calls expand_tilde() before extra_rawfile()
+#     ever sees it. `~` is not on the reject list below and does not need to be.
+#     Because the field is resolved TWICE, a variable whose VALUE contains a `$`
+#     expands on the second pass and the entry then keys off a path that a
+#     one-pass `xschem raw clear` cannot match — issue 0820.
 #  3. `%` itself is the field separator (find_nth(...,"%",...)), and `"` is the
 #     quote char of the tokenizer — neither can appear inside the value.
 #

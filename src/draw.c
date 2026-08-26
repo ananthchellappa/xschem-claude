@@ -3365,8 +3365,16 @@ static void node_token_split(const char *ntok, char **expr, int *dataset,
      * survives save.c's round trip verbatim). And `$a([...])` in the same
      * field ran too, which no `subst` flag prevents -- see util.c.
      * BOTH fields are rewired, not one: the rawfile field is resolved AGAIN by
-     * extra_rawfile() downstream, and that double pass is only safe because
-     * resolve_rawfile_path() is idempotent on its own output.
+     * extra_rawfile() downstream. That double pass is safe against INJECTION
+     * unconditionally -- the first pass emits no metacharacter it did not
+     * receive as data, and the second parses nothing either. It is NOT
+     * value-stable in general: a variable whose VALUE contains a `$` expands
+     * on the second pass, so such a spelling loads under a registry key a
+     * one-pass `xschem raw clear <same spelling>` cannot match (issue 0820,
+     * measured, unchanged from HEAD, no shipped spelling reaches it).
+     * `~/` IS expanded in this field -- resolve_rawfile_path() calls
+     * expand_tilde() -- which settles the contradiction wave_viewer.tcl's
+     * db_path_safe comment used to carry.
      * The sim_type field gets expand_tcl_vars() and NOT the full resolver: a
      * sim_type is a word like `tran`, never a path, so a leading `~/` there
      * would mean nothing.
