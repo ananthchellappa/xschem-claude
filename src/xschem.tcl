@@ -16811,6 +16811,13 @@ set_ne auto_set_wire_bus 0
 # (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
+## CIW text size, in points, for BOTH panes (log display + command entry). The two
+## share one named Tk font, CiwFont, built by ciw_font in src/ciw.tcl. Change it at
+## runtime with `ciw_set_font_size N` -- NOT by setting this variable, which is only
+## read when the font is first created: ciw_create runs during startup, before any
+## --script rc, so a later assignment here reaches nothing. See src/cadence_style_rc,
+## which bumps it for the Cadence-style workarea.
+set_ne ciw_font_size 10
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
 # C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
 # harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES

@@ -374,6 +374,44 @@ set ::ciw_subcommands {}
 ## the split is user-adjustable by dragging the sash (spec decision 9); the
 ## entry pane starts at its natural one-line height and stays fixed on window
 ## resize (the log pane takes the extra space).
+# ---------------------------------------------------------------------------
+# CIW text size.
+#
+# Both panes -- the log display and the command entry -- share ONE named Tk font,
+# and they share it for a timing reason, not a tidiness one: `ciw_create` runs from
+# xschem.tcl during startup, which is BEFORE a `--script` rc (cadence_style_rc and
+# friends) gets a chance to run. A size read out of a variable at build time would
+# therefore always be read too late for an rc to influence, and a literal
+# `{Monospace 10}` baked into the widget cannot be changed afterwards at all.
+# A NAMED font can: `font configure CiwFont -size N` reaches every widget using it,
+# whenever it happens.
+#
+# $::ciw_font_size (set_ne 10 in xschem.tcl) is the declared default; ciw_set_font_size
+# is the setter and works whether or not the CIW has been built yet.
+proc ciw_font {} {
+  if {![llength [info commands font]]} { return {Monospace 10} }
+  if {[lsearch -exact [font names] CiwFont] < 0} {
+    set sz 10
+    if {[info exists ::ciw_font_size]} { set sz $::ciw_font_size }
+    if {[catch {font create CiwFont -family Monospace -size $sz}]} { return {Monospace 10} }
+  }
+  return CiwFont
+}
+
+# Set the CIW text size for both panes. Order-independent: an rc may call this before
+# OR after ciw_create, so it records the value AND reconfigures a font that already
+# exists. Returns 1 if the size was accepted. Out-of-range values are REFUSED rather
+# than clamped -- a CIW rendered at size 1 or 300 is an unusable window, and silently
+# "fixing" a typo hides which value the rc actually asked for.
+proc ciw_set_font_size {size} {
+  if {![string is integer -strict $size] || $size < 4 || $size > 72} { return 0 }
+  set ::ciw_font_size $size
+  if {[llength [info commands font]] && [lsearch -exact [font names] CiwFont] >= 0} {
+    catch {font configure CiwFont -size $size}
+  }
+  return 1
+}
+
 proc ciw_create {} {
   if {[winfo exists .ciw]} {
     ## a bare `raise` is a no-op under Weston/WSLg (issue 0054): use the shared
@@ -405,7 +443,7 @@ proc ciw_create {} {
 
   # upper pane: read-only log display, fed by ciw_echo
   frame .ciw.l
-  text .ciw.l.t -width 80 -height 14 -font {Monospace 10} -state disabled \
+  text .ciw.l.t -width 80 -height 14 -font [ciw_font] -state disabled \
     -yscrollcommand {.ciw.l.yscroll set}
   scrollbar .ciw.l.yscroll -command {.ciw.l.t yview}
   .ciw.l.t tag configure input  -foreground blue
@@ -427,7 +465,7 @@ proc ciw_create {} {
   # and Return executes instead of inserting a newline ('break' stops the
   # class binding that would).
   frame .ciw.c
-  text .ciw.c.e -height 1 -font {Monospace 10} -wrap char -undo 1
+  text .ciw.c.e -height 1 -font [ciw_font] -wrap char -undo 1
   bind .ciw.c.e <Return>   {ciw_exec; break}
   bind .ciw.c.e <KP_Enter> {ciw_exec; break}
   ## shell-style line editing. 'break' everywhere: the Text class bindings

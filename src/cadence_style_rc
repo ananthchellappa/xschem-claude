@@ -602,3 +602,12 @@ unset _ut
 # scientific notation, uncomment:
 # set ase_eng_notation 0
 
+
+# --- CIW text size ----------------------------------------------------------
+# The CIW is where every notice, echo and command result lands, and it ships at
+# Monospace 10 -- small enough on a large or HiDPI display that the pane gets
+# skimmed instead of read. Bump it 20% (10 -> 12) for the Cadence-style workarea.
+# `ciw_set_font_size`, not `set ciw_font_size`: this rc is sourced AFTER
+# ciw_create has already built the window, so only the setter (which reconfigures
+# the live named font) reaches it. See src/ciw.tcl.
+catch {ciw_set_font_size 12}
