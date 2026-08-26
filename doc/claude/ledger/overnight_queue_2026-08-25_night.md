@@ -28,10 +28,11 @@ three that land are the three that matter.
 | # | item | why here | state |
 |---|---|---|---|
 | 1 | **0821 + 0816 + 0817** | the rest of the Tcl injection family. 0821's trigger is worse than 0812's: opening a schematic someone sent | **IN FLIGHT** since 21:06, `wf_7b44465d-7ec` |
-| 2 | **0807 + 0813 + 0814** | **DATA LOSS with a lying success return, live at HEAD.** Retry of a refuted attempt whose §11 is six binding constraints | queued |
-| 3 | **0809 + 0811 + 0808** | finish 0688's clear: leaks into a new tab, only `load_schematic()` got the seam, three rows that claim to pin it and do not | queued |
-| 4 | **0802 + 0805 + 0803 + 0804** | harness truth II — three readers of one completion banner, agreeing in none of them | queued |
-| 5 | **notify channel** 0674 · 0675 · 0677 · 0699 · 0800 | unblocked by the user's 0806 ruling (raise the CIW; `.statusbar.12` retired) | queued, likely not reached |
+| 2 | **0827 + 0817 + 0828** | **INSERTED 00:20 after item 1 reported.** 0827 is a LIVE remote-code-execution on the *fixed* binary, reproduced by the lead: a mailed `.sch`, a stock `examples/rlc.sym`, one descend. No dialog, no gesture. It outranks data loss, and the family's patterns are hot | queued |
+| 3 | **0807 + 0813 + 0814** | **DATA LOSS with a lying success return, live at HEAD.** Retry of a refuted attempt whose §11 is six binding constraints | queued |
+| 4 | **0809 + 0811 + 0808** | finish 0688's clear: leaks into a new tab, only `load_schematic()` got the seam, three rows that claim to pin it and do not | queued |
+| 5 | **0802 + 0805 + 0803 + 0804** | harness truth II — three readers of one completion banner, agreeing in none of them | queued |
+| 6 | **notify channel** 0674 · 0675 · 0677 · 0699 · 0800 | unblocked by the user's 0806 ruling (raise the CIW; `.statusbar.12` retired) | queued, likely not reached |
 
 **Not queued tonight:** 0684 (item 6 of the day queue) — its direction is settled
 but it is the one item most likely to change shape under the 23 pending rulings,
@@ -94,3 +95,43 @@ detached" aggravating factor is retired rather than inherited.
 2. `tests/headless/runtime_gaps.sh` on the night's runs. Host sleep is set to
    Never, so a gap means something else and wants a real diagnosis.
 3. Every commit of the night re-verified by the lead, independently.
+
+
+---
+
+## Re-ordered 00:20, after item 1 reported
+
+`05d259f9` landed and was verified independently by the lead (row in
+`driver_run_2026-08-22.md`). 0821, 0822, 0825 and 0816 are fixed. **0817 is still
+open, and the crew's adversary found 0827 — a LIVE RCE on the fixed binary.**
+
+Reproduced by the lead, `--nogui`, no dialog and no gesture beyond a descend:
+
+```
+after-load     CVPWN=0 host=0
+after-descend  rc-res=0 CVPWN=1 host=1   VERDICT=PWNED
+```
+
+`src/actions.c:4215` `cellview_sch_path()` builds `cellview_path {%s} schematic`
+and `tcleval()`s it, with `%s` the instance's `schematic=` property read straight
+out of the file. A `}` closes the brace group and the rest is parsed as script —
+and `\}` is the `.sch` format's own escape for a literal brace, so the fixture is
+**well-formed, not corrupt**. The delivery is one mailed `.sch` referencing
+`examples/rlc.sym`, which ships with xschem.
+
+**Why it jumps 0807.** 0807 is data loss on the user's own work, and it is real —
+but arbitrary code execution from a document someone was mailed outranks it, the
+trigger here is *more* ordinary than 0821's (no dialog needed), and the family's
+resolver and test patterns are fresh in the tree this hour. 0807 slides to 3 and
+loses nothing by waiting; it has waited since 16:12 already.
+
+**Also folded into item 2:** 0828 (GDI09/GDI10/GDI11 stay green when the graph
+attribute intake returns nothing — the anti-hollow half of that group proves less
+than it reads). It is a test defect in the coverage the item just shipped, and it
+belongs with the crew that owns that suite.
+
+**NOT folded in: 0826.** `test_wave_markers` 6 FAIL. Corroborated by the lead as
+**not** this commit — deterministic 3/3, and a pre-fix `xschem.tcl` swapped in
+still fails 6. It is a standing red, which CLAUDE.md is explicit is a defect and
+not furniture, but it is a *test* defect in a different subsystem and putting it
+in a security crew's scope would dilute both.
