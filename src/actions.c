@@ -458,10 +458,12 @@ void set_grid(double newgrid)
  */
 int set_netlist_dir(int what, const char *dir)
 {
-  char cmd[PATH_MAX+200];
-  if(dir) my_snprintf(cmd, S(cmd), "set_netlist_dir %d {%s}", what, dir);
-  else    my_snprintf(cmd, S(cmd), "set_netlist_dir %d", what);
-  tcleval(cmd);
+  char cmd[64];
+  /* `what` is a C-formatted decimal (program text); `dir` is a PATH and is
+   * DATA -- a `}` in it used to close the brace group (issue 0817 Z.2). */
+  my_snprintf(cmd, S(cmd), "set_netlist_dir %d", what);
+  if(dir) tcl_call(cmd, dir, NULL, NULL);
+  else    tcleval(cmd);
   if(!strcmp("", tclresult()) ) {
     return 0;
   }
@@ -768,7 +770,7 @@ void saveas(const char *f, int type) /*  changed name from ask_save_file to save
      * `xschem saveas path` passes f and is already in the log. */
     if(!f && tcl_braceable(res))
       log_action("xschem saveas {%s} %s", res, type == SYMBOL ? "symbol" : "schematic");
-    tclvareval("update_recent_file {", res,"}",  NULL);
+    tcl_call("update_recent_file", res, NULL, NULL);
     return;
 }
 
@@ -830,15 +832,15 @@ void ask_new_file(int in_new_window, char *filename)
            * a replayed/typed `xschem load f` goes through the scheduler and
            * never re-enters this function -> no double-log. */
           if(!filename && tcl_braceable(f)) log_action("xschem load {%s}", f);
-          tclvareval("update_recent_file {", f, "}", NULL);
+          tcl_call("update_recent_file", f, NULL, NULL);
           if(xctx->portmap[xctx->currsch].table) str_hash_free(&xctx->portmap[xctx->currsch]);
           my_strdup(_ALLOC_ID_, &xctx->sch_path[xctx->currsch],".");
           xctx->sch_path_hash[xctx->currsch] = 0;
           xctx->sch_inst_number[xctx->currsch] = 1;
           zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
         } else { /* load in new window/tab */
-          tclvareval("update_recent_file {", f, "}", NULL);
-          tclvareval("xschem load_new_window {", f, "}", NULL);
+          tcl_call("update_recent_file", f, NULL, NULL);
+          tcl_call("xschem load_new_window", f, NULL, NULL);
           /* the with-filename arm of load_new_window does not log (it is the
            * replay form); record this dialog-resolved new-window open here */
           if(!filename && tcl_braceable(f)) log_action("xschem load_new_window {%s}", f);
@@ -3363,7 +3365,7 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  }
  dbg(1, "place_symbol(): 2: name1=%s\n",name1);
 
- tclvareval("is_xschem_file {", name1, "}", NULL);
+ tcl_call("is_xschem_file", name1, NULL, NULL);
  if(!strcmp(tclresult(), "GENERATOR")) {
    size_t len = strlen(name1);
    if( name1[len - 1] != ')') my_snprintf(name, S(name), "%s()", name1);
@@ -3811,12 +3813,14 @@ void launcher(void)
     url = get_tok_value(prop_ptr,"url",0); /* handle backslashes */
     dbg(1, "launcher(): url=%s\n", url);
     if(url[0] || (program[0])) { /* open url with appropriate program */
-      tclvareval("launcher {", url, "} {", program, "}", NULL);
+      tcl_call("launcher", url, program, NULL);
     } else if(command && command[0]){
       dbg(1, "launcher(): command=%s\n", command);
       if(Tcl_GlobalEval(interp, command) != TCL_OK) {
-        dbg(0, "%s\n", tclresult());
-        if(has_x) tclvareval("alert_ {", tclresult(), "} {}", NULL);
+        char errmsg[PATH_MAX + 100];
+        my_strncpy(errmsg, tclresult(), S(errmsg)); /* tclsetvar() would invalidate it */
+        dbg(0, "%s\n", errmsg);
+        if(has_x) tcl_call("alert_", errmsg, NULL, "{}");
         Tcl_ResetResult(interp);
       }
     } else { /* no action defined --> warning */
@@ -4211,12 +4215,26 @@ void get_additional_symbols(int what)
  * (<libpath>/<cell>/schematic/<cell>.sch), return its absolute path, else "".
  * Thin wrapper over the Tcl resolver (library-manager Phase 4). Lets descend and
  * the schematic= override target the cell's schematic VIEW rather than ext-swap
- * the symbol-view path. See doc/claude/code_analysis/library_manager_design.md. */
+ * the symbol-view path. See doc/claude/code_analysis/library_manager_design.md.
+ *
+ * ⚠ `ref` IS `.sch` TEXT AND MUST NOT BE CONCATENATED INTO THE SCRIPT -- issue
+ * 0827. It used to be spelled
+ *     my_snprintf(c, S(c), "cellview_path {%s} schematic", ref); tcleval(c);
+ * and both call sites below hand it attacker-controlled bytes: the instance's
+ * `schematic=` property value, and the symbol's own name. `\}` is the `.sch`
+ * format's OWN escape for a literal brace, so a WELL-FORMED sheet closed the
+ * group and the rest of the attribute RAN AS TCL. Driven: ONE mailed `.sch`
+ * referencing examples/rlc.sym (which ships with xschem) executed `exec touch`
+ * on a plain `xschem descend -inst x1`, --nogui, no dialog. The second door
+ * (sym->name) needs an EMBEDDED subcircuit symbol -- a disk symbol whose name
+ * carries `}` cannot reach it, because the load falls back to missing.sym and
+ * descend_schematic()'s type guard refuses a non-subcircuit -- and was driven
+ * too. tcl_call() (util.c) hands `ref` over as a variable; one wrapper, both
+ * doors. The PATH_MAX+100 buffer and its silent mid-escape truncation go with
+ * it. Rows CVP01-CVP07 in tests/headless/test_raw_read_dispatch.tcl. */
 static const char *cellview_sch_path(const char *ref)
 {
-  char c[PATH_MAX + 100];
-  my_snprintf(c, S(c), "cellview_path {%s} schematic", ref);
-  return tcleval(c);
+  return tcl_call("cellview_path", ref ? ref : "", NULL, "schematic");
 }
 
 void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
@@ -4228,6 +4246,7 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
   int file_exists=0;
   int cancel = 0;
   int is_gen = 0;
+  char msg[PATH_MAX + 100];
 
   my_strncpy(filename, "", PATH_MAX);
 
@@ -4296,7 +4315,8 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
   if(has_x && fallback && !is_gen && filename[0]) {
     file_exists = !stat(filename, &buf);
     if(!file_exists) {
-      tclvareval("ask_save {Schematic ", filename, "\ndoes not exist.\nDescend into base schematic?}", NULL);
+      my_snprintf(msg, S(msg), "Schematic %s\ndoes not exist.\nDescend into base schematic?", filename);
+      tcl_call("ask_save", msg, NULL, NULL);
       if(strcmp(tclresult(), "yes") ) fallback = 0; /* 'no' or 'cancel' */
        if(!strcmp(tclresult(), "") ) { /* 'cancel' */
          cancel = 1;
@@ -4336,7 +4356,7 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
     my_snprintf(sympath, S(sympath), "%s/%s",  xschem_web_dirname, get_cell_w_ext(filename, 0));
     if(stat(sympath, &buf)) { /* not found, download */
       /* download item into ${XSCHEM_TMP_DIR}/xschem_web_xxxxx */
-      tclvareval("try_download_url {", xctx->current_dirname, "} {", filename, "}", NULL);
+      tcl_call("try_download_url", xctx->current_dirname, filename, NULL);
     }
     if(stat(sympath, &buf)) { /* not found !!! build abs_sym_path to look into local fs and hope fror the best */
       my_strncpy(filename, abs_sym_path(sym->name, ".sch"), PATH_MAX);
@@ -4823,6 +4843,7 @@ void go_back(int what)
  int from_embedded_sym;
  int save_modified;
  char filename[PATH_MAX];
+ char msg[PATH_MAX + 100];
  int prev_sch_type;
  int confirm = what & 1;
  int set_title = !(what & 2);
@@ -4854,7 +4875,8 @@ void go_back(int what)
   }
   if(save_ok==0) {
     fprintf(errfp, "go_back(): file opening for write failed! %s \n", xctx->current_name);
-    tclvareval("alert_ {file opening for write failed! ", xctx->current_name, "} {}", NULL);
+    my_snprintf(msg, S(msg), "file opening for write failed! %s", xctx->current_name);
+    tcl_call("alert_", msg, NULL, "{}");
   }
   unselect_all(1);
   if(!tclgetboolvar("keep_symbols")) remove_symbols();

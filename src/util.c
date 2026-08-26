@@ -1075,6 +1075,84 @@ const char *resolve_rawfile_path(const char *s, char *dest, int destsize)
   expand_tilde(s, tilde_expanded, (int)S(tilde_expanded));
   return expand_tcl_vars(tilde_expanded, dest, destsize);
 }
+
+/* CALL A TCL PROC WITH DATA ARGUMENTS, WITHOUT CONCATENATING THEM INTO THE
+ * SCRIPT -- issues 0817 (section Z.2), 0827, 0829.
+ *
+ * `cmd` and `tail` are PROGRAM TEXT: a C string literal at every call site --
+ * the FN07 source scan in tests/headless/test_raw_read_dispatch.tcl keeps
+ * `cmd` that way -- with the single exception of a value the C side itself
+ * FORMATTED, such as my_itoa()'s decimal pin count in token.c. `a1` and `a2`
+ * are DATA: a filename, a `.sch` property value,
+ * a symbol name, a message composed in C. They are handed to the interpreter
+ * as GLOBAL VARIABLES and referenced with a `$::` substitution, because a
+ * variable substitution's result is ONE word and is NEVER re-parsed -- so no
+ * byte in them can escape into script.
+ *
+ * What it replaces, in three spellings of ONE defect:
+ *     tclvareval("someproc {", x, "}", NULL);
+ *     my_snprintf(c, S(c), "someproc {%s}", x); tcleval(c);
+ *     tclvareval("someproc [list ", x, "]", NULL);
+ * A `}` in x closed the brace group and everything after it RAN AS TCL, and
+ * `\}` is the `.sch` format's OWN escape for a literal brace -- so a
+ * WELL-FORMED, not corrupt, schematic could carry one. The `[list ...]`
+ * spelling reads as the safe form and is not: the bracket is a command
+ * substitution in the OUTER script and runs while that script's words are
+ * being parsed, before `list` is ever reached.
+ * Driven on an unmodified tree, all three with --nogui and no dialog: a mailed
+ * `.sch` whose instance carries `schematic="x\} ... exec touch HOST ..."`
+ * created the host file on a plain descend (0827, both call sites of
+ * cellview_sch_path); a crafted FILENAME did it on `xschem load` (0817 Z.2);
+ * a schematic whose FILENAME contains `[exec touch HOST]` did it on
+ * `xschem netlist` (0829).
+ *
+ * This is the route backannot_refuse_digital() (save.c) already took, and that
+ * the three sym-path wrappers in actions.c took for issue 0825. It is NOT a
+ * second path resolver: it expands nothing and resolves nothing, so the
+ * raw-file registry's strcmp() key (issue 0812) is untouched and no route
+ * gains a second resolution pass (issue 0820). It adds no `trace ... read`
+ * surface either -- it calls Tcl_SetVar, not Tcl_GetVar2Ex (issue 0819,
+ * which GUARD3 pins).
+ *
+ * The globals are deliberately NOT unset afterwards: Tcl_UnsetVar can reset
+ * the interpreter result, and the interpreter result IS the return value here
+ * (call sites hold it as a `const char *`, exactly as with abs_sym_path()).
+ * ONE shared name pair serves every call site: Tcl substitutes the variable
+ * into the argument word BEFORE the proc body runs, so a proc that re-enters
+ * C and calls tcl_call() again cannot corrupt the outer call's built word.
+ *
+ * A caller must NOT pass tclresult() straight in as a1 or a2: tclsetvar()
+ * writes through the interpreter and invalidates that pointer. Copy it into a
+ * local buffer first -- token.c sanitize() and actions.c launcher() do. */
+static const char *tcl_call_core(const char *cmd, const char *a1, const char *mid,
+                                const char *a2, const char *tail)
+{
+  char script[512];
+
+  tclsetvar("__tcl_call_a1", a1 ? a1 : "");
+  if(a2) tclsetvar("__tcl_call_a2", a2);
+  my_snprintf(script, S(script), "%s $::__tcl_call_a1%s%s%s%s%s",
+              cmd ? cmd : "",
+              (mid && mid[0]) ? " " : "", (mid && mid[0]) ? mid : "",
+              a2 ? " $::__tcl_call_a2" : "",
+              (tail && tail[0]) ? " " : "", (tail && tail[0]) ? tail : "");
+  tcleval(script);
+  return tclresult();
+}
+
+const char *tcl_call(const char *cmd, const char *a1, const char *a2, const char *tail)
+{
+  return tcl_call_core(cmd, a1, NULL, a2, tail);
+}
+
+/* `<cmd> $a1 <mid> $a2` -- for the procs whose two DATA words are separated by a
+ * literal switch, the only shape tcl_call()'s argument order cannot express.
+ * One caller family: `netlist <file> show|noshow <cellname>` in the five
+ * netlisters, where BOTH data words derive from the schematic's own filename. */
+const char *tcl_call_mid(const char *cmd, const char *a1, const char *mid, const char *a2)
+{
+  return tcl_call_core(cmd, a1, mid, a2, NULL);
+}
 size_t my_mstrcat(int id, char **str, const char *add, ...)
 {
   va_list args;

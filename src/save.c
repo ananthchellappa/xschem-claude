@@ -4215,7 +4215,6 @@ void remove_backup(void)
 int load_backup_as(const char *cellfile, int set_title)
 {
   char bak[PATH_MAX];
-  char msg[PATH_MAX+100];
   struct stat sb;
   if(!cellfile || !cellfile[0]) return 0;
   if(!tclgetboolvar("autosave_backup")) return 0;
@@ -4225,8 +4224,8 @@ int load_backup_as(const char *cellfile, int set_title)
   /* restore the logical identity: this buffer IS cellfile, not cellfile~ */
   my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], cellfile);
   my_strncpy(xctx->current_name, rel_sym_path(cellfile), S(xctx->current_name));
-  my_snprintf(msg, S(msg), "get_directory {%s}", cellfile);
-  my_strncpy(xctx->current_dirname, tcleval(msg), S(xctx->current_dirname));
+  my_strncpy(xctx->current_dirname, tcl_call("get_directory", cellfile, NULL, NULL),
+             S(xctx->current_dirname));
   if(!stat(cellfile, &sb)) xctx->time_last_modify = sb.st_mtime;
   set_modify(1);                                     /* unsaved vs cellfile        */
   return 1;
@@ -4279,8 +4278,10 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
   else { /* user asks to save to same filename */
     if(!stat(xctx->sch[xctx->currsch], &buf)) {
       if(xctx->time_last_modify && xctx->time_last_modify != buf.st_mtime) {
-        tclvareval("ask_save \"Schematic file: ", xctx->sch[xctx->currsch],
-            "\nHas been changed since opening.\nSave anyway?\" 0", NULL);
+        my_snprintf(msg, S(msg),
+            "Schematic file: %s\nHas been changed since opening.\nSave anyway?",
+            xctx->sch[xctx->currsch]);
+        tcl_call("ask_save", msg, NULL, "0");
         if(strcmp(tclresult(), "yes") ) return 0;
       }
     }
@@ -4306,8 +4307,8 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
     xctx->time_last_modify =  buf.st_mtime;
   }
   my_strncpy(xctx->current_name, rel_sym_path(schname), S(xctx->current_name));
-  my_snprintf(msg, S(msg), "get_directory {%s}", schname);
-  my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+  my_strncpy(xctx->current_dirname, tcl_call("get_directory", schname, NULL, NULL),
+             S(xctx->current_dirname));
   /* why clear all these? */
   /*
    * xctx->prep_hi_structs=0;
@@ -4396,7 +4397,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   if(ffname && ffname[0]) {
     int generator = 0;
     /* if ffname is a generator add () at end of filename if not already present */
-    tclvareval("is_xschem_file {", ffname, "}", NULL);
+    tcl_call("is_xschem_file", ffname, NULL, NULL);
     if(!strcmp(tclresult(), "GENERATOR")) {
       size_t len = strlen(ffname);
       if( ffname[len - 1] != ')') my_strcat(_ALLOC_ID_, &ffname, "()");
@@ -4407,12 +4408,12 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     /* remote web object specified */
     if(is_from_web(ffname) && xschem_web_dirname[0]) {
       /* download into ${XSCHEM_TMP_DIR}/xschem_web */
-      tclvareval("download_url {", ffname, "}", NULL);
+      tcl_call("download_url", ffname, NULL, NULL);
       /* build local file name of downloaded object */
       my_snprintf(name, S(name), "%s/%s",  xschem_web_dirname, get_cell_w_ext(ffname, 0));
       /* build current_dirname by stripping off last filename from url */
-      my_snprintf(msg, S(msg), "get_directory {%s}", ffname);
-      my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+      my_strncpy(xctx->current_dirname, tcl_call("get_directory", ffname, NULL, NULL),
+                 S(xctx->current_dirname));
       /* local file name */
       my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], name);
       /* local relative reference */
@@ -4425,8 +4426,8 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       /* ffname does not begin with $XSCHEM_TMP_DIR/xschem_web and ffname does not exist */
 
       if(strstr(ffname, sympath) != ffname /* && stat(ffname, &buf)*/) {
-        my_snprintf(msg, S(msg), "get_directory {%s}", ffname);
-        my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+        my_strncpy(xctx->current_dirname, tcl_call("get_directory", ffname, NULL, NULL),
+                   S(xctx->current_dirname));
       }
       /* local file name */
       my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], ffname);
@@ -4434,8 +4435,8 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       my_strncpy(xctx->current_name, rel_sym_path(ffname), S(xctx->current_name));
     } else { /* local file specified and not coming from web url */
       /* build current_dirname by stripping off last filename from url */
-      my_snprintf(msg, S(msg), "get_directory {%s}", ffname);
-      my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+      my_strncpy(xctx->current_dirname, tcl_call("get_directory", ffname, NULL, NULL),
+                 S(xctx->current_dirname));
       /* local file name */
       my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], ffname);
       /* local relative reference */
@@ -4472,8 +4473,9 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       if(alert) {
         fprintf(errfp, "load_schematic(): unable to open file: %s, ffname=%s\n", name, ffname );
         if(has_x) {
-          my_snprintf(msg, S(msg), "update; alert_ {Unable to open file: %s}", ffname);
-          tcleval(msg);
+          my_snprintf(msg, S(msg), "Unable to open file: %s", ffname);
+          tcleval("update");
+          tcl_call("alert_", msg, NULL, NULL);
         }
       }
       len = strlen(name);
@@ -4497,7 +4499,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       dbg(2, "load_schematic(): loaded file:wire=%d inst=%d\n",xctx->wires , xctx->instances);
       if(load_symbols) link_symbols_to_instances(-1);
       if(reset_undo) {
-        tclvareval("is_xschem_file {", xctx->sch[xctx->currsch], "}", NULL);
+        tcl_call("is_xschem_file", xctx->sch[xctx->currsch], NULL, NULL);
         if(!strcmp(tclresult(), "SYMBOL") || xctx->instances == 0) {
           if(xctx->netlist_type != CAD_SYMBOL_ATTRS) xctx->save_netlist_type = xctx->netlist_type;
           xctx->netlist_type = CAD_SYMBOL_ATTRS;
@@ -5347,7 +5349,7 @@ int load_sym_def(const char *name, FILE *embed_fd)
         my_snprintf(sympath, S(sympath), "%s/%s", xschem_web_dirname, get_cell_w_ext(transl_name, 0));
         if((lcc[level].fd=my_fopen(sympath,fopen_read_mode))==NULL) {
           /* not already cached in .../xschem_web_xxxxx/ so download */
-          tclvareval("try_download_url {", xctx->current_dirname, "} {", transl_name, "}", NULL);
+          tcl_call("try_download_url", xctx->current_dirname, transl_name, NULL);
         }
         lcc[level].fd=my_fopen(sympath,fopen_read_mode);
       }
@@ -6114,6 +6116,7 @@ void create_sch_from_sym(void)
   char *dir = NULL;
   char *prop = NULL;
   char schname[PATH_MAX];
+  char msg[PATH_MAX + 100];
   char *sub_prop;
   char *sub2_prop=NULL;
   char *str=NULL;
@@ -6140,8 +6143,9 @@ void create_sch_from_sym(void)
              ".sch"), S(schname));
       }
       if( !stat(schname, &buf) ) {
-        tclvareval("ask_save \"Create schematic file: ", schname,
-            "?\nWARNING: This schematic file already exists, it will be overwritten\"", NULL);
+        my_snprintf(msg, S(msg), "Create schematic file: %s?\n"
+            "WARNING: This schematic file already exists, it will be overwritten", schname);
+        tcl_call("ask_save", msg, NULL, NULL);
         if(strcmp(tclresult(), "yes") ) {
           return;
         }

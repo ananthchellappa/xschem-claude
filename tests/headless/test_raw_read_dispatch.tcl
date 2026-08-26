@@ -865,6 +865,368 @@ check SYMP07-no-brace-splice-in-sym-path-wrappers [expr {[llength $SYMP_HITS] ==
   "(issue 0825: a sym-path wrapper still splices its argument into a `{%s}` group:\
  [join $SYMP_HITS { }])"
 
+# ===========================================================================
+# CVP — issue 0827: cellview_sch_path() (src/actions.c:4215) builds
+#       `cellview_path {<ref>} schematic` BY CONCATENATION and tcleval()s it.
+#       `<ref>` is `.sch` text: at actions.c:4291 the instance's `schematic=`
+#       property value, at actions.c:4314 the symbol's own name. `\}` is the
+#       `.sch` format's OWN escape for a literal brace, so the fixture below is
+#       a WELL-FORMED schematic, not a corrupt one — and one `}` closes the
+#       brace group so the remainder of the attribute is parsed as SCRIPT.
+#
+# FN  — issue 0817 §Z.2: the same defect on the `load` verb, where the string
+#       is the FILENAME. `is_xschem_file` (save.c:4399), `get_directory`
+#       (save.c:4414/4428/4437) and `update_recent_file` (scheduler.c:7693…)
+#       are all called by concatenation.
+#
+# NL  — issue 0829: the five netlisters spell it
+#       `get_directory [list <path>]`. `[list …]` READS as the safe form and is
+#       not: the bracket is a command substitution in the OUTER script, so it
+#       runs while that script's words are being parsed — before `list` is
+#       reached, and the brace-escape defence is irrelevant to it.
+#
+# WHY THEY ARE IN *THIS* FILE. Same sink shape as SC/SYMP above — a string out
+# of a document spliced into a `{...}` group of a script that is then
+# evaluated — so one file carries the whole splice family and one grep
+# (`SC0`/`SYMP`/`CVP`/`FN0`/`NL0`) finds every row.
+#
+# ⚠ THE PAYLOAD SHAPE IS SINK-SPECIFIC, AND SC02/SC07 ARE A FALSE GREEN
+# BECAUSE OF IT. `sc_pay` is shaped for 0816's `regsub {^~/} {…} {…}` sink:
+# spliced into a ONE-argument call it makes `is_xschem_file {x} {y} {z}` and
+# Tcl throws `wrong # args` BEFORE the attacker's own commands — so SC02 and
+# SC07 pass over a live sink. FN01/FN03 are the same verbs with a payload
+# shaped for THIS sink, and they are the rows that go red.
+#
+# FN02 IS SHAPED FOR A SINK *BEYOND* save.c ON PURPOSE. Its leading fragment
+# carries TWO words, which is `wrong # args` at `is_xschem_file f` and at
+# `get_directory f` (both take exactly one) and legal at
+# `update_recent_file {f {topwin {}}}`. So a fix that stops inside save.c
+# leaves FN02 red, and FN02 is the row that says the scheduler.c sites were
+# swept too.
+#
+# ⚠ CLAIMS (issue 0823). A `.sch` is executable BY DESIGN: a `tcleval(` in a
+# text record fires on DRAW (token.c:78, tcl_hook2). No row here may be read
+# as "opening a schematic no longer runs their Tcl". What these rows pin is
+# narrower and is the whole point: the paths that execute WITHOUT SAYING SO.
+# ===========================================================================
+
+set CVP_EMPTY "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\n"
+sch_wr [file join $tmp cvp_plain.sch] $CVP_EMPTY
+## return the context to a plain sheet at the top of the hierarchy, whether the
+## descend under test succeeded, failed, or landed on a payload's own tail
+proc cvp_reset {} {
+  catch {xschem go_back 2} ; catch {xschem go_back 2}
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $::tmp cvp_plain.sch]
+}
+## the 0827 payload in CLEAN form (what the resolver must end up seeing);
+## sch_esc escapes it into the file, so a reader sees it without decoding
+proc cvp_pay {host} { return "x\} schematic ; set ::SC_PWNED 1 ; exec touch $host ; list \{y" }
+## the lead's own fixture: ONE mailed .sch referencing examples/rlc.sym, a
+## symbol that SHIPS WITH XSCHEM, so nothing else has to be delivered
+proc cvp_inst_sch {path pay} {
+  sch_wr $path "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nC {examples/rlc.sym} 0 0 0 0 {name=x1 schematic=\"[sch_esc $pay]\"}\n"
+}
+## THE USER'S DOOR: load the mailed sheet, descend into the block. No dialog,
+## no gesture beyond the descend. Answers {sentinel host-file-created}.
+proc cvp_descend {host path} {
+  set ::SC_PWNED 0
+  catch {file delete -force $host}
+  catch {xschem set_modify 0}
+  pcall xschem load $path
+  pcall xschem descend -inst x1
+  set e [file exists $host]
+  catch {file delete -force $host}
+  cvp_reset
+  return [list $::SC_PWNED $e]
+}
+
+# --- CVP01: actions.c:4291, the instance `schematic=` property -------------
+set CVP_H1 [file join $tmp HOST_CVP01]
+cvp_inst_sch [file join $tmp cvp1.sch] [cvp_pay $CVP_H1]
+eqcheck CVP01-descend-schematic-attr [cvp_descend $CVP_H1 [file join $tmp cvp1.sch]] {0 0}
+
+# --- CVP02: actions.c:4314, the SYMBOL NAME ------------------------------
+# A disk symbol cannot reach this site: fopen fails, the instance falls back to
+# systemlib/missing.sym, type becomes "missing" and descend_schematic's type
+# guard (actions.c:4620) returns 0 before get_sch_from_sym is called. An
+# EMBEDDED subcircuit symbol reaches it with the payload intact, so the second
+# door needs its own fixture and cannot be waved through as "same wrapper".
+set CVP_H2 [file join $tmp HOST_CVP02]
+sch_wr [file join $tmp cvp2.sch] "v {xschem version=3.4.6 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {[sch_esc [cvp_pay $CVP_H2]]} 0 0 0 0 {name=x1}
+\[
+v {xschem version=3.4.6 file_version=1.2}
+G {}
+K {type=subcircuit}
+V {}
+S {}
+E {}
+L 4 0 0 20 0 {}
+B 5 -5 -5 5 5 {name=A dir=inout}
+T {@name} 0 0 0 0 0.2 0.2 {}
+\]
+"
+eqcheck CVP02-descend-symbol-name [cvp_descend $CVP_H2 [file join $tmp cvp2.sch]] {0 0}
+
+# --- CVP03/CVP04: the resolver's own ANSWER, and the non-vacuity twin ------
+# 0827 acceptance row 2: `xschem get_sch_from_sym` must return a path or empty,
+# never the payload's own tail. Measured at head it returns `y schematic` —
+# the value of the payload's closing `list {y} schematic`, which is the receipt
+# that the attribute really was parsed as script.
+# CVP04 is the twin that stops CVP01-CVP03 from passing because the name
+# stopped ARRIVING: the same answer must still carry the literal attribute
+# bytes, i.e. the resolver was handed the whole string as ONE word.
+set CVP_H3 [file join $tmp HOST_CVP03]
+set CVP_PAY3 [cvp_pay $CVP_H3]
+cvp_inst_sch [file join $tmp cvp3.sch] $CVP_PAY3
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp cvp3.sch]
+set ::SC_PWNED 0
+catch {file delete -force $CVP_H3}
+set CVP_G3 [pcall xschem get_sch_from_sym 0]
+set CVP_E3 [file exists $CVP_H3]
+catch {file delete -force $CVP_H3}
+eqcheck CVP03-answer-is-not-the-payload-tail \
+  [list [expr {$CVP_G3 eq {y schematic}}] $::SC_PWNED $CVP_E3] {0 0 0}
+check CVP04-attribute-reached-the-resolver-whole \
+  [expr {[string first $CVP_PAY3 $CVP_G3] >= 0}] \
+  "(the .sch schematic= value never reached the path resolver, so CVP01-CVP03 are\
+ vacuous; get_sch_from_sym answered '$CVP_G3')"
+cvp_reset
+
+# --- CVP05: the sharpest discriminator — WHAT THE PROC WAS CALLED WITH -----
+# A test-local recorder over `cellview_path`. This is a proc RENAME, not a
+# `trace ... read`, so GUARD3 (issue 0819) is untouched and nothing is added to
+# the shipped src/*.tcl this suite scans.
+# At head the recorder sees ONE argument word `x` — everything after the `}`
+# left the argument list and became script. Fixed, it must see the WHOLE
+# attribute as argument 1 and exactly two arguments.
+set ::CVREC {}
+set CVP_RENAMED 0
+if {[catch {
+  rename ::cellview_path ::__cvp_real
+  proc ::cellview_path {args} {
+    lappend ::CVREC $args
+    return [uplevel 1 [list ::__cvp_real {*}$args]]
+  }
+  set CVP_RENAMED 1
+} CVP_RERR]} { set CVP_RERR "recorder could not be installed: $CVP_RERR" }
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp cvp3.sch]
+set ::CVREC {}
+pcall xschem get_sch_from_sym 0
+if {$CVP_RENAMED} {
+  catch {rename ::cellview_path {}}
+  catch {rename ::__cvp_real ::cellview_path}
+}
+eqcheck CVP05-resolver-called-with-one-whole-word \
+  [list [llength $::CVREC] [llength [lindex $::CVREC 0]] [lindex [lindex $::CVREC 0] 0]] \
+  [list 1 2 $CVP_PAY3]
+cvp_reset
+
+# --- CVP06: ANTI-HOLLOW. Breaking a LEGITIMATE name is a different bug -----
+# A real, valid schematic whose filename simply contains a `}` — legal on every
+# filesystem xschem runs on — named by an absolute `schematic=` override. All
+# three halves are measured, because two of them are red at head:
+#   schname            the descend must land on the real file
+#   current_dirname    the `get_directory {%s}` splice BLANKS it (0817 Z.2)
+#   a clean log        `cellview_path {…}` must not throw on an ordinary name
+file mkdir [file join $tmp cvlib]
+sch_wr [file join $tmp cvlib cvsub.sym] "v {xschem version=3.4.6 file_version=1.2}
+G {}
+K {type=subcircuit
+format=\"@name @pinlist @symname\"
+template=\"name=x1\"}
+V {}
+S {}
+E {}
+L 4 0 0 20 0 {}
+B 5 -5 -5 5 5 {name=A dir=inout}
+"
+lappend ::pathlist [file join $tmp cvlib]
+set CVP_TGT [file join $tmp "w\}x.sch"]
+sch_wr $CVP_TGT $CVP_EMPTY
+sch_wr [file join $tmp cvp6.sch] "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nC {cvsub.sym} 0 0 0 0 {name=x1 schematic=\"[sch_esc $CVP_TGT]\"}\n"
+set CVP_LOG [file join $tmp cvp6.log]
+catch {file delete -force $CVP_LOG}
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp cvp6.sch]
+catch {xschem log $CVP_LOG}
+pcall xschem descend -inst x1
+catch {xschem log}
+set CVP_L6 {}
+if {[file exists $CVP_LOG]} { set _fd [open $CVP_LOG r]; set CVP_L6 [read $_fd]; close $_fd }
+eqcheck CVP06-legit-brace-name-still-descends \
+  [list [pcall xschem get schname] [pcall xschem get current_dirname] \
+        [expr {[string first "evaluation of script: cellview_path" $CVP_L6] >= 0}]] \
+  [list $CVP_TGT $tmp 0]
+cvp_reset
+
+# --- CVP07: the sibling verb, scheduler.c:2699 ----------------------------
+# Same Tcl proc, same brace-group concat, argv-derived words. Leaving it while
+# fixing actions.c is the half-sweep 0817 §Z.4 exists to prevent.
+set CVP_H7 [file join $tmp HOST_CVP07]
+eqcheck CVP07-cellview_path-verb [sc_probe $CVP_H7 xschem cellview_path \
+  "x\} \{y\}; set ::SC_PWNED 1; exec touch $CVP_H7; list \{a" schematic] {0 0}
+cvp_reset
+
+# --- FN01: the DRIVEN 0817 §Z.2 vector — a crafted FILENAME to `load` ------
+set FN_H1 [file join $tmp HOST_FN01]
+eqcheck FN01-load-is_xschem_file-sink [sc_probe $FN_H1 xschem load \
+  "[file join $tmp x]\} ; set ::SC_PWNED 1; exec touch $FN_H1; is_xschem_file \{a"] {0 0}
+# --- FN02: shaped for update_recent_file, which is BEYOND save.c ----------
+set FN_H2 [file join $tmp HOST_FN02]
+eqcheck FN02-load-update_recent_file-sink [sc_probe $FN_H2 xschem load \
+  "[file join $tmp x]\} \{\} ; set ::SC_PWNED 1; exec touch $FN_H2; update_recent_file \{a"] {0 0}
+# --- FN03: the same door SC07 covers, with a payload shaped for THIS sink --
+set FN_H3 [file join $tmp HOST_FN03]
+eqcheck FN03-load_new_window-is_xschem_file-sink [sc_probe $FN_H3 xschem load_new_window \
+  "[file join $tmp x]\} ; set ::SC_PWNED 1; exec touch $FN_H3; is_xschem_file \{a"] {0 0}
+
+# --- FN04/FN05/FN06: ANTI-HOLLOW. An ordinary filename must still work ----
+# FN04 is red at head: a `}` in a real filename makes both the is_xschem_file
+# and the get_directory scripts throw, and current_dirname comes back EMPTY —
+# a legitimate file that opens with a broken working directory.
+# FN05 and FN06 are GREEN AT HEAD ON PURPOSE. They are the rows that stop the
+# fix from being paid for with a blanked or re-expanded filename: `$` and `[`
+# must stay literal (no second resolver, 0812 decision D2 / 0819) and an
+# ordinary load must still report its own directory.
+set FN_EMPTY $CVP_EMPTY
+set FN_F4 [file join $tmp "x\} y.sch"]
+sch_wr $FN_F4 $FN_EMPTY
+catch {xschem set_modify 0}
+pcall xschem load $FN_F4
+eqcheck FN04-brace-filename-loads-with-its-own-dirname \
+  [list [pcall xschem get schname] [pcall xschem get current_dirname]] [list $FN_F4 $tmp]
+set FN_F5 [file join $tmp "a\$b\[1\].sch"]
+sch_wr $FN_F5 $FN_EMPTY
+catch {xschem set_modify 0}
+pcall xschem load $FN_F5
+eqcheck FN05-dollar-and-bracket-filename-stay-literal \
+  [list [pcall xschem get schname] [pcall xschem get current_dirname]] [list $FN_F5 $tmp]
+set FN_F6 [file join $tmp fn_plain.sch]
+sch_wr $FN_F6 $FN_EMPTY
+catch {xschem set_modify 0}
+pcall xschem load $FN_F6
+eqcheck FN06-ordinary-load-reports-its-dirname \
+  [list [pcall xschem get schname] [pcall xschem get current_dirname]] [list $FN_F6 $tmp]
+
+# --- FN07: THE ANTI-HALF-SWEEP SCAN ---------------------------------------
+# 0817 §Z.4 exists because a family was reported swept while siblings stayed
+# live. This names the SHAPE (a Tcl proc called by string concatenation with a
+# C variable spliced into a `{…}` or `[list …]` group) rather than one
+# spelling, across the load / descend / netlist path.
+# ⚠ WHAT IT DOES NOT COVER, so nobody reads a green here as "the family is
+# closed": the `ask_save`/`alert_` message sites (they compose program text and
+# a path together, and no mechanical rule separates them), the unbraced
+# `file dirname <var>` / `xschem load_new_window <argv>` splices, token.c's
+# `regsub`-based sanitize(), hilight.c's gaw `copyvar` protocol lines and
+# parselabel.c's modal tk_messageBox.
+set FN_PROCS {is_xschem_file get_directory update_recent_file download_url
+              try_download_url cellview_path launcher hi_descend_pick_done
+              xschem_recover_backup}
+set FN_FILES {save.c actions.c scheduler.c xinit.c callback.c spice_netlist.c
+              vhdl_netlist.c spectre_netlist.c verilog_netlist.c tedax_netlist.c}
+set FN_HITS {}
+foreach _f $FN_FILES {
+  set _fd [open [file join $INJ_REPO src $_f] r]; set _b [read $_fd]; close $_fd
+  set _ln 0
+  foreach _l [split $_b "\n"] {
+    incr _ln
+    set _t [string trimleft $_l]
+    if {[string index $_t 0] eq "*" || [string range $_t 0 1] eq "/*"} continue
+    foreach _p $FN_PROCS {
+      set _hit -1
+      foreach _n [list "tclvareval(\"$_p \{" "tclvareval(\"$_p \[list " "\"$_p \{%s\}"] {
+        set _i [string first $_n $_l]
+        if {$_i < 0} continue
+        ## program text spliced into program text is not this defect: skip a
+        ## site whose next argument is a C string LITERAL -- scheduler.c's two
+        ## launcher calls splice the compile-time file:// sharedir -- and keep
+        ## the ones that splice a variable.
+        if {[string first "\", \"" [string range $_l $_i end]] == [string length $_n]} continue
+        set _hit $_i
+        break
+      }
+      if {$_hit >= 0} { lappend FN_HITS "$_f:$_ln" ; break }
+    }
+  }
+}
+check FN07-no-concat-splice-in-the-load-path [expr {[llength $FN_HITS] == 0}] \
+  "(issues 0817 Z.2 / 0827 / 0829: a load-path proc is still called by CONCATENATION,\
+ so a close-brace or a bracket in the string it splices is script:\
+ [join $FN_HITS { }])"
+
+# --- FN08: ANTI-TYPO for a mechanical multi-site sweep --------------------
+# A misspelled proc name in a converted call compiles fine and degrades
+# SILENTLY — the C caller ignores the eval result. A child run doing
+# load + descend + go_back + netlist + saveas over a directory whose name
+# merely contains a `}` must emit no Tcl diagnostics at all. Red at head: the
+# same ordinary directory throws at is_xschem_file, get_directory and
+# update_recent_file today.
+set FN_D8 [file join $tmp "d\}8"]
+file mkdir $FN_D8
+sch_wr [file join $FN_D8 c8.sch] "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nC {examples/cmos_inv.sym} 0 0 0 0 {name=x1}\n"
+set FN_DRV [file join $tmp drive8.tcl]
+sch_wr $FN_DRV "set ::netlist_dir [list $FN_D8]
+xschem set netlist_type spice
+xschem load [list [file join $FN_D8 c8.sch]]
+xschem descend -inst x1
+xschem go_back 2
+xschem netlist
+xschem saveas [list [file join $FN_D8 out8.sch]] schematic
+"
+set FN_ERR {}
+catch {exec [file join $INJ_REPO src xschem] --nogui --pipe -q --nolog --script $FN_DRV 2>@1} FN_ERR
+set FN_BAD {}
+foreach _l [split $FN_ERR "\n"] {
+  if {[string match {*invalid command name*} $_l] ||
+      [string match {*evaluation of script*} $_l] ||
+      [string match {*error executing*} $_l]} { lappend FN_BAD $_l }
+}
+check FN08-no-tcl-diagnostics-on-an-ordinary-run [expr {[llength $FN_BAD] == 0}] \
+  "([llength $FN_BAD] diagnostic line(s) from a plain load/descend/netlist/saveas:\
+ [string map {\n |} [join [lrange $FN_BAD 0 3] { | }]])"
+
+# --- NL01/NL02: issue 0829, the five netlisters' `get_directory [list …]` --
+# `[list …]` is not a defence: the bracket is a command substitution in the
+# OUTER script and runs while that script's words are parsed. Measured at head:
+# a schematic whose FILENAME contains `[exec touch …]` creates the host file on
+# `xschem netlist` — one verb past the `load` vector, same door.
+# NL02 is the anti-hollow twin: the netlist must still be written, with the
+# subcircuit body in it, and the working directory must still be right.
+set NL_H [file join $tmp HOST_NL01]
+set NL_F [file join $tmp "a\[exec touch HOST_NL01\]b.sch"]
+sch_wr $NL_F "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nC {examples/cmos_inv.sym} 0 0 0 0 {name=x1}\n"
+set NL_NDIR [expr {[info exists ::netlist_dir] ? $::netlist_dir : {}}]
+set ::netlist_dir [file join $tmp nl]
+file mkdir $::netlist_dir
+xschem set netlist_type spice
+set ::SC_PWNED 0
+catch {file delete -force $NL_H}
+catch {xschem set_modify 0}
+pcall xschem load $NL_F
+set NL_LOADED [file exists $NL_H]
+pcall xschem netlist
+set NL_AFTER [file exists $NL_H]
+catch {file delete -force $NL_H}
+eqcheck NL01-netlist-list-splice [list $NL_LOADED $NL_AFTER] {0 0}
+set NL_SP [file join $::netlist_dir "a\[exec touch HOST_NL01\]b.spice"]
+set NL_B {}
+if {[file exists $NL_SP]} { set _fd [open $NL_SP r]; set NL_B [read $_fd]; close $_fd }
+eqcheck NL02-netlist-still-emits-the-subcircuit \
+  [list [regexp {\.subckt\s+cmos_inv\M} $NL_B] [regexp -line {^M1 } $NL_B] \
+        [regexp -line {^M2 } $NL_B] [pcall xschem get current_dirname]] \
+  [list 1 1 1 $tmp]
+set ::netlist_dir $NL_NDIR
+cvp_reset
+
 cd $SC_CWD
 catch {xschem set_modify 0}
 

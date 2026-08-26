@@ -3238,6 +3238,20 @@ extern int tclvareval(const char *script, ...);
 extern const char *expand_tilde(const char *s, char *dest, int destsize);
 extern const char *expand_tcl_vars(const char *s, char *dest, int destsize);
 extern const char *resolve_rawfile_path(const char *s, char *dest, int destsize);
+/* tcl_call() -- CALLING a Tcl proc with DATA arguments, issues 0817 Z.2 / 0827 /
+ * 0829. The sibling of the three above and the other half of the same rule: a
+ * filename, a `.sch` property value or a symbol name is DATA, so it is never
+ * concatenated into the script. `cmd` and `tail` are PROGRAM TEXT (a C string
+ * literal at every call site); `a1`/`a2` are handed over as globals and
+ * referenced with `$::`, whose substitution result is one word and is never
+ * re-parsed. It EXPANDS nothing and RESOLVES nothing -- it is a caller, not a
+ * resolver, so it neither competes with resolve_rawfile_path() for the
+ * registry's strcmp() key (0812) nor adds a second pass (0820), and it reads
+ * no variable, so it adds no `trace ... read` surface (0819).
+ * A caller must not pass tclresult() straight in: tclsetvar() invalidates it.
+ * See the comment block above it in util.c. */
+extern const char *tcl_call(const char *cmd, const char *a1, const char *a2, const char *tail);
+extern const char *tcl_call_mid(const char *cmd, const char *a1, const char *mid, const char *a2);
 extern const char *tcl_hook2(const char *res);
 extern void statusmsg(char str[],int n);
 /* issue 0248: statusmsg() + a hold, for lines a user must be able to READ (gate messages,

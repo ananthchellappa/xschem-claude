@@ -3854,8 +3854,9 @@ int Tcl_AppInit(Tcl_Interp *inter)
    my_strncpy(xctx->netlist_name, cli_opt_initial_netlist_name, S(cli_opt_initial_netlist_name));
    #ifdef __unix__
    if(strchr(xctx->netlist_name, '/')) {
-     tclvareval("file dirname ", xctx->netlist_name, NULL);
-     tclsetvar("netlist_dir", tclresult());
+     char ndir[PATH_MAX + 100];
+     my_strncpy(ndir, tcl_call("file dirname", xctx->netlist_name, NULL, NULL), S(ndir));
+     tclsetvar("netlist_dir", ndir);
    }
    #endif
  }
@@ -3920,7 +3921,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
    file_loaded = load_schematic(1, fname, !cli_opt_do_netlist, 1);
    if(cli_opt_do_netlist) if(!file_loaded) tcleval("exit 1");
    if(cli_opt_do_netlist) set_modify(-1); /* set tab/window title */
-   tclvareval("update_recent_file {", fname, "}", NULL);
+   tcl_call("update_recent_file", fname, NULL, NULL);
  } else /* if(!cli_opt_filename[0]) */
  {
    char *tmp;
@@ -4059,7 +4060,10 @@ int Tcl_AppInit(Tcl_Interp *inter)
  if(cli_opt_lastopened || cli_opt_lastclosed) i = 1;
  else i = 2;
  for(; i < cli_opt_argc; ++i) {
-   tclvareval("xschem load_new_window ",  cli_opt_argv[i], NULL);
+   /* one file per argument: the name is DATA. Before this it was spliced
+    * UNBRACED, so a command-line path containing a space became several
+    * arguments and opened nothing (issue 0817 Z.2 / 0829 decision L3). */
+   tcl_call("xschem load_new_window", cli_opt_argv[i], NULL, NULL);
  }
 
  /* Execute tcl script given on command line with --command */

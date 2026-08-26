@@ -2447,7 +2447,7 @@ void hilight_net(int viewer)
    }
   }
   if( viewer == XSCHEM_GRAPH && s) {
-    tclvareval("graph_add_nodes_from_list {", s, "}", NULL);
+    tcl_call("graph_add_nodes_from_list", s, NULL, NULL); /* net names are .sch text, 0817 Z.4 */
     my_free(_ALLOC_ID_, &s);
   }
   if(!incr_hi) incr_hilight_color();

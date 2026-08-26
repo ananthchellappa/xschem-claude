@@ -16525,6 +16525,14 @@ set wm_fix 0
 
 # 20171010
 set tclcmd_txt {}
+# `simulate_bg` is the Simulate menu entry's own background and is only assigned
+# when a menubar is built (see create_toolbar/menu setup below). A --nogui or
+# --pipe session never builds one, yet C set_modify() writes
+# `set tctx::${win}_netlist $simulate_bg` unconditionally, so every scripted
+# load/netlist/save threw `can't read "simulate_bg": no such variable` on
+# stderr -- a Tcl error on a completely ordinary headless run. A default makes
+# the read legal; a GUI session still overwrites it with the real colour.
+set simulate_bg {}
 
 ###
 ### user preferences: set default values

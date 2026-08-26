@@ -2671,6 +2671,48 @@ Values:
   foreach _n {plain.raw gdi_one.raw autozero_comp.raw} {
     file copy -force [file join $GDIT an.raw] [file join $GDIT $_n]
   }
+  ## TWO DISTINGUISHABLE DATABASES (issue 0828). `aaa.raw` carries v(naaa) and
+  ## `bbb.raw` carries v(nbbb), so a row can say WHICH raw the dialog listed.
+  ## With the current database aaa and the graph naming bbb, an intake that
+  ## reads nothing falls through graph_fill_listbox's `elseif` arm and lists
+  ## the CURRENT raw -- the wrong database, on screen, with every widget
+  ## present. `winfo exists` cannot see that; the vector names can.
+  proc gdi_named_raw {p v} {
+    set b [string map [list v(n1) v($v)] "Title: gdi
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 3
+Variables:
+\t0\ttime\ttime
+\t1\tv(n1)\tvoltage
+Values:
+0\t0.000000000000000e+00
+\t1.000000000000000e+00
+
+1\t1.000000000000000e-08
+\t2.000000000000000e+00
+
+2\t2.000000000000000e-08
+\t3.000000000000000e+00
+
+"]
+    gdi_wr $p $b
+  }
+  gdi_named_raw [file join $GDIT aaa.raw] naaa
+  gdi_named_raw [file join $GDIT bbb.raw] nbbb
+
+  ## Open the Graph dialog on the ALREADY-LOADED schematic and answer
+  ## {gep_rc listbox-content}. gdi_open destroys the dialog before it returns,
+  ## which is why every anti-hollow row before issue 0828 could only ask
+  ## whether the listbox WIDGET existed.
+  proc gdi_lb_of_open_dialog {} {
+    set rc [catch {graph_edit_properties 0} r]
+    set lb {}
+    catch {set lb [.graphdialog.center.left.list1 get 0 end]}
+    catch {destroy .graphdialog}
+    return [list $rc $lb]
+  }
 
   ## THE USER'S DOOR. Answers \{gep_rc sentinel host-file-created\} and records
   ## the non-vacuity evidence (GDI07) as a side effect, so no injection row has
@@ -2792,21 +2834,59 @@ Values:
   set GDI9_RC [lindex [gdi_open GDI09 [file join $GDIT gdi_nd.sch] \
     [file join $GDIT GDI_NEVER]] 0]
   set GDI9_INFO [pcall xschem raw info]
-  check {GDI09 the shipped $netlist_dir spelling still loads and is registered under the RESOLVED absolute path} \
-    [list $GDI9_RC [string match "*[file join $GDIT autozero_comp.raw]*" $GDI9_INFO]] \
-    {0 1}
+  ## ...and the DIALOG'S OWN WORD for it, not only the C-side registry. Issue
+  ## 0828: draw.c:3643-3655 reads the same three attributes with
+  ## get_tok_value() and registers the same resolved path, so the registry
+  ## assertion above holds whatever the Tcl intake returns -- it was a
+  ## draw-path test wearing a dialog test's name.
+  set GDI9_ATTR [pcall graph_rect_attr $::graph_selected rawfile]
+  check {GDI09 the shipped $netlist_dir spelling still loads, is registered under the RESOLVED absolute path, and is what the dialog itself read} \
+    [list $GDI9_RC [string match "*[file join $GDIT autozero_comp.raw]*" $GDI9_INFO] $GDI9_ATTR] \
+    [list 0 1 {$netlist_dir/autozero_comp.raw}]
 
-  ## a PLAIN RELATIVE rawfile of a real .raw must still fill the listbox
+  ## --- GDI16: THE INTAKE ITSELF, BY ITS LITERAL BYTES (issue 0828) --------
+  ## The one row that names graph_rect_attr. An inert intake reds a row that
+  ## says so, instead of being absorbed by the C draw path.
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_nd.sch]
+  check {GDI16 graph_rect_attr hands back the .sch bytes for all three attributes} \
+    [list [pcall graph_rect_attr 0 rawfile] [pcall graph_rect_attr 0 sim_type 2] \
+          [pcall graph_rect_attr 0 autoload 2]] \
+    [list {$netlist_dir/autozero_comp.raw} tran 1]
+
+  ## --- GDI10: WHICH DATABASE DID THE DIALOG ACTUALLY LIST? (issue 0828) ---
+  ## The row this group used to have asserted `winfo exists` on the listbox --
+  ## widget EXISTENCE, not content -- so a dialog that listed nothing, or
+  ## listed another raw's vectors, passed. Measured: with the intake replaced
+  ## by a proc returning the empty string, the whole group stayed ALL PASS
+  ## while the dialog showed the wrong database's signals.
+  ## The discriminator: `aaa.raw` is the CURRENT database and the graph names
+  ## `bbb.raw`. A working intake reads bbb and lists nbbb; a dead one falls
+  ## through to the current database and lists naaa.
+  xschem raw clear
+  gdi_sch [file join $GDIT gdi_bbb.sch] [file join $GDIT bbb.raw] tran 1
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_bbb.sch]
+  set GDI10_AAA [pcall xschem raw read [file join $GDIT aaa.raw] tran]
+  set GDI10_R [gdi_lb_of_open_dialog]
+  xschem raw clear
+  check {GDI10 with two databases resident the listbox holds the GRAPH's raw, not the current one} \
+    [list $GDI10_AAA [lindex $GDI10_R 0] [lindex $GDI10_R 1]] \
+    [list 1 0 {nbbb time}]
+
+  ## --- GDI10b: ANTI-HOLLOW, and it reads the listbox rather than counting --
+  ## a PLAIN RELATIVE rawfile of a real .raw must still fill the listbox, with
+  ## the vector names of that file, and all THREE shipped graph schematics must
+  ## still open their dialog.
   set GDI_CWD [pwd]
   cd $GDIT
   gdi_sch [file join $GDIT gdi_rel.sch] plain.raw tran 1
   xschem raw clear
-  set GDI10_RC [lindex [gdi_open GDI10 [file join $GDIT gdi_rel.sch] \
-    [file join $GDIT GDI_NEVER]] 0]
-  set GDI10_LB [lindex [lindex $::GDI_NONVAC end] 2]
+  catch {xschem set_modify 0}
+  set GDI10_RC [expr {[string match ERR:* [pcall xschem load [file join $GDIT gdi_rel.sch]]] ? 1 : 0}]
+  set GDI10_R2 [gdi_lb_of_open_dialog]
   set GDI10_INFO [pcall xschem raw info]
   cd $GDI_CWD
-  ## ...and all THREE shipped graph schematics must still open their dialog
   set GDI10_SHIP {}
   foreach _s {xschem_library/ngspice/autozero_comp.sch
               xschem_library/ngspice/solar_panel.sch
@@ -2817,9 +2897,10 @@ Values:
       [catch {graph_edit_properties 0}]]
     catch {destroy .graphdialog}
   }
-  check {GDI10 a plain relative rawfile still loads, and the three shipped graph schematics still open their dialog} \
-    [list $GDI10_RC $GDI10_LB [string match {*plain.raw*} $GDI10_INFO] $GDI10_SHIP] \
-    [list 0 1 1 {{autozero_comp.sch 0 0} {solar_panel.sch 0 0} {cmos_example.sch 0 0}}]
+  check {GDI10b a plain relative rawfile still loads and its listbox comes back with THAT file's vectors, and the three shipped graph schematics still open their dialog} \
+    [list $GDI10_RC [lindex $GDI10_R2 0] [lindex $GDI10_R2 1] \
+          [string match {*plain.raw*} $GDI10_INFO] $GDI10_SHIP] \
+    [list 0 0 {n1 time} 1 {{autozero_comp.sch 0 0} {solar_panel.sch 0 0} {cmos_example.sch 0 0}}]
 
   ## --- GDI11: SINGLE PASS OR TWO? MEASURED, NOT ASSUMED (issue 0820) ------
   ## ::gdi_lvl2 holds the LITERAL TEXT `$gdi_one`. One resolution pass turns

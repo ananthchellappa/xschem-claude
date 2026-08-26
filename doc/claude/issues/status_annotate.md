@@ -581,3 +581,81 @@ clock on the 0658 run, with all three live agents freezing within 47 seconds of
 each other. `tests/headless/runtime_gaps.sh` now decomposes any run and names the
 cause from the `btime` contradiction. The host sleep timeout has since been set
 to Never.
+
+---
+
+# Item 0827+0817+0828 — 2026-08-26 — status **E**
+
+**Three driven RCEs closed. The family is NOT swept — issue 0831 is live and driven.**
+
+## What was measured BEFORE (verbatim, Measure agent, on the fresh 23:05 binary)
+
+```
+after-load     CVPWN=0 host=0
+after-descend  CVPWN=1 host=1     VERDICT=PWNED     (0827 site 1, actions.c:4291)
+after-descend  CVPWN2=1 host2=1   VERDICT=PWNED     (0827 site 2, actions.c:4314)
+FNHOST created via the injected `exec touch`      VERDICT=PWNED     (0817 §Z.2, save.c:4399)
+HOST-after-netlist=1                              (0829, new, driven during planning)
+```
+
+## What changed
+
+One helper pair in `src/util.c` — `tcl_call(cmd, a1, a2, tail)` and
+`tcl_call_mid(cmd, a1, mid, a2)` — hands the data words to the interpreter as
+**global variables** and evaluates `<cmd> $::__tcl_call_a1 …`. Only the command
+name and the literal connective words are program text. **72 call sites across 13
+`.c` files.** This is the `backannot_refuse_digital()` / 0825 route, **not** a
+second resolver: it expands nothing and resolves nothing, so 0812's `strcmp()`
+registry key is untouched, no route gains a second pass (0820), and it uses
+`Tcl_SetVar` not `Tcl_GetVar2Ex`, so it adds no read-trace surface (0819, GUARD3
+still green). Globals are deliberately **not** unset — `Tcl_UnsetVar` can reset the
+interp result, which *is* these wrappers' return value (0825's recorded reason).
+
+AFTER: `CVPWN=0 host=0`, `CVPWN2=0 host2=0`, `FNPWN=0 host=0`, netlist host file
+not created — with the non-vacuity twin green (`get_sch_from_sym` still answers
+with the **whole payload bytes, un-truncated**; the value reaches the resolver, it
+is simply no longer script).
+
+## Tiers
+
+`test_raw_read_dispatch` 107 → **124**, `test_wave_sigsearch` (`:99`) 248 → **250**,
+T1 **0** counted, T2 **HARNESS PASS** (6/6), `test_descend_views` /
+`test_cellview_resolve` / `test_descend_inert_class` (177) / `descend_symbol` /
+`fidelity` / `preserve` / `cadence_descend_newwin_ro` all unchanged ALL PASS.
+`test_wave_markers` **6 FAILED / 977 passed** — the documented standing red
+**0826**, identical rows to baseline, not from this item.
+Rebuild receipt: `find src -maxdepth 1 -newer src/xschem` = **0**;
+`grep -rn SABOTAGE src/` = **0**. No new `.c`/`.tcl` file, so `Makefile.in` was not
+edited and `./configure` correctly not run.
+
+## Filed by this crew
+
+**0829** (the netlisters' `get_directory [list …]` — the **bracket** is a command
+substitution in the outer script; fixed same-commit), **0830** (`simulate_bg`
+undefined in every headless session, a pre-existing Tcl defect that made "zero Tcl
+diagnostics" unreachable; fixed same-commit), and **0831** — ⚠ **LIVE, DRIVEN,
+NOT FIXED**.
+
+## Why status E, and why not x
+
+Verify-C **refuted** the completeness half of the claim, and the write-up agent
+**independently re-drove it**: `library_inst_lcv` (`scheduler.c:5527`) takes
+`xctx->inst[n].name` straight from the `.sch` and still concatenates —
+`LMX=1 host=1`, host file created, `--nogui`. Six siblings share the spelling.
+**They are named on the same line of 0817's own sweep list as the `cellview_path`
+this item fixed.**
+
+Not downgraded to **F**: F's remedy is to revert, and reverting would re-open three
+*driven* RCEs while fixing none of the newly-found ones — strictly worse for the
+user. Not rounded up to **x**: the adversary refuted, and a half-swept family
+reported as swept is the defect this branch keeps filing against itself.
+
+**E** is also independently warranted: the plan set `user_visible_change=true` with
+no prior ratification (ladder **L3**).
+
+## Ledger
+
+One **rule** debt against **0829** (recorded by the Implement agent) and one
+**suite** debt for `test_wave_sigsearch` on `:0`. **Nothing was cleared, converted
+or discharged.** The 0831 finding is a *defect*, not a user decision, so it was
+filed rather than added to the user's queue.

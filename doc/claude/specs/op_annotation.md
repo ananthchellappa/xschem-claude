@@ -2679,7 +2679,9 @@ directory* name and nobody typed a path.
 top of the function, both `node_token_split()` fields were rewired, and the four raw-family
 `regsub` splices became `expand_tilde()`. **Thirteen minus four = nine `regsub` splices
 outside this family are still live: issue 0816**, and the `tclvareval` brace groups of
-file-derived strings are **0817**.
+file-derived strings are **0817**. *(Both fixed since — 0816 by item 0821+0816+0817,
+0817's driven §Z.2 vector by item 0827+0817+0828, which converted 72 sites to
+`tcl_call()`. **0831** is what remains of the shape and it is still driven.)*
 
 **The correction this spec needs**, because §4.2 and §4.3a already say "`string map`,
 never `subst`, a template is user data" and someone will reasonably read that as
@@ -2748,21 +2750,46 @@ sym-path wrappers in `actions.c`, found and fixed in the same commit because two
 nine fed one of them. The dialog route is now **single-pass**, measured, which retires
 0820's exposure for it.
 
-Still live: **0815** (`compare_schematics` segfaults under `--nogui`), **0817** (the
-`tclvareval` brace groups — now with a **driven** vector: a crafted *filename* still
-executes on `xschem load` through `is_xschem_file`/`get_directory`/`update_recent_file`),
-**0818** (the top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a
-`$var`-spelled path — left alone on purpose, decision D5), **0819** (the read-trace edge),
-**0820** (the double-pass non-idempotence, on the `%` `node=` route only), **0827** —
-⚠ **a LIVE splice of the same shape, reached by DESCENDING into a block**:
-`cellview_sch_path()` (`src/actions.c:4215`) splices a `.sch` `schematic=` attribute into
-`cellview_path {%s} schematic`, and one mailed file plus a stock library symbol runs
-`exec touch` on a plain `xschem descend` — and **0828** (three anti-hollow rows of the new
-GDI group stay green when the dialog's attribute intake is inert).
+**✅ Fixed since, by item 0827+0817+0828 (2026-08-26): 0827** (both doors —
+`cellview_sch_path()`'s instance `schematic=` value *and* `sym->name` via an embedded
+subcircuit), **0817 §Z.2** (the crafted-*filename* vector through
+`is_xschem_file`/`get_directory`/`update_recent_file`/`try_download_url`), **0829**
+(new — the five netlisters' `get_directory [list …]`, where the **bracket** is a command
+substitution in the outer script, so a `[` in a filename runs before `list` is reached),
+**0830** (new — `simulate_bg` undefined in every headless session) and **0828**
+(the GDI anti-hollow rows now assert dialog **content**). The mechanism is one helper,
+`tcl_call()` in `src/util.c`, applied to **72 call sites across 13 `.c` files**: the data
+words are handed over as **global variables** and never concatenated. It expands nothing
+and resolves nothing, so 0812's `strcmp()` registry key is untouched and no route gains a
+second pass (0820).
 
-**The honest summary of this whole family: a `.sch` is still executable by two named doors
-(0827 content, 0817 filename). What the fixes can claim is site-by-site, never
-verb-by-verb** — see issue 0823.
+Still live: **0831** — ⚠ **the same shape, DRIVEN twice, and it is why this family may
+NOT be called swept**: `library_inst_lcv` (`src/scheduler.c:5527`) splices
+`xctx->inst[n].name` — the instance's symbol reference **read straight out of the
+`.sch`** — into `library_inst_lcv {%s}`, and one mailed file plus the Library Manager's
+`get_inst_lcv` gesture runs `exec touch` (`LMX=1 host=1`, `--nogui`). Six siblings share
+the spelling (`cell_views`, `ciform::open`, `library_resolve`, `library_cells`,
+`libmgr::open`, `replace_symbol`) and two more sit in
+`set INITIALINSTDIR [file dirname {…}]` at `scheduler.c:9707` / `callback.c:559`.
+Also **0815** (`compare_schematics` segfaults under `--nogui`), **0817** (reduced to the
+gaw `copyvar` ×7 and the modal/Windows-only remnants — see its **§Z.5**), **0818** (the
+top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled
+path — left alone on purpose, decision D5), **0819** (the read-trace edge), **0820** (the
+double-pass non-idempotence, on the `%` `node=` route only), and **0826**
+(`test_wave_markers` MX7b/MX7d, a standing red at 6 FAILED / 977 passed).
+
+**The honest summary of this whole family: a `.sch` is still executable — by design
+(`tcleval(` in a text record, `token.c:78`) and, at the sites 0831 names, WITHOUT SAYING
+SO. What the fixes can claim is site-by-site, never verb-by-verb** — see issue 0823.
+
+⚠ **Two process lessons this item paid for, binding on anyone extending the family.**
+First, **the half-sweep repeated itself in the same sentence**: 0817's inventory names
+`cellview_path / cell_views / … / libmgr::open` on one line, and the item converted the
+first name only. Convert the whole line, or say per-name why not. Second, **the
+source-scan guard certified its own blind spot**: `FN07` in
+`tests/headless/test_raw_read_dispatch.tcl` scans a 9-proc list that includes none of the
+seven live sinks, so it was green throughout. Add a proc to `FN_PROCS` in the same edit
+that converts its sink.
 
 **The `(` decision is user-visible and is the ruling this item returned as status E**
 (0812 §16): `$a(1)` in a rawfile spelling now means the value of `a` followed by a literal

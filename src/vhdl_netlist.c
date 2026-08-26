@@ -121,7 +121,6 @@ int global_vhdl_netlist(int global, int alert)  /* netlister driver */
  /* issue 0498: caller's xctx->no_undo, parked while this walk owns the undo slot */
  int undo_saved;
  char netl_filename[PATH_MAX];   /* overflow safe 20161122 */
- char tcl_cmd_netlist[PATH_MAX + 100];  /* 20081202 overflow safe 20161122 */
  char cellname[PATH_MAX];  /* 20081202 overflow safe 20161122 */
  char *type=NULL;
  struct stat buf;
@@ -396,11 +395,10 @@ int global_vhdl_netlist(int global, int alert)  /* netlister driver */
  if(split_f) {
    int save;
    fclose(fd);
-   my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} noshow {%s}", netl_filename, cellname);
    save = xctx->netlist_type;
    xctx->netlist_type = CAD_VHDL_NETLIST;
    set_tcl_netlist_type();
-   tcleval(tcl_cmd_netlist);
+   tcl_call_mid("netlist", netl_filename, "noshow", cellname);
    xctx->netlist_type = save;
    set_tcl_netlist_type();
    if(debug_var==0) xunlink(netl_filename);
@@ -444,7 +442,7 @@ int global_vhdl_netlist(int global, int alert)  /* netlister driver */
     if(strcmp(xctx->sym[i].type,"subcircuit")==0 && check_lib(1, abs_path))
     {
       if(!web_url) {
-        tclvareval("get_directory [list ", xctx->sch[xctx->currsch - 1], "]", NULL);
+        tcl_call("get_directory", xctx->sch[xctx->currsch - 1], NULL, NULL);
         my_strncpy(xctx->current_dirname, tclresult(),  S(xctx->current_dirname));
       }
       /* xctx->sym can be SCH or SYM, use hash to avoid writing duplicate subckt */
@@ -482,7 +480,7 @@ int global_vhdl_netlist(int global, int alert)  /* netlister driver */
    if(web_url) {
      my_strncpy(xctx->current_dirname, current_dirname_save, S(xctx->current_dirname));
    } else {
-     tclvareval("get_directory [list ", xctx->sch[xctx->currsch], "]", NULL);
+     tcl_call("get_directory", xctx->sch[xctx->currsch], NULL, NULL);
      my_strncpy(xctx->current_dirname, tclresult(),  S(xctx->current_dirname));
    }
    my_strncpy(xctx->current_name, rel_sym_path(xctx->sch[xctx->currsch]), S(xctx->current_name));
@@ -501,12 +499,10 @@ int global_vhdl_netlist(int global, int alert)  /* netlister driver */
  if(!split_f) {
    fclose(fd);
    if(tclgetboolvar("netlist_show")) {
-    my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} show {%s}", netl_filename, cellname);
-    tcleval(tcl_cmd_netlist);
+    tcl_call_mid("netlist", netl_filename, "show", cellname);
    }
    else {
-    my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} noshow {%s}", netl_filename, cellname);
-    tcleval(tcl_cmd_netlist);
+    tcl_call_mid("netlist", netl_filename, "noshow", cellname);
    }
    if(!debug_var) xunlink(netl_filename);
  }
@@ -532,7 +528,6 @@ int vhdl_block_netlist(FILE *fd, int i, int alert)
   char *type=NULL;
   char filename[PATH_MAX];
   char netl_filename[PATH_MAX];
-  char tcl_cmd_netlist[PATH_MAX + 100];
   char cellname[PATH_MAX];
   char *abs_path = NULL;
   const char *str_tmp;
@@ -737,11 +732,10 @@ int vhdl_block_netlist(FILE *fd, int i, int alert)
   if(split_f) {
     int save;
     fclose(fd);
-    my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} noshow {%s}", netl_filename, cellname);
     save = xctx->netlist_type;
     xctx->netlist_type = CAD_VHDL_NETLIST;
     set_tcl_netlist_type();
-    tcleval(tcl_cmd_netlist);
+    tcl_call_mid("netlist", netl_filename, "noshow", cellname);
     xctx->netlist_type = save;
     set_tcl_netlist_type();
     if(debug_var==0) xunlink(netl_filename);

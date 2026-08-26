@@ -145,9 +145,14 @@ const char *sanitize(const char *name)
     return empty;
   }
   dbg(1, "sanitize(): name=%s\n", name);
-  tclvareval("regsub -all { *[.(),] *} {", name, "} _", NULL);
-  tclvareval("regsub  {_$} {", tclresult(), "} {}", NULL);
-  my_strdup2(_ALLOC_ID_, &s, tclresult());
+  {
+    /* the symbol name is DATA -- issue 0817 Z.4. tclresult() may not be handed
+     * to tcl_call() directly: tclsetvar() writes through the interpreter and
+     * invalidates it, so the first pass is copied out before the second. */
+    char pass1[PATH_MAX + 100];
+    my_strncpy(pass1, tcl_call("regsub -all { *[.(),] *}", name, NULL, "_"), S(pass1));
+    my_strdup2(_ALLOC_ID_, &s, tcl_call("regsub {_$}", pass1, NULL, "{}"));
+  }
   dbg(1, "sanitize(): s=%s\n", s);
   return s;
 }
@@ -1974,8 +1979,10 @@ static int has_included_subcircuit(int inst, int symbol, char **result)
     dbg(1, "exp_no_of_pins=%d\n", exp_no_of_pins);
     /* process spice_sym_def spice netlist */
     strtolower(symname);
-    tclvareval("has_included_subcircuit {", get_cell(symname, 0), "} {",
-                translated_sym_def, "} ", my_itoa(exp_no_of_pins), NULL);
+    /* the cell name and the `spice_sym_def` attribute are both `.sym` text
+     * (issue 0817 Z.4); the pin count is a decimal the C side formatted */
+    tcl_call("has_included_subcircuit", get_cell(symname, 0), translated_sym_def,
+             my_itoa(exp_no_of_pins));
 
     my_free(_ALLOC_ID_, &symname_attr);
     if(tclresult()[0]) { /* a valid spice_sym_def netlist was found */
@@ -2012,9 +2019,12 @@ static int has_included_subcircuit(int inst, int symbol, char **result)
       } else {
         dbg(0, "has_included_subcircuit(): %s symbol and .subckt pins do not match. Discard port order\n",
                 symname);
-        if(has_x)
-           tclvareval("alert_ {has_included_subcircuit(): ", symname,
-                   " symbol and .subckt pins do not match. Discard .subckt port order}", NULL);
+        if(has_x) {
+          char amsg[PATH_MAX + 200];
+          my_snprintf(amsg, S(amsg), "has_included_subcircuit(): %s symbol and .subckt pins"
+              " do not match. Discard .subckt port order", symname);
+          tcl_call("alert_", amsg, NULL, NULL);
+        }
       }
       if(tmp_result) my_free(_ALLOC_ID_, &tmp_result);
       my_free(_ALLOC_ID_, &subckt_pinlist);

@@ -4549,7 +4549,7 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     if(n >= 0) {
       statusmsg_hold_clear();   /* same as the ESC path: the blank must land (issue 0248) */
       statusmsg(" ", 1);
-      tclvareval("hi_descend_pick_done {", xctx->inst[n].instname, "}", NULL);
+      tcl_call("hi_descend_pick_done", xctx->inst[n].instname, NULL, NULL);
     } else { /* clicked empty space or a non-instance: cancel the armed descend cleanly */
       statusmsg_hold("Descend: cancelled (no instance there)", 1);
       tcleval("hi_descend_pick_cancel");

@@ -160,3 +160,80 @@ defect: `src/xschem.tcl:2831` `file_exists` (`catch "uplevel #0 {subst $f}"`,
 which 0812 §1 measured still running a command substitution inside an array index);
 `src/xschem.tcl:7067/7068`, the preview_window `<Expose>`/`<Configure>` binds built
 with `subst` over a file-dialog filename.
+
+## §Z.5 — 2026-08-26, after item 0827+0817+0828
+
+### Z.5.1 What that item CLOSED
+
+**72 concat call sites** across 13 `.c` files converted to the new
+`tcl_call()` / `tcl_call_mid()` in `src/util.c` — the data words are handed to the
+interpreter as **global variables** and never concatenated; only the command name
+and the literal connective words are program text. That is the
+`backannot_refuse_digital()` / 0825 route, **not** a second resolver: `tcl_call`
+expands nothing and resolves nothing, so 0812's `strcmp()` registry key is
+untouched, no route gains a second pass (0820), and it calls `Tcl_SetVar` not
+`Tcl_GetVar2Ex`, so it adds no `trace ... read` surface (0819 — GUARD3 still green).
+
+Closed and **driven green**: `cellview_sch_path` **both doors**
+(0827 — `actions.c:4291` the instance `schematic=` value, and `:4314` `sym->name`
+via an embedded subcircuit); `is_xschem_file` ×3, `get_directory` ×5,
+`update_recent_file` ×7, `download_url`, `try_download_url` ×2,
+`xschem_recover_backup`, `launcher` ×3, `hi_descend_pick_done`, `cellview_path`
+(the verb), `ask_save` ×3, `alert_` ×4, `sanitize`'s two regsubs,
+`has_included_subcircuit`, `graph_add_nodes_from_list`, `set_netlist_dir`;
+plus the five netlisters' `get_directory [list …]` ×10 and `netlist {%s} … {%s}`
+×18 (**issue 0829**, a bracket-not-brace vector filed and fixed in the same pass).
+
+### Z.5.2 ⚠ THE FAMILY IS NOT SWEPT — issue 0831
+
+**It happened again, in the same sentence of the same list.** The "rest of the
+sweep" section above names, on one line:
+
+> `cellview_path` / `cell_views` / `ciform::open` / `library_inst_lcv` /
+> `library_resolve` / `library_cells` / `libmgr::open` / … / `replace_symbol`
+
+The item fixed **`cellview_path`, the first name**, and left the rest
+concatenating. `library_inst_lcv` (`scheduler.c:5527`) takes
+`xctx->inst[n].name` — **straight from the `.sch`** — and was **driven to
+host-file creation** by the adversary (3/3) and again, independently, by the
+write-up agent:
+
+```
+LMX=1 host=1 r=y
+```
+
+`cell_views` was driven to Tcl execution with a sink-shaped argv payload.
+Two more, **not in the adversary's list**, found during the write-up:
+`scheduler.c:9707` and `callback.c:559`,
+`set INITIALINSTDIR [file dirname {<abs_sym_path(inst.name)>}]` — file-derived and
+carrying 0829's bracket problem as well as this issue's brace problem.
+
+**And the guard did not catch it**: `FN07`'s `FN_PROCS` list in
+`tests/headless/test_raw_read_dispatch.tcl` covers 9 procs and **none of these**,
+so the anti-half-sweep row was green while the sinks were live. Extending that
+list is part of 0831's fix, not an afterthought.
+
+### Z.5.3 Still live after that item — the corrected list
+
+* **issue 0831** (driven): `library_inst_lcv` 5527; `cell_views` 2708;
+  `ciform::open` 2726; `library_resolve` 8068; `library_cells` 8077;
+  `libmgr::open` 8097; `replace_symbol` 12393; `INITIALINSTDIR`
+  scheduler.c:9707 + callback.c:559.
+* `hilight.c` gaw `copyvar` ×7 (847, 855, 1644, 1647, 1760, 1769, 1773) — a
+  **different sink shape**, a protocol line to a co-process; needs its own helper
+  and a live GAW that no headless suite has.
+* `parselabel.c:~1884` `tk_messageBox` (**modal**, issue 0803).
+* `hilight.c:1118/1120` — Windows-only, behind `#ifndef __unix__`.
+* `draw.c:126` / `svgdraw.c:1113` / `psprint.c:1795` `file dirname {plotfile}` — a
+  Tcl **setting**, not file-derived.
+* `move.c:9135` `c_toolbar::add`; `xinit.c:470` `lindex {tclpixdata}`;
+  `hilight.c:3303` `net_hilight_anim_update {wp}` — internal, not file-derived.
+* Tcl-side siblings unchanged: `ase.tcl:202`, `xschem.tcl:7067/7068`,
+  `xschem.tcl:2831` (dead).
+
+### Z.5.4 Newly established as NOT defects — do not re-derive
+
+* `scheduler.c:7819` / `:7840` `xschem load {f}` — already guarded by
+  `is_pristine_untitled() && tcl_braceable(f)` with a `new_schematic()` C-string
+  fall-through. **Issue 0022 solved this.**
+* `scheduler.c:7798` `file normalize` — already commented out.

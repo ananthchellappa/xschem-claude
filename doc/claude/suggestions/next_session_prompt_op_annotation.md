@@ -106,16 +106,19 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    This is a **user-visible** change and it is the ruling this step returned as status
    **E** — see 0812 §16. If you reuse `expand_tcl_vars()` for 0817, you inherit this
    decision; say so in your own write-up rather than letting it spread silently.
-9. **Still open in this family** — ⚠ **rewritten 2026-08-25 after item 0821+0816+0817**;
-   see the ✅ block below it for what closed. Open: **0817** (the `tclvareval` brace
-   groups — now with a **driven** vector, not just an inventory), **0818** (the top-level
+9. **Still open in this family** — ⚠ **rewritten 2026-08-26 after item 0827+0817+0828**;
+   see the ✅ blocks below for what closed. Open: **0831** (⚠ **LIVE and DRIVEN**: the
+   library-manager brace-concat sinks — `library_inst_lcv` takes an instance name straight
+   from the `.sch` and creates a host file; six more siblings on the same line of 0817's
+   own sweep list), **0817** (reduced to the gaw `copyvar` ×7 and the modal/Windows-only
+   remnants — see its new **§Z.5**), **0818** (the top-level
    `raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled path —
    deliberate, decision D5), **0819** (the read-trace edge above), **0820** (the
    double-pass non-idempotence — the `%` `node=` route only; the Graph **dialog** route is
    now single-pass and measured), **0815** (`xschem compare_schematics <path>` segfaults
-   under `--nogui`, not injection), **0827** (⚠ **LIVE**: descend executes a `.sch`'s
-   `schematic=` attribute) and **0828** (test coverage). **Closed**: 0816, 0821, 0822,
-   0825.
+   under `--nogui`, not injection), **0826** (`test_wave_markers` MX7b/MX7d, a *standing
+   red* — 6 FAILED / 977 passed, deterministic, **not** from any of these items).
+   **Closed**: 0816, 0821, 0822, 0825, **0827**, **0828**, **0829**, **0830**.
 10. **⚠ REBUILD AT THE TOP OF YOUR ITEM.** The 0812-retry write-up corrected three C
    comment blocks (`util.c`, `draw.c`, `xschem.h`) and could not build — crew rule 2 gives
    `make` to the Implement agent alone — so `find src -maxdepth 1 -newer src/xschem`
@@ -126,6 +129,92 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    0821, which cost a second write-up cycle and a second round of source edits on a
    "finished" item. An adversary pass is what refuted attempt 1 while four suites were ALL
    PASS; it is not an optional garnish and it is not useful late.
+
+---
+
+## ✅ 0827 + 0817 §Z.2 + 0829 + 0830 + 0828 — **FIXED 2026-08-26 (item 0827+0817+0828, status E). THREE DRIVEN RCEs CLOSED — AND THE FAMILY IS *NOT* SWEPT: SEE 0831**
+
+**Not a plan step.** Records: **`0827-*.md` §6** (before/after, the four acceptance
+rows, the sabotage matrix), **`0817-*.md` §Z.5** (what closed, and the corrected
+still-live list), **`0828-*.md` §5**, **`0829-*.md`**, **`0830-*.md`**, and
+**`0831-*.md`** (⚠ **new, LIVE, driven**).
+
+**One helper closed all of it.** `tcl_call(cmd, a1, a2, tail)` and
+`tcl_call_mid(cmd, a1, mid, a2)` in `src/util.c` hand the data words to the
+interpreter as **global variables** and evaluate
+`<cmd> $::__tcl_call_a1 <mid> $::__tcl_call_a2 <tail>`; only the command name and
+the literal connective words are program text. **72 call sites across 13 `.c`
+files.** `test_raw_read_dispatch` 107 → **124**, `test_wave_sigsearch` (`:99`)
+248 → **250**, everything else unchanged, T1 0, T2 HARNESS PASS.
+
+### ⚠⚠ WHAT MUST PROPAGATE TO EVERY LATER STEP
+
+1. **A `.sch` is STILL EXECUTABLE on this tree — issue 0831, driven twice.**
+   `library_inst_lcv` (`scheduler.c:5527`) takes `xctx->inst[n].name` **straight
+   from the file** and concatenates it. One mailed `.sch` + select the instance +
+   the Library Manager's `get_inst_lcv` → `LMX=1 host=1`, host file created,
+   `--nogui`. `cell_views` (2708) likewise, via argv. Plus `ciform::open` 2726,
+   `library_resolve` 8068, `library_cells` 8077, `libmgr::open` 8097,
+   `replace_symbol` 12393, and `INITIALINSTDIR` at `scheduler.c:9707` +
+   `callback.c:559`. **Do not write "the injection family is closed" anywhere.**
+2. **⚠ THE HALF-SWEEP HAPPENED AGAIN, IN THE SAME SENTENCE.** 0817's "rest of the
+   sweep" list names `cellview_path / cell_views / ciform::open / library_inst_lcv
+   / library_resolve / library_cells / libmgr::open` **on one line**. This item
+   fixed **the first name** and left the rest live. 0817 §Z.4 exists *because* that
+   pattern happened once. It is now twice. **If your item's issue carries an
+   inventory line, convert the WHOLE line or say per-name why not.**
+3. **⚠ A SOURCE-SCAN GUARD IS ONLY AS GOOD AS ITS PROC LIST.** `FN07` in
+   `test_raw_read_dispatch.tcl` is the anti-half-sweep row. It scans **9 procs**
+   and none of the seven above, so it was **green while the sinks were live**. When
+   you convert a sink, add its proc name to `FN_PROCS` in the same edit — otherwise
+   you ship a guard that certifies your own blind spot.
+4. **`tcl_call()` is the in-tree answer now — use it, do not invent a resolver.**
+   It expands nothing and resolves nothing, so 0812's `strcmp()` registry key is
+   untouched, no route gains a second pass (0820), and it uses `Tcl_SetVar` not
+   `Tcl_GetVar2Ex`, so it adds no `trace ... read` surface (0819 — GUARD3 green).
+   **Do not unset the globals**: `Tcl_UnsetVar` can reset the interp result, which
+   *is* these wrappers' return value (0825's recorded reason). One shared name pair
+   is re-entrancy-safe — Tcl substitutes the word before the proc body runs.
+5. **`[list …]` is NOT the safe spelling** (issue 0829, driven). The five netlisters
+   wrote `get_directory [list <path>]`; the bracket is a **command substitution in
+   the outer script**, so a `[` in a *filename* runs before `list` is ever reached.
+   The `.sch` brace-escape discussion is irrelevant to that spelling. If you see
+   `[list` inside a concatenated Tcl script string, it is a defect, not a defence.
+6. **A counterweight suite can be mislabelled.** `SAB-1` proved
+   **`test_cellview_resolve` (CV1-CV12) is NOT the anti-hollow suite for the descend
+   route** — it drives the `xschem cellview_path` *verb*, never the `actions.c`
+   wrapper. `test_descend_views` **D1/D2/D4** are. **D3 is not either** (legacy flat
+   descend resolves via `abs_sym_path` and never enters `tcl_call`). Name the row,
+   not the suite, when you claim anti-hollow coverage.
+7. **`simulate_bg` was undefined in every headless session** (issue 0830, Tcl-only
+   fix). `set_modify()` wrote `set tctx::${win}_netlist $simulate_bg` uncaught while
+   the variable is only assigned when a **menubar** is built, so every `--nogui`
+   load/netlist/save threw on stderr. **Pre-existing, not from this item.** If your
+   step asserts "zero Tcl diagnostics on an ordinary run", you needed this fix.
+8. **⚠ NEVER MEASURE A TIER WHILE A SABOTAGE AGENT HOLDS THE TREE.** Verify-A's
+   first T1 scored `netlisting FATAL: 57 / Total num fail: 1` — every failure
+   `exit 126` (text-file-busy) in one contiguous job window, taken across a
+   concurrent SAB-5 relink. Re-run by hand: rc=0. It would have been reported as a
+   five-file netlister regression. Verify-A re-ran all twelve tiers under a
+   binary-identity guard (wait for `make` idle + zero noop residue, re-check
+   `size:mtime` after). **Adopt that guard**; an unguarded number taken during
+   sabotage is not evidence.
+9. **`test_wave_markers` is a STANDING RED, not yours** — 6 FAILED / 977 passed
+   (MX7b ×3, MX7d ×3), deterministic, issue **0826**. Report your suites against
+   977. Do not fold it in, do not chase it, do not carry it as "3 FAIL pre-existing"
+   the way this branch did for days (see CLAUDE.md's T1 rule).
+
+### ⚠ STATUS E — the question owed to a human
+
+Converting the **unbraced** and **double-quoted** splices changes behaviour for
+**ordinary** paths, not only crafted ones, and nothing ratifies it:
+`xschem 'my file.sch'` used to word-split and fail to open, and now opens **one**
+file; a `$` or `[` in a path used to substitute inside an `ask_save`/descend prompt
+and is now shown **literally**. Implemented **YES** on ladder **L2** (a word-split
+filename is indistinguishable from a bug, and preserving it means keeping an RCE
+open to protect a defect) — but the ratification is the user's. Recorded as a
+**rule debt against 0829**; the option table is in that issue. **Do not answer it
+for them, and do not let it spread silently into a later step.**
 
 ---
 

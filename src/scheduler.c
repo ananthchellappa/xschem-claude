@@ -246,12 +246,12 @@ static void xschem_cmd_help(int argc, const char **argv)
   done:
   my_strncpy(prog, tclresult(), S(prog));
   #ifdef __unix__
-  if(running_in_src_dir) {
-    tclvareval("launcher {", "file://", xschem_sharedir,
-               "/../doc/xschem_man/developer_info.html#cmdref", "} ", prog, NULL);
-  } else {
-    tclvareval("launcher {", "file://", xschem_sharedir,
-               "/../doc/xschem/xschem_man/developer_info.html#cmdref", "} ", prog, NULL);
+  {
+    char docurl[PATH_MAX + 100];
+    my_snprintf(docurl, S(docurl), "file://%s%s", xschem_sharedir ? xschem_sharedir : "",
+        running_in_src_dir ? "/../doc/xschem_man/developer_info.html#cmdref"
+                           : "/../doc/xschem/xschem_man/developer_info.html#cmdref");
+    tcl_call("launcher", docurl, prog, NULL);
   }
   #else
   my_snprintf(url2, S(url2), "file://%s#cmdref", url);
@@ -2696,7 +2696,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Tcl (src/library_defs.tcl). See doc/claude/code_analysis/library_manager_design.md. */
     else if(!strcmp(argv[1], "cellview_path"))
     {
-      if(argc > 3) tclvareval("cellview_path {", argv[2], "} {", argv[3], "}", NULL);
+      if(argc > 3) tcl_call("cellview_path", argv[2], argv[3], NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -7647,7 +7647,9 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             FILE *probe = my_fopen(f, fopen_read_mode);
             if(probe) fclose(probe);
             else {
-              if(has_x) tclvareval("alert_ {Unable to open file: ", f, "}", NULL);
+              char amsg[PATH_MAX + 100];
+              my_snprintf(amsg, S(amsg), "Unable to open file: %s", f);
+              if(has_x) tcl_call("alert_", amsg, NULL, NULL);
               else dbg(0, "xschem load -gui: unable to open file: %s\n", f);
               skip = 1;
             }
@@ -7655,11 +7657,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!force && !skip && f[0] && check_loaded(f, win_path) &&
               xctx->current_win_path && strcmp(win_path, xctx->current_win_path)) {
             char msg[PATH_MAX + 100];
-            my_snprintf(msg, S(msg),
-               "tk_messageBox -type okcancel -icon warning -parent [xschem get topwindow] "
-               "-message {Warning: %s already open.}", f);
+            my_snprintf(msg, S(msg), "Warning: %s already open.", f);
             if(has_x) {
-              tcleval(msg);
+              tcl_call("tk_messageBox -type okcancel -icon warning "
+                       "-parent [xschem get topwindow] -message", msg, NULL, NULL);
               if(strcmp(tclresult(), "ok")) skip = 1;
             }
             else dbg(0, "xschem load: %s already open: %s\n", f, win_path);
@@ -7690,7 +7691,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
               int dr = nofullzoom * 2 + !nodraw;
               ret = new_schematic("create", "noconfirm", f, dr);
               if(undo_reset) {
-                tclvareval("update_recent_file {", f, "}", NULL);
+                tcl_call("update_recent_file", f, NULL, NULL);
               }
             } else {
               first_loaded = 1;
@@ -7702,7 +7703,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
               if(!force && has_x && tcl_braceable(f)) log_action("xschem load {%s}", f);
               dbg(1, "xschem load: f=%s, ret=%d\n", f, ret);
               if(undo_reset) {
-                tclvareval("update_recent_file {", f, "}", NULL);
+                tcl_call("update_recent_file", f, NULL, NULL);
                 my_strdup(_ALLOC_ID_, &xctx->sch_path[xctx->currsch], ".");
                 if(xctx->portmap[xctx->currsch].table) str_hash_free(&xctx->portmap[xctx->currsch]);
                 str_hash_init(&xctx->portmap[xctx->currsch], HASHSIZE);
@@ -7718,7 +7719,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
                * in GUI + interactive mode -- never on scripted/replay loads or headless.
                * doc/claude/specs/descend_hierarchy_in_memory.md (B8) */
               if(!force && has_x) {
-                tclvareval("xschem_recover_backup {", xctx->sch[xctx->currsch], "}", NULL);
+                tcl_call("xschem_recover_backup", xctx->sch[xctx->currsch], NULL, NULL);
               }
             }
           }
@@ -7817,7 +7818,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             * path can't corrupt the load command (issue 0022). */
            if(is_pristine_untitled() && tcl_braceable(f)) tclvareval("xschem load {", f, "}", NULL);
            else new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
-           tclvareval("update_recent_file {", f, "}", NULL);
+           tcl_call("update_recent_file", f, NULL, NULL);
            /* a reopen-shortcut new-window open is read mode by default, like the in-window reopen */
            if(reopen && xctx && !xctx->readonly) { xctx->readonly = 1; set_modify(-1); }
           } else {
@@ -7841,7 +7842,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
            /* action-log (file-menu plan): dialog-resolved new-window open;
             * the with-filename arm above is the replay form and stays silent */
            if(tcl_braceable(f)) log_action("xschem load_new_window {%s}", f);
-           tclvareval("update_recent_file {", f, "}", NULL);
+           tcl_call("update_recent_file", f, NULL, NULL);
           } else {
             new_schematic("create", NULL, NULL, 1);
           }
@@ -8885,8 +8886,7 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(erc == 0) tclsetvar("show_infowindow_after_netlist", "never");
       if(fname) {
         my_strncpy(xctx->netlist_name, get_cell_w_ext(fname, 0), S(xctx->netlist_name));
-        tclvareval("file dirname ", fname, NULL);
-        path = tclresult();
+        path = tcl_call("file dirname", fname, NULL, NULL);
         if(strchr(fname, '/')) {
           set_netlist_dir(1, path);
         }
@@ -9927,8 +9927,8 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
        * with the previous value, which is the measured show_hidden_texts defect (0453). */
       annot_show_sync_cache();
       if(argc > 3) {
-        tclvareval("file normalize {", argv[3], "}", NULL);
-        my_strncpy(xctx->plotfile, Tcl_GetStringResult(interp), S(xctx->plotfile));
+        my_strncpy(xctx->plotfile, tcl_call("file normalize", argv[3], NULL, NULL),
+                   S(xctx->plotfile));
       }
       if(!strcmp(argv[2], "pdf") || !strcmp(argv[2],"ps") || !strcmp(argv[2],"eps")) {
         double save_lw = xctx->lw;

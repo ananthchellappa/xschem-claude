@@ -1,7 +1,7 @@
 # 0828 — GDI09/GDI10/GDI11 stay GREEN when the Graph dialog's attribute intake returns nothing, so the anti-hollow half of that group proves less than it reads
 
-Status: **STUB — measured by the 0821+0816+0817 crew's sabotage agent, 2026-08-25.
-NOT FIXED.** Severity: medium — it is a *test* defect, and it is the kind that
+Status: **FIXED** (test-only) by item 0827+0817+0828, 2026-08-26. Originally
+measured by the 0821+0816+0817 crew's sabotage agent, 2026-08-25. Severity: medium — it is a *test* defect, and it is the kind that
 lets a real break ship past a green suite.
 Family: the 0821 fix's own coverage (`tests/headless/test_wave_sigsearch.tcl`,
 group **GDI**).
@@ -47,3 +47,43 @@ the **anti-hollow** half is the half that stops a security fix from being paid f
 with a broken feature, and here it is satisfied by a code path the fix did not
 touch. A crew reading "GDI09/GDI10 anti-hollow ALL PASS" would reasonably believe
 the dialog still works. It is the counterweight that has no weight.
+
+---
+
+## 5. FIXED — item 0827+0817+0828, 2026-08-26
+
+**Test-only.** `graph_rect_attr` was never the defect; the rows were. No C change,
+no rebuild needed for this part.
+
+* **GDI10 rewritten** around the `aaa`/`bbb` two-database discriminator this issue
+  already named: with `aaa.raw` resident and the graph naming `bbb.raw`, it now
+  reads `[.graphdialog.center.left.list1 get 0 end]` and requires the **content**
+  to contain `v(nbbb)` and *not* `v(naaa)`. The `winfo exists` check is gone.
+* **GDI09 extended** to assert the dialog's own `graph_rect_attr … rawfile` words —
+  the literal `$netlist_dir/...` spelling — not only the C-side registry.
+* **GDI16 added**: the literal bytes of all three tokens (`rawfile`, `sim_type`,
+  `autoload`) on a known rect, so an inert intake reds a row that **says so by name**.
+* **GDI10b added**: the three shipped graph schematics still open their dialog *and*
+  each listbox comes back with content.
+
+`test_wave_sigsearch` 248 → **250 checks, ALL PASS** (`:99` Xvfb, openbox 3.6.1).
+
+### 5.1 Acceptance — §3 row 3, met, and a correction to it
+
+`SAB-A3` re-run **verbatim** (noop proc + the three `graph_fill_listbox` call sites
+renamed): **GDI10 red** — `{1 0 {naaa time}}`, i.e. the dialog listed the **wrong
+database**, exactly the failure this issue said the suite could not see. Before the
+fix that same sabotage scored **0 red / ALL PASS (248)**. The acceptance is met.
+
+⚠ **But GDI09 and GDI16 stayed green under SAB-A3**, and that is worth recording
+rather than glossing: they call `graph_rect_attr` **directly from the test**, so
+renaming the *dialog's use* of it cannot reach them. A second sabotage,
+**SAB-7b** (gut `graph_rect_attr` itself — real body renamed away, an inert proc
+installed under the real name), reds **all three**: GDI09 `{0 1 {}}`, GDI16
+`{{} {} {}}`, GDI10. So the rows are **not vacuous** — they carry the proc's
+byte-fidelity mechanism, which SAB-A3's shape leaves intact by construction.
+
+**Consequence the next crew must not weaken:** if the dialog stops *calling* the
+intake while the proc still works, **GDI10 is the only row in the group that
+reds**. It is the single row carrying the dialog-wiring mechanism. Do not soften
+it back toward a widget-existence check.
