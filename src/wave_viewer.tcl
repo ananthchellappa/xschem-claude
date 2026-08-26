@@ -1411,6 +1411,26 @@ proc wviewer::open {token} {
   raise_activate_toplevel $top
   catch {focus $top}
   wviewer::diag "open-RETURN     token=$token top=$top"
+  # ⚠ AN UNCONDITIONAL CENSUS, twice, at the one moment that matters.
+  #
+  # The viewer-vs-design confusion is a race, and four sittings have now produced four
+  # different arrangements. The WVDIAG-gated trace above answers all of it -- and was
+  # switched off on every run that reproduced anything, because a diagnostic you must
+  # arm in advance is one you have not armed when the race finally goes your way. The
+  # user then has to remember to type `window_report` at exactly the right instant
+  # while the thing they are chasing is on screen. That is not a reasonable ask.
+  #
+  # So the viewer records its own arrival. Two lines of log, at the two instants that
+  # separate the competing explanations:
+  #   `viewer-open`  -- immediately: how many toplevels exist, and where. One window
+  #                     means the design canvas is painting viewer content (a repaint
+  #                     defect); two means the viewer is covering it (a placement one).
+  #   `viewer-open+` -- after the deferred uncover shove has had its chance to run, so
+  #                     the log says whether the anti-congruence step actually fired.
+  #                     Issue 0840's shove was dead for days precisely because nothing
+  #                     recorded whether it had happened.
+  catch {window_report viewer-open}
+  catch {after 700 {catch {window_report viewer-open+}}}
   return 1
 }
 
