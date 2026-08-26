@@ -1,6 +1,6 @@
 # 0845 — the reopen shortcuts open the design READ-ONLY
 
-Status: **CLOSED — RULED BY THE USER 2026-08-26: keep read-only-by-default.**
+Status: **CLOSED — RULED BY THE USER 2026-08-26: keep read-only-by-default, AND make it loud.**
 Was a ruling, never a defect. Raised from the user's own action log while
 investigating something else; the user did not report it. Related: 0839 (the
 other half of Ctrl+Shift+O), 0843.
@@ -84,9 +84,47 @@ Sabotage, two directions, opposite reds:
 | drop the skip (return the head unconditionally) | **FAIL** | ok |
 | over-tighten (always skip index 0) | ok | **FAIL** |
 
-## Left open, deliberately, as a separate question
+## The loudness, also ruled (same day)
 
-The third option this issue named — keep read-only but make it **loud** (a status
-line / CIW note "opened read-only, Ctrl-2 to edit" on the reopen path, because the
-title bar is the one thing nobody reads) — was **not** put to the user and is
-**not** ruled on. It is orthogonal to the default and can be raised on its own.
+Put to the user separately; answer: **"Yes, add loudness."**
+
+The reopen doors now announce themselves through the house notify channel — CIW
+pane, the durable action log, and the short form in the statusbar:
+
+> `a.sch opened READ-ONLY — the default for the reopen shortcuts (Open Most
+> Recent, Open Last Closed, File > Open Recent). Edits are refused until you make
+> it editable. Fix: Edit > Make Editable (Ctrl-2). CIW command: toggle_readonly`
+
+short form: `opened read-only`.
+
+`reopen_readonly_notice` (`xschem.tcl`, beside `readonly_notice`), called from
+the single convergence point in `scheduler.c`. Four decisions worth keeping:
+
+* **Not latched.** No `-once`. The fact worth saying is *which window you are in
+  now*, not that the rule exists. The user will see it every session; that is the
+  point, and it is also the thing their eyes should judge (look debt recorded).
+* **`!force` only** — an interactive `-gui` open. A scripted load or an
+  action-log replay stays silent. R15 is the twin.
+* **Outside the `!xctx->readonly` branch.** A non-writable file reopened through
+  one of these doors is *already* read-only from `save.c:4497`, so a notice
+  nested in the state change would go silent for exactly the file the user is
+  least able to edit. R19 is the twin, and sabotage SB-3 (nesting it) reds R19
+  alone.
+* **`Ctrl-2` is named only in cadence-compatible mode**, where
+  `cadence::make_editable` actually binds it. The `Edit > Make Editable` row
+  always exists, so that half is unconditional. An accelerator named in a mode
+  that does not bind it is a remedy that does not work. R17/R17b are the pair.
+
+Sabotage, five variants, each reddening its own rows and nothing else:
+
+| variant | reds |
+|---|---|
+| drop the `!force` gate | R15 |
+| remove the announcement | R11 R12 R13 R14 R17 R19 |
+| nest it inside the state change | R19 |
+| name Ctrl-2 unconditionally | R13 R17b |
+| drop the remedy from the notice | R13 R17 |
+
+21 checks, ALL PASS. Every sink was **stubbed** — `::xschem::notify` is replaced
+by a recorder — so nothing here proves the sentence renders. That is a `look`
+debt and a `suite` debt, both recorded.

@@ -7749,9 +7749,23 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
        * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
        * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */
-      if(readonly_open && first_loaded && !xctx->readonly) {
-        xctx->readonly = 1;
-        set_modify(-1); /* refresh window title to show the read-only marker */
+      if(readonly_open && first_loaded) {
+        if(!xctx->readonly) {
+          xctx->readonly = 1;
+          set_modify(-1); /* refresh window title to show the read-only marker */
+        }
+        /* issue 0845 (the user's ruling, 2026-08-26): the read-only default is CORRECT --
+         * its silence was not. The window title was the only surface that said so, and a
+         * title bar is the one thing nobody reads; a whole netlist/run/annotate session
+         * went by on a read-only design before an action-log trace found it. Say it out
+         * loud through the house notify channel (CIW + durable log + statusbar short form).
+         *
+         * `!force` == an interactive -gui open: the three doors. A scripted load or an
+         * action-log replay must stay silent. Placed OUTSIDE the !xctx->readonly branch on
+         * purpose, so a NON-WRITABLE file reopened through one of these doors -- already
+         * read-only from save.c's file-protection fallback, so the block above is a no-op
+         * -- is announced too. It is the same surprise either way. */
+        if(!force) tcl_call("reopen_readonly_notice", xctx->sch[xctx->currsch], NULL, NULL);
       }
       Tcl_SetResult(interp, xctx->sch[xctx->currsch], TCL_STATIC);
     }

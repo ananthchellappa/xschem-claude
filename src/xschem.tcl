@@ -13533,6 +13533,38 @@ proc readonly_notice {} {
     -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
 }
 
+# Issue 0845, RULED by the user 2026-08-26: the three reopen doors -- Open Most Recent
+# (Ctrl+Shift+O), Open Last Closed (Ctrl+Shift+T) and File > Open Recent -- KEEP opening
+# read-only. That default is ratified. What was not acceptable is how quietly it happened:
+# the ONLY surface that said so was the window title, and a title bar is the one thing a
+# person never reads. A whole session of netlist / run / annotate went by on a read-only
+# design, and it took an action-log trace to find out.
+#
+# So the door announces itself, through the house channel (CIW pane, durable log, and the
+# short form in the statusbar). Deliberately NOT latched with `-once`: the fact worth
+# saying is which window you are in NOW, not that the rule exists. Called from the single
+# read-only convergence point in scheduler.c, and only for an INTERACTIVE (-gui) open, so
+# scripted loads and action-log replays stay silent.
+proc reopen_readonly_notice {{name {}}} {
+  set what [file tail $name]
+  if {$what eq {}} { set what {This view} }
+  # The Edit menu row is always there (its label flips, xschem.tcl toggle_readonly_menu);
+  # Ctrl-2 exists only in cadence-compatible mode (cadence::make_editable). So name the
+  # menu unconditionally and the key only when it is really bound -- an accelerator named
+  # in a mode that does not bind it is a remedy that does not work.
+  set remedy {Edit > Make Editable}
+  if {[info exists ::cadence_compat] && $::cadence_compat} {
+    append remedy { (Ctrl-2)}
+  }
+  catch {
+    ::xschem::notify "$what opened READ-ONLY -- the default for the reopen shortcuts\
+ (Open Most Recent, Open Last Closed, File > Open Recent). Edits are refused until you\
+ make it editable." \
+      -short {opened read-only} -menu $remedy -command {toggle_readonly}
+  }
+  return
+}
+
 # Shown when instance creation is attempted on a symbol view (single source of the
 # message: used by the C symbol_view_block() early-exit for the insert-symbol keys and
 # by the Create Instance form's ciform::open guard). A symbol holds only pins + artwork.

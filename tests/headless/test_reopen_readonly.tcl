@@ -76,6 +76,77 @@ check "R6 recent menu (setup_recent_menu) passes -readonly" \
 check "R7 File>Open stays editable (no -readonly in file_chooser_place)" \
   [regexp {xschem load -gui \$f\n} $tcl] {}
 
+# ---- (3) LOUDNESS (issue 0845, the user's ruling): the read-only default is ratified, so the
+# door must SAY SO. Only the window title used to, and nobody reads a title bar. The notice goes
+# through the house channel; here ::xschem::notify is replaced by a recorder so the sentence,
+# the -short form and the remedy can be asserted without a display.
+rename ::xschem::notify ::xschem::_notify_real
+proc ::xschem::notify {msg args} { lappend ::notified [linsert $args 0 $msg] ; return 1 }
+proc cap {script} { set ::notified {} ; uplevel 1 $script ; return $::notified }
+proc first_ro {} {
+  foreach n $::notified { if {[string match {*READ-ONLY*} [lindex $n 0]]} { return $n } }
+  return {}
+}
+proc menu_of {n} {
+  set i [lsearch -exact $n -menu]
+  if {$i < 0} { return {} }
+  return [lindex $n [expr {$i + 1}]]
+}
+set ::cadence_compat 0
+
+cap {xschem load -gui -readonly $fa}
+set n [first_ro]
+check "R11 an interactive reopen ANNOUNCES the read-only open" [expr {$n ne {}}] "(=> [lindex $n 0])"
+check "R12 the notice names the file that was opened" [string match {a.sch *} [lindex $n 0]] {}
+check "R13 the notice carries the remedy menu" [expr {[menu_of $n] eq {Edit > Make Editable}}] "(=> [menu_of $n])"
+check "R14 the notice carries a short form for the statusbar" [expr {[lsearch -exact $n -short] >= 0}] {}
+
+# negative twin A: a SCRIPTED load (no -gui) must stay silent -- a replay must not narrate.
+cap {xschem load -readonly $fa}
+check "R15 a scripted -readonly load announces NOTHING" [expr {[first_ro] eq {}}] "(=> [first_ro])"
+
+# negative twin B: an ordinary interactive open is editable, so there is nothing to announce.
+cap {xschem load -gui $fa}
+check "R16 a plain -gui load announces NOTHING" [expr {[first_ro] eq {}}] "(=> [first_ro])"
+
+# the accelerator is named ONLY where it is bound: Ctrl-2 is cadence::make_editable, cadence mode
+# only. A remedy that names a key the session does not bind is a remedy that does not work.
+set ::cadence_compat 1
+cap {xschem load -gui -readonly $fa}
+check "R17 cadence mode names Ctrl-2 in the remedy" [string match {*Ctrl-2*} [menu_of [first_ro]]] "(=> [menu_of [first_ro]])"
+set ::cadence_compat 0
+cap {xschem load -gui -readonly $fa}
+check "R17b legacy mode does NOT name Ctrl-2" [expr {![string match {*Ctrl-2*} [menu_of [first_ro]]]}] "(=> [menu_of [first_ro]])"
+
+# the read-only state itself must still be reached by the announcing path (the notice is an
+# ADDITION, not a replacement -- a door that only talks is worse than one that only acts).
+check "R18 the announcing path still opens READ mode" [expr {[xschem get readonly] == 1}] "(ro=[xschem get readonly])"
+
+# WHY the announcement sits OUTSIDE scheduler.c's `if(!xctx->readonly)` block: a NON-WRITABLE
+# file is already read-only by the time that block is reached (save.c's file-protection
+# fallback set it during the load), so the block is a no-op -- and an announcement nested
+# inside it would go silent for exactly the file the user is LEAST able to edit. Same
+# surprise, so the same sentence.
+set fro [file join $dir ro.sch]
+file copy -force $lib $fro
+file attributes $fro -permissions 0444
+cap {xschem load -gui -readonly $fro}
+check "R19 a NON-WRITABLE reopen is announced too (notice is not nested in the state change)" \
+  [expr {[first_ro] ne {}}] "(=> [lindex [first_ro] 0])"
+file attributes $fro -permissions 0644
+
+# END-TO-END through the door the user actually presses: Ctrl+Shift+O runs
+# `xschem load -gui -lastopened` from callback.c with NO explicit -readonly, so the
+# announcement has to survive the implied-readonly path too, not just the flagged one.
+xschem load $fc
+set tctx::recentfile [list $fc $fa]
+cap {xschem load -gui -lastopened}
+check "R20 the KEYBOARD door (-gui -lastopened, no explicit flag) announces" \
+  [expr {[first_ro] ne {}}] "(=> [lindex [first_ro] 0])"
+
+rename ::xschem::notify {}
+rename ::xschem::_notify_real ::xschem::notify
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
