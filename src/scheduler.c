@@ -7622,10 +7622,21 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           my_strncpy(f, tcleval("get_lastclosed"), S(f));
           i--;
           lastclosed = 0;
+          /* issue 0839: the resolver answering "nothing to reopen" is a NO-OP,
+           * not a load of the empty path. Falling through used to reach
+           * load_schematic() with f="" -- abs_sym_path("") does not stop it and
+           * the two f[0] tests below only skip the open-probe and the
+           * already-open warning -- and then handed that "" to
+           * update_recent_file, which PERSISTED it into
+           * $USER_CONF_DIR/recent_files, where it broke every subsequent
+           * Ctrl+Shift+O. get_lastopened's guard makes an already-poisoned list
+           * inert; this one stops the empty load itself. */
+          if(!f[0]) break;
         } else if(lastopened) {
           my_strncpy(f, tcleval("get_lastopened"), S(f));
           i--;
           lastopened = 0;
+          if(!f[0]) break;                                     /* issue 0839, as above */
         } else {
           /* issue 0816: `~/` is expanded in C. This used to be
            * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
@@ -7785,9 +7796,15 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           } else if(!strcmp(argv[i], "-lastclosed")) {
             my_strncpy(f, tcleval("get_lastclosed"), S(f));
             reopen = 1;
+            /* issue 0839: nothing to reopen -> do nothing. Without this the
+             * empty f falls past the `if(f[0])` below into its else arm, which
+             * creates a BLANK untitled window -- so "reopen my last file" with
+             * an exhausted list answered with an empty editor. */
+            if(!f[0]) continue;
           } else if(!strcmp(argv[i], "-lastopened")) {
             my_strncpy(f, tcleval("get_lastopened"), S(f));
             reopen = 1;
+            if(!f[0]) continue;                                /* issue 0839, as above */
           } else if(!is_from_web(argv[i])) {
             char t[PATH_MAX + 100];   /* C89: declaration at the top of this block */
             /* issue 0816: `~/` is expanded in C. This used to be

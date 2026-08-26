@@ -2519,6 +2519,15 @@ proc load_recent_file {} {
             -icon warning -parent . -type ok
       }
     }
+    # issue 0839: an already-poisoned conf file is on disk in the wild -- the
+    # empty-filename guard in update_recent_file stops NEW ones but cannot
+    # remove one already written. Filter on the way in, so the bad entry
+    # disappears at the next write instead of needing the user to hand-edit
+    # ~/.xschem/recent_files.
+    set tctx::recentfile [lsearch -all -inline -not -exact $tctx::recentfile {}]
+    if {[info exists tctx::recentdirs]} {
+      set tctx::recentdirs [lsearch -all -inline -not -exact $tctx::recentdirs {}]
+    }
     foreach i [info vars c_toolbar::c_t_*] {
       if {[set ${i}(w)] != $c_toolbar::c_t(w) ||
           [set ${i}(n)] != $c_toolbar::c_t(n)} {
@@ -2536,6 +2545,15 @@ proc update_recent_file {f {topwin {} } } {
   global has_x update_recent_files
   # the recent-views list belongs to the user: no-op in gated (test/automation) sessions
   if {[info exists update_recent_files] && !$update_recent_files} return
+  # issue 0839: NEVER record an empty filename. Every caller in scheduler.c and
+  # actions.c hands us whatever `f` it ended up with, and the load path guards
+  # `f[0]` for the open-probe and the already-open check but NOT for this write.
+  # So one `xschem load {}` (which is what a poisoned recent list makes
+  # Ctrl+Shift+O do) used to append {} here and write_recent_file PERSISTED it --
+  # the bug installed itself into $USER_CONF_DIR/recent_files and survived every
+  # relaunch. This is the guard that breaks the loop; get_lastopened's is the one
+  # that makes an already-poisoned file inert.
+  if {$f eq {}} return
   # puts "update recent file, f=$f, topwin=$topwin"
   set old $tctx::recentfile
   set tctx::recentfile {}
@@ -13894,14 +13912,34 @@ proc get_lastclosed {} {
   return $ret
 }
 
+# The reopen shortcut Ctrl+Shift+O (callback.c case 'O' + ControlMask, `xschem
+# load -gui -lastopened`) resolves through here: the most recent entry that is
+# not ALREADY open in some window.
+#
+# ⚠ issue 0839, two ways this used to answer wrongly:
+#
+#  1. AN EMPTY ELEMENT ALWAYS WON. `xschem check_loaded {}` reports "not
+#     loaded", so a {} in the list satisfied the break and Ctrl+Shift+O issued
+#     `xschem load {}`. It was reached exactly when the real first entry was
+#     already open, which is why the failure looked intermittent -- reopening a
+#     file you did NOT have open worked, reopening one you DID silently loaded
+#     nothing. Measured list: {/…/tb_bandgap.sch {}}.
+#  2. `foreach` LEAVES THE LOOP VARIABLE SET. With every entry already loaded the
+#     loop never broke and the proc returned the LAST element -- a file that IS
+#     open. The `set f {}` on entry looks like it covers this and does not:
+#     foreach overwrites it on the first iteration.
+#
+# So: skip empties explicitly, and return from inside the loop so falling out of
+# it can only mean "nothing suitable" -> {}. The caller must treat {} as "do
+# nothing", NOT as a path (scheduler.c, same issue).
 proc get_lastopened {} {
-  set f {}
   foreach f $tctx::recentfile {
+    if {$f eq {}} continue
     if {[xschem check_loaded $f] eq {}} {
-      break
+      return $f
     }
   }
-  return $f
+  return {}
 }
 
 # Cadence-style hierarchy close: when closing/quitting while descended, walk UP the
