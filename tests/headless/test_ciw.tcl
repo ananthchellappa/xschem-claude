@@ -128,7 +128,18 @@ check "tricky line verbatim in file" [expr {[lsearch -exact $lines $tricky] >= 0
 check "typed cmd recorded raw"     [expr {[lsearch -exact $lines {xschem get instances}] >= 0}]
 check "failed cmd is a comment"    [expr {[lsearch -exact $lines {# failed: this_is_not_a_command}] >= 0}]
 check "no echo prefix in file"     [expr {[lsearch -glob $lines {> *}] < 0}]
-check "no result/error text in file" [expr {[string first {invalid command name} $body] < 0}]
+# ⚠ THIS WAS A STANDING RED, and the test was the thing that was wrong.
+# The check used to be `[string first {invalid command name} $body] < 0` -- no error text
+# ANYWHERE in the file. That premise predates the `#! ` carrier (src/util.c log_output, the
+# issue 0207 seam): a failed command's error is now recorded as a NON-REPLAYABLE COMMENT,
+# which is precisely the sanctioned way to keep human text in a source-able file. The
+# invariant worth guarding is source-ability, not the absence of a substring -- so assert
+# the error text appears ONLY on a `#! ` line and never as a bare, replayable command.
+set _errlines {}
+foreach _l $lines { if {[string first {invalid command name} $_l] >= 0} { lappend _errlines $_l } }
+check "error text IS recorded (the #! carrier, not silence)" [expr {[llength $_errlines] > 0}]
+check "error text appears ONLY as a #! non-replayable comment" \
+  [expr {[llength $_errlines] == [llength [lsearch -all -inline -glob $_errlines {#!*}]]}]
 # source-ability: every line must be a comment or a known-good command here,
 # so replaying the file into this same interpreter must not error
 check "file is source-able"        [expr {![catch {uplevel #0 [list source $logf]} err]}]
@@ -143,6 +154,41 @@ check "ciw_create re-shows"        [expr {[wm state .ciw] eq {normal}}]
 
 # clean RAIL teardown (issue 0002 hardening): destroy the toplevel and let the
 # event loop deliver it while the client is still alive, THEN exit
+# 9) CIW TEXT SIZE. Both panes share ONE NAMED Tk font, and the naming is the whole
+# point: ciw_create runs from xschem.tcl during startup, BEFORE any --script rc, so a
+# size read out of a variable at build time can never be influenced by an rc and a
+# literal {Monospace 10} baked into the widget cannot be changed afterwards at all.
+check "both panes share one font" [expr {[.ciw.l.t cget -font] eq [.ciw.c.e cget -font]}]
+check "the shared font is the NAMED CiwFont (a literal could not be reconfigured later)" \
+  [expr {[.ciw.l.t cget -font] eq {CiwFont}}]
+set sz0 [font actual CiwFont -size]
+check "the built size is the declared ciw_font_size" [expr {$sz0 == $::ciw_font_size}]
+check "ciw_set_font_size 12 is accepted" [expr {[ciw_set_font_size 12] == 1}]
+check "the LIVE font followed, with no rebuild" [expr {[font actual CiwFont -size] == 12}]
+check "and both panes still share it" [expr {[.ciw.l.t cget -font] eq [.ciw.c.e cget -font]}]
+check "the variable records what was set" [expr {$::ciw_font_size == 12}]
+# REFUSE, do not clamp: silently "fixing" a typo hides which size the rc actually asked
+# for, and a CIW at size 1 or 300 is an unusable window either way.
+check "an out-of-range size is refused" [expr {[ciw_set_font_size 300] == 0}]
+check "... and the refusal leaves the live font alone" [expr {[font actual CiwFont -size] == 12}]
+check "a non-integer size is refused" [expr {[ciw_set_font_size big] == 0}]
+ciw_set_font_size $sz0
+check "restoring the original size works" [expr {[font actual CiwFont -size] == $sz0}]
+
+# the wiring: the Cadence workarea asks for 20% over the SHIPPED default, and it asks
+# through the setter. A bare `set ciw_font_size N` in the rc would be read by nothing,
+# because the font already exists by then -- the failure mode is silent.
+proc _slurp {f} { set fd [open $f r] ; set d [read $fd] ; close $fd ; return $d }
+set _rc [_slurp [file join [pwd] src cadence_style_rc]]
+set _xt [_slurp [file join [pwd] src xschem.tcl]]
+set _dflt {} ; regexp {set_ne ciw_font_size ([0-9]+)} $_xt -> _dflt
+set _bump {} ; regexp {ciw_set_font_size ([0-9]+)} $_rc -> _bump
+check "xschem.tcl declares a default CIW font size" [expr {$_dflt ne {}}]
+check "cadence_style_rc bumps it 20% over that default" \
+  [expr {$_dflt ne {} && $_bump ne {} && $_bump == round($_dflt * 1.2)}]
+check "the rc uses the SETTER, not a bare variable set (ciw_create has already run)" \
+  [expr {![regexp {(^|\n)[ \t]*set +ciw_font_size} $_rc]}]
+
 destroy .ciw
 update
 
