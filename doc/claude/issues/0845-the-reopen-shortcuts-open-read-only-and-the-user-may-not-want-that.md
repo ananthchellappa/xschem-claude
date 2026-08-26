@@ -44,7 +44,13 @@ door was used*. That ambiguity is what made the first attribution here a guess.
 ## Two candidates that were investigated and CLEARED
 
 * **Library Manager double-click** — `libmgr::open_view` (`library_manager.tcl:481`)
-  runs `xschem load -gui $f` and sets nothing read-only. Not a source.
+  runs `xschem load -gui $f` and sets nothing read-only. Not a source. **Measured
+  2026-08-26**, no longer inferred: driving exactly that call under the sky130
+  Cadence rc on `:99` gives `readonly=0` and **no notice**, while
+  `load -gui -readonly` on the same file gives `readonly=1` and the notice. So a
+  user log that carries `#= Opened Read-Only…` right after a bare
+  `xschem load {…}` was opened through one of the three doors, with the Library
+  Manager merely on screen.
 * **Library Manager > Open (read-only)** — `libmgr::open_view_ro` really does set
   it, but logs `xschem set readonly 1` (`library_manager.tcl:636`), and log.6
   contains no such line. Not what happened.

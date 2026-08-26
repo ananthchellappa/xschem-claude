@@ -13560,6 +13560,58 @@ proc readonly_notice {} {
 #
 # The filename is deliberately gone with them: the notice fires at the instant you
 # open the thing, so the name it would repeat is the name you just picked.
+# A one-word window census, for the user to type in the CIW at the moment something
+# looks wrong.
+#
+# The waveform-viewer-vs-design confusion (issues 0647, 0840, 0844) is a RACE: the user
+# gets a different arrangement every run -- viewer on top, viewer absent, a window that
+# shows waveforms until it is clicked -- and prose written after the fact cannot say
+# which toplevel was where, which one held which cellview, or what the stacking was.
+# This writes the arrangement into the action log they are ALREADY producing, as `#= `
+# non-replayable comments, so a bug report can carry evidence instead of memory.
+#
+# ⚠ NOT gated on a debug flag, unlike wviewer::diag's WVDIAG. A diagnostic you must set
+# an environment variable to reach is one you will not have set on the run that finally
+# reproduced the thing -- which is exactly what happened to WVDIAG on three sittings.
+# It costs nothing until it is typed.
+proc window_report {{tag {}}} {
+  set cwp {} ; catch {set cwp [xschem get current_win_path]}
+  set cn  {} ; catch {set cn  [xschem get current_name]}
+  set ro  ?  ; catch {set ro  [xschem get readonly]}
+  set out [list "window_report $tag current_win_path='$cwp' current_name='$cn' readonly=$ro"]
+  # `wm stackorder .` lists MAPPED toplevels bottom-to-top; an unmapped one is absent
+  # from it, which is itself worth seeing, so the two lists are gathered separately and
+  # a window missing from the stack prints `stack=-` rather than being dropped.
+  set order {} ; catch {set order [wm stackorder .]}
+  set tops  {} ; catch {set tops [concat . [winfo children .]]}
+  foreach t $tops {
+    set cls {} ; if {[catch {winfo class $t} cls]} continue
+    if {$t ne {.} && $cls ne {Toplevel}} continue
+    set st ? ; catch {set st [wm state $t]}
+    set g  ? ; catch {set g  [wm geometry $t]}
+    set ti ? ; catch {set ti [wm title $t]}
+    set z [lsearch -exact $order $t]
+    lappend out [format {  %-10s stack=%-3s %-10s %-20s '%s'} \
+      $t [expr {$z < 0 ? {-} : $z + 1}] $st $g $ti]
+  }
+  # ⚠ ONE line in the pane, not two. `xschem log_action` already MIRRORS what it writes
+  # into the CIW pane (src/util.c log_action_echo, file -> pane, one way), so echoing
+  # first and logging second printed the whole census twice. The direct echo is now the
+  # FALLBACK for the case the log cannot take it -- no --logdir, or a --pipe session,
+  # where log_action writes nothing and the mirror therefore says nothing either. Same
+  # -reset/-emitted gate libmgr::open_view uses for exactly this reason.
+  foreach l $out {
+    set done 0
+    catch {
+      xschem log_action -reset
+      xschem log_action "#= $l"
+      set done [xschem log_action -emitted]
+    }
+    if {!$done} { catch {ciw_echo $l} }
+  }
+  return [llength $out]
+}
+
 proc reopen_readonly_notice {{name {}}} {
   # `name` is unused -- kept in the signature because scheduler.c passes the loaded
   # path and a future recipient (a per-window sink) would want it. See the note above
