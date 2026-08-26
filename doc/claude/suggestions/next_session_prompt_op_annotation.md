@@ -106,11 +106,16 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    This is a **user-visible** change and it is the ruling this step returned as status
    **E** — see 0812 §16. If you reuse `expand_tcl_vars()` for 0817, you inherit this
    decision; say so in your own write-up rather than letting it spread silently.
-9. **Still open in this family** — ⚠ **rewritten 2026-08-26 after item 0827+0817+0828**;
-   see the ✅ blocks below for what closed. Open: **0831** (⚠ **LIVE and DRIVEN**: the
-   library-manager brace-concat sinks — `library_inst_lcv` takes an instance name straight
-   from the `.sch` and creates a host file; six more siblings on the same line of 0817's
-   own sweep list), **0817** (reduced to the gaw `copyvar` ×7 and the modal/Windows-only
+9. **Still open in this family** — ⚠ **rewritten again 2026-08-26 after item 0831**;
+   see the ✅ blocks below for what closed. Open: **0833** (⚠ **LIVE, 8 sites, none
+   driven**: `move.c:9135`, `scheduler.c:7472`, and **six more the 0831 adversary found**
+   in `draw.c`/`psprint.c`/`svgdraw.c` — the plot/print `save_file_dialog` pair, one of
+   which splices the **schematic's own path**, i.e. 0817 §Z.2's crafted-*filename*
+   vector), **0832** (⚠ **LIVE and DRIVEN**: `scheduler.c:8107`'s `log_action` is
+   unguarded where its four siblings are `tcl_braceable()`-guarded, and the action log is
+   a **replayable Tcl script by design** — the poisoned line was replayed and executed on
+   the *fixed* binary), **0834** (`xschem callback` segfaults under `--nogui`, which is
+   why `callback.c:559` needs X to drive), **0817** (reduced to the gaw `copyvar` ×7 and the modal/Windows-only
    remnants — see its new **§Z.5**), **0818** (the top-level
    `raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled path —
    deliberate, decision D5), **0819** (the read-trace edge above), **0820** (the
@@ -118,7 +123,8 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    now single-pass and measured), **0815** (`xschem compare_schematics <path>` segfaults
    under `--nogui`, not injection), **0826** (`test_wave_markers` MX7b/MX7d, a *standing
    red* — 6 FAILED / 977 passed, deterministic, **not** from any of these items).
-   **Closed**: 0816, 0821, 0822, 0825, **0827**, **0828**, **0829**, **0830**.
+   **Closed**: 0816, 0821, 0822, 0825, **0827**, **0828**, **0829**, **0830**,
+   **0831**, **0835**.
 10. **⚠ REBUILD AT THE TOP OF YOUR ITEM.** The 0812-retry write-up corrected three C
    comment blocks (`util.c`, `draw.c`, `xschem.h`) and could not build — crew rule 2 gives
    `make` to the Implement agent alone — so `find src -maxdepth 1 -newer src/xschem`
@@ -129,6 +135,94 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    0821, which cost a second write-up cycle and a second round of source edits on a
    "finished" item. An adversary pass is what refuted attempt 1 while four suites were ALL
    PASS; it is not an optional garnish and it is not useful late.
+
+---
+
+## ✅ 0831 + 0835 — **FIXED 2026-08-26 (item 0831, status x). THE NINE LIBRARY-MANAGER / INSERT-SYMBOL SINKS ARE CONVERTED — AND THE FAMILY IS *STILL* NOT SWEPT: SEE 0832 / 0833**
+
+**Not a plan step.** Records: **`0831-*.md` §9** (what changed, the one
+non-mechanical site, the §4 upgrade, the §4 *correction*), **§10** (the eight-variant
+sabotage matrix **including the three predicted reds that did not appear**), **§11**
+(the adversary's residual risks); **`0835-*.md`** (the anti-hollow mis-attributions);
+**`0832`**, **`0833`**, **`0834`** (found, filed, **not** fixed).
+
+**Same helper, nine more sites.** `tcl_call()` from `src/util.c` — no second
+mechanism was invented. `cell_views` 2710, `ciform::open` 2729,
+`library_inst_lcv` 5536, `library_resolve` 8078, `library_cells` 8088,
+`libmgr::open` 8109, `replace_symbol` 12425, and the `INITIALINSTDIR` pair
+`scheduler.c:9734` + `callback.c:574`. `test_raw_read_dispatch` 124 → **137**,
+`test_create_instance` 70 → **75**, `test_lib_manager_launch` 5 → **7**, T1 0,
+T2 HARNESS PASS.
+
+### ⚠⚠ WHAT MUST PROPAGATE TO EVERY LATER STEP
+
+1. **A `.sch` IS STILL EXECUTABLE, AND `.sch`-DERIVED SPLICES ARE STILL LIVE.**
+   Eight of them, filed as **0833** — and six were found *by the adversary pass*,
+   after the item's own scout and Measure agents had both declared the family
+   enumerated. `draw.c:121` / `psprint.c:1790` / `svgdraw.c:1108` splice
+   `get_cell(xctx->sch[xctx->currsch],0)` — **the schematic's own path** — into a
+   `save_file_dialog` call, so the attacker input is the *file name* and the user
+   need only open the file and export a plot. **Do not write "the injection family
+   is closed" anywhere.** (0823 also still stands: `tcleval(` in a text record
+   fires on DRAW via `token.c:78`, by design.)
+2. **⚠ A SOURCE-SCAN GUARD HAS *TWO* BLIND SPOTS, NOT ONE — the previous plan note
+   named only the first.** `FN07`'s list is (a) a set of **proc names** and (b) a
+   set of **files**. `move.c`, `draw.c`, `psprint.c`, `svgdraw.c` are **not in
+   `FN_FILES` at all**, so no name you add reaches them. And `scheduler.c` *is* in
+   `FN_FILES`, yet `:7472` and `:8107` still escape because the scan is anchored on
+   `tclvareval("` + a name and those lines spell `tclvareval("join` and
+   `log_action(`. **Widening the proc list is the smaller half of the job.**
+3. **⚠ A MULTI-WORD NEEDLE WAS LOAD-BEARING, AND ONLY SABOTAGE PROVED IT.** Three
+   sites spell their splice with words *between* the paren and the proc name
+   (`tclvareval("set INITIALINSTDIR [file dirname {`,
+   `tclvareval("xschem replace_symbol {`). The obvious single-word-per-proc
+   extension of `FN_PROCS` finds **6 of 9** and silently misses them. Verify-B
+   stripped the two multi-word entries and watched FN07 name only `scheduler.c`,
+   missing `callback.c:559`. **Do not "tidy" them into single words.**
+4. **⚠ NAME THE ROW, NOT THE SUITE — AND THEN MEASURE THAT THE ROW TAKES THE
+   CONVERTED BRANCH.** Item 0827 already learned "name the row" (its point 6). This
+   item shows that is *not enough*: all three of 0831's "the existing row covers
+   it" claims were **wrong**, because the named rows call the verb **bare** and take
+   an untouched `else tcleval(...)` branch. One was a real hole —
+   `test_lib_manager_launch` scored **`RESULT: ALL PASS` with `libmgr::open`'s
+   argument path gutted to a no-op**, and *no test in the repo* drove the argument
+   form. Issue **0835**, fixed here by a new **LL9**. **If you claim an existing row
+   as an anti-hollow twin, check which branch it takes.**
+5. **A WRITE-UP AGENT CANNOT BUILD — SO PROVE NON-VACUITY IN Tcl.** LL9 needed a
+   red, and crew rule 2 forbids the write-up agent `make`. A **Tcl-side** stub is a
+   faithful proxy for a gutted C call and needs no build:
+   `rename libmgr::open libmgr::__real_open` +
+   `proc libmgr::open {{lcv {}}} { libmgr::__real_open {} }` (drop the argument) →
+   LL9 red, LL1/LL6/LL8 green. **Use this instead of shipping an unproven row.**
+6. **`abs_sym_path()` RETURNS `tclresult()` — copy before the next interpreter
+   write.** `scheduler.c:9734` and `callback.c:574` were the one non-mechanical
+   site: `tcl_call`'s `tclsetvar()` writes through the interpreter and invalidates
+   that pointer (`util.c:1122-1126`). Two `my_strdup2`/`my_free` heap copies, **not**
+   a `char buf[PATH_MAX]` — a bounded copy reintroduces the silent mid-escape
+   truncation 0827 deleted. The `[file dirname {…}]` **command substitution was
+   deleted**, not rebuilt: `tcl_call("file dirname", …)` + `tclsetvar()`.
+7. **`scheduler.c:12425` `replace_symbol` IS NOT A VECTOR — 0831 §4 over-rated it
+   and §9.4 corrects it.** Both spliced words are program-derived (`num` is `%d` of
+   a loop index; `dir_pin_sym()` returns one of three compile-time literals,
+   `paste.c:56-61`). Converted for hygiene and for FN07's multi-word precedent
+   only. **Do not carry it in an RCE count.** Its only cover is
+   `test_pin_type_edit` — `test_perform_action_replace_symbol` tests the
+   *subcommand* (the callee) and stayed green with the caller gutted (0835 §4).
+8. **⚠ `grep -rn SABOTAGE src/` IS NOT A RESTORE CHECK — measured blind, live.**
+   For the whole sabotage window `util.c`+`xschem.h` carried `tcl_sab_concat`,
+   `tcl_sab_setdir`, `tcl_call_nop`, `tclsetvar_nop`, `nm` listed all four as `T`,
+   and the prescribed grep returned **empty** (the marker was lowercase). This is
+   0807 §10 happening rather than being quoted. **Verify against `nm` and the real
+   symbol spellings.**
+9. **⚠ NEVER MEASURE A TIER WHILE A SABOTAGE AGENT HOLDS THE TREE** — again. The
+   adversary hit an apparent counterexample (a host file created that should not
+   have been) and traced it to a concurrent sabotage relink rather than reporting
+   it. Verify-A timestamped every tier against the relink times to prove its numbers
+   predated them. Adopt the binary-identity guard; an unguarded number taken during
+   sabotage is not evidence.
+10. **`test_wave_markers` is STILL a standing red, still not yours** — 6 FAILED /
+   977 passed, deterministic (MX7b ×3, MX7d ×3), issue **0826**, unchanged by this
+   item. Report against 977.
 
 ---
 

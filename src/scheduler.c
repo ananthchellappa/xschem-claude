@@ -2705,7 +2705,9 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   datafile). Backs the Library Manager tree (library-manager Phase 7a). */
     else if(!strcmp(argv[1], "cell_views"))
     {
-      if(argc > 3) tclvareval("cell_views {", argv[2], "} {", argv[3], "}", NULL);
+      /* issue 0831 -- the two words are argv DATA: passed as $:: globals, never
+       * concatenated. Same shape as cellview_path above (issue 0827). */
+      if(argc > 3) tcl_call("cell_views", argv[2], argv[3], NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -2723,7 +2725,8 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(has_x) {
         log_action("xschem create_instance");
         if(argc > 2) {
-          tclvareval("ciform::open {", argv[2], "}", NULL);
+          /* issue 0831 -- the lcv list is argv DATA (see tcl_call(), util.c). */
+          tcl_call("ciform::open", argv[2], NULL, NULL);
         } else {
           tcleval("ciform::open");
         }
@@ -5523,8 +5526,14 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       n = xctx->sel_array[0].n;
       /* delegate the lib/cell/view reverse-map to Tcl, passing the instance's
-       * symbol reference (resolved to an abs path Tcl-side via abs_sym_path). */
-      tclvareval("library_inst_lcv {", xctx->inst[n].name, "}", NULL);
+       * symbol reference (resolved to an abs path Tcl-side via abs_sym_path).
+       * issue 0831 -- inst[].name is a symbol reference read straight out of the
+       * .sch, i.e. DATA. tcl_call() passes it as a $:: global so a `}` in it is a
+       * brace, not a script terminator. tcl_call() RETURNS tclresult() and runs
+       * nothing after tcleval(), so the empty-result test below -- the only thing
+       * separating "not in a Cadence library" from a hit -- is unchanged. Do not
+       * insert anything between this call and that test. */
+      tcl_call("library_inst_lcv", xctx->inst[n].name, NULL, NULL);
       if(tclresult()[0] == '\0') {
         Tcl_SetResult(interp,
           "xschem get_inst_lcv: selected instance is not in a Cadence library", TCL_STATIC);
@@ -8065,7 +8074,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Absolute path of the named library, or "" if it is not defined. */
     else if(!strcmp(argv[1], "library"))
     {
-      if(argc > 2) tclvareval("library_resolve {", argv[2], "}", NULL);
+      /* issue 0831 -- the library name is argv DATA (see tcl_call(), util.c). */
+      if(argc > 2) tcl_call("library_resolve", argv[2], NULL, NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -8074,7 +8084,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Backs the Library Manager tree (library-manager Phase 7a). */
     else if(!strcmp(argv[1], "lib_cells"))
     {
-      if(argc > 2) tclvareval("library_cells {", argv[2], "}", NULL);
+      /* issue 0831 -- the library name is argv DATA (see tcl_call(), util.c). */
+      if(argc > 2) tcl_call("library_cells", argv[2], NULL, NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -8094,7 +8105,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
          * list arg -- brace it, matching the adjacent libmgr::open call. */
         if(argc > 2) {
           log_action("xschem library_manager {%s}", argv[2]);
-          tclvareval("libmgr::open {", argv[2], "}", NULL);
+          /* issue 0831 -- the lcv list is argv DATA (see tcl_call(), util.c). */
+          tcl_call("libmgr::open", argv[2], NULL, NULL);
         } else {
           log_action("xschem library_manager");
           tcleval("libmgr::open");
@@ -9704,8 +9716,25 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
-        tclvareval("set INITIALINSTDIR [file dirname {",
-             abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""), "}]", NULL);
+        /* issue 0831 -- the symbol reference is .sch DATA and the old splice sat inside
+         * a `[file dirname {...}]` COMMAND SUBSTITUTION, so a `}` or a `[` in it was
+         * script (issues 0827 + 0829 at one site). The substitution is deleted outright:
+         * the dirname is taken by tcl_call() and the result assigned with tclsetvar(),
+         * which is Tcl_SetVar/TCL_GLOBAL_ONLY -- exactly what the old global-level `set`
+         * did. abs_sym_path() returns tclresult() and tcl_call()'s tclsetvar() writes
+         * through the interpreter, invalidating it, so each result is copied out before
+         * the next call (the token.c sanitize() rule, util.c:1122). Heap copies, not a
+         * fixed buffer: a symbol reference has no length bound and a bounded copy would
+         * truncate silently. NB tcl_hook2() still evaluates a `tcleval(`-prefixed name
+         * here -- that is by design (issue 0823) and no conversion changes it. */
+        char *symref = NULL;
+        char *instdir = NULL;
+        my_strdup2(_ALLOC_ID_, &symref,
+             abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""));
+        my_strdup2(_ALLOC_ID_, &instdir, tcl_call("file dirname", symref, NULL, NULL));
+        tclsetvar("INITIALINSTDIR", instdir);
+        my_free(_ALLOC_ID_, &symref);
+        my_free(_ALLOC_ID_, &instdir);
       }
       xctx->mx_double_save = xctx->mousex_snap;
       xctx->my_double_save = xctx->mousey_snap;
@@ -12390,7 +12419,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(tgt, cur)) continue;
           if(!undo_done) { xctx->push_undo(); undo_done = 1; }
           my_snprintf(num, S(num), "%d", i);
-          tclvareval("xschem replace_symbol {", num, "} {", dir_pin_sym(tgt), "} fast", NULL);
+          /* issue 0831 -- HYGIENE, not a live vector: `num` is %d of a loop index and
+           * dir_pin_sym() returns one of three compile-time literals (paste.c). Converted
+           * so the FN07 source scan can cover the spelling uniformly. */
+          tcl_call("xschem replace_symbol", num, dir_pin_sym(tgt), "fast");
           ++changed;
         }
       } else {

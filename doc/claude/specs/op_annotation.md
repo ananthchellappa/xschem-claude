@@ -2681,7 +2681,9 @@ top of the function, both `node_token_split()` fields were rewired, and the four
 outside this family are still live: issue 0816**, and the `tclvareval` brace groups of
 file-derived strings are **0817**. *(Both fixed since — 0816 by item 0821+0816+0817,
 0817's driven §Z.2 vector by item 0827+0817+0828, which converted 72 sites to
-`tcl_call()`. **0831** is what remains of the shape and it is still driven.)*
+`tcl_call()`; **0831**'s nine library-manager / insert-symbol sinks by item 0831, a
+further 9 sites. What remains of the shape is **0833** — 8 sites, none driven, four of
+them in files FN07 does not scan.)*
 
 **The correction this spec needs**, because §4.2 and §4.3a already say "`string map`,
 never `subst`, a template is user data" and someone will reasonably read that as
@@ -2763,15 +2765,31 @@ words are handed over as **global variables** and never concatenated. It expands
 and resolves nothing, so 0812's `strcmp()` registry key is untouched and no route gains a
 second pass (0820).
 
-Still live: **0831** — ⚠ **the same shape, DRIVEN twice, and it is why this family may
-NOT be called swept**: `library_inst_lcv` (`src/scheduler.c:5527`) splices
-`xctx->inst[n].name` — the instance's symbol reference **read straight out of the
-`.sch`** — into `library_inst_lcv {%s}`, and one mailed file plus the Library Manager's
-`get_inst_lcv` gesture runs `exec touch` (`LMX=1 host=1`, `--nogui`). Six siblings share
-the spelling (`cell_views`, `ciform::open`, `library_resolve`, `library_cells`,
-`libmgr::open`, `replace_symbol`) and two more sit in
-`set INITIALINSTDIR [file dirname {…}]` at `scheduler.c:9707` / `callback.c:559`.
-Also **0815** (`compare_schematics` segfaults under `--nogui`), **0817** (reduced to the
+**✅ 0831 fixed since, by item 0831 (2026-08-26)** — the nine sites above are converted
+to the same `tcl_call()` helper, so the headline drive
+(`library_inst_lcv`, `src/scheduler.c:5536`, splicing `xctx->inst[n].name` read straight
+out of the `.sch`) goes `LMX=1 host=1 r=y` → **`LMX=0 host=0`**, the payload arriving as
+a literal symbol name. Its one non-mechanical site is worth carrying: `abs_sym_path()`
+**returns `tclresult()`**, which `tcl_call`'s `tclsetvar()` invalidates
+(`util.c:1122-1126`), so `scheduler.c:9734` / `callback.c:574` heap-copy each result
+(`my_strdup2`/`my_free`, **not** a `char buf[PATH_MAX]` — a bounded copy reintroduces the
+silent truncation 0827 deleted) and the `[file dirname {…}]` **command substitution is
+deleted**, not rebuilt. Record: `0831-*.md` §9-§11.
+
+Still live in this family: **0833** — ⚠ **eight `tclvareval` brace-concat splices, none
+driven**, and **six of them were found by 0831's *adversary*, after that item's scout and
+Measure agents had both declared the family enumerated. `draw.c:121` / `psprint.c:1790` /
+`svgdraw.c:1108` splice `get_cell(xctx->sch[xctx->currsch],0)` — the **schematic's own
+path** — into `save_file_dialog {…}`, which is 0817 §Z.2's crafted-*filename* vector
+reached by merely opening a file and exporting a plot; `draw.c:126` / `psprint.c:1795` /
+`svgdraw.c:1113` splice the dialog's returned name back into `file dirname {…}`; plus
+`move.c:9135` and `scheduler.c:7472`. **None of `move.c`/`draw.c`/`psprint.c`/`svgdraw.c`
+is in FN07's `FN_FILES`.** And **0832** — ⚠ **DRIVEN**: `scheduler.c:8107`'s
+`log_action("xschem library_manager {%s}", argv[2])` is unguarded where its four siblings
+use `tcl_braceable()`, and the action log is a **replayable Tcl script by design**; the
+poisoned line was replayed and executed **on the fixed binary**. Also **0834**
+(`xschem callback` segfaults under `--nogui`, which is why `callback.c:559` needs X),
+**0815** (`compare_schematics` segfaults under `--nogui`), **0817** (reduced to the
 gaw `copyvar` ×7 and the modal/Windows-only remnants — see its **§Z.5**), **0818** (the
 top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled
 path — left alone on purpose, decision D5), **0819** (the read-trace edge), **0820** (the
@@ -2779,8 +2797,11 @@ double-pass non-idempotence, on the `%` `node=` route only), and **0826**
 (`test_wave_markers` MX7b/MX7d, a standing red at 6 FAILED / 977 passed).
 
 **The honest summary of this whole family: a `.sch` is still executable — by design
-(`tcleval(` in a text record, `token.c:78`) and, at the sites 0831 names, WITHOUT SAYING
+(`tcleval(` in a text record, `token.c:78`) and, at the sites 0833 names, WITHOUT SAYING
 SO. What the fixes can claim is site-by-site, never verb-by-verb** — see issue 0823.
+⚠ And note *how* 0833 grew from two sites to eight: not by new code, but because each
+sweep enumerated the family from the *previous* issue's inventory line. **Enumerate from
+the shape (`tclvareval("` + `{`), across all of `src/`, not from the last list.**
 
 ⚠ **Two process lessons this item paid for, binding on anyone extending the family.**
 First, **the half-sweep repeated itself in the same sentence**: 0817's inventory names
@@ -2790,6 +2811,19 @@ source-scan guard certified its own blind spot**: `FN07` in
 `tests/headless/test_raw_read_dispatch.tcl` scans a 9-proc list that includes none of the
 seven live sinks, so it was green throughout. Add a proc to `FN_PROCS` in the same edit
 that converts its sink.
+
+⚠ **Three more lessons item 0831 paid for.** (a) **`FN_PROCS` is the smaller half** — the
+guard also has an `FN_FILES` blind spot, and four files carrying live splices are not
+scanned at all; widening the name list reaches none of them. (b) **Three needles must be
+MULTI-WORD** (`{xschem replace_symbol}`, `{set INITIALINSTDIR [file dirname}`): the scan
+anchors on `tclvareval("` + a name, and a single-word extension finds 6 of 9 sites and
+silently misses the two file-derived `INITIALINSTDIR` doors — proved by stripping them and
+watching FN07 name only `scheduler.c`. (c) **"Name the row, not the suite" is not enough:
+check which BRANCH the named row takes.** All three of 0831's "an existing row covers it"
+claims were wrong, because the named rows call their verb **bare** and take an untouched
+`else tcleval(...)` branch; one was a real hole (`test_lib_manager_launch` scored
+`RESULT: ALL PASS` with `libmgr::open`'s argument path gutted, and no test in the repo
+drove the argument form). Issue **0835**.
 
 **The `(` decision is user-visible and is the ruling this item returned as status E**
 (0812 §16): `$a(1)` in a rawfile spelling now means the value of `a` followed by a literal

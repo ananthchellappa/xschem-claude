@@ -1122,15 +1122,60 @@ eqcheck FN06-ordinary-load-reports-its-dirname \
 # live. This names the SHAPE (a Tcl proc called by string concatenation with a
 # C variable spliced into a `{…}` or `[list …]` group) rather than one
 # spelling, across the load / descend / netlist path.
+#
+# ⚠ THIS SCAN IS SPELLING-ANCHORED, not shape-anchored. Every needle begins
+# with the literal `tclvareval("`, so a call routed through ANY other
+# concatenating helper -- my_snprintf() into a buffer then tcleval(), or a
+# private wrapper -- is invisible to it. A green here is "these NAMES are not
+# spliced by tclvareval", nothing wider. Issue 0831 is what that blind spot
+# cost: the list below carried nine names while seven live sinks in the
+# library-manager / insert-symbol family sat one line apart from them, and this
+# row stayed green through all of it.
+#
+# ⚠ TWO OF THE ENTRIES ARE MULTI-WORD ON PURPOSE. `scheduler.c:9707`,
+# `callback.c:559` and `scheduler.c:12393` spell their splices
+# `tclvareval("set INITIALINSTDIR [file dirname {` and
+# `tclvareval("xschem replace_symbol {` -- words between the paren and the proc
+# name. Measured against this very loop: the six single-word 0831 names find
+# 6 of the 9 sites and SILENTLY MISS those three. Do not "tidy" the two
+# multi-word entries into single words.
+#
 # ⚠ WHAT IT DOES NOT COVER, so nobody reads a green here as "the family is
 # closed": the `ask_save`/`alert_` message sites (they compose program text and
-# a path together, and no mechanical rule separates them), the unbraced
-# `file dirname <var>` / `xschem load_new_window <argv>` splices, token.c's
-# `regsub`-based sanitize(), hilight.c's gaw `copyvar` protocol lines and
-# parselabel.c's modal tk_messageBox.
+# a path together, and no mechanical rule separates them), the
+# `xschem load_new_window <argv>` splice, token.c's `regsub`-based sanitize(),
+# hilight.c's gaw `copyvar` protocol lines and parselabel.c's modal
+# tk_messageBox. And three sites that are LIVE at the time of writing and are
+# filed, not fixed, so a green here can never be read as a sweep:
+#   move.c:9135        `c_toolbar::add {` + abs_sym_path(sym->name)   (0833)
+#   scheduler.c:7472   `join [lsort ... {` + .sch net names + argv `sep` (0833)
+#   scheduler.c:8107   log_action("xschem library_manager {%s}") -- the action
+#                      log is a replayable Tcl script BY DESIGN and this one
+#                      line is unguarded where its four siblings are          (0832)
+#   draw.c:121  psprint.c:1790  svgdraw.c:1108   `save_file_dialog {` + the
+#                      SCHEMATIC'S OWN PATH via get_cell(xctx->sch[currsch],0)
+#                      -- 0817 Z.2's crafted-FILENAME vector                  (0833)
+#   draw.c:126  psprint.c:1795  svgdraw.c:1113   `file dirname {` +
+#                      xctx->plotfile, the dialog's returned name             (0833)
+#
+# ⚠ TWO DIFFERENT REASONS THOSE ESCAPE, and an earlier version of this note
+# got it wrong by giving only one. move.c, draw.c, psprint.c and svgdraw.c are
+# NOT IN FN_FILES, so no proc-name extension reaches them at all. But
+# scheduler.c IS in FN_FILES: 7472 and 8107 escape because this scan is
+# anchored on `tclvareval("` + a NAME, and those lines spell `tclvareval("join`
+# and `log_action(`. Fixing either class needs more than another word here --
+# the first needs FN_FILES widened, the second needs a different rule. Note
+# also that adding `{file dirname}` as a needle would match the CONVERTED
+# tcl_call("file dirname", ...) sites too; it only works behind the
+# `tclvareval("` anchor this loop already applies.
+# Finally, token.c:90 `tclpropeval2` is Tcl evaluation from a `.sch` BY DESIGN
+# (issue 0823) and must never appear in this list.
 set FN_PROCS {is_xschem_file get_directory update_recent_file download_url
               try_download_url cellview_path launcher hi_descend_pick_done
-              xschem_recover_backup}
+              xschem_recover_backup
+              cell_views ciform::open library_inst_lcv library_resolve
+              library_cells libmgr::open
+              {xschem replace_symbol} {set INITIALINSTDIR [file dirname}}
 set FN_FILES {save.c actions.c scheduler.c xinit.c callback.c spice_netlist.c
               vhdl_netlist.c spectre_netlist.c verilog_netlist.c tedax_netlist.c}
 set FN_HITS {}
@@ -1159,7 +1204,7 @@ foreach _f $FN_FILES {
   }
 }
 check FN07-no-concat-splice-in-the-load-path [expr {[llength $FN_HITS] == 0}] \
-  "(issues 0817 Z.2 / 0827 / 0829: a load-path proc is still called by CONCATENATION,\
+  "(issues 0817 Z.2 / 0827 / 0829 / 0831: a load-path proc is still called by CONCATENATION,\
  so a close-brace or a bracket in the string it splices is script:\
  [join $FN_HITS { }])"
 
@@ -1226,6 +1271,200 @@ eqcheck NL02-netlist-still-emits-the-subcircuit \
   [list 1 1 1 $tmp]
 set ::netlist_dir $NL_NDIR
 cvp_reset
+
+# ===========================================================================
+# LM — issue 0831: the library-manager / insert-symbol brace-concat sinks
+# ===========================================================================
+# THE SAME DEFECT AS CVP/FN, ONE FAMILY LATER. 0817 §Z.4 named nine procs on one
+# line; the 0827+0817+0828 item converted the FIRST of them (cellview_path) and
+# left the rest concatenating — and FN07 above did not list any of them, so the
+# anti-half-sweep guard stayed GREEN while seven sinks were live. That is 0831.
+#
+# THE DRIVEN DOOR IS FILE-DERIVED. `scheduler.c:5527`:
+#     tclvareval("library_inst_lcv {", xctx->inst[n].name, "}", NULL);
+# `inst[].name` is the instance's SYMBOL REFERENCE read straight out of the
+# `.sch`, so a mailed sheet plus the stock gesture (click an instance, ask the
+# Library Manager which lib/cell/view it is) runs the sender's Tcl. `\}` is the
+# `.sch` format's OWN escape for a literal brace, so the fixture below is a
+# WELL-FORMED schematic, not a corrupt one. Measured at head, --nogui, no
+# dialog: the host file appears and `xschem get_inst_lcv` ANSWERS `y` — the
+# payload's own `list {y}` tail, which is the receipt that the reference was
+# parsed as SCRIPT and not as data.
+#
+# THE ARGV SIBLINGS are the identical spelling with argv[] in the slot:
+# cell_views (2708), ciform::open (2726), library_resolve (8068),
+# library_cells (8077), libmgr::open (8097). ⚠ 0831 §3 is binding: NOT ONE of
+# them is "protected because the first token errors on wrong args" — a
+# wrong-args abort is an accident of PAYLOAD SHAPE, not a defence. LM04 is the
+# proof: it hands the two-argument `cell_views` a two-word payload and the sink
+# executes anyway. (ciform::open and libmgr::open are has_x-gated and cannot be
+# driven from a --nogui run; their rows are CI16 in test_create_instance.tcl and
+# LL8 in test_lib_manager_launch.tcl.)
+#
+# THE TWO INITIALINSTDIR DOORS (scheduler.c:9707 and callback.c:559, byte-
+# identical) are file-derived AND sit inside a `[file dirname {…}]` COMMAND
+# SUBSTITUTION, so they carry 0829's bracket problem on top of 0827's brace
+# problem. 0831 §4 recorded them "verified present, NOT individually driven";
+# LM10/LM11 drive the verb half here and CI17 (test_create_instance.tcl) drives
+# the key-`I` half, so that claim is upgraded on a MEASUREMENT, not a reading.
+#
+# NOT CLAIMED HERE, deliberately: scheduler.c:12393 `xschem replace_symbol`.
+# Both of its spliced words are PROGRAM-derived (`num` is `%d` of a loop index;
+# dir_pin_sym() returns one of three compile-time literals, paste.c:56-61), so
+# no attacker data reaches it. It is a hygiene conversion — covered by FN07's
+# `{xschem replace_symbol}` needle and by test_pin_type_edit.tcl (5 rows go red
+# when that call site is gutted, measured) — and no row below may be read as
+# calling it a vector.
+# ⚠ NOT by test_perform_action_replace_symbol.tcl: this comment used to name it
+# and that was WRONG (issue 0835). That suite tests the `xschem replace_symbol`
+# SUBCOMMAND — the CALLEE — whereas scheduler.c:12393 is a CALLER of it from
+# set_pin_type, so gutting the caller cannot fail the callee's own suite. It
+# stayed ALL PASS under exactly that sabotage. test_pin_type_edit is the ONLY
+# cover for this site.
+#
+# ⚠ ANTI-HOLLOW (issue 0828). `xschem get_inst_lcv` had ZERO coverage anywhere
+# in this repo before these rows — every grep hit was documentation — so the
+# negatives below would ALL pass against a verb that had been gutted.
+# LM03/LM07/LM08/LM09/LM12 are the positives, driven on a real nested
+# lib/cell/view library, and they are what goes red if a conversion misspells a
+# proc name or stops calling it at all.
+#
+# ⚠ THE PAYLOAD MUST LIVE IN A TCL VARIABLE and reach the verb through
+# `[list …]` (sc_probe already does that). Written literally into this script's
+# own `catch {…}` body it would set THIS script's sentinel and every row would
+# lie — measured while writing them, and the false PWNED is indistinguishable
+# from the real one by eye.
+#
+# ⚠ CLAIMS (issue 0823). A `.sch` is executable BY DESIGN — a `tcleval(` in a
+# text record fires on DRAW (token.c:78 tcl_hook2), and scheduler.c:9708 /
+# callback.c:560 call tcl_hook2() on the instance name THEMSELVES, which no
+# conversion here changes. Nothing in this group may be read as "opening a
+# schematic no longer runs their Tcl". What it pins is the narrower,
+# load-bearing thing: the paths that execute WITHOUT SAYING SO.
+# ===========================================================================
+
+## the 0831 payload, arity 1 (a symbol reference, a library name, a cell name)
+proc lm_pay {host} { return "x\} ; set ::SC_PWNED 1; exec touch $host; list \{y" }
+## the SINK-SHAPED arity-2 payload, for `cell_views <lib> <cell>` (0831 §3)
+proc lm_pay2 {host} { return "x\} \{y\} ; set ::SC_PWNED 1; exec touch $host; list \{z" }
+
+# --- the fixture: ONE real Cadence-layout library, plus the mailed sheet ----
+set LM_DEFS_HAD [info exists ::XSCHEM_LIBRARY_DEFS]
+set LM_DEFS_OLD [expr {$LM_DEFS_HAD ? $::XSCHEM_LIBRARY_DEFS : {}}]
+set LM_IID_HAD  [info exists ::INITIALINSTDIR]
+set LM_IID_OLD  [expr {$LM_IID_HAD ? $::INITIALINSTDIR : {}}]
+file mkdir [file join $tmp plib cellA symbol]
+sch_wr [file join $tmp plib cellA symbol cellA.sym] \
+  "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nL 4 0 0 20 0 {}\n"
+sch_wr [file join $tmp lm_library.defs] "DEFINE plib [file join $tmp plib]\n"
+set ::XSCHEM_LIBRARY_DEFS [file join $tmp lm_library.defs]
+symp_sch [file join $tmp lm_ok.sch] plib/cellA
+
+## THE USER'S DOOR: load the mailed sheet, select the instance, ask the Library
+## Manager's reverse-map verb what it is. Answers {sentinel host-after-LOAD
+## host-after-VERB} and leaves the verb's own answer in ::LM_ANS. The load is
+## sampled separately because at head it does NOT fire (measured) — the row must
+## be red for the VERB, which is the gesture the user makes.
+proc lm_lcv_probe {host path} {
+  set ::SC_PWNED 0
+  catch {file delete -force $host}
+  catch {xschem set_modify 0}
+  pcall xschem load $path
+  set l [file exists $host]
+  pcall xschem select_all
+  set ::LM_ANS [pcall xschem get_inst_lcv]
+  set e [file exists $host]
+  catch {file delete -force $host}
+  return [list $::SC_PWNED $l $e]
+}
+
+# --- LM01/LM02: scheduler.c:5527, THE DRIVEN SITE --------------------------
+set LM_H1 [file join $tmp HOST_LM01]
+symp_sch [file join $tmp lm_evil.sch] [lm_pay $LM_H1]
+eqcheck LM01-get_inst_lcv-sch-symbol-reference \
+  [lm_lcv_probe $LM_H1 [file join $tmp lm_evil.sch]] {0 0 0}
+check LM02-get_inst_lcv-answer-is-not-the-payload-tail [expr {$::LM_ANS ne {y}}] \
+  "(the verb answered '$::LM_ANS' — the value of the payload's own `list \{y\}`\
+ tail, which is the receipt that the .sch symbol reference was parsed as SCRIPT)"
+cvp_reset
+
+# --- LM03: ANTI-HOLLOW. The reverse map must still ANSWER -------------------
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp lm_ok.sch]
+pcall xschem select_all
+eqcheck LM03-get_inst_lcv-still-answers-lib-cell-view \
+  [pcall xschem get_inst_lcv] {plib cellA symbol}
+cvp_reset
+
+# --- LM04/LM05/LM06: the argv-derived siblings a headless run can drive -----
+set LM_H4 [file join $tmp HOST_LM04]
+eqcheck LM04-cell_views-sink-shaped-two-word-payload \
+  [sc_probe $LM_H4 xschem cell_views [lm_pay2 $LM_H4] zz] {0 0}
+set LM_H5 [file join $tmp HOST_LM05]
+eqcheck LM05-library-resolve-sink \
+  [sc_probe $LM_H5 xschem library [lm_pay $LM_H5]] {0 0}
+set LM_H6 [file join $tmp HOST_LM06]
+eqcheck LM06-lib_cells-sink \
+  [sc_probe $LM_H6 xschem lib_cells [lm_pay $LM_H6]] {0 0}
+
+# --- LM07/LM08/LM09: ANTI-HOLLOW twins for the three above -----------------
+eqcheck LM07-library-still-resolves [pcall xschem library plib] [file join $tmp plib]
+eqcheck LM08-lib_cells-still-lists-the-cell [pcall xschem lib_cells plib] cellA
+eqcheck LM09-cell_views-still-lists-the-view [pcall xschem cell_views plib cellA] symbol
+
+# --- LM10/LM11: scheduler.c:9707, the INITIALINSTDIR command substitution ---
+## `xschem place_symbol` reads the SELECTED instance's name and splices it into
+## `set INITIALINSTDIR [file dirname {…}]`. Answers {sentinel host} and leaves
+## the variable's value in ::LM_IID. The trailing abort_operation matters: the
+## verb ARMS a placement, and an armed preview leaking into the next row is a
+## different failure wearing this one's name.
+proc lm_place_probe {host path} {
+  set ::SC_PWNED 0
+  catch {file delete -force $host}
+  catch {xschem set_modify 0}
+  pcall xschem load $path
+  pcall xschem select_all
+  set ::INITIALINSTDIR NOTSET
+  pcall xschem place_symbol devices/lab_pin.sym {}
+  set ::LM_IID $::INITIALINSTDIR
+  set e [file exists $host]
+  catch {file delete -force $host}
+  catch {xschem abort_operation}
+  catch {xschem set_modify 0}
+  return [list $::SC_PWNED $e]
+}
+## its OWN fixture: the payload has to name THIS row's host file, or the
+## host-file leg is vacuous and only the sentinel is doing any work
+set LM_H10 [file join $tmp HOST_LM10]
+symp_sch [file join $tmp lm_evil10.sch] [lm_pay $LM_H10]
+eqcheck LM10-place_symbol-INITIALINSTDIR-sink \
+  [lm_place_probe $LM_H10 [file join $tmp lm_evil10.sch]] {0 0}
+check LM11-INITIALINSTDIR-is-not-the-payload-tail [expr {$::LM_IID ne {y}}] \
+  "(INITIALINSTDIR is '$::LM_IID' — the value of the payload's own `list \{y\}`,\
+ returned THROUGH the `\[file dirname \{…\}\]` command substitution: 0829's\
+ bracket problem riding on top of 0827's brace problem)"
+cvp_reset
+
+# --- LM12: ANTI-HOLLOW twin. The Insert-symbol initial dir must still be set -
+# ::INITIALINSTDIR is pre-set to NOTSET inside the probe, so this row also
+# detects a conversion that stops setting the variable at ALL — which the
+# negatives above would happily call a pass.
+lm_place_probe [file join $tmp HOST_LM12] [file join $tmp lm_ok.sch]
+eqcheck LM12-INITIALINSTDIR-still-points-at-the-symbol-directory \
+  [list $::LM_IID [file isdirectory $::LM_IID]] \
+  [list [file join $tmp plib cellA symbol] 1]
+cvp_reset
+
+# --- LM13: hygiene. No payload may have written into the repo root ---------
+set LM_DROP {}
+foreach _t [lsort [glob -nocomplain -directory $INJ_REPO -tails *]] {
+  if {[lsearch -exact $SC_ROOT_BEFORE $_t] < 0} { lappend LM_DROP $_t }
+}
+check LM13-no-repo-droppings-from-the-0831-payloads [expr {[llength $LM_DROP] == 0}] \
+  "(an 0831 payload created a file in the repo root — memory note\
+ 'untitled litter fails 3 tests': $LM_DROP)"
+if {$LM_DEFS_HAD} { set ::XSCHEM_LIBRARY_DEFS $LM_DEFS_OLD } else { catch {unset ::XSCHEM_LIBRARY_DEFS} }
+if {$LM_IID_HAD}  { set ::INITIALINSTDIR $LM_IID_OLD }       else { catch {unset ::INITIALINSTDIR} }
 
 cd $SC_CWD
 catch {xschem set_modify 0}

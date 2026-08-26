@@ -556,8 +556,25 @@ static void start_place_symbol(void)
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
-      tclvareval("set INITIALINSTDIR [file dirname {",
-           abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""), "}]", NULL);
+      /* issue 0831 -- the symbol reference is .sch DATA and the old splice sat inside
+       * a `[file dirname {...}]` COMMAND SUBSTITUTION, so a `}` or a `[` in it was
+       * script (issues 0827 + 0829 at one site). The substitution is deleted outright:
+       * the dirname is taken by tcl_call() and the result assigned with tclsetvar(),
+       * which is Tcl_SetVar/TCL_GLOBAL_ONLY -- exactly what the old global-level `set`
+       * did. abs_sym_path() returns tclresult() and tcl_call()'s tclsetvar() writes
+       * through the interpreter, invalidating it, so each result is copied out before
+       * the next call (the token.c sanitize() rule, util.c:1122). Heap copies, not a
+       * fixed buffer: a symbol reference has no length bound and a bounded copy would
+       * truncate silently. NB tcl_hook2() still evaluates a `tcleval(`-prefixed name
+       * here -- that is by design (issue 0823) and no conversion changes it. */
+      char *symref = NULL;
+      char *instdir = NULL;
+      my_strdup2(_ALLOC_ID_, &symref,
+           abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""));
+      my_strdup2(_ALLOC_ID_, &instdir, tcl_call("file dirname", symref, NULL, NULL));
+      tclsetvar("INITIALINSTDIR", instdir);
+      my_free(_ALLOC_ID_, &symref);
+      my_free(_ALLOC_ID_, &instdir);
     }
     xctx->mx_double_save = xctx->mousex_snap;
     xctx->my_double_save = xctx->mousey_snap;
