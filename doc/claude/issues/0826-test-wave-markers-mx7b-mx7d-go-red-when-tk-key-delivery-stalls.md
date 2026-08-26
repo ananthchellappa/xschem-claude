@@ -1,6 +1,52 @@
 # 0826 — test_wave_markers MX7b/MX7d go red when Tk KEY DELIVERY STALLS and the suite silently falls back to the shipping handler
 
-Status: **OPEN — measured LIVE on a PRISTINE tree, NOT FIXED.**
+Status: **OPEN — NOT FIXED. ⚠ RE-CLASSIFIED 2026-08-26 06:50 BY THE LEAD: this is
+a LOAD-SENSITIVE FLAKE, not the standing red this file and three crew reports call
+it.** See §0.
+
+## 0. The re-classification, and the lead's own error
+
+**Measured 2026-08-26 06:50, machine idle (`load average: 0.77`), on a freshly
+rebuilt binary at HEAD `2d4dafaf`:**
+
+```
+wave_markers run 1: RESULT: ALL PASS (983 checks)
+wave_markers run 2: RESULT: ALL PASS (983 checks)
+```
+
+**983, twice. The 6 FAILED does not reproduce at all when the box is quiet.**
+
+The lead measured `6 FAILED (977 passed)` **3/3** at ~00:20 and wrote it up as
+*"deterministic"*, then put **"KNOWN STANDING RED, NOT YOURS … report against
+977"** into three consecutive crew briefs. That was wrong, and the error is
+instructive rather than clerical:
+
+* 3/3 is not determinism, it is **three samples under one set of conditions**.
+  Those conditions were a box carrying a second Claude session running python
+  test loops, plus the tail of a ten-agent crew.
+* The 0807 crew reported `test_wave_markers 983->983 (:99, **NOT the brief's
+  977**)` — it contradicted the brief it was given, in writing, and it was right.
+* **The instruction was actively harmful**: telling three crews to report against
+  977 told them to accept six red rows as furniture. Had a real regression landed
+  in exactly those rows it would have been read as the known red and shipped.
+  CLAUDE.md's rule — *a standing red is a defect, not furniture* — is precisely
+  about this, and the lead reproduced the disease while quoting the rule.
+
+This does **not** retract §3b's mechanism: a **Tk key-delivery stall** is exactly
+what a loaded box produces, and §3b's measurement that the geometry rows are
+byte-identical between green and red runs stands. What changes is the **class** —
+it is 0801's family (`test_ase_window`, 2-red-in-48 under 12-way load, reproducing
+on pristine code), not a standing red — and therefore the fix is to make the suite
+**wait for key delivery deterministically**, not to chase a code defect that is
+not there.
+
+⚠ **The four-way bisect in §2 is still sound and still says the same thing** — it
+was taken under load, where every arm reproduced. It proves the failure is not the
+crew's change. It does not, and never did, prove the failure is deterministic.
+
+---
+
+Status (original): **OPEN — measured LIVE on a PRISTINE tree, NOT FIXED.**
 ⚠ **THE DIAGNOSIS IN §3 IS WRONG AND IS CORRECTED IN §3b.** The file was filed
 against an unpinned *window geometry*; the verify pass then measured that the early
 geometry rows are byte-identical between the green and red runs, and that the real
