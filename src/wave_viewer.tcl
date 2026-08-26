@@ -1163,8 +1163,21 @@ proc wviewer::uncover {top from {tries 4} {verify 2}} {
   set tol 8
   if {abs($w - $fw) > $tol || abs($h - $fh) > $tol} { return 0 }
   if {abs($x - $fx) > $tol || abs($y - $fy) > $tol} { return 0 }
-  set dx 48
-  set dy 48
+  # ⚠ THE STEP IS A FRACTION OF THE WINDOW, NOT A CONSTANT -- ruled by the user
+  # 2026-08-26 after seeing the 48px version in the field. 48 broke pixel-congruence,
+  # which is what issue 0840 was filed about, and that turned out not to be what anyone
+  # actually wanted: on a 1110x761 window a 48px step leaves a 48px sliver of the
+  # schematic showing, and the user read the result as ONE window that had been
+  # corrupted with waveforms rather than two windows stacked. It also made "click the
+  # schematic to get it back" look like a repaint fix when it was only a raise.
+  #
+  # A third of the window is unmistakably two windows at any size, and being a fraction
+  # it stays right on a 600px window and on a 3000px one. The user chose this over
+  # tiling and over not raising the viewer, knowing it still overlaps.
+  set dx [expr {$w / 3}]
+  set dy [expr {$h / 3}]
+  if {$dx < 48} { set dx 48 }
+  if {$dy < 48} { set dy 48 }
   # keep the title bar reachable: step back toward the origin rather than off
   # the bottom-right of the screen
   if {$x + $dx + $w > [winfo screenwidth $top]}  { set dx [expr {-$dx}] }

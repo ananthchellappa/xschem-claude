@@ -116,6 +116,23 @@ if {[info exists ::has_x]} {
      {[wviewer::uncover .zz1 .zz9] == 1 && [wm geometry .zz1] ne [wm geometry .zz9]}
   ck "U1b and the SIZE is preserved; only the position moves" \
      {[string match {400x300+*} [wm geometry .zz1]]}
+  # ⚠ THE STEP MUST BE BIG ENOUGH TO READ AS A SECOND WINDOW, and it must SCALE.
+  # The first version stepped a flat 48px. It broke pixel-congruence -- which is what
+  # 0840 was filed about -- and the user, looking at two 1110x761 windows 48px apart,
+  # reported it as ONE window corrupted with waveforms. Ruled 2026-08-26: a fraction of
+  # the window (a third), never a constant, so it stays right at any window size.
+  scan [wm geometry .zz1] {%dx%d+%d+%d} _w _h _ux _uy
+  ck "U1c the step is a FRACTION of the window (>= a quarter), not a fixed 48px" \
+     {abs($_ux - 100) >= 100 && abs($_uy - 100) >= 75}
+  ck "U1d the shoved window stays FULLY on screen" \
+     {$_ux >= 0 && $_uy >= 0 && $_ux + $_w <= [winfo screenwidth .] &&
+      $_uy + $_h <= [winfo screenheight .]}
+  # ⚠ NOT PINNED: there is no upper bound on the step. An over-large fraction does not
+  # fly off screen -- the flip and the clamp below catch it -- it just lands in a corner,
+  # and every row here still passes. Sabotaging the step to 5x the window width proved
+  # that. Left unguarded deliberately rather than dressed up: the failure it would
+  # protect against is cosmetic, and the ruling that set the value is recorded on the
+  # owed ledger where the user can revisit it.
 
   wm geometry .zz1 400x300+300+300
   wm geometry .zz9 400x300+100+100

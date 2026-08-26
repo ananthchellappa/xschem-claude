@@ -273,3 +273,51 @@ Two further reasons the shove was inert, both fixed and both real:
    map, bounded retries);
 2. it demanded an **exact string match**, while 0647's own measurement was one pixel apart
    (fixed: same size and same corner within 8 px).
+
+---
+
+# ADDENDUM 2 — the shove worked, and the result was still wrong
+
+`/tmp/Xschem.log.1`, both censuses identical, so the verification held:
+
+```
+.     stack=2  1110x761+3728+382  'xschem [3] - tb_bandgap.sch (read-only)'
+.x1   stack=5  1110x761+3776+430  'Waveforms tb_bandgap (ngspice_state1)'
+```
+
+Two mapped toplevels, 48px apart, viewer on top. The user's reading of that same screen:
+
+> *"The double-click still corrupts the schematic window display with waveforms. There is
+> an offset, but no new Waveform Window. When I click in the schematic window, it's
+> restored to show tb_bandgap."*
+
+Both windows are 1110x761 and 48px apart, so 95% of the schematic is hidden and the
+result reads as **one window gone wrong**. "Clicking restores the schematic" is not a
+repaint — it raises `.` above `.x1`. The user's own earlier session already proved the
+two-window reading (*"I was able to drag the waveform viewer to reveal schematic"*); a
+canvas painting the wrong content would not have been fixed by moving a different window.
+
+## The lesson worth keeping
+
+The bug as **filed** was pixel-congruence. 48px fixes pixel-congruence completely and
+fixes nothing the user cares about. Congruence was the measurable proxy someone reached
+for; *"I can still see my schematic"* was the requirement, and no amount of green on the
+proxy was ever going to satisfy it.
+
+## Ruled by the user 2026-08-26
+
+Offered: tile side by side / open behind without raising / a much bigger offset / do not
+auto-open the viewer at all. **Chosen: a much bigger offset**, knowing it still overlaps.
+
+Implemented as a **fraction of the window (a third), never a constant**, so it stays right
+at any window size — `dx = w/3`, `dy = h/3`, floored at 48, with the existing flip and
+clamp keeping the window on screen. Measured on the real `ase::open_state` path on `:99`:
+design at `+808+0`, viewer at `+438+253` (flipped in x because the step would have gone
+off the right edge).
+
+Rows: U1c pins the step as a fraction and reds on a return to 48px; U1d pins that the
+result stays fully on screen.
+
+⚠ **Not pinned:** there is no upper bound on the step. Sabotaging it to 5x the window
+width still passes — the flip and clamp land it in a corner and nothing complains. Left
+unguarded deliberately, and said so in the suite rather than dressed up.
