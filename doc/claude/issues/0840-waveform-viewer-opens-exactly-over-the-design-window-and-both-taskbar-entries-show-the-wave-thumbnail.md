@@ -128,6 +128,50 @@ Measured after: `+452+180` against the main window's `+404+132`.
 
 SB3 and SB5 are the over-reach directions; both are caught.
 
+## The instrumentation, and what it already showed
+
+`wviewer::diag` (opt-in, `WVDIAG=1`) traces every entry, arm and exit of
+`wviewer::open`, plus `forget` and `viewer_restore`, and dumps every mapped
+toplevel with its title and geometry at each point.
+
+⚠ **It writes through `xschem log_action`, into the ACTION LOG, not a file of
+its own.** The first version opened `/tmp/wvdiag.log` and under the user's own rc
+the `open` itself failed, so the trace came back silently empty — which looks
+exactly like *"the event never happened"*, the one thing a diagnostic must never
+look like. The action log is already produced by the user's `--logdir /tmp` run,
+so the trace lands in the file they ALREADY send. `#= ` is the shipped
+non-replayable-comment prefix (`util.c:538`), so the log stays source-able.
+(Note `--pipe` gates the action log, so this cannot be exercised from a scripted
+run — it was verified with an interactive-shaped `--logdir` run.)
+
+**It has already localised residual 2.** Trace of a clean open on the dev
+display:
+
+```
+#= wvdiag open-FRESH   token=…/ngspice_state1 top=.x1 ctx=.x1.drw registry={…}
+#=        .x1 normal 1110x761+452+180 'xschem [4] - untitled.sch (read-only)'
+#= wvdiag open-RETURN  token=…/ngspice_state1 top=.x1 ctx=.x1.drw registry={…}
+#=        .x1 normal 1110x761+452+180 'Waveforms tb_bandgap (ngspice_state1)'
+```
+
+So the `untitled.sch (read-only)` title is not a rare corruption — **it is the
+window's NORMAL state for most of `open`**. `xschem set readonly 1` runs early
+(it rewrites the WM title as a side effect), and `wviewer::retitle` runs at
+`wave_viewer.tcl:1373`, near the end. Everything between the two is a window in
+which the viewer wears the wrong name.
+
+**Which yields one hypothesis for BOTH residual 1 and residual 2**: an exception
+somewhere in that span.
+
+* thrown **before** `dict set windows` → an orphan toplevel that is in no
+  registry, so `forget` cannot see it, the re-open arm cannot find it, and the
+  next `wviewer::open` builds a **second** window → residual 1;
+* and that orphan has `readonly` set and was never retitled → residual 2.
+
+The trace distinguishes the two cases without any guessing: an `open-ENTER` with
+no matching `open-FRESH` means it threw before the registry entry; `open-FRESH`
+with no `open-RETURN` means it threw after.
+
 ## STILL OPEN — measured as unreproduced, not as absent
 
 1. **TWO viewer windows existed in the user's session.** They closed one with

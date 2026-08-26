@@ -4062,7 +4062,9 @@ proc ase::ui::viewer_restore {key} {
   # up for whatever it still cannot attach.
   set vcds {}
   foreach v [ase::last_vcdfiles $key] { lappend vcds [list $v vcd] }
+  catch {wviewer::diag "viewer_restore  key=$key rawfile='$rf' sim_type=$sim_t"}
   set rc [wviewer::restore $key $vd $rf $sim_t $vcds]
+  catch {wviewer::diag "viewer_restore  key=$key rc=$rc"}
   if {$rc && $rf eq {}} {
     catch {::ase::echo "ase: no simulation results for this state — viewer\
  restored, traces will fill after a run"}

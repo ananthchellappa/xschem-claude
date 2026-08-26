@@ -823,6 +823,7 @@ proc wviewer::token_for_canvas {wp} {
 # open starts from an empty layout (persistence across sessions is item 14's
 # `viewer` state key, not this registry).
 proc wviewer::forget {token} {
+  wviewer::diag "forget         token=$token"
   variable windows
   variable graphbb
   variable layouts
@@ -1074,6 +1075,48 @@ proc wviewer::ctx_verdict {wp tops0 tops1 ninst nwires} {
 # Keyed by the TOPLEVEL PATH, not the context: store_geom runs from C at moments
 # when the current context may be somebody else's, so a per-context flag cannot
 # answer "whose window is this".
+# --- OPT-IN DIAGNOSTIC TRACE (issue 0840 residuals 1-3) ----------------------
+#
+# TEMPORARY, and tied to 0840: remove it when the residuals close.
+#
+# Three things the user sees on their bench that do NOT reproduce on the dev
+# display: a SECOND viewer window hiding behind the first, that window's WM
+# title reading `untitled.sch (read-only)` instead of `Waveforms ...`, and
+# ase::ui::viewer_restore opening nothing at all here despite the state file
+# carrying `viewer {open 1 ...}`. All three are questions about WHEN, HOW OFTEN
+# and THROUGH WHICH ARM open() is entered -- which is exactly what a report from
+# the bench cannot answer and a trace can.
+#
+# Off unless $env(WVDIAG) is set, and the whole body is catch-wrapped: a
+# diagnostic that can break the thing it is diagnosing is worse than none.
+proc wviewer::diag {tag {extra {}}} {
+  if {![info exists ::env(WVDIAG)] || $::env(WVDIAG) eq {}} { return }
+  # ⚠ IT WRITES INTO THE ACTION LOG, NOT A FILE OF ITS OWN. The first version
+  # opened /tmp/wvdiag.log and, under the user's own rc, the `open` itself
+  # failed -- so the trace was silently empty and looked exactly like "the event
+  # never happened", which is the one thing a diagnostic must never look like.
+  # `xschem log_action` is already the mechanism the user's `--logdir /tmp` run
+  # uses, so the trace lands in the file they ALREADY send, with no second
+  # channel to go wrong. The `#= ` prefix is the shipped convention for a
+  # non-replayable comment (util.c:538), so the log stays source-able.
+  set toks {} ; catch {set toks [dict keys $::wviewer::windows]}
+  set cwp {}  ; catch {set cwp [xschem get current_win_path]}
+  catch {xschem log_action "#= wvdiag $tag ctx=$cwp registry={$toks} $extra"}
+  # every MAPPED toplevel with its title and geometry -- residual 1 is a COUNT
+  # and residual 2 is a TITLE, so both are read straight off this list
+  set kids {} ; catch {set kids [winfo children .]}
+  foreach t [concat . $kids] {
+    set cls {} ; if {[catch {winfo class $t} cls]} continue
+    if {$t ne {.} && $cls ne {Toplevel}} continue
+    set st ? ; catch {set st [wm state $t]}
+    if {$st eq {withdrawn}} continue
+    set ttl ? ; catch {set ttl [wm title $t]}
+    set g ?   ; catch {set g [wm geometry $t]}
+    catch {xschem log_action "#=        $t $st $g '$ttl'"}
+  }
+  return
+}
+
 proc wviewer::geom_key {win} {
   variable windows
   if {$win eq {} || ![info exists windows]} { return {} }
@@ -1113,6 +1156,7 @@ proc wviewer::uncover {top from} {
 }
 
 proc wviewer::open {token} {
+  wviewer::diag "open-ENTER      token=$token"
   variable windows
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx; variable gridshow
@@ -1133,8 +1177,10 @@ proc wviewer::open {token} {
     if {[winfo exists $top]} {
       raise_activate_toplevel $top
       catch {focus $top}
+      wviewer::diag "open-REUSE      token=$token top=$top"
       return 1
     }
+    wviewer::diag "open-STALEENTRY token=$token top=$top registry had it, window gone"
     wviewer::forget $token   ;# window died without cleanup: stale entry
   }
   # fresh open (D4): real toplevel + untitled buffer in BOTH window models;
@@ -1218,6 +1264,7 @@ proc wviewer::open {token} {
   # AFTER the registry entry so geom_key can already recognise $top.
   set _fromtop [expr {$before eq {.drw} ? {.} : [string range $before 0 end-4]}]
   catch {wviewer::uncover $top $_fromtop}
+  wviewer::diag "open-FRESH      token=$token top=$top from=$_fromtop"
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
   # D2 fixup: the editor TOOLBAR is a second editing-verb surface, reachable
@@ -1341,6 +1388,7 @@ proc wviewer::open {token} {
   # open_viewer, auto_plot, restore) — none want a viewer opening behind.
   raise_activate_toplevel $top
   catch {focus $top}
+  wviewer::diag "open-RETURN     token=$token top=$top"
   return 1
 }
 
