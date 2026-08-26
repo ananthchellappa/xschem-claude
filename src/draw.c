@@ -3332,10 +3332,14 @@ static void set_thick_waves(int what, int wcnt, int wave_col, Graph_ctx *gr)
  *                      raw's). NULL is read as "".
  *
  * The caller my_free()s *expr, *rawfile and *sim_type.
- * Both the path and the type go through a Tcl `subst {...}`, exactly as
- * draw_graph() has always done, so a token may name its database through a Tcl
- * variable. NOTHING here switches databases: the switch, and the balanced
- * restore that must pair with it, belong to the caller. */
+ * Both the path and the type are resolved as DATA -- resolve_rawfile_path()
+ * and expand_tcl_vars() (util.c), a C byte scanner whose only Tcl call is
+ * Tcl_GetVar2Ex -- so a token may still name its database or its type through
+ * a Tcl VARIABLE, as draw_graph() has always allowed, and NOTHING else in
+ * those fields is evaluated. They used to go through a Tcl `subst {...}` built
+ * by string concatenation, which made a `[...]` in a .sch graph attribute run
+ * as a command: issue 0812. NOTHING here switches databases: the switch, and
+ * the balanced restore that must pair with it, belong to the caller. */
 static void node_token_split(const char *ntok, char **expr, int *dataset,
                              char **rawfile, char **sim_type, const char *dflt_sim_type)
 {
@@ -3348,14 +3352,34 @@ static void node_token_split(const char *ntok, char **expr, int *dataset,
     /* `%12 file.raw tran` -- the dataset digits are optional, so the rawfile is
      * field 1 or field 2 of the `%` payload (separators "\n ") */
     int pos = 1;
+    /* C89: both resolver buffers at the top of the block */
+    char rawbuf[PATH_MAX + 100];
+    char typebuf[256];
     if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
+    /* THE SEVENTH INJECTION SITE (issue 0812), and the worst of them: these two
+     * fields are read STRAIGHT OUT OF A .sch FILE, and they used to be resolved
+     * with `tclvareval("subst {", <field>, "}", NULL)` -- so a `[...]` in a
+     * graph `node=` attribute was COMMAND SUBSTITUTION and merely OPENING a
+     * schematic someone sent you ran their Tcl (measured on :99 with a plain
+     * `xschem load` + redraw; the tab that keeps the payload inside one field
+     * survives save.c's round trip verbatim). And `$a([...])` in the same
+     * field ran too, which no `subst` flag prevents -- see util.c.
+     * BOTH fields are rewired, not one: the rawfile field is resolved AGAIN by
+     * extra_rawfile() downstream, and that double pass is only safe because
+     * resolve_rawfile_path() is idempotent on its own output.
+     * The sim_type field gets expand_tcl_vars() and NOT the full resolver: a
+     * sim_type is a word like `tran`, never a path, so a leading `~/` there
+     * would mean nothing.
+     * The `$netlist_dir/...` spelling documented in doc/xschem_man/graphs.html
+     * still resolves -- that expansion is what these fields are FOR.
+     * Checks NINJ1-NINJ4 / NVAR1-NVAR2, tests/headless/test_node_token_split.tcl. */
     if(rawfile) {
-      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
-      my_strdup2(_ALLOC_ID_, rawfile, tclresult());
+      resolve_rawfile_path(find_nth(nd, "\n ", "\"", 0, pos), rawbuf, (int)S(rawbuf));
+      my_strdup2(_ALLOC_ID_, rawfile, rawbuf);
     }
     if(sim_type) {
-      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
-      my_strdup2(_ALLOC_ID_, sim_type, tclresult()[0] ? tclresult() : dflt_sim_type);
+      expand_tcl_vars(find_nth(nd, "\n ", "\"", 0, pos + 1), typebuf, (int)S(typebuf));
+      my_strdup2(_ALLOC_ID_, sim_type, typebuf[0] ? typebuf : dflt_sim_type);
     }
     if(pos == 2) ds = atoi(nd);
     if(expr) my_strdup(_ALLOC_ID_, expr, find_nth(ntok, "%", "\"", 4, 1));

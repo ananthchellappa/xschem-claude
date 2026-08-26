@@ -3204,6 +3204,34 @@ extern void tclsetdoublevar(const char *s, const double value);
 extern void tclsetboolvar(const char *s, const int value);
 extern void tclsetintvar(const char *s, const int value);
 extern int tclvareval(const char *script, ...);
+/* util.c -- PATH RESOLUTION, issue 0812. A filename is DATA, never script.
+ * expand_tilde()        leading `~/` -> home_dir, in C. Nothing else.
+ * expand_tcl_vars()     Tcl VARIABLE expansion by a C BYTE SCANNER. It
+ *                       recognises `$name`, `${name}` and `$ns::name`, looks
+ *                       them up with Tcl_GetVar2Ex(..., TCL_GLOBAL_ONLY) and
+ *                       copies EVERY other byte through verbatim -- `{` `}`
+ *                       `[` `]` `;` `\` `(` `)` included. `(` is never an index
+ *                       opener; an undefined reference is copied as its own
+ *                       literal text. There is NO evaluator: the only Tcl API
+ *                       it calls is Tcl_GetVar2Ex, a hash lookup. It is NOT
+ *                       named subst_tcl_value(), and it does not call subst --
+ *                       the first attempt at this fix used
+ *                       `subst -nobackslashes -nocommands` and was refuted by
+ *                       `$a([exec touch X])`, whose command substitution runs
+ *                       inside the ARRAY INDEX no matter which -no* flags are
+ *                       passed.
+ * resolve_rawfile_path() the two composed: THE raw-file path resolver, and
+ *                       idempotent on its own output because the extra_raw_arr
+ *                       registry keys off it with strcmp().
+ * Each writes at most destsize bytes into dest (NUL included) and returns dest.
+ * See the comment block above them in util.c for what is and is NOT
+ * guaranteed. Reusable beyond the raw-file family: expand_tilde() is the
+ * drop-in for the remaining `regsub {^~/}` + tcleval splices (issue 0816) and
+ * expand_tcl_vars() for the tclvareval brace groups that exist only to expand
+ * variables (issue 0817). */
+extern const char *expand_tilde(const char *s, char *dest, int destsize);
+extern const char *expand_tcl_vars(const char *s, char *dest, int destsize);
+extern const char *resolve_rawfile_path(const char *s, char *dest, int destsize);
 extern const char *tcl_hook2(const char *res);
 extern void statusmsg(char str[],int n);
 /* issue 0248: statusmsg() + a hold, for lines a user must be able to READ (gate messages,

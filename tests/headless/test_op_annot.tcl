@@ -10443,6 +10443,171 @@ set XSCHEM_LIBRARY_PATH $W_LIBS
   incr fail
 }
 
+# =============================================================================
+# SECTION Z — ISSUE 0812: A RAW FILENAME IS DATA, NOT SCRIPT.
+# =============================================================================
+# `xschem annotate_op` resolves a leading `~/` IN C (scheduler.c, two
+# my_snprintf branches) and its comment block says the splice hazard is closed.
+# That is true of its own line and FALSE of the path: the `f` those branches
+# produce is handed straight to extra_rawfile() (save.c), which resolves it by
+# BUILDING THE TCL SCRIPT `subst { <f> }` and evaluating it. Closed one frame
+# up, open one frame down.
+#   doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
+#
+# ⚠ AINJ2 IS THE ROW THAT KILLS THE "THE USER TYPED THE PATH" DEFENCE. It passes
+# NO FILENAME AT ALL -- the shipped menu entry (src/xschem.tcl `Op Annotate`) --
+# and the payload lives in the SIMULATION DIRECTORY name, which scheduler.c
+# joins with the cell name to build `<netlist_dir>/<cell>.raw`. Nobody typed
+# anything; a project checked out with a sim dir named
+# `q}; set ::SC_PWNED 1; list {a` is enough.
+#
+# ⚠ AINJ3/AINJ4 ARE THE ROWS THE FIRST ATTEMPT DID NOT HAVE, AND ARE WHY IT WAS
+# REVERTED (0812 §1/§3). It sanitized with `subst -nobackslashes -nocommands`.
+# `-nocommands` suppresses only TOP-LEVEL command substitution: a command
+# substitution inside a VARIABLE ARRAY INDEX still runs, before the array lookup
+# fails, so the array need not exist. AINJ4 asserts the sharpest form of it --
+# `[exec touch ...]` inside the index of a path that DOES NOT EXIST ON DISK
+# created a host file, because the resolver runs before any stat().
+#
+# ⚠ THE ASSERTION IS A SIDE EFFECT -- the sentinel ::SC_PWNED or a FILE CREATED
+# ON DISK -- NEVER A RETURN CODE. The payload runs BEFORE the read fails, so a
+# row that only checks for an error passes over a live arbitrary-code-execution
+# defect.
+#
+# AORD1/AORD2/AORD3 ARE THE COUNTERWEIGHT: the easy wrong fix is to refuse
+# anything unusual. `~/` works here TODAY (and only here -- through `xschem raw
+# read` it returns 0, which tests/headless/test_raw_read_dispatch.tcl ORD7 pins
+# as a fix to deliver); a path with SPACES and a `$netlist_dir/...` spelling work
+# here today. All three must still work after. AKEY1 pins the idempotence
+# annotate_op needs by construction: it feeds the ALREADY-RESOLVED
+# xctx->raw->rawfile back through extra_rawfile()'s clear arm, so resolving
+# twice must equal resolving once.
+# =============================================================================
+
+if {[catch {
+
+set XSCHEM_LIBRARY_PATH $Y_LIB
+
+set Z_INJ [file join $scratch "q\}; set ::SC_PWNED 1; list \{a.raw"]
+file copy -force $Y_GOLD $Z_INJ
+set Z_SPACE [file join $scratch "z op with space.raw"]
+file copy -force $Y_GOLD $Z_SPACE
+# the payload as a SIMULATION DIRECTORY, holding the raw the no-argument form
+# will name by itself: <netlist_dir>/<cell>.raw, cell = y_a
+set Z_SIMDIR [file join $scratch "q\}; set ::SC_PWNED 1; list \{a"]
+file mkdir $Z_SIMDIR
+file copy -force $Y_GOLD [file join $Z_SIMDIR y_a.raw]
+
+# The `~/` probe can only live directly under $HOME. Same 0148-class discipline
+# as tests/headless/test_perform_action_embed_rawfile.tcl check (d): removed on
+# every exit path, and dead-pid corpses of earlier runs swept on the way in,
+# because nothing else sweeps $HOME.
+set Z_HNAME opannot0812probe_[pid].raw
+set Z_HRAW  [file join $::env(HOME) $Z_HNAME]
+foreach _zf [glob -nocomplain -directory $::env(HOME) opannot0812probe_*.raw] {
+  if {![regexp {^opannot0812probe_([0-9]+)\.raw$} [file tail $_zf] -> _zp]} continue
+  if {$_zp eq [pid] || [__scratch_pid_alive $_zp]} continue
+  catch {file delete -force $_zf}
+}
+if {[info commands ::__opa_z_real_exit] eq {}} {
+  rename ::exit ::__opa_z_real_exit
+  proc ::exit {{code 0}} { catch {file delete -force $::Z_HRAW}; ::__opa_z_real_exit $code }
+}
+file copy -force $Y_GOLD $Z_HRAW
+
+set Z_NDIR [expr {[info exists ::netlist_dir] ? $::netlist_dir : {}}]
+
+## Drive one annotate_op with the sentinel armed immediately before the call, so
+## a 1 can only have been written by the filename.
+proc opa_z_probe {script} {
+  set ::SC_PWNED 0
+  catch {uplevel #0 $script}
+  return $::SC_PWNED
+}
+## ...and one that asserts a HOST FILE, which is the form a reader cannot argue
+## with: the process reached out and touched the filesystem.
+proc opa_z_owned {path script} {
+  catch {file delete -force $path}
+  catch {uplevel #0 $script}
+  set e [file exists $path]
+  catch {file delete -force $path}
+  return $e
+}
+
+xschem load $Y_A
+catch {xschem raw clear}
+check {Z0 FIXTURE the payload-named raw, the spaced raw, the ~/ probe and the payload-named SIM DIR all exist on disk} \
+  [list [file exists $Z_INJ] [file exists $Z_SPACE] [file exists $Z_HRAW] \
+        [file exists [file join $Z_SIMDIR y_a.raw]] \
+        [expr {[string match {*y_a.sch} [xschem get schname 0]] ? 1 : 0}]] \
+  {1 1 1 1 1}
+
+check {AINJ1 a raw whose FILENAME carries Tcl does not execute it (the issue's own transcript, inverted)} \
+  [opa_z_probe {xschem annotate_op $::Z_INJ 0}] 0
+
+# THE SHIPPED MENU ENTRY, WITH NO ARGUMENT AT ALL.
+catch {xschem raw clear}
+set ::netlist_dir $Z_SIMDIR
+set z2 [opa_z_probe {xschem annotate_op}]
+set ::netlist_dir $Z_NDIR
+check {AINJ2 `xschem annotate_op` with NO ARGUMENT does not execute Tcl living in the SIMULATION DIRECTORY name -- nobody typed a path} \
+  $z2 0
+
+# THE ARRAY-INDEX SHAPE, which no `subst` flag suppresses. `noar0812` does not
+# exist and does not need to: the index is substituted before the lookup fails.
+catch {xschem raw clear}
+check {AINJ3 an ARRAY-INDEX payload `$a([set ::SC_PWNED 1]).raw` is not executed by annotate_op -- the shape that refuted the first attempt} \
+  [opa_z_probe {xschem annotate_op {$noar0812([set ::SC_PWNED 1]).raw} 0}] 0
+
+# ...and the same shape with `exec`, on a path that EXISTS NOWHERE. The resolver
+# runs before any stat(), so non-existence is not a defence.
+catch {xschem raw clear}
+set Z_OWNED [file join $scratch OWNED_ANNOT]
+check {AINJ4 an `[exec touch ...]` inside a variable ARRAY INDEX creates NO host file -- asserted on the FILE, on a path that does not exist on disk} \
+  [opa_z_owned $Z_OWNED [list xschem annotate_op "\$noar0812(\[exec touch $Z_OWNED\]).raw" 0]] 0
+
+# --- the counterweight: the ordinary paths must still annotate ---------------
+catch {xschem raw clear}
+catch {xschem annotate_op ~/$Z_HNAME 0}
+check {AORD1 a `~/` path still annotates: the raw is read, registered under the EXPANDED name, and its value is live} \
+  [list [rcall {xschem raw rawfile}] [rcall {xschem raw value v(a) -1}]] \
+  [list [list 0 $Z_HRAW] {0 3.14}]
+
+catch {xschem raw clear}
+catch {xschem annotate_op $Z_SPACE 0}
+check {AORD2 a path containing SPACES still annotates, under its own literal name} \
+  [list [rcall {xschem raw rawfile}] [rcall {xschem raw value v(a) -1}]] \
+  [list [list 0 $Z_SPACE] {0 3.14}]
+
+# the shipped graph-attribute spelling: nine draw.c/callback.c sites hand
+# extra_rawfile() a `rawfile=$netlist_dir/...` string unsubstituted
+catch {xschem raw clear}
+set ::netlist_dir $scratch
+catch {xschem annotate_op {$netlist_dir/y_op_gold.raw} 0}
+set z_ord3 [list [rcall {xschem raw rawfile}] [rcall {xschem raw value v(a) -1}]]
+set ::netlist_dir $Z_NDIR
+check {AORD3 a `$netlist_dir/...` spelling -- the one the shipped corpus uses -- still annotates and stores the RESOLVED absolute path} \
+  $z_ord3 [list [list 0 $Y_GOLD] {0 3.14}]
+
+# IDEMPOTENCE: annotate_op feeds the already-resolved xctx->raw->rawfile back
+# through extra_rawfile()'s clear arm, so a second call on the same file must
+# find and clear its own entry rather than miss it.
+catch {xschem raw clear}
+set z_k1 [rcall {xschem annotate_op $::Z_SPACE 0}]
+set z_k2 [rcall {xschem annotate_op $::Z_SPACE 0}]
+check {AKEY1 two successive annotate_op on the SAME file both succeed and the value stays live (resolving twice == resolving once)} \
+  [list [lindex $z_k1 0] [lindex $z_k2 0] [rcall {xschem raw value v(a) -1}]] \
+  [list 0 0 {0 3.14}]
+
+catch {xschem raw clear}
+file delete -force $Z_HRAW   ;# early drop; the exit hook above is the backstop
+set XSCHEM_LIBRARY_PATH $W_LIBS
+
+} zerr]} {
+  puts "UNEXPECTED ERROR (section Z): $zerr"
+  incr fail
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

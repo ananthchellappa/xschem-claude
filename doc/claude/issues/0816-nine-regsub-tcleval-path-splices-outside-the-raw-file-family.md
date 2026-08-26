@@ -2,12 +2,33 @@
 
 STATUS: **OPEN — filed by the 0812 implement agent, 2026-08-25. Measured, not fixed.**
 FOUND IN: `src/scheduler.c`. Same sink shape as issue 0812.
-⚠ **UPDATED 2026-08-25 after the 0812 attempt was REVERTED.** That attempt would have
-fixed the four raw-file-family splices (`embed_rawfile`, the `raw_read` verb, the
-`table_read` verb, the `vcd_read` verb) and left these nine; it was reverted, so **all
-THIRTEEN `regsub {^~/}` splices are live at HEAD.** The four raw-family ones belong to
-0812; these nine are this issue, and the split is unchanged — it is only the count that
-is live that moved.
+⚠ **UPDATED 2026-08-25 (twice).** The first 0812 attempt was reverted, briefly making all
+THIRTEEN splices live; **the 0812 RETRY then landed and killed the four raw-file-family
+ones** (`embed_rawfile` :851, the `raw_read` verb :10559, the `table_read` verb :13202,
+the `vcd_read` verb :13787). **These NINE — `scheduler.c` 2980, 7611, 7767, 7835, 8132,
+8989, 9028, 9831, 11183, plus `xinit.c:3235` on a compile-time constant — are still live
+and are this issue.** The split is unchanged; only the live count moved, 13 → 9.
+
+## ✅ THE FIX ALREADY EXISTS — do not write a second one
+
+0812 shipped `expand_tilde(const char *s, char *dest, int destsize)` in `src/util.c`
+(declared in `src/xschem.h` after `tclvareval`). It expands a leading `~/` against
+`home_dir` in pure C and does nothing else, which is **all `regsub {^~/} {…} {…}` ever
+did** — a brace-quoted regsub word never performed variable substitution either, so for
+every input without a `}` it is byte-identical to what it replaces. It writes at most
+`destsize` bytes (NUL included), returns `dest`, and is safe on `NULL` / `destsize<=0`.
+
+```c
+/* was: my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[N], home_dir);
+ *      tcleval(f); my_strncpy(f, tclresult(), S(f));                        */
+expand_tilde(argv[N], f, (int)S(f));
+```
+
+Each site needs its own red row first — the payload shape for this sink is
+`x} {y} {z}; set ::SC_PWNED 1; list {a` (**no slash**, so the `^~/` anchor is irrelevant),
+and 0812 §4 constraint 4 is binding: assert the **side effect**, add an `[exec …]` row that
+checks a created **file**, and add a row on a path that does **not exist** — the splice runs
+before any `stat()`.
 
 ## The sink
 

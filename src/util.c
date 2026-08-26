@@ -782,6 +782,269 @@ FILE *my_fopen(const char *f, const char *m)
   fd = fopen(f, m);
   return fd;
 }
+
+/* ===========================================================================
+ * PATH RESOLUTION -- A FILENAME IS DATA, NEVER SCRIPT (issue 0812)
+ * doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
+ *
+ * WHAT THIS REPLACES. Raw-file paths used to be resolved by BUILDING a Tcl
+ * script around the filename and evaluating it -- `subst { <file> }` via
+ * tclvareval() in save.c's extra_rawfile() (six call sites) and draw.c's
+ * node_token_split() (two), and `regsub {^~/} {<path>} {<home>/}` via tcleval()
+ * in scheduler.c (four raw-family verbs). In both shapes the path sits INSIDE A
+ * BRACE GROUP, so a filename containing `}` closes the group early and the
+ * remainder of the name RUNS AS TCL. Measured on this tree with a real file: a
+ * raw named
+ *     q}; set ::SC_PWNED 1; list {a.raw
+ * set the sentinel through `xschem annotate_op`, `xschem raw read/switch/clear`
+ * and `xschem raw table_read/vcd_read`; the regsub-shaped payload
+ *     x} {y} {z}; set ::SC_PWNED 1; list {a
+ * did the same through the `raw_read` / `table_read` / `vcd_read` /
+ * `embed_rawfile` verbs; and a graph `node=` field read STRAIGHT OUT OF A .sch
+ * fired on a plain `xschem load` + redraw under X. `xschem annotate_op` WITH NO
+ * ARGUMENT (the shipped menu entry) fired too, with the payload living in the
+ * simulation DIRECTORY name: nobody typed a path.
+ *
+ * ⚠ WHY THERE IS NO `subst` HERE, IN ANY FORM. The FIRST attempt at this fix
+ * (2026-08-25, reverted; kept at doc/claude/evidence/0812-attempt1-reverted.patch.txt)
+ * sanitized with `subst -nobackslashes -nocommands` handed a pre-built word
+ * list, and its shipped comment said `[` and `]` were therefore literal. THAT
+ * IS FALSE. `-nocommands` suppresses only TOP-LEVEL command substitution; a
+ * command substitution that occurs inside a VARIABLE ARRAY INDEX --
+ * `$a([exec touch /tmp/OWNED])` -- is still evaluated, because a variable
+ * reference's index is itself fully substituted, and it is evaluated BEFORE the
+ * lookup fails, so the array need not even exist. Re-measured in tclsh 8.6.13:
+ *     subst -nobackslashes -nocommands {$a([set ::S 1])}   ->   ::S == 1
+ * That is why nothing below calls subst, Tcl_SubstObj, Tcl_ParseVar or
+ * Tcl_EvalObjv. The scanner is plain C.
+ *
+ * THE ONE SAFETY CLAIM MADE HERE, AND IT IS GREP-CHECKABLE: the only Tcl API
+ * this file's resolver calls is Tcl_GetVar2Ex(), which is a hash lookup. There
+ * is no evaluator in the path. Every byte of the input that is not part of a
+ * RECOGNISED, DEFINED variable reference is copied through verbatim -- `{` `}`
+ * `[` `]` `;` `\` `(` `)` newline and quote included -- and a variable's VALUE
+ * is appended verbatim and never rescanned.
+ *
+ * WHAT SURVIVES ON PURPOSE. Tcl VARIABLE substitution is load-bearing, not
+ * decoration: nine draw.c/callback.c sites hand extra_rawfile() a graph
+ * `rawfile=` attribute unsubstituted and the shipped corpus spells it
+ * `$netlist_dir/...` (xschem_library/ngspice/autozero_comp.sch,
+ * .../solar_panel.sch, xschem_library/examples/cmos_example.sch). Breaking
+ * those would be a regression, not a fix.
+ *
+ * WHAT IS NOT COVERED. This says nothing about any other caller in the tree
+ * that still splices a string into a script: the nine remaining
+ * `regsub {^~/}` + tcleval() sites are issue 0816 and the tclvareval() brace
+ * groups of file-derived strings are issue 0817. Both are open.
+ *
+ * Checks: GUARD1-GUARD2 / INJ1-INJ17 / ORD1-ORD9 / VAR0-VAR4 / KEY1-KEY3 in
+ * tests/headless/test_raw_read_dispatch.tcl, NINJ1-NINJ4 / NVAR1-NVAR2 in
+ * tests/headless/test_node_token_split.tcl, Z0 / AINJ1-AINJ4 / AORD1-AORD3 /
+ * AKEY1 in tests/headless/test_op_annot.tcl, (EINJ1)/(EINJ2) in
+ * tests/headless/test_perform_action_embed_rawfile.tcl.
+ * =========================================================================== */
+
+/* The literal answer: the path exactly as given. Used for the no-`$` fast path
+ * (where expansion is provably the identity) and for the degenerate inputs.
+ * The old code my_strncpy'd a FAILED tclresult() instead, which silently made
+ * the filename the EMPTY STRING -- the measured
+ * `raw_read(): failed to open file  for reading`, with nothing between the two
+ * spaces. Factored out so it has one definition and one meaning. It is NOT
+ * called `subst_*` anything: there is no subst here to be a fallback FROM. */
+static const char *copy_literal(const char *s, char *dest, int destsize)
+{
+  my_strncpy(dest, s, (size_t)destsize);
+  return dest;
+}
+
+/* Append at most `len` bytes of `src` to dest[], truncating at destsize-1 and
+ * always leaving dest NUL terminated (my_strncpy semantics: n INCLUDES the
+ * NUL). *pos is the write cursor. */
+static void append_n(char *dest, int destsize, int *pos, const char *src, int len)
+{
+  int i;
+
+  for(i = 0; i < len && *pos < destsize - 1; i++) {
+    dest[*pos] = src[i];
+    (*pos)++;
+  }
+  dest[*pos] = '\0';
+}
+
+/* An UNRESOLVED reference -- an undefined variable, or an array name with no
+ * index -- is copied through as the literal text the user wrote (`$name`,
+ * `${name}`) and the scan continues. This is the per-variable literal fallback:
+ * a file really named `pay$no_such_var.raw` opens under its own name instead of
+ * being blanked, and `$netlist_dir/pay$undefined.raw` still resolves its first
+ * reference. It has its OWN name (rather than sharing append_n()) so that a
+ * sabotage variant can neutralise this one behaviour without touching the
+ * common append -- attempt 1's equivalent went red on 131 rows because its
+ * fast path shared the callee, which told nobody anything. */
+static void append_unresolved_ref(char *dest, int destsize, int *pos, const char *src, int len)
+{
+  append_n(dest, destsize, pos, src, len);
+}
+
+/* [A-Za-z0-9_] -- the body of a Tcl variable name as this scanner recognises
+ * it. Deliberately NOT isalnum(): no locale, no sign extension, and the set is
+ * visible at the point of use. `(` and `)` are excluded on purpose (see D2 in
+ * the issue): no array index is ever parsed here, by either name form. */
+static int is_var_name_char(int c)
+{
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_';
+}
+
+/* Expand a leading `~/` against home_dir. Pure C -- this is the two-my_snprintf
+ * shape the annotate_op branch already used (scheduler.c), lifted here so there
+ * is exactly ONE tilde expander instead of a private copy per verb. A leading
+ * `~/` is all `regsub {^~/} {...} {...}` ever did, so for every input that does
+ * not contain `}` this is byte-identical to what it replaced. `~user/` is NOT
+ * expanded -- it never was. */
+const char *expand_tilde(const char *s, char *dest, int destsize)
+{
+  if(destsize <= 0) return dest;
+  if(!s) { dest[0] = '\0'; return dest; }
+  if(s[0] == '~' && s[1] == '/') {
+    my_snprintf(dest, (size_t)destsize, "%s/%s", home_dir, s + 2);
+  } else {
+    my_strncpy(dest, s, (size_t)destsize);
+  }
+  return dest;
+}
+
+/* TCL VARIABLE EXPANSION WITH NO EVALUATOR IN IT.
+ *
+ * A byte scanner. It recognises exactly two spellings of a variable reference
+ * and copies EVERYTHING ELSE literally:
+ *
+ *   ${NAME}   NAME must be non-empty and must contain no `(` and no `)`; it is
+ *             taken literally and never rescanned. A missing `}` means the `$`
+ *             is just a `$`.
+ *   $NAME     NAME is a run of [A-Za-z0-9_], with `::` separators accepted
+ *             between runs (so `$ns::name` and `$::ns::name` work) but never
+ *             trailing -- a colon run is consumed only when a name character
+ *             follows it. NAME must be non-empty.
+ *
+ * The lookup is Tcl_GetVar2Ex(interp, NAME, NULL, TCL_GLOBAL_ONLY): a hash
+ * lookup, the only Tcl API called here, and no TCL_LEAVE_ERR_MSG so the
+ * interpreter result is not touched. A defined variable's value is appended
+ * VERBATIM and is never rescanned (a value that itself contains a `$` is data).
+ * An undefined one is copied through as its own literal text by
+ * append_unresolved_ref().
+ *
+ * `(` IS NEVER AN INDEX OPENER (issue 0812 decision D2). `$a(1)` means the
+ * value of `a` followed by the two literal characters `(1)`, not an array
+ * element. Measured cost in the shipped corpus: zero -- `grep -rn '\$env('
+ * --include=*.sch --include=*.sym` is empty tree-wide and the complete set of
+ * shipped `rawfile=` values is three `$netlist_dir/...` spellings plus the bare
+ * name `distrib`. The benefit is that "no array index is ever parsed" is a
+ * property of THIS SCANNER, checkable by reading it, rather than a claim about
+ * what some Tcl entry point does with a string.
+ *
+ * TCL_GLOBAL_ONLY keeps the OLD lookup scope: the tclvareval() this replaces
+ * evaluated with TCL_EVAL_GLOBAL (scheduler.c), so `$netlist_dir` resolved
+ * globally even when the caller was inside a proc, and dropping that would
+ * quietly break every `$netlist_dir/...` graph attribute read from inside one.
+ *
+ * No `$` in the input means expansion is provably the identity, so skip the
+ * scan entirely. */
+const char *expand_tcl_vars(const char *s, char *dest, int destsize)
+{
+  const char *p;      /* read cursor: points at the `$` being considered */
+  const char *q;      /* scan cursor inside a reference */
+  const char *name;   /* first byte of NAME */
+  const char *c;      /* colon-run probe */
+  const char *valstr; /* a resolved variable's value */
+  Tcl_Obj *val;
+  char namebuf[512];
+  int pos = 0;        /* write cursor into dest */
+  int namelen;
+
+  if(destsize <= 0) return dest;
+  if(!s) { dest[0] = '\0'; return dest; }
+  if(!s[0] || !interp || !strchr(s, '$')) return copy_literal(s, dest, destsize);
+
+  dest[0] = '\0';
+  p = s;
+  while(*p) {
+    if(*p != '$') {
+      append_n(dest, destsize, &pos, p, 1);
+      p++;
+      continue;
+    }
+    /* a `$`: try the two recognised spellings, else emit a literal `$` */
+    q = p + 1;
+    if(*q == '{') {
+      name = q + 1;
+      q = name;
+      while(*q && *q != '}' && *q != '(' && *q != ')') q++;
+      if(*q != '}' || q == name) {          /* unterminated, empty, or parens */
+        append_n(dest, destsize, &pos, p, 1);
+        p++;
+        continue;
+      }
+      namelen = (int)(q - name);
+      q++;                                  /* step past the `}` */
+    } else {
+      name = q;
+      for(;;) {
+        if(is_var_name_char((unsigned char)*q)) { q++; continue; }
+        if(*q == ':' && q[1] == ':') {
+          c = q;
+          while(*c == ':') c++;
+          if(is_var_name_char((unsigned char)*c)) { q = c; continue; }
+        }
+        break;
+      }
+      namelen = (int)(q - name);
+      if(namelen == 0) {                    /* a bare `$` */
+        append_n(dest, destsize, &pos, p, 1);
+        p++;
+        continue;
+      }
+    }
+    if(namelen >= (int)sizeof(namebuf)) {   /* absurdly long: it is just text */
+      append_unresolved_ref(dest, destsize, &pos, p, (int)(q - p));
+      p = q;
+      continue;
+    }
+    memcpy(namebuf, name, (size_t)namelen);
+    namebuf[namelen] = '\0';
+    val = Tcl_GetVar2Ex(interp, namebuf, NULL, TCL_GLOBAL_ONLY);
+    if(val) {
+      valstr = Tcl_GetString(val);
+      append_n(dest, destsize, &pos, valstr, (int)strlen(valstr));
+    } else {
+      append_unresolved_ref(dest, destsize, &pos, p, (int)(q - p));
+    }
+    p = q;
+  }
+  return dest;
+}
+
+/* THE raw-file path resolver: `~/` in C, then variables expanded as data. One
+ * resolver for read / switch / clear because all three key the extra_raw_arr
+ * registry off the string the READ arm stored and compare it with strcmp() --
+ * if the arms resolved differently, `xschem raw clear $f` would stop matching
+ * what `xschem raw read $f` stored (src/ase.tcl does exactly that pair).
+ * It is IDEMPOTENT on its own output, which the registry needs because
+ * scheduler.c's annotate_op branch feeds an already-resolved
+ * xctx->raw->rawfile back through the clear arm: the output carries no leading
+ * `~/`, and a `$` that survives to the output survived by being UNRESOLVABLE,
+ * so the second pass leaves it alone too. The one residual, unchanged from
+ * HEAD and unfixable by a resolver: if that variable becomes DEFINED between
+ * the two calls, the second resolution differs. Nothing shipped can hit it --
+ * `$netlist_dir/x.raw` resolves to an absolute path with no `$` left in it. */
+const char *resolve_rawfile_path(const char *s, char *dest, int destsize)
+{
+  char tilde_expanded[PATH_MAX + 100];
+
+  if(destsize <= 0) return dest;
+  if(!s) { dest[0] = '\0'; return dest; }
+  expand_tilde(s, tilde_expanded, (int)S(tilde_expanded));
+  return expand_tcl_vars(tilde_expanded, dest, destsize);
+}
 size_t my_mstrcat(int id, char **str, const char *add, ...)
 {
   va_list args;

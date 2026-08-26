@@ -4,15 +4,29 @@ STATUS: **OPEN — filed by the 0812 implement agent, 2026-08-25. Site sweep don
 verified against the tree; only the parselabel case is characterised in detail, and it is
 deliberately UNMEASURED (see the caveat).**
 FOUND IN: many files under `src/`. Same defect class as issue 0812.
-⚠ **UPDATED 2026-08-25 after the 0812 attempt was REVERTED**: that attempt would have
-removed the raw-file path sites (`save.c` `extra_rawfile()` ×6, `draw.c`
-`node_token_split()` ×2); it was reverted, so those eight are live at HEAD too and remain
-0812's. This issue is the rest.
+⚠ **UPDATED 2026-08-25 (twice)**: the first 0812 attempt was reverted, then **the 0812
+RETRY landed** and removed the raw-file path sites (`save.c` `extra_rawfile()` ×6 → one
+call, `draw.c` `node_token_split()` ×2). Those eight are **fixed**. This issue is the rest,
+and it is untouched.
 ⚠ And the fix shape matters: 0812 §1 measured that `subst -nobackslashes -nocommands`
 still executes a command substitution in a variable **array index** (`$a([...])`), so
 "route it through `subst` as a value" is NOT an answer here either. Pass the string as a
 Tcl **list element** / variable (`save.c` `backannot_refuse_digital()` is the in-tree
 precedent) or expand it in C.
+
+## ✅ THE C-SIDE EXPANDER ALREADY EXISTS
+
+Where a `tclvareval("subst {", x, "}", NULL)` exists **only to expand variables** — which is
+what all the raw-file ones were — the drop-in is 0812's
+`expand_tcl_vars(const char *s, char *dest, int destsize)` in `src/util.c` (declared in
+`src/xschem.h`). It is a **C byte scanner**: `$name`, `${name}` and `$ns::name` are looked up
+with `Tcl_GetVar2Ex(..., TCL_GLOBAL_ONLY)` — the only Tcl API it calls, a hash lookup — and
+**every** other byte is copied verbatim, `{ } [ ] ; \ ( )` included. `(` is never an index
+opener, a variable's value is never rescanned, and an undefined reference is copied through
+as its own literal text (so a filename really containing `$` opens under its own name instead
+of being blanked). Where the splice is *not* just variable expansion, the list-element route
+above is the answer; do not reach for a cleverer `subst` flag — 0812's first attempt already
+lost to one.
 
 ## The sink
 

@@ -1723,6 +1723,15 @@ static void update_waves_menu_cue(void)
  * what == 5: switch back to previous
  * if bit 5 (32) of what is set do not issue warnings
  * return 1 if sucessfull, 0 otherwise
+ *
+ * `file` is resolved ONCE at the top of the function by resolve_rawfile_path()
+ * (util.c): a leading `~/` in C, then Tcl VARIABLE expansion by a C BYTE
+ * SCANNER whose only Tcl call is Tcl_GetVar2Ex(). It is NOT evaluated -- issue
+ * 0812, where each arm's own `subst { <file> }` meant a filename containing `}`
+ * executed, and where the FIRST fix's `subst -nobackslashes -nocommands` was
+ * refuted by `$a([exec ...])`. Every arm reads the resolved `f`, and the
+ * extra_raw_arr registry is keyed on it, so read / switch / clear cannot
+ * disagree about what a given spelling names.
  */
 int extra_rawfile(int what, const char *file, const char *type, double sweep1, double sweep2)
 {
@@ -1737,6 +1746,33 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   dbg(1, "extra_rawfile(): what=%d, no_warning=%d, file=%s, type=%s\n",
       what, no_warning, file ? file : "<NULL>", type ? type : "<NULL>");
   if(what == 0) return 0;
+
+  /* THE path resolution, ONCE, in ONE place, for every arm below (issue 0812).
+   * Each arm used to do its own `tclvareval("subst {", file, "}", NULL)` --
+   * six of them, four reachable with a metacharacter -- which BUILDS A TCL
+   * SCRIPT out of the filename: a `}` in the name closed the brace group and
+   * the rest of the name EXECUTED. resolve_rawfile_path() (util.c) treats the
+   * path as DATA instead: `~/` in C, then a C byte scanner that recognises
+   * `$name` / `${name}` / `$ns::name`, looks each up with Tcl_GetVar2Ex() and
+   * copies every other byte through verbatim. There is no evaluator in it at
+   * all -- not `subst` under any flags, which is what refuted the first
+   * attempt. The `$netlist_dir` spelling the shipped graph attributes use
+   * still resolves; nothing else in the name is interpreted.
+   * ONE call, not one per arm, because the registry is KEYED on this string:
+   * the read arms store it in raw->rawfile and the switch and clear arms
+   * strcmp() against what was stored, so two resolutions that could ever
+   * disagree would make `xschem raw clear $f` silently miss what
+   * `xschem raw read $f` loaded.
+   * The isonlydigit()/atoi() arms below deliberately keep reading the RAW
+   * `file`, exactly as they did when their own subst result was never used --
+   * their behaviour is unchanged.
+   * NOTE the side effect that went away with the tclvareval: extra_rawfile()
+   * no longer leaves the resolved path in the interpreter result. No caller
+   * depended on it (the `raw` verb sets its own result immediately after, and
+   * the `info` arm below is reached with file == NULL, so its
+   * Tcl_AppendResult() listing is not touched). */
+  if(file) resolve_rawfile_path(file, f, (int)S(f));
+  else f[0] = '\0';
 
   /* allocate xctx->extra_raw_arr array */
   if(xctx->extra_raw_n >= xctx->extra_raw_size) {
@@ -1763,8 +1799,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
    * See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md section C. */
   if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file &&
      raw_type_is_non_spice(type)) {
-    tclvareval("subst {", file, "}", NULL);
-    my_strncpy(f, tclresult(), S(f));
     dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
     for(i = 0; i < xctx->extra_raw_n; i++) {
       /* Skip an entry with no filename, the way the spice loop below skips one
@@ -1810,8 +1844,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
     }
   /* **************** read ************* */
   } else if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file /* && type*/) {
-    tclvareval("subst {", file, "}", NULL);
-    my_strncpy(f, tclresult(), S(f));
     if(type) {
       if(!my_strcasecmp(type, "spectrum")) type = "ac";
       else if(!my_strcasecmp(type, "sp")) type = "ac";
@@ -1861,8 +1893,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   /* **************** switch ************* */
   } else if(what == 2 && xctx->extra_raw_n > 0) {
     if(file && type) {
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       for(i = 0; i < xctx->extra_raw_n; i++) {
         dbg(1, "      extra_rawfile(): checking with %s\n",
             xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>");
@@ -1880,8 +1910,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
         ret = 0;
       }
     } else if(file && isonlydigit(file) ) {
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       i = atoi(file);
       if(i >= 0 && i < xctx->extra_raw_n) { /* if file found switch to it ... */
         dbg(1, "extra_rawfile() switch %d: found: switch %d to it\n", xctx->extra_idx, i);
@@ -1921,8 +1949,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       xctx->extra_raw_size = 0;
     } else if(file && isonlydigit(file)) {
       int n, found = 0;
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       n = atoi(file);
       if(xctx->extra_raw_n > 0 ) {
         for(i = 0; i < xctx->extra_raw_n; i++) {
@@ -1951,8 +1977,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       } else ret = 0;
     } else { /* clear provided file if found, switch to first in remaining if any */
       int found = 0;
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       if(xctx->extra_raw_n > 0 ) {
         for(i = 0; i < xctx->extra_raw_n; i++) {
           /* the same NULL skips as the two lookup loops above (issue 0306): a

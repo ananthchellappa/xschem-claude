@@ -163,8 +163,14 @@ check "P1 the empty string is NOT"       [pcall {wviewer::db_path_safe {}}] 0
 #                becomes the sim_type (draw.c:8187-8194)
 #   %         -> the field separator itself (find_nth(...,"%",...))
 #   "         -> the tokenizer's quote character
-#   \ $ [ ] { } -> live through `subst {…}`, applied TWICE
-#                (draw.c:8191/8193 then save.c:1649)
+#   $         -> STILL live: the two resolution passes expand Tcl VARIABLES by
+#                design (the shipped `rawfile=$netlist_dir/...` corpus needs it)
+#   \ [ ] { } -> no longer substitution syntax (issue 0812 replaced both
+#                `subst {…}` splices with a C byte scanner, util.c), but still
+#                rejected: db_path_safe is a conservative filter over a field
+#                that also has separator and tokenizer rules, and the viewer
+#                never needs such a path. These rows pin the GUARD, not the
+#                vanished hazard.
 foreach {tag bad} [list space "/a b/c.vcd" tab "/a\tb.vcd" pct "/a%b.vcd" \
                         quote "/a\"b.vcd" bslash "/a\\b.vcd" dollar "/a\$b.vcd" \
                         obrack "/a\[b.vcd" cbrack "/a\]b.vcd" \

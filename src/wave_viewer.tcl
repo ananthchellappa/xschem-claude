@@ -2501,11 +2501,21 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
 #     DB's type (draw.c:8194-8195), which for an analog current DB is `tran`, and
 #     the VCD switch then fails silently. Hence db_suffix refuses to emit a
 #     half-suffix.
-#  2. Both fields pass through Tcl `subst {…}` TWICE (draw.c:8191/8193, then
-#     again inside extra_rawfile, save.c:1649) and the sub-field separator set is
-#     "\n " — so a space TRUNCATES the path and turns the remainder into the
-#     sim_type, and `$` / `[` / `\` / unbalanced braces are live substitution
-#     syntax. `~` is NOT expanded. db_path_safe is that whole hazard list.
+#  2. Both fields are RESOLVED twice — once by node_token_split() and again
+#     inside extra_rawfile() — and the sub-field separator set is "\n ", so a
+#     space TRUNCATES the path and turns the remainder into the sim_type.
+#     `$` IS STILL LIVE: that resolution expands Tcl variables on purpose (the
+#     shipped `rawfile=$netlist_dir/...` corpus depends on it), so a literal `$`
+#     in a path still means something other than itself.
+#     `[` `]` `{` `}` `\` ARE NO LONGER SUBSTITUTION SYNTAX — issue 0812 replaced
+#     both `subst {…}` splices with a C byte scanner (util.c
+#     resolve_rawfile_path/expand_tcl_vars) that copies every byte it does not
+#     recognise as a `$name`. They stay on this reject list anyway, and the
+#     guard below is UNCHANGED: this proc is a conservative filter over a field
+#     that also has separator and tokenizer rules (3), the viewer never needs
+#     such a path, and a false reject costs a suffix while a false accept costs
+#     a silently mis-parsed field. `~` is NOT expanded here (it is by
+#     extra_rawfile, but the `%` field is not that argument).
 #  3. `%` itself is the field separator (find_nth(...,"%",...)), and `"` is the
 #     quote char of the tokenizer — neither can appear inside the value.
 #
@@ -2531,7 +2541,9 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
 proc wviewer::db_path_safe {s} {
   if {$s eq {}} { return 0 }
   # whitespace (field separator), % (field separator), " (tokenizer quote),
-  # backslash + $ + [ ] + braces (live through two rounds of `subst`)
+  # $ (still live: variable expansion, by design), and backslash + [ ] + braces,
+  # which stopped being substitution syntax with issue 0812 but stay rejected as
+  # a conservative filter — see rule 2 above.
   if {[regexp {[][{}%\"\\$[:space:]]} $s]} { return 0 }
   return 1
 }

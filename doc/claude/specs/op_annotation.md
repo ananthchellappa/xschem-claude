@@ -2661,16 +2661,24 @@ on-screen sink whatsoever. That is issue **0675**, live. The only honest reads a
 `.ciw.l.t` text containment, `[xschem get top_path].statusbar.12 -text`, and a grep
 of the `--logdir` `Xschem.log` file.
 
-### ⚠ 6d. A path is DATA, and `subst` is NOT a sanitizer in ANY flag combination — measured 2026-08-25 (0812)
+### ⚠ 6d. A path is DATA, and `subst` is NOT a sanitizer in ANY flag combination — measured 2026-08-25 (0812, ✅ FIXED for the raw-file family)
 
-Every raw-file path the annotation pipeline touches is still handed to a Tcl evaluator at
-HEAD: `save.c` `extra_rawfile()` builds `subst { <file> }` (six call sites), `draw.c`
-`node_token_split()` does the same with a graph `node=` field read out of a `.sch`, and
-`scheduler.c` splices paths into `regsub {^~/} {<path>} {<home>/}` at thirteen verbs. A
-filename containing `}` closes the brace group and the rest of the name **runs as Tcl** —
-measured `PWNED=1` on **18 of 18** entry points, including `xschem annotate_op` **with no
-argument**, where the payload lives in the *simulation directory* name and nobody typed a
-path.
+Every raw-file path the annotation pipeline touched used to be handed to a Tcl evaluator:
+`save.c` `extra_rawfile()` built `subst { <file> }` (six call sites), `draw.c`
+`node_token_split()` did the same with **both** `%` fields of a graph `node=` attribute read
+out of a `.sch`, and `scheduler.c` spliced paths into `regsub {^~/} {<path>} {<home>/}` at
+thirteen verbs. A filename containing `}` closed the brace group and the rest of the name
+**ran as Tcl** — measured `PWNED=1` on **18 of 18** entry points, including
+`xschem annotate_op` **with no argument**, where the payload lives in the *simulation
+directory* name and nobody typed a path.
+
+**✅ The raw-file family is fixed (2026-08-25, item 0812-retry): 18/18 → PWNED=0**, both
+`[exec touch]` host-file rows → not created, and the graph `node=` field is inert on
+`xschem load` + redraw under X. The six `extra_rawfile()` substs became **one** call at the
+top of the function, both `node_token_split()` fields were rewired, and the four raw-family
+`regsub` splices became `expand_tilde()`. **Thirteen minus four = nine `regsub` splices
+outside this family are still live: issue 0816**, and the `tclvareval` brace groups of
+file-derived strings are **0817**.
 
 **The correction this spec needs**, because §4.2 and §4.3a already say "`string map`,
 never `subst`, a template is user data" and someone will reasonably read that as
@@ -2688,20 +2696,38 @@ So the rule for this feature, and for any later step that resolves a path, a net
 property value: **expand what you recognise, in C** (`$name` / `${name}` / `$ns::name` via
 `Tcl_GetVar2Ex`, everything else copied literally), or pass the string to Tcl as a **list
 element or a variable** (`save.c` `backannot_refuse_digital()` is the in-tree precedent).
-Never as script text, and never through `subst`.
+Never as script text, and never through `subst`. **That is now shipped code, and it is the
+API a later step should reuse** (`src/util.c`, declared in `src/xschem.h`):
 
-Two constraints on the eventual fix, both measured: **variable expansion must survive**
-(nine `draw.c`/`callback.c` sites hand `extra_rawfile()` a graph `rawfile=` attribute
-unsubstituted and the shipped corpus spells it `$netlist_dir/…`), and **one resolver must
-serve read/switch/clear** and be idempotent on its own output, because the `extra_raw_arr`
-registry is keyed by `strcmp()` on what the read arm stored and `annotate_op` feeds an
+| function | contract |
+|---|---|
+| `expand_tilde(s,dest,n)` | leading `~/` → `home_dir`, pure C. The one tilde expander; the `annotate_op` branch's private two-`my_snprintf` copy folded into it. |
+| `expand_tcl_vars(s,dest,n)` | a **C byte scanner**. Recognises `$name`, `${name}`, `$ns::name`, looks each up with `Tcl_GetVar2Ex(..., TCL_GLOBAL_ONLY)`, and copies **every** other byte verbatim — `{ } [ ] ; \ ( )` included. `(` is never an index opener; a value is never rescanned; an undefined reference is copied as its own literal text. |
+| `resolve_rawfile_path(s,dest,n)` | the two composed. Idempotent on its own output. |
+
+**The only safety claim these carry is grep-checkable**: the sole Tcl API called is
+`Tcl_GetVar2Ex`, a hash lookup. State a safety property that way or do not state it —
+attempt 1 was reverted for a comment as much as for a bug.
+
+Two constraints on the fix, both measured and both **honoured**: **variable expansion had to
+survive** (nine `draw.c`/`callback.c` sites hand `extra_rawfile()` a graph `rawfile=`
+attribute unsubstituted and the shipped corpus spells it `$netlist_dir/…`; all three shipped
+schematics were loaded after the fix and all three resolve), and **one resolver serves
+read/switch/clear** and is idempotent on its own output, because the `extra_raw_arr` registry
+is keyed by `strcmp()` on what the read arm stored and `annotate_op` feeds an
 already-resolved `xctx->raw->rawfile` back through the clear arm.
 
-A fix was built, measured green on 32 new checks and all five sabotage variants, and
-**reverted** when the adversary pass drove the array-index shape: `doc/claude/issues/0812-*.md`
-§1-§10 (§4 binding on the retry), diff at `doc/claude/evidence/0812-attempt1-reverted.patch.txt`.
-Related and also live: **0815** (`compare_schematics` segfaults under `--nogui`), **0816**
-(nine more `regsub` splices), **0817** (the `tclvareval` brace groups).
+The **anti-hollow** half is also delivered rather than merely warned about: through
+`xschem raw read`, `br[1].raw`, `back\slash.raw`, `pay$undefined.raw` and `~/probe.raw` were
+all **0** before (three of them with the filename silently **blanked** — a `my_strncpy` of a
+*failed* `tclresult()`); all four are **1** now, under their own literal names.
+
+Attempt 1 (built, green on 32 new checks and all five sabotage variants, **reverted** when the
+adversary drove the array-index shape) is `doc/claude/issues/0812-*.md` §1-§10; the retry is
+§11-§17. Still live: **0815** (`compare_schematics` segfaults under `--nogui`), **0816** (nine
+more `regsub` splices), **0817** (the `tclvareval` brace groups), **0818** (the top-level
+`raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled path — left
+alone on purpose, decision D5).
 
 ---
 

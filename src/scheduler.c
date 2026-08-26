@@ -848,9 +848,14 @@ static int run_core(const char *verb, int argc, const char *argv[])
       Tcl_SetResult(interp, "xschem embed_rawfile needs a file argument", TCL_STATIC);
       return TCL_ERROR;
     }
-    my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-    tcleval(f);
-    my_strncpy(f, tclresult(), S(f));
+    /* issue 0812: `~/` is expanded in C. This used to be
+     * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+     * the path into a Tcl script inside a brace group -- a filename containing
+     * `}` closed the group and the rest of the name EXECUTED (measured).
+     * expand_tilde() (util.c) is the same transformation with nothing to
+     * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+     * brace-quoted word never did variable substitution either. */
+    expand_tilde(argv[2], f, (int)S(f));
     embed_rawfile(f);
     return TCL_OK;
   }
@@ -2357,25 +2362,49 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* the file name is resolved BEFORE the D5 refusal below, because the
        * refusal asks the FILE what it is, not just the caller (RULING D5-6).
        *
-       * ⚠ AND IT IS RESOLVED IN C. This used to be
+       * ⚠ WHAT THIS LINE GUARANTEES, AND WHAT IT DOES NOT (issue 0812).
+       * An earlier version of this comment said the splice hazard was closed
+       * because the `~/` expansion had been moved out of
        *   my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
        *   tcleval(f);
-       * which splices a USER-SUPPLIED PATH into a Tcl script inside a brace
-       * group -- a path containing `}` closes the group early and the rest of
-       * the path EXECUTES (measured: a file named
-       *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
-       * set ::PWNED in the session). That hazard predates D5 and fires for
-       * every annotate_op, but D5's refusal now stands downstream of this line,
-       * so leaving it would mean the refusal path itself ran attacker text.
-       * A leading `~/` is all that regsub ever did; doing it with two
-       * my_snprintf branches is the same transformation with nothing to
-       * escape from. */
+       * into C. That was TRUE OF THIS LINE and FALSE OF THE PATH: the `f` it
+       * produces was handed, a few lines below, to extra_rawfile() (save.c),
+       * which resolved it by building the Tcl script `subst { <f> }` and
+       * evaluating it -- so a filename containing `}` still closed a brace
+       * group and still EXECUTED. Closed one frame up, open one frame down;
+       * that comment is why the defect survived review. It is not the only
+       * frame that had to change, and this note should not be read as a claim
+       * about any frame but its own.
+       *
+       * GUARANTEED NOW, and pinned by named checks rather than by prose:
+       *   - the leading `~/` is expanded HERE, in C, by expand_tilde()
+       *     (util.c) -- the same transformation the regsub performed, with
+       *     nothing to escape from;
+       *   - extra_rawfile() resolves what it receives with
+       *     resolve_rawfile_path() (util.c): a C byte scanner that expands
+       *     `$name` / `${name}` / `$ns::name` via Tcl_GetVar2Ex and copies
+       *     every other byte verbatim. No evaluator, and in particular NOT
+       *     `subst` under any flag combination -- the first attempt at this
+       *     fix used `subst -nobackslashes -nocommands` and was refuted by
+       *     `$a([exec touch X])`, whose command substitution runs inside the
+       *     variable's ARRAY INDEX;
+       *   - so `xschem annotate_op <file>` and `xschem annotate_op` with NO
+       *     ARGUMENT (the shipped menu entry, where the path is built from
+       *     netlist_dir and the cell name and nobody typed anything) do not
+       *     execute filename content. Checks AINJ1-AINJ4 in
+       *     tests/headless/test_op_annot.tcl, INJ1-INJ17 in
+       *     tests/headless/test_raw_read_dispatch.tcl.
+       *   - the three raw read verbs below expand the tilde too, so a `~/`
+       *     path handed on from here is expanded TWICE. Harmless by
+       *     construction: expand_tilde()'s output already starts with `/`, so
+       *     the second pass is the identity.
+       * NOT GUARANTEED by anything here: the other Tcl-splicing seams in the
+       * tree. The nine remaining `regsub {^~/}` + tcleval() path splices
+       * outside the raw-file family are issue 0816, and the tclvareval()
+       * brace-group splices of file-derived strings are issue 0817. Both are
+       * open and neither is addressed by this line. */
       if(argc > 2) {
-        if(argv[2][0] == '~' && argv[2][1] == '/') {
-          my_snprintf(f, S(f), "%s/%s", home_dir, argv[2] + 2);
-        } else {
-          my_snprintf(f, S(f), "%s", argv[2]);
-        }
+        expand_tilde(argv[2], f, (int)S(f));
       } else {
         my_snprintf(f, S(f), "%s/%s.raw",  tclgetvar("netlist_dir"), get_cell(xctx->sch[xctx->currsch], 0));
       }
@@ -6062,9 +6091,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!strcmp(argv[2], "add") && argc > 5) {
         int delta = (argc > 6 && !strcmp(argv[6], "-delta"));
         int num = graph_marker_create(atoi(argv[3]), atof(argv[4]), atof(argv[5]), delta);
-        /* reset on refusal too: the engine's extra_rawfile() does a tclvareval
-         * internally and leaves the substituted filename in the interp result,
-         * so "" is only really "" if we clear it here */
+        /* reset on refusal too: a deeper call may have left something in the
+         * interp result, so "" is only really "" if we clear it here.
+         * (Until issue 0812 the something was extra_rawfile()'s own
+         * `subst { <file> }`, which left the substituted filename there. That
+         * tclvareval is gone -- the path is resolved in C now and the result is
+         * not touched -- but the reset stays: it costs nothing and this arm
+         * must not inherit ANY callee's leftovers.) */
         if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
         else Tcl_ResetResult(interp);
       }
@@ -10556,9 +10589,14 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         tcleval("array unset ngspice::ngspice_data");
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* free_rawfile(&xctx->raw, 0, 0); */
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0812: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a filename containing
+         * `}` closed the group and the rest of the name EXECUTED (measured).
+         * expand_tilde() (util.c) is the same transformation with nothing to
+         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         if(argc > 5) {
           sweep1 = atof_spice(argv[4]);
           sweep2 = atof_spice(argv[5]);
@@ -13199,9 +13237,14 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* free_rawfile(&xctx->raw, 1, 0); */
         draw();
       } else if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0812: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a filename containing
+         * `}` closed the group and the rest of the name EXECUTED (measured).
+         * expand_tilde() (util.c) is the same transformation with nothing to
+         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* free_rawfile(&xctx->raw, 0, 0); */
         /* through the one dispatch (issue 0290): it stamps sim_type "table" on success.
@@ -13784,9 +13827,14 @@ static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         draw();
       } else if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0812: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a filename containing
+         * `}` closed the group and the rest of the name EXECUTED (measured).
+         * expand_tilde() (util.c) is the same transformation with nothing to
+         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* through the one dispatch (issue 0290), same reasoning as the `table_read`
          * verb: the sim_type stamp must not hang off sch_waves_loaded() */
