@@ -1133,14 +1133,36 @@ proc wviewer::geom_key {win} {
 # the window it was launched from, step it off. Congruence is the whole defect
 # -- a viewer merely NEAR the design window is fine, one exactly on top of it
 # reads as the schematic having vanished.
-proc wviewer::uncover {top from} {
+proc wviewer::uncover {top from {tries 4}} {
   if {$top eq {} || $from eq {}} { return 0 }
   if {![winfo exists $top] || ![winfo exists $from]} { return 0 }
+  # ⚠ NOT AT CREATION TIME -- AND THAT IS WHY THIS SHOVE NEVER FIRED IN THE FIELD.
+  # `wm geometry` reports the REQUESTED geometry until the window has been mapped and
+  # the window manager has answered. Called straight out of wviewer::open, it compared
+  # a not-yet-placed viewer against the design window, found them different, and did
+  # nothing -- and the WM then went on to place the viewer exactly on top anyway.
+  # Measured in the user's own session log (window_report, 2026-08-26): viewer `.x1`
+  # and design `.` BOTH at 1110x761+3597+340, byte-identical, shove never fired.
+  # So wait for the map, then decide. Bounded retries; a viewer the user has already
+  # dragged simply will not be congruent by the time we look, which is the right answer.
+  if {![winfo ismapped $top] || ![winfo ismapped $from]} {
+    if {$tries > 0} { after 120 [list wviewer::uncover $top $from [expr {$tries - 1}]] }
+    return 0
+  }
   set gt {}; set gf {}
   catch {set gt [wm geometry $top]}
   catch {set gf [wm geometry $from]}
-  if {$gt eq {} || $gt ne $gf} { return 0 }
+  if {$gt eq {} || $gf eq {}} { return 0 }
   if {[scan $gt {%dx%d+%d+%d} w h x y] != 4} { return 0 }
+  if {[scan $gf {%dx%d+%d+%d} fw fh fx fy] != 4} { return 0 }
+  # ⚠ TOLERANCE, NOT STRING EQUALITY. Issue 0647's own measurement was
+  # 1000x800+13+89 against 1000x800+13+90 -- ONE PIXEL apart, which `eq` calls "not
+  # congruent" and a human calls "my schematic is gone". Congruent means the same size
+  # and the same corner to within a few pixels. Anything further out is proximity, and
+  # U2 says proximity is not the defect.
+  set tol 8
+  if {abs($w - $fw) > $tol || abs($h - $fh) > $tol} { return 0 }
+  if {abs($x - $fx) > $tol || abs($y - $fy) > $tol} { return 0 }
   set dx 48
   set dy 48
   # keep the title bar reachable: step back toward the origin rather than off

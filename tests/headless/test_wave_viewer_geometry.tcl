@@ -144,6 +144,47 @@ if {[info exists ::has_x]} {
      {$ux <= $cx && $uy <= $cy && $ux >= 0 && $uy >= 0 &&
       [wm geometry .zz1] ne [wm geometry .zz9]}
 
+  # ---- U5..U7: what the field log actually showed (2026-08-26) --------------
+  # ⚠ ONE PIXEL IS CONGRUENT. Issue 0647's own measurement was 1000x800+13+89
+  # against 1000x800+13+90. A string compare calls that "not congruent"; a human
+  # calls it "my schematic is gone".
+  wm geometry .zz1 400x300+101+100
+  wm geometry .zz9 400x300+100+100
+  update idletasks
+  ck "U5  a ONE-PIXEL offset still counts as covered (issue 0647's own numbers)" \
+     {[wviewer::uncover .zz1 .zz9] == 1 && [wm geometry .zz1] ne {400x300+101+100}}
+
+  # ⚠ THE FIELD FAILURE. `wm geometry` reports the REQUESTED geometry until the
+  # window is mapped, so deciding at creation time compares a not-yet-placed viewer,
+  # sees a difference, and does nothing -- while the WM then places it exactly on top.
+  # The user's window_report log caught precisely that: viewer and design both at
+  # 1110x761+3597+340, shove never fired. So an unmapped window must DEFER, not decide.
+  wm geometry .zz1 400x300+100+100
+  wm geometry .zz9 400x300+100+100
+  update idletasks
+  wm withdraw .zz1
+  update idletasks
+  set g_unmapped [wm geometry .zz1]
+  set rc_unmapped [wviewer::uncover .zz1 .zz9]
+  set pending 0
+  foreach id [after info] {
+    set scr {} ; catch {set scr [lindex [after info $id] 0]}
+    if {[string match {*wviewer::uncover*} $scr]} { set pending 1 }
+  }
+  ck "U6  an UNMAPPED window DEFERS instead of deciding, and schedules a retry" \
+     {$rc_unmapped == 0 && $pending == 1}
+
+  wm deiconify .zz1
+  wm geometry .zz1 400x300+100+100
+  update
+  set moved 0
+  for {set t 0} {$t < 2000} {incr t 60} {
+    update
+    after 60
+    if {[wm geometry .zz1] ne {400x300+100+100}} { set moved 1 ; break }
+  }
+  ck "U7  ... and once it IS mapped the deferred shove fires" {$moved == 1}
+
   destroy .zz1 ; destroy .zz9
 } else {
   puts "SKIP: no X connection (has_x=0) — groups K and U need real toplevels"
