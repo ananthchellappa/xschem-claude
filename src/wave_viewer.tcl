@@ -1034,6 +1034,84 @@ proc wviewer::ctx_verdict {wp tops0 tops1 ninst nwires} {
 # the viewer is up (raised or freshly built), 0 on an unknown token (ciw_echo
 # under has_x, never a throw — ase::open_state style) and 0 headless (the
 # window shell is GUI-only; the session bookkeeping stays untouched).
+# --- window geometry: the viewer is NOT an untitled scratch buffer ------------
+#
+# ⚠ issue 0840, MEASURED. store_geom/set_geom (src/xschem.tcl) key a window's
+# saved geometry by `[xschem get current_name]`, and the viewer is built on a
+# schematic buffer whose name is `untitled.sch`. So the viewer and EVERY
+# untitled scratch buffer in the program shared ONE slot in
+# $USER_CONF_DIR/geometry:
+#
+#     sky130A/.../tb_bandgap.sch   1110x761+404+132   <- the design window
+#     untitled.sch                 1110x761+404+132   <- the viewer, restored
+#                                                        pixel-for-pixel on top
+#
+# The user reported it as "the schematic window appears to get replaced by a
+# Waveform Window": two mapped toplevels at exactly the same geometry, so the
+# design window is 100% occluded and the taskbar preview shows the waveform for
+# both. Reproduced on Xvfb + openbox with identical numbers, so it is not a
+# window-manager quirk and not the VcXsrv compositing of issue 0680.
+#
+# ⚠ AND THE NUMBERS IN THAT SLOT ARE THE MAIN WINDOW'S OWN, which is why the
+# overlap is EXACT rather than merely likely, and why it happens every session:
+#
+#   1. xschem starts with `untitled.sch` in the main window;
+#   2. the user loads a schematic, and the load path stores the geometry FIRST
+#      -- `store_geom [xschem get topwindow] [xschem get current_name]`
+#      (scheduler.c:7656) with current_name still `untitled.sch`, so the MAIN
+#      WINDOW's geometry lands in the untitled slot;
+#   3. wviewer::open's buffer is `untitled.sch` too, so set_geom hands it back.
+#
+# The read half below is therefore the load-bearing one. The write half matters
+# in the NON-tabbed window model, where store_geom persists arbitrary windows
+# (under the tabbed interface it is main-window-only) and the viewer would
+# otherwise overwrite that slot with its own place -- moving the next File > New.
+#
+# The viewer already marks its context as not-a-scratch-buffer (`xschem set
+# wave_viewer 1`, issue 0172, for exactly this family of confusion). Geometry
+# never got the memo. This gives it its own key.
+#
+# Keyed by the TOPLEVEL PATH, not the context: store_geom runs from C at moments
+# when the current context may be somebody else's, so a per-context flag cannot
+# answer "whose window is this".
+proc wviewer::geom_key {win} {
+  variable windows
+  if {$win eq {} || ![info exists windows]} { return {} }
+  foreach tok [dict keys $windows] {
+    if {[catch {dict get $windows $tok top} t]} continue
+    if {$t ne {} && $t eq $win} { return {__waveviewer__} }
+  }
+  return {}
+}
+
+# Deterministic backstop for the FIRST open, when no viewer geometry is stored
+# yet and placement falls to the window manager. Openbox cascades; nothing
+# guarantees the user's does. If the new viewer landed exactly congruent with
+# the window it was launched from, step it off. Congruence is the whole defect
+# -- a viewer merely NEAR the design window is fine, one exactly on top of it
+# reads as the schematic having vanished.
+proc wviewer::uncover {top from} {
+  if {$top eq {} || $from eq {}} { return 0 }
+  if {![winfo exists $top] || ![winfo exists $from]} { return 0 }
+  set gt {}; set gf {}
+  catch {set gt [wm geometry $top]}
+  catch {set gf [wm geometry $from]}
+  if {$gt eq {} || $gt ne $gf} { return 0 }
+  if {[scan $gt {%dx%d+%d+%d} w h x y] != 4} { return 0 }
+  set dx 48
+  set dy 48
+  # keep the title bar reachable: step back toward the origin rather than off
+  # the bottom-right of the screen
+  if {$x + $dx + $w > [winfo screenwidth $top]}  { set dx [expr {-$dx}] }
+  if {$y + $dy + $h > [winfo screenheight $top]} { set dy [expr {-$dy}] }
+  set nx [expr {$x + $dx}]
+  set ny [expr {$y + $dy}]
+  if {$nx < 0} { set nx 0 }
+  if {$ny < 0} { set ny 0 }
+  catch {wm geometry $top ${w}x${h}+${nx}+${ny}}
+  return 1
+}
+
 proc wviewer::open {token} {
   variable windows
   variable layouts
@@ -1136,6 +1214,10 @@ proc wviewer::open {token} {
   # every other context, and it is never cleared -- a viewer stays a viewer.
   catch {xschem set wave_viewer 1}
   dict set windows $token [dict create top $top win_path $wp]
+  # issue 0840: never land exactly on the window we were launched from. Done
+  # AFTER the registry entry so geom_key can already recognise $top.
+  set _fromtop [expr {$before eq {.drw} ? {.} : [string range $before 0 end-4]}]
+  catch {wviewer::uncover $top $_fromtop}
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
   # D2 fixup: the editor TOOLBAR is a second editing-verb surface, reachable

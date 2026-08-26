@@ -13791,6 +13791,17 @@ proc tab_queue {what {win_path {}}} {
 proc store_geom {win filename} {
   global tabbed_interface USER_CONF_DIR
 
+  # issue 0840: a waveform viewer is built on an `untitled.sch` buffer, so
+  # without this it stores its geometry in the slot every untitled scratch
+  # buffer shares -- and the next File > New opens where the waveform window
+  # was. wviewer::geom_key answers {} for every ordinary window, so this is
+  # inert unless a viewer really owns $win.
+  if {[llength [info commands ::wviewer::geom_key]]} {
+    set _k {}
+    catch {set _k [::wviewer::geom_key $win]}
+    if {$_k ne {}} { set filename $_k }
+  }
+
   # set geom [winfo width $win]x[winfo height $win]+[winfo rootx $win]+[winfo rooty $win]
   set geom [wm geometry $win]
   # puts "store_geom: geom=$geom"
@@ -13840,6 +13851,14 @@ proc store_geom {win filename} {
 proc set_geom {win {filename {}}} {
   global USER_CONF_DIR initial_geometry fullscreen
   set geom {}
+  # issue 0840, the read half of store_geom's key swap. Without it the viewer
+  # RESTORED `untitled.sch`'s geometry -- measured as pixel-for-pixel congruent
+  # with the design window, so the schematic looked like it had been replaced.
+  if {[llength [info commands ::wviewer::geom_key]]} {
+    set _k {}
+    catch {set _k [::wviewer::geom_key $win]}
+    if {$_k ne {}} { set filename $_k }
+  }
   if {$fullscreen ne 0} {return}
   if {[info exists initial_geometry]} {
     set geom $initial_geometry
