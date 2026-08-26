@@ -3631,7 +3631,11 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!tclgetboolvar("tabbed_interface")) {
           int wc = get_window_count();
           dbg(1, "wc=%d\n", wc);
-          if(wc > 0 ) {
+          /* issue 0847: "another window exists" is not enough -- if every other window is
+           * a WAVEFORM VIEWER there is nothing to swap in, and swapping one in teleports
+           * the viewer's buffer into this window and destroys the viewer's own toplevel.
+           * Fall through to the clear/quit arm instead and leave the viewer alone. */
+          if(wc > 0 && first_swappable_ctx() >= 0) {
             if(!force && hierarchy_modified()) {
               tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""
                         "[get_cell [xschem get schname] 0]"
@@ -3674,7 +3678,9 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
         else {
           int wc = get_window_count();
           dbg(1, "wc=%d\n", wc);
-          if(wc > 0 ) {
+          /* issue 0847, tabbed twin of the guard above. This is the arm the Cadence
+           * workarea actually takes (tabbed_interface defaults to 1). */
+          if(wc > 0 && first_swappable_ctx() >= 0) {
             if(has_x && !force && hierarchy_modified()) {
               tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""
                         "[get_cell [xschem get schname] 0]"

@@ -3054,6 +3054,9 @@ extern int get_tab_or_window_number(const char *win_path);
 extern int allocate_window_number(void);
 extern void swap_tabs(void);
 extern void swap_windows(int dr);
+/* first context index (1..MAX_NEW_WINDOWS-1) that is NOT a waveform viewer, or -1.
+ * See the comment on the definition in xinit.c (issue 0847). */
+extern int first_swappable_ctx(void);
 extern int check_loaded(const char *f, char *win_path);
 extern char *get_last_created_window_path(void);
 extern int get_last_created_window(void);

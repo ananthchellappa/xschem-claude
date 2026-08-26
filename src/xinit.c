@@ -1680,6 +1680,35 @@ int get_tab_or_window_number(const char *win_path)
 
 /* swap primary view (.drw) with first valid tab (x1.drw, x2.drw, ...)
  * used for window close ('xschem exit' command) */
+/* issue 0847: the context a closing window's document is swapped WITH must not be a
+ * WAVEFORM VIEWER.
+ *
+ * swap_tabs() and swap_windows() both used to take `the first non-NULL save_xctx[j]`,
+ * j from 1. With a viewer open that is the viewer -- so closing the design (Ctrl-W ->
+ * `xschem exit`) teleported the viewer's untitled buffer into the main window and then
+ * destroyed the viewer's own toplevel. Measured in the user's session log via
+ * window_report, 2026-08-26: `.` went from 'xschem [3] - tb_bandgap.sch (read-only)' to
+ * 'xschem [5] - untitled.sch (read-only)' and `.x1` disappeared, in one keystroke. That
+ * is the "my schematic window vanished" report, and it had been blamed on window
+ * management races for days.
+ *
+ * Issue 0172 already noticed the neighbouring hazard and fixed the wrong half: it swaps
+ * the wave_viewer BRAND back so the surviving canvas is not mis-branded, but nobody asked
+ * whether a viewer should be a swap TARGET at all. It should not -- a viewer is a
+ * surface, not a document the user asked to keep.
+ *
+ * Returns the index of the first swappable (non-viewer) context, or -1 if every other
+ * context is a viewer. Callers that get -1 must NOT swap: leave the viewer in its own
+ * window and clear the closing one instead. */
+int first_swappable_ctx(void)
+{
+  int j;
+  for(j = 1; j < MAX_NEW_WINDOWS; j++) {
+    if(save_xctx[j] && !save_xctx[j]->wave_viewer) return j;
+  }
+  return -1;
+}
+
 void swap_tabs(void)
 {
   int wc = window_count;
@@ -1691,11 +1720,10 @@ void swap_tabs(void)
     int i = 0;
     int j;
     int wv;
-    for(j = 1; j < MAX_NEW_WINDOWS; j++) {
-      if(save_xctx[j]) break;
-    }
-    if(j >= MAX_NEW_WINDOWS) {
-      dbg(0, "swap_tabs(): no tab to swap to found\n");
+    /* issue 0847: never swap a WAVEFORM VIEWER into the closing window's place. */
+    j = first_swappable_ctx();
+    if(j < 0) {
+      dbg(0, "swap_tabs(): no non-viewer tab to swap to found\n");
       return;
     }
     if(!save_xctx[i]) {
@@ -1766,11 +1794,10 @@ void swap_windows(int dr)
     int wv;
     char geometry[80];
 
-    for(j = 1; j < MAX_NEW_WINDOWS; j++) {
-      if(save_xctx[j]) break;
-    }
-    if(j >= MAX_NEW_WINDOWS) {
-      dbg(0, "swap_windows(): no tab to swap to found\n");
+    /* issue 0847: never swap a WAVEFORM VIEWER into the closing window's place. */
+    j = first_swappable_ctx();
+    if(j < 0) {
+      dbg(0, "swap_windows(): no non-viewer window to swap to found\n");
       return;
     }
     if(!save_xctx[i]) {
