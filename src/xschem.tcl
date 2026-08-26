@@ -4765,19 +4765,57 @@ proc graph_update_nodelist {} {
   graph_tag_nodes $txt
 }
 
+## THE INTAKE FOR A GRAPH RECT ATTRIBUTE, AND THERE IS NO EVALUATOR IN IT.
+## Issues 0821 / 0822. A `.sch` is a document people mail each other, so every
+## byte of `rawfile=`, `sim_type=` and `autoload=` is untrusted input. This
+## proc used to be three inline reads each wrapped in
+##     uplevel #0 {subst [xschem getprop rect ...]}
+## and (for rawfile) `eval uplevel #0 {subst $rawfile}`. The sink is NOT
+## `subst`: `eval`/`uplevel` CONCATENATE their arguments and evaluate the
+## result AS A SCRIPT, so the attribute is RE-PARSED -- a `[...]` in it ran
+## while the script's own words were being parsed, before `subst` was called
+## at all, and a `}` in it closed `subst`'s word and everything after it ran
+## as a command. All three fields were measured executing an `exec touch` out
+## of a merely-opened schematic.
+##
+## THE VALUE IS HANDED ON RAW, ON PURPOSE. `rawfile` is consumed only by
+## `xschem raw read|switch|table_read`, which land in extra_rawfile()
+## (src/save.c), which resolves the path with resolve_rawfile_path()
+## (src/util.c) -- the ONE C resolver issue 0812 shipped: a byte scanner that
+## expands `$name` / `${name}` / `$ns::name` through Tcl_GetVar2Ex and copies
+## every other byte literally. src/draw.c reads the same three attributes with
+## get_tok_value() and no substitution at all, so dropping the Tcl pass makes
+## this dialog and the renderer see byte-identical values (invariant I1, ONE
+## name builder) and makes the route SINGLE-pass, which retires issue 0820's
+## double-resolution exposure for it. Do NOT add a resolver here: two
+## resolvers that disagree is worse than the bug, because the raw registry is
+## keyed by strcmp() on the resolved string (0812 constraint 3).
+##
+## Consequence, recorded rather than discovered later: a `[...]` command
+## substitution in any of the three fields no longer runs, and `$a(1)` means
+## "the value of a, then the literal (1)" (0812 decision D2). The shipped
+## corpus spells `rawfile=$netlist_dir/<name>.raw` and a bare name, both of
+## which still resolve; nothing shipped uses `$env(...)` or a `[...]`.
+proc graph_rect_attr {n tok {with_quotes 0}} {
+  return [xschem getprop rect 2 $n $tok $with_quotes]
+}
+
 proc graph_fill_listbox {} {
   global graph_selected
   set pattern [.graphdialog.center.left.search get]
   set retv {}
-  set autoload [uplevel #0 {subst [xschem getprop rect 2 $graph_selected autoload 2]}]
-  set rawfile [xschem getprop rect 2 $graph_selected rawfile]
-  if {$rawfile ne {}} {
-    if {![catch {eval uplevel #0 {subst $rawfile}} res]} {
-      set rawfile $res
-    }
+  set autoload [graph_rect_attr $graph_selected autoload 2]
+  set rawfile [graph_rect_attr $graph_selected rawfile]
+  set sim_type [graph_rect_attr $graph_selected sim_type 2]
+  ## `string is boolean -strict` because a crafted `autoload=` is not a
+  ## boolean and a bare `&& $autoload` would throw out of this proc: a mailed
+  ## schematic must not be able to BREAK the Graph dialog either. Same
+  ## data-from-a-document class as the injection, one line away from it.
+  if {$autoload ne {} && [string is boolean -strict $autoload] && $autoload} {
+    set autoload read
+  } else {
+    set autoload switch
   }
-  set sim_type [uplevel #0 {subst [xschem getprop rect 2 $graph_selected sim_type 2]}]
-  if {$autoload ne {} && $autoload } { set autoload read} else {set autoload switch}
   # puts "graph_fill_listbox: $rawfile $sim_type"
   if {$rawfile ne {}} {
     if {$sim_type eq {table}} {
@@ -4836,24 +4874,14 @@ proc graph_set_linewidth {graph_sel} {
   }
 }
 
-proc raw_is_loaded {rawfile type} {
-  set loaded 0
-
-  set r [catch "uplevel #0 {subst $rawfile}" res]
-  if {$r == 0} {
-    set rawfile $res
-  } else {
-    return $loaded
-  }
-  set rawlist [lrange [xschem raw info] 2 end]
-  foreach {n f t} $rawlist {
-    if {$rawfile eq $f && $type eq $t} {
-       set loaded 1
-       break
-    }
-  }
-  return $loaded
-}
+## `proc raw_is_loaded {rawfile type}` USED TO LIVE HERE and is DELETED, not
+## repaired -- issue 0821 §4. It carried the same evaluator sink as
+## graph_fill_listbox above (`catch "uplevel #0 {subst $rawfile}"`, measured
+## executing a payload on a direct call) and had ZERO callers tree-wide, so a
+## repair would have left a never-called, never-exercised second resolver
+## shape for someone to wire up later. Anything needing this answer should ask
+## `xschem raw info` directly and compare against the path the ONE resolver
+## produced.
 proc set_rect_flags {graph_selected} {
       global graph_private_cursor graph_unlocked
 
@@ -4923,8 +4951,14 @@ proc graph_edit_properties {n} {
     set graph_unlocked 0
   }
 
+  ## `string is boolean -strict`: a crafted `autoload=` out of a mailed
+  ## schematic is not a boolean, and a bare `&& $autoload` threw
+  ## "expected boolean value" HERE -- before the dialog was even built, so the
+  ## Graph dialog could not be opened at all on that file. Issues 0821/0822:
+  ## a document must not be able to break the tool that reads it. The same
+  ## guard is in graph_fill_listbox; both had to change (measured).
   set autoload [xschem getprop rect 2 $n autoload]
-  if {$autoload ne {} && $autoload} {
+  if {$autoload ne {} && [string is boolean -strict $autoload] && $autoload} {
     set graph_autoload 1
   } else {
     set graph_autoload 0

@@ -1,6 +1,8 @@
 # 0817 — `tclvareval()` brace-group splices of file-/user-derived strings
 
-STATUS: **OPEN — filed by the 0812 implement agent, 2026-08-25. Site sweep done and
+STATUS: **STILL OPEN — and now DRIVEN, not just inventoried. See §Z (2026-08-25) for the
+measured `xschem load` vector, the sites the 0821+0816+0817 item removed from this list, and
+two corrections to the inventory below.** Filed by the 0812 implement agent, 2026-08-25. Site sweep done and
 verified against the tree; only the parselabel case is characterised in detail, and it is
 deliberately UNMEASURED (see the caveat).**
 FOUND IN: many files under `src/`. Same defect class as issue 0812.
@@ -91,3 +93,70 @@ removing the *parsing* step is necessary and not sufficient — the attempt's wo
 still invoked `subst`, and `subst` re-introduced evaluation through a variable array
 index. If the word you pass is data, make the command you call one that cannot evaluate
 it.
+
+---
+
+## §Z — 2026-08-25, after item 0821+0816+0817
+
+### Z.1 What that item REMOVED from this issue
+
+The three sym-path wrappers in `src/actions.c` (`abs_sym_path`, `rel_sym_path`,
+`sanitized_abs_sym_path`) were this issue's class and were fixed, as **0825**,
+using the `backannot_refuse_digital()` variable route this issue names. They are
+no longer part of the sweep. Nothing else here was touched.
+
+### Z.2 This issue is no longer a site inventory — it has a driven vector
+
+Measured on the **fixed** tree, twice independently (`--nogui`, no dialog):
+
+```
+xschem load "<dir>/x} ; set ::FNPWN 1; exec touch <dir>/FNHOST; is_xschem_file {a"
+->  FNPWN=1   host=1
+```
+
+A crafted **filename** executes through `is_xschem_file` / `get_directory` /
+`update_recent_file`. That is the `load` verb, on a fixed tree, and it means the
+sentence "0816 is fixed" must never be compressed into "`xschem load` is safe" —
+0816's sink is closed at all nine of its sites, and this one is beside it.
+
+Note the payload shape is **sink-specific**: 0816's own no-slash payload trips a
+wrong-number-of-args error at the first of these sinks and aborts the script, which
+is exactly why `test_raw_read_dispatch`'s SC rows are green while this is live. A
+suite row for this issue must be shaped for **this** sink.
+
+### Z.3 Two corrections to the inventory above
+
+1. **`cellview_path` is under-rated and is in the wrong file.** It is listed under
+   *"the rest of the sweep (same class, **LOWER REACH**; verified present, not
+   individually driven)"* and attributed to `scheduler.c`. The live sink is
+   **`src/actions.c:4215-4219`** `cellview_sch_path()`, it is now **driven**, and
+   its reach **exceeds this issue's own nominated sharpest reachable-on-unix site**:
+   one mailed `.sch` + a stock library symbol + `xschem descend` created a host
+   file. Split out as **issue 0827**.
+2. **`hilight.c:1118` / `:1120` is Windows-only.** Verified on this tree:
+   `:1114` is `#ifndef __unix__` and `:1115` is `win_regexec`. It cannot be driven
+   here at all, so it should not sit third in a "sharpest first" list.
+
+### Z.4 Still live after that item — the list, so nobody reports the family swept
+
+C side: `actions.c:3784` `launcher` (a `.sch` `url` property); `actions.c` /
+`save.c` `is_xschem_file`, `get_directory`, `update_recent_file`, `ask_save`,
+`try_download_url`, `download_url` (**driven — Z.2**);
+`actions.c:4215` `cellview_sch_path` (**driven — 0827**);
+`hilight.c` gaw `copyvar` ×7 (847, 855, 1644, 1647, 1760, 1769, 1773);
+`token.c:148/149` `sanitize`; `parselabel.c:~1884` `tk_messageBox` (**modal** —
+still deliberately unmeasured, issue 0803); `hilight.c:1118/1120` (Windows-only);
+and the rest of the sweep list above.
+
+⚠ `token.c:148` was **attempted and is unproven either way**: a generator-shaped
+instance name (`gen(a} … regsub x {b)`) gave `SANHIT=0` on both load and netlist,
+because a **missing** symbol never reaches the `@symname`/`.subckt` paths that call
+`sanitize()`. It needs a real generator symbol on the library path to drive. Until
+then this issue should not describe it as merely "present" — it is untested.
+
+Tcl-side same-class siblings, outside this issue's `tclvareval` scope but the same
+defect: `src/xschem.tcl:2831` `file_exists` (`catch "uplevel #0 {subst $f}"`,
+**dead** — no callers); `src/ase.tcl:202` `ase::expand_path` (`subst -nocommands`,
+which 0812 §1 measured still running a command substitution inside an array index);
+`src/xschem.tcl:7067/7068`, the preview_window `<Expose>`/`<Configure>` binds built
+with `subst` over a file-dialog filename.

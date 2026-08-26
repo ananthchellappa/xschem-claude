@@ -2399,10 +2399,15 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
        *     construction: expand_tilde()'s output already starts with `/`, so
        *     the second pass is the identity.
        * NOT GUARANTEED by anything here: the other Tcl-splicing seams in the
-       * tree. The nine remaining `regsub {^~/}` + tcleval() path splices
-       * outside the raw-file family are issue 0816, and the tclvareval()
-       * brace-group splices of file-derived strings are issue 0817. Both are
-       * open and neither is addressed by this line. */
+       * tree. The nine `regsub {^~/}` + tcleval() path splices outside the
+       * raw-file family (issue 0816) are now CLOSED -- all nine call
+       * expand_tilde() -- as are the three sym-path wrappers in src/actions.c
+       * (issue 0825) that two of those nine fed, and the Graph dialog's three
+       * `.sch` attribute reads in src/xschem.tcl (issues 0821 / 0822). The
+       * tclvareval() brace-group splices of file-derived strings (issue 0817)
+       * are STILL OPEN -- actions.c launcher, hilight.c's gaw copyvar,
+       * token.c sanitize, parselabel.c's modal -- and none of them is
+       * addressed by this line. */
       if(argc > 2) {
         expand_tilde(argv[2], f, (int)S(f));
       } else {
@@ -2977,9 +2982,14 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       int ret = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         ret = compare_schematics(f);
       }
       else {
@@ -7608,9 +7618,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           i--;
           lastopened = 0;
         } else {
-          my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[i], home_dir);
-          tcleval(f);
-          my_strncpy(f, tclresult(), S(f));
+          /* issue 0816: `~/` is expanded in C. This used to be
+           * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+           * the path into a Tcl script inside a brace group -- a path containing
+           * `}` closed the group and the rest of it EXECUTED (measured on this
+           * verb). expand_tilde() (util.c) is the same transformation with nothing
+           * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+           * brace-quoted word never did variable substitution either. */
+          expand_tilde(argv[i], f, (int)S(f));
         }
         /* route_newwin: not clobbering the current window, so never prompt to save it.
          * target_done: the -window target's save prompt was already handled above. */
@@ -7764,10 +7779,23 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             my_strncpy(f, tcleval("get_lastopened"), S(f));
             reopen = 1;
           } else if(!is_from_web(argv[i])) {
-            my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[i], home_dir);
-            tcleval(f);
+            char t[PATH_MAX + 100];   /* C89: declaration at the top of this block */
+            /* issue 0816: `~/` is expanded in C. This used to be
+             * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+             * the path into a Tcl script inside a brace group -- a path containing
+             * `}` closed the group and the rest of it EXECUTED (measured on this
+             * verb). expand_tilde() (util.c) is the same transformation with nothing
+             * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+             * brace-quoted word never did variable substitution either. */
+            /* ⚠ expand_tilde() closes the regsub splice, NOT the one inside
+             * abs_sym_path() (src/actions.c), which used to splice its own
+             * argument into `abs_sym_path {%s} {%s}` -- so this verb stayed
+             * exploitable until issue 0825 fixed that wrapper too. Two frames,
+             * both had to change; see the 0812 note at the annotate_op branch
+             * for the same lesson learned the expensive way. */
+            expand_tilde(argv[i], t, (int)S(t));
             /* tclvareval("file normalize {", tclresult(), "}", NULL); */
-            my_strncpy(f, abs_sym_path(tclresult(), ""), S(f));
+            my_strncpy(f, abs_sym_path(t, ""), S(f));
           } else {
             my_strncpy(f, argv[i], S(f));
           }
@@ -7832,9 +7860,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         char f[PATH_MAX + 100];
         FILE *fp;
 
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         fp = fopen(f, "w");
         if(fp) errfp = fp;
         else dbg(0, "xschem log: problems opening file %s\n", f);
@@ -8129,9 +8162,14 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
         merge_file(0, "");  /* 2nd param not used for merge 25122002 */
       }
       else {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         merge_file(0, f);
       }
       Tcl_ResetResult(interp);
@@ -8986,9 +9024,14 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
         char f[PATH_MAX + 100];
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         new_xschem_process(f, 0);
       } else new_xschem_process("", 0);
       Tcl_ResetResult(interp);
@@ -9025,9 +9068,18 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
         else if(argc == 4) r = new_schematic(argv[2], argv[3], NULL, 1);
         else if(argc >= 5) {
           char f[PATH_MAX + 100];
-          my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[4], home_dir);
-          tcleval(f);
-          my_strncpy(f, abs_sym_path(tclresult(), ""), S(f));
+          char t[PATH_MAX + 100];   /* C89: declaration at the top of this block */
+          /* issue 0816: `~/` is expanded in C. This used to be
+           * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+           * the path into a Tcl script inside a brace group -- a path containing
+           * `}` closed the group and the rest of it EXECUTED (measured on this
+           * verb). expand_tilde() (util.c) is the same transformation with nothing
+           * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+           * brace-quoted word never did variable substitution either. */
+          /* ⚠ same two-frame caveat as the `load_new_window` branch: the
+           * splice inside abs_sym_path() itself is issue 0825, not this line. */
+          expand_tilde(argv[4], t, (int)S(t));
+          my_strncpy(f, abs_sym_path(t, ""), S(f));
           r = new_schematic(argv[2], argv[3], f, dr);
         }
         my_snprintf(s, S(s), "%d", r);
@@ -9828,9 +9880,14 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       else if(argc == 4) res = preview_window(argv[2], argv[3], NULL);
       else if(argc == 5) {
         char f[PATH_MAX + 100];
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[4], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[4], f, (int)S(f));
         res = preview_window(argv[2], argv[3], f);
       }
       Tcl_SetResult(interp, my_itoa(res), TCL_VOLATILE);
@@ -11180,9 +11237,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
 
       if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
       }
       if(argc > 3) {
         fptr = !strcmp(f, "") ? NULL : f;

@@ -468,33 +468,63 @@ int set_netlist_dir(int what, const char *dir)
   return 1;
 }
 
+/* ⚠ THE THREE WRAPPERS BELOW TAKE A SYMBOL NAME READ STRAIGHT OUT OF A `.sch`
+ * FILE, so none of them may build its script by CONCATENATION -- issue 0825.
+ *
+ * They used to spell it
+ *     my_snprintf(c, S(c), "abs_sym_path {%s} {%s}", s, ext); tcleval(c);
+ * which puts the name inside a brace group of a script that is then evaluated.
+ * `\}` is the `.sch` format's OWN escape for a literal brace, so an ordinary,
+ * well-formed schematic can carry a name containing `}`: it closed the group
+ * and everything after it RAN AS TCL. Measured on an unmodified tree --
+ *     C {p\} {\} ; exec touch /tmp/HOST; list {a} 0 0 0 0 {name=x1}
+ * created the host file on a plain `xschem load`, --nogui, no dialog and no
+ * gesture (via get_sym_type -> abs_sym_path); an ABSOLUTE name did the same
+ * through load_inst -> rel_sym_path; and `xschem netlist` fired it three more
+ * times through sanitized_abs_sym_path in the netlisters. That trigger is
+ * strictly worse than the Graph dialog's (issue 0821), which at least needs
+ * the dialog opened.
+ *
+ * The name is handed over as a GLOBAL VARIABLE instead and referenced with
+ * `$::...` in the script. A variable substitution's result is ONE word and is
+ * NEVER re-parsed, so no content in it can escape -- the same route
+ * backannot_refuse_digital() (src/save.c) takes for a user-supplied path, and
+ * one of the two in-tree answers issue 0817 names. Signatures, return storage
+ * (the interpreter result, which ~70 call sites hold as a `const char *`) and
+ * the Tcl-side procs are all unchanged; the shipped procs already default
+ * `ext` and `paths` to `{}`, so an empty ext behaves exactly as the old `{}`
+ * group did.
+ *
+ * The globals are deliberately NOT unset afterwards: Tcl_UnsetVar can reset
+ * the interpreter result, which IS the return value here. Rejected:
+ * Tcl_Merge / Tcl_EvalObjv (correct, but a rewrite of three two-line
+ * functions), and any `subst` flag (issue 0812 §1: `-nocommands` still runs
+ * the command substitution inside `$a([...])`). */
+
 /* wrapper to TCL function */
 /* remove parameter section of symbol generator before calculating abs path : xxx(a,b) -> xxx */
 const char *sanitized_abs_sym_path(const char *s, const char *ext)
 {
-  char c[PATH_MAX+1000];
-
-  my_snprintf(c, S(c), "abs_sym_path [regsub {\\(.*} {%s} {}] {%s}", s, ext);
-  tcleval(c);
+  tclsetvar("__san_symp_name", s ? s : "");
+  tclsetvar("__san_symp_ext", ext ? ext : "");
+  tcleval("abs_sym_path [regsub {\\(.*} $::__san_symp_name {}] $::__san_symp_ext");
   return tclresult();
 }
 
 /* wrapper to TCL function */
 const char *abs_sym_path(const char *s, const char *ext)
 {
-  char c[PATH_MAX+1000];
-
-  my_snprintf(c, S(c), "abs_sym_path {%s} {%s}", s, ext);
-  tcleval(c);
+  tclsetvar("__abs_symp_name", s ? s : "");
+  tclsetvar("__abs_symp_ext", ext ? ext : "");
+  tcleval("abs_sym_path $::__abs_symp_name $::__abs_symp_ext");
   return tclresult();
 }
 
 /* Wrapper to Tcl function */
 const char *rel_sym_path(const char *s)
 {
-  char c[PATH_MAX+1000];
-  my_snprintf(c, S(c), "rel_sym_path {%s}", s);
-  tcleval(c);
+  tclsetvar("__rel_symp_name", s ? s : "");
+  tcleval("rel_sym_path $::__rel_symp_name");
   return tclresult();
 }
 

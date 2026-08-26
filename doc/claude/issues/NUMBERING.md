@@ -41,7 +41,21 @@ paragraph above, which stopped at 0806. Filed since: **0807-0811** (the 0688+068
 0812-retry — **0819** (`Tcl_GetVar2Ex` fires READ TRACES, so the resolver's "no evaluator"
 comment was false; mitigation pinned by GUARD3), **0820** (a graph `%` rawfile field is
 resolved twice, so `resolve_rawfile_path()` is not idempotent in general and read/clear can
-disagree about a registry key), **0821** (⚠ a LIVE Tcl-side splice of the same shape:
-`src/xschem.tcl:4775` `graph_fill_listbox` runs `subst` over a `.sch` `rawfile=` attribute).
-**The next free number is 0822.** 0500-0599 and 0700-0799 remain reserved for other
+disagree about a registry key), **0821** (a Tcl-side splice of the same shape: `src/xschem.tcl:4775` `graph_fill_listbox`
+ran `subst` over a `.sch` `rawfile=` attribute).
+
+**2026-08-25, item 0821+0816+0817 write-up.** Filed since: **0822** (the lead — `autoload`
+and `sim_type` execute from a `.sch` attribute too), **0823**, **0824**, and by this item
+**0825** (the three sym-path wrappers splice a `.sch` symbol name, so a plain `xschem load`
+executes Tcl — found, filed and fixed in one commit), **0826** (test_wave_markers MX7b/MX7d
+go red on a Tk key-delivery stall), **0827** (⚠ **LIVE**: `cellview_sch_path()`,
+`src/actions.c:4215`, splices a `.sch` `schematic=` attribute, so a plain descend executes
+Tcl), **0828** (three anti-hollow rows in the new GDI group stay green when the Graph
+dialog's attribute intake is inert).
+
+**0821 and 0822 are FIXED** — `src/xschem.tcl:4775` is no longer live and no line of this
+file should still be quoted as evidence that it is; so are **0816** and **0825**. **0817**
+is open and now has a driven vector.
+
+**The next free number is 0829.** 0500-0599 and 0700-0799 remain reserved for other
 branches.

@@ -616,6 +616,258 @@ check   E18-vcd-in-new-registry  [info_has $tmp/t.vcd vcd] \
   "(info='[string map {\n |} [pcall xschem raw info]]')"
 eqcheck E19-vcd-switchable-in-new-window [pcall xschem raw switch $tmp/t.vcd vcd] 1
 
+
+# ===========================================================================
+# SC — issue 0816: the NINE `regsub {^~/}` + tcleval() path splices that live
+#      OUTSIDE the raw-file family, and
+# SYMP — issue 0825: the three sym-path wrappers in src/actions.c, whose
+#      trigger is STRICTLY WORSE than the graph dialog's — a plain
+#      `xschem load evil.sch`, headless, no dialog, no gesture.
+#
+# WHY THEY ARE IN *THIS* FILE. Both are the same sink shape the INJ rows above
+# already pin for the raw-file family: a string that came out of a document
+# (`argv[N]` from a Tcl caller, an instance's symbol NAME out of a `.sch`)
+# spliced into a `{...}` group of a script that is then evaluated. The
+# raw-family half was closed by 0812; these are what 0812's scope fence left.
+# Keeping them beside INJ/GUARD means one file carries the whole splice family
+# and one grep (`SC0`/`SYMP`) finds every row.
+#
+# THE SC PAYLOAD IS NOT THE INJ PAYLOAD. `regsub {^~/} {<path>} {<home>/}`
+# needs a payload that leaves the trailing `{<home>/}` a legal word, so it is
+#     x} {y} {z}; set ::SC_PWNED 1; ...; list {a
+# and `regsub {^~/} {x} {y} {z}` is a perfectly legal 4-argument regsub that
+# writes a variable and returns 0. The `^~/` anchor is irrelevant — the splice
+# happens while the SCRIPT IS BUILT, long before any pattern matches anything
+# and (SC03) long before any stat().
+#
+# THREE OF THE NINE ARE NOT DRIVEN, and SC09 is the only thing covering them:
+#   compare_schematics  — issue 0815, it SEGFAULTS under --nogui (measured
+#                         again while writing these rows: the process dies
+#                         mid-run, taking every later row with it)
+#   preview_window      — same, measured: the payload FIRES (the host file is
+#                         created) and the process then dies before the row can
+#                         read the sentinel
+#   new_process         — forks a real second xschem
+# A source scan is a weaker instrument than a driven row and SC09 says so in
+# its own failure text. It is not a substitute; it is what is left.
+#
+# THE SYMP PAYLOAD is the same brace-escape, delivered as an instance's SYMBOL
+# NAME: `C {p\} {\} ; ...; list {a} 0 0 0 0 {name=x1}`. `\}` is the `.sch`
+# format's own escape, so this is an ordinary, well-formed schematic file.
+# ===========================================================================
+
+# {sentinel host-file-created} for one command, both cleared immediately before
+# the call so a 1 can only have been written by the argument.
+proc sc_probe {host args} {
+  set ::SC_PWNED 0
+  catch {file delete -force $host}
+  catch {xschem set_modify 0}
+  uplevel 1 [list pcall {*}$args]
+  set e [file exists $host]
+  catch {file delete -force $host}
+  return [list $::SC_PWNED $e]
+}
+# the 0816 payload, with an `exec touch` of $host wired in
+proc sc_pay {host} {
+  return "x\} \{y\} \{z\}; set ::SC_PWNED 1; exec touch $host; list \{a"
+}
+# `.sch` brace escaping: the file format escapes a literal brace with `\`
+proc sch_esc {s} { return [string map [list \{ \\\{ \} \\\}] $s] }
+proc sch_wr {path body} { set fp [open $path w]; puts -nonewline $fp $body; close $fp }
+# a one-instance schematic whose SYMBOL NAME is $nm (unescaped; escaped here)
+proc symp_sch {path nm} {
+  sch_wr $path "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nC {[sch_esc $nm]} 0 0 0 0 {name=x1}\n"
+}
+
+set SC_CWD [pwd]
+# SNAPSHOT the repo root BEFORE anything runs, so SC06b can name what THIS
+# group created and cannot be reddened by a corpse an earlier session left.
+set SC_ROOT_BEFORE [lsort [glob -nocomplain -directory $INJ_REPO -tails *]]
+cd $tmp                      ;# every stray file a payload can make lands here
+
+# --- the six verbs a headless run can actually drive ------------------------
+set SC_H1 [file join $tmp HOST_SC01]
+eqcheck SC01-load-sentinel [sc_probe $SC_H1 xschem load \
+  "x\} \{y\} \{z\}; set ::SC_PWNED 1; list \{a"] {0 0}
+set SC_H2 [file join $tmp HOST_SC02]
+eqcheck SC02-load-hostfile [sc_probe $SC_H2 xschem load [sc_pay $SC_H2]] {0 0}
+# the splice runs BEFORE any stat(), so a path that exists nowhere is not a
+# defence — the leading directory below does not exist and never will
+set SC_H3 [file join $tmp HOST_SC03]
+eqcheck SC03-nonexistent-path [sc_probe $SC_H3 xschem load \
+  "[file join $tmp no_such_dir_0816 gh]\} \{y\} \{z\}; set ::SC_PWNED 1; list \{a"] {0 0}
+set SC_H4 [file join $tmp HOST_SC04]
+eqcheck SC04-merge [sc_probe $SC_H4 xschem merge [sc_pay $SC_H4]] {0 0}
+set SC_H5 [file join $tmp HOST_SC05]
+eqcheck SC05-log [sc_probe $SC_H5 xschem log [sc_pay $SC_H5]] {0 0}
+catch {xschem log}                       ;# restore stderr whatever happened
+set SC_H6 [file join $tmp HOST_SC06]
+eqcheck SC06-saveas [sc_probe $SC_H6 xschem saveas [sc_pay $SC_H6] schematic] {0 0}
+# `saveas` is the one verb that WRITES. It must not have written into the repo
+# (untracked untitled*.sch in the root reds three OTHER suites — memory note
+# "untitled litter fails 3 tests"), which is why every payload above runs with
+# the cwd moved into $tmp.
+set SC_DROP {}
+foreach _t [lsort [glob -nocomplain -directory $INJ_REPO -tails *]] {
+  if {[lsearch -exact $SC_ROOT_BEFORE $_t] < 0} { lappend SC_DROP $_t }
+}
+check SC06b-no-repo-droppings [expr {[llength $SC_DROP] == 0}] \
+  "(a payload created a file in the repo root: $SC_DROP)"
+set SC_H7 [file join $tmp HOST_SC07]
+eqcheck SC07-load_new_window [sc_probe $SC_H7 xschem load_new_window [sc_pay $SC_H7]] {0 0}
+set SC_H8 [file join $tmp HOST_SC08]
+eqcheck SC08-new_schematic [sc_probe $SC_H8 xschem new_schematic create .x0816 \
+  [sc_pay $SC_H8] 0] {0 0}
+
+# --- SC09: the source scan, and the ONLY cover for the three undriveable ----
+# A live splice is `my_snprintf(f, S(f),"regsub {^~/} ...` — a line of code.
+# Every OTHER mention in this file is prose inside a `/* ... */`, whose
+# continuation lines all begin with `*`, so trimming and rejecting a leading
+# `*` separates the two without a parser. src/xinit.c:3235 is EXCLUDED by
+# 0816 itself (it splices the compile-time USER_CONF_DIR macro, which no
+# document can reach) and this scan does not read that file.
+set SC_HITS {}
+set _fd [open [file join $INJ_REPO src scheduler.c] r]; set _b [read $_fd]; close $_fd
+set _ln 0
+foreach _l [split $_b "\n"] {
+  incr _ln
+  if {![string match {*regsub \{^~/\}*} $_l]} continue
+  set _t [string trimleft $_l]
+  if {[string index $_t 0] eq "*" || [string range $_t 0 1] eq "/*"} continue
+  lappend SC_HITS "scheduler.c:$_ln"
+}
+check SC09-no-regsub-splice-in-scheduler [expr {[llength $SC_HITS] == 0}] \
+  "(issue 0816: a `regsub {^~/}` path splice is still compiled in — and this row is\
+ the ONLY cover for compare_schematics / preview_window / new_process, which no\
+ headless row can drive (0815 segfault / fork): [join $SC_HITS { }])"
+
+# --- SC10: ANTI-HOLLOW. Refusing an unusual path is a different bug ---------
+# `~/` must still expand (that is ALL the regsub ever did), a real `~/` file
+# must still load, and a path with SPACES must still load.
+set SC_HLOG [file join $::env(HOME) rawdisp0816probe_[pid].log]
+catch {file delete -force $SC_HLOG}
+catch {xschem log ~/[file tail $SC_HLOG]}
+catch {xschem log}
+set SC_TILDE_OK [file exists $SC_HLOG]
+catch {file delete -force $SC_HLOG}
+set SC_HSCH [file join $::env(HOME) rawdisp0816probe_[pid].sch]
+symp_sch $SC_HSCH sc10_no_such_symbol
+catch {xschem set_modify 0}
+set SC_R1 [pcall xschem load ~/[file tail $SC_HSCH]]
+set SC_N1 [file tail [pcall xschem get schname]]
+catch {file delete -force $SC_HSCH}
+file mkdir [file join $tmp "sc space"]
+set SC_SSCH [file join $tmp "sc space" "s c.sch"]
+symp_sch $SC_SSCH sc10_no_such_symbol
+catch {xschem set_modify 0}
+set SC_R2 [pcall xschem load $SC_SSCH]
+set SC_N2 [file tail [pcall xschem get schname]]
+eqcheck SC10-tilde-and-spaces-still-work \
+  [list $SC_TILDE_OK $SC_N1 $SC_N2] \
+  [list 1 [file tail $SC_HSCH] "s c.sch"]
+
+# --- SYMP: issue 0825, the three src/actions.c wrappers --------------------
+set SYMP_H1 [file join $tmp HOST_SYMP01]
+symp_sch [file join $tmp symp_rel.sch] \
+  "p\} \{\} ; set ::SC_PWNED 1; exec touch $SYMP_H1; list \{a"
+eqcheck SYMP01-abs_sym_path-on-load \
+  [sc_probe $SYMP_H1 xschem load [file join $tmp symp_rel.sch]] {0 0}
+# an ABSOLUTE symbol name goes the other way, through rel_sym_path()
+set SYMP_H2 [file join $tmp HOST_SYMP02]
+symp_sch [file join $tmp symp_abs.sch] \
+  "/tmp/p\} \{\} ; set ::SC_PWNED 1; exec touch $SYMP_H2; list \{a"
+eqcheck SYMP02-rel_sym_path-on-load \
+  [sc_probe $SYMP_H2 xschem load [file join $tmp symp_abs.sch]] {0 0}
+# COUNTING, not just "did it fire": load reaches the wrappers once, netlist
+# three more times (sanitized_abs_sym_path in the netlisters). A row that only
+# asked "was the sentinel set" cannot tell a partial fix from a whole one.
+symp_sch [file join $tmp symp_cnt.sch] "p\} \{\} ; incr ::SYMP_HIT; list \{a"
+set ::SYMP_HIT 0
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp symp_cnt.sch]
+eqcheck SYMP03-count-on-load $::SYMP_HIT 0
+set SYMP_NDIR [expr {[info exists ::netlist_dir] ? $::netlist_dir : {}}]
+set ::netlist_dir [file join $tmp symp_nl]
+file mkdir $::netlist_dir
+set ::SYMP_HIT 0
+pcall xschem netlist
+eqcheck SYMP04-count-on-netlist $::SYMP_HIT 0
+# NON-VACUITY: the payload name really REACHED the resolver and was treated as
+# a filename. Captured from the engine's own error channel via `xschem log`,
+# because the Tcl result of `xschem load` is the schematic name, not the
+# symbol diagnostic. GREEN AT HEAD ON PURPOSE — it is the row that stops
+# SYMP01-04 from passing because the name stopped arriving at all.
+set SYMP_LOG [file join $tmp symp.log]
+catch {file delete -force $SYMP_LOG}
+catch {xschem log $SYMP_LOG}
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp symp_cnt.sch]
+catch {xschem log}
+set SYMP_LB {}
+if {[file exists $SYMP_LOG]} { set _fd [open $SYMP_LOG r]; set SYMP_LB [read $_fd]; close $_fd }
+check SYMP05-name-reached-the-resolver \
+  [expr {[string first "Symbol not found: p\} \{\} ; incr ::SYMP_HIT; list \{a" $SYMP_LB] >= 0}] \
+  "(the .sch symbol name never reached the path resolver, so SYMP01-04 are vacuous;\
+ log was '[string map {\n |} [string range $SYMP_LB 0 200]]')"
+
+# --- SYMP06: ANTI-HOLLOW, as a GOLDEN STRING -------------------------------
+# A symbol whose absolute path contains a SPACE must still resolve, and the
+# `** sym_path:` line the spice netlister emits comes out of
+# sanitized_abs_sym_path() itself (spice_netlist.c:688, the base_name==NULL
+# arm) — so this one line is a receipt for the wrapper AND for spaces.
+# tests/headless/run.sh's six golden netlists are the shipped-corpus half of
+# the same check.
+file mkdir [file join $tmp symp_lib]
+sch_wr [file join $tmp symp_lib "sy m.sym"] \
+"v {xschem version=3.4.6 file_version=1.2}
+G {}
+K {type=subcircuit
+format=\"@name @pinlist @symname\"
+template=\"name=x1\"}
+V {}
+S {}
+E {}
+B 5 -10 -10 10 10 {name=A dir=in}
+"
+lappend ::pathlist [file join $tmp symp_lib]
+symp_sch [file join $tmp symp_ok.sch] {sy m.sym}
+catch {xschem set_modify 0}
+pcall xschem load [file join $tmp symp_ok.sch]
+set SYMP_SYMS [pcall xschem get symbols]
+pcall xschem netlist
+set SYMP_SP [file join $::netlist_dir symp_ok.spice]
+set SYMP_PATHLINE {}
+if {[file exists $SYMP_SP]} {
+  set _fd [open $SYMP_SP r]; set _b [read $_fd]; close $_fd
+  foreach _l [split $_b "\n"] {
+    if {[string match {** sym_path:*} $_l]} { set SYMP_PATHLINE $_l ; break }
+  }
+}
+eqcheck SYMP06-space-path-golden [list $SYMP_SYMS $SYMP_PATHLINE] \
+  [list 1 "** sym_path: [file join $tmp symp_lib {sy m.sym}]"]
+set ::netlist_dir $SYMP_NDIR
+
+# --- SYMP07: the source scan -----------------------------------------------
+# All three wrappers splice with a `{%s}` group; the scan names the shape
+# rather than one spelling, so `sanitized_abs_sym_path`'s
+# `abs_sym_path [regsub ...] {%s}` is caught by the same rule.
+set SYMP_HITS {}
+set _fd [open [file join $INJ_REPO src actions.c] r]; set _b [read $_fd]; close $_fd
+set _ln 0
+foreach _l [split $_b "\n"] {
+  incr _ln
+  if {![string match {*sym_path*} $_l] || ![string match "*\{%s\}*" $_l]} continue
+  set _t [string trimleft $_l]
+  if {[string index $_t 0] eq "*" || [string range $_t 0 1] eq "/*"} continue
+  lappend SYMP_HITS "actions.c:$_ln"
+}
+check SYMP07-no-brace-splice-in-sym-path-wrappers [expr {[llength $SYMP_HITS] == 0}] \
+  "(issue 0825: a sym-path wrapper still splices its argument into a `{%s}` group:\
+ [join $SYMP_HITS { }])"
+
+cd $SC_CWD
+catch {xschem set_modify 0}
+
 xschem raw clear
 catch {test_scratch_drop $tmp}
 puts "----"

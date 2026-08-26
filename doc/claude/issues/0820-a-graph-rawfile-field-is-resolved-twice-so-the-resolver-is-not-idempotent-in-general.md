@@ -87,8 +87,25 @@ spelling that ships** (pinned by KEY1/KEY3 in `tests/headless/test_raw_read_disp
 **not in general**, with this issue named. `src/wave_viewer.tcl`'s db_path_safe rule 2
 carries the same pointer.
 
-## 6. Still open
+## 6. Still open — UPDATED 2026-08-25 (item 0821+0816+0817)
 
-- **No row covers the two-pass-vs-one-pass shape.** KEY1/KEY3 use spellings that converge
-  in one pass, so they cannot see it. A row would need a graph strip plus a nested-value
-  variable; worth adding when someone next touches `test_node_token_split.tcl`.
+**The graph DIALOG route is retired from this exposure; the `%` `node=` route is not.**
+`src/xschem.tcl`'s `graph_fill_listbox` used to `subst` the `rawfile=` attribute and then
+hand the result to `xschem raw read|switch`, which resolves it again inside
+`extra_rawfile()` — two passes. That `subst` is **gone** (issues 0821/0822), so the dialog
+route is now **one** pass, by the one C resolver, and cannot produce a two-pass key.
+
+Measured rather than argued, `tests/headless/test_wave_sigsearch.tcl` **GDI11**: with
+`::gdi_lvl2` holding the literal text `$gdi_lvl1`, a `rawfile=$gdi_lvl2` lands in the
+registry under the **one-pass** key. `{1 1}` before, `{0 1}` after. The adversary pass
+re-drove it independently and got the engine's own words:
+`raw_read(): failed to open file $one_lvl` — exactly one pass.
+
+`node_token_split()` → `extra_rawfile()` (the `%` field) is **untouched** and is still two
+passes, for the reasons in §3 and §4. So:
+
+
+- **No row covers the two-pass-vs-one-pass shape for the `%` route.** KEY1/KEY3 use
+  spellings that converge in one pass, so they cannot see it. GDI11 now covers the
+  **dialog** route with exactly the nested-value spelling this bullet asked for; the same
+  shape still needs a graph strip row in `test_node_token_split.tcl` for the `%` route.

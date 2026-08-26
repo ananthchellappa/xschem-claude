@@ -302,7 +302,8 @@ the stamp: `./`, `//`, `../` and symlinked spellings of the SAME file false-clea
 **0811** (only `load_schematic` got the deterministic clear; `Save As` lags). ~~Next
 free number: **0812**.~~ **Superseded 2026-08-25**: 0812-0814 (the 0807 crew), 0815-0817
 (the 0812 attempt-1 crew), 0818 (0812-retry), and **0819-0821** from 0812-retry's late
-adversary pass — **the next free number is 0822**. See `NUMBERING.md`.
+adversary pass; then 0822-0824, and 0825-0828 from the 0821+0816+0817 item — **the next
+free number is 0829**. See `NUMBERING.md`.
 
 **0686 stays OPEN on purpose** (decision D8) — its new §7 records why, and what
 changed under it. The E question this owes the user is in §6a-bis's plan block:
@@ -520,8 +521,8 @@ PASS — run_regression is now deliberately stricter than the CI reader), **0803
 test-side), **0804** (`test_ase_core` NT14 asserts headless-only behaviour in both
 arms; arm-gated to an announced SKIP, deliberately not widened while the notify
 channel is mid-ruling) and **0805** (full_audit's `is_pass` is prefix-anchored, so it
-accepts trailing junk the other two readers reject — latent). **Next free number:
-0806.**
+accepts trailing junk the other two readers reject — latent). ~~**Next free number:
+0806.**~~ Superseded — see §6f and `NUMBERING.md`.
 
 No ledger debt added: nothing here needed a user ruling and there is no pixel
 deliverable. Nothing cleared, converted or discharged.
@@ -530,6 +531,47 @@ Full record: `doc/claude/suggestions/next_session_prompt_op_annotation.md`, bloc
 "✅ 0689 + 0690 (+ 0698)"; issues **0689 §4-§9**, **0690 §4-§10**, **0698** (widened).
 
 ---
+
+## 6f. ✅ 0821 + 0822 + 0816 + 0825 — FIXED 2026-08-25. THE Tcl SIDE OF THE INJECTION FAMILY
+
+The C side was 0812. This item closed the Tcl side, in three units, one commit.
+
+**0821 + 0822 — the Graph dialog.** Opening the Graph properties dialog on a
+schematic someone mailed you **ran their Tcl**, out of the `rawfile=`, `sim_type=`
+and `autoload=` attributes of a graph rect. Measured through the real door — load
+the file, open the dialog — four payload shapes each created a **host file on
+disk**; `rc=0` every time, nothing logged, the dialog then behaved normally. The
+three `subst`/`eval uplevel` reads are deleted and replaced by one evaluator-free
+intake; the dead `raw_is_loaded`, which carried the same sink, is deleted. Ordinary
+trigger, high severity: a `.sch` is a document people mail each other.
+
+**0816 — nine `regsub {^~/}` + `tcleval` splices in `scheduler.c`.** `load`,
+`merge` and `log` were measured executing a payload, including on a path that does
+not exist (the splice runs before any `stat`). All nine now call `expand_tilde()`.
+
+**0825 — filed and fixed in the same commit**, because 0816 could not be closed
+without it: two of those nine verbs feed `abs_sym_path()`, which spliced its own
+argument. Its trigger is worse than the dialog's — a plain `xschem load`, no GUI:
+an instance whose symbol name contains the format's own `\}` escape executed on
+load, and three more times on netlist.
+
+**Still open, and it is the part that must not be rounded off:** `xschem load` is
+**not** safe. A crafted *filename* still executes through `is_xschem_file` /
+`get_directory` / `update_recent_file` (**0817**, now driven), and a `.sch`'s own
+`schematic=` attribute still executes on a plain **descend** through
+`cellview_sch_path()` (**0827**, filed by this write-up after re-driving it).
+
+Filed by this crew: **0825** (fixed same-commit), **0826** (test_wave_markers
+MX7b/MX7d go red on a Tk key-delivery stall — a standing red that is a *test*
+defect, root-caused instead of waved through), **0827** (the descend vector),
+**0828** (three anti-hollow rows in the new GDI group stay green when the dialog's
+attribute intake is inert — the sabotage matrix caught it).
+
+**Status E.** No new ledger debt: the user-visible consequence — a `.sch` path
+spelled `$env(HOME)/x.raw` or `$a(1)` no longer resolves, and a `[...]` in any of
+the three graph fields no longer runs — is the ruling **already owed under rule
+debt [0812] §16 item 3**. Deliberately not re-filed, not answered, and no debt of
+any kind was cleared or converted.
 
 ## 7. A note on elapsed time, so the next long run is not a mystery
 

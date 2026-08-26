@@ -1,6 +1,8 @@
 # 0822 — `autoload` and `sim_type` execute from a `.sch` attribute too, and 0821 names neither
 
-Status: **measured LIVE at HEAD, NOT FIXED.** Found by the lead 2026-08-25 21:50
+Status: **FIXED 2026-08-25 by item 0821+0816+0817, in the same change that closed 0821.**
+The full record lives in `doc/claude/issues/0821-*.md` §6-§11; §12 below is what is
+specific to this issue. Originally filed as: measured LIVE at HEAD, NOT FIXED. Found by the lead 2026-08-25 21:50
 while preparing the independent verification of the in-flight 0821+0816+0817 crew,
 by reading the site 0821 points at and noticing its two neighbours.
 Family: 0812 (fixed, C side) / 0816 / 0817 / **0821** (the Tcl side, in flight).
@@ -158,3 +160,52 @@ Also recorded: `graph_fill_listbox` **is** defined under `--nogui`, but calling 
 fires nothing — it reaches `.graphdialog.center.left.search get` and throws before
 the substitutions. So **stage 1 (replaying the three reads directly) is the
 load-bearing test**, and a stage-2 skip or silence must never be read as a pass.
+
+---
+
+## 12. FIXED — what this issue specifically got, 2026-08-25
+
+**§1's warning was the load-bearing one and it held.** "A fix that closes 4775
+alone closes one of three and reports 0821 fixed" is exactly what sabotage
+variant **SAB-A2** was built to catch: it left only `rawfile` on the evaluator
+and turned 6 rows red (GDI01, 02, 03, 04, 08, 11), which is the receipt that the
+three fields are covered **independently** rather than by one family-wide row.
+
+All three reads now go through one evaluator-free intake,
+`graph_rect_attr` (`src/xschem.tcl`), which is a bare
+`xschem getprop rect 2 $n $tok $with_quotes`. Acceptance §6:
+
+1. ✅ zero `OWNED_*` files — GDI05 (`sim_type="tran[exec touch …]"`) and GDI06
+   (`autoload="1[exec touch …]"`) are driven **separately** from the rawfile rows,
+   each through `xschem load` + `graph_edit_properties`.
+2. ✅ counterweight — `rawfile=$netlist_dir/x.raw`, `autoload=1`, `sim_type=tran`
+   behave as at HEAD (GDI09/GDI10, plus all three shipped graph schematics).
+3. ✅ the §4 quoting fact is exercised: every crafted attribute in the GDI group is
+   **quoted**, and the RED phase measured that the *unquoted* array-index spelling
+   is truncated at the space and would have passed against a live defect.
+4. ✅ `raw_is_loaded` was deleted, which is what 0821 decided (its D4).
+
+**§5's stronger option was taken for `autoload` and NOT for `sim_type`, and that
+asymmetry is deliberate:**
+
+* `autoload` **is** validated — `string is boolean -strict` — because the
+  alternative was measured to be a **denial of service on the dialog**: a crafted
+  non-boolean made `graph_edit_properties` throw "expected boolean value" *before
+  the dialog was built*, so the Graph dialog could not be opened on that file at
+  all. That guard had to go in **two** procs, not the one the plan named.
+* `sim_type` is **not** membership-tested. It needed no validation to be safe once
+  the substitution was gone: it is only ever compared (`eq {table}`) and passed on
+  as `extra_rawfile()`'s type argument, which does not expand it. A closed-set test
+  would have been new refusal behaviour on a surface no shipped file exercises —
+  larger blast radius than the defect, ladder rung L2.
+
+**And the §5 caveat, answered explicitly as it asked to be:** yes, `autoload` and
+`sim_type` (and `rawfile`) **stop honouring `$var` and `[...]` in a `.sch`**. The
+census §5 asked for was run: the complete shipped `rawfile=` set is three
+`$netlist_dir/...` spellings plus the bare name `distrib`, and
+`grep -rn '\$env(' --include=*.sch --include=*.sym` is empty tree-wide. For
+`rawfile` the `$netlist_dir` spelling still works, because the value is now
+resolved by the **one C resolver** downstream (`resolve_rawfile_path()`) instead of
+by `subst` here. For `autoload` and `sim_type` nothing shipped uses a variable at
+all. This is a **user-visible** change; the ruling is already owed to the user
+under rule debt **[0812] §16 item 3** and was deliberately not re-filed.

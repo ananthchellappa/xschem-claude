@@ -1,6 +1,9 @@
 # 0816 — nine `regsub {^~/}` + `tcleval()` path splices are still live outside the raw-file family
 
-STATUS: **OPEN — filed by the 0812 implement agent, 2026-08-25. Measured, not fixed.**
+STATUS: **FIXED 2026-08-25, item 0821+0816+0817 — all nine `scheduler.c` sites now call
+`expand_tilde()`; `xinit.c:3235` is excluded by this issue itself. See §A below, and read
+§B before writing "`xschem load` is safe" anywhere.**
+Originally filed by the 0812 implement agent, 2026-08-25. Measured, not fixed.
 FOUND IN: `src/scheduler.c`. Same sink shape as issue 0812.
 ⚠ **UPDATED 2026-08-25 (twice).** The first 0812 attempt was reverted, briefly making all
 THIRTEEN splices live; **the 0812 RETRY then landed and killed the four raw-file-family
@@ -103,3 +106,94 @@ They are not raw-file paths. Fixing them moves the **schematic-load** and
 them, and `tests/headless/test_perform_action_embed_rawfile.tcl` is the only suite that
 pins any of this seam's `~/` semantics. Whoever takes 0816 should run that suite plus the
 load/merge/saveas suites.
+
+---
+
+## §A — FIXED, 2026-08-25 (item 0821+0816+0817)
+
+### BEFORE (Measure agent, on the rebuilt HEAD binary, verbatim)
+
+```
+load: HITL=1 SC_FILE=1
+merge: HITM=1
+log: HITG=1
+load-nonexistent: HITN=1
+```
+
+The payload is this issue's own no-slash shape,
+`x} {y} {z}; set ::HIT 1; list {a`. `SC_FILE=1` is an embedded `[exec touch]`
+creating a **host file**; `HITN=1` is the row this issue demanded — the splice runs
+**before any `stat()`**, so a path that does not exist executes just as well.
+
+### AFTER
+
+All nine sites replaced with the two-line form this issue prescribed:
+
+```c
+expand_tilde(argv[N], f, (int)S(f));
+```
+
+`tests/headless/test_raw_read_dispatch.tcl`, group **SC** (true headless), added by
+this item — 89 checks → **107**, `ALL PASS`:
+
+* **SC01-SC08** `{0 0}` for `load`, `merge`, `log`, `saveas`, `load_new_window`,
+  `new_schematic` — sentinel 0 **and** no host file; **SC03** repeats it on a path
+  that does not exist; **SC06b** asserts no file appeared in the repo root.
+* **SC09** is a source scan: zero live `regsub {^~/}` splices remain in
+  `src/scheduler.c` (was nine, at 2980 7611 7767 7835 8132 8989 9028 9831 11183),
+  with `xinit.c:3235` named in the failure text as the one deliberate exclusion.
+  **It is the only coverage of `compare_schematics`, `new_process` and
+  `preview_window`**, which are not driven — 0815 segfaults `compare_schematics`
+  under `--nogui` and `new_process` forks a real xschem.
+* **SC10** anti-hollow: `xschem log ~/<name>.log` still expands the tilde and
+  creates the file under `$HOME`; a real `~/` `.sch` still loads; a path containing
+  a **space** still loads.
+
+**Two of the nine needed a second frame, and this is the propagating lesson.**
+`:7767` `load_new_window` and `:9028` `new_schematic` feed their argument into
+`abs_sym_path()`, whose **own body** spliced it into `abs_sym_path {%s} {%s}`.
+Replacing only their `regsub` left those two verbs fully exploitable, so this issue
+could not honestly be reported swept without fixing that wrapper family too — filed
+and fixed in the same commit as **0825**. `SC07` is the row that only passes once
+0825 lands, and sabotage variant SAB-C1 turned it red exactly as predicted.
+
+### Sabotage matrix
+
+| variant | predicted red | observed |
+|---|---|---|
+| **SAB-B1** splice back at all nine verbs | SC01-SC09 (9) | **exactly those 9** |
+| **SAB-B2** splice back at `log` only | SC05, SC09 (2) | **exactly those 2** — per-verb coverage, not one row standing in for nine |
+| **SAB-B3** tilde expansion dropped (verbatim copy) | SC10 (1) | **exactly SC10**; every injection row correctly stayed green |
+
+⚠ One weakness recorded rather than papered over: only SC10's
+`xschem log ~/x.log` element discriminates SAB-B3. Its two `.sch`-load elements
+pass either way, because an unexpanded literal `~/…` still reports the same
+`file tail`.
+
+### Decision
+
+**`expand_tilde()` only, never `resolve_rawfile_path()`** (ladder rung L2). It is
+byte-identical to the regsub for every input without a `}` — a brace-quoted regsub
+word never did variable substitution either. Rejected: the full resolver, which
+would **add** `$var` expansion to `load`/`merge`/`saveas`/`log` that nobody asked
+for. That is the same call 0812 made for the four raw-family verbs, with **0818**
+as the recorded residual.
+
+## §B — ⚠ "0816 FIXED" DOES NOT MEAN `xschem load` IS SAFE
+
+Driven on the **fixed** binary, twice independently (the implement agent, then the
+write-up agent):
+
+```
+xschem load "<dir>/x} ; set ::FNPWN 1; exec touch <dir>/FNHOST; is_xschem_file {a"
+->  FNPWN=1  host=1
+```
+
+A crafted **filename** still executes, through the `tclvareval` brace groups of
+`is_xschem_file` / `get_directory` / `update_recent_file` — **issue 0817**, which
+this item deliberately deferred. SC01-SC08 pass only because *this issue's* payload
+shape trips a wrong-number-of-args error at the first of those sinks and aborts the
+script; a payload shaped for that sink does not.
+
+The sink named by this issue is closed at all nine sites. The **verb** is not clean.
+Any status row that compresses the first sentence into the second is wrong.

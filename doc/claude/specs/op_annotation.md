@@ -2740,15 +2740,29 @@ all **0** before (three of them with the filename silently **blanked** — a `my
 Attempt 1 (built, green on 32 new checks and all five sabotage variants, **reverted** when the
 adversary drove the array-index shape) is `doc/claude/issues/0812-*.md` §1-§10; the retry is
 §11-§17, and **§18 is the adversary pass on the retry** — which did *not* refute the fix and
-*did* refute two of its comments. Still live: **0815** (`compare_schematics` segfaults under
-`--nogui`), **0816** (nine more `regsub` splices), **0817** (the `tclvareval` brace groups),
+*did* refute two of its comments. Fixed since, by item **0821+0816+0817** (2026-08-25): **0821 + 0822** — the Graph dialog's
+three `.sch` attribute reads (`src/xschem.tcl:4775` and its two neighbours) no longer
+`subst` anything, and the dead `raw_is_loaded` is deleted; **0816** — all nine remaining
+`regsub {^~/}` splices in `scheduler.c` call `expand_tilde()`; **0825** — the three
+sym-path wrappers in `actions.c`, found and fixed in the same commit because two of the
+nine fed one of them. The dialog route is now **single-pass**, measured, which retires
+0820's exposure for it.
+
+Still live: **0815** (`compare_schematics` segfaults under `--nogui`), **0817** (the
+`tclvareval` brace groups — now with a **driven** vector: a crafted *filename* still
+executes on `xschem load` through `is_xschem_file`/`get_directory`/`update_recent_file`),
 **0818** (the top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a
 `$var`-spelled path — left alone on purpose, decision D5), **0819** (the read-trace edge),
-**0820** (the double-pass non-idempotence), and **0821** — ⚠ **a LIVE Tcl-side splice of the
-same shape that this section is about**: `src/xschem.tcl:4775` `graph_fill_listbox` runs
-`eval uplevel #0 {subst $rawfile}` over a `.sch` `rawfile=` attribute, measured executing,
-seven call sites, reached by opening the Graph dialog on someone else's schematic. The C
-family is fixed; **the Tcl layer in front of it is not**.
+**0820** (the double-pass non-idempotence, on the `%` `node=` route only), **0827** —
+⚠ **a LIVE splice of the same shape, reached by DESCENDING into a block**:
+`cellview_sch_path()` (`src/actions.c:4215`) splices a `.sch` `schematic=` attribute into
+`cellview_path {%s} schematic`, and one mailed file plus a stock library symbol runs
+`exec touch` on a plain `xschem descend` — and **0828** (three anti-hollow rows of the new
+GDI group stay green when the dialog's attribute intake is inert).
+
+**The honest summary of this whole family: a `.sch` is still executable by two named doors
+(0827 content, 0817 filename). What the fixes can claim is site-by-site, never
+verb-by-verb** — see issue 0823.
 
 **The `(` decision is user-visible and is the ruling this item returned as status E**
 (0812 §16): `$a(1)` in a rawfile spelling now means the value of `a` followed by a literal

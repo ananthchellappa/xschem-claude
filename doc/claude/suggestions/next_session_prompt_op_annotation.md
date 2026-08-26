@@ -106,18 +106,16 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    This is a **user-visible** change and it is the ruling this step returned as status
    **E** — see 0812 §16. If you reuse `expand_tcl_vars()` for 0817, you inherit this
    decision; say so in your own write-up rather than letting it spread silently.
-9. **Still open in this family**: **0816** (nine `regsub` splices outside the raw family +
-   `xinit.c`), **0817** (the `tclvareval` brace groups of file-derived strings), **0818**
-   (the top-level `raw_read`/`table_read`/`vcd_read` verbs still do not expand a
-   `$var`-spelled path — deliberate, decision D5), **0819** (the read-trace edge above),
-   **0820** (the double-pass non-idempotence above), **0821** (⚠ **a LIVE Tcl-side splice
-   of the same shape**: `src/xschem.tcl:4775` `graph_fill_listbox` runs
-   `eval uplevel #0 {subst $rawfile}` over a `.sch` `rawfile=` attribute — measured
-   executing, 7 call sites, the Graph dialog; `:4842` `raw_is_loaded` is the same shape and
-   is dead code, delete it), and **0815** (`xschem compare_schematics <path>` segfaults
-   under `--nogui`, not injection). **0821 belongs in the 0816/0817 sweep** — it is the
-   same defect class, in Tcl, and it is reachable by opening a dialog on someone else's
-   schematic.
+9. **Still open in this family** — ⚠ **rewritten 2026-08-25 after item 0821+0816+0817**;
+   see the ✅ block below it for what closed. Open: **0817** (the `tclvareval` brace
+   groups — now with a **driven** vector, not just an inventory), **0818** (the top-level
+   `raw_read`/`table_read`/`vcd_read` verbs still do not expand a `$var`-spelled path —
+   deliberate, decision D5), **0819** (the read-trace edge above), **0820** (the
+   double-pass non-idempotence — the `%` `node=` route only; the Graph **dialog** route is
+   now single-pass and measured), **0815** (`xschem compare_schematics <path>` segfaults
+   under `--nogui`, not injection), **0827** (⚠ **LIVE**: descend executes a `.sch`'s
+   `schematic=` attribute) and **0828** (test coverage). **Closed**: 0816, 0821, 0822,
+   0825.
 10. **⚠ REBUILD AT THE TOP OF YOUR ITEM.** The 0812-retry write-up corrected three C
    comment blocks (`util.c`, `draw.c`, `xschem.h`) and could not build — crew rule 2 gives
    `make` to the Implement agent alone — so `find src -maxdepth 1 -newer src/xschem`
@@ -128,6 +126,86 @@ code delivers.** Whatever you write in the 0816/0817 sweep, attack the sentence 
    0821, which cost a second write-up cycle and a second round of source edits on a
    "finished" item. An adversary pass is what refuted attempt 1 while four suites were ALL
    PASS; it is not an optional garnish and it is not useful late.
+
+---
+
+## ✅ 0821 + 0822 + 0816 + 0825 — **FIXED 2026-08-25 (item 0821+0816+0817, status E). THE Tcl SIDE OF 0812'S FAMILY IS CLOSED AT ITS NAMED SITES — AND `xschem load` IS STILL NOT SAFE**
+
+**Not a plan step.** Records: **`0821-*.md` §6-§11** (the full one: before/after
+transcripts, decisions with ladder rungs, the sabotage matrix including the three
+predicted reds that did **not** appear, still-open), **0822 §12**, **0816 §A/§B**,
+**0825 §6-§9**.
+
+Three units, one commit: the Graph dialog's three `.sch` attribute reads
+(`src/xschem.tcl`, `subst`/`eval uplevel` **deleted**, `raw_is_loaded` deleted); the
+nine `regsub {^~/}` + `tcleval` splices in `scheduler.c` (all → `expand_tilde()`);
+and the three sym-path wrappers in `actions.c` (→ `tclsetvar` + `$::var`, filed as
+0825 and fixed in the same commit because two of the nine fed one of them).
+`test_raw_read_dispatch` 89 → **107**, `test_wave_sigsearch` (`:99`) 233 → **248**,
+everything else unchanged.
+
+### ⚠⚠ WHAT MUST PROPAGATE TO EVERY LATER STEP
+
+1. **A `.sch` is STILL EXECUTABLE, by two named doors, on this tree.** Do not write
+   "the injection family is closed" anywhere.
+   * **0827 — content**: `cellview_sch_path()` (`src/actions.c:4215`) splices the
+     instance `schematic=` attribute into `cellview_path {%s} schematic`. One mailed
+     `.sch` + a **stock** library symbol + `xschem descend -inst x1` → `exec touch`
+     ran, `--nogui`, no dialog. Filed by the write-up agent after re-driving the
+     adversary's finding. Its trigger is at least as ordinary as 0821's was.
+   * **0817 — filename**: `xschem load "<dir>/x} ; … ; is_xschem_file {a"` still
+     executes, through `is_xschem_file` / `get_directory` / `update_recent_file`.
+     0816's SC rows are green only because *0816's* payload shape trips a
+     wrong-#-args error at the first of those sinks.
+   **Claims in this family are site-by-site, never verb-by-verb** (issue 0823).
+2. **A splice can need TWO frames fixed, and each frame passes its own review.**
+   `load_new_window` and `new_schematic` needed `expand_tilde()` **and** 0825's
+   wrapper. `graph_fill_listbox`'s boolean guard needed to go in
+   `graph_edit_properties` **as well** — the plan hardened one and the throw was in
+   the other, one frame earlier. When you fix a splice, walk what the argument is
+   handed to next.
+3. **The anti-hollow half of a security suite is the half that rots.** Sabotage
+   variant SAB-A3 made the Graph dialog read **nothing** — a measured user-visible
+   break (the dialog lists the wrong raw's signals) — and the suite stayed
+   **248/248**, because two of those three rows are satisfied by the C draw path and
+   the third asserts `winfo exists`, not content. Filed as **0828**. Predict a red
+   for an *inert* implementation, not only for a *malicious* one.
+4. **Two rows in the SYMP group do not test what their text says**, and both were
+   found only by sabotage: SYMP05 greps a message printed **before** the wrapper
+   runs, and `sanitized_abs_sym_path` has **no driven row at all** (a payload symbol
+   name never reaches it — the netlisters call it with a symbol that actually
+   loaded). It is covered only by a source-scan guard, which the next editor deletes.
+   See 0825 §8.
+5. **`string is boolean -strict` (Tcl) is narrower than `strboolcmp()` (C,
+   `util.c:78`)**, which accepts any positive integer. `autoload=2` gives the Tcl
+   word `switch` where `draw.c` gives `read`. Unobservable today only because
+   `raw switch` falls through to a read. Anything that consumes that Tcl word for
+   something else re-opens an **I1** divergence.
+6. **New failure mode in the sym-path wrappers**: they now depend on
+   `__abs_symp_name` / `__abs_symp_ext` / `__rel_symp_name` being **scalars**. A
+   user rc that array-ifies one, or puts a failing trace on it, makes `tcleval` fail
+   and the Tcl **error message** is returned as a filesystem path to ~70 call sites.
+   GUARD3 pins read traces in `src/*.tcl` only, not in a user's rc.
+7. **The rebuild receipt must be quoted in its FILTERED form.**
+   `find src -maxdepth 1 -newer src/xschem` is now **1** — `src/xschem_subcommands.txt`,
+   a gitignored artifact **xschem regenerates at runtime**, so merely running a suite
+   reddens the bare form. The load-bearing form is
+   `find src -maxdepth 1 \( -name '*.c' -o -name '*.h' -o -name '*.y' -o -name '*.l' \) -newer src/xschem`,
+   and it is **0**.
+8. **`test_wave_markers` on `:99` is 977 passed / 6 FAILED, and that is the baseline
+   to diff against — not 983.** MX7b ×3 + MX7d ×3, root-caused to a **Tk
+   key-delivery stall** whose fallback drives the shipping handler and lands markers
+   on different pixels (the geometry is byte-identical between the green and red
+   runs — the first diagnosis, "unpinned window geometry", was **wrong** and is
+   corrected in **0826 §3b**). Reproduced by a **pre-fix pinned binary**, so it is
+   not this item's change. It is a *test* defect; do not carry it forward as
+   furniture and do not spend a budget bisecting an innocent patch against it.
+9. **Concurrency will poison your tiers.** Two `run_regression.tcl` runs in the same
+   tree share `tests/<case>/results/.work/` and `results.log` and clobber each other
+   into FATALs whose own debug logs show a clean `xwin_exit()`; and a suite launched
+   while `src/xschem.tcl` is mid-write dies with
+   `missing close-brace … Line No: 15157`. Gate on a tree fingerprint plus process
+   idle, and assert the fingerprint identical before and after each run.
 
 ---
 
