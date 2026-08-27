@@ -161,6 +161,31 @@ if {[info exists ::has_x]} {
      {$ux <= $cx && $uy <= $cy && $ux >= 0 && $uy >= 0 &&
       [wm geometry .zz1] ne [wm geometry .zz9]}
 
+  # ⚠ U4's step-back IS NOT ENOUGH ON ITS OWN, which is what U4b pins. The flip only asks
+  # "would stepping away from the origin overflow"; it never checks where the step actually
+  # LANDS. On a window large relative to the screen the stepped-back position still hangs
+  # off the bottom. Arithmetic on this suite's own 1920x1080: a congruent 1200x800 pair at
+  # +600+600 flips to +200+334, bottom edge 1134 -- 54px below a 1080-tall screen. Sized
+  # from the live screen so the row does not silently stop testing anything at another
+  # AUDIT_SCREEN (at 1600x1200 the same absolute numbers would fit and the row would pass
+  # without the clamp).
+  set bw [expr {int($sw * 0.62)}]
+  set bh [expr {int($sh * 0.74)}]
+  set bx [expr {int($sw * 0.31)}]
+  set by [expr {int($sh * 0.55)}]
+  wm geometry .zz1 ${bw}x${bh}+${bx}+${by}
+  wm geometry .zz9 ${bw}x${bh}+${bx}+${by}
+  update idletasks
+  set rc_big [wviewer::uncover .zz1 .zz9]
+  scan [wm geometry .zz1] {%dx%d+%d+%d} pw ph px py
+  # POSITIVE TWIN FIRST: it really did move. Without this the row below passes on an
+  # uncover that declined to act, since a window it never touched could sit anywhere.
+  ck "U4a a large congruent pair is still shoved (precondition for U4b)" \
+     {$rc_big == 1 && [wm geometry .zz1] ne [wm geometry .zz9]}
+  ck "U4b ... and the shoved window lands FULLY ON SCREEN, not merely stepped back\
+ (the direction flip alone leaves it hanging off)" \
+     {$px >= 0 && $py >= 0 && $px + $pw <= $sw && $py + $ph <= $sh}
+
   # ---- U5..U7: what the field log actually showed (2026-08-26) --------------
   # ⚠ ONE PIXEL IS CONGRUENT. Issue 0647's own measurement was 1000x800+13+89
   # against 1000x800+13+90. A string compare calls that "not congruent"; a human

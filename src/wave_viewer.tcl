@@ -1184,6 +1184,30 @@ proc wviewer::uncover {top from {tries 4} {verify 2}} {
   if {$y + $dy + $h > [winfo screenheight $top]} { set dy [expr {-$dy}] }
   set nx [expr {$x + $dx}]
   set ny [expr {$y + $dy}]
+  # ⚠ CLAMP THE FAR EDGES TOO, WITH A MARGIN. Flipping the direction above is not enough.
+  # The flip only asks "would stepping AWAY from the origin overflow"; it never checks the
+  # result, so on a window large relative to the screen the stepped-back position still
+  # hangs off. Measured on 1920x1080, a congruent 1200x800 pair at +600+600: the flip
+  # alone yields +200+334, bottom edge 1134 on a 1080-tall screen -- 54px past it. With
+  # the clamp, +200+216, bottom 1016. Row U4b.
+  #
+  # The margin also covers the decoration `wm geometry` does not report (it gives the
+  # CLIENT size, excluding the WM title bar) and keeps a grab-able strip on screen.
+  #
+  # ⚠ THIS IS NOT AN EXPLANATION OF THE VANISHING VIEWER, and an earlier revision of this
+  # comment wrongly claimed it was. The field case that prompted it -- viewer 1110x790 at
+  # +3930+665 on 5120x1440, bottom edge 1455 -- is a real overhang and this clamp is worth
+  # having, but the disappearance was measured afterwards to be a VcXsrv failure to create
+  # a native Windows window at all: the X server reported the window IsViewable while an
+  # EnumWindows sweep of the vcxsrv process found no window for it, and the fragment the
+  # user could see was exactly the geometric intersection with the schematic window, which
+  # tracked it when the X window was moved. Nothing here fixes that. Do not let this
+  # comment grow an explanation again.
+  set margin 64
+  set sw [winfo screenwidth $top]
+  set sh [winfo screenheight $top]
+  if {$nx + $w > $sw - $margin} { set nx [expr {$sw - $margin - $w}] }
+  if {$ny + $h > $sh - $margin} { set ny [expr {$sh - $margin - $h}] }
   if {$nx < 0} { set nx 0 }
   if {$ny < 0} { set ny 0 }
   catch {wm geometry $top ${w}x${h}+${nx}+${ny}}
