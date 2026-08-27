@@ -383,6 +383,25 @@ set r4 [kid r4 {
 check {R4a annotate_op on a LIVE (still-running) raw survives} [survived $r4] [ctail $r4]
 eqcheck {R4b PRECONDITION: the good database really was attached first} [zval $r4 Z_PRE_VA] 3.14
 eqcheck {R4c PRECONDITION: and really had published 6 entries} [zval $r4 Z_PRE_ND] 6
+# ⚠ SINCE ISSUE 0856, R4d-R4g NO LONGER ISOLATE THE 0836 GUARD -- BUT NOT FOR
+# THE REASON AN EARLIER DRAFT OF THIS COMMENT GAVE. It said a transient is turned
+# away ONE GUARD EARLIER, before the zero-point test is reached. That is BACKWARDS
+# and it is worth getting right, because issue 0859's whole product is a
+# DO-NOT-REORDER rule on these guards. Source order inside update_op() is:
+# digital refusal at save.c:2096, ZERO-POINT refusal at save.c:2154, then the 0856
+# op/dc gate at save.c:2240. The zero-point guard is FIRST and it really does fire
+# here -- measured, because the two refusals mint different sentences, and a
+# zero-point transient emits 0836's own 'holds no simulation points yet' text
+# while the 0856 line never appears for it.
+# So the 0856 gate is a LATER BACKSTOP, not an earlier catch: delete the 0836
+# guard and fixture L falls through to it and is refused anyway, with the same
+# observable a Tcl row can see (`return 0`, array untouched). That is why these
+# rows stay green with the 0836 guard deleted. They are kept because what they
+# claim -- a live, still-running .tran raw publishes nothing -- is still exactly
+# true and is still the user-visible behaviour worth pinning.
+# THE ROWS THAT DO ISOLATE THE 0836 GUARD are the ZERO-POINT OPERATING POINT
+# ones: R2*, R5a-R5j and R7*. `op` passes the 0856 gate, so those reach the
+# zero-point test and red when it is removed. Recorded in issue 0859.
 eqcheck {R4d the live raw did attach, and is zero-point} [zval $r4 Z_PTS] 0
 eqcheck {R4e it attached as the transient it is} [zval $r4 Z_SIM] tran
 eqcheck {R4f NOTHING was published from it -- not even zeros} [zval $r4 Z_ND] 0
@@ -432,6 +451,7 @@ set r4i [kid r4i {
 check {R4i annotate_op on a live raw survives with a non-current good db} [survived $r4i] [ctail $r4i]
 eqcheck {R4j PRECONDITION: the good db answered 3.14 BEFORE the refused call} [zval $r4i Z_BASE_VA] 3.14
 eqcheck {R4k PRECONDITION: and had published} [zval $r4i Z_BASE_UOP] 1
+# ⚠ same 0856 shadowing as R4d-R4g above: fixture L is a zero-point TRANSIENT.
 eqcheck {R4l nothing was published from the zero-point raw} [zval $r4i Z_ND] 0
 eqcheck {R4m I3: the good database is STILL IN THE REGISTRY, untouched} \
   [zval $r4i Z_INFO] {2 current|0 G.raw op|1 S.raw tran|2 L.raw tran|}
@@ -485,13 +505,29 @@ eqcheck {R5i I3: the good tran at that path still has its 3 points} [zval $r5 Z_
 eqcheck {R5j I3: and still answers with a number} [zval $r5 Z_SURV_VAL] 7.77
 
 # ===========================================================================
-# ROW 5s -- THE LITERAL WORDING, KEPT AS A 0814 WITNESS.
-# This is green at HEAD and says NOTHING about 0836: the tran leg finds
-# <P>/"tran" already registered and serves the in-memory copy without opening
-# the rewritten file. It is here so that when 0814 lands and the leg really
-# reads, this row REDS and has to be replaced by row 5 proper -- rather than
-# 0814 silently turning an 0836 row from vacuous into meaningful with nobody
-# noticing which it had been.
+# ROW 5s -- THE LITERAL WORDING. ONE 0814 WITNESS, TWO 0856 WITNESSES.
+# The tran leg finds <P>/"tran" already registered and serves the in-memory
+# copy without opening the rewritten file, so this scenario says NOTHING about
+# 0836 -- the zero-point guard is never reached, because the database that
+# arrives is the cached 3-point one.
+#
+# ⚠ THE THREE ROWS BELOW NO LONGER WITNESS THE SAME THING, AND A LATER READER
+# MUST NOT READ THE SPLIT AS A WEAKENING.
+#   R5s1  is the 0814 witness, and now the ONLY one. It says the cached points
+#         are served and the rewritten file is never opened. When 0814 lands
+#         and the leg really reads, THIS row reds and has to be replaced by
+#         row 5 proper.
+#   R5s2  and R5s3 used to be 0814 witnesses too -- "so it still publishes",
+#         "the PREVIOUS run's number, from memory". Issue 0856 took that away:
+#         the copy being served is a TRANSIENT, and since the ruling only an
+#         operating point publishes an operating point, so the point-0
+#         publisher refuses it and nothing reaches the schematic. They are now
+#         0856 gate witnesses, and they are gate-sensitive: delete the guard in
+#         update_op() and they read `1` and `7.77` again.
+#         When 0814 lands, R5s1 reds and these two do NOT -- a zero-point
+#         transient is refused by the 0856 gate before it can reach the 0836
+#         one. That is the expected shape, not a row that quietly stopped
+#         measuring.
 # ===========================================================================
 set r5s [kid r5s {
   set Q [file join $::TMP Q.raw]
@@ -506,8 +542,8 @@ set r5s [kid r5s {
 }]
 check {R5s0 the literal registered-path row survives} [survived $r5s] [ctail $r5s]
 eqcheck {R5s1 WITNESS(0814): the cached 3 points are served, file never opened} [zval $r5s Z_PTS] 3
-eqcheck {R5s2 WITNESS(0814): so it still publishes} [zval $r5s Z_UOP] 1
-eqcheck {R5s3 WITNESS(0814): the PREVIOUS run's number, from memory} [zval $r5s Z_VA] 7.77
+eqcheck {R5s2 WITNESS(0856): the served copy is a TRANSIENT, so the point-0 publisher refuses it} [zval $r5s Z_UOP] 0
+eqcheck {R5s3 WITNESS(0856): and NO number reaches the schematic -- not the previous run's, not a fabricated one} [zval $r5s Z_VA] {}
 
 # ===========================================================================
 # ROW 7 -- THE THIRD DOOR, found while fixing this and not in the issue's list.

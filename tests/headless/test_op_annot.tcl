@@ -6007,8 +6007,30 @@ set T_TXT_P4  "id  = 40u\ngm  = 400u\ngds =\nvth = 0.7\n"
 set T_TXT_P25 "id  = 25u\ngm  = 250u\ngds =\nvth = 0.7\n"
 ## The same four rows as the RENDERED overlay reads back out of an SVG export.
 set T_ROWS_P0 {{id  = 0} {gm  = 0} {gds =} {vth = 0.7}}
+## ⚠ THE REFUSED STATE, WHICH IS NOW THE RESTING STATE OF AN ATTACHED TRANSIENT.
+## Issue 0856, ruled by the user 2026-08-26: only an operating point publishes an
+## operating point, so a freshly attached .tran raw rests at annot_p == -1 with
+## NOTHING published, instead of showing its t=0 sample wearing the label
+## "operating point". Move a cursor and the real values at that time appear,
+## exactly as before -- that is what every row from T1 down still measures.
+## MEASURED on this binary, both arms, and written out for the same reason the
+## P0/P1/P3 goldens are: a formatter drift must red here, not agree with itself.
+set T_TXT_NONE  "id  =\ngm  =\ngds =\nvth =\n"
 set T_ROWS_P1 {{id  = 10u} {gm  = 100u} {gds =} {vth = 0.7}}
 set T_ROWS_P3 {{id  = 30u} {gm  = 300u} {gds =} {vth = 0.7}}
+## ...and the same four rows in the 0856 REFUSED state, as the RENDERED overlay
+## reads back out of an SVG export. All four blank, including `vth`: in this
+## fixture vth is a raw VECTOR (`v(@m.xm1...[vth])`, variable 3 of the header
+## written below), not a symbol property, so nothing published means nothing to
+## print. MEASURED on this binary; it agrees row-for-row with T_TXT_NONE, and
+## that agreement is itself worth having -- the C overlay back end and
+## op_annot::text are two separate formatters over one state (invariant I1), and
+## a divergence here would be a real defect rather than a golden to tidy.
+set T_ROWS_NONE {{id  =} {gm  =} {gds =} {vth =}}
+## Row T22's two shapes: the lab_pin text tail of an SVG export, from the `d`
+## label onwards. MEASURED, byte-identical headless and under a display.
+set T_PINS_NONE {d g 0 0}
+set T_PINS_P3   {d 3 g 0.9 0 0.0 0 0.0}
 
 ## `xschem raw annot` -> {annot_p annot_x annot_sweep_idx}, or a marker. NEVER a
 ## bare catch: with no raw loaded it RAISES "No raw file loaded", and a caught
@@ -6067,17 +6089,21 @@ proc opa_t_rows {svg} {
   foreach t [opa_q_texts $svg] { if {[regexp {^(id|gm|gds|vth) +=} $t]} { lappend o $t } }
   return $o
 }
-## The voltage lab_pin `d` is printing, i.e. the text node immediately after the
-## label — lab_pin.sym carries `T {@lab}` then `T {@spice_get_voltage}`
-## (lab_pin.sym:32) and the export preserves that order. This is the
-## `@spice_get_voltage` half of the blast radius, and it is a CACHED floater
-## string, not a live translate: the marker matters because the value alone
-## (`0`, `3`) is far too generic to search for.
-proc opa_t_vd {svg} {
+## The lab_pin TAIL of an export: every text node from the `d` label onwards.
+## lab_pin.sym carries `T {@lab}` then `T {@spice_get_voltage}` (lab_pin.sym:32)
+## and the export preserves that order, so a rendered voltage appears BETWEEN two
+## pin labels and a refused one leaves the labels back to back.
+## ⚠ THE WHOLE TAIL, NOT THE ONE NODE AFTER `d`, AND THAT CHANGED WITH 0856.
+## The old accessor returned `lindex $t [expr {$i+1}]` alone. With nothing
+## published there is no voltage text at all, so that lone node is the NEXT PIN'S
+## LABEL (`g`) -- a golden of `g` would pin a neighbouring symbol's label and call
+## it evidence about the subject. Reading the tail says the true thing directly:
+## either the labels run back to back, or a value sits between them.
+proc opa_t_pins {svg} {
   set t [opa_q_texts $svg]
   set i [lsearch -exact $t d]
   if {$i < 0} { return "NO-LABEL" }
-  return [lindex $t [expr {$i + 1}]]
+  return [lrange $t $i end]
 }
 
 if {[catch {
@@ -6151,14 +6177,29 @@ catch {op_annot::register nmos [list devpath $TMPL_AT params $T_PARAMS]}
 #   * cursor B was never enabled (graph_flags == 0) — decision D5 says the
 #     direct path must neither REQUIRE nor SET bit 4, and this is the state that
 #     makes T1's claim the strong one;
-#   * annotate_op published point 0 (`0 0 -1`: annot_p 0, annot_x never written,
-#     sweep_idx never resolved);
-#   * and the block really does read that point.
+#   * the raw ATTACHED (rc 0) but published NOTHING -- `-1 0 -1`: annot_p -1,
+#     annot_x never written, sweep_idx never resolved;
+#   * and the block really does read that refusal, blank rather than zero.
+#
+# ⚠ THE FOURTH CLAIM INVERTED WITH ISSUE 0856, AND THE ROW GOT STRONGER RATHER
+# THAN WEAKER. It used to assert `0 0 -1` and a block full of point-0 numbers,
+# i.e. that a 5-point TRANSIENT put its t=0 sample on the schematic labelled as
+# the operating point. The user ruled that out on 2026-08-26, verbatim: "We
+# haven't yet built anything for annotating from TRAN results, so it should do
+# nothing silently."
+# ⚠ annot_p == -1 IS THE GATE'S SIGNATURE AND IS THIS ROW'S REAL EVIDENCE.
+# Delete the guard in update_op() and this row reads `0 0 -1` with the block
+# filled -- so it still catches the gate being removed, which is the whole
+# reason it was rewritten instead of deleted.
+# ⚠ AND IT STILL CANNOT GO HOLLOW: rc 0 says the raw really attached (a failed
+# load also publishes nothing), `nmos` says the descriptor really resolved, and
+# T1 immediately below moves a cursor and gets real numbers out of the SAME
+# database -- so "nothing is published" here is a refusal, not an empty tree.
 set t0_rc [opa_t_arm [file join $lib s5_flat.sch]]
-check {T0 CONTROL: a tran raw annotated on a sheet with NO graph object and cursor B never enabled, resting on point 0} \
+check {T0 CONTROL: a tran raw annotated on a sheet with NO graph object and cursor B never enabled ATTACHES and publishes NOTHING (0856)} \
   [list $t0_rc [xschem get rects 2] [xschem get graph_flags] [opa_t_annot] \
         [op_annot::type M1] [rcall {op_annot::text M1}]] \
-  [list 0 0 0 {0 0 -1} nmos [list 0 $T_TXT_P0]]
+  [list 0 0 0 {-1 0 -1} nmos [list 0 $T_TXT_NONE]]
 
 # ===========================================================================
 # T1 — THE STEP: THE CURSOR IS RESOLVED WITH NO GRAPH IN THE PICTURE
@@ -6320,8 +6361,16 @@ check {T9 SEAM a graphless cursor move invalidates the overlay cache exactly ONC
 # BYTES the overlay back end produced, through get_annot_overlay()'s cache
 # (actions.c:1456) rather than through op_annot::text — which is the only way a
 # stale C cache can be told apart from a correct formatter. The three exports
-# are one sequence in one process: point 0 (which fills the cache), then 3 ns,
-# then back to 1 ns.
+# are one sequence in one process: the resting state (which fills the cache),
+# then 3 ns, then back to 1 ns.
+# ⚠ THE FIRST FRAME IS NOW THE 0856 REFUSED STATE, AND THAT MAKES THE ROW A
+# STRONGER I3 STATEMENT THAN IT WAS. The cache is filled from a state in which
+# NOTHING was published, then the cursor moves and real numbers must appear. A
+# stale C cache can no longer satisfy the sequence by accident: the first frame's
+# content genuinely DIFFERS IN KIND from the second, where before 0856 the
+# difference was only between two sets of numbers.
+# ⚠ AND THE FIRST FRAME IS GATE-SENSITIVE: delete the guard in update_op() and
+# t10a fills with the point-0 numbers again.
 opa_t_arm [file join $lib s5_flat.sch]
 opa_l_annot 1
 set t10a [opa_t_rows [opa_l_print2 svg [file join $scratch t_ovl0.svg] $T_VP]]
@@ -6330,8 +6379,8 @@ set t10b [opa_t_rows [opa_l_print2 svg [file join $scratch t_ovl3.svg] $T_VP]]
 xschem set cursor2_x 1e-9
 set t10c [opa_t_rows [opa_l_print2 svg [file join $scratch t_ovl1.svg] $T_VP]]
 opa_l_annot 0
-check {T10 the RENDERED overlay block follows the graphless cursor -- point 0, then 3 ns, then back to 1 ns} \
-  [list $t10a $t10b $t10c] [list $T_ROWS_P0 $T_ROWS_P3 $T_ROWS_P1]
+check {T10 the RENDERED overlay block follows the graphless cursor -- refused at rest, then 3 ns, then back to 1 ns} \
+  [list $t10a $t10b $t10c] [list $T_ROWS_NONE $T_ROWS_P3 $T_ROWS_P1]
 
 # ===========================================================================
 # T11 — INVARIANT I4: THE SHEET IS READ, NEVER WRITTEN
@@ -6450,10 +6499,21 @@ foreach {k v} [list x1 0 x2 5e-9 y1 -1 y2 5] { xschem setprop rect 2 1 $k $v }
 xschem setprop rect 2 1 fullyzoom
 xschem cursor 2 1
 xschem set cursor2_x 3e-9
+# ⚠ THE ANNOT TRIPLE IS THIS ROW'S EVIDENCE. THE TRAILING `0` IS NOT.
+# Since issue 0856 an attached transient rests at annot_p -1 rather than 0, so
+# the triple moved from `0 0 -1` to `-1 0 -1` -- and the row still catches a 0477
+# "rescue", which would read annot_p 2. The trailing `0` from `opa_t_v {v(d)}` is
+# IDENTICAL with and without the 0856 gate and proves nothing on its own: this
+# fixture's v(d) really IS 0.0 at point 0, and with the gate the -1 accessor falls
+# through to a cursor_b_val that was never written and is calloc-zeroed. It is
+# kept because it says the value accessor did not RAISE, not because its value
+# discriminates. `opa_t_eng` is no better here -- measured, it also answers 0:
+# op_annot::raw_or_blank is deliberately ungated and the annot_p>=0 gate lives in
+# op_annot::_annotated, which only the block and the floater go through.
 check {T14 REGRESSION 0477 a plain rect at GRIDLAYER index 0 still blocks a real graph at index 1 -- the direct path does NOT rescue it} \
   [list [xschem get rects 2] [xschem getprop rect 2 0 flags] \
         [xschem getprop rect 2 1 flags] [opa_t_annot] [opa_t_v {v(d)}]] \
-  [list 2 {} graph {0 0 -1} 0]
+  [list 2 {} graph {-1 0 -1} 0]
 
 # ===========================================================================
 # T15 — REGRESSION: GATE 3, `graph_flags & 4` (issue 0478)
@@ -6467,8 +6527,12 @@ check {T14 REGRESSION 0477 a plain rect at GRIDLAYER index 0 still blocks a real
 opa_t_arm [file join $lib s5_flat.sch]
 opa_t_graph 1
 xschem set cursor2_x 3e-9
+# ⚠ SAME SHAPE AND SAME CAVEAT AS T14: the annot triple is the evidence and the
+# trailing `0` is not. `-1 0 -1` rather than `0 0 -1` since issue 0856 -- an
+# attached transient publishes nothing at rest -- and the row still catches the
+# direct arm firing behind a graph, which would read annot_p 2.
 check {T15 REGRESSION 0478 a fullyzoom'd graph with cursor B never enabled still annotates nothing} \
-  [list [xschem get graph_flags] [opa_t_annot] [opa_t_v {v(d)}]] {0 {0 0 -1} 0}
+  [list [xschem get graph_flags] [opa_t_annot] [opa_t_v {v(d)}]] {0 {-1 0 -1} 0}
 
 # ===========================================================================
 # T16 — OUT OF RANGE, PAST THE END: THE ENDPOINT IS HELD, AND SAID SO
@@ -6608,9 +6672,23 @@ check {T21 D1 a plain non-graph rect on GRIDLAYER with no graph anywhere still r
 # the raw and the schematic keeps painting the previous timepoint. Measured
 # today, graphless, at the DEFAULT mask: the two exports are byte-identical and
 # both print `d 0`; with a graph the same pair moves `d 1` -> `d 3`.
-# ⚠ THE FIRST ELEMENT IS THE NON-VACUITY GUARD. `0` proves the floater renders
-# at all at point 0 — without it a fixture where the text never appeared would
-# satisfy "the two exports differ" by accident.
+#
+# ⚠ ISSUE 0856 MOVED THE FIRST EXPORT AND FORCED A BETTER ACCESSOR.
+# At rest an attached transient now publishes nothing, so NO `@spice_get_voltage`
+# text is emitted at all -- and the old accessor, which returned the single text
+# node after the `d` label, then returned `g`: THE NEXT PIN'S LABEL. A golden of
+# `g` would be pinning a neighbouring symbol's label and calling it evidence
+# about this row's subject. opa_t_pins reads the whole tail instead and says the
+# true thing directly.
+# ⚠ SO READ THE TWO ELEMENTS AS SHAPES, NOT AS VALUES.
+#   first  -- the four lab_pin labels BACK TO BACK with nothing between them:
+#             no voltage text was emitted anywhere on the sheet.
+#   second -- THE NON-VACUITY GUARD, and it does more work than the old `0` did:
+#             at 3 ns all four floaters render, each value sitting between its
+#             own label and the next. Without it, "the two exports differ" is
+#             satisfied by a fixture whose text never appeared at all.
+# ⚠ GATE-SENSITIVE: delete the guard in update_op() and the first element fills
+# with point-0 values, i.e. it stops being labels-back-to-back.
 #
 # ⚠ THE MASK IS SET TO 2 HERE, AND THAT IS A REPAIR, NOT A WEAKENING (0614).
 # This row ran at the DEFAULT mask because at the time nothing gated a node
@@ -6623,15 +6701,164 @@ check {T21 D1 a plain non-graph rect on GRIDLAYER with no graph anywhere still r
 # restored to 0 immediately below, as it was before.
 opa_t_arm [file join $lib s5_flat.sch]
 opa_l_annot 2
-set t22a [opa_t_vd [opa_l_print2 svg [file join $scratch t_flt0.svg] $T_VP]]
+set t22a [opa_t_pins [opa_l_print2 svg [file join $scratch t_flt0.svg] $T_VP]]
 xschem set cursor2_x 3e-9
-set t22b [opa_t_vd [opa_l_print2 svg [file join $scratch t_flt3.svg] $T_VP]]
+set t22b [opa_t_pins [opa_l_print2 svg [file join $scratch t_flt3.svg] $T_VP]]
 check {T22 the lab_pin @spice_get_voltage floater follows a GRAPHLESS cursor -- the wider blast radius, and set_modify(-2)} \
-  [list $t22a $t22b] {0 3}
+  [list $t22a $t22b] [list $T_PINS_NONE $T_PINS_P3]
+
+opa_l_annot 0
+
+# ===========================================================================
+# T23-T28 — ISSUE 0856's OWN TRUTH TABLE, ONE ROW PER TERM
+# ===========================================================================
+# ⚠ EVERY ROW ABOVE MEASURES THE GATE THROUGH THE `tran` TERM ALONE. The guard
+# in update_op() has four more terms and until these rows NOTHING IN THE TREE
+# saw three of them: `dc` accepted, a multi-point Operating Point accepted after
+# read_dataset rewrites it, and a NULL sim_type refused. A guard whose accepting
+# half is untested is a guard that can be tightened into refusing everything
+# without a single row noticing -- and "publishes nothing, ever" passes T0, T10,
+# T14, T15 and T22 exactly as the correct behaviour does.
+#
+# THE FIVE TERMS, and the row that owns each:
+#   T23  tran      REFUSED   -- the ruling itself, in one row
+#   T24  op        ACCEPTED  -- the control; the feature that must not break
+#   T25  dc        ACCEPTED  -- Xyce spells its operating point this way
+#   T26  op, N>1   ACCEPTED  -- read_dataset rewrites it to `dc`; the gate
+#                              comment's own stated justification
+#   T27  table     REFUSED   -- THE WIDENING, pinned as behaviour (issue 0860)
+#   T28  <none>    REFUSED   -- the NULL-safety term, no database loaded at all
+#
+# ⚠ THE VALUE HALF IS WHAT MAKES T24-T26 REAL. `update_op` answering 1 says a
+# publish was attempted; the number out of ngspice::ngspice_data says one
+# arrived. Each fixture carries a DIFFERENT, exactly-representable voltage
+# (7.5 / 8.5 / 6.5 / 5.5) so no row can be satisfied by another row's leftovers
+# -- and update_op unsets the array on entry, so a stale value would have to
+# have been republished to appear.
+proc opa_t_pub {} {
+  return [list [xschem raw sim_type] [xschem raw points] [xschem update_op]]
+}
+proc opa_t_nv {k} {
+  if {[info exists ::ngspice::ngspice_data($k)]} { return [set ::ngspice::ngspice_data($k)] }
+  return {}
+}
+proc opa_t_hdr {plot npts sweep} {
+  return "Title: 0856 truth table
+Date: Mon Jan 1 00:00:00 2026
+Plotname: $plot
+Flags: real
+No. Variables: 2
+No. Points: $npts
+Variables:
+\t0\t$sweep\t$sweep
+\t1\tv(d)\tvoltage
+Values:
+"
+}
+proc opa_t_wr {path text} {
+  set f [open $path w] ; puts -nonewline $f $text ; close $f
+}
+
+set T_OPRAW   [file join $scratch t_op1.raw]
+set T_DCRAW   [file join $scratch t_dc1.raw]
+set T_OPMULTI [file join $scratch t_opn.raw]
+set T_TBL     [file join $scratch t_tbl.dat]
+opa_t_wr $T_OPRAW   "[opa_t_hdr {Operating Point} 1 time]0\t0.0\n\t7.5\n"
+opa_t_wr $T_DCRAW   "[opa_t_hdr {DC transfer characteristic} 1 v-sweep]0\t0.0\n\t8.5\n"
+opa_t_wr $T_OPMULTI "[opa_t_hdr {Operating Point} 3 time]0\t0.0\n\t6.5\n1\t1.0\n\t6.6\n2\t2.0\n\t6.7\n"
+opa_t_wr $T_TBL     "v-sweep\tv(d)\n0.0\t5.5\n1.0\t5.6\n2.0\t5.7\n"
+
+# ---------------------------------------------------------------------------
+# T23 — THE RULING, IN ONE ROW
+# ---------------------------------------------------------------------------
+# The user's words, 2026-08-26: "if OP is part of the run, then plot from OP. We
+# haven't yet built anything for annotating from TRAN results, so it should do
+# nothing silently. Why complicate things?" This is that sentence as an
+# assertion: a 5-point transient is loaded and current, and the point-0
+# publisher declines it and leaves the array EMPTY.
+# Without the guard this row reads `tran 5 1` with 2 entries in the array.
+catch {xschem raw clear}
+xschem raw read $T_RAW tran
+check {T23 issue 0856: a TRANSIENT is loaded and current, and the point-0 publisher refuses it -- nothing published, nothing said} \
+  [list [opa_t_pub] [array size ::ngspice::ngspice_data]] {{tran 5 0} 0}
+
+# ---------------------------------------------------------------------------
+# T24 — THE CONTROL: THE OPERATING POINT PATH IS UNTOUCHED
+# ---------------------------------------------------------------------------
+# ⚠ THE ROW THE WHOLE FEATURE IS PROTECTED BY. Backannotation exists to put an
+# operating point on a schematic; a guard that also silenced `op` would be a far
+# worse defect than the one it fixes, and every refusal row in this file would
+# still be green. 7.5 is exactly representable in single precision, so the
+# golden is exact and needs no to_eng.
+catch {xschem raw clear}
+xschem raw read $T_OPRAW op
+check {T24 CONTROL: a 1-point OPERATING POINT still publishes, and a real number reaches the schematic} \
+  [list [opa_t_pub] [opa_t_nv {v(d)}]] {{op 1 1} 7.5}
+
+# ---------------------------------------------------------------------------
+# T25 — THE `dc` TERM, WHICH NOTHING IN THE TREE SAW BEFORE THIS ROW
+# ---------------------------------------------------------------------------
+# Xyce writes its operating point as a 1-point DC TRANSFER CHARACTERISTIC, and
+# both `raw switch` gates already spell the op/dc pair the same way. Drop the
+# `dc` half of the guard and every Xyce user's operating point silently stops
+# annotating -- with no error, because the refusal is deliberately silent.
+# ⚠ READ AS `dc`, NOT AS `op`: measured, `xschem raw read <dc-plotname> op`
+# answers 0 and leaves nothing loaded, so a row written the other way would be
+# green against a broken guard for the wrong reason.
+catch {xschem raw clear}
+xschem raw read $T_DCRAW dc
+check {T25 a 1-point DC TRANSFER CHARACTERISTIC -- how Xyce spells an operating point -- still publishes} \
+  [list [opa_t_pub] [opa_t_nv {v(d)}]] {{dc 1 1} 8.5}
+
+# ---------------------------------------------------------------------------
+# T26 — THE OTHER ROAD TO `dc`, AND THE GATE COMMENT'S OWN JUSTIFICATION
+# ---------------------------------------------------------------------------
+# read_dataset() rewrites a MULTI-POINT "Operating Point" to sim_type `dc`
+# (save.c, the `npoints > 1 && !strcmp(sim_type, "op")` arms). So a file whose
+# header says Operating Point can arrive at the guard calling itself `dc`, which
+# is exactly why the guard accepts both spellings. The gate's comment says so;
+# this row is what makes the claim checkable.
+catch {xschem raw clear}
+xschem raw read $T_OPMULTI op
+check {T26 a MULTI-POINT Operating Point arrives as `dc` -- the rewrite read_dataset performs -- and still publishes its point 0} \
+  [list [opa_t_pub] [opa_t_nv {v(d)}]] {{dc 3 1} 6.5}
+
+# ---------------------------------------------------------------------------
+# T27 — THE WIDENING, TURNED FROM A SILENT DECISION INTO A VISIBLE ONE
+# ---------------------------------------------------------------------------
+# ⚠ THE USER RULED ABOUT TRANSIENTS. THE GUARD REFUSES EVERYTHING THAT IS NOT
+# op/dc, an ascii TABLE database included -- and a table is not a logic database,
+# it is columns of real numbers, so nothing about the digital ruling covers it
+# either. That is a deliberate widening (issue 0860): one rule and one answer,
+# because nothing but op/dc has ever held a meaningful operating point, and the
+# narrow alternative would leave ac, noise and table publishing a fabricated
+# point 0 -- ruling D5-1's exact failure. It is recorded as an unratified
+# decision rather than hidden. If the user later rules that tables SHOULD
+# publish, THIS ROW REDS and forces the conversation instead of letting the
+# behaviour drift.
+catch {xschem raw clear}
+xschem raw table_read $T_TBL
+check {T27 issue 0860 THE WIDENING: an ascii TABLE database publishes nothing either -- the guard is op/dc only, not `not tran`} \
+  [list [opa_t_pub] [opa_t_nv {v(d)}]] {{table 3 0} {}}
+
+# ---------------------------------------------------------------------------
+# T28 — THE NULL-SAFETY TERM
+# ---------------------------------------------------------------------------
+# The guard reads xctx->raw->sim_type, so it must survive there being no
+# database at all -- `xschem update_op` is a public verb any script can call at
+# any moment, and the Op Annotate menu entries reach it after a `raw clear`.
+# Drop the null test from the condition and this row does not fail politely: it
+# SIGSEGVs, the file dies with no RESULT banner, and run_regression scores the
+# whole case as a harness failure. That is the honest shape -- the row is only
+# crash-prone under sabotage, and at HEAD it answers safely.
+# ⚠ `xschem raw loaded`, NEVER `xschem raw sim_type`: with nothing loaded the
+# latter RAISES, which would abort the file rather than answer it.
+catch {xschem raw clear}
+check {T28 with NO database loaded at all the publisher answers 0 and touches nothing -- the guard's NULL term} \
+  [list [xschem raw loaded] [xschem update_op] [array size ::ngspice::ngspice_data]] {-1 0 0}
 
 catch {xschem raw clear}
 catch {xschem cursor 2 0}
-opa_l_annot 0
 set XSCHEM_LIBRARY_PATH $S_LIBS
 
 } terr]} {
@@ -10609,10 +10836,17 @@ set XSCHEM_LIBRARY_PATH $W_LIBS
 }
 
 # --- verdict -----------------------------------------------------------------
+# ⚠ THE DUAL BANNER IS REQUIRED BY tests/run_regression.tcl's hcases list, which
+# this file is registered in. banner_complete (tests/banner_rule.tcl) needs a
+# WHOLE-LINE "OVERALL: ok" as well as the RESULT line; registering a suite there
+# without one reproduces the completion-sentinel false red that has been filed
+# four separate times as 0420 / 0492 / 0629 / 0689.
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
+  puts "OVERALL: ok"
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"
+  puts "OVERALL: notok"
 }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

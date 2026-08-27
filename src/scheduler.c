@@ -2457,7 +2457,25 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           /* Xyce uses a 1-point DC transfer characteristic for operating point (OP) data */
           res = extra_rawfile(1, f, "dc", -1.0, -1.0);
         }
-        if(res != 1) { /* try to load a tran analysis (display 1stpoint as OP data in schematic) */
+        /* ISSUE 0856 -- THE TRANSIENT FALLBACK STAYS, AND THE REFUSAL MOVED
+         * ONE LEVEL DOWN. See update_op() in save.c.
+         *
+         * The user ruled 2026-08-26 that a transient must not be annotated,
+         * on the stated premise that nothing had been built for it. That
+         * premise is incomplete and the measurement is in issue 0856: cursor-
+         * driven transient annotation IS built (RULING D4, step S11) and is
+         * pinned by 23 rows, T0-T22, of tests/headless/test_op_annot.tcl -- a
+         * cursor at 3 ns on a 0..4 V ramp annotates 3 V, correctly. This line
+         * is that feature's ATTACH door; deleting it took the whole section
+         * down (20 rows red, measured) while the feature itself was untouched.
+         *
+         * So the transient still ATTACHES here, and update_op() below refuses
+         * to publish its point 0 as an operating point. Resting state on a
+         * freshly attached transient is now annot_p == -1 -- nothing shown --
+         * instead of t=0 wearing the label "operating point", which is the
+         * thing the user actually reported. Move a cursor and the real values
+         * at that time appear, exactly as before. */
+        if(res != 1) {
           res = extra_rawfile(1, f, "tran", -1.0, -1.0);
         }
       }

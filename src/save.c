@@ -2142,6 +2142,19 @@ int update_op()
    * schematic instead of blanking -- a fabricated number, which is the exact
    * outcome RULING D5-1 exists to prevent.
    *
+   * ⚠ THAT INVENTORY IS SHORT BY ONE, AND THE MISSING ONE IS UNGUARDED --
+   * ISSUE 0861. Six is the right count of GUARDED sites. There is a SEVENTH
+   * reader of cursor_b_val in token.c, spice_get_node() at about :4483, which
+   * carries no annot_p term at all -- it tests only that the vector index
+   * resolved. So a @spice_get_node text on a schematic (a probe symbol, or the
+   * shipped devices/scope_ammeter.sym) prints the calloc zero WHENEVER nothing
+   * has been published, which this guard and the 0856 guard below both make
+   * more reachable than they used to be. Measured 2026-08-27: the same three
+   * data points render `-` with nothing loaded, `0` as a refused transient, and
+   * the true `1.8` as an operating point. The audit that produced the "six"
+   * above stopped at op_annot.tcl's _annotated and never reached the C
+   * renderers. Do not read this guard, or the one below, as closing that.
+   *
    * ⚠ NOT COVERED HERE: this guard is update_op()-local by ruling (the
    * narrow option of 0836's open question). The other zero-point dereferences
    * on the same database are fixed SEPARATELY and elsewhere -- get_raw_value()
@@ -2153,6 +2166,110 @@ int update_op()
    * point count (issue 0853), which this guard catches one frame late. */
   if(xctx->raw && xctx->raw->allpoints <= 0) {
     backannot_refuse_empty(xctx->raw->rawfile);
+    return 0;
+  }
+  /* ISSUE 0856 -- A TRANSIENT DOES NOT PUBLISH AN OPERATING POINT.
+   * (An earlier draft of this line claimed the stronger "ONLY AN OPERATING
+   * POINT PUBLISHES AN OPERATING POINT". That is not yet true -- see the
+   * ISSUE 0862 note below -- and a comment must not out-claim its code.)
+   * RULED BY THE USER 2026-08-26: "We haven't yet built anything for annotating
+   * from TRAN results, so it should do nothing silently."
+   *
+   * `p` is pinned at 0 twenty lines below and there was NO sim_type test here at
+   * all, so a 5-point transient published values[i][0] -- t=0, the DC initial
+   * condition -- as the operating point. Measured: v(a) 0,1,2,3,4 published 0.
+   *
+   * THIS IS THE CHOKE POINT, which is why the guard is here and not at the one
+   * caller that was reported. FOUR routes reach this function with a non-op
+   * database and this single guard answers all four identically: scheduler.c's
+   * annotate_op transient fallback, the route the user actually hit; `xschem
+   * annotate_op <f> <lvl> tran`, which names the type explicitly; `xschem raw
+   * switch`, whose op/dc gate lives in the caller and which issue 0853 measured
+   * asking the WRONG database; and the bare `xschem update_op` verb.
+   *
+   * ⚠ THE scheduler.c FALLBACK STAYS -- IT IS NOT DEAD CODE, AND AN EARLIER
+   * DRAFT OF THIS COMMENT WRONGLY SAID IT HAD BEEN DELETED. Do not read "the
+   * user ruled against annotating a transient" as "nothing should attach one".
+   * That line is the ATTACH door for CURSOR-DRIVEN transient annotation, which
+   * is a built and shipping feature (RULING D4, step S11) pinned by section T
+   * of tests/headless/test_op_annot.tcl; deleting it takes ~20 rows down while
+   * changing nothing whatever about this ruling. The transient still attaches,
+   * and this guard refuses to publish its point 0 as an operating point. See
+   * the matching comment at that line in scheduler.c.
+   *
+   * SILENT, DELIBERATELY, AND UNLIKE ITS TWO NEIGHBOURS. The digital (D5-3) and
+   * zero-point (0836) refusals each mint a sentence because each describes a
+   * database the user deliberately pointed at and deserves an explanation for.
+   * This one is a policy the user asked not to dress up -- "why complicate
+   * things?" -- and the explanation the user actually needs arrives one level
+   * up, from the chord (issue 0857) which re-asks `xschem raw loaded` and
+   * reports for itself. `return 0` still means "nothing was published", which is
+   * what a calling script reads.
+   *
+   * ⚠ "SILENT" NAMES THE CHANNELS A PERSON LOOKS AT, and all three hold: no
+   * CIW line, no status line, no number on the schematic. The dbg(0) below is
+   * not one of them -- it reaches stderr and the action log, where someone
+   * editing a schematic never sees it but a script grepping a log will, once
+   * per call. dbg(0) is the level both neighbouring refusals in this function
+   * already use, so it stays; demoting this one alone would be a second idiom
+   * for no reader's benefit. Recorded, unratified, in issue 0860.
+   *
+   * `dc` IS ACCEPTED, and that is not slack: read_dataset() rewrites a
+   * multi-point OP to `dc`, and Xyce spells its operating point as a 1-point DC
+   * transfer characteristic. Both `raw switch` gates spell the same op/dc PAIR.
+   * A NULL sim_type is refused -- nothing that cannot name itself gets to be an
+   * operating point.
+   *
+   * ⚠ BUT THIS TEST IS ONE TERM WEAKER THAN THOSE TWO GATES -- ISSUE 0862.
+   * scheduler.c's `raw switch` and `switch_back` both require `allpoints == 1`
+   * as well as the op/dc pair; this guard tests the TYPE ONLY. So a genuine
+   * multi-point .dc SWEEP still publishes its FIRST STEP as the operating
+   * point. Measured 2026-08-27: a 5-point DC transfer characteristic answers
+   * update_op() with 1, puts its v-sweep=0 step on the schematic, and even
+   * declares "n points = 1" while holding 5. That is pre-existing -- this guard
+   * did not change the dc path -- but it means the transient is refused while
+   * the sweep is not, which is why the headline above was narrowed. Do NOT
+   * "fix" it by bolting `allpoints == 1` on here: row T26 is a THREE-point
+   * Operating Point that read_dataset() rewrote to `dc`, and it must keep
+   * publishing. Point count alone does not separate the two; the sweep
+   * variable does. Measure before choosing.
+   *
+   * ⚠ THE WIDENING (ISSUE 0860): THIS REFUSES EVERY sim_type THAT IS NOT
+   * op/dc, NOT MERELY `tran`. The user ruled about transients; the test is
+   * written as an ALLOW-LIST, so `ac`, `noise`, `table` and `vcd` are refused
+   * by it too -- measured 2026-08-27, an ascii table database answers `xschem
+   * update_op` with 0 and puts nothing on the schematic. That is deliberate,
+   * and it is the NARROWER reading that would be unsafe: a denylist testing
+   * only for `tran` leaves ac, noise and table publishing values[i][0] as an
+   * operating point, which is a number that was never measured for the device
+   * it is drawn beside -- precisely what RULING D5-1 forbids. Nothing but op/dc
+   * has ever held a meaningful operating point. Row T27 of
+   * tests/headless/test_op_annot.tcl pins the widening AS BEHAVIOUR, so a later
+   * change of mind reds a test instead of passing unnoticed.
+   *
+   * ⚠ THIS GUARD SHADOWS THE D5-3 DIGITAL REFUSAL ABOVE. DO NOT REORDER THE
+   * TWO (ISSUE 0859). "vcd" is the only sim_type raw_is_digital() answers true
+   * for -- raw_reader_table above has exactly one digital entry -- and "vcd" is
+   * neither "op" nor "dc", so THIS guard would refuse a digital database as
+   * well, with the identical observable: return 0, the array left unset. The
+   * refusal above is the ONLY place the user-facing "is a digital results
+   * database" sentence is minted (RULING D5-4). Put this guard first and that
+   * sentence is never spoken: someone who points Op Annotate at a .vcd gets
+   * silence instead of an explanation, and NO behavioural row in the tree would
+   * notice, because from Tcl the two refusals are indistinguishable. That is
+   * why BA37 of tests/headless/test_backannotate_digital.tcl pins the ORDER.
+   *
+   * ⚠ BA37 GREPS THIS FUNCTION, AND THIS COMMENT QUOTES ITS TOKENS. It looks
+   * for `raw_is_digital(`, `backannot_refuse_digital(` and this guard's own
+   * `sim_type, "op")` -- all three appear in the prose here. It counts them on
+   * CODE LINES ONLY, skipping every line whose first non-blank character is a
+   * star or which opens a comment, so the quotations above are invisible to it
+   * and only moving real code can change its answer. Keep any new prose in this
+   * block in that shape, or BA37 starts counting sentences as calls. */
+  if(!xctx->raw || !xctx->raw->sim_type ||
+     (strcmp(xctx->raw->sim_type, "op") && strcmp(xctx->raw->sim_type, "dc"))) {
+    dbg(0, "update_op(): '%s' is not an operating point database, publishing nothing\n",
+        (xctx->raw && xctx->raw->sim_type) ? xctx->raw->sim_type : "<none>");
     return 0;
   }
   if(xctx->raw && xctx->raw->values) {
