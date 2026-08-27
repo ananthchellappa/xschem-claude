@@ -270,7 +270,22 @@ int set_modify(int mod)
        * run the command "N"). \[ \] make them literal. */
       char wn[20] = "";
       if(xctx->window_number > 0) my_snprintf(wn, S(wn), " \\[%d\\]", xctx->window_number);
-      if(xctx->modified == 1) {
+      /* ⚠ issue 0851: A WAVEFORM VIEWER OWNS ITS OWN TITLE. Its buffer is `untitled.sch`
+       * by construction, so deriving a title from the schematic name here renames the
+       * window from "Waveforms <cell> (<state>)" to "xschem [N] - untitled.sch
+       * (read-only)" -- and the user then reasonably reports that there is no waveform
+       * window, because the one on screen no longer says it is one. wviewer::retitle
+       * (src/wave_viewer.tcl) is the owner; this is the same surface-vs-document
+       * distinction the wave_viewer brand was added for in issue 0172.
+       *
+       * It surfaced with issue 0848. Before that fix the redraw-only restore hit
+       * switch_window's "already there" early return and never reached set_modify(-1);
+       * once the forward switch really happened, the restore had somewhere to come back
+       * FROM, called set_modify(-1) on the viewer context, and clobbered the title. The
+       * bug was always here -- 0848 only stopped hiding it. */
+      if(xctx->wave_viewer) {
+        /* leave the viewer's title to its owner */
+      } else if(xctx->modified == 1) {
         tclvareval("wm title ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
         tclvareval("wm iconname ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
       } else {
