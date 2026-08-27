@@ -1606,6 +1606,43 @@ const char *backannot_refuse_digital(const char *dbname)
   return msg;
 }
 
+/* ISSUE 0836 -- THE SAME SENTENCE SHAPE FOR THE OTHER "PUBLISHES NOTHING" CASE.
+ * A results database with no simulation points in it carries no operating
+ * point either, and unguarded it does not merely publish nothing -- it
+ * SIGSEGVs (see the guard in update_op() for the mechanism).
+ *
+ * WHY THIS IS THE ORDINARY PATH AND NOT A CORNER: ngspice writes
+ * `No. Points: 0` into the raw header when a run STARTS and backfills the real
+ * count only when it ENDS. So for the entire duration of every simulation the
+ * file on disk is a well-formed, UNTRUNCATED, zero-point raw. Measured
+ * 2026-08-26 against a real 868 KB mid-run /usr/local/bin/ngspice-46+ transient
+ * raw: read_dataset() reports it a success with points=0, no truncation logic
+ * is involved at all, and there is no `binary block is not of correct size`
+ * warning to notice. Pressing Annotate Operating Point while a simulation runs
+ * is therefore this sentence's routine, intended audience.
+ *
+ * Minted here rather than at the caller for the same reason D5-4 gives: the
+ * refusal is where the reason is known. Same anti-splice discipline as
+ * backannot_refuse_digital() above -- `dbname` is a user-supplied path and is
+ * handed to Tcl as a VARIABLE, never concatenated into a script. */
+const char *backannot_refuse_empty(const char *dbname)
+{
+  static char msg[512];
+  const char *n = (dbname && dbname[0]) ? dbname : "that results database";
+  my_snprintf(msg, S(msg),
+    "backannotation: '%s' holds no simulation points yet -- a spice raw file "
+    "reports 'No. Points: 0' from the moment its run starts until the moment it "
+    "ends, so while the simulation is still running there is nothing in it to "
+    "annotate onto the schematic", n);
+  dbg(0, "%s\n", msg);
+  if(has_x) {
+    tclsetvar("__backannot_refuse_msg", msg);
+    tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $::__backannot_refuse_msg note}");
+    Tcl_UnsetVar(interp, "__backannot_refuse_msg", TCL_GLOBAL_ONLY);
+  }
+  return msg;
+}
+
 /* RULING D5-6 -- THE TYPE TOKEN IS NOT THE ONLY WAY TO ASK FOR A DIGITAL
  * DATABASE, so it cannot be the only thing the refusal keys on.
  *
@@ -2058,6 +2095,61 @@ int update_op()
    * what `xschem update_op` reports to the script that asked. */
   if(raw_is_digital(xctx->raw)) {
     backannot_refuse_digital(xctx->raw->rawfile);
+    return 0;
+  }
+  /* ISSUE 0836, enforcement point 1 of 1 -- A ZERO-POINT DATABASE PUBLISHES
+   * NOTHING, and unguarded it SIGSEGVs rather than merely publishing nothing.
+   *
+   * THE MECHANISM: read_raw_data_block() sizes every column with
+   *   my_realloc(_ALLOC_ID_, &raw->values[p], (offset + npoints) * sizeof(SPICE_DATA))
+   * (save.c, the loop just below the values[] calloc), and my_realloc() with a
+   * size of 0 FREES AND NULLS (util.c). So with npoints == 0 and offset == 0
+   * `raw->values` is non-NULL while every `raw->values[v]` is NULL, and
+   * read_dataset() still returns 1. The gate below tests the OUTER array and
+   * then dereferences the INNER one, with `p` pinned at 0 -- a NULL[0] read.
+   *
+   * WHY IT IS THE ORDINARY PATH: see backannot_refuse_empty() above. ngspice
+   * writes `No. Points: 0` at the start of a run and backfills it at the end,
+   * so every simulation leaves a well-formed zero-point raw on disk for its
+   * whole duration. Three shipped verbs reach this with one, measured
+   * 2026-08-26: `xschem update_op` after `xschem raw read <f> op 999 1000`
+   * (a sweep window that excludes every point), `xschem annotate_op <live raw>`,
+   * and `xschem raw switch <n>` -- the last because scheduler.c snapshots
+   * `Raw *raw = xctx->raw` BEFORE the switch and then gates update_op() on the
+   * OUTGOING database's allpoints while update_op() reads the INCOMING one.
+   *
+   * WHICH FIELD, AND WHAT THE OTHER ONE ANSWERED. Guarded on `allpoints`,
+   * a plain int that cannot be indexed wrong. Issue 0836 suggested
+   * `npoints[raw->datasets] > 0` instead; that is an OUT-OF-BOUNDS READ.
+   * Measured on both fixtures: `datasets` is 1 by the time update_op() runs
+   * (read_dataset() does raw->datasets++ AFTER read_raw_data_block()), while
+   * the npoints array was realloc'd to `datasets+1` entries BEFORE that
+   * increment and therefore holds exactly ONE. So npoints[datasets] is
+   * npoints[1], one past the live entry; npoints[0] answers 0 correctly and
+   * allpoints answers 0 correctly. allpoints is also the field every other
+   * point-count guard in the tree already uses (draw.c's `point >= allpoints`,
+   * callback.c's `allpoints > 1`), and it is set on all four reader paths
+   * (raw_read, table_read, vcd_read, new_rawfile).
+   *
+   * SHAPE: the D5-3 refusal above, not a second idiom -- refuse, say why once,
+   * `return 0` meaning "nothing was published", and leave whatever was
+   * previously attached alone rather than half-publishing (invariant I3).
+   *
+   * ⚠ IT MUST RETURN BEFORE `annot_p = 0` BELOW, not after. `annot_p >= 0` is a
+   * term of the published-annotation gate in token.c's six live_cursor2 sites
+   * and in op_annot.tcl, so a guard that let annot_p reach 0 would make every
+   * one of them read the my_calloc-zeroed cursor_b_val and print 0 V on the
+   * schematic instead of blanking -- a fabricated number, which is the exact
+   * outcome RULING D5-1 exists to prevent.
+   *
+   * ⚠ NOT COVERED HERE, AND STILL LIVE: this guard is update_op()-local by
+   * ruling (the narrow option of 0836's open question). `xschem raw pos_at` on
+   * a zero-point database still SIGSEGVs by a different route -- raw_get_pos()
+   * clamps to `lastpoint = npoints[dset] - 1`, i.e. -1, and get_raw_value()
+   * bounds `point` from ABOVE only -- and waves_callback() has the same shape.
+   * Measured and filed as siblings; do not read this guard as closing them. */
+  if(xctx->raw && xctx->raw->allpoints <= 0) {
+    backannot_refuse_empty(xctx->raw->rawfile);
     return 0;
   }
   if(xctx->raw && xctx->raw->values) {

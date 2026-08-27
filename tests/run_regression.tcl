@@ -50,7 +50,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_gf180mcud_libmgr" \
                  "headless/test_ihp_sg13g2_libmgr" \
                  "headless/test_pdk_launcher" \
-                 "headless/test_ciw_actionlog_output"]
+                 "headless/test_ciw_actionlog_output" \
+                 "headless/test_zero_point_raw_0836"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

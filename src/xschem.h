@@ -2435,6 +2435,7 @@ extern int raw_file_is_digital(const char *f);
  * the debug channel and returns it, so a caller with a Tcl result to set hands
  * the script the same words the user reads. */
 extern const char *backannot_refuse_digital(const char *dbname);
+extern const char *backannot_refuse_empty(const char *dbname);
 extern double get_raw_value(int dataset, int idx, int point);
 extern int plot_raw_custom_data(int sweep_idx, int first, int last, const char *ntok, const char *yname);
 extern int calc_custom_data_yrange(int sweep_idx, const char *express, Graph_ctx *gr);
