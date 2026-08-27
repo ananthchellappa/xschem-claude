@@ -2142,12 +2142,15 @@ int update_op()
    * schematic instead of blanking -- a fabricated number, which is the exact
    * outcome RULING D5-1 exists to prevent.
    *
-   * ⚠ NOT COVERED HERE, AND STILL LIVE: this guard is update_op()-local by
-   * ruling (the narrow option of 0836's open question). `xschem raw pos_at` on
-   * a zero-point database still SIGSEGVs by a different route -- raw_get_pos()
-   * clamps to `lastpoint = npoints[dset] - 1`, i.e. -1, and get_raw_value()
-   * bounds `point` from ABOVE only -- and waves_callback() has the same shape.
-   * Measured and filed as siblings; do not read this guard as closing them. */
+   * ⚠ NOT COVERED HERE: this guard is update_op()-local by ruling (the
+   * narrow option of 0836's open question). The other zero-point dereferences
+   * on the same database are fixed SEPARATELY and elsewhere -- get_raw_value()
+   * now bounds `point` from below and raw_get_pos() refuses an empty dataset
+   * (issue 0852, which also covers waves_callback()'s identical shape). Do not
+   * read THIS guard as closing them, and do not read their fix as closing this
+   * one: three call sites, three guards, one input. Still open on the same
+   * input: `xschem raw switch` gates the republish on the OUTGOING database's
+   * point count (issue 0853), which this guard catches one frame late. */
   if(xctx->raw && xctx->raw->allpoints <= 0) {
     backannot_refuse_empty(xctx->raw->rawfile);
     return 0;
@@ -2370,6 +2373,20 @@ int raw_get_pos(const char *node, double value, int dset, int from_start, int to
   if(sch_waves_loaded() >= 0) {
     if(dset >= raw->datasets) dset = raw->datasets - 1;
     if(dset < 0) dset = 0;
+    /* ISSUE 0852: a search over a dataset with NO POINTS has no answer, so say
+     * so instead of clamping the window to `lastpoint = npoints[dset] - 1` ==
+     * -1 and then asking get_raw_value() for point -1. That clamp was the
+     * caller half of the SIGSEGV described in get_raw_value() above; the lower
+     * bound added there stops the dereference, but arriving at the bisection
+     * with start == end == -1 is still asking a question about points that do
+     * not exist. -1 is this function's own "not found", the value `x` is
+     * already initialised to, and what every out-of-range search returns.
+     *
+     * The npoints NULL test is not decoration: sch_waves_loaded() (draw.c)
+     * tests raw->values / names / schname and raw->level, never the point
+     * count and never npoints, so it admits a database this function must not
+     * index. That is the same outer-array-only shape as issue 0836's defect. */
+    if(!raw->npoints || raw->npoints[dset] <= 0) return -1;
     idx = get_raw_index(node, NULL);
     if(idx >= 0) {
       double vx;
@@ -3094,16 +3111,48 @@ double get_raw_value(int dataset, int idx, int point)
     dbg(0, "get_raw_value(): dataset(%d) >= datasets(%d)\n", dataset,  xctx->raw->datasets);
   }
   if(xctx->raw && xctx->raw->values && dataset < xctx->raw->datasets) {
-    if(dataset == -1) {
-      if(point < xctx->raw->allpoints)
-        return xctx->raw->values[idx][point];
-    } else {
+    /* ISSUE 0852: BOUND `point` FROM BELOW AS WELL AS FROM ABOVE.
+     *
+     * This used to be two arms -- `dataset == -1` testing `point < allpoints`
+     * and `dataset >= 0` testing `ofs + point < allpoints` -- and NEITHER had a
+     * lower bound. `allpoints` is a signed int (xschem.h), so there is no
+     * unsigned wrap to save a negative index: on a ZERO-POINT database
+     * `allpoints` is 0 and `-1 < 0` is TRUE, and the return dereferenced
+     * values[idx][-1] on a column that my_realloc(id, ptr, 0) had already freed
+     * and NULLed. That is a SIGSEGV, and a zero-point database is the ORDINARY
+     * case, not a corner: ngspice writes `No. Points: 0` into the raw header
+     * when a run STARTS and backfills the real count only when it ENDS, so for
+     * the whole duration of every simulation the file on disk is a well-formed,
+     * untruncated, zero-point raw. See issue 0836 for that mechanism.
+     *
+     * WHO SENDS A NEGATIVE POINT. raw_get_pos() below clamps its search window
+     * to `lastpoint = npoints[dset] - 1`, which is -1 on an empty dataset, and
+     * waves_callback() (callback.c) computes `npoints[dset] - 1` the same way
+     * with no point-count test in its guard chain. raw_get_pos() now refuses an
+     * empty dataset outright (see there), but this function is the shared root
+     * and must be safe for EVERY caller, present and future -- callback.c's
+     * site needs a GUI event to reach and is covered only from here.
+     *
+     * ONE GUARD, NOT TWO. The arms are merged so there is exactly one bound.
+     * The old shape let a fix land on one `if` and not the other, and the
+     * `dataset == -1` arm is not reachable with a negative point from any
+     * `xschem raw ...` subcommand, so it could not have been pinned by a
+     * behavioural test row. With `dataset >= 0` gating the offset walk, `ofs`
+     * is 0 for `dataset == -1` exactly as before -- and for any `dataset < -1`
+     * too, which is what the old `else` arm's zero-iteration loop produced.
+     * Behaviour is bit-identical to the old code for every non-negative point.
+     *
+     * The shape matches the rest of the tree: draw.c spells
+     * `if(point < 0 || point >= xctx->raw->allpoints) goto done;` and
+     * scheduler.c's `xschem raw value` / `raw set` arms both spell
+     * `point >= 0 && point < ...`. get_raw_value() was the outlier. */
+    if(dataset >= 0) {
       for(i = 0; i < dataset; ++i) {
         ofs += xctx->raw->npoints[i];
       }
-      if(ofs + point < xctx->raw->allpoints) {
-        return xctx->raw->values[idx][ofs + point];
-      }
+    }
+    if(point >= 0 && ofs + point < xctx->raw->allpoints) {
+      return xctx->raw->values[idx][ofs + point];
     }
   }
   return 0.0;

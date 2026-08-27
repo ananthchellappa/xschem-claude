@@ -283,7 +283,7 @@ identical crash.
 | 5 | **registered-path twin** | `R5a`-`R5j`, plus `R5s0`-`R5s3` |
 | 6 | what a zero-point database reports about itself | `R6a`-`R6f` |
 | +  | door 3, `raw switch` | `R7a`-`R7e` |
-| +  | **scope tripwire**: `raw pos_at` still crashes | `R8a`-`R8b` |
+| +  | scope: `raw pos_at` on the same database | `R8a`-`R8c` — shipped as a **crash** assertion (the tripwire), **converted to survival** when 0852 landed, same day |
 
 ### Row 4 had to be split: its I3 clause is unachievable on a 0836-only tree
 
@@ -395,23 +395,35 @@ Two corrections, both source-confirmed:
 0299's ruling is still the user's. Its rule debt is untouched. Note that acting on
 that read-across would mean re-applying 0807 attempt 2, which was out of scope.
 
-## Siblings filed, NOT fixed
+## Siblings (one since fixed)
 
 The guard is `update_op()`-local **by ruling**. It does not close every zero-point
 dereference in the tree, and the scope is asserted as a test row rather than
 claimed in prose.
 
-- **[0852]** — `get_raw_value()` bounds `point` from **above only**, so
-  `raw_get_pos()`'s `lastpoint = npoints[dset] - 1 == -1` reaches
-  `values[idx][-1]` on a NULL column. **`xschem raw pos_at` on a zero-point
-  database still SIGSEGVs**, measured. Reachable from the shipped wave viewer
-  (`wviewer::interp_value`), where the surrounding Tcl `catch` cannot catch a
-  SIGSEGV. `waves_callback()` has the same shape from the same root.
-  Pinned by `R8b`, which asserts the crash **on purpose** so that closing 0852
-  reds the row and forces it to become a survival assertion.
-- **[0853]** — the `raw switch` mixed predicate (door 3 above). Also **fails to
-  annotate** a 1-point op database when switching into it from a multi-point one,
-  measured; 0836's guard does not fix that half.
+- **[0852] — FIXED 2026-08-26**, and it was the sharpest of these: a SECOND
+  SIGSEGV on the same database, by a different route. `get_raw_value()` bounded
+  `point` from **above only**, so `raw_get_pos()`'s
+  `lastpoint = npoints[dset] - 1 == -1` reached `values[idx][-1]` on a NULL
+  column — reachable from the shipped wave viewer (`wviewer::interp_value`),
+  where the surrounding Tcl `catch` cannot catch a SIGSEGV. Fixed with two
+  redundant guards (the lower bound in `get_raw_value()`, an empty-dataset
+  refusal in `raw_get_pos()`), which also covers `waves_callback()`'s identical
+  shape. `R8b` was written to assert the crash **on purpose** so that closing
+  0852 would red it; that conversion is done — it now asserts **survival**, and
+  `R8c` was added beside it so the answer must be `-1` and not a fabricated
+  index. Full acceptance in `tests/headless/test_zero_point_pos_at_0852.tcl`.
+- **[0855]** — filed by the 0852 crew, and it exists only **because** 0852 was
+  fixed: with the crash gone, the viewer's value readout now shows **`0`** for
+  every trace during a running simulation, a number the database does not
+  contain. Same class as RULING D5-1, one surface over. The remedy is a
+  presentation choice, so it is a queued ruling rather than a fix.
+- **[0853]** — `xschem raw switch` gates the republish on the **outgoing**
+  database's point count while reading `sim_type` off the **incoming** one (door
+  3 above). Also **fails to annotate** a 1-point op database when switching into
+  it from a multi-point one, measured; 0836's guard does not fix that half. The
+  user-visible half: switch from waveforms back to your operating point and the
+  schematic shows no numbers, with nothing said about why.
 - **[0854]** — `annotate_op`'s pre-delete hands `extra_rawfile()`
   `xctx->raw->sim_type`, a pointer into the Raw the clear arm then frees; the
   named-clear loop keeps dereferencing it. **Confirmed under valgrind**

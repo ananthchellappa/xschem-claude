@@ -235,10 +235,24 @@ proc mk_G {p} { raw_write $p "Operating Point" 1 $::OPVARS {3.14 1.5 -0.0015 -0.
 proc mk_Z {p} { raw_write $p "Operating Point" 0 $::OPVARS {} }
 # L: a well-formed ZERO-POINT transient database -- a simulation still running
 proc mk_L {p} { raw_write $p "Transient Analysis" 0 $::TRVARS {} }
-# S: a good 3-point transient database (column-major: all of var0, then var1, ...)
+# S: a good 3-point transient database.
+# ROW-MAJOR (point-major): for each point, ALL variables, in header order. That
+# is the ngspice binary raw layout, and 3 points x 4 vars = TWELVE doubles.
+# ⚠ This originally supplied NINE, mislabelled "column-major". The data area was
+# then 72 bytes where the header promised 96, xschem printed `Warning: binary
+# block is not of correct size`, and the reader ran off the end of the file:
+# `xschem raw values time 0` answered `0 7.78 1.2` -- v(a)'s first sample
+# masquerading as a timestamp -- and v(a)'s last sample was leftover memory.
+# No row here asserted S's VALUES, so it passed; but a short fixture is exactly
+# the hollow fixture this suite's own header forbids, and the next row to read a
+# number out of S would have been reading garbage. Corrected 2026-08-26 by the
+# 0852 crew. Verified: the warning is gone and every vector reads back exactly.
 proc mk_S {p} {
-  raw_write $p "Transient Analysis" 3 $::TRVARS \
-    {0.0 7.77 1.0  1.0 7.78 1.1  2.0 7.79 1.2}
+  raw_write $p "Transient Analysis" 3 $::TRVARS {
+    0.0e-9 7.77 1.0 -1e-3
+    1.0e-9 7.78 1.1 -2e-3
+    2.0e-9 7.79 1.2 -3e-3
+  }
 }
 
 set ::G [file join $::TMP G.raw]
@@ -559,20 +573,26 @@ eqcheck {R6e the dataset really was counted (the db is attached, not discarded)}
 eqcheck {R6f and its per-dataset count agrees with allpoints} [zval $r6 Z_Z_NP0] 0
 
 # ===========================================================================
-# ROW 8 -- SCOPE, ASSERTED. This guard is update_op()-local BY RULING (the
-# narrow option of 0836's open question, taken because no user ruling had
-# arrived). It does NOT close every zero-point dereference in the tree.
+# ROW 8 -- SCOPE, ASSERTED. This suite's guard is update_op()-local BY RULING
+# (the narrow option of 0836's open question, taken because no user ruling had
+# arrived), so it does NOT close every zero-point dereference in the tree. This
+# row tracks the OTHER route into the same input.
 #
-# ⚠ THIS ROW ASSERTS A CRASH ON PURPOSE, and it is the only such row here.
-# `xschem raw pos_at` on a zero-point database still SIGSEGVs, by a different
-# route: raw_get_pos() clamps to `lastpoint = npoints[dset] - 1`, i.e. -1, and
-# get_raw_value() bounds `point` from ABOVE only, so `ofs + point < allpoints`
-# is `-1 < 0` -- true -- and it dereferences values[idx][-1] on a NULL column.
-# Reachable from the shipped wave viewer (wviewer::interp_value), where the
-# surrounding Tcl catch cannot catch a SIGSEGV. Filed as a sibling, NOT fixed
-# here. The row exists so the scope is a measured fact rather than a sentence in
-# a write-up, and so that closing the sibling REDS this row and forces it to be
-# turned into a survival assertion.
+# HISTORY, AND WHY THIS ROW READS THE WAY IT DOES. It shipped with 0836 as a
+# CRASH ASSERTION -- the only such row here -- because `xschem raw pos_at` on a
+# zero-point database still SIGSEGVed by a different route: raw_get_pos()
+# clamped to `lastpoint = npoints[dset] - 1`, i.e. -1, and get_raw_value()
+# bounded `point` from ABOVE only, so `ofs + point < allpoints` was `-1 < 0`,
+# true, and it dereferenced values[idx][-1] on a NULL column. It was written to
+# go RED the moment the sibling was fixed, precisely so the conversion could not
+# be forgotten. Issue 0852 fixed it, and this is that conversion: the row now
+# asserts SURVIVAL, which is what it was always going to have to say.
+#
+# It stays HERE, in 0836's suite, rather than moving wholesale to 0852's: the
+# two issues share one input and one fixture, and this row is the seam. Its full
+# acceptance -- the positive twin, the falling-signal direction, the windowed
+# search, the viewer's own readout sequence -- lives in
+# tests/headless/test_zero_point_pos_at_0852.tcl.
 # ===========================================================================
 set r8 [kid r8 {
   xschem raw read $::Z op
@@ -581,8 +601,9 @@ set r8 [kid r8 {
   puts "Z_SURVIVED"
 }]
 eqcheck {R8a PRECONDITION: the sibling fixture is the same zero-point database} [zval $r8 Z_PTS] 0
-check {R8b SCOPE TRIPWIRE: raw pos_at STILL crashes -- sibling filed, not fixed} \
-  [crashed $r8] [ctail $r8]
+check {R8b raw pos_at SURVIVES a zero-point database (issue 0852, was a crash)} \
+  [survived $r8] [ctail $r8]
+eqcheck {R8c and it answers "not found", not a fabricated index} [zval $r8 Z_POS] -1
 
 catch {test_scratch_drop $tmp}
 puts "----"
