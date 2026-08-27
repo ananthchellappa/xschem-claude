@@ -14,6 +14,67 @@ Newest entries on top.
 
 ---
 
+## Q52. A test says the value is on the schematic, and the schematic is blank. Why?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issues **0864**/**0865**/**0866**, ruling 0614.
+
+**Because `xschem translate` is not a paint measurement, and two careful
+findings came apart on exactly that.**
+
+A node voltage reaches the sheet in two stages. First the token expands:
+`xschem translate <inst> {@spice_get_voltage}` reads
+`xctx->raw->cursor_b_val[]` under `!raw_is_digital(raw) && sch_waves_loaded()
+>= 0 && annot_p >= 0` (`src/token.c`). Then, and only then, the text has to
+survive **`text_hidden()`** (`src/actions.c`), where annotation classes answer to
+the `annot_show` mask that `6` / `Alt-6` / `Ctrl-6` write. The mask's resting
+value is 0, so a freshly loaded raw expands the token and paints nothing.
+
+Measured on one fixture, one binary, one run — the difference is the whole point:
+
+```
+P1 shipped annot_show=0:  token='4'  PAINTED texts = d
+P2 after Alt-6 (mask 2):  token='4'  PAINTED texts = d 4
+P4 after Ctrl-6 (mask 0): token='4'  PAINTED texts = d
+```
+
+0864's verification used `translate` and concluded both that loading a raw paints
+numbers nobody asked for and that no control takes them off again. Neither is
+true; the mask does both jobs. **If a row or a probe claims something is or is
+not on the schematic, it must read an SVG or PS export (or pixels).** The
+suite's own `opa_l_print2` / `opa_l_seen` helpers exist for this.
+
+---
+
+## Q51. I unticked "Live annotate probes with 'b' cursor" and pressed `6`. Why did the box tick itself back on?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0864** (fixed), **0865** (open).
+
+**It was a bug, it is fixed, and the box now ships OFF.**
+
+The checkbutton in **Simulation > Graphs** promised one thing — follow cursor B
+and re-annotate as it moves — and secretly did a second: it was the *first* gate
+on whether annotation RENDERED at all, in two places at once
+(`op_annot::_annotated` for the device OP block that `6` draws, and six
+`cursor_b_val[]` gates in `src/token.c` for the node voltages `Alt-6` draws).
+Because unticking it blanked everything, the annotate path force-ticked it back
+(`tclsetboolvar("live_cursor2_backannotate", 1)`) so `6` would still show
+something — upstream's own patch for the same coupling, `89d847fb`, papering
+over `96f80d1d`.
+
+0864 split the two. The switch is no longer a render gate in either language,
+the force-set is gone, and the default is back to upstream's original `0`. `6`
+and `Alt-6` paint exactly what they painted before; what needs the box ticked is
+the *following*: with it off, dragging cursor B no longer repaints the sheet.
+
+⚠ **The half that is still open is 0865.** With the box off, a value that is
+already on the sheet does not follow the cursor and `Alt-6` will not refresh it,
+so the schematic can hold a number measured at a time point the cursor has left.
+`Ctrl-6` clears it; ticking the box makes it follow again.
+
+---
+
 ## Q50. My node voltages disappeared. I load a raw and the nets are bare until I press something. What changed?
 
 - **Asked:** 2026-08-22

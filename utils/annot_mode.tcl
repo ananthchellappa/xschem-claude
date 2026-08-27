@@ -221,7 +221,7 @@ proc cadence::_annot_scan {} {
 }
 
 ## The one held status line. <state> is one of
-##   off | live | notlive | noop | loaded | failed | noraw | nopath
+##   off | live | noop | loaded | failed | noraw | nopath
 ## and <types> is _annot_scan's second element, already known to matter only
 ## when NOTHING on the sheet was annotatable.
 ##
@@ -265,8 +265,6 @@ proc cadence::_annot_msg {mask state path types} {
   }
   switch -exact -- $state {
     live    { append m " -- raw already loaded" }
-    notlive { append m " -- a raw is loaded but backannotation is off\
-                        (live_cursor2_backannotate 0)" }
     noop    { append m " -- a raw is loaded but it published no operating point:\
                         use Waves > Op Annotate, or `xschem raw_clear` then press\
                         again" }
@@ -322,18 +320,29 @@ proc cadence::annot_mode {mode} {
       ## indistinguishable cause. Saying "raw already loaded" would be a lie
       ## about a blank block, and reloading would throw away a good file.
       ##
-      ## ⚠ WHICH of _annotated's two remaining terms failed is ASKED, not assumed
-      ## (issue 0459). Naming `live_cursor2_backannotate 0` unconditionally was
-      ## measured FALSE on the shipped `Waves > Op` route: `xschem raw_read`
-      ## leaves `raw loaded` 0 with `raw annot` -1 while the flag is 1, so the
-      ## line accused a variable that was innocent and never named the real
-      ## cause. A plausible wrong REASON is the same defect as save.c ruling
-      ## D5-1's plausible wrong NUMBER, and this branch is a dead end — the
-      ## guard above blocks the auto-load — so the way out is named too.
-      set lv 1
-      catch {set lv [uplevel #0 {set live_cursor2_backannotate}]}
-      if {[catch {expr {$lv ? 1 : 0}} lvb]} { set lvb 1 }
-      set state [expr {$lvb ? {noop} : {notlive}}]
+      ## ⚠ THERE IS ONLY ONE CAUSE LEFT, AND THIS IS WHY IT IS NOT ASKED FOR
+      ## (issue 0459 closes here, issue 0864 is what closed it). This branch used
+      ## to choose between two sentences by reading the shipped menu checkbutton
+      ## `Simulation > Graphs > Live annotate probes with 'b' cursor`, because
+      ## that switch was _annotated's first term and could blank a populated
+      ## block on its own. After 0864 it is not a term of _annotated at all — it
+      ## means "follow cursor B and re-annotate as it moves" and nothing else —
+      ## so with a database attached the ONLY way the gate can fail is
+      ## annot_p < 0: a file that published no operating point. The sentence
+      ## that named the switch is DELETED rather than re-worded, because it can
+      ## no longer be true, and a plausible wrong REASON is the same defect as
+      ## save.c ruling D5-1's plausible wrong NUMBER. Users who used to see it
+      ## now see the `noop` sentence, which names the real cause and the way
+      ## out — this branch is a dead end, the guard above blocks the auto-load.
+      ##
+      ## ⚠ Row N10c greps this file's CODE lines for the deleted arm and for the
+      ## switch's name; prose above may name both freely, code may not. After
+      ## 0864 the `live` arm above is taken first whenever a point is published,
+      ## so on that path — every real user's — N10c is the ONLY row that can see
+      ## the arm come back. It is not the only row in the tree: measured
+      ## 2026-08-27, restoring this arm also reddens N10b, whose fixture has
+      ## annot_p < 0 and therefore reaches the selector below.
+      set state noop
     } else {
       set cand [cadence::_annot_raw_candidate]
       set path [lindex $cand 0]

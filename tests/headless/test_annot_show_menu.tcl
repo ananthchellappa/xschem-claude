@@ -517,10 +517,11 @@ check "C4 with no session, Waves > Op Annotate changes nothing and never opens t
 
 # --- C4b: the refusal must not disturb a database the user already has -------
 # ⚠ `op_annot::_annotated` IS NOT AN ELEMENT HERE, and that is a correction to
-# the plan rather than an omission: measured (src/op_annot.tcl:781) it reads
-# `live_cursor2_backannotate`, `xschem raw loaded` and `xschem raw annot` and
-# NEVER the mask, so with a raw deliberately attached it answers 1 whatever the
-# refusal did. The honest claim is that the attached values are untouched.
+# the plan rather than an omission: measured, it reads `xschem raw loaded` and
+# `xschem raw annot` and NEVER the mask, so with a raw deliberately attached it
+# answers 1 whatever the refusal did. The honest claim is that the attached
+# values are untouched. (Before issue 0864 it read the Live-annotate switch as a
+# third term; that is gone, and Section D below is what pins its absence.)
 catch {xschem annotate_op $C_RAW}
 set c4b_v0 [expr {[catch {xschem raw value v(a) -1} _r] ? "RAISED" : $_r}]
 set c4b_l0 [expr {[catch {xschem raw loaded} _r] ? "RAISED" : $_r}]
@@ -641,6 +642,75 @@ check "C9 Simulation > Graphs refuses too, and names its OWN menu path" \
         [expr {[string first $C_PATH_G [c_notify_field line]] >= 0 ? 1 : 0}] \
         [expr {[string first $C_PATH_W [c_notify_field line]] >= 0 ? 1 : 0}]] \
   {0 0 1 0}
+
+# =============================================================================
+# SECTION D — ISSUE 0864: `MUST ONLY HAPPEN WHEN USER REQUESTS IT!!`
+# =============================================================================
+# `Simulation > Graphs > Live annotate probes with 'b' cursor` is the switch the
+# user unticks and finds ticked again after pressing `6`. 0864 splits what it
+# means from what it was doing: it goes back to meaning ONLY "follow cursor B
+# and re-annotate as it moves", it stops being a term of what `6` and `Alt-6`
+# RENDER, and it ships off.
+#
+# ⚠ THIS FILE OWNS THE WIDGET. The headless suite (test_op_annot rows S16, O29,
+# A64-1..A64-5) drives the Tcl variable directly, which is right for what it
+# measures and is blind to the entry itself. Only here can a row click the thing
+# the user clicks.
+set D_MG  .menubar.simulation.graph
+set D_IL  [entry_index_var $D_MG live_cursor2_backannotate]
+
+# ⚠ THE FEATURE IS KEPT AND MADE OPT-IN, NOT REMOVED, and this row is what says
+# so. Every other 0864 row is a negative claim — the switch is not a render
+# gate, the force-set is gone, the default is off — and a build that simply
+# deleted the checkbutton would satisfy all of them. It must still be there,
+# still be a checkbutton, still carry the user's own label, and still write 1/0.
+check "D1 Simulation > Graphs still carries the Live annotate checkbutton: the feature is kept, not removed" \
+  [list [expr {$D_IL >= 0 ? 1 : 0}] \
+        [expr {$D_IL >= 0 ? [$D_MG type $D_IL] : {NO-ENTRY}}] \
+        [expr {$D_IL >= 0 ? [$D_MG entrycget $D_IL -label] : {NO-ENTRY}}] \
+        [expr {$D_IL >= 0 ? [$D_MG entrycget $D_IL -onvalue] : {-}}] \
+        [expr {$D_IL >= 0 ? [$D_MG entrycget $D_IL -offvalue] : {-}}]] \
+  [list 1 checkbutton {Live annotate probes with 'b' cursor} 1 0]
+
+# ⚠ SOURCE-ONLY, DELIBERATELY. Reading the live variable here would red on a
+# developer whose own ~/.xschem/xschemrc sets it — true about their machine, not
+# about the shipped tree — and after 0864 the default changes nothing that
+# renders, so there is no behavioural observable to read at all. The value is
+# matched as a whole word, not to end of line, so the shipped line may carry a
+# trailing comment naming the issue.
+check "D2 the box ships UNTICKED: live cursor annotation is opt-in" \
+  [list [src_grep $F_XS {^set_ne live_cursor2_backannotate 0(\M|$)}] \
+        [src_grep $F_XS {^set_ne live_cursor2_backannotate 1(\M|$)}]] \
+  {1 0}
+
+# ⚠ THE CLICK, NOT THE VARIABLE. With an operating point attached, ticking and
+# unticking this entry must not change one character of what the schematic
+# shows. Two things are read at each of the three points: the gate `6`'s device
+# block is drawn through, and the `@spice_get_voltage` floater that `Alt-6`'s
+# node voltages are drawn through — because A1 has to be done in BOTH languages
+# and each of these two reads exactly one of them. `3.14` is the positive
+# control: a build that rendered nothing ever would fail all three points.
+#
+# ⚠ `invoke` FLIPS THE VARIABLE AND RUNS THE ENTRY'S -command, of which there is
+# none (filed separately). That is deliberate: the row must hold for the widget
+# as SHIPPED, not for a repaired one.
+proc d_floater {} {
+  if {[catch {xschem translate la {@spice_get_voltage}} r]} { return RAISED }
+  return $r
+}
+xschem load $C_DUT
+update
+catch {xschem annotate_op $C_RAW}
+set d_lv $::live_cursor2_backannotate
+set d3_0 [list [op_annot::_annotated] [d_floater]]
+if {$D_IL >= 0} { catch {$D_MG invoke $D_IL} } ; update
+set d3_1 [list [op_annot::_annotated] [d_floater]]
+if {$D_IL >= 0} { catch {$D_MG invoke $D_IL} } ; update
+set d3_2 [list [op_annot::_annotated] [d_floater]]
+set ::live_cursor2_backannotate $d_lv
+check "D3 CLICKING the checkbutton changes nothing the annotation shows" \
+  [list $d3_0 $d3_1 $d3_2] [list {1 3.14} {1 3.14} {1 3.14}]
+catch {xschem raw clear}
 
 # --- restore -----------------------------------------------------------------
 rename select_raw {}

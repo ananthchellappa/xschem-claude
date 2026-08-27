@@ -726,30 +726,70 @@ xc_cursor 175e-9
 check "BA86 ...and the floater is not latched off: the analog database renders\
  the same measured voltage it did before" [floater] $ba_flo_analog
 
-# ⚠ BA80-BA86 exercise ONE of the six branches -- translate()'s bare
+# ===========================================================================
+# BA88 -- ISSUE 0864: the live-cursor SWITCH is not what keeps D5 honest
+# ===========================================================================
+# `Simulation > Graphs > Live annotate probes with 'b' cursor` used to be the
+# first half of every one of these gates, so turning it off blanked the floater
+# too. 0864 splits the two: the switch now means only "follow the cursor and
+# re-annotate as it moves", and what a floater RENDERS is decided by the
+# database alone. Both halves of that are asserted here, because dropping the
+# switch term and dropping the D5 term look identical from one side:
+#   * switch OFF, ANALOG database -> the measured voltage, same bytes BA80 saw
+#   * switch OFF, DIGITAL database -> still nothing, RULING D5-1 untouched
+# This is also the ONLY behavioural cover of translate()'s bare
+# @spice_get_voltage gate with the switch off; BA87 below carries the other five.
+xschem raw clear
+xschem raw read $collraw tran
+xschem raw read $collvcd vcd
+xschem raw switch 0
+xc_cursor 175e-9
+set ba88_lv $::live_cursor2_backannotate
+set ::live_cursor2_backannotate 0
+set ba88_analog [floater]
+xschem raw switch 1
+xc_cursor 175e-9
+set ba88_digital [floater]
+set ::live_cursor2_backannotate $ba88_lv
+check "BA88 with the live-cursor switch OFF the floater still renders the\
+ measured voltage -- and a digital database still renders nothing" \
+  [list $ba88_analog $ba88_digital] [list $ba_flo_analog {}]
+
+# ⚠ BA80-BA88 exercise ONE of the six branches -- translate()'s bare
 # @spice_get_voltage, the one lab_pin.sym carries. The other five
 # (@spice_get_voltage(...), @spice_get_diff_voltage, @spice_get_current,
 # @spice_get_modelparam, and get_pin_attr()'s @#<pin>:spice_get_voltage) need a
 # wired multi-pin instance and a device-current vector to reach behaviourally,
 # and MEASURED: reverting the guard at the get_pin_attr() site alone reddens
 # NOTHING above. So the remaining five are pinned by a source witness, declared
-# as the weaker form of evidence it is: every site that reads
-# live_cursor2_backannotate to gate a cursor_b_val[] read must carry the D5 term.
+# as the weaker form of evidence it is.
+#
+# ⚠ ISSUE 0864 MADE THIS A DOUBLE WITNESS, AND THE NEEDLE MOVED WITH IT. Every
+# one of the six gate lines used to read
+#   int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(...)
+# and 0864 removed the first half from all six: what a floater RENDERS is not
+# the business of a switch labelled "follow the cursor". The D5 half MUST
+# survive, and that is still this row's first job. Its second is that the switch
+# stays out of all six -- restored at any one of them, the user unticks the box
+# and part of the schematic silently blanks again. So the needle is now the bare
+# `int live = ` and the row asserts three things about the same six lines.
 set ba_tf [open [file join $here .. .. src token.c] r]
 set ba_tl [split [read $ba_tf] "\n"]
 close $ba_tf
-set ba_live 0; set ba_guarded 0
+set ba_live 0; set ba_guarded 0; set ba_switched 0
 foreach ba_l $ba_tl {
   set ba_t [string trimleft $ba_l]
   if {[string index $ba_t 0] eq "*" || [string range $ba_t 0 1] eq "/*"} { continue }
-  if {[string first "int live = tclgetboolvar" $ba_l] >= 0} {
+  if {[string first "int live = " $ba_l] >= 0} {
     incr ba_live
     if {[string first "raw_is_digital" $ba_l] >= 0} { incr ba_guarded }
+    if {[string first "live_cursor2_backannotate" $ba_l] >= 0} { incr ba_switched }
   }
 }
-check "BA87 SOURCE WITNESS: every one of token.c's live-backannotation gates\
- carries the D5 term -- all six branches, not just the one the fixture can\
- reach" [list [expr {$ba_live == 6}] [expr {$ba_guarded == $ba_live}]] {1 1}
+check "BA87 SOURCE WITNESS: every one of token.c's cursor_b_val gates carries\
+ the D5 term, and NONE of them reads the live-cursor switch -- all six\
+ branches, not just the one the fixture can reach" \
+  [list [expr {$ba_live == 6}] [expr {$ba_guarded == $ba_live}] $ba_switched] {1 1 0}
 
 # ===========================================================================
 # BA9 -- RULING D5-7: `xschem raw switch` deliberately does NOT touch the array

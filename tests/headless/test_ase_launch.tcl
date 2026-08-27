@@ -383,9 +383,10 @@ check "L23 untick + Session > Close leave nothing armed" \
 
 # --- L24: STEP 5 — reopen the original cell. THE ORPHAN, INVERTED -----------
 # ⚠ `op_annot::_annotated` IS DELIBERATELY NOT AN ELEMENT HERE, and that is a
-# correction to the plan rather than an omission. Measured (src/op_annot.tcl:781)
-# it reads `live_cursor2_backannotate`, `xschem raw loaded` and `xschem raw
-# annot` — it never looks at the mask. The raw legitimately stays in the
+# correction to the plan rather than an omission. Measured, it reads `xschem raw
+# loaded` and `xschem raw annot` — it never looks at the mask. (It read the
+# Live-annotate switch as a third term until issue 0864 removed it.) The raw
+# legitimately stays in the
 # registry across a `File > Open` (a `xschem load` of the first sheet again
 # re-associates it and answers 3.14), so `_annotated` is 1 here whatever the mask
 # says. What the user complained about is NUMBERS ON THE SHEET, so the row reads

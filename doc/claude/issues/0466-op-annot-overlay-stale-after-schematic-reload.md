@@ -319,7 +319,7 @@ a call appended at the tail misses the early one.
 | `sim_sch_path` | `xschem get sim_sch_path` | descend / ascend / sibling descend |
 | raw contents | `raw value -1`, `raw loaded`, `raw annot` | **in-place** mutation: `raw rename`, `raw set` (same pointer, same nvars, same level, same `annot_p`) |
 | `::op_annot::desc` | `op_annot::register` | covered by `::op_annot::gen` (attempt 1) |
-| **`live_cursor2_backannotate`** | `op_annot::_annotated`'s FIRST gate (`op_annot.tcl:561`) | a **shipped menu checkbutton** (`xschem.tcl:15360`); no C mirror, no epoch field. Strands real numbers on screen after the user turns annotation OFF — I3 in the other direction |
+| **`live_cursor2_backannotate`** **⚠ SUPERSEDED BY 0864 (2026-08-27)** — it is no longer a gate of the formatter in either language, so it is no longer an input of the overlay and epoch term 14 was removed | ~~`op_annot::_annotated`'s FIRST gate (`op_annot.tcl:561`)~~ | a **shipped menu checkbutton** (`xschem.tcl:15360`); no C mirror, no epoch field. Strands real numbers on screen after the user turns annotation OFF — I3 in the other direction |
 
 One path this issue named as a hole is **honestly already covered**:
 `xschem setprop instance <n> name <new>` does call `set_modify(1)`
@@ -343,6 +343,8 @@ a new hole.
             raw_deletevar (:1357), and the `xschem raw set` arm
             (src/scheduler.c:10490).
     TERM 14 live_cursor2_backannotate, via tclgetboolvar in annot_overlay_sync().
+            SUPERSEDED BY 0864 (2026-08-27): term REMOVED. Nothing rendered
+            reads the switch any more, so it cannot distinguish two frames.
     SEAM 2  `xschem get annot_overlay_flushes` (scheduler.c:4148), a monotonic
             count of WHOLESALE flushes, incremented INSIDE annot_overlay_sync()
             at the moment of the flush.
@@ -378,7 +380,7 @@ a new hole.
   at the top of the whole `raw` dispatcher arm* — `xschem raw value` is called by
   `op_annot::text` itself, once per row per device, so that would self-invalidate
   every frame and silently become the flush-every-frame design D1 forbids.
-* **D6 (L2)** — `live_cursor2_backannotate` becomes epoch term 14, one
+* **D6 (L2)** **⚠ SUPERSEDED BY 0864 (2026-08-27)** (term 14 removed) — `live_cursor2_backannotate` becomes epoch term 14, one
   `tclgetboolvar` per frame. *Rejected: a Tcl `trace add variable` bumping
   `::op_annot::gen`* — it installs a trace on a **shipped** global that C also
   writes (`scheduler.c:2409`), affecting every writer, and a trace body that

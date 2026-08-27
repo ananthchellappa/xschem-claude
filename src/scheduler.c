@@ -2440,7 +2440,22 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         return TCL_OK;
       }
 
-      tclsetboolvar("live_cursor2_backannotate", 1);
+      /* ISSUE 0864 -- NO FORCE-SET HERE, AND A READER WHO EXPECTS ONE SHOULD
+       * NOT PUT IT BACK. This arm used to open with
+       *   tclsetboolvar("live_cursor2_backannotate", 1);
+       * i.e. annotating silently re-ticked the shipped "Live annotate probes
+       * with 'b' cursor" checkbutton. The user's own words on that:
+       * "MUST ONLY HAPPEN WHEN USER REQUESTS IT!!" -- untick the box, press
+       * `6`, and the box came back ticked. It existed for one reason (upstream
+       * 89d847fb, "not showing data if Live annotation option was not set
+       * beforehand"): the switch was ALSO the first term of every render gate,
+       * so without it a fresh annotation drew nothing. 0864 removed the switch
+       * from those gates in both languages, so the reason is gone with it. An
+       * operation the user asked for must never re-enable a behaviour the user
+       * turned off. Rows A64-1/A64-3 watch the box across this arm; A64-2
+       * slices this arm and requires the variable's name to appear on no code
+       * line of it -- the slice strips C comments, which is why this paragraph
+       * may name it. */
       /* delete previously loaded OP */
       if(xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
          (!strcmp(xctx->raw->sim_type, "op") || !strcmp(xctx->raw->sim_type, "dc"))) {

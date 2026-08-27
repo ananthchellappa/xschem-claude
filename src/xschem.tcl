@@ -16806,7 +16806,17 @@ set_ne change_lw 1
 ## See doc/claude/specs/snap_spacing_bindkeys.md section 5.
 set_ne linewidth_follows_snap 0
 set_ne line_width 0
-set_ne live_cursor2_backannotate 1
+## ISSUE 0864 -- SHIPPED OFF, AND THAT IS A CHANGE, NOT AN OVERSIGHT. This is
+## the menu checkbutton `Simulation > Graphs > Live annotate probes with 'b'
+## cursor`: while it is on, every drag of cursor B in a graph re-annotates the
+## schematic. It shipped ON and `xschem annotate_op` additionally FORCE-SET it,
+## so a user who unticked it found it ticked again the next time they pressed
+## `6`. It is opt-in now. Nothing that `6` or `Alt-6` PAINT depends on it any
+## more (see op_annot::_annotated and token.c's six cursor_b_val branches), so
+## flipping this default changes only when the schematic follows the cursor.
+## This also restores upstream's own original default: 96f80d1d shipped 0, and
+## fc19e646 flipped it to 1 in 2024.
+set_ne live_cursor2_backannotate 0
 set_ne cursor_2_hook {}
 set_ne draw_window 0
 set_ne show_hidden_texts 0

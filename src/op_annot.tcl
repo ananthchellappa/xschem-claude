@@ -754,15 +754,9 @@ proc op_annot::eng_or_blank {v} {
 
 ## Is there a PUBLISHED annotation point to read?  (hazard (b))
 ##
-## The three terms are COPIED from the C's own read gate (token.c:4318/4339),
-## not invented, so op_annot::text shows exactly what the schematic's own
-## @spice_get_voltage texts show:
-##   live_cursor2_backannotate   the user's own on/off switch. Without this term
-##                               the block goes HALF blank when it is off — the
-##                               params rows still read while every pinexpr row
-##                               returns ` -  ` — which on a schematic reads as
-##                               "the save cards are missing", not as
-##                               "annotation is off".
+## The two terms are COPIED from the C's own read gate (token.c's six
+## cursor_b_val[] branches), not invented, so op_annot::text shows exactly what
+## the schematic's own @spice_get_voltage texts show:
 ##   xschem raw loaded >= 0      sch_waves_loaded(). get_raw_index() is gated on
 ##                               it (save.c:2259), so below 0 every lookup is -1
 ##                               anyway; ascending out of the annotated level is
@@ -771,17 +765,30 @@ proc op_annot::eng_or_blank {v} {
 ##                               annot_sweep_idx}. -1 means NOTHING was ever
 ##                               published, i.e. the fabricated-zero state.
 ##
+## ⚠ ISSUE 0864 — THERE USED TO BE A THIRD TERM, AND A READER WHO REMEMBERS IT
+## WILL ASSUME IT IS STILL LOAD-BEARING. It was the shipped menu checkbutton
+## `Simulation > Graphs > Live annotate probes with 'b' cursor`, read FIRST, so
+## unticking a box about the cursor blanked the device operating-point block
+## that `6` draws while every number sat untouched in the database (measured:
+## the block reads blank row by row, `xschem raw value` still reads
+## 9.9999997e-05). That switch means "follow cursor B and re-annotate as it
+## moves" — a question about WHEN to re-read, never about whether there is
+## anything to read — so it is not a term of this gate and must not come back as
+## one. The C half of the same split removed it from all six token.c branches;
+## the old note here argued the term was needed to stop the block going HALF
+## blank, and that argument is answered by removing it from BOTH languages
+## rather than by keeping it in either. Rows S16 (behavioural, both halves in
+## one golden) and A64-4 (this proc's own source) pin it.
+##
 ## ⚠ EVERY TERM IS CATCH-WRAPPED, INCLUDING `xschem raw annot` — measured, it
 ## RAISES "No raw file loaded" exactly like `raw value`. A gate that can raise
 ## in a draw path is a second bug, not a guard.
 ##
-## NOT MIRRORED: the C's `&& !raw_is_digital(xctx->raw)`. No Tcl accessor
-## exposes it, and it costs nothing here — a digital raw holds no device
-## parameter vectors, so every row blanks through raw_or_blank anyway.
+## NOT MIRRORED: the C's `&& !raw_is_digital(xctx->raw)`, which after 0864 is the
+## whole of the C gate's extra condition. No Tcl accessor exposes it, and it
+## costs nothing here — a digital raw holds no device parameter vectors, so every
+## row blanks through raw_or_blank anyway.
 proc op_annot::_annotated {} {
-  if {[catch {uplevel #0 {set live_cursor2_backannotate}} lv]} { return 0 }
-  if {[catch {expr {$lv ? 1 : 0}} b]} { return 0 }
-  if {!$b} { return 0 }
   if {[catch {xschem raw loaded} l]} { return 0 }
   if {![string is integer -strict $l] || $l < 0} { return 0 }
   if {[catch {xschem raw annot} a]} { return 0 }

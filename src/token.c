@@ -4325,7 +4325,7 @@ static char *get_pin_attr(const char *token, int inst, int engineering)
     else if(!pin_attr_value && !is_net_name && !strcmp(pin_attr, "spice_get_voltage"))
     {
       int start_level; /* hierarchy level where waves were loaded */
-      int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+      int live = !raw_is_digital(xctx->raw);
       /* SPEC D5 / RULING D5-5 -- THE `@spice_get_*` FLOATERS ARE THE SCHEMATIC
        * VOLTAGE OVERLAY BY A SECOND ROAD, and they do not go through
        * ngspice::ngspice_data at all: each branch below reads
@@ -4345,7 +4345,30 @@ static char *get_pin_attr(const char *token, int inst, int engineering)
        * NOTHING. "Contributes nothing" is not "contributes a dash"; there is
        * no measurement to report, so no placeholder is invented for one. The
        * Tcl-side overlay says the same thing in its own vocabulary (`?`).
-       * The other five sites carry the one-line back-reference. */
+       * The other five sites carry the one-line back-reference.
+       *
+       * ISSUE 0864 -- `live` USED TO READ THE MENU CHECKBUTTON TOO, and a
+       * reader who remembers that will assume the switch still decides what
+       * these tokens render. It does not, in any of the six branches. The line
+       * was
+       *   int live = tclgetboolvar("live_cursor2_backannotate") &&
+       *              !raw_is_digital(xctx->raw);
+       * and `Simulation > Graphs > Live annotate probes with 'b' cursor` means
+       * "follow cursor B and re-annotate as it moves" -- WHEN to re-read, never
+       * whether there is anything to read. With it in here, unticking a box
+       * about the cursor silently blanked every node voltage and every
+       * device-current floater `Alt-6` draws, while the numbers sat untouched
+       * in the database. The callers that decide whether to RE-ANNOTATE on
+       * cursor motion (callback.c, scheduler.c) still read the switch; that is
+       * its whole remaining meaning.
+       *
+       * WHAT SURVIVES IS THE D5 TERM, and it is not optional: drop
+       * !raw_is_digital() and a digital database prints logic levels as volts
+       * again. test_backannotate_digital row BA87 is the source witness for all
+       * six lines at once -- it counts every `int live = ` line in this file,
+       * requires each to carry raw_is_digital, and requires none to name the
+       * switch. Its needle is the bare `int live = `, so do not respell these
+       * six declarations. */
       if(live && (start_level = sch_waves_loaded()) >= 0 && xctx->raw->annot_p>=0) {
         int multip;
         char *fqnet = NULL;
@@ -4831,7 +4854,7 @@ const char *translate(int inst, const char* s)
       else if(inst >= 0 && strcmp(token,"@spice_get_voltage")==0 && xctx->inst[inst].ptr >= 0)
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -4922,7 +4945,7 @@ const char *translate(int inst, const char* s)
       else if(strncmp(token,"@spice_get_voltage(", 19)==0 )
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -5009,7 +5032,7 @@ const char *translate(int inst, const char* s)
       #endif
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -5104,7 +5127,7 @@ const char *translate(int inst, const char* s)
       else if(inst >= 0 && strcmp(token,"@spice_get_diff_voltage")==0  && xctx->inst[inst].ptr >= 0)
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -5177,7 +5200,7 @@ const char *translate(int inst, const char* s)
              )
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */

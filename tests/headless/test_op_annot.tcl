@@ -1761,8 +1761,10 @@ check {S9b ACCEPTANCE no 0, NaN, Inf, infT or bare - anywhere in the no-raw bloc
 # where an annotate_op has already published, cursor_b_val survives a later
 # `xschem load` and this row passes vacuously.
 #
-# The gate is copied from the C's own read gate (token.c:4318/4339), not
-# invented: live_cursor2_backannotate && sch_waves_loaded() >= 0 && annot_p >= 0.
+# The gate is copied from the C's own read gate (token.c), not invented. Since
+# 0864 it is `!raw_is_digital(raw) && sch_waves_loaded() >= 0 && annot_p >= 0`:
+# the live-cursor switch was a fourth term until 0864 took it out of every
+# render path, in both languages. The two terms this row leans on are unchanged.
 # `xschem raw annot`'s first field IS annot_p, and -1 means nothing published.
 set s14_read [rcall {xschem raw read [file join $scratch s5_op.raw] op}]
 set s14_annot [rcall {xschem raw annot}]
@@ -1822,17 +1824,27 @@ check {S2 raw_or_blank on a loaded raw: present, ABSENT (empty at rc=0), blank n
                [op_annot::raw_or_blank {}]}] \
   {0 {9.9999997e-05 {} {}}}
 
-# ⚠ THE THIRD GATE TERM, AND IT MUST BLANK THE WHOLE BLOCK. token.c:4318
-# applies live_cursor2_backannotate to every @spice_get_* branch but NOT to
-# `xschem raw value`, so a gate built on annot_p alone leaves the block HALF
-# populated — six real params and two pinexpr rows reading ` -  ` — which on a
-# schematic reads as "the save cards are missing", not as "annotation is off".
-set live_cursor2_backannotate 0
+# ⚠ ISSUE 0864 — THE SWITCH IS NOT A RENDER GATE, AND THIS ONE GOLDEN PINS
+# BOTH HALVES OF THAT. `Simulation > Graphs > Live annotate probes with 'b'
+# cursor` means "follow the cursor and re-annotate as it moves". It used to be
+# the FIRST term of op_annot::_annotated as well, and the first term of all six
+# cursor_b_val[] gates in token.c, so unticking a box about the cursor blanked
+# the device operating-point block that `6` draws while every number sat
+# untouched in the database (measured: the block reads blank, `raw value` still
+# reads 9.9999997e-05).
+#
+# ⚠ $S_GOLD IS THE SAME STRING ROW S10 ASSERTS WITH THE SWITCH ON, and that is
+# what makes this row see a half-done fix. Its six params rows come through the
+# Tcl gate; its vgs/vds rows come through token.c's get_pin_attr gate. Decouple
+# only one of the two languages and this row reds with a HALF-blank block —
+# exactly the shape the deleted "the save cards are missing" comment described.
+set s16_lv $::live_cursor2_backannotate
+set ::live_cursor2_backannotate 0
 set s16_block [rcall {op_annot::text M1}]
 set s16_read [rcall {xschem raw value {@m.xm1.msky130_fd_pr__nfet_01v8[gm]} -1}]
-set live_cursor2_backannotate 1
-check {S16 live_cursor2_backannotate 0 blanks the WHOLE block, not just pinexpr} \
-  [list $s16_block $s16_read] [list [list 0 $S_BLANK] {0 9.9999997e-05}]
+set ::live_cursor2_backannotate $s16_lv
+check {S16 the live-cursor switch OFF no longer blanks the block: every row renders, params AND pinexpr} \
+  [list $s16_block $s16_read] [list [list 0 $S_GOLD] {0 9.9999997e-05}]
 
 # ===========================================================================
 # S29 — ISSUE 0444 LIVE
@@ -3493,6 +3505,102 @@ proc opa_proc_src {src name} {
   if {$j < 0} { return $rest }
   return [string range $rest 0 $j]
 }
+
+## ------------------------------------------------------------- issue 0864 --
+## The whole text of <path>, or {} when it is absent — so a missing file reds
+## the one row that reads it rather than raising out of the section.
+proc opa_slurp {path} {
+  if {![file isfile $path]} { return {} }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  return $d
+}
+
+## The <n> lines of <path> ENDING at (and including) the first line matching
+## <re>, joined — i.e. the comment paragraph that documents one rc option.
+## {} when the file or the line is absent.
+##
+## ⚠ A WHOLE-FILE GREP CANNOT DO THIS JOB, measured: `Default: disabled` already
+## appears four times in src/xschemrc, on crosshairs, the endpoint cursor and
+## two netlister options. Row A64-5 asking the whole file whether it says
+## "disabled" was green before a single byte changed. The claim is about ONE
+## paragraph, so the row must read one paragraph.
+proc opa_rc_para {path re n} {
+  if {![file isfile $path]} { return {} }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set lines [split $d \n]
+  set i -1 ; set k 0
+  foreach l $lines {
+    if {[regexp -- $re $l]} { set i $k ; break }
+    incr k
+  }
+  if {$i < 0} { return {} }
+  set lo [expr {$i - $n + 1}]
+  if {$lo < 0} { set lo 0 }
+  return [join [lrange $lines $lo $i] \n]
+}
+
+## Count the CODE lines of <path> matching <re>. A line whose first non-blank
+## character is `#` does not count; -1 when the file is absent.
+##
+## ⚠ WHY NOT opa_n_grep. Row N10c claims a name is GONE from
+## utils/annot_mode.tcl. A plain line grep would also count the explanatory
+## comment saying why it went, so the row would oblige the implementer to
+## explain a removal without naming the thing removed -- a rule that buys no
+## teeth, because a comment cannot restore a branch, and costs the file its
+## prose. The teeth are entirely in the code lines: the `notlive` arm of the
+## message builder and the selector that reaches for it are both code.
+proc opa_n_grep_code {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] {
+    if {[string index [string trimleft $l] 0] eq "#"} continue
+    if {[regexp -- $re $l]} { incr n }
+  }
+  return $n
+}
+
+## The body of ONE C function or ONE `else if` arm: from the first line matching
+## <startre> down to the first following line that is EXACTLY that line's own
+## indent followed by `}`. C comments are stripped LINE-WISE. {} when the start
+## line is absent, so a renamed arm reds its row instead of passing vacuously.
+##
+## ⚠ THE COMMENTS MUST GO, AND THAT IS NOT TIDINESS. Both rows that use this
+## (A64-2, O29b) look for a variable NAME, and both of the arms they slice carry
+## paragraphs about that same variable. Grepping the raw text would match the
+## prose and the row could never go green however correct the code was. Same
+## loop shape as test_backannotate_digital.tcl's BA87, for the same reason.
+##
+## ⚠ THE START LINE IS RETURNED TOO, and the closing brace with it, so a row
+## can name a positive control that lives in the arm's own body and prove the
+## slice is not empty. A slicer that returns {} must never satisfy a
+## "0 occurrences" claim.
+proc opa_c_slice {path startre} {
+  if {![file isfile $path]} { return {} }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set lines [split $d \n]
+  set i -1 ; set k 0
+  foreach l $lines {
+    if {[regexp -- $startre $l]} { set i $k ; break }
+    incr k
+  }
+  if {$i < 0} { return {} }
+  set ind {}
+  regexp -- {^[ \t]*} [lindex $lines $i] ind
+  set endl "$ind\}"
+  set out {} ; set k $i ; set len [llength $lines]
+  while {$k < $len} {
+    set l [lindex $lines $k]
+    if {$k > $i && $l eq $endl} { lappend out $l ; break }
+    set t [string trimleft $l]
+    if {[string index $t 0] ne "*" && [string range $t 0 1] ne "/*"} {
+      regsub -all -- {/\*.*?\*/} $l {} l
+      lappend out $l
+    }
+    incr k
+  }
+  return [join $out \n]
+}
 ## -> {mode has-trailing-break} for one `bind .drw <chord>` line of the rc.
 ## The `break` half is not decoration: measured with `event generate`, Ctrl-6
 ## without it still reaches callback.c:7272 and selects drawing layer 6.
@@ -3961,36 +4069,179 @@ check {N9 a candidate that will not parse is reported as a FAILURE, not as a loa
   [list $n9_pre [opa_n_mode op] [xschem raw loaded] [xschem get statusmsg]] \
   [list -1 {} -1 "OP annotation ON (device OP info) -- COULD NOT LOAD [file join $N_ND_BAD n_dev.raw]"]
 
-# ⚠ THE FOURTH INDISTINGUISHABLE CAUSE (issue 0451). A raw IS loaded and every
-# row still renders blank, because live_cursor2_backannotate is off. Naming
-# `raw already loaded` here would be a lie about a blank block; the row also
-# asserts the loaded raw was not thrown away on the way to saying so.
+# ⚠ ISSUE 0864 — THIS ROW IS REVERSED, AND THE REVERSAL IS THE POINT. It used
+# to assert issue 0451's "fourth indistinguishable cause": a database attached,
+# every row blank, because the live-cursor switch was off. That cause is gone —
+# the switch means "follow the cursor", not "render" — so the honest claim is
+# its opposite, and this row is the BEHAVIOURAL death certificate of the
+# sentence that named the switch. With the switch OFF and a database attached,
+# pressing `6` reports the raw as already loaded and the block still carries its
+# numbers. The row also still asserts the loaded raw was not thrown away on the
+# way to saying so.
 xschem load [file join $lib n_dev.sch]
 xschem annotate_op $N_RAW
 set ::netlist_dir $N_ND_EMPTY
+set n10_lv $::live_cursor2_backannotate
 set ::live_cursor2_backannotate 0
-check {N10 a raw loaded with backannotation OFF is named as such, and is NOT cleared} \
-  [list [opa_n_mode op] [xschem raw loaded] [xschem get statusmsg]] \
-  {{} 0 {OP annotation ON (device OP info) -- a raw is loaded but backannotation is off (live_cursor2_backannotate 0)}}
-set ::live_cursor2_backannotate $n_live_saved
+check {N10 with the live-cursor switch OFF the `6` chord reports the raw as LIVE and the block still renders} \
+  [list [opa_n_mode op] [xschem raw loaded] [op_annot::_annotated] \
+        [rcall {op_annot::text MZZ1}] [xschem get statusmsg]] \
+  [list {} 0 1 [list 0 "id  = 10u\ngm  = 100u\ngds = 1u\n"] \
+        {OP annotation ON (device OP info) -- raw already loaded}]
+set ::live_cursor2_backannotate $n10_lv
 
-# ⚠ AND *WHICH* TERM FAILED IS ASKED, NOT ASSUMED (issue 0459). N10 sets the
-# flag to 0 itself, so it can only ever confirm the wording it was written
-# from. The route a user actually takes — `Waves > Op`, i.e. `xschem raw_read`
-# — leaves `raw loaded` 0 and `raw annot` -1 with live_cursor2_backannotate
-# still 1: the block is blank for the OTHER reason. Naming the flag there
-# accused an innocent variable and never named the real cause, which is
-# save.c ruling D5-1's plausible-wrong-NUMBER defect wearing a reason's
-# clothes. The branch is also a dead end (the guard blocks the auto-load), so
-# the row pins that the way out is named.
+# ⚠ WHICH TERM FAILED IS NO LONGER A QUESTION (issue 0459 closes here). The
+# route a user actually takes — `Waves > Op`, i.e. `xschem raw_read` — leaves
+# `raw loaded` 0 and `raw annot` -1, and after 0864 that is the ONLY way the
+# gate can fail with a database attached. The old wording accused the
+# live-cursor switch, which is save.c ruling D5-1's plausible wrong NUMBER
+# wearing a reason's clothes. The branch is also a dead end (the guard blocks
+# the auto-load), so the row pins that the way out is named.
+#
+# ⚠ THE FIRST ELEMENT IS 0, AND IT IS AN A2 ROW RIDING ALONG. Nothing in this
+# section sets the switch by now — N10 restores what it found — so what is read
+# here is the SHIPPED default surviving every annotate_op the file has already
+# done. Today it reads 1 for two reasons at once: the shipped default is 1, and
+# `xschem annotate_op` force-sets it. Both must go.
 xschem load [file join $lib n_dev.sch] ; xschem raw_clear
 catch {xschem raw_read $N_RAW}
 check {N10b a raw that published no OP point names THAT, not the backannotate flag} \
   [list $::live_cursor2_backannotate [xschem raw loaded] [op_annot::_annotated] \
         [opa_n_mode op] [xschem get statusmsg]] \
-  [list 1 0 0 {} "OP annotation ON (device OP info) -- a raw is loaded but it\
+  [list 0 0 0 {} "OP annotation ON (device OP info) -- a raw is loaded but it\
      published no operating point: use Waves > Op Annotate, or `xschem raw_clear`\
      then press again"]
+xschem raw_clear
+
+# ⚠ N10c — MANDATORY, NOT BELT-AND-BRACES, and the reason is this branch's own
+# recorded lesson. After 0864 a database WITH a published point makes
+# `op_annot::_annotated` answer 1, so cadence::annot_mode takes its `live` arm
+# FIRST and a restored `notlive` arm below it is UNREACHABLE from there — N10,
+# whose fixture is exactly that, cannot see the arm come back. That path is
+# every real user's, and this row is the only cover it has.
+#
+# ⚠ CORRECTED 2026-08-27, BY MEASUREMENT. The first wording of this paragraph
+# said "no behavioural row in the tree — N10 included — could ever see it come
+# back". The sabotage run disproved that: restoring the arm (variant SAB-8)
+# reddened N10b, whose fixture is the annot_p < 0 case that falls THROUGH the
+# `live` arm into the selector. The row stays mandatory for the reason above;
+# the stronger claim was false, and on this branch an unchecked coverage claim
+# left in a comment is exactly how a guard rots.
+#
+# ⚠ CODE LINES ONLY (opa_n_grep_code). The prose explaining the removal may name
+# both freely; what must not come back is the arm and the selector that reaches
+# for it, and both of those are code.
+check {N10c the sentence that named the live-cursor switch is gone from the chord status builder, arm and selector both} \
+  [list [opa_n_grep_code [file join $repo utils annot_mode.tcl] {live_cursor2_backannotate}] \
+        [opa_n_grep_code [file join $repo utils annot_mode.tcl] {notlive}] \
+        [expr {[opa_n_grep_code [file join $repo utils annot_mode.tcl] {noop}] >= 1 ? 1 : 0}]] \
+  {0 0 1}
+
+# ===========================================================================
+# A64 — ISSUE 0864: `MUST ONLY HAPPEN WHEN USER REQUESTS IT!!`
+# ===========================================================================
+# The user unticks `Simulation > Graphs > Live annotate probes with 'b' cursor`,
+# presses `6`, and finds it ticked again. Measured on this tree, through the
+# chord and through the menu item alike. Two mechanisms, and BOTH are pinned
+# below because each is invisible to the other's rows:
+#   * the shipped default is on          -> A64-5 (source; with 0864's render
+#                                           gate gone nothing PAINTS differently
+#                                           for it, so no pixel/export row can
+#                                           see it. Corrected 2026-08-27: N10b
+#                                           does — it reads the variable itself,
+#                                           and sabotage variant SAB-6 reddened
+#                                           it. The source row stays anyway: it
+#                                           is the only one that also pins the
+#                                           shipped rc paragraph, and the only
+#                                           one a user xschemrc setting the
+#                                           variable cannot falsely redden)
+#   * `xschem annotate_op` force-sets it -> A64-1 / A64-3 behaviourally,
+#                                           A64-2 structurally
+# and the render gate that made the force-set look necessary is A64-4 / S16.
+set a64_nd  $::netlist_dir
+set a64_lv  $::live_cursor2_backannotate
+
+# ⚠ THE SECOND HALF OF THE GOLDEN IS THE POSITIVE CONTROL. "The switch stayed
+# off" is worth nothing next to an annotation that never happened; a build that
+# refused the file outright would satisfy the first element alone.
+xschem load [file join $lib n_dev.sch] ; xschem raw_clear
+set ::live_cursor2_backannotate 0
+set a641 [rcall [list xschem annotate_op $N_RAW]]
+check {A64-1 Annotate Operating Point does not re-tick the box the user unticked} \
+  [list $::live_cursor2_backannotate [lindex $a641 0] [xschem raw loaded] \
+        [lindex [xschem raw annot] 0] [rcall {op_annot::text MZZ1}]] \
+  [list 0 0 0 0 [list 0 "id  = 10u\ngm  = 100u\ngds = 1u\n"]]
+
+# ⚠ THE STRUCTURAL HALF, AND IT IS THE HONEST FORM FOR A DELETED LINE. The
+# force-set is ONE statement in the `annotate_op` arm of scheduler(); a row that
+# only watched behaviour would go green again the moment someone re-added it
+# beside a compensating read. The slice strips C comments, so the arm may
+# explain at length why the line is gone. The second and third elements are the
+# positive control: an arm that was renamed, or a slicer that returned nothing,
+# must not satisfy the first.
+set a642 [opa_c_slice [file join $repo src scheduler.c] \
+            {else if\(!strcmp\(argv\[1\], "annotate_op"\)\)}]
+check {A64-2 the force-set is not back in the annotate_op arm} \
+  [list [regexp -all -- {live_cursor2_backannotate} $a642] \
+        [expr {[string first {extra_rawfile} $a642] >= 0 ? 1 : 0}] \
+        [expr {[string first {update_op} $a642] >= 0 ? 1 : 0}]] \
+  {0 1 1}
+
+# ⚠ THROUGH THE SURFACE THE USER PRESSES, not through the internal command.
+# This is measurement B3 verbatim: box off, no database attached, press `6`, and
+# the key finds and loads `<netlist_dir>/<cell>.raw`. It must load it, say so,
+# and leave the box exactly as the user left it.
+xschem load [file join $lib n_dev.sch] ; xschem raw_clear
+set ::netlist_dir $N_ND_GOOD
+set ::live_cursor2_backannotate 0
+check {A64-3 the `6` chord loads a database without re-ticking the box} \
+  [list [opa_n_mode op] [xschem raw loaded] $::live_cursor2_backannotate \
+        [opa_n_row [op_annot::text MZZ1] gm] [xschem get statusmsg]] \
+  [list {} 0 0 100u "OP annotation ON (device OP info) -- loaded [file join $N_ND_GOOD n_dev.raw]"]
+
+# ⚠ BEHAVIOURALLY COVERED BY S16 ALREADY, and kept anyway for one reason: S16
+# reads a rendered block, so a term re-added in a shape this fixture happens to
+# satisfy would leave S16 green. The two remaining terms are asserted PRESENT in
+# the same row, so deleting the gate wholesale does not pass either.
+set a644 [opa_proc_src [opa_slurp [file join $repo src op_annot.tcl]] op_annot::_annotated]
+check {A64-4 the render gate is two terms and the live-cursor switch is not one of them} \
+  [list [regexp -all -- {live_cursor2_backannotate} $a644] \
+        [expr {[string first {raw loaded} $a644] >= 0 ? 1 : 0}] \
+        [expr {[string first {raw annot} $a644] >= 0 ? 1 : 0}]] \
+  {0 1 1}
+
+# ⚠ SOURCE-ONLY, DELIBERATELY, AND SAID OUT LOUD. Reading the live
+# `$::live_cursor2_backannotate` here would red on a developer whose own
+# ~/.xschem/xschemrc sets it — a true statement about their machine, not about
+# the shipped tree. And after A1 the default changes nothing that RENDERS, so
+# no export or pixel row can see this half at all.
+#
+# ⚠ CORRECTED 2026-08-27: an earlier wording said no behavioural row in the tree
+# could see it. Sabotage variant SAB-6 (default back to 1) reddened N10b, which
+# reads the variable itself. The source row stays for the two reasons above —
+# a user rc cannot falsely redden it, and it is the only row that also pins the
+# shipped rc paragraph below.
+#
+# ⚠ THE VALUE IS MATCHED AS A WHOLE WORD, NOT TO END OF LINE, so the shipped
+# line may carry the trailing comment naming the issue.
+#
+# ⚠ ELEMENTS 3-5 READ THE OPTION'S OWN PARAGRAPH IN src/xschemrc, not the file.
+# The shipped rc documents this switch as "Default: enabled (1)", which the
+# moment the default flips becomes a shipped contradiction — and the user is
+# told to read that file. It also asserts the option is still THERE: 0864 keeps
+# the feature and makes it opt-in, it does not remove it.
+set a645_rc [file join $repo src xschemrc]
+set a645_p  [opa_rc_para $a645_rc {^#\s*set live_cursor2_backannotate} 6]
+check {A64-5 the shipped default is OFF, and the option's own rc paragraph says so} \
+  [list [opa_n_grep [file join $repo src xschem.tcl] {^set_ne live_cursor2_backannotate 0(\M|$)}] \
+        [opa_n_grep [file join $repo src xschem.tcl] {^set_ne live_cursor2_backannotate 1(\M|$)}] \
+        [expr {[string length $a645_p] > 0 ? 1 : 0}] \
+        [expr {[regexp -nocase -- {default:\s*disabled} $a645_p] ? 1 : 0}] \
+        [expr {[regexp -nocase -- {default:\s*enabled} $a645_p] ? 1 : 0}]] \
+  {1 0 1 1 0}
+
+set ::netlist_dir $a64_nd
+set ::live_cursor2_backannotate $a64_lv
 xschem raw_clear
 
 # ===========================================================================
@@ -5161,15 +5412,23 @@ check {O27 the SAME raw path rewritten and re-annotated between two exports CHAN
 # ===========================================================================
 # O29 — THE SHIPPED MENU CHECKBUTTON (hole A, invariant I3)
 # ===========================================================================
-# ⚠ ONE CLICK, PERMANENTLY STALE. `Live annotate probes with 'b' cursor`
-# (src/xschem.tcl:15360, Simulation > Graphs) is a shipped checkbutton on
-# `live_cursor2_backannotate` with NO -command, so it does not even redraw, and
-# op_annot::_annotated (op_annot.tcl:561) reads it as its FIRST gate. Nothing in
-# a 13-field xctx epoch can see a Tcl variable. Off must BLANK every row — I3's
-# forbidden previous-run's-number arriving from a different button — and back on
-# must restore them. That the checkbutton has no -command is filed separately;
-# this row is about the CACHE, and it drives the variable directly so it holds
-# whether or not the -command ever lands.
+# ⚠ ISSUE 0864 — THE SAME CHECKBUTTON, THE OPPOSITE CLAIM, AND STILL A CACHE
+# ROW. `Live annotate probes with 'b' cursor` (Simulation > Graphs) is a shipped
+# checkbutton on `live_cursor2_backannotate` with NO -command. It used to be the
+# FIRST gate of op_annot::_annotated, so one click blanked every row of every
+# block on the sheet; this row used to assert that the draw-time cache SAW that
+# click, because nothing in a 13-field xctx epoch can see a Tcl variable. After
+# 0864 the switch means "follow the cursor" and nothing else, so the claim
+# inverts: three exports, before / with the box off / with it back on, must be
+# BYTE-IDENTICAL and populated.
+#
+# ⚠ IT IS THE CACHE-LEVEL PIN OF A1, which is why it is not redundant with S16.
+# S16 asks op_annot::text; this asks what was PAINTED, through the overlay cache
+# and its epoch. A first term restored in either language blanks leg b here
+# whether or not the epoch's own live-annotate term comes back with it.
+#
+# ⚠ NON-VACUOUS BY CONSTRUCTION: the golden is the POPULATED $O_RL_A, so a
+# printer that emitted nothing at all fails all four elements.
 opa_o_mkrl MZZA zzda
 xschem load [file join $lib o_rl.sch]
 rcall {xschem annotate_op $O_RLRAW}
@@ -5182,10 +5441,28 @@ set o29t [opa_s5_lines [op_annot::text MZZA]]
 set ::live_cursor2_backannotate 1
 set o29c [opa_l_print2 svg [file join $scratch o_rl29c.svg] $O_VP]
 set ::live_cursor2_backannotate $o29lv
-check {O29 `live_cursor2_backannotate` 1 -> 0 -> 1 blanks every row and restores it, with no other change} \
+check {O29 toggling the shipped Live-annotate checkbutton no longer changes a single painted row} \
   [list [opa_o_rowtexts $o29a ZZO] [opa_o_rowtexts $o29b ZZO] \
         [opa_o_rowtexts $o29c ZZO] $o29t] \
-  [list $O_RL_A {{ZZOA =} {ZZOB =} {ZZOC =}} $O_RL_A {{ZZOA =} {ZZOB =} {ZZOC =}}]
+  [list $O_RL_A $O_RL_A $O_RL_A $O_RL_A]
+
+# ⚠ O29b — MANDATORY, AND INVISIBLE TO EVERY BEHAVIOURAL ROW IN THE TREE. The
+# overlay epoch carried a 14th term, `e.live_annot`, for one reason: the switch
+# changed what was rendered, so the cache had to flush when it moved. After 0864
+# nothing rendered reads the switch, so the term can no longer tell two frames
+# apart — it is a flush trigger keyed to an irrelevant variable, and O29 above
+# would stay green with it left in. Standing furniture is the defect this branch
+# has been warned about twice; this row is the only thing that can see it.
+#
+# ⚠ THE SLICE STRIPS C COMMENTS, so annot_overlay_sync() may explain at length
+# why the term went. Elements 2 and 3 are the positive control: a renamed
+# function, or a slicer that returned nothing, must not satisfy element 1.
+set o29b_src [opa_c_slice [file join $repo src actions.c] {^void annot_overlay_sync}]
+check {O29b the overlay epoch carries no live-annotate term} \
+  [list [regexp -all -- {live_cursor2_backannotate} $o29b_src] \
+        [expr {[string first {annot_epoch.desc_gen} $o29b_src] >= 0 ? 1 : 0}] \
+        [expr {[string first {annot_overlay_flush} $o29b_src] >= 0 ? 1 : 0}]] \
+  {0 1 1}
 
 # ===========================================================================
 # O30 — A VECTOR RENAMED UNDER A STATIC SCHEMATIC (hole B, invariant I3)
@@ -5881,9 +6158,10 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
 # ============================================================================
 # ⚠ THE BLAST RADIUS IS WIDER THAN op_annot, AND ROW T22 IS WHY IT IS PINNED
 # ============================================================================
-# `@spice_get_voltage` (token.c:4315 for the `@#n:` form, token.c:4821 for the
-# bare one) reads `xctx->raw->cursor_b_val[]` DIRECTLY under
-# `live_cursor2_backannotate && sch_waves_loaded() >= 0 && annot_p >= 0`. So the
+# `@spice_get_voltage` (token.c, the `@#n:` form and the bare one) reads
+# `xctx->raw->cursor_b_val[]` DIRECTLY under `!raw_is_digital(raw) &&
+# sch_waves_loaded() >= 0 && annot_p >= 0` — the live-cursor switch was a fourth
+# term there until 0864 removed it from every render path. So the
 # same seam moves every lab_pin / ipin / opin / iopin / vdd / ngspice_probe /
 # scope text on the sheet, and every `pinexpr` row of every block. That is the
 # feature, not a side effect — but it means the graph-path regression rows

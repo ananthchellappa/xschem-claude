@@ -116,7 +116,8 @@ design.
 
 `xschem annotate_op [rawfile] [level] [sim_type]` (`scheduler.c` ~2329) loads a
 raw via `extra_rawfile()` — trying `op`, then `dc` (Xyce writes OP as a one-point
-DC sweep), then `tran` (point 0) — forces `live_cursor2_backannotate=1`, and
+DC sweep), then `tran` (point 0) — forces `live_cursor2_backannotate=1` **⚠ SUPERSEDED BY 0864 (2026-08-27)**: the force-set is DELETED, `annotate_op` no longer re-ticks the
+shipped Live-annotate checkbutton — and
 calls `update_op()`.
 
 `update_op()` (`save.c:1988`) copies point 0 of every vector into
@@ -1058,7 +1059,14 @@ verbatim apart from the name. What S5 settled that this section did not specify:
   parameter list on a real device. Skip on a blank **devpath**, never on a blank
   descriptor.
 * **A WHOLE-BLOCK GATE, COPIED FROM THE C RATHER THAN INVENTED.** Nothing is read
-  unless `token.c:4318`/`:4339`'s own three terms hold: `live_cursor2_backannotate`
+  unless `token.c`'s own gate terms hold — **⚠ SUPERSEDED BY 0864 (2026-08-27)**, the six
+  `cursor_b_val[]` branches now read `!raw_is_digital()`, `sch_waves_loaded()>=0`
+  and `annot_p>=0`, and the switch is no longer one of them (**⚠ and see 0865,
+  OPEN: with the switch off, three sites still PUBLISH a cursor-B point —
+  `save.c:1287` raw_read, `actions.c:4819` descend, `scheduler.c:12080/12112`
+  `set cursor2_x` — while the six that would keep it current are gated on the
+  switch, so a published value can outlive the cursor position it was measured
+  at**): `live_cursor2_backannotate`
   && `xschem raw loaded` >= 0 && `annot_p` >= 0 from `xschem raw annot`, each
   catch-wrapped (`raw annot` itself raises with no raw). Without it, a raw that
   was READ but never PUBLISHED — `xschem raw read <f> op` never calls
@@ -1533,7 +1541,10 @@ Consequences of carrier 2 that the plan must handle:
               descriptor's block forever
       HOOK D  save.c raw_add_vector / raw_renamevar / raw_deletevar + the
               `xschem raw set` arm — in-place raw mutation moves NO epoch field
-      TERM 14 `live_cursor2_backannotate`, a shipped menu checkbutton
+      TERM 14 `live_cursor2_backannotate`, a shipped menu checkbutton **⚠ SUPERSEDED BY 0864 (2026-08-27)** —
+              the 14th term is REMOVED from `annot_overlay_sync()`; nothing
+              rendered reads the switch, so it could no longer tell two
+              frames apart (row O29b pins its absence)
               (`xschem.tcl:15360`) that is `op_annot::_annotated`'s FIRST gate
 
   The covering rows must re-load the **same path** with changed content (a
@@ -1760,7 +1771,8 @@ an unguarded reload silently destroys a good annotation. Three guards:
 `op_annot::_annotated`, then `raw loaded >= 0`, then `file exists`.
 
 **⚠ AND `op_annot::_annotated` COLLAPSES TWO CAUSES — ASK WHICH ONE.** It is
-false when *either* `live_cursor2_backannotate` is 0 *or* the raw published no OP
+false when *either* `live_cursor2_backannotate` is 0 *or* the raw published no OP **⚠ SUPERSEDED BY 0864 (2026-08-27)** — the switch is not a term of `op_annot::_annotated` at all, so the gate is
+`raw loaded >= 0 && annot_p >= 0` and the only remaining cause is the second one
 point (`raw annot` `p == -1`). The shipped `Waves > Op` route
 (`xschem raw_read`) reaches the **second** with the flag still at 1, and
 `scheduler.c:2404` *forces that flag on*, so the first is almost never the
@@ -1796,7 +1808,7 @@ unchanged.
 | exists, won't parse | `-- COULD NOT LOAD <path>` |
 | candidate absent | `-- NO RAW FILE: <path>` |
 | no candidate buildable | `-- NO RAW FILE for this cell` |
-| loaded, flag off | `-- a raw is loaded but backannotation is off (live_cursor2_backannotate 0)` |
+| loaded, flag off | ~~`-- a raw is loaded but backannotation is off (live_cursor2_backannotate 0)`~~ **⚠ SUPERSEDED BY 0864 (2026-08-27)** — the state and its sentence are DELETED. With a database attached the gate can now fail only on `annot_p < 0`, which is the `noop` row below; issue 0459 closes here |
 | loaded, no OP point | `-- a raw is loaded but it published no operating point: use Waves > Op Annotate, or ``xschem raw_clear`` then press again` |
 | nothing annotatable | `-- no OP descriptor for symbol type(s): <t…>` appended to any of the above |
 
@@ -2496,7 +2508,7 @@ down or assumed, which is why they are here and not in a crew report.
    and `xschem raw annot` both **RAISE** with nothing attached, so every probe of them
    must be catch-wrapped — and per **I3** an unanswerable term must fall to
    "re-attach", never to "assume attached".
-5. **`annotate_op` force-enables `live_cursor2_backannotate`** (`scheduler.c:2409`).
+5. ~~**`annotate_op` force-enables `live_cursor2_backannotate`**~~ (`scheduler.c:2409`). **⚠ SUPERSEDED BY 0864 (2026-08-27)** The force-set is deleted: an operation the user asked for must never re-enable a behaviour the user turned off.
    So `op_annot::_annotated`'s first term cannot be used to detect that the user
    turned the live-probe checkbutton off: the attach turns it back on.
 

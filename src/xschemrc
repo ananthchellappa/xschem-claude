@@ -735,8 +735,12 @@
 ###########################################################################
 #### LIVE BACKANNOTATION OF DATA AT CURSOR 2 (B) POSITION
 ###########################################################################
-#### if enabled will backannotate values in schematic at cursor 'b' position
-#### in graph. Default: enabled (1)
+#### if enabled, every time cursor 'b' is moved in a graph the schematic is
+#### re-annotated with the values at the new time point. Issue 0864 made this
+#### opt-in: it used to be on, and `xschem annotate_op` used to switch it back
+#### on behind your back. Operating-point annotation itself does NOT need it --
+#### the `6` / `Alt-6` keys and the Annotate menu items work with this off.
+#### Uncomment to follow the cursor. Default: disabled (0)
 # set live_cursor2_backannotate 1
 
 ###########################################################################

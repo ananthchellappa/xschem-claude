@@ -1636,7 +1636,6 @@ typedef struct {
   unsigned int modify_seq;
   unsigned int data_seq;
   int desc_gen;
-  int live_annot;
 } Annot_epoch;
 
 static Annot_epoch annot_epoch;      /* zero-initialised: .valid == 0 == "no epoch yet" */
@@ -1731,18 +1730,19 @@ void annot_overlay_sync(void)
   e.raw_annot_p = xctx->raw ? xctx->raw->annot_p : -1;
   g = tclgetvar("::op_annot::gen");
   e.desc_gen = g ? atoi(g) : -1;
-  /* THE 14th TERM (S9b, decision D6). op_annot::_annotated reads the Tcl global
-   * live_cursor2_backannotate as its FIRST gate, so flipping the shipped
-   * "Simulation > Live annotate" menu checkbutton flips every row of every block
-   * between its value and blank -- while moving nothing else: not modify_seq,
-   * not the raw, not ::op_annot::gen, not any field of xctx. Without this term
-   * the cache strands real numbers on screen after the user switched annotation
-   * OFF, which is invariant I3's "not the previous run's number" in the other
-   * direction. One tclgetboolvar per frame, the same cost class as the
-   * ::op_annot::gen read above. A Tcl variable trace was rejected: it would be
-   * installed on a SHIPPED global that C also writes, and a trace body that
-   * errors makes the variable WRITE fail. */
-  e.live_annot = tclgetboolvar("live_cursor2_backannotate");
+  /* ISSUE 0864 -- THERE WAS A 14th TERM HERE AND IT IS GONE; a reader who
+   * remembers it will assume the epoch still has to watch a Tcl variable. It
+   * read the shipped "Live annotate probes with 'b' cursor" checkbutton, because
+   * that switch used to be op_annot::_annotated's first gate and so flipped
+   * every row of every block between its value and blank while moving nothing
+   * else -- not modify_seq, not the raw, not ::op_annot::gen, not any field of
+   * xctx. After 0864 nothing that RENDERS reads that switch (it means "follow
+   * cursor B and re-annotate as it moves"), so the term can no longer tell two
+   * frames apart: it is a flush trigger keyed to a variable the block's content
+   * does not depend on. Removed rather than left with a corrected comment --
+   * the alternative was considered and rejected in 0864. Row O29b slices this
+   * function and is the ONLY thing that can see the term come back; O29 stays
+   * green either way, which is exactly why O29b exists. */
   if(annot_epoch.valid &&
      e.ctx == annot_epoch.ctx && e.raw == annot_epoch.raw &&
      e.instances == annot_epoch.instances && e.currsch == annot_epoch.currsch &&
@@ -1750,7 +1750,7 @@ void annot_overlay_sync(void)
      e.raw_level == annot_epoch.raw_level && e.raw_nvars == annot_epoch.raw_nvars &&
      e.raw_annot_p == annot_epoch.raw_annot_p && e.schhash == annot_epoch.schhash &&
      e.modify_seq == annot_epoch.modify_seq && e.data_seq == annot_epoch.data_seq &&
-     e.desc_gen == annot_epoch.desc_gen && e.live_annot == annot_epoch.live_annot) return;
+     e.desc_gen == annot_epoch.desc_gen) return;
   annot_overlay_flush();
   ++annot_overlay_flushes;
   annot_epoch = e;

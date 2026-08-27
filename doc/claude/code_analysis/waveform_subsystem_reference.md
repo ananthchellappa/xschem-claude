@@ -409,7 +409,8 @@ below renders blank, while `pinexpr` rows (pin voltages) still render.
 ### 6.1 The value pipeline (C)
 
 - `annotate_op` (`scheduler.c:2339`): loads the op→dc→tran section via
-  `extra_rawfile`, **forces `live_cursor2_backannotate=1`** (side effect), calls
+  `extra_rawfile`, ~~**forces `live_cursor2_backannotate=1`** (side effect)~~ **⚠ SUPERSEDED BY 0864 (2026-08-27)** — the force-set is deleted, `annotate_op` leaves the shipped Live-annotate
+  checkbutton exactly as the user left it — calls
   `update_op`.
 - `update_op` (`save.c:2015`): copies point 0 of each var into `cursor_b_val[]`
   **and** into Tcl `ngspice::ngspice_data`; bumps the overlay epoch through
@@ -432,7 +433,8 @@ below renders blank, while `pinexpr` rows (pin voltages) still render.
   `token.c:4912` parenthesised form) — for a **1-pin** instance (`no_of_pins==1`),
   resolves net → fq lowercased node → `get_raw_index` → substitutes
   `cursor_b_val[idx]` (eng-formatted); `0`/`GND`→0, unknown→`-`. Gated by
-  `live_cursor2_backannotate` && `sch_waves_loaded()>=0`. `@spice_get_node`/currents
+  ~~`live_cursor2_backannotate` &&~~ **⚠ SUPERSEDED BY 0864 (2026-08-27)** (the six gates read `!raw_is_digital()` and no longer read the switch)
+  `sch_waves_loaded()>=0`. `@spice_get_node`/currents
   go via `ngspice::get_current/get_node` reading `ngspice_data`.
 - **THE value accessor is `xschem raw value <vector> -1`** (`scheduler.c:10344`),
   which falls through to `cursor_b_val[idx]` — the OP point, or the cursor-B point
@@ -595,7 +597,7 @@ Three of those are not obvious, and each answers a measured failure:
   and nothing in C can otherwise observe a Tcl proc being redefined. It reads
   `::op_annot::gen`.
 - **`live_annot`** — `op_annot::_annotated` gates on the Tcl global
-  `live_cursor2_backannotate` *first*, so the shipped "Live annotate" checkbutton
+  ~~`live_cursor2_backannotate` *first*~~ **⚠ SUPERSEDED BY 0864 (2026-08-27)** — it does not read the switch at all, so the shipped "Live annotate" checkbutton
   flips every row between its value and blank while moving nothing else: not
   `modify_seq`, not the raw, not `::op_annot::gen`, not any field of `xctx`.
 
