@@ -9861,7 +9861,29 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
        strcmp(xctx->current_win_path, win_path) ) {
       struct stat buf;
 
-      if(xctx->pending_fullzoom == 1) return 0; /* no switching if opening a new window */
+      /* ⚠ issue 0848: AN EXPOSE IS NOT A CONTEXT STEAL, and dropping it corrupts a
+       * window that is not the one this guard protects.
+       *
+       * The guard exists so a window being opened cannot have its context yanked away
+       * by focus/enter events arriving mid-creation. True for FocusIn and EnterNotify.
+       * False for Expose: an Expose is another window reporting that its pixels are
+       * gone and asking to be repainted, and the arm below answers with a redraw-ONLY
+       * switch that restores the previous context immediately (`redraw_only` /
+       * `restore_win`). Refusing it does not protect the window being opened -- it
+       * leaves a DIFFERENT window carrying whatever was drawn over it, until something
+       * else happens to force a full redraw.
+       *
+       * ⚠ AND IT WAS INVISIBLE UNTIL THE OTHER HALF WAS FIXED. This is one of two
+       * bugs in series: new_schematic("switch_no_tcl_ctx", ...) silently no-opped for
+       * the main window under the tabbed interface (xinit.c, same issue), so the
+       * redraw never happened whether or not this guard fired. Measured with a
+       * detached window current and the main window uncovered, as a fraction of
+       * differing canvas pixels against a correct repaint:
+       *     both bugs present     guard armed 0.0263   guard clear 0.0263
+       *     switch fixed only     guard armed 0.0263   guard clear 0.0000
+       *     both fixed            guard armed 0.0000   guard clear 0.0000
+       * The middle row is why the first measurement of this guard read as innocent. */
+      if(xctx->pending_fullzoom == 1 && event != Expose) return 0;
       dbg(1, "handle_window_switching(): event=%d, ui_state=%d win_path=%s\n",
           event, xctx->ui_state, win_path);
       /* This will switch context only when copying stuff across windows

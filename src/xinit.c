@@ -2697,7 +2697,31 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
     net_hilight_anim_update();
     return ret;
   } else if(!strcmp(what, "switch_no_tcl_ctx")) {
-    if(!tabbed_interface || is_window_context(win_path)) switch_window(&window_count, win_path, 0);
+    /* ⚠ issue 0848: NO GATE HERE. This used to read
+     *     if(!tabbed_interface || is_window_context(win_path)) switch_window(...);
+     * with no else, so under the tabbed interface a redraw-only switch to the MAIN
+     * window silently did nothing -- is_window_context() returns 0 for slot 0 by
+     * design ("slot 0 is the main window, handled by the normal paths"), and there
+     * were no normal paths on this arm. The sibling "switch" arm above has the
+     * three-way fallback this one was never given.
+     *
+     * The caller is callback()'s Expose handling: "a temporary switch just to redraw
+     * obscured window parts". When it no-ops, callback() carries on believing the
+     * switch happened and repaints the WRONG context -- measured with a detached
+     * window current and the main window uncovered:
+     *     switching window context for redraw ONLY: .x1.drw --> .drw
+     *     handle_expose: ctx=.x1.drw ... win=4195017      <- .x1, not .drw
+     * so the main window's canvas kept whatever had been drawn over it and was never
+     * repainted until something forced a full redraw. That is the "double-click
+     * corrupts the schematic window with waveforms" report: the viewer opens over the
+     * design window, paints, is stepped aside, and the design window's Expose for the
+     * vacated area is serviced against the viewer's context.
+     *
+     * switch_window(..., tcl_ctx=0) already handles n == 0 (it maps slot 0 to ".drw")
+     * and is exactly the tcl-context-free swap this path wants, for tabs and windows
+     * alike -- a genuine tab shares the .drw X window, so pointing xctx at it and
+     * repainting is correct there too. */
+    switch_window(&window_count, win_path, 0);
   }
   return window_count;
 }

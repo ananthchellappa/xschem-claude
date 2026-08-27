@@ -1253,6 +1253,21 @@ proc wviewer::open {token} {
       if {[xschem get current_win_path] eq "$t.drw"} { set wp $t.drw; break }
     }
   }
+  # ⚠ issue 0848: STEP OFF THE DESIGN WINDOW *BEFORE* ANYTHING IS PAINTED HERE.
+  #
+  # set_geom has just placed this window, and on a session whose `untitled.sch` slot
+  # holds the design window's own geometry that means placed exactly on top of it. Every
+  # graph drawn from here on is therefore drawn over the design window's real estate --
+  # and when the late uncover (after the raise, below) finally steps the viewer aside,
+  # it leaves those pixels behind on a window that then has to be told to repaint. Doing
+  # it now means there is nothing to leave behind. The late call stays, because a
+  # withdraw/deiconify re-map can still undo this one; it is the verification, not the
+  # first line of defence.
+  catch {
+    set _ft [expr {$before eq {.drw} ? {.} : [string range $before 0 end-4]}]
+    set _nt [expr {$wp eq {.drw} ? {.} : [string range $wp 0 end-4]}]
+    if {$_nt ne $_ft} { wviewer::uncover $_nt $_ft }
+  }
   set tops1 [winfo children .]
   # ⚠ EVERYTHING BELOW STAMPS PER-CONTEXT C STATE, SO VERIFY THE CONTEXT FIRST
   # (issue 0187). The verdict is a pure proc so the rules are testable headless;
