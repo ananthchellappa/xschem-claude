@@ -13590,21 +13590,51 @@ proc window_report {{tag {}}} {
     set st ? ; catch {set st [wm state $t]}
     set g  ? ; catch {set g  [wm geometry $t]}
     set ti ? ; catch {set ti [wm title $t]}
+    # ⚠ `wm state` IS TK'S OWN RECORD. The user hit runs where the census listed a
+    # waveform window they could not see anywhere, and the question "does the X SERVER
+    # agree this window exists and is on screen" is not answerable from `wm state`
+    # alone. Three more facts, all cheap, all from a different source:
+    #   id   -- the X window id, so the server's own tree can be cross-checked against
+    #           this line afterwards (xwininfo -id <id>) instead of guessed at;
+    #   map  -- winfo ismapped, which follows the server's MapNotify rather than Tk's
+    #           intent, so `normal`+map=0 is a window Tk believes in and X does not;
+    #   OFF-SCREEN -- because a window parked past the screen edge is invisible while
+    #           every other field on this line looks perfectly healthy. Measured: a
+    #           viewer at +3930+665 sized 1110x790 on a 5120x1440 screen has its bottom
+    #           edge at 1455, i.e. under the taskbar and off the display.
+    set id ? ; catch {set id [winfo id $t]}
+    set mp ? ; catch {set mp [winfo ismapped $t]}
+    set off {}
+    if {[scan $g {%dx%d+%d+%d} gw gh gx gy] == 4} {
+      set sw [winfo screenwidth $t]
+      set sh [winfo screenheight $t]
+      if {$gx + $gw > $sw || $gy + $gh > $sh || $gx < 0 || $gy < 0} {
+        set off [format { OFF-SCREEN(right=%d bottom=%d screen=%dx%d)} \
+                   [expr {$gx + $gw}] [expr {$gy + $gh}] $sw $sh]
+      }
+    }
     set z [lsearch -exact $order $t]
-    lappend out [format {  %-10s stack=%-3s %-10s %-20s '%s'} \
-      $t [expr {$z < 0 ? {-} : $z + 1}] $st $g $ti]
+    lappend out [format {  %-10s stack=%-3s %-10s map=%-2s %-20s %-11s '%s'%s} \
+      $t [expr {$z < 0 ? {-} : $z + 1}] $st $mp $g $id $ti $off]
   }
-  # ⚠ ONE line in the pane, not two. `xschem log_action` already MIRRORS what it writes
-  # into the CIW pane (src/util.c log_action_echo, file -> pane, one way), so echoing
-  # first and logging second printed the whole census twice. The direct echo is now the
-  # FALLBACK for the case the log cannot take it -- no --logdir, or a --pipe session,
-  # where log_action writes nothing and the mirror therefore says nothing either. Same
-  # -reset/-emitted gate libmgr::open_view uses for exactly this reason.
+  # ⚠ THE FILE, NOT THE PANE. A census is SEVEN lines and the viewer takes two of them
+  # 700ms apart, so a plain `log_action` -- which MIRRORS file -> pane (src/util.c
+  # log_action_echo, one way) -- put fourteen lines of forensics into the user's CIW
+  # every time a waveform window opened. That is where this instrument was read from
+  # WRONG: the durable log is where a census is useful (it can be diffed against a
+  # later one, and the user hands over /tmp/Xschem.log.N after the fact), the pane is
+  # where it is only noise. `-noecho` writes the identical line to the file and skips
+  # the mirror (log_action_noecho, util.c:517), and it still sets actionlog_cmd_logged,
+  # so the -reset/-emitted gate below reads exactly as it did before.
+  #
+  # The direct echo stays as the FALLBACK for the case the log cannot take it at all --
+  # no --logdir, or a --pipe session -- where the file write is a no-op and a silently
+  # dropped census would be worse than a noisy one. Same gate libmgr::open_view uses.
   foreach l $out {
     set done 0
     catch {
       xschem log_action -reset
-      xschem log_action "#= $l"
+      xschem log_action -noecho "#= $l"
       set done [xschem log_action -emitted]
     }
     if {!$done} { catch {ciw_echo $l} }
