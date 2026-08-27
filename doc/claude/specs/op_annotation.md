@@ -2105,6 +2105,184 @@ path.
   back-annotation appears at all.** Shipped at 0; the question is issue **0621**.
 
 
+---
+
+### 4.9 On-request transient annotation at the waveform cursor ✅ LANDED (0868, 2026-08-27)
+
+**The user's request, verbatim 2026-08-26:**
+
+> "MUST ONLY HAPPEN WHEN USER REQUESTS IT!! Alt-6 and 6 are for OP info and OP
+> node voltages. We can add a menu item in Results > Annotate for annotating TRAN
+> node voltages for time-point given by cursor B, or A - whatever the convention
+> is - if there is only one cursor in the waveform viewer's active tab, use that.
+> If A and B are there, then use cursor-A. Give user a way to enter this mode
+> with a different shortcut through cadence_style_rc - maybe Alt-Shift-6"
+
+Two halves, and neither ships alone.
+
+#### Half 1 — the two ACQUISITION doors (issue 0865, closed here)
+
+Two sites published a cursor-B annotation with **no** `live_cursor2_backannotate`
+test at all, i.e. with the shipped **unticked** box and nobody having asked:
+
+* `raw_read()`'s tail (`src/save.c`) — **loading a waveform file**;
+* `descend_schematic()`'s tail (`src/actions.c`) — **walking into a child**.
+
+Both now carry the same `tclgetboolvar("live_cursor2_backannotate") &&` term the
+six cursor-motion sites have always carried, so one grep finds one gate shape.
+Rows **V22**, **V23**, **V23b** and **V24** of `tests/headless/test_op_annot.tcl`
+are the measurement, each behavioural one with a **box-ticked positive control**:
+a gate that reds nothing when removed is not a gate, and one that also silences
+the ticked box would delete the shipped live-annotate feature.
+
+This is **finishing 0856**, not repairing staleness. `update_op()` already refuses
+to publish a transient's point 0 as an operating point, so the `6` chord paints
+nothing on a pure transient — while these two doors put a transient node voltage
+on that same surface unasked. The user's 0856 words: *"We haven't yet built
+anything for annotating from TRAN results, so it should do nothing silently."*
+
+**⚠ THE PUBLISHER INVENTORY IN 0865 IS WRONG IN BOTH DIRECTIONS.**
+`scheduler.c:12080`, named there as an ungated publisher, is inside `#if 0` —
+**dead code**. And the `else if(backannotate_at_cursor_b_nograph())` arm of
+`xschem set cursor2_x` is a **fourth** publisher nobody listed.
+
+**⚠ BOTH `xschem set cursor2_x` ARMS ARE LEFT PUBLISHING, DELIBERATELY.** That
+verb is a sentence somebody TYPED naming a time — which is what "the user
+requested it" means — it stamps `annot_x` at the position it was measured at, it
+is the scripting verb and §4.7's only road, and the waveform viewer's own call
+runs inside the VIEWER's context (`wviewer::cursor_toggle`) and never reaches the
+design sheet. Both plans leave the identical residual (a requested snapshot
+persists while the cursor moves on), so the extra gating buys nothing half 2 does
+not already provide, and costs five suites. Row **V25** pins the decision so a
+later crew meets an explained row rather than what looks like a missed gate.
+Ratification owed: issue **0868**.
+
+#### Half 2 — the third mode
+
+```c
+/* xschem.h */
+#define ANNOT_SHOW_TRAN 4     /* bit2, beside ANNOT_SHOW_OP and ANNOT_SHOW_VOLTAGE */
+
+/* actions.c -- annot_class_mask(): bit2 is a SECOND SWITCH onto the node-voltage
+ * content class, not a third class */
+if(flags & TEXT_ANNOT_VOLTAGE) return ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN;
+
+/* callback.c -- the requested-time entry. NOTHING is reimplemented: the sample
+ * scan, D4-7's window rescan, D4-4's clamp and D4-1's fan-out are all reached
+ * through the shipped body, with `at` short-circuiting the cursor read. */
+int backannotate_at_time(double t)
+{
+  xRect r; Graph_ctx gr;
+  if(!xctx || sch_waves_loaded() < 0) return 0;
+  memset(&r, 0, sizeof(r)); memset(&gr, 0, sizeof(gr));
+  gr.gx1 = -HUGE_VAL; gr.gx2 = HUGE_VAL;
+  backannot_pos_at(&r, &gr, &t);
+  return 1;
+}
+
+/* scheduler.c */
+xschem annotate_at <time>   ->  1 | 0, plus set_modify(-2) when it annotated
+```
+
+Every one of §4.7's four load-bearing points applies here verbatim and for the
+same measured reasons — the public path (so `annot_data_changed()` fires), a
+stack-local `Graph_ctx`, the explicit **`[-HUGE_VAL, +HUGE_VAL]`** window (a
+`memset`-0 one answers **point 1's value for every t past the second sample**;
+row **V3** is the only row that can see it) and the `sch_waves_loaded()` gate
+*ahead* of the call (row **V5**). The one addition is that the verb **does not
+move either cursor**: it READS a time. An implementation that "fixed" the `at`
+parameter by writing `graph_cursor2_x = t` passes V1-V4 and fails **V6**.
+
+#### The cursor convention, and the deliberate limit
+
+`cadence::_annot_tran_cursor` (`utils/annot_mode.tcl`) resolves **one** time
+point: the waveform viewer's ACTIVE TAB first — `wviewer::cva` / `cvb` say which
+cursors are on, keyed by token, and the positions are read inside a
+`wviewer::enter_ctx` / `leave_ctx` borrow copied from `wviewer::readout_refresh`
+— otherwise the current context's own `graph_flags` (bit1 = A, bit2 = B) and
+`cursor1_x` / `cursor2_x`. **Cursor A wins whenever it is on**; B is used only
+when A is not. Row **V11** is the only row that tells a rule-honouring build from
+a B-preferring one; **B12** (Tk, dev display) is the only row in the tree that can
+see the viewer borrow at all.
+
+**⚠ NO `cursor_a_val` ARRAY WAS BUILT, and the rule is still honoured in full.**
+The engine has `cursor_b_val` only; the mode resolves one time point and publishes
+it through that array. The deliberate limit is that A and B cannot be annotated
+**simultaneously**, which nobody asked for; a real independent array costs six
+alloc sites plus eight `token.c` readers plus new `Raw` fields.
+
+#### What the user sees, and the ordering guard
+
+`cadence::annot_tran` is the ONE body both entry points drive — the
+`Alt-Shift-6` chord (`src/cadence_style_rc`) and the ASE-L **Results > Annotate >
+Transient Node Voltages (at cursor)** item (`src/ase_window.tcl`). It refuses by
+NAME, with one minted sentence each (`cadence::_annot_tran_msg`, RULING D5-4),
+delivered to the CIW *and* the held status line:
+
+| state | when |
+|---|---|
+| `ok` | published — **names the time point and the cursor letter** |
+| `nocursor` | no cursor is on anywhere |
+| `noraw` | no database attached to this sheet |
+| `notran` | a database is attached but it is not a transient |
+| `nodata` | the engine had nothing to resolve against — **⚠ UNREACHABLE, issue 0871**: `xschem raw loaded` IS `sch_waves_loaded()`, the same predicate `backannotate_at_time()` gates on, so the `noraw` arm above has already returned. Three refusal states are reachable, not four |
+
+**⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH** (rows V14/V15/V16). Arming
+first would leave the user looking at an armed mode over the PREVIOUS request's
+numbers — RULING D5-1 with an extra step.
+
+**⚠ THE `ok` SENTENCE'S PROVENANCE IS LOAD-BEARING, NOT POLITENESS.** The mode is a
+SNAPSHOT: the number stays on the sheet while the cursor moves on. Under D5-1 the
+only thing that keeps a held number honest is that the user was told what it was
+measured at and from which cursor. Unratified — issue **0868**.
+
+> **🔴 AND AS SHIPPED IT DOES NOT CARRY IT — issue 0869.** The sentence renders the
+> time the user ASKED for, not the time the number was measured at. RULING D4-4
+> makes an out-of-range request hold the boundary sample, correctly, and the
+> sentence is not told: with the last sample at 4e-09 and cursor B at 4.5e-09 the
+> sheet paints `d 4` beside *"Transient annotation at t = 4.5e-09 (cursor B)"*.
+> Row V4 tests the paint without the sentence; row V17 tests the sentence without
+> data; nothing composes them. Reachable whenever the plotted x-range outruns the
+> data — an interrupted run, a raw still being written, a graph left at a previous
+> run's range.
+
+**⚠ THE BIND SPELLING IS THE TRAP.** Measured with `wish` on `:99`: keycode 15 is
+`6 asciicircum`, a physical Alt+Shift+6 arrives as keysym **`asciicircum`**, and
+even an event synthesised with keysym `6` plus Shift+Alt dispatches to
+`<Alt-Key-asciicircum>` — **`<Alt-Shift-Key-6>` never fires.** The asciicircum form
+is the real bind; the Shift-Key-6 form is the documented non-US-layout fallback,
+exactly as `cadence_style_rc` already does for Ctrl-Shift-4 → `dollar`. A landing
+that wrote only the Shift-Key-6 form passes every behavioural row and is dead under
+the user's fingers, which is why row **V20** is structural.
+
+**⚠ `cadence::_annot_mask` IS NOT TOUCHED** — `tran` still raises there. The three
+OP chords are pure mask arithmetic over numbers that are already published; this
+one PUBLISHES. Folding it into that table would lose the refusal states.
+
+**Reachability:** the ASE-L window build calls `ase::ui::annot_tran_helper`, which
+sources `utils/annot_mode.tcl` only when `cadence::annot_tran` is absent and only
+when the file is actually there. Deliberately **not** a `source` line in
+`src/xschem.tcl`: `utils/` is not in the install list, and a shipped `xschem.tcl`
+sourcing a file it did not install is the startup segfault recorded as 0423/0424.
+
+#### 4.9.1 Open against this section (measured 2026-08-27, none fixed)
+
+| issue | what |
+|---|---|
+| **0869** | the `ok` sentence names the REQUESTED time, not the measured one — the D5-1 claim §4.9 rests on |
+| **0870** | `xschem annotate_at <unparseable>` publishes at t = 0 and answers 1 (`atof_spice` → 0.0) |
+| **0871** | the `nodata` refusal is unreachable; row V17's fifth golden is hollow |
+| **0872** | bit1 and bit2 share ONE render class, so `Alt-6` repaints a transient's numbers as *"OP annotation ON (node voltages)"* and the transient bit renders an operating point — RULING **0856** reopens here |
+| **0873** | guard **G9**, "refusals speak", has no row: silencing the emitter leaves all 651 checks green |
+| **0874** | the widened `text_hidden()` `hide=voltage` arm has no row (masks 4 and 5 are the only discriminating ones and nothing reaches them) |
+| **0875** | row B12b cannot see a leaked viewer-context borrow |
+| **0876** | the eight C-level guards were never sabotage-tested — present and working, but unfalsified |
+
+⚠ **0872 is the one to read before extending this section.** The third mode is a
+third SWITCH onto the second mode's store, not a third store. Anything that assumes
+"bit2 on ⇒ the number came from a transient" is wrong today.
+
+
 ## 5. Contracts and invariants
 
 | id | invariant |

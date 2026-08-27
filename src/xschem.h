@@ -431,6 +431,27 @@ typedef int Tcl_Size;
 /* the annot_show mask bits (xctx->annot_show, MIRRORED IN TCL as ::annot_show) */
 #define ANNOT_SHOW_OP 1
 #define ANNOT_SHOW_VOLTAGE 2
+/* 0868 -- bit2, the TRANSIENT node-voltage mode: ASE-L `Results > Annotate >
+ * Transient Node Voltages (at cursor)` and the `Alt-Shift-6` chord. It is a
+ * SECOND SWITCH ONTO THE NODE-VOLTAGE CONTENT CLASS, not a third class:
+ * annot_class_mask() (actions.c) returns ANNOT_SHOW_VOLTAGE|ANNOT_SHOW_TRAN for
+ * TEXT_ANNOT_VOLTAGE, so a bare bit2 renders exactly the texts bit1 renders.
+ *
+ * ⚠ MEASURED BEFORE THE CHANGE, AND IT IS WHY THE OR IS THERE RATHER THAN A
+ * THIRD ARM: `xschem set annot_show 4` read back 4 and painted NOTHING, because
+ * both render gates tested bit1 alone -- a mode the user can select and not see.
+ * Row V7 of tests/headless/test_op_annot.tcl is that measurement, and row V9
+ * (masks 2 / 4 / 6 all paint, mask 1 paints none) is what forbids "fixing" this
+ * by making bit2 simply set bit1.
+ *
+ * WHAT DISTINGUISHES THE TWO BITS IS WHERE THE NUMBER CAME FROM, not what is
+ * drawn: bit1's number is an operating point, bit2's is a transient sample the
+ * user asked for AT ONE TIME POINT. That provenance is carried by the sentence
+ * cadence::_annot_tran_msg mints (utils/annot_mode.tcl) -- which names the time
+ * and the cursor letter -- and never by a second render path. RULING D5-1: a
+ * held snapshot is honest only because the user was told what it was measured
+ * at. See doc/claude/issues/0868-*.md. */
+#define ANNOT_SHOW_TRAN 4
 /* S9: the font the draw-time OP-annotation overlay renders in, needed by all three
  * back ends. Lifted verbatim from the shipped carrier xschem_library/devices/
  * annotate_params.sym (font=Monospace) so carrier and overlay look identical side
@@ -2784,6 +2805,11 @@ extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
  * See callback.c for why the rect is synthetic and the Graph_ctx is a stack
  * local carrying an explicit whole-sweep window. */
 extern int backannotate_at_cursor_b_nograph(void);
+/* 0868 -- resolve ONE requested time point against xctx->raw and publish it,
+ * without going through either graph cursor. `xschem annotate_at <t>`
+ * (scheduler.c) is its only caller. Returns 1 when it annotated, 0 when there
+ * was nothing to annotate against and the call was a byte-exact no-op. */
+extern int backannotate_at_time(double t);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
 extern int callback(const char *win_path, int event, int mx, int my, KeySym key,

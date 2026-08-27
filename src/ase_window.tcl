@@ -573,6 +573,35 @@ proc ase::ui::build {key top} {
   $top.mb.results.annotate add checkbutton -label {DC Node Voltages} \
     -variable ::ase::ui::annot($key,volt) -state disabled \
     -command [list ase::ui::annot_apply $key volt]
+  # ISSUE 0868 -- THE THIRD ENTRY, and the user asked for it by name: "We can add
+  # a menu item in Results > Annotate for annotating TRAN node voltages for
+  # time-point given by cursor B, or A - whatever the convention is".
+  #
+  # THE LABEL NAMES ITS TIME SOURCE, and that is a decision rather than a
+  # phrasing. The two entries above name a CONTENT class; a transient has no
+  # single meaningful time, so a bare `Transient Node Voltages` would leave the
+  # user asking "at when?". Rejected: that bare form, and `Annotate at Cursor`
+  # (which says nothing about what). Unratified -- see doc/claude/issues/0868-*.md.
+  #
+  # CHECKBUTTON and BUILT DISABLED for exactly the reasons the pair above are:
+  # it is a third independently clearable bit of one mask (ANNOT_SHOW_TRAN,
+  # xschem.h), and nothing in this menu may be clickable before
+  # `ase::has_results` has been asked.
+  # ⚠ AND THE BODY IS MADE REACHABLE HERE, WHERE THE ENTRY IS BUILT. The mode
+  # lives in utils/annot_mode.tcl, which only the CADENCE profile's rc sources,
+  # while this menu belongs to every ASE-L user -- so building the entry without
+  # the body would ship a control that greys correctly and does nothing. The
+  # helper never clobbers an existing definition and never sources a file that
+  # is not there (it `file isfile`s each candidate first), so a session that
+  # already loaded the profile, and an installation that ships no utils/, are
+  # both no-ops rather than errors. Deliberately NOT a `source` line in
+  # src/xschem.tcl: utils/ is not in the install list, and a shipped xschem.tcl
+  # sourcing a file it did not install is the startup segfault CLAUDE.md records
+  # as issues 0423/0424.
+  catch {ase::ui::annot_tran_helper}
+  $top.mb.results.annotate add checkbutton -label {Transient Node Voltages (at cursor)} \
+    -variable ::ase::ui::annot($key,tran) -state disabled \
+    -command [list ase::ui::annot_apply $key tran]
   $top.mb.results add cascade -label Annotate -menu $top.mb.results.annotate
 
   # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
@@ -2249,9 +2278,14 @@ proc ase::ui::annot_menu_sync {key} {
   set st [expr {$hr ? {normal} : {disabled}}]
   catch {$m entryconfigure {Operating Point info} -state $st}
   catch {$m entryconfigure {DC Node Voltages}     -state $st}
+  # 0868: the third entry greys and pulls with the other two. A sync that knew
+  # about two bits and left the third alone would show a stale tick on the very
+  # first Alt-Shift-6 the user pressed -- decision D4's reasoning, widened.
+  catch {$m entryconfigure {Transient Node Voltages (at cursor)} -state $st}
   set mask [ase::ui::annot_mask $key]
   set annot($key,op)   [expr {($mask & 1) ? 1 : 0}]
   set annot($key,volt) [expr {($mask & 2) ? 1 : 0}]
+  set annot($key,tran) [expr {($mask & 4) ? 1 : 0}]
   return
 }
 
@@ -2357,7 +2391,28 @@ proc ase::ui::annot_ensure_loaded {key} {
   return
 }
 
-# The two checkbuttons' -command: PUSH the clicked bit into the DESIGN's mask.
+# ISSUE 0868 -- make `cadence::annot_tran` reachable from a session that never
+# loaded the cadence profile, and do it WITHOUT clobbering an existing
+# definition. utils/ sits beside the installed share dir in a source tree; when
+# neither candidate resolves the caller says so rather than doing nothing (the
+# silence issue 0857 is about).
+proc ase::ui::annot_tran_helper {} {
+  if {[llength [info commands ::cadence::annot_tran]]} { return 1 }
+  set sd {}
+  catch {set sd [uplevel #0 {set XSCHEM_SHAREDIR}]}
+  if {$sd eq {}} { return 0 }
+  foreach cand [list [file join $sd .. utils annot_mode.tcl] \
+                     [file join $sd utils annot_mode.tcl]] {
+    if {[file isfile $cand]} {
+      catch {uplevel #0 [list source $cand]}
+      if {[llength [info commands ::cadence::annot_tran]]} { return 1 }
+    }
+  }
+  return 0
+}
+
+# The two visibility checkbuttons' -command: PUSH the clicked bit into the
+# DESIGN's mask. (The third entry, issue 0868, takes the request arm below.)
 #
 # ⚠ BIT-WISE FROM THE DESIGN'S LIVE VALUE (decision D6), never composed from
 # both ticks. The ticks were painted by a PULL that ran BEFORE any context
@@ -2383,7 +2438,7 @@ proc ase::ui::annot_ensure_loaded {key} {
 # current when the user clicked.
 proc ase::ui::annot_apply {key which} {
   variable annot
-  set bit [expr {$which eq {op} ? 1 : 2}]
+  set bit [expr {$which eq {op} ? 1 : ($which eq {volt} ? 2 : 4)}]
   if {![ase::ui::annot_goto_design $key]} {
     catch {::ase::echo "ase: cannot reach this session's design window (not open,\
  or the context switch was refused) -- Session > Design Window opens it" error}
@@ -2395,6 +2450,43 @@ proc ase::ui::annot_apply {key which} {
   if {![string is integer -strict $cur]} { set cur 0 }
   set want 0
   if {[info exists annot($key,$which)] && $annot($key,$which)} { set want 1 }
+  # ISSUE 0868 -- TICKING THE TRANSIENT ENTRY IS A REQUEST, NOT A VISIBILITY
+  # TOGGLE, so this arm composes NO mask of its own (RULING D5-4). The other two
+  # bits describe numbers that are already published; bit2's are not published
+  # until somebody asks, at a time point that has to be resolved from the
+  # waveform viewer's cursors. So the work is handed to `cadence::annot_tran`
+  # (utils/annot_mode.tcl), which resolves the cursor, publishes, mints the ONE
+  # sentence and arms bit2 ITSELF. The `Alt-Shift-6` chord in
+  # src/cadence_style_rc is the other door onto that same body.
+  #
+  # ⚠ ON A REFUSAL THE TICK SNAPS BACK, and that is the sync call below doing it:
+  # Tk has ALREADY flipped the variable by the time this -command runs, so a mode
+  # that declines (no cursor on, no transient loaded) and writes nothing would
+  # otherwise leave the user looking at a ticked box over a mask with no bit2 in
+  # it. Same shape as the unreachable-design arm above.
+  #
+  # ⚠ UNTICKING IS NOT ROUTED HERE. Clearing bit2 is pure visibility and falls
+  # through to the bit-wise write below, so `Ctrl-6`, this entry and the mask all
+  # agree about how the mode goes off.
+  #
+  # ⚠ THE HELPER IS SOURCED ON DEMAND. `cadence::*` lives in
+  # utils/annot_mode.tcl, which only the CADENCE profile's rc sources -- and this
+  # menu belongs to every ASE-L user. The source is attempted ONLY when the proc
+  # is absent, so a test spy or a user's own override is never clobbered.
+  if {$which eq {tran} && $want} {
+    ase::ui::annot_tran_helper
+    if {![llength [info commands ::cadence::annot_tran]]} {
+      catch {::ase::echo "ase: transient annotation helper (utils/annot_mode.tcl)\
+ is not available in this installation" error}
+      ase::ui::annot_menu_sync $key
+      return
+    }
+    catch {::cadence::annot_tran}
+    catch {xschem update_all_sym_bboxes}
+    catch {xschem redraw}
+    ase::ui::annot_menu_sync $key
+    return
+  }
   set new [expr {($cur & ~$bit) | ($want ? $bit : 0)}]
   xschem set annot_show $new
   if {$new != 0} { ase::ui::annot_ensure_loaded $key }

@@ -3610,7 +3610,14 @@ proc opa_n_rcbind {path chord} {
   foreach l [split $d \n] {
     if {[string first "bind .drw $chord" $l] < 0} continue
     set mode NO-MODE
-    regexp {cadence::annot_mode\s+(\w+)} $l -> mode
+    ## issue 0868: the fourth chord's body is `cadence::annot_tran`, not
+    ## `cadence::annot_mode <word>`, so the shipped regexp answers NO-MODE for it
+    ## and row V20 could never say WHICH mode the new bind reaches. The transient
+    ## mode reports itself as `tran`; the three shipped chords are unaffected,
+    ## because the annot_mode form is tried first.
+    if {![regexp {cadence::annot_mode\s+(\w+)} $l -> mode]} {
+      if {[regexp {cadence::annot_tran} $l]} { set mode tran }
+    }
     return [list $mode [expr {[regexp {break\s*\}\s*$} $l] ? 1 : 0}]]
   }
   return {NO-BIND 0}
@@ -11110,6 +11117,821 @@ set XSCHEM_LIBRARY_PATH $W_LIBS
 
 } zerr]} {
   puts "UNEXPECTED ERROR (section Z): $zerr"
+  incr fail
+}
+
+# =============================================================================
+# SECTION V — ISSUE 0868: ON-REQUEST TRANSIENT NODE-VOLTAGE ANNOTATION AT THE
+#             WAVEFORM CURSOR, AND THE TWO ACQUISITION DOORS OF ISSUE 0865
+# =============================================================================
+# The user's request, verbatim 2026-08-26:
+#
+#   "MUST ONLY HAPPEN WHEN USER REQUESTS IT!! Alt-6 and 6 are for OP info and OP
+#    node voltages. We can add a menu item in Results > Annotate for annotating
+#    TRAN node voltages for time-point given by cursor B, or A - whatever the
+#    convention is - if there is only one cursor in the waveform viewer's active
+#    tab, use that. If A and B are there, then use cursor-A. Give user a way to
+#    enter this mode with a different shortcut through cadence_style_rc - maybe
+#    Alt-Shift-6"
+#
+# Two halves, and they are one item because neither ships alone.
+#
+# HALF 1 -- THE TWO ACQUISITION DOORS. With the Live-annotate box unticked, a
+# transient node voltage lands on the schematic WITHOUT anyone asking, from two
+# places that do not ask: raw_read's tail in src/save.c and descend_schematic's
+# tail in src/actions.c. Measured on this tree, box off, a sheet carrying a graph
+# rect and cursor B on at 4 ns:
+#
+#     xschem raw read <tran>       ->  raw annot 3 4e-09 0, the sheet paints d 4
+#     xschem swap_cursors          ->  cursor B is now at 0, the sheet STILL
+#                                      paints d 4  <- RULING D5-1: a number that
+#                                      was not measured for the state it is
+#                                      shown in
+#
+# The six re-annotate sites the user can reach by moving a cursor are already
+# gated on the box; these two are not. Guards G1 and G2 close them, and rows
+# V22 / V23 / V23b / V24 are the measurement.
+#
+# ⚠ THE 0856 GATE CLOSED ONE ROAD AND LEFT THE OTHER OPEN, so half 1 is
+# FINISHING 0856 rather than repairing staleness. `update_op()` already refuses a
+# transient (rows T23-T28), so the `6` chord paints nothing on a pure transient.
+# The cursor road has no such refusal, so `Alt-6` on the same sheet paints a
+# transient node voltage on the operating-point surface, unrequested. That is
+# what the user's "we haven't yet built anything for annotating from TRAN
+# results, so it should do nothing silently" forbids.
+#
+# ⚠ AND THE STALE NUMBER IS UNREFRESHABLE, which is why half 1 cannot ship
+# alone. Measured with the box off: `s` leaves d 4, Alt-6 again leaves d 4,
+# Ctrl-6 then Alt-6 leaves d 4. With the box ticked the same gesture correctly
+# repaints d 1. The engine can re-measure; the user has no on-request door.
+# Gating the doors without half 2 leaves a user who cannot annotate at all.
+#
+# HALF 2 -- THE THIRD MODE. A third `annot_show` bit -- bit0 ANNOT_SHOW_OP is
+# the `6` chord, bit1 ANNOT_SHOW_VOLTAGE is Alt-6, bit2 ANNOT_SHOW_TRAN is this
+# -- a new C verb `xschem annotate_at <time>` that resolves ONE time point
+# against xctx->raw, a Tcl cursor rule, a menu entry and a chord.
+#
+# ============================================================================
+# THE PUBLISHER INVENTORY, CORRECTED -- ISSUE 0865 AND THE ITEM BRIEF BOTH GET
+# IT WRONG IN BOTH DIRECTIONS
+# ============================================================================
+# * `src/scheduler.c:12080`, named as an ungated publisher, is inside `#if 0`
+#   (:12075 / :12083). It is DEAD CODE. Gating it would look like work and be
+#   nothing.
+# * `src/scheduler.c:12123`, the `else if(backannotate_at_cursor_b_nograph())`
+#   arm of the same `xschem set cursor2_x`, is a FOURTH ungated publisher nobody
+#   listed. Measured painting d 3 with the box off and no graph on the sheet.
+# So the real ungated set is save.c:1287, actions.c:4819, scheduler.c:12112 and
+# scheduler.c:12123.
+#
+# ============================================================================
+# ⚠ THE DELIBERATE NON-GATING OF `xschem set cursor2_x`, AND ROW V25
+# ============================================================================
+# Both `set cursor2_x` arms are LEFT PUBLISHING, and that is a decision with a
+# reason, recorded in issue 0868 and pinned by row V25 so that a later crew which
+# tries to "finish the gating" reds a row that explains itself.
+#   * `xschem set cursor2_x <t>` is a sentence a user or a script TYPED, naming a
+#     time. Loading a raw and descending a hierarchy are things the program does.
+#     The user's test is "only when the user requests it", and a typed verb is a
+#     request.
+#   * It stamps annot_x at exactly the position it was measured at, so it is
+#     never stale at the moment it happens.
+#   * It is driven 43 times across five suites -- test_op_annot 35,
+#     test_wave_cursor_crossdb 4, test_wave_viewer 2, test_wave_crossdb_trace 1,
+#     test_backannotate_digital 1 -- and three of those suites never mention the
+#     Live-annotate box at all. It is also the scripting verb and the shipped S11
+#     feature's only road.
+#   * The waveform viewer's own `set cursor2_x` runs inside the VIEWER's context
+#     -- `wviewer::cursor_toggle` switches first, src/wave_viewer.tcl:14239 --
+#     so it never touches the design sheet's annotation.
+#   * Both plans have the IDENTICAL residual: after any on-request annotation the
+#     number persists while the cursor moves on. Gating it buys nothing half 2
+#     does not already provide, and costs five suites.
+# The alternative -- gate everything, per issue 0865's ruling -- is recorded as a
+# rejected option in 0868 and is owed to the user as a `rule` debt.
+#
+# ============================================================================
+# ⚠ WHY CURSOR A GETS NO VALUE ARRAY, AND WHY THAT STILL HONOURS THE RULING
+# ============================================================================
+# The engine has `cursor_b_val` only. Cursor A exists as `graph_cursor1_x`, is
+# drawn, is read out -- and is INERT: measured, with both cursors on, A at 1 ns
+# and B at 4 ns, the annotation is 3 4e-09 0 and the sheet paints d 4; moving A
+# to 2 ns changes nothing at all.
+# The mode resolves ONE time point -- cursor A when both are on, otherwise
+# whichever one is -- and publishes it through the existing array. The user's
+# rule is honoured in full. The deliberate limit is that A and B cannot be
+# annotated SIMULTANEOUSLY, which nobody asked for; a real independent
+# `cursor_a_val` costs six alloc sites plus eight token.c readers plus new Raw
+# fields. Recorded as a limit in 0868.
+#
+# ============================================================================
+# ⚠ THE BIND SPELLING IS THE TRAP, AND ONLY ROW V20 CAN SEE IT
+# ============================================================================
+# Measured with wish on :99: keycode 15 is `6 asciicircum`, a physical Alt+Shift+6
+# arrives as keysym `asciicircum`, and even an event synthesised with keysym `6`
+# plus Shift+Alt dispatches to `<Alt-Key-asciicircum>`. `<Alt-Shift-Key-6>` NEVER
+# fires. A landing that writes only the Shift-Key-6 form passes every behavioural
+# row in this file and is DEAD under the user's fingers. src/cadence_style_rc
+# already documents the identical gotcha for Ctrl-Shift-4 -> `dollar` at :275-281;
+# this is the same precedent, and V20 is a structural row for the same reason.
+#
+# ============================================================================
+# ROWS THAT ARE GREEN BEFORE THE CHANGE -- CONTROLS, NOT EVIDENCE
+# ============================================================================
+#   V0   the fixture control. Without it every row below degrades into a hollow
+#        pass -- a raw that failed to attach answers nothing for everything,
+#        which is the shape half the rows here ask about.
+#   V8   the off-ramp. Mask 0 paints no voltage today because nothing is
+#        published; it must still paint none when bit2 exists and is clear.
+#   V22  leg 2 and V23 leg 2, the POSITIVE CONTROLS of guards G1 and G2. A gate
+#        that reds nothing when it is removed is not a gate; a gate that also
+#        silences the ticked box is a worse defect than the one it fixes.
+#   V25  the recorded decision's pin. See the paragraph above.
+#
+# ============================================================================
+# ⚠ WHAT THIS SECTION DOES NOT MEASURE
+# ============================================================================
+# * NO PIXELS. Every PAINT row reads an SVG export -- the same back end the
+#   screen uses, not the screen. FAQ Q52: `xschem translate` is NOT a paint
+#   measurement and an SVG export is. A new menu entry and a new keyboard chord
+#   are pixel deliverables and owe an eyeball (`owed.sh add look`).
+# * NO VIEWER. Guard G8 -- the mode borrowing the waveform viewer's context so
+#   it reads the ACTIVE TAB's cursors -- cannot be seen headless at all, because
+#   headless there is no viewer. Rows B12 / B12b of
+#   tests/headless/test_annot_show_menu.tcl own it, and that suite must be run on
+#   the dev display before this item is called done.
+# * NO PHYSICAL KEY PRESS. V20 is a source grep. Nothing automated can press a
+#   real Alt+Shift+6.
+
+set V_RAW $T_RAW
+set V_VP  $T_VP
+## The lab_pin tail of an SVG export in the two states this section keeps
+## asking about. MEASURED on this binary, and they are the same shapes section T
+## already uses -- the four labels back to back when nothing is published, and a
+## value sitting between each label and the next when something is.
+set V_PINS_NONE {d g 0 0}
+set V_PINS_P1   {d 1 g 0.9 0 0.0 0 0.0}
+set V_PINS_P2   {d 2 g 0.9 0 0.0 0 0.0}
+set V_PINS_P3   {d 3 g 0.9 0 0.0 0 0.0}
+set V_PINS_P4   {d 4 g 0.9 0 0.0 0 0.0}
+
+## THE ONE MINT, as five byte-exact sentences (RULING D5-4). These strings ARE
+## the specification: `cadence::_annot_tran_msg` renders exactly them and every
+## caller -- the chord, the ASE-L menu entry, the CIW line and the held status
+## line -- renders through it rather than composing its own wording.
+set V_MSG_OK       {Transient annotation at t = 1e-09 (cursor A)}
+set V_MSG_NOCURSOR {Transient annotation -- NO CURSOR: turn on cursor A or B in the waveform viewer}
+set V_MSG_NORAW    {Transient annotation -- NO RAW FILE loaded}
+set V_MSG_NOTRAN   {Transient annotation -- the loaded database is not a transient analysis}
+set V_MSG_NODATA   {Transient annotation -- nothing to annotate at t = 3e-09}
+
+## `xschem annotate_at <t>` -> the verb's rc, or a marker. NEVER a bare catch:
+## the verb does not exist today and `invalid command` reported as 0 would make
+## "refused politely" and "was never built" the same answer.
+proc opa_v_at {t} {
+  set r [rcall [list xschem annotate_at $t]]
+  if {[lindex $r 0] != 0} { return "RAISED:[lindex $r 1]" }
+  return [lindex $r 1]
+}
+## `cadence::annot_tran` -> the state name it returns, or a marker. Same
+## discipline: an absent proc must not read as a refusal.
+proc opa_v_tran {} {
+  set r [rcall {cadence::annot_tran}]
+  if {[lindex $r 0] != 0} { return "RAISED:[lindex $r 1]" }
+  return [lindex $r 1]
+}
+## Set the mask, refresh the bboxes, export ONCE and return the lab_pin tail.
+## ⚠ ONE export, through opa_l_print and not opa_l_print2: opa_l_print2's warm
+## pass is itself a draw, and row V10's whole claim is about the FIRST frame
+## after a publish with no redraw in between.
+proc opa_v_paint {tag {mask -1}} {
+  if {$mask >= 0} { opa_l_annot $mask }
+  return [opa_t_pins [opa_l_print svg [file join $::scratch v_$tag.svg] $::V_VP]]
+}
+## Re-arm WITHOUT touching the cursors: `raw clear` then `annotate_op` puts the
+## annotation back to the 0856 resting state -1 0 -1 while graph_flags,
+## graph_cursor1_x and graph_cursor2_x survive. MEASURED -- opa_t_arm cannot be
+## used by the cursor-rule rows because it says `xschem cursor 2 0` out loud.
+proc opa_v_rearm {} {
+  catch {xschem raw clear}
+  return [lindex [rcall [list xschem annotate_op $::V_RAW]] 0]
+}
+## Count the lines of <path> matching <re>, IGNORING whole-line Tcl comments, so
+## a sentence quoted in a header paragraph is not counted as a second mint.
+## -1 when the file is absent, so a missing file reds one row.
+proc opa_v_ngrep {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] {
+    if {[regexp {^\s*#} $l]} continue
+    if {[regexp -- $re $l]} { incr n }
+  }
+  return $n
+}
+
+if {[catch {
+
+set XSCHEM_LIBRARY_PATH $S_LIBS
+set V_LV $::live_cursor2_backannotate
+
+# ===========================================================================
+# V0 — CONTROL: THE PREMISE. GREEN BEFORE AND AFTER, AND LOAD-BEARING
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW EVERY ROW BELOW DEGRADES INTO A HOLLOW PASS. Four claims:
+# the transient really ATTACHED (rc 0 and sim_type tran, so a row that measures
+# "nothing was published" is measuring a refusal and not an empty tree); it rests
+# at the 0856 refused state -1 0 -1; there is NO graph object on the canvas, so
+# every cursor row below is exercising the graphless arm; and neither cursor is
+# on, so the cursor-rule rows say what they turn on out loud.
+catch {xschem cursor 1 0}
+set v0_rc [opa_t_arm [file join $lib s5_flat.sch]]
+check {V0 CONTROL: the transient ATTACHES on a graphless sheet with no cursor on, and rests at the 0856 refused state} \
+  [list $v0_rc [rcall {xschem raw sim_type}] [opa_t_annot] \
+        [xschem get rects 2] [xschem get graph_flags]] \
+  [list 0 {0 tran} {-1 0 -1} 0 0]
+
+# ===========================================================================
+# V1 — THE NEW VERB PUBLISHES AT A REQUESTED TIME, WITH NO CURSOR INVOLVED
+# ===========================================================================
+# ⚠ ALL THREE FIELDS, for the reason row T1 gives: an implementation that wrote
+# annot_x and stopped would still read the resting point everywhere.
+# `xschem annotate_at <t>` is a top-level sibling of `xschem annotate_op`, it
+# returns 1 when it annotated and 0 when there was nothing to annotate against,
+# and it does NOT go through a cursor -- half 2's entry points resolve a time
+# first and hand it over, so the C verb has exactly one input.
+check {V1 `xschem annotate_at 3e-9` returns 1 and stamps annot_p, the requested annot_x and the resolved sweep} \
+  [list [opa_v_at 3e-9] [opa_t_annot]] [list 1 {2 3e-09 0}]
+
+# ===========================================================================
+# V2 — BETWEEN SAMPLES: THE SHIPPED INTERPOLATION, NOT A NEAREST-SAMPLE SNAP
+# ===========================================================================
+# 2.5 ns is exactly half way between two round samples, so a nearest-sample or
+# floor-to-sample implementation answers 2 or 3 and reds here while passing V1.
+# The number is the one the cursor path returns for the same t on the same raw.
+opa_v_at 2.5e-9
+check {V2 a requested time BETWEEN two samples interpolates -- 2.5 ns is exactly 2.5, not a snap to 2 or 3} \
+  [opa_t_v {v(d)}] 2.5
+
+# ===========================================================================
+# V3 — THE WINDOW DISCRIMINATOR (guard G5): THE ONE ROW A ZEROED Graph_ctx
+#      CANNOT PASS
+# ===========================================================================
+# ⚠ THE STEP'S SHARPEST TRAP, AND IT LOOKS LIKE A NON-ISSUE. The new verb has to
+# hand the shipped cursor arithmetic a LOCAL Graph_ctx -- never
+# xctx->graph_struct, which is live inside draw_graph(). A memset-0 one is the
+# obvious choice and it is the degenerate window 0,0: every transient raw has a
+# sample at exactly t=0, that sample passes the window filter, so `first` comes
+# back 0 instead of -1, RULING D4-7's rescan never fires, and interpolate_yval's
+# frac clamp walks ONE segment forward and returns POINT 1's value for every t
+# past the second sample. Measured on the graph path today with an un-zoomed
+# rect: v(d) = 1 at t = 3 ns where the truth is 3.0 -- a plausible wrong number
+# on a schematic, which is exactly what invariant I3 and RULING D5-1 forbid.
+# callback.c:1637-1648 carries the same reasoning for the graphless arm; the new
+# verb needs the same -HUGE_VAL / +HUGE_VAL window, and this row is the only
+# thing between the feature and that wrong number.
+opa_v_at 3e-9
+set v3a [opa_t_v {v(d)}]
+opa_v_at 4e-9
+set v3b [opa_t_v {v(d)}]
+check {V3 guard G5 two times a degenerate 0,0 window would collapse onto point 1 each answer their OWN sample} \
+  [list $v3a $v3b] {3 4}
+
+# ===========================================================================
+# V4 — RULING D4-4: A BOUNDARY HOLDS, IT NEVER EXTRAPOLATES
+# ===========================================================================
+# Past the last sample the value HOLDS at the last sample; before the first it
+# holds at the first. An arm that extrapolated would answer 99 and -5 here, and
+# a fabricated number on a schematic is RULING D5-1's failure.
+opa_v_at 99e-9
+set v4a [opa_t_v {v(d)}]
+opa_v_at -5e-9
+set v4b [opa_t_v {v(d)}]
+check {V4 RULING D4-4 out of range in both directions HOLDS at the boundary sample, never extrapolates} \
+  [list $v4a $v4b] {4 0}
+
+# ===========================================================================
+# V5 — GUARD G4: A SHEET WITH NO DATA IS A BYTE-EXACT NO-OP
+# ===========================================================================
+# ⚠ THE T19/T20 LESSON, RE-EARNED. backannotate_at_cursor_b_pos() fires
+# annot_data_changed() and `catch {eval $cursor_2_hook}` BEFORE its own
+# sch_waves_loaded() test, so a verb that called it unconditionally would fire a
+# user hook and move the S9b overlay flush counter on every sheet with no data.
+# The gate belongs AHEAD of the call, exactly as
+# backannotate_at_cursor_b_nograph() puts it (callback.c:1657).
+# Both halves: the verb answers 0, and the flush counter did not move.
+catch {xschem raw clear}
+set v5_delta [opa_o_fdelta {opa_v_at 3e-9}]
+set v5_rc    [opa_v_at 3e-9]
+check {V5 guard G4 with NO raw loaded the verb answers 0 and moves the overlay flush counter by nothing} \
+  [list $v5_rc $v5_delta] {0 0}
+
+# ===========================================================================
+# V6 — THE VERB READS A TIME, IT DOES NOT MOVE THE USER'S CURSOR
+# ===========================================================================
+# ⚠ AN IMPLEMENTATION THAT "FIXES" THE at-PARAMETER BY WRITING graph_cursor2_x
+# = t INSTEAD PASSES V1-V4 AND FAILS HERE, which is why this row exists next to
+# them rather than being folded into one of them. Moving the user's cursor B as a
+# side effect of reading a value would be its own defect: the waveform viewer
+# would jump under the pointer every time the sheet was annotated.
+opa_t_arm [file join $lib s5_flat.sch]
+xschem cursor 2 1 ; xschem cursor 1 1
+xschem set cursor1_x 1e-9
+xschem set cursor2_x 4e-9
+set v6_pre [list [xschem get cursor1_x] [xschem get cursor2_x]]
+opa_v_at 2e-9
+set v6_post [list [xschem get cursor1_x] [xschem get cursor2_x]]
+check {V6 `annotate_at` READS a time point and leaves both cursor positions byte-identical} \
+  [list $v6_pre $v6_post] {{1e-09 4e-09} {1e-09 4e-09}}
+
+# ===========================================================================
+# V7 — PAINT (guard G6): A BARE BIT2 PAINTS
+# ===========================================================================
+# ⚠ MEASURED TODAY: `xschem set annot_show 4` reads back 4 and paints NOTHING,
+# because actions.c gates the node-voltage texts on bit1 alone. A third bit that
+# renders nothing is a mode the user can select and not see. The repair is one
+# line -- annot_class_mask()'s TEXT_ANNOT_VOLTAGE arm returns
+# ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN, making bit2 a SECOND switch onto the same
+# content class rather than a second class.
+# ⚠ AN SVG EXPORT, NEVER `xschem translate` -- FAQ Q52: translate is not a paint
+# measurement.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_v_at 3e-9
+set v7 [opa_v_paint bit2 4]
+check {V7 guard G6 PAINT with the mask at bit2 ALONE the lab_pin floater renders the annotated value} \
+  [list [xschem get annot_show] $v7] [list 4 $V_PINS_P3]
+
+# ===========================================================================
+# V8 — CONTROL: THE OFF-RAMP STILL EXISTS
+# ===========================================================================
+# GREEN BEFORE AND AFTER. With every bit clear the labels run back to back and no
+# voltage text is emitted anywhere on the sheet. A bit2 arm wired so that it
+# rendered regardless of the mask would red here and nowhere else.
+check {V8 CONTROL mask 0 paints no voltage at all -- the labels run back to back} \
+  [opa_v_paint off 0] $V_PINS_NONE
+
+# ===========================================================================
+# V9 — THE TWO VOLTAGE BITS ARE INDEPENDENT SWITCHES ONTO ONE CLASS
+# ===========================================================================
+# ⚠ THE ROW THAT REDS A bit2 ARM IMPLEMENTED AS AN ALIAS OF bit1. Masks 2, 4 and
+# 6 all paint the same annotated value -- bit1 alone, bit2 alone, and both -- and
+# mask 1 paints none of it, because bit0 is device OP info and this content is
+# node voltages. An arm that made bit2 simply set bit1 would pass V7 and fail the
+# mask-4-with-bit1-clear leg here.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_v_at 3e-9
+set v9 {}
+foreach m {2 4 6 1} { lappend v9 [opa_v_paint m$m $m] }
+opa_l_annot 0
+check {V9 masks 2, 4 and 6 each paint the annotated value and mask 1 paints none of it} \
+  $v9 [list $V_PINS_P3 $V_PINS_P3 $V_PINS_P3 $V_PINS_NONE]
+
+# ===========================================================================
+# V10 — GUARD G10: THE FLOATER CACHE IS REFRESHED, IN THE SAME FRAME
+# ===========================================================================
+# ⚠ ROW T22'S BLAST RADIUS, RE-MEASURED FOR THE NEW VERB. `@spice_get_voltage`
+# on every lab_pin / ipin / opin / vdd / probe text is a FLOATER, and floaters
+# render from a cache that only `set_modify(-2)` refreshes. The `set cursor2_x`
+# arms both carry it (scheduler.c:12118 and :12124); a new verb that forgot it
+# would move every number in V1-V4 and leave the SHEET rendering the previous
+# request until something else dirtied the cache -- the exact I3 breach that got
+# S9 attempt 1 reverted.
+# ⚠ ONE EXPORT, NO INTERVENING REDRAW. opa_v_paint uses opa_l_print, not
+# opa_l_print2: a warm pass would be a second draw and would hide the defect.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_v_at 1e-9
+set v10a [opa_v_paint fl1 2]
+opa_v_at 4e-9
+set v10b [opa_v_paint fl4]
+opa_l_annot 0
+check {V10 guard G10 the FIRST frame after `annotate_at`, with no redraw in between, already carries the new value} \
+  [list $v10a $v10b] [list $V_PINS_P1 $V_PINS_P4]
+
+# ===========================================================================
+# V11 — THE USER'S RULE (guard G7): BOTH CURSORS ON MEANS CURSOR A
+# ===========================================================================
+# ⚠ THE DISCRIMINATOR ROW. V12 and V13 stay GREEN under a build that always
+# prefers cursor B, so they are not evidence for the rule on their own; this is
+# the only row that fails when the preference is the wrong way round.
+# The user's words: "if there is only one cursor in the waveform viewer's active
+# tab, use that. If A and B are there, then use cursor-A."
+# ⚠ MEASURED TODAY AND IT IS THE WHOLE DEFECT: with both cursors on, A at 1 ns
+# and B at 4 ns, the annotation is 3 4e-09 0 and the sheet paints d 4. Cursor A
+# is drawn and read out and has no value path whatever.
+# ⚠ `xschem cursor N 1` RESETS that cursor's position, so both positions are
+# written AFTER both cursors are enabled. graph_flags 6 is A and B both on --
+# measured 0 / 2 / 4 / 6 for none / A / B / both.
+# Four claims: the mode says `ok`, it published at CURSOR A's time, it armed bit2
+# itself, and the sheet paints cursor A's value.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 1 ; xschem cursor 2 1
+xschem set cursor1_x 1e-9
+xschem set cursor2_x 4e-9
+opa_v_rearm
+set v11_state [opa_v_tran]
+check {V11 guard G7 BOTH cursors on: the mode annotates at CURSOR A, arms bit2 itself and paints A's value} \
+  [list $v11_state [xschem get graph_flags] [lindex [opa_t_annot] 1] \
+        [xschem get annot_show] [opa_v_paint both]] \
+  [list ok 6 1e-09 4 $V_PINS_P1]
+
+# ===========================================================================
+# V12 — ONLY CURSOR B ON: USE CURSOR B
+# ===========================================================================
+# GREEN UNDER A B-PREFERRING BUILD, by construction -- see V11. It is here so
+# that a build which honoured the rule by IGNORING cursor B cannot pass.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 4e-9
+opa_v_rearm
+set v12_state [opa_v_tran]
+check {V12 only cursor B on: the mode annotates at cursor B} \
+  [list $v12_state [xschem get graph_flags] [lindex [opa_t_annot] 1] [opa_v_paint bonly]] \
+  [list ok 4 4e-09 $V_PINS_P4]
+
+# ===========================================================================
+# V13 — ONLY CURSOR A ON: USE CURSOR A
+# ===========================================================================
+# ⚠ THE ROW THAT SAYS CURSOR A HAS A VALUE PATH AT ALL. Today `xschem set
+# cursor1_x` writes a global nobody reads -- its would-be publisher at
+# scheduler.c:12076 is inside `#if 0` -- so no gesture in the program can put
+# cursor A's value on a schematic.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 2 0 ; xschem cursor 1 1
+xschem set cursor1_x 2e-9
+opa_v_rearm
+set v13_state [opa_v_tran]
+check {V13 only cursor A on: the mode annotates at cursor A -- the path that does not exist today} \
+  [list $v13_state [xschem get graph_flags] [lindex [opa_t_annot] 1] [opa_v_paint aonly]] \
+  [list ok 2 2e-09 $V_PINS_P2]
+
+# ===========================================================================
+# V14 — NO CURSOR ON: REFUSE, SAY SO, AND ARM NOTHING (guards G7 + G13)
+# ===========================================================================
+# ⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH, and that ordering is a
+# guard, not a style. Arming first would leave the user looking at an armed mode
+# over a sheet showing the PREVIOUS request's numbers -- RULING D5-1 with an
+# extra step. Three claims: the state name, nothing published, and the mask never
+# gained bit2.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 0
+check {V14 guards G7 and G13 with NO cursor on the mode refuses by name, publishes nothing and arms no bit} \
+  [list [opa_v_tran] [opa_t_annot] [xschem get annot_show] [opa_v_paint nocur]] \
+  [list nocursor {-1 0 -1} 0 $V_PINS_NONE]
+
+# ===========================================================================
+# V15 — NO DATABASE AT ALL: REFUSE BY A DIFFERENT NAME
+# ===========================================================================
+# ⚠ ISSUE 0857's CHANNEL, AND THE HALF THIS ITEM OWES IT. The user ruled 2026-08-26
+# that when the user asks for annotation and the program cannot deliver it, the
+# program says so in the CIW rather than doing nothing silently. The five states
+# are distinguishable by NAME so the caller can render one sentence per cause
+# rather than one apology for all of them.
+opa_l_annot 0
+catch {xschem raw clear}
+xschem cursor 2 1
+xschem set cursor2_x 4e-9
+check {V15 with NO database loaded the mode refuses as `noraw`, publishes nothing and arms no bit} \
+  [list [opa_v_tran] [rcall {xschem raw loaded}] [xschem get annot_show]] \
+  [list noraw {0 -1} 0]
+
+# ===========================================================================
+# V16 — THE WRONG KIND OF DATABASE: 0856's RULE, APPLIED IN THE OTHER DIRECTION
+# ===========================================================================
+# The user ruled that an operating-point surface must not show a transient's
+# numbers. The converse is this row: a TRANSIENT mode must not show an operating
+# point's. `xschem raw sim_type` already answers `op`, so the detector exists and
+# this is a refusal, not a limitation.
+# ⚠ THE OP FIXTURE IS SECTION T's, deliberately: 7.5 is exactly representable and
+# no other row's leftovers can satisfy this one.
+opa_l_annot 0
+catch {xschem raw clear}
+xschem raw read $T_OPRAW op
+xschem cursor 2 1
+check {V16 an OPERATING POINT database in the TRANSIENT mode refuses as `notran` and publishes nothing} \
+  [list [rcall {xschem raw sim_type}] [opa_v_tran] [xschem get annot_show]] \
+  [list {0 op} notran 0]
+catch {xschem raw clear}
+
+# ===========================================================================
+# V17 — THE ONE MINT (RULING D5-4), AS FIVE BYTE-EXACT SENTENCES
+# ===========================================================================
+# ⚠ THE `ok` SENTENCE NAMES THE TIME POINT AND THE CURSOR LETTER, and that is
+# the load-bearing part rather than politeness. The mode takes a SNAPSHOT: the
+# number stays on the sheet while the cursor moves on, so the only thing keeping
+# it honest under RULING D5-1 is that the user was told what it was measured at
+# and from which cursor. A sentence that said merely "annotated" would leave the
+# user with an undated number.
+# ⚠ AN UNKNOWN STATE RAISES. `_annot_msg`'s own discipline (row N2): a mode
+# spelling is a caller bug and must be loud, unlike DATA, which blanks (I3).
+check {V17 RULING D5-4 the five sentences of the transient mode, byte for byte} \
+  [list [rcall {cadence::_annot_tran_msg ok 1e-09 A}] \
+        [rcall {cadence::_annot_tran_msg nocursor {} {}}] \
+        [rcall {cadence::_annot_tran_msg noraw {} {}}] \
+        [rcall {cadence::_annot_tran_msg notran {} {}}] \
+        [rcall {cadence::_annot_tran_msg nodata 3e-09 B}]] \
+  [list [list 0 $V_MSG_OK] [list 0 $V_MSG_NOCURSOR] [list 0 $V_MSG_NORAW] \
+        [list 0 $V_MSG_NOTRAN] [list 0 $V_MSG_NODATA]]
+
+check_raises {V17b an unknown state RAISES rather than rendering a default apology} \
+  {cadence::_annot_tran_msg zzv868garbage {} {}} {zzv868garbage}
+
+# ===========================================================================
+# V18 — STRUCTURAL, RULING D5-4: THE SENTENCE IS MINTED IN EXACTLY ONE FILE
+# ===========================================================================
+# ⚠ NO RUNTIME ROW CAN SEE THIS. Two entry points drive this mode -- a menu item
+# and a chord -- and the shape a hurried landing reaches for is a second
+# `statusmsg` string inside `ase::ui::annot_apply`, which every behavioural row
+# above would still pass. D5-4 says a user-facing sentence is minted in ONE place
+# and rendered by callers.
+# ⚠ WHOLE-LINE COMMENTS ARE STRIPPED FIRST, or this section's own header
+# paragraphs would count as mints.
+set V_MINT [file join $repo utils annot_mode.tcl]
+check {V18 RULING D5-4 the transient sentences live in utils/annot_mode.tcl and in no other file} \
+  [list [expr {[opa_v_ngrep $V_MINT {Transient annotation}] >= 1 ? 1 : 0}] \
+        [opa_v_ngrep $N_ASE {Transient annotation}] \
+        [opa_v_ngrep $N_RC  {Transient annotation}] \
+        [opa_v_ngrep $N_TCL {Transient annotation}]] \
+  {1 0 0 0}
+
+# ===========================================================================
+# V19 — STRUCTURAL: BOTH ENTRY POINTS DRIVE ONE CODE PATH
+# ===========================================================================
+# The user asked for a menu item AND a chord. Two independent implementations of
+# the same mode is the drift invariant I1 exists to prevent, one level up: they
+# would arm different bits, resolve different cursors and say different things.
+check {V19 the chord and the ASE-L menu entry both call cadence::annot_tran, which is defined once} \
+  [list [expr {[opa_v_ngrep $N_RC  {cadence::annot_tran}] >= 1 ? 1 : 0}] \
+        [expr {[opa_v_ngrep $N_ASE {cadence::annot_tran}] >= 1 ? 1 : 0}] \
+        [opa_v_ngrep $V_MINT {^proc cadence::annot_tran }]] \
+  {1 1 1}
+
+# ===========================================================================
+# V20 — STRUCTURAL: THE BIND SPELLING, AND THE ONLY ROW THAT CAN SEE THE TRAP
+# ===========================================================================
+# ⚠ MEASURED WITH wish ON :99, AND IT IS THE WHOLE REASON THIS ROW IS
+# STRUCTURAL: keycode 15 is `6 asciicircum`; a physical Alt+Shift+6 arrives as
+# keysym `asciicircum`; an event synthesised with keysym `6` plus Shift+Alt still
+# dispatches to <Alt-Key-asciicircum>; and <Alt-Shift-Key-6> NEVER fires. A
+# landing that writes only the Shift-Key-6 form passes every behavioural row in
+# this file and is DEAD under the user's fingers. src/cadence_style_rc:275-281
+# already carries the identical finding for Ctrl-Shift-4 -> `dollar`; the
+# asciicircum form is THE REAL BIND and the Shift-Key-6 form is kept as the
+# documented non-US-layout fallback, exactly as there.
+# ⚠ AND THE THREE SHIPPED CHORDS ARE RE-ASSERTED HERE UNCHANGED. Tk matches a
+# pattern whose modifiers are a SUBSET of the event's, so a fourth chord added
+# carelessly can swallow one of the three -- the same hazard row N19's comment
+# records for Ctrl-6.
+check {V20 src/cadence_style_rc binds Alt-Shift-6 through `asciicircum` AND keeps the Shift-Key-6 fallback, each ending in `break`} \
+  [list [opa_n_rcbind $N_RC {<Alt-Key-asciicircum>}] \
+        [opa_n_rcbind $N_RC {<Alt-Shift-Key-6>}]] \
+  {{tran 1} {tran 1}}
+
+# ===========================================================================
+# V21 — THE STATUS LINE STOPS DESCRIBING A STATE THAT IS NOT THE ONE SHOWN
+# ===========================================================================
+# ⚠ MEASURED TODAY: `cadence::_annot_msg` switches on `mask & 3`, so mask 4 --
+# transient node voltages ON and painted -- lands on the `0` arm and reports "OP
+# annotation OFF". That is worse than falling through to the bare default: the
+# line does not merely say nothing, it says the opposite of what is on the
+# screen. The switch widens to `mask & 7`.
+# ⚠ MASKS 0-3 MUST STAY BYTE-IDENTICAL. Row N23's four goldens are re-asserted
+# here through the widened switch, so a widening that quietly re-worded the
+# shipped four reds in this file rather than in six unrelated statusmsg rows.
+set v21 {}
+foreach m {0 1 2 3 4 5 6 7} { lappend v21 [rcall [list cadence::_annot_msg $m off {} {}]] }
+check {V21 `_annot_msg` keeps its four shipped wordings and gains four that name the transient class} \
+  $v21 \
+  [list {0 {OP annotation OFF}} \
+        {0 {OP annotation ON (device OP info)}} \
+        {0 {OP annotation ON (node voltages)}} \
+        {0 {OP annotation ON (device OP info + node voltages)}} \
+        {0 {OP annotation ON (transient node voltages)}} \
+        {0 {OP annotation ON (device OP info + transient node voltages)}} \
+        {0 {OP annotation ON (node voltages + transient node voltages)}} \
+        {0 {OP annotation ON (device OP info + node voltages + transient node voltages)}}]
+
+# ===========================================================================
+# V22 — GUARD G1, BEHAVIOURAL, BOTH LEGS: LOADING WAVES IS NOT A REQUEST
+# ===========================================================================
+# ⚠ THE 0865 ACQUISITION, IN ONE ROW. raw_read()'s tail (src/save.c:1279) fires
+# backannotate_at_cursor_b_pos() on every successful read whenever a graph rect
+# with cursor B on happens to be on the sheet -- with the Live-annotate box in
+# its shipped UNTICKED state. Nobody asked for that number: the user loaded a
+# waveform file.
+# ⚠ THE SEQUENCE IS BUILT SO THAT NOTHING ELSE CAN HAVE PUBLISHED. The cursor is
+# positioned BEFORE any raw exists, so `xschem set cursor2_x` -- which stays
+# ungated on purpose, see this section's header and row V25 -- resolves against
+# nothing and publishes nothing. The only publisher left in the sequence is
+# raw_read's own tail.
+# ⚠ LEG 2 IS THE POSITIVE CONTROL AND IS NOT OPTIONAL. A gate that reds nothing
+# when it is removed is not a gate, and a gate that also silenced the TICKED box
+# would delete the shipped live-annotate feature while every negative row above
+# stayed green.
+foreach {v_box v_tag} {0 off 1 on} {
+  set ::live_cursor2_backannotate $v_box
+  catch {xschem raw clear} ; catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}
+  xschem load [file join $lib s5_flat.sch]
+  opa_l_annot 0
+  opa_t_graph 1
+  xschem cursor 2 1
+  xschem set cursor2_x 4e-9
+  set v22_pre($v_tag) [opa_t_annot]
+  set v22_rc($v_tag)  [rcall [list xschem raw read $V_RAW tran]]
+  set v22_an($v_tag)  [opa_t_annot]
+  set v22_pt($v_tag)  [opa_v_paint g1$v_tag 2]
+  opa_l_annot 0
+}
+set ::live_cursor2_backannotate $V_LV
+check {V22 guard G1 FIXTURE: the cursor was positioned before any database existed, so nothing had published} \
+  [list $v22_pre(off) $v22_pre(on) $v22_rc(off) $v22_rc(on)] \
+  [list {RAISED:No raw file loaded} {RAISED:No raw file loaded} {0 1} {0 1}]
+check {V22 guard G1 LOADING a transient publishes NOTHING with the Live-annotate box off, and still publishes with it on} \
+  [list $v22_an(off) $v22_pt(off) $v22_an(on) $v22_pt(on)] \
+  [list {-1 0 -1} $V_PINS_NONE {3 4e-09 0} $V_PINS_P4]
+
+# ===========================================================================
+# V23 — GUARD G2, BEHAVIOURAL, BOTH LEGS: DESCENDING IS NOT A REQUEST EITHER
+# ===========================================================================
+# descend_schematic()'s tail (src/actions.c:4814) is the second acquisition door:
+# walk into a child that happens to carry a graph rect and the child's sheet
+# acquires an annotation, box or no box. Measured today, both legs identical:
+# annot goes from -1 0 -1 to 0 4e-09 0 at the descend.
+# ⚠ THE PARENT CARRIES NO GRAPH, so the raw read at the parent level cannot fire
+# guard G1's site and the ONLY publisher in the sequence is the descend.
+# ⚠ THE MEASURE IS `raw annot`, NOT PAINT. At the child level the lab_pin `d`
+# resolves to the hierarchical node `x1.d`, which is not a vector in this raw, so
+# both legs paint a blank either way and paint cannot discriminate. The published
+# annotation can.
+set f [open [file join $lib v_leaf.sym] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+close $f
+set f [open [file join $lib v_parent.sch] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C {v_leaf.sym} 120 0 0 0 {name=x1}}
+close $f
+set f [open [file join $lib v_leaf.sch] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+B 2 0 -400 800 0 {flags=graph
+node="v(d)"
+x1=0
+x2=5e-9
+y1=-1
+y2=5}
+C {sky130_fd_pr/nfet_01v8.sym} 0 0 0 0 {name=M1 W=1 L=0.15 nf=1}
+C {lab_pin.sym} 20 -30 0 0 {name=p1 lab=d}}
+close $f
+foreach {v_box v_tag} {0 off 1 on} {
+  set ::live_cursor2_backannotate $v_box
+  catch {xschem raw clear} ; catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}
+  catch {unset ::ngspice::ngspice_data}
+  xschem load [file join $lib v_parent.sch]
+  opa_l_annot 0
+  xschem cursor 2 1
+  xschem set cursor2_x 4e-9
+  catch {xschem raw read $V_RAW tran}
+  catch {unset ::ngspice::ngspice_data}
+  set v23_top($v_tag) [list [xschem get rects 2] [opa_t_annot]]
+  xschem unselect_all ; xschem select instance 0 fast nodraw ; xschem descend 1 2
+  set v23_kid($v_tag) [list [xschem get rects 2] [opa_t_annot]]
+}
+set ::live_cursor2_backannotate $V_LV
+check {V23 guard G2 FIXTURE: the parent carries no graph and nothing was published there, and the child does carry one} \
+  [list $v23_top(off) $v23_top(on) [lindex $v23_kid(off) 0] [lindex $v23_kid(on) 0]] \
+  [list {0 {-1 0 -1}} {0 {-1 0 -1}} 1 1]
+# ⚠ THE ON LEG PINS annot_x AND THE SWEEP, NOT annot_p, AND THAT IS ISSUE 0480
+# RATHER THAN A WEAKENING. The descended graph borrows the SHARED
+# xctx->graph_struct, which still holds whatever window the last fullyzoom'd rect
+# in this process left there -- measured, the same fixture answers annot_p 0 in a
+# standalone process and annot_p 3 here, purely from that leftover. The point
+# index is 0480's subject; whether anything was published AT THE REQUESTED TIME
+# is this row's, and `>= 0` versus -1 is the whole discrimination.
+check {V23 guard G2 DESCENDING into a child that carries a graph publishes NOTHING with the box off, and still publishes with it on} \
+  [list [lindex $v23_kid(off) 1] \
+        [expr {[lindex $v23_kid(on) 1 0] >= 0 ? 1 : 0}] \
+        [lrange [lindex $v23_kid(on) 1] 1 2]] \
+  [list {-1 0 -1} 1 {4e-09 0}]
+
+# ===========================================================================
+# V23b — GUARD G2, STRUCTURAL, AND IT IS NOT OPTIONAL
+# ===========================================================================
+# ⚠ V23's BEHAVIOURAL LEG CAN BE SHADOWED. The whole block it measures sits
+# behind `tcleval("info exists ngspice::ngspice_data")[0] == '0'`, so a fixture
+# that left that array set would make V23 pass over an ungated site. The
+# structural row holds the gate whatever the array is doing.
+# ⚠ C COMMENTS ARE STRIPPED FIRST -- the guard's own explanatory comment names
+# the switch, and a body grep that counted it would be green over a deleted test.
+# ⚠ AND THE SPELLING IS PINNED: the six already-gated re-annotate sites all say
+# `tclgetboolvar("live_cursor2_backannotate")`, so a grep finds ONE gate shape.
+set V_ACT {}
+if {![catch {open [file join $repo src actions.c] r} _vfh]} { set V_ACT [read $_vfh] ; close $_vfh }
+regsub -all {/\*.*?\*/} $V_ACT {} V_ACT_NC
+set V_DESC {}
+if {[regexp {\nint descend_schematic\(.*?\n\}\n} "\n$V_ACT_NC" V_DESC]} { }
+set v23b 0
+foreach _l [split $V_DESC \n] {
+  if {[regexp {tclgetboolvar\("live_cursor2_backannotate"\)} $_l]} { incr v23b }
+}
+check {V23b guard G2 STRUCTURAL descend_schematic's body, C comments stripped, tests the Live-annotate switch exactly once} \
+  [list [expr {[string length $V_DESC] > 200 ? 1 : 0}] $v23b] {1 1}
+
+# ===========================================================================
+# V24 — THE 0865 REPRODUCER, END TO END. THE ITEM'S ACCEPTANCE
+# ===========================================================================
+# ⚠ THIS IS THE TRANSCRIPT IN THE ISSUE, AS FOUR PAINTED LISTS. The user's own
+# sequence, with the Live-annotate box in its shipped unticked state:
+#   1. load the waveform file                     -> measured today: d 4 is
+#      ALREADY acquired, before any key is pressed
+#   2. Alt-6                                      -> d 4
+#   3. move cursor B (swap_cursors puts it at 0)  -> STILL d 4, and v(d) at
+#      cursor B is now 0. RULING D5-1.
+#   4. Ctrl-6                                     -> cleared
+# After guards G1 and G2 nothing paints at any step, because nothing was
+# requested at any step. The user's door is the new mode, and rows V11-V13 are
+# where that door is measured.
+# ⚠ THE FOURTH ELEMENT IS THE ANTI-HOLLOW HALF. "Nothing is painted" is
+# satisfied by a fixture whose text never appeared at all; step 4 is the same
+# blank as step 1, and rows V22 leg 2 and V9 are what say the exporter can render
+# these floaters when something IS published.
+set ::live_cursor2_backannotate 0
+catch {xschem raw clear} ; catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}
+xschem load [file join $lib s5_flat.sch]
+opa_l_annot 0
+opa_t_graph 1
+xschem cursor 2 1
+xschem set cursor2_x 4e-9
+xschem raw read $V_RAW tran
+set v24a [opa_v_paint r1]
+catch {cadence::annot_mode opvolt}
+set v24b [opa_v_paint r2]
+xschem swap_cursors
+set v24c [opa_v_paint r3]
+catch {cadence::annot_mode none}
+set v24d [opa_v_paint r4]
+set ::live_cursor2_backannotate $V_LV
+check {V24 ISSUE 0865 END TO END with the box off: load, Alt-6, move cursor B, Ctrl-6 -- nothing stale is painted at any step} \
+  [list $v24a $v24b $v24c $v24d] \
+  [list $V_PINS_NONE $V_PINS_NONE $V_PINS_NONE $V_PINS_NONE]
+
+# ===========================================================================
+# V25 — THE RECORDED DECISION'S PIN (issue 0868). GREEN BEFORE AND AFTER
+# ===========================================================================
+# ⚠ READ THIS ROW'S NAME BEFORE "FIXING" IT. Issue 0865's ruling says gate every
+# ungated publisher on the Live-annotate box. Two of the four are gated by this
+# item -- loading waves and descending. The other two, both arms of `xschem set
+# cursor2_x`, are LEFT PUBLISHING ON PURPOSE, and this row is that decision
+# written down where a later crew will meet it.
+# The reasons are in this section's header; the shortest of them is that
+# `xschem set cursor2_x <t>` is a sentence somebody TYPED, naming a time, which
+# is what "only when the user requests it" means, and that it is driven 43 times
+# across five suites of which three never mention the box.
+# ⚠ BOTH ARMS. scheduler.c:12112 is the graph-present arm and :12123 is the
+# no-graph arm that neither issue 0865 nor the item brief lists at all.
+set ::live_cursor2_backannotate 0
+opa_t_arm [file join $lib s5_flat.sch]
+xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set v25_nograph [list [xschem get rects 2] [opa_t_annot]]
+opa_t_arm [file join $lib s5_flat.sch]
+opa_t_graph 1
+xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set v25_graph [list [xschem get rects 2] [opa_t_annot]]
+set ::live_cursor2_backannotate $V_LV
+check {V25 issue 0868 DELIBERATE: with the box off `xschem set cursor2_x` still publishes, in BOTH arms -- it is a typed request} \
+  [list $v25_nograph $v25_graph] [list {0 {2 3e-09 0}} {1 {2 3e-09 0}}]
+
+set ::live_cursor2_backannotate $V_LV
+catch {xschem raw clear}
+catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}
+opa_l_annot 0
+set XSCHEM_LIBRARY_PATH $S_LIBS
+
+} verr]} {
+  puts "UNEXPECTED ERROR (section V): $verr"
   incr fail
 }
 

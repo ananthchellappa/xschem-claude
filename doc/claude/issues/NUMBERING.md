@@ -57,5 +57,24 @@ dialog's attribute intake is inert).
 file should still be quoted as evidence that it is; so are **0816** and **0825**. **0817**
 is open and now has a driven vector.
 
-**The next free number is 0829.** 0500-0599 and 0700-0799 remain reserved for other
+~~**The next free number is 0829.**~~ superseded, see below.
+
+**2026-08-27, the annotation driver run (items A0-A9).** The block has moved past
+0829 several times over. Filed on this run: **0859-0867** by the earlier items, and
+**0868** by item A3 (the on-request transient annotation, which also closed 0865),
+then **0869-0876** by A3's write-up from three verification passes —
+**0869** (the transient sentence names the REQUESTED time, not the measured one:
+RULING D5-1), **0870** (`xschem annotate_at <unparseable>` publishes at t = 0 and
+reports success), **0871** (the `nodata` refusal is unreachable and its golden is
+hollow), **0872** (bit1 and bit2 share one render class, so `Alt-6` repaints a
+transient's numbers as OP node voltages — RULING 0856 reopens), **0873** (guard G9,
+"refusals speak", has no row), **0874** (the widened `text_hidden()` voltage arm has
+no row), **0875** (row B12b cannot see a leaked viewer-context borrow), **0876**
+(0868's eight C guards were never sabotage-tested).
+
+Nothing new was filed for `test_ase_window` W7's flake: it is **0642**, and it got a
+third dated sighting appended rather than a fourth number. See CLAUDE.md on 0689/0690
+for why that matters.
+
+**The next free number is 0877.** 0500-0599 and 0700-0799 remain reserved for other
 branches.

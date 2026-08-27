@@ -14,6 +14,81 @@ Newest entries on top.
 
 ---
 
+## Q54. I bound `<Alt-Shift-Key-6>` and my chord never fires. Why?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0868** (the transient annotation
+  chord), `src/cadence_style_rc`.
+
+**Because on a US layout Alt+Shift+6 is not "6 with two modifiers" — it is the
+keysym `asciicircum`, and Tk dispatches on the keysym.**
+
+Measured with `wish` on `:99`. Keycode 15 is the pair `6 asciicircum`, so:
+
+```
+K plain-6            (keysym=6 state=0x00) -> KEY-6
+K Alt+6              (keysym=6 state=0x08) -> ALT-KEY-6
+K Alt+Shift+6-as-6   (keysym=6 state=0x09) -> ALT-KEY-asciicircum
+K Alt+Shift+6-real   (keysym=asciicircum state=0x09) -> ALT-KEY-asciicircum
+K Shift+6-real       (keysym=asciicircum state=0x01) -> NOTHING
+```
+
+Note the third line: even an event **synthesised** with keysym `6` plus Shift+Alt
+dispatches to `<Alt-Key-asciicircum>`. `<Alt-Shift-Key-6>` never fires at all.
+
+So the real bind is `<Alt-Key-asciicircum>`; the `<Alt-Shift-Key-6>` form is kept
+only as the documented **non-US-layout fallback**, where the shifted `6` is
+something else entirely. `src/cadence_style_rc` already recorded the identical
+gotcha for Ctrl-Shift-4 → `dollar`, one screenful above.
+
+**Why this bites so hard:** a landing that writes only the Shift-Key-6 form passes
+every behavioural row in the tree — the mode itself works when driven from Tcl —
+and is dead under the user's fingers. Nothing but a **structural** row (0868's
+V20, which greps `cadence_style_rc` for both spellings) can see it, and no
+automated row can press a physical Alt+Shift+6 at all; that stays a `look` debt.
+
+---
+
+## Q53. "Only when the user requests it" — is a scripted `xschem set cursor2_x` a request?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issues **0865** / **0868**, ruling D5-1.
+
+**Unratified, and it is the sharpest question the annotation work has produced.**
+The A3 crew answered *yes* and the user has not yet ruled (rule debt `0868`).
+
+Issue 0865's complaint is real: with *Simulation > Graphs > "Live annotate probes
+with 'b' cursor"* in its shipped **unticked** state, the sheet was acquiring a
+node-voltage annotation nobody asked for, and then holding it while the cursor
+moved away — a number not measured for the state it is shown in, RULING D5-1.
+
+0865's own ruling was "gate every ungated publisher on that box". Measured, the
+inventory behind it is wrong in both directions: `src/scheduler.c:12080`, named as
+a publisher, sits inside `#if 0` and is **dead code**; and the
+`backannotate_at_cursor_b_nograph()` arm of the same `xschem set cursor2_x` is a
+**fourth** publisher nobody listed.
+
+The distinction that was drawn instead:
+
+| publisher | verdict | why |
+|---|---|---|
+| `raw_read()`'s tail (`save.c`) | **gated** | loading a waveform file is something the PROGRAM does |
+| `descend_schematic()`'s tail (`actions.c`) | **gated** | so is descending a hierarchy |
+| both `xschem set cursor2_x` arms (`scheduler.c`) | **left publishing** | somebody TYPED a sentence naming a time |
+
+Supporting measurement: the waveform viewer's own `cursor_toggle` does
+`xschem new_schematic switch` **first**, so its `set cursor2_x` publishes inside the
+VIEWER's context and never reaches the design sheet. And gating the verb would
+touch 43 call sites across five suites, three of which never mention the box, while
+buying nothing — both plans leave the identical residual, a requested snapshot that
+persists while the cursor moves on.
+
+**What makes the residual acceptable at all** is the on-request door built beside
+it (0868): before it existed, no gesture in the program could re-measure a
+published number — not `s`, not the chord again, not `Ctrl-6` then the chord.
+
+---
+
 ## Q52. A test says the value is on the schematic, and the schematic is blank. Why?
 
 - **Asked:** 2026-08-27

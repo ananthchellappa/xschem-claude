@@ -1276,7 +1276,31 @@ int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, doub
       dbg(0, "points=%d, vars=%d, datasets=%d sim_type=%s\n",
              raw->allpoints, raw->nvars, raw->datasets, raw->sim_type ? raw->sim_type : "<NULL>");
 
-      if(xctx->graph_flags & 4) { /* if cursor2 is enabled in first graph setup schematic annotation */
+      /* ISSUES 0865 / 0868 -- GUARD G1: LOADING A WAVEFORM FILE IS NOT A REQUEST.
+       *
+       * This was the first of two UNGATED publishers, and it is the one the 0865
+       * transcript opens with. With `Simulation > Graphs > Live annotate probes
+       * with 'b' cursor` UNTICKED -- its shipped state -- a sheet carrying a
+       * graph rect with cursor B on ACQUIRED a node-voltage annotation the
+       * moment a raw was read, before the user pressed anything. Move the cursor
+       * afterwards and the painted number does not follow: RULING D5-1, a number
+       * that was not measured for the state it is shown in. The user's words on
+       * the family: "MUST ONLY HAPPEN WHEN USER REQUESTS IT!!".
+       *
+       * It also drove a straight RULING 0856 breach. update_op() below already
+       * refuses to publish a transient's point 0 as an operating point, so the
+       * `6` chord paints nothing on a pure transient -- while this site put a
+       * transient node voltage on that same surface unasked. 0856 closed one
+       * road and left this one open; this closes it.
+       *
+       * The spelling matches the six cursor-motion sites (callback.c x5,
+       * scheduler.c swap_cursors) exactly, so one grep finds one gate shape.
+       * ⚠ Both arms of `xschem set cursor2_x` are deliberately NOT gated -- a
+       * typed verb naming a time IS a request. doc/claude/issues/0868-*.md;
+       * pinned by row V25 of tests/headless/test_op_annot.tcl. Rows V22 (both
+       * legs) and V24 are this guard's measurement. */
+      if(tclgetboolvar("live_cursor2_backannotate") && (xctx->graph_flags & 4)) {
+        /* cursor2 enabled in first graph, AND the user asked to follow it */
         if(xctx->rects[GRIDLAYER] > 0)  {
           xRect *r;
           r = &xctx->rect[GRIDLAYER][0];

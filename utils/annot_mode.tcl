@@ -254,13 +254,26 @@ proc cadence::_annot_scan {} {
 ## would be change for its own sake. Note the ASE-L labels are Cadence's and do
 ## NOT partition the two content classes, so they could not have served as the
 ## reference wording anyway.
+##
+## ⚠ ISSUE 0868 WIDENED THE SWITCH FROM `& 3` TO `& 7`, AND THE FOUR SHIPPED
+## WORDINGS ARE BYTE-IDENTICAL. Before the widening, mask 4 -- transient node
+## voltages ON and painted on the sheet -- fell on the `0` arm and reported
+## "OP annotation OFF": not merely silence, the OPPOSITE of what was on the
+## screen. The four new arms name the transient class in the same shape the
+## shipped ones name theirs. Row V21 of tests/headless/test_op_annot.tcl asserts
+## all eight, so a re-wording of the shipped four reds in this file rather than
+## in six unrelated statusmsg rows.
 proc cadence::_annot_msg {mask state path types} {
   if {![string is integer -strict $mask]} { set mask 0 }
-  switch -exact -- [expr {$mask & 3}] {
+  switch -exact -- [expr {$mask & 7}] {
     0 { set m "OP annotation OFF" }
     1 { set m "OP annotation ON (device OP info)" }
     2 { set m "OP annotation ON (node voltages)" }
     3 { set m "OP annotation ON (device OP info + node voltages)" }
+    4 { set m "OP annotation ON (transient node voltages)" }
+    5 { set m "OP annotation ON (device OP info + transient node voltages)" }
+    6 { set m "OP annotation ON (node voltages + transient node voltages)" }
+    7 { set m "OP annotation ON (device OP info + node voltages + transient node voltages)" }
     default { set m "OP annotation" }
   }
   switch -exact -- $state {
@@ -387,4 +400,261 @@ proc cadence::annot_mode {mode} {
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot.
   catch {xschem statusmsg -hold [cadence::_annot_msg $mask $state $path $types]}
   return
+}
+
+# ===========================================================================
+# ISSUE 0868 -- ON-REQUEST TRANSIENT NODE-VOLTAGE ANNOTATION AT THE WAVEFORM
+#               CURSOR. The FOURTH chord, and the ASE-L menu entry beside it.
+# ===========================================================================
+# The user's request, verbatim 2026-08-26:
+#
+#   "MUST ONLY HAPPEN WHEN USER REQUESTS IT!! Alt-6 and 6 are for OP info and OP
+#    node voltages. We can add a menu item in Results > Annotate for annotating
+#    TRAN node voltages for time-point given by cursor B, or A - whatever the
+#    convention is - if there is only one cursor in the waveform viewer's active
+#    tab, use that. If A and B are there, then use cursor-A. Give user a way to
+#    enter this mode with a different shortcut through cadence_style_rc - maybe
+#    Alt-Shift-6"
+#
+#      Alt-Shift-6 -> cadence::annot_tran   annot_show |= 4   (ANNOT_SHOW_TRAN)
+#
+# ⚠ IT IS NOT A SPELLING OF `annot_mode`, AND `_annot_mask` IS DELIBERATELY NOT
+# TOUCHED -- `tran` still raises there. The three OP chords are pure mask
+# arithmetic: they turn a rendering switch on and the numbers were already
+# published. This one PUBLISHES: it resolves a time point, hands it to the
+# engine, and only then arms its bit. Folding it into the mask table would make
+# `cadence::annot_mode tran` look like a peer of `opvolt` while being a
+# fundamentally different operation, and it would lose the refusal states.
+#
+# ⚠ THE MASK IS ARMED LAST (guard G13). A mode armed before a publish that then
+# refuses leaves the user looking at an armed mode over the PREVIOUS request's
+# numbers -- RULING D5-1 with an extra step. Rows V14/V15/V16 of
+# tests/headless/test_op_annot.tcl each assert "and the mask never gained bit2".
+#
+# ⚠ THE SNAPSHOT IS HELD, AND THE SENTENCE IS WHAT KEEPS IT HONEST. After a
+# successful request the number stays on the sheet while the cursor moves on --
+# the mode is a snapshot, not a live follow (that is the Live-annotate box, and
+# it is a different feature). So the `ok` sentence NAMES THE TIME POINT AND THE
+# CURSOR LETTER: under RULING D5-1 an undated number is the defect, and the
+# provenance is the only thing that makes a held one truthful. Recorded as an
+# unratified decision in doc/claude/issues/0868-*.md.
+# ---------------------------------------------------------------------------
+
+## -> {t which src} -- the time point to annotate at, the cursor letter it came
+## from and where it was read -- or {} when NO cursor is on anywhere.
+##
+## ⚠ THE USER'S RULE, IN ORDER: "if there is only one cursor in the waveform
+## viewer's active tab, use that. If A and B are there, then use cursor-A."
+## So A wins whenever it is on, and B is used only when A is not. Row V11 of
+## tests/headless/test_op_annot.tcl is the ONLY row that can tell a
+## rule-honouring build from a B-preferring one; V12 and V13 stay green under
+## both, by construction.
+##
+## ⚠ READ THE SUBJECT OF THE USER'S SENTENCE: "the waveform VIEWER'S active
+## tab", not the schematic's own graph cursors. The viewer keeps its cursors in
+## its OWN xschem context and mirrors which of them are on in
+## wviewer::cva / wviewer::cvb, keyed BY TOKEN -- and the tab stash keys every
+## per-view array on the token, so reading them describes the ACTIVE TAB by
+## construction and there is no separate "which tab" question to get wrong.
+## Positions are per-context reads, so the context has to be BORROWED, exactly
+## as wviewer::readout_refresh (src/wave_viewer.tcl) borrows it for the readout
+## bar, which is the shipped caller this copies.
+##
+## ⚠ THE BORROW ALWAYS GIVES THE CONTEXT BACK, and the reads are bracketed in a
+## `catch` so a throw cannot escape past leave_ctx. A borrow that entered and
+## never left would strand the user in the waveform window's context with the
+## schematic still on screen -- issue 0173's exact shape, from a path nobody
+## would think to look at. Row B12b of tests/headless/test_annot_show_menu.tcl
+## greps this body for both halves; row B12 is the only behavioural row in the
+## tree that can see the borrow at all, because headless there is no viewer.
+##
+## THE FALLBACK IS THE CURRENT CONTEXT'S OWN GRAPH CURSORS, and it is not a
+## consolation prize: it is what makes the mode work for a plain xschem user
+## with a graph on the sheet and no ASE session, and it is the only arm a
+## headless row can construct. `xschem get graph_flags` bit1 (2) is cursor A and
+## bit2 (4) is cursor B -- measured 0 / 2 / 4 / 6 for none / A / B / both.
+proc cadence::_annot_tran_cursor {} {
+  set key {}
+  if {[llength [info commands ::ase::session_for_current]]} {
+    catch {set key [lindex [::ase::session_for_current] 0]}
+  }
+  if {$key ne {} && [llength [info commands ::wviewer::enter_ctx]] &&
+      [llength [info commands ::wviewer::leave_ctx]] &&
+      [llength [info commands ::wviewer::window_for]]} {
+    set top {}
+    catch {set top [::wviewer::window_for $key]}
+    set live 0
+    catch {set live [expr {$top ne {} && [winfo exists $top]}]}
+    if {$live} {
+      set va 0 ; set vb 0
+      catch {set va [expr {[info exists ::wviewer::cva($key)] && $::wviewer::cva($key)}]}
+      catch {set vb [expr {[info exists ::wviewer::cvb($key)] && $::wviewer::cvb($key)}]}
+      if {$va || $vb} {
+        set ticket [::wviewer::enter_ctx $key]
+        if {[lindex $ticket 0]} {
+          set xa {} ; set xb {}
+          catch {
+            if {$va} { catch {set xa [xschem get cursor1_x]} }
+            if {$vb} { catch {set xb [xschem get cursor2_x]} }
+          }
+          ::wviewer::leave_ctx $key $ticket
+          if {$va && $xa ne {}} { return [list $xa A viewer] }
+          if {$vb && $xb ne {}} { return [list $xb B viewer] }
+        }
+      }
+    }
+  }
+  set fl 0
+  catch {set fl [xschem get graph_flags]}
+  if {![string is integer -strict $fl]} { set fl 0 }
+  if {$fl & 2} {
+    set x {}
+    catch {set x [xschem get cursor1_x]}
+    if {$x ne {}} { return [list $x A sheet] }
+  }
+  if {$fl & 4} {
+    set x {}
+    catch {set x [xschem get cursor2_x]}
+    if {$x ne {}} { return [list $x B sheet] }
+  }
+  return {}
+}
+
+## THE ONE MINT (RULING D5-4): every user-facing sentence of the transient mode
+## is built here and RENDERED by callers -- the chord, the ASE-L menu entry, the
+## CIW line and the held status line all pass through this proc. A second
+## `statusmsg` string composed inside a menu body is the shape this forbids, and
+## row V18 of tests/headless/test_op_annot.tcl greps every other candidate file
+## for these strings and requires zero.
+##
+## FIVE STATES, DISTINGUISHABLE BY NAME so the caller can act on the cause and
+## the user is told which one it was. Issue 0857's ruling, verbatim: "if OP has
+## been run but we don't have device info, and user is wanting to annotate by
+## pressing 6, then, yes, we want to say something in the CIW." The same applies
+## to every way this mode can decline.
+##   ok        published -- names the time point AND the cursor letter
+##   nocursor  no cursor is on anywhere, so there is no time to annotate at
+##   noraw     no database is attached to this sheet
+##   notran    a database is attached but it is not a transient analysis
+##   nodata    the engine had nothing to resolve the request against
+##
+## ⚠ AN UNKNOWN STATE RAISES, and names it. `_annot_msg`'s own discipline (row
+## N2): op_annot blanks for missing DATA (invariant I3), but a state spelling is
+## a CALLER bug, and a caller bug that renders as a polite apology is exactly the
+## silence this mode exists to remove.
+proc cadence::_annot_tran_msg {state t which} {
+  switch -exact -- $state {
+    ok       { return "Transient annotation at t = $t (cursor $which)" }
+    nocursor { return "Transient annotation -- NO CURSOR: turn on cursor A or B\
+                       in the waveform viewer" }
+    noraw    { return "Transient annotation -- NO RAW FILE loaded" }
+    notran   { return "Transient annotation -- the loaded database is not a\
+                       transient analysis" }
+    nodata   { return "Transient annotation -- nothing to annotate at t = $t" }
+  }
+  error "cadence::_annot_tran_msg: unknown state \"$state\":\
+         use ok, nocursor, noraw, notran or nodata"
+}
+
+## THE ONE EMITTER, and it is deliberately not a bare `catch {::ase::echo ...}`.
+## ISSUE 0857 is about a chord that says NOTHING when it cannot deliver; a
+## catch-and-discard would reproduce that defect precisely at the moment the
+## message matters, on any session where the CIW is not up. So the sinks are
+## tried in order and the last one always works.
+##
+## ⚠ THIS IS THE CHORD-SIDE CIW ROUTE ISSUE 0857's HALF 2 NEEDS. It is recorded
+## in 0857 so that work renders through this rather than minting a second
+## mechanism -- two channels for "the annotation chord could not deliver" is the
+## drift invariant I1 forbids.
+proc cadence::_annot_ciw {msg {tag {}}} {
+  if {[llength [info commands ::ase::echo]]} {
+    if {![catch {::ase::echo $msg $tag}]} { return 1 }
+  }
+  if {[llength [info commands ::xschem::notify]]} {
+    if {![catch {::xschem::notify $msg}]} { return 1 }
+  }
+  catch {puts stderr $msg}
+  return 0
+}
+
+## cadence::annot_tran -- THE ONE CODE PATH both entry points drive (the
+## `Alt-Shift-6` chord in src/cadence_style_rc and the ASE-L
+## `Results > Annotate > Transient Node Voltages (at cursor)` item in
+## src/ase_window.tcl). Returns the state name, so a caller -- and a headless row
+## -- can see the decision without reading a sink.
+##
+## ⚠ THE ORDER OF THE FIRST FOUR STEPS IS A GUARD, NOT A STYLE (G13). Every
+## refusal returns with the mask UNTOUCHED and nothing published; the bit is
+## armed only after the engine says it annotated. Rows V14/V15/V16 assert the
+## mask on each refusal, and sabotage variant S13 -- moving the arm above the
+## refusals -- must redden all three.
+##
+## ⚠ THE MASK IS PULLED THROUGH `xschem get annot_show`, never $::annot_show:
+## the mask is PER-CONTEXT (xctx->annot_show), so under the tabbed interface the
+## Tcl mirror belongs to whichever context wrote it last. Same reasoning as
+## cadence::annot_mode above, and the same S7 decision D4 spelling for the write.
+proc cadence::annot_tran {} {
+  set cur [cadence::_annot_tran_cursor]
+  if {![llength $cur]} {
+    cadence::_annot_ciw [cadence::_annot_tran_msg nocursor {} {}] warn
+    catch {xschem statusmsg -hold [cadence::_annot_tran_msg nocursor {} {}]}
+    return nocursor
+  }
+  set t     [lindex $cur 0]
+  set which [lindex $cur 1]
+
+  ## ⚠ THE CONVERSE OF RULING 0856, AND IT IS A REFUSAL RATHER THAN A LIMIT.
+  ## The user ruled that an operating-point surface must not show a transient's
+  ## numbers; a TRANSIENT mode must not show an operating point's. Both
+  ## detectors already exist -- `xschem raw loaded` answers -1 with nothing
+  ## attached and `xschem raw sim_type` answers `op` / `dc` / `tran` -- so
+  ## nothing new is invented here. `dc` and `ac` are NOT accepted: annotating at
+  ## an x-axis value would be meaningful for them, but the user asked for TRAN
+  ## and widening it is scope the request does not carry.
+  set loaded -1
+  catch {set loaded [xschem raw loaded]}
+  if {![string is integer -strict $loaded] || $loaded < 0} {
+    cadence::_annot_ciw [cadence::_annot_tran_msg noraw {} {}] warn
+    catch {xschem statusmsg -hold [cadence::_annot_tran_msg noraw {} {}]}
+    return noraw
+  }
+  set st {}
+  if {[catch {xschem raw sim_type} st]} { set st {} }
+  if {$st ne {tran}} {
+    cadence::_annot_ciw [cadence::_annot_tran_msg notran {} {}] warn
+    catch {xschem statusmsg -hold [cadence::_annot_tran_msg notran {} {}]}
+    return notran
+  }
+
+  ## The engine resolves the time point against xctx->raw through the SHIPPED
+  ## cursor arithmetic (invariant I1) -- so an out-of-range t holds the boundary
+  ## sample, RULING D4-4, and a vector missing from the raw renders blank, I3.
+  ## `xschem annotate_at` answers 0 when there was nothing to annotate against
+  ## and the call was a byte-exact no-op.
+  set rc 0
+  if {[catch {xschem annotate_at $t} rc]} { set rc 0 }
+  if {![string is integer -strict $rc]} { set rc 0 }
+  if {!$rc} {
+    cadence::_annot_ciw [cadence::_annot_tran_msg nodata $t $which] warn
+    catch {xschem statusmsg -hold [cadence::_annot_tran_msg nodata $t $which]}
+    return nodata
+  }
+
+  set mask 0
+  catch {set mask [xschem get annot_show]}
+  if {![string is integer -strict $mask]} { set mask 0 }
+  xschem set annot_show [expr {$mask | 4}]
+
+  ## The `Show hidden texts` pair (src/xschem.tcl): bboxes change when hidden
+  ## texts appear, and annot_show_sync_cache() rides inside the first.
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+
+  ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot
+  ## erase it (issue 0248). Both sinks: the CIW is where the user asked for it
+  ## and the status line is where the three OP chords already speak.
+  set m [cadence::_annot_tran_msg ok $t $which]
+  cadence::_annot_ciw $m
+  catch {xschem statusmsg -hold $m}
+  return ok
 }

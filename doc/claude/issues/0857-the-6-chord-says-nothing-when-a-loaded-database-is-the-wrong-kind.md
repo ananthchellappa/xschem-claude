@@ -6,6 +6,26 @@ report on `tb_bandgap`. Sibling of
 which is the same day's other half: 0856 is the wrong NUMBER, this is the
 missing EXPLANATION.
 
+## ⚠ HALF 2's CHANNEL ALREADY EXISTS — DO NOT BUILD A SECOND ONE (added 2026-08-27)
+
+Issue [0868](0868-on-request-transient-node-voltage-annotation-at-the-waveform-cursor.md)
+landed **`cadence::_annot_ciw {msg {tag {}}}`** in `utils/annot_mode.tcl`: the ONE
+emitter for the annotation chords' user-facing sentences. It tries `::ase::echo`,
+then `::xschem::notify`, then `stderr`, and it is deliberately **not** a bare
+`catch {::ase::echo ...}` — a catch-and-discard would go silent exactly where this
+issue says silence is the defect.
+
+0868's own mode uses it beside a `xschem statusmsg -hold` of the same string, i.e.
+it answers half 2 with **both** sinks for its own five sentences. The work still
+owed here is to route the `6` / `Alt-6` chords' existing `_annot_msg` line through
+the same emitter, and to add the missing wrong-kind wording — **through
+`cadence::_annot_msg`, which is already the one mint** (RULING D5-4). Two channels
+for "the annotation chord could not deliver" is the drift invariant I1 forbids.
+
+The BOTH-sinks choice is itself unratified and is recorded as decision 4 of 0868's
+rule debt; it is the same unruled question as this issue's half 2 and as 0636. One
+ruling settles all three.
+
 ## What the user did, and what they expected
 
 Opened `tb_bandgap`, descended `x1 > x1`, pressed **`6`**. Every device row came

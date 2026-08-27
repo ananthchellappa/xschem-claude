@@ -2331,6 +2331,48 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       return perform_action("align", argc, argv);
     }
 
+    /* annotate_at <time>
+     *   ISSUE 0868 -- annotate node voltages at a REQUESTED time point of the
+     *   loaded transient, with no cursor involved. Answers 1 when it annotated
+     *   and 0 when there was nothing to annotate against.
+     *
+     *   ⚠ THIS IS THE C HALF ONLY, AND IT TAKES A NUMBER. Which cursor supplies
+     *   that number is the user's rule -- "if there is only one cursor in the
+     *   waveform viewer's active tab, use that. If A and B are there, then use
+     *   cursor-A" -- and it lives in cadence::_annot_tran_cursor
+     *   (utils/annot_mode.tcl), because it has to ask the waveform viewer's
+     *   ACTIVE TAB, which is Tk state. Both of the user's entry points (the
+     *   ASE-L `Results > Annotate > Transient Node Voltages (at cursor)` item
+     *   and the `Alt-Shift-6` chord) go through cadence::annot_tran, which
+     *   resolves the cursor, calls this, arms ANNOT_SHOW_TRAN and mints the one
+     *   sentence (RULING D5-4).
+     *
+     *   ⚠ IT DOES NOT MOVE EITHER CURSOR. Reading a value at a time must not
+     *   drag the user's cursor B under their pointer; row V6 of
+     *   tests/headless/test_op_annot.tcl is the only guard on that.
+     *
+     *   ⚠ THE set_modify(-2) IS NOT OPTIONAL (guard G10). `@spice_get_voltage`
+     *   on every lab_pin / ipin / opin / vdd / probe text is a FLOATER, and
+     *   floaters render out of a cache that only this call refreshes -- both
+     *   `xschem set cursor2_x` arms carry it for the same reason. Without it the
+     *   published number is correct and the SHEET keeps painting the previous
+     *   one until something else dirties the cache, which is the invariant-I3
+     *   breach that got S9 attempt 1 reverted. Row V10 measures the FIRST frame
+     *   after this verb, with no redraw in between. */
+    else if(!strcmp(argv[1], "annotate_at"))
+    {
+      int floaters, rc;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem annotate_at <time>: missing time point", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      floaters = there_are_floaters();
+      rc = backannotate_at_time(atof_spice(argv[2]));
+      if(rc && floaters) set_modify(-2); /* refresh floater caches: see guard G10 above */
+      Tcl_SetResult(interp, rc ? "1" : "0", TCL_STATIC);
+    }
+
     /* annotate_op [raw_file] [level] [sim_type]
      *   Annotate operating point data into current schematic.
      *   use <schematic name>.raw or use supplied argument as raw file to open

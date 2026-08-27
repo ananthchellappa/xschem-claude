@@ -1,8 +1,45 @@
 # 0865 — with "Live annotate" off, a node voltage stays on the sheet after the cursor leaves it
 
-STATUS: **OPEN — measured 2026-08-27, NOT fixed. NEEDS THE USER'S RULING.**
+STATUS: ✅ **CLOSED 2026-08-27 by issue
+[0868](0868-on-request-transient-node-voltage-annotation-at-the-waveform-cursor.md).**
 Introduced by **0864** (the opt-in split), found by that item's adversarial
-verification and re-measured from scratch here. A `rule` debt is recorded.
+verification and re-measured from scratch here.
+
+## How it was closed — and what deliberately did NOT change
+
+**⚠ READ THIS BEFORE "FINISHING THE GATING".** 0868 gated the two ACQUISITION
+publishers and left both `xschem set cursor2_x` arms publishing, on purpose.
+
+* **GATED** — `raw_read()`'s tail (`src/save.c`, guard G1) and
+  `descend_schematic()`'s tail (`src/actions.c`, guard G2) now carry the same
+  `tclgetboolvar("live_cursor2_backannotate")` term the six cursor-motion sites
+  have always carried. Loading a waveform file and walking into a child are things
+  the PROGRAM does; neither is a request.
+* **NOT GATED, DELIBERATELY** — both arms of `xschem set cursor2_x <t>`. That verb
+  is a sentence somebody TYPED naming a time, it stamps `annot_x` at the position
+  it was measured at, it is the scripting verb and step S11's only road, and the
+  waveform viewer's own call runs inside the VIEWER's context and never reaches the
+  design sheet. **Row V25 of `tests/headless/test_op_annot.tcl` pins that
+  decision**, so a later crew meets an explained row rather than what looks like a
+  missed gate. Ratification is owed to the user as a `rule` debt on 0868.
+* **THE INVENTORY IN THIS ISSUE IS WRONG IN BOTH DIRECTIONS**, measured:
+  `src/scheduler.c:12080`, listed here as an ungated publisher, is inside `#if 0`
+  and is dead code; and the `else if(backannotate_at_cursor_b_nograph())` arm of
+  the same `set cursor2_x` is a **fourth** publisher this issue never listed.
+* **THE USER'S DOOR IS THE NEW MODE.** Gating alone was not shippable: measured
+  with the box off, NO gesture in the program re-measured the stale number — not
+  `s`, not `Alt-6` again, not `Ctrl-6` then `Alt-6`. 0868's `Alt-Shift-6` chord and
+  ASE-L **Results > Annotate > Transient Node Voltages (at cursor)** item are the
+  on-request door that makes the gating usable.
+* This was also **finishing 0856**, not merely repairing staleness: `update_op()`
+  already refused a transient, so the `6` chord painted nothing on one — while
+  these two doors put a transient node voltage on the operating-point surface
+  unasked, which is exactly what the user's *"it should do nothing silently"*
+  forbids.
+
+Acceptance: row **V24** of `tests/headless/test_op_annot.tcl` is the transcript
+below, end to end, as four painted SVG lists; **V22** and **V23** are the two
+guards, each with a box-ticked positive control.
 
 ## What the user sees
 

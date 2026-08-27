@@ -712,14 +712,39 @@ foreach {t v} [list x1 0 x2 3e-6 y1 0.8 y2 1.0] { xschem setprop rect 2 2 $t $v 
 xschem setprop rect 2 2 fullyzoom
 xschem setprop rect 2 0 fullyzoom
 xschem raw switch 0
-# NOT 175 ns. reent.raw was CURRENT for one instant during the XC8 leg -- it is
-# the database `xschem raw read` made current there, with a live cursor at
-# 175 ns -- so it carries a real annotation at that exact t from before this
-# strip existed. A leg that used 175 ns would be green against code that never
-# reaches this database at all. Every t below is one reent.raw has never seen.
-check "XCO0b premise: reent.raw's leftover annotation from the XC8 leg is at\
- 175 ns, so this leg must avoid that t to mean anything" \
-  [pcall {xschem raw switch 5; set a [lindex [xc_annot] 1]; xschem raw switch 0; set a}] 1.75e-07
+# ⚠ THE PREMISE WAS RE-MEASURED FOR ISSUE 0868 AND IT GOT STRONGER, NOT WEAKER.
+# It used to read: "reent.raw was CURRENT for one instant during the XC8 leg,
+# with a live cursor at 175 ns, so it carries a real annotation at that exact t
+# from before this strip existed -- every t below is one reent.raw has never
+# seen." That leftover came from raw_read()'s tail (src/save.c), which published
+# a cursor-B annotation on EVERY successful read whenever a graph rect with
+# cursor B on happened to be present -- with `Simulation > Graphs > Live annotate
+# probes with 'b' cursor` in its shipped UNTICKED state, i.e. with nobody having
+# asked. That is issue 0865, and guard G1 of issue 0868 closed it: reading a
+# waveform file is something the program does, not something the user requested,
+# and a number published there goes stale the moment the cursor moves (RULING
+# D5-1). This suite never ticks the box, so reent.raw now arrives with NOTHING
+# annotated -- annot_p -1, annot_x 0.
+#
+# THE ANTI-HOLLOW JOB OF THIS ROW IS UNCHANGED AND BETTER SERVED. Its purpose is
+# to prove that XCO1's `annot_p >= 0` cannot be satisfied by a leftover; the
+# strongest form of that is "there is no leftover", which is what is asserted
+# now. The t values used below are still ones reent.raw has never seen, so
+# nothing else in this leg moves.
+#
+# ⚠ BUT BE HONEST ABOUT WHERE THE DISCRIMINATION NOW LIVES (recorded by the 0868
+# write-up's adversary leg, 2026-08-27). `xco_stale_p` below is now -1, so
+# XCO1's second conjunct `[xc_annot_p] != $xco_stale_p` is LOGICALLY IMPLIED by
+# its first, `[xc_annot_p] >= 0`. The inequality is unchanged in spelling but it
+# no longer does independent work: the discriminating claim has MOVED into XCO0b,
+# which is a hard equality on {-1 0 -1} and reds if guard G1 is ever removed. The
+# leg's net strength is preserved -- XCO2 still pins the value at the cursor's t
+# -- but do not read XCO1 as two independent clauses. Keeping the inequality
+# costs nothing and re-earns its force the day anything republishes on read.
+check "XCO0b premise (issue 0868): reent.raw arrives with NO leftover annotation\
+ at all -- reading a waveform file no longer publishes one -- so XCO1's index\
+ cannot come from anywhere but this strip's own fan-out" \
+  [pcall {xschem raw switch 5; set a [xc_annot]; xschem raw switch 0; set a}] {-1 0 -1}
 set xco_stale_p [pcall {xschem raw switch 5; set a [xc_annot_p]; xschem raw switch 0; set a}]
 xc_cursor 1.5e-6
 xschem raw switch 5

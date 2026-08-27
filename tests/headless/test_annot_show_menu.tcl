@@ -712,6 +712,239 @@ check "D3 CLICKING the checkbutton changes nothing the annotation shows" \
   [list $d3_0 $d3_1 $d3_2] [list {1 3.14} {1 3.14} {1 3.14}]
 catch {xschem raw clear}
 
+# =============================================================================
+# SECTION E — ISSUE 0868: THE THIRD ANNOTATE ENTRY, AND THE ONE GUARD NO
+#             HEADLESS ROW CAN SEE (the waveform viewer's active tab)
+# =============================================================================
+# The user's request, verbatim 2026-08-26:
+#
+#   "We can add a menu item in Results > Annotate for annotating TRAN node
+#    voltages for time-point given by cursor B, or A - whatever the convention
+#    is - if there is only one cursor in the waveform viewer's active tab, use
+#    that. If A and B are there, then use cursor-A."
+#
+# ⚠ READ THE SUBJECT OF THE SENTENCE: "the waveform viewer's ACTIVE TAB". Not
+# the schematic's own graph cursors. The mode must ask the VIEWER which cursors
+# are on and where they sit, and only fall back to the current context's own
+# graph cursors when there is no viewer -- which is the only case a headless row
+# can construct at all. Rows V11-V13 of tests/headless/test_op_annot.tcl measure
+# the fallback and the cursor RULE; they are blind to the borrow, by
+# construction, because headless there is no viewer to borrow from. That is why
+# B12 lives here and why this suite has to be run on the dev display before the
+# item is called done.
+#
+#   B11   the submenu carries THREE entries      <- red before (measured: two)
+#   B12f  FIXTURE: a viewer is open, its cursor A is on at a time of its own,
+#         and the DESIGN context's own cursor B is on at a DIFFERENT time
+#   B12   the mode annotates at the VIEWER's cursor, not the design context's
+#   B12b  STRUCTURAL: the borrow enters and LEAVES the viewer's context
+#
+# ⚠ B12 IS BUILT SO THE TWO ANSWERS CANNOT ALIAS. The viewer's cursor A sits at
+# 2 ns and the design context's cursor B sits at 4 ns, and the fixture raw's
+# v(a) is exactly 2.0 and 4.0 there. A build that reads the current context
+# answers 4; a build that borrows answers 2. Neither number can arrive by
+# accident, and B12f is asserted separately so a fixture that failed to build
+# reds as a fixture rather than as a verdict about the feature.
+# ⚠ THE VIEWER MIRRORS ARE THE `cva` / `cvb` ARRAYS, KEYED BY TOKEN
+# (src/wave_viewer.tcl:349-350). The tab stash keys every per-view array on the
+# token, so reading them describes the ACTIVE TAB by construction -- there is no
+# separate "which tab" question to get wrong.
+
+set E_TRAN [file join $C_SCRATCH e_tran.raw]
+set f [open $E_TRAN w]
+puts -nonewline $f "Title: 0868 transient fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 5
+Variables:
+\t0\ttime\ttime
+\t1\tv(a)\tvoltage
+Values:
+0\t0
+\t0.0
+1\t1e-09
+\t1.0
+2\t2e-09
+\t2.0
+3\t3e-09
+\t3.0
+4\t4e-09
+\t4.0
+"
+close $f
+
+## The design context's window path, taken from `xschem windows` (field 0 is the
+## context path, field 4 the schematic) rather than assumed -- opening a viewer
+## MOVES the current context, and every row below has to come back deliberately.
+proc e_winpath {schpath} {
+  foreach e [xschem windows] {
+    if {[file normalize [lindex $e 4]] eq [file normalize $schpath]} { return [lindex $e 0] }
+  }
+  return {}
+}
+## Evaluate <script> with <win> current, then restore. A MARKER, never a raise:
+## `xschem new_schematic switch` silently no-ops while a semaphore is up
+## (wave_viewer.tcl landmine 17), and a blind read would then answer about the
+## wrong context.
+proc e_ctx {win script} {
+  set cur [xschem get current_win_path]
+  if {$cur ne $win} { catch {xschem new_schematic switch $win} ; update }
+  if {[xschem get current_win_path] ne $win} { return "SWITCH-FAILED($win)" }
+  if {[catch {uplevel 1 $script} r]} { set r "ERR: $r" }
+  if {[xschem get current_win_path] ne $cur} { catch {xschem new_schematic switch $cur} ; update }
+  return $r
+}
+## The source text of ONE proc, sliced out of <src> so a grep cannot run past
+## the end of the body into the next one -- issue 0682's measured hole, where
+## `.` matched a newline and a row stayed green over a renamed no-op shim.
+proc e_proc_src {src name} {
+  set s "\n$src"
+  set i [string first "\nproc $name \{" $s]
+  if {$i < 0} { return {} }
+  set rest [string range $s [expr {$i + 1}] end]
+  set j [string first "\nproc " $rest]
+  if {$j < 0} { return $rest }
+  return [string range $rest 0 $j]
+}
+proc e_slurp {p} {
+  if {![file isfile $p]} { return {} }
+  set fd [open $p r] ; set d [read $fd] ; close $fd ; return $d
+}
+
+xschem load $C_DUT
+update
+set E_DWIN [e_winpath $C_DUT]
+catch {uplevel #0 {ase::launch_for_current}}
+update
+set E_KEY [lindex [ase::session_for_current] 0]
+set E_AW {}
+catch {set E_AW [ase::ui::window_for $E_KEY]}
+set E_AM {}
+if {$E_AW ne {}} { set E_AM $E_AW.mb.results.annotate }
+
+# ---------------------------------------------------------------------------
+# B11 — THE THREE ENTRIES, READ OFF THE REAL WIDGETS
+# ---------------------------------------------------------------------------
+# ⚠ OFF THE WIDGETS, NOT OUT OF THE SOURCE. Row C2's lesson: a label the source
+# and the suite agree on is not a label the user sees. Measured on the real
+# ASE-L menu 2026-08-27, this submenu carries exactly two entries.
+# ⚠ ALL THREE MUST BE CHECKBUTTONS. `add command` cannot display state, and
+# state is the entire content of a visibility control (decision D1, row W1a1 of
+# tests/headless/test_ase_window.tcl).
+set e_b11 {}
+if {$E_AM ne {} && [winfo exists $E_AM]} {
+  for {set i 0} {$i <= [$E_AM index end]} {incr i} {
+    set t NO-TYPE ; set l NO-LABEL
+    catch {set t [$E_AM type $i]} ; catch {set l [$E_AM entrycget $i -label]}
+    lappend e_b11 [list $t $l]
+  }
+} else {
+  set e_b11 NO-MENU
+}
+check "B11 the ASE-L Results > Annotate submenu carries THREE checkbuttons, and the third is the transient one" \
+  $e_b11 \
+  [list [list checkbutton {Operating Point info}] \
+        [list checkbutton {DC Node Voltages}] \
+        [list checkbutton {Transient Node Voltages (at cursor)}]]
+
+# ---------------------------------------------------------------------------
+# B12f — THE FIXTURE, ASSERTED SEPARATELY
+# ---------------------------------------------------------------------------
+# ⚠ WITHOUT THIS ROW B12 CANNOT BE READ. A viewer that never opened, a session
+# key that never resolved or a raw that never attached all make B12 red for a
+# reason that has nothing to do with the feature. Five claims: the viewer
+# toplevel exists and its canvas is mapped; the viewer's own context is
+# reachable; its cursor-A mirror says ON and its cursor-B mirror says OFF; the
+# viewer's cursor A sits at 2 ns; and the DESIGN context has the transient
+# attached with ITS OWN cursor B on at 4 ns.
+set E_VOK 0
+catch {wviewer::open $E_KEY}
+update
+set E_VT {}
+catch {set E_VT [wviewer::window_for $E_KEY]}
+for {set _i 0} {$_i < 200} {incr _i} {
+  update
+  if {$E_VT ne {} && [winfo exists $E_VT.drw] && [winfo ismapped $E_VT.drw]} { set E_VOK 1 ; break }
+  after 20
+}
+set E_VW {}
+if {$E_VT ne {}} { set E_VW $E_VT.drw }
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+set e_vpos [e_ctx $E_VW {xschem get cursor1_x}]
+e_ctx $E_DWIN {
+  catch {xschem raw clear}
+  catch {xschem annotate_op $::E_TRAN}
+  catch {xschem cursor 1 0}
+  xschem cursor 2 1
+  xschem set cursor2_x 4e-9
+}
+set e_dstate [e_ctx $E_DWIN {list [xschem raw sim_type] [xschem get graph_flags] [xschem get cursor2_x]}]
+check "B12f FIXTURE a viewer is open with cursor A at 2 ns, and the DESIGN has the transient with cursor B at 4 ns" \
+  [list $E_VOK $e_vpos $::wviewer::cva($E_KEY) $::wviewer::cvb($E_KEY) $e_dstate] \
+  [list 1 2e-09 1 0 {tran 4 4e-09}]
+
+# ---------------------------------------------------------------------------
+# B12 — GUARD G8: THE MODE READS THE VIEWER'S CURSOR, NOT THE SHEET'S
+# ---------------------------------------------------------------------------
+# ⚠ THE ONLY ROW IN THE TREE THAT CAN SEE THIS GUARD. A build that resolves the
+# cursor from the CURRENT context answers 4e-09 / v(a) 4 here and passes every
+# row of tests/headless/test_op_annot.tcl section V, because headless there is
+# no viewer and the fallback IS the answer.
+# ⚠ AND IT MUST COME BACK. The borrow enters the viewer's context to read; a
+# borrow that forgets to leave strands the user in the waveform window's context
+# with the schematic still on screen (issue 0173's shape). The fourth element is
+# that claim.
+set e_before [xschem get current_win_path]
+set e_state [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_annot [e_ctx $E_DWIN {xschem raw annot}]
+set e_val   [e_ctx $E_DWIN {xschem raw value v(a) -1}]
+check "B12 guard G8 the mode annotates at the VIEWER's cursor A (2 ns), not the design context's cursor B (4 ns), and comes back" \
+  [list $e_state [lindex $e_annot 1] $e_val \
+        [expr {[xschem get current_win_path] eq $e_before ? 1 : 0}]] \
+  {ok 2e-09 2 1}
+
+# ---------------------------------------------------------------------------
+# B12b — STRUCTURAL: THE BORROW IS THE SHIPPED ONE, AND THE LEAVE IS
+#        UNCONDITIONAL
+# ---------------------------------------------------------------------------
+# ⚠ B12 CAN PASS OVER A BORROW THAT NEVER LETS GO IN THE ERROR PATH. `enter_ctx`
+# takes a ticket that `leave_ctx` gives back (wave_viewer.tcl:1622/1693), and
+# `wviewer::readout_refresh` (:14498) is the shipped caller to copy. A body that
+# entered, threw, and never left would leave the ticket outstanding and the
+# current context wrong for everything after it -- and B12's own fourth element
+# only measures the SUCCESS path.
+# ⚠ WHOLE-LINE COMMENTS STRIPPED, so the explanatory paragraph that names these
+# two procs is not counted as an implementation of them.
+set E_SRC [e_slurp [file join $REPO utils annot_mode.tcl]]
+set E_CUR [e_proc_src $E_SRC cadence::_annot_tran_cursor]
+set e_enter 0 ; set e_leave 0 ; set e_fin 0
+foreach _l [split $E_CUR \n] {
+  if {[regexp {^\s*#} $_l]} continue
+  if {[regexp {wviewer::enter_ctx} $_l]} { incr e_enter }
+  if {[regexp {wviewer::leave_ctx} $_l]} { incr e_leave }
+  if {[regexp {\mfinally\M|\mcatch\M} $_l]} { incr e_fin }
+}
+check "B12b the cursor resolver borrows the viewer's context through enter_ctx and ALWAYS gives it back" \
+  [list [expr {[string length $E_CUR] > 0 ? 1 : 0}] \
+        [expr {$e_enter >= 1 ? 1 : 0}] \
+        [expr {$e_leave >= 1 ? 1 : 0}] \
+        [expr {$e_fin >= 1 ? 1 : 0}]] \
+  {1 1 1 1}
+
+# --- section E teardown ------------------------------------------------------
+catch {e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}}}
+catch {array unset ::wviewer::cva $E_KEY}
+catch {array unset ::wviewer::cvb $E_KEY}
+if {$E_VT ne {}} { catch {wviewer::close $E_KEY} ; catch {destroy $E_VT} }
+update
+catch {ase::ui::close $E_KEY} ; catch {ase::session_close $E_KEY}
+update
+catch {xschem set annot_show 0}
+
 # --- restore -----------------------------------------------------------------
 rename select_raw {}
 if {[llength [info procs c_real_select_raw]]} { rename c_real_select_raw select_raw }

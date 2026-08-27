@@ -567,6 +567,51 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [am_get $AM {Operating Point info} -state] \
           [am_get $AM {DC Node Voltages} -state]] \
     {disabled disabled}
+  # ========================================================================
+  # W1a18-W1a23 -- ISSUE 0868: THE THIRD ANNOTATE ENTRY, `Transient Node
+  #               Voltages (at cursor)`
+  # ========================================================================
+  # ⚠ THE NUMBERING SKIPS W1a17 ON PURPOSE. W1a17 is the teardown row of the
+  # 0682 leg below and predates this item; renumbering it would silently move a
+  # row every earlier report refers to by name. The plan's W1a17-W1a22 are these
+  # W1a18-W1a23, one for one.
+  #
+  # The user's request, verbatim 2026-08-26: "We can add a menu item in
+  # Results > Annotate for annotating TRAN node voltages for time-point given by
+  # cursor B, or A - whatever the convention is". MEASURED on the real widgets
+  # 2026-08-27, this submenu carries exactly TWO entries.
+  #
+  # ⚠ THE LABEL NAMES ITS TIME SOURCE, and that is a decision recorded in issue
+  # 0868 rather than a phrasing. `Operating Point info` and `DC Node Voltages`
+  # name a CONTENT class; a transient has no single meaningful time, so an entry
+  # called `Transient Node Voltages` alone would leave the user asking "at
+  # when?". Rejected alternatives: that bare form, and `Annotate at Cursor`
+  # (which says nothing about what). The user has not ratified it -- rule debt.
+  #
+  # ⚠ CHECKBUTTON AND BUILT DISABLED, for exactly the reasons W1a1 and W1a4
+  # give: it is a third independently clearable bit of one mask, and nothing in
+  # this menu may be clickable before `ase::has_results` has been asked.
+  check "W1a18 issue 0868: a THIRD Annotate entry, a checkbutton on the session-keyed tick, built disabled" \
+    [list [am_type $AM {Transient Node Voltages (at cursor)}] \
+          [am_get $AM {Transient Node Voltages (at cursor)} -variable] \
+          [am_get $AM {Transient Node Voltages (at cursor)} -command] \
+          [am_get $AM {Transient Node Voltages (at cursor)} -state]] \
+    [list checkbutton ::ase::ui::annot($key,tran) \
+          [list ase::ui::annot_apply $key tran] disabled]
+  # ⚠ THE COUNT, AND IT IS NOT REDUNDANT WITH THE ROW ABOVE. A fourth entry
+  # added by a later crew without a row of its own would leave this menu growing
+  # silently; and the ORDER is the reading order the user scans, OP info first
+  # because it is the classic back-annotation.
+  set a18_labels {}
+  if {[winfo exists $AM]} {
+    for {set i 0} {$i <= [$AM index end]} {incr i} {
+      if {[catch {$AM entrycget $i -label} l]} { continue }
+      lappend a18_labels $l
+    }
+  }
+  check "W1a18b the Annotate submenu carries exactly these three entries, in this order" \
+    $a18_labels \
+    [list {Operating Point info} {DC Node Voltages} {Transient Node Voltages (at cursor)}]
   set slabels {}
   for {set i 0} {$i <= [$top.mb.sim index end]} {incr i} {
     lappend slabels [$top.mb.sim entrycget $i -label]
@@ -1786,6 +1831,122 @@ Values:
             [expr {$a_pre16 >= 0}] \
             [expr {[a_rawidx $dwin {v(sentinel16)}] >= 0}]] \
       {2 1 1}
+
+    # ---- W1a19-W1a23: ISSUE 0868, THE THIRD ENTRY DRIVES bit2 --------------
+    # ⚠ THE PREDICATE STUB IS STILL LIVE HERE (`ase::last_rawfile` is renamed
+    # until the teardown below), so these rows steer `ase::has_results` the same
+    # way W1a5/W1a7 do rather than inventing a second mechanism.
+    set A_TRAN {Transient Node Voltages (at cursor)}
+    set A_ALL [list {Operating Point info} {DC Node Voltages} $A_TRAN]
+
+    ## The three -state values, in menu order, as one list.
+    proc a_states {m labels} {
+      set o {}
+      foreach l $labels { lappend o [am_get $m $l -state] }
+      return $o
+    }
+
+    # ⚠ POISONED IN BOTH DIRECTIONS, exactly as W1a5/W1a7. A -postcommand that
+    # only ever ENABLES passes a disabled-to-enabled test and leaves a live
+    # control on a session with no results.
+    foreach _l $A_ALL { catch {$AM entryconfigure $_l -state normal} }
+    set ::a_rawstub {}
+    a_cx {ase::ui::annot_menu_sync $key}
+    set a19a [a_states $AM $A_ALL]
+    foreach _l $A_ALL { catch {$AM entryconfigure $_l -state disabled} }
+    set ::a_rawstub $a_rawS
+    a_cx {ase::ui::annot_menu_sync $key}
+    set a19b [a_states $AM $A_ALL]
+    check "W1a19 the postcommand enables and disables ALL THREE entries by ase::has_results" \
+      [list $a19a $a19b] \
+      {{disabled disabled disabled} {normal normal normal}}
+
+    # ⚠ PULL over a poison, the W1a11 shape widened to three ticks. A sync that
+    # knows about two bits and leaves the third alone shows a stale tick on the
+    # very first Alt-Shift-6 the user presses.
+    a_setmask $dwin 4
+    set ::ase::ui::annot($key,op) 9 ; set ::ase::ui::annot($key,volt) 9
+    set ::ase::ui::annot($key,tran) 9
+    a_cx {ase::ui::annot_menu_sync $key}
+    set a20a [list [a_cx {set ::ase::ui::annot($key,op)}] \
+                   [a_cx {set ::ase::ui::annot($key,volt)}] \
+                   [a_cx {set ::ase::ui::annot($key,tran)}]]
+    a_setmask $dwin 6
+    set ::ase::ui::annot($key,op) 9 ; set ::ase::ui::annot($key,volt) 9
+    set ::ase::ui::annot($key,tran) 9
+    a_cx {ase::ui::annot_menu_sync $key}
+    set a20b [list [a_cx {set ::ase::ui::annot($key,op)}] \
+                   [a_cx {set ::ase::ui::annot($key,volt)}] \
+                   [a_cx {set ::ase::ui::annot($key,tran)}]]
+    check "W1a20 PULL: a design mask of 4 re-derives the ticks to 0 0 1, and 6 to 0 1 1, over a 9/9/9 poison" \
+      [list $a20a $a20b] {{0 0 1} {0 1 1}}
+
+    # ⚠ RULING D5-4 AS A BEHAVIOURAL ROW. Ticking the third entry must not
+    # compose a mask of its own: it hands over to `cadence::annot_tran`, which
+    # resolves the cursor, publishes, mints the ONE sentence and arms bit2
+    # itself. The spy STANDS IN for that proc, so the mask must NOT move -- a
+    # menu body that also wrote the mask would move it and red here.
+    # ⚠ THE FIRST ELEMENT IS THE ANTI-HOLLOW HALF: the spy is only evidence if
+    # there was a real proc to stand in for. Without it, defining the stub would
+    # satisfy the "was called" half over a feature that does not exist.
+    # ⚠ THE HELPER IS SOURCED HERE, AND THAT IS ITSELF A CLAIM. `cadence::*`
+    # lives in utils/annot_mode.tcl, which only the CADENCE profile's rc sources
+    # -- so an ASE-L menu entry that calls into it must not assume the profile.
+    # Sourcing it explicitly is the same discipline row N0 of
+    # tests/headless/test_op_annot.tcl uses, and it means `a21_exists` measures
+    # "the mode's one code path exists", not "this session happens to be
+    # cadence-flavoured".
+    catch {source [file join $repo utils annot_mode.tcl]}
+    catch {namespace eval ::cadence {}}
+    set a21_exists [llength [info procs ::cadence::annot_tran]]
+    set ::a_tran_calls 0
+    catch {rename ::cadence::annot_tran a_tran_saved_0868}
+    proc ::cadence::annot_tran {} { incr ::a_tran_calls ; return ok }
+    a_setmask $dwin 1
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke $A_TRAN}
+    set a21_calls $::a_tran_calls
+    set a21_mask  [a_mask $dwin]
+    catch {rename ::cadence::annot_tran {}}
+    catch {rename a_tran_saved_0868 ::cadence::annot_tran}
+    check "W1a21 PUSH: ticking the third entry calls cadence::annot_tran and composes NO mask of its own" \
+      [list $a21_exists $a21_calls $a21_mask] {1 1 1}
+
+    # ⚠ THE OFF-RAMP, AND IT IS BIT-WISE. Decision D6's reason (W1a8's comment):
+    # the ticks were painted by a PULL that ran before any context switch, so
+    # composing the mask from all three can write a stale OTHER bit over the
+    # design's real value. Both round trips are asserted so a control that does
+    # NOTHING cannot alias into a pass.
+    a_setmask $dwin 6
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke $A_TRAN}
+    set a22a [a_mask $dwin]
+    a_setmask $dwin 5
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke $A_TRAN}
+    set a22b [a_mask $dwin]
+    check "W1a22 unticking the third entry clears bit2 and PRESERVES the other two (6 -> 2, 5 -> 1)" \
+      [list $a22a $a22b] {2 1}
+
+    # ⚠ A REFUSAL MUST SNAP THE TICK BACK, the W1a14 shape. Tk has ALREADY
+    # flipped the tick variable by the time -command runs, so a mode that
+    # refuses (no cursor on, no transient loaded) and writes nothing leaves the
+    # user looking at a TICKED box over a mask with no bit2 in it -- the state
+    # the tick is supposed to report.
+    catch {namespace eval ::cadence {}}
+    catch {rename ::cadence::annot_tran a_tran_saved2_0868}
+    proc ::cadence::annot_tran {} { return nocursor }
+    a_setmask $dwin 1
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke $A_TRAN}
+    set a23 [list [a_mask $dwin] [a_cx {set ::ase::ui::annot($key,tran)}]]
+    catch {rename ::cadence::annot_tran {}}
+    catch {rename a_tran_saved2_0868 ::cadence::annot_tran}
+    check "W1a23 a REFUSED transient annotation leaves the mask alone and snaps the tick back" \
+      $a23 {1 0}
+
+    a_setmask $dwin 0
+    catch {array unset ::ase::ui::annot $key,*}
 
     # ---- teardown: this leg must leave W5-W8 the world they see today -----
     a_ctx_eval $dwin {catch {xschem raw clear}}

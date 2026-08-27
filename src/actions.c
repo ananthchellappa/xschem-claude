@@ -1520,7 +1520,17 @@ int annot_text_layer(int flags, int ctx)
 static int annot_class_mask(int flags, int ctx)
 {
   if(ctx != TEXT_CTX_INSTANCE && !(flags & TEXT_FLOATER)) return 0;
-  if(flags & TEXT_ANNOT_VOLTAGE) return ANNOT_SHOW_VOLTAGE;
+  /* 0868 -- TWO BITS, ONE CONTENT CLASS. bit1 is the operating-point node
+   * voltage (`Alt-6`), bit2 the TRANSIENT node voltage at a requested time
+   * point (`Alt-Shift-6` / ASE-L Results > Annotate). They render the same
+   * texts, so this returns BOTH and text_hidden()'s `annot_show & m` shows the
+   * class when EITHER switch is on. Measured before the change: `xschem set
+   * annot_show 4` read back 4 and painted nothing at all -- a mode the user can
+   * select and not see (row V7 of tests/headless/test_op_annot.tcl). What the
+   * two bits do NOT share is where the number came from, and that provenance
+   * travels in the minted sentence, not in a second render path. Row V9 forbids
+   * the shortcut of making bit2 an alias that sets bit1. */
+  if(flags & TEXT_ANNOT_VOLTAGE) return ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN;
   if(flags & TEXT_ANNOT_CURRENT) return ANNOT_SHOW_OP;
   return 0;
 }
@@ -1537,7 +1547,12 @@ int text_hidden(int flags, int ctx)
   int m = annot_class_mask(flags, ctx);
   if(m) return (xctx->annot_show & m) ? 0 : 1;
   if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
-  if(flags & HIDE_TEXT_VOLTAGE) return (xctx->annot_show & ANNOT_SHOW_VOLTAGE) ? 0 : 1;
+  /* 0868: an author's EXPLICIT `hide=voltage` follows both node-voltage
+   * switches too -- the implicit class above and this one must not disagree
+   * about which masks show a node voltage, or the same number would appear on
+   * one sheet and vanish on another for the same mask. */
+  if(flags & HIDE_TEXT_VOLTAGE)
+    return (xctx->annot_show & (ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN)) ? 0 : 1;
   if(xctx->show_hidden_texts) return 0;
   if(flags & HIDE_TEXT) return 1;
   if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
@@ -4815,7 +4830,41 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
        Graph_ctx *gr = &xctx->graph_struct;
        xRect *r = &xctx->rect[GRIDLAYER][0];
        if(r->flags & 1) {
-         if(xctx->graph_flags & 4) {
+         /* ISSUES 0865 / 0868 -- GUARD G2: DESCENDING IS NOT A REQUEST.
+          *
+          * This was the second of two UNGATED publishers. Walk into a child that
+          * happens to carry a graph rect with cursor B on and the child's sheet
+          * ACQUIRED a node-voltage annotation -- with `Simulation > Graphs >
+          * Live annotate probes with 'b' cursor` in its shipped UNTICKED state,
+          * i.e. with the user having asked for nothing. Move the cursor
+          * afterwards and the number stays where it was: RULING D5-1, a number
+          * that was not measured for the state it is shown in. The user's rule
+          * on this whole family is verbatim "MUST ONLY HAPPEN WHEN USER
+          * REQUESTS IT!!".
+          *
+          * The six re-annotate sites the user reaches BY MOVING A CURSOR
+          * (callback.c x5, scheduler.c swap_cursors) have always tested this
+          * switch; this site and raw_read()'s tail (save.c, guard G1) did not.
+          * The spelling is deliberately identical to those six so one grep finds
+          * one gate shape.
+          *
+          * ⚠ WHAT IS DELIBERATELY *NOT* GATED: both arms of `xschem set
+          * cursor2_x <t>`. That verb is a sentence somebody TYPED, naming a
+          * time, which is what "the user requested it" means; it is also the
+          * scripting verb and step S11's only road. See doc/claude/issues/
+          * 0868-*.md and row V25 of tests/headless/test_op_annot.tcl, which pins
+          * that decision so a later crew meets an explained row rather than what
+          * looks like a missed gate.
+          *
+          * ⚠ THE USER'S ON-REQUEST DOOR IS THE NEW MODE, not this site. Gating
+          * here without `xschem annotate_at` / cadence::annot_tran would leave a
+          * user who cannot annotate a transient at all -- measured, with the box
+          * off no gesture in the program re-measured the stale number.
+          *
+          * ⚠ ROW V23b GREPS THIS FUNCTION'S BODY for the switch name with C
+          * comments STRIPPED, so this paragraph may name it freely and the code
+          * line below is what the row actually counts. */
+         if(tclgetboolvar("live_cursor2_backannotate") && (xctx->graph_flags & 4)) {
            backannotate_at_cursor_b_pos(r, gr);
          }
        }
