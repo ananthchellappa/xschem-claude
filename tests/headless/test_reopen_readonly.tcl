@@ -37,6 +37,8 @@ file copy -force $lib $fa ; file copy -force $lib $fb
 file attributes $fa -permissions 0644 ; file attributes $fb -permissions 0644
 set fc [file join $dir c.sch]
 file copy -force $lib $fc ; file attributes $fc -permissions 0644
+set fpark [file join $dir park.sch]
+file copy -force $lib $fpark ; file attributes $fpark -permissions 0644
 # The recents list is HARD-GATED OFF in a --nogui/--pipe session (no_recent_files, issue 0119 --
 # xinit.c sets it for every test harness), so a plain `xschem load` here records NOTHING. Feeding
 # the resolver that way left it reading the USER's persisted $USER_CONF_DIR/recent_files, and R10
@@ -83,12 +85,20 @@ check "R7 File>Open stays editable (no -readonly in file_chooser_place)" \
 rename ::xschem::notify ::xschem::_notify_real
 proc ::xschem::notify {msg args} { lappend ::notified [linsert $args 0 $msg] ; return 1 }
 proc cap {script} { set ::notified {} ; uplevel 1 $script ; return $::notified }
+# ⚠ NEVER `-gui` LOAD A FILE THAT IS ALREADY LOADED. Under a real display the C side
+# raises a modal "Warning: <file> already open." and the suite hangs forever. It is
+# INVISIBLE under --nogui -- has_x is false there, so that arm only calls dbg() -- which
+# is why every row below passed when run standalone the documented way and the suite
+# TIMED OUT the moment the full audit ran it under Xvfb. Park the buffer on another file
+# first, so the `-gui` load is always of something not currently open.
+proc park {} { uplevel 1 {xschem load $fpark} }
 proc first_ro {} {
   foreach n $::notified { if {[string match {*Read-Only*} [lindex $n 0]]} { return $n } }
   return {}
 }
 set ::cadence_compat 0
 
+park
 cap {xschem load -gui -readonly $fa}
 set n [first_ro]
 set sentence {Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed}
@@ -113,6 +123,7 @@ cap {xschem load -readonly $fa}
 check "R15 a scripted -readonly load announces NOTHING" [expr {[first_ro] eq {}}] "(=> [first_ro])"
 
 # negative twin B: an ordinary interactive open is editable, so there is nothing to announce.
+park
 cap {xschem load -gui $fa}
 check "R16 a plain -gui load announces NOTHING" [expr {[first_ro] eq {}}] "(=> [first_ro])"
 
@@ -121,9 +132,11 @@ check "R16 a plain -gui load announces NOTHING" [expr {[first_ro] eq {}}] "(=> [
 # advertises `Ctrl+2` unconditionally (xschem.tcl toggle_readonly_menu), so a conditional
 # here would have made the notice and the menu disagree about the same key. One claim.
 set ::cadence_compat 1
+park
 cap {xschem load -gui -readonly $fa}
 set nc [lindex [first_ro] 0]
 set ::cadence_compat 0
+park
 cap {xschem load -gui -readonly $fa}
 check "R17 the sentence does not vary with cadence_compat" [expr {$nc eq [lindex [first_ro] 0]}] \
   "(cadence='$nc' legacy='[lindex [first_ro] 0]')"
@@ -140,6 +153,7 @@ check "R18 the announcing path still opens READ mode" [expr {[xschem get readonl
 set fro [file join $dir ro.sch]
 file copy -force $lib $fro
 file attributes $fro -permissions 0444
+park
 cap {xschem load -gui -readonly $fro}
 check "R19 a NON-WRITABLE reopen is announced too (notice is not nested in the state change)" \
   [expr {[first_ro] ne {}}] "(=> [lindex [first_ro] 0])"
