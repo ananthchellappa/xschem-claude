@@ -300,6 +300,65 @@ proc cadence::_annot_msg {mask state path types} {
   return $m
 }
 
+## ⚠ ISSUE 0872 / RULING 0856 — THE DETECTOR THE MODE CHOOSER NEVER HAD.
+## The user's ruling, verbatim: "if OP is part of the run, then plot from OP.
+## We haven't yet built anything for annotating from TRAN results, so it should
+## do nothing silently." Commit e31975e7 made the OPERATING POINT PUBLISHER obey
+## it -- update_op() in src/save.c refuses anything that is not `op` or `dc`.
+## The MODE CHOOSER did not, and a reader would reasonably assume it did not
+## NEED to: the mask is only a VISIBILITY switch, so flipping it looks like it
+## cannot put a number on a sheet. IT CAN. `xschem set cursor2_x` publishes a
+## transient sample into the very cursor_b_val[] array the render gates read
+## (row V25 pins that publish as a DELIBERATE typed request), and those gates
+## ask only whether a point IS published, never which analysis minted it. So on
+## a transient sheet the numbers are already sitting there and bit1 alone
+## reveals them, under a status line calling them OP node voltages.
+##
+## ⚠ AND THIS IS NOT WHERE ISSUE 0872 SAID THE DEFECT WAS. That issue blamed
+## the shared render class -- the ANNOT_SHOW_VOLTAGE-or-ANNOT_SHOW_TRAN return
+## in annot_class_mask(), src/actions.c. Measured with the transient mode never
+## invoked and bit2 never set, Alt-6 ALONE already repaints the transient's
+## numbers, so that return is not in the chain in this direction at all. The
+## fix belongs where the MODE is chosen, and that is here. What the render class
+## still lacks -- a provenance stamp, so masks 4 and 6 over an OPERATING POINT
+## database stop calling its numbers transient, and so the ASE-L
+## `Results > Annotate` checkbuttons cannot write the mask past this refusal --
+## is issue 0877, and it needs a user ruling before anyone builds it.
+##
+## Answers 1 when the ATTACHED database can supply an operating point, AND when
+## NOTHING is attached at all. The second half is not laxity: with no database
+## there is nothing to ask, and a refusal keyed on "the database is not op" that
+## also swallowed "there is no database to ask" would stop the chord being able
+## to FIND a raw at all -- row V31b leg 2 is that guard, and it is why the
+## `loaded < 0` arm returns 1 rather than 0.
+##
+## ⚠ SO THIS PREDICATE IS ASKED TWICE, AND THE SECOND ASK IS NOT OPTIONAL.
+## `annot_mode`'s own candidate search runs on exactly the `loaded < 0` arm this
+## proc waves through, and what it loads is very often the transient the user
+## just ran. update_op()'s guard is NOT a backstop for that: measured, it only
+## declines to PUBLISH, so the mask is still written, the sentence is still
+## minted, and raw_read()'s tail gate still publishes at cursor B. The second
+## ask -- and the unwind that follows it -- lives at the end of the candidate
+## branch in `annot_mode` below, and row V31c is what sees it. An earlier
+## revision of this paragraph called update_op() the backstop; it is not, and
+## the sentence shipped while the defect it excused was one key press away.
+##
+## The op/dc set and its spelling are copied from update_op()'s own guard, so
+## one grep finds one predicate shape and a later widening (issue 0860) moves
+## both together. `xschem raw sim_type` RAISES with nothing loaded -- measured,
+## not assumed -- hence the catch rather than a comparison against {}; an
+## unreadable sim_type with a database attached refuses, exactly as update_op()
+## refuses a NULL one.
+proc cadence::_annot_op_db_ok {} {
+  set loaded -1
+  catch {set loaded [xschem raw loaded]}
+  if {![string is integer -strict $loaded] || $loaded < 0} { return 1 }
+  set st {}
+  if {[catch {xschem raw sim_type} st]} { set st {} }
+  if {$st eq {op} || $st eq {dc}} { return 1 }
+  return 0
+}
+
 ## cadence::annot_mode none|op|opvolt — the bind target. See the file header.
 proc cadence::annot_mode {mode} {
   ## THE CURRENT MASK IS PULLED THROUGH `xschem get`, never $::annot_show: the
@@ -311,6 +370,24 @@ proc cadence::annot_mode {mode} {
   catch {set cur [xschem get annot_show]}
   if {![string is integer -strict $cur]} { set cur 0 }
   set mask [cadence::_annot_mask $mode $cur] ;# raises on an unknown spelling
+
+  ## ⚠ RULING 0856, AND IT IS A SILENT RETURN ON PURPOSE (issue 0872). The
+  ## ruling is "it should do nothing silently", so this returns BEFORE the mask
+  ## is written and before any sentence is minted: no paint, no status line, no
+  ## CIW. A fix that only gated the PAINT would leave the worst face of 0872
+  ## standing -- with a transient attached and nothing published, Alt-6 painted
+  ## nothing but still told the user to run `Waves > Op Annotate`, which is the
+  ## exact operation the 0856 guard refuses on a transient. Row V31 plants a
+  ## held sentinel before each press and requires it to SURVIVE, because
+  ## "said nothing" cannot be read off a status line that is never empty.
+  ##
+  ## ⚠ `$mask != 0` EXEMPTS THE OFF SWITCH, AND THAT TERM IS LOAD-BEARING.
+  ## Ctrl-6 must always clear: clearing never puts a number on a sheet, and a
+  ## refusal that swallowed Ctrl-6 would strand the user with bit2 armed and no
+  ## way to turn it off -- a worse defect than the one being fixed. Row V31
+  ## leg 2 is that exemption's only guard, and sabotage S14b drops this term.
+  if {$mask != 0 && ![cadence::_annot_op_db_ok]} { return }
+
   xschem set annot_show $mask
 
   set state off
@@ -380,6 +457,48 @@ proc cadence::annot_mode {mode} {
         set after -1
         catch {set after [xschem raw loaded]}
         if {[string is integer -strict $after] && $after >= 0} {
+          ## ⚠ RULING 0856, THE SECOND ASK, AND THE FIRST ONE CANNOT COVER IT.
+          ## The gate at the top of this proc runs BEFORE any search: with
+          ## nothing attached `_annot_op_db_ok` deliberately answers yes, so
+          ## that `6` can still go and find a file (row V31b leg 2). But the
+          ## file it finds is very often the transient the user just ran, and
+          ## the branch above has now LOADED it. Measured before this arm
+          ## existed: one Alt-6 on a sheet with `$netlist_dir/<cell>.raw` a
+          ## transient wrote mask 2, attached the transient and said
+          ## "OP annotation ON (node voltages) -- loaded <that transient>" --
+          ## byte for byte the defect issue 0872 was filed about, one key press
+          ## from the most ordinary desktop state there is.
+          ##
+          ## ⚠ AND update_op()'s OWN GUARD IS NOT A BACKSTOP FOR THIS. That guard
+          ## (src/save.c) only declines to PUBLISH the operating point. It does
+          ## not stop the mask being written, it does not stop the sentence
+          ## being minted, and it does not stop raw_read()'s tail gate
+          ## publishing at cursor B on this very load -- so on a sheet carrying
+          ## a waveform strip with cursor B live, the transient's sample lands
+          ## on the pins under a status line calling it OP node voltages.
+          ##
+          ## ⚠ IT UNWINDS, IT DOES NOT REFUSE EARLIER. The tempting shortcut --
+          ## making the first gate say no when nothing is attached -- breaks the
+          ## chord's ability to find a raw at all: measured, it reds V31b and
+          ## five section-N rows, because pressing `6` with nothing loaded must
+          ## still search, still load, and still name the file it could not
+          ## find. So the search runs, and what it landed is put back.
+          ##
+          ## THE UNWIND IS BOTH HALVES. The mask goes back to what the user had
+          ## (`$cur`, never a bare 0 -- a press must not clear bits the press
+          ## did not set), and the database this proc attached ITSELF is
+          ## detached. Leaving it attached is not "nothing": the waveform
+          ## viewer would suddenly hold data the user never loaded, and cursor
+          ## motion would start publishing from it. We are only here because
+          ## `xschem raw loaded` was < 0 on entry, so the clear returns the
+          ## session to exactly the state the key press found.
+          if {![cadence::_annot_op_db_ok]} {
+            catch {xschem raw clear}
+            catch {xschem set annot_show $cur}
+            catch {xschem update_all_sym_bboxes}
+            catch {xschem redraw}
+            return
+          }
           set state loaded
         } else {
           set state failed
@@ -527,24 +646,51 @@ proc cadence::_annot_tran_cursor {} {
 ## row V18 of tests/headless/test_op_annot.tcl greps every other candidate file
 ## for these strings and requires zero.
 ##
-## FIVE STATES, DISTINGUISHABLE BY NAME so the caller can act on the cause and
+## SIX STATES, DISTINGUISHABLE BY NAME so the caller can act on the cause and
 ## the user is told which one it was. Issue 0857's ruling, verbatim: "if OP has
 ## been run but we don't have device info, and user is wanting to annotate by
 ## pressing 6, then, yes, we want to say something in the CIW." The same applies
 ## to every way this mode can decline.
-##   ok        published -- names the time point AND the cursor letter
-##   nocursor  no cursor is on anywhere, so there is no time to annotate at
-##   noraw     no database is attached to this sheet
-##   notran    a database is attached but it is not a transient analysis
-##   nodata    the engine had nothing to resolve the request against
+##   ok         published -- names the time point AND the cursor letter
+##   okclamped  published, but the cursor is OUTSIDE the data and the boundary
+##              sample was held (RULING D4-4) -- names the time the number was
+##              MEASURED at first, then where the cursor actually is, then why
+##              the two differ
+##   nocursor   no cursor is on anywhere, so there is no time to annotate at
+##   noraw      no database is attached to this sheet
+##   notran     a database is attached but it is not a transient analysis
+##   nodata     the engine had nothing to resolve the request against
+##
+## ⚠ `okclamped` IS ISSUE 0869, AND IT IS RULING D5-1 (issue 0869). The shipped
+## `ok` sentence rendered the REQUESTED time unconditionally: with the last
+## sample at 4e-09 and cursor B parked at 4.5e-09 the sheet painted `d 4` -- the
+## correct held boundary value -- beside "Transient annotation at t = 4.5e-09",
+## a number presented as measured for a time it was never measured at, and worse
+## than a bare wrong number because the sentence lends it authority.
+##
+## ⚠ AND ISSUE 0869's OWN RECOMMENDED OPTION 1 IS MEASURABLY WRONG, which is why
+## it was not taken. It says "render the annotated point's own x". Measured over
+## the whole sweep, that x reads 2e-09 for a requested 3e-09 whose painted number
+## genuinely IS the interpolated value at 3e-09 -- a fresh D5-1 breach in the
+## opposite direction, and it reds row V2's premise. In range the shipped
+## arithmetic really does return the value AT the requested time, so the two
+## times are the same number and the SHIPPED sentence stays byte-identical; only
+## out of range do they differ, and only there does this sixth state appear.
+## Row V26b is the in-range control that reds an unconditional clause.
+##
+## ⚠ THE `req` PARAMETER IS OPTIONAL SO THE FIVE SHIPPED CALLERS DO NOT MOVE.
+## They pass three arguments, exactly as before; row V27 re-asserts all five
+## through the widened signature for that reason, and V17 is left untouched.
 ##
 ## ⚠ AN UNKNOWN STATE RAISES, and names it. `_annot_msg`'s own discipline (row
 ## N2): op_annot blanks for missing DATA (invariant I3), but a state spelling is
 ## a CALLER bug, and a caller bug that renders as a polite apology is exactly the
 ## silence this mode exists to remove.
-proc cadence::_annot_tran_msg {state t which} {
+proc cadence::_annot_tran_msg {state t which {req {}}} {
   switch -exact -- $state {
     ok       { return "Transient annotation at t = $t (cursor $which)" }
+    okclamped { return "Transient annotation at t = $t (cursor $which at $req,\
+                        outside the data -- holding the boundary sample)" }
     nocursor { return "Transient annotation -- NO CURSOR: turn on cursor A or B\
                        in the waveform viewer" }
     noraw    { return "Transient annotation -- NO RAW FILE loaded" }
@@ -553,7 +699,40 @@ proc cadence::_annot_tran_msg {state t which} {
     nodata   { return "Transient annotation -- nothing to annotate at t = $t" }
   }
   error "cadence::_annot_tran_msg: unknown state \"$state\":\
-         use ok, nocursor, noraw, notran or nodata"
+         use ok, okclamped, nocursor, noraw, notran or nodata"
+}
+
+## THE TIME THE PAINTED NUMBER WAS ACTUALLY MEASURED AT, or {} when it cannot
+## be established. Issue 0869: the sentence must name THIS, not the time the
+## user's cursor happened to be parked at, whenever the two differ.
+##
+## ⚠ NO C CHANGE IS NEEDED AND NONE WAS MADE. Three already-shipped calls:
+##   `xschem raw annot`          -> {annot_p annot_x annot_sweep_idx}
+##   `xschem raw list`           -> the column names, newline separated
+##   `xschem raw value <sw> -1`  -> point -1 falls through to cursor_b_val[],
+##                                  which is the requested time already clamped
+##                                  into the data's own span (RULING D4-6)
+## A reader would otherwise assume `annot_x` -- the second element, which is
+## right there -- is the answer. It is NOT: `annot_x` is the REQUESTED time, the
+## very number issue 0869 is about.
+##
+## ⚠ EVERY STEP IS CAUGHT AND THE FAILURE RETURNS {}, NOT A NUMBER. The caller
+## treats {} as "cannot tell" and mints the shipped `ok` sentence, which names
+## the requested time and nothing else. That degrades to today's behaviour; what
+## it must never do is invent a time, which is the D5-1 defect this fixes.
+proc cadence::_annot_tran_efft {} {
+  set a {}
+  if {[catch {xschem raw annot} a]} { return {} }
+  if {[llength $a] != 3} { return {} }
+  if {![string is integer -strict [lindex $a 0]] || [lindex $a 0] < 0} { return {} }
+  set names {}
+  if {[catch {xschem raw list} names]} { return {} }
+  set sw [lindex [split $names "\n"] [lindex $a 2]]
+  if {$sw eq {}} { return {} }
+  set v {}
+  if {[catch {xschem raw value $sw -1} v]} { return {} }
+  if {![string is double -strict $v]} { return {} }
+  return $v
 }
 
 ## THE ONE EMITTER, and it is deliberately not a bare `catch {::ase::echo ...}`.
@@ -653,7 +832,32 @@ proc cadence::annot_tran {} {
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot
   ## erase it (issue 0248). Both sinks: the CIW is where the user asked for it
   ## and the status line is where the three OP chords already speak.
-  set m [cadence::_annot_tran_msg ok $t $which]
+  ## ⚠ ISSUE 0869, RULING D5-1: THE SENTENCE NAMES THE TIME THE NUMBER WAS
+  ## MEASURED AT. Out of range the engine HOLDS the boundary sample (RULING
+  ## D4-4 -- a boundary holds, it never extrapolates), which is correct
+  ## behaviour; the defect was that the sentence went on naming the cursor's
+  ## time regardless, so a `d 4` measured at 4e-09 was captioned 4.5e-09.
+  ##
+  ## ⚠ NEVER EXACT FLOAT EQUALITY, AND THAT IS NOT PEDANTRY. The effective time
+  ## is read back through the SINGLE-PRECISION cursor_b_val[] array, so an
+  ## in-range request comes back a few ULPs away from the double the caller
+  ## sent and an `==` test would caption every ordinary annotation as clamped.
+  ## The tolerance is RELATIVE, with an absolute floor so t = 0 works: 1e-6 is
+  ## about 16x the worst single-precision relative error, and the only thing
+  ## that can push the two further apart than that is the D4-4 clamp itself.
+  ## Row V26b is the in-range control that reds a clause appended
+  ## unconditionally, and sabotage S15b inverts this comparison.
+  ##
+  ## ⚠ THE STATE NAME RETURNED IS STILL `ok` IN BOTH CASES. `okclamped` is a
+  ## wording of the same success, not a different outcome: rows V11/V12/V13 read
+  ## this return value, `ase::ui::annot_apply` discards it, and the new
+  ## information belongs in the sentence, where the user is.
+  set te [cadence::_annot_tran_efft]
+  if {$te ne {} && abs($te - $t) > 1.0e-6 * (abs($t) + abs($te) + 1.0e-30)} {
+    set m [cadence::_annot_tran_msg okclamped $te $which $t]
+  } else {
+    set m [cadence::_annot_tran_msg ok $t $which]
+  }
   cadence::_annot_ciw $m
   catch {xschem statusmsg -hold $m}
   return ok

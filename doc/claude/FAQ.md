@@ -14,6 +14,127 @@ Newest entries on top.
 
 ---
 
+## Q57. My sabotage run reddened a big pile of rows and I blamed the guard. How do I know it was the guard?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0876**/**0879**, the A3h
+  hardening pass on `utils/annot_mode.tcl`.
+
+**Check the brace balance of the file you just edited, before you run anything.
+A one-line `sed` into a braced Tcl body is a structural edit, and a broken one
+reports a SUPERSET of reds that looks exactly like a well-covered guard.**
+
+Measured. Neutralizing `cadence::_annot_ciw` by replacing *one line* of its body
+with `return 0` left an unmatched `}` that closed the proc early. That variant
+reddened **twelve** rows. Replacing the *whole proc* reddens the **three** the
+guard actually owns. The twelve-row result is not a stronger signal than the
+three-row one — it is a different bug, in the test harness, wearing the guard's
+name.
+
+This is almost certainly how issue **0876** came to record an S15b result that
+three later runs could not reproduce, and whose stated cause is mechanically
+impossible. The lesson generalizes past Tcl: **a sabotage variant that reds more
+than you predicted is a reason to re-check the edit, not a reason to upgrade your
+confidence.** A guard's blast radius can genuinely surprise you (S5 here reddened
+13 rows against a predicted 1, correctly) — so the discriminator is not the count,
+it is whether the file still parses as you intended.
+
+The check costs one line and there is no excuse for skipping it:
+
+```tcl
+set f [open utils/annot_mode.tcl]; set d [read $f]; close $f
+puts "complete=[info complete $d]"
+```
+
+`CLAUDE.md` already warns that **braces inside Tcl comments count**. This is the
+same hazard from the other end: braces inside the text you *delete* count too.
+
+---
+
+## Q56. The restored binary's md5 doesn't match the original. Did my sabotage restore fail?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0876**, sabotaging guard **G10**
+  at `src/scheduler.c:2372`.
+
+**Probably not — check the SOURCE, not the binary. `src/scheduler.c:4343`
+compiles `__DATE__ " : " __TIME__` into the program, so two back-to-back builds
+of byte-identical source differ.**
+
+Measured: exactly **one** byte differs between two such builds, a seconds digit,
+confirmed with `cmp -l`. The other three files in that guard set — `save.c`,
+`actions.c`, `callback.c` — do rebuild bit-identically, which is the trap: the
+first several restores in a session reproduce the original md5 exactly, you come
+to trust binary md5 as your restore check, and then the one variant that touches
+`scheduler.c` looks like a failed restore and sends you hunting.
+
+**The valid restore checks, in order:** `md5sum` the *source* against its backup;
+`git diff HEAD -- src/` empty; `grep -rn SABOTAGE src/ utils/` empty; and the
+baseline suite green. Binary md5 is a convenience that is only sound for
+translation units with no `__DATE__`/`__TIME__`.
+
+Related, and the reason this matters at all: the house rule is `cp backup
+src/file.c && touch src/file.c`, **never `cp -p`**. A preserved mtime makes
+`make` a no-op and every later number is measured against the previous sabotage's
+binary — a failure that produces confident, green, meaningless output.
+
+---
+
+## Q55. I put a guard at the top of the function. Why did the thing it guards against still happen?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0872**, `cadence::annot_mode` in
+  `utils/annot_mode.tcl`.
+
+**Because the function went and CHANGED the state the guard had inspected. A gate
+that runs before a search cannot speak for what the search brings back.**
+
+The shape, and it is worth recognising because it reads as correct in review:
+
+```
+proc do_the_thing {} {
+  if {![state_is_acceptable]} { return }   ;# the gate
+  ...
+  if {nothing is attached} {
+     find_a_candidate_and_attach_it        ;# the state the gate inspected is now different
+  }
+  ...
+  announce_success
+}
+```
+
+RULING **0856** says the OP chords must do nothing, silently, on a transient
+database. A gate was added at the top of `cadence::annot_mode` asking
+`xschem raw sim_type`, and it deliberately answers **yes when nothing is
+attached** — it has to, or pressing `6` with no database could never go and find
+one. Measured: with a transient at the candidate path and nothing attached, one
+`Alt-6` still wrote the mask, still attached the transient, and still announced
+*"OP annotation ON (node voltages) -- loaded &lt;that transient&gt;"*. One key press
+from the most ordinary desktop state there is, past a guard written for exactly
+that ruling.
+
+**The fix is to ask again, after the state changes, and UNWIND** — not to
+strengthen the first ask. Making the first gate refuse a no-database session was
+measured and reds six rows, because `6` with nothing loaded must still search,
+still load, and still name the file it could not find.
+
+Two details the unwind got wrong on the first attempt and that generalize:
+
+* **Restore what the user had, not a zero.** The mask goes back to `$cur`. A
+  press must not clear bits the press did not set.
+* **Undo the side effect, not just the flag.** The database this proc attached
+  itself is detached. Leaving a transient attached is not "nothing" — the
+  waveform viewer would hold data the user never loaded, and cursor motion would
+  start publishing from it.
+
+**Why no suite caught it:** one row exercised the refusal with a database already
+attached; another exercised the candidate search with no database on disk.
+**Nothing composed them** — nobody put a transient at the candidate path. That is
+the identical test-gap shape as issue **0869** one layer up, and it is the shape
+to go looking for whenever two rows each cover "half" of a path.
+
+---
+
 ## Q54. I bound `<Alt-Shift-Key-6>` and my chord never fires. Why?
 
 - **Asked:** 2026-08-27

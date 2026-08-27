@@ -1,6 +1,9 @@
 # 0869 — the transient annotation sentence names the time the user ASKED for, not the time the number was measured at
 
-**Status:** 🔴 **OPEN — measured, NOT fixed.** Filed by the A3 write-up, 2026-08-27,
+**Status:** ✅ **FIXED 2026-08-27** by the A3h hardening pass — Tcl only, no C change.
+See *The fix* at the foot of this file, and note that **option 1 below, this issue's
+own recommendation, is measurably WRONG and was NOT taken**.
+Originally filed by the A3 write-up, 2026-08-27,
 from the adversary leg of the 0868 run. Class: **RULING D5-1** — a number that was
 not measured for the thing it is displayed next to.
 
@@ -76,3 +79,82 @@ that requested time to the user as the measurement time**.
 
 Recommended: **1**, with the composing row (out-of-range paint AND the sentence in
 one check) as its acceptance.
+
+
+---
+
+# The fix (A3h, 2026-08-27) — option 2, against the EFFECTIVE time
+
+## Option 1 — this issue's own recommendation — is measurably wrong
+
+Option 1 says *"resolve the annotated point's own x (`annot_p` indexes it) and render
+that"*. Measured over the whole sweep on the 5-point fixture, that column is the last
+one below:
+
+```
+requested | annot_p annot_x sweep | v(d) | EFFECTIVE t | the sample's own x (option 1)
+-5e-9     | 0 -5e-09 0            | 0    | 0           | 0
+5e-10     | 0 5e-10 0             | 0.5  | 5e-10       | 0
+2.5e-9    | 2 2.5e-09 0           | 2.5  | 2.5e-09     | 2e-09
+3e-9      | 2 3e-09 0             | 3    | 3e-09       | 2e-09
+4e-9      | 3 4e-09 0             | 4    | 4e-09       | 3e-09
+4.5e-9    | 4 4.5e-09 0           | 4    | 4e-09       | 4e-09
+99e-9     | 4 9.9e-08 0           | 4    | 4e-09       | 4e-09
+```
+
+At a requested **3e-09** the painted number is **3**, which genuinely IS the
+interpolated value at 3e-09 — row V2 measures exactly that. Option 1 would caption it
+*"t = 2e-09"*: **a fresh D5-1 breach in the opposite direction**, and it reds row V2's
+premise. In range the shipped arithmetic returns the value AT the requested time; the
+sentence is dishonest ONLY out of range.
+
+## What landed instead
+
+**Option 2 — name both, only when they differ**, against the *effective* time (the
+`EFFECTIVE t` column above), which needs no C change.
+
+* `cadence::_annot_tran_msg` gains a **sixth state**, `okclamped`, and an optional
+  fourth parameter `req`. The five shipped sentences are byte-identical and the five
+  shipped callers still pass three arguments.
+
+  > `Transient annotation at t = 4e-09 (cursor B at 4.5e-09, outside the data -- holding the boundary sample)`
+
+  It names the MEASURED time first — that is the number's provenance — then the
+  cursor letter, then where the cursor actually is, then why the two differ. RULING
+  D4-4 made visible instead of hidden.
+* New `cadence::_annot_tran_efft` reads the effective time through **three already
+  shipped calls**: `xschem raw annot` → `{annot_p annot_x annot_sweep_idx}`,
+  `xschem raw list` → the column names, `xschem raw value <sweep> -1` → the sweep's
+  own value at the annotated point. Every step caught; a failure returns `{}` and the
+  caller mints today's shipped `ok` sentence rather than inventing a time.
+* `cadence::annot_tran` picks the wording with a **relative** comparison,
+  `abs(te - t) > 1e-6 * (abs(t) + abs(te) + 1e-30)`. **Never exact float equality**:
+  the effective time is read back through the single-precision `cursor_b_val[]` array,
+  so an in-range request returns a few ULPs away and `==` would caption every ordinary
+  annotation as clamped.
+* The state name returned is still **`ok`** in both cases — `okclamped` is a wording
+  of the same success, not a different outcome. Rows V11/V12/V13 read that return.
+
+## The rows
+
+* **V26** — the composing row this issue said was missing. Cursor B at 4.5e-09
+  against a last sample of 4e-09; **one** check asserting the state, the PAINT (SVG
+  export, FAQ Q52), the effective time, and the sentence byte for byte.
+* **V26b** — the in-range control at 3e-09. Reds a clause appended unconditionally,
+  and reds option 1.
+* **V27** — the sixth golden beside V17's five, plus all five re-asserted through the
+  widened signature. V17 itself untouched.
+
+Tcl sabotage, run 2026-08-27, no build needed:
+
+| variant | mutation | reds |
+|---|---|---|
+| S15 | `annot_tran` always mints the shipped `ok` | **V26** |
+| S15b | the tolerance comparison inverted | **V26b**, and also V26, V11, V12, V13, V28, V31 — see 0876's table |
+
+## Debt
+
+The clamped sentence is **new user-facing wording the user has not ratified** — owed
+as `rule 0869` in `tests/headless/owed.sh`, with the two rejected alternatives
+(option 1 above; and naming only the effective time, which loses where the cursor is)
+recorded there.

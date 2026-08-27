@@ -2236,15 +2236,70 @@ SNAPSHOT: the number stays on the sheet while the cursor moves on. Under D5-1 th
 only thing that keeps a held number honest is that the user was told what it was
 measured at and from which cursor. Unratified — issue **0868**.
 
-> **🔴 AND AS SHIPPED IT DOES NOT CARRY IT — issue 0869.** The sentence renders the
-> time the user ASKED for, not the time the number was measured at. RULING D4-4
-> makes an out-of-range request hold the boundary sample, correctly, and the
-> sentence is not told: with the last sample at 4e-09 and cursor B at 4.5e-09 the
-> sheet paints `d 4` beside *"Transient annotation at t = 4.5e-09 (cursor B)"*.
-> Row V4 tests the paint without the sentence; row V17 tests the sentence without
-> data; nothing composes them. Reachable whenever the plotted x-range outruns the
-> data — an interrupted run, a raw still being written, a graph left at a previous
-> run's range.
+> **AS SHIPPED IT DID NOT CARRY IT — issue 0869, ✅ FIXED 2026-08-27 (A3h).** The
+> sentence rendered the time the user ASKED for, not the time the number was
+> measured at. RULING D4-4 makes an out-of-range request hold the boundary sample,
+> correctly, and the sentence was not told: with the last sample at 4e-09 and cursor
+> B at 4.5e-09 the sheet painted `d 4` beside *"Transient annotation at t = 4.5e-09
+> (cursor B)"*. Row V4 tested the paint without the sentence, row V17 the sentence
+> without data, and nothing composed them — **row V26 now does**, which is why the
+> defect shipped. Reachable whenever the plotted x-range outruns the data: an
+> interrupted run, a raw still being written, a graph left at a previous run's range.
+
+**⚠ THE SIXTH STATE, `okclamped` — the clamped sentence (issue 0869).** When the
+cursor is outside the data the boundary sample is held (D4-4) and the sentence says
+so, naming the **measured** time first:
+
+> `Transient annotation at t = 4e-09 (cursor B at 4.5e-09, outside the data -- holding the boundary sample)`
+
+In range the two times are the same number and the **shipped `ok` sentence is
+byte-identical** — row V26b is the control that reds a clause appended
+unconditionally. The effective time is read with **no C change**, through three
+shipped calls (`cadence::_annot_tran_efft`): `xschem raw annot`, `xschem raw list`,
+`xschem raw value <sweep> -1`. ⚠ The comparison is **relative, never `==`** — the
+read-back travels through the single-precision `cursor_b_val[]` array, so exact
+equality would caption every ordinary annotation as clamped. ⚠ And 0869's own
+recommended option — rendering the annotated sample's own x unconditionally — is
+**measurably wrong**: it captions a requested 3e-09, whose painted number genuinely
+IS the value at 3e-09, as *"t = 2e-09"*. The wording is **unratified**, owed as
+`rule 0869`.
+
+**⚠ THE THREE OP CHORDS REFUSE A TRANSIENT SHEET, SILENTLY — RULING 0856, issue 0872,
+✅ FIXED 2026-08-27 (A3h).** `Ctrl-6`, `6` and `Alt-6` are the OP chords, and on a
+database whose `sim_type` is not `op` or `dc` the two that TURN THINGS ON now write no
+mask, paint nothing and say nothing — the user's ruling verbatim: *"we haven't yet
+built anything for annotating from TRAN results, so it should do nothing silently."*
+The detector is `cadence::_annot_op_db_ok` and it is asked **TWICE**: once in
+`cadence::annot_mode` before the mask is written and before any sentence is minted,
+and once again at the end of the candidate branch, after the chord's own search has
+loaded a file.
+
+* **`Ctrl-6` is exempt** (`$mask != 0`): clearing never puts a number on a sheet, and
+  a refusal that swallowed the off switch would strand the user with bit2 armed.
+* **No database attached is NOT a refusal at the FIRST ask**: the chord's own
+  candidate search is what finds and loads a raw, and a gate that swallowed
+  *"there is nothing to ask"* would stop `6` finding a file at all (row V31b leg 2,
+  and sabotage S19 reds V31d/N8/A64-3).
+* **...WHICH IS WHY THE SECOND ASK EXISTS, AND IT IS THE ONE THE FIRST PASS MISSED.**
+  The candidate is very often the transient the user just ran. Measured: one `Alt-6`
+  from that state used to write mask 2, attach the transient and announce
+  *"OP annotation ON (node voltages) -- loaded &lt;that transient&gt;"*. With a waveform
+  strip on the sheet and `Live annotate probes with 'b' cursor` ticked it also painted
+  the transient's sample at cursor B. The second ask **unwinds** — mask back to what
+  the user had (never a bare 0), the database this chord attached itself detached, no
+  sentence — and rows **V31c** / **V31d** are its witnesses. Issue 0872 §6.
+* ⚠ **`update_op()`'s GUARD IS NOT A BACKSTOP FOR THAT**, and an earlier revision of
+  this bullet said it was. That guard only declines to PUBLISH the operating point; it
+  does not stop the mask being written, the sentence being minted, or `raw_read()`'s
+  tail gate (guard **G1**) publishing at cursor B on the very load the chord performed.
+* A reader would assume the mask cannot put a number on a sheet because it is only a
+  VISIBILITY switch. **It can** — `xschem set cursor2_x` has already published a
+  transient sample into `cursor_b_val[]`, and the render gates never ask which
+  analysis minted it.
+* ⚠ **The mechanism issue 0872 names is wrong**, and the correction is recorded in
+  that file: `Alt-6` ALONE, with bit2 never set, already did it, so the shared render
+  class was not in the chain. What the render class still lacks is a **provenance
+  stamp** — issue **0877**, OPEN.
 
 **⚠ THE BIND SPELLING IS THE TRAP.** Measured with `wish` on `:99`: keycode 15 is
 `6 asciicircum`, a physical Alt+Shift+6 arrives as keysym **`asciicircum`**, and
@@ -2265,22 +2320,28 @@ when the file is actually there. Deliberately **not** a `source` line in
 `src/xschem.tcl`: `utils/` is not in the install list, and a shipped `xschem.tcl`
 sourcing a file it did not install is the startup segfault recorded as 0423/0424.
 
-#### 4.9.1 Open against this section (measured 2026-08-27, none fixed)
+#### 4.9.1 Open against this section (measured 2026-08-27; the A3h pass closed six)
 
 | issue | what |
 |---|---|
-| **0869** | the `ok` sentence names the REQUESTED time, not the measured one — the D5-1 claim §4.9 rests on |
+| ~~**0869**~~ | ✅ **FIXED 2026-08-27 (A3h).** The `ok` sentence named the REQUESTED time, not the measured one — the D5-1 claim §4.9 rests on. Sixth state `okclamped`, rows V26/V26b/V27 |
 | **0870** | `xschem annotate_at <unparseable>` publishes at t = 0 and answers 1 (`atof_spice` → 0.0) |
 | **0871** | the `nodata` refusal is unreachable; row V17's fifth golden is hollow |
-| **0872** | bit1 and bit2 share ONE render class, so `Alt-6` repaints a transient's numbers as *"OP annotation ON (node voltages)"* and the transient bit renders an operating point — RULING **0856** reopens here |
-| **0873** | guard **G9**, "refusals speak", has no row: silencing the emitter leaves all 651 checks green |
-| **0874** | the widened `text_hidden()` `hide=voltage` arm has no row (masks 4 and 5 are the only discriminating ones and nothing reaches them) |
+| ~~**0872**~~ | ✅ **FIXED 2026-08-27 (A3h), in TWO passes** — the first added the refusal, verification then showed the ruling-0856 breach was still one key press away because the chord's own candidate search loads a transient *after* it; the repair pass added the second ask and the unwind. ⚠ Its stated mechanism was WRONG — corrected in the issue file. Residual → **0877** |
+| ~~**0873**~~ | ✅ **FIXED 2026-08-27 (A3h)**, tests only. Guard **G9**, "refusals speak", had no row: silencing the emitter left all 651 checks green. Rows V28/V29/V30, and the mute-mode experiment now reds five |
+| ~~**0874**~~ | ✅ **FIXED 2026-08-27 (A3h).** The widened `text_hidden()` `hide=voltage` arm had no row. Row **V32** pins `0 0 1 1 1 1 1 1` across all eight masks, and sabotage **S6b** — the variant that reddened NOTHING when A3 ran it — now reds V32 and only V32, at masks 4 and 5 |
 | **0875** | row B12b cannot see a leaked viewer-context borrow |
-| **0876** | the eight C-level guards were never sabotage-tested — present and working, but unfalsified |
+| ~~**0876**~~ | ✅ **CLOSED 2026-08-27 (A3h).** The eight C-level guards were never sabotage-tested. All eight C variants plus ten Tcl ones are now executed (table in the issue). **Seven of eight** are falsified by a named row; the eighth, **G10**, was seen by nothing and became **0878**. ⚠ Its S15b block is refuted — see **0879** |
+| **0877** | 🔴 **NEW.** The node-voltage render class carries no provenance stamp. **Three** faces: over an OPERATING POINT database masks 4 and 6 paint the OP number under the wording *"transient node voltages"*; the ASE-L `Results > Annotate` checkbuttons write the mask directly, past 0872's refusal; and a **held** status line minted about an OP database survives a transient being attached underneath it, so a transient sample at cursor B sits under *"OP annotation ON (node voltages)"*. **Needs a user ruling** |
+| ~~**0878**~~ | ✅ **FIXED 2026-08-27 (A3h).** Guard **G10** (`src/scheduler.c:2372`, the floater-cache refresh) was invisible: every fixture in the suite annotates a sheet with **no floater**, so `there_are_floaters()` answered 0 on all twenty `annotate_at` calls and the guarded statement never executed. Row **V10b** on a dedicated sheet that has one; S9 now reds V10b and only V10b |
+| **0879** | 🔴 **NEW.** Issue 0876 records an S15b sabotage result that three independent runs cannot reproduce, and whose stated cause is mechanically impossible. Annotated in place, not deleted — correcting another agent's tracker entry is the user's call |
+| **0880** | 🔴 **NEW.** Five of the twelve suites this feature is gated on are registered in NEITHER automated runner, `test_op_annot` (413 checks) included in `full_audit.sh` — they run only when a human types them |
 
-⚠ **0872 is the one to read before extending this section.** The third mode is a
-third SWITCH onto the second mode's store, not a third store. Anything that assumes
-"bit2 on ⇒ the number came from a transient" is wrong today.
+⚠ **0877 is the one to read before extending this section**, and it is what is left of
+0872. The third mode is a third SWITCH onto the second mode's store, not a third
+store. Anything that assumes "bit2 on ⇒ the number came from a transient" is still
+wrong. What 0872's fix changed is only that the **chord** no longer walks the user
+into that state on a transient sheet; the store is unstamped as ever.
 
 
 ## 5. Contracts and invariants

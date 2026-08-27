@@ -11489,13 +11489,18 @@ check {V9 masks 2, 4 and 6 each paint the annotated value and mask 1 paints none
 # ===========================================================================
 # V10 — GUARD G10: THE FLOATER CACHE IS REFRESHED, IN THE SAME FRAME
 # ===========================================================================
-# ⚠ ROW T22'S BLAST RADIUS, RE-MEASURED FOR THE NEW VERB. `@spice_get_voltage`
-# on every lab_pin / ipin / opin / vdd / probe text is a FLOATER, and floaters
-# render from a cache that only `set_modify(-2)` refreshes. The `set cursor2_x`
-# arms both carry it (scheduler.c:12118 and :12124); a new verb that forgot it
-# would move every number in V1-V4 and leave the SHEET rendering the previous
-# request until something else dirtied the cache -- the exact I3 breach that got
-# S9 attempt 1 reverted.
+# ⚠ THIS ROW IS NOT THE G10 GUARD'S WITNESS -- ROW V10b BELOW IS. Measured with
+# a printf inside the guard: over s5_flat.sch `there_are_floaters()` answers 0
+# on all twenty `annotate_at` calls in this file, because that function scans
+# the SCHEMATIC's own text records and s5_flat.sch has none. So `if(rc &&
+# floaters) set_modify(-2);` never runs here and deleting it leaves this row
+# green. What V10 does measure is still worth having and is stated honestly:
+# the SYMBOL-text render path -- `@spice_get_voltage` inside lab_pin.sym, drawn
+# per instance -- carries the new value in the first frame after the new verb,
+# with no redraw in between. That is row T22's blast radius re-measured for
+# `annotate_at`, and a verb that left the symbol texts on the previous request
+# is the I3 breach that got S9 attempt 1 reverted. The floater CACHE, which is
+# the thing G10 refreshes, is a different path and needs a sheet that has one.
 # ⚠ ONE EXPORT, NO INTERVENING REDRAW. opa_v_paint uses opa_l_print, not
 # opa_l_print2: a warm pass would be a second draw and would hide the defect.
 opa_t_arm [file join $lib s5_flat.sch]
@@ -11506,6 +11511,69 @@ set v10b [opa_v_paint fl4]
 opa_l_annot 0
 check {V10 guard G10 the FIRST frame after `annotate_at`, with no redraw in between, already carries the new value} \
   [list $v10a $v10b] [list $V_PINS_P1 $V_PINS_P4]
+
+# ===========================================================================
+# V10b — GUARD G10 FOR REAL: A SHEET THAT ACTUALLY HAS A FLOATER
+# ===========================================================================
+# ⚠ V10 ABOVE CANNOT SEE G10, MEASURED, AND THAT IS WHY THIS ROW EXISTS.
+# `there_are_floaters()` (src/actions.c) scans the SCHEMATIC's own xctx->text[]
+# and nothing else. s5_flat.sch has four lab_pin instances and NO text record
+# at all, so the count is 0 on every call and `if(rc && floaters)
+# set_modify(-2);` never executes anywhere in this file. Instrumented with a
+# printf inside the guard: all twenty `annotate_at` calls report floaters=0.
+# Deleting the guard and rebuilding left the whole suite green -- a guard
+# shipped untested behind a row named after it. The number V10 measures belongs
+# to lab_pin.sym, a SYMBOL text drawn per instance, which is a different render
+# path and does not go through the floater cache.
+# ⚠ SO THE FIX IS A FIXTURE, NOT A MECHANISM, AND IT IS ITS OWN SHEET. Adding a
+# schematic-level text to s5_flat.sch moves fifteen other goldens; v_g10.sch
+# carries the same four lab_pins plus ONE schematic-own floater -- a text with
+# a `name=` property, which is what sets TEXT_FLOATER (src/actions.c) -- so it
+# renders through get_text_floater()'s cache and nothing else in the file moves.
+# ⚠ THE COUNTERFACTUAL WAS BUILT, so this row is not a guess about what the
+# guard does. With the guard present the sheet reads 1 then 4. With it deleted
+# it reads 1 then 1: the sheet keeps displaying the PREVIOUS request's number
+# while the database has moved on, which is RULING D5-1 -- a number that was
+# not measured for the thing it is displayed next to.
+# ⚠ ONE EXPORT, NO INTERVENING REDRAW, for V10's own reason: the second frame
+# is the subject, so `opa_l_annot` is not called between the second
+# `annotate_at` and its export, and the reader goes through opa_l_print rather
+# than opa_l_print2.
+set f [open [file join $lib v_g10.sch] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+T {ZZG10=@spice_get_voltage} -200 -200 0 0 0.2 0.2 {name=p1}
+C {lab_pin.sym} 20 -30 0 0 {name=p1 lab=d}
+C {lab_pin.sym} -20 0 0 0 {name=p2 lab=g}
+C {lab_pin.sym} 20 30 0 0 {name=p3 lab=0}
+C {lab_pin.sym} 20 0 0 0 {name=p4 lab=0}}
+close $f
+## The SCHEMATIC-OWN floater texts of one export, in document order. A list, so
+## a fixture that lost its floater reads as an empty list and reds this row
+## rather than quietly agreeing with a broken export.
+proc opa_v_fl {tag} {
+  set o {}
+  foreach t [opa_q_texts [opa_l_print svg [file join $::scratch v_$tag.svg] $::V_VP]] {
+    if {[string first ZZG10= $t] == 0} { lappend o $t }
+  }
+  return $o
+}
+catch {xschem raw clear}
+xschem load [file join $lib v_g10.sch]
+catch {xschem cursor 2 0}
+set v10b_arm [lindex [rcall [list xschem annotate_op $V_RAW]] 0]
+opa_l_annot 2
+set v10b_r1 [opa_v_at 1e-9]
+set v10b_f1 [opa_v_fl g10_1]
+set v10b_r2 [opa_v_at 4e-9]
+set v10b_f2 [opa_v_fl g10_2]
+opa_l_annot 0
+check {V10b guard G10 on a sheet that HAS a floater the first frame after `annotate_at` already carries the new value} \
+  [list $v10b_arm $v10b_r1 $v10b_f1 $v10b_r2 $v10b_f2] \
+  [list 0 1 {ZZG10=1} 1 {ZZG10=4}]
 
 # ===========================================================================
 # V11 — THE USER'S RULE (guard G7): BOTH CURSORS ON MEANS CURSOR A
@@ -11876,6 +11944,15 @@ check {V23b guard G2 STRUCTURAL descend_schematic's body, C comments stripped, t
 # satisfied by a fixture whose text never appeared at all; step 4 is the same
 # blank as step 1, and rows V22 leg 2 and V9 are what say the exporter can render
 # these floaters when something IS published.
+# ⚠ AND AFTER THE 0872 FIX, STEP 2 IS BLANK FOR A SECOND REASON — DO NOT READ
+# THIS ROW AS EVIDENCE FOR EITHER ONE. The fixture is a TRANSIENT database, so
+# `cadence::annot_mode opvolt` now REFUSES it outright (ruling 0856) and returns
+# before the mask is written; step 2 would be blank even if something had been
+# published. The row still measures what it was written to measure -- nothing
+# stale reaches the sheet -- but the discrimination between "nothing was
+# published" and "the chord refused" lives in row V31, which plants a held
+# sentinel and reads the mask at every press. A future edit that made
+# annot_mode a no-op everywhere would leave V24 green.
 set ::live_cursor2_backannotate 0
 catch {xschem raw clear} ; catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}
 xschem load [file join $lib s5_flat.sch]
@@ -11923,6 +12000,543 @@ set v25_graph [list [xschem get rects 2] [opa_t_annot]]
 set ::live_cursor2_backannotate $V_LV
 check {V25 issue 0868 DELIBERATE: with the box off `xschem set cursor2_x` still publishes, in BOTH arms -- it is a typed request} \
   [list $v25_nograph $v25_graph] [list {0 {2 3e-09 0}} {1 {2 3e-09 0}}]
+
+# ===========================================================================
+# V26 .. V32 — THE A3 HARDENING PASS (issues 0869, 0872, 0873, 0874/0876)
+# ===========================================================================
+# Everything below is new with the hardening item. Four defects were filed by
+# the crew that landed the mode and left unfixed; these are the rows that see
+# them. The goldens are MEASURED on the committed binary, and each row's own
+# header says whether it is red today or is a control that must never move.
+#
+# ⚠ THE THREE EXTRA GOLDEN SENTENCES, beside V17's five. V_MSG_CLAMP is NEW
+# WORDING the user has not ratified -- it is owed as a `rule` debt against
+# issue 0869 and must not be re-worded here without clearing that debt.
+set V_MSG_OK2   {Transient annotation at t = 2e-09 (cursor B)}
+set V_MSG_OK3   {Transient annotation at t = 3e-09 (cursor B)}
+set V_MSG_CLAMP {Transient annotation at t = 4e-09 (cursor B at 4.5e-09, outside the data -- holding the boundary sample)}
+## The lab_pin tail over the OPERATING POINT fixture of section T. Measured: the
+## `d` node carries 7.5 and `g` is not a vector in that raw, so it renders the
+## I3 placeholder rather than a number.
+set V_PINS_OP   {d 7.5 g - 0 0.0 0 0.0}
+
+## THE TIME THE PAINTED NUMBER WAS ACTUALLY MEASURED AT, through three shipped
+## calls and no C change: `xschem raw annot` names the annotated point and which
+## column is the sweep, `xschem raw list` names the columns, and
+## `xschem raw value <sweep> -1` reads the sweep's own value at that point.
+## ⚠ NEVER A BARE CATCH, for this file's standing reason: with nothing published
+## a caught raise reported as an empty string would make "the boundary held" and
+## "the accessor is broken" the same answer.
+proc opa_v_efft {} {
+  set a [opa_t_annot]
+  if {[llength $a] != 3} { return "NO-ANNOT:$a" }
+  if {![string is integer -strict [lindex $a 0]]} { return "NO-ANNOT:$a" }
+  if {[lindex $a 0] < 0} { return "NOT-PUBLISHED" }
+  set r [rcall {xschem raw list}]
+  if {[lindex $r 0] != 0} { return "RAISED:[lindex $r 1]" }
+  set names [split [lindex $r 1] "\n"]
+  set sw [lindex $names [lindex $a 2]]
+  if {$sw eq {}} { return "NO-SWEEP-NAME" }
+  set v [rcall [list xschem raw value $sw -1]]
+  if {[lindex $v 0] != 0} { return "RAISED:[lindex $v 1]" }
+  return [lindex $v 1]
+}
+
+## The CIW sink, spied. Same shape as w_aecho_spy in
+## tests/headless/test_ase_window.tcl -- save the shipped emitter, install a
+## recorder, restore whatever happens. Returns the list of tag/message pairs.
+proc opa_v_spy {script} {
+  set ::opa_v_echo {}
+  namespace eval ::ase {}
+  set had [expr {[info commands ::ase::echo] ne {}}]
+  if {$had} { rename ::ase::echo ::opa_v_saved_echo }
+  proc ::ase::echo {msg {tag {}}} { lappend ::opa_v_echo [list $tag $msg] ; return 1 }
+  catch {uplevel 1 $script}
+  catch {rename ::ase::echo {}}
+  if {$had} { rename ::opa_v_saved_echo ::ase::echo }
+  return $::opa_v_echo
+}
+
+## Drive `cadence::_annot_ciw` with BOTH sinks under control, and report
+## its rc plus how many times each sink was reached.
+proc opa_v_emit {mode} {
+  set ::opa_v_ne 0 ; set ::opa_v_nn 0
+  namespace eval ::ase {}
+  namespace eval ::xschem {}
+  set had_e [expr {[info commands ::ase::echo] ne {}}]
+  set had_n [expr {[info commands ::xschem::notify] ne {}}]
+  if {$had_e} { rename ::ase::echo ::opa_v_sav_e }
+  if {$had_n} { rename ::xschem::notify ::opa_v_sav_n }
+  switch -exact -- $mode {
+    bothok  { proc ::ase::echo {msg {tag {}}} { incr ::opa_v_ne ; return 1 }
+              proc ::xschem::notify {msg} { incr ::opa_v_nn ; return 1 } }
+    echobad { proc ::ase::echo {msg {tag {}}} { incr ::opa_v_ne ; error ZZBAD }
+              proc ::xschem::notify {msg} { incr ::opa_v_nn ; return 1 } }
+    bothbad { proc ::ase::echo {msg {tag {}}} { incr ::opa_v_ne ; error ZZBAD }
+              proc ::xschem::notify {msg} { incr ::opa_v_nn ; error ZZBAD } }
+    default { error "opa_v_emit: unknown mode $mode" }
+  }
+  set r [rcall {cadence::_annot_ciw ZZ0873PROBE}]
+  catch {rename ::ase::echo {}}
+  catch {rename ::xschem::notify {}}
+  if {$had_e} { rename ::opa_v_sav_e ::ase::echo }
+  if {$had_n} { rename ::opa_v_sav_n ::xschem::notify }
+  return [list $r $::opa_v_ne $::opa_v_nn]
+}
+
+# ===========================================================================
+# V26 — ISSUE 0869, THE COMPOSING ROW. RED TODAY
+# ===========================================================================
+# ⚠ THIS IS THE ROW WHOSE ABSENCE SHIPPED THE DEFECT, and the gap was exact:
+# V4 measures the boundary PAINT with no sentence, V17 measures the sentence
+# with no data, and NOTHING composed them. So a sentence that named a time the
+# number was never measured at passed every row in the file.
+# The last sample is 4e-09 and cursor B is parked at 4.5e-09. RULING D4-4 says a
+# boundary HOLDS and never extrapolates, so painting 4 is CORRECT; the defect is
+# the label. Measured on the committed binary the sheet paints `d 4` beside
+# "Transient annotation at t = 4.5e-09 (cursor B)" -- a number presented as
+# measured for a time it was not measured at, which is RULING D5-1 in its purest
+# form, and worse than a bare wrong number because the sentence lends authority.
+# Four claims in one row: the state, the PAINT, the time the number was ACTUALLY
+# measured at, and the sentence the user reads.
+# ⚠ THE PAINT IS AN SVG EXPORT, NEVER `xschem translate` -- FAQ Q52.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 4.5e-9
+opa_v_rearm
+set v26_state [opa_v_tran]
+set v26_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v26_efft  [opa_v_efft]
+set v26_paint [opa_v_paint clamp]
+check {V26 issue 0869 RULING D5-1 out of range the sentence names the time the number was MEASURED at, not the cursor's} \
+  [list $v26_state $v26_paint $v26_efft $v26_msg] \
+  [list ok $V_PINS_P4 4e-09 $V_MSG_CLAMP]
+
+# ===========================================================================
+# V26b — THE IN-RANGE CONTROL. GREEN BEFORE AND AFTER, AND NOT OPTIONAL
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW A FIX THAT APPENDED THE CLAUSE UNCONDITIONALLY PASSES V26,
+# and every user with an in-range cursor is told their cursor is outside the
+# data. In range the shipped arithmetic genuinely returns the value AT the
+# requested time -- row V2 measures exactly that at 2.5 ns -- so the requested
+# and the measured time are the same number and the sentence must stay the
+# SHIPPED one, byte for byte.
+# ⚠ AND IT IS THE ROW THAT REDS ISSUE 0869's OWN RECOMMENDED OPTION 1. That
+# option renders the annotated sample's own x unconditionally; measured over
+# this fixture it answers 2e-09 for a requested 3e-09 whose painted number is
+# genuinely the value at 3e-09 -- a fresh D5-1 breach in the opposite direction.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_v_rearm
+set v26b_state [opa_v_tran]
+set v26b_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v26b_efft  [opa_v_efft]
+set v26b_paint [opa_v_paint inrange]
+check {V26b CONTROL in range the requested and the measured time are the same, and the sentence is the SHIPPED one byte for byte} \
+  [list $v26b_state $v26b_paint $v26b_efft $v26b_msg] \
+  [list ok $V_PINS_P3 3e-09 $V_MSG_OK3]
+
+# ===========================================================================
+# V27 — THE SIXTH GOLDEN, BESIDE V17'S FIVE. RED TODAY
+# ===========================================================================
+# ⚠ V17 IS LEFT UNTOUCHED SO ITS DIFF STAYS CLEAN, and the five shipped
+# sentences are RE-ASSERTED here through the widened signature, called with
+# three arguments exactly as every shipped caller calls them. That is the half
+# that says a new optional parameter did not move the five.
+# Measured on the committed binary the four-argument call raises
+# `wrong # args: should be "cadence::_annot_tran_msg state t which"`, so this
+# row is red for the mint not existing rather than for its wording.
+# ⚠ ONE MINT, RULING D5-4. The clamped sentence is a SIXTH state of the same
+# emitter, not a second string composed at a call site; row V18's one-file grep
+# is what holds that, and it does not move.
+check {V27 RULING D5-4 the clamped sentence is a SIXTH state of the one mint, and the five shipped ones do not move} \
+  [list [rcall {cadence::_annot_tran_msg okclamped 4e-09 B 4.5e-09}] \
+        [rcall {cadence::_annot_tran_msg ok 1e-09 A}] \
+        [rcall {cadence::_annot_tran_msg nocursor {} {}}] \
+        [rcall {cadence::_annot_tran_msg noraw {} {}}] \
+        [rcall {cadence::_annot_tran_msg notran {} {}}] \
+        [rcall {cadence::_annot_tran_msg nodata 3e-09 B}]] \
+  [list [list 0 $V_MSG_CLAMP] [list 0 $V_MSG_OK] [list 0 $V_MSG_NOCURSOR] \
+        [list 0 $V_MSG_NORAW] [list 0 $V_MSG_NOTRAN] [list 0 $V_MSG_NODATA]]
+
+# ===========================================================================
+# V28 — ISSUE 0873: THE `ok` SENTENCE IS SPOKEN, ON BOTH SINKS
+# ===========================================================================
+# ⚠ GREEN TODAY AND THAT IS THE POINT -- the channel works, nothing pins it.
+# Measured by the hardening crew: with the CIW emitter neutered AND the held
+# status line swallowed, the mode goes COMPLETELY MUTE and all 651 checks across
+# test_op_annot, test_annot_show_menu and test_ase_window still pass. So the row
+# has to pin BOTH sinks; a row that only spied the CIW would still pass if a
+# later edit dropped the status line, and a row that only read the status line
+# would still pass if the CIW route were deleted.
+# ⚠ THE TAG IS PART OF THE CLAIM. A success carries NO tag; the three refusals
+# below carry `warn`. A build that shouted every sentence as a warning would
+# pass a row that only compared the text.
+# ⚠ THE HOLD FLAG IS PART OF IT TOO. Issue 0248: without the hold, pointer
+# motion erases the line before the user has read it, and the number stays on
+# the sheet with nothing left saying what it was measured at.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 2e-9
+opa_v_rearm
+catch {xschem statusmsg -hold ZZ0873SENTINEL}
+set v28_spy  [opa_v_spy {set ::v28_state [opa_v_tran]}]
+set v28_msg  [lindex [rcall {xschem get statusmsg}] 1]
+set v28_hold [lindex [rcall {xschem get statusmsg_hold}] 1]
+check {V28 issue 0873 the `ok` sentence reaches the CIW untagged AND the held status line, once each} \
+  [list $::v28_state [llength $v28_spy] [lindex $v28_spy 0 0] [lindex $v28_spy 0 1] \
+        $v28_msg $v28_hold] \
+  [list ok 1 {} $V_MSG_OK2 $V_MSG_OK2 1]
+
+# ===========================================================================
+# V29 — ISSUE 0873: THE THREE REACHABLE REFUSALS ARE SPOKEN, TAGGED `warn`
+# ===========================================================================
+# ⚠ THREE, NOT FOUR, AND THE MISSING ONE IS DELIBERATE. Issue 0871: `nodata` is
+# UNREACHABLE, because `xschem raw loaded` and the engine's own gate are the
+# same predicate -- so V17 pins a fifth sentence no user can be shown. Covering
+# it behaviourally would need a fixture that cannot exist; naming that here is
+# the honest alternative to a row that quietly tests four states and can only
+# ever exercise three.
+# Rows V14, V15 and V16 already assert that each refusal publishes nothing and
+# arms no bit. This row asserts the other half the user actually experiences:
+# that the program SAYS which of the three happened, in both places, rather than
+# doing nothing silently -- issue 0857's ruling, applied to this mode.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 0
+catch {xschem statusmsg -hold ZZ0873SENTINEL}
+set v29a  [opa_v_spy {set ::v29a_state [opa_v_tran]}]
+set v29am [lindex [rcall {xschem get statusmsg}] 1]
+set v29ah [lindex [rcall {xschem get statusmsg_hold}] 1]
+opa_l_annot 0
+catch {xschem raw clear}
+xschem cursor 2 1
+xschem set cursor2_x 4e-9
+catch {xschem statusmsg -hold ZZ0873SENTINEL}
+set v29b  [opa_v_spy {set ::v29b_state [opa_v_tran]}]
+set v29bm [lindex [rcall {xschem get statusmsg}] 1]
+set v29bh [lindex [rcall {xschem get statusmsg_hold}] 1]
+opa_l_annot 0
+catch {xschem raw clear}
+xschem raw read $T_OPRAW op
+xschem cursor 2 1
+catch {xschem statusmsg -hold ZZ0873SENTINEL}
+set v29c  [opa_v_spy {set ::v29c_state [opa_v_tran]}]
+set v29cm [lindex [rcall {xschem get statusmsg}] 1]
+set v29ch [lindex [rcall {xschem get statusmsg_hold}] 1]
+catch {xschem raw clear}
+check {V29 issue 0873 nocursor, noraw and notran each reach the CIW tagged `warn` AND the held status line} \
+  [list $::v29a_state $v29a $v29am $v29ah \
+        $::v29b_state $v29b $v29bm $v29bh \
+        $::v29c_state $v29c $v29cm $v29ch] \
+  [list nocursor [list [list warn $V_MSG_NOCURSOR]] $V_MSG_NOCURSOR 1 \
+        noraw    [list [list warn $V_MSG_NORAW]]    $V_MSG_NORAW    1 \
+        notran   [list [list warn $V_MSG_NOTRAN]]   $V_MSG_NOTRAN   1]
+
+# ===========================================================================
+# V30 — ISSUE 0873: THE EMITTER'S OWN CLAIM, MADE FALSIFIABLE
+# ===========================================================================
+# ⚠ `cadence::_annot_ciw`'s comment says the sinks are tried IN ORDER and the
+# last one always works, and nothing in the tree tested that sentence. It is not
+# decoration: issue 0857 is about a chord that says nothing when it cannot
+# deliver, so a catch-and-discard emitter would reproduce the defect precisely
+# on the sessions where the CIW is not up.
+# Three legs, and the middle one is the whole subject: when the CIW route
+# RAISES, the message must still land, on the fallback.
+#   bothok  -> rc 1, the CIW got it, the fallback was never asked
+#   echobad -> rc 1, the CIW was tried and failed, the fallback got it
+#   bothbad -> rc 0, both were tried, and the emitter does NOT raise at its own
+#              caller. The stderr line it writes as a last resort is expected
+#              output, not a fault.
+check {V30 issue 0873 the emitter tries the sinks in order, falls through when one raises and never raises itself} \
+  [list [opa_v_emit bothok] [opa_v_emit echobad] [opa_v_emit bothbad]] \
+  [list {{0 1} 1 0} {{0 1} 1 1} {{0 0} 1 1}]
+
+# ===========================================================================
+# V31 — ISSUE 0872: RULING 0856 APPLIED TO THE OP CHORDS. RED TODAY
+# ===========================================================================
+# ⚠ THE USER'S RULING, VERBATIM: "if OP is part of the run, then plot from OP.
+# We haven't yet built anything for annotating from TRAN results, so it should
+# do nothing silently." Commit e31975e7 made the OPERATING POINT publisher obey
+# it. The mode chooser does not: measured on the committed binary, on a
+# transient database, Ctrl-6 clears and then Alt-6 puts the transient's `d 3`
+# back on the sheet under the status line "OP annotation ON (node voltages)".
+# ⚠ AND THE MECHANISM THE ISSUE NAMES IS WRONG. The crew blamed the shared
+# render class -- the ANNOT_SHOW_VOLTAGE-or-ANNOT_SHOW_TRAN return in
+# annot_class_mask. Measured with the transient mode never invoked and bit2
+# never set, Alt-6 ALONE already does it, so that return is not in the chain at
+# all in this direction. `cadence::annot_mode` flips a pure visibility switch
+# without ever asking the database which analysis it holds, while its sibling
+# `cadence::annot_tran` refuses the wrong analysis by name nine lines away.
+# ⚠ LEG 5 IS THE FACE NO ISSUE FILE RECORDS AND IT IS THE WORST OF THEM. With a
+# transient attached and NOTHING published, Alt-6 paints nothing but still
+# SPEAKS, and what it says is impossible: it tells the user to run
+# Waves > Op Annotate, which is exactly the operation the 0856 guard refuses on
+# a transient. A fix that only gated the PAINT leaves that sentence standing,
+# so every leg carries the status line and not just the mask.
+# ⚠ THE SENTINEL IS THE MEASUREMENT OF SILENCE. "Said nothing" cannot be read
+# off an empty status line -- a status line is never empty. A planted held
+# message that SURVIVES the key press is what says the press was silent.
+# ⚠ LEG 2 IS THE OFF SWITCH AND IT IS EXEMPT, ON PURPOSE. Ctrl-6 must always
+# clear, and clearing never puts a number on a sheet. A refusal that swallowed
+# Ctrl-6 would strand the user with bit2 armed and no way to turn it off, which
+# is a worse defect than the one being fixed; this leg is that exemption's only
+# guard.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_v_rearm
+set v31_1state [opa_v_tran]
+set v31_1mask  [xschem get annot_show]
+set v31_1paint [opa_v_paint c6arm]
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode none}
+set v31_2mask  [xschem get annot_show]
+set v31_2msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v31_2paint [opa_v_paint c6none]
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31_3mask  [xschem get annot_show]
+set v31_3msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v31_3paint [opa_v_paint c6alt]
+opa_l_annot 0
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode op}
+set v31_4mask  [xschem get annot_show]
+set v31_4msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v31_4paint [opa_v_paint c6op]
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 0
+set v31_5pre   [opa_t_annot]
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31_5mask  [xschem get annot_show]
+set v31_5msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v31_5paint [opa_v_paint c6facec]
+check {V31 issue 0872 RULING 0856 on a TRANSIENT sheet Alt-6 and 6 publish nothing and say nothing, and Ctrl-6 still clears} \
+  [list $v31_1state $v31_1mask $v31_1paint \
+        $v31_2mask $v31_2msg $v31_2paint \
+        $v31_3mask $v31_3msg $v31_3paint \
+        $v31_4mask $v31_4msg $v31_4paint \
+        $v31_5pre $v31_5mask $v31_5msg $v31_5paint] \
+  [list ok 4 $V_PINS_P3 \
+        0 {OP annotation OFF} $V_PINS_NONE \
+        0 ZZ0872SENTINEL $V_PINS_NONE \
+        0 ZZ0872SENTINEL $V_PINS_NONE \
+        {-1 0 -1} 0 ZZ0872SENTINEL $V_PINS_NONE]
+
+# ===========================================================================
+# V31b — THE POSITIVE CONTROL. GREEN BEFORE AND AFTER, AND NOT OPTIONAL
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW A FIX THAT TURNED THE MODE CHOOSER INTO A NO-OP EVERYWHERE
+# PASSES V31, and the two shipped OP chords are dead. Both legs are the ones
+# that must keep working:
+#   leg 1  an OPERATING POINT database is attached -- Alt-6 arms bit1, the
+#          operating point's own 7.5 reaches the sheet, and the status line says
+#          so. This is the surface the whole feature exists for.
+#   leg 2  NOTHING is attached -- `6` still runs the candidate search, still
+#          arms bit0 and still speaks. A refusal keyed on "the database is not
+#          op" must not swallow the case where there is no database to ask, or
+#          the chord stops being able to FIND a raw at all.
+# ⚠ THE PATH IN LEG 2's SENTENCE IS SCRATCH-DEPENDENT, so it is matched by shape
+# rather than goldened -- the claim is that the chord still names a file, not
+# which temporary directory this run used.
+opa_l_annot 0
+catch {xschem raw clear}
+xschem load [file join $lib s5_flat.sch]
+catch {xschem annotate_op $T_OPRAW}
+set v31b_st [rcall {xschem raw sim_type}]
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31b_mask  [xschem get annot_show]
+set v31b_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v31b_paint [opa_v_paint opdb]
+opa_l_annot 0
+catch {xschem raw clear}
+xschem load [file join $lib s5_flat.sch]
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode op}
+set v31b2_mask [xschem get annot_show]
+set v31b2_ld   [rcall {xschem raw loaded}]
+set v31b2_msg  [lindex [rcall {xschem get statusmsg}] 1]
+opa_l_annot 0
+check {V31b CONTROL an OPERATING POINT database still annotates on Alt-6, and with NO database `6` still searches and still speaks} \
+  [list $v31b_st $v31b_mask $v31b_paint $v31b_msg \
+        $v31b2_mask $v31b2_ld \
+        [string match {OP annotation ON (device OP info) -- NO RAW FILE: *} $v31b2_msg]] \
+  [list {0 op} 2 $V_PINS_OP {OP annotation ON (node voltages) -- raw already loaded} \
+        1 {0 -1} 1]
+
+# ===========================================================================
+# V31c — ISSUE 0872, THE FACE V31 CANNOT REACH. RED BEFORE THIS REPAIR
+# ===========================================================================
+# ⚠ THE GAP WAS THE SAME SHAPE THE DEFECT ITSELF HAD, ONE LAYER UP. V31
+# exercises the refusal only with a database ALREADY ATTACHED -- every leg
+# starts from opa_t_arm or a raw clear plus annotate_op. V31b leg 2 exercises
+# the candidate search only with NO raw ON DISK. Nothing composed them, and the
+# composition is the ordinary desktop state: a `.tran` was just run, so
+# `$netlist_dir/<cell>.raw` exists and is a transient, and nothing is attached
+# yet because the waveform viewer has not been opened. Measured before the
+# repair, ONE Alt-6 from there wrote mask 2, attached the transient and said
+# "OP annotation ON -- loaded <that transient>", which is RULING 0856 breached
+# from the most ordinary state there is, and the 410-check suite was green.
+# ⚠ WHY THE FIRST GATE CANNOT SEE IT. `cadence::_annot_op_db_ok` deliberately
+# answers yes with nothing attached, so that `6` can still go and find a file
+# -- V31b leg 2 is that decision's guard. The search then runs and loads a
+# transient ITSELF, after the one and only ask. The repair asks a SECOND time,
+# after the load, and unwinds.
+# ⚠ update_op()'s GUARD IS NOT A BACKSTOP FOR THIS, and leg 4 is the proof.
+# That guard only declines to PUBLISH the operating point; leg 4 puts a
+# waveform strip with cursor B parked on the sheet, and raw_read()'s own tail
+# gate then publishes the transient's sample at cursor B on the very load the
+# chord performed. Before the repair leg 4 painted `d 3` under a status line
+# calling it OP node voltages -- RULING D5-1 with the sentence lending it
+# authority.
+# ⚠ LEG 3 IS THE `$cur` HALF. The unwind restores the mask the USER had, not a
+# bare 0: a press that cannot do its job must not clear bits the press did not
+# set. It starts at mask 1 and must end at mask 1.
+# ⚠ THE UNWIND DETACHES THE DATABASE TOO, and every leg asserts it. Leaving a
+# transient attached is not "nothing": the waveform viewer would hold data the
+# user never loaded and cursor motion would start publishing from it. We only
+# reach the search when nothing was attached, so the clear returns the session
+# to exactly the state the key press found.
+set V_ND_TRAN [file join $scratch v_nd_tran]
+set V_ND_OP   [file join $scratch v_nd_op]
+file mkdir $V_ND_TRAN ; file mkdir $V_ND_OP
+file copy -force $T_RAW   [file join $V_ND_TRAN v_cand.raw]
+file copy -force $T_OPRAW [file join $V_ND_OP   v_cand.raw]
+file copy -force [file join $lib s5_flat.sch] [file join $lib v_cand.sch]
+set v31c_nd $::netlist_dir
+set ::netlist_dir $V_ND_TRAN
+
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31c_1 [list [xschem get annot_show] [rcall {xschem raw loaded}] \
+                 [lindex [rcall {xschem get statusmsg}] 1] [opa_v_paint cand_alt]]
+
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode op}
+set v31c_2 [list [xschem get annot_show] [rcall {xschem raw loaded}] \
+                 [lindex [rcall {xschem get statusmsg}] 1] [opa_v_paint cand_six]]
+
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 1
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31c_3 [list [xschem get annot_show] [rcall {xschem raw loaded}] \
+                 [lindex [rcall {xschem get statusmsg}] 1] [opa_v_paint cand_cur]]
+
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+opa_t_graph 1
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+## ⚠ THE BOX IS TICKED FOR THIS LEG, AND WITHOUT IT THE LEG IS A DECORATION.
+## raw_read()'s tail gate (guard G1, src/save.c) is `live_cursor2_backannotate
+## AND graph_flags & 4`, so with the shipped unticked state the load publishes
+## nothing and the leg would pass with the repair reverted. Ticked, the chord's
+## own load publishes the transient's sample at cursor B and the pre-repair
+## sheet paints it -- measured under sabotage S18, this leg reads mask 2, the
+## transient attached, `d 3` on the pins and the OP sentence over the top.
+set ::live_cursor2_backannotate 1
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31c_4 [list [xschem get annot_show] [rcall {xschem raw loaded}] \
+                 [lindex [rcall {xschem get statusmsg}] 1] [opa_v_paint cand_graph] \
+                 [opa_t_annot]]
+set ::live_cursor2_backannotate $V_LV
+catch {xschem cursor 2 0}
+opa_l_annot 0
+check {V31c issue 0872 RULING 0856 the chord's OWN candidate search must not attach a transient, paint from it or speak about it} \
+  [list $v31c_1 $v31c_2 $v31c_3 $v31c_4] \
+  [list [list 0 {0 -1} ZZ0872SENTINEL $V_PINS_NONE] \
+        [list 0 {0 -1} ZZ0872SENTINEL $V_PINS_NONE] \
+        [list 1 {0 -1} ZZ0872SENTINEL $V_PINS_NONE] \
+        [list 0 {0 -1} ZZ0872SENTINEL $V_PINS_NONE {RAISED:No raw file loaded}]]
+
+# ===========================================================================
+# V31d — THE CANDIDATE SEARCH'S OWN POSITIVE CONTROL. GREEN BEFORE AND AFTER
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW THE CHEAPEST FIX FOR V31c PASSES: refuse the candidate
+# branch outright, or make the first gate say no whenever nothing is attached.
+# Both leave `6` unable to FIND a raw at all, which is the whole reason the
+# `loaded < 0` arm answers yes. V31b leg 2 covers the no-file-on-disk half;
+# this covers the half that matters more -- the file IS there, it IS an
+# operating point, and the chord must load it, arm the mask, put the operating
+# point's own 7.5 on the sheet and NAME the file it loaded.
+# The only difference from V31c is the analysis in the candidate file, so a
+# refusal that cannot tell them apart reds here.
+set ::netlist_dir $V_ND_OP
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+catch {xschem statusmsg -hold ZZ0872SENTINEL}
+catch {cadence::annot_mode opvolt}
+set v31d_mask [xschem get annot_show]
+set v31d_ld   [rcall {xschem raw loaded}]
+set v31d_st   [rcall {xschem raw sim_type}]
+set v31d_msg  [lindex [rcall {xschem get statusmsg}] 1]
+set v31d_paint [opa_v_paint cand_op]
+opa_l_annot 0
+catch {xschem raw clear}
+set ::netlist_dir $v31c_nd
+check {V31d CONTROL an OPERATING POINT at the SAME candidate path still loads, still arms, still paints and still names the file} \
+  [list $v31d_mask $v31d_ld $v31d_st $v31d_paint \
+        [string match "OP annotation ON (node voltages) -- loaded *[file join $V_ND_OP v_cand.raw]" $v31d_msg]] \
+  [list 2 {0 0} {0 op} $V_PINS_OP 1]
+
+# ===========================================================================
+# V32 — ISSUE 0874 / GUARD G6b: THE HIDE ARM, MADE VISIBLE
+# ===========================================================================
+# ⚠ THE GUARD NO ROW COULD SEE. `text_hidden()`'s explicit arm was widened from
+# ANNOT_SHOW_VOLTAGE to ANNOT_SHOW_VOLTAGE-or-ANNOT_SHOW_TRAN when bit2 was
+# added; the sabotage that put it back reddened NOTHING, so eight masks of
+# behaviour rested on an untested line. This row is the discriminator, and it is
+# behavioural rather than a source grep.
+# The fixture is a SCHEMATIC-OWN text carrying `hide=voltage` -- not a symbol
+# floater, and not a text carrying the annotation class -- so it reaches the
+# hide arm and not `annot_class_mask`. Masks 4 and 5 are the whole
+# discrimination: they are visible ONLY because the arm names bit2 as well.
+# Measured on the committed binary: 0 0 1 1 1 1 1 1, exactly.
+# ⚠ THE PLAIN TEXT IS THE ANTI-HOLLOW HALF. "Not visible" is satisfied by a
+# fixture that never rendered at all, so a second text with no `hide` property
+# is asserted VISIBLE at all eight masks. Without it the two leading zeros are
+# indistinguishable from a broken export.
+set f [open [file join $lib v_g6b.sch] w]
+puts $f {v {xschem version=3.4.4 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+T {ZZG6BHIDDEN} 0 -100 0 0 0.2 0.2 {hide=voltage}
+T {ZZG6BPLAIN} 0 -60 0 0 0.2 0.2 {}}
+close $f
+catch {xschem raw clear}
+xschem load [file join $lib v_g6b.sch]
+set v32h {} ; set v32p {}
+foreach v32m {0 1 2 3 4 5 6 7} {
+  opa_l_annot $v32m
+  set v32svg [opa_l_print svg [file join $::scratch v_g6b_$v32m.svg] $::V_VP]
+  lappend v32h [expr {[string first ZZG6BHIDDEN $v32svg] >= 0 ? 1 : 0}]
+  lappend v32p [expr {[string first ZZG6BPLAIN  $v32svg] >= 0 ? 1 : 0}]
+}
+opa_l_annot 0
+check {V32 issue 0874 guard G6b a schematic text hidden by `hide=voltage` reappears for bit2 as well as bit1, and a plain text never hides} \
+  [list $v32h $v32p] [list {0 0 1 1 1 1 1 1} {1 1 1 1 1 1 1 1}]
 
 set ::live_cursor2_backannotate $V_LV
 catch {xschem raw clear}
