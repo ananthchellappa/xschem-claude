@@ -14,6 +14,55 @@ Newest entries on top.
 
 ---
 
+## Q60. My structural row greps for the thing it is about, and it is green. Why is that not enough?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issue **0894**, the A12 pass on
+  `tests/headless/test_op_annot.tcl` and `tests/run_regression.tcl`.
+
+**Because a grep over a block matches the PROSE about the thing as readily as
+the thing.** Two structural rows shipped in the same commit, both green, both
+satisfiable with the thing they name entirely deleted. Neither was carelessly
+written; both fell into a trap that generalises.
+
+**Trap 1 — the search window was a block, and the block talks about itself.**
+The row asserted that the new regression display arm routes through the virtual
+display helper: `regexp {devdisplay\.sh|\$dd} $LOOP` over the whole `foreach`
+body. Strip the routing out completely — so `tclsh run_regression.tcl` opens
+real xschem windows on the human's own screen — and it still answered 1, twice
+over: the liveness variable is called `$dd_alive`, and the sentence the runner
+prints when no virtual display is up contains the words
+`tests/headless/devdisplay.sh start`. A block that explains itself in comments,
+variable names and user-facing strings will satisfy almost any keyword taken
+from its subject.
+
+*The rule:* **assert about the smallest span that can carry the claim.** Here,
+the ONE line that launches the binary — `set LAUNCH` to the line matching
+`\$xschem_cmd`, then require the routing on that line. Verified 1 → 0 across the
+removal, which is the only evidence that a structural row works.
+
+**Trap 2 — the slicing helper silently returned the rest of the file.**
+`opa_proc_src` ends a proc at the next `\nproc `. `tests/run_regression.tcl`
+contains exactly ONE proc, so the "proc body" was 100 of 137 lines — everything
+to end of file, including the loop being asserted about. The row grepped that
+slice for `NODISPLAY`, matched the loop's own printed message, and could not see
+the classifier it was written to pin. **A slicing helper with no terminator in
+sight fails open, and it fails open silently.** Slice by brace matching, and
+prefer a needle only the target can carry — here the alternation
+`NOGOLD\|NODISPLAY`, which appears in the classifier and nowhere else.
+
+**The discipline both traps share, and it is the one from Q59 wearing different
+clothes: a structural row is not finished when it is green. It is finished when
+you have DELETED ITS SUBJECT and watched it go red.** Three of item A12's
+guards were run through that and two of the three failed it. The third was a
+behavioural roll-call (`V52`, "which refusals must put back what the press
+attached") that had simply never been extended when a ninth refusal state
+shipped — the same lesson from the completeness side, and the reason issue
+**0897** now asks for that list to be derived from the source rather than typed
+twice.
+
+---
+
 ## Q59. My acceptance row drives the real path and it passes. How do I know the row is not hollow?
 
 - **Asked:** 2026-08-27

@@ -76,5 +76,17 @@ Nothing new was filed for `test_ase_window` W7's flake: it is **0642**, and it g
 third dated sighting appended rather than a fourth number. See CLAUDE.md on 0689/0690
 for why that matters.
 
-**The next free number is 0877.** 0500-0599 and 0700-0799 remain reserved for other
-branches.
+**2026-08-28, the annotation driver run continued (items A10-A12).** Filed
+**0877-0893** by the later items, then **0894-0898** by item A12's write-up:
+**0894** (three of A12's own guards had no row that could see them removed — one
+of them the routing that keeps the regression runner off the user's real screen;
+fixed in the same commit), **0895** (issue 0893's truthful refusal sentence
+misses its commonest trigger — a *deleted* results file, not a corrupt one),
+**0896** (the two-window compare is skipped entirely while a run is still
+filling, and another run's numbers reach the schematic — a live RULING D5-1
+violation), **0897** (the plain-English refusal-sentence lists are
+hand-maintained with no completeness check), **0898** (T1's new display arm gives
+a wall-clock row two chances to flake on a loaded box).
+
+**The next free number is 0899.** 0500-0599 and 0700-0799 remain reserved for
+other branches.

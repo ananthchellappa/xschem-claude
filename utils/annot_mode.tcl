@@ -921,6 +921,18 @@ proc cadence::_annot_tran_cursor {} {
 ## They pass three arguments, exactly as before; row V27 re-asserts all five
 ## through the widened signature for that reason, and V17 is left untouched.
 ##
+## ⚠ `viewerunread` IS ISSUE 0893, AND IT IS A WRONG *REASON*, WHICH IS THE
+## SAME DEFECT CLASS AS A WRONG NUMBER. A reader would otherwise assume that
+## once the waveform window has told the annotation which file it is showing,
+## the only way left to fail is that no results exist -- so the failure was
+## reported as `noraw`, whose sentence is "No simulation results are loaded".
+## The user is looking at the traces drawn from that very file while being told
+## no results are loaded. It happens whenever the file the viewer named cannot
+## be re-read off disk: a simulator rewriting it in place, a truncated write, a
+## corrupt header. The refusal itself is right (nothing measured, nothing
+## painted -- RULING D5-1); only the sentence was wrong, and the user's PLAIN
+## ENGLISH ruling requires it to say what actually happened. Row V55.
+##
 ## ⚠ AN UNKNOWN STATE RAISES, and names it. `_annot_msg`'s own discipline (row
 ## N2): op_annot blanks for missing DATA (invariant I3), but a state spelling is
 ## a CALLER bug, and a caller bug that renders as a polite apology is exactly the
@@ -950,9 +962,14 @@ proc cadence::_annot_tran_msg {state t which {req {}}} {
                        than the one the waveform window is showing, so nothing was\
                        placed on the schematic. Plot the results again in the\
                        waveform window, then try again." }
+    viewerunread { return "The waveform window is showing the results file [file tail $req],\
+                       but that file could not be read again just now, so nothing was\
+                       placed on the schematic. Plot the results again in the\
+                       waveform window, then try again." }
   }
   error "cadence::_annot_tran_msg: unknown state \"$state\":\
-         use ok, okclamped, nocursor, noraw, notran, staleraw, viewerdiff or nodata"
+         use ok, okclamped, nocursor, noraw, notran, staleraw, viewerdiff,\
+         viewerunread or nodata"
 }
 
 ## THE TIME THE PAINTED NUMBER WAS ACTUALLY MEASURED AT, or {} when it cannot
@@ -1245,6 +1262,20 @@ proc cadence::_annot_tran_supply {} {
     catch {set after [xschem raw loaded]}
   }
   if {![string is integer -strict $after] || $after < 0} {
+    ## ⚠ ISSUE 0893: WHO NAMED THE FILE DECIDES WHAT THE USER IS TOLD.
+    ## A reader would otherwise assume this arm has only one meaning -- there
+    ## are no results -- because for years there was only one way to reach it.
+    ## There are now two. `$vprint` is non-empty ONLY when the viewer consult
+    ## above SUCCEEDED, i.e. the waveform window is on screen showing a
+    ## transient and this is the very file it named. Getting here then means the
+    ## file could not be read AGAIN off disk -- a simulator rewriting it in
+    ## place, a truncated write -- while the traces are still drawn. Telling
+    ## that user "No simulation results are loaded" is a wrong reason, and a
+    ## wrong reason is the same defect class as a wrong number (RULING D5-1's
+    ## neighbour, and the user's PLAIN ENGLISH ruling). The guard is the
+    ## condition, not the arm: with no viewer in play this must still say
+    ## `noraw`, which is row V37's job.
+    if {[llength $vprint]} { return [list -1 viewerunread $path] }
     return [list -1 noraw $path]
   }
 
@@ -1343,6 +1374,19 @@ proc cadence::annot_tran {} {
     if {[lindex $sup 1] eq {stale}} {
       cadence::_annot_say [cadence::_annot_tran_msg staleraw {} {} [lindex $sup 2]] warn
       return staleraw
+    }
+    ## ⚠ ISSUE 0893, AND ITS PLACE IN THE ORDER IS THE GUARD (G13's rule).
+    ## A reader would otherwise assume this test could sit anywhere among the
+    ## refusals. It cannot: `loaded` is -1 on this path too, so the `noraw`
+    ## branch immediately below would swallow it and the user would be back to
+    ## being told no results are loaded while the waveform window plots them.
+    ## It sits BELOW `stale` (an out-of-date file on disk is the older, more
+    ## specific complaint) and ABOVE `noraw`. Nothing has been attached yet --
+    ## `set attached 1` is further down -- so no unwind is owed and RULING D5-1
+    ## holds byte-for-byte: the mask is untouched and the sheet stays bare.
+    if {[lindex $sup 1] eq {viewerunread}} {
+      cadence::_annot_say [cadence::_annot_tran_msg viewerunread {} {} [lindex $sup 2]] warn
+      return viewerunread
     }
     if {![string is integer -strict $loaded] || $loaded < 0} {
       cadence::_annot_say [cadence::_annot_tran_msg noraw {} {}] warn

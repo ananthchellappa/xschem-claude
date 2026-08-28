@@ -13231,9 +13231,56 @@ check {V44 issue 0882 WITNESS a base-level mismatch that REFUSED with an empty d
 ## viewer on a real display.
 proc opa_v_viewer {rawfile script} {
   set dw [xschem get current_win_path]
-  catch {xschem new_schematic create {} $::V_A10_VSCH}
-  set vw [xschem get current_win_path]
+  ## ⚠ ISSUE 0891 -- THE STAND-IN IS BUILT ON THE VERB THE REAL VIEWER USES,
+  ## AND THAT IS THE WHOLE OF THE ISSUE. A reader would otherwise assume any
+  ## second xschem context is a faithful stand-in for the waveform window. It is
+  ## not, under Tk: `xschem new_schematic create` with `tabbed_interface` on --
+  ## the default -- makes a TAB, whose `.xN.drw` is a C-side name with no Tk
+  ## widget behind it, so `winfo exists` on it answers 0. The shipped consult
+  ## `cadence::_annot_viewer_db` asks exactly that question before it will borrow,
+  ## so against a tab the whole 0881 consult returned nothing and rows V50/V51
+  ## were green headless (no `winfo` exists, so the question is never asked) and
+  ## red on the arm the user actually has. `wviewer::open` never makes a tab: it
+  ## uses `load_new_window -window {}`, which always yields a real toplevel.
+  ## ⚠ THE EMPTY FILE ARGUMENT IS LOAD-BEARING. `load_new_window -window <file>`
+  ## with a NON-empty name takes scheduler.c's pristine-untitled reuse arm and
+  ## loads into the CURRENT window instead, so the schematic is loaded as a
+  ## separate step afterwards. Same reasoning as src/wave_viewer.tcl's own open.
+  ## ⚠ AND THE CONTEXT SWITCH IS VERIFIED, NOT ASSUMED (landmine 17): `-window`
+  ## always creates the toplevel, but the switch to it silently no-ops under a
+  ## raised semaphore -- measured in the product at 3 fresh processes in 10.
+  if {[llength [info commands ::winfo]]} {
+    set tops0 [winfo children .]
+    catch {xschem load_new_window -window {}}
+    set vw [xschem get current_win_path]
+    if {$vw eq $dw} {
+      foreach t [winfo children .] {
+        if {[lsearch -exact $tops0 $t] >= 0} continue
+        if {![winfo exists $t.drw]} continue
+        catch {xschem new_schematic switch $t.drw}
+        if {[xschem get current_win_path] eq "$t.drw"} { set vw $t.drw ; break }
+      }
+    }
+    if {$vw ne $dw} {
+      catch {xschem load $::V_A10_VSCH}
+      catch {xschem set readonly 1}
+    }
+  } else {
+    ## Headless there is no Tk at all, so there is no toplevel to make and no
+    ## `winfo` to ask about it; the tab IS the whole window model. Both arms set
+    ## the same two globals below, so the shape under test is identical.
+    catch {xschem new_schematic create {} $::V_A10_VSCH}
+    set vw [xschem get current_win_path]
+  }
+  ## ⚠ TWO KEYS, BECAUSE THE PRODUCT'S REGISTRY HAS TWO. src/wave_viewer.tcl
+  ## records `{top .xN win_path .xN.drw}`: `wviewer::window_for` answers the TOP
+  ## (and `winfo exists`-checks it), while `wviewer::enter_ctx` switches to the
+  ## WIN_PATH. A stub that conflates them cannot see issue 0891's defect, which
+  ## is how it survived. Row V54 asserts this split as source text, in both arms.
+  ## `string range ... end-4` rather than a regsub, because a regsub of `.drw$`
+  ## maps the design window `.drw` to the empty string instead of `.`.
   set ::opa_v_vw_path $vw
+  set ::opa_v_vw_top [expr {$vw eq {.drw} ? {.} : [string range $vw 0 end-4]}]
   set ok 0
   if {$vw ne $dw} {
     catch {set ok [xschem raw read $rawfile tran]}
@@ -13257,7 +13304,7 @@ proc opa_v_viewer {rawfile script} {
   proc ::ase::session_for_current {} { return [list zzA10vw 0 zzlib zzcell schematic] }
   proc ::ase::last_rawfile {key} { return {} }
   proc ::ase::results_stale {key} { return 0 }
-  proc ::wviewer::window_for {key} { return $::opa_v_vw_path }
+  proc ::wviewer::window_for {key} { return $::opa_v_vw_top }
   proc ::wviewer::enter_ctx {key {borrow 0}} {
     set prev [xschem get current_win_path]
     if {$prev eq $::opa_v_vw_path} { return [list 1 {}] }
@@ -13623,10 +13670,19 @@ proc opa_v_hasunwind {body state} {
 # armed by hand; the unwind must take both back, and must do NOTHING at all
 # when told this press attached nothing -- a press that found a database
 # already loaded must never detach the user's own results on its way out.
-# ⚠ LEGS 3-8 SAY WHICH ARMS OWE ONE AND WHICH MUST NOT HAVE ONE. `nocursor`,
-# `noraw` and the out-of-date-results refusal all return BEFORE anything has
-# been attached, so an unwind there would be a detach of somebody else's
-# database. The three that return after the supply has attached one all owe it.
+# ⚠ LEGS 3-9 SAY WHICH ARMS OWE ONE AND WHICH MUST NOT HAVE ONE. `nocursor`,
+# `noraw`, the out-of-date-results refusal and the unreadable-viewer-file
+# refusal all return BEFORE anything has been attached, so an unwind there
+# would be a detach of somebody else's database. The three that return after
+# the supply has attached one all owe it.
+# ⚠ THE ROLL-CALL IS ONLY AS GOOD AS ITS COMPLETENESS, AND ISSUE 0894 IS WHERE
+# IT WAS NOT COMPLETE. `viewerunread` (issue 0893) shipped as the ninth refusal
+# with no entry here, and a sabotage that gave that arm an unwind it must not
+# have -- the shape that, on any later edit moving the arm below `set attached
+# 1`, would strip the numbers the user already had off their schematic as part
+# of a refusal -- left every check in the tree green in BOTH arms. Every state
+# `cadence::annot_tran` can return is now named: ok, nocursor, nodata, noraw,
+# notran, staleraw, viewerdiff, viewerunread.
 catch {xschem raw clear}
 xschem load [file join $lib v_cand.sch]
 opa_l_annot 0
@@ -13652,10 +13708,229 @@ check {V52 a refusal PUTS BACK what the press attached, does nothing when the pr
         [opa_v_hasunwind $V_A10_TRN2 viewerdiff] \
         [opa_v_hasunwind $V_A10_TRN2 nocursor] \
         [opa_v_hasunwind $V_A10_TRN2 noraw] \
-        [opa_v_hasunwind $V_A10_TRN2 staleraw]] \
+        [opa_v_hasunwind $V_A10_TRN2 staleraw] \
+        [opa_v_hasunwind $V_A10_TRN2 viewerunread]] \
   [list {{0 0} 6} {0 1} {{0 -1} 2} \
         {0 0} {{0 0} 6} \
-        1 1 1 0 0 0]
+        1 1 1 0 0 0 0]
+
+# ===========================================================================
+# V53 — THE STAND-IN IS A REAL, LIVE Tk TOPLEVEL, WHICH IS WHAT THE PRODUCT
+#       CONSULTS  (issue 0891)
+# ===========================================================================
+# ⚠ THIS IS THE ROW ISSUE 0891 SHOWS THE TREE NEVER HAD, and it is the one that
+# reds the instant the waveform stand-in goes back to being a TAB. The shipped
+# consult asks two questions of the viewer that only a display can answer --
+# `wviewer::window_for` hands back the registry's TOPLEVEL, and
+# `cadence::_annot_viewer_db` then asks `winfo exists` of it before it will
+# borrow. Under --nogui neither question is even reachable, so V50 and V51 were
+# green on the arm nobody uses and red on the arm the user has.
+# ⚠ FIVE CLAIMS, and the middle three are the whole point: the viewer's window
+# answer is not empty; it is NOT the drawing canvas but the toplevel above it;
+# that toplevel really exists as a Tk widget; it is its own toplevel; and the
+# shipped consult, asked directly, comes back with the file the WAVEFORM WINDOW
+# is showing rather than nothing at all.
+if {![info exists has_x]} {
+  puts "skip: V53 needs a display - winfo does not exist under --nogui, so the Tk liveness probe in cadence::_annot_viewer_db, which is the thing under test, is never reached"
+} else {
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+set ::v53 {}
+opa_v_viewer $V_A10_VRUN {
+  set v53t {}
+  catch {set v53t [::wviewer::window_for zzA10vw]}
+  set v53a [expr {$v53t ne {} ? 1 : 0}]
+  set v53b [expr {$v53t ne $::opa_v_vw_path ? 1 : 0}]
+  set v53c 0
+  catch {if {[winfo exists $v53t]} { set v53c 1 }}
+  set v53d 0
+  catch {if {[winfo toplevel $v53t] eq $v53t} { set v53d 1 }}
+  set v53db {}
+  catch {set v53db [cadence::_annot_viewer_db]}
+  set v53e [expr {[llength $v53db] == 2 && [lindex $v53db 0] eq $::V_A10_VRUN ? 1 : 0}]
+  set ::v53 [list $v53a $v53b $v53c $v53d $v53e]
+}
+opa_l_annot 0
+catch {xschem raw clear}
+check {V53 issue 0891 the waveform window the annotation borrows into is a real live Tk toplevel, not the drawing canvas of a tab, and the shipped consult finds the file it is showing} \
+  $::v53 [list 1 1 1 1 1]
+}
+
+## The CODE lines of <src>, whole-line Tcl comments dropped, so a paragraph
+## quoting a call is never read as the call. Section A11 has the same tool, but
+## it is defined 200 lines further down and section V runs first -- the same
+## ordering trap that made the first run of these rows raise instead of red.
+proc opa_v_code {src} {
+  set out {}
+  foreach l [split $src \n] {
+    if {[regexp {^\s*#} $l]} continue
+    lappend out $l
+  }
+  return [join $out \n]
+}
+
+# ===========================================================================
+# V54 — STRUCTURAL: THE FIXTURE MODELS THE WINDOW THE PRODUCT ACTUALLY BUILDS
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW, DELETING V53's SUBJECT REDS NOTHING WHERE ANYONE LOOKS.
+# V53 can only run on a display, and the everyday runner is headless -- that
+# combination IS issue 0891. So the shape of the stand-in is asserted as source
+# text too, in BOTH arms: the fixture must stand its waveform window up on the
+# same verb the shipped viewer uses, and must hand back the same registry field
+# the shipped `wviewer::window_for` hands back.
+# ⚠ THE FIRST THREE LEGS ARE THE PRODUCT'S OWN CONTRACT, read from
+# src/wave_viewer.tcl -- window_for answers the TOPLEVEL and checks it is alive,
+# while enter_ctx switches to the WIN_PATH. A fixture that conflates the two is
+# a fixture that cannot see the defect, which is exactly what happened.
+set V54_WV   [opa_v_code [opa_slurp [file join $repo src wave_viewer.tcl]]]
+set V54_SELF [opa_v_code [opa_slurp [file join $repo tests headless test_op_annot.tcl]]]
+set V54_WFOR [opa_proc_src $V54_WV wviewer::window_for]
+set V54_ENT  [opa_proc_src $V54_WV wviewer::enter_ctx]
+set V54_FIX  [opa_proc_src $V54_SELF opa_v_viewer]
+check {V54 issue 0891 STRUCTURAL the waveform stand-in is built on the verb the real viewer uses and answers the registry field the real viewer answers} \
+  [list [regexp {dict get \$windows \$token top}      $V54_WFOR] \
+        [regexp {winfo exists}                        $V54_WFOR] \
+        [regexp {dict get \$windows \$token win_path} $V54_ENT] \
+        [regexp {\$::opa_v_vw_top}                    $V54_FIX] \
+        [regexp {load_new_window\s+-window}           $V54_FIX]] \
+  [list 1 1 1 1 1]
+
+# ===========================================================================
+# V55 — ISSUE 0893: THE REFUSAL MUST NOT BLAME A MISSING RESULTS FILE WHILE
+#       THE WAVEFORM WINDOW IS PLOTTING IT
+# ===========================================================================
+# ⚠ THE USER IS LOOKING AT THE TRACES. The waveform window holds a transient in
+# memory and the annotation goes to read that same file off disk again -- and
+# cannot, because the simulator is rewriting it or it is truncated. Today the
+# user is told "No simulation results are loaded, so there are no voltages to
+# show. Run a simulation first, then try again." with the results plainly on
+# screen. The refusal is right; the reason is wrong, and a wrong reason is the
+# same defect class as a wrong number.
+# ⚠ SIX CLAIMS, the same six V51 makes, because this is V51's sibling: the
+# state is its own named refusal and NOT the no-results one; the CIW got the
+# sentence once, tagged as a warning; the held status line carries it and names
+# the file the WAVEFORM WINDOW is showing; nothing is attached afterwards; the
+# user's mask is untouched; the sheet is bare.
+set V_MSG_VUNREAD "The waveform window is showing the results file [file tail $V_A10_VRUN], but that file could not be read again just now, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again."
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA10SENTINEL}
+set v55 [opa_v_spy {
+  opa_v_viewer $V_A10_VRUN {
+    ## the file goes unreadable under the viewer -- the simulator is rewriting
+    ## it, or it was truncated -- while the traces stay on screen
+    file copy -force [file join $::V_ND_JUNK v_cand.raw] $::V_A10_VRUN
+    set ::v55_state [opa_v_tran]
+  }
+}]
+set v55_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v55_ld    [rcall {xschem raw loaded}]
+set v55_mask  [xschem get annot_show]
+set v55_paint [opa_v_paint a10_vunread]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V55 issue 0893 the results file the waveform window is showing cannot be read again, so the refusal says THAT and not that no results are loaded} \
+  [list $::v55_state $v55 $v55_msg $v55_ld $v55_mask $v55_paint] \
+  [list viewerunread [list [list warn $V_MSG_VUNREAD]] $V_MSG_VUNREAD {0 -1} 0 $V_PINS_NONE]
+
+# ===========================================================================
+# V56 — STRUCTURAL: THE Tk LIVENESS PROBE IN THE CONSULT
+# ===========================================================================
+# ⚠ NO BEHAVIOURAL ROW IN THE TREE CAN SEE THIS GUARD, measured. A second guard
+# covers the same case from the other side -- `wviewer::enter_ctx` refuses an
+# unregistered token on its own -- so deleting the liveness probe leaves every
+# behavioural row green. Per this branch's own lesson, a guard no behavioural
+# row can see gets a STRUCTURAL row rather than nothing.
+# ⚠ AND IT IS THE STATEMENT ISSUE 0891 TURNS ON. It asks a legitimate question
+# of a legitimate value; the answer for a dead viewer must be to decline the
+# borrow and hand back nothing, never to borrow into a window that is not there.
+set V56_DB [opa_v_code [opa_proc_src [opa_slurp [file join $repo utils annot_mode.tcl]] cadence::_annot_viewer_db]]
+check {V56 issue 0891 STRUCTURAL the consult asks whether the waveform window is still alive before it borrows, and declines when it is not} \
+  [list [regexp {info commands ::winfo} $V56_DB] \
+        [regexp {winfo exists \$top}    $V56_DB] \
+        [regexp {!\$live[^\n]*return}   $V56_DB]] \
+  [list 1 1 1]
+
+# ===========================================================================
+# V57 — STRUCTURAL: A DISPLAY ARM OF THIS SUITE IS REACHABLE FROM THE RUNNER
+# ===========================================================================
+# ⚠ THIS ROW IS THE HALF OF ISSUE 0891 THAT IS ABOUT THE HARNESS, NOT THE
+# FEATURE. The red lived for a whole feature because tests/run_regression.tcl
+# hard-codes --nogui for every headless case, so the arm the user actually has
+# was never run by the everyday runner at all. Restoring the arm and then
+# leaving nothing to notice its removal would set the trap again, so the claim
+# that the arm EXISTS is asserted here, in the suite, in both arms.
+# ⚠ SIX LEGS: the suite is still in the headless list; it is ALSO in a second,
+# display list; that list is driven by a loop; the loop's LAUNCH LINE routes
+# through the persistent dev display helper rather than a bare screen; the loop
+# does not pass --nogui, which would silently make it a duplicate of the
+# headless arm; and the summary CLASSIFIER surfaces an unavailable display
+# instead of scoring it green.
+# ⚠ TWO OF THOSE LEGS WERE DEAD ON ARRIVAL, WHICH IS ISSUE 0894, AND HOW THEY
+# DIED IS WORTH THE NEXT READER'S TIME BECAUSE BOTH TRAPS ARE GENERIC.
+#   * The routing leg used to grep the WHOLE loop for `devdisplay.sh|$dd`.
+#     Measured: strip the routing out entirely -- so the everyday runner opens a
+#     real xschem window on whatever screen it was started from, on this box the
+#     human's own -- and the leg still answered 1, twice over: the liveness
+#     variable is named `$dd_alive`, and the sentence the runner prints when no
+#     dev display is up literally contains the words `devdisplay.sh start`. A
+#     grep over a whole block matches the PROSE about the thing as readily as
+#     the thing. So the leg now isolates the one line that launches the binary
+#     and demands the routing be on THAT line.
+#   * The classifier leg used to grep `opa_proc_src`'s slice of `summarize_all`
+#     for `NODISPLAY`. But run_regression.tcl contains exactly ONE proc, and
+#     opa_proc_src ends a proc at the next `\nproc ` -- so the slice ran to end
+#     of file and swallowed the display loop, whose own printed message says
+#     NODISPLAY. Revert the classifier and the leg still answered 1. The slice
+#     is now taken by brace matching, and the leg asserts the ALTERNATION that
+#     only the classifier line carries.
+proc opa_v_block {src re {op "\{"} {cl "\}"}} {
+  set lines [split $src \n]
+  set n [llength $lines]
+  set start -1
+  for {set i 0} {$i < $n} {incr i} {
+    if {[regexp -- $re [lindex $lines $i]]} { set start $i ; break }
+  }
+  if {$start < 0} { return {} }
+  set depth 0 ; set seen 0 ; set out {}
+  for {set i $start} {$i < $n} {incr i} {
+    set l [lindex $lines $i]
+    lappend out $l
+    foreach ch [split $l {}] {
+      if {$ch eq $op} { incr depth ; set seen 1 } elseif {$ch eq $cl} { incr depth -1 }
+    }
+    if {$seen && $depth <= 0} { break }
+  }
+  return [join $out \n]
+}
+set V57_RR   [opa_v_code [opa_slurp [file join $repo tests run_regression.tcl]]]
+set V57_LOOP [opa_v_block $V57_RR {foreach\s+\w+\s+\$dcases}]
+set V57_SUM  [opa_v_block $V57_RR {proc\s+summarize_all}]
+## The ONE line in the loop that starts the binary. Issue 0894: a routing claim
+## has to be made about the launch, not about the block the launch sits in.
+set V57_LAUNCH {}
+foreach _l57 [split $V57_LOOP \n] {
+  if {[regexp -- {\$xschem_cmd} $_l57]} { set V57_LAUNCH $_l57 }
+}
+check {V57 issue 0891 STRUCTURAL the everyday regression runner also runs this suite on the persistent dev display, and says so when that display is not there} \
+  [list [regexp {headless/test_op_annot} [opa_v_block $V57_RR {set\s+hcases} "\[" "\]"]] \
+        [regexp {set\s+dcases[^\n]*headless/test_op_annot} $V57_RR] \
+        [expr {$V57_LOOP ne {} ? 1 : 0}] \
+        [expr {$V57_LAUNCH ne {} && [regexp {(devdisplay\.sh|\$dd)\s+exec} $V57_LAUNCH] ? 1 : 0}] \
+        [expr {$V57_LOOP ne {} && ![regexp -- {--nogui} $V57_LOOP] ? 1 : 0}] \
+        [regexp {NOGOLD\|NODISPLAY} $V57_SUM]] \
+  [list 1 1 1 1 1 1]
 
 set ::netlist_dir $v33_nd
 catch {xschem raw clear}
@@ -13769,7 +14044,8 @@ proc opa_a11_sentences {} {
   foreach a [list [list ok 1e-09 A {}] [list okclamped 4e-09 B 4.5e-09] \
                   [list nocursor {} {} {}] [list noraw {} {} {}] \
                   [list notran {} {} {}] [list nodata 3e-09 B {}] \
-                  [list staleraw {} {} $p] [list viewerdiff {} {} $p]] {
+                  [list staleraw {} {} $p] [list viewerdiff {} {} $p] \
+                  [list viewerunread {} {} $p]] {
     set r [rcall [concat [list cadence::_annot_tran_msg] $a]]
     if {[lindex $r 0] != 0} {
       lappend out "RAISED:[lindex $r 1]"
@@ -13952,7 +14228,7 @@ set A11_BANNED [list {*NO RAW*} {*database*} {*sim_type*} {* raw *} {*raw file*}
                      {*_*} {*=*} {*::*} {*xschem *} {*OP *} \
                      {*noop*} {*nopath*} {*noraw*} {*notop*} {*notran*} \
                      {*nocursor*} {*staleraw*} {*viewerdiff*} {*okclamped*} \
-                     {*nodata*}]
+                     {*nodata*} {*viewerunread*}]
 proc opa_a11_jargon {s} {
   set hits {}
   foreach p $::A11_BANNED { if {[string match $p $s]} { lappend hits $p } }
@@ -14152,7 +14428,7 @@ foreach _a11st {noop noraw nopath stale} {
   foreach _a11r $A11_REMEDIES { if {[string match "*$_a11r*" $_a11m]} { set _a11ok 1 } }
   if {!$_a11ok} { lappend a11_mute [list press-6 $_a11st $_a11m] }
 }
-foreach _a11st {nocursor noraw notran staleraw viewerdiff} {
+foreach _a11st {nocursor noraw notran staleraw viewerdiff viewerunread} {
   set _a11m [lindex [rcall [list cadence::_annot_tran_msg $_a11st 1e-09 A $a11_gp]] 1]
   set _a11ok 0
   foreach _a11r $A11_REMEDIES { if {[string match "*$_a11r*" $_a11m]} { set _a11ok 1 } }

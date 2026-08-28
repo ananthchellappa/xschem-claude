@@ -56,6 +56,24 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_op_annot" \
                  "headless/test_backannotate_digital" \
                  "headless/test_results_freshness"]
+# ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
+# USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
+#
+# A reader would otherwise assume the hcases loop above covers these suites. It
+# does not: it hard-codes --nogui, where there is no Tk at all, so every product
+# guard of the form "is the waveform window still alive" is unreachable and every
+# row that depends on one passes for the wrong reason. Measured: test_op_annot
+# was "RESULT: ALL PASS (447 checks)" headless and "RESULT: 2 FAILED" on the dev
+# display, on the same binary, for a whole feature -- and the two red rows were
+# the acceptance rows of the issue that feature closed. A suite whose subject is
+# a WINDOW gets a second run where windows exist.
+#
+# These run on the PERSISTENT DEV DISPLAY (tests/headless/devdisplay.sh, :99,
+# Xvfb + a window manager), never on the invoking $DISPLAY -- that is the human's
+# real screen and flooding it is the thing devdisplay.sh exists to stop.
+# devdisplay.sh's own `exec` sets GUI_GATE=0 for the child only, so the user's
+# Pause/Stop panel is left alone.
+set dcases [list "headless/test_op_annot"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {
@@ -67,10 +85,15 @@ proc summarize_all {fn fd} {
       if { [regexp {FAIL$} $line] || [regexp {GOLD\?$} $line] || [regexp {RESULT\?$} $line] || [regexp {^FATAL} $line]} {
         puts $fd $line
         incr num_fail
-      } elseif { [regexp {^NOGOLD} $line] } {
+      } elseif { [regexp {^(NOGOLD|NODISPLAY)} $line] } {
         # Surface "this case verified NOTHING" in the summary without counting it
         # as a regression (issue 0147). Without this, a case with no baseline
         # reports a bare "Total num fail: 0" and reads exactly like a pass.
+        #
+        # NODISPLAY is issue 0891's own instance of the same rule: a box with no
+        # dev display cannot run the display arm, and turning that into a red
+        # would make every headless CI box fail. Turning it into SILENCE is what
+        # 0891 actually was, so it is printed, loudly, and not counted.
         puts $fd $line
       }
     }
@@ -147,6 +170,47 @@ foreach tc $tcases {
     }
     summarize_all ${hc}.log $fd
     puts "Finish ${hc}.tcl (headless)"
+  }
+  # ISSUE 0891 -- THE DISPLAY ARM. Same three-condition verdict as the headless
+  # loop above and the same banner rule out of banner_rule.tcl (never a private
+  # predicate: test_audit_classifier.tcl section K locks the three readers
+  # together). The ONE difference is the arm: no --nogui, and the child is
+  # launched through devdisplay.sh so it lands on :99 and not on the human's
+  # screen. Row V57 of tests/headless/test_op_annot.tcl asserts that this loop
+  # exists, routes through devdisplay.sh and does NOT pass --nogui -- because a
+  # restored arm that nothing notices the removal of is the trap 0891 already
+  # sprang once.
+  set dd [file join headless devdisplay.sh]
+  catch {exec $dd start 2>@1}
+  set dd_st {}
+  catch {exec $dd status 2>@1} dd_st
+  set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
+  foreach dc $dcases {
+    puts "Start ${dc}.tcl (display arm)"
+    file delete -force ${dc}.disp.log
+    if {!$dd_alive} {
+      puts $fd "${dc}.disp.log"
+      puts $fd "NODISPLAY: ${dc} display arm NOT RUN -- the persistent dev display is not up, so THIS ARM VERIFIED NOTHING. Start it with tests/headless/devdisplay.sh start and run again."
+      puts $fd "Total num fail: 0"
+      puts "NODISPLAY: ${dc} display arm NOT RUN -- this arm verified NOTHING"
+      continue
+    }
+    set childcode 0
+    if {[catch {exec $dd exec $xschem_cmd --pipe -q --script ${dc}.tcl > ${dc}.disp.log 2>@1} msg opt]} {
+      set ec [dict get $opt -errorcode]
+      set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
+    }
+    set body ""
+    if {![catch {open ${dc}.disp.log r} rf]} { set body [read $rf]; close $rf }
+    set sentinel [banner_complete $body]
+    set died     [banner_died $body]
+    if {[regression_case_failed $childcode $body]} {
+      set af [open ${dc}.disp.log a]
+      puts $af "HARNESS: ${dc} (display arm) did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- crashed, aborted mid-script, or a check failed: FAIL"
+      close $af
+    }
+    summarize_all ${dc}.disp.log $fd
+    puts "Finish ${dc}.tcl (display arm)"
   }
   # xschemtest.tcl: the broad functional/perf harness. GUARDED (issue 0147) --
   # it used to run AFTER results.log was closed and with no catch, so any failure

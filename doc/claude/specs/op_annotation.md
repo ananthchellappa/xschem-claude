@@ -2237,6 +2237,7 @@ were deliberately left asserting it. Every time reaches the user through
 | `notran` | the results are attached and they are not a transient. **The supply's attach is UNDONE before this returns** — see the unwind below | *These results are not from a transient run, so there is no time axis to read a voltage at. Run a transient simulation to use this.* |
 | `staleraw` | 🆕 the candidate is OLDER than the circuit it describes (ruling 0838, inherited from `cadence::_annot_raw_candidate`). Nothing is attached, nothing is published, and **the sentence names the file** | *The results file run.raw is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again, then try again.* |
 | `viewerdiff` | 🆕 the file on disk and the copy the waveform viewer is holding are **different simulation runs** (RULING D5-1). The attach is undone, nothing is published, and the sentence tells the user to plot the results again | *The results file run.raw on disk is from a different simulation run than the one the waveform window is showing, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again.* |
+| `viewerunread` | 🆕 issue 0893 — the waveform window **named its own results file** (the 0881 consult succeeded) but that file could not be read again off disk: a simulator rewriting it in place, a truncated write, a corrupt header. Nothing is attached, nothing is published. Before this state the user was told `noraw`'s *"No simulation results are loaded"* **while the traces from that file were on screen** — a wrong reason, which is the same defect class as a wrong number | *The waveform window is showing the results file run.raw, but that file could not be read again just now, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again.* |
 | `nodata` | the engine had nothing to resolve against — **⚠ UNREACHABLE, issue 0871**: `xschem raw loaded` IS `sch_waves_loaded()`, the same predicate `backannotate_at_time()` gates on, so the `noraw` arm above has already returned. Three refusal states are reachable, not four | *The results have no values at 3 ns, so nothing was placed on the schematic.* |
 
 #### The OTHER mint: what the three `6` chords say (`cadence::_annot_msg`)
@@ -2335,8 +2336,14 @@ table above is the finished article.
 | **0888** | the mask clause says *"Showing … on the schematic"* in all 35 mask × refusal-state combinations, where nothing was placed on the schematic. The clause used to be a **mode** claim and was true; it is now a **screen** claim and is not. `_annot_msg`'s own `notop` guard argues exactly this and was applied to one state only. The remedy is a user ruling, not a code choice. |
 | **0889** | `These symbol types … : nmos.` is plural with one item; `_annot_tsec -0.0` renders `-0 s`. |
 | **0890** | `ase::ui::annot_fail_msg` splices the engine's own error text into a user-facing sentence through `$e`. Latent — `xschem annotate_op` was measured not to raise at all. |
-| **0891** | 0881's V50/V51 are green headless and **red with a live display**. Not this pass — the wording in the failure output matches; the state and the attached file diverge. |
+| ~~**0891**~~ | ✅ **FIXED 2026-08-28 (A12).** 0881's V50/V51 are green headless and **red with a live display**. Not this pass — the wording in the failure output matches; the state and the attached file diverge. |
 | **0892** | five rows compare the **fitted** status line to the **untrimmed** sentence, four with an absolute path in it. N9's margin is 35 bytes, N10b's is 33. Row N15 in the same file already shows the right shape. |
+| ~~**0893**~~ | ✅ **FIXED 2026-08-28 (A12).** The refusal said *"No simulation results are loaded"* while the waveform window was plotting the very file it had just named. New state `viewerunread`, its own minted sentence, row **V55** in both arms. **⚠ Its guard misses two reachable cases — see 0895 and 0896.** |
+| ~~**0894**~~ | ✅ **FIXED 2026-08-28 (A12), tests only.** Three of A12's own guards had no row that could see them go: the display arm could stop routing to the virtual display and open xschem on the **user's real screen** with V57 still green; the runner could go back to swallowing "this arm verified nothing"; and the new refusal could be given an unwind that tears down the user's own annotations, with V52 still green. Each removal now reddens exactly one row. |
+| **0895** | 🔴 **NEW.** 0893's truthful sentence misses its **commonest** trigger. Most simulators unlink and re-create rather than rewrite in place, so the viewer's file is **absent**, not corrupt — `_annot_viewer_db` returns `{}` on `![file exists]` before `$vprint` is set, and the user gets *"No simulation results are loaded"* with the traces on screen. Measured on both arms. |
+| **0896** | 🔴 **NEW, and it is a live RULING D5-1 violation.** A run the user is **watching fill** has `No. Points: 0`, so the fingerprint is empty while the consult succeeds — the two-window compare is gated on that fingerprint and **does not run**. The completed run written over the same path lands on the schematic under the "Showing each node's voltage at ..." caption. Measured on both arms: `state=ok`, `mask=4`, another run's numbers painted, no warning. Same root conflation as 0895. |
+| **0897** | 🔴 **NEW.** The two hand-maintained enumerations that hold a refusal sentence to the user's PLAIN ENGLISH ruling have no completeness check. Remove `viewerunread` from either and the tree stays `ALL PASS (451 checks)` — the count does not even move. |
+| **0898** | 🔴 **NEW, low.** T1 now runs `test_op_annot` twice (issue 0891's arm), so its 3000 ms wall-clock row **W33** has two chances to flake on a loaded box — measured at 5010 ms under concurrent agents, 1089 ms alone. |
 
 **⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH** (rows V14/V15/V16). Arming
 first would leave the user looking at an armed mode over the PREVIOUS request's
@@ -2397,6 +2404,20 @@ asymmetry, and runs **only** on the `loaded < 0` arm:
    column's value at the **last** point — a **sample, not a proof**; a re-run
    differing only mid-sweep passes it. Filed as **0885**, with both honest
    closures costed.
+   ⚠⚠ **AND IT IS SKIPPED ENTIRELY WHEN THE FINGERPRINT CANNOT BE COMPUTED —
+   issue 0896, measured on both arms and still OPEN.** A run the user is
+   watching fill has `No. Points: 0`, so `cadence::_annot_db_print` answers
+   `{}` while the consult itself succeeds. The compare is gated on
+   `[llength $vprint]`, so it does not run, and the completed run written over
+   that path lands on the schematic under the "Showing each node's voltage
+   at ..." caption while the waveform window still shows the partial one. Issue
+   0836 calls the zero-point read the ordinary case, not a corner. The root
+   fault is that `$vprint` is standing in for *"the consult succeeded"* and
+   cannot: it is also empty when the viewer's file was **deleted** (issue
+   **0895**, which is why issue 0893's truthful sentence misses its own
+   commonest trigger). One repair covers 0893, 0895 and 0896 — have
+   `cadence::_annot_viewer_db` report success as its own answer, separate from
+   the path and the fingerprint.
 
 **⚠ THE SUPPLY IS BELOW THE CURSOR RESOLVE, AND THAT IS A GUARD.** Hoisting it
 would make a key press that REFUSES (*"no cursor is on anywhere"*) attach a
