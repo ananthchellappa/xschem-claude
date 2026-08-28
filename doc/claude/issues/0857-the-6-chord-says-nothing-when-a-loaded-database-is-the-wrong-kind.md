@@ -1,7 +1,9 @@
 # 0857 - the `6` chord says nothing when the loaded database is the WRONG KIND, and its advisory is on the status bar, not the CIW
 
-**Status:** OPEN, source-confirmed, not fixed. Filed 2026-08-26 from a user
-report on `tb_bandgap`. Sibling of
+**Status:** **PARTLY FIXED** 2026-08-27 by item A10 — the WRONG-KIND half, which
+is the half the user ruled on. **The originally reported case is still open**: see
+"What landed" at the foot of this file for exactly which half is which. Filed
+2026-08-26 from a user report on `tb_bandgap`. Sibling of
 [0856](0856-annotate-op-shows-a-transient-s-t-0-as-the-operating-point-silently.md),
 which is the same day's other half: 0856 is the wrong NUMBER, this is the
 missing EXPLANATION.
@@ -122,3 +124,118 @@ together, or answer this one in a way that does not prejudge that one.
 5. No CIW line is emitted when `has_x` is 0 — this is a chord, and headless
    suites press it.
 6. Sabotage: force `sim_type` to `op` on a transient and confirm row 1 reds.
+
+
+---
+
+# What landed (item A10, 2026-08-27) — and what did NOT
+
+## The user's ruling this answers, verbatim
+
+> "Yes, 6 does nothing when there is ONLY a TRAN result. But, it's a good idea to
+> say 'No OP results available' in the CIW."
+
+That retires the collision between this issue and ruling 0856. 0856 said *"it
+should do nothing silently"*; the user has now said the "do nothing" keeps
+standing for the **screen** — nothing published, no bit armed, no number painted —
+and stops standing for the **user**, who was left holding a key that looked broken.
+
+## Measured before the change: the OP chords had no CIW route at all
+
+All five `cadence::_annot_ciw` call sites in the shipped product were inside
+`cadence::annot_tran`. `cadence::annot_mode` — the body behind `6`, `Alt-6` and
+`Ctrl-6` — had one `xschem statusmsg -hold` at its very end, and **both** silent
+refusals returned before reaching it. So this was not "route the existing line
+through the emitter"; the wiring did not exist. It does now, at both refusals, and
+they are the emitter's first call sites outside `annot_tran`.
+
+## What speaks now
+
+Both of `cadence::annot_mode`'s silent returns:
+
+* the `$mask != 0 && ![_annot_op_db_ok]` refusal at the top — a database is
+  attached and it is not an operating point;
+* the issue 0872 unwind — nothing was attached, the chord went and found the run's
+  `.raw`, it turned out to be a transient, and everything was put back. The
+  analysis type is read **before** `xschem raw clear`, because afterwards the
+  accessor raises and the sentence could only be the typeless shape.
+
+Both render one new state of `cadence::_annot_msg` — `notop`, minted in two shapes
+from ONE arm (RULING D5-4), the analysis type named when the database can say what
+it is and left out when it cannot:
+
+    No operating point results available -- the results loaded here are a 'tran'
+    analysis, not an operating point. Run an operating point analysis, or press
+    Alt-Shift-6 to annotate transient node voltages at the waveform cursor.
+
+It carries **no** `OP annotation ON/OFF (...)` prefix, unlike every other sentence
+this proc mints: on both paths the mask is never written or is written and put
+straight back, so a prefix would make a claim about a screen that did not change.
+
+Both sinks — the CIW **and** the held status line. The user's words were "say
+something in the CIW", and that is where an ASE-L user looks; the three OP chords
+have always spoken on the held status line, and a plain xschem user with no ASE-L
+window open would never see a CIW-only sentence. **Unratified** — `owed.sh` rule
+debt 0857 covers this and the wording.
+
+`Ctrl-6` is still exempt and still says only `OP annotation OFF`, with nothing
+added to the CIW: clearing can never put a number on a sheet, and a chord people
+press repeatedly must not write a line every press. That is the 0636 chattiness
+question left un-prejudged.
+
+## What did NOT land: the case the user originally reported
+
+The `tb_bandgap` report — a **proper OP database** loaded and annotated, every
+device row blank because nothing on the sheet has an OP descriptor — goes down
+`_annot_op_db_ok` = 1, takes no refusal, and reaches the routine `live` / `noop`
+sentence on the status line with **nothing in the CIW**. Gap 2 of this issue
+("the advisory is on the status bar, not the CIW") is untouched, and so is the
+`live`-state wording. That work is still owed.
+
+## Acceptance list, re-scored
+
+1. **Met** for the transient case — `6` names the analysis it actually has and the
+   remedy. Rows **V40** (a transient already attached) and **V41** (the post-run
+   desktop where the chord finds the file itself).
+2. **Met.** Row **V31d**: an operating point at the same candidate path still
+   loads, still arms, still paints and still says
+   `OP annotation ON (node voltages) -- loaded <file>` and nothing more.
+3. **Met.** `Alt-6` renders the same one `notop` sentence, not a device-OP-specific
+   line — there is one arm, not two.
+4. **Met.** Every section-N golden is byte-unchanged; the new state returns before
+   the mask switch those rows exercise.
+5. **SUPERSEDED, deliberately.** This item said "no CIW line when `has_x` is 0".
+   `cadence::_annot_ciw` is built the opposite way on purpose — its last sink
+   always works, because a catch-and-discard would go silent exactly where this
+   issue says silence is the defect (row V30 pins that). Headless rows therefore
+   see the line, which is what makes rows V40/V41 possible at all. Issue **0873**
+   records that muting this channel once left every check in the file green; the
+   experiment was re-run after this change and now reds **V28, V29, V30, V40 and
+   V41**.
+6. **Met.** Muting either refusal's emit pair reds V40 or V41 respectively;
+   dropping the `$mask != 0` term reds V31 leg 2 and V40 leg 3.
+
+
+---
+
+# Repair note (item A10, second pass, 2026-08-27)
+
+A sabotage pass found that the ruling's own words — *"it's a good idea to say
+'No OP results available' in the CIW"* — were only half delivered at the newest
+refusal. Item A10 added a FOURTH way for the transient annotation to decline
+(the results file is older than the circuit it describes), and it does speak in
+the CIW — but **deleting that CIW call left every check in the tree green**.
+Only its held status line was pinned. Row **V29** enumerates the three refusals
+that existed before that item and was never extended.
+
+Closed by row **V49** of `tests/headless/test_op_annot.tcl`, which is V29 applied
+to the fourth state: the sentence must reach the CIW tagged `warn` AND the held
+status line. Muting the CIW call alone now reds it.
+
+A FIFTH refusal arrived with the same repair — the results file on disk is a
+different simulation run from the one the waveform viewer is showing — and its
+CIW half is pinned by row **V51**, which asserts the spy output and the status
+line together for exactly this reason.
+
+Both new sentences are plain English per the user's 2026-08-27 ruling: they say
+what happened and what the user can do about it, and name the file.

@@ -734,10 +734,24 @@ catch {xschem raw clear}
 # item is called done.
 #
 #   B11   the submenu carries THREE entries      <- red before (measured: two)
-#   B12f  FIXTURE: a viewer is open, its cursor A is on at a time of its own,
-#         and the DESIGN context's own cursor B is on at a DIFFERENT time
+#   B12f  FIXTURE: a viewer is open holding the run's raw -- and the DESIGN
+#         window holds NOTHING -- with the two cursors at different times
 #   B12   the mode annotates at the VIEWER's cursor, not the design context's
 #   B12b  STRUCTURAL: the borrow enters and LEAVES the viewer's context
+#   B12d  PRECONDITION for B12c: the design window is empty again
+#   B12c  the ASE-L MENU ENTRY does it too -- acceptance row 2 of issue 0881
+#
+# ⚠ THE FIXTURE USED TO HAND-ATTACH, AND THAT IS WHY THE FEATURE SHIPPED BROKEN
+# (item A10, issue 0881). B12f used to do `xschem annotate_op $E_TRAN` in the
+# DESIGN window, which is a state the product never produces: the waveform
+# viewer attaches the run's results to its OWN window's context
+# (wviewer::attach_raw switches context first, by design), so on a real bench
+# the design window holds nothing and the annotation refused with
+# "Transient annotation -- NO RAW FILE loaded". 29 checks here and 413 in
+# tests/headless/test_op_annot.tcl were all green over a feature that had never
+# once worked end to end. The fixture now supplies the raw the way the product
+# does -- through `wviewer::attach_raw`, the same call the post-run auto-plot
+# makes -- and asserts the design window is EMPTY as its own claim.
 #
 # ⚠ B12 IS BUILT SO THE TWO ANSWERS CANNOT ALIAS. The viewer's cursor A sits at
 # 2 ns and the design context's cursor B sits at 4 ns, and the fixture raw's
@@ -871,21 +885,54 @@ for {set _i 0} {$_i < 200} {incr _i} {
 }
 set E_VW {}
 if {$E_VT ne {}} { set E_VW $E_VT.drw }
+
+## THE SESSION METADATA SEAM. Only two READERS are replaced -- which file this
+## session's last run wrote, and whether that file still describes the deck --
+## because nothing in a headless-launched session has actually run a simulator.
+## They are METADATA: no database is attached by either of them, and the raw
+## still reaches a context only through the product's own supply call below.
+## Restored in the section E teardown.
+set E_HAD_LRF [expr {[info commands ::ase::last_rawfile] ne {}}]
+set E_HAD_RST [expr {[info commands ::ase::results_stale] ne {}}]
+if {$E_HAD_LRF} { rename ::ase::last_rawfile  ::ase::_e_saved_lrf }
+if {$E_HAD_RST} { rename ::ase::results_stale ::ase::_e_saved_rst }
+proc ::ase::last_rawfile  {key} { return [expr {$key eq $::E_KEY ? $::E_TRAN : {}}] }
+proc ::ase::results_stale {key} { return 0 }
+
+## ⚠ THE SUPPLY GOES THROUGH THE PRODUCT, NOT THROUGH THE FIXTURE.
+## `wviewer::attach_raw` is byte-for-byte the call `ase::ui::auto_plot` makes
+## after a run (src/ase_window.tcl:4701); it switches to the VIEWER's context
+## first -- "never clear a foreign ctx" -- and hands the file to
+## `ase::attach_dbs`, which is what actually calls `xschem raw read`. So after
+## this line the viewer's window holds the run's transient and the DESIGN
+## window holds nothing, which is exactly the state the user reported.
+set E_ATT 0
+catch {set E_ATT [wviewer::attach_raw $E_KEY [ase::last_rawfile $E_KEY] tran]}
+update
+catch {xschem new_schematic switch $E_DWIN}
+update
+
 set ::wviewer::cva($E_KEY) 1
 set ::wviewer::cvb($E_KEY) 0
 e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
 set e_vpos [e_ctx $E_VW {xschem get cursor1_x}]
+set e_vraw [e_ctx $E_VW {list [xschem raw loaded] [xschem raw sim_type]}]
 e_ctx $E_DWIN {
   catch {xschem raw clear}
-  catch {xschem annotate_op $::E_TRAN}
   catch {xschem cursor 1 0}
   xschem cursor 2 1
   xschem set cursor2_x 4e-9
 }
-set e_dstate [e_ctx $E_DWIN {list [xschem raw sim_type] [xschem get graph_flags] [xschem get cursor2_x]}]
-check "B12f FIXTURE a viewer is open with cursor A at 2 ns, and the DESIGN has the transient with cursor B at 4 ns" \
-  [list $E_VOK $e_vpos $::wviewer::cva($E_KEY) $::wviewer::cvb($E_KEY) $e_dstate] \
-  [list 1 2e-09 1 0 {tran 4 4e-09}]
+## ⚠ THE DESIGN WINDOW'S EMPTINESS IS AN ASSERTION, NOT AN ASSUMPTION. Element
+## 2 of the list is `catch {xschem raw sim_type}`, which is 1 exactly when the
+## accessor RAISES "No raw file loaded" -- the two reads
+## `cadence::annot_tran` refuses on. A fixture that quietly left a database
+## here would make B12 a verdict about nothing.
+set e_dstate [e_ctx $E_DWIN {list [xschem raw loaded] [catch {xschem raw sim_type}] \
+                                  [xschem get graph_flags] [xschem get cursor2_x]}]
+check "B12f FIXTURE the run's raw reaches the VIEWER's window through wviewer::attach_raw, the DESIGN window holds NOTHING, and the two cursors sit at different times" \
+  [list $E_VOK $E_ATT $e_vpos $::wviewer::cva($E_KEY) $::wviewer::cvb($E_KEY) $e_vraw $e_dstate] \
+  [list 1 1 2e-09 1 0 {0 tran} {-1 1 4 4e-09}]
 
 # ---------------------------------------------------------------------------
 # B12 — GUARD G8: THE MODE READS THE VIEWER'S CURSOR, NOT THE SHEET'S
@@ -898,6 +945,11 @@ check "B12f FIXTURE a viewer is open with cursor A at 2 ns, and the DESIGN has t
 # borrow that forgets to leave strands the user in the waveform window's context
 # with the schematic still on screen (issue 0173's shape). The fourth element is
 # that claim.
+# ⚠ SAME GOLDEN, ENTIRELY DIFFERENT CLAIM SINCE ITEM A10. B12f no longer hands
+# the design window a database, so reaching `ok` at all now requires the mode to
+# go and GET the run's results -- this row is acceptance row 1 of issue 0881 as
+# well as guard G8. Measured before the fix it answers `noraw` and annotates
+# nothing, which is the user's own bench report.
 set e_before [xschem get current_win_path]
 set e_state [e_ctx $E_DWIN {cadence::annot_tran}]
 set e_annot [e_ctx $E_DWIN {xschem raw annot}]
@@ -935,7 +987,113 @@ check "B12b the cursor resolver borrows the viewer's context through enter_ctx a
         [expr {$e_fin >= 1 ? 1 : 0}]] \
   {1 1 1 1}
 
+# ---------------------------------------------------------------------------
+# B12d — B12c's PRECONDITION, ASSERTED ON ITS OWN
+# ---------------------------------------------------------------------------
+# ⚠ WITHOUT THIS ROW B12c PASSES ON B12's LEFTOVERS. B12 has just attached a
+# database to the design window and armed bit2; if the menu entry were then
+# pressed over that state it would be measuring nothing. So the design window is
+# emptied and the mask cleared, while the VIEWER keeps holding the run's raw and
+# its cursor A stays at 2 ns -- the same bench state B12f built, restored.
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+set e_d_pre [e_ctx $E_DWIN {list [xschem raw loaded] [xschem get annot_show]}]
+set e_v_pre [e_ctx $E_VW   {list [xschem raw loaded] [xschem raw sim_type]}]
+check "B12d PRECONDITION the design window is empty again with no bit armed, and the viewer still holds the run's transient" \
+  [list $e_d_pre $e_v_pre] [list {-1 0} {0 tran}]
+
+# ---------------------------------------------------------------------------
+# B12c — ACCEPTANCE ROW 2 OF ISSUE 0881: THE MENU DOOR
+# ---------------------------------------------------------------------------
+# ⚠ THE USER NAMED BOTH DOORS: "I do a TRAN run and then Alt-Shift-6 and
+# Results > Annotate > Transient Node.. don't annotate anything onto the
+# schematic". B12 is the chord's door; this is the menu's. They share one body,
+# so a fix could only break them apart by accident -- but "could only" is how
+# the original defect got here, and the menu carries one thing the chord does
+# not: the tick.
+# ⚠ THE TICK IS THE PASS/FAIL, NOT DECORATION. Tk has already flipped the
+# variable by the time the -command body runs, and `annot_menu_sync` reads the
+# mask back and SNAPS THE TICK OFF again on a refusal. So a still-ticked box
+# after the press is a second, independent reading of "the mask really gained
+# bit2", taken through the widget the user is looking at.
+set ::ase::ui::annot($E_KEY,tran) 1
+catch {ase::ui::annot_apply $E_KEY tran}
+update
+set e_c_mask  [e_ctx $E_DWIN {xschem get annot_show}]
+set e_c_annot [e_ctx $E_DWIN {xschem raw annot}]
+set e_c_tick  $::ase::ui::annot($E_KEY,tran)
+check "B12c ACCEPTANCE Results > Annotate > Transient Node Voltages annotates at the viewer's cursor, arms bit2 and leaves the entry TICKED" \
+  [list [expr {[string is integer -strict $e_c_mask] && ($e_c_mask & 4) ? 1 : 0}] \
+        $e_c_tick [lindex $e_c_annot 1]] \
+  [list 1 1 2e-09]
+
+# ---------------------------------------------------------------------------
+# B12g — ACCEPTANCE ROW 3 OF ISSUE 0881: *WHICH* RESULTS FILE
+# ---------------------------------------------------------------------------
+# ⚠ B12 AND B12c CANNOT TELL THE FIX FROM ITS NEAR-MISS, AND THIS ROW CAN.
+# In their fixture the file the viewer is showing and the file the session
+# metadata names are the SAME file, so a build that never looks at the viewer
+# at all -- one that just rebuilds a path and reads it off disk -- passes both.
+# The first A10 build was exactly that build, and a verifier proved it by
+# deleting the viewer attach from this fixture and watching B12 and B12c stay
+# green.
+# ⚠ SO THIS ROW MAKES THE TWO DISAGREE. The waveform viewer keeps holding the
+# run's results, where v(a) is 2 V at the 2 ns cursor. The session metadata is
+# repointed at a DIFFERENT results file, where v(a) at 2 ns is 20 V. The user's
+# ruling decides which one wins, verbatim: "The info should already be
+# available - it's been loaded to display waveforms in the waveform viewer."
+# Four claims: the press succeeded; the number is the VIEWER's 2 V and not the
+# other file's 20 V; the database now attached to the design window is the
+# viewer's file BY NAME; and the mask gained the transient bit.
+set E_DECOY [file join $C_SCRATCH e_decoy.raw]
+set f [open $E_DECOY w]
+puts -nonewline $f "Title: 0881 decoy, a DIFFERENT run
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 5
+Variables:
+\t0\ttime\ttime
+\t1\tv(a)\tvoltage
+Values:
+0\t0
+\t0.0
+1\t1e-09
+\t10.0
+2\t2e-09
+\t20.0
+3\t3e-09
+\t30.0
+4\t4e-09
+\t40.0
+"
+close $f
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+catch {rename ::ase::last_rawfile {}}
+proc ::ase::last_rawfile {key} { return [expr {$key eq $::E_KEY ? $::E_DECOY : {}}] }
+set e_g_pre   [e_ctx $E_DWIN {list [xschem raw loaded] [xschem get annot_show]}]
+set e_g_state [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_g_val   [e_ctx $E_DWIN {xschem raw value v(a) -1}]
+set e_g_rf    [e_ctx $E_DWIN {xschem raw rawfile}]
+set e_g_mask  [e_ctx $E_DWIN {xschem get annot_show}]
+catch {rename ::ase::last_rawfile {}}
+proc ::ase::last_rawfile  {key} { return [expr {$key eq $::E_KEY ? $::E_TRAN : {}}] }
+check "B12g ACCEPTANCE the results file the WAVEFORM VIEWER is showing is the one annotated, even when the session metadata names a different file" \
+  [list $e_g_pre $e_g_state $e_g_val [expr {$e_g_rf eq $E_TRAN ? 1 : 0}] \
+        [expr {[string is integer -strict $e_g_mask] && ($e_g_mask & 4) ? 1 : 0}]] \
+  [list {-1 0} ok 2 1 1]
+
 # --- section E teardown ------------------------------------------------------
+catch {rename ::ase::last_rawfile {}}
+catch {rename ::ase::results_stale {}}
+if {$E_HAD_LRF} { catch {rename ::ase::_e_saved_lrf ::ase::last_rawfile} }
+if {$E_HAD_RST} { catch {rename ::ase::_e_saved_rst ::ase::results_stale} }
 catch {e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}}}
 catch {array unset ::wviewer::cva $E_KEY}
 catch {array unset ::wviewer::cvb $E_KEY}

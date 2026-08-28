@@ -264,6 +264,44 @@ proc cadence::_annot_scan {} {
 ## all eight, so a re-wording of the shipped four reds in this file rather than
 ## in six unrelated statusmsg rows.
 proc cadence::_annot_msg {mask state path types} {
+  ## ⚠ ISSUE 0857, RULED BY THE USER 2026-08-27, VERBATIM: "Yes, 6 does
+  ## nothing when there is ONLY a TRAN result. But, it's a good idea to say
+  ## 'No OP results available' in the CIW." So RULING 0856's "do nothing"
+  ## keeps standing for the SCREEN -- nothing published, no bit armed, no
+  ## number painted -- and stops standing for the user, who was left holding a
+  ## key that looked broken. `cadence::annot_mode`'s TWO silent returns render
+  ## this state; nothing else does.
+  ##
+  ## ⚠ IT RETURNS BEFORE THE MASK SWITCH, AND THAT IS THE POINT, NOT AN
+  ## OPTIMISATION. Every other sentence in this proc opens with
+  ## "OP annotation ON/OFF (...)", which is a claim about what the screen is
+  ## now showing. On both refusal paths the mask is never written, or is
+  ## written and put straight back, so that prefix would describe a change that
+  ## did not happen -- RULING D5-1's shape, a caption with no measurement
+  ## behind it. A reader who assumed every arm of this proc carries the prefix
+  ## would be wrong here, deliberately.
+  ##
+  ## ⚠ `path` CARRIES THE ANALYSIS TYPE FOR THIS STATE ONLY -- `tran`,
+  ## `ac`, whatever `xschem raw sim_type` answered -- and not a file path. Two
+  ## shapes, ONE arm (RULING D5-4): the type is named when the attached
+  ## database can say what it is, and left out when it cannot, because
+  ## "the results loaded here are a '' analysis" says less than silence. Row
+  ## V42 of tests/headless/test_op_annot.tcl pins both shapes byte for byte,
+  ## and row V43 requires the fragment "No operating point results available"
+  ## to appear on a code line of THIS file and of no other -- so the sentence
+  ## below is grep-visible on purpose.
+  if {$state eq {notop}} {
+    if {$path eq {}} {
+      return "No operating point results available -- the results loaded here are\
+              not an operating point. Run an operating point analysis, or press\
+              Alt-Shift-6 to annotate transient node voltages at the waveform\
+              cursor."
+    }
+    return "No operating point results available -- the results loaded here are a\
+            '$path' analysis, not an operating point. Run an operating point\
+            analysis, or press Alt-Shift-6 to annotate transient node voltages at\
+            the waveform cursor."
+  }
   if {![string is integer -strict $mask]} { set mask 0 }
   switch -exact -- [expr {$mask & 7}] {
     0 { set m "OP annotation OFF" }
@@ -386,7 +424,29 @@ proc cadence::annot_mode {mode} {
   ## refusal that swallowed Ctrl-6 would strand the user with bit2 armed and no
   ## way to turn it off -- a worse defect than the one being fixed. Row V31
   ## leg 2 is that exemption's only guard, and sabotage S14b drops this term.
-  if {$mask != 0 && ![cadence::_annot_op_db_ok]} { return }
+  ##
+  ## ⚠ IT IS NO LONGER A SILENT RETURN, AND THE USER IS WHY (issue 0857,
+  ## ruled 2026-08-27). Nothing is published, no bit is armed and no number is
+  ## painted -- RULING 0856 is untouched -- but the press now SAYS which of the
+  ## two things happened instead of leaving a key that appears dead. The
+  ## sim_type is read HERE, before anything else runs, because it is the only
+  ## thing that lets the sentence name the analysis the user actually has.
+  ##
+  ## ⚠ BOTH SINKS, NOT THE CIW ALONE. The user's words were "say something
+  ## in the CIW", and the CIW is where a person running ASE-L looks -- but the
+  ## three OP chords have always spoken on the held status line, and a plain
+  ## xschem user with no ASE-L window open would see a CIW-only sentence not at
+  ## all. `cadence::_annot_ciw` is the ONE emitter (invariant I1); this is its
+  ## first call site outside `cadence::annot_tran`. Recorded as an unratified
+  ## decision -- `owed.sh add rule 0857`.
+  if {$mask != 0 && ![cadence::_annot_op_db_ok]} {
+    set st {}
+    if {[catch {xschem raw sim_type} st]} { set st {} }
+    set m [cadence::_annot_msg $cur notop $st {}]
+    cadence::_annot_ciw $m warn
+    catch {xschem statusmsg -hold $m}
+    return
+  }
 
   xschem set annot_show $mask
 
@@ -492,11 +552,31 @@ proc cadence::annot_mode {mode} {
           ## motion would start publishing from it. We are only here because
           ## `xschem raw loaded` was < 0 on entry, so the clear returns the
           ## session to exactly the state the key press found.
+          ##
+          ## ⚠ AND IT SPEAKS NOW (issue 0857, ruled 2026-08-27). The three
+          ## unwind statements below are byte-for-byte what they were, because
+          ## they are what RULING 0856 asks for and sabotage S18 deletes them
+          ## to check that row V31c still sees it. What is added is the
+          ## sentence: the user pressed a key, the program went and found a
+          ## file, decided it was the wrong kind and put everything back, and
+          ## until now said nothing about any of it.
+          ##
+          ## ⚠ THE ANALYSIS TYPE IS READ BEFORE THE CLEAR. After
+          ## `xschem raw clear` the accessor RAISES "No raw file loaded", so a
+          ## sentence minted after the unwind could only ever be the typeless
+          ## shape -- it would have thrown away the one fact that makes the
+          ## line worth reading. Row V31c golds the named shape on all four
+          ## legs, which is what pins this ordering.
           if {![cadence::_annot_op_db_ok]} {
+            set st {}
+            if {[catch {xschem raw sim_type} st]} { set st {} }
             catch {xschem raw clear}
             catch {xschem set annot_show $cur}
             catch {xschem update_all_sym_bboxes}
             catch {xschem redraw}
+            set m [cadence::_annot_msg $cur notop $st {}]
+            cadence::_annot_ciw $m warn
+            catch {xschem statusmsg -hold $m}
             return
           }
           set state loaded
@@ -697,9 +777,16 @@ proc cadence::_annot_tran_msg {state t which {req {}}} {
     notran   { return "Transient annotation -- the loaded database is not a\
                        transient analysis" }
     nodata   { return "Transient annotation -- nothing to annotate at t = $t" }
+    staleraw { return "Transient annotation -- the results file [file tail $req]\
+                       is older than the circuit it describes, so it was not used.\
+                       Re-run the simulation." }
+    viewerdiff { return "Transient annotation -- the results file [file tail $req]\
+                       on disk is from a different simulation run than the one the\
+                       waveform viewer is showing, so nothing was annotated. Plot\
+                       the results again in the waveform viewer, then try again." }
   }
   error "cadence::_annot_tran_msg: unknown state \"$state\":\
-         use ok, okclamped, nocursor, noraw, notran or nodata"
+         use ok, okclamped, nocursor, noraw, notran, staleraw, viewerdiff or nodata"
 }
 
 ## THE TIME THE PAINTED NUMBER WAS ACTUALLY MEASURED AT, or {} when it cannot
@@ -756,6 +843,264 @@ proc cadence::_annot_ciw {msg {tag {}}} {
   return 0
 }
 
+## -> the CURRENT window's database reduced to something two windows can be
+## COMPARED on, or {} when there is nothing to reduce. Five elements: the
+## analysis type, the dataset count, the point count, the column names and
+## every column's value at the LAST point.
+##
+## ⚠ THIS IS A COMPARATOR, NOT A CHECKSUM, and the difference matters to the
+## reader. It is computed in whichever window it is called in, through the
+## SHIPPED read-only verbs and nothing else, so the same file read twice into
+## two windows prints the same list and two different RUNS of the same deck
+## print different ones. The last point is where a re-run shows up most
+## reliably -- a longer or shorter sweep moves the point count, a changed
+## supply or device moves the final sample of nearly every node.
+##
+## ⚠ COST, because it runs on a key press. One `xschem raw list` plus one
+## `xschem raw value` per column, per window. Those are hash lookups into an
+## array already in memory; there is no disk access and no re-parse.
+proc cadence::_annot_db_print {} {
+  set out {}
+  set v {}
+  if {[catch {xschem raw sim_type} v]} { return {} }
+  lappend out $v
+  if {[catch {xschem raw datasets} v]} { return {} }
+  lappend out $v
+  set np 0
+  if {[catch {xschem raw points} np]} { return {} }
+  if {![string is integer -strict $np] || $np < 1} { return {} }
+  lappend out $np
+  set names {}
+  if {[catch {xschem raw list} names]} { return {} }
+  set names [split [string trimright $names "\n"] "\n"]
+  lappend out $names
+  set last [expr {$np - 1}]
+  set vals {}
+  foreach n $names {
+    set x {}
+    catch {set x [xschem raw value $n $last]}
+    lappend vals $x
+  }
+  lappend out $vals
+  return $out
+}
+
+## -> {path print} for the transient the WAVEFORM VIEWER is showing for this
+## sheet's session, or {} when there is no viewer, it holds nothing, or what it
+## holds is not a transient.
+##
+## ⚠ ISSUE 0881, AND IT IS THE HALF THE MODE WAS MISSING. The user's words,
+## verbatim 2026-08-27: "The info should already be available -- it's been
+## loaded to display waveforms in the waveform viewer." The other half of this
+## mode already crosses the window boundary correctly -- the cursor resolver
+## borrows the viewer's context to read cursor A -- and this is the same borrow
+## asked a different question. Without it the supplier could only REBUILD a
+## path out of the preferences, so a viewer showing a file that lives anywhere
+## else got the user's original complaint back with a new sentence on it.
+##
+## ⚠ THE BORROW ALWAYS GIVES THE CONTEXT BACK, same discipline and same reason
+## as `cadence::_annot_tran_cursor`: a borrow that entered and never left would
+## strand the user in the waveform window's context with the schematic still on
+## screen, which is issue 0173's shape from a path nobody would look at.
+##
+## ⚠ THE Tk PROBE IS ASKED ONLY WHERE Tk EXISTS. `winfo` is absent under
+## --nogui, so an unconditional `winfo exists` would make this arm unreachable
+## to every headless row and the feature would be pinned on the Tk suite alone.
+## `wviewer::enter_ctx` refuses an unregistered token on its own -- it answers a
+## ticket of 0 -- so the ticket, not the widget, is the authority here.
+##
+## ⚠ ONLY A TRANSIENT IS OFFERED. A viewer switched to a digital database or to
+## an operating point must not divert the supply: this returns {} and the
+## session's own candidate is used, which is the behaviour every row before
+## this item asserted.
+proc cadence::_annot_viewer_db {} {
+  set key {}
+  if {[llength [info commands ::ase::session_for_current]]} {
+    catch {set key [lindex [::ase::session_for_current] 0]}
+  }
+  if {$key eq {}} { return {} }
+  if {![llength [info commands ::wviewer::enter_ctx]] ||
+      ![llength [info commands ::wviewer::leave_ctx]] ||
+      ![llength [info commands ::wviewer::window_for]]} { return {} }
+  set top {}
+  catch {set top [::wviewer::window_for $key]}
+  if {$top eq {}} { return {} }
+  if {[llength [info commands ::winfo]]} {
+    set live 0
+    catch {set live [winfo exists $top]}
+    if {!$live} { return {} }
+  }
+  set ticket [::wviewer::enter_ctx $key]
+  if {![lindex $ticket 0]} { return {} }
+  set path {}
+  set print {}
+  catch {
+    set ld -1
+    catch {set ld [xschem raw loaded]}
+    if {[string is integer -strict $ld] && $ld >= 0} {
+      set st {}
+      catch {set st [xschem raw sim_type]}
+      if {$st eq {tran}} {
+        catch {set path [xschem raw rawfile]}
+        set print [cadence::_annot_db_print]
+      }
+    }
+  }
+  ::wviewer::leave_ctx $key $ticket
+  if {$path eq {} || ![file exists $path]} { return {} }
+  return [list $path $print]
+}
+
+## -> {loaded state path} -- what the CURRENT window holds after this proc has
+## tried to supply it, the reason when it could not, and the file it reached
+## for. `loaded` is `xschem raw loaded`'s own answer, RE-ASKED; `state` is one
+## of ok | noraw | stale.
+##
+## ⚠ ISSUE 0881, AND THE USER REPRODUCED IT AT THEIR OWN BENCH 2026-08-27,
+## VERBATIM: "I do a TRAN run and then Alt-Shift-6 and Results > Annotate >
+## Transient Node.. don't annotate anything onto the schematic - yes, there is
+## the 'Transient annotation -- NO RAW ..' message.. - bad. Given that results
+## are being loaded and plotted, we have enough info to satisfy user intent.
+## The ultimate goal of any UI is to satisfy user intent." And: "The info
+## should already be available - it's been loaded to display waveforms in the
+## waveform viewer."
+##
+## ⚠ WHAT A READER WOULD OTHERWISE ASSUME: that `xschem raw loaded` is a
+## question about the session. IT IS NOT -- it is a question about the CURRENT
+## WINDOW. The waveform viewer attaches the run's results to its OWN window's
+## context on purpose: `wviewer::attach_raw` (src/wave_viewer.tcl) calls
+## `wviewer::switch_ctx` FIRST, commented "never clear a foreign ctx", and only
+## then hands the file to `ase::attach_dbs`. So on a real bench the viewer's
+## window holds the transient and the schematic window holds nothing, and the
+## refusal this proc replaces was reading the wrong window's answer. Half of
+## this mode ALREADY crosses that boundary correctly -- the cursor resolver
+## borrows the viewer's context to read cursor A -- so the defect was one
+## asymmetry, not a missing feature.
+##
+## ⚠ IT ASKS THE VIEWER WHICH FILE, THEN SUPPLIES THE SCHEMATIC WINDOW WITH
+## THAT FILE. Both halves are load-bearing and the first one is the fix.
+## There is no cross-window raw registry in the C engine (checked), so the
+## numbers cannot be painted on the sheet without a database attached to the
+## SHEET's window -- `annotate_at` resolves against xctx->raw of the window it
+## is called in. But a supplier that only knew how to REBUILD a path from the
+## preferences would answer with a file the user may not be looking at, which
+## is not what the user asked for: their words were "The info should already be
+## available -- it's been loaded to display waveforms in the waveform viewer."
+## So `cadence::_annot_viewer_db` asks the viewer what it actually holds, and
+## the two copies are then COMPARED before any number is believed -- see the
+## `viewerdiff` note below.
+##
+## ⚠ ONE DISCOVERY MECHANISM, NOT TWO (RULING D5-4's spirit).
+## `cadence::_annot_raw_candidate` already answers "where are this sheet's
+## results", already prefers the ASE session's own file over the shipped
+## fallback, and already refuses a file older than the deck (issue 0838). A
+## second lookup written out longhand here would drift the first time one of
+## the three learned something the other did not. Row V39 of
+## tests/headless/test_op_annot.tcl slices this body and requires exactly one
+## call to that proc and no source spelled out on its own.
+##
+## ⚠ IT HANDS THE FILE TO `xschem annotate_op`, NOT TO `xschem raw read`.
+## Two reasons, and neither is cosmetic: annotate_op is the same verb
+## `cadence::annot_mode`'s candidate branch already uses, and it stamps the raw
+## with the session LEVEL, which is what makes the database findable after the
+## user has descended. Row V47 is the structural witness for both -- neither is
+## visible to a behavioural row while the session stub sits at level 0.
+##
+## ⚠ AND IT ASKS FOR `tran` BY NAME FIRST. THE SHIPPED FALLBACK IS THE SECOND
+## ASK, NOT THE FIRST, AND THE ORDER IS THE WHOLE POINT.
+## annotate_op with no type token runs op -> dc -> tran, and the commonest
+## results file a real bench produces carries the deck's `.op` in the same file
+## as its `.tran` -- ngspice writes one plot per analysis into one raw. On that
+## file the fallback stops at the OPERATING POINT, and the transient mode then
+## refused its own supply with "the loaded database is not a transient
+## analysis" -- about a file whose transient is on the user's screen. Measured,
+## and the sentence was false: reading the same file with the `tran` token
+## gives 5 points, sim_type tran and v(a) = 3 at the 3 ns cursor. Row V45.
+## The fallback is still run when the explicit ask finds no transient, and it
+## is what lets an OPERATING-POINT-only session ATTACH and meet the honest
+## `notran` refusal below rather than being told there is no results file at
+## all. Row V35b is that path.
+##
+## ⚠ SUCCESS IS RE-ASKED FROM `xschem raw loaded`, NEVER TAKEN FROM THE rc.
+## Measured: annotate_op returns the same rc for a file it loaded and a file it
+## could not parse. A supplier that trusted the rc would walk on into the
+## analysis check with nothing attached and tell the user their transient is
+## not a transient. Row V37 is the only row that can see this.
+##
+## ⚠ AND THE TWO COPIES ARE COMPARED BEFORE ANY NUMBER IS BELIEVED
+## (RULING D5-1). The viewer holds its copy in MEMORY; this reads the file
+## again, off disk, into another window. Re-running the simulator overwrites
+## that file in place, so the two can be different runs -- and then the sheet
+## would carry run N+1's numbers while the traces beside it are still run N's,
+## with nothing saying so. Measured before this guard: the viewer plotting
+## v(a) = 3 V at the cursor and the schematic painting 30 V, no refusal, no
+## warning. `cadence::_annot_db_print` reduces a database to what two windows
+## can be compared on; a mismatch is refused by name and the sentence tells the
+## user to re-plot. Rows V52 and V52b.
+##
+## ⚠ WHAT THE COMPARISON CANNOT SEE, stated so nobody reads it as a proof.
+## The print is the analysis type, the dataset and point counts, the column
+## names and every column's value at the LAST point. A re-run that changed a
+## value only in the middle of the sweep and left every last sample and the
+## whole shape identical would pass it. Closing that would mean comparing every
+## sample of every column on every key press; the print is the cheap 95%, and
+## the honest fix for the rest is a shared database, which is a C change and is
+## not this item.
+proc cadence::_annot_tran_supply {} {
+  set cand [cadence::_annot_raw_candidate]
+  set path [lindex $cand 0]
+  set lvl  [lindex $cand 1]
+  if {[lindex $cand 2] eq {stale}} { return [list -1 stale $path] }
+
+  ## THE WAVEFORM VIEWER IS ASKED FIRST, AND ITS ANSWER WINS THE FILE.
+  ## The session question -- is this sheet's results file still current --
+  ## stayed above, with the ONE builder that answers it. This asks a different
+  ## question of a different subject: which file is on the user's screen right
+  ## now. When the viewer is showing a transient for this sheet, that file is
+  ## the answer, whatever a path rebuilt from the preferences would have said.
+  set vw [cadence::_annot_viewer_db]
+  set vprint {}
+  if {[llength $vw]} {
+    set path   [lindex $vw 0]
+    set vprint [lindex $vw 1]
+  }
+
+  if {$path eq {} || ![file exists $path]} { return [list -1 noraw $path] }
+  if {$lvl eq {} || ![string is integer -strict $lvl]} { set lvl -1 }
+
+  ## THE TRANSIENT IS ASKED FOR BY NAME FIRST, AND THE SHIPPED FALLBACK IS THE
+  ## SECOND ASK, NOT THE FIRST.
+  catch {xschem annotate_op $path $lvl tran}
+  set after -1
+  catch {set after [xschem raw loaded]}
+  if {![string is integer -strict $after] || $after < 0} {
+    catch {xschem annotate_op $path $lvl}
+    set after -1
+    catch {set after [xschem raw loaded]}
+  }
+  if {![string is integer -strict $after] || $after < 0} {
+    return [list -1 noraw $path]
+  }
+
+  ## THE TWO WINDOWS ARE COMPARED BEFORE A SINGLE NUMBER IS BELIEVED.
+  if {[llength $vprint] && [cadence::_annot_db_print] ne $vprint} {
+    return [list $after viewerdiff $path]
+  }
+  return [list $after ok $path]
+}
+
+## -> whether the unwind ran. Puts back what `cadence::_annot_tran_supply` did:
+## the database it attached is detached and the annotation mask goes back to
+## what the user had before the key press.
+proc cadence::_annot_tran_unwind {attached mask} {
+  if {!$attached} { return 0 }
+  catch {xschem raw clear}
+  catch {xschem set annot_show $mask}
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  return 1
+}
+
 ## cadence::annot_tran -- THE ONE CODE PATH both entry points drive (the
 ## `Alt-Shift-6` chord in src/cadence_style_rc and the ASE-L
 ## `Results > Annotate > Transient Node Voltages (at cursor)` item in
@@ -790,16 +1135,93 @@ proc cadence::annot_tran {} {
   ## nothing new is invented here. `dc` and `ac` are NOT accepted: annotating at
   ## an x-axis value would be meaningful for them, but the user asked for TRAN
   ## and widening it is scope the request does not carry.
+  ##
+  ## ⚠ ISSUE 0881: NOTHING ATTACHED HERE IS NOT THE SAME AS NOTHING TO
+  ## ANNOTATE. `xschem raw loaded` answers for the CURRENT WINDOW, and the
+  ## waveform viewer deliberately keeps the run's results in its own window's
+  ## context -- so the user who has just run a transient, is looking at the
+  ## traces and puts a cursor on gets -1 here and used to be told
+  ## "NO RAW FILE loaded" about a file that was on their screen. The supply
+  ## goes and gets it; see `cadence::_annot_tran_supply` above for which file
+  ## and why through annotate_op.
+  ##
+  ## ⚠ AND IT IS BELOW THE CURSOR RESOLVE, WHICH IS A GUARD, NOT AN
+  ## ACCIDENT OF WRITING ORDER. Hoisting the supply above it would make a key
+  ## press that REFUSES ("no cursor is on anywhere") attach a database to the
+  ## user's session on its way out -- the very thing the issue 0872 unwind in
+  ## `cadence::annot_mode` exists to prevent, arriving through the new door.
+  ## Row V14 asserts the state and the mask on that refusal and would not
+  ## notice; row V38 asserts the registry afterwards and is the only thing that
+  ## does.
+  ## THE MASK AS THE KEY PRESS FOUND IT. Every refusal below puts it back
+  ## through `cadence::_annot_tran_unwind`, so a press that declines leaves the
+  ## user's own annotation settings exactly where they were.
+  set mask0 0
+  catch {set mask0 [xschem get annot_show]}
+  if {![string is integer -strict $mask0]} { set mask0 0 }
+
+  set attached 0
   set loaded -1
   catch {set loaded [xschem raw loaded]}
   if {![string is integer -strict $loaded] || $loaded < 0} {
-    cadence::_annot_ciw [cadence::_annot_tran_msg noraw {} {}] warn
-    catch {xschem statusmsg -hold [cadence::_annot_tran_msg noraw {} {}]}
-    return noraw
+    set sup [cadence::_annot_tran_supply]
+    set loaded [lindex $sup 0]
+    ## ⚠ ISSUE 0838's RULE, CARRIED THROUGH THE NEW DOOR. A results file
+    ## older than the deck it describes is REPORTED and never used: annotating
+    ## it would put the previous run's numbers on a changed circuit under an
+    ## authoritative caption, which is RULING D5-1 with the sentence lending it
+    ## weight. The sentence names the file, because "not used" without saying
+    ## which file is not something a user can act on. Note the waveform viewer
+    ## checks staleness nowhere, so the user can be watching those very traces
+    ## while this refuses -- that collision is filed as issue 0884 and needs
+    ## the user's ruling.
+    if {[lindex $sup 1] eq {stale}} {
+      set m [cadence::_annot_tran_msg staleraw {} {} [lindex $sup 2]]
+      cadence::_annot_ciw $m warn
+      catch {xschem statusmsg -hold $m}
+      return staleraw
+    }
+    if {![string is integer -strict $loaded] || $loaded < 0} {
+      cadence::_annot_ciw [cadence::_annot_tran_msg noraw {} {}] warn
+      catch {xschem statusmsg -hold [cadence::_annot_tran_msg noraw {} {}]}
+      return noraw
+    }
+    ## FROM HERE ON THIS KEY PRESS OWNS A DATABASE THE SESSION DID NOT HAVE,
+    ## and every way out below has to put it back.
+    set attached 1
+    ## ⚠ RULING D5-1 -- THE TWO WINDOWS DISAGREE, SO NOTHING IS PUBLISHED.
+    ## The viewer holds its copy in memory and this read the file again off
+    ## disk; a re-run in between makes them different runs. Measured before
+    ## this arm: the waveform screen showing 3 V at the cursor and the
+    ## schematic painting 30 V beside the same node, with no refusal and no
+    ## warning anywhere. The sentence tells the user to re-plot, because that
+    ## is the action that makes the two agree.
+    if {[lindex $sup 1] eq {viewerdiff}} {
+      set m [cadence::_annot_tran_msg viewerdiff {} {} [lindex $sup 2]]
+      cadence::_annot_tran_unwind $attached $mask0
+      cadence::_annot_ciw $m warn
+      catch {xschem statusmsg -hold $m}
+      return viewerdiff
+    }
   }
+  ## ⚠ READ BEFORE THE UNWIND, NOT AFTER. `xschem raw sim_type` RAISES once the
+  ## database is detached, so a sentence minted after the unwind could only ever
+  ## be the typeless shape -- the same ordering the 0872 unwind above needs, for
+  ## the same reason.
   set st {}
   if {[catch {xschem raw sim_type} st]} { set st {} }
   if {$st ne {tran}} {
+    ## ⚠ THE REFUSAL MUST NOT PUBLISH, AND UNTIL THIS UNWIND IT DID.
+    ## Getting here means the supply attached a database to find out what it
+    ## was, and `xschem annotate_op` runs update_op() and draw() on its way --
+    ## so with the OP annotation bits already on (a previous `6`, or an
+    ## `annot_show` line in the user's xschemrc) the operating point LANDED ON
+    ## THE SHEET on the very path that then said "the loaded database is not a
+    ## transient analysis". Measured: 0.5 V painted beside node `a` while the
+    ## cursor sat at 3 ns. That is RULING D5-1 -- a number nobody asked for,
+    ## published by a refusal -- and it is issue 0872's shape arriving through
+    ## the new door. Rows V46 and V35b.
+    cadence::_annot_tran_unwind $attached $mask0
     cadence::_annot_ciw [cadence::_annot_tran_msg notran {} {}] warn
     catch {xschem statusmsg -hold [cadence::_annot_tran_msg notran {} {}]}
     return notran
@@ -814,6 +1236,9 @@ proc cadence::annot_tran {} {
   if {[catch {xschem annotate_at $t} rc]} { set rc 0 }
   if {![string is integer -strict $rc]} { set rc 0 }
   if {!$rc} {
+    ## Same rule as the `notran` arm above: a refusal puts back whatever the
+    ## supply attached on its way in.
+    cadence::_annot_tran_unwind $attached $mask0
     cadence::_annot_ciw [cadence::_annot_tran_msg nodata $t $which] warn
     catch {xschem statusmsg -hold [cadence::_annot_tran_msg nodata $t $which]}
     return nodata

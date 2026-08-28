@@ -14,6 +14,83 @@ Newest entries on top.
 
 ---
 
+## Q59. My acceptance row drives the real path and it passes. How do I know the row is not hollow?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0881**, the A10 pass on
+  `utils/annot_mode.tcl` and `tests/headless/test_op_annot.tcl`.
+
+**Delete the thing the row is supposedly about FROM ITS OWN FIXTURE and re-run.
+If the row still passes, it never tested that thing — no matter how faithfully
+the fixture drives the product's real code.**
+
+Issue 0881 is the whole argument. The transient annotation could not see the
+`.raw` the waveform viewer had loaded, because the viewer keeps it in its own
+window's context. **413 headless checks, 29 Tk checks and a zero-failure
+`run_regression.tcl` were all consistent with the feature never having worked
+from a bench**, because every row that covered the viewer path called
+`xschem raw read` in its own fixture first — manufacturing a state the product
+never produces.
+
+So the fix's acceptance rows were written the hard way: the fixture supplies the
+results through the product's own proc (`ase::attach_dbs`, `wviewer::attach_raw`)
+and never by hand. That was still not enough. The first fix re-derived a PATH
+from the session metadata rather than asking the viewer anything, and on those
+fixtures both roads lead to the same file — so a verifier **deleted the viewer
+attach from the acceptance fixture and every row stayed green**. The row was
+faithful and hollow at the same time.
+
+Three discriminators, in order of how much they cost:
+
+1. **Delete the supply from the fixture.** A row that passes with the subject
+   removed is decoration. This is one edit and it is the one that caught it.
+2. **Make the two roads disagree.** Point the metadata at a decoy file carrying
+   20 V and let the viewer hold the run carrying 2 V. Now only a build that
+   really asks the viewer can paint 2. That is what rows V50 and B12g do, and
+   B12g is the ONLY row in either suite that reds when the viewer consult is
+   deleted — B12 and B12c, both labelled "acceptance", stay green.
+3. **Assert the precondition as its own check.** The design window must be
+   asserted EMPTY (`xschem raw loaded` = -1 *and* `raw sim_type` raising) at the
+   moment before the gesture, in a row of its own, so the acceptance row cannot
+   pass on a previous row's leftovers.
+
+The general form, and it is the branch's recurring failure: **a fixture that
+manufactures the state under test is not a test of how that state arises.** When
+the bug you are chasing IS how the state arises, the fixture is the defect.
+
+---
+
+## Q58. My `.raw` fixture holds an `.op` plot and a `.tran` plot, and xschem says there is no `tran` analysis. Why?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0881**, writing a multi-plot
+  ASCII raw fixture for `tests/headless/test_op_annot.tcl`.
+
+**Each ASCII `Values:` block must end with a BLANK LINE, or the reader cannot
+skip past the plot it does not want and never reaches the one you asked for.**
+
+`skip_raw_ascii_points()` (`src/save.c:411`) walks forward to `line[0] == '\n'`
+once per point and has no other terminator and no bound:
+
+```c
+if(line[0] == '\n') { dbg(1, "found empty line --> break\n"); break; }
+```
+
+A fixture whose first plot's values run straight into the next plot's
+`Plotname:` header makes that walk eat the second plot, and the read reports
+`extra_rawfile() read: <path> not found or no "tran" analysis` — which reads
+exactly like a missing plot rather than a malformed one. Add the blank line and
+the same file gives 5 points, `sim_type=tran` and the right value.
+
+This is the fixture-writer's face of issue **0300**, which carries the same
+walk's two live defects (no CRLF support, no bound) and the direction for a real
+fix. Worth knowing because **every raw fixture in `tests/headless/` holds exactly
+one plot**, so the ordinary bench file — a deck's `.op` and `.tran` in one raw —
+is a shape the suite has never had, and it is the shape that hid a false refusal
+in the transient annotation.
+
+---
+
 ## Q57. My sabotage run reddened a big pile of rows and I blamed the guard. How do I know it was the guard?
 
 - **Asked:** 2026-08-27

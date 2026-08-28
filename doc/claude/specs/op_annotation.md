@@ -2223,13 +2223,96 @@ delivered to the CIW *and* the held status line:
 |---|---|
 | `ok` | published — **names the time point and the cursor letter** |
 | `nocursor` | no cursor is on anywhere |
-| `noraw` | no database attached to this sheet |
-| `notran` | a database is attached but it is not a transient |
+| `noraw` | **nothing attached to this sheet AND the supply below found nothing to attach** — no candidate on disk, no file the waveform viewer is showing, or a candidate that would not parse |
+| `notran` | the results are attached and they are not a transient. **The supply's attach is UNDONE before this returns** — see the unwind below |
+| `staleraw` | 🆕 the candidate is OLDER than the circuit it describes (ruling 0838, inherited from `cadence::_annot_raw_candidate`). Nothing is attached, nothing is published, and **the sentence names the file** |
+| `viewerdiff` | 🆕 the file on disk and the copy the waveform viewer is holding are **different simulation runs** (RULING D5-1). The attach is undone, nothing is published, and the sentence tells the user to plot the results again |
 | `nodata` | the engine had nothing to resolve against — **⚠ UNREACHABLE, issue 0871**: `xschem raw loaded` IS `sch_waves_loaded()`, the same predicate `backannotate_at_time()` gates on, so the `noraw` arm above has already returned. Three refusal states are reachable, not four |
 
 **⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH** (rows V14/V15/V16). Arming
 first would leave the user looking at an armed mode over the PREVIOUS request's
 numbers — RULING D5-1 with an extra step.
+
+#### Where the numbers come from — the supply (issue 0881, ✅ FIXED 2026-08-27, A10)
+
+**⚠ `xschem raw loaded` ANSWERS FOR THE CURRENT WINDOW, AND THE RUN'S RESULTS ARE
+IN A DIFFERENT ONE.** The waveform viewer attaches the run's `.raw` to its OWN
+window's context, deliberately (`wviewer::attach_raw` → `wviewer::switch_ctx`,
+commented *"never clear a foreign ctx"*, → `ase::attach_dbs` → `xschem raw read`).
+So the user who has just run a transient, is looking at the traces and puts a
+cursor on got `-1` in the schematic window and was told
+*"Transient annotation -- NO RAW FILE loaded"* about a file that was on their
+screen. **The mode as issue 0868 shipped it had therefore never worked from a
+real bench** — every row that covered this path attached the database to the
+schematic context in its own fixture, so 413 checks, 29 Tk checks and a
+zero-failure `run_regression.tcl` were all consistent with the feature being
+dead. That is the measurement gap, not a missing assertion.
+
+Half of the mode already crossed the window boundary correctly: the cursor
+resolver borrows the viewer's context and reads the cursor sitting in its active
+tab. Only the results lookup was blind. `cadence::_annot_tran_supply` closes that
+asymmetry, and runs **only** on the `loaded < 0` arm:
+
+1. **`cadence::_annot_raw_candidate`** — the ONE lookup the `6` chord already
+   uses. It prefers the ASE session's own results over `$netlist_dir/<cell>.raw`
+   and refuses a file older than the deck (`staleraw`). No second discovery
+   mechanism exists; row **V39** slices the body and enforces that.
+2. **`cadence::_annot_viewer_db` asks the waveform viewer which file it is
+   showing, and that answer WINS the path.** Same context borrow as the cursor
+   resolver, same always-give-it-back discipline. It offers only a transient, so
+   a viewer switched to a digital database or an operating point does not divert
+   the supply. Rows **V50** and **B12g** (the real viewer, on the dev display) —
+   and B12g exists because **deleting the viewer consult leaves B12 and B12c
+   green**: on an ordinary fixture the two roads lead to the same file.
+3. **`xschem annotate_op $path $lvl tran`, the transient asked for BY NAME
+   first**, with the shipped `op → dc → tran` fallback as the SECOND ask. The
+   ordinary results file holds the deck's `.op` beside its `.tran`; an unnamed
+   ask stops at the operating point and the transient mode then refuses its own
+   supply with a sentence that is **false**. Keeping the fallback means an
+   operating-point-only session still attaches and still meets the honest
+   `notran`. Rows **V45**, control **V35b**.
+   `annotate_op` rather than `raw read` because it stamps the session LEVEL onto
+   the raw (`scheduler.c:2538-2542`), which is what makes `sch_waves_loaded()`
+   answer ≥ 0 after the user has descended — row **V48** presses the chord one
+   sheet down.
+4. **Success is RE-ASKED from `xschem raw loaded`, never taken from the rc** —
+   `annotate_op` answers the same for a file it loaded and a file it could not
+   parse (row **V37**, the only witness).
+5. **The two windows are COMPARED before a single number is believed**
+   (`cadence::_annot_db_print`, RULING D5-1). The viewer holds its copy in
+   memory; this read the file again off disk, and re-running the simulator
+   overwrites that file in place. Measured before this arm: the waveform screen
+   showing **3 V** at the cursor and the schematic painting **30 V** beside the
+   same node, rc `ok`, no warning anywhere. Row **V51**. ⚠ The print is the
+   analysis type, the dataset and point counts, the column names and every
+   column's value at the **last** point — a **sample, not a proof**; a re-run
+   differing only mid-sweep passes it. Filed as **0885**, with both honest
+   closures costed.
+
+**⚠ THE SUPPLY IS BELOW THE CURSOR RESOLVE, AND THAT IS A GUARD.** Hoisting it
+would make a key press that REFUSES (*"no cursor is on anywhere"*) attach a
+database to the user's session on its way out — issue 0872's shape arriving
+through the new door. Row **V14** asserts the state and the mask and would not
+notice; row **V38** asserts the registry afterwards and is the only thing that
+does.
+
+**⚠ AND EVERY REFUSAL THAT FOLLOWS THE ATTACH UNDOES IT**
+(`cadence::_annot_tran_unwind`, taking the database back and putting the user's
+own mask back). The supply must attach a database to learn what analysis it
+holds, and `annotate_op` runs `update_op()` and `draw()` on its way in — so with
+the node-voltage bit already on (an earlier `Alt-6`, or an `annot_show` line in
+the user's `xschemrc`, which `src/xinit.c:3896` honours) **the operating point
+landed on the sheet on the very key press whose status line then read "not a
+transient analysis"**. Measured: 0.5 V beside node `a` with the cursor at 3 ns.
+Rows **V46** (with a positive control requiring 7.5 V to appear when the same
+file is attached by hand under the same mask), **V35b** and **V52**.
+
+**⚠ A ROW THAT HAND-ATTACHES THE DATABASE TO THE SCHEMATIC CONTEXT PROVES
+NOTHING ABOUT THIS PATH.** That is the hollow shape that hid 0881 for a whole
+feature. Rows **V33** (the ordinary post-run desktop), **V34** (the results
+attached to ANOTHER window through `ase::attach_dbs`, the design window asserted
+empty on two independent reads) and **B12f** (the Tk fixture, supplying through
+the real `wviewer::attach_raw`) hand-attach nothing.
 
 **⚠ THE `ok` SENTENCE'S PROVENANCE IS LOAD-BEARING, NOT POLITENESS.** The mode is a
 SNAPSHOT: the number stays on the sheet while the cursor moves on. Under D5-1 the
@@ -2264,11 +2347,23 @@ recommended option — rendering the annotated sample's own x unconditionally �
 IS the value at 3e-09, as *"t = 2e-09"*. The wording is **unratified**, owed as
 `rule 0869`.
 
-**⚠ THE THREE OP CHORDS REFUSE A TRANSIENT SHEET, SILENTLY — RULING 0856, issue 0872,
-✅ FIXED 2026-08-27 (A3h).** `Ctrl-6`, `6` and `Alt-6` are the OP chords, and on a
-database whose `sim_type` is not `op` or `dc` the two that TURN THINGS ON now write no
-mask, paint nothing and say nothing — the user's ruling verbatim: *"we haven't yet
-built anything for annotating from TRAN results, so it should do nothing silently."*
+**⚠ THE THREE OP CHORDS REFUSE A TRANSIENT SHEET — RULING 0856, issue 0872,
+✅ FIXED 2026-08-27 (A3h). THEY NO LONGER DO IT SILENTLY — issue 0857, 2026-08-27
+(A10).** `Ctrl-6`, `6` and `Alt-6` are the OP chords, and on a database whose
+`sim_type` is not `op` or `dc` the two that TURN THINGS ON write no mask and paint
+nothing — the user's ruling verbatim: *"we haven't yet built anything for
+annotating from TRAN results, so it should do nothing silently."* The user then
+ruled on the second half: *"Yes, 6 does nothing when there is ONLY a TRAN result.
+But, it's a good idea to say 'No OP results available' in the CIW."* So the
+"do nothing" stands for the **screen** and stops standing for the **user**: both
+refusals — the top gate and the 0872 unwind — now mint one `notop` sentence
+naming the analysis actually loaded and pointing at `Alt-Shift-6`, to the CIW
+**and** the held status line. ⚠ Before A10 `cadence::annot_mode` had **no CIW
+route at all** (all five `_annot_ciw` call sites were inside `annot_tran`), so
+this was new wiring, not a re-route. `Ctrl-6` stays exempt and stays quiet.
+Rows **V40** / **V41**; the analysis type is read **before** `xschem raw clear`,
+because afterwards the accessor raises.
+
 The detector is `cadence::_annot_op_db_ok` and it is asked **TWICE**: once in
 `cadence::annot_mode` before the mask is written and before any sentence is minted,
 and once again at the end of the candidate branch, after the chord's own search has
@@ -2320,7 +2415,7 @@ when the file is actually there. Deliberately **not** a `source` line in
 `src/xschem.tcl`: `utils/` is not in the install list, and a shipped `xschem.tcl`
 sourcing a file it did not install is the startup segfault recorded as 0423/0424.
 
-#### 4.9.1 Open against this section (measured 2026-08-27; the A3h pass closed six)
+#### 4.9.1 Open against this section (measured 2026-08-27; the A3h pass closed six, the A10 pass closed 0881 and half of 0857 and filed four more)
 
 | issue | what |
 |---|---|
@@ -2335,7 +2430,13 @@ sourcing a file it did not install is the startup segfault recorded as 0423/0424
 | **0877** | 🔴 **NEW.** The node-voltage render class carries no provenance stamp. **Three** faces: over an OPERATING POINT database masks 4 and 6 paint the OP number under the wording *"transient node voltages"*; the ASE-L `Results > Annotate` checkbuttons write the mask directly, past 0872's refusal; and a **held** status line minted about an OP database survives a transient being attached underneath it, so a transient sample at cursor B sits under *"OP annotation ON (node voltages)"*. **Needs a user ruling** |
 | ~~**0878**~~ | ✅ **FIXED 2026-08-27 (A3h).** Guard **G10** (`src/scheduler.c:2372`, the floater-cache refresh) was invisible: every fixture in the suite annotates a sheet with **no floater**, so `there_are_floaters()` answered 0 on all twenty `annotate_at` calls and the guarded statement never executed. Row **V10b** on a dedicated sheet that has one; S9 now reds V10b and only V10b |
 | **0879** | 🔴 **NEW.** Issue 0876 records an S15b sabotage result that three independent runs cannot reproduce, and whose stated cause is mechanically impossible. Annotated in place, not deleted — correcting another agent's tracker entry is the user's call |
-| **0880** | 🔴 **NEW.** Five of the twelve suites this feature is gated on are registered in NEITHER automated runner, `test_op_annot` (413 checks) included in `full_audit.sh` — they run only when a human types them |
+| **0880** | 🔴 **OPEN.** Five of the twelve suites this feature is gated on are registered in NEITHER automated runner, and `test_op_annot` (now **435** checks) is absent from `full_audit.sh` — they run only when a human types them. Re-confirmed unchanged 2026-08-27 by A10 |
+| ~~**0881**~~ | ✅ **FIXED 2026-08-27 (A10), in TWO passes.** `Alt-Shift-6` and the ASE-L menu item could not see the `.raw` the waveform viewer had loaded, because the viewer keeps it in its own window's context — so the mode issue 0868 shipped had **never worked from a bench**. The first pass re-derived a PATH from the session metadata and read that file; a verifier deleted the viewer attach from the acceptance fixtures and every row stayed green, which is the same hollow shape that hid the original defect. The repair asks the viewer which file it is showing, names `tran` explicitly, compares the two windows' copies, and unwinds every refusal. Rows V33–V52, B12f/B12/B12c/B12d/B12g. Residue → **0885** |
+| ~~**0857**~~ | ⚠ **PARTLY FIXED 2026-08-27 (A10)** — the WRONG-KIND half, which is the half the user ruled on: `6` and `Alt-6` on a transient-only bench now say *"No operating point results available…"* in the CIW and on the held status line. **Still open:** the originally reported `tb_bandgap` case (a proper OP database loaded, every device row blank) takes no refusal and still says nothing in the CIW |
+| **0882** | 🔴 **NEW.** `wviewer::hier_origin_ok` (`src/wave_viewer.tcl:11137`) short-circuits `return 1` on `xschem raw loaded >= 0`, skipping the base-level guard. Measured 0 → 1 purely because the design window now holds a raw after a successful transient annotation — its own header states the premise A10 invalidated. Witness row **V44**; **not fixed**, outside A10's blast radius |
+| **0883** | 🔴 **NEW.** `ase::browser_show_current` (`src/ase.tcl:3582`) feeds the same per-context read into `browser_origin_drop`, where a session bound at level 2 changes the drop from 2 to 0. Measured; **not fixed** |
+| **0884** | 🔴 **NEW, NEEDS A USER RULING.** A results file older than the deck is refused (`staleraw`, ruling 0838) **while the waveform viewer is plotting that very file** — the viewer checks staleness nowhere. Ruling 0838 against the user's 2026-08-27 intent ruling; only the user can settle it. `owed.sh` rule debt 0884 |
+| **0885** | 🔴 **NEW.** The two-window comparison is a SAMPLE — shape plus the last point of every column — not a proof. A re-run differing only mid-sweep annotates. Both honest closures (a C-side digest verb, or a shared database) are larger than the item that found this |
 
 ⚠ **0877 is the one to read before extending this section**, and it is what is left of
 0872. The third mode is a third SWITCH onto the second mode's store, not a third

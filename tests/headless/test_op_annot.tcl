@@ -11335,6 +11335,18 @@ if {[catch {
 set XSCHEM_LIBRARY_PATH $S_LIBS
 set V_LV $::live_cursor2_backannotate
 
+## ⚠ A KNOWN-EMPTY `netlist_dir`, AND ROWS V15 AND V29 NEED IT (item A10).
+## Until issue 0881 those two rows answered `noraw` BY ACCIDENT: nothing was
+## attached, and whatever directory an earlier section happened to leave in
+## ::netlist_dir happened not to hold a `<cell>.raw`. Once the transient mode
+## goes and FINDS the run's results the way `6` already does, `noraw` stops
+## meaning "nothing is attached" and starts meaning "nothing is attached AND
+## there is no candidate on disk" -- so the second half has to be built by the
+## fixture rather than inherited from section W's leftovers.
+set V_ND_NONE [file join $scratch v_nd_none]
+file mkdir $V_ND_NONE
+foreach _vf [glob -nocomplain [file join $V_ND_NONE *]] { catch {file delete -force $_vf} }
+
 # ===========================================================================
 # V0 — CONTROL: THE PREMISE. GREEN BEFORE AND AFTER, AND LOAD-BEARING
 # ===========================================================================
@@ -11658,13 +11670,21 @@ check {V14 guards G7 and G13 with NO cursor on the mode refuses by name, publish
 # program says so in the CIW rather than doing nothing silently. The five states
 # are distinguishable by NAME so the caller can render one sentence per cause
 # rather than one apology for all of them.
+## ⚠ THE EMPTY `netlist_dir` IS PART OF THE FIXTURE, NOT TIDINESS (item A10).
+## `noraw` here means BOTH halves -- nothing is attached to this sheet and there
+## is no results file for this cell on disk either -- and after issue 0881 the
+## second half is the one that decides the answer. Left to the ambient value the
+## row would be asserting whatever the previous section's directory contained.
+set v15_nd $::netlist_dir
+set ::netlist_dir $V_ND_NONE
 opa_l_annot 0
 catch {xschem raw clear}
 xschem cursor 2 1
 xschem set cursor2_x 4e-9
-check {V15 with NO database loaded the mode refuses as `noraw`, publishes nothing and arms no bit} \
+check {V15 with NO database loaded and NO results file on disk the mode refuses as `noraw`, publishes nothing and arms no bit} \
   [list [opa_v_tran] [rcall {xschem raw loaded}] [xschem get annot_show]] \
   [list noraw {0 -1} 0]
+set ::netlist_dir $v15_nd
 
 # ===========================================================================
 # V16 — THE WRONG KIND OF DATABASE: 0856's RULE, APPLIED IN THE OTHER DIRECTION
@@ -12015,6 +12035,20 @@ check {V25 issue 0868 DELIBERATE: with the box off `xschem set cursor2_x` still 
 set V_MSG_OK2   {Transient annotation at t = 2e-09 (cursor B)}
 set V_MSG_OK3   {Transient annotation at t = 3e-09 (cursor B)}
 set V_MSG_CLAMP {Transient annotation at t = 4e-09 (cursor B at 4.5e-09, outside the data -- holding the boundary sample)}
+## ⚠ ISSUE 0857's SENTENCE, AND THE USER RULED IT ON 2026-08-27, VERBATIM:
+## "Yes, 6 does nothing when there is ONLY a TRAN result. But, it's a good idea
+## to say 'No OP results available' in the CIW." So the two silent returns of
+## `cadence::annot_mode` -- the one at the top and the one inside the 0872
+## unwind -- stop being mute. The wording is NEW and the user has not ratified
+## it (a `rule` debt); the user's own opening clause is kept and a next step is
+## added, per the PLAIN ENGLISH ruling of the same day. Two shapes, ONE arm of
+## `cadence::_annot_msg` (RULING D5-4): the analysis type is named when the
+## attached database can say what it is, and left out when it cannot.
+## ⚠ NO "OP annotation ON/OFF (...)" PREFIX. On both refusal paths the mask is
+## never written, or is written and restored, so a prefix would be a sentence
+## making a claim about a screen that did not change -- RULING D5-1's shape.
+set V_MSG_NOTOP_TRAN {No operating point results available -- the results loaded here are a 'tran' analysis, not an operating point. Run an operating point analysis, or press Alt-Shift-6 to annotate transient node voltages at the waveform cursor.}
+set V_MSG_NOTOP_BARE {No operating point results available -- the results loaded here are not an operating point. Run an operating point analysis, or press Alt-Shift-6 to annotate transient node voltages at the waveform cursor.}
 ## The lab_pin tail over the OPERATING POINT fixture of section T. Measured: the
 ## `d` node carries 7.5 and `g` is not a vector in that raw, so it renders the
 ## I3 placeholder rather than a number.
@@ -12212,6 +12246,10 @@ catch {xschem statusmsg -hold ZZ0873SENTINEL}
 set v29a  [opa_v_spy {set ::v29a_state [opa_v_tran]}]
 set v29am [lindex [rcall {xschem get statusmsg}] 1]
 set v29ah [lindex [rcall {xschem get statusmsg_hold}] 1]
+## The empty `netlist_dir`, for row V15's reason: after issue 0881 this leg's
+## `noraw` is only reachable when there is no candidate ON DISK either.
+set v29_nd $::netlist_dir
+set ::netlist_dir $V_ND_NONE
 opa_l_annot 0
 catch {xschem raw clear}
 xschem cursor 2 1
@@ -12220,6 +12258,7 @@ catch {xschem statusmsg -hold ZZ0873SENTINEL}
 set v29b  [opa_v_spy {set ::v29b_state [opa_v_tran]}]
 set v29bm [lindex [rcall {xschem get statusmsg}] 1]
 set v29bh [lindex [rcall {xschem get statusmsg_hold}] 1]
+set ::netlist_dir $v29_nd
 opa_l_annot 0
 catch {xschem raw clear}
 xschem raw read $T_OPRAW op
@@ -12278,9 +12317,15 @@ check {V30 issue 0873 the emitter tries the sinks in order, falls through when o
 # Waves > Op Annotate, which is exactly the operation the 0856 guard refuses on
 # a transient. A fix that only gated the PAINT leaves that sentence standing,
 # so every leg carries the status line and not just the mask.
-# ⚠ THE SENTINEL IS THE MEASUREMENT OF SILENCE. "Said nothing" cannot be read
-# off an empty status line -- a status line is never empty. A planted held
-# message that SURVIVES the key press is what says the press was silent.
+# ⚠ LEGS 3, 4 AND 5 NO LONGER ASSERT SILENCE, AND THE USER IS WHY (item A10,
+# issue 0857, ruled 2026-08-27): "Yes, 6 does nothing when there is ONLY a TRAN
+# result. But, it's a good idea to say 'No OP results available' in the CIW."
+# So the press still publishes nothing and still arms no bit -- ruling 0856 is
+# untouched, and every mask and every paint below is byte-identical -- but it
+# now SAYS why instead of leaving the user with a key that appears dead. The
+# held sentinel is replaced by the one sentence rather than deleted: a press
+# that wrote nothing at all would leave the sentinel standing and red here,
+# exactly as a press that wrote the wrong sentence would.
 # ⚠ LEG 2 IS THE OFF SWITCH AND IT IS EXEMPT, ON PURPOSE. Ctrl-6 must always
 # clear, and clearing never puts a number on a sheet. A refusal that swallowed
 # Ctrl-6 would strand the user with bit2 armed and no way to turn it off, which
@@ -12319,7 +12364,7 @@ catch {cadence::annot_mode opvolt}
 set v31_5mask  [xschem get annot_show]
 set v31_5msg   [lindex [rcall {xschem get statusmsg}] 1]
 set v31_5paint [opa_v_paint c6facec]
-check {V31 issue 0872 RULING 0856 on a TRANSIENT sheet Alt-6 and 6 publish nothing and say nothing, and Ctrl-6 still clears} \
+check {V31 issue 0872 RULING 0856 on a TRANSIENT sheet Alt-6 and 6 publish nothing and SAY WHY (issue 0857), and Ctrl-6 still clears} \
   [list $v31_1state $v31_1mask $v31_1paint \
         $v31_2mask $v31_2msg $v31_2paint \
         $v31_3mask $v31_3msg $v31_3paint \
@@ -12327,9 +12372,9 @@ check {V31 issue 0872 RULING 0856 on a TRANSIENT sheet Alt-6 and 6 publish nothi
         $v31_5pre $v31_5mask $v31_5msg $v31_5paint] \
   [list ok 4 $V_PINS_P3 \
         0 {OP annotation OFF} $V_PINS_NONE \
-        0 ZZ0872SENTINEL $V_PINS_NONE \
-        0 ZZ0872SENTINEL $V_PINS_NONE \
-        {-1 0 -1} 0 ZZ0872SENTINEL $V_PINS_NONE]
+        0 $V_MSG_NOTOP_TRAN $V_PINS_NONE \
+        0 $V_MSG_NOTOP_TRAN $V_PINS_NONE \
+        {-1 0 -1} 0 $V_MSG_NOTOP_TRAN $V_PINS_NONE]
 
 # ===========================================================================
 # V31b — THE POSITIVE CONTROL. GREEN BEFORE AND AFTER, AND NOT OPTIONAL
@@ -12401,6 +12446,13 @@ check {V31b CONTROL an OPERATING POINT database still annotates on Alt-6, and wi
 # ⚠ LEG 3 IS THE `$cur` HALF. The unwind restores the mask the USER had, not a
 # bare 0: a press that cannot do its job must not clear bits the press did not
 # set. It starts at mask 1 and must end at mask 1.
+# ⚠ ONLY THE STATUS LINE MOVED WITH ITEM A10, AND DELIBERATELY SO. The mask,
+# the `xschem raw loaded` readback, the paint and leg 4's
+# `RAISED:No raw file loaded` are byte-for-byte what they were, so deleting the
+# unwind body still reddens this row on all four of them -- that is PART 2 of
+# the A10 brief, and sabotage S18 is the check of it. What changed is that the
+# unwound press now SAYS what happened (issue 0857, ruled 2026-08-27) instead
+# of leaving the planted sentinel standing.
 # ⚠ THE UNWIND DETACHES THE DATABASE TOO, and every leg asserts it. Leaving a
 # transient attached is not "nothing": the waveform viewer would hold data the
 # user never loaded and cursor motion would start publishing from it. We only
@@ -12463,10 +12515,10 @@ catch {xschem cursor 2 0}
 opa_l_annot 0
 check {V31c issue 0872 RULING 0856 the chord's OWN candidate search must not attach a transient, paint from it or speak about it} \
   [list $v31c_1 $v31c_2 $v31c_3 $v31c_4] \
-  [list [list 0 {0 -1} ZZ0872SENTINEL $V_PINS_NONE] \
-        [list 0 {0 -1} ZZ0872SENTINEL $V_PINS_NONE] \
-        [list 1 {0 -1} ZZ0872SENTINEL $V_PINS_NONE] \
-        [list 0 {0 -1} ZZ0872SENTINEL $V_PINS_NONE {RAISED:No raw file loaded}]]
+  [list [list 0 {0 -1} $V_MSG_NOTOP_TRAN $V_PINS_NONE] \
+        [list 0 {0 -1} $V_MSG_NOTOP_TRAN $V_PINS_NONE] \
+        [list 1 {0 -1} $V_MSG_NOTOP_TRAN $V_PINS_NONE] \
+        [list 0 {0 -1} $V_MSG_NOTOP_TRAN $V_PINS_NONE {RAISED:No raw file loaded}]]
 
 # ===========================================================================
 # V31d — THE CANDIDATE SEARCH'S OWN POSITIVE CONTROL. GREEN BEFORE AND AFTER
@@ -12537,6 +12589,999 @@ foreach v32m {0 1 2 3 4 5 6 7} {
 opa_l_annot 0
 check {V32 issue 0874 guard G6b a schematic text hidden by `hide=voltage` reappears for bit2 as well as bit1, and a plain text never hides} \
   [list $v32h $v32p] [list {0 0 1 1 1 1 1 1} {1 1 1 1 1 1 1 1}]
+
+# ===========================================================================
+# V33 .. V44 — ITEM A10 / ISSUE 0881: THE SUPPLY THE MODE NEVER HAD, AND
+#              ISSUE 0857's SENTENCE FOR THE TWO SILENT REFUSALS
+# ===========================================================================
+# ⚠ THE USER REPRODUCED THIS AT THEIR OWN BENCH, 2026-08-27, VERBATIM:
+# "I do a TRAN run and then Alt-Shift-6 and Results > Annotate > Transient
+#  Node.. don't annotate anything onto the schematic - yes, there is the
+#  'Transient annotation -- NO RAW ..' message.. - bad. Given that results are
+#  being loaded and plotted, we have enough info to satisfy user intent. The
+#  ultimate goal of any UI is to satisfy user intent."
+# and: "The info should already be available - it's been loaded to display
+#  waveforms in the waveform viewer."
+#
+# ⚠ AND THE ROWS ARE WHY IT SHIPPED. Every row that covered the viewer-cursor
+# path attached the database to the schematic context IN ITS OWN FIXTURE, so it
+# manufactured a state the product never produces -- 413 checks here, 29 in
+# tests/headless/test_annot_show_menu.tcl and a zero-failure run_regression.tcl
+# were all consistent with the feature never having worked once. So the
+# load-bearing rows below -- V33 and V34 -- HAND-ATTACH NOTHING. The results
+# file sits where a run leaves it, or is attached to a DIFFERENT window through
+# the proc the waveform viewer itself calls, and the annotation is then asked
+# for from the schematic window exactly as the user asks for it.
+#
+# ⚠ HALF OF THE FEATURE ALREADY CROSSES THE WINDOW BOUNDARY CORRECTLY, and that
+# is the measurement that says how small the fix is. The schematic window
+# already reaches into the waveform viewer's window and reads the cursor
+# sitting in its active tab -- row B12 of test_annot_show_menu.tcl is that
+# borrow. Only the results lookup is blind. One asymmetry, not a missing
+# feature.
+#
+#   V33   the ordinary post-run desktop: the run's results on disk, nothing
+#         attached, and the mode supplies itself                 <- RED before
+#   V34   the bench, headless twin: the results are attached to ANOTHER
+#         window through ase::attach_dbs and the design window is empty
+#                                                                <- RED before
+#   V35   the ASE session's own file wins over the netlist_dir arm  <- RED
+#   V35b  an OPERATING POINT reached through the same door is refused by name
+#                                                                <- RED before
+#   V36   stale results are named and NOT used, issue 0838's rule <- RED before
+#   V37   a candidate that exists but will not parse is still `noraw` <- RED
+#   V38   ORDERING: no cursor refuses BEFORE anything is attached  (green both)
+#   V39   STRUCTURAL: one discovery mechanism, not two            <- RED before
+#   V40   issue 0857 half 1: a transient already attached, `6` and `Alt-6` say
+#         why, `Ctrl-6` still just clears                        <- RED before
+#   V41   issue 0857 half 2: the 0872 unwind says why too         <- RED before
+#   V42   the two new sentences, byte for byte                    <- RED before
+#   V43   STRUCTURAL: RULING D5-4, minted in one file only        <- RED before
+#   V44   WITNESS, issue 0882: a consequence of the fix, pinned so a later crew
+#         has to confront it rather than discover it              <- RED before
+
+## The session METADATA seam, stubbed for ONE script and always restored --
+## section N's rename-in / rename-out technique. Only the three readers
+## `cadence::_annot_raw_candidate` consults are replaced: which session owns
+## this sheet, which file that session's last run wrote, and whether that file
+## still describes the deck. NOTHING here attaches a database; the point of
+## these rows is that the PRODUCT does the attaching.
+proc opa_v_ase {rawfile stale script} {
+  set ::opa_v_ase_raw   $rawfile
+  set ::opa_v_ase_stale $stale
+  namespace eval ase {}
+  set h1 [expr {[info commands ::ase::session_for_current] ne {}}]
+  set h2 [expr {[info commands ::ase::last_rawfile] ne {}}]
+  set h3 [expr {[info commands ::ase::results_stale] ne {}}]
+  if {$h1} { rename ::ase::session_for_current ::opa_v_sav_sfc }
+  if {$h2} { rename ::ase::last_rawfile        ::opa_v_sav_lrf }
+  if {$h3} { rename ::ase::results_stale       ::opa_v_sav_rst }
+  proc ::ase::session_for_current {} { return [list zzA10key 0 zzlib zzcell schematic] }
+  proc ::ase::last_rawfile {key} { return [expr {$key eq {zzA10key} ? $::opa_v_ase_raw : {}}] }
+  proc ::ase::results_stale {key} { return $::opa_v_ase_stale }
+  catch {uplevel 1 $script} r
+  catch {rename ::ase::session_for_current {}}
+  catch {rename ::ase::last_rawfile {}}
+  catch {rename ::ase::results_stale {}}
+  if {$h1} { rename ::opa_v_sav_sfc ::ase::session_for_current }
+  if {$h2} { rename ::opa_v_sav_lrf ::ase::last_rawfile }
+  if {$h3} { rename ::opa_v_sav_rst ::ase::results_stale }
+  return $r
+}
+
+## Count the CODE lines of a proc body matching <re>, whole-line Tcl comments
+## dropped -- so a header paragraph that names a proc is not counted as a call
+## to it. Same discipline as opa_v_ngrep, applied to a sliced body.
+proc opa_v_pgrep {body re} {
+  set n 0
+  foreach l [split $body \n] {
+    if {[regexp {^\s*#} $l]} continue
+    if {[regexp -- $re $l]} { incr n }
+  }
+  return $n
+}
+
+## The item's own fixtures. NONE of them is attached by hand anywhere below.
+set V_A10_STALE   [file join $scratch v_a10_stale.raw]
+set V_A10_SESS    [file join $scratch v_a10_sess.raw]
+set V_A10_VSCH    [file join $lib v_a10_viewer.sch]
+set V_ND_JUNK     [file join $scratch v_nd_junk]
+file copy -force $T_RAW $V_A10_STALE
+file copy -force $T_RAW $V_A10_SESS
+file copy -force [file join $lib v_cand.sch] $V_A10_VSCH
+file mkdir $V_ND_JUNK
+set f [open [file join $V_ND_JUNK v_cand.raw] w]
+puts $f {ZZ this file is not a spice raw database and never was}
+close $f
+
+## The sixth sentence of the transient mint. NEW WORDING the user has not
+## ratified -- a `rule` debt -- and deliberately short, because the plain
+## English pass the user ordered on 2026-08-27 is a separate item.
+set V_MSG_STALERAW "Transient annotation -- the results file [file tail $V_A10_STALE] is older than the circuit it describes, so it was not used. Re-run the simulation."
+
+set v33_nd $::netlist_dir
+
+# ===========================================================================
+# V33 — THE ORDINARY POST-RUN DESKTOP. NOTHING IS HAND-ATTACHED. RED BEFORE
+# ===========================================================================
+# ⚠ THIS IS ACCEPTANCE ROW 3 OF ISSUE 0881, HEADLESS HALF. A `.tran` has just
+# been run, so the results sit at the shipped location every OP chord already
+# resolves -- and NOTHING is attached to the sheet, because the user has not
+# opened anything. The precondition is asserted first and separately: without
+# it a row that passed because an earlier section left a database attached
+# would be the same hollow row that hid this defect for a whole feature.
+# Five claims: nothing was attached before the press; the mode published; it
+# armed its own bit; the results really are attached afterwards; and the number
+# reached the SHEET, measured through an SVG export -- never `xschem translate`,
+# FAQ Q52.
+set ::netlist_dir $V_ND_TRAN
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set v33_pre   [rcall {xschem raw loaded}]
+set v33_st    [opa_v_tran]
+set v33_mask  [xschem get annot_show]
+set v33_ld    [rcall {xschem raw loaded}]
+set v33_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v33_paint [opa_v_paint a10_desktop]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V33 issue 0881 the ORDINARY POST-RUN DESKTOP nothing is hand-attached, the mode finds the run's own results and paints at the cursor} \
+  [list $v33_pre $v33_st $v33_mask $v33_ld $v33_msg $v33_paint] \
+  [list {0 -1} ok 4 {0 0} $V_MSG_OK3 $V_PINS_P3]
+
+# ===========================================================================
+# V34 — THE USER'S BENCH, HEADLESS TWIN. THE ROW THE ITEM EXISTS FOR. RED
+# ===========================================================================
+# ⚠ THE RAW IS ATTACHED TO A DIFFERENT WINDOW, THROUGH THE PRODUCT'S OWN PROC.
+# `ase::attach_dbs` is exactly what `wviewer::attach_raw` calls after it has
+# switched to the viewer's context (src/wave_viewer.tcl:3725), and it is what
+# calls `xschem raw read`. So this row reproduces the bench state without Tk:
+# the viewer's window holds the run's transient, the DESIGN window holds
+# nothing at all, and the annotation is then asked for from the design window.
+# ⚠ THE EMPTY DESIGN WINDOW IS ASSERTED, NOT ASSUMED. Two elements say it --
+# `xschem raw loaded` is -1 and `xschem raw sim_type` RAISES -- because those
+# are precisely the two reads `cadence::annot_tran` refuses on, and a row that
+# did not pin them could pass on another row's leftovers.
+# ⚠ AND THE CONTEXT COMES BACK. Every switch is deliberate and the last element
+# is that the design window is current again at the end -- issue 0173's shape,
+# from a path nobody would think to look at.
+set ::netlist_dir $V_ND_TRAN
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 2e-9
+set v34_wa [xschem get current_win_path]
+catch {xschem new_schematic create {} $V_A10_VSCH}
+set v34_wb [xschem get current_win_path]
+set v34_att [rcall [list ase::attach_dbs [file join $V_ND_TRAN v_cand.raw] tran]]
+set v34_vld [rcall {xschem raw loaded}]
+set v34_vst [rcall {xschem raw sim_type}]
+catch {xschem new_schematic switch $v34_wa}
+set v34_back  [expr {[xschem get current_win_path] eq $v34_wa ? 1 : 0}]
+set v34_dld   [rcall {xschem raw loaded}]
+set v34_dst   [rcall {xschem raw sim_type}]
+set v34_st    [opa_v_tran]
+set v34_mask  [xschem get annot_show]
+set v34_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v34_paint [opa_v_paint a10_viewer]
+opa_l_annot 0
+catch {xschem raw clear}
+catch {xschem new_schematic switch $v34_wb}
+catch {xschem new_schematic destroy $v34_wb {}}
+catch {xschem new_schematic switch $v34_wa}
+set v34_end [expr {[xschem get current_win_path] eq $v34_wa ? 1 : 0}]
+check {V34 issue 0881 THE BENCH the run's results are attached to ANOTHER window through ase::attach_dbs, the design window holds nothing, and the annotation still lands} \
+  [list [expr {$v34_wb ne $v34_wa ? 1 : 0}] $v34_att $v34_vld $v34_vst \
+        $v34_back $v34_dld $v34_dst \
+        $v34_st $v34_mask $v34_msg $v34_paint $v34_end] \
+  [list 1 {0 {n 1 current 0 vcds {} skipped {}}} {0 0} {0 tran} \
+        1 {0 -1} {1 {No raw file loaded}} \
+        ok 4 $V_MSG_OK2 $V_PINS_P2 1]
+
+# ===========================================================================
+# V35 — THE ASE ARM OF THE SUPPLY: THE SESSION'S OWN FILE WINS. RED BEFORE
+# ===========================================================================
+# ⚠ ONE DISCOVERY MECHANISM, REUSED. `cadence::_annot_raw_candidate` already
+# resolves this for the `6` chord and it already prefers the ASE session's own
+# results over the `$netlist_dir/<cell>.raw` fallback -- rows N11 and N12 pin
+# that order. This row asserts the transient mode arrives at the same file
+# through the same door: the netlist_dir arm is pointed at an EMPTY directory,
+# so a supply that had quietly grown its own second lookup answers `noraw`
+# here, and the session's file is named in the readback rather than assumed.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 1e-9
+opa_v_ase $V_A10_SESS 0 {set ::v35_state [opa_v_tran]}
+set v35_rf    [rcall {xschem raw rawfile}]
+set v35_mask  [xschem get annot_show]
+set v35_paint [opa_v_paint a10_sess]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V35 the ASE session's own results file is what the transient mode reaches, not the netlist_dir fallback} \
+  [list $::v35_state $v35_rf $v35_mask $v35_paint] \
+  [list ok [list 0 $V_A10_SESS] 4 $V_PINS_P1]
+
+# ===========================================================================
+# V35b — THE SAME DOOR, AN OPERATING POINT BEHIND IT. RED BEFORE
+# ===========================================================================
+# ⚠ THE GATE THIS REACHES HAS BEEN DEAD CODE SINCE THE MODE SHIPPED. The
+# `sim_type ne tran` refusal in `cadence::annot_tran` was only ever reachable
+# from a fixture that hand-attached an operating point (row V16). Once the mode
+# supplies itself, an OP-only session reaches it for real -- and the answer must
+# be the honest `notran`, not the misleading `noraw` a supply that demanded a
+# transient up front would produce.
+# ⚠ THE THIRD ELEMENT WAS INVERTED, AND THE OLD ONE WAS THE DEFECT. It used to
+# gold the operating point being LEFT ATTACHED after the refusal, on the reading
+# that it had to be attached to find out what it was and is the right database
+# for `6` and `Alt-6`. That reading is wrong, and row V46 is the measurement
+# that says why: `xschem annotate_op` runs update_op() and draw() on its way in,
+# so a session that already had the OP annotation bits on got the operating
+# point PAINTED ONTO THE SHEET by the very key press that then said "the loaded
+# database is not a transient analysis". A refusal that publishes is RULING
+# D5-1, and it is issue 0872's shape arriving through the new door. So the
+# refusal now unwinds -- the database this press attached is detached and the
+# mask goes back -- and this row golds `xschem raw sim_type` RAISING.
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 1e-9
+opa_v_ase $T_OPRAW 0 {set ::v35b_state [opa_v_tran]}
+set v35b_mask  [xschem get annot_show]
+set v35b_st    [rcall {xschem raw sim_type}]
+set v35b_ld    [rcall {xschem raw loaded}]
+set v35b_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v35b_paint [opa_v_paint a10_sessop]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V35b an OPERATING POINT reached through the new supply refuses as `notran`, arms nothing, paints nothing and is PUT BACK} \
+  [list $::v35b_state $v35b_mask $v35b_st $v35b_ld $v35b_msg $v35b_paint] \
+  [list notran 0 {1 {No raw file loaded}} {0 -1} $V_MSG_NOTRAN $V_PINS_NONE]
+
+# ===========================================================================
+# V36 — STALE RESULTS ARE NAMED AND NOT USED (issue 0838). RED BEFORE
+# ===========================================================================
+# ⚠ ISSUE 0838's RULE, CARRIED THROUGH THE NEW DOOR. The session is what knows
+# whether its results still describe the deck on disk, and
+# `cadence::_annot_raw_candidate` already refuses a stale one for the `6` chord
+# rather than falling through to the netlist_dir arm, which is very often the
+# same file under another name. A supply that reused the candidate builder but
+# ignored its third element would annotate the previous run's numbers onto a
+# changed circuit -- RULING D5-1, with an authoritative caption on top.
+# The sentence NAMES THE FILE, because "not used" without saying which file is
+# not something a user can act on.
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_v_ase $V_A10_STALE 1 {set ::v36_state [opa_v_tran]}
+set v36_ld    [rcall {xschem raw loaded}]
+set v36_mask  [xschem get annot_show]
+set v36_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v36_paint [opa_v_paint a10_stale]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V36 issue 0838 STALE results are refused by name, nothing is attached, nothing is armed and nothing is painted} \
+  [list $::v36_state $v36_ld $v36_mask $v36_msg $v36_paint] \
+  [list staleraw {0 -1} 0 $V_MSG_STALERAW $V_PINS_NONE]
+
+# ===========================================================================
+# V37 — A CANDIDATE THAT EXISTS BUT WILL NOT PARSE. RED BEFORE
+# ===========================================================================
+# ⚠ THE ONLY ROW THAT CAN SEE THE RE-ASK. `xschem annotate_op` returns the same
+# rc for a file it loaded and a file it could not parse -- measured, and it is
+# why `cadence::annot_mode`'s own candidate branch re-asks `xschem raw loaded`
+# afterwards instead of trusting the rc. A supply that trusted the rc would
+# walk on into the analysis check with nothing attached and answer `notran`,
+# telling the user their transient is not a transient.
+set ::netlist_dir $V_ND_JUNK
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set v37_state [opa_v_tran]
+set v37_ld    [rcall {xschem raw loaded}]
+set v37_mask  [xschem get annot_show]
+set v37_msg   [lindex [rcall {xschem get statusmsg}] 1]
+check {V37 a results file that exists but will not parse still answers `noraw`, attaches nothing and arms nothing} \
+  [list $v37_state $v37_ld $v37_mask $v37_msg] \
+  [list noraw {0 -1} 0 $V_MSG_NORAW]
+
+# ===========================================================================
+# V38 — THE ORDERING GUARD. GREEN BEFORE AND AFTER, AND NOT OPTIONAL
+# ===========================================================================
+# ⚠ ROW V14 ASSERTS THE STATE AND THE MASK, WHICH IS WHY THIS ROW HAS TO EXIST.
+# A supply hoisted above the cursor resolve passes V14 unchanged: the answer is
+# still `nocursor` and the mask is still 0, but a key press that REFUSED has
+# silently attached a database to the user's session -- exactly the thing the
+# 0872 unwind exists to prevent, arriving through the new door. The second
+# element is the whole row: with a perfectly good results file sitting on disk,
+# `xschem raw loaded` is still -1 afterwards.
+set ::netlist_dir $V_ND_TRAN
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 0
+set v38_state [opa_v_tran]
+set v38_ld    [rcall {xschem raw loaded}]
+set v38_mask  [xschem get annot_show]
+check {V38 ORDERING with no cursor on the mode refuses BEFORE it attaches anything, even with the run's results on disk} \
+  [list $v38_state $v38_ld $v38_mask] \
+  [list nocursor {0 -1} 0]
+
+# ===========================================================================
+# V39 — STRUCTURAL: ONE DISCOVERY MECHANISM, NOT TWO. RED BEFORE
+# ===========================================================================
+# ⚠ RULING D5-4's SPIRIT, APPLIED TO A LOOKUP INSTEAD OF A SENTENCE. There is
+# already one proc that answers "where are this sheet's results", it already
+# knows the ASE session beats the netlist_dir fallback, and it already refuses
+# a stale file. A second lookup written out longhand beside it would drift
+# silently the first time one of the three learned something the other did not
+# -- the same argument invariant I1 makes for op_annot::vector.
+# So: the supplier CALLS the candidate builder exactly once and spells none of
+# its sources itself, and `cadence::annot_tran` does no loading of its own.
+# ⚠ BODIES ARE SLICED, AND WHOLE-LINE COMMENTS DROPPED. Issue 0682's measured
+# hole: `.` matches a newline in Tcl, so an unsliced grep runs from one proc
+# header into the next body and stays green over dead code.
+set V_A10_SRC [opa_slurp [file join $repo utils annot_mode.tcl]]
+set V_A10_SUP [opa_proc_src $V_A10_SRC cadence::_annot_tran_supply]
+set V_A10_TRN [opa_proc_src $V_A10_SRC cadence::annot_tran]
+check {V39 RULING D5-4 the supplier reuses the ONE candidate builder and spells no second lookup, and annot_tran does no loading of its own} \
+  [list [expr {[string length $V_A10_SUP] > 0 ? 1 : 0}] \
+        [opa_v_pgrep $V_A10_SUP {cadence::_annot_raw_candidate}] \
+        [opa_v_pgrep $V_A10_SUP {netlist_dir}] \
+        [opa_v_pgrep $V_A10_SUP {ase::last_rawfile}] \
+        [opa_v_pgrep $V_A10_SUP {ase::session_for_current}] \
+        [expr {[string length $V_A10_TRN] > 0 ? 1 : 0}] \
+        [opa_v_pgrep $V_A10_TRN {annotate_op}] \
+        [opa_v_pgrep $V_A10_TRN {raw read}]] \
+  [list 1 1 0 0 0 1 0 0]
+
+# ===========================================================================
+# V40 — ISSUE 0857, HALF 1: A TRANSIENT ALREADY ATTACHED. RED BEFORE
+# ===========================================================================
+# ⚠ THE USER RULED THIS ON 2026-08-27, VERBATIM: "Yes, 6 does nothing when
+# there is ONLY a TRAN result. But, it's a good idea to say 'No OP results
+# available' in the CIW." So ruling 0856's "do nothing" stands for the SCREEN
+# -- nothing published, no bit armed, no number painted -- and stops standing
+# for the user, who was left with a key that looked broken.
+# ⚠ AND THE CHANNEL HAD TO BE BUILT, NOT REUSED. Measured before this item, all
+# five `cadence::_annot_ciw` call sites in the shipped product were inside
+# `cadence::annot_tran`; the `6` / `Alt-6` body had no CIW route at all, only
+# one held status line that both silent returns return before reaching. So this
+# row asserts BOTH sinks: the CIW is where the user asked for it, and the
+# status line is where the three OP chords already speak.
+# ⚠ LEG 3 IS THE EXEMPTION AND IT MUST STAY QUIET. Ctrl-6 clears, clearing can
+# never put a number on a sheet, and it says what it has always said -- with
+# nothing added to the CIW, because a chord people press repeatedly must not
+# write a line every press.
+opa_t_arm [file join $lib s5_flat.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 0
+catch {xschem statusmsg -hold ZZ0857SENTINEL}
+set v40a       [opa_v_spy {catch {cadence::annot_mode op}}]
+set v40a_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v40a_mask  [xschem get annot_show]
+set v40a_paint [opa_v_paint a10_six]
+catch {xschem statusmsg -hold ZZ0857SENTINEL}
+set v40b       [opa_v_spy {catch {cadence::annot_mode opvolt}}]
+set v40b_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v40b_mask  [xschem get annot_show]
+set v40b_paint [opa_v_paint a10_alt6]
+catch {xschem statusmsg -hold ZZ0857SENTINEL}
+set v40c       [opa_v_spy {catch {cadence::annot_mode none}}]
+set v40c_msg   [lindex [rcall {xschem get statusmsg}] 1]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V40 issue 0857 with ONLY a transient loaded `6` and `Alt-6` say so in the CIW and on the status line, arm nothing and paint nothing, and Ctrl-6 stays quiet} \
+  [list $v40a $v40a_msg $v40a_mask $v40a_paint \
+        $v40b $v40b_msg $v40b_mask $v40b_paint \
+        $v40c $v40c_msg] \
+  [list [list [list warn $V_MSG_NOTOP_TRAN]] $V_MSG_NOTOP_TRAN 0 $V_PINS_NONE \
+        [list [list warn $V_MSG_NOTOP_TRAN]] $V_MSG_NOTOP_TRAN 0 $V_PINS_NONE \
+        {} {OP annotation OFF}]
+
+# ===========================================================================
+# V41 — ISSUE 0857, HALF 2: THE 0872 UNWIND SPEAKS TOO. RED BEFORE
+# ===========================================================================
+# ⚠ WITHOUT THIS ROW THE SENTENCE AT THE UNWIND IS INVISIBLE TO EVERY OTHER
+# ROW. V31c reads the status line and nothing else, so a fix that spoke on the
+# status line but never reached the CIW would pass it -- and issue 0873 is on
+# record that silencing this channel once left every check in the file green.
+# This is the ordinary post-run desktop: the run's transient is on disk,
+# nothing is attached, one Alt-6 searches, loads, unwinds and now SAYS why.
+# Four claims: the CIW got it exactly once and tagged it a warning; the held
+# status line carries the same string; the mask is back where the user had it;
+# and the database the chord attached itself is detached again.
+set ::netlist_dir $V_ND_TRAN
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+catch {xschem statusmsg -hold ZZ0857SENTINEL}
+set v41      [opa_v_spy {catch {cadence::annot_mode opvolt}}]
+set v41_msg  [lindex [rcall {xschem get statusmsg}] 1]
+set v41_mask [xschem get annot_show]
+set v41_ld   [rcall {xschem raw loaded}]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V41 issue 0857 the post-run desktop: Alt-6 searches, loads, unwinds AND says why, once, tagged as a warning} \
+  [list $v41 $v41_msg $v41_mask $v41_ld] \
+  [list [list [list warn $V_MSG_NOTOP_TRAN]] $V_MSG_NOTOP_TRAN 0 {0 -1}]
+
+# ===========================================================================
+# V42 — THE TWO NEW SENTENCES, BYTE FOR BYTE. RED BEFORE
+# ===========================================================================
+# ⚠ THESE STRINGS ARE THE SPECIFICATION. Both mints render exactly them and
+# every caller renders through the mint rather than composing its own wording.
+# The `notop` arm has TWO shapes and both are pinned: the analysis type is
+# named when the attached database can say what it is, and left out when it
+# cannot -- a sentence that said "a '' analysis" would be worse than saying
+# nothing, which is the defect this whole row set is about.
+# ⚠ AND AN UNKNOWN STATE STILL RAISES, NAMING THE NEW SPELLING. A state name is
+# a CALLER bug and must be loud; a caller bug that renders as a polite apology
+# is exactly the silence the mode exists to remove.
+## ⚠ AND THE THIRD SENTENCE, ADDED BY THE A10 REPAIR. It is the one a user
+## meets when the results file changed under the waveform viewer, and it is
+## written the way the user asked for on 2026-08-27 -- plain English, saying
+## what happened AND what to do about it, with no internal vocabulary in it.
+set V_MSG_VDIFF42 "Transient annotation -- the results file [file tail $V_A10_STALE] on disk is from a different simulation run than the one the waveform viewer is showing, so nothing was annotated. Plot the results again in the waveform viewer, then try again."
+check {V42 RULING D5-4 the stale-results sentence, the changed-results sentence and BOTH shapes of the no-operating-point sentence, byte for byte} \
+  [list [rcall [list cadence::_annot_tran_msg staleraw {} {} $V_A10_STALE]] \
+        [rcall [list cadence::_annot_tran_msg viewerdiff {} {} $V_A10_STALE]] \
+        [rcall {cadence::_annot_msg 0 notop tran {}}] \
+        [rcall {cadence::_annot_msg 0 notop {} {}}]] \
+  [list [list 0 $V_MSG_STALERAW] [list 0 $V_MSG_VDIFF42] \
+        [list 0 $V_MSG_NOTOP_TRAN] [list 0 $V_MSG_NOTOP_BARE]]
+check_raises {V42b an unknown transient state still RAISES, and the message names the new `staleraw` spelling} \
+  {cadence::_annot_tran_msg zzbogus {} {}} {staleraw}
+
+# ===========================================================================
+# V43 — STRUCTURAL, RULING D5-4: MINTED IN ONE FILE ONLY. RED BEFORE
+# ===========================================================================
+# ⚠ ROW V18's SET, EXTENDED. A second copy of a user-facing sentence composed
+# inside a menu body or an rc file is the shape this ruling forbids, and it is
+# the shape that actually happens -- someone needs the wording one call away
+# and pastes it. The mint file must carry each fragment; the five files a
+# reader would plausibly reach for must carry neither.
+# ⚠ AT LEAST ONE, NOT EXACTLY ONE, IN THE MINT. The no-operating-point sentence
+# has two shapes and may legitimately be written as two returns of one arm; the
+# claim that matters is that no OTHER file has it.
+set V_A10_MINT  [file join $repo utils annot_mode.tcl]
+set V_A10_OTHER [list [file join $repo src xschem.tcl] \
+                      [file join $repo src ase.tcl] \
+                      [file join $repo src ase_window.tcl] \
+                      [file join $repo src wave_viewer.tcl] \
+                      [file join $repo src cadence_style_rc]]
+set v43_mint [list [expr {[opa_v_ngrep $V_A10_MINT {No operating point results available}] >= 1 ? 1 : 0}] \
+                   [expr {[opa_v_ngrep $V_A10_MINT {is older than the circuit it describes}] >= 1 ? 1 : 0}] \
+                   [expr {[opa_v_ngrep $V_A10_MINT {is from a different simulation run}] >= 1 ? 1 : 0}]]
+set v43_other {}
+foreach _vp $V_A10_OTHER {
+  lappend v43_other [opa_v_ngrep $_vp {No operating point results available}]
+  lappend v43_other [opa_v_ngrep $_vp {is older than the circuit it describes}]
+  lappend v43_other [opa_v_ngrep $_vp {is from a different simulation run}]
+}
+check {V43 RULING D5-4 the three new sentences are minted in utils/annot_mode.tcl and appear in no other file} \
+  [list $v43_mint $v43_other] \
+  [list {1 1 1} {0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}]
+
+# ===========================================================================
+# V44 — WITNESS, ISSUE 0882: A CONSEQUENCE OF THE FIX, PINNED
+# ===========================================================================
+# ⚠ THIS ROW GUARDS NOTHING -- IT RECORDS. `wviewer::hier_origin_ok`
+# (src/wave_viewer.tcl) short-circuits `return 1` whenever the CURRENT context
+# holds a database, skipping the base-level check entirely, and its own header
+# states the premise in writing: "ASE reads the raw into the VIEWER context
+# only ... so in the DESIGN window sch_waves_loaded is -1". Item A10 makes that
+# sentence false: after a successful transient annotation the design window
+# DOES hold a raw, so a base-level mismatch that refused before now passes.
+# Measured, not read: the stub forces a refusing base level and the ONLY thing
+# that changes between the two reads is whether the design window holds
+# results. Filed as issue 0882; src/wave_viewer.tcl is outside this item's
+# blast radius, so this row exists so a later crew has to confront the changed
+# premise rather than discover it.
+set ::netlist_dir $V_ND_TRAN
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+namespace eval ::ase::ui {}
+set v44_had [expr {[info commands ::ase::ui::sod_base_level] ne {}}]
+if {$v44_had} { rename ::ase::ui::sod_base_level ::opa_v44_saved_sod }
+proc ::ase::ui::sod_base_level {tok} { return 3 }
+set v44_before [rcall {wviewer::hier_origin_ok ZZA10TOKEN}]
+set v44_state  [opa_v_tran]
+set v44_after  [rcall {wviewer::hier_origin_ok ZZA10TOKEN}]
+catch {rename ::ase::ui::sod_base_level {}}
+if {$v44_had} { rename ::opa_v44_saved_sod ::ase::ui::sod_base_level }
+opa_l_annot 0
+catch {xschem raw clear}
+check {V44 issue 0882 WITNESS a base-level mismatch that REFUSED with an empty design window is ALLOWED once the annotation has attached results there} \
+  [list $v44_before $v44_state $v44_after] \
+  [list {0 0} ok {0 1}]
+
+# ===========================================================================
+# A10 REPAIR — THE FOUR DEFECTS THE VERIFIERS FOUND, AND THE FOUR GUARDS THE
+#              SABOTAGE PASS COULD NOT SEE
+# ===========================================================================
+# Every row below was RED on the first A10 build. Named by what a user would
+# say happened, not by the proc that changed:
+#
+#   V45   the results file holds the deck's operating point AND its transient,
+#         which is what a simulator ordinarily writes, and the transient is
+#         what gets annotated                                  <- RED before
+#   V46   a press that REFUSES must not leave a number on the sheet <- RED
+#   V47   STRUCTURAL: the two hand-off choices the sabotage pass found
+#         unwitnessed -- the hierarchy level travels with the file, and the
+#         file goes through the annotate verb                   <- RED
+#   V48   BEHAVIOURAL twin of V47's first half: one sheet DOWN  <- RED
+#   V49   the newest refusal reaches the CIW, not the status line alone <- RED
+#   V50   the file the WAVEFORM VIEWER is showing beats a stale path rebuilt
+#         from the preferences -- issue 0881's own acceptance   <- RED before
+#   V51   the viewer and the sheet would disagree, so nothing is annotated and
+#         the user is told to re-plot -- RULING D5-1            <- RED before
+#
+# ⚠ V50 AND V51 ARE THE ROWS ISSUE 0881 ACTUALLY ASKED FOR, and V33/V34 are
+# not. V34 attaches the run's results to another window and then passes anyway,
+# because the file also sits where the preferences say it does -- so it cannot
+# tell a build that consults the viewer from one that does not. These two put
+# a DIFFERENT results file at each place and are the only rows in the tree that
+# can.
+
+## The waveform viewer, headless. A second schematic window stands in for the
+## viewer's window -- it is a real second xschem context with its own results
+## registry, which is exactly what the viewer's window is -- and the three
+## verbs `cadence::_annot_viewer_db` calls are pointed at it. Restored on the
+## way out, window destroyed, design window current again.
+## ⚠ THE PRODUCT IS NOT STUBBED, THE WINDOW MANAGER IS. `wviewer::enter_ctx`
+## and `wviewer::leave_ctx` exist only when Tk and the viewer are up; headless
+## there is no viewer at all, so the borrow has to be spelled out here. What is
+## NOT spelled out here is any part of the annotation: the supply, the compare
+## and the refusal are the shipped code. Rows B12/B12c/B12g of
+## tests/headless/test_annot_show_menu.tcl drive the same path through the REAL
+## viewer on a real display.
+proc opa_v_viewer {rawfile script} {
+  set dw [xschem get current_win_path]
+  catch {xschem new_schematic create {} $::V_A10_VSCH}
+  set vw [xschem get current_win_path]
+  set ::opa_v_vw_path $vw
+  set ok 0
+  if {$vw ne $dw} {
+    catch {set ok [xschem raw read $rawfile tran]}
+    catch {xschem new_schematic switch $dw}
+  }
+  set ::opa_v_vw_ok $ok
+  namespace eval ase {}
+  namespace eval wviewer {}
+  set h1 [expr {[info commands ::ase::session_for_current] ne {}}]
+  set h2 [expr {[info commands ::ase::last_rawfile] ne {}}]
+  set h3 [expr {[info commands ::ase::results_stale] ne {}}]
+  set h4 [expr {[info commands ::wviewer::window_for] ne {}}]
+  set h5 [expr {[info commands ::wviewer::enter_ctx] ne {}}]
+  set h6 [expr {[info commands ::wviewer::leave_ctx] ne {}}]
+  if {$h1} { rename ::ase::session_for_current ::opa_v_sv1 }
+  if {$h2} { rename ::ase::last_rawfile        ::opa_v_sv2 }
+  if {$h3} { rename ::ase::results_stale       ::opa_v_sv3 }
+  if {$h4} { rename ::wviewer::window_for      ::opa_v_sv4 }
+  if {$h5} { rename ::wviewer::enter_ctx       ::opa_v_sv5 }
+  if {$h6} { rename ::wviewer::leave_ctx       ::opa_v_sv6 }
+  proc ::ase::session_for_current {} { return [list zzA10vw 0 zzlib zzcell schematic] }
+  proc ::ase::last_rawfile {key} { return {} }
+  proc ::ase::results_stale {key} { return 0 }
+  proc ::wviewer::window_for {key} { return $::opa_v_vw_path }
+  proc ::wviewer::enter_ctx {key {borrow 0}} {
+    set prev [xschem get current_win_path]
+    if {$prev eq $::opa_v_vw_path} { return [list 1 {}] }
+    if {[catch {xschem new_schematic switch $::opa_v_vw_path}]} { return [list 0 {}] }
+    return [list 1 $prev]
+  }
+  proc ::wviewer::leave_ctx {key ticket} {
+    if {[lindex $ticket 1] ne {}} {
+      catch {xschem new_schematic switch [lindex $ticket 1]}
+    }
+  }
+  catch {uplevel 1 $script} r
+  catch {rename ::ase::session_for_current {}}
+  catch {rename ::ase::last_rawfile {}}
+  catch {rename ::ase::results_stale {}}
+  catch {rename ::wviewer::window_for {}}
+  catch {rename ::wviewer::enter_ctx {}}
+  catch {rename ::wviewer::leave_ctx {}}
+  if {$h1} { rename ::opa_v_sv1 ::ase::session_for_current }
+  if {$h2} { rename ::opa_v_sv2 ::ase::last_rawfile }
+  if {$h3} { rename ::opa_v_sv3 ::ase::results_stale }
+  if {$h4} { rename ::opa_v_sv4 ::wviewer::window_for }
+  if {$h5} { rename ::opa_v_sv5 ::wviewer::enter_ctx }
+  if {$h6} { rename ::opa_v_sv6 ::wviewer::leave_ctx }
+  if {$vw ne $dw} {
+    catch {xschem new_schematic switch $vw}
+    catch {xschem raw clear}
+    catch {xschem new_schematic destroy $vw {}}
+    catch {xschem new_schematic switch $dw}
+  }
+  return $r
+}
+
+## THE ITEM'S REPAIR FIXTURES, all derived from the section's own transient so
+## the only thing that differs between them is the thing under test.
+set V_T_SRC  [opa_slurp $T_RAW]
+set V_T_HDR  [string range $V_T_SRC 0 [expr {[string first "Values:\n" $V_T_SRC] + 7}]]
+
+## The ordinary simulator output: the deck's `.op` and its `.tran` in ONE file.
+## The operating point comes first, exactly as a simulator writes it, and its
+## node values are deliberately nothing like the transient's so a build that
+## took the wrong plot cannot pass by arithmetic accident.
+## ⚠ THE BLANK LINE AFTER THE OPERATING POINT'S ONE DATA POINT IS REQUIRED, and
+## it is not decoration: skip_raw_ascii_points (src/save.c) walks to a blank
+## line to step over a plot it was not asked for, so an ascii fixture without
+## one cannot be skipped and the second plot is unreachable. Measured.
+set V_OPHDR $V_T_HDR
+regsub {Plotname: Transient Analysis} $V_OPHDR {Plotname: Operating Point} V_OPHDR
+regsub {No\. Points: 5} $V_OPHDR {No. Points: 1} V_OPHDR
+set V_A10_OPTRAN [file join $scratch v_a10_optran.raw]
+opa_t_wr $V_A10_OPTRAN "${V_OPHDR}0\t0.0\n\t0.0\n\t0.0\n\t0.7\n\t99.0\n\t88.0\n\n$V_T_SRC"
+
+## A SECOND, DIFFERENT transient: same columns, different numbers. It plays the
+## decoy at the preferences path in V50 and the next simulation run in V51.
+set V_A10_RUN2 [file join $scratch v_a10_other.raw]
+set V_OTHER $V_T_HDR
+for {set _vp 0} {$_vp < 5} {incr _vp} {
+  append V_OTHER "$_vp\t[expr {$_vp*1.0e-9}]\n\t0.0\n\t0.0\n\t0.7\n\t[expr {$_vp*7.0}]\n\t0.1\n"
+}
+opa_t_wr $V_A10_RUN2 $V_OTHER
+set V_ND_DECOY [file join $scratch v_nd_decoy]
+file mkdir $V_ND_DECOY
+file copy -force $V_A10_RUN2 [file join $V_ND_DECOY v_cand.raw]
+## The file a run leaves behind and the viewer then reads. V51 overwrites it
+## in place, which is what re-running the simulator does.
+set V_A10_VRUN [file join $scratch v_a10_vrun.raw]
+file copy -force $T_RAW $V_A10_VRUN
+
+set V_PINS_OTHER {d 21 g 0.1 0 0.0 0 0.0}
+## ⚠ THE `-` IS INVARIANT I3, NOT A DEFECT. The operating-point fixture carries
+## v(d) and no v(g), so node `g` renders the blank placeholder while the two
+## grounds read 0.0. That is what "the operating point is on the sheet" looks
+## like for this file, and it is what row V46's control leg requires to appear.
+set V_PINS_OP75  {d 7.5 g - 0 0.0 0 0.0}
+set V_MSG_VDIFF "Transient annotation -- the results file [file tail $V_A10_VRUN] on disk is from a different simulation run than the one the waveform viewer is showing, so nothing was annotated. Plot the results again in the waveform viewer, then try again."
+
+# ===========================================================================
+# V45 — THE ORDINARY RESULTS FILE: AN OPERATING POINT *AND* A TRANSIENT
+# ===========================================================================
+# ⚠ THIS IS THE COMMONEST FILE A REAL BENCH PRODUCES, AND THE MODE REFUSED IT.
+# A deck with a `.op` and a `.tran` puts both plots in one results file. The
+# engine's shipped fallback, used when no analysis is named, is op -> dc ->
+# tran, so it stopped at the operating point -- and the transient mode then
+# refused its own supply with "the loaded database is not a transient
+# analysis", about a file whose transient the user could see on screen. The
+# sentence was not merely unhelpful, it was FALSE: the same file read with the
+# transient named gives 5 points and 3 V at the 3 ns cursor, which is the
+# second half of this row.
+# ⚠ AND THE OPERATING POINT IN THIS FIXTURE SAYS 99 V, so a build that took the
+# wrong plot cannot land on the right number by coincidence.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_v_ase $V_A10_OPTRAN 0 {set ::v45_state [opa_v_tran]}
+set v45_st    [rcall {xschem raw sim_type}]
+set v45_np    [rcall {xschem raw points}]
+set v45_mask  [xschem get annot_show]
+set v45_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v45_paint [opa_v_paint a10_optran]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V45 a results file holding the deck's OPERATING POINT and its TRANSIENT annotates the TRANSIENT at the cursor} \
+  [list $::v45_state $v45_st $v45_np $v45_mask $v45_msg $v45_paint] \
+  [list ok {0 tran} {0 5} 4 $V_MSG_OK3 $V_PINS_P3]
+
+# ===========================================================================
+# V46 — A PRESS THAT REFUSES MUST NOT LEAVE A NUMBER ON THE SHEET
+# ===========================================================================
+# ⚠ RULING D5-1, AND THE OLD BEHAVIOUR PUT AN OPERATING POINT ON A SHEET THE
+# USER HAD ASKED FOR TRANSIENT NUMBERS ON. The supply has to attach a database
+# to find out what analysis it holds, and `xschem annotate_op` runs update_op()
+# and draw() on its way in. So with the node-voltage bit already on -- one
+# earlier `Alt-6`, or an `annot_show` line in the user's own xschemrc, which
+# src/xinit.c honours -- the operating point was PUBLISHED AND PAINTED by the
+# very key press whose status line then read "the loaded database is not a
+# transient analysis".
+# ⚠ LEG 1 IS THE NON-VACUITY AND IT IS NOT OPTIONAL. It attaches the same file
+# by hand under the same mask and requires 7.5 V to appear beside node `d`. A
+# row asserting only that nothing was painted would be satisfied by a fixture
+# that could not paint at all, which is how this defect survived 427 checks.
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_l_annot 2
+catch {xschem annotate_op $T_OPRAW}
+set v46_ctl [opa_v_paint a10_pubctl]
+catch {xschem raw clear}
+opa_l_annot 2
+opa_v_ase $T_OPRAW 0 {set ::v46_state [opa_v_tran]}
+set v46_mask  [xschem get annot_show]
+set v46_ld    [rcall {xschem raw loaded}]
+set v46_paint [opa_v_paint a10_pub]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V46 RULING D5-1 the `not a transient` refusal publishes NOTHING: the operating point that would have painted 7.5 V is put back, and the user's own mask survives} \
+  [list $v46_ctl $::v46_state $v46_mask $v46_ld $v46_paint] \
+  [list $V_PINS_OP75 notran 2 {0 -1} $V_PINS_NONE]
+
+# ===========================================================================
+# V47 — STRUCTURAL: THE TWO HAND-OFF CHOICES NO BEHAVIOURAL ROW COULD SEE
+# ===========================================================================
+# ⚠ THIS ROW EXISTS BECAUSE A SABOTAGE PASS PROVED IT HAD TO. Deleting the
+# hierarchy level from the hand-off, and swapping the annotate verb for a bare
+# results read, each left the whole tree green -- 427 checks here and 31 on the
+# Tk suite -- while silently discarding the level stamp that makes a database
+# findable after the user has descended. Row V48 is the behavioural twin of the
+# first half; the verb choice has no behavioural witness at all on this
+# fixture, so it is pinned here, which is the honest answer.
+# The claims: the viewer is consulted exactly once; the level travels on EVERY
+# hand-off, not just the first; the transient is asked for by name once; the
+# shipped fallback is still there as the second ask; the file is checked to
+# exist; and nothing in the supplier reaches for the raw-read verb.
+set V_A10_SRC2 [opa_slurp [file join $repo utils annot_mode.tcl]]
+set V_A10_SUP2 [opa_proc_src $V_A10_SRC2 cadence::_annot_tran_supply]
+check {V47 STRUCTURAL the supplier consults the viewer, carries the hierarchy level on every hand-off, names the transient first and keeps the shipped fallback second} \
+  [list [expr {[string length $V_A10_SUP2] > 0 ? 1 : 0}] \
+        [opa_v_pgrep $V_A10_SUP2 {cadence::_annot_viewer_db}] \
+        [opa_v_pgrep $V_A10_SUP2 {annotate_op}] \
+        [opa_v_pgrep $V_A10_SUP2 {annotate_op \$path \$lvl}] \
+        [opa_v_pgrep $V_A10_SUP2 {annotate_op \$path \$lvl tran}] \
+        [opa_v_pgrep $V_A10_SUP2 {file exists}] \
+        [opa_v_pgrep $V_A10_SUP2 {raw read}]] \
+  [list 1 1 2 2 1 1 0]
+
+# ===========================================================================
+# V48 — BEHAVIOURAL: THE SAME PRESS, ONE SHEET DOWN
+# ===========================================================================
+# ⚠ THE LEVEL IS NOT DECORATION, AND THIS IS THE ROW THAT SAYS SO. The results
+# were written for the WHOLE design, at the top; the user has walked down into
+# a sub-sheet and presses the chord there. `sch_waves_loaded()` (src/draw.c)
+# answers -1 unless the database was stamped with a hierarchy level that still
+# matches somewhere up the stack, and `xschem raw loaded` is what the supplier
+# re-asks -- so a hand-off that dropped the level answers "no results file
+# loaded" to a user whose results are loaded, one sheet up.
+# ⚠ WHY NO ROW SAW THIS BEFORE: every fixture in both suites stood at the top
+# sheet, where the level argument is a no-op because it already matches. This
+# one descends.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib s5_top.sch]
+opa_l_annot 0
+xschem unselect_all ; xschem select instance 0 fast nodraw
+catch {xschem descend 1 2}
+set v48_lvl [xschem get currsch]
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_v_ase $T_RAW 0 {set ::v48_state [opa_v_tran]}
+set v48_ld   [rcall {xschem raw loaded}]
+set v48_mask [xschem get annot_show]
+opa_l_annot 0
+catch {xschem raw clear}
+catch {xschem go_back 2}
+check {V48 the chord pressed ONE SHEET DOWN still finds the run's results, because the hierarchy level travels with the file} \
+  [list $v48_lvl $::v48_state $v48_ld $v48_mask] \
+  [list 1 ok {0 0} 4]
+
+# ===========================================================================
+# V49 — THE NEWEST REFUSAL SPEAKS IN THE CIW, NOT ON THE STATUS LINE ALONE
+# ===========================================================================
+# ⚠ ROW V29 ENUMERATES THE THREE REFUSALS THAT EXISTED BEFORE THIS ITEM, and a
+# sabotage pass proved that deleting the CIW call from the out-of-date-results
+# refusal left every check in the file green -- only its status line was
+# pinned. The user's ask was explicitly about the CIW ("it's a good idea to say
+# ... in the CIW"), and a person running ASE-L is looking there, so half a
+# delivery is not a delivery. This row is V29 extended to the fourth state.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+catch {xschem statusmsg -hold ZZA10SENTINEL}
+set v49  [opa_v_spy {opa_v_ase $V_A10_STALE 1 {set ::v49_state [opa_v_tran]}}]
+set v49m [lindex [rcall {xschem get statusmsg}] 1]
+set v49h [lindex [rcall {xschem get statusmsg_hold}] 1]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V49 the out-of-date-results refusal reaches the CIW tagged `warn` AND the held status line, exactly as the three older refusals do} \
+  [list $::v49_state $v49 $v49m $v49h] \
+  [list staleraw [list [list warn $V_MSG_STALERAW]] $V_MSG_STALERAW 1]
+
+# ===========================================================================
+# V50 — ISSUE 0881's OWN ACCEPTANCE: THE FILE ON THE USER'S SCREEN WINS
+# ===========================================================================
+# ⚠ THE USER'S WORDS, VERBATIM 2026-08-27: "The info should already be
+# available - it's been loaded to display waveforms in the waveform viewer."
+# The first A10 build did not read what the viewer holds -- it rebuilt a path
+# out of the preferences and read THAT file, which is a different thing that
+# happens to agree most of the time. This row is the case where they disagree:
+# the waveform viewer is showing one results file and the preferences point at
+# a different one, and the numbers that land on the sheet must be the ones the
+# user is looking at.
+# ⚠ THE TWO FILES CARRY DIFFERENT NUMBERS ON PURPOSE. The viewer's says 3 V at
+# the 3 ns cursor; the one at the preferences path says 21 V. A build that
+# reads the wrong file paints 21 and cannot pass.
+# ⚠ AND THE CONTEXT COMES BACK. The borrow into the viewer's window is a loan;
+# the last element is the design window being current again afterwards.
+set ::netlist_dir $V_ND_DECOY
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set v50_dw [xschem get current_win_path]
+file copy -force $T_RAW $V_A10_VRUN
+opa_v_viewer $V_A10_VRUN {set ::v50_state [opa_v_tran]}
+set v50_att   $::opa_v_vw_ok
+set v50_rf    [rcall {xschem raw rawfile}]
+set v50_mask  [xschem get annot_show]
+set v50_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v50_paint [opa_v_paint a10_vwfile]
+set v50_back  [expr {[xschem get current_win_path] eq $v50_dw ? 1 : 0}]
+opa_l_annot 0
+catch {xschem raw clear}
+## ⚠ THE SECOND PRESS IS THE USER'S OWN BENCH REPORT, AND IT USED TO BE THE
+## WHOLE OF IT. Here there is NO candidate anywhere off the viewer -- the
+## preferences point at an empty directory and the session names no file -- so
+## the only place the results can come from is the window the user is looking
+## at. This is the state the first A10 build still answered "NO RAW FILE
+## loaded" in, because it keyed on the session metadata rather than on the
+## viewer; measured, byte for byte, after that build shipped.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+opa_v_viewer $V_A10_VRUN {set ::v50b_state [opa_v_tran]}
+set v50b_rf    [rcall {xschem raw rawfile}]
+set v50b_paint [opa_v_paint a10_vwonly]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V50 issue 0881 the results file the WAVEFORM VIEWER is showing is the one that gets annotated, not a different file at the preferences path, and it is annotated even when there is no other candidate at all} \
+  [list $v50_att $::v50_state $v50_rf $v50_mask $v50_msg $v50_paint $v50_back \
+        $::v50b_state $v50b_rf $v50b_paint] \
+  [list 1 ok [list 0 $V_A10_VRUN] 4 $V_MSG_OK3 $V_PINS_P3 1 \
+        ok [list 0 $V_A10_VRUN] $V_PINS_P3]
+
+# ===========================================================================
+# V51 — THE VIEWER AND THE SHEET WOULD DISAGREE, SO NOTHING IS ANNOTATED
+# ===========================================================================
+# ⚠ RULING D5-1, MEASURED. The waveform viewer keeps its copy of the results in
+# memory; the annotation reads the file again off disk into the schematic's own
+# window. Re-running the simulator overwrites that file in place -- so the sheet
+# would carry the NEW run's numbers while the traces beside it are still the OLD
+# run's, with nothing anywhere saying so. Measured on the first A10 build: the
+# waveform screen showing 3 V at the cursor and the schematic painting 30 V, no
+# refusal, no warning.
+# ⚠ SIX CLAIMS. The state is the named refusal; the CIW got it once, tagged as a
+# warning; the held status line carries the same sentence and names the file;
+# nothing is attached to the design window afterwards; the user's mask is
+# untouched; and the sheet is bare.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA10SENTINEL}
+set v51 [opa_v_spy {
+  opa_v_viewer $V_A10_VRUN {
+    ## the simulator runs again and overwrites the file the viewer read
+    file copy -force $::V_A10_RUN2 $::V_A10_VRUN
+    set ::v51_state [opa_v_tran]
+  }
+}]
+set v51_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v51_ld    [rcall {xschem raw loaded}]
+set v51_mask  [xschem get annot_show]
+set v51_paint [opa_v_paint a10_vdiff]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V51 RULING D5-1 the results file changed under the waveform viewer, so the annotation refuses, says which file and why, attaches nothing and paints nothing} \
+  [list $::v51_state $v51 $v51_msg $v51_ld $v51_mask $v51_paint] \
+  [list viewerdiff [list [list warn $V_MSG_VDIFF]] $V_MSG_VDIFF {0 -1} 0 $V_PINS_NONE]
+
+## The CODE lines of <body> that belong to ONE refusal arm: everything after
+## the previous `return` up to and including `return <state>`. Whole-line
+## comments dropped first, so a paragraph naming a proc is never counted as a
+## call to it -- issue 0682's measured hole.
+proc opa_v_arm {body state} {
+  set out {}
+  foreach l [split $body \n] {
+    if {[regexp {^\s*#} $l]} continue
+    lappend out $l
+  }
+  set ri -1
+  for {set i 0} {$i < [llength $out]} {incr i} {
+    if {[string trim [lindex $out $i]] eq "return $state"} { set ri $i }
+  }
+  if {$ri < 0} { return {} }
+  set start 0
+  for {set i [expr {$ri - 1}]} {$i >= 0} {incr i -1} {
+    if {[regexp {^\s*return\M} [lindex $out $i]]} { set start [expr {$i + 1}] ; break }
+  }
+  return [join [lrange $out $start $ri] \n]
+}
+proc opa_v_hasunwind {body state} {
+  set arm [opa_v_arm $body $state]
+  if {$arm eq {}} { return -1 }
+  return [expr {[regexp {_annot_tran_unwind} $arm] ? 1 : 0}]
+}
+
+# ===========================================================================
+# V52 — PUTTING IT BACK: THE UNWIND ITSELF, AND WHICH REFUSALS OWE ONE
+# ===========================================================================
+# ⚠ ONE REFUSAL'S UNWIND HAS NO BEHAVIOURAL WITNESS AND CANNOT HAVE ONE.
+# Issue 0871 measured that `nodata` is unreachable -- "no results loaded" and
+# "the engine had nothing to resolve against" are the same predicate -- so a
+# fixture that reaches it does not exist. A sabotage pass confirmed the
+# consequence: deleting the unwind from that one arm leaves every check in the
+# tree green. Deleting the guard is not the answer, because the arm becomes
+# reachable the moment those two predicates come apart, and it would then
+# publish an operating point out of a refusal exactly as the `notran` arm did.
+# So the arm is pinned structurally, and the unwind ITSELF is pinned live.
+# ⚠ LEGS 1 AND 2 DRIVE THE UNWIND FOR REAL. A database is attached and a mask
+# armed by hand; the unwind must take both back, and must do NOTHING at all
+# when told this press attached nothing -- a press that found a database
+# already loaded must never detach the user's own results on its way out.
+# ⚠ LEGS 3-8 SAY WHICH ARMS OWE ONE AND WHICH MUST NOT HAVE ONE. `nocursor`,
+# `noraw` and the out-of-date-results refusal all return BEFORE anything has
+# been attached, so an unwind there would be a detach of somebody else's
+# database. The three that return after the supply has attached one all owe it.
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+catch {xschem annotate_op $T_OPRAW}
+opa_l_annot 6
+set v52_pre  [list [rcall {xschem raw loaded}] [xschem get annot_show]]
+set v52_did  [rcall {cadence::_annot_tran_unwind 1 2}]
+set v52_post [list [rcall {xschem raw loaded}] [xschem get annot_show]]
+catch {xschem raw clear}
+opa_l_annot 0
+catch {xschem annotate_op $T_OPRAW}
+opa_l_annot 6
+set v52_noop [rcall {cadence::_annot_tran_unwind 0 2}]
+set v52_kept [list [rcall {xschem raw loaded}] [xschem get annot_show]]
+opa_l_annot 0
+catch {xschem raw clear}
+set V_A10_TRN2 [opa_proc_src [opa_slurp [file join $repo utils annot_mode.tcl]] cadence::annot_tran]
+check {V52 a refusal PUTS BACK what the press attached, does nothing when the press attached nothing, and every arm that owes an unwind has one} \
+  [list $v52_pre $v52_did $v52_post \
+        $v52_noop $v52_kept \
+        [opa_v_hasunwind $V_A10_TRN2 notran] \
+        [opa_v_hasunwind $V_A10_TRN2 nodata] \
+        [opa_v_hasunwind $V_A10_TRN2 viewerdiff] \
+        [opa_v_hasunwind $V_A10_TRN2 nocursor] \
+        [opa_v_hasunwind $V_A10_TRN2 noraw] \
+        [opa_v_hasunwind $V_A10_TRN2 staleraw]] \
+  [list {{0 0} 6} {0 1} {{0 -1} 2} \
+        {0 0} {{0 0} 6} \
+        1 1 1 0 0 0]
+
+set ::netlist_dir $v33_nd
+catch {xschem raw clear}
+catch {xschem cursor 1 0} ; catch {xschem cursor 2 0}
+opa_l_annot 0
 
 set ::live_cursor2_backannotate $V_LV
 catch {xschem raw clear}
