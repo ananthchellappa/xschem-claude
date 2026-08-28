@@ -98,7 +98,34 @@ filed not fixed, same predicate mistake as 0684) and **0901** (A13's new
 "still filling" sentence tells the user to wait for a run that has already
 finished).
 
-**The next free number is 0902.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-28, item A14's repair pass.** Filed **0902** — item A14's own gate
+unloaded every database in the design window rather than the one it was talking
+about, so a mixed-signal bench holding an analog run *and* a co-simulation VCD
+lost both on one `Alt-Shift-6` and the sheet's digital back-annotation went
+blank. Found by A14's sabotage pass, reproduced mechanically against the shipped
+tree, and **fixed in the same commit** (the detach names its file and never
+touches a digital database — RULING D5-3). Rows V72, V73, V75 behavioural and
+V74 structural.
+
+**2026-08-28, item A14's write-up.** Filed **0903**, **0904** and **0905**, each
+measured by the write-up agent itself rather than inherited. **0903** — item
+A14's fix revalidates against the ASE **waveform window** and only that, so with
+no waveform window open and the cursor read off the schematic's **own** graph, a
+second `Alt-Shift-6` still repaints the previous run's numbers: issue 0900's own
+defect through a door 0900's fix does not reach, a **live RULING D5-1**
+violation, reproduced on both arms, **filed not fixed**. **0904** — the cost of
+revalidating on every press scales with the number of **saved vectors**, not with
+points, and A14's published table swept points at a fixed 200 columns; an 11 MB
+`.save all` database revalidates in 55.9 ms against 0.014 ms for a 995 KB one, so
+the shipped *"+0.46 ms, the whole price of revalidating"* is true of one database
+and false as a claim (issue 0899's class). The claim is corrected in that commit;
+the cost is open and no row measures it. **0905** — two concurrent
+`tclsh run_regression.tcl` runs truncate each other's `results.log` to **0
+bytes**, and an empty summary contains no `FAIL`, `FATAL` or `GOLD?`, so the
+wreckage of a destroyed verdict reads as a clean pass to every reader in the tree
+and to a human: the same fail-open class as **0147**, one level further back.
+
+**The next free number is 0906.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

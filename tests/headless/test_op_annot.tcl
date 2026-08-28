@@ -13377,6 +13377,33 @@ proc opa_v_viewer {rawfile script {analysis tran}} {
   return $r
 }
 
+## THE WAVEFORM WINDOW RE-PLOTS, WHICH IS WHAT A RE-RUN DOES TO IT. Borrows
+## into the stand-in window the way the shipped consult does, throws away what
+## it was holding and reads the file again -- the shape of
+## `wviewer::attach_raw`, which is the call `ase::ui::auto_plot` makes after a
+## run. Answers the read's rc and v(d) at the last point, so a row can prove
+## the WINDOW really moved to the new run before it asks what the key press
+## did. Restores the design window on the way out, opa_v_viewer's discipline.
+##
+## ⚠ NOTHING HERE TOUCHES THE DESIGN WINDOW'S OWN DATABASE, and that is the
+## whole point of the fixture: the state issue 0900 is about is a design window
+## still holding what an EARLIER PRESS attached while the waveform window has
+## moved on. A fixture that cleared the design window here would rebuild the
+## one condition the defect needs and could never see it -- which is exactly
+## how row B12d hid this defect from the real-chain rows for a whole item.
+proc opa_v_replot {file} {
+  set dw [xschem get current_win_path]
+  if {[catch {xschem new_schematic switch $::opa_v_vw_path}]} { return [list SWITCH-FAILED {}] }
+  if {[xschem get current_win_path] ne $::opa_v_vw_path} { return [list SWITCH-FAILED {}] }
+  set rc 0
+  catch {xschem raw clear}
+  catch {set rc [xschem raw read $file tran]}
+  set v {}
+  catch {set v [xschem raw value v(d) 4]}
+  catch {xschem new_schematic switch $dw}
+  return [list $rc $v]
+}
+
 ## THE ITEM'S REPAIR FIXTURES, all derived from the section's own transient so
 ## the only thing that differs between them is the thing under test.
 set V_T_SRC  [opa_slurp $T_RAW]
@@ -13411,6 +13438,58 @@ file copy -force $V_A10_RUN2 [file join $V_ND_DECOY v_cand.raw]
 ## in place, which is what re-running the simulator does.
 set V_A10_VRUN [file join $scratch v_a10_vrun.raw]
 file copy -force $T_RAW $V_A10_VRUN
+
+## ⚠ ISSUE 0902's FIXTURE: THE USER'S CO-SIMULATION VCD, WHICH THIS SURFACE MUST
+## NEVER TOUCH. `doc/claude/specs/mixed_signal_signal_browser.md` D5 is written
+## about exactly this window state -- one analog run and one digital database
+## side by side -- and RULING D5-3 is what it settles: a logic level is not a
+## voltage, so a digital database contributes NOTHING to a schematic and
+## `xschem annotate_op` refuses one before it loads anything. It follows that
+## the annotation surface can never have attached a VCD, and must never take one
+## off. Three points, so a fingerprint can be computed for it and it can never
+## be mistaken for the 5-point transient beside it.
+set V_A14_VCD [file join $scratch v_a14_dig.vcd]
+opa_t_wr $V_A14_VCD "\$timescale 1ns \$end\n\$scope module top \$end\n \$scope module m \$end\n  \$var wire 1 ! dsig \$end\n \$upscope \$end\n\$upscope \$end\n\$enddefinitions \$end\n#0\n0!\n#1\n1!\n#4\n"
+set V_A14_DIGNODE top.m.dsig
+
+## How many databases THIS window is holding. `xschem raw info` prints a header
+## line and then one line per slot, so the count is the number of slots. 0 when
+## the window is holding nothing at all.
+## ⚠ THE COUNT IS THE POINT, NOT `xschem raw loaded`. `raw loaded` answers a
+## hierarchy LEVEL and is 0 both for a window holding one database and for a
+## window holding three, so it cannot see a database being destroyed alongside
+## the one the press was talking about -- which is the whole of issue 0902.
+proc opa_v_slots {} {
+  if {[catch {xschem raw info} t] || $t eq {}} { return 0 }
+  set n 0
+  foreach l [lrange [split [string trimright $t "\n"] "\n"] 1 end] {
+    if {[regexp {^[0-9]+ } $l]} { incr n }
+  }
+  return $n
+}
+
+## What the user's digital database still reads for its one signal, WITHOUT
+## leaving the window on a different database than it was found on -- a probe
+## that changed which database is current would be staging the next row's state
+## instead of measuring this one. `NO-VCD` when the database is not there at
+## all, which is the failure issue 0902 is about and which must not read as a
+## blank value.
+proc opa_v_digval {} {
+  set f {} ; set t {}
+  catch {set f [xschem raw rawfile]}
+  catch {set t [xschem raw sim_type]}
+  set sw 0
+  catch {set sw [xschem raw switch $::V_A14_VCD vcd]}
+  set here {}
+  catch {set here [xschem raw rawfile]}
+  set v {NO-VCD}
+  if {$here eq $::V_A14_VCD} {
+    set v {}
+    catch {set v [xschem raw value $::V_A14_DIGNODE 2]}
+  }
+  if {$f ne {} && $t ne {}} { catch {xschem raw switch $f $t} }
+  return $v
+}
 
 set V_PINS_OTHER {d 21 g 0.1 0 0.0 0 0.0}
 ## ⚠ THE `-` IS INVARIANT I3, NOT A DEFECT. The operating-point fixture carries
@@ -13666,10 +13745,27 @@ check {V51 RULING D5-1 the results file changed under the waveform viewer, so th
   [list $::v51_state $v51 $v51_msg $v51_ld $v51_mask $v51_paint] \
   [list viewerdiff [list [list warn $V_MSG_VDIFF]] $V_MSG_VDIFF {0 -1} 0 $V_PINS_NONE]
 
-## The CODE lines of <body> that belong to ONE refusal arm: everything after
-## the previous `return` up to and including `return <state>`. Whole-line
+## The CODE lines of <body> that belong to ONE refusal arm: the lines from the
+## `if` that OPENS that arm up to and including `return <state>`. Whole-line
 ## comments dropped first, so a paragraph naming a proc is never counted as a
 ## call to it -- issue 0682's measured hole.
+##
+## ⚠ THE SLICE IS ANCHORED ON THE ARM'S OWN `if`, NOT MERELY ON THE PREVIOUS
+## `return`, AND ISSUE 0900 IS WHY. It used to start at the line after the last
+## `return` above the arm, which is the same thing only while every statement in
+## between belongs to some arm. It stopped being: the item A14 gate in
+## `cadence::annot_tran` takes a database an EARLIER key press attached off the
+## sheet before the supplier runs, and that `cadence::_annot_tran_unwind` call
+## sits between `return nocursor` and `return staleraw` with no `return` in
+## between. The old slice therefore handed the `staleraw`, `noraw`,
+## `viewerunread`, `viewergone` and `viewerfilling` roll-call entries a call
+## made ten lines and one nesting level away from them, and row V52's golden 0
+## for each -- the whole "this arm attached nothing, so it must not detach
+## anything" invariant -- would have had to be given up. The new anchor is a
+## STRICT SUBSET of the old one, so the row can only get sharper: it still sees
+## an unwind added inside any arm, and no longer sees one that is not in an arm
+## at all. Falls back to the old anchor when no opening `if` is found, so no arm
+## can silently come back with a slice LOOSER than it had.
 proc opa_v_arm {body state} {
   set out {}
   foreach l [split $body \n] {
@@ -13684,6 +13780,9 @@ proc opa_v_arm {body state} {
   set start 0
   for {set i [expr {$ri - 1}]} {$i >= 0} {incr i -1} {
     if {[regexp {^\s*return\M} [lindex $out $i]]} { set start [expr {$i + 1}] ; break }
+  }
+  for {set i [expr {$ri - 1}]} {$i >= $start} {incr i -1} {
+    if {[regexp {^\s*if\M.*\{\s*$} [lindex $out $i]]} { set start $i ; break }
   }
   return [join [lrange $out $start $ri] \n]
 }
@@ -13726,6 +13825,20 @@ proc opa_v_hasunwind {body state} {
 # have an unwind: both return above `set attached 1`, so an unwind there would
 # detach a database this key press never attached -- somebody else's results,
 # taken off the user's session by a refusal.
+# ⚠ AND "THIS ARM ATTACHED NOTHING" IS NOT THE SAME SENTENCE AS "THE SHEET
+# STILL CARRIES WHATEVER IT CARRIED", which is the distinction issue 0900 drew
+# and which a reader of the six zeroes below would otherwise get wrong. Since
+# item A14 every press first asks the waveform window whether the database the
+# design window is already holding is still the run on screen, and if it is not,
+# that database comes off IN THE GATE, before the supplier reads anything. So a
+# session that WAS holding numbers has already had them taken off by the time
+# any of these six refusals speaks -- which is what makes their shipped clause
+# "so nothing was placed on the schematic" true of the sheet the user is
+# looking at. Row V67 is the row that proves the numbers really come off, and
+# row V69 leg 5 pins the ordering. What the six zeroes here still say, and the
+# only thing they say, is that the refusal ARM itself detaches nothing: it is a
+# claim about these `if` bodies, and `opa_v_arm` above is anchored on each arm's
+# own `if` so that it stays one.
 catch {xschem raw clear}
 xschem load [file join $lib v_cand.sch]
 opa_l_annot 0
@@ -14485,6 +14598,550 @@ check {V65 issue 0899 when the run has produced no values yet AND its results fi
   [list $::v65_state $v65 $v65_msg $v65_mask $v65_paint \
         [expr {$v65_msg ne $V_MSG_VFILL ? 1 : 0}]] \
   [list viewergone [list [list warn $V_MSG_VGONE]] $V_MSG_VGONE 0 $V_PINS_NONE 1]
+
+# ===========================================================================
+# V66 - THE SECOND PRESS SHOWS THE SECOND RUN'S NUMBERS
+# ===========================================================================
+# ⚠ ISSUE 0900, AND IT IS THE ORDINARY SEQUENCE, NOT A CORNER. Press the chord;
+# the run's node voltages land on the sheet and they are right. Change the
+# circuit, run the simulation again; the waveform window re-plots and is now
+# showing the new run. Press the chord again -- and the schematic is repainted
+# with the FIRST run's numbers, under the caption "Showing each node's voltage
+# at 3 ns, where cursor B is on the waveform.", with no refusal, no warning and
+# no compare anywhere. Measured on both arms 2026-08-28. That is RULING D5-1: a
+# number displayed next to a thing it was not measured for, with an
+# authoritative sentence lending it weight.
+# ⚠ WHY EVERY ROW BEFORE THIS ONE IS BLIND TO IT. A successful press never
+# unwinds -- it OWNS the database it attached -- and the gate in
+# `cadence::annot_tran` asks only "is some database attached", never "is it the
+# one the user is looking at". So the second press short-circuits the entire
+# supply: the waveform consult, the deleted-file and no-values-yet guards, the
+# out-of-date check and the two-window compare are all skipped. Every fixture in
+# the tree starts from a design window holding NOTHING, so all of them enter the
+# guarded block and none of them can reach this path with a disagreeing window.
+# ⚠ THE FIXTURE NEVER HAND-ATTACHES. The state the second press meets is built
+# by a real FIRST press through the shipped `cadence::annot_tran`, because a
+# fixture that hand-builds the attached state is how this whole class of defect
+# reached the user in the first place.
+# ⚠ AND THE VIEWER IS ASSERTED TO HAVE MOVED BEFORE THE PRESS IS ASKED
+# ANYTHING. Leg 4 is the re-plot's own rc and v(d) at the last point, 28, which
+# is the second run. Without it a red here could mean the fixture failed to
+# re-plot rather than the feature failed to look.
+# ⚠ THE SECOND PAINT IS `d 21 g 0.1 0 0.0 0 0.0`, THE SAME LITERAL ROWS V58 AND
+# V61 NAME AS FORBIDDEN. Same string, opposite meaning, and leg 4 is what tells
+# them apart: there the waveform window is NOT showing that run and painting it
+# is the defect; here the waveform window IS showing it and painting it is the
+# whole job -- the user's own 0881 ruling, "The info should already be available
+# - it's been loaded to display waveforms in the waveform viewer", applied a
+# second time.
+# ⚠ LEG 7 IS `paint2 ne paint1` AND IT IS NOT A DUPLICATE OF LEG 6. A later
+# re-lettering of the fixture that made both runs paint the same numbers would
+# leave leg 6 green over a feature that never looked at anything.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {
+  set ::v66_s1  [opa_v_tran]
+  set ::v66_p1  [opa_v_paint a14_2p_1]
+  ## the design window now OWNS the database that press left attached -- the
+  ## precondition the defect needs, asserted rather than assumed
+  set ::v66_pre [rcall {xschem raw loaded}]
+  ## the simulator runs again over the same path, and the waveform window
+  ## re-plots, exactly as it does after a real re-run
+  file copy -force $::V_A10_RUN2 $::V_A10_VRUN
+  set ::v66_re  [opa_v_replot $::V_A10_VRUN]
+  set ::v66_s2  [opa_v_tran]
+}
+set v66_rf   [rcall {xschem raw rawfile}]
+set v66_mask [xschem get annot_show]
+set v66_msg  [lindex [rcall {xschem get statusmsg}] 1]
+set v66_p2   [opa_v_paint a14_2p_2]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V66 issue 0900 the simulation was run again and the waveform window is showing the new run, so a second press annotates the NEW run's numbers instead of repainting the first run's under a caption that describes the new one} \
+  [list $::v66_s1 $::v66_p1 $::v66_pre $::v66_re $::v66_s2 $v66_p2 \
+        [expr {$v66_p2 ne $::v66_p1 ? 1 : 0}] $v66_rf $v66_msg \
+        [expr {[string is integer -strict $v66_mask] && ($v66_mask & 4) ? 1 : 0}]] \
+  [list ok $V_PINS_P3 {0 0} {1 28} ok $V_PINS_OTHER \
+        1 [list 0 $V_A10_VRUN] $V_MSG_OK3 1]
+
+# ===========================================================================
+# V67 - A REFUSAL TAKES THE EARLIER PRESS'S NUMBERS OFF THE SHEET
+# ===========================================================================
+# ⚠ THE DRIVER'S RULING, 2026-08-28, AND IT IS RULING D5-1 AGAIN. Once a press
+# has learned that the numbers on the sheet describe a run that is no longer the
+# one on screen, leaving them there is a number displayed next to a thing it was
+# not measured for. A captioned refusal sitting above a stale number is not an
+# improvement on a silent stale number, so the refusal clears what the earlier
+# press painted.
+# ⚠ THE SCENARIO IS ISSUE 0895's, ONE PRESS LATER. The first press succeeds and
+# leaves the run's results attached and its numbers on the sheet. The simulator
+# then unlinks the results file to re-create it -- which is what most simulators
+# do, so the file is ABSENT rather than corrupt -- while the waveform window
+# keeps plotting what it already read. The second press cannot reach the
+# viewer's data, which is the one case the 0896 decision leaves a refusal for.
+# ⚠ SIX CLAIMS, AND THE FIFTH IS THE ONE THE RULING TURNS ON: the first press
+# succeeded and painted the run; the second press refuses BY NAME; the CIW got
+# that sentence once, tagged as a warning, and the held status line carries it;
+# nothing is attached to the design window afterwards; THE SHEET IS BARE; and
+# the user's own annotation settings are exactly where the first press left
+# them, because a refusal must never edit them.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+set v67 [opa_v_spy {
+  opa_v_viewer $::V_A10_VRUN {
+    set ::v67_s1 [opa_v_tran]
+    set ::v67_p1 [opa_v_paint a14_gone_1]
+    ## the simulator unlinks the file it is about to re-create, while the
+    ## waveform window keeps plotting what it read
+    file delete -force $::V_A10_VRUN
+    set ::v67_s2 [opa_v_tran]
+  }
+}]
+set v67_msg  [lindex [rcall {xschem get statusmsg}] 1]
+set v67_ld   [rcall {xschem raw loaded}]
+set v67_mask [xschem get annot_show]
+set v67_p2   [opa_v_paint a14_gone_2]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V67 issue 0900 RULING D5-1 when the second press cannot reach the waveform window's data it says so AND takes the earlier press's numbers off the schematic, instead of captioning a refusal over them} \
+  [list $::v67_s1 $::v67_p1 $::v67_s2 $v67 $v67_msg $v67_ld $v67_p2 $v67_mask] \
+  [list ok $V_PINS_P3 viewergone \
+        [list [list {} $V_MSG_OK3] [list warn $V_MSG_VGONE]] \
+        $V_MSG_VGONE {0 -1} $V_PINS_NONE 4]
+
+# ===========================================================================
+# V68 - THE WAVEFORM WINDOW HAS NOT MOVED, SO NOTHING IS RE-READ
+# ===========================================================================
+# ⚠ THIS IS THE ROW THAT SAYS THE REVALIDATION IS CHEAP, and it is the only
+# thing standing between a fix for issue 0900 and a press that re-reads the
+# whole results file off disk every time. The waveform window is still showing
+# the run it was showing; the sheet still agrees with the traces beside it; so
+# the press annotates from what it already holds and touches no file.
+# ⚠ AND THE DISK IS DELIBERATELY DIFFERENT FROM BOTH WINDOWS. A second run has
+# overwritten the file at that path and NOBODY has re-plotted it, so a press
+# that went back to disk would paint 21 V and answer 28 at the last point. Leg 4
+# reads v(d) at the last point back out of the design window and requires 4 --
+# the run BOTH windows are holding in memory.
+# ⚠ LEG 5 IS THE NON-VACUITY AND IT IS NOT OPTIONAL. It reads the same path
+# fresh, out of band, and requires 28 -- so leg 4's 4 is a statement about the
+# feature and not about a fixture that failed to overwrite anything.
+# ⚠ AND THIS ASYMMETRY IS DELIBERATE AND PRE-EXISTING: row V51 puts the same
+# changed file on disk with an EMPTY design window and gets a refusal, because
+# there the two windows really are about to disagree. Here they agree, and
+# agreeing with what the user is looking at is the user's own 0881 ruling.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {
+  set ::v68_s1 [opa_v_tran]
+  ## the simulator runs again -- but the user has NOT re-plotted, so the
+  ## waveform window is still showing the run the sheet agrees with
+  file copy -force $::V_A10_RUN2 $::V_A10_VRUN
+  set ::v68_s2 [opa_v_tran]
+}
+set v68_p2  [opa_v_paint a14_cache]
+set v68_val [rcall {xschem raw value v(d) 4}]
+opa_l_annot 0
+catch {xschem raw clear}
+set v68_ctl [rcall {xschem annotate_op $V_A10_VRUN}]
+set v68_disk [rcall {xschem raw value v(d) 4}]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V68 issue 0900 the waveform window is still showing the same run, so a second press annotates from what is already loaded and never goes back to disk} \
+  [list $::v68_s1 $::v68_s2 $v68_p2 $v68_val $v68_disk] \
+  [list ok ok $V_PINS_P3 {0 4} {0 28}]
+
+# ===========================================================================
+# V69 - STRUCTURAL: THE CONSULT IS NOT SKIPPABLE WHEN A DATABASE IS ALREADY
+#       ATTACHED
+# ===========================================================================
+# ⚠ THIS ROW EXISTS BECAUSE THE CLAIM IS ABOUT A CONDITION, AND A CONDITION
+# CANNOT BE SEEN FROM A SINGLE FIXTURE. Rows V66 and V67 prove the answer
+# changes on two staged disagreements; neither can prove that a THIRD kind of
+# disagreement nobody has thought to stage is also asked about. What makes that
+# true is that the currency question is part of the gate's own condition rather
+# than a statement somewhere after it, and that is source text.
+# ⚠ LEG 4 IS THE WHOLE CLAIM. The line that asks whether a database is attached
+# and the line that asks whether it is the RIGHT one must be the SAME line, so
+# no arrangement of the code can reach the guarded block without having asked.
+# A build that computed the currency into a variable further up and forgot to
+# use it, or tested it in an arm below, passes V66 and V67 on today's fixtures
+# and fails here.
+# ⚠ LEG 5 IS THE ORDERING: the database the session was holding must come off
+# BEFORE the supplier runs, not after, because the supplier finds out whether
+# its own read worked by asking the registry. Left attached, the old database is
+# still there to be counted, so a viewer-named file that fails to re-parse
+# leaves the supplier believing it succeeded and the user is told the file is
+# "from a different simulation run" when the truth is that it could not be read.
+# ⚠ AN EARLIER REVISION OF THIS PARAGRAPH SAID THAT ORDERING HAD NO BEHAVIOURAL
+# WITNESS AND THAT THIS LEG WAS ITS ONLY ONE. FALSE, AND MEASURED: item A14's
+# sabotage pass deleted the three lines and reddened V66, V67 and V71 on both
+# arms plus B12j and B12k on the display arm -- V66's failure IS the wrong-reason
+# corner, the press answering "from a different simulation run" while the disk
+# file and the waveform window agree perfectly. This leg is the ordering pinned
+# on TOP of those five, not instead of them. Issue 0899's class, in a test file.
+# ⚠ AND THE LEG NUMBERS ABOVE ARE THE ROW'S OWN, counted from 1 over the eight
+# elements below. An earlier revision numbered them from 0 and named the wrong
+# leg twice; measured against the vector, S-A14-1 zeroes 3 and 4, S-A14-2
+# zeroes 5, a behaviour-neutral early return in the currency test zeroes 7, and
+# deleting the fingerprint compare zeroes 8.
+# ⚠ LEGS 6 AND 7 SAY THE CONSULT SITS ABOVE EVERY EXIT. A currency test that
+# returned early -- on a cheap check, on a cached answer -- before asking the
+# waveform window anything would be a cache that is never revalidated, which is
+# the entire mechanism of issue 0900 rebuilt one level down.
+set V69_SRC [opa_slurp [file join $repo utils annot_mode.tcl]]
+set V69_AT  [opa_proc_src $V69_SRC cadence::annot_tran]
+set V69_CUR [opa_proc_src $V69_SRC cadence::_annot_tran_db_current]
+set v69_gi [opa_v_lineidx $V69_AT {\$loaded < 0}]
+set v69_ci [opa_v_lineidx $V69_AT {_annot_tran_db_current}]
+set v69_ui [opa_v_lineidx $V69_AT {_annot_tran_unwind}]
+set v69_si [opa_v_lineidx $V69_AT {_annot_tran_supply}]
+set v69_vi [opa_v_lineidx $V69_CUR {_annot_viewer_db}]
+set v69_ri [opa_v_lineidx $V69_CUR {\mreturn\M}]
+check {V69 issue 0900 STRUCTURAL every press asks the waveform window whether the database it already holds is still the run on screen, the question is part of the gate itself so it cannot be short-circuited past, and what the session was holding comes off before the supplier reads anything} \
+  [list [expr {[string length $V69_AT] > 0 ? 1 : 0}] \
+        [expr {[string length $V69_CUR] > 0 ? 1 : 0}] \
+        [opa_v_pgrep $V69_AT {_annot_tran_db_current}] \
+        [expr {($v69_gi >= 0 && $v69_gi == $v69_ci) ? 1 : 0}] \
+        [expr {($v69_ui >= 0 && $v69_si >= 0 && $v69_ui < $v69_si) ? 1 : 0}] \
+        [opa_v_pgrep $V69_CUR {_annot_viewer_db}] \
+        [expr {($v69_vi >= 0 && $v69_ri >= 0 && $v69_vi < $v69_ri) ? 1 : 0}] \
+        [opa_v_pgrep $V69_CUR {_annot_db_print}]] \
+  [list 1 1 1 1 1 1 1 1]
+
+# ===========================================================================
+# V70 - NO WAVEFORM WINDOW IN PLAY, SO THE ATTACHED DATABASE IS STILL USED
+# ===========================================================================
+# ⚠ THE DECISION THIS ROW PINS: nothing on the user's screen contradicts what
+# the session is holding, so it is kept. The user pressed the chord, got their
+# numbers, and then CLOSED the waveform window. Their numbers must not vanish
+# from the schematic on the next press, and the press must not go off and
+# rebuild a path out of the preferences either -- answering with a file the user
+# may not be looking at is issue 0881's own defect, arriving from the other
+# side.
+# ⚠ AND THE PREFERENCES POINT AT AN EMPTY DIRECTORY ON PURPOSE. There is no
+# candidate anywhere off the closed window, so a build that treated "no waveform
+# window" as "the database is stale" would refuse `noraw` here and strip the
+# numbers off the sheet. That refusal is the whole content of this row, and it
+# is what sabotage variant S-A14-3 produces.
+# ⚠ THE WINDOW IS CLOSED THE WAY THE USER CLOSES IT: `opa_v_viewer` destroys the
+# stand-in and takes the three verbs the consult calls away with it, so the
+# second press meets a session with no viewer at all -- which is what every
+# headless row that never opens one meets.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {set ::v70_s1 [opa_v_tran]}
+## the user closes the waveform window; the sheet keeps the numbers it was given
+set v70_pre  [rcall {xschem raw loaded}]
+set v70_s2   [opa_v_tran]
+set v70_p2   [opa_v_paint a14_noview]
+set v70_mask [xschem get annot_show]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V70 issue 0900 with the waveform window closed there is nothing on screen to disagree with, so a second press keeps the numbers the first press put on the schematic instead of refusing} \
+  [list $::v70_s1 $v70_pre $v70_s2 $v70_p2 \
+        [expr {[string is integer -strict $v70_mask] && ($v70_mask & 4) ? 1 : 0}]] \
+  [list ok {0 0} ok $V_PINS_P3 1]
+
+# ===========================================================================
+# V71 - AN OPERATING POINT ON THE SHEET AND A TRANSIENT IN THE WINDOW
+# ===========================================================================
+# ⚠ LEG b IS A SECOND 0881-FAMILY REPAIR THE SAME GATE GETS FOR FREE. The user
+# has pressed `6` or `Alt-6` at some point, so the design window is holding an
+# OPERATING POINT and its 7.5 V is on the sheet. They then run a transient, put
+# a cursor on the traces and press the transient chord. Today the press asks
+# only "is some database attached", finds the operating point, never looks at
+# the waveform window at all, and tells the user "These results are not from a
+# transient run" -- about a database nobody is looking at, while the transient
+# they asked about is plotted on screen beside it. That sentence is false in the
+# only sense a user cares about, and it is the same complaint the user filed
+# against this mode in the first place.
+# ⚠ LEG a's CONTROL IS NOT OPTIONAL, ROW V46's DISCIPLINE. It attaches the same
+# operating point under the same mask by hand and requires 7.5 V to appear
+# beside node `d`, so the second leg's `d 3` is a statement about the feature
+# and not about a fixture that could not paint.
+# ⚠ LEG c IS THE OTHER FACE AND IT NEEDS ITS OWN LEGS: the same operating point
+# on the sheet, and the waveform window's file gone. The press must refuse -- it
+# cannot reach the data the user is asking about -- and the OPERATING POINT
+# NUMBERS COME OFF TOO. That is a decision, not an inevitability: the user ruled
+# on clearing "the numbers the earlier press painted" and these were painted by
+# a DIFFERENT press. It is done uniformly because a press that has learned the
+# held database is not the run on screen must detach it before anything else, or
+# every downstream refusal reports the wrong REASON -- see row V69 leg 5.
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_l_annot 2
+catch {xschem annotate_op $T_OPRAW}
+set v71_ctl [opa_v_paint a14_opctl]
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+opa_l_annot 2
+catch {xschem annotate_op $T_OPRAW}
+file copy -force $T_RAW $V_A10_VRUN
+opa_v_viewer $V_A10_VRUN {set ::v71a_state [opa_v_tran]}
+set v71a_paint [opa_v_paint a14_opview]
+set v71a_msg   [lindex [rcall {xschem get statusmsg}] 1]
+opa_l_annot 0
+catch {xschem raw clear}
+opa_l_annot 2
+catch {xschem annotate_op $T_OPRAW}
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {
+  file delete -force $::V_A10_VRUN
+  set ::v71b_state [opa_v_tran]
+}
+set v71b_paint [opa_v_paint a14_opgone]
+set v71b_ld    [rcall {xschem raw loaded}]
+set v71b_mask  [xschem get annot_show]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V71 issue 0900 an operating point left on the schematic by an earlier press no longer blinds the transient chord to the waveform window, and when that window's data cannot be reached the operating-point numbers come off with the refusal} \
+  [list $v71_ctl $::v71a_state $v71a_paint $v71a_msg \
+        $::v71b_state $v71b_ld $v71b_paint $v71b_mask] \
+  [list $V_PINS_OP75 ok $V_PINS_P3 $V_MSG_OK3 \
+        viewergone {0 -1} $V_PINS_NONE 2]
+
+# ===========================================================================
+# V72 - THE USER'S DIGITAL DATABASE SURVIVES A PRESS THAT WAS NEVER TALKING
+#       ABOUT IT
+# ===========================================================================
+# ⚠ ISSUE 0902, AND IT IS A DEFECT ITEM A14 INTRODUCED, NOT ONE IT INHERITED.
+# The user is running a mixed-signal bench: the design window is holding the
+# analog transient a previous press attached AND the co-simulation VCD that
+# feeds the sheet's digital back-annotation, which is exactly the window state
+# spec D5 is written about. The waveform window has moved on to a newer run, so
+# the press correctly decides the numbers on the sheet cannot be believed and
+# goes and gets the run on screen -- and on its way it took EVERY database off
+# the window, the VCD included. The digital values on the sheet went blank and
+# nothing said why.
+# ⚠ WHY NO ROW COULD SEE IT. `xschem raw clear` with no file named "unloads all
+# raw files" (src/scheduler.c); with a file and a type named it takes off one.
+# Before item A14 the unwind was reachable only on a press that had itself
+# attached the one database it then took off, so the two spellings were
+# indistinguishable and every fixture in the tree holds exactly one database.
+# ⚠ THE COUNT IS ASSERTED BEFORE AND AFTER, AND THE DIGITAL VALUE ON TOP.
+# A row that only counted would pass against a build that took the VCD off and
+# left the stale analog on; a row that only read the value would pass against
+# one that left BOTH on and never refreshed. Leg 6 is the count and leg 7 is the
+# value the digital back-annotation actually reads.
+# ⚠ AND LEG 8 IS THE 0900 FIX ITSELF, RE-ASSERTED UNDER THE NEW STATE. The
+# second press must still paint the NEW run -- fixing the data loss by declining
+# to refresh at all would pass every other leg here.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {
+  set ::v72_s1 [opa_v_tran]
+  ## the co-simulation VCD goes on next to the run the press just attached, and
+  ## the analog transient is made current again -- which is the order
+  ## `ase::attach_dbs` leaves the registry in on a real bench
+  set ::v72_vrc [catch {xschem raw read $::V_A14_VCD vcd}]
+  catch {xschem raw switch $::V_A10_VRUN tran}
+  set ::v72_n1 [opa_v_slots]
+  ## the simulator runs again over the same path and the waveform window
+  ## re-plots, exactly as it does after a real re-run
+  file copy -force $::V_A10_RUN2 $::V_A10_VRUN
+  set ::v72_re [opa_v_replot $::V_A10_VRUN]
+  set ::v72_s2 [opa_v_tran]
+}
+set v72_n2   [opa_v_slots]
+set v72_dig  [opa_v_digval]
+set v72_p2   [opa_v_paint a14_vcdkeep]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V72 issue 0902 a press that goes and gets the newer run takes the run it can no longer believe off the design window and leaves the co-simulation results the user loaded exactly where they were} \
+  [list $::v72_s1 $::v72_vrc $::v72_n1 $::v72_re $::v72_s2 $v72_n2 $v72_dig $v72_p2] \
+  [list ok 0 2 {1 28} ok 2 1 $V_PINS_OTHER]
+
+# ===========================================================================
+# V73 - AND A REFUSAL LEAVES IT ALONE TOO, AS DOES A PRESS THAT FINDS IT
+#       CURRENT
+# ===========================================================================
+# ⚠ TWO FACES, BECAUSE ISSUE 0902 HAS TWO. Face a is the REFUSAL path: the
+# waveform window's file has gone, so the press cannot reach the data the user
+# is asking about and clears what the earlier press painted -- row V67's
+# scenario -- and the co-simulation database must still be there afterwards. A
+# refusal that takes away results the user loaded is worse than the stale number
+# it was clearing.
+# ⚠ FACE b IS RULING D5-3 READ FORWARDS, AND IT IS THE SHARPER OF THE TWO. Here
+# the digital database is the CURRENT one in the design window, so a build that
+# fixed face a merely by naming the file it clears would name the VCD and take
+# it off. There is nothing of this surface's to take off: `xschem annotate_op`
+# refuses a digital file before it loads anything, so the surface can never have
+# attached one.
+# ⚠ AND FACE b STILL HAS TO ANNOTATE. Leg 8 is the paint: leaving the digital
+# database alone must not mean giving up on the press. The waveform window is
+# showing a transient, so the run on screen goes on the sheet.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {
+  set ::v73a_s1 [opa_v_tran]
+  catch {xschem raw read $::V_A14_VCD vcd}
+  catch {xschem raw switch $::V_A10_VRUN tran}
+  set ::v73a_n1 [opa_v_slots]
+  file delete -force $::V_A10_VRUN
+  set ::v73a_s2 [opa_v_tran]
+}
+set v73a_n2    [opa_v_slots]
+set v73a_dig   [opa_v_digval]
+set v73a_paint [opa_v_paint a14_vcdrefuse]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+catch {xschem raw read $V_A14_VCD vcd}
+set v73b_n1 [opa_v_slots]
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {set ::v73b_s2 [opa_v_tran]}
+set v73b_n2    [opa_v_slots]
+set v73b_dig   [opa_v_digval]
+set v73b_paint [opa_v_paint a14_vcdcur]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V73 issue 0902 the co-simulation results the user loaded are still there after a press that had to refuse, and a press that finds them as the window's current database leaves them alone and annotates the run on screen anyway} \
+  [list $::v73a_s1 $::v73a_n1 $::v73a_s2 $v73a_n2 $v73a_dig $v73a_paint \
+        $v73b_n1 $::v73b_s2 $v73b_n2 $v73b_dig $v73b_paint] \
+  [list ok 2 viewergone 1 1 $V_PINS_NONE \
+        1 ok 2 1 $V_PINS_P3]
+
+# ===========================================================================
+# V75 - THE REFUSAL STILL NAMES THE RIGHT REASON WITH A DIGITAL DATABASE IN
+#       THE WINDOW
+# ===========================================================================
+# ⚠ THIS IS THE BILL FOR ISSUE 0902's FIX, AND IT IS PAID HERE RATHER THAN
+# DISCOVERED LATER. Once a press is allowed to leave the user's co-simulation
+# database attached -- which is the whole of 0902 -- the design window can be
+# holding something while the press's OWN read of the waveform window's file
+# fails. `xschem raw loaded` answers 0 either way, so a supplier that asked it
+# would believe its read had worked, fall through to the two-window compare, and
+# tell the user their results file is "from a different simulation run" when the
+# truth is that it could not be read. A wrong reason is the same defect class as
+# a wrong number.
+# ⚠ THE SCENARIO IS ISSUE 0893's, WITH THE VCD ON. The simulator has replaced
+# the results file in place with something that is not a database at all, while
+# the waveform window keeps plotting what it already read -- so the file EXISTS,
+# which is what separates this from the deleted-file case rows V67 and V73 face
+# a stage.
+# ⚠ LEG 2 IS THE POINT, NOT LEG 1. A row that only checked that some refusal
+# was raised would be satisfied by the wrong one, so the sentence is asserted
+# whole and leg 5 names the sentence that must NOT appear.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem raw read $V_A14_VCD vcd}
+catch {xschem statusmsg -hold ZZA14SENTINEL}
+opa_v_viewer $V_A10_VRUN {
+  opa_t_wr $::V_A10_VRUN "ZZ this file is not a spice raw database and never was\n"
+  set ::v75_s [opa_v_tran]
+}
+set v75_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v75_n     [opa_v_slots]
+set v75_dig   [opa_v_digval]
+set v75_paint [opa_v_paint a14_vcdunread]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V75 issue 0902 with the user's co-simulation results still attached a press whose own read of the waveform window's file fails says the file could not be read, not that it is from a different run} \
+  [list $::v75_s $v75_msg $v75_n $v75_dig $v75_paint \
+        [expr {$v75_msg ne $V_MSG_VDIFF ? 1 : 0}]] \
+  [list viewerunread $V_MSG_VUNREAD 1 1 $V_PINS_NONE 1]
+
+# ===========================================================================
+# V74 - STRUCTURAL: THE SPELLING THAT TAKES A DATABASE OFF, AND THE CHEAP EXIT
+#       NOTHING BEHAVIOURAL CAN SEE
+# ===========================================================================
+# ⚠ LEGS 3 AND 4 ARE THE ONE-CHARACTER DIFFERENCE ISSUE 0902 IS. `xschem raw
+# clear` and `xschem raw clear <file> <type>` read almost the same and do
+# something very different -- the first "unloads all raw files"
+# (src/scheduler.c), the second takes off one. V72 and V73 see the difference
+# behaviourally today; these legs are what stops the bare spelling coming back
+# into a proc whose callers have grown, which is precisely how it got in.
+# ⚠ LEG 5 IS RULING D5-3's PLACE IN THE ORDER. The digital question must be
+# asked BEFORE anything is taken off, or the answer arrives too late to matter.
+# ⚠ LEGS 6 AND 7 ARE THE SUPPLIER'S SUCCESS TEST, AND ROW V75 IS WHAT THEY SIT
+# ON TOP OF. Once a refusal is allowed to leave a VCD attached, `xschem raw
+# loaded` stops answering "did my own read work" -- it says 0 for a window
+# holding nothing but that VCD -- so the supplier must ask whether an ANALOG
+# database is loaded, and must not have the shorter spelling anywhere in it.
+# V75 sees the answer change; these two see the question.
+# ⚠ LEG 8 IS THE ONE ITEM A14's SABOTAGE PASS COULD NOT SEE, AND IT IS PINNED
+# HERE RATHER THAN DESCRIBED AS SOMETHING IT IS NOT. The `if` wrapping the
+# gate's unwind is a CHEAP EXIT, not a guard: with it deleted all three suites
+# stay ALL PASS on both arms, because with nothing attached the unwind finds
+# nothing to take off and writes back the mask it just read. Its only effect is
+# one fewer redraw on a press that starts from an empty design window, and no
+# row in the tree counts redraws. It is kept because a press that decides
+# nothing should do nothing, and this leg is the honest witness for it: the test
+# must sit on the line immediately above the call.
+set V74_SRC [opa_slurp [file join $repo utils annot_mode.tcl]]
+set V74_REL [opa_proc_src $V74_SRC cadence::_annot_db_release]
+set V74_UNW [opa_proc_src $V74_SRC cadence::_annot_tran_unwind]
+set V74_SUP [opa_proc_src $V74_SRC cadence::_annot_tran_supply]
+set V74_AT  [opa_proc_src $V74_SRC cadence::annot_tran]
+set v74_di [opa_v_lineidx $V74_REL {is_digital}]
+set v74_ci [opa_v_lineidx $V74_REL {xschem raw clear}]
+set v74_wi [opa_v_lineidx $V74_AT {\$loaded >= 0}]
+set v74_ui [opa_v_lineidx $V74_AT {_annot_tran_unwind}]
+check {V74 issue 0902 STRUCTURAL taking a database off names the file it is taking off and never touches a digital one, the supplier asks whether an analog database is loaded rather than whether anything is, and the cheap exit above the gate's detach is pinned because nothing behavioural can see it go} \
+  [list [expr {[string length $V74_REL] > 0 ? 1 : 0}] \
+        [expr {[string length [opa_proc_src $V74_SRC cadence::_annot_db_analog_loaded]] > 0 ? 1 : 0}] \
+        [opa_v_pgrep $V74_REL {xschem raw clear \$f \$t}] \
+        [expr {[opa_v_pgrep $V74_REL {xschem raw clear\s*\}}] + [opa_v_pgrep $V74_UNW {xschem raw clear}]}] \
+        [expr {($v74_di >= 0 && $v74_ci >= 0 && $v74_di < $v74_ci) ? 1 : 0}] \
+        [opa_v_pgrep $V74_SUP {_annot_db_analog_loaded}] \
+        [opa_v_pgrep $V74_SUP {xschem raw loaded}] \
+        [expr {($v74_wi >= 0 && $v74_ui >= 0 && $v74_wi == $v74_ui - 1) ? 1 : 0}]] \
+  [list 1 1 1 0 1 2 0 1]
 
 set ::netlist_dir $v33_nd
 catch {xschem raw clear}

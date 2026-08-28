@@ -2343,12 +2343,13 @@ table above is the finished article.
 | ~~**0893**~~ | ✅ **FIXED 2026-08-28 (A12).** The refusal said *"No simulation results are loaded"* while the waveform window was plotting the very file it had just named. New state `viewerunread`, its own minted sentence, row **V55** in both arms. Its guard missed two reachable cases; both are closed by A13 — see 0895 and 0896. |
 | ~~**0894**~~ | ✅ **FIXED 2026-08-28 (A12), tests only.** Three of A12's own guards had no row that could see them go: the display arm could stop routing to the virtual display and open xschem on the **user's real screen** with V57 still green; the runner could go back to swallowing "this arm verified nothing"; and the new refusal could be given an unwind that tears down the user's own annotations, with V52 still green. Each removal now reddens exactly one row. |
 | ~~**0895**~~ | ✅ **FIXED 2026-08-28 (A13).** 0893's truthful sentence missed its **commonest** trigger — a deleted file, not a corrupt one — because `cadence::_annot_viewer_db` answered a bare `{}` on `![file exists]` before `$vprint` was ever set. The consult now **classifies its own answer** (`ok` \| `filegone` \| `nopoints`), and `filegone` reaches the new `viewergone` state. Rows **V60**, **V61**, **V62**, **V63** in both arms and **B12i** on the display arm. |
-| ~~**0896**~~ | ✅ **FIXED 2026-08-28 (A13), and it was a live RULING D5-1 violation.** A run the user was **watching fill** has `No. Points: 0`, so the fingerprint was empty while the consult succeeded, the two-window compare was gated on that fingerprint and **did not run**, and the completed run written over the same path landed on the schematic under the *"Showing each node's voltage at ..."* caption (measured both arms: `state=ok`, `mask=4`, another run's numbers painted, no warning). The compare is now gated on **whether the consult succeeded**, `nopoints` reaches the new `viewerfilling` state, and the compare can no longer be skipped **once the supplier runs**. ⚠ That scope is literal — see **0900**: the supplier is called only when the design window holds no database, so the consulted path is closed and the *unconsulted* one is not. Rows **V58**, **V59**, **V62**, **V63** and **B12h**. A third face nobody had filed closes with it: a still-filling run with **nothing** overwritten used to report success over a bare sheet (row **V59**). |
+| ~~**0896**~~ | ✅ **FIXED 2026-08-28 (A13), and it was a live RULING D5-1 violation.** A run the user was **watching fill** has `No. Points: 0`, so the fingerprint was empty while the consult succeeded, the two-window compare was gated on that fingerprint and **did not run**, and the completed run written over the same path landed on the schematic under the *"Showing each node's voltage at ..."* caption (measured both arms: `state=ok`, `mask=4`, another run's numbers painted, no warning). The compare is now gated on **whether the consult succeeded**, `nopoints` reaches the new `viewerfilling` state, and the compare can no longer be skipped **once the supplier runs** — and since **0900** was fixed (A14) the supplier runs on **every** press that finds a disagreement, so the *unconsulted* path is closed too. Rows **V58**, **V59**, **V62**, **V63** and **B12h**. A third face nobody had filed closes with it: a still-filling run with **nothing** overwritten used to report success over a bare sheet (row **V59**). |
 | **0897** | 🔴 **NEW.** The two hand-maintained enumerations that hold a refusal sentence to the user's PLAIN ENGLISH ruling have no completeness check. Remove `viewerunread` from either and the tree stays `ALL PASS (451 checks)` — the count does not even move. |
 | ~~**0899**~~ | ✅ **FIXED 2026-08-28 (A13 repair), tests + attributions only.** Two of A13's own twelve guards had nothing able to see them go. `if {$path eq {}} { return {} }` could be deleted with seven suites staying green on both arms, while a waveform window holding an operating point then produced *"The waveform window is showing the results file , but that file is no longer on disk"* — a refusal naming **no file** — over a bare sheet whose own results were readable. And `filegone` being tested before `nopoints` shipped on a comment: every fixture in the tree made at most one of the two tests true, so either order passed. Rows **V63 legs e/f/g**, **V64** and **V65**, all in both arms; the wrong V37 attribution corrected in the spec and in `annot_mode.tcl`. |
 | **0898** | 🔴 **NEW, low.** T1 now runs `test_op_annot` twice (issue 0891's arm), so its 3000 ms wall-clock row **W33** has two chances to flake on a loaded box — measured at 5010 ms under concurrent agents, 1089 ms alone. |
-| **0900** | 🔴 **NEW, and a LIVE RULING D5-1 violation.** `cadence::annot_tran` calls the whole supply — consult, `filegone`, `nopoints`, staleness, `viewerunread` and the **two-window compare** — only inside `if {... $loaded < 0}`, i.e. only when the design window holds no database. A successful press never unwinds, so it always leaves one attached: press, re-run the simulation, press again, and the **first** run's numbers stay on the sheet under *"Showing each node's voltage at ..."* with no refusal and no compare (measured both arms). The same door reaches 0896's own `d 21 g 0.1 0 0.0 0 0.0`. Same predicate mistake as **0684** on the OP surface. **No row can see it** — every existing row starts from a design window holding nothing. |
+| ~~**0900**~~ | ✅ **FIXED 2026-08-28 (A14), and it was a live RULING D5-1 violation.** `cadence::annot_tran` called the whole supply — consult, `filegone`, `nopoints`, staleness, `viewerunread` and the **two-window compare** — only inside `if {... $loaded < 0}`, i.e. only when the design window held no database. A successful press never unwinds, so it always leaves one attached: press, re-run the simulation, press again, and the **first** run's numbers stayed on the sheet under *"Showing each node's voltage at ..."* with no refusal and no compare (measured both arms). The gate now also asks `cadence::_annot_tran_db_current` — *is the attached database the run the waveform window is showing* — **on the same line**, so no arrangement of the code can reach the guarded block without having asked; and when the answer is no, what the session was holding comes **off the sheet** before the supplier reads anything. Rows **V66**, **V67**, **V68**, **V69**, **V70**, **V71** in both arms and **B12j**, **B12k** on the display arm. The same predicate mistake is still live on the OP surface as **0684**, deliberately out of scope.
 | **0901** | 🔴 **NEW.** A13's `viewerfilling` sentence says *"the run has not produced any values yet ... Wait for the simulation to finish"*, decided from what the **waveform window** holds. When the run finished behind the window's back the five measured points are on disk at the path the sentence names, so the user is told to wait for something that already happened and waiting can never clear it — re-plotting is the action that works, which is `viewerdiff`'s own advice. The refusal is right; the reason and the remedy are wrong (PLAIN ENGLISH ruling). Row **V59** pins the world where the sentence is true; nothing covers the other. |
+| ~~**0902**~~ | ✅ **FIXED 2026-08-28 (A14 repair), and it was a defect A14 itself introduced.** The gate's new detach went through a bare `xschem raw clear`, which `src/scheduler.c` documents as *"if no file is given unload all raw files"* — so a design window holding an analog run **and** a co-simulation VCD lost **both** on one `Alt-Shift-6`, and the sheet's digital back-annotation went blank with nothing said. Measured on the shipped tree: two `free_rawfile()` clears, `xschem raw loaded` 0 → -1, a digital signal that read `1` reading empty. Now `cadence::_annot_db_release` names the file (`xschem raw clear <file> <type>`) and never touches a **digital** database (RULING D5-3 — `annotate_op` refuses a VCD, so this surface can never have attached one). The supplier's success test moved to `cadence::_annot_db_analog_loaded` at the same time, or a file that fails to re-parse behind a legitimately-attached VCD would be reported as *"from a different simulation run"*. Rows **V72**, **V73**, **V75** behavioural in both arms, **V74** structural. Boundary and alternatives: rule debt **[0902]**. |
 
 **⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH** (rows V14/V15/V16). Arming
 first would leave the user looking at an armed mode over the PREVIOUS request's
@@ -2372,7 +2373,141 @@ dead. That is the measurement gap, not a missing assertion.
 Half of the mode already crossed the window boundary correctly: the cursor
 resolver borrows the viewer's context and reads the cursor sitting in its active
 tab. Only the results lookup was blind. `cadence::_annot_tran_supply` closes that
-asymmetry, and runs **only** on the `loaded < 0` arm:
+asymmetry.
+
+**⚠ EVERY PRESS RE-ASKS THE WAVEFORM WINDOW WHETHER WHAT THE DESIGN WINDOW IS
+HOLDING IS STILL THE RUN ON SCREEN (issue 0900, ✅ FIXED 2026-08-28, A14 — but
+read the scope in the next paragraph, because one door of the same defect is
+still open).** The supply used to run *only* on the
+`loaded < 0` arm, i.e. only when the design window held no database at all. A
+successful press never unwinds — it owns the database it attached — so on a real
+bench the second press onwards always found one and **short-circuited the entire
+supply**: consult, `filegone`, `nopoints`, staleness, `viewerunread` and the
+two-window compare with it. Press, re-run the simulation, press again, and the
+first run's numbers were repainted under *"Showing each node's voltage at ..."*
+with no refusal and no warning — RULING D5-1, measured on both arms.
+
+An attached database is a **cache, not an authority**, and a cache that is never
+revalidated is the whole mechanism of that defect. The gate now reads
+`... || ![cadence::_annot_tran_db_current]`, and three things about that are
+decisions rather than spellings:
+
+**⚠ AND THE SCOPE IS LITERAL: IT RE-ASKS THE ASE WAVEFORM WINDOW, AND ONLY THAT
+— ISSUE 0903, OPEN, NOT FIXED.** XSCHEM also draws waveforms **on the schematic
+sheet itself**, and this mode reads a cursor off them on purpose
+(`cadence::_annot_tran_cursor` falls back to `graph_flags` bits 2 and 4 and tags
+its answer `sheet`). On that path `cadence::_annot_viewer_db` answers empty, the
+currency test keeps the cache without consulting anything, and
+press → re-run → press repaints the **first** run's numbers under *"Showing each
+node's voltage at ..."* — RULING D5-1, measured on both arms 2026-08-28, the
+same defect 0900 was filed on. The empty answer conflates *nothing on screen to
+disagree with* (keep the cache, correctly — row **V70**) with *the sheet's own
+graph is plotting a different run* (keep the cache, wrongly). **No row sees the
+second**: every row on this gate stages its disagreement through a viewer window,
+because that is the surface the driver ruled on. Do not read V70's green as
+coverage of that arm. See `doc/claude/issues/0903-*.md`.
+
+* **The currency question is on the SAME LINE as the "is anything attached"
+  question**, so no arrangement of the code below can reach the guarded block
+  without having asked the waveform window. That is a claim about a *condition*,
+  which no single fixture can prove, so row **V69 leg 4** reads it as source text
+  while rows **V66**, **V67** and **V71** stage three different disagreements.
+* **`cadence::_annot_tran_db_current` consults the viewer as its first
+  statement, above every return.** A currency test that answered from a cheap
+  check or a remembered answer before asking would be issue 0900 rebuilt one
+  level down. Its three answers: no waveform window showing a transient → **keep
+  the cache** (nothing on screen contradicts it, and rebuilding a path out of the
+  preferences would answer with a file the user may not be looking at — issue
+  0881's own defect from the other side; row **V70**); a consult that could not
+  reach the viewer's data (`filegone` / `nopoints`) → **not current**, because a
+  path and a fingerprint that happen to match must never be read as agreement
+  (0895/0896's lesson one level up; row **V67**); otherwise compare the two
+  windows' `_annot_db_print` fingerprints.
+* **The held database comes off BEFORE the supplier runs.** Two reasons. Once a
+  press knows the numbers on the sheet describe a run that is no longer on
+  screen, leaving them there is RULING D5-1 exactly — a captioned refusal sitting
+  above a stale number is not an improvement on a silent one, and clearing is
+  what finally makes the shipped clause *"so nothing was placed on the
+  schematic"* true of the sheet the user is looking at (rows **V67**, **V71 leg
+  c**, **B12k**). And the supplier finds out whether its **own** read worked by
+  asking the registry: left attached, the old database is still there to be
+  counted, the supplier believes it succeeded, and the user is told the file is
+  *"from a different simulation run"* when the truth is that it could not be
+  read. A wrong reason is the same defect class as a wrong number. That ordering
+  is witnessed **behaviourally** by **V66**, **V67**, **V71**, **B12j** and
+  **B12k** — item A14's sabotage pass measured all five reddening when the three
+  lines are deleted — and structurally by **V69 leg 5** on top. An earlier
+  revision of this paragraph said no fixture in the tree could stage it and that
+  V69 was its only witness; both halves were false, which is issue **0899**'s
+  class arriving in a spec.
+
+**⚠ THE REVALIDATION READS NO FILE, AND ROW V68 IS WHY THAT STAYS TRUE.**
+`_annot_db_print` reduces what each window already holds **in memory**; nothing
+is opened. V68 puts a *different* run on disk at the same path, leaves the
+waveform window showing the old one, and requires the press to answer from
+memory — so a "fix" that re-read the results file on every press reds there. A
+press where the run really *did* change costs **146.8 ms** on a 42.5 MB database,
+because it reads the run the user is asking about; that is the same work the
+FIRST press already does (192.6 ms cold) and is paid only on the press whose
+answer changes.
+
+**⚠ BUT "READS NO FILE" IS NOT "IS FREE", AND THE PRICE SCALES ON THE NUMBER OF
+SAVED VECTORS — ISSUE 0904, OPEN.** `_annot_db_print` ends in one
+`xschem raw value` per **saved vector**, always at the same single point, and the
+gate computes it **twice per press**, once in each window. The point count barely
+enters. Item A14's original table swept *points* at a fixed 200 columns and
+published *"0.220 ms to 0.678 ms — +0.46 ms, the whole price of revalidating"*;
+that is true of that database and false as a general claim, which is issue
+**0899**'s class. Re-measured 2026-08-28, headless, median of 11, both windows
+counted:
+
+| vectors | points | file | revalidation |
+|---|---|---|---|
+| 6 | 20 000 | 995 KB | **0.014 ms** |
+| 2 000 | 200 | 2.0 MB | **2.52 ms** |
+| 20 000 | 50 | 5.5 MB | **26.98 ms** |
+| 40 000 | 50 | 11.0 MB | **55.88 ms** |
+
+~1.4 µs per saved vector per window, linear, with no ceiling — an **11 MB**
+database revalidates four thousand times slower than a **995 KB** one, because it
+saved forty thousand signals rather than six. A `.save all` transient reaches
+that routinely. **No row measures it**: V68 proves the cheap path is *taken*,
+never how cheap it is. Sketches (sampling, an mtime pre-check, caching the design
+window's own print) are in `doc/claude/issues/0904-*.md`, and the sampling one
+has to be ruled on together with **0885**.
+
+**⚠ TAKING A DATABASE OFF NAMES THE FILE IT IS TAKING OFF — ISSUE 0902.**
+The detach the gate performs, and the one every refusal arm below performs, both
+go through `cadence::_annot_tran_unwind` → `cadence::_annot_db_release`. That
+helper says **`xschem raw clear <file> <type>`**, the spelling `ase::attach_dbs`
+already uses, and never the bare `xschem raw clear` — which `src/scheduler.c`
+documents as *"if no file is given unload all raw files"*, i.e. the window's
+**whole registry**. The bare spelling was harmless while the unwind was reachable
+only from a press that had itself attached the one database it then took off; the
+gate made it reachable whenever *anything* was attached, and a mixed-signal bench
+holding an analog run **and** a co-simulation VCD then lost both on one key press
+— two `free_rawfile()` clears, and the sheet's digital back-annotation blank with
+nothing said. Measured against the shipped tree 2026-08-28.
+
+`_annot_db_release` also **never takes off a digital database**, which is
+RULING D5-3 read forwards: `xschem annotate_op` refuses a digital file before it
+loads anything, so this surface can never have attached a VCD and has nothing of
+its own to put back. A press that finds one as the window's current database
+leaves it alone and annotates the run on screen anyway.
+
+Two consequences worth stating rather than leaving to be discovered. First, the
+release takes off the **current** database, so a window holding a second,
+non-current *analog* database would keep it — no shipped path puts one there, and
+that boundary is the ruling recorded as rule debt **[0902]**. Second, because a
+refusal may now legitimately leave a VCD attached, the supplier's *"did my own
+read work"* test moved from `xschem raw loaded` (which answers `0` for a window
+holding nothing but that VCD) to **`cadence::_annot_db_analog_loaded`**; without
+that move a viewer-named file that fails to re-parse is reported as *"from a
+different simulation run"* instead of *"could not be read"*, and a wrong reason is
+the same defect class as a wrong number. Rows **V72**, **V73** and **V75**
+behavioural on both arms, **V74** structural.
+
+When the gate does open, the supply runs exactly as before:
 
 1. **`cadence::_annot_raw_candidate`** — the ONE lookup the `6` chord already
    uses. It prefers the ASE session's own results over `$netlist_dir/<cell>.raw`

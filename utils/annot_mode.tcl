@@ -545,6 +545,16 @@ proc cadence::_annot_msg {mask state path types} {
 ## not assumed -- hence the catch rather than a comparison against {}; an
 ## unreadable sim_type with a database attached refuses, exactly as update_op()
 ## refuses a NULL one.
+##
+## ⚠ AND `xschem raw loaded` HERE ASKS "IS SOME DATABASE ATTACHED", NOT "IS IT
+## THIS SESSION'S CURRENT RESULTS" -- issue 0684, still OPEN, on the
+## OPERATING-POINT surface. The transient surface had the identical mistake and
+## it was fixed by item A14 (issue 0900): `cadence::annot_tran`'s gate now also
+## asks `cadence::_annot_tran_db_current`. This one is deliberately LEFT AS IT
+## IS: it is a different surface, with its own rows and its own ruling, and
+## A14's scope fence names it. Said here so a later reader does not read the
+## transient fix as covering this and does not think the resemblance went
+## unnoticed.
 proc cadence::_annot_op_db_ok {} {
   set loaded -1
   catch {set loaded [xschem raw loaded]}
@@ -1090,6 +1100,22 @@ proc cadence::_annot_db_print {} {
   lappend out $names
   set last [expr {$np - 1}]
   set vals {}
+  ## ⚠ THIS LOOP IS WHY REVALIDATING COSTS WHAT IT COSTS, AND THE COST SCALES ON
+  ## AN AXIS THE PUBLISHED NUMBER DID NOT VARY -- ISSUE 0904, OPEN. One
+  ## `xschem raw value` per SAVED VECTOR, always at the same single point, so the
+  ## price is linear in how many signals the run saved and is very nearly
+  ## independent of how many points it has. `cadence::_annot_tran_db_current`
+  ## calls this twice per key press, once in each window, on EVERY press.
+  ## Measured 2026-08-28, headless, median of 11, both windows counted: 6 vectors
+  ## x 20000 points -- a 995 KB file -- costs 0.014 ms; 40000 vectors x 50 points
+  ## -- an 11 MB file, a QUARTER the size -- costs 55.9 ms. About 1.4 us per
+  ## saved vector per window, with no ceiling. A `.save all` transient reaches
+  ## tens of thousands of vectors routinely. Item A14's own table swept POINTS at
+  ## a fixed 200 columns and published +0.46 ms as "the whole price of
+  ## revalidating"; that number is true of that database and false as a general
+  ## claim, which is issue 0899's class. NO ROW MEASURES THIS -- row V68 proves
+  ## only that the cheap path is TAKEN, never how cheap it is. Sketches, and the
+  ## sampling one has to be ruled on with issue 0885: in doc/claude/issues/0904.
   foreach n $names {
     set x {}
     catch {set x [xschem raw value $n $last]}
@@ -1097,6 +1123,73 @@ proc cadence::_annot_db_print {} {
   }
   lappend out $vals
   return $out
+}
+
+## -> the hierarchy level of the database this window is holding, when that
+## database is an ANALOG one; -1 when the window is holding nothing, or holding
+## nothing but a digital database.
+##
+## ⚠ "SOMETHING IS LOADED" IS NOT "SOMETHING THIS SURFACE CAN READ", AND
+## RULING D5-3 IS WHY. A reader would otherwise assume `xschem raw loaded` is
+## the whole answer -- it was, for two items. A digital database publishes
+## nothing to a schematic: a logic level is not a voltage, and `xschem
+## annotate_op` refuses a digital file before it loads anything (src/scheduler.c,
+## enforcement point 2 of RULING D5-3). So a window holding nothing but a VCD is
+## a window this surface has nothing to read, while `xschem raw loaded` cheerfully
+## answers 0 for it. That mattered from issue 0902 on, because from then on a
+## refusal is allowed to leave a VCD attached: the supplier below re-asks whether
+## its OWN read worked, and with a VCD still there the old spelling said yes when
+## the answer was no -- so the user was told their results file is "from a
+## different simulation run" when the truth is that it could not be read. A wrong
+## reason is the same defect class as a wrong number. Row V74 legs 5 and 6.
+proc cadence::_annot_db_analog_loaded {} {
+  set l -1
+  if {[catch {xschem raw loaded} l]} { return -1 }
+  if {![string is integer -strict $l] || $l < 0} { return -1 }
+  set dig 0
+  catch {set dig [xschem raw is_digital]}
+  if {$dig eq {1}} { return -1 }
+  return $l
+}
+
+## -> 1 when a database was taken off this window, 0 when there was nothing of
+## this surface's to take off.
+##
+## ⚠ ISSUE 0902: IT NAMES THE FILE IT IS TAKING OFF, AND THE BARE SPELLING IT
+## REPLACES DID NOT. A reader would otherwise assume `xschem raw clear` and
+## `xschem raw clear <file> <type>` differ only in convenience. They do not:
+## with no file named, src/scheduler.c says verbatim "if no file is given unload
+## all raw files" -- the WHOLE registry of the window, not the one database the
+## caller is talking about. MEASURED 2026-08-28 on the shipped tree: a design
+## window holding a transient AND a co-simulation VCD went from two databases to
+## none on one key press, and a digital signal that read 1 a moment earlier read
+## empty afterwards. Taking away results the user loaded, on a press that was
+## only ever talking about the analog run, is data loss. The named spelling is
+## the one `ase::attach_dbs` already uses, src/ase.tcl. Rows V72 and V73.
+##
+## ⚠ AND A DIGITAL DATABASE IS NEVER TAKEN OFF, WHICH IS RULING D5-3 READ
+## FORWARDS. `xschem annotate_op` refuses a digital file before it loads
+## anything, so this surface can never have attached one; there is nothing of
+## ours to put back, and a window whose current database is a VCD must come out
+## of a refusal exactly as it went in. Row V73's second half.
+##
+## ⚠ WHAT IT DOES NOT DO, said out loud rather than left for a later reader to
+## find. It takes off THE CURRENT database only, so a design window holding a
+## SECOND, non-current analog database would keep it. No shipped path puts one
+## there -- every VCD attach in the tree runs inside the waveform window's own
+## context, and `xschem annotate_op` replaces rather than appends -- so that is
+## the edge of the claim, not a known defect. Recorded in issue 0902.
+proc cadence::_annot_db_release {} {
+  set f {}
+  set t {}
+  if {[catch {xschem raw rawfile} f]} { return 0 }
+  if {[catch {xschem raw sim_type} t]} { return 0 }
+  if {$f eq {} || $t eq {}} { return 0 }
+  set dig 0
+  catch {set dig [xschem raw is_digital]}
+  if {$dig eq {1}} { return 0 }
+  catch {xschem raw clear $f $t}
+  return 1
 }
 
 ## -> {path print why} for the transient the WAVEFORM VIEWER is showing for this
@@ -1359,13 +1452,21 @@ proc cadence::_annot_tran_supply {} {
 
   ## THE TRANSIENT IS ASKED FOR BY NAME FIRST, AND THE SHIPPED FALLBACK IS THE
   ## SECOND ASK, NOT THE FIRST.
+  ##
+  ## ⚠ AND "DID MY READ WORK" IS ASKED OF `cadence::_annot_db_analog_loaded`,
+  ## NOT OF `xschem raw loaded`. ISSUE 0902 IS WHY, and a reader would otherwise
+  ## put the shorter spelling back. Since 0902 a press is allowed to leave a
+  ## DIGITAL database attached -- taking off a VCD this surface never attached
+  ## was the data loss that issue is about -- and `xschem raw loaded` answers 0
+  ## for a window holding nothing but that VCD. So the shorter spelling would
+  ## have this proc believe its own read succeeded when it failed, and the user
+  ## would be told their results file is "from a different simulation run" when
+  ## the truth is that it could not be read. Row V74 legs 5 and 6.
   catch {xschem annotate_op $path $lvl tran}
-  set after -1
-  catch {set after [xschem raw loaded]}
-  if {![string is integer -strict $after] || $after < 0} {
+  set after [cadence::_annot_db_analog_loaded]
+  if {$after < 0} {
     catch {xschem annotate_op $path $lvl}
-    set after -1
-    catch {set after [xschem raw loaded]}
+    set after [cadence::_annot_db_analog_loaded]
   }
   if {![string is integer -strict $after] || $after < 0} {
     ## ⚠ ISSUE 0893: WHO NAMED THE FILE DECIDES WHAT THE USER IS TOLD.
@@ -1398,32 +1499,132 @@ proc cadence::_annot_tran_supply {} {
   ## already returned; that is defence in depth, and row V62 legs 2 and 3 are
   ## the only witnesses it has.
   ##
-  ## ⚠ AND THE SCOPE OF THAT SENTENCE IS THE WHOLE OF ISSUE 0900, SO READ IT
-  ## LITERALLY. This says the compare cannot be skipped ONCE THIS PROC RUNS. It
-  ## does NOT say the compare always runs. `cadence::annot_tran` calls this
-  ## supplier only when `xschem raw loaded` is < 0 in the design window, so a
-  ## window that ALREADY holds a database -- which is what every successful
-  ## press leaves behind, since success never unwinds -- skips this proc
-  ## entirely: consult, `filegone`, `nopoints` and this compare with them.
-  ## Measured on both arms 2026-08-28: press, re-run the simulation, press
-  ## again, and the FIRST run's numbers stay on the sheet under the confident
-  ## caption. An earlier revision of this comment claimed a skipped compare was
-  ## "structurally impossible" full stop; that was an overclaim of exactly the
-  ## kind issue 0899 records, and it is corrected here rather than quietly
-  ## dropped. Issue 0900 carries the measurement and the shape of a fix; it is
-  ## the same predicate mistake as issue 0684 on the OP surface.
+  ## ⚠ AND READ THAT SENTENCE LITERALLY: IT IS ABOUT THIS PROC, AND WHAT MAKES
+  ## IT TRUE OF THE FEATURE LIVES IN THE CALLER. This says the compare cannot be
+  ## skipped once control is in here. Whether control GETS here is
+  ## `cadence::annot_tran`'s gate, and for two items that gate asked only
+  ## `xschem raw loaded` < 0 -- so a design window that ALREADY held a database,
+  ## which is what every successful press leaves behind since success never
+  ## unwinds, skipped this proc entirely: consult, `filegone`, `nopoints` and
+  ## this compare with them. Measured on both arms 2026-08-28: press, re-run the
+  ## simulation, press again, and the FIRST run's numbers stayed on the sheet
+  ## under the confident caption. That was issue 0900, and it is FIXED -- the
+  ## gate now also asks `cadence::_annot_tran_db_current`, on the same line, so
+  ## a press that finds a disagreement comes in here every time. Two things are
+  ## still worth knowing. An earlier revision of this comment claimed a skipped
+  ## compare was "structurally impossible" full stop, which was an overclaim of
+  ## exactly the kind issue 0899 records; the scoping stays, because it is what
+  ## makes the pair of claims checkable. And the same predicate mistake is STILL
+  ## LIVE on the operating-point surface as issue 0684 -- see the note above
+  ## `cadence::_annot_op_db_ok`.
   if {$vseen && [cadence::_annot_db_print] ne $vprint} {
     return [list $after viewerdiff $path]
   }
   return [list $after ok $path]
 }
 
-## -> whether the unwind ran. Puts back what `cadence::_annot_tran_supply` did:
-## the database it attached is detached and the annotation mask goes back to
-## what the user had before the key press.
+## -> 1 when the results database the DESIGN WINDOW is already holding can
+## still be believed about what the WAVEFORM WINDOW is showing, 0 when it has to
+## be thrown away and supplied again.
+##
+## ⚠ ISSUE 0900, AND THE WHOLE POINT IS THAT AN ATTACHED DATABASE IS A
+## CACHE, NOT AN AUTHORITY. What a reader would otherwise assume -- what
+## `cadence::annot_tran` itself assumed for a whole item -- is that "a database
+## is attached" and "the numbers on the sheet describe the run on screen" are
+## the same question. They are not. A successful press never unwinds, so it
+## leaves its database attached to the design window; the user then re-runs the
+## simulation, the waveform window re-plots, and the next press repainted the
+## FIRST run's numbers under "Showing each node's voltage at ...", with no
+## refusal, no warning and no compare -- the waveform-window consult, the
+## deleted-file and no-values-yet guards, the out-of-date check and the
+## two-window compare were all skipped. Measured on both arms 2026-08-28. That
+## is RULING D5-1: a number displayed next to a thing it was not measured for,
+## with an authoritative sentence lending it weight. A cache that is never
+## revalidated IS that defect, so this runs on EVERY press.
+##
+## ⚠ THE CONSULT IS THE FIRST STATEMENT, ABOVE EVERY RETURN, and that is a
+## guard rather than an accident of writing order. A currency test that answered
+## from a cheap check, or from a remembered answer, before asking the waveform
+## window anything would be issue 0900 rebuilt one level down. Rows V69 legs 6
+## and 7 are the only witnesses that ordering has.
+##
+## ⚠ NO WAVEFORM WINDOW SHOWING A TRANSIENT -> THE CACHE IS KEPT (answer 1),
+## AND THAT IS A DECISION. Nothing on the user's screen contradicts what the
+## session is holding, and a press that instead went off and rebuilt a path out
+## of the preferences would answer with a file the user may not be looking at --
+## issue 0881's own defect, arriving from the other side. The user who pressed
+## the chord, got their numbers and then CLOSED the waveform window must not
+## have them stripped off the sheet by the next press. Row V70 is the only
+## witness, and sabotage variant S-A14-3 is the inversion.
+##
+## ⚠ AND THAT DECISION LEAVES ISSUE 0900's DEFECT LIVE ON ONE PATH -- ISSUE
+## 0903, OPEN, MEASURED ON BOTH ARMS, NOT FIXED. Read the line above literally:
+## it consults the ASE WAVEFORM WINDOW, and only that. XSCHEM also draws
+## waveforms ON THE SHEET ITSELF, and this very mode supports reading a cursor
+## off them -- `cadence::_annot_tran_cursor` below falls back to `graph_flags`
+## bits 2 and 4 and returns its third element as `sheet`. On that path
+## `_annot_viewer_db` answers empty, this proc answers 1 without asking anything,
+## the gate stays shut, and press-then-rerun-then-press repaints the FIRST run's
+## numbers under "Showing each node's voltage at ...": RULING D5-1, exactly the
+## defect 0900 was filed on, through a door 0900's fix does not reach. So an
+## EMPTY answer conflates two situations that are NOT alike -- nothing on screen to disagree
+## with (keep the cache, correctly, row V70) and the sheet's own graph plotting
+## a different run (keep the cache, wrongly). No row can see the second: every
+## row on this gate stages its disagreement through a viewer window, because
+## that is the surface the driver ruled on. DO NOT read row V70's green as
+## coverage of this arm.
+##
+## ⚠ A CONSULT THAT COULD NOT REACH THE VIEWER'S DATA IS NOT AGREEMENT.
+## `filegone` and `nopoints` both come back carrying a path and a fingerprint
+## that may well still match the design window's, so reading "the prints are
+## equal" as "current" would let the deleted-file case repaint numbers whose
+## file is gone. That is issues 0895 and 0896's lesson -- an unusable answer and
+## a matching answer must never read alike -- one level up. Row V67, and
+## sabotage variant S-A14-4.
+##
+## ⚠ AND THE COMPARE IS `cadence::_annot_db_print`, THE SAME REDUCTION THE
+## SUPPLIER ALREADY COMPARES ON (RULING D5-4's spirit: one place knows what two
+## windows can be compared on). It reads only what is already in memory in each
+## window -- no file is opened -- which is what keeps the revalidation cheap
+## enough to run on every press. Row V68 is the standing proof that the cheap
+## path really is taken: it requires the values to be the in-memory copy and not
+## the different run sitting on disk at the same path. What the print cannot see
+## is unchanged and is written out above `cadence::_annot_tran_supply`; issue
+## 0885.
+proc cadence::_annot_tran_db_current {} {
+  set vw [cadence::_annot_viewer_db]
+  if {![llength $vw]} { return 1 }
+  if {[lindex $vw 2] ne {ok}} { return 0 }
+  if {[cadence::_annot_db_print] ne [lindex $vw 1]} { return 0 }
+  return 1
+}
+
+## -> whether the unwind ran: the database that was attached is detached and the
+## annotation mask goes back to what the user had before the key press.
+##
+## ⚠ TWO CALLERS, TWO MEANINGS, AND THE SECOND ONE ARRIVED WITH ISSUE 0900.
+## A reader would otherwise assume this only ever puts back what
+## `cadence::_annot_tran_supply` did on its way in -- that was its only job for
+## two items, and every refusal arm below still uses it that way. It is now also
+## called by `cadence::annot_tran`'s own gate, BEFORE the supplier runs, to take
+## off a database an EARLIER press attached once this press has learned it is
+## not the run the waveform window is showing. Same two verbs, so there stays
+## one place that knows how to take numbers off a sheet; the mask handed in is
+## the mask this press found, so in both cases the user's own annotation
+## settings come out exactly where they went in.
+##
+## ⚠ AND IT TAKES OFF ONE DATABASE, NOT THE WINDOW'S WHOLE REGISTRY. That is
+## issue 0902 and it is the cost of the second caller: this line used to be a
+## bare `catch {xschem raw clear}`, which "unloads all raw files"
+## (src/scheduler.c). Reachable only from a press that had attached the one
+## database it then took off, the two spellings were indistinguishable; reachable
+## from the gate, the bare one destroys the co-simulation VCD the user loaded and
+## the sheet's digital back-annotation goes blank. `cadence::_annot_db_release`
+## is the named spelling, and it is also where RULING D5-3 keeps a digital
+## database out of this proc's reach entirely. Rows V72, V73 and V74.
 proc cadence::_annot_tran_unwind {attached mask} {
   if {!$attached} { return 0 }
-  catch {xschem raw clear}
+  cadence::_annot_db_release
   catch {xschem set annot_show $mask}
   catch {xschem update_all_sym_bboxes}
   catch {xschem redraw}
@@ -1491,7 +1692,86 @@ proc cadence::annot_tran {} {
   set attached 0
   set loaded -1
   catch {set loaded [xschem raw loaded]}
-  if {![string is integer -strict $loaded] || $loaded < 0} {
+  ## ⚠ ISSUE 0900: "IS A DATABASE ATTACHED" IS NOT THE QUESTION. IT IS
+  ## "IS THE ATTACHED DATABASE THE RUN THE USER IS LOOKING AT", AND UNTIL THIS
+  ## LINE ONLY THE FIRST HALF WAS ASKED. A reader would otherwise assume the
+  ## `loaded < 0` test is enough -- it reads like one, and it was the whole gate
+  ## for two items. It is not: a successful press never unwinds, so it leaves
+  ## its database attached, and the very next press then short-circuited the
+  ## ENTIRE supply -- the waveform-window consult, the deleted-file and
+  ## no-values-yet guards, the out-of-date check and the two-window compare with
+  ## them. Re-run the simulation and press again and the FIRST run's numbers
+  ## were repainted under "Showing each node's voltage at ...", no refusal, no
+  ## warning. Measured both arms 2026-08-28; RULING D5-1. So the currency
+  ## question is part of THIS condition and not a statement anywhere after it:
+  ## no arrangement of the code below can reach the guarded block without having
+  ## asked the waveform window. Row V69 leg 4 is that claim as source text --
+  ## the two questions must be on the SAME line -- and rows V66, V67 and V71 are
+  ## the three staged disagreements. Sabotage variant S-A14-1 removes the
+  ## disjunct and is the defect itself, restored.
+  ##
+  ## ⚠ THE `||` SHORT-CIRCUITS, AND THAT IS LOAD-BEARING TOO. With nothing
+  ## attached the helper is never called, so every press that starts from an
+  ## empty design window -- which is every fixture written before this item, and
+  ## the ordinary first press on a real bench -- takes byte-for-byte the path it
+  ## always took.
+  ##
+  ## ⚠ THE SAME PREDICATE MISTAKE IS STILL LIVE ON THE OPERATING-POINT
+  ## SURFACE, filed as issue 0684 against `cadence::_annot_op_db_ok` and
+  ## `cadence::annot_mode` above. It is deliberately NOT fixed here: that is a
+  ## different surface with its own rows and its own ruling, and this item's
+  ## scope fence names it. Said so a later reader does not think it was missed.
+  if {![string is integer -strict $loaded] || $loaded < 0 || ![cadence::_annot_tran_db_current]} {
+    ## ⚠ THE HELD DATABASE COMES OFF BEFORE ANYTHING ELSE, AND THAT IS THE
+    ## DRIVER'S RULING OF 2026-08-28, NOT TIDINESS. Once this press has learned
+    ## that what the design window is holding is not the run the waveform window
+    ## is showing, the numbers already on the sheet describe a run that is no
+    ## longer on screen -- RULING D5-1 exactly -- and a captioned refusal
+    ## sitting above a stale number is not an improvement on a silent stale
+    ## number. So they come off whatever this press decides next: a supply that
+    ## succeeds replaces them, and a supply that refuses leaves the sheet bare,
+    ## which is what finally makes the shipped clause "so nothing was placed on
+    ## the schematic" true of the sheet the user is looking at. Rows V67 and
+    ## V71 leg c, and B12k on the display arm. Sabotage variant S-A14-2 deletes
+    ## it.
+    ##
+    ## ⚠ AND IT IS ABOVE THE SUPPLY, NOT BELOW IT, FOR A SECOND REASON: THE
+    ## SUPPLIER FINDS OUT WHETHER ITS OWN READ WORKED BY ASKING THE REGISTRY.
+    ## Left attached, the old database is still there to be counted, so a
+    ## viewer-named file that fails to re-parse leaves the supplier believing it
+    ## succeeded and the user is told the file is "from a different simulation
+    ## run" when the truth is that it could not be read. A wrong reason is the
+    ## same defect class as a wrong number.
+    ##
+    ## ⚠ AN EARLIER REVISION OF THIS PARAGRAPH SAID THAT SECOND REASON WAS
+    ## SOMETHING "NO FIXTURE IN THE TREE CAN STAGE" and that row V69 leg 5 was
+    ## its only, structural witness. Both halves were FALSE and item A14's
+    ## sabotage pass measured it: deleting these three lines reddens V66, V67 and
+    ## V71 on both arms and B12j and B12k on the display arm, and V66's failure
+    ## IS the wrong-reason corner -- the second press answers "the results file
+    ## on disk is from a different simulation run" while the disk file and the
+    ## waveform window agree perfectly. That is issue 0899's class: prose that
+    ## undersells a guard invites the next reader to delete it. The ordering is
+    ## witnessed BEHAVIOURALLY by V66, V67, V71, B12j and B12k, and structurally
+    ## by V69 leg 5 on top.
+    ##
+    ## ⚠ THE MASK HANDED BACK IS `$mask0`, i.e. UNCHANGED. This detaches a
+    ## database; it must not edit the user's annotation settings, which is the
+    ## same invariant rows V14/V15/V16 assert on every refusal. V67 and B12k
+    ## both read the mask back afterwards.
+    ##
+    ## ⚠ THE `if` AROUND THE CALL IS A CHEAP EXIT, NOT A GUARD, AND NOTHING
+    ## BEHAVIOURAL CAN SEE IT GO -- measured, item A14's sabotage pass, all
+    ## three suites ALL PASS on both arms with it deleted. With nothing attached
+    ## the unwind finds nothing to take off and writes back the mask it just
+    ## read, so removing it costs one spurious redraw per press that starts from
+    ## an empty design window and changes no answer anywhere. It is kept because
+    ## a press that decides nothing should do nothing, and it is pinned
+    ## STRUCTURALLY by row V74 leg 7 rather than described as something it is
+    ## not. Do not read the surrounding paragraphs as covering it.
+    if {[string is integer -strict $loaded] && $loaded >= 0} {
+      cadence::_annot_tran_unwind 1 $mask0
+    }
     set sup [cadence::_annot_tran_supply]
     set loaded [lindex $sup 0]
     ## ⚠ ISSUE 0838's RULE, CARRIED THROUGH THE NEW DOOR. A results file

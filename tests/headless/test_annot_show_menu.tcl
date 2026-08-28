@@ -1197,6 +1197,120 @@ check "B12i issue 0895 the waveform window's results file was deleted, so the an
         [expr {[string is integer -strict $e_i_mask] && ($e_i_mask & 4) ? 1 : 0}] $e_i_val] \
   [list 1 {0 tran} viewergone -1 0 1]
 
+# ---------------------------------------------------------------------------
+# B12j — ISSUE 0900 THROUGH THE REAL SUPPLY CHAIN: PRESS, RE-RUN, PRESS
+# ---------------------------------------------------------------------------
+# ⚠ THE SEQUENCE IS TWO KEY PRESSES AND A RE-RUN, AND NOTHING IN THE TREE COULD
+# SEE IT. The user presses the chord and gets their numbers. They change
+# something and run the simulation again; the waveform window re-plots and is
+# showing the new run. They press the chord again -- and the schematic is
+# repainted with the FIRST run's numbers, under a caption asserting they are
+# what the cursor is sitting on. Measured on both arms 2026-08-28, no refusal,
+# no warning, no compare.
+# ⚠ THE REASON THE REAL-CHAIN ROWS ARE BLIND TO IT IS ROW B12d, and it is worth
+# naming. B12d empties the design window before each of the rows that follow it,
+# precisely so those rows measure the feature rather than B12's leftovers. But
+# the leftovers ARE the defect: a successful press never unwinds, so the state
+# every later press meets on a real bench is a design window still holding what
+# the last press attached. This row is the one that deliberately does NOT clear.
+# ⚠ AND THE RE-PLOT GOES THROUGH THE PRODUCT. `wviewer::attach_raw` is byte for
+# byte the call `ase::ui::auto_plot` makes after a run, so the waveform window
+# moves to the new run the way it moves on a real bench, not by a fixture
+# writing into its context.
+# ⚠ THE TWO RUNS CANNOT BE CONFUSED: v(a) at the 2 ns cursor is 2 V in the first
+# and 22 V in the second. Leg 4 requires 22.
+set E_RUN2 "Title: 0900 the SECOND run, over the same path
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 5
+Variables:
+\t0\ttime\ttime
+\t1\tv(a)\tvoltage
+Values:
+0\t0
+\t0.0
+1\t1e-09
+\t11.0
+2\t2e-09
+\t22.0
+3\t3e-09
+\t33.0
+4\t4e-09
+\t44.0
+"
+set e_j_pre1  [e_ctx $E_DWIN {list [xschem raw loaded] [xschem get annot_show]}]
+set e_j_s1    [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_j_v1    [e_ctx $E_DWIN {xschem raw value v(a) -1}]
+## the simulator runs again over the same path, and the waveform window
+## re-plots -- and the design window is deliberately NOT cleared in between
+set f [open $E_TRAN w] ; puts -nonewline $f $E_RUN2 ; close $f
+set E_JATT 0
+catch {set E_JATT [wviewer::attach_raw $E_KEY $E_TRAN tran]}
+update
+catch {xschem new_schematic switch $E_DWIN}
+update
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+set e_j_vfix  [e_ctx $E_VW {list [xschem raw loaded] [xschem raw value v(a) 2]}]
+set e_j_pre2  [e_ctx $E_DWIN {xschem raw loaded}]
+set e_j_s2    [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_j_v2    [e_ctx $E_DWIN {xschem raw value v(a) -1}]
+set e_j_annot [e_ctx $E_DWIN {xschem raw annot}]
+set e_j_mask  [e_ctx $E_DWIN {xschem get annot_show}]
+check "B12j issue 0900 the simulation was run again and the waveform window re-plotted, so a second press annotates the NEW run's 22 V instead of repainting the first run's 2 V under a caption describing the new one" \
+  [list $e_j_pre1 $e_j_s1 $e_j_v1 $E_JATT $e_j_vfix $e_j_pre2 $e_j_s2 $e_j_v2 \
+        [lindex $e_j_annot 1] \
+        [expr {[string is integer -strict $e_j_mask] && ($e_j_mask & 4) ? 1 : 0}]] \
+  [list {-1 0} ok 2 1 {0 22} 0 ok 22 2e-09 1]
+
+# ---------------------------------------------------------------------------
+# B12k — ISSUE 0900's REFUSAL FACE THROUGH THE REAL SUPPLY CHAIN
+# ---------------------------------------------------------------------------
+# ⚠ THE DRIVER'S RULING, THROUGH THE PRODUCT'S OWN CHAIN. The first press
+# succeeds and its numbers are on the sheet. The simulator then unlinks the
+# results file to re-create it, which is what most simulators do, while the
+# waveform window keeps plotting what it already read. The second press cannot
+# reach the data the user is asking about, so it says so -- AND it takes the
+# earlier press's numbers off, because once they are known to describe a run
+# that is no longer the one on screen, leaving them there is RULING D5-1: a
+# number displayed next to a thing it was not measured for.
+# ⚠ AGAIN WITH NO CLEAR BETWEEN THE PRESSES. Row B12i is this scenario with an
+# EMPTY design window and it already passes; the whole difference here is the
+# database the first press left behind, which is the state a real bench is
+# always in.
+# ⚠ LEG 5 SAYS THE NUMBERS ARE NOWHERE WITHOUT NAMING THEM: reading a value
+# RAISES, because there is no database on the design window at all.
+# ⚠ THE RUN'S FILE AND THE DESIGN WINDOW ARE PUT BACK, row B12i's discipline.
+set f [open $E_TRAN w] ; puts -nonewline $f $E_TSRC ; close $f
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+set E_KATT 0
+catch {set E_KATT [wviewer::attach_raw $E_KEY $E_TRAN tran]}
+update
+catch {xschem new_schematic switch $E_DWIN}
+update
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+set e_k_s1   [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_k_pre  [e_ctx $E_DWIN {list [xschem raw loaded] \
+                                  [expr {([xschem get annot_show] & 4) ? 1 : 0}]}]
+## the simulator unlinks the file it is about to re-create, while the waveform
+## window keeps plotting what it read
+file delete -force $E_TRAN
+set e_k_s2   [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_k_ld   [e_ctx $E_DWIN {xschem raw loaded}]
+set e_k_val  [e_ctx $E_DWIN {catch {xschem raw value v(a) -1}}]
+set e_k_mask [e_ctx $E_DWIN {xschem get annot_show}]
+set f [open $E_TRAN w] ; puts -nonewline $f $E_TSRC ; close $f
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+check "B12k issue 0900 the waveform window's results file went off disk between two presses, so the second press refuses by name AND takes the first press's numbers off the schematic instead of captioning a refusal over them" \
+  [list $E_KATT $e_k_s1 $e_k_pre $e_k_s2 $e_k_ld $e_k_val \
+        [expr {[string is integer -strict $e_k_mask] && ($e_k_mask & 4) ? 1 : 0}]] \
+  [list 1 ok {0 1} viewergone -1 1 1]
+
 # --- section E teardown ------------------------------------------------------
 catch {rename ::ase::last_rawfile {}}
 catch {rename ::ase::results_stale {}}

@@ -14,6 +14,70 @@ Newest entries on top.
 
 ---
 
+## Q61. A cache that is never revalidated is a defect. So why did fixing that leave the same defect standing on another path?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issues **0900** (fixed) and **0903**
+  (filed, open), `utils/annot_mode.tcl`.
+
+**Because "revalidate" needs an authority, and the fix picked one authority when
+the feature has two.**
+
+Item A14's fix is a single question asked on every `Alt+Shift+6`: *is the results
+database this window is already holding still the run the user is looking at?*
+The mechanism was sound and the rows are real — press, re-run the simulation,
+press again, and the new numbers land. But the question is asked of
+`cadence::_annot_viewer_db`, which asks **the ASE waveform window**. When there
+is no ASE waveform window it answers empty, and the currency test reads empty as
+*"nothing on screen contradicts the cache — keep it."*
+
+That reading is right for the case it was written for: a user who pressed the
+chord, got their numbers, then **closed** the waveform window should not have
+them stripped off by the next press. Row V70 pins exactly that, and it is a good
+row.
+
+**What it misses is that XSCHEM has a second waveform surface.** The schematic
+sheet draws its own graph, with its own cursors, and this same mode reads a
+cursor off it on purpose — `cadence::_annot_tran_cursor` falls back to
+`graph_flags` bits 2 and 4 and tags its answer `sheet`. So *"no ASE waveform
+window"* is not the same as *"nothing on screen"*. On the sheet-graph path the
+old defect is untouched: measured on both arms, the second press repaints the
+first run's numbers under *"Showing each node's voltage at ..."* — RULING D5-1,
+the very thing the item was chartered to stop.
+
+**Three things generalise.**
+
+1. **An empty answer is not a state; it is a bag of states.** This is the same
+   lesson issues 0895 and 0896 taught one level down — an empty fingerprint and a
+   matching fingerprint read alike at the caller — and the fix for those was to
+   make the answer *classify itself* (`filegone` / `nopoints` / `ok`). The empty
+   answer at this level was left unclassified, and it immediately hid a second
+   meaning. If a helper can return "nothing", ask what the distinct reasons for
+   "nothing" are before the caller branches on it.
+
+2. **Two halves of one feature disagreed about what the user is looking at, and
+   nothing made them agree.** The *cursor* resolver already knows perfectly well
+   which surface answered — it returns `viewer` or `sheet`. The *currency* test
+   never asks it. The information needed to close 0903 was already in the
+   process, one proc away, and the two were written months apart against
+   different mental models.
+
+3. **A green row on the arm can be what hides the arm.** V70 is the only row on
+   the empty-answer path and it asserts the cache is *kept*. Every row that
+   stages a disagreement stages it through a viewer window, because that is the
+   surface the driver's ruling named. So the suite is at ALL PASS on both arms
+   with a live D5-1 violation in it — which is this branch's recurring shape (see
+   Q60, and `CLAUDE.md`'s note about two defects shipping past twenty-eight
+   passing checks). **A row that asserts a decision is not a row that tests the
+   decision's boundary.**
+
+*Practical rule:* when you make a cache revalidate, write down **who the
+authority is** and then go looking for the users who are not talking to that
+authority. Here the sentence *"consults the waveform window, and only that"* was
+never written until the write-up, and writing it was what exposed 0903.
+
+---
+
 ## Q60. My structural row greps for the thing it is about, and it is green. Why is that not enough?
 
 - **Asked:** 2026-08-28
