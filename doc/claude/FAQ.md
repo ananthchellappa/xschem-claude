@@ -14,6 +14,53 @@ Newest entries on top.
 
 ---
 
+## Q62. We added a freshness stamp so a re-run can never show the old numbers. Two menu items still show the old numbers. Where did the stamp go wrong?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issue **0684** (fixed for the routes its
+  §8 table names), issue **0910** (filed, open), `src/op_annot.tcl`.
+
+**The stamp is taken when the question is first ASKED, not when the data is
+ATTACHED — and those are different moments whenever somebody else did the
+attaching.**
+
+`op_annot::db_current` decides "are these numbers still your run?" by comparing
+the attached file's `{mtime size}` against a stamp it holds. The first time it
+ever sees a given window+path it has nothing to compare against, so it records a
+stamp from the file **as it is right now** and answers "current". That is
+deliberate: a database somebody attached by another route has to be trusted once,
+or every first press after a hand-attach would re-read a perfectly good file for
+nothing (58 ms on a 40 000-vector raw).
+
+The flaw is the word *now*. `op_annot::db_attach` — the surface's own attach —
+stamps at attach time, so its stamp always describes the file the numbers
+actually came from. Every other attach route (`Simulation > Graphs > Annotate
+Operating Point into schematic`, `Waves > Op Annotate`, an `xschemrc` line) puts
+the database in without stamping. If the user then re-runs and *then* presses
+`6`, the first sight lands **after** the change: the stamp minted describes run
+2's file while the in-memory numbers are run 1's, and from that moment the cheap
+path matches forever. "Trusted once" silently became "trusted for the life of the
+session", on the exact defect the fix was written to kill.
+
+**The general lesson, and it is not about this feature.** A validity stamp is a
+claim about *provenance*, so it must be minted by whoever performs the acquisition.
+Minting it at first *use* records what the world looked like when somebody got
+around to asking — which is not evidence of anything. If a subsystem cannot stamp
+at acquisition because acquisition happens outside it, then its choices are to
+re-acquire on first sight, or to be honest that it does not know; the one thing it
+must not do is manufacture a stamp out of the present tense and treat it as
+history.
+
+**Why every test passed.** The row that owns the first-sight arm stages
+`attach → ask → rewrite → ask`. It asks while the file is still run 1, so its
+stamp *is* correct, and the row is green and truthful about a sequence nobody
+performs. The user's sequence is `attach → walk away → re-run → first ask`. Same
+states, same code, different order — and the order was the whole defect. When a
+row and a defect disagree, check whether the row has quietly chosen the one
+interleaving in which the code is right.
+
+---
+
 ## Q61. A cache that is never revalidated is a defect. So why did fixing that leave the same defect standing on another path?
 
 - **Asked:** 2026-08-28

@@ -1948,6 +1948,236 @@ Values:
     a_setmask $dwin 0
     catch {array unset ::ase::ui::annot $key,*}
 
+    # ---- W1a24-W1a27: ISSUE 0684, ON THE REAL MENU ------------------------
+    # THE COMPLAINT, IN THE USER'S OWN GESTURE: annotation is ticked on, the
+    # simulation is run again, and the schematic keeps painting the PREVIOUS
+    # run's numbers under a control that says these are your results. Nothing
+    # on screen distinguishes it from a correct annotation.
+    #
+    # ⚠ NOT ONE OF THESE ROWS UNTICKS AND RE-TICKS. That is what refuted the
+    # 2026-08-25 attempt: its three acceptance rows all did, so none of them
+    # could see the headline case and a fix that never reached the display
+    # looked green. Issue 0684 section 7 records it; the sentence that binds
+    # this file is "it must re-attach-or-blank, not merely invalidate".
+    #
+    # ⚠ AND THE AUTO-PLOT IS STUBBED OUT FOR THESE FOUR ROWS ONLY. A finished
+    # run also opens the waveform viewer, which is item 13's subject and not
+    # this one's; leaving it live would put a second window's context switches
+    # in the middle of the measurement.
+    proc a_rawval_here {vec} {
+      if {[catch {xschem raw value $vec -1} r]} { return RAISED }
+      return $r
+    }
+    proc a_designval {win vec} { return [a_ctx_eval $win [list a_rawval_here $vec]] }
+    proc a_mkraw684 {path vname val} {
+      set f [open $path w]
+      puts -nonewline $f "Title: 0684 fixture
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Operating Point
+Flags: real
+No. Variables: 2
+No. Points: 1
+Variables:
+\t0\t$vname\tvoltage
+\t1\tv(b)\tvoltage
+Values:
+0\t$val
+\t2.0
+"
+      close $f
+    }
+    proc a_mktran684 {path} {
+      set f [open $path w]
+      puts -nonewline $f "Title: 0684 foreign transient
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 2
+Variables:
+\t0\ttime\ttime
+\t1\tv(zzz)\tvoltage
+Values:
+0\t0
+\t1.5
+
+1\t1e-09
+\t2.5
+"
+      close $f
+    }
+    set a_tranB [file join $scratch a0684_foreign.raw]
+    a_mktran684 $a_tranB
+    catch {rename ase::ui::auto_plot a_autoplot_saved_0684}
+    proc ase::ui::auto_plot {key} { return 1 }
+
+    ## Drive the run-completion event the way ase::run_done does, then let the
+    ## idle queue drain -- the annotation refresh is deferred to idle for the
+    ## same reason auto_plot_idle already is (a callback dispatched inside
+    ## ase::wait's semaphore bracket cannot switch windows).
+    proc a_finish684 {key} {
+      set ::execute(exitcode,last) 0
+      catch {ase::ui::run_finished $key}
+      update ; after 250 ; update
+    }
+
+    # ---- W1a24: THE ITEM. NO KEY PRESS, NO TICK, NO UNTICK ----------------
+    set ::a_rawstub $a_rawS
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_setmask $dwin 0
+    a_mkraw684 $a_rawS {v(a)} 1.25
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    set a24_pre  [a_designval $dwin {v(a)}]
+    set a24_win0 [xschem get current_win_path]
+    after 1100
+    a_mkraw684 $a_rawS {v(a)} 7.77
+    set a24_mid  [a_designval $dwin {v(a)}]
+    a_cx {a_finish684 $key}
+    set a24_post [a_designval $dwin {v(a)}]
+    set a24_win1 [xschem get current_win_path]
+    check "W1a24 issue 0684: a finished run repaints the schematic's numbers by itself, with the tick already on and no further gesture" \
+      [list $a24_pre $a24_mid $a24_post \
+            [expr {[a_mask $dwin] & 1}] \
+            [expr {$a24_win0 eq $a24_win1 ? 1 : 0}]] \
+      [list 1.25 1.25 7.77 1 1]
+
+    # ---- W1a25: the OR BLANK half -----------------------------------------
+    # A run whose results cannot be read must clear the numbers off, not leave
+    # the previous run's under an authoritative control. RULING D5-1.
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_setmask $dwin 0
+    a_mkraw684 $a_rawS {v(a)} 1.25
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    set a25_pre [a_designval $dwin {v(a)}]
+    after 1100
+    set a25f [open $a_rawS w]
+    puts $a25f "ZZ this is not a spice raw database and never was"
+    close $a25f
+    set a25_said [w_aecho_spy {a_cx {a_finish684 $key}}]
+    set a25_post [a_designval $dwin {v(a)}]
+    a_mkraw684 $a_rawS {v(a)} 1.25
+    check "W1a25 issue 0684: a finished run whose results cannot be read blanks the numbers and says so exactly once" \
+      [list $a25_pre $a25_post [llength $a25_said] \
+            [expr {[string match {ase: could not put the results from *} \
+                     [lindex [lindex $a25_said 0] 1]] ? 1 : 0}]] \
+      [list 1.25 RAISED 1 1]
+
+    # ---- W1a26: W1a15 AND W1a16 RE-ASSERTED, VERBATIM ---------------------
+    # The tick must still attach when the design has nothing, and must still
+    # leave another corner's operating point exactly where the user put it.
+    # Replacing it would destroy it -- scheduler.c's delete-previous-OP branch
+    # fires precisely on a 1-point op/dc -- so the fix must be keyed on the
+    # session's OWN path, not on "is anything attached".
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    set a26_pre15 [a_ctx_eval $dwin {xschem raw loaded}]
+    a_setmask $dwin 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    set a26_post15 [a_ctx_eval $dwin {xschem raw loaded}]
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_ctx_eval $dwin [list catch [list xschem annotate_op $a_rawB 0]]
+    set a26_pre16 [a_rawidx $dwin {v(sentinel16)}]
+    a_setmask $dwin 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {DC Node Voltages}}
+    check "W1a26 issue 0684: the fix does not change what the tick does to an empty design, nor to a database the user loaded from somewhere else" \
+      [list [expr {$a26_pre15 < 0}] [expr {$a26_post15 >= 0}] \
+            [a_mask $dwin] [expr {$a26_pre16 >= 0}] \
+            [expr {[a_rawidx $dwin {v(sentinel16)}] >= 0}]] \
+      {1 1 2 1 1}
+
+    # ---- W1a27: DEFECT B, on the real menu --------------------------------
+    # An ordinary waveform graph in the design context leaves `raw loaded` 0
+    # with `raw annot` -1, and today the tick returns without annotating, the
+    # bit goes on and NOTHING renders -- and it is the one path in the loader
+    # that says nothing either. A dead-looking control.
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_ctx_eval $dwin [list catch [list xschem raw_read $a_tranB tran]]
+    set a27_pre [a_ctx_eval $dwin {list [xschem raw loaded] [xschem raw annot]}]
+    a_setmask $dwin 0
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    check "W1a27 issue 0684 defect B: an unrelated waveform graph no longer leaves the tick a dead control" \
+      [list $a27_pre [a_designval $dwin {v(a)}] [expr {[a_mask $dwin] & 1}]] \
+      [list {0 {-1 0 -1}} 1.25 1]
+
+    # ---- W1a28-W1a29: THE BORROW, AND IT NEEDS TWO WINDOWS ----------------
+    # ⚠ THESE TWO ROWS EXIST BECAUSE NOTHING COULD SEE THE BORROW (sabotage
+    # round 2026-08-28). `ase::ui::annot_refresh_after_run` makes the design the
+    # current context, writes the numbers, and gives the context back -- and
+    # every fixture that drove it, here and in
+    # tests/headless/test_annot_stale_0684.tcl, ran with the design ALREADY
+    # current, because the tick's own `annot_goto_design` leaves it that way.
+    # Measured: 12 of 12 calls across both files reported cur == win, so the
+    # branch was never entered; deleting the switch-back and deleting the
+    # landmine-17 verification BOTH left every suite green. The decoy tab this
+    # block already owns is the missing ingredient: it is a second, foreign
+    # schematic, and the user's real bench -- ASE-L open, two designs in tabs,
+    # a run finishing in the background -- is exactly this shape.
+    #
+    # W1a28 is the ordinary borrow: the numbers must land in the DESIGN even
+    # though a different schematic is in front, the foreign one must be left
+    # holding nothing, and the user must be given back the window they were
+    # looking at.
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_ctx_eval $a_dec {catch {xschem raw clear}}
+    a_setmask $dwin 0
+    a_setmask $a_dec 0
+    a_mkraw684 $a_rawS {v(a)} 1.25
+    a_cx {ase::ui::annot_menu_sync $key}
+    a_cx {$AM invoke {Operating Point info}}
+    set a28_pre [a_designval $dwin {v(a)}]
+    catch {xschem new_schematic switch $a_dec} ; update
+    set a28_win0 [xschem get current_win_path]
+    after 1100
+    a_mkraw684 $a_rawS {v(a)} 7.77
+    a_cx {a_finish684 $key}
+    set a28_win1 [xschem get current_win_path]
+    set a28_post [a_designval $dwin {v(a)}]
+    set a28_decoy [a_ctx_eval $a_dec {xschem raw loaded}]
+    check "W1a28 issue 0684: a run finishing while ANOTHER schematic is in front repaints the design's numbers, leaves the foreign tab holding nothing, and gives the user back the window they were looking at" \
+      [list $a28_pre [expr {$a28_win0 eq $a_dec ? 1 : 0}] $a28_post \
+            [expr {$a28_win1 eq $a_dec ? 1 : 0}] \
+            [expr {$a28_decoy < 0 ? 1 : 0}]] \
+      [list 1.25 1 7.77 1 1]
+
+    # W1a29 is LANDMINE 17 ITSELF, staged the way the landmine is written:
+    # `xschem new_schematic switch` SILENTLY NO-OPS while the current context's
+    # semaphore is raised, and `xschem set semaphore` is the debug handle that
+    # raises it. A blind switch followed by a write does not fail -- it succeeds
+    # into the WRONG schematic. The decoy's own annotate bit is turned ON here
+    # so the unguarded path would have every reason to write: without the
+    # verification the session's operating point lands in the foreign tab, which
+    # is a schematic the user never asked to annotate being changed by a run
+    # they started somewhere else.
+    a_ctx_eval $dwin {catch {xschem raw clear}}
+    a_ctx_eval $a_dec {catch {xschem raw clear}}
+    a_mkraw684 $a_rawS {v(a)} 3.33
+    a_setmask $dwin 1
+    a_setmask $a_dec 1
+    catch {xschem new_schematic switch $a_dec} ; update
+    set a29_win0 [xschem get current_win_path]
+    catch {xschem set semaphore 1}
+    set a29_sem [xschem get semaphore]
+    set a29_did [a_cx {ase::ui::annot_refresh_after_run $key}]
+    catch {xschem set semaphore 0}
+    set a29_win1 [xschem get current_win_path]
+    set a29_decoy [a_ctx_eval $a_dec {xschem raw loaded}]
+    set a29_design [a_ctx_eval $dwin {xschem raw loaded}]
+    a_setmask $dwin 0
+    a_setmask $a_dec 0
+    check "W1a29 landmine 17: when the context switch is silently refused the refresh declines instead of writing the numbers into whichever schematic happens to be in front" \
+      [list [expr {$a29_win0 eq $a_dec ? 1 : 0}] $a29_sem $a29_did \
+            [expr {$a29_win1 eq $a_dec ? 1 : 0}] \
+            [expr {$a29_decoy < 0 ? 1 : 0}] [expr {$a29_design < 0 ? 1 : 0}]] \
+      [list 1 1 0 1 1 1]
+
+    catch {rename ase::ui::auto_plot {}}
+    catch {rename a_autoplot_saved_0684 ase::ui::auto_plot}
+    catch {unset ::execute(exitcode,last)}
+
     # ---- teardown: this leg must leave W5-W8 the world they see today -----
     a_ctx_eval $dwin {catch {xschem raw clear}}
     a_setmask $dwin 0

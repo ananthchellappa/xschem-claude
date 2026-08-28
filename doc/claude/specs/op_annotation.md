@@ -2751,6 +2751,65 @@ wrong. What 0872's fix changed is only that the **chord** no longer walks the us
 into that state on a transient sheet; the store is unstamped as ever.
 
 
+### 4.10 Is it still THIS run? — the operating-point currency contract ✅ LANDED (0684, 2026-08-28)
+
+Both operating-point surfaces used to ask *"is SOME database attached?"* and take
+silence for consent, so a re-run repainted the PREVIOUS run's `id`/`gm`/`gds`
+forever (issue **0684**, RULING **D5-1**, invariant **I3**). They now ask *"is the
+database this window is painting from still the file it was read from?"*
+
+**Three verbs, in `src/op_annot.tcl`, minted ONCE and called by both surfaces
+(RULING D5-4):**
+
+| verb | contract |
+|---|---|
+| `op_annot::db_current {cand}` | 1 iff what is attached is publishable AND still the file it was read from. `cand` is the path this surface would attach, `{}` when it has none. O(1): no vector is touched, only `raw loaded` / `raw annot` / `raw rawfile` plus a `file mtime` + `file size` stamp |
+| `op_annot::db_attach {path ?level?}` | issue **0685**'s TARGETED drop (same path, `op`/`dc` only — **never** `tran`, **never** the bare `xschem raw clear`), then attach, then **verify by re-asking** — `xschem annotate_op /nonexistent` returns the path with `TCL_OK` and nothing attached — then stamp |
+| `op_annot::db_detach {}` | the "or BLANK" half; the named-file spelling, the `raw is_digital` question first (RULING **D5-3**). `cadence::_annot_db_release` is now a one-line delegate to it |
+
+**Guard order inside `db_current` IS the contract**, and it is written down in that
+proc's header: nothing publishable → 0; the attached file cannot be named → 0
+(**every catch falls to re-attach, never to a bare `return`** — an early return on
+an unanswerable question is the precise mechanism that painted run 1 forever); no
+stamp yet → stamp and trust once; stamp matches → 1, the cheap path; stamp differs
+→ the candidate decides: a DIFFERENT path is left exactly where it is (destroying
+it is issue 0685 §4's data loss), the SAME path answers 0 — the headline.
+
+**Callers.** `cadence::annot_mode` asks both questions on ONE source line
+(`[::op_annot::_annotated] && [::op_annot::db_current [cadence::_annot_op_target]]`)
+and **detaches above the selector**, so a refusal can never sit as a caption over
+a stale number. `ase::ui::annot_ensure_loaded` lost its `raw loaded >= 0` early
+return entirely. `ase::ui::run_finished` schedules `annot_refresh_idle` **below**
+`auto_plot_idle`, which is the only place in the tree where a finished run
+repaints the schematic with no user gesture at all.
+
+**Why the transient surface's predicate was NOT reused, though D5-4 asks for one
+mint.** `cadence::_annot_tran_db_current` consults the waveform viewer, which
+reports a database only when its `sim_type` is `tran`; with a stale operating
+point attached it answers *"current"* both before and after the disk changes
+(measured). The two surfaces ask genuinely different questions — TRAN: *"do two
+windows' in-memory copies agree?"*; OP: *"is this window still holding the file it
+read?"* — and an operating-point run usually has no waveform window to ask. D5-4
+is honoured by minting the OP question once and cross-referencing both helpers.
+
+**Cost.** Flat in the size of the results file: the revalidation never exceeds
+0.022 ms (3 → 40 000 vectors, both arms), against 28.3 ms for the transient
+surface's fingerprint and 58.2 ms for a full re-read at 40 000. A press that
+genuinely must re-read pays the read — once per re-run, and it is the press that
+used to show the wrong answer.
+
+**Known holes, all filed, none silent:** a same-second rewrite of identical size
+is invisible to a 1-second-resolution `mtime` stamp; **0910** a database attached
+from outside these verbs at the same path is stamped at first *observation*, not
+at attach, so it is trusted forever; **0911** the `netlist_dir` candidate is built
+from the sheet the user stands on, so a descended sheet with no ASE-L session never
+repairs; **0912** a deleted results file leaves the tick showing it and the chord
+blanking it; **0908** another corner's database is deliberately left alone.
+
+Rows: `tests/headless/test_annot_stale_0684.tcl` (39, both arms) and
+`test_ase_window.tcl` W1a24–W1a29 (`:99`).
+
+
 ## 5. Contracts and invariants
 
 | id | invariant |

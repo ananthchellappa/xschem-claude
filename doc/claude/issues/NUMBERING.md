@@ -125,7 +125,52 @@ bytes**, and an empty summary contains no `FAIL`, `FATAL` or `GOLD?`, so the
 wreckage of a destroyed verdict reads as a clean pass to every reader in the tree
 and to a human: the same fail-open class as **0147**, one level further back.
 
-**The next free number is 0906.** 0500-0599 and 0700-0799 remain reserved for
+**0906** — a new PDK cannot get device-OP annotation without hand-writing an
+undocumented descriptor: only three PDK profiles call `op_annot::register`, so on
+any fourth the six-row device block is empty **forever and silently**, and
+`op_annot::register` appears in no user-facing document. Filed at the user's
+request with a spec for a Python bootstrap script
+(`doc/claude/specs/pdk_annotation_bootstrap.md`); **docs only, not to be worked
+on yet**.
+
+**2026-08-28, item A15's implementation (the issue 0684 fix).** Filed **0907**
+and **0908**, both measured while fixing 0684 and both left OPEN. **0907** — the
+`live` status line, *"These results were already loaded."*, never names the file
+it is talking about, while the `loaded` line one arm away does; after 0684 those
+two sentences are the only thing on screen distinguishing "the run you just did"
+from "a database somebody attached earlier". **0908** — 0684's fix deliberately
+leaves a database at a path other than the session's candidate exactly where it
+is, so the tick can still show another corner's operating point; replacing it
+would DESTROY it (`scheduler.c`'s delete-previous-OP branch, measured to drive
+row W1a16's sentinel from 0 to -1), which is the data loss the reverted
+2026-08-25 attempt created. Both need a user ruling.
+
+**0909** — the blank-device-row explanation is a NAG fired at netlist time, not
+an ANSWER given when you press `6`. Filed from a user reproduction on `tb_bandgap`
+(OP-only, save-cards gate off): six blank rows, no CIW line. Nothing was removed —
+`ase::op_cards_capture` still prints the menu path and the pasteable CIW command,
+but behind `notify_latch_ok` (`src/ciw.tcl:187`), a **one-turn latch per cellview
+per session**, so it speaks on the first Netlist-and-Run and never again. The `6`
+path has **no state for it at all** (`grep -c` for any params-missing state in
+`utils/annot_mode.tcl` = 0). A suppression latch is right for a nag and wrong for
+an answer to a direct question. ⚠ The approved `save_op_params` default flip must
+land AFTER this or it masks it.
+
+**2026-08-28, item A15's adversary + write-up pass (still the issue 0684 fix).**
+Filed **0910**, **0911** and **0912**, all three measured on the delivered tree
+and all three the SAME defect 0684 names, surviving in states the fix does not
+reach. **0910** — a database attached by `Simulation > Graphs > Annotate
+Operating Point into schematic` or `Waves > Op Annotate` is trusted **forever**
+at the very same path, because guard G3a stamps at the first *observation* and
+not at the attach. **0911** — on a descended sheet with no ASE-L session the
+candidate names the SUBCELL's raw, so the chord never repairs and
+`Waves > Clear` then `6` reports "There is no results file at …/sub.raw yet"
+about a run that just finished. **0912** — when the results file is deleted, the
+`Results > Annotate` tick keeps the numbers and `6` blanks them: the two
+operating-point surfaces disagree and only one speaks. 0684 §8's route table
+said "every route" and has been corrected; §10 records the pass.
+
+**The next free number is 0913.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

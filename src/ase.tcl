@@ -1277,7 +1277,7 @@ proc ase::last_rawfile {key} {
 # different question: `xschem raw loaded` (scheduler.c:10325) asks whether a
 # database is attached to the CURRENT xschem context -- read from a plain Tk
 # toplevel it measures whichever design happens to be current -- and
-# op_annot::_annotated (op_annot.tcl:781) additionally requires that the annotation
+# op_annot::_annotated (`src/op_annot.tcl`) additionally requires that the annotation
 # already be live, which would grey the control precisely when the user wants to
 # turn annotation ON.
 proc ase::has_results {key} {

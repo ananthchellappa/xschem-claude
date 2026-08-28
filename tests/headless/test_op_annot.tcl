@@ -15108,6 +15108,14 @@ check {V75 issue 0902 with the user's co-simulation results still attached a pre
 # into a proc whose callers have grown, which is precisely how it got in.
 # ⚠ LEG 5 IS RULING D5-3's PLACE IN THE ORDER. The digital question must be
 # asked BEFORE anything is taken off, or the answer arrives too late to matter.
+# ⚠ LEGS 3, 4 AND 5 CHANGED ADDRESS WITH ISSUE 0684, AND THE CLAIM DID NOT.
+# The body they read used to be `cadence::_annot_db_release`'s own; it now lives
+# at `op_annot::db_detach` (src/op_annot.tcl), because after 0684 BOTH
+# operating-point surfaces need to take a database off and utils/annot_mode.tcl
+# is loaded only by the cadence profile while src/op_annot.tcl is sourced by
+# every session. RULING D5-4 is satisfied by the OLD address becoming a one-line
+# delegate, which is what leg 9 requires -- so the spelling has exactly one
+# owner, as before, and this row still names it.
 # ⚠ LEGS 6 AND 7 ARE THE SUPPLIER'S SUCCESS TEST, AND ROW V75 IS WHAT THEY SIT
 # ON TOP OF. Once a refusal is allowed to leave a VCD attached, `xschem raw
 # loaded` stops answering "did my own read work" -- it says 0 for a window
@@ -15124,24 +15132,27 @@ check {V75 issue 0902 with the user's co-simulation results still attached a pre
 # nothing should do nothing, and this leg is the honest witness for it: the test
 # must sit on the line immediately above the call.
 set V74_SRC [opa_slurp [file join $repo utils annot_mode.tcl]]
+set V74_OPA [opa_slurp [file join $repo src op_annot.tcl]]
 set V74_REL [opa_proc_src $V74_SRC cadence::_annot_db_release]
+set V74_DET [opa_proc_src $V74_OPA op_annot::db_detach]
 set V74_UNW [opa_proc_src $V74_SRC cadence::_annot_tran_unwind]
 set V74_SUP [opa_proc_src $V74_SRC cadence::_annot_tran_supply]
 set V74_AT  [opa_proc_src $V74_SRC cadence::annot_tran]
-set v74_di [opa_v_lineidx $V74_REL {is_digital}]
-set v74_ci [opa_v_lineidx $V74_REL {xschem raw clear}]
+set v74_di [opa_v_lineidx $V74_DET {is_digital}]
+set v74_ci [opa_v_lineidx $V74_DET {xschem raw clear}]
 set v74_wi [opa_v_lineidx $V74_AT {\$loaded >= 0}]
 set v74_ui [opa_v_lineidx $V74_AT {_annot_tran_unwind}]
 check {V74 issue 0902 STRUCTURAL taking a database off names the file it is taking off and never touches a digital one, the supplier asks whether an analog database is loaded rather than whether anything is, and the cheap exit above the gate's detach is pinned because nothing behavioural can see it go} \
   [list [expr {[string length $V74_REL] > 0 ? 1 : 0}] \
         [expr {[string length [opa_proc_src $V74_SRC cadence::_annot_db_analog_loaded]] > 0 ? 1 : 0}] \
-        [opa_v_pgrep $V74_REL {xschem raw clear \$f \$t}] \
-        [expr {[opa_v_pgrep $V74_REL {xschem raw clear\s*\}}] + [opa_v_pgrep $V74_UNW {xschem raw clear}]}] \
+        [opa_v_pgrep $V74_DET {xschem raw clear \$f \$t}] \
+        [expr {[opa_v_pgrep $V74_DET {xschem raw clear\s*\}}] + [opa_v_pgrep $V74_REL {xschem raw clear}] + [opa_v_pgrep $V74_UNW {xschem raw clear}]}] \
         [expr {($v74_di >= 0 && $v74_ci >= 0 && $v74_di < $v74_ci) ? 1 : 0}] \
         [opa_v_pgrep $V74_SUP {_annot_db_analog_loaded}] \
         [opa_v_pgrep $V74_SUP {xschem raw loaded}] \
-        [expr {($v74_wi >= 0 && $v74_ui >= 0 && $v74_wi == $v74_ui - 1) ? 1 : 0}]] \
-  [list 1 1 1 0 1 2 0 1]
+        [expr {($v74_wi >= 0 && $v74_ui >= 0 && $v74_wi == $v74_ui - 1) ? 1 : 0}] \
+        [opa_v_pgrep $V74_REL {op_annot::db_detach}]] \
+  [list 1 1 1 0 1 2 0 1 1]
 
 set ::netlist_dir $v33_nd
 catch {xschem raw clear}

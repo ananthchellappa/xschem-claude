@@ -2333,28 +2333,60 @@ proc ase::ui::annot_goto_design {key} {
 # dead on the very next bench run. That is the class of defect this batch is
 # made of.
 #
-# ⚠ A LOADED DATABASE IS NEVER THROWN AWAY. `xschem raw loaded` >= 0 means this
-# context already has one -- possibly the very run the user is looking at -- and
-# replacing it would be a data loss caused by a menu tick.
+# ⚠ A DATABASE THE USER LOADED FROM SOMEWHERE ELSE IS NEVER THROWN AWAY, and
+# that is now a property of the PREDICATE rather than of a blanket early return.
+# `op_annot::db_current` answers "current, leave it alone" whenever the attached
+# database is at a path other than this session's -- another corner's operating
+# point, say -- because replacing it really would destroy it (`xschem
+# annotate_op` deletes a 1-point op/dc it replaces, scheduler.c). Row W1a16 of
+# tests/headless/test_ase_window.tcl is that claim's owner.
 #
-# ⚠⚠ AND THAT GUARD IS MEASURED WRONG -- SEE ISSUE 0684, FILED NOT FIXED.
-# `raw loaded` >= 0 answers "is SOME database attached", not "are THIS session's
-# CURRENT results attached", and two things fall out of it. (a) ngspice
-# overwrites ONE stable raw path (`<rundir>/<cell>_ase.raw`) in place, so after a
-# second run this early-return keeps the FIRST run's numbers on screen forever --
-# invariant I3's own phrase, "not the previous run's number". (b) An ordinary
-# waveform graph's `xschem raw_read` leaves `raw loaded` = 0 with `raw annot` =
-# -1, so this returns without annotating, the mask goes on and NOTHING renders,
-# and this is the one path here that echoes nothing. The question meant here is
-# answered by `xschem raw annot` plus "is this the session's raw" --
-# op_annot::_annotated (op_annot.tcl:781) already ships the three-term test.
-# Do not "tidy" this comment away; fix 0684.
+# ⚠ ISSUE 0684 IS FIXED HERE, AND THE GUARD IT REPLACED IS WHAT A READER WILL
+# EXPECT TO FIND. This proc used to open with
+#     set ld -1 ; catch {set ld [xschem raw loaded]}
+#     if {$ld >= 0} { return }
+# which answers "is SOME database attached", not "are THIS session's CURRENT
+# results attached". Two defects fell out of it. (a) ngspice overwrites ONE
+# stable raw path in place, so after a second run that early return kept the
+# FIRST run's numbers on screen forever -- invariant I3's own phrase, "not the
+# previous run's number". (b) An ordinary waveform graph's `xschem raw_read`
+# leaves `raw loaded` = 0 with `raw annot` = -1, so the tick returned without
+# annotating, the mask went on and NOTHING rendered -- and it was the one path
+# here that echoed nothing, i.e. a dead-looking control.
+#
+#   GUARD G12  the currency question is the FIRST question and the ONLY early
+#              return. `op_annot::db_current` (src/op_annot.tcl) is the mint;
+#              every catch inside it falls to "re-attach", never to a return,
+#              because `xschem raw rawfile` RAISES with nothing attached and an
+#              early return on an unanswerable question is precisely how the old
+#              guard painted run 1 forever. Row F28 of
+#              tests/headless/test_annot_stale_0684.tcl greps this body and
+#              requires `xschem raw loaded` to appear on no code line of it.
+#
+#   GUARD G13  RE-ATTACH OR BLANK. When the attached database is this surface's
+#              and is out of date, it comes OFF before anything below can
+#              refuse -- the 0838 staleness refusal, or a failed attach. A
+#              refusal spoken over the previous run's numbers is RULING D5-1
+#              with a caption, which is worse than the silent version because
+#              the caption makes it look checked. The `$ann` term is what stops
+#              this taking off a waveform graph the user is looking at: that
+#              database is not something this surface attached or can paint
+#              from, so defect B is repaired by ADDING ours beside it, not by
+#              destroying theirs. Rows F24 and F25 -- and specifically F24's
+#              LAST leg, which asks whether the graph is still in the registry
+#              afterwards. ⚠ WITHOUT THAT LEG NOTHING SEES THE `$ann` TERM
+#              (measured 2026-08-28): making the detach unconditional still
+#              renders the numbers and still leaves the session's own file
+#              current, so every other gold in every suite is satisfied while
+#              the trace the user was looking at has been unloaded from under
+#              their waveform window.
 proc ase::ui::annot_ensure_loaded {key} {
-  set ld -1
-  catch {set ld [xschem raw loaded]}
-  if {[string is integer -strict $ld] && $ld >= 0} { return }
   set path {}
   catch {set path [ase::last_rawfile $key]}
+  set ann 0
+  catch {set ann [::op_annot::_annotated]}
+  if {[::op_annot::db_current $path]} { return }
+  if {$ann} { ::op_annot::db_detach }
   if {$path eq {}} { return }
   # ⚠ issue 0838: A STALE RAW IS NOT ATTACHED. `last_rawfile` answers "the raw
   # path, if the file exists" and deliberately stays that loose — the three
@@ -2387,16 +2419,108 @@ proc ase::ui::annot_ensure_loaded {key} {
   set s {}
   catch {set s [ase::session_for_current]}
   if {[llength $s] >= 2 && [lindex $s 0] eq $key} { set level [lindex $s 1] }
-  if {$level ne {}} {
-    if {[catch {xschem annotate_op $path $level} e]} {
-      catch {::ase::echo [ase::ui::annot_fail_msg $path $e] error}
-    }
-  } else {
-    if {[catch {xschem annotate_op $path} e]} {
-      catch {::ase::echo [ase::ui::annot_fail_msg $path $e] error}
-    }
+  ## ⚠ ONE CALL SITE NOW, AND THE FAILURE CAN ACTUALLY BE SPOKEN (issue 0684).
+  ## There used to be two `xschem annotate_op` calls here, one with a level and
+  ## one without, each inside its own `catch` -- and MEASURED, that catch never
+  ## fires: annotate_op returns TCL_OK for a file that does not exist and for
+  ## one that will not parse, so this surface's failure sentence could never
+  ## reach a user. `op_annot::db_attach` verifies by RE-ASKING and hands back
+  ## {ok reason}, so the sentence below is now reachable. Rows F26 and F32.
+  set att [::op_annot::db_attach $path $level]
+  if {![lindex $att 0]} {
+    catch {::ase::echo [ase::ui::annot_fail_msg $path [lindex $att 1]] error}
   }
   return
+}
+
+# ISSUE 0684, THE HALF THAT REACHES THE DISPLAY WITH NO GESTURE AT ALL.
+#
+# ⚠ THIS IS WHAT REFUTED THE 2026-08-25 ATTEMPT, and a reader who only fixes the
+# tick will re-ship the defect. That attempt made run completion drop the
+# freshness stamp, so the cache stopped lying -- and the SCREEN kept painting
+# run 1's number, because nothing re-attached. Issue 0684 section 7's own words:
+# "what it must do is re-attach-or-blank, not merely invalidate." The user's
+# gesture is: annotation is already on, the simulation is re-run, and with no
+# key press and no tick the numbers must be the new ones or blank.
+#
+#   GUARD G15  ANNOTATION OFF -> NOTHING IS OWED. Attaching a raw is not a
+#              neutral act -- it can destroy a 1-point op/dc it replaces -- and
+#              the user's own ruling on 0684 was about what the TICK shows, not
+#              about firing a data operation nobody asked for. Bits 0 and 1 are
+#              this surface's; bit 2 is the transient chord's and is not this
+#              seam's business. Row F29.
+#   GUARD G16  THE BORROW ALWAYS GIVES THE CONTEXT BACK. Same discipline and
+#              same reason as wviewer::enter_ctx: a borrow that entered and
+#              never left would strand the user in another window's context with
+#              the schematic still on screen (issue 0173's shape). And the switch
+#              is VERIFIED, never assumed -- landmine 17: `new_schematic switch`
+#              silently no-ops while the current context's semaphore is raised,
+#              and a blind switch followed by a write lands the numbers in a
+#              FOREIGN schematic. It never RAISES or opens a window either: a
+#              finished run must not pop the design over the ASE-L window.
+#              ⚠ THIS GUARD NEEDS TWO SCHEMATIC WINDOWS TO BE SEEN AT ALL, and
+#              for a while it had none. The tick's own `annot_goto_design`
+#              leaves the design current, so every fixture that drove this proc
+#              entered it with cur == win and the borrow branch was dead code
+#              under test -- both halves could be deleted with every suite
+#              green (measured 2026-08-28, 12 of 12 calls). The witnesses are
+#              rows W1a28 and W1a29 of tests/headless/test_ase_window.tcl,
+#              which drive a finished run from a foreign tab; W1a29 stages the
+#              refused switch through `xschem set semaphore`, the landmine
+#              itself, and shows the numbers landing in the foreign schematic
+#              when the verification is removed. Row F33 of
+#              tests/headless/test_annot_stale_0684.tcl is the single-window
+#              floor only: it cannot reach this branch, and says so.
+proc ase::ui::annot_refresh_after_run {key} {
+  set win [ase::ui::annot_design_win $key]
+  if {$win eq {}} { return 0 }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  if {$cur eq {}} { return 0 }
+  set back 0
+  if {$cur ne $win} {
+    catch {xschem new_schematic switch $win}
+    set now {}
+    catch {set now [xschem get current_win_path]}
+    if {$now eq {} || $now ne $win} { return 0 }
+    set back 1
+  }
+  set did 0
+  catch {set did [ase::ui::annot_refresh_here $key]}
+  if {$back} { catch {xschem new_schematic switch $cur} }
+  return $did
+}
+
+# The design-context half of the refresh. Caller must already BE in the design
+# context; `annot_refresh_after_run` is the seam that arranges that.
+#
+# ⚠ IT GOES THROUGH `annot_ensure_loaded`, NOT ROUND IT (RULING D5-4). The tick
+# and a finished run are the same question -- "are the numbers on this sheet the
+# ones this session just produced" -- and one body answers it, so the 0838
+# staleness refusal, the level resolution and the single failure sentence cannot
+# drift between the two doors.
+proc ase::ui::annot_refresh_here {key} {
+  set m 0
+  catch {set m [xschem get annot_show]}
+  if {![string is integer -strict $m]} { set m 0 }
+  if {($m & 3) == 0} { return 0 }
+  ase::ui::annot_ensure_loaded $key
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  return 1
+}
+
+# The deferred entry `run_finished` schedules. WHY `after idle`, and it is the
+# same reason `auto_plot_idle` already carries: run_finished fires from the
+# execute fileevent, which can be dispatched INSIDE ase::wait's semaphore
+# bracket -- and with the current window's semaphore raised every
+# `new_schematic switch` is a silent no-op (xinit.c switch_window), so the
+# borrow above would run its whole body in the WRONG context and re-attach the
+# session's raw to whatever window happened to be current. At idle time the
+# bracket is balanced. The catch keeps an idle-time failure out of Tk's bgerror
+# modal.
+proc ase::ui::annot_refresh_idle {key} {
+  catch {ase::ui::annot_refresh_after_run $key}
 }
 
 ## THE ONE SENTENCE FOR "the engine refused to put these numbers on the sheet".
@@ -4793,6 +4917,14 @@ proc ase::ui::run_finished {key} {
     # this callback can run inside ase::wait's semaphore bracket where
     # window switches silently no-op — see auto_plot_idle.
     after idle [list ase::ui::auto_plot_idle $key]
+    # ISSUE 0684 (GUARD G14): annotation was the ONLY consumer of new results
+    # that was not on this event -- a finished run already re-reads the results,
+    # refreshes the output values and re-plots, while the schematic went on
+    # showing the PREVIOUS run's id / gm / gds until somebody pressed a key.
+    # BELOW the auto-plot line deliberately: the viewer's own context borrow
+    # runs first and balances itself, so ours reads a restored context rather
+    # than the viewer's. Row F34 pins that order, row F31 the behaviour.
+    after idle [list ase::ui::annot_refresh_idle $key]
   } else {
     ase::ui::set_status $key fail
   }

@@ -796,6 +796,361 @@ proc op_annot::_annotated {} {
   return 1
 }
 
+# ===========================================================================
+# ISSUE 0684 -- IS THE DATABASE THIS WINDOW IS PAINTING FROM STILL THE FILE IT
+#               WAS READ FROM?  The ONE mint, called by BOTH operating-point
+#               surfaces: the `6` / `Alt-6` chords (cadence::annot_mode,
+#               utils/annot_mode.tcl) and ASE-L's `Results > Annotate` tick
+#               (ase::ui::annot_ensure_loaded, src/ase_window.tcl).
+# ===========================================================================
+# WHAT THE USER SAW. Press 6. Numbers appear. Change a device, re-run the
+# simulation, press 6 again -- the sheet repaints the PREVIOUS run's
+# id / gm / gds under a sentence saying the results were already loaded.
+# Nothing on screen distinguishes it from a correct annotation. RULING D5-1 and
+# invariant I3 in their own words: "A missing vector renders BLANK. Not 0, not
+# NaN on screen, not the previous run's number."
+#
+# ⚠ WHY THIS IS A SECOND PREDICATE AND NOT A CALL TO THE TRANSIENT SURFACE'S.
+# A reader who has seen `cadence::_annot_tran_db_current` (issue 0900) will
+# assume this is the same question and that RULING D5-4 obliges us to call it.
+# MEASURED 2026-08-28, and it is not: that predicate consults
+# `cadence::_annot_viewer_db`, which reports a database only when the WAVEFORM
+# VIEWER is showing a `tran` (annot_mode.tcl, "ONLY A TRANSIENT IS OFFERED"),
+# so with a stale operating point attached it answers 1 = "current" both before
+# and after the file on disk becomes a different run. Calling it from here is a
+# fix that passes while doing nothing. The two surfaces ask genuinely different
+# questions:
+#     TRAN -- do two WINDOWS' in-memory copies agree?
+#     OP   -- is the database this ONE window is painting from still the file
+#             it was read from?  (an operating-point run usually has no
+#             waveform window at all, so there is no second window to consult)
+# Widening `_annot_viewer_db` past `tran` was rejected: it is issue 0903's line,
+# it is scope-fenced away from this item, and it would change the transient
+# supply's documented behaviour. So: minted ONCE here, rendered by both
+# operating-point callers. Invariant I1 is honoured by the CALLERS, not by
+# pretending two different questions are one.
+#
+# ⚠ THE STAMP IS A PATH + mtime + size, AND THAT IS DELIBERATELY CHEAP.
+# `cadence::_annot_db_print` -- the transient surface's fingerprint -- is one
+# `xschem raw value` per SAVED VECTOR and costs 28.3 ms on a 40000-vector
+# database (issue 0904). The operating-point path reads DEVICE PARAMETER
+# vectors, so a `.save all` design is exactly where it would hurt, and this
+# predicate runs on every key press. Row F35 of
+# tests/headless/test_annot_stale_0684.tcl greps this proc and db_attach for
+# `_annot_db_print` and requires ZERO hits; that grep is why the name must not
+# appear on a code line here.
+#
+# ⚠ KNOWN LIMITATION, STATED RATHER THAN HIDDEN: `file mtime` is 1-second
+# resolution, so a same-second rewrite of identical size is invisible to this
+# stamp. That hole is open on every re-run route and is not closed by anything
+# in this file.
+
+## The stamp table. Keyed "<current_win_path>|<normalized raw path>", because
+## the mask and xctx->raw are BOTH per-context: under the tabbed interface two
+## windows can hold two different databases at once, and a table keyed on the
+## path alone would let one window's observation answer for the other. A key
+## that goes stale can only ever cause a harmless re-read, never a false
+## "current".
+namespace eval op_annot {
+  variable _db_src
+  if {![info exists _db_src]} { array set _db_src {} }
+}
+
+proc op_annot::_db_key {np} {
+  set w {}
+  catch {set w [xschem get current_win_path]}
+  return "$w|$np"
+}
+
+## {mtime size} for a file, or {} when it cannot be stat'ed. Both terms, not
+## just mtime: a simulator that rewrites within the same second usually changes
+## the length too, so the pair sees a little more than the clock alone.
+proc op_annot::_db_stat {np} {
+  set m {}
+  set s {}
+  if {[catch {file mtime $np} m]} { return {} }
+  if {[catch {file size $np} s]} { return {} }
+  return [list $m $s]
+}
+
+## Forget one path's stamp, or -- with no argument -- every stamp belonging to
+## THIS window.
+##
+## ⚠ THE NO-ARGUMENT FORM IS A GUARD, NOT HOUSEKEEPING (issue 0684). A stamp
+## describes a database that is ATTACHED. Once nothing publishable is attached
+## -- the user picked `Waves > Clear`, another surface detached, a graph
+## replaced it -- the stamp describes an attachment epoch that is over, and
+## keeping it would let the NEXT attach of that same path be judged against an
+## observation from the previous one: the file would read "changed since I last
+## looked" and a perfectly good fresh attach would be thrown away and re-read.
+## Row F7 is what sees this: it hand-attaches a path this file has stamped
+## before and requires the FIRST look to answer "current".
+proc op_annot::_db_forget {{np {}}} {
+  variable _db_src
+  if {$np ne {}} {
+    catch {unset _db_src([::op_annot::_db_key $np])}
+    return 1
+  }
+  set pfx [::op_annot::_db_key {}]
+  foreach k [array names _db_src] {
+    if {[string first $pfx $k] == 0} { unset _db_src($k) }
+  }
+  return 1
+}
+
+## Record the stamp for <np> from the file as it is on disk RIGHT NOW.
+proc op_annot::_db_stamp {np} {
+  variable _db_src
+  set now [::op_annot::_db_stat $np]
+  if {![llength $now]} { return 0 }
+  set _db_src([::op_annot::_db_key $np]) $now
+  return 1
+}
+
+## op_annot::db_current <candidate-path> -> 1 when the database attached to
+## THIS window is one this surface can paint from AND is still the file it was
+## read from; 0 when the caller must RE-ATTACH (or blank). <candidate-path> is
+## the path this surface would attach, or {} when it has none.
+##
+## THE GUARDS, IN ORDER -- and the ORDER IS THE GUARD:
+##
+##   G1  nothing publishable is attached -> 0. That is defect B of issue 0684:
+##       an ordinary waveform graph leaves `xschem raw loaded` at 0 with
+##       `xschem raw annot` at -1, and the shipped guard read that as "a
+##       database is here, leave it alone", so the tick rendered nothing and
+##       said nothing. It is asked FIRST, above every path comparison, because
+##       a foreign transient sitting at a foreign path would otherwise read as
+##       "not mine, therefore current" and the control would stay dead forever.
+##       Rows F6 and F24 own it, and row W1a27 of
+##       tests/headless/test_ase_window.tcl owns it on the real menu. NOT row
+##       F1, whose title used to claim it: with nothing attached at all G2's
+##       catch answers first, so F1 never reaches this line (measured 2026-08-28
+##       by deleting it -- F1 stayed green).
+##
+##   G2  the attached database cannot be named -> 0 = RE-ATTACH.
+##       ⚠ EVERY CATCH IN THIS BODY FALLS TO 0, NEVER TO 1 AND NEVER TO A BARE
+##       `return`. `xschem raw rawfile` RAISES with nothing attached (measured,
+##       not assumed), and an early return on an unanswerable question is the
+##       precise mechanism by which the shipped guard paints run 1 forever.
+##       No behavioural row can stage this arm -- G1 has already refused every
+##       state in which `raw rawfile` blows up -- so row F8 reads this proc's
+##       own source and is its only witness.
+##
+##   G3a no stamp for this window+path -> record one and answer 1 ("first
+##       sight"). A database attached by some OTHER route -- `Waves > Op
+##       Annotate`, an xschemrc line, a test fixture -- has nothing to be
+##       compared against the first time it is seen, so it is trusted once and
+##       revalidated from then on. Rows N5, N10 and V31b of
+##       tests/headless/test_op_annot.tcl are exactly that shape and expect the
+##       `live` arm; a predicate that answered 0 on first sight would redden a
+##       suite this item does not own, and would re-read a good file for no
+##       reason on every press.
+##       ⚠ ISSUE 0910, MEASURED 2026-08-28 AND OPEN: "trusted once" is
+##       "trusted FOREVER" whenever the first sight lands AFTER the file
+##       changed. The stamp below is taken at this first OBSERVATION, not at
+##       the attach -- `op_annot::db_attach` is the only place that stamps at
+##       attach time -- so a database put here by `Simulation > Graphs >
+##       Annotate Operating Point into schematic` or `Waves > Op Annotate`,
+##       followed by a re-run, is blessed against the NEW file while holding
+##       the OLD numbers, and every later press repaints run 1. Row F7 cannot
+##       see it: F7 asks once BEFORE it rewrites. The narrow fix is in 0910 §4
+##       -- when the attached path IS this surface's candidate, re-attach on
+##       first sight instead of trusting; the arm this comment defends is only
+##       needed for a path that is NOT the candidate, which is guard G4's.
+##
+##   G3b the stamp still matches -> 1. This is the cheap path, and it is the
+##       reason a press does not re-read the file: row F19 is its guard.
+##
+##   G4  the stamp DIFFERS. Now the candidate decides:
+##         ⚠ ISSUE 0912, MEASURED 2026-08-28 AND OPEN: the no-candidate half of
+##           the next line is also what happens when the results file has been
+##           DELETED -- `ase::last_rawfile` answers {} for a file that is gone,
+##           so ASE-L's tick early-returns above guard G13 and keeps painting
+##           numbers whose file no longer exists, while `6` in the identical
+##           state blanks and says why. "Nothing to re-attach from" and "these
+##           numbers are still your run" are being answered by the same 1.
+##         no candidate, or a candidate at a DIFFERENT path -> 1. This surface
+##           never destroys a database it did not attach. The user may be
+##           looking at another corner's operating point loaded by hand, and
+##           `xschem annotate_op` DOES destroy a 1-point op/dc it replaces
+##           (scheduler.c's delete-previous-OP branch), so "not mine" must mean
+##           "leave it exactly where it is".
+##           ⚠ BOTH ARMS NEED A SECOND LOOK TO BE REACHED AT ALL, and until
+##           2026-08-28 nothing here took one: a row that stages the situation
+##           and then asks ONCE is answered by G3a several lines above, so
+##           inverting either arm changed no answer in any suite. The witnesses
+##           are row F5 (first sight, then a rewritten foreign file), row F20
+##           (the same through the `6` chord, two presses), and row F4 for the
+##           no-candidate arm (a rewritten file, then asked with no candidate).
+##           Row W1a16 of tests/headless/test_ase_window.tcl states the user's
+##           side of the same promise but is a first-sight row and does not
+##           reach this line.
+##         the candidate IS the attached path -> 0. THE HEADLINE: the file this
+##           window is painting from has been rewritten by a re-run. Row F3.
+proc op_annot::db_current {cand} {
+  variable _db_src
+  set ann 0
+  catch {set ann [::op_annot::_annotated]}
+  if {!$ann} { ::op_annot::_db_forget ; return 0 }
+  set f {}
+  if {[catch {xschem raw rawfile} f]} { return 0 }
+  if {$f eq {}} { return 0 }
+  set np {}
+  if {[catch {file normalize $f} np]} { return 0 }
+  if {$np eq {}} { return 0 }
+  set key [::op_annot::_db_key $np]
+  set now [::op_annot::_db_stat $np]
+  if {![info exists _db_src($key)]} { ::op_annot::_db_stamp $np ; return 1 }
+  if {[llength $now] && $now eq $_db_src($key)} { return 1 }
+  if {$cand eq {}} { return 1 }
+  set nc {}
+  if {[catch {file normalize $cand} nc]} { set nc {} }
+  if {$nc eq {} || $nc ne $np} { return 1 }
+  return 0
+}
+
+## op_annot::db_attach <path> ?<level>? -> {ok errtext}: put <path>'s operating
+## point onto THIS window and stamp it, or answer 0 with a sentence fragment
+## the caller can render.
+##
+##   G6  ISSUE 0685'S TARGETED DROP, and ONLY that. `xschem annotate_op` hands
+##       back a STALE in-memory database when the path it is asked for is
+##       already in the extra-raw registry and something else is current:
+##       extra_rawfile()'s dedup loop matches on rawfile+sim_type and takes the
+##       "already loaded: switch to it" branch with NO read (save.c). The
+##       precondition is exact -- `xschem raw read` ADDS (a waveform graph's own
+##       form) while `xschem raw_read` REPLACES -- so the hazard needs a graph
+##       open, which is the ordinary bench state.
+##       ⚠ ROW F12 DEMONSTRATES THAT HAZARD BUT DOES NOT GUARD THIS DROP: it
+##       makes its own bare `annotate_op` call first, which leaves the stale
+##       entry CURRENT, and once it is current the attach re-reads with or
+##       without a drop (measured 2026-08-28 -- deleting this loop left F12
+##       green). The guard is row F12b, which is the same staging with nothing
+##       in between.
+##       ⚠ ONLY `op` AND `dc`, NEVER A THIRD TYPE, AND NEVER THE BARE
+##       `xschem raw clear`. The 2026-08-25 attempt dropped op, dc AND tran at
+##       this path; when the re-read then failed -- the ordinary case of a
+##       simulator mid-rewrite, file present and readable but truncated -- the
+##       user's loaded waveform database was gone and nothing replaced it
+##       (issue 0685 section 4). The guard on the never-tran half is row F13b,
+##       which puts the user's waveform at the SAME path this call is about --
+##       the only place the type list can matter; row F13 stages the same
+##       failure with the waveform somewhere else and guards the drop existing
+##       at all, not its type list. Row F14 greps this body for the word it
+##       must not contain and for the bare spelling that "unloads all raw
+##       files".
+##       The registry's OWN spelling of the path is handed back to `raw clear`,
+##       so a drop cannot silently miss on a path-spelling difference; a miss
+##       is a no-op (save.c's what==3 returns 0 and changes nothing).
+##
+##   G7  VERIFIED BY RE-ASKING, NEVER BY `annotate_op`'s RETURN. Measured on
+##       this binary: `xschem annotate_op /nonexistent` returns TCL_OK with the
+##       path string and nothing attached, and an unreadable file returns
+##       TCL_OK with an empty result AND destroys whatever was attached. So the
+##       engine's answer says nothing about whether it worked. Rows F10 and
+##       F11 -- F11 golds the engine's OK next to this proc's 0, so a fix that
+##       trusts the return cannot pass.
+##
+##   G8  THE STAMP IS WRITTEN ONLY AFTER THAT VERIFY, and any previous stamp
+##       for the path is forgotten on failure. Row F10b, both halves.
+##       ⚠ THE HAZARD IS NOT THE ONE THIS COMMENT USED TO NAME. It said a
+##       stamp written early would make the next press answer "these results
+##       were already loaded" over a BLANK sheet -- and that state cannot be
+##       reached: a failed attach leaves nothing publishable attached, so G1
+##       refuses the next question before any stamp is read, which is why the
+##       2026-08-28 sabotage round could neutralise this guard with every suite
+##       staying green. What a leftover stamp really costs is the case F10b
+##       walks: the simulator is mid-write, the attach fails, the file is
+##       finished a moment later, and the user attaches it from somewhere else.
+##       That fresh, good attach is then judged against an observation of the
+##       TRUNCATED file, so it is "changed since I last looked" on FIRST SIGHT
+##       and is thrown away and re-read -- the needless re-read G3a exists to
+##       prevent, which on a 40000-vector operating point is a 58 ms re-read on
+##       every press, paid for nothing.
+proc op_annot::db_attach {path {level {}}} {
+  set np {}
+  if {[catch {file normalize $path} np]} { set np {} }
+  if {$np eq {}} { return [list 0 "the results file could not be named"] }
+  ::op_annot::_db_forget $np
+  set inf {}
+  catch {set inf [xschem raw info]}
+  foreach ln [split $inf "\n"] {
+    set ln [string trim $ln]
+    if {$ln eq {}} { continue }
+    if {![regexp {^([0-9]+)[ \t]+(.*)[ \t]+([A-Za-z0-9_]+)$} $ln -> ei ep et]} { continue }
+    if {$et ne {op} && $et ne {dc}} { continue }
+    set enp {}
+    if {[catch {file normalize $ep} enp]} { continue }
+    if {$enp ne $np} { continue }
+    catch {xschem raw clear $ep $et}
+  }
+  set rc 0
+  set e {}
+  if {$level ne {} && [string is integer -strict $level]} {
+    set rc [catch {xschem annotate_op $np $level} e]
+  } else {
+    set rc [catch {xschem annotate_op $np} e]
+  }
+  set ann 0
+  catch {set ann [::op_annot::_annotated]}
+  set got {}
+  catch {set got [file normalize [xschem raw rawfile]]}
+  if {!$ann || $got ne $np} {
+    ::op_annot::_db_forget $np
+    if {!$rc || $e eq {}} {
+      set e "it could not be read as a results file, or it holds no operating\
+             point. If the simulator is still writing it, try again when the\
+             run has finished"
+    }
+    return [list 0 $e]
+  }
+  ::op_annot::_db_stamp $np
+  return [list 1 {}]
+}
+
+## op_annot::db_detach -> 1 when a database was taken off this window, 0 when
+## there was nothing of this surface's to take off. THE "OR BLANK" HALF of
+## issue 0684: a captioned refusal sitting above the previous run's numbers is
+## not an improvement on a silent stale number, it is RULING D5-1 with a
+## caption, so a surface that has learned the numbers are wrong takes them off
+## BEFORE it says anything.
+##
+## ⚠ THIS BODY WAS `cadence::_annot_db_release`'s (issue 0902) AND IT MOVED
+## HERE UNCHANGED. RULING D5-4: after this item BOTH operating-point surfaces
+## and the transient surface need to take a database off, and annot_mode.tcl is
+## loaded only by the cadence profile while this file is sourced by every
+## session (src/xschem.tcl). `cadence::_annot_db_release` is now a one-line
+## delegate, so there is still exactly one place that knows how to take numbers
+## off a sheet. Row V74 of tests/headless/test_op_annot.tcl moved its spelling
+## legs here with the body; row F15 of tests/headless/test_annot_stale_0684.tcl
+## is the new home and also requires the old address to be a delegate.
+##
+## ⚠ THE NAMED SPELLING, NEVER THE BARE ONE (issue 0902). With no file given
+## `xschem raw clear` "unloads all raw files" (src/scheduler.c) -- the WHOLE
+## registry of the window, not the one database the caller is talking about.
+## Measured: a design window holding a transient AND a co-simulation VCD went
+## from two databases to none on one key press.
+##
+## ⚠ AND A DIGITAL DATABASE IS NEVER TAKEN OFF -- RULING D5-3 read forwards.
+## `xschem annotate_op` refuses a digital file before it loads anything, so
+## this surface can never have attached one; there is nothing of ours to put
+## back, and a window whose current database is a VCD must come out of a
+## refusal exactly as it went in. The question is asked ABOVE the clear, or the
+## answer arrives too late to matter.
+proc op_annot::db_detach {} {
+  set f {}
+  set t {}
+  if {[catch {xschem raw rawfile} f]} { return 0 }
+  if {[catch {xschem raw sim_type} t]} { return 0 }
+  if {$f eq {} || $t eq {}} { return 0 }
+  set dig 0
+  catch {set dig [xschem raw is_digital]}
+  if {$dig eq {1}} { return 0 }
+  catch {xschem raw clear $f $t}
+  catch {::op_annot::_db_forget [file normalize $f]}
+  return 1
+}
+
 ## Evaluate ONE `derived` expression with <varpairs> bound, or {} if it blows up.
 ##
 ## ⚠ A PROC-LOCAL SCOPE, NEVER `uplevel #0`. That is to_eng's defect shape

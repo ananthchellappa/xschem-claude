@@ -172,6 +172,18 @@ proc cadence::_annot_raw_candidate {} {
       }
     }
   }
+  ## ⚠ ISSUE 0911, MEASURED 2026-08-28 AND OPEN. This arm is FLAT: `schname` is
+  ## the sheet the user is STANDING ON, so after a descend it names the SUBCELL
+  ## and the candidate becomes `$netlist_dir/<subcell>.raw` while the design is
+  ## still painting from the TOP's raw. That was harmless while the candidate
+  ## only answered "which file would I load"; since issue 0684 it also decides
+  ## "are these numbers still your run", and guard G4 reads the mismatch as
+  ## "not mine, leave it alone" -- so on a descended sheet with no ASE-L
+  ## session a re-run NEVER repairs, and `Waves > Clear` then `6` reports
+  ## "There is no results file at .../sub.raw yet" about a run that just
+  ## finished. The ASE arm above is immune because `ase::session_for_current`
+  ## walks the hierarchy stack; closing 0911 means resolving this arm the same
+  ## way, and carrying the level with it.
   set nd {}
   catch {set nd [uplevel #0 {set netlist_dir}]}
   regsub {/$} $nd {} nd
@@ -180,6 +192,23 @@ proc cadence::_annot_raw_candidate {} {
   set cell [file tail [file rootname $sn]]
   if {$nd eq {} || $cell eq {}} { return [list {} {} none] }
   return [list "$nd/$cell.raw" {} netlist_dir]
+}
+
+## -> just the PATH half of `cadence::_annot_raw_candidate`'s answer: the file
+## this sheet's operating-point chord would attach if it had to.
+##
+## ⚠ IT EXISTS FOR ONE REASON AND IT IS NOT TIDINESS (issue 0684). The currency
+## question in `cadence::annot_mode` has to be asked on ONE source line
+## alongside `op_annot::_annotated` (guard G10), and it needs the candidate to
+## ask it -- but the candidate SEARCH must stay below the detach that guard G11
+## performs, or a reader (and row F22's second leg) can no longer tell that a
+## stale database is taken off before anything goes looking for a replacement.
+## So the search itself stays where it was and this one-line accessor carries
+## the same answer up to the guard. It is NOT a second spelling of the
+## candidate: there is still exactly one body that knows where a raw comes
+## from, and this returns element 0 of what that body said.
+proc cadence::_annot_op_target {} {
+  return [lindex [cadence::_annot_raw_candidate] 0]
 }
 
 ## -> {n-annotatable {symbol types with no device path}} for the CURRENT sheet.
@@ -546,15 +575,22 @@ proc cadence::_annot_msg {mask state path types} {
 ## unreadable sim_type with a database attached refuses, exactly as update_op()
 ## refuses a NULL one.
 ##
-## ⚠ AND `xschem raw loaded` HERE ASKS "IS SOME DATABASE ATTACHED", NOT "IS IT
-## THIS SESSION'S CURRENT RESULTS" -- issue 0684, still OPEN, on the
-## OPERATING-POINT surface. The transient surface had the identical mistake and
-## it was fixed by item A14 (issue 0900): `cadence::annot_tran`'s gate now also
-## asks `cadence::_annot_tran_db_current`. This one is deliberately LEFT AS IT
-## IS: it is a different surface, with its own rows and its own ruling, and
-## A14's scope fence names it. Said here so a later reader does not read the
-## transient fix as covering this and does not think the resemblance went
-## unnoticed.
+## ⚠ `xschem raw loaded` HERE ASKS "IS SOME DATABASE ATTACHED", AND THAT IS
+## CORRECT FOR THIS GATE -- ISSUE 0684 DOES NOT LIVE ON THIS LINE, and an
+## earlier revision of this paragraph said it did. This gate answers one
+## question only: can the attached database supply an operating point at all?
+## Measured 2026-08-28 with a STALE run attached, it answers 1 and it is RIGHT
+## to -- an operating point really is attached and its sim_type really is `op`.
+## Tightening it here was tried and is a trap: the sheet keeps the old numbers,
+## the mask stays armed, and the status line becomes "No operating point results
+## are loaded. These are from a 'op' run instead", a sentence that denies the
+## analysis it is looking at.
+##
+## WHERE 0684 ACTUALLY LIVES on this surface is `cadence::annot_mode`'s live arm
+## below (guard G10), which used to read `if {$annotated} { set state live }`
+## and short-circuited every load path. It now also asks
+## `op_annot::db_current`. Said here because the resemblance between the two
+## lines is exactly what cost this branch one refuted attempt.
 proc cadence::_annot_op_db_ok {} {
   set loaded -1
   catch {set loaded [xschem raw loaded]}
@@ -627,9 +663,66 @@ proc cadence::annot_mode {mode} {
     catch {set loaded [xschem raw loaded]}
     if {![string is integer -strict $loaded]} { set loaded -1 }
 
-    if {$annotated} {
-      ## The display's own three-term gate says the numbers are live. Reloading
-      ## here would be the destructive path for no gain.
+    ## ⚠ GUARD G10 -- ISSUE 0684, AND THE TWO QUESTIONS ARE ON ONE SOURCE LINE
+    ## ON PURPOSE. `op_annot::_annotated` answers "is SOME publishable database
+    ## attached here", never "is it THIS run", and for two items that was the
+    ## whole of the test below: press 6, re-run the simulation, press 6 again,
+    ## and the sheet repainted the PREVIOUS run's id / gm / gds under "These
+    ## results were already loaded." RULING D5-1 and invariant I3 -- "not the
+    ## previous run's number" -- in their own words. `op_annot::db_current`
+    ## (src/op_annot.tcl) is the mint for the second question and BOTH
+    ## operating-point surfaces call it; the header there records why it is not
+    ## `cadence::_annot_tran_db_current` (that one consults the waveform viewer
+    ## and answers "current" for any operating point, measured).
+    ##
+    ## ⚠ AND IT IS NOT THE GATE `cadence::_annot_op_db_ok` ABOVE. Measured
+    ## 2026-08-28: with a stale run attached that gate answers 1 CORRECTLY -- an
+    ## operating point really IS attached and its sim_type really is `op` -- and
+    ## control reaches HERE. Tightening the gate instead leaves the old numbers
+    ## on the sheet with the mask still armed, under "No operating point results
+    ## are loaded. These are from a 'op' run instead", a sentence that denies the
+    ## analysis it is looking at. This is the deciding line, not that one.
+    ##
+    ## ⚠ ONE LINE, NOT TWO, and that is item A14's shape on the transient
+    ## surface for the same reason: with the questions on separate lines a later
+    ## edit can reach the guarded block having asked only the first, and the
+    ## first one is the shipped defect's own predicate. `_annotated` is read a
+    ## second time here rather than reusing $annotated purely so the guard is
+    ## one grep-visible line; both reads are two C calls and cost nothing.
+    ## Row F22 of tests/headless/test_annot_stale_0684.tcl pins the shape.
+    ##
+    ## `cadence::_annot_op_target` rather than `_annot_raw_candidate` inline:
+    ## the candidate search must stay BELOW the detach (row F22's second leg),
+    ## so the one-line accessor is what carries the same answer up here.
+    set live 0
+    catch {set live [expr {[::op_annot::_annotated] && [::op_annot::db_current [cadence::_annot_op_target]]}]}
+
+    ## ⚠ GUARD G11 -- RE-ATTACH OR BLANK, NEVER A CAPTION OVER A STALE NUMBER
+    ## (issue 0684). This press has just learned that what the sheet is painting
+    ## is not the run it is about. Every arm below can refuse -- the file may be
+    ## gone, unreadable, or the wrong analysis -- and a refusal that left the
+    ## previous run's numbers where they were would be RULING D5-1 with an
+    ## explanation attached, which is worse than the silent version because the
+    ## caption makes it look checked. So the database comes OFF first and the
+    ## selector below then re-attaches or leaves the sheet blank.
+    ##
+    ## ⚠ THE `$annotated` TERM IS WHAT KEEPS THE `noop` ARM WHOLE. A database
+    ## that published no operating point (annot_p < 0) is not something this
+    ## surface attached or can paint from; taking it off would throw away the
+    ## user's file to say nothing new. Row F21 here and row N10b of
+    ## tests/headless/test_op_annot.tcl are its owners.
+    if {$annotated && !$live} {
+      ::op_annot::db_detach
+      set annotated 0
+      set loaded -1
+      catch {set loaded [xschem raw loaded]}
+      if {![string is integer -strict $loaded]} { set loaded -1 }
+    }
+
+    if {$live} {
+      ## The display's own three-term gate says the numbers are live AND the
+      ## file they came from has not moved under them. Reloading here would be
+      ## the destructive path for no gain.
       set state live
     } elseif {$loaded >= 0} {
       ## A raw IS loaded and every row still renders blank — issue 0451's fourth
@@ -675,13 +768,28 @@ proc cadence::annot_mode {mode} {
       } elseif {![file exists $path]} {
         set state noraw
       } else {
-        if {$lvl ne {} && [string is integer -strict $lvl]} {
-          catch {xschem annotate_op $path $lvl}
-        } else {
-          catch {xschem annotate_op $path}
-        }
-        ## RE-ASKED, never taken from annotate_op's rc: measured, it returns 0
-        ## for a file that does not exist and for one that will not parse.
+        ## ⚠ ISSUE 0684 -- THE ATTACH GOES THROUGH THE ONE MINT NOW, and the
+        ## two things that used to be written out here are inside it.
+        ## `op_annot::db_attach` (src/op_annot.tcl) does the RE-ASK -- measured,
+        ## `xschem annotate_op` returns TCL_OK for a file that does not exist
+        ## and for one that will not parse, so its rc says nothing about whether
+        ## it worked -- and it also drops the STALE REGISTRY ENTRY at this path
+        ## first (issue 0685: with a waveform graph open, `annotate_op` hands
+        ## back the in-memory copy from the PREVIOUS run with no read at all).
+        ## The chord gained that second half by moving here; it never had it.
+        ## ⚠ AND "DID ANYTHING ATTACH" IS STILL `xschem raw loaded`, NOT
+        ## db_attach's OWN ANSWER. The difference is RULING 0856's unwind.
+        ## db_attach answers the narrower question "did an OPERATING POINT land
+        ## here" -- it verifies through `op_annot::_annotated` -- while
+        ## `xschem annotate_op` with no type token tries op, then dc, THEN
+        ## TRAN. So on the commonest post-run desktop, a transient sitting at
+        ## `$netlist_dir/<cell>.raw`, db_attach answers 0 with that transient
+        ## ATTACHED. The arm below has to SEE that database: it is what puts it
+        ## back and what lets the sentence name the analysis the user really
+        ## has. Reading db_attach's 0 as "nothing happened" here would leave
+        ## the window holding a transient nobody asked for, under "Could not
+        ## read the results file" -- rows V31c and V41 are what measure that.
+        ::op_annot::db_attach $path $lvl
         set after -1
         catch {set after [xschem raw loaded]}
         if {[string is integer -strict $after] && $after >= 0} {
@@ -1179,17 +1287,19 @@ proc cadence::_annot_db_analog_loaded {} {
 ## there -- every VCD attach in the tree runs inside the waveform window's own
 ## context, and `xschem annotate_op` replaces rather than appends -- so that is
 ## the edge of the claim, not a known defect. Recorded in issue 0902.
+##
+## ⚠ ISSUE 0684 -- THE BODY MOVED, THE ADDRESS DID NOT. Everything above is
+## still true of what happens; it now happens in `op_annot::db_detach`
+## (src/op_annot.tcl), because after 0684 BOTH operating-point surfaces need to
+## take a database off and this file is loaded only by the cadence profile,
+## while src/op_annot.tcl is sourced by every session. RULING D5-4: one mint,
+## rendered by its callers -- and this one-line delegate is what keeps the
+## transient surface's three call sites reading the way they always did. Row
+## V74 of tests/headless/test_op_annot.tcl moved its spelling legs with the
+## body; row F15 of tests/headless/test_annot_stale_0684.tcl requires this to
+## BE a delegate, so the two rows cannot both claim to own the spelling.
 proc cadence::_annot_db_release {} {
-  set f {}
-  set t {}
-  if {[catch {xschem raw rawfile} f]} { return 0 }
-  if {[catch {xschem raw sim_type} t]} { return 0 }
-  if {$f eq {} || $t eq {}} { return 0 }
-  set dig 0
-  catch {set dig [xschem raw is_digital]}
-  if {$dig eq {1}} { return 0 }
-  catch {xschem raw clear $f $t}
-  return 1
+  return [::op_annot::db_detach]
 }
 
 ## -> {path print why} for the transient the WAVEFORM VIEWER is showing for this
@@ -1591,6 +1701,18 @@ proc cadence::_annot_tran_supply {} {
 ## the different run sitting on disk at the same path. What the print cannot see
 ## is unchanged and is written out above `cadence::_annot_tran_supply`; issue
 ## 0885.
+## ⚠ AND IT IS NOT THE OPERATING-POINT SURFACE'S PREDICATE, THOUGH THE NAMES
+## LOOK LIKE A PAIR (issue 0684). MEASURED 2026-08-28: with a stale operating
+## point attached, `cadence::_annot_viewer_db` above answers {} -- it reports a
+## database only when the viewer is showing a `tran` -- so this proc answers 1
+## = "current" both before and after that file on disk becomes a different run.
+## Calling it from the `6` / `Alt-6` chord would be a fix that passes while
+## doing nothing. The two questions differ in kind: this one asks whether TWO
+## WINDOWS' in-memory copies agree, and the operating-point one asks whether
+## THIS window's database is still the file it was read from. That one is
+## `op_annot::db_current` (src/op_annot.tcl), which is where the reasoning and
+## the rejection of a widened `_annot_viewer_db` (issue 0903's line) are
+## written out.
 proc cadence::_annot_tran_db_current {} {
   set vw [cadence::_annot_viewer_db]
   if {![llength $vw]} { return 1 }

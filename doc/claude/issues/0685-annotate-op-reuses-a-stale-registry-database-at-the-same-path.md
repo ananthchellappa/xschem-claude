@@ -107,7 +107,56 @@ Binding on any retry: **drop the entry only for the sim_type you are about to re
 (`op`/`dc`, never `tran`), and/or verify the candidate parses before dropping
 anything. `file readable` is not that verification.
 
-## 5. Still open
+## 5. Still open — but the hazard now has a workaround AND its first test rows
 
-The C defect itself, all four exposed callers, and the absence of any test row for
-it anywhere in the tree.
+**2026-08-28, item A15 (the issue 0684 fix).** The Tcl workaround this section
+asks for now ships, in the shape §4 makes binding, inside `op_annot::db_attach`
+(`src/op_annot.tcl`):
+
+* it enumerates `xschem raw info` and drops **only** entries whose normalized
+  rawfile equals the path it is about to read **and** whose sim_type is `op` or
+  `dc` — **never** `tran`, and never the bare `xschem raw clear` the reverted
+  attempt used;
+* it hands `raw clear` the **registry's own spelling** of the path, so a drop
+  cannot silently miss on a path-spelling difference (a miss is a no-op:
+  `save.c`'s `what==3` returns 0 and changes nothing);
+* it then **verifies by re-asking**, because `annotate_op` returns `TCL_OK` for a
+  file it could not read.
+
+Five rows now cover it, the first anywhere in the tree
+(`tests/headless/test_annot_stale_0684.tcl`, both arms):
+
+* **F12** stages §2's second probe exactly — `annotate_op`, then
+  `xschem raw read <tran> tran` (the **adding** form), then the same op path
+  rewritten — and golds the naive `annotate_op` handing back `1e-05` **next to**
+  `db_attach` yielding `0.009`, with the user's transient still in the registry.
+  So the hazard and its workaround are pinned in one golden. ⚠ It is a
+  **demonstration, not a guard**: its own bare `annotate_op` call leaves the
+  stale entry *current*, and once it is current the attach re-reads with or
+  without the drop — measured 2026-08-28, deleting the drop loop left F12 green.
+* **F12b** is the guard. Same staging, **nothing in between**: the stale
+  operating-point entry sits at the session's path while the user's waveform
+  graph is the current database, and `op_annot::db_attach` is the first thing to
+  touch it. Without the drop, `extra_rawfile`'s dedup loop takes the
+  "already loaded: switch to it" branch with **no read** and the sheet paints
+  the previous run.
+* **F13** stages §4's data loss with the user's waveform at a **different** path
+  from the one being attached: the rewritten op file is truncated garbage,
+  `db_attach` must fail **and** the transient must still be attached and
+  readable. It guards the drop **existing**, not its type list.
+* **F13b** is the type list's guard, and it is where §4's loss actually lives:
+  one file, read as a waveform by `xschem raw read`, then rewritten by a re-run
+  this surface tries to annotate from while the simulator is still mid-write.
+  The drop runs **before** the read, so a drop that included `tran` would take
+  the user's trace off and the failed read would put nothing back. Measured both
+  ways — shipped keeps the registry entry and `v(zzz)` still reads; with `tran`
+  in the list the registry is **empty** and the vector is unreadable. Until
+  2026-08-28 nothing but F14's source grep stood between the user and that.
+
+Row **F14** is the structural guard: `db_attach`'s body must contain no `tran` and
+no bare `xschem raw clear`.
+
+**Still open:** the C defect itself (`scheduler.c:2410-2427` +
+`save.c`'s dedup loop) and the other exposed callers, which the workaround does
+not reach. C remains the right place; every Tcl caller that re-attaches has to
+carry this drop until then.
