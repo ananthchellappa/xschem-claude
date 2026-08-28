@@ -3222,8 +3222,7 @@ proc ase::annot_no_binding_notice {menupath} {
   set remedy {}
   catch {set remedy [annot_remedy_menu]}
   catch {
-    ::xschem::notify "ASE: $what did NOT annotate -- annotation is driven by\
- ASE-L and no ASE-L session is bound to this design or to any of its parents." \
+    ::xschem::notify "ASE: $what did not put anything on the schematic. Annotation is driven by ASE-L, and no ASE-L session is bound to this design or to any of its parents." \
       -tag error -short {not annotated: no ASE-L} \
       -menu $remedy -command {ase::launch_for_current}
   }

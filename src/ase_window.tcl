@@ -2369,7 +2369,15 @@ proc ase::ui::annot_ensure_loaded {key} {
   set stale 0
   catch {set stale [ase::results_stale $key]}
   if {$stale} {
-    catch {::ase::echo "ase: [file tail $path] is OLDER than the deck it describes — the last run did not produce it. Not annotating stale results; re-run first." error}
+    ## ⚠ ISSUE 0886 -- THIS SURFACE GETS ITS OWN WORDS, NOT THE MINT'S.
+    ## Row V43 of tests/headless/test_op_annot.tcl requires the fragment "is
+    ## older than the circuit it describes" to appear in utils/annot_mode.tcl
+    ## and in NO other file, ase_window.tcl included, so pasting the mint's
+    ## sentence here would red that row. It says the same thing about the same
+    ## situation from ASE-L's own side, with the `ase:` prefix its channel uses.
+    ## The file is still NAMED, because "not used" without saying which file is
+    ## not something a user can act on (issue 0838's argument, unchanged).
+    catch {::ase::echo "ase: [file tail $path] is from an earlier run than the circuit now on screen, so it was not used. Run the simulation again first." error}
     return
   }
   # the hierarchy LEVEL the raw refers to, from the same seam
@@ -2381,14 +2389,31 @@ proc ase::ui::annot_ensure_loaded {key} {
   if {[llength $s] >= 2 && [lindex $s 0] eq $key} { set level [lindex $s 1] }
   if {$level ne {}} {
     if {[catch {xschem annotate_op $path $level} e]} {
-      catch {::ase::echo "ase: cannot annotate '$path': $e" error}
+      catch {::ase::echo [ase::ui::annot_fail_msg $path $e] error}
     }
   } else {
     if {[catch {xschem annotate_op $path} e]} {
-      catch {::ase::echo "ase: cannot annotate '$path': $e" error}
+      catch {::ase::echo [ase::ui::annot_fail_msg $path $e] error}
     }
   }
   return
+}
+
+## THE ONE SENTENCE FOR "the engine refused to put these numbers on the sheet".
+##
+## ⚠ ISSUE 0886, RULING D5-4. It was written out TWICE, at the two
+## `xschem annotate_op` call sites in `ase::ui::annot_ensure_loaded` -- one with
+## a hierarchy level and one without -- which is one message with two places to
+## edit and only a reader comparing them can tell they were meant to agree. Row
+## A11-8 of tests/headless/test_op_annot.tcl greps for exactly one copy of the
+## fragment "could not put the results from", and for zero copies of the old
+## `ase: cannot annotate` spelling.
+##
+## ⚠ `$e` IS THE ENGINE'S OWN RAISE TEXT and is passed through unedited.
+## It is the only part of this sentence that says WHICH thing went wrong, and
+## paraphrasing it would leave the user a polite apology with no fact in it.
+proc ase::ui::annot_fail_msg {path e} {
+  return "ase: could not put the results from '$path' onto the schematic. The reason given was: $e"
 }
 
 # ISSUE 0868 -- make `cadence::annot_tran` reachable from a session that never
@@ -2440,8 +2465,7 @@ proc ase::ui::annot_apply {key which} {
   variable annot
   set bit [expr {$which eq {op} ? 1 : ($which eq {volt} ? 2 : 4)}]
   if {![ase::ui::annot_goto_design $key]} {
-    catch {::ase::echo "ase: cannot reach this session's design window (not open,\
- or the context switch was refused) -- Session > Design Window opens it" error}
+    catch {::ase::echo "ase: this session's design window is not open, or switching to it was refused, so there is nothing to annotate. Session > Design Window opens it." error}
     ase::ui::annot_menu_sync $key
     return
   }
@@ -2476,8 +2500,12 @@ proc ase::ui::annot_apply {key which} {
   if {$which eq {tran} && $want} {
     ase::ui::annot_tran_helper
     if {![llength [info commands ::cadence::annot_tran]]} {
-      catch {::ase::echo "ase: transient annotation helper (utils/annot_mode.tcl)\
- is not available in this installation" error}
+      ## ⚠ ISSUE 0886 -- IT CANNOT BE MINTED IN utils/annot_mode.tcl, and a
+      ## reader tidying the surface would move it there first. This is the
+      ## sentence for the session where that file is ABSENT; a mint inside it
+      ## could never render. It also stops naming the file to the user: the
+      ## path is a fact about the installation, not an action the user can take.
+      catch {::ase::echo "ase: transient annotation is not available in this installation. The helper it needs was not installed." error}
       ase::ui::annot_menu_sync $key
       return
     }

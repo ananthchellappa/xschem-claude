@@ -19,10 +19,22 @@
 
 set failed 0
 set checks 0
+# ⚠ THE FAILURE LINE ENDS IN " : FAIL", AND THE SUITE EXITS NONZERO. Neither was
+# true until 2026-08-28, and between them they made this file a suite that could
+# not report a failure to anything but a human reading its output. Measured: a
+# deliberate break here printed "RESULT: 2 FAILED" and still exited 0, and
+# tests/run_regression.tcl counts a failed check by grepping for a line that
+# ENDS in FAIL, which "FAIL: <name>" does not. Registering a suite in a runner
+# without both of these is registering a green light.
 proc ck {name cond} {
   global failed checks
   incr checks
-  if {[uplevel 1 [list expr $cond]]} { puts "ok:   $name" } else { puts "FAIL: $name"; incr failed }
+  if {[uplevel 1 [list expr $cond]]} {
+    puts "ok:   $name"
+  } else {
+    puts "FAIL: $name : FAIL"
+    incr failed
+  }
 }
 
 set TMP [file normalize [file join /tmp xschem_fresh_test_[pid]]]
@@ -116,17 +128,66 @@ ck "W2  ...while has_results, the annotation door, refuses the same file" \
 set _am [file join [file dirname [file normalize [info script]]] .. .. utils annot_mode.tcl]
 ck "M0  fixture: utils/annot_mode.tcl sources cleanly" \
    {![catch {uplevel #0 [list source [file normalize $_am]]}]}
+# ⚠ RE-AIMED BY ISSUE 0886, AND TIGHTENED WHILE IT MOVED. These three used to
+# match FRAGMENTS -- "*STALE RESULTS NOT USED*" and the like -- which is exactly
+# the shape that cannot tell a good sentence from a bad one. They now compare
+# whole sentences. The user's ruling, verbatim: "wording too cryptic. Give it in
+# plain english with context, 9th grade level."
+set A11_M1S {Showing device operating-point values on the schematic.}
 set msg [cadence::_annot_msg 1 stale $RAW {}]
-ck "M1  the stale state has its own message, and it names the file" \
-   {[string match {*STALE RESULTS NOT USED*} $msg] &&
-    [string match "*[file tail $RAW]*" $msg]}
-ck "M2  POSITIVE TWIN: the other states still speak" \
-   {[string match {*NO RAW FILE for this cell*} [cadence::_annot_msg 1 nopath {} {}]] &&
-    [string match {*raw already loaded*}       [cadence::_annot_msg 1 live {} {}]]}
-ck "M3  and the mask half of the message is untouched" \
-   {[string match {OP annotation ON (device OP info)*} $msg]}
+ck "M1  the out-of-date-results message says what happened, names the file, and says what to do" \
+   {$msg eq "$A11_M1S The results file [file tail $RAW] is older than the circuit\
+ it describes, so it was not used - it is from an earlier run. Run the simulation again."}
+ck "M2  POSITIVE TWIN: the other states still speak, in the user's own words" \
+   {[cadence::_annot_msg 1 nopath {} {}] eq "$A11_M1S No results file has been found\
+ for this cell. Run a simulation first." &&
+    [cadence::_annot_msg 1 live {} {}] eq "$A11_M1S These results were already loaded."}
+ck "M3  and the mask half still says what the schematic is showing" \
+   {[string first $A11_M1S $msg] == 0}
+
+# ------------------------------------------------------------------ group M
+# A11-11 — EVERY REFUSAL THE USER CAN ACT ON ENDS WITH WHAT TO DO
+#
+# ⚠ THE THIRD LEG OF THE USER'S STANDARD, MADE MECHANICAL. A sentence has to say
+# WHAT HAPPENED, give the CONTEXT that makes it make sense, and -- where the user
+# can act -- say WHAT TO DO. The first two are a matter of reading; the third is
+# not. Nine states leave the user holding a key that did nothing, and every one
+# of them has a next step: run a simulation, turn on a cursor, load a different
+# results file, plot the results again. A refusal that names the problem and
+# stops is the silence this whole mode exists to remove.
+set A11_REMEDIES [list {Run } {Turn on } {Load } {Plot } {try again}]
+set a11_mute {}
+foreach a11st {noop noraw nopath stale} {
+  set a11m {}
+  catch {set a11m [cadence::_annot_msg 1 $a11st $RAW {}]}
+  set a11ok 0
+  foreach a11r $A11_REMEDIES { if {[string match "*$a11r*" $a11m]} { set a11ok 1 } }
+  if {!$a11ok} { lappend a11_mute [list press-6 $a11st $a11m] }
+}
+foreach a11st {nocursor noraw notran staleraw viewerdiff} {
+  set a11m {}
+  catch {set a11m [cadence::_annot_tran_msg $a11st 1e-09 A $RAW]}
+  set a11ok 0
+  foreach a11r $A11_REMEDIES { if {[string match "*$a11r*" $a11m]} { set a11ok 1 } }
+  if {!$a11ok} { lappend a11_mute [list cursor-annotate $a11st $a11m] }
+}
+if {[llength $a11_mute]} {
+  foreach a11e $a11_mute { puts "     A11-11 no next step offered: $a11e" }
+}
+ck "A11-11 every refusal the user can act on says what to do next" \
+   {[llength $a11_mute] == 0}
 
 file delete -force $TMP
-puts "test_results_freshness: $checks checks"
-if {$failed} { puts "RESULT: $failed FAILED" } else { puts "RESULT: ALL PASS" }
-xschem exit closewindow force
+# ⚠ THE DUAL BANNER IS WHAT tests/run_regression.tcl's hcases list REQUIRES.
+# banner_complete in tests/banner_rule.tcl wants a WHOLE-LINE "OVERALL: ok"
+# alongside the RESULT line, and it tolerates the parenthesised check count. The
+# count used to be printed on a line of its own, which no reader looks at.
+if {$failed} {
+  puts "RESULT: $failed FAILED ($checks checks)"
+  puts "OVERALL: notok"
+} else {
+  puts "RESULT: ALL PASS ($checks checks)"
+  puts "OVERALL: ok"
+}
+flush stdout
+exit [expr {$failed == 0 ? 0 : 1}]

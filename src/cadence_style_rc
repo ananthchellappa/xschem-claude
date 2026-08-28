@@ -298,8 +298,11 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 # gives mask 2 -- voltages ALONE, which the old cascade could not reach.
 # Each press also loads the cell's raw if nothing is annotated yet (ASE session
 # first, else $netlist_dir/<cell>.raw) and SAYS WHAT HAPPENED on the status line,
-# held -- "no raw file" and "no OP descriptor for this symbol type" are the two
-# first-run confusions and both are silent without it. Body: utils/annot_mode.tcl.
+# held -- "there is no results file for this cell yet" and "these symbol types
+# have no operating-point values to show" are the two first-run confusions and
+# both are silent without it. (Issue 0886 put every one of those sentences into
+# plain English; the two confusions themselves are unchanged.) Body:
+# utils/annot_mode.tcl.
 #
 # Ctrl-6 overrides the C default (Ctrl+<digit> = select drawing layer <digit>,
 # callback.c:7272), so it ends in `break`, exactly like Ctrl-2 and Ctrl-4 above.

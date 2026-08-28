@@ -746,8 +746,10 @@ catch {xschem raw clear}
 # DESIGN window, which is a state the product never produces: the waveform
 # viewer attaches the run's results to its OWN window's context
 # (wviewer::attach_raw switches context first, by design), so on a real bench
-# the design window holds nothing and the annotation refused with
-# "Transient annotation -- NO RAW FILE loaded". 29 checks here and 413 in
+# the design window holds nothing and the annotation refused with what was then
+# spelled "Transient annotation -- NO RAW FILE loaded" (issue 0886 rewrote it to
+# "No simulation results are loaded, so there are no voltages to show. Run a
+# simulation first, then try again."). 29 checks here and 413 in
 # tests/headless/test_op_annot.tcl were all green over a feature that had never
 # once worked end to end. The fixture now supplies the raw the way the product
 # does -- through `wviewer::attach_raw`, the same call the post-run auto-plot

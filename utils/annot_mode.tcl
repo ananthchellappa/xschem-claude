@@ -121,8 +121,8 @@ proc cadence::_annot_mask {mode {cur 0}} {
   error "cadence::annot_mode: unknown mode \"$mode\": use none, op or opvolt"
 }
 
-## Symbol types that are never devices, so naming them in "no OP descriptor for
-## symbol type(s): ..." would be noise rather than news. `annotator` is the
+## Symbol types that are never devices, so naming them in "These symbol types
+## have no operating-point values to show: ..." would be noise rather than news. `annotator` is the
 ## carrier symbol itself — the very thing displaying the block — and the pins and
 ## labels are connectivity, not instances anyone would annotate.
 namespace eval cadence {
@@ -220,6 +220,141 @@ proc cadence::_annot_scan {} {
   return [list $n [lsort $missing]]
 }
 
+## ===========================================================================
+## ISSUE 0886 -- THE FOUR HELPERS THE PLAIN-ENGLISH PASS IS BUILT ON.
+## ===========================================================================
+## The user's ruling, verbatim 2026-08-27: "wording too cryptic. Give it in
+## plain english with context, 9th grade level." Every sentence the two mints
+## below render now says WHAT HAPPENED in the user's own nouns, gives the
+## CONTEXT that makes it make sense and, wherever the user can act, says WHAT
+## TO DO. These four are what make that possible without a second copy of
+## anything: a time formatter, the menu-path deriver, the status-line budget,
+## and the one renderer that puts a minted sentence on both sinks.
+
+## A TIME, THE WAY AN ANALOG DESIGNER READS IT OFF AN X-AXIS: 4 ns, 30 us, 0 s.
+##
+## ⚠ IT REUSES `op_annot::eng_or_blank` RATHER THAN MINTING A SECOND FORMATTER
+## (invariant I1). That helper emits NO unit letter -- 4e-09 comes back as `4n`
+## -- so the `s` is appended here, and the SI prefix is split off the tail to
+## land between the number and the unit. A reader would otherwise assume the
+## helper already returns something printable beside a unit; it does not, and
+## `4n s` is what you get if you assume it.
+##
+## ⚠ A VALUE THE FORMATTER CANNOT READ IS RETURNED UNCHANGED, NOT BLANKED, and
+## that is the opposite of op_annot's own rule one layer down. Invariant I3
+## blanks a MISSING measurement, which is right there -- the user is being told
+## a number is not available. A time THIS proc cannot parse is a CALLER bug, and
+## a caller bug that renders as an empty gap in a sentence is precisely the
+## silence this whole mode exists to remove. Row A11-4 of
+## tests/headless/test_op_annot.tcl is the only row that reaches this leg.
+proc cadence::_annot_tsec {v} {
+  set e {}
+  catch {set e [::op_annot::eng_or_blank $v]}
+  if {$e eq {}} { return $v }
+  set last [string index $e end]
+  if {[lsearch -exact {T G M k m u n p f a} $last] >= 0} {
+    return "[string range $e 0 end-1] ${last}s"
+  }
+  return "$e s"
+}
+
+## THE MENU ENTRY THE `these results hold no operating point` SENTENCE SENDS THE
+## USER TO, read from the menubar's own labels.
+##
+## ⚠ THE PATH IS DERIVED, NEVER TYPED (RULING D5-4).
+## `annot_menu_path_waves_op` (src/xschem.tcl) composes it from the two label
+## constants the menubar is BUILT from, so renaming the entry moves every
+## printed path with it; issue 0661 is the measured example of that drift, one
+## word apart and entirely plausible. Row A11-5 renames that mint and requires
+## the new name to come back out of the sentence, which is the only way to tell
+## a derived path from a hardcoded one that happens to be spelled right today.
+##
+## ⚠ THE LITERAL BELOW IS THE FALLBACK for a session that never loaded
+## src/xschem.tcl's menu labels, and it is THE ONLY COPY OF IT IN THIS FILE.
+## Row A11-6 greps for exactly that, and it is the row that survives someone
+## deleting A11-5. Do not paste the path into a sentence; call this.
+proc cadence::_annot_menu_op {} {
+  set p {Waves > Op Annotate}
+  catch {set p [::annot_menu_path_waves_op]}
+  return $p
+}
+
+## THE STATUS LINE HOLDS 255 BYTES, AND THIS IS THE ONE PLACE THAT KNOWS IT.
+##
+## ⚠ ISSUE 0639, AND THE OVERFLOW WAS ALREADY LIVE BEFORE A WORD WAS
+## REWRITTEN. Measured on the shipped binary 2026-08-27: the widest annotation
+## mask, the no-operating-point state and five symbol types built a 257
+## character line, `xschem get statusmsg` read back 255, and the tail died
+## mid-token -- `nmos pmos res cap ...` arrived as `cap .`.
+##
+## ⚠ THE WALL IS A BYTE COUNT, NOT A CHARACTER COUNT, AND THE DIFFERENCE IS
+## USER DATA. The C side stores the line in statusmsg_text[256] (src/xschem.h)
+## and `my_strncpy` fills it in BYTES. An earlier revision of this proc counted
+## Tcl CHARACTERS and justified it by noting that every sentence minted here is
+## plain printable ASCII -- which is true of the WORDING and false of the
+## sentence, because three of the eight states paste the user's own results-file
+## path into it. A designer whose project lives under an accented or non-Latin
+## directory therefore built a line of 251 characters and 281 bytes; this proc
+## waved it through, C cut it at 255 bytes, and the amputation was back with no
+## `...` to show for it -- measured 2026-08-28, and the reason row A11-9 exists.
+## `cadence::_annot_bytes` is now the only ruler either half uses.
+##
+## ⚠ IT CUTS AT A SPACE AND MARKS THE CUT. The shipped defect was a sentence
+## that stopped mid-word with nothing saying it had. A reader would otherwise
+## assume a plain `string range` is enough; a plain `string range` is what
+## produced `cap .`.
+##
+## ⚠ ONLY THE STATUS LINE IS TRIMMED. `cadence::_annot_say` writes the WHOLE
+## sentence to the CIW, which is the record and which scrolls, and the fitted
+## copy to the bar. Rows A11-1, A11-2 and A11-10 hold that split honest.
+## The length the C side will see, in the units the C side counts.
+##
+## ⚠ `string bytelength` IS THE FAITHFUL ONE ON Tcl 8.6, and it is gone in
+## Tcl 9. It reports the modified-UTF-8 form `Tcl_GetString` really hands over,
+## surrogate pairs and all; `encoding convertto utf-8` under-counts a non-BMP
+## character by two bytes on 8.6. The fallback is there so this file still loads
+## on a Tcl that removed the command, where the two forms agree anyway.
+proc cadence::_annot_bytes {s} {
+  if {![catch {string bytelength $s} n]} { return $n }
+  return [string length [encoding convertto utf-8 $s]]
+}
+
+proc cadence::_annot_fit {m} {
+  set n [string length $m]
+  if {[cadence::_annot_bytes $m] <= 255} { return $m }
+  ## Shrink a CHARACTER window until what it holds fits 252 BYTES, leaving
+  ## three for the marker. `string range` cannot split a character, so the
+  ## window boundary is always a legal place to stop.
+  if {$n > 252} { set n 252 }
+  while {$n > 0 && [cadence::_annot_bytes [string range $m 0 [expr {$n - 1}]]] > 252} {
+    incr n -1
+  }
+  set cut [string last { } [string range $m 0 [expr {$n - 1}]]]
+  if {$cut < 1} { set cut $n }
+  return "[string range $m 0 [expr {$cut - 1}]]..."
+}
+
+## THE ONE RENDERER: a minted sentence, onto both sinks the annotation surface
+## speaks through.
+##
+## ⚠ THE TWO SINKS DIFFER IN ONE WAY ONLY, DELIBERATELY. The CIW gets the
+## sentence WHOLE; the held status line gets it through `cadence::_annot_fit`.
+## Issue 0639's unmade choice is made here: nothing is dropped from the record,
+## and the bar shows a marked elision instead of an amputation. Recorded as an
+## unratified decision -- `owed.sh add rule 0886`.
+##
+## ⚠ `cadence::_annot_ciw` STAYS THE ONE EMITTER beneath this (invariant I1).
+## This proc adds the status-line half; it does not become a second channel.
+## Issue 0873's property -- muting the CIW must redden at least one row -- is
+## measured against that emitter and is untouched by this.
+##
+## ⚠ `-hold`, NOT A PLAIN STATUS LINE WRITE: pointer motion erases an unheld
+## line before the user has finished reading it (issue 0248).
+proc cadence::_annot_say {m {tag {}}} {
+  cadence::_annot_ciw $m $tag
+  catch {xschem statusmsg -hold [cadence::_annot_fit $m]}
+}
+
 ## The one held status line. <state> is one of
 ##   off | live | noop | loaded | failed | noraw | nopath
 ## and <types> is _annot_scan's second element, already known to matter only
@@ -227,8 +362,8 @@ proc cadence::_annot_scan {} {
 ##
 ## Both first-run confusions land in the SAME line (decision D5). The descriptor
 ## clause is omitted when the sheet carries no candidate device at all, because
-## "no OP descriptor for symbol type(s):" with nothing after it says less than
-## silence.
+## "These symbol types have no operating-point values to show:" with nothing
+## after it says less than silence.
 ## ⚠ WORDED OFF THE RESULTING MASK, NOT OFF THE MODE — issue 0614. Under additive
 ## semantics a mode-worded line LIES: `Alt-6` from a clean start produces mask 2
 ## and a mode switch would still announce "device OP info + node voltages" while
@@ -263,6 +398,16 @@ proc cadence::_annot_scan {} {
 ## shipped ones name theirs. Row V21 of tests/headless/test_op_annot.tcl asserts
 ## all eight, so a re-wording of the shipped four reds in this file rather than
 ## in six unrelated statusmsg rows.
+##
+## ⚠ AND ISSUE 0886 RE-WORDED ALL EIGHT, WHICH IS WHY THE PARAGRAPHS ABOVE READ
+## AS HISTORY. "OP annotation OFF" and its seven relatives are gone; the arms now
+## say what is on the schematic in the user's own words -- "Annotation is off. The
+## schematic is not showing simulation numbers.", "Showing device operating-point
+## values on the schematic.", and so on, worded off the user's ratified
+## `Results > Annotate` labels. The user's ruling, verbatim 2026-08-27: "wording
+## too cryptic. Give it in plain english with context, 9th grade level." The
+## REASONING above is untouched -- what each arm has to be true ABOUT did not
+## change -- and row V21 still asserts all eight, byte for byte.
 proc cadence::_annot_msg {mask state path types} {
   ## ⚠ ISSUE 0857, RULED BY THE USER 2026-08-27, VERBATIM: "Yes, 6 does
   ## nothing when there is ONLY a TRAN result. But, it's a good idea to say
@@ -273,9 +418,10 @@ proc cadence::_annot_msg {mask state path types} {
   ## this state; nothing else does.
   ##
   ## ⚠ IT RETURNS BEFORE THE MASK SWITCH, AND THAT IS THE POINT, NOT AN
-  ## OPTIMISATION. Every other sentence in this proc opens with
-  ## "OP annotation ON/OFF (...)", which is a claim about what the screen is
-  ## now showing. On both refusal paths the mask is never written, or is
+  ## OPTIMISATION. Every other sentence in this proc opens with "Showing ..."
+  ## or "Annotation is off ..." (issue 0886's wording; it was
+  ## "OP annotation ON/OFF (...)" before), which is a claim about what the
+  ## screen is now showing. On both refusal paths the mask is never written, or is
   ## written and put straight back, so that prefix would describe a change that
   ## did not happen -- RULING D5-1's shape, a caption with no measurement
   ## behind it. A reader who assumed every arm of this proc carries the prefix
@@ -287,53 +433,65 @@ proc cadence::_annot_msg {mask state path types} {
   ## database can say what it is, and left out when it cannot, because
   ## "the results loaded here are a '' analysis" says less than silence. Row
   ## V42 of tests/headless/test_op_annot.tcl pins both shapes byte for byte,
-  ## and row V43 requires the fragment "No operating point results available"
+  ## and row V43 requires the fragment "No operating point results are loaded"
   ## to appear on a code line of THIS file and of no other -- so the sentence
-  ## below is grep-visible on purpose.
+  ## below is grep-visible on purpose. (Issue 0886 moved that fragment one word:
+  ## it read "... results available" until the plain-English pass.)
   if {$state eq {notop}} {
     if {$path eq {}} {
-      return "No operating point results available -- the results loaded here are\
-              not an operating point. Run an operating point analysis, or press\
-              Alt-Shift-6 to annotate transient node voltages at the waveform\
-              cursor."
+      return "No operating point results are loaded. The results loaded here are\
+              not an operating point, so there are no operating-point numbers to\
+              show. Run an operating point analysis, or press Alt-Shift-6 for\
+              node voltages at the waveform cursor."
     }
-    return "No operating point results available -- the results loaded here are a\
-            '$path' analysis, not an operating point. Run an operating point\
-            analysis, or press Alt-Shift-6 to annotate transient node voltages at\
+    return "No operating point results are loaded. These are from a '$path' run\
+            instead, so there are no operating-point numbers to show. Run an\
+            operating point analysis, or press Alt-Shift-6 for node voltages at\
             the waveform cursor."
   }
   if {![string is integer -strict $mask]} { set mask 0 }
   switch -exact -- [expr {$mask & 7}] {
-    0 { set m "OP annotation OFF" }
-    1 { set m "OP annotation ON (device OP info)" }
-    2 { set m "OP annotation ON (node voltages)" }
-    3 { set m "OP annotation ON (device OP info + node voltages)" }
-    4 { set m "OP annotation ON (transient node voltages)" }
-    5 { set m "OP annotation ON (device OP info + transient node voltages)" }
-    6 { set m "OP annotation ON (node voltages + transient node voltages)" }
-    7 { set m "OP annotation ON (device OP info + node voltages + transient node voltages)" }
-    default { set m "OP annotation" }
+    0 { set m "Annotation is off. The schematic is not showing simulation\
+               numbers." }
+    1 { set m "Showing device operating-point values on the schematic." }
+    2 { set m "Showing DC node voltages on the schematic." }
+    3 { set m "Showing device operating-point values and DC node voltages on the\
+               schematic." }
+    4 { set m "Showing node voltages at the waveform cursor on the schematic." }
+    5 { set m "Showing device operating-point values, and node voltages at the\
+               waveform cursor, on the schematic." }
+    6 { set m "Showing DC node voltages, and node voltages at the waveform\
+               cursor, on the schematic." }
+    7 { set m "Showing device operating-point values, DC node voltages, and node\
+               voltages at the waveform cursor, on the schematic." }
+    default { set m "Annotation settings changed." }
   }
   switch -exact -- $state {
-    live    { append m " -- raw already loaded" }
-    noop    { append m " -- a raw is loaded but it published no operating point:\
-                        use Waves > Op Annotate, or `xschem raw_clear` then press\
-                        again" }
-    loaded  { append m " -- loaded $path" }
-    failed  { append m " -- COULD NOT LOAD $path" }
-    noraw   { append m " -- NO RAW FILE: $path" }
-    nopath  { append m " -- NO RAW FILE for this cell" }
-    stale   { append m " -- STALE RESULTS NOT USED: [file tail $path] is older than\
-                        the deck it describes; the last run did not produce it. Re-run." }
+    live    { append m " These results were already loaded." }
+    noop    { append m " The loaded results do not include an operating point, so\
+                        there are no device values to show. Load a different\
+                        results file from [cadence::_annot_menu_op], then press\
+                        again." }
+    loaded  { append m " Loaded results from $path." }
+    failed  { append m " Could not read the results file $path, so nothing was\
+                        placed on the schematic." }
+    noraw   { append m " There is no results file at $path yet. Run a simulation\
+                        first." }
+    nopath  { append m " No results file has been found for this cell. Run a\
+                        simulation first." }
+    stale   { append m " The results file [file tail $path] is older than the circuit it describes,\
+                        so it was not used - it is from an earlier run. Run the\
+                        simulation again." }
   }
   if {$state ne {off} && [llength $types]} {
     set shown $types
     set tail {}
     if {[llength $types] > 4} {
       set shown [lrange $types 0 3]
-      set tail { ...}
+      set tail { and more}
     }
-    append m " -- no OP descriptor for symbol type(s): [join $shown { }]$tail"
+    append m " These symbol types have no operating-point values to show:\
+              [join $shown {, }]$tail."
   }
   return $m
 }
@@ -442,9 +600,7 @@ proc cadence::annot_mode {mode} {
   if {$mask != 0 && ![cadence::_annot_op_db_ok]} {
     set st {}
     if {[catch {xschem raw sim_type} st]} { set st {} }
-    set m [cadence::_annot_msg $cur notop $st {}]
-    cadence::_annot_ciw $m warn
-    catch {xschem statusmsg -hold $m}
+    cadence::_annot_say [cadence::_annot_msg $cur notop $st {}] warn
     return
   }
 
@@ -467,8 +623,10 @@ proc cadence::annot_mode {mode} {
       set state live
     } elseif {$loaded >= 0} {
       ## A raw IS loaded and every row still renders blank — issue 0451's fourth
-      ## indistinguishable cause. Saying "raw already loaded" would be a lie
-      ## about a blank block, and reloading would throw away a good file.
+      ## indistinguishable cause. Saying "These results were already loaded."
+      ## would be a lie about a blank block, and reloading would throw away a
+      ## good file. (Issue 0886: that clause read "-- raw already loaded"
+      ## before the plain-English pass.)
       ##
       ## ⚠ THERE IS ONLY ONE CAUSE LEFT, AND THIS IS WHY IT IS NOT ASKED FOR
       ## (issue 0459 closes here, issue 0864 is what closed it). This branch used
@@ -574,9 +732,7 @@ proc cadence::annot_mode {mode} {
             catch {xschem set annot_show $cur}
             catch {xschem update_all_sym_bboxes}
             catch {xschem redraw}
-            set m [cadence::_annot_msg $cur notop $st {}]
-            cadence::_annot_ciw $m warn
-            catch {xschem statusmsg -hold $m}
+            cadence::_annot_say [cadence::_annot_msg $cur notop $st {}] warn
             return
           }
           set state loaded
@@ -597,7 +753,7 @@ proc cadence::annot_mode {mode} {
   catch {xschem redraw}
 
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot.
-  catch {xschem statusmsg -hold [cadence::_annot_msg $mask $state $path $types]}
+  catch {xschem statusmsg -hold [cadence::_annot_fit [cadence::_annot_msg $mask $state $path $types]]}
   return
 }
 
@@ -746,7 +902,10 @@ proc cadence::_annot_tran_cursor {} {
 ## sample at 4e-09 and cursor B parked at 4.5e-09 the sheet painted `d 4` -- the
 ## correct held boundary value -- beside "Transient annotation at t = 4.5e-09",
 ## a number presented as measured for a time it was never measured at, and worse
-## than a bare wrong number because the sentence lends it authority.
+## than a bare wrong number because the sentence lends it authority. (That is the
+## PRE-0886 spelling, quoted as it was measured. Both sentences were rewritten by
+## the plain-English pass and now read the time as 4.5 ns; the defect and the fix
+## are unchanged.)
 ##
 ## ⚠ AND ISSUE 0869's OWN RECOMMENDED OPTION 1 IS MEASURABLY WRONG, which is why
 ## it was not taken. It says "render the annotated point's own x". Measured over
@@ -768,22 +927,29 @@ proc cadence::_annot_tran_cursor {} {
 ## silence this mode exists to remove.
 proc cadence::_annot_tran_msg {state t which {req {}}} {
   switch -exact -- $state {
-    ok       { return "Transient annotation at t = $t (cursor $which)" }
-    okclamped { return "Transient annotation at t = $t (cursor $which at $req,\
-                        outside the data -- holding the boundary sample)" }
-    nocursor { return "Transient annotation -- NO CURSOR: turn on cursor A or B\
-                       in the waveform viewer" }
-    noraw    { return "Transient annotation -- NO RAW FILE loaded" }
-    notran   { return "Transient annotation -- the loaded database is not a\
-                       transient analysis" }
-    nodata   { return "Transient annotation -- nothing to annotate at t = $t" }
-    staleraw { return "Transient annotation -- the results file [file tail $req]\
-                       is older than the circuit it describes, so it was not used.\
-                       Re-run the simulation." }
-    viewerdiff { return "Transient annotation -- the results file [file tail $req]\
-                       on disk is from a different simulation run than the one the\
-                       waveform viewer is showing, so nothing was annotated. Plot\
-                       the results again in the waveform viewer, then try again." }
+    ok       { return "Showing each node's voltage at [cadence::_annot_tsec $t],\
+                       where cursor $which is on the waveform." }
+    okclamped { return "Cursor $which is at [cadence::_annot_tsec $req], outside\
+                        the time range of the run. Showing each node's voltage at\
+                        [cadence::_annot_tsec $t], the closest point that was\
+                        actually measured." }
+    nocursor { return "Turn on cursor A or cursor B in the waveform window first.\
+                       The schematic then shows each node's voltage at the time\
+                       that cursor marks." }
+    noraw    { return "No simulation results are loaded, so there are no voltages\
+                       to show. Run a simulation first, then try again." }
+    notran   { return "These results are not from a transient run, so there is no\
+                       time axis to read a voltage at. Run a transient simulation\
+                       to use this." }
+    nodata   { return "The results have no values at [cadence::_annot_tsec $t], so\
+                       nothing was placed on the schematic." }
+    staleraw { return "The results file [file tail $req] is older than the circuit it describes,\
+                       so it was not used - it is from an earlier run. Run the\
+                       simulation again, then try again." }
+    viewerdiff { return "The results file [file tail $req] on disk is from a different simulation run\
+                       than the one the waveform window is showing, so nothing was\
+                       placed on the schematic. Plot the results again in the\
+                       waveform window, then try again." }
   }
   error "cadence::_annot_tran_msg: unknown state \"$state\":\
          use ok, okclamped, nocursor, noraw, notran, staleraw, viewerdiff or nodata"
@@ -1120,8 +1286,7 @@ proc cadence::_annot_tran_unwind {attached mask} {
 proc cadence::annot_tran {} {
   set cur [cadence::_annot_tran_cursor]
   if {![llength $cur]} {
-    cadence::_annot_ciw [cadence::_annot_tran_msg nocursor {} {}] warn
-    catch {xschem statusmsg -hold [cadence::_annot_tran_msg nocursor {} {}]}
+    cadence::_annot_say [cadence::_annot_tran_msg nocursor {} {}] warn
     return nocursor
   }
   set t     [lindex $cur 0]
@@ -1176,14 +1341,11 @@ proc cadence::annot_tran {} {
     ## while this refuses -- that collision is filed as issue 0884 and needs
     ## the user's ruling.
     if {[lindex $sup 1] eq {stale}} {
-      set m [cadence::_annot_tran_msg staleraw {} {} [lindex $sup 2]]
-      cadence::_annot_ciw $m warn
-      catch {xschem statusmsg -hold $m}
+      cadence::_annot_say [cadence::_annot_tran_msg staleraw {} {} [lindex $sup 2]] warn
       return staleraw
     }
     if {![string is integer -strict $loaded] || $loaded < 0} {
-      cadence::_annot_ciw [cadence::_annot_tran_msg noraw {} {}] warn
-      catch {xschem statusmsg -hold [cadence::_annot_tran_msg noraw {} {}]}
+      cadence::_annot_say [cadence::_annot_tran_msg noraw {} {}] warn
       return noraw
     }
     ## FROM HERE ON THIS KEY PRESS OWNS A DATABASE THE SESSION DID NOT HAVE,
@@ -1199,8 +1361,7 @@ proc cadence::annot_tran {} {
     if {[lindex $sup 1] eq {viewerdiff}} {
       set m [cadence::_annot_tran_msg viewerdiff {} {} [lindex $sup 2]]
       cadence::_annot_tran_unwind $attached $mask0
-      cadence::_annot_ciw $m warn
-      catch {xschem statusmsg -hold $m}
+      cadence::_annot_say $m warn
       return viewerdiff
     }
   }
@@ -1222,8 +1383,7 @@ proc cadence::annot_tran {} {
     ## published by a refusal -- and it is issue 0872's shape arriving through
     ## the new door. Rows V46 and V35b.
     cadence::_annot_tran_unwind $attached $mask0
-    cadence::_annot_ciw [cadence::_annot_tran_msg notran {} {}] warn
-    catch {xschem statusmsg -hold [cadence::_annot_tran_msg notran {} {}]}
+    cadence::_annot_say [cadence::_annot_tran_msg notran {} {}] warn
     return notran
   }
 
@@ -1239,8 +1399,7 @@ proc cadence::annot_tran {} {
     ## Same rule as the `notran` arm above: a refusal puts back whatever the
     ## supply attached on its way in.
     cadence::_annot_tran_unwind $attached $mask0
-    cadence::_annot_ciw [cadence::_annot_tran_msg nodata $t $which] warn
-    catch {xschem statusmsg -hold [cadence::_annot_tran_msg nodata $t $which]}
+    cadence::_annot_say [cadence::_annot_tran_msg nodata $t $which] warn
     return nodata
   }
 
@@ -1283,7 +1442,6 @@ proc cadence::annot_tran {} {
   } else {
     set m [cadence::_annot_tran_msg ok $t $which]
   }
-  cadence::_annot_ciw $m
-  catch {xschem statusmsg -hold $m}
+  cadence::_annot_say $m
   return ok
 }

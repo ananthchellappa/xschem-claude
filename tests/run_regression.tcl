@@ -54,7 +54,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_zero_point_raw_0836" \
                  "headless/test_zero_point_pos_at_0852" \
                  "headless/test_op_annot" \
-                 "headless/test_backannotate_digital"]
+                 "headless/test_backannotate_digital" \
+                 "headless/test_results_freshness"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

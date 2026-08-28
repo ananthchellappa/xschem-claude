@@ -2219,15 +2219,124 @@ Transient Node Voltages (at cursor)** item (`src/ase_window.tcl`). It refuses by
 NAME, with one minted sentence each (`cadence::_annot_tran_msg`, RULING D5-4),
 delivered to the CIW *and* the held status line:
 
-| state | when |
+**⚠ THE WORDING BELOW IS ISSUE 0886's, AND IT IS WHAT THE CODE SAYS TODAY.** The
+user's ruling, verbatim 2026-08-27: *"wording too cryptic. Give it in plain
+english with context, 9th grade level."* Every sentence now says WHAT HAPPENED
+in the user's own nouns, gives the CONTEXT that makes it make sense and, wherever
+the user can act, says WHAT TO DO. **The state NAMES are unchanged** — they are
+internal, nothing user-facing carries them, and rows that assert a state name
+were deliberately left asserting it. Every time reaches the user through
+`cadence::_annot_tsec` in engineering units (**4 ns**, not `4e-09`).
+
+| state | when | what the user is told |
+|---|---|---|
+| `ok` | published — **names the time point and the cursor letter** | *Showing each node's voltage at 1 ns, where cursor A is on the waveform.* |
+| `okclamped` | published, but the cursor sat outside the data, so the boundary sample was held (RULING D4-4, issue 0869). **One neutral wording covers both ends** — "past the end of the run" would be false before the first sample | *Cursor B is at 4.5 ns, outside the time range of the run. Showing each node's voltage at 4 ns, the closest point that was actually measured.* |
+| `nocursor` | no cursor is on anywhere | *Turn on cursor A or cursor B in the waveform window first. The schematic then shows each node's voltage at the time that cursor marks.* |
+| `noraw` | **nothing attached to this sheet AND the supply below found nothing to attach** — no candidate on disk, no file the waveform viewer is showing, or a candidate that would not parse | *No simulation results are loaded, so there are no voltages to show. Run a simulation first, then try again.* |
+| `notran` | the results are attached and they are not a transient. **The supply's attach is UNDONE before this returns** — see the unwind below | *These results are not from a transient run, so there is no time axis to read a voltage at. Run a transient simulation to use this.* |
+| `staleraw` | 🆕 the candidate is OLDER than the circuit it describes (ruling 0838, inherited from `cadence::_annot_raw_candidate`). Nothing is attached, nothing is published, and **the sentence names the file** | *The results file run.raw is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again, then try again.* |
+| `viewerdiff` | 🆕 the file on disk and the copy the waveform viewer is holding are **different simulation runs** (RULING D5-1). The attach is undone, nothing is published, and the sentence tells the user to plot the results again | *The results file run.raw on disk is from a different simulation run than the one the waveform window is showing, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again.* |
+| `nodata` | the engine had nothing to resolve against — **⚠ UNREACHABLE, issue 0871**: `xschem raw loaded` IS `sch_waves_loaded()`, the same predicate `backannotate_at_time()` gates on, so the `noraw` arm above has already returned. Three refusal states are reachable, not four | *The results have no values at 3 ns, so nothing was placed on the schematic.* |
+
+#### The OTHER mint: what the three `6` chords say (`cadence::_annot_msg`)
+
+The mask half says what the schematic is showing right now, worded off the user's
+own ratified **Results > Annotate** labels so the status line and the menu agree
+about what the three switches do. A state clause is appended after ONE space.
+
+| mask | what the user is told |
 |---|---|
-| `ok` | published — **names the time point and the cursor letter** |
-| `nocursor` | no cursor is on anywhere |
-| `noraw` | **nothing attached to this sheet AND the supply below found nothing to attach** — no candidate on disk, no file the waveform viewer is showing, or a candidate that would not parse |
-| `notran` | the results are attached and they are not a transient. **The supply's attach is UNDONE before this returns** — see the unwind below |
-| `staleraw` | 🆕 the candidate is OLDER than the circuit it describes (ruling 0838, inherited from `cadence::_annot_raw_candidate`). Nothing is attached, nothing is published, and **the sentence names the file** |
-| `viewerdiff` | 🆕 the file on disk and the copy the waveform viewer is holding are **different simulation runs** (RULING D5-1). The attach is undone, nothing is published, and the sentence tells the user to plot the results again |
-| `nodata` | the engine had nothing to resolve against — **⚠ UNREACHABLE, issue 0871**: `xschem raw loaded` IS `sch_waves_loaded()`, the same predicate `backannotate_at_time()` gates on, so the `noraw` arm above has already returned. Three refusal states are reachable, not four |
+| 0 | *Annotation is off. The schematic is not showing simulation numbers.* |
+| 1 | *Showing device operating-point values on the schematic.* |
+| 2 | *Showing DC node voltages on the schematic.* |
+| 3 | *Showing device operating-point values and DC node voltages on the schematic.* |
+| 4 | *Showing node voltages at the waveform cursor on the schematic.* |
+| 5 | *Showing device operating-point values, and node voltages at the waveform cursor, on the schematic.* |
+| 6 | *Showing DC node voltages, and node voltages at the waveform cursor, on the schematic.* |
+| 7 | *Showing device operating-point values, DC node voltages, and node voltages at the waveform cursor, on the schematic.* |
+
+| state | what the user is told (appended) |
+|---|---|
+| `off` | nothing appended |
+| `live` | *These results were already loaded.* |
+| `noop` | *The loaded results do not include an operating point, so there are no device values to show. Load a different results file from Waves > Op Annotate, then press again.* — **the menu path is DERIVED** through `cadence::_annot_menu_op` → `annot_menu_path_waves_op` (RULING D5-4, issue 0661's drift class), and the internal `xschem raw_clear` remedy the old sentence offered is **gone**: an internal command is not something to hand a user |
+| `loaded` | *Loaded results from &lt;path&gt;.* |
+| `failed` | *Could not read the results file &lt;path&gt;, so nothing was placed on the schematic.* |
+| `noraw` | *There is no results file at &lt;path&gt; yet. Run a simulation first.* |
+| `nopath` | *No results file has been found for this cell. Run a simulation first.* |
+| `stale` | *The results file &lt;name&gt; is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again.* |
+| `notop` | **returns BEFORE the mask switch**, so it carries no "Showing ..." prefix — the mask was never written, and that prefix would be a caption with no measurement behind it (RULING D5-1). Two shapes: *No operating point results are loaded. These are from a 'tran' run instead, so there are no operating-point numbers to show. Run an operating point analysis, or press Alt-Shift-6 for node voltages at the waveform cursor.* — and, when the attached results cannot say what they are, *... The results loaded here are not an operating point, so ...* |
+
+A trailing clause names the symbol types nothing could be annotated for, clipped
+at four: *These symbol types have no operating-point values to show: nmos, pmos,
+res, cap and more.*
+
+#### The 255-BYTE status line, and where the two channels differ
+
+**⚠ THE OVERFLOW WAS LIVE BEFORE A WORD WAS REWRITTEN (issue 0639).** Measured on
+the shipped binary 2026-08-27: mask 7 + `noop` + five symbol types built a **257**
+character line, `xschem get statusmsg` read back **255**, and the tail died
+mid-token — `nmos pmos res cap ...` arrived as `cap .`. C stores the line in
+`statusmsg_text[256]` (`src/xschem.h`) and fills it with `my_strncpy`
+(`src/scheduler.c:59`), so the wall is a **byte** count.
+
+**⚠ AND IT WAS STILL LIVE AFTER THE REWRITE, FOR A DIFFERENT REASON (issue
+0887, fixed 2026-08-28).** The first budget counted Tcl **characters** and
+justified it by noting that every minted sentence is plain ASCII. That is true of
+the *wording* and false of the *sentence*: the `loaded`, `failed` and `noraw`
+clauses paste the user's own results-file path into it, and a path is whatever
+the designer named their directory. A project under an accented or non-Latin
+directory built a line of **225 characters and 256 bytes**, the budget waved it
+through, and C cut it at 255 with no `...` to show for it.
+
+`cadence::_annot_bytes` is now the one ruler — `string bytelength`, which is what
+`Tcl_GetString` really hands the C side, with `encoding convertto utf-8` as the
+fallback on a Tcl that dropped the command. `cadence::_annot_fit` is the ONE
+place that knows the number. It shrinks a character window until its contents fit
+252 bytes, then cuts at a **space** and marks the cut with `...`, so an elision is
+visible and never lands inside a token or inside a character.
+`cadence::_annot_say` is the ONE renderer: the **CIW gets the sentence whole** —
+it is the record, and it scrolls — and the **held status line gets the fitted
+copy**. That split is 0639's unmade choice, made; it is an unratified decision and
+carries a rule debt under **0886**.
+
+Two consequences a reader should expect rather than discover. Every sentence the
+two mints render is **plain printable ASCII** as *wording* (row **A11-7**, second
+leg) — the user's path is the part that is not, which is exactly why the budget
+counts bytes. And on the longest combinations the status line and the CIW
+**deliberately disagree** — the bar shows a marked elision of the front of the
+sentence.
+
+The rows: **A11-1** the budget as a unit; **A11-2** the two channels end to end;
+**A11-9** the byte budget against a non-ASCII path, through `xschem statusmsg`
+and back; **A11-10** 578 combinations of mask × state × symbol types × three
+results paths, one long and one non-ASCII, every one inside 255 bytes after the
+fit. The suite measures bytes with its **own** helper, never the mint's, so a
+broken ruler cannot agree with itself.
+
+**How often the elision fires, and what it eats — measured 2026-08-28.** With an
+ordinary project path (55 characters) the bar elides **62 of 192** mask × state ×
+symbol-type combinations; the widest sentence is **373 bytes**. The old cryptic
+wording exceeded the wall in **1** of 192. And the text the cut takes is the
+actionable text: mask 7 + `noop` fits as *"… values to show. Load a different
+results file from Waves…"*, so the derived menu path — the whole point of the
+D5-4 fix — is what disappears. Row A11-11 cannot see this: it matches the remedy
+against the **unfitted** mint output. Full record in issue **0639**.
+
+#### ⚠ Known wording defects in this surface, all OPEN (2026-08-28)
+
+The plain-English pass landed green and then measurement found five things it did
+not cover. They are listed here so a reader of this section does not assume the
+table above is the finished article.
+
+| issue | what is wrong |
+|---|---|
+| **0888** | the mask clause says *"Showing … on the schematic"* in all 35 mask × refusal-state combinations, where nothing was placed on the schematic. The clause used to be a **mode** claim and was true; it is now a **screen** claim and is not. `_annot_msg`'s own `notop` guard argues exactly this and was applied to one state only. The remedy is a user ruling, not a code choice. |
+| **0889** | `These symbol types … : nmos.` is plural with one item; `_annot_tsec -0.0` renders `-0 s`. |
+| **0890** | `ase::ui::annot_fail_msg` splices the engine's own error text into a user-facing sentence through `$e`. Latent — `xschem annotate_op` was measured not to raise at all. |
+| **0891** | 0881's V50/V51 are green headless and **red with a live display**. Not this pass — the wording in the failure output matches; the state and the attached file diverge. |
+| **0892** | five rows compare the **fitted** status line to the **untrimmed** sentence, four with an absolute path in it. N9's margin is 35 bytes, N10b's is 33. Row N15 in the same file already shows the right shape. |
 
 **⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH** (rows V14/V15/V16). Arming
 first would leave the user looking at an armed mode over the PREVIOUS request's

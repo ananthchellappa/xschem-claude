@@ -105,6 +105,52 @@ proc rcall {script} {
   return [list $rc $res]
 }
 ## A raise is only the RIGHT raise if it names the thing the caller got wrong.
+# =============================================================================
+# THE PLAIN-ENGLISH GOLDENS — issue 0886, item A11
+# =============================================================================
+# The user's ruling, verbatim: "wording too cryptic. Give it in plain english
+# with context, 9th grade level." Every sentence the annotation surface shows
+# is minted ONCE in utils/annot_mode.tcl (RULING D5-4) and asserted here as a
+# WHOLE SENTENCE, never as a substring: a row that only looked for the word
+# "cursor" cannot tell a good sentence from a bad one.
+#
+# The eight mask sentences say what is on the schematic right now. They are
+# worded off the user's own ratified menu labels — "Operating Point info",
+# "DC Node Voltages", "Transient Node Voltages (at cursor)" — so the status
+# line and the menu agree about what the three switches do.
+set A11_M0 {Annotation is off. The schematic is not showing simulation numbers.}
+set A11_M1 {Showing device operating-point values on the schematic.}
+set A11_M2 {Showing DC node voltages on the schematic.}
+set A11_M3 {Showing device operating-point values and DC node voltages on the schematic.}
+set A11_M4 {Showing node voltages at the waveform cursor on the schematic.}
+set A11_M5 {Showing device operating-point values, and node voltages at the waveform cursor, on the schematic.}
+set A11_M6 {Showing DC node voltages, and node voltages at the waveform cursor, on the schematic.}
+set A11_M7 {Showing device operating-point values, DC node voltages, and node voltages at the waveform cursor, on the schematic.}
+
+# The state clauses, each appended to a mask sentence after ONE space. Every
+# clause that the user can act on ends with what to do; the two that report a
+# completed action do not, because there is nothing to do.
+set A11_LIVE   { These results were already loaded.}
+set A11_NOOP   { The loaded results do not include an operating point, so there are no device values to show. Load a different results file from Waves > Op Annotate, then press again.}
+set A11_NOPATH { No results file has been found for this cell. Run a simulation first.}
+# The three clauses that paste the user's own results-file path into the
+# sentence, and the one that pastes its file name. @P@ is the full path, @T@ the
+# tail; row A11-12 substitutes and compares byte for byte.
+#
+# ⚠ WHY THEY ARE HERE AT ALL. A11_NOPATH sat in this file unreferenced from the
+# day it was written, so the sentence a user reads on a freshly drawn cell that
+# has never been simulated -- the FIRST annotation sentence most people will
+# ever see -- was the one sentence in the whole surface with no byte-exact
+# golden behind it in this suite. It was measured 2026-08-28 that the state
+# clause could be replaced wholesale with internal jargon and every row here
+# still passed. A11-12 is what closes that, and the other four clauses join it
+# so the set is complete rather than patched.
+set A11_OFFC   {}
+set A11_LOADED { Loaded results from @P@.}
+set A11_FAILED { Could not read the results file @P@, so nothing was placed on the schematic.}
+set A11_NORAW  { There is no results file at @P@ yet. Run a simulation first.}
+set A11_STALE  { The results file @T@ is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again.}
+
 proc check_raises {name script needle} {
   global fail npass
   set rc [catch {uplevel #0 $script} res]
@@ -3733,10 +3779,10 @@ check {N23 `_annot_msg` is worded off the RESULTING MASK, and mask 2 has a wordi
         [rcall {cadence::_annot_msg 1 off {} {}}] \
         [rcall {cadence::_annot_msg 2 off {} {}}] \
         [rcall {cadence::_annot_msg 3 off {} {}}]] \
-  [list {0 {OP annotation OFF}} \
-        {0 {OP annotation ON (device OP info)}} \
-        {0 {OP annotation ON (node voltages)}} \
-        {0 {OP annotation ON (device OP info + node voltages)}}]
+  [list [list 0 $A11_M0] \
+        [list 0 $A11_M1] \
+        [list 0 $A11_M2] \
+        [list 0 $A11_M3]]
 
 # ⚠ A BIND-BODY TYPO IS A CALLER BUG, SO IT IS LOUD. op_annot's own discipline
 # is the opposite for DATA (a missing vector blanks, I3); a mode spelling is
@@ -3935,7 +3981,7 @@ check {N3 `none` writes mask 0 through BOTH halves of the mirror and says so, pl
   [list [opa_n_mode none] [rcall {xschem get annot_show}] \
         [expr {[info exists ::annot_show] ? $::annot_show : {NO-VAR}}] \
         [xschem get statusmsg]] \
-  {{} {0 0} 0 {OP annotation OFF}}
+  [list {} {0 0} 0 $A11_M0]
 
 # ⚠ BOTH HALVES IN ONE ROW (S7 D4). A setter that wrote only the Tcl var would
 # be healed by the `update_all_sym_bboxes` that follows it, so reading them
@@ -3965,7 +4011,7 @@ set ::netlist_dir $N_ND_BAD
 check {N5 a LIVE annotation is never reloaded: the numbers survive and the line says so} \
   [list [opa_n_mode op] [xschem raw loaded] [op_annot::_annotated] \
         [opa_n_row [op_annot::text MZZ1] gm] [xschem get statusmsg]] \
-  {{} 0 1 100u {OP annotation ON (device OP info + node voltages) -- raw already loaded}}
+  [list {} 0 1 100u "$A11_M3$A11_LIVE"]
 
 # ===========================================================================
 # N1b — THE RULING AS THE SEQUENCE THE USER ACTUALLY PRESSES
@@ -4050,7 +4096,7 @@ set ::netlist_dir $N_ND_EMPTY
 check {N6 no raw loaded and none on disk: the mask still moves, the missing file is NAMED} \
   [list $n6_pre [opa_n_mode op] [xschem raw loaded] [rcall {xschem get annot_show}] \
         [xschem get statusmsg]] \
-  [list -1 {} -1 {0 1} "OP annotation ON (device OP info) -- NO RAW FILE: [file join $N_ND_EMPTY n_dev.raw]"]
+  [list -1 {} -1 {0 1} "$A11_M1 There is no results file at [file join $N_ND_EMPTY n_dev.raw] yet. Run a simulation first."]
 
 # ⚠ WITHOUT THE HOLD THIS WHOLE SECTION IS A NO-OP IN REAL USE — see the
 # header. Sabotage SB3 drops `-hold` and ONLY this row reds.
@@ -4063,7 +4109,7 @@ set ::netlist_dir $N_ND_GOOD
 check {N8 no raw loaded but one on disk: it is loaded, the block populates, the path is NAMED} \
   [list $n8_pre [opa_n_mode op] [xschem raw loaded] [op_annot::_annotated] \
         [opa_n_row [op_annot::text MZZ1] gm] [xschem get statusmsg]] \
-  [list -1 {} 0 1 100u "OP annotation ON (device OP info) -- loaded [file join $N_ND_GOOD n_dev.raw]"]
+  [list -1 {} 0 1 100u "$A11_M1 Loaded results from [file join $N_ND_GOOD n_dev.raw]."]
 
 # ⚠ SUCCESS IS RE-ASKED, NEVER TAKEN FROM annotate_op. Measured: on a garbage
 # file it returns rc=0 with the PATH as its result and `raw loaded` -1. A key
@@ -4074,7 +4120,7 @@ set n9_pre [xschem raw loaded]
 set ::netlist_dir $N_ND_BAD
 check {N9 a candidate that will not parse is reported as a FAILURE, not as a load} \
   [list $n9_pre [opa_n_mode op] [xschem raw loaded] [xschem get statusmsg]] \
-  [list -1 {} -1 "OP annotation ON (device OP info) -- COULD NOT LOAD [file join $N_ND_BAD n_dev.raw]"]
+  [list -1 {} -1 "$A11_M1 Could not read the results file [file join $N_ND_BAD n_dev.raw], so nothing was placed on the schematic."]
 
 # ⚠ ISSUE 0864 — THIS ROW IS REVERSED, AND THE REVERSAL IS THE POINT. It used
 # to assert issue 0451's "fourth indistinguishable cause": a database attached,
@@ -4094,7 +4140,7 @@ check {N10 with the live-cursor switch OFF the `6` chord reports the raw as LIVE
   [list [opa_n_mode op] [xschem raw loaded] [op_annot::_annotated] \
         [rcall {op_annot::text MZZ1}] [xschem get statusmsg]] \
   [list {} 0 1 [list 0 "id  = 10u\ngm  = 100u\ngds = 1u\n"] \
-        {OP annotation ON (device OP info) -- raw already loaded}]
+        "$A11_M1$A11_LIVE"]
 set ::live_cursor2_backannotate $n10_lv
 
 # ⚠ WHICH TERM FAILED IS NO LONGER A QUESTION (issue 0459 closes here). The
@@ -4115,9 +4161,7 @@ catch {xschem raw_read $N_RAW}
 check {N10b a raw that published no OP point names THAT, not the backannotate flag} \
   [list $::live_cursor2_backannotate [xschem raw loaded] [op_annot::_annotated] \
         [opa_n_mode op] [xschem get statusmsg]] \
-  [list 0 0 0 {} "OP annotation ON (device OP info) -- a raw is loaded but it\
-     published no operating point: use Waves > Op Annotate, or `xschem raw_clear`\
-     then press again"]
+  [list 0 0 0 {} "$A11_M1$A11_NOOP"]
 xschem raw_clear
 
 # ⚠ N10c — MANDATORY, NOT BELT-AND-BRACES, and the reason is this branch's own
@@ -4204,7 +4248,7 @@ set ::live_cursor2_backannotate 0
 check {A64-3 the `6` chord loads a database without re-ticking the box} \
   [list [opa_n_mode op] [xschem raw loaded] $::live_cursor2_backannotate \
         [opa_n_row [op_annot::text MZZ1] gm] [xschem get statusmsg]] \
-  [list {} 0 0 100u "OP annotation ON (device OP info) -- loaded [file join $N_ND_GOOD n_dev.raw]"]
+  [list {} 0 0 100u "$A11_M1 Loaded results from [file join $N_ND_GOOD n_dev.raw]."]
 
 # ⚠ BEHAVIOURALLY COVERED BY S16 ALREADY, and kept anyway for one reason: S16
 # reads a rendered block, so a term re-added in a shape this fixture happens to
@@ -4310,9 +4354,25 @@ check {N14 the scan answers {n-annotatable types-with-no-devpath}, current level
 # gets a blank block and no reason (issue 0451, four indistinguishable causes).
 # Both confusions are reported in ONE line (decision D5): fixing the raw only to
 # meet the descriptor problem on the next press is the shape D5 rejects.
-check {N15 with nothing annotatable on the sheet the missing descriptor is NAMED, alongside the raw} \
-  [list [opa_n_mode op] [xschem get statusmsg]] \
-  [list {} "OP annotation ON (device OP info) -- NO RAW FILE: [file join $N_ND_EMPTY n_probe.raw] -- no OP descriptor for symbol type(s): zzs8probe"]
+## ⚠ ISSUE 0886 MOVED THIS ROW'S CLAIM OFF THE STATUS LINE, DELIBERATELY. In
+## plain English this combination runs past the 255 characters the schematic's
+## status bar can hold, so the status line shows the FRONT of the sentence with
+## an elided tail while the sentence itself is complete. The claim -- that the
+## symbol type nobody registered is NAMED -- therefore has to be asserted where
+## the sentence is minted. Of the status line the row asserts only that it fits,
+## and that it is either the whole sentence or a properly marked elision of its
+## front, so it can never disagree with the sentence about what it says.
+set n15_msg  [lindex [rcall [list cadence::_annot_msg 1 noraw [file join $N_ND_EMPTY n_probe.raw] zzs8probe]] 1]
+set n15_mode [opa_n_mode op]
+set n15_line [xschem get statusmsg]
+check {N15 with nothing annotatable on the sheet the missing descriptor is NAMED, alongside the results file} \
+  [list $n15_mode $n15_msg \
+        [expr {[string length $n15_line] <= 255 ? 1 : 0}] \
+        [expr {($n15_line eq $n15_msg) ||
+               ([string range $n15_line end-2 end] eq {...} &&
+                [string first [string range $n15_line 0 end-3] $n15_msg] == 0) ? 1 : 0}]] \
+  [list {} "$A11_M1 There is no results file at [file join $N_ND_EMPTY n_probe.raw] yet. Run a simulation first. These symbol types have no operating-point values to show: zzs8probe." \
+        1 1]
 
 opa_n_mode none
 set ::netlist_dir $n_nd_saved
@@ -11279,11 +11339,11 @@ set V_PINS_P4   {d 4 g 0.9 0 0.0 0 0.0}
 ## the specification: `cadence::_annot_tran_msg` renders exactly them and every
 ## caller -- the chord, the ASE-L menu entry, the CIW line and the held status
 ## line -- renders through it rather than composing its own wording.
-set V_MSG_OK       {Transient annotation at t = 1e-09 (cursor A)}
-set V_MSG_NOCURSOR {Transient annotation -- NO CURSOR: turn on cursor A or B in the waveform viewer}
-set V_MSG_NORAW    {Transient annotation -- NO RAW FILE loaded}
-set V_MSG_NOTRAN   {Transient annotation -- the loaded database is not a transient analysis}
-set V_MSG_NODATA   {Transient annotation -- nothing to annotate at t = 3e-09}
+set V_MSG_OK       {Showing each node's voltage at 1 ns, where cursor A is on the waveform.}
+set V_MSG_NOCURSOR {Turn on cursor A or cursor B in the waveform window first. The schematic then shows each node's voltage at the time that cursor marks.}
+set V_MSG_NORAW    {No simulation results are loaded, so there are no voltages to show. Run a simulation first, then try again.}
+set V_MSG_NOTRAN   {These results are not from a transient run, so there is no time axis to read a voltage at. Run a transient simulation to use this.}
+set V_MSG_NODATA   {The results have no values at 3 ns, so nothing was placed on the schematic.}
 
 ## `xschem annotate_at <t>` -> the verb's rc, or a marker. NEVER a bare catch:
 ## the verb does not exist today and `invalid command` reported as 0 would make
@@ -11737,13 +11797,32 @@ check_raises {V17b an unknown state RAISES rather than rendering a default apolo
 # and rendered by callers.
 # ⚠ WHOLE-LINE COMMENTS ARE STRIPPED FIRST, or this section's own header
 # paragraphs would count as mints.
+## ⚠ RE-AIMED BY ISSUE 0886, AND STRENGTHENED RATHER THAN WEAKENED. The eight
+## transient sentences no longer share a "Transient annotation" stem -- plain
+## English does not open every sentence with a category name -- so the row now
+## carries THREE fragments, one from a success, one from a refusal the user can
+## act on and one from a refusal about the results themselves. The mint leg is
+## BEHAVIOURAL: it asks the rendered sentence for the fragment rather than
+## grepping the source, because a minted sentence is written across continuation
+## lines and a source grep would red on a reflow that changed nothing the user
+## sees. The three zero legs are where the teeth are: a second mint anywhere
+## else is what D5-4 forbids.
 set V_MINT [file join $repo utils annot_mode.tcl]
-check {V18 RULING D5-4 the transient sentences live in utils/annot_mode.tcl and in no other file} \
-  [list [expr {[opa_v_ngrep $V_MINT {Transient annotation}] >= 1 ? 1 : 0}] \
-        [opa_v_ngrep $N_ASE {Transient annotation}] \
-        [opa_v_ngrep $N_RC  {Transient annotation}] \
-        [opa_v_ngrep $N_TCL {Transient annotation}]] \
-  {1 0 0 0}
+set V18_FRAGS [list {is on the waveform} \
+                    {voltage at the time that cursor marks} \
+                    {no time axis to read a voltage at}]
+set V18_SENT [list [lindex [rcall {cadence::_annot_tran_msg ok 1e-09 A}] 1] \
+                   [lindex [rcall {cadence::_annot_tran_msg nocursor {} {}}] 1] \
+                   [lindex [rcall {cadence::_annot_tran_msg notran {} {}}] 1]]
+set v18 {}
+foreach _v18f $V18_FRAGS _v18s $V18_SENT {
+  lappend v18 [expr {[string match "*$_v18f*" $_v18s] ? 1 : 0}] \
+              [opa_v_ngrep $N_ASE $_v18f] \
+              [opa_v_ngrep $N_RC  $_v18f] \
+              [opa_v_ngrep $N_TCL $_v18f]
+}
+check {V18 RULING D5-4 the transient sentences are minted in utils/annot_mode.tcl and appear in no other file} \
+  $v18 {1 0 0 0 1 0 0 0 1 0 0 0}
 
 # ===========================================================================
 # V19 — STRUCTURAL: BOTH ENTRY POINTS DRIVE ONE CODE PATH
@@ -11793,14 +11872,14 @@ set v21 {}
 foreach m {0 1 2 3 4 5 6 7} { lappend v21 [rcall [list cadence::_annot_msg $m off {} {}]] }
 check {V21 `_annot_msg` keeps its four shipped wordings and gains four that name the transient class} \
   $v21 \
-  [list {0 {OP annotation OFF}} \
-        {0 {OP annotation ON (device OP info)}} \
-        {0 {OP annotation ON (node voltages)}} \
-        {0 {OP annotation ON (device OP info + node voltages)}} \
-        {0 {OP annotation ON (transient node voltages)}} \
-        {0 {OP annotation ON (device OP info + transient node voltages)}} \
-        {0 {OP annotation ON (node voltages + transient node voltages)}} \
-        {0 {OP annotation ON (device OP info + node voltages + transient node voltages)}}]
+  [list [list 0 $A11_M0] \
+        [list 0 $A11_M1] \
+        [list 0 $A11_M2] \
+        [list 0 $A11_M3] \
+        [list 0 $A11_M4] \
+        [list 0 $A11_M5] \
+        [list 0 $A11_M6] \
+        [list 0 $A11_M7]]
 
 # ===========================================================================
 # V22 — GUARD G1, BEHAVIOURAL, BOTH LEGS: LOADING WAVES IS NOT A REQUEST
@@ -12032,9 +12111,9 @@ check {V25 issue 0868 DELIBERATE: with the box off `xschem set cursor2_x` still 
 # ⚠ THE THREE EXTRA GOLDEN SENTENCES, beside V17's five. V_MSG_CLAMP is NEW
 # WORDING the user has not ratified -- it is owed as a `rule` debt against
 # issue 0869 and must not be re-worded here without clearing that debt.
-set V_MSG_OK2   {Transient annotation at t = 2e-09 (cursor B)}
-set V_MSG_OK3   {Transient annotation at t = 3e-09 (cursor B)}
-set V_MSG_CLAMP {Transient annotation at t = 4e-09 (cursor B at 4.5e-09, outside the data -- holding the boundary sample)}
+set V_MSG_OK2   {Showing each node's voltage at 2 ns, where cursor B is on the waveform.}
+set V_MSG_OK3   {Showing each node's voltage at 3 ns, where cursor B is on the waveform.}
+set V_MSG_CLAMP {Cursor B is at 4.5 ns, outside the time range of the run. Showing each node's voltage at 4 ns, the closest point that was actually measured.}
 ## ⚠ ISSUE 0857's SENTENCE, AND THE USER RULED IT ON 2026-08-27, VERBATIM:
 ## "Yes, 6 does nothing when there is ONLY a TRAN result. But, it's a good idea
 ## to say 'No OP results available' in the CIW." So the two silent returns of
@@ -12047,8 +12126,8 @@ set V_MSG_CLAMP {Transient annotation at t = 4e-09 (cursor B at 4.5e-09, outside
 ## ⚠ NO "OP annotation ON/OFF (...)" PREFIX. On both refusal paths the mask is
 ## never written, or is written and restored, so a prefix would be a sentence
 ## making a claim about a screen that did not change -- RULING D5-1's shape.
-set V_MSG_NOTOP_TRAN {No operating point results available -- the results loaded here are a 'tran' analysis, not an operating point. Run an operating point analysis, or press Alt-Shift-6 to annotate transient node voltages at the waveform cursor.}
-set V_MSG_NOTOP_BARE {No operating point results available -- the results loaded here are not an operating point. Run an operating point analysis, or press Alt-Shift-6 to annotate transient node voltages at the waveform cursor.}
+set V_MSG_NOTOP_TRAN {No operating point results are loaded. These are from a 'tran' run instead, so there are no operating-point numbers to show. Run an operating point analysis, or press Alt-Shift-6 for node voltages at the waveform cursor.}
+set V_MSG_NOTOP_BARE {No operating point results are loaded. The results loaded here are not an operating point, so there are no operating-point numbers to show. Run an operating point analysis, or press Alt-Shift-6 for node voltages at the waveform cursor.}
 ## The lab_pin tail over the OPERATING POINT fixture of section T. Measured: the
 ## `d` node carries 7.5 and `g` is not a vector in that raw, so it renders the
 ## I3 placeholder rather than a number.
@@ -12371,7 +12450,7 @@ check {V31 issue 0872 RULING 0856 on a TRANSIENT sheet Alt-6 and 6 publish nothi
         $v31_4mask $v31_4msg $v31_4paint \
         $v31_5pre $v31_5mask $v31_5msg $v31_5paint] \
   [list ok 4 $V_PINS_P3 \
-        0 {OP annotation OFF} $V_PINS_NONE \
+        0 $A11_M0 $V_PINS_NONE \
         0 $V_MSG_NOTOP_TRAN $V_PINS_NONE \
         0 $V_MSG_NOTOP_TRAN $V_PINS_NONE \
         {-1 0 -1} 0 $V_MSG_NOTOP_TRAN $V_PINS_NONE]
@@ -12414,8 +12493,8 @@ opa_l_annot 0
 check {V31b CONTROL an OPERATING POINT database still annotates on Alt-6, and with NO database `6` still searches and still speaks} \
   [list $v31b_st $v31b_mask $v31b_paint $v31b_msg \
         $v31b2_mask $v31b2_ld \
-        [string match {OP annotation ON (device OP info) -- NO RAW FILE: *} $v31b2_msg]] \
-  [list {0 op} 2 $V_PINS_OP {OP annotation ON (node voltages) -- raw already loaded} \
+        [string match "$A11_M1 There is no results file at *" $v31b2_msg]] \
+  [list {0 op} 2 $V_PINS_OP "$A11_M2$A11_LIVE" \
         1 {0 -1} 1]
 
 # ===========================================================================
@@ -12548,7 +12627,7 @@ catch {xschem raw clear}
 set ::netlist_dir $v31c_nd
 check {V31d CONTROL an OPERATING POINT at the SAME candidate path still loads, still arms, still paints and still names the file} \
   [list $v31d_mask $v31d_ld $v31d_st $v31d_paint \
-        [string match "OP annotation ON (node voltages) -- loaded *[file join $V_ND_OP v_cand.raw]" $v31d_msg]] \
+        [string match "$A11_M2 Loaded results from *[file join $V_ND_OP v_cand.raw]." $v31d_msg]] \
   [list 2 {0 0} {0 op} $V_PINS_OP 1]
 
 # ===========================================================================
@@ -12697,7 +12776,7 @@ close $f
 ## The sixth sentence of the transient mint. NEW WORDING the user has not
 ## ratified -- a `rule` debt -- and deliberately short, because the plain
 ## English pass the user ordered on 2026-08-27 is a separate item.
-set V_MSG_STALERAW "Transient annotation -- the results file [file tail $V_A10_STALE] is older than the circuit it describes, so it was not used. Re-run the simulation."
+set V_MSG_STALERAW "The results file [file tail $V_A10_STALE] is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again, then try again."
 
 set v33_nd $::netlist_dir
 
@@ -12988,7 +13067,7 @@ check {V40 issue 0857 with ONLY a transient loaded `6` and `Alt-6` say so in the
         $v40c $v40c_msg] \
   [list [list [list warn $V_MSG_NOTOP_TRAN]] $V_MSG_NOTOP_TRAN 0 $V_PINS_NONE \
         [list [list warn $V_MSG_NOTOP_TRAN]] $V_MSG_NOTOP_TRAN 0 $V_PINS_NONE \
-        {} {OP annotation OFF}]
+        {} $A11_M0]
 
 # ===========================================================================
 # V41 — ISSUE 0857, HALF 2: THE 0872 UNWIND SPEAKS TOO. RED BEFORE
@@ -13033,7 +13112,7 @@ check {V41 issue 0857 the post-run desktop: Alt-6 searches, loads, unwinds AND s
 ## meets when the results file changed under the waveform viewer, and it is
 ## written the way the user asked for on 2026-08-27 -- plain English, saying
 ## what happened AND what to do about it, with no internal vocabulary in it.
-set V_MSG_VDIFF42 "Transient annotation -- the results file [file tail $V_A10_STALE] on disk is from a different simulation run than the one the waveform viewer is showing, so nothing was annotated. Plot the results again in the waveform viewer, then try again."
+set V_MSG_VDIFF42 "The results file [file tail $V_A10_STALE] on disk is from a different simulation run than the one the waveform window is showing, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again."
 check {V42 RULING D5-4 the stale-results sentence, the changed-results sentence and BOTH shapes of the no-operating-point sentence, byte for byte} \
   [list [rcall [list cadence::_annot_tran_msg staleraw {} {} $V_A10_STALE]] \
         [rcall [list cadence::_annot_tran_msg viewerdiff {} {} $V_A10_STALE]] \
@@ -13061,12 +13140,12 @@ set V_A10_OTHER [list [file join $repo src xschem.tcl] \
                       [file join $repo src ase_window.tcl] \
                       [file join $repo src wave_viewer.tcl] \
                       [file join $repo src cadence_style_rc]]
-set v43_mint [list [expr {[opa_v_ngrep $V_A10_MINT {No operating point results available}] >= 1 ? 1 : 0}] \
+set v43_mint [list [expr {[opa_v_ngrep $V_A10_MINT {No operating point results are loaded}] >= 1 ? 1 : 0}] \
                    [expr {[opa_v_ngrep $V_A10_MINT {is older than the circuit it describes}] >= 1 ? 1 : 0}] \
                    [expr {[opa_v_ngrep $V_A10_MINT {is from a different simulation run}] >= 1 ? 1 : 0}]]
 set v43_other {}
 foreach _vp $V_A10_OTHER {
-  lappend v43_other [opa_v_ngrep $_vp {No operating point results available}]
+  lappend v43_other [opa_v_ngrep $_vp {No operating point results are loaded}]
   lappend v43_other [opa_v_ngrep $_vp {is older than the circuit it describes}]
   lappend v43_other [opa_v_ngrep $_vp {is from a different simulation run}]
 }
@@ -13253,7 +13332,7 @@ set V_PINS_OTHER {d 21 g 0.1 0 0.0 0 0.0}
 ## grounds read 0.0. That is what "the operating point is on the sheet" looks
 ## like for this file, and it is what row V46's control leg requires to appear.
 set V_PINS_OP75  {d 7.5 g - 0 0.0 0 0.0}
-set V_MSG_VDIFF "Transient annotation -- the results file [file tail $V_A10_VRUN] on disk is from a different simulation run than the one the waveform viewer is showing, so nothing was annotated. Plot the results again in the waveform viewer, then try again."
+set V_MSG_VDIFF "The results file [file tail $V_A10_VRUN] on disk is from a different simulation run than the one the waveform window is showing, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again."
 
 # ===========================================================================
 # V45 — THE ORDINARY RESULTS FILE: AN OPERATING POINT *AND* A TRANSIENT
@@ -13591,6 +13670,500 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
 
 } verr]} {
   puts "UNEXPECTED ERROR (section V): $verr"
+  incr fail
+}
+
+# =============================================================================
+# SECTION A11 — THE ANNOTATION SURFACE SPEAKS PLAIN ENGLISH (issue 0886)
+# =============================================================================
+# The user's ruling, verbatim: "wording too cryptic. Give it in plain english
+# with context, 9th grade level."
+#
+# ⚠ THE SUITE COULD NOT SEE THIS DEFECT, BY CONSTRUCTION, AND THAT IS WHY THESE
+# ROWS EXIST. Every sentence golden above is a byte-for-byte comparison against
+# a string this file itself chose, so a green run proves the bytes match — the
+# one thing that cannot tell a good sentence from a bad one. The rows below add
+# the three legs that CAN judge a rewrite mechanically: no internal vocabulary
+# reaches the user, every number reaches the user in engineering units, and
+# every refusal the user can act on says what to do. The fourth leg, whether the
+# sentences actually read well, is a look debt and only the user can pay it.
+#
+# ⚠ AND THE STATUS BAR HOLDS 255 CHARACTERS. Measured on the shipped binary
+# before a word was rewritten: mask 7 with the no-operating-point state and five
+# symbol types builds a 257-character line, `xschem get statusmsg` reads back
+# 255, and the tail dies mid-token. Plain English is longer than jargon, so the
+# budget is not optional headroom — it is the reason the "what to do" half of a
+# sentence would be the half that gets cut. `cadence::_annot_fit` is the one
+# place that decides, and A11-1 / A11-2 / A11-10 are what hold it honest.
+
+## Whole-line Tcl comments stripped, so a sentence quoted in a header paragraph
+## is never counted as a mint.
+proc opa_a11_code {src} {
+  set out {}
+  foreach l [split $src \n] {
+    if {[regexp {^\s*#} $l]} continue
+    lappend out $l
+  }
+  return [join $out \n]
+}
+
+## Count the CODE lines of <path> that match BOTH regexps. -1 when the file is
+## absent, so a missing file reds one row instead of raising out of the section.
+proc opa_a11_pair {path re1 re2} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] {
+    if {[regexp {^\s*#} $l]} continue
+    if {[regexp -- $re1 $l] && [regexp -- $re2 $l]} { incr n }
+  }
+  return $n
+}
+
+## Is every character of <s> printable US-ASCII? The character budget the status
+## line is trimmed against is a CHARACTER count in Tcl and a BYTE count in C
+## (statusmsg_text[256], src/xschem.h), so one smuggled UTF-8 dash puts the two
+## out of step and the amputation this pass repairs comes back silently.
+proc opa_a11_ascii {s} {
+  foreach c [split $s {}] {
+    scan $c %c v
+    if {$v < 32 || $v > 126} { return 0 }
+  }
+  return 1
+}
+
+## The length the C side will see. MEASURED HERE INDEPENDENTLY, on purpose: the
+## mint has a proc of its own for this, and a row that borrowed it could not
+## tell a broken ruler from a correct one -- both halves would agree while the
+## status line was amputated. `encoding convertto utf-8` is the plain reading of
+## the same question and needs nothing from the code under test.
+proc opa_a11_bytes {s} { return [string length [encoding convertto utf-8 $s]] }
+
+## Every sentence the two mints can render: eight masks by eight states by three
+## symbol-type lists, the two no-operating-point shapes, and all eight transient
+## arms. A path with no jargon in it, so a banned word can only come from the
+## wording and never from the fixture.
+proc opa_a11_sentences {} {
+  set out {}
+  set p /tmp/zzA11/results.data
+  foreach m {0 1 2 3 4 5 6 7} {
+    foreach st {off live noop loaded failed noraw nopath stale} {
+      foreach ty [list {} {nmos} {nmos pmos res cap ind}] {
+        set r [rcall [list cadence::_annot_msg $m $st $p $ty]]
+        if {[lindex $r 0] != 0} {
+          lappend out "RAISED:[lindex $r 1]"
+        } else {
+          lappend out [lindex $r 1]
+        }
+      }
+    }
+  }
+  foreach a [list [list 1 notop tran {}] [list 1 notop {} {}]] {
+    set r [rcall [concat [list cadence::_annot_msg] $a]]
+    if {[lindex $r 0] != 0} {
+      lappend out "RAISED:[lindex $r 1]"
+    } else {
+      lappend out [lindex $r 1]
+    }
+  }
+  foreach a [list [list ok 1e-09 A {}] [list okclamped 4e-09 B 4.5e-09] \
+                  [list nocursor {} {} {}] [list noraw {} {} {}] \
+                  [list notran {} {} {}] [list nodata 3e-09 B {}] \
+                  [list staleraw {} {} $p] [list viewerdiff {} {} $p]] {
+    set r [rcall [concat [list cadence::_annot_tran_msg] $a]]
+    if {[lindex $r 0] != 0} {
+      lappend out "RAISED:[lindex $r 1]"
+    } else {
+      lappend out [lindex $r 1]
+    }
+  }
+  return $out
+}
+
+if {[catch {
+
+set A11_MINT [file join $repo utils annot_mode.tcl]
+set A11_ASEW [file join $repo src ase_window.tcl]
+set A11_ASE  [file join $repo src ase.tcl]
+
+# ===========================================================================
+# A11-1 — THE STATUS-LINE BUDGET, AS A UNIT
+# ===========================================================================
+# ⚠ THE PROPERTIES, NOT AN IMPLEMENTATION. A line that fits comes back
+# untouched, byte for byte -- the common case must not be paraphrased. A line
+# that does not fit comes back inside the budget, marked as elided with three
+# ASCII dots, and cut at a SPACE that really is in the original: the shipped
+# defect this repairs is a sentence that died mid-token, so "never mid-token" is
+# the claim, and asserting it against the original string is what makes it one.
+set a11_s255     [string repeat x 255]
+set a11_fit255   [rcall [list cadence::_annot_fit $a11_s255]]
+set a11_short    {a line that fits}
+set a11_fitshort [rcall [list cadence::_annot_fit $a11_short]]
+set a11_long     [string trim [string repeat {abcdefghij } 30]]
+set a11_fitlong  [rcall [list cadence::_annot_fit $a11_long]]
+set a11_r        [lindex $a11_fitlong 1]
+set a11_pre      [string range $a11_r 0 end-3]
+check {A11-1 the status line has ONE budget: a line that fits is untouched, a line that does not is cut at a word boundary and marked} \
+  [list [lindex $a11_fit255 1] [lindex $a11_fitshort 1] \
+        [lindex $a11_fitlong 0] \
+        [expr {[string length $a11_r] <= 255 ? 1 : 0}] \
+        [string range $a11_r end-2 end] \
+        [expr {[string first $a11_pre $a11_long] == 0 ? 1 : 0}] \
+        [string index $a11_long [string length $a11_pre]]] \
+  [list $a11_s255 $a11_short 0 1 {...} 1 { }]
+
+# ===========================================================================
+# A11-2 — THE AMPUTATION, END TO END: THE CIW KEEPS THE WHOLE SENTENCE
+# ===========================================================================
+# ⚠ THIS IS THE COMBINATION THAT IS BROKEN ON THE SHIPPED BINARY TODAY. Mask 7,
+# the no-operating-point state and five symbol types: 257 characters go out,
+# 255 come back, and the two channels the user can read already disagree about
+# what the program said. The rule this row pins is that the CIW copy is NEVER
+# trimmed -- it is the record -- while the status line is fitted, so the elision
+# is visible rather than silent. The structural leg is the half no behavioural
+# row can see: every line that writes the status bar must go through the budget,
+# or the next sentence added bypasses it and the defect returns.
+set a11_full [lindex [rcall {cadence::_annot_msg 7 noop {} {nmos pmos res cap ind}}] 1]
+catch {xschem statusmsg -hold ZZA11SENTINEL}
+set a11_spy  [opa_v_spy {catch {cadence::_annot_say $::a11_full warn}}]
+set a11_line [lindex [rcall {xschem get statusmsg}] 1]
+set a11_hold [lindex [rcall {xschem get statusmsg_hold}] 1]
+set a11_nhold [opa_v_ngrep $A11_MINT {xschem statusmsg -hold}]
+check {A11-2 the whole sentence reaches the CIW while the status line is fitted, and every status-line write goes through the budget} \
+  [list [expr {[string length $a11_full] > 255 ? 1 : 0}] \
+        [llength $a11_spy] [lindex $a11_spy 0 0] \
+        [expr {[lindex $a11_spy 0 1] eq $a11_full ? 1 : 0}] \
+        [expr {[string length $a11_line] <= 255 ? 1 : 0}] \
+        [string range $a11_line end-2 end] \
+        [expr {[string first [string range $a11_line 0 end-3] $a11_full] == 0 ? 1 : 0}] \
+        $a11_hold \
+        [expr {$a11_nhold >= 1 ? 1 : 0}] \
+        [expr {[opa_a11_pair $A11_MINT {xschem statusmsg -hold} {_annot_fit}] == $a11_nhold ? 1 : 0}]] \
+  [list 1 1 warn 1 1 {...} 1 1 1 1]
+
+# ===========================================================================
+# A11-3 — A TIME REACHES THE USER THE WAY A DESIGNER READS A WAVEFORM
+# ===========================================================================
+# ⚠ RULING: "NUMBERS ARE PART OF THE WORDING". `4e-09` is not how an analog
+# designer reads time off an x-axis; 4 ns is. The row asserts both directions --
+# the engineering form is PRESENT and the bare Tcl float is ABSENT -- because a
+# sentence that printed both would satisfy a one-sided row while still handing
+# the user the float. The zero case is here because it is the one value with no
+# SI prefix at all, and a formatter that appends a prefix unconditionally would
+# render it as something no designer has ever seen.
+set a11_ok [lindex [rcall {cadence::_annot_tran_msg ok 4e-09 A}] 1]
+set a11_nd [lindex [rcall {cadence::_annot_tran_msg nodata 3e-05 B}] 1]
+set a11_cl [lindex [rcall {cadence::_annot_tran_msg okclamped 0 B 4.5e-09}] 1]
+check {A11-3 every time on the annotation path reaches the user in engineering units, never as a bare float} \
+  [list [string match {*4 ns*}    $a11_ok] [string match {*4e-09*}   $a11_ok] \
+        [string match {*30 us*}   $a11_nd] [string match {*3e-05*}   $a11_nd] \
+        [string match {*0 s*}     $a11_cl] [string match {*4.5 ns*}  $a11_cl] \
+        [string match {*4.5e-09*} $a11_cl]] \
+  {1 0 1 0 1 1 0}
+
+# ===========================================================================
+# A11-4 — A CALLER BUG STAYS VISIBLE INSTEAD OF RENDERING A HOLE
+# ===========================================================================
+# ⚠ op_annot's own discipline, applied one layer up. Invariant I3 blanks a
+# MISSING measurement, and blanking is right there: the user is being told a
+# number is not available. A time this proc could not parse is a CALLER bug, and
+# a caller bug that renders as an empty gap in a sentence is the silence the
+# whole mode exists to remove. It is also the only leg of the formatter that no
+# other row in this file can reach.
+set a11_bad [rcall {cadence::_annot_tran_msg ok zzgarbage A}]
+check {A11-4 a time the formatter cannot read is shown as it stands, so a caller bug is visible rather than blank} \
+  [list [lindex $a11_bad 0] [string match {*zzgarbage*} [lindex $a11_bad 1]] \
+        [lindex $a11_bad 1]] \
+  [list 0 1 {Showing each node's voltage at zzgarbage, where cursor A is on the waveform.}]
+
+# ===========================================================================
+# A11-5 — RULING D5-4, BEHAVIOURAL: THE MENU PATH IS DERIVED, NOT TYPED
+# ===========================================================================
+# ⚠ THE REMEDY THE SENTENCE OFFERS IS A MENU ENTRY THE USER HAS TO FIND. The
+# labels are already minted once, in src/xschem.tcl, precisely so that renaming
+# an entry moves every printed path with it; a second copy typed into the
+# sentence drifts the day someone renames the menu and nothing reds. The rename
+# below is the only way to tell a derived path from a hardcoded one that happens
+# to be spelled correctly today.
+set a11_had [expr {[info commands ::annot_menu_path_waves_op] ne {}}]
+if {$a11_had} { rename ::annot_menu_path_waves_op ::opa_a11_saved_menu }
+proc ::annot_menu_path_waves_op {} { return ZZA11MENU }
+set a11_noop [lindex [rcall {cadence::_annot_msg 1 noop {} {}}] 1]
+catch {rename ::annot_menu_path_waves_op {}}
+if {$a11_had} { rename ::opa_a11_saved_menu ::annot_menu_path_waves_op }
+check {A11-5 RULING D5-4 the menu the sentence sends the user to is read from the menu labels, not typed into the sentence} \
+  [list $a11_had \
+        [string match {*ZZA11MENU*}          $a11_noop] \
+        [string match {*Waves > Op Annotate*} $a11_noop]] \
+  {1 1 0}
+
+# ===========================================================================
+# A11-6 — STRUCTURAL: NO INTERNAL COMMAND IS OFFERED TO THE USER AS A REMEDY
+# ===========================================================================
+# ⚠ NO BEHAVIOURAL ROW CAN SEE THIS ONE. A11-5 proves the path is derived; it
+# cannot prove the typed literal is gone, because a fallback that is never
+# reached renders nothing. And the same shipped line that types the menu path
+# also tells the user to type `xschem raw_clear` -- an internal command, offered
+# as a remedy, in the sentence the user reads when the results they loaded turn
+# out to have no operating point in them. The literal survives only as an
+# unreachable fallback inside the one proc that derives the path.
+set a11_mintsrc [opa_slurp $A11_MINT]
+set a11_msgbody [opa_a11_code [opa_proc_src $a11_mintsrc cadence::_annot_msg]]
+check {A11-6 RULING D5-4 the menu path appears once at most and no internal command is named to the user} \
+  [list [expr {[opa_v_ngrep $A11_MINT {Waves > Op Annotate}] <= 1 ? 1 : 0}] \
+        [regexp -all -- {Waves > Op Annotate} $a11_msgbody] \
+        [opa_v_ngrep $A11_MINT {raw_clear}]] \
+  {1 0 0}
+
+# ===========================================================================
+# A11-7 — THE ROW THAT CAN JUDGE THE REWRITE
+# ===========================================================================
+# ⚠ EVERY SENTENCE THE SURFACE CAN RENDER, AGAINST THE RULING'S OWN BAN LIST.
+# 202 sentences: eight masks by eight states by three symbol-type lists, the two
+# no-operating-point shapes and all eight transient arms. The user's nouns are
+# the schematic, the waveform window, cursor A and cursor B, a simulation run,
+# results, node voltages, device operating-point values and the time on the
+# x-axis. None of the program's own nouns may appear beside them.
+# ⚠ THE SECOND LEG IS NOT TIDINESS. Tcl trims the status line by CHARACTERS and
+# C stores it in a 256-BYTE array, so a single UTF-8 dash makes the two budgets
+# disagree and puts the amputation back where nothing is looking.
+# ⚠ TEN LITERALS ARE NOT A STANDARD, AND FOR A DAY THAT IS ALL THIS ROW HAD.
+# The first ten patterns are the legacy spellings the rewrite deleted, and a
+# detector made only of those passes any NEW jargon that happens not to be one
+# of them. Measured 2026-08-28: replacing the no-results-file sentence with
+# " OP annot state=nopath: sim dir unset for this cell. Run netlist first." --
+# an unqualified OP, a bare internal state name, an internal variable -- left
+# this row green. The patterns after the blank continuation are SHAPES rather
+# than spellings, and they are what lets the row judge a sentence nobody wrote a
+# golden for: an underscore or an equals sign is an identifier, not English; a
+# namespace separator or the program's own command name is the machine talking;
+# and the eleven bare state words are names this code calls itself by.
+#
+# ⚠ THE SHAPES ARE SAFE ONLY BECAUSE THE FIXTURE IS JARGON-FREE, which is the
+# same reason the header gives for the path. `opa_a11_sentences` passes a path
+# with no underscore in it and symbol types spelled nmos, pmos, res, cap, ind.
+# A real symbol type -- sky130_fd_pr__nfet_01v8 -- carries underscores and is
+# legitimately shown to the user, so anyone widening the fixture must widen it
+# with jargon-free names or this row will red on the fixture instead of the
+# wording.
+set A11_BANNED [list {*NO RAW*} {*database*} {*sim_type*} {* raw *} {*raw file*} \
+                     {*annot_show*} {*raw_clear*} {*COULD NOT LOAD*} \
+                     {*STALE RESULTS*} {*NO CURSOR*} \
+                     {*_*} {*=*} {*::*} {*xschem *} {*OP *} \
+                     {*noop*} {*nopath*} {*noraw*} {*notop*} {*notran*} \
+                     {*nocursor*} {*staleraw*} {*viewerdiff*} {*okclamped*} \
+                     {*nodata*}]
+proc opa_a11_jargon {s} {
+  set hits {}
+  foreach p $::A11_BANNED { if {[string match $p $s]} { lappend hits $p } }
+  return $hits
+}
+# ⚠ THE CONTROL, AND IT IS THE HALF THAT KEEPS THIS ROW HONEST. A ban list is
+# an instrument that reads green whether it is working or unplugged, so three
+# sentences that MUST be caught are run through it. The first is the real
+# jargon that slipped past the ten literals; the second is the shipped spelling
+# the rewrite removed; the third is what a hurried debug line looks like.
+set A11_CONTROL [list \
+  { OP annot state=nopath: sim dir unset for this cell. Run netlist first.} \
+  {Transient annotation -- NO RAW FILE loaded} \
+  {annot mask now 3, see cadence::_annot_msg}]
+set a11_bad {}
+set a11_nonascii {}
+set a11_ctlmute {}
+foreach _a11s [opa_a11_sentences] {
+  foreach _a11h [opa_a11_jargon $_a11s] { lappend a11_bad [list $_a11h $_a11s] }
+  if {![opa_a11_ascii $_a11s]} { lappend a11_nonascii $_a11s }
+}
+foreach _a11s $A11_CONTROL {
+  if {![llength [opa_a11_jargon $_a11s]]} { lappend a11_ctlmute $_a11s }
+}
+check {A11-7 no sentence the user can be shown carries the program's own vocabulary, every one of them is plain ASCII, and the ban list can still catch jargon} \
+  [list [llength $a11_bad] [lindex $a11_bad 0] [llength $a11_nonascii] [lindex $a11_nonascii 0] \
+        [llength $a11_ctlmute] [lindex $a11_ctlmute 0]] \
+  [list 0 {} 0 {} 0 {}]
+
+# ===========================================================================
+# A11-8 — THE SWEEP: THE FIVE SENTENCES THAT BYPASS BOTH MINTS
+# ===========================================================================
+# ⚠ TWO OF THEM ARE ONE SENTENCE AT TWO CALL SITES, which is the D5-4 breach in
+# its purest form: one message, two places to edit, and only a reader comparing
+# them can tell they are meant to agree. It is minted here as
+# `ase::ui::annot_fail_msg` and rendered by both.
+# ⚠ THE ase_window STALE SENTENCE DELIBERATELY DOES NOT REUSE THE MINT'S WORDS.
+# Row V43 requires "is older than the circuit it describes" to appear in
+# utils/annot_mode.tcl and NOWHERE ELSE, so this surface -- which speaks about
+# the same situation from ASE-L's own side, with an `ase:` prefix -- gets its
+# own sentence rather than a copy of a sentence it does not own.
+set A11_SWEEP [list \
+  [list $A11_ASEW {could not put the results from}] \
+  [list $A11_ASEW {is from an earlier run than the circuit now on screen}] \
+  [list $A11_ASEW {so there is nothing to annotate}] \
+  [list $A11_ASEW {The helper it needs was not installed}] \
+  [list $A11_ASE  {did not put anything on the schematic}]]
+set A11_SWEEPF [list $A11_MINT $A11_ASEW $A11_ASE [file join $repo src xschem.tcl] $N_RC]
+set a11_sweep {}
+foreach _a11r $A11_SWEEP {
+  set _a11home [lindex $_a11r 0]
+  set _a11f    [lindex $_a11r 1]
+  foreach _a11file $A11_SWEEPF {
+    set _a11n [opa_v_ngrep $_a11file $_a11f]
+    if {$_a11file eq $_a11home} {
+      lappend a11_sweep [expr {$_a11n == 1 ? 1 : 0}]
+    } else {
+      lappend a11_sweep [expr {$_a11n == 0 ? 1 : 0}]
+    }
+  }
+}
+check {A11-8 the five sentences that bypass the two mints are plain English, each minted once, and the duplicated one is minted at all} \
+  [list $a11_sweep \
+        [opa_v_ngrep $A11_ASEW {^proc ase::ui::annot_fail_msg }] \
+        [opa_v_ngrep $A11_ASEW {ase: cannot annotate}]] \
+  [list {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} 1 0]
+
+# ===========================================================================
+# A11-9 — THE BUDGET IS THE C SIDE'S BUDGET, AND THE C SIDE COUNTS BYTES
+# ===========================================================================
+# ⚠ THE AMPUTATION THIS SECTION EXISTS TO REPAIR WAS STILL LIVE AFTER THE
+# REPAIR, and no row in this file could see it. `xschem statusmsg` stores the
+# line in statusmsg_text[256] (src/xschem.h) and `my_strncpy` fills it in BYTES;
+# the budget in utils/annot_mode.tcl counted Tcl CHARACTERS and defended itself
+# by saying every sentence minted there is plain printable ASCII. That is true
+# of the WORDING and false of the SENTENCE: three of the eight states paste the
+# user's own results-file path into it, and a path is whatever the designer
+# named their directory.
+#
+# ⚠ MEASURED, ON THE SHIPPED BINARY, 2026-08-28. A project under a directory of
+# accented characters, the cell not yet simulated: 225 characters, 256 bytes.
+# The old budget waved it through because 225 <= 255, C cut it at 255 bytes, and
+# the sentence died mid-token with no "..." to say it had -- exactly the defect
+# the pass was written to remove, wearing the fix as a disguise. Swapping the
+# ruler back to characters reds legs 3, 4 and 7 below.
+#
+# The fixture builds its non-ASCII path with `format %c`, so THIS FILE stays
+# plain ASCII and cannot itself be the thing that changes when an editor
+# rewrites an encoding.
+set a11_e  [format %c 233]
+set a11_np "/home/analog/[string repeat $a11_e 31][string repeat a 60]/run.raw"
+set a11_nm [lindex [rcall [list cadence::_annot_msg 1 noraw $a11_np {}]] 1]
+set a11_nf [lindex [rcall [list cadence::_annot_fit $a11_nm]] 1]
+catch {xschem statusmsg -hold ZZA11BYTESENTINEL}
+catch {xschem statusmsg -hold $a11_nf}
+set a11_nb [lindex [rcall {xschem get statusmsg}] 1]
+check {A11-9 the status-line budget is measured in the bytes the C side stores, so a results path that is not plain ASCII is elided rather than amputated} \
+  [list [expr {[string length $a11_nm] <= 255 ? 1 : 0}] \
+        [expr {[opa_a11_bytes $a11_nm] > 255 ? 1 : 0}] \
+        [expr {$a11_nf ne $a11_nm ? 1 : 0}] \
+        [expr {[opa_a11_bytes $a11_nf] <= 255 ? 1 : 0}] \
+        [string range $a11_nf end-2 end] \
+        [expr {[string first [string range $a11_nf 0 end-3] $a11_nm] == 0 ? 1 : 0}] \
+        [expr {$a11_nb eq $a11_nf ? 1 : 0}] \
+        [lindex [rcall [list cadence::_annot_fit [string repeat x 255]]] 1]] \
+  [list 1 1 1 1 {...} 1 1 [string repeat x 255]]
+
+# ===========================================================================
+# A11-10 — THE BUDGET STAYS HONEST AS THE SENTENCES DRIFT
+# ===========================================================================
+# ⚠ ONE ROW, 386 COMBINATIONS, AND IT IS THE ONLY THING STANDING BETWEEN THE
+# NEXT WORDING CHANGE AND THE DEFECT THIS PASS REPAIRS. Eight masks by eight
+# states by three symbol-type lists by two results-file paths, one of them
+# absurdly long, plus the two no-operating-point shapes. A clause that grows by
+# a sentence reds HERE, legibly, instead of amputating a status line on a
+# combination nobody happened to try.
+# ⚠ THREE PATHS, AND THE THIRD ONE IS NOT DECORATION. The sweep used to run two
+# ASCII paths and measure the result with `string length`, so all of its
+# combinations agreed with the budget about the WRONG UNIT and the row could not
+# have caught the byte overflow A11-9 documents. The third path is the one a
+# designer with an accented project directory actually has, and the measurement
+# below is now the same one the C side makes.
+set a11_over {}
+set a11_lp "/tmp/[string repeat z 280]/results.data"
+set a11_up "/tmp/[string repeat [format %c 233] 90]dir/results.data"
+foreach _a11m {0 1 2 3 4 5 6 7} {
+  foreach _a11st {off live noop loaded failed noraw nopath stale} {
+    foreach _a11ty [list {} {nmos} {nmos pmos res cap ind}] {
+      foreach _a11p [list /tmp/a/results.data $a11_lp $a11_up] {
+        set _a11r [rcall [list cadence::_annot_msg $_a11m $_a11st $_a11p $_a11ty]]
+        set _a11f [rcall [list cadence::_annot_fit [lindex $_a11r 1]]]
+        if {[lindex $_a11f 0] != 0 || [opa_a11_bytes [lindex $_a11f 1]] > 255} {
+          lappend a11_over [list $_a11m $_a11st [llength $_a11ty] [string length $_a11p] \
+                                 [opa_a11_bytes [lindex $_a11f 1]]]
+        }
+      }
+    }
+  }
+}
+foreach _a11a [list [list 1 notop tran {}] [list 1 notop {} {}]] {
+  set _a11r [rcall [concat [list cadence::_annot_msg] $_a11a]]
+  set _a11f [rcall [list cadence::_annot_fit [lindex $_a11r 1]]]
+  if {[lindex $_a11f 0] != 0 || [opa_a11_bytes [lindex $_a11f 1]] > 255} {
+    lappend a11_over [list notop $_a11a]
+  }
+}
+check {A11-10 every sentence the surface can build fits the status line after the budget, at any results-file path length and in any encoding} \
+  [list [llength $a11_over] [lindex $a11_over 0]] \
+  [list 0 {}]
+
+# ===========================================================================
+# A11-12 — EVERY STATE CLAUSE HAS A BYTE-EXACT GOLDEN, THE FIRST ONE INCLUDED
+# ===========================================================================
+# ⚠ THE SENTENCE MOST USERS MEET FIRST HAD NO GOLDEN AT ALL. A cell that has
+# been drawn but never simulated reports the `nopath` clause, and until now the
+# only byte-exact assertion of it in the tree lived in
+# tests/headless/test_results_freshness.tcl -- a suite no runner carries. The
+# constant for it sat in this file, defined and never referenced, from the day
+# it was written. Measured 2026-08-28: the whole clause could be replaced with
+# internal jargon and this suite still reported ALL PASS.
+#
+# All eight states are here rather than the one, because a set with a hole in it
+# is how the hole got there. `off` contributes no clause, which is itself the
+# claim -- a mask sentence with nothing appended.
+set a11_gp /tmp/zzA11/results.data
+set a11_got {}
+foreach _a11st {off live noop loaded failed noraw nopath stale} {
+  lappend a11_got [lindex [rcall [list cadence::_annot_msg 1 $_a11st $a11_gp {}]] 1]
+}
+set a11_want {}
+foreach _a11c [list $A11_OFFC $A11_LIVE $A11_NOOP $A11_LOADED $A11_FAILED \
+                    $A11_NORAW $A11_NOPATH $A11_STALE] {
+  lappend a11_want "$A11_M1[string map [list @P@ $a11_gp @T@ [file tail $a11_gp]] $_a11c]"
+}
+check {A11-12 every state the user can land in renders its own sentence, byte for byte, the never-simulated one included} \
+  $a11_got $a11_want
+
+# ===========================================================================
+# A11-13 — EVERY REFUSAL THE USER CAN ACT ON ENDS WITH WHAT TO DO
+# ===========================================================================
+# ⚠ THE THIRD LEG OF THE USER'S STANDARD, AND IT LIVED WHERE NOTHING COULD SEE
+# IT. A sentence has to say WHAT HAPPENED, give the CONTEXT that makes it make
+# sense, and -- where the user can act -- say WHAT TO DO. The first two are a
+# matter of reading; the third is not. Nine states leave the user holding a key
+# that did nothing, and every one of them has a next step: run a simulation,
+# turn on a cursor, load a different results file, plot the results again.
+#
+# This is the property tests/headless/test_results_freshness.tcl calls A11-11.
+# It is repeated here deliberately: this file is the feature's registered row
+# set, and a standard that only a hand-run suite enforces is a standard the next
+# wording change can walk past.
+set A11_REMEDIES [list {Run } {Turn on } {Load } {Plot } {try again}]
+set a11_mute {}
+foreach _a11st {noop noraw nopath stale} {
+  set _a11m [lindex [rcall [list cadence::_annot_msg 1 $_a11st $a11_gp {}]] 1]
+  set _a11ok 0
+  foreach _a11r $A11_REMEDIES { if {[string match "*$_a11r*" $_a11m]} { set _a11ok 1 } }
+  if {!$_a11ok} { lappend a11_mute [list press-6 $_a11st $_a11m] }
+}
+foreach _a11st {nocursor noraw notran staleraw viewerdiff} {
+  set _a11m [lindex [rcall [list cadence::_annot_tran_msg $_a11st 1e-09 A $a11_gp]] 1]
+  set _a11ok 0
+  foreach _a11r $A11_REMEDIES { if {[string match "*$_a11r*" $_a11m]} { set _a11ok 1 } }
+  if {!$_a11ok} { lappend a11_mute [list cursor-annotate $_a11st $_a11m] }
+}
+check {A11-13 every refusal the user can act on says what to do next} \
+  [list [llength $a11_mute] [lindex $a11_mute 0]] \
+  [list 0 {}]
+
+} a11err]} {
+  puts "UNEXPECTED ERROR (section A11): $a11err"
   incr fail
 }
 

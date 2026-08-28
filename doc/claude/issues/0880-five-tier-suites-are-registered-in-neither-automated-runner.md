@@ -93,3 +93,30 @@ locks the banner rule across all three readers (section K) — asserting that ev
 name in `run_regression.tcl`'s `hcases` also appears in `full_audit.sh`'s
 `nogui_tests` **as a whole word inside that string**, not merely somewhere in the
 file. That row is what would have caught this, and it would have caught 0409 too.
+
+## PARTIAL LANDING — a SIXTH suite was found, and it is now registered (2026-08-28)
+
+`tests/headless/test_results_freshness.tcl` is not in the twelve above, and it
+was worse off than any of them. `grep -c` scored **0** in both runners, and
+`full_audit.sh` reached it only because the file glob picks up every
+`test_*.tcl` — so it ran under the DISPLAY arm rather than `--nogui`, which is
+the arm it wants.
+
+Worse, it **could not report a failure to either reader**:
+
+* its `ck` printed `FAIL: <name>`, and `summarize_all` counts a line that
+  **ends** in `FAIL`;
+* it finished with `xschem exit closewindow force`, so a run with failing checks
+  **exited 0** — measured 2026-08-28: `RESULT: 2 FAILED`, exit code 0;
+* it emitted no `OVERALL:` line and printed its check count on a line of its
+  own, so `banner_complete` (`tests/banner_rule.tcl`) could not have scored it
+  complete had it been registered as it stood.
+
+Fixed with the A11 repair pass, because that pass's own guards (the `nopath`
+sentence, A11-11) had no other home: the suite now prints a counted failure
+line, emits the dual banner, exits 1 on any failure, and is named in
+`full_audit.sh`'s `nogui_tests` and `run_regression.tcl`'s `hcases`
+(`grep -c` = 1 each).
+
+**The five suites in the table above are untouched** and 0880 stays 🔴 OPEN for
+them, as does its acceptance row.
