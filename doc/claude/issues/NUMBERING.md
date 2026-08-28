@@ -88,5 +88,17 @@ violation), **0897** (the plain-English refusal-sentence lists are
 hand-maintained with no completeness check), **0898** (T1's new display arm gives
 a wall-clock row two chances to flake on a loaded box).
 
-**The next free number is 0899.** 0500-0599 and 0700-0799 remain reserved for
-other branches.
+**2026-08-28, item A13's write-up.** Filed **0899** by A13's sabotage pass (two
+of A13's own guards had nothing able to see them go), then **0900** and **0901**
+by this write-up, from A13's adversarial verification pass — **0900** (a second
+Alt+Shift+6 skips the consult, both new guards and the two-window compare,
+because the supply is called only when the design window holds no database, so
+the previous run's numbers stay on the sheet: a **live** RULING D5-1 violation,
+filed not fixed, same predicate mistake as 0684) and **0901** (A13's new
+"still filling" sentence tells the user to wait for a run that has already
+finished).
+
+**The next free number is 0902.** 0500-0599 and 0700-0799 remain reserved for
+other branches. No 09xx block is reserved: the three tracked sources — this
+file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
+followed by 0900.

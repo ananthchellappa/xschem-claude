@@ -2238,6 +2238,8 @@ were deliberately left asserting it. Every time reaches the user through
 | `staleraw` | 🆕 the candidate is OLDER than the circuit it describes (ruling 0838, inherited from `cadence::_annot_raw_candidate`). Nothing is attached, nothing is published, and **the sentence names the file** | *The results file run.raw is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again, then try again.* |
 | `viewerdiff` | 🆕 the file on disk and the copy the waveform viewer is holding are **different simulation runs** (RULING D5-1). The attach is undone, nothing is published, and the sentence tells the user to plot the results again | *The results file run.raw on disk is from a different simulation run than the one the waveform window is showing, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again.* |
 | `viewerunread` | 🆕 issue 0893 — the waveform window **named its own results file** (the 0881 consult succeeded) but that file could not be read again off disk: a simulator rewriting it in place, a truncated write, a corrupt header. Nothing is attached, nothing is published. Before this state the user was told `noraw`'s *"No simulation results are loaded"* **while the traces from that file were on screen** — a wrong reason, which is the same defect class as a wrong number | *The waveform window is showing the results file run.raw, but that file could not be read again just now, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again.* |
+| `viewergone` | 🆕 issue 0895 (item A13) — the waveform window **named its own results file and that file is no longer on disk**. Most simulators unlink and re-create rather than rewriting in place, so this, not `viewerunread`, is the commonest way a viewer's file lets the annotation down; before this state the consult gave up first and the user got `noraw`'s *"No simulation results are loaded"* with the traces on screen. Nothing is attached, nothing is published — and in particular the supply **does not fall through** to a different run sitting at the preferences path (driver ruling 1). Rows **V60**, **V61**, **B12i** | *The waveform window is showing the results file run.raw, but that file is no longer on disk, so nothing was placed on the schematic. If a simulation is running, wait for it to finish, then try again.* |
+| `viewerfilling` | 🆕 issue 0896 (item A13), **and it closes a live RULING D5-1 violation.** The waveform window is showing a run that has **not produced a measured point yet** (`No. Points: 0`, which issue 0836 calls the ordinary case). There is no fingerprint, so the two windows **cannot be compared** — and until this state the compare was silently skipped and the *completed* run written over the same path landed on the schematic under the confident `ok` caption. Nothing is attached, nothing is published. Rows **V58**, **V59**, **B12h**. ⚠ The sentence's *remedy* is wrong when the run finished behind the waveform window's back — the points are then on disk at the path it names and waiting can never clear it: issue **0901**, filed not fixed | *The waveform window is showing the results file run.raw, but the run has not produced any values yet, so nothing was placed on the schematic. Wait for the simulation to finish, then try again.* |
 | `nodata` | the engine had nothing to resolve against — **⚠ UNREACHABLE, issue 0871**: `xschem raw loaded` IS `sch_waves_loaded()`, the same predicate `backannotate_at_time()` gates on, so the `noraw` arm above has already returned. Three refusal states are reachable, not four | *The results have no values at 3 ns, so nothing was placed on the schematic.* |
 
 #### The OTHER mint: what the three `6` chords say (`cadence::_annot_msg`)
@@ -2338,12 +2340,15 @@ table above is the finished article.
 | **0890** | `ase::ui::annot_fail_msg` splices the engine's own error text into a user-facing sentence through `$e`. Latent — `xschem annotate_op` was measured not to raise at all. |
 | ~~**0891**~~ | ✅ **FIXED 2026-08-28 (A12).** 0881's V50/V51 are green headless and **red with a live display**. Not this pass — the wording in the failure output matches; the state and the attached file diverge. |
 | **0892** | five rows compare the **fitted** status line to the **untrimmed** sentence, four with an absolute path in it. N9's margin is 35 bytes, N10b's is 33. Row N15 in the same file already shows the right shape. |
-| ~~**0893**~~ | ✅ **FIXED 2026-08-28 (A12).** The refusal said *"No simulation results are loaded"* while the waveform window was plotting the very file it had just named. New state `viewerunread`, its own minted sentence, row **V55** in both arms. **⚠ Its guard misses two reachable cases — see 0895 and 0896.** |
+| ~~**0893**~~ | ✅ **FIXED 2026-08-28 (A12).** The refusal said *"No simulation results are loaded"* while the waveform window was plotting the very file it had just named. New state `viewerunread`, its own minted sentence, row **V55** in both arms. Its guard missed two reachable cases; both are closed by A13 — see 0895 and 0896. |
 | ~~**0894**~~ | ✅ **FIXED 2026-08-28 (A12), tests only.** Three of A12's own guards had no row that could see them go: the display arm could stop routing to the virtual display and open xschem on the **user's real screen** with V57 still green; the runner could go back to swallowing "this arm verified nothing"; and the new refusal could be given an unwind that tears down the user's own annotations, with V52 still green. Each removal now reddens exactly one row. |
-| **0895** | 🔴 **NEW.** 0893's truthful sentence misses its **commonest** trigger. Most simulators unlink and re-create rather than rewrite in place, so the viewer's file is **absent**, not corrupt — `_annot_viewer_db` returns `{}` on `![file exists]` before `$vprint` is set, and the user gets *"No simulation results are loaded"* with the traces on screen. Measured on both arms. |
-| **0896** | 🔴 **NEW, and it is a live RULING D5-1 violation.** A run the user is **watching fill** has `No. Points: 0`, so the fingerprint is empty while the consult succeeds — the two-window compare is gated on that fingerprint and **does not run**. The completed run written over the same path lands on the schematic under the "Showing each node's voltage at ..." caption. Measured on both arms: `state=ok`, `mask=4`, another run's numbers painted, no warning. Same root conflation as 0895. |
+| ~~**0895**~~ | ✅ **FIXED 2026-08-28 (A13).** 0893's truthful sentence missed its **commonest** trigger — a deleted file, not a corrupt one — because `cadence::_annot_viewer_db` answered a bare `{}` on `![file exists]` before `$vprint` was ever set. The consult now **classifies its own answer** (`ok` \| `filegone` \| `nopoints`), and `filegone` reaches the new `viewergone` state. Rows **V60**, **V61**, **V62**, **V63** in both arms and **B12i** on the display arm. |
+| ~~**0896**~~ | ✅ **FIXED 2026-08-28 (A13), and it was a live RULING D5-1 violation.** A run the user was **watching fill** has `No. Points: 0`, so the fingerprint was empty while the consult succeeded, the two-window compare was gated on that fingerprint and **did not run**, and the completed run written over the same path landed on the schematic under the *"Showing each node's voltage at ..."* caption (measured both arms: `state=ok`, `mask=4`, another run's numbers painted, no warning). The compare is now gated on **whether the consult succeeded**, `nopoints` reaches the new `viewerfilling` state, and the compare can no longer be skipped **once the supplier runs**. ⚠ That scope is literal — see **0900**: the supplier is called only when the design window holds no database, so the consulted path is closed and the *unconsulted* one is not. Rows **V58**, **V59**, **V62**, **V63** and **B12h**. A third face nobody had filed closes with it: a still-filling run with **nothing** overwritten used to report success over a bare sheet (row **V59**). |
 | **0897** | 🔴 **NEW.** The two hand-maintained enumerations that hold a refusal sentence to the user's PLAIN ENGLISH ruling have no completeness check. Remove `viewerunread` from either and the tree stays `ALL PASS (451 checks)` — the count does not even move. |
+| ~~**0899**~~ | ✅ **FIXED 2026-08-28 (A13 repair), tests + attributions only.** Two of A13's own twelve guards had nothing able to see them go. `if {$path eq {}} { return {} }` could be deleted with seven suites staying green on both arms, while a waveform window holding an operating point then produced *"The waveform window is showing the results file , but that file is no longer on disk"* — a refusal naming **no file** — over a bare sheet whose own results were readable. And `filegone` being tested before `nopoints` shipped on a comment: every fixture in the tree made at most one of the two tests true, so either order passed. Rows **V63 legs e/f/g**, **V64** and **V65**, all in both arms; the wrong V37 attribution corrected in the spec and in `annot_mode.tcl`. |
 | **0898** | 🔴 **NEW, low.** T1 now runs `test_op_annot` twice (issue 0891's arm), so its 3000 ms wall-clock row **W33** has two chances to flake on a loaded box — measured at 5010 ms under concurrent agents, 1089 ms alone. |
+| **0900** | 🔴 **NEW, and a LIVE RULING D5-1 violation.** `cadence::annot_tran` calls the whole supply — consult, `filegone`, `nopoints`, staleness, `viewerunread` and the **two-window compare** — only inside `if {... $loaded < 0}`, i.e. only when the design window holds no database. A successful press never unwinds, so it always leaves one attached: press, re-run the simulation, press again, and the **first** run's numbers stay on the sheet under *"Showing each node's voltage at ..."* with no refusal and no compare (measured both arms). The same door reaches 0896's own `d 21 g 0.1 0 0.0 0 0.0`. Same predicate mistake as **0684** on the OP surface. **No row can see it** — every existing row starts from a design window holding nothing. |
+| **0901** | 🔴 **NEW.** A13's `viewerfilling` sentence says *"the run has not produced any values yet ... Wait for the simulation to finish"*, decided from what the **waveform window** holds. When the run finished behind the window's back the five measured points are on disk at the path the sentence names, so the user is told to wait for something that already happened and waiting can never clear it — re-plotting is the action that works, which is `viewerdiff`'s own advice. The refusal is right; the reason and the remedy are wrong (PLAIN ENGLISH ruling). Row **V59** pins the world where the sentence is true; nothing covers the other. |
 
 **⚠ THE MASK IS ARMED ONLY AFTER A SUCCESSFUL PUBLISH** (rows V14/V15/V16). Arming
 first would leave the user looking at an armed mode over the PREVIOUS request's
@@ -2380,6 +2385,36 @@ asymmetry, and runs **only** on the `loaded < 0` arm:
    the supply. Rows **V50** and **B12g** (the real viewer, on the dev display) —
    and B12g exists because **deleting the viewer consult leaves B12 and B12c
    green**: on an ordinary fixture the two roads lead to the same file.
+   ⚠ **ITS ANSWER NAMES ITSELF (item A13, issues 0895 + 0896).** It returns
+   `{path print why}`, where `why` is `ok`, `filegone` (the window named this
+   file and it is not on disk any more) or `nopoints` (the file is there, but
+   the run has not produced a measured point, so no fingerprint exists). A bare
+   `{}` now means **one** thing and one thing only: no waveform window is
+   showing a transient for this sheet. Given the consult's own
+   preconditions (`raw loaded` >= 0, `sim_type` eq `tran`), the only way the
+   print can come back empty is `_annot_db_print`'s `np < 1` test — verified,
+   not assumed — so `nopoints` means exactly "the run is still filling". Rows
+   **V62** (structural) and **V63** in both arms, **V53** leg 6 on the display.
+   ⚠ **TWO OF THIS SPLIT'S OWN GUARDS SHIPPED UNWITNESSED — issue 0899, repaired
+   2026-08-28.** An earlier revision of this paragraph said row **V37** depended
+   on the bare `{}`. It does not and cannot: V37's fixture has no waveform
+   window at all, so the consult leaves at the window guard several lines above
+   and never reaches `if {$path eq {}}`. Deleting that line reddened nothing in
+   seven suites on both arms, while a viewer holding an operating point then
+   answered `filegone` about a file it had never named and the user was told
+   *"The waveform window is showing the results file , but that file is no
+   longer on disk"* over a bare sheet whose own results were readable. The two
+   ways to get an empty path with the borrow succeeding — the window holds
+   nothing, the window holds an operating point — are rows **V63 legs e/f**
+   (the consult) and **V64** (the schematic, both faces).
+   ⚠ **AND THE ORDER IS A DECISION, NOT A SPELLING.** `filegone` is tested
+   before `nopoints` because a deleted file is the more actionable complaint —
+   *"no values yet"* would have the user waiting for a run whose output has
+   already gone. Rows V58/V59 make only the `nopoints` test true and V60/V61
+   only the `filegone` one, so **either order passed both pairs** and the
+   precedence shipped on a comment. Deciding it needs both true at once: a run
+   with no points yet whose file is then unlinked. Rows **V63 leg g** (the
+   consult) and **V65** (the schematic).
 3. **`xschem annotate_op $path $lvl tran`, the transient asked for BY NAME
    first**, with the shipped `op → dc → tran` fallback as the SECOND ask. The
    ordinary results file holds the deck's `.op` beside its `.tran`; an unnamed
@@ -2404,20 +2439,26 @@ asymmetry, and runs **only** on the `loaded < 0` arm:
    column's value at the **last** point — a **sample, not a proof**; a re-run
    differing only mid-sweep passes it. Filed as **0885**, with both honest
    closures costed.
-   ⚠⚠ **AND IT IS SKIPPED ENTIRELY WHEN THE FINGERPRINT CANNOT BE COMPUTED —
-   issue 0896, measured on both arms and still OPEN.** A run the user is
+   ⚠⚠ **IT USED TO BE SKIPPED ENTIRELY WHEN THE FINGERPRINT COULD NOT BE
+   COMPUTED — issue 0896, FIXED 2026-08-28 (item A13).** A run the user is
    watching fill has `No. Points: 0`, so `cadence::_annot_db_print` answers
-   `{}` while the consult itself succeeds. The compare is gated on
-   `[llength $vprint]`, so it does not run, and the completed run written over
-   that path lands on the schematic under the "Showing each node's voltage
-   at ..." caption while the waveform window still shows the partial one. Issue
+   `{}` while the consult itself succeeds. The compare was gated on
+   `[llength $vprint]`, so it did not run, and the completed run written over
+   that path landed on the schematic under the "Showing each node's voltage
+   at ..." caption while the waveform window still showed the partial one. Issue
    0836 calls the zero-point read the ordinary case, not a corner. The root
-   fault is that `$vprint` is standing in for *"the consult succeeded"* and
-   cannot: it is also empty when the viewer's file was **deleted** (issue
-   **0895**, which is why issue 0893's truthful sentence misses its own
-   commonest trigger). One repair covers 0893, 0895 and 0896 — have
-   `cadence::_annot_viewer_db` report success as its own answer, separate from
-   the path and the fingerprint.
+   fault was that `$vprint` stood in for *"the consult succeeded"* and cannot:
+   it is also empty when the viewer's file was **deleted** (issue **0895**,
+   which is why issue 0893's truthful sentence missed its own commonest
+   trigger). **One repair covered 0893, 0895 and 0896:**
+   `cadence::_annot_viewer_db` now reports which of its four answers it is
+   giving — `{}` (no waveform window showing a transient for this sheet, the
+   ONE meaning an empty answer keeps), `filegone`, `nopoints`, `ok` — and the
+   supplier keys every guard on `$vseen` rather than on the fingerprint. The
+   compare is gated on `$vseen`, so it can no longer be skipped; `filegone` and
+   `nopoints` refuse **above** the attach, so RULING D5-1 holds byte for byte
+   (nothing attached, mask untouched, sheet bare) and neither owes an unwind.
+   Rows **V58**–**V65** in both arms, **B12h**/**B12i** on the display arm.
 
 **⚠ THE SUPPLY IS BELOW THE CURSOR RESOLVE, AND THAT IS A GUARD.** Hoisting it
 would make a key press that REFUSES (*"no cursor is on anywhere"*) attach a

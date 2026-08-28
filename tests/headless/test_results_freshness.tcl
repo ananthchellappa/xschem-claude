@@ -164,7 +164,7 @@ foreach a11st {noop noraw nopath stale} {
   foreach a11r $A11_REMEDIES { if {[string match "*$a11r*" $a11m]} { set a11ok 1 } }
   if {!$a11ok} { lappend a11_mute [list press-6 $a11st $a11m] }
 }
-foreach a11st {nocursor noraw notran staleraw viewerdiff viewerunread} {
+foreach a11st {nocursor noraw notran staleraw viewerdiff viewerunread viewergone viewerfilling} {
   set a11m {}
   catch {set a11m [cadence::_annot_tran_msg $a11st 1e-09 A $RAW]}
   set a11ok 0

@@ -1091,6 +1091,112 @@ check "B12g ACCEPTANCE the results file the WAVEFORM VIEWER is showing is the on
         [expr {[string is integer -strict $e_g_mask] && ($e_g_mask & 4) ? 1 : 0}]] \
   [list {-1 0} ok 2 1 1]
 
+# ---------------------------------------------------------------------------
+# B12h — ISSUE 0896 THROUGH THE REAL SUPPLY CHAIN
+# ---------------------------------------------------------------------------
+# ⚠ ITEM A13's ACCEPTANCE ROW 4: A PATH ROW, NOT A HAND-BUILT STATE. Rows V58
+# and V59 of tests/headless/test_op_annot.tcl stand the waveform window in;
+# this one does not. The results reach the VIEWER's window through the
+# product's own `wviewer::open` + `wviewer::attach_raw` -- byte for byte the
+# call `ase::ui::auto_plot` makes after a run -- and the design window is
+# reached the way the menu item reaches it. This run has already shipped one
+# defect through a hand-attached fixture, which is why the chain is driven.
+# ⚠ THE SCENARIO IS THE ONE THE USER LIVES IN. The waveform window is showing
+# a run that has not produced a point yet (ngspice writes `No. Points: 0` and
+# fills the values in as it goes; the read succeeds and the database attaches,
+# which is how the window can watch a run fill). The session metadata names a
+# DIFFERENT, finished run. Today the two windows cannot be compared -- there is
+# no fingerprint to compare with -- the compare is silently skipped, and the
+# other run's numbers land on the schematic under a caption asserting they are
+# what the cursor is sitting on.
+# ⚠ THE FIXTURE IS ASSERTED FIRST, B12f's discipline: the viewer really holds a
+# transient with zero points, and the design window really holds nothing. A row
+# whose fixture failed to build must red as a fixture, not as a verdict about
+# the feature.
+set E_ZERO [file join $C_SCRATCH e_zero.raw]
+set f [open $E_ZERO w]
+puts -nonewline $f "Title: 0896 a run that has not produced a point yet
+Date: Mon Jan 1 00:00:00 2026
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 0
+Variables:
+\t0\ttime\ttime
+\t1\tv(a)\tvoltage
+Values:
+"
+close $f
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+catch {rename ::ase::last_rawfile {}}
+proc ::ase::last_rawfile {key} { return [expr {$key eq $::E_KEY ? $::E_DECOY : {}}] }
+set E_HATT 0
+catch {set E_HATT [wviewer::attach_raw $E_KEY $E_ZERO tran]}
+update
+catch {xschem new_schematic switch $E_DWIN}
+update
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+set e_h_fix   [e_ctx $E_VW {list [xschem raw loaded] [xschem raw sim_type] [xschem raw points]}]
+set e_h_pre   [e_ctx $E_DWIN {list [xschem raw loaded] [xschem get annot_show]}]
+set e_h_state [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_h_ld    [e_ctx $E_DWIN {xschem raw loaded}]
+set e_h_mask  [e_ctx $E_DWIN {xschem get annot_show}]
+set e_h_val   [e_ctx $E_DWIN {catch {xschem raw value v(a) -1}}]
+check "B12h issue 0896 a run the waveform window is still filling cannot be compared with the file on disk, so nothing is annotated and the transient bit is not armed" \
+  [list $E_HATT $e_h_fix $e_h_pre $e_h_state $e_h_ld \
+        [expr {[string is integer -strict $e_h_mask] && ($e_h_mask & 4) ? 1 : 0}] $e_h_val] \
+  [list 1 {0 tran 0} {-1 0} viewerfilling -1 0 1]
+
+# ---------------------------------------------------------------------------
+# B12i — ISSUE 0895 THROUGH THE REAL SUPPLY CHAIN
+# ---------------------------------------------------------------------------
+# ⚠ THE SAME CHAIN, THE OTHER FACE. The waveform window has the run's results
+# attached and plotted; the simulator unlinks the file to re-create it, which is
+# what most simulators do, so the file is ABSENT rather than corrupt. The traces
+# stay on screen throughout. Today the annotation gives up on the viewer, falls
+# through to the DIFFERENT run the session metadata names, and annotates THAT --
+# so the wrong reason of issue 0895 is also a wrong number, and the decoy's 20 V
+# reaches a sheet whose waveform window is showing 2 V.
+# ⚠ FIVE CLAIMS: the attach through the product succeeded; the viewer still
+# holds the transient with the file gone; the press refuses by name; nothing is
+# attached to the design window; the bit is not armed; and reading a value
+# RAISES, because there is no database there at all -- which is how this row
+# says the decoy's numbers are nowhere without naming them.
+# ⚠ THE RUN'S FILE IS PUT BACK, so the rows after this one see the bench state
+# B12f built.
+set E_TSRC [e_slurp $E_TRAN]
+catch {rename ::ase::last_rawfile {}}
+proc ::ase::last_rawfile {key} { return [expr {$key eq $::E_KEY ? $::E_TRAN : {}}] }
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+set E_IATT 0
+catch {set E_IATT [wviewer::attach_raw $E_KEY $E_TRAN tran]}
+update
+catch {xschem new_schematic switch $E_DWIN}
+update
+set ::wviewer::cva($E_KEY) 1
+set ::wviewer::cvb($E_KEY) 0
+e_ctx $E_VW {xschem cursor 1 1 ; xschem set cursor1_x 2e-9}
+## the session metadata names a DIFFERENT, perfectly good run ...
+catch {rename ::ase::last_rawfile {}}
+proc ::ase::last_rawfile {key} { return [expr {$key eq $::E_KEY ? $::E_DECOY : {}}] }
+## ... and the file the waveform window is showing goes off disk
+file delete -force $E_TRAN
+set e_i_fix   [e_ctx $E_VW {list [xschem raw loaded] [xschem raw sim_type]}]
+set e_i_state [e_ctx $E_DWIN {cadence::annot_tran}]
+set e_i_ld    [e_ctx $E_DWIN {xschem raw loaded}]
+set e_i_mask  [e_ctx $E_DWIN {xschem get annot_show}]
+set e_i_val   [e_ctx $E_DWIN {catch {xschem raw value v(a) -1}}]
+set f [open $E_TRAN w] ; puts -nonewline $f $E_TSRC ; close $f
+catch {rename ::ase::last_rawfile {}}
+proc ::ase::last_rawfile {key} { return [expr {$key eq $::E_KEY ? $::E_TRAN : {}}] }
+e_ctx $E_DWIN {catch {xschem raw clear} ; catch {xschem set annot_show 0}}
+check "B12i issue 0895 the waveform window's results file was deleted, so the annotation refuses by name instead of quietly annotating a different run from the preferences path" \
+  [list $E_IATT $e_i_fix $e_i_state $e_i_ld \
+        [expr {[string is integer -strict $e_i_mask] && ($e_i_mask & 4) ? 1 : 0}] $e_i_val] \
+  [list 1 {0 tran} viewergone -1 0 1]
+
 # --- section E teardown ------------------------------------------------------
 catch {rename ::ase::last_rawfile {}}
 catch {rename ::ase::results_stale {}}
@@ -1116,6 +1222,14 @@ catch {xschem set annot_show 0}
 # ------------------------------------------------------------------- cleanup --
 set ::autosave_backup $::saved_autosave_0601   ;# issue 0601
 
+## THE DUAL BANNER, AND ITEM A13 ADDED THE SECOND HALF. This suite is now in
+## tests/run_regression.tcl's `dcases`, and the everyday runner's verdict comes
+## from `banner_complete` in tests/banner_rule.tcl, which requires a whole-line
+## `OVERALL: ok` and nothing else. Without it the runner scored a suite whose
+## own 34 checks all passed as a HARNESS failure -- exactly the standing red
+## issue 0689 was filed four times about. `RESULT:` stays for the human and for
+## the shell readers; `OVERALL:` is what the runner reads.
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } else { puts "RESULT: $fail FAILED ($npass passed)" }
+if {$fail == 0} { puts "OVERALL: ok" } else { puts "OVERALL: notok" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

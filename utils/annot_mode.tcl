@@ -933,6 +933,30 @@ proc cadence::_annot_tran_cursor {} {
 ## painted -- RULING D5-1); only the sentence was wrong, and the user's PLAIN
 ## ENGLISH ruling requires it to say what actually happened. Row V55.
 ##
+## ⚠ `viewergone` AND `viewerfilling` ARE ITEM A13's, FOR ISSUES 0895 AND 0896,
+## AND THEY ARE THE SAME WRONG-REASON DEFECT ONE STEP EARLIER THAN 0893's.
+## A reader would otherwise assume `viewerunread` already covers every way the
+## waveform window's file can let us down. It does not, because the consult
+## itself gives up before that guard can see either of these:
+##   `viewergone`    -- the window names a results file that is NOT ON DISK any
+##                      more. Issue 0893's own comment claims this case, but
+##                      most simulators do not rewrite in place, they unlink and
+##                      re-create, so the commonest real trigger reached `noraw`
+##                      and told a user watching the traces that no results are
+##                      loaded. Row V60, and B12i on the display arm.
+##   `viewerfilling` -- the window IS showing the file, the file IS there, but
+##                      the run has not produced a measured point yet, so the
+##                      two windows cannot be compared at all. Publishing the
+##                      file on disk anyway is RULING D5-1 (issue 0896): the
+##                      finished run's numbers landed on the sheet under the
+##                      confident `ok` caption. Rows V58 and V59, and B12h.
+## Both refuse; neither publishes. The driver's preferred shape -- show what the
+## waveform window already holds in memory and caption it -- is not reachable
+## for either: `viewerfilling`'s window holds zero samples, and `viewergone`'s
+## holds them in ANOTHER window's xctx->raw, which `annotate_at` cannot resolve
+## against. So refusing honestly is what that ruling degenerates to here, not a
+## shortcut past it. Recorded as a rule debt against issue 0895.
+##
 ## ⚠ AN UNKNOWN STATE RAISES, and names it. `_annot_msg`'s own discipline (row
 ## N2): op_annot blanks for missing DATA (invariant I3), but a state spelling is
 ## a CALLER bug, and a caller bug that renders as a polite apology is exactly the
@@ -966,10 +990,17 @@ proc cadence::_annot_tran_msg {state t which {req {}}} {
                        but that file could not be read again just now, so nothing was\
                        placed on the schematic. Plot the results again in the\
                        waveform window, then try again." }
+    viewergone { return "The waveform window is showing the results file [file tail $req],\
+                       but that file is no longer on disk, so nothing was placed on the\
+                       schematic. If a simulation is running, wait for it to finish, then\
+                       try again." }
+    viewerfilling { return "The waveform window is showing the results file [file tail $req],\
+                       but the run has not produced any values yet, so nothing was placed\
+                       on the schematic. Wait for the simulation to finish, then try again." }
   }
   error "cadence::_annot_tran_msg: unknown state \"$state\":\
          use ok, okclamped, nocursor, noraw, notran, staleraw, viewerdiff,\
-         viewerunread or nodata"
+         viewerunread, viewergone, viewerfilling or nodata"
 }
 
 ## THE TIME THE PAINTED NUMBER WAS ACTUALLY MEASURED AT, or {} when it cannot
@@ -1068,9 +1099,10 @@ proc cadence::_annot_db_print {} {
   return $out
 }
 
-## -> {path print} for the transient the WAVEFORM VIEWER is showing for this
+## -> {path print why} for the transient the WAVEFORM VIEWER is showing for this
 ## sheet's session, or {} when there is no viewer, it holds nothing, or what it
-## holds is not a transient.
+## holds is not a transient. `why` is ok | filegone | nopoints -- see the note
+## at the return below, which is issues 0895 and 0896.
 ##
 ## ⚠ ISSUE 0881, AND IT IS THE HALF THE MODE WAS MISSING. The user's words,
 ## verbatim 2026-08-27: "The info should already be available -- it's been
@@ -1130,14 +1162,65 @@ proc cadence::_annot_viewer_db {} {
     }
   }
   ::wviewer::leave_ctx $key $ticket
-  if {$path eq {} || ![file exists $path]} { return {} }
-  return [list $path $print]
+  ## ⚠ THE ANSWER CLASSIFIES ITSELF, AND THAT THIRD ELEMENT IS THE WHOLE OF
+  ## ISSUES 0895 AND 0896. A reader would otherwise assume -- as this proc used
+  ## to -- that an EMPTY answer is a good enough way to say "the consult did not
+  ## work out", and that the caller can then use the FINGERPRINT to tell whether
+  ## the consult happened at all. Both are wrong, and they are the same mistake:
+  ## `$print` is empty for a run that has produced no measured point yet, so an
+  ## empty fingerprint and a matching fingerprint read identically at the caller.
+  ## Measured 2026-08-28 on both arms: the two-window compare was skipped, no
+  ## refusal was raised, and a DIFFERENT run's numbers were painted on the sheet
+  ## under "Showing each node's voltage at ...". That is RULING D5-1.
+  ## So there are now four distinct answers and every one of them is named:
+  ##   {}                       -- no waveform window is showing a transient for
+  ##                               this sheet. This is the ONE meaning an empty
+  ##                               answer is allowed to keep.
+  ##   {path print filegone}    -- the window names this file and it is NOT on
+  ##                               disk any more. Issue 0895: most simulators
+  ##                               unlink and re-create rather than rewriting in
+  ##                               place, so the file is absent, not corrupt.
+  ##   {path print nopoints}    -- the file is there but no fingerprint could be
+  ##                               computed. Given this proc's own preconditions
+  ##                               above (`raw loaded` >= 0 and `sim_type` eq
+  ##                               tran) the ONLY way `_annot_db_print` can come
+  ##                               back empty is its `np < 1` test, so this means
+  ##                               exactly and only "the run has not produced a
+  ##                               measured point yet". Verified, not assumed.
+  ##   {path print ok}          -- the ordinary case, unchanged.
+  ## ⚠ AND `filegone` IS TESTED FIRST WHEN BOTH ARE TRUE, deliberately: a
+  ## deleted file is the more concrete and more actionable complaint, and the
+  ## sentence a user can act on is the one naming it. "No values yet" would have
+  ## the user waiting for a run whose output has already gone.
+  ## Rows V62 and V63 legs a-d pin the SPELLINGS and the per-case mapping;
+  ## V53 leg 6 pins them again on the display arm. The ORDER needs both tests
+  ## true at once, which no fixture in the tree produced until issue 0899: row
+  ## V63 leg g asks the consult directly and row V65 asks the schematic.
+  ##
+  ## ⚠ AND THE EMPTY-PATH LINE BELOW IS A GUARD, NOT A TIDY-UP -- issue 0899,
+  ## which is what a wrong attribution here cost. This comment used to say row
+  ## V37 depended on it; V37's fixture has no waveform window at all, so it
+  ## leaves this proc at the window guard far above and cannot reach this line.
+  ## For one item the line therefore shipped with NOTHING able to see it go.
+  ## What it actually holds back: a window that IS in play -- the borrow
+  ## succeeded -- but holds nothing, or holds an operating point rather than a
+  ## transient. Both leave `$path` empty, and `file exists {}` is 0, so without
+  ## this line the next test claims `filegone` about a file that was never
+  ## named. Measured: the user is told "The waveform window is showing the
+  ## results file , but that file is no longer on disk", the sheet stays bare,
+  ## and their own results file was readable the whole time. Rows V63 legs e and
+  ## f ask the consult; row V64 asks the schematic, on both faces.
+  if {$path eq {}} { return {} }
+  if {![file exists $path]} { return [list $path $print filegone] }
+  if {![llength $print]} { return [list $path $print nopoints] }
+  return [list $path $print ok]
 }
 
 ## -> {loaded state path} -- what the CURRENT window holds after this proc has
 ## tried to supply it, the reason when it could not, and the file it reached
 ## for. `loaded` is `xschem raw loaded`'s own answer, RE-ASKED; `state` is one
-## of ok | noraw | stale.
+## of ok | noraw | stale | viewerdiff | viewerunread | viewergone |
+## viewerfilling. The last two are item A13's, for issues 0895 and 0896.
 ##
 ## ⚠ ISSUE 0881, AND THE USER REPRODUCED IT AT THEIR OWN BENCH 2026-08-27,
 ## VERBATIM: "I do a TRAN run and then Alt-Shift-6 and Results > Annotate >
@@ -1242,11 +1325,34 @@ proc cadence::_annot_tran_supply {} {
   ## now. When the viewer is showing a transient for this sheet, that file is
   ## the answer, whatever a path rebuilt from the preferences would have said.
   set vw [cadence::_annot_viewer_db]
+  set vseen  0
   set vprint {}
+  set vwhy   {}
   if {[llength $vw]} {
     set path   [lindex $vw 0]
     set vprint [lindex $vw 1]
+    set vwhy   [lindex $vw 2]
+    set vseen  1
   }
+
+  ## ⚠ THE CONSULT SAYS WHETHER IT SUCCEEDED; THE FINGERPRINT SAYS WHETHER THE
+  ## TWO WINDOWS CAN BE COMPARED. THOSE ARE TWO QUESTIONS AND UNTIL ITEM A13
+  ## THIS CODE ASKED THEM AS ONE. A reader would otherwise assume `$vprint`
+  ## being non-empty is a fair stand-in for "the waveform window answered" --
+  ## it is not, and issues 0895 and 0896 are both that assumption cashing out.
+  ## `$vseen` is now the only thing that answers the first question and it is
+  ## the only thing the guards below key on.
+  ##
+  ## ⚠ AND NEITHER OF THESE TWO FALLS THROUGH TO THE FILE ON DISK. That
+  ## fall-through IS the defect (driver ruling 1, 2026-08-28): when the two
+  ## windows cannot be compared, a number nobody measured for the thing it is
+  ## displayed next to must never reach the schematic -- RULING D5-1 is not
+  ## satisfied by "we could not check", it is satisfied by not painting. Both
+  ## return BEFORE the annotate hand-off below, so nothing is ever attached, no
+  ## unwind is owed, the user's mask is untouched and the sheet stays bare.
+  ## Row V62 leg 5 measures that ordering rather than trusting this paragraph.
+  if {$vseen && $vwhy eq {filegone}} { return [list -1 viewergone $path] }
+  if {$vseen && $vwhy eq {nopoints}} { return [list -1 viewerfilling $path] }
 
   if {$path eq {} || ![file exists $path]} { return [list -1 noraw $path] }
   if {$lvl eq {} || ![string is integer -strict $lvl]} { set lvl -1 }
@@ -1275,12 +1381,38 @@ proc cadence::_annot_tran_supply {} {
     ## neighbour, and the user's PLAIN ENGLISH ruling). The guard is the
     ## condition, not the arm: with no viewer in play this must still say
     ## `noraw`, which is row V37's job.
-    if {[llength $vprint]} { return [list -1 viewerunread $path] }
+    ## ⚠ AND THE GUARD KEYS ON THE CONSULT, NOT ON THE FINGERPRINT. It used to
+    ## read `[llength $vprint]`, which is the same conflation issues 0895 and
+    ## 0896 came out of: a waveform window whose run has no points yet answers
+    ## with an EMPTY fingerprint and would have been sent to `noraw` here.
+    if {$vseen} { return [list -1 viewerunread $path] }
     return [list -1 noraw $path]
   }
 
   ## THE TWO WINDOWS ARE COMPARED BEFORE A SINGLE NUMBER IS BELIEVED.
-  if {[llength $vprint] && [cadence::_annot_db_print] ne $vprint} {
+  ## ⚠ GATED ON `$vseen`, SO THE COMPARE CANNOT BE SKIPPED ONCE CONTROL IS
+  ## IN THIS PROC. The old gate was `[llength $vprint]`, so a fingerprint that
+  ## could not be computed SILENTLY SKIPPED the compare and the supply answered
+  ## `ok` -- issue 0896, measured. By the time control reaches here `$vseen`
+  ## implies `$vprint` is non-empty, because the `nopoints` arm above has
+  ## already returned; that is defence in depth, and row V62 legs 2 and 3 are
+  ## the only witnesses it has.
+  ##
+  ## ⚠ AND THE SCOPE OF THAT SENTENCE IS THE WHOLE OF ISSUE 0900, SO READ IT
+  ## LITERALLY. This says the compare cannot be skipped ONCE THIS PROC RUNS. It
+  ## does NOT say the compare always runs. `cadence::annot_tran` calls this
+  ## supplier only when `xschem raw loaded` is < 0 in the design window, so a
+  ## window that ALREADY holds a database -- which is what every successful
+  ## press leaves behind, since success never unwinds -- skips this proc
+  ## entirely: consult, `filegone`, `nopoints` and this compare with them.
+  ## Measured on both arms 2026-08-28: press, re-run the simulation, press
+  ## again, and the FIRST run's numbers stay on the sheet under the confident
+  ## caption. An earlier revision of this comment claimed a skipped compare was
+  ## "structurally impossible" full stop; that was an overclaim of exactly the
+  ## kind issue 0899 records, and it is corrected here rather than quietly
+  ## dropped. Issue 0900 carries the measurement and the shape of a fix; it is
+  ## the same predicate mistake as issue 0684 on the OP surface.
+  if {$vseen && [cadence::_annot_db_print] ne $vprint} {
     return [list $after viewerdiff $path]
   }
   return [list $after ok $path]
@@ -1387,6 +1519,30 @@ proc cadence::annot_tran {} {
     if {[lindex $sup 1] eq {viewerunread}} {
       cadence::_annot_say [cadence::_annot_tran_msg viewerunread {} {} [lindex $sup 2]] warn
       return viewerunread
+    }
+    ## ⚠ ISSUES 0895 AND 0896, AND THEIR PLACE IN THE ORDER IS THE SAME GUARD
+    ## (G13's rule). A reader would otherwise assume these could sit anywhere
+    ## among the refusals, or below `set attached 1` with the others. They
+    ## cannot: `loaded` is -1 on both of these paths, so the `noraw` branch
+    ## below would swallow them and the user would be told no results are
+    ## loaded while the waveform window is plotting them -- which is the whole
+    ## of issue 0895. And nothing has been attached yet, so neither owes an
+    ## unwind; giving one would detach a database this key press never
+    ## attached, i.e. somebody else's results taken off the user's session by a
+    ## refusal. Row V52's roll-call names both with golden 0 for that reason,
+    ## and row V62 leg 5 pins the ordering in the supplier itself.
+    ##
+    ## ⚠ `viewergone` IS FIRST BECAUSE THE SUPPLY CAN ONLY RETURN ONE OF THEM.
+    ## This is a dispatch chain over a single answer, not a precedence puzzle;
+    ## the precedence that matters was already decided in the consult, where a
+    ## file that is gone outranks a run with no points.
+    if {[lindex $sup 1] eq {viewergone}} {
+      cadence::_annot_say [cadence::_annot_tran_msg viewergone {} {} [lindex $sup 2]] warn
+      return viewergone
+    }
+    if {[lindex $sup 1] eq {viewerfilling}} {
+      cadence::_annot_say [cadence::_annot_tran_msg viewerfilling {} {} [lindex $sup 2]] warn
+      return viewerfilling
     }
     if {![string is integer -strict $loaded] || $loaded < 0} {
       cadence::_annot_say [cadence::_annot_tran_msg noraw {} {}] warn

@@ -13113,6 +13113,13 @@ check {V41 issue 0857 the post-run desktop: Alt-6 searches, loads, unwinds AND s
 ## written the way the user asked for on 2026-08-27 -- plain English, saying
 ## what happened AND what to do about it, with no internal vocabulary in it.
 set V_MSG_VDIFF42 "The results file [file tail $V_A10_STALE] on disk is from a different simulation run than the one the waveform window is showing, so nothing was placed on the schematic. Plot the results again in the waveform window, then try again."
+## ⚠ AND THE TWO SENTENCES ITEM A13 ADDS, for issues 0895 and 0896. NEW WORDING
+## THE USER HAS NOT RATIFIED -- a `look` debt each and a `rule` debt for having
+## invented it. Both name the file, both say what happened and both end with
+## what the user can do, because a refusal that stops at naming the problem is
+## the silence this mode exists to remove.
+set V_MSG_VGONE42 "The waveform window is showing the results file [file tail $V_A10_STALE], but that file is no longer on disk, so nothing was placed on the schematic. If a simulation is running, wait for it to finish, then try again."
+set V_MSG_VFILL42 "The waveform window is showing the results file [file tail $V_A10_STALE], but the run has not produced any values yet, so nothing was placed on the schematic. Wait for the simulation to finish, then try again."
 check {V42 RULING D5-4 the stale-results sentence, the changed-results sentence and BOTH shapes of the no-operating-point sentence, byte for byte} \
   [list [rcall [list cadence::_annot_tran_msg staleraw {} {} $V_A10_STALE]] \
         [rcall [list cadence::_annot_tran_msg viewerdiff {} {} $V_A10_STALE]] \
@@ -13120,8 +13127,18 @@ check {V42 RULING D5-4 the stale-results sentence, the changed-results sentence 
         [rcall {cadence::_annot_msg 0 notop {} {}}]] \
   [list [list 0 $V_MSG_STALERAW] [list 0 $V_MSG_VDIFF42] \
         [list 0 $V_MSG_NOTOP_TRAN] [list 0 $V_MSG_NOTOP_BARE]]
+check {V42d issues 0895+0896 the deleted-results-file sentence and the still-filling sentence, byte for byte} \
+  [list [rcall [list cadence::_annot_tran_msg viewergone {} {} $V_A10_STALE]] \
+        [rcall [list cadence::_annot_tran_msg viewerfilling {} {} $V_A10_STALE]]] \
+  [list [list 0 $V_MSG_VGONE42] [list 0 $V_MSG_VFILL42]]
 check_raises {V42b an unknown transient state still RAISES, and the message names the new `staleraw` spelling} \
   {cadence::_annot_tran_msg zzbogus {} {}} {staleraw}
+## ⚠ THE ROLL-CALL IN THE RAISE IS HAND-MAINTAINED, which is issue 0897, and an
+## arm added without its spelling here is an arm the raise cannot name.
+check_raises {V42c an unknown transient state names the new `viewerfilling` spelling too} \
+  {cadence::_annot_tran_msg zzbogus {} {}} {viewerfilling}
+check_raises {V42c2 an unknown transient state names the new `viewergone` spelling too} \
+  {cadence::_annot_tran_msg zzbogus {} {}} {viewergone}
 
 # ===========================================================================
 # V43 — STRUCTURAL, RULING D5-4: MINTED IN ONE FILE ONLY. RED BEFORE
@@ -13140,18 +13157,26 @@ set V_A10_OTHER [list [file join $repo src xschem.tcl] \
                       [file join $repo src ase_window.tcl] \
                       [file join $repo src wave_viewer.tcl] \
                       [file join $repo src cadence_style_rc]]
-set v43_mint [list [expr {[opa_v_ngrep $V_A10_MINT {No operating point results are loaded}] >= 1 ? 1 : 0}] \
-                   [expr {[opa_v_ngrep $V_A10_MINT {is older than the circuit it describes}] >= 1 ? 1 : 0}] \
-                   [expr {[opa_v_ngrep $V_A10_MINT {is from a different simulation run}] >= 1 ? 1 : 0}]]
+## ⚠ THE FRAGMENT MUST SIT ON ONE SOURCE LINE, because opa_v_ngrep is
+## line-based. That is a constraint on how the mint is written, and it is
+## cheaper to state it than to have a later reader wrap the sentence and
+## silently hollow this row.
+set V43_FRAGS [list {No operating point results are loaded} \
+                    {is older than the circuit it describes} \
+                    {is from a different simulation run} \
+                    {but that file is no longer on disk} \
+                    {but the run has not produced any values yet}]
+set v43_mint {}
+foreach _vf $V43_FRAGS {
+  lappend v43_mint [expr {[opa_v_ngrep $V_A10_MINT $_vf] >= 1 ? 1 : 0}]
+}
 set v43_other {}
 foreach _vp $V_A10_OTHER {
-  lappend v43_other [opa_v_ngrep $_vp {No operating point results are loaded}]
-  lappend v43_other [opa_v_ngrep $_vp {is older than the circuit it describes}]
-  lappend v43_other [opa_v_ngrep $_vp {is from a different simulation run}]
+  foreach _vf $V43_FRAGS { lappend v43_other [opa_v_ngrep $_vp $_vf] }
 }
-check {V43 RULING D5-4 the three new sentences are minted in utils/annot_mode.tcl and appear in no other file} \
+check {V43 RULING D5-4 the five new sentences are minted in utils/annot_mode.tcl and appear in no other file} \
   [list $v43_mint $v43_other] \
-  [list {1 1 1} {0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}]
+  [list {1 1 1 1 1} {0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}]
 
 # ===========================================================================
 # V44 — WITNESS, ISSUE 0882: A CONSEQUENCE OF THE FIX, PINNED
@@ -13229,7 +13254,13 @@ check {V44 issue 0882 WITNESS a base-level mismatch that REFUSED with an empty d
 ## and the refusal are the shipped code. Rows B12/B12c/B12g of
 ## tests/headless/test_annot_show_menu.tcl drive the same path through the REAL
 ## viewer on a real display.
-proc opa_v_viewer {rawfile script} {
+## ⚠ THE ANALYSIS IS A PARAMETER BECAUSE A WAVEFORM WINDOW IS NOT ALWAYS
+## SHOWING A TRANSIENT, and item A13's repair turns on exactly that. Default
+## `tran`, so every row written before this reads unchanged; rows V63e/V63f and
+## V64 pass `op` or point it at a file that is not there, which is the only way
+## to stand up a viewer window that is genuinely IN PLAY while holding nothing
+## this mode can use.
+proc opa_v_viewer {rawfile script {analysis tran}} {
   set dw [xschem get current_win_path]
   ## ⚠ ISSUE 0891 -- THE STAND-IN IS BUILT ON THE VERB THE REAL VIEWER USES,
   ## AND THAT IS THE WHOLE OF THE ISSUE. A reader would otherwise assume any
@@ -13282,11 +13313,19 @@ proc opa_v_viewer {rawfile script} {
   set ::opa_v_vw_path $vw
   set ::opa_v_vw_top [expr {$vw eq {.drw} ? {.} : [string range $vw 0 end-4]}]
   set ok 0
+  ## â  THE VIEWER'S OWN sim_type IS RECORDED HERE AND NOWHERE ELSE, because by
+  ## the time <script> runs the context has already been switched back to the
+  ## design window -- so a probe written in the script body would silently ask
+  ## the WRONG window and answer for the sheet. Row V63 leg f needs to prove the
+  ## viewer really is holding an operating point rather than a transient.
+  set st {}
   if {$vw ne $dw} {
-    catch {set ok [xschem raw read $rawfile tran]}
+    catch {set ok [xschem raw read $rawfile $analysis]}
+    catch {set st [xschem raw sim_type]}
     catch {xschem new_schematic switch $dw}
   }
   set ::opa_v_vw_ok $ok
+  set ::opa_v_vw_st $st
   namespace eval ase {}
   namespace eval wviewer {}
   set h1 [expr {[info commands ::ase::session_for_current] ne {}}]
@@ -13682,7 +13721,11 @@ proc opa_v_hasunwind {body state} {
 # 1`, would strip the numbers the user already had off their schematic as part
 # of a refusal -- left every check in the tree green in BOTH arms. Every state
 # `cadence::annot_tran` can return is now named: ok, nocursor, nodata, noraw,
-# notran, staleraw, viewerdiff, viewerunread.
+# notran, staleraw, viewerdiff, viewerunread, viewergone, viewerfilling.
+# ⚠ THE LAST TWO ARE ITEM A13's, for issues 0895 and 0896, and they must NOT
+# have an unwind: both return above `set attached 1`, so an unwind there would
+# detach a database this key press never attached -- somebody else's results,
+# taken off the user's session by a refusal.
 catch {xschem raw clear}
 xschem load [file join $lib v_cand.sch]
 opa_l_annot 0
@@ -13709,10 +13752,12 @@ check {V52 a refusal PUTS BACK what the press attached, does nothing when the pr
         [opa_v_hasunwind $V_A10_TRN2 nocursor] \
         [opa_v_hasunwind $V_A10_TRN2 noraw] \
         [opa_v_hasunwind $V_A10_TRN2 staleraw] \
-        [opa_v_hasunwind $V_A10_TRN2 viewerunread]] \
+        [opa_v_hasunwind $V_A10_TRN2 viewerunread] \
+        [opa_v_hasunwind $V_A10_TRN2 viewergone] \
+        [opa_v_hasunwind $V_A10_TRN2 viewerfilling]] \
   [list {{0 0} 6} {0 1} {{0 -1} 2} \
         {0 0} {{0 0} 6} \
-        1 1 1 0 0 0 0]
+        1 1 1 0 0 0 0 0 0]
 
 # ===========================================================================
 # V53 — THE STAND-IN IS A REAL, LIVE Tk TOPLEVEL, WHICH IS WHAT THE PRODUCT
@@ -13752,13 +13797,19 @@ opa_v_viewer $V_A10_VRUN {
   catch {if {[winfo toplevel $v53t] eq $v53t} { set v53d 1 }}
   set v53db {}
   catch {set v53db [cadence::_annot_viewer_db]}
-  set v53e [expr {[llength $v53db] == 2 && [lindex $v53db 0] eq $::V_A10_VRUN ? 1 : 0}]
-  set ::v53 [list $v53a $v53b $v53c $v53d $v53e]
+  set v53e [expr {[llength $v53db] == 3 && [lindex $v53db 0] eq $::V_A10_VRUN ? 1 : 0}]
+  ## ⚠ THE SIXTH LEG IS ITEM A13's, and it reds ONLY on the display arm --
+  ## which is a live demonstration of why every A13 row also runs here. The
+  ## consult now says WHICH of its answers it is giving, and for a good file
+  ## the answer is `ok`; an empty fingerprint and a matching one may never
+  ## again read the same (issues 0895, 0896).
+  set v53f [expr {[lindex $v53db 2] eq {ok} ? 1 : 0}]
+  set ::v53 [list $v53a $v53b $v53c $v53d $v53e $v53f]
 }
 opa_l_annot 0
 catch {xschem raw clear}
-check {V53 issue 0891 the waveform window the annotation borrows into is a real live Tk toplevel, not the drawing canvas of a tab, and the shipped consult finds the file it is showing} \
-  $::v53 [list 1 1 1 1 1]
+check {V53 issue 0891 the waveform window the annotation borrows into is a real live Tk toplevel, not the drawing canvas of a tab, and the shipped consult finds the file it is showing AND says which answer it is giving} \
+  $::v53 [list 1 1 1 1 1 1]
 }
 
 ## The CODE lines of <src>, whole-line Tcl comments dropped, so a paragraph
@@ -13923,14 +13974,517 @@ set V57_LAUNCH {}
 foreach _l57 [split $V57_LOOP \n] {
   if {[regexp -- {\$xschem_cmd} $_l57]} { set V57_LAUNCH $_l57 }
 }
-check {V57 issue 0891 STRUCTURAL the everyday regression runner also runs this suite on the persistent dev display, and says so when that display is not there} \
+## ⚠ THE SEVENTH LEG IS ITEM A13's, AND IT IS THE SAME TRAP ONE SUITE ALONG.
+## The rows that drive the REAL supply chain -- a waveform window opened by the
+## product's own `wviewer::open` and filled by its own `wviewer::attach_raw` --
+## live in tests/headless/test_annot_show_menu.tcl and can only run on a
+## display. Registering them and leaving nothing to notice the registration
+## being removed would put issue 0891's trap straight back: the everyday runner
+## would go on saying zero failures while the acceptance rows stopped running.
+check {V57 issue 0891 STRUCTURAL the everyday regression runner also runs this suite AND the menu suite on the persistent dev display, and says so when that display is not there} \
   [list [regexp {headless/test_op_annot} [opa_v_block $V57_RR {set\s+hcases} "\[" "\]"]] \
         [regexp {set\s+dcases[^\n]*headless/test_op_annot} $V57_RR] \
         [expr {$V57_LOOP ne {} ? 1 : 0}] \
         [expr {$V57_LAUNCH ne {} && [regexp {(devdisplay\.sh|\$dd)\s+exec} $V57_LAUNCH] ? 1 : 0}] \
         [expr {$V57_LOOP ne {} && ![regexp -- {--nogui} $V57_LOOP] ? 1 : 0}] \
-        [regexp {NOGOLD\|NODISPLAY} $V57_SUM]] \
-  [list 1 1 1 1 1 1]
+        [regexp {NOGOLD\|NODISPLAY} $V57_SUM] \
+        [regexp {set\s+dcases[^\n]*headless/test_annot_show_menu} $V57_RR]] \
+  [list 1 1 1 1 1 1 1]
+
+# ===========================================================================
+# V58 .. V63 — ITEM A13 / ISSUES 0896 + 0895: ONE CONFLATION, THREE FACES
+# ===========================================================================
+# ⚠ THE SHARED ROOT, AND IT IS ONE EXPRESSION. `$vprint` -- the fingerprint the
+# consult hands back -- is being used to stand in for "the consult succeeded".
+# A fingerprint that is EMPTY and a fingerprint that MATCHES are different
+# answers, and today's code cannot tell them apart. Everything below is that
+# one conflation seen from a different side:
+#
+#   V58  the waveform window is showing a run that has not produced a point
+#        yet, the finished and DIFFERENT run lands at the same path, and the
+#        two-window compare is SILENTLY SKIPPED -- so another run's numbers
+#        reach the schematic under the caption "Showing each node's voltage
+#        at 3 ns". Issue 0896, and a live RULING D5-1 breach     <- RED before
+#   V59  the same run still filling with NOTHING overwritten: the caption says
+#        the voltages are on the sheet while the sheet is bare   <- RED before
+#   V60  the waveform window's results file is DELETED while the traces stay
+#        on screen, and the refusal blames a missing results file. Issue 0895,
+#        a wrong REASON, which is the same defect class as a wrong number
+#                                                                <- RED before
+#   V61  0895's sharper face: a perfectly good but DIFFERENT results file sits
+#        at the preferences path, so the deleted-file case does not merely say
+#        the wrong thing, it annotates the wrong run             <- RED before
+#   V62  STRUCTURAL: an empty fingerprint and a matching fingerprint produce
+#        DIFFERENT states, and the compare can no longer be skipped
+#                                                                <- RED before
+#   V63  the consult's answer, asked directly, in BOTH arms      <- RED before
+#   V64  a waveform window that is showing an OPERATING POINT, or holding
+#        nothing at all, must not hijack the annotation and must not produce a
+#        refusal about a file nobody named -- issue 0899   <- RED on A13's fix
+#   V65  the run has produced nothing AND its file is gone: the user is told
+#        about the deleted file, which is the one they can act on
+#                                                          <- RED on A13's fix
+#
+# ⚠ EVERY ROW HERE RUNS ON BOTH ARMS. Item A12 spent a whole item establishing
+# that a row which only runs headless is a row that hides a defect; V53 is the
+# display-only row and it is edited rather than copied.
+
+## THE FILE A RUN LEAVES WHILE IT IS STILL GOING. ngspice writes a well-formed
+## header with `No. Points: 0` and fills the values in as it goes -- issue 0836
+## measured this and its own suite calls it "THE ORDINARY CASE, NOT A CORNER".
+## The read SUCCEEDS and the database ATTACHES, which is exactly how the
+## waveform window can watch a run fill; what it cannot do is produce a
+## fingerprint, because there is no last point to fingerprint.
+set V_A13_ZERO [file join $scratch v_a13_zero.raw]
+set V_ZHDR $V_T_HDR
+regsub {No\. Points: 5} $V_ZHDR {No. Points: 0} V_ZHDR
+opa_t_wr $V_A13_ZERO $V_ZHDR
+
+## A PATH THAT IS DELIBERATELY NOT THERE, so a waveform window can be stood up
+## that is genuinely in play and yet holds nothing. Deleted rather than assumed
+## absent: an earlier section leaving a file at this name would hollow out rows
+## V63 leg e and V64's second face without reddening anything.
+set V_A13_ABSENT [file join $scratch v_a13_absent.raw]
+catch {file delete -force $V_A13_ABSENT}
+
+## THE TWO NEW SENTENCES. NEW WORDING THE USER HAS NOT RATIFIED -- one `look`
+## debt each and one `rule` debt, because the wording was invented here. Both
+## say WHAT HAPPENED, give the CONTEXT that makes it make sense, and end with
+## what the user can do, which is the user's PLAIN ENGLISH ruling made
+## mechanical by row A11-11.
+set V_MSG_VGONE "The waveform window is showing the results file [file tail $V_A10_VRUN], but that file is no longer on disk, so nothing was placed on the schematic. If a simulation is running, wait for it to finish, then try again."
+set V_MSG_VFILL "The waveform window is showing the results file [file tail $V_A10_VRUN], but the run has not produced any values yet, so nothing was placed on the schematic. Wait for the simulation to finish, then try again."
+
+# ===========================================================================
+# V58 — ISSUE 0896's ACCEPTANCE: ANOTHER RUN'S NUMBERS MUST NOT LAND
+# ===========================================================================
+# ⚠ RULING D5-1, MEASURED 2026-08-28 ON BOTH ARMS. The user is watching a
+# transient fill in the waveform window. The simulator finishes and writes the
+# completed run over the same path. The user presses the chord -- and because
+# the file the waveform window is showing has no points yet, its fingerprint is
+# empty, the two-window compare never runs, and the FINISHED run's numbers are
+# painted on the sheet under "Showing each node's voltage at 3 ns, where cursor
+# B is on the waveform." No refusal. No warning. The numbers the caption claims
+# to describe are precisely the ones that are NOT on the user's screen, which
+# is why the INTENT ruling does not rescue this: its premise is that the
+# numbers are already there.
+# ⚠ LEG 1 IS THE NON-VACUITY AND IT IS NOT OPTIONAL, in row V46's discipline.
+# The same decoy file, the same sheet, the same cursor and the same mask,
+# reached through the product's own supply, really does paint 21 V beside node
+# `d`. A row asserting only that nothing was painted would be satisfied by a
+# fixture that could not paint at all.
+# ⚠ AND THE LAST LEG NAMES THE LITERAL. `d 21 g 0.1 0 0.0 0 0.0` is the other
+# run, byte for byte, and it must not appear on this sheet.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+opa_v_ase $V_A10_RUN2 0 {set ::v58_ctl_state [opa_v_tran]}
+set v58_ctl [opa_v_paint a13_ctl]
+opa_l_annot 0
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $V_A13_ZERO $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA13SENTINEL}
+set v58 [opa_v_spy {
+  opa_v_viewer $V_A10_VRUN {
+    ## the run finishes and the completed, DIFFERENT run lands at the same path
+    file copy -force $::V_A10_RUN2 $::V_A10_VRUN
+    set ::v58_state [opa_v_tran]
+  }
+}]
+set v58_att   $::opa_v_vw_ok
+set v58_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v58_ld    [rcall {xschem raw loaded}]
+set v58_mask  [xschem get annot_show]
+set v58_paint [opa_v_paint a13_fill]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V58 issue 0896 RULING D5-1 a run that is still filling cannot be compared with the file on disk, so the finished run's numbers are NOT painted and the user is told the run has not produced values yet} \
+  [list $v58_ctl $::v58_ctl_state $v58_att $::v58_state $v58 $v58_msg $v58_ld $v58_mask $v58_paint \
+        [expr {$v58_paint ne $V_PINS_OTHER ? 1 : 0}]] \
+  [list $V_PINS_OTHER ok 1 viewerfilling [list [list warn $V_MSG_VFILL]] $V_MSG_VFILL {0 -1} 0 \
+        $V_PINS_NONE 1]
+
+# ===========================================================================
+# V59 — ISSUE 0896's QUIETER FACE: A CONFIDENT CAPTION OVER A BARE SHEET
+# ===========================================================================
+# ⚠ IN NEITHER ISSUE FILE, AND IT IS A LIVE FALSE SUCCESS ON ITS OWN. Nothing
+# has been overwritten here: the waveform window and the disk are holding the
+# very same still-filling file. Measured today, both arms -- the state is `ok`,
+# the transient bit is armed, and the status line says "Showing each node's
+# voltage at 3 ns, where cursor B is on the waveform." over a COMPLETELY BARE
+# schematic. Fixing the conflation closes this for free, because the refusal
+# now happens before anything is published at all.
+# ⚠ THE LAST LEG IS AN INEQUALITY ON PURPOSE. Asserting the sentence is not the
+# `ok` one survives a future reword of the `ok` sentence; asserting a literal
+# would hollow out the moment somebody edits it.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $V_A13_ZERO $V_A10_VRUN
+opa_v_viewer $V_A10_VRUN {set ::v59_state [opa_v_tran]}
+set v59_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v59_mask  [xschem get annot_show]
+set v59_paint [opa_v_paint a13_still]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V59 issue 0896 a run that has produced no values yet must not report success over a bare schematic} \
+  [list $::v59_state $v59_mask $v59_paint [expr {$v59_msg ne $V_MSG_OK3 ? 1 : 0}]] \
+  [list viewerfilling 0 $V_PINS_NONE 1]
+
+# ===========================================================================
+# V60 — ISSUE 0895: THE REFUSAL MUST NAME WHAT ACTUALLY HAPPENED
+# ===========================================================================
+# ⚠ ROW V55's SIBLING, AND ITS COMMONEST REAL TRIGGER. Issue 0893 gave the
+# annotation a truthful sentence for a results file that cannot be READ again;
+# most simulators do not rewrite in place, they unlink and re-create, so the
+# file is ABSENT rather than corrupt -- and the consult gives up before 0893's
+# guard can see it. The user is looking at the traces drawn from that very
+# database and is told "No simulation results are loaded".
+# ⚠ SEVEN CLAIMS, V55's six plus one. The seventh asserts the WRONG sentence is
+# gone, not merely that some sentence appeared: a wrong reason is the defect,
+# so a row that only checked that something was said could not see the fix.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA13SENTINEL}
+set v60 [opa_v_spy {
+  opa_v_viewer $V_A10_VRUN {
+    ## the simulator unlinks the file it is about to re-create, while the
+    ## waveform window keeps holding and plotting what it already read
+    file delete -force $::V_A10_VRUN
+    set ::v60_state [opa_v_tran]
+  }
+}]
+set v60_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v60_ld    [rcall {xschem raw loaded}]
+set v60_mask  [xschem get annot_show]
+set v60_paint [opa_v_paint a13_gone]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V60 issue 0895 the waveform window's results file was deleted, so the refusal says THAT and names the file, instead of claiming no results are loaded} \
+  [list $::v60_state $v60 $v60_msg $v60_ld $v60_mask $v60_paint \
+        [expr {$v60_msg ne $V_MSG_NORAW ? 1 : 0}]] \
+  [list viewergone [list [list warn $V_MSG_VGONE]] $V_MSG_VGONE {0 -1} 0 $V_PINS_NONE 1]
+
+# ===========================================================================
+# V61 — 0895's SHARPER FACE, AND DRIVER RULING 1's ONLY BEHAVIOURAL WITNESS
+# ===========================================================================
+# ⚠ THE RULING, VERBATIM: "Never fall through to the file on disk when the two
+# windows cannot be compared." V60's fixture has nothing at the preferences
+# path, so the wrong sentence is all the user gets. Put a perfectly good but
+# DIFFERENT results file there -- the ordinary case, a previous run of the same
+# cell -- and the fall-through does not merely say the wrong thing: it
+# ANNOTATES THE WRONG RUN, with no compare possible, which is issue 0896's
+# family reached from 0895's side.
+# ⚠ LEG 1 IS THE NON-VACUITY. With no waveform window in play the same decoy at
+# the same path paints 21 V, so a fixture that could not paint cannot pass.
+set ::netlist_dir $V_ND_DECOY
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+set ::v61_ctl_state [opa_v_tran]
+set v61_ctl [opa_v_paint a13_decoyctl]
+opa_l_annot 0
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $T_RAW $V_A10_VRUN
+opa_v_viewer $V_A10_VRUN {
+  file delete -force $::V_A10_VRUN
+  set ::v61_state [opa_v_tran]
+}
+set v61_ld    [rcall {xschem raw loaded}]
+set v61_mask  [xschem get annot_show]
+set v61_paint [opa_v_paint a13_gonedecoy]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V61 issue 0895 with the waveform window's file deleted the annotation must NOT fall through to a different run sitting at the preferences path} \
+  [list $v61_ctl $::v61_ctl_state $::v61_state $v61_ld $v61_mask $v61_paint \
+        [expr {$v61_paint ne $V_PINS_OTHER ? 1 : 0}]] \
+  [list $V_PINS_OTHER ok viewergone {0 -1} 0 $V_PINS_NONE 1]
+
+## The 0-based index of the FIRST code line of <body> matching <re>, whole-line
+## Tcl comments dropped so a paragraph naming a call is never read as the call.
+## -1 when there is none. Row V62 leg 5 compares two of these, which is how an
+## ordering guard becomes a measurement instead of a promise.
+proc opa_v_lineidx {body re} {
+  set i 0
+  foreach l [split $body \n] {
+    if {![regexp {^\s*#} $l] && [regexp -- $re $l]} { return $i }
+    incr i
+  }
+  return -1
+}
+
+# ===========================================================================
+# V62 — STRUCTURAL: AN EMPTY FINGERPRINT AND A MATCHING ONE ARE DIFFERENT
+#       ANSWERS
+# ===========================================================================
+# ⚠ THREE OF THESE FIVE LEGS ARE THINGS NO BEHAVIOURAL ROW IN THE TREE CAN SEE,
+# and per this branch's own rule that is exactly why they are here rather than
+# nowhere. Legs 2, 3 and 5 stay green under every fixture that exists while the
+# guard they name is deleted, because the refusals above them have already
+# returned -- that is defence in depth working, and the honest way to pin it is
+# structurally.
+#   1  the consult CLASSIFIES its answer instead of giving up: it names the
+#      deleted-file case, names the no-points-yet case, and has no line that
+#      answers a bare {} to an absent file. That last one is the whole of
+#      issue 0895 -- "no waveform window in play" and "the window's file is
+#      gone" must stop being the same answer.
+#   2  the supplier never reads the fingerprint's LENGTH again. That expression
+#      is the conflation itself; while it survives anywhere in the supplier the
+#      two questions are still being asked as one.
+#   3  the two-window compare is gated on whether the CONSULT succeeded, not on
+#      whether a fingerprint happened to be computable, so a SKIPPED compare
+#      becomes structurally impossible rather than merely unlikely.
+#   4  the supplier names each new refusal exactly once.
+#   5  both new refusals return BEFORE the supplier ever hands a file to the
+#      annotate verb, which is the "nothing was attached, so no unwind is owed"
+#      invariant made measurable. Row V52's roll-call cannot catch this: it only
+#      asks whether an unwind EXISTS, which is issue 0894's exact shape.
+set V62_SRC [opa_slurp [file join $repo utils annot_mode.tcl]]
+set V62_DB  [opa_v_code [opa_proc_src $V62_SRC cadence::_annot_viewer_db]]
+set V62_SUP [opa_v_code [opa_proc_src $V62_SRC cadence::_annot_tran_supply]]
+set v62_cmpgate 0
+foreach _l62 [split $V62_SUP \n] {
+  if {[regexp {^\s*#} $_l62]} continue
+  if {[regexp {_annot_db_print} $_l62]} {
+    set v62_cmpgate [expr {[regexp {\$vseen} $_l62] ? 1 : 0}]
+  }
+}
+set v62_iao   [opa_v_lineidx $V62_SUP {annotate_op}]
+set v62_igone [opa_v_lineidx $V62_SUP {viewergone}]
+set v62_ifill [opa_v_lineidx $V62_SUP {viewerfilling}]
+check {V62 issues 0895+0896 STRUCTURAL the consult says WHICH answer it is giving, the supplier stops reading the fingerprint's length, the compare is gated on the consult and both new refusals return before anything is attached} \
+  [list [expr {[string length $V62_DB] > 0 ? 1 : 0}] \
+        [expr {[opa_v_pgrep $V62_DB {filegone}] >= 1 ? 1 : 0}] \
+        [expr {[opa_v_pgrep $V62_DB {nopoints}] >= 1 ? 1 : 0}] \
+        [opa_v_pgrep $V62_DB {!\[file exists \$path\][^\n]*return \{\}}] \
+        [opa_v_pgrep $V62_SUP {llength \$vprint}] \
+        $v62_cmpgate \
+        [opa_v_pgrep $V62_SUP {viewergone}] \
+        [opa_v_pgrep $V62_SUP {viewerfilling}] \
+        [expr {$v62_igone >= 0 && $v62_ifill >= 0 && $v62_iao > $v62_igone \
+               && $v62_iao > $v62_ifill ? 1 : 0}]] \
+  [list 1 1 1 0 0 1 1 1 1]
+
+# ===========================================================================
+# V63 — THE CONSULT'S ANSWER, ASKED DIRECTLY, ON THE ARM V53 CANNOT REACH
+# ===========================================================================
+# ⚠ V53 IS DISPLAY-ONLY, so the SHAPE of the consult's answer is unwitnessed
+# headless -- and issue 0891 is the whole story of what a display-only row
+# costs. This asks the shipped consult the same question four times, in both
+# arms, and it is the row that shows an empty fingerprint and a matching one
+# producing different answers directly rather than through a paint.
+#   a  a finished run           -> the path, a fingerprint, and `ok`
+#   b  a run with no points yet -> the path, an EMPTY fingerprint, `nopoints`
+#   c  the file deleted         -> the path, a fingerprint, `filegone`
+#   d  no waveform window at all -> nothing, which is the ONE meaning an empty
+#      answer is allowed to have from now on
+#   e  a waveform window that IS in play and holds NOTHING -> nothing
+#   f  a waveform window that IS in play and is showing an OPERATING POINT
+#      rather than a transient -> nothing
+#   g  a run with no points yet whose file is then DELETED -> `filegone`, which
+#      is the PRECEDENCE and not merely the spelling
+#
+# â  LEGS e, f AND g ARE ITEM A13's REPAIR, AND THEY EXIST BECAUSE THE SABOTAGE
+# PASS COULD NOT SEE TWO OF THE ITEM'S OWN GUARDS (issue 0899). Legs a-d walked
+# straight past `if {$path eq {}} { return {} }`: leg d has no waveform window
+# at all, so the consult exits at the window guard several lines ABOVE and that
+# line is never reached. Delete the line and, measured, a viewer holding an
+# operating point answers `{{} {} filegone}` -- a refusal naming NO file, on a
+# session whose own results file was sitting readable on disk. Legs e and f are
+# the two ways a window can be in play holding nothing this mode can use, and
+# row V64 is the same defect seen from the schematic. Leg g is the ORDER: legs
+# b and c pin the two spellings but each makes only one of the two tests true,
+# so swapping the two lines was invisible to every row in the tree; here both
+# are true at once and only the shipped order answers `filegone`. Row V65 is
+# that one seen from the schematic.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+file copy -force $T_RAW $V_A10_VRUN
+set ::v63a {}
+opa_v_viewer $V_A10_VRUN {
+  set v63d1 {}
+  catch {set v63d1 [cadence::_annot_viewer_db]}
+  set ::v63a [list [llength $v63d1] [lindex $v63d1 2] \
+                   [expr {[llength [lindex $v63d1 1]] > 0 ? 1 : 0}] \
+                   [expr {[lindex $v63d1 0] eq $::V_A10_VRUN ? 1 : 0}]]
+}
+file copy -force $V_A13_ZERO $V_A10_VRUN
+set ::v63b {}
+opa_v_viewer $V_A10_VRUN {
+  set v63d2 {}
+  catch {set v63d2 [cadence::_annot_viewer_db]}
+  set ::v63b [list [llength $v63d2] [lindex $v63d2 2] [llength [lindex $v63d2 1]] \
+                   [expr {[lindex $v63d2 0] eq $::V_A10_VRUN ? 1 : 0}]]
+}
+file copy -force $T_RAW $V_A10_VRUN
+set ::v63c {}
+opa_v_viewer $V_A10_VRUN {
+  file delete -force $::V_A10_VRUN
+  set v63d3 {}
+  catch {set v63d3 [cadence::_annot_viewer_db]}
+  set ::v63c [list [llength $v63d3] [lindex $v63d3 2] \
+                   [expr {[lindex $v63d3 0] eq $::V_A10_VRUN ? 1 : 0}]]
+}
+file copy -force $T_RAW $V_A10_VRUN
+set v63d {}
+catch {set v63d [cadence::_annot_viewer_db]}
+## e -- the window is REAL and the borrow SUCCEEDS; it just holds nothing. The
+## second element of each pair is the fixture's own honesty check: the viewer
+## really did fail to attach anything, so a fixture that quietly attached the
+## file anyway cannot pass this leg by accident.
+set ::v63e {}
+opa_v_viewer $V_A13_ABSENT {
+  set v63d5 {}
+  catch {set v63d5 [cadence::_annot_viewer_db]}
+  set ::v63e [list [llength $v63d5] $::opa_v_vw_ok]
+}
+## f -- the window holds a DC operating point, which is a database this mode
+## must not divert to and must not complain about either.
+set ::v63f {}
+opa_v_viewer $V_A10_OPTRAN {
+  set v63d6 {}
+  catch {set v63d6 [cadence::_annot_viewer_db]}
+  set ::v63f [list [llength $v63d6] $::opa_v_vw_ok $::opa_v_vw_st]
+} op
+## g -- BOTH classification tests are true at once: the run has produced no
+## point AND its file has been unlinked. The shipped order says the deleted
+## file wins, because that is the complaint the user can act on.
+file copy -force $V_A13_ZERO $V_A10_VRUN
+set ::v63g {}
+opa_v_viewer $V_A10_VRUN {
+  file delete -force $::V_A10_VRUN
+  set v63d7 {}
+  catch {set v63d7 [cadence::_annot_viewer_db]}
+  set ::v63g [list [llength $v63d7] [lindex $v63d7 2] [llength [lindex $v63d7 1]]]
+}
+file copy -force $T_RAW $V_A10_VRUN
+opa_l_annot 0
+catch {xschem raw clear}
+check {V63 issues 0895+0896 the consult reports WHICH of its answers it is giving, so an empty fingerprint and a matching fingerprint can never read the same, a window holding nothing usable is still no answer at all, and a deleted file outranks a run with no points yet} \
+  [list $::v63a $::v63b $::v63c [llength $v63d] $::v63e $::v63f $::v63g] \
+  [list {3 ok 1 1} {3 nopoints 0 1} {3 filegone 1} 0 {0 0} {0 1 op} {3 filegone 0}]
+
+# ===========================================================================
+# V64 - A WAVEFORM WINDOW THAT IS NOT SHOWING A TRANSIENT MUST NOT HIJACK THE
+#       ANNOTATION, AND MUST NOT PRODUCE A COMPLAINT EITHER
+# ===========================================================================
+# ⚠ ITEM A13's REPAIR, AND ISSUE 0899's MAJOR HALF SEEN FROM THE SCHEMATIC.
+# The user has the waveform window open on a DC operating point -- or has it
+# open with nothing plotted in it yet -- and their sheet's own transient results
+# are sitting readable where the preferences say they are. Pressing the chord
+# must annotate from the sheet's own results file, exactly as it did before
+# there was any waveform consult at all.
+# ⚠ WHAT GOES WRONG WITHOUT THE GUARD, MEASURED 2026-08-28 THROUGH SHIPPED
+# VERBS ONLY. Delete `if {$path eq {}} { return {} }` from the consult and the
+# empty path falls into the deleted-file arm -- `file exists {}` is 0 -- so the
+# consult answers `filegone` about a file it never named. The user gets
+# "The waveform window is showing the results file , but that file is no longer
+# on disk", a refusal naming NO file, about a file that was never named, on a
+# session whose results were readable, and the sheet stays bare. Every other row
+# in the tree stayed green through that.
+# ⚠ TWO FACES BECAUSE THERE ARE TWO WAYS TO GET AN EMPTY PATH, and the consult's
+# own comment names both: the window holds nothing (`raw loaded` < 0), and the
+# window holds something that is not a transient (`sim_type` ne tran). Neither
+# is a corner: a viewer opened but not yet plotted into, and a viewer showing
+# the operating point, are both ordinary bench states.
+# ⚠ THE PAINT IS THE POINT. `d 21 g 0.1 0 0.0 0 0.0` is the decoy at the
+# preferences path, and here it is not a decoy at all -- it is the sheet's own
+# results file, correctly annotated, which is the whole claim.
+set ::netlist_dir $V_ND_DECOY
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+catch {xschem statusmsg -hold ZZA13SENTINEL}
+opa_v_viewer $V_A10_OPTRAN {set ::v64_state [opa_v_tran]} op
+set v64_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v64_paint [opa_v_paint a13_opview]
+opa_l_annot 0
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+catch {xschem statusmsg -hold ZZA13SENTINEL}
+opa_v_viewer $V_A13_ABSENT {set ::v64b_state [opa_v_tran]}
+set v64b_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v64b_paint [opa_v_paint a13_emptyview]
+opa_l_annot 0
+catch {xschem raw clear}
+check {V64 issue 0899 a waveform window showing an operating point or holding nothing at all still lets the sheet be annotated from its own results file, and never produces a refusal about a file nobody named} \
+  [list $::v64_state $v64_paint $v64_msg $::v64b_state $v64b_paint $v64b_msg] \
+  [list ok $V_PINS_OTHER $V_MSG_OK3 ok $V_PINS_OTHER $V_MSG_OK3]
+
+# ===========================================================================
+# V65 - BOTH COMPLAINTS ARE TRUE AT ONCE, AND THE USER IS TOLD THE ONE THEY
+#       CAN ACT ON
+# ===========================================================================
+# ⚠ ISSUE 0899's SECOND HALF, AND THE ONLY FIXTURE IN THE TREE WHERE THE
+# CLASSIFICATION'S ORDER IS DECIDABLE. Rows V58/V59 make the run-has-no-points
+# test true and the file-is-gone test false; rows V60/V61 do the reverse. Either
+# order of the two lines passes both pairs, so the order shipped on a comment
+# and nothing else. Here the simulator has unlinked a file the waveform window
+# read while it still had no points in it -- both true -- and the shipped order
+# says the deleted file wins, because "that file is no longer on disk" is the
+# complaint the user can do something about and "no values yet" would have the
+# user waiting for a run whose output has already gone.
+# ⚠ THE LAST LEG NAMES THE SENTENCE THAT MUST NOT APPEAR, in row V60's
+# discipline: a row that only checked that some refusal was raised would be
+# satisfied by the wrong one.
+set ::netlist_dir $V_ND_NONE
+catch {xschem raw clear}
+xschem load [file join $lib v_cand.sch]
+opa_l_annot 0
+xschem cursor 1 0 ; xschem cursor 2 1
+xschem set cursor2_x 3e-9
+file copy -force $V_A13_ZERO $V_A10_VRUN
+catch {xschem statusmsg -hold ZZA13SENTINEL}
+set v65 [opa_v_spy {
+  opa_v_viewer $V_A10_VRUN {
+    ## the run has produced nothing yet AND the simulator has just unlinked the
+    ## file it is about to re-create, while the window keeps plotting what it read
+    file delete -force $::V_A10_VRUN
+    set ::v65_state [opa_v_tran]
+  }
+}]
+set v65_msg   [lindex [rcall {xschem get statusmsg}] 1]
+set v65_mask  [xschem get annot_show]
+set v65_paint [opa_v_paint a13_zerogone]
+opa_l_annot 0
+catch {xschem raw clear}
+file copy -force $T_RAW $V_A10_VRUN
+check {V65 issue 0899 when the run has produced no values yet AND its results file has been deleted the user is told about the deleted file, which is the one they can act on} \
+  [list $::v65_state $v65 $v65_msg $v65_mask $v65_paint \
+        [expr {$v65_msg ne $V_MSG_VFILL ? 1 : 0}]] \
+  [list viewergone [list [list warn $V_MSG_VGONE]] $V_MSG_VGONE 0 $V_PINS_NONE 1]
 
 set ::netlist_dir $v33_nd
 catch {xschem raw clear}
@@ -14045,7 +14599,8 @@ proc opa_a11_sentences {} {
                   [list nocursor {} {} {}] [list noraw {} {} {}] \
                   [list notran {} {} {}] [list nodata 3e-09 B {}] \
                   [list staleraw {} {} $p] [list viewerdiff {} {} $p] \
-                  [list viewerunread {} {} $p]] {
+                  [list viewerunread {} {} $p] [list viewergone {} {} $p] \
+                  [list viewerfilling {} {} $p]] {
     set r [rcall [concat [list cadence::_annot_tran_msg] $a]]
     if {[lindex $r 0] != 0} {
       lappend out "RAISED:[lindex $r 1]"
@@ -14228,7 +14783,7 @@ set A11_BANNED [list {*NO RAW*} {*database*} {*sim_type*} {* raw *} {*raw file*}
                      {*_*} {*=*} {*::*} {*xschem *} {*OP *} \
                      {*noop*} {*nopath*} {*noraw*} {*notop*} {*notran*} \
                      {*nocursor*} {*staleraw*} {*viewerdiff*} {*okclamped*} \
-                     {*nodata*} {*viewerunread*}]
+                     {*nodata*} {*viewerunread*} {*viewergone*} {*viewerfilling*}]
 proc opa_a11_jargon {s} {
   set hits {}
   foreach p $::A11_BANNED { if {[string match $p $s]} { lappend hits $p } }
