@@ -151,6 +151,37 @@ set A11_FAILED { Could not read the results file @P@, so nothing was placed on t
 set A11_NORAW  { There is no results file at @P@ yet. Run a simulation first.}
 set A11_STALE  { The results file @T@ is older than the circuit it describes, so it was not used - it is from an earlier run. Run the simulation again.}
 
+# ISSUE 0909 — THE CLAUSE THAT DESCRIBES WHAT IS INSIDE THE RESULTS FILE.
+#
+# ⚠ EVERY OTHER CLAUSE ABOVE IS ABOUT THE FILE; THESE THREE ARE ABOUT ITS
+# CONTENTS, AND THAT IS WHY THEY ARE A SEPARATE AXIS RATHER THAN THREE MORE
+# STATES. The block was drawn, the press succeeded, and the values in it are
+# blank — a fact that can be true under `live` and under `loaded` alike, so a
+# state would have to be duplicated per state or would delete the sentence that
+# names the file. It is appended as a clause, and rows A11-10 and A11-12b are
+# what hold it to the same standards as the eight states.
+#
+# ⚠ THREE SENTENCES BECAUSE THE REMEDIES DIFFER, and src/ase.tcl:765's own rule
+# governs the split: a wrong direction printed with authority is worse than
+# printing none. The wording is this crew's and is NOT YET RATIFIED — recorded
+# as an owed rule against issue 0909.
+set A11_CAUSE_NOCARDS {Some values are blank because this simulation did not save the device operating-point numbers. The results file has node voltages, but no per-device values like gm, gds and vth. Turn on saving them, then run the simulation again.}
+set A11_CAUSE_NOPARAMS {Some values are blank because the results file has no per-device operating-point numbers in it, such as gm, gds and vth. Run the simulation again with device parameter saving turned on.}
+set A11_CAUSE_SOMEDEV {Some values are blank. The results file does have device operating-point numbers, but not for every device on this sheet. Run the simulation again, and check that these devices are included in what it saves.}
+
+# ⚠ AND EACH HAS A SHORT FORM, BECAUSE THE STATUS LINE IS 255 BYTES AND THE
+# LONG ONE DOES NOT FIT. Measured: the mask sentence is 55 bytes and the
+# save-cards sentence is 229, so 285 arrived at the wall before a results-file
+# path was added, cadence::_annot_fit cut inside the sentence, and the bar read
+# "... Turn on saving..." — the remedy's verb without its object, on the one
+# sink RULING 0857 put there for a user with no ASE-L window. The CIW pane
+# keeps the long form; the bar gets these. Both come out of the SAME proc
+# (RULING D5-4), which is why the rows below sweep the forms rather than the
+# call sites. Also unratified.
+set A11_CAUSE_NOCARDS_S {Some values are blank because this run did not save device values like gm and vth. Turn on saving them, then run again.}
+set A11_CAUSE_NOPARAMS_S {Some values are blank because the results file has no device values like gm and vth in it. Run the simulation again with them saved.}
+set A11_CAUSE_SOMEDEV_S {Some values are blank because the results file has no numbers for some of the devices here. Run the simulation again and save them.}
+
 proc check_raises {name script needle} {
   global fail npass
   set rc [catch {uplevel #0 $script} res]
@@ -4347,8 +4378,16 @@ xschem load [file join $lib n_devonly.sch]
 set n14a [rcall {cadence::_annot_scan}]
 xschem load [file join $lib n_probe.sch]
 set n14b [rcall {cadence::_annot_scan}]
-check {N14 the scan answers {n-annotatable types-with-no-devpath}, current level only} \
-  [list $n14a $n14b] {{0 {1 {}}} {0 {0 zzs8probe}}}
+## ⚠ ISSUE 0909 ADDED A THIRD ELEMENT, AND `-1` IS THE POINT OF IT. The blank
+## row probe rides this same one-pass loop rather than walking the sheet a
+## second time, and it is OPTIONAL: `opvolt` draws no device block, so asking
+## whether any device row is blank would be work done for a question nobody
+## asked. Called with no argument the scan does not ask, and it says so with
+## -1 rather than with a 0 that reads as "nothing is blank". A probe that
+## answered 0 when it had not looked is the shape of defect this whole file
+## exists to catch.
+check {N14 the scan answers {n-annotatable types-with-no-devpath blank-row-probe}, current level only} \
+  [list $n14a $n14b] {{0 {1 {} -1}} {0 {0 zzs8probe -1}}}
 
 # ⚠ THE OTHER SILENT FIRST RUN. A user whose PDK symbol type nobody registered
 # gets a blank block and no reason (issue 0451, four indistinguishable causes).
@@ -13161,11 +13200,27 @@ set V_A10_OTHER [list [file join $repo src xschem.tcl] \
 ## line-based. That is a constraint on how the mint is written, and it is
 ## cheaper to state it than to have a later reader wrap the sentence and
 ## silently hollow this row.
+## ⚠ ISSUE 0909's THREE BLANK-ROW SENTENCES JOIN THE SET, and each is
+## represented by a SHORT distinguishing fragment on purpose: opa_v_ngrep is
+## line-based, and a 229-byte sentence cannot be written on one source line
+## without a reader wrapping it and silently hollowing this row. The fragment
+## is the constraint, not the whole sentence.
+## ⚠ AND THE THREE SHORT FORMS ARE IN THE SET TOO. They are user-facing
+## sentences in their own right -- the only ones a plain xschem user with no
+## ASE-L window ever reads -- so a second copy of one is exactly the drift this
+## ruling forbids, and being short makes pasting one somewhere convenient MORE
+## likely, not less.
 set V43_FRAGS [list {No operating point results are loaded} \
                     {is older than the circuit it describes} \
                     {is from a different simulation run} \
                     {but that file is no longer on disk} \
-                    {but the run has not produced any values yet}]
+                    {but the run has not produced any values yet} \
+                    {did not save the device operating-point numbers} \
+                    {has no per-device operating-point numbers in it} \
+                    {but not for every device on this sheet} \
+                    {values like gm and vth. Turn on saving them} \
+                    {values like gm and vth in it.} \
+                    {for some of the devices here.}]
 set v43_mint {}
 foreach _vf $V43_FRAGS {
   lappend v43_mint [expr {[opa_v_ngrep $V_A10_MINT $_vf] >= 1 ? 1 : 0}]
@@ -13174,9 +13229,10 @@ set v43_other {}
 foreach _vp $V_A10_OTHER {
   foreach _vf $V43_FRAGS { lappend v43_other [opa_v_ngrep $_vp $_vf] }
 }
-check {V43 RULING D5-4 the five new sentences are minted in utils/annot_mode.tcl and appear in no other file} \
+check {V43 RULING D5-4 the eleven new sentences are minted in utils/annot_mode.tcl and appear in no other file} \
   [list $v43_mint $v43_other] \
-  [list {1 1 1 1 1} {0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}]
+  [list [string trim [string repeat {1 } [llength $V43_FRAGS]]] \
+        [string trim [string repeat {0 } [expr {[llength $V43_FRAGS] * [llength $V_A10_OTHER]}]]]]
 
 # ===========================================================================
 # V44 — WITNESS, ISSUE 0882: A CONSEQUENCE OF THE FIX, PINNED
@@ -15581,11 +15637,21 @@ foreach _a11m {0 1 2 3 4 5 6 7} {
   foreach _a11st {off live noop loaded failed noraw nopath stale} {
     foreach _a11ty [list {} {nmos} {nmos pmos res cap ind}] {
       foreach _a11p [list /tmp/a/results.data $a11_lp $a11_up] {
-        set _a11r [rcall [list cadence::_annot_msg $_a11m $_a11st $_a11p $_a11ty]]
-        set _a11f [rcall [list cadence::_annot_fit [lindex $_a11r 1]]]
-        if {[lindex $_a11f 0] != 0 || [opa_a11_bytes [lindex $_a11f 1]] > 255} {
-          lappend a11_over [list $_a11m $_a11st [llength $_a11ty] [string length $_a11p] \
-                                 [opa_a11_bytes [lindex $_a11f 1]]]
+        ## ⚠ ISSUE 0909's CLAUSE JOINS THE SWEEP, AND SO DOES THE MINT'S OWN
+        ## RETURN CODE. The row used to measure the FITTED string only, so a
+        ## cadence::_annot_msg that RAISED handed its error text to the budget,
+        ## got a short string back and passed — which is exactly what a call
+        ## with an argument the mint does not accept yet looks like.
+        foreach _a11cz [list {} $A11_CAUSE_NOCARDS $A11_CAUSE_NOPARAMS \
+                             $A11_CAUSE_SOMEDEV] {
+          set _a11r [rcall [list cadence::_annot_msg $_a11m $_a11st $_a11p $_a11ty $_a11cz]]
+          set _a11f [rcall [list cadence::_annot_fit [lindex $_a11r 1]]]
+          if {[lindex $_a11r 0] != 0 || [lindex $_a11f 0] != 0 \
+              || [opa_a11_bytes [lindex $_a11f 1]] > 255} {
+            lappend a11_over [list $_a11m $_a11st [llength $_a11ty] [string length $_a11p] \
+                                   [string length $_a11cz] [lindex $_a11r 1] \
+                                   [opa_a11_bytes [lindex $_a11f 1]]]
+          }
         }
       }
     }
@@ -15630,6 +15696,67 @@ check {A11-12 every state the user can land in renders its own sentence, byte fo
   $a11_got $a11_want
 
 # ===========================================================================
+# A11-12b — ISSUE 0909: EVERY REASON A DEVICE ROW CAN BE BLANK HAS ITS OWN
+#                       SENTENCE, AND THE SENTENCE LANDS WHERE IT WAS PUT
+# ===========================================================================
+# ⚠ THE PRESS SUCCEEDS AND THE VALUES ARE BLANK, AND UNTIL ISSUE 0909 THE
+# SURFACE HAD NO WORDS FOR THAT AT ALL. Measured 2026-08-28: grep -c for
+# noparams / nosave / save_op / missing param in utils/annot_mode.tcl answered
+# 0, and this suite reported ALL PASS with 472 checks while the user's own
+# bench showed six blank rows and a silent CIW.
+#
+# All three causes are asserted, not one, for the reason A11-12's own header
+# gives: a set with a hole in it is how the hole got there. And the three are
+# separate sentences rather than one, because the remedies differ and
+# src/ase.tcl:765's rule applies — a wrong direction printed with authority is
+# worse than printing none.
+#
+# LEG 2 IS THE PLACEMENT, AND IT IS A DECISION, NOT A DETAIL. The clause goes
+# after the mask sentence and BEFORE the results-file clause, so that when
+# cadence::_annot_fit has to cut, what it sacrifices is the file path rather
+# than the answer to the question the user just asked by pressing the key.
+set a11_cgot {}
+foreach _a11c {nocards noparams somedev} {
+  lappend a11_cgot [lindex [rcall [list cadence::_annot_cause_msg $_a11c]] 1]
+}
+set a11_cplace [lindex [rcall [list cadence::_annot_msg 1 loaded $a11_gp {} \
+                                    $A11_CAUSE_NOCARDS]] 1]
+check {A11-12b issue 0909 each blank-row cause renders its own sentence, and the clause sits ahead of the results-file clause} \
+  [list $a11_cgot $a11_cplace] \
+  [list [list $A11_CAUSE_NOCARDS $A11_CAUSE_NOPARAMS $A11_CAUSE_SOMEDEV] \
+        "$A11_M1 $A11_CAUSE_NOCARDS[string map [list @P@ $a11_gp] $A11_LOADED]"]
+
+# ===========================================================================
+# A11-12c — THE SHORT FORM, AND THE BUDGET THAT IS THE ONLY REASON IT EXISTS
+# ===========================================================================
+# ⚠ THE PLACEMENT DECISION IN A11-12b IS WORTHLESS IF THE SENTENCE ITSELF DOES
+# NOT FIT, AND FOR THE FIRST SHIPPED DRAFT IT DID NOT. Putting the answer ahead
+# of "Loaded results from <path>." is meant to make the FILE NAME the thing the
+# elision eats. Measured on the delivered tree: the long save-cards sentence is
+# 229 bytes against a 55-byte mask sentence, so the cut landed inside the
+# REMEDY and the bar read "... Turn on saving..." with no object. Placement
+# right, line useless.
+#
+# So each cause has a second, shorter rendering for the bar, minted in the same
+# proc (RULING D5-4) and asked for by argument. This row holds all three to the
+# budget the bar actually has, with the longest state clause attached, and
+# requires that cadence::_annot_fit have nothing to do — an elision marker on
+# the end of any of them is this row's failure, not its tolerance.
+set a11_csgot {}
+set a11_csfit {}
+foreach _a11c {nocards noparams somedev} {
+  set _a11s [lindex [rcall [list cadence::_annot_cause_msg $_a11c short]] 1]
+  lappend a11_csgot $_a11s
+  set _a11line [lindex [rcall [list cadence::_annot_msg 1 live {} {} $_a11s]] 1]
+  set _a11fit  [lindex [rcall [list cadence::_annot_fit $_a11line]] 1]
+  lappend a11_csfit [expr {($_a11fit eq $_a11line) && ![string match {*...} $_a11fit] ? 1 : 0}]
+}
+check {A11-12c issue 0909 the status line gets a short form of each cause, and it survives the 255-byte budget whole} \
+  [list $a11_csgot $a11_csfit] \
+  [list [list $A11_CAUSE_NOCARDS_S $A11_CAUSE_NOPARAMS_S $A11_CAUSE_SOMEDEV_S] \
+        {1 1 1}]
+
+# ===========================================================================
 # A11-13 — EVERY REFUSAL THE USER CAN ACT ON ENDS WITH WHAT TO DO
 # ===========================================================================
 # ⚠ THE THIRD LEG OF THE USER'S STANDARD, AND IT LIVED WHERE NOTHING COULD SEE
@@ -15659,6 +15786,40 @@ foreach _a11st {nocursor noraw notran staleraw viewerdiff viewerunread} {
 }
 check {A11-13 every refusal the user can act on says what to do next} \
   [list [llength $a11_mute] [lindex $a11_mute 0]] \
+  [list 0 {}]
+
+# ===========================================================================
+# A11-13b — ISSUE 0909: A BLANK BLOCK IS SOMETHING THE USER CAN ACT ON, SO
+#                       EVERY CAUSE SENTENCE SAYS WHAT TO DO
+# ===========================================================================
+# ⚠ ITS OWN ROW, NOT A WIDER LOOP IN A11-13. A11-13 sweeps STATES; these are
+# CAUSES, a different axis, and quietly widening that loop would hide a new
+# claim inside an old row's name. The standard is identical and the user's
+# words are the same ones: if we annotate param = <blank> we need to tell the
+# user why — and, where they can act, what to do about it.
+#
+# ⚠ THE ONE CAUSE WITH NO NEXT STEP IS DELIBERATELY NOT IN THIS SET. A symbol
+# type nobody registered a descriptor for cannot be fixed by the user today
+# (issue 0906 is documentation only), so it keeps the already-minted "These
+# symbol types have no operating-point values to show" clause and no remedy at
+# all. Inventing a next step for it would be the wrong-direction defect wearing
+# this row's standard as a licence.
+#
+# ⚠ BOTH FORMS ARE SWEPT, NOT JUST THE LONG ONE. The short form exists BECAUSE
+# the long one was losing its remedy to the 255-byte status line, so a short
+# form that arrives whole and says nothing about what to do would have made the
+# repair cosmetic. A loop over the long form alone would not have noticed.
+set a11_cmute {}
+foreach _a11c {nocards noparams somedev} {
+  foreach _a11f {long short} {
+    set _a11m [lindex [rcall [list cadence::_annot_cause_msg $_a11c $_a11f]] 1]
+    set _a11ok 0
+    foreach _a11r $A11_REMEDIES { if {[string match "*$_a11r*" $_a11m]} { set _a11ok 1 } }
+    if {!$_a11ok} { lappend a11_cmute [list blank-cause $_a11c $_a11f $_a11m] }
+  }
+}
+check {A11-13b issue 0909 every blank-row explanation says what to do next, in both forms} \
+  [list [llength $a11_cmute] [lindex $a11_cmute 0]] \
   [list 0 {}]
 
 } a11err]} {

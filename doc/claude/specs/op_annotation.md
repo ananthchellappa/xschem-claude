@@ -60,7 +60,9 @@ producing a loaded raw and a dark annotator. It corrected §4.6's claim that the
 per-PDK rcs are copies (they delegate; one bind block covers all three PDKs) and
 added §4.6's guard, message-matrix and `-hold` requirements, all measured. Status
 **E** for the `annot_show` default (issue **0457**) and the pixel deliverable.
-Filed and not fixed: **0460** (the descriptor clause names decorations),
+Filed and not fixed at the time: **0460** (the descriptor clause names
+decorations — **part 1 fixed 2026-08-28** by issue 0909's repair, once deleting
+the clause's suppression gate made every entry live on every press),
 **0461** (a specific load-failure reason is discarded), **0462** (a guard covered
 only by wording rows). Fixed within the step: **0459**.
 
@@ -2273,7 +2275,98 @@ about what the three switches do. A state clause is appended after ONE space.
 
 A trailing clause names the symbol types nothing could be annotated for, clipped
 at four: *These symbol types have no operating-point values to show: nmos, pmos,
-res, cap and more.*
+res, cap and more.* It is built by `cadence::_annot_types_clause`, its own proc
+since **0909**, because the status line and the CIW pane must compose the same
+string from one builder (RULING D5-4).
+
+**⚠ THAT CLAUSE IS NO LONGER SUPPRESSED ON A MIXED SHEET (issue 0909).** It used
+to be gated on *"only when NOTHING here can be annotated is it news"*, and that
+is exactly what hid the unregistered-design-kit cause on the realistic bench: one
+registered FET plus one hand-drawn symbol scans `1 <type>`, the gate dropped the
+clause, and the user was told nothing about the block that never appeared. The
+wording is unchanged and still golden (row **N15**); only its reachability moved.
+It is a **user-visible change on sheets that used to say nothing**, and it is
+unratified.
+
+#### The blank-row clause: what is INSIDE the results file (issue 0909)
+
+Every state above describes the results **file**. Not one described what is
+**inside** it, so a press that loaded a perfectly good file and painted six empty
+rows had nothing to say — the user reproduced that on `tb_bandgap` and read it as
+the feature being broken. A clause now says why, **on every press, with no
+suppressor in front of it**: a nag may be quietened, a reply to a direct question
+may not. (The netlist-time notice in `src/ase.tcl` keeps its own suppression; that
+one really is a nag.)
+
+`cadence::_annot_cause` names the cause and `cadence::_annot_cause_msg` is its one
+mint:
+
+| cause | when | what the user is told | remedy fields |
+|---|---|---|---|
+| `nocards` | an ASE-L session owns this sheet **and** its save-device-parameters tickbox reads off | *Some values are blank because this simulation did not save the device operating-point numbers. The results file has node voltages, but no per-device values like gm, gds and vth. Turn on saving them, then run the simulation again.* | the menu path **and** the pasteable command |
+| `noparams` | no session claims the sheet, or its tickbox is on, and the file holds no device **parameter** vectors | *Some values are blank because the results file has no per-device operating-point numbers in it, such as gm, gds and vth. Run the simulation again with device parameter saving turned on.* | the menu path only — a command naming a session key nobody is under is issue **0679** verbatim, and a command turning on a tick that is already on is the same defect wearing a tie |
+| `somedev` | the file demonstrably **does** hold device parameter vectors, just not for this device | *Some values are blank. The results file does have device operating-point numbers, but not for every device on this sheet. Run the simulation again, and check that these devices are included in what it saves.* | **none** — the cause is not attributable, and a wrong direction printed with authority is worse than printing none |
+| an unregistered symbol type (issue **0906**) | no descriptor was ever registered for the type | the descriptor clause above. It draws **no block at all**, not a blank one, so "some values are blank" would describe something that is not on the screen | **none** — there is nothing the user can do about it today |
+
+**⚠ THE TICKBOX IS ASKED BEFORE THE FILE, AND THE FIRST DRAFT ASKED THEM THE
+OTHER WAY ROUND — WHICH MADE `nocards` UNREACHABLE ON EVERY REAL BENCH.** The
+first draft's file probe answered "this file holds device numbers" whenever a
+vector contained both `@` and `[`. `.options savecurrents` — a **different**
+tickbox — is set in 35 of the committed ASE states, `tb_bandgap_opamp` among
+them, and it makes ngspice write a terminal current per device whether or not a
+single save card was emitted. Verified by running ngspice 46 on the real deck:
+
+| deck | vectors written |
+|---|---|
+| `savecurrents` only | `i(@m1[ib])` `i(@m1[id])` `i(@m1[ig])` `i(@m1[is])` |
+| save cards too | `@m1[gds]` `@m1[gm]` `v(@m1[vth])` + the four above |
+
+So the probe short-circuited to `somedev` on every operating point and the
+item's whole deliverable — the tickbox sentence and its pasteable command — was
+dead code in the field while the suite was green, because the suite hand-wrote
+its own two-variable results file. Two changes: `cadence::_annot_devparams_present`
+ignores anything wrapped in `i(`, which is ngspice's own separator between a
+current and a parameter; and `cadence::_annot_cause` asks the tickbox **first**,
+because the tickbox is a *measurement* of the run's configuration while the file
+probe is an *inference* from vector names. Rows **BC1**, **BC1b** and **BC1c**
+are the guards, and BC1c is the only state that can tell the two orders apart —
+a registered session with the box off **and** a real parameter in the file.
+
+Both remedy fields are read from `ase::ui::remedy_op_params_menu` and
+`ase::ui::save_op_params_on`; neither is spelled out in `utils/annot_mode.tcl`
+(row **BC15**). They reach the pane through `cadence::_annot_ciw`'s `args`
+branch, because `ase::echo` is `xschem::notify_safe`, which **drops** `-menu` and
+`-command` — only a direct `::xschem::notify` renders them as *" Fix: …."* and
+*" CIW command: …"*.
+
+The clause is appended **after the mask sentence and before the state clause**,
+so that when the 255-byte budget below has to cut, what it sacrifices is the
+results-file path rather than the answer to the question just asked. **⚠ That
+placement is worthless unless the sentence itself fits, and the first draft's
+did not**: the mask sentence is 55 bytes and the long `nocards` sentence is 229,
+so 285 arrived at the wall before a path was added and the fitted line ended
+*"… Turn on saving..."* — the remedy's verb without its object, on the one sink
+a plain xschem user with no ASE-L window ever reads. So each cause has a
+**second, short rendering**, minted beside the long one in
+`cadence::_annot_cause_msg` and asked for by argument, the way `xschem::notify`
+already gives every notice a `-short`:
+
+| cause | short form (the status line) | bytes, with the longest state clause |
+|---|---|---|
+| `nocards` | *Some values are blank because this run did not save device values like gm and vth. Turn on saving them, then run again.* | 210 |
+| `noparams` | *Some values are blank because the results file has no device values like gm and vth in it. Run the simulation again with them saved.* | 223 |
+| `somedev` | *Some values are blank because the results file has no numbers for some of the devices here. Run the simulation again and save them.* | 222 |
+
+The pane keeps the long form; it has room. Rows **A11-12c** and **BC5b** hold
+the short forms to the budget and require `cadence::_annot_fit` to have nothing
+to do — an elision marker on the end of one of them is a failure, not a
+tolerance. The two rejected alternatives are recorded because they are what a
+later reader reaches for: shortening the *long* sentence makes the pane pay for
+the bar's budget, and putting the cause *last* lets the elision eat the answer
+to the question just asked.
+
+The wording of all six sentences, the ordering and the unsuppression are
+unratified and carry a rule debt under **0909**.
 
 #### The 255-BYTE status line, and where the two channels differ
 

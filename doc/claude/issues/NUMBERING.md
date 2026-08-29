@@ -170,7 +170,13 @@ about a run that just finished. **0912** — when the results file is deleted, t
 operating-point surfaces disagree and only one speaks. 0684 §8's route table
 said "every route" and has been corrected; §10 records the pass.
 
-**The next free number is 0913.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-28, item A16 (the fix for 0909).** Filed **0913** — the blank-row
+probe rides `cadence::_annot_scan`'s existing per-*cell* dedup, so one device
+whose vectors are missing while its cell siblings populate is never looked at.
+Recorded as an accepted limitation of 0909's fix and needing a user ruling on
+whether to pay per-*device* for exactness.
+
+**The next free number is 0914.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

@@ -67,7 +67,13 @@
 #  vocabulary is `xschem set annot_show`, `xschem raw loaded`,
 #  `xschem annotate_op`, `ase::last_rawfile` / `ase::session_for_current`,
 #  `op_annot::devpath` / `op_annot::type` / `op_annot::_annotated`,
-#  `xschem update_all_sym_bboxes`, `xschem redraw`, `xschem statusmsg -hold`.
+#  `xschem update_all_sym_bboxes`, `xschem redraw`, `xschem statusmsg -hold`,
+#  and — since issue 0909 — `op_annot::text` (the blank-row probe),
+#  `xschem raw list`, `ase::session_state` / `ase::state_get` /
+#  `ase::op_gate_on` and the two remedy mints `ase::ui::remedy_op_params_menu` /
+#  `ase::ui::save_op_params_on`, all of them named but never spelled out (row
+#  BC15 of tests/headless/test_annot_blank_cause_0909.tcl greps this file's code
+#  lines for the menu path's own words and requires zero hits).
 #  If a PDK name ever appears below, the generalization has failed.
 #
 #  ⚠ NO HIERARCHY WALK (invariant I6). "Is anything on this sheet annotatable?"
@@ -125,9 +131,53 @@ proc cadence::_annot_mask {mode {cur 0}} {
 ## have no operating-point values to show: ..." would be noise rather than news. `annotator` is the
 ## carrier symbol itself — the very thing displaying the block — and the pins and
 ## labels are connectivity, not instances anyone would annotate.
+##
+## ⚠ THE SECOND GROUP WAS ADDED BY ISSUE 0909's REPAIR, AND IT IS THERE BECAUSE
+## THE TOOL WAS REPORTING A PICTURE AS A DEVICE IT HAD FAILED TO ANNOTATE.
+## Until this item the clause only reached the user when NOTHING on the sheet
+## could be annotated, which is a state a real bench almost never reaches, so
+## whatever the list contained was effectively invisible. Removing that gate
+## made every entry live on every press, and the list was measured on the
+## user's own benches:
+##
+##   tb_bandgap_opamp   ->  capacitor isource logo subcircuit vsource
+##   sky130_tests/tb_bandgap ->  ammeter logo probe subcircuit vsource
+##
+## `logo` is the xschem logo graphic and `subcircuit` is a hierarchy block, so
+## the sentence named a decoration and a container as things it could not find
+## operating-point values for -- as a warning, on a completely successful
+## annotation, on every press. `probe` and `ammeter` are measurement
+## instruments; `vsource` and `isource` are stimulus, whose current is a branch
+## current and not a per-device block. None of the five is something a design
+## kit would ever register a descriptor for, so naming them cannot be the
+## issue-0906 news the clause exists to carry.
+##
+## ⚠ `missing` IS NOT A SYMBOL TYPE, IT IS XSCHEM'S MARKER FOR A SYMBOL IT
+## COULD NOT RESOLVE AT ALL -- a broken library path. Naming it here tells the
+## user to go and write an operating-point descriptor for a problem that is a
+## library reference, which is a wrong direction printed with authority. It is
+## skipped for that reason and not because it is noise. Reporting an
+## unresolved symbol as its OWN condition, in its own words, is part 2 of issue
+## 0460 and is still open; xschem's own missing-symbol reporting covers it in
+## the meantime.
+##
+## This is part 1 of issue 0460, filed by S8's own adversary pass on 2026-08-19
+## and unfixed until now because the clause was unreachable in practice. That
+## issue also proposed skipping `resistor`, `capacitor` and `inductor`; they
+## are deliberately NOT skipped here, for the reason in the paragraph below.
+##
+## ⚠ AND NOTHING A DESIGN KIT REGISTERS IS IN HERE. The three shipped
+## descriptor sets register `nmos`, `pmos` and `vertical_npn`
+## (sky130A/sky130_procs.tcl, ihp-sg13g2/sg13g2_procs.tcl), and the passive
+## device types a kit plausibly WOULD register next -- resistor, capacitor,
+## inductor, diode, npn, pnp, njfet, pjfet -- are deliberately left OUT of this
+## list, because those are exactly the ones whose absence is worth saying out
+## loud. `capacitor` staying visible is why the user's own tb_bandgap_opamp
+## still reports one type rather than none.
 namespace eval cadence {
   variable _annot_skip_types \
-    {{} annotator ipin opin iopin label show_label noconn netlist_commands launcher}
+    {{} annotator ipin opin iopin label show_label noconn netlist_commands launcher
+     logo probe ammeter subcircuit vsource isource missing}
 }
 
 ## -> {path level source} for the raw this cell would use, or {} {} none.
@@ -211,7 +261,26 @@ proc cadence::_annot_op_target {} {
   return [lindex [cadence::_annot_raw_candidate] 0]
 }
 
-## -> {n-annotatable {symbol types with no device path}} for the CURRENT sheet.
+## -> {n-annotatable {symbol types with no device path} blank-row-probe} for
+## the CURRENT sheet.
+##
+## ⚠ THE THIRD ELEMENT IS `-1` WHEN IT WAS NOT ASKED FOR, NEVER `0` (issue
+## 0909). The blank-row probe is what lets the `6` press say WHY a block it
+## just drew is full of empty values, and it is optional because `Alt-6` draws
+## no device block at all -- asking there would be work done for a question
+## nobody asked. A probe that answered 0 when it had not looked would read as
+## "nothing is blank", which is the silence this whole item exists to remove,
+## so the not-asked answer is a value of its own. Row N14 of
+## tests/headless/test_op_annot.tcl golds all three elements.
+##
+## ⚠ THE PROBE RIDES THIS LOOP; IT DOES NOT WALK THE SHEET A SECOND TIME. One
+## press costs one `op_annot::text` per DISTINCT CELL, not per instance -- row
+## BC17 of tests/headless/test_annot_blank_cause_0909.tcl pins both the single
+## walk and the clock, because issue 0904 is the recorded case of a cost
+## published on an axis it does not scale on. The dedup has a known cost of its
+## own: one instance whose vectors are missing while its cell siblings populate
+## is never looked at. That is accepted and filed as issue 0913, and the
+## `somedev` sentence is worded generally enough to remain true when it bites.
 ##
 ## ⚠ INSTANCE NAMES, NEVER INDICES. get_instance() (scheduler.c:187) takes an
 ## all-digit string as an INDEX, so `op_annot::devpath 0` answers a plausible
@@ -223,13 +292,14 @@ proc cadence::_annot_op_target {} {
 ## descriptor's `match` globs are functions of (op_annot::_matches), so one
 ## instance per distinct cell answers for all of them. Every term catch-wrapped:
 ## a status line must not raise out of a key press.
-proc cadence::_annot_scan {} {
+proc cadence::_annot_scan {{withblanks 0}} {
   variable _annot_skip_types
   set n 0
   set missing {}
   set seen {}
-  if {[catch {xschem get instances} ni]} { return [list 0 {}] }
-  if {![string is integer -strict $ni]} { return [list 0 {}] }
+  set blank [expr {$withblanks ? 0 : -1}]
+  if {[catch {xschem get instances} ni]} { return [list 0 {} $blank] }
+  if {![string is integer -strict $ni]} { return [list 0 {} $blank] }
   for {set i 0} {$i < $ni} {incr i} {
     if {[catch {xschem getprop instance $i name} nm]} continue
     if {$nm eq {}} continue
@@ -243,10 +313,284 @@ proc cadence::_annot_scan {} {
     if {[lsearch -exact $_annot_skip_types $t] >= 0} continue
     set p {}
     catch {set p [::op_annot::devpath $nm]}
-    if {$p ne {}} { incr n ; continue }
+    if {$p ne {}} {
+      incr n
+      ## A BLANK ROW IS A LINE ENDING IN `=` AND NOTHING AFTER IT -- that is
+      ## how op_annot::text writes a value it could not read (src/op_annot.tcl,
+      ## `format "%-*s ="`). Asked only once: the first blank row on the sheet
+      ## settles the question, and the loop still runs on for the types half.
+      if {$withblanks && $blank == 0} {
+        set b {}
+        catch {set b [::op_annot::text $nm]}
+        foreach bl [split [string trimright $b "\n"] "\n"] {
+          if {[string match {*=} [string trimright $bl]]} { set blank 1 ; break }
+        }
+      }
+      continue
+    }
     if {[lsearch -exact $missing $t] < 0} { lappend missing $t }
   }
-  return [list $n [lsort $missing]]
+  return [list $n [lsort $missing] $blank]
+}
+
+## ===========================================================================
+## ISSUE 0909 -- WHY THE ROWS IT JUST DREW ARE BLANK, ANSWERED ON EVERY PRESS
+## ===========================================================================
+## The user, verbatim 2026-08-28, from their own bench on tb_bandgap:
+##
+##   "I JUST AGAIN ran tb_bandgap WITHOUT that checkbox checked, only OP
+##    analysis, and then, when I do 6 key, I DON'T GET THE MESSAGE IN CIW
+##    TELLING ME WHY! I thought we fixed this a couple days ago."
+##   "User intent with 6 key press is to get OP device info annotated. If we
+##    annotate param = <blank> we need to tell the user why."
+##
+## They were right that it once spoke, and nothing had been removed. The
+## explanation is minted at NETLIST time by `ase::op_cards_capture`
+## (src/ase.tcl) and stands behind a one-turn suppressor keyed on the design
+## cellview, so it speaks on the first Netlist-and-Run of a cell in a session
+## and is correctly quiet afterwards. The press had no sentence of its own at
+## all: every state this file can report -- off, live, notlive, noop, loaded,
+## failed, noraw, nopath, stale, staleraw, viewerdiff -- describes the results
+## FILE, and not one of them describes what is INSIDE it.
+##
+## ⚠ THE RULE THESE FIVE HELPERS EXIST TO CARRY: A SUPPRESSOR IS RIGHT FOR A
+## NAG AND WRONG FOR AN ANSWER. A nag is the tool volunteering something while
+## the user is busy, and quietening a repeat is courteous. A key press is the
+## user asking a direct question, and a question asked twice is answered twice.
+## So nothing below consults, sets or re-arms the netlist-time suppressor, and
+## the emit site in `cadence::annot_mode` routes through none either -- row BC6
+## of tests/headless/test_annot_blank_cause_0909.tcl greps this file's code
+## lines for exactly that, and it is the row a future one dies on. The
+## netlist-time nag keeps its own; it really is a nag.
+##
+## ⚠ FOUR CAUSES, THREE SENTENCES, AND THE FOURTH DELIBERATELY HAS NONE OF ITS
+## OWN. src/ase.tcl's own rule governs the split -- "a wrong direction printed
+## with authority is worse than printing none":
+##   nocards   the run did not save device cards, and an ASE-L session owns
+##             this sheet, so the tick and the pasteable command both apply;
+##   noparams  the file has no device numbers and no session claims the sheet,
+##             so the menu path is still true but a session key is not;
+##   somedev   the file demonstrably HAS device numbers, just not for this
+##             device, so no remedy is guessed at all;
+##   and a symbol type nobody registered a descriptor for (issue 0906) keeps
+##             the already-minted "These symbol types have no operating-point
+##             values to show" clause and no remedy, because there is nothing
+##             the user can do about it today. It also draws NO BLOCK rather
+##             than a blank one, so "some values are blank" would be describing
+##             something that is not on the screen.
+
+## 1 iff the attached results file carries per-device operating-point vectors
+## at all -- the discriminator between "this file has no device numbers" and
+## "it has them, but not for this device".
+##
+## ⚠ `string first`, NEVER `string match`. A left bracket is a glob
+## metacharacter, so a `{*@*[*]*}` pattern is a live trap: it answers
+## plausibly and wrongly, and it would send a user who really is missing one
+## device's vectors off to tick a box that is already ticked. The shapes are
+## `i(@m.xm1.msky130_fd_pr__nfet_01v8[id])` and `@m.xm1.m...[gm]`.
+##
+## ⚠ A TERMINAL CURRENT IS NOT AN OPERATING-POINT PARAMETER, AND UNTIL THIS
+## REPAIR THIS PROC COUNTED ONE AS THE OTHER. `.options savecurrents` is a
+## DIFFERENT tickbox from "Save device OP parameters", it is set in 35 of the
+## committed ASE states (the user's own tb_bandgap_opamp among them), and it
+## makes ngspice write a device vector for every terminal whether or not a
+## single save card was emitted. Measured here on ngspice 46, same deck, two
+## runs:
+##
+##   savecurrents only ->  i(@m1[ib])  i(@m1[id])  i(@m1[ig])  i(@m1[is])
+##   save cards too    ->  @m1[gds]  @m1[gm]  v(@m1[vth])  + the four above
+##
+## So `@` plus `[` was true on EVERY real operating-point run, this proc
+## answered 1 unconditionally, and the save-cards explanation and its pasteable
+## command were dead code on the user's own bench.
+##
+## THE RULE THAT SEPARATES THE TWO IS THE `i(` WRAPPER, and it is ngspice's,
+## not this file's invention: a current is emitted wrapped and everything the
+## save-cards box adds beyond currents -- gm, gds, vth, cgg -- is emitted bare
+## or `v(`-wrapped. A design kit whose descriptor asks for currents ALONE would
+## therefore read as "no device parameters here"; that is a knowingly
+## conservative answer, and the conservative direction is the safe one, because
+## it costs a vaguer sentence rather than a wrong remedy.
+proc cadence::_annot_devparams_present {} {
+  set names {}
+  if {[catch {xschem raw list} names]} { return 0 }
+  foreach nm [split [string trimright $names "\n"] "\n"] {
+    set nm [string trim $nm]
+    if {[string first {@} $nm] < 0} continue
+    if {[string first {[} $nm] < 0} continue
+    if {[string range $nm 0 1] eq {i(}} continue
+    return 1
+  }
+  return 0
+}
+
+## The ASE-L session key that owns this sheet, or {} when none does.
+##
+## ⚠ IT COMES OUT OF THE REGISTRY, AND ISSUE 0679 IS WHY. That issue is the
+## measured cost of a key REBUILT at the point of printing: it named the design
+## cellview while every session is registered under its state view, so the
+## printed command addressed a key no session was ever under. It looked perfect
+## and did nothing, measured on this very bench with tb_bandgap.
+## `ase::session_for_current` answers {key level lib cell view} out of the
+## registry itself, and element 0 is that key.
+proc cadence::_annot_session_key {} {
+  set s {}
+  if {[catch {::ase::session_for_current} s]} { return {} }
+  if {[llength $s] < 1} { return {} }
+  return [lindex $s 0]
+}
+
+## 1 iff a session owns this sheet AND its "save device OP parameters" gate is
+## off. Every term catch-wrapped and the default is 0: a status line must not
+## raise out of a key press, and an unreadable session must never be reported
+## as a ticked-off box the user could go and fix.
+proc cadence::_annot_op_cards_off {} {
+  set key [cadence::_annot_session_key]
+  if {$key eq {}} { return 0 }
+  set st {}
+  if {[catch {::ase::session_state $key} st]} { return 0 }
+  set v {}
+  if {[catch {::ase::state_get $st save_op_params {}} v]} { return 0 }
+  set on 0
+  if {[catch {::ase::op_gate_on $v} on]} { return 0 }
+  return [expr {$on ? 0 : 1}]
+}
+
+## -> nocards | noparams | somedev, or {} when there is nothing to explain.
+##
+## ⚠ THE ORDER OF THE TWO TESTS IS THE HONESTY, AND IT IS THE REVERSE OF WHAT
+## THIS PROC SHIPPED WITH. The tickbox is asked FIRST because it is a
+## MEASUREMENT of the run's own configuration -- the session that owns this
+## sheet records whether the deck it netlisted carried device save cards -- while
+## the file probe below is an INFERENCE from vector names. When a measurement
+## and an inference disagree, the measurement wins.
+##
+## The shipped order asked the file first, on the reasoning that "a file that
+## demonstrably holds device numbers cannot be explained by a save-cards box".
+## That reasoning is sound and its premise was false: `.options savecurrents`
+## puts a device vector in every real operating-point raw, so the file probe
+## answered "holds device numbers" on every bench and the save-cards
+## explanation could never be reached. See `_annot_devparams_present` for the
+## two measured ngspice outputs.
+##
+## The reversal is also safe in the other direction. `_annot_op_cards_off` is 1
+## only when a session owns the sheet AND its box reads off, and a box that
+## reads off means the NEXT run will have no device parameters either -- so
+## "turn it on and run again" is correct advice even in the corner where an
+## older results file still holds numbers from a run made while it was on.
+##
+## ⚠ ROW BC2 OF tests/headless/test_annot_blank_cause_0909.tcl IS THIS
+## ORDERING'S GUARD, and it can only be that because its fixture now carries
+## BOTH a registered session with the box off AND device vectors in the file.
+## With either half missing the two orders agree and the row goes blind.
+proc cadence::_annot_cause {scan} {
+  if {[lindex $scan 2] != 1} { return {} }
+  if {[cadence::_annot_op_cards_off]} { return nocards }
+  if {[cadence::_annot_devparams_present]} { return somedev }
+  return noparams
+}
+
+## THE ONE MINT for the three blank-row sentences (RULING D5-4), rendered by
+## both sinks and by nobody else. Row V43 of tests/headless/test_op_annot.tcl
+## requires one distinguishing fragment of each to appear on a code line of
+## THIS file and of no other, so the line breaks below are placed to keep each
+## fragment whole on one line -- opa_v_ngrep is line-based.
+##
+## ⚠ PLAIN ENGLISH, THE USER'S RULING VERBATIM 2026-08-27: "wording too
+## cryptic. Give it in plain english with context, 9th grade level." Each says
+## WHAT HAPPENED, gives the CONTEXT that makes it make sense, and ends with
+## WHAT TO DO -- row A11-13b asserts that third leg as a property rather than
+## as three readings. The wording itself is this crew's and is NOT RATIFIED;
+## recorded as an owed rule against issue 0909.
+## ⚠ TWO FORMS, ONE MINT, AND THE SECOND ONE EXISTS BECAUSE THE FIRST DOES NOT
+## FIT ON THE BAR. Measured: the mask sentence is 55 bytes and the long
+## save-cards sentence is 229, so 285 arrives at the status line's 255-byte
+## wall before a results-file path or a symbol-type clause is added at all.
+## `cadence::_annot_fit` then cuts inside the sentence and the last thing
+## written is the first thing lost -- the bar read "... Turn on saving..." and
+## never said saving WHAT. The CIW pane was fine, because it gets the sentence
+## whole; the loss fell entirely on the user RULING 0857 put the bar there for,
+## a plain xschem user with no ASE-L window, who is told what is wrong and not
+## one word about what to do.
+##
+## Three ways out were on the table -- shorten the long sentence under the
+## wall, give the bar its own short form, or put the cause LAST so the elision
+## eats it. The third throws away the answer to the question just asked; the
+## first makes the pane, which has room, pay for the bar's budget. So the bar
+## gets a short form, the way `xschem::notify` already gives every notice one.
+## BOTH forms are minted HERE and rendered by callers (RULING D5-4): the CIW
+## leg in `cadence::annot_mode` asks for the long one, the held status line at
+## its tail asks for the short one, and nobody composes either. Row A11-13b of
+## tests/headless/test_op_annot.tcl holds BOTH forms to the "say what to do"
+## standard, and rows BC5/BC5b hold the short one to the byte budget.
+##
+## The short wording is this crew's and is NOT RATIFIED, like the long one --
+## recorded as an owed rule against issue 0909.
+proc cadence::_annot_cause_msg {cause {form long}} {
+  switch -exact -- $cause {
+    nocards {
+      if {$form eq {short}} {
+        return "Some values are blank because this run did not save device\
+                values like gm and vth. Turn on saving them, then run again."
+      }
+      return "Some values are blank because this simulation\
+              did not save the device operating-point numbers.\
+              The results file has node voltages, but no per-device values\
+              like gm, gds and vth. Turn on saving them, then run the\
+              simulation again."
+    }
+    noparams {
+      if {$form eq {short}} {
+        return "Some values are blank because the results file has no device\
+                values like gm and vth in it. Run the simulation again with\
+                them saved."
+      }
+      return "Some values are blank because the results file\
+              has no per-device operating-point numbers in it, such as gm, gds\
+              and vth. Run the simulation again with device parameter saving\
+              turned on."
+    }
+    somedev {
+      if {$form eq {short}} {
+        return "Some values are blank because the results file has no numbers\
+                for some of the devices here. Run the simulation again and\
+                save them."
+      }
+      return "Some values are blank. The results file does have device\
+              operating-point numbers,\
+              but not for every device on this sheet. Run the simulation again,\
+              and check that these devices are included in what it saves."
+    }
+  }
+  return {}
+}
+
+## -> {menu-path pasteable-command} for a cause, BOTH READ FROM THE MINTS THAT
+## ALREADY OWN THEM (invariant I1, RULING D5-4). The menu path is composed by
+## `ase::ui::remedy_op_params_menu` from the three label constants the menubar
+## and the dialog are BUILT from, so renaming the entry moves this sentence
+## with it -- issue 0661 is the measured example of a pasted path drifting one
+## word from the menu it names. The command is the same one the netlist-time
+## notice prints and the same one the dialog's OK path calls, so a test can
+## EXECUTE it instead of string-comparing it (row BC3 does exactly that).
+##
+## ⚠ `noparams` GETS THE MENU AND NOT THE COMMAND, AND THE OMISSION IS THE
+## POINT. The tick exists for everyone, so the path is true for everyone; the
+## command names a SESSION KEY, and issue 0679 is the recorded cost of printing
+## one that no session was ever registered under. `somedev` gets neither: the
+## file already holds device numbers, so every remedy here would be a wrong
+## direction printed with authority.
+proc cadence::_annot_remedy {cause} {
+  set menu {}
+  set cmd {}
+  if {$cause eq {nocards} || $cause eq {noparams}} {
+    catch {set menu [::ase::ui::remedy_op_params_menu]}
+  }
+  if {$cause eq {nocards}} {
+    set key [cadence::_annot_session_key]
+    if {$key ne {}} { set cmd [list ase::ui::save_op_params_on $key] }
+  }
+  return [list $menu $cmd]
 }
 
 ## ===========================================================================
@@ -386,13 +730,21 @@ proc cadence::_annot_say {m {tag {}}} {
 
 ## The one held status line. <state> is one of
 ##   off | live | noop | loaded | failed | noraw | nopath
-## and <types> is _annot_scan's second element, already known to matter only
-## when NOTHING on the sheet was annotatable.
+## and <types> is _annot_scan's second element.
 ##
-## Both first-run confusions land in the SAME line (decision D5). The descriptor
-## clause is omitted when the sheet carries no candidate device at all, because
+## ⚠ THAT SECOND ELEMENT USED TO REACH HERE ONLY WHEN NOTHING ON THE SHEET WAS
+## ANNOTATABLE, AND ISSUE 0909 DELETED THAT GATE. The reasoning was that only
+## then was the descriptor clause news; the measurement was that on the
+## realistic bench -- one registered FET plus one symbol whose type nobody
+## wrote a descriptor for -- the clause was dropped and the user heard nothing
+## about the block that never appeared. `cadence::annot_mode` now passes the
+## types through unconditionally; the caller-side comment there is the fuller
+## account. The clause is still omitted when there is nothing to NAME, because
 ## "These symbol types have no operating-point values to show:" with nothing
-## after it says less than silence.
+## after it says less than silence -- that half now lives in
+## `cadence::_annot_types_clause`.
+##
+## Both first-run confusions land in the SAME line (decision D5).
 ## ⚠ WORDED OFF THE RESULTING MASK, NOT OFF THE MODE — issue 0614. Under additive
 ## semantics a mode-worded line LIES: `Alt-6` from a clean start produces mask 2
 ## and a mode switch would still announce "device OP info + node voltages" while
@@ -437,7 +789,50 @@ proc cadence::_annot_say {m {tag {}}} {
 ## too cryptic. Give it in plain english with context, 9th grade level." The
 ## REASONING above is untouched -- what each arm has to be true ABOUT did not
 ## change -- and row V21 still asserts all eight, byte for byte.
-proc cadence::_annot_msg {mask state path types} {
+## THE DESCRIPTOR CLAUSE, ON ITS OWN SO BOTH SINKS COMPOSE THE SAME STRING
+## FROM ONE BUILDER (RULING D5-4). Issue 0909 gave the CIW pane a leg of its
+## own on the success path, and two builders of this sentence -- one for the
+## bar, one for the pane -- is the drift invariant I1 forbids. Returns {} when
+## there is nothing to name, because "These symbol types have no
+## operating-point values to show:" with nothing after it says less than
+## silence.
+proc cadence::_annot_types_clause {types} {
+  if {![llength $types]} { return {} }
+  set shown $types
+  set tail {}
+  if {[llength $types] > 4} {
+    set shown [lrange $types 0 3]
+    set tail { and more}
+  }
+  return "These symbol types have no operating-point values to show:\
+          [join $shown {, }]$tail."
+}
+
+## ⚠ ISSUE 0909 ADDED A FIFTH ARGUMENT, DEFAULTED, AND EVERY EXISTING CALLER IS
+## BYTE-IDENTICAL BECAUSE OF IT. `cause` is the already-minted sentence saying
+## why the block that was just drawn has blank values in it -- a fact about the
+## CONTENTS of the results file, which is orthogonal to every state above (it
+## can be true under `live` and under `loaded` alike). A state would therefore
+## have had to be duplicated per state, or would have deleted the clause naming
+## the file; it is a clause instead, and rows A11-10 and A11-12b hold it to the
+## same budget and byte-exactness the eight states are held to.
+##
+## ⚠ IT IS APPENDED SECOND, AHEAD OF THE STATE CLAUSE, AND THAT IS A DECISION
+## RATHER THAN AN ORDERING ACCIDENT. The bar holds 255 bytes and already elides
+## on long results-file paths (issue 0639). Putting the answer before
+## "Loaded results from <path>." means what `cadence::_annot_fit` sacrifices is
+## the file name, not the answer to the question the user just asked by
+## pressing the key. Recorded as an unratified decision -- `owed.sh add rule
+## 0909`.
+##
+## ⚠ AND THE ORDERING ONLY DELIVERS THAT IF THE SENTENCE ITSELF FITS. As first
+## shipped it did not: the long cause sentence alone is 229 bytes against a 55-
+## byte mask sentence, so the elision landed INSIDE the cause and took the
+## remedy with it -- the placement was right and the line was still useless.
+## `cadence::annot_mode` therefore hands this proc the SHORT form of the cause
+## (see `cadence::_annot_cause_msg`) and hands the CIW pane the long one. This
+## proc renders whatever it is given and chooses neither.
+proc cadence::_annot_msg {mask state path types {cause {}}} {
   ## ⚠ ISSUE 0857, RULED BY THE USER 2026-08-27, VERBATIM: "Yes, 6 does
   ## nothing when there is ONLY a TRAN result. But, it's a good idea to say
   ## 'No OP results available' in the CIW." So RULING 0856's "do nothing"
@@ -495,6 +890,7 @@ proc cadence::_annot_msg {mask state path types} {
                voltages at the waveform cursor, on the schematic." }
     default { set m "Annotation settings changed." }
   }
+  if {$cause ne {}} { append m " $cause" }
   switch -exact -- $state {
     live    { append m " These results were already loaded." }
     noop    { append m " The loaded results do not include an operating point, so\
@@ -512,15 +908,9 @@ proc cadence::_annot_msg {mask state path types} {
                         so it was not used - it is from an earlier run. Run the\
                         simulation again." }
   }
-  if {$state ne {off} && [llength $types]} {
-    set shown $types
-    set tail {}
-    if {[llength $types] > 4} {
-      set shown [lrange $types 0 3]
-      set tail { and more}
-    }
-    append m " These symbol types have no operating-point values to show:\
-              [join $shown {, }]$tail."
+  if {$state ne {off}} {
+    set tc [cadence::_annot_types_clause $types]
+    if {$tc ne {}} { append m " $tc" }
   }
   return $m
 }
@@ -655,6 +1045,16 @@ proc cadence::annot_mode {mode} {
   set state off
   set path {}
   set types {}
+  ## The blank-row sentence (issue 0909), minted below and rendered on BOTH
+  ## sinks. Declared out here because the held status line at the tail is
+  ## outside the `$mask != 0` block that decides it.
+  ##
+  ## ⚠ TWO VARIABLES, ONE MINT. `cmsg` is the long form, for the CIW pane,
+  ## which has room for it; `cmsgs` is the short form, for the 255-byte status
+  ## line, which does not -- the long one used to be cut mid-remedy there.
+  ## Neither is composed here: both come out of `cadence::_annot_cause_msg`.
+  set cmsg {}
+  set cmsgs {}
 
   if {$mask != 0} {
     set annotated 0
@@ -860,9 +1260,63 @@ proc cadence::annot_mode {mode} {
       }
     }
 
-    ## Only when NOTHING here can be annotated is the descriptor clause news.
-    set scan [cadence::_annot_scan]
-    if {[lindex $scan 0] == 0} { set types [lindex $scan 1] }
+    ## ⚠ THE DESCRIPTOR CLAUSE IS NO LONGER SUPPRESSED ON A MIXED SHEET
+    ## (issue 0909). It used to be gated on "nothing here can be annotated",
+    ## on the reasoning that only then was it news. Measured on the realistic
+    ## bench -- one registered FET plus one symbol whose type nobody wrote a
+    ## descriptor for -- the scan answers `1 <type>`, the gate dropped the
+    ## clause, and the user was told nothing at all about the block that never
+    ## appeared. That is the unregistered-design-kit cause of issue 0906
+    ## hidden exactly where it happens. The clause itself is unchanged and
+    ## already golden (row N15); only its reachability moved. This is a
+    ## user-visible wording change on sheets that used to say nothing --
+    ## recorded as an unratified decision, `owed.sh add rule 0909`.
+    ##
+    ## The blank-row probe is asked for only when a device block is actually
+    ## drawn: `Alt-6` (mask 2) shows node voltages and draws no block, so
+    ## there are no blank device rows for it to explain.
+    set scan [cadence::_annot_scan [expr {($mask & 1) ? 1 : 0}]]
+    set types [lindex $scan 1]
+
+    ## ===================================================================
+    ## ISSUE 0909 -- THE ANSWER, EVERY PRESS, WITH NOTHING IN FRONT OF IT
+    ## ===================================================================
+    ## The user pressed a key to ask a question and the block came up blank.
+    ## This is where they are told why, and it is emitted UNCONDITIONALLY on
+    ## every press: no suppressor, no one-turn gate, no "we said this
+    ## already". The netlist-time notice in src/ase.tcl keeps its own and is
+    ## right to -- that one is the tool volunteering something while the user
+    ## is busy. A reader who assumed this surface should be quietened the same
+    ## way would be reproducing the defect: the user read that silence as the
+    ## feature being broken, twice, on their own bench.
+    ##
+    ## ⚠ ONE CONDITION, USED TWICE, AND THE TWO TERMS ARE BOTH LOAD-BEARING.
+    ## `$mask & 1` -- only the chord that draws a device block explains a
+    ## blank one. `live`/`loaded` -- a press that already said "there is no
+    ## results file at X yet" must not ALSO be told its values are blank
+    ## because the file lacks device parameters; that would be a second, wrong
+    ## reason for the same press. Rows BC10 and BC11 are those two terms'
+    ## only guards.
+    ##
+    ## ⚠ AND IT IS ABOVE THE `statusmsg -hold` TAIL ON PURPOSE. When the CIW
+    ## pane is not in front of the user, `xschem::notify` falls back to the
+    ## drawing window's own status field with a SHORT form. Emitting after the
+    ## tail would leave that short form standing where the annotation sentence
+    ## belongs. `cadence::_annot_say` already uses this order; row BC13 pins it
+    ## in the source, because headless has no `winfo` and cannot see the swap.
+    set canask [expr {($mask & 1) && ($state eq {live} || $state eq {loaded})}]
+    set cause {}
+    if {$canask} { set cause [cadence::_annot_cause $scan] }
+    if {$cause ne {}} {
+      set cmsg  [cadence::_annot_cause_msg $cause]
+      set cmsgs [cadence::_annot_cause_msg $cause short]
+    }
+    if {$canask && ($cmsg ne {} || [llength $types])} {
+      set rem [cadence::_annot_remedy $cause]
+      cadence::_annot_ciw \
+        [string trim "$cmsg [cadence::_annot_types_clause $types]"] warn \
+        -menu [lindex $rem 0] -command [lindex $rem 1]
+    }
   }
 
   ## The `Show hidden texts` pair (src/xschem.tcl:15036): bboxes change when
@@ -871,7 +1325,7 @@ proc cadence::annot_mode {mode} {
   catch {xschem redraw}
 
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot.
-  catch {xschem statusmsg -hold [cadence::_annot_fit [cadence::_annot_msg $mask $state $path $types]]}
+  catch {xschem statusmsg -hold [cadence::_annot_fit [cadence::_annot_msg $mask $state $path $types $cmsgs]]}
   return
 }
 
@@ -1164,7 +1618,18 @@ proc cadence::_annot_tran_efft {} {
 ## in 0857 so that work renders through this rather than minting a second
 ## mechanism -- two channels for "the annotation chord could not deliver" is the
 ## drift invariant I1 forbids.
-proc cadence::_annot_ciw {msg {tag {}}} {
+## ⚠ ISSUE 0909 ADDED THE `args` BRANCH, AND WITHOUT IT THE REMEDY IS LOST IN
+## TRANSIT. `ase::echo` is `xschem::notify_safe`, which DROPS -menu and
+## -command; only a DIRECT `::xschem::notify` renders them, as " Fix: <menu>."
+## and " CIW command: <cmd>". So a caller that has remedy fields to deliver
+## goes straight to the channel that can carry them, and a caller that has none
+## takes the shipped chain unchanged -- row V30's three legs are byte-identical
+## because they pass no extra options at all. This stays ONE emitter
+## (invariant I1); it is a second ROUTE inside it, not a second channel.
+proc cadence::_annot_ciw {msg {tag {}} args} {
+  if {[llength $args] && [llength [info commands ::xschem::notify]]} {
+    if {![catch {::xschem::notify $msg -tag $tag {*}$args}]} { return 1 }
+  }
   if {[llength [info commands ::ase::echo]]} {
     if {![catch {::ase::echo $msg $tag}]} { return 1 }
   }

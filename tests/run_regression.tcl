@@ -56,7 +56,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_op_annot" \
                  "headless/test_backannotate_digital" \
                  "headless/test_results_freshness" \
-                 "headless/test_annot_stale_0684"]
+                 "headless/test_annot_stale_0684" \
+                 "headless/test_annot_blank_cause_0909"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -75,7 +76,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # devdisplay.sh's own `exec` sets GUI_GATE=0 for the child only, so the user's
 # Pause/Stop panel is left alone.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
-                 "headless/test_annot_stale_0684"]
+                 "headless/test_annot_stale_0684" \
+                 "headless/test_annot_blank_cause_0909"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

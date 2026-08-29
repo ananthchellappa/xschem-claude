@@ -1,5 +1,31 @@
 # 0460 — the "no OP descriptor" clause names decorations, and relabels an unresolved symbol
 
+Status: **PART 1 FIXED 2026-08-28** (issue 0909's repair, `cadence::_annot_skip_types`).
+**PART 2 STILL OPEN** — an unresolved symbol is now skipped rather than
+mislabelled, but it is still not reported in its own words.
+
+⚠ WHY IT SAT FOR NINE DAYS AND THEN SUDDENLY MATTERED: until issue 0909 the
+descriptor clause only reached the user when NOTHING on the sheet could be
+annotated, which is a state a real design does not reach, so the whole list was
+effectively invisible. 0909 deleted that gate for a good reason — a mixed sheet
+was saying nothing about the block that never appeared — and every entry in this
+issue became live on every press, as a WARNING, on completely successful
+annotations. `logo` and `subcircuit` were being named on the user's own
+tb_bandgap_opamp.
+
+WHAT WAS ADDED: `logo probe ammeter subcircuit vsource isource missing`.
+WHAT WAS DELIBERATELY NOT ADDED, against this issue's own suggestion:
+`resistor`, `capacitor`, `inductor` and the code/title text symbols. A passive
+device type is exactly what a design kit might describe next, so its absence
+from the descriptor registry is the issue-0906 news the clause exists to carry.
+`capacitor` is still named on tb_bandgap_opamp, and it should be. That
+divergence is this crew's judgement and is recorded in the owed rule under 0909.
+Row BC20 of tests/headless/test_annot_blank_cause_0909.tcl asserts both halves
+by name -- the skipped list and, negatively, eleven device types that must
+never join it.
+
+Originally filed as:
+
 Status: OPEN (measured by S8's adversary pass, not fixed)
 Found: S8 of doc/claude/specs/op_annotation.md. Subject: `cadence::_annot_skip_types`,
 `utils/annot_mode.tcl:109`.

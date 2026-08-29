@@ -14,6 +14,77 @@ Newest entries on top.
 
 ---
 
+## Q63. The explanation the user wants exists, is correct, and never reaches them. Why, and what is the general shape of that bug?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issue **0909** (fixed, then repaired the
+  same day), issue **0460** (part 1 fixed), `utils/annot_mode.tcl`.
+
+**A suppression latch is right for a NAG and wrong for an ANSWER, and the two
+were the same sentence.**
+
+The user pressed `6`, got six blank rows on every transistor, and was told
+nothing. The explanation they remembered — the one naming the menu path and the
+pasteable command — was still in the tree, still correct, and still firing. It
+fires at **netlist time**, behind a one-turn latch keyed on (subject, cellview).
+The latch's contract is "suppress an identical notice while the underlying state
+is unchanged; re-arm when it changes". The user never ticked the box, so the
+state never changed, so it never re-armed, so it spoke once per session and then
+went quiet forever — correctly, by its own design.
+
+The moment the tool volunteers something while the user is busy is a nag, and
+suppressing a repeat is courteous. The moment a user presses a key is a
+**question**, and a question asked twice is answered twice. Attaching one
+sentence to the first moment and hoping it covers the second is the defect. The
+fix is not to un-latch the nag; it is to mint the answer where the key is
+pressed, unlatched, and leave the nag alone.
+
+**How to tell which one you are writing:** ask who chose the moment. If the tool
+chose it, you may suppress. If the user chose it, you may not — silence is
+indistinguishable from broken, which is exactly how the user read it.
+
+---
+
+**The repair taught a second, sharper lesson: a probe that INFERS is not a probe
+that MEASURES, and the difference only shows up in the field.**
+
+The first delivery had to answer "does this results file contain device
+operating-point numbers?" and answered it by looking for a vector name holding
+both `@` and `[`. Plausible, cheap, and true on **every** operating point ever
+run — because `.options savecurrents` is a *different* tickbox, it is set in 35
+of the committed ASE states, and it makes ngspice write a terminal current per
+device (`i(@m1[id])`) whether or not one save card was emitted. So the probe said
+"this file already has device numbers" always, the cause detector short-circuited
+to the wrong branch always, and the item's whole deliverable — the sentence
+naming the tickbox and its pasteable command — was **unreachable code in the
+field** while 495 checks were green.
+
+Two rules came out of it:
+
+1. **Prefer the measurement to the inference, and ask it first.** The
+   save-device-parameters tickbox is a *record of how the run was configured*.
+   The vector-name scan is a *guess about what the configuration produced*. When
+   they disagree, the record wins. The repair reversed the order for that reason
+   alone, and the guard on the order needed a fixture nothing else in the suite
+   had: a registered session with the box off **and** a real parameter in the
+   file, which is the only state in which the two orders differ.
+2. **A name is a namespace, not a type.** `@m1[id]` and `@m1[gm]` differ by the
+   thing you were actually asking about, and ngspice's own separator is the
+   `i(...)` wrapper around the first. A substring test over a name will find
+   whatever else the vendor decided to put in the same shape.
+
+**Why the suite could not see any of it.** The row that owned the user's exact
+case took the path where the simulator's output would go and **overwrote it with
+a hand-written file**. Everything downstream — the session, the deck, the press,
+the assertion — was real. The one element that decided the entire outcome was
+written by the test. A fixture may stage the *situation*; the moment it also
+supplies the *evidence the code under test reads to make its decision*, the row
+is asserting that the test agrees with itself. The tell is mechanical: if you can
+delete the product's ability to produce that input and the row stays green, the
+row is not about the product.
+
+---
+
 ## Q62. We added a freshness stamp so a re-run can never show the old numbers. Two menu items still show the old numbers. Where did the stamp go wrong?
 
 - **Asked:** 2026-08-28
