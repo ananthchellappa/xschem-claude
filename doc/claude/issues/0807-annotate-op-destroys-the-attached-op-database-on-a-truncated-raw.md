@@ -1,6 +1,6 @@
 # 0807 — `xschem annotate_op` destroys the attached OP database on a truncated raw, and reports success
 
-STATUS: **OPEN — attempt 1 implemented, measured, and REVERTED 2026-08-25.**
+STATUS: **OPEN — attempt 1 implemented, measured, and REVERTED 2026-08-25. RULING SETTLED 2026-08-29** — both halves decided (see the RULING section at the foot; it supersedes §14.1's mechanism), half (1) NOT the way attempt 2 wrote it. The code that ruling implies is follow-up work, NOT YET DONE.
 The defect below is still live at HEAD. A fix was written, passed every tier and the
 whole sabotage matrix, and was then refuted by the adversary and reverted because it
 introduced a worse defect on a shipped route (§7). The reverted diff is kept at
@@ -443,3 +443,286 @@ assigned. Had it not been, this would have shipped green.
    guarded in `update_op()`. That is a wider blast radius (the wave viewer may want to
    attach a running sim's raw and watch it fill) and is a **user-visible ruling** — do
    not decide it unilaterally.
+
+---
+
+## 14. RULING, 2026-08-29 — both halves decided, one of them NOT the way attempt 2 wrote it
+
+Decided under the user's instruction of 2026-08-29 ("decide the 23, leave 0861 and
+0299 for me"). Ruling debt **0807** is discharged; **0299 remains the user's** and is
+still on the critical path (§5, §11.4).
+
+### 14.1 THE ANSWER — ratified. `annotate_op` must answer `1` or `0`.
+
+**Instruction to the codebase:** the `annotate_op` branch of `scheduler.c` must set
+its own Tcl result as its last act — `"1"` when the operating point was actually read
+and published, `"0"` when it was not — always with `TCL_OK`. It must never again fall
+off the end setting nothing.
+
+Verified at HEAD before ruling: between the digital refusal
+(`src/scheduler.c:2481`) and the branch's closing brace (`:2546`) there is **no**
+`Tcl_SetResult` on any path. The result is therefore the previous command's residue,
+and the residue is not even stable across arms — row **F0** of
+`tests/headless/test_annot_stale_0684.tcl` golds a *successful* annotate as
+`{0 ::op_annot::text}`, and the comment above row **F10** (`:528`, `:543-546`)
+records the failure result as "an empty string headless and `0` on the display arm".
+A verb whose success answer is another proc's name and whose failure answer depends
+on whether a display is attached cannot be asked "did that work".
+
+Note the issue text in §1 above ("returns `TCL_OK` **with the path string**") is
+**stale** and so is any test comment repeating it. The path string is not what ships.
+
+Costs nothing to ratify: **no shipped caller reads the result.** All six sites were
+re-checked — `src/xschem.tcl:5916`, `:6209`, `:15713`/`:15715` and `:16139`/`:16141`
+(the two copies of *Simulation > Graphs > Annotate Operating Point*) ignore it, and
+the two that want a failure signal already work around its absence by re-asking:
+`utils/annot_mode.tcl:2118-2124` (`catch`, then `cadence::_annot_db_analog_loaded`,
+with the comment "SUCCESS IS RE-ASKED FROM `xschem raw loaded`, NEVER TAKEN FROM THE
+rc") and `src/ase_window.tcl`'s `annot_ensure_loaded`.
+
+`TCL_ERROR` stays rejected for the reason §8 already gives: four uncaught callers,
+two of them Tk `-command` bodies where a raise becomes a `bgerror` modal.
+
+The **RULING D5-3 digital refusal keeps its plain-English sentence** as the result
+(minted once in `save.c:1602 backannot_refuse_digital()`, rendered at
+`scheduler.c:2481`, asserted by `test_backannotate_digital` BA20/BA21/BA27). That is
+not a second answer to the same question: it is the one arm that has something to
+*say* rather than a yes/no to report, which is what RULING D5-4 asks for.
+
+**Cost of honouring this:** row **F0** of `tests/headless/test_annot_stale_0684.tcl`
+golds the residue and must be re-golded `{0 1}`. Row **F10** golds only
+`[lindex $f10_raw 0]`, the return code, and is unaffected.
+
+### 14.2 THE WAVES CHECKBUTTON — ratified in the OPPOSITE direction to attempt 2
+
+**Instruction to the codebase:** *Simulation > Graphs > "Live annotate probes with
+'b' cursor"* is the user's tick and nothing but a user click may move it.
+`annotate_op` must not set it on **any** arm — not on failure, and **not on success
+either**. When `0807-attempt2-reverted.patch.txt` is re-applied for attempt 3, the
+line that moves `tclsetboolvar("live_cursor2_backannotate", 1)` into the success arm
+must be **dropped, not carried over**.
+
+The debt's own pitch, and the read-only audit that proposed an answer to it, both
+framed this as "arm it only when the annotate succeeded" — which is what attempt 2
+built. That framing predates **issue 0864** and ratifying it would be a *regression*.
+
+Verified at HEAD: `grep -rn 'tclsetboolvar("live_cursor2_backannotate"' src/` returns
+**one hit, and it is inside a comment** (`src/scheduler.c:2487`, the 0864 note telling
+a future reader not to put it back). No code anywhere sets that variable; the only
+assignment in the tree is the shipped default `set_ne live_cursor2_backannotate 0`
+(`src/xschem.tcl:16819`). So HEAD is already stricter than attempt 2, and this half of
+the ruling **ratifies shipped behaviour and moves no code**.
+
+Why the stricter reading is the right one, and why this is not a trade-off:
+
+* it is the user's standing ruling verbatim — *"MUST ONLY HAPPEN WHEN USER REQUESTS
+  IT!!"*, quoted in the 0864 note at `scheduler.c:2487` and again at
+  `xschem.tcl:16809-16818`. Untick the box, press `6`, and the box came back ticked;
+* the only argument that ever existed for the force-set (upstream 89d847fb — without
+  the switch a fresh annotation drew nothing, because the switch was also the first
+  term of every render gate) **no longer applies**: 0864 removed it from those gates
+  in both languages. There is no remaining cost on the other side, which is why this
+  was decided rather than bounced;
+* rows **A64-1 / A64-2 / A64-3** of `tests/headless/test_op_annot.tcl` already watch
+  this arm, and A64-2 requires the variable's name to appear on no *code* line of it.
+  Attempt 2's success-arm set would red A64-2 on re-application; that red is correct
+  and must be fixed by deleting the line, never by relaxing the row.
+
+---
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+**Scope note.** This section **supersedes the mechanism of §14.1** and **adds one
+line to §14.2**. §14 is left exactly as written, as the record of what was ruled
+first. §14.2's substance stands unchanged; §14.1 was right that the verb must
+answer and wrong about where the answer comes from.
+
+The user's instruction, 2026-08-29, verbatim:
+
+> "decide the 23, leave 0861 and 0299 for me"
+
+A read-only audit of the 57-entry ruling queue classified 25 entries as questions
+whose answer is cheap and obvious — things to be **decided** rather than put to the
+user. **0807 was one of the 23** so classified. 0861 and 0299 were excluded and
+remain the user's to answer.
+
+### The ruling, as an instruction to the codebase
+
+**(1) `annotate_op` must answer, and its answer is "did the numbers reach the
+schematic".**
+
+The `annotate_op` branch of `src/scheduler.c` must set its own Tcl result as its
+last act — `"1"` or `"0"`, always with `TCL_OK`, never falling off the end.
+`TCL_ERROR` stays rejected for the reason §8 already gives (four uncaught callers,
+two of them Tk `-command` bodies where a raise becomes a `bgerror` modal). The
+RULING D5-3 digital refusal keeps its minted plain-English sentence as its result:
+that arm has something to *say*, not a yes/no to report.
+
+**The yes/no is `update_op()`'s verdict, NOT `extra_rawfile()`'s.** Attempt 2 wrote
+`Tcl_SetResult(interp, my_itoa(res == 1), TCL_VOLATILE)`, where `res` is the return
+of `extra_rawfile(1, ...)` — that means *"a results file got attached"*, which is not
+what the user is being told. Instead:
+
+* declare `int published = 0;` at the top of the branch;
+* in the success arm, capture the return that is presently discarded:
+  `published = update_op();`
+* answer `Tcl_SetResult(interp, my_itoa(published == 1), TCL_VOLATILE);`
+
+`update_op()` is the one choke point where "was anything put on the schematic" is
+known (`src/save.c:2100-2320`; `res` is set to `1` only inside the publish loop, and
+each refusal returns `0` at `:2122`, `:2200`, `:2304`). With that source, `"1"` means
+what the user was told it means — *the operating point is on the schematic*.
+
+**(2) The Waves checkbutton — §14.2 stands, plus one line.** *Simulation > Graphs >
+"Live annotate probes with 'b' cursor"* is the user's tick and nothing but a user
+click may move it; `annotate_op` must not set it on **any** arm, success or failure.
+When `0807-attempt2-reverted.patch.txt` is re-applied for attempt 3, the line moving
+`tclsetboolvar("live_cursor2_backannotate", 1)` into the success arm must be
+**dropped**. **The added line:** that patch also brings its own new row **AA13**,
+golded `{0 1}` — *"a FAILED annotate leaves `live_cursor2_backannotate` as it found
+it; a SUCCESSFUL one arms it"* (patch line 1095). Deleting the code without
+re-golding AA13 to **"leaves the box as it found it on BOTH arms"**, gold `{0 0}`,
+lands attempt 3 with a **false red** that reads like the fix is broken.
+
+**(3) The unreadable raw must speak plain English, like its two neighbours.** The
+failure this issue is *named after* is the one arm with no sentence: attempt 2's
+failure arm is `dbg(0, "annotate_op(): no op/dc/tran data read from %s...")`, which
+reaches stderr and the action log, where someone editing a schematic never sees it.
+Mint a **third sentence** beside `backannot_refuse_digital()` and
+`backannot_refuse_empty()` in `src/save.c` — naming the file, saying it could not be
+read, and saying that nothing on the schematic changed — rendered on the same
+channel those two use. §8 rejected a GUI notice because no channel existed; one
+exists now, minted-once and already used twice.
+
+### Why
+
+* **INTENT OVER MECHANISM, and RULING D5-4.** "Attached" and "published" disagree in
+  shipped shapes, not corners, and every disagreement prints a contradiction:
+  * **a transient run** — the commonest thing on a bench. ngspice writes one `.raw`;
+    `op` fails, `dc` fails, `tran` attaches, and `update_op()` refuses to publish a
+    transient's t=0 as an operating point — the user's own ruling of 2026-08-26,
+    shipped as 0856/0872. The schematic shows nothing; `res == 1` would answer `1`.
+    The contradiction is already committed one row apart: **BA25** runs
+    `xschem annotate_op $collraw 0 tran` and is "not refused", while **BA26** beside
+    it asserts the array is left empty;
+  * **annotating while the simulation is still running** — ngspice leaves
+    `No. Points: 0` in the header for the whole run. The attach succeeds, the 0836
+    guard refuses, and `backannot_refuse_empty()` prints its plain-English *"holds no
+    simulation points yet"* sentence **into the command window**
+    (`src/save.c:1652`, `ciw_echo` under `has_x`). Then the command window prints
+    `1` on the next line, because `ciw_exec` echoes any non-empty result
+    (`src/ciw.tcl:642-643`). The user reads the refusal and the success one line
+    apart — RULING D5-4 broken in the literal;
+  * **ac / noise / table**, per the 0860 widening: attach, refuse to publish, answer
+    `1`.
+* **§13 already rules against the weaker reading.** "What attempt 3 should do" item 1
+  requires *"a decision on what a zero-point database means to `annotate_op`
+  (recommend: treat it as 'nothing was published', answer `0`... invariant I3)"*, and
+  §11.7 makes a well-formed `No. Points: 0` header a required acceptance fixture.
+  `res == 1` answers `1` on the exact fixture this document requires to answer `0`.
+* **Half (1) is a bug wearing a question mark, so ratifying costs nothing.** No
+  shipped caller reads the result at all, and the two that want a failure signal
+  already work around its absence by re-asking. Every `"1"` gold attempt 2 wrote is
+  on an `op` fixture (AA0/AA8/AA10), as is F0, so all stay green under the corrected
+  reading.
+* **Half (2) is the user's standing ruling verbatim** — *"MUST ONLY HAPPEN WHEN USER
+  REQUESTS IT!!"* (issue 0864, quoted at `scheduler.c:2487` and
+  `xschem.tcl:16809-16818`). Untick the box, press `6`, and the box came back ticked.
+  The only argument that ever existed for the force-set (upstream 89d847fb — the
+  switch was also the first term of every render gate, so a fresh annotation drew
+  nothing without it) **no longer applies**: 0864 removed it from those gates in both
+  languages. Nothing on the other side of the scale, which is why this was decided
+  rather than bounced.
+* **PLAIN ENGLISH.** Point Annotate at a `.vcd` and get a paragraph; press it mid-run
+  and get a paragraph; point it at a results file that cannot be read and get the
+  digit `0` and silence. Half (3) closes that gap.
+
+### What was verified in the tree, so a later reader need not re-derive it
+
+* `src/scheduler.c:2386-2546` — the whole branch read. The **only** `Tcl_SetResult`
+  is the digital refusal at `:2481`; the `res == 1` success arm (`:2539-2546`) calls
+  `update_op()` and `draw()`, **discards `update_op()`'s return**, and sets no result.
+  The verb therefore answers the previous command's residue. §1's claim that it
+  "returns `TCL_OK` **with the path string**" is **stale**; the path string is not
+  what ships.
+* `src/save.c:2100-2320` — `int update_op()`. `res` starts `0` and is set `1` only
+  inside the publish loop (`:2320` returns it); the refusals return `0` at `:2122`
+  (digital), `:2200` (zero-point / `backannot_refuse_empty`) and `:2304`
+  (non-op/transient). This is the published verdict, minted at one choke point.
+* `tests/headless/test_annot_stale_0684.tcl:340-346` — row **F0** golds a
+  *successful* annotate as `{0 ::op_annot::text}`: a committed measurement of the
+  residue on success.
+* `tests/headless/test_annot_stale_0684.tcl:528, 539-546` — row **F10**'s comment:
+  *"annotate_op over an unreadable file answers an empty string headless and `0` on
+  the display arm"*. F10 golds only `[lindex $f10_raw 0]`, the return code, so it is
+  unaffected by the change.
+* `tests/headless/test_backannotate_digital.tcl:290, 307-310` — **BA25** ("the same
+  command on an ANALOG raw is not refused") and **BA26** ("a TRANSIENT publishes
+  NOTHING onto the schematic (0856)... the array is left EMPTY"): attached-but-not-
+  published, already committed, one row apart.
+* `grep -rn 'tclsetboolvar("live_cursor2_backannotate"' src/` → **one hit**,
+  `src/scheduler.c:2487`, **inside the 0864 comment block**, not code. No force-set
+  survives at HEAD on any arm.
+* `grep -rn 'live_cursor2_backannotate' src/*.tcl utils/*.tcl` → three hits, none an
+  assignment by annotate: `src/xschem.tcl:14276` (a variable list), `:16189` (the
+  checkbutton's `-variable`, user-visible label *"Live annotate probes with 'b'
+  cursor"*, under *Simulation > Graphs*), `:16819` `set_ne live_cursor2_backannotate 0`
+  (the shipped default).
+* `doc/claude/evidence/0807-attempt2-reverted.patch.txt` — line **571** is the
+  success-arm `tclsetboolvar(...)` to be dropped; line **589** is
+  `Tcl_SetResult(interp, my_itoa(res == 1), TCL_VOLATILE)`, the mechanism corrected
+  here; line **577** is the `dbg(0, ...)` failure arm half (3) replaces; lines
+  **1081-1096** are row **AA13** and its `{0 1}` gold.
+* `src/save.c:1602` `backannot_refuse_digital()` and `:1652`
+  `backannot_refuse_empty()` — the two existing minted sentences, both echoing to the
+  command window via `ciw_echo` under `has_x`. `src/ciw.tcl:636-644` — `ciw_exec`
+  echoes any non-empty result, which is how a bare `1` would land beside a refusal.
+* Caller sweep: `src/xschem.tcl:5916`, `:6209`, `:15713`/`:15715`, `:16139`/`:16141`
+  — none reads the result. `utils/annot_mode.tcl:2118-2121` —
+  `catch {xschem annotate_op $path $lvl tran}` then `cadence::_annot_db_analog_loaded`,
+  under the comment *"SUCCESS IS RE-ASKED FROM `xschem raw loaded`, NEVER TAKEN FROM
+  THE rc"*. `src/ase_window.tcl`'s `annot_ensure_loaded` does the same.
+
+### Does this move code?
+
+**Half (2) ratifies shipped behaviour — nothing moves at HEAD.** HEAD is already
+stricter than attempt 2. Its obligation is a *don't* aimed at attempt 3.
+
+**Halves (1) and (3) IMPLY A CODE CHANGE — follow-up work, NOT YET DONE.** Nothing
+in this ruling has been implemented; no source or test file was touched to record it.
+Attempt 3 owes:
+
+1. `src/scheduler.c`, `annotate_op` branch: add `int published = 0;` at the top,
+   change the discarded `update_op();` in the success arm to
+   `published = update_op();`, and add
+   `Tcl_SetResult(interp, my_itoa(published == 1), TCL_VOLATILE);` as the branch's
+   **last statement**.
+2. `src/save.c`: mint a third refusal sentence beside `backannot_refuse_digital()`
+   and `backannot_refuse_empty()` for the unreadable/unparseable raw — names the
+   file, says it could not be read, says nothing on the schematic changed — rendered
+   on the same channel; replace the `dbg(0, ...)`-only failure arm with it.
+3. `tests/headless/test_annot_stale_0684.tcl`: re-gold row **F0** from
+   `{0 ::op_annot::text}` to `{0 1}`. Row F10 is unaffected.
+4. On re-applying `0807-attempt2-reverted.patch.txt`: **delete** its success-arm
+   `tclsetboolvar("live_cursor2_backannotate", 1)` (patch line 571) — otherwise it
+   reds row **A64-2** of `tests/headless/test_op_annot.tcl`, correctly — **and**
+   re-gold that patch's own row **AA13** to *"leaves the box as it found it on BOTH
+   arms"*, gold `{0 0}`, so the deletion does not land as a false red.
+5. Add the zero-point acceptance fixture §11.7 and §13 already require (a well-formed
+   `No. Points: 0` header, not AA19's 40 bytes of garbage). Under this ruling it must
+   answer **`0`** — which `res == 1` could not have delivered.
+
+**The adversary ran.** It could not overturn half (2) and confirmed it independently
+at HEAD; it **overturned half (1)** — not on *whether* the verb should answer, but on
+*what its yes/no means* — and its better answer, the published-not-attached reading
+plus the third minted sentence, is what is ruled above.
+
+**What this means for the person using the tool:** pressing *Annotate Operating
+Point* will give a plain yes/no about whether it actually worked — not merely whether
+a results file opened — and when it cannot work it will say why in the command window
+instead of leaving you guessing. And it will never tick the *Simulation > Graphs* box
+*"Live annotate probes with 'b' cursor"* on your behalf, on success or failure; that
+box stays wherever you left it.
+
+**The user may reverse this at any time; it was decided to spare their attention, not
+to bind them.**

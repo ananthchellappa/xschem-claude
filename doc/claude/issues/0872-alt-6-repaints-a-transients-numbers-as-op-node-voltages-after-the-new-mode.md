@@ -1,6 +1,6 @@
 # 0872 — the two node-voltage bits share one render class, so the mode the user picked no longer describes the number on the sheet
 
-**Status:** ✅ **FIXED 2026-08-27** — in **two passes**, and the first one did not
+**Status:** ✅ **FIXED 2026-08-27**; **RULING SETTLED 2026-08-29** — the detach stands, see the closing RULING section. Fixed in **two passes**, and the first one did not
 close it. The A3h hardening pass added the refusal; verification then showed the
 ruling-0856 breach was still **one key press away** from the most ordinary desktop
 state there is, because the chord's OWN candidate search loads a transient AFTER that
@@ -307,3 +307,172 @@ asking, but a user who presses a key and gets no acknowledgement at all may read
 a broken keyboard. Owed as a `look` so the user sees the silence once. Ruling 0857
 (*"if OP has been run but we don't have device info … we want to say something in the
 CIW"*) covers only the case where OP HAS been run, which this is not.
+
+---
+
+## 10. RULING, 2026-08-29 — the detach stands (decided under the user's "decide the 23" instruction)
+
+**Question put to the user (`rule 0872`):** after a transient run, pressing `6` or
+`Alt-6` on the schematic finds the run's results file, opens it, decides it is the
+wrong analysis, and closes it again. Should it instead leave that file loaded, as a
+side benefit?
+
+**Decided: keep the detach.** `cadence::annot_mode` continues to put back whatever the
+key press attached — the whole-registry clear when nothing was loaded on entry, the
+by-name `::op_annot::db_detach` otherwise (issue 0914's split) — restore the mask to
+`$cur`, redraw, and say the plain-English `notop` sentence. **No code moves.**
+
+Why, against the standing rulings:
+
+* **Cadence.** In Virtuoso an annotation gesture never populates the waveform
+  display; choosing which results are open is its own explicit act. A chord that
+  asked for operating-point numbers and came back having opened a transient is not a
+  use mode Cadence has.
+* **"Annotation must only happen when the user requests it."** The user asked for
+  DC node voltages. Leaving the transient attached is not "nothing": a waveform strip
+  on the sheet would start plotting a run the user never opened, and cursor motion
+  would publish that run's samples onto the pins — which is issue 0872's own defect
+  arriving by the back door, and RULING D5-1 with it.
+* **Nothing is lost.** The refusal names the analysis and points at `Alt-Shift-6`,
+  and `cadence::annot_tran` runs its **own** supply (`_annot_tran_supply`,
+  `utils/annot_mode.tcl:2061`) — the waveform-window consult of issue 0881, then the
+  candidate path. So the advice in the sentence works from exactly the state the
+  detach leaves behind; the user does not have to re-find the file. `Waves > Op
+  Annotate` remains the explicit route for loading one by hand.
+* **Precedent, already shipped on the sibling surface.** `cadence::annot_tran` keeps
+  its supply *below* the cursor resolve for this reason, naming this unwind: a press
+  that refuses must not attach a database on its way out
+  (`utils/annot_mode.tcl:2438`, rows V38/V67/V71/B12k).
+
+**§9's debt is superseded in one respect:** the press is no longer silent. Since
+ruling 0857 landed it says *"No operating point results are loaded. These are from a
+'tran' run instead, so there are no operating-point numbers to show. Run an operating
+point analysis, or press Alt-Shift-6 for node voltages at the waveform cursor."* The
+`look` debt for the silence is therefore about a sentence, not about nothing at all.
+
+**Unaffected:** issue 0877 (the render class still carries no provenance stamp, and
+the ASE-L `Results > Annotate` checkbuttons still write the mask past this refusal)
+is a separate ruling and this does not touch it.
+
+**Verified in the tree before ruling:** `utils/annot_mode.tcl:1302-1334` (the second
+ask and both detach spellings), `:893-903` (the sentence the user reads),
+`tests/headless/test_op_annot.tcl:12658` (V31c — four legs, each asserting
+`xschem raw loaded` back to `{0 -1}`, no paint, the golden sentence, leg 3 the `$cur`
+mask), `:12691` (V31d — an operating point at the same path still loads, arms and
+paints).
+
+---
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+The user said, verbatim, 2026-08-29: **"decide the 23, leave 0861 and 0299 for me"**.
+This debt was one of the 23 a read-only audit classified as **cheap and obvious** —
+a question whose answer the standing rulings already settle — so it was decided on
+the user's behalf rather than added to their reading pile. (0861 and 0299 were
+excluded and remain theirs.) §10 above recorded the same decision during the same
+pass; this section is the formal record and carries the parts §10 does not: the
+instruction it was decided under, the adversary's verdict, and the reversal line.
+
+### The ruling, as an instruction to the codebase
+
+**Keep the detach.** When the `6` / `Alt-6` chord's own candidate search opens a
+results file and then finds it is not an operating point, it must put the session
+back exactly as the key press found it:
+
+* take the file back off — the whole-registry clear when **nothing** was loaded on
+  entry, the by-name `::op_annot::db_detach` otherwise (issue 0914's split);
+* restore the annotation mask to `$cur`;
+* redraw;
+* say the plain-English `notop` sentence, which names the analysis it found and
+  points the user at `Alt-Shift-6`.
+
+It must **not** leave the file loaded as a side benefit. Rows **V31c** (nothing
+attached, all four legs) and **V31d** (the operating-point positive control) stay as
+the fence around this.
+
+**One line for the user:** pressing `6` or `Alt-6` right after a transient run will
+keep closing the results file it opened to check — it won't leave a transient sitting
+in your waveform window that you never asked to open; it tells you what it found and
+points you at `Alt-Shift-6`, which goes and gets the file itself.
+
+### Why
+
+* **Cadence or nothing.** In Virtuoso an annotation gesture never populates the
+  waveform display — choosing which results are open is its own explicit act. A chord
+  that asked for operating-point numbers and came back having opened a transient is
+  not a use mode Cadence has.
+* **"Annotation must only happen when the user requests it."** Leaving the transient
+  attached is not "nothing": a waveform strip on the sheet would plot a run the user
+  never opened, and cursor motion would publish that run's samples onto the pins under
+  an operating-point caption — this issue's own defect through the back door, and
+  **D5-1** with it.
+* **Nothing is lost by detaching.** The refusal names the analysis and points at
+  `Alt-Shift-6`, and `cadence::annot_tran` runs its **own** supply
+  (`utils/annot_mode.tcl:2061` — the issue 0881 waveform-window consult, then the
+  candidate path), so the advice works from exactly the state the detach leaves.
+  `Waves > Op Annotate` remains the by-hand route for loading a results file.
+* **Precedent already shipped on the sibling surface.** `cadence::annot_tran` keeps
+  its supply *below* the cursor resolve, citing this very unwind, and calls
+  `_annot_tran_unwind 1 $mask0` (`utils/annot_mode.tcl:2438`). Same rule, one surface
+  over.
+* **0900** makes the attached database a cache and never an authority, so nothing
+  downstream gains anything from the file being left on.
+
+### What was verified in the tree, so a later reader need not re-derive it
+
+* `utils/annot_mode.tcl:1302-1334` — the second ask: `if {![cadence::_annot_op_db_ok]}`
+  reads `xschem raw sim_type` **before** detaching, then `xschem raw clear` when
+  `$entry_loaded < 0` else `::op_annot::db_detach`, then `xschem set annot_show $cur`,
+  bbox update, redraw, and `cadence::_annot_say [cadence::_annot_msg $cur notop $st {}] warn`.
+  The detach this debt asks about is live and shipped.
+* `utils/annot_mode.tcl:893-903` — the sentence the user actually reads: *"No
+  operating point results are loaded. These are from a 'tran' run instead, so there
+  are no operating-point numbers to show. Run an operating point analysis, or press
+  Alt-Shift-6 for node voltages at the waveform cursor."*
+* `tests/headless/test_op_annot.tcl:12658-12665` — row **V31c**, four legs (`Alt-6`;
+  `6`; `Alt-6` from mask 1; a waveform strip with cursor B and Live-annotate ticked).
+  Every leg golds `xschem raw loaded` == `{0 -1}` — nothing attached — plus the
+  no-pins paint and the golden `notop` sentence; leg 3 golds mask 1 back, leg 4 golds
+  `RAISED:No raw file loaded`.
+* `tests/headless/test_op_annot.tcl:12691-12695` — row **V31d**, the positive control:
+  the same candidate path holding an operating point still loads (`{0 0}`, `sim_type
+  op`), still arms mask 2, still paints the pins and still names the file. The detach
+  is not a blanket refusal of the candidate search.
+* `utils/annot_mode.tcl:678-682` — `Waves > Op Annotate`, the by-hand route.
+* Two attacks were run against the mechanism and both died. A whole-registry
+  `xschem raw clear` cannot steal the waveform viewer's file: it routes through
+  `extra_rawfile(3, NULL, ...)` (`src/save.c:1797`), which touches only this window's
+  own registry, and the bare clear is reached **only** when this window held nothing
+  when the key went down. And a user's own hand-loaded transient never reaches this
+  unwind at all — `cadence::_annot_op_db_ok` (`utils/annot_mode.tcl:1014`) refuses at
+  the top, before the candidate search.
+
+### Does anything move?
+
+**No. This ratifies behaviour that already ships.** No code change is implied, and no
+test row changes. Two housekeeping notes for a later reader, neither of them work
+owed by this ruling:
+
+* **§9's debt is superseded in one respect.** The press is **no longer silent** —
+  since ruling 0857 it speaks the `notop` sentence above. The outstanding `look` is
+  therefore about whether that *sentence* reads right, not about a dead keyboard.
+* **A slight over-claim, corrected.** "The advice works from exactly the state the
+  detach leaves" is true of the *file* but not of the whole press: `Alt-Shift-6`
+  resolves a cursor first, so on a bench with no waveform window and no graph placed
+  the user meets a second, different plain-English refusal asking them to turn on
+  cursor A or B. That chain is progressively actionable, and it is **independent of
+  the detach** — a cursor comes from a graph or a viewer window, never from an
+  attached results file, so leaving the transient loaded would produce the identical
+  second sentence. It argues about wording, not about the unwind.
+* **Untouched:** issue **0877** (the render class still carries no provenance stamp;
+  the ASE-L `Results > Annotate` checkbuttons still write the mask past this refusal)
+  is a separate ruling and remains the user's.
+
+**The adversary ran** and could not overturn it: it granted the question is unusually
+obvious (three standing rulings pull the same way, nothing pulls back, and the
+decision moves no code), and both of its attack scenarios — the registry clear
+stealing the viewer's file, and the unwind destroying a transient the user loaded by
+hand — were refuted in the tree. Its verdict: **decision stands**.
+
+**The user may reverse this at any time; it was decided to spare their attention, not
+to bind them.**

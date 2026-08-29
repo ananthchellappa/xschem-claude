@@ -212,3 +212,43 @@ Two things this did NOT do, deliberately:
 silently disarmed by the restore. `grep` finds no `no_undo`, `no_draw` or
 `keep_symbols` anywhere in `src/ase.tcl` or `src/ase_window.tcl`, and S4 adds no
 such scope. There is nothing to defend against on this tree.
+
+
+---
+
+## NOT RULED, 2026-08-29 — a ratification was drafted, OVERTURNED, and SPLIT
+
+The user instructed *"decide the 23, leave 0861 and 0299 for me"*, and this debt
+was one of the 23 a read-only audit had classified as cheap and obvious. A
+decision was drafted — *refuse symmetrically: any schematic with unsaved edits,
+whatever the Autosave backup setting* — and the adversarial pass **overturned it.**
+No ruling was made on the half that is the user's. **Answer 0628 and 0632
+together; they are one question.**
+
+### The half that needs NO ruling, and should just ship
+
+* **The refusal when Autosave backup is OFF is right.** `src/save.c:4508` returns
+  early, so the walk's return trip is a plain reload from disk and the user's
+  unsaved edit is gone. Silent loss, from a menu item that promises to change
+  nothing. Nobody needs to be asked about that.
+* **The wording must be re-minted in plain English, in one place both surfaces
+  render** (PLAIN ENGLISH, RULING D5-4). Today `src/xschem.tcl:16181` hands the
+  raised string straight to `alert_`, so the user reads a sentence opening
+  `op_annot::save_cards:` and naming a variable `autosave_backup` — neither of
+  which is a thing on screen. And `src/ase.tcl:817` still says *"issue 0632,
+  ruling pending"* to a designer. Both are plain defects, not decisions.
+
+### The half that IS the user's
+
+Extending the refusal to the **shipped default** — unsaved edits *with* Autosave
+backup ON — and promoting ASE's provisional refusal to permanent.
+
+### And the drafted summary was factually wrong, which is why this matters
+
+It told the user that both **Create device OP .save file** and **Netlist and Run**
+"will now stop and ask you to save first." **Netlist and Run does not stop, and
+never did.** `src/ase.tcl:905` is `catch {ase::op_cards_capture ...}` under the
+comment *"an annotation extra can never break Netlist-and-Run"*, and
+[0633](0633-ase-refuses-op-save-cards-on-a-dirty-sheet-provisional.md) says it in
+one line: *"The run itself proceeds."* A ruling sold to the user on a false
+description of what they would experience is worse than no ruling.

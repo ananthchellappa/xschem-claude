@@ -181,3 +181,39 @@ identical to an rc-set one. The two cases have to be distinguished, not merged.
   because the load reaches `annot_show_sync_cache()` on its own. Read with 0811.
 * §4 point 4's requirement is met: `vc/atk4.tcl`'s five steps are now rows
   **L20–L25** in `tests/headless/test_ase_launch.tcl`.
+
+---
+
+## NOT RULED, 2026-08-29 — a ratification was drafted and OVERTURNED
+
+The user instructed *"decide the 23, leave 0861 and 0299 for me"*, and this debt
+was one of the 23 a read-only audit had classified as cheap and obvious. A
+decision was drafted — *ratify as shipped: annotation switches off when the
+window's root sheet changes, chord-set masks included* — and the adversarial pass
+**overturned it and sent the debt back to the user's queue.** No ruling was made.
+The debt stands.
+
+**Why it was overturned.** The debt bundles **three** gestures — `File > Open`,
+`File > Save As`, and Clear Schematic — and the Cadence case argues only the
+first. *"Put a different cellview in front of you and you do not inherit the
+previous design's annotation"* is a good argument for `File > Open`. It was never
+made for `Save As`, which was carried along under it.
+
+And `Save As` is not the same act. Measured, and already filed as
+[0811](0811-only-load-schematic-got-the-deterministic-annotation-clear.md) §2:
+
+    WU| after saveas   sch0=sa.sch   annot_show=3  root=dut.sch   <<< stale, root moved
+
+`save_schematic()` rebinds identity in place when the name differs
+(`src/save.c:4563-4564`); at the top level `currsch == 0`, so **Save As moves the
+very field the stamp is compared against**, nothing re-stamps, and the next
+repaint clears the mask. Not one object on screen changed. The numbers were
+measured for exactly the devices still in front of the user, and they vanish with
+nothing said. The commonest instance is the **first save** of a new sheet:
+simulate, press `6`, then save — and the numbers go.
+
+**What would make this decidable.** Split it. `File > Open` is the obvious half
+and can be ratified on the Cadence reading alone. `Save As` belongs to 0811,
+which already measured it, and the honest question there is whether a rename
+should re-stamp rather than clear. Clear Schematic needs its own sentence.
+Re-scoped that way, two thirds of this debt stops needing the user at all.

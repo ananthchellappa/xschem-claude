@@ -1,6 +1,6 @@
 # 0891 — 0881's viewer consult is green headless and red with a live display
 
-**Status:** **FIXED** 2026-08-28 (backlog item A12). Verdict: **the fixture was
+**Status:** **FIXED** 2026-08-28 (backlog item A12); **ruling debt SETTLED 2026-08-29** on the user's "decide the 23" instruction — see the RULING section at the foot of this file (arm ratified; three follow-up code changes named, not yet done). Verdict: **the fixture was
 at fault, the product was not** — established by measurement, not by assumption,
 see "Which side was wrong" below. Originally measured 2026-08-28 during the
 item A11 write-up, on the
@@ -251,3 +251,334 @@ run's numbers reach the schematic with no warning. That is a live RULING D5-1
 violation on a path no row covers. **Issue 0895** is the same conflation's third
 face — a *deleted* viewer file still produces "No simulation results are
 loaded" while the traces are on screen, which is issue 0893's commonest trigger.
+
+---
+
+# THE RULING  (2026-08-29, decided under the user's "decide the 23" instruction)
+
+**DECIDED: the display arm stays in the everyday regression run, exactly as it
+ships.** No code moves.
+
+The debt asked whether `tests/run_regression.tcl` should keep starting the
+persistent dev display and re-running the annotation suites on it, given the two
+costs — extra wall clock, and an X server left running afterwards — with the only
+alternative on offer being a silent skip when no display is there.
+
+## Why this was not the user's call to make
+
+* **The alternative is the defect.** A silent skip under a green banner *is*
+  issue 0891. `CLAUDE.md` already forbids it twice over — "a standing red is a
+  defect, not furniture", and the T1-baseline-zero rule — and issue 0147 already
+  settled the shape of the answer with `NOGOLD`: an arm that verified nothing
+  says so, loudly, without being counted a regression. `NODISPLAY` is that same
+  precedent applied to the same problem.
+* **The evidence is not an argument, it is a measurement.** 0881's feature was
+  `ALL PASS (447 checks)` headless and `2 FAILED` on a display, same binary, same
+  tree — and the two red rows were 0881's own acceptance rows. The blind runner
+  was T1, and T1 is the everyday runner.
+* **Neither cost is really a cost.** `CLAUDE.md` instructs the user to start the
+  persistent dev display once and leave it up (idempotent, ~0.3 s), so a
+  surviving Xvfb is the documented intended state, not litter. And the runner
+  must *not* stop it: the control dir is shared with every other session and
+  worktree, so a `stop` at the end of a regression run would pull the display out
+  from under whatever else is attached to it. Leaving it up is the correct
+  behaviour, not an oversight.
+* **It fails open and never touches the human's screen.** No display → an
+  uncounted `NODISPLAY:` line, so a headless CI box stays green. Every child is
+  launched through `devdisplay.sh exec`, which pins `DISPLAY=:99` and
+  `GUI_GATE=0` for the child only (`tests/headless/devdisplay.sh:402`), so the
+  user's real screen and their Pause/Stop panel are both left alone.
+
+## Correction to the debt's own pitch — the cost is 3x what it says
+
+The pitch reads "runs `test_op_annot` a SECOND time ... ~15 s more". That was
+true when it was written and is not true now: `dcases` has grown to **four**
+suites (`test_op_annot`, `test_annot_show_menu`, `test_annot_stale_0684`,
+`test_annot_blank_cause_0909`), of which three are also run headless and one
+(`test_annot_show_menu`) runs only here.
+
+Measured from the run of 2026-08-29 01:48–01:53 (log mtimes, dev display `:99`
+alive with openbox 3.6.1, a loaded box with other agents live): the headless loop
+ended 01:52:24 and the display loop ended 01:53:09 — **~45 s** for the four
+suites, against a whole-run wall clock of roughly five minutes. All four were
+green on the display arm: 483, 36, 52 and 27 checks, `OVERALL: ok`.
+
+The ruling does not change with the bigger number. 45 s on a five-minute run to
+cover the only arm in which a window exists is still the cheap side of the trade.
+
+## Left standing, deliberately
+
+* **Issue 0898** (the `W33` wall-clock row now has two chances to flake) is a
+  separate open question about what T1 should cost, with its own option list. It
+  is not settled here.
+* **Which suites belong in `dcases`** is not settled here either. This ruling is
+  about the arm existing, not its membership; a suite whose subject is not a
+  window has no business in it, and that is a per-suite judgement.
+
+---
+
+# ADVERSARY REVIEW OF THE RULING  (2026-08-29)
+
+**The direction is right and stays: the display arm is kept.** A silent skip
+under a green banner is the defect this issue is named after, `CLAUDE.md`
+forbids it twice, and issue 0147's `NOGOLD` already settled the shape. That half
+of the ruling is not disturbed, and it did not need the user.
+
+**What is overturned is the other half — "exactly as it ships. No code moves."**
+Three findings, all read out of the tree, none of them a preference.
+
+## 1. The new arm is the one loop in the tree with no clock on it
+
+| reader | wraps every launch in a time cap? |
+|---|---|
+| `tests/headless/full_audit.sh` | yes — `timeout ${AUDIT_TIMEOUT:-300}`, 7 call sites |
+| `tests/headless/run_suites.sh` | yes — `timeout ${SUITE_TIMEOUT:-200}`, 3 call sites |
+| `tests/run_regression.tcl` display loop | **no — zero** |
+
+That asymmetry did not matter while T1 was `--nogui` everywhere, because the
+hang this tree has actually measured **cannot happen without a display**. Both
+cases are written down in `full_audit.sh` itself:
+
+* `test_placement_wire_gate` — "with ANY display it blocks forever at the G4
+  `xschem place_text` row — headlessly `place_text()` fails fast because the
+  text dialog needs a Tk toplevel, but under a real X the modal is raised for
+  real and nothing dismisses it. Measured: killed at 120 s under WSLg, **still
+  stalled after 300 s under xvfb-run**." Xvfb is not a defence.
+* `test_descend_symbol` — a modal `alert_` nothing dismisses: "**It does not
+  fail, it HANGS**, and paid `AUDIT_TIMEOUT` (300 s) plus a crash row on every
+  full run."
+
+The audit survived both only because of its cap. T1 now runs four suites with a
+live display and no cap, so the failure mode it newly admits is not a red row —
+it is a runner that never returns.
+
+## 2. And a hang there destroys the whole report, not just its own row
+
+`results.log` is opened with `open ... w` and closed only after `xschemtest`;
+there is no `fconfigure -buffering` and no `flush` anywhere in the file (grep =
+0). Tcl's default is full buffering at 4 KB and **the entire finished
+`results.log` is 2678 bytes** — under one buffer. The display loop runs *after*
+all 38 headless cases have been summarized into that unflushed buffer. So a hang
+or the Ctrl-C that ends it throws away every headless result as well, and the
+everyday runner produces nothing at all.
+
+## 3. The ruling states a membership rule and then declines to apply it, on a number it had
+
+The ruling says "a suite whose subject is not a window has no business in
+[`dcases`]", records ~45 s, and leaves membership standing. The per-suite split
+was available in the same log mtimes the 45 s came from:
+
+| display-arm suite | cost | also run headless? | `full_audit.sh` pins it |
+|---|---|---|---|
+| `test_op_annot` | ~16 s | yes | (not in `nogui_tests`) |
+| `test_annot_show_menu` | ~0.8 s | **no — display only** | — |
+| `test_annot_stale_0684` | **~27 s** | yes, 26.6 s | **`--nogui`** |
+| `test_annot_blank_cause_0909` | ~0.35 s | yes | **`--nogui`** |
+
+**~27 s of the ~45 s — about 60% — is `test_annot_stale_0684`**, a suite whose
+subject is a results file going stale rather than a window, which already runs
+to completion headless in the same run, and which `full_audit.sh:161` has
+already assigned to `--nogui`. Two readers in one tree now put the same suite on
+opposite arms, and the one with no time cap took the riskier side. The ruling's
+cost argument was made on an aggregate whose majority buys nothing.
+
+## The decision that should stand
+
+Keep the arm. Then, in the same loop and without touching a fence:
+
+1. **Put a clock on each display-arm launch**, matching `full_audit.sh`'s 300 s,
+   as `exec $dd exec timeout 300 $xschem_cmd ...`. `timeout` exits 124, which the
+   existing `regression_case_failed` verdict already turns into a counted
+   failure; the appended line should say plainly that the suite ran out of time
+   on the hidden test display rather than implying a crash.
+2. **Line-buffer `results.log`** (`fconfigure $fd -buffering line`) so a hang, or
+   the Ctrl-C that ends one, cannot erase 38 case blocks that already passed.
+3. **Drop `test_annot_stale_0684` from `dcases`** and reconcile with
+   `full_audit.sh`'s `nogui_tests`, which has already ruled on it. That returns
+   ~27 s of the ~45 s and leaves the arm covering the three suites whose subject
+   really is a window.
+
+All three keep row **V57** green: the launch line still matches
+`(devdisplay\.sh|\$dd)\s+exec`, the loop still carries no `--nogui`,
+`summarize_all` still surfaces `NOGOLD|NODISPLAY`, and `test_op_annot` and
+`test_annot_show_menu` both stay in `dcases`.
+
+**Smaller, noted not fixed:** `dd_alive` is probed once before the loop, so a
+display stopped mid-run by another session — the shared control dir makes that
+possible, and the ruling relies on that sharing for its "never stop it"
+argument — lands as `exit=6` on every remaining suite rather than as a
+`NODISPLAY` line.
+
+---
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+The user said, verbatim, 2026-08-29:
+
+> **"decide the 23, leave 0861 and 0299 for me"**
+
+A read-only audit of the 57-entry ruling queue classified 25 of the waiting
+questions as ones whose answer is cheap and obvious — things that should be
+decided rather than handed to the user to read. **This debt was one of the 23.**
+Only 0861 and 0299 were held back for the user.
+
+This section is the settled ruling and supersedes the earlier
+"# THE RULING" section above where the two differ. That section's first half —
+keep the display arm — stands unchanged. Its second half, *"exactly as it ships.
+No code moves"*, does not.
+
+### The ruling
+
+**Keep the second pass on the hidden test display.** The everyday regression run
+(`tclsh tests/run_regression.tcl`) goes on starting the persistent dev display
+and re-running the annotation suites on it, goes on leaving that display up
+afterwards, and goes on printing an uncounted `NODISPLAY:` line — never a silent
+skip, never a green banner — on a machine that has no such display.
+
+**Then make three changes to that loop.** All three match precedent that already
+exists elsewhere in this tree, and none of them disturbs the fences row `V57`
+locks:
+
+1. **Put a clock on each display-arm launch**, the same 300 s the full audit
+   already uses: `exec $dd exec timeout 300 $xschem_cmd ...`. `timeout` exits
+   124, which the existing `regression_case_failed` verdict already counts as a
+   failure. The line that gets appended must say in plain words that the suite
+   ran out of time on the hidden test display — not something that reads like a
+   crash.
+2. **Write the report as the run goes** — `fconfigure $fd -buffering line` on
+   `results.log` — so a suite that stops responding, or the Ctrl-C that ends it,
+   cannot throw away the 38 headless case blocks that already passed.
+3. **Stop re-running `test_annot_stale_0684` on the display arm** — drop it from
+   `dcases`, reconciling with the full audit, which has already assigned that
+   suite to `--nogui`. Its subject is a results file going stale, not a window.
+   That returns ~27 s of the ~45 s and leaves the arm covering the three suites
+   whose subject really is a window.
+
+### Why
+
+* **The only alternative on offer — skip quietly when no display is there — is
+  this issue.** `CLAUDE.md` forbids it twice: *"a standing red is a defect, not
+  furniture"*, and the T1-baseline-zero rule. Issue **0147** already settled the
+  correct shape with `NOGOLD`: an arm that verified nothing says so out loud and
+  is not counted as a regression. `NODISPLAY` is that precedent reapplied.
+* **The evidence is a measurement, not a preference.** 0881's feature was
+  `ALL PASS (447 checks)` with no windows open and `2 FAILED` with a display
+  live — same binary, same tree — and the two red rows were 0881's own
+  acceptance rows. The blind runner was T1, and T1 is the everyday runner.
+* **Neither alleged cost survives inspection.** `CLAUDE.md` tells the user to
+  start the dev display once and leave it up (idempotent, ~0.3 s), so a
+  surviving Xvfb is the documented intended state. And the runner must *not*
+  stop it: the control directory is shared with every other session and
+  worktree, so a stop at the end of a regression run would pull the display out
+  from under whatever else is attached to it.
+* **It never touches the human's screen.** Every child goes through
+  `devdisplay.sh exec`, which pins `DISPLAY=:99` and `GUI_GATE=0` for that child
+  only, so the user's real screen and their Pause/Stop panel are left alone.
+* **Why the three changes.** The display arm is the only loop in this tree with
+  no time limit on it: the full audit wraps every launch in
+  `timeout ${AUDIT_TIMEOUT:-300}` (7 call sites) and `run_suites.sh` in
+  `timeout ${SUITE_TIMEOUT:-200}` (3 call sites); `run_regression.tcl` has none.
+  That was harmless while T1 was headless everywhere, because the hang this tree
+  has actually measured **cannot happen without a display** — a modal dialog is
+  raised for real and nothing dismisses it, and the audit records two such
+  suites, one of which was still stalled after 300 s under Xvfb. And an
+  un-flushed report makes that hang worse than a red row: `results.log` is
+  opened plain, has no `fconfigure -buffering` and no `flush` anywhere in the
+  file, Tcl buffers to 4 KB, and the whole finished report is 2678 bytes — under
+  one buffer — so a hang on the display arm, which runs *after* all 38 headless
+  cases are summarized, would leave the user with nothing at all. Finally, the
+  earlier ruling stated the membership rule ("a suite whose subject is not a
+  window has no business in `dcases`") and then declined to apply it to a number
+  it already had; ~60% of the arm's cost is one suite that is not about a window
+  and that the full audit has already pinned to `--nogui`.
+
+### Verified in the tree
+
+* `tests/run_regression.tcl:80-82` — `dcases` is **four** suites, not the one the
+  debt's pitch names: `test_op_annot`, `test_annot_show_menu`,
+  `test_annot_stale_0684`, `test_annot_blank_cause_0909`. Three of the four are
+  also in `hcases` (lines 56, 59, 60), so they genuinely run twice;
+  `test_annot_show_menu` runs only on the display arm.
+* `tests/run_regression.tcl:190` — `catch {exec $dd start 2>@1}`: the runner
+  really does **start** the dev display. A grep for `stop` in that file returns
+  only comment prose, so nothing ever takes it down — the display is left up.
+* `tests/run_regression.tcl:192-203` — `$dd status` is matched against
+  `*state:*alive*`; where that fails, the loop prints an uncounted
+  `NODISPLAY: ... THIS ARM VERIFIED NOTHING` line with `Total num fail: 0` and
+  carries on. The probe matches reality: `devdisplay.sh status` prints
+  `state:   alive` today.
+* `tests/run_regression.tcl:205` — the launch line is
+  `exec $dd exec $xschem_cmd --pipe -q --script ${dc}.tcl`: routed through
+  `devdisplay.sh`, with **no** `--nogui`. `tests/headless/devdisplay.sh:402` is
+  `DISPLAY="$DPY" GUI_GATE=0 "$@"`, pinning the child to `:99` with the gate off
+  for the child only.
+* `tests/run_regression.tcl:94-104` — `summarize_all`'s surfacing regexp is
+  `^(NOGOLD|NODISPLAY)`: printed, not counted, per issue 0147's precedent.
+* `tests/headless/test_op_annot.tcl:14177-14184` — row **V57** locks all of it:
+  `test_op_annot` in both `hcases` and `dcases`, the loop exists, the launch line
+  routes through `devdisplay.sh|$dd exec`, the loop carries no `--nogui`,
+  `summarize_all` carries `NOGOLD|NODISPLAY`, and `test_annot_show_menu` is in
+  `dcases`. All three changes above keep this row green.
+* **The arm is currently green, not a standing red.** Tails of the four logs from
+  the 2026-08-29 01:5x run: `test_op_annot.disp.log` `ALL PASS (483 checks)
+  OVERALL: ok`; `test_annot_show_menu.disp.log` `ALL PASS (36 checks)`;
+  `test_annot_stale_0684.disp.log` `ALL PASS (52 checks)`;
+  `test_annot_blank_cause_0909.disp.log` `ALL PASS (27 checks)`.
+* **Cost, measured** from log mtimes of that same run: last headless case
+  01:52:24, last display case 01:53:09 — **~45 s** for the display arm, against
+  `create_save.log` 01:48:13 → `results.log` 01:53:09, a ~5-minute whole run. The
+  debt's pitch says "~15 s"; that is stale by roughly 3x. Per-suite:
+  `test_op_annot` ~16 s, `test_annot_show_menu` ~0.8 s (display-only, the one
+  genuinely new coverage), `test_annot_stale_0684` ~27 s,
+  `test_annot_blank_cause_0909` ~0.35 s.
+* `full_audit.sh:161` already lists `test_annot_stale_0684` under `nogui_tests`,
+  so the two readers in this tree currently put the same suite on opposite arms,
+  and the one with no time cap took the riskier side.
+* `doc/claude/issues/0898-*.md` — the double-run's real cost is the `W33` 3000 ms
+  wall-clock row (1089 ms clean, 5010 ms on a loaded box) now having two chances
+  to flake. It carries its own option list and is explicitly recorded as
+  undecided; it is not folded into this ruling.
+
+### Does anything move?
+
+**Partly.** The arm itself is **ratified** — it stays exactly where it is, and
+the "keep the display running afterwards" behaviour is correct as shipped.
+
+**Three code changes are implied, and none of them is done yet — follow-up
+work:**
+
+1. `tests/run_regression.tcl:205` — wrap the display-arm launch in
+   `timeout 300`, and word the appended failure line as "ran out of time on the
+   hidden test display", not as a crash.
+2. `tests/run_regression.tcl` — `fconfigure $fd -buffering line` on the
+   `results.log` channel.
+3. `tests/run_regression.tcl:80-82` — remove `test_annot_stale_0684` from
+   `dcases`.
+
+**Also noted, not fixed:** `dd_alive` is probed once before the loop, so a
+display stopped mid-run by another session — the shared control directory makes
+that possible, and this ruling leans on that sharing for its "never stop it"
+argument — lands as `exit=6` on every remaining suite rather than as the
+`NODISPLAY` line the design intends.
+
+**Left standing, deliberately:** issue **0898**, and the wider question of which
+suites belong in `dcases` beyond the one this ruling removes.
+
+### Told to the user
+
+The regression run keeps its second pass on the hidden test display — it caught a
+whole feature that passed with no windows open and failed with them — but it now
+gives up on a suite that stops responding instead of hanging the run forever,
+writes its report as it goes so a stuck run cannot throw away results that
+already passed, and stops re-running one slow file-freshness suite that has
+nothing to do with windows, which halves the extra time.
+
+---
+
+**An adversary reviewed this ruling.** It could not overturn the direction —
+keeping the arm — and said so plainly; what it overturned was the claim that no
+code moves, producing the three changes above, and that better answer is what is
+recorded here.
+
+**The user may reverse this at any time; it was decided to spare their
+attention, not to bind them.**

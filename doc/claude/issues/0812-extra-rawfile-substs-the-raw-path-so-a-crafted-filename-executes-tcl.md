@@ -1,6 +1,6 @@
 # 0812 — `extra_rawfile()` `subst`s the raw file path, so a crafted filename EXECUTES Tcl
 
-STATUS: **FIXED 2026-08-25, on the SECOND attempt (item 0812-retry) — step status E, and
+STATUS: **THE §16 RULING IS SETTLED — decided 2026-08-29 on the user's "decide the 23" instruction; see the RULING section at the foot of this file. The scanner ships as-is; ONE follow-up is now owed (say so in the Graph dialog when the results file cannot be opened, `src/xschem.tcl:4838-4846`). Before that: FIXED 2026-08-25, on the SECOND attempt (item 0812-retry) — step status E, and
 the E is a RULING owed on one user-visible side effect (§16), not a doubt about the fix.**
 18/18 probes went `PWNED=1` → `PWNED=0`, both `[exec touch]` host-file rows went
 `exists=1` → `exists=0`, and four *ordinary* filenames that were broken at HEAD now work.
@@ -654,3 +654,299 @@ false comments and one live defect elsewhere — but it cost a second write-up c
 second set of source edits on a "finished" item. **Run Verify-C before the write-up agent,
 and never concurrently with Sabotage.** That is now two consecutive items where agent
 concurrency corrupted or delayed measurement (§17, last two bullets).
+
+---
+
+## 19. THE §16 RULING, ANSWERED — 2026-08-29, under the user's "decide the 23" instruction
+
+**RULING: the loss stands. Keep the scanner exactly as it ships. Tcl array-element
+syntax in a results-file path — `$a(1)`, and with it `$env(HOME)/x.raw` — does NOT
+come back.** Decision D2 is ratified as permanent. No code moves.
+
+Verified in this tree before ruling, not taken on the write-up's word:
+
+* `src/util.c:910-914` `is_var_name_char()` excludes `(` and `)`; `src/util.c:1000-1006`
+  rejects a `${NAME}` containing either. So neither name form can open an index. The
+  sole Tcl API in the scanner is `Tcl_GetVar2Ex` (`src/util.c:1029`).
+* `grep -rn '\$env(' --include=*.sch --include=*.sym .` → **0 files**, tree-wide. The
+  complete set of shipped `rawfile=` spellings is seven `$netlist_dir/...` paths plus
+  the bare name `distrib` — every one of them a plain global scalar the scanner still
+  resolves (`src/xschem.tcl:76` etc. confirm `netlist_dir` is a scalar).
+* `~/` still expands in the same field: `src/util.c:1075` (`resolve_rawfile_path()`
+  calls `expand_tilde()`), pinned green by row **ORD7-tilde**,
+  `tests/headless/test_raw_read_dispatch.tcl:500`.
+* D2's cost is priced by a test row, not only a comment: **ORD9-paren-not-index**,
+  `tests/headless/test_raw_read_dispatch.tcl:511`. A change of mind reds a check.
+* No split brain: the only `subst`-based existence test left in the GUI,
+  `file_exists` (`src/xschem.tcl:2847`), has **zero callers** — nothing tells the user
+  a `$env(...)` path exists and then fails to open it. The ADE-side loader
+  `ase::attach_dbs` (`src/ase.tcl:2100-2101`) tests `[file isfile $rawfile]` on an
+  already-absolute path and never sees the spelling at all.
+
+Why this is not a real trade:
+
+1. **The one plausible spelling has an exact working synonym in the same box.**
+   `$env(HOME)/x.raw` and `~/x.raw` name the same file, and `~/` works. Nothing a user
+   can do was lost — only one way of typing it.
+2. **Any other environment variable has a one-line escape hatch.** `set PDK_ROOT
+   $env(PDK_ROOT)` in `~/.xschem/xschemrc` (sourced at global scope, `src/xinit.c:3458+`)
+   makes `$PDK_ROOT/x.raw` resolve, because a scalar global is what the scanner reads.
+3. **CADENCE OR NOTHING.** `$env(...)` in a stored path is a stock-XSCHEM Tcl-ism. The
+   Cadence-shaped surface — Netlist-and-Run composing its own absolute results path —
+   never used it. "It preserves legacy XSCHEM behaviour" is an argument against.
+4. **Restoring it re-admits an index grammar that would then have to be proven inert.**
+   Attempt 1 (§1-§10) shipped, and was reverted for, a sanitizer nobody could state in
+   one sentence. "No array index is ever parsed here" is the sentence. It is worth more
+   than a spelling with a synonym.
+
+The failure is also loud rather than silent: an unresolvable `$env(HOME)/sim.raw` is
+copied through **verbatim** and reported with the literal text the user typed
+(`src/save.c:1334`), so the unexpanded `$env(...)` is visible in the message. It is not
+blanked, and it never opens a different file. (The **wording** of that message is a
+separate matter and is not ruled on here.)
+
+**If a real bench ever needs it**, add `$env(NAME)` as a narrow, explicitly named case in
+`expand_tcl_vars()` — a literal `$env(` prefix, one `Tcl_GetVar2Ex(interp, "env", NAME,
+TCL_GLOBAL_ONLY)`, closing `)` required. **Do not restore the general array-index
+grammar.** That is a future option, not a scheduled change; nothing is owed today.
+
+Items 1, 2 and 4 of §16 (ordinary filenames starting to work, `\` no longer eaten, the
+interpreter result no longer polluted) are ratified as the improvements they are.
+
+---
+
+## 20. ADVERSARY PASS ON THE §19 RULING — 2026-08-29. THE CODE STANDS; THE REASON GIVEN DOES NOT
+
+**Verdict: the shipped scanner stays (do NOT re-open a general Tcl array-index
+grammar), but §19 is overturned on three points — its security rationale, its
+"permanently / nothing is owed" framing, and its claim that the failure is loud.**
+
+### 20.1 The paren rule is NOT what closed the injection — this file's own sabotage run says so
+
+§19 (and the sentence drafted to tell the user) attribute the loss of
+`$env(HOME)/x.raw` to security: "dropping that spelling is what stops a booby-trapped
+file name from running commands". **That is false, and §14 already measured it.**
+
+* **SAB-7** put `(` back as an index opener and reddened **exactly one** row — **ORD9**,
+  the cost row. **Every injection row stayed green**, including `INJ11-INJ14`
+  (`tests/headless/test_raw_read_dispatch.tcl:450-462`), which drive
+  `$noar0812([set ::SC_PWNED 1]).raw` plain and namespaced through read / clear /
+  switch and assert the sentinel stays 0. Those four rows are non-vacuous: they go
+  **red under SAB-1**.
+* The mechanism is plain in the code: this scanner never substitutes anything. An
+  index would reach `Tcl_GetVar2Ex` as a **literal element name**, exactly as the
+  variable name does today (`src/util.c:1029`). What closed the hole is **D1** — no
+  evaluator anywhere in the resolver — not **D2**.
+
+So D2 buys a **one-sentence, readable safety property** ("no index is ever parsed
+here"), which is worth having. It does not buy safety. Justification 4 of §19
+("restoring it re-admits an index grammar that would then have to be proven inert")
+is answered by SAB-7: on *this* scanner it was already proven inert, in this file.
+
+**This matters beyond wording.** Attempt 1 (§3) was reverted for exactly one comment
+asserting a safety property the code did not have, and §18.2 refuted two more. A
+*ruling* that asserts a safety property the code does not have is the same defect
+one level up, and it is the level the user reads.
+
+### 20.2 The failure is SILENT on the surface the ruling itself names
+
+§19: "the failure is also loud rather than silent ... reported with the literal text
+the user typed (`src/save.c:1334`)". Measured in this tree:
+
+* `src/save.c:1334` is `dbg(0, "raw_read(): failed to open file %s for reading\n", f)`.
+  `dbg()` writes to `errfp` (`src/util.c:265-272`) and `errfp = stderr`
+  (`src/main.c:91`, `src/xinit.c:1252`). A GUI user does not read it, and
+  `raw_read(): failed to open file ... for reading` is developer voice, not the 9th-grade
+  English the standing PLAIN ENGLISH ruling requires.
+* The box the ruling names — the Graph dialog's results-file entry
+  (`.graphdialog.center.right.rawentry`, `src/xschem.tcl:4921`, `:5091`) — says
+  **nothing at all**. `graph_fill_listbox` (`src/xschem.tcl:4838-4846`) calls
+  `xschem raw read`, and when it returns 0 it simply **skips the fill**: the signal
+  list comes back **empty**, with no sentence anywhere. Type the old spelling, get a
+  blank list and no reason.
+
+That is a locally-correct, collectively-absurd refusal — the INTENT OVER MECHANISM
+case — and `src/wave_viewer.tcl:4127` states the house position on exactly this shape:
+"Refusing LOUDLY here is the honest move: emitting a suffix the engine cannot switch
+on would silently draw nothing." **Fixing a silent refusal needs no ruling.**
+
+### 20.3 One premise of §19 is narrower than it reads
+
+§19's "no split brain" check covered `file_exists` (`src/xschem.tcl:2847`, zero callers
+— confirmed) and `ase::attach_dbs` (`src/ase.tcl:2100-2101` — confirmed). It did not
+look at **`library_defs_expand_path` (`src/library_defs.tcl:22-34`)**, which expands
+`${VAR}` in a library path from **the environment** (`$env($var)`) — in the
+Cadence-shaped library registry this branch ships. So "an environment variable in a
+stored path is a stock-XSCHEM Tcl-ism the Cadence surface never uses" is not quite
+true of this tree: the Library Manager teaches that spelling, and the identical
+spelling in the results-file box means a Tcl **global** and falls through as literal
+text. Unchanged by the fix (HEAD's `subst` read globals too), so it is not a
+regression — but it is why "nothing was lost, only one way of typing it" understates
+what was dropped: **environment variables in results paths**, full stop.
+
+Verified and NOT disputed from §19: `$env(` appears in **0** `.sch`/`.sym` files
+tree-wide; the shipped `rawfile=` set is seven `$netlist_dir/...` spellings plus the
+bare name `distrib`, all plain global scalars the scanner still resolves; `~/` still
+expands (`src/util.c:1069-1077`, row **ORD7-tilde** at
+`tests/headless/test_raw_read_dispatch.tcl:500`); the xschemrc hatch
+(`set PDK_ROOT $env(PDK_ROOT)`) does work, sourced at global scope.
+
+### 20.4 The ruling that replaces §19
+
+1. **Keep the scanner as it ships.** No general array-index grammar. Keep **ORD9** as
+   the price tag. `$env(HOME)/x.raw` stays unsupported today.
+2. **Do not tell the user the paren rule is a security rule.** The honest sentence is
+   the plain one: *"The results-file box understands `~/` and plain names like
+   `$netlist_dir`. It does not understand `$env(HOME)/sim.raw` — type `~/sim.raw` or
+   the whole path."* No claim about booby-trapped filenames; that hole was closed by
+   removing the evaluator, and it stays closed either way.
+3. **Fix the silence, which is the part that actually costs a user something.** When
+   the results-file box cannot open what is in it, say so in the dialog, in plain
+   English, quoting the text the user typed — instead of returning an empty signal
+   list. (`src/xschem.tcl:4838-4846`; the stderr line at `src/save.c:1334` is not a
+   user-facing report.)
+4. **Do not close the door "permanently".** `$env(NAME)` as one explicitly named case
+   — literal `$env(` prefix, one `Tcl_GetVar2Ex(interp, "env", NAME, TCL_GLOBAL_ONLY)`,
+   closing `)` required — remains available and provably evaluator-free. It is not
+   scheduled and nothing is owed on it today; it is simply not forbidden, because the
+   reason §19 gave for forbidding it does not hold.
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+The user said, verbatim, on 2026-08-29: **"decide the 23, leave 0861 and 0299 for me"**.
+A read-only audit had classified 25 of the 57 queued ruling debts as questions whose
+answer is cheap and obvious; the user excluded 0861 and 0299 and told us to decide the
+rest. **This debt (the §16 question) was one of the 23.** It was decided on the user's
+behalf, not by them.
+
+### The ruling, as an instruction to the codebase
+
+1. **Keep the results-file scanner exactly as it ships.** No general Tcl array-index
+   grammar comes back. `(` and `)` stay out of a variable name, by either name form.
+   Row **ORD9-paren-not-index** (`tests/headless/test_raw_read_dispatch.tcl:511`) stays
+   as the price tag, so a silent reversal reds a check instead of drifting.
+   `$env(HOME)/sim.raw` in a results-file box stays unsupported today.
+
+2. **Never tell the user the paren rule is a security rule.** The sentence to use, if
+   one is ever shown, is the honest one:
+   *"The results-file box understands `~/` and plain names like `$netlist_dir`. It does
+   not understand `$env(HOME)/sim.raw` — type `~/sim.raw` or the whole path."*
+   An earlier draft of this ruling's user-facing line said dropping that spelling "is
+   what stops a booby-trapped file name from running commands". **That line is
+   withdrawn and must not be shipped.** The injection hole was closed by removing the
+   evaluator (decision D1); it stays closed whether or not parens are honoured.
+
+3. **Fix the silence** — see the follow-up below. This part is not ratification; it is
+   work that is now owed.
+
+4. **The door is not closed permanently.** `$env(NAME)` as one explicitly named case —
+   a literal `$env(` prefix, one
+   `Tcl_GetVar2Ex(interp, "env", NAME, TCL_GLOBAL_ONLY)`, closing `)` required — stays
+   available and is provably evaluator-free. Nothing is scheduled and nothing is owed
+   on it today. It is simply **not forbidden**, because the reason given for forbidding
+   it does not hold.
+
+Items 1, 2 and 4 of §16 (ordinary filenames starting to work, `\` no longer eaten, the
+interpreter result no longer polluted) are **ratified as improvements**, unchanged.
+
+### Why
+
+* **CADENCE OR NOTHING.** `$env(...)` inside a stored results path is a stock-XSCHEM
+  Tcl-ism. The Cadence-shaped surface this branch ships — Netlist-and-Run — composes
+  its own absolute results path and never sees that spelling at all
+  (`ase::attach_dbs` tests `[file isfile $rawfile]`, `src/ase.tcl:2100-2101`). "It
+  preserves legacy XSCHEM behaviour" is an argument **against** under the standing
+  ruling, not for.
+* **Nothing a user can DO was lost — only one way of typing it.** `$env(HOME)/x.raw`
+  and `~/x.raw` name the same file, and `~/` is still expanded
+  (`expand_tilde()` inside `resolve_rawfile_path()`, `src/util.c:1069-1077`). Any
+  other environment variable has a one-line escape hatch in `~/.xschem/xschemrc`:
+  `set PDK_ROOT $env(PDK_ROOT)` makes `$PDK_ROOT/x.raw` resolve, because a scalar
+  global is exactly what the scanner reads.
+* **Restoring the grammar costs more than it buys.** Attempt 1 of this very fix was
+  reverted for shipping a sanitizer nobody could state in one sentence. *"No array
+  index is ever parsed here"* is that sentence, and it is worth more than a spelling
+  that already has a working synonym.
+* **But the security framing is measurably false**, which is why item 2 above exists.
+  Sabotage variant SAB-7 (§14) put `(` back as an index opener and reddened **exactly
+  one** row — ORD9, the cost row. Every injection row stayed green, including
+  INJ11–INJ14 (`tests/headless/test_raw_read_dispatch.tcl:450-462`), which drive
+  `$noar0812([set ::SC_PWNED 1]).raw` plain and namespaced through read/clear/switch
+  and assert the sentinel stays 0. Those four are non-vacuous — they go red under
+  SAB-1. Attempt 1 was reverted for **one comment asserting a safety property the code
+  did not have**; a ruling that repeats that assertion is the same defect one level up,
+  at the level the user actually reads.
+* **PLAIN ENGLISH and INTENT OVER MECHANISM** are what force the follow-up. Today a
+  results-file box that cannot open what is in it says nothing at all to a GUI user.
+
+### What was verified in the tree (so a later reader need not re-derive it)
+
+* `src/util.c:910-914` — `is_var_name_char()` is `[A-Za-z0-9_]` only; `(` and `)` are
+  excluded on purpose, with the reason in the comment above it. No index is parsed.
+* `src/util.c:1000-1006` — a `${NAME}` containing `(` or `)` is rejected and emitted as
+  a literal `$`; both name forms are paren-free by construction.
+* `src/util.c:1029` — the only Tcl API in the scanner is
+  `Tcl_GetVar2Ex(interp, namebuf, NULL, TCL_GLOBAL_ONLY)`. Reading the `env` **array**
+  as a scalar returns NULL, so `$env(HOME)` falls to `append_unresolved_ref()` and
+  passes through as literal text.
+* `src/util.c:1069-1077` — `resolve_rawfile_path()` = `expand_tilde()` then
+  `expand_tcl_vars()`. `~/` still expands: the working synonym.
+* `grep -rn '\$env(' --include=*.sch --include=*.sym .` → **0** files tree-wide. The
+  shipped corpus cost of decision D2 is genuinely zero.
+* The shipped `rawfile=` set is seven `$netlist_dir/...` spellings plus the bare name
+  `distrib`; `netlist_dir` is a plain global scalar (`src/xschem.tcl:76-78`), so every
+  shipped spelling still resolves.
+* `tests/headless/test_raw_read_dispatch.tcl:500` **ORD7-tilde** and `:511`
+  **ORD9-paren-not-index** — `~/` works, and D2's cost is pinned by a check.
+* `tests/headless/test_raw_read_dispatch.tcl:450-462` **INJ11–INJ14** — the array-index
+  injection rows, green with parens excluded and green under SAB-7 as well.
+* `src/xschem.tcl:2847` `file_exists`, the last `subst`-based existence test — **zero
+  callers** across `src/*.tcl` and `utils/*.tcl`. Nothing tells the user such a path
+  exists and then fails to open it.
+* `src/ase.tcl:2100-2101` — `ase::attach_dbs` tests `[file isfile $rawfile]` on an
+  already-absolute path; the Netlist-and-Run route never sees a `$env()` spelling.
+* `src/save.c:1334` — a failed open reports the path verbatim, **but through
+  `dbg(0, ...)` → `errfp` → stderr** (`src/util.c:265-272`, `src/main.c:91`,
+  `src/xinit.c:1252`). A GUI user never sees it. This is developer voice, not a
+  user-facing report — §19's claim that the failure is "loud" was wrong on this point.
+* `src/xschem.tcl:4838-4846` — `graph_fill_listbox` calls `xschem raw ...` and, on a 0
+  return, simply skips the fill. The signal list comes back **empty with no sentence
+  anywhere**. The box in question is the Graph dialog's results-file entry
+  (`.graphdialog.center.right.rawentry`, `src/xschem.tcl:4921`, `:5091`).
+* `src/library_defs.tcl:22-34` — `library_defs_expand_path` expands `${VAR}` in a
+  library path **from the environment** (`$env($var)`), in the Cadence-shaped library
+  registry this branch ships. Not a regression (HEAD's `subst` read only Tcl globals in
+  the results path either), but it means the Library Manager teaches an environment-
+  variable spelling that the results-file box does not honour. Worth knowing; it does
+  not change the ruling.
+* `src/xinit.c:3458+` — `xschemrc` is sourced at global scope, so the
+  `set PDK_ROOT $env(PDK_ROOT)` hatch really does yield a scalar global the scanner
+  resolves.
+
+### Ratification vs. code change
+
+**Mixed.** Items 1, 2 and 4 of the ruling **ratify what already ships — nothing moves
+in the code.** Item 3 **implies a code change, and it is FOLLOW-UP WORK NOT YET DONE:**
+
+> When the Graph dialog's results-file box cannot open what is typed in it, say so **in
+> the dialog**, in plain English, quoting the text the user typed — instead of
+> returning an empty signal list. Site: `src/xschem.tcl:4838-4846` (`graph_fill_listbox`,
+> the `if {$res}` arm has no `else`). The existing `src/save.c:1334` stderr line does
+> not discharge this. The house position on exactly this shape is already written down
+> at `src/wave_viewer.tcl:4127`: *"Refusing LOUDLY here is the honest move ... would
+> silently draw nothing."*
+
+Item 2 also implies that **no shipped comment, message or doc line may describe the
+paren exclusion as a security measure.** If one exists, it is wrong and should be
+corrected when next touched.
+
+### Adversary
+
+An adversary pass ran against the first draft of this ruling (§20) and **overturned it
+in part**: it did not disturb the code answer — no array-index grammar returns — but it
+showed the security rationale was false (SAB-7 reddened only the cost row), that the
+"loud failure" was a stderr line a GUI user never sees, and that closing the door
+"permanently" was unearned. Its better answer is what is recorded above.
+
+**The user may reverse this at any time; it was decided to spare their attention, not to
+bind them.**

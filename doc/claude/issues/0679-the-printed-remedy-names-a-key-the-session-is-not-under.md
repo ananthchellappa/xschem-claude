@@ -1,6 +1,6 @@
 # 0679 — the printed remedy names a key no session is under, and `save_all_apply` reports success anyway
 
-Status: OPEN. **Reproduced by the user on their bench, then reproduced exactly by the
+Status: FIXED 2026-08-25; the D6/D7 ruling debt is SETTLED 2026-08-29 (ratified as shipped — see RULING at the foot; one wording fix owed as follow-up). STILL OPEN items 2-8 remain. **Reproduced by the user on their bench, then reproduced exactly by the
 driver.** Filed 2026-08-24. Related: 0653 (R-0653-d requirement 3, which this
 violates), 0648, 0652, 0664, 0677.
 
@@ -333,3 +333,240 @@ never from the return value), **W1v2**, **W1w** (the OK-path audit).
 8. **Count drift that will look like a regression:** `test_ase_launch` reports
    **22** checks headless and **38** X-armed (GUI legs self-skip). Diff the
    verdict, not the count.
+
+---
+
+# RULED 2026-08-29 — D6 and D7 ratified as shipped, with one wording fix owed
+
+Decided under the user's explicit instruction of 2026-08-29 ("decide the 23, leave
+0861 and 0299 for me"). This closes item 1 of "STILL OPEN" above. Items 2-8 are
+untouched and stay open.
+
+## Verified in the tree before ruling (line numbers as of this date)
+
+| what was checked | where | what it actually does |
+|---|---|---|
+| the honest return | `src/ase_window.tcl:3500` `save_all_commit` | `set rc [ase::session_update ...]`; on `!$rc` one **caught** `::ase::echo ... error`; `return $rc`. No raise. |
+| the shared writer | `src/ase_window.tcl:3460` `save_all_apply` | returns `save_all_commit`'s rc; the hardcoded `return 1` is gone |
+| the pasted remedy | `src/ase_window.tcl:3512` `save_op_params_on` | plain call through the shared writer; inherits the honest value |
+| the menu OK path | `src/ase_window.tcl:3583` `save_all_ok` | captures the rc, runs `save_all_close` **unconditionally**, then `return $rc`; both early guards `return 0` |
+| the honest callee | `src/ase.tcl:2796` `session_update` | `if {![dict exists $sessions $key]} { return 0 }` — docstring is true |
+| where the command window puts the answer | `src/ciw.tcl:609` `ciw_exec` | `set code [catch {uplevel #0 $cmd} res]`; `$code` -> `ciw_echo $res error`, else a non-empty result -> `ciw_echo $res result` |
+| where the error line lands | `src/ciw.tcl:256` `xschem::notify` SINK 1 | `::ciw_echo $line $tag` — so an `error`-tagged notice is **already** styled as an error in the command-window pane, with no raise |
+| the test that pins it | `tests/headless/test_ase_final.tcl:866` F19w | asserts count==1, tag==`error`, key present. **Does not pin the sentence text**, so a rewording costs no golden churn |
+
+The single fact that settles D6: the alternative's only claimed benefit — the line
+being red-tagged in the command window — **is already delivered today**, by
+`ase::echo`'s `error` tag travelling SINK 1. Raising would buy the same red line and
+add a throw to a value-returning proc.
+
+## D6 — RATIFIED AS SHIPPED
+
+A pasted `ase::ui::save_op_params_on <key>` that finds no open session **returns 0
+and echoes one error-tagged sentence naming the key. It does not raise.**
+
+* **Cadence.** A SKILL command that cannot do its job prints to the CIW and returns
+  a false value; it does not abort the session. Shipped behaviour is the
+  Cadence-compatible one, so CADENCE-OR-NOTHING points at ratify, not at the raise.
+* The raise buys **no visible difference** (see the SINK 1 finding above) and costs
+  a `catch` at every present and future caller, including the Tk `-command`
+  `save_all_ok`, where an uncaught throw surfaces as a bgerror instead of a
+  sentence. Issue 0666 already records raises leaking out of the echo family.
+
+## D7 — RATIFIED AS SHIPPED
+
+`save_all_ok` returns the apply's rc and **still closes the Save All form** on a
+failed apply.
+
+* The only way the apply fails from that button is that the session the form
+  belongs to is **gone from the registry**. The form cannot repair that from the
+  inside, so holding it open strands the user on a form for a dead session.
+* Cadence forms close on OK and report trouble in the CIW; that is exactly this
+  shape. The non-silence lives in the shared writer's one error line, which the OK
+  path inherits *because* it shares the writer (R-0653-d req 3).
+
+## THE ONE THING THAT MUST CHANGE — the sentence, under PLAIN ENGLISH
+
+The mechanism is ratified; **the wording is not**. Today it reads:
+
+```
+ase: no ASE-L session is open under 'foo/bar/baz'; the Save All settings were NOT applied.
+```
+
+That says what happened and **not what the user can do about it**, which is half of
+the user's standing PLAIN ENGLISH ruling ("say what happened AND what the user can
+do about it, 9th grade level"). Commit b5d5b24f applied that ruling across the
+annotation surface and to five sentences in this same file; this one was missed.
+
+**Instruction to the codebase:** in `ase::ui::save_all_commit`
+(`src/ase_window.tcl:3500`), keep the return, the single echo and the `error` tag
+exactly as they are, and reword the sentence to drop the `ase:` prefix and add the
+remedy half — naming the menu path through the existing mint
+`ase::ui::remedy_op_params_menu` (`src/ase_window.tcl:3437`) rather than retyping
+it, per D5-4. Shape:
+
+```
+No ASE-L session is open for '<key>', so the Save All settings were not changed.
+Open that cellview in ASE-L and set it from <Outputs > Save All... > Save device OP parameters (gm, gds, vth, ...)>.
+```
+
+F19w (`tests/headless/test_ase_final.tcl:866`) asserts count/tag/key-present only,
+so it stays green across the rewording; that is the row to keep, not to relax.
+
+**Not in scope of this ruling:** the raise, the form-close, and STILL OPEN items
+2-8. Nothing else in `save_all_commit` / `save_all_apply` / `save_all_ok` moves.
+
+---
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+The user said, verbatim, on 2026-08-29:
+
+> **"decide the 23, leave 0861 and 0299 for me"**
+
+A read-only audit of the 57-entry ruling queue classified 25 debts as questions whose
+answer is cheap and obvious — things that should be **decided** rather than put to the
+user. **This debt was one of the 23** the user then handed over. (0861 and 0299 stay
+with the user and are not touched here.) This closes item **1** of "STILL OPEN" above.
+Items **2-8 stay open and unchanged**.
+
+⚠ **This section SUPERSEDES the wording instruction in the `# RULED 2026-08-29` block
+immediately above it.** That block's D6 and D7 rulings stand exactly as written; its
+proposed replacement sentence does **not** ship, for the three reasons in R3 below.
+The earlier block is left byte-untouched on purpose — an append-only record — so read
+the two together, with this one winning on wording.
+
+### The ruling, as an instruction to the codebase
+
+**R1 (D6) — ratified as shipped. Nothing moves.**
+When the user pastes `ase::ui::save_op_params_on <key>` into the command window and no
+ASE-L session is open under that name, the command keeps **printing one red line in the
+command window and returning `0`**. It must **not** be changed to throw an error.
+
+**R2 (D7) — ratified as shipped. Nothing moves.**
+Pressing **OK** in the **Save All** form keeps **closing the form**, even when the
+settings could not be saved because the session behind the form is gone. The report
+lives in the one red line in the command window, which the OK path inherits because
+both paths share one writer.
+
+**R3 (the sentence) — one code change is owed, and it is NOT the sentence the block
+above proposes.** The failure line must gain a remedy half under PLAIN ENGLISH, but the
+remedy must talk about the **session**, never about a named checkbox, and **all three
+sibling sentences must be reworded together from ONE mint**. Shape:
+
+```
+ASE-L is not open for 'lib/cell/view', so the Save All settings were not saved.
+Open that cellview in ASE-L again, then set them there.
+
+ASE-L is not open for 'lib/cell/view', so the state was not loaded.
+Open that cellview in ASE-L again, then load the state there.
+
+ASE-L is not open for 'lib/cell/view', so the state was not saved to lib/cell/view.
+Open that cellview in ASE-L again, then save it there.
+```
+
+### Why
+
+**R1.** The single fact that settles it, and the one the original proposal never
+checked: **the only benefit the raise was supposed to buy is already delivered.**
+`ase::echo "..." error` travels `xschem::notify` **SINK 1** (`src/ciw.tcl:297-301`),
+which calls `::ciw_echo $line error` unconditionally and first — so the sentence is
+**already styled red in the command-window pane, with no raise anywhere**. Raising buys
+the user **no visible difference** and costs a `catch` at every present and future
+caller, including the **OK** button's own handler, where an uncaught throw would
+surface as a bare Tk error box instead of a sentence. Issue **0666** already records
+raises leaking out of this echo family. **CADENCE OR NOTHING** points the same way: a
+SKILL command that cannot do its job prints to the CIW and returns a false value; it
+does not abort the session. Shipped behaviour is the Cadence-shaped one.
+
+**R2.** **INTENT OVER MECHANISM.** The only way OK's save can fail is that the session
+the form belongs to has left the registry, and a form for a dead session cannot repair
+it from the inside — holding it open strands the user on a window that can never
+succeed. Cadence forms close on OK and report trouble in the CIW. In production this is
+**near-vacuous anyway**: closing an ASE-L window (`ase::ui::close`,
+`src/ase_window.tcl:300-321`) drops the session, the window record and that window's
+dialog records in one go, so a live **Save All** form sitting over a dead session is not
+reachable by any normal gesture — the suite has to close the session by hand to build
+one. Ratifying a near-vacuous behaviour costs nothing.
+
+**R3.** Three reasons the block above's sentence must not ship, each checked in the tree:
+
+1. **It puts a caller-specific checkbox in a shared writer.** `save_all_commit`
+   (`:3500`) is reached from two places: the pasted remedy (`save_op_params_on`,
+   `:3512`, which forces only the OP-parameters box on) and the **Save All** form's
+   **OK** (`:3583`, which applies all three boxes). A remedy naming *"Save device OP
+   parameters (gm, gds, vth, ...)"* points a user who ticked **Save all voltages** at a
+   box they never touched. The file states this rule about its own twin at `:4139`:
+   *"its own sentence and not save_all_commit's, whose wording is Save-All-specific and
+   would be wrong for an import."*
+2. **It would desynchronize three byte-parallel siblings.** `src/ase_window.tcl` carries
+   the same template three times — `:3503`, `:4152`, `:4355` — and the comment at
+   `:4131` says the twin exists so *"the two read alike"*. Rewriting one and leaving two
+   cryptic manufactures a second **0661** (that file already carries a filed drift
+   defect of exactly this shape: two spellings of the same menu path, `string match`
+   against both returns 0). Fixing a PLAIN ENGLISH miss by minting a **D5-4** miss is
+   the wrong trade.
+3. **On the OK path that remedy is a loop.** R2 closes the form; the sentence would then
+   tell the user to open **Outputs > Save All...** and tick a box — the gesture that just
+   failed, on a form just closed under them, which fails identically because the session
+   is gone. The true remedy for this failure is never a menu path inside ASE-L; it is
+   *"that ASE-L session is closed — open the cellview again"*.
+
+A fourth, mechanical reason: the remedy **cannot travel as structured fields on this
+channel**. `proc xschem::notify_safe {msg {tag {}}}` (`src/xschem.tcl:15168`) takes a
+message and a tag only and drops `-short`/`-menu`/`-command`, so an instruction to name
+the menu path forces it into baked prose — the shape **R-0653-d** forbids
+(`src/ciw.tcl:245`: *"`-menu` and `-command` are DISTINCT FIELDS, not prose baked into
+the message"*), already filed as open class **0674**. A session-level remedy needs no
+menu field at all, so that limitation stops mattering.
+
+### What was verified in the tree (2026-08-29 — do not re-derive)
+
+| what was checked | where | what it actually does |
+|---|---|---|
+| the honest return | `src/ase_window.tcl:3500` `save_all_commit` | `set rc [ase::session_update $key $st]`; on `!$rc` **one caught** `::ase::echo ... error`; `return $rc`. **No raise anywhere** — R1 ships as ratified |
+| the shared writer | `src/ase_window.tcl:3460` `save_all_apply` | returns `save_all_commit`'s rc; the hardcoded `return 1` is gone; the `{}`-never-`0` expr preserved |
+| the pasted remedy | `src/ase_window.tcl:3512` `save_op_params_on` | a plain call through the shared writer; inherits the honest value; forces **only** the OP-parameters box |
+| the form's OK | `src/ase_window.tcl:3583` `save_all_ok` | captures the rc, runs `save_all_close` **unconditionally**, `return $rc`; both early guards `return 0` — R2 ships as ratified; applies **all three** boxes |
+| the honest callee | `src/ase.tcl:2796` `session_update` | `if {![dict exists $sessions $key]} { return 0 }` — the docstring is true |
+| **the deciding fact** | `src/ciw.tcl:297-301` `xschem::notify` SINK 1 | `::ciw_echo $line $tag`, unconditional and first — an `error`-tagged echo is **already red in the command-window pane without any raise** |
+| where the command window puts the answer | `src/ciw.tcl:609` `ciw_exec` | `set code [catch {uplevel #0 $cmd} res]`; non-zero -> `ciw_echo $res error`, else a non-empty result -> `ciw_echo $res result`. So a bad key prints the red sentence, then a bare `0` |
+| the three siblings | `src/ase_window.tcl:3503`, `:4152`, `:4355` | the identical `ase: no ASE-L session is open under '$key'; ...` template, three times; `:4131` says they must read alike |
+| the label mint | `src/ase_window.tcl:3433-3442` | `lbl_outputs` / `lbl_save_all` / `lbl_save_op_params` and `remedy_op_params_menu` — the D5-4 mint the rejected sentence would have rendered through |
+| the session teardown | `src/ase_window.tcl:300-321` `ase::ui::close` | drops the session, the `wins` entry and `dlg($key,*)` in one proc — a live Save All form over a dead session is unreachable by a normal gesture |
+| the channel's field limit | `src/xschem.tcl:15168` `notify_safe` | `{msg {tag {}}}` only; `-menu`/`-command`/`-short` are dropped |
+| the test that pins it | `tests/headless/test_ase_final.tcl:858-873` F19w | asserts `{1 error 1 0}` — count, tag, key-substring, zero-on-success. **The sentence text is NOT pinned**, so a rewording costs no golden churn and needs no test relaxed |
+| the six rows that glob the old literal | `test_ase_window.tcl:977, :989, :1098`; `test_ase_dialogs.tcl:1066, :1076, :1117` | they match `*NOT applied*` on the **ESC/Cancel discard** sentence at `src/ase_window.tcl:3879`, which `save_all_commit` never emits — **unaffected** by the R3 rewording |
+
+### Does anything move?
+
+**R1 and R2 ratify shipped behaviour — nothing moves.** No code change, no test change.
+
+**R3 implies a code change, and it is FOLLOW-UP WORK NOT YET DONE.** Exactly:
+
+* Mint **one** helper in `src/ase_window.tcl` that takes the session key and the thing
+  that did not happen, and renders `ASE-L is not open for '<key>', so <what> Open that
+  cellview in ASE-L again, then <verb> there.`
+* Route **all three** call sites through it — `:3503` (Save All settings were not
+  saved), `:4152` (the state was not loaded), `:4355` (the state was not saved to
+  `$l/$c/$v`) — so the three stay in sync instead of drifting.
+* Everything else in `save_all_commit` / `save_all_apply` / `save_all_ok` stays byte-
+  identical: the `set rc [ase::session_update ...]`, the single **caught** echo, the
+  `error` tag, `return $rc`, and the unconditional close.
+* **F19w stays green unmodified** (count/tag/key only), and the six `*NOT applied*`
+  rows stay green because they read the ESC discard sentence, not this one.
+
+**Acceptable alternative if a crew would rather batch wording work:** rule R1/R2 here
+and carry R3 into the surface-wide plain-English pass where **0886** and **0888**
+already sit. Commit `b5d5b24f`'s own message warns that *"a behaviour or wording change
+smuggled into one is how defects ship"*. What is **not** acceptable either way is a
+named checkbox in the shared writer's failure line.
+
+**Adversary:** an adversary pass ran against this ruling. It could not shake D6 or D7 —
+it re-measured SINK 1 and found the raise buys no visible difference, and found D7 more
+settled than argued because `ase::ui::close` makes a dead-session form unreachable — but
+it **overturned the proposed replacement sentence** on the three grounds recorded in R3,
+and that overturn is what ships as R3 above.
+
+**The user may reverse this at any time; it was decided to spare their attention, not to
+bind them.**

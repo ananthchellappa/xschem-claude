@@ -1,9 +1,76 @@
 # 0865 — with "Live annotate" off, a node voltage stays on the sheet after the cursor leaves it
 
-STATUS: ✅ **CLOSED 2026-08-27 by issue
+STATUS: **RULING SETTLED 2026-08-29 — see the RULING section at the foot of this file.** ✅ **CLOSED 2026-08-27 by issue
 [0868](0868-on-request-transient-node-voltage-annotation-at-the-waveform-cursor.md).**
 Introduced by **0864** (the opt-in split), found by that item's adversarial
 verification and re-measured from scratch here.
+
+RULED: ✅ **2026-08-29 — the shipped reading is ACCEPTED. Both arms of
+`xschem set cursor2_x <t>` keep publishing, ungated.** Decided under the user's
+2026-08-29 instruction to settle the cheap questions rather than queue them.
+This CLOSES the live question the `rule` debt carried; nothing in the tree moves.
+
+**What was verified in the tree before ruling** (not taken on the audit's word):
+
+* The two gates 0868 added are real and spelled identically to the six
+  cursor-motion sites: `src/save.c:1302` (loading a waveform file) and
+  `src/actions.c:4867` (descending into a child), both
+  `tclgetboolvar("live_cursor2_backannotate") && (xctx->graph_flags & 4)`.
+* Both `set cursor2_x` arms are genuinely ungated — the graph arm
+  (`backannotate_at_cursor_b_pos`) and the no-graph arm
+  (`backannotate_at_cursor_b_nograph`), `src/scheduler.c:12157`–`12194`.
+* The `cursor1_x` block this issue's inventory listed as an ungated publisher
+  really is inside `#if 0`, `src/scheduler.c:12146`–`12155`. Dead code.
+* Row **V25** exists and pins both arms, `tests/headless/test_op_annot.tcl:12163`.
+* The box really does ship unticked, `src/xschem.tcl:16819`.
+
+**The reason the answer is not close.** *Publishing is not painting.* The
+`annot_show` mask is a text-HIDING mask (`xschem.h:2262`, `text_hidden()`), and
+the six `@spice_get_voltage` readers in `src/token.c` no longer consult the
+Live-annotate box at all (`token.c:4328` and the ISSUE 0864 paragraph at
+`:4348`). So with the mask at its shipped 0, typing `xschem set cursor2_x 3e-9`
+writes a value into the database and puts **nothing on the schematic** — this
+issue's own P1/P2 measurement. The non-gating can only change what the user
+SEES after the user has already pressed `6`, `Alt-6` or `Alt-Shift-6`. So
+"MUST ONLY HAPPEN WHEN USER REQUESTS IT" is satisfied twice over: the class was
+armed by a request, and the time was named by a typed one.
+
+**Why the drag/type asymmetry is coherent, not arbitrary.** The tick box is
+labelled *"Live annotate probes with 'b' cursor"*. **Live** is the whole word:
+it governs the continuous following that happens as a side effect of dragging a
+cursor around while reading a plot. A typed sentence naming one time point is
+not live, it is a one-shot statement, and it stamps `annot_x` at the position it
+was measured at — so it is never stale at the moment it happens.
+
+**Why gating it would be the worse defect (INTENT OVER MECHANISM).**
+`xschem set cursor2_x` is the scripting road and S11's only road; a grep for the
+verb hits 102 lines across seven suites (`test_op_annot` 92,
+`test_wave_cursor_crossdb` 4, `test_wave_viewer` 2, plus
+`test_wave_crossdb_trace`, `test_spice_get_node_0861`,
+`test_backannotate_digital`, `test_annot_show_menu` — comment lines included, so
+read it as an order of magnitude, not a call count; 0868's own figure was 43
+across five suites). Most of those suites never mention the box. Gating it would make a typed command silently do nothing
+because of a GUI checkbutton that ships off — correct at every joint and
+collectively absurd.
+
+**No GUI gesture reaches the ungated arm.** `wviewer::cursor_toggle` runs
+`xschem new_schematic switch $wp` before its `set cursor2_x`
+(`src/wave_viewer.tcl:14239–14250`), so the waveform window's own cursor
+buttons act inside the viewer's context and never touch the design sheet.
+`Alt-Shift-6` goes through `xschem annotate_at`, a different verb. The only road
+to the ungated arm is a command someone types.
+
+**And the D5-1 hole this publish used to open is already shut.** The worry that
+a transient sample could surface under an "OP node voltages" heading was issue
+0872; `cadence::_annot_op_db_ok` / `cadence::annot_mode` (`utils/annot_mode.tcl`)
+now return silently before the mask is written, so `6` and `Alt-6` do nothing on
+a transient sheet. Ratifying this publish does not re-open it.
+
+**What stays open and is NOT covered by this ruling:** the provenance stamp on
+the node-voltage render class is issue **0877**, still owed. And 0868 measured
+that both plans leave the identical residual — after any on-request annotation
+the number persists while the cursor moves on — so gating would have bought
+nothing here either.
 
 ## How it was closed — and what deliberately did NOT change
 
@@ -182,3 +249,147 @@ PAINT (SVG-export) leg, not a `translate` leg — the token expands either way:
 * **the `Ctrl-6` control** — mask 0 paints no value in either arm.
 * **a structural row** over the caller list above, since "gated" and "not gated"
   is a property of six-plus call sites that no single fixture reaches.
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+The user said, verbatim, on 2026-08-29: *"decide the 23, leave 0861 and 0299 for
+me"*. A read-only audit had gone through the 57 queued ruling debts and sorted
+out the ones whose answer is cheap and obvious; **this debt was one of the 23 the
+user handed back to be decided** rather than read. 0861 and 0299 remain the
+user's. So the decision below was made on the user's behalf, at the user's own
+instruction — not by an agent deciding it was entitled to.
+
+### The ruling, as an instruction to the codebase
+
+**Both arms of `xschem set cursor2_x <t>` stay UNGATED on the "Live annotate
+probes with 'b' cursor" tick box. Nothing in the tree moves.**
+
+* `src/scheduler.c:12157`–`12194` — the graph arm (calling
+  `backannotate_at_cursor_b_pos`) and the no-graph arm (calling
+  `backannotate_at_cursor_b_nograph`) both keep publishing whatever the box says.
+* The tick box governs **continuous following only** — the thing its own "Live"
+  label promises. It must **never** gate a one-shot command somebody typed.
+* The two ACQUISITION doors that 0868 gated **stay gated**: `src/save.c:1302`
+  (loading a waveform file) and `src/actions.c:4867` (descending into a child).
+  Those are things the program does on its own; neither is a request.
+* **Do not "finish the gating".** Row **V25** of
+  `tests/headless/test_op_annot.tcl` remains the pin that explains this to the
+  next crew.
+
+### Why
+
+* **"MUST ONLY HAPPEN WHEN USER REQUESTS IT" is satisfied twice over, not
+  breached.** *Publishing is not painting.* `annot_show` is a text-HIDING mask
+  (`xschem.h:2262`, `text_hidden()`), and since 0864 the six
+  `@spice_get_voltage` readers in `src/token.c` no longer consult the box at all
+  (`token.c:4328`, and the ISSUE 0864 paragraph at `:4348`). With the shipped
+  mask of 0, typing `xschem set cursor2_x 3e-9` writes a value into the database
+  and puts **nothing on the schematic** — this issue's own P1/P2 measurement. The
+  non-gating can only change what the user sees **after** they have already
+  pressed `6`, `Alt-6` or `Alt-Shift-6`. So the class was armed by a request, and
+  the time was named by a second, typed one.
+* **D5-1 is satisfied.** The value is stamped at the position it was measured at,
+  so it is right at the instant it lands.
+* **INTENT OVER MECHANISM settles the other direction.** `set cursor2_x` is the
+  scripting road and step S11's only road, exercised across seven suites most of
+  which never mention the box. Gating it would make a typed command that names a
+  time silently do nothing, forever, because of a GUI checkbutton that ships
+  unticked — locally correct at every joint and collectively absurd.
+* **CADENCE OR NOTHING points the same way.** "Live annotate probes with 'b'
+  cursor" is a stock-XSCHEM leftover with no Virtuoso counterpart. Widening its
+  authority over a typed command is the disfavoured direction, not the favoured
+  one.
+* **There is no cost on the accept side for the user to weigh.** With the
+  annotation off — the shipped state — the typed command paints nothing at all.
+  With it on, it puts the number for the time the user just named next to the
+  node it was measured on, which is strictly better than leaving the previous
+  time's number sitting there. A question with a real cost on only one side is
+  not the user's to arbitrate.
+* **The D5-1 hole this publish once opened is already shut.** A transient sample
+  surfacing under an "OP node voltages" heading was issue 0872;
+  `cadence::_annot_op_db_ok` / `cadence::annot_mode` (`utils/annot_mode.tcl`) now
+  return silently before the mask is written. Ratifying does not re-open it.
+* 0868 also measured that **both plans leave the identical residual**, so gating
+  would have bought nothing here.
+
+### What was verified in the tree, so a later reader does not re-derive it
+
+* `src/save.c:1302` — guard G1 present:
+  `if(tclgetboolvar("live_cursor2_backannotate") && (xctx->graph_flags & 4))` in
+  `raw_read()`'s tail.
+* `src/actions.c:4867` — guard G2 present, identical spelling, in
+  `descend_schematic()`'s tail.
+* `src/scheduler.c:12157`–`12194` — both `set cursor2_x` arms confirmed UNGATED.
+* `src/scheduler.c:12144`–`12155` — the `cursor1_x` backannotate block this
+  issue's inventory listed as an ungated publisher really is inside `#if 0`.
+  Dead code; the inventory was wrong.
+* `grep -n live_cursor2_backannotate src/*.c` — exactly **8** live call sites
+  carry the gate (`callback.c` ×5, `actions.c`, `save.c`, `scheduler.c:13348`
+  swap_cursors). Three further hits are C comments (`token.c:4354`,
+  `token.c:4525`, `scheduler.c:2487`). None is in the `set cursor2_x` block.
+* `src/xschem.tcl:16819` — `set_ne live_cursor2_backannotate 0`; the box really
+  does ship unticked.
+* `tests/headless/test_op_annot.tcl:12139` — row **V25** exists and asserts both
+  arms publish with the box off, goldens `{0 {2 3e-09 0}}` and `{1 {2 3e-09 0}}`;
+  the explaining header sits at `:11311`.
+* `src/token.c:4328` — `int live = !raw_is_digital(xctx->raw);` (×6 sites); the
+  ISSUE 0864 paragraph records that the switch term was removed, so the box no
+  longer gates rendering.
+* `src/xschem.h:2262` and `:909`–`915` — `annot_show` is a text-HIDING mask,
+  which is why publication with mask 0 paints nothing.
+* `src/wave_viewer.tcl:14239`–`14250` — `wviewer::cursor_toggle` runs
+  `xschem new_schematic switch $wp` before its `xschem set cursor${which}_x`, so
+  the waveform window's own cursor buttons act inside the viewer's context.
+* `utils/annot_mode.tcl` — `cadence::_annot_op_db_ok` / `cadence::annot_mode`
+  return silently before writing the mask on a transient (the 0872 fix).
+
+### Two corrections for the record — neither moves the ruling
+
+1. **There is a FIFTH ungated publisher nobody has inventoried:**
+   `xschem annotate_at <time>` (`src/scheduler.c:2362`). It is the `Alt-Shift-6`
+   door, so it is ungated on purpose and for exactly the same reason — but this
+   issue still says "four", and the next crew counting publishers will find five.
+2. **The tick box controls three things, not one.** Besides following cursor B as
+   it is dragged, with the box ticked *loading a waveform file* and *descending
+   into a sub-circuit* also re-read the numbers with no press (`src/save.c:1302`,
+   `src/actions.c:4867`). The honest plain-English sentence is: it "controls
+   whether the numbers re-read themselves on their own — as you drag cursor B,
+   when new results load, and when you walk into a sub-circuit."
+
+There is also a **known follow-up defect, not an overturn**: the waveform
+viewer's **Cursors > Cursor B** tick uses a bare `xschem new_schematic switch`
+(`src/wave_viewer.tcl:14239`) and never checks that it worked, while the same
+file at `:1563`–`:1575` documents that this switch silently does nothing while a
+semaphore is up and offers `wviewer::switch_ctx` precisely so callers verify it.
+During a run with a wait in progress, that tick can therefore land on the design
+sheet. The remedy is one line inside that tick handler; gating the typed command
+would not fix it, because the same refused switch also fires `xschem cursor 2 1`
+at the design sheet, which zeroes the cursor position outright and is the larger
+breakage.
+
+### Does this imply a code change?
+
+**No. This RATIFIES what already ships. Nothing moves.** No file is edited under
+this ruling; row V25 stays, both guards stay, both `set cursor2_x` arms stay
+ungated. The two corrections above are bookkeeping about *this issue's text*, and
+the waveform-viewer tick and the `annotate_at` inventory line are follow-up work
+**not done here**.
+
+One residual remains true and belongs to issue **0877** (the provenance stamp),
+not to this ruling: after `Alt-Shift-6` puts transient node voltages on the
+sheet, dragging cursor B in the waveform window does not move them — press
+`Alt-Shift-6` again to re-read at the new time, or tick the Live box to have them
+follow.
+
+### Adversary
+
+An adversary was run against this decision and **could not overturn it**: "I
+tried to break this and could not. The ruling stands." Its strongest attack — the
+unverified context switch in the waveform viewer's cursor tick — is recorded
+above as a separate follow-up defect, since gating the typed command would not
+have repaired it.
+
+---
+
+**The user may reverse this at any time; it was decided to spare their attention,
+not to bind them.**

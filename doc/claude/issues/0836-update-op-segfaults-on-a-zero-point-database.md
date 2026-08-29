@@ -1,6 +1,6 @@
 # 0836 - `update_op()` SIGSEGVs on a zero-point database, reachable from a shipped verb
 
-**Status:** **FIXED (narrow) 2026-08-26.** `update_op()` now refuses a zero-point
+**Status:** **RULING SETTLED 2026-08-29** (see "RULING, 2026-08-29" at the foot of this file) — the rule debt is answered; the `look` debt on the wording stays queued and one follow-up code change (the refusal sentence) is owed. **FIXED (narrow) 2026-08-26.** `update_op()` now refuses a zero-point
 database. Filed by the Measure agent of the 0807+0813+0814 crew (2026-08-26) as a
 STUB claim; see `doc/claude/issues/status_annotate.md`. **The open ruling below is
 STILL OPEN** - narrow shipped because no user ruling had arrived, and the wide
@@ -453,3 +453,347 @@ which reads as coverage and is worse than none.
 `Total num fail: 0`, no `couldn't execute` and no `exit 127`. The three `NOGOLD`
 lines (create_save, open_close, netlisting) are the documented standing state —
 those cases have no committed `gold/` baseline and verify nothing.
+
+---
+
+# RULING — DECIDED 2026-08-29 (delegated batch; user: "decide the 23, leave 0861 and 0299 for me")
+
+## The ruling
+
+**NARROW IS RATIFIED. The reader keeps attaching a zero-point results file; the
+refusal stays at the annotator only.** Specifically, and as instructions to the
+codebase:
+
+1. **Do NOT add a reader-level refusal.** `xschem raw read` must keep returning 1
+   for a well-formed zero-point raw, and the database must keep attaching.
+2. **`xschem raw loaded` keeps answering the hierarchy level** at which the
+   database is attached, exactly as for a good database (row `R6c` stands).
+3. **`xschem raw points` keeps answering `0`** — that is the discriminator a
+   caller acts on (rows `R6b`, `R6d`, `R6f` stand).
+4. The `update_op()` guard on `xctx->raw->allpoints <= 0` (`src/save.c:2198`)
+   **is the ruled shape** and stays where it is, before `annot_p = 0`.
+5. **Separately: `backannot_refuse_empty()`'s sentence is rewritten** — see
+   "The sentence" below. This is the one half of this ruling that moves code.
+
+Nothing already shipped is undone by (1)-(4). `test_zero_point_raw_0836.tcl`
+(648 lines) and `test_zero_point_pos_at_0852.tcl` are unaffected.
+
+## Why narrow, and why it is not a close call
+
+**CADENCE OR NOTHING settles it.** Watching a transient build while the run is
+still going is ordinary Virtuoso/ADE practice. The wide option — refuse the read
+outright — does not merely decline to ship that today; it makes it unreachable,
+because nothing can plot a file that will not attach. An option whose entire
+benefit is "stock XSCHEM never had to think about this" is an argument against
+itself under the standing ruling.
+
+**Measured blast radius of the wide option.** `sch_waves_loaded()`
+(`src/draw.c:2834`) gates every graph path in `draw.c` — `:3722`, `:3984`,
+`:5828`, `:5970`, `:6594`, `:7054`, `:8308`, `:9134`, `:9142`, `:9168`, `:9291`
+all return early on `-1`. Refusing the read (or making `raw loaded` answer `-1`,
+which is the same ruling wearing a different hat) stops a running simulation's
+waveform rendering everywhere at once. That is a large, permanent loss bought
+with nothing.
+
+**The safety argument the wide option rested on is spent.** It was written while
+a zero-point database still killed the process. It no longer does: three guards,
+three call sites, one input — `update_op()` (this issue), `get_raw_value()`'s
+lower bound and `raw_get_pos()`'s empty-dataset refusal (0852, fixed
+2026-08-26). Ruling wide would demote those to belt-and-braces; it would not
+remove a live crash, because there is none left to remove.
+
+**What narrow leaves open is separately owned and does not hinge on this.**
+0853 (the `raw switch` gate reads `allpoints` off the OUTGOING database) is a
+mixed-predicate bug that must be fixed whichever way this went; 0855 (the viewer
+readout mid-run) exists only because 0852 was fixed and has already shipped its
+option (a). Neither becomes cheaper under the wide ruling.
+
+## The sentence — REWRITE IT (this part implies a code change)
+
+The shipped text (`src/save.c:1652`) is:
+
+> `backannotation: '<path>' holds no simulation points yet -- a spice raw file`
+> `reports 'No. Points: 0' from the moment its run starts until the moment it`
+> `ends, so while the simulation is still running there is nothing in it to`
+> `annotate onto the schematic`
+
+Three defects, each against a ruling already standing — so **no new ruling is
+needed for the rewrite, only the instruction to do it**:
+
+1. **PLAIN ENGLISH.** `backannotation:` is the program's own vocabulary (0886
+   removed exactly this class of prefix elsewhere and did not reach the two C
+   mints in `save.c`). `'No. Points: 0'` and "a spice raw file" are file-format
+   internals; the user sees a menu item and a results file, not a header field.
+2. **No remedy.** The standing ruling is "say what happened AND what the user
+   can do about it". This sentence says only what happened.
+3. **It over-claims, and INTENT OVER MECHANISM makes that the sharpest of the
+   three.** It asserts "while the simulation is still running". A zero-point
+   file is *not* proof of a live run: ngspice backfills `No. Points:` only at
+   the end, so a run that was killed or died leaves that header on disk
+   **permanently**, and `xschem raw read <f> op 999 1000` manufactures the same
+   state with no simulator involved at all. A user whose run crashed twenty
+   minutes ago is currently told it is still going, and told to do nothing.
+
+**Ruled replacement shape** (words to this effect; the exact final wording is
+still the user's `look` debt "0836 refusal sentence on the CIW", which this
+ruling does NOT clear):
+
+> `No results yet in '<file>'. A simulation writes its results only when it`
+> `finishes, so there is nothing to put on the schematic. If the run is still`
+> `going, wait for it to finish and annotate again; if it already stopped, it`
+> `ended before saving anything -- open the run log to see why.`
+
+Constraints on the edit, all of which the current mint already satisfies and
+none of which may be lost: minted in ONE place per RULING D5-4 and returned to
+callers; `dbname` handed to Tcl as a **variable**, never spliced (the measured
+`}`-in-path execution hazard documented at `backannot_refuse_digital()`);
+`static char msg[512]`; `dbg(0, ...)` unchanged so `--nogui` rows keep reading
+it. Channel is unchanged — CIW via `ciw_echo`, matching its sibling.
+
+**Note, not part of this ruling:** `backannot_refuse_digital()` eleven lines
+above carries defect (1) identically ("backannotation: ... is a digital results
+database"). Two sibling refusals in two registers would violate D5-4's spirit,
+so the same pass should carry it — but it belongs to D5-3/0886, not here, and is
+recorded rather than ruled.
+
+## What was verified in the tree before ruling
+
+- `src/save.c:2198-2201` — the guard is exactly as this issue claims:
+  `if(xctx->raw && xctx->raw->allpoints <= 0) { backannot_refuse_empty(...); return 0; }`,
+  sited after the `raw_is_digital` refusal (`:2120`) and before `annot_p = 0`.
+- `src/save.c:1652-1668` — the sentence, verbatim, as quoted above.
+- **No reader-level refusal exists.** Every `allpoints` site in `save.c`
+  (`:1212 :1229 :1234 :1271-1277 :1466 :2451-2463 :3264-3302`) either sums,
+  sizes or bounds; `:1466` assigns the count and rejects nothing. The read
+  succeeds and the database attaches, which is what the narrow ruling claims to
+  be ratifying.
+- `src/draw.c:2834` + the eleven `sch_waves_loaded()` gates listed above — the
+  measured cost of the wide option.
+- `src/ase_window.tcl:4885-4931` (`ase::ui::run_finished`) — auto-plot and
+  `annot_refresh_idle` fire only on `exitcode == 0`, i.e. **after** the run.
+  So watch-it-fill is *permitted* by the narrow ruling, not yet *shipped* by
+  ASE-L; the wide ruling would have foreclosed it before it was written.
+- `tests/headless/test_zero_point_raw_0836.tcl` present, 648 lines.
+
+## Debts
+
+- The **`rule` debt for 0836 is discharged by this ruling.**
+- The **`look` debt "0836 refusal sentence on the CIW" is NOT.** It is the
+  user's eyes on the new wording once the rewrite lands, and it stays queued.
+
+---
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+The user said, verbatim, on 2026-08-29:
+
+> **"decide the 23, leave 0861 and 0299 for me"**
+
+A read-only audit had sorted the 57-entry ruling queue and classified 25 of the
+questions as ones whose answer is cheap and obvious — things to be **decided**
+rather than put to the user. **This debt was one of the 23** the user handed
+over. (0861 and 0299 were kept back and are untouched.)
+
+**This section is the settled answer, and it SUPERSEDES item (5) of the
+"RULING — DECIDED 2026-08-29" section immediately above.** Items (1)-(4) of that
+section are ratified word for word and nothing there is withdrawn; only the
+prescribed replacement wording is replaced, for the reasons under "Why" below.
+Nothing already shipped is undone by any part of this ruling.
+
+### The ruling, as instructions to the codebase
+
+**Ratified, nothing moves:**
+
+1. **No refusal at the reading step.** `xschem raw read` keeps returning 1 for a
+   well-formed results file that holds zero points, and the file keeps
+   attaching. A simulation that is still running stays openable in the waveform
+   window.
+2. **`xschem raw loaded` is unchanged** — it keeps answering the hierarchy level
+   the file is attached at, exactly as for a full file (row `R6c` stands).
+3. **`xschem raw points` keeps answering `0`.** That is the discriminator a
+   caller acts on (rows `R6b`, `R6d`, `R6f` stand).
+4. **The guard in `update_op()` on `allpoints <= 0` (`src/save.c:2198`) is the
+   ruled shape** and stays exactly where it is — after the digital refusal and
+   **before** `annot_p = 0`, so nothing is published and `annot_p` stays -1.
+
+**Moves code — the refusal sentence:**
+
+5a. **ONE SENTENCE, MINTED ONCE.** This one state is currently described by two
+   different sentences in two different languages: `backannot_refuse_empty()`
+   (`src/save.c:1652`) in C, and `op_annot::db_attach`'s fallback string
+   (`src/op_annot.tcl:1182-1184`) in Tcl. Per **RULING D5-4** that is one
+   sentence: mint it in C, where the reason is known, return it to callers, and
+   make `db_attach` carry that text through instead of substituting its own.
+   The Tcl fallback goes in the same pass — not because its words are ugly but
+   because **"it could not be read as a results file" is untrue** of a file that
+   read successfully.
+
+5b. **WHAT THE SENTENCE MAY CLAIM — only what is checkable.** Say that the
+   results file has not recorded how many points it holds yet, so there is
+   nothing in it to read. **Do NOT write "a simulation writes its results only
+   when it finishes"** — that is false (the simulator writes data continuously;
+   what it defers to the end is the point count in the header) and it
+   contradicts the promise this same ruling makes about the waveform window.
+   **Do NOT assert the run is still going.** A killed or crashed run leaves that
+   header on disk forever, and `xschem raw read <f> op 999 1000` manufactures
+   the identical state with no simulator involved at all.
+
+5c. **THE REMEDY MUST BE TRUE FOR THE ANALYSIS IN HAND.** `xctx->raw->sim_type`
+   is in scope at the guard, so pass it to the mint and let the sentence branch:
+   - **transient** — do NOT say "wait and annotate again". Annotate Operating
+     Point will never read a transient, by the user's own 0856/0872 ruling, so
+     that advice dead-ends in deliberate silence eleven lines below this guard.
+     Point at the thing that does work: read transient voltages at the waveform
+     cursor with **Alt-Shift-6**, once the run has finished.
+   - **op / dc** — waiting and annotating again genuinely works, so say that.
+   - **either** — if the run has already stopped, it ended before recording
+     anything; open **Simulation > Log** to see why. Name that menu item, not
+     "the run log".
+   If a branch is judged out of scope when the edit is made, **the minimum
+   acceptable edit is to DELETE the remedy clause** rather than ship one that
+   dead-ends. A sentence with no remedy falls short of the standard; a sentence
+   whose remedy leads to silence is worse than both.
+
+5d. **Unchanged constraints, all of which the current mint already satisfies and
+   none of which may be lost:** one place per **D5-4**; `dbname` handed to Tcl
+   as a **variable**, never spliced into a script (the measured `}`-in-path
+   execution hazard); `static char msg[512]`; `dbg(0, ...)` kept so `--nogui`
+   rows keep reading it; the channel unchanged — the CIW via `ciw_echo`. Drop
+   the `backannotation:` prefix and the `'No. Points: 0'` file-format detail.
+   `backannot_refuse_digital()` carries the same prefix defect but stays **out
+   of scope here** — it is recorded against D5-3 / 0886.
+
+5e. **The `look` debt "0836 refusal sentence on the CIW" stays queued**, and it
+   now covers **both** surfaces — the CIW line and what the key chord and
+   ASE-L's **Results > Annotate** say — because after 5a they are the same
+   words. This ruling does not clear it.
+
+**Worth filing separately, NOT ruled here:** whether a zero-point **transient**
+should reach this sentence at all, or take the 0856 silence instead. Guard order
+(the 0836 guard sits before the analysis-type guard) decides that today and
+nobody chose it. Making the sentence analysis-aware per 5c settles the
+user-visible half without touching guard order, so no shipped ruling is
+disturbed either way.
+
+### Why
+
+**CADENCE OR NOTHING settles the main question.** Watching a transient build
+while the run is still going is ordinary Virtuoso/ADE practice. The wide option
+— refuse the read — does not merely decline to ship that today, it makes it
+unreachable, because nothing can plot a file that will not attach. An option
+whose whole benefit is "stock XSCHEM never had to think about this" argues
+against itself under the standing ruling.
+
+**Measured cost of the wide option.** `sch_waves_loaded()` (`src/draw.c:2834`)
+gates every graph path in `draw.c` — `:3722 :3984 :5828 :5970 :6594 :7054 :8308
+:9134 :9142 :9168 :9291` all return early on `-1`. Refusing the read, or making
+`xschem raw loaded` answer `-1` (the same ruling wearing a hat), stops a running
+simulation's waveform drawing everywhere at once.
+
+**The safety argument for the wide option is spent.** It was written while a
+zero-point database still killed the process. It no longer does: three guards,
+three call sites, one input — `update_op()` here, plus `get_raw_value()`'s lower
+bound and `raw_get_pos()`'s empty-dataset refusal (0852, fixed 2026-08-26).
+
+**What narrow leaves open is separately owned.** 0853 is a mixed-predicate bug
+that must be fixed either way; 0855 has already shipped its option (a). Neither
+gets cheaper under wide.
+
+**The sentence needed no new ruling — three standing ones already condemn the
+shipped text.** PLAIN ENGLISH (`backannotation:` is program vocabulary,
+`'No. Points: 0'` is a file-format internal); the "say what the user can do"
+half of it (there is no remedy at all); and INTENT OVER MECHANISM, the sharpest
+— the sentence asserts the run is still going, which a killed run makes
+permanently false.
+
+**What changed from the section above, and why.** Its prescribed replacement was
+verified against the C mint only, and three things about the rest of the tree
+break it: (A) the same state is already described by a **second, contradictory**
+sentence in Tcl, so a wording pass on one string leaves the program giving two
+answers about one file — the very thing D5-4 exists to stop; (B) its words state
+a **false mechanism** ("a simulation writes its results only when it finishes"),
+which the mid-run 868 KB and 2.9 MB raws measured in this issue disprove and
+which contradicts this ruling's own headline; (C) its remedy, "wait for it to
+finish and annotate again", **dead-ends on the commonest case** — the zero-point
+file in front of a user is nearly always a transient, and the next press is
+refused silently and deliberately by the analysis-type guard eleven lines below.
+(D) "open the run log" names nothing the user can press; the surface is
+**Simulation > Log**.
+
+### What was verified in the tree
+
+- `src/save.c:2198-2201` — the guard is exactly as claimed:
+  `if(xctx->raw && xctx->raw->allpoints <= 0) { backannot_refuse_empty(xctx->raw->rawfile); return 0; }`,
+  sited after the digital refusal (`:2120`) and before `annot_p = 0`.
+- `src/save.c:1652-1668` — `backannot_refuse_empty()` mints the shipped sentence
+  verbatim, reaches the CIW only through `ciw_echo`, and passes `dbname` as a
+  Tcl **variable**, never spliced. `static char msg[512]`, `dbg(0, ...)` present.
+- `src/save.c:1260` and `:1456` — `raw->annot_p = -1` on read, which is why the
+  Tcl-side check answers "not annotated" after the guard returns 0.
+- **No refusal exists at the reading step.** Every `allpoints` site in `save.c`
+  (`:1212 :1229 :1234 :1271-1277 :1466 :2451-2463 :3264-3302`) sums, sizes or
+  bounds; `:1466` assigns the count and rejects nothing. The read succeeds and
+  the file attaches — which is the behaviour items (1)-(3) ratify.
+- `src/op_annot.tcl:1182-1184` — the **second** sentence, in Tcl: "it could not
+  be read as a results file, or it holds no operating point. If the simulator is
+  still writing it, try again when the run has finished." It is substituted when
+  `op_annot::_annotated` (`:791`) answers 0, which is exactly this state.
+- **Correction to one surface claim.** The 6 / Alt-6 chord calls
+  `::op_annot::db_attach` at `utils/annot_mode.tcl:1248` **without capturing its
+  return**, so the chord does **not** speak the Tcl sentence. The only shipped
+  consumer of that string is **ASE-L's Results > Annotate**
+  (`src/ase_window.tcl:2429-2431`, wrapped by `ase::ui::annot_fail_msg` at
+  `:2539` and echoed as an *error* line). So the measured "two paragraphs, one
+  press" is Results > Annotate: the CIW note from C **and** that error line. On
+  the chord the user gets the CIW note plus, on a mid-run **transient**, the
+  chord's own 0857 unwind line — still two sentences about one press, by a
+  different route. **This does not weaken 5a**; both texts describe the same
+  state and both must come from one mint.
+- `src/save.c:2226+` — the analysis-type guard sits eleven lines below the 0836
+  guard, and its own comment states the refusal is silent by design: "no CIW
+  line, no status line, no number on the schematic." This is what makes "wait
+  and annotate again" dead-end on a transient.
+- `src/ase_window.tcl:525` (`$top.mb.sim add command -label Log`) and `:4687`
+  (window title "Simulation Log") — **Simulation > Log** is a real menu item the
+  user can press.
+- `src/draw.c:2834` plus the eleven `sch_waves_loaded()` gates listed above —
+  the measured blast radius of the wide option.
+- `src/ase_window.tcl:4885-4931` (`ase::ui::run_finished`) — auto-plot and the
+  annotate refresh fire only inside the `exitcode == 0` arm, i.e. **after** the
+  run. Watch-it-fill is *permitted* by this ruling, not yet *shipped* by ASE-L;
+  the wide ruling would have foreclosed it before it was written.
+- `git show b5d5b24f | grep backannot_refuse` — no hits. The 0886 plain-English
+  pass never reached the two C mints in `save.c`, and the 0886 rule debt's six
+  items do not include this sentence, so it is not covered elsewhere.
+- `tests/headless/test_zero_point_raw_0836.tcl` present, 648 lines.
+
+### Ratify or code change
+
+**Both.** Items (1)-(4) **ratify shipped behaviour — nothing moves**;
+`tests/headless/test_zero_point_raw_0836.tcl` and
+`test_zero_point_pos_at_0852.tcl` are unaffected by them.
+
+Item 5 **implies a code change, and it is FOLLOW-UP WORK NOT YET DONE**
+(no code was touched by this ruling):
+
+- rewrite the `my_snprintf()` text in `backannot_refuse_empty()`
+  (`src/save.c:1652`) per 5b/5c/5d, taking the analysis type so the remedy
+  branches;
+- make `op_annot::db_attach` (`src/op_annot.tcl:1182-1184`) carry the C text
+  through instead of substituting its own string, so ASE-L's **Results >
+  Annotate** and the CIW say the same words;
+- move any golden rows in `tests/headless/test_zero_point_raw_0836.tcl` that
+  match the old string;
+- recorded, not ruled: `backannot_refuse_digital()` carries the same
+  `backannotation:` prefix defect and should follow under D5-3 / 0886.
+
+### The adversary
+
+An adversary ran against this decision: it **conceded items (1)-(4)** as
+obviously right and **overturned item (5)** on three tree-verified counts
+(a second contradictory sentence in Tcl, a false mechanism in the prescribed
+words, and a remedy that dead-ends on transients) — its better answer is 5a-5e
+above, which is what stands.
+
+**The user may reverse this at any time; it was decided to spare their
+attention, not to bind them.**
