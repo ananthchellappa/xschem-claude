@@ -274,3 +274,37 @@ built on **14766**. §3 and §4 cited `ase::session_for_current` at
 `src/ase.tcl:2351`; it is at **3091** (2351 lands in `ase::cosim_scope_derive`).
 `utils/annot_mode.tcl`'s own header carried the same two stale numbers plus a
 stale `ase::last_rawfile` (689, really **1253**); all three are fixed there too.
+
+---
+
+## RULING, 2026-08-29 — OPTION A, and the menu is withdrawn
+
+The user, verbatim:
+
+> *"How did support for such a whacko use mode every fall on your plate? We do
+> not support this. Think Cadence Cadence Cadence. We want to support the same
+> use mode as cadence, unless it something very reasonable and easy to
+> implement"*
+
+**OPTION A is ruled: the results file resolves from the TOP of the hierarchy,
+always.** That is what commit `e60e1974` shipped, and it is now permanent, not
+provisional. Row `H13` of `tests/headless/test_annot_hier_0911.tcl` pins it and
+does not move.
+
+Option B (fall back to the standing sheet when the top's file is absent) is
+**withdrawn**, along with options C, D and E from issue 0917 §3. Every one of them
+existed to keep working a mode this product does not support: starting a
+simulation from a sheet you descended into. In Cadence, ADE simulates the
+testbench cellview; descending is navigation, and the results belong to the
+session's top cellview.
+
+Consequences, recorded so they are not re-derived:
+
+* Issues **0917** and **0918** are CLOSED as NOT DEFECTS. Their premise is a block
+  results file produced by a run started from a descended sheet.
+* A press on a descended sheet answering from the top's results file is now
+  **correct behaviour**, not a cost to be paid down later.
+* The one crumb worth keeping: when the top's results file is genuinely absent,
+  the transient chord still refuses **without naming the file it looked for**.
+  That is a PLAIN ENGLISH wording defect of the same class as issue **0888**, and
+  it belongs on 0888's queue — it does NOT justify reopening this one.

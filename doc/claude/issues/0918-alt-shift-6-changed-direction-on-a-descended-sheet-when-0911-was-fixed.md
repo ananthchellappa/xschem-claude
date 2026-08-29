@@ -1,7 +1,8 @@
 # 0918 — the same two lines that fixed `6` on a descended sheet also moved
 #         **Alt-Shift-6**, in both directions, and nobody was told
 
-STATUS: OPEN
+STATUS: **CLOSED 2026-08-29 — NOT A DEFECT.** See the RULING at the foot of this
+file: descending and simulating from the descended sheet is not a supported mode.
 FOUND BY: the adversary/guard-coverage pass on item B2, 2026-08-28.
 SEEN BY: NOTHING. No row anywhere in the tree exercises the transient chord on a
          descended sheet; every transient fixture is flat.
@@ -104,3 +105,27 @@ measurement does not exist either way.
 4. If the refusal in §2(a) survives the ruling, its sentence must **name the
    file it looked for**, the way the operating-point refusal does. A refusal that
    names nothing is the one shape PLAIN ENGLISH forbids outright.
+
+---
+
+## RULING, 2026-08-29 (user, verbatim)
+
+> *"How did support for such a whacko use mode every fall on your plate? We do
+> not support this. Think Cadence Cadence Cadence. We want to support the same
+> use mode as cadence, unless it something very reasonable and easy to
+> implement"*
+
+**Descending into a sheet and simulating from there is NOT A SUPPORTED MODE.** In
+Cadence, ADE simulates the testbench cellview; descending in the schematic editor
+is navigation, not a new simulation top, and the results always belong to the
+session's top cellview. Issue 0911's **option A — resolve the results file from
+the top of the hierarchy, always — is the Cadence answer and is what ships.**
+
+This issue is therefore **CLOSED, NOT A DEFECT.** Its whole premise is a results
+file written by a run started from a descended sheet, which is a file this product
+does not undertake to produce or to find. Options B, C and D on the menu are
+withdrawn: each one existed only to keep that mode working.
+
+**Do not re-file this class.** A future crew that measures a behaviour change on
+the descend-and-run-from-inside path must record it as an intentional consequence
+of this ruling, not as a regression, and must not spend a user ruling on it.
