@@ -277,7 +277,16 @@ Measured: 3000 cards are FREE under `.op` (+0.03 s, +107 KB) and cost +8.6 s and
 +242 MB under a 10068-point `.tran`. A live regression 0927 created. FIXED the
 same day.
 
-**The next free number is 0929.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the user's tb_bandgap report** (*"We are still screwed up ... The
+ASE-L does have OP analysis enabled ... 6 says these are from a 'tran' run"*).
+Filed **0929** — ngspice's `write` writes the CURRENT plot, and the deck emitted
+ONE write after the LAST analysis, so on any state with more than one analysis
+enabled every earlier plot was silently discarded. Their 144 MB raw held one
+plot, `Transient Analysis`. Fixed with `set appendwrite` + one write per
+analysis, plus deleting the raw before the run. No reader change was needed.
+Every ASE deck test used an op-ONLY state, where the bug is invisible.
+
+**The next free number is 0930.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

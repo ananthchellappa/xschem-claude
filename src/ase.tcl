@@ -1050,6 +1050,15 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   # both the E7 missing-artifact check and last_vcdfiles would serve the
   # PREVIOUS run's digital data beside this run's analog raw.
   ase::cosim_clear_artifacts $cosim
+  ## 0929: AND THE RAW, for the same reason one line up — plus a new one. The
+  ## deck now emits `set appendwrite` and one `write` per analysis, so a raw
+  ## left over from the previous run would not be truncated: this run's plots
+  ## would be APPENDED to it, and `xschem raw read <file> op` would hand `6` the
+  ## PREVIOUS run's operating point. Deleting it also restores the plain
+  ## property the single-`write` deck used to have for free — a run that dies
+  ## before it writes leaves no raw, instead of serving last run's numbers as
+  ## though they were this one's.
+  catch {file delete -- [[ase::backend_hook $sim raw_file] $state]}
   if {[llength $cosim]} {
     foreach r [ase::cosim_build $state $cosim] {
       lassign $r cm cstatus cdetail
@@ -4130,6 +4139,31 @@ namespace eval ase::backend::ngspice {
         [ase::cosim_policy $state bridges auto] ne {0}} {
       foreach b [ase::cosim_default_bridges $state] { lappend lines $b }
     }
+    # --- 0929: ONE `write` PER ANALYSIS, NOT ONE PER RUN ----------------------
+    # ngspice's `write` writes the CURRENT plot, and every analysis makes a new
+    # one. A single trailing `write` therefore stored ONLY the last analysis and
+    # silently discarded every earlier one. On the user's own tb_bandgap -- op
+    # AND tran both enabled, 468 device OP save cards emitted, run exit 0 -- the
+    # raw came back holding one plot, `Transient Analysis`, and pressing `6` said
+    # "No operating point results are loaded. These are from a 'tran' run
+    # instead." The operating point had been computed and thrown away.
+    #
+    # `set appendwrite` makes each `write` APPEND its plot to the file instead of
+    # truncating it, so one raw carries `Operating Point` then `Transient
+    # Analysis` (MEASURED, ngspice-46+). No reader change is needed:
+    # `xschem raw read <file> op` already picks the operating-point plot out of a
+    # multi-plot raw and `... tran` picks the transient one (MEASURED against
+    # this very tree).
+    #
+    # ⚠ APPEND MEANS THE FILE MUST NOT PRE-EXIST. ase::run_deck deletes it before
+    # the run for exactly this reason -- without that, every run's plots pile up
+    # on the previous run's and `6` annotates whichever stale operating point
+    # happens to come first. See the deletion beside cosim_clear_artifacts.
+    set n_enabled 0
+    foreach a [ase::state_get $state analyses] {
+      if {[ase::state_get $a enabled 0] eq {1}} { incr n_enabled }
+    }
+    if {$n_enabled > 0} { lappend lines "set appendwrite" }
     foreach type {op dc ac tran} {
       foreach a [ase::state_get $state analyses] {
         if {[ase::state_get $a type] ne $type} { continue }
@@ -4142,6 +4176,13 @@ namespace eval ase::backend::ngspice {
  [dict get $a stop]" }
           tran { lappend lines "tran [dict get $a step] [dict get $a stop]" }
         }
+        # `remzerovec` before every write, not once at the end: `.options
+        # savecurrents` leaves zero-length @m...[ib]-class vectors in the plot
+        # and ngspice's write then aborts SILENTLY (probe-verified, ngspice-42).
+        # It is per-PLOT, so one call at the end would only ever have cleaned
+        # the last analysis's.
+        lappend lines "remzerovec"
+        lappend lines "write [raw_file $state]"
       }
     }
     foreach o [ase::state_get $state outputs] {
@@ -4150,21 +4191,10 @@ namespace eval ase::backend::ngspice {
       }
     }
     # waveform-viewer raw artifact (item 11 D3): with a .control block,
-    # ngspice's `-b -r <file>` is DEAD (probe-verified: no raw file written),
-    # so emit an explicit `write <raw_file path>` of the CURRENT (= last
-    # analysis) plot — only when >= 1 analysis is enabled (a plot-less
-    # `write` would error). `remzerovec` first: `.options savecurrents`
-    # leaves zero-length @m...[ib]-class vectors in the plot and ngspice's
-    # write then aborts SILENTLY (probe-verified, ngspice-42) — remzerovec
-    # prunes them and is harmless when there are none.
-    set n_enabled 0
-    foreach a [ase::state_get $state analyses] {
-      if {[ase::state_get $a enabled 0] eq {1}} { incr n_enabled }
-    }
-    if {$n_enabled > 0} {
-      lappend lines "remzerovec"
-      lappend lines "write [raw_file $state]"
-    }
+    # ngspice's `-b -r <file>` is DEAD (re-probed 2026-08-29: with a .control
+    # block and no explicit `write`, `-r` produces NO raw file at all), so the
+    # writes are emitted explicitly — see the per-analysis block above, which
+    # replaced the single trailing `write` this comment used to describe.
     lappend lines ".endc"
     lappend lines ".end"
     return "[join $lines "\n"]\n"

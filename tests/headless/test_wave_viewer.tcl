@@ -172,13 +172,29 @@ set nwrite 0
 foreach line [split $deck "\n"] {
   if {$line eq "write $rawpath"} { incr nwrite }
 }
-check "V1 exactly one write line with the exact raw path" $nwrite 1
+## ⚠ 0929: ONE `write` PER ENABLED ANALYSIS, not one per deck. ngspice's `write`
+## writes the CURRENT plot and every analysis makes a new one, so the single
+## trailing write this row used to pin stored ONLY the last analysis -- the
+## reported defect being an op+tran bench where `6` answered "these are from a
+## 'tran' run instead". This fixture enables op AND dc, so it is exactly the
+## two-plot case: two writes, and `set appendwrite` so the second appends rather
+## than truncating the first.
+check "V1 0929 one write line per ENABLED analysis, with the exact raw path" \
+  $nwrite 2
+check "V1 0929 appendwrite is emitted once, ahead of them" \
+  [regexp -all -line {^set appendwrite$} $deck] 1
 set cidx [string first "\n.control\n" $deck]
 set pidx [string first "\nprint -i(v1)\n" $deck]
 set widx [string first "\nwrite $rawpath\n" $deck]
+set aidx [string first "\nset appendwrite\n" $deck]
 set eidx [string first "\n.endc\n" $deck]
-check_true "V1 write inside .control, after print, before .endc" \
-  [expr {$cidx >= 0 && $pidx > $cidx && $widx > $pidx && $eidx > $widx}]
+## The prints now sit BELOW the writes -- they are emitted after the analysis
+## loop, and the writes moved INTO it. They still run against the last
+## analysis's plot, which is where they ran before.
+check_true "V1 0929 appendwrite then writes, all inside .control and before\
+ .endc, with the prints below them" \
+  [expr {$cidx >= 0 && $aidx > $cidx && $widx > $aidx && $pidx > $widx &&
+         $eidx > $pidx}]
 
 # --- V2: all analyses disabled -> NO write line ------------------------------
 set st2 $st

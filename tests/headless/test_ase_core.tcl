@@ -245,6 +245,14 @@ V2 G GND 1.8
 # default, resolved through the SAME ase::rundir call render_deck's raw_file
 # hook uses, so the golden stays deterministic on every machine
 set d1_raw [file join [ase::rundir [nfet_state /models/sky130.lib.spice {}]] nfet_clean_ase.raw]
+## ⚠ 0929 MOVED THIS GOLDEN. The deck used to end on ONE `remzerovec` + `write`
+## after the last analysis; ngspice's `write` writes the CURRENT plot, so a deck
+## with op AND tran stored only the transient and `6` reported "these are from a
+## 'tran' run". There is now `set appendwrite` before the analyses and a
+## `remzerovec` + `write` after EACH one, so every analysis's plot reaches the
+## raw. The `print` rows moved below the write because the writes are emitted
+## inside the analysis loop; they still run against the last analysis's plot,
+## which is where they ran before.
 set expected_deck [string map [list @RAWFILE@ $d1_raw] {** sch_path: /fixture/nfet_clean.sch
 **.subckt nfet_clean
 XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
@@ -259,10 +267,11 @@ V2 G GND 1.8
 .temp 27
 .save -i(v1)
 .control
+set appendwrite
 op
-print -i(v1)
 remzerovec
 write @RAWFILE@
+print -i(v1)
 .endc
 .end
 }]
@@ -473,6 +482,42 @@ check "C5 gate off emits no device save cards" [llength [c_cards $deckC5]] 0
 check "C5 gate off emits no op_annot marker line" [c_marker $deckC5] 0
 check_true "C5 gate off is byte-identical to the D1 golden" \
   [string equal $deckC5 $expected_deck]
+
+# --- D6: ISSUE 0929 -- ONE `write` PER ANALYSIS ------------------------------
+# THE ROW THE USER'S BUG WOULD HAVE FAILED. ngspice's `write` writes the CURRENT
+# plot and every analysis makes a new one, so a single trailing `write` stored
+# only the LAST analysis. On the user's tb_bandgap (op AND tran enabled, run
+# exit 0, 468 device OP cards emitted) the raw came back with one plot,
+# `Transient Analysis`, and `6` said "these are from a 'tran' run instead".
+#
+# Four terms, none of which passes on the shipped deck: one `set appendwrite`
+# (without it the second write TRUNCATES the first), one `write` per enabled
+# analysis, a `remzerovec` before each (it is per-plot, so one at the end only
+# ever cleaned the last), and -- the ordering term -- every `write` must come
+# AFTER its own analysis and BEFORE the next one.
+set d6_st [nfet_state /models/sky130.lib.spice {}]
+set d6_an {}
+foreach a [ase::state_get $d6_st analyses] {
+  if {[ase::state_get $a type] eq {tran}} {
+    dict set a enabled 1 ; dict set a step 1n ; dict set a stop 1u
+  }
+  lappend d6_an $a
+}
+dict set d6_st analyses $d6_an
+set d6_deck [$render $d6_st $netlist_text]
+set d6_l [split [string trimright $d6_deck "\n"] "\n"]
+set d6_seq {}
+foreach l $d6_l {
+  if {[regexp {^(set appendwrite|op|tran |remzerovec|write )} $l]} {
+    lappend d6_seq [lindex [split [string trim $l]] 0]
+  }
+}
+check "D6 0929 op+tran: appendwrite once, then analysis/remzerovec/write per\
+ analysis, in that order" \
+  $d6_seq {set op remzerovec write tran remzerovec write}
+check "D6 0929 exactly one write per ENABLED analysis, and both name the raw" \
+  [list [c_count $d6_deck {^write }] [c_count $d6_deck {^set appendwrite$}] \
+        [c_count $d6_deck {^remzerovec$}]] {2 1 2}
 
 # --- C5b: ISSUE 0928 -- GATE ON, but NO `op` ANALYSIS -> still nothing --------
 # Device operating-point cards are for an operating-point analysis. Nothing

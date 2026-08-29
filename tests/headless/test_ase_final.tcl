@@ -1170,6 +1170,75 @@ if {[auto_execok ngspice] eq {}} {
   check "F17 no rendered value is blank, 0, 0.0, nan or inf (landmine 2)" \
     $f17_bad {}
 
+  # --- F21: ISSUE 0929 -- THE USER'S OWN CASE, END TO END --------------------
+  # Reported 2026-08-29 on sky130_tests_ase/tb_bandgap with op AND tran both
+  # enabled: the run exits 0, "468 device OP save card(s) added to the deck" is
+  # echoed, and pressing `6` answers "No operating point results are loaded.
+  # These are from a 'tran' run instead." One `write` after the last analysis
+  # stored only the transient plot; the operating point was computed and thrown
+  # away, so the 468 cards paid for nothing.
+  #
+  # Every F-row above this one runs an OP-ONLY state, which is why a whole suite
+  # of green checks never saw it. This row is the two-analysis case: run it for
+  # real, then ask the raw for each plot the way the product does --
+  # `xschem raw read <file> op` is what the `6` path calls, and `... tran` is
+  # what the waveform viewer calls. BOTH must succeed on ONE file.
+  #
+  # Term 4 is the one that makes it about the user's complaint rather than about
+  # plot counting: the device OP vectors must be in the OPERATING-POINT plot,
+  # which is the only place `6` can read them.
+  set f21_dir [file normalize [file join $scratch runboth]]
+  set f21_st [ase::state_load $statefile]
+  dict set f21_st rundir $f21_dir
+  set f21_an {}
+  foreach a [ase::state_get $f21_st analyses] {
+    if {[ase::state_get $a type] eq {tran}} {
+      dict set a enabled 1 ; dict set a step 1n ; dict set a stop 100n
+    }
+    lappend f21_an $a
+  }
+  dict set f21_st analyses $f21_an
+  dict set f21_st save_op_params 1
+  ## ⚠ THE FIRST VERSION OF THIS ROW WAS VACUOUS, and the way it was vacuous is
+  ## the same shape as the bug. `xschem raw read <file> op` does NOT report
+  ## failure through its return code -- on a tran-only raw it prints
+  ## `raw_read(): no useful data found` and returns 0 -- and it leaves the
+  ## PREVIOUSLY loaded raw in place, so `xschem raw sim_type` answered `op` from
+  ## F13-F17's load further up this file. Measured: the row passed on a tree with
+  ## the fix reverted. So this version (a) clears the reader before every read,
+  ## and (b) leads with a term read off the FILE, which no reader state can fake.
+  proc f21_plots {raw} {
+    if {[catch {open $raw rb} fh]} { return NO-FILE }
+    fconfigure $fh -translation binary
+    set head [read $fh 200000] ; close $fh
+    set out {}
+    foreach ln [split $head "\n"] {
+      if {[regexp {^Plotname:\s*(.+?)\s*$} $ln -> nm]} { lappend out $nm }
+    }
+    return $out
+  }
+  set f21_id  [ase::run $f21_st]
+  set f21_rc  [ase::wait $f21_id]
+  set f21_raw [[ase::backend_hook ngspice raw_file] $f21_st]
+  set f21_pl  [f21_plots $f21_raw]
+  catch {xschem raw clear}
+  catch {xschem raw read $f21_raw op}
+  set f21_opst NO-READ ; catch {set f21_opst [xschem raw sim_type]}
+  set f21_oppt -1      ; catch {set f21_oppt [xschem raw points]}
+  catch {xschem raw clear}
+  catch {xschem raw read $f21_raw tran}
+  set f21_trst NO-READ ; catch {set f21_trst [xschem raw sim_type]}
+  catch {xschem raw clear}
+  set f21_devs [llength [f_devvecs [f_rawnames $f21_raw]]]
+  check "F21 0929 op+tran in ONE deck: the raw carries BOTH plots, `6`'s reader\
+ finds the operating-point one, and the device OP vectors are in it" \
+    [list $f21_rc $f21_pl $f21_opst $f21_oppt $f21_trst \
+          [expr {$f21_devs > 0 ? 1 : 0}]] \
+    [list 0 {{Operating Point} {Transient Analysis}} op 1 tran 1]
+  if {$f21_pl ne {{Operating Point} {Transient Analysis}}} {
+    puts "  F21 plots in $f21_raw: $f21_pl"
+  }
+
   # --- F20: invariant I4 -- the overlay never modifies the schematic ---------
   check "F20 the design buffer is still unmodified" [xschem get modified] 0
   set f [open $schfile rb]; set f20_sch_after [read $f]; close $f
