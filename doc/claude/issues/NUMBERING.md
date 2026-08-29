@@ -245,7 +245,22 @@ are off while they are on the schematic in front of the user. Carved out of
 0682's ratification deliberately: it is a defect inside the ratified shape, not an
 argument for a different shape.
 
-**The next free number is 0924.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the user's Open Recent report.** Filed **0924** — `File > Open
+Recent` empties whenever a stock xschem touches the same `~/.xschem/recent_files`.
+Two spellings of one variable: this tree writes `set tctx::recentfile`, stock
+xschem writes `set recentfile`, neither could read the other, and the older build
+rewrites the whole file. FIXED the same day, both directions, with
+`tests/headless/test_recent_conf_compat_0924.tcl` (17 checks, 7 red pre-fix).
+
+**2026-08-29, the adversarial review of the 0924 fix.** Filed **0925** — saved
+net-highlight styles are discarded at every startup: `load_net_hilight_conf`
+sources two conf files inside the proc frame, so their unqualified names become
+throwaway locals. 0924's read half, unfixed, in the same file, and the suite that
+should catch it sources the conf itself instead of calling the loader. And
+**0926** — a stock-written `~/.xschem/simrc` would strip Spectre from this tree's
+simulator list (latent; no simrc on disk).
+
+**The next free number is 0927.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

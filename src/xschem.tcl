@@ -2512,13 +2512,38 @@ proc load_recent_file {} {
   # an older recent_files conf without this variable leaves the empty default
   set tctx::recentdirs {}
   if { [file exists $USER_CONF_DIR/recent_files] } {
-    if {[catch { source $USER_CONF_DIR/recent_files } err] } {
+    # issue 0924: source the conf at GLOBAL scope, not in this proc's frame.
+    # Stock xschem -- and every build of ours before 6be62c26 -- writes the list
+    # as an unnamespaced `set recentfile {...}`. Sourced inside a proc that name
+    # is a throwaway LOCAL: the list was read, dropped on the floor and never
+    # seen again, so File > Open Recent came up empty with no error anywhere.
+    # At #0 the same line lands in ::recentfile, where the legacy arm below
+    # picks it up. The qualified names (tctx::*, ::c_toolbar::c_t_*) are
+    # unaffected by the scope change.
+    # Clear the legacy global FIRST, so the adoption arm below can only ever
+    # pick up something THIS conf just set -- never a leftover from an earlier
+    # load or from an unrelated rc.
+    unset -nocomplain ::recentfile
+    if {[catch { uplevel #0 [list source $USER_CONF_DIR/recent_files] } err] } {
       puts "Problems opening recent_files: $err"
       if {[info exists has_x]} {
         tk_messageBox -message  "Problems opening recent_files: $err" \
             -icon warning -parent . -type ok
       }
     }
+    # issue 0924: a conf last written by a stock/older xschem that shares this
+    # ~/.xschem (an installed /usr/local/bin/xschem is the measured case) carries
+    # only the legacy name. Adopt it, then drop the global so nothing else can
+    # read a stale copy of it. tctx::recentdirs has no legacy counterpart and is
+    # simply absent from such a file.
+    # `llength` is the list-validity test: a hand-edited or truncated conf can
+    # leave an unbalanced brace here, and the 0839 filter below is an unguarded
+    # `lsearch` that would raise on one.
+    if {$tctx::recentfile eq {} && [info exists ::recentfile] &&
+        ![catch {llength $::recentfile}]} {
+      set tctx::recentfile $::recentfile
+    }
+    unset -nocomplain ::recentfile
     # issue 0839: an already-poisoned conf file is on disk in the wild -- the
     # empty-filename guard in update_recent_file stops NEW ones but cannot
     # remove one already written. Filter on the way in, so the bad entry
@@ -2601,9 +2626,20 @@ proc write_recent_file {} {
   # puts "write recent file tctx::recentfile=$tctx::recentfile"
   set a [catch {open $USER_CONF_DIR/recent_files w} fd]
   if { $a } {
-    puts "write_recent_file: error opening file $f: $fd"
+    puts "write_recent_file: error opening $USER_CONF_DIR/recent_files: $fd"
     return
   }
+  # issue 0924: write the pre-6be62c26 unnamespaced name FIRST, then the
+  # namespaced one. A stock xschem sharing this ~/.xschem cannot read the tctx::
+  # line, so without the legacy line it starts from an empty list and rewrites
+  # the whole file with just the one schematic it opened -- the user's ten
+  # entries are gone from disk, and load_recent_file above then reads back an
+  # empty menu. Order matters because the conf is SOURCED: a reader whose Tcl
+  # has no tctx namespace raises on the namespaced line and abandons the rest of
+  # the file, so the line it CAN read has to come before the one it cannot.
+  # (The 3.4.6 build measured here does have the namespace and reads either
+  # order; the ordering is for the builds that do not.)
+  puts $fd "set recentfile {$tctx::recentfile}"
   puts $fd "set tctx::recentfile {$tctx::recentfile}"
   if { [info exists tctx::recentdirs] } {
     puts $fd "set tctx::recentdirs {$tctx::recentdirs}"

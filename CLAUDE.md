@@ -63,6 +63,16 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `PATH`**, so an uninstalled dev tree works out of the box (issue 0147 — it used
   to be a bare `xschem`, and with nothing installed the entire suite silently
   no-op'd while still printing a plausible `results.log`).
+- **⚠ A BARE `xschem` ON `PATH` IS NOT THIS TREE.** It resolves to
+  `/usr/local/bin/xschem`, which on this machine is **3.4.6 from Jan 2025**. It
+  is not merely stale — it predates issue 0119, so it has **no `no_recent_files`
+  gate at all**: `--pipe`, `--nogui` and `--norecent` do not stop it rewriting
+  the user's `~/.xschem/recent_files`, because it has never heard of them. One
+  run of it through a tree with no built `src/xschem` is what emptied the user's
+  `File > Open Recent` (issue **0924**). The conf is now written in both the
+  modern and the legacy spelling so the round trip is lossless, but the rule
+  stands: **always give the binary a path** — `./src/xschem`, `$XSCHEM`, or
+  `devdisplay.sh exec ./src/xschem`. Never a bare `xschem`.
 - **`create_save`, `open_close` and `netlisting` have no committed `gold/`
   baseline**, so they can only report `NOGOLD` — they run the cases and produce
   `<case>/results/`, but verify nothing until someone promotes a baseline. The
