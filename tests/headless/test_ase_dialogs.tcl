@@ -15,8 +15,9 @@
 #          filtered to schematic views) round trip; Model Files list dialog
 #          add/delete; Save All -> save_all_i + Save Options column + deck
 #          line + disabled Levels; the S4 `save_op_params` third blanket
-#          (G5b widget paths + grid rows survive the shift, G5c commits 1 and
-#          writes `{}` -- never `0` -- back off); Simulation Options add/delete; Save-As
+#          (G5b widget paths + grid rows survive the shift, G5c commits `0` for
+#          the explicit OFF and writes `{}` -- the ON default -- back on, issue
+#          0927); Simulation Options add/delete; Save-As
 #          prefill / new-view create / same-target clean save; read-only
 #          same-target confirm gate; Load State browser (opens defaulted to
 #          the session's own Library/Cell with the View column filled and no
@@ -603,31 +604,37 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [ase_grid_row $top.saveall.levels] [ase_grid_row $top.saveall.btns]] \
     {1 2 3 4}
 
-  # G5c: the checkbox actually reaches the state, and OFF is `{}` and not `0`.
-  # `{}` is what keeps the key out of ase::state_serialize, which is what keeps
-  # the 104 committed .state files byte-identical (F3/G3/R4/V4/R2).
-  check "G5c opparams starts unticked (the gate defaults off)" \
-    [expr {[info exists ::ase::ui::dlg($key,opparams)]
-             ? $::ase::ui::dlg($key,opparams) : {<no record>}}] 0
-  catch {$top.saveall.opparams invoke}
-  $top.saveall.btns.proceed invoke
-  update
-  check "G5c ticking opparams writes save_op_params 1" \
-    [ase::state_get [ase::session_state $key] save_op_params] 1
-  check_true "G5c a ticked gate IS serialized" \
-    [expr {[string first "save_op_params 1" \
-       [ase::state_serialize [ase::session_state $key]]] >= 0}]
-  $top.mb.outputs invoke "Save All\u2026"
-  update
-  check "G5c reopening preloads the ticked state" \
+  # G5c: the checkbox actually reaches the state, both ways round.
+  # ⚠ 0927 FLIPPED THE POLARITY (2026-08-29, the user's call). The box now
+  # starts TICKED on a state that never mentions the key -- which is every
+  # existing test bench -- and the empty value is what keeps the key out of
+  # ase::state_serialize and the 104 committed .state files byte-identical
+  # (F3/G3/R4/V4/R2). So: ON writes `{}` and VANISHES from the file, OFF writes
+  # a literal `0` and is the only thing a state file ever says about this key.
+  # The sequence below is untick -> OK -> reopen -> retick -> OK, i.e. the
+  # mirror image of what this row used to drive.
+  check "G5c 0927 opparams starts TICKED (the gate defaults ON)" \
     [expr {[info exists ::ase::ui::dlg($key,opparams)]
              ? $::ase::ui::dlg($key,opparams) : {<no record>}}] 1
   catch {$top.saveall.opparams invoke}
   $top.saveall.btns.proceed invoke
   update
-  check "G5c un-ticking writes {} back, never 0" \
+  check "G5c 0927 UN-ticking opparams writes save_op_params 0" \
+    [ase::state_get [ase::session_state $key] save_op_params] 0
+  check_true "G5c 0927 an off gate IS serialized (off is what costs a key)" \
+    [expr {[string first "save_op_params 0" \
+       [ase::state_serialize [ase::session_state $key]]] >= 0}]
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  check "G5c reopening preloads the UN-ticked state" \
+    [expr {[info exists ::ase::ui::dlg($key,opparams)]
+             ? $::ase::ui::dlg($key,opparams) : {<no record>}}] 0
+  catch {$top.saveall.opparams invoke}
+  $top.saveall.btns.proceed invoke
+  update
+  check "G5c 0927 re-ticking writes {} back, never 1" \
     [ase::state_get [ase::session_state $key] save_op_params <absent>] {}
-  check "G5c an off gate is OMITTED from the serialized state again" \
+  check "G5c 0927 an ON gate is OMITTED from the serialized state again" \
     [expr {[string first "save_op_params" \
        [ase::state_serialize [ase::session_state $key]]] >= 0}] 0
 
@@ -1168,7 +1175,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # RED AT HEAD for 0695's plain reason -- nothing follows yet.
   set ge10j_st [ase::session_state $key]
   set ge10j_off $ge10j_st
-  dict set ge10j_off save_op_params {}
+  dict set ge10j_off save_op_params 0   ;# 0927: OFF is `0`; `{}` is now the ON default
   cx {ase::session_update $key $ge10j_off}
   $top.mb.outputs invoke "Save All…"
   update

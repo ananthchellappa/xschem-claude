@@ -51,9 +51,24 @@ namespace eval ase {
   # the gate that lets ase::netlist capture op_annot::save_cards and render_deck
   # carry the device operating-point `.save` cards into the deck. It joins
   # `cosim` here for exactly the same reason and it MUST default to `{}` rather
-  # than `0`: state_serialize writes every non-empty schema key, so a `0`
-  # default would land in all 104 committed .state files and break the five
-  # load->save byte-identity rows (F3/G3/R4/V4/R2). `{}` = off, `1` = on.
+  # than a literal: state_serialize writes every non-empty schema key, so a
+  # literal default would land in all 104 committed .state files and break the
+  # five load->save byte-identity rows (F3/G3/R4/V4/R2).
+  #
+  # ⚠ THE POLARITY IS INVERTED AS OF 2026-08-29 (issue 0927, the user's call).
+  # The key is now TRI-STATE and `{}` means "the default", which is ON:
+  #     {} / absent  -> ON   (the default; what all 104 committed states carry)
+  #     0 / no|false -> OFF  (the ONLY thing a state file ever spells out)
+  #     1 / anything -> ON
+  # The user's sentence: *"a saved state would have to say NOT to save all OP
+  # params, so that users who start using existing test-benches don't need to do
+  # more work to get their OP info."* Off is the value that costs a key; on is
+  # free. That is what keeps the 104 files byte-identical THROUGH the flip —
+  # nothing on disk had to change, because the default is still the empty value.
+  # ⚠ ONE CONSEQUENCE, AND IT IS NOT RECOVERABLE: before the flip, OFF was ALSO
+  # `{}`. A state a user deliberately unticked is byte-identical to one that
+  # never heard of the key, so it flips ON with the rest. Ticking it off again
+  # now writes `save_op_params 0` and sticks.
   variable omit_if_empty {cosim save_op_params}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
@@ -602,19 +617,40 @@ proc ase::op_cards_nudge_reset {} {
 }
 
 # --- 0648: ONE gate normaliser, ONE latch-key builder ------------------------
-# `save_op_params` is read as a gate in THREE places — op_cards_capture's
-# `ne {1}`, render_deck's `eq {1}` and (new) the change detector below. Two
-# independent normalisations of one key already existed and drift between them
-# fails SILENTLY; issue 0637 is the standing proof it bites here. Invariant I1
-# (one builder, many consumers) applied to a gate rather than a vector name.
+# `save_op_params` is read as a gate in THREE places — op_cards_capture,
+# render_deck and the change detector below. Two independent normalisations of
+# one key already existed and drift between them fails SILENTLY; issue 0637 is
+# the standing proof it bites here. Invariant I1 (one builder, many consumers)
+# applied to a gate rather than a vector name.
 #
-# ⚠ 1 IFF THE VALUE IS LITERALLY `1`. `0`, `{}`, absent and truthy-not-1
-# (`yes`, `true`, `2`) all read OFF — exactly as both existing call sites read
-# today. Do NOT "improve" this to accept truthy values: that would silently
-# decide issue 0637, whose ruling is with the user, and it would flip the gate
-# for any state hand-edited to `save_op_params yes`.
+# ⚠ THE DEFAULT IS ON (issue 0927, 2026-08-29 — the user's call). Read the
+# schema comment at the top of this file for the whole rule; the short form is
+# that only an EXPLICIT false turns the feature off:
+#     {} / absent -> 1     0 | no | false | off -> 0     everything else -> 1
+#
+# ⚠ THIS ALSO CLOSES ISSUE 0637 ITEM 1, in the only direction the flip leaves
+# open. Before the flip a state hand-edited to `save_op_params yes` read OFF and
+# the only report was a nudge telling the user to tick a box they thought they
+# had ticked. `yes` now reads ON, and a hand-edited `no`/`false`/`off` reads OFF
+# rather than silently reverting to the default. `string is false -strict` is
+# what makes that true in both directions; it is deliberately -strict so that
+# `{}` (the default) does NOT count as false.
 proc ase::op_gate_on {v} {
-  return [expr {$v eq {1} ? 1 : 0}]
+  if {[string is false -strict $v]} { return 0 }
+  return 1
+}
+
+# THE ONE WRITER, paired with the one reader above (invariant I1). Given a
+# boolean the UI collected, return the value to store in the state.
+#
+# ⚠ ON IS `{}`, NOT `1`. `save_op_params` is in ase::omit_if_empty, so an on
+# value keeps the key OUT of the serialized state entirely — a user who opens
+# Save All on an existing bench, leaves the box at its default and presses OK
+# gets a byte-identical .state file. OFF is the value that costs a key, which is
+# exactly the user's requirement. Do NOT "improve" this to write a literal 1:
+# that puts the key into every state anyone ever saves for no information gain.
+proc ase::op_gate_value {on} {
+  return [expr {$on ? {} : 0}]
 }
 
 # The latch key: this state's DESIGN cellview, {lib cell view}. Lifted out of
@@ -751,10 +787,13 @@ proc ase::op_cards_capture {state netlistpath} {
   ase::op_cards_clear
   set have [expr {[info commands ::op_annot::save_cards] ne {}}]
   if {![ase::op_gate_on [ase::state_get $state save_op_params {}]]} {
-    # THE GATE DEFAULTS OFF, so it has to be discoverable. 468 cards on a
-    # 31-FET bench (~3000 on a 500-device block, issue 0620) is a real deck
-    # cost, and two committed byte-exact deck goldens would redden on an
-    # unconditional emit. One line, only when an `op` analysis is enabled.
+    # ⚠ THE GATE NO LONGER DEFAULTS OFF (issue 0927): reaching here means the
+    # state says `save_op_params 0`, i.e. the user turned it off by hand. The
+    # nudge stays anyway — it is still the one line that explains a deck with no
+    # device parameters in it, and it now names a setting the user themselves
+    # changed. 468 cards on a 31-FET bench (~3000 on a 500-device block, issue
+    # 0620) is a real deck cost, which is why turning it off stays possible.
+    # One line, only when an `op` analysis is enabled.
     ## ⚠ THE LATCH IS CONSULTED LAST AND ONLY HERE (issue 0636). A state that
     ## fails the `op`-analysis gate must not consume its cellview's one turn,
     ## so the two gates are NESTED rather than &&-ed into one condition.

@@ -3453,15 +3453,19 @@ proc ase::ui::remedy_op_params_menu {} {
 # SAB-N6 is the discriminator that keeps them honest: neutralizing this one proc
 # must redden the existing Save All OK rows TOO, not only the remedy row.
 #
-# ⚠ OFF IS `{}`, NEVER `0`. `save_op_params` is in ase::omit_if_empty, and an
-# empty value is what keeps the key OUT of ase::state_serialize -- which is what
-# keeps the 104 committed .state files byte-identical (F3/G3/R4/V4/R2). A literal
-# 0 here would write the key into every state a user ever saves.
+# ⚠ THE EMPTY VALUE IS `ON`, NOT `OFF` (issue 0927, 2026-08-29 — the user's
+# call). `save_op_params` is in ase::omit_if_empty, and an empty value is what
+# keeps the key OUT of ase::state_serialize -- which is what keeps the 104
+# committed .state files byte-identical (F3/G3/R4/V4/R2). Before the flip that
+# empty value meant off; now it means "the default", and the default is on. So
+# OFF is the value that costs a key. Nothing here invents the mapping: it is
+# `ase::op_gate_value`, the one writer paired with `ase::op_gate_on`, the one
+# reader (invariant I1).
 proc ase::ui::save_all_apply {key allv alli opparams} {
   set st [ase::session_state $key]
   dict set st save_all_v [expr {$allv ? 1 : 0}]
   dict set st save_all_i [expr {$alli ? 1 : 0}]
-  if {$opparams} { dict set st save_op_params 1 } else { dict set st save_op_params {} }
+  dict set st save_op_params [ase::op_gate_value $opparams]
   ## ⚠ 0679: THE RETURN IS MEASURED, NOT MANUFACTURED. This line used to be a
   ## bare `ase::session_update $key $st` with the answer discarded and the proc
   ## ending in a hardcoded `return 1`.
@@ -3727,11 +3731,11 @@ proc ase::ui::save_all_touched {key} {
 # would lose a hand tick; the shipped snapshot lost the external write; this
 # loses neither, per field.
 #
-# ⚠ OFF IS `{}`, NEVER `0` — the values here round-trip through
-# `save_all_current` / `ase::op_gate_on` and land in `save_all_apply`'s
-# untouched expression, so no literal 0 is ever invented for `save_op_params`
-# (see the ⚠ on save_all_apply: a 0 would write the key into every state a user
-# saves and break the 104 byte-identical committed .state files).
+# ⚠ THE VALUES HERE ARE 0/1 BOOLEANS, NOT STATE VALUES. They round-trip through
+# `save_all_current` / `ase::op_gate_on` and land in `save_all_apply`, which is
+# the only place that turns a boolean back into what the state stores — via
+# `ase::op_gate_value`, where ON is `{}` and OFF is `0` (issue 0927). Nothing in
+# this proc may spell either literal.
 #
 # ⚠ ON A CONFLICT THE USER'S HAND WINS, SILENTLY (hand-untick vs external tick).
 # That is user-visible and unratified: recorded as `rule` debt [0692].

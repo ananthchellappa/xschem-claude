@@ -8,8 +8,9 @@
 #                   Save-All blankets (save_all_v -> `.save all` before the
 #                   per-output saves, save_all_i -> `.options savecurrents`,
 #                   nothing while both flags are 0)
-#   C* op cards:    the save_op_params gate key ({} = off, omitted from the
-#                   serialized form), the op-cards capture/consume seam, and
+#   C* op cards:    the save_op_params gate key ({} = ON, the default, omitted
+#                   from the serialized form; `0` = the explicit off a user has
+#                   to spell out -- issue 0927), the op-cards capture/consume seam, and
 #                   render_deck appending op_annot::save_cards VERBATIM above
 #                   `.control` on a cache hit (plan step S4 / issue 0617)
 #   N* netlist:     ase::netlist on a scratch lib/cell/view fixture, rundir
@@ -131,19 +132,35 @@ check "R1 cosim defaults to empty and is omitted from the serialized form" \
 check "R1 a NON-empty cosim IS serialized" \
   [expr {[string first "cosim {build never}" \
      [ase::state_serialize [dict replace $d cosim {build never}]]] >= 0}] 1
-# --- C2/C3: the save_op_params gate key (plan step S4) -----------------------
+# --- C2/C3: the save_op_params gate key (plan step S4, polarity 0927) --------
 # doc/claude/suggestions/next_session_prompt_op_annotation.md S4 + the S4 plan's
 # first decision. The gate key MUST default to `{}` and MUST join
-# ase::omit_if_empty, NOT default to `0`: ase::state_serialize (ase.tcl:344)
-# writes every non-empty schema key, so a `0` default lands in all 104 committed
+# ase::omit_if_empty, NOT default to a literal: ase::state_serialize writes
+# every non-empty schema key, so a literal default lands in all 104 committed
 # .state files and reddens five load->save byte-identity rows (F3 in
 # test_ase_final, G3 in test_ase_final_gf180, R4 below, V4 in test_ase_view,
 # R2 in test_ase_persist). `cosim` is the precedent this copies.
-#   {} = off (the default), 1 = on.
+#
+# ⚠ WHAT `{}` MEANS FLIPPED ON 2026-08-29 (issue 0927, the user's call):
+#   {} / absent = ON, the default    0 = OFF, the only value ever written out
+# The empty default is what carried the flip with ZERO churn on disk -- the 104
+# committed states say nothing about the key and now get the feature for free,
+# which is the whole point of the change.
 # sentinel default: a MISSING key must read as `<absent>`, never as the `{}`
 # the row is asserting, or the check would pass vacuously on a tree without it
-check "C2 save_op_params defaults to empty (= off)" \
+check "C2 save_op_params defaults to empty" \
   [ase::state_get $d save_op_params <absent>] {}
+check "C2 0927 the empty default reads ON" \
+  [ase::op_gate_on [ase::state_get $d save_op_params <absent>]] 1
+check "C2 0927 an ABSENT key reads ON too (a state written before the key)" \
+  [ase::op_gate_on [ase::state_get [dict remove $d save_op_params] \
+     save_op_params {}]] 1
+check "C2 0927 only an explicit false reads OFF" \
+  [list [ase::op_gate_on 0] [ase::op_gate_on no] [ase::op_gate_on false] \
+        [ase::op_gate_on 1] [ase::op_gate_on yes] [ase::op_gate_on 2]] \
+  {0 0 0 1 1 1}
+check "C2 0927 op_gate_value is the one writer: on -> {} (omitted), off -> 0" \
+  [list [ase::op_gate_value 1] [ase::op_gate_value 0]] {{} 0}
 check "C2 save_op_params is OMITTED from the serialized default state" \
   [expr {[string first "save_op_params" [ase::state_serialize $d]] >= 0}] 0
 check "C2 save_op_params sits right after save_all_i in the canonical order" \
@@ -151,7 +168,10 @@ check "C2 save_op_params sits right after save_all_i in the canonical order" \
   [expr {[lsearch -exact $ase::schema_keys save_all_i] + 1}]
 check "C2 save_op_params is in ase::omit_if_empty" \
   [expr {[lsearch -exact $ase::omit_if_empty save_op_params] >= 0}] 1
-check "C3 save_op_params 1 IS serialized (the key is not write-only)" \
+check "C3 0927 save_op_params 0 IS serialized (OFF is what costs a key)" \
+  [expr {[string first "save_op_params 0" \
+     [ase::state_serialize [dict replace $d save_op_params 0]]] >= 0}] 1
+check "C3 save_op_params 1 IS serialized too (the key is not write-only)" \
   [expr {[string first "save_op_params 1" \
      [ase::state_serialize [dict replace $d save_op_params 1]]] >= 0}] 1
 
@@ -444,7 +464,10 @@ check_true "C4 empty cache leaves the D1 golden deck byte-identical" \
 # GREEN under that sabotage because their cache is empty.
 cx {ase::op_cards_clear}
 cx {ase::op_cards_put $netlist_text $c_block}
-set stC [nfet_state /models/sky130.lib.spice {}]
+## 0927: the gate defaults ON now, so OFF has to be SPELLED OUT here. Without
+## the explicit 0 this row would be testing the gate-on path under a gate-off
+## name and every C5 assertion would invert.
+set stC [dict replace [nfet_state /models/sky130.lib.spice {}] save_op_params 0]
 set deckC5 [$render $stC $netlist_text]
 check "C5 gate off emits no device save cards" [llength [c_cards $deckC5]] 0
 check "C5 gate off emits no op_annot marker line" [c_marker $deckC5] 0
@@ -498,7 +521,8 @@ c_echo_disarm
 cx {ase::op_cards_clear}
 cx {ase::op_cards_put $netlist_text $c_block}
 set deckC8on  [$render $stC $netlist_text]
-set deckC8off [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
+set deckC8off [$render [dict replace [nfet_state /models/sky130.lib.spice {}] \
+                          save_op_params 0] $netlist_text]   ;# 0927: explicit OFF
 check "C8 gate on adds exactly one .save all line (I2 / rule R2)" \
   [expr {[c_count $deckC8on {^\.save all$}] - [c_count $deckC8off {^\.save all$}]}] 1
 set on_l [split [string trimright $deckC8on "\n"] "\n"]

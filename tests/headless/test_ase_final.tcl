@@ -358,9 +358,16 @@ set f19d_default [expr {[info exists ::ase_op_card_nudge] ? $::ase_op_card_nudge
 check "F19d 0636 ::ase_op_card_nudge defaults to 1 at ase.tcl source time" \
   $f19d_default 1
 
+## ⚠ 0927: `save_op_params` DEFAULTS ON as of 2026-08-29 (the user's call), so a
+## state loaded from a committed .state file -- which says nothing about the key
+## -- is a gate-ON state. Every "gate off" row in this file therefore has to
+## SPELL THE OFF OUT. Without these lines the rows below keep their gate-off
+## names while testing the gate-on path, which is the silent-inversion failure
+## this suite exists to catch.
 set f_offdir [file normalize [file join $scratch runoff]]
 set stoff [ase::state_load $statefile]
 dict set stoff rundir $f_offdir
+dict set stoff save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 cx {ase::op_cards_nudge_reset}
 check "F19 gate off + op enabled nudges ONCE, naming Outputs > Save All" \
   [f_nudges $stoff] 1
@@ -380,6 +387,7 @@ cx {ase::op_cards_nudge_reset}
 set f19c_dir [file normalize [file join $scratch runoff_c]]
 set st19c [ase::state_load $statefile]
 dict set st19c rundir $f19c_dir
+dict set st19c save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 check "F19c 0636 ::ase_op_card_nudge 0 silences it even with the latch reset" \
   [f_nudges $st19c] 0
 if {$f19c_had} { set ::ase_op_card_nudge $f19c_val } else { unset ::ase_op_card_nudge }
@@ -391,6 +399,7 @@ cx {ase::op_cards_nudge_reset}
 set f19e_dir [file normalize [file join $scratch runoff_e]]
 set st19e [ase::state_load $statefile]
 dict set st19e rundir $f19e_dir
+dict set st19e save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 set f19e_an {}
 foreach a [ase::state_get $st19e analyses] {
   if {[ase::state_get $a type] eq {op}} { dict set a enabled 0 }
@@ -499,6 +508,14 @@ check "F19n 0648 the latch is PER CELLVIEW: taking it for one cell does NOT\
 cx {ase::op_cards_nudge_reset}
 set f19g_key [ase::session_key f19 latch rearm]
 ase::session_open $f19g_key $statefile
+## 0927: the session starts gate-ON (the file says nothing about the key), so
+## the OFF this row starts from is written FIRST -- and that write is itself a
+## gate change, which re-arms the latch. Reset after it, not before, or the
+## "take, hold, then speak again" sequence starts one turn ahead of itself.
+set f19g_st [ase::session_state $f19g_key]
+dict set f19g_st save_op_params 0
+ase::session_update $f19g_key $f19g_st
+cx {ase::op_cards_nudge_reset}
 set f19g_st [ase::session_state $f19g_key]
 set f19g_take [list [cx {ase::op_cards_nudge_ok $f19g_st}] \
                     [cx {ase::op_cards_nudge_ok $f19g_st}]]
@@ -524,35 +541,48 @@ check "F19h 0636 NOISE GUARD: a session_update that leaves save_op_params alone\
 # --- F19i: the reverse edge ---------------------------------------------------
 # Turning the gate back OFF is just as much "the user acted on this setting".
 set f19i_st [ase::session_state $f19g_key]
-dict set f19i_st save_op_params {}
+dict set f19i_st save_op_params 0        ;# 0927: OFF is `0`, no longer `{}`
 ase::session_update $f19g_key $f19i_st
-check "F19i 0648 the reverse edge re-arms too: save_op_params 1 -> {} through\
+check "F19i 0648 the reverse edge re-arms too: save_op_params 1 -> 0 through\
  session_update" \
   [cx {ase::op_cards_nudge_ok [ase::session_state $f19g_key]}] 1
 
 # --- F19j: the change detector normalises exactly like the capture gate -------
-# ase.tcl:594 reads `ne {1}` and ase.tcl:3565 reads `eq {1}`, independently.
-# Truthy-not-1 is OFF at both (issue 0637's subject, whose ruling is NOT this
-# step's) and the detector must agree with them, not improve on them.
-check "F19j 0648 op_cards_gate_changed normalises exactly like the capture gate\
- (truthy-not-1 stays OFF, 0637 unchanged)" \
+# All three readers go through ase::op_gate_on, so the detector cannot drift
+# from them. ⚠ 0927 FLIPPED EVERY ANSWER IN THIS ROW and that is the point of
+# keeping it: `{}` is now ON, `0` is the only OFF, and `yes` is ON rather than
+# the silent OFF issue 0637 was filed about.
+#   {} -> 0   ON  -> OFF  : a change      {} -> 1   ON  -> ON   : no change
+#   1  -> 1   no change    0  -> {}  OFF -> ON   : a change
+#   yes-> {}  ON  -> ON   : no change    1  -> {}  ON  -> ON   : no change
+check "F19j 0648/0927 op_cards_gate_changed normalises exactly like the capture\
+ gate (empty is ON, only an explicit false is OFF)" \
   [list [cx {ase::op_cards_gate_changed {} 0}] \
         [cx {ase::op_cards_gate_changed {} 1}] \
         [cx {ase::op_cards_gate_changed 1 1}] \
         [cx {ase::op_cards_gate_changed 0 {}}] \
         [cx {ase::op_cards_gate_changed yes {}}] \
         [cx {ase::op_cards_gate_changed 1 {}}]] \
-  {0 1 0 0 0 1}
+  {1 0 0 1 0 0}
 
 # --- F19m: the re-arm never writes the state ----------------------------------
 # The landmine that shapes the whole design: `save_op_params` is in
-# ase::omit_if_empty, OFF must stay `{}` and never `0`, or the key lands in
-# every .state a user saves and the 104 committed byte-identical fixtures
-# redden. GREEN BEFORE THE CHANGE -- it exists to stay green.
-check "F19m 0648 the re-arm hook writes NOTHING into the state (an off gate is\
- still OMITTED from the serialization)" \
-  [expr {[string first save_op_params \
-     [ase::state_serialize [ase::session_state $f19g_key]]] >= 0}] 0
+# ase::omit_if_empty, so whichever value is the DEFAULT has to be the empty one
+# or the key lands in every .state a user saves and the 104 committed
+# byte-identical fixtures redden. ⚠ 0927 SWAPPED WHICH VALUE THAT IS: the
+# default (and so the omitted value) is now ON, and the explicit `0` F19i wrote
+# is what serializes. Three terms: the state still carries EXACTLY what F19i
+# wrote (the re-arm added nothing and removed nothing), that value serializes,
+# and a state back at the default still omits the key entirely.
+set f19m_st [ase::session_state $f19g_key]
+check "F19m 0648/0927 the re-arm hook writes NOTHING into the state (it carries\
+ exactly what F19i wrote, and a DEFAULT gate is still omitted)" \
+  [list [cx {ase::state_get $f19m_st save_op_params <absent>}] \
+        [expr {[regexp {save_op_params\s+0} \
+           [ase::state_serialize $f19m_st]] ? 1 : 0}] \
+        [expr {[string first save_op_params [ase::state_serialize \
+           [dict replace $f19m_st save_op_params {}]]] >= 0 ? 1 : 0}]] \
+  {0 1 0}
 ase::session_close $f19g_key
 
 # --- F19k/F19l: the success line, pinned (issue 0648 section 3 is REFUTED) ----
@@ -588,6 +618,7 @@ cx {ase::op_cards_nudge_reset}
 set f19l_dir [file normalize [file join $scratch runoff_l]]
 set st19l [ase::state_load $statefile]
 dict set st19l rundir $f19l_dir
+dict set st19l save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 set f19l_msgs [f_echo_run $st19l]
 check "F19l 0648 NON-VACUITY CONTROL: a gate-OFF netlist says nothing about\
  cards added" \
@@ -696,7 +727,10 @@ foreach k [f_regkeys] {
 }
 set f19o_dir [file normalize [file join $scratch runoff_o]]
 set f19o_st [cx {ase::session_state $f19o_key}]
-catch {dict set f19o_st rundir $f19o_dir ; ase::session_update $f19o_key $f19o_st}
+catch {dict set f19o_st rundir $f19o_dir
+       dict set f19o_st save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
+       ase::session_update $f19o_key $f19o_st}
+cx {ase::op_cards_nudge_reset}   ;# 0927: that OFF write re-armed the latch
 
 # --- F19o1: THE NON-VACUITY CONTROL for every 0679 row below -----------------
 # If these two ever coincided on this fixture, F19t/F19p/F19u would be asserting
@@ -818,13 +852,19 @@ set f19q_src [catch {ase::ui::save_all_apply $f19o_key $f19p_v1 $f19p_i1 1}]
 set f19q_on [cx {ase::state_serialize [ase::session_state $f19o_key]}]
 set f19q_orc [catch {ase::ui::save_all_apply $f19o_key $f19p_v1 $f19p_i1 0} f19q_err]
 set f19q_off [cx {ase::state_serialize [ase::session_state $f19o_key]}]
-check "F19q 0648 the shared writer keeps OFF as `{}`: ON serializes\
- `save_op_params 1`, OFF omits the key entirely (never a literal 0)" \
-  [list [expr {[regexp {save_op_params\s+1} $f19q_on] ? 1 : 0}] \
+## ⚠ 0927 REVERSED THIS ROW END TO END, and it is the row that proves the whole
+## change landed on disk the right way round: ON is the empty value, so it
+## VANISHES from the serialization (which is what leaves the 104 committed
+## states byte-identical and is the entire reason existing benches get the
+## feature for free); OFF is the literal `0`, the one thing a state file ever
+## has to say about this key.
+check "F19q 0648/0927 the shared writer keeps ON as `{}`: ON omits the key\
+ entirely, OFF serializes `save_op_params 0`" \
+  [list [expr {[string first save_op_params $f19q_on] >= 0 ? 1 : 0}] \
         $f19q_src $f19q_orc \
-        [expr {[string first save_op_params $f19q_off] >= 0 ? 1 : 0}] \
+        [expr {[regexp {save_op_params\s+0} $f19q_off] ? 1 : 0}] \
         [cx {ase::state_get [ase::session_state $f19o_key] save_op_params {}}]] \
-  {1 0 0 0 {}}
+  {0 0 0 1 0}
 
 # --- F19r: R-0653-d REQ 3 -- the remedy went through the MENU'S OWN writer ---
 # "The command must invoke THE SAME PROC THE MENU INVOKES, not poke the state
@@ -887,6 +927,7 @@ catch {unset ::xschem::notify_last}
 set f19s_dir [file normalize [file join $scratch runoff_s]]
 set f19s_st [ase::state_load $statefile]
 dict set f19s_st rundir $f19s_dir
+dict set f19s_st save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 set f19s_n [f_nudges $f19s_st]
 check "F19s 0650/0679 the gate-off nudge travels through xschem::notify and\
  names the ONE registered session on this design (its own record names it,\
@@ -917,8 +958,10 @@ cx {ase::session_open $f19y_b $statefile}
 set f19y_sta [cx {ase::session_state $f19y_a}]
 set f19y_stb [cx {ase::session_state $f19y_b}]
 catch {dict set f19y_sta rundir [file normalize [file join $scratch runoff_ya]]
+       dict set f19y_sta save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
        ase::session_update $f19y_a $f19y_sta}
 catch {dict set f19y_stb rundir [file normalize [file join $scratch runoff_yb]]
+       dict set f19y_stb save_op_params 0
        ase::session_update $f19y_b $f19y_stb}
 
 # --- F19y: THE DISAMBIGUATOR --------------------------------------------------
@@ -957,6 +1000,7 @@ catch {unset ::xschem::notify_last}
 set f19s2_amb_dir [file normalize [file join $scratch runoff_s2a]]
 set f19s2_amb [ase::state_load $statefile]
 dict set f19s2_amb rundir $f19s2_amb_dir
+dict set f19s2_amb save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 set f19s2_amb_n [f_nudges $f19s2_amb]
 set f19s2_amb_cmd  [f_nfield command]
 set f19s2_amb_menu [f_nfield menu]
@@ -968,6 +1012,7 @@ catch {unset ::xschem::notify_last}
 set f19s2_non_dir [file normalize [file join $scratch runoff_s2b]]
 set f19s2_non [ase::state_load $statefile]
 dict set f19s2_non rundir $f19s2_non_dir
+dict set f19s2_non save_op_params 0  ;# 0927: the gate defaults ON now -- OFF must be spelled out
 set f19s2_non_n [f_nudges $f19s2_non]
 set f19s2_non_cmd  [f_nfield command]
 set f19s2_non_menu [f_nfield menu]

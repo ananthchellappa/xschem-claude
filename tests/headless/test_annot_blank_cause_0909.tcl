@@ -689,6 +689,12 @@ if {[llength $bc_dsg] == 3} {
   file mkdir $bc_rundir
   set bc_st [ase::session_state $bc_key]
   catch {dict set bc_st rundir $bc_rundir}
+  ## ⚠ 0927: THE WHOLE SUITE IS "the user ran WITHOUT the tickbox", and as of
+  ## 2026-08-29 that is no longer the default -- `save_op_params` defaults ON
+  ## and only an explicit `0` turns it off. Without this line the fixture runs
+  ## WITH cards saved, every blank-cause row gets a different (and correct)
+  ## diagnosis, and the suite reds out while the product is behaving.
+  catch {dict set bc_st save_op_params 0}
   catch {ase::session_update $bc_key $bc_st}
 }
 set bc_nl {}
@@ -938,7 +944,14 @@ check {BC1c the save-cards tickbox is asked before the file, so an older file ho
 set bc3_msg  [bc_notify_field msg]
 set bc3_cmd  [bc_notify_field command]
 set bc3_rc   [catch {uplevel #0 $bc3_cmd} bc3_e]
-set bc3_gate [b_ans ::ase::state_get [b_ans ::ase::session_state $bc_key] save_op_params {}]
+## ⚠ 0927: ASK THE GATE, NOT THE RAW VALUE. Since the default flipped ON, the
+## value a turn-it-on write stores is `{}` (= the default = on), not `1` --
+## which is exactly what keeps the key out of the saved .state file. A row that
+## string-compares the stored value is asserting the STORAGE FORMAT while
+## claiming to assert the tick; ase::op_gate_on is the one reader everything
+## else in the product goes through.
+set bc3_gate [b_ans ::ase::op_gate_on \
+  [b_ans ::ase::state_get [b_ans ::ase::session_state $bc_key] save_op_params {}]]
 check {BC3 the CIW command the press printed really turns the tick on, for the session the user is actually under} \
   [list $bc3_msg $bc3_cmd $bc3_rc $bc3_gate] \
   [list $BC_NOCARDS [list ase::ui::save_op_params_on $bc_key] 0 1]
@@ -1080,6 +1093,7 @@ check {BC21 the descriptor clause names at most four symbol types and says so wh
 # state change: it speaks once and then is quiet.
 set bc14_st {}
 catch {set bc14_st [ase::state_load $bc_statefile]}
+catch {dict set bc14_st save_op_params 0}   ;# 0927: the nag needs an EXPLICIT off
 catch {ase::op_cards_nudge_reset}
 proc bc14_capture {st} {
   set hits 0

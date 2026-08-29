@@ -260,7 +260,15 @@ should catch it sources the conf itself instead of calling the loader. And
 **0926** — a stock-written `~/.xschem/simrc` would strip Spectre from this tree's
 simulator list (latent; no simrc on disk).
 
-**The next free number is 0927.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the user's Save-All default request.** Filed **0927** — device
+OP-parameter saving was off by default, so every pre-existing test bench showed
+blank rows until the user ticked a box per bench. Flipped ON at the user's
+instruction, with `{}` (the value that is never written to disk) reassigned from
+"off" to "the default, which is on" — so the flip cost zero bytes on disk and
+the 104 committed `.state` files were not touched. FIXED the same day; five
+suites went green, and issue 0637 item 1 closed along the way.
+
+**The next free number is 0928.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

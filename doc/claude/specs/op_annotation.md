@@ -1110,14 +1110,45 @@ carries it. Until S4 nobody did: `ase::render_deck` emitted `.save all` plus one
 card per configured output row, so a user could run a perfect OP analysis and get
 six blank rows (issue **0617**). This is the design of record for that arrow.
 
-**One gate, defaulting off.** A new ASE state key `save_op_params` — `{}` = off,
-`1` = on — surfaced as *Outputs → Save All → Save device OP parameters*. It
-**must** default to `{}` and live in `ase::omit_if_empty`, never `0`:
-`state_serialize` writes every non-empty schema key, so a `0` default lands in
-all 104 committed `.state` files and breaks five load→save byte-identity rows.
-Off by default because the cost is real — 468 cards on a 31-FET bench, ~3000 at
-500 devices (issue 0620) — and because two committed byte-exact deck goldens
-would redden on an unconditional emit.
+**One gate, defaulting ON since 2026-08-29 (issue 0927).** An ASE state key
+`save_op_params`, surfaced as *Outputs → Save All → Save device OP parameters*.
+It **must** default to `{}` and live in `ase::omit_if_empty`, never a literal:
+`state_serialize` writes every non-empty schema key, so a literal default lands
+in all 104 committed `.state` files and breaks five load→save byte-identity rows.
+
+⚠ **What `{}` MEANS was inverted on 2026-08-29, at the user's instruction.** The
+key is now tri-state and the empty value is the *default*, which is **on**:
+
+| value in the state | gate |
+|---|---|
+| absent, or `{}` | **ON** — every state written before the flip, i.e. every existing test bench |
+| `0`, `no`, `false`, `off` | **OFF** — the only thing a state file ever spells out |
+| `1`, `yes`, anything else | **ON** |
+
+The user's requirement, verbatim: *"Make it the default. So, a saved state would
+have to say NOT to save all OP params, so that users who start using existing
+test-benches don't need to do more work to get their OP info."* Because the
+default is still the *empty* value, the flip cost **zero bytes on disk** — the
+104 committed states say nothing about the key and simply inherit the new
+default, and the five byte-identity rows stayed green untouched.
+
+Two normalisers, and nothing else may read the key raw: **`ase::op_gate_on`**
+(the one reader, `string is false -strict`) and **`ase::op_gate_value`** (the one
+writer, on → `{}`, off → `0`).
+
+**Two consequences worth stating plainly.**
+1. *The cost is now paid by default.* 468 cards on a 31-FET bench, ~3000 at 500
+   devices (issue 0620), plus an `op_annot::save_cards` hierarchy walk on every
+   netlist. Turning it off stays one tick, and the tick now persists.
+2. *A deliberate OFF made before the flip is not recoverable.* Off used to be
+   `{}` too, so a state the user unticked is byte-identical to one that never
+   heard of the key. Those flip on with the rest; unticking again writes
+   `save_op_params 0` and sticks.
+
+This also settles **issue 0637 item 1** in the only direction the flip leaves
+open: a hand-edited `yes`/`true` used to read OFF while the nudge told the user
+to tick a box they thought they had ticked. It now reads ON, and `no`/`false`
+reads OFF rather than silently reverting to the default.
 
 **Built at NETLIST time, consumed at RENDER time.** `ase::op_cards_capture` runs
 from `ase::netlist` immediately after the artifact is written and caches
@@ -1300,8 +1331,9 @@ ships now, all in `src/ase_window.tcl` and all local to that dialog:
   role did not;
 * `save_all_resolve` is the OK-path **per-field** reconcile: the user's value for a
   box they touched, the **LIVE** value for one they did not. It feeds the
-  *unchanged* `save_all_apply`, so `{}`-never-`0` is preserved by construction
-  (measured: `LM save_op_params_value={} serialized_has_key=0`);
+  *unchanged* `save_all_apply`, so the omit-the-default rule is preserved by
+  construction (measured: `LM save_op_params_value={} serialized_has_key=0`;
+  since 0927 that measurement reads the gate **on**, not off);
 * `save_all_refresh` (new with 0695) is **the follow**: an open dialog's boxes are
   repainted from `save_all_resolve`'s output whenever `ase::ui::session_changed`
   fires, so what the user sees is what OK will write. **Invariant I1 in its exact

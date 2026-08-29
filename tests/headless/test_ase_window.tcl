@@ -739,9 +739,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # from this state, so nothing here may leave it changed)
   set w1v_st0 [w_cx {ase::session_state $key}]
 
-  # gate OFF + an enabled `op` analysis: the exact configuration the user ran
+  # gate OFF + an enabled `op` analysis: the exact configuration the user ran.
+  # ⚠ 0927: OFF IS `0`. The gate defaults ON as of 2026-08-29 and `{}` now means
+  # "the default", so the `{}` this line used to write would set the gate ON and
+  # every row below would be testing the opposite of its own name.
   set w1v_st $w1v_st0
-  catch {dict set w1v_st save_op_params {}}
+  catch {dict set w1v_st save_op_params 0}
   catch {dict set w1v_st analyses \
     {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}}
   w_cx {ase::session_update $key $w1v_st}
@@ -867,7 +870,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # the exact configuration the user ran: OP gate OFF, an enabled `op` analysis
   proc w_gate_off {key} {
     set st [ase::session_state $key]
-    catch {dict set st save_op_params {}}
+    catch {dict set st save_op_params 0}   ;# 0927: OFF is `0`, `{}` is the ON default
     catch {dict set st analyses \
       {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}}
     ase::session_update $key $st
@@ -1030,7 +1033,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {dict set w1zc_st save_all_v 0}
   w_cx {ase::session_update $key $w1zc_st}
   set w1zc_file $w1zc_st
-  catch {dict set w1zc_file save_op_params {}}   ;# the IMPORTED state: gate OFF
+  catch {dict set w1zc_file save_op_params 0}    ;# the IMPORTED state: gate OFF (0927: `0`)
   catch {dict set w1zc_file save_all_v 1}        ;#                     allv ON
   set w1zc_path [file join $scratch w1zc.state]
   w_cx {ase::state_save $w1zc_path $w1zc_file}
@@ -1115,7 +1118,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {dict set w1ze_st save_op_params 1}
   w_cx {ase::session_update $key $w1ze_st}
   set w1ze_file $w1ze_st
-  catch {dict set w1ze_file save_op_params {}}
+  catch {dict set w1ze_file save_op_params 0}   ;# 0927: the import turns it OFF
   set w1ze_path [file join $scratch w1ze.state]
   w_cx {ase::state_save $w1ze_path $w1ze_file}
   set w1ze_w [w_cx {ase::ui::save_all_dialog $key}]
