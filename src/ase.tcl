@@ -838,6 +838,28 @@ proc ase::op_cards_capture {state netlistpath} {
     }
     return {}
   }
+  ## ⚠ 0928: DEVICE OPERATING-POINT CARDS ARE FOR AN OPERATING-POINT ANALYSIS.
+  ## Nothing gated the EMIT on one. `ase::op_analysis_enabled` existed and was
+  ## consulted by exactly ONE caller -- the gate-off nudge above -- so a
+  ## transient-only bench collected a `.save` card per device per parameter that
+  ## no feature in this tree can read: `6` annotates an operating point, and
+  ## `Alt+Shift+6` reads node voltages from the raw, never a device parameter.
+  ##
+  ## MEASURED, and it is why this guard is not cosmetic: a deck-level `.save` is
+  ## sampled at EVERY timepoint of EVERY analysis in the deck. 3000 cards (500
+  ## devices x 6) cost +0.03 s and +107 KB under `.op` -- free -- and +8.6 s and
+  ## +242 MB under a 10068-point `.tran`, on a raw that grows 6.9x. Harmless
+  ## while the gate defaulted off; a tax on every transient run the moment 0927
+  ## turned it on.
+  ##
+  ## Records an EMPTY HIT rather than returning bare: render_deck's
+  ## stale-artifact arm fires on a cache MISS, and a bare return would make it
+  ## tell the user to re-netlist an artifact this session just wrote (issue
+  ## 0635's contradiction, C13's subject).
+  if {![ase::op_analysis_enabled $state]} {
+    ase::op_cards_note_refusal $netlistpath
+    return {}
+  }
   if {!$have} {
     ase::op_cards_note_refusal $netlistpath   ;# 0635: ONE sentence, not two
     ase::echo "ASE: save_op_params is on but op_annot::save_cards is not\
@@ -4051,7 +4073,14 @@ namespace eval ase::backend::ngspice {
     # wrapped card produces no vector and no diagnostic (rule R4 / spec
     # landmine 1 / issue 0607). One name builder, two consumers (invariant I1):
     # nothing here rebuilds, re-wraps, sorts or dedupes a card.
-    if {[ase::op_gate_on [ase::state_get $state save_op_params {}]]} {
+    ## ⚠ 0928: AND THE CONSUMER CHECKS IT TOO, not only the capture. The cache
+    ## outlives one netlist -- `ase::run_existing` renders from a block an
+    ## EARLIER netlist primed -- so a user who turns the `op` analysis off and
+    ## re-runs would otherwise get a deck full of device cards nothing reads,
+    ## sampled at every timepoint of whatever analysis is left. The capture-side
+    ## guard saves the walk; this one is what makes the deck correct.
+    if {[ase::op_gate_on [ase::state_get $state save_op_params {}]] &&
+        [ase::op_analysis_enabled $state]} {
       set opblk [ase::op_cards_for $netlist_text]
       if {$opblk ne {}} {
         lappend lines \

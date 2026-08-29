@@ -474,6 +474,70 @@ check "C5 gate off emits no op_annot marker line" [c_marker $deckC5] 0
 check_true "C5 gate off is byte-identical to the D1 golden" \
   [string equal $deckC5 $expected_deck]
 
+# --- C5b: ISSUE 0928 -- GATE ON, but NO `op` ANALYSIS -> still nothing --------
+# Device operating-point cards are for an operating-point analysis. Nothing
+# gated the EMIT on one until 0928: `ase::op_analysis_enabled` had exactly ONE
+# caller, the gate-off nudge, so a transient-only bench collected a `.save` card
+# per device per parameter that no feature can read. A deck-level `.save` is
+# sampled at EVERY timepoint, and 3000 cards measured +8.6 s / +242 MB on a
+# 10068-point `.tran` against +0.03 s / +107 KB on an `.op`.
+#
+# (The `op` row is simply disabled here rather than swapping in a `tran` -- the
+# fixture's tran row carries no step/stop and render_deck raises on it. What the
+# guard reads is `op_analysis_enabled`, and nothing else.)
+#
+# THE THIRD TERM IS THE 0635 GUARD: the skip must leave a cache HIT, or
+# render_deck's stale-artifact arm tells the user to re-netlist an artifact this
+# session just wrote. The fourth is the non-vacuity control -- the SAME state
+# with `op` re-enabled must emit the cards -- so a sabotage that simply stops
+# emitting cannot pass this row.
+cx {ase::op_cards_clear}
+cx {ase::op_cards_put $netlist_text $c_block}
+set stC5b [nfet_state /models/sky130.lib.spice {}]
+set c5b_an {}
+foreach a [ase::state_get $stC5b analyses] {
+  if {[ase::state_get $a type] eq {op}} { dict set a enabled 0 }
+  lappend c5b_an $a
+}
+dict set stC5b analyses $c5b_an
+set deckC5b [$render $stC5b $netlist_text]
+set stC5c [dict replace $stC5b analyses [ase::state_get [nfet_state /models/sky130.lib.spice {}] analyses]]
+set deckC5c [$render $stC5c $netlist_text]
+check "C5b 0928 gate ON but no `op` analysis emits NO device save cards" \
+  [list [ase::op_analysis_enabled $stC5b] \
+        [ase::op_gate_on [ase::state_get $stC5b save_op_params {}]] \
+        [llength [c_cards $deckC5b]] \
+        [llength [c_cards $deckC5c]]] \
+  [list 0 1 0 3]
+
+# C5b2: the CAPTURE half. C5b drives render_deck over a hand-primed cache, which
+# cannot see whether the expensive half ran at all -- op_annot::save_cards is the
+# ~350 ms/78-FET hierarchy walk, and skipping the walk is most of the point. This
+# row watches the seam instead: with no `op` analysis the walk must not be
+# called, and it must still leave a cache HIT so render_deck's stale-artifact
+# sentence stays silent.
+cx {ase::op_cards_clear}
+set c5b2_nl [file join $scratch c5b2.spice]
+set fh [open $c5b2_nl w]; puts -nonewline $fh $netlist_text; close $fh
+set ::c5b2_called 0
+rename ::op_annot::save_cards ::op_annot::c5b2_real
+proc ::op_annot::save_cards {args} { incr ::c5b2_called ; return {} }
+c_echo_arm
+cx {ase::op_cards_capture $stC5b $c5b2_nl}
+set c5b2_msgs [llength $::c_echo]
+c_echo_disarm
+rename ::op_annot::save_cards {}
+rename ::op_annot::c5b2_real ::op_annot::save_cards
+check "C5b2 0928 no `op` analysis: the walk is never called, a HIT is left, and\
+ nothing is echoed" \
+  [list $::c5b2_called \
+        [cx {ase::op_cards_hit $netlist_text}] \
+        $c5b2_msgs] \
+  {0 1 0}
+## re-prime for C6 below: this row's capture left an EMPTY hit by design.
+cx {ase::op_cards_clear}
+cx {ase::op_cards_put $netlist_text $c_block}
+
 # C6: gate ON + a hit -> the block VERBATIM, in its own order, immediately above
 # `.control`, behind exactly one marker line.
 set stC [nfet_state /models/sky130.lib.spice {}]

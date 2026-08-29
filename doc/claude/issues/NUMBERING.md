@@ -268,7 +268,16 @@ instruction, with `{}` (the value that is never written to disk) reassigned from
 the 104 committed `.state` files were not touched. FIXED the same day; five
 suites went green, and issue 0637 item 1 closed along the way.
 
-**The next free number is 0928.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the user's challenge to 0927** (*"you're telling me we have to
+have a .save card per every device existing in the design?"*). Filed **0928** —
+device OP save cards rode along on analyses that cannot use them: both gates
+asked only about `save_op_params`, never whether an `op` analysis was enabled,
+and `ase::op_analysis_enabled` had exactly one caller (the gate-OFF nudge).
+Measured: 3000 cards are FREE under `.op` (+0.03 s, +107 KB) and cost +8.6 s and
++242 MB under a 10068-point `.tran`. A live regression 0927 created. FIXED the
+same day.
+
+**The next free number is 0929.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.
