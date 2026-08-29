@@ -462,11 +462,25 @@ check {F6 defect B an ordinary waveform graph is NOT something this surface can 
   [list $f6_ld $f6_an $f6_cur] [list {0 0} {0 {-1 0 -1}} 0]
 
 # ---- a database attached by some OTHER route ------------------------------
-# Waves > Op Annotate, an xschemrc line, a test fixture. It is trusted the
-# FIRST time it is seen -- there is nothing to compare against -- and
-# revalidated from then on. Rows N5, N10 and V31b of test_op_annot.tcl are
-# hand-attaches that expect the `live` arm, so a predicate that answered 0 on
-# first sight would redden a suite this item is not allowed to touch.
+# Waves > Op Annotate, an xschemrc line, a test fixture: an attach that never
+# went through op_annot::db_attach, so nothing stamped it and the first look at
+# it has nothing of its own to compare against.
+#
+# ⚠ THIS ROW WAS RESTATED BY ISSUE 0910 AND ITS OLD CLAIM WAS FALSE. It used to
+# gold "trusted on FIRST sight and revalidated from the second look on", first
+# leg 1. Measured 2026-08-28: when the first look lands AFTER the file was
+# rewritten -- attach from the menu, walk away, re-run, THEN press 6 -- trusting
+# it once means trusting it forever, because the stamp minted at that first look
+# describes run 2's file while the numbers in memory are run 1's, and every
+# later look then matches. Section F36 below stages the user's own order and is
+# where that lives; what this row states is the predicate underneath it.
+#
+# WHAT SURVIVES OF THE TRUST, AND WHY IT MUST. The third leg. A database at a
+# path this sheet would NOT load itself is still trusted on first sight: rows
+# N5, N10 and V31b of tests/headless/test_op_annot.tcl hand-attach exactly that
+# shape and expect the live arm, and issue 0908's whole promise is that a press
+# about one corner never destroys another corner's operating point. The repair
+# is "re-read the file I would have loaded anyway", not "stop trusting".
 catch {xschem raw clear}
 f_mkop $F_RAW 1e-05 1e-04 1e-06
 catch {xschem annotate_op $F_RAW}
@@ -474,8 +488,13 @@ set f7_first [f_cur $F_RAW]
 f_bump
 f_mkop $F_RAW 9e-03 7e-03 5e-05
 set f7_second [f_cur $F_RAW]
-check {F7 guard G3a a database attached by some other route is trusted on FIRST sight and revalidated from the second look on} \
-  [list $f7_first $f7_second] [list 1 0]
+set F7_OTHER [file join $scratch f7other.raw]
+f_mkop $F7_OTHER 4e-06 2e-04 3e-06
+catch {xschem raw clear}
+catch {xschem annotate_op $F7_OTHER}
+set f7_other [f_cur $F_RAW]
+check {F7 guard G3a a database attached by some other route is re-read on FIRST sight when it is the file this sheet would load itself, and trusted on first sight when it is not} \
+  [list $f7_first $f7_second $f7_other] [list 0 0 1]
 
 # ---- the guard no behavioural row can stage -------------------------------
 # `xschem raw rawfile` RAISES with nothing attached, so every state in which it
@@ -551,6 +570,19 @@ check {F10 guard G7 an unreadable results file does not attach, and the sheet is
 # thrown away and re-read, which is exactly the needless re-read G3a exists to
 # prevent -- and on a 40000-vector operating point it is the 58 ms re-read this
 # item's cost table measures, paid for nothing, on every press.
+#
+# ⚠ ISSUE 0910 NARROWED WHICH FIRST SIGHT THAT ARGUMENT IS ABOUT, AND THIS ROW
+# WAS RESTATED WITH IT. The good file is re-attached from another route and then
+# looked at twice. Asked with THIS sheet's own candidate -- the same path -- the
+# answer is now 0 by design and the file is re-read once: that is issue 0910's
+# stated price and it is paid whether or not a stale stamp was left behind, so
+# the leg cannot witness the forget. Asked with a candidate at a DIFFERENT path
+# the answer is 1, which is the trust the forget is protecting and the arm rows
+# N5, N10 and V31b of tests/headless/test_op_annot.tcl depend on. The ORDERING
+# itself -- stamp below the verify, forget on the failure arm -- is witnessed by
+# the two structural legs below and by nothing else, and saying so plainly is
+# part of the row: a behavioural leg that cannot see a guard must not be
+# advertised as its witness.
 catch {xschem raw clear}
 f_mkjunk $F_RAW
 set f10b_att [f_attok $F_RAW]
@@ -559,6 +591,9 @@ f_bump
 f_mkop $F_RAW 1e-05 1e-04 1e-06
 catch {xschem annotate_op $F_RAW}
 set f10b_first [f_cur $F_RAW]
+set F10B_OTHER [file join $scratch f10bother.raw]
+f_mkop $F10B_OTHER 4e-06 2e-04 3e-06
+set f10b_other [f_cur $F10B_OTHER]
 set f10b_rows [f_rows]
 # THE STRUCTURAL HALF. The ordering itself -- stamp BELOW verify, forget on the
 # failure arm -- is a property of the source that no behavioural row can read,
@@ -569,12 +604,12 @@ set f10b_ver [f_lineidx $F_B_ATT0 {_annotated}]
 set f10b_got [f_lineidx $F_B_ATT0 {raw rawfile}]
 set f10b_stamp [f_lineidx $F_B_ATT0 {_db_stamp}]
 set f10b_forget [f_lastidx $F_B_ATT0 {_db_forget}]
-check {F10b guard G8 no freshness stamp is written until the attach has been verified, and a failed attach leaves none behind, so a good file attached later by another route is still trusted on first sight} \
-  [list $f10b_att $f10b_ann $f10b_first $f10b_rows \
+check {F10b guard G8 no freshness stamp is written until the attach has been verified and a failed attach leaves none behind, so a good file attached later by another route is re-read once when it is the file this sheet would load itself and trusted when it is not} \
+  [list $f10b_att $f10b_ann $f10b_first $f10b_other $f10b_rows \
         [expr {($f10b_ver >= 0 && $f10b_got >= 0 && $f10b_stamp >= 0 \
                 && $f10b_ver < $f10b_stamp && $f10b_got < $f10b_stamp) ? 1 : 0}] \
         [expr {($f10b_forget >= 0 && $f10b_ver >= 0 && $f10b_forget > $f10b_ver) ? 1 : 0}]] \
-  [list 0 {0 0} 1 $F_R1 1 1]
+  [list 0 {0 0} 0 1 $F_R1 1 1]
 
 # ---- brief constraint 4, both facts in ONE golden -------------------------
 # A fix that trusts annotate_op's return cannot pass this row, because the row
@@ -1223,6 +1258,489 @@ check {F35 COST asking whether the numbers are still this run's is flat in the s
         [f_pgrep $F_B_CUR2 {_annot_db_print}] \
         [f_pgrep $F_B_ATT2 {_annot_db_print}]] \
   [list 1 1 1 1 0 0]
+
+# ===========================================================================
+# F36 .. F41 -- ISSUE 0910: AN OPERATING POINT ATTACHED FROM OUTSIDE THIS
+#               SURFACE WAS TRUSTED FOREVER AT THE VERY SAME PATH
+# ===========================================================================
+# WHAT THE USER DOES. They pick `Simulation > Graphs > Annotate Operating Point
+# into schematic`, or the waveform window's `Waves > Op Annotate` -- both a bare
+# `xschem annotate_op`, i.e. an attach that never goes through
+# op_annot::db_attach and therefore leaves no freshness stamp behind. Numbers
+# appear. Then the simulation is re-run, rewriting THE SAME FILE. They press 6.
+# And 6 again. And a third time.
+#
+# MEASURED ON THE SHIPPED TREE, 2026-08-28, HEAD 85159039:
+#   sheet paints : id = 10u | gm = 100u | gds = 1u   while the file holds id=9m
+#   status line  : "... These results were already loaded."
+#   three presses re-read the results file ZERO times
+# It never self-corrects. The window is not slow to notice the rewrite -- it
+# never looks. RULING D5-1 and invariant I3 in their own words: not the previous
+# run's number.
+#
+# WHY THE ROWS ABOVE CANNOT SEE IT. Row F7 stages attach -> ASK -> rewrite ->
+# ask, so its first look lands while the file is still run 1 and the stamp it
+# mints is correct. The user's order is attach -> walk away -> re-run -> FIRST
+# look. Nothing in the tree staged that order until this section.
+#
+# ⚠ THE STAGING BELOW IS THE WHOLE ROW, AND A ROW STAGED ANY OTHER WAY IS BLIND.
+# Two things have to be true at once or the question is answered by a different
+# guard several lines earlier and the defect cannot appear:
+#   1. THE PATH MUST BE FRESH. A stamp minted by any earlier row in this file
+#      for the same window and path puts the question on the second-look path,
+#      where the shipped tree is already right. So every block below gets its
+#      OWN directory and its own mos.raw.
+#   2. THE CHORD'S CANDIDATE MUST BE THE ATTACHED FILE. That is the ordinary
+#      bench -- ngspice writes <netlist_dir>/<cell>.raw and that is exactly what
+#      the menu item attached -- and it is why each block sets ::netlist_dir to
+#      its own directory. With a candidate at a different path the question is
+#      answered by guard G4's "not mine, leave it alone" arm, which is issue
+#      0908's promise and is measured separately by F40.
+# Row F36's first leg asserts fact 2 out loud rather than assuming it.
+proc f_blockraw {name} {
+  set d [file join $::scratch b910 $name]
+  file mkdir $d
+  set ::netlist_dir $d
+  return [file join $d mos.raw]
+}
+# ⚠ COUNTING THE RE-READS. `op_annot::db_attach` is the one door every re-read
+# goes through -- the chord's selector and ASE-L's tick both call it -- so a
+# counting proxy in front of it says how many times the file was actually read.
+# It is installed HERE, below every structural row that reads db_attach's own
+# body, and taken off again at the end of this section.
+set ::f_natt 0
+rename ::op_annot::db_attach f_saved_db_attach
+proc ::op_annot::db_attach {path {level {}}} {
+  incr ::f_natt
+  return [::f_saved_db_attach $path $level]
+}
+
+# ---- THE HEADLINE OF 0910, ON THE GESTURE THE USER NAMED ------------------
+# Attach from the menu, walk away, re-run, then press 6 three times. The first
+# press must paint the NEW numbers and say which file it loaded; the second and
+# third must agree with it AND cost nothing.
+set R910 [f_blockraw f36]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+set f36_same [expr {[file normalize [cadence::_annot_op_target]] eq [file normalize $R910] ? 1 : 0}]
+f_bump
+f_mkop $R910 9e-03 7e-03 5e-05
+set ::f_natt 0
+catch {cadence::annot_mode op}
+set f36_r1 [f_rows]
+set f36_m1 [f_msg]
+set f36_n1 $::f_natt
+catch {cadence::annot_mode op}
+set f36_r2 [f_rows]
+set f36_m2 [f_msg]
+catch {cadence::annot_mode op}
+set f36_r3 [f_rows]
+set f36_val [f_val $F_ID]
+set f36_n3 $::f_natt
+check {F36 THE HEADLINE OF 0910 the operating point was attached from the menu and the run was redone at the same path: the FIRST press of 6 paints the NEW numbers and says which file it loaded, and the two presses after it agree without reading anything again} \
+  [list $f36_same $f36_r1 \
+        [string match "$F_M1 Loaded results from *mos.raw." $f36_m1] \
+        [expr {$f36_m1 eq "$F_M1$F_LIVE" ? {SAID-ALREADY-LOADED} : {}}] \
+        $f36_r2 $f36_r3 $f36_val $f36_m2 \
+        [expr {$f36_n1 >= 1 ? 1 : 0}] $f36_n3] \
+  [list 1 $F_R2 1 {} $F_R2 $F_R2 0.009 "$F_M1$F_LIVE" 1 1]
+
+# ---- the same defect on ASE-L's `Results > Annotate` tick -----------------
+# Same staging, driven through the loader the tick calls. Measured on the
+# shipped tree: two ticks, run 1's numbers both times, zero re-reads.
+set R910 [f_blockraw f37]
+set ::f_rawstub $R910
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+f_bump
+f_mkop $R910 9e-03 7e-03 5e-05
+set ::f_natt 0
+catch {ase::ui::annot_ensure_loaded K}
+set f37_r1 [f_rows]
+catch {ase::ui::annot_ensure_loaded K}
+set f37_r2 [f_rows]
+set f37_val [f_val $F_ID]
+set f37_n $::f_natt
+check {F37 issue 0910 on the tick: with the operating point attached from the menu and the run redone at the same path, ticking Results > Annotate shows the NEW numbers, and a second tick agrees without reading again} \
+  [list $f37_r1 $f37_r2 $f37_val $f37_n] [list $F_R2 $F_R2 0.009 1]
+
+# ---- and through ase::ui::annot_refresh_here ------------------------------
+# ⚠ THIS ONE ANSWERS 1 ON THE SHIPPED TREE WHILE SHOWING RUN 1, so its return
+# value alone is not evidence of anything: it reports that it did the refresh
+# and the sheet still carries the previous run. Both facts are golded together.
+set R910 [f_blockraw f38]
+set ::f_rawstub $R910
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 1}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+f_bump
+f_mkop $R910 9e-03 7e-03 5e-05
+set f38_did {}
+catch {set f38_did [ase::ui::annot_refresh_here K]}
+set f38_rows [f_rows]
+set f38_val [f_val $F_ID]
+check {F38 issue 0910 through the design-context refresh: it reports that it refreshed AND the sheet carries the numbers from the run that was just redone} \
+  [list $f38_did $f38_rows $f38_val] [list 1 $F_R2 0.009]
+
+# ---- THE POSITIVE TWIN: nothing was re-run, so nothing may change ---------
+# The over-refusal side of the same line. Attach from the menu, change NOTHING,
+# press 6 three times: the numbers stay, and the press says the results were
+# already loaded from the second press on.
+#
+# ⚠ THE RE-READ COUNT IS 1 AND NOT 0, AND THAT IS THE FIX'S STATED PRICE, NOT A
+# DEFECT. On the shipped tree these three presses cost ZERO reads -- because the
+# first press trusts a database it has never looked at, which is the whole of
+# issue 0910. Once first sight of THIS surface's own candidate re-attaches, the
+# first press pays one read and presses two and three are free. Issue 0910
+# section 4 states that price out loud: "A re-read of a file that has not
+# changed is correct and costs one read." Golding 0 here would be golding the
+# defect back in; golding 3 would accept an unconditional re-read on every
+# press, which is what row F19 refuses.
+set R910 [f_blockraw f39]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+set f39_rf0 [f_rawfile]
+set ::f_natt 0
+catch {cadence::annot_mode op}
+set f39_a [f_rows]
+set f39_ma [f_msg]
+catch {cadence::annot_mode op}
+set f39_b [f_rows]
+set f39_mb [f_msg]
+catch {cadence::annot_mode op}
+set f39_c [f_rows]
+set f39_n $::f_natt
+set f39_val [f_val $F_ID]
+check {F39 POSITIVE TWIN an operating point attached from the menu with nothing re-run survives three presses of 6 unchanged, at the cost of exactly ONE read on the first press and none after it} \
+  [list [expr {$f39_rf0 eq [file normalize $R910] ? 1 : 0}] \
+        $f39_a $f39_b $f39_c $f39_val \
+        [string match "$F_M1 Loaded results from *mos.raw." $f39_ma] \
+        $f39_mb $f39_n] \
+  [list 1 $F_R1 $F_R1 $F_R1 1e-05 1 "$F_M1$F_LIVE" 1]
+
+# ---- THE 0908 TWIN: a different path is still nobody else's business ------
+# GREEN BEFORE AND AFTER, and it is the row that stops the repair being "stop
+# trusting anything". The user has another corner's operating point loaded by
+# hand. The chord's own candidate names a DIFFERENT file. `xschem annotate_op`
+# DELETES a 1-point op or dc it replaces, so a press that decided to re-attach
+# here would not hide the corner the user chose -- it would destroy it.
+# Row F20 above states the same promise on the SECOND press; this one states it
+# on the FIRST, which is the sight issue 0910 changes.
+set R910 [f_blockraw f40]
+set OTH910 [file join $scratch b910 f40other corner.raw]
+file mkdir [file dirname $OTH910]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+f_mkop $OTH910 4e-06 2e-04 3e-06 {v(sentinel910)}
+catch {xschem annotate_op $OTH910}
+set f40_pre [f_idx {v(sentinel910)}]
+set ::f_natt 0
+catch {cadence::annot_mode op}
+set f40_post [f_idx {v(sentinel910)}]
+set f40_rf [f_rawfile]
+set f40_msg [f_msg]
+set f40_n $::f_natt
+check {F40 issue 0908 TWIN the very FIRST press of 6 taken while another corner's operating point is loaded by hand leaves that corner exactly where it is, keeps its own vectors, reads nothing, and still says the results were already loaded} \
+  [list [expr {$f40_pre >= 0}] [expr {$f40_post >= 0}] \
+        [expr {$f40_rf eq [file normalize $OTH910] ? 1 : 0}] $f40_msg $f40_n] \
+  [list 1 1 1 "$F_M1$F_LIVE" 0]
+
+# ---- the three first-sight arms, asked of the mint itself -----------------
+# Each leg gets a path this window has never stamped, so each really is a FIRST
+# sight; there is no forget between them and none is needed.
+#   a  the attached file IS this surface's candidate -> NOT CURRENT, re-attach.
+#      That is issue 0910.
+#   b  the attached file is at a DIFFERENT path -> CURRENT. This is guard G3a's
+#      surviving arm and it is not decoration: rows N5, N10 and V31b of
+#      tests/headless/test_op_annot.tcl hand-attach a database and expect the
+#      live arm, and a predicate that answered 0 on every first sight would
+#      redden a suite this item does not own.
+#   c  no candidate at all -> CURRENT. ⚠ THIS LEG IS NOT THE WITNESS FOR THE
+#      EMPTINESS TEST IN THAT BRANCH, and an earlier version of this comment
+#      said it was, on a reason that is false -- see row F46 below, which
+#      measures what `file normalize` of an empty string really answers and
+#      fences the two terms structurally. This leg says only what it says: with
+#      no candidate to compare against, a database attached from outside is
+#      left alone.
+#   d  after a verified re-attach the very next same-path question is CURRENT
+#      again -- the cheap path survives, which is what keeps the price at one
+#      read per re-run rather than one per press.
+set RA910 [f_blockraw f41a]
+catch {xschem raw clear}
+xschem load $F_SCH
+f_mkop $RA910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $RA910}
+set f41_same [f_cur $RA910]
+set f41_re [f_attok $RA910]
+set f41_again [f_cur $RA910]
+set RB910 [f_blockraw f41b]
+set OTHB910 [file join $scratch b910 f41other corner.raw]
+file mkdir [file dirname $OTHB910]
+catch {xschem raw clear}
+f_mkop $RB910 1e-05 1e-04 1e-06
+f_mkop $OTHB910 4e-06 2e-04 3e-06 {v(sentinel910b)}
+catch {xschem annotate_op $OTHB910}
+set f41_other [f_cur $RB910]
+set OTHC910 [file join $scratch b910 f41otherc corner.raw]
+file mkdir [file dirname $OTHC910]
+catch {xschem raw clear}
+f_mkop $OTHC910 4e-06 2e-04 3e-06 {v(sentinel910c)}
+catch {xschem annotate_op $OTHC910}
+set f41_nocand [f_cur {}]
+check {F41 the first look at a database attached from outside: it is re-read when it is the file this sheet would load itself, and trusted when it is not, and trusted when this sheet has no file of its own to compare against} \
+  [list $f41_same $f41_re $f41_again $f41_other $f41_nocand] \
+  [list 0 1 1 1 1]
+
+# ============================================================================
+# ISSUE 0914 -- THE ORDINARY BENCH HAS A WAVEFORM GRAPH OPEN, AND EVERY ROW
+# ABOVE STAGES AN EMPTY WINDOW
+# ============================================================================
+# Every hand-attach row above puts the operating point into a window holding
+# NOTHING else. The bench does not look like that: the user has a waveform
+# graph on the sheet, which is a second database in the same window's registry.
+# Add that one line and the press changes its answer completely, because
+# `cadence::annot_mode` decides what to do next by asking `xschem raw loaded`
+# -- "is ANY database attached here" -- immediately after taking its own
+# operating point off. The graph answers yes, so control took the arm that
+# means "a raw is loaded and the rows are blank anyway", said "No operating
+# point results are loaded. These are from a 'tran' run instead" and never went
+# to look for the results file the press was about.
+#
+# WHAT THE USER SAW, both halves measured 2026-08-28:
+#   * nothing re-run at all -- Waves > Op Annotate, then 6 -- the numbers
+#     vanished and the operating point was GONE from the window. A regression
+#     from issue 0910: before it, that first press trusted the database and
+#     never took it off.
+#   * press 6, re-run, press 6 -- the second press blanked instead of showing
+#     the new numbers. That half was true of the shipped tree too.
+# Both are one defect: after this surface takes its own database off, "is
+# something loaded" stops being the question. Rows F43 and F44.
+
+# ---- F43: THE REGRESSION. Nothing re-run, and a graph is open. ------------
+set R910 [f_blockraw f43]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem raw read $F_TRAN tran}
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+set f43_pre [f_info_has $F_TRAN]
+set ::f_natt 0
+catch {cadence::annot_mode op}
+set f43_a [f_rows]
+set f43_ma [f_msg]
+catch {cadence::annot_mode op}
+set f43_b [f_rows]
+catch {cadence::annot_mode op}
+set f43_c [f_rows]
+set f43_n $::f_natt
+set f43_val [f_val $F_ID]
+set f43_graph [f_info_has $F_TRAN]
+check {F43 issue 0914 with an ordinary waveform graph open, an operating point attached from the menu and nothing re-run survives three presses of 6, the graph is still in the window afterwards, and the whole thing costs one read} \
+  [list $f43_pre $f43_a $f43_b $f43_c $f43_val \
+        [string match "$F_M1 Loaded results from *mos.raw." $f43_ma] \
+        $f43_n $f43_graph] \
+  [list 1 $F_R1 $F_R1 $F_R1 1e-05 1 1 1]
+
+# ---- F44: the headline of 0684 with the same graph open ------------------
+# The half that was broken on the shipped tree as well: the press that follows
+# a re-run must paint the NEW numbers, not blank the sheet.
+set R910 [f_blockraw f44]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem raw read $F_TRAN tran}
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+f_bump
+f_mkop $R910 9e-03 7e-03 5e-05
+set ::f_natt 0
+catch {cadence::annot_mode op}
+set f44_a [f_rows]
+set f44_ma [f_msg]
+catch {cadence::annot_mode op}
+set f44_b [f_rows]
+set f44_val [f_val $F_ID]
+set f44_n $::f_natt
+set f44_graph [f_info_has $F_TRAN]
+check {F44 issue 0914 with a waveform graph open, the press after a re-run at the same path paints the NEW numbers and leaves the graph in the window} \
+  [list $f44_a $f44_b $f44_val \
+        [string match "$F_M1 Loaded results from *mos.raw." $f44_ma] \
+        $f44_n $f44_graph] \
+  [list $F_R2 $F_R2 0.009 1 1 1]
+
+# ---- F45: the unwind must not take the user's graph away -----------------
+# The other end of the same change. Letting the press reach the file selector
+# with a graph still in the window also lets it reach the RULING 0856 unwind at
+# the tail of that selector -- the arm that runs when the file it found turns
+# out to be a transient and puts everything back. That arm used to unload the
+# WHOLE registry, which was honest only while the arm could not be reached with
+# anything else in it: `xschem raw clear` with no file named unloads all raw
+# files. Reached with a graph open, it would take away the trace the user is
+# looking at, which is issue 0902's data loss arriving through a new door.
+#
+# Staging: the graph is opened FIRST so the operating point attached after it is
+# the current database, then the re-run leaves a TRANSIENT at the path the sheet
+# would load. The press must blank, say which analysis it really found, put the
+# mask back -- and leave the graph exactly where it was.
+set R910 [f_blockraw f45]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem raw read $F_TRAN tran}
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+set f45_att [f_attok $R910]
+set f45_pre [f_info_has $F_TRAN]
+f_bump
+f_mktran $R910
+catch {cadence::annot_mode op}
+set f45_graph [f_info_has $F_TRAN]
+set f45_rows [f_rows]
+set f45_mask [f_mask]
+set f45_msg [f_msg]
+check {F45 issue 0914 when the re-run left a transient where the operating point used to be, the press blanks and says so and still leaves the user's waveform graph loaded} \
+  [list $f45_att $f45_pre $f45_graph $f45_rows $f45_mask \
+        [string match "*from a 'tran' run instead*" $f45_msg]] \
+  [list 1 1 1 $F_BLANK 0 1]
+
+# ---- F43b: the same bench state on ASE-L's Results > Annotate tick --------
+# F43's twin on the other surface, and the reason it is here is that the two
+# surfaces reach the same first-sight answer through completely different code:
+# the tick has no "a raw is loaded, so stop" arm at all, it detaches and then
+# attaches. Measured on the delivered tree it was already right, and this row is
+# what keeps it right -- it is the same ordinary bench, a waveform graph open
+# and an operating point loaded from the menu with nothing re-run, and the
+# numbers must still be there afterwards.
+set R910 [f_blockraw f43b]
+set ::f_rawstub $R910
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem raw read $F_TRAN tran}
+catch {xschem set annot_show 0}
+f_mkop $R910 1e-05 1e-04 1e-06
+catch {xschem annotate_op $R910}
+set ::f_natt 0
+catch {ase::ui::annot_ensure_loaded K}
+set f43b_a [f_rows]
+catch {ase::ui::annot_ensure_loaded K}
+set f43b_b [f_rows]
+set f43b_n $::f_natt
+set f43b_graph [f_info_has $F_TRAN]
+check {F43b issue 0914 on ASE-L's Results > Annotate tick: with a waveform graph open and nothing re-run, two ticks keep the numbers, keep the graph, and cost one read} \
+  [list $f43b_a $f43b_b $f43b_n $f43b_graph] [list $F_R1 $F_R1 1 1]
+
+catch {rename ::op_annot::db_attach {}}
+catch {rename ::f_saved_db_attach ::op_annot::db_attach}
+set ::netlist_dir $nd
+catch {xschem raw clear}
+set ::f_rawstub $F_RAW
+
+# ---- the guard issue 0910 left without a behavioural witness --------------
+# `op_annot::_db_forget` with NO argument throws away every freshness stamp
+# belonging to this window the moment nothing publishable is attached -- the
+# user picked `Waves > Clear`, a graph replaced the database, another surface
+# detached it. A stamp describes an attachment that is over; keeping it would
+# let the NEXT attach of that same path be judged against an observation from
+# the previous one.
+#
+# ⚠ ROW F7 USED TO BE ITS WITNESS AND IS NOT ANY MORE, AND THAT IS THIS ROW'S
+# REASON TO EXIST. F7 hand-attached a path this file had stamped before and
+# required the FIRST look to answer "current"; since issue 0910 that same first
+# look answers "re-read" whether or not a stale stamp survived, so F7 cannot
+# tell the two apart. MEASURED 2026-08-28 by neutralizing the no-argument form
+# and re-running this whole file: 45 of 45 still passed, nothing moved. A guard
+# every suite in the tier list agrees can be deleted is precisely what issue
+# 0684 catalogued six of, so it gets a structural witness rather than silence.
+#
+# `f_code` drops whole-line comments, so the prose above cannot satisfy any of
+# this. The claim is about ORDER and about the CALL SHAPE: the forget-all sits
+# on the not-attached arm, which is asked before any path question, and it is
+# called with no argument (the one-argument form is the targeted drop that
+# `op_annot::db_attach` uses on its failure arm, and row F10b owns that one).
+set f42_ann [f_lineidx $F_B_CUR2 {_annotated}]
+set f42_forget [f_lineidx $F_B_CUR2 {_db_forget}]
+set f42_path [f_lineidx $F_B_CUR2 {raw rawfile}]
+check {F42 STRUCTURAL every freshness stamp this window holds is thrown away the moment nothing is attached, and that happens before any question about paths}   [list [expr {$F_B_CUR2 ne {NOPROC} ? 1 : 0}]         [expr {($f42_ann >= 0 && $f42_forget >= 0 && $f42_ann <= $f42_forget) ? 1 : 0}]         [expr {($f42_forget >= 0 && $f42_path >= 0 && $f42_forget < $f42_path) ? 1 : 0}]         [f_pgrep $F_B_CUR2 {_db_forget\s*(;|\})}]]   [list 1 1 1 1]
+
+# ---- the two emptiness terms in the first-sight branch -------------------
+# ⚠ THIS ROW REPLACES A CLAIM THAT WAS SIMPLY UNTRUE, and the untrue version
+# shipped past two review passes. The branch in `op_annot::db_current` reads
+#
+#     if the candidate is not empty and normalising it does not blow up
+#       if the normalised candidate is not empty and equals the attached path
+#
+# and until 2026-08-28 the comment above it -- and row F41's leg c -- said the
+# emptiness test had to come first because `file normalize` of an empty string
+# answers the current working DIRECTORY, so normalising first would compare the
+# attached results file against a directory name. MEASURED here, in the
+# interpreter this actually runs in, that is FALSE: `file normalize` of an
+# empty string answers the EMPTY STRING. Leg a is that measurement, kept as a
+# check rather than as prose so a future Tcl that behaves differently reddens
+# this file instead of quietly changing what the branch means.
+#
+# The consequence, said plainly: with no candidate the comparison is false
+# either way, control falls through to stamp-and-trust, and that is the answer
+# the no-candidate case wants -- so NEITHER emptiness term can change an answer
+# on this interpreter, and no behavioural row anywhere in the tier list can see
+# them. Measured by deleting each one and both together: 46 of 46 here, 475 of
+# 475 in test_op_annot, 27 of 27 in test_annot_blank_cause_0909, nothing moved.
+# They stay because they say what the branch is asking -- "does this surface
+# have a candidate at all" -- and because the empty-string behaviour is this
+# Tcl's, not a contract this file should lean on. Legs b, c and d are their
+# only witnesses, and they are structural on purpose.
+set f46_norm [file normalize {}]
+check {F46 STRUCTURAL the first-sight branch tests the candidate for emptiness before it normalises it, and tests the normalised path again before comparing, neither of which any behavioural row can see} \
+  [list [expr {$f46_norm eq {} ? 1 : 0}] \
+        [f_pgrep $F_B_CUR2 {\$cand ne \{\}.*catch \{file normalize \$cand\}}] \
+        [f_pgrep $F_B_CUR2 {\$nc0 ne \{\}\s*&&\s*\$nc0 eq \$np}] \
+        [expr {$F_B_CUR2 ne {NOPROC} ? 1 : 0}]] \
+  [list 1 1 1 1]
+
+# ---- and the BEHAVIOUR of the forget-all, which F42 cannot see ------------
+# Row F42 above requires the no-argument `op_annot::_db_forget` to be CALLED on
+# the not-attached arm, above every path question. It cannot tell a live guard
+# from a hollow one: measured 2026-08-28, gutting the wipe loop while leaving
+# the call in place leaves all twelve headless suites green, F42 included.
+#
+# This row watches the guard do its job, and it can only be seen through the
+# SAME-PATH question. Attach through the one mint, which stamps. Ask once: the
+# stamp matches, so the answer is the cheap "current". Now pick `Waves > Clear`
+# -- nothing is attached, the next question is refused, and THAT refusal is
+# where every stamp this window holds is thrown away. Re-attach the very same
+# file from the menu, which mints no stamp of its own, and ask again: with the
+# wipe, this is a first sight of this surface's own candidate and the answer is
+# "re-read"; without it, the stamp from the previous attachment survives, still
+# matches the untouched file, and the answer is the stale "current".
+set R914 [file join $scratch b914 f47]
+file mkdir $R914
+set R914 [file join $R914 mos.raw]
+set ::netlist_dir [file dirname $R914]
+catch {xschem raw clear}
+xschem load $F_SCH
+f_mkop $R914 1e-05 1e-04 1e-06
+set f47_att [f_attok $R914]
+set f47_cheap [f_cur $R914]
+catch {xschem raw clear}
+set f47_none [f_cur $R914]
+catch {xschem annotate_op $R914}
+set f47_after [f_cur $R914]
+check {F47 taking the database off throws away the freshness stamp with it, so re-attaching the same file from the menu is a FIRST sight again and is re-read rather than trusted} \
+  [list $f47_att $f47_cheap $f47_none $f47_after] [list 1 1 0 0]
+set ::netlist_dir $nd
+catch {xschem raw clear}
 
 # --- teardown ----------------------------------------------------------------
 catch {rename ase::last_rawfile {}}

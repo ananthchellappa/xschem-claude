@@ -14,6 +14,60 @@ Newest entries on top.
 
 ---
 
+## Q64. Every row is green, the fix is right, and the feature is broken on the bench. What did the suite fail to stage?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issues **0910** (fixed) and **0914**
+  (found by 0910's own sabotage pass, fixed the same day),
+  `src/op_annot.tcl`, `utils/annot_mode.tcl`.
+
+**The suite staged an empty window. The user's window is never empty.**
+
+Issue 0910 was a stale-numbers defect: an operating point loaded from
+`Waves > Op Annotate`, then a re-run over the same file, and every later press of
+`6` repainted the previous run. The fix was four lines and it was correct. Fifty
+two rows agreed, plus 475 in a neighbouring suite, plus a clean full regression.
+One line added to the staging of the suite's own *positive* row —
+`xschem raw read <transient> tran`, i.e. **the user has a waveform graph open**,
+which is the reason they are looking at this schematic at all — inverted the
+answer: the press blanked the sheet and **deleted** the operating point from the
+window, with nothing re-run and nothing changed on disk.
+
+The mechanism generalises past this feature. The press takes its own stale
+database off, then asks the engine *"is a raw file loaded?"* to decide what to do
+next. That question answers **"is ANY database attached to this window"**, not
+**"is one of mine"**. With an empty window the two are the same sentence and every
+row passed. With the ordinary bench they are different sentences, and the code
+took the "something is loaded, so stop" arm about a database it had no interest
+in. The repair was to keep the detach's *own* answer and ask
+`!$took && $loaded >= 0` — once this surface has taken its database off, "is
+something loaded" is not the question any more, whatever else the window holds.
+
+**Two rules fall out of it.**
+
+*For predicates:* a question whose subject is "any" cannot decide something whose
+subject is "mine". Whenever a re-read follows a mutation you just performed, ask
+what the re-read's subject actually is — the mutation usually narrowed it.
+
+*For suites, and this is the expensive one:* **a fixture's empty slots are
+assertions**. A row that stages one database is asserting that the count is one,
+silently, and it is the assertion nobody wrote down and nobody reviews. When a
+feature reads shared session state — a registry, a selection, an open-window
+list, a hierarchy stack — at least one row must stage it with **something else
+already in it**, put there by a different user gesture. That row is the whole
+difference between a green board and a user losing their numbers.
+
+Corollary, learned the same day: fixing the first door opened a second one. With
+a graph now reachable in the window, an unwind path that had always been safe —
+its comment said so, and its premise was true when it was written — became a bare
+`xschem raw clear` that would unload the user's waveform trace on a press that was
+only ever about the operating point. **A guard whose comment justifies itself by a
+precondition is a guard that expires the moment someone changes the precondition,
+and nothing in the language will tell you.** Grep for the precondition, not for
+the guard.
+
+---
+
 ## Q63. The explanation the user wants exists, is correct, and never reaches them. Why, and what is the general shape of that bug?
 
 - **Asked:** 2026-08-28
@@ -89,7 +143,8 @@ row is not about the product.
 
 - **Asked:** 2026-08-28
 - **Project state:** branch `annotate`, issue **0684** (fixed for the routes its
-  §8 table names), issue **0910** (filed, open), `src/op_annot.tcl`.
+  §8 table names), issue **0910** (filed open, **fixed later the same day** — see
+  the closing note), `src/op_annot.tcl`.
 
 **The stamp is taken when the question is first ASKED, not when the data is
 ATTACHED — and those are different moments whenever somebody else did the
@@ -129,6 +184,18 @@ performs. The user's sequence is `attach → walk away → re-run → first ask`
 states, same code, different order — and the order was the whole defect. When a
 row and a defect disagree, check whether the row has quietly chosen the one
 interleaving in which the code is right.
+
+**How it was answered (2026-08-28, issue 0910 fixed).** Of the two options this
+entry names — re-acquire on first sight, or be honest that you do not know — the
+first was taken, but only for the path this surface would have loaded itself.
+First sight of **that** file re-attaches; first sight of any other file is still
+stamped and trusted. Splitting there matters: the trust arm is not a performance
+concession, it is what stops a press about one corner **deleting** another
+corner's operating point, because the attach primitive destroys the database it
+replaces. "Distrust everything" is the stronger-looking fix and it is a data-loss
+bug (issue 0908). The price of the half that moved is one read of an unchanged
+file on the first press after a hand attach, and it is golded as one so nobody
+optimises it back to zero — zero is the defect.
 
 ---
 

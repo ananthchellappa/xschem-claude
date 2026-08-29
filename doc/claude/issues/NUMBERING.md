@@ -176,7 +176,24 @@ whose vectors are missing while its cell siblings populate is never looked at.
 Recorded as an accepted limitation of 0909's fix and needing a user ruling on
 whether to pay per-*device* for exactness.
 
-**The next free number is 0914.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-28, item B1 (the fix for 0910).** Filed **0914**, **0915** and
+**0916**. **0914** — with a waveform graph open in the same window, taking a
+stale operating point off is a one-way door: `cadence::annot_mode` asks
+`xschem raw loaded` right after its own detach, that question answers "is ANY
+database attached", the user's graph answers yes, and the press blanks the sheet
+instead of reloading. Found by B1's own sabotage pass, **fixed in the same item**
+— half of it was a regression from 0910's first-sight re-read and half was live
+on the shipped tree. **0915** — a re-run inside the same wall-clock second at the
+same byte length is invisible to the `{mtime size}` freshness stamp, so from the
+second press on the sheet keeps the previous run's numbers; named as a limitation
+in three places since 0684 and never given a number until now. **0916** — when
+`<netlist_dir>/<cell>.raw` is a **symlink** to the file the menu attached,
+`file normalize` does not resolve the final component, so 0910's own same-path
+test never fires and its §1 transcript reproduces word for word on a tree where
+0910 is marked FIXED. 0915 and 0916 are OPEN; both are measured, neither is a
+regression from this item.
+
+**The next free number is 0917.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

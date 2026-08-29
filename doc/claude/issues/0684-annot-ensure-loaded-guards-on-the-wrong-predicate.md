@@ -327,7 +327,7 @@ paragraphs in each helper saying why they are not the same question.
 
 | proc | file | what |
 |---|---|---|
-| `op_annot::db_current {cand}` | `src/op_annot.tcl` | THE MINT. G1 nothing publishable attached → 0 (defect B, asked **first**); G2 unnameable → 0 (**every catch falls to re-attach, never to `return`**); G3a first sight → stamp and trust; G3b stamp matches → 1 (the cheap path); G4 stamp differs → 1 when the candidate is elsewhere or absent, **0 when it is this file** (the headline) |
+| `op_annot::db_current {cand}` | `src/op_annot.tcl` | THE MINT. G1 nothing publishable attached → 0 (defect B, asked **first**); G2 unnameable → 0 (**every catch falls to re-attach, never to `return`**); G3a first sight → **0 when the attached file IS this surface's own candidate** (issue 0910, fixed 2026-08-28), stamp and trust otherwise; G3b stamp matches → 1 (the cheap path); G4 stamp differs → 1 when the candidate is elsewhere or absent, **0 when it is this file** (the headline) |
 | `op_annot::db_attach {path ?level?}` | `src/op_annot.tcl` | issue 0685's **targeted** drop (`op`/`dc` at this path only, using the registry's own path spelling, **never** `tran`, **never** the bare `xschem raw clear`), then `annotate_op`, then **verify by re-asking**, then stamp |
 | `op_annot::db_detach` | `src/op_annot.tcl` | the "or BLANK" half. `cadence::_annot_db_release`'s body, moved verbatim; that proc is now a one-line delegate |
 | `op_annot::_db_key` / `_db_stat` / `_db_stamp` / `_db_forget` | `src/op_annot.tcl` | the stamp table, keyed `<current_win_path>|<normpath>` because the mask and `xctx->raw` are both per-context |
@@ -405,7 +405,8 @@ and the sheet the user is standing on resolves to the file that is attached.*
 
 > ⚠ **THIS PARAGRAPH SAID "every route" UNTIL 2026-08-28 AND THAT WAS FALSE.**
 > The adversary pass measured two states it does not cover, and both are the
-> filed defect surviving verbatim. **Neither is fixed.** See §10, and
+> filed defect surviving verbatim. **0910 was fixed later the same day (item
+> B1); 0911 is not fixed.** See §10, and
 > [0910](0910-an-operating-point-attached-from-outside-is-trusted-forever-at-the-same-path.md)
 > and
 > [0911](0911-on-a-descended-sheet-with-no-ase-l-session-the-chord-never-repairs.md).
@@ -422,17 +423,27 @@ and the sheet the user is standing on resolves to the file that is attached.*
   mandatory and not optional.
 * **A same-second rewrite of identical size** is invisible to the stamp, on every
   route. `file mtime` is 1-second resolution. Unremoved, and issue 0904 is the
-  axis on which a content fingerprint would have to be paid for.
-* A database attached by some **other** route — `Simulation > Graphs > Annotate
+  axis on which a content fingerprint would have to be paid for. **Now filed as
+  [0915](0915-a-re-run-inside-the-same-second-at-the-same-byte-length-is-invisible-to-the-freshness-stamp.md)**
+  (2026-08-28, item B1's write-up), because a limitation living only in a bullet
+  list is a limitation nobody can be given.
+* ~~A database attached by some **other** route — `Simulation > Graphs > Annotate
   Operating Point into schematic`, `Waves > Op Annotate`, an xschemrc line — is
   trusted on **first sight**, and the stamp is taken at that first *observation*,
   not at the attach. If the file changed in between, the stamp already describes
-  the NEW file and the OLD numbers are blessed **forever**: press `6` three times
-  and the first run's `id`/`gm`/`gds` repaint every time. Filed as
-  [0910](0910-an-operating-point-attached-from-outside-is-trusted-forever-at-the-same-path.md),
-  measured on the delivered tree. The trust arm itself is load-bearing — it is
-  what keeps rows N5, N10 and V31b green — so the fix is narrower than deleting
-  it (0910 §4).
+  the NEW file and the OLD numbers are blessed **forever**.~~ **CLOSED
+  2026-08-28 (item B1),
+  [0910](0910-an-operating-point-attached-from-outside-is-trusted-forever-at-the-same-path.md)
+  §7.** First sight of a database whose path IS this surface's own candidate now
+  re-attaches instead of trusting, so the press paints the new run and says which
+  file it loaded. The trust arm itself stayed — it is what keeps rows N5, N10 and
+  V31b green, and deleting it would let a press about one corner destroy another
+  corner's operating point (issue 0908) — so only the same-path half moved.
+  ⚠ **Only for the ordinary SPELLING of the path.** When `<netlist_dir>/<cell>.raw`
+  is a symlink to the file the menu attached, `file normalize` does not resolve
+  the final component, the same-path test never fires, and 0910's transcript
+  reproduces verbatim — filed as
+  [0916](0916-a-symlinked-results-path-defeats-the-same-path-test-so-the-previous-runs-numbers-survive.md).
 * On a **descended sheet with no ASE-L session**, the `netlist_dir` candidate is
   built from the sheet the user is standing on, so it names the SUBCELL's raw
   while the design is painting from the TOP's. Guard G4 reads that as "not mine,
@@ -505,12 +516,27 @@ at**. None of the guards was removed. Each one gained a row.
 
 | guard | what it stops | why nothing saw it | the row that sees it now |
 |---|---|---|---|
-| **G8** — the freshness stamp is written only *after* the attach is verified, and a failed attach drops any stamp it held | a stamp describing a file that never attached | the stated hazard ("already loaded over a blank sheet") is **unreachable**: a failed attach leaves nothing publishable attached, so G1 refuses the next question before any stamp is read | **F10b**, both halves — behavioural (a simulator mid-write fails the attach; the file finishes; the user attaches it from `Waves > Op Annotate`, and that good fresh attach must still be trusted on first sight, not thrown away and re-read) plus a structural leg pinning the stamp **below** the verify and a forget **after** it |
+| **G8** — the freshness stamp is written only *after* the attach is verified, and a failed attach drops any stamp it held | a stamp describing a file that never attached | the stated hazard ("already loaded over a blank sheet") is **unreachable**: a failed attach leaves nothing publishable attached, so G1 refuses the next question before any stamp is read | **F10b**, restated by issue 0910: the good file re-attached from another route is now re-read once when it is this sheet's own candidate (0910's stated price, paid whether or not a stale stamp survived) and trusted when it is at a different path. The ORDERING — stamp **below** the verify, forget **after** it — is carried by the row's two structural legs and, as the row now says out loud, by nothing else |
 | **G16** — the design-window borrow: switch, verify the switch took (landmine 17), give the context back | numbers written into a **foreign schematic** | every fixture held **one** schematic window, because the tick's own `annot_goto_design` leaves the design current — 12 of 12 calls entered with `cur == win`, so the branch was dead code under test | **W1a28** and **W1a29** of `test_ase_window.tcl`, which drive a finished run from the decoy tab. W1a29 stages the refused switch through `xschem set semaphore` — the landmine itself — and measures the failure: without the check the refresh answers "done" and the session's operating point lands in the **foreign** tab |
 | **G4's path arm** — a database at a path this surface never owned is left where it is | one corner's operating point wiped by a press about another (`annotate_op` **deletes** a 1-point op/dc it replaces) | F5 and F20 staged the situation and then asked **once**, which G3a's first-sight arm answers several lines above the path comparison | **F5** takes a first look, *then* rewrites the foreign file, then asks again; **F20** does the same through two presses of `6` |
 | **G4's no-candidate arm** | the tick throwing away good numbers when the results file has been deleted and there is nothing to re-attach from | F4 staged an **unchanged** file, so the cheap path answered one line earlier | **F4** rewrites the file first, and its last leg asks the same question *with* a candidate and requires `0` — the proof that the cheap path did not answer |
 | **G6's never-tran half** | issue 0685 §4's data loss: the user's waveform unloaded by a failed re-attach | F13 puts the waveform at a **different** path, where the type list cannot matter — only F14's source grep moved | **F13b**, the same failure at the **same** path. Measured: shipped keeps the entry and `v(zzz)` still reads; with `tran` in the list the registry is empty |
 | **G13's `$ann` term** | an ordinary waveform graph destroyed by a tick that is not about it | F24 golded that the numbers render and the session's file is current — both still true when the detach is unconditional | **F24's last leg**: is the graph still in the registry afterwards |
+
+### A seventh, created by the 0910 fix itself (item B1, 2026-08-28)
+
+`op_annot::_db_forget` with **no argument** — every freshness stamp this window
+holds is dropped the moment nothing publishable is attached — used to be seen by
+row **F7**: F7 hand-attached a path this file had already stamped and required
+the FIRST look to answer "current". After 0910 that same first look answers
+"re-read" whether or not a stale stamp survived, so F7 can no longer tell the two
+apart. Measured by neutralizing the no-argument form and re-running the whole
+file: **46 of 46 still passed, nothing moved.** Rather than let a guard sit with
+no witness — which is the exact shape this section catalogued six of — it was
+given a structural one, row **F42**, which requires the forget-all to sit on the
+not-attached arm above every path question and to be called with no argument.
+Both the proc's comment and the row say plainly that the behavioural witness is
+gone, so nobody re-derives it.
 
 ### Four rows whose titles claimed more than they measured
 
@@ -564,7 +590,7 @@ somebody can lose.
 
 | # | the state | what the user sees | filed |
 |---|---|---|---|
-| 1 | the database was attached by `Simulation > Graphs > Annotate Operating Point into schematic` or `Waves > Op Annotate` — both a bare `xschem annotate_op` — and the run happened after that | press `6`, `6`, `6`: **run 1's `id`/`gm`/`gds` every time**, under *"These results were already loaded."* Permanent. Guard G3a stamps at the first **observation**, not at the attach, so the stamp already describes run 2's file while the in-memory copy is run 1's | **0910** |
+| 1 | the database was attached by `Simulation > Graphs > Annotate Operating Point into schematic` or `Waves > Op Annotate` — both a bare `xschem annotate_op` — and the run happened after that | press `6`, `6`, `6`: **run 1's `id`/`gm`/`gds` every time**, under *"These results were already loaded."* Permanent. Guard G3a stamps at the first **observation**, not at the attach, so the stamp already describes run 2's file while the in-memory copy is run 1's | **0910 — FIXED 2026-08-28 (item B1)**; the press now paints the new run and names the file it loaded |
 | 2 | a descended sheet, no ASE-L session (the plain `netlist_dir` way of working) | the same permanence, **and the escape breaks**: `Waves > Clear` then `6` says *"There is no results file at …/sub.raw yet. Run a simulation first."* about a run that just finished. The candidate is built from the sheet the user is standing on, so it names the subcell while the design paints from the top | **0911** |
 | 3 | the results file has been deleted (the simulator removed it and the run died) | ASE-L's **tick keeps the numbers of a file that is gone** and untick-and-re-tick does not clear it; `6` in the identical state blanks and says why. The two surfaces disagree and only one speaks | **0912** |
 

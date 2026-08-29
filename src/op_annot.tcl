@@ -883,8 +883,20 @@ proc op_annot::_db_stat {np} {
 ## keeping it would let the NEXT attach of that same path be judged against an
 ## observation from the previous one: the file would read "changed since I last
 ## looked" and a perfectly good fresh attach would be thrown away and re-read.
-## Row F7 is what sees this: it hand-attaches a path this file has stamped
-## before and requires the FIRST look to answer "current".
+##
+## ⚠ ITS BEHAVIOURAL WITNESS IS GONE, AND THAT IS WORTH SAYING OUT LOUD
+## (measured 2026-08-28, item B1, by neutralizing the no-argument form and
+## re-running the suite: 45/45, nothing moved). Row F7 used to see it -- it
+## hand-attached a path this file had stamped before and required the FIRST
+## look to answer "current". Since issue 0910 that same first look answers
+## "re-read" whether or not a stale stamp survived, so F7 can no longer tell
+## the two apart, and every other arm agrees either way. What is left is
+## hygiene with teeth in one direction only: a surviving stamp can never make
+## a re-attach say "current" that should have said "re-read", it can only cost
+## an extra read. Row **F42** is now its only witness and it is a STRUCTURAL
+## one -- it reads this proc's caller and requires the no-argument forget to
+## sit on the not-attached arm, above every path question. Deleting this and
+## watching the suite stay green is exactly the trap 0684 catalogued.
 proc op_annot::_db_forget {{np {}}} {
   variable _db_src
   if {$np ne {}} {
@@ -936,27 +948,30 @@ proc op_annot::_db_stamp {np} {
 ##       state in which `raw rawfile` blows up -- so row F8 reads this proc's
 ##       own source and is its only witness.
 ##
-##   G3a no stamp for this window+path -> record one and answer 1 ("first
-##       sight"). A database attached by some OTHER route -- `Waves > Op
-##       Annotate`, an xschemrc line, a test fixture -- has nothing to be
-##       compared against the first time it is seen, so it is trusted once and
-##       revalidated from then on. Rows N5, N10 and V31b of
-##       tests/headless/test_op_annot.tcl are exactly that shape and expect the
-##       `live` arm; a predicate that answered 0 on first sight would redden a
-##       suite this item does not own, and would re-read a good file for no
-##       reason on every press.
-##       ⚠ ISSUE 0910, MEASURED 2026-08-28 AND OPEN: "trusted once" is
-##       "trusted FOREVER" whenever the first sight lands AFTER the file
-##       changed. The stamp below is taken at this first OBSERVATION, not at
-##       the attach -- `op_annot::db_attach` is the only place that stamps at
-##       attach time -- so a database put here by `Simulation > Graphs >
-##       Annotate Operating Point into schematic` or `Waves > Op Annotate`,
-##       followed by a re-run, is blessed against the NEW file while holding
-##       the OLD numbers, and every later press repaints run 1. Row F7 cannot
-##       see it: F7 asks once BEFORE it rewrites. The narrow fix is in 0910 §4
-##       -- when the attached path IS this surface's candidate, re-attach on
-##       first sight instead of trusting; the arm this comment defends is only
-##       needed for a path that is NOT the candidate, which is guard G4's.
+##   G3a no stamp for this window+path -- "first sight". A database attached by
+##       some OTHER route -- `Waves > Op Annotate`, `Simulation > Graphs >
+##       Annotate Operating Point into schematic`, an xschemrc line, a test
+##       fixture -- has nothing to be compared against the first time it is
+##       seen. WHICH FILE IT IS decides what happens next, and the split is
+##       ISSUE 0910 (fixed 2026-08-28):
+##         the attached path IS this surface's own candidate -> 0, RE-ATTACH.
+##           Until this was fixed, "trusted once" was "trusted FOREVER"
+##           whenever the first sight landed AFTER the file changed: the stamp
+##           is minted at this OBSERVATION, not at the attach, so a menu attach
+##           followed by a re-run over the same file was blessed against run 2
+##           while holding run 1's numbers, and every press of `6` from then on
+##           repainted the previous run under "These results were already
+##           loaded." Row F7 cannot see it -- F7 asks once BEFORE it rewrites.
+##           Rows F36..F39 and F41 stage the user's own order.
+##         the attached path is ANYTHING ELSE -> record a stamp and answer 1.
+##           This arm is load-bearing: rows N5, N10 and V31b of
+##           tests/headless/test_op_annot.tcl hand-attach a database and expect
+##           the `live` arm, and `xschem annotate_op` DESTROYS a 1-point op it
+##           replaces, so a predicate that answered 0 on EVERY first sight
+##           would not merely re-read a good file -- it would delete another
+##           corner's operating point out from under the user (issue 0908).
+##           Row F40 is that promise on the first press; row F41 leg b on the
+##           mint itself.
 ##
 ##   G3b the stamp still matches -> 1. This is the cheap path, and it is the
 ##       reason a press does not re-read the file: row F19 is its guard.
@@ -1000,7 +1015,73 @@ proc op_annot::db_current {cand} {
   if {$np eq {}} { return 0 }
   set key [::op_annot::_db_key $np]
   set now [::op_annot::_db_stat $np]
-  if {![info exists _db_src($key)]} { ::op_annot::_db_stamp $np ; return 1 }
+  if {![info exists _db_src($key)]} {
+    ## G3a-2, ISSUE 0910 -- FIRST SIGHT OF **THIS SURFACE'S OWN CANDIDATE** IS
+    ## NOT TRUSTED, IT IS RE-READ.
+    ##
+    ## What a reader would otherwise assume, and what was shipped until
+    ## 2026-08-28: that "no stamp yet" means "nothing has happened since the
+    ## attach, so the numbers in memory match the file". It does not. The stamp
+    ## is minted HERE, at the first OBSERVATION -- `op_annot::db_attach` is the
+    ## only route that stamps at attach time -- so a database put here by
+    ## `Simulation > Graphs > Annotate Operating Point into schematic` or the
+    ## waveform window's `Waves > Op Annotate` (both a bare `xschem
+    ## annotate_op`), followed by a re-run over the same file, was blessed
+    ## against RUN 2's file while holding RUN 1's numbers. Guard G3b then
+    ## answered "current" forever and the sheet repainted the previous run's
+    ## numbers on every press of `6`, saying they were already loaded. That is
+    ## RULING D5-1 and invariant I3 -- "not the previous run's number" -- and
+    ## driver ruling 0900, every press re-consults the source.
+    ##
+    ## So: when the attached path IS the path this surface would load itself,
+    ## answer NOT CURRENT and let the caller re-attach. One read of a file that
+    ## may not have changed is the stated price (issue 0910 section 4); the
+    ## stamp written by that re-attach puts every later press back on G3b's
+    ## cheap path, so the cost is one read per re-run, not one per press.
+    ##
+    ## ⚠ THE ARM BELOW THIS ONE IS NOT DECORATION. A database at some OTHER
+    ## path is still trusted on first sight, and must be: rows N5, N10 and V31b
+    ## of tests/headless/test_op_annot.tcl hand-attach a database and expect
+    ## the live arm, and `xschem annotate_op` DESTROYS a 1-point op it
+    ## replaces, so re-attaching over another corner's operating point would
+    ## not hide it, it would delete it (issue 0908). Distrusting every first
+    ## sight looks like a stronger fix and re-opens that defect.
+    ##
+    ## ⚠ THE TWO EMPTINESS TERMS BELOW ARE NOT LOAD-BEARING ON THIS TCL,
+    ## AND AN EARLIER VERSION OF THIS COMMENT CLAIMED OTHERWISE ON A FACT THAT
+    ## IS FALSE. It said `$cand ne {}` had to stay above the normalize because
+    ## `file normalize {}` answers the current working DIRECTORY. MEASURED in
+    ## the interpreter this runs in, Tcl 8.6.14, it answers the EMPTY STRING --
+    ## so with no candidate the comparison below is false either way and
+    ## control falls through to stamp-and-trust, which is the answer the
+    ## no-candidate case wants. That comment also named row F41 leg c as the
+    ## witness; F41 stays green with either term deleted, and so does every
+    ## other row in the tier list (measured 2026-08-28: 46 here, 475 in
+    ## test_op_annot, 27 in test_annot_blank_cause_0909, nothing moved).
+    ##
+    ## They stay, because deleting a guard nobody can see is how this branch
+    ## ships defects: they say out loud what the branch is asking -- "does this
+    ## surface have a candidate at all" -- and the empty-string answer is this
+    ## Tcl's behaviour, not a contract this file should lean on. What they get
+    ## instead of a false witness is a real one: row **F46** of
+    ## tests/headless/test_annot_stale_0684.tcl is STRUCTURAL, it requires the
+    ## emptiness test to sit on the same line and to the LEFT of the normalize,
+    ## and its first leg re-measures `file normalize {}` every run so a Tcl
+    ## that behaves differently reddens the suite instead of quietly changing
+    ## what this branch means.
+    ##
+    ## Rows F36 (the headline, through the `6` chord), F37 (ASE-L's
+    ## `Results > Annotate` tick), F38 (`ase::ui::annot_refresh_here`),
+    ## F39 (the positive twin: nothing re-run, numbers must survive),
+    ## F40 (the 0908 twin) and F41 (all four first-sight arms) in
+    ## tests/headless/test_annot_stale_0684.tcl own this branch.
+    set nc0 {}
+    if {$cand ne {} && ![catch {file normalize $cand} nc0]} {
+      if {$nc0 ne {} && $nc0 eq $np} { return 0 }
+    }
+    ::op_annot::_db_stamp $np
+    return 1
+  }
   if {[llength $now] && $now eq $_db_src($key)} { return 1 }
   if {$cand eq {}} { return 1 }
   set nc {}

@@ -1062,6 +1062,10 @@ proc cadence::annot_mode {mode} {
     set loaded -1
     catch {set loaded [xschem raw loaded]}
     if {![string is integer -strict $loaded]} { set loaded -1 }
+    ## what the window was holding when the key was pressed, kept because the
+    ## unwind at the tail of the selector needs the reading from BEFORE the
+    ## detach below -- see the 0914 note there.
+    set entry_loaded $loaded
 
     ## ⚠ GUARD G10 -- ISSUE 0684, AND THE TWO QUESTIONS ARE ON ONE SOURCE LINE
     ## ON PURPOSE. `op_annot::_annotated` answers "is SOME publishable database
@@ -1111,8 +1115,31 @@ proc cadence::annot_mode {mode} {
     ## surface attached or can paint from; taking it off would throw away the
     ## user's file to say nothing new. Row F21 here and row N10b of
     ## tests/headless/test_op_annot.tcl are its owners.
+    ##
+    ## ⚠ ISSUE 0914 -- `$took` IS WHAT KEEPS THE PRESS ALIVE WHEN A WAVEFORM
+    ## GRAPH IS ALSO OPEN, and without it this detach is a one-way door.
+    ## The re-read below asks `xschem raw loaded`, which answers "is ANY
+    ## database attached to this window", not "is one of OURS". On the ordinary
+    ## bench the user has a waveform graph on the sheet, so after this proc
+    ## takes its own stale operating point off, the graph is still there and
+    ## still answers 0. Control then took the `$loaded >= 0` arm below, said
+    ## "No operating point results are loaded. These are from a 'tran' run
+    ## instead", and never went to look for the results file the press was
+    ## about -- so a press that should have repainted the new numbers instead
+    ## blanked the sheet AND left the operating point unloaded. MEASURED
+    ## 2026-08-28 on both halves: with a graph open, `Waves > Op Annotate`
+    ## then `6` destroyed an operating point nothing had re-run (a regression
+    ## from issue 0910's first-sight re-read), and press-6 / re-run / press-6
+    ## blanked on the second press on the shipped tree too (pre-existing).
+    ## The question the arm below wants is "has this surface got something it
+    ## can paint from", and once we have taken ours off the answer is no
+    ## whatever else the window is holding. Rows F43, F43b and F44 of
+    ## tests/headless/test_annot_stale_0684.tcl own it, and F45 owns the arm
+    ## it opens the way to.
+    set took 0
     if {$annotated && !$live} {
-      ::op_annot::db_detach
+      catch {set took [::op_annot::db_detach]}
+      if {![string is integer -strict $took]} { set took 0 }
       set annotated 0
       set loaded -1
       catch {set loaded [xschem raw loaded]}
@@ -1124,7 +1151,7 @@ proc cadence::annot_mode {mode} {
       ## file they came from has not moved under them. Reloading here would be
       ## the destructive path for no gain.
       set state live
-    } elseif {$loaded >= 0} {
+    } elseif {!$took && $loaded >= 0} {
       ## A raw IS loaded and every row still renders blank — issue 0451's fourth
       ## indistinguishable cause. Saying "These results were already loaded."
       ## would be a lie about a blank block, and reloading would throw away a
@@ -1246,7 +1273,29 @@ proc cadence::annot_mode {mode} {
           if {![cadence::_annot_op_db_ok]} {
             set st {}
             if {[catch {xschem raw sim_type} st]} { set st {} }
-            catch {xschem raw clear}
+            ## ⚠ ISSUE 0914 -- THE WHOLE-REGISTRY CLEAR IS ONLY HONEST WHEN THE
+            ## REGISTRY WAS EMPTY WHEN THE KEY WAS PRESSED. The paragraph above
+            ## says "we are only here because `xschem raw loaded` was < 0 on
+            ## entry, so the clear returns the session to exactly the state the
+            ## key press found" -- and that sentence stopped being true the
+            ## moment 0914 let a press reach this selector with the user's
+            ## waveform graph still in the window. `xschem raw clear` with no
+            ## file named unloads ALL raw files (src/scheduler.c), so on that
+            ## path the unwind would take away the trace the user was looking
+            ## at, which is issue 0902's data loss arriving through a new door.
+            ## `$entry_loaded` is the reading taken before the detach, so the
+            ## two spellings split exactly where the old sentence's premise
+            ## does: empty on entry -> the bare clear, byte for byte as RULING
+            ## 0856 and row V31c ask; anything else -> take off only what this
+            ## proc attached, by name, which is `op_annot::db_detach`. Row F45
+            ## of tests/headless/test_annot_stale_0684.tcl is the witness: it
+            ## stages a re-run that left a TRANSIENT where the operating point
+            ## used to be and asks whether the user's graph is still loaded.
+            if {$entry_loaded < 0} {
+              catch {xschem raw clear}
+            } else {
+              catch {::op_annot::db_detach}
+            }
             catch {xschem set annot_show $cur}
             catch {xschem update_all_sym_bboxes}
             catch {xschem redraw}
