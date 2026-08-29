@@ -1,6 +1,6 @@
 # 0682 — annotation visibility belongs in ASE-L `Results > Annotate`, not the schematic's View menu
 
-STATUS: **RULED 2026-08-24. IMPLEMENTED 2026-08-25 — awaiting the user's ratification (rule debt [0682]) and their eyes (look debt).**
+STATUS: **RULED 2026-08-24. IMPLEMENTED 2026-08-25. RATIFIED 2026-08-29 on the user's instruction — see the RULING at the foot of this file; the ruling question is settled. Rule debt [0682] stays on the queue until the user clears it, and the look debt is untouched.**
 Reverses: [0457](0457-annot-show-has-no-stock-affordance.md) decision (b).
 Supersedes: the wording question raised by [0678](0678-branch-currents-are-gated-by-alt-6-but-belong-to-6.md) — see §5.
 Related: 0613, 0614, 0615, 0621, 0678, 0681.
@@ -314,3 +314,130 @@ B10 — which is why B10's hole mattered.
 8. **`annot_mask` returns 0 both for "the mask is 0" and for "I could not read
    it"** — indistinguishable, so a resolution failure paints two unticked boxes
    rather than reporting anything.
+
+---
+
+## RULING, 2026-08-29 — decided on the user's instruction
+
+**The instruction, verbatim (2026-08-29):**
+
+> decide the 23, leave 0861 and 0299 for me
+
+0682 was one of the 23. It is decided here rather than put back on the user's
+queue, and the decision is theirs to overturn.
+
+### The ruling
+
+**Ratify what ships. Nothing moves.**
+
+`ASE-L > Results > Annotate` is the only place in the program that offers to
+turn annotation on or off, and the shape it ships in stands:
+
+1. **The entries are tick boxes, not plain menu commands.** A tick box shows
+   whether the numbers are currently on the sheet; a plain command cannot.
+2. **They are greyed out until that ASE-L window has usable results** — a
+   results file that exists *and* is no older than the netlist it describes. A
+   stale file greys them, which is the behaviour the user asked for on the bench
+   (0838).
+3. **Ticking one turns the matching numbers on for the schematic that ASE-L
+   window is bound to**, and it sets exactly the same thing the `6` and `Alt-6`
+   keys set. So the menu and the keys always agree, and either one can undo the
+   other: unticking clears that class, `Ctrl-6` clears them all.
+4. **The wording stays exactly as the user typed it** — `Operating Point info`
+   and `DC Node Voltages`.
+5. **There is no second annotation-visibility control anywhere else**, and none
+   is to be added back. `View > Show / Hide` no longer carries one.
+
+### What this ruling does NOT cover
+
+- **The third entry, `Transient Node Voltages (at cursor)`.** It was added later
+  by [0868](0868-on-request-transient-node-voltage-annotation-at-the-waveform-cursor.md),
+  its label was invented rather than typed by the user, and 0868 is still on the
+  user's queue. This ruling covers the two entries the user named, plus the
+  shape all three share; the third entry's wording and behaviour remain 0868's.
+- **What happens when a tick has to re-read the results file** — that is
+  [0684](0684-annot-ensure-loaded-guards-on-the-wrong-predicate.md), also on the
+  user's queue. Ratifying where the control lives says nothing about it.
+- **§F items 4, 5 and 8** below-the-line above: the one unreproduced anomaly, the
+  descended-design gap, and the fact that a tick box shows *unticked* both when
+  the numbers are off and when the program could not find out. That last one is a
+  PLAIN ENGLISH gap — the user is told nothing when the menu cannot answer — and
+  it deserves its own issue. **Follow-up work, not done here.**
+- **Rule debt `[0682]` itself.** Only the user clears it.
+
+### Why
+
+- **The destination is the user's own sentence, twice over.** *"It needs to ONLY
+  be in ASE-L > Results > Annotate > Operating Point Info"*, and *"results
+  (including OP info) only make sense when there is a result loaded - meaning an
+  ASE-L is active, to which this schematic is 'bound'."* The second sentence is
+  the greying rule, stated by the user before anyone wrote the code. There is no
+  open question about placement or about when the entries come alive.
+- **CADENCE OR NOTHING settles the one thing that gets worse.** Ratifying this
+  means a person running plain XSCHEM with no ASE-L window cannot annotate. That
+  is a real loss, and it is the strongest argument against — but the user was
+  asked that exact question under
+  [0683](0683-annotation-is-reachable-with-no-bound-ase-l-session.md) on
+  2026-08-25 and answered *"refuse without a bound session"*, with the trade
+  stated in the question. It is already weighed, and by the person entitled to
+  weigh it. Under the standing ruling, an option that exists to keep stock-XSCHEM
+  behaviour alive is an argument against that option.
+- **The tick-box choice is forced by the feature, not chosen for taste.** The `6`
+  and `Alt-6` keys can leave any combination of the classes showing, and `Ctrl-6`
+  can clear them. A control that cannot display "off" would be lying half the
+  time.
+- **Keeping the setting attached to the schematic, rather than to the ASE-L
+  window, is what makes the menu and the keys tell the same story.** The
+  alternative was measured: it needs C work at eight places and it would make the
+  `6` key and the menu tick describe two different things. That alternative is
+  the one with a case that gets worse.
+
+### What was verified in the tree, 2026-08-29
+
+The audit's proposal said *"two checkbuttons … greyed until that ASE-L session
+has a results file"*. Both halves were wrong in detail and were corrected against
+the code before ruling:
+
+| checked | file:line | found |
+|---|---|---|
+| the submenu and its refresh | `src/ase_window.tcl:568-569` | `-postcommand ase::ui::annot_menu_sync` |
+| the two ruled entries | `src/ase_window.tcl:570-575` | `add checkbutton` (not `add command`), built `-state disabled`, labels verbatim |
+| a **third** entry exists | `src/ase_window.tcl:602-605` | `Transient Node Voltages (at cursor)`, 0868's — the audit said "two" |
+| greying + tick refresh | `src/ase_window.tcl:2270-2290` | greys all three on `ase::has_results`, then pulls the ticks from the schematic's setting |
+| the greying test | `src/ase.tcl:1283-1286` | file present **AND** `results_stale` false — **stricter** than the audit's "has a results file" |
+| its two halves | `src/ase.tcl:1253-1261`, `src/ase.tcl:1336` | existence, and the raw-newer-than-deck check added by 0838 |
+| the write | `src/ase_window.tcl:2588`, `:2642-2643` | one bit-wise write of the same setting the keys write |
+| reads without switching sheets; switch is verified | `src/ase_window.tcl:2242`, `:2310` | as decided (D7, D5) |
+| the keys | `src/cadence_style_rc:323-325`, `:354-355` | `6` / `Ctrl-6` / `Alt-6`, and `Alt-Shift-6` |
+| the classes | `src/xschem.h:432`, `:433`, `:454` | three independent bits |
+| the View pair is really gone | `src/xschem.tcl:15290-15318` (headstone) | `grep -c` for either old tick-box variable = **0**; for either old helper proc = **0** |
+| no surviving control outside ASE-L | tree-wide | writers: `src/ase_window.tcl` 1 (the menu), `src/xschem.tcl` 2 (**both** inside 0683's refusal, `src/xschem.tcl:15693` / `:16119`), `utils/annot_mode.tcl` 6 (the keys). None of them is a second visibility control. |
+| the stock off-ramp objection (§F item 2) is closed | `doc/claude/issues/0683-*.md:3`; `src/xschem.tcl:15666-15693` | 0683 FIXED — both stock items refuse and name the ASE-L path, and the path is minted once at `src/xschem.tcl:15347-15359` (ruling D5-4) |
+
+### Implies a code change?
+
+**No. This ratifies shipped behaviour and nothing moves.** The only follow-up it
+names is the separate PLAIN ENGLISH gap above (a tick box that reads "off" when
+the program could not find out), which is **not done** and wants its own issue.
+
+### I argued against this before committing to it
+
+On *"is it really mine to decide"*: the sharpest case for handing it back is that
+ratifying costs the plain-XSCHEM user their ability to annotate at all. I
+concluded it is not the user's to decide again — they were asked precisely that
+under 0683 and answered it, with the trade spelled out. The two genuinely
+unratified pieces near this one, the third entry's invented label and the
+re-read behaviour, are carved out above and left on their own debts rather than
+swept in.
+
+On *"is the answer wrong"*: the strongest case I could build is that the greying
+test asks about the **ASE-L window's** results while the tick paints the
+**schematic's** numbers, so "available" does not promise "you are about to see
+this run's results". That is real, but it is a defect inside the shape (0684),
+not an argument for a different shape — no alternative placement or widget
+repairs it, and the alternatives each break something the current one does not.
+
+### Reversible
+
+**The user may reverse this at any time. It was decided to spare their attention,
+not to bind them.**

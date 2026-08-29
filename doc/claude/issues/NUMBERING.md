@@ -238,7 +238,14 @@ THIS column's slot a measurement". It self-heals on a transient the moment the
 cursor moves and **stands indefinitely on an operating point**, where there is no
 cursor to move.
 
-**The next free number is 0923.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the ruling pass on 0682.** Filed **0923** — an unticked
+`Results > Annotate` tick box means BOTH "the numbers are off" and "I could not
+find out", and looks identical in the two states, so the menu can say the numbers
+are off while they are on the schematic in front of the user. Carved out of
+0682's ratification deliberately: it is a defect inside the ratified shape, not an
+argument for a different shape.
+
+**The next free number is 0924.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.
