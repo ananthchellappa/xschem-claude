@@ -4351,12 +4351,23 @@ if {$n_have_lrf} { rename ::ase::_n_lrf_saved ::ase::last_rawfile }
 check {N11 an ASE session wins, and its LEVEL travels with the path} \
   $n11 [list 0 [list $N_RAW 2 ase]]
 
-# ⚠ THE SHIPPED SPELLING, NOT A NEW ONE. select_raw (xschem.tcl:14471) is what
-# both Annotate-OP menu items already resolve through; a second spelling here
-# would be an I1-shaped drift in the path rather than in the vector name.
-check {N12 with no ASE session it falls back to select_raw's `$netlist_dir/<cell>.raw`} \
+# ⚠ THE SHIPPED SPELLING, NOT A NEW ONE. select_raw (xschem.tcl:14763, the path
+# built on :14766) is what both Annotate-OP menu items already resolve through;
+# a second spelling here would be an I1-shaped drift in the path rather than in
+# the vector name.
+#
+# ⚠ THE LEVEL IS 0, NOT {} (issue 0911). This sheet is FLAT -- the reason the
+# gold reads 0 is not that the fallback learned about this sheet, it is that
+# the fallback now always answers from the TOP of the hierarchy stack and
+# carries that level back, so `op_annot::db_attach` binds the raw to
+# xctx->sch[0] instead of letting raw_read default it to whatever sheet the
+# user happens to be standing on. On a flat sheet the two are the same file, so
+# NOTHING about this row's behaviour moved; only the level the answer now
+# spells out loud. tests/headless/test_annot_hier_0911.tcl row H8 measures that
+# equality on a live attach, and rows H2/H3 show what it buys once descended.
+check {N12 with no ASE session it falls back to select_raw's `$netlist_dir/<cell>.raw`, at the top of the hierarchy} \
   [rcall {cadence::_annot_raw_candidate}] \
-  [list 0 [list [file join $N_ND_GOOD n_dev.raw] {} netlist_dir]]
+  [list 0 [list [file join $N_ND_GOOD n_dev.raw] 0 netlist_dir]]
 
 # ⚠ select_raw ITSELF MUTATES THE USER'S GLOBAL — `regsub {/$} $netlist_dir {}
 # netlist_dir` under `global`. A key pressed forty times must not rewrite a
@@ -4365,7 +4376,7 @@ set ::netlist_dir "$N_ND_GOOD/"
 set n13 [rcall {cadence::_annot_raw_candidate}]
 check {N13 a trailing slash is handled in a LOCAL copy: single-slash path, ::netlist_dir untouched} \
   [list $n13 $::netlist_dir] \
-  [list [list 0 [list [file join $N_ND_GOOD n_dev.raw] {} netlist_dir]] "$N_ND_GOOD/"]
+  [list [list 0 [list [file join $N_ND_GOOD n_dev.raw] 0 netlist_dir]] "$N_ND_GOOD/"]
 set ::netlist_dir $N_ND_EMPTY
 
 # ===========================================================================

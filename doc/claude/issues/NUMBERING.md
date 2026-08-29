@@ -193,7 +193,27 @@ test never fires and its §1 transcript reproduces word for word on a tree where
 0910 is marked FIXED. 0915 and 0916 are OPEN; both are measured, neither is a
 regression from this item.
 
-**The next free number is 0917.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-28, item B2 (the fix for 0911).** Filed **0917**, **0918** and
+**0919**, all three found by B2's own adversary/guard-coverage pass against the
+delivered tree, and all three **invisible to every suite in the tree** — the
+annotation tier list and all 44 blocks of `run_regression.tcl` are green with
+every one of them live. **0917** — 0911's fix answers the results file from the
+TOP of the hierarchy always, which moves 0911's own symptom into the
+standalone-block workflow, where it is SILENT: with the chip's raw and a fresh
+block raw both in `netlist_dir`, descending into the block and pressing `6`
+paints the chip run and keeps painting it after a block re-run, under "These
+results were already loaded". Rule debt 0911's options A and B *both* answer the
+chip's file there, so 0917 §3 adds options C/D/E to the menu. **0918** —
+`cadence::_annot_tran_supply` reads both halves of the same candidate, so the
+same two lines moved **Alt-Shift-6** in both directions (a repair on a
+chip-level transient, a regression on a block-only one), and left `$path` and
+`$lvl` sourced from two different subjects when the waveform viewer supplies the
+file. **0919** — two of 0911's own acceptance rows gold a whole sentence against
+`xschem get statusmsg`, which is capped at 255 bytes; at this checkout path there
+are 50 characters of headroom, so a worktree or a deeper clone false-reds a
+correct tree. All three OPEN. 0917 and 0918 need a **user ruling**, together.
+
+**The next free number is 0920.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

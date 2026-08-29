@@ -57,7 +57,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_backannotate_digital" \
                  "headless/test_results_freshness" \
                  "headless/test_annot_stale_0684" \
-                 "headless/test_annot_blank_cause_0909"]
+                 "headless/test_annot_blank_cause_0909" \
+                 "headless/test_annot_hier_0911"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #

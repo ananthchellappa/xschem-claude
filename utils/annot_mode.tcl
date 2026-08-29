@@ -183,21 +183,26 @@ namespace eval cadence {
 ## -> {path level source} for the raw this cell would use, or {} {} none.
 ##
 ## ASE FIRST, AND ITS LEVEL TRAVELS WITH THE PATH. `ase::session_for_current`
-## (ase.tcl:2351) walks the hierarchy stack and answers {key level lib cell view}
-## or {}; `ase::last_rawfile` (ase.tcl:689) answers the backend raw path only if
+## (ase.tcl:3091) walks the hierarchy stack and answers {key level lib cell view}
+## or {}; `ase::last_rawfile` (ase.tcl:1253) answers the backend raw path only if
 ## the file exists. Passing the path ALONE would bind the raw to the CURRENT
 ## level and reproduce spec landmine 4's silent device-path collapse the moment
 ## the user has descended — which is precisely what annotate_op's optional
 ## `level` argument is for.
 ##
 ## Otherwise the SHIPPED fallback spelling, the one `select_raw`
-## (src/xschem.tcl:14471) already resolves for both **Annotate Operating Point**
-## menu items — a second spelling here would be an I1-shaped drift in the path
-## instead of in the vector name. Two deliberate differences from select_raw:
-## it is not CALLED (it pops a tk_getOpenFile whenever has_x — a modal dialog on
-## every key press), and its trailing-slash `regsub` is done on a LOCAL copy,
-## because select_raw does it under `global` and rewrites the user's
-## `netlist_dir` preference as a side effect of being read.
+## (src/xschem.tcl:14763, the path itself built on :14766) already resolves for
+## both **Annotate Operating Point** menu items — a second spelling here would
+## be an I1-shaped drift in the path instead of in the vector name. THREE
+## deliberate differences from select_raw, all of them load-bearing:
+##   1. it is not CALLED (select_raw pops a tk_getOpenFile whenever has_x — a
+##      modal dialog on every key press);
+##   2. its trailing-slash `regsub` is done on a LOCAL copy, because select_raw
+##      does it under `global` and rewrites the user's `netlist_dir` preference
+##      as a side effect of being read;
+##   3. issue 0911: it asks `xschem get schname 0`, the TOP of the hierarchy
+##      stack, where select_raw asks the bare `schname` — the sheet the user is
+##      standing on. See the block inside the fallback arm below for why.
 proc cadence::_annot_raw_candidate {} {
   if {[llength [info commands ::ase::session_for_current]] &&
       [llength [info commands ::ase::last_rawfile]]} {
@@ -222,26 +227,50 @@ proc cadence::_annot_raw_candidate {} {
       }
     }
   }
-  ## ⚠ ISSUE 0911, MEASURED 2026-08-28 AND OPEN. This arm is FLAT: `schname` is
-  ## the sheet the user is STANDING ON, so after a descend it names the SUBCELL
-  ## and the candidate becomes `$netlist_dir/<subcell>.raw` while the design is
-  ## still painting from the TOP's raw. That was harmless while the candidate
-  ## only answered "which file would I load"; since issue 0684 it also decides
-  ## "are these numbers still your run", and guard G4 reads the mismatch as
-  ## "not mine, leave it alone" -- so on a descended sheet with no ASE-L
-  ## session a re-run NEVER repairs, and `Waves > Clear` then `6` reports
-  ## "There is no results file at .../sub.raw yet" about a run that just
-  ## finished. The ASE arm above is immune because `ase::session_for_current`
-  ## walks the hierarchy stack; closing 0911 means resolving this arm the same
-  ## way, and carrying the level with it.
+  ## ⚠ ISSUE 0911: THIS ARM ASKS THE TOP OF THE HIERARCHY STACK, NOT THE SHEET
+  ## THE USER IS STANDING ON. A reader coming from `select_raw` will expect the
+  ## bare `xschem get schname` that ships there, and will be tempted to "tidy"
+  ## the ` 0` away as noise. It is the whole fix. `schname` alone answers
+  ## `xctx->sch[currsch]`, so the moment the user descends into an instance the
+  ## candidate becomes `$netlist_dir/<subcell>.raw` while the design is still
+  ## painting from the TOP's raw. That was harmless while the candidate only
+  ## answered "which file would I load"; since issue 0684 it also decides "are
+  ## these numbers still your run", so guard G4 in `op_annot::db_current` read
+  ## the mismatch as "not mine, leave it alone" (issue 0908's promise, correct
+  ## rule, wrong input) and a re-run NEVER repaired on a descended sheet, while
+  ## `Waves > Clear` then `6` reported "There is no results file at
+  ## .../sub.raw yet" about a run that had just finished -- naming a path the
+  ## design never produces. `xschem get schname 0` is `xctx->sch[0]`, which is
+  ## populated whenever a schematic is loaded (scheduler.c:5251-5261 returns the
+  ## empty string if it somehow is not, which the guard below already covers),
+  ## and it is the same walk `ase::session_for_current` (ase.tcl:3091) does on
+  ## the arm above -- which is exactly why that arm was already immune.
+  ##
+  ## ⚠ AND THE LEVEL IS HALF THE FIX, NOT A GARNISH. Returning `0` rather than
+  ## `{}` is what makes `op_annot::db_attach` pass a level to `annotate_op`, so
+  ## scheduler.c:2540-2543 binds the raw to `xctx->sch[0]`; without it raw_read
+  ## defaults the binding to the CURRENT sheet, the device path loses its `x1.`
+  ## prefix and the descended block paints BLANK -- spec landmine 4's silent
+  ## device-path collapse. A fix that corrected only the path would re-attach
+  ## the right file and still show the user nothing. On a flat sheet `currsch`
+  ## is already 0, so the `0` is a no-op there; row H8 of
+  ## tests/headless/test_annot_hier_0911.tcl measures that equality rather than
+  ## asserting it, and rows H2/H11 of the same suite gold both halves.
+  ##
+  ## ⚠ STRUCTURAL ROWS QUOTE THIS PROC'S CODE. Row H11 strips comment lines and
+  ## then requires `xschem get schname 0` present exactly once, a bare
+  ## `xschem get schname]` absent, and no return handing back an empty level.
+  ## The stripping exists because this block names the defective spelling out
+  ## loud; an unstripped grep would match the warning and stay green over the
+  ## defect it warns about.
   set nd {}
   catch {set nd [uplevel #0 {set netlist_dir}]}
   regsub {/$} $nd {} nd
   set sn {}
-  catch {set sn [xschem get schname]}
+  catch {set sn [xschem get schname 0]}
   set cell [file tail [file rootname $sn]]
   if {$nd eq {} || $cell eq {}} { return [list {} {} none] }
-  return [list "$nd/$cell.raw" {} netlist_dir]
+  return [list "$nd/$cell.raw" 0 netlist_dir]
 }
 
 ## -> just the PATH half of `cadence::_annot_raw_candidate`'s answer: the file
