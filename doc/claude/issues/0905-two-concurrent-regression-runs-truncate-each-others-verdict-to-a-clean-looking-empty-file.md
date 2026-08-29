@@ -94,3 +94,45 @@ catches a run killed by an OOM, which on this ~7.8 GB box is a documented event.
 `tests/run_regression.tcl:77` and `:114` (the `results.log` name and the mode-`w`
 open). The measured 0-byte instance is recorded in item A14's verification pass,
 2026-08-28.
+
+## Second sighting, 2026-08-29 — the stitched variant, and it produced a FALSE RED
+
+Recorded here rather than given a new number, per `CLAUDE.md` on 0689/0690: this
+is the same defect with a different surface, not a second defect.
+
+Hit live by the verification pass of item **B3** (issue 0861). `results.log`
+carried **47** blocks where the tree has 45, and one counted failure:
+
+    HARNESS: headless/test_annot_stale_0684 (display arm) did not complete
+    cleanly (exit=0, OVERALL_ok=0, died=0) ... : FAIL
+
+It was not a real red, and four pieces of evidence say so:
+
+1. **Two blocks for the same suite** — one at `Total num fail: 0`, and a second
+   one whose block header was torn to `/test_annot_stale_0684.disp.log`, its
+   `headless` prefix clobbered mid-write. A single writer cannot produce that.
+2. **47 blocks against 45**, which is the same interleaving counted a second way.
+3. `ps -ef` at that moment showed a concurrent
+   `tests/headless/devdisplay.sh exec … test_annot_stale_0684.tcl` and a second
+   agent's mutation loop in another checkout, both sharing `:99`.
+4. `tests/headless/test_annot_stale_0684.disp.log` — the file the harness
+   judged — ends with `RESULT: ALL PASS (52 checks)` and `OVERALL: ok` and
+   carries **no appended HARNESS line**. The FAIL was recorded against a version
+   of that file that had already been overwritten.
+
+Re-run alone with the harness's exact command: `rc=0`, 52 checks, `OVERALL: ok`.
+Re-run of the whole regression on a verified-quiet box: 45 blocks, all at
+`Total num fail: 0`.
+
+**The mechanism this sighting adds** is the one named under "Blast radius" above,
+now measured: the per-suite `headless/*.disp.log` names are **not PID-qualified**,
+so two regressions in the same tree race on them and the summariser reads a file
+that a different run has since replaced. Fix shape (2) — run-unique names — has
+to cover these, not only `results.log`.
+
+**Operational note for anyone taking a number off this harness**, and especially
+for a sabotage pass: `results.log` and the `.disp.log` files are shared and
+truncating. A run that overlaps another agent's suite produces numbers that are
+silently not its own — the same class of lie as a `cp -p` restore whose preserved
+mtime makes `make` a no-op. Check the box is quiet first; `ps -ef | grep -E
+"xschem|run_regression"` returning nothing is the cheap version.

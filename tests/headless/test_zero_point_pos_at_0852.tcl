@@ -260,6 +260,11 @@ proc iv {var x} {
   set names [split [xschem raw list] "\n"]
   set sweep [lindex $names 0]
   set n [xschem raw points]
+  # ISSUE 0855 -- mirrored from the shipped proc: a run that has not finished
+  # yet leaves a results file with no points in it, and the honest readout for
+  # data that does not exist is nothing at all. Comment kept free of brace
+  # characters on purpose -- this body is written out inside a braced block.
+  if {$n <= 0} { return {} }
   set pos [xschem raw pos_at $sweep $x]
   if {$pos < 0} {
     set s0 [xschem raw value $sweep 0]
@@ -485,9 +490,10 @@ eqcheck {R3f and it REFUSES an empty dataset before searching it} \
 set wv [file normalize [file join [file dirname [info script]] .. .. src wave_viewer.tcl]]
 set wvsrc {}
 if {[file readable $wv]} { set fp [open $wv r]; set wvsrc [read $fp]; close $fp }
-check {V0 the shipped wviewer::interp_value still calls `xschem raw pos_at $sweep $x`} \
+check {V0 the shipped wviewer::interp_value still calls `xschem raw pos_at $sweep $x`, and still says nothing when the run has no points yet} \
   [expr {[string first {proc wviewer::interp_value} $wvsrc] >= 0 && \
-         [string first {set pos [xschem raw pos_at $sweep $x]} $wvsrc] >= 0}] \
+         [string first {set pos [xschem raw pos_at $sweep $x]} $wvsrc] >= 0 && \
+         [string first {if {$n <= 0} { return {} }} $wvsrc] >= 0}] \
   "(wave_viewer.tcl len=[string length $wvsrc])"
 
 set v1 [kid v1 {
@@ -513,14 +519,18 @@ set v2 [kid v2 {
 eqcheck {V2a PRECONDITION: the viewer is reading a still-running simulation} [zval $v2 Z_PTS] 0
 check   {V2b THE HEADLINE: the viewer readout no longer KILLS xschem mid-run} \
   [survived $v2] [ctail $v2]
-# NOT a fix, an OBSERVATION, and it is why this row asserts a value at all: the
-# readout now answers 0, because `xschem raw value` falls back to the zeroed
-# cursor_b_val when the point index is out of range. A user watching a running
-# simulation sees 0 V rather than a crash -- better, but still a number the
-# database does not contain. Filed as a sibling; pinned here so that fixing it
-# REDS this row instead of passing silently.
-eqcheck {V2c OBSERVED (sibling, not fixed here): it answers 0, not "no data"} \
-  [zval $v2 Z_IV] 0
+# THE SIBLING, ISSUE 0855, IS NOW FIXED TOO, AND THIS ROW MOVED WITH IT.
+# It used to read 0: `xschem raw value` fell back to the zeroed cursor values
+# whenever the point index was out of range, so a user watching a running
+# simulation saw a confident 0 V on every trace for the whole run -- better than
+# the crash 0852 fixed, and still a number the database does not contain. The
+# row was pinned at that 0 deliberately, so that fixing it would RED here rather
+# than pass silently. Issue 0861 put the "was anything actually published"
+# question back into the engine, and the viewer readout now asks the point count
+# itself, so the answer is a BLANK: the readout bar says nothing about data that
+# does not exist yet (RULING D5-1, INVARIANT I3).
+eqcheck {V2c FIXED with the run still going the readout says nothing, rather than a confident 0 -- issue 0855} \
+  [zval $v2 Z_IV] {}
 
 catch {test_scratch_drop $tmp}
 puts "----"

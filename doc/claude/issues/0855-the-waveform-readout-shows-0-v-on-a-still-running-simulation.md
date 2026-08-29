@@ -1,6 +1,12 @@
 # 0855 - the waveform viewer's value readout shows `0` on a still-running simulation
 
-**Status:** OPEN, **measured**, not fixed. Filed 2026-08-26 by the 0852 crew, as a
+**Status:** **FIXED 2026-08-29**, alongside
+[0861](0861-spice-get-node-renders-a-fabricated-0-when-nothing-is-published.md)
+(crew item B3) — it had to be, see "What landed" at the foot. **⚠ ONE PIECE IS
+UNRATIFIED:** the presentation question below (options a-d) was answered with
+**(a) blank** because that is what the surrounding code already does, but the
+user has not ruled on it. Recorded as a `rule` debt in `tests/headless/owed.sh`.
+Originally filed 2026-08-26 by the 0852 crew, as a
 SIBLING of [0852](0852-get-raw-value-has-no-lower-bound-so-a-zero-point-database-sigsegvs-raw-pos-at.md)
 and a cousin of [0836](0836-update-op-segfaults-on-a-zero-point-database.md).
 **Severity is much lower than either**: 0852 was a process death, this is a wrong
@@ -103,3 +109,52 @@ value`'s cursor fallback is used by other callers and narrowing it here would be
    from an OBSERVED row into an assertion of the new behaviour, in the same
    commit. It is written to go RED when this lands.
 5. Sabotage: restore the `pos < 0` fall-through and confirm row 1 reds.
+
+
+---
+
+## What landed (2026-08-29, with item B3)
+
+**This stopped being optional the moment 0861 landed.** 0861 guarded the engine's
+cursor fall-through, so `xschem raw value <vec> 0` on a still-running (zero-point)
+database stopped answering `0` and started answering nothing — which is the right
+answer, and which `wviewer::interp_value` then tried to do arithmetic on. The
+readout bar's callers all `catch`, so no user would have seen a stack trace, but
+the proc was throwing on every cursor motion for the whole duration of every run.
+
+**The fix is the one this file already named:** one test at the top of
+`wviewer::interp_value` (`src/wave_viewer.tcl`) — no points means there is no
+value at any x, so return nothing rather than entering the boundary arm. The
+same line is mirrored into the copy of that body in
+`tests/headless/test_zero_point_pos_at_0852.tcl`, and row `V0` now pins the
+mirror against the shipped proc so the two cannot drift.
+
+**⚠ THE ENGINE SIDE DID CHANGE, and this file's guess that it "should probably
+not change" is superseded rather than overlooked.** 0861's acceptance row 4
+(RULING D5-4 — the rendered schematic text and the `raw value` verb must give one
+answer) required narrowing that cursor fallback. The narrowing is `annot_p >= 0`
+on the cursor arm alone; the in-range numbered-point read is untouched.
+
+**Presentation: option (a), and it is UNRATIFIED.** `readout_refresh` already
+appends a trace to the cursor line only when its value is non-empty, so a blank
+value makes that trace **drop out of the readout line entirely** — mid-run the
+bar reads `A: x=1n` with no trace names after it, where it used to read
+`A: x=1n   v(a)=0   v(b)=0`. That is (a) rather than (b) `--` or (c) a
+`no data yet` phrase, chosen because it is the idiom already in that proc (an
+unreachable database has always returned blank there) and because minting a new
+sentence was outside item B3. **It is still a user-visible choice the user has
+not made**, and the honest reading of (a) as implemented is "the trace vanishes",
+not "the trace shows blank". Please rule.
+
+## Acceptance, as landed
+
+1. ✅ Readout on a zero-point database renders no number — row `V2c`, converted
+   from `OBSERVED (sibling, not fixed here)` into an assertion, same commit.
+2. ✅ **Positive twin.** `V1b` green and unchanged, both D4-4 boundary values
+   included (a cursor before the first sample still holds `0.0`, after the last
+   still holds `4`).
+3. ✅ A `vcd` database still HOLDS rather than interpolating — that arm is
+   untouched; `test_vcd_read` (156) and `test_wave_cursor_crossdb` (93) green.
+4. ✅ `V0` extended to pin the new line, so the test's copy of the body cannot
+   drift away from the shipped one.
+5. Sabotage row 5 is for the sabotage pass.

@@ -1833,10 +1833,19 @@ check {S9b ACCEPTANCE no 0, NaN, Inf, infT or bare - anywhere in the no-raw bloc
 # ===========================================================================
 # ⚠⚠ S14 IS THE FIRST RAW OPERATION IN THIS PROCESS AND MUST STAY THAT WAY.
 # `xschem raw read <f> op` loads the data but never calls update_op()
-# (save.c:1988), so cursor_b_val stays my_calloc-zeroed and EVERY point -1 read
-# returns a fabricated 0.0 while point 0 holds the true value. In a process
-# where an annotate_op has already published, cursor_b_val survives a later
-# `xschem load` and this row passes vacuously.
+# (save.c:1988), so cursor_b_val stays my_calloc-zeroed: nothing has been
+# published. In a process where an annotate_op has already published,
+# cursor_b_val survives a later `xschem load` and this row passes vacuously.
+#
+# ⚠ THE point -1 GOLDEN MOVED WITH ISSUE 0861, AND THE OLD ONE WAS THE DEFECT.
+# It used to be `0` -- with a comment calling that a fabricated 0.0 and pinning
+# it anyway. That zero was the same calloc zero the device block correctly
+# refuses to print, one accessor over, and it was reaching the user: a
+# @spice_get_node text on a schematic (the shipped devices/scope_ammeter.sym
+# among them) painted it as a measured value. `xschem raw value <node> -1` asks
+# "what does this node say where the annotation is", and with no annotation
+# published the honest answer is nothing. Point 0 still reads the true value,
+# because inspecting a numbered data point is not annotating it.
 #
 # The gate is copied from the C's own read gate (token.c), not invented. Since
 # 0864 it is `!raw_is_digital(raw) && sch_waves_loaded() >= 0 && annot_p >= 0`:
@@ -1847,11 +1856,11 @@ set s14_read [rcall {xschem raw read [file join $scratch s5_op.raw] op}]
 set s14_annot [rcall {xschem raw annot}]
 set s14_p0 [rcall {xschem raw value {@m.xm1.msky130_fd_pr__nfet_01v8[gm]} 0}]
 set s14_pm1 [rcall {xschem raw value {@m.xm1.msky130_fd_pr__nfet_01v8[gm]} -1}]
-check {S14 a raw READ but never PUBLISHED fabricates 0 — and the block stays blank} \
+check {S14 a raw READ but never PUBLISHED says nothing at the annotation point — and the block stays blank} \
   [list $s14_read $s14_annot $s14_p0 $s14_pm1 \
         [rcall {op_annot::text M1}] \
         [rcall {opa_s5_fabricated [op_annot::text M1]}]] \
-  [list {0 1} {0 {-1 0 -1}} {0 9.9999997e-05} {0 0} [list 0 $S_BLANK] {0 {}}]
+  [list {0 1} {0 {-1 0 -1}} {0 9.9999997e-05} {0 {}} [list 0 $S_BLANK] {0 {}}]
 
 # ⚠ THE POSITIVE CONTROL FOR THE SAME GATE. Without it S14 could be satisfied
 # by a formatter that never reads anything at all. The count is 10 AND 10, not
@@ -6894,21 +6903,23 @@ foreach {k v} [list x1 0 x2 5e-9 y1 -1 y2 5] { xschem setprop rect 2 1 $k $v }
 xschem setprop rect 2 1 fullyzoom
 xschem cursor 2 1
 xschem set cursor2_x 3e-9
-# ⚠ THE ANNOT TRIPLE IS THIS ROW'S EVIDENCE. THE TRAILING `0` IS NOT.
-# Since issue 0856 an attached transient rests at annot_p -1 rather than 0, so
-# the triple moved from `0 0 -1` to `-1 0 -1` -- and the row still catches a 0477
-# "rescue", which would read annot_p 2. The trailing `0` from `opa_t_v {v(d)}` is
-# IDENTICAL with and without the 0856 gate and proves nothing on its own: this
-# fixture's v(d) really IS 0.0 at point 0, and with the gate the -1 accessor falls
-# through to a cursor_b_val that was never written and is calloc-zeroed. It is
-# kept because it says the value accessor did not RAISE, not because its value
-# discriminates. `opa_t_eng` is no better here -- measured, it also answers 0:
-# op_annot::raw_or_blank is deliberately ungated and the annot_p>=0 gate lives in
-# op_annot::_annotated, which only the block and the floater go through.
+# ⚠ THE ANNOT TRIPLE IS THIS ROW'S EVIDENCE, AND THE TRAILING FIELD IS NOW A
+# BLANK -- ISSUE 0861. Since issue 0856 an attached transient rests at annot_p -1
+# rather than 0, so the triple moved from `0 0 -1` to `-1 0 -1`, and the row still
+# catches a 0477 "rescue", which would read annot_p 2.
+#
+# The trailing field used to be gold'd as `0`, with a comment judging that zero
+# inert. IT WAS NOT INERT. Nothing had been published, so the value accessor was
+# reading an array that was never written and is zero only because it was
+# allocated zeroed -- the same fabricated number a `@spice_get_node` text was
+# painting on the schematic, one accessor over, which is issue 0861 and RULING
+# D5-1. The accessor now answers NOTHING when nothing was published, so the
+# golden is the empty string. The field still says the accessor did not RAISE;
+# it just no longer says it by quoting a number the results file never contained.
 check {T14 REGRESSION 0477 a plain rect at GRIDLAYER index 0 still blocks a real graph at index 1 -- the direct path does NOT rescue it} \
   [list [xschem get rects 2] [xschem getprop rect 2 0 flags] \
         [xschem getprop rect 2 1 flags] [opa_t_annot] [opa_t_v {v(d)}]] \
-  [list 2 {} graph {-1 0 -1} 0]
+  [list 2 {} graph {-1 0 -1} {}]
 
 # ===========================================================================
 # T15 — REGRESSION: GATE 3, `graph_flags & 4` (issue 0478)
@@ -6922,12 +6933,14 @@ check {T14 REGRESSION 0477 a plain rect at GRIDLAYER index 0 still blocks a real
 opa_t_arm [file join $lib s5_flat.sch]
 opa_t_graph 1
 xschem set cursor2_x 3e-9
-# ⚠ SAME SHAPE AND SAME CAVEAT AS T14: the annot triple is the evidence and the
-# trailing `0` is not. `-1 0 -1` rather than `0 0 -1` since issue 0856 -- an
-# attached transient publishes nothing at rest -- and the row still catches the
-# direct arm firing behind a graph, which would read annot_p 2.
+# ⚠ SAME SHAPE AND SAME CORRECTION AS T14: the annot triple is the evidence, and
+# the trailing field is a BLANK since issue 0861. `-1 0 -1` rather than `0 0 -1`
+# since issue 0856 -- an attached transient publishes nothing at rest -- and the
+# row still catches the direct arm firing behind a graph, which would read
+# annot_p 2. The old `0` there was the un-published, allocated-zero read that
+# 0861 is about, not a measurement of this fixture.
 check {T15 REGRESSION 0478 a fullyzoom'd graph with cursor B never enabled still annotates nothing} \
-  [list [xschem get graph_flags] [opa_t_annot] [opa_t_v {v(d)}]] {0 {-1 0 -1} 0}
+  [list [xschem get graph_flags] [opa_t_annot] [opa_t_v {v(d)}]] {0 {-1 0 -1} {}}
 
 # ===========================================================================
 # T16 — OUT OF RANGE, PAST THE END: THE ENDPOINT IS HELD, AND SAID SO

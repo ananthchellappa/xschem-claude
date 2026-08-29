@@ -14,6 +14,79 @@ Newest entries on top.
 
 ---
 
+## Q65. A shared array of "the value at the cursor" is read from seven places. What does a guard on it actually have to ask?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0861** (fixed), residuals
+  **0920**, **0921**, **0922** open. `src/token.c`, `src/scheduler.c`,
+  `src/save.c`.
+
+**Not "what kind of run was it". Not "is the vector there". "Was anything
+actually published."** Three wrong questions were available and each one is
+plausible enough to survive review.
+
+The array is `xctx->raw->cursor_b_val` — one double per vector, "what this signal
+says where the annotation is". It is `my_calloc`'d, so **every slot reads 0.0
+until somebody fills it**, and the filler (`update_op()` in `src/save.c`) returns
+early on all its refusal paths *before* the fill loop. So a reader that asks only
+whether the vector index resolved publishes calloc zeros as measurements. On the
+shipped `devices/scope_ammeter.sym` that painted a confident **zero amps through
+the branch** — a plausible reading the results file did not contain, which is
+exactly what RULING **D5-1** exists to forbid and INVARIANT **I3** says must be
+blank.
+
+**Wrong question 1: the simulation type.** The refusal that made this reachable
+from a menu is *"a transient is not an operating point, publish nothing"*, so
+`sim_type` looks like the term. It passes every negative case. It also destroys
+the feature: a **transient that has published**, because the user dropped cursor
+B on a waveform graph, has real numbers in that array and must keep painting
+them. Nothing else in the fixture notices. The term is `annot_p >= 0` — *did a
+publisher run* — and one row (`SGN15`) exists solely to catch a guard written the
+other way.
+
+**Wrong question 2: copy the neighbours.** Six sibling readers in the same file
+carry `live && sch_waves_loaded() >= 0 && annot_p >= 0`. Copying that shape looks
+like consistency and is over-refusal: `live` folds in the live-annotate switch
+and `sch_waves_loaded()` demands the current sheet sit inside the waves
+hierarchy, and both would blank cases that are correct today. The minimum term
+that separates a published value from a calloc zero is the whole of the right
+answer.
+
+**Wrong question 3: where to put it.** The verb `xschem raw value <vec> <point>`
+has two arms under one index test: an in-range numbered point (**data
+inspection** — read that point out of the file) and a negative point (**the
+annotation read**). Hoisting the guard onto the shared index test refuses both,
+and four suites depend on the first staying live while an annotation is refused.
+Reading the data is not the same act as annotating it, and only the second is a
+claim about the schematic.
+
+**And the fix is two sites or it is nothing.** The rendered `@spice_get_node`
+text and the public verb are two faces of *"what does this node say"*; RULING
+**D5-4** makes them one sentence with one answer. Guarding only the text passes
+three of the issue's four behavioural acceptance rows, leaves the verb answering
+`0`, and leaves the two goldens that pinned the fabricated zero **green** —
+because they reach the verb and never the rendered text. A landing that looks
+clean and is not.
+
+**The residual is the interesting part.** `annot_p >= 0` answers *"was an
+annotation published"*. It does **not** answer *"is THIS column's slot a
+measurement"*, and the two come apart: adding an expression trace from the
+waveform viewer appends a fresh slot initialised to `0.0` while `annot_p` stays
+published, so the same fabricated zero reappears on the same schematic through
+the same accessor with both guards satisfied (issue **0922**). A guard is a
+question, and a question narrower than the invariant it defends will be right
+today and wrong at the next writer.
+
+**Which leaves the comment.** The wrong inventory in `update_op()` — *"six
+`live_cursor2` sites"* — is what let the seventh reader sit unguarded for as long
+as it did, and **nothing executable can watch a comment go false**. The
+structural row written to lock the corrected version turned out to assert only
+the ABSENCE of the two retired phrases: delete the whole paragraph and every
+check stays green (issue **0921**). An absence lock keeps the old lie out; only a
+presence lock keeps the new truth in.
+
+---
+
 ## Q64. Every row is green, the fix is right, and the feature is broken on the bench. What did the suite fail to stage?
 
 - **Asked:** 2026-08-28

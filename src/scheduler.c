@@ -10591,7 +10591,37 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
                       raw->annot_sweep_idx);
           Tcl_SetResult(interp, s, TCL_VOLATILE);
         }
-        /* xschem raw value v(ldcp) 123 */
+        /* xschem raw value v(ldcp) 123
+         *   With a point number in range this is DATA INSPECTION: it reads that
+         *   point straight out of the database and is answerable whether or not
+         *   an annotation was ever published. With a negative point it is the
+         *   ANNOTATION read -- "what does this node say where the cursor is" --
+         *   and falls through to the cursor values below.
+         *
+         * ISSUE 0861 -- THE FALL-THROUGH IS THE SAME UNGUARDED READ AS
+         * token.c's spice_get_node(), one accessor over, and this is the face
+         * op_annot::raw_or_blank answers through. cursor_b_val is my_calloc'd
+         * and update_op() returns before filling it whenever it declines to
+         * publish, so without an annot_p term this verb reported a confident 0
+         * for a node whose value nothing had measured. RULING D5-4 says the
+         * rendered schematic text and this verb are one sentence with one
+         * answer, so the two guards are deliberately identical.
+         *
+         * ⚠ THE TERM BELONGS ON THIS ARM ALONE, NOT ON THE ENCLOSING
+         * `if(idx >= 0)`. Lifting it one level would also refuse the in-range
+         * numbered-point read above, which is data inspection and must stay
+         * live while an annotation is refused -- test_raw_read_dispatch,
+         * test_vcd_read, test_del_negative_arg and test_cosim_golden_e2e all
+         * read it that way, and rows SGN13, SGN14 and SGN22 of
+         * test_spice_get_node_0861.tcl fence it. That row also greps this arm
+         * (C comments stripped) for an annot_p term and exactly ONE
+         * cursor_b_val subscript, so the shape here is pinned by a check.
+         *
+         * An OUT-OF-RANGE explicit point also lands on this arm and is
+         * answered with the cursor's value wearing the label of a point that
+         * does not exist. The guard blanks it wherever nothing was published;
+         * that it still answers where something was is its own defect, filed
+         * and left open as issue 0920. */
         else if(argc > 4 && !strcmp(argv[2], "value")) {
           int dataset = -1;
           int point = argv[4][0] ? atoi(argv[4]) : -1;
@@ -10606,8 +10636,8 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
               ) {
               val = get_raw_value(dataset, idx, point);
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
-            } else if(xctx->raw->cursor_b_val) {
-              val = xctx->raw->cursor_b_val[idx];
+            } else if(raw->cursor_b_val && raw->annot_p >= 0) {
+              val = raw->cursor_b_val[idx];
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
             }
           }

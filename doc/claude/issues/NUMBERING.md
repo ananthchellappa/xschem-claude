@@ -213,7 +213,32 @@ file. **0919** — two of 0911's own acceptance rows gold a whole sentence again
 are 50 characters of headroom, so a worktree or a deeper clone false-reds a
 correct tree. All three OPEN. 0917 and 0918 need a **user ruling**, together.
 
-**The next free number is 0920.** 0500-0599 and 0700-0799 remain reserved for
+~~**The next free number is 0920.**~~ superseded, see below.
+
+**2026-08-29, item B3 (the fix for 0861).** Filed **0920**, **0921** and
+**0922**, all three found by B3's own plan/sabotage/verification passes against
+the tree B3 delivered, and all three OPEN. **0920** — `xschem raw value <vec> 99`
+on a 3-point database answers the value at the *annotation* point wearing the
+label of a point that does not exist; the same D5-1 class one argument over,
+milder because the number is real and the *label* is what is fabricated. B3's
+guard blanks it only where nothing was published at all, and row `SGN18` of
+`tests/headless/test_spice_get_node_0861.tcl` pins BOTH halves so the remaining
+behaviour is chosen rather than inherited from where a brace landed. **0921** —
+`SGN19`, the structural lock over the reconciled inventory comment in
+`src/save.c`, asserts only the ABSENCE of two retired phrases; sabotage variant
+S5b deleted the entire issue-0861 paragraph and all 23 checks stayed green, so
+the comment that is the only thing telling a future author to guard a new reader
+can be tidied away silently. **0922** — an **expression trace** added from the
+waveform viewer (`xschem raw add`) gets a fresh `cursor_b_val` slot initialised
+to `0.0` while `annot_p` stays published, so every `@spice_get_node` text naming
+it paints a fabricated `0` on the schematic. Not a regression from 0861 — the
+pre-fix read produced the identical zero — but it walks straight past both of
+0861's guards, because `annot_p` answers "was an annotation published", never "is
+THIS column's slot a measurement". It self-heals on a transient the moment the
+cursor moves and **stands indefinitely on an operating point**, where there is no
+cursor to move.
+
+**The next free number is 0923.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

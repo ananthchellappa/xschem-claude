@@ -4492,6 +4492,7 @@ const char *spice_get_node(const char *token)
     char sp;
     int n;
     size_t len;
+    int published;
     double val = 0.0;
     const char *valstr;
     const char *s;
@@ -4501,13 +4502,50 @@ const char *spice_get_node(const char *token)
     n = sscanf(pos, "%*[^ ] %[^ ]%c", node, &sp);
     len = strlen(node);
     dbg(1, "node=%s, n=%d, sp=|%c|\n", node, n, sp);
+    /* ISSUE 0861 -- ASK WHETHER ANYTHING WAS PUBLISHED, NOT MERELY WHETHER THE
+     * VECTOR EXISTS. cursor_b_val is my_calloc'd, so every entry reads 0.0
+     * until update_op() (save.c) or a waveform cursor fills it. update_op()
+     * returns early -- an empty database, a non-operating-point run (the 0856
+     * refusal, ruled by the user), a digital database -- BEFORE it sets
+     * annot_p = 0 and before the fill loop. A reader that tests only the
+     * vector index therefore publishes those calloc zeros as if they were
+     * measurements: the shipped devices/scope_ammeter.sym painted a confident
+     * `0` amps through the branch on a transient the annotation had explicitly
+     * declined to answer from, which is precisely the fabricated number
+     * RULING D5-1 forbids and the blank INVARIANT I3 requires.
+     *
+     * WHY annot_p AND NOT THE SIMULATION TYPE. A transient that HAS published,
+     * because the user dropped cursor B on a waveform graph, has real values in
+     * here and must keep painting them. The question is "was an annotation
+     * published", never "what kind of run was it" -- a guard written the second
+     * way passes every negative row and silently kills the feature.
+     *
+     * WHY NOT THE SIX SIBLINGS' FULL SHAPE. The live_cursor2 readers in this
+     * file also carry `live && sch_waves_loaded() >= 0`, which folds in the
+     * live_cursor2_backannotate switch and demands the current sheet sit inside
+     * the waves hierarchy. Those terms are right for a cursor-following
+     * annotation and wrong here: they would blank cases that are correct today.
+     * annot_p is the minimum term that separates a published value from a
+     * calloc zero.
+     *
+     * The guard must reach the BLANK below, not merely skip the read -- with
+     * `val` left at 0.0 the else arm would still print "0".
+     *
+     * ⚠ tests/headless/test_spice_get_node_0861.tcl row SGN20 greps this
+     * function body (C comments stripped first) for an `annot_p` term and for
+     * exactly ONE `cursor_b_val` subscript, so the SHAPE of these two lines is
+     * pinned by a check, not only their behaviour. */
+    published = xctx->raw && xctx->raw->cursor_b_val && xctx->raw->annot_p >= 0;
     idx = get_raw_index(node, NULL);
-    if(idx >= 0) {
+    if(published && idx >= 0) {
       val = xctx->raw->cursor_b_val[idx];
     }
     if(!strcmp(node, "0") || !my_strcasecmp(node, "GND")) {
+      /* ground is a definition, not a measurement: it reads 0.0 in every state,
+       * with nothing loaded at all included. This arm stays FIRST and outside
+       * the published test on purpose (row SGN16). */
       valstr = "0.0";
-    } else if(idx < 0) {
+    } else if(!published || idx < 0) {
       valstr = "-";
     } else {
       /* always use engineering as these tokens are generated from single

@@ -14296,6 +14296,23 @@ proc wviewer::interp_value {var x} {
   set names [split [xschem raw list] "\n"]
   set sweep [lindex $names 0]
   set n [xschem raw points]
+  # ISSUE 0855, and the half of it that lives in Tcl. A simulation that is still
+  # RUNNING leaves a well-formed results file with NO POINTS IN IT YET -- ngspice
+  # writes the real count only when the run ends -- so the user who opens the
+  # waveform viewer mid-run and moves the cursor is asking about data that does
+  # not exist yet. The honest readout is nothing at all; a number here would be
+  # read as a measurement (RULING D5-1, INVARIANT I3).
+  #
+  # The boundary arms below are RULING D4-4's "hold, never extrapolate", and they
+  # are right for a cursor dragged off the end of a REAL sweep. They cannot tell
+  # that case from a sweep with no ends to hold, because nothing in this proc
+  # tested the point count -- that missing test is what issue 0855 names. Until
+  # issue 0861 the engine papered over it by answering an out-of-range point with
+  # the annotation cursor's value, which on an unpublished database is a zeroed
+  # array: the readout bar said 0 V for every trace for the whole duration of
+  # every run. The engine now says nothing there, correctly, so this proc must
+  # ask the question itself rather than do arithmetic on the blank.
+  if {$n <= 0} { return {} }
   set pos [xschem raw pos_at $sweep $x]
   if {$pos < 0} {
     set s0 [xschem raw value $sweep 0]

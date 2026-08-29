@@ -2159,25 +2159,32 @@ int update_op()
    * `return 0` meaning "nothing was published", and leave whatever was
    * previously attached alone rather than half-publishing (invariant I3).
    *
-   * ⚠ IT MUST RETURN BEFORE `annot_p = 0` BELOW, not after. `annot_p >= 0` is a
-   * term of the published-annotation gate in token.c's six live_cursor2 sites
-   * and in op_annot.tcl, so a guard that let annot_p reach 0 would make every
-   * one of them read the my_calloc-zeroed cursor_b_val and print 0 V on the
-   * schematic instead of blanking -- a fabricated number, which is the exact
-   * outcome RULING D5-1 exists to prevent.
+   * ⚠ IT MUST RETURN BEFORE `annot_p = 0` BELOW, not after. `annot_p >= 0` is
+   * the term every published-annotation gate in the tree is built on: the
+   * live_cursor2 readers in token.c, spice_get_node() in the same file, the
+   * `xschem raw value <node> -1` arm of scheduler.c, and op_annot.tcl. A guard
+   * that let annot_p reach 0 would make every one of them read the
+   * my_calloc-zeroed cursor_b_val and print 0 V on the schematic instead of
+   * blanking -- a fabricated number, which is the exact outcome RULING D5-1
+   * exists to prevent.
    *
-   * ⚠ THAT INVENTORY IS SHORT BY ONE, AND THE MISSING ONE IS UNGUARDED --
-   * ISSUE 0861. Six is the right count of GUARDED sites. There is a SEVENTH
-   * reader of cursor_b_val in token.c, spice_get_node() at about :4483, which
-   * carries no annot_p term at all -- it tests only that the vector index
-   * resolved. So a @spice_get_node text on a schematic (a probe symbol, or the
-   * shipped devices/scope_ammeter.sym) prints the calloc zero WHENEVER nothing
-   * has been published, which this guard and the 0856 guard below both make
-   * more reachable than they used to be. Measured 2026-08-27: the same three
-   * data points render `-` with nothing loaded, `0` as a refused transient, and
-   * the true `1.8` as an operating point. The audit that produced the "six"
-   * above stopped at op_annot.tcl's _annotated and never reached the C
-   * renderers. Do not read this guard, or the one below, as closing that.
+   * ⚠ THAT INVENTORY WAS ONCE SHORTER THAN THE TRUTH -- ISSUE 0861, NOW
+   * FIXED, AND THE LESSON IS THE PART THAT STILL MATTERS. An earlier revision
+   * of this comment listed only the live_cursor2 readers and op_annot.tcl, and
+   * two readers of cursor_b_val carried no annot_p term at all: token.c's
+   * spice_get_node(), which renders a @spice_get_node text on a schematic, and
+   * the cursor fall-through of scheduler.c's `raw value` verb. Both tested only
+   * that the vector index resolved, so a probe symbol -- or the shipped
+   * devices/scope_ammeter.sym -- printed the calloc zero WHENEVER nothing had
+   * been published. Measured 2026-08-27: the same three data points rendered
+   * `-` with nothing loaded, `0` as a refused transient, and the true `1.8` as
+   * an operating point; on the ammeter that read as a confident zero amps
+   * through the branch. The audit that produced the old count stopped at
+   * op_annot.tcl's _annotated and never reached the C renderers. Both are
+   * guarded now, and tests/headless/test_spice_get_node_0861.tcl pins them --
+   * including a structural row over THIS comment, because no behaviour can see
+   * a comment go false. Adding a reader of cursor_b_val obliges you to add the
+   * annot_p term to it and to this list, in the same commit.
    *
    * ⚠ NOT COVERED HERE: this guard is update_op()-local by ruling (the
    * narrow option of 0836's open question). The other zero-point dereferences
