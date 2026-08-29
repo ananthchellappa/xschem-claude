@@ -481,6 +481,49 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # Calculator per xschem), unlike every ase::ui:: entry beside it.
   check "W1m Tools Calculator command is the bare calc::open" \
     [$top.mb.tools entrycget Calculator -command] calc::open
+
+  # --- W1m2: ISSUE 0930 -- AN ASE-L MENU PICK REACHES THE ACTION LOG ---------
+  # The user, after finding ASE-L > Tools > Waveform Viewer left no trace at
+  # all: "We want to log everything! I said that 3 months ago!" MEASURED at the
+  # time: 15 of this window's 24 menubar entries wrote nothing whatever, and its
+  # 68 `ase::echo` calls emit `#= ` COMMENTS, which are not replayable actions.
+  #
+  # The fix is an interceptor on the `menu` command (action_registry.tcl) that
+  # wraps each menu widget's `invoke`, so a pick logs by construction. Two
+  # terms, and the FIRST is what makes the row non-vacuous: the interceptor must
+  # actually be installed, or the second term would pass on any tree at all.
+  #
+  # ⚠ IT DRIVES A THROWAWAY ENTRY, NOT `Waveform Viewer`. Picking the real entry
+  # here would open the viewer and disturb every row below; W1m above already
+  # pins that entry's `-command` verbatim, so command-string x mechanism is the
+  # whole claim. The `-command` rows like W1m are also why this is an `invoke`
+  # interceptor rather than a `-command` rewrite -- 19 rows across 11 files read
+  # that string back, and all of them still read exactly what was set.
+  set ::w1m2_seen {}
+  set w1m2_installed [expr {[info commands ::menu_unlogged] ne {} ? 1 : 0}]
+  if {$w1m2_installed} {
+    rename ::menu_invoke_logged ::w1m2_real
+    proc ::menu_invoke_logged {w real args} {
+      if {[lindex $args 0] eq {invoke}} {
+        set c {}
+        catch {set c [$real entrycget [lindex $args 1] -command]}
+        lappend ::w1m2_seen $c
+      }
+      uplevel 1 [list ::w1m2_real $w $real {*}$args]
+    }
+  }
+  $top.mb.tools add command -label {W1m2 probe} -command {set ::w1m2_ran 1}
+  set ::w1m2_ran 0
+  catch {$top.mb.tools invoke {W1m2 probe}}
+  catch {$top.mb.tools delete {W1m2 probe}}
+  if {$w1m2_installed} {
+    rename ::menu_invoke_logged {}
+    rename ::w1m2_real ::menu_invoke_logged
+  }
+  check "W1m2 0930 the menu-pick log interceptor is installed AND an ASE-L\
+ menubar pick routes through it, carrying the entry's own command" \
+    [list $w1m2_installed $::w1m2_ran $::w1m2_seen] \
+    {1 1 {{set ::w1m2_ran 1}}}
   check_true "W1m Results Direct Plot NOT disabled (item 13: live)" \
     [expr {[$top.mb.results entrycget {Direct Plot} -state] ne {disabled}}]
   check_true "W1m Results Direct Plot has a command" \

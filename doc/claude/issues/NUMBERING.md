@@ -286,7 +286,15 @@ plot, `Transient Analysis`. Fixed with `set appendwrite` + one write per
 analysis, plus deleting the raw before the run. No reader change was needed.
 Every ASE deck test used an op-ONLY state, where the bug is invisible.
 
-**The next free number is 0930.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the user on ASE-L > Tools > Waveform Viewer leaving no trace**
+(*"We want to log everything! I said that 3 months ago!"*). Filed **0930** —
+menu picks outside the File menu reached the action log only by accident.
+`menu_action_logged` existed but was attached in ONE place, so 6 of 238
+main-window entries were wrapped and 15 of ASE-L's 24 were silent. Fixed with an
+interceptor on the `menu` command that wraps each widget's `invoke`, leaving
+every `-command` string byte-identical (19 test rows read them back).
+
+**The next free number is 0931.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

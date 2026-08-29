@@ -2651,7 +2651,20 @@ proc ase::ui::annot_apply {key which} {
 # `~` strip button / raise-or-open the session's waveform viewer (item 13,
 # D13): no traces added; headless / unknown-session safe via the catch.
 proc ase::ui::open_viewer {key} {
-  catch {wviewer::open $key}
+  ## ⚠ 0930: THIS USED TO BE A BARE `catch {wviewer::open $key}` -- one line that
+  ## discarded both halves of what the user needs to see. `wviewer::open` builds
+  ## a real toplevel and its own comments record a past raise out of
+  ## `build_menubar` when the new window's context did not follow; a raise on
+  ## that path leaves a half-built or vanished window and, behind a bare catch,
+  ## NO message anywhere. The user reported exactly that shape -- "it launched a
+  ## window which disappeared soon" -- with nothing in the log to say which arm
+  ## ran. Still caught, because a viewer failure must not take the ASE-L window
+  ## down with it, but now REPORTED.
+  if {[catch {wviewer::open $key} err]} {
+    catch {::ase::echo "ase: the waveform viewer could not be opened: $err" error}
+    return 0
+  }
+  return 1
 }
 
 # The Add/Edit Output dialog's "From Design…" button: flavor = the dialog's
