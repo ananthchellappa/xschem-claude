@@ -1,6 +1,7 @@
 # 0976 — the shipped PDK helpers still spell a device the schematic's way, not the netlist's
 
-**Status:** FILED, NOT FIXED.
+**Status:** **2 of 5 sites FIXED 2026-08-30 by item S4b**; the other 3 are
+deliberately unchanged and pinned. (Filed by item S4a's verification pass.)
 **Found:** item S4a's verification pass, 2026-08-30; the call sites confirmed
 first-hand by the write-up before filing.
 **Scope:** the shipped per-PDK helper files, outside `src/`. This is issue
@@ -64,3 +65,48 @@ the one the deck contains, the way row **N1** does for the annotation.
 
 Until then, NM5's "one place" claim is true of `src/op_annot.tcl` and not of
 the tree.
+
+
+---
+
+# THE REPAIR, 2026-08-30 (item S4b)
+
+## The two user-reachable sky130 sites — FIXED
+
+1. **`op_annot::_model_netlist` is renamed `op_annot::model_netlist`** — public,
+   because a shipped PDK file calls it now, and a leading underscore means
+   private in this tree. **No alias is left behind under the old spelling.** A
+   PDK file reaching into a proc `src/op_annot.tcl` calls private is exactly the
+   quiet contract that made 0965 and 0976 the same defect twice; an alias would
+   have let the next one be written without anybody noticing. Six references in
+   `src/op_annot.tcl` and six in `tests/headless/test_op_annot.tcl` moved with
+   it. Row **NM5**'s "one place" claim is unaffected — it is scoped to
+   `src/op_annot.tcl` and is still true of it.
+2. **`sky130A/sky130_procs.tcl` asks the model question in ONE place**, the new
+   `sky130_model_netlist`, used by both `sky130_hier_sch_expand` (`:150`, the
+   menu's *Create FET .save file*) and `sky130_display_fet_params` (`:212`, the
+   *Add FET param annotator* behind the shipped `annotate_fet_params` symbol).
+   GUARD **PDK-FALLBACK**: it falls back to the old `xschem translate` answer
+   when `op_annot` is not loaded, because this file can be sourced on its own by
+   a script or a test and a menu item that RAISES halfway through is worse than
+   one that gives the old answer. Rows **PD1–PD4**.
+
+Measured on the fixture before the change: the *Add FET param annotator* showed
+**8 filled rows for x3** (which overrides nothing) and **0 for x5 and X7** — a
+column of blanks for exactly the two instances whose model the schematic
+overrides. After: 8, 8 and 8.
+
+## The three `ihp-sg13g2` sites — DELIBERATELY UNCHANGED
+
+`ihp-sg13g2/sg13g2_procs.tcl:375`, `:454` and `:513` still spell it the
+schematic's way.
+
+* No IHP symbol was measured to override a model attribute the netlister drops —
+  the narrowed sweep over that whole tree found **zero** candidates.
+* There is no IHP bench and no IHP suite, so a change there would have **no row
+  watching it**, which is precisely the failure this branch has already shipped
+  twice.
+
+Row **PD5** pins the count at **3**, so a later change there is a decision
+somebody took and not a drift. Whether to change them anyway is on the user's
+ruling queue.

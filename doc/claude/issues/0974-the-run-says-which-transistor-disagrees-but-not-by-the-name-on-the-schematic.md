@@ -1,6 +1,8 @@
 # 0974 — the run says which transistor disagrees, but not by the name on the schematic
 
-**Status:** FILED, NOT FIXED.
+**Status:** **FIXED 2026-08-30 by item S4b.** (Filed by item S4a's
+verification pass; the finding below is kept verbatim because it is the
+measurement. What was done is at the end.)
 **Found:** item S4a's verification pass, 2026-08-30; reproduced first-hand by the
 write-up before filing, on the bench, from the shipped code.
 **Scope:** the wording of one sentence added by issue **0965**. No behaviour
@@ -73,3 +75,52 @@ the way A11-13b does for the blank-row causes.
 The write-up pass files and does not fix: a change to this sentence with no row
 watching it is the defect the sabotage pass failed this item for once already.
 Whoever fixes it should add the two rows in the same change.
+
+
+---
+
+# THE REPAIR, 2026-08-30 (item S4b)
+
+## The sentence now
+
+> On this sheet, the transistor **M2** inside **x5** has "pfet_01v8_lvt" written
+> on its schematic line, but **x5** does not pass that setting down into the
+> netlist, so the simulator was given "pfet_01v8" for it instead. The numbers
+> put next to it are the ones measured for "pfet_01v8", not for the model the
+> schematic names. **What you can do:** give **x5** a `schematic=` attribute of
+> its own, which makes this one copy of the cell netlist with your model in it;
+> or leave it as it is and read these numbers as belonging to "pfet_01v8". In
+> the results this device is called `@m.x5.xm2.msky130_fd_pr__pfet_01v8`
+
+The placed instance leads. The device inside the cell is named as being inside
+it. Both model spellings are given. The sentence ends with the action. The
+results-file path goes last, where a person can ignore it.
+
+## Three changes
+
+1. **`op_annot::_why_model_differs`** — the ONE place this sentence is written
+   (ruling D5-4). `op_annot::_walk` now holds none of its words and only renders
+   what comes back. Row **GC4** is structural and pins that.
+2. **`op_annot::_pathseg_shown`** — the last component of `sch_path` **with the
+   case the schematic gave it**. GUARD **GC-NAME**: an instance a sheet calls
+   `X7` is called `X7`, never `x7`. `op_annot::_pathseg` keeps the lowercased
+   form — it exists to compare against the deck, where the netlister has already
+   lowercased everything — and is now *derived* from `_pathseg_shown`, so the two
+   cannot drift about which component they mean. Row **GC2**.
+3. **The action.** 0974's own text suggested editing the symbol's `format=`
+   string. That is **not** the advice given, because it changes every placement
+   of the symbol tree-wide and still cannot substitute a model NAME through a
+   `.subckt` parameter. The advice is the per-instance `schematic=` attribute —
+   the mechanism measured to work, the one issue 0970's repair used, and the
+   same one the netlist-time warning recommends. One story, three surfaces.
+   Rows **GC1**, **GC3**.
+
+## ⚠ Why this guard's witness is a fixture now
+
+Repairing issue 0970 removed the only disagreement in the shipped tree, and with
+it the only place this sentence was ever produced. Rows **GC1–GC5** of
+`tests/headless/test_unused_attr_0970.tcl` keep it on a fixture whose `x5` and
+`X7` are deliberately left without a copy of the cell to themselves, so it cannot
+be repaired away. Row **N3** of `test_ase_optier_0963.tcl` is inverted to assert
+the bench is now silent, and its own text points at GC1–GC5 so a reader cannot
+mistake that silence for the guard being gone.

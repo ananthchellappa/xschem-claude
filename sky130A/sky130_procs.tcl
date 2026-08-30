@@ -110,6 +110,32 @@ proc sky130_sch_expand {{only_subckts 1} {all_hierarchy 1} {pattern {.*}}} {
   return {}
 }
 
+# ISSUE 0976: ASK WHAT MODEL THE DECK BUILT THIS DEVICE WITH, IN ONE PLACE.
+#
+# WHAT A READER WOULD OTHERWISE ASSUME: that `xschem translate <inst> @model` is
+# the model, and that the two places below were just repeating themselves
+# harmlessly. They were not. That verb answers from the LIVE DESIGN, which reads
+# an instance property the netlister may never have written into the deck; the
+# deck's answer comes from the symbol template unless the instance carries a
+# `schematic=` attribute of its own. Measured on the shipped bandgap bench: for
+# the two passgates whose schematic line overrides the p-channel model, the two
+# answers differed, the name built from the live answer was in NO vector of the
+# real results file, and the name built from the deck's answer was in it. The
+# user saw a column of blanks in "Add FET param annotator" and a .save file full
+# of devices ngspice would never report on, with nothing said.
+#
+# GUARD PDK-FALLBACK. src/op_annot.tcl is sourced unconditionally by
+# src/xschem.tcl, so in the running program the shared resolver is always there.
+# But this file can be sourced on its own by a script or a test, and a menu item
+# that RAISES halfway through is worse than one that gives the old answer. So
+# the old answer is the fallback, deliberately, and never the first choice.
+proc sky130_model_netlist {instname} {
+  if {[llength [info commands ::op_annot::model_netlist]]} {
+    if {![catch {::op_annot::model_netlist $instname} m]} { return $m }
+  }
+  return [xschem translate $instname @model]
+}
+
 # recursive procedure used by sky130_sch_expand
 proc sky130_hier_sch_expand {{level 0} {only_subckts 0} {all_hierarchy 1} {pattern {.*}}} {
   global nolist_libs sky130_sch_expand
@@ -121,7 +147,7 @@ proc sky130_hier_sch_expand {{level 0} {only_subckts 0} {all_hierarchy 1} {patte
     # puts "sky130_hier_sch_expand: instname=$instname schpath=$schpath"
     set symbol [xschem getprop instance $i cell::name]
     set spiceprefix [xschem getprop instance $i spiceprefix]
-    set model [xschem translate $instname @model]
+    set model [sky130_model_netlist $instname]
     set abs_symbol [abs_sym_path $symbol]
     set type [xschem getprop symbol $symbol type]
 
@@ -183,7 +209,7 @@ proc sky130_display_fet_params {instname} {
   set schpath [xschem get sim_sch_path]
   set symbol [xschem getprop instance $instname cell::name]
   set spiceprefix [xschem getprop instance $instname spiceprefix]
-  set model [xschem translate $instname @model]
+  set model [sky130_model_netlist $instname]
   set type [xschem getprop symbol $symbol type]
 
   if {[regexp {[pn]mos} $type]} {

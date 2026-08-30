@@ -2450,6 +2450,220 @@ static void warn_hash_extra_node(int inst, const char *tokname, const char *valu
   }
 }
 
+/* ISSUE 0970: THE SETTINGS A USER TYPES ON A SHEET THAT NEVER REACH THE DECK.
+ *
+ * A designer clicks a cell on their schematic and types `modelp=pfet_01v8_lvt`
+ * on it, meaning "build THIS copy of the cell out of the low-threshold device".
+ * If the symbol's format= string never mentions modelp, the netlister writes
+ * ONE .subckt body for every copy of that cell out of the SYMBOL TEMPLATE's own
+ * default, and the setting the user typed is discarded without a word. Measured
+ * on the shipped sky130_tests bandgap bench before this pass: one `.subckt
+ * passgate` body, zero occurrences of `modelp` anywhere in the deck, and two
+ * transistors that had never once been simulated as the device their schematic
+ * line names.
+ *
+ * THE SILENCE IS THE DEFECT, not the dropping. The netlister finds the breath
+ * to warn about an open net on that very sheet; about the setting it threw away
+ * it said nothing, ever, on any sheet.
+ *
+ * WHY THIS IS NARROWED RATHER THAN GENERAL, with the measurement. Run over
+ * every schematic in both shipped PDK trees (321 sheets, 13630 instances), the
+ * unnarrowed rule -- "any instance attribute the format string does not use" --
+ * emits 16876 lines. That is not a diagnostic, it is wallpaper, and a warning
+ * nobody can read is worse than no warning at all. Each guard below is the
+ * reason a number that large becomes a number a person can act on; the counts
+ * are recorded in doc/claude/issues/0970-*.md.
+ *
+ * DELIBERATELY NOT IN THE STOPLIST: `schematic` and the *_sym_def family. Those
+ * are guard UA-POLY's business, one block down, because for them the override
+ * really does reach the deck and the instance must be skipped ENTIRELY -- not
+ * merely have one attribute excused. Keeping them out of the list keeps the two
+ * guards separately visible, and separately sabotage-able.
+ *
+ * A reader would otherwise assume every name here is arbitrary. They are not:
+ * each is either a netlist-time attribute the backends read for themselves
+ * (device_model is hashed straight off the instance at spice_netlist.c:235-241,
+ * outside any format string -- measured, 2 false hits on devices/vsource
+ * without it), an ERC/LVS directive, or a drawing/GUI attribute that was never
+ * going to appear in a deck. */
+static const char * const unused_attr_stoplist[] = {
+  "name", "lab", "sig_type", "verilog_type", "verilog_gate",
+  "spice_ignore", "vhdl_ignore", "verilog_ignore", "tedax_ignore",
+  "spectre_ignore", "lvs_ignore", "lvs_netlist", "only_toplevel",
+  "embed", "url", "symversion", "place", "hide", "hide_texts",
+  "locked", "lock", "comment", "text", "tclcommand", "analysis",
+  "format", "spice_format", "vhdl_format", "verilog_format",
+  "tedax_format", "spectre_format", "extra", "extra_pinnumber",
+  "numslots", "sim_pinnumber", "pinnumber", "spiceprefix",
+  "highlight", "net_name", "propag", "dir", "global",
+  "generic_type", "template", "device_model", "spectre_device_model",
+  "model-name", "attach", "program", "file", "class", "savecurrent",
+  "top_is_subckt", "hiersep", "bus_replacement_char",
+  NULL
+};
+
+/* GUARD UA-FMT, issue 0970. Does <format> reference <tok> as @tok or %tok?
+ *
+ * WHOLE-TOKEN, NEVER strstr(). A reader would assume a substring test is good
+ * enough here; it is the exact defect this check exists to catch, in a new
+ * place. passgate.sym's format carries `W_P=@W_P`, so a plain strstr() for "W"
+ * finds it and the diagnostic goes quiet about an instance that really did set
+ * a stray `W` -- one name hiding inside another, which is how issue 0972 was
+ * filed one layer down. So the character after the match must not continue the
+ * identifier. */
+static int format_uses_token(const char *format, const char *tok)
+{
+  const char *p;
+  size_t n;
+  int c;
+
+  if(!format || !tok || !tok[0]) return 0;
+  n = strlen(tok);
+  for(p = format; *p; ++p) {
+    if((*p != '@' && *p != '%') || strncmp(p + 1, tok, n)) continue;
+    c = (unsigned char)p[1 + n];
+    if(!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_')) return 1;
+  }
+  return 0;
+}
+
+/* ISSUE 0970: say so, once per lost setting, in words a designer reads as
+ * "you typed this and it had no effect".
+ *
+ * Called once per instance from print_spice_element(), after the format string
+ * has been resolved and before it is parsed, so the four-way resolution above
+ * (instance override, symbol, then the same two again for a per-format
+ * attribute) has already decided WHICH format string this instance is netlisted
+ * through -- the check must ask about that one, not about the symbol's.
+ *
+ * SEVERITY IS DELIBERATE: statusmsg(str, 2) appends to the info/ERC window's
+ * text and does NOT raise the netlister's error flag, so it reads exactly like
+ * the existing open-net and '#'-node notices and does not force the info window
+ * open (show_infowindow_after_netlist defaults to `onerror`). A discarded
+ * setting is worth telling the user about; it is not worth interrupting every
+ * netlist of a design that has one. That loudness is on the user's ruling queue
+ * with issue 0970. */
+static void warn_unused_instance_attr(int inst, const char *format)
+{
+  const char *type;
+  const char *prop;
+  const char *val;
+  const char *sym_cell;
+  const char *instname;
+  char *toks = NULL;
+  char *p;
+  char *q;
+  char str[2048];
+  size_t saved_tok_size;
+  int i;
+  int skip;
+
+  if(!format || !format[0]) return;
+  if(inst < 0 || xctx->inst[inst].ptr < 0) return;
+  prop = xctx->inst[inst].prop_ptr;
+  if(!prop || !prop[0]) return;
+
+  /* GUARD UA-TYPE, issue 0970. Only cells whose insides are written out ONCE
+   * from a template. That is what this whole class IS: a per-copy setting has
+   * nowhere to go precisely because there is only one body. A reader would
+   * assume the check is about "unused attributes" in general -- it is not, and
+   * measured without this guard the rule emits 6863 lines across the two
+   * shipped PDK trees instead of 10. A transistor placed straight on a sheet
+   * gets its own line in the deck and is nobody's problem here. */
+  type = (xctx->inst[inst].ptr + xctx->sym)->type;
+  if(!type || strcmp(type, "subcircuit")) return;
+
+  /* get_tok_value() overwrites xctx->tok_size, which print_spice_element() uses
+   * as its "token ABSENT" signal while resolving the format string. Latch it and
+   * put it back, exactly as warn_hash_extra_node() does and for the same stated
+   * reason: an observer may never become the reason a real netlist value goes
+   * missing if this call site ever moves. GUARD UA-TOKSIZE -- invisible at
+   * today's call site, which is why only a structural test row can see it. */
+  saved_tok_size = xctx->tok_size;
+
+  /* GUARD UA-POLY, issue 0970. An instance carrying `schematic=` (or one of the
+   * *_sym_def bodies) gets a symbol block of its OWN from
+   * get_additional_symbols(), whose parent property string is this instance's,
+   * so `model=@modelp` inside the cell resolves to what THIS copy asked for and
+   * the deck really does get a second body. Accusing it of having typed
+   * something that changed nothing would be exactly backwards -- and after this
+   * pass's own repair of the bandgap bench, whose two passgates now carry
+   * `schematic=passgate_lvtp`, this guard is the only thing standing between
+   * the user and being told their working override did nothing. Measured: 6 of
+   * sky130A's 10 remaining hits are this shape. */
+  get_tok_value(prop, "schematic", 0);
+  skip = xctx->tok_size ? 1 : 0;
+  if(!skip) { get_tok_value(prop, "spice_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "spectre_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "vhdl_sym_def", 0);    skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "verilog_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "tedax_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
+  if(skip) {
+    xctx->tok_size = saved_tok_size;
+    return;
+  }
+
+  instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
+  sym_cell = get_cell((xctx->inst[inst].ptr + xctx->sym)->name, 0);
+
+  /* GUARD UA-INST, issue 0970. The tokens come from the INSTANCE's own property
+   * string, never from the symbol template. "You typed this and it had no
+   * effect" is a claim about what the user wrote on the sheet; a template
+   * default the format does not read is the symbol author's business and not a
+   * lost setting, so it must never be reported. list_tokens() returns a static
+   * buffer, hence the copy. */
+  my_strdup(_ALLOC_ID_, &toks, list_tokens(prop, 0));
+  p = toks;
+  while(p && *p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n') ++p;
+    if(!*p) break;
+    q = p;
+    while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
+    if(*q) { *q = '\0'; ++q; }
+
+    skip = 0;
+    /* GUARD UA-NAME, issue 0970. A token that does not read as an attribute
+     * NAME is not a setting the user typed, and the tree really contains such
+     * tokens: the shipped sky130_tests/charge_pump_phasegen sheet writes its
+     * instance properties over three lines with SPICE-style '+' continuation
+     * markers, so list_tokens() hands back a bare "+" twice per instance.
+     * Measured: without this guard the shipped tb_charge_pump bench emits 8
+     * lines reading `instance x7 (a lvtnot) sets +=`, which is nonsense to a
+     * reader and would have been the whole of this diagnostic's noise budget.
+     * An attribute name starts with a letter or an underscore. */
+    if(!((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z') ||
+         p[0] == '_')) skip = 1;
+    /* GUARD UA-STOP: the measured exemptions, above. */
+    for(i = 0; !skip && unused_attr_stoplist[i]; ++i) {
+      if(!strcmp(p, unused_attr_stoplist[i])) { skip = 1; break; }
+    }
+    /* GUARD UA-POLY's own tokens: an instance carrying one of these never gets
+     * here, but naming them keeps a reader from adding them to the stoplist and
+     * quietly turning the skip-the-whole-instance rule into a skip-one-attribute
+     * rule. */
+    if(!skip && (!strcmp(p, "schematic") || !strcmp(p, "spice_sym_def") ||
+                 !strcmp(p, "spectre_sym_def") || !strcmp(p, "vhdl_sym_def") ||
+                 !strcmp(p, "verilog_sym_def") || !strcmp(p, "tedax_sym_def"))) skip = 1;
+    if(!skip && format_uses_token(format, p)) skip = 1;   /* GUARD UA-FMT */
+    if(!skip) {
+      val = get_tok_value(prop, p, 0);
+      my_snprintf(str, S(str),
+        "Warning: on this sheet, instance %s (a %s) sets %s=%s, but %s never reads "
+        "%s when the netlist is written, so that setting did not reach the simulator "
+        "and changed nothing. Check the spelling against the settings this cell does "
+        "read, or take it off. If you meant to change only this one copy of the cell, "
+        "give %s a schematic= attribute of its own as well, and the cell will be "
+        "written out separately with your setting in it.",
+        instname, sym_cell, p, val ? val : "", sym_cell, p, instname);
+      statusmsg(str, 2);
+    }
+    p = q;
+  }
+  my_free(_ALLOC_ID_, &toks);
+  xctx->tok_size = saved_tok_size;
+}
+
 int print_spice_element(FILE *fd, int inst)
 {
   int i=0, multip, itmp;
@@ -2495,6 +2709,12 @@ int print_spice_element(FILE *fd, int inst)
     my_free(_ALLOC_ID_, &result);
     return 0; /* do no netlist unwanted insts(no format) */
   }
+  /* ISSUE 0970: here, and only here. The four-way resolution above has just
+   * settled WHICH format string this instance is netlisted through, and the
+   * parse loop below has not started consuming it yet, so this is the one point
+   * where the question "does this instance set anything the deck will never
+   * see?" can be asked against the string the deck is actually written from. */
+  warn_unused_instance_attr(inst, format);
   no_of_pins= (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
   s=format;
   dbg(1, "print_spice_element(): name=%s, format=%s xctx->netlist_count=%d\n",name,format, xctx->netlist_count);

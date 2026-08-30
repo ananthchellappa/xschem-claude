@@ -530,6 +530,38 @@ shipped `annotate_fet_params` symbol, and `sky130_hier_sch_expand`, behind the
 menu's `.save` writer); row NM5's "one place" claim is scoped to
 `src/op_annot.tcl` and is not true of the tree.
 
-**The next free number is 0977.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-30, item S4b — the last repair pass on the OP work.** FIXED **0970**
+(both halves: the two bandgap passgates now netlist from a cell body built with
+the low-threshold device their schematic line names, via a per-instance
+`schematic=` attribute; and the netlister now says so when an instance sets a
+property the symbol's format string never reads), **0974** (the disagreement
+sentence leads with the placed instance, in the case the sheet spells it, and
+ends with the action), **0975** (both defects: a third sentence for the
+all-or-nothing shape that names no cause, and one place that chooses singular
+from plural) and **2 of 5 sites of 0976** (the two user-reachable sky130 menu
+surfaces; the three IHP ones are pinned unchanged at row PD5). Filed **0977**
+(the tree's only other netlist-time warning suite was registered nowhere and had
+never been run — fixed in the same pass, because the new check lives in the same
+C function), **0978** (149 settings in `xschem_library/` that the new diagnostic
+reports, NOT fixed — 111 of them real, the other 36 being issue 0980's defect
+in the check itself) and **0979** (the `xschem descend` COMMAND cannot
+fall back to a cell's base sheet where the menu can — measured on SHIPPED data,
+pre-existing, NOT fixed).
+
+**2026-08-30, item S4b write-up and commit.** The verification and sabotage
+passes over the same item produced four more measured defects and one coverage
+issue, all filed here rather than left in a report: **0980** (the new
+netlist-time warning tells a designer to delete a setting the VHDL and Verilog
+netlists really use — 36 of the 149 lines on the example library, and the one to
+fix first), **0981** (the same warning says "on this sheet" about instances that
+are not on the sheet, and names three of them identically), **0982** (two
+instances given the same `schematic=` name collide in silence — reached by
+following the advice the new sentences give), **0983** (a long or multi-line
+attribute value costs the sentence its ending) and **0984** (the new guards are
+pinned by fewer rows than they look; one gap in it, row UB9's anchor, was fixed
+in the same commit). Issue **0978**'s claim that its 149 lines are "all real" is
+corrected there by measurement.
+
+**The next free number is 0985.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved, so 0899 is followed by 0900 — but
 **1000–1199 is** (user, 2026-08-30), so 0999 is followed by **1200**.

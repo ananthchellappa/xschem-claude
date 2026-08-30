@@ -665,6 +665,22 @@ namespace eval ase {
 # user mid-gesture on either would be worse than the failure it prevents. They
 # say what happened and what to do instead. The ruling that choice needs is on
 # the user's queue as issue 0948.
+# ISSUE 0975: ONE PLACE CHOOSES BETWEEN A SINGULAR AND A PLURAL WORDING.
+#
+# WHAT A READER WOULD OTHERWISE ASSUME: that "of $n devices" is fine because a
+# run always has several devices in it. It is not -- the shape that produced
+# issue 0975 is a run asking about exactly one device, and it rendered "the
+# operating-point numbers of 1 devices". Nothing else in this surface is written
+# that carelessly and the sentence is one a user is meant to read and act on.
+#
+# It takes both wordings whole rather than a stem and a suffix, because two of
+# its callers are not a word but a clause ("This is the one it did not answer
+# for" / "These are the ones it did not answer for").
+proc ase::sim_plural {n one many} {
+  if {$n eq {1}} { return $one }
+  return $many
+}
+
 proc ase::sim_why {kind name path {extra {}}} {
   switch -- $kind {
     empty_path {
@@ -741,7 +757,48 @@ proc ase::sim_why {kind name path {extra {}}} {
       set rest [expr {[llength $miss] - [llength $shown]}]
       set tail [join $shown {, }]
       if {$rest > 0} { append tail ", and $rest more" }
-      return "This run asked your simulator for the operating-point numbers of $n devices and only $back of them came back, so the rest will show nothing at all on your schematic. These are the ones it did not answer for: $tail. That almost always means the deck spells a device differently from the way the schematic does. Save the schematic, netlist it again and re-run; if the same devices keep coming back empty, this run's log is where to look."
+      ## ISSUE 0975, defect 2: "of 1 devices". Both clauses that count go
+      ## through ase::sim_plural, so the number and the word it agrees with
+      ## cannot drift apart. There are two of them, not one: the list intro
+      ## "These are the ones" was plural-only as well.
+      ##
+      ## ISSUE 0975, defect 1, and why the cause clause STAYS here: some came
+      ## back and some did not, which is issue 0965's own shape. There a
+      ## differently-spelled device really is the likely reason and saying so is
+      ## the whole value of the sentence. It is the ALL-OR-NOTHING shape below,
+      ## op_numbers_none, where nothing established any cause at all.
+      return "This run asked your simulator for the operating-point numbers of $n [ase::sim_plural $n device devices] and only $back of them came back, so the rest will show nothing at all on your schematic. [ase::sim_plural [llength $miss] {This is the one it did not answer for} {These are the ones it did not answer for}]: $tail. That almost always means the deck spells a device differently from the way the schematic does. Save the schematic, netlist it again and re-run; if the same devices keep coming back empty, this run's log is where to look."
+    }
+    op_numbers_none {
+      ## ISSUE 0975, defect 1: WHEN NOTHING CAME BACK, NAME NO CAUSE.
+      ##
+      ## WHAT THE USER READ BEFORE. The results file is there, it holds the
+      ## rest of the run, and it has no operating point in it at all. They were
+      ## told the deck spells a device differently from the way the schematic
+      ## does -- a cause the code never established, asserted on the one
+      ## surface built to stop exactly that kind of confident claim. Measured
+      ## in the source it replaced: the arm above reads how many came back and
+      ## interpolates it, and the only `if` in the whole body was on how many
+      ## names were left off the end of the list. There was no branch on it, so
+      ## the same clause fired at three-of-five, where it is right, and at
+      ## none-of-any, where nobody knows.
+      ##
+      ## AND DO NOT PUT A CAUSE BACK HERE. The obvious candidate is an
+      ## operating point that did not converge, and it did NOT reproduce: this
+      ## pass rendered the shipped bandgap bench and ran it through the real
+      ## ngspice -- exit 0, a 284,283-byte results file, an Operating Point
+      ## plot complete with 891 vectors, and zero singular-matrix or
+      ## convergence lines anywhere in the log. Naming it would repeat the
+      ## defect with a different noun. What IS established is that the file
+      ## exists, that the operating point is not in it, and that the simulator
+      ## wrote a log.
+      ##
+      ## A COMMENT MAY NOT SIT BETWEEN TWO ARMS OF A BRACED `switch`; Tcl reads
+      ## it as an extra pattern with no body and the whole proc raises. That is
+      ## why this block is inside the arm rather than above it.
+      set n [lindex $extra 0]
+      set name [lindex $extra 1]
+      return "This run asked your simulator for the operating-point numbers of $n [ase::sim_plural $n device devices] and not one of them came back, so no device numbers will appear on your schematic at all. The results file $name is there and holds the rest of the run, but there is no operating point in it. Something stopped the operating point itself from finishing, and this run cannot tell you what: open the log your simulator wrote for this run and read what it printed there."
     }
     op_numbers_no_file {
       return "Your simulator finished without reporting any problem, but it produced no results file at all -- no [file tail $extra] was written into the run folder. So there are no numbers to put on your schematic and the waveform window has nothing to show either. One thing that causes this: when a run is asked for device numbers on one short line, a single device name the simulator cannot match is enough to make it throw the whole result away and still finish quietly. Open this run's log to see what it printed, then ask for the numbers one device at a time."
@@ -2688,6 +2745,34 @@ proc ase::op_report_missing {state meta exitcode} {
     if {![dict exists $answered $d]} { lappend miss $d }
   }
   if {![llength $miss]} { return {} }
+  ## GUARD NB-ZERO, ISSUE 0975. Two different things happened and they are not
+  ## the same sentence. SOME came back and some did not: a device the deck
+  ## spells differently is the likely reason and the run says so, which is what
+  ## issue 0965 was closed on. NONE came back at all: the results file is there,
+  ## the operating point is not in it, and NOTHING here established why -- so
+  ## the run says what it found, names no cause, and points at the log the
+  ## simulator itself wrote. A reader would otherwise assume one sentence covers
+  ## both; it did, and that was the defect.
+  ##
+  ## The kind is RETURNED, not merely said, so a caller (and row Q12) can tell
+  ## which shape the run decided it was in without reading the prose.
+  ##
+  ## ⚠ AND THE TEST IS NOT "DID EVERY DEVICE I ASKED ABOUT COME BACK EMPTY".
+  ## Those are two different facts and this proc holds the one that separates
+  ## them, `vars`, read three dozen lines up: the operating-point plot itself.
+  ## A sheet with ONE device whose name is spelled differently in the deck
+  ## leaves every requested device missing while the operating point sits
+  ## complete in the results file -- and issue 0975's own worked example is
+  ## exactly that shape. Deciding on the count alone told that user their
+  ## operating point never finished and sent them to a log with nothing wrong
+  ## in it, which is the same defect 0975 is about wearing the fix's clothes.
+  ## The all-or-nothing sentence is for a file with NO operating point in it.
+  ## Row Q17.
+  if {[llength $miss] == [llength $devs] && ![llength $vars]} {
+    ase::sim_say op_numbers_none $sim $path \
+      [list [llength $devs] [file tail $raw]] error
+    return op_numbers_none
+  }
   ase::sim_say op_numbers_missing $sim $path \
     [list [llength $devs] [expr {[llength $devs] - [llength $miss]}] $miss] error
   return op_numbers_missing

@@ -2013,6 +2013,168 @@ check {Q11 issue 0972 STRUCTURAL the parameter suffix is cut off a device name\
         [expr {$Q11RM  eq {NOPROC} ? $Q11RM  : [o_count $Q11RM {op_dev_of}]}]] \
   {1 0 1 0 1}
 
+## ============================================================================
+## Q12-Q16 -- ISSUE 0975: THE SENTENCE THAT NAMES A CAUSE IT NEVER ESTABLISHED,
+## AND SAYS "OF 1 DEVICES"
+## ============================================================================
+## WHAT THE USER READS TODAY WHEN NOTHING WHATEVER CAME BACK. The results file
+## is there, it holds the transient, and it has no operating point in it at
+## all. The run then tells them the deck spells a device differently from the
+## way the schematic does -- a cause nothing in the code established, on the one
+## surface built to stop exactly that kind of confident claim. Measured in the
+## source: ase::sim_why's op_numbers_missing arm reads how many came back and
+## interpolates it into the sentence, and the only `if` in the whole body is on
+## how many names were left off the end of the list. There is no branch on it.
+## So the same clause fires at three-of-five, where it is right, and at
+## none-of-any, where nobody knows.
+##
+## AND THE BRIEF'S COROBBORATING DETAIL DID NOT REPRODUCE, which is itself part
+## of the ruling. The bench was rendered and run through the real ngspice for
+## the measurement pass: exit 0, a 284,283-byte results file, an Operating Point
+## plot complete with 891 vectors, and ZERO singular-matrix or convergence lines
+## in the log. So the honest statement is that the code asserts a cause it never
+## established -- not that the real cause is a non-converging operating point.
+## The replacement sentence therefore names no cause at all and points at the
+## log the simulator itself wrote.
+##
+## THE PLURAL. "of 1 devices" and "These are the ones it did not answer for"
+## both render with no singular form. Two clauses, one fix.
+
+## Q12 -- NOTHING CAME BACK. A results file that exists, holds a transient and
+## has no operating point in it: the shape the user actually runs, measured on
+## the bench with the short form and one unmatchable name.
+o_wr $QD_RAW "$TITLE$TRHDR"
+set Q12DEVS [list @m.xz1.mzmod]
+set Q12R [q_direct $QD_ST [q_blkdevs $Q12DEVS] 0]
+set Q12 $Q12R
+if {$Q12R ne {NOPROC} && ![string match RAISED:* $Q12R]} {
+  set q12l {}
+  foreach l [lindex $Q12R 1] {
+    if {[string first zzcell_ase.raw $l] >= 0 ||
+        [string first {came back} $l] >= 0} { lappend q12l $l }
+  }
+  set q12s [expr {[llength $q12l] == 1 ? [lindex $q12l 0] : {}}]
+  set Q12 [list [lindex $Q12R 0] [llength $q12l] \
+                [expr {[string first {spells a device differently} $q12s] >= 0 ? 1 : 0}] \
+                [expr {[string first {log} $q12s] >= 0 ? 1 : 0}]]
+}
+check {Q12 issue 0975 GUARD NB-ZERO when the results file is there and holds no\
+ operating point at all, the run says so and stops -- it does not tell the user\
+ their deck spells a device differently, which is a cause nothing here\
+ established, and it points them at the log their simulator wrote instead} \
+  $Q12 {op_numbers_none 1 0 1}
+
+## Q13 -- THE CONTROL, and the reason the cause clause is kept rather than
+## deleted. Some came back and some did not, which is issue 0965's own case;
+## there a differently-spelled device really is the likely reason and saying so
+## is the whole value of the sentence.
+set Q13DEVS [list @m.xz1.mzmod @m.xz2.mzmod @m.xz3.mzmod @m.xz4.mzmod @m.xz5.mzmod]
+o_wr $QD_RAW [q_rawdevs [lrange $Q13DEVS 0 2]]
+set Q13R [q_direct $QD_ST [q_blkdevs $Q13DEVS] 0]
+set Q13 $Q13R
+if {$Q13R ne {NOPROC} && ![string match RAISED:* $Q13R]} {
+  set q13l [q_hits [lindex $Q13R 1] [lrange $Q13DEVS 3 4]]
+  set q13s [expr {[llength $q13l] == 1 ? [lindex $q13l 0] : {}}]
+  set Q13 [list [lindex $Q13R 0] [llength $q13l] \
+                [expr {[string first {spells a device differently} $q13s] >= 0 ? 1 : 0}]]
+}
+check {Q13 the three-of-five shape still tells the user the likely reason,\
+ because there it is the right one -- the fix for the all-or-nothing shape must\
+ not throw away the sentence that issue 0965 was closed on} \
+  $Q13 {op_numbers_missing 1 1}
+
+## Q14 -- THE PLURAL, both kinds and both clauses. One device is a device.
+proc q_said {r} {
+  if {$r eq {NOPROC} || [string match RAISED:* $r]} { return {} }
+  set out {}
+  foreach l [lindex $r 1] {
+    if {[string first {operating-point numbers of} $l] >= 0} { lappend out $l }
+  }
+  return [expr {[llength $out] == 1 ? [lindex $out 0] : {}}]
+}
+o_wr $QD_RAW "$TITLE$TRHDR"
+set Q14A [q_said [q_direct $QD_ST [q_blkdevs [list @m.xz1.mzmod]] 0]]
+set Q14B [q_said [q_direct $QD_ST [q_blkdevs [list @m.xz1.mzmod @m.xz2.mzmod]] 0]]
+o_wr $QD_RAW [q_rawdevs [list @m.xz1.mzmod]]
+set Q14C [q_said [q_direct $QD_ST [q_blkdevs [list @m.xz1.mzmod @m.xz2.mzmod]] 0]]
+set Q14D [q_said [q_direct $QD_ST \
+  [q_blkdevs [list @m.xz1.mzmod @m.xz2.mzmod @m.xz3.mzmod]] 0]]
+puts "MEASURE Q14 one-none>>>$Q14A<<<"
+puts "MEASURE Q14 two-of-three>>>$Q14D<<<"
+check {Q14 issue 0975 one device is spoken of as one device, not as 1 devices,\
+ and the one name it did not answer for is spoken of as one name -- in both\
+ kinds of sentence and in both of the clauses that count} \
+  [list [expr {$Q14A ne {} && [string first {1 devices} $Q14A] < 0 &&
+               [string first {1 device} $Q14A] >= 0 ? 1 : 0}] \
+        [expr {$Q14B ne {} && [string first {2 devices} $Q14B] >= 0 ? 1 : 0}] \
+        [expr {$Q14C ne {} && [string first {This is the one} $Q14C] >= 0 &&
+               [string first {These are the ones} $Q14C] < 0 ? 1 : 0}] \
+        [expr {$Q14D ne {} && [string first {These are the ones} $Q14D] >= 0 ? 1 : 0}]] \
+  {1 1 1 1}
+
+## Q15 -- STRUCTURAL, ruling D5-4. The new sentence is written where a run's
+## sentences are written, and the report only chooses it.
+set Q15WHY [o_body ase::sim_why]
+set Q15RM  [o_body ase::op_report_missing]
+check {Q15 RULING D5-4 STRUCTURAL the nothing-came-back sentence exists exactly\
+ once, in the one place a run's sentences are written, and the part of the run\
+ that decides which sentence to say holds none of its words} \
+  [list [expr {$Q15WHY eq {NOPROC} ? $Q15WHY : [o_count $Q15WHY {op_numbers_none}]}] \
+        [expr {$Q15RM  eq {NOPROC} ? $Q15RM  :
+               [expr {[o_count $Q15RM {op_numbers_none}] >= 1 ? 1 : 0}]}] \
+        [expr {$Q15RM  eq {NOPROC} ? $Q15RM  : [o_count $Q15RM {came back}]}]] \
+  {1 1 0}
+
+## Q16 -- PLAIN ENGLISH, the same ban list Q6 applies to this sentence's
+## siblings, plus the kind the report decided it was in, so a sentence that is
+## merely quiet cannot satisfy the row.
+o_wr $QD_RAW "$TITLE$TRHDR"
+set Q16R [q_direct $QD_ST [q_blkdevs $Q12DEVS] 0]
+set Q16 {}
+set Q16K NOPROC
+if {$Q16R ne {NOPROC} && ![string match RAISED:* $Q16R]} {
+  set Q16K [lindex $Q16R 0]
+  foreach s [lindex $Q16R 1] {
+    if {$s eq {}} continue
+    if {[string length $s] < 80} { lappend Q16 [list SHORT $s] }
+    foreach w {blanket tier optier saveopparams appendwrite hier_op_names\
+               blanket_op_save vector .save .control remzerovec op_numbers} {
+      if {[string first $w [string tolower $s]] >= 0} { lappend Q16 [list $w $s] }
+    }
+  }
+}
+check {Q16 PLAIN ENGLISH the nothing-came-back sentence uses no word out of the\
+ code and is a real explanation rather than a bare state name} \
+  [list $Q16 $Q16K] {{} op_numbers_none}
+
+## Q17 -- ISSUE 0975, THE SHARPER HALF OF GUARD NB-ZERO, caught by the
+## verification pass before this ever shipped. "None of the devices I asked
+## about came back" and "this results file holds no operating point" are NOT
+## the same fact, and the code has the one that tells them apart sitting in a
+## local -- the operating-point plot it has just read. A sheet with ONE device
+## whose name is misspelled leaves every requested device missing while the
+## operating point sits complete in the file. The honest sentence there is the
+## one that names the spelling; the all-or-nothing sentence would tell the user
+## their operating point never finished and send them to a log with nothing
+## wrong in it. Issue 0975's own worked example, a single @m.xz1.mzmod, is
+## exactly this shape, so the first fix for 0975 made its own example worse.
+o_wr $QD_RAW [q_rawdevs [list @m.xzother.mzmod]]
+set Q17R [q_direct $QD_ST [q_blkdevs [list @m.xz1.mzmod]] 0]
+set Q17 $Q17R
+if {$Q17R ne {NOPROC} && ![string match RAISED:* $Q17R]} {
+  set q17s [q_said $Q17R]
+  puts "MEASURE Q17>>>$q17s<<<"
+  set Q17 [list [lindex $Q17R 0] \
+                [expr {[string first {spells a device differently} $q17s] >= 0 ? 1 : 0}] \
+                [expr {[string first {no operating point in it} $q17s] >= 0 ? 1 : 0}]]
+}
+check {Q17 issue 0975 when every device asked about is missing but the results\
+ file DOES hold an operating point, the run gives the likely spelling reason\
+ and never claims the operating point is absent -- the all-or-nothing sentence\
+ belongs to a file with no operating point in it, not to a name nothing\
+ matched} \
+  $Q17 {op_numbers_missing 1 0}
+
 catch {file delete -- $QD_RAW}
 ase::op_cards_put $NL $BLK5
 
@@ -2054,17 +2216,24 @@ check {S13 guard G4 STAYS, and the sentence that explains it still tells the\
 # ============================================================================
 # N. THE USER'S OWN BENCH -- EVERY DEVICE NAME MUST BE ONE THE DECK CONTAINS
 # ============================================================================
-# ISSUE 0965, MEASURED ON sky130_tests_ase/tb_bandgap. The tree emits 468
-# requests naming 78 distinct devices. 76 of them are in the deck; two are not:
-#     @m.x1.x5.xm2.msky130_fd_pr__pfet_01v8_lvt
-#     @m.x1.x6.xm2.msky130_fd_pr__pfet_01v8_lvt
-# Both are passgates whose schematic line overrides the transistor model with
-# modelp=pfet_01v8_lvt, while passgate.sym's format= string never mentions
-# modelp -- so the netlister writes ONE .subckt passgate body from the SYMBOL
-# TEMPLATE default and the override never reaches the deck. The name builder
-# asks the live design instead and gets the override. Cost to the user: 12
-# blank annotation rows out of 468 on their own bench, and not one word
-# anywhere.
+# ISSUE 0965, MEASURED ON sky130_tests_ase/tb_bandgap. The tree emitted 468
+# requests naming 78 distinct devices, and two of those names were not in the
+# deck at all. Both were passgates whose schematic line overrides the
+# transistor model with modelp=pfet_01v8_lvt, while passgate.sym's format=
+# string never mentions modelp -- so the netlister wrote ONE .subckt passgate
+# body from the SYMBOL TEMPLATE default and the override never reached the
+# deck. The name builder asked the live design instead and got the override.
+# Cost to the user: 12 blank annotation rows out of 468 on their own bench, and
+# not one word anywhere.
+#
+# ISSUE 0970 IS THE OTHER HALF OF THE SAME SENTENCE, AND IT IS WHY ROWS N2, N3
+# AND N4 NOW SAY THE OPPOSITE OF WHAT THEY USED TO. Naming the two transistors
+# the way the deck spells them stopped the blank rows, but it left the user's
+# typed override doing nothing: those two passgates had never been simulated
+# with the low-threshold device their schematic line names. The repair is on
+# the SHEET -- the two instances ask for a copy of the cell of their own -- so
+# the deck now carries a second passgate body built with the model they asked
+# for, and the annotation asks for THAT name. The rows below are the pin.
 #
 # THIS SECTION NEEDS NO SIMULATOR. The deck's own call graph is enough to say
 # whether a name it emits can be found, and op_annot already builds that graph
@@ -2107,8 +2276,50 @@ proc n_dsc {nm} {
   return 0
 }
 
-set N_X5 {@m.x1.x5.xm2.msky130_fd_pr__pfet_01v8}
-set N_X6 {@m.x1.x6.xm2.msky130_fd_pr__pfet_01v8}
+## ISSUE 0979, AND IT IS WHY N4 CANNOT USE n_dsc ABOVE. After the issue 0970
+## repair, x5 and x6 carry `schematic=passgate_lvtp`, which names no file on
+## disk on purpose -- that is the library author's own idiom, taught on the
+## shipped sky130_tests/gain_stage sheet and already used by three shipped
+## instances, and it is what makes the netlister write a SECOND cell body with
+## the model this copy asked for.
+##
+## Opening such an instance falls back to the cell's own base sheet. THE PRODUCT
+## DOES THAT FOR THE USER: the descend a person performs comes through
+## callback.c:5490 with fallback on, so they are asked "Schematic ... does not
+## exist. Descend into base schematic?" and land in passgate.sch. The `xschem
+## descend` COMMAND cannot: scheduler.c:3355-3364 passes fallback as a hard 0,
+## so a script gets a blank sheet with no word said. Measured on the SHIPPED
+## gain_stage x6, with nothing of this pass's changed: sch_path becomes `.x6.`
+## and the sheet has 0 instances. Filed as issue 0979, not fixed here -- turning
+## the flag on would make every GUI suite hang on that modal prompt (issue 0803).
+##
+## So this descends the way the PERSON does, into the cell's base sheet, using
+## the one-shot view override the product itself uses for a named view. The
+## assertion below is untouched by that; only the way the row reaches the sheet
+## the user reaches is.
+proc n_dsc_base {nm} {
+  set n [xschem get instances]
+  for {set i 0} {$i < $n} {incr i} {
+    if {[xschem getprop instance $i name] ne $nm} { continue }
+    set sym [xschem getprop instance $i cell::name]
+    set base {}
+    catch {set base [abs_sym_path $sym .sch]}
+    xschem unselect_all ; xschem select instance $i
+    if {$base ne {} && [file isfile $base]} { set ::hi_descend_view_path $base }
+    xschem descend 1 2
+    return [expr {[xschem get instances] > 0 ? 1 : 0}]
+  }
+  return 0
+}
+
+## ISSUE 0970: THESE ARE THE NAMES THE DECK MUST CONTAIN AFTER THE REPAIR, not
+## the ones it held before it. The standard-threshold spelling is DERIVED from
+## them rather than typed out again, so the two halves of every row below
+## cannot drift apart, and section N5's budget on literal device names holds.
+set N_X5 {@m.x1.x5.xm2.msky130_fd_pr__pfet_01v8_lvt}
+set N_X6 {@m.x1.x6.xm2.msky130_fd_pr__pfet_01v8_lvt}
+set N_S5 [string range $N_X5 0 end-4]
+set N_S6 [string range $N_X6 0 end-4]
 if {![file isfile $N_BG]} {
   foreach nrow {N1 N2 N3 N4} {
     check "$nrow the shipped bandgap bench" BENCH-ABSENT BENCH-PRESENT
@@ -2148,12 +2359,13 @@ if {![file isfile $N_BG]} {
   if {[llength $N_DEVS]} {
     set N2 [list [expr {[lsearch -exact $N_DEVS $N_X5] >= 0 ? 1 : 0}] \
                  [expr {[lsearch -exact $N_DEVS $N_X6] >= 0 ? 1 : 0}] \
-                 [expr {[lsearch -exact $N_DEVS ${N_X5}_lvt] >= 0 ? 1 : 0}] \
-                 [expr {[lsearch -exact $N_DEVS ${N_X6}_lvt] >= 0 ? 1 : 0}]]
+                 [expr {[lsearch -exact $N_DEVS $N_S5] >= 0 ? 1 : 0}] \
+                 [expr {[lsearch -exact $N_DEVS $N_S6] >= 0 ? 1 : 0}]]
   }
-  check {N2 issue 0965 the two passgate transistors whose schematic line\
- overrides the model are asked for under the name the deck gives them, and the\
- name the deck does not have is not asked for at all} \
+  check {N2 issue 0970 the two passgate transistors whose schematic line asks\
+ for the low-threshold device are asked for under THAT name, because that is\
+ now the device the deck builds them from -- and the ordinary p-device name\
+ they used to be simulated as is not asked for at all} \
     $N2 {1 1 0 0}
 
   set N3 NOPROC
@@ -2176,20 +2388,23 @@ if {![file isfile $N_BG]} {
     }
     set N3 [list [llength $N_WARN] $n3x5 $n3x6 [llength $n3extra] [lindex $n3extra 1]]
   }
-  check {N3 issue 0965 RULING D5-1 the two transistors whose schematic says one\
- model while the netlist writes another are reported, once each, naming both\
- spellings -- so the numbers that do appear are not silently attributed to the\
- device the schematic claims} \
-    $N3 {2 1 1 2 2}
+  check {N3 issue 0970 RULING D5-1 there is nothing left on this bench for the\
+ run to report: the model the schematic names and the model the deck builds\
+ agree on all five passgates, so the run says nothing and counts no\
+ disagreement. The guard that speaks when they DO disagree is still exercised,\
+ on a fixture that cannot be repaired away -- rows GC1 to GC5 of\
+ tests/headless/test_unused_attr_0970.tcl} \
+    $N3 {0 0 0 2 0}
 
   set N4 NOPROC
   catch {xschem load $N_BG}
-  if {[n_dsc x1] && [n_dsc x5]} {
+  if {[n_dsc x1] && [n_dsc_base x5]} {
     set N4 [list [o_ans op_annot::devpath M2] [o_ans op_annot::devpath M2 deck .]]
   }
-  check {N4 issue 0965 the name the rows ON THE SCHEMATIC are read under is the\
- same name the request was made under -- otherwise the numbers would be saved\
- and then looked up under a spelling nothing wrote} \
+  check {N4 issue 0965 and 0970 the name the rows ON THE SCHEMATIC are read\
+ under is the same name the request was made under, on both bases, and it is\
+ the low-threshold name -- otherwise the numbers would be saved and then\
+ looked up under a spelling nothing wrote} \
     $N4 [list $N_X5 $N_X5]
 }
 
@@ -2231,7 +2446,7 @@ set X_TRAN  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type t
 set X_OPONLY {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
 
 proc x_skip {why} {
-  foreach r {X1 X2 X3 X4 X5} { check "$r on the shipped bandgap bench" $why RAN }
+  foreach r {X1 X2 X3 X4 X5 X7} { check "$r on the shipped bandgap bench" $why RAN }
 }
 
 if {[auto_execok ngspice] eq {} || ![file isfile $X_SCH] || ![file isfile $X_STATE]} {
@@ -2451,6 +2666,54 @@ catch {dict set X5ST save_op_params 1}
 check {X5 guard G4 on the real bench with the real simulator: the short form is\
  still not chosen for anybody automatically} \
   [o_tr $X5ST] {c unsafe}
+
+## X7 -- ISSUE 0970, AND IT IS THE ONLY ROW IN THE TREE THAT MEASURES A DEVICE
+## RATHER THAN A NAME. Two passgates on this bench have a low-threshold
+## p-device written on their schematic line. Until 0970 was repaired the deck
+## built all five passgates from the same ordinary p-device, so the results file
+## held no vector for the low-threshold one at all and those two transistors had
+## never been simulated as what their sheet says they are. This row runs the
+## bench and asks the results file itself: is the low-threshold device there,
+## and did it measure something different from the passgates that did not ask?
+## SELF-RELATIVE -- no threshold voltage is typed into this file, because a
+## number typed here would stop measuring the tree the day the models move.
+## ⚠ ITS OWN RUN, NOT $XC's. Every x_run2 writes to the SAME results path and
+## deletes it first, so by the time this row is reached the file $XC named holds
+## the tick-OFF run from X4 and carries no device numbers at all. Re-running is
+## about four seconds and is the only way this row measures what it says.
+set XF [x_run2 c $X_TRAN 1 {}]
+set X7L {} ; set X7S {}
+set X7V {}
+set x7raw {}
+if {[string is list $XF] && ![catch {dict get $XF raw} x7raw] &&
+    $x7raw ne {} && [file isfile $x7raw]} {
+  set X7V [o_plotvars $x7raw {Operating Point}]
+}
+puts "MEASURE X7 rc=[x_num $XF rc] raw=[x_num $XF rawbytes]bytes\
+ op-vectors=[expr {[string is list $X7V] ? [llength $X7V] : $X7V}]"
+if {[string is list $X7V]} {
+  foreach x7v $X7V {
+    if {[string first {[vth]} $x7v] < 0} { continue }
+    if {[string first $N_X5 $x7v] >= 0} { set X7L $x7v }
+    if {[string first {.x3.xm2.} $x7v] >= 0} { set X7S $x7v }
+  }
+}
+set X7LV ZZNONE ; set X7SV ZZNONE
+if {$X7L ne {} && $X7S ne {}} {
+  catch {xschem annotate_op $x7raw 0 op}
+  set X7LV [o_readone $X7L]
+  set X7SV [o_readone $X7S]
+}
+puts "MEASURE X7 lvt-vector=$X7L value=$X7LV / standard-vector=$X7S value=$X7SV"
+check {X7 issue 0970 the bench now really does simulate what its schematic\
+ says: the results file holds the two overriding passgates under the\
+ low-threshold device's own name -- a vector that did not exist before -- and\
+ the threshold voltage it measured for them is not the one it measured for a\
+ passgate that did not ask} \
+  [list [expr {$X7L ne {} ? 1 : 0}] [expr {$X7S ne {} ? 1 : 0}] \
+        [expr {($X7LV ne {ZZNONE} && $X7SV ne {ZZNONE} && $X7LV ne {} &&
+                $X7SV ne {} && $X7LV ne $X7SV) ? 1 : 0}]] \
+  {1 1 1}
 
 }
 

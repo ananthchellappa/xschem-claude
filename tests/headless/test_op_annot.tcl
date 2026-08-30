@@ -15881,7 +15881,7 @@ check {A11-13b issue 0909 every blank-row explanation says what to do next, in b
 # so a live descend answers at r2 from the instance override and never reaches
 # r4, while the netlister falls through to r4 and answers from the template.
 #
-# WHAT THESE ROWS REQUIRE. One resolver, op_annot::_model_netlist, that answers
+# WHAT THESE ROWS REQUIRE. One resolver, op_annot::model_netlist, that answers
 # the way the NETLISTER answers, wired into op_annot::devpath - both its devproc
 # arm and its devpath-template arm - so the save card and the on-screen row are
 # spelled the same way and both match the deck.
@@ -15903,7 +15903,7 @@ file mkdir $NM_LIB
 ## `VSSBPIN=VSS ` and carries `modelp=pfet_01v8` on the SECOND line, and
 ## `xschem globals` prints the value verbatim, newline and all. A reader of it
 ## that stopped at the first newline would answer with half the template and
-## drop the very key op_annot::_model_netlist is looking up. With this fixture
+## drop the very key op_annot::model_netlist is looking up. With this fixture
 ## one line long that guard had no witness at all: sabotaged, NM1-NM6 all
 ## stayed green and only the 20-second real-bench rows caught it. Two lines
 ## here and NM2 is its witness. Keep `modelp` on the second line.
@@ -16021,12 +16021,12 @@ proc nm_ask {idx dev} {
   xschem select instance $idx
   xschem descend 1 2
   set out {}
-  foreach q [list _model_netlist translate devpath] {
+  foreach q [list model_netlist translate devpath] {
     switch -- $q {
-      _model_netlist {
-        if {![llength [info commands ::op_annot::_model_netlist]]} {
+      model_netlist {
+        if {![llength [info commands ::op_annot::model_netlist]]} {
           lappend out NOPROC
-        } elseif {[catch {::op_annot::_model_netlist $dev} r]} {
+        } elseif {[catch {::op_annot::model_netlist $dev} r]} {
           lappend out "RAISED:$r"
         } else { lappend out $r }
       }
@@ -16105,7 +16105,7 @@ check {NM4 issue 0965 when the cell was given its own copy of the sheet the\
 
 # --- NM5: STRUCTURAL, invariant I1 - one lookup, one place ------------------
 set NM_DPB [nm_body ::op_annot::devpath]
-set NM_MNB [nm_body ::op_annot::_model_netlist]
+set NM_MNB [nm_body ::op_annot::model_netlist]
 set NM_SRC [nm_nocomment [opa_slurp [file join $repo src op_annot.tcl]]]
 ## How many CODE lines ask the program to resolve a device model - i.e. carry
 ## both the verb and the token. Line-based, so a wrapped call still counts once
@@ -16121,7 +16121,7 @@ proc nm_lookups {t} {
 check {NM5 issue 0965 STRUCTURAL the model a device is named after is looked up\
  in ONE place, the name builder uses that place, and no arm of it asks the\
  question a second way} \
-  [list [expr {($NM_DPB ne {NOPROC} && [nm_count $NM_DPB {_model_netlist}] >= 1) ? 1 : 0}] \
+  [list [expr {($NM_DPB ne {NOPROC} && [nm_count $NM_DPB {model_netlist}] >= 1) ? 1 : 0}] \
         [nm_lookups $NM_DPB] \
         [nm_lookups $NM_SRC] \
         [nm_lookups $NM_MNB]] \

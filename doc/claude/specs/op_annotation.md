@@ -570,7 +570,7 @@ where `<symbol-type>` is the symbol `K`-record `type=` token (`nmos`, `pmos`,
 | `devproc` | *alternative to* `devpath`: name of a Tcl proc called as `<proc> <instname> <model> <path> <spiceprefix>` returning the device path. The escape hatch for PDKs that mangle the model name. |
 
 ⚠ **`@model` IS THE NETLIST'S MODEL, NOT THE LIVE DESIGN'S — ISSUE 0965.** Both
-rows above are fed by `op_annot::_model_netlist` and not by
+rows above are fed by `op_annot::model_netlist` and not by
 `xschem translate <inst> @model` directly, in the devproc arm and in the
 template arm alike. The two answers differ for any instance that overrides a
 model attribute the enclosing symbol's `format=` string does not pass down: a
@@ -1713,7 +1713,7 @@ own reader, i.e. the numbers that would be painted on the schematic).
   answers from the instance's own override. Both readers resolve through
   `xctx->hier_attr[currsch-1]`, filled differently by `src/actions.c:4780-4783`
   and `src/spice_netlist.c:492-496`.
-  **Fixed** by `op_annot::_model_netlist` — one lookup, used by both arms of
+  **Fixed** by `op_annot::model_netlist` — one lookup, used by both arms of
   `op_annot::devpath`, so the save-card name and the on-screen name cannot be
   spelled differently (invariant I1). It answers the netlister's way, ONE level
   (every `.subckt` body is netlisted with `currsch == 1`), and keeps the
@@ -1850,52 +1850,112 @@ which sits above every capability read, so the row passed unconditionally — th
 sabotage pass moved the blanket test above the known test and nothing noticed.
 It now matches `$caps known`, which appears only where the guard asks.
 
-#### What the write-up measured and did NOT fix, 2026-08-30 — 0974, 0975, 0976
+#### 0974, 0975, 0976 — measured by the write-up, FIXED by item S4b (2026-08-30)
 
-The sentences this change added are **shipped and unratified**, and three
-things about them were measured from the shipped code before the commit and
-left alone deliberately. A change to a user-facing sentence with no row
-watching it is exactly what the sabotage pass failed this item for once
-already, so these are filed, not patched.
+The three defects below were measured from the shipped code by the 2026-08-30
+write-up pass and left alone then, on the rule that a change to a user-facing
+sentence with no row watching it is not a fix. Item S4b wrote the rows and made
+the changes. The original findings are kept in full, because each one is the
+reason its guard exists; what changed is recorded under each.
 
-* **0974 — the disagreement warning does not name the thing the user can point
-  at.** On `tb_bandgap` it prints two lines that are byte-identical for their
+* **0974 — the disagreement warning did not name the thing the user can point
+  at.** On `tb_bandgap` it printed two lines that were byte-identical for their
   first 280 characters, both opening `the schematic line for M2 asks for model
   "pfet_01v8_lvt"` — on a sheet holding five passgates that each contain an
-  `M2`. The placed instance the user sees, `x5` or `x6`, appears only inside
+  `M2`. The placed instance the user sees, `x5` or `x6`, appeared only inside
   the trailing `@m.x1.x5.…` device path, which is a raw-file name and the one
-  thing the reporting rule says not to lead with. It also stops at the
-  diagnosis and never says what the user can do, which the PLAIN ENGLISH ruling
-  requires and which row A11-13b already enforces for the blank-row causes.
-  Row **N3** passes on this text because it searches for the substring `x5`,
-  which the device path supplies; it is a correct row for what it pins and
-  blind to which name the sentence leads with.
-* **0975 — the "did not come back" sentence names one cause it cannot know.**
+  thing the reporting rule says not to lead with. It also stopped at the
+  diagnosis and never said what the user could do.
+
+  **FIXED.** The sentence is now minted in exactly one place,
+  `op_annot::_why_model_differs` (ruling D5-4), and `op_annot::_walk` only
+  renders it. It leads with the placed instance, names the device as being
+  *inside* it, gives both model spellings, ends with `What you can do:`, and
+  puts the results-file path last. `op_annot::_pathseg_shown` supplies the name
+  **in the case the schematic gave it** (GUARD GC-NAME) — an instance a sheet
+  calls `X7` is called `X7`, never `x7`; `op_annot::_pathseg` keeps the
+  lowercased form for comparing against the deck and is now derived from it, so
+  the two cannot drift about which component they mean.
+
+  ⚠ **THIS GUARD'S WITNESS IS A FIXTURE NOW.** Repairing 0970 removed the only
+  disagreement in the tree, so no shipped bench produces this sentence any
+  more. Rows **GC1–GC5** of `tests/headless/test_unused_attr_0970.tcl` keep it,
+  on a fixture whose `x5` and `X7` are deliberately left un-repairable. Row N3
+  of `test_ase_optier_0963.tcl` is inverted to assert the bench is now silent
+  and points at those rows.
+
+* **0975 — the "did not come back" sentence named one cause it cannot know.**
   `ase::op_report_missing` deliberately treats a results file with no Operating
   Point plot as "none of them came back", which is the right data model; the
-  sentence then tells the user, with no hedge, that *"That almost always means
+  sentence then told the user, with no hedge, that *"That almost always means
   the deck spells a device differently … Save the schematic, netlist it again
   and re-run."* When **some** came back that cause is exactly right — it is
-  issue 0965's own case. When **none** did, the likelier reason is an operating
-  point that did not converge (`tb_bandgap`'s own log carries
-  `Warning: singular matrix`), and re-netlisting is a wrong instruction
-  delivered confidently. The same sentence has no singular form: rendered with
-  one device, it reads `the operating-point numbers of 1 devices`. Rows Q1 and
-  Q4 drive 3-of-5 and 2-of-20; **no row drives file-present-and-zero-back**,
-  which is the shape that gets the wrong cause.
-* **0976 — the model-resolution fix is one place in `src/`, not one place in
-  the tree.** Row **NM5** asserts exactly one `translate … @model` call remains
-  and is explicit that it means `src/op_annot.tcl`. Five more live in the
-  shipped PDK helpers, two of them on surfaces a user reaches today:
-  `sky130_display_fet_params` (`sky130_procs.tcl:186`), which is the proc behind
-  the shipped `sky130_fd_pr/annotate_fet_params` symbol, and
-  `sky130_hier_sch_expand` (`:124`), which writes the menu's `.save` file. Both
-  build their own `@m.…` path from `@model` and will therefore still spell
-  `x5`/`x6` the schematic's way on this very bench. `sky130_op_devpath` is
-  unaffected because it takes `model` as a parameter and the descriptor now
-  hands it the netlist's answer. `ihp-sg13g2` has the same shape at three
-  sites and was **not** measured for an actual divergence.
+  issue 0965's own case. When **none** did, nothing had established anything
+  and re-netlisting was a wrong instruction delivered confidently. The same
+  sentence had no singular form: rendered with one device it read `the
+  operating-point numbers of 1 devices`.
 
+  **FIXED, both halves.** A third kind, `op_numbers_none`, is minted for the
+  all-or-nothing shape; it names **no cause at all**, says what was actually
+  found (the file is there, the operating point is not in it) and points at the
+  log the simulator wrote. `ase::op_report_missing` chooses between the two
+  (GUARD NB-ZERO) and returns which kind it said, so a row can assert the shape
+  without reading prose. `ase::sim_plural` is the one place a singular or
+  plural wording is chosen and both offending clauses go through it — the list
+  intro `These are the ones it did not answer for` was plural-only as well.
+  Rows **Q12–Q17**; **Q13** is the control that keeps the cause clause on the
+  some-came-back shape.
+
+  ⚠ **GUARD NB-ZERO IS A TEST ON THE OPERATING-POINT PLOT, NOT ON THE COUNT.**
+  The first version of it chose the all-or-nothing sentence whenever every
+  requested device was missing, and that is a different fact. A sheet with ONE
+  device whose name is spelled differently in the deck leaves every requested
+  device missing while the operating point sits complete in the results file —
+  and it was told its operating point never finished, and sent to a log with
+  nothing wrong in it. That is 0975's own defect, reproduced by 0975's own fix,
+  on 0975's own worked example. The condition is therefore
+  `[llength $miss] == [llength $devs] && ![llength $vars]`: the all-or-nothing
+  sentence belongs to a file with **no operating point in it**, and a name
+  nothing matched goes back to the sentence that names the spelling. Row
+  **Q17**, written before the fix and watched fail on it.
+
+  ⚠ **A CORRECTION TO THE ORIGINAL FINDING.** It said the likelier reason for
+  the all-or-nothing shape is an operating point that did not converge, citing
+  `tb_bandgap`'s own log carrying `Warning: singular matrix`. **That did not
+  reproduce.** The bench was rendered and run through the real ngspice for the
+  measurement pass — exit 0, a 284,283-byte results file, an Operating Point
+  plot complete with 891 vectors, and zero singular-matrix and zero convergence
+  lines anywhere in the log. So the defensible statement is *the code asserted a
+  cause it never established*, not *the real cause is non-convergence*, and the
+  replacement sentence names no cause for exactly that reason.
+
+* **0976 — the model-resolution fix was one place in `src/`, not one place in
+  the tree.** Row **NM5** asserts exactly one `translate … @model` call remains
+  and is explicit that it means `src/op_annot.tcl`. Five more lived in the
+  shipped PDK helpers, two of them on surfaces a user reaches today:
+  `sky130_display_fet_params` (`sky130_procs.tcl:186`), the proc behind the
+  shipped `sky130_fd_pr/annotate_fet_params` symbol, and
+  `sky130_hier_sch_expand` (`:124`), which writes the menu's `.save` file. Both
+  built their own `@m.…` path from `@model` and therefore spelled `x5`/`x6` the
+  schematic's way on this very bench. `sky130_op_devpath` is unaffected because
+  it takes `model` as a parameter and the descriptor hands it the netlist's
+  answer.
+
+  **THE TWO USER-REACHABLE ONES ARE FIXED.** `op_annot::_model_netlist` is
+  renamed `op_annot::model_netlist` — public, because a shipped PDK file calls
+  it now, and **no alias is left under the old spelling**: a PDK reaching into a
+  proc this file calls private is the quiet contract that produced 0965 and 0976
+  as the same defect twice. `sky130_procs.tcl` asks the model question in ONE
+  place, `sky130_model_netlist`, which falls back to the old answer when
+  `op_annot` is not loaded (GUARD PDK-FALLBACK) so a menu item can never raise
+  halfway through. Rows **PD1–PD4**.
+
+  **THE THREE `ihp-sg13g2` SITES ARE DELIBERATELY UNCHANGED.** No IHP symbol was
+  measured to override a model attribute the netlister drops — the narrowed
+  sweep found zero candidates on that whole tree — there is no IHP bench and no
+  IHP suite, and a change there would have no row watching it. Row **PD5** pins
+  the count at 3 so a later change is a decision somebody took and not a drift.
+  The ruling is on the user's queue.
 
 ### 4.4 Getting the block onto the screen — two carriers
 

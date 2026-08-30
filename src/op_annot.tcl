@@ -644,7 +644,7 @@ proc op_annot::_devproc_call {p instname model dp pfx} {
 ## WHAT A READER WOULD OTHERWISE ASSUME: that `xschem translate <inst> @model`
 ## is the model, full stop. It is not.
 ## (Row NM5 counts CODE lines carrying both that verb and that token and expects
-## exactly one in this whole file, inside _model_netlist below. It strips Tcl
+## exactly one in this whole file, inside model_netlist below. It strips Tcl
 ## comments first, so the quotation in this paragraph and the ones further down
 ## are invisible to it. Keep it that way: a second live call would be a second
 ## builder of the same decision.) It is the model as the LIVE DESIGN reads
@@ -720,8 +720,17 @@ proc op_annot::_tok {s tok} {
   return [string trim $v]
 }
 
-## op_annot::_model_netlist <instname> ?livevar? -> the model token THE DECK
+## op_annot::model_netlist <instname> ?livevar? -> the model token THE DECK
 ## builds this device with. Issue 0965.
+##
+## PUBLIC, AND DELIBERATELY SO SINCE ISSUE 0976. It was `_model_netlist`, and a
+## leading underscore means private in this file. The shipped PDK helper
+## sky130A/sky130_procs.tcl now calls it, because it was asking the same
+## question the wrong way in two places, so the name had to stop claiming to be
+## private. NO ALIAS WAS LEFT BEHIND under the old spelling: a PDK file reaching
+## into a proc this file calls private is exactly the quiet contract that made
+## 0965 and 0976 the same defect twice, and an alias would have let the next one
+## be written without anybody noticing.
 ##
 ## ⚠ THIS IS THE ONE PLACE IN THIS FILE THAT ASKS WHAT A DEVICE'S MODEL IS
 ## (invariant I1), and row NM5 of tests/headless/test_op_annot.tcl greps the
@@ -745,7 +754,7 @@ proc op_annot::_tok {s tok} {
 ## exactly as `translate` resolves it. That is 76 of the 78 names on the bench
 ## and every name on every other PDK; only an instance whose own `model=` is a
 ## single parameter reference can diverge at all.
-proc op_annot::_model_netlist {instname {livevar {}}} {
+proc op_annot::model_netlist {instname {livevar {}}} {
   if {$livevar ne {}} { upvar 1 $livevar live }
   set live [xschem translate $instname @model]
   set raw {}
@@ -833,9 +842,9 @@ proc op_annot::devpath {instname {basis read} {root {}}} {
     ## only because IHP's own test schematics spell spiceprefix= on the instance
     ## line; ported verbatim the device path silently loses its `x`.
     ## ISSUE 0965: THE NETLIST'S MODEL, NOT THE LIVE DESIGN'S. See the block
-    ## above op_annot::_model_netlist for the measurement; the raise behaviour
+    ## above op_annot::model_netlist for the measurement; the raise behaviour
     ## of the line this replaced is preserved inside it.
-    if {[catch {::op_annot::_model_netlist $instname} model]} { return {} }
+    if {[catch {::op_annot::model_netlist $instname} model]} { return {} }
     if {[catch {xschem translate $instname @spiceprefix} pfx]} { set pfx {} }
     if {[catch {::op_annot::_devproc_call $p $instname $model $dp $pfx} r]} {
       return {}
@@ -853,7 +862,7 @@ proc op_annot::devpath {instname {basis read} {root {}}} {
   ## `translate` ever sees the string, so the two ways of describing a PDK can
   ## never name the same transistor differently. Row NM6.
   if {[string first {@model} $tmpl] >= 0} {
-    if {[catch {::op_annot::_model_netlist $instname} m0]} { return {} }
+    if {[catch {::op_annot::model_netlist $instname} m0]} { return {} }
     set tmpl [::op_annot::_subst_model $tmpl $m0]
   }
   if {[catch {xschem translate $instname $tmpl} r]} { return {} }
@@ -2402,16 +2411,70 @@ proc op_annot::_descendable {i idx {block {}}} {
   return 1
 }
 
-## The last component of `xschem get sch_path`, lowercased — the string the deck
-## basis will really put in front of every card built below this level. Shared
-## by _prefix_ok and by its warning so the two cannot disagree about what was
-## compared.
-proc op_annot::_pathseg {} {
+## GUARD GC-NAME, ISSUE 0974. The last component of `xschem get sch_path` WITH
+## THE CASE THE SCHEMATIC GAVE IT — the name of the instance the user actually
+## placed and can see on their sheet. An instance the user called `X7` is called
+## `X7`, never `x7`.
+##
+## WHAT A READER WOULD OTHERWISE ASSUME: that this and _pathseg below are the
+## same thing and one of them is redundant. They are two different jobs and the
+## difference is the whole of issue 0974. This one NAMES A THING TO A PERSON.
+## _pathseg COMPARES AGAINST THE DECK, where the netlister has already
+## lowercased everything, so it must lowercase too or the comparison is wrong.
+## Mixing them up is a defect in one direction (a sentence that calls the user's
+## X7 something they never typed) and a defect in the other (a comparison that
+## never matches).
+proc op_annot::_pathseg_shown {} {
   if {[catch {xschem get sch_path} p]} { return {} }
   set seg [string trimright $p {.}]
   set i [string last {.} $seg]
   if {$i >= 0} { set seg [string range $seg [expr {$i + 1}] end] }
-  return [string tolower $seg]
+  return $seg
+}
+
+## The same component, lowercased — the string the deck basis will really put in
+## front of every card built below this level. Shared by _prefix_ok and by its
+## warning so the two cannot disagree about what was compared. Derived from
+## _pathseg_shown above rather than re-cut from sch_path, so the two can never
+## drift apart about WHICH component they mean.
+proc op_annot::_pathseg {} {
+  return [string tolower [::op_annot::_pathseg_shown]]
+}
+
+## RULING D5-4, ISSUE 0974: THE ONE PLACE THIS SENTENCE IS WRITTEN.
+##
+## WHAT THE USER READ BEFORE, AND WHY IT WAS USELESS. The sentence used to open
+## with the device INSIDE the cell — "the schematic line for M2 asks for model
+## ..." — on a sheet holding five passgates that each contain a transistor
+## called M2. Measured on the shipped bandgap bench: two warnings, byte
+## identical for their first ~280 characters, diverging only inside the raw
+## device path at the very end. The name that identifies the thing the user
+## clicked, `x5`, appeared nowhere except glued into `@m.x1.x5.xm2....` — and
+## lowercased, so a sheet's `X7` was gone as well. It also stopped at the
+## diagnosis and never said what to do.
+##
+## SO: the placed instance leads, the device inside it is named as being inside
+## it, both model spellings are given, the sentence ends with the action, and
+## the results-file path goes last where a person can ignore it.
+##
+## THE ACTION IS THE ONE THAT IS MEASURED TO WORK, and it is the same action the
+## netlist-time warning recommends (src/token.c, issue 0970) and the same one
+## that repaired the bandgap bench in this pass. Issue 0974 originally suggested
+## editing the symbol's format= string instead; that changes every placement of
+## the symbol tree-wide and still cannot substitute a model NAME through a
+## .subckt parameter, so it is not advice this file gives.
+##
+## <placed> MUST come from _pathseg_shown, never _pathseg (GUARD GC-NAME).
+proc op_annot::_why_model_differs {placed inner schmodel nlmodel devpath} {
+  if {$placed eq {}} { set placed {the cell it sits in} }
+  return "On this sheet, the transistor $inner inside $placed has\
+ \"$schmodel\" written on its schematic line, but $placed does not pass that\
+ setting down into the netlist, so the simulator was given \"$nlmodel\" for it\
+ instead. The numbers put next to it are the ones measured for \"$nlmodel\",\
+ not for the model the schematic names. What you can do: give $placed a\
+ schematic= attribute of its own, which makes this one copy of the cell netlist\
+ with your model in it; or leave it as it is and read these numbers as\
+ belonging to \"$nlmodel\". In the results this device is called $devpath"
 }
 
 ## Does the hierarchy path we now stand on still SPELL this instance the way the
@@ -2684,15 +2747,15 @@ proc op_annot::_walk {root idx block} {
         ## schematic; refusing to emit them would restore the 12 blank rows this
         ## whole change exists to delete. So: emit, and say so. Row N3.
         set livem {}
-        if {![catch {::op_annot::_model_netlist $instname livem} nlm]} {
+        if {![catch {::op_annot::model_netlist $instname livem} nlm]} {
           if {$nlm ne {} && $livem ne {} && $nlm ne $livem} {
             incr _c_model
             set nldev [::op_annot::devpath $instname deck $root]
-            ::op_annot::_warn "the schematic line for $instname asks for model\
- \"$livem\", but the cell it sits in does not pass that setting into the\
- netlist, so the simulator was given \"$nlm\" for it instead. The numbers\
- shown on this device are the ones measured for \"$nlm\". In the results it is\
- called $nldev"
+            ## ISSUE 0974 and RULING D5-4: the words live in one place. This
+            ## renders them and names the instance the user placed, in the case
+            ## their sheet spells it.
+            ::op_annot::_warn [::op_annot::_why_model_differs \
+              [::op_annot::_pathseg_shown] $instname $livem $nlm $nldev]
           }
         }
         set cards [::op_annot::_cards_for $instname $root]

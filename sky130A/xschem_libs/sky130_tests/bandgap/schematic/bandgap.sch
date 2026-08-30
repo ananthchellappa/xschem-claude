@@ -189,9 +189,9 @@ C {devices/lab_pin} 1050 -500 0 0 {name=l25 sig_type=std_logic lab=PLUS}
 C {devices/lab_pin} 840 -510 0 0 {name=l29 sig_type=std_logic lab=PLUS}
 C {devices/lab_pin} 840 -360 0 0 {name=l33 sig_type=std_logic lab=MINUS}
 C {sky130_tests/passgate} 1380 -530 0 0 {name=x5 W_N=0.5 L_N=0.35 W_P=0.6 L_P=0.35 VCCBPIN=VCC VSSBPIN=VSS m=1
-modelp=pfet_01v8_lvt}
+modelp=pfet_01v8_lvt schematic=passgate_lvtp}
 C {sky130_tests/passgate} 1380 -250 0 0 {name=x6 W_N=0.5 L_N=0.35 W_P=0.6 L_P=0.35 VCCBPIN=VCC VSSBPIN=VSS m=1
-modelp=pfet_01v8_lvt}
+modelp=pfet_01v8_lvt schematic=passgate_lvtp}
 C {devices/lab_pin} 1380 -220 0 0 {name=l34 sig_type=std_logic lab=F1}
 C {devices/lab_pin} 1380 -500 0 0 {name=l35 sig_type=std_logic lab=F2}
 C {devices/lab_pin} 1380 -560 0 0 {name=l36 sig_type=std_logic lab=F2N}
