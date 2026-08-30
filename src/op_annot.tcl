@@ -67,7 +67,8 @@
 #   op_annot::last_warnings {}                 -> what the last walk could not
 #                                                 do, as a list         (S3)
 #   op_annot::last_counts {}                   -> {dropped_by_rule N not_found N
-#                                                  name_failed N}       (S3)
+#                                                  name_failed N
+#                                                  netlist_model_differs N} (S3)
 #
 # ============================================================================
 # ⚠ A SAVE CARD IS BARE. `vector` IS THE READ SHAPE ONLY.  (spec §3 rule R4)
@@ -266,6 +267,11 @@ namespace eval op_annot {
   ##   _c_notfound issue 0497 counter: the deck HAS it and the walk could not
   ##               reach it. THE 0496 CLASS. Never normal.
   ##   _c_name     issue 0497 counter: no name could be built for it.
+  ##   _c_model    issue 0965 counter: the schematic line and the netlist
+  ##               disagree about this device's model. NOT an under-emission —
+  ##               a card IS emitted, under the deck's own spelling — but the
+  ##               numbers it brings back were measured for a different device
+  ##               than the schematic claims, which is ruling D5-1's shape.
   variable _acc
   if {![info exists _acc]} { set _acc {} }
   variable warnings
@@ -278,6 +284,8 @@ namespace eval op_annot {
   if {![info exists _c_notfound]} { set _c_notfound 0 }
   variable _c_name
   if {![info exists _c_name]} { set _c_name 0 }
+  variable _c_model
+  if {![info exists _c_model]} { set _c_model 0 }
 }
 
 ## The effective row cap: a positive integer, or 0 for no limit. Anything the
@@ -584,12 +592,200 @@ proc op_annot::_subst_path {tmpl dp} {
   return [string map [list {$path} $dp {@path} $dp] $tmpl]
 }
 
+## Substitute the NETLIST-basis model into a devpath TEMPLATE, before `translate`
+## runs (issue 0965). Same `string map` discipline as _subst_path, and for the
+## same reason: a template is user data and `subst` would execute any `[...]`
+## inside it. `@modelname` and the like are longer tokens and are NOT touched,
+## because the map is applied to the exact string `@model` followed by a
+## non-token character only.
+##
+## ⚠ THE BOUNDARY IS THE WHOLE REASON THIS IS NOT A `string map`. A plain
+## `string map [list {@model} $m]` rewrites the front of every longer token, so
+## a descriptor whose template also spells `@modelname` or `@modelp` would be
+## handed `sky130_fd_pr__pfet_01v8name` — a plausible-looking wrong device path,
+## which is the exact silent drift invariant I1 exists to prevent. Rows NM7
+## (the boundary as a unit) and NM8 (the same thing end to end, through
+## op_annot::devpath) are that guard's witnesses.
+proc op_annot::_subst_model {tmpl model} {
+  set out {}
+  set i 0
+  set n [string length $tmpl]
+  while {$i < $n} {
+    set j [string first {@model} $tmpl $i]
+    if {$j < 0} { append out [string range $tmpl $i end] ; break }
+    append out [string range $tmpl $i [expr {$j - 1}]]
+    set k [expr {$j + 6}]
+    set c [string index $tmpl $k]
+    if {$c ne {} && [regexp {[A-Za-z0-9_]} $c]} {
+      append out {@model}
+    } else {
+      append out $model
+    }
+    set i $k
+  }
+  return $out
+}
+
 ## Call a descriptor's `devproc`, handing it the SAME prefix the template arm
 ## substitutes. The devproc contract is unchanged:
 ##     <proc> <instname> <model> <path> <spiceprefix>
 ## ⚠ `uplevel #0` so a PDK proc that reaches for a global finds one.
 proc op_annot::_devproc_call {p instname model dp pfx} {
   return [uplevel #0 [list $p $instname $model $dp $pfx]]
+}
+
+## ============================================================================
+## THE MODEL A DEVICE IS NAMED AFTER — ISSUE 0965
+## ============================================================================
+## A device's raw-file name ends in the MODEL the deck built it with. There are
+## two different answers to "which model is that", and until issue 0965 this
+## file asked for the wrong one.
+##
+## WHAT A READER WOULD OTHERWISE ASSUME: that `xschem translate <inst> @model`
+## is the model, full stop. It is not.
+## (Row NM5 counts CODE lines carrying both that verb and that token and expects
+## exactly one in this whole file, inside _model_netlist below. It strips Tcl
+## comments first, so the quotation in this paragraph and the ones further down
+## are invisible to it. Keep it that way: a second live call would be a second
+## builder of the same decision.) It is the model as the LIVE DESIGN reads
+## it, and the netlister reads it differently — measurably, on the shipped
+## sky130_tests_ase/tb_bandgap bench, for 2 of the 78 devices this file names.
+##
+## THE SEAM. Both readers resolve a `@token` through xctx->hier_attr[currsch-1]
+## (`lcc[...]` in `xschem globals`), and the two fill it DIFFERENTLY:
+##   src/actions.c:4780-4783   a live descend: prop_ptr = the parent INSTANCE's
+##                             own property string, templ = its symbol template
+##   src/spice_netlist.c:492-496  netlisting:   prop_ptr = sym.parent_prop_ptr,
+##                             which is NULL for every symbol EXCEPT one created
+##                             from an instance's `schematic=` attribute; templ
+##                             = the same symbol template
+## src/token.c:5443-5457 then looks the token up in prop_ptr first and falls
+## back to templ. So an instance that OVERRIDES a model attribute the enclosing
+## symbol's `format=` does not pass down is answered from the override by a live
+## descend, and from the SYMBOL TEMPLATE by the netlister.
+##
+## MEASURED, tb_bandgap: passgate.sym's `format=` never mentions `modelp`, so
+## the deck holds ONE `.subckt passgate` body spelling
+## `sky130_fd_pr__pfet_01v8` for all five passgates, while x5 and x6 carry
+## `modelp=pfet_01v8_lvt` on their schematic lines. This file asked for
+## `@m.x1.x5.xm2.msky130_fd_pr__pfet_01v8_lvt`, the deck contained no such
+## device, ngspice accepted the request without one character of complaint, and
+## the user got 12 blank annotation rows out of 468 with nothing said anywhere.
+##
+## ⚠ THE NETLISTER RESOLVES ONE LEVEL, NOT A CHAIN. Every `.subckt` body is
+## written with currsch == 1 and hier_attr[0] set from the symbol being
+## netlisted (spice_netlist.c:482-498), so the only enclosing scope a `@token`
+## in a device's `model=` can reach is the IMMEDIATELY enclosing cell. A
+## multi-level walk here would resolve names the deck cannot spell.
+
+## `lcc[currsch-1].<which>` out of `xschem globals`, or {} — the two strings the
+## netlister and a live descend disagree about.
+##
+## ⚠ BOUNDED BY THE NEXT KEY, NOT BY THE NEWLINE. A symbol template is routinely
+## MULTI-LINE (passgate.sym's runs to two lines and carries `modelp` on the
+## second), and `xschem globals` prints it verbatim, so a reader that stopped at
+## the first newline would silently answer with half the template — and the half
+## it dropped is the half this proc exists to read. Sabotaged (stop at the first
+## newline) rows NM2, NM6 and NM8 all go red, because the NM fixture's enclosing
+## symbol now wraps its template exactly the way the shipped passgate.sym does.
+proc op_annot::_lcc_attr {which} {
+  if {[catch {xschem get currsch} c]} { return {} }
+  if {![string is integer -strict $c] || $c < 1} { return {} }
+  if {[catch {xschem globals} g]} { return {} }
+  set key "lcc\[[expr {$c - 1}]\].$which="
+  set out {}
+  set on 0
+  foreach l [split $g "\n"] {
+    if {$on} {
+      if {[regexp {^(lcc\[[0-9]+\]\.|previous_instance\[|sch_path\[|sch\[|modified=)} $l]} {
+        break
+      }
+      append out "\n" $l
+      continue
+    }
+    if {[string first $key $l] == 0} {
+      set on 1
+      append out [string range $l [string length $key] end]
+    }
+  }
+  if {!$on} { return {} }
+  if {$out eq {<NULL>}} { return {} }
+  return $out
+}
+
+## One token out of one property string, blank on anything unexpected.
+proc op_annot::_tok {s tok} {
+  if {[string trim $s] eq {} || [string trim $tok] eq {}} { return {} }
+  if {[catch {xschem get_tok $s $tok} v]} { return {} }
+  return [string trim $v]
+}
+
+## op_annot::_model_netlist <instname> ?livevar? -> the model token THE DECK
+## builds this device with. Issue 0965.
+##
+## ⚠ THIS IS THE ONE PLACE IN THIS FILE THAT ASKS WHAT A DEVICE'S MODEL IS
+## (invariant I1), and row NM5 of tests/headless/test_op_annot.tcl greps the
+## comment-stripped file to keep it that way. Both arms of op_annot::devpath
+## come through here, so the SAVE-CARD name and the ON-SCREEN name cannot be
+## spelled differently — which they were, and fixing only the card path would
+## have written correctly-named numbers into the results file and then looked
+## them up under a name nothing wrote.
+##
+## ⚠ IT RAISES EXACTLY WHERE THE LINE IT REPLACED RAISED. devpath's devproc arm
+## turned a raising `translate` into "no card for this device"; that behaviour
+## is unchanged because the live lookup is still the first thing done and is
+## still uncaught.
+##
+## `livevar` names a caller variable to receive the LIVE answer as well, so a
+## caller that wants to report the disagreement does not have to ask the
+## question a second way.
+##
+## THE FALLBACK IS THE OLD ANSWER, DELIBERATELY. Anything that is not a bare
+## `@token` — a literal `pfet_01v8_hvt`, an expression, a `%`-form — is returned
+## exactly as `translate` resolves it. That is 76 of the 78 names on the bench
+## and every name on every other PDK; only an instance whose own `model=` is a
+## single parameter reference can diverge at all.
+proc op_annot::_model_netlist {instname {livevar {}}} {
+  if {$livevar ne {}} { upvar 1 $livevar live }
+  set live [xschem translate $instname @model]
+  set raw {}
+  if {[catch {xschem getprop instance $instname model} raw]} { set raw {} }
+  set raw [string trim $raw]
+  if {$raw eq {}} {
+    ## Not on the instance line: the netlister's own second look, at the DEVICE
+    ## symbol's template (src/token.c:5420-5423).
+    set tpl {}
+    if {[catch {xschem getprop instance $instname cell::template} tpl]} { set tpl {} }
+    set raw [::op_annot::_tok $tpl model]
+  }
+  if {![regexp {^@[A-Za-z_][A-Za-z0-9_]*$} $raw]} { return $live }
+  set pp [::op_annot::_lcc_attr prop_ptr]
+  set tp [::op_annot::_lcc_attr templ]
+  ## GUARD GB — THE NETLISTER'S OWN EXCEPTION, AND IT IS NOT AN OPTIMISATION.
+  ## What a reader would otherwise assume is that the enclosing instance's
+  ## property string is never consulted at netlist time. It is, for exactly one
+  ## kind of instance: one carrying `schematic=`, for which get_additional_symbols
+  ## makes a SEPARATE symbol block whose parent_prop_ptr is that instance's own
+  ## property string (spice_netlist.c:494-496 and its comment). For such a cell
+  ## the override really does reach the deck, and dropping it here would name
+  ## the device wrongly in the other direction. Row NM4 is this guard's only
+  ## witness.
+  set usepp 0
+  if {[::op_annot::_tok $pp schematic] ne {}} { set usepp 1 }
+  set v $raw
+  ## Bounded, and one LEVEL only: token.c's three passes over the same
+  ## hier_attr entry, not a walk up the hierarchy. See the block header.
+  for {set n 0} {$n < 4} {incr n} {
+    if {[string index $v 0] ne {@}} { break }
+    set b [string range $v 1 end]
+    set got {}
+    if {$usepp} { set got [::op_annot::_tok $pp $b] }
+    if {$got eq {}} { set got [::op_annot::_tok $tp $b] }
+    if {$got eq {}} { break }
+    set v $got
+  }
+  if {$v eq {} || [string index $v 0] eq {@}} { return $live }
+  return $v
 }
 
 ## op_annot::devpath <instname> ?basis? ?root? -> the lowercased raw-file device
@@ -636,7 +832,10 @@ proc op_annot::devpath {instname {basis read} {root {}}} {
     ## The IHP prototype's sg13g2_procs.tcl:374/:453/:512 get this wrong and work
     ## only because IHP's own test schematics spell spiceprefix= on the instance
     ## line; ported verbatim the device path silently loses its `x`.
-    if {[catch {xschem translate $instname @model} model]} { return {} }
+    ## ISSUE 0965: THE NETLIST'S MODEL, NOT THE LIVE DESIGN'S. See the block
+    ## above op_annot::_model_netlist for the measurement; the raise behaviour
+    ## of the line this replaced is preserved inside it.
+    if {[catch {::op_annot::_model_netlist $instname} model]} { return {} }
     if {[catch {xschem translate $instname @spiceprefix} pfx]} { set pfx {} }
     if {[catch {::op_annot::_devproc_call $p $instname $model $dp $pfx} r]} {
       return {}
@@ -649,6 +848,14 @@ proc op_annot::devpath {instname {basis read} {root {}}} {
   set tmpl [dict get $d devpath]
   if {$tmpl eq {}} { return {} }
   set tmpl [::op_annot::_subst_path $tmpl $dp]
+  ## ISSUE 0965, THE SAME ANSWER FOR THE OTHER KIND OF DESCRIPTOR. A PDK that
+  ## spells its device path with a TEMPLATE gets `@model` resolved here, before
+  ## `translate` ever sees the string, so the two ways of describing a PDK can
+  ## never name the same transistor differently. Row NM6.
+  if {[string first {@model} $tmpl] >= 0} {
+    if {[catch {::op_annot::_model_netlist $instname} m0]} { return {} }
+    set tmpl [::op_annot::_subst_model $tmpl $m0]
+  }
   if {[catch {xschem translate $instname $tmpl} r]} { return {} }
   if {$r eq {}} { return {} }
   return [::op_annot::_lower $r]
@@ -1510,7 +1717,8 @@ proc op_annot::place_annotator {} {
 #   op_annot::write_save_file {}  -> writes it to $netlist_dir/<cell>.save and
 #                                    returns the path; {} when nothing to save
 #   op_annot::last_warnings {}    -> what the walk could not do, as a list
-#   op_annot::last_counts {}      -> {dropped_by_rule N not_found N name_failed N}
+#   op_annot::last_counts {}      -> {dropped_by_rule N not_found N name_failed N
+#                                    netlist_model_differs N}
 #
 # PORTED FROM ihp-sg13g2/sg13g2_procs.tcl, the single-PDK prototype, whose twin
 # sky130A/sky130_procs.tcl:72-146 is byte-for-byte the same design:
@@ -1721,7 +1929,7 @@ proc op_annot::last_warnings {} {
 }
 
 ## op_annot::last_counts -> what the last walk did NOT emit, as three named
-## integers (issue 0497).
+## integers (issue 0497), plus a fourth about what it DID emit (issue 0965).
 ##
 ##   dropped_by_rule  a NETLISTER rule dropped it: spice_ignore, only_toplevel,
 ##                    lvs_ignore, an empty `format`, default_schematic=ignore,
@@ -1731,6 +1939,15 @@ proc op_annot::last_warnings {} {
 ##                    reach its block. THE 0496 CLASS. Never normal.
 ##   name_failed      devpath/devproc could not build a name: a raising devproc,
 ##                    a blank template, or the 0488 prefix guard.
+##   netlist_model_differs   issue 0965, and the ODD ONE OUT: a card WAS emitted
+##                    for this instance, under the deck's own spelling of its
+##                    model, but the schematic line says a different model —
+##                    because the enclosing symbol's `format=` does not pass that
+##                    setting down. Nothing is missing; what is at stake is
+##                    ruling D5-1, the attribution of the numbers that appear.
+##                    Do NOT fold it into the three above: they count silence,
+##                    this counts a disagreement, and an aggregate would report
+##                    a healthy walk as a broken one.
 ##
 ## ⚠ THE SPLIT IS THE WHOLE POINT. Attempt 4 shipped ONE aggregate whose sentence
 ## ended `- normal for such cells`; on tb_bandgap_opamp it fired twice, the tool
@@ -1740,8 +1957,9 @@ proc op_annot::last_counts {} {
   variable _c_rule
   variable _c_notfound
   variable _c_name
+  variable _c_model
   return [list dropped_by_rule $_c_rule not_found $_c_notfound \
-               name_failed $_c_name]
+               name_failed $_c_name netlist_model_differs $_c_model]
 }
 
 ## ============================================================================
@@ -2440,6 +2658,7 @@ proc op_annot::_walk {root idx block} {
   variable _c_rule
   variable _c_notfound
   variable _c_name
+  variable _c_model
   set ninstances [xschem get instances]
   for {set i 0} {$i < $ninstances} {incr i} {
     set instname [xschem getprop instance $i name]
@@ -2456,6 +2675,26 @@ proc op_annot::_walk {root idx block} {
     ## card and is COUNTED — silence there is how two attempts shipped.
     if {$netl} {
       if {[::op_annot::_claims $instname]} {
+        ## GUARD GC — ISSUE 0965, AND RULING D5-1. The card below is emitted
+        ## under the DECK's spelling of this device's model, which is the only
+        ## spelling the simulator can answer. When the SCHEMATIC line says a
+        ## different model, the numbers that come back were measured for the
+        ## model the deck used, not the one the schematic shows next to them.
+        ## Emitting them silently would put an unmeasured attribution on a
+        ## schematic; refusing to emit them would restore the 12 blank rows this
+        ## whole change exists to delete. So: emit, and say so. Row N3.
+        set livem {}
+        if {![catch {::op_annot::_model_netlist $instname livem} nlm]} {
+          if {$nlm ne {} && $livem ne {} && $nlm ne $livem} {
+            incr _c_model
+            set nldev [::op_annot::devpath $instname deck $root]
+            ::op_annot::_warn "the schematic line for $instname asks for model\
+ \"$livem\", but the cell it sits in does not pass that setting into the\
+ netlist, so the simulator was given \"$nlm\" for it instead. The numbers\
+ shown on this device are the ones measured for \"$nlm\". In the results it is\
+ called $nldev"
+          }
+        }
         set cards [::op_annot::_cards_for $instname $root]
         if {[llength $cards]} {
           foreach c $cards { lappend _acc $c }
@@ -2635,6 +2874,7 @@ proc op_annot::save_cards {} {
   variable _c_rule
   variable _c_notfound
   variable _c_name
+  variable _c_model
   variable _nkmemo
 
   ## FIRST, and before any state is touched: a nested call would overwrite the
@@ -2655,6 +2895,7 @@ proc op_annot::save_cards {} {
   set _c_rule 0
   set _c_notfound 0
   set _c_name 0
+  set _c_model 0
   ## Issue 0493: the path memo may not outlive one walk — abs_sym_path resolves
   ## against XSCHEM_LIBRARY_PATH, which is user state.
   catch {array unset _nkmemo}

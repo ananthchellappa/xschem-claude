@@ -134,10 +134,16 @@ proc o_body {cmd} {
 # section A needs a stand-in that answers the CAPABILITY probe's blanket deck
 # AND the real ASE deck a blanket tier renders -- and those two decks look
 # nothing alike. The probe's blanket deck carries the wildcard save card
-# `[*]`; a blanket-tier ASE deck names no device at all and is recognised by
-# the device-less request `.options saveopparams` instead. The existing
-# stand-in in test_ase_simcaps_0948.tcl keys only off `[*]`, which is why this
-# file cannot reuse it.
+# `[*]`.
+#
+# ⚠ THE THIRD ARM IS NOW DEAD, AND IT IS KEPT AS A WITNESS. Before issues 0966
+# and 0968 a blanket-tier ASE deck named no device at all and had to be
+# recognised by the device-less request `.options saveopparams` instead -- two
+# different questions with one capability answer between them, which was the
+# defect. Since the emitted shape IS the probed shape, a blanket-tier deck
+# carries `[*]` like the probe's own and takes the second arm. Leaving the
+# `saveopparams` arm here costs nothing and makes the change visible to a reader
+# of this file.
 set OPHDR "Plotname: Operating Point\nFlags: real\nNo. Variables: 3\nNo. Points: 1\nVariables:\n\t0\ti(@m.xo1.xi1.m1\[id\])\tcurrent\n\t1\t@m.xo1.xi1.m1\[gm\]\tadmittance\n\t2\tv(@m.xo1.xi1.m1\[vdsat\])\tvoltage\nValues:\n 0\t1.2500002e-05\n\t5e-05\n\t5.000000e-01\n"
 set TRHDR "Plotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: 3\nVariables:\n\t0\ttime\ttime\n\t1\tv(dd)\tvoltage\nValues:\n 0\t0.000000e+00\n\t1.800000e+00\n 1\t1.000000e-09\n\t1.800000e+00\n 2\t2.000000e-09\n\t1.800000e+00\n"
 set TITLE "Title: * ase tier stand-in\nDate: Sat Aug 30 00:00:00  2026\n"
@@ -505,29 +511,56 @@ o_prime $CAPS_BLANKET
 o_force a
 ase::op_cards_put $NL $BLK5
 set DA [o_render [o_state $AN_OP] $NL]
+# ⚠ THIS ROW CHANGED SHAPE WITH ISSUES 0966 AND 0968, AND THE OLD SHAPE WAS THE
+# DEFECT. It used to assert that the blanket deck NAMES NO DEVICE ANYWHERE --
+# a device-less `.options` pair sitting above the run. That is not the question
+# the capability probe asks (0966), and a dot-card above the run applies to
+# every analysis in it, which is how the device numbers rode the transient
+# before (0968). What survives unchanged is the property that matters: the
+# request is O(devices), not O(devices x parameters), and nothing device-related
+# is left sitting above the run.
 set E1 NOPROC
 if {$DA ne {NOPROC} && ![string match RAISED:* $DA]} {
   set nats 0
   foreach l [split $DA "\n"] { if {[string first {@} $l] >= 0} { incr nats } }
   set nsaveall 0
-  foreach l [o_decklevel $DA] { if {[string trim $l] eq {.save all}} { incr nsaveall } }
-  set E1 [list [regexp -all -line {^\.options saveopparams$} $DA] $nsaveall $nats]
+  set ndeckats 0
+  foreach l [o_decklevel $DA] {
+    if {[string trim $l] eq {.save all}} { incr nsaveall }
+    if {[string first {@} $l] >= 0} { incr ndeckats }
+  }
+  set E1 [list [regexp -all -line {^\.options} $DA] $nsaveall $nats $ndeckats]
 }
-check {E1 the blanket form asks for every device's operating-point numbers in\
- one request and NAMES NO DEVICE ANYWHERE IN THE DECK} $E1 {1 1 0}
+check {E1 the blanket form asks for each device's operating-point numbers ONCE\
+ -- one request per device rather than one per number -- all of them on a\
+ single line inside the run, and it leaves nothing that names a device above\
+ the run where it would apply to every analysis} $E1 {0 1 1 0}
 
 ase::op_cards_put $NL $BLK100
 set DA100 [o_render [o_state $AN_OP] $NL]
 ase::op_cards_put $NL $BLK0
 set DA0 [o_render [o_state $AN_OP] $NL]
+# ⚠ ALSO RESHAPED BY 0966. The blanket form is no longer O(1) in the deck -- it
+# names one device per request -- so the claim "the same size for 100 devices as
+# for none" is no longer true and asserting it would be asserting the defect.
+# What it IS, and what this row now measures, is O(devices) against the
+# per-device form's O(devices x parameters): 100 devices at 6 parameters each
+# are 600 cards under form c and 100 names on one line under this one.
 set E2 NOPROC
 if {$DA100 ne {NOPROC} && ![string match RAISED:* $DA100] &&
     $DA0 ne {NOPROC} && ![string match RAISED:* $DA0]} {
   set gr [expr {[llength [split $DA100 "\n"]] - [llength [split $DA0 "\n"]]}]
-  set E2 [expr {($gr >= 0 && $gr <= 3) ? {within-3} : "grew-by-$gr-lines"}]
+  set e2n 0
+  foreach l [o_control $DA100] {
+    if {![regexp {^\s*save\s} [string trim $l]]} { continue }
+    foreach w [split [string trim $l]] { if {[string index $w 0] eq {@}} { incr e2n } }
+  }
+  set E2 [list [expr {($gr >= 0 && $gr <= 3) ? {within-3-lines} : "grew-by-$gr-lines"}] \
+               $e2n [llength [o_deckcards $DA100]]]
 }
-check {E2 the blanket form costs the same whether the bench has 100 devices in\
- it or none -- that is the whole point of it} $E2 within-3
+check {E2 the blanket form asks for a hundred devices in the same three lines it\
+ asks for none -- a hundred names, not six hundred cards, and not one of them\
+ above the run} $E2 {within-3-lines 100 0}
 
 # --- the one-line short form, reachable only through the override -----------
 o_prime $CAPS_WRITE
@@ -1067,14 +1100,23 @@ set ARC [o_dorun $AST $NL]
 set ARAW [[o_ans ase::backend_hook ngspice raw_file] $AST]
 set A1 NOPROC
 if {$ADECK ne {NOPROC} && ![string match RAISED:* $ADECK]} {
-  set nats 0
-  foreach l [split $ADECK "\n"] { if {[string first {@} $l] >= 0} { incr nats } }
-  set A1 [list $ABOP [o_tr $AST] $nats $ARC [o_plotnames $ARAW]]
+  ## RESHAPED WITH 0966: the deck names each device ONCE, wildcarded over that
+  ## device's own parameters -- the shape the probe measured. It used to name
+  ## none, which is a different question from the one the YES was about.
+  set anames {}
+  foreach l [split $ADECK "\n"] {
+    foreach w [split $l] { if {[string index $w 0] eq {@}} { lappend anames $w } }
+  }
+  set awild 1
+  if {![llength $anames]} { set awild 0 }
+  foreach n $anames { if {![string match {*\[\*\]} $n]} { set awild 0 } }
+  set A1 [list $ABOP [o_tr $AST] [llength $anames] $awild $ARC [o_plotnames $ARAW]]
 }
 check {A1 a stand-in that really can save every device at once is given the\
- blanket form: the deck it is handed names no device anywhere, the run\
- succeeds, and an operating point comes back with the device numbers in it} \
-  $A1 [list 1 {a blanket} 0 0 {{Operating Point}}]
+ blanket form: the deck it is handed asks for each of the five devices once and\
+ for every one of that device's numbers, the run succeeds, and an operating\
+ point comes back with the device numbers in it} \
+  $A1 [list 1 {a blanket} 5 1 0 {{Operating Point}}]
 
 o_force c
 set A2DIR [file join $scratch a2run]
@@ -1432,6 +1474,1005 @@ check {ACC3 deck size, wall clock and results size are measured for both forms\
   $ACC3 [list [list {c forced} 0] [list {b forced} 0] [list {c forced} 0]]
 
 }
+
+
+# ============================================================================
+# E-NEW. THE BLANKET FORM IS THE SHAPE THAT WAS MEASURED (0966), AND IT IS
+#        SCOPED TO THE ANALYSIS THAT CAN USE IT (0968)
+# ============================================================================
+# TWO DEFECTS, ONE SHAPE. What the capability probe ASKS is one request per
+# device, wildcarded over that device's parameters, inside the control block:
+#     save @m.xo1.xi1.m1[*]                             (src/ase.tcl:6332)
+# What the deck EMITS when the probe says yes is a device-less pair of
+# dot-cards at deck level, above the control block:
+#     .save all
+#     .options saveopparams                        (as ase.tcl shipped it)
+# So a build that answers YES to the question that was asked gets a deck that
+# asks a different question (0966), and it gets it at DECK level, where it
+# applies to every analysis in the run -- which is exactly how the per-analysis
+# scoping was lost before, issue 0928 (0968).
+#
+# Neither is reachable behaviourally on this box without the stand-in: no
+# released ngspice answers yes. Measured by hand on ngspice-46+, the probe's
+# own deck B returns 0 device-parameter vectors.
+
+o_prime $CAPS_BLANKET
+o_force a
+ase::op_cards_put $NL $BLK5
+set EA [o_render [o_state $AN_OP] $NL]
+set EAB [o_render [o_state $AN_BOTH] $NL]
+set EABO [o_render [o_state $AN_BOTH {} $OUTS] $NL]
+
+## The `@` tokens named by the `save` commands inside `.control`, in order.
+proc o_ctlats {deck} {
+  set n {}
+  foreach s [o_ctlsaves $deck] {
+    foreach t [o_ats $s] { lappend n $t }
+  }
+  return $n
+}
+## Does every one of them carry the wildcard the probe measured with?
+proc o_allwild {names} {
+  if {![llength $names]} { return 0 }
+  foreach n $names { if {![string match {*\[\*\]} $n]} { return 0 } }
+  return 1
+}
+## Where the device requests sit relative to the analysis they belong to:
+## the control-block line index of the last device request and of `op`.
+proc o_ctlorder {deck} {
+  set i -1 ; set lastsave -1 ; set opat -1
+  foreach l [o_control $deck] {
+    incr i
+    set t [string trim $l]
+    if {[regexp {^save\s} $t]} { set lastsave $i }
+    if {[regexp {^op(\s|$)} $t]} { if {$opat < 0} { set opat $i } }
+  }
+  return [list $lastsave $opat]
+}
+
+set E14 NOPROC
+if {$EA ne {NOPROC} && ![string match RAISED:* $EA]} {
+  set e14names [o_ctlats $EA]
+  lassign [o_ctlorder $EA] e14last e14op
+  set E14 [list [regexp -all -line {^\.options} $EA] \
+                [llength [o_deckcards $EA]] \
+                [llength $e14names] \
+                [o_allwild $e14names] \
+                [expr {($e14last >= 0 && $e14op == $e14last + 1) ? 1 : 0}]]
+}
+check {E14 issue 0966 when the simulator can hand back every device's\
+ operating-point numbers, the deck asks for them the way the simulator was\
+ asked whether it could -- one request per device, right before the operating\
+ point, and nothing left sitting above the run} \
+  $E14 {0 0 5 1 1}
+
+set E15SRC [o_nocomment [o_slurp $ASETCL]]
+set E15 NOPROC
+if {$EA ne {NOPROC} && ![string match RAISED:* $EA]} {
+  set E15 [list [o_count $E15SRC {\[*\]}] [o_allwild [o_ctlats $EA]]]
+}
+check {E15 issue 0966 STRUCTURAL the shape the simulator is TESTED with and the\
+ shape the deck ASKS with are spelled in one place, so a capability that is\
+ measured one way can never be used another} \
+  $E15 {1 1}
+
+set E16 NOPROC
+if {$EAB ne {NOPROC} && ![string match RAISED:* $EAB]} {
+  lassign [o_ctlorder $EAB] e16last e16op
+  set E16 [list [o_analines $EAB] \
+                [llength [o_ctlats $EAB]] \
+                [expr {($e16last >= 0 && $e16op == $e16last + 1) ? 1 : 0}] \
+                [regexp -all -line {^\.options} $EAB] \
+                [llength [o_deckcards $EAB]]]
+}
+check {E16 issue 0968 with a transient in the same run the device requests are\
+ made for the OPERATING POINT ONLY -- they sit inside the run, right before it,\
+ and the operating point goes last so nothing else is recorded at every\
+ timepoint} \
+  $E16 {{tran op} 5 1 0 0}
+
+## 0967 IS NOT BEING SETTLED HERE. Which analysis the Outputs Value column
+## reads is the user's ruling to make. This row says only that this change did
+## not move it: the printed outputs still sit with the same analysis's write
+## they sat with before, whatever the deck's analysis ORDER became.
+set E17 NOPROC
+if {$EABO ne {NOPROC} && ![string match RAISED:* $EABO]} {
+  set e17 {} ; set e17seen {}
+  foreach l [o_control $EABO] {
+    set t [string trim $l]
+    if {[regexp {^(op|dc|ac|tran)(\s|$)} $t -> k]} { set e17seen $k }
+    if {[regexp {^print\s} $t]} { lappend e17 $e17seen }
+  }
+  set E17 $e17
+}
+check {E17 issue 0967 NON-REGRESSION the Outputs Value column still reads the\
+ analysis it read before -- this change moves where the requests sit, not which\
+ results the printed outputs come from} \
+  $E17 {tran tran}
+
+set RDBODY [o_body ::ase::backend::ngspice::render_deck]
+check {E18 issues 0966+0968 STRUCTURAL nothing device-related is written as a\
+ setting that applies to the whole run, because a whole-run setting cannot be\
+ confined to the operating point} \
+  [list [expr {($RDBODY ne {NOPROC}) ? [o_count $RDBODY {saveopparams}] : $RDBODY}] \
+        [o_count $E15SRC {saveopparams}]] \
+  {0 0}
+
+o_force {}
+
+# ============================================================================
+# Q. A NAME THAT CAME BACK WITH NOTHING IS NEVER SILENT AGAIN
+# ============================================================================
+# MEASURED FIRST-HAND ON ngspice-46+. A `.save` card naming a device that does
+# not exist is accepted without one character of complaint: exit 0, a normal
+# results file, and the bad name lands in it as a zero-length vector that
+# `remzerovec` then strips. In-control `save` behaves the same. So the run
+# looks perfect and six rows on the user's schematic are blank.
+#
+# On the shipped bandgap bench that is 12 blank rows out of 468, and NOTHING
+# anywhere says so: op_annot::last_warnings is empty, its counts read
+# dropped_by_rule 0 not_found 0 name_failed 0, and the 561-line run log has no
+# occurrence of "no such", "x5.xm2" or "x6.xm2". The only count the user is
+# ever shown is how many requests went IN. Nothing compares that with what came
+# back. Removing that silence is ours to do, not the simulator's.
+#
+# The rows below drive whole runs against stand-ins that hand back a chosen
+# subset of the devices, so the comparison is exercised end to end without a
+# PDK or a simulator.
+
+## One canned results file: an Operating Point plot naming the given devices,
+## spelled the three ways the parameter kinds wrap them.
+proc q_rawdevs {devs} {
+  global TITLE
+  set params {id gm gds vgs vth vds}
+  set vars {}
+  foreach dv $devs {
+    foreach p $params {
+      set d "${dv}\[$p\]"
+      switch -- $p {
+        id  { lappend vars "i($d)" }
+        gm  -
+        gds { lappend vars $d }
+        default { lappend vars "v($d)" }
+      }
+    }
+  }
+  set t "${TITLE}Plotname: Operating Point\nFlags: real\nNo. Variables:\
+ [llength $vars]\nNo. Points: 1\nVariables:\n"
+  set k 0
+  foreach v $vars { append t "\t$k\t$v\tnotype\n" ; incr k }
+  append t "Values:\n 0"
+  for {set j 0} {$j < [llength $vars]} {incr j} { append t "\t1.000000e-03\n" }
+  return $t
+}
+## The same, for the <ndev> devices ase::op_cards_devices reads out of o_block.
+proc q_raw {ndev} {
+  set devs {}
+  for {set i 1} {$i <= $ndev} {incr i} { lappend devs "@m.xz${i}.mzmod" }
+  return [q_rawdevs $devs]
+}
+## A stand-in that always copies ONE file, or writes nothing at all when the
+## source is the word NONE -- which is the measured shape of a run that exits 0
+## and produces no results.
+set Q_STUBTPL {#!/bin/sh
+deck=
+for a in "$@"; do
+  if [ -f "$a" ]; then deck="$a"; fi
+done
+if [ -z "$deck" ]; then exit 0; fi
+out=`grep -E '^[ 	]*write[ 	]' "$deck" | head -1 | sed -e 's/^[ 	]*write[ 	][ 	]*//' -e 's/[ 	]*$//'`
+if [ -n "$out" ] && [ -f "@SRC@" ]; then cat "@SRC@" > "$out"; fi
+exit 0
+}
+proc q_stub {name src} {
+  global Q_STUBTPL BIN
+  set p [file join $BIN $name]
+  o_wr $p [string map [list @SRC@ $src] $Q_STUBTPL] 0755
+  return $p
+}
+proc q_prime {prog caps} {
+  set r [o_useprog $prog]
+  if {$r eq {}} { return NORESOLVE }
+  if {[catch {ase::cap_stamp $r} st]} { return "RAISED:$st" }
+  set ::ase::sim_caps [dict create $r [list stamp $st caps $caps]]
+  return $r
+}
+## Every line the run put in front of the user, and every sentence the one mint
+## produced while it ran. Both, because ruling D5-4 is about WHERE a sentence
+## comes from, not only about what it says.
+proc q_run {script} {
+  set ::q_lines {}
+  set ::q_minted {}
+  set ::q_kinds {}
+  if {[info commands ::ase::echo] eq {} ||
+      [info commands ::ase::sim_why] eq {}} { return NOPROC }
+  rename ::ase::echo ::q_saved_echo
+  proc ::ase::echo {msg {tag {}}} {
+    lappend ::q_lines $msg
+    return [::q_saved_echo $msg $tag]
+  }
+  rename ::ase::sim_why ::q_saved_why
+  proc ::ase::sim_why {kind name path {extra {}}} {
+    set s [::q_saved_why $kind $name $path $extra]
+    lappend ::q_minted $s
+    lappend ::q_kinds $kind
+    return $s
+  }
+  set rc [catch {uplevel 1 $script} r]
+  rename ::ase::echo {} ; rename ::q_saved_echo ::ase::echo
+  rename ::ase::sim_why {} ; rename ::q_saved_why ::ase::sim_why
+  if {$rc} { return "RAISED:$r" }
+  return [list $::q_lines $::q_minted $::q_kinds]
+}
+## Which of <names> a line mentions.
+proc q_named {line names} {
+  set h {}
+  foreach n $names { if {[string first $n $line] >= 0} { lappend h $n } }
+  return $h
+}
+## The lines that mention at least one of <names>.
+proc q_hits {lines names} {
+  set h {}
+  foreach l $lines { if {[llength [q_named $l $names]]} { lappend h $l } }
+  return $h
+}
+## Standalone whole numbers in a sentence -- the counts, not the digits buried
+## in a device name.
+proc q_ints {line} {
+  set out {}
+  foreach w [split [string map {, { } . { }} $line]] {
+    if {[string is integer -strict $w]} { lappend out $w }
+  }
+  return [lsort -integer -unique $out]
+}
+proc q_has {l vals} {
+  foreach v $vals { if {[lsearch -exact $l $v] < 0} { return 0 } }
+  return 1
+}
+
+set Q_ALL5  [file join $scratch q_all5.raw]
+set Q_SOME5 [file join $scratch q_some5.raw]
+set Q_SOME20 [file join $scratch q_some20.raw]
+o_wr $Q_ALL5   [q_raw 5]
+o_wr $Q_SOME5  [q_raw 3]
+o_wr $Q_SOME20 [q_raw 2]
+set Q_S_ALL5   [q_stub sim_q_all5   $Q_ALL5]
+set Q_S_SOME5  [q_stub sim_q_some5  $Q_SOME5]
+set Q_S_SOME20 [q_stub sim_q_some20 $Q_SOME20]
+set Q_S_NONE   [q_stub sim_q_none   NONE]
+
+set BLK20  [o_block 20]
+set DEV20  [o_blockdevs 20]
+set Q_MISS2  [list @m.xz4.mzmod @m.xz5.mzmod]
+
+o_force {}
+ase::op_cards_put $NL $BLK5
+
+## Q1 -- three of the five devices came back.
+q_prime $Q_S_SOME5 $CAPS_WRITE
+set Q1R [q_run {o_dorun [o_state $AN_OP 1] $NL}]
+set Q1 NOPROC
+if {$Q1R ne {NOPROC} && ![string match RAISED:* $Q1R]} {
+  set q1h [q_hits [lindex $Q1R 0] $Q_MISS2]
+  set Q1 [list [llength $q1h] \
+               [expr {[llength $q1h] == 1 ? [llength [q_named [lindex $q1h 0] $Q_MISS2]] : 0}] \
+               [expr {[llength $q1h] == 1 ? [q_has [q_ints [lindex $q1h 0]] {5 3}] : 0}]]
+}
+check {Q1 the simulator was asked for five devices and handed back three, so\
+ the run says so once, gives both counts, and names the two it did not answer\
+ for -- instead of leaving those rows blank on the schematic with no\
+ explanation anywhere} \
+  $Q1 {1 2 1}
+
+## Q2 -- the control. Every device came back; there is nothing to report and
+## saying something anyway would be a claim about a run that went fine.
+q_prime $Q_S_ALL5 $CAPS_WRITE
+set Q2R [q_run {o_dorun [o_state $AN_OP 1] $NL}]
+set Q2 NOPROC
+if {$Q2R ne {NOPROC} && ![string match RAISED:* $Q2R]} {
+  set Q2 [llength [q_hits [lindex $Q2R 0] [o_blockdevs 5]]]
+}
+check {Q2 a run every device answered for says nothing about it -- silence is\
+ the right answer when nothing went wrong} $Q2 0
+
+## Q3 -- exit 0 and no results file at all. MEASURED: that is what the
+## one-line short form does on ngspice-46+ when a single device name cannot be
+## matched; it prints three lines to its own log, writes no file, and exits 0.
+q_prime $Q_S_NONE $CAPS_WRITE
+set Q3R [q_run {o_dorun [o_state $AN_OP 1] $NL}]
+set Q3 NOPROC
+if {$Q3R ne {NOPROC} && ![string match RAISED:* $Q3R]} {
+  set q3h {}
+  foreach l [lindex $Q3R 0] { if {[string first zzcell_ase.raw $l] >= 0} { lappend q3h $l } }
+  set Q3 [list [llength $q3h] [expr {[llength $q3h] ? [expr {[string length [lindex $q3h 0]] >= 80}] : 0}]]
+}
+check {Q3 the run finished without complaining and produced no results file at\
+ all, so the user is told that -- naming the file that never appeared and what\
+ to do instead -- rather than being left with a blank schematic} \
+  $Q3 {1 1}
+
+## Q4 -- twenty asked for, two answered. The list is capped so the CIW stays
+## readable, and the sentence says how many it did not list.
+ase::op_cards_put $NL $BLK20
+q_prime $Q_S_SOME20 $CAPS_WRITE
+set Q4R [q_run {o_dorun [o_state $AN_OP 1] $NL}]
+set Q4 NOPROC
+if {$Q4R ne {NOPROC} && ![string match RAISED:* $Q4R]} {
+  set q4miss [lrange $DEV20 2 end]
+  set q4h [q_hits [lindex $Q4R 0] $q4miss]
+  set Q4 [list [llength $q4h] \
+               [expr {[llength $q4h] == 1 ? [llength [q_named [lindex $q4h 0] $q4miss]] : -1}] \
+               [expr {[llength $q4h] == 1 ? [q_has [q_ints [lindex $q4h 0]] {20 2 13}] : 0}]]
+}
+check {Q4 when many devices went unanswered the run names the first few and\
+ says how many more there were, so one bad run cannot bury the CIW in device\
+ names} $Q4 {1 5 1}
+ase::op_cards_put $NL $BLK5
+
+## Q5 -- ruling D5-4, measured rather than grepped: the sentence the user read
+## is the very string the one mint produced.
+set Q5 NOPROC
+if {$Q1R ne {NOPROC} && ![string match RAISED:* $Q1R]} {
+  set q5h [q_hits [lindex $Q1R 0] $Q_MISS2]
+  set q5ok 0
+  if {[llength $q5h] == 1} {
+    foreach m [lindex $Q1R 1] {
+      if {$m ne {} && [string first $m [lindex $q5h 0]] >= 0} { set q5ok 1 }
+    }
+  }
+  set q5n 0
+  if {$Q3R ne {NOPROC} && ![string match RAISED:* $Q3R]} {
+    foreach l [lindex $Q3R 0] {
+      if {[string first zzcell_ase.raw $l] < 0} { continue }
+      foreach m [lindex $Q3R 1] {
+        if {$m ne {} && [string first $m $l] >= 0} { set q5n 1 }
+      }
+    }
+  }
+  set Q5 [list $q5ok $q5n]
+}
+check {Q5 RULING D5-4 both new sentences are written in the one place sentences\
+ about a run are written, and the run only renders them -- so the Simulators\
+ dialog can show the user the very words the CIW got} $Q5 {1 1}
+
+## Q6 -- the plain-English ruling. The device names themselves are the deck's
+## own spelling and are deliberately NOT on the ban list: they are what the
+## user searches their results with.
+set Q6 {}
+foreach q6r [list $Q1R $Q3R $Q4R] {
+  if {$q6r eq {NOPROC} || [string match RAISED:* $q6r]} { lappend Q6 $q6r ; continue }
+  foreach s [lindex $q6r 1] {
+    if {$s eq {}} continue
+    if {[string length $s] < 80} { lappend Q6 [list SHORT $s] }
+    foreach w {blanket tier optier saveopparams appendwrite hier_op_names\
+               blanket_op_save vector .save .control remzerovec} {
+      if {[string first $w [string tolower $s]] >= 0} { lappend Q6 [list $w $s] }
+    }
+  }
+}
+set Q6NEW 0
+foreach q6r [list $Q1R $Q3R] {
+  if {$q6r eq {NOPROC} || [string match RAISED:* $q6r]} { continue }
+  incr Q6NEW [llength [lindex $q6r 1]]
+}
+check {Q6 PLAIN ENGLISH neither new sentence uses a word out of the code, and\
+ each is a real explanation rather than a bare state name} \
+  [list $Q6 [expr {$Q6NEW >= 2 ? 1 : 0}]] {{} 1}
+
+# ============================================================================
+# Q-DIRECT. THE FOUR GUARDS A WHOLE RUN CANNOT REACH
+# ============================================================================
+# WHY THESE ROWS ARE DRIVEN AND NOT RUN. Q1-Q6 above drive real runs against
+# stand-in simulators, and that is the right shape for the everyday case. But
+# the stand-ins always exit 0, always resolve their own results path, and are
+# always fed a block whose device names are twenty tidy variations on one
+# spelling. Four of this report's guards live outside all three of those, and
+# sabotaging every one of them left the whole tree green:
+#
+#   * the whole-name test, which a substring test silently replaces;
+#   * the LAST-bracket cut, which a bussed instance needs (issue 0972);
+#   * "I could not work out where the file would be is not 'there is no file'";
+#   * "a run that already failed loudly is not also told its devices are gone".
+#
+# A guard nobody can see is a comment. These rows call ase::op_report_missing
+# the way ase::run_done calls it -- state, the run's captured block, the exit
+# code -- and put those four conditions in front of it.
+
+## The report, driven directly. Answers {kind lines saidkinds}, so a row can
+## assert on the ANSWER and on what the user was told, and can tell silence
+## (nothing said) from a wrong sentence.
+proc q_direct {state blk exitcode} {
+  if {[info commands ::ase::op_report_missing] eq {}} { return NOPROC }
+  set ::q_st $state
+  set ::q_meta [dict create opblock $blk]
+  set ::q_rc $exitcode
+  set ::q_ret ZZUNSET
+  set r [q_run {set ::q_ret [ase::op_report_missing $::q_st $::q_meta $::q_rc]}]
+  if {$r eq {NOPROC} || [string match RAISED:* $r]} { return $r }
+  return [list $::q_ret [lindex $r 0] [lindex $r 2]]
+}
+## A captured block naming exactly the given devices, six parameters each --
+## the shape op_annot::save_cards produces.
+proc q_blkdevs {devs} {
+  set b ".save all"
+  foreach dv $devs {
+    foreach p {id gm gds vgs vth vds} { append b "\n.save ${dv}\[$p\]" }
+  }
+  return "$b\n"
+}
+
+set QD_ST  [o_state $AN_OP 1]
+set QD_RAW {}
+catch {set QD_RAW [[ase::backend_hook ngspice raw_file] $QD_ST]}
+
+## Q7 -- ONE NAME INSIDE ANOTHER. sky130's own model names nest: every binned
+## flavour is the plain name with a suffix glued on, so `..._pfet_01v8` sits
+## inside `..._pfet_01v8_lvt` character for character. If the report only asked
+## "do these characters appear anywhere in the results file", a longer-named
+## device answering would cover for a shorter-named one that produced nothing
+## -- which is the exact silence this whole report exists to remove.
+set Q7DEVS [list @m.xz1.mzmod @m.xz1.mzmod_lvt]
+o_wr $QD_RAW [q_rawdevs [list @m.xz1.mzmod_lvt]]
+set Q7R [q_direct $QD_ST [q_blkdevs $Q7DEVS] 0]
+set Q7 $Q7R
+if {$Q7R ne {NOPROC} && ![string match RAISED:* $Q7R]} {
+  set q7h [q_hits [lindex $Q7R 1] [list @m.xz1.mzmod]]
+  set Q7 [list [lindex $Q7R 0] \
+               [llength $q7h] \
+               [expr {[llength $q7h] == 1 ?
+                      [string first {_lvt} [lindex $q7h 0]] : -99}] \
+               [expr {[llength $q7h] == 1 ?
+                      [q_has [q_ints [lindex $q7h 0]] {2 1}] : 0}]]
+}
+check {Q7 issue 0965 a device whose name is the FRONT of another device's name\
+ is still reported when it comes back with nothing -- the longer one answering\
+ does not cover for it} \
+  $Q7 {op_numbers_missing 1 -1 1}
+
+## Q8 -- ISSUE 0972, A BUS PUTS A BRACKET INSIDE THE DEVICE NAME. Measured on
+## the shipped sky130_tests_ase/sky130_mismatch bench, whose ten matched
+## transistors are one symbol named M1[9:0] and whose save cards read
+## `.save @m.xm1[9:0].msky130_fd_pr__nfet_01v8[id]`. Cutting the parameter off
+## at the FIRST bracket answered `@m.xm1` -- not a device, and the same key for
+## every member of the bus, so one member answering covered for all the rest.
+## Both halves are here: the names the write line would carry, and the report.
+set Q8DEVS [list {@m.xz1[3].mzmod} {@m.xz1[7].mzmod}]
+o_wr $QD_RAW [q_rawdevs [list {@m.xz1[7].mzmod}]]
+set Q8R [q_direct $QD_ST [q_blkdevs $Q8DEVS] 0]
+set Q8 $Q8R
+if {$Q8R ne {NOPROC} && ![string match RAISED:* $Q8R]} {
+  set Q8 [list [o_ans ase::op_cards_devices [q_blkdevs $Q8DEVS]] \
+               [lindex $Q8R 0] \
+               [llength [q_hits [lindex $Q8R 1] [list {@m.xz1[3].mzmod}]]] \
+               [llength [q_hits [lindex $Q8R 1] [list {@m.xz1[7].mzmod}]]]]
+}
+check {Q8 issue 0972 when the same symbol stands for a whole bus of\
+ transistors each member keeps its own full name, so the run asks for names\
+ that exist and names the member that came back with nothing instead of\
+ letting its neighbour answer for it} \
+  $Q8 [list $Q8DEVS op_numbers_missing 1 0]
+
+## Q9 -- "I COULD NOT WORK OUT WHERE THE FILE WOULD BE" IS NOT "THERE IS NO
+## FILE". Two ways in: a simulator with no results-file hook at all, and a
+## design the hook itself refuses to answer for. Either way nothing was looked
+## at, so telling the user their run produced no results would be a confident
+## claim about a file nobody opened -- on the one surface built to stop exactly
+## that. Silence is the honest answer.
+o_wr $QD_RAW [q_rawdevs [list @m.xz1.mzmod]]
+set Q9STA [o_state $AN_OP 1]
+dict set Q9STA simulator zznosuchsim
+set Q9STB [o_state $AN_OP 1]
+dict unset Q9STB design
+set Q9RA [q_direct $Q9STA [q_blkdevs $Q7DEVS] 0]
+set Q9RB [q_direct $Q9STB [q_blkdevs $Q7DEVS] 0]
+set Q9 {}
+foreach q9r [list $Q9RA $Q9RB] {
+  if {$q9r eq {NOPROC} || [string match RAISED:* $q9r]} { lappend Q9 $q9r ; continue }
+  lappend Q9 [list [lindex $q9r 0] [llength [lindex $q9r 1]]]
+}
+check {Q9 issue 0965 when there was no way to tell where the results file would\
+ even be, the run says nothing at all -- it never claims a file failed to\
+ appear when it never went looking for one} \
+  $Q9 {{{} 0} {{} 0}}
+
+## Q10 -- A RUN THAT ALREADY FAILED LOUDLY IS NOT ALSO COUNTED AT. The same
+## fixture Q7 reports on, at a nonzero exit: every device is missing by
+## construction there, and a second sentence counting them buries the error the
+## user actually has to read. The exit-0 half is in the row so the fixture
+## cannot go vacuous.
+o_wr $QD_RAW [q_rawdevs [list @m.xz1.mzmod_lvt]]
+set Q10A [q_direct $QD_ST [q_blkdevs $Q7DEVS] 0]
+set Q10B [q_direct $QD_ST [q_blkdevs $Q7DEVS] 1]
+set Q10 [list $Q10A $Q10B]
+if {$Q10A ne {NOPROC} && ![string match RAISED:* $Q10A] &&
+    $Q10B ne {NOPROC} && ![string match RAISED:* $Q10B]} {
+  set Q10 [list [lindex $Q10A 0] \
+                [lindex $Q10B 0] [llength [lindex $Q10B 1]]]
+}
+check {Q10 a run that stopped with an error is not ALSO told how many device\
+ numbers did not come back -- the error the user has to read stays the one\
+ thing in front of them} \
+  $Q10 {op_numbers_missing {} 0}
+
+## Q11 -- STRUCTURAL, issue 0972: ONE SPLITTER, BOTH SIDES. The report compares
+## the names the deck asked for with the names the results file answered for.
+## If those two lists are cut apart at different places the comparison is a
+## name against a differently-cut copy of itself, and it can only be right by
+## luck. Nothing behavioural can see the two cuts drift while they drift
+## together, which is why this row reads the source.
+set Q11DEV [o_body ase::op_dev_of]
+set Q11CD  [o_body ase::op_cards_devices]
+set Q11RM  [o_body ase::op_report_missing]
+check {Q11 issue 0972 STRUCTURAL the parameter suffix is cut off a device name\
+ in ONE place, that place cuts at the last bracket rather than the first, and\
+ both the write line and the run report go through it} \
+  [list [expr {$Q11DEV eq {NOPROC} ? $Q11DEV : [o_count $Q11DEV {string last}]}] \
+        [expr {$Q11DEV eq {NOPROC} ? $Q11DEV : [o_count $Q11DEV {string first}]}] \
+        [expr {$Q11CD  eq {NOPROC} ? $Q11CD  : [o_count $Q11CD {op_dev_of}]}] \
+        [expr {$Q11CD  eq {NOPROC} ? $Q11CD  : [o_count $Q11CD {string first}]}] \
+        [expr {$Q11RM  eq {NOPROC} ? $Q11RM  : [o_count $Q11RM {op_dev_of}]}]] \
+  {1 0 1 0 1}
+
+catch {file delete -- $QD_RAW}
+ase::op_cards_put $NL $BLK5
+
+# ============================================================================
+# S-NEW. WHERE THE NEW SENTENCES LIVE, AND WHAT THE OLD ONES MAY STILL CLAIM
+# ============================================================================
+set Q_NEWKINDS {}
+foreach q6r [list $Q1R $Q3R] {
+  if {$q6r eq {NOPROC} || [string match RAISED:* $q6r]} { continue }
+  foreach k [lindex $q6r 2] {
+    if {[string match op_tier* $k]} { continue }
+    if {[lsearch -exact $Q_NEWKINDS $k] < 0} { lappend Q_NEWKINDS $k }
+  }
+}
+set S11WHY [o_body ase::sim_why]
+set S11 {}
+foreach k $Q_NEWKINDS { lappend S11 [o_count $S11WHY $k] }
+check {S11 RULING D5-4 the asked-for-and-did-not-come-back sentence and the\
+ no-results-file sentence each exist exactly once, in the one place a run's\
+ sentences are written} \
+  [list [llength $Q_NEWKINDS] $S11] {2 {1 1}}
+
+set S12 [o_ans ase::sim_why op_tier_blanket ngspice /usr/bin/zzsim {}]
+check {S12 issue 0966 the sentence for the short-and-wide form no longer tells\
+ the user their deck names no devices, because after this change it names one\
+ per device} \
+  [expr {($S12 eq {NOPROC} || [string match RAISED:* $S12]) ? $S12 :
+         [expr {[string first {names no devices} $S12] < 0 ? 1 : 0}]}] 1
+
+set S13 [o_ans ase::sim_why op_tier_perdevice ngspice /usr/bin/zzsim unsafe]
+check {S13 guard G4 STAYS, and the sentence that explains it still tells the\
+ user the risk in the words the measurement supports -- one unmatched device\
+ name and the whole operating point is gone, with no complaint} \
+  [expr {($S13 eq {NOPROC} || [string match RAISED:* $S13]) ? $S13 :
+         [list [expr {[string first {all or nothing} [string tolower $S13]] >= 0 ? 1 : 0}] \
+               [expr {[string first {throws the whole operating point away} $S13] >= 0 ? 1 : 0}]]}] \
+  {1 1}
+
+# ============================================================================
+# N. THE USER'S OWN BENCH -- EVERY DEVICE NAME MUST BE ONE THE DECK CONTAINS
+# ============================================================================
+# ISSUE 0965, MEASURED ON sky130_tests_ase/tb_bandgap. The tree emits 468
+# requests naming 78 distinct devices. 76 of them are in the deck; two are not:
+#     @m.x1.x5.xm2.msky130_fd_pr__pfet_01v8_lvt
+#     @m.x1.x6.xm2.msky130_fd_pr__pfet_01v8_lvt
+# Both are passgates whose schematic line overrides the transistor model with
+# modelp=pfet_01v8_lvt, while passgate.sym's format= string never mentions
+# modelp -- so the netlister writes ONE .subckt passgate body from the SYMBOL
+# TEMPLATE default and the override never reaches the deck. The name builder
+# asks the live design instead and gets the override. Cost to the user: 12
+# blank annotation rows out of 468 on their own bench, and not one word
+# anywhere.
+#
+# THIS SECTION NEEDS NO SIMULATOR. The deck's own call graph is enough to say
+# whether a name it emits can be found, and op_annot already builds that graph
+# for its own walk. Section NM of tests/headless/test_op_annot.tcl holds the
+# same finding at unit scale on a fixture.
+
+set N_SKY [file join $repo sky130A xschem_libs]
+set N_BG  [file join $N_SKY sky130_tests_ase tb_bandgap schematic tb_bandgap.sch]
+
+## Walk one emitted device name through the DECK's own call graph. Answers OK,
+## or the plain-English reason it is not there.
+proc n_resolve {idx name} {
+  if {[string range $name 0 2] ne {@m.}} { return "not a device name: $name" }
+  set callee [dict get $idx callee]
+  set blocks [dict keys $callee]
+  set cur [dict get $idx top]
+  set segs [split [string range $name 3 end] .]
+  set i 0
+  while {$i < [llength $segs]} {
+    set s [lindex $segs $i]
+    if {![dict exists $callee $cur] || ![dict exists [dict get $callee $cur] $s]} {
+      return "there is no part called \"$s\" inside \"$cur\""
+    }
+    set c [dict get [dict get $callee $cur] $s]
+    if {[lsearch -exact $blocks $c] >= 0} { set cur $c ; incr i ; continue }
+    set leaf [join [lrange $segs [expr {$i + 1}] end] .]
+    if {$leaf eq "m$c"} { return OK }
+    return "part \"$s\" inside \"$cur\" uses model \"$c\", so the deck spells it\
+ \"m$c\" and not \"$leaf\""
+  }
+  return "the name ran out before it named a device, inside \"$cur\""
+}
+proc n_dsc {nm} {
+  set n [xschem get instances]
+  for {set i 0} {$i < $n} {incr i} {
+    if {[xschem getprop instance $i name] eq $nm} {
+      xschem unselect_all ; xschem select instance $i ; xschem descend 1 2 ; return 1
+    }
+  }
+  return 0
+}
+
+set N_X5 {@m.x1.x5.xm2.msky130_fd_pr__pfet_01v8}
+set N_X6 {@m.x1.x6.xm2.msky130_fd_pr__pfet_01v8}
+if {![file isfile $N_BG]} {
+  foreach nrow {N1 N2 N3 N4} {
+    check "$nrow the shipped bandgap bench" BENCH-ABSENT BENCH-PRESENT
+  }
+} else {
+  set XSCHEM_LIBRARY_PATH ":$N_SKY:[file join $repo xschem_library devices]"
+  catch {uplevel #0 [list source [file join $repo sky130A sky130_procs.tcl]]}
+  catch {xschem raw clear}
+  xschem load $N_BG
+  set N_BLK [o_ans op_annot::save_cards]
+  set N_WARN [o_ans op_annot::last_warnings]
+  set N_CNT  [o_ans op_annot::last_counts]
+  set N_DEVS {}
+  set N_NAMES {}
+  if {$N_BLK ne {NOPROC} && ![string match RAISED:* $N_BLK]} {
+    set N_DEVS  [o_ans ase::op_cards_devices $N_BLK]
+    set N_NAMES [o_ans ase::op_cards_names $N_BLK]
+  }
+  set N_IDX {}
+  catch {set N_IDX [op_annot::_deck_index [op_annot::_oracle_deck]]}
+  set N_ABSENT {}
+  if {$N_IDX ne {} && [llength $N_DEVS]} {
+    foreach nd $N_DEVS {
+      set r [n_resolve $N_IDX $nd]
+      if {$r ne {OK}} { lappend N_ABSENT [list $nd $r] }
+    }
+  }
+  foreach na $N_ABSENT { puts "N-ABSENT: [lindex $na 0] -> [lindex $na 1]" }
+
+  check {N1 issue 0965 EVERY device the annotation asks the simulator about on\
+ the shipped bandgap bench is one the deck that runs actually contains -- all\
+ 78 of them, not 76} \
+    [list [llength $N_NAMES] [llength $N_DEVS] [llength $N_ABSENT]] \
+    {468 78 0}
+
+  set N2 {}
+  if {[llength $N_DEVS]} {
+    set N2 [list [expr {[lsearch -exact $N_DEVS $N_X5] >= 0 ? 1 : 0}] \
+                 [expr {[lsearch -exact $N_DEVS $N_X6] >= 0 ? 1 : 0}] \
+                 [expr {[lsearch -exact $N_DEVS ${N_X5}_lvt] >= 0 ? 1 : 0}] \
+                 [expr {[lsearch -exact $N_DEVS ${N_X6}_lvt] >= 0 ? 1 : 0}]]
+  }
+  check {N2 issue 0965 the two passgate transistors whose schematic line\
+ overrides the model are asked for under the name the deck gives them, and the\
+ name the deck does not have is not asked for at all} \
+    $N2 {1 1 0 0}
+
+  set N3 NOPROC
+  if {$N_WARN ne {NOPROC} && ![string match RAISED:* $N_WARN] &&
+      $N_CNT ne {NOPROC} && ![string match RAISED:* $N_CNT]} {
+    set n3x5 0 ; set n3x6 0
+    foreach w $N_WARN {
+      set hasboth [expr {[string first pfet_01v8_lvt $w] >= 0 &&
+                         [regexp {pfet_01v8[^_]} "$w "] }]
+      if {[string first x5 $w] >= 0 && $hasboth} { incr n3x5 }
+      if {[string first x6 $w] >= 0 && $hasboth} { incr n3x6 }
+    }
+    set n3extra {}
+    catch {
+      dict for {k v} $N_CNT {
+        if {[lsearch -exact {dropped_by_rule not_found name_failed} $k] < 0} {
+          lappend n3extra $k $v
+        }
+      }
+    }
+    set N3 [list [llength $N_WARN] $n3x5 $n3x6 [llength $n3extra] [lindex $n3extra 1]]
+  }
+  check {N3 issue 0965 RULING D5-1 the two transistors whose schematic says one\
+ model while the netlist writes another are reported, once each, naming both\
+ spellings -- so the numbers that do appear are not silently attributed to the\
+ device the schematic claims} \
+    $N3 {2 1 1 2 2}
+
+  set N4 NOPROC
+  catch {xschem load $N_BG}
+  if {[n_dsc x1] && [n_dsc x5]} {
+    set N4 [list [o_ans op_annot::devpath M2] [o_ans op_annot::devpath M2 deck .]]
+  }
+  check {N4 issue 0965 the name the rows ON THE SCHEMATIC are read under is the\
+ same name the request was made under -- otherwise the numbers would be saved\
+ and then looked up under a spelling nothing wrote} \
+    $N4 [list $N_X5 $N_X5]
+}
+
+set N5SRC [o_nocomment [o_slurp [info script]]]
+check {N5 STRUCTURAL the bench rows read the deck's own call graph rather than\
+ a list of device names copied into this file, so they keep measuring the tree\
+ and not a snapshot of it} \
+  [list [expr {[o_count $N5SRC {@m.x1.}] <= 8 ? 1 : 0}] \
+        [expr {[o_count $N5SRC {_deck_index}] >= 1 ? 1 : 0}]] \
+  {1 1}
+
+
+# ============================================================================
+# X. THE ACCEPTANCE, ON THE USER'S OWN BENCH AND A REAL RUN (issue 0969)
+# ============================================================================
+# ISSUE 0969 IS THAT THE ACCEPTANCE FOR ALL OF THIS WAS PINNED ON A TOY. The
+# rows above measure one level-1 transistor in two nested subcircuits, and the
+# defect that costs the user twelve blank rows lives on a PDK bench, four
+# levels down, in a cell that is instanced five times with two of them
+# overriding a model attribute. So this section runs
+# sky130_tests_ase/tb_bandgap for real.
+#
+# THE TRANSIENT IS SHORTENED, AND ONLY THE TRANSIENT. The committed bench asks
+# for `tran 10n 200u`, which is 20,505 points and about 16 s. Every row here is
+# about the SHAPE of the deck and the SPELLING of what comes back, and neither
+# depends on how long the transient runs. Measured with `tran 1u 2u`: the whole
+# thing -- netlist, run, read -- takes about 4 s, the deck is the committed
+# bench's own deck, and the operating point is identical.
+#
+# WHAT THIS SECTION MEASURED BEFORE ANY FIX, so a later reader can tell whether
+# it is still measuring: 468 requests naming 78 devices, 456 vectors back, 12
+# blank rows, and the two names that came back with nothing were
+# x5.xm2 and x6.xm2 in the passgate cell.
+
+set X_ROOT  [file join $repo sky130A xschem_libs sky130_tests_ase tb_bandgap]
+set X_STATE [file join $X_ROOT ngspice_state1 tb_bandgap.state]
+set X_SCH   [file join $X_ROOT schematic tb_bandgap.sch]
+set X_TRAN  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 2u step 1u}}
+set X_OPONLY {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+
+proc x_skip {why} {
+  foreach r {X1 X2 X3 X4 X5} { check "$r on the shipped bandgap bench" $why RAN }
+}
+
+if {[auto_execok ngspice] eq {} || ![file isfile $X_SCH] || ![file isfile $X_STATE]} {
+  x_skip [expr {[auto_execok ngspice] eq {} ? {NO-NGSPICE} : {NO-BENCH}}]
+} else {
+
+## The bench, opened the way the product opens it, with its own committed
+## settings and its own rundir under the scratch area.
+set X_RUN [file join $scratch xrun]
+file delete -force $X_RUN
+file mkdir $X_RUN
+set ::SKYWATER_MODELS [file join $repo sky130A models libs.tech combined]
+set X_DEFS [file join $scratch xlibrary.defs]
+set fx [open $X_DEFS w]
+foreach xl {sky130_tests_ase sky130_tests sky130_fd_pr} {
+  puts $fx "DEFINE $xl [file join $repo sky130A xschem_libs $xl]"
+}
+puts $fx "DEFINE devices [file join $repo xschem_libs_newsym devices]"
+close $fx
+set ::XSCHEM_LIBRARY_DEFS $X_DEFS
+set ::library_registry_defs_only 1
+catch {uplevel #0 [list source [file join $repo sky130A sky130_procs.tcl]]}
+o_unprime
+o_force {}
+catch {xschem raw clear}
+xschem load $X_SCH
+set X_KEY {}
+set X_DSG {}
+catch {set X_DSG [ase::design_of_path [file normalize $X_SCH]]}
+if {[llength $X_DSG] == 3} {
+  set X_KEY [ase::session_key {*}$X_DSG]
+  catch {ase::session_open $X_KEY $X_STATE}
+}
+
+## ONE WHOLE RUN OF THE BENCH. `doctor` is a list of extra requests to smuggle
+## into the captured block after the netlist is written and before the deck is
+## rendered -- the seam ase::run_deck itself reads. It is how a device name the
+## simulator cannot match is produced ON PURPOSE once the two real ones are
+## fixed, which is what guard G4's reason has to be measured against.
+## ONE WHOLE RUN OF THE BENCH. `doctor` is a list of extra requests smuggled
+## into the captured block after the netlist is written and before the deck is
+## rendered -- the seam ase::run_deck itself reads. It is how a device name the
+## simulator cannot match is produced ON PURPOSE once the two real ones are
+## fixed, which is what guard G4's reason has to be measured against. The
+## netlist path travels in a global because q_run takes a script, not
+## arguments.
+proc x_run2 {tier analyses gate doctor} {
+  global X_KEY X_RUN
+  if {$X_KEY eq {}} { return NOSESSION }
+  set st [ase::session_state $X_KEY]
+  dict set st rundir $X_RUN
+  dict set st save_op_params $gate
+  dict set st analyses $analyses
+  ase::session_update $X_KEY $st
+  o_force $tier
+  if {[catch {ase::netlist [ase::session_state $X_KEY]} nl]} { o_force {} ; return "NLRAISED:$nl" }
+  set ::x_nl $nl
+  set blk [ase::op_cards_block]
+  if {[llength $doctor]} {
+    set nt [o_slurp $nl]
+    set nb [string trimright $blk "\n"]
+    foreach dcard $doctor { append nb "\n$dcard" }
+    ase::op_cards_put $nt "$nb\n"
+    set blk [ase::op_cards_block]
+  }
+  set decktext [o_render [ase::session_state $X_KEY] [o_slurp $nl]]
+  set raw [o_rawhook [ase::session_state $X_KEY]]
+  catch {file delete -force -- $raw}
+  set t0 [clock milliseconds]
+  set said [q_run {
+    if {[catch {ase::run_deck [ase::session_state $::X_KEY] $::x_nl} xid]} {
+      set ::x_rc "RUNRAISED:$xid"
+    } else { set ::x_rc [ase::wait $xid] }
+  }]
+  set ms [expr {[clock milliseconds] - $t0}]
+  o_force {}
+  set sz -1
+  if {$raw ne {} && [file isfile $raw]} { set sz [file size $raw] }
+  return [dict create rc $::x_rc raw $raw rawbytes $sz wall $ms \
+    deckbytes [string length $decktext] \
+    decklines [llength [split [string trimright $decktext "\n"] "\n"]] \
+    names [ase::op_cards_names $blk] devices [ase::op_cards_devices $blk] \
+    said [expr {($said eq {NOPROC} || [string match RAISED:* $said]) ? {} : [lindex $said 0]}]]
+}
+## How many of the requests came back with a vector, and which devices did not.
+proc x_backfill {r} {
+  if {![string is list $r] || [catch {dict get $r raw} raw]} { return NORUN }
+  if {$raw eq {} || ![file isfile $raw]} { return NORAW }
+  set vars [o_plotvars $raw {Operating Point}]
+  if {$vars eq {NO-FILE} || $vars eq {NO-PLOT}} { return $vars }
+  set back 0
+  foreach n [dict get $r names] {
+    foreach v $vars { if {[string first $n $v] >= 0} { incr back ; break } }
+  }
+  set miss {}
+  foreach d [dict get $r devices] {
+    set hit 0
+    foreach v $vars { if {[string first $d $v] >= 0} { set hit 1 ; break } }
+    if {!$hit} { lappend miss $d }
+  }
+  return [list [llength [dict get $r names]] $back $miss]
+}
+proc x_num {r k} {
+  if {![string is list $r] || [catch {dict get $r $k} v]} { return NA }
+  return $v
+}
+
+set XC [x_run2 c $X_TRAN 1 {}]
+set XCB [x_backfill $XC]
+puts "MEASURE X bench form=c rc=[x_num $XC rc] deck=[x_num $XC deckbytes]bytes/[x_num\
+ $XC decklines]lines wall=[x_num $XC wall]ms raw=[x_num $XC rawbytes]bytes\
+ asked=[llength [x_num $XC names]] devices=[llength [x_num $XC devices]] back/miss=$XCB"
+
+check {X1 issue 0965 on the user's own bandgap bench every one of the requests\
+ this run made comes back with a number -- no transistor on that sheet is left\
+ with blank rows and no explanation} \
+  [expr {[string is list $XCB] && [llength $XCB] == 3 ?
+         [list [expr {[lindex $XCB 0] > 0 ? 1 : 0}] \
+               [expr {[lindex $XCB 0] - [lindex $XCB 1]}] [lindex $XCB 2]] : $XCB}] \
+  {1 0 {}}
+
+set XB [x_run2 b $X_TRAN 1 {}]
+set XBB [x_backfill $XB]
+puts "MEASURE X bench form=b rc=[x_num $XB rc] deck=[x_num $XB deckbytes]bytes/[x_num\
+ $XB decklines]lines wall=[x_num $XB wall]ms raw=[x_num $XB rawbytes]bytes back/miss=$XBB"
+
+## The per-device per-parameter comparison the acceptance asks for: every value
+## the long form saved, read back the way the annotation reads it, against the
+## same value out of the short form's own results file.
+set X2DIFF ZZNOTRUN
+if {[string is list $XCB] && [llength $XCB] == 3 &&
+    [string is list $XBB] && [llength $XBB] == 3} {
+  set X2DIFF {}
+  set cvars [o_devvars [o_plotvars [dict get $XC raw] {Operating Point}]]
+  set bvars [o_devvars [o_plotvars [dict get $XB raw] {Operating Point}]]
+  if {[string is list $cvars] && [string is list $bvars]} {
+    catch {xschem annotate_op [dict get $XC raw] 0 op}
+    set cval [dict create]
+    foreach v $cvars { dict set cval $v [o_readone $v] }
+    catch {xschem annotate_op [dict get $XB raw] 0 op}
+    foreach v $cvars {
+      set bare $v
+      regexp {^[iv]\((.*)\)$} $v -> bare
+      if {[lsearch -exact $bvars $bare] < 0} { lappend X2DIFF [list $v ABSENT] ; continue }
+      if {[o_readone $bare] ne [dict get $cval $v]} {
+        lappend X2DIFF [list $v [dict get $cval $v] [o_readone $bare]]
+      }
+    }
+  } else { set X2DIFF [list $cvars $bvars] }
+}
+check {X2 issue 0969 the two ways of asking give the SAME numbers on the real\
+ bench, device by device and parameter by parameter -- the deck size, the time\
+ taken and the results size are printed above, and this row is what says the\
+ shorter way is not shorter by losing something} \
+  [list [expr {[string is list $XBB] && [llength $XBB] == 3 ? [lindex $XBB 2] : $XBB}] $X2DIFF] \
+  {{} {}}
+
+## X3 -- WHY GUARD G4 STAYS. One device name that cannot be matched, put there
+## deliberately, so this stays measurable after the two real ones are fixed.
+set X_BADCARD {.save @m.x1.xzznosuchdevice.mzznosuchmodel[gm]}
+set XBD [x_run2 b $X_OPONLY 1 [list $X_BADCARD]]
+set XCD [x_run2 c $X_OPONLY 1 [list $X_BADCARD]]
+proc x_saysdev {r dev} {
+  if {![string is list $r] || [catch {dict get $r said} ls]} { return NORUN }
+  set n 0
+  foreach l $ls { if {[string first $dev $l] >= 0} { incr n } }
+  return $n
+}
+proc x_saysfile {r} {
+  if {![string is list $r] || [catch {dict get $r said} ls]} { return NORUN }
+  set n 0
+  foreach l $ls { if {[string first tb_bandgap_ase.raw $l] >= 0} { incr n } }
+  return $n
+}
+set XCDB [x_backfill $XCD]
+check {X3 guard G4 STAYS, and here is the measurement it stands on: one device\
+ name the simulator cannot match costs the short form the WHOLE operating\
+ point and no results file at all, while the safe form keeps every other\
+ device -- and the run now says so in both cases instead of leaving the user\
+ with a blank schematic} \
+  [list [x_num $XBD rc] [expr {[x_num $XBD rawbytes] < 0 ? 1 : 0}] [x_saysfile $XBD] \
+        [x_num $XCD rc] \
+        [expr {([string is list $XCDB] && [llength $XCDB] == 3) ?
+               [lindex $XCDB 2] : $XCDB}] \
+        [x_saysdev $XCD {@m.x1.xzznosuchdevice.mzznosuchmodel}]] \
+  [list 0 1 1 0 {@m.x1.xzznosuchdevice.mzznosuchmodel} 1]
+
+## X4 -- 0969's second gap, as a RUN and not a grep: the device numbers must
+## not ride the transient. Measured before this work: they did, at every one of
+## 20,505 timepoints, and the results file was 144 MB instead of 69 MB.
+set XG0 [x_run2 c $X_TRAN 0 {}]
+proc x_trannodes {r} {
+  if {![string is list $r] || [catch {dict get $r raw} raw]} { return NORUN }
+  if {$raw eq {} || ![file isfile $raw]} { return NORAW }
+  set vars [o_plotvars $raw {Transient Analysis}]
+  if {![string is list $vars]} { return $vars }
+  set n 0
+  foreach v $vars { if {[string first {@} $v] < 0} { incr n } }
+  return $n
+}
+puts "MEASURE X bench tick-off rc=[x_num $XG0 rc] raw=[x_num $XG0 rawbytes]bytes\
+ tran-node-vectors=[x_trannodes $XG0] (tick-on [x_trannodes $XC])"
+check {X4 issue 0964 asking for device numbers does not change what the\
+ transient records: the same node voltages come back with the tick on as with\
+ it off, and no device number rides the transient at all} \
+  [list [x_trannodes $XC] [expr {[x_trannodes $XC] eq [x_trannodes $XG0] ? 1 : 0}] \
+        [expr {[llength [o_devvars [o_plotvars [dict get $XC raw] {Transient Analysis}]]] == 0 ? 1 : 0}]] \
+  [list [x_trannodes $XG0] 1 1]
+
+## X5 -- the tier the bench really lands on, with this box's real ngspice and
+## no priming at all. G4 must fire HERE, not only on a primed capability.
+o_unprime
+o_force {}
+set X5ST [ase::session_state $X_KEY]
+catch {dict set X5ST rundir $X_RUN}
+catch {dict set X5ST save_op_params 1}
+check {X5 guard G4 on the real bench with the real simulator: the short form is\
+ still not chosen for anybody automatically} \
+  [o_tr $X5ST] {c unsafe}
+
+}
+
+## X6 -- the section's own discipline: nothing above is compared with a device
+## count typed into this file. The counts come from the walk.
+set X6SRC {}
+set X6ON 0
+foreach x6l [split [o_slurp [info script]] "\n"] {
+  if {[string first {# X. THE ACCEPTANCE} $x6l] >= 0} { set X6ON 1 }
+  if {[string first {# X6 -- the section} $x6l] >= 0} { set X6ON 0 }
+  if {$X6ON && ![regexp {^\s*#} $x6l]} { lappend X6SRC $x6l }
+}
+set X6HIT {}
+foreach x6l $X6SRC {
+  foreach x6w {468 78 456 76} {
+    if {[regexp -- "(^|\[^0-9\])${x6w}(\$|\[^0-9\])" $x6l]} { lappend X6HIT [list $x6w $x6l] }
+  }
+}
+check {X6 STRUCTURAL no row on the bench is compared with a device count typed\
+ into this file -- the counts come from the walk, so the rows keep measuring\
+ the tree rather than a snapshot of it} \
+  [list [expr {[llength $X6SRC] > 20 ? 1 : 0}] $X6HIT] {1 {}}
 
 } zzerr]} {
   puts "FATAL: uncaught error: $zzerr"

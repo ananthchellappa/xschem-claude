@@ -1,8 +1,8 @@
 # 0966 — the blanket request is not the shape the probe actually measured
 
-**FILED, NOT FIXED — the tier work of issue 0963 shipped over it, 2026-08-30.**
-
-Status: OPEN.
+**FIXED 2026-08-30** (the S4a repair pass), together with issue **0968** —
+they were one shape and one change. Filed by the tier work of issue 0963, which
+shipped over it.
 
 The capability probe asks the simulator whether it can do `save @<device>[*]` —
 ONE request per device, with a wildcard over that device's parameters. The
@@ -19,15 +19,50 @@ ngspice-46+ — exit 0, a normal results file, no warning — and no released bu
 answers yes to the probe anyway.
 
 
-## Where it now stands in the code
+## The fix: make the emitted shape BE the probed shape
 
-`ase::backend::ngspice::render_deck`'s blanket arm emits `.save all` +
-`.options saveopparams` and names no device. Selection is guard G3 of
-`ase::op_save_tier`, which reads `blanket_op_save` — the per-device wildcard the
-probe measures. No released ngspice answers yes to that probe, so on every real
-box today the guard never fires and the mismatch cannot bite; the arm is
-exercised by a `/bin/sh` stand-in that really makes the probe measure
-`blanket_op_save 1` (`test_ase_optier_0963` rows A1/A2).
+The blanket arm of `ase::backend::ngspice::render_deck` now emits, inside
+`.control` and immediately before `op`:
 
-The clean fix is a second probe question. "Do not change the probe" blocks it,
-so this is filed rather than guessed at.
+    save all @m.xz1.mzmod[*] @m.xz2.mzmod[*] …
+
+`.options saveopparams` is **deleted**. It is not what was probed, no released
+ngspice honours it, and a dot-card cannot be scoped to one analysis — which is
+issue **0968**, fixed by the same change, because filling `optier_ctl` is also
+what turns on issue 0964's reorder that keeps `op` last.
+
+⚠ **THE WILDCARD IS ONE LITERAL, `ase::cap_param_wildcard`, AND BOTH SIDES READ
+IT.** The probe deck B interpolates it and the emitter appends it, so the shape
+the simulator is TESTED with and the shape the deck ASKS with cannot drift apart
+again. It is named `cap_` and not `op_` because row C3 of
+`test_ase_simcaps_0948` unions the `ase::cap_*` family's bodies and requires the
+wildcard to be findable there. Row **E15** counts the literal in the
+comment-stripped file and expects exactly one.
+
+The alternative — a second probe question — was rejected: it measures the same
+capability twice and leaves two answers that can disagree, which is the defect
+in a different costume.
+
+## What a YES answer now buys, and what it costs
+
+One request per DEVICE covering every parameter that device has, rather than one
+request per device per parameter: on the shipped tb_bandgap bench, 78 entries
+instead of 468 cards. Still the cheapest of the three shapes, and no longer
+O(1) in the deck — which is why rows E1 and E2 were reshaped rather than left
+asserting the old claim. `ase::sim_why`'s `op_tier_blanket` sentence changed
+with the shape; it used to tell the user "the deck names no devices at all",
+which is now false (row S12).
+
+⚠ **xschem no longer emits the line
+`doc/claude/ngspice_enhancement_request_op_parameter_saving.md` section 4 asks
+ngspice for.** That request stands as a request; this tree stops emitting a
+dot-card no build honours and that it cannot scope to one analysis. **On the
+user's ruling queue** (`owed.sh add rule 0966`).
+
+## Rows
+
+`test_ase_optier_0963`: **E14** (the emitted shape is the probed shape, per
+device, inside the run, immediately before the operating point, nothing left
+above it), **E15** (structural: one literal), **E18** (structural: no whole-run
+setting anywhere), **E1**/**E2**/**A1** reshaped, **S12** (the sentence no
+longer claims the deck names no devices).

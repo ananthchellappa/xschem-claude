@@ -15851,6 +15851,351 @@ check {A11-13b issue 0909 every blank-row explanation says what to do next, in b
   incr fail
 }
 
+
+# ============================================================================
+# NM — WHERE THE MODEL NAME COMES FROM (issue 0965)
+# ============================================================================
+# THE USER-VISIBLE DEFECT. On the shipped sky130_tests_ase/tb_bandgap bench two
+# of the 78 transistors annotate as six blank rows each. The names this tree
+# asks the simulator for are
+#     @m.x1.x5.xm2.msky130_fd_pr__pfet_01v8_lvt
+#     @m.x1.x6.xm2.msky130_fd_pr__pfet_01v8_lvt
+# and the deck that ran contains neither of them. Nothing says a word.
+#
+# WHY, MEASURED. Those two are passgates whose SCHEMATIC LINE overrides the
+# transistor model - modelp=pfet_01v8_lvt - while passgate.sym's format= string
+# never mentions modelp. So the netlister writes ONE .subckt passgate body for
+# all five passgates, built from the SYMBOL TEMPLATE default pfet_01v8, and the
+# override is not passed down at all. The annotation name builder asks
+# `xschem translate <inst> @model`, which on a LIVE DESCEND answers from the
+# parent instance's own property and so says pfet_01v8_lvt. The deck follows the
+# symbol template; the annotation follows the schematic; they disagree.
+#
+# The seam is src/token.c:2701-2743, translate's four rounds for an @token:
+#   r2  translate3(val,0, inst.prop_ptr, PARENT_PROP_PTR, template, NULL)
+#   r4  translate3(val,0, inst.prop_ptr, PARENT_TEMPL,    NULL,     NULL)
+# xctx->hier_attr[currsch-1] is filled DIFFERENTLY by the two callers:
+#   src/spice_netlist.c:492-495  templ = sym.templ, prop_ptr = sym.parent_prop_ptr
+#                                (NULL unless the instance carried schematic=)
+#   src/actions.c:4780-4783      templ = sym.templ, prop_ptr = inst.prop_ptr
+# so a live descend answers at r2 from the instance override and never reaches
+# r4, while the netlister falls through to r4 and answers from the template.
+#
+# WHAT THESE ROWS REQUIRE. One resolver, op_annot::_model_netlist, that answers
+# the way the NETLISTER answers, wired into op_annot::devpath - both its devproc
+# arm and its devpath-template arm - so the save card and the on-screen row are
+# spelled the same way and both match the deck.
+#
+# THE FIXTURE IS THE BENCH IN MINIATURE, and it was measured against the real
+# netlister before these rows were written: one .subckt nmpass body carrying
+# sky130_fd_pr__pfet_01v8, reached from two instances one of which overrides
+# modelp. NM4 is the netlister's own exception and needs a SEPARATE block.
+
+set NM_LIB [file join $scratch nmlib]
+file delete -force $NM_LIB
+file mkdir $NM_LIB
+
+## The enclosing cell: format= DROPS @modelp, template= carries the default.
+## This is passgate.sym's shape, cut down to one pin.
+##
+## ⚠ THE template= STRING IS TWO LINES, AND THAT IS DELIBERATE. The shipped
+## sky130_tests/passgate/symbol/passgate.sym wraps its template at
+## `VSSBPIN=VSS ` and carries `modelp=pfet_01v8` on the SECOND line, and
+## `xschem globals` prints the value verbatim, newline and all. A reader of it
+## that stopped at the first newline would answer with half the template and
+## drop the very key op_annot::_model_netlist is looking up. With this fixture
+## one line long that guard had no witness at all: sabotaged, NM1-NM6 all
+## stayed green and only the 20-second real-bench rows caught it. Two lines
+## here and NM2 is its witness. Keep `modelp` on the second line.
+set fnm [open [file join $NM_LIB nmpass.sym] w]
+puts $fnm {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P"
+template="name=x1 W_P=1
+modelp=pfet_01v8"
+extra="modelp"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+close $fnm
+
+## Its body: one shipped sky130 pfet whose model is the parameter, exactly as
+## sky130_tests/passgate/schematic/passgate.sch:M2 spells it — plus ONE extra
+## property, `modelname=zz9`, which the shipped cell does not carry. It is
+## there so row NM8 has a LONGER @-token beginning with the six characters
+## `@model` that resolves to something recognisable, and nothing else reads it.
+set fnm [open [file join $NM_LIB nmpass.sch] w]
+puts $fnm {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {sky130_fd_pr/pfet_01v8} 400 -300 0 0 {name=M2
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modelp
+modelname=zz9
+spiceprefix=X
+}}
+close $fnm
+
+## A byte copy, so the schematic= instance really does reach a DIFFERENT file
+## and the netlister really does write a second block for it. Measured: with
+## schematic= naming the very file the symbol already points at, no extra block
+## is made and NM4 would be vacuous.
+file copy -force [file join $NM_LIB nmpass.sch] [file join $NM_LIB nmpass_alt.sch]
+
+## A second enclosing cell whose body spells the model as a LITERAL on the
+## device instance. Its template carries a modelp that must NEVER be reached.
+set fnm [open [file join $NM_LIB nmlit.sym] w]
+puts $fnm {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P"
+template="name=x1 W_P=1 modelp=pfet_01v8"
+extra="modelp"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+close $fnm
+set fnm [open [file join $NM_LIB nmlit.sch] w]
+puts $fnm {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {sky130_fd_pr/pfet_01v8} 400 -300 0 0 {name=M3
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=pfet_01v8_hvt
+spiceprefix=X
+}}
+close $fnm
+
+## x3 takes the default; x5 overrides it on its own schematic line. That single
+## difference is the whole of issue 0965.
+set fnm [open [file join $NM_LIB nmtop.sch] w]
+puts $fnm {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {nmpass.sym} 120 0 0 0 {name=x3 W_P=0.5}
+C {nmpass.sym} 320 0 0 0 {name=x5 W_P=0.6 modelp=pfet_01v8_lvt}
+C {nmlit.sym} 520 0 0 0 {name=x9 W_P=0.9 modelp=pfet_01v8_lvt}
+C {nmpass.sym} 720 0 0 0 {name=x8 W_P=0.8 modelp=pfet_01v8_lvt schematic=nmpass_alt.sch}}
+close $fnm
+
+set XSCHEM_LIBRARY_PATH ":[file join $repo sky130A xschem_libs]:[file join $repo xschem_library devices]:$NM_LIB"
+opa_source [file join $repo sky130A sky130_procs.tcl]
+
+## Stand inside one instance of the top sheet and answer three questions about
+## its one transistor, with everything wrapped so an absent proc says NOPROC
+## rather than raising out of the section.
+proc nm_ask {idx dev} {
+  global NM_LIB
+  xschem load [file join $NM_LIB nmtop.sch]
+  xschem unselect_all
+  xschem select instance $idx
+  xschem descend 1 2
+  set out {}
+  foreach q [list _model_netlist translate devpath] {
+    switch -- $q {
+      _model_netlist {
+        if {![llength [info commands ::op_annot::_model_netlist]]} {
+          lappend out NOPROC
+        } elseif {[catch {::op_annot::_model_netlist $dev} r]} {
+          lappend out "RAISED:$r"
+        } else { lappend out $r }
+      }
+      translate {
+        if {[catch {xschem translate $dev @model} r]} { lappend out "RAISED:$r" } \
+        else { lappend out $r }
+      }
+      devpath {
+        if {[catch {::op_annot::devpath $dev} r]} { lappend out "RAISED:$r" } \
+        else { lappend out $r }
+      }
+    }
+  }
+  return $out
+}
+
+## Drop Tcl comments, so a sentence or a call quoted in a comment cannot satisfy
+## a row about where the call is MADE.
+proc nm_nocomment {t} {
+  set out {}
+  foreach l [split $t "\n"] {
+    if {[regexp {^\s*#} $l]} { continue }
+    lappend out $l
+  }
+  return [join $out "\n"]
+}
+proc nm_body {cmd} {
+  if {![llength [info commands $cmd]]} { return NOPROC }
+  if {[catch {info body $cmd} b]} { return "RAISED:$b" }
+  return [nm_nocomment $b]
+}
+proc nm_count {hay needle} {
+  if {$needle eq {}} { return 0 }
+  set n 0 ; set i 0
+  while {[set i [string first $needle $hay $i]] >= 0} { incr n ; incr i }
+  return $n
+}
+
+if {[catch {
+
+# --- NM1: the unchanged path, which is 76 of the bench's 78 names -----------
+# x3 does not override anything, so the netlister and a live descend agree and
+# the resolver must not invent a difference.
+check {NM1 issue 0965 with nothing overridden the netlist-basis model lookup\
+ gives exactly what the live lookup gives, so the 76 device names on the bench\
+ that already resolve keep the answer they have today} \
+  [lrange [nm_ask 0 M2] 0 1] {pfet_01v8 pfet_01v8}
+
+# --- NM2: the defect itself, at unit scale (guard GA) -----------------------
+# x5 overrides modelp on its own schematic line and the enclosing symbol's
+# format= drops it, so the deck holds ONE .subckt nmpass body spelling
+# sky130_fd_pr__pfet_01v8 - measured against the real netlister. The name the
+# user's schematic gets annotated with must be the one the deck contains.
+check {NM2 issue 0965 the enclosing cell does not pass its model setting into\
+ the netlist, so the device is named the way the DECK spells it and not the way\
+ the schematic line reads} \
+  [nm_ask 1 M2] \
+  {pfet_01v8 pfet_01v8_lvt @m.x5.xm2.msky130_fd_pr__pfet_01v8}
+
+# --- NM3: a literal on the device consults nothing --------------------------
+check {NM3 issue 0965 a transistor whose own line spells the model outright\
+ keeps that model, whatever the cell around it was set to} \
+  [lrange [nm_ask 2 M3] 0 1] {pfet_01v8_hvt pfet_01v8_hvt}
+
+# --- NM4: the netlister's own exception (guard GB) --------------------------
+# THIS ROW IS GUARD GB'S ONLY WITNESS. When the instance carries schematic=,
+# get_additional_symbols builds a SEPARATE block for it and spice_netlist.c:494
+# hands the parent INSTANCE's property to translate - so the override really is
+# in the deck and must be kept. Measured on this fixture: the deck holds
+# .subckt nmpass_alt whose device line reads sky130_fd_pr__pfet_01v8_lvt.
+check {NM4 issue 0965 when the cell was given its own copy of the sheet the\
+ model setting DOES reach the netlist, so the override is kept and the device\
+ keeps the name the deck really uses} \
+  [nm_ask 3 M2] \
+  {pfet_01v8_lvt pfet_01v8_lvt @m.x8.xm2.msky130_fd_pr__pfet_01v8_lvt}
+
+# --- NM5: STRUCTURAL, invariant I1 - one lookup, one place ------------------
+set NM_DPB [nm_body ::op_annot::devpath]
+set NM_MNB [nm_body ::op_annot::_model_netlist]
+set NM_SRC [nm_nocomment [opa_slurp [file join $repo src op_annot.tcl]]]
+## How many CODE lines ask the program to resolve a device model - i.e. carry
+## both the verb and the token. Line-based, so a wrapped call still counts once
+## and a mention in a comment counts not at all.
+proc nm_lookups {t} {
+  if {$t eq {NOPROC} || [string match RAISED:* $t]} { return $t }
+  set n 0
+  foreach l [split $t "\n"] {
+    if {[string first {xschem translate} $l] >= 0 && [string first {@model} $l] >= 0} { incr n }
+  }
+  return $n
+}
+check {NM5 issue 0965 STRUCTURAL the model a device is named after is looked up\
+ in ONE place, the name builder uses that place, and no arm of it asks the\
+ question a second way} \
+  [list [expr {($NM_DPB ne {NOPROC} && [nm_count $NM_DPB {_model_netlist}] >= 1) ? 1 : 0}] \
+        [nm_lookups $NM_DPB] \
+        [nm_lookups $NM_SRC] \
+        [nm_lookups $NM_MNB]] \
+  {1 0 1 1}
+
+# --- NM6: the devpath-template arm takes the same answer --------------------
+# A descriptor may carry a devpath TEMPLATE instead of a devproc, and spec
+# section 4.2's own template interpolates @model. Registering one over the
+# sky130 pmos key exercises that arm on the same fixture.
+catch {op_annot::register pmos [list devpath $TMPL_AT match {*sky130_fd_pr/*} \
+  params {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}]}
+set NM6 [nm_ask 1 M2]
+opa_source [file join $repo sky130A sky130_procs.tcl]
+check {NM6 issue 0965 a PDK that spells its device path with a template rather\
+ than a script gets the same model, so the two ways of describing a PDK cannot\
+ name the same transistor differently} \
+  [lindex $NM6 2] {@m.x5.xm2.msky130_fd_pr__pfet_01v8}
+
+# --- NM7: the token boundary, as a unit ------------------------------------
+# NM6 cannot see this: TMPL_AT ends at @model, so every way of substituting it
+# gives the same answer. A descriptor is free to spell a LONGER token that
+# starts with the same six characters -- @modelname, @modelp, @model_hi -- and
+# a plain `string map` would rewrite the front of every one of them, handing
+# `translate` a plausible-looking wrong device path with nothing said. That is
+# the silent drift invariant I1 exists to prevent, so the boundary gets its own
+# row rather than being taken on trust from a comment.
+proc nm_sub {t} {
+  if {![llength [info commands ::op_annot::_subst_model]]} { return NOPROC }
+  if {[catch {::op_annot::_subst_model $t ZZ} r]} { return "RAISED:$r" }
+  return $r
+}
+check {NM7 issue 0965 a device-path template that also spells a LONGER word\
+ starting with the same six letters keeps that longer word untouched -- only\
+ the model token itself is replaced, wherever it appears and however many\
+ times} \
+  [list [nm_sub {@model}] \
+        [nm_sub {\@m.@name\.m@model}] \
+        [nm_sub {@modelname}] \
+        [nm_sub {@modelp}] \
+        [nm_sub {@model_hi}] \
+        [nm_sub {a@model b@modelname c@model}] \
+        [nm_sub {}] \
+        [nm_sub {no tokens at all}]] \
+  [list {ZZ} \
+        {\@m.@name\.mZZ} \
+        {@modelname} \
+        {@modelp} \
+        {@model_hi} \
+        {aZZ b@modelname cZZ} \
+        {} \
+        {no tokens at all}]
+
+# --- NM8: the same boundary, end to end through the name builder ------------
+# The fixture device carries `modelname=zz9`, so the two halves of the template
+# resolve to two visibly different things and a row can tell which one moved.
+# With the boundary gone the tail would read `pfet_01v8name` -- a device path
+# no deck contains, produced without one word of complaint.
+catch {op_annot::register pmos [list \
+  devpath {\@m.@path@spiceprefix@name\.msky130_fd_pr__@model\.@modelname} \
+  match {*sky130_fd_pr/*} \
+  params {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}]}
+set NM8 [nm_ask 1 M2]
+opa_source [file join $repo sky130A sky130_procs.tcl]
+check {NM8 issue 0965 with the model token and a longer word beside it in one\
+ device-path template, only the model token is filled in and the longer word is\
+ left for the design to answer -- so the built name is the one the deck really\
+ spells} \
+  [lindex $NM8 2] {@m.x5.xm2.msky130_fd_pr__pfet_01v8.zz9}
+
+} nmerr]} {
+  puts "UNEXPECTED ERROR (section NM): $nmerr"
+  incr fail
+}
+
 # --- verdict -----------------------------------------------------------------
 # ⚠ THE DUAL BANNER IS REQUIRED BY tests/run_regression.tcl's hcases list, which
 # this file is registered in. banner_complete (tests/banner_rule.tcl) needs a

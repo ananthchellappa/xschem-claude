@@ -731,7 +731,20 @@ proc ase::sim_why {kind name path {extra {}}} {
       return "$path, which is the program the simulator you picked will start, was given a tiny test circuit to try and had still not finished with it after $extra seconds, so there was no way to find out what it can do. It may simply be slow to start. Your run is going ahead anyway, and this will be tried again the next time you press Run."
     }
     op_tier_blanket {
-      return "Your simulator can hand back the operating-point numbers for every device in one request, so that is what this run asked for. The deck names no devices at all, which means it stays the same size however many transistors your design has."
+      return "Your simulator can hand back all of one device's operating-point numbers in a single request, so this run asked once per device instead of once per number. The requests are made just before the operating point and nowhere else, so nothing is recorded at every step of a transient that happens to be in the same run."
+    }
+    op_numbers_missing {
+      set n [lindex $extra 0]
+      set back [lindex $extra 1]
+      set miss [lindex $extra 2]
+      set shown [lrange $miss 0 4]
+      set rest [expr {[llength $miss] - [llength $shown]}]
+      set tail [join $shown {, }]
+      if {$rest > 0} { append tail ", and $rest more" }
+      return "This run asked your simulator for the operating-point numbers of $n devices and only $back of them came back, so the rest will show nothing at all on your schematic. These are the ones it did not answer for: $tail. That almost always means the deck spells a device differently from the way the schematic does. Save the schematic, netlist it again and re-run; if the same devices keep coming back empty, this run's log is where to look."
+    }
+    op_numbers_no_file {
+      return "Your simulator finished without reporting any problem, but it produced no results file at all -- no [file tail $extra] was written into the run folder. So there are no numbers to put on your schematic and the waveform window has nothing to show either. One thing that causes this: when a run is asked for device numbers on one short line, a single device name the simulator cannot match is enough to make it throw the whole result away and still finish quietly. Open this run's log to see what it printed, then ask for the numbers one device at a time."
     }
     op_tier_perdevice {
       set head "This run asked your simulator for each device's operating-point numbers one request at a time. That is the way that always works, and it is where the numbers on your schematic come from."
@@ -1477,6 +1490,18 @@ proc ase::cap_timeout_cmd {} {
 # the payload is exactly points x variables x 8 bytes (16 when the plot is
 # complex) -- skipped by length, so no byte of it can ever be mistaken for the
 # header of a plot that is not there.
+#
+# ⚠ IT STEPS OVER THE NUMBERS; IT DOES NOT LOAD THEM (issue 0971). This used to
+# pull the ENTIRE file into a string first. What a reader would otherwise assume
+# is that reading a few header lines is cheap. It is not, once the run report
+# added by issue 0965 calls this on the USER'S OWN results file: measured on the
+# shipped tb_bandgap bench that file is 69,595,016 bytes, and was 144,455,860
+# before issue 0964, on a box with about 7.8 GB. And issue 0964 put the
+# operating point LAST, so no read of the first few kilobytes can find the plot
+# the report needs -- the file pointer has to walk past the payload, which the
+# `Binary:` arithmetic below already knew how to do. Nothing a suite can observe
+# changes, which is exactly why row H3 of test_ase_simcaps_0948 is STRUCTURAL as
+# well as behavioural.
 proc ase::cap_raw_plots {path} {
   set plots {}
   set name {}
@@ -1489,15 +1514,8 @@ proc ase::cap_raw_plots {path} {
   if {$path eq {} || ![file isfile $path]} { return $plots }
   if {[catch {open $path r} f]} { return $plots }
   fconfigure $f -translation binary
-  set t [read $f]
-  catch {close $f}
-  set n [string length $t]
-  set i 0
-  while {$i < $n} {
-    set e [string first "\n" $t $i]
-    if {$e < 0} { set e $n }
-    set line [string trimright [string range $t $i [expr {$e - 1}]] "\r"]
-    set i [expr {$e + 1}]
+  while {[gets $f rawline] >= 0} {
+    set line [string trimright $rawline "\r"]
     if {[string match {Plotname:*} $line]} {
       if {$have} { lappend plots [list $name $np $vars] }
       set have 1
@@ -1532,7 +1550,7 @@ proc ase::cap_raw_plots {path} {
     if {[string match {Binary:*} $line]} {
       set invars 0
       if {$np > 0 && $nv > 0} {
-        incr i [expr {$np * $nv * ($cx ? 16 : 8)}]
+        catch {seek $f [expr {$np * $nv * ($cx ? 16 : 8)}] current}
       }
       continue
     }
@@ -1541,6 +1559,7 @@ proc ase::cap_raw_plots {path} {
       if {$nm ne {}} { lappend vars $nm }
     }
   }
+  catch {close $f}
   if {$have} { lappend plots [list $name $np $vars] }
   return $plots
 }
@@ -2234,12 +2253,19 @@ proc ase::op_cards_count {block} {
 # its answer had exactly one reader, ase::cap_report, which warns about three
 # unrelated things and never touched the deck.
 #
-#   a  BLANKET      one device-less request, `.options saveopparams`. O(1) in
-#                   the deck whatever the design holds. No released ngspice can
-#                   do it, so on this box it is COLD CODE by construction and
-#                   is exercised only by a stand-in that claims the capability
-#                   (test_ase_optier_0963 section A). Cold code behind a green
-#                   suite is what shipped issues 0928 and 0929.
+#   a  WILDCARD     one request per DEVICE, wildcarded over that device's own
+#                   parameters, inside `.control` immediately before `op` --
+#                   the exact shape the capability probe measures. O(devices)
+#                   rather than O(devices x parameters): 78 FETs and 468 cards
+#                   become 78 entries. No released ngspice can do it, so on this
+#                   box it is COLD CODE by construction and is exercised only by
+#                   a stand-in that claims the capability (test_ase_optier_0963
+#                   section A). Cold code behind a green suite is what shipped
+#                   issues 0928 and 0929.
+#                   ⚠ IT WAS A DEVICE-LESS DECK-LEVEL PAIR UNTIL ISSUE 0966+0968
+#                   and that was two defects at once: it answered a question the
+#                   probe never asked, and a dot-card cannot be scoped to one
+#                   analysis, so the device numbers rode the transient again.
 #   b  WRITE LINE   `write <raw> all @dev1 @dev2 …` — each device named once,
 #                   no parameter, on the OPERATING-POINT write only. O(devices)
 #                   rather than O(devices x parameters): 78 FETs and 468 cards
@@ -2339,6 +2365,38 @@ proc ase::op_cards_names {block} {
   return $out
 }
 
+# THE DEVICE HALF OF A `@dev[param]` NAME — ONE SPLITTER, ISSUE 0972.
+#
+# ⚠ THE PARAMETER BRACKET IS THE LAST ONE, NEVER THE FIRST, AND A BUS IS WHY.
+# What a reader would otherwise assume is that a device name has no bracket in
+# it. It does whenever the instance is a VECTOR: `M1[9:0]` netlists as ten
+# element lines `XM1[9]` .. `XM1[0]`, and the save card then reads
+#
+#     .save @m.xm1[9:0].msky130_fd_pr__nfet_01v8[id]
+#
+# Measured on the shipped sky130_tests_ase/sky130_mismatch bench, where cutting
+# at the first bracket answered `@m.xm1` — not a device, and the SAME key for
+# every member, so ten different transistors became one. That cost two things
+# at once: the short-and-wide form put `@m.xm1` on its write line (a name the
+# deck does not contain, which costs the whole operating point at exit 0), and
+# the did-not-come-back report went quiet, because one member answering covered
+# for the other nine.
+#
+# A parameter name never contains a bracket, so the last bracket is always the
+# parameter's. Both callers hand in a name that HAS a parameter suffix
+# (ase::op_cards_names keeps only cards that carry one; a results-file variable
+# for a device parameter always carries one), and a name with no bracket at all
+# answers {} rather than guessing.
+#
+# ⚠ SPELLED ONCE (invariant I1). ase::op_cards_devices and
+# ase::op_report_missing must cut identically or the report compares a name
+# against a differently-cut copy of itself; row Q11 keeps them on this proc.
+proc ase::op_dev_of {nm} {
+  set i [string last {[} $nm]
+  if {$i <= 0} { return {} }
+  return [string range $nm 0 [expr {$i - 1}]]
+}
+
 # The distinct devices a captured block names, in block order, with the
 # `[param]` suffix cut off — one entry per device however many parameters it
 # carries. This is what shape b puts on the write line.
@@ -2346,12 +2404,51 @@ proc ase::op_cards_devices {block} {
   set out {}
   set seen [dict create]
   foreach nm [ase::op_cards_names $block] {
-    set i [string first {[} $nm]
-    if {$i <= 0} { continue }
-    set dev [string range $nm 0 [expr {$i - 1}]]
+    set dev [ase::op_dev_of $nm]
+    if {$dev eq {}} { continue }
     if {[dict exists $seen $dev]} { continue }
     dict set seen $dev 1
     lappend out $dev
+  }
+  return $out
+}
+
+# THE WILDCARD THE CAPABILITY QUESTION IS ASKED WITH, AND ANSWERED WITH — ONE
+# LITERAL, ISSUE 0966.
+#
+# ⚠ IT LIVES WITH THE PROBE ON PURPOSE, AND THE EMITTER BORROWS IT. The name
+# says whose literal it is: the capability question's. Row C3 of
+# test_ase_simcaps_0948 unions the `ase::cap_*` family's bodies and requires the
+# wildcard to be findable in them, which is why this is `cap_` and not `op_`.
+#
+# ⚠ IT IS SPELLED HERE AND NOWHERE ELSE, AND THAT IS THE WHOLE OF THE FIX. What
+# a reader would otherwise assume is that a capability measured with one shape
+# can be used with another. It cannot: the probe deck asked
+# `save @<device>[<this>]` — one request per device, wildcarded over that
+# device's own parameters, inside `.control` — and the deck a YES answer used to
+# get was a device-less `.save all` plus `.options saveopparams` at DECK level.
+# (That word appears here ONLY in this comment. Row E18 counts it in the
+# comment-stripped file and in render_deck's comment-stripped body, and expects
+# zero of each, so this sentence is invisible to it -- deliberately, because the
+# history is worth keeping and the code word must not be.)
+# Two different questions with one answer between them is a false YES with extra
+# steps, and the deck-level half is how issue 0928's per-analysis scoping was
+# lost before (issue 0968). Both the probe and the emitter now read this proc,
+# so the measured shape and the emitted shape cannot drift apart again. Row E15
+# counts this literal in the comment-stripped file and expects exactly one.
+#
+# ⚠ WRITTEN WITH THE BACKSLASHES A TCL SOURCE FILE NEEDS, and they are not
+# decoration: an unescaped `[...]` in a Tcl word is a command to run. The proc
+# RETURNS the three characters; the file CONTAINS the escaped five.
+proc ase::cap_param_wildcard {} { return \[*\] }
+
+# The wildcard request for each DISTINCT device a captured block names — the
+# shape the probe measured, one entry per device, covering every parameter that
+# device has. Derived from the block, never rebuilt (invariant I1).
+proc ase::op_cards_wildcards {block} {
+  set out {}
+  foreach d [ase::op_cards_devices $block] {
+    lappend out "$d[ase::cap_param_wildcard]"
   }
   return $out
 }
@@ -2496,6 +2593,104 @@ proc ase::op_tier_report {sim state netlist_text} {
     ase::sim_say op_tier_forced $sim $path {} note
   }
   return $kind
+}
+
+# ============================================================================
+# ISSUE 0965 — A DEVICE THAT CAME BACK WITH NOTHING IS NEVER SILENT AGAIN
+# ============================================================================
+# MEASURED FIRST-HAND, ngspice-46+. A `.save` card naming a device that is not
+# in the deck is accepted without one character of complaint: exit 0, a normal
+# results file, and the bad name lands in it as a zero-length entry that
+# `remzerovec` then strips, so not even the file remembers it was asked for.
+# In-`.control` `save` behaves the same. The one shape that does speak is the
+# short one-line form, and it speaks by throwing the WHOLE operating point away
+# and writing no file at all, still at exit 0.
+#
+# On the user's own tb_bandgap that cost 12 blank annotation rows out of 468
+# with nothing said anywhere: op_annot's warnings were empty, its counts read
+# all zeroes, and the 561-line run log had no occurrence of "no such". The only
+# count the user was ever shown is how many requests went IN (op_cards_capture's
+# last line). Nothing compared that with what came back.
+#
+# ⚠ THIS SILENCE IS OURS TO REMOVE, NOT THE SIMULATOR'S. What a reader would
+# otherwise assume is that a run which exits 0 with a results file succeeded.
+# It is exactly the failure this whole surface exists to delete, and it is the
+# reason the two sentences below are minted at all.
+#
+# ⚠ A MISSING `Operating Point` PLOT IS "NONE OF THEM CAME BACK", NOT AN ERROR
+# TO SWALLOW. Measured on the bench with the short form and one unmatchable
+# name: on an operating-point-only deck no file is written, but with a transient
+# in the same run the file EXISTS, holds the transient, and simply has no
+# operating point in it. A report that only asked "did a file appear" would say
+# nothing in the shape the user actually runs.
+#
+# CAUGHT BY ITS CALLER, and everything it says is advisory: a defect in a report
+# may never break a run. Returns the kind it said, or {} when there was nothing
+# to say -- a real answer, not an absence.
+proc ase::op_report_missing {state meta exitcode} {
+  ## ⚠ A RUN THAT ALREADY FAILED LOUDLY IS NOT ALSO TOLD ITS DEVICES ARE
+  ## MISSING. On a nonzero exit the user has a real error in front of them and
+  ## every device is "missing" by construction; a second sentence counting them
+  ## buries the first. Row Q10.
+  if {$exitcode ne {0}} { return {} }
+  set blk [ase::state_get $meta opblock {}]
+  if {$blk eq {}} { return {} }
+  set devs [ase::op_cards_devices $blk]
+  if {![llength $devs]} { return {} }
+  set sim [ase::state_get $state simulator ngspice]
+  set path {}
+  catch {set path [dict get [ase::sim_status $sim] resolved]}
+  ## ⚠ "I COULD NOT WORK OUT WHERE THE FILE WOULD BE" IS NOT "THERE IS NO FILE".
+  ## A backend with no raw_file hook, or one that raises, leaves nothing to
+  ## check; saying the run produced no results then would be a claim about a
+  ## file this proc never looked for. Silence is the honest answer there.
+  ## Row Q9 drives both halves: an unregistered simulator (the hook LOOKUP
+  ## raises) and a state the ngspice hook itself refuses (no cell).
+  set raw {}
+  if {[catch {[ase::backend_hook $sim raw_file] $state} raw]} { return {} }
+  if {[string trim $raw] eq {}} { return {} }
+  if {![file isfile $raw]} {
+    ase::sim_say op_numbers_no_file $sim $path $raw error
+    return op_numbers_no_file
+  }
+  set vars {}
+  catch {
+    set vars [lindex [ase::cap_plot [ase::cap_raw_plots $raw] {Operating Point}] 2]
+  }
+  ## Which devices the results file actually answered for, as a set, taken by
+  ## EXACT device name -- everything from the `@` up to the PARAMETER bracket,
+  ## cut by the one splitter the save cards were cut with (ase::op_dev_of).
+  ##
+  ## ⚠ NOT A SUBSTRING TEST, AND THAT IS THE WHOLE POINT OF THIS PROC.
+  ## `@m.x1.xm1.mfoo` is a substring of `@m.x1.xm1.mfoobar`, so a substring test
+  ## would call a device present because a LONGER-NAMED one came back -- i.e. it
+  ## would go quiet about a device that produced nothing, which is the exact
+  ## silence this proc exists to remove. Row Q7 is that guard's witness. It is
+  ## also O(vars + devices) rather than O(vars x devices), on a plot that holds
+  ## 879 entries on the user's own bench.
+  ##
+  ## ⚠ THE CUT IS THE LAST BRACKET, NOT THE FIRST (issue 0972). A bussed
+  ## instance carries a bracket INSIDE its device name, so cutting at the first
+  ## one collapses every member of the bus onto one key and one member
+  ## answering covers for all the rest -- the same silence again, wearing a bus
+  ## index. Row Q8. Both cuts go through ase::op_dev_of so the two sides of this
+  ## comparison cannot be cut differently; row Q11.
+  set answered [dict create]
+  foreach v $vars {
+    set a [string first {@} $v]
+    if {$a < 0} { continue }
+    set d [ase::op_dev_of [string range $v $a end]]
+    if {$d eq {}} { continue }
+    dict set answered $d 1
+  }
+  set miss {}
+  foreach d $devs {
+    if {![dict exists $answered $d]} { lappend miss $d }
+  }
+  if {![llength $miss]} { return {} }
+  ase::sim_say op_numbers_missing $sim $path \
+    [list [llength $devs] [expr {[llength $devs] - [llength $miss]}] $miss] error
+  return op_numbers_missing
 }
 
 # Does the design buffer carry unsaved edits? Exactly `xschem get modified`,
@@ -2884,8 +3079,26 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## `2>@1` included and argv0 unresolved. auto_execok-resolving it would be a
   ## SECOND source of truth about which binary ran, computed at a different
   ## instant from the exec that ran it.
+  ## 0965: WHAT THIS DECK ASKED FOR, CARRIED TO THE ONLY PLACE THAT CAN SEE
+  ## WHAT CAME BACK. ase::run_done fires from execute_fileevent on EOF and is
+  ## handed the state and this metadata, never the netlist text -- so the
+  ## captured block has to travel with the run. Taken HERE, after the deck was
+  ## rendered from it, so the record is what this run really asked, including
+  ## anything a caller put into the block between netlisting and rendering.
+  ##
+  ## The two gates are render_deck's own: without the user's tick and an enabled
+  ## operating point the deck carries no device requests, and a report about
+  ## requests that were never made is a claim about a deck that does not exist.
+  ## Empty means "nothing to compare", which is what every run that asks for no
+  ## device numbers leaves behind.
+  set opblock {}
+  if {[ase::op_gate_on [ase::state_get $state save_op_params {}]] &&
+      [ase::op_analysis_enabled $state]} {
+    catch {set opblock [ase::op_cards_for $netlist_text]}
+  }
   set meta [dict create cell $cell simulator $sim cmd $cmd dir $rd \
                         deck $deckpath started [clock seconds] \
+                        opblock $opblock \
                         t0 [clock milliseconds]]
   catch {ase::run_log_write $logpath $meta {} {}}
 
@@ -3044,6 +3257,16 @@ proc ase::run_done {logpath state callback {meta {}}} {
     ::ase::echo "ase: *** CO-SIMULATION PROBLEM ($dcode, $dn occurrence[expr {$dn == 1 ? {} : {s}}]):\
  $dmsg. The results of this run cannot be trusted. See $logpath" error
   }
+  ## 0965: AND SAY, BEFORE THE FINISH LINE, HOW MANY DEVICES WERE ASKED ABOUT
+  ## AND HOW MANY CAME BACK -- because a simulator that could not match a device
+  ## name says nothing at all about it, and a blank row on a schematic with no
+  ## diagnostic anywhere is the single largest cost this feature has.
+  ##
+  ## CAUGHT, for ase::cap_report's and ase::op_tier_report's reason: everything
+  ## it says is advisory, nothing downstream reads it, and a defect in a report
+  ## must never break a run. The suite calls ase::op_report_missing directly,
+  ## uncaught.
+  catch {ase::op_report_missing $state $meta $exitcode}
   ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
   if {$callback ne {}} { uplevel #0 $callback }
 }
@@ -5923,15 +6146,28 @@ namespace eval ase::backend::ngspice {
             # is what holds it. Cold code on every released ngspice, which is
             # why a stand-in that claims the capability exercises it.
             #
-            # ⚠ THIS IS NOT THE SHAPE THE PROBE MEASURED, and that is filed as
-            # issue 0966: the probe asks whether `save @<device>[*]` works, one
-            # request per device, while this asks for a device-less blanket.
-            # It is what doc/claude/ngspice_enhancement_request_op_parameter_saving.md
-            # section 4 asks ngspice for. Harmless when mis-selected: measured
-            # on ngspice-46+, an unrecognised `.options` line is ignored
-            # silently at exit 0 with a normal results file.
+            # ⚠ IT ASKS THE SHAPE THE PROBE MEASURED, AND IT ASKS IT INSIDE
+            # THE RUN (issues 0966 and 0968). What a reader would otherwise
+            # assume is that a blanket capability is best spent on a blanket
+            # request. Two things say otherwise, and both were measured:
+            #   * the probe's question is `save @<device>[<wildcard>]` — see
+            #     ase::cap_param_wildcard — so a device-less request is an
+            #     answer to a question nobody asked, and the YES it leans on
+            #     was never about it;
+            #   * a dot-card applies to EVERY analysis in the deck and cannot
+            #     be scoped to one, which is issue 0928 section 7 exactly: the
+            #     device numbers get recorded at every time point of the
+            #     transient, where nothing reads them. On the user's own
+            #     tb_bandgap that was +74.9 MB and +4.08 s.
+            # So the requests go in `optier_ctl`, which the analysis loop below
+            # emits immediately before `op` — and filling it is also what turns
+            # on the 0964 reorder that keeps `op` last. Rows E14, E16 and E18.
+            #
+            # STILL O(devices) AND NOT O(devices x parameters): one entry per
+            # device, whatever its parameter count. On tb_bandgap that is 78
+            # entries against 468 cards.
             lappend lines ".save all"
-            lappend lines ".options saveopparams"
+            set optier_ctl [ase::op_ctl_saves [ase::op_cards_wildcards $opblk]]
           }
           b {
             # THE ONE-LINE SHAPE (issue 0963 tier b): no cards at all here, and
@@ -6329,7 +6565,7 @@ write probe_a.raw
     set f [open $deckb w]
     puts -nonewline $f "$ckt.control
 set filetype=ascii
-save @m.xo1.xi1.m1\[*\]
+save @m.xo1.xi1.m1[ase::cap_param_wildcard]
 op
 remzerovec
 write probe_b.raw

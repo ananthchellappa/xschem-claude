@@ -2093,6 +2093,49 @@ check {H2 the five hooks a backend must have still resolve, and the simulator th
   [list $H2OK [expr {[lsearch -exact [a_ans ase::backend_names] ngspice] >= 0}]] \
   [list 1 1]
 
+
+# ----------------------------------------------------------------------------
+# H3 -- READING A RESULTS FILE'S HEADER MUST NOT MEAN READING THE WHOLE FILE
+# ----------------------------------------------------------------------------
+# WHY THIS ROW EXISTS NOW. The run report that tells the user how many devices
+# were asked for and how many came back has to read the Operating Point plot's
+# variable list out of the results file. The only reader in the tree for that
+# is ase::cap_raw_plots, and it pulls the ENTIRE file into memory first.
+#
+# MEASURED, on the shipped sky130_tests_ase/tb_bandgap bench: the results file
+# is 69,595,016 bytes with the device requests scoped to the operating point,
+# and was 144,455,860 bytes before they were. This box has about 7.8 GB. And
+# the plot the report needs is the LAST one in the file, so no read of the
+# first few kilobytes can find it -- the reader must step over the numbers,
+# which is exactly what its own `Binary:` arithmetic already knows how to do.
+#
+# The behavioural half of this row passes today, on the slurp. That is the
+# recorded reason the structural half is not optional: nothing a suite can
+# observe goes red when a reader quietly loads 69 MB to read 40 lines.
+#
+# ⚠ THE STRUCTURAL HALF ASKS FOR THE MECHANISM, NOT FOR ONE SPELLING. It used
+# to look for the nine literal characters of a bracketed whole-file read, which
+# a slurp written any other way walked straight past. It now requires: no
+# whole-file read of the handle AT ALL, at least one line-at-a-time read, and
+# at least one skip over a block of numbers -- which is the property the row is
+# actually about.
+set H3RAW [file join $scratch raw_oplast.raw]
+a_wrbin $H3RAW "$TITLE$BINTRH[a_numblock [expr {3 * 2 * 8}] {} 0]$TITLE$BINOPH[a_numblock [expr {8 * 3 * 8}] $ZZGHOST 8]"
+set H3GOT [a_ans ase::cap_raw_plots $H3RAW]
+set H3BODY [a_body ase::cap_raw_plots]
+check {H3 the plot a report needs is the LAST one in the results file, and the\
+ reader finds it by stepping over the numbers rather than by loading a file\
+ that is 69 MB on the user's own bench} \
+  [list [a_plotnames $H3GOT] \
+        [lindex [lindex $H3GOT 1] 1] \
+        [lsearch -exact [lindex [lindex $H3GOT 1] 2] {@m.xo1.xi1.m1[gm]}] \
+        [expr {($H3BODY eq {NOPROC}) ? $H3BODY : [a_count $H3BODY {read $f}]}] \
+        [expr {($H3BODY eq {NOPROC}) ? $H3BODY :
+               ([a_count $H3BODY {gets $f}] >= 1 ? 1 : 0)}] \
+        [expr {($H3BODY eq {NOPROC}) ? $H3BODY :
+               ([a_count $H3BODY {seek $f}] >= 1 ? 1 : 0)}]] \
+  [list [list {Transient Analysis} {Operating Point}] 8 1 0 1 1]
+
 } zzerr]} {
   puts "FATAL: uncaught error: $zzerr"
   puts "$::errorInfo"

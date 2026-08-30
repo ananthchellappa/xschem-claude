@@ -484,6 +484,52 @@ the item names (checked by hand: 456 of 456 bit-identical), and the leader rule
 is a deck grep where its measured hazard was a run that lost 4 of 6 node
 voltages from its transient (checked by hand: 424 vectors either way).
 
-**The next free number is 0970.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-30, item S4a's repair pass.** Two more, both reproduced first-hand
+before filing. **0970**: the bandgap bench does not simulate what its schematic
+says — `passgate.sym`'s `format=` string never passes `modelp` down, so x5's and
+x6's `modelp=pfet_01v8_lvt` is dead in the netlist and those two transistors are
+simulated with a standard-Vt pfet. FILED NOT FIXED; netlister/symbol scope,
+wider than annotation, and fixing it would change what the committed bench
+simulates. **0971**: the results-file reader loaded the WHOLE file to read its
+headers, which became a hazard the moment issue 0965's run report pointed it at
+the user's own 69 MB results file; FIXED in the same pass, and filed anyway
+because no behavioural row in the tree can see it.
+
+The same pass FIXED **0965** (the two unresolvable device names, and the silence
+that hid them), **0966** + **0968** (one change: the blanket form now asks the
+shape the probe measures, inside the run and scoped to the operating point) and
+**0969** (the acceptance is pinned on the PDK bench with a real run, section X).
+**0967** stays with the user and was deliberately not acted on.
+
+**2026-08-30, item S4a's REPAIR pass** (the sabotage pass found four guards no
+row anywhere could see; one of the four was also half broken). **0972**: the
+`@dev[param]` split cut at the FIRST bracket, which on a bussed instance is the
+bus index — measured on the shipped `sky130_tests_ase/sky130_mismatch` bench,
+whose ten matched transistors are one symbol named `M1[9:0]`, the split answered
+`@m.xm1` for all ten. FIXED here, one splitter cutting at the last bracket, rows
+Q7/Q8/Q11. **0973**: a vector instance's save cards name the bus RANGE, which
+the deck never contains (the netlister writes one element per member) — 60 blank
+annotation rows on that same bench. FILED NOT FIXED: which member's numbers
+belong beside a symbol standing for ten transistors is the user's ruling, and
+ruling D5-1 forbids the obvious shortcut. Recorded as a `rule` debt.
+
+**2026-08-30, item S4a's WRITE-UP.** Three more, all measured and none fixed —
+each reproduced first-hand from the shipped code before filing, and each left
+unfixed on the rule the sabotage pass established on this very item: *a change
+with no row watching it is not a fix.* **0974**: the sentence that says which
+transistor's schematic and netlist disagree leads with `M2` — the device inside
+the cell — on a sheet holding five passgates that each contain an `M2`, and
+names the placed instance (`x5`) only inside the trailing raw-file device path;
+it also never says what the user can do. **0975**: the "did not come back"
+sentence names ONE cause ("the deck spells a device differently") even when
+NOTHING came back, where the likelier reason is an operating point that did not
+converge — and it says "of 1 devices". **0976**: issue 0965's model-resolution
+defect is still live at five sites in the shipped PDK helper files, two of them
+on surfaces a user reaches today (`sky130_display_fet_params`, behind the
+shipped `annotate_fet_params` symbol, and `sky130_hier_sch_expand`, behind the
+menu's `.save` writer); row NM5's "one place" claim is scoped to
+`src/op_annot.tcl` and is not true of the tree.
+
+**The next free number is 0977.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved, so 0899 is followed by 0900 — but
 **1000–1199 is** (user, 2026-08-30), so 0999 is followed by **1200**.

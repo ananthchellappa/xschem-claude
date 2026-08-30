@@ -8,6 +8,19 @@ back-annotation of operating-point values onto the schematic)
 `/usr/local/bin/ngspice`
 **Status:** draft — not yet sent
 
+> **Note, 2026-08-30 (issues 0966 + 0968).** XSCHEM no longer emits
+> `.options saveopparams`. It used to emit it at deck level for the blanket
+> tier, which was two defects at once: it is not the shape this tool's own
+> capability probe measures (the probe asks `save @<device>[*]`, one request per
+> device, inside `.control`), and a dot-card applies to every analysis in the
+> deck, which is exactly the per-analysis scoping issue 0964 had just restored.
+> The blanket tier now emits the probed shape, inside the run and immediately
+> before `op`. **Section 5's request stands unchanged** — a blanket option is
+> still what we would like, and this note records only that the tool stopped
+> pre-emptively writing a line no released build honours. Whether to keep asking
+> for `saveopparams` in this spelling is on the user's ruling queue against
+> issue 0966.
+
 ---
 
 ## 1. The ask, in one paragraph

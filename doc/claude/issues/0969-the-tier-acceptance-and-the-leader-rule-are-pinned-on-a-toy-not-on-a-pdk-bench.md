@@ -1,9 +1,9 @@
 # 0969 — the value acceptance and the leader rule are pinned on a toy, not on a PDK bench and not on a run
 
-**FILED, NOT FIXED — a coverage gap, not a behaviour defect.** Both properties
-were checked by hand during item S4's verification and both HOLD today; nothing
-committed watches either of them. Found by S4's verification pass. Status:
-**OPEN**. Sibling in kind of issue **0962**.
+**FIXED 2026-08-30** (the S4a repair pass): both gaps are now pinned on the PDK
+bench, with a real run, in section **X** of the suite. Filed as a coverage gap,
+not a behaviour defect — both properties were checked by hand during item S4's
+verification and both held. Sibling in kind of issue **0962**.
 
 Design of record: `doc/claude/specs/op_annotation.md` §4.3b.
 Suite: `tests/headless/test_ase_optier_0963.tcl`.
@@ -83,3 +83,49 @@ Nothing was lost by leaving it alone — the analysis reorder is held by
 `test_ase_final` F21, all five of which redden under SAB-REORDER. What is true
 is the narrower statement: **nothing in `test_ase_simcaps_0948` sees the
 reorder**, and nothing needs to.
+
+
+## HOW IT WAS FIXED — section X, on the bench, with a real ngspice
+
+`tests/headless/test_ase_optier_0963.tcl` gained section **X**, which opens
+`sky130A/xschem_libs/sky130_tests_ase/tb_bandgap` the way the product opens it —
+its own committed state, its own library defs — and runs it four times. It is
+gated on `auto_execok ngspice` and on the bench being present, exactly as
+sections B/M/R/ACC are, and it skips loudly rather than silently.
+
+⚠ **THE TRANSIENT IS SHORTENED, AND ONLY THE TRANSIENT.** The committed bench
+asks for `tran 10n 200u` — 20,505 points, about 16 s. Every row in the section
+is about the SHAPE of the deck and the SPELLING of what comes back, and neither
+depends on how long the transient runs. With `tran 1u 2u` a whole
+netlist + run + read cycle is about 3.3 s, so the four runs add roughly 14 s.
+That is a state edit, not a bench edit: nothing under `sky130A/` is written.
+
+* **Gap 1 → rows X1 and X2.** X1 asserts that on the bench every one of the 468
+  requests comes back with a number (it was 456, i.e. 12 blank rows, before
+  issue 0965 was fixed). X2 forces form b on the same bench and compares all 468
+  values device by device and parameter by parameter, through the tree's own
+  reader — the numbers that would be painted on the schematic — and prints deck
+  bytes and lines, wall clock and results-file bytes for both forms. Measured:
+
+      form c   deck 35,255 B / 329 lines   wall 3,296 ms   raw   284,283 B
+      form b   deck 17,641 B / 328 lines   wall 3,420 ms   raw   710,738 B
+      differences over all 468 values: NONE
+
+  The item's acceptance was unsatisfiable as worded until 0965 was fixed; it is
+  satisfiable now, and X2 is what keeps it so.
+* **Row X3** is the measurement guard **G4** stands on, taken on this bench
+  rather than on a toy: a device name made unmatchable on purpose costs form b
+  the WHOLE operating point and no results file at all, at exit 0, while form c
+  keeps every other device — and the run now says so in both cases.
+* **Gap 2 → row X4**, as a RUN and not a grep: with the transient enabled, the
+  count of transient node-voltage vectors is the same with the device-numbers
+  tick on as with it off (measured: 424 either way), and no device number rides
+  the transient at all.
+* **Row X5** measures the tier the bench really lands on with this box's own
+  ngspice and no priming: `c unsafe`. G4 fires on the bench, not only on a
+  primed capability.
+* **Row X6** is the section's discipline: no device or card count is typed into
+  it; every count comes from the walk. **Row N5** is the same discipline for
+  section N, whose whole 78-name finding is reproduced from committed files with
+  no simulator at all, in about two seconds, by walking each emitted name
+  through the deck's own call graph via `op_annot::_deck_index`.

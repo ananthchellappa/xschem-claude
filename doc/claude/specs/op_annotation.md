@@ -568,6 +568,17 @@ where `<symbol-type>` is the symbol `K`-record `type=` token (`nmos`, `pmos`,
 |---|---|
 | `devpath` | template for the raw-file device path, **including the element-letter prefix**. Expanded with `xschem translate <inst> …` (so `@name`, `@model`, `@spiceprefix`, `@path` all work) plus `$path` for the hierarchy prefix. |
 | `devproc` | *alternative to* `devpath`: name of a Tcl proc called as `<proc> <instname> <model> <path> <spiceprefix>` returning the device path. The escape hatch for PDKs that mangle the model name. |
+
+⚠ **`@model` IS THE NETLIST'S MODEL, NOT THE LIVE DESIGN'S — ISSUE 0965.** Both
+rows above are fed by `op_annot::_model_netlist` and not by
+`xschem translate <inst> @model` directly, in the devproc arm and in the
+template arm alike. The two answers differ for any instance that overrides a
+model attribute the enclosing symbol's `format=` string does not pass down: a
+live descend answers from the override, the netlister answers from the enclosing
+SYMBOL TEMPLATE, and it is the netlister that decides what is in the deck. The
+descriptor contract is unchanged — a `devproc` still receives `<model>` in the
+same position — only its VALUE is now the deck's. See §4.3b's repair-pass block
+and `doc/claude/issues/0965-*.md`.
 | `params` | ordered list of `{label param kind}`. `kind` is `0` = wrap in `i(…)`, `1` = bare, `2` = wrap in `v(…)` — the R3 shape, and `get_fqdevice()`'s convention. |
 | `derived` | ordered list of `{label expr}`, evaluated after `params` are read, with each `label` from `params` available as a Tcl variable. Non-numeric inputs yield a blank, never a fabricated number. |
 | `pinexpr` | ordered list of `{label expr-over-pin-voltages}` for quantities that need no save card at all. **The spelling is the shipped one**, `expr(@#1:spice_get_voltage - @#2:spice_get_voltage)` — see the pinexpr note below. |
@@ -1446,7 +1457,7 @@ above now carry the same verdict in **both** arms — `ALL PASS (79)` headless a
 `:99`. Nothing in `src/ase.tcl` moved; its guard is adjacent to the OPEN 0683/0684
 ruling.
 
-### 4.3b Which SHAPE the request takes — the three forms ✅ LANDED (0963 + 0964, 2026-08-30)
+### 4.3b Which SHAPE the request takes — the three forms ✅ LANDED (0963 + 0964, 2026-08-30; repaired by 0965 + 0966 + 0968 + 0969, same day)
 
 §4.3a settles *whether* device numbers are asked for. This settles *how*, and it
 is where the cost of the feature lives. Selection is `ase::op_save_tier`; the
@@ -1465,7 +1476,7 @@ that renders a deck with no Run behind it.
 
 | form | what the deck carries | cost |
 |---|---|---|
-| **a — blanket** | `.save all` + `.options saveopparams`. **No device is named anywhere.** | O(1) |
+| **a — wildcard** | `.save all`, then `save all @dev1[*] @dev2[*] …` **inside `.control`, immediately before `op`** — one request per device, wildcarded over that device's own parameters. The exact shape the capability probe measures. | O(devices) |
 | **b — one write line** | no cards; `write <raw> all @dev1 @dev2 …` on the **operating-point write only**, each device once, no parameter | O(devices) |
 | **c — per device** | today's `.save @dev[param]` cards, one per device per parameter | O(devices × parameters) |
 
@@ -1486,17 +1497,43 @@ capability keys at all means *nothing was measured*, not *no to everything*. Row
 T11 pins that ordering structurally: no behavioural row can tell a missing key
 from a measured 0.
 
-⚠ **G4 IS THE ITEM'S OWN TIER-B CONDITION RETURNING TIER C, DELIBERATELY.**
-Measured on the user's `sky130_tests_ase/tb_bandgap`: naming all 78 devices on
-the operating-point write line produces a results file with **no operating point
-in it at all**, at exit 0. Two of the 78 names this tree emits cannot be resolved
-(issue **0965**) and **one unresolvable name aborts the whole write** —
-`Error during 'write': no writable vector found.`, no file. The same two names
-cost form **c** 12 blank rows out of 468 and it keeps the other 456. Form b
-therefore trades 468 independently-degradable requests for one all-or-nothing
-request, on the surface whose entire purpose is to stop numbers going missing
-quietly. It is built, exercised and reachable through the override; nothing
-selects it automatically.
+⚠ **G4 IS THE ITEM'S OWN TIER-B CONDITION RETURNING TIER C, DELIBERATELY, AND
+IT SURVIVED 0965 BEING FIXED.** Its original reason was that two of the 78 names
+this tree emitted for `tb_bandgap` could not be resolved (issue **0965**) and one
+unresolvable name aborts the whole write — `Error during 'write': no writable
+vector found.`, no file, exit 0. **0965 is fixed**, so that reason no longer
+applies as written, and the question "can form b be chosen automatically now?"
+was asked and answered with a measurement rather than an opinion. On the bench,
+transient shortened to `tran 1u 2u`, rows X1–X3 and X5:
+
+| | form c | form b |
+|---|---|---|
+| deck | 35,255 B / 329 lines | 17,641 B / 328 lines |
+| wall clock | 3,296 ms | 3,420–7,100 ms |
+| results file | 284,283 B | 710,738–2,213,395 B |
+| asked / came back | 468 / 468 | 468 / 468 |
+| per-device per-parameter value diff | — | **none, over all 468 values** |
+
+So the values are proven identical and the deck is half the size. **G4 stays
+anyway**, on three measurements:
+
+1. **The failure mode is total, not partial.** Row X3: one device name made
+   unmatchable on purpose costs form b the WHOLE operating point and no results
+   file at all, at exit 0; form c loses that device's six numbers and keeps the
+   other 462.
+2. **0965 closed one source of bad names, not the class.** The inner device
+   spelling is DESCRIPTOR knowledge (`sky130_op_devpath` branches on
+   `g5v0d16` / `20v0_(iso|nvt)` / `20v0`) and the deck cannot verify it: PDK
+   model subcircuits are `.include`d, never netlisted, so nothing in the deck
+   names `msky130_fd_pr__pfet_01v8` at all. A deck cross-check proves the
+   hierarchy path and the callee; it cannot prove the leaf.
+3. Its results file is **2.5×–7.8× larger here**, because a bare device name on
+   a write line dumps every parameter that device has (~75 for a level-1 MOS, 89
+   for BSIM4) rather than the six the annotation reads.
+
+Row **X5** measures that the guard fires on the real bench with this box's real
+ngspice and no priming at all: `c unsafe`. Form b is built, exercised and
+reachable through the override; nothing selects it automatically.
 
 **The override.** `ase::op_tier_force_set a|b|c|{}` / `ase::op_tier_forced`.
 Tcl-level only — no menu item, nothing in the Save All dialog. It is the ONLY
@@ -1663,42 +1700,135 @@ maximum relative difference 0.000e+00**. So the acceptance is *one invocation,
 two writes, compared* — rows ACC1 (from the raws) and ACC2 (through the tree's
 own reader, i.e. the numbers that would be painted on the schematic).
 
-#### Filed, not fixed
+#### The repair pass, 2026-08-30 — 0965, 0966, 0968 and 0969 all FIXED
 
-* **0965** — two `tb_bandgap` devices get a name ngspice cannot resolve. A
-  devpath defect, out of scope here, and the reason G4 exists.
-* **0966** — the blanket form emits `.options saveopparams` (device-less, what
-  the ngspice enhancement request asks for) while the probe measures
-  `save @dev[*]` (per device). "Do not change the probe" blocks the clean fix;
-  harmless in practice, since ngspice-46+ ignores the line silently and no
-  released build answers yes to the probe.
-* **0968** — form a's request is a **deck-level** `.options` line, so it applies
-  to every analysis, and the blanket arm does not get 0964's reorder either
-  (that is keyed on the in-`.control` request list, which form a never fills).
-  Measured by rendering the same op+tran state under each form: form a emits
-  `.options saveopparams` above `.control` with `op` still FIRST. So on the day
-  a build honours it, **0964's defect comes back inside the cheapest of the
-  three forms**. Nothing can see it: E1, E2 and A1 all render form a on an
-  operating-point-only state, and the stand-in returns a canned results file
-  whatever the deck asks for. The recommended fix is a seventh guard — refuse
-  form a when more than one analysis is enabled — but the enhancement request is
-  the only specification this option has and it does not say what a build that
-  honoured it would do with a transient, so it is filed and not guessed at.
-* **0969** — two coverage gaps, both checked by hand and both currently
-  holding. The form-b-against-form-c value acceptance (ACC1/ACC2) runs on a
-  hand-written level-1 transistor, not on the PDK bench the item names — by
-  hand on `tb_bandgap`, 456 of 456 device × parameter values are bit-identical,
-  and with all 78 names rather than the 76 resolvable ones form b writes nothing
-  at all (issue 0965), so the acceptance **as the item words it** is
-  unsatisfiable on that bench. And G-LEADER is a deck grep where its measured
-  hazard was a run (6 transient vectors down to 2); by hand, `tb_bandgap`'s
-  transient holds 424 vectors with the tick on and 424 with it off.
+* **0965 — a device name the deck does not contain, and the silence around it.**
+  Two `tb_bandgap` devices were named `…msky130_fd_pr__pfet_01v8_lvt` where the
+  deck spells them `…msky130_fd_pr__pfet_01v8`, costing 12 blank annotation rows
+  out of 468 with **nothing said anywhere**. The cause was not a PDK branch at
+  `W_P=0.6 / L_P=0.35` (that model file has one device line and zero
+  conditionals): `passgate.sym`'s `format=` never passes `@modelp` down, so the
+  netlister builds one `.subckt passgate` from the SYMBOL TEMPLATE while
+  `op_annot::devpath` asked `xschem translate @model`, which on a live descend
+  answers from the instance's own override. Both readers resolve through
+  `xctx->hier_attr[currsch-1]`, filled differently by `src/actions.c:4780-4783`
+  and `src/spice_netlist.c:492-496`.
+  **Fixed** by `op_annot::_model_netlist` — one lookup, used by both arms of
+  `op_annot::devpath`, so the save-card name and the on-screen name cannot be
+  spelled differently (invariant I1). It answers the netlister's way, ONE level
+  (every `.subckt` body is netlisted with `currsch == 1`), and keeps the
+  netlister's own exception: an instance carrying `schematic=` really does pass
+  its override down, because `get_additional_symbols` gives that block a
+  `parent_prop_ptr`.
+  **Ruling D5-1 is kept honest** by guard GC: the walk counts the
+  schematic-vs-netlist disagreement (`op_annot::last_counts` gained
+  `netlist_model_differs`) and says it once per instance, in plain English,
+  through the channel `ase::op_cards_capture` already echoes. The wider defect —
+  that the bench does not simulate what its schematic says — is **issue 0970**,
+  netlister scope, filed not fixed.
+  **And the silence is gone**: `ase::op_report_missing`, called from
+  `ase::run_done`, compares what the deck asked for with what the Operating
+  Point plot came back holding and says both counts plus the names (capped at
+  five plus "and N more"). Its two sentences are minted in `ase::sim_why`
+  (ruling D5-4). The captured block travels to the completion hook in the run's
+  `meta` dict, because `run_done` fires from `execute_fileevent` and never sees
+  the netlist text. ⚠ A MISSING `Operating Point` PLOT IS "NONE OF THEM CAME
+  BACK", not an error to swallow: with a transient in the same run, form b's
+  loss leaves a file that holds the transient and no operating point at all.
+* **0966 + 0968 — one shape, one change.** The blanket arm now emits the shape
+  the probe measures, as a `save` COMMAND inside `.control` immediately before
+  `op`, and `.options saveopparams` is deleted from the tree. That fixes both at
+  once: the emitted form is the probed form (0966), and it is scoped by position
+  to the operating point rather than applying to every analysis (0968) —
+  filling `optier_ctl` is also what turns on 0964's reorder, so form a inherits
+  0964 instead of undoing it. The wildcard is ONE literal,
+  `ase::cap_param_wildcard`, read by both the probe deck and the emitter, so the
+  measured shape and the emitted shape cannot drift apart again (row E15; it is
+  named `cap_` because row C3 of `test_ase_simcaps_0948` unions the `ase::cap_*`
+  bodies looking for it). Consequence on the user's queue: **xschem no longer
+  emits the line the ngspice enhancement request's §4 asks for.**
+* **0969 — the acceptance is pinned on the bench.** Section **X** runs
+  `sky130_tests_ase/tb_bandgap` for real, four times, with the transient
+  shortened to `tran 1u 2u` (a state edit, not a bench edit — every row is about
+  deck shape and vector spelling, neither of which depends on transient length).
+  X1: 468 asked, 468 back, no blank rows. X2: all 468 values compared form b
+  against form c, no differences, with deck bytes/lines, wall clock and results
+  bytes printed. X3: guard G4's measurement. X4: 0969's second gap as a RUN —
+  424 transient node vectors with the tick on and 424 with it off. X5: the tier
+  the bench really lands on. X6/N5: no count or name list typed into the suite.
 
-**Verification.** `tests/headless/test_ase_optier_0963.tcl`, 56 checks, both
+#### The repair pass's own repair, 2026-08-30 — 0972 FIXED, 0973 FILED
+
+The sabotage pass on the change above found four guards that **no row anywhere
+could see**, and one of the four was also half broken. A guard nobody can see is
+a comment, so each one now has a witness, and the broken half has a number.
+
+* **0972 — a device name was cut at the FIRST bracket, so ten transistors
+  became one.** `ase::op_cards_devices` and `ase::op_report_missing` both split
+  `@dev[param]` at `string first {[}`. On a **bussed** instance the first
+  bracket is the bus index, not the parameter: measured on the shipped
+  `sky130_tests_ase/sky130_mismatch` bench, whose ten matched transistors are
+  one symbol named `M1[9:0]`, the save card reads
+  `.save @m.xm1[9:0].msky130_fd_pr__nfet_01v8[id]` and the split answered
+  `@m.xm1` — not a device, and the same key for every member. Two costs at
+  once: the short-and-wide form would put a name the deck does not contain on
+  its `write` line (which costs the whole operating point at exit 0), and the
+  did-not-come-back report went quiet, because one member answering covered for
+  the other nine. **Fixed** by one splitter, `ase::op_dev_of`, cutting at the
+  LAST bracket and used by both callers (rows Q7, Q8, Q11 — Q11 is structural,
+  because nothing behavioural can see two cuts drift while they drift
+  together).
+* **0973 — a vector instance asks for a device the deck never contains.**
+  FILED, NOT FIXED, and it needs a **ruling** rather than a patch. The
+  netlister writes one element line per member (`XM1[9]` … `XM1[0]`, measured)
+  while `op_annot::devpath` builds its name from `@name`, which is the bracketed
+  RANGE — so `sky130_mismatch` asks for `@m.xm1[9:0].…` and gets 60 blank rows.
+  `op_annot::_elements` already knows how to expand the range; only the name
+  builder does not. What it cannot know is **which member's numbers belong
+  beside a symbol that stands for ten transistors** — ruling D5-1 forbids the
+  obvious shortcut. With 0972 fixed the run now NAMES the card that came back
+  with nothing instead of saying nothing at all.
+* **The three other unwitnessed guards now have rows.** The whole-name presence
+  test (row **Q7** — a substring test would let a longer-named device cover for
+  a shorter-named one, which is the exact silence the report exists to remove);
+  "I could not work out where the file would be is not 'there is no file'" (row
+  **Q9**, both halves — an unregistered simulator and a design the hook itself
+  refuses); and "a run that already failed loudly is not also counted at" (row
+  **Q10**). All three are driven directly, the way `ase::run_done` drives the
+  report, because the stand-in simulators always exit 0, always resolve their
+  own results path, and are always handed tidy names.
+* **`op_annot::_subst_model`'s token boundary now has rows** — **NM7** (unit)
+  and **NM8** (end to end). A plain `string map` rewrites the front of every
+  longer token, so a descriptor spelling `@modelname` beside `@model` would be
+  handed a plausible-looking wrong device path; the shipped template ends the
+  string at `@model`, so nothing could see it.
+* **The NM fixture's enclosing symbol now wraps its `template=` over two
+  lines**, exactly the way the shipped `passgate.sym` does, with `modelp` on the
+  second. `op_annot::_lcc_attr`'s multi-line reading previously had no unit
+  witness at all — sabotaged, NM1–NM6 all stayed green and only the 20-second
+  real-bench row caught it. Rows NM2, NM6 and NM8 now do.
+* **`test_ase_simcaps_0948`'s H3 structural half asks for the mechanism, not one
+  spelling.** It used to search for the nine literal characters of a bracketed
+  whole-file read, which a slurp written any other way walked past. It now
+  requires no whole-file read of the handle at all, at least one line-at-a-time
+  read and at least one skip over a block of numbers.
+
+**Verification.** `tests/headless/test_ase_optier_0963.tcl`, **86 checks**, both
 arms. Form a is exercised by a `/bin/sh` stand-in that really makes the probe
 measure `blanket_op_save 1`; form b is exercised against the real local ngspice
 through the override. Section ACC3 prints deck size, wall clock and results size
-for both forms and for the no-device-numbers control on every run.
+for both forms and for the no-device-numbers control on every run; section X
+prints the same four numbers on the PDK bench. Section **N** reproduces the
+whole 78-name finding from committed files with **no simulator at all**, in about
+two seconds, by walking each emitted name through the deck's own call graph via
+`op_annot::_deck_index`. Unit scale: `tests/headless/test_op_annot.tcl` section
+**NM** (8 rows). Section **Q-DIRECT** drives `ase::op_report_missing` the way
+`ase::run_done` drives it, for the four conditions a whole run cannot reach.
+
+⚠ **0967 IS NOT SETTLED HERE.** Which analysis the Outputs pane's Value column
+reads is the user's ruling. Row E17 states only that this change did not move
+it: the printed outputs still sit with the same analysis's write they sat with
+before, whatever the deck's analysis ORDER became.
 
 **Seven guards had no row until the sabotage pass went looking**, and each now
 has one, re-measured by re-applying the same sabotage and watching the named row
@@ -1719,6 +1849,53 @@ body. The proc's own not-measured fallback is `set caps [dict create known 0]`,
 which sits above every capability read, so the row passed unconditionally — the
 sabotage pass moved the blanket test above the known test and nothing noticed.
 It now matches `$caps known`, which appears only where the guard asks.
+
+#### What the write-up measured and did NOT fix, 2026-08-30 — 0974, 0975, 0976
+
+The sentences this change added are **shipped and unratified**, and three
+things about them were measured from the shipped code before the commit and
+left alone deliberately. A change to a user-facing sentence with no row
+watching it is exactly what the sabotage pass failed this item for once
+already, so these are filed, not patched.
+
+* **0974 — the disagreement warning does not name the thing the user can point
+  at.** On `tb_bandgap` it prints two lines that are byte-identical for their
+  first 280 characters, both opening `the schematic line for M2 asks for model
+  "pfet_01v8_lvt"` — on a sheet holding five passgates that each contain an
+  `M2`. The placed instance the user sees, `x5` or `x6`, appears only inside
+  the trailing `@m.x1.x5.…` device path, which is a raw-file name and the one
+  thing the reporting rule says not to lead with. It also stops at the
+  diagnosis and never says what the user can do, which the PLAIN ENGLISH ruling
+  requires and which row A11-13b already enforces for the blank-row causes.
+  Row **N3** passes on this text because it searches for the substring `x5`,
+  which the device path supplies; it is a correct row for what it pins and
+  blind to which name the sentence leads with.
+* **0975 — the "did not come back" sentence names one cause it cannot know.**
+  `ase::op_report_missing` deliberately treats a results file with no Operating
+  Point plot as "none of them came back", which is the right data model; the
+  sentence then tells the user, with no hedge, that *"That almost always means
+  the deck spells a device differently … Save the schematic, netlist it again
+  and re-run."* When **some** came back that cause is exactly right — it is
+  issue 0965's own case. When **none** did, the likelier reason is an operating
+  point that did not converge (`tb_bandgap`'s own log carries
+  `Warning: singular matrix`), and re-netlisting is a wrong instruction
+  delivered confidently. The same sentence has no singular form: rendered with
+  one device, it reads `the operating-point numbers of 1 devices`. Rows Q1 and
+  Q4 drive 3-of-5 and 2-of-20; **no row drives file-present-and-zero-back**,
+  which is the shape that gets the wrong cause.
+* **0976 — the model-resolution fix is one place in `src/`, not one place in
+  the tree.** Row **NM5** asserts exactly one `translate … @model` call remains
+  and is explicit that it means `src/op_annot.tcl`. Five more live in the
+  shipped PDK helpers, two of them on surfaces a user reaches today:
+  `sky130_display_fet_params` (`sky130_procs.tcl:186`), which is the proc behind
+  the shipped `sky130_fd_pr/annotate_fet_params` symbol, and
+  `sky130_hier_sch_expand` (`:124`), which writes the menu's `.save` file. Both
+  build their own `@m.…` path from `@model` and will therefore still spell
+  `x5`/`x6` the schematic's way on this very bench. `sky130_op_devpath` is
+  unaffected because it takes `model` as a parameter and the descriptor now
+  hands it the netlist's answer. `ihp-sg13g2` has the same shape at three
+  sites and was **not** measured for an actual divergence.
+
 
 ### 4.4 Getting the block onto the screen — two carriers
 

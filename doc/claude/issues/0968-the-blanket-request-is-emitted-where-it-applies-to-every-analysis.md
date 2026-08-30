@@ -1,9 +1,10 @@
 # 0968 — the blanket request is emitted where it applies to every analysis, and no row renders it with a transient
 
-**FILED, NOT FIXED.** Found by item S4's verification pass, reproduced
-first-hand by the write-up before filing. Status: **OPEN**, and **COLD** — no
-released ngspice can reach the arm it is in, which is exactly why it needs to be
-written down rather than trusted.
+**FIXED 2026-08-30** (the S4a repair pass), by the same change that fixed issue
+**0966** — the two were one shape and one defect wearing two names. Found by
+item S4's verification pass, reproduced first-hand by the write-up before
+filing. Still **COLD** on every released ngspice, which is exactly why it needed
+to be written down rather than trusted.
 
 Design of record: `doc/claude/specs/op_annotation.md` §4.3b. Sibling of issue
 **0966** (the same arm, a different defect: the *shape* is not the shape the
@@ -82,7 +83,42 @@ secondary item is answered, there is no scoped spelling to emit, and inventing
 semantics for an option no build implements would be the optimistic guess the S4
 item forbids elsewhere.
 
-## Three fix shapes, none taken here
+## THE FIX TAKEN: shape 2's placement, without waiting for shape 2's spelling
+
+None of the three shapes below was taken as written. What the repair pass did
+instead is simpler and settles 0966 at the same time: the blanket arm stopped
+emitting a **dot-card** at all. It now emits the shape the capability probe
+actually measures —
+
+    save all @m.xz1.mzmod[*] @m.xz2.mzmod[*] …
+
+— as a **command inside `.control`, immediately before `op`**, which is exactly
+where forms b and c place theirs. `.options saveopparams` is deleted from the
+tree.
+
+That removes the deck-level problem at its root rather than guarding around it:
+
+* the request is now scoped by POSITION, the way ngspice's save list actually
+  works (sticky forward-only; `unsave` does not exist and a later `save all`
+  does not reset it — both measured, ngspice-46+);
+* filling `optier_ctl` is what **turns on issue 0964's reorder**, so `op` runs
+  LAST in the blanket form too and nothing after it re-records the device
+  numbers. Form a inherits 0964 instead of undoing it;
+* it needs no new semantics from ngspice and no seventh guard, so nothing here
+  is invented for an option no build implements.
+
+The enhancement request's §4 blanket option is no longer emitted by this tree.
+That is recorded on issue **0966** and is on the user's ruling queue.
+
+**Row E16** is the row that was missing: form a rendered with a transient AND an
+operating point in the same run, asserting `op` is last, that the requests sit
+inside `.control` immediately before it, and that nothing device-related sits
+above `.control`. **Row E18** is its structural half: no whole-run setting
+anywhere in the arm. Row **E17** pins that this did not move the Outputs Value
+column (issue 0967, still the user's to settle).
+
+## Three fix shapes considered and NOT taken (kept for the record)
+
 
 1. **Refuse form a when more than one analysis is enabled** — a seventh guard in
    `ase::op_save_tier`, `{c reason multianalysis}`, so the blanket is used only
@@ -95,15 +131,9 @@ item forbids elsewhere.
 3. **Accept it and say so**, in the same sentence that already tells the user
    which form the run used.
 
-Option 1 is the recommendation; it is a guard, not a redesign, and it turns a
-cold arm into one a row can hold. It is out of scope here because it is a
-behaviour choice on a surface the user has an unratified ruling open against
-already (rule debt **0963**).
-
-## Ready-made rows for whoever takes it
-
-* render form a with `AN_BOTH` and assert the deck carries no request that
-  outlives the operating point — under option 1, that the form demotes to c
-  with reason `multianalysis` and the sentence says so.
-* the control: form a with `AN_OP` still renders exactly as it does today
-  (E1/E2 unchanged), so the fix cannot be "switch the blanket off".
+Option 1 was rejected because it makes the cheapest form unavailable in the one
+configuration a real user runs, to work around a placement this tree controls.
+Option 3 was rejected because a sentence about a defect is not a fix for it.
+Option 2's *placement* is what shipped; only its dependency on ngspice growing a
+new spelling was dropped, because the per-device wildcard the probe already
+measures is a `save` COMMAND and needs nothing new.
