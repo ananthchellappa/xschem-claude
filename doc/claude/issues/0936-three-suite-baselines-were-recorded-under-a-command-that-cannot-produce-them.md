@@ -48,3 +48,12 @@ the skip on the line above the total.
 
 Not fixed here because the tier list is the orchestration layer's file, not the
 repository's, and it was being written by another agent in the same session.
+
+## Sighted again, 2026-08-30 (item S3a)
+
+Three more agents in one session each stopped to chase the same four numbers and
+each reached the answer already written above. That is six agents across two
+sessions. The `test_wave_viewer` leg was re-measured on both launch forms and is
+exactly as recorded here: 401 with `--nolog`, 404 with `--logdir`, both exit 0 and
+ALL PASS, the gap being G1c's three log-artifact checks. Nothing in S3a touched
+any of these suites. The cost is not going down on its own.

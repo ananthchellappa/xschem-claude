@@ -428,7 +428,34 @@ anyone edits the liveness logic.
 Also appended, not renumbered: a second dated sighting of `test_ase_window`'s
 `W7` flake under **0801**, which already owns that class.
 
-**The next free number is 0957.** 0500-0599 and 0700-0799 remain reserved for
+**0957** — the REAL deck's `write [raw_file $state]` line is unquoted and
+absolute, so a run from a folder whose name has a space (or a dollar, a quote, a
+semicolon) writes its results nowhere. Filed 2026-08-30 by item S3a, which fixed
+issue 0949's PROBE half and is forbidden by its brief from touching deck
+emission. The measured mitigation is recorded on the issue: `ase::run_deck`
+already cd's into the very folder `raw_file` joins, so a bare basename on the
+deck's `write` line resolves to the same file on every folder name.
+
+**2026-08-30, item S3a's write-up pass — five more, each reproduced first-hand
+before filing.** S3a repaired the 0948 capability probe (0949-0954, all FIXED);
+these five are what the fix and its verification turned up and did not close.
+**0958**: the Run pause for a simulator that never answers is paid on EVERY press,
+not once — a consequence of S3a's own two correct rules meeting, measured at
+3004/3003/3005 ms per press at a lowered budget and 30 s x 3 at the shipped one,
+where the code it replaced cost 20 s once. **0959**: the bound, the honest
+sentence and the never-cache rule all depend on `timeout(1)` being on the box and
+evaporate together in silence when it is not — measured, 16.0 s unbounded then
+the false "not a circuit simulator" sentence, remembered. **0960**: a simulation
+folder the probe cannot use switches every simulator warning off, for good, with
+nothing said — both shapes measured, a read-only folder and an ordinary file
+sitting where `.ase_probe` needs to be. **0961**: a location written `./name` is
+not made absolute before the probe changes folder and cannot then be started;
+latent behind the registry's own normalize, and the code comment states the
+opposite rule. **0962**: a coverage gap — no committed row reproduces the
+CONCURRENT write that 0951 is about, and row I4's headline half passes on the
+defective tree.
+
+**The next free number is 0963.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

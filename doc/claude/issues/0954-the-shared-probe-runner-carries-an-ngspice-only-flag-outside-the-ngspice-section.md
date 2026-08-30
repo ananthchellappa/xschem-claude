@@ -1,9 +1,8 @@
 # 0954 — the shared probe runner carries an ngspice-only flag outside the ngspice section
 
-**STATUS: OPEN — measured 2026-08-30 by 0948's verification pass, confirmed by
-its write-up pass. A seam defect, latent today: `ngspice` is the only backend
-registered, so nothing is broken until the second one arrives — which is
-precisely when it is expensive to find.**
+**STATUS: FIXED (2026-08-30, item S3a) — everything after the program name now
+comes from the caller. Rows M1 and M2 of
+`tests/headless/test_ase_simcaps_0948.tcl`.**
 
 ## The contract it breaks
 
@@ -57,3 +56,20 @@ that it assumes nothing.
   `ase::backend::ngspice`.
 * A structural row asserting the generic probe runner's body carries no
   backend-specific flag, so the next reuse cannot re-introduce one.
+
+## The fix (item S3a, 2026-08-30)
+
+`lappend cmd -b $deck` is gone from `ase::cap_run`. Its signature is now
+`{exe exeargs workdir secs}` and `exeargs` is EVERYTHING after the program name:
+the arguments the user registered, the backend's own flags, and the deck. The
+ngspice probe supplies its own spelling:
+
+```tcl
+ase::cap_run $exe [concat $exeargs [list -b $decka]] $workdir [ase::cap_left $t0]
+```
+
+Row M1 is structural and asserts both ends at once — the shared runner carries no
+`-b`, and the ngspice probe does. Row M2 is why M1 alone is not enough: it drives
+an argument-logging stand-in and asserts the flag still reaches the program, so
+deleting it from BOTH places cannot leave M1 green while every measurement stops
+running in batch mode.

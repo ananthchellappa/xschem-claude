@@ -59,7 +59,16 @@
 # THE STUB DEPENDS ON THREE THINGS THE PLAN NAMES, AND ON NOTHING ELSE:
 #   1. the probe hands the deck to the program as a FILE ARGUMENT;
 #   2. the probe deck carries a line beginning `write ` naming where the
-#      results go;
+#      results go, RELATIVE TO THE PROGRAM'S OWN CURRENT DIRECTORY. Issue
+#      0949: the name on that line is a bare file name and the program is
+#      started with the probe's folder under it, which is the only form
+#      measured to survive a space, a dollar, a bracket, a quote or a
+#      semicolon in the simulation folder's name. The stub needs no change for
+#      that -- it copies to whatever the line says, and it now runs with the
+#      probe's folder as its own -- but a reader who believed the old wording
+#      would look for an absolute path that is no longer there. Rows Z2 and Z3
+#      still hand the stub a deck naming an absolute file by hand, which also
+#      works, because the stub simply obeys the line;
 #   3. THE PROBE RUNS TWO DECKS, and the blanket-save one is the one whose
 #      save card carries the `[*]` wildcard form -- which row C3 asserts
 #      structurally, so it is a contract and not a guess.
@@ -90,6 +99,11 @@ proc check {name got exp} {
 # --- locations, cwd-independent ---------------------------------------------
 set here [file normalize [file dirname [info script]]]
 set repo [file normalize [file join $here .. ..]]
+## The folder this suite was started in, read while it is still certainly a
+## real one. Row K4 puts the process back here before it measures, because a
+## probe that failed to come back leaves `pwd` answering the empty string and
+## two empty strings compare equal -- see K4's own note.
+set A_HOME [file normalize [pwd]]
 source [file join $here scratch.tcl]
 set scratch [test_scratch simcaps0948]
 set ASETCL [file join $repo src ase.tcl]
@@ -185,6 +199,18 @@ a_wr $RAW_ZERO   "$TITLE$OPHDR_ZERO$TITLE$TRHDR"
 a_wr $RAW_BCONST $CONSTHDR
 a_wr $RAW_BOP    "$TITLE$OPHDR_HIER"
 
+## 0952's MEASURED SHAPE -- a build that adds every analysis to the one
+## results file exactly as it was asked to, but spells its device parameters
+## differently. Nothing the probe saved matches, so the operating point
+## degenerates to a constants-only plot and no plot in the file is called
+## "Operating Point" at all. The S3a crew measured this file's real twin:
+## TWO plots, constants with one point and Transient Analysis with the rest,
+## i.e. THE WRITES APPENDED. Whether they appended and whether the device
+## names are the ones this tree reads are two different questions, and this
+## fixture is the one shape where the answers differ.
+set RAW_CONSTTR [file join $scratch raw_consttr.raw]
+a_wr $RAW_CONSTTR "$CONSTHDR$TITLE$TRHDR"
+
 # --- and the same results in the shape a build that ignores the text request
 # The probe deck ASKS for a results file it can read as text, but a simulator
 # is free to ignore that and write its numbers as raw bytes instead. Every
@@ -278,6 +304,65 @@ set S_G4      [a_stub [file join $BIN sim_g4]      g4      $RAW_BOTH $RAW_BCONST
 set S_F1      [a_stub [file join $BIN sim_f1]      f1      $RAW_LAST $RAW_BCONST 0]
 set S_F3      [a_stub [file join $BIN sim_f3]      f3      NONE      NONE        0]
 set S_F4      [a_stub [file join $BIN sim_f4]      f4      $RAW_BOTH $RAW_BCONST 0]
+set S_RENAME  [a_stub [file join $BIN sim_rename]  rename  $RAW_CONSTTR $RAW_BCONST 0]
+set S_D10     [a_stub [file join $BIN sim_d10]     d10     $RAW_BOTH $RAW_BCONST 0]
+set S_D11     [a_stub [file join $BIN sim_d11]     d11     $RAW_BOTH $RAW_BCONST 0]
+
+# ============================================================================
+# THE WORD-FAITHFUL STUB -- a stand-in that reads its deck the way the real
+# simulator on this box was measured to read it
+# ============================================================================
+# The ordinary stub above takes EVERYTHING after `write ` as one file name,
+# which is far more forgiving than any real simulator. Measured first-hand on
+# ngspice-46+ by the S3a crew, six write forms across five hostile folder
+# names: given `write /a/b c/probe_a.raw` the real program reads the SECOND
+# whitespace word as a VECTOR name, finds no such vector, prints
+#     Error during 'write': no writable vector found.
+# and writes nothing anywhere -- the probe directory afterwards holds
+# probe_a.sp and probe_b.sp and no results file at all. A dollar sign, a
+# single quote or a semicolon in the name kills it the same way, a square
+# bracket does not, and NO quoting form inside the deck rescues the dollar
+# because the program expands it regardless of quoting.
+#
+# This stub reproduces exactly that column of the measured table, so section K
+# can prove the defect on a box with no simulator installed on it at all. Row
+# K3 runs the same folder names through the REAL program, because a stub can
+# never prove another program's parser.
+set STUBSTRICT {#!/bin/sh
+echo @MARK@ >> @COUNT@
+deck=
+for a in "$@"; do
+  if [ -f "$a" ]; then deck="$a"; fi
+done
+if [ -z "$deck" ]; then exit @RC@; fi
+@WAIT@
+line=`grep -E '^[[:blank:]]*write[[:blank:]]' "$deck" | head -1 | sed -e 's/^[[:blank:]]*write[[:blank:]][[:blank:]]*//' -e 's/[[:blank:]]*$//'`
+nw=`printf '%s\n' "$line" | wc -w`
+out=
+if [ "$nw" -eq 1 ]; then
+  case "$line" in
+    *'$'*) out= ;;
+    *"'"*) out= ;;
+    *';'*) out= ;;
+    *) out="$line" ;;
+  esac
+fi
+if [ -z "$out" ]; then
+  echo "Error during 'write': no writable vector found."
+  exit @RC@
+fi
+src=@NORMAL@
+if grep -q '\[\*\]' "$deck"; then src=@BLANKET@; fi
+if [ "$src" != NONE ] && [ -f "$src" ]; then cat "$src" > "$out"; fi
+exit @RC@
+}
+proc a_stub_strict {path mark normal blanket rc {wait {}}} {
+  global STUBSTRICT COUNT
+  a_wr $path [string map [list @MARK@ $mark @COUNT@ $COUNT @NORMAL@ $normal \
+                               @BLANKET@ $blanket @RC@ $rc @WAIT@ $wait] \
+                $STUBSTRICT] 0755
+  return $path
+}
 ## Two programs whose NAMES have to resolve on the PATH, for the two rows
 ## about a resolver that says no -- E2 needs a backend the PATH can answer
 ## for, or its arm is indistinguishable from E1's.
@@ -307,6 +392,57 @@ proc a_capcache {} {
 }
 set G1CACHE [a_capcache]
 set G1COUNT [file exists $COUNT]
+
+## The number of seconds the whole measurement is allowed, READ BEFORE ANY ROW
+## LOWERS IT. Section J lowers it so a stuck program can be measured cheaply,
+## so the shipped default has to be captured up here or row J1 would report
+## whatever the last row set.
+set J1BUDGET [expr {[info exists ::ase::cap_budget_ms] ? $::ase::cap_budget_ms : {NOVAR}}]
+proc a_budget_set {ms} { set ::ase::cap_budget_ms $ms }
+
+## --- the simulation folder, moved around and put back ------------------------
+## Several rows below need the probe to run with a DIFFERENT simulation folder
+## under it -- a fresh one nothing has littered, one whose name has a space in
+## it, one nothing may be written into. ::netlist_dir is the documented global
+## set_netlist_dir 0 answers with, and no new variable is invented here.
+set NDBASE [file join $scratch simdir]
+proc a_nd {dir} {
+  file mkdir $dir
+  set ::netlist_dir $dir
+  return [set_netlist_dir 0]
+}
+## Everything under a folder, deepest last, so a row can say "nothing was left
+## behind" and name what was.
+proc a_entries {dir} {
+  set out {}
+  foreach f [glob -nocomplain -directory $dir -tails -types {f d l} * .*] {
+    if {$f eq {.} || $f eq {..}} { continue }
+    lappend out $f
+  }
+  return [lsort $out]
+}
+proc a_walk {dir} {
+  set out {}
+  if {![file isdirectory $dir]} { return $out }
+  foreach f [a_entries $dir] {
+    lappend out $f
+    set p [file join $dir $f]
+    if {[file isdirectory $p]} {
+      foreach sub [a_walk $p] { lappend out [file join $f $sub] }
+    }
+  }
+  return $out
+}
+## What a place the probe was handed looks like: it has to exist, be inside the
+## simulation folder, and arrive EMPTY.
+proc a_dirstate {d root} {
+  if {$d eq {NOPROC} || [string match RAISED:* $d]} { return NOANSWER }
+  if {$d eq {}} { return NOPLACE }
+  if {![file isdirectory $d]} { return NOTADIR }
+  if {![string match "[file normalize $root]/*" [file normalize $d]]} { return OUTSIDE }
+  if {[llength [a_entries $d]]} { return NOTEMPTY }
+  return EMPTY
+}
 
 # --- the surface under test --------------------------------------------------
 proc a_cap {backend} { return [a_ans ase::sim_capabilities $backend] }
@@ -507,15 +643,48 @@ check {B4 THE INVERSION a program that exits with an error but produces the resu
 
 a_resetall
 a_use ngcap-zero $S_ZERO
-check {B5 an operating point that arrives holding no data points is not counted as results -- the bogus empty answer must not read as success} \
-  [a_capfields ngspice {known usable appendwrite}] \
-  [list 1 1 0]
+## RESTATED FOR ISSUE 0952. The subject is unchanged -- an operating point
+## that arrives holding no data points must not read as success -- but it has
+## moved into the key that owns it. Whether the writes APPENDED is decided by
+## whether a second plot arrived in the one file, which it did; whether this
+## tree can read any device numbers out of the operating point is a different
+## question, and a plot with no data points in it holds none. Letting the
+## empty operating point answer the append question is what told a healthy
+## build to "run one analysis at a time" in issue 0952.
+check {B5 an operating point that arrives holding no data points is not counted as device numbers this tree can read, while the two analyses it arrived alongside are still counted as having been added to the one file} \
+  [a_capfields ngspice {known usable appendwrite hier_op_names}] \
+  [list 1 1 1 0]
 
 a_resetall
 a_use ngcap-flat $S_FLAT
 check {B6 a build whose device numbers arrive under flat names instead of the two-level ones this tree reads is caught, and separately from the keeps-every-analysis answer} \
   [a_capfields ngspice {known usable appendwrite hier_op_names}] \
   [list 1 1 1 0]
+
+## ISSUE 0952. A build that adds every analysis to the one results file
+## exactly as asked, but spells its device parameters differently. Measured by
+## the S3a crew on a stand-in that was the real ngspice with only the save
+## card's device path rewritten: the results file held TWO plots, a constants
+## plot with one point and a Transient Analysis plot with fifty-nine -- the
+## writes appended -- and the tree reported it as a build that keeps only the
+## last analysis. Two different questions, and neither may be allowed to fail
+## the other.
+a_resetall
+a_use ngcap-rename $S_RENAME
+check {B9 a build that adds every analysis to the one results file but spells its device parameters differently is measured as adding them, and separately as not using the names this tree reads} \
+  [a_capfields ngspice {known usable appendwrite hier_op_names}] \
+  [list 1 1 1 0]
+
+## THE SAY-SITE HALF. Without this row the verdict above could be right in the
+## answer and still wrong at the user, which is where the whole defect lives:
+## the sentence was a wrong diagnosis AND advice that changes nothing, because
+## running one analysis at a time would not make the device names readable.
+a_resetall
+a_use ngcap-rename2 $S_RENAME
+set B10 [a_report ngspice 2]
+check {B10 and that build is not told to run one analysis at a time: nothing is said about it, and the record the Simulators window reads back is empty} \
+  [list [a_rep_rv $B10] [a_rep_n $B10] [a_rep_rec $B10]] \
+  [list {} 0 {}]
 
 ## READING THE RESULTS WHATEVER SHAPE THEY ARRIVE IN. No stub and no simulator
 ## here: the subject is the probe's own reader, and a written fixture is the
@@ -756,6 +925,58 @@ check {D9 STRUCTURAL every doubtful case still answers measure-it-again, includi
         [expr {$D9B ne {NOPROC} && [a_count $D9B {catch}] >= 1}]] \
   [list 1 1 1]
 
+## ISSUE 0950(b) -- THERE HAS TO BE A DOOR. Measured: a wrong answer taken in
+## a folder the simulator could not write into was then served for the whole
+## session, in an ordinary folder, with nothing in the Simulators window able
+## to clear it -- grep -c sim_caps_clear src/ase_window.tcl was 0. Adding or
+## editing an entry is the user saying something about their simulators
+## changed, and it is the moment the tree must look again.
+a_resetall
+a_use ngcap-d10 $S_D10
+set D10N0 [a_runs d10]
+a_cap ngspice
+set D10N1 [a_runs d10]
+## Exactly what the Edit gesture does: the same name, pointed at the same
+## place. If only a CHANGED path re-measured, the user who rebuilt in place
+## and re-saved the entry would still be served the stale answer.
+a_ans ase::sim_register ngcap-d10 $S_D10
+a_cap ngspice
+set D10N2 [a_runs d10]
+check {D10 adding or editing an entry in the simulator list makes the tree measure the program again} \
+  [list [expr {$D10N1 > $D10N0}] [expr {$D10N2 > $D10N1}]] \
+  [list 1 1]
+
+## The removal arm, isolated: the entry removed is NOT the one in force, so
+## nothing here can be satisfied by the registration arm above.
+a_resetall
+a_ans ase::sim_register ngcap-d11a $S_D11
+a_ans ase::sim_register ngcap-d11b $S_GOOD
+a_ans ase::sim_select ngcap-d11a
+set D11N0 [a_runs d11]
+a_cap ngspice
+set D11N1 [a_runs d11]
+a_ans ase::sim_unregister ngcap-d11b
+a_cap ngspice
+set D11N2 [a_runs d11]
+check {D11 removing an entry from the simulator list does the same} \
+  [list [expr {$D11N1 > $D11N0}] [expr {$D11N2 > $D11N1}]] \
+  [list 1 1]
+
+## STRUCTURAL: ONE DOOR, NOT TWO. The Simulators window and the Command window
+## are two ways in to the SAME registry writer, and the look-again belongs on
+## the writer. Put it in the dialog instead and the Command window's door is
+## still broken, and that file's own rule -- no logic is re-implemented here --
+## is broken with it. This row reddens on that placement, which no behavioural
+## row can see.
+set D12DLG [a_body ase::ui::simdlg_ok]
+set D12REG [a_body ase::sim_register]
+set D12UNR [a_body ase::sim_unregister]
+check {D12 STRUCTURAL the Simulators window reaches the same registry writer the Command window does, and the look-again is on the writer} \
+  [list [expr {$D12DLG ne {NOPROC} && [string first sim_register $D12DLG] >= 0}] \
+        [expr {$D12REG ne {NOPROC} && [string first sim_caps_clear $D12REG] >= 0}] \
+        [expr {$D12UNR ne {NOPROC} && [string first sim_caps_clear $D12UNR] >= 0}]] \
+  [list 1 1 1]
+
 # ============================================================================
 # E. NEVER PROBE WHAT THE RESOLVER ALREADY REFUSED
 # ============================================================================
@@ -883,29 +1104,60 @@ check {F5 both new sentences are plain English, they are two different sentences
 ## STRUCTURAL: each fixed phrase the user reads exists in exactly one place,
 ## so no caller re-words what the mint already said. Same technique as row D6
 ## of tests/headless/test_ase_simreg_0931.tcl.
+##
+## THE SENTENCE IS TAKEN APART AT THE VALUES THAT GET SUBSTITUTED INTO IT,
+## because a location dropped into the middle of a sentence leaves a fragment
+## of itself glued to the words in front of it that no source line can match.
+proc a_chunks {m words} {
+  set chunks [list $m]
+  foreach word $words {
+    if {$word eq {}} { continue }
+    set next {}
+    foreach c $chunks {
+      foreach piece [split [string map [list $word \x01] $c] \x01] { lappend next $piece }
+    }
+    set chunks $next
+  }
+  set out {}
+  foreach c $chunks {
+    set t [string trim $c]
+    if {[string length $t] >= 25} { lappend out $t }
+  }
+  return $out
+}
+## ...AND THEN AT ITS OWN SENTENCE ENDINGS, WHICH IS NOT A REFINEMENT. A
+## sabotage pass measured the coarse grain alone and it is not enough: with
+## only whole runs of fixed text counted, one clause of either new sentence
+## could be pasted verbatim into a second real `set` in src/ase.tcl and all
+## 76 checks stayed green. Copying HALF a sentence into a second call site or
+## a dialog is the realistic breach of ruling D5-4; copying all of it is not.
+proc a_phrases {m words} {
+  set out [a_chunks $m $words]
+  foreach c [a_chunks $m $words] {
+    foreach piece [split $c "."] {
+      set t [string trim $piece]
+      if {[string length $t] >= 25 && $t ne $c} { lappend out $t }
+    }
+  }
+  return $out
+}
 set F6SRC [a_nocomment [a_slurp $ASETCL]]
-set F6N 0 ; set F6ALLONE 1
+set F6N 0 ; set F6ALLONE 1 ; set F6FINER 0
 foreach m [list $F5A $F5B] {
   if {$m eq {} || $m eq {NOPROC} || [string match RAISED:* $m]} { set F6ALLONE 0 ; continue }
   ## The catch-all sentence is not one of these two, and counting ITS words
   ## would let a tree that never wrote either sentence pass this row.
   if {$m eq $F5FALL} { set F6ALLONE 0 ; continue }
-  set chunks [list $m]
-  foreach word [list ngspice $F5P] {
-    if {$word eq {}} { continue }
-    set next {}
-    foreach c $chunks { foreach piece [split [string map [list $word \x01] $c] \x01] { lappend next $piece } }
-    set chunks $next
-  }
-  foreach c $chunks {
-    set c [string trim $c]
-    if {[string length $c] < 25} { continue }
+  set F6WORDS [list ngspice $F5P]
+  set F6PH [a_phrases $m $F6WORDS]
+  incr F6FINER [expr {[llength $F6PH] - [llength [a_chunks $m $F6WORDS]]}]
+  foreach c $F6PH {
     incr F6N
     if {[a_count $F6SRC $c] != 1} { set F6ALLONE 0 }
   }
 }
-check {F6 STRUCTURAL each fixed phrase of the two new sentences exists in exactly one place in the source} \
-  [list [expr {$F6N >= 2}] $F6ALLONE] [list 1 1]
+check {F6 STRUCTURAL each fixed phrase of the two new sentences, and each sentence inside those phrases, exists in exactly one place in the source} \
+  [list [expr {$F6N >= 2}] $F6ALLONE [expr {$F6FINER >= 2}]] [list 1 1 1]
 
 ## The report is NOT in the command builder. run_cmd's answer and its echo
 ## behaviour are pinned byte for byte by test_ase_simreg_0931 row D4.
@@ -1036,22 +1288,33 @@ check {G3 a program that sits waiting for something to be typed at it cannot han
   [list $G3ANS [expr {$G3MS < 3000}] $G3STRUCT] \
   [list [list 1 0] 1 1]
 
+## RESTATED FOR ISSUE 0951. The old expectation was "the same number of files
+## as last time, and at least one" -- which a probe that overwrites a shared,
+## fixed set of names satisfies perfectly, and which is exactly the shape that
+## let one process's results answer for another process's program. Measured by
+## the S3a crew: after a probe the user's own simulation folder was left
+## holding probe_a.raw, probe_a.sp and probe_b.sp. The probe's workings are
+## nobody's deliverable and must not outlive the measurement.
+##
+## A FRESH simulation folder, so what is counted is this row's own litter and
+## not the pile every earlier row left in the shared one.
+set G4ND [file join $scratch g4simdir]
+file delete -force $G4ND
+a_nd $G4ND
 a_resetall
 a_use ngcap-g4 $S_G4
-set G4DIR [a_ans ase::cap_workdir]
+set G4N0 [a_runs g4]
 a_cap ngspice
-if {$G4DIR eq {NOPROC} || [string match RAISED:* $G4DIR]} {
-  set G4N1 $G4DIR ; set G4N2 $G4DIR ; set G4IN 0
-} else {
-  set G4N1 [llength [glob -nocomplain -directory $G4DIR *]]
-  a_ans ase::sim_caps_clear
-  a_cap ngspice
-  set G4N2 [llength [glob -nocomplain -directory $G4DIR *]]
-  set G4IN [string match [file normalize $scratch]* [file normalize $G4DIR]]
-}
-check {G4 measuring the simulator twice leaves the same number of files behind: the probe overwrites its scratch files instead of piling them up} \
-  [list [expr {$G4N1 ne {NOPROC} && $G4N1 >= 1}] [expr {$G4N2 eq $G4N1}] $G4IN] \
-  [list 1 1 1]
+a_ans ase::sim_caps_clear
+a_cap ngspice
+## Two measurements, two decks each: four starts. Without this the row would
+## go green on a tree that never ran the program at all.
+set G4RAN [expr {[a_runs g4] - $G4N0}]
+set G4LEFT [a_walk $G4ND]
+a_nd $NDBASE
+check {G4 measuring the simulator twice leaves nothing at all behind in the user's simulation folder: the place the probe wrote is gone once it has finished} \
+  [list [expr {$G4RAN >= 4}] $G4LEFT] \
+  [list 1 {}]
 
 ## THE OTHER HALF OF THE HANG BELT. Row G3 covers a program that stops to read
 ## something typed at it. This one covers a program that simply never comes
@@ -1059,29 +1322,47 @@ check {G4 measuring the simulator twice leaves the same number of files behind: 
 ## file system that has gone away, a loop with no way out. Nothing in the run
 ## is waiting on what the measurement has to say, so the user's Run must not
 ## wait on it either.
+## RESTATED FOR ISSUE 0953. The number of seconds was a literal buried in the
+## runner, so nothing could ask for fewer and no caller could find out that a
+## program had been cut off -- measured, the runner hands back the catch code
+## and throws away the only place the truth survived, so a program cut off at
+## ten seconds is indistinguishable from one that failed instantly. The caller
+## says how long, and gets told whether it ran out.
 set G5TO [lindex [auto_execok timeout] 0]
-set G5DECK [file join $scratch g5.sp]
+set G5WD [file join $scratch g5wd]
+file mkdir $G5WD
+set G5DECK [file join $G5WD g5.sp]
 a_wr $G5DECK "* deck\n.end\n"
+set G5SLEEP [file join $BIN sim_stuck]
+## The shell REPLACES itself with the waiting program, so the cap has one
+## process to stop and nothing is left holding the output open behind it.
+a_wr $G5SLEEP "#!/bin/sh\nexec sleep 30\n" 0755
+proc a_capran {ans} {
+  if {$ans eq {NOPROC} || [string match RAISED:* $ans]} { return $ans }
+  if {[llength $ans] < 4} { return "SHORT-[llength $ans]:$ans" }
+  return OK
+}
+proc a_capcut {ans} {
+  if {[a_capran $ans] ne {OK}} { return NOANSWER }
+  return [lindex $ans 2]
+}
 if {$G5TO eq {}} {
-  puts "  G5 SKIPPED: this box has no way to put a wall-clock cap on a program"
+  puts "  G5 SKIPPED LOUDLY: this box has no way to put a wall-clock cap on a program"
   set G5GOT [list SKIP-NO-CAP [expr {[string first timeout [a_body ase::cap_run]] >= 0}]]
   set G5EXP [list SKIP-NO-CAP 1]
 } else {
-  set G5SLEEP [file join $BIN sim_stuck]
-  ## The shell REPLACES itself with the waiting program, so the cap has one
-  ## process to stop and nothing is left holding the output open behind it.
-  a_wr $G5SLEEP "#!/bin/sh\nexec sleep 30\n" 0755
   set G5T0 [clock milliseconds]
-  set G5ANS [a_ans ase::cap_run $G5SLEEP {} $G5DECK]
+  set G5ANS [a_ans ase::cap_run $G5SLEEP [list -b $G5DECK] $G5WD 3]
   set G5MS [expr {[clock milliseconds] - $G5T0}]
-  ## Over five seconds proves the program really did stick, so a stand-in that
-  ## returned at once could not make this row green by accident. Under
-  ## twenty-five proves something cut it off well before its thirty.
-  set G5GOT [list [expr {$G5ANS ne {NOPROC} && ![string match RAISED:* $G5ANS]}] \
-                  [expr {$G5MS > 5000}] [expr {$G5MS < 25000}]]
-  set G5EXP [list 1 1 1]
+  ## Over two seconds proves the program really did stick, so a stand-in that
+  ## returned at once could not make this row green by accident. Under ten
+  ## proves it was cut off at the number of seconds it was GIVEN and not at
+  ## some larger number of somebody else's choosing.
+  set G5GOT [list [a_capran $G5ANS] [a_capcut $G5ANS] \
+                  [expr {$G5MS > 2000}] [expr {$G5MS < 10000}]]
+  set G5EXP [list OK 1 1 1]
 }
-check {G5 a program that never comes back at all cannot hang the run: it is given a fixed number of seconds and then the answer arrives anyway} $G5GOT $G5EXP
+check {G5 a program that never comes back at all cannot hang the run: it is cut off at the number of seconds it was given, and the caller is told that is what happened} $G5GOT $G5EXP
 
 ## THE PROGRAM IS MEASURED THE WAY IT WILL BE STARTED. A user who registers a
 ## build together with extra arguments -- a mode switch, a licence server, a
@@ -1105,6 +1386,667 @@ set G6WITHOUT [expr {[string first -zzcapargprobe [a_slurp $G6LOG]] >= 0}]
 check {G6 the extra arguments a user registered with their simulator are handed to it when it is measured too, so what was measured is the program they will actually get} \
   [list $G6WITH $G6WITHOUT $G6ANS] \
   [list 1 0 [list 1 1 1]]
+
+# ============================================================================
+# I. THE PROBE'S OWN SCRATCH AREA -- ISSUE 0951
+# ============================================================================
+# Measured by the S3a crew on the built binary: the probe wrote its results to
+# a FIXED path, <simulation folder>/.ase_probe/probe_a.raw, shared by every
+# process on the box. A registered program that was literally
+#     #!/bin/sh
+#     sleep 3
+#     exit 0
+# and that wrote NOT ONE BYTE was reported as
+#     known 1 usable 1 appendwrite 1 blanket_op_save 0 hier_op_names 1
+# and the Command window said nothing at all, because a separate process
+# dropped a healthy results file at that name one second into the probe. That
+# is a false yes about a program that did nothing, and the deck emitter picks
+# what it writes from exactly these answers, so a false yes here becomes a
+# blank annotation on the user's schematic later -- issue 0929's symptom all
+# over again, arriving through a new door.
+#
+# Two guards, and they are guards against different things. A place of its own
+# per measurement means no other process can be writing where this one reads.
+# Not trusting a results file this run did not see appear means a name that
+# collides anyway -- a recycled process number, a predecessor that died
+# without tidying up -- still cannot answer.
+
+proc a_dictf {d key} {
+  if {$d eq {NOPROC} || [string match RAISED:* $d]} { return $d }
+  if {[catch {dict exists $d $key} h]} { return "NOTADICT:$d" }
+  if {!$h} { return "NOKEY-$key" }
+  return [dict get $d $key]
+}
+
+set I1ND [file join $scratch i1simdir]
+file delete -force $I1ND
+a_nd $I1ND
+set I1A [a_ans ase::cap_workdir]
+set I1B [a_ans ase::cap_workdir]
+set I1AS [a_dirstate $I1A $I1ND]
+set I1BS [a_dirstate $I1B $I1ND]
+set I1DIFF [expr {$I1A ne $I1B}]
+set I1D1 [a_ans ase::cap_workdir_done $I1A]
+set I1D2 [a_ans ase::cap_workdir_done $I1B]
+set I1LEFT [a_walk $I1ND]
+a_nd $NDBASE
+check {I1 the place the probe writes is a different place every time it is asked for, it arrives empty, and it is given back cleanly} \
+  [list $I1AS $I1BS $I1DIFF \
+        [expr {$I1D1 ne {NOPROC} && ![string match RAISED:* $I1D1]}] \
+        [expr {$I1D2 ne {NOPROC} && ![string match RAISED:* $I1D2]}] \
+        $I1LEFT] \
+  [list EMPTY EMPTY 1 1 1 {}]
+
+## A PROBE THAT BLOWS UP STILL TIDIES UP. The error must still reach the
+## caller -- a defect in a probe has to stay loud -- and the user's simulation
+## folder must be exactly as it was.
+proc zz_cap_raiser {args} { return -code error "zz probe blew up" }
+a_ans ase::register_backend zzcaprai [dict create \
+  render_deck  [a_ans ase::backend_hook ngspice render_deck] \
+  run_cmd      [a_ans ase::backend_hook ngspice run_cmd] \
+  log_file     [a_ans ase::backend_hook ngspice log_file] \
+  result_probe [a_ans ase::backend_hook ngspice result_probe] \
+  raw_file     [a_ans ase::backend_hook ngspice raw_file] \
+  capabilities zz_cap_raiser]
+set I3ND [file join $scratch i3simdir]
+file delete -force $I3ND
+a_nd $I3ND
+a_resetall
+a_ans ase::sim_register ngcap-i3 $S_GOOD -backend zzcaprai
+a_ans ase::sim_select ngcap-i3
+set I3BEFORE [a_walk $I3ND]
+set I3ANS [a_cap zzcaprai]
+set I3AFTER [a_walk $I3ND]
+a_nd $NDBASE
+check {I3 a probe that blows up still leaves nothing behind, and the failure still reaches the caller} \
+  [list [expr {[string match {RAISED:*zz probe blew up*} $I3ANS] ? 1 : 0}] \
+        $I3AFTER] \
+  [list 1 $I3BEFORE]
+
+## THE ROW ISSUE 0951 ASKS FOR, THROUGH THE FRONT DOOR. A plausible healthy
+## results file is planted at the OLD fixed name. A program that writes not one
+## byte must still be reported as producing nothing -- and the planted file,
+## which belongs to somebody else, must still be sitting there untouched
+## afterwards. Measured today: the probe deletes it.
+set I4ND [file join $scratch i4simdir]
+file delete -force $I4ND
+a_nd $I4ND
+set I4PLANT [file join $I4ND .ase_probe probe_a.raw]
+a_wr $I4PLANT [a_slurp $RAW_BOTH]
+a_resetall
+a_use ngcap-i4 $S_NONE
+set I4ANS [a_capfields ngspice {known usable appendwrite}]
+set I4STILL [expr {[file exists $I4PLANT] \
+                   && [a_slurp $I4PLANT] eq [a_slurp $RAW_BOTH]}]
+a_nd $NDBASE
+check {I4 a healthy results file left at the old shared name by somebody else does not answer for a program that wrote nothing, and is not destroyed either} \
+  [list $I4ANS $I4STILL] \
+  [list [list 1 0 0] 1]
+
+## THE BELT, AND THE ONLY ROW THAT CAN SEE IT. Row I4 is answered by the place
+## being private; this one hands the probe a place that is NOT private, with
+## results already sitting in it under the names it uses, and a program that
+## writes nothing. The answer must still be that nothing was produced, and the
+## files that were already there must survive: the probe may neither believe a
+## results file it did not see appear, nor delete one it did not create.
+set I5WD [file join $scratch i5wd]
+file delete -force $I5WD
+file mkdir $I5WD
+set I5RA [file join $I5WD probe_a.raw]
+set I5RB [file join $I5WD probe_b.raw]
+a_wr $I5RA [a_slurp $RAW_BOTH]
+a_wr $I5RB [a_slurp $RAW_BOP]
+set I5ANS [a_ans ase::backend::ngspice::capabilities $S_NONE {} $I5WD]
+set I5KEPT [expr {[file exists $I5RA] && [file exists $I5RB] \
+                  && [a_slurp $I5RA] eq [a_slurp $RAW_BOTH] \
+                  && [a_slurp $I5RB] eq [a_slurp $RAW_BOP]}]
+check {I5 results already sitting in the place the probe was handed cannot answer for the program being measured, and are not thrown away either} \
+  [list [a_dictf $I5ANS usable] [a_dictf $I5ANS appendwrite] $I5KEPT] \
+  [list 0 0 1]
+
+## STRUCTURAL, AND NOTHING BEHAVIOURAL ON THIS BOX CAN REACH THE SECOND HALF.
+## A folder `file mkdir` has just made is writable here, so only a filesystem
+## that answers otherwise -- a default ACL, a mount that went read-only under
+## us -- gets past the make and fails the writability test. A sabotage pass
+## deleted that half and no row noticed. It is still the difference between
+## the probe having somewhere to write and the PROGRAM being blamed for a
+## folder's fault, which is issue 0949's category error, so it is pinned by
+## reading the body rather than by a fixture nobody on this box can build.
+set I6B [a_body ase::cap_workdir]
+check {I6 STRUCTURAL a place the probe is handed is accepted only after it is checked to be a folder AND to be one that can be written into} \
+  [list [expr {$I6B ne {NOPROC} && ![string match RAISED:* $I6B]}] \
+        [expr {[string first {file isdirectory $d} $I6B] >= 0}] \
+        [expr {[string first {file writable $d} $I6B] >= 0}]] \
+  [list 1 1 1]
+
+# ============================================================================
+# J. A PROGRAM THAT DOES NOT ANSWER IN TIME -- ISSUE 0953
+# ============================================================================
+# Measured: a stub that was slow to start blocked the editor for 20.0 seconds
+# and was then called not a simulator. Two wrongs in one gesture. The 20.0 is
+# two runs each paying a ten-second cap that nothing could ask to be smaller,
+# and the sentence claims something the probe never established -- it found out
+# that the program had not finished, which is not the same claim as "this is
+# not a circuit simulator". A healthy probe costs 0.014 seconds cold and
+# nothing at all warm, so the bound can be generous and never be felt.
+
+check {J1 the number of seconds the whole measurement is allowed is a real and generous number} \
+  [list $J1BUDGET \
+        [expr {$J1BUDGET ne {NOVAR} && [string is integer -strict $J1BUDGET] \
+               && $J1BUDGET > 0}]] \
+  [list 30000 1]
+
+## A PROGRAM THAT IGNORES THE POLITE STOP IS STILL CUT OFF. Measured on this
+## box: `timeout 3` on a program that traps the polite stop lets it run its
+## full thirty seconds, while `timeout -k 2 3` ends it at five. Without the
+## grace the bound is not a bound at all for that program.
+if {$G5TO eq {}} {
+  puts "  J3 SKIPPED LOUDLY: this box has no way to put a wall-clock cap on a program"
+  set J3GOT SKIP-NO-CAP ; set J3EXP SKIP-NO-CAP
+} elseif {[catch {exec $G5TO -k 1 1 true}]} {
+  puts "  J3 SKIPPED LOUDLY: the wall-clock cap on this box has no way to insist"
+  set J3GOT SKIP-NO-GRACE ; set J3EXP SKIP-NO-GRACE
+} else {
+  set S_J3 [file join $BIN sim_termproof]
+  a_wr $S_J3 "#!/bin/sh\ntrap '' TERM\ni=0\nwhile \[ \$i -lt 60 ]; do sleep 0.5; i=\$((i+1)); done\nexit 0\n" 0755
+  set J3T0 [clock milliseconds]
+  set J3ANS [a_ans ase::cap_run $S_J3 [list -b $G5DECK] $G5WD 3]
+  set J3MS [expr {[clock milliseconds] - $J3T0}]
+  set J3GOT [list [a_capran $J3ANS] [expr {$J3MS > 2000}] [expr {$J3MS < 12000}]]
+  set J3EXP [list OK 1 1]
+}
+check {J3 a program that ignores the polite stop is still cut off} $J3GOT $J3EXP
+
+## NON-VACUITY for G5 and J3: a program that answers normally is NOT reported
+## as having been cut off, so "was it cut off" is a measurement and not a
+## constant that happens to read the way those two rows want.
+set J4T0 [clock milliseconds]
+set J4ANS [a_ans ase::cap_run $S_GOOD [list -b $G5DECK] $G5WD 10]
+set J4MS [expr {[clock milliseconds] - $J4T0}]
+check {J4 a program that answers normally is not reported as having been cut off} \
+  [list [a_capran $J4ANS] [a_capcut $J4ANS] [expr {$J4MS < 5000}]] \
+  [list OK 0 1]
+
+## THE SENTENCE. A simulator that did not answer in time must not be called
+## "not a simulator" -- and the answer must carry NO capability keys at all,
+## because "we never found out" and "we found out, and the answer is no" are
+## different things and a reader that confused them would put a fabricated
+## claim about the user's program on their screen.
+set S_SLOW [file join $BIN sim_slow]
+a_wr $S_SLOW "#!/bin/sh\nexec sleep 30\n" 0755
+a_budget_set 3000
+a_resetall
+a_use ngcap-j5 $S_SLOW
+set J5R [a_report ngspice 1]
+set J5F [a_capfields ngspice {known usable}]
+set J5MSG [a_rep_msg $J5R]
+set J5NOTSIM [a_ans ase::sim_why cap_not_a_simulator ngspice $S_SLOW]
+set J5FALL [a_ans ase::sim_why zz_no_such_kind ngspice $S_SLOW]
+check {J5 a simulator that did not answer in time is told about as one that did not answer in time, and is never called not a simulator} \
+  [list $J5F [a_rep_rv $J5R] [a_rep_n $J5R] \
+        [expr {[string first $S_SLOW $J5MSG] >= 0}] \
+        [expr {$J5MSG ne $J5NOTSIM}] [expr {$J5MSG ne $J5FALL}]] \
+  [list [list 0 NOKEY-usable] cap_no_answer 1 1 1 1]
+
+## ONE BOUND FOR THE WHOLE MEASUREMENT, NOT ONE PER RUN. This is the row that
+## measures the difference between the 20.0 seconds the crew reproduced and
+## the number the user was actually promised.
+a_budget_set 3000
+a_resetall
+a_use ngcap-j6 $S_SLOW
+set J6T0 [clock milliseconds]
+a_cap ngspice
+set J6MS [expr {[clock milliseconds] - $J6T0}]
+## ⚠ THE UPPER BOUND IS TIED TO THE BUDGET THIS ROW ITSELF SET, and the old
+## one was not. A sabotage pass gave each run the full budget instead of the
+## shared deadline -- the exact pre-fix shape -- and this row stayed green:
+## shipped 3003 ms, sabotaged 6003 ms, against a bound of 9000. A clean
+## doubling sailed through. 5100 is 1.7x the budget: it passes at 3003 and
+## fails at 6003. Rows J11 and J12 below pin the same guard by COUNTING, which
+## is what a timing band can never do on its own.
+check {J6 the whole measurement is bounded once, not each run inside it separately} \
+  [list [expr {$J6MS > 1500}] [expr {$J6MS < 5100}]] \
+  [list 1 1]
+
+## AN ANSWER THAT COULD NOT BE WORKED OUT IS NOT REMEMBERED. Issue 0950's
+## first half, reached through 0953's door: the wrong answer stuck for the
+## rest of the session because a failure of the RUN was cached as if it were
+## a fact about the PROGRAM.
+set S_J7 [file join $BIN sim_j7]
+a_wr $S_J7 "#!/bin/sh\necho j7 >> $COUNT\nexec sleep 30\n" 0755
+a_budget_set 3000
+a_resetall
+a_use ngcap-j7 $S_J7
+set J7N0 [a_runs j7]
+a_cap ngspice
+set J7N1 [a_runs j7]
+a_cap ngspice
+set J7N2 [a_runs j7]
+set J7CACHE [a_capcache]
+check {J7 an answer that could not be worked out is not remembered, so asking again starts the program again} \
+  [list [expr {$J7N1 > $J7N0}] [expr {$J7N2 > $J7N1}] $J7CACHE] \
+  [list 1 1 0]
+
+## A SIMULATION FOLDER NOTHING CAN BE WRITTEN INTO IS A FACT ABOUT THE FOLDER.
+## Blaming the program for it is issue 0949's category error wearing different
+## clothes, and remembering the blame is issue 0950's.
+a_budget_set 30000
+set J8ND [file join $scratch j8simdir]
+file delete -force $J8ND
+file mkdir $J8ND
+catch {file attributes $J8ND -permissions 0555}
+if {[file writable $J8ND]} {
+  puts "  J8 SKIPPED LOUDLY: a folder that cannot be written into could not be made here"
+  set J8GOT SKIP-NO-READONLY ; set J8EXP SKIP-NO-READONLY
+} else {
+  a_nd $J8ND
+  a_resetall
+  a_use ngcap-j8 $S_GOOD
+  set J8R [a_report ngspice 2]
+  set J8F [a_capfields ngspice {known usable}]
+  set J8CACHE [a_capcache]
+  a_nd $NDBASE
+  catch {file attributes $J8ND -permissions 0755}
+  set J8GOT [list $J8F [a_rep_n $J8R] $J8CACHE]
+  set J8EXP [list [list 0 NOKEY-usable] 0 0]
+}
+check {J8 a simulation folder nothing can be written into answers that nothing is known, instead of accusing the program} $J8GOT $J8EXP
+
+## The sentence itself, held to the same standard as the two the file already
+## has: plain English, it names the program, it is its own sentence, and it is
+## not the catch-all.
+set J9P /some/where/slowsim
+set J9S [a_ans ase::sim_why cap_no_answer ngspice $J9P 7]
+check {J9 the did-not-answer sentence is plain English, names the program, and is not one of the sentences that were already there} \
+  [list [a_plain $J9S ngspice $J9P] [expr {$J9S ne $F5A}] [expr {$J9S ne $F5B}] \
+        [expr {[string first $J9P $J9S] >= 0}] [expr {$J9S ne $F5FALL}]] \
+  [list PLAIN 1 1 1 1]
+
+## STRUCTURAL, the F6 technique applied to the third sentence: every fixed
+## phrase of it exists in exactly one place, so no caller re-words what the
+## mint already said (ruling D5-4).
+set J10S [a_ans ase::sim_why cap_no_answer ngspice $F5P zzsecsmark]
+set J10N 0 ; set J10ALLONE 1 ; set J10FINER 0
+if {$J10S eq {} || $J10S eq {NOPROC} || [string match RAISED:* $J10S] \
+    || $J10S eq $F5FALL} {
+  set J10ALLONE 0
+} else {
+  set J10WORDS [list ngspice $F5P zzsecsmark]
+  set J10PH [a_phrases $J10S $J10WORDS]
+  set J10FINER [expr {[llength $J10PH] - [llength [a_chunks $J10S $J10WORDS]]}]
+  foreach c $J10PH {
+    incr J10N
+    if {[a_count $F6SRC $c] != 1} { set J10ALLONE 0 }
+  }
+}
+check {J10 STRUCTURAL each fixed phrase of the did-not-answer sentence, and each sentence inside those phrases, exists in exactly one place in the source} \
+  [list [expr {$J10N >= 1}] $J10ALLONE [expr {$J10FINER >= 2}]] [list 1 1 1]
+
+## ⚠ ONCE A RUN HAS BEEN CUT OFF, NOTHING MORE IS ASKED OF THE PROGRAM. This
+## row COUNTS PROGRAM STARTS, because a sabotage pass proved that counting
+## seconds cannot see this: give each run the full budget and attempt the
+## second run anyway -- the exact shape the 20.0 second freeze had -- and the
+## wait merely doubles, which row J6's band was too wide to notice. A start is
+## a whole number and doubling it is unmissable.
+set S_J11 [file join $BIN sim_j11]
+a_wr $S_J11 "#!/bin/sh\necho j11 >> $COUNT\nexec sleep 30\n" 0755
+a_budget_set 1000
+a_resetall
+a_use ngcap-j11 $S_J11
+set J11N0 [a_runs j11]
+set J11ANS [a_cap ngspice]
+set J11N [expr {[a_runs j11] - $J11N0}]
+check {J11 a measurement whose first run was cut off starts the program once and never asks it again} \
+  [list $J11N [a_dictf $J11ANS known] [a_dictf $J11ANS unmeasured]] \
+  [list 1 0 timeout]
+
+## AND THE BUDGET IS ONE BUDGET, NOT ONE PER RUN -- the behavioural half of
+## the same guard, and the half a start count cannot see. This stand-in
+## ANSWERS, correctly and completely, but takes two seconds over it. Under one
+## shared three-second budget the first run leaves the second one a single
+## second and the second run is cut off. Under a budget handed out afresh to
+## each run the second would get three seconds, finish comfortably, and the
+## measurement would come back `known 1` -- which is what makes this row the
+## one that tells the two shapes apart.
+set S_J12 [a_stub [file join $BIN sim_j12] j12 $RAW_BOTH $RAW_BCONST 0 {sleep 2}]
+a_budget_set 3000
+a_resetall
+a_use ngcap-j12 $S_J12
+set J12N0 [a_runs j12]
+set J12ANS [a_cap ngspice]
+set J12N [expr {[a_runs j12] - $J12N0}]
+check {J12 one budget covers every run of a measurement, so a first run that eats most of it leaves the second run only what is left} \
+  [list $J12N [a_dictf $J12ANS known] [a_dictf $J12ANS unmeasured]] \
+  [list 2 0 timeout]
+
+## ⚠ THE NUMBER OF SECONDS THE USER IS TOLD THEY WAITED IS A MEASUREMENT, NOT
+## A CONSTANT -- ruling D5-1, on a number that goes in front of the user. A
+## sabotage pass replaced the whole body of the counter with `return 999` and
+## all seventy-six checks stayed green while the Command window told a user who
+## had waited three seconds that their program had not finished after 999.
+##
+## The last reading is the one that keeps the sentence honest the other way:
+## the cap is handed to the program in WHOLE seconds, so a program that is cut
+## off always comes back a few milliseconds PAST it. Rounding those few
+## milliseconds up to a whole extra second made a thirty-second budget say 31,
+## every time, and 30 became a number the sentence could never print.
+check {J13 the number of seconds a measurement is said to have taken is read off the clock, a real part-second still counts as a whole one, and a few milliseconds past a whole second do not} \
+  [list [a_ans ase::cap_spent [expr {[clock milliseconds] - 5000}]] \
+        [a_ans ase::cap_spent [expr {[clock milliseconds] - 12000}]] \
+        [a_ans ase::cap_spent [expr {[clock milliseconds] - 3200}]] \
+        [a_ans ase::cap_spent [expr {[clock milliseconds] - 30005}]] \
+        [a_ans ase::cap_spent [clock milliseconds]]] \
+  [list 5 12 4 30 1]
+
+## AND THE NUMBER THAT REACHED THE COMMAND WINDOW IS THAT MEASUREMENT. J13
+## pins the counter; this pins that the sentence the user actually read in row
+## J5 -- a real cut-off, on a real three-second budget, through the front door
+## -- carries what the counter said about THEIR wait and not a number chosen
+## anywhere else.
+##
+## WHERE THE NUMBER SITS IS ASKED OF THE MINT, NOT WRITTEN DOWN HERE. The
+## sentence is rendered once with a marker where the number goes; the words
+## on either side of that marker are what the number is fished out from. So a
+## reworded sentence moves this row with it instead of stranding it.
+proc a_between {m pre suf} {
+  if {[string first $pre $m] != 0} { return NOPRE }
+  set rest [string range $m [string length $pre] end]
+  if {$suf eq {}} { return $rest }
+  set at [string last $suf $rest]
+  if {$at < 0} { return NOSUF }
+  return [string trim [string range $rest 0 [expr {$at - 1}]]]
+}
+set J14MARK zzsecsmark
+set J14TPL [a_ans ase::sim_why cap_no_answer ngspice $S_SLOW $J14MARK]
+set J14AT [string first $J14MARK $J14TPL]
+if {$J14AT < 0} {
+  set J14N NOMARK
+} else {
+  set J14PRE [string range $J14TPL 0 [expr {$J14AT - 1}]]
+  set J14SUF [string range $J14TPL [expr {$J14AT + [string length $J14MARK]}] end]
+  set J14N [a_between $J5MSG $J14PRE $J14SUF]
+}
+if {[string is integer -strict $J14N]} {
+  set J14KIND IS-A-NUMBER
+  set J14BAND [expr {$J14N >= 2 && $J14N <= 4}]
+} else {
+  set J14KIND "NOT-A-NUMBER:$J14N"
+  set J14BAND 0
+}
+check {J14 the sentence the user reads carries the number of seconds they actually waited} \
+  [list $J14KIND $J14BAND] [list IS-A-NUMBER 1]
+
+## ⚠ A PROGRAM THAT CHOOSES THE CAP'S OWN EXIT CODE, ON ITS OWN, INSTANTLY, IS
+## NOT ONE THAT WAS CUT OFF. ase::cap_run's own header claims this and a
+## sabotage pass proved no row could see it: delete the elapsed-time arm of the
+## cut-off test and a program that exits 124 in one millisecond is announced to
+## the user as one that "had still not finished with it after 1 seconds".
+if {$G5TO eq {}} {
+  puts "  J15 SKIPPED LOUDLY: this box has no way to put a wall-clock cap on a program, so nothing can be reported as cut off"
+  set J15GOT SKIP-NO-CAP ; set J15EXP SKIP-NO-CAP
+} else {
+  set S_J15 [file join $BIN sim_j15]
+  a_wr $S_J15 "#!/bin/sh\nexit 124\n" 0755
+  set J15ANS [a_ans ase::cap_run $S_J15 [list -b $G5DECK] $G5WD 3]
+  set J15GOT [list [a_capran $J15ANS] [a_capcut $J15ANS] \
+                   [expr {[a_capran $J15ANS] eq {OK} && [lindex $J15ANS 3] < 1500}]]
+  set J15EXP [list OK 0 1]
+}
+check {J15 a program that chooses the cap's own exit code on its own, instantly, is not reported as one that was cut off} $J15GOT $J15EXP
+
+## ⚠ AND A PROGRAM THAT GENUINELY FAILED JUST BEFORE THE CAP RAN OUT IS NOT
+## ONE EITHER. The other arm of the same test, and the other thing no row could
+## see: delete the exit-code arm and a program that failed at 2.903 seconds
+## under a three-second cap is reported to the user as one that had still not
+## finished -- a false statement about their program, which is the whole class
+## issues 0949 and 0953 exist to stop.
+##
+## THE WINDOW IS NARROW BY CONSTRUCTION -- the failure has to land in the last
+## quarter-second before the cap, or the elapsed-time arm alone would already
+## answer "not cut off" and the row would prove nothing. Measured on this box
+## the landing is stable to about five milliseconds; it is retried rather than
+## trusted, and it says so out loud if the box could not manage it.
+if {$G5TO eq {}} {
+  puts "  J16 SKIPPED LOUDLY: this box has no way to put a wall-clock cap on a program, so nothing can be reported as cut off"
+  set J16GOT SKIP-NO-CAP ; set J16EXP SKIP-NO-CAP
+} else {
+  set S_J16 [file join $BIN sim_j16]
+  a_wr $S_J16 "#!/bin/sh\nsleep 2.85\nexit 3\n" 0755
+  set J16GOT SKIP-NO-WINDOW ; set J16EXP SKIP-NO-WINDOW
+  for {set J16I 0} {$J16I < 3} {incr J16I} {
+    set J16ANS [a_ans ase::cap_run $S_J16 [list -b $G5DECK] $G5WD 3]
+    if {[a_capran $J16ANS] ne {OK}} { break }
+    set J16MS [lindex $J16ANS 3]
+    if {$J16MS >= 2750 && $J16MS < 3000} {
+      set J16GOT [list IN-THE-LAST-QUARTER-SECOND [a_capcut $J16ANS] [lindex $J16ANS 0]]
+      set J16EXP [list IN-THE-LAST-QUARTER-SECOND 0 1]
+      break
+    }
+  }
+  if {$J16GOT eq {SKIP-NO-WINDOW}} {
+    puts "  J16 SKIPPED LOUDLY: this box could not land a failing program inside the last quarter-second before the cap"
+  }
+}
+check {J16 a program that genuinely failed just before the cap ran out is not reported as one that was cut off} $J16GOT $J16EXP
+
+# ============================================================================
+# K. A SIMULATION FOLDER WHOSE NAME IS AWKWARD -- ISSUE 0949
+# ============================================================================
+# Measured, same session, same healthy ngspice, only the folder changed: a
+# folder called `plain` answered known 1 usable 1 appendwrite 1 and said
+# nothing, while `with space` and `do$llar` both answered usable 0 and put a
+# FALSE sentence in the Command window about a working simulator --
+#   "...produced no results at all when it was tried on a tiny test circuit.
+#    Check that it really is a circuit simulator..."
+# The mechanism is not a truncated path. The program reads the second word of
+# the results line as a vector name, finds none, and writes nothing anywhere.
+# Six write forms were measured against five hostile folder names and NO
+# quoting form inside the deck covers them all -- the only form that produced
+# the file for a space, a dollar, a bracket, a quote and a semicolon alike is
+# giving the program the target folder as its own current directory and naming
+# the results file with a bare name.
+
+set HOSTILE [file join $scratch hostile]
+file mkdir $HOSTILE
+set S_K1 [a_stub_strict [file join $BIN sim_k1] k1 $RAW_BOTH $RAW_BCONST 0]
+
+## The control first: the SAME stand-in in an ordinary folder. Without it a red
+## K1 could be about the stand-in rather than about the folder's name.
+set K1PLAINND [file join $HOSTILE plain]
+file delete -force $K1PLAINND
+a_nd $K1PLAINND
+a_resetall
+a_use ngcap-k1a $S_K1
+set K1CTRL [a_capfields ngspice {known usable appendwrite}]
+
+set K1ND [file join $HOSTILE {with space}]
+file delete -force $K1ND
+a_nd $K1ND
+a_resetall
+a_use ngcap-k1b $S_K1
+set K1F [a_capfields ngspice {known usable appendwrite}]
+set K1SAID [a_report ngspice 2]
+a_nd $NDBASE
+check {K1 a simulation folder whose name has a space in it measures the same healthy answer as an ordinary one, and nothing is said about the simulator} \
+  [list $K1CTRL $K1F [a_rep_n $K1SAID]] \
+  [list [list 1 1 1] [list 1 1 1] 0]
+
+## The rest of the measured table, each name reported by name so a red says
+## which one. A square bracket is in the list because the real program was
+## measured to survive it -- a fix that only escaped whitespace would pass the
+## bracket and fail the other three.
+set K2NAMES [list {do$llar} {br[ack]et} {quo'te} {semi;colon}]
+set K2GOT {} ; set K2EXP {}
+foreach nm $K2NAMES {
+  set d [file join $HOSTILE $nm]
+  file delete -force $d
+  a_nd $d
+  a_resetall
+  a_use ngcap-k2 $S_K1
+  lappend K2GOT [list $nm [a_capfields ngspice {known usable appendwrite}]]
+  lappend K2EXP [list $nm [list 1 1 1]]
+}
+a_nd $NDBASE
+check {K2 the same for a folder named with a dollar, a bracket, a quote or a semicolon} $K2GOT $K2EXP
+
+## THE REAL PROGRAM. A stand-in can prove what this tree hands the simulator;
+## it can never prove another program's own parser, and the parser is where
+## issue 0949 lives. Skips loudly rather than quietly on a box with no
+## simulator on it.
+set K3NG [lindex [auto_execok ngspice] 0]
+if {$K3NG eq {}} {
+  puts "  K3 SKIPPED LOUDLY: there is no ngspice on this box to measure"
+  set K3GOT SKIP-NO-SIM ; set K3EXP SKIP-NO-SIM
+} else {
+  set K3GOT {} ; set K3EXP {}
+  foreach nm [list plainish {with space} {do$llar}] {
+    set d [file join $HOSTILE ng-$nm]
+    file delete -force $d
+    a_nd $d
+    a_resetall
+    a_use ngcap-k3 $K3NG
+    lappend K3GOT [list $nm [a_capfields ngspice {known usable appendwrite}]]
+    lappend K3EXP [list $nm [list 1 1 1]]
+  }
+  a_nd $NDBASE
+}
+check {K3 the simulator this box actually has measures the same in a folder whose name has a space or a dollar in it as in an ordinary one} $K3GOT $K3EXP
+
+## THE PROGRAM IS STARTED WITH THE PROBE'S OWN FOLDER UNDER IT, and the folder
+## the rest of the editor was working in is put back afterwards -- on the path
+## where the probe worked and on the path where it did not.
+set K4LOG [file join $scratch k4pwd.log]
+set S_K4  [a_stub [file join $BIN sim_k4]  k4  $RAW_BOTH $RAW_BCONST 0 "pwd >> $K4LOG"]
+set S_K4B [a_stub [file join $BIN sim_k4b] k4b NONE      NONE        1 "pwd >> $K4LOG"]
+set K4ND [file join $scratch k4simdir]
+file delete -force $K4ND
+a_nd $K4ND
+a_resetall
+file delete -force $K4LOG
+a_use ngcap-k4 $S_K4
+## ⚠ THE PROCESS IS PUT SOMEWHERE REAL FIRST, AND THE FOLDER IT COMES BACK
+## TO HAS TO STILL EXIST. Comparing two readings of `pwd` is NOT enough and a
+## sabotage pass proved it: with the restore deleted from ase::cap_run this row
+## stayed GREEN, because an earlier probe had already left the process sitting
+## in a folder that was then removed, and Tcl's `pwd` answers the EMPTY STRING
+## for both readings once that has happened. Two empty strings compare equal,
+## so the half of the row that names the defect was vacuous under the defect.
+catch {cd $A_HOME}
+set K4PWD0 [pwd]
+a_cap ngspice
+set K4PWD1 [pwd]
+set K4PROBE [file normalize [file join $K4ND .ase_probe]]
+set K4LINES {}
+foreach l [split [a_slurp $K4LOG] "\n"] {
+  set l [string trim $l]
+  if {$l ne {}} { lappend K4LINES $l }
+}
+set K4UNDER [expr {[llength $K4LINES] >= 2}]
+foreach l $K4LINES {
+  if {![string match "$K4PROBE*" [file normalize $l]]} { set K4UNDER 0 }
+}
+a_resetall
+file delete -force $K4LOG
+a_use ngcap-k4b $S_K4B
+catch {cd $A_HOME}
+set K4PWD2 [pwd]
+a_cap ngspice
+set K4PWD3 [pwd]
+catch {cd $A_HOME}
+a_nd $NDBASE
+## A reading that is a folder which still EXISTS. The empty string is what
+## `pwd` answers after the folder underneath the process has been deleted,
+## and it is the reading this row must never accept as a match.
+proc a_realdir {p} { return [expr {($p ne {} && [file isdirectory $p]) ? 1 : 0}] }
+check {K4 the program is started with the probe's own folder under it, and the folder the editor was working in is a real one it is put back into afterwards} \
+  [list $K4UNDER [a_realdir $K4PWD0] [a_realdir $K4PWD1] [expr {$K4PWD1 eq $K4PWD0}] \
+        [a_realdir $K4PWD2] [a_realdir $K4PWD3] [expr {$K4PWD3 eq $K4PWD2}]] \
+  [list 1 1 1 1 1 1 1]
+
+## A program named by a relative location is still found after the folder
+## changes underneath it. Without this the fix for 0949 would break every user
+## who registered their simulator as ./build/ngspice.
+set K5WD [file join $scratch k5wd]
+file delete -force $K5WD
+file mkdir $K5WD
+set K5DECK [file join $K5WD k5.sp]
+a_wr $K5DECK "* deck\n.control\nwrite k5out.raw\n.endc\n.end\n"
+set K5PWD [file normalize [pwd]]
+set K5REL {}
+if {[string first "$K5PWD/" [file normalize $S_GOOD]] == 0} {
+  set K5REL [string range [file normalize $S_GOOD] [expr {[string length $K5PWD] + 1}] end]
+}
+if {$K5REL eq {}} {
+  puts "  K5 SKIPPED LOUDLY: the stand-in simulator is not below the folder this test was started from, so no relative location names it"
+  set K5GOT SKIP-NO-RELPATH ; set K5EXP SKIP-NO-RELPATH
+} else {
+  set K5N0 [a_runs good]
+  set K5ANS [a_ans ase::cap_run $K5REL [list -b $K5DECK] $K5WD 10]
+  set K5GOT [list [a_capran $K5ANS] [expr {[a_runs good] > $K5N0}] \
+                  [file exists [file join $K5WD k5out.raw]]]
+  set K5EXP [list OK 1 1]
+}
+check {K5 a program named by a relative location is still found after the folder changes under it} $K5GOT $K5EXP
+
+## STRUCTURAL, and no behavioural row can see it once the folder is right: the
+## deck names its results with a bare file name and no folder in it. That is
+## the only form measured to survive every hostile folder name, and a deck that
+## quietly went back to an absolute name would pass every row above.
+set K6LOG [file join $scratch k6deck.log]
+set S_K6 [a_stub [file join $BIN sim_k6] k6 $RAW_BOTH $RAW_BCONST 0 "cat \"\$deck\" >> $K6LOG"]
+set K6ND [file join $scratch k6simdir]
+file delete -force $K6ND
+a_nd $K6ND
+a_resetall
+file delete -force $K6LOG
+a_use ngcap-k6 $S_K6
+a_cap ngspice
+a_nd $NDBASE
+set K6W 0 ; set K6BARE 1
+foreach l [split [a_slurp $K6LOG] "\n"] {
+  set t [string trim $l]
+  if {![string match {write *} $t]} { continue }
+  incr K6W
+  set arg [string trim [string range $t 6 end]]
+  if {[string first / $arg] >= 0} { set K6BARE 0 }
+  if {[string first \\ $arg] >= 0} { set K6BARE 0 }
+}
+check {K6 STRUCTURAL every results line in every deck the probe hands the simulator names a bare file, with no folder in it} \
+  [list [expr {$K6W >= 3}] $K6BARE] \
+  [list 1 1]
+
+# ============================================================================
+# M. THE SHARED RUNNER BELONGS TO NO ONE SIMULATOR -- ISSUE 0954
+# ============================================================================
+# The batch-mode flag is one program's spelling. Carried in the shared runner
+# it is inherited by every backend that is ever added, including ones for which
+# it means something else or nothing at all.
+
+proc a_hasbflag {b} {
+  if {$b eq {NOPROC} || [string match RAISED:* $b]} { return NOBODY }
+  return [expr {[regexp {(?:^|\s)-b(?:\s|$)} $b] ? 1 : 0}]
+}
+check {M1 STRUCTURAL the shared probe runner carries no flag that belongs to one simulator, and the simulator's own probe carries it instead} \
+  [list [a_hasbflag [a_body ase::cap_run]] \
+        [a_hasbflag [a_body ase::backend::ngspice::capabilities]]] \
+  [list 0 1]
+
+## And the flag still reaches the program. Without this row, deleting it from
+## both places would leave M1 green while every simulation stopped running in
+## batch mode.
+set M2LOG [file join $scratch m2args.log]
+set S_M2 [a_stub [file join $BIN sim_m2] m2 $RAW_BOTH $RAW_BCONST 0 "echo \"\$@\" >> $M2LOG"]
+a_resetall
+file delete -force $M2LOG
+a_use ngcap-m2 $S_M2
+a_cap ngspice
+set M2HAS 0
+foreach l [split [a_slurp $M2LOG] "\n"] {
+  if {[catch {llength $l}]} { continue }
+  if {[lsearch -exact $l -b] >= 0} { set M2HAS 1 }
+}
+check {M2 the batch-mode flag still reaches the program that is measured} \
+  [list $M2HAS] [list 1]
 
 # ============================================================================
 # H. NOTHING ELSE MOVED
@@ -1161,6 +2103,7 @@ check {H2 the five hooks a backend must have still resolve, and the simulator th
 a_resetall
 set ::env(PATH) $PATHSAVE
 if {$NDSAVE eq {ZZUNSET}} { catch {unset ::netlist_dir} } else { set ::netlist_dir $NDSAVE }
+if {$J1BUDGET eq {NOVAR}} { catch {unset ::ase::cap_budget_ms} } else { a_budget_set $J1BUDGET }
 
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which

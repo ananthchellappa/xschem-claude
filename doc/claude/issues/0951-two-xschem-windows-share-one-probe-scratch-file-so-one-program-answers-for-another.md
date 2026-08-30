@@ -1,9 +1,10 @@
 # 0951 — two xschem windows share one probe scratch file, so one simulator's results can answer for another's
 
-**STATUS: OPEN — measured 2026-08-30. Found by 0948's verification pass,
-reproduced deterministically by its write-up pass. This one defeats the purpose
-of 0948 itself, silently, so it should be fixed before anything else in this
-family.**
+**STATUS: FIXED (2026-08-30, item S3a) — the probe now works in a directory of
+its own per measurement, removed when the measurement ends including when the
+probe blows up, and it refuses to take a verdict from any results file it did
+not see appear. Rows I1, I3, I4, I5 and G4 of
+`tests/headless/test_ase_simcaps_0948.tcl`.**
 
 ## What the user sees
 
@@ -86,3 +87,49 @@ four files per simulation folder.
 * A row that fails when the per-process scoping is removed — the shared
   production path is exercised by nothing today, which is why this was invisible
   to a suite whose every row builds its own throw-away directory.
+
+## The fix (item S3a, 2026-08-30)
+
+Two guards, against two different things, both in `src/ase.tcl`.
+
+**A place of its own, per measurement.** `ase::cap_workdir` used to answer the
+one fixed name `<simulation folder>/.ase_probe`, shared by every process on the
+box. It now creates `<simulation folder>/.ase_probe/p<pid>_<n>`, refuses any
+candidate name something is already sitting at, and answers empty when no such
+place can be made at all. `ase::cap_workdir_done` gives it back — the private
+directory with `-force`, the shared `.ase_probe` parent **without**, so the
+parent disappears when it is empty and survives when another process's probe is
+still working in it. `ase::sim_capabilities` calls it on every path out,
+including the one where the probe raised, and then re-raises so a defect in a
+probe stays loud.
+
+**Not believing a results file this run did not see appear.** `ase::cap_claim`
+is asked immediately before each run whether the name is free; `ase::cap_result`
+answers empty when it was not. That covers the collision the private directory
+cannot: a recycled process number, a predecessor that died without tidying up,
+or a caller that hands the probe a directory of its own choosing. The probe also
+no longer **deletes** the two results files at the top of the run — which is how
+the old tree got the right answer in the staged case, by destroying somebody
+else's results.
+
+**What that leaves.** The false yes needs a concurrent write, which no
+deterministic test row can stage. Row I4 plants a plausible healthy results file
+at the OLD fixed name and asserts the program that wrote nothing is still
+reported as producing nothing AND that the planted file survives; row I5 hands
+the probe a directory that is already populated and asserts the same. Row G4
+asserts the user's simulation folder is empty again afterwards.
+
+## Correction, 2026-08-30 — the race CAN be staged, and no committed row stages it
+
+The paragraph above says the false yes "needs a concurrent write, which no
+deterministic test row can stage". The verification pass staged it: a helper that
+drops a healthy results file at `.ase_probe/probe_a.raw` one second into the probe
+makes the OLD tree answer `known 1 usable 1 appendwrite 1 ...` (the false yes) and
+the NEW tree answer `known 1 usable 0 appendwrite 0 ...`.
+
+The same pass also showed that row **I4's headline half passes on the defective
+tree** — with the old shared folder AND the old delete-at-top restored, a planted
+raw is destroyed before it can be read, so I4's `1 0 0` is identical on both trees
+and only its file-survival half reddens. The fix is real and I5 covers the belt;
+what is missing is a row for the shape the issue is actually about. Filed as
+**issue 0962**.

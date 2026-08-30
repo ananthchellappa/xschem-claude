@@ -1,8 +1,9 @@
 # 0952 — a build that spells device parameters differently is told it keeps only the last analysis, and given advice that changes nothing
 
-**STATUS: OPEN — measured 2026-08-30. Found by 0948's verification pass,
-reproduced by its write-up pass. The right answer is already computed and
-thrown away, so the fix is small.**
+**STATUS: FIXED (2026-08-30, item S3a) — whether the analyses were added to
+the one file and whether the device parameter names are the ones this tree reads
+are now two separate measurements, and neither can fail the other. Rows B5, B9
+and B10 of `tests/headless/test_ase_simcaps_0948.tcl`.**
 
 ## What the user sees
 
@@ -76,3 +77,45 @@ this case, and `ase::cap_report` never looks at it.
   `appendwrite 0` and is still told so — row B2 of `test_ase_simcaps_0948.tcl`
   must stay green.
 * Whatever is said about a naming difference is said about naming.
+
+## The fix (item S3a, 2026-08-30)
+
+`appendwrite` was decided by `$op ne {} && [lindex $op 1] >= 1 && $tr ne {}` —
+i.e. by whether the vectors the probe expected turned up under the names it
+expected. A build that adds every analysis correctly but spells its device
+parameters differently saves no vector the probe named, so its operating point
+degenerates to a `constants` plot, no plot in the file is called
+`Operating Point`, and the append question answered no about a build that
+appended perfectly. Measured: the file held TWO plots, `constants` with one point
+and `Transient Analysis` with fifty-nine.
+
+It is now decided by the only thing that is actually about appending:
+
+```tcl
+set appendwrite [expr {[llength $pa] >= 2 ? 1 : 0}]
+```
+
+Deck A asks for two analyses and two writes into one file. Two plots coming back
+in that one file means the writes were added, whatever the plots are called, and
+that is decidable without knowing any vector's name.
+
+**The point-count requirement moved to the key that owns it.** An operating point
+carrying `No. Points: 0` holds no device numbers for anyone to read, so
+`hier_op_names` now requires `[lindex $op 1] >= 1`. That claim is unchanged — row
+B5 still asserts an empty operating point must not read as success — it has moved
+into the key it was always about. Letting it answer the append question is what
+produced this defect.
+
+**The say-site follows for free.** With `appendwrite 1` the "keeps only the last
+analysis" arm of `ase::cap_report` never fires for this build, so nothing is said
+and the record the Simulators window reads back is empty (row B10). That was the
+half that mattered: the sentence was a wrong diagnosis AND advice that changes
+nothing, because running one analysis at a time would not make the device names
+readable.
+
+## Still open, and deferred here on purpose
+
+A build whose device parameter names this tree cannot read is measured
+(`hier_op_names 0`) and **still says nothing about it**. Giving that its own
+sentence is deck-emission's business — the emitter is what has to do something
+different about it — and is left to the item that owns deck emission.

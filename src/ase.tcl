@@ -90,6 +90,24 @@ namespace eval ase {
   # NOTHING IS EVER STORED UNDER AN EMPTY KEY -- see ase::sim_capabilities,
   # where the guards that return before a probe also return before a write.
   variable sim_caps [dict create]
+  # HOW LONG THE WHOLE MEASUREMENT MAY TAKE, in milliseconds (issue 0953).
+  # ONE budget for the whole probe, shared by every run inside it, not a cap
+  # per run: the measured defect was two runs each paying a ten-second cap
+  # buried in the runner, so a program slow to start froze the user's Run
+  # gesture for 20.0 s and was then called not a simulator.
+  # GENEROUS ON PURPOSE. A healthy probe was measured at 0.014 s cold and
+  # nothing at all warm, so thirty seconds is never felt by a working
+  # simulator, and it is deliberately longer than the eleven-second-to-start
+  # build issue 0953 names -- a bound tight enough to cut that one off would
+  # keep the defect for the very user the issue is about.
+  variable cap_budget_ms 30000
+  # Which wall-clock cap this box actually has, worked out once per session by
+  # ase::cap_timeout_cmd. ZZUNKNOWN means "not looked for yet"; empty means
+  # "looked for, and this box has none".
+  variable cap_timeout_prefix ZZUNKNOWN
+  # Counter behind the per-measurement scratch directory name (issue 0951).
+  # Two probes in ONE process must not be handed the same place either.
+  variable cap_seq 0
   # most recent completed run: {results <dict> exitcode <n> log <path> }
   variable last_run [dict create]
   # session registry (item 03): key ("lib/cell/view") -> entry dict
@@ -634,6 +652,14 @@ namespace eval ase {
 # sentence leaves a fragment of itself glued to the words in front of it,
 # which no source line can ever match.
 #
+# THE THIRD ONE, `cap_no_answer`, SAYS ONLY WHAT WAS ESTABLISHED (issue 0953).
+# The program was given a tiny test circuit and had not finished with it inside
+# the time the measurement was allowed. That is ALL that was found out, and the
+# sentence claims nothing more -- it does not say the program is broken, and it
+# does not say it is not a simulator, because neither was measured. It says how
+# long it waited, offers the likeliest innocent explanation, and says what
+# happens next, because the run is going ahead either way.
+#
 # NEITHER OF THEM REFUSES ANYTHING. A build that keeps only the last analysis
 # still produces that last analysis, and the probe is a heuristic; stranding a
 # user mid-gesture on either would be worse than the failure it prevents. They
@@ -700,6 +726,9 @@ proc ase::sim_why {kind name path {extra {}}} {
     }
     cap_not_a_simulator {
       return "$path, which is the program the simulator you picked will start, produced no results at all when it was tried on a tiny test circuit. Check that it really is a circuit simulator, or point this entry at a different file."
+    }
+    cap_no_answer {
+      return "$path, which is the program the simulator you picked will start, was given a tiny test circuit to try and had still not finished with it after $extra seconds, so there was no way to find out what it can do. It may simply be slow to start. Your run is going ahead anyway, and this will be tried again the next time you press Run."
     }
   }
   return "Something is wrong with the simulator named $name."
@@ -934,6 +963,21 @@ proc ase::sim_register {name path args} {
   # would have to make a second, separate gesture to mean the obvious thing.
   # A later registration never steals the choice away from it.
   if {$sim_use eq {}} { set sim_use $name }
+  # ADDING OR EDITING AN ENTRY MEANS LOOK AT THE PROGRAM AGAIN (issue 0950).
+  # What a reader would otherwise assume is that the file stamp already covers
+  # every reason an answer could be stale. It does not: a wrong answer taken in
+  # a folder the simulator could not write into was served for the whole
+  # session, in an ordinary folder, and nothing in the Simulators window could
+  # clear it. Editing an entry is the user saying something about their
+  # simulators changed, and it is the moment to look again.
+  #
+  # ⚠ IT GOES ON THE WRITER, NOT ON THE DIALOG, and that placement is the
+  # point. Setup > Simulators and the Command window are two doors onto THIS
+  # proc; putting the look-again in the dialog would leave the other door
+  # broken and would breach src/ase_window.tcl's own rule that no logic is
+  # re-implemented there. Row D12 of tests/headless/test_ase_simcaps_0948.tcl
+  # reddens on that placement, which no behavioural row can see.
+  ase::sim_caps_clear
   return [expr {$kind eq {} ? 1 : 0}]
 }
 
@@ -987,6 +1031,10 @@ proc ase::sim_unregister {name} {
   if {[dict get $e origin] eq {rc}} {
     ase::sim_say rc_removed $name {} {} note
   }
+  # The removal half of the look-again above (issue 0950). Taking an entry off
+  # the list can change which program will start, so what was remembered about
+  # the old one must not be served about the new one.
+  ase::sim_caps_clear
   # NOT the sentence. Every caller here tests this as a boolean, and row E13
   # pins it at 1 for a removal that also had two things to say.
   return 1
@@ -1210,23 +1258,168 @@ proc ase::sim_caps_clear {} {
   return {}
 }
 
-# Where the probe writes its throw-away deck and results.
+# A PLACE OF ITS OWN FOR ONE MEASUREMENT, or empty when no such place can be
+# made. Every call hands back a FRESH, EMPTY directory that no other probe and
+# no other process is using, and the caller gives it back with
+# ase::cap_workdir_done.
+#
+# ⚠ THIS USED TO BE ONE FIXED NAME AND THAT WAS ISSUE 0951. What a reader
+# would otherwise assume is that overwriting the results files at the top of
+# each probe is enough to stop one measurement answering for another. It is
+# not: the fixed name `<simulation folder>/.ase_probe/probe_a.raw` is shared by
+# every process on the box, and the delete only closes the window between two
+# probes inside ONE process. Measured on the built binary: a registered
+# program that was literally `#!/bin/sh` + `sleep 3` + `exit 0`, and that wrote
+# not one byte, was reported `known 1 usable 1 appendwrite 1` because a
+# separate process dropped a healthy results file at that name one second into
+# the probe. That is a false yes about a program that did nothing, and the deck
+# emitter picks what it writes from exactly these answers -- so a false yes
+# here becomes a blank annotation on the user's schematic later, which is issue
+# 0929's symptom arriving through a new door.
 #
 # ABSOLUTE, because ase::run_deck does `cd` around the launch and a relative
 # probe directory would then mean two different places in one run. Inside the
-# simulation directory, because that is already the directory this session is
-# allowed to write simulation artifacts into; a dot-name because it is nobody's
-# deliverable. The files in it are OVERWRITTEN in place on every probe and
-# never accumulate.
+# simulation folder, because that is already the folder this session is allowed
+# to write simulation artifacts into; a dot-name because it is nobody's
+# deliverable. One private directory per measurement is the same pattern
+# run_parallel_cmds already uses at tests/test_utility.tcl:82.
+#
+# EMPTY IS A REAL ANSWER AND ITS OWN GUARD. A simulation folder nothing can be
+# written into is a fact about the FOLDER; ase::sim_capabilities turns this
+# empty answer into "nothing is known" rather than into an accusation about the
+# user's program, which is issue 0949's category error wearing other clothes.
 proc ase::cap_workdir {} {
+  variable cap_seq
+  set tries 0
   set base [set_netlist_dir 0]
-  # set_netlist_dir answers empty when the simulation directory could not be
-  # made at all. Probing into the current directory is untidy but it is never
-  # wrong, and the user has a larger problem than tidiness at that point.
+  # set_netlist_dir answers empty when the simulation folder could not be made
+  # at all. Probing into the current directory is untidy but it is never wrong,
+  # and the user has a larger problem than tidiness at that point.
   if {$base eq {}} { set base [pwd] }
-  set d [file normalize [file join $base .ase_probe]]
-  file mkdir $d
-  return $d
+  set parent [file normalize [file join $base .ase_probe]]
+  if {[catch {file mkdir $parent}]} { return {} }
+  if {![file isdirectory $parent]} { return {} }
+  while {$tries < 64} {
+    incr tries
+    incr cap_seq
+    set d [file join $parent p[pid]_$cap_seq]
+    # NEVER REUSE A NAME SOMETHING IS ALREADY SITTING AT. A recycled process
+    # number, or a predecessor that died before it could tidy up, is exactly
+    # the collision the fixed name made permanent.
+    if {[file exists $d]} { continue }
+    if {[catch {file mkdir $d}]} { continue }
+    # BELT AND BRACES, AND NO BEHAVIOURAL ROW ON THIS BOX CAN REACH THE SECOND
+    # HALF. A folder this line just made is writable here, so only a filesystem
+    # that answers otherwise -- a default ACL, a mount going read-only under
+    # us -- gets past `file mkdir` and fails `file writable`. It is kept because
+    # a place the probe cannot write into is exactly issue 0949's category
+    # error waiting to happen, and it is pinned by the STRUCTURAL row I6 of
+    # tests/headless/test_ase_simcaps_0948.tcl rather than by a fixture nobody
+    # can build.
+    if {![file isdirectory $d] || ![file writable $d]} {
+      catch {file delete -force -- $d}
+      continue
+    }
+    return $d
+  }
+  return {}
+}
+
+# Give back a place ase::cap_workdir handed out. Never raises, and is called on
+# every path out of a measurement including the one where the probe blew up:
+# the probe's workings are nobody's deliverable and must not outlive the
+# measurement. Measured before this existed -- after a probe the user's own
+# simulation folder was left holding probe_a.raw, probe_a.sp and probe_b.sp.
+#
+# ⚠ THE SHARED PARENT IS DELETED WITHOUT -force, ON PURPOSE. It disappears when
+# it is empty and SURVIVES when another process's probe is still working in it,
+# or when somebody else's results are sitting in it. A -force here would delete
+# a file this measurement never created, which is the other half of issue 0951.
+proc ase::cap_workdir_done {dir} {
+  if {$dir eq {}} { return {} }
+  catch {file delete -force -- $dir}
+  catch {file delete -- [file dirname $dir]}
+  return {}
+}
+
+# BELT AND BRACES FOR ISSUE 0951, asked immediately BEFORE a probe run: is
+# nothing sitting at the name this run is about to write?
+#
+# The private directory above is the belt; this is the braces, and they guard
+# different things. A place of its own means no other process can be writing
+# where this one reads. Not trusting a results file this run did not see appear
+# means a name that collides ANYWAY -- a recycled process number, a predecessor
+# that died without tidying up, a caller that handed the probe a directory of
+# its own choosing -- still cannot answer for the program being measured.
+proc ase::cap_claim {path} {
+  if {$path eq {}} { return 0 }
+  return [expr {[file exists $path] ? 0 : 1}]
+}
+
+# The plots this run actually produced, or empty when it produced none.
+#
+# ⚠ EMPTY WHEN THE NAME WAS NOT CLAIMED, and that is the whole point: whatever
+# is sitting there now was not put there by this run, so no verdict about the
+# user's program may be taken from it. Reading it anyway is the false yes issue
+# 0951 measured. Note this proc does NOT delete what it found -- results that
+# belong to somebody else are theirs.
+proc ase::cap_result {path claimed} {
+  if {!$claimed} { return {} }
+  return [ase::cap_raw_plots $path]
+}
+
+# How many whole seconds of the measurement's budget are left, never less than
+# one (issue 0953). `t0` is the clock reading taken when the measurement
+# started. One budget is shared by every run of one measurement, so a program
+# that never comes back costs the user that budget once and not once per run.
+proc ase::cap_left {t0} {
+  variable cap_budget_ms
+  set left [expr {$cap_budget_ms - ([clock milliseconds] - $t0)}]
+  set secs [expr {int(($left + 999) / 1000)}]
+  if {$secs < 1} { set secs 1 }
+  return $secs
+}
+
+# How many whole seconds a measurement that started at `t0` has taken so far,
+# never less than one -- the number the did-not-answer sentence tells the user
+# they waited (issue 0953). Rounded up, because a user who waited 3.2 seconds
+# did not wait 3.
+#
+# ⚠ THE LAST TENTH OF A SECOND DOES NOT BUY A WHOLE EXTRA ONE, and that is not
+# a rounding preference, it is the only way this number can ever be the one the
+# design chose. The cap above is handed to the program in WHOLE seconds, so a
+# program that is cut off always comes back a few milliseconds PAST it -- 30.005
+# for a thirty-second budget, measured. Rounding that up without a grace made
+# the sentence say "after 31 seconds", every single time, and 30 was a number
+# it could never print. A real 3.2-second wait still reads as 4.
+proc ase::cap_spent {t0} {
+  set spent [expr {[clock milliseconds] - $t0}]
+  set secs [expr {int(($spent + 900) / 1000)}]
+  if {$secs < 1} { set secs 1 }
+  return $secs
+}
+
+# The wall-clock cap this box can put on a program, as a command prefix that
+# takes the number of seconds next, or empty when the box has none. Worked out
+# once per session.
+#
+# ⚠ THE KILL GRACE IS NOT A REFINEMENT (issue 0953). The plain form sends only
+# the polite stop signal, so a program that ignores it is not bounded at all --
+# measured on this box, a stop-ignoring program under a three-second plain cap
+# ran its full thirty seconds. With the grace it ends at five.
+proc ase::cap_timeout_cmd {} {
+  variable cap_timeout_prefix
+  if {$cap_timeout_prefix ne {ZZUNKNOWN}} { return $cap_timeout_prefix }
+  set cap_timeout_prefix {}
+  set to [lindex [auto_execok timeout] 0]
+  if {$to ne {}} {
+    if {![catch {exec $to -k 1 1 true}]} {
+      set cap_timeout_prefix [list $to -k 2]
+    } elseif {![catch {exec $to 1 true}]} {
+      set cap_timeout_prefix [list $to]
+    }
+  }
+  return $cap_timeout_prefix
 }
 
 # Every plot in a results file, as a list of {name npoints {varname ...}}.
@@ -1322,33 +1515,83 @@ proc ase::cap_plot {plots want} {
   return {}
 }
 
-# Run one probe deck through one program and hand back {exitcode output}.
+# Run ONE program with ONE set of arguments and hand back
+# {exitcode output was-it-cut-off elapsed-milliseconds}.
 #
 # ⚠ THE EXIT CODE IS RECORDED AND USED FOR NOTHING. It is here so a failing
 # probe can be described in a bug report; every verdict is taken from the
 # results file. See this section's header for the measured case where exit 0,
 # a clean log and a written file all say success over a destroyed result.
 #
+# ⚠ THIS RUNNER BELONGS TO NO ONE SIMULATOR (issue 0954). It used to append
+# one program's batch-mode flag itself, so every backend ever added would
+# inherit a switch that means something else, or nothing, to it. EVERYTHING
+# after the program name now comes from the caller: the arguments the user
+# registered, the backend's own flags, and the deck.
+#
+# ⚠ THE PROGRAM IS RUN WITH `workdir` UNDER IT, AND THAT IS THE FIX FOR ISSUE
+# 0949, not a tidiness. A simulation folder whose name has a space in it made a
+# healthy ngspice be told it is not a circuit simulator, on every Run. The
+# mechanism is not a truncated path: the program reads the second whitespace
+# word of the deck's results line as a VECTOR name, finds no such vector, and
+# writes nothing anywhere. Six write forms were measured against five hostile
+# folder names and NO quoting form inside the deck covers them all -- a dollar
+# sign survives double quotes, backslashes, a .control-level cd and an
+# indirection through a variable alike, because the program expands it
+# regardless of quoting. The one form that produced the file for a space, a
+# dollar, a bracket, a quote and a semicolon is this one: give the program the
+# target folder as its own current directory and let the deck name its results
+# with a bare file name.
+#
+# A PROGRAM NAMED BY A RELATIVE LOCATION IS RESOLVED BEFORE THE MOVE, or the
+# user who registered their simulator as ./build/ngspice would stop being able
+# to run it. A bare name with no folder in it is left alone: that is a PATH
+# lookup, which the move cannot affect.
+#
 # STDIN IS REDIRECTED AWAY, AND THAT IS NOT A DETAIL. A program handed a deck
 # it does not understand may drop into its own interactive prompt and sit
 # there reading; without this the user's Run would hang forever on a probe.
-# The wall-clock cap is the same belt: `timeout` when the box has one.
-proc ase::cap_run {exe exeargs deck} {
-  set cmd {}
+#
+# ⚠ WAS IT CUT OFF IS ANSWERED BY THREE THINGS TOGETHER, AND EACH ONE CLOSES
+# A HOLE THE OTHERS LEAVE OPEN (issue 0953). The runner used to hand back the
+# catch code -- Tcl's own 1, not the child's -- so a program cut off at ten
+# seconds was indistinguishable from one that failed instantly, and the only
+# place the truth survived was ::errorCode, which was thrown away. A cap that
+# was never applied cannot manufacture a cut-off; a real simulator that chooses
+# to exit 124 on its own is not called one; and the elapsed time is what tells
+# those two apart with neither hole. ::errorCode is read on the very next line,
+# before restoring the folder can overwrite it.
+proc ase::cap_run {exe exeargs workdir secs} {
   set nul [expr {$::tcl_platform(platform) eq {windows} ? {NUL} : {/dev/null}}]
-  set to [lindex [auto_execok timeout] 0]
-  if {$to ne {}} { lappend cmd $to 10 }
-  lappend cmd $exe
+  set prog $exe
+  if {[file pathtype $prog] eq {relative} && [file dirname $prog] ne {.}} {
+    set prog [file normalize $prog]
+  }
+  set cap [ase::cap_timeout_cmd]
+  set cmd {}
+  if {[llength $cap]} { set cmd [concat $cap [list $secs]] }
+  lappend cmd $prog
   foreach a $exeargs { lappend cmd $a }
-  lappend cmd -b $deck
+  set save [pwd]
+  if {$workdir ne {}} {
+    if {[catch {cd $workdir} cderr]} { return [list 1 $cderr 0 0] }
+  }
+  set t0 [clock milliseconds]
   set rc [catch {exec {*}$cmd < $nul 2>@1} out]
-  return [list $rc $out]
+  set ec $::errorCode
+  set ms [expr {[clock milliseconds] - $t0}]
+  catch {cd $save}
+  set cut 0
+  if {[llength $cap] && $rc && [lindex $ec 0] eq {CHILDSTATUS} \
+      && [lindex $ec 2] == 124 && $ms >= ($secs * 1000) - 250} { set cut 1 }
+  return [list $rc $out $cut $ms]
 }
 
 # WHAT THE PROGRAM THAT WILL ACTUALLY START CAN DO -- the front door, lazy and
 # cached. Returns a dict:
 #
 #   {known 0}                     nothing was measured, and nothing is claimed
+#   {known 0 unmeasured <reason> ...}   the same, plus why nobody found out
 #   {known 1 usable 0|1 appendwrite 0|1 blanket_op_save 0|1 hier_op_names 0|1}
 #
 # ⚠ `known 0` CARRIES NO CAPABILITY KEYS AT ALL, and callers must read `known`
@@ -1389,9 +1632,35 @@ proc ase::sim_capabilities {backend} {
       return [dict get $stored caps]
     }
   }
-  set caps [[ase::backend_hook $backend capabilities] $resolved \
-              [dict get $s args] [ase::cap_workdir]]
-  dict set sim_caps $resolved [list stamp $live caps $caps]
+  # NO PLACE TO WORK IS A FACT ABOUT THE FOLDER, NOT ABOUT THE PROGRAM (issues
+  # 0949 and 0950). What a reader would otherwise assume is that a probe which
+  # could not run says something about the simulator. It does not: a simulation
+  # folder nothing can be written into would otherwise make a perfectly healthy
+  # build be reported as producing no results at all, and -- before the rule
+  # below -- that accusation was then remembered for the whole session.
+  set wd [ase::cap_workdir]
+  if {$wd eq {}} { return [dict create known 0 unmeasured noplace] }
+  # THE PLACE IS GIVEN BACK ON EVERY PATH, INCLUDING THE ONE WHERE THE PROBE
+  # BLEW UP -- and the failure is then RE-RAISED, so a defect in a probe stays
+  # as loud as it was. Tidying up must not swallow it.
+  set rc [catch {[ase::backend_hook $backend capabilities] $resolved \
+                   [dict get $s args] $wd} caps]
+  set einfo $::errorInfo
+  set ecode $::errorCode
+  ase::cap_workdir_done $wd
+  if {$rc} { return -code error -errorinfo $einfo -errorcode $ecode $caps }
+  # ⚠ AN ANSWER NOBODY WORKED OUT IS NEVER REMEMBERED (issue 0950). What a
+  # reader would otherwise assume is that the cache holds facts about a
+  # program. It holds facts about a program AND, before this line, failures of
+  # the RUN dressed up as facts about the program: measured, a wrong answer
+  # taken in a folder the simulator could not write into was then served for
+  # the rest of the session, in an ordinary folder, with nothing in the
+  # Simulators window able to clear it. One line covers the folder that cannot
+  # be written into, the program that did not answer in time, and every reason
+  # anyone adds later, because all of them say `known 0`.
+  if {[dict exists $caps known] && [dict get $caps known] == 1} {
+    dict set sim_caps $resolved [list stamp $live caps $caps]
+  }
   return $caps
 }
 
@@ -1413,8 +1682,23 @@ proc ase::sim_capabilities {backend} {
 # run_cmd already owns the resolver's sentence.
 proc ase::cap_report {backend nwrites} {
   set c [ase::sim_capabilities $backend]
-  if {![dict exists $c known] || [dict get $c known] == 0} { return {} }
   set path [dict get [ase::sim_status $backend] resolved]
+  # THE PROGRAM THAT DID NOT ANSWER IN TIME GETS ITS OWN SENTENCE (issue
+  # 0953). What a reader would otherwise assume is that a probe which learned
+  # nothing has nothing to say. It has: the user has just waited, and the
+  # measured behaviour was to wait 20.0 s and then be told the program is not a
+  # circuit simulator -- a claim the probe never established. "It had not
+  # finished" and "it is not a simulator" are different statements about
+  # somebody's program, and only the first one was measured. Every OTHER
+  # known-0 answer is silent, exactly as before: nothing was measured and
+  # nothing is claimed.
+  if {![dict exists $c known] || [dict get $c known] == 0} {
+    if {[dict exists $c unmeasured] && [dict get $c unmeasured] eq {timeout}} {
+      ase::sim_say cap_no_answer $backend $path [dict get $c secs]
+      return cap_no_answer
+    }
+    return {}
+  }
   if {[dict exists $c usable] && [dict get $c usable] == 0} {
     ase::sim_say cap_not_a_simulator $backend $path
     return cap_not_a_simulator
@@ -5472,9 +5756,21 @@ namespace eval ase::backend::ngspice {
   # and no error, while holding no operating point at all. The exit codes are
   # collected for a bug report and used for nothing.
   #
-  # ⚠ THE RESULTS FILES ARE DELETED BEFORE EACH RUN. The probe directory is
-  # shared between probes and between builds, so one program's leftover file
-  # would otherwise answer for the next program measured.
+  # ⚠ THE PROBE NEVER DELETES A RESULTS FILE AND NEVER BELIEVES ONE IT DID NOT
+  # SEE APPEAR (issue 0951). It used to do the opposite -- delete two fixed
+  # names at the top and trust whatever was sitting there afterwards -- and a
+  # program that wrote not one byte was reported healthy because a separate
+  # process dropped its own results at one of those names mid-probe.
+  # ase::cap_workdir now hands this proc a place of its own, and ase::cap_claim
+  # / ase::cap_result are the second guard for a caller that hands it a place
+  # somebody else is already using.
+  #
+  # ⚠ THE DECK NAMES ITS RESULTS WITH A BARE FILE NAME, and the program is run
+  # with `workdir` under it (issue 0949). An absolute name on the `write` line
+  # is what made a simulation folder with a space -- or a dollar, a quote or a
+  # semicolon -- in its name produce no results at all from a perfectly healthy
+  # ngspice, which was then reported to the user as not being a circuit
+  # simulator. No quoting form inside the deck fixes it; see ase::cap_run.
   #
   # `set filetype=ascii` is asked for because a text results file cannot be
   # misread; measured on ngspice-46+, it still appends every analysis. A build
@@ -5502,8 +5798,6 @@ xo1 dd gg 0 outer
     set appendwrite 0
     set hier 0
     set blanket 0
-    catch {file delete -- $rawa}
-    catch {file delete -- $rawb}
     set f [open $decka w]
     puts -nonewline $f "$ckt.control
 set filetype=ascii
@@ -5511,10 +5805,10 @@ save @m.xo1.xi1.m1\[id\] @m.xo1.xi1.m1\[gm\] @m.xo1.xi1.m1\[vdsat\]
 set appendwrite
 op
 remzerovec
-write $rawa
+write probe_a.raw
 tran 1n 5n
 remzerovec
-write $rawa
+write probe_a.raw
 .endc
 .end
 "
@@ -5525,15 +5819,41 @@ set filetype=ascii
 save @m.xo1.xi1.m1\[*\]
 op
 remzerovec
-write $rawb
+write probe_b.raw
 .endc
 .end
 "
     close $f
-    ase::cap_run $exe $exeargs $decka
-    ase::cap_run $exe $exeargs $deckb
-    set pa [ase::cap_raw_plots $rawa]
-    set pb [ase::cap_raw_plots $rawb]
+    # ONE BUDGET FOR THE WHOLE MEASUREMENT, NOT ONE PER RUN (issue 0953). The
+    # measured 20.0 s freeze of the user's Run gesture was two runs each paying
+    # a ten-second cap that nothing could ask to be smaller. And once one run
+    # has been cut off, the second is NOT attempted: nothing more can be
+    # learned from a program that is not answering, and the user is already
+    # waiting.
+    #
+    # A CUT-OFF MAKES THE WHOLE ANSWER `known 0`, DELIBERATELY. Keeping the
+    # half that was measured would mean either claiming 0 about a question
+    # nobody asked -- ruling D5-1's shape -- or handing every reader a known-1
+    # answer with keys missing from it, which this section's own contract
+    # forbids. `secs` is how long the user actually waited, so the sentence can
+    # say it.
+    set t0 [clock milliseconds]
+    set ca [ase::cap_claim $rawa]
+    set ra [ase::cap_run $exe [concat $exeargs [list -b $decka]] $workdir \
+              [ase::cap_left $t0]]
+    if {[lindex $ra 2]} {
+      return [dict create known 0 unmeasured timeout \
+                secs [ase::cap_spent $t0]]
+    }
+    set cb [ase::cap_claim $rawb]
+    set rb [ase::cap_run $exe [concat $exeargs [list -b $deckb]] $workdir \
+              [ase::cap_left $t0]]
+    if {[lindex $rb 2]} {
+      return [dict create known 0 unmeasured timeout \
+                secs [ase::cap_spent $t0]]
+    }
+    set pa [ase::cap_result $rawa $ca]
+    set pb [ase::cap_result $rawb $cb]
     # USABLE: did anything with data in it come back at all, from either run.
     # A program that produced no plot with a single data point in it is not
     # simulating this circuit, whatever it printed and whatever it exited.
@@ -5541,19 +5861,35 @@ write $rawb
       if {[lindex $pl 1] >= 1} { set usable 1 }
     }
     set op [ase::cap_plot $pa {Operating Point}]
-    set tr [ase::cap_plot $pa {Transient Analysis}]
-    # APPENDWRITE: BOTH analyses in ONE file, and the operating point holding
-    # at least one data point. The point count is not a formality: measured,
-    # a blanket save leaves a results file whose plot carries `No. Points: 0`,
-    # and counting that as an operating point would call a destroyed result a
-    # success.
-    if {$op ne {} && [lindex $op 1] >= 1 && $tr ne {}} { set appendwrite 1 }
+    # APPENDWRITE: DID THE SECOND WRITE ADD TO THE FILE, OR REPLACE IT. Deck A
+    # asks for two analyses and two writes into one file; two plots coming back
+    # in that one file means they were added, whatever the plots are called.
+    #
+    # ⚠ THIS USED TO BE DECIDED BY WHETHER THE VECTORS THE PROBE EXPECTED WERE
+    # FOUND UNDER THE NAMES IT EXPECTED, AND THAT WAS ISSUE 0952. What a reader
+    # would otherwise assume is that a missing operating point means an
+    # analysis was thrown away. It does not: a build that adds every analysis
+    # correctly but spells its device parameters differently saves no vector
+    # this probe named, so its operating point degenerates to a `constants`
+    # plot -- and the measured file plainly held TWO plots. The user was told
+    # their build "keeps only the last analysis" and advised to run one
+    # analysis at a time, which is a wrong diagnosis AND advice that changes
+    # nothing. Whether the writes added up, and whether the device parameter
+    # names are the ones this tree reads, are two different questions and
+    # neither may be allowed to fail the other.
+    set appendwrite [expr {[llength $pa] >= 2 ? 1 : 0}]
     # HIER_OP_NAMES: the device is INSIDE two subcircuits, and its numbers
     # have to arrive under the exact names this tree's annotation reader
     # builds -- the three spellings op_annot::_wrap emits, at
     # src/op_annot.tcl:419-425. A build that answers with flat names has an
     # operating point that this tree cannot read a single device out of.
-    if {$op ne {}} {
+    #
+    # THE POINT COUNT MOVED HERE FROM APPENDWRITE, AND IT IS NOT A FORMALITY:
+    # measured, a blanket save leaves a results file whose plot carries
+    # `No. Points: 0`, and an operating point with no data points in it holds
+    # no device numbers for anyone to read. This is the key that owns that
+    # claim; letting it answer the append question is what produced 0952.
+    if {$op ne {} && [lindex $op 1] >= 1} {
       set hier 1
       foreach want {i(@m.xo1.xi1.m1[id]) @m.xo1.xi1.m1[gm]
                     v(@m.xo1.xi1.m1[vdsat])} {

@@ -1,8 +1,10 @@
 # 0950 — a wrong answer about a simulator is remembered for the rest of the session, and the user cannot make the tree look again
 
-**STATUS: OPEN — measured 2026-08-30 on the tree that landed 0948, by that
-item's write-up pass. Not fixed here: the lever exists, the door does not, and
-which door it should be is a design question.**
+**STATUS: FIXED (2026-08-30, item S3a) — an answer nobody worked out is never
+remembered, and adding, editing or removing an entry in the simulator list makes
+the tree look again. NO "Check again" button was added; that choice is on the
+user's ruling queue (`owed.sh` rule 0950). Rows D10, D11, D12, J7 and J8 of
+`tests/headless/test_ase_simcaps_0948.tcl`.**
 
 ## What the user sees
 
@@ -76,3 +78,63 @@ program file.
   again in the same session — the answer is right.
 * A user with the Simulators window open can force a re-measure without
   restarting, and can see that it happened.
+
+## The fix (item S3a, 2026-08-30), in two parts
+
+**(a) The cache no longer holds failures of the RUN dressed up as facts about
+the PROGRAM.** `ase::sim_capabilities` writes the cache only when the answer
+says `known 1`. One line, and it covers every measured case: the simulation
+folder that could not be written into, the program that did not answer in time,
+and every reason anyone adds later, because all of them say `known 0`. It is the
+same rule the three existing guards already followed — they return before the
+probe AND before any cache write.
+
+A folder nothing can be written into now answers `{known 0 unmeasured noplace}`
+and says nothing at all, instead of accusing the user's program of producing no
+results. That was the actual cause of every case measured for this issue.
+
+**(b) There is a door.** `ase::sim_caps_clear` is now called by
+`ase::sim_register` and `ase::sim_unregister`. Adding or editing an entry is the
+user saying something about their simulators changed, and it is the moment to
+look again.
+
+**The look-again is on the WRITER, not on the dialog, and that placement is the
+decision.** Setup > Simulators and the Command window are two doors onto the same
+registry writer. Putting it in `ase::ui::simdlg_ok` would leave the Command
+window's door broken and would breach `src/ase_window.tcl`'s own stated rule that
+no logic is re-implemented there. `src/ase_window.tcl` therefore needed no change
+at all. Row D12 reddens on the wrong placement, which no behavioural row can see.
+
+It is deliberately NOT in `ase::sim_select`: row D5 pins that switching back to a
+simulator already measured does not start it again, and selecting an entry is not
+a statement that anything about a program changed.
+
+## The decision the user has not ratified, and the alternative rejected
+
+**No "Check again" control was added to the Simulators window.** The reasoning:
+
+1. a rebuilt program file is already re-measured with nothing for the user to do
+   (the file stamp — rows D2, D3, D4);
+2. Add / Edit / Remove now re-measure;
+3. after (a), an answer that came from the run environment is never remembered in
+   the first place — which is what every measured case actually was.
+
+The rejected alternative is a **Check again** button in the dialog's button row
+(`src/ase_window.tcl:3345-3352`) calling `ase::sim_caps_clear`. It is cheap and
+it is discoverable; the argument against it is that it is a control for a state
+that can no longer be reached, and a button that never has anything to do is a
+button that teaches the user the tree cannot be trusted.
+
+This is the user's to rule on, and it is recorded as such.
+
+## Addendum, 2026-08-30 — the never-remember rule has a hole nothing announces
+
+The rule "an answer nobody worked out is never remembered" holds only while a
+probe that did not answer can be RECOGNISED as one. It cannot, on a box with no
+`timeout(1)`: the run is then unbounded, the answer falls through to the ordinary
+`usable 0` verdict, that verdict is `known 1`, and `known 1` is cached. Measured
+on this box with the prefix emptied — 16.0 s unbounded, `cap_not_a_simulator`
+said, remembered, second press instant and still wrong. Filed as **issue 0959**.
+
+The two states that answer `{known 0 unmeasured noplace}` are correctly not
+remembered, and are also completely silent, for good — filed as **issue 0960**.

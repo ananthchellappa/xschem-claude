@@ -173,10 +173,13 @@ was: the bare backend name, `auto_execok`'s file, and a byte-identical command.
 
 `ase::sim_capabilities <backend>` answers what the build that will ACTUALLY
 start can do — resolved through `ase::sim_status`, never a bare name. The
-answer is a dict: `{known 0}`, or
+answer is a dict: `{known 0}`, `{known 0 unmeasured <reason> ...}`, or
 `{known 1 usable 0|1 appendwrite 0|1 blanket_op_save 0|1 hier_op_names 0|1}`.
 When `known` is 0 the capability keys are **absent, not 0**; absent means
-nobody measured, 0 means measured-and-no.
+nobody measured, 0 means measured-and-no. `unmeasured` is a REASON, never a
+capability: `timeout` (the program had not finished inside the budget, and
+`secs` says how long the user waited) or `noplace` (the simulation folder could
+not be written into at all).
 
 * **The method is a PROBE RUN, never a version string.** Measured: a stock
   ngspice and one patched to ignore the add-each-analysis line print the
@@ -194,6 +197,64 @@ nobody measured, 0 means measured-and-no.
   nothing to do on their part, which is the whole point. `ase::sim_caps_clear`
   forces a re-measure. Nothing is ever cached under an empty `resolved`, which
   is what two unrunnable backends both answer (issue 0935).
+* **An answer nobody worked out is NEVER remembered (issue 0950).** Only a
+  `known 1` answer is cached. Before that rule, a failure of the RUN — a folder
+  that could not be written into, a program that did not answer in time — was
+  stored as if it were a fact about the PROGRAM and served for the rest of the
+  session, in an ordinary folder, with nothing in the GUI able to clear it.
+  `ase::sim_register` and `ase::sim_unregister` also clear the whole cache, so
+  adding, editing or removing an entry makes the tree look again. **That call
+  sits on the registry writer, not on the dialog**: Setup > Simulators and the
+  Command window are two doors onto the same writer, and putting it in the
+  dialog would leave the other door broken. It is deliberately NOT in
+  `ase::sim_select` — switching back to a simulator already measured is not a
+  statement that anything about a program changed.
+* **The probe works in a directory of its own, per measurement (issue 0951).**
+  `ase::cap_workdir` answers a fresh, empty
+  `<simulation folder>/.ase_probe/p<pid>_<n>` that no other probe is using, or
+  EMPTY when no such place can be made — which `ase::sim_capabilities` turns
+  into `{known 0 unmeasured noplace}` rather than into an accusation about the
+  user's program. `ase::cap_workdir_done` removes it on every path out,
+  including the one where the probe raised (and then re-raises, so a defect in a
+  probe stays loud); it deletes the shared `.ase_probe` parent WITHOUT `-force`,
+  so the parent goes when it is empty and survives when another process's probe
+  is still using it. **And no verdict is taken from a results file this run did
+  not see appear**: `ase::cap_claim` / `ase::cap_result` are the second guard,
+  for the collision a private name cannot cover — a recycled process number, a
+  predecessor that died without tidying up, a caller that hands the probe a
+  directory of its own. The probe never deletes a results file it did not
+  create. Before all that, a program that wrote not one byte measured
+  `usable 1 appendwrite 1 hier_op_names 1` because a separate process dropped
+  its own results at the one fixed name.
+* **The program is run with the probe's directory under it, and its deck names
+  its results with a BARE FILE NAME (issue 0949).** Not a quoting fix, and the
+  distinction is load-bearing: measured on ngspice-46+, an absolute path with a
+  space in it is read as a file name followed by a VECTOR name, no such vector
+  is found, and nothing is written anywhere. Six write forms were measured
+  against five hostile folder names and none of the in-deck forms — bare,
+  double-quoted, backslash-escaped, `.control`-level `cd`, or an indirection
+  through a variable — survives a folder called `do$llar`, because the program
+  expands `$` inside `.control` regardless of quoting. Giving the process the
+  target folder as its own current directory is the only form that survived a
+  space, a dollar, a bracket, a single quote and a semicolon alike.
+  `ase::cap_run` resolves a RELATIVE program location before the move, so a user
+  who registered `./build/ngspice` keeps working; a bare name with no folder in
+  it is left alone, because that is a PATH lookup the move cannot affect.
+  ⚠ That last clause describes the intent, not the code: the test is
+  `[file dirname $prog] ne {.}`, and `./ng` has dirname `.` too, so a
+  single-segment relative location is left alone and then fails. Latent — the
+  registry normalizes — and filed as **issue 0961**.
+* **`appendwrite` means the writes ADDED UP, and nothing else (issue 0952).**
+  Deck A asks for two analyses and two writes into one file; two plots coming
+  back in that one file is the answer, whatever the plots are called. It used to
+  be decided by whether the vectors the probe expected turned up under the names
+  it expected, so a build that appends perfectly but spells device parameters
+  differently — whose operating point therefore degenerates to a `constants`
+  plot — was told it keeps only the last analysis and advised to run one
+  analysis at a time, which is a wrong diagnosis AND advice that changes
+  nothing. Whether an operating point holds device numbers this tree can read is
+  `hier_op_names`, which is where the "at least one data point" requirement now
+  lives; the two questions must never be able to fail each other.
 * **`capabilities` is an OPTIONAL sixth backend hook**, beside `render_deck`,
   `run_cmd`, `log_file`, `result_probe` and `raw_file`. A backend that declares
   none is answered `known 0` — never a guessed yes.
@@ -207,44 +268,83 @@ nobody measured, 0 means measured-and-no.
   meets it.
 * **Four belts around the probe run, each pinned by its own row.** The program
   is given nothing to read (`< /dev/null`, row G3) so a build that drops into
-  its own prompt cannot hang the user's Run; it is given a fixed number of
-  seconds (`timeout`, row G5) so one that never returns for any other reason
-  cannot either; the extra arguments the user registered are handed to it when
+  its own prompt cannot hang the user's Run; it is given a bounded number of
+  seconds (row G5) so one that never returns for any other reason cannot
+  either; the extra arguments the user registered are handed to it when
   it is measured (row G6), so what was measured is the program they will
   actually get; and `ase::cap_raw_plots` reads a results file written as raw
   numbers as well as one written as text (rows B7/B8), stepping over each
   payload by its own length so a run of numbers that happens to spell a plot
   header is never mistaken for one.
+* **ONE budget for the whole measurement, not one cap per run (issue 0953).**
+  `ase::cap_budget_ms` is 30000 and `ase::cap_left` hands each run what is left
+  of it; once a run has been cut off the second is not attempted. The measured
+  20.0 s freeze of the user's Run gesture was two runs each paying a literal
+  ten-second cap that nothing could ask to be smaller. Thirty seconds is
+  deliberately generous — a healthy probe is 0.014 s cold and nothing warm, and
+  a tighter bound would cut off exactly the slow-to-start build 0953 is about.
+  `ase::cap_run` returns `{exitcode output was-it-cut-off elapsed-ms}`, and
+  **was-it-cut-off needs all three of** a cap actually applied, child status
+  124, and elapsed time that reached the cap — so a simulator that exits 124 of
+  its own accord is not called a timeout and a cap that was never applied cannot
+  manufacture one. The cap is `timeout -k 2 <secs>` where the box has it:
+  measured, the plain form lets a stop-ignoring program run its full thirty
+  seconds. A cut-off answers `{known 0 unmeasured timeout secs N}`, which is
+  never cached, and `ase::cap_report` says the `cap_no_answer` sentence — which
+  claims only what was established, that the program had not finished, and never
+  that it is not a circuit simulator.
+  ⚠ **All of that is conditional on the box having `timeout(1)`, and nothing
+  says so when it does not.** With no cap the run is unbounded, the answer falls
+  through to the ordinary `usable 0` verdict, that verdict is `known 1`, and
+  `known 1` is cached — so the bound, the honest sentence and the never-cache
+  rule fail together and silently. Measured on this box with the prefix emptied:
+  16.0 s unbounded, `cap_not_a_simulator` said, remembered. Filed as
+  **issue 0959**.
+* **`ase::cap_run` belongs to no one simulator (issue 0954).** Everything after
+  the program name comes from the caller: the arguments the user registered, the
+  backend's own flags, and the deck. It used to append ngspice's `-b` itself,
+  against this file's own seam rule (`src/ase.tcl:24`).
 
-* **Where the shipped code does not yet meet this contract**, all measured and
-  filed, none fixed at the time of writing. Read these before relying on an
-  answer from this surface:
-  * **0951** — the probe's scratch files are per simulation-folder, not
-    per-process, under fixed names, so a second xschem window's results can
-    answer for the program being measured. Reproduced: a program that wrote
-    nothing at all measured `usable 1 appendwrite 1 hier_op_names 1`.
-  * **0949** — the probe deck's `write` line is unquoted, so a simulation
-    folder whose name contains a space or a dollar sign makes a healthy build
-    measure `usable 0` and be told, on every Run, that it is not a circuit
-    simulator. (`render_deck`'s own `write` line is unquoted the same way, and
-    older.)
-  * **0952** — `appendwrite` is decided by the presence of an operating-point
-    plot, so it reads 0 for a build that appends perfectly but names device
-    parameters differently. That build is then given advice that changes
-    nothing; `hier_op_names` already holds the true answer and is not read.
-  * **0953** — the two probe runs are paid synchronously inside `run_deck`, so
-    a slow-to-start simulator freezes the editor for a measured 20.0 s, and
-    "cut off by its own clock" is reported as "produced nothing".
-  * **0950** — a wrong answer is remembered for the session; the stamp only
-    notices the program file changing, and no GUI door calls
-    `ase::sim_caps_clear`.
-  * **0954** — `ase::cap_run` appends ngspice's `-b` from the generic
-    namespace, against this file's own seam rule (`src/ase.tcl:24`).
-
-  Three of those — 0949, 0950, 0953 — are one mistake in three places: **a
-  measurement that did not happen, reported as a fact about the user's
-  program.** The `known 0` contract at the top of this section is what they
-  should be answering.
+* **Where the shipped code does not yet meet this contract.** Issues 0949 (the
+  probe half), 0950, 0951, 0952, 0953 (the bound and the sentence) and 0954 were
+  all fixed on 2026-08-30 and are described above. What is still genuinely open:
+  * **0957** — the REAL deck's own `write [raw_file $state]` line
+    (`src/ase.tcl:5613`) is still absolute and unquoted, so a user running from
+    a folder whose name has a space in it gets a run that writes its results
+    nowhere. This is 0949's older half and it is deck emission, not the probe.
+    The measured mitigation is on the issue: `ase::run_deck` already cd's into
+    the very folder `raw_file` joins, so a bare basename resolves to the same
+    file.
+  * **0953's other half** — the probe is still paid inside the user's Run
+    gesture, so a program that never answers still costs a bounded pause.
+    Getting the measurement off that path is the larger fix and is not done.
+  * **0958** — and that pause is paid on EVERY press of Run, not once. A
+    cut-off answers `known 0`, `known 0` is correctly never remembered, so the
+    next press measures again from scratch: measured 3004 / 3003 / 3005 ms at a
+    lowered budget, and 30.0 s x 3 at the shipped one. Before this contract
+    existed the same user paid 20 s once and nothing after.
+  * **0959** — the bound, the honest sentence and the never-cache rule all
+    depend on `timeout(1)` being on the box, and evaporate together in silence
+    when it is not.
+  * **0960** — the two states that answer `{known 0 unmeasured noplace}` say
+    NOTHING, on every Run, for good. A read-only simulation folder, or an
+    ordinary file sitting where `.ase_probe` needs to be, silently switches off
+    every warning this section exists to give — including the one about a build
+    that keeps only the last analysis, which is the one that costs the user
+    their results. This section's own rule for the sibling arm is "never a
+    silent failure".
+  * **0961** — a program location written `./name` is not made absolute before
+    the folder change and cannot then be started. Latent behind the registry's
+    own `file normalize`; the comment in `ase::cap_run` states the opposite rule.
+  * **0962** — a coverage gap, not a behaviour one: no committed row reproduces
+    the CONCURRENT write that issue 0951 is actually about. Row I4's headline
+    half passes on the defective tree, because the old delete-at-top destroyed a
+    file planted beforehand; the race itself was staged by hand and the fix does
+    hold against it.
+  * **0952's other half** — a build whose device parameter names this tree
+    cannot read is MEASURED (`hier_op_names 0`) and still says nothing about it.
+    Giving that its own sentence belongs with deck emission, which is what would
+    have to do something different about it.
 
 ## Migration tool (cluttered testbench → clean + state view)
 
