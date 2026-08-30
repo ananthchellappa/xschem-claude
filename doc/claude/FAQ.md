@@ -14,6 +14,52 @@ Newest entries on top.
 
 ---
 
+## Q67. Two rows compared the list against the run and both went green while the feature was broken. What kind of row is that?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0937** (the `Setup > Simulators…`
+  dialog) committed; **0938** filed as a regression it caused. `src/ase.tcl`,
+  `ase::sim_entry_kind` / `ase::sim_status`, rows R7 and S2.
+
+**A tautology — a row whose two sides are the same source, so they agree even
+when both are wrong.** Two of them showed up in one item, in different
+disguises, and each hid a real defect.
+
+**R7** was written to close a genuine gap: the list and the run gave *different*
+sentences about the same entry, so the row asserts they give the *same* one. But
+the fix made both call one new validator, and that validator turned out to be
+wrong. The list and the run now agree — **wrongly** — and R7 is green. A
+runnable simulator is refused, and the row designed to notice sentence
+disagreement cannot, because there is no disagreement left to see.
+
+**S2** was the sabotage pass's headline: the dialog's Problem column was
+asserted as `[wcell $TV 1 problem] eq [mint ase::sim_entry_why …]`. Blank the
+proc and **both sides go blank**, so the row passes while every broken simulator
+shows an empty Problem cell. The suite's own "answer discipline" — a missing
+*mint* answers `NOMINT`, a missing *widget* answers `NOWIDGET` — guards a proc
+that is **absent** and not one that **returns empty**, which is the shape a
+gutted function actually takes.
+
+**The rule that falls out:** a row must anchor at least one side to something
+the code under test cannot move. S2 was repaired by asserting properties instead
+of equality — the cell must carry *words*, and must name *that entry's own
+program* — neither of which a blanked proc can satisfy. R7 has no such repair
+available and is why 0938 needs a row that pins **idempotence** directly
+(register the portable form against a real directory with a `$` in its name; the
+simulator must still start) rather than pinning agreement.
+
+**And the second lesson, about the defect itself:** `ase::sim_register` stores
+the **already-expanded** path, and `ase::sim_entry_kind` substitutes it a second
+time. **Variable substitution is not idempotent.** Re-deriving a stored value's
+history by re-running the transform that produced it asks a different question
+from the one that was originally answered — here, a folder legitimately named
+with a `$` reads as an unknown setting. Record the outcome at the point the
+question is first asked; re-validate only the facts that can genuinely change
+underneath you (the file being deleted, losing its executable bit), which is
+what row R6 actually demands.
+
+---
+
 ## Q66. A startup file's list is read inside a `catch`, and one typo still killed the whole editor. Where does the raise come from?
 
 - **Asked:** 2026-08-29

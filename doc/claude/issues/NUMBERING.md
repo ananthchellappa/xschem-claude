@@ -319,7 +319,48 @@ trap rather than a code defect: three tier baselines were taken on the dev
 display and written down under the headless command, and a fourth cannot be
 produced by the `--nolog` command printed beside it.
 
-**The next free number is 0937.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the simulator-registry backlog item S2.** Filed **0937** — the
+registry 0931 shipped had no door in the GUI at all (nine menus walked on the
+real session window, zero entries mentioning a simulator program) and nothing in
+the tree ever called its writer, so anything registered from the CIW was gone at
+the next start. FIXED the same day: `Setup > Simulators…`, one dialog that
+drives S1's own procs and saves through `ase::sim_write_conf` — one writer, two
+front doors. Four new sentences in the mint (removing the one in force now says
+what happens next, in both arms), a per-entry reason a list can show
+(`ase::sim_entry_why`, re-validated on every call), and a recorder
+(`ase::sim_say` / `sim_said`) so the dialog shows the very sentence the CIW got
+instead of composing a second one.
+
+Two of the four things S1 left behind were closed by it: **0932** is FIXED (a
+cleared choice is written down as `ase::sim_select {}` and survives a restart —
+and therefore now overrides an rc's own `::ASE_SIMULATOR`, which is recorded and
+unratified), and **0933** is HALF fixed — the list and the run now give the SAME
+sentence for a location naming a setting this session does not know about; the
+storage half (the unexpanded literal is stored and skips normalisation) stays
+filed. **0934** and **0935** are untouched. 0937 carries S1's unratified
+question forward: the first simulator you register still goes into force even
+when its path is bad, and the dialog now makes the consequence visible in the
+same gesture rather than changing the rule.
+
+**2026-08-29, S2's write-up pass — seven more, and one of them is ours.**
+Verifying the 0937 dialog measured seven defects that were filed rather than
+fixed, each reproduced first-hand before filing. **0938** is a REGRESSION this
+branch caused: `ase::sim_entry_kind` substitutes the stored path a second time,
+registration already substituted it once, and the substitution is not
+idempotent — so a runnable simulator whose path contains a literal dollar sign
+is refused with a sentence blaming a setting the path never mentions. **0939**
+(editing a startup-file simulator takes it over for good, silently), **0940**
+(Add onto an existing name silently replaces it and wipes its settings) and
+**0941** (Remove on a startup-file entry never says which simulator runs next —
+a miss of the item's own brief) are silence or data loss in the new dialog's own
+buttons. **0942** and **0943** are the two halves of the writer rewrite (a
+symlinked list is replaced by a plain file; saves the old writer managed are now
+refused, with an internal `.new` name leaking into user-facing wording).
+**0944** is a blank Problem column for an entry registered for another backend.
+0938 is on the user's ruling queue, because the way out is a trade between a
+wrong sentence in a rare arm and a refusal to run a working simulator.
+
+**The next free number is 0945.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

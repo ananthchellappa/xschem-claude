@@ -1001,6 +1001,339 @@ check {G1 STRUCTURAL the written description matches the run that actually happe
         [expr {[string first {ase::sim_status} $G1DOC] >= 0}]] \
   [list 0 1]
 
+# ============================================================================
+# H. THE NON-GUI HALF THE GUI FRONT DOOR CANNOT BE BUILT WITHOUT -- ISSUE 0937
+# ============================================================================
+# Backlog item S2 puts a Simulators dialog on the ASE-L session window's Setup
+# menu. Three of the four things that dialog has to say do not exist yet, and
+# none of them is a widget:
+#
+#   * REMOVE MUST SAY WHAT HAPPENS NEXT. Measured at 439d1087, all three arms:
+#     taking out the simulator currently in force printed NOTHING AT ALL --
+#     whether it was the only one (the choice is silently cleared and the
+#     program on your PATH takes over), one of two (the survivor is silently
+#     promoted into force), or one of three (nothing is left in force). Under
+#     ruling D5-4 the sentence is minted in ase.tcl, not written in the dialog,
+#     so it is measured here rather than in the dialog suite. R1 R2 R3 R4.
+#
+#   * A ROW MUST BE ABLE TO SAY WHY IT IS UNUSABLE. The stored entry carries
+#     name path args backend origin ok and no reason, so a list has nothing to
+#     put in a Problem column; and re-checking the stored path is not a
+#     substitute -- for a location naming a setting this session does not know
+#     about, registration says "setting" and a re-check says "there is no file
+#     at", so the row would contradict, in writing, the sentence the user was
+#     just given. R5 R6 R7.
+#
+#   * A CLEARED CHOICE MUST SURVIVE A RESTART. Issue 0932, on this item's path
+#     rather than beside it: the dialog offers "none of mine, use the program
+#     on my PATH", and today saving that writes two register lines and no
+#     selection line, so reading it back at the next start puts the first entry
+#     in force again and the user's own gesture is silently undone. R8.
+#
+#   * AND THE DIALOG MUST RENDER THE MINT, NEVER RE-WORD IT. R9 counts the
+#     fixed pieces of the four new sentences in BOTH files -- exactly once in
+#     ase.tcl, never in ase_window.tcl. R10 pins the seam that makes that
+#     possible: one recorder, so the dialog can show the very sentence the CIW
+#     was given instead of composing a second one. Row D6 above cannot see any
+#     of this: it scans one file, and only the four registration sentences.
+#
+# THE WIDGETS ARE NOT HERE. tests/headless/test_ase_simdlg_0937.tcl drives the
+# real menu entry and the real dialog; this section owns everything that is
+# still true with no display attached.
+
+set ASEWIN [file join $repo src ase_window.tcl]
+
+## The removal channel, collected exactly the way a_regbad collects the
+## registration one: what unregister answered, HOW MANY sentences the user
+## got, and the tag and text of the first. The count matters on its own --
+## "it says what happens next" and "it says it once" are different claims.
+proc a_unreg_do {name} { set ::a_urv [a_ans ase::sim_unregister $name] }
+proc a_unreg {name} {
+  set ::a_urv NOPROC
+  set said [a_echoed [list a_unreg_do $name]]
+  set tag NONE ; set msg NONE
+  if {[llength $said]} {
+    set tag [lindex [lindex $said 0] 0] ; set msg [lindex [lindex $said 0] 1]
+  }
+  return [list $::a_urv $tag $msg [llength $said]]
+}
+proc a_n {r} { return [lindex $r 3] }
+
+a_reset
+a_ans ase::sim_register solo $STUB
+set R1 [a_unreg solo]
+check {R1 removing the simulator that was in use, with none of your own left, says so once: which one went, and that the program your system finds on your PATH is what will start now} \
+  [list [a_rv $R1] [a_n $R1] [a_tag $R1] [a_names_in $R1 solo] \
+        [a_says $R1 {PATH}] [a_names] [a_ans ase::sim_selected] \
+        [a_plain $R1 solo {}]] \
+  [list 1 1 note 1 1 {} {} PLAIN]
+
+a_reset
+a_ans ase::sim_register first-r2 $STUB
+a_ans ase::sim_register second-r2 $STUB2
+set R2 [a_unreg first-r2]
+check {R2 removing the one in use when a single simulator is left names the survivor as the one that will start now -- the silent promotion, spoken} \
+  [list [a_rv $R2] [a_n $R2] [a_tag $R2] [a_names_in $R2 first-r2] \
+        [a_names_in $R2 second-r2] [a_ans ase::sim_selected] \
+        [a_plain $R2 first-r2 {}]] \
+  [list 1 1 note 1 1 second-r2 PLAIN]
+
+## R3 IS A CONTROL AND IT IS GREEN TODAY. Removing a simulator that was not in
+## use changes nothing the user needs telling about, and the new sentence must
+## not be bought by making that case chatty too.
+a_reset
+a_ans ase::sim_register keep-r3 $STUB
+a_ans ase::sim_register other-r3 $STUB2
+set R3 [a_unreg other-r3]
+check {R3 removing a simulator that was NOT the one in use still says nothing at all -- the correct silence is not traded away for the new sentence} \
+  [list [a_rv $R3] [a_n $R3] [a_names] [a_ans ase::sim_selected]] \
+  [list 1 0 [list keep-r3] keep-r3]
+
+## STRUCTURAL, and it exists because NO BEHAVIOURAL ROW IN THIS FILE CAN SEE
+## IT. Row E13 reads the LAST sentence a removal echoed, so a new say-site
+## placed after the startup-configuration-file one would redden E13 instead of
+## this, and the next reader would bisect onto the wrong change. The order is
+## a contract: what-happens-next first, "it will be back next time" last.
+proc a_procbody {src name} {
+  set out {} ; set on 0
+  foreach l [split $src "\n"] {
+    if {!$on} {
+      if {[string first "proc $name " $l] == 0} { set on 1 }
+      continue
+    }
+    if {[regexp {^\}} $l]} { break }
+    lappend out $l
+  }
+  return [join $out "\n"]
+}
+set R4BODY [a_procbody [a_nocomment $ASETCL] ase::sim_unregister]
+set R4RC [string first {rc_removed} $R4BODY]
+set R4P  [string first {removed_now_path} $R4BODY]
+set R4O  [string first {removed_now_other} $R4BODY]
+check {R4 STRUCTURAL both what-happens-next sentences are said inside the removal itself, and the startup-configuration-file one is still said LAST} \
+  [list [expr {$R4P >= 0}] [expr {$R4O >= 0}] [expr {$R4RC >= 0}] \
+        [expr {$R4RC > $R4P && $R4RC > $R4O}]] \
+  [list 1 1 1 1]
+
+## R5-R7: the per-entry reason. A Problem column has to come from somewhere,
+## and the two obvious somewheres are both wrong: the `ok` field is a boolean
+## with no words in it, and re-running the file check on the stored path
+## answers `missing` for a location whose setting is unknown -- a DIFFERENT
+## sentence from the one registration just gave the user, about the same entry.
+a_reset
+a_ans ase::sim_register ok5 $STUB
+set R5M [a_regbad miss5 $MISSING]
+set R5N [a_regbad nox5  $NOEXEC]
+set R5D [a_regbad dir5  $ADIR]
+set R5E [a_regbad none5 {}]
+set R5V [a_regbad var5  $C8VARPATH]
+set R5NOENT [ase::sim_why noentry zz-never-registered {} [a_names]]
+check {R5 the list can say, entry by entry, what is wrong with THAT one -- and it is word for word the sentence the user was given when they registered it} \
+  [list [a_ans ase::sim_entry_why ok5] \
+        [expr {[a_ans ase::sim_entry_why miss5] eq [a_msg $R5M]}] \
+        [expr {[a_ans ase::sim_entry_why nox5]  eq [a_msg $R5N]}] \
+        [expr {[a_ans ase::sim_entry_why dir5]  eq [a_msg $R5D]}] \
+        [expr {[a_ans ase::sim_entry_why none5] eq [a_msg $R5E]}] \
+        [expr {[a_ans ase::sim_entry_why var5]  eq [a_msg $R5V]}] \
+        [regexp -nocase {setting|does not know|doesn't know} [a_ans ase::sim_entry_why var5]] \
+        [expr {[string first {no file at} [a_ans ase::sim_entry_why var5]] < 0}] \
+        [a_ans ase::sim_entry_why zz-never-registered]] \
+  [list {} 1 1 1 1 1 1 1 $R5NOENT]
+
+a_reset
+set R6BIN [file join $scratch bin ng6]
+a_wr $R6BIN "#!/bin/sh\nexit 0\n" 0755
+a_ans ase::sim_register live6 $R6BIN
+set R6A [a_ans ase::sim_entry_why live6]
+set R6OKA [a_efields live6 {ok}]
+file delete -force $R6BIN
+set R6B [a_ans ase::sim_entry_why live6]
+set R6OKB [a_efields live6 {ok}]
+a_wr $R6BIN "#!/bin/sh\nexit 0\n" 0755
+set R6C [a_ans ase::sim_entry_why live6]
+check {R6 the reason is worked out fresh every time it is asked for, never read back from what was true at registration: delete the program and the row explains itself, put it back and the row goes quiet} \
+  [list $R6A [expr {$R6B ne {} && $R6B ne {NOPROC} && [string first $R6BIN $R6B] >= 0}] \
+        $R6C $R6OKA $R6OKB] \
+  [list {} 1 {} [list 1] [list 1]]
+
+proc a_why_agree {name} {
+  set w1 [a_ans ase::sim_entry_why $name]
+  set w2 [a_sfield ngspice why]
+  if {$w1 eq {NOPROC} || $w2 eq {NOPROC}} { return NOPROC }
+  return [expr {$w1 eq $w2 ? 1 : 0}]
+}
+set R7 {}
+foreach {r7n r7p} [list miss7 $MISSING nox7 $NOEXEC dir7 $ADIR var7 $C8VARPATH] {
+  a_reset
+  a_ans ase::sim_register $r7n $r7p
+  lappend R7 [a_why_agree $r7n]
+}
+check {R7 ONE reason, wherever it is read: what the list shows against an entry and what the run refuses with are the same sentence, in all four broken arms} \
+  $R7 [list 1 1 1 1]
+
+## R8: ISSUE 0932, WHICH IS ON THIS ITEM'S PATH AND NOT BESIDE IT. The dialog
+## offers "none of mine -- use the program on my PATH". Real restarts, HOME
+## redirected, because nothing in-process can prove what the next start does.
+## The second pair is the CONTROL: a choice that WAS made must still survive,
+## so this cannot be satisfied by simply forgetting choices.
+set R8HOME  [file join $scratch home_r8a]
+set R8HOME2 [file join $scratch home_r8b]
+file delete -force $R8HOME
+file delete -force $R8HOME2
+set R8W {
+  set r NOPROC
+  if {[llength [info commands ase::sim_register]]} {
+    ase::sim_register r8-a @STUB@
+    ase::sim_register r8-b @STUB2@
+    set r [ase::sim_select @PICK@]
+  }
+  puts "Z_PICK=$r"
+  set w NOPROC
+  if {[llength [info commands ase::sim_write_conf]]} { set w [ase::sim_write_conf] }
+  puts "Z_WROTE=$w"
+  puts "Z_DONE=1"
+  exit 0
+}
+set R8WNONE [string map [list @STUB@ $STUB @STUB2@ $STUB2 @PICK@ "{}"] $R8W]
+set R8WPICK [string map [list @STUB@ $STUB @STUB2@ $STUB2 @PICK@ "r8-b"] $R8W]
+set R8C1 [a_child r8w1 $R8WNONE {} $R8HOME]
+set R8C2 [a_child r8r1 $::A_REPORT {} $R8HOME]
+set R8C3 [a_child r8w2 $R8WPICK {} $R8HOME2]
+set R8C4 [a_child r8r2 $::A_REPORT {} $R8HOME2]
+check {R8 "use the program on my PATH" is a choice like any other and it survives a restart -- and the control arm proves a real pick still survives one too} \
+  [list [a_zrc $R8C1] [a_zval $R8C1 Z_WROTE] \
+        [a_zrc $R8C2] [a_zval $R8C2 Z_N] [a_zval $R8C2 Z_SEL] [a_zval $R8C2 Z_EXE] \
+        [a_zval $R8C2 Z_DONE] \
+        [a_zrc $R8C3] [a_zval $R8C3 Z_WROTE] \
+        [a_zrc $R8C4] [a_zval $R8C4 Z_SEL] [a_zval $R8C4 Z_EXE] [a_zval $R8C4 Z_DONE]] \
+  [list 0 1 0 2 {} ngspice 1 0 1 0 r8-b $STUB2 1]
+
+## R9: THE SAME DISCIPLINE AS D6, EXTENDED TO THE SECOND FILE. D6 scans
+## ase.tcl only, and only the four registration sentences, so it cannot see a
+## dialog that quietly writes its own copy of "the program on your PATH will
+## start". Every fixed piece of the four sentences the door needs must occur
+## exactly once in ase.tcl and never in ase_window.tcl -- and the four must be
+## four DIFFERENT sentences, none of them the catch-all.
+set R9KINDS [list removed_now_path removed_now_other in_force path_in_force]
+set R9NAME zz9name
+set R9PATH /zz9/path/to/ngspice
+set R9EXTRA zz9extra
+set R9S {}
+foreach r9k $R9KINDS { lappend R9S [a_ans ase::sim_why $r9k $R9NAME $R9PATH $R9EXTRA] }
+set R9CATCH [a_ans ase::sim_why zz-no-such-kind $R9NAME $R9PATH $R9EXTRA]
+set R9DISTINCT 1
+if {[llength [lsort -unique $R9S]] != 4} { set R9DISTINCT 0 }
+foreach r9s $R9S { if {$r9s eq $R9CATCH} { set R9DISTINCT 0 } }
+set R9SRCA [a_nocomment $ASETCL]
+set R9SRCW [a_nocomment $ASEWIN]
+set R9N 0 ; set R9ONE 1 ; set R9ZERO 1
+foreach r9s $R9S {
+  set chunks [list $r9s]
+  foreach r9w [list $R9NAME $R9PATH $R9EXTRA] {
+    set next {}
+    foreach c $chunks {
+      foreach piece [split [string map [list $r9w \x01] $c] \x01] { lappend next $piece }
+    }
+    set chunks $next
+  }
+  foreach c $chunks {
+    set c [string trim $c]
+    if {[string length $c] < 25} { continue }
+    incr R9N
+    if {[a_count $R9SRCA $c] != 1} { set R9ONE 0 }
+    if {[a_count $R9SRCW $c] != 0} { set R9ZERO 0 }
+  }
+}
+check {R9 STRUCTURAL the four sentences the dialog needs are four different sentences, each written in exactly one place, and none of them is written in the window file} \
+  [list $R9DISTINCT [expr {$R9N >= 4}] $R9ONE $R9ZERO] [list 1 1 1 1]
+
+## R10: THE SEAM. A dialog that must show the user the SAME sentence the CIW
+## just got has two ways to get it: re-derive it, which is ruling D5-4's
+## defect, or read back what was actually said. One recorder, one render site,
+## and no `echo the mint` construct left anywhere for a caller to copy.
+set R10SRC [a_nocomment $ASETCL]
+set R10ECHO [a_count $R10SRC {ase::echo [ase::sim_why}]
+a_reset
+set ::r10m NOPROC
+set R10SAID [a_echoed {set ::r10m [a_ans ase::sim_say missing zz10 /zz10/ngspice {} error]}]
+set R10A [a_ans ase::sim_said]
+a_ans ase::sim_said_clear
+set R10B [a_ans ase::sim_said]
+check {R10 every sentence about a simulator is said in one place and remembered there, so the dialog can show the very words the CIW got instead of composing its own} \
+  [list $R10ECHO \
+        [expr {$::r10m ne {NOPROC} && $::r10m eq $R10A}] \
+        [llength $R10SAID] $R10B] \
+  [list 0 1 1 {}]
+
+## R11-R12: THE SAVED LIST IS REPLACED, NEVER EMPTIED FIRST.
+##
+## ase::sim_write_conf builds the new list BESIDE the real file and moves it
+## into place. That shape carries two promises to the user and neither had a
+## row anywhere -- measured, by reverting each half in turn and watching this
+## file stay at 58 and the dialog file at 23:
+##
+##   R11  a save that CANNOT happen leaves the list you already had exactly
+##        as it was. The old writer opened the real file for writing, which
+##        TRUNCATES it before the first line is written, so a failure after
+##        that point -- a full disk, a close reporting a buffered write --
+##        left the user with an empty simulator list and, because the close
+##        raised out of a proc that promises never to raise, no sentence
+##        about it either.
+##   R12  the permissions you put on your own saved list survive a save. A
+##        move replaces the file, and with it whatever mode the user had set;
+##        the old truncate-in-place kept it.
+##
+## R11 MAKES THE SAVE FAIL IN A WAY THAT WORKS FOR ROOT TOO -- the file the
+## writer builds beside the real one is already a DIRECTORY, and no user can
+## open a directory for writing. The row cannot go quietly vacuous if that
+## temporary name ever changes: the write would then SUCCEED and the second
+## term reds. Both rows call the writer with an explicit path, so neither
+## goes anywhere near the developer's own saved list.
+proc a_perms {path} {
+  if {![file exists $path]} { return NOFILE }
+  if {[catch {file attributes $path -permissions} m]} { return NOPERM }
+  set v 0
+  if {![scan $m {%o} v]} { return "NOSCAN-$m" }
+  return [format %04o [expr {$v & 0777}]]
+}
+
+set W11DIR [file join $scratch wconf]
+file mkdir $W11DIR
+set W11  [file join $W11DIR ase_simulators]
+set W11N $W11.new
+a_reset
+a_ans ase::sim_register keep11 $STUB
+set R11W1 [a_ans ase::sim_write_conf $W11]
+set R11BEFORE [a_slurp $W11]
+a_ans ase::sim_register gone11 $STUB2
+catch {file delete -force $W11N}
+file mkdir $W11N
+a_ans ase::sim_said_clear
+set R11W2 [a_ans ase::sim_write_conf $W11]
+set R11SAID [a_ans ase::sim_said]
+catch {file delete -force $W11N}
+set R11AFTER [a_slurp $W11]
+check {R11 a save that cannot happen leaves the simulator list you already had exactly as it was -- it never empties the file first and then fails -- and you are told in plain English that what you just added will be gone when xschem closes} \
+  [list $R11W1 [expr {[a_count $R11BEFORE {keep11}] >= 1}] \
+        $R11W2 [expr {$R11AFTER eq $R11BEFORE}] \
+        [a_count $R11AFTER {gone11}] \
+        [expr {[string first {could not be saved} $R11SAID] >= 0}]] \
+  [list 1 1 0 1 0 1]
+
+set W12 [file join $W11DIR ase_simulators_perm]
+a_reset
+a_ans ase::sim_register perm12 $STUB
+set R12W1 [a_ans ase::sim_write_conf $W12]
+catch {file attributes $W12 -permissions 0600}
+set R12M0 [a_perms $W12]
+a_ans ase::sim_register perm12b $STUB2
+set R12W2 [a_ans ase::sim_write_conf $W12]
+set R12M1 [a_perms $W12]
+set R12TXT [a_slurp $W12]
+check {R12 saving the list again keeps whatever permissions you had put on your own copy of it, instead of quietly handing the file back to you with the default ones} \
+  [list $R12W1 $R12M0 $R12W2 $R12M1 [expr {[a_count $R12TXT {perm12b}] >= 1}]] \
+  [list 1 0600 1 0600 1]
+
 # --- teardown ----------------------------------------------------------------
 a_reset
 catch {cd $A_SAVEDCWD}

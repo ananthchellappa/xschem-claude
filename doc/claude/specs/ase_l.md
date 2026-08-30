@@ -137,6 +137,31 @@ was: the bare backend name, `auto_execok`'s file, and a byte-identical command.
   `ase.tcl` — xschem exited with no schematic editor at all, where the identical
   typo in `::ASE_DEFAULT_MODELS` starts normally. Row E12 of
   `tests/headless/test_ase_simreg_0931.tcl` measures the two side by side.
+* **The door is `Setup > Simulators…` (issue 0937).** One dialog, listing
+  every registered simulator with the reason any one of them cannot be started
+  in a Problem column, Add / Edit / Remove, and a "use this one" control whose
+  first line is *(none — use the program my system finds on the PATH)*. It
+  drives the procs above and saves through `ase::sim_write_conf` — one writer,
+  two front doors — and it re-words nothing: every sentence it shows is
+  `ase::sim_why`'s, read back through `ase::sim_said` when it is reporting what
+  a gesture just did. Feedback lands IN the dialog (`.status`) and in the row
+  editor (`.simrow.status`), not only in the CIW, because silence is this
+  area's failure mode. Edit shows Name and Program only and carries the extra
+  arguments and the backend through untouched; the Name field is read-only,
+  so a rename is a Remove plus an Add.
+* **Removing the simulator in force says what happens next.** Either the one
+  survivor is named as the one that will start now, or the user is told nothing
+  of theirs is picked and the program on the `PATH` takes over. Both sentences
+  are minted in `ase::sim_why`; the "it will be back at the next start" one for
+  an rc entry is always said LAST.
+* **"None of mine" is a choice and is saved as one (issue 0932).** The saved
+  list carries `ase::sim_select {}`, so a cleared choice survives a restart
+  instead of the first entry being put silently back in force — and it
+  therefore overrides an rc's own `::ASE_SIMULATOR` at the next start.
+* **The saved list is written beside itself and moved into place.** A failed
+  write used to truncate the user's list before the first line was written and
+  then raise out of a proc that promises not to; now the file they have keeps
+  what it had until a complete new one is ready.
 * **The suite is hermetic about the user's own saved list.** A machine whose
   user has registered a simulator has a real `$USER_CONF_DIR/ase_simulators`,
   which xschem reads at startup, so "nothing is registered" is false in the
@@ -504,7 +529,11 @@ the schematic's name, not the simulator's.
   a confirmation popup); Close.
 - **Setup** — Design (L/C/V dropdown dialog; after Cell chosen, View
   dropdown lists ONLY schematic views); Model Files (dialog: one row per
-  model file + corner/section entry per row, e.g. `tt`).
+  model file + corner/section entry per row, e.g. `tt`); Simulators…
+  (the simulator-registry dialog, issue 0937: the registered simulators with
+  the reason any one of them cannot be started, Add / Edit / Remove, and
+  which one is in force — or none of them, which means the program the
+  system finds on the PATH).
 - **Analyses** — Choose… (Choose Analyses dialog).
 - **Variables** — Edit… (variables editor).
 - **Outputs** — To Be Saved > Select On Design; To Be Plotted > Select On

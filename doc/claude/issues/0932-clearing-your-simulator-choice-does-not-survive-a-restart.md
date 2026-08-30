@@ -1,6 +1,21 @@
 # 0932 — clearing your simulator choice does not survive a restart
 
-**STATUS: OPEN.** Measured 2026-08-29 at commit `0225a962`, the commit that
+**STATUS: FIXED** 2026-08-29, as part of issue 0937 (backlog item S2) — it sits
+ON that item's path rather than beside it, because the Simulators dialog offers
+"none of mine, use the program on my PATH" and would otherwise appear to accept
+a choice it silently undid at the next start. `ase::sim_write_conf` now writes
+`ase::sim_select {}` for a cleared choice. Row R8 of
+`tests/headless/test_ase_simreg_0931.tcl` proves it across four real child
+xschem processes with `HOME` redirected, and carries the control arm — a choice
+that WAS made still survives the same restart, so this cannot be satisfied by
+forgetting choices. Row S10b measures it from the dialog.
+
+CONSEQUENCE, RECORDED AND UNRATIFIED: a cleared choice now overrides a startup
+configuration file's own `::ASE_SIMULATOR` at the next start, because the user
+file is read after the rc seed and the user's later gesture wins over the rc's
+default.
+
+Measured 2026-08-29 at commit `0225a962`, the commit that
 built the simulator registry (issue 0931). Found by the adversarial verifier of
 that item, reproduced independently before filing.
 

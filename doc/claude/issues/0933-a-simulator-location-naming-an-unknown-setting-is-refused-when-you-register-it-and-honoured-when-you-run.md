@@ -1,6 +1,23 @@
 # 0933 — a simulator location naming an unknown setting is refused when you register it, and honoured when you run
 
-**STATUS: OPEN.** Measured 2026-08-29 at commit `0225a962` (issue 0931's
+**STATUS: HALF FIXED** 2026-08-29, as part of issue 0937 (backlog item S2).
+
+Half one — the two different answers about one entry — is CLOSED. The
+Simulators dialog has to show a per-entry reason in a Problem column, and a
+column that contradicted in writing the sentence the user was just given would
+be the defect the dialog exists to end. `ase::sim_entry_kind` is now the
+entry-flavoured validator: it asks whether the stored location can be turned
+into a real file name at all before it asks whether a file is there, and
+`ase::sim_status` uses it too, so what the list shows against an entry and what
+a run refuses with are ONE sentence (rows R5 and R7 of
+`tests/headless/test_ase_simreg_0931.tcl`).
+
+Half two — the unexpanded literal is what gets STORED, so that arm also skips
+the path normalisation every other arm gets — is still OPEN. Nothing in 0937
+touched it: the stored path is validated, never the expansion, and every field
+`ase::sim_status` answers with is byte-identical to what it answered before.
+
+Measured 2026-08-29 at commit `0225a962` (issue 0931's
 commit). Two halves, one cause.
 
 ## What the user sees

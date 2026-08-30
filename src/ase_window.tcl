@@ -100,6 +100,13 @@ namespace eval ase::ui {
   # combo full-value lists (dlib/dcell/dview/salib), and the list-dialog row
   # index (models/simopt). Cleaned on dialog proceed/cancel AND in close.
   variable dlg;     array set dlg {}
+  # simuse(key): the Simulators dialog's "which one is in force" combobox
+  # variable (issue 0937). Session-keyed for the same reason `annot` is: two
+  # ASE-L windows can be open at once, and Tk resolves a -textvariable in the
+  # global namespace, so one shared name would make both dialogs fight over
+  # one value. The REGISTRY behind it is process-global; two open dialogs do
+  # not refresh each other until reopened, which is recorded in issue 0937.
+  variable simuse;  array set simuse {}
   # the shared two-column list-dialog configs (Setup > Model Files and
   # Simulation > Options share one engine): toplevel suffix, state list key,
   # row dict fields, column headings, row-editor toplevel suffix + title
@@ -300,7 +307,7 @@ proc ase::ui::open {key lib cell view} {
 proc ase::ui::close {key} {
   variable wins; variable wnum; variable meta; variable idlebg
   variable loglen; variable selclear; variable edrow; variable edchk
-  variable dlg; variable annot
+  variable dlg; variable annot; variable simuse
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
   ase::ui::drop_trace $key
@@ -318,6 +325,10 @@ proc ase::ui::close {key} {
   array unset edchk $key,*
   array unset annot $key,*
   array unset dlg $key,*
+  # issue 0937: the Simulators dialog's in-force combobox variable is keyed by
+  # session, not by dialog, so it outlives the dialog on purpose and has to be
+  # dropped with the session.
+  catch {unset simuse($key)}
   catch {destroy $top}
   # item 13 (D10): the session's waveform viewer dies with the session
   # (wviewer::close destroys its OWN toplevel and is registry-keyed — no-op
@@ -478,6 +489,15 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::design_dialog $key]
   $top.mb.setup add command -label "Model Files\u2026" \
     -command [list ase::ui::model_files_dialog $key]
+  # Simulators… = the registry issue 0931 shipped with no door at all (issue
+  # 0937). Setup, not Simulation: this is configuration that outlives a run,
+  # and it is where the other configuration dialogs already live. The menu
+  # LABEL is v2-spec-fixed the way the Session ones are (doc/claude/specs/
+  # ase_l.md, and W1m/S16 assert it). NO LOG CALL BELONGS HERE OR IN THE
+  # DIALOG: the 0930 interceptor logs this pick by construction, from the
+  # entry's own -command, and a second call would double every line.
+  $top.mb.setup add command -label "Simulators\u2026" \
+    -command [list ase::ui::simulators_dialog $key]
 
   menu $top.mb.analyses -tearoff 0
   $top.mb add cascade -label Analyses -menu $top.mb.analyses
@@ -3233,6 +3253,381 @@ proc ase::ui::model_files_dialog {key} {
 # `.options name=value`.
 proc ase::ui::sim_options_dialog {key} {
   return [ase::ui::listdlg_open $key simopt {Simulation Options}]
+}
+
+# --- Setup > Simulators… : the front door of the simulator registry -------
+# ISSUE 0937. Issue 0931 built a working registry -- register a simulator of
+# your own by name, say which one is in force, save the list so it comes back
+# next start -- and shipped it with no way into it: nine menus walked on the
+# real session window at 439d1087 and not one entry anywhere mentioned a
+# simulator program. The only lever was typing Tcl into the CIW, and even that
+# forgot itself, because nothing in the tree called the writer.
+#
+# ONE WRITER, TWO FRONT DOORS. Everything below drives the SAME procs the CIW
+# route drives -- ase::sim_register / sim_unregister / sim_select / sim_list /
+# sim_status / sim_entry_why -- and saves through ase::sim_write_conf. No
+# validation, no path resolution and no persistence is re-implemented here; a
+# second copy of any of them is how the two doors would start disagreeing.
+#
+# AND NO SENTENCE IS WRITTEN HERE. Ruling D5-4: every user-facing sentence
+# about a simulator is minted in ase::sim_why (src/ase.tcl) and only RENDERED
+# here, and where the dialog has to show what a gesture just said it reads
+# ase::sim_said back rather than composing its own version. Row R9 of
+# tests/headless/test_ase_simreg_0931.tcl greps THIS file for the minted
+# phrases and reds if one appears; rows S7/S17 compare the label text against
+# the mint byte for byte.
+#
+# NOTHING HERE LOGS. The 0930 menu interceptor already records the pick from
+# the Setup entry's own -command; row S13 greps these bodies for a second log
+# call.
+
+# The combobox line that means "none of mine". Minted once so the suite can
+# ask for it instead of hardcoding a string that would drift (row S4).
+proc ase::ui::simdlg_none_label {} {
+  return "(none — use the program my system finds on the PATH)"
+}
+
+# The backend the session will run, which is what "the program on your PATH"
+# is the name of. Defaulted rather than raised: this feeds a label.
+proc ase::ui::simdlg_backend {key} {
+  set b {}
+  catch {set b [ase::state_get [ase::session_state $key] simulator]}
+  if {$b eq {}} { set b ngspice }
+  return $b
+}
+
+# A refusal raised by the registry, made fit to show in a dialog: the internal
+# "ase: " prefix is a CIW convention and means nothing to someone reading a
+# label three inches from the field they just got wrong.
+proc ase::ui::simdlg_plain {msg} {
+  if {[string first {ase: } $msg] == 0} { return [string range $msg 5 end] }
+  return $msg
+}
+
+# Setup > Simulators…
+proc ase::ui::simulators_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simdlg
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Simulators}
+  ttk::treeview $w.tv -columns {name path problem} -show headings \
+    -selectmode browse -height 8 -style Ase.Treeview \
+    -yscrollcommand [list $w.sb set]
+  foreach c {name path problem} h {Name Program Problem} width {140 300 420} {
+    $w.tv heading $c -text $h
+    $w.tv column $c -width $width -anchor w -stretch 1
+  }
+  scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+  label $w.usel -text {Use this one:} -anchor w
+  ttk::combobox $w.use -state readonly -font AseEntryFont \
+    -style Ase.TCombobox -textvariable ase::ui::simuse($key)
+  bind $w.use <<ComboboxSelected>> [list ase::ui::simdlg_use $key]
+  # THE IN-DIALOG FEEDBACK SURFACE, and it is the point of the dialog rather
+  # than decoration. Silence is this area's failure mode: Setup > Design and
+  # the shared list dialog behind Model Files report their refusals to the
+  # CIW only, so the user sits looking at a dialog that did nothing and says
+  # nothing. Every sentence that lands here is minted in ase.tcl.
+  label $w.status -anchor w -justify left -wraplength 560 -text {}
+  set cf {}
+  catch {set cf [ase::sim_conf_file]}
+  if {$cf ne {}} {
+    label $w.where -anchor w -justify left -wraplength 560 \
+      -text "Your list is saved in $cf and comes back the next time xschem starts."
+  } else {
+    label $w.where -anchor w -justify left -wraplength 560 \
+      -text {This list cannot be saved in this session, so it will be gone when xschem closes.}
+  }
+  frame $w.btns
+  button $w.btns.add -text {Add…} -command [list ase::ui::simdlg_editor $key {}]
+  button $w.btns.edit -text {Edit…} -command [list ase::ui::simdlg_edit $key]
+  button $w.btns.remove -text Remove -command [list ase::ui::simdlg_remove $key]
+  button $w.btns.close -text Close -command [list ase::ui::simdlg_close $key]
+  pack $w.btns.add -side left -padx 5
+  pack $w.btns.edit -side left -padx 5
+  pack $w.btns.remove -side left -padx 5
+  pack $w.btns.close -side right -padx 5
+  grid $w.tv     -row 0 -column 0 -sticky nsew -padx {8 0} -pady {8 2}
+  grid $w.sb     -row 0 -column 1 -sticky ns   -padx {0 8} -pady {8 2}
+  grid $w.usel   -row 1 -column 0 -columnspan 2 -sticky w  -padx 8 -pady {6 0}
+  grid $w.use    -row 2 -column 0 -columnspan 2 -sticky we -padx 8
+  grid $w.status -row 3 -column 0 -columnspan 2 -sticky we -padx 8 -pady {6 2}
+  grid $w.where  -row 4 -column 0 -columnspan 2 -sticky we -padx 8
+  grid $w.btns   -row 5 -column 0 -columnspan 2 -sticky we -padx 8 -pady 6
+  grid rowconfigure $w 0 -weight 1
+  grid columnconfigure $w 0 -weight 1
+  # item 10: ESC = the Close button, through the same path, so the per-key
+  # records go with it
+  ase::ui::bind_dialog_esc $w [list ase::ui::simdlg_close $key]
+  ase::ui::simdlg_fill $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# Re-read the registry into the list, the combobox and the status line. Called
+# after every gesture: the registry is the truth, the widgets are a view of it.
+proc ase::ui::simdlg_fill {key} {
+  variable wins; variable dlg; variable simuse
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simdlg
+  if {![winfo exists $w]} { return }
+  $w.tv delete [$w.tv children {}]
+  set names {}
+  set i 0
+  foreach e [ase::sim_list] {
+    set n [dict get $e name]
+    lappend names $n
+    # The Problem cell is ase::sim_entry_why VERBATIM -- the same sentence
+    # the user was given when they registered it, worked out fresh now rather
+    # than read back from the entry's `ok` flag, which is a boolean with no
+    # words in it and answers a question about the past.
+    $w.tv insert {} end -id $i \
+      -values [list $n [dict get $e path] [ase::sim_entry_why $n]]
+    incr i
+  }
+  set dlg($key,simnames) $names
+  set none [ase::ui::simdlg_none_label]
+  $w.use configure -values [linsert $names 0 $none]
+  set sel [ase::sim_selected]
+  if {$sel eq {}} { set simuse($key) $none } else { set simuse($key) $sel }
+  ase::ui::simdlg_status $key
+}
+
+# THE ONE WRITER OF THE STATUS LABEL. A non-empty `msg` wins -- that is a
+# caller handing over the sentence a gesture just said. Otherwise the line
+# describes the state, and every branch of it is a rendered mint.
+#
+# THE ORDER OF THE THREE BRANCHES IS THE PART A READER WOULD GET WRONG. Asking
+# "is there anything to say" first looks right and is not: with two simulators
+# registered and the user's choice deliberately cleared, the resolver's `why`
+# carries the "more than one is registered and none is picked" sentence, which
+# is true but is an answer to a question this dialog is the answer to -- the
+# list is right there. So a problem is shown only when the resolver could NOT
+# honour what is in force (row S4 pins the cleared-choice case).
+proc ase::ui::simdlg_status {key {msg {}}} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simdlg
+  if {![winfo exists $w]} { return }
+  if {$msg ne {}} {
+    $w.status configure -text $msg
+    return
+  }
+  set backend [ase::ui::simdlg_backend $key]
+  set st [ase::sim_status $backend]
+  if {![dict get $st ok]} {
+    $w.status configure -text [dict get $st why]
+  } elseif {[dict get $st source] eq {registry}} {
+    $w.status configure -text \
+      [ase::sim_why in_force [dict get $st entry] [dict get $st exe]]
+  } else {
+    $w.status configure -text [ase::sim_why path_in_force $backend {}]
+  }
+}
+
+# SAVE, THROUGH THE ONE WRITER. Not "also save": ase::sim_write_conf is the
+# whole of what this dialog does about persistence, and it reports its own
+# failure through ase::sim_say, which is what leaves a sentence for the
+# gesture that called it to show. `key` is unused on purpose -- the registry
+# is process-global -- and is carried so every gesture below reads the same.
+proc ase::ui::simdlg_commit {key} {
+  catch {ase::sim_write_conf}
+  return
+}
+
+# The name of the row the user clicked, or {} with the status line telling
+# them to click one. Two buttons need it, so the sentence is written once.
+proc ase::ui::simdlg_selected_name {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].simdlg
+  if {![winfo exists $w]} { return {} }
+  set sel [$w.tv selection]
+  if {$sel eq {}} {
+    ase::ui::simdlg_status $key \
+      {Click the simulator you want in the list above first, then press that button again.}
+    return {}
+  }
+  set names {}
+  if {[info exists dlg($key,simnames)]} { set names $dlg($key,simnames) }
+  set i [lindex $sel 0]
+  if {![string is integer -strict $i] || $i < 0 || $i >= [llength $names]} { return {} }
+  return [lindex $names $i]
+}
+
+# The two-field row editor. An empty `name` is the Add flavor; anything else
+# is Edit, and then the Name field is READ-ONLY -- a rename here would have to
+# be a remove plus an add, which moves the entry to the end of the list and
+# fires the "you removed X" sentence in the middle of what the user
+# experienced as a rename.
+proc ase::ui::simdlg_editor {key name} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set top [dict get $wins $key]
+  set title {Add Simulator}
+  if {$name ne {}} { set title {Edit Simulator} }
+  set w [ase::ui::dialog_frame $top.simrow $title]
+  set dlg($key,simrow) $name
+  set en [ase::ui::dialog_row $w 0 {Name:} name]
+  set ep [ase::ui::dialog_row $w 1 {Program:} path]
+  button $w.browse -text {Browse…} -command [list ase::ui::simdlg_browse $key]
+  grid $w.browse -row 1 -column 2 -sticky w -padx {6 8} -pady 2
+  # the editor's OWN feedback surface: a refusal about what was just typed
+  # belongs where the typing is, not only in the CIW behind the dialog. Empty
+  # until there is something to say, so an untouched editor makes no claim.
+  label $w.status -anchor w -justify left -wraplength 420 -text {}
+  grid $w.status -row 2 -column 0 -columnspan 3 -sticky we -padx 8 -pady {4 0}
+  if {$name ne {}} {
+    $en insert 0 $name
+    foreach e [ase::sim_list] {
+      if {[dict get $e name] eq $name} { $ep insert 0 [dict get $e path] }
+    }
+    $en configure -state readonly
+  }
+  bind $en <Return> [list ase::ui::simdlg_ok $key]
+  bind $ep <Return> [list ase::ui::simdlg_ok $key]
+  ase::ui::dialog_buttons $w 3 [list ase::ui::simdlg_ok $key] \
+    [list ase::ui::simdlg_cancel $key]
+  ase::ui::apply_theme $w
+  if {$name eq {}} { focus $en } else { focus $ep }
+  return $w
+}
+
+# Edit… on the clicked row.
+proc ase::ui::simdlg_edit {key} {
+  set n [ase::ui::simdlg_selected_name $key]
+  if {$n eq {}} { return }
+  ase::ui::simdlg_editor $key $n
+}
+
+# Browse… beside the Program field.
+#
+# NOT COVERED BY ANY SUITE, AND THAT IS A PROPERTY OF tk_getOpenFile, NOT AN
+# OVERSIGHT: it grabs the display and waits for a human, so no headless or
+# Xvfb run can press OK in it (wviewer::rawbar_browse declares the same
+# limit). Row S14a asserts this body instead -- that it really opens a file
+# browser and really writes the answer into the Program field.
+proc ase::ui::simdlg_browse {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simrow
+  if {![winfo exists $w]} { return }
+  set init [string trim [$w.path get]]
+  if {$init ne {}} { set init [file dirname $init] }
+  if {$init eq {} || ![file isdirectory $init]} { set init [pwd] }
+  set f {}
+  catch {set f [tk_getOpenFile -parent $w -initialdir $init \
+                  -title {Choose the simulator program to run}]}
+  if {$f eq {}} { return }
+  $w.path delete 0 end
+  $w.path insert 0 $f
+}
+
+# OK in the row editor.
+#
+# A BAD PATH IS RECORDED, NOT REFUSED -- that is the registry's own rule, and
+# the dialog must not quietly tighten it: refusing would throw the user's
+# typing away mid-gesture and leave them nothing to fix. What the dialog adds
+# is that the reason lands where they are looking, in the row's Problem cell
+# and on the status line, in the same words the CIW got.
+#
+# A malformed CALL is different and does keep the editor up: an entry with no
+# name cannot be stored, looked up or removed, so there is nothing to record.
+#
+# EVERYTHING THE DIALOG DOES NOT SHOW IS CARRIED THROUGH. An entry can also
+# carry extra arguments and the backend it was registered for; they have no
+# fields here, and an editor that rebuilt the entry from its two visible
+# fields would silently delete them (row S9).
+proc ase::ui::simdlg_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simrow
+  if {![winfo exists $w]} { return }
+  set editing {}
+  if {[info exists dlg($key,simrow)]} { set editing $dlg($key,simrow) }
+  set name [string trim [$w.name get]]
+  set path [string trim [$w.path get]]
+  set eargs {}
+  set backend {}
+  if {$editing ne {}} {
+    set name $editing
+    foreach e [ase::sim_list] {
+      if {[dict get $e name] ne $editing} { continue }
+      set eargs [dict get $e args]
+      set backend [dict get $e backend]
+    }
+  }
+  ase::sim_said_clear
+  if {[catch {ase::sim_register $name $path -args $eargs -backend $backend} err]} {
+    $w.status configure -text [ase::ui::simdlg_plain $err]
+    return
+  }
+  array unset dlg $key,simrow
+  destroy $w
+  ase::ui::simdlg_commit $key
+  ase::ui::simdlg_fill $key
+  set said [ase::sim_said]
+  if {$said ne {}} { ase::ui::simdlg_status $key $said }
+}
+
+proc ase::ui::simdlg_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,simrow
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].simrow}
+  }
+}
+
+# Remove. WORKS ON THE ENTRY CURRENTLY IN FORCE, by construction -- and says
+# what happens next, which is the half that did not exist before issue 0937:
+# removing the one in force silently promoted the survivor, or silently handed
+# control back to the program on the PATH, and printed nothing at all.
+proc ase::ui::simdlg_remove {key} {
+  set n [ase::ui::simdlg_selected_name $key]
+  if {$n eq {}} { return }
+  ase::sim_said_clear
+  if {[catch {ase::sim_unregister $n} err]} {
+    ase::ui::simdlg_status $key [ase::ui::simdlg_plain $err]
+    return
+  }
+  ase::ui::simdlg_commit $key
+  ase::ui::simdlg_fill $key
+  set said [ase::sim_said]
+  if {$said ne {}} { ase::ui::simdlg_status $key $said }
+}
+
+# The in-force combobox. "None of mine" clears the choice, which is a choice
+# like any other and is written down as one (issue 0932): without that, the
+# next start puts the first entry back in force and the gesture is undone.
+proc ase::ui::simdlg_use {key} {
+  variable simuse
+  set v {}
+  if {[info exists simuse($key)]} { set v $simuse($key) }
+  ase::sim_said_clear
+  if {$v eq [ase::ui::simdlg_none_label]} { set v {} }
+  if {[catch {ase::sim_select $v} err]} {
+    ase::ui::simdlg_fill $key
+    ase::ui::simdlg_status $key [ase::ui::simdlg_plain $err]
+    return
+  }
+  ase::ui::simdlg_commit $key
+  ase::ui::simdlg_fill $key
+  set said [ase::sim_said]
+  if {$said ne {}} { ase::ui::simdlg_status $key $said }
+}
+
+# Close / ESC. The row editor goes with it: it is a child dialog of this one
+# in everything but Tk parentage.
+proc ase::ui::simdlg_close {key} {
+  variable wins; variable dlg; variable simuse
+  array unset dlg $key,simnames
+  array unset dlg $key,simrow
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].simrow}
+    catch {destroy [dict get $wins $key].simdlg}
+  }
+  catch {unset simuse($key)}
 }
 
 proc ase::ui::listdlg_open {key which title} {

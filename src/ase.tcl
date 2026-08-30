@@ -555,6 +555,10 @@ namespace eval ase {
   # field. Only the seed block and ase::sim_load_conf ever change it, and both
   # restore it, so an ordinary call is always `session`.
   variable sim_origin session
+  # the last sentence ase::sim_say said, so a dialog can show the user the
+  # very words the CIW got instead of composing a second version of them
+  # (issue 0937; ase::sim_said / ase::sim_said_clear).
+  variable sim_said {}
 }
 
 # THE MINT. Every user-facing sentence about a simulator entry is written
@@ -614,8 +618,60 @@ proc ase::sim_why {kind name path {extra {}}} {
     badrclist {
       return "The list of simulators in your startup configuration file could not be read at all, so no simulators were set up from it. Check that the braces and brackets on that line match. The system said: $extra"
     }
+    removed_now_path {
+      return "You removed $name, which was the simulator being used. Nothing of your own is picked now, so xschem will start the program your system finds on your PATH. Pick or add one in the simulator list whenever you want a program of your own back."
+    }
+    removed_now_other {
+      return "You removed $name, and $extra is now the simulator that will be used, because it is the only one left on your list. Pick a different one if that is not what you want."
+    }
+    in_force {
+      return "The simulator named $name is the one that will be used, and $path is the program that will start."
+    }
+    path_in_force {
+      return "You have not picked a simulator of your own, so xschem will start the program named $name that your system finds on your PATH. Add one to the list, or pick one that is already on it, if you would rather run a build of your own."
+    }
   }
   return "Something is wrong with the simulator named $name."
+}
+
+# THE RECORDER. Mint a sentence, REMEMBER it, and say it -- the one route by
+# which a sentence about a simulator reaches the user. Returns the sentence.
+#
+# WHY THIS EXISTS AT ALL, AND WHAT A READER WOULD OTHERWISE ASSUME (issue
+# 0937). The Simulators dialog has to show the user, IN the dialog, the same
+# sentence the CIW just got. Its two ways to get it are to re-derive it --
+# which is the very defect ruling D5-4 forbids, and which is not even
+# possible for the removal sentences, because after the removal the entry is
+# gone -- or to read back what was actually said. So every render-and-echo
+# site in this section goes through here, and no caller renders a fresh
+# sentence into ase::echo by hand any more. Row R10 of
+# tests/headless/test_ase_simreg_0931.tcl greps the comment-stripped file for
+# that echo-the-mint construct and reds if one comes back.
+#
+# The tag is the CIW pane's style name -- input / result / error / note are
+# the four the pane actually styles -- and defaults to `error` because most
+# of what this section has to say is a refusal.
+proc ase::sim_say {kind name path {extra {}} {tag error}} {
+  variable sim_said
+  set m [ase::sim_why $kind $name $path $extra]
+  set sim_said $m
+  ase::echo $m $tag
+  return $m
+}
+
+# The last sentence said about a simulator, or empty. A caller that wants to
+# show the user what a gesture said clears this first, does the gesture, then
+# reads it back -- so a gesture that said nothing is visibly nothing rather
+# than the sentence before it.
+proc ase::sim_said {} {
+  variable sim_said
+  return $sim_said
+}
+
+proc ase::sim_said_clear {} {
+  variable sim_said
+  set sim_said {}
+  return {}
 }
 
 # THE VALIDATOR. Four ordered guards, each its own line and its own thing to
@@ -636,6 +692,58 @@ proc ase::sim_check {path} {
   if {![file isfile $path]}      { return notfile }
   if {![file executable $path]}  { return notexec }
   return {}
+}
+
+# THE SAME VALIDATOR, ASKED ABOUT A STORED ENTRY RATHER THAN ABOUT A FILE
+# NAME. One guard more, and it is the one a reader would assume is redundant
+# (issue 0933, half of it): a location written the portable way, as
+# $::PDK_ROOT/bin/ngspice, is stored UNEXPANDED when the setting it names is
+# not set in this session -- registration reports it and skips the
+# normalisation. Handing that literal to ase::sim_check answers `missing`,
+# so the list would tell the user "there is no file at $::PDK_ROOT/bin/
+# ngspice" and send them looking at a disk, contradicting in writing the
+# sentence registration had just given them about a setting. Rows R5 and R7
+# measure exactly that contradiction.
+#
+# What is deliberately NOT done here: the STORED path is validated, never the
+# expansion. The storage half of 0933 stays filed.
+#
+# WARNING, MEASURED AND FILED AS 0938. This comment used to claim that every
+# field ase::sim_status answers with -- exe, resolved, ok -- stays
+# byte-identical to what it answered before this proc existed. That claim is
+# FALSE, and the next reader must not trust it. ase::sim_register stores the
+# ALREADY-EXPANDED path, so substituting it a second time here asks a
+# different question, and the substitution is not idempotent. A path that
+# expands to a name containing a literal dollar sign -- a PDK root with one in
+# a folder name -- is runnable and was registered with ok 1, yet is refused
+# here as badvar: ok flips to 0, resolved goes empty, and ase::sim_exe raises
+# with a sentence blaming a setting the path never mentions. Row R7 cannot see
+# it, because the list and the run are then wrong together. See
+# doc/claude/issues/0938 for the reproduction and the two ways out.
+proc ase::sim_entry_kind {path} {
+  if {[catch {ase::expand_path $path}]} { return badvar }
+  return [ase::sim_check $path]
+}
+
+# THE PER-ENTRY REASON: the one sentence a list can show against ONE entry,
+# or empty when that entry can be started. This is what the Simulators
+# dialog's Problem column is filled from (issue 0937).
+#
+# RE-VALIDATED ON EVERY CALL, NEVER READ BACK FROM THE ENTRY'S `ok` FIELD.
+# `ok` is a boolean with no words in it, and it answers a question about the
+# PAST -- the file can be deleted, a rebuild can leave it without its
+# executable bit, a mount can go away, all without anything re-registering.
+# Row R6 deletes the program under a live entry and expects the row to
+# explain itself, with `ok` untouched throughout.
+proc ase::sim_entry_why {name} {
+  variable simulators
+  if {![dict exists $simulators $name]} {
+    return [ase::sim_why noentry $name {} [dict keys $simulators]]
+  }
+  set p [dict get $simulators $name path]
+  set kind [ase::sim_entry_kind $p]
+  if {$kind eq {}} { return {} }
+  return [ase::sim_why $kind $name $p]
 }
 
 # Register simulator `name` at `path`. Options: -args <extra argv list>,
@@ -696,7 +804,7 @@ proc ase::sim_register {name path args} {
     }
   }
   if {$kind eq {}} { set kind [ase::sim_check $p] }
-  if {$kind ne {}} { ase::echo [ase::sim_why $kind $name $p] error }
+  if {$kind ne {}} { ase::sim_say $kind $name $p {} error }
   dict set simulators $name [dict create name $name path $p args $eargs \
                              backend $backend origin $sim_origin \
                              ok [expr {$kind eq {} ? 1 : 0}]]
@@ -710,6 +818,23 @@ proc ase::sim_register {name path args} {
 
 # Remove one registered simulator. Raises on a name that was never
 # registered, because the caller asked about something that is not there.
+#
+# TAKING OUT THE ONE IN FORCE SAYS WHAT HAPPENS NEXT (issue 0937). Measured
+# at 439d1087 in all three arms -- the only entry, one of two, one of three --
+# removing the simulator that was in force printed NOTHING AT ALL, while the
+# program that would actually start changed underneath the user. What a
+# reader would otherwise assume is that the silence is the ordinary case: it
+# is not, it is the whole point of the removal, and the two arms below are
+# the two different things that can happen to the choice.
+#
+# THE ORDER OF THE THREE SAY-SITES IS A CONTRACT, NOT A STYLE (rows R4, E13).
+# The "it will be back the next time xschem starts" sentence must be said
+# LAST, because a startup-configuration entry that was also in force says two
+# sentences and the one a reader must end on is the one about the file they
+# have to edit. Row E13 reads the LAST sentence a removal echoed, so a
+# what-happens-next say-site added after the rc one would redden E13 and send
+# the next reader bisecting onto the wrong change; row R4 pins the order in
+# the source so no behavioural row has to.
 proc ase::sim_unregister {name} {
   variable simulators
   variable sim_use
@@ -717,20 +842,32 @@ proc ase::sim_unregister {name} {
     return -code error "ase: [ase::sim_why noentry $name {} [dict keys $simulators]]"
   }
   set e [dict get $simulators $name]
+  # Recorded BEFORE the removal: `sim_use` is about to be rewritten, and
+  # afterwards there is no way left to ask whether this entry was the one
+  # being used.
+  set wasuse [expr {$sim_use eq $name}]
   dict unset simulators $name
-  if {$sim_use eq $name} {
+  if {$wasuse} {
     set sim_use {}
     # One left after the removal is not a guess, it is the only answer; two
     # or more is a guess, and the choice is left empty so the user makes it.
     if {[dict size $simulators] == 1} {
       set sim_use [lindex [dict keys $simulators] 0]
     }
+    # `note` is the CIW pane's dark-orange tag; the tags the pane actually
+    # styles are input / result / error / note, and this is news, not an
+    # error -- the user asked for the removal and got it.
+    if {$sim_use eq {}} {
+      ase::sim_say removed_now_path $name {} {} note
+    } else {
+      ase::sim_say removed_now_other $name {} $sim_use note
+    }
   }
   if {[dict get $e origin] eq {rc}} {
-    # `note` is the CIW pane's dark-orange tag; the tags the pane actually
-    # styles are input / result / error / note, and this is news, not an error.
-    ase::echo [ase::sim_why rc_removed $name {}] note
+    ase::sim_say rc_removed $name {} {} note
   }
+  # NOT the sentence. Every caller here tests this as a boolean, and row E13
+  # pins it at 1 for a removal that also had two things to say.
   return 1
 }
 
@@ -824,7 +961,12 @@ proc ase::sim_status {backend} {
     # change between the two: the file gets deleted, a rebuild leaves it
     # without its executable bit, a mount goes away. The `ok` recorded at
     # registration answers a question about the past.
-    set kind [ase::sim_check $p]
+    #
+    # ase::sim_entry_kind, not ase::sim_check: the entry-flavoured validator,
+    # so what a list shows against this entry and what a run refuses with are
+    # ONE sentence in the unknown-setting arm too (issue 0937, row R7). No
+    # other field of this answer changes.
+    set kind [ase::sim_entry_kind $p]
     if {$kind ne {}} {
       return [dict create ok 0 exe $p args [dict get $e args] resolved {} \
                           source registry entry $sim_use \
@@ -872,10 +1014,46 @@ proc ase::sim_write_conf {{path {}}} {
   variable simulators
   variable sim_use
   if {$path eq {}} { set path [ase::sim_conf_file] }
-  if {[catch {open $path w} fp]} {
-    ase::echo [ase::sim_why nowrite {} $path $fp] error
+  # WRITTEN BESIDE THE REAL FILE AND MOVED OVER IT, NEVER STRAIGHT INTO IT
+  # (issue 0937). `open <path> w` TRUNCATES before a single line is written,
+  # so a failure anywhere after that -- a full disk, a close that reports the
+  # write it had buffered -- left the user with an EMPTY simulator list and,
+  # because `close` raised out of a proc that promises never to raise, no
+  # sentence about it either. That was survivable while nothing in the tree
+  # called this writer; the Simulators dialog now calls it on every Add, Edit,
+  # Remove and choice, so the odds moved. The file the user has keeps whatever
+  # it had until a complete new one is ready to take its place.
+  set tmp $path.new
+  set mode {}
+  if {[file exists $path]} { catch {set mode [file attributes $path -permissions]} }
+  if {[catch {open $tmp w} fp]} {
+    ase::sim_say nowrite {} $path $fp error
     return 0
   }
+  if {[catch {ase::sim_write_body $fp} err]} {
+    catch {close $fp}
+    catch {file delete -force $tmp}
+    ase::sim_say nowrite {} $path $err error
+    return 0
+  }
+  if {[catch {file rename -force $tmp $path} err]} {
+    catch {file delete -force $tmp}
+    ase::sim_say nowrite {} $path $err error
+    return 0
+  }
+  # A move replaces the file, and with it whatever permissions the user had
+  # put on their own copy; the old truncate-in-place kept them.
+  if {$mode ne {}} { catch {file attributes $path -permissions $mode} }
+  return 1
+}
+
+# The body of the saved list. Split out only so the writer above can wrap the
+# whole of it in ONE catch: every `puts` and the `close` are failures the user
+# has to be told about, and the file being written is a temporary one, so a
+# failure here costs nothing that was already saved.
+proc ase::sim_write_body {fp} {
+  variable simulators
+  variable sim_use
   puts $fp "# xschem ASE-L simulator list -- written by xschem, issue 0931."
   puts $fp "# Read once at startup. Edit by hand if you like: it is a plain"
   puts $fp "# Tcl script of ase::sim_register lines."
@@ -888,16 +1066,34 @@ proc ase::sim_write_conf {{path {}}} {
     puts $fp [list ase::sim_register $n [dict get $e path] \
                    -args [dict get $e args] -backend [dict get $e backend]]
   }
+  # "NONE OF MINE -- USE THE PROGRAM ON MY PATH" IS A CHOICE, AND IT IS
+  # WRITTEN DOWN LIKE ANY OTHER (issue 0932, on the Simulators dialog's path
+  # rather than beside it). What a reader would assume is that an empty
+  # choice is the absence of a line: it is not. Registering the first
+  # simulator puts it in force, so a file with register lines and no
+  # selection line reads back with the FIRST entry in force -- and the user
+  # who deliberately handed control back to their PATH gets one of their own
+  # builds silently put back in charge at the next start. Measured before
+  # this arm existed: cleared the choice, saved, restarted, `in force = a`.
+  #
+  # The consequence, recorded and unratified: a cleared choice now overrides
+  # a startup configuration file's own ::ASE_SIMULATOR at the next start,
+  # because the user file is read after the rc seed and their later gesture
+  # wins over the rc's default.
+  #
   # Same reason the selection line is skipped when what is in force came from
   # an rc: this file must not mention rc entries at all, or reading it back
   # in a session where the rc no longer declares that name would fail.
-  if {$sim_use ne {} && [dict exists $simulators $sim_use] \
+  if {$sim_use eq {}} {
+    puts $fp [list ase::sim_select {}]
+  } elseif {[dict exists $simulators $sim_use] \
       && [dict get $simulators $sim_use origin] ne {rc}} {
     puts $fp [list ase::sim_select $sim_use]
   }
   close $fp
   return 1
 }
+
 
 # Read the saved simulator list back. Returns 1 when a file was read, 0 when
 # there was none or it could not be read. NEVER RAISES: it runs at startup,
@@ -913,7 +1109,7 @@ proc ase::sim_load_conf {{path {}}} {
   set rc [catch {uplevel #0 [list source $path]} err]
   set sim_origin session
   if {$rc} {
-    ase::echo [ase::sim_why badconf {} $path $err] error
+    ase::sim_say badconf {} $path $err error
     return 0
   }
   return 1
@@ -952,11 +1148,11 @@ if {[info exists ::ASE_SIMULATORS] && $::ASE_SIMULATORS ne {}} {
         ase::sim_register [dict get $ase_seed_e name] [dict get $ase_seed_e path] \
                           -args $ase_seed_a -backend $ase_seed_b
       } ase_seed_err]} {
-        catch {ase::echo [ase::sim_why badrcentry {} {} $ase_seed_err] error}
+        catch {ase::sim_say badrcentry {} {} $ase_seed_err error}
       }
     }
   } ase_seed_lerr]} {
-    catch {ase::echo [ase::sim_why badrclist {} {} $ase_seed_lerr] error}
+    catch {ase::sim_say badrclist {} {} $ase_seed_lerr error}
   }
   set ::ase::sim_origin session
   catch {unset ase_seed_e} ; catch {unset ase_seed_a}
