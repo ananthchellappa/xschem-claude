@@ -730,6 +730,33 @@ proc ase::sim_why {kind name path {extra {}}} {
     cap_no_answer {
       return "$path, which is the program the simulator you picked will start, was given a tiny test circuit to try and had still not finished with it after $extra seconds, so there was no way to find out what it can do. It may simply be slow to start. Your run is going ahead anyway, and this will be tried again the next time you press Run."
     }
+    op_tier_blanket {
+      return "Your simulator can hand back the operating-point numbers for every device in one request, so that is what this run asked for. The deck names no devices at all, which means it stays the same size however many transistors your design has."
+    }
+    op_tier_perdevice {
+      set head "This run asked your simulator for each device's operating-point numbers one request at a time. That is the way that always works, and it is where the numbers on your schematic come from."
+      switch -- $extra {
+        unknown {
+          return "$head xschem was not able to find out anything about what $path can do, so it did not try a shorter way. Nothing is wrong; the deck is just longer than it has to be."
+        }
+        unsafe {
+          return "$head There is a much shorter way your simulator would accept, but it is all or nothing: if a single device in your design has a name the simulator cannot match, it throws the whole operating point away and says nothing. Until that risk is gone, xschem asks the safe way."
+        }
+        toomany {
+          return "$head The shorter way puts every device on one request line, and your design has too many devices to fit on one line, so the safe way is the only one left."
+        }
+        forced {
+          return "$head You asked for it to be done this way."
+        }
+      }
+      return "$head Your simulator cannot do either of the shorter ways, so this is the only one available. Nothing is wrong; the deck is just longer than it has to be."
+    }
+    op_tier_writeline {
+      return "This run asked for every device's operating-point numbers on one short request line, because you chose that by hand. Watch out: if even one device in your design has a name the simulator cannot match, it throws the whole operating point away and writes no results at all, without complaining. If your schematic comes up with no device numbers on it anywhere, that is why — ask one device at a time instead."
+    }
+    op_tier_forced {
+      return "You chose by hand how this run would ask for device operating-point numbers, so what your simulator can actually do was not taken into account. Clear that choice whenever you want xschem to decide for itself again."
+    }
   }
   return "Something is wrong with the simulator named $name."
 }
@@ -758,10 +785,21 @@ proc ase::sim_why {kind name path {extra {}}} {
 # happens next. Every reader clears first and reads back after, so the record
 # is always the sentences of ONE gesture. The RETURN value is unchanged and is
 # still this call's own sentence, not the record.
+#
+# ⚠ THE RECORD IS WRITTEN BY ITS FULL NAME, NOT THROUGH `variable` (issue
+# 0963). What a reader would otherwise assume is that the two spellings are the
+# same thing. They are not once this command is WRAPPED: `variable sim_said`
+# binds to whatever namespace the command lives in AT CALL TIME, so a caller
+# that renames ::ase::sim_say aside and puts its own proc in front of it -- how
+# every test that wants to know WHICH sentence was said does it, and how a
+# future dialog that wants to tee the CIW would do it -- silently starts
+# appending to ::sim_said in the global namespace. Measured on Tcl 8.6: the
+# sentence still reaches the user, ase::sim_said still answers empty, and the
+# dialog that exists to show the user the very words the CIW got shows nothing,
+# with no error anywhere.
 proc ase::sim_say {kind name path {extra {}} {tag error}} {
-  variable sim_said
   set m [ase::sim_why $kind $name $path $extra]
-  lappend sim_said $m
+  lappend ::ase::sim_said $m
   ase::echo $m $tag
   return $m
 }
@@ -2188,6 +2226,278 @@ proc ase::op_cards_count {block} {
   return $n
 }
 
+# ============================================================================
+# ISSUE 0963 — WHICH SHAPE THE DECK ASKS FOR DEVICE NUMBERS IN, AND WHY
+# ============================================================================
+# Three shapes, and the run picks ONE of them. The probe (issue 0948) already
+# measures what the program that will start can do; until this section existed
+# its answer had exactly one reader, ase::cap_report, which warns about three
+# unrelated things and never touched the deck.
+#
+#   a  BLANKET      one device-less request, `.options saveopparams`. O(1) in
+#                   the deck whatever the design holds. No released ngspice can
+#                   do it, so on this box it is COLD CODE by construction and
+#                   is exercised only by a stand-in that claims the capability
+#                   (test_ase_optier_0963 section A). Cold code behind a green
+#                   suite is what shipped issues 0928 and 0929.
+#   b  WRITE LINE   `write <raw> all @dev1 @dev2 …` — each device named once,
+#                   no parameter, on the OPERATING-POINT write only. O(devices)
+#                   rather than O(devices x parameters): 78 FETs and 468 cards
+#                   become one line with 78 names.
+#   c  PER DEVICE   today's `.save @dev[param]` cards, one per device per
+#                   parameter. What every automatic choice lands on.
+#
+# ⚠ SHAPE b IS NEVER CHOSEN AUTOMATICALLY, AND THAT IS DELIBERATE (guard G4).
+# What a reader would otherwise assume is that a simulator which accepts the
+# short form should be given it. MEASURED on the user's own tb_bandgap: naming
+# all 78 devices on the operating-point write line produces a results file with
+# NO OPERATING POINT IN IT AT ALL, at exit 0. Two of the 78 names this tree
+# emits cannot be resolved (issue 0965) and ONE unresolvable name aborts the
+# WHOLE write — "Error during 'write': no writable vector found.", no file. The
+# same two names cost shape c 12 blank rows out of 468 and it keeps the other
+# 456. So the short form trades 468 independently-degradable requests for one
+# all-or-nothing request, on the one surface whose whole job is to stop numbers
+# going missing quietly. It is built, it is exercised, and it is reachable
+# through the override — nothing chooses it for anybody.
+#
+# ⚠ AND A SIMULATOR NOTHING WAS MEASURED ABOUT LANDS ON c, NEVER ON A GUESS
+# (guard G2). `known` is tested FIRST and by its own key: an answer that
+# carries no capability keys at all is "nothing was measured", not "no to
+# everything". Row T11 pins that ordering structurally, because no behavioural
+# row can tell a missing key from a measured 0.
+namespace eval ase { variable op_tier_force {} }
+
+# THE MEASURED BOUNDS, minted once each because both are quoted in comments and
+# consumed in two places, and a bound that drifts between them fails silently.
+#
+# ⚠ THESE ARE NOT THE SAME NUMBER AND MUST NOT BE MERGED. ngspice takes at most
+# 1000 arguments after a command word, and the two commands spend that budget
+# differently — `write <file> all @d1…@dK` spends two on the file and the
+# save-everything word, `save all @n1…@nK` spends one. MEASURED, ngspice-46+:
+#   write : 998 names fine; at 999 it prints `write: too many args.`, writes NO
+#           FILE AT ALL, and exits 0.
+#   save  : 999 names fine; at 1000 it prints `save: too many args.` and the
+#           results file is still written, with the node voltages and zero
+#           device vectors, at exit 0.
+# Both failures are silent-under-emission, which is why neither is guessed.
+proc ase::op_write_max_names {} { return 998 }
+proc ase::op_save_max_names {} { return 999 }
+
+# THE OVERRIDE (issue 0963). Force one shape regardless of what was measured,
+# for support and for the suites — `a`, `b`, `c`, or {} to hand the decision
+# back. Tcl-level on purpose: no menu item and nothing in the Save All dialog,
+# which is the smallest blast radius that still covers both stated users. That
+# choice is on the user's queue.
+#
+# ⚠ THIS IS THE ONLY DOOR TO SHAPES a AND b. Shape a needs a simulator nobody
+# has, and shape b is refused by guard G4 above; without the override both arms
+# would be paths only somebody else's machine ever runs, which is the specific
+# failure that produced issues 0928 and 0929.
+proc ase::op_tier_force_set {t} {
+  variable op_tier_force
+  if {$t ne {} && [lsearch -exact {a b c} $t] < 0} {
+    return -code error "ase: op_tier_force_set: expected a, b, c or {}, got '$t'"
+  }
+  set op_tier_force $t
+  return $t
+}
+
+# What the override is set to, or {} when the measurement decides.
+proc ase::op_tier_forced {} {
+  variable op_tier_force
+  return $op_tier_force
+}
+
+# The captured block itself, whatever netlist text it was built from — {} when
+# nothing is held.
+#
+# ⚠ DELIBERATELY NOT ase::op_cards_for, AND THE DIFFERENCE MATTERS. op_cards_for
+# answers only for EXACTLY one netlist text, because emitting a block into a
+# deck it was not built from names devices that deck may not contain. Choosing
+# a SHAPE is a different question: it needs only how many devices there are,
+# and it is asked from ase::op_save_tier, whose caller has already decided
+# whether the block is emittable at all.
+proc ase::op_cards_block {} {
+  variable op_cards
+  if {![dict exists $op_cards block]} { return {} }
+  return [dict get $op_cards block]
+}
+
+# The bare `@dev[param]` names carried by a captured block, in block order.
+#
+# ⚠ DERIVED FROM THE BLOCK, NEVER REBUILT (invariant I1). op_annot::save_cards
+# is the one place a device name is composed; this reads the names back out of
+# what it produced. A second walk of the hierarchy here would be a second name
+# builder, and the two would drift on exactly the cells issue 0965 is about.
+proc ase::op_cards_names {block} {
+  set out {}
+  foreach l [split $block "\n"] {
+    if {[regexp {^\.save[ \t]+(@[^ \t]+)[ \t]*$} $l -> nm]} {
+      if {[string first {[} $nm] >= 0} { lappend out $nm }
+    }
+  }
+  return $out
+}
+
+# The distinct devices a captured block names, in block order, with the
+# `[param]` suffix cut off — one entry per device however many parameters it
+# carries. This is what shape b puts on the write line.
+proc ase::op_cards_devices {block} {
+  set out {}
+  set seen [dict create]
+  foreach nm [ase::op_cards_names $block] {
+    set i [string first {[} $nm]
+    if {$i <= 0} { continue }
+    set dev [string range $nm 0 [expr {$i - 1}]]
+    if {[dict exists $seen $dev]} { continue }
+    dict set seen $dev 1
+    lappend out $dev
+  }
+  return $out
+}
+
+# The `save` command lines shape c emits INSIDE `.control` (issue 0964), split
+# at the measured bound with the save-everything word on the FIRST line only.
+#
+# ⚠ A SPLIT `save` ACCUMULATES; A SPLIT `write` DOES NOT. MEASURED: two `save`
+# lines of 300 names each leave 500 distinct device vectors in the plot, byte
+# for byte what one line of 600 gives. Two `write` lines under `set appendwrite`
+# instead produce TWO plots BOTH named `Operating Point`, and `xschem raw read
+# <file> op` picks one of them — half the devices become silently unreadable.
+# That asymmetry is the whole reason shape b has a hard one-line ceiling
+# (guard G6) while shape c has none.
+proc ase::op_ctl_saves {names} {
+  set out {}
+  set max [ase::op_save_max_names]
+  set n [llength $names]
+  set i 0
+  while {$i < $n} {
+    set chunk [lrange $names $i [expr {$i + $max - 1}]]
+    if {$i == 0} {
+      lappend out "save all [join $chunk { }]"
+    } else {
+      lappend out "save [join $chunk { }]"
+    }
+    incr i $max
+  }
+  return $out
+}
+
+# THE DECISION. Returns {tier a|b|c reason <token> ndev N ncards M}.
+#
+# Every arm is testable on a box with no simulator at all by priming
+# ase::sim_caps, and that is how the whole of section T drives it.
+#
+# ⚠ IT IS NOT SIDE-EFFECT FREE, and an earlier version of this comment said
+# it was. `ase::sim_capabilities` is lazy: on a cache MISS it makes a scratch
+# folder and STARTS THE USER'S SIMULATOR (twice, under a timeout) before it can
+# answer. Every test row states the answer outright, so no row has ever taken
+# that path from here -- and in production `ase::run_deck` warms the cache one
+# line earlier, so a Run pays for the measurement once, where the user expects
+# a simulator to start. Do NOT move this call onto a path that renders a deck
+# without a Run behind it, and do not read the comment two hundred lines up
+# about the walk staying out of render_deck as covering this one: it does not.
+#
+# The guards, in order, each on its own line and each with its own reason token
+# so a reader of the CIW and a test row can both tell which one fired:
+#
+#   G1 forced   the override is set                       -> that shape
+#   G2 unknown  nothing was measured about the program    -> c
+#   G3 blanket  it can save every device in one request   -> a
+#   G4 unsafe   it could take the short form              -> c   (the demotion)
+#   G5 nocap    it can take neither shorter form          -> c
+#   G6 toomany  the short form will not fit on one line   -> c
+#
+# ⚠ G4 AND G5 RETURN THE SAME SHAPE, so nothing behavioural can tell them apart
+# and only the reason token separates them. That is why test_ase_optier_0963
+# carries a STRUCTURAL row (T12) asserting G4 exists at all: delete its body and
+# the suite would otherwise stay green while every ngspice on earth was silently
+# switched onto the all-or-nothing write.
+#
+# ⚠ G6 BEATS THE OVERRIDE, and it is the one place a forced choice is refused.
+# Splitting is not available (see ase::op_ctl_saves), so the alternative to
+# refusing is an operating point with half its devices missing and no complaint
+# anywhere — the defect this whole surface exists to delete.
+proc ase::op_save_tier {state} {
+  variable op_tier_force
+  set blk [ase::op_cards_block]
+  set ndev [llength [ase::op_cards_devices $blk]]
+  set ncards [ase::op_cards_count $blk]
+  set tier c
+  set reason nocap
+  if {$op_tier_force ne {}} {
+    set tier $op_tier_force
+    set reason forced
+  } else {
+    # ⚠ CAUGHT, AND A RAISE IS READ AS "NOTHING WAS MEASURED". What a reader
+    # would otherwise assume is that this call cannot fail: ase::sim_capabilities
+    # deliberately RE-RAISES a backend probe's own error so a defect in it stays
+    # loud (issues 0949-0954). It stays loud where it should -- ase::cap_report
+    # and the probe's own suite call it uncaught -- but THIS caller is on the
+    # deck-rendering path of an opt-in annotation extra, and op_cards_capture's
+    # rule applies to it word for word: an annotation extra may not break
+    # Netlist-and-Run. So a probe that blew up lands on the per-device form,
+    # which is the one that always works.
+    if {[catch {ase::sim_capabilities \
+                  [ase::state_get $state simulator ngspice]} caps]} {
+      set caps [dict create known 0]
+    }
+    if {![dict exists $caps known] || [dict get $caps known] != 1} {
+      set tier c
+      set reason unknown
+    } elseif {[dict exists $caps blanket_op_save] &&
+              [dict get $caps blanket_op_save] == 1} {
+      set tier a
+      set reason blanket
+    } elseif {[dict exists $caps appendwrite] && [dict get $caps appendwrite] == 1 &&
+              [dict exists $caps hier_op_names] && [dict get $caps hier_op_names] == 1} {
+      set tier c
+      set reason unsafe
+    } else {
+      set tier c
+      set reason nocap
+    }
+  }
+  if {$tier eq {b} && $ndev > [ase::op_write_max_names]} {
+    set tier c
+    set reason toomany
+  }
+  return [dict create tier $tier reason $reason ndev $ndev ncards $ncards]
+}
+
+# SAY WHICH SHAPE THE RUN USED, ONCE, IN THE USER'S OWN WORDS. Called from
+# ase::run_deck; returns the kind that was said, or {} when there was nothing
+# to say — a real answer, not an absence.
+#
+# ⚠ SILENT WHEN NO DEVICE NUMBERS WERE ASKED FOR AT ALL. The three conditions
+# are exactly render_deck's own: the user's tick, an enabled operating point,
+# and a block captured from THIS netlist text. A run that emits no device
+# requests has no shape to report, and a sentence about one would be a claim
+# about a deck that does not carry it.
+#
+# ⚠ THE SENTENCES ARE MINTED IN ase::sim_why AND SAID THROUGH ase::sim_say
+# (ruling D5-4), never rendered here. The Simulators dialog reads back what was
+# said; a sentence composed at a say-site cannot be read back, and row S4 greps
+# the comment-stripped file for exactly that construct.
+proc ase::op_tier_report {sim state netlist_text} {
+  if {![ase::op_gate_on [ase::state_get $state save_op_params {}]]} { return {} }
+  if {![ase::op_analysis_enabled $state]} { return {} }
+  if {[ase::op_cards_for $netlist_text] eq {}} { return {} }
+  set d [ase::op_save_tier $state]
+  set path {}
+  catch {set path [dict get [ase::sim_status $sim] resolved]}
+  set kind op_tier_perdevice
+  switch -- [dict get $d tier] {
+    a { set kind op_tier_blanket }
+    b { set kind op_tier_writeline }
+  }
+  ase::sim_say $kind $sim $path [dict get $d reason] note
+  if {[dict get $d reason] eq {forced}} {
+    ase::sim_say op_tier_forced $sim $path {} note
+  }
+  return $kind
+}
+
 # Does the design buffer carry unsaved edits? Exactly `xschem get modified`,
 # normalised to 1/0 and safe when the command is unavailable.
 proc ase::design_is_dirty {} {
@@ -2507,6 +2817,24 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## reads its answer. The suite calls ase::cap_report directly, uncaught, so
   ## a defect in it is still loud where it should be.
   catch {ase::cap_report $sim [ase::n_enabled_analyses $state]}
+  ## 0963: AND SAY, IN PLAIN WORDS, HOW THIS RUN ASKED FOR DEVICE
+  ## OPERATING-POINT NUMBERS AND WHY. Until this line the probe's answer had one
+  ## reader (cap_report, one line up) that never touched the deck, and the whole
+  ## of what a user was told about the strategy was a count of cards emitted at
+  ## netlist time. The sentence names no capability, no internal word and no
+  ## letter for the shape -- ase::sim_why mints all four of them.
+  ##
+  ## HERE AND NOT IN run_cmd, for cap_report's reason one line up: run_cmd's
+  ## returned command and its echo behaviour are pinned byte for byte by row D4
+  ## of tests/headless/test_ase_simreg_0931.tcl. The report belongs to the RUN.
+  ##
+  ## CAUGHT, for cap_report's reason too: everything it says is advisory and
+  ## nothing downstream reads it, so a defect in it must never stop a run. The
+  ## suite calls ase::op_tier_report and ase::op_save_tier directly, uncaught.
+  ##
+  ## SILENT when this deck asks for no device numbers at all -- op_tier_report
+  ## re-checks render_deck's own two gates and the captured block.
+  catch {ase::op_tier_report $sim $state $netlist_text}
   if {[llength $cosim]} {
     foreach r [ase::cosim_build $state $cosim] {
       lassign $r cm cstatus cdetail
@@ -2745,11 +3073,25 @@ proc ase::last_result {} {
 
 # The `xschem raw read` type argument (and the op-only "nothing plottable"
 # gate) for a state's results: the LAST enabled analysis type in the FIXED
-# emit order op dc ac tran ({} when none is enabled). COUPLING: the ngspice
-# render_deck emits the enabled analyses into one .control block in exactly
-# this order, so when the trailing `write` executes, ngspice's CURRENT plot
-# (the one the raw file carries) belongs to the FINAL analysis — this proc
-# must mirror render_deck's emit order forever.
+# order op dc ac tran ({} when none is enabled).
+#
+# ⚠ THIS PROC NO LONGER MIRRORS render_deck's EMIT ORDER, AND ITS OWN COMMENT
+# USED TO SAY IT MUST, FOREVER (issue 0964). That coupling was true of a deck
+# with ONE trailing `write`, where the results file carried whichever analysis
+# happened to run last. Two changes broke it and neither can be undone here:
+# issue 0929 made the deck write once PER analysis, so the file carries every
+# one of them; and issue 0964 made the operating point run LAST when its device
+# requests moved inside `.control`, so "last to run" became `op` on exactly the
+# op+tran benches whose waveform window should open on the TRANSIENT.
+#
+# What the answer means now is "the analysis this state's results should be
+# SHOWN as", and both readers find their plot BY NAME — `xschem raw read <file>
+# op` picks the operating point out of a multi-plot file and `... tran` picks
+# the transient (measured against this tree). So the fixed order below is a
+# preference, not a mirror: the transient wins over the operating point because
+# it is what a user who enabled both wants to look at. Row R6 pins it, and it
+# is the only place the reorder could have silently changed the user's waveform
+# window.
 proc ase::plot_sim_type {state} {
   set out {}
   foreach type {op dc ac tran} {
@@ -5510,40 +5852,137 @@ namespace eval ase::backend::ngspice {
     }
     # --- the op_annot device operating-point save cards (plan step S4) -------
     # A PURE CONSUMER: the block was built by op_annot::save_cards at netlist
-    # time (ase::op_cards_capture) and is appended VERBATIM here.
+    # time (ase::op_cards_capture) and is never rebuilt here. Which SHAPE the
+    # request takes is ase::op_save_tier's answer (issue 0963); this switch only
+    # renders it. Nothing below re-wraps, sorts or dedupes a card, and every
+    # device name still originates in op_annot's own walk (invariant I1).
     #
-    # ⚠ DECK LEVEL, IMMEDIATELY ABOVE `.control`, AND NOT ONE LINE LOWER.
-    # Inside a .control block a dot-card is `save: no such command available`
-    # at rc 0 (op_annot.tcl:2112-2118) — it would fail silently.
+    # ⚠ THE TWO GATES ABOVE THE SHAPE ARE UNCHANGED, AND THEY ARE WHAT DECIDES
+    # WHETHER DEVICE NUMBERS ARE ASKED FOR AT ALL: the user's tick, and an
+    # enabled operating point. The shape decides only HOW.
+    #
+    # ⚠ A DOT-CARD MUST STAY AT DECK LEVEL, ABOVE `.control`, AND A `save`
+    # COMMAND MUST STAY INSIDE IT. Inside a .control block a dot-card is
+    # `save: no such command available` at rc 0 (op_annot.tcl:2112-2118) and
+    # above it a bare `save` is not a card at all — both fail silently. That is
+    # why the per-device shape has two arms below and they are not
+    # interchangeable.
     #
     # ⚠ THE BLOCK'S OWN `.save all` LEADER IS LOAD-BEARING; DO NOT TIDY IT AWAY
-    # AS A DUPLICATE. Any explicit `save` cancels ngspice's implicit
+    # AS A DUPLICATE, AND DO NOT MOVE IT INSIDE `.control` (guard G-LEADER,
+    # issue 0964). Any explicit `save` cancels ngspice's implicit
     # save-everything (rule R2 / invariant I2), and the `.save all` at :3161
     # above is emitted ONLY when save_all_v is 1 — the schema default is 0.
     # Measured on the committed save_all_v=0 sky130_tests/test_nfet_final
     # state: block WITH the leader -> 13 vectors, 6 device parameters, 5 node
     # v(); block WITHOUT it -> 7 vectors, 6 device parameters, ZERO node v().
+    # And measured again when the reorder arm below was built: with the leader
+    # moved into `.control` alongside the device requests, a bench carrying
+    # per-output `.save <expr>` lines lost every OTHER node voltage from its
+    # TRANSIENT — the plot fell from 6 vectors to 2, `time` and the one named
+    # output, silently. So every arm below emits the leader at deck level.
     # Two `.save all` lines in one deck were re-measured harmless.
     #
-    # ⚠ AND THE CARDS GO THROUGH BARE. `.save @m.x1.xm4.m<model>[id]`, never
-    # `.save i(@...)` — the wrapper is the READ shape (op_annot::vector), and a
-    # wrapped card produces no vector and no diagnostic (rule R4 / spec
-    # landmine 1 / issue 0607). One name builder, two consumers (invariant I1):
-    # nothing here rebuilds, re-wraps, sorts or dedupes a card.
+    # ⚠ THE LITERAL THE ARMS BELOW EMIT IS THE BLOCK'S OWN, NOT A SECOND
+    # SPELLING OF IT: op_annot::save_cards builds `[linsert $cards 0 {.save
+    # all}]` (op_annot.tcl:2611) and returns {} rather than a lone leader for an
+    # empty walk, so a non-empty block always begins with exactly that line and
+    # always carries at least one card. That is what makes "emit the leader,
+    # move the cards" an exact substitution rather than an approximation.
+    #
+    # ⚠ AND THE NAMES GO THROUGH BARE, IN EVERY SHAPE. `@m.x1.xm4.m<model>[id]`,
+    # never `i(@...)` — the wrapper is the READ shape (op_annot::vector), and a
+    # wrapped request produces no vector and no diagnostic (rule R4 / spec
+    # landmine 1 / issue 0607). That survives the move into `.control`: row E11
+    # is what stops a later hand "fixing" the spelling on the way in.
     ## ⚠ 0928: AND THE CONSUMER CHECKS IT TOO, not only the capture. The cache
     ## outlives one netlist -- `ase::run_existing` renders from a block an
     ## EARLIER netlist primed -- so a user who turns the `op` analysis off and
     ## re-runs would otherwise get a deck full of device cards nothing reads,
     ## sampled at every timepoint of whatever analysis is left. The capture-side
     ## guard saves the walk; this one is what makes the deck correct.
+    ##
+    ## The two carriers below are read by the `.control` block further down.
+    ## Empty means "this shape puts nothing there", which is the state every
+    ## deck that emits no device requests at all is left in — and that is what
+    ## keeps such a deck byte-identical to what it has always been (row E12).
+    set optier_write {}
+    set optier_ctl {}
     if {[ase::op_gate_on [ase::state_get $state save_op_params {}]] &&
         [ase::op_analysis_enabled $state]} {
       set opblk [ase::op_cards_for $netlist_text]
       if {$opblk ne {}} {
+        set optier [dict get [ase::op_save_tier $state] tier]
         lappend lines \
           "* op_annot device operating-point save cards (Outputs > Save All)"
-        foreach opl [split [string trimright $opblk "\n"] "\n"] {
-          lappend lines $opl
+        switch -- $optier {
+          a {
+            # THE BLANKET SHAPE (issue 0963 tier a): one device-less request,
+            # so the deck is the same length for 1 device as for 5000. NO
+            # DEVICE IS NAMED ANYWHERE — that is the whole property, and row E1
+            # is what holds it. Cold code on every released ngspice, which is
+            # why a stand-in that claims the capability exercises it.
+            #
+            # ⚠ THIS IS NOT THE SHAPE THE PROBE MEASURED, and that is filed as
+            # issue 0966: the probe asks whether `save @<device>[*]` works, one
+            # request per device, while this asks for a device-less blanket.
+            # It is what doc/claude/ngspice_enhancement_request_op_parameter_saving.md
+            # section 4 asks ngspice for. Harmless when mis-selected: measured
+            # on ngspice-46+, an unrecognised `.options` line is ignored
+            # silently at exit 0 with a normal results file.
+            lappend lines ".save all"
+            lappend lines ".options saveopparams"
+          }
+          b {
+            # THE ONE-LINE SHAPE (issue 0963 tier b): no cards at all here, and
+            # each device named ONCE — with no parameter — on the
+            # OPERATING-POINT write line built further down. MEASURED: naming a
+            # bare device on a write line dumps ALL of that device's parameters,
+            # 75 for a level-1 MOS and 89 for BSIM4, so this is O(devices) and
+            # not O(devices x parameters).
+            #
+            # ⚠ THE OPERATING-POINT WRITE AND NOTHING ELSE. MEASURED: the same
+            # bare name on a `.tran` or `.dc` write is SILENTLY WRONG — every
+            # device vector arrives dims=1 with one non-zero sample parked at
+            # index 0 holding the end-of-run value and 0.0 at all 208 remaining
+            # points, no warning, well-formed file. It round-trips exactly under
+            # `op` alone. Rows E5 and M1 are what stop the line being moved.
+            #
+            # ⚠ NOTHING SELECTS THIS AUTOMATICALLY (guard G4). See
+            # ase::op_save_tier for the measurement: one unresolvable device
+            # name throws the ENTIRE operating point away at exit 0.
+            lappend lines ".save all"
+            set optier_write [ase::op_cards_devices $opblk]
+          }
+          default {
+            if {[ase::n_enabled_analyses $state] > 1} {
+              # THE PER-DEVICE SHAPE, WITH ANOTHER ANALYSIS IN THE SAME RUN
+              # (issue 0964, which is issue 0928 section 7). A deck-level
+              # `.save` applies to EVERY analysis, so today's cards are
+              # recorded at every time point of the transient, where nothing
+              # reads them. MEASURED on the user's own tb_bandgap: +74.9 MB of
+              # results file (144,455,860 against 69,595,016) and +4.08 s of
+              # wall clock, for 456 device vectors whose operating-point copy
+              # occupies one point and about 3.6 KB.
+              #
+              # ⚠ THE REQUESTS MOVE INSIDE `.control` AND THE OPERATING POINT
+              # MOVES LAST, and BOTH halves are needed. MEASURED: `unsave` does
+              # not exist in ngspice and a later `save all` does not reset the
+              # list, so the save list is sticky forward-only — asking inside
+              # `.control` but leaving `op` first would put the requests right
+              # back onto every analysis that follows it. The reorder is in the
+              # analysis loop below, keyed on this list being non-empty.
+              lappend lines ".save all"
+              set optier_ctl [ase::op_ctl_saves [ase::op_cards_names $opblk]]
+            } else {
+              # THE PER-DEVICE SHAPE ON ITS OWN. Nothing else runs, so nothing
+              # can ride along: the block goes through EXACTLY as it always
+              # has, byte for byte, leader included (row E8).
+              foreach opl [split [string trimright $opblk "\n"] "\n"] {
+                lappend lines $opl
+              }
+            }
+          }
         }
       } elseif {![ase::op_cards_hit $netlist_text]} {
         # No record for THIS netlist text: the artifact is one this session
@@ -5608,10 +6047,71 @@ namespace eval ase::backend::ngspice {
     # on the previous run's and `6` annotates whichever stale operating point
     # happens to come first. See the deletion beside cosim_clear_artifacts.
     if {[ase::n_enabled_analyses $state] > 0} { lappend lines "set appendwrite" }
-    foreach type {op dc ac tran} {
+    # --- 0964: THE OPERATING POINT RUNS LAST WHEN ITS REQUESTS MOVED IN ------
+    # The emit order is normally the fixed `op dc ac tran` this block has always
+    # used, and every deck that carries no in-`.control` device requests renders
+    # byte-identically (row E12, and it is what keeps test_ase_core's committed
+    # deck goldens green with nobody editing them).
+    #
+    # ⚠ THE ONE EXCEPTION IS NOT COSMETIC AND IS NOT REORDERABLE BY TASTE. When
+    # the per-device requests moved inside `.control` (issue 0964), they are
+    # asked for immediately before `op` — and ngspice's save list is sticky
+    # FORWARD ONLY: `unsave` does not exist and a later `save all` does not
+    # reset it (both measured, ngspice-46+). So `op` must be the LAST analysis
+    # or every analysis after it records the device numbers again, which is the
+    # 74.9 MB this change exists to delete.
+    #
+    # ⚠ AND `ase::plot_sim_type` NO LONGER MIRRORS THIS ORDER. Its own comment
+    # used to say it must, forever; read the one there before changing either.
+    # Both readers pick their plot BY NAME out of the multi-plot results file,
+    # so nothing downstream depends on which analysis ran last.
+    set anorder {op dc ac tran}
+    # --- 0967: THE PRINTED OUTPUTS KEEP READING THE PLOT THEY ALWAYS READ ----
+    # `print` reads whichever plot the simulator is standing in, and these lines
+    # have always sat after every analysis -- so before the reorder above they
+    # read the LAST analysis of `op dc ac tran`, and after it they would read the
+    # operating point instead. The Outputs pane's Value column is filled from
+    # them (see result_probe), so ticking a box about DEVICE numbers would put a
+    # DC operating-point number in a column that had been showing the transient,
+    # with nothing said. That is a number that was not measured for the thing it
+    # is displayed next to (ruling D5-1), and the tick that caused it is about
+    # something else entirely.
+    #
+    # So the prints are emitted after the write of the analysis that is last in
+    # the CANONICAL order, not after whatever ran last. With no reorder the two
+    # are the same analysis and the deck renders BYTE-IDENTICALLY, which is what
+    # keeps the committed deck goldens green. Rows P1/P2/P3 of
+    # tests/headless/test_ase_optier_0963.tcl.
+    set printlines {}
+    foreach o [ase::state_get $state outputs] {
+      if {[ase::state_get $o save 0] eq {1}} {
+        lappend printlines "print [ase::backend::ngspice::print_arg [dict get $o expr]]"
+      }
+    }
+    set printanchor {}
+    foreach type $anorder {
+      set ai -1
       foreach a [ase::state_get $state analyses] {
+        incr ai
         if {[ase::state_get $a type] ne $type} { continue }
         if {[ase::state_get $a enabled 0] ne {1}} { continue }
+        set printanchor [list $type $ai]
+      }
+    }
+    set printsdone 0
+    if {[llength $optier_ctl]} { set anorder {dc ac tran op} }
+    foreach type $anorder {
+      set ai -1
+      foreach a [ase::state_get $state analyses] {
+        incr ai
+        if {[ase::state_get $a type] ne $type} { continue }
+        if {[ase::state_get $a enabled 0] ne {1}} { continue }
+        # 0964: the device requests, immediately before the analysis that is
+        # the only one able to use them. A `save` COMMAND, not a dot-card:
+        # dot-cards are not commands in here (see the shape switch above).
+        if {$type eq {op}} {
+          foreach opsl $optier_ctl { lappend lines $opsl }
+        }
         switch -- $type {
           op   { lappend lines "op" }
           dc   { lappend lines "dc [dict get $a source] [dict get $a start]\
@@ -5626,13 +6126,26 @@ namespace eval ase::backend::ngspice {
         # It is per-PLOT, so one call at the end would only ever have cleaned
         # the last analysis's.
         lappend lines "remzerovec"
-        lappend lines "write [raw_file $state]"
+        # 0963 tier b: the device names ride THIS write and no other. A bare
+        # `@dev` on a multi-point write is silently wrong -- dims=1, one
+        # non-zero sample parked at index 0, 0.0 everywhere else, no warning.
+        # Rows E5 and M1 fail if this condition is loosened.
+        if {$type eq {op} && [llength $optier_write]} {
+          lappend lines "write [raw_file $state] all [join $optier_write { }]"
+        } else {
+          lappend lines "write [raw_file $state]"
+        }
+        # 0967: the printed outputs sit with the analysis they have always read.
+        if {[list $type $ai] eq $printanchor} {
+          foreach pl $printlines { lappend lines $pl }
+          set printsdone 1
+        }
       }
     }
-    foreach o [ase::state_get $state outputs] {
-      if {[ase::state_get $o save 0] eq {1}} {
-        lappend lines "print [ase::backend::ngspice::print_arg [dict get $o expr]]"
-      }
+    # A deck with no enabled analysis at all still carries its print lines, in
+    # the one place there is for them -- exactly where they were before.
+    if {!$printsdone} {
+      foreach pl $printlines { lappend lines $pl }
     }
     # waveform-viewer raw artifact (item 11 D3): with a .control block,
     # ngspice's `-b -r <file>` is DEAD (re-probed 2026-08-29: with a .control

@@ -512,9 +512,20 @@ foreach l $d6_l {
     lappend d6_seq [lindex [split [string trim $l]] 0]
   }
 }
-check "D6 0929 op+tran: appendwrite once, then analysis/remzerovec/write per\
- analysis, in that order" \
-  $d6_seq {set op remzerovec write tran remzerovec write}
+## 0964: AND THE OPERATING POINT NOW RUNS LAST HERE, WHICH IS NOT COSMETIC.
+## C5 one row up left a block primed, and this state has the gate on with op AND
+## tran enabled -- exactly the shape where the device requests move inside
+## `.control`. A deck-level `.save` applies to every analysis, so today's cards
+## were also recorded at every time point of the transient, where nothing reads
+## them: +74.9 MB and +4.08 s measured on the user's own tb_bandgap. ngspice's
+## save list is sticky forward-only -- `unsave` does not exist and a later
+## `save all` does not reset it -- so asking inside `.control` only works if
+## `op` is the LAST analysis. The 0929 property this row was written for is
+## unchanged and still asserted: one `set appendwrite`, and every `write`
+## immediately after its own analysis with a `remzerovec` between.
+check "D6 0929/0964 op+tran: appendwrite once, then analysis/remzerovec/write\
+ per analysis, in that order, with the operating point LAST" \
+  $d6_seq {set tran remzerovec write op remzerovec write}
 check "D6 0929 exactly one write per ENABLED analysis, and both name the raw" \
   [list [c_count $d6_deck {^write }] [c_count $d6_deck {^set appendwrite$}] \
         [c_count $d6_deck {^remzerovec$}]] {2 1 2}

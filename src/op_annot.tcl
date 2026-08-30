@@ -424,6 +424,41 @@ proc op_annot::_wrap {dev param kind} {
   }
 }
 
+## ISSUE 0963 — THE SAME NAME, IN EVERY SPELLING A RESULTS FILE MAY USE.
+##
+## Returns the ordered list of vector names to try for one device parameter:
+## the descriptor's own spelling first, then the BARE one. Deduped to a single
+## element for kind 1, whose spelling is already bare.
+##
+## ⚠ WHAT A READER WOULD OTHERWISE ASSUME IS THAT ONE SPELLING IS ENOUGH. It is
+## not, and the second spelling is not a guess — it is what a results file
+## written by naming devices on the `write` line actually contains. MEASURED,
+## ngspice-46+, the same device in two results files from ONE run:
+##   per-device `.save` cards -> `i(@dev[id])` current, `v(@dev[vgs])` voltage
+##   `write <raw> all @dev`   -> `@dev[id]` notype, `@dev[vgs]` notype
+## and get_raw_index (src/save.c:2567-2600) tries exact / upper / lower and then
+## ADDS a `v(...)` wrapper — it never STRIPS one. So a `i(@dev[id])` request
+## against the second file misses SILENTLY and the schematic paints a blank
+## where a real number exists: measured at 4 of the 6 rows this tree shows for
+## a sky130 transistor (id, vgs, vth, vds).
+##
+## ⚠ ORDER IS LOAD-BEARING AND THE WRAPPED SPELLING MUST STAY FIRST. Because
+## get_raw_index adds `v(...)` on its own, a BARE request also finds a
+## `v(@dev[vgs])` in an ordinary results file — so a bare-first order would
+## work, silently, right up until a file held both spellings. First hit wins,
+## and on every ordinary results file the first hit is the first spelling, which
+## is why row B4 measures the fallback changing nothing at all.
+##
+## ⚠ BOTH SPELLINGS COME FROM _wrap (invariant I1). Typing `${dev}\[${param}\]`
+## out again here would be a second wrapper builder, and when token.c's kind
+## table moves only one of them would follow.
+proc op_annot::_wrap_alts {dev param kind} {
+  set out [list [::op_annot::_wrap $dev $param $kind]]
+  set bare [::op_annot::_wrap $dev $param 1]
+  if {[lindex $out 0] ne $bare} { lappend out $bare }
+  return $out
+}
+
 ## The kind for <param>, taken from the descriptor's `params` triples.
 ## ⚠ Matches the PARAM field (index 1), NOT the label (index 0): S5's formatter
 ## needs `{Ids ids 0}`, a display label that differs from the raw name.
@@ -1332,8 +1367,17 @@ proc op_annot::text {instname} {
       set lbl [lindex $row 0]
       set val {}
       if {$gate} {
-        set val [::op_annot::raw_or_blank \
-                   [::op_annot::_wrap $dev [lindex $row 1] [lindex $row 2]]]
+        ## ISSUE 0963: EVERY SPELLING THIS PARAMETER MAY CARRY, FIRST HIT WINS.
+        ## An ordinary results file answers on the FIRST name, so this loop
+        ## costs one extra `xschem raw value` (0.5 us, measured) only for a
+        ## parameter that is genuinely absent. The second name is what a file
+        ## written by naming devices on the `write` line spells them as; see
+        ## op_annot::_wrap_alts for the measurement and for why the order is
+        ## load-bearing.
+        foreach vn [::op_annot::_wrap_alts $dev [lindex $row 1] [lindex $row 2]] {
+          set val [::op_annot::raw_or_blank $vn]
+          if {[::op_annot::_finite $val]} { break }
+        }
       }
       if {![::op_annot::_finite $val]} {
         set val {}

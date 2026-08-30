@@ -1,6 +1,6 @@
 # Issue number reservations — read before filing
 
-Two blocks are reserved for other branches. Filing into them collides with work
+Three blocks are reserved for other branches. Filing into them collides with work
 this branch cannot see, and the 02xx renumbering recorded in `status.md` is what
 that costs to undo.
 
@@ -8,6 +8,7 @@ that costs to undo.
 |---|---|---|
 | **0500–0599** | the fluid-editing branch | after **0499**, the next number is **0600** |
 | **0700–0799** | reserved (user, 2026-08-24) | after **0699**, the next number is **0800** |
+| **1000–1199** | reserved (user, 2026-08-30) | after **0999**, the next number is **1200** |
 
 So the filing sequence is:
 
@@ -455,7 +456,34 @@ opposite rule. **0962**: a coverage gap — no committed row reproduces the
 CONCURRENT write that 0951 is about, and row I4's headline half passes on the
 defective tree.
 
-**The next free number is 0963.** 0500-0599 and 0700-0799 remain reserved for
-other branches. No 09xx block is reserved: the three tracked sources — this
-file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
-followed by 0900.
+**2026-08-30, item S4's red pass.** Claimed as stubs before any work, so a
+concurrent crew cannot collide: **0963** (a run never says how it asked for
+device numbers, and there is no way to choose — the tier selection, the
+override and the sentence), **0964** (the device requests are recorded at every
+time point of the transient — issue 0928 section 7, measured at +74.9 MB and
++4.08 s on tb_bandgap; this is where the whole win of S4 lives), **0965** (two
+devices on the bandgap bench get a device name ngspice cannot resolve — FILED,
+NOT FIXED, and the reason the one-write-line form cannot be auto-selected), and
+**0966** (the blanket request is not the shape the probe measured — FILED).
+
+**2026-08-30, item S4's repair pass.** **0967**: ticking the device-numbers box
+silently changed which analysis the Outputs pane's Value column reads — issue
+0964 moved the operating point last and the deck's `print` lines, which sit
+after every analysis, went with it. Found by the sabotage pass as a behaviour
+change no committed row could see; FIXED, with rows P1/P2/P3.
+
+**2026-08-30, item S4's write-up pass.** Two more, both reproduced first-hand
+before filing, both FILED NOT FIXED. **0968**: the blanket form's request is a
+deck-level `.options` line and so applies to every analysis, and the blanket arm
+does not get 0964's reorder — so on the day a simulator honours it, issue 0964's
+defect comes back inside the cheapest of the three forms; every committed row
+that renders that form does so on an operating-point-only state, so nothing can
+see it. **0969**: a coverage gap in two halves — the form-b-against-form-c value
+acceptance runs on a hand-written level-1 transistor rather than the PDK bench
+the item names (checked by hand: 456 of 456 bit-identical), and the leader rule
+is a deck grep where its measured hazard was a run that lost 4 of 6 node
+voltages from its transient (checked by hand: 424 vectors either way).
+
+**The next free number is 0970.** 0500-0599 and 0700-0799 remain reserved for
+other branches. No 09xx block is reserved, so 0899 is followed by 0900 — but
+**1000–1199 is** (user, 2026-08-30), so 0999 is followed by **1200**.

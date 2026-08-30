@@ -264,6 +264,87 @@ proc f_devvecs {names} {
   }
   return [lsort $d]
 }
+## 0964: EVERY PLOT IN A MULTI-PLOT RESULTS FILE, EACH WITH ITS OWN VECTORS.
+## f_rawnames above stops at the FIRST `Binary:` and therefore sees the FIRST
+## plot only. That was harmless while the operating point was always written
+## first; since issue 0964 made it run LAST on an op+tran bench it is not, and a
+## row built on it would report the transient's vectors under the operating
+## point's name. Walks each header, then steps over exactly that plot's block of
+## numbers -- binary payload counted from No. Points x No. Variables x 8 (16 for
+## complex), because a plot header can otherwise be spelled inside the numbers.
+proc f_rawplots {raw} {
+  if {[catch {open $raw rb} fh]} { return {} }
+  fconfigure $fh -translation binary
+  set data [read $fh] ; close $fh
+  set out {} ; set pos 0 ; set len [string length $data]
+  while {$pos < $len} {
+    set name {} ; set np 0 ; set nv 0 ; set vars {} ; set invars 0
+    set cplx 0 ; set mode none ; set binstart -1
+    while {$pos < $len} {
+      set nl [string first "\n" $data $pos]
+      if {$nl < 0} { set nl $len }
+      set line [string range $data $pos [expr {$nl - 1}]]
+      set nxt [expr {$nl + 1}]
+      if {[string match {Plotname:*} $line]} {
+        set pos $nxt ; set name [string trim [string range $line 9 end]] ; continue
+      }
+      if {[string match {Flags:*} $line]} {
+        set pos $nxt
+        if {[string first complex $line] >= 0} { set cplx 1 }
+        continue
+      }
+      if {[string match {No. Variables:*} $line]} {
+        set pos $nxt ; set nv [string trim [string range $line 14 end]] ; continue
+      }
+      if {[string match {No. Points:*} $line]} {
+        set pos $nxt ; set np [string trim [string range $line 11 end]] ; continue
+      }
+      if {[string match {Variables:*} $line]} { set pos $nxt ; set invars 1 ; continue }
+      if {[string match {Binary:*} $line]} { set pos $nxt ; set mode bin ; set binstart $pos ; break }
+      if {[string match {Values:*} $line]} { set pos $nxt ; set mode txt ; break }
+      set pos $nxt
+      if {$invars && [regexp {^\s*\d+\s+(\S+)} $line -> nm]} { lappend vars $nm }
+    }
+    if {$name eq {}} break
+    lappend out [list $name $vars]
+    if {$mode eq {bin}} {
+      if {![string is integer -strict $np] || ![string is integer -strict $nv]} break
+      set pos [expr {$binstart + $np * $nv * ($cplx ? 16 : 8)}]
+    } elseif {$mode eq {txt}} {
+      while {$pos < $len} {
+        set nl [string first "\n" $data $pos]
+        if {$nl < 0} { set nl $len }
+        set line [string range $data $pos [expr {$nl - 1}]]
+        if {[string match {Plotname:*} $line] || [string match {Title:*} $line]} { break }
+        set pos [expr {$nl + 1}]
+      }
+    } else break
+  }
+  return $out
+}
+proc f_plotnames {raw} {
+  set o {} ; foreach x [f_rawplots $raw] { lappend o [lindex $x 0] }
+  return $o
+}
+proc f_plotvars {raw plot} {
+  foreach x [f_rawplots $raw] { if {[lindex $x 0] eq $plot} { return [lindex $x 1] } }
+  return {}
+}
+## The vectors that can ONLY have come from a device operating-point request.
+## ⚠ NOT simply "has an @ and a [" -- this bench sets `.options savecurrents`,
+## which puts a terminal current `@dev[id]` / `[is]` / `[ig]` / `[ib]` into
+## EVERY plot, transient included, with nothing to do with this feature. `gm`,
+## `gds` and `vth` are small-signal quantities savecurrents never produces, so
+## they are the honest discriminator.
+proc f_opdevvecs {names} {
+  set d {}
+  foreach n $names {
+    foreach p {[gm] [gds] [vth]} {
+      if {[string first $p $n] >= 0} { lappend d $n ; break }
+    }
+  }
+  return [lsort $d]
+}
 proc f_nodevecs {names} {
   set v {}
   foreach n $names {
@@ -1229,13 +1310,24 @@ if {[auto_execok ngspice] eq {}} {
   catch {xschem raw read $f21_raw tran}
   set f21_trst NO-READ ; catch {set f21_trst [xschem raw sim_type]}
   catch {xschem raw clear}
-  set f21_devs [llength [f_devvecs [f_rawnames $f21_raw]]]
-  check "F21 0929 op+tran in ONE deck: the raw carries BOTH plots, `6`'s reader\
- finds the operating-point one, and the device OP vectors are in it" \
+  ## 0964: PLOT-AWARE, AND THE ORDER IS NO LONGER OP-FIRST. Device
+  ## operating-point requests used to sit at deck level, where a `.save`
+  ## applies to EVERY analysis -- so the same numbers were also recorded at
+  ## every time point of the transient, where nothing reads them (+74.9 MB and
+  ## +4.08 s measured on the user's tb_bandgap). They now go inside `.control`
+  ## immediately before an operating point that runs LAST, because ngspice's
+  ## save list is sticky forward-only. So the transient is the FIRST plot in
+  ## the file now, and this row grew a term: the operating point must still
+  ## carry the device numbers, and the transient must no longer carry them.
+  set f21_devs   [llength [f_opdevvecs [f_plotvars $f21_raw {Operating Point}]]]
+  set f21_trdevs [llength [f_opdevvecs [f_plotvars $f21_raw {Transient Analysis}]]]
+  check "F21 0929/0964 op+tran in ONE deck: the raw carries BOTH plots, `6`'s\
+ reader finds the operating-point one, the device OP vectors are in it, and\
+ they are NOT repeated at every timepoint of the transient" \
     [list $f21_rc $f21_pl $f21_opst $f21_oppt $f21_trst \
-          [expr {$f21_devs > 0 ? 1 : 0}]] \
-    [list 0 {{Operating Point} {Transient Analysis}} op 1 tran 1]
-  if {$f21_pl ne {{Operating Point} {Transient Analysis}}} {
+          [expr {$f21_devs > 0 ? 1 : 0}] $f21_trdevs] \
+    [list 0 {{Transient Analysis} {Operating Point}} op 1 tran 1 0]
+  if {$f21_pl ne {{Transient Analysis} {Operating Point}}} {
     puts "  F21 plots in $f21_raw: $f21_pl"
   }
 

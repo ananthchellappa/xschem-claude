@@ -1446,6 +1446,280 @@ above now carry the same verdict in **both** arms — `ALL PASS (79)` headless a
 `:99`. Nothing in `src/ase.tcl` moved; its guard is adjacent to the OPEN 0683/0684
 ruling.
 
+### 4.3b Which SHAPE the request takes — the three forms ✅ LANDED (0963 + 0964, 2026-08-30)
+
+§4.3a settles *whether* device numbers are asked for. This settles *how*, and it
+is where the cost of the feature lives. Selection is `ase::op_save_tier`; the
+answer is a dict `{tier a|b|c reason <token> ndev N ncards M}`, and it is what
+`ase::backend::ngspice::render_deck` switches on.
+
+⚠ **`ase::op_save_tier` IS NOT SIDE-EFFECT FREE**, and both its own comment and
+this paragraph used to say it was. Every arm is drivable with no simulator on
+the box by priming `ase::sim_caps`, which is how the whole of section T runs —
+but `ase::sim_capabilities` is lazy, and on a cache MISS it makes a scratch
+folder and STARTS THE USER'S SIMULATOR twice under a timeout before it can
+answer. In production that never bites: `ase::run_deck` warms the cache one line
+earlier, so the measurement is paid on a Run, where a simulator starting is what
+the user expects. It would bite immediately if this call were moved onto a path
+that renders a deck with no Run behind it.
+
+| form | what the deck carries | cost |
+|---|---|---|
+| **a — blanket** | `.save all` + `.options saveopparams`. **No device is named anywhere.** | O(1) |
+| **b — one write line** | no cards; `write <raw> all @dev1 @dev2 …` on the **operating-point write only**, each device once, no parameter | O(devices) |
+| **c — per device** | today's `.save @dev[param]` cards, one per device per parameter | O(devices × parameters) |
+
+**The guards, in order.** Each has its own reason token, because two of them
+return the same form and nothing behavioural can tell those two apart.
+
+| guard | condition | answer |
+|---|---|---|
+| G1 | the override is set | that form, reason `forced` |
+| G2 | `known` is absent or 0 | **c**, reason `unknown` |
+| G3 | `blanket_op_save` is 1 | **a**, reason `blanket` |
+| G4 | `appendwrite` **and** `hier_op_names` are 1 | **c**, reason `unsafe` — *the demotion* |
+| G5 | otherwise | **c**, reason `nocap` |
+| G6 | the answer was b and `ndev > 998` | **c**, reason `toomany` — **beats G1** |
+
+⚠ **G2 tests `known` FIRST and by its own key.** A capability answer carrying no
+capability keys at all means *nothing was measured*, not *no to everything*. Row
+T11 pins that ordering structurally: no behavioural row can tell a missing key
+from a measured 0.
+
+⚠ **G4 IS THE ITEM'S OWN TIER-B CONDITION RETURNING TIER C, DELIBERATELY.**
+Measured on the user's `sky130_tests_ase/tb_bandgap`: naming all 78 devices on
+the operating-point write line produces a results file with **no operating point
+in it at all**, at exit 0. Two of the 78 names this tree emits cannot be resolved
+(issue **0965**) and **one unresolvable name aborts the whole write** —
+`Error during 'write': no writable vector found.`, no file. The same two names
+cost form **c** 12 blank rows out of 468 and it keeps the other 456. Form b
+therefore trades 468 independently-degradable requests for one all-or-nothing
+request, on the surface whose entire purpose is to stop numbers going missing
+quietly. It is built, exercised and reachable through the override; nothing
+selects it automatically.
+
+**The override.** `ase::op_tier_force_set a|b|c|{}` / `ase::op_tier_forced`.
+Tcl-level only — no menu item, nothing in the Save All dialog. It is the ONLY
+door to forms a and b, which is what stops either being a path only somebody
+else's machine ever runs (the failure that produced 0928 and 0929).
+
+#### The three measured traps on form b
+
+1. **A bare `@dev` on a multi-point write is SILENTLY WRONG.** Under `.tran`
+   (208 points) and `.dc` (11 points) every device vector arrives `dims=1` with
+   ONE non-zero sample parked at index 0 holding the end-of-run value and 0.0
+   everywhere else — no warning, well-formed file. It round-trips exactly under
+   `op`. Hence "the operating-point write only", asserted structurally (E5) and
+   behaviourally (M1).
+2. **The line holds at most 998 device names.** At 999 ngspice prints
+   `write: too many args.`, writes **no file at all**, and exits 0. The bound is
+   1000 arguments after the command word, and `write <file> all @d1…@dK` spends
+   two of them. `save all @n1…@nK` spends one, so its bound is **999**. Both
+   minted once: `ase::op_write_max_names`, `ase::op_save_max_names`.
+3. **Splitting is not available on `write`.** Two `write` lines under
+   `set appendwrite` produce TWO plots BOTH named `Operating Point`, and
+   `xschem raw read <file> op` picks one — half the devices become silently
+   unreadable. A split `save` *does* accumulate (300 + 300 names → 500 distinct
+   device vectors, byte-equal to one line). That asymmetry is why G6 refuses
+   rather than splits, and why form c's in-`.control` requests may split freely.
+
+#### The read side — form b's results file spells everything BARE
+
+Measured, same device, one ngspice run, two results files:
+
+    per-device .save cards   i(@dev[id]) current      v(@dev[vgs]) voltage
+    write <raw> all @dev     @dev[id]    notype       @dev[vgs]    notype
+
+`get_raw_index` (`src/save.c:2567-2600`) tries exact / upper / lower and then
+**adds** a `v(…)` wrapper; it never **strips** one. So the typed request the
+annotation makes misses silently against form b's file — measured at 4 of the 6
+rows this tree shows for a sky130 transistor (id, vgs, vth, vds). Closed by
+`op_annot::_wrap_alts`, which returns the descriptor's own spelling **first**
+and the bare one as a second try, both built by `op_annot::_wrap` (invariant
+I1). Order is load-bearing: because `get_raw_index` adds `v(…)` on its own, a
+bare-first order would work right up until a file held both spellings.
+
+#### The device requests no longer ride the transient (issue 0964)
+
+A deck-level `.save` applies to **every** analysis, so form c's cards were also
+recorded at every time point of the transient, where nothing reads them.
+Measured on `tb_bandgap`, op AND tran enabled:
+
+    with the 468 device requests   20.21 s   144,455,860 bytes
+    the identical deck, no cards   16.13 s    69,595,016 bytes
+                                   -------   -------------
+    what they cost                 +4.08 s       +74.9 MB
+
+Almost none of that is the operating point: its own 456 device vectors occupy
+one point, about 3.6 KB. **The fix, and both halves are needed:** when form c
+runs with at least one other analysis enabled, the requests move INSIDE
+`.control` as `save` commands placed immediately before `op`, and the analysis
+emit order becomes `dc ac tran op` so `op` runs LAST. ngspice's save list is
+sticky forward-only — `unsave` does not exist and a later `save all` does not
+reset it (both measured) — so asking inside `.control` with `op` still first
+would put the requests straight back onto every analysis that follows.
+
+**Measured after, same bench, three runs of each order** (`VCCGAUSS` pinned to
+1.8; one op-first run excluded for a `Timestep too small` transient failure this
+bench has independently):
+
+    op first, 468 cards at deck level        25.36 / 24.26 s      144,498,100 / 144,491,060 B
+    op last, one `save` inside .control      19.19 / 19.15 / 20.04 s   69,649,886 / 69,626,142 / 69,870,366 B
+
+The results file is now within **48 KB (0.07 %)** of the same bench with device
+numbers turned off entirely, against +74.9 MB before, and the operating point
+still carries all 456 device vectors while the transient carries none.
+
+⚠ **THE OPERATING POINT IS NOT REACHED FROM A DIFFERENT STARTING GUESS, AND THE
+FIRST VERSION OF THIS PARAGRAPH SAID IT WAS.** It claimed the solver now starts
+from the transient's final state rather than from cold. That was reasoned, not
+measured, and it is **false for ngspice**. Measured on a cross-coupled bistable
+with 1 pF of state per node — three DC solutions, driven hard into one of them
+by a transient-only current kick:
+
+    the transient ends LATCHED       v(q) = 1.811825   v(qb) = 0.008087
+    the `op` immediately after it     v(q) = 0.800000   v(qb) = 0.800000
+    the same deck with no transient   v(q) = 0.800000   v(qb) = 0.800000
+
+`op` inside `.control` **re-solves**; it does not continue from wherever the
+transient left the circuit. What the reorder does leave is `tb_bandgap`'s own
+run-to-run spread, which is real and about 2 % wide in **both** orders: `v(vbg)`
+op-first 1.19615 / 1.18454 / 1.20634, op-last 1.19310 / 1.18216 / 1.16632 — two
+overlapping ranges, and the same picture per device parameter. Kept as a `rule`
+debt against 0964 anyway: the analysis order on the user's own bench changed,
+and that spread is theirs to accept or not.
+
+⚠ **G-LEADER: the block's `.save all` leader STAYS AT DECK LEVEL.** Moved into
+`.control` with the requests, a bench carrying per-output `.save <expr>` lines
+lost every OTHER node voltage from its transient — the plot fell from 6 vectors
+to 2, `time` and the one named output, silently. Every form emits the leader
+above `.control`.
+
+⚠ **`ase::plot_sim_type` NO LONGER MIRRORS THE EMIT ORDER**, and its own comment
+used to say it must, forever. That coupling was true of a deck with one trailing
+`write`; issue 0929 made the deck write once per analysis and 0964 made `op` run
+last. Both readers pick their plot BY NAME out of the multi-plot file, so the
+fixed order in `plot_sim_type` is now a *preference* — the transient wins,
+because that is what a user who enabled both wants to look at. Row R6 is the
+only thing that can see this, and it is the only place the reorder could have
+silently changed the waveform window.
+
+⚠ **AND THE PRINTED OUTPUTS DO NOT FOLLOW THE REORDER EITHER (issue 0967).**
+The Outputs pane's **Value** column is filled from the deck's `print` lines, and
+`print` reads whichever plot the simulator is standing in. Those lines sit after
+every analysis, so before 0964 they read the LAST analysis; putting `op` last
+moved them onto the operating point. Measured on an op+tran bench with one saved
+output `v(out)`: with the device-numbers tick **off** the Value column was empty
+(a transient `print` is a table, and `result_probe` accepts only a scalar
+`<expr> = <number>` line), and with it **on** the same bench answered
+`1.800000e+00` — the DC operating point — and the run log the CIW points at held
+one scalar line where it had held a table. A number appearing beside an output
+row because of a checkbox about *device* numbers, unlabelled, is ruling D5-1's
+own class.
+
+Fixed by emitting the `print` lines after the write of the analysis that is last
+in the **canonical** `op dc ac tran` order rather than after whatever ran last.
+With nothing reordered the two are the same analysis and every deck renders
+**byte-identically** — verified by rendering ten deck shapes before and after and
+diffing: only the two reordered shapes moved, and only by the print lines.
+Rows P1 (reorder in force: `tran`, the prints, then the requests and `op`),
+P2 (the control, tick off) and P3 (an op-only run, and a deck with no analysis
+at all).
+
+#### What the user is told
+
+One sentence per run, minted in `ase::sim_why` (ruling D5-4) as one of
+`op_tier_blanket` / `op_tier_perdevice` / `op_tier_writeline`, said through
+`ase::sim_say` from `ase::run_deck` — never from `run_cmd`, whose echoes are
+pinned byte for byte by `test_ase_simreg_0931` row D4. When the override chose
+the form, `op_tier_forced` is said as well, so the user is never left wondering
+why. Row S2 greps every sentence for `appendwrite`, `hier_op_names`,
+`blanket_op_save`, `known` and `tier` and expects none: 9th-grade English, what
+happened and what the user can do, no name out of the code.
+
+⚠ **THE PER-DEVICE SENTENCE IS A HEAD PLUS FIVE TAILS, AND THE TAIL IS CHOSEN BY
+THE REASON TOKEN.** Four of the five are reachable only by passing that token, so
+a row that calls `ase::sim_why` without one measures the default tail and nothing
+else — which is what the first version of S2 did. On this machine the tail that
+actually ships is `unsafe` (the local ngspice measures `appendwrite 1` +
+`hier_op_names 1`, so G4 fires), and the S4 sabotage pass put a code word inside
+it, and then deleted it outright, without one check in twelve suites going red.
+S2 now iterates every kind × every reason token; **S6** additionally asserts the
+five tails are five *different* sentences sharing one opening, so a deleted tail
+cannot fall through to the catch-all and tell the user their simulator "cannot do
+either of the shorter ways" about a simulator that can do one and was refused it
+on purpose.
+
+#### The acceptance, and why it had to be respecified
+
+The item asked that form b's annotated numbers MATCH form c's, per device per
+parameter. **Two separate runs cannot answer that on this bench.** Three runs of
+the byte-identical form-c deck (with `VCCGAUSS` pinned to remove the state's
+`agauss`) put the bandgap output at 1.18680738 / 1.19115242 / 1.19121891 and
+disagree across the 456 device numbers by a **median of 1.7 % and a maximum of
+1256 %** — which swamps the form-b/form-c difference entirely. Written from ONE
+ngspice invocation and ONE operating point, both spellings are **bit-identical,
+maximum relative difference 0.000e+00**. So the acceptance is *one invocation,
+two writes, compared* — rows ACC1 (from the raws) and ACC2 (through the tree's
+own reader, i.e. the numbers that would be painted on the schematic).
+
+#### Filed, not fixed
+
+* **0965** — two `tb_bandgap` devices get a name ngspice cannot resolve. A
+  devpath defect, out of scope here, and the reason G4 exists.
+* **0966** — the blanket form emits `.options saveopparams` (device-less, what
+  the ngspice enhancement request asks for) while the probe measures
+  `save @dev[*]` (per device). "Do not change the probe" blocks the clean fix;
+  harmless in practice, since ngspice-46+ ignores the line silently and no
+  released build answers yes to the probe.
+* **0968** — form a's request is a **deck-level** `.options` line, so it applies
+  to every analysis, and the blanket arm does not get 0964's reorder either
+  (that is keyed on the in-`.control` request list, which form a never fills).
+  Measured by rendering the same op+tran state under each form: form a emits
+  `.options saveopparams` above `.control` with `op` still FIRST. So on the day
+  a build honours it, **0964's defect comes back inside the cheapest of the
+  three forms**. Nothing can see it: E1, E2 and A1 all render form a on an
+  operating-point-only state, and the stand-in returns a canned results file
+  whatever the deck asks for. The recommended fix is a seventh guard — refuse
+  form a when more than one analysis is enabled — but the enhancement request is
+  the only specification this option has and it does not say what a build that
+  honoured it would do with a transient, so it is filed and not guessed at.
+* **0969** — two coverage gaps, both checked by hand and both currently
+  holding. The form-b-against-form-c value acceptance (ACC1/ACC2) runs on a
+  hand-written level-1 transistor, not on the PDK bench the item names — by
+  hand on `tb_bandgap`, 456 of 456 device × parameter values are bit-identical,
+  and with all 78 names rather than the 76 resolvable ones form b writes nothing
+  at all (issue 0965), so the acceptance **as the item words it** is
+  unsatisfiable on that bench. And G-LEADER is a deck grep where its measured
+  hazard was a run (6 transient vectors down to 2); by hand, `tb_bandgap`'s
+  transient holds 424 vectors with the tick on and 424 with it off.
+
+**Verification.** `tests/headless/test_ase_optier_0963.tcl`, 56 checks, both
+arms. Form a is exercised by a `/bin/sh` stand-in that really makes the probe
+measure `blanket_op_save 1`; form b is exercised against the real local ngspice
+through the override. Section ACC3 prints deck size, wall clock and results size
+for both forms and for the no-device-numbers control on every run.
+
+**Seven guards had no row until the sabotage pass went looking**, and each now
+has one, re-measured by re-applying the same sabotage and watching the named row
+turn red:
+
+| guard | what it protects the user from | row |
+|---|---|---|
+| the `unsafe` tail's wording | the shipping sentence carrying a code word | S2 |
+| the `unsafe` tail existing at all | being told their simulator can do neither short form when it can do one | S6 |
+| `known` tested BEFORE any capability | a leftover capability beside `known 0` read as permission | T11 (source) + T13 (behaviour) |
+| the catch around `ase::sim_capabilities` | a probe that blows up breaking Netlist-and-Run for an opt-in extra | T14 |
+| `op_tier_report`'s captured-block gate | a sentence about device requests a deck does not carry | S9 |
+| `op_tier_report`'s tick and op gates | the same sentence to a user who ticked nothing | S7, S8 |
+| `op_cards_names`'s parameter filter | a bare `@dev` reaching a request line, where it means something else | E13 |
+
+T11 used to look for the whole word `known` anywhere in `ase::op_save_tier`'s
+body. The proc's own not-measured fallback is `set caps [dict create known 0]`,
+which sits above every capability read, so the row passed unconditionally — the
+sabotage pass moved the blanket test above the known test and nothing noticed.
+It now matches `$caps known`, which appears only where the guard asks.
+
 ### 4.4 Getting the block onto the screen — two carriers
 
 **Carrier 1: the annotator symbol.** A PDK-neutral `annotate_params.sym`,
