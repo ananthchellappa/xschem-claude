@@ -294,7 +294,32 @@ main-window entries were wrapped and 15 of ASE-L's 24 were silent. Fixed with an
 interceptor on the `menu` command that wraps each widget's `invoke`, leaving
 every `-command` string byte-identical (19 test rows read them back).
 
-**The next free number is 0931.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, the simulator-registry backlog item S1.** Filed **0931** — there
+was no way at all to point ASE-L at a simulator that is not on `PATH`: the whole
+body of `ase::backend::ngspice::run_cmd` was `return [list ngspice -b $deckpath
+2>@1]`, no rc variable, no `$USER_CONF_DIR` file and no proc anywhere answered
+"which program will be started", and the only lever was the `PATH` of the shell
+that launched xschem. FIXED the same day: one resolver (`ase::sim_status`), a
+named registry that an rc, the user's own file and the session all feed, four
+validation guards that each SAY something, and `auto_execok` still the fallback
+when nothing is registered (byte-identical command, which is why the committed
+log-header goldens needed no edit). The GUI front door is item S2 and calls
+`ase::sim_write_conf`.
+
+Four things measured during that item's verification are filed and NOT fixed:
+**0932** (clearing your simulator choice does not survive a restart — the saved
+file cannot write down "none of mine", so the first entry is auto-selected back
+into force silently); **0933** (a location naming an unknown setting is refused
+at registration and honoured at the run, and skips the path normalisation on
+that arm); **0934** (`ase::cosim_build_script` is silent on a missing or
+non-runnable path and RETURNS A DIRECTORY as the build script — the neighbour
+defect 0931's row C7 pins as KNOWN); **0935** (the resolver's `ok` field claims
+more than it delivers — read `resolved`). And **0936** records a measurement
+trap rather than a code defect: three tier baselines were taken on the dev
+display and written down under the headless command, and a fourth cannot be
+produced by the `--nolog` command printed beside it.
+
+**The next free number is 0937.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

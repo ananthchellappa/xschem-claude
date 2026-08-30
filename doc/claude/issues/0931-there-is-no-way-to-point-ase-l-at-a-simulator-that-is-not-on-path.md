@@ -56,7 +56,8 @@ It also has no `file isfile` guard, and `file executable` answers 1 for a
 **directory**, so a folder passes it. Row C7 of the suite pins that silence as
 KNOWN so nobody satisfies this item by copying the neighbour, and so the day
 it is repaired that row is what says so. **It is not fixed here** (out of
-scope) and deserves its own issue — see the open questions.
+scope); it is filed as **issue 0934**, where the directory arm above is
+measured too.
 
 ## What was built
 
@@ -158,6 +159,25 @@ at registration.** *Rejected: storing it verbatim — `ase::run_deck` `cd`s into
 the run directory before it launches anything, so a relative argv0 would
 silently resolve somewhere else.*
 
+**D7 — one mistyped registration takes the working PATH program out of
+service.** Measured at the commit, on a stock tree where `ngspice` on the
+`PATH` works:
+
+    F6 before        -> ngspice -b /tmp/d.spice 2>@1
+    F6 register typo -> 0
+    F6 selected      -> 'my-build'
+    F6 after         -> ase: There is no file at /no/such/ngspice, which you
+                        registered as the simulator named my-build. …
+
+This is D1 (the first registration goes into force) and D3 (a bad entry is kept
+and reported) composing: the entry that goes into force is one that failed
+validation, and D2 then refuses every run until it is fixed. The user IS told a
+plain sentence at the moment they register it, so nothing is hidden — but *"a
+typo disables the simulator that was working"* is not a shape any of the
+questions put to the user, and it is the one place where an alternative is
+cheap: **auto-select only an entry that validated**. Recorded here rather than
+changed, because changing it is the user's call.
+
 ## Tests
 
 `tests/headless/test_ase_simreg_0931.tcl` — 48 checks, written red first
@@ -189,7 +209,7 @@ contract stated for the twelve `auto_execok ngspice` availability gates;
   use. Repointing them is its own item.
 * **`ase::cosim_build_script`'s two silent arms and its missing `isfile`
   guard** are a real, untested defect one proc away. Pinned as KNOWN by row
-  C7; should be filed separately.
+  C7, and now filed as **issue 0934**.
 * **Deck rendering.** `-b`, `2>@1` and the absence of `-o` are unchanged, and
   rows A2 / B5 / B6 assert it byte for byte.
 
@@ -239,3 +259,36 @@ C8 also carries a trap worth keeping: an earlier draft named its fixture
 word "setting" was in the path being echoed back. The user's own words — the
 entry name and the location they typed — are now stripped out before the
 sentence is read.
+
+## Still open, measured and filed rather than quietly fixed
+
+Written up at commit time from the adversarial verification of this item, each
+reproduced independently at `0225a962` before filing:
+
+* **0932 — clearing your simulator choice does not survive a restart.** Going
+  back to the plain `ngspice` on your `PATH` is a gesture the saved file has no
+  way to write down, so the first registered entry is auto-selected on the way
+  back in and starts a program you took out of service, silently. This is the
+  D5-1 shape that D2 was written to avoid, arriving through the persistence
+  layer. Rows E2 and E6 both keep a selection set, so neither can see it.
+* **0933 — a location naming a setting this session does not have is refused at
+  registration and honoured at the run.** `ase::sim_register` reports it and
+  flags the entry unusable; `ase::sim_status` re-validates the literal string,
+  finds a file, and starts it. The same arm also skips D6's normalisation, so
+  the entry answers differently before and after `ase::run_deck` `cd`s into the
+  run directory. Row C8 covers the report; nothing covers what the resolver
+  then does.
+* **0935 — the resolver's `ok` field says a program can be started when nothing
+  can** (`ok 1`, `resolved {}`, for a backend with no program anywhere), which
+  its own comment overpromises. Behaviour is today's, unchanged, which is why it
+  is filed and not touched: the field a future caller should read is `resolved`,
+  and row F1 already says so.
+* **0934 — `ase::cosim_build_script`'s silences**, pinned as KNOWN by row C7,
+  now filed with the measurement, including one arm worse than reported: a
+  **directory** is returned as the build script, because `file executable`
+  answers 1 for a folder and there is no `isfile` guard.
+
+Also noted, not a defect: **`ase::sim_exe` has no caller in the tree** —
+`run_cmd` reads `ase::sim_status` directly. It is API for the S2 dialog to
+render, and row D5 pins its refusal to the resolver's own sentence, but it is
+not on the run path and should not be assumed to be.

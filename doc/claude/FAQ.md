@@ -14,6 +14,61 @@ Newest entries on top.
 
 ---
 
+## Q66. A startup file's list is read inside a `catch`, and one typo still killed the whole editor. Where does the raise come from?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0931** (fixed), residuals
+  **0932**, **0933**, **0935** open. `src/ase.tcl`, the rc seed at the end of
+  the simulator-registry section.
+
+**From the `foreach` header, not from its body.** The seed was written the
+careful way, and its comment said so in capitals — *"EVERY STEP IS CAUGHT …
+A mistake in the rc must cost the user a sentence, not the feature"*:
+
+    foreach e $::ASE_SIMULATORS {
+      if {[catch {ase::sim_register …} err]} { report; continue }
+    }
+
+Every step **inside** the loop was caught. But `foreach x $v` parses `$v` as a
+Tcl list **before the body runs once**, so an unbalanced brace in
+`::ASE_SIMULATORS` — the ordinary way a hand-edited rc goes wrong — raises at
+the loop header, outside every catch in sight. The rc is sourced while
+`ase.tcl` is being sourced, so the raise aborted the source, and
+`Tcl_AppInit()` reported:
+
+    xschem: STARTUP ABORTED … Failing file: …/src/ase.tcl line 926
+    Cause: unmatched open brace in list
+
+No schematic editor at all, over a typo in somebody's PDK file. The control
+that proves this was new and not the house idiom: the identical typo in
+`::ASE_DEFAULT_MODELS` and `::ASE_DEFAULT_INCLUDES` — the two pre-existing rc
+variables this seed was modelled on — both start normally, because nothing
+iterates them at source time.
+
+**The general shape.** Any Tcl command that takes a *list-valued argument*
+parses it before it runs anything you wrapped: `foreach`, `lassign`,
+`lindex`, `dict for` over a malformed dict, `switch` with a braced pattern
+list. A `catch` around the body protects the body. To protect against the
+**value**, the catch has to be around the command that consumes it — or the
+value has to be tested first (`if {[catch {llength $v}]} …`).
+
+**Why no test row saw it.** The suite's rc row drove two *well-formed but
+wrong* values (a name that was never registered, an entry whose file is
+missing). Both take the caught path. "Malformed" and "wrong" are different
+inputs, and only one of them can reach a loop header. The row that exists now
+drives an unparsable list in the new variable **and** the same typo in
+`::ASE_DEFAULT_MODELS`, side by side, so the parity with the older variables is
+a check rather than a comment.
+
+**Second lesson, on the test rather than the code.** A row asserting the
+sentence a wrong path produces passed against the **wrong** sentence, because
+the fixture path was named `$::ZZ_NO_SUCH_SETTING/bin/ngspice` and the word
+"setting" the row was looking for was sitting in the path the sentence echoes
+back. When a message quotes the user's own words, strip the user's words out
+before reading the message.
+
+---
+
 ## Q65. A shared array of "the value at the cursor" is read from seven places. What does a guard on it actually have to ask?
 
 - **Asked:** 2026-08-29
