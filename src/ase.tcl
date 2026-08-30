@@ -16,8 +16,12 @@
 # so a load→save round trip of any state_save-produced file is byte-stable.
 #
 # Backend seam: ase::backends maps simulator name -> hook dict
-# {render_deck run_cmd log_file result_probe raw_file} (proc names). v1
-# registers `ngspice` only; the only ngspice literals outside the
+# {render_deck run_cmd log_file result_probe raw_file} (proc names), plus one
+# OPTIONAL sixth hook, `capabilities` (issue 0948): the PROBE RUN that answers
+# what the program that will actually start can do. Optional, and that is a
+# decision: a hand-built five-hook registration must keep registering, and a
+# future backend must not have to write a probe before it may register at all.
+# v1 registers `ngspice` only; the only ngspice literals outside the
 # ase::backend::ngspice namespace are the state_default schema defaults.
 
 namespace eval ase {
@@ -70,8 +74,22 @@ namespace eval ase {
   # never heard of the key, so it flips ON with the rest. Ticking it off again
   # now writes `save_op_params 0` and sticks.
   variable omit_if_empty {cosim save_op_params}
-  # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
+  # simulator name -> hooks dict: the five REQUIRED hooks
+  # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
+  # `capabilities` (issue 0948).
   variable backends [dict create]
+  # WHAT THE PROGRAM THAT WILL ACTUALLY START CAN DO (issue 0948).
+  # Key   = the RESOLVED ABSOLUTE PROGRAM PATH, never the backend name and
+  #         never the registered entry's name. Two entries can name one file,
+  #         one name can be re-pointed at another file, and a user can rebuild
+  #         the file in place; only the path identifies the thing measured.
+  # Value = {stamp <ase::cap_stamp of that file> caps <the answer dict>}.
+  # In memory, session-lifetime, and NEVER written to disk beside the
+  # simulator list: persisting it would buy one probe per session (measured at
+  # ~10 ms) and cost a file format, a corruption arm and a staleness arm.
+  # NOTHING IS EVER STORED UNDER AN EMPTY KEY -- see ase::sim_capabilities,
+  # where the guards that return before a probe also return before a write.
+  variable sim_caps [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
   variable last_run [dict create]
   # session registry (item 03): key ("lib/cell/view") -> entry dict
@@ -467,6 +485,16 @@ proc ase::state_save {path state} {
 
 # Register simulator `name` with a hooks dict providing proc names for all of
 # render_deck, run_cmd, log_file, result_probe, raw_file.
+#
+# THE FIVE BELOW ARE THE WHOLE REQUIREMENT (issue 0948). `capabilities` -- the
+# probe run that answers what the registered build can actually do -- rides in
+# the same dict when a backend offers one, and is simply carried through by the
+# `dict set` below. It is deliberately NOT in this loop: making it required
+# would break every hand-built five-hook registration already in the tree
+# (tests/headless/test_ase_core.tcl builds two) and would oblige a future
+# backend to write a probe before it could register at all. A caller that
+# wants the answer asks ase::sim_capabilities, which says "not known" rather
+# than guessing when a backend declares no probe.
 proc ase::register_backend {name hooks} {
   variable backends
   foreach h {render_deck run_cmd log_file result_probe raw_file} {
@@ -585,6 +613,32 @@ namespace eval ase {
 # with no internal vocabulary in it: no proc names, no variable names, no
 # state names, nothing about auto_execok. The suite scans these sentences for
 # machinery words and reds if it finds any.
+#
+# ⚠ NOTHING BELOW `switch` MAY CARRY A COMMENT, AND A READER WILL ASSUME IT
+# MAY. A switch body is parsed as a LIST of pattern/body pairs, not as a
+# script: a `#` line inside it becomes a PATTERN, the next word becomes its
+# BODY, and every pair after it shifts by one. Measured on this tree while
+# writing issue 0948's two kinds: a comment placed between two cases silently
+# ate `path_in_force`, which then fell through to the catch-all sentence and
+# reddened row R9 of tests/headless/test_ase_simreg_0931.tcl. Notes about a
+# kind go here, above the switch, or inside that kind's own body.
+#
+# THE TWO 0948 KINDS PUT THE PROGRAM'S LOCATION FIRST, ON PURPOSE. They are
+# about a PROGRAM, not about a list entry, so they name the file and never the
+# entry's name: a user who registered three builds needs to know which file
+# misbehaved, and the entry's name is in front of them in the Simulators
+# window already. Location-first is also what keeps the structural row F6 of
+# tests/headless/test_ase_simcaps_0948.tcl meaningful -- that row takes the
+# sentence apart at the user's own words and demands each fixed piece exist
+# exactly once in this file, and a location dropped into the MIDDLE of a
+# sentence leaves a fragment of itself glued to the words in front of it,
+# which no source line can ever match.
+#
+# NEITHER OF THEM REFUSES ANYTHING. A build that keeps only the last analysis
+# still produces that last analysis, and the probe is a heuristic; stranding a
+# user mid-gesture on either would be worse than the failure it prevents. They
+# say what happened and what to do instead. The ruling that choice needs is on
+# the user's queue as issue 0948.
 proc ase::sim_why {kind name path {extra {}}} {
   switch -- $kind {
     empty_path {
@@ -640,6 +694,12 @@ proc ase::sim_why {kind name path {extra {}}} {
     }
     path_in_force {
       return "You have not picked a simulator of your own, so xschem will start the program named $name that your system finds on your PATH. Add one to the list, or pick one that is already on it, if you would rather run a build of your own."
+    }
+    cap_no_append {
+      return "$path, which is the program that will run your simulation, keeps only the last analysis of a run and throws the earlier ones away as it goes. Your run has more than one analysis in it, so everything but the last one would be lost. Run one analysis at a time, or use a build that adds each analysis to the results file."
+    }
+    cap_not_a_simulator {
+      return "$path, which is the program the simulator you picked will start, produced no results at all when it was tried on a tiny test circuit. Check that it really is a circuit simulator, or point this entry at a different file."
     }
   }
   return "Something is wrong with the simulator named $name."
@@ -1069,6 +1129,304 @@ proc ase::sim_exe {backend} {
   return [dict get $s exe]
 }
 
+# --- What the registered simulator can actually do (issue 0948) --------------
+#
+# THE PROBLEM THIS SECTION EXISTS FOR, MEASURED, NOT ARGUED. The deck ASE-L
+# emits asks the simulator to ADD each analysis to the results file (`set
+# appendwrite`, see render_deck's 0929 block). A build that does not honour
+# that keeps only the LAST analysis and throws the earlier ones away as it
+# goes: measured on this box with two decks identical but for that one line,
+# the same program, exit 0 both times, and NOT ONE WARNING OR ERROR LINE in
+# either log -- one raw with an operating point AND a transient, one raw with
+# the transient alone. The operating point the user asked for is computed and
+# discarded, and pressing 6 on the schematic then says there are no operating
+# point results. That is issue 0929's exact symptom, arriving silently through
+# a door 0929 never guarded, and until this section nothing anywhere could
+# even ASK whether the registered build honours it.
+#
+# ⚠ THE METHOD IS A PROBE RUN, NEVER A VERSION STRING. Measured: a stock
+# ngspice and a build patched to ignore that one line print the byte-identical
+# line "** ngspice-46+ : Circuit level simulation program". A version string
+# cannot answer this question, so nothing here asks one.
+#
+# ⚠ AND THE VERDICT IS THE RESULT, NEVER THE EXIT CODE AND NEVER THE LOG.
+# Measured: a blanket device save (`.save @m...[*]`) exits 0, WRITES a results
+# file, and logs no warning and no error -- and the file holds a `constants`
+# plot and no operating point at all. Anything that asked "did the command
+# error" would call that a success. Every answer below is read out of the
+# results file the probe's own deck asked for.
+#
+# ⚠ LAZY, NEVER AT STARTUP. The whole two-deck probe measures ~10 ms, so it is
+# affordable on first use and there is no reason to spend it on a session that
+# never runs a simulation.
+
+# The identity of ONE program file: everything whose change means a different
+# program. Empty when there is no file to stamp, which is the caller's signal
+# that there is nothing to remember.
+#
+# PATH + MTIME + SIZE, and the point of the last two is a user who rebuilds
+# their simulator IN PLACE. The path does not change, so a cache keyed on the
+# path alone would serve last week's answer about a program that no longer
+# exists, forever, with nothing the user could do about it and nothing telling
+# them to. Modelled on ase::cosim_stamp, which stamps a build the same way and
+# for the same reason.
+proc ase::cap_stamp {path} {
+  if {$path eq {}} { return {} }
+  if {![file isfile $path]} { return {} }
+  return [list path [file normalize $path] mtime [file mtime $path] \
+                size [file size $path]]
+}
+
+# Is what we remember about a program still true of the file on disk?
+#
+# BIASED TOWARDS RE-MEASURING, exactly as ase::cosim_stale is: any doubt at
+# all -- either stamp empty, the two not comparable, anything different --
+# answers 1 and costs one ~10 ms probe. Answering 0 wrongly costs the user a
+# silently truncated results file and no way to find out why.
+#
+# ⚠ THE SECOND ARM IS A BELT NO VALUE CAN CURRENTLY REACH, AND SAYING SO HERE
+# IS THE POINT: nobody should read it as a measured behaviour. Measured on
+# this Tcl, `string equal` handed exactly two values and no options never
+# raises, whatever those two values are -- options are only looked for when
+# there are more than two arguments, and there are always exactly two here. It
+# is kept because the day this proc compares something richer than two strings
+# is the day it starts mattering, and because falling INTO it answers
+# re-measure while falling out of the proc would abort the run it was only
+# reporting on. Row D9 of tests/headless/test_ase_simcaps_0948.tcl pins that
+# both arms still answer 1, and says the same thing about reachability.
+proc ase::cap_stale {stored live} {
+  if {$stored eq {} || $live eq {}} { return 1 }
+  if {[catch {string equal $stored $live} same]} { return 1 }
+  return [expr {$same ? 0 : 1}]
+}
+
+# Forget every measured answer, so the next ask measures again. The lever for
+# a user who knows something changed that a file stamp cannot see -- a rebuild
+# inside the same second that leaves the file byte-for-byte the same size. The
+# same one-second file-time hole is recorded at src/op_annot.tcl:843-847.
+proc ase::sim_caps_clear {} {
+  variable sim_caps
+  set sim_caps [dict create]
+  return {}
+}
+
+# Where the probe writes its throw-away deck and results.
+#
+# ABSOLUTE, because ase::run_deck does `cd` around the launch and a relative
+# probe directory would then mean two different places in one run. Inside the
+# simulation directory, because that is already the directory this session is
+# allowed to write simulation artifacts into; a dot-name because it is nobody's
+# deliverable. The files in it are OVERWRITTEN in place on every probe and
+# never accumulate.
+proc ase::cap_workdir {} {
+  set base [set_netlist_dir 0]
+  # set_netlist_dir answers empty when the simulation directory could not be
+  # made at all. Probing into the current directory is untidy but it is never
+  # wrong, and the user has a larger problem than tidiness at that point.
+  if {$base eq {}} { set base [pwd] }
+  set d [file normalize [file join $base .ase_probe]]
+  file mkdir $d
+  return $d
+}
+
+# Every plot in a results file, as a list of {name npoints {varname ...}}.
+# Empty for a file that is missing or unreadable -- which is itself an answer
+# the callers below use: a program that wrote nothing produced nothing.
+#
+# ⚠ THIS READER IS THE PROBE'S OWN, AND THAT IS DELIBERATE (ruling 0881). The
+# results database the waveform viewer has attached is the USER'S; a probe
+# that read its scratch file through `xschem raw` would detach whatever they
+# are looking at in order to answer a question about a program. So the header
+# is parsed here, from bytes, and nothing in this section touches that
+# database.
+#
+# It reads a BINARY results file as well as a text one. The probe deck asks
+# for text (`set filetype=ascii`, measured to still append every analysis on
+# ngspice-46+), but a build is free to ignore that, and after a `Binary:` line
+# the payload is exactly points x variables x 8 bytes (16 when the plot is
+# complex) -- skipped by length, so no byte of it can ever be mistaken for the
+# header of a plot that is not there.
+proc ase::cap_raw_plots {path} {
+  set plots {}
+  set name {}
+  set np -1
+  set nv -1
+  set cx 0
+  set vars {}
+  set invars 0
+  set have 0
+  if {$path eq {} || ![file isfile $path]} { return $plots }
+  if {[catch {open $path r} f]} { return $plots }
+  fconfigure $f -translation binary
+  set t [read $f]
+  catch {close $f}
+  set n [string length $t]
+  set i 0
+  while {$i < $n} {
+    set e [string first "\n" $t $i]
+    if {$e < 0} { set e $n }
+    set line [string trimright [string range $t $i [expr {$e - 1}]] "\r"]
+    set i [expr {$e + 1}]
+    if {[string match {Plotname:*} $line]} {
+      if {$have} { lappend plots [list $name $np $vars] }
+      set have 1
+      set name [string trim [string range $line 9 end]]
+      set np -1
+      set nv -1
+      set cx 0
+      set vars {}
+      set invars 0
+      continue
+    }
+    if {!$have} { continue }
+    if {[string match {Flags:*} $line]} {
+      set invars 0
+      if {[string first complex [string tolower $line]] >= 0} { set cx 1 }
+      continue
+    }
+    if {[string match {No. Variables:*} $line]} {
+      set invars 0
+      set v [string trim [string range $line 14 end]]
+      set nv [expr {[string is integer -strict $v] ? $v : -1}]
+      continue
+    }
+    if {[string match {No. Points:*} $line]} {
+      set invars 0
+      set v [string trim [string range $line 11 end]]
+      set np [expr {[string is integer -strict $v] ? $v : -1}]
+      continue
+    }
+    if {[string match {Variables:*} $line]} { set invars 1 ; continue }
+    if {[string match {Values:*} $line]} { set invars 0 ; continue }
+    if {[string match {Binary:*} $line]} {
+      set invars 0
+      if {$np > 0 && $nv > 0} {
+        incr i [expr {$np * $nv * ($cx ? 16 : 8)}]
+      }
+      continue
+    }
+    if {$invars} {
+      set nm [lindex [split [string trim $line] "\t"] 1]
+      if {$nm ne {}} { lappend vars $nm }
+    }
+  }
+  if {$have} { lappend plots [list $name $np $vars] }
+  return $plots
+}
+
+# The named plot out of a cap_raw_plots answer, or empty.
+proc ase::cap_plot {plots want} {
+  foreach p $plots {
+    if {[string equal -nocase [lindex $p 0] $want]} { return $p }
+  }
+  return {}
+}
+
+# Run one probe deck through one program and hand back {exitcode output}.
+#
+# ⚠ THE EXIT CODE IS RECORDED AND USED FOR NOTHING. It is here so a failing
+# probe can be described in a bug report; every verdict is taken from the
+# results file. See this section's header for the measured case where exit 0,
+# a clean log and a written file all say success over a destroyed result.
+#
+# STDIN IS REDIRECTED AWAY, AND THAT IS NOT A DETAIL. A program handed a deck
+# it does not understand may drop into its own interactive prompt and sit
+# there reading; without this the user's Run would hang forever on a probe.
+# The wall-clock cap is the same belt: `timeout` when the box has one.
+proc ase::cap_run {exe exeargs deck} {
+  set cmd {}
+  set nul [expr {$::tcl_platform(platform) eq {windows} ? {NUL} : {/dev/null}}]
+  set to [lindex [auto_execok timeout] 0]
+  if {$to ne {}} { lappend cmd $to 10 }
+  lappend cmd $exe
+  foreach a $exeargs { lappend cmd $a }
+  lappend cmd -b $deck
+  set rc [catch {exec {*}$cmd < $nul 2>@1} out]
+  return [list $rc $out]
+}
+
+# WHAT THE PROGRAM THAT WILL ACTUALLY START CAN DO -- the front door, lazy and
+# cached. Returns a dict:
+#
+#   {known 0}                     nothing was measured, and nothing is claimed
+#   {known 1 usable 0|1 appendwrite 0|1 blanket_op_save 0|1 hier_op_names 0|1}
+#
+# ⚠ `known 0` CARRIES NO CAPABILITY KEYS AT ALL, and callers must read `known`
+# first. Absent means "not measured"; 0 means "measured, and the answer is
+# no". A reader that treated a missing key as a no would turn "we never asked"
+# into a statement about the user's simulator, which is the fabricated-number
+# defect wearing different clothes.
+#
+# THE THREE GUARDS RETURN BEFORE THE PROBE **AND BEFORE ANY CACHE WRITE**:
+#
+#  1. the resolver said no. Issue 0935: that answer still carries a `resolved`
+#     naming a real file on the PATH -- the file a WRONG choice would have
+#     started. Probing it would measure a program the resolver has already
+#     refused to run, and would attribute the answer to a simulator the user
+#     is not using. run_cmd already refuses and says why, so nothing is said
+#     here.
+#  2. nothing resolved. Issue 0935's other half: `ok` is 1 while `resolved` is
+#     EMPTY, whenever nothing is registered and nothing of that name is on the
+#     PATH. Two unrunnable backends both answer that way, so a cache keyed on
+#     an empty string would fuse them into one answer about neither.
+#  3. the backend declares no probe. Answer "not known" and never a guessed
+#     yes; ase::register_backend keeps `capabilities` optional for exactly the
+#     backends that reach this line.
+proc ase::sim_capabilities {backend} {
+  variable sim_caps
+  variable backends
+  set s [ase::sim_status $backend]
+  if {[dict get $s ok] == 0} { return [dict create known 0] }
+  set resolved [dict get $s resolved]
+  if {$resolved eq {}} { return [dict create known 0] }
+  if {![dict exists $backends $backend capabilities]} {
+    return [dict create known 0]
+  }
+  set live [ase::cap_stamp $resolved]
+  if {[dict exists $sim_caps $resolved]} {
+    set stored [dict get $sim_caps $resolved]
+    if {![ase::cap_stale [dict get $stored stamp] $live]} {
+      return [dict get $stored caps]
+    }
+  }
+  set caps [[ase::backend_hook $backend capabilities] $resolved \
+              [dict get $s args] [ase::cap_workdir]]
+  dict set sim_caps $resolved [list stamp $live caps $caps]
+  return $caps
+}
+
+# TELL THE USER WHEN THE PROGRAM THAT IS ABOUT TO RUN CANNOT DO WHAT THIS
+# RUN NEEDS. `nwrites` is how many analyses this run has enabled.
+#
+# Returns the kind that was said, or empty when there was nothing to say --
+# which is a real answer, not an absence: a caller can tell "kept quiet"
+# apart from "never asked".
+#
+# THE TWO ARMS, AND WHY THE SECOND ONE IS CONDITIONAL. A build that keeps only
+# the last analysis loses nothing on a run with ONE analysis in it, so saying
+# so then would be a nag about a run that is going to be perfectly fine. A
+# program that produced NO results at all on the probe's tiny test circuit is
+# reported whatever the run looks like: never a silent failure.
+#
+# It never re-words, and never echoes the resolver's own `why`: the sentences
+# are minted in ase::sim_why and rendered by ase::sim_say (ruling D5-4), and
+# run_cmd already owns the resolver's sentence.
+proc ase::cap_report {backend nwrites} {
+  set c [ase::sim_capabilities $backend]
+  if {![dict exists $c known] || [dict get $c known] == 0} { return {} }
+  set path [dict get [ase::sim_status $backend] resolved]
+  if {[dict exists $c usable] && [dict get $c usable] == 0} {
+    ase::sim_say cap_not_a_simulator $backend $path
+    return cap_not_a_simulator
+  }
+  if {[dict exists $c appendwrite] && [dict get $c appendwrite] == 0 \
+      && $nwrites > 1} {
+    ase::sim_say cap_no_append $backend $path
+    return cap_no_append
+  }
+  return {}
+}
+
 # The file the user's own simulator list is saved in.
 proc ase::sim_conf_file {} {
   if {![info exists ::USER_CONF_DIR]} { return {} }
@@ -1238,6 +1596,26 @@ if {[info exists ::ASE_SIMULATOR] && $::ASE_SIMULATOR ne {}} {
     catch {ase::echo $ase_seed_serr error}
   }
   catch {unset ase_seed_serr}
+}
+
+# How many analyses this run has enabled.
+#
+# ONE OWNER, BECAUSE TWO PLACES NOW NEED THE SAME COUNT (issue 0948). The
+# ngspice render_deck has always counted them to decide whether the deck needs
+# the add-each-analysis line at all; ase::cap_report needs the same count to
+# decide whether a build that keeps only the LAST analysis is about to lose
+# anything. Counted twice, the two could disagree and the warning would be
+# about a run that is not the one being launched.
+#
+# An enabled analysis whose type this backend does not recognise IS counted --
+# unchanged from the loop this was lifted out of, so the rendered deck is
+# byte-identical to before.
+proc ase::n_enabled_analyses {state} {
+  set n 0
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a enabled 0] eq {1}} { incr n }
+  }
+  return $n
 }
 
 # --- Run directory ----------------------------------------------------------
@@ -1828,6 +2206,23 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## before it writes leaves no raw, instead of serving last run's numbers as
   ## though they were this one's.
   catch {file delete -- [[ase::backend_hook $sim raw_file] $state]}
+  ## 0948: AND SAY SO IF THE PROGRAM ABOUT TO START CANNOT DO WHAT THIS RUN
+  ## NEEDS. The deletion one line up, and the `set appendwrite` the deck is
+  ## about to carry, BOTH assume the simulator adds each analysis to the
+  ## results file. Nothing checked that until here, and a build that does not
+  ## honour it exits 0, logs no warning and no error, and leaves the user with
+  ## issue 0929's symptom and no word of explanation.
+  ##
+  ## HERE AND NOT IN run_cmd: run_cmd's returned command and its echo
+  ## behaviour are pinned byte for byte by row D4 of
+  ## tests/headless/test_ase_simreg_0931.tcl, and every row there counts the
+  ## echoes. The report belongs to the RUN, which is this proc.
+  ##
+  ## CAUGHT, BECAUSE A PROBE THAT CANNOT RUN MUST NEVER STOP THE RUN IT WAS
+  ## ONLY REPORTING ON. Everything it says is advisory; nothing downstream
+  ## reads its answer. The suite calls ase::cap_report directly, uncaught, so
+  ## a defect in it is still loud where it should be.
+  catch {ase::cap_report $sim [ase::n_enabled_analyses $state]}
   if {[llength $cosim]} {
     foreach r [ase::cosim_build $state $cosim] {
       lassign $r cm cstatus cdetail
@@ -4928,11 +5323,7 @@ namespace eval ase::backend::ngspice {
     # the run for exactly this reason -- without that, every run's plots pile up
     # on the previous run's and `6` annotates whichever stale operating point
     # happens to come first. See the deletion beside cosim_clear_artifacts.
-    set n_enabled 0
-    foreach a [ase::state_get $state analyses] {
-      if {[ase::state_get $a enabled 0] eq {1}} { incr n_enabled }
-    }
-    if {$n_enabled > 0} { lappend lines "set appendwrite" }
+    if {[ase::n_enabled_analyses $state] > 0} { lappend lines "set appendwrite" }
     foreach type {op dc ac tran} {
       foreach a [ase::state_get $state analyses] {
         if {[ase::state_get $a type] ne $type} { continue }
@@ -5065,6 +5456,124 @@ namespace eval ase::backend::ngspice {
     return $results
   }
 
+  # WHAT THIS BUILD OF NGSPICE CAN ACTUALLY DO (issue 0948). Two probe runs of
+  # a PDK-free circuit -- a level-1 MOS transistor two subcircuits deep, so
+  # nothing on the user's machine has to be installed for this to work -- and
+  # every answer read out of the results file the deck itself asked for.
+  #
+  # TWO DECKS, NOT ONE, AND THAT IS A CONTRACT. Deck A asks for an operating
+  # point AND a transient with the add-each-analysis line set, so the shape of
+  # its results file answers whether this build honours it. Deck B asks for
+  # every parameter of one device at once, which is a different question with
+  # a different right answer, and merging them would make each unreadable.
+  #
+  # ⚠ NOT ONE VERDICT COMES FROM THE EXIT CODE OR THE LOG. Measured on this
+  # box: deck B's shape exits 0, writes a results file, and logs no warning
+  # and no error, while holding no operating point at all. The exit codes are
+  # collected for a bug report and used for nothing.
+  #
+  # ⚠ THE RESULTS FILES ARE DELETED BEFORE EACH RUN. The probe directory is
+  # shared between probes and between builds, so one program's leftover file
+  # would otherwise answer for the next program measured.
+  #
+  # `set filetype=ascii` is asked for because a text results file cannot be
+  # misread; measured on ngspice-46+, it still appends every analysis. A build
+  # free to ignore it is still read correctly -- ase::cap_raw_plots reads both
+  # shapes.
+  proc capabilities {exe exeargs workdir} {
+    set ckt "* ase capability probe (issue 0948): PDK-free, level-1 MOS,\
+ two hierarchy levels deep
+.model nm1 nmos level=1 vto=0.7 kp=100u
+.subckt inner d g s
+m1 d g s s nm1 w=1u l=1u
+.ends
+.subckt outer d g s
+xi1 d g s inner
+.ends
+vdd dd 0 1.8
+vg gg 0 1.2
+xo1 dd gg 0 outer
+"
+    set rawa [file join $workdir probe_a.raw]
+    set rawb [file join $workdir probe_b.raw]
+    set decka [file join $workdir probe_a.sp]
+    set deckb [file join $workdir probe_b.sp]
+    set usable 0
+    set appendwrite 0
+    set hier 0
+    set blanket 0
+    catch {file delete -- $rawa}
+    catch {file delete -- $rawb}
+    set f [open $decka w]
+    puts -nonewline $f "$ckt.control
+set filetype=ascii
+save @m.xo1.xi1.m1\[id\] @m.xo1.xi1.m1\[gm\] @m.xo1.xi1.m1\[vdsat\]
+set appendwrite
+op
+remzerovec
+write $rawa
+tran 1n 5n
+remzerovec
+write $rawa
+.endc
+.end
+"
+    close $f
+    set f [open $deckb w]
+    puts -nonewline $f "$ckt.control
+set filetype=ascii
+save @m.xo1.xi1.m1\[*\]
+op
+remzerovec
+write $rawb
+.endc
+.end
+"
+    close $f
+    ase::cap_run $exe $exeargs $decka
+    ase::cap_run $exe $exeargs $deckb
+    set pa [ase::cap_raw_plots $rawa]
+    set pb [ase::cap_raw_plots $rawb]
+    # USABLE: did anything with data in it come back at all, from either run.
+    # A program that produced no plot with a single data point in it is not
+    # simulating this circuit, whatever it printed and whatever it exited.
+    foreach pl [concat $pa $pb] {
+      if {[lindex $pl 1] >= 1} { set usable 1 }
+    }
+    set op [ase::cap_plot $pa {Operating Point}]
+    set tr [ase::cap_plot $pa {Transient Analysis}]
+    # APPENDWRITE: BOTH analyses in ONE file, and the operating point holding
+    # at least one data point. The point count is not a formality: measured,
+    # a blanket save leaves a results file whose plot carries `No. Points: 0`,
+    # and counting that as an operating point would call a destroyed result a
+    # success.
+    if {$op ne {} && [lindex $op 1] >= 1 && $tr ne {}} { set appendwrite 1 }
+    # HIER_OP_NAMES: the device is INSIDE two subcircuits, and its numbers
+    # have to arrive under the exact names this tree's annotation reader
+    # builds -- the three spellings op_annot::_wrap emits, at
+    # src/op_annot.tcl:419-425. A build that answers with flat names has an
+    # operating point that this tree cannot read a single device out of.
+    if {$op ne {}} {
+      set hier 1
+      foreach want {i(@m.xo1.xi1.m1[id]) @m.xo1.xi1.m1[gm]
+                    v(@m.xo1.xi1.m1[vdsat])} {
+        if {[lsearch -exact [lindex $op 2] $want] < 0} { set hier 0 }
+      }
+    }
+    # BLANKET_OP_SAVE: can one card save every parameter of a device at once.
+    # NO RELEASED NGSPICE CAN, and this probe must keep answering that
+    # honestly rather than by assumption -- measured here, the run exits 0 and
+    # writes a file holding only a `constants` plot.
+    set bop [ase::cap_plot $pb {Operating Point}]
+    if {$bop ne {} && [lindex $bop 1] >= 1} {
+      foreach nm [lindex $bop 2] {
+        if {[string first {@m.xo1.xi1.m1[} $nm] >= 0} { set blanket 1 }
+      }
+    }
+    return [dict create known 1 usable $usable appendwrite $appendwrite \
+                        blanket_op_save $blanket hier_op_names $hier]
+  }
+
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
@@ -5073,5 +5582,6 @@ namespace eval ase::backend::ngspice {
     run_cmd      ::ase::backend::ngspice::run_cmd \
     log_file     ::ase::backend::ngspice::log_file \
     result_probe ::ase::backend::ngspice::result_probe \
-    raw_file     ::ase::backend::ngspice::raw_file]
+    raw_file     ::ase::backend::ngspice::raw_file \
+    capabilities ::ase::backend::ngspice::capabilities]
 }

@@ -391,7 +391,44 @@ shipped-before code refused the same entry with a different wrong sentence, so
 it is a wording trade, not a behaviour regression. Both lean on 0933's still-open
 storage half, which would close them together.
 
-**The next free number is 0948.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-30, item S3.** **0948**: a registered simulator is never asked what
+it can actually do, so a build that keeps only the LAST analysis of a run
+destroys the user's operating point with exit 0 and a clean log, and nothing at
+any layer can even ask. FIXED — an optional sixth backend hook,
+`capabilities`, answering from a PROBE RUN (never a version string, never an
+exit code), cached on the resolved program's path + mtime + size so a rebuild
+in place re-measures itself. Its open half is a ruling, on the user's queue:
+warn-vs-refuse, and how often to say it.
+
+**2026-08-30, item S3's write-up pass — eight more, each reproduced before
+filing.** Six are defects in the capability probe 0948 just landed, and the
+first three of those are one mistake in three places: a measurement that did
+not happen reported as a fact about the user's program. **0951**: two xschem
+windows share one probe scratch file under one fixed name, so a program that
+wrote nothing was measured healthy. **0949**: a simulation folder with a space
+in its name makes a working ngspice be told it is not a circuit simulator, on
+every Run — the deck's `write` line is unquoted, and so is the real deck's,
+which is older. **0952**: a build that appends perfectly but spells device
+parameters differently is told it keeps only the last analysis, and given
+advice that changes nothing. **0953**: the two probe runs are paid inside the
+user's gesture, so a slow-to-start simulator freezes Run for a measured 20.0 s
+and is then called not a simulator. **0950**: a wrong answer is remembered for
+the whole session and no door in the GUI clears it. **0954**: the generic probe
+runner appends ngspice's `-b`, breaching this file's own stated seam.
+
+Two are harness, from the same session's verification. **0955**: two
+`run_regression.tcl` runs in one tree truncate each other's `results.log`, so a
+run can report the branch's ZERO baseline having verified nothing — issue
+0147's false green through a new door, and the dangerous-direction sibling of
+0867. **0956**: `devdisplay.sh start` deletes the lock of a server that is
+merely slow to answer; its second half — a wedged display reported `alive` —
+is recorded as observed and NOT explained, and must be reproduced before
+anyone edits the liveness logic.
+
+Also appended, not renumbered: a second dated sighting of `test_ase_window`'s
+`W7` flake under **0801**, which already owns that class.
+
+**The next free number is 0957.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

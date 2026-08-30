@@ -169,6 +169,83 @@ was: the bare backend name, `auto_execok`'s file, and a byte-identical command.
   fresh-start claim is measured in a child with `HOME` redirected into the
   suite's scratch tree.
 
+### What that program can actually do (issue 0948)
+
+`ase::sim_capabilities <backend>` answers what the build that will ACTUALLY
+start can do — resolved through `ase::sim_status`, never a bare name. The
+answer is a dict: `{known 0}`, or
+`{known 1 usable 0|1 appendwrite 0|1 blanket_op_save 0|1 hier_op_names 0|1}`.
+When `known` is 0 the capability keys are **absent, not 0**; absent means
+nobody measured, 0 means measured-and-no.
+
+* **The method is a PROBE RUN, never a version string.** Measured: a stock
+  ngspice and one patched to ignore the add-each-analysis line print the
+  byte-identical `** ngspice-46+ : Circuit level simulation program`. The probe
+  is two tiny PDK-free decks (a level-1 MOS two subcircuits deep, op + tran),
+  and it runs **lazily on first use** — measured at ~10 ms, never at startup.
+* **The verdict is the RESULT, never the exit code and never the log.**
+  Measured: a blanket device save exits 0, writes a results file, and logs no
+  warning and no error, while holding a `constants` plot and no operating point
+  at all. Every answer is read out of the results file the probe's own deck
+  asked for, by `ase::cap_raw_plots` — the probe's own reader, so it never
+  touches the results database the waveform viewer has attached (ruling 0881).
+* **The cache key is the resolved absolute path; the stamp is path + mtime +
+  size.** A user who rebuilds their simulator in place is re-measured with
+  nothing to do on their part, which is the whole point. `ase::sim_caps_clear`
+  forces a re-measure. Nothing is ever cached under an empty `resolved`, which
+  is what two unrunnable backends both answer (issue 0935).
+* **`capabilities` is an OPTIONAL sixth backend hook**, beside `render_deck`,
+  `run_cmd`, `log_file`, `result_probe` and `raw_file`. A backend that declares
+  none is answered `known 0` — never a guessed yes.
+* **`ase::cap_report`, called once from `ase::run_deck`,** is the only say-site:
+  a program that produced nothing is reported whatever the run looks like, and a
+  build that keeps only the last analysis is reported when the run has more than
+  one. Both sentences are minted in `ase::sim_why` like every other one here.
+  **The run, not the command builder** — building a command line happens in
+  places that must stay silent, and `test_ase_simcaps_0948` row F8 pins both
+  ends of that so the report cannot be refactored out of the one place the user
+  meets it.
+* **Four belts around the probe run, each pinned by its own row.** The program
+  is given nothing to read (`< /dev/null`, row G3) so a build that drops into
+  its own prompt cannot hang the user's Run; it is given a fixed number of
+  seconds (`timeout`, row G5) so one that never returns for any other reason
+  cannot either; the extra arguments the user registered are handed to it when
+  it is measured (row G6), so what was measured is the program they will
+  actually get; and `ase::cap_raw_plots` reads a results file written as raw
+  numbers as well as one written as text (rows B7/B8), stepping over each
+  payload by its own length so a run of numbers that happens to spell a plot
+  header is never mistaken for one.
+
+* **Where the shipped code does not yet meet this contract**, all measured and
+  filed, none fixed at the time of writing. Read these before relying on an
+  answer from this surface:
+  * **0951** — the probe's scratch files are per simulation-folder, not
+    per-process, under fixed names, so a second xschem window's results can
+    answer for the program being measured. Reproduced: a program that wrote
+    nothing at all measured `usable 1 appendwrite 1 hier_op_names 1`.
+  * **0949** — the probe deck's `write` line is unquoted, so a simulation
+    folder whose name contains a space or a dollar sign makes a healthy build
+    measure `usable 0` and be told, on every Run, that it is not a circuit
+    simulator. (`render_deck`'s own `write` line is unquoted the same way, and
+    older.)
+  * **0952** — `appendwrite` is decided by the presence of an operating-point
+    plot, so it reads 0 for a build that appends perfectly but names device
+    parameters differently. That build is then given advice that changes
+    nothing; `hier_op_names` already holds the true answer and is not read.
+  * **0953** — the two probe runs are paid synchronously inside `run_deck`, so
+    a slow-to-start simulator freezes the editor for a measured 20.0 s, and
+    "cut off by its own clock" is reported as "produced nothing".
+  * **0950** — a wrong answer is remembered for the session; the stamp only
+    notices the program file changing, and no GUI door calls
+    `ase::sim_caps_clear`.
+  * **0954** — `ase::cap_run` appends ngspice's `-b` from the generic
+    namespace, against this file's own seam rule (`src/ase.tcl:24`).
+
+  Three of those — 0949, 0950, 0953 — are one mistake in three places: **a
+  measurement that did not happen, reported as a fact about the user's
+  program.** The `known 0` contract at the top of this section is what they
+  should be answering.
+
 ## Migration tool (cluttered testbench → clean + state view)
 
 `tools/migrate/ase_migrate.py` (stdlib-only, OO; tests `test_ase_migrate.py`)

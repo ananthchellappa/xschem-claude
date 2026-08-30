@@ -70,3 +70,26 @@ budget on it.
 3. `run_suites.sh` **preserves** the output of runs that FAIL. Discarding exactly
    the runs worth reading is why this took 48 runs to characterise.
 4. A soak row: 20 consecutive runs, identical check counts, under nominal load.
+
+---
+
+## 2026-08-30 — W7 seen again, by two of the four agents on item S3, and its
+## acceptance row 1 is still the fix
+
+Recorded here rather than under a new number: this is the same suite, the same
+class, and the acceptance above already names `W7` by name.
+
+* One verification agent hit `FAIL: W7 simulator produced output before Stop ->
+  {0} (exp {1})` on **three consecutive runs**, then passed **six** later runs
+  of the byte-identical tree. They checked it against the change under review
+  and it is not attributable: with the new call removed it passed 5/5, and under
+  a deliberate 4-way CPU load **both** arms passed.
+* Two other agents on the same tree, same day, same display, ran the suite once
+  each and got `RESULT: ALL PASS (228 checks)` — so a single green run is not
+  evidence the row is stable, and a crew reading "228" as a hard tier number is
+  reading one sample.
+
+The named cliff is the fixed five-second wait at
+`tests/headless/test_ase_window.tcl:2594-2601`. Acceptance row 1 above — force
+the race, do not wait on the clock — remains the fix, and this is the second
+crew to pay for it.
