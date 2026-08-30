@@ -93,10 +93,56 @@ pre_commands {{cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}}}
    `.include` includes, `.lib` models, `.param` variables, `.options`,
    `.save` outputs, `.control` analyses block, `.end`.
 3. Write `<rundir>/<cell>_ase.spice` (schematic netlist artifact stays
-   untouched); run `ngspice -b <cell>_ase.spice -o <cell>_ase.log`.
+   untouched); run `<simulator> -b <cell>_ase.spice 2>@1` from the run
+   directory. **There is no `-o`**: stdout must flow into `execute(data,$id)`
+   so the session window can show it live, and `2>@1` folds the simulator's
+   warnings into the same stream. The log file is written by ASE itself
+   (`ase::run_log_write`), framed with the command, directory, deck and
+   elapsed time. This paragraph used to describe an `-o` redirect that the
+   code had not emitted for a long time.
 
 Per-simulator seam: step 2+3 live behind `ase::backend::<sim>::render_deck` /
 `run_cmd` table; v1 registers `ngspice` only.
+
+### Which simulator program actually starts (issue 0931)
+
+`ase::sim_status <backend>` is the **one** resolver, and every caller renders
+what it says — `run_cmd` builds the command from it, `ase::sim_exe` raises its
+sentence, and a caller asking merely "is a simulator available" reads its
+`resolved` field. Registering nothing leaves the answer exactly as it always
+was: the bare backend name, `auto_execok`'s file, and a byte-identical command.
+
+* **Registry entries** are `{name <label> path <program> args <extra argv>
+  backend <name or empty>}`. `ase::sim_register` / `ase::sim_unregister` /
+  `ase::sim_select` / `ase::sim_list` drive them; the path is expanded
+  (`$::VAR` form, as `models` paths are) and normalised to absolute at
+  registration, because `ase::run_deck` `cd`s into the run directory before it
+  launches anything.
+* **A path that is missing, is a folder, or is not marked executable is
+  reported out loud** and the entry is kept, flagged unusable, so the user can
+  fix it. Every sentence is minted once in `ase::sim_why`.
+* **A path that names a setting this session does not have** (`$::PDK_ROOT/...`
+  with `PDK_ROOT` unset) gets its own sentence, because "there is no such file"
+  would send the user to look at a disk when the thing to fix is a setting.
+* **Layers**: `::ASE_SIMULATORS` / `::ASE_SIMULATOR` from an rc
+  (`xschemrc`/`cadence_style_rc`, same idiom as `::ASE_DEFAULT_MODELS`), then
+  `$USER_CONF_DIR/ase_simulators` (written by `ase::sim_write_conf`, read at
+  startup by `xschem.tcl` beside the other loaders), then the session. rc
+  entries are never copied into the user file, and removing one from inside
+  xschem says so — it is back at the next start until the rc itself is edited.
+* **A mistake in the rc costs a sentence, never the editor.** The seed's
+  `foreach` header is itself inside the catch: `foreach x $v` parses `$v` as a
+  list *before* the body runs once, so an unbalanced brace in `::ASE_SIMULATORS`
+  used to raise out of reach of the body's own catch and abort the source of
+  `ase.tcl` — xschem exited with no schematic editor at all, where the identical
+  typo in `::ASE_DEFAULT_MODELS` starts normally. Row E12 of
+  `tests/headless/test_ase_simreg_0931.tcl` measures the two side by side.
+* **The suite is hermetic about the user's own saved list.** A machine whose
+  user has registered a simulator has a real `$USER_CONF_DIR/ase_simulators`,
+  which xschem reads at startup, so "nothing is registered" is false in the
+  test process too: the in-process rows clear the registry first and every
+  fresh-start claim is measured in a child with `HOME` redirected into the
+  suite's scratch tree.
 
 ## Migration tool (cluttered testbench → clean + state view)
 

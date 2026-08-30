@@ -287,6 +287,32 @@ set_ne ASE_DEFAULT_MODELS {}
 # subckts reference. Each entry is a {file <path>} dict. set_ne so an rc value set
 # before ase.tcl is sourced survives.
 set_ne ASE_DEFAULT_INCLUDES {}
+# --- The simulator binary registry, rc layer (issue 0931) --------------------
+#
+# WHAT THE USER COULD NOT DO BEFORE THIS. They have an ngspice build of their
+# own, somewhere that is not on PATH. There was no place in ASE-L to say so:
+# ase::backend::ngspice::run_cmd returned a hardcoded bare `ngspice`, so the
+# only lever was the PATH of the shell that launched xschem -- global to the
+# whole process, invisible from inside it, and impossible to name, list or
+# take back.
+#
+# ::ASE_SIMULATORS is a list of entry dicts, each
+#     name <label>  path <program>  args <extra argv>  backend <name or empty>
+# and ::ASE_SIMULATOR names the one to put in force. Both are `set_ne` for the
+# same reason ASE_DEFAULT_MODELS is: an rc -- xschemrc, or a PDK's
+# cadence_style_rc -- is sourced by xinit.c BEFORE xschem.tcl sources this
+# file, so a value the rc set survives, and this line only supplies the stock
+# empty default. That ordering is also why an rc CANNOT call ase::sim_register
+# directly: the proc does not exist yet when the rc runs. The rc declares data;
+# the seed block at the end of the registry section below turns it into
+# entries.
+#
+# REMOVING one is the rc no longer declaring it: the registry is rebuilt from
+# these two variables at every startup, so nothing lingers. An entry removed
+# in-session with ase::sim_unregister comes back at the next start, and the
+# user is told so at the moment they remove it.
+set_ne ASE_SIMULATORS {}
+set_ne ASE_SIMULATOR  {}
 
 # The v1 default state (spec "State file schema"). `simulator ngspice` here is
 # the one permitted ngspice literal outside the backend namespace.
@@ -469,6 +495,479 @@ proc ase::backend_hook {sim hook} {
 proc ase::backend_names {} {
   variable backends
   return [lsort [dict keys $backends]]
+}
+# --- Simulator binary registry (issue 0931) ---------------------------------
+#
+# ONE resolver answers "which program will actually be started", and every
+# caller renders what it says. The whole of ase::backend::ngspice::run_cmd
+# used to be
+#
+#     return [list ngspice -b $deckpath 2>@1]
+#
+# -- a hardcoded bare name that ignored its own state argument, so a user with
+# a build of their own had no lever but the process PATH, and no way to name,
+# list or remove what they had chosen.
+#
+# WHY ONE RESOLVER AND NOT A SECOND SOURCE OF TRUTH. The warning at
+# ase::run_deck -- "auto_execok-resolving the command afterwards would be a
+# SECOND source of truth about which binary ran, computed at a different
+# instant from the exec that ran it" -- forbids RE-deriving argv0 after the
+# fact for the log header. It does not forbid deriving it once. Here it is
+# derived once, inside run_cmd, and the very same string is both handed to
+# `execute` and stamped into the run log's `command` line, so the log still
+# records exactly what was launched. ase::sim_status is also the answer a
+# future caller asks for "is a simulator available" -- today twelve places
+# across twelve test suites answer that with their own `auto_execok ngspice`
+# call, by a different rule from the one that launches. Repointing them is a
+# separate item; this is the contract they would use.
+#
+# WHY NOTHING GOES IN ase::schema_keys. The binary is a fact about this
+# machine, not about the design; state files are committed and shared. A new
+# schema key that is not in the omit-if-empty set is written into all 104
+# committed .state files and breaks the five load-then-save byte-identity
+# rows. The registry lives entirely in the rc layer plus USER_CONF_DIR.
+#
+# LAYERS, in the order they are applied:
+#   1. the rc layer  -- ::ASE_SIMULATORS / ::ASE_SIMULATOR, seeded at the end
+#                       of this section, entries marked origin `rc`
+#   2. the user file -- USER_CONF_DIR/ase_simulators, read once at startup by
+#                       xschem.tcl beside the other startup loaders, entries
+#                       marked origin `conf`
+#   3. this session  -- ase::sim_register from the CIW, a script, or the
+#                       dialog that item S2 will add, entries marked `session`
+# The user file is read AFTER the rc seed on purpose: a personal entry wins a
+# same-name collision with a workarea rc. It never carries a copy of an rc
+# entry, so a later rc edit is never shadowed by a frozen copy.
+#
+# WHEN NOTHING IS REGISTERED, NOTHING CHANGES. ase::sim_status then answers
+# with the bare backend name and auto_execok's file, and run_cmd builds the
+# byte-identical command it always built. That is not a courtesy, it is the
+# contract: a user who registers nothing must not be able to tell this
+# section exists.
+
+namespace eval ase {
+  # entry name -> entry dict. A Tcl dict preserves insertion order, and the
+  # order entries were registered in is the order the user sees them.
+  variable simulators [dict create]
+  # the entry name in force, or empty for "no choice made -- use PATH".
+  variable sim_use {}
+  # which layer is currently registering, stamped into every entry's `origin`
+  # field. Only the seed block and ase::sim_load_conf ever change it, and both
+  # restore it, so an ordinary call is always `session`.
+  variable sim_origin session
+}
+
+# THE MINT. Every user-facing sentence about a simulator entry is written
+# here, once, and rendered by callers -- the registration report, the
+# resolver's `why`, the refusal ase::sim_exe raises, the warning run_cmd
+# echoes. A caller that re-worded one of these would be the defect ruling
+# D5-4 is about, and the structural row D6 of
+# tests/headless/test_ase_simreg_0931.tcl greps this file for exactly these
+# phrases and fails if any of them occurs more than once.
+#
+# PLAIN ENGLISH IS A REQUIREMENT, NOT A STYLE. Each sentence says what
+# happened AND what the user can do about it, at a ninth-grade reading level,
+# with no internal vocabulary in it: no proc names, no variable names, no
+# state names, nothing about auto_execok. The suite scans these sentences for
+# machinery words and reds if it finds any.
+proc ase::sim_why {kind name path {extra {}}} {
+  switch -- $kind {
+    empty_path {
+      return "No program file was given for the simulator named $name. Type the full location of the program you want to start, such as a build of your own."
+    }
+    missing {
+      return "There is no file at $path, which you registered as the simulator named $name. Check that you typed the location correctly, or point this entry at a different file."
+    }
+    notfile {
+      return "$path is a folder, not a program. It is registered as the simulator named $name. Point this entry at the simulator program inside that folder."
+    }
+    notexec {
+      return "The file $path is not marked as a program you can run. It is registered as the simulator named $name. Use chmod +x on it, or point this entry at a different file."
+    }
+    badvar {
+      return "The location given for the simulator named $name mentions a setting this session does not know about, so it cannot be turned into a real file name: $path"
+    }
+    noentry {
+      if {[llength $extra]} {
+        return "You asked for the simulator named $name, but nothing by that name has been registered. The ones you can choose from are: [join $extra {, }]."
+      }
+      return "You asked for the simulator named $name, but no simulator has been registered yet. Register one before choosing it."
+    }
+    wrongbackend {
+      return "The simulator named $name was registered for [lindex $extra 0], so it cannot be used to run [lindex $extra 1]. Pick one that was registered for [lindex $extra 1], or make no choice at all and the program named [lindex $extra 1] on your PATH will be used."
+    }
+    ambiguous {
+      return "More than one simulator is registered and none of them has been picked: [join $extra {, }]. Until you pick one, the program named $name on your PATH is what will start."
+    }
+    rc_removed {
+      return "The simulator named $name was put there by a startup configuration file, so it will be back the next time xschem starts. Edit that file to remove it for good."
+    }
+    nowrite {
+      return "Your simulator list could not be saved to $path, so the simulators you added will be gone when xschem closes. Check that the folder exists and that you can write to it. The system said: $extra"
+    }
+    badconf {
+      return "Your saved simulator list in $path could not be read, so no simulators were restored from it. Fix or delete that file. The system said: $extra"
+    }
+    badrcentry {
+      return "One simulator listed in your startup configuration file could not be set up, so it was skipped and the others were kept. Fix that one entry in that file. The system said: $extra"
+    }
+    badrclist {
+      return "The list of simulators in your startup configuration file could not be read at all, so no simulators were set up from it. Check that the braces and brackets on that line match. The system said: $extra"
+    }
+  }
+  return "Something is wrong with the simulator named $name."
+}
+
+# THE VALIDATOR. Four ordered guards, each its own line and its own thing to
+# say, returning the `kind` that names what is wrong or empty when the file
+# can be started.
+#
+# THE `file isfile` GUARD IS NOT REDUNDANT AND IT IS THE ONE A READER SKIPS.
+# Measured on this tree: `file executable` answers 1 for a DIRECTORY. An
+# executable-only check therefore lets a folder through and the user finds
+# out when the run fails. ase::cosim_build_script -- this tree's only other
+# "an rc variable names an executable" resolver -- has exactly that hole, and
+# returns empty with no message in both of its bad arms; the sentence the
+# user then reads blames the variable as unset when it is set and merely
+# wrong. That silence is the shape this whole section exists not to copy.
+proc ase::sim_check {path} {
+  if {$path eq {}}               { return empty_path }
+  if {![file exists $path]}      { return missing }
+  if {![file isfile $path]}      { return notfile }
+  if {![file executable $path]}  { return notexec }
+  return {}
+}
+
+# Register simulator `name` at `path`. Options: -args <extra argv list>,
+# -backend <backend name, or empty for any>.
+#
+# Returns 1 when the entry can be started, 0 when it was recorded but cannot.
+# A malformed CALL -- no name, an unknown option, a -args value that is not a
+# list -- raises; a bad PATH does not.
+#
+# WHY A BAD PATH IS RECORDED AND NOT REFUSED. Refusing would throw the user's
+# typing away mid-gesture and leave the list with nothing to show them, so
+# there would be nothing to fix. It is recorded with ok 0 and REPORTED out
+# loud, because silence is this feature area's failure mode.
+proc ase::sim_register {name path args} {
+  variable simulators
+  variable sim_use
+  variable sim_origin
+  set eargs {}
+  set backend {}
+  set p $path
+  set kind {}
+  if {[llength $args] % 2} {
+    return -code error "ase: simulator options come in pairs, like -args or -backend followed by a value: $args"
+  }
+  foreach {o v} $args {
+    switch -- $o {
+      -args {
+        if {[catch {llength $v}]} {
+          return -code error "ase: the extra arguments for simulator '$name' are not a proper list: $v"
+        }
+        set eargs $v
+      }
+      -backend { set backend $v }
+      default {
+        return -code error "ase: unknown option '$o' registering simulator '$name' (known: -args -backend)"
+      }
+    }
+  }
+  if {$name eq {}} {
+    return -code error "ase: a simulator needs a name to be registered under"
+  }
+  # The portable form the model files already use -- a path written as
+  # $::PDK_ROOT/bin/ngspice -- is expanded here, variables only, no command
+  # execution. Failure is a bad path, not a bad call, so it is reported and
+  # recorded like any other.
+  if {$p ne {}} {
+    if {[catch {ase::expand_path $p} out]} {
+      set kind badvar
+    } else {
+      # NORMALISED AT REGISTRATION, AND THIS IS LOAD-BEARING. ase::run_deck
+      # does `cd` into the run directory before it launches the simulator, so
+      # a path stored the way the user typed it -- bin/ngspice, or ../build/
+      # ngspice -- would resolve against the RUN directory rather than
+      # against wherever they were standing. Normalising once means the
+      # stored value, the value every message shows, and the value handed to
+      # `execute` are one string.
+      set p [file normalize $out]
+    }
+  }
+  if {$kind eq {}} { set kind [ase::sim_check $p] }
+  if {$kind ne {}} { ase::echo [ase::sim_why $kind $name $p] error }
+  dict set simulators $name [dict create name $name path $p args $eargs \
+                             backend $backend origin $sim_origin \
+                             ok [expr {$kind eq {} ? 1 : 0}]]
+  # Registering the FIRST simulator puts it in force. Without this,
+  # registering one simulator would do nothing visible at all and the user
+  # would have to make a second, separate gesture to mean the obvious thing.
+  # A later registration never steals the choice away from it.
+  if {$sim_use eq {}} { set sim_use $name }
+  return [expr {$kind eq {} ? 1 : 0}]
+}
+
+# Remove one registered simulator. Raises on a name that was never
+# registered, because the caller asked about something that is not there.
+proc ase::sim_unregister {name} {
+  variable simulators
+  variable sim_use
+  if {![dict exists $simulators $name]} {
+    return -code error "ase: [ase::sim_why noentry $name {} [dict keys $simulators]]"
+  }
+  set e [dict get $simulators $name]
+  dict unset simulators $name
+  if {$sim_use eq $name} {
+    set sim_use {}
+    # One left after the removal is not a guess, it is the only answer; two
+    # or more is a guess, and the choice is left empty so the user makes it.
+    if {[dict size $simulators] == 1} {
+      set sim_use [lindex [dict keys $simulators] 0]
+    }
+  }
+  if {[dict get $e origin] eq {rc}} {
+    # `note` is the CIW pane's dark-orange tag; the tags the pane actually
+    # styles are input / result / error / note, and this is news, not an error.
+    ase::echo [ase::sim_why rc_removed $name {}] note
+  }
+  return 1
+}
+
+# The registered entries, in the order they were registered. With a backend
+# name, only those that can serve it -- an entry registered for no particular
+# backend serves every backend.
+proc ase::sim_list {{backend {}}} {
+  variable simulators
+  set out {}
+  dict for {n e} $simulators {
+    if {$backend ne {} && [dict get $e backend] ne {} \
+        && [dict get $e backend] ne $backend} { continue }
+    lappend out $e
+  }
+  return $out
+}
+
+# Put one registered simulator in force. An empty name clears the choice,
+# which puts the program on the PATH back in charge.
+proc ase::sim_select {name} {
+  variable simulators
+  variable sim_use
+  if {$name eq {}} { set sim_use {} ; return {} }
+  if {![dict exists $simulators $name]} {
+    return -code error "ase: [ase::sim_why noentry $name {} [dict keys $simulators]]"
+  }
+  set sim_use $name
+  return $name
+}
+
+# The name in force, or empty.
+proc ase::sim_selected {} {
+  variable sim_use
+  return $sim_use
+}
+
+# Forget every registered simulator and every choice.
+proc ase::sim_clear {} {
+  variable simulators
+  variable sim_use
+  set simulators [dict create]
+  set sim_use {}
+  return 1
+}
+
+# THE RESOLVER. The single answer to "which program will actually be
+# started", for `backend`. NEVER RAISES -- every caller here is either a menu
+# predicate or a run about to start, and a resolver that throws would turn a
+# wrong path into a stack trace instead of a sentence.
+#
+# Returns a dict:
+#   ok        1 when something can be started, 0 when the user's own choice
+#             cannot be honoured
+#   exe       argv0, exactly as it will be handed to `execute`
+#   args      the extra arguments that go before the deck
+#   resolved  the absolute file this names, or auto_execok's answer when the
+#             PATH is what is in charge. This is the field a caller asking
+#             "is a simulator available" wants.
+#   source    `registry` when a registered entry answered, `path` when the
+#             program on the PATH did
+#   entry     the registered name that answered, or empty
+#   why       the one sentence to show the user, or empty when there is
+#             nothing to say. NON-EMPTY WITH ok 1 IS REAL: it means the run
+#             will proceed on the PATH program and the user should know why.
+proc ase::sim_status {backend} {
+  variable simulators
+  variable sim_use
+  set aeo [lindex [auto_execok $backend] 0]
+  set pathans [dict create ok 1 exe $backend args {} resolved $aeo \
+                           source path entry {} why {}]
+  if {$sim_use ne {}} {
+    if {![dict exists $simulators $sim_use]} {
+      # Reachable from a startup configuration file that names a simulator it
+      # never registered, which is a typo the user must be told about by
+      # name. Neither honoured nor hidden.
+      dict set pathans ok 0
+      dict set pathans why [ase::sim_why noentry $sim_use {} [dict keys $simulators]]
+      return $pathans
+    }
+    set e [dict get $simulators $sim_use]
+    set eb [dict get $e backend]
+    if {$eb ne {} && $eb ne $backend} {
+      dict set pathans ok 0
+      dict set pathans source registry
+      dict set pathans entry $sim_use
+      dict set pathans why [ase::sim_why wrongbackend $sim_use {} [list $eb $backend]]
+      return $pathans
+    }
+    set p [dict get $e path]
+    # RE-VALIDATED HERE, NOT TRUSTED FROM REGISTRATION TIME. The machine can
+    # change between the two: the file gets deleted, a rebuild leaves it
+    # without its executable bit, a mount goes away. The `ok` recorded at
+    # registration answers a question about the past.
+    set kind [ase::sim_check $p]
+    if {$kind ne {}} {
+      return [dict create ok 0 exe $p args [dict get $e args] resolved {} \
+                          source registry entry $sim_use \
+                          why [ase::sim_why $kind $sim_use $p]]
+    }
+    return [dict create ok 1 exe $p args [dict get $e args] resolved $p \
+                        source registry entry $sim_use why {}]
+  }
+  # No choice made. Registering the first simulator makes one, so an empty
+  # choice with entries present means the user cleared it deliberately, and
+  # the program on the PATH is what they asked for. More than one waiting is
+  # still worth saying out loud -- reported, never guessed at.
+  set cands {}
+  foreach e [ase::sim_list $backend] { lappend cands [dict get $e name] }
+  if {[llength $cands] > 1} {
+    dict set pathans why [ase::sim_why ambiguous $backend {} $cands]
+  }
+  return $pathans
+}
+
+# argv0 for `backend`, or a clean refusal carrying the resolver's own
+# sentence. The sentence is rendered, never re-worded.
+proc ase::sim_exe {backend} {
+  set s [ase::sim_status $backend]
+  if {![dict get $s ok]} { return -code error "ase: [dict get $s why]" }
+  return [dict get $s exe]
+}
+
+# The file the user's own simulator list is saved in.
+proc ase::sim_conf_file {} {
+  if {![info exists ::USER_CONF_DIR]} { return {} }
+  return [file join $::USER_CONF_DIR ase_simulators]
+}
+
+# Save the simulator list so it survives a restart. Returns 1 on success, 0
+# with a report on failure; never raises.
+#
+# THIS IS THE WRITER A DIALOG CALLS. It takes no widget and touches no Tk, so
+# the Setup dialog item S2 adds calls exactly this and nothing is duplicated
+# behind the dialog.
+#
+# The file is a Tcl script of ase::sim_register lines, the same shape a user
+# could type by hand, modelled on write_net_hilight_style_conf in xschem.tcl.
+proc ase::sim_write_conf {{path {}}} {
+  variable simulators
+  variable sim_use
+  if {$path eq {}} { set path [ase::sim_conf_file] }
+  if {[catch {open $path w} fp]} {
+    ase::echo [ase::sim_why nowrite {} $path $fp] error
+    return 0
+  }
+  puts $fp "# xschem ASE-L simulator list -- written by xschem, issue 0931."
+  puts $fp "# Read once at startup. Edit by hand if you like: it is a plain"
+  puts $fp "# Tcl script of ase::sim_register lines."
+  # ENTRIES A STARTUP CONFIGURATION FILE DECLARES ARE DELIBERATELY NOT
+  # WRITTEN. The rc re-declares them at every start, so a copy here would
+  # only be a stale second declaration -- and it would shadow a later edit to
+  # the rc, which is the one place the user would think to make the change.
+  dict for {n e} $simulators {
+    if {[dict get $e origin] eq {rc}} { continue }
+    puts $fp [list ase::sim_register $n [dict get $e path] \
+                   -args [dict get $e args] -backend [dict get $e backend]]
+  }
+  # Same reason the selection line is skipped when what is in force came from
+  # an rc: this file must not mention rc entries at all, or reading it back
+  # in a session where the rc no longer declares that name would fail.
+  if {$sim_use ne {} && [dict exists $simulators $sim_use] \
+      && [dict get $simulators $sim_use origin] ne {rc}} {
+    puts $fp [list ase::sim_select $sim_use]
+  }
+  close $fp
+  return 1
+}
+
+# Read the saved simulator list back. Returns 1 when a file was read, 0 when
+# there was none or it could not be read. NEVER RAISES: it runs at startup,
+# and a damaged file must not stop xschem from starting.
+proc ase::sim_load_conf {{path {}}} {
+  variable sim_origin
+  if {$path eq {}} { set path [ase::sim_conf_file] }
+  if {$path eq {}} { return 0 }
+  # A missing file is the ordinary first-run case, not a failure, and saying
+  # anything about it would be noise in every fresh install.
+  if {![file isfile $path]} { return 0 }
+  set sim_origin conf
+  set rc [catch {uplevel #0 [list source $path]} err]
+  set sim_origin session
+  if {$rc} {
+    ase::echo [ase::sim_why badconf {} $path $err] error
+    return 0
+  }
+  return 1
+}
+
+# --- the rc seed ------------------------------------------------------------
+# Turn what a startup configuration file declared into entries, at the moment
+# this file is sourced -- which is the only moment at which both the rc's
+# values and these procs exist.
+#
+# EVERY STEP IS CAUGHT, AND THAT IS NOT DEFENSIVE PADDING. An error raised
+# here is raised while xschem.tcl is sourcing this file: it would abort the
+# source and take the entire ASE-L namespace out at startup, over a typo in
+# somebody's PDK rc. A mistake in the rc must cost the user a sentence, not
+# the feature.
+#
+# THE LOOP HEADER IS INSIDE THE CATCH TOO, AND THAT IS THE PART A READER
+# SKIPS. `foreach x $v` parses $v AS A LIST before it runs the body even
+# once, so an unbalanced brace in the rc's value raises in the HEADER --
+# outside any catch the body owns. Measured before this was fixed: an
+# unmatched brace in ::ASE_SIMULATORS aborted the source of this file and
+# xschem exited with no schematic editor at all ("STARTUP ABORTED ... Failing
+# file: ase.tcl"), while the identical typo in ::ASE_DEFAULT_MODELS and
+# ::ASE_DEFAULT_INCLUDES -- the two rc variables this seed was modelled on --
+# started normally. Row E12 of tests/headless/test_ase_simreg_0931.tcl
+# measures the two side by side, so the parity is a check and not a comment.
+if {[info exists ::ASE_SIMULATORS] && $::ASE_SIMULATORS ne {}} {
+  set ::ase::sim_origin rc
+  if {[catch {
+    foreach ase_seed_e $::ASE_SIMULATORS {
+      if {[catch {
+        set ase_seed_a {}
+        set ase_seed_b {}
+        catch {set ase_seed_a [dict get $ase_seed_e args]}
+        catch {set ase_seed_b [dict get $ase_seed_e backend]}
+        ase::sim_register [dict get $ase_seed_e name] [dict get $ase_seed_e path] \
+                          -args $ase_seed_a -backend $ase_seed_b
+      } ase_seed_err]} {
+        catch {ase::echo [ase::sim_why badrcentry {} {} $ase_seed_err] error}
+      }
+    }
+  } ase_seed_lerr]} {
+    catch {ase::echo [ase::sim_why badrclist {} {} $ase_seed_lerr] error}
+  }
+  set ::ase::sim_origin session
+  catch {unset ase_seed_e} ; catch {unset ase_seed_a}
+  catch {unset ase_seed_b} ; catch {unset ase_seed_err}
+  catch {unset ase_seed_lerr}
+}
+if {[info exists ::ASE_SIMULATOR] && $::ASE_SIMULATOR ne {}} {
+  if {[catch {ase::sim_select $::ASE_SIMULATOR} ase_seed_serr]} {
+    catch {ase::echo $ase_seed_serr error}
+  }
+  catch {unset ase_seed_serr}
 }
 
 # --- Run directory ----------------------------------------------------------
@@ -4202,8 +4701,39 @@ namespace eval ase::backend::ngspice {
 
   # Batch invocation arg list. 2>@1 folds stderr warnings into the captured
   # log; stdout must flow into execute(data,$id), so no -o here.
+  #
+  # ISSUE 0931: argv0 is no longer the hardcoded word `ngspice`. It is
+  # whatever ase::sim_status says will actually start -- a simulator the user
+  # registered, or the program on their PATH when they registered none. This
+  # is the single resolution: the string built here is both what `execute`
+  # launches and what the run log records as the command, so the two cannot
+  # disagree.
+  #
+  # THE COMMAND IS BUILT BY APPENDING, AND THAT IS THE POINT. With nothing
+  # registered the result is byte-identical to what this proc always returned,
+  # which is what keeps the committed deck and command goldens green with
+  # nobody editing them, and what keeps a user who registered nothing unable
+  # to tell this change happened. The user's own extra arguments land between
+  # the program and the deck, which is where they would type them; -b and
+  # 2>@1 are untouched.
+  #
+  # IT REFUSES RATHER THAN FALLING BACK. When the simulator the user chose
+  # cannot be started -- deleted, or no longer marked runnable -- quietly
+  # launching a different program and mentioning it in a pane they may not be
+  # reading is the same defect as putting an unmeasured number on a
+  # schematic. The `why` sentence is minted by ase::sim_why and rendered here.
   proc run_cmd {state deckpath} {
-    return [list ngspice -b $deckpath 2>@1]
+    set s [ase::sim_status ngspice]
+    if {![dict get $s ok]} {
+      return -code error "ase: [dict get $s why]"
+    }
+    if {[dict get $s why] ne {}} {
+      ase::echo "ase: [dict get $s why]" error
+    }
+    set cmd [list [dict get $s exe]]
+    foreach a [dict get $s args] { lappend cmd $a }
+    lappend cmd -b $deckpath 2>@1
+    return $cmd
   }
 
   # <rundir>/<cell>_ase.log

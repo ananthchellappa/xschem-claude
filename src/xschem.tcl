@@ -17394,6 +17394,16 @@ set_ne copy_cell 0
 
 load_recent_file
 load_net_hilight_conf
+# ASE-L simulator list: the simulators the user pointed at builds of their
+# own, saved in USER_CONF_DIR/ase_simulators by ase::sim_write_conf. Sits with
+# the other startup loaders because it has their lifetime: read once here,
+# written back only from an explicit save. Issue 0931. ase.tcl is sourced far
+# above, so the proc exists; it never throws, and a missing or damaged file
+# just leaves the list empty.
+#
+# A WRITER WITH NO READER IS THE RECORDED WAY THIS GOES WRONG (issue 0925),
+# which is why the suite greps this file for this call.
+ase::sim_load_conf
 # signal_browser_batch item 13: the waveform viewer's Location-bar raw history,
 # read from its own store ($USER_CONF_DIR/raw_history) -- NEVER the recent-files
 # list. Sits with the other two loaders because it has their lifetime: read once
