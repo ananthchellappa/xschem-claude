@@ -360,7 +360,38 @@ refused, with an internal `.new` name leaking into user-facing wording).
 0938 is on the user's ruling queue, because the way out is a trade between a
 wrong sentence in a rare arm and a refusal to run a working simulator.
 
-**The next free number is 0945.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-29, item S2a — one number claimed, three issues closed.** Repairing
+0938 measured a fourth arm of the same guard that nobody had filed: a simulator
+typed at its REAL absolute path with a dollar sign in it is refused when you add
+it. That is **0945**, and it is NOT the 0937 regression — it is refused
+consistently at both ends and dates from 0931 (`0225a962`). It is closed by the
+same guard that closes 0938's restart half. **0938** is FIXED by its own option
+2 (the verdict about the setting is worked out once, at registration, and
+recorded on the entry) plus that guard; the rejected alternatives and the
+residual 0933 storage half are written into the file. **0941** is FIXED by
+making the sentence recorder accumulate, so a gesture with two true things to
+say has both of them on the dialog's status line. **0940** was examined for the
+same root and MEASURED to be a different one — it says no sentence at all, so
+there is nothing for a recorder to overwrite — and stays OPEN, needing a new
+minted sentence and the user's refuse-vs-confirm ruling.
+
+**2026-08-29, item S2a's write-up pass — two more, both measured on the
+repaired tree.** The 0938 repair narrowed the wrong sentence rather than
+removing it, and the write-up agent measured how much is left before publishing
+the claim. **0946**: a location with a dollar sign in a **folder name** that
+names no file — a typo, or a program that moved — is still blamed on a setting,
+in the live session, on the first gesture, with nothing deleted and no restart
+involved. 0938's own residual paragraph scoped that to "after a restart, an
+entry since deleted"; both qualifiers were wrong and the file now says so.
+**0947**: the answer about the setting is worked out once and recorded, so an
+entry added while its setting was unset goes on saying the session does not know
+that setting after the user sets it — false by then, and one `Edit` → `OK` from
+working, which no sentence mentions. 0947 is this repair's own doing; the
+shipped-before code refused the same entry with a different wrong sentence, so
+it is a wording trade, not a behaviour regression. Both lean on 0933's still-open
+storage half, which would close them together.
+
+**The next free number is 0948.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved: the three tracked sources — this
 file, `CLAUDE.md` and the auto-memory note — record only those two, so 0899 is
 followed by 0900.

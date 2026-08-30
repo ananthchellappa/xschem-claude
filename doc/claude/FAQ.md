@@ -14,6 +14,92 @@ Newest entries on top.
 
 ---
 
+## Q69. The same suite answers 17 checks headless and 109 on the dev display. Which one is "the" count?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, item S2a (the simulator-registry dollar-path
+  repair). `tests/headless/test_ase_persist.tcl`, `test_ase_view.tcl`,
+  `test_ase_plot.tcl`, `test_wave_viewer.tcl`.
+
+**Both. A check count is an *arm* number, not a property of the suite**, and a
+baseline that does not name the arm it was taken on will read as a regression to
+the next person who runs it the other way.
+
+Measured today, same tree, same binary:
+
+| suite | `--nogui` | dev display `:99` |
+|---|---|---|
+| `test_ase_persist` | 17 | 109 |
+| `test_ase_plot` | 30 | 150 |
+| `test_ase_view` | 32 | 36 |
+
+`test_ase_persist` says so out loud — `gui legs skipped (no DISPLAY)` — and then
+prints `RESULT: ALL PASS (17 checks)`, which is a **whole-line completion banner
+after a clean exit**, so by the repo's own pass rule it *passed*. It just
+answered a smaller question. `test_wave_viewer` splits on a different axis
+again: 401 with `--nolog`, 404 with `--logdir`, because three of its checks
+census the log file and it prints `SKIP: G1c needs --logdir` when there is none.
+
+**This is not free.** Three agents on one item each independently re-measured
+those five numbers to work out whether a "drop" was a red, because the list they
+were handed filed dev-display counts under a "Headless" heading. The suites were
+green the whole time.
+
+**The rule:** whenever a check count is written down — a tier list, a brief, an
+issue's acceptance section, a commit body — write the arm beside it
+(`--nogui`, `:99`, `--logdir`). And when a count comes in *lower* than a
+baseline, read the SKIP lines before reading it as a failure: a suite that
+skipped a leg says so, and a suite that died does not.
+
+---
+
+## Q68. We stopped re-deriving an answer and recorded it at the point the question was first asked. What does that buy, and what does it cost?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0938** FIXED, **0945** FIXED,
+  **0946** and **0947** filed. `src/ase.tcl`, `ase::sim_register` /
+  `ase::sim_entry_kind`, rows R13–R19.
+
+**It buys idempotence, and it costs you the freshness of anything in the
+recorded answer that can still change.** Q67 ends with the prescription — record
+the outcome where the question is first asked, re-validate only what can
+genuinely move underneath you. Shipping it turned up two things the
+prescription does not tell you.
+
+**First: a recorded verdict is only as safe as the *least* immutable fact inside
+it.** The recorded field here, `varok`, looks like one answer but carries two.
+For a location whose substitution *succeeded* and whose result still contains a
+literal `$`, it records a property of a fixed string — that can never go false,
+and freezing it is exactly right. For a location naming a setting the session
+could not read, it records **a fact about the session at one instant**, and the
+user can set that variable a minute later. Measured: the entry then goes on
+saying *"mentions a setting this session does not know about"* about a setting
+the session now knows (issue **0947**). The old code re-derived and got a
+*different* wrong sentence, so nothing regressed — but the freeze made a false
+statement possible where before there was only an unhelpful one. **Split a
+recorded verdict by whether each fact it stands for can change, before you
+freeze it.**
+
+**Second: an arm that "defers to the existing guards" needs the deferral
+tested, not the happy path.** The repair's other half says a location that
+already names a real file is a file name, not a template — and its comment
+promises it defers to the four filesystem checks below, so a folder is still a
+folder and a non-executable is still non-executable. That promise was **true and
+completely untested**. Rows R13–R16 all point the new arm at a *working*
+program, so one of its four outcomes was measured and three were not. A sabotage
+variant that deleted the deferral entirely left the whole suite green at 66
+checks while a **folder** was accepted as a simulator with nothing said about
+it. The row that closed it (R19) asserts the other three outcomes and leads with
+its own witnesses — the fixture really contains a `$`, the location really
+cannot be read as a setting, the folder really is a folder — so it cannot go
+green by drifting onto the ordinary arm two older rows already cover.
+
+**The general shape:** a new branch inherits its siblings' guarantees only on
+paper. Test the branch at each outcome those guarantees produce, or you have
+tested the one case you had in mind and written the rest down as a comment.
+
+---
+
 ## Q67. Two rows compared the list against the run and both went green while the feature was broken. What kind of row is that?
 
 - **Asked:** 2026-08-29

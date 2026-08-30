@@ -639,6 +639,42 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
           [expr {[wtext $top.simdlg.status] eq [mint ase::sim_why removed_now_path keep8 {}]}]] \
     [list {} {} 1]
 
+
+  # --- S19: ISSUE 0941, AT THE PIXELS -----------------------------------
+  # Taking away a simulator that a startup configuration file put there,
+  # while it is the one in use, has TWO true things to say: which simulator
+  # takes over, and that this one will be back next time. Both reach the CIW.
+  # Measured at d733209e: the dialog's own line showed only the second, so
+  # the user was never told, anywhere they were looking, that the program
+  # which will actually run had just changed.
+  #
+  # Both sentences are quoted from the mint, never from a literal here, so
+  # this row cannot drift from the wording in ase.tcl. S8a and S8b above are
+  # the control: one sentence still renders as exactly one sentence.
+  simreset
+  set ::ase::sim_origin rc
+  pcall ase::sim_register rc19 $STUB
+  set ::ase::sim_origin session
+  pcall ase::sim_register mine19 $STUB2
+  pcall ase::sim_select rc19
+  catch {destroy $top.simdlg}
+  winv $top.mb.setup $SIMLBL
+  update
+  catch {$top.simdlg.tv selection set 0}
+  update
+  winv $top.simdlg.btns.remove
+  update
+  set S19TXT [wtext $top.simdlg.status]
+  set S19O [mint ase::sim_why removed_now_other rc19 {} mine19]
+  set S19R [mint ase::sim_why rc_removed rc19 {}]
+  set S19IO [string first $S19O $S19TXT]
+  set S19IR [string first $S19R $S19TXT]
+  check {S19 removing a simulator a startup file put there, while it is the one in use, tells you BOTH true things on the dialog's own line -- which simulator takes over, said first, and that this one comes back the next time xschem starts} \
+    [list [simnames] [pcall ase::sim_selected] \
+          [expr {$S19IO >= 0}] [expr {$S19IR >= 0}] \
+          [expr {$S19IO >= 0 && $S19IR > $S19IO}]] \
+    [list [list mine19] mine19 1 1 1]
+
   # --- S9: EDIT DOES NOT THROW AWAY WHAT THE DIALOG DOES NOT SHOW -------
   # The dialog offers Name and Program only. Extra arguments and the backend
   # an entry was registered for are invisible in it -- and an editor that

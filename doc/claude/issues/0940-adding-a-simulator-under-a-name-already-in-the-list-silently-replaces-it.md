@@ -1,7 +1,26 @@
 # 0940 — adding a simulator under a name already in the list silently replaces it
 
-**Status: OPEN.** Measured on the `Setup > Simulators…` dialog that issue 0937
-shipped, and reproduced first-hand at the registry level by the write-up agent.
+**Status: OPEN — examined during the 0938/0941 repair (item S2a) and
+deliberately left filed.** The S2a brief asked whether this shares the
+one-string-recorder root that 0941 has. **Measured: it does not.** Removing an
+in-force startup-file entry says two true sentences and the recorder kept only
+the last of them — that is 0941, and accumulating fixed it. Re-registering onto
+a name already taken says **zero** sentences and leaves the recorder **empty**:
+
+```
+N2 second register returns   = 1
+N4 entry after               = name ng path ... args {} backend {} origin session ok 1
+N5 sentences the CIW got     = 0
+N6 sim_said                  = ''
+```
+
+Nothing is overwritten in the recorder because nothing is ever put in it. There
+is no collision guard and no minted sentence at all, so fixing this needs a NEW
+sentence and the user's refuse-vs-confirm ruling below — neither of which the
+0938/0941 repair could carry.
+
+**The original filing, unchanged.** Measured on the `Setup > Simulators…` dialog
+that issue 0937 shipped, and reproduced first-hand at the registry level by the write-up agent.
 
 **This is the same defect row S9 exists to prevent, reachable through the other
 button.** `ase::ui::simdlg_ok` carries an entry's extra arguments and its backend

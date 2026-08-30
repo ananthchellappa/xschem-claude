@@ -555,9 +555,20 @@ namespace eval ase {
   # field. Only the seed block and ase::sim_load_conf ever change it, and both
   # restore it, so an ordinary call is always `session`.
   variable sim_origin session
-  # the last sentence ase::sim_say said, so a dialog can show the user the
-  # very words the CIW got instead of composing a second version of them
-  # (issue 0937; ase::sim_said / ase::sim_said_clear).
+  # EVERY sentence ase::sim_say has said since the last clear, in the order it
+  # said them, so a dialog can show the user the very words the CIW got
+  # instead of composing a second version of them (issue 0937;
+  # ase::sim_said / ase::sim_said_clear).
+  #
+  # A LIST, NOT ONE STRING, AND THAT IS ISSUE 0941. One gesture can have more
+  # than one true thing to say: taking away a simulator that a startup
+  # configuration file put there, while it is the one in use, says BOTH which
+  # simulator takes over AND that this one will be back the next time xschem
+  # starts. A single-string recorder kept only the last of the two, so the one
+  # line the Simulators window can show never told the user that the program
+  # which will actually run had just changed. What a reader would otherwise
+  # assume -- that this holds "the last sentence" -- is exactly what the
+  # defect was made of.
   variable sim_said {}
 }
 
@@ -651,21 +662,34 @@ proc ase::sim_why {kind name path {extra {}}} {
 # The tag is the CIW pane's style name -- input / result / error / note are
 # the four the pane actually styles -- and defaults to `error` because most
 # of what this section has to say is a refusal.
+#
+# APPENDED, NEVER OVERWRITTEN (issue 0941). Two say-sites can fire in one
+# gesture, and both sentences are true and both are the user's business; the
+# recorder that kept only the last one threw away the half that says what
+# happens next. Every reader clears first and reads back after, so the record
+# is always the sentences of ONE gesture. The RETURN value is unchanged and is
+# still this call's own sentence, not the record.
 proc ase::sim_say {kind name path {extra {}} {tag error}} {
   variable sim_said
   set m [ase::sim_why $kind $name $path $extra]
-  set sim_said $m
+  lappend sim_said $m
   ase::echo $m $tag
   return $m
 }
 
-# The last sentence said about a simulator, or empty. A caller that wants to
-# show the user what a gesture said clears this first, does the gesture, then
-# reads it back -- so a gesture that said nothing is visibly nothing rather
-# than the sentence before it.
+# What was said about a simulator since the last clear, as ONE string a status
+# line can show, or empty. A caller that wants to show the user what a gesture
+# said clears this first, does the gesture, then reads it back -- so a gesture
+# that said nothing is visibly nothing rather than the sentence before it.
+#
+# JOINED IN THE ORDER THEY WERE SAID (issue 0941). A gesture with two things
+# to say hands back both, the what-happens-next one first, which is the order
+# the CIW got them in and the order ase::sim_unregister's say-sites are pinned
+# in. A gesture with ONE thing to say hands back exactly that sentence and
+# nothing else, so every caller written before 0941 sees no change at all.
 proc ase::sim_said {} {
   variable sim_said
-  return $sim_said
+  return [join $sim_said { }]
 }
 
 proc ase::sim_said_clear {} {
@@ -695,34 +719,42 @@ proc ase::sim_check {path} {
 }
 
 # THE SAME VALIDATOR, ASKED ABOUT A STORED ENTRY RATHER THAN ABOUT A FILE
-# NAME. One guard more, and it is the one a reader would assume is redundant
-# (issue 0933, half of it): a location written the portable way, as
-# $::PDK_ROOT/bin/ngspice, is stored UNEXPANDED when the setting it names is
-# not set in this session -- registration reports it and skips the
-# normalisation. Handing that literal to ase::sim_check answers `missing`,
-# so the list would tell the user "there is no file at $::PDK_ROOT/bin/
-# ngspice" and send them looking at a disk, contradicting in writing the
-# sentence registration had just given them about a setting. Rows R5 and R7
-# measure exactly that contradiction.
+# NAME. It takes the ENTRY, not the path, because the one question it can add
+# to ase::sim_check was already answered once and cannot be asked again.
 #
-# What is deliberately NOT done here: the STORED path is validated, never the
-# expansion. The storage half of 0933 stays filed.
+# THE GUARD, AND WHAT A READER WOULD OTHERWISE ASSUME (issues 0933 and 0938).
+# A location written the portable way, as $::PDK_ROOT/bin/ngspice, is stored
+# as typed when the setting it names is not set in this session --
+# registration reports it and skips the normalisation. Handing that literal to
+# ase::sim_check answers `missing`, so the list would tell the user "there is
+# no file at $::PDK_ROOT/bin/ngspice" and send them looking at a disk,
+# contradicting in writing the sentence registration had just given them about
+# a setting. Rows R5 and R7 measure exactly that contradiction, so the answer
+# about the SETTING has to survive to here somehow.
 #
-# WARNING, MEASURED AND FILED AS 0938. This comment used to claim that every
-# field ase::sim_status answers with -- exe, resolved, ok -- stays
-# byte-identical to what it answered before this proc existed. That claim is
-# FALSE, and the next reader must not trust it. ase::sim_register stores the
-# ALREADY-EXPANDED path, so substituting it a second time here asks a
-# different question, and the substitution is not idempotent. A path that
-# expands to a name containing a literal dollar sign -- a PDK root with one in
-# a folder name -- is runnable and was registered with ok 1, yet is refused
-# here as badvar: ok flips to 0, resolved goes empty, and ase::sim_exe raises
-# with a sentence blaming a setting the path never mentions. Row R7 cannot see
-# it, because the list and the run are then wrong together. See
-# doc/claude/issues/0938 for the reproduction and the two ways out.
-proc ase::sim_entry_kind {path} {
-  if {[catch {ase::expand_path $path}]} { return badvar }
-  return [ase::sim_check $path]
+# IT SURVIVES AS A RECORDED VERDICT, AND IT IS NEVER WORKED OUT AGAIN. The
+# obvious-looking thing -- try the substitution again here and answer badvar
+# when it fails -- is what this proc used to do, and it is issue 0938: turning
+# a location into a file name is NOT idempotent. ase::sim_register does it
+# once and stores the RESULT, and a result that came back carrying a literal
+# dollar sign (a PDK kept under a folder with one in its name) fails the
+# second pass. A runnable simulator, registered with ok 1 and shown in the
+# list with no problem against it, was then refused at the run with a sentence
+# blaming a setting its path never mentions. Row R7 could not see it, because
+# the list and the run were wrong together; rows R13 and R18 can.
+#
+# A MISSING `varok` MEANS "NOTHING TO COMPLAIN ABOUT", so an entry dict built
+# anywhere else can never start silently answering badvar.
+#
+# What is deliberately NOT done here: the FILESYSTEM facts are still worked
+# out fresh on every call, because they change under a live entry -- row R6
+# deletes the program and row R14 expects the list to say the file is gone
+# rather than go on blaming a setting. Only the answer about the setting is
+# remembered. The storage half of 0933 stays filed: see
+# doc/claude/issues/0938 for what a restart can no longer tell apart.
+proc ase::sim_entry_kind {entry} {
+  if {[dict exists $entry varok] && ![dict get $entry varok]} { return badvar }
+  return [ase::sim_check [dict get $entry path]]
 }
 
 # THE PER-ENTRY REASON: the one sentence a list can show against ONE entry,
@@ -740,8 +772,9 @@ proc ase::sim_entry_why {name} {
   if {![dict exists $simulators $name]} {
     return [ase::sim_why noentry $name {} [dict keys $simulators]]
   }
-  set p [dict get $simulators $name path]
-  set kind [ase::sim_entry_kind $p]
+  set e [dict get $simulators $name]
+  set p [dict get $e path]
+  set kind [ase::sim_entry_kind $e]
   if {$kind eq {}} { return {} }
   return [ase::sim_why $kind $name $p]
 }
@@ -765,6 +798,12 @@ proc ase::sim_register {name path args} {
   set backend {}
   set p $path
   set kind {}
+  # THE ANSWER ABOUT THE SETTING, WORKED OUT HERE AND ONLY HERE (issue 0938),
+  # and recorded on the entry below so no later reader has to work it out
+  # again. 1 means "there was nothing in this location this session could not
+  # read"; 0 means the sentence about a setting is the one that belongs to
+  # this entry for as long as it is registered.
+  set varok 1
   if {[llength $args] % 2} {
     return -code error "ase: simulator options come in pairs, like -args or -backend followed by a value: $args"
   }
@@ -791,7 +830,28 @@ proc ase::sim_register {name path args} {
   # recorded like any other.
   if {$p ne {}} {
     if {[catch {ase::expand_path $p} out]} {
-      set kind badvar
+      # A LOCATION THAT ALREADY NAMES A REAL FILE IS A FILE NAME, NOT A
+      # TEMPLATE (issues 0938 and 0945). What a reader would otherwise assume
+      # is that failing to read a setting out of a location makes the location
+      # unusable. It does not, in the one case that matters: a user whose PDK
+      # lives under a folder with a dollar sign in its name has a location
+      # that no setting can be read out of AND a program sitting at it. Both
+      # ways in land here -- typing that real path (0945), and re-reading the
+      # saved list at the next start, since what is saved is the location
+      # already turned into a file name (0938's restart half).
+      #
+      # This can only ever turn a refusal into a run: it fires exactly where
+      # the entry was about to be recorded as unusable, and it defers to the
+      # four filesystem guards below -- `file exists` only, so a folder is
+      # still `notfile` and a file without its executable bit is still
+      # `notexec`. A location naming a setting nobody set names nothing on the
+      # disk, so that arm is untouched and still says what it always said.
+      if {[file exists $p]} {
+        set p [file normalize $p]
+      } else {
+        set kind badvar
+        set varok 0
+      }
     } else {
       # NORMALISED AT REGISTRATION, AND THIS IS LOAD-BEARING. ase::run_deck
       # does `cd` into the run directory before it launches the simulator, so
@@ -807,6 +867,7 @@ proc ase::sim_register {name path args} {
   if {$kind ne {}} { ase::sim_say $kind $name $p {} error }
   dict set simulators $name [dict create name $name path $p args $eargs \
                              backend $backend origin $sim_origin \
+                             varok $varok \
                              ok [expr {$kind eq {} ? 1 : 0}]]
   # Registering the FIRST simulator puts it in force. Without this,
   # registering one simulator would do nothing visible at all and the user
@@ -908,8 +969,16 @@ proc ase::sim_selected {} {
 proc ase::sim_clear {} {
   variable simulators
   variable sim_use
+  variable sim_said
   set simulators [dict create]
   set sim_use {}
+  # THE RECORD OF WHAT WAS SAID GOES TOO (issue 0941). This puts the section
+  # back to the state it had before anything was registered, and sentences
+  # already said were about entries that no longer exist. It mattered only
+  # once the recorder started accumulating: a reader that clears the registry
+  # and then reads back what one later gesture said would otherwise get every
+  # sentence from before the clear glued in front of it.
+  set sim_said {}
   return 1
 }
 
@@ -966,7 +1035,12 @@ proc ase::sim_status {backend} {
     # so what a list shows against this entry and what a run refuses with are
     # ONE sentence in the unknown-setting arm too (issue 0937, row R7). No
     # other field of this answer changes.
-    set kind [ase::sim_entry_kind $p]
+    #
+    # THE ENTRY, NOT THE PATH (issue 0938). The validator reads the answer
+    # about the setting that registration recorded on this entry; handing it
+    # the bare path would ask it to work that answer out again, and working it
+    # out twice is the regression 0938 is about.
+    set kind [ase::sim_entry_kind $e]
     if {$kind ne {}} {
       return [dict create ok 0 exe $p args [dict get $e args] resolved {} \
                           source registry entry $sim_use \

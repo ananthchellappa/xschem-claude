@@ -1334,6 +1334,304 @@ check {R12 saving the list again keeps whatever permissions you had put on your 
   [list $R12W1 $R12M0 $R12W2 $R12M1 [expr {[a_count $R12TXT {perm12b}] >= 1}]] \
   [list 1 0600 1 0600 1]
 
+## ===========================================================================
+## R13-R18: ISSUE 0938 -- A SIMULATOR THAT IS RUNNABLE MUST RUN.
+## ===========================================================================
+## The user keeps their PDK under a folder whose name has a dollar sign in it.
+## They add their simulator the documented portable way, as
+## $::PDK_ROOT/bin/ngspice. The list takes it, says nothing is wrong with it,
+## and shows no problem against it. Then they press run and are refused with
+## "the location ... mentions a setting this session does not know about",
+## printed back at them against a path that mentions no setting -- and the
+## program at that path runs perfectly from a shell.
+##
+## WHY EVERY ROW ABOVE IS BLIND TO IT. R7 asks whether the list and the run
+## say the SAME sentence. They do. Both are wrong, together. All four of R7's
+## fixtures are paths that were already broken, and NOTHING IN THIS FILE HAS
+## EVER STARTED A SIMULATOR -- so nothing here could notice a green list
+## sitting in front of a dead run. R13 starts it. Measured before these rows:
+## register returned 1, the entry's ok flag was 1, the file was runnable, the
+## list showed no problem, and the run died.
+##
+## THE MECHANISM, MEASURED, NOT RE-DERIVED HERE. Turning a location into a
+## file name is not idempotent -- doing it twice to a name that came out of
+## the first pass carrying a literal dollar sign fails. Registration does it
+## once and stores the RESULT; the validator the run consults did it a second
+## time to that stored result.
+
+## THE FIXTURE, and the braces are load-bearing: this suite must not
+## substitute its own fixture away before the code under test ever sees it.
+set DROOT [file join $scratch root {p$q}]
+set DBIN  [file join $DROOT bin ngdollar]
+set DDECK [file join $scratch deck13.spice]
+a_wr $DBIN  "#!/bin/sh\necho ZZ_DOLLAR_RAN \"\$@\"\nexit 0\n" 0755
+a_wr $DDECK "* deck\n.end\n" 0644
+set ::ZZ_DOLLAR_ROOT $DROOT
+## The portable form the documentation tells the user to type.
+set DPORT {$::ZZ_DOLLAR_ROOT/bin/ngdollar}
+
+## ACTUALLY START THE PROGRAM. run_cmd's list ends in the redirection token
+## exec understands, so `eval exec` is the mechanism -- and Tcl's own list
+## quoting braces the element carrying the dollar sign, so eval cannot
+## substitute the path away before exec sees it.
+proc a_runs {deck} {
+  if {![llength [info commands ase::backend::ngspice::run_cmd]]} { return NOPROC }
+  if {[catch {ase::backend::ngspice::run_cmd {} $deck} cmd]} { return "REFUSED:$cmd" }
+  if {[catch {eval exec $cmd} out]} { return "RANFAIL:$out" }
+  return $out
+}
+proc a_ran {deck marker} {
+  set o [a_runs $deck]
+  if {$o eq {NOPROC}} { return NOPROC }
+  return [expr {[string first $marker $o] >= 0 ? 1 : 0}]
+}
+## One named field of one entry, raw -- a_efields answers with a LIST, whose
+## string form braces a value containing a dollar sign, which would fail a
+## comparison against the path itself for a reason that has nothing to do
+## with the subject.
+proc a_efield1 {name key} {
+  set e [a_entry $name]
+  if {[string match NOENTRY-* $e] || $e eq {NOPROC} || [string match RAISED:* $e]} { return $e }
+  if {[catch {dict get $e $key} v]} { return "NOKEY-$key" }
+  return $v
+}
+## The fixture's own witness: if this ever answers 0 the rows below are
+## measuring a broken stub, not the subject.
+proc a_direct {bin marker} {
+  if {[catch {exec $bin -b /dev/null} out]} { return "RANFAIL:$out" }
+  return [expr {[string first $marker $out] >= 0 ? 1 : 0}]
+}
+
+a_reset
+set R13RV [a_rv [a_regbad d13 $DPORT]]
+check {R13 a simulator kept under a folder whose name has a dollar sign in it, added the portable way, shows no problem in the list AND really starts when you run it} \
+  [list [a_direct $DBIN ZZ_DOLLAR_RAN] \
+        $R13RV [a_efield1 d13 ok] [a_ans ase::sim_entry_why d13] \
+        [a_sfield ngspice ok] [a_sfield ngspice resolved] \
+        [a_ans ase::sim_exe ngspice] \
+        [a_ran $DDECK ZZ_DOLLAR_RAN]] \
+  [list 1 1 1 {} 1 $DBIN $DBIN 1]
+
+## R14: WHAT IS RECORDED AT REGISTRATION IS THE ANSWER ABOUT THE SETTING, AND
+## NOTHING ELSE. The facts about the disk are still worked out fresh on every
+## call, which is what R6 demands: delete the program under this live entry
+## and the list must say the file is gone, not blame a setting; put it back
+## and the run must start again. And a location that really does name a
+## setting this session does not know about must still be reported as exactly
+## that, or the fix bought R13 by going silent.
+set R14A [a_ans ase::sim_entry_why d13]
+file delete -force $DBIN
+set R14B [a_ans ase::sim_entry_why d13]
+set R14OK [a_sfield ngspice ok]
+a_wr $DBIN "#!/bin/sh\necho ZZ_DOLLAR_RAN \"\$@\"\nexit 0\n" 0755
+set R14C [a_ans ase::sim_entry_why d13]
+set R14RUN [a_ran $DDECK ZZ_DOLLAR_RAN]
+set R14V [a_msg [a_regbad var14 $C8VARPATH]]
+set R14VW [a_ans ase::sim_entry_why var14]
+check {R14 the answer about the setting is worked out once and remembered, but what is on the disk is not: delete the program and the list says the file is gone, put it back and it runs again -- and a location that really does mention a setting nobody set still says so} \
+  [list $R14A \
+        [expr {[string first {no file at} $R14B] >= 0}] \
+        [regexp -nocase {setting|does not know} $R14B] \
+        $R14OK $R14C $R14RUN \
+        [expr {$R14VW eq $R14V}] \
+        [regexp -nocase {setting|does not know} $R14VW] \
+        [expr {[string first {no file at} $R14VW] >= 0}]] \
+  [list {} 1 0 0 {} 1 1 1 0]
+
+## R15: AND IT HAS TO SURVIVE A RESTART. Two real child processes sharing one
+## redirected HOME, because nothing in-process can prove what the next start
+## does. The first adds the simulator the portable way and saves the list; the
+## second is a FRESH xschem in a session where the setting is not set at all,
+## reading that saved list back through the same startup path a user's would
+## go through. Measured before these rows: the saved line carries the location
+## already turned into a file name, the next start turned it into one a second
+## time, and the entry came back dead in a session that never mentioned a
+## setting.
+set R15HOME [file join $scratch home_r15]
+file delete -force $R15HOME
+set R15WT {
+  set ::ZZ_DOLLAR_ROOT {@DROOT@}
+  set r NOPROC
+  if {[llength [info commands ase::sim_register]]} {
+    set r [ase::sim_register d15 {$::ZZ_DOLLAR_ROOT/bin/ngdollar}]
+  }
+  puts "Z_REG=$r"
+  set w NOPROC
+  if {[llength [info commands ase::sim_write_conf]]} { set w [ase::sim_write_conf] }
+  puts "Z_WROTE=$w"
+  puts "Z_DONE=1"
+  exit 0
+}
+set R15RT {
+  set ok NOPROC ; set ex NOPROC ; set eok NOPROC ; set ran NOPROC
+  if {[llength [info commands ase::sim_status]]} {
+    set s [ase::sim_status ngspice]
+    catch {set ok [dict get $s ok]}
+    catch {set ex [dict get $s exe]}
+  }
+  if {[llength [info commands ase::sim_list]]} {
+    foreach e [ase::sim_list] { catch {set eok [dict get $e ok]} }
+  }
+  if {[llength [info commands ase::backend::ngspice::run_cmd]]} {
+    set ran 0
+    if {![catch {ase::backend::ngspice::run_cmd {} {@DECK@}} cmd]} {
+      if {![catch {eval exec $cmd} out]} {
+        if {[string first ZZ_DOLLAR_RAN $out] >= 0} { set ran 1 }
+      }
+    }
+  }
+  puts "Z_VAR=[info exists ::ZZ_DOLLAR_ROOT]"
+  puts "Z_OK=$ok"
+  puts "Z_EXE=$ex"
+  puts "Z_EOK=$eok"
+  puts "Z_RAN=$ran"
+  puts "Z_DONE=1"
+  exit 0
+}
+set R15C1 [a_child r15w [string map [list @DROOT@ $DROOT] $R15WT] {} $R15HOME]
+set R15C2 [a_child r15r [string map [list @DECK@ $DDECK] $R15RT] {} $R15HOME]
+check {R15 the simulator you added under a dollar-sign folder is still there, still shows no problem and still really starts the next time xschem is opened -- in a session where the setting it was typed with is not set at all} \
+  [list [a_zrc $R15C1] [a_zval $R15C1 Z_REG] [a_zval $R15C1 Z_WROTE] \
+        [a_zrc $R15C2] [a_zval $R15C2 Z_VAR] [a_zval $R15C2 Z_OK] \
+        [a_zval $R15C2 Z_EXE] [a_zval $R15C2 Z_EOK] [a_zval $R15C2 Z_RAN] \
+        [a_zval $R15C2 Z_DONE]] \
+  [list 0 1 1 0 0 1 $DBIN 1 1 1]
+
+## R16: ISSUE 0945, THE SAME PATH TYPED EXACTLY AS THE DISK SPELLS IT. The
+## portable form is a convenience, not a requirement: a user who types the
+## real absolute location of their program must get their program. Measured
+## before these rows: refused at the door, with the same sentence about a
+## setting, against a path that names no setting. The second half of the row
+## is the normalisation the older arm already has -- a location with a
+## redundant step in it is cleaned once, at registration, so the value stored,
+## the value every message shows and the value handed to the run are one
+## string.
+a_reset
+set R16RV [a_rv [a_regbad lit16 $DBIN]]
+set R16OK [a_efield1 lit16 ok]
+set R16WHY [a_ans ase::sim_entry_why lit16]
+set R16S [a_sfield ngspice ok]
+set R16RUN [a_ran $DDECK ZZ_DOLLAR_RAN]
+a_rv [a_regbad norm16 [file join $DROOT . bin ngdollar]]
+set R16P [a_efield1 norm16 path]
+check {R16 typing the real location of your simulator, dollar sign and all, adds it, shows no problem against it and starts it -- and a location written with a redundant step in it is cleaned up once, when you add it} \
+  [list $R16RV $R16OK $R16WHY $R16S $R16RUN $R16P] \
+  [list 1 1 {} 1 1 $DBIN]
+
+## R17: ISSUE 0941, AT THE REGISTRY. Taking away a simulator that a startup
+## configuration file put there, while it is the one in use, has TWO true
+## things to say: which simulator takes over, and that this one will be back
+## next time. Both reach the CIW. Only the last was remembered, so the one
+## line the Simulators window can show never told the user that the program
+## which will actually run had just changed. Measured before this row: two
+## sentences said, one remembered, and the remembered one is the wrong half.
+a_reset
+set ::ase::sim_origin rc
+a_rv [a_regbad rc17 $STUB]
+set ::ase::sim_origin session
+a_rv [a_regbad mine17 $STUB2]
+a_ans ase::sim_select rc17
+a_ans ase::sim_said_clear
+set R17SAID [a_echoed {a_ans ase::sim_unregister rc17}]
+set R17M [a_ans ase::sim_said]
+set R17O [a_ans ase::sim_why removed_now_other rc17 {} mine17]
+set R17R [a_ans ase::sim_why rc_removed rc17 {}]
+set R17IO [string first $R17O $R17M]
+set R17IR [string first $R17R $R17M]
+a_ans ase::sim_said_clear
+set R17CLR [a_ans ase::sim_said]
+check {R17 taking away a simulator a startup file put there, while it is the one in use, remembers BOTH things it just told the user -- which simulator takes over, said first, and that this one comes back next time} \
+  [list [llength $R17SAID] [expr {$R17IO >= 0}] [expr {$R17IR >= 0}] \
+        [expr {$R17IO >= 0 && $R17IR > $R17IO}] $R17CLR \
+        [a_ans ase::sim_selected]] \
+  [list 2 1 1 1 {} mine17]
+
+## R18 STRUCTURAL, and it exists because NO BEHAVIOURAL ROW CAN SEE IT. R13
+## goes green the moment the run works, by any means; this pins the invariant
+## the defect was made of, so a later reader who adds a "quick" second look at
+## the location back into the validator is stopped by a row rather than by a
+## comment. Comments are stripped first, so the words cannot be satisfied by
+## a paragraph about them.
+##
+## THE LAST TERM IS THE SECOND HALF OF THE SAME INVARIANT, AND IT IS HERE
+## RATHER THAN IN A ROW OF ITS OWN BECAUSE NOTHING CAN REACH IT. The recorded
+## answer is read with a "if there is no answer recorded, there is nothing to
+## complain about" default, so an entry built somewhere other than where
+## simulators are added can never start silently calling itself broken.
+## Measured: there is exactly ONE place in src/ase.tcl that builds an entry
+## and it always records the answer, so no gesture a user can make reaches
+## that default today. Deleting it changes nothing a user could see -- until
+## the day a second builder appears, when it is the difference between a list
+## that works and a stack trace. A structural term keeps it; a behavioural
+## row would have to invent a caller that does not exist.
+set R18SRC  [a_nocomment $ASETCL]
+set R18KIND [a_procbody $R18SRC ase::sim_entry_kind]
+set R18REG  [a_procbody $R18SRC ase::sim_register]
+check {R18 STRUCTURAL the location is turned into a file name exactly once, where the simulator is added, and the answer is recorded there -- the check the run consults never does it a second time, and it reads that answer defensively} \
+  [list [expr {[string length $R18KIND] > 0}] \
+        [a_count $R18KIND {expand_path}] \
+        [expr {[string length $R18REG] > 0}] \
+        [a_count $R18REG {expand_path}] \
+        [expr {[string first {varok} $R18KIND] >= 0}] \
+        [expr {[string first {dict exists} $R18KIND] >= 0}]] \
+  [list 1 0 1 1 1 1]
+
+## R19: THE OTHER THREE THINGS THAT CAN BE AT A DOLLAR-SIGN LOCATION, AND THE
+## ONE THAT IS NOT A ROW ABOVE. R13-R16 all point the dollar-sign arm at a
+## working program, so only ONE of its outcomes was ever measured. The arm's
+## whole promise is narrow: a location it could not read a setting out of is
+## given the benefit of the doubt about the SETTING, and about nothing else --
+## what is actually sitting at that location is still looked at, and a folder
+## is still refused as a folder and a file nobody marked runnable is still
+## refused as that.
+##
+## MEASURED, AND THE REASON THIS ROW EXISTS. With the "look at what is really
+## there" half taken out of that arm, every other row in this file stays green:
+## pointing a simulator at a FOLDER under a dollar-sign PDK path then answers
+## "added, nothing wrong with it", the Simulators list shows no problem against
+## it, the CIW says nothing at all, and the run starts a folder. Three of the
+## arm's four outcomes were untested; this row is the other two, and the run
+## side of them.
+##
+## THE WITNESSES COME FIRST. If the fixture ever stops containing a dollar
+## sign, or stops being a folder, or the location starts reading cleanly as a
+## setting, this row would go green while measuring the ORDINARY arm that C2
+## and C3 already cover -- so the row asserts it is really standing in front
+## of the dollar-sign arm before it asserts anything about what that arm says.
+proc a_expfails {p} {
+  if {![llength [info commands ase::expand_path]]} { return NOPROC }
+  return [expr {[catch {ase::expand_path $p}] ? 1 : 0}]
+}
+set R19DIR [file join $DROOT bin adir19]
+set R19NX  [file join $DROOT bin noexec19.sh]
+file mkdir $R19DIR
+a_wr $R19NX "#!/bin/sh\nexit 0\n" 0644
+
+a_reset
+set R19D  [a_regbad dir19 $R19DIR]
+set R19DS [a_sfield ngspice ok]
+set R19DW [a_ans ase::sim_entry_why dir19]
+set R19DV [a_efield1 dir19 varok]
+set R19DK [a_efield1 dir19 ok]
+a_reset
+set R19N  [a_regbad nx19 $R19NX]
+set R19NS [a_sfield ngspice ok]
+set R19NW [a_ans ase::sim_entry_why nx19]
+set R19NV [a_efield1 nx19 varok]
+check {R19 a dollar sign in the location buys it the benefit of the doubt about a SETTING and nothing else: pointing a simulator at a folder under such a path is still refused as a folder, a file nobody marked runnable is still refused as that, and neither one is ever started} \
+  [list [a_expfails $R19DIR] [file isdirectory $R19DIR] \
+        [a_rv $R19D] $R19DK $R19DS \
+        [a_says $R19D {folder|directory}] \
+        [regexp -nocase {setting|does not know|doesn't know} [a_msg $R19D]] \
+        [expr {$R19DW eq [a_msg $R19D]}] [a_plain $R19D dir19 $R19DIR] $R19DV \
+        [a_expfails $R19NX] [file exists $R19NX] [file executable $R19NX] \
+        [a_rv $R19N] [a_efield1 nx19 ok] $R19NS \
+        [a_says $R19N {not marked|not executable|cannot run|can't run|not a program|permission|chmod}] \
+        [regexp -nocase {setting|does not know|doesn't know} [a_msg $R19N]] \
+        [expr {$R19NW eq [a_msg $R19N]}] [a_plain $R19N nx19 $R19NX] $R19NV] \
+  [list 1 1  0 0 0  1 0 1 PLAIN 1 \
+        1 1 0  0 0 0  1 0 1 PLAIN 1]
+
 # --- teardown ----------------------------------------------------------------
 a_reset
 catch {cd $A_SAVEDCWD}
