@@ -14,6 +14,73 @@ Newest entries on top.
 
 ---
 
+## Q71. A dialog grew four guards and the operation underneath still accepts anything. Where does a check belong?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S5 — issue `0799` (**Library
+  Manager ▸ New library…** registering the folder that holds your libraries, or a
+  second name for a library you already have). `src/library_defs.tcl`
+  (`library_new`), `src/library_manager.tcl`. Follow-ups 0995–0999, 1200.
+
+**Split the check by what it is a property OF, not by which form the user
+happened to reach it through.** A check that is a property of the *directory* —
+true no matter who is asking, what is running, or which dialog is on screen —
+belongs in the **choke point**, so every form inherits it. A check that is a
+property of the *run* — "this is the std-cell library the import now open reads
+its symbols from" — **cannot** move down there, because the choke point does not
+know a run is happening, and it must stay in its caller.
+
+Get that split wrong in the easy direction and you get 0799's exact shape: the
+import dialog's own `New…` form grew **four** guards, `library_new` underneath it
+grew none, and the *other* form — the menu item — sailed straight past all four.
+The user's words for the result were *"why does library manager > New Library
+menu item allow a user to do something so stupid?"*
+
+The sharper version of the same shape, and the one worth remembering:
+
+> **The defence was built in the CONSUMER; the thing that MANUFACTURES the bad
+> fixture was left alone.**
+
+This tree had already *written down* the hazard — two `DEFINE`s pointing at one
+directory — in a comment in the code that has to cope with it, and had never
+gone back to the code that creates it. A comment that describes a hazard you are
+tolerating is a filed bug in disguise; grep for the ones you have.
+
+**Record the split in the code, or it rots back into an accident.** The reason
+`library_new` now carries a paragraph naming which check lives where *and why the
+run-scoped one cannot join it* is that the next person to add a form has to be
+able to tell a decision from an oversight. On this branch that paragraph also had
+to say, in as many words, that the run-scoped caller it names **does not exist
+here** — it is on `synthesis` — so nobody reads the comment as a description of
+code they can open.
+
+**The second lesson, and it cost four issues.** The rows written to pin that
+split were `[info body library_new]` greps — does the body mention the check.
+They passed on a tree with **every check deleted**, because the words they grep
+for also appear in the paragraph above, and `string first` finds the *comment*
+first. One of them, the row asserting the checks run *before* the folder is
+created, reported `check-at=2393 mkdir-at=3416` — both indices inside the
+documentation. That is a cousin of Q67's tautology in a new disguise: **a
+structural row that reads the code's documentation instead of its code.** The
+repair is one line — strip the comments out of the body before you grep it:
+
+```tcl
+regsub -all -line {^[ \t]*#[^\n]*$} [info body library_new] {} code
+```
+
+and then anchor on something a comment would not plausibly contain — `set owner
+[library_dir_owner`, not `library_dir_owner`. Keep exactly one row whose subject
+really *is* the comment, and let it read the raw body.
+
+**Corollary about mutation matrices.** All eleven planned mutations passed
+through this without noticing, because none of them perturbed the *documentation*
+— they perturbed the code, which the hollow rows were not reading. A mutation set
+proves a row can see the thing it was aimed at; it cannot tell you the row is
+aimed at the right thing. The variant that found it was the crude one nobody
+plans: **delete the whole feature and see which rows still say ok.**
+
+---
+
 ## Q70. When is a setting a user typed on an instance "unused"? Whose netlist decides?
 
 - **Asked:** 2026-08-30

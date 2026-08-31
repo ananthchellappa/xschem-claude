@@ -66,6 +66,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_optier_0963" \
                  "headless/test_unused_attr_0970" \
                  "headless/test_hash_extra_node_warn_0165" \
+                 "headless/test_lib_new_path_guards_0799" \
                  "headless/test_ase_simdlg_0937"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
@@ -87,6 +88,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
+                 "headless/test_lib_new_path_guards_0799" \
                  "headless/test_ase_simdlg_0937"]
 set log_fn "results.log"
 

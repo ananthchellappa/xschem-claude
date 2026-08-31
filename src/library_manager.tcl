@@ -35,6 +35,9 @@ namespace eval libmgr {
   variable hist_counter 0 ;# unique-id source for History dialog windows
   variable hist_msg       ;# array: history-window path -> dict(hash -> message)
   array set hist_msg {}
+  variable last_status "" ;# the last sentence put on the status line, kept so a
+                          ;# dialog can re-show the SAME sentence rather than
+                          ;# word a second one (D5-4; issue 0799).
 }
 
 # Bring the (existing) Library Manager window to the front AND give it the
@@ -561,7 +564,18 @@ proc libmgr::place_symbol {} {
 # (or join the read-only allowlist there) fails the guard closed.
 # Test: tests/headless/test_libmgr_mutation_log.tcl.
 
-proc libmgr::status {msg} { catch {.libmgr.status configure -text $msg} }
+# The status line, plus the one copy of what it last said. libmgr::last_status
+# is what lets a refused "New library" press re-open its window carrying the
+# SAME sentence library_new minted instead of a second wording of it (issue
+# 0799; D5-4, a user-facing sentence is minted in one place and rendered by
+# callers). The `catch` keeps this a no-op in a --nogui session where Tk is not
+# loaded -- but last_status is recorded there too, which is what makes the
+# caller-side checks runnable on the headless arm.
+proc libmgr::status {msg} {
+  variable last_status
+  set last_status $msg
+  catch {.libmgr.status configure -text $msg}
+}
 
 proc libmgr::lib_names {} {
   set out {}
@@ -1042,11 +1056,27 @@ proc libmgr::do_new_cell {lib cell} {
   return 1
 }
 
+# "New library..." -- prompt, and on a REFUSAL re-open the window seeded with
+# what the user typed and carrying the reason at its top, instead of closing
+# over it (issue 0799 requirement 3). A reader would assume the status line was
+# enough: it is not. Closing the window on a refusal throws away what the user
+# typed and says why on a status bar behind where the window used to be -- and
+# libmgr::on_lib overwrites that line with "library: <name>" on the very next
+# click in the Library pane, so the reason can be gone before it is read.
+# Two ways out, both immediate and both silent: Cancel/Escape returns {}, and so
+# does an empty name. do_new_library is untouched, so the status line keeps
+# carrying the sentence as well -- nothing that used to be visible was traded
+# away for the window coming back.
 proc libmgr::ctx_new_library {} {
-  set r [libmgr::newlib_dialog]
-  if {$r eq {}} return
-  lassign $r name path
-  libmgr::do_new_library $name $path
+  variable last_status
+  set name {}; set path {}; set msg {}
+  while {1} {
+    set r [libmgr::newlib_dialog $name $path $msg]
+    if {$r eq {}} return
+    lassign $r name path
+    if {[libmgr::do_new_library $name $path]} return
+    set msg $last_status
+  }
 }
 proc libmgr::do_new_library {name path} {
   if {[catch {library_new $name $path} e]} { libmgr::status "new library failed: $e"; return 0 }
@@ -1157,19 +1187,37 @@ proc libmgr::newlib_browse {entry} {
   if {$dir ne {}} { $entry delete 0 end; $entry insert 0 $dir }
 }
 
+# The New-library window went away without answering. Only the window ITSELF
+# counts: <Destroy> fires for every child widget too, and an entry being torn
+# down must not be read as the user cancelling. Bound in libmgr::newlib_dialog.
+proc libmgr::newlib_vanished {w d} {
+  variable dlg_done
+  if {$w eq $d} { set dlg_done 0 }
+}
+
 # Library name + directory. Returns {name path} or {} on cancel / empty name.
-proc libmgr::newlib_dialog {} {
+# The three arguments are how a REFUSED press comes back (issue 0799): $name and
+# $path pre-fill the two fields so nothing the user typed is lost, and $msg is
+# shown as a red line across the TOP of the window, above the fields, so the
+# reason is where the user is already looking. With no $msg the label is not
+# created at all -- an ordinary New library must carry no empty red bar.
+proc libmgr::newlib_dialog {{name {}} {path {}} {msg {}}} {
   variable dlg_done
   set d .libmgr.nl
   catch {destroy $d}
   toplevel $d
   wm title $d "New library"
   wm transient $d .libmgr
+  if {$msg ne {}} {
+    ttk::label $d.msg -text $msg -wraplength 380 -justify left -foreground red
+  }
   ttk::label $d.l1 -text "Library name:"
   ttk::entry $d.name -width 28
+  $d.name insert 0 $name
   ttk::label $d.l2 -text "Directory (blank = in same directory as library.defs):"
   ttk::frame $d.pf
   ttk::entry $d.pf.path -width 32
+  $d.pf.path insert 0 $path
   ttk::button $d.pf.browse -text "Browse…" -command \
     [list libmgr::newlib_browse $d.pf.path]
   pack $d.pf.path -side left
@@ -1178,11 +1226,25 @@ proc libmgr::newlib_dialog {} {
   ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}
   ttk::button $d.b.cancel -text Cancel -command {set libmgr::dlg_done 0}
   pack $d.b.ok $d.b.cancel -side left -padx 4
+  if {$msg ne {}} { grid $d.msg - -sticky w -padx 6 -pady {6 0} }
   grid $d.l1 $d.name -sticky w -padx 6 -pady 4
   grid $d.l2 $d.pf   -sticky w -padx 6 -pady 4
   grid $d.b  -       -pady 6
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
+  # EVERY way this window can go away has to end the wait below, or New library
+  # sits waiting for an answer that can never arrive (issue 0998). The title-bar
+  # close button had no handler at all -- press it and the window vanished while
+  # New library went on waiting -- and destroying the Library Manager takes this
+  # child with it the same way. Both now mean exactly what Cancel means.
+  # It matters more here than in the Library Manager's other prompts because
+  # THIS one loops: since 0799 a refused press re-opens the window, and "the
+  # window returned nothing" is the only way out of that loop, so a window that
+  # can vanish without returning is a hang rather than a mistake. The other four
+  # prompts in this file have the same missing handler and do not loop; that is
+  # issue 0999, deliberately not widened into here.
+  wm protocol $d WM_DELETE_WINDOW [list set libmgr::dlg_done 0]
+  bind $d <Destroy> [list libmgr::newlib_vanished %W $d]
   set dlg_done -1
   catch {grab $d}; focus $d.name
   vwait libmgr::dlg_done

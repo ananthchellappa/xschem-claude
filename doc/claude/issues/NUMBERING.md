@@ -615,6 +615,54 @@ so four suites can never reach their recorded baseline by the command recorded
 beside them; its `run_regression.tcl` block count is stale at 46 against a
 measured 53. Found independently FOUR times inside one item).
 
-**The next free number is 0995.** 0500-0599 and 0700-0799 remain reserved for
-other branches. No 09xx block is reserved, so 0899 is followed by 0900 — but
-**1000–1199 is** (user, 2026-08-30), so 0999 is followed by **1200**.
+**2026-08-30, item S5 sabotage pass.** Filed **0995** (`library_dir_owner`'s
+argument-side `file normalize` is live code no row can see -- deleting it leaves
+both arms at 29/44 ALL PASS, against a plan that predicted two reds), **0996**
+(two structural rows, R8a and R8d, grep `library_new`'s body for words that also
+appear in the comment inside it, so both go green on a tree with BOTH folder
+checks deleted; the before-mkdir ordering has ONE eye, R4b, not the two the plan
+claims), **0997** (the "this folder holds your library list" refusal tests the
+literal filename `library.defs` rather than this session's registry root, so a
+root whose list file is spelled `cds.lib` is still accepted at rc=0 -- the issue's
+own harm, reproduced on the fixed tree) and **0998** (deleting the re-prompt
+loop's only way out makes the suite HANG with no banner rather than fail, and it
+is registered in `run_regression.tcl`'s `dcases`). Sixteen mutations, one per
+build, each restored and re-baselined before the next.
+
+**ALSO NOTED, not an issue:** the item this pass audited carries
+`doc/claude/issues/0799-…`, **inside the reserved 0700-0799 block**, and it is the
+only 07xx file on this branch.
+
+**2026-08-31, the S5 repair pass RULED THAT NUMBER CORRECT and did not renumber
+it.** The reserved block exists *because the synthesis branch owns it*, and that
+issue was authored **there**, not here: its own header reads `**Branch:**
+synthesis`, and it cross-references `[[0792]]` and `[[0798]]`, neither of which
+exists on `annotate` — 0792 is about `vimport::create_library`, code this branch
+does not contain (`grep -rn vimport src/` matches only the comments S5 itself
+wrote). Nothing on `annotate` **filed** into the reserved block; a briefing
+document was carried across from the branch that owns the number, which is what
+reserving a block is *for*. Renumbering would have given one user complaint two
+identities on two branches and broken its two cross-references. Recorded in the
+suite header (`tests/headless/test_lib_new_path_guards_0799.tcl`) so the next
+reader does not re-derive it. The follow-ups `annotate` really did file for that
+work — **0995-0999** — are all in this branch's own range.
+
+**2026-08-31, item S5 repair pass.** Filed **0999** (the Library Manager's other
+four prompt windows — New cell…, Rename…, Copy view…, New view… — have the same
+missing close-button handler that `[[0998]]` describes: press the X in the title
+bar and the window vanishes while the press goes on waiting for ever. Fixed in
+**New library…** only, because that is the one window that *loops* and the one the
+S5 suite could reproduce; the other four are recorded rather than changed
+untested).
+
+**2026-08-31, item S5 write-up/commit pass.** Filed **1200** (`library_new`'s one
+remaining cryptic sentence, `no writable library.defs (set XSCHEM_LIBRARY_DEFS)`
+— it names a file the user has never seen and an environment variable with no
+value, and the 0799 re-prompt loop now lands it *inside* the New-library window
+where it never used to appear. Measured on both arms; it has no test row
+anywhere. Pre-existing, so it was recorded rather than reworded untested inside a
+commit whose subject was something else).
+
+**The next free number is 1201.** 0999 and 1200 are taken. **1000-1199 is
+reserved** (user, 2026-08-30), so 0999 was followed by **1200**; 0500-0599 and
+0700-0799 remain reserved for other branches.
