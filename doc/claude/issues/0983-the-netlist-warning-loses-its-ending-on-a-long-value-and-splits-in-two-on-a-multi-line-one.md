@@ -1,6 +1,28 @@
 # 0983 — the netlist warning loses its ending on a long value, and splits in two on a multi-line one
 
-**Status: FILED, NOT FIXED (2026-08-30, item S4b write-up).** One surface, two
+**Status: FIXED (2026-08-30, item S4c), in `src/token.c`, rebuilt and measured.**
+GUARD UA-ELIDE. Every variable-length field of the sentence — the sheet path,
+the instance name, the cell name, the property name and the value — is now
+shortened to one line of bounded length **before** the sentence is built, and a
+shortened field carries a trailing `...`. Any run of whitespace, newlines
+included, becomes a single space. The sheet path is shortened from the FRONT
+(`.../rom8k/rom2_predec1.sch`) because a path is identified by its last
+components; everything else is shortened from the back.
+
+Measured after: the 1705-character value produces **one** line of **800**
+characters that still ends with the recommended action and carries the `...`
+marker (before: 2037 characters, stopping dead at "...give xLONG", no marker).
+The shipped `xschem_library/examples/tb_symbol_include.sch` produces **3** lines
+and **0** of them begin mid-sentence (before: one began with "symbol reference
+to use in netlist, but SYMBOL_include never reads comm..."). Rows UF10, UF11
+(fixture) and UF12 (shipped).
+
+Rejected: moving the value to the end of the sentence, which the report below
+suggests. Elision makes truncation impossible, so the reordering buys nothing
+and changes more words. The user now sees a shortened value on a long attribute;
+that is user-visible and unratified.
+
+**Original report, unchanged:** One surface, two
 measured shapes, one fix site. `src/token.c`, needs a rebuild.
 
 The sentence issue 0970 half two added interpolates the instance's attribute

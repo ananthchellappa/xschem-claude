@@ -562,6 +562,40 @@ pinned by fewer rows than they look; one gap in it, row UB9's anchor, was fixed
 in the same commit). Issue **0978**'s claim that its 149 lines are "all real" is
 corrected there by measurement.
 
-**The next free number is 0985.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-30, item S4c — the correction of S4b's netlist warning.** FIXED
+**0980** (the warning was wrong on 43 of the 149 lines it printed across
+`xschem_library`, not the 36 that file claimed; it is now 0 of 98), **0981**
+(every line names the sheet the instance is really on, and all 22 lines on
+`rom8k.sch` are distinct), **0982**'s advice half (the collision itself stays
+open there), **0983** (both shapes) and **0984** (all four coverage gaps; the
+suite went 21 → 40 checks). Corrected the counts in **0978** and **0980**. Filed
+**0985** (the VHDL netlist writes `extra=`-declared nodes into the generic map
+where Verilog leaves them out — found while fixing 0980, deliberately not
+settled, because settling it either way changes a shipped VHDL netlist).
+
+**2026-08-30, item S4c sabotage pass.** Filed **0986** — halves of S4c's own new
+guards that can each be deleted with all 40 checks green: the instance-side half
+of GUARD UA-ALTFMT, five of the six names in `fmt_attrs[]`, any single name
+dropped from the stoplist, the early-return restore of the netlister's
+token-found flag, `unused_attr_elide()`'s buffer clamp, and — found when the
+whole pass was repeated on 27 fresh builds — the `%` sigil half of GUARD UA-FMT.
+**Six, not the five the filename says**; the sixth is in that file's addendum.
+Found by neutralizing every guard one at a time against a real rebuild, one
+mutation per build, restoring and re-asserting the baseline green between each.
+It is issue 0984's complaint one round later, and the fourth of them is the same
+defect UB9 was re-anchored to fix, one level down.
+
+**2026-08-30, item S4c write-up.** Filed **0987** (0980's fix silences a setting
+the SPICE deck really drops — 43 lines' worth on the shipped library — because
+GUARD UA-TMPL asks whether ANY format could consume it, not whether the netlist
+being written does), **0988** (a setting no format can consume at all is silent
+too, when the symbol carries `vhdl_ignore`/`verilog_ignore`; 112 shipped symbols
+carry such a flag), **0989** (`select` on the stoplist makes a real subcircuit
+parameter of that name permanently unreportable) and **0990** (two concurrent
+`run_regression.tcl` runs share `open_close`'s fixed `results/.work` directory,
+and the one that finishes second reports a `FATAL: 10` that never happened —
+a fake red in the suite whose baseline is ZERO).
+
+**The next free number is 0991.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved, so 0899 is followed by 0900 — but
 **1000–1199 is** (user, 2026-08-30), so 0999 is followed by **1200**.

@@ -2474,6 +2474,16 @@ static void warn_hash_extra_node(int inst, const char *tokname, const char *valu
  * reason a number that large becomes a number a person can act on; the counts
  * are recorded in doc/claude/issues/0970-*.md.
  *
+ * ISSUE 0980, THE CORRECTION. The first version of this check asked only
+ * whether the SPICE format string referenced the property, and shipped ON BY
+ * DEFAULT. Netlisting the whole of xschem_library to SPICE, it printed 149
+ * lines on 18 sheets and 43 of them were false; on six of those sheets every
+ * line was false. The missing half was that a symbol is netlisted in six
+ * formats and that VHDL and Verilog pass an instance attribute in as a
+ * generic/parameter on the strength of the SYMBOL TEMPLATE, no format string
+ * involved. GUARD UA-TMPL and GUARD UA-ALTFMT below are that half; the same
+ * sweep after them is recorded in doc/claude/issues/0980-*.md.
+ *
  * DELIBERATELY NOT IN THE STOPLIST: `schematic` and the *_sym_def family. Those
  * are guard UA-POLY's business, one block down, because for them the override
  * really does reach the deck and the instance must be skipped ENTIRELY -- not
@@ -2485,7 +2495,14 @@ static void warn_hash_extra_node(int inst, const char *tokname, const char *valu
  * (device_model is hashed straight off the instance at spice_netlist.c:235-241,
  * outside any format string -- measured, 2 false hits on devices/vsource
  * without it), an ERC/LVS directive, or a drawing/GUI attribute that was never
- * going to appear in a deck. */
+ * going to appear in a deck.
+ *
+ * `select` is the last of those and was added with the issue 0980 correction:
+ * the property editor reads it off the INSTANCE to decide which field to put
+ * the cursor in (src/property_form.tcl, `xschem get_tok $::tctx::retval
+ * select`). Shipped xschem_library/ngspice/solar_panel.sch sets select=OFFSET
+ * and select=AMPLITUDE on two comparators for exactly that, and was being told
+ * on two lines to take them off. */
 static const char * const unused_attr_stoplist[] = {
   "name", "lab", "sig_type", "verilog_type", "verilog_gate",
   "spice_ignore", "vhdl_ignore", "verilog_ignore", "tedax_ignore",
@@ -2495,7 +2512,7 @@ static const char * const unused_attr_stoplist[] = {
   "format", "spice_format", "vhdl_format", "verilog_format",
   "tedax_format", "spectre_format", "extra", "extra_pinnumber",
   "numslots", "sim_pinnumber", "pinnumber", "spiceprefix",
-  "highlight", "net_name", "propag", "dir", "global",
+  "highlight", "net_name", "propag", "dir", "global", "select",
   "generic_type", "template", "device_model", "spectre_device_model",
   "model-name", "attach", "program", "file", "class", "savecurrent",
   "top_is_subckt", "hiersep", "bus_replacement_char",
@@ -2528,6 +2545,197 @@ static int format_uses_token(const char *format, const char *tok)
   return 0;
 }
 
+/* GUARD UA-ELIDE, issue 0983. Copy <src> into <dest> as ONE line of at most
+ * <max_chars> characters, marking a shortened result with "...".
+ *
+ * TWO MEASURED DEFECTS LIVE HERE and a reader would assume neither was
+ * possible. (a) The sentence below is built into a fixed 2048-byte buffer, so
+ * ONE instance attribute carrying a 1705-character value pushed the whole
+ * recommended action off the end: the line stopped dead at "...give xLONG",
+ * with nothing whatever to say it had been cut. (b) A value the user typed over
+ * two physical lines -- shipped xschem_library/examples/tb_symbol_include.sch
+ * writes its comm= value exactly that way -- put a newline INSIDE the sentence,
+ * so the info window showed one warning as two entries and the second began
+ * mid-word with "symbol reference to use in netlist, but SYMBOL_include never
+ * reads comm...". Every variable-length field of the sentence goes through here,
+ * so neither shape can come back whatever a user types on a sheet.
+ *
+ * <from_tail> keeps the END of the string rather than its beginning, and exists
+ * for the sheet path: a path is identified by its last components, so a long one
+ * must read ".../rom8k/rom2_predec1.sch" and never "/home/some/long/prefix...".
+ *
+ * Any run of whitespace -- spaces, tabs, newlines, carriage returns -- becomes a
+ * single space, which is what makes (b) impossible rather than merely unlikely. */
+static void unused_attr_elide(char *dest, size_t dest_size, const char *src,
+                              size_t max_chars, int from_tail)
+{
+  const char *p;
+  size_t flen = 0;
+  size_t skip = 0;
+  size_t seen = 0;
+  size_t w = 0;
+  int prev_space;
+  int c;
+
+  if(!dest || dest_size < 8) { if(dest && dest_size) dest[0] = '\0'; return; }
+  dest[0] = '\0';
+  if(!src || !src[0]) return;
+  if(max_chars > dest_size - 4) max_chars = dest_size - 4;
+  if(max_chars < 4) max_chars = 4;
+
+  /* pass 1: how long the field becomes once every whitespace run is one space */
+  prev_space = 0;
+  for(p = src; *p; ++p) {
+    c = (unsigned char)*p;
+    if(c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      if(prev_space) continue;
+      prev_space = 1;
+    } else prev_space = 0;
+    ++flen;
+  }
+  if(flen > max_chars && from_tail) {
+    skip = flen - max_chars + 3;      /* +3: the "..." stands in for them */
+    if(skip > flen) skip = flen;
+    dest[w++] = '.'; dest[w++] = '.'; dest[w++] = '.';
+  }
+
+  prev_space = 0;
+  for(p = src; *p; ++p) {
+    c = (unsigned char)*p;
+    if(c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      if(prev_space) continue;
+      prev_space = 1;
+      c = ' ';
+    } else prev_space = 0;
+    if(seen < skip) { ++seen; continue; }
+    ++seen;
+    if(w + 1 >= dest_size) break;
+    if(!from_tail && w >= max_chars) {
+      dest[w++] = '.'; dest[w++] = '.'; dest[w++] = '.';
+      break;
+    }
+    dest[w++] = (char)c;
+  }
+  dest[w] = '\0';
+}
+
+/* GUARD UA-TMPL, issue 0980. Does the SYMBOL declare <tok> as one of the cell's
+ * own settings -- that is, does the symbol's template= carry it?
+ *
+ * THIS IS THE FIX FOR THE WARNING THE PREVIOUS PASS SHIPPED, and a reader would
+ * assume the question this diagnostic must answer is "does the format string
+ * being written this minute mention it?". It is not. A symbol is netlisted in
+ * six formats, and the VHDL and Verilog backends do not consult a format string
+ * at all: print_vhdl_element() (this file, the TOK_END arm, `get_tok_value(
+ * template, token, 0); if(xctx->tok_size)`) and print_verilog_element() (same
+ * shape, plus an extra= exclusion) emit an instance attribute into the generic
+ * or parameter map exactly when the SYMBOL's template= declares it. So a
+ * setting the template declares does reach a netlist, even when the SPICE
+ * format string never mentions it, and calling it dead is a lie.
+ *
+ * MEASURED, which is why this is a correction and not a refinement: before this
+ * guard, netlisting the whole of xschem_library to SPICE printed 149 lines of
+ * this kind on 18 sheets and 43 of them were false -- on SIX of those eighteen
+ * sheets every single line was false. xschem_library/logic/ram_tb.sch was told
+ * its datafile, dim, width, hex, modulename, access_delay and oe_delay "did not
+ * reach the simulator and changed nothing", while the Verilog netlist of the
+ * same sheet carries all seven into a module body that runs
+ * $readmemh(datafile, mem) and `assign #access_delay iidata = idata;`.
+ * xschem_library/examples/loading.sch was told the same about the capacitances,
+ * conductances and delays its VHDL netlist writes as `cap => 30.0` and
+ * `conduct => 1.0/20000.0`. A designer who followed that advice broke a working
+ * shipped example, and the tool told them to.
+ *
+ * NOT generic_type=, which is the near miss: that attribute only picks quoting
+ * and drops time-typed tokens from the Verilog map. Reading IT as the
+ * consumption test silences 31 of the 43 and leaves ram_tb's datafile still
+ * accused. Template membership is what separates 43 from 106 cleanly on the
+ * shipped data.
+ *
+ * GUARD UA-EXTRA, deliberately inside this one: a name the symbol lists in
+ * extra= is a NODE the cell gets wired to, not a setting the cell reads, so it
+ * stays reportable even when the template also carries it. That is the seam
+ * that keeps issue 0970's own case alive -- sky130_tests/passgate.sym declares
+ * modelp in its template AND names it in extra=, and a designer who types
+ * modelp= on one passgate still has to be told it went nowhere. Note the VHDL
+ * backend disagrees with Verilog about extra= and writes such names into the
+ * generic map; that asymmetry is filed as issue 0985 and is deliberately not
+ * settled here. attr_is_extra_node() is hilight.c's, shared with
+ * warn_hash_extra_node() above for the reason stated there. */
+static int symbol_declares_param(int inst, const char *tok)
+{
+  const char *templ;
+  const char *extra;
+  int declared;
+
+  if(!tok || !tok[0]) return 0;
+  templ = (xctx->inst[inst].ptr + xctx->sym)->templ;
+  if(!templ || !templ[0]) return 0;
+  get_tok_value(templ, tok, 0);
+  /* latch FIRST: the extra= lookup below overwrites xctx->tok_size */
+  declared = xctx->tok_size ? 1 : 0;
+  if(!declared) return 0;
+  extra = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "extra", 0);
+  if(attr_is_extra_node(extra, tok)) return 0;        /* GUARD UA-EXTRA */
+  return 1;
+}
+
+/* GUARD UA-ALTFMT, issue 0980. Does ANY format string this symbol can be
+ * written through reference <tok>, not merely the one being written now?
+ *
+ * <format> is the resolved string print_spice_element() is about to parse, and
+ * asking only about it was half of what made the shipped warning wrong: a
+ * symbol carries up to six format strings and an instance may override any of
+ * them, so a setting read by verilog_format is a live setting even while SPICE
+ * is being written. get_tok_value() hands back a pointer into a static buffer
+ * that the NEXT call overwrites, so each result is consumed immediately and two
+ * are never held at once. */
+static int any_format_uses_token(int inst, const char *format, const char *tok)
+{
+  static const char * const fmt_attrs[] = {
+    "format", "spice_format", "vhdl_format", "verilog_format",
+    "tedax_format", "spectre_format", NULL
+  };
+  const char *f;
+  int i;
+
+  if(format_uses_token(format, tok)) return 1;        /* GUARD UA-FMT */
+  for(i = 0; fmt_attrs[i]; ++i) {
+    f = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, fmt_attrs[i], 2);
+    if(f && f[0] && format_uses_token(f, tok)) return 1;
+  }
+  for(i = 0; fmt_attrs[i]; ++i) {
+    f = get_tok_value(xctx->inst[inst].prop_ptr, fmt_attrs[i], 2);
+    if(f && f[0] && format_uses_token(f, tok)) return 1;
+  }
+  return 0;
+}
+
+/* GUARD UA-SYMNAME, issue 0980. Does the instance's own SYMBOL REFERENCE read
+ * the setting?
+ *
+ * A reader would assume the cell an instance points at is a fixed name somebody
+ * typed on the sheet. It is not. xschem substitutes the instance's attributes
+ * into the symbol reference before resolving it -- link_symbols_to_instances()
+ * in save.c calls translate() on xctx->inst[].name -- and the shipped library
+ * uses that on purpose. xschem_library/generators/test_symbolgen.sch places
+ * `symbolgen.tcl(inv,@ROUT\)` and sets ROUT=1200 on it, and the SPICE deck
+ * really does get `x1 IN_INV IN symbolgen_tcl_inv_1200`. The setting chose the
+ * cell body: it is the loudest way a setting can possibly reach the simulator,
+ * and the first version of this diagnostic told the user on six shipped lines
+ * that it had changed nothing and they should take it off. Doing so would point
+ * the sheet at symbolgen_tcl_inv_ , a different cell that is not there.
+ *
+ * xctx->inst[].name is the RAW reference, with the @ still in it; the resolved
+ * name lives on the symbol, so this is the only place the question can be
+ * asked. The tree ships two more of this shape, mosgen.tcl(@model\) and
+ * tier.tcl(@lab\), both under xschem_library/generators/. Whole-token test, for
+ * the reason GUARD UA-FMT states. */
+static int symbol_name_uses_token(int inst, const char *tok)
+{
+  return format_uses_token(xctx->inst[inst].name, tok);
+}
+
 /* ISSUE 0970: say so, once per lost setting, in words a designer reads as
  * "you typed this and it had no effect".
  *
@@ -2551,10 +2759,16 @@ static void warn_unused_instance_attr(int inst, const char *format)
   const char *val;
   const char *sym_cell;
   const char *instname;
+  const char *sheet;
   char *toks = NULL;
   char *p;
   char *q;
   char str[2048];
+  char e_sheet[160];
+  char e_inst[80];
+  char e_cell[80];
+  char e_prop[80];
+  char e_val[160];
   size_t saved_tok_size;
   int i;
   int skip;
@@ -2607,6 +2821,26 @@ static void warn_unused_instance_attr(int inst, const char *format)
   instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
   sym_cell = get_cell((xctx->inst[inst].ptr + xctx->sym)->name, 0);
 
+  /* GUARD UA-SHEET, issue 0981. Which sheet is this instance actually ON?
+   *
+   * The sentence used to open "on this sheet", and a reader would assume that
+   * is true because the netlister is writing the sheet the user opened. It is
+   * not: the netlister descends, and print_spice_element() runs once per
+   * instance of every sub-cell too. Measured on the shipped ROM,
+   * xschem_library/rom8k/rom8k.sch, which contains not one lvnand2: netlisting
+   * it printed 23 paragraphs saying "on this sheet, instance x2 (a lvnand2)",
+   * 10 distinct, with four instance names each printed three times
+   * byte-identically -- three DIFFERENT x2s, on rom2_predec1.sch,
+   * rom2_predec3.sch and rom2_predec4.sch, that the user could not tell apart.
+   *
+   * xctx->current_name is right at this moment because spice_block_netlist()
+   * calls load_schematic() (save.c, which sets it) before spice_netlist() walks
+   * the sub-cell's instances, and global_spice_netlist() puts the top sheet's
+   * name back on the way out (spice_netlist.c). The two fallbacks are for a
+   * caller that never went through either. */
+  sheet = (xctx->current_name[0]) ? xctx->current_name :
+          (xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "?");
+
   /* GUARD UA-INST, issue 0970. The tokens come from the INSTANCE's own property
    * string, never from the symbol template. "You typed this and it had no
    * effect" is a claim about what the user wrote on the sheet; a template
@@ -2645,17 +2879,52 @@ static void warn_unused_instance_attr(int inst, const char *format)
     if(!skip && (!strcmp(p, "schematic") || !strcmp(p, "spice_sym_def") ||
                  !strcmp(p, "spectre_sym_def") || !strcmp(p, "vhdl_sym_def") ||
                  !strcmp(p, "verilog_sym_def") || !strcmp(p, "tedax_sym_def"))) skip = 1;
-    if(!skip && format_uses_token(format, p)) skip = 1;   /* GUARD UA-FMT */
+    /* GUARD UA-FMT + GUARD UA-ALTFMT: any format string this symbol can be
+     * written through, not only the one being written this minute. */
+    if(!skip && any_format_uses_token(inst, format, p)) skip = 1;
+    /* GUARD UA-TMPL, issue 0980: a setting the cell's own template declares is
+     * passed straight into a VHDL or Verilog netlist of that cell, so it is not
+     * a lost setting even though the SPICE format string never names it. */
+    if(!skip && symbol_declares_param(inst, p)) skip = 1;
+    /* GUARD UA-SYMNAME, issue 0980: a setting the instance's symbol reference
+     * substitutes into the cell name picks WHICH cell body is written out. */
+    if(!skip && symbol_name_uses_token(inst, p)) skip = 1;
     if(!skip) {
       val = get_tok_value(prop, p, 0);
+      /* GUARD UA-ELIDE, issue 0983: every variable-length field is shortened to
+       * one line of bounded length BEFORE the sentence is built, so no value a
+       * user types can cost the reader the recommended action or split the
+       * warning across two info-window entries. */
+      unused_attr_elide(e_sheet, S(e_sheet), sheet, 120, 1);
+      unused_attr_elide(e_inst,  S(e_inst),  instname, 60, 0);
+      unused_attr_elide(e_cell,  S(e_cell),  sym_cell, 60, 0);
+      unused_attr_elide(e_prop,  S(e_prop),  p, 60, 0);
+      unused_attr_elide(e_val,   S(e_val),   val ? val : "", 120, 0);
+      /* RULING D5-4: this sentence is minted HERE and nowhere else. The clause
+       * "did not reach the simulator" is the contract phrase the test suite
+       * recognises these lines by -- keep it verbatim.
+       *
+       * ISSUE 0982, the advice: the old wording told the user to "give x1 a
+       * schematic= attribute of its own", which walks them into a silent
+       * collision. Measured on two copies of one cell given the SAME name, as
+       * that sentence invites: the deck holds ONE cell body carrying the first
+       * instance's setting, the second instance's setting appears nowhere at
+       * all, and the netlister says nothing about it -- GUARD UA-POLY above has
+       * already skipped both instances, so the very diagnostic that exists to
+       * catch "your setting reached nothing" is structurally blind to the state
+       * its own advice created. The advice now names the requirement and says
+       * what breaks without it. Detecting the collision itself is issue 0982's
+       * remaining half and is not done here. */
       my_snprintf(str, S(str),
-        "Warning: on this sheet, instance %s (a %s) sets %s=%s, but %s never reads "
+        "Warning: on sheet %s, instance %s (a %s) sets %s=%s, but %s never reads "
         "%s when the netlist is written, so that setting did not reach the simulator "
         "and changed nothing. Check the spelling against the settings this cell does "
         "read, or take it off. If you meant to change only this one copy of the cell, "
-        "give %s a schematic= attribute of its own as well, and the cell will be "
-        "written out separately with your setting in it.",
-        instname, sym_cell, p, val ? val : "", sym_cell, p, instname);
+        "add a schematic= attribute to %s naming a cell name that no other instance "
+        "asks for, and that copy is written out on its own with your setting in it. "
+        "Two instances that ask for the same name quietly share one copy, and only "
+        "the first one's setting is kept.",
+        e_sheet, e_inst, e_cell, e_prop, e_val, e_cell, e_prop, e_inst);
       statusmsg(str, 2);
     }
     p = q;

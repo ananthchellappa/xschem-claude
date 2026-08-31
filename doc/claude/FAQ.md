@@ -14,6 +14,65 @@ Newest entries on top.
 
 ---
 
+## Q70. When is a setting a user typed on an instance "unused"? Whose netlist decides?
+
+- **Asked:** 2026-08-30
+- **Project state:** branch `annotate`, item S4c (the correction of S4b's netlist
+  warning). `warn_unused_instance_attr()` in `src/token.c`, issues 0980 and 0987.
+
+**A setting is consumed if the symbol declares it — and "declares" has four
+separate spellings, three of which are invisible in the format string everyone
+reaches for first.** Getting this wrong shipped a warning that was wrong on 43 of
+the 149 lines it printed across `xschem_library`, telling designers to delete
+settings the VHDL and Verilog netlists really use.
+
+The four ways a cell consumes an instance attribute, all measured:
+
+1. **A format string names it** — `format="… K=@K"`. The obvious one. Note both
+   sigils count: the netlister treats `%tok` exactly like `@tok`
+   (`print_spice_element()`, `if(state==TOK_BEGIN && (c=='@'||c=='%') …)`).
+   And there are **six** format attributes, not one: `format`, `spice_format`,
+   `vhdl_format`, `verilog_format`, `tedax_format`, `spectre_format` — each on
+   the symbol *and* overridable on the instance.
+2. **The symbol's `template=` declares it, with no format string anywhere.**
+   This is the one that bit. `print_vhdl_element()` and
+   `print_verilog_element()` emit an instance attribute as a generic or
+   parameter *iff it is in the symbol's template* — no format string is
+   consulted at all. `ram.sym` never mentions `datafile` in a format string, and
+   `ram_tb.v` still carries `.datafile ( "ram.list" )` into a module body that
+   calls `$readmemh(datafile, mem)`.
+3. **`extra=` excludes it again.** A name in `extra=` is a **node** — a
+   subcircuit port — not a parameter, even when the template also carries it.
+   That seam is why `passgate.sym`'s `modelp` is still correctly reported.
+4. **The symbol NAME itself reads it.** The cell an instance points at is not a
+   fixed string: `link_symbols_to_instances()` runs `translate()` over
+   `xctx->inst[].name`, so `symbolgen.tcl(inv,@ROUT\)` with `ROUT=1200` produces
+   the deck line `x1 IN_INV IN symbolgen_tcl_inv_1200`. The setting **chose the
+   cell body** — the loudest way a setting can reach the simulator — and the
+   first version of the warning told the user to take it off.
+
+**The near miss:** `generic_type=` looks like the consumption test and is not.
+It only picks quoting and drops time-typed tokens from the Verilog map; reading
+it as the gate silences 31 of the 43 false lines and leaves `ram_tb`'s
+`datafile` still accused.
+
+**And the part that is still open — whose netlist?** All of the above answers
+*"can any format this symbol supports consume it?"*. It does **not** answer
+*"does the netlist I am writing right now consume it?"*, and those differ.
+`real_capa.sym` is `format="@name @pinlist @symname"`: `cap=30.0` reaches a VHDL
+netlist as `cap => 30.0` and is **dropped from the SPICE deck entirely** — all
+four capacitors on `loading.sch` simulate at the symbol default `10.0`. Today
+the tool is silent about that, which is the *sanctioned* answer and probably not
+the *right* one. Issue **0987** carries it.
+
+**The transferable lesson:** the diagnostic now uses the identical test its
+backends use — `get_tok_value(template, token, 0)` plus `tok_size` — rather than
+a second implementation that agrees today. A "is this used?" check written
+against a different oracle than the code that uses it will drift, and it will
+drift into confidently telling a user to delete working input.
+
+---
+
 ## Q69. The same suite answers 17 checks headless and 109 on the dev display. Which one is "the" count?
 
 - **Asked:** 2026-08-29

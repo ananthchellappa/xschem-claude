@@ -1,5 +1,30 @@
 # 0978 — the shipped example library carries 149 settings that never reach the netlist
 
+**CORRECTED AND SUPERSEDED IN PART (2026-08-30, item S4c).** This file's headline
+figure is wrong twice over. Of the 149 lines, **43** were false and **106** true,
+not 36 and 111 — `del`/`delay` on `logic/latch` and `logic/mux21` are live VHDL
+and Verilog generics (`doublepin.vhdl:44` `del => 200`, `testbench.v:74`
+`.del ( 200 )`), which this file and issue 0980 both set aside for want of static
+evidence. Running the netlister supplies it.
+
+Since issue 0980's fix landed, the shipped library figure is **98 lines on 11
+sheets, all of them true** — verified per-cell against the Verilog and VHDL
+netlists of the same sheets. Sixty of the 98 are one real typo: `rom8k`'s sheets
+bind `VSSBPIN` while the gate they place spells it `VSSPIN`, and `VSSBPIN`
+appears zero times in all three netlists of `rom8k.sch`. The breakdown of the
+other 38 is in issue 0980. The settings themselves are still **not fixed** —
+that is what this issue remains open for.
+
+**And the 98 is an undercount of this issue's own subject.** 43 of the lines
+0980's fix silenced are settings that really are dropped from the **SPICE** deck
+— `loading.sch` sets `cap=100.0` and `cap=30.0` on capacitors that all simulate
+at the symbol default `10.0` — and they were silenced because a VHDL netlist of
+the same sheet would carry them. They are still shipped settings that never
+reach the SPICE netlist, so they belong to this issue; they are simply no longer
+counted by the diagnostic. Issue **0987** carries that measurement and the
+ruling it needs.
+
+
 **Status: FILED, NOT FIXED (2026-08-30, item S4b).** Reproduced by measurement,
 not by inspection. These are the example library's own data, and correcting a
 schematic somebody drew is a different decision from adding a check.

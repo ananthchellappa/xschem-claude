@@ -1,6 +1,29 @@
 # 0982 — two instances given the same `schematic=` name collide in silence, and the advice this tree now prints leads the user straight into it
 
-**Status: FILED, NOT FIXED (2026-08-30, item S4b write-up).** The sharpest of
+**Status: THE ADVICE IS FIXED (2026-08-30, item S4c). THE COLLISION ITSELF IS
+STILL OPEN AND THIS ISSUE STAYS OPEN FOR IT.**
+
+Item S4c was scoped to the advice half. The netlist-time sentence in
+`src/token.c` no longer says "give x1 a `schematic=` attribute of its own". It
+now says:
+
+> If you meant to change only this one copy of the cell, add a `schematic=`
+> attribute to `x1` naming a cell name that no other instance asks for, and that
+> copy is written out on its own with your setting in it. **Two instances that
+> ask for the same name quietly share one copy, and only the first one's setting
+> is kept.**
+
+Rejected: dropping the clause, which throws away the actionable half that issues
+0970 and 0974 exist to add. Rejected as out of scope: detecting the collision at
+netlist time — **that is this issue's remaining half.** Note what the
+measurement below shows about it: GUARD UA-POLY has already skipped both
+colliding instances by the time the diagnostic runs, so the check that exists to
+catch "your setting reached nothing" is structurally blind to the state its own
+advice used to create. Fixing that means a new check, not a wording change.
+
+This wording is user-visible and the user has not ratified it.
+
+**Original report, unchanged:** The sharpest of
 the findings against item S4b's own work, because the defect is reached by
 **following the advice the tool now gives**.
 

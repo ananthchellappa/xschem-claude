@@ -58,15 +58,24 @@
 # THE CONTRACT PHRASE. A netlist-time line of this kind is recognised here by
 # the clause "did not reach the simulator". The whole sentence it belongs to is
 #
-#   Warning: on this sheet, instance <inst> (a <symbol>) sets <prop>=<value>,
+#   Warning: on sheet <sheet>, instance <inst> (a <symbol>) sets <prop>=<value>,
 #   but <symbol> never reads <prop> when the netlist is written, so that
 #   setting did not reach the simulator and changed nothing. Check the spelling
 #   against the settings this cell does read, or take it off. If you meant to
-#   change only this one copy of the cell, give <inst> a schematic= attribute of
-#   its own as well, and the cell will be written out separately with your
-#   setting in it.
+#   change only this one copy of the cell, add a schematic= attribute to <inst>
+#   naming a cell name that no other instance asks for, and that copy is
+#   written out on its own with your setting in it. Two instances that ask for
+#   the same name quietly share one copy, and only the first one's setting is
+#   kept.
 #
 # and it is minted in exactly one place, src/token.c.
+#
+# THAT SENTENCE WAS REWRITTEN BY ITEM S4c, 2026-08-30. It used to open "on this
+# sheet," about instances that were not on the sheet the user had open (issue
+# 0981), and it used to end "give <inst> a schematic= attribute of its own as
+# well", which walked the reader into a silent collision (issue 0982). Rows UF8
+# and UF13 assert that both of those old strings are now ABSENT, so do not
+# reinstate either one here as a description of what the tool says.
 #
 # Runs on BOTH arms, unchanged:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_unused_attr_0970.tcl
@@ -203,6 +212,152 @@ model=pfet_01v8
 zzspare=7
 spiceprefix=X
 }}
+
+
+# ---------------------------------------------------------------------------
+# THE S4c FIXTURE ADDITIONS -- issues 0980, 0981, 0983, 0982, 0984.
+#
+# uafmt.sym is the shape that separates the four ways a cell can consume a
+# setting the user typed, one per attribute, so each row below has exactly one
+# reason to be red:
+#   nfin  -- named in the cell's own template= and in no format string. A
+#            Verilog or VHDL netlist of this cell passes it in as a parameter,
+#            so it is NOT a lost setting even though the SPICE format never
+#            mentions it. Issue 0980 in miniature.
+#   vbb   -- named in the template AND in extra=. An extra= name is a NODE, not
+#            a setting, so it stays reportable. This is the seam that keeps the
+#            shipped bandgap passgate reportable.
+#   K     -- read by the SPICE format string and absent from the template.
+#   V     -- read only by verilog_format and absent from the template.
+#   zznone-- read by nothing at all. The control: the sheet must always say its
+#            one thing about this one, or a row that expects silence elsewhere
+#            is passing because the whole instance was skipped.
+u_wr [file join $UA uafmt.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname K=@K"
+verilog_format="assign @V = 1;"
+template="name=x1
+nfin=1
+vbb=0"
+extra="vbb"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+
+u_wr [file join $UA uafmt.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {devices/res} 400 -300 0 0 {name=R1 value=1k}}
+
+## A cell that reads nothing at all, for the three SHAPE fixtures -- a very long
+## value, a value written over two lines, and properties continued with a SPICE
+## '+' marker the way the shipped charge pump sheet writes them.
+u_wr [file join $UA uatsub.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+
+u_wr [file join $UA uatsub.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {devices/res} 400 -300 0 0 {name=R1 value=2k}}
+
+## Written line by line rather than as one literal, because the three shapes
+## this sheet exists to carry are shapes of the FILE: a 1705-character value, a
+## quoted value broken across two physical lines exactly as shipped
+## examples/tb_symbol_include.sch breaks its comm= value, and a property
+## continued onto the next line behind a '+' exactly as shipped
+## sky130_tests/charge_pump_phasegen.sch continues its lvtnot instances.
+set UF_BIG "note_[string repeat ABCDEFGHIJ 170]"
+set UF_TOP [file join $UA uafmt_top.sch]
+set uffd [open $UF_TOP w]
+puts $uffd "v \{xschem version=3.4.4 file_version=1.2\}"
+puts $uffd "G \{\}"
+puts $uffd "K \{\}"
+puts $uffd "V \{\}"
+puts $uffd "S \{\}"
+puts $uffd "E \{\}"
+puts $uffd "C \{ua/uafmt.sym\} 120 0 0 0 \{name=xT nfin=2 zznone=1 vbb=1 K=3 V=2\}"
+puts $uffd "C \{ua/uatsub.sym\} 320 0 0 0 \{name=xLONG bigprop=$UF_BIG\}"
+puts $uffd "C \{ua/uatsub.sym\} 520 0 0 0 \{name=xNL nlprop=\"first half of the value"
+puts $uffd "      second half of the value\"\}"
+puts $uffd "C \{ua/uatsub.sym\} 720 0 0 0 \{name=xPLUS "
+puts $uffd "+ zzplus=1\}"
+close $uffd
+
+## TWO LEVELS, ONE INSTANCE NAME, ONE PROPERTY NAME -- issue 0981's shipped
+## shape reduced to two sheets. The x5 the user placed on uahier.sch and the x5
+## inside uamid.sch are different instances on different sheets, and today the
+## netlister says the same eleven words about both.
+u_wr [file join $UA uamid.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+
+u_wr [file join $UA uamid.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {ua/uatsub.sym} 400 -300 0 0 {name=x5 zzlost=1}}
+
+u_wr [file join $UA uahier.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {ua/uatsub.sym} 120 0 0 0 {name=x5 zzlost=1}
+C {ua/uamid.sym} 320 0 0 0 {name=xm1}}
+set UF_HIER [file join $UA uahier.sch]
+
+## A SHEET WHOSE PATH IS TOO LONG FOR THE SENTENCE -- issue 0983's third shape,
+## and the only witness of the half of GUARD UA-ELIDE that keeps the END of a
+## field instead of its beginning. Three directory levels of forty characters
+## each put the sheet well past the 120 the sentence allows, and a path is
+## identified by its last components, so the reader must still be able to see
+## which sheet it is.
+set UF_DEEPDIR [file join $UA \
+  dddddddddddddddddddddddddddddddddddddddd \
+  eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+  ffffffffffffffffffffffffffffffffffffffff]
+file mkdir $UF_DEEPDIR
+u_wr [file join $UF_DEEPDIR uadeep.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {ua/uatsub.sym} 120 0 0 0 {name=xD zzdeep=1}}
+set UF_DEEP [file join $UF_DEEPDIR uadeep.sch]
 
 set SKY [file join $repo sky130A xschem_libs]
 set DEFS [file join $UA library.defs]
@@ -394,6 +549,335 @@ check {UB11 STRUCTURAL this suite is itself named once in the full regression\
   [list [u_count $UB_REG {headless/test_unused_attr_0970}] \
         [u_count $UB_AUD {test_unused_attr_0970}]] \
   {1 1}
+
+# ============================================================================
+# UF. THE SAME DIAGNOSTIC, TOLD THE TRUTH -- issues 0980, 0981, 0982, 0983, 0984
+# ============================================================================
+# S4b shipped this warning ON BY DEFAULT and it is wrong on 43 of the 149 lines
+# it prints across the shipped xschem_library, and on SIX of the eighteen sheets
+# that speak it is wrong on every single line. A designer who follows the advice
+# on xschem_library/logic/ram_tb.sch or xschem_library/examples/loading.sch
+# breaks a working shipped example, because the settings it calls dead are
+# carried into the Verilog and VHDL netlists of the very same sheet:
+# ram_tb.v holds .datafile - "ram.list" - and a module body that runs
+# $readmemh on it, loading.vhdl holds cap => 30.0 and conduct => 1.0/20000.0.
+#
+# The rows below are on SHIPPED sheets wherever a shipped sheet carries the
+# shape, and on the fixture only where no shipped sheet does. The fixture rows
+# separate the four ways a cell can consume a setting, one attribute each, so a
+# repair that silences the warning wholesale cannot pass them -- UF3 is the
+# negative control that reddens if somebody simply turns the thing off.
+
+## Every line the info window holds that mentions <needle>, whether or not it is
+## the START of one of these paragraphs. UF11 and UF12 need the continuation
+## halves that ua_lines cannot see, because a value with a newline in it makes
+## one warning arrive as two lines and the second begins mid-sentence.
+proc uf_iw_with {needle} {
+  set out {}
+  foreach ln [split [xschem get infowindow_text] \n] {
+    set t [string trim $ln]
+    if {$t eq {}} { continue }
+    if {[string first $needle $t] >= 0} { lappend out $t }
+  }
+  return $out
+}
+## Of a captured list of lines, the ones mentioning <needle>. Captured rather
+## than re-read, because the info window also carries a separator line naming
+## every sheet it descends into -- searching the whole window for a sheet name
+## would find the separator and pass a row about what the SENTENCE says.
+proc uf_with {lines needle} {
+  set out {}
+  foreach l $lines { if {[string first $needle $l] >= 0} { lappend out $l } }
+  return $out
+}
+## Of the warnings the last netlist produced, the ones about attribute <prop>.
+proc uf_sets {lines prop} {
+  set out {}
+  foreach l $lines { if {[string first " sets $prop=" $l] >= 0} { lappend out $l } }
+  return $out
+}
+## Of the warnings the last netlist produced, the ones that do not begin at the
+## beginning of the sentence.
+proc uf_midsentence {lines} {
+  set n 0
+  foreach l $lines { if {![string match {Warning:*} $l]} { incr n } }
+  return $n
+}
+## A boolean expression, evaluated in the CALLER's scope, reduced to 1 or 0 so
+## a failing row prints a readable list instead of a wall of true/false.
+proc uf_yes {c} { return [expr {[uplevel 1 [list expr $c]] ? 1 : 0}] }
+
+# --- UF1 / UF2 / UF3: the shipped sheets, and the control --------------------
+set UF_RAMTB [file join $repo xschem_library logic ram_tb.sch]
+set UF1N [ua_netlist $UF_RAMTB]
+set UF1D [u_slurp [file join $scratch ram_tb.spice]]
+puts "UA-COUNT ram_tb.sch: $UF1N (deck [string length $UF1D] bytes)"
+check {UF1 issue 0980 SHIPPED netlisting the shipped memory testbench to SPICE\
+ says nothing of this kind at all. Every one of the seven settings it used to\
+ call dead -- the data file, the memory size, the access delay -- is carried\
+ into the Verilog netlist of the same sheet and read by the module body, so\
+ telling the user to take them off breaks a working shipped example. The deck\
+ really was written and holds the memory cell, so a sheet that failed to load\
+ cannot pass this row by being silent} \
+  [list $UF1N [uf_yes {[string length $UF1D] > 100}] \
+        [uf_yes {[string first {ram} $UF1D] >= 0}]] \
+  {0 1 1}
+
+set UF_LOADING [file join $repo xschem_library examples loading.sch]
+set UF2N [ua_netlist $UF_LOADING]
+set UF2D [u_slurp [file join $scratch loading.spice]]
+puts "UA-COUNT loading.sch: $UF2N (deck [string length $UF2D] bytes)"
+check {UF2 issue 0980 SHIPPED the shipped loading example says nothing of this\
+ kind either. Its eleven accused settings are the capacitances, conductances\
+ and delays the VHDL netlist of the same sheet writes into its generic maps.\
+ The deck really was written and holds both cells the accusations were about} \
+  [list $UF2N [uf_yes {[string first {real_capa} $UF2D] >= 0}] \
+        [uf_yes {[string first {pump} $UF2D] >= 0}]] \
+  {0 1 1}
+
+set UF_ROM8K [file join $repo xschem_library rom8k rom8k.sch]
+set UF3N [ua_netlist $UF_ROM8K]
+set UF3L [ua_lines]
+set UF3V [llength [uf_sets $UF3L VSSBPIN]]
+set UF3THIS [llength [uf_with $UF3L {on this sheet}]]
+set UF3P1 [llength [uf_with $UF3L rom2_predec1]]
+set UF3P3 [llength [uf_with $UF3L rom2_predec3]]
+set UF3P4 [llength [uf_with $UF3L rom2_predec4]]
+puts "UA-COUNT rom8k.sch: $UF3N (VSSBPIN lines $UF3V, distinct [llength [lsort -unique $UF3L]])"
+check {UF3 issue 0980 THE NEGATIVE CONTROL the shipped ROM still gets its real\
+ warning: its sheets bind a power pin spelled VSSBPIN while the gate they place\
+ spells it VSSPIN, so that binding truly reaches nothing, and the netlister\
+ must go on saying so. A repair that merely switches this diagnostic off, or\
+ that excuses every setting a symbol happens to name anywhere, reddens here} \
+  [list [uf_yes {$UF3N > 0}] [uf_yes {$UF3V > 0}]] {1 1}
+
+# --- UF4 .. UF7: the four ways a cell can consume a setting -------------------
+set UF_TN [ua_netlist $UF_TOP]
+set UF_TL [ua_lines]
+foreach l $UF_TL { puts "UA-FIX-LINE: $l" }
+puts "UA-COUNT uafmt_top.sch: $UF_TN"
+set UF_CTL [llength [uf_sets $UF_TL zznone]]
+
+check {UF4 issue 0980 GUARD UA-TMPL a setting the cell declares as one of its\
+ own -- it is in the symbol's template, so a Verilog or VHDL netlist of that\
+ cell passes it straight in as a parameter -- is never called dead, even though\
+ the SPICE format string does not mention it. The control setting, which no\
+ template and no format string anywhere names, is still reported once} \
+  [list [llength [uf_sets $UF_TL nfin]] $UF_CTL] {0 1}
+
+check {UF5 issue 0980 GUARD UA-EXTRA a name the symbol lists in extra= is a\
+ NODE the cell gets wired to, not a setting the cell reads, so it stays\
+ reportable even though the template also mentions it. This is the seam that\
+ keeps the shipped bandgap passgate reportable, which is the case this whole\
+ diagnostic was written for} \
+  [list [llength [uf_sets $UF_TL vbb]] $UF_CTL] {1 1}
+
+check {UF6 issue 0980 GUARD UA-FMT a setting the SPICE format string itself\
+ reads is silent, and this is now the only place that guard can be seen from --\
+ the older row for it uses a name the symbol's template also declares, so the\
+ template rule alone would keep that one quiet and the format rule could be\
+ deleted without anything going red} \
+  [list [llength [uf_sets $UF_TL K]] $UF_CTL] {0 1}
+
+check {UF7 issue 0980 GUARD UA-ALTFMT a setting read only by the cell's Verilog\
+ form is silent when the sheet is written to SPICE. The question the warning\
+ has to answer is whether the setting reaches ANY netlist this cell can be\
+ written in, not whether it reaches the one being written this minute} \
+  [list [llength [uf_sets $UF_TL V]] $UF_CTL] {0 1}
+
+# --- UF8 / UF9: which sheet, and which instance ------------------------------
+check {UF8 issue 0981 SHIPPED netlisting the shipped ROM never says on this\
+ sheet about an instance that is not on the sheet the user opened. Not one of\
+ those instances is on rom8k.sch -- they are on three predecoder sheets one\
+ level down -- and every line names the sheet it is really about, so no two\
+ lines are word-for-word identical. Today four names are each printed three\
+ times byte-identically and the user cannot tell which is which} \
+  [list $UF3THIS \
+        [uf_yes {$UF3P1 > 0}] \
+        [uf_yes {$UF3P3 > 0}] \
+        [uf_yes {$UF3P4 > 0}] \
+        [uf_yes {[llength [lsort -unique $UF3L]] == [llength $UF3L]}]] \
+  {0 1 1 1 1}
+
+set UF9N [ua_netlist $UF_HIER]
+set UF9L [ua_lines]
+foreach l $UF9L { puts "UA-HIER-LINE: $l" }
+check {UF9 issue 0981 two sheets, one instance name, one setting name: the x5\
+ the user placed and the x5 inside the cell it contains are different\
+ instances, and the two sentences differ -- one names the sheet the user opened\
+ and the other names the sheet one level down. Both still name x5 itself} \
+  [list $UF9N \
+        [uf_yes {$UF9N == 2 && [u_word [lindex $UF9L 0] x5] && [u_word [lindex $UF9L 1] x5]}] \
+        [uf_yes {[llength [uf_with $UF9L uahier]] > 0}] \
+        [uf_yes {[llength [uf_with $UF9L uamid]] > 0}] \
+        [uf_yes {[llength [lsort -unique $UF9L]] == $UF9N}]] \
+  {2 1 1 1 1}
+
+# --- UF10 / UF11 / UF12: the sentence survives the value ---------------------
+set UF10N [ua_netlist $UF_TOP]
+set UF10L [ua_lines]
+set UF10B [uf_sets $UF10L bigprop]
+set UF10S [expr {[llength $UF10B] == 1 ? [lindex $UF10B 0] : {}}]
+puts "UA-LONG len=[string length $UF10S]"
+check {UF10 issue 0983 a very long value does not cost the user the advice. One\
+ line, it still ends with what they can do about it, the shortened value is\
+ marked as shortened, and the whole line stays short enough to read -- today it\
+ stops dead in the middle of the last sentence with nothing to say it was cut} \
+  [list [llength $UF10B] \
+        [uf_yes {[string first {no other instance asks for} $UF10S] >= 0}] \
+        [uf_yes {[string first {...} $UF10S] >= 0}] \
+        [uf_yes {[string length $UF10S] > 0 && [string length $UF10S] < 1000}]] \
+  {1 1 1 1}
+
+set UF11L [uf_iw_with nlprop]
+check {UF11 issue 0983 a value the user typed on two lines does not split the\
+ warning in two. The info window gets ONE line about it, it begins at the\
+ beginning of the sentence, and it still carries the spelling advice -- today\
+ the second half arrives as its own line starting in the middle of a word} \
+  [list [llength $UF11L] [uf_midsentence $UF11L] \
+        [uf_yes {[llength $UF11L] == 1 &&
+                 [string first {Check the spelling} [lindex $UF11L 0]] >= 0}]] \
+  {1 0 1}
+
+set UF20N [ua_netlist $UF_DEEP]
+set UF20L [uf_sets [ua_lines] zzdeep]
+set UF20S [expr {[llength $UF20L] == 1 ? [lindex $UF20L 0] : {}}]
+puts "UA-DEEP len=[string length $UF20S]"
+check {UF20 issue 0983 GUARD UA-ELIDE a sheet buried deep enough that its path\
+ will not fit in the sentence is still named by the part that identifies it --\
+ the file, not the first hundred characters of the directory it lives in -- and\
+ the shortening is marked. One line, it names uadeep.sch, it carries the marker,\
+ and the whole line stays short enough to read} \
+  [list [llength $UF20L] \
+        [uf_yes {[string first {uadeep.sch} $UF20S] >= 0}] \
+        [uf_yes {[string first {...} $UF20S] >= 0}] \
+        [uf_yes {[string length $UF20S] > 0 && [string length $UF20S] < 1000}]] \
+  {1 1 1 1}
+
+set UF_TBSI [file join $repo xschem_library examples tb_symbol_include.sch]
+set UF12N [ua_netlist $UF_TBSI]
+set UF12L [ua_lines]
+puts "UA-COUNT tb_symbol_include.sch: $UF12N (mid-sentence [uf_midsentence $UF12L])"
+check {UF12 issue 0983 SHIPPED on the one shipped sheet that carries a value\
+ typed over two lines, every warning the netlist produces begins at the\
+ beginning of the sentence. Today one of them begins with the words symbol\
+ reference to use in netlist, which is the tail of the user's own comment and\
+ reads as gibberish} \
+  [list [uf_yes {$UF12N > 0}] [uf_midsentence $UF12L]] {1 0}
+
+# --- UF13: the advice itself, and where it is written ------------------------
+set UF13N [ua_netlist $UF_TOP]
+set UF13B [uf_sets [ua_lines] zznone]
+set UF13S [expr {[llength $UF13B] == 1 ? [lindex $UF13B 0] : {}}]
+check {UF13 issue 0982 the advice is safe to follow. It tells the user the cell\
+ name has to be one no other instance asks for, and says what goes wrong if it\
+ is not -- two copies asking for the same name quietly share one body and only\
+ the first one's setting survives, which is what the old wording walked them\
+ into. And RULING D5-4: the sentence is still built in exactly one place and\
+ handed to the info window exactly once} \
+  [list [uf_yes {[string first {no other instance asks for} $UF13S] >= 0}] \
+        [uf_yes {[string first {share one copy} $UF13S] >= 0}] \
+        [uf_yes {[string first {attribute of its own as well} $UF13S] < 0}] \
+        [u_count $UB_FN {my_snprintf(str, S(str)}] \
+        [u_count $UB_FN {statusmsg(str,}]] \
+  {1 1 1 1 1}
+
+# --- UF14 / UF15 / UF16: issue 0984, the guards nothing was holding ----------
+## The list of attribute names the netlister reads for itself, parsed out of the
+## C source, then exercised ONE NAME AT A TIME on a sheet that also carries a
+## control setting. The control is what makes this honest: a name that quietly
+## skipped the whole instance would otherwise look like a name that was properly
+## excused. Before this row, 3 of the 55 names were reached by any fixture.
+set UF14SRC [u_slurp [file join $repo src token.c]]
+set UF14I [string first "unused_attr_stoplist\[\] = \{" $UF14SRC]
+set UF14J [expr {$UF14I >= 0 ? [string first "\n\};" $UF14SRC $UF14I] : -1}]
+set UF14BODY [expr {$UF14J > 0 ? [string range $UF14SRC $UF14I $UF14J] : {}}]
+set UF14NAMES {}
+foreach {uf14w uf14g} [regexp -all -inline {"([^"]*)"} $UF14BODY] { lappend UF14NAMES $uf14g }
+set UF14BAD {}
+set UF14SCH [file join $UA uastop.sch]
+foreach uf14n $UF14NAMES {
+  set uf14fd [open $UF14SCH w]
+  puts $uf14fd "v \{xschem version=3.4.4 file_version=1.2\}"
+  puts $uf14fd "G \{\}"
+  puts $uf14fd "K \{\}"
+  puts $uf14fd "V \{\}"
+  puts $uf14fd "S \{\}"
+  puts $uf14fd "E \{\}"
+  puts $uf14fd "C \{ua/uatsub.sym\} 320 0 0 0 \{name=xS $uf14n=zz zzctl=1\}"
+  close $uf14fd
+  ua_netlist $UF14SCH
+  set uf14l [ua_lines]
+  if {[llength [uf_sets $uf14l zzctl]] != 1 || [llength $uf14l] != 1} {
+    lappend UF14BAD "$uf14n:[llength $uf14l]"
+  }
+}
+puts "UA-STOPLIST names=[llength $UF14NAMES] unexcused=[llength $UF14BAD] $UF14BAD"
+check {UF14 issue 0984 every name on the netlister's own read-for-itself list\
+ is exercised, not three of them. Each name is put on an instance next to a\
+ control setting nothing reads, and the sheet must say its one thing about the\
+ control and nothing about the listed name -- so a name that silently swallowed\
+ the whole instance cannot pass as a name that was properly excused} \
+  [list [uf_yes {[llength $UF14NAMES] >= 50}] \
+        [uf_yes {[string first {NULL} $UF14BODY] >= 0}] \
+        [llength $UF14BAD]] \
+  {1 1 0}
+
+set UF15N [ua_netlist $UF_TOP]
+set UF15L [ua_lines]
+check {UF15 issue 0984 GUARD UA-NAME on a fixture of its own. A sheet that\
+ writes an instance's settings over two lines behind a SPICE plus marker -- the\
+ way the shipped charge pump sheet writes its inverters -- never produces a\
+ sentence about an attribute called plus, and the real lost setting on that\
+ instance is still reported. Until now this guard's only witness was one\
+ shipped sheet's formatting} \
+  [list [llength [uf_sets $UF15L +]] [llength [uf_sets $UF15L zzplus]]] {0 1}
+
+check {UF16 issue 0984 STRUCTURAL how loudly this speaks is a decision, and it\
+ is now held still. These notices are added to the end of the info window's\
+ text and never force the window open or fail the netlist, which is what the\
+ open-net notices on the same sheet do. The user has not yet ruled on that, and\
+ until they do it must not drift} \
+  [list [u_count $UB_FN {statusmsg(str, 2)}] \
+        [u_count $UB_FN {statusmsg(str, 1)}] \
+        [u_count $UB_FN {statusmsg(str, 3)}]] \
+  {1 0 0}
+
+# --- UF18 / UF19: two more ways a setting reaches something ------------------
+## Found by re-running the whole-library sweep against the repaired netlister
+## rather than by reasoning about it, which is why they are here and not in the
+## plan: 6 lines survived UA-TMPL because the cell that reads the setting is
+## chosen BY the setting, and 4 more because the reader is the property editor
+## rather than a netlist.
+set UF_SYMGEN [file join $repo xschem_library generators test_symbolgen.sch]
+set UF18N [ua_netlist $UF_SYMGEN]
+set UF18L [ua_lines]
+set UF18D [u_slurp [file join $scratch test_symbolgen.spice]]
+foreach l $UF18L { puts "UA-SYMGEN-LINE: $l" }
+puts "UA-COUNT test_symbolgen.sch: $UF18N"
+check {UF18 issue 0980 SHIPPED GUARD UA-SYMNAME a setting that picks WHICH cell\
+ the instance is built from is the loudest way a setting can reach the\
+ simulator, and it must never be called dead. Two instances on the shipped\
+ symbol-generator example write their resistance into the cell name itself and\
+ the deck really does contain that cell, spelled with the number they typed;\
+ the third instance names a cell that takes no such argument, so its setting\
+ truly goes nowhere and is still the one thing the sheet says} \
+  [list [llength [ua_for x1]] [llength [ua_for x3]] \
+        [uf_yes {[string first {symbolgen_tcl_inv_1200} $UF18D] >= 0}] \
+        [llength [uf_sets $UF18L ROUT]]] \
+  {0 0 1 1}
+
+set UF_SOLAR [file join $repo xschem_library ngspice solar_panel.sch]
+set UF19N [ua_netlist $UF_SOLAR]
+set UF19D [u_slurp [file join $scratch solar_panel.spice]]
+puts "UA-COUNT solar_panel.sch: $UF19N (deck [string length $UF19D] bytes)"
+check {UF19 issue 0980 SHIPPED GUARD UA-STOP the setting that says which box\
+ the property editor puts the cursor in is read by the editor, not by any\
+ netlist, so telling the user it reached nothing and offering to take it off\
+ would cost them an editing convenience on a shipped sheet. The solar panel\
+ example sets it on two comparators and the netlist now says nothing about it,\
+ while the deck really was written and holds the comparator cell} \
+  [list $UF19N [uf_yes {[string first {comp_ngspice} $UF19D] >= 0}]] {0 1}
 
 # ============================================================================
 # GC. THE SENTENCE THAT SAYS WHICH TRANSISTOR DISAGREES (issue 0974)
@@ -593,10 +1077,16 @@ check {PD3 GUARD PDK-FALLBACK with the shared resolver not loaded the sky130\
   $PD3 [u_ans xschem translate M2 @model]
 
 set PD_SKY [u_nocomment_tcl [u_slurp [file join $repo sky130A sky130_procs.tcl]]]
+## ⚠ RE-ANCHORED, issue 0984 gap 4. The needle used to stop at `@model`, which
+## is a PREFIX of the very rename a sabotage pass would make -- `@modelXX` still
+## contains `@model`, so the row scored the same count before and after and
+## could not fail. Every one of the four call sites in the two shipped helper
+## files ends the command with a closing bracket, so the bracket is part of the
+## needle now and a rename really does redden these two rows.
 check {PD4 STRUCTURAL the shipped sky130 helper file asks what model a device\
  uses in exactly ONE place, and that place goes through the shared resolver --\
  it asked in two places, and both were wrong the same way} \
-  [list [u_count $PD_SKY {translate $instname @model}] \
+  [list [u_count $PD_SKY {translate $instname @model]}] \
         [expr {[u_count $PD_SKY {model_netlist}] >= 3 ? 1 : 0}]] \
   {1 1}
 
@@ -604,7 +1094,7 @@ set PD_IHP [u_nocomment_tcl [u_slurp [file join $repo ihp-sg13g2 sg13g2_procs.tc
 check {PD5 STRUCTURAL the three matching places in the IHP helper file are\
  deliberately left alone and recorded as such in issue 0976, pinned here so a\
  later change to them is a decision somebody took and not a drift} \
-  [u_count $PD_IHP {translate $instname @model}] 3
+  [u_count $PD_IHP {translate $instname @model]}] 3
 
 } zzerr]} {
   puts "FATAL: uncaught error: $zzerr"

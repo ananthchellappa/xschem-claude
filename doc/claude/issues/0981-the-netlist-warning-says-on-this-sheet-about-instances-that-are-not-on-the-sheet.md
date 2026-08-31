@@ -1,6 +1,20 @@
 # 0981 — the netlist warning says "on this sheet" about instances that are not on the sheet, and names three of them identically
 
-**Status: FILED, NOT FIXED (2026-08-30, item S4b write-up).** This is issue
+**Status: FIXED (2026-08-30, item S4c), in `src/token.c`, rebuilt and measured.**
+GUARD UA-SHEET. The sentence now opens `on sheet <path>,` and takes the path
+from `xctx->current_name`, which is correct at the moment the sentence is minted
+because `spice_block_netlist()` calls `load_schematic()` before `spice_netlist()`
+walks a sub-cell's instances. One form for every line, including lines about the
+sheet the user has open — one mint site, ruling D5-4.
+
+Measured after, on the same sheet: `rom8k.sch` produces **22** lines (23 before;
+one of the 23 was a false positive that issue 0980's fix removed), **0** of them
+contain the words "on this sheet", they name `rom2_predec1`, `rom2_predec3` and
+`rom2_predec4`, and **all 22 are distinct** where four names were previously each
+printed three times byte-identically. Rows UF8 (shipped) and UF9 (a two-level
+fixture with one instance name and one setting name on both levels).
+
+**Original report, unchanged:** This is issue
 **0974** exactly one layer down: the same pass that taught the annotation
 surface to name a transistor the way the schematic names it shipped a new
 netlist-time sentence that cannot name its instance at all. The fix is in

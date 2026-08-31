@@ -83,6 +83,16 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   leading `FATAL` is counted. `couldn't execute "xschem"` or `exit 127` anywhere
   means the binary never launched and *nothing in that run is meaningful*
   (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
+- **⚠ RUN `run_regression.tcl` SOLO.** Two of them at once corrupt each other and
+  the loser reports a `FATAL` that never happened. `open_close.tcl:38` puts its
+  per-job exit-status files in a **fixed** `results/.work` (no pid), and `:108`
+  deletes that directory when the run ends — including out from under a run still
+  reading it. `read_job_status` scores a missing status file as `-1`
+  (`test_utility.tcl:119`), so the victim prints `FATAL: 10` and a nonzero count
+  in the one suite whose baseline is ZERO. **`exit -1` is the tell**: no xschem
+  process writes that; a real crash writes a real code. Both verify passes on
+  item S4c hit this in one session. Filed as **0990**; until it is fixed, a T1
+  number taken while another agent's suite was live is not evidence.
 - **T1's baseline is ZERO counted failures, as of the 0689+0690 commit.** For days
   every crew report carried "T1 3 FAIL — pre-existing" and every reader, the lead
   included, waved it through. Two of those three were the completion sentinel
