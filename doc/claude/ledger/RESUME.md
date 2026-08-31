@@ -34,8 +34,17 @@ run id is still visible to the session — the workflow journal lives under the
 
 ```
 Workflow({scriptPath: "doc/claude/ledger/crew.js",
-          resumeFromRunId: "wf_4b4abf31-e2b"})
+          resumeFromRunId: "wf_4b4abf31-e2b",
+          args: {id: "S4c", brief: "<the S4c brief, VERBATIM>"}})
 ```
+
+**`args` MUST be passed again on resume, and the brief must be byte-identical.**
+Measured 2026-08-30: `resumeFromRunId` alone fails instantly with
+`TypeError: undefined is not an object (evaluating 'args.id')` — the run id
+restores the agent CACHE, not the script's inputs, and `crew.js` reads `args.id`
+on its first line. The brief must match verbatim because it is interpolated into
+every agent prompt, and the cache keys on `(prompt, opts)` — a reworded brief
+silently re-runs all of them at full cost.
 
 `crew.js` was edited after that run launched (the `must()` guard below), but only
 outside the prompt strings, so the cached agents' `(prompt, opts)` are unchanged
