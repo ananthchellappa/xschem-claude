@@ -1,6 +1,12 @@
 # 0994 — the recorded suite baselines name an arm that cannot produce them
 
-**Status** OPEN, filed 2026-08-30 by item S4d's write-up pass. **Class** a
+**Status** **FIXED 2026-08-30** by the orchestrator, in the same session, right
+after S4d filed it — `crew.js` is the orchestrator's own file, which is why S4d
+correctly declined to edit under its uncommitted changes. The tier list now
+carries both arms with their own numbers, says a count belongs to an arm, drops
+the block count from the invariant (it grows as suites are added; the ZERO is
+what is fixed), and tells crews to run T1 solo per issues 0955 and 0990.
+Originally filed by item S4d's write-up pass. **Class** a
 standing red that is really furniture — the shape CLAUDE.md names as the one
 place a real regression hides in plain sight. **Not fixed here**: the numbers
 live in a harness file another hand already has uncommitted edits in, so this

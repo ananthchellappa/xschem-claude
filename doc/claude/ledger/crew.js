@@ -165,15 +165,28 @@ const TIERS = [
 
 const TIERTEXT = `
 === TIER LIST — these must be green when you are done ===
-Headless (\`./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl\`),
-baseline check counts measured 2026-08-29 AFTER commit 0e6cb3cb:
+**A COUNT BELONGS TO AN ARM.** Four of these suites have GUI rows that self-skip
+without a display, so the same suite has two right answers and the wrong pairing
+reads as a standing red (issue 0994). Run each under the command it is listed
+under; if you report a number, say which arm produced it.
+
+Headless (\`./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl\`):
   test_ase_core 182 | test_ase_final 80 | test_ase_final_gf180 34
-  test_ase_view 36 | test_ase_persist 109 | test_ase_cosim 341
-  test_ase_plot 150 | test_annot_blank_cause_0909 27
-Tk-only (\`tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script ...\`):
-  test_ase_window 228 | test_ase_dialogs 174 | test_wave_viewer 404
+  test_ase_cosim 341 | test_annot_blank_cause_0909 27
+  test_ase_view 32 | test_ase_persist 17 | test_ase_plot 30   <- headless numbers
+
+Dev display (\`tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script ...\`):
+  test_ase_view 36 | test_ase_persist 109 | test_ase_plot 150
+  test_ase_window 228 | test_ase_dialogs 174
+  test_wave_viewer 401 under --nolog, 404 under --logdir (the 3-row difference is
+  issue 0936 and is expected — do not chase it)
+
 Full: \`cd ${REPO}/tests && tclsh run_regression.tcl\` — baseline **ZERO** counted
-failures, 46 blocks, 0 launch failures. Measured today at 0e6cb3cb.
+failures, 0 launch failures. Block count grows as suites are added (46 at commit
+0e6cb3cb, 53 at 827220bb); the ZERO is the invariant, the block count is not.
+**Run it SOLO** — two concurrent runs in one tree share a results directory and
+truncate each other's \`results.log\`, which manufactures a FATAL and can also
+report ZERO having verified nothing (issues 0955, 0990).
 
 NOTHING IS KNOWN-RED. If a tier is not at its number above, that is YOURS: say
 which case and why, per case. A standing red is a defect, not furniture.
