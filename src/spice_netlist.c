@@ -400,6 +400,22 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
  my_free(_ALLOC_ID_, &pinnumber_list);
  fprintf(fd,"\n");
 
+ /* ISSUE 1201, GUARD AS-MODE. Everything between here and auto_spec_end() at
+  * the tail of this function is the ONE window in which the netlister may write
+  * a specialised copy of a cell for a setting a designer typed on one copy of
+  * it. It is opened here and nowhere else: the GUI, descend, hier_psprint()
+  * (printing a hierarchy is not writing a deck) and the Spectre, VHDL, Verilog
+  * and tEDAx netlisters all keep exactly today's behaviour.
+  *
+  * ⚠ IT MUST OPEN BEFORE THIS LINE, NOT AT get_additional_symbols() BELOW, and
+  * that is measured, not stylistic. spice_netlist() here writes the TOP sheet's
+  * own call lines, and the cell name on a call line comes from get_sym_name().
+  * Opened any later, the deck grew the specialised cell bodies while every call
+  * line above them still named the plain cell -- bodies nothing called, and the
+  * designer's setting still nowhere. spice_block_netlist()'s own
+  * get_additional_symbols(1) and spice_netlist() are both inside this window,
+  * so sub-sheets specialise too. See src/actions.c. */
+ auto_spec_begin();
  err |= spice_netlist(fd, 0);
 
  first = 0;
@@ -624,6 +640,13 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
    }
    if(!debug_var) xunlink(netl_filename);
  }
+ /* ISSUE 1201: close the window and throw away everything it remembered,
+  * including the answers read off disk about which cell drawing uses which
+  * setting -- a file may be edited between two netlist runs of one session, and
+  * an answer kept past the end of a run is an answer about a file that no
+  * longer says that. The only return between auto_spec_begin() above and here
+  * is the fopen failure, which is upstream of the begin. */
+ auto_spec_end();
  my_free(_ALLOC_ID_, &place);
  xctx->netlist_count = 0;
  tclvareval("show_infotext ", my_itoa(err), NULL); /* critical error: force ERC window showing */

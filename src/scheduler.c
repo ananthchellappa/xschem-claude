@@ -5985,6 +5985,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_AppendResult(interp, res, NULL);
         my_snprintf(res, S(res), "lcc[%d].templ=%s\n", i, t);
         Tcl_AppendResult(interp, res, NULL);
+        /* ISSUE 1201: 1 when the netlister gives the instance this level was
+         * entered through a cell body of its own, so its own settings are in
+         * the deck. op_annot::model_netlist (GUARD GB) reads it to name a
+         * device the way the simulator named it. */
+        my_snprintf(res, S(res), "lcc[%d].auto_spec=%d\n", i,
+                    xctx->hier_attr[i].auto_spec);
+        Tcl_AppendResult(interp, res, NULL);
 
       }
       my_snprintf(res, S(res), "modified=%d\n", xctx->modified); Tcl_AppendResult(interp, res, NULL);

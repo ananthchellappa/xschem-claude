@@ -1112,6 +1112,14 @@ typedef struct
   char *templ;
   char *symname;
   char *sym_extra;
+  /* ISSUE 1201. Used only for the DESCEND hierarchy stack (xctx->hier_attr[]),
+   * never by load_sym_def()'s local Lcc array: 1 when the netlister would give
+   * the instance this level was entered through a cell body of its own for a
+   * setting typed on it. descend_schematic() records it, because the question
+   * needs the PARENT's instance and symbol and neither survives the descend;
+   * `xschem globals` publishes it as lcc[N].auto_spec and
+   * op_annot::model_netlist reads it (GUARD GB). */
+  int auto_spec;
 } Lcc;
 
 typedef struct {
@@ -3102,6 +3110,25 @@ extern void read_record(int firstchar, FILE *fp, int dbg_level);
 extern void create_sch_from_sym(void);
 extern void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback);
 extern const char *get_sym_name(int inst, int ndir, int ext, int abs_path);
+/* ISSUE 1201: the netlister writes a specialised copy of a cell by itself.
+ * auto_spec_begin()/auto_spec_end() bracket ONE SPICE netlist run (GUARD
+ * AS-MODE); auto_spec_name() answers "what cell body should this copy be built
+ * under", or NULL for today's behaviour. See src/actions.c and issue 1201. */
+extern void auto_spec_begin(void);
+extern void auto_spec_end(void);
+extern int auto_spec_would_specialize(int inst);
+extern const char *auto_spec_name(int inst);
+/* ISSUE 1201, in src/token.c: the settings this copy typed that the SPICE deck
+ * drops AND the cell's own drawing uses -- the trigger, in one answer. <canon>
+ * comes back with a sorted, canonical spelling of the set (GUARD AS-ORDER) and
+ * <settings> with the same set written for a person to read. */
+extern int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings);
+extern void lost_attrs_cache_clear(void);
+/* ISSUE 0983 GUARD UA-ELIDE: one line, bounded length, whitespace runs folded.
+ * Every variable-length field of a user-facing netlist-time sentence goes
+ * through it -- the warning in token.c and issue 1201's note in actions.c. */
+extern void unused_attr_elide(char *dest, size_t dest_size, const char *src,
+                              size_t max_chars, int from_tail);
 extern void toggle_ignore(void);
 extern void get_additional_symbols(int what);
 extern int change_sch_path(int instnumber, int dr);

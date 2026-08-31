@@ -14,6 +14,62 @@ Newest entries on top.
 
 ---
 
+## Q72. When a designer types a setting on one copy of a cell and the tool cannot use it, should the tool tell them how to fix it, or fix it?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6 — issue `1201` (the netlister
+  honours a per-copy setting by itself). `src/token.c`, `src/actions.c`,
+  `src/spice_netlist.c`, `src/op_annot.tcl`. Follow-ups 1202–1209.
+
+**Fix it.** The user's framing settles it before any implementation question is
+reached: *"the creator of the bandgap design did NOTHING wrong; this is a tool
+bug."* They typed `modelp=pfet_01v8_lvt` on two passgates, XSCHEM threw it away,
+and the only remedy on offer was to hand-invent a second attribute
+(`schematic=passgate_lvtp`) whose entire job was to give the netlister a name it
+could have chosen itself. In Virtuoso the netlister unique-ifies a specialised
+cell body by itself and there is no user-typed token for it.
+
+The general shape, and it recurs: **a diagnostic that tells the user to perform a
+mechanical step the tool could perform is a diagnostic standing in for a missing
+feature.** The tell is that the advice contains no judgement — "name a cell name
+no other copy asks for" needs no knowledge of the circuit, so nothing about it
+required a human. Advice that *does* need judgement ("your drawing has to use
+this setting on the part meant to follow it") is real advice and stays.
+
+Two consequences worth carrying:
+
+**A tool that fixes the problem and still tells you to fix it yourself is its own
+defect**, so the advice has to be deleted in the same change. That means finding
+*every* surface that gives it. This item's brief named one (`src/token.c`); there
+were three. The second was the annotation surface's "the model differs" sentence
+in `src/op_annot.tcl`, which said the same thing in different words. The third
+was not a sentence at all — `op_annot::model_netlist` **tested for** the
+hand-typed attribute to work out what the deck would call a device, so making the
+netlister do it automatically would have made the annotation ask the results file
+for a device under a name the simulator never used. `grep` for the *mechanism*,
+not for the wording.
+
+**Automatic naming inherits every problem hand-naming had, plus one.** Issue
+`0982` records that two copies given the same hand-typed name silently share one
+body with only the first one's setting kept. The automatic path must not
+reproduce that, and the way it does not is by keying the shared body on the
+canonical **setting set** — so sharing is correct for free, and two different sets
+can never fold together. Getting that key exactly right is the whole game:
+`1202` (the invented name collides with a hand-typed one) and `1203` (an
+ambiguous join makes two different sets spell one key) are both that same bug
+wearing different clothes, and both were found by adversarial fixtures rather
+than by a green suite.
+
+**A measurement trap, for whoever writes the next netlister suite.** `xschem
+setprop netlist_type spectre` **silently does nothing** — it reads back `spice`.
+The working spelling is `xschem set netlist_type`, and it must be issued **after**
+`xschem load`: before the load it reads back `spectre` and still writes a SPICE
+deck. The netlist *directory* is not a subcommand at all; it is the Tcl variable
+`::netlist_dir`. A row that gets any of these wrong measures SPICE while
+reporting Spectre, and passes.
+
+---
+
 ## Q71. A dialog grew four guards and the operation underneath still accepts anything. Where does a check belong?
 
 - **Asked:** 2026-08-31

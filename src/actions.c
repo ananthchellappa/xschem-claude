@@ -3728,6 +3728,7 @@ int copy_hierarchy_data(const char *from_win_path, const char *to_win_path)
     my_strdup2(_ALLOC_ID_, &to->hier_attr[i].templ, hier_attr[i].templ);
     my_strdup2(_ALLOC_ID_, &to->hier_attr[i].symname, hier_attr[i].symname);
     my_strdup2(_ALLOC_ID_, &to->hier_attr[i].sym_extra, hier_attr[i].sym_extra);
+    to->hier_attr[i].auto_spec = hier_attr[i].auto_spec;   /* issue 1201 */
     if(to->portmap[i].table) str_hash_free(&to->portmap[i]);
     str_hash_init(&to->portmap[i], HASHSIZE);
     for(j = 0; j < HASHSIZE; j++) {
@@ -3880,6 +3881,19 @@ const char *get_sym_name(int inst, int ndir, int ext, int abs_path)
   /* resolve schematic=generator.tcl( @n ) where n=11 is defined in instance attrs */
   my_strdup2(_ALLOC_ID_, &sch, get_tok_value(xctx->inst[inst].prop_ptr,"schematic", 6));
   schematic_token_found = xctx->tok_size;
+  /* ISSUE 1201. The SECOND of the two places that decide which cell body a copy
+   * belongs to -- this one writes the name onto the call line, the one in
+   * get_additional_symbols() writes the body. Both ask auto_spec_name(), so the
+   * call line and the .subckt line can never drift apart about what the copy is
+   * called. Outside a SPICE netlist run this is always NULL and nothing here
+   * changes. */
+  if(!schematic_token_found) {
+    const char *auto_sch = auto_spec_name(inst);
+    if(auto_sch && auto_sch[0]) {
+      my_strdup2(_ALLOC_ID_, &sch, auto_sch);
+      schematic_token_found = strlen(auto_sch);
+    }
+  }
   if(sch && sch[0])
     my_strdup2(_ALLOC_ID_, &sch, translate3(sch, 1, xctx->inst[inst].prop_ptr, NULL, NULL, NULL));
   if(sch && sch[0])
@@ -4082,6 +4096,422 @@ void toggle_ignore(void)
   }
 }
 
+/* ============================================================================
+ * ISSUE 1201: THE NETLISTER WRITES THE SPECIALISED COPY OF A CELL BY ITSELF
+ * ============================================================================
+ *
+ * WHAT WENT WRONG FOR THE USER. A designer opens the shipped sky130 bandgap
+ * sheet, clicks two of the five passgates and types modelp=pfet_01v8_lvt on
+ * them, because those two have to be built from the low-threshold p-device.
+ * They press netlist. The deck builds all five out of the ordinary device and
+ * the tool says the setting changed nothing. Measured: one cell body, zero
+ * occurrences of the device they asked for.
+ *
+ * The tool COULD always do it. Type a second attribute -- `schematic=` naming a
+ * cell name no other copy asks for -- and get_additional_symbols() below writes
+ * a second cell body out of the very same sheet, feeds that copy's own property
+ * string into it as parent_prop_ptr, and the deck is right. The name in that
+ * attribute is not a path; it is just a cell name nobody else uses. So the
+ * designer was being asked to invent a unique name for something the netlister
+ * could name itself. In Cadence there is no such token: the netlister
+ * unique-ifies a specialised body on its own. This is that.
+ *
+ * WHEN IT FIRES, and both halves are required:
+ *   1. the copy sets something the SPICE line it is written through never reads
+ *      (the shared classification in token.c, the same one the "your setting
+ *      went nowhere" warning uses -- see ua_instance_eligible() and
+ *      ua_token_lost() there), AND
+ *   2. the cell's OWN drawing uses that setting, as sky130_tests/passgate.sch
+ *      uses `model=@modelp` (GUARD AS-BODY, token.c).
+ * Half 2 is what keeps this small. "The SPICE line never reads it" alone is
+ * true of misspellings and leftovers, and writing a cell body for those would
+ * put cells nobody asked for into decks that are correct today.
+ *
+ * MEASURED ON THE SHIPPED TREES: of the 653 schematics under sky130A,
+ * gf180mcuD, ihp-sg13g2, xschem_library and xschem_libs_newsym, not one copy
+ * enters this path, because every copy that would qualify already carries a
+ * hand-typed `schematic=`. The BEFORE/AFTER byte-diff of all 653 decks is on
+ * issue 1201.
+ *
+ * SCOPE IS THE SPICE DECK ONLY (GUARD AS-MODE). auto_spec_begin() is called
+ * from global_spice_netlist() and nowhere else, so the GUI, descend, and the
+ * Spectre, VHDL, Verilog and tEDAx netlisters keep exactly today's behaviour.
+ * The classification this rests on has only ever run for SPICE anyway --
+ * warn_unused_instance_attr() has one call site, inside print_spice_element().
+ */
+
+/* auto_spec_on is GUARD AS-MODE itself: outside a SPICE netlist run every
+ * question below is answered NULL and nothing in the editor changes. */
+static int auto_spec_on = 0;
+/* "<symbol reference>\n<the copy's whole property string>" -> the cell name
+ * chosen for it, or "" for "this copy gets nothing". Purely a speed memo: the
+ * answer is a function of those two things, and get_sym_name() asks it once per
+ * token expansion, which on a large sheet is thousands of times. */
+static Str_hashtable auto_spec_memo = {NULL, 0};
+/* "<symbol reference>\n<canonical setting list>" -> the cell name. THIS is what
+ * makes sharing correct: two copies that asked for the same settings land on
+ * the same key and therefore on ONE cell body, whatever order they typed them
+ * in and whatever else differs between them. */
+static Str_hashtable auto_spec_by_set = {NULL, 0};
+/* every cell name this run has already handed out, so GUARD AS-COLLIDE can see
+ * a name it minted itself as taken. */
+static Str_hashtable auto_spec_taken = {NULL, 0};
+
+/* ISSUE 1201. End the window: forget every answer, and stop answering.
+ *
+ * A reader would assume the tables are harmless to leave lying about, since
+ * they only cache. They are not: the sheet a cell is built from is read off
+ * DISK, and the file may be edited between two netlist runs of the same
+ * session, so an answer kept past the end of a run is an answer about a file
+ * that no longer says that. No behavioural row inside one run can see this --
+ * within a run the stale answer is the right one -- which is exactly the class
+ * of defect this branch has shipped past a green suite before. Row AS30 pins it
+ * structurally. */
+void auto_spec_end(void)
+{
+  auto_spec_on = 0;
+  str_hash_free(&auto_spec_memo);
+  str_hash_free(&auto_spec_by_set);
+  str_hash_free(&auto_spec_taken);
+  lost_attrs_cache_clear();
+}
+
+/* ISSUE 1201. Open the window. Called from global_spice_netlist() immediately
+ * before it writes the TOP sheet's own call lines, and from nowhere else. That
+ * point matters and is measured -- see the comment at the call site. */
+void auto_spec_begin(void)
+{
+  auto_spec_end();
+  str_hash_init(&auto_spec_memo, 1021);
+  str_hash_init(&auto_spec_by_set, 1021);
+  str_hash_init(&auto_spec_taken, 1021);
+  auto_spec_on = 1;
+}
+
+/* GUARD AS-COLLIDE, issue 1201. Is <nm> a name this deck, this design or this
+ * disk already means something else by?
+ *
+ * A NAME THE TOOL INVENTS MUST NEVER LAND ON A CELL THE DESIGN ALREADY HAS.
+ * The consequence if it does is not cosmetic: get_additional_symbols() below
+ * only falls back to the cell's own drawing when the named file does NOT
+ * exist, so a candidate that happens to name a real symbol next door builds
+ * this copy out of THAT cell's drawing instead -- a different circuit, quietly,
+ * under a name the designer never typed. Three questions, because there are
+ * three ways a name can already be spoken for:
+ *
+ *   * a symbol already loaded in this design, including one this same run has
+ *     just minted;
+ *   * a name this run has already handed out (two different setting lists whose
+ *     names collapse to the same spelling once punctuation is folded to '_');
+ *   * a file on disk, asked BOTH as a bare reference and as a reference in the
+ *     base symbol's own library, because that is where a neighbouring cell of
+ *     the same family actually lives and a bare name does not resolve there.
+ */
+static int auto_spec_collides(int inst, const char *nm)
+{
+  struct stat buf;
+  const char *symname;
+  char dirref[PATH_MAX];
+  const char *slash;
+  size_t dlen;
+  int i;
+
+  if(!nm || !nm[0]) return 1;
+  for(i = 0; i < xctx->symbols; ++i) {
+    if(!xctx->sym[i].name) continue;
+    if(!strcmp(get_cell(xctx->sym[i].name, 0), nm)) return 1;
+  }
+  if(str_hash_lookup(&auto_spec_taken, nm, "", XLOOKUP)) return 1;
+  if(!stat(abs_sym_path(nm, ".sym"), &buf)) return 1;
+  if(!stat(abs_sym_path(nm, ".sch"), &buf)) return 1;
+  symname = xctx->sym[xctx->inst[inst].ptr].name;
+  slash = symname ? strrchr(symname, '/') : NULL;
+  if(slash) {
+    dlen = (size_t)(slash - symname) + 1;
+    if(dlen < S(dirref) - 1) {
+      my_strncpy(dirref, symname, dlen + 1);
+      my_strncpy(dirref + dlen, nm, S(dirref) - dlen);
+      if(!stat(abs_sym_path(dirref, ".sym"), &buf)) return 1;
+      if(!stat(abs_sym_path(dirref, ".sch"), &buf)) return 1;
+    }
+  }
+  return 0;
+}
+
+/* ISSUE 1201. DOES THIS COPY QUALIFY FOR A CELL BODY OF ITS OWN? Everything
+ * except GUARD AS-MODE and the naming, so that auto_spec_name() (inside a SPICE
+ * netlist run) and auto_spec_would_specialize() (the annotation surface, at any
+ * time) can never answer differently about the same copy.
+ *
+ * Returns the number of settings that qualify and hands back the canonical and
+ * the human spelling of them. */
+static int auto_spec_qualifies(int inst, char **canon, char **settings)
+{
+  xSymbol *symptr;
+  size_t saved_tok_size;
+  int ok;
+
+  if(canon) my_strdup(_ALLOC_ID_, canon, NULL);
+  if(settings) my_strdup(_ALLOC_ID_, settings, NULL);
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  symptr = xctx->inst[inst].ptr + xctx->sym;
+
+  saved_tok_size = xctx->tok_size;
+  /* GUARD AS-SYMBODY, issue 1201. A SYMBOL that names its own drawing, or says
+   * its insides are never to be written out, has already decided which body it
+   * uses -- and get_additional_symbols()'s missing-file fallback would silently
+   * replace that decision with "<cell>.sch beside the symbol", which is a
+   * different drawing. Ten shipped symbols are of this shape. Rejected
+   * alternative, recorded on issue 1201: resolve the symbol's own drawing and
+   * use THAT as the fallback. More code, it changes an existing fallback, and
+   * no shipped cell needs it. */
+  get_tok_value(symptr->prop_ptr, "schematic", 0);
+  ok = xctx->tok_size ? 0 : 1;
+  if(ok) {
+    get_tok_value(symptr->prop_ptr, "default_schematic", 0);
+    ok = xctx->tok_size ? 0 : 1;
+  }
+  /* GUARD AS-TMPLMODEL, issue 1201. spice_block_netlist() takes the .subckt
+   * name from the symbol template's `model` when it has one, NOT from the
+   * symbol's name -- so two specialised copies of such a cell would put two
+   * different cell bodies into the deck under ONE name, which is a deck no
+   * simulator can read. Zero of the 533 shipped subcircuit symbols do this; the
+   * fixture on row AS20 is what proves the guard. */
+  if(ok) {
+    get_tok_value(symptr->templ, "model", 0);
+    ok = xctx->tok_size ? 0 : 1;
+  }
+  xctx->tok_size = saved_tok_size;
+  /* GUARD AS-IGNORE, issue 1201. A copy the SPICE deck does not contain at all,
+   * or one written out as a plain wire joining its pins, carries no settings
+   * anywhere. Without this it would still grow a cell body nothing calls. */
+  if(ok && ((xctx->inst[inst].flags & (SPICE_IGNORE | SPICE_SHORT)) ||
+            (symptr->flags & (SPICE_IGNORE | SPICE_SHORT)))) ok = 0;
+  if(!ok) return 0;
+  /* GUARD AS-EXPLICIT, AS-TYPE, AS-LOST and AS-BODY, all four, and they are the
+   * same tests the "your setting went nowhere" warning applies -- one
+   * classification, in token.c, asked twice. GUARD AS-ORDER is inside it: the
+   * canonical string is sorted by setting name, so two copies that typed the
+   * same settings in opposite order are one request and share one body. */
+  return lost_attrs_the_cell_body_reads(inst, canon, settings);
+}
+
+/* ISSUE 1201. WOULD THE NETLISTER GIVE THIS COPY A CELL BODY OF ITS OWN?
+ * The same question auto_spec_name() answers, asked OUTSIDE a netlist run and
+ * without minting a name or saying anything.
+ *
+ * WHY IT EXISTS, and it is not a convenience. The annotation surface has to
+ * know which model name the DECK will build a device with, so it can ask the
+ * results file for that device by the name the simulator gave it
+ * (op_annot::model_netlist, src/op_annot.tcl, GUARD GB). Before issue 1201 the
+ * only way a copy's own setting could reach the deck was a hand-typed
+ * `schematic=`, and GUARD GB tested for exactly that string. Now the netlister
+ * does it by itself, so a copy with no attribute on it at all can have its
+ * setting in the deck -- and an annotation surface still testing for the
+ * attribute would ask the results for a device under a name the simulator never
+ * used, and put no numbers, or the wrong ones, on the user's schematic. RULING
+ * D5-1. descend_schematic() records this answer per hierarchy level; `xschem
+ * globals` publishes it as lcc[N].auto_spec.
+ *
+ * The body-read cache is dropped on the way out when no netlist run owns it,
+ * because outside that window nothing else would ever clear it and the drawing
+ * it read may be edited a moment later. */
+int auto_spec_would_specialize(int inst)
+{
+  char *canon = NULL;
+  char *settings = NULL;
+  int n;
+
+  n = auto_spec_qualifies(inst, &canon, &settings);
+  my_free(_ALLOC_ID_, &canon);
+  my_free(_ALLOC_ID_, &settings);
+  if(!auto_spec_on) lost_attrs_cache_clear();
+  return n > 0 ? 1 : 0;
+}
+
+/* ISSUE 1201. The cell name this copy should be built under, or NULL for "leave
+ * this copy exactly as it is today".
+ *
+ * Consulted from the two places that resolve which cell body a copy calls --
+ * get_additional_symbols(), which writes the body, and get_sym_name(), which
+ * writes the name onto the call line. Both ask THIS function, so the two can
+ * never disagree about what a copy is called.
+ *
+ * The guards, in order, each of which has its own test row:
+ *   AS-MODE       we are not inside a SPICE netlist run
+ *   AS-SYMBODY    the SYMBOL already has an opinion about which drawing it is
+ *                 built from, or says not to write its insides out at all
+ *   AS-TMPLMODEL  the symbol's template names the cell body itself
+ *   AS-IGNORE     this copy is not written into the SPICE deck at all
+ *   AS-EXPLICIT / AS-TYPE / AS-LOST / AS-BODY, all four in token.c
+ *   AS-ORDER      the answer is the SET of settings, not the order typed
+ *   AS-CANON      a readable, deterministic name built from that set
+ *   AS-COLLIDE    and never a name something else already answers to
+ */
+const char *auto_spec_name(int inst)
+{
+  static char name[256];
+  char cand[256];
+  char note[1600];
+  char e_sheet[160];
+  char e_inst[80];
+  char e_cell[80];
+  char e_set[160];
+  char e_new[120];
+  char *memokey = NULL;
+  char *setkey = NULL;
+  char *canon = NULL;
+  char *settings = NULL;
+  const char *symname;
+  /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK. get_cell() returns a
+   * static buffer that the NEXT call overwrites, and auto_spec_collides() below
+   * calls it once per loaded symbol. Measured before this copy existed: the
+   * note told the user their passgate was "a 130_fd_pr/pfet_01v8" -- the tail
+   * of some other symbol's name, left in that buffer. */
+  char base[PATH_MAX];
+  const char *sheet;
+  const char *instname;
+  const char *s;
+  Str_hashentry *e;
+  xSymbol *symptr;
+  size_t w;
+  int nlost;
+  int suffix;
+  int c;
+
+  name[0] = '\0';
+  if(!auto_spec_on) return NULL;                              /* GUARD AS-MODE */
+  if(inst < 0 || inst >= xctx->instances) return NULL;
+  if(xctx->inst[inst].ptr < 0) return NULL;
+  symptr = xctx->inst[inst].ptr + xctx->sym;
+  symname = symptr->name ? symptr->name : "";
+
+  my_strdup2(_ALLOC_ID_, &memokey, symname);
+  my_strcat(_ALLOC_ID_, &memokey, "\n");
+  my_strcat(_ALLOC_ID_, &memokey,
+            xctx->inst[inst].prop_ptr ? xctx->inst[inst].prop_ptr : "");
+  e = str_hash_lookup(&auto_spec_memo, memokey, "", XLOOKUP);
+  if(e) {
+    if(e->value && e->value[0]) my_strncpy(name, e->value, S(name));
+    my_free(_ALLOC_ID_, &memokey);
+    return name[0] ? name : NULL;
+  }
+
+  nlost = auto_spec_qualifies(inst, &canon, &settings);
+  if(nlost <= 0 || !canon || !canon[0]) {
+    str_hash_lookup(&auto_spec_memo, memokey, "", XINSERT);
+    my_free(_ALLOC_ID_, &memokey);
+    my_free(_ALLOC_ID_, &canon);
+    my_free(_ALLOC_ID_, &settings);
+    return NULL;
+  }
+
+  my_strdup2(_ALLOC_ID_, &setkey, symname);
+  my_strcat(_ALLOC_ID_, &setkey, "\n");
+  my_strcat(_ALLOC_ID_, &setkey, canon);
+  e = str_hash_lookup(&auto_spec_by_set, setkey, "", XLOOKUP);
+  if(e && e->value && e->value[0]) {
+    my_strncpy(name, e->value, S(name));
+    str_hash_lookup(&auto_spec_memo, memokey, name, XINSERT);
+    my_free(_ALLOC_ID_, &memokey);
+    my_free(_ALLOC_ID_, &setkey);
+    my_free(_ALLOC_ID_, &canon);
+    my_free(_ALLOC_ID_, &settings);
+    return name;
+  }
+
+  /* GUARD AS-CANON, issue 1201. The name is READABLE and it is a pure function
+   * of the setting SET: `passgate__modelp_pfet_01v8_lvt`. A designer reading a
+   * simulator log, or a .subckt line, can see at a glance which copy it is and
+   * why it exists. Rejected alternative, recorded on issue 1201: an opaque
+   * `passgate__auto_7f3a1c9e`, which is shorter and says nothing.
+   *
+   * Anything a simulator would not accept in a name becomes '_', and a cell
+   * whose own name does not begin with a letter gets one, because the result
+   * has to be a name a netlist reader accepts (row AS12). The length is capped
+   * so a long setting value cannot produce an unreadable line. */
+  w = 0;
+  my_strncpy(base, get_cell(symname, 0), S(base));
+  if(!base[0]) my_strncpy(base, "cell", S(base));
+  if(!((base[0] >= 'a' && base[0] <= 'z') || (base[0] >= 'A' && base[0] <= 'Z')))
+    cand[w++] = 'x';
+  for(s = base; *s && w < 60; ++s) {
+    c = (unsigned char)*s;
+    cand[w++] = (char)(((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9')) ? c : '_');
+  }
+  cand[w++] = '_';
+  cand[w++] = '_';
+  for(s = canon; *s && w < 200; ++s) {
+    c = (unsigned char)*s;
+    cand[w++] = (char)(((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9')) ? c : '_');
+  }
+  cand[w] = '\0';
+
+  suffix = 0;
+  while(1) {
+    if(suffix == 0) my_strncpy(name, cand, S(name));
+    else my_snprintf(name, S(name), "%s_%d", cand, suffix);
+    if(!auto_spec_collides(inst, name)) break;
+    ++suffix;
+    /* Nothing a user can type reaches this: it needs a thousand different
+     * cells already answering to one family of names. If it ever does, the
+     * honest answer is today's behaviour, not a name that means something
+     * else. */
+    if(suffix > 999) {
+      str_hash_lookup(&auto_spec_memo, memokey, "", XINSERT);
+      my_free(_ALLOC_ID_, &memokey);
+      my_free(_ALLOC_ID_, &setkey);
+      my_free(_ALLOC_ID_, &canon);
+      my_free(_ALLOC_ID_, &settings);
+      return NULL;
+    }
+  }
+
+  str_hash_lookup(&auto_spec_by_set, setkey, name, XINSERT);
+  str_hash_lookup(&auto_spec_taken, name, "1", XINSERT);
+  str_hash_lookup(&auto_spec_memo, memokey, name, XINSERT);
+
+  /* ISSUE 1201 AND THE PLAIN-ENGLISH RULING. The user gets a cell name in their
+   * deck that nobody typed, so the tool says so ONCE per new cell, in the words
+   * a first-time user has: sheet, copy, setting, cell, new name -- and it ends
+   * by telling them there is nothing for them to do. It does NOT tell them to
+   * type an attribute; that instruction is what this whole issue removes, and
+   * rows AS23, AS24 and AS25 assert its absence here and on the two older
+   * surfaces that used to give it.
+   *
+   * Net noise goes DOWN: this line replaces a warning that used to fire on the
+   * same copy, and like that warning it is statusmsg(..., 2), which appends to
+   * the info window without forcing it open. RULING D5-4: the sentence is
+   * assembled by ONE my_snprintf and handed over exactly once.
+   *
+   * GUARD UA-ELIDE on every variable-length field, so no value a user types can
+   * push the last sentence off the end or split the note across two entries. */
+  sheet = (xctx->current_name[0]) ? xctx->current_name :
+          (xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "?");
+  instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
+  unused_attr_elide(e_sheet, S(e_sheet), sheet, 120, 1);
+  unused_attr_elide(e_inst,  S(e_inst),  instname, 60, 0);
+  unused_attr_elide(e_cell,  S(e_cell),  base, 60, 0);
+  unused_attr_elide(e_set,   S(e_set),   settings ? settings : "", 120, 0);
+  unused_attr_elide(e_new,   S(e_new),   name, 100, 0);
+  my_snprintf(note, S(note),
+    "Note: on sheet %s, %s (a %s) sets %s, and the %s drawing uses that setting "
+    "inside it, so XSCHEM wrote a separate copy of %s called %s and pointed %s "
+    "at it. Any other copy of %s on this design that asks for the same settings "
+    "shares that one. You do not have to add anything to the sheet.",
+    e_sheet, e_inst, e_cell, e_set, e_cell, e_cell, e_new, e_inst, e_cell);
+  statusmsg(note, 2);
+
+  my_free(_ALLOC_ID_, &memokey);
+  my_free(_ALLOC_ID_, &setkey);
+  my_free(_ALLOC_ID_, &canon);
+  my_free(_ALLOC_ID_, &settings);
+  return name;
+}
+
 /* what = 1: start
  * what = 0 : end : should NOT be called if match_symbol() has been executed between start & end
  */
@@ -4108,6 +4538,7 @@ void get_additional_symbols(int what)
       char *spectre_sym_def = NULL;
       char *default_schematic = NULL;
       char *sch = NULL;
+      const char *auto_sch = NULL;
       char symbol_base_sch[PATH_MAX] = "";
       size_t schematic_token_found = 0;
 
@@ -4123,6 +4554,23 @@ void get_additional_symbols(int what)
       my_strdup2(_ALLOC_ID_, &sch, get_tok_value(xctx->inst[i].prop_ptr,"schematic", 6));
       dbg(1, "get_additional_symbols(): schematic=%s\n", sch);
       schematic_token_found = xctx->tok_size;
+
+      /* ISSUE 1201. The copy did not name a cell body of its own -- so ask
+       * whether the netlister should name one for it. auto_spec_name() answers
+       * NULL for everything except the one shape this issue is about, and
+       * always NULL outside a SPICE netlist run. When it does answer, the name
+       * takes exactly the route a hand-typed one takes from here on: the file
+       * of that name does not exist, so the fallback three lines below points
+       * the new symbol block at the cell's own drawing, and parent_prop_ptr
+       * further down feeds THIS copy's settings into it. That is the whole
+       * mechanism; nothing new was needed for it. */
+      if(!schematic_token_found) {
+        auto_sch = auto_spec_name(i);
+        if(auto_sch && auto_sch[0]) {
+          my_strdup2(_ALLOC_ID_, &sch, auto_sch);
+          schematic_token_found = strlen(auto_sch);
+        }
+      }
 
       my_strdup2(_ALLOC_ID_, &sch, translate3(sch, 1, xctx->inst[i].prop_ptr, NULL, NULL, NULL));
       dbg(1, "  get_additional_symbols(): sch=%s tok_size= %ld\n", sch, xctx->tok_size);
@@ -4782,6 +5230,15 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    my_strdup(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].templ, xctx->sym[xctx->inst[n].ptr].templ);
    my_strdup(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].sym_extra,
      get_tok_value(xctx->sym[xctx->inst[n].ptr].prop_ptr, "extra", 0));
+   /* ISSUE 1201. ⚠ ASKED HERE AND NOWHERE ELSE, AND IT HAS TO BE. The question
+    * "would the netlister give this copy a cell body of its own?" needs the
+    * PARENT sheet's instance and its symbol, and one line below this the walk
+    * is inside the child and neither of them exists any more. The three
+    * attribute strings above are recorded for exactly the same reason. Read
+    * back from Tcl as lcc[N].auto_spec by op_annot::model_netlist, so the
+    * annotation surface asks the results file for the device under the name the
+    * simulator really used. */
+   xctx->hier_attr[xctx->currsch].auto_spec = auto_spec_would_specialize(n);
 
    dbg(1,"descend_schematic(): inst_number=%d\n", inst_number);
    my_strcat(_ALLOC_ID_, &xctx->sch_path[xctx->currsch+1], find_nth(str, ",", "", 0, inst_number));
@@ -4960,6 +5417,7 @@ void go_back(int what)
   my_free(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].prop_ptr);
   my_free(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].templ);
   my_free(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].sym_extra);
+  xctx->hier_attr[xctx->currsch].auto_spec = 0;            /* issue 1201 */
   save_modified = xctx->modified; /* we propagate modified flag (cleared by load_schematic */
                             /* by default) to parent schematic if going back from embedded symbol */
 

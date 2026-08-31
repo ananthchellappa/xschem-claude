@@ -2617,8 +2617,8 @@ static int format_uses_token(const char *format, const char *tok)
  *
  * Any run of whitespace -- spaces, tabs, newlines, carriage returns -- becomes a
  * single space, which is what makes (b) impossible rather than merely unlikely. */
-static void unused_attr_elide(char *dest, size_t dest_size, const char *src,
-                              size_t max_chars, int from_tail)
+void unused_attr_elide(char *dest, size_t dest_size, const char *src,
+                       size_t max_chars, int from_tail)
 {
   const char *p;
   size_t flen = 0;
@@ -3073,6 +3073,367 @@ static int symbol_name_uses_token(int inst, const char *tok)
   return format_uses_token(xctx->inst[inst].name, tok);
 }
 
+/* ISSUES 0970 AND 1201. WHICH SPICE LINE IS THIS COPY ACTUALLY WRITTEN THROUGH?
+ *
+ * The four steps below are the netlister's own; they were lifted VERBATIM out
+ * of print_spice_element() so that the two things that now ask "did this
+ * setting reach the deck?" -- the warning, and issue 1201's automatic separate
+ * copy of the cell -- can never ask the question about two different strings
+ * for the same copy. Row AS29 counts the definition and the callers.
+ *
+ * A reader would assume the symbol's `format` attribute settles it. It does
+ * not, twice over: a copy may bring a format line of its OWN, and an LVS or
+ * custom-format run puts some other attribute name in xctx->format so THAT is
+ * the string the deck is written from, with plain `format` as the fallback.
+ * Instance first, then symbol, then the same two again for the plain name.
+ *
+ * my_strdup() of an empty source leaves *format NULL, which is the caller's
+ * "this copy produces no element line at all" signal. */
+static int resolve_netlist_format(int inst, char **format)
+{
+  const char *fmt_attr;
+
+  fmt_attr = xctx->format ? xctx->format : "format";
+  /* allow format string override in instance */
+  my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->inst[inst].prop_ptr, fmt_attr, 2));
+  /* get netlist format rule from symbol */
+  if(!xctx->tok_size)
+    my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, fmt_attr, 2));
+  /* allow format string override in instance */
+  if(!xctx->tok_size && strcmp(fmt_attr, "format"))
+    my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->inst[inst].prop_ptr, "format", 2));
+  /* get netlist format rule from symbol */
+  if(!xctx->tok_size && strcmp(fmt_attr, "format"))
+    my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "format", 2));
+  return (*format && (*format)[0]) ? 1 : 0;
+}
+
+/* GUARD UA-TYPE + GUARD UA-POLY, issues 0970 and 1201. Is this copy one the
+ * whole question can be asked about at all?
+ *
+ * ONE CLASSIFICATION, ASKED TWICE. Until issue 1201 this was the head of
+ * warn_unused_instance_attr() and had exactly one caller. It has two now -- the
+ * warning, and auto_spec_name() in actions.c which writes the separate copy --
+ * and a second hand-written copy of these tests would agree on the day it was
+ * written and drift silently afterwards, with nothing a user could do to show
+ * it. So it is a function. Row AS28 counts the definition and the callers.
+ *
+ * GUARD UA-TYPE: only cells whose insides are written out ONCE from a template.
+ * That is what this whole class IS: a per-copy setting has nowhere to go
+ * precisely because there is only one body. A reader would assume the check is
+ * about "unused attributes" in general -- it is not, and measured without this
+ * guard the rule emits 6863 lines across the two shipped PDK trees instead of
+ * 10. A transistor placed straight on a sheet gets its own line in the deck and
+ * is nobody's problem here.
+ *
+ * GUARD UA-POLY, and for issue 1201 it is GUARD AS-EXPLICIT as well: a copy
+ * that already carries a `schematic` attribute (or one of the *_sym_def
+ * bodies) ALREADY gets a symbol block of its own from get_additional_symbols(),
+ * whose parent property string is this copy's, so `model=@modelp` inside the
+ * cell resolves to what THIS copy asked for and the deck really does get a
+ * second body. Accusing it of having typed something that changed nothing would
+ * be exactly backwards -- and a designer who named the copy by hand must keep
+ * exactly today's deck, byte for byte, which is why the shipped bandgap sheet
+ * does not move. EXPLICIT BEATS IMPLICIT, and this is the line that does it.
+ *
+ * It latches and restores xctx->tok_size itself, for the reason GUARD
+ * UA-TOKSIZE states at the caller: an observer may never become the reason a
+ * real netlist value goes missing. */
+static int ua_instance_eligible(int inst)
+{
+  const char *type;
+  const char *prop;
+  size_t saved_tok_size;
+  int skip;
+
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  prop = xctx->inst[inst].prop_ptr;
+  if(!prop || !prop[0]) return 0;
+  type = (xctx->inst[inst].ptr + xctx->sym)->type;
+  if(!type || strcmp(type, "subcircuit")) return 0;
+
+  saved_tok_size = xctx->tok_size;
+  get_tok_value(prop, "schematic", 0);
+  skip = xctx->tok_size ? 1 : 0;
+  if(!skip) { get_tok_value(prop, "spice_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "spectre_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "vhdl_sym_def", 0);    skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "verilog_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "tedax_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
+  xctx->tok_size = saved_tok_size;
+  return skip ? 0 : 1;
+}
+
+/* ISSUES 0970 AND 1201. IS THIS ONE SETTING LOST -- and if so, how far did it
+ * get? The exemption chain, in the order it was measured, and it is shared for
+ * the same reason ua_instance_eligible() is: two copies of it would drift.
+ *
+ * The guards keep their own names so a reader can find the measurement behind
+ * each one in the blocks above: UA-NAME, UA-STOP, UA-POLY's own token names,
+ * UA-STOP2, UA-SYMNAME, then ua_reach() itself.
+ *
+ * Returns 1 when the setting really is lost to the deck being written, and
+ * writes *reach so the caller can tell the two shapes of the sentence apart. */
+static int ua_token_lost(int inst, const char *format, const char *tok,
+                         char *carriers, size_t csize, int *reach)
+{
+  int i;
+  int r;
+
+  *reach = UA_NOWHERE;
+  carriers[0] = '\0';
+  if(!tok || !tok[0]) return 0;
+  /* GUARD UA-NAME, issue 0970. A token that does not read as an attribute NAME
+   * is not a setting the user typed, and the tree really contains such tokens:
+   * the shipped sky130_tests/charge_pump_phasegen sheet writes its instance
+   * properties over three lines with SPICE-style continuation markers, so
+   * list_tokens() hands back a bare "+" twice per instance. Measured: without
+   * this guard the shipped tb_charge_pump bench emits 8 lines reading
+   * `instance x7 (a lvtnot) sets +=`, which is nonsense to a reader and would
+   * have been the whole of this diagnostic's noise budget. An attribute name
+   * starts with a letter or an underscore. */
+  if(!((tok[0] >= 'a' && tok[0] <= 'z') || (tok[0] >= 'A' && tok[0] <= 'Z') ||
+       tok[0] == '_')) return 0;
+  /* GUARD UA-STOP: the measured exemptions, by name whatever cell they sit on. */
+  for(i = 0; unused_attr_stoplist[i]; ++i) {
+    if(!strcmp(tok, unused_attr_stoplist[i])) return 0;
+  }
+  /* GUARD UA-POLY's own tokens: an instance carrying one of these never gets
+   * here, but naming them keeps a reader from adding them to the stoplist and
+   * quietly turning the skip-the-whole-instance rule into a skip-one-attribute
+   * rule. */
+  if(!strcmp(tok, "schematic") || !strcmp(tok, "spice_sym_def") ||
+     !strcmp(tok, "spectre_sym_def") || !strcmp(tok, "vhdl_sym_def") ||
+     !strcmp(tok, "verilog_sym_def") || !strcmp(tok, "tedax_sym_def")) return 0;
+  /* GUARD UA-STOP2, issue 0989: a name the EDITOR reads for itself is excused
+   * only while the cell does not declare it as one of its own parameters. */
+  for(i = 0; unused_attr_cellparam_stoplist[i]; ++i) {
+    if(!strcmp(tok, unused_attr_cellparam_stoplist[i]) &&
+       !symbol_declares_param(inst, tok)) return 0;
+  }
+  /* GUARD UA-SYMNAME, issue 0980: a setting the copy's symbol reference
+   * substitutes into the cell name picks WHICH cell body is written out. It
+   * stays the FIRST of the reach tests: it is the loudest way a setting can
+   * reach the simulator, so there is nothing to report about it in any shape --
+   * and for issue 1201 nothing to specialise either, since the setting has
+   * already chosen a body of its own. */
+  if(symbol_name_uses_token(inst, tok)) return 0;
+  /* ISSUE 0987: and then how far it gets -- this deck, some other netlist of
+   * the same cell, or nothing anywhere. Only the first of those is silent. */
+  r = ua_reach(inst, format, tok, carriers, csize);
+  *reach = r;
+  return (r == UA_HERE) ? 0 : 1;
+}
+
+/* GUARD AS-BODY's cache, issue 1201. Answers keyed "<symbol reference>\n<token>"
+ * and thrown away by auto_spec_end() (actions.c) when the netlist run ends.
+ *
+ * WHY IT IS KEYED ON THE SYMBOL AND NOT ON THE COPY: the sheet a cell is built
+ * from is a property of the symbol here, not of the copy, because a copy that
+ * names its own sheet has already been sent away by GUARD AS-EXPLICIT and a
+ * SYMBOL that names its own sheet by GUARD AS-SYMBODY. So one lookup answers
+ * for every copy of the cell on the design, and a 200-copy sheet reads the
+ * cell's file once instead of 200 times.
+ *
+ * WHY IT MUST BE THROWN AWAY: without that, the answer remembered about one
+ * design is handed to the next design opened in the same session, and the file
+ * it was read from may have been edited in between. No behavioural row inside a
+ * single run can see this; row AS30 pins it structurally. */
+static Str_hashtable ua_body_table = {NULL, 0};
+
+/* Does the text of a cell's own sheet reference <tok> as @tok or %tok?
+ *
+ * WHOLE-TOKEN, NEVER strstr(), for the reason GUARD UA-FMT gives one block up:
+ * a sheet reading `@model` must not answer yes to a question about `modelp`.
+ *
+ * The file is read once, whole, because a token can straddle any chunk
+ * boundary. A file that cannot be read, or one absurdly large, answers NO --
+ * which is today's behaviour, i.e. no separate copy is written -- rather than
+ * guessing. */
+static int ua_file_uses_token(const char *path, const char *tok)
+{
+  struct stat st;
+  FILE *f;
+  char *buf;
+  size_t want;
+  size_t got;
+  int r;
+
+  if(!path || !path[0]) return 0;
+  if(stat(path, &st)) return 0;
+  if(st.st_size <= 0) return 0;
+  if((double)st.st_size > 64.0 * 1024.0 * 1024.0) return 0;
+  f = fopen(path, "r");
+  if(!f) return 0;
+  want = (size_t)st.st_size;
+  buf = my_malloc(_ALLOC_ID_, want + 1);
+  if(!buf) { fclose(f); return 0; }
+  got = fread(buf, 1, want, f);
+  fclose(f);
+  buf[got] = '\0';
+  r = format_uses_token(buf, tok);
+  my_free(_ALLOC_ID_, &buf);
+  return r;
+}
+
+/* GUARD AS-BODY, issue 1201. Does the cell's OWN SHEET use this setting?
+ *
+ * THIS IS THE SECOND HALF OF THE TRIGGER AND IT IS WHAT KEEPS THE CHANGE SMALL.
+ * "The SPICE line never reads it" alone is true of a great many settings that a
+ * separate copy of the cell could do nothing whatever about -- a misspelling, a
+ * note to oneself, a leftover. Writing a second body for those would put cells
+ * nobody asked for into decks that are correct today. The setting has to be one
+ * the cell's own drawing actually consumes, as sky130_tests/passgate.sch
+ * consumes `model=@modelp`, before a copy of that drawing can be worth making.
+ *
+ * A reader would assume the cell's sheet can be asked about the loaded state.
+ * It cannot: at the moment this question has to be answered the sub-sheet has
+ * not been loaded and will not be until the netlister descends into it, which
+ * is after the decision. So the file is read from disk. */
+static int cell_body_reads_token(int inst, const char *tok)
+{
+  char fn[PATH_MAX];
+  char key[PATH_MAX];
+  const char *symname;
+  Str_hashentry *e;
+  int r;
+
+  if(!tok || !tok[0]) return 0;
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  symname = xctx->sym[xctx->inst[inst].ptr].name;
+  if(!symname) symname = "";
+  my_snprintf(key, S(key), "%s\n%s", symname, tok);
+  if(ua_body_table.size == 0) str_hash_init(&ua_body_table, 1021);
+  e = str_hash_lookup(&ua_body_table, key, "", XLOOKUP);
+  if(e) return (e->value && e->value[0] == '1') ? 1 : 0;
+  /* ⚠ inst = -1, NOT inst, AND fallback = 0. NEITHER IS COSMETIC.
+   *
+   * -1 because get_sch_from_sym()'s instance arm READS AND CLEARS the one-shot
+   * Tcl variable hi_descend_view_path -- the "descend into this named view just
+   * this once" override (doc/claude/specs/hi_descend.md). Asking it a question
+   * here would eat that override before the descend it was set for ever saw
+   * it, and the user would land in the default view with nothing said.
+   * Answering about the SYMBOL is also the right question: both callers have
+   * already established that neither the copy (GUARD AS-EXPLICIT) nor the
+   * symbol (GUARD AS-SYMBODY) names a drawing of its own, so the arm this takes
+   * is the plain "<cell>.sch beside the symbol" one, and that is a property of
+   * the symbol alone -- which is what makes the cache key above sound.
+   *
+   * fallback = 0 because with a real display up, get_sch_from_sym()'s fallback
+   * arm asks the user a question in a dialog box, and a netlist run may never
+   * stop to ask one. */
+  get_sch_from_sym(fn, xctx->inst[inst].ptr + xctx->sym, -1, 0);
+  r = ua_file_uses_token(fn, tok);
+  str_hash_lookup(&ua_body_table, key, r ? "1" : "0", XINSERT);
+  return r;
+}
+
+/* ISSUE 1201. Throw away what GUARD AS-BODY remembered. Called by
+ * auto_spec_end() (actions.c) at the end of every SPICE netlist run. */
+void lost_attrs_cache_clear(void)
+{
+  str_hash_free(&ua_body_table);
+}
+
+/* ISSUE 1201. THE WHOLE TRIGGER, IN ONE ANSWER: the settings this copy typed
+ * that the deck drops AND the cell's own sheet uses.
+ *
+ * Returns how many there are; that is the number auto_spec_name() decides on.
+ * <canon> is written with a CANONICAL, sorted, name-and-value spelling of the
+ * set -- GUARD AS-ORDER. Two copies that typed the same settings in a different
+ * order are the same request and must end up sharing one cell body, so the
+ * order the user typed them in may not appear in the answer. <settings> is the
+ * same set written for a person to read, for the note the tool prints.
+ *
+ * Both are handed back as freshly allocated strings the caller frees. */
+int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings)
+{
+  char *format = NULL;
+  char *toks = NULL;
+  char **names = NULL;
+  char *p;
+  char *q;
+  char *sw;
+  char carriers[64];
+  size_t saved_tok_size;
+  const char *prop;
+  int cap = 0;
+  int n = 0;
+  int reach;
+  int i;
+  int j;
+
+  if(canon) my_strdup(_ALLOC_ID_, canon, NULL);
+  if(settings) my_strdup(_ALLOC_ID_, settings, NULL);
+  /* GUARD AS-EXPLICIT and GUARD AS-TYPE, both of them, and they are the SAME
+   * test the warning applies -- see ua_instance_eligible() above. */
+  if(!ua_instance_eligible(inst)) return 0;
+  saved_tok_size = xctx->tok_size;
+  prop = xctx->inst[inst].prop_ptr;
+  /* GUARD AS-FMTRESOLVE: the decision is made against the SPICE line this copy
+   * is really written through, which may be one the copy itself carries. */
+  resolve_netlist_format(inst, &format);
+  if(!format || !format[0]) {
+    my_free(_ALLOC_ID_, &format);
+    xctx->tok_size = saved_tok_size;
+    return 0;
+  }
+  /* GUARD UA-INST: the tokens come from the COPY's own property string, never
+   * from the symbol template. A template default the format does not read is
+   * the symbol author's business, not a setting anybody typed on this sheet. */
+  my_strdup(_ALLOC_ID_, &toks, list_tokens(prop, 0));
+  p = toks;
+  while(p && *p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n') ++p;
+    if(!*p) break;
+    q = p;
+    while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
+    if(*q) { *q = '\0'; ++q; }
+    /* GUARD AS-LOST then GUARD AS-BODY, in that order: the cheap shared
+     * classification first, the file read only for what survives it. */
+    if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach) &&
+       cell_body_reads_token(inst, p)) {
+      if(n == cap) {
+        cap = cap ? cap * 2 : 8;
+        my_realloc(_ALLOC_ID_, &names, (size_t)cap * sizeof(char *));
+      }
+      names[n] = NULL;
+      my_strdup2(_ALLOC_ID_, &names[n], p);
+      ++n;
+    }
+    p = q;
+  }
+  /* GUARD AS-ORDER: sort by name, so the answer is a property of the SET the
+   * user asked for and not of the order they happened to type it in. */
+  for(i = 1; i < n; ++i) {
+    sw = names[i];
+    for(j = i; j > 0 && strcmp(names[j - 1], sw) > 0; --j) names[j] = names[j - 1];
+    names[j] = sw;
+  }
+  for(i = 0; i < n; ++i) {
+    if(canon) {
+      if(i) my_strcat(_ALLOC_ID_, canon, "__");
+      my_strcat(_ALLOC_ID_, canon, names[i]);
+      my_strcat(_ALLOC_ID_, canon, "_");
+      my_strcat(_ALLOC_ID_, canon, get_tok_value(prop, names[i], 0));
+    }
+    if(settings) {
+      if(i) my_strcat(_ALLOC_ID_, settings, (i == n - 1) ? " and " : ", ");
+      my_strcat(_ALLOC_ID_, settings, names[i]);
+      my_strcat(_ALLOC_ID_, settings, "=");
+      my_strcat(_ALLOC_ID_, settings, get_tok_value(prop, names[i], 0));
+    }
+    my_free(_ALLOC_ID_, &names[i]);
+  }
+  if(names) my_free(_ALLOC_ID_, &names);
+  my_free(_ALLOC_ID_, &toks);
+  my_free(_ALLOC_ID_, &format);
+  xctx->tok_size = saved_tok_size;
+  return n;
+}
+
 /* ISSUE 0970: say so, once per lost setting, in words a designer reads as
  * "you typed this and it had no effect".
  *
@@ -3091,10 +3452,14 @@ static int symbol_name_uses_token(int inst, const char *tok)
  * with issue 0970. */
 static void warn_unused_instance_attr(int inst, const char *format)
 {
-  const char *type;
   const char *prop;
   const char *val;
-  const char *sym_cell;
+  /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK, issue 1201. get_cell()
+   * returns a static buffer that the NEXT call overwrites, and GUARD
+   * UA-HONOURED below reaches auto_spec_name(), which walks every loaded symbol
+   * calling get_cell() on each. Held as a pointer, the cell name in the
+   * sentence became the tail of whatever symbol happened to be last. */
+  char sym_cell[PATH_MAX];
   const char *instname;
   const char *sheet;
   char *toks = NULL;
@@ -3114,24 +3479,9 @@ static void warn_unused_instance_attr(int inst, const char *format)
   char advice[640];
   char carriers[64];
   size_t saved_tok_size;
-  int i;
-  int skip;
   int reach;
 
   if(!format || !format[0]) return;
-  if(inst < 0 || xctx->inst[inst].ptr < 0) return;
-  prop = xctx->inst[inst].prop_ptr;
-  if(!prop || !prop[0]) return;
-
-  /* GUARD UA-TYPE, issue 0970. Only cells whose insides are written out ONCE
-   * from a template. That is what this whole class IS: a per-copy setting has
-   * nowhere to go precisely because there is only one body. A reader would
-   * assume the check is about "unused attributes" in general -- it is not, and
-   * measured without this guard the rule emits 6863 lines across the two
-   * shipped PDK trees instead of 10. A transistor placed straight on a sheet
-   * gets its own line in the deck and is nobody's problem here. */
-  type = (xctx->inst[inst].ptr + xctx->sym)->type;
-  if(!type || strcmp(type, "subcircuit")) return;
 
   /* get_tok_value() overwrites xctx->tok_size, which print_spice_element() uses
    * as its "token ABSENT" signal while resolving the format string. Latch it and
@@ -3141,30 +3491,23 @@ static void warn_unused_instance_attr(int inst, const char *format)
    * today's call site, which is why only a structural test row can see it. */
   saved_tok_size = xctx->tok_size;
 
-  /* GUARD UA-POLY, issue 0970. An instance carrying `schematic=` (or one of the
-   * *_sym_def bodies) gets a symbol block of its OWN from
-   * get_additional_symbols(), whose parent property string is this instance's,
-   * so `model=@modelp` inside the cell resolves to what THIS copy asked for and
-   * the deck really does get a second body. Accusing it of having typed
-   * something that changed nothing would be exactly backwards -- and after this
-   * pass's own repair of the bandgap bench, whose two passgates now carry
-   * `schematic=passgate_lvtp`, this guard is the only thing standing between
-   * the user and being told their working override did nothing. Measured: 6 of
-   * sky130A's 10 remaining hits are this shape. */
-  get_tok_value(prop, "schematic", 0);
-  skip = xctx->tok_size ? 1 : 0;
-  if(!skip) { get_tok_value(prop, "spice_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
-  if(!skip) { get_tok_value(prop, "spectre_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
-  if(!skip) { get_tok_value(prop, "vhdl_sym_def", 0);    skip = xctx->tok_size ? 1 : 0; }
-  if(!skip) { get_tok_value(prop, "verilog_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
-  if(!skip) { get_tok_value(prop, "tedax_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
-  if(skip) {
+  /* GUARD UA-TYPE and GUARD UA-POLY, both of them, and they are asked HERE by
+   * calling the same function issue 1201's automatic separate copy calls -- see
+   * ua_instance_eligible() above for the measurements behind each. A reader
+   * would assume these tests are cheap enough to write out twice. They are; the
+   * cost of the second copy is not the typing, it is that the two would agree
+   * on the day they were written and drift apart afterwards, with the warning
+   * accusing a copy the netlister had quietly repaired, and nothing a user
+   * could do would show it. Row AS28 counts the callers. */
+  if(!ua_instance_eligible(inst)) {
     xctx->tok_size = saved_tok_size;
     return;
   }
+  prop = xctx->inst[inst].prop_ptr;
 
   instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
-  sym_cell = get_cell((xctx->inst[inst].ptr + xctx->sym)->name, 0);
+  my_strncpy(sym_cell, get_cell((xctx->inst[inst].ptr + xctx->sym)->name, 0),
+             S(sym_cell));
 
   /* GUARD UA-SHEET, issue 0981. Which sheet is this instance actually ON?
    *
@@ -3201,56 +3544,40 @@ static void warn_unused_instance_attr(int inst, const char *format)
     while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
     if(*q) { *q = '\0'; ++q; }
 
-    skip = 0;
-    /* Defensive, and deliberately invisible to any row: reach is assigned by
-     * ua_reach() on every path that can reach the print block below, so this
-     * reset cannot change what the user sees. It is here so that a later hand
-     * adding a test between the two cannot inherit the previous token's answer. */
+    /* Defensive, and deliberately invisible to any row: reach is written by
+     * ua_token_lost() on every path that can reach the print block below, so
+     * this reset cannot change what the user sees. It is here so that a later
+     * hand adding a test between the two cannot inherit the previous token's
+     * answer. */
     reach = UA_NOWHERE;
     carriers[0] = '\0';
-    /* GUARD UA-NAME, issue 0970. A token that does not read as an attribute
-     * NAME is not a setting the user typed, and the tree really contains such
-     * tokens: the shipped sky130_tests/charge_pump_phasegen sheet writes its
-     * instance properties over three lines with SPICE-style '+' continuation
-     * markers, so list_tokens() hands back a bare "+" twice per instance.
-     * Measured: without this guard the shipped tb_charge_pump bench emits 8
-     * lines reading `instance x7 (a lvtnot) sets +=`, which is nonsense to a
-     * reader and would have been the whole of this diagnostic's noise budget.
-     * An attribute name starts with a letter or an underscore. */
-    if(!((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z') ||
-         p[0] == '_')) skip = 1;
-    /* GUARD UA-STOP: the measured exemptions, above. */
-    for(i = 0; !skip && unused_attr_stoplist[i]; ++i) {
-      if(!strcmp(p, unused_attr_stoplist[i])) { skip = 1; break; }
-    }
-    /* GUARD UA-POLY's own tokens: an instance carrying one of these never gets
-     * here, but naming them keeps a reader from adding them to the stoplist and
-     * quietly turning the skip-the-whole-instance rule into a skip-one-attribute
-     * rule. */
-    if(!skip && (!strcmp(p, "schematic") || !strcmp(p, "spice_sym_def") ||
-                 !strcmp(p, "spectre_sym_def") || !strcmp(p, "vhdl_sym_def") ||
-                 !strcmp(p, "verilog_sym_def") || !strcmp(p, "tedax_sym_def"))) skip = 1;
-    /* GUARD UA-STOP2, issue 0989: a name the EDITOR reads for itself is excused
-     * only while the cell does not declare it as one of its own parameters. The
-     * list above is consulted by name alone; this one asks about the cell, which
-     * is why a subcircuit parameter a designer called `select` can be reported
-     * at last while the shipped solar panel's editing convenience is untouched. */
-    for(i = 0; !skip && unused_attr_cellparam_stoplist[i]; ++i) {
-      if(!strcmp(p, unused_attr_cellparam_stoplist[i]) &&
-         !symbol_declares_param(inst, p)) { skip = 1; break; }
-    }
-    /* GUARD UA-SYMNAME, issue 0980: a setting the instance's symbol reference
-     * substitutes into the cell name picks WHICH cell body is written out. It
-     * stays the FIRST of the reach tests: it is the loudest way a setting can
-     * reach the simulator, so there is nothing to report about it in any shape. */
-    if(!skip && symbol_name_uses_token(inst, p)) skip = 1;
-    /* ISSUE 0987: and then how far it gets -- this deck, some other netlist of
-     * the same cell, or nothing anywhere. Only the first of those is silent. */
-    if(!skip) {
-      reach = ua_reach(inst, format, p, carriers, S(carriers));
-      if(reach == UA_HERE) skip = 1;
-    }
-    if(!skip) {
+    /* THE EXEMPTION CHAIN -- UA-NAME, UA-STOP, UA-POLY's own token names,
+     * UA-STOP2, UA-SYMNAME and then ua_reach() -- lives in ua_token_lost()
+     * above, ONE copy of it, because issue 1201's automatic separate copy of a
+     * cell has to answer the very same question about the very same token. Two
+     * hand-written copies would agree on the day they were written and drift
+     * silently afterwards: the netlister would write a copy of a cell for a
+     * setting the warning still called dead, or accuse a designer of a setting
+     * it had just honoured. Nothing a user does could show that. Row AS28
+     * counts the callers. */
+    if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach)) {
+      /* GUARD UA-HONOURED, issue 1201, AND IT IS THE OTHER HALF OF THAT ISSUE.
+       * The netlister now writes this copy its own version of the cell when the
+       * cell's own drawing uses the setting -- so the setting DID reach the
+       * simulator, and saying it changed nothing would be a false accusation
+       * about a thing the tool had just done correctly, in the same run, one
+       * step earlier. Measured on the 0970 fixture before this guard: x5 and X7
+       * got their cell body, their low-threshold device really was in the deck,
+       * and the tool still told the designer their setting had gone nowhere.
+       *
+       * The two tests are the exact membership test of the specialised set --
+       * auto_spec_name() answers non-NULL only when at least one setting on
+       * this copy is both lost and used by the cell's drawing, and
+       * cell_body_reads_token() picks out WHICH ones -- so a second lost
+       * setting on the same copy that the drawing does not use is still
+       * reported, which row AS15 measures. Both are memoised, so this costs a
+       * hash lookup. */
+      if(auto_spec_name(inst) && cell_body_reads_token(inst, p)) { p = q; continue; }
       val = get_tok_value(prop, p, 0);
       /* GUARD UA-ELIDE, issue 0983: every variable-length field is shortened to
        * one line of bounded length BEFORE the sentence is built, so no value a
@@ -3276,17 +3603,23 @@ static void warn_unused_instance_attr(int inst, const char *format)
        * advice appears below in the UA_ELSEWHERE arm, and a test row asserts
        * their absence from every line of that shape the whole run produces.
        *
-       * ISSUE 0982, the accusing advice: the old wording told the user to "give
-       * x1 a schematic= attribute of its own", which walks them into a silent
-       * collision. Measured on two copies of one cell given the SAME name, as
-       * that sentence invites: the deck holds ONE cell body carrying the first
-       * instance's setting, the second instance's setting appears nowhere at
-       * all, and the netlister says nothing about it -- GUARD UA-POLY above has
-       * already skipped both instances, so the very diagnostic that exists to
-       * catch "your setting reached nothing" is structurally blind to the state
-       * its own advice created. The advice now names the requirement and says
-       * what breaks without it. Detecting the collision itself is issue 0982's
-       * remaining half and is not done here. */
+       * ISSUE 1201, AND IT IS WHY THE SECOND HALF OF THE ACCUSING ADVICE IS
+       * GONE. That advice used to end by telling the designer to type a second
+       * attribute on the copy, naming a cell name no other copy asks for, and
+       * the tool would then write that copy out on its own. THE TOOL NOW DOES
+       * THAT BY ITSELF -- auto_spec_name() in actions.c -- whenever the cell's
+       * own sheet uses the setting, and it says so in its own note. A tool that
+       * fixes the problem and still tells you to fix it yourself is its own
+       * defect, so the instruction had to go, and rows AS24 and AS25 assert it
+       * is gone from every line of this shape the whole run produces.
+       *
+       * WHAT SURVIVES HERE IS THE POPULATION A SEPARATE COPY CANNOT HELP: the
+       * cell's sheet does not use the setting ANYWHERE, so there is nothing for
+       * a copy of that sheet to do differently. Saying "make a copy" to that
+       * designer was always wrong; issue 0982 recorded the further harm, that
+       * two copies given the same hand-typed name silently share one body and
+       * only the first one's setting survives, with GUARD UA-POLY blinding this
+       * very diagnostic to the state its own advice created. */
       if(reach == UA_ELSEWHERE) {
         my_snprintf(mid, S(mid),
           "a SPICE netlist of %s does not pass %s through", e_cell, e_prop);
@@ -3300,11 +3633,12 @@ static void warn_unused_instance_attr(int inst, const char *format)
           "%s never reads %s when the netlist is written", e_cell, e_prop);
         my_snprintf(advice, S(advice),
           "Check the spelling against the settings this cell does read, or take "
-          "it off. If you meant to change only this one copy of the cell, add a "
-          "schematic= attribute to %s naming a cell name that no other instance "
-          "asks for, and that copy is written out on its own with your setting "
-          "in it. Two instances that ask for the same name quietly share one "
-          "copy, and only the first one's setting is kept.", e_inst);
+          "it off. When a cell's own drawing uses a setting you type on one "
+          "copy, XSCHEM gives that copy its own version of the cell and you "
+          "need do nothing -- but the %s drawing does not use %s anywhere, so "
+          "there is nothing a separate copy could change. To make it count, "
+          "that drawing has to use %s on the part meant to follow it.",
+          e_cell, e_prop, e_prop);
       }
       /* RULING D5-4: whichever shape it took, the sentence is assembled HERE and
        * nowhere else, and handed to the info window exactly once. */
@@ -3336,7 +3670,6 @@ int print_spice_element(FILE *fd, int inst)
   char *result = NULL;
   size_t size = 0;
   char *spiceprefixtag = NULL;
-  const char *fmt_attr = NULL;
 
   size = CADCHUNKALLOC;
   my_realloc(_ALLOC_ID_, &result, size);
@@ -3346,18 +3679,11 @@ int print_spice_element(FILE *fd, int inst)
   my_strdup(_ALLOC_ID_, &name,xctx->inst[inst].instname);
   if (!name) my_strdup(_ALLOC_ID_, &name, get_tok_value(template, "name", 0));
 
-  fmt_attr = xctx->format ? xctx->format : "format";
-  /* allow format string override in instance */
-  my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->inst[inst].prop_ptr, fmt_attr, 2));
-  /* get netlist format rule from symbol */
-  if(!xctx->tok_size)
-    my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, fmt_attr, 2));
-  /* allow format string override in instance */
-  if(!xctx->tok_size && strcmp(fmt_attr, "format") )
-    my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->inst[inst].prop_ptr, "format", 2));
-  /* get netlist format rule from symbol */
-  if(!xctx->tok_size && strcmp(fmt_attr, "format"))
-     my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "format", 2));
+  /* ISSUE 1201: the four-step resolution that used to stand here, verbatim, in
+   * resolve_netlist_format() above -- so that the warning below and the
+   * automatic separate copy of a cell can never decide against two different
+   * SPICE lines for the same copy. Row AS29 counts the callers. */
+  resolve_netlist_format(inst, &format);
   if ((name==NULL) || (format==NULL)) {
     my_free(_ALLOC_ID_, &template);
     my_free(_ALLOC_ID_, &format);

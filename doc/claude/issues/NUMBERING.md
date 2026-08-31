@@ -663,6 +663,32 @@ where it never used to appear. Measured on both arms; it has no test row
 anywhere. Pre-existing, so it was recorded rather than reworded untested inside a
 commit whose subject was something else).
 
-**The next free number is 1201.** 0999 and 1200 are taken. **1000-1199 is
+**2026-08-31, item S6.** Claimed **1201** (the netlister must honour a
+per-copy setting by itself, rather than silently discarding it and telling the
+designer to hand-type a `schematic=` attribute). FIXED and committed.
+
+**2026-08-31, item S6 write-up/commit pass.** Filed **1202-1209**, all measured
+by that item's own verify pass and none of them fixed inside it:
+
+* **1202** - a copy that hand-types the cell name the netlister would invent
+  silently loses its own setting. Caused by 1201; a regression.
+* **1203** - two different setting lists spell one cell name because the
+  setting/value join is ambiguous. Caused by 1201.
+* **1204** - "netlist current schematic only" calls a cell body it never
+  writes. Caused by 1201; a regression.
+* **1205** - the netlist warning says the cell's drawing does not use the
+  setting, without having looked (RULING D5-1). Caused by 1201.
+* **1206** - an empty setting value writes a second, identical copy of a cell.
+  Caused by 1201.
+* **1207** - netlisting eight shipped `viewdraw_import` sheets segfaults, in
+  every backend. **Pre-existing**, not 1201's doing; the backtrace is in
+  `netlist.c`, which that item does not touch.
+* **1208** - two rows in the new netlister suite pin a whole-deck fingerprint
+  that carries this checkout's own absolute path, so a clone elsewhere reds
+  them. Test fragility, not a product defect.
+* **1209** - a specialised copy loses the symbol/schematic pin-mismatch
+  highlight. Error path only.
+
+**The next free number is 1210.** 1201-1209 are taken. **1000-1199 is
 reserved** (user, 2026-08-30), so 0999 was followed by **1200**; 0500-0599 and
 0700-0799 remain reserved for other branches.

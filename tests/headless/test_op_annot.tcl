@@ -15993,8 +15993,46 @@ spiceprefix=X
 }}
 close $fnm
 
+## A third enclosing cell, added by ISSUE 1201, whose SPICE line DOES read the
+## setting -- `modelp=@modelp` is in its format=, so the setting is passed down
+## as a cell parameter and is not lost. That matters because the netlister now
+## writes a copy its own version of a cell whenever the setting would otherwise
+## go nowhere AND the cell's drawing uses it. This one does not qualify: the
+## setting is on the call line where it belongs, so no separate copy is written
+## -- and a SPICE .subckt parameter still cannot carry a model NAME into the
+## body, which resolves it from the template. So the deck says one thing and a
+## live descend says another, which is issue 0965's own subject, and this cell
+## keeps it reachable for good.
+set fnm [open [file join $NM_LIB nmfmt.sym] w]
+puts $fnm {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P modelp=@modelp"
+template="name=x1 W_P=1
+modelp=pfet_01v8"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+close $fnm
+file copy -force [file join $NM_LIB nmpass.sch] [file join $NM_LIB nmfmt.sch]
+
 ## x3 takes the default; x5 overrides it on its own schematic line. That single
 ## difference is the whole of issue 0965.
+##
+## ⚠ x11 IS WHERE THE 0965 ROWS LIVE NOW, ISSUE 1201, AND x5 IS WHY. x5's cell
+## drops the setting entirely and its drawing builds the transistor out of it,
+## so the netlister now gives x5 a copy of the cell to itself with the setting
+## in it -- the deck and the schematic agree about x5 and there is no longer a
+## disagreement there to measure. x11's cell passes the setting down as a cell
+## parameter instead, which a SPICE .subckt cannot use for a model NAME, so the
+## disagreement is permanent there and cannot be repaired away. Row NM9 measures
+## what x5 became.
 set fnm [open [file join $NM_LIB nmtop.sch] w]
 puts $fnm {v {xschem version=3.4.4 file_version=1.2}
 G {}
@@ -16005,7 +16043,8 @@ E {}
 C {nmpass.sym} 120 0 0 0 {name=x3 W_P=0.5}
 C {nmpass.sym} 320 0 0 0 {name=x5 W_P=0.6 modelp=pfet_01v8_lvt}
 C {nmlit.sym} 520 0 0 0 {name=x9 W_P=0.9 modelp=pfet_01v8_lvt}
-C {nmpass.sym} 720 0 0 0 {name=x8 W_P=0.8 modelp=pfet_01v8_lvt schematic=nmpass_alt.sch}}
+C {nmpass.sym} 720 0 0 0 {name=x8 W_P=0.8 modelp=pfet_01v8_lvt schematic=nmpass_alt.sch}
+C {nmfmt.sym} 920 0 0 0 {name=x11 W_P=0.6 modelp=pfet_01v8_lvt}}
 close $fnm
 
 set XSCHEM_LIBRARY_PATH ":[file join $repo sky130A xschem_libs]:[file join $repo xschem_library devices]:$NM_LIB"
@@ -16076,15 +16115,44 @@ check {NM1 issue 0965 with nothing overridden the netlist-basis model lookup\
   [lrange [nm_ask 0 M2] 0 1] {pfet_01v8 pfet_01v8}
 
 # --- NM2: the defect itself, at unit scale (guard GA) -----------------------
-# x5 overrides modelp on its own schematic line and the enclosing symbol's
-# format= drops it, so the deck holds ONE .subckt nmpass body spelling
-# sky130_fd_pr__pfet_01v8 - measured against the real netlister. The name the
-# user's schematic gets annotated with must be the one the deck contains.
+# x11's enclosing cell passes modelp down as a cell PARAMETER, which a SPICE
+# .subckt cannot use for a model NAME, so the body still builds the transistor
+# from the template default. Measured on the real netlister, this build:
+#   x11 net3 nmfmt W_P=0.6 modelp=pfet_01v8_lvt
+#   .subckt nmfmt A W_P=1 modelp=pfet_01v8
+#   XM2 ... sky130_fd_pr__pfet_01v8 ...
+# while a live descend answers pfet_01v8_lvt from the instance override. The
+# name the user's schematic gets annotated with must be the one the deck holds.
+#
+# ⚠ THIS ROW WAS ON x5 UNTIL ISSUE 1201 and had to move, because the netlister
+# now REPAIRS x5: its cell drops the setting entirely and its drawing builds the
+# transistor out of it, so x5 gets a copy of the cell to itself
+# (.subckt nmpass__modelp_pfet_01v8_lvt, XM2 sky130_fd_pr__pfet_01v8_lvt) and
+# the deck and the schematic agree about it. Row NM9 pins that. Left on x5 this
+# row would have gone red on the day the defect it describes was cured, and
+# re-pinning it to the new values there would have kept the row's words while
+# losing its subject.
 check {NM2 issue 0965 the enclosing cell does not pass its model setting into\
  the netlist, so the device is named the way the DECK spells it and not the way\
  the schematic line reads} \
+  [nm_ask 4 M2] \
+  {pfet_01v8 pfet_01v8_lvt @m.x11.xm2.msky130_fd_pr__pfet_01v8}
+
+# --- NM9: what x5 became, issue 1201 ----------------------------------------
+# The copy that used to be the 0965 witness is the 1201 witness now. x5 types
+# modelp on itself and nothing else -- no cell name of its own, no attribute of
+# any kind -- and the netlister writes it its own version of the cell with that
+# device in it. The annotation surface has to follow: it must name the device
+# the way the SIMULATOR will, or it asks the results file for a device under a
+# name that was never in the deck and the schematic gets no numbers at all.
+# Measured on the real netlister, this build: x5 calls
+# nmpass__modelp_pfet_01v8_lvt, whose XM2 reads sky130_fd_pr__pfet_01v8_lvt.
+check {NM9 issue 1201 the copy that types a setting and nothing else gets its\
+ own version of the cell from the netlister, so the deck and the schematic line\
+ now AGREE about it -- and the device the annotation asks the results file for\
+ is the low-threshold one the deck really built} \
   [nm_ask 1 M2] \
-  {pfet_01v8 pfet_01v8_lvt @m.x5.xm2.msky130_fd_pr__pfet_01v8}
+  {pfet_01v8_lvt pfet_01v8_lvt @m.x5.xm2.msky130_fd_pr__pfet_01v8_lvt}
 
 # --- NM3: a literal on the device consults nothing --------------------------
 check {NM3 issue 0965 a transistor whose own line spells the model outright\
@@ -16133,12 +16201,12 @@ check {NM5 issue 0965 STRUCTURAL the model a device is named after is looked up\
 # sky130 pmos key exercises that arm on the same fixture.
 catch {op_annot::register pmos [list devpath $TMPL_AT match {*sky130_fd_pr/*} \
   params {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}]}
-set NM6 [nm_ask 1 M2]
+set NM6 [nm_ask 4 M2]
 opa_source [file join $repo sky130A sky130_procs.tcl]
 check {NM6 issue 0965 a PDK that spells its device path with a template rather\
  than a script gets the same model, so the two ways of describing a PDK cannot\
  name the same transistor differently} \
-  [lindex $NM6 2] {@m.x5.xm2.msky130_fd_pr__pfet_01v8}
+  [lindex $NM6 2] {@m.x11.xm2.msky130_fd_pr__pfet_01v8}
 
 # --- NM7: the token boundary, as a unit ------------------------------------
 # NM6 cannot see this: TMPL_AT ends at @model, so every way of substituting it
@@ -16183,13 +16251,13 @@ catch {op_annot::register pmos [list \
   devpath {\@m.@path@spiceprefix@name\.msky130_fd_pr__@model\.@modelname} \
   match {*sky130_fd_pr/*} \
   params {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}]}
-set NM8 [nm_ask 1 M2]
+set NM8 [nm_ask 4 M2]
 opa_source [file join $repo sky130A sky130_procs.tcl]
 check {NM8 issue 0965 with the model token and a longer word beside it in one\
  device-path template, only the model token is filled in and the longer word is\
  left for the design to answer -- so the built name is the one the deck really\
  spells} \
-  [lindex $NM8 2] {@m.x5.xm2.msky130_fd_pr__pfet_01v8.zz9}
+  [lindex $NM8 2] {@m.x11.xm2.msky130_fd_pr__pfet_01v8.zz9}
 
 } nmerr]} {
   puts "UNEXPECTED ERROR (section NM): $nmerr"

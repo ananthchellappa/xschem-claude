@@ -772,15 +772,32 @@ proc op_annot::model_netlist {instname {livevar {}}} {
   set tp [::op_annot::_lcc_attr templ]
   ## GUARD GB — THE NETLISTER'S OWN EXCEPTION, AND IT IS NOT AN OPTIMISATION.
   ## What a reader would otherwise assume is that the enclosing instance's
-  ## property string is never consulted at netlist time. It is, for exactly one
-  ## kind of instance: one carrying `schematic=`, for which get_additional_symbols
-  ## makes a SEPARATE symbol block whose parent_prop_ptr is that instance's own
-  ## property string (spice_netlist.c:494-496 and its comment). For such a cell
-  ## the override really does reach the deck, and dropping it here would name
-  ## the device wrongly in the other direction. Row NM4 is this guard's only
-  ## witness.
+  ## property string is never consulted at netlist time. It is, for exactly two
+  ## kinds of instance, for which get_additional_symbols makes a SEPARATE symbol
+  ## block whose parent_prop_ptr is that instance's own property string
+  ## (spice_netlist.c and its comment). For such a cell the override really does
+  ## reach the deck, and dropping it here would name the device wrongly in the
+  ## other direction. Row NM4 is the first kind's only witness.
+  ##
+  ## ⚠ THE SECOND KIND ARRIVED WITH ISSUE 1201 AND CARRIES NO ATTRIBUTE AT ALL.
+  ## The netlister now writes a copy its own version of the cell BY ITSELF when
+  ## the cell's drawing uses a setting typed on that copy -- which is precisely
+  ## the shape this proc is looking at, since `raw` above is `@<setting>` read
+  ## off the device's own line. A test for the `schematic` attribute alone would
+  ## therefore miss every copy the tool repaired for the user and hand back the
+  ## symbol template's default: the annotation would ask the results file for a
+  ## device under a name the simulator never used, and the schematic would get
+  ## no numbers, or numbers measured for another device. RULING D5-1.
+  ##
+  ## The answer is the NETLISTER'S OWN, not a second opinion assembled here:
+  ## descend_schematic() calls auto_spec_would_specialize() for the instance the
+  ## walk entered this level through -- the only moment that instance and its
+  ## symbol still exist -- and publishes it as lcc[N].auto_spec. Re-deriving it
+  ## from $pp and $tp would be a second classification that agreed on the day it
+  ## was written and drifted afterwards.
   set usepp 0
   if {[::op_annot::_tok $pp schematic] ne {}} { set usepp 1 }
+  if {[::op_annot::_lcc_attr auto_spec] eq {1}} { set usepp 1 }
   set v $raw
   ## Bounded, and one LEVEL only: token.c's three passes over the same
   ## hier_attr entry, not a walk up the hierarchy. See the block header.
@@ -2457,12 +2474,31 @@ proc op_annot::_pathseg {} {
 ## it, both model spellings are given, the sentence ends with the action, and
 ## the results-file path goes last where a person can ignore it.
 ##
-## THE ACTION IS THE ONE THAT IS MEASURED TO WORK, and it is the same action the
-## netlist-time warning recommends (src/token.c, issue 0970) and the same one
-## that repaired the bandgap bench in this pass. Issue 0974 originally suggested
-## editing the symbol's format= string instead; that changes every placement of
-## the symbol tree-wide and still cannot substitute a model NAME through a
-## .subckt parameter, so it is not advice this file gives.
+## THE ACTION CHANGED WITH ISSUE 1201, AND IT HAD TO. This sentence used to end
+## by telling the designer to type a second attribute on the copy, naming a cell
+## name nobody else uses, so the netlister would write that copy its own version
+## of the cell. THE NETLISTER NOW DOES THAT BY ITSELF whenever the cell's own
+## drawing takes the model from a setting -- see auto_spec_name() in
+## src/actions.c -- so the advice would be telling the user to do a thing the
+## tool has already done, on the one surface where it did NOT happen. A tool
+## that fixes the problem and still tells you to fix it yourself is its own
+## defect. Row AS25 in tests/headless/test_auto_specialize_1201.tcl asserts the
+## instruction is gone from here and from the netlister's own warning together.
+##
+## WHAT IS LEFT IS THE POPULATION A SEPARATE COPY CANNOT HELP, and it is more
+## than one shape: the cell's drawing may write the model in by hand; or the
+## cell's SPICE line may pass the setting down as a .subckt parameter, which
+## SPICE cannot use for a model NAME; or the symbol may name its own drawing,
+## or its template may name the cell body. ⚠ SO THE SENTENCE MUST NOT SAY WHICH.
+## Measured while writing this: a first draft ended "since that drawing writes
+## the model in by hand", and on the .subckt-parameter shape -- row GC1's own
+## fixture -- that was simply untrue, a claim about the designer's circuit that
+## nobody measured. RULING D5-1. It names only what WAS measured: the deck used
+## one model, the schematic line says another, and nothing typed on this one
+## copy is reaching it. Issue 0974 originally suggested editing the format=;
+## that changes every placement of the symbol tree-wide and still cannot
+## substitute a model NAME through a .subckt parameter, so it is not advice this
+## file gives.
 ##
 ## <placed> MUST come from _pathseg_shown, never _pathseg (GUARD GC-NAME).
 proc op_annot::_why_model_differs {placed inner schmodel nlmodel devpath} {
@@ -2471,10 +2507,11 @@ proc op_annot::_why_model_differs {placed inner schmodel nlmodel devpath} {
  \"$schmodel\" written on its schematic line, but $placed does not pass that\
  setting down into the netlist, so the simulator was given \"$nlmodel\" for it\
  instead. The numbers put next to it are the ones measured for \"$nlmodel\",\
- not for the model the schematic names. What you can do: give $placed a\
- schematic= attribute of its own, which makes this one copy of the cell netlist\
- with your model in it; or leave it as it is and read these numbers as\
- belonging to \"$nlmodel\". In the results this device is called $devpath"
+ not for the model the schematic names. What you can do: leave it as it is and\
+ read these numbers as belonging to \"$nlmodel\"; or, if they should have been\
+ for \"$schmodel\", open the $placed drawing and set that transistor's model\
+ there, because nothing typed on this one copy of the cell is reaching it. In\
+ the results this device is called $devpath"
 }
 
 ## Does the hierarchy path we now stand on still SPELL this instance the way the

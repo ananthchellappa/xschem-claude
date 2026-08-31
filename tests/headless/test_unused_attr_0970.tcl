@@ -65,14 +65,24 @@
 #   Warning: on sheet <sheet>, instance <inst> (a <symbol>) sets <prop>=<value>,
 #   but <symbol> never reads <prop> when the netlist is written, so that
 #   setting did not reach the simulator and changed nothing. Check the spelling
-#   against the settings this cell does read, or take it off. If you meant to
-#   change only this one copy of the cell, add a schematic= attribute to <inst>
-#   naming a cell name that no other instance asks for, and that copy is
-#   written out on its own with your setting in it. Two instances that ask for
-#   the same name quietly share one copy, and only the first one's setting is
-#   kept.
+#   against the settings this cell does read, or take it off. When a cell's own
+#   drawing uses a setting you type on one copy, XSCHEM gives that copy its own
+#   version of the cell and you need do nothing -- but the <symbol> drawing does
+#   not use <prop> anywhere, so there is nothing a separate copy could change.
+#   To make it count, that drawing has to use <prop> on the part meant to
+#   follow it.
 #
 # and it is minted in exactly one place, src/token.c.
+#
+# ⚠ THE SECOND HALF OF THAT ADVICE CHANGED WITH ISSUE 1201 and the change is
+# not cosmetic. It used to tell the designer to type a schematic= attribute
+# naming a cell name no other copy asks for. THE NETLISTER NOW DOES THAT BY
+# ITSELF whenever the cell's own drawing uses the setting (src/actions.c,
+# auto_spec_name), so that instruction would be a tool fixing the problem and
+# still telling you to fix it yourself. What survives here is the population a
+# separate copy genuinely cannot help: the cell's drawing does not use the
+# setting anywhere. Rows UF13 and UB1 pin the new wording and the absence of
+# the old; row UB12 pins the copies the tool now repairs in silence.
 #
 # ============================================================================
 # THE S4d REPAIR, 2026-08-30 -- issues 0991, 0992, 0993 AND THE TWO COMMAS
@@ -114,12 +124,15 @@
 # of reach and carriers. A row written to see either would be pinning a
 # comment, not a behaviour.
 #
-# THAT SENTENCE WAS REWRITTEN BY ITEM S4c, 2026-08-30. It used to open "on this
-# sheet," about instances that were not on the sheet the user had open (issue
-# 0981), and it used to end "give <inst> a schematic= attribute of its own as
-# well", which walked the reader into a silent collision (issue 0982). Rows UF8
-# and UF13 assert that both of those old strings are now ABSENT, so do not
-# reinstate either one here as a description of what the tool says.
+# THAT SENTENCE WAS REWRITTEN BY ITEM S4c, 2026-08-30, AND ITS ADVICE AGAIN BY
+# ISSUE 1201. It used to open "on this sheet," about instances that were not on
+# the sheet the user had open (issue 0981); it used to end "give <inst> a
+# schematic= attribute of its own as well", which walked the reader into a
+# silent collision (issue 0982); and the replacement for THAT, which asked the
+# designer to invent a unique cell name, went with issue 1201 when the netlister
+# started writing the separate copy by itself. Rows UF8, UF13 and UB1 assert
+# that every one of those old strings is now ABSENT, so do not reinstate any of
+# them here as a description of what the tool says.
 #
 # ============================================================================
 # THERE ARE TWO SENTENCES NOW, NOT ONE -- ITEM S4d, issues 0987 and 0988
@@ -136,15 +149,16 @@
 # clause "did not reach the simulator", which is how ua_lines() finds the whole
 # class, and they are told apart by their third clause:
 #
-#   SENTENCE A -- nothing anywhere reads it. UNCHANGED from S4c, word for word.
+#   SENTENCE A -- nothing anywhere reads it. Its ADVICE was rewritten by issue
+#     1201; the diagnosis half is unchanged from S4c, word for word.
 #     ... sets <prop>=<value>, but <symbol> never reads <prop> when the netlist
 #     is written, so that setting did not reach the simulator and changed
 #     nothing. Check the spelling against the settings this cell does read, or
-#     take it off. If you meant to change only this one copy of the cell, add a
-#     schematic= attribute to <inst> naming a cell name that no other instance
-#     asks for, and that copy is written out on its own with your setting in
-#     it. Two instances that ask for the same name quietly share one copy, and
-#     only the first one's setting is kept.
+#     take it off. When a cell's own drawing uses a setting you type on one
+#     copy, XSCHEM gives that copy its own version of the cell and you need do
+#     nothing -- but the <symbol> drawing does not use <prop> anywhere, so
+#     there is nothing a separate copy could change. To make it count, that
+#     drawing has to use <prop> on the part meant to follow it.
 #
 #   SENTENCE B -- NEW with 0987 and 0988. The SPICE deck drops it, but another
 #     netlist of the same cell really does carry it.
@@ -290,6 +304,32 @@ model=@modelp
 spiceprefix=X
 }}
 
+## ISSUE 1201's OWN FIXTURE CELL, and it is here because the netlister changed
+## under this file. uaparm's SPICE line DOES read modelp -- `modelp=@modelp` is
+## in its format= -- so the setting is passed down as a cell parameter and is
+## not lost, and the netlister writes no separate copy for it. But a SPICE
+## .subckt parameter still cannot carry a model NAME into the body, which
+## resolves it from the template. So the deck says one thing about x12 and X13
+## and a live descend says another, permanently: that is issue 0974's own
+## subject, and rows GC1-GC5 and PD1-PD2 need a copy it cannot be taken away
+## from.
+u_wr [file join $UA uaparm.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P modelp=@modelp"
+template="name=x1 W_P=1
+modelp=pfet_01v8"}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
+T {@symname} -20 -34 0 0 0.2 0.2 {}}
+file copy -force [file join $UA uapass.sch] [file join $UA uaparm.sch]
+
 ## x8 names a schematic file that DOES NOT EXIST, and that is the mechanism,
 ## not an accident. get_additional_symbols makes a separate symbol block whose
 ## parent property string is that instance's own, and the missing file falls
@@ -308,6 +348,8 @@ C {ua/uapass.sym} 520 0 0 0 {name=X7 W_P=0.7 modelp=pfet_01v8_lvt}
 C {ua/uapass.sym} 720 0 0 0 {name=x8 W_P=0.8 modelp=pfet_01v8_lvt schematic=uapass_lvtp}
 C {ua/uapass.sym} 920 0 0 0 {name=x9 W_P=0.9 W=0.4}
 C {ua/uapass.sym} 1120 0 0 0 {name=x10 W_P=1.0 place=end sig_type=std_logic device_model=zz}
+C {ua/uaparm.sym} 1520 0 0 0 {name=x12 W_P=0.6 modelp=pfet_01v8_lvt}
+C {ua/uaparm.sym} 1720 0 0 0 {name=X13 W_P=0.7 modelp=pfet_01v8_lvt}
 C {sky130_fd_pr/pfet_01v8} 1320 0 0 0 {name=M9
 L=0.15
 W=1
@@ -772,29 +814,81 @@ foreach l [ua_lines] { puts "UA-LINE: $l" }
 puts "UA-COUNT fixture: $UB_N"
 
 set UB_X5 [ua_for x5]
+## ⚠ THE LIVE-WARNING CONTROL MOVED FROM x5 TO x9, ISSUE 1201, AND SO DID UB1.
+##
+## Seven rows below used "and x5 is still accused" as their control -- the
+## thing that reddens if somebody simply turns the whole diagnostic off. That
+## worked only while x5's setting really was lost. Issue 1201 makes the
+## netlister write x5 a copy of the cell to itself and put the setting in it,
+## so x5 stops being accused BECAUSE THE TOOL FIXED IT, and a control anchored
+## there would have gone red on the day the defect was cured.
+##
+## x9 is the anchor now: it sets W, which uapass.sch does not use anywhere, so
+## no copy of the cell could make it matter and it stays a genuinely lost
+## setting on both sides of that change. UB4 is the row that measures it.
+set UB_X9 [ua_for x9]
+set UB_XX7 [ua_for X7]
+
+## The cell body a named instance of the TOP sheet calls: the last bare word
+## before the first name=value setting on its call line. Scoped to the top
+## block, because a sub-cell one level down can hold an instance of the same
+## name -- the trap that made a first pass at issue 1201 report the defect
+## already cured.
+proc ub_bodyfor {deck inst} {
+  set inblk 0
+  foreach l [split $deck "\n"] {
+    if {[regexp {^\*\*\.subckt } $l]} { set inblk 1 ; continue }
+    if {$inblk && [regexp {^\*\*\.ends} $l]} { break }
+    if {!$inblk} { continue }
+    set t [string trim $l]
+    if {$t eq {}} continue
+    if {[lindex [split $t] 0] ne $inst} continue
+    set c {}
+    foreach w [split $t] {
+      if {$w eq {}} continue
+      if {[string first = $w] >= 0} break
+      set c $w
+    }
+    return $c
+  }
+  return NOCALL
+}
+## Which p-device the transistor inside a named cell body is built from.
+proc ub_pmodel {deck name} {
+  set inblk 0
+  foreach l [split $deck "\n"] {
+    if {[regexp {^\.subckt[ \t]+(\S+)} $l -> n]} { set inblk [expr {$n eq $name}] ; continue }
+    if {$inblk && [regexp {^\.ends} $l]} { set inblk 0 ; continue }
+    if {$inblk && [regexp {(sky130_fd_pr__pfet\S*)} $l -> m]} { return $m }
+  }
+  return NOMODEL
+}
 
 check {UB1 issue 0970 netlisting the sheet says once, in plain English, that\
- the setting the user typed on x5 never reached the simulator -- naming the\
+ the setting the user typed on x9 never reached the simulator -- naming the\
  instance they placed, the setting they typed and the cell it sits in, and\
  ending by telling them what they can do about it. And it is the "nothing\
  anywhere reads this" sentence, not the "the SPICE deck drops it but another\
- netlist carries it" one: modelp is a NODE this cell gets wired to, so no\
- netlist of it passes the setting through and telling the user not to remove\
- it would be wrong} \
-  [list [llength $UB_X5] \
-        [expr {[llength $UB_X5] == 1 ? [u_word [lindex $UB_X5 0] x5] : 0}] \
-        [expr {[llength $UB_X5] == 1 ? [u_word [lindex $UB_X5 0] modelp] : 0}] \
-        [expr {[llength $UB_X5] == 1 ?
-               [expr {[string first {uapass} [lindex $UB_X5 0]] >= 0 ? 1 : 0}] : 0}] \
-        [expr {[llength $UB_X5] == 1 ?
-               [expr {[string first {schematic=} [lindex $UB_X5 0]] >= 0 ? 1 : 0}] : 0}] \
-        [ua_kind1 $UB_X5]] \
-  {1 1 1 1 1 A}
+ netlist carries it" one: no netlist of this cell passes W through, so telling\
+ the user not to remove it would be wrong. ISSUE 1201 INVERTS THE LAST CLAUSE:\
+ the advice used to end by telling the designer to go and type a schematic=\
+ attribute by hand, and once the tool writes that copy by itself it must stop\
+ saying so -- a tool that fixes it and still tells you to fix it yourself is\
+ its own defect} \
+  [list [llength $UB_X9] \
+        [expr {[llength $UB_X9] == 1 ? [u_word [lindex $UB_X9 0] x9] : 0}] \
+        [expr {[llength $UB_X9] == 1 ? [u_word [lindex $UB_X9 0] W] : 0}] \
+        [expr {[llength $UB_X9] == 1 ?
+               [expr {[string first {uapass} [lindex $UB_X9 0]] >= 0 ? 1 : 0}] : 0}] \
+        [expr {[llength $UB_X9] == 1 ?
+               [expr {[string first {schematic=} [lindex $UB_X9 0]] >= 0 ? 1 : 0}] : 0}] \
+        [ua_kind1 $UB_X9]] \
+  {1 1 1 1 0 A}
 
 check {UB2 GUARD UA-INST a cell setting the sheet never typed is not a lost\
  setting: x3 takes the cell's own default for the very same setting and is not\
  mentioned at all, while x5 which really did type one still is} \
-  [list [llength [ua_for x3]] [llength $UB_X5]] {0 1}
+  [list [llength [ua_for x3]] [llength $UB_X9]] {0 1}
 
 check {UB3 GUARD UA-POLY x8 asked for its own copy of the cell, so its setting\
  really did reach the simulator -- the deck holds a second cell body whose\
@@ -802,10 +896,9 @@ check {UB3 GUARD UA-POLY x8 asked for its own copy of the cell, so its setting\
  having typed something that changed nothing} \
   [list [llength [ua_for x8]] \
         [expr {[regexp {(?m)^XM2 .*pfet_01v8_lvt} $UB_DECK] ? 1 : 0}] \
-        [llength $UB_X5]] \
+        [llength $UB_X9]] \
   {0 1 1}
 
-set UB_X9 [ua_for x9]
 check {UB4 GUARD UA-FMT one name inside another: x9 sets W while the cell reads\
  W_P, and W is reported -- a plain substring test would find W inside W_P and\
  go quiet about exactly the class this check exists to catch} \
@@ -816,13 +909,26 @@ check {UB4 GUARD UA-FMT one name inside another: x9 sets W while the cell reads\
 check {UB5 GUARD UA-STOP an instance carrying only settings the netlister reads\
  for itself -- where it goes in the deck, what kind of signal it is, and a\
  device model it hashes out on its own -- is not mentioned} \
-  [list [llength [ua_for x10]] [llength $UB_X5]] {0 1}
+  [list [llength [ua_for x10]] [llength $UB_X9]] {0 1}
 
 check {UB6 GUARD UA-TYPE a plain transistor placed straight on the sheet with a\
  spare setting on it is not mentioned: this check is about cells whose insides\
  are written out once from a template, which is why a per-copy setting has\
  nowhere to go} \
-  [list [llength [ua_for M9]] [llength $UB_X5]] {0 1}
+  [list [llength [ua_for M9]] [llength $UB_X9]] {0 1}
+
+# --- UB12: the fixture that proved the defect now proves the fix -------------
+# ISSUE 1201. x5 and X7 each type modelp=pfet_01v8_lvt on a copy of uapass and
+# type NOTHING ELSE -- no schematic= attribute, no invented cell name. uapass's
+# own sheet builds its transistor out of modelp, so there is a cell body the
+# tool can write for them. It has to write it, and it has to stop accusing them
+# of having typed something that changed nothing, because they did not.
+#
+# x8 is the byte-for-byte control alongside: it types the schematic= attribute
+# by hand and must keep exactly today's behaviour, which UB3 pins.
+check {UB12 issue 1201 the two copies that type the setting and nothing else get it into the deck with nobody typing a cell name: each is built from a cell body of its own rather than the one x3 shares, that body's transistor really is the low-threshold p-device they asked for, and neither of them is told any more that what they typed changed nothing}   [list [expr {[ub_bodyfor $UB_DECK x5] ne {NOCALL} &&
+               [ub_bodyfor $UB_DECK x5] ne [ub_bodyfor $UB_DECK x3] ? 1 : 0}]         [expr {[ub_bodyfor $UB_DECK X7] ne {NOCALL} &&
+               [ub_bodyfor $UB_DECK X7] ne [ub_bodyfor $UB_DECK x3] ? 1 : 0}]         [ub_pmodel $UB_DECK [ub_bodyfor $UB_DECK x5]]         [ub_pmodel $UB_DECK [ub_bodyfor $UB_DECK X7]]         [llength $UB_X5] [llength $UB_XX7]]   {1 1 sky130_fd_pr__pfet_01v8_lvt sky130_fd_pr__pfet_01v8_lvt 0 0}
 
 # --- UB7/UB8: the noise, on shipped data ------------------------------------
 # These two are the rows that keep the repair of the bandgap bench honest. The
@@ -850,7 +956,7 @@ check {UB7 netlisting the shipped bandgap bench says nothing of this kind at\
  fixture, which cannot be repaired away, still says its one line. The bench\
  really was netlisted: its deck is on disk and holds the passgate cell this\
  whole issue is about, so a silent failure to netlist cannot pass this row} \
-  [list $UB7N [llength $UB_X5] \
+  [list $UB7N [llength $UB_X9] \
         [expr {[regexp {(?m)^\.subckt passgate} $UB_BDECK] ? 1 : 0}]] \
   {0 1 1}
 
@@ -869,7 +975,7 @@ check {UB8 the noise budget, counted rather than hoped for: netlisting every\
  shipped testbench in the analog simulation library produces not one of these\
  lines, and the count is printed above so a regression shows the number and\
  not merely a red} \
-  [list [expr {$UB8SEEN >= 4 ? 1 : 0}] $UB8N [llength $UB_X5]] {1 0 1}
+  [list [expr {$UB8SEEN >= 4 ? 1 : 0}] $UB8N [llength $UB_X9]] {1 0 1}
 
 # --- UB9: the guard no behavioural row can see -------------------------------
 set UB_TOKC [u_nocomment_c [u_slurp [file join $repo src token.c]]]
@@ -1257,12 +1363,20 @@ set UF10L [ua_lines]
 set UF10B [uf_sets $UF10L bigprop]
 set UF10S [expr {[llength $UF10B] == 1 ? [lindex $UF10B 0] : {}}]
 puts "UA-LONG len=[string length $UF10S]"
+## ⚠ THE SECOND ELEMENT WAS RE-ANCHORED BY ISSUE 1201, AND IT GOT STRONGER.
+## It used to look for "no other instance asks for", a phrase in the MIDDLE of
+## the old advice -- so a line cut after it would still have passed. That phrase
+## was the instruction to go and type an attribute by hand, which the tool no
+## longer gives because it now does the thing itself. The anchor is the LAST
+## WORDS OF THE LINE now, so the row really does prove the sentence reached its
+## end rather than merely got past its middle.
 check {UF10 issue 0983 a very long value does not cost the user the advice. One\
- line, it still ends with what they can do about it, the shortened value is\
- marked as shortened, and the whole line stays short enough to read -- today it\
- stops dead in the middle of the last sentence with nothing to say it was cut} \
+ line, it still ends with what they can do about it -- the very last words of\
+ it, not merely some phrase in the middle -- the shortened value is marked as\
+ shortened, and the whole line stays short enough to read. Today it stops dead\
+ in the middle of the last sentence with nothing to say it was cut} \
   [list [llength $UF10B] \
-        [uf_yes {[string first {no other instance asks for} $UF10S] >= 0}] \
+        [uf_yes {[string first {on the part meant to follow it.} $UF10S] >= 0}] \
         [uf_yes {[string first {...} $UF10S] >= 0}] \
         [uf_yes {[string length $UF10S] > 0 && [string length $UF10S] < 1000}]] \
   {1 1 1 1}
@@ -1367,19 +1481,36 @@ check {UF12 issue 0983 SHIPPED on the one shipped sheet that carries a value\
 set UF13N [ua_netlist $UF_TOP]
 set UF13B [uf_sets [ua_lines] zznone]
 set UF13S [expr {[llength $UF13B] == 1 ? [lindex $UF13B 0] : {}}]
-check {UF13 issue 0982 the advice is safe to follow. This row reads the ACCUSING\
- sentence deliberately -- the control setting nothing anywhere reads -- so it\
- can never drift onto the other one and start describing advice it was not\
- written about. It tells the user the cell name has to be one no other instance\
- asks for, and says what goes wrong if it\
- is not -- two copies asking for the same name quietly share one body and only\
- the first one's setting survives, which is what the old wording walked them\
- into. And RULING D5-4: the sentence is still built in exactly one place and\
- handed to the info window exactly once} \
+## ⚠ REWRITTEN BY ISSUE 1201, AND THE ROW IS STRICTLY STRONGER FOR IT.
+##
+## It used to assert the PRESENCE of the old advice: "give this copy a cell name
+## no other instance asks for, and two instances that ask for the same name
+## quietly share one copy". That instruction is what issue 1201 deletes -- the
+## netlister now writes the separate copy of the cell by itself whenever the
+## cell's own drawing uses the setting, so telling the designer to do it by hand
+## would be a tool that fixes the problem and still tells you to fix it
+## yourself. Asserting the presence of a sentence the tool must no longer say
+## would have pinned the defect in place.
+##
+## So the row now asks the two things that are TRUE of the surviving population
+## -- the cell's drawing does not use the setting anywhere, which is the one
+## case a separate copy genuinely cannot help -- and it asks, as a fourth
+## element, that the old hand-typed instruction is GONE. That last element is
+## the inversion, and it is what UB1 asserts from the other side.
+check {UF13 issues 0982 and 1201, the advice is safe to follow. This row reads\
+ the ACCUSING sentence deliberately -- the control setting nothing anywhere\
+ reads -- so it can never drift onto the other one and start describing advice\
+ it was not written about. It tells the user that XSCHEM gives a copy its own\
+ version of the cell by itself when the cell's drawing uses the setting, and\
+ that this drawing does not, so there is nothing a separate copy could change;\
+ and it does NOT tell them to go and type a cell name by hand, which is the\
+ instruction the tool stopped needing. And RULING D5-4: the sentence is still\
+ built in exactly one place and handed to the info window exactly once} \
   [list [ua_kind1 $UF13B] \
-        [uf_yes {[string first {no other instance asks for} $UF13S] >= 0}] \
-        [uf_yes {[string first {share one copy} $UF13S] >= 0}] \
-        [uf_yes {[string first {attribute of its own as well} $UF13S] < 0}] \
+        [uf_yes {[string first {its own version of the cell} $UF13S] >= 0}] \
+        [uf_yes {[string first {nothing a separate copy could change} $UF13S] >= 0}] \
+        [uf_yes {[string first {schematic=} $UF13S] < 0 &&
+                 [string first {attribute of its own as well} $UF13S] < 0}] \
         [u_count $UB_FN {my_snprintf(str, S(str)}] \
         [u_count $UB_FN {statusmsg(str,}]] \
   {A 1 1 1 1 1}
@@ -1800,9 +1931,18 @@ check {UF28 issue 0980 THE HARD CONSTRAINT, over every line of this kind the\
 # repaired the shipped bandgap bench was the guard's own witness: two passgates
 # whose schematic said one model while the deck used another. Repairing the
 # bench removes that disagreement -- correctly -- and with it the only place in
-# the tree where this sentence was ever produced. The fixture keeps it, and
-# cannot be repaired away, because x5 and X7 here are deliberately left without
-# a copy of the cell to themselves.
+# the tree where this sentence was ever produced. The fixture keeps it.
+#
+# ⚠ THE WITNESS MOVED FROM x5/X7 TO x12/X13, ISSUE 1201. It used to be x5 and
+# X7, "deliberately left without a copy of the cell to themselves". They are not
+# without one any more: their cell drops the setting entirely and its drawing
+# builds the transistor out of it, so THE NETLISTER NOW GIVES THEM A COPY OF THE
+# CELL, with the setting in it, and the deck and the schematic agree about them.
+# Left here, these rows would have gone red on the day the defect they describe
+# was cured. x12 and X13 sit on uaparm, whose SPICE line passes the setting down
+# as a cell parameter -- which a SPICE .subckt cannot use for a model NAME -- so
+# their disagreement is permanent and cannot be repaired away. Row UB12 pins
+# what x5 and X7 became.
 catch {xschem load $UATOP}
 set GC_BLK [u_ans op_annot::save_cards]
 set GC_W {}
@@ -1822,24 +1962,24 @@ proc gc_named {ws inst} {
   foreach w $ws { if {[u_word $w $inst]} { lappend out $w } }
   return $out
 }
-set GC_X5 [gc_named $GC_W x5]
-check {GC1 issue 0974 walking the sheet reports x5's transistor once and the\
- sentence names the instance the user placed, x5, before it names any\
- results-file path -- five passgates on that sheet each hold a transistor\
- called M2, so leading with M2 identifies nothing} \
+set GC_X5 [gc_named $GC_W x12]
+check {GC1 issue 0974 walking the sheet reports x12's transistor once and the\
+ sentence names the instance the user placed, x12, before it names any\
+ results-file path -- every copy on that sheet holds a transistor called M2, so\
+ leading with M2 identifies nothing} \
   [list [llength $GC_X5] \
         [expr {[llength $GC_X5] == 1 ?
                [expr {[string first {@m.} [lindex $GC_X5 0]] < 0 ? 0 :
-                      ([regexp -indices "(^|\[^A-Za-z0-9_.\])x5(\[^A-Za-z0-9_.\]|$)" \
+                      ([regexp -indices "(^|\[^A-Za-z0-9_.\])x12(\[^A-Za-z0-9_.\]|$)" \
                         [lindex $GC_X5 0] gcm] ?
                        [expr {[lindex $gcm 0] < [string first {@m.} [lindex $GC_X5 0]] ? 1 : 0}] : 0)}] : 0}]] \
   {1 1}
 
-check {GC2 GUARD GC-NAME the instance the schematic calls X7 is called X7 in\
+check {GC2 GUARD GC-NAME the instance the schematic calls X13 is called X13 in\
  the sentence -- the lowercased spelling exists for comparing against the deck\
  and must not leak into a sentence whose whole job is naming the thing on the\
  sheet} \
-  [llength [gc_named $GC_W X7]] 1
+  [llength [gc_named $GC_W X13]] 1
 
 check {GC3 issue 0974 the sentence names both spellings -- the model the\
  schematic asks for and the one the simulator was actually given -- and tells\
@@ -1873,9 +2013,18 @@ check {GC5 the count the run reports and the sentences the user reads cannot\
 # PD. THE TWO SHIPPED SKY130 MENU ITEMS (issue 0976)
 # ============================================================================
 # Both ask `xschem translate <inst> @model`, which answers from the SCHEMATIC.
-# The deck answers from the symbol template. On x5 and X7 those differ, so the
-# .save file names a device the results file will not contain and the
-# annotator reads a name nothing wrote.
+# The deck may answer differently, and then the .save file names a device the
+# results file will not contain and the annotator reads a name nothing wrote.
+#
+# ⚠ WHAT THE DECK SAYS ABOUT x5 AND X7 CHANGED WITH ISSUE 1201, and these two
+# rows changed with it rather than moving. Their subject is "these two menu
+# items name a device the way the DECK does", and that is unaltered. What
+# altered is the deck: the netlister now gives x5 and X7 a copy of the cell to
+# themselves carrying the setting they typed, so the device they build really is
+# the low-threshold one and the .save file must say so. The old rows demanded
+# the opposite -- "never the low-threshold spelling the deck does not contain"
+# -- which was true of the old deck and is false of this one. Row UB12 pins the
+# deck itself; these two pin the two menu items following it.
 catch {xschem load $UATOP}
 set PD_SAVE [u_ans sky130_save_fet_params]
 if {$PD_SAVE ne {NOPROC} && ![string match RAISED:* $PD_SAVE]} {
@@ -1895,22 +2044,28 @@ proc pd_savelines {txt frag} {
 ## no save line for it. That is a separate, pre-existing gap in
 ## sky130_hier_sch_expand and is nothing to do with which model name it asks
 ## for, so pinning it here would tie issue 0976 to a defect it did not cause.
-check {PD1 issue 0976 site 1 the save file the SKY130 menu's Create FET save\
- file item writes names x5's and X7's transistors the way the deck spells them\
- and never the low-threshold spelling the deck does not contain, while x3\
- which overrides nothing is untouched} \
+check {PD1 issues 0976 and 1201 site 1 the save file the SKY130 menu's Create\
+ FET save file item writes names x5's and X7's transistors the way the deck\
+ spells them -- and since the netlister now gives those two copies a version of\
+ the cell carrying the setting they typed, that is the low-threshold device, on\
+ all seven of its parameters, with the plain spelling asked for nowhere. x3,\
+ which overrides nothing, still gets the plain one} \
   [list [pd_savelines $PD_SAVE {@m.x5.xm2.msky130_fd_pr__pfet_01v8_lvt}] \
         [pd_savelines $PD_SAVE {@m.x7.xm2.msky130_fd_pr__pfet_01v8_lvt}] \
-        [expr {[pd_savelines $PD_SAVE {@m.x5.xm2.msky130_fd_pr__pfet_01v8[}] > 0 ? 1 : 0}] \
+        [pd_savelines $PD_SAVE {@m.x5.xm2.msky130_fd_pr__pfet_01v8[}] \
         [expr {[pd_savelines $PD_SAVE {@m.x3.xm2.msky130_fd_pr__pfet_01v8[}] > 0 ? 1 : 0}]] \
-  {0 0 1 1}
+  {7 7 0 1}
 
 # --- PD2: the user-visible half ----------------------------------------------
 # A results file spelled the way the deck spells it -- which is the only way a
 # real one can be spelled -- and the annotator asked for the same transistors.
+## ISSUE 1201: x5 and X7 are built from a version of the cell the netlister
+## wrote for them, so the deck -- and therefore the only results file a real run
+## can produce -- spells their transistor with the low-threshold device. x3
+## overrides nothing and keeps the plain one.
 set PD_DEVS [list @m.x3.xm2.msky130_fd_pr__pfet_01v8 \
-                  @m.x5.xm2.msky130_fd_pr__pfet_01v8 \
-                  @m.x7.xm2.msky130_fd_pr__pfet_01v8]
+                  @m.x5.xm2.msky130_fd_pr__pfet_01v8_lvt \
+                  @m.x7.xm2.msky130_fd_pr__pfet_01v8_lvt]
 set pdvars {}
 foreach pdd $PD_DEVS {
   foreach pdp {gm gds cgg cgdo cgso} { lappend pdvars "$pdd\[$pdp\]" }
