@@ -1,600 +1,781 @@
 export const meta = {
-  name: 'backlog-crew',
-  description: 'Run one open_pdk backlog item end to end: scout, measure, plan, RED, implement, verify, write-up, commit, ledger',
-  whenToUse: 'Driver dispatch of a single backlog item (D1-D10) on branch open_pdk of xschem-claude',
+  name: 'annot-crew',
+  description: 'One backlog item end to end: scout, measure, plan, RED, implement, verify x3, write up, commit, ledger row',
   phases: [
-    { title: 'Scout', detail: 'locate code, existing tests, exact current behaviour' },
-    { title: 'Measure', detail: 'reproduce headlessly, record BEFORE lines and the tier baseline' },
-    { title: 'Plan', detail: 'fix, test rows, sabotage variants, ratification questions' },
-    { title: 'RED', detail: 'write the failing checks first and confirm they are red' },
+    { title: 'Scout',     detail: 'locate code, tests, current behaviour' },
+    { title: 'Measure',   detail: 'reproduce headlessly, record BEFORE transcript' },
+    { title: 'Plan',      detail: 'fix shape, test rows, sabotage variants, open questions' },
+    { title: 'RED',       detail: 'write the checks first and prove them red' },
     { title: 'Implement', detail: 'the ONLY agent allowed to run make' },
-    { title: 'Verify', detail: '3 parallel: tier diff, sabotage matrix, adversarial refutation' },
-    { title: 'Writeup', detail: 'issue file, doc updates, git add + git commit' },
-    { title: 'Ledger', detail: 'append the run row (always runs)' },
+    { title: 'Verify',    detail: 'tier diff, structure, adversarial refute' },
+    { title: 'Sabotage',  detail: 'SERIAL and build-permitted: prove every guard is seen by a row' },
+    { title: 'Writeup',   detail: 'issue + docs + commit' },
+    { title: 'Ledger',    detail: 'append the row' },
   ],
 }
 
-/* ------------------------------------------------------------------ */
-/* constants                                                           */
-/* ------------------------------------------------------------------ */
-
-let ARGS = args
-if (typeof ARGS === 'string') {
-  try { ARGS = JSON.parse(ARGS) } catch (e) { ARGS = {} }
-}
-if (!ARGS || typeof ARGS !== 'object') ARGS = {}
-
-const ID = ARGS.id || 'UNKNOWN'
-const BRIEF = ARGS.brief || '(no brief supplied)'
+const ID = args.id
+const BRIEF = args.brief
+const LEDGER = 'doc/claude/ledger/sim_registry_run_2026-08-29.md'
 const REPO = '/home/analog/dev/xschem-claude'
-const LEDGER = REPO + '/doc/claude/ledger/driver_run_2026-08-09.md'
-const SESSION_URL = 'https://claude.ai/code/session_01WRDmzMK6C5VEBLc5Q34CX9'
 
-const COMMON = [
-  'You are one agent of an autonomous crew working item ' + ID + ' of an unattended backlog run.',
-  'Repository: ' + REPO + '   Branch: open_pdk   (already checked out; do NOT switch branches)',
-  '',
-  'ITEM ' + ID + ' BRIEF (verbatim from the driver):',
-  BRIEF,
-  '',
-  '=== HARD RULES FOR EVERY AGENT IN THIS CREW ===',
-  '1. NO HUMAN IS WATCHING. Never ask a question, never wait for approval. Decide using the',
-  '   ratified-rules ladder below and record the decision in writing.',
-  '2. ONLY the Implement agent may run make / cmake / any build. If you are not the Implement',
-  '   agent and you think you need to rebuild, you are wrong - use the binary at ' + REPO + '/src/xschem',
-  '   as it stands. Two concurrent builds OOM this ~7.8GB WSL box.',
-  '3. NEVER git push. NEVER open a PR. NEVER git checkout/switch/reset --hard a branch.',
-  '4. Default to headless: ./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl',
-  '   A suite that genuinely needs X runs under xvfb: GUI_GATE=0 xvfb-run -a <cmd>. That is correct,',
-  '   not a cheat - the gate protects the USER display, and xvfb is not the user display.',
-  '   Do NOT set GUI_GATE=0 globally and do NOT touch ~/.claude/gui_test_gate/control.',
-  '   If a human must eyeball pixels: screenshot to doc/claude/evidence/, and the item is status E.',
-  '5. Every file you create under doc/claude/ must be committed by the Write-up agent, not left',
-  '   untracked. Leave no stray scratch files in the repo; use',
-  '   /tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_' + ID + ' for scratch.',
-  '',
-  '=== TIERS THAT MUST STAY GREEN (baseline measured 2026-08-09 at bc4ff4a2) ===',
-  '  test_shape_draw_gate.tcl ......................... 421',
-  '  test_paste_modify_flag_0244.tcl .................. 376',
-  '  test_add_wire_label.tcl .......................... 178',
-  '  test_placement_wire_gate.tcl ..................... 171',
-  '  test_label_ride.tcl .............................. 157',
-  '  test_placement_preview_doors.tcl ................. 115',
-  '  test_label_strand_oracle.tcl ..................... 32',
-  '  test_sch_add_pin.tcl ............................. 21',
-  '  test_wire_split / test_crossview_paste / test_instance_update ... OVERALL: ok',
-  '  tests/headless/wireedit/run_wireedit.sh .......... WIREEDIT: ALL PASS',
-  '  tests/headless/run.sh ............................ 6 goldens, HARNESS: PASS',
-  '  cd tests && tclsh run_regression.tcl ............. exactly 3 pre-existing FAIL lines',
-  '',
-  '=== KNOWN-RED BEFORE THIS RUN - NOT YOURS, DO NOT CHASE ===',
-  '  - run_regression.tcl: 3 lines from ONE defect - test_ihp_sg13g2_libmgr expects 9 libs, tree has',
-  '    10 (sg13g2_tests_ase), which also fails test_pdk_launcher.',
-  '  - test_selflog_output: 6 transform-key checks (Shift-F/Alt-F/Shift-R/Alt-R/Shift-V/Alt-V).',
-  '  - test_fluid_editing under X: FAIL: FE8 drag-and-return changed the arc AND left buffer',
-  '    MODIFIED. It self-SKIPs under --nogui. Only run it if this item touches move.c.',
-  '  - test_action_replay.sh and test_ciw: carried forward, not re-verified since 0265.',
-  '',
-  '=== RATIFIED RULES LADDER (apply in order, and SAY which rung you used) ===',
-  '  R1. Already-ratified rules:',
-  '      - whatever you just pressed is what you meant (0240/0242/0243/0247/0265/0269)',
-  '      - a teardown must name what it is tearing down (0241)',
-  '      - gates live at the VERBS, never at the shared per-click primitive (0243 F2)',
-  '      - never gate a pure-commit coordinate form - those are the replay/test seams (landmine 2)',
-  '      - an aborted gesture must not lie about the modify flag (0244/0267/0270)',
-  '  R2. If R1 does not settle it: pick the option LEAST SURPRISING to a user mid-gesture and',
-  '      SMALLEST in blast radius, implement it, and write both the decision AND the rejected',
-  '      alternative into the issue file.',
-  '  R3. If the choice changes USER-VISIBLE behaviour and no prior ratification covers it: still',
-  '      implement it, then the item is status E and the exact question goes in the ledger row.',
-  '',
-  '=== NEW ISSUE NUMBERING ===',
-  '  Number new issues from 0350 upward. 0200-0272 are taken on open_pdk. 0212-0229, 0278/0279,',
-  '  0285, 0290, 0295-0300, 0305, 0306 belong to the fluid-editing branch. The 0273-0349 gap is',
-  '  left clear ON PURPOSE - do not fill it. Claim a number by creating',
-  '  doc/claude/issues/NNNN-<slug>.md IMMEDIATELY as a stub before doing the work, so a later crew',
-  '  in this same run cannot collide. File anything measured and not fixed. Never fix a discovered',
-  '  defect silently.',
-  '',
-  '=== PROJECT ORIENTATION ===',
-  '  Almost all state hangs off the global Xschem_ctx *xctx (xschem.h). The C core exposes',
-  '  functionality through one Tcl command dispatched by scheduler() in scheduler.c; GUI events',
-  '  arrive as xschem callback <win> <event> ... into callback.c. src/xschem.tcl is the GUI layer',
-  '  and mirrors many C config vars (search MIRRORED IN TCL in xschem.h).',
-  '  Before touching ANYTHING that creates, moves, deletes or reroutes wires, read',
-  '  doc/claude/WIRING.md and keep it updated.',
-  '  Allocations use my_malloc/my_realloc/my_strdup with the literal placeholder _ALLOC_ID_ as the',
-  '  first argument - write _ALLOC_ID_, never a hand-picked number.',
-  '  C89 only. src/Makefile lists objects explicitly in OBJ - a new .c file needs an OBJ entry and',
-  '  a compile rule.',
-].join('\n')
+const HOUSE = `
+=== HOUSE RULES (repo ${REPO}, branch \`annotate\`) ===
 
-/* ------------------------------------------------------------------ */
-/* schemas                                                             */
-/* ------------------------------------------------------------------ */
+Read ${REPO}/CLAUDE.md first if you have not. It is authoritative and it OVERRIDES
+your defaults. The points that bite hardest:
 
-const SCOUT_SCHEMA = {
+BUILD / OOM
+* This is a ~7.8 GB WSL box. Running \`make\` while other agents are live is the
+  recorded OOM path. **Only TWO agents in this crew may ever run \`make\`: the
+  Implement agent, and the Sabotage agent — and the Sabotage agent runs alone,
+  after everyone else has finished.** If you are neither of those, run the binary
+  already built at \`${REPO}/src/xschem\` and do not rebuild, ever, for any reason.
+  If your own prompt does not explicitly grant you \`make\`, you do not have it.
+
+RUNNING TESTS
+* Headless is the default and the preferred arm:
+  \`cd ${REPO} && ./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl\`
+* A suite that needs Tk/X self-SKIPs under --nogui. Run those on the persistent
+  dev display, NEVER on a bare \$DISPLAY:
+  \`cd ${REPO} && tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script tests/headless/<t>.tcl\`
+  \`\$DISPLAY\` here is the user's REAL screen (a Windows X server over TCP), not the
+  harness's \`:0\` (which is Xwayland). Never flood it.
+* Do NOT set GUI_GATE=0 globally and do NOT touch ~/.claude/gui_test_gate/control.
+  The gate is already pre-granted; Pause/Stop must keep working for the user.
+* A suite passes only on exit 0 AND a whole-line completion banner
+  (\`OVERALL: ok\`, or \`RESULT: ALL PASS (N checks)\`) AND no column-0 death marker.
+  The exit code alone is not enough: --nogui --pipe exits 0 on an uncaught Tcl error.
+* \`tests/run_regression.tcl\` (T1) baseline is **ZERO** counted failures. If you
+  see a red there, name the case and the reason; never carry a count forward.
+
+WRITING A NEW SUITE
+* A new headless suite MUST be \`tests/headless/test_*.tcl\`. Nothing in the repo
+  automatically runs a \`test_*.sh\`.
+* Register it in TWO places (\`grep -c\` each, expect 1):
+  \`tests/headless/full_audit.sh\`'s \`nogui_tests\` string, and \`tests/run_regression.tcl\`'s
+  \`hcases\`. \`hcases\` needs the DUAL banner: emit both \`RESULT: ALL PASS (N checks)\`
+  and \`OVERALL: ok\`.
+* If the subject can CRASH the interpreter, run the crash-provoking sequence in a
+  spawned child (\`exec timeout N [info nameofexecutable] --nogui --pipe -q --nolog
+  --script <f>\`) and assert on the child's exit plus a printed sentinel. Copy the
+  machinery from \`tests/headless/test_raw_read_failure_0306.tcl\`. xschem installs its
+  own SIGSEGV handler, so **a crash exits 1, not 139** — never assert 139.
+* Braces inside Tcl COMMENTS still count for brace matching. A \`}\` in a comment
+  inside a braced body is a syntax error. Write comments with no brace characters.
+
+SABOTAGE (a sabotage run LIES if done sloppily)
+* Back up EVERY file the patch touches. Restore with an mtime bump:
+  \`cp backup src/file.c && touch src/file.c\` — **never \`cp -p\`**. A preserved mtime
+  makes \`make\` a no-op and every later number is measured against the PREVIOUS
+  sabotage's binary.
+* A \`/* SABOTAGE */\` comment PREFIXED to a line does not disable the call on it.
+  Neutralize by renaming the callee to a no-op, or by deleting the guard body.
+* Afterwards assert \`grep -rn SABOTAGE ${REPO}/src/\` is empty AND re-assert the
+  restored baseline is green, BEFORE publishing any number.
+* Report every PREDICTED red that did NOT appear. A guard no behavioural row can
+  see needs a STRUCTURAL row (grep the function body; strip C comments first with
+  \`regsub -all {/\\*.*?\\*/}\` or the comment text itself matches).
+
+C CONVENTIONS
+* C89 throughout. Declarations at the top of a block. No \`//\` comments.
+* Allocation wrappers take the literal placeholder macro \`_ALLOC_ID_\` as their
+  first argument. Write \`_ALLOC_ID_\`; never hand-number it.
+* Almost all state hangs off the single global \`Xschem_ctx *xctx\`.
+* New user-facing operations are a branch in \`scheduler()\` in \`src/scheduler.c\`,
+  driven from Tcl, not a new C entry point.
+* Config variables mirrored between C and Tcl are marked \`MIRRORED IN TCL\` in
+  \`src/xschem.h\` — change both sides.
+* Editing \`src/Makefile.in\` obliges a \`./configure\` re-run. \`src/Makefile\` has no
+  self-regeneration rule.
+
+GIT
+* **NEVER \`git push\`. NEVER open a PR. NEVER \`git checkout\` / \`switch\` /
+  \`reset --hard\`.** Commit on \`annotate\` and stop.
+* \`git add\` the EXACT paths you touched. Never \`git add -A\` — the tree has a lot of
+  untracked scatter that must stay untracked.
+* Commit trailer: \`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\`
+
+ISSUE NUMBERS
+* Next free on this branch is whatever \`doc/claude/issues/NUMBERING.md\` says at
+  the moment you file. READ IT; do not trust any number written here or in a
+  brief - crews file eight at a time and this line goes stale within hours.
+* \`0500-0599\`, \`0700-0799\` and \`1000-1199\` are RESERVED for other
+  branches. Never use them: after 0499 file 0600, after 0699 file 0800, after
+  0999 file 1200.
+* Claim a number by creating \`doc/claude/issues/NNNN-<slug>.md\` as a stub
+  IMMEDIATELY, before doing the work, so a later crew cannot collide.
+
+DEBT LEDGER
+* \`tests/headless/owed.sh add look <what> [why]\` the MOMENT a pixel deliverable is
+  incurred. Never report a pixel deliverable "done" because a suite went green.
+* \`tests/headless/owed.sh add rule <issue-id> [why]\` for any user-visible decision
+  you made that the user has not ratified.
+
+REPORTING STYLE (the user has corrected this twice)
+* Speak in terms of what the USER SEES AND INTERACTS WITH — windows, menus,
+  checkbuttons, the vertical cursor line on a waveform. Not internal command names,
+  not variable names, when a UI noun exists.
+=== END HOUSE RULES ===
+`
+
+const RULINGS = `
+=== STANDING RULINGS THAT BIND THIS WORK ===
+* **D5-1** — never put a fabricated number on a schematic. A number that was not
+  measured for the thing it is displayed next to is the defect.
+* **D5-3** — a digital database publishes nothing.
+* **D5-4** — a user-facing sentence is minted in ONE place and rendered by callers.
+* **D4** — one cursor, every database.
+* **D4-3 / D4-4** — VCD holds its value; a boundary holds, it never extrapolates.
+* **0856 (user, verbatim)** — *"if OP is part of the run, then plot from OP. We
+  haven't yet built anything for annotating from TRAN results, so it should do
+  nothing silently. Why complicate things?"*
+* **0857 (user, verbatim)** — *"6 - if OP has been run but we don't have device
+  info, and user is wanting to annotate by pressing 6, then, yes, we want to say
+  something in the CIW."*
+* **The feature request (user, verbatim)** — *"MUST ONLY HAPPEN WHEN USER
+  REQUESTS IT!! Alt-6 and 6 are for OP info and OP node voltages. We can add a
+  menu item in Results > Annotate for annotating TRAN node voltages for time-point
+  given by cursor B, or A - whatever the convention is - if there is only one
+  cursor in the waveform viewer's active tab, use that. If A and B are there, then
+  use cursor-A. Give user a way to enter this mode with a different shortcut
+  through cadence_style_rc - maybe Alt-Shift-6"*
+* **INTENT OVER MECHANISM (user, verbatim 2026-08-27)** — *"Given that results
+  are being loaded and plotted, we have enough info to satisfy user intent. The
+  ultimate goal of any UI is to satisfy user intent."* A refusal that is locally
+  correct at every joint and collectively absurd is a defect. If the data the user
+  is asking about is already on their screen, the answer is never "not loaded".
+* **0881 (user, verbatim 2026-08-27)** — *"The info should already be available -
+  it's been loaded to display waveforms in the waveform viewer."* The transient
+  annotation MUST use the database the viewer already attached.
+* **PLAIN ENGLISH (user, verbatim 2026-08-27)** — *"wording too cryptic. Give it in
+  plain english with context, 9th grade level."* Every user-facing sentence in the
+  annotation surface. No internal vocabulary, no bare state names, say what
+  happened AND what the user can do about it.
+* **0857 (user, verbatim 2026-08-27)** — *"Yes, 6 does nothing when there is ONLY a
+  TRAN result. But, it's a good idea to say 'No OP results available' in the CIW."*
+=== END RULINGS ===
+`
+
+const TIERS = [
+  'test_ase_core', 'test_ase_final', 'test_ase_final_gf180', 'test_ase_view',
+  'test_ase_persist', 'test_ase_cosim', 'test_ase_plot', 'test_ase_launch',
+  'test_annot_blank_cause_0909', 'test_op_annot',
+]
+
+const TIERTEXT = `
+=== TIER LIST — these must be green when you are done ===
+Headless (\`./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl\`),
+baseline check counts measured 2026-08-29 AFTER commit 0e6cb3cb:
+  test_ase_core 182 | test_ase_final 80 | test_ase_final_gf180 34
+  test_ase_view 36 | test_ase_persist 109 | test_ase_cosim 341
+  test_ase_plot 150 | test_annot_blank_cause_0909 27
+Tk-only (\`tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script ...\`):
+  test_ase_window 228 | test_ase_dialogs 174 | test_wave_viewer 404
+Full: \`cd ${REPO}/tests && tclsh run_regression.tcl\` — baseline **ZERO** counted
+failures, 46 blocks, 0 launch failures. Measured today at 0e6cb3cb.
+
+NOTHING IS KNOWN-RED. If a tier is not at its number above, that is YOURS: say
+which case and why, per case. A standing red is a defect, not furniture.
+
+`
+
+const SCHEMA_SCOUT = {
   type: 'object',
   additionalProperties: false,
-  required: ['anchors', 'existing_tests', 'repro_command', 'current_behaviour', 'risk_notes'],
+  required: ['anchors', 'existing_tests', 'current_behaviour', 'repro_command'],
   properties: {
-    anchors: {
-      type: 'array', maxItems: 25, items: { type: 'string' },
-      description: 'file:line anchors with a few words each, e.g. "src/callback.c:1204 ESC handler ignores placement form"',
-    },
-    existing_tests: {
-      type: 'array', maxItems: 20, items: { type: 'string' },
-      description: 'paths of tests that already cover or nearly cover this area',
-    },
-    repro_command: { type: 'string', description: 'exact shell command that should exhibit the defect headlessly' },
-    current_behaviour: { type: 'string', description: 'what the code actually does today, in prose, no proposed fix' },
-    risk_notes: { type: 'array', maxItems: 10, items: { type: 'string' }, description: 'call sites / seams a fix would disturb' },
-  },
-}
-
-const MEASURE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['reproduced', 'before_transcript', 'baseline', 'baseline_matches_expected', 'notes'],
-  properties: {
-    reproduced: { type: 'boolean', description: 'true only if the defect was actually observed' },
-    before_transcript: {
-      type: 'array', maxItems: 20, items: { type: 'string' },
-      description: 'LITERAL output lines proving the BEFORE state - these are quoted verbatim in the issue',
-    },
-    baseline: {
-      type: 'array', maxItems: 20, items: { type: 'string' },
-      description: 'one line per tier: "<tier> = <observed>" as measured RIGHT NOW, before any edit',
-    },
-    baseline_matches_expected: { type: 'boolean', description: 'false if a tier already differs from the documented baseline' },
+    anchors: { type: 'array', items: { type: 'string' }, description: 'file:line anchors, one per line, with a few words of what is there' },
+    existing_tests: { type: 'array', items: { type: 'string' }, description: 'suite file plus the row ids that already cover this area' },
+    current_behaviour: { type: 'string', description: 'what the code does today, precisely, no proposed fix' },
+    repro_command: { type: 'string', description: 'a single shell command that exercises the area headlessly' },
     notes: { type: 'string' },
   },
 }
 
-const PLAN_SCHEMA = {
+const SCHEMA_MEASURE = {
   type: 'object',
   additionalProperties: false,
-  required: ['code_change_needed', 'fix_summary', 'files_to_touch', 'test_rows', 'sabotage_variants', 'decisions', 'user_visible_change'],
+  required: ['reproduced', 'transcript', 'summary'],
   properties: {
-    code_change_needed: { type: 'boolean', description: 'false for a pure DECIDE / documentation item' },
-    fix_summary: { type: 'string' },
-    files_to_touch: { type: 'array', maxItems: 20, items: { type: 'string' } },
-    test_rows: {
-      type: 'array', maxItems: 30, items: { type: 'string' },
-      description: 'one line per new check: what it asserts and which existing suite file it joins',
-    },
-    sabotage_variants: {
-      type: 'array', maxItems: 8,
-      items: {
-        type: 'object', additionalProperties: false,
-        required: ['name', 'how', 'predicted_red'],
-        properties: {
-          name: { type: 'string' },
-          how: { type: 'string', description: 'how to neutralize - rename the callee to a no-op macro, never a prefixed comment' },
-          predicted_red: { type: 'array', maxItems: 12, items: { type: 'string' } },
-        },
-      },
-    },
-    decisions: {
-      type: 'array', maxItems: 10, items: { type: 'string' },
-      description: 'each: the choice, the rung of the ladder used (R1/R2/R3), and the rejected alternative',
-    },
-    user_visible_change: { type: 'boolean' },
+    reproduced: { type: 'boolean' },
+    transcript: { type: 'array', items: { type: 'string' }, description: 'literal output lines, the BEFORE state, quoted exactly' },
+    summary: { type: 'string' },
+    rescope: { type: 'string', description: 'if the defect is not what the issue says, what it actually is' },
   },
 }
 
-const RED_SCHEMA = {
+const SCHEMA_PLAN = {
   type: 'object',
   additionalProperties: false,
-  required: ['test_files', 'is_red', 'red_for_measured_reason', 'evidence'],
+  required: ['fix', 'files', 'test_rows', 'sabotage', 'questions'],
   properties: {
-    test_files: { type: 'array', maxItems: 20, items: { type: 'string' } },
-    is_red: { type: 'boolean' },
-    red_for_measured_reason: { type: 'boolean', description: 'false if it fails for an unrelated reason - that is a broken test, not a RED' },
-    evidence: { type: 'array', maxItems: 12, items: { type: 'string' }, description: 'literal failing lines' },
+    fix: { type: 'string', description: 'the change, concretely, function by function' },
+    files: { type: 'array', items: { type: 'string' } },
+    test_rows: { type: 'array', items: { type: 'string' }, description: 'row id + what it asserts + which suite it goes in' },
+    sabotage: { type: 'array', items: { type: 'string' }, description: 'each variant: what is neutralized and which rows must red' },
+    questions: { type: 'array', items: { type: 'string' }, description: 'decisions the docs do not settle; empty if none' },
+    user_visible: { type: 'boolean', description: 'true if this changes what the user sees and no prior ruling covers it' },
   },
 }
 
-const IMPL_SCHEMA = {
+const SCHEMA_RED = {
   type: 'object',
   additionalProperties: false,
-  required: ['built', 'changed_files', 'new_checks_green', 'tier_counts_after', 'evidence', 'notes'],
+  required: ['rows_written', 'red_confirmed', 'evidence'],
+  properties: {
+    rows_written: { type: 'array', items: { type: 'string' } },
+    red_confirmed: { type: 'boolean' },
+    evidence: { type: 'array', items: { type: 'string' }, description: 'the literal FAIL lines' },
+    notes: { type: 'string' },
+  },
+}
+
+const SCHEMA_IMPL = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['built', 'green', 'files_changed', 'evidence'],
   properties: {
     built: { type: 'boolean' },
-    changed_files: { type: 'array', maxItems: 30, items: { type: 'string' } },
-    new_checks_green: { type: 'boolean' },
-    tier_counts_after: { type: 'array', maxItems: 20, items: { type: 'string' } },
-    evidence: { type: 'array', maxItems: 12, items: { type: 'string' } },
-    notes: { type: 'string' },
+    green: { type: 'boolean' },
+    files_changed: { type: 'array', items: { type: 'string' } },
+    evidence: { type: 'array', items: { type: 'string' } },
+    blocker: { type: 'string' },
   },
 }
 
-const TIER_VERIFY_SCHEMA = {
+const SCHEMA_VERIFY = {
   type: 'object',
   additionalProperties: false,
-  required: ['clean', 'per_tier', 'regressions'],
+  required: ['verdict', 'findings'],
   properties: {
-    clean: { type: 'boolean', description: 'true only if every tier is at or above its baseline and no NEW failure appeared' },
-    per_tier: { type: 'array', maxItems: 20, items: { type: 'string' }, description: '"<tier>: baseline -> after (verdict)"' },
-    regressions: { type: 'array', maxItems: 15, items: { type: 'string' } },
+    verdict: { type: 'string', enum: ['PASS', 'FAIL', 'PARTIAL'] },
+    findings: { type: 'array', items: { type: 'string' } },
+    counts: { type: 'array', items: { type: 'string' }, description: 'suite name and check count, one per line' },
+    unexpected: { type: 'array', items: { type: 'string' }, description: 'predicted reds that did not appear, or reds nobody predicted' },
   },
 }
 
-const SABOTAGE_SCHEMA = {
+const SCHEMA_WRITEUP = {
   type: 'object',
   additionalProperties: false,
-  required: ['trustworthy', 'variants', 'missing_predicted_reds', 'restore_clean', 'baseline_green_after_restore'],
-  properties: {
-    trustworthy: { type: 'boolean', description: 'false if any restore was partial, make did not rebuild, or the restored baseline was not re-asserted green' },
-    variants: { type: 'array', maxItems: 10, items: { type: 'string' }, description: '"<name>: predicted <n> red, observed <n> red - <which>"' },
-    missing_predicted_reds: { type: 'array', maxItems: 15, items: { type: 'string' }, description: 'predicted reds that did NOT appear - these are holes in the test' },
-    restore_clean: { type: 'boolean', description: 'grep -rn SABOTAGE src/ is empty' },
-    baseline_green_after_restore: { type: 'boolean' },
-  },
-}
-
-const REFUTE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['refuted', 'central_claim', 'attacks', 'residual_risks'],
-  properties: {
-    refuted: { type: 'boolean', description: 'true if the fix does NOT do what it claims. Default to true when genuinely uncertain.' },
-    central_claim: { type: 'string' },
-    attacks: { type: 'array', maxItems: 12, items: { type: 'string' }, description: 'each attempted counterexample and its outcome' },
-    residual_risks: { type: 'array', maxItems: 10, items: { type: 'string' } },
-  },
-}
-
-const WRITEUP_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['status', 'commit', 'tests_line', 'new_issues', 'result_line', 'evidence', 'blocker'],
+  required: ['status', 'commit', 'suites', 'new_issues', 'result', 'evidence'],
   properties: {
     status: { type: 'string', enum: ['x', 'F', 'D', 'E'] },
-    commit: { type: 'string', description: 'short sha, or the literal word none' },
-    tests_line: { type: 'string', description: 'suites + counts, one line, e.g. "shape_draw 421->421, doors 115->121, wireedit ALL PASS"' },
-    new_issues: { type: 'string', description: 'comma-separated issue numbers filed, or the literal word none' },
-    result_line: { type: 'string', description: 'ONE line. If status is E, this must BE the question the user must answer.' },
-    evidence: { type: 'array', maxItems: 3, items: { type: 'string' } },
-    blocker: { type: 'string', description: 'blocker for F/D, else the literal word none' },
+    commit: { type: 'string', description: 'sha, or the word none' },
+    suites: { type: 'string', description: 'suite names with check counts, one line' },
+    new_issues: { type: 'string', description: 'issue numbers filed, comma separated, or the word none' },
+    result: { type: 'string', description: 'ONE line. If status is E, this is the exact question for the user.' },
+    evidence: { type: 'array', items: { type: 'string' }, description: 'at most 3 lines' },
+    blocker: { type: 'string' },
   },
 }
 
-/* ------------------------------------------------------------------ */
-/* helpers                                                             */
-/* ------------------------------------------------------------------ */
-
-function block(title, obj) {
-  return '=== ' + title + ' ===\n' + JSON.stringify(obj, null, 1)
-}
-
-function esc(s) {
-  return String(s === undefined || s === null ? '' : s).split('|').join('\\|').split('\n').join(' ').slice(0, 400)
-}
-
-/* ------------------------------------------------------------------ */
-/* the run                                                             */
-/* ------------------------------------------------------------------ */
-
-let receipt = null
-let carried = { status: 'F', commit: 'none', tests_line: 'not reached', new_issues: 'none', result_line: 'crew aborted before write-up', evidence: [], blocker: 'crew aborted' }
-
-try {
-  /* ---------------- Scout ---------------- */
-  phase('Scout')
-  const scout = await agent([
-    COMMON,
-    '',
-    'YOU ARE THE SCOUT. Read-only. Propose NO fix.',
-    'Deliver: (a) the exact code paths that implement the behaviour named in the brief, as file:line',
-    'anchors; (b) every existing test that touches this area; (c) an exact headless command that',
-    'should exhibit the defect; (d) prose describing what the code does TODAY - not what it should',
-    'do; (e) the seams a fix would disturb (callers, Tcl call sites, replay/action-log surfaces).',
-    '',
-    'If the brief names an issue number, read doc/claude/issues/ for that file first and take its',
-    'claims as UNVERIFIED HYPOTHESES - several issues in this backlog were filed off code reading and',
-    'never measured. Say explicitly which of the issue claims you could and could not corroborate in',
-    'the source.',
-    'If the brief names several issue numbers, cover ALL of them and look hard for the ONE mechanism',
-    'that would close most of the batch - that consolidation is the point of the batched items.',
-    'Grep widely (rg over src/, tests/, doc/claude/) rather than guessing at filenames.',
-  ].join('\n'), { label: 'scout:' + ID, phase: 'Scout', schema: SCOUT_SCHEMA })
-
-  if (!scout) throw new Error('scout produced nothing')
-
-  /* ---------------- Measure ---------------- */
-  phase('Measure')
-  const measure = await agent([
-    COMMON,
-    '',
-    block('SCOUT REPORT', scout),
-    '',
-    'YOU ARE THE MEASURE AGENT. Three jobs, in this order.',
-    '',
-    'JOB 0 - BINARY FRESHNESS (the ONE build you are allowed, and only if it is needed).',
-    'A previous crew may have reverted sources without rebuilding, leaving ' + REPO + '/src/xschem',
-    'containing code that is no longer in the tree - every number you then measure would be a lie.',
-    'Check whether any .c/.h/.y/.l under ' + REPO + '/src/ is newer than ' + REPO + '/src/xschem, and',
-    'whether git diff HEAD -- src/ is empty. If the binary is stale, run cd ' + REPO + '/src && make',
-    'ONCE and record that you did so in notes. You are the only agent alive in this phase, so this',
-    'cannot collide with another build. If the binary is already fresh, do NOT build.',
-    'After JOB 0 you may not build again for any reason.',
-    '',
-    'JOB 1 - RECORD THE TIER BASELINE AS IT IS RIGHT NOW, before anything is edited. Run every tier',
-    'in the tier list above against the CURRENT ./src/xschem binary and record the observed number or',
-    'verdict for each. Report a tier honestly even if it already differs from the documented',
-    'baseline; set baseline_matches_expected=false and name the drift in notes. This recorded set is',
-    'what the Verify agents diff against, so it must be real measurement, not a copy of the table.',
-    'Skip test_fluid_editing unless this item touches move.c.',
-    '',
-    'JOB 2 - REPRODUCE THE DEFECT HEADLESSLY. Write a throwaway .tcl driver under',
-    '/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_' + ID + '/ if you need one (NOT in the repo).',
-    'Capture LITERAL output lines that prove the BEFORE state. The issue write-up quotes these',
-    'verbatim, so they must be real transcript lines, never paraphrase.',
-    '',
-    'If the defect DOES NOT reproduce, that is a legitimate and valuable outcome: set',
-    'reproduced=false and make before_transcript the evidence of NON-reproduction (what you ran, what',
-    'you expected, what you actually got). The item will end F and the issue will be updated to say',
-    'so. Do not manufacture a reproduction to keep the crew busy.',
-    '',
-    'For a pure DECIDE or infrastructure item where "the defect" is a missing capability rather than',
-    'a misbehaviour, set reproduced=true and let before_transcript be the literal evidence of the',
-    'current state (e.g. the command that shows the suite is not gated, the grep count of call sites).',
-  ].join('\n'), { label: 'measure:' + ID, phase: 'Measure', schema: MEASURE_SCHEMA })
-
-  if (!measure) throw new Error('measure produced nothing')
-
-  const baselineText = block('MEASURED BASELINE + BEFORE STATE', measure)
-
-  if (!measure.reproduced) {
-    /* -------- not reproduced: straight to write-up as F -------- */
-    phase('Writeup')
-    const wu = await agent([
-      COMMON, '', block('SCOUT REPORT', scout), '', baselineText,
-      '',
-      'YOU ARE THE WRITE-UP AGENT. The defect DID NOT REPRODUCE. Do NOT attempt a fix.',
-      'Update the relevant issue file under doc/claude/issues/ (create it only if the brief names an',
-      'issue that has no file) with a NOT REPRODUCED section quoting the measurement transcript',
-      'verbatim, stating exactly what was run and what was observed, and either narrowing the issue to',
-      'the part that does still hold or marking it NOT A DEFECT with the reasoning.',
-      'Then git add ONLY the doc paths you touched and git commit. This is a docs-only commit and is',
-      'legitimate; the item status is still F because no defect was fixed.',
-      'Commit message in house style, subject line "docs(issues): NNNN not reproduced - <what was',
-      'measured>", body = what was measured, how, and what remains open.',
-      'Trailers, exactly:',
-      'Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>',
-      'Claude-Session: ' + SESSION_URL,
-      'NEVER git push. Leave the working tree clean of scratch files.',
-      'Set status="F", blocker="did not reproduce", and make result_line say so in one line.',
-    ].join('\n'), { label: 'writeup:' + ID, phase: 'Writeup', schema: WRITEUP_SCHEMA })
-    carried = wu || carried
-  } else {
-    /* ---------------- Plan ---------------- */
-    phase('Plan')
-    const plan = await agent([
-      COMMON, '', block('SCOUT REPORT', scout), '', baselineText,
-      '',
-      'YOU ARE THE PLANNER. Decide the fix. Do not write it.',
-      'Deliver: the fix in prose; the exact files to touch; the test rows (one line each: what the',
-      'check asserts and which suite file it joins - PREFER extending an existing suite over inventing',
-      'a new file); the sabotage variants NAMED UP FRONT with, for each, how to neutralize the fix',
-      '(rename the callee to a no-op macro - a /* SABOTAGE */ comment PREFIXED to a line does NOT',
-      'disable the call on it) and which specific checks that variant must turn red; and every',
-      'decision the docs do not already settle, each tagged with the ladder rung R1/R2/R3 you used and',
-      'the alternative you rejected.',
-      '',
-      'Set code_change_needed=false ONLY for a genuine DECIDE-or-document item - and in that case the',
-      'deliverable is a WRITTEN, RATIFIED decision in the issue file plus whatever doc updates make it',
-      'permanent, not a shrug. Set user_visible_change=true if a user would notice a behaviour',
-      'difference; that forces status E and the exact question must appear in your decisions list.',
-      '',
-      'Smallest blast radius wins. Gates go at the VERBS, never at the shared per-click primitive.',
-      'Never gate a pure-commit coordinate form. Do not refactor beyond the item.',
-    ].join('\n'), { label: 'plan:' + ID, phase: 'Plan', schema: PLAN_SCHEMA })
-
-    if (!plan) throw new Error('plan produced nothing')
-    const planText = block('PLAN', plan)
-
-    let red = null
-    let impl = null
-
-    if (plan.code_change_needed) {
-      /* ---------------- RED ---------------- */
-      phase('RED')
-      red = await agent([
-        COMMON, '', block('SCOUT REPORT', scout), '', baselineText, '', planText,
-        '',
-        'YOU ARE THE RED AGENT. Write the failing checks FIRST, before any production code exists.',
-        'You may NOT edit any file under src/ except test scripts. You may NOT run make.',
-        'Add the planned test rows to the suites named in the plan. Match the surrounding house style',
-        'of that suite exactly (numbering, the check helper it uses, the pass/fail counter).',
-        'Then RUN them against the current unmodified binary and confirm they are red.',
-        '',
-        'CRITICAL: a check that fails for an unrelated reason (typo, wrong path, harness error) is a',
-        'BROKEN TEST, not a RED. Read each failure line and confirm it is red for exactly the reason',
-        'the Measure agent recorded. Set red_for_measured_reason accordingly and quote the literal',
-        'failing lines as evidence.',
-        'If a planned check turns out to be already GREEN before the fix, say so loudly in evidence -',
-        'that check proves nothing and the plan needs to know.',
-      ].join('\n'), { label: 'red:' + ID, phase: 'RED', schema: RED_SCHEMA })
-
-      /* ---------------- Implement ---------------- */
-      phase('Implement')
-      impl = await agent([
-        COMMON, '', block('SCOUT REPORT', scout), '', baselineText, '', planText, '',
-        block('RED REPORT', red || { note: 'RED agent produced nothing - write the checks yourself first' }),
-        '',
-        'YOU ARE THE IMPLEMENT AGENT. You are the ONLY agent in this crew permitted to run make.',
-        'Implement the planned fix. C89 only. Use _ALLOC_ID_ as the literal first argument to',
-        'my_malloc/my_realloc/my_strdup - never hand-number it. A new .c file needs an OBJ entry and a',
-        'compile rule in src/Makefile. Keep C-side and Tcl-side mirrored config vars in sync.',
-        '',
-        'Build with: cd ' + REPO + '/src && make 2>&1 | tail -40',
-        'Then run the new checks and confirm they are GREEN, then re-run the full tier list and record',
-        'the counts. Do not run two builds at once and do not background a build.',
-        '',
-        'If the fix turns out to need more than the plan allowed, do the smallest thing that makes the',
-        'red checks green and record the overrun in notes. If you discover a SEPARATE defect, do not',
-        'fix it silently - note it in notes so the Write-up agent files it as a new issue from 0350 up.',
-        'If the build fails and you cannot get it green, set built=false and explain - do NOT leave a',
-        'broken tree; revert your edits so the tree still compiles.',
-      ].join('\n'), { label: 'impl:' + ID, phase: 'Implement', schema: IMPL_SCHEMA })
-    }
-
-    const implText = block('IMPLEMENT REPORT', impl || { note: 'no code change - decide/document item' })
-
-    /* ---------------- Verify (3 in parallel, none wrote the fix) ---------------- */
-    phase('Verify')
-    const verifies = await parallel([
-      () => agent([
-        COMMON, '', baselineText, '', planText, '', implText,
-        '',
-        'YOU ARE VERIFY-A (TIER DIFF). You did not write the fix. You may NOT run make - run the',
-        'binary as it stands at ' + REPO + '/src/xschem.',
-        'Re-run EVERY tier in the tier list and diff against the MEASURED BASELINE above (not against',
-        'the documented table - the baseline the Measure agent recorded is the truth for this run).',
-        'For each tier report "baseline -> after" and a verdict. A count going UP is fine when the',
-        'item added checks; a count going DOWN, or any NEW failure line, is a regression.',
-        'Cross-check every failure against the KNOWN-RED list before calling it a regression.',
-        'Set clean=false if there is any new failure at all.',
-      ].join('\n'), { label: 'verify-tiers:' + ID, phase: 'Verify', schema: TIER_VERIFY_SCHEMA }),
-
-      () => agent([
-        COMMON, '', baselineText, '', planText, '', implText,
-        '',
-        'YOU ARE VERIFY-B (SABOTAGE). You did not write the fix. You ARE permitted to run make, but',
-        'ONLY sequentially and ONLY as part of this sabotage loop - never at the same time as anyone',
-        'else. (Verify-A and Verify-C are forbidden to build; you own the build lock for this phase.)',
-        'If the plan set code_change_needed=false there is nothing to sabotage: return',
-        'trustworthy=true, variants=["n/a - no code change"], restore_clean=true,',
-        'baseline_green_after_restore=true and stop.',
-        '',
-        'For each planned sabotage variant, in sequence:',
-        '  1. Back up EVERY file the patch touches (all of them, not just the one you are editing).',
-        '  2. Neutralize the fix by renaming the callee to a no-op macro. A /* SABOTAGE */ comment',
-        '     PREFIXED to a line does NOT disable the call on it - that trick silently proves nothing.',
-        '  3. Rebuild, run the affected suites, record which checks went red.',
-        '  4. Restore with cp + touch (NOT cp -p). A preserved mtime makes make a no-op and every',
-        '     later number is then measured against the PREVIOUS sabotage binary.',
-        '  5. Rebuild again and RE-ASSERT the restored baseline is green before publishing any number.',
-        'After the loop assert grep -rn SABOTAGE ' + REPO + '/src/ is empty.',
-        '',
-        'Report, for each variant, predicted red vs observed red. Any PREDICTED red that does NOT',
-        'appear is the finding that matters - list every one of them in missing_predicted_reds, because',
-        'it means the check does not actually cover the mechanism it claims to.',
-        'Set trustworthy=false if any restore was partial, any rebuild was skipped, or the restored',
-        'baseline was not re-asserted green.',
-      ].join('\n'), { label: 'verify-sabotage:' + ID, phase: 'Verify', schema: SABOTAGE_SCHEMA }),
-
-      () => agent([
-        COMMON, '', block('SCOUT REPORT', scout), '', baselineText, '', planText, '', implText,
-        '',
-        'YOU ARE VERIFY-C (ADVERSARY). You did not write the fix. You may NOT run make and may NOT',
-        'edit any file. Your job is to REFUTE the fix\'s central claim, not to bless it.',
-        'State the central claim in one sentence, then attack it: hunt for the input, ordering,',
-        'hierarchy depth, window/tab, undo/redo path, action-log replay path, or Tcl call site where',
-        'the old wrong behaviour still happens. Read the diff (git diff) and reason about what it does',
-        'NOT cover. Drive the existing binary headlessly to try to produce a counterexample.',
-        'Check specifically: does the fix gate a pure-commit coordinate form (forbidden)? does it sit',
-        'at the shared per-click primitive instead of the verbs (forbidden)? does an aborted path still',
-        'lie about the modify flag? does a teardown fail to name what it tears down?',
-        'Default refuted=true when you are genuinely uncertain. A confident pass requires that you',
-        'tried and failed to break it, and the attacks list must show the attempts.',
-      ].join('\n'), { label: 'verify-adversary:' + ID, phase: 'Verify', schema: REFUTE_SCHEMA }),
-    ])
-
-    const tierV = verifies[0]
-    const sabV = verifies[1]
-    const advV = verifies[2]
-
-    /* ---------------- Write-up + commit ---------------- */
-    phase('Writeup')
-    const wu = await agent([
-      COMMON, '', block('SCOUT REPORT', scout), '', baselineText, '', planText, '', implText, '',
-      block('VERIFY-A TIERS', tierV || { note: 'verify-A produced nothing - treat tiers as UNVERIFIED' }), '',
-      block('VERIFY-B SABOTAGE', sabV || { note: 'verify-B produced nothing - treat sabotage as UNTRUSTWORTHY' }), '',
-      block('VERIFY-C ADVERSARY', advV || { note: 'verify-C produced nothing - treat the claim as UNREFUTED-UNTESTED' }),
-      '',
-      'YOU ARE THE WRITE-UP AND COMMIT AGENT. You decide this item\'s final status. Be honest.',
-      '',
-      'STATUS RULES:',
-      '  x = fixed, tiers clean, sabotage trustworthy, adversary did not refute, committed.',
-      '  E = it landed and is committed, but a human must look: the plan set user_visible_change=true',
-      '      with no prior ratification, OR the only proof is a GUI screenshot. result_line must BE',
-      '      the one-line question the user has to answer.',
-      '  F = not fixed / broke something / sabotage untrustworthy / adversary refuted. Then REVERT the',
-      '      code changes so the tree is clean and compiles, commit NOTHING but (optionally) the issue',
-      '      write-up recording what was measured, and say why in blocker.',
-      '  D = blocked before a fix was possible. Nothing committed except the issue note.',
-      'If VERIFY-A reports a regression, or VERIFY-B reports trustworthy=false, or VERIFY-C reports',
-      'refuted=true, you may NOT claim x. Downgrade and say why. Never round a partial result up.',
-      '',
-      'DELIVERABLES:',
-      '1. The issue file(s) under doc/claude/issues/. For an existing issue, append a resolution',
-      '   section; for anything measured-and-not-fixed, create a NEW issue numbered from 0350 up',
-      '   (create the stub file IMMEDIATELY to claim the number). Quote the Measure agent\'s BEFORE',
-      '   transcript lines verbatim, then the AFTER lines. Record every decision with its ladder rung',
-      '   and its rejected alternative. Record the sabotage matrix including any predicted red that did',
-      '   not appear, and the adversary\'s residual risks under a "still open" heading.',
-      '2. Doc updates the change EARNS - doc/claude/WIRING.md if wires were touched (mandatory in that',
-      '   case), the relevant doc/claude/specs/ file, doc/claude/FAQ.md (newest entry on top) if a',
-      '   design question was settled. Do not touch docs the change did not earn.',
-      '3. git add the EXACT paths (never git add -A, never git add .) and git commit. The repo has a',
-      '   large untracked scatter that must NOT be swept in. Verify with git status --short before and',
-      '   after that you added only your paths.',
-      '   Commit subject in house style: type(scope): imperative summary (issue NNNN)',
-      '   Body: what was measured BEFORE (quote a line), what changed, why, what is still open.',
-      '   Trailers, exactly these two lines at the end:',
-      '   Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>',
-      '   Claude-Session: ' + SESSION_URL,
-      '   NEVER git push. NEVER open a PR.',
-      '4. Delete any scratch files your crew left inside the repo.',
-      '5. Do NOT touch ' + LEDGER + '. A dedicated Ledger agent appends the run row after you, from',
-      '   the receipt fields you return. Writing a row yourself produces a duplicate.',
-      '',
-      'Then return the receipt fields. tests_line is ONE line of suite names with baseline->after',
-      'counts. evidence is at most 3 literal lines. Keep every field short - this is the only thing',
-      'that crosses back to the driver.',
-    ].join('\n'), { label: 'writeup:' + ID, phase: 'Writeup', schema: WRITEUP_SCHEMA })
-
-    carried = wu || carried
+// ---------------------------------------------------------------- Guard
+// A workflow agent() returns null when its subagent dies on a terminal API
+// error after retries -- an exhausted quota is the common way. This script is a
+// straight line of awaits, so an unguarded null walks all the way to the LEDGER
+// agent and buys a plausible-looking row over work that never ran. That is the
+// exact failure class this branch keeps shipping. Die at the seam instead.
+function must(label, value) {
+  if (value === null || value === undefined) {
+    log(`STOPPED: the ${label} agent returned nothing (terminal API error, or skipped). No ledger row will be written; the tree is left as it stands and nothing is committed.`)
+    throw new Error(`${label} agent returned null -- crew halted before it could report work that did not happen`)
   }
-} catch (e) {
-  carried = {
-    status: 'F', commit: 'none', tests_line: 'not reached', new_issues: 'none',
-    result_line: 'crew aborted: ' + String(e && e.message ? e.message : e).slice(0, 200),
-    evidence: [], blocker: 'crew exception',
-  }
+  return value
 }
 
-/* ---------------- Ledger (always runs) ---------------- */
+// ---------------------------------------------------------------- Scout
+
+phase('Scout')
+const scout = must('SCOUT', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the SCOUT for backlog item **${ID}**.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+Your job is READ-ONLY reconnaissance. Locate the code, the tests that already
+touch it, and the exact current behaviour. Do NOT propose a fix. Do NOT edit
+anything. Do NOT run \`make\`.
+
+Read the issue file if the brief names one (\`doc/claude/issues/NNNN-*.md\`) — the
+issues on this branch carry measured evidence and pre-written acceptance criteria,
+and re-deriving them is waste.
+
+Return file:line anchors precise enough that the next agent does not have to
+search again, and one shell command that exercises the area headlessly.`,
+  { label: `scout:${ID}`, phase: 'Scout', schema: SCHEMA_SCOUT }
+))
+
+// ---------------------------------------------------------------- Measure
+
+phase('Measure')
+const measure = must('MEASURE', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the MEASURE agent for backlog item **${ID}**.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+The scout found:
+${JSON.stringify(scout, null, 1)}
+
+Reproduce the defect HEADLESSLY and record the BEFORE state as LITERAL transcript
+lines — the actual bytes the program printed, not your paraphrase of them. This
+phase is not optional and its output is what the issue write-up will quote.
+
+Do NOT run \`make\`. Do NOT fix anything. Use the binary already built at
+\`${REPO}/src/xschem\`.
+
+Write any scratch fixtures under \`/tmp/\`, never into the repo.
+
+If the defect does NOT reproduce, say so with the measurement as evidence and set
+reproduced=false — that is a legitimate and valuable outcome, and the item will
+end F with your measurement attached to the issue.
+
+If the defect reproduces but is not what the issue says it is, fill \`rescope\`.`,
+  { label: `measure:${ID}`, phase: 'Measure', schema: SCHEMA_MEASURE }
+))
+
+// ---------------------------------------------------------------- Plan
+
+phase('Plan')
+const plan = must('PLAN', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the PLANNER for backlog item **${ID}**.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+Scout:
+${JSON.stringify(scout, null, 1)}
+
+Measurement (the BEFORE state, literal):
+${JSON.stringify(measure, null, 1)}
+
+Decide the fix, the test rows, and the sabotage variants. Do NOT implement.
+Do NOT run \`make\`.
+
+Rules for the plan:
+* Smallest blast radius that actually fixes the measured thing. Do not widen scope.
+* Every guard you add needs a row that can SEE it. If a guard is invisible to every
+  behavioural row (because a second guard already covers the case), it needs a
+  STRUCTURAL row that greps the function body — that is not optional, it is the
+  lesson of this branch.
+* Name the sabotage variants UP FRONT, one per guard, each with the rows it must
+  redden. A guard whose sabotage reddens nothing is a guard with no test.
+* If a decision is not settled by the standing rulings above or by
+  \`doc/claude/\` docs: apply the least-surprising-to-a-user-mid-gesture option with
+  the smallest blast radius, implement it, and record BOTH the decision and the
+  rejected alternative in the issue. Put the question in \`questions\` and set
+  \`user_visible\` if the user has not ratified it.
+* NO human is watching this run. Never plan a step that waits for a human.`,
+  { label: `plan:${ID}`, phase: 'Plan', schema: SCHEMA_PLAN }
+))
+
+// ---------------------------------------------------------------- RED
+
+phase('RED')
+const red = must('RED', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the RED agent for backlog item **${ID}**. You write the checks FIRST and
+prove they are red for the measured reason.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+Measurement:
+${JSON.stringify(measure, null, 1)}
+
+Plan:
+${JSON.stringify(plan, null, 1)}
+
+Write the test rows the plan names. Run them. Confirm they fail, and that they fail
+for the reason the measurement recorded — not for a typo, not for a missing fixture,
+not because the suite did not launch. Quote the literal FAIL lines as evidence.
+
+You may edit TEST files. You may NOT edit \`src/*.c\`, \`src/*.h\` or \`src/*.tcl\`.
+You may NOT run \`make\`.
+
+SPECIAL CASE — the fix may ALREADY BE PRESENT in the working tree (item A0 is
+exactly this: the \`update_op()\` gate in \`src/save.c\` is already applied and
+uncommitted). If your new rows come up GREEN immediately because the fix is already
+there, that is NOT a red proof. Do this instead:
+  1. Back up every source file the fix touches to /tmp.
+  2. Neutralize the fix (rename the callee to a no-op, or delete the guard body —
+     a \`/* SABOTAGE */\` comment prefix does NOT disable anything).
+  3. You are permitted ONE \`make\` for this and only this purpose. State that you
+     used it.
+  4. Run the rows, confirm red, quote the lines.
+  5. Restore with \`cp backup src/file.c && touch src/file.c\` (NEVER \`cp -p\`),
+     rebuild, confirm green again, and assert \`grep -rn SABOTAGE ${REPO}/src/\`
+     is empty.
+Set red_confirmed=true only if you actually saw the rows red.`,
+  { label: `red:${ID}`, phase: 'RED', schema: SCHEMA_RED }
+))
+
+// ---------------------------------------------------------------- Implement
+
+phase('Implement')
+const impl = must('IMPLEMENT', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the IMPLEMENT agent for backlog item **${ID}**. **You are the ONLY agent in
+this crew permitted to run \`make\`.** Nobody else will build; the agents after you
+run the binary you leave behind, so leave it built and correct.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+Measurement:
+${JSON.stringify(measure, null, 1)}
+
+Plan:
+${JSON.stringify(plan, null, 1)}
+
+RED phase:
+${JSON.stringify(red, null, 1)}
+
+Implement the plan. Rebuild with \`cd ${REPO}/src && make\`. Make the new checks
+green and keep every tier suite green.
+
+* C89: declarations at the top of a block, no \`//\` comments.
+* Every non-obvious guard gets a comment naming the ISSUE NUMBER and what a reader
+  would otherwise assume. The comments on this branch are load-bearing documentation
+  and they are quoted by structural test rows — write them deliberately.
+* If a comment's text would match a structural grep the tests use, say so.
+* Do not commit. The write-up agent commits.
+* If you cannot make it green, set green=false and fill \`blocker\` with the exact
+  failing line. Do NOT hack a row green by weakening its assertion.`,
+  { label: `impl:${ID}`, phase: 'Implement', schema: SCHEMA_IMPL }
+))
+
+// ---------------------------------------------------------------- Verify x3
+
+phase('Verify')
+const VERIFY_COMMON = `${HOUSE}${RULINGS}${TIERTEXT}
+Backlog item **${ID}**.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+Measurement (BEFORE):
+${JSON.stringify(measure, null, 1)}
+
+Plan:
+${JSON.stringify(plan, null, 1)}
+
+What was implemented:
+${JSON.stringify(impl, null, 1)}
+
+You did NOT write this fix and you are not here to be agreeable.
+**You may NOT run \`make\`** — another verify agent is running concurrently and two
+builds on this box is the OOM. Run the binary already at \`${REPO}/src/xschem\`.
+`
+
+const verdicts = await parallel([
+  () => agent(
+    `${VERIFY_COMMON}
+You are VERIFY-A: the TIER agent.
+
+Re-run every suite in the tier list and diff the check counts against the recorded
+baseline. Report each suite as \`name N/M\` plus the banner you actually saw.
+
+A suite passes only on exit 0 AND a whole-line completion banner AND no column-0
+death marker. A count that went UP is fine and expected if this item added rows;
+a count that went DOWN without an explanation is a finding.
+
+Also run the Tk-only suite on the dev display:
+\`cd ${REPO} && tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script tests/headless/test_annot_show_menu.tcl\`
+
+Finally run \`cd ${REPO}/tests && tclsh run_regression.tcl\` and report the counted
+failures. Baseline is ZERO. If it is not zero, name the case and the reason PER
+CASE — never carry a count forward as a known quantity.
+
+verdict=FAIL if any tier suite is red for a reason this item caused.`,
+    { label: `verify-tier:${ID}`, phase: 'Verify', schema: SCHEMA_VERIFY }
+  ),
+  () => agent(
+    `${VERIFY_COMMON}
+You are VERIFY-B: the STRUCTURE agent.
+
+⚠ **You must not modify ANY file in the repository, for any reason.** A dedicated
+Sabotage phase runs later, alone and build-permitted, and it owns tree mutation.
+On the A3h run a predecessor of yours sabotaged \`utils/annot_mode.tcl\` in place
+while the other two verifiers were live; one of them caught it and had to re-take
+every number. Work only on COPIES under /tmp. If you believe a variant can only be
+tested by editing the tree, say so in \`findings\` and leave it to the Sabotage phase.
+
+The variants the plan named, for reference — the Sabotage phase will run them:
+${JSON.stringify(plan.sabotage || [], null, 1)}
+
+**You may not run \`make\`.** Therefore you cannot do a rebuild-based sabotage of C
+code. Do what you CAN do without building, and say plainly what you could not do:
+  * Tcl-level sabotage needs no build — neutralize the Tcl guard, run, restore.
+  * Test-row sabotage needs no build — weaken a row, confirm it stops catching.
+  * STRUCTURAL rows: verify each guard the plan named is actually pinned by a row
+    that greps for it. Delete the guard TEXT in a /tmp COPY of the file and confirm
+    the structural row's pattern stops matching. This proves the row can see the
+    guard without touching the tree.
+  * For C-level behavioural sabotage you cannot build: instead READ the code and
+    state, for each guard, exactly which row would go red and why — and flag any
+    guard for which you cannot name such a row. **A guard with no row that can see
+    it is a finding**, and it is the single most common defect on this branch.
+
+Report every PREDICTED red that did NOT appear, and every red nobody predicted.
+Afterwards assert \`grep -rn SABOTAGE ${REPO}/src/\` is empty and that
+\`git status --porcelain\` shows only the files the plan said it would touch.`,
+    { label: `verify-sabotage:${ID}`, phase: 'Verify', schema: SCHEMA_VERIFY }
+  ),
+  () => agent(
+    `${VERIFY_COMMON}
+You are VERIFY-C: the ADVERSARY. Your job is to REFUTE the fix's central claim.
+Default to refuted if you are uncertain.
+
+Attack in this order:
+  1. **Is the measured defect actually gone?** Re-run the measurement's repro
+     command yourself and compare byte for byte with the recorded BEFORE lines.
+     Do not take the implement agent's word for it.
+  2. **Does the fix over-refuse?** Every guard that refuses something can refuse
+     something it should have allowed. Construct the POSITIVE TWIN — the input that
+     must still work — and run it. This branch has shipped two defects past
+     twenty-eight passing checks, both of them over-refusals.
+  3. **Is a new row hollow?** A row that would pass on the BROKEN tree proves
+     nothing. Pick the most important new row and argue whether it is real.
+  4. **Boundaries.** Zero, one, negative, empty string, NULL, the last element,
+     one past the last element.
+  5. **Does it violate a standing ruling?** Especially D5-1: is there any path on
+     which a number that was not measured for a node can now appear beside it?
+
+Every finding must be a CONCRETE input plus the WRONG OUTPUT it produces, or a
+literal transcript line. An opinion is not a finding.`,
+    { label: `verify-adversary:${ID}`, phase: 'Verify', schema: SCHEMA_VERIFY }
+  ),
+])
+
+// A dead verifier must never read as a passing one. filter(Boolean) drops the
+// nulls a terminal API error leaves behind, so losing all three would make
+// `failed` empty -- indistinguishable from three PASSes. Require every verifier
+// to have actually answered.
+const vs = verdicts.filter(Boolean)
+if (vs.length !== verdicts.length) {
+  log(`STOPPED: ${verdicts.length - vs.length} of ${verdicts.length} verify agents returned nothing (terminal API error, or skipped). A missing verdict is not a passing one. No ledger row will be written and nothing is committed.`)
+  throw new Error('verify agents returned null -- crew halted rather than read silence as a pass')
+}
+const failed = vs.filter(v => v.verdict === 'FAIL')
+log(`${ID}: verify ${vs.map(v => v.verdict).join('/')}`)
+
+// ------------------------------------------------- Sabotage (SERIAL, builds)
+
+/* ISSUE 0876: the verify agents are forbidden to build, so on earlier items in
+ * this run NOBODY ever sabotage-tested a C-level guard -- eight of them shipped
+ * with no proof that any row can see them. This phase runs ALONE, after the
+ * parallel verifiers have finished, and IS permitted to build. It is the only
+ * place in the crew where a C guard's test coverage is actually demonstrated. */
+phase('Sabotage')
+const sabotage = must('SABOTAGE', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the SABOTAGE agent for backlog item **${ID}**. You run ALONE — every other
+agent in this crew has finished — so **you ARE permitted to run \`make\`**, and you
+are the only agent besides Implement who is.
+
+What was implemented:
+${JSON.stringify(impl, null, 1)}
+
+Sabotage variants the plan named:
+${JSON.stringify((plan && plan.sabotage) || [], null, 1)}
+
+What the no-build verifiers could and could not establish:
+${JSON.stringify(vs, null, 1)}
+
+Your job is the one thing this run kept failing to do: **prove that every guard this
+item added is actually seen by a test row.** A guard no row can see is not a guard,
+it is a comment.
+
+For EACH guard, in turn:
+  1. Back up EVERY file you are about to touch, to /tmp.
+  2. Neutralize the guard properly. A \`/* SABOTAGE */\` comment PREFIXED to a line
+     does NOT disable the call on it. Delete the guard body, or rename the callee to
+     a no-op macro. Deleting the whole line is usually cleanest.
+  3. \`cd ${REPO}/src && make\`.
+  4. Run the rows the plan predicted would redden. Record which actually reddened.
+  5. Restore: \`cp /tmp/<backup> ${REPO}/src/<file> && touch ${REPO}/src/<file>\`.
+     **NEVER \`cp -p\`** — a preserved mtime makes \`make\` a no-op and every later
+     number is measured against the PREVIOUS sabotage's binary.
+  6. \`make\` again and re-assert the baseline is green BEFORE moving to the next
+     guard. A sabotage run lies if the restore was partial or the rebuild did not
+     happen.
+
+Do them ONE AT A TIME. Do not batch several neutralizations into one build — you
+cannot attribute a red to a guard that way.
+
+**Report every PREDICTED red that did NOT appear.** That is the finding, not an
+inconvenience: it means the guard shipped untested, and on this branch that is the
+defect that has twice slipped past twenty-eight passing checks.
+
+When finished:
+  * assert \`grep -rn SABOTAGE ${REPO}/src/\` is empty,
+  * assert \`git status --porcelain\` shows only files this item legitimately changed,
+  * assert \`git diff\` against the item's own commit is empty for every src file you
+    touched — i.e. you really did restore them,
+  * and confirm the tier list is green on the RESTORED, REBUILT binary.
+
+verdict=FAIL if any guard has no row that can see it, or if you could not restore
+the tree cleanly. List each unseen guard in \`unexpected\`.`,
+  { label: `sabotage:${ID}`, phase: 'Sabotage', schema: SCHEMA_VERIFY }
+))
+
+if (sabotage && sabotage.verdict === 'FAIL') {
+  vs.push(sabotage)
+  if (!failed.includes(sabotage)) failed.push(sabotage)
+  log(`${ID}: sabotage FAIL — ${(sabotage.unexpected || []).length} guard(s) unseen`)
+} else {
+  log(`${ID}: sabotage ${sabotage ? sabotage.verdict : 'null'}`)
+}
+
+// ------------------------------------------------- Repair loop (bounded)
+
+let repair = null
+if (failed.length > 0 && impl.green !== false) {
+  phase('Implement')
+  repair = await agent(
+    `${HOUSE}${RULINGS}${TIERTEXT}
+You are the REPAIR agent for backlog item **${ID}**. You ARE permitted to run
+\`make\` — the verify agents have all finished, so you are alone on the box.
+
+What was implemented:
+${JSON.stringify(impl, null, 1)}
+
+The verifiers found problems:
+${JSON.stringify(failed, null, 1)}
+
+The sabotage pass reported:
+${JSON.stringify(sabotage, null, 1)}
+
+If the sabotage pass found a guard that NO row can see, the fix is to ADD THE ROW,
+not to delete the guard. A structural row that greps the function body is the
+honest answer when a second guard already covers the case behaviourally.
+
+Fix what they found. Then re-run the tier list yourself and confirm green.
+
+If a finding is WRONG — the verifier misread the code, or ran the wrong thing —
+say so with evidence and do not change the code to satisfy it. A verifier being
+mistaken is common; a fix bent to satisfy a mistaken verifier is a real defect.
+
+If you cannot resolve it, set green=false and fill \`blocker\`. The item will land
+as F or D and that is an honest outcome.`,
+    { label: `repair:${ID}`, phase: 'Implement', schema: SCHEMA_IMPL }
+  )
+}
+
+// ---------------------------------------------------------------- Write-up
+
+phase('Writeup')
+const writeup = must('WRITE-UP', await agent(
+  `${HOUSE}${RULINGS}${TIERTEXT}
+You are the WRITE-UP AND COMMIT agent for backlog item **${ID}**. You are last
+before the ledger. Everything below is the crew's work; your job is to make it
+durable and then commit it.
+
+ITEM BRIEF (verbatim):
+${BRIEF}
+
+Measurement (BEFORE, literal):
+${JSON.stringify(measure, null, 1)}
+
+Plan:
+${JSON.stringify(plan, null, 1)}
+
+Implementation:
+${JSON.stringify(impl, null, 1)}
+
+Verification:
+${JSON.stringify(vs, null, 1)}
+
+Sabotage pass (guards actually proven visible to a row):
+${JSON.stringify(sabotage, null, 1)}
+
+Repair pass (null if none was needed):
+${JSON.stringify(repair, null, 1)}
+
+DO:
+1. **Issue file.** Update the existing \`doc/claude/issues/NNNN-*.md\` if the brief
+   names one, or create a new one numbered from the next free number upward
+   (never 0500-0599, never 0700-0799, never 1000-1199). Record: what was measured BEFORE (quote the literal lines),
+   what changed, why, what is still open, and the acceptance rows that now pin it.
+   Mark it FIXED only if it is.
+2. **File anything measured and not fixed** as its own issue, numbered the same way.
+   Do NOT fix a discovered defect silently and do not leave it unfiled.
+3. **Docs that the change earns**: \`doc/claude/WIRING.md\` if wires were touched,
+   \`doc/claude/FAQ.md\` for a design Q&A worth keeping (newest on top),
+   \`doc/claude/specs/\` for a feature contract, \`CLAUDE.md\` ONLY if a build/test
+   invariant changed.
+4. **Debt.** If any deliverable can only be confirmed by a human looking at pixels,
+   run \`cd ${REPO} && tests/headless/owed.sh add look "<what>" "<why>"\`.
+   If you made a user-visible decision nobody ratified, run
+   \`tests/headless/owed.sh add rule <issue-number> "<why>"\`.
+   Do this even if every suite is green. **A green suite never discharges an
+   eyeball debt.**
+5. **Commit.** \`git add\` the EXACT paths — never \`git add -A\`, the tree has
+   untracked scatter that must stay untracked. Include
+   \`doc/claude/ledger/annot_run_2026-08-27.md\` ONLY if you also edited it (you
+   should not; the ledger agent appends after you).
+   Commit body in house style: what was measured before, what changed, why, what is
+   still open. Subject line \`<type>(<issue>): <plain sentence>\`.
+   Trailer: \`Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\`
+   **NEVER \`git push\`. NEVER open a PR.**
+6. Report the commit sha.
+
+STATUS you must choose:
+  **x** — done, verified, committed.
+  **E** — landed and committed, but a human must eyeball it (GUI-only proof) OR it
+      changed user-visible behaviour nobody ratified. Put the EXACT question for the
+      user in \`result\`, one line.
+  **F** — failed. Leave the tree CLEAN: revert your own edits, commit nothing.
+  **D** — deferred/blocked. Tree clean, nothing committed.
+
+If the implement agent set green=false and repair did not rescue it, the status is
+F or D and you commit NOTHING except possibly the issue file recording the
+measurement. Say so plainly. An honest F is worth more than a green-looking x.`,
+  { label: `writeup:${ID}`, phase: 'Writeup', schema: SCHEMA_WRITEUP }
+))
+
+// ---------------------------------------------------------------- Ledger
+
 phase('Ledger')
-const row = '| ' + ID + ' | ' + esc(carried.status) + ' | ' + esc(carried.commit) + ' | ' +
-  esc(carried.tests_line) + ' | ' + esc(carried.new_issues) + ' | ' + esc(carried.result_line) + ' |'
+const rowResult = await agent(
+  `Append EXACTLY ONE markdown table row to \`${REPO}/${LEDGER}\` and do nothing else.
 
-await agent([
-  'You are the LEDGER agent for item ' + ID + '. You do exactly one thing and nothing else.',
-  'Append this single line, verbatim, as the last line of ' + LEDGER + ':',
-  '',
-  row,
-  '',
-  'Rules: APPEND only - never rewrite, reorder or reformat any existing line in that file.',
-  'Use a shell append (printf ... >> file) or read-then-write-with-the-line-added. Ensure the file',
-  'ends with exactly one newline after your row and that your row is the last table row.',
-  'If a row for ' + ID + ' already exists, leave it and append yours anyway - the driver reads the',
-  'last line. Do NOT git commit the ledger. Do NOT touch any other file. Do NOT run tests or make.',
-  'Reply with the literal word DONE and nothing else.',
-].join('\n'), { label: 'ledger:' + ID, phase: 'Ledger' })
+Use a shell append so you cannot damage the file:
+\`cat >> ${REPO}/${LEDGER} <<'EOF'\` ... \`EOF\`
 
-receipt = [
-  'id: ' + ID,
-  'status: ' + carried.status,
-  'commit: ' + carried.commit,
-  'suites: ' + carried.tests_line,
-  'new issues: ' + carried.new_issues,
-  'result: ' + carried.result_line,
-].concat((carried.evidence || []).slice(0, 3).map(function (e) { return 'evidence: ' + String(e).slice(0, 200) }))
-  .concat(['blocker: ' + (carried.blocker || 'none')])
-  .join('\n')
+The row, in this column order, pipe delimited, on ONE line:
+| ${ID} | <status> | <commit sha or none> | <suites+counts> | <new issues or none> | <one-line result> |
 
-return receipt
+Values to use, verbatim from the crew's receipt:
+  status:     ${writeup && writeup.status ? writeup.status : 'F'}
+  commit:     ${writeup && writeup.commit ? writeup.commit : 'none'}
+  suites:     ${writeup && writeup.suites ? writeup.suites : 'unknown'}
+  new issues: ${writeup && writeup.new_issues ? writeup.new_issues : 'none'}
+  result:     ${writeup && writeup.result ? writeup.result : 'crew produced no receipt'}
+
+Rules:
+* Escape any literal \`|\` inside a cell as \`\\|\` or the table breaks.
+* Keep the result cell to ONE line. Collapse newlines to \`; \`.
+* Do NOT rewrite, reformat or reorder any existing line in the file.
+* Do NOT commit. Do NOT run git at all.
+Then reply with the single word \`appended\`.`,
+  { label: `ledger:${ID}`, phase: 'Ledger' }
+)
+
+return {
+  id: ID,
+  status: writeup ? writeup.status : 'F',
+  commit: writeup ? writeup.commit : 'none',
+  suites: writeup ? writeup.suites : 'unknown',
+  new_issues: writeup ? writeup.new_issues : 'none',
+  result: writeup ? writeup.result : 'crew produced no receipt',
+  evidence: writeup ? (writeup.evidence || []).slice(0, 3) : [],
+  blocker: writeup ? (writeup.blocker || '') : 'no writeup',
+  ledger: rowResult,
+}
