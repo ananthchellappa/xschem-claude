@@ -2484,6 +2484,19 @@ static void warn_hash_extra_node(int inst, const char *tokname, const char *valu
  * involved. GUARD UA-TMPL and GUARD UA-ALTFMT below are that half; the same
  * sweep after them is recorded in doc/claude/issues/0980-*.md.
  *
+ * ISSUES 0987 AND 0988, THE SECOND CORRECTION, AND WHY THERE ARE TWO SENTENCES
+ * NOW. The 0980 pass asked ONE question -- "can ANY netlist of this cell use
+ * this setting?" -- and went silent whenever the answer was yes. That turned 43
+ * wrong accusations into 43 silences, one for one: shipped
+ * xschem_library/examples/loading.sch types cap=100.0, 30.0, 20.0 and 40.0 on
+ * four capacitors, the SPICE deck writes one `.subckt real_capa USC  cap=10.0`
+ * and none of those four numbers appears in it anywhere, so all four simulate
+ * at 10.0 -- and the tool said nothing whatever. The honest question is BOTH:
+ * can any format use it, AND does the format being written right now use it.
+ * ua_reach() below answers in three states, and the sentence has two shapes.
+ * A reader would assume "not a mistake" and "silent" are the same thing. They
+ * are opposites here: one of them costs the designer their setting.
+ *
  * DELIBERATELY NOT IN THE STOPLIST: `schematic` and the *_sym_def family. Those
  * are guard UA-POLY's business, one block down, because for them the override
  * really does reach the deck and the instance must be skipped ENTIRELY -- not
@@ -2497,12 +2510,10 @@ static void warn_hash_extra_node(int inst, const char *tokname, const char *valu
  * without it), an ERC/LVS directive, or a drawing/GUI attribute that was never
  * going to appear in a deck.
  *
- * `select` is the last of those and was added with the issue 0980 correction:
- * the property editor reads it off the INSTANCE to decide which field to put
- * the cursor in (src/property_form.tcl, `xschem get_tok $::tctx::retval
- * select`). Shipped xschem_library/ngspice/solar_panel.sch sets select=OFFSET
- * and select=AMPLITUDE on two comparators for exactly that, and was being told
- * on two lines to take them off. */
+ * `select` USED TO BE THE LAST OF THOSE AND IS NOT ON THIS LIST ANY MORE --
+ * issue 0989. It moved to unused_attr_cellparam_stoplist just below, which asks
+ * the question per CELL rather than per NAME. That list records why the other
+ * 55 names deliberately did not move with it. */
 static const char * const unused_attr_stoplist[] = {
   "name", "lab", "sig_type", "verilog_type", "verilog_gate",
   "spice_ignore", "vhdl_ignore", "verilog_ignore", "tedax_ignore",
@@ -2512,10 +2523,50 @@ static const char * const unused_attr_stoplist[] = {
   "format", "spice_format", "vhdl_format", "verilog_format",
   "tedax_format", "spectre_format", "extra", "extra_pinnumber",
   "numslots", "sim_pinnumber", "pinnumber", "spiceprefix",
-  "highlight", "net_name", "propag", "dir", "global", "select",
+  "highlight", "net_name", "propag", "dir", "global",
   "generic_type", "template", "device_model", "spectre_device_model",
   "model-name", "attach", "program", "file", "class", "savecurrent",
   "top_is_subckt", "hiersep", "bus_replacement_char",
+  NULL
+};
+
+/* GUARD UA-STOP2, issue 0989. The names above are excused WHATEVER cell they
+ * are typed on. This second list is excused only while the cell does NOT
+ * declare the name as one of its own parameters.
+ *
+ * THE CAUSE OF 0989 IS NOT A KEYWORD AND NOT A TCL OR C LIST COMMAND, which is
+ * what a reader -- and the issue as filed -- would assume from the symptom. It
+ * is a plain case-sensitive strcmp() against the list above, applied to the
+ * ATTRIBUTE NAME alone with no regard for the cell. Measured on one instance
+ * carrying ten settings the cell reads nothing of: `select`, `dir`, `class` and
+ * `global` were silent while `selectt`, `dirr`, `classs`, `globall`, `Select`
+ * (the same word with a capital S) and `knobx` were every one of them reported.
+ * One extra letter, or one capital, and the tool speaks. So `select` was never
+ * special: it was one of 56 doors, and a designer who names a real subcircuit
+ * parameter after any of those words could never be told their setting went
+ * nowhere, however the cell was written.
+ *
+ * WHEN A NAME BELONGS ON THIS LIST RATHER THAN THE ONE ABOVE: when the only
+ * thing that reads it is a UI convenience OUTSIDE any netlist, so a symbol
+ * author who declares it in template= has the stronger claim to the name.
+ * `select` is read by the property editor to decide which field to put the
+ * cursor in (src/property_form.tcl, `xschem get_tok $::tctx::retval select`),
+ * and shipped xschem_library/ngspice/solar_panel.sch sets select=OFFSET and
+ * select=AMPLITUDE on two comparators for exactly that. comp_ngspice.sym's
+ * template declares no `select`, so those two stay silent -- while a mux whose
+ * template DOES declare one is now reportable, which is the whole of 0989.
+ *
+ * THE OTHER 55 DELIBERATELY DID NOT MOVE, and a blanket rule would manufacture
+ * false positives on shipped data. Thirteen of them are already declared in
+ * some shipped symbol's template while no shipped format string reads them --
+ * numslots by 271 symbols, class by 67, symversion by 48, only_toplevel by 20,
+ * model-name by 20, file by 11, comment by 9, sig_type by 5, text, spice_ignore,
+ * generic_type, device_model and bus_replacement_char by one or two each. The
+ * netlister, loader and drawing code read those off the instance whether or not
+ * the cell declares them, so the cell's template says nothing about whether the
+ * setting was consumed. Recorded as a rule debt on issue 0989. */
+static const char * const unused_attr_cellparam_stoplist[] = {
+  "select",
   NULL
 };
 
@@ -2680,35 +2731,321 @@ static int symbol_declares_param(int inst, const char *tok)
   return 1;
 }
 
-/* GUARD UA-ALTFMT, issue 0980. Does ANY format string this symbol can be
- * written through reference <tok>, not merely the one being written now?
+/* GUARD UA-ALTFMT, issue 0987. Is <attr> -- one of the cell's alternate netlist
+ * format strings -- there at all, and does it reference <tok>?
  *
- * <format> is the resolved string print_spice_element() is about to parse, and
- * asking only about it was half of what made the shipped warning wrong: a
- * symbol carries up to six format strings and an instance may override any of
- * them, so a setting read by verilog_format is a live setting even while SPICE
- * is being written. get_tok_value() hands back a pointer into a static buffer
- * that the NEXT call overwrites, so each result is consumed immediately and two
- * are never held at once. */
-static int any_format_uses_token(int inst, const char *format, const char *tok)
+ *   0 = the attribute is on neither the instance nor the symbol
+ *   1 = it is there and does NOT reference tok
+ *   2 = it is there and references tok
+ *
+ * THE INSTANCE IS ASKED FIRST AND WINS, because that is exactly what the
+ * netlisters do: every one of them resolves a format attribute as instance
+ * override, then symbol (print_spice_element, print_vhdl_element,
+ * print_verilog_element, print_spectre_element, print_tedax_element all carry
+ * the same four-step resolution). The previous version of this code OR'd the
+ * two together, which is wrong twice over: an instance that brings its own
+ * Spectre line is netlisted through THAT line and the symbol's is never parsed.
+ * Row UF31 is the witness, and it is a separate row from UF25: deleting the
+ * instance-side lookup altogether reddens UF25, but putting the OR back reddens
+ * only UF31, because until that fixture no sheet anywhere carried an
+ * instance-side format string that read a DIFFERENT token from the one the
+ * symbol's reads, and OR and instance-wins give the same answer on every other.
+ *
+ * A READER WOULD ASSUME `1` IS JUST `0` WITH LESS INFORMATION. It is not, and
+ * the difference is what issues 0987 and 0988 turn on: a backend that has a
+ * format string of its own does NOT also emit the symbol template's parameters
+ * -- print_vhdl_element and print_verilog_element both hand off to their
+ * _primitive() form the moment fmt[0] is non-empty -- so `1` means "this
+ * backend will not carry the setting either", and collapsing it into `0` would
+ * put a format on the carrier list that carries nothing. That is a fabricated
+ * claim about the user's own design, RULING D5-1.
+ *
+ * ISSUE 0992, AND IT IS THE WHOLE REASON THE PRESENCE TEST BELOW IS
+ * xctx->tok_size ALONE. "Is the attribute there?" and "does it hold anything?"
+ * are two different questions, and the netlisters ask only the first when they
+ * decide whether to stop looking. print_vhdl_element and print_verilog_element
+ * both read `get_tok_value(inst->prop_ptr, fmt_attr, 2); if(!xctx->tok_size)
+ * <look at the symbol>` -- xctx->tok_size is the length of the token NAME that
+ * matched, so an instance carrying vhdl_format="" IS the answer as far as they
+ * are concerned and the symbol's own line is never read. They then find the
+ * string empty, take the ordinary path, and write the cell's template
+ * parameters after all.
+ *
+ * An earlier version of this function tested (xctx->tok_size && f && f[0]),
+ * which reads as the same question and is not: an empty override on ONE COPY
+ * of a cell made this code fall through to the SYMBOL's format string, which
+ * the netlist being described never looks at. MEASURED, on a one-pin cell whose
+ * template declares knob and whose symbol carries a VHDL line reading some
+ * other token: the sheet types knob=99 and vhdl_format="" on one copy, the VHDL
+ * netlist really does write `knob => 99` in that copy's generic map, and the
+ * tool told the designer "uaemptf never reads knob when the netlist is written
+ * ... or take it off". Following that advice deletes a live setting -- issue
+ * 0980's harm, arriving through a new door. The mirror shape fabricated
+ * instead: with the symbol's VHDL line reading knob and the template declaring
+ * nothing, the tool named VHDL as a carrier while neither the VHDL nor the
+ * Verilog netlist of that sheet mentioned knob anywhere, RULING D5-1.
+ *
+ * So: presence is tok_size, exactly as the netlisters have it, and an override
+ * that IS there but empty resolves to state 0 -- no format string governs this
+ * backend, the template path is the one taken -- which is what the netlisters
+ * do one line later at `if(fmt[0])`. Rows UF33a and UF33b are the two shapes.
+ *
+ * get_tok_value() hands back a pointer into a static buffer that the NEXT call
+ * overwrites, so the result is consumed before anything else is looked up. */
+static int ua_fmt_attr_state(int inst, const char *attr, const char *tok)
 {
-  static const char * const fmt_attrs[] = {
-    "format", "spice_format", "vhdl_format", "verilog_format",
-    "tedax_format", "spectre_format", NULL
-  };
   const char *f;
+  int found;
+
+  f = get_tok_value(xctx->inst[inst].prop_ptr, attr, 2);
+  found = xctx->tok_size ? 1 : 0;
+  if(!found) {
+    f = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, attr, 2);
+    found = xctx->tok_size ? 1 : 0;
+  }
+  if(!found || !f || !f[0]) return 0;
+  return format_uses_token(f, tok) ? 2 : 1;
+}
+
+/* GUARD UA-IGNORE, issue 0988. Would this instance be written out AT ALL in the
+ * netlist format these flag bits belong to?
+ *
+ * THIS IS THE CASE THE WHOLE DIAGNOSTIC EXISTS FOR AND IT WAS THE ONE THAT GOT
+ * AWAY. A symbol or an instance may carry vhdl_ignore=true, verilog_ignore,
+ * spectre_ignore or tedax_ignore, and then no netlist of that format contains
+ * the instance at all -- so a setting its template happens to declare reaches
+ * nothing, anywhere, and the accusing sentence is the truthful one. Before this
+ * guard a template declaration alone silenced the warning, so a cell marked
+ * un-netlistable in every other format was the quietest thing in the tree.
+ * Measured on a fixture: the sheet types knob=99, the SPICE deck carries only
+ * the template default knob=1, the VHDL netlist holds no instance of the cell
+ * at all, and the tool said nothing.
+ *
+ * The bits are the ones skip_instance2() (netlist.c) tests, set from the
+ * *_ignore attributes by set_sym_flags() and set_inst_flags() in actions.c, so
+ * this asks the netlisters' own question. skip_instance2() itself cannot be
+ * called here: it is static to netlist.c AND keyed to xctx->netlist_type, which
+ * is SPICE at this call site, so it can only ever answer about SPICE. A
+ * three-line reader of the same bits keeps this change to one file.
+ *
+ * LVS_IGNORE is deliberately NOT consulted. When it applies, spice_netlist.c's
+ * own skip_instance() means print_spice_element() -- and so this whole check --
+ * is never reached for that instance. */
+static int ua_inst_or_sym_flag(int inst, int mask)
+{
+  return ((xctx->inst[inst].flags & mask) ||
+          (xctx->sym[xctx->inst[inst].ptr].flags & mask)) ? 1 : 0;
+}
+
+/* GUARD UA-GENTIME, issue 0987. A generic the symbol types as `time` is dropped
+ * from the Verilog instance parameter map -- print_verilog_element's
+ * `strcmp(get_tok_value(generic_type, token, 0), "time")` test -- so Verilog
+ * does not carry it even though the template declares it. A reader would assume
+ * template membership settles both VHDL and Verilog together; on this one
+ * attribute type it does not, and VHDL has no matching exclusion. Shipped
+ * xschem_library/examples/loading.sch is the witness: switch_rreal.sym types
+ * del as a time, so naming Verilog beside VHDL on those lines would name a
+ * netlist that carries nothing -- RULING D5-1.
+ *
+ * generic_type= is read into a copy because the inner get_tok_value() overwrites
+ * the static buffer the outer one just returned. */
+static int ua_generic_is_time(int inst, const char *tok)
+{
+  char *gt = NULL;
+  int r;
+
+  my_strdup(_ALLOC_ID_, &gt,
+            get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "generic_type", 0));
+  if(!gt || !gt[0]) {
+    my_free(_ALLOC_ID_, &gt);
+    return 0;
+  }
+  r = !strcmp(get_tok_value(gt, tok, 0), "time");
+  my_free(_ALLOC_ID_, &gt);
+  return r;
+}
+
+/* GUARD UA-EMPTY, issue 0993. A setting with an EMPTY value is not written
+ * into the generic/parameter map at all, and the two backends that walk the
+ * template disagree about what "empty" means.
+ *
+ * A reader would assume template membership settles it -- the 0988 pass assumed
+ * exactly that -- so here is the measurement, taken on the same one-pin cell
+ * whose template declares knob, with the sheet typing knob="" on one copy: the
+ * VHDL netlist writes `xEM : uatpl` with NO generic map, only the component's
+ * own default, while the Verilog netlist writes `.knob ( "" )`. Naming VHDL
+ * beside Verilog on that line would be a claim about the designer's own circuit
+ * that nobody measured, RULING D5-1.
+ *
+ * WHY TWO MODES AND NOT ONE. Both netlisters end the value at `if(value[0] !=
+ * '\0')`, but they build `value` differently: print_vhdl_element strips the
+ * unescaped quotes as it parses (`if(c=='"' && !escape) quote=!quote; else
+ * value[value_pos++]=c`), so "" leaves nothing behind, and
+ * print_verilog_element keeps every character it sees, so "" is two characters
+ * and counts. get_tok_value's bit 0 is that same difference -- 3 keeps quotes
+ * and backslashes, 2 drops the unescaped ones -- and bit 1 is set in both so
+ * that merely LOOKING at a value can never run a tcleval() hook.
+ *
+ * Shipped instances already carry attrs="", write="", sweep="", store="" and
+ * nodeset=""; this needs only a cell whose template declares one of those
+ * names. Row UF32 is the witness. */
+#define UA_TMPL_NO      0   /* this backend never walks the symbol template */
+#define UA_TMPL_DEQUOTE 1   /* VHDL: the parser strips "..." before the test */
+#define UA_TMPL_RAW     2   /* Verilog: the parser keeps "..." so "" is a value */
+
+static int ua_value_is_empty(int inst, const char *tok, int mode)
+{
+  const char *v;
+
+  v = get_tok_value(xctx->inst[inst].prop_ptr, tok,
+                    (mode == UA_TMPL_RAW) ? 3 : 2);
+  return (!v || !v[0]) ? 1 : 0;
+}
+
+/* GUARD UA-FMTWINS, issues 0987 and 0988. Does the netlist format described by
+ * <attr> and <mask> carry <tok> for THIS instance?
+ *
+ * <uses_template> is UA_TMPL_NO, UA_TMPL_DEQUOTE or UA_TMPL_RAW: whether that
+ * backend emits the symbol template's parameters when it has no format string
+ * of its own, and if it does, which spelling of "empty" it applies to the value
+ * (GUARD UA-EMPTY above). VHDL and Verilog do; Spectre and tEDAx do NOT.
+ *
+ * A reader would assume all six formats behave alike
+ * -- the 0980 pass assumed exactly that -- so here is the measurement, taken on
+ * a one-pin subcircuit whose template declares knob and whose sheet sets
+ * knob=99: the VHDL netlist writes `knob => 99`, the Verilog one writes
+ * `.knob ( 99 )`, the Spectre product has no instance line for the cell at all
+ * and the tEDAx one mentions knob nowhere. print_spectre_element() and
+ * print_tedax_element() read spectre_format and tedax_format and nothing else;
+ * neither falls back to `format` and neither walks the template. So template
+ * membership is evidence for two backends and for no others.
+ *
+ * GUARD UA-FMTWINS is the `st == 1` line: a backend that has a format string of
+ * its own is netlisted through that string and never through the parameter map,
+ * so for that backend template membership counts for nothing. */
+static int ua_backend_carries(int inst, const char *attr, int mask,
+                              int uses_template, int drop_time, const char *tok)
+{
+  int st;
+
+  if(ua_inst_or_sym_flag(inst, mask)) return 0;             /* GUARD UA-IGNORE */
+  st = ua_fmt_attr_state(inst, attr, tok);
+  if(st == 2) return 1;                                     /* GUARD UA-ALTFMT */
+  if(st == 1) return 0;                                     /* GUARD UA-FMTWINS */
+  if(uses_template == UA_TMPL_NO) return 0;
+  if(drop_time && ua_generic_is_time(inst, tok)) return 0;   /* GUARD UA-GENTIME */
+  if(ua_value_is_empty(inst, tok, uses_template)) return 0;   /* GUARD UA-EMPTY */
+  return symbol_declares_param(inst, tok);      /* GUARD UA-TMPL + GUARD UA-EXTRA */
+}
+
+/* ISSUE 0987. How far does <tok> actually get? THREE answers, not two, and
+ * <carriers> is filled in with the netlist formats measured for THIS instance.
+ *
+ *   UA_HERE      the deck being written right now reads it. Say nothing.
+ *   UA_ELSEWHERE this deck drops it, but another netlist of the same cell
+ *                really does carry it. Say so, and say DO NOT REMOVE IT.
+ *   UA_NOWHERE   nothing anywhere reads it. The original 0970 sentence.
+ *
+ * A reader would assume UA_ELSEWHERE deserves silence -- the 0980 pass did, and
+ * that is issue 0987: it turned 43 wrong accusations into 43 silences, one for
+ * one, and shipped loading.sch's four capacitors went on simulating at the cell
+ * default with nothing said.
+ *
+ * `spice_format` IS NOT IN THIS TABLE and its absence is deliberate. It is a
+ * phantom: no backend reads it -- print_spice_element() resolves `format`, or
+ * xctx->format when an LVS or custom-format run has set one -- and it is
+ * declared by zero .sym files in xschem_library, sky130A, ihp-sg13g2, gf180mcuD
+ * and xschem_libs_newsym. The 0980 pass silenced the warning on it, which was
+ * silencing on nothing. It stays on the stoplist above, because a user may
+ * still type the name.
+ *
+ * GUARD UA-CARRIERS, RULING D5-1: the sentence names the formats measured here,
+ * joined as "VHDL or Verilog" or "Spectre, VHDL or Verilog", never a fixed
+ * phrase. A hardcoded list would be a claim about the user's design that nobody
+ * measured. */
+#define UA_HERE      0
+#define UA_ELSEWHERE 1
+#define UA_NOWHERE   2
+
+static int ua_reach(int inst, const char *format, const char *tok,
+                    char *carriers, size_t csize)
+{
+  const char *names[4];
+  const char *sep;
+  size_t len;
+  int n = 0;
   int i;
 
-  if(format_uses_token(format, tok)) return 1;        /* GUARD UA-FMT */
-  for(i = 0; fmt_attrs[i]; ++i) {
-    f = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, fmt_attrs[i], 2);
-    if(f && f[0] && format_uses_token(f, tok)) return 1;
+  /* Defensive, and deliberately invisible to any row -- the only caller resets
+   * this itself one line before the call, and every path out of here that
+   * returns UA_ELSEWHERE has written the join into it. It is here so that a
+   * later caller cannot inherit the previous token's list. Deleting it changes
+   * nothing a user sees, and no test row should be written to see it. */
+  carriers[0] = '\0';
+  if(format_uses_token(format, tok)) return UA_HERE;         /* GUARD UA-FMT */
+
+  /* GUARD UA-LVSFMT, issue 0987. <format> is the string the deck is written
+   * from, and in an LVS or custom-format run that is lvs_format, not `format`.
+   * 110 files in this tree carry an lvs_format, so narrowing the first test to
+   * the resolved string alone would newly call every setting only the ordinary
+   * format line reads dead, and offer it for deletion -- issue 0980's harm
+   * arriving through a new door.
+   *
+   * ⚠ THE `xctx->format &&` HALF IS A COST GUARD, NOT A CORRECTNESS ONE, and no
+   * test row can see it or should try -- issue 0986's rule is about halves that
+   * hide a defect. When xctx->format is NULL the resolved <format> above IS the
+   * plain `format` attribute, resolved instance-then-symbol by exactly the same
+   * four steps, so this second lookup would return the same answer the first
+   * test already gave. Removing the condition changes no output; it only pays
+   * two get_tok_value() calls per token per instance on every ordinary SPICE
+   * netlist. Delete the whole line, though, and UF26 reddens. */
+  if(xctx->format && ua_fmt_attr_state(inst, "format", tok) == 2) return UA_HERE;
+
+  /* THE `| *_SHORT` HALF OF EACH MASK, issue 0991, and it is not decoration.
+   * *_ignore takes THREE spellings, not two: `true`/`open` set the _IGNORE bit
+   * and `short` sets the _SHORT bit (set_sym_flags and set_inst_flags in
+   * actions.c). A cell or a copy marked `vhdl_ignore=short` is netlisted as a
+   * plain WIRE joining its pins -- netlist.c's skip_instance(i, 1, ...) hands
+   * skip_instance2 the _SHORT bit as well, so print_vhdl_element is never
+   * reached for it -- and a wire carries no settings at all. Without this half
+   * the sentence names a netlist in which the instance does not appear as an
+   * instance, RULING D5-1. Rows UF30a-d take the four marks one at a time and
+   * each demands the exact list that survives. */
+  if(ua_backend_carries(inst, "spectre_format", SPECTRE_IGNORE | SPECTRE_SHORT,
+                        UA_TMPL_NO, 0, tok)) names[n++] = "Spectre";
+  if(ua_backend_carries(inst, "vhdl_format", VHDL_IGNORE | VHDL_SHORT,
+                        UA_TMPL_DEQUOTE, 0, tok)) names[n++] = "VHDL";
+  if(ua_backend_carries(inst, "verilog_format", VERILOG_IGNORE | VERILOG_SHORT,
+                        UA_TMPL_RAW, 1, tok)) names[n++] = "Verilog";
+  if(ua_backend_carries(inst, "tedax_format", TEDAX_IGNORE | TEDAX_SHORT,
+                        UA_TMPL_NO, 0, tok)) names[n++] = "tEDAx";
+  if(!n) return UA_NOWHERE;
+
+  /* The join, and BOTH separators are load-bearing English. Two names read "VHDL
+   * or Verilog"; three or four need the commas as well, "Spectre, VHDL, Verilog
+   * or tEDAx". Until row UF29 there was no sheet anywhere -- shipped or fixture
+   * -- that produced more than two carriers, so the ", " branch was executed by
+   * nothing and "a VHDL, Verilog netlist" or "a VHDLVerilog netlist" could have
+   * shipped past every check, against the PLAIN ENGLISH ruling. UF29 demands
+   * the joined phrase verbatim, not the set of names.
+   *
+   * The length test is the same shape as GUARD UA-ELIDE's destination clamp and
+   * is unreachable for the same reason: four names at most, the longest join is
+   * "Spectre, VHDL, Verilog or tEDAx" at 31 characters, and the only caller
+   * hands in a 64-byte buffer. No sentence a user can produce reaches it, so row
+   * UF22 pins it structurally rather than trading a field the reader needs for a
+   * test -- issue 0986 gap 5, same argument. */
+  len = 0;
+  for(i = 0; i < n; ++i) {
+    sep = "";
+    if(i > 0) sep = (i == n - 1) ? " or " : ", ";
+    if(len + strlen(sep) + strlen(names[i]) + 1 >= csize) break;
+    strcpy(carriers + len, sep);
+    len += strlen(sep);
+    strcpy(carriers + len, names[i]);
+    len += strlen(names[i]);
   }
-  for(i = 0; fmt_attrs[i]; ++i) {
-    f = get_tok_value(xctx->inst[inst].prop_ptr, fmt_attrs[i], 2);
-    if(f && f[0] && format_uses_token(f, tok)) return 1;
-  }
-  return 0;
+  return UA_ELSEWHERE;
 }
 
 /* GUARD UA-SYMNAME, issue 0980. Does the instance's own SYMBOL REFERENCE read
@@ -2769,9 +3106,17 @@ static void warn_unused_instance_attr(int inst, const char *format)
   char e_cell[80];
   char e_prop[80];
   char e_val[160];
+  /* ISSUE 0987: the two clauses that differ between the two shapes of the
+   * sentence. They are separate buffers so that RULING D5-4 stays true -- the
+   * sentence itself is still built by ONE my_snprintf into str, and handed to
+   * the info window exactly once, whichever shape it took. */
+  char mid[240];
+  char advice[640];
+  char carriers[64];
   size_t saved_tok_size;
   int i;
   int skip;
+  int reach;
 
   if(!format || !format[0]) return;
   if(inst < 0 || xctx->inst[inst].ptr < 0) return;
@@ -2857,6 +3202,12 @@ static void warn_unused_instance_attr(int inst, const char *format)
     if(*q) { *q = '\0'; ++q; }
 
     skip = 0;
+    /* Defensive, and deliberately invisible to any row: reach is assigned by
+     * ua_reach() on every path that can reach the print block below, so this
+     * reset cannot change what the user sees. It is here so that a later hand
+     * adding a test between the two cannot inherit the previous token's answer. */
+    reach = UA_NOWHERE;
+    carriers[0] = '\0';
     /* GUARD UA-NAME, issue 0970. A token that does not read as an attribute
      * NAME is not a setting the user typed, and the tree really contains such
      * tokens: the shipped sky130_tests/charge_pump_phasegen sheet writes its
@@ -2879,16 +3230,26 @@ static void warn_unused_instance_attr(int inst, const char *format)
     if(!skip && (!strcmp(p, "schematic") || !strcmp(p, "spice_sym_def") ||
                  !strcmp(p, "spectre_sym_def") || !strcmp(p, "vhdl_sym_def") ||
                  !strcmp(p, "verilog_sym_def") || !strcmp(p, "tedax_sym_def"))) skip = 1;
-    /* GUARD UA-FMT + GUARD UA-ALTFMT: any format string this symbol can be
-     * written through, not only the one being written this minute. */
-    if(!skip && any_format_uses_token(inst, format, p)) skip = 1;
-    /* GUARD UA-TMPL, issue 0980: a setting the cell's own template declares is
-     * passed straight into a VHDL or Verilog netlist of that cell, so it is not
-     * a lost setting even though the SPICE format string never names it. */
-    if(!skip && symbol_declares_param(inst, p)) skip = 1;
+    /* GUARD UA-STOP2, issue 0989: a name the EDITOR reads for itself is excused
+     * only while the cell does not declare it as one of its own parameters. The
+     * list above is consulted by name alone; this one asks about the cell, which
+     * is why a subcircuit parameter a designer called `select` can be reported
+     * at last while the shipped solar panel's editing convenience is untouched. */
+    for(i = 0; !skip && unused_attr_cellparam_stoplist[i]; ++i) {
+      if(!strcmp(p, unused_attr_cellparam_stoplist[i]) &&
+         !symbol_declares_param(inst, p)) { skip = 1; break; }
+    }
     /* GUARD UA-SYMNAME, issue 0980: a setting the instance's symbol reference
-     * substitutes into the cell name picks WHICH cell body is written out. */
+     * substitutes into the cell name picks WHICH cell body is written out. It
+     * stays the FIRST of the reach tests: it is the loudest way a setting can
+     * reach the simulator, so there is nothing to report about it in any shape. */
     if(!skip && symbol_name_uses_token(inst, p)) skip = 1;
+    /* ISSUE 0987: and then how far it gets -- this deck, some other netlist of
+     * the same cell, or nothing anywhere. Only the first of those is silent. */
+    if(!skip) {
+      reach = ua_reach(inst, format, p, carriers, S(carriers));
+      if(reach == UA_HERE) skip = 1;
+    }
     if(!skip) {
       val = get_tok_value(prop, p, 0);
       /* GUARD UA-ELIDE, issue 0983: every variable-length field is shortened to
@@ -2900,12 +3261,23 @@ static void warn_unused_instance_attr(int inst, const char *format)
       unused_attr_elide(e_cell,  S(e_cell),  sym_cell, 60, 0);
       unused_attr_elide(e_prop,  S(e_prop),  p, 60, 0);
       unused_attr_elide(e_val,   S(e_val),   val ? val : "", 120, 0);
-      /* RULING D5-4: this sentence is minted HERE and nowhere else. The clause
-       * "did not reach the simulator" is the contract phrase the test suite
-       * recognises these lines by -- keep it verbatim.
+      /* ISSUES 0987 AND 0988, THE TWO SHAPES. They differ in the clause that
+       * says WHY the setting was lost and in the action they ask for, and those
+       * actions are opposites -- take it off, versus do not take it off. Both
+       * keep the contract phrase "did not reach the simulator" verbatim, which
+       * is how the test suite recognises the whole class, and both open the
+       * same way, so a reader who has seen one recognises the other.
        *
-       * ISSUE 0982, the advice: the old wording told the user to "give x1 a
-       * schematic= attribute of its own", which walks them into a silent
+       * THE SECOND SHAPE MUST NEVER TELL THE USER TO DELETE ANYTHING. That one
+       * clause is the whole of issue 0980's harm: following it on shipped
+       * xschem_library/examples/loading.sch or logic/ram_tb.sch breaks a working
+       * example, because the VHDL and Verilog netlists of those very sheets
+       * carry the settings the SPICE deck drops. So neither half of the accusing
+       * advice appears below in the UA_ELSEWHERE arm, and a test row asserts
+       * their absence from every line of that shape the whole run produces.
+       *
+       * ISSUE 0982, the accusing advice: the old wording told the user to "give
+       * x1 a schematic= attribute of its own", which walks them into a silent
        * collision. Measured on two copies of one cell given the SAME name, as
        * that sentence invites: the deck holds ONE cell body carrying the first
        * instance's setting, the second instance's setting appears nowhere at
@@ -2915,16 +3287,31 @@ static void warn_unused_instance_attr(int inst, const char *format)
        * its own advice created. The advice now names the requirement and says
        * what breaks without it. Detecting the collision itself is issue 0982's
        * remaining half and is not done here. */
+      if(reach == UA_ELSEWHERE) {
+        my_snprintf(mid, S(mid),
+          "a SPICE netlist of %s does not pass %s through", e_cell, e_prop);
+        my_snprintf(advice, S(advice),
+          "It is not a spelling mistake and you should not remove it: a %s "
+          "netlist of the same cell does carry it, so deleting it would break "
+          "that. To get it into the SPICE run as well, the %s symbol has to be "
+          "changed so its SPICE line passes it through.", carriers, e_cell);
+      } else {
+        my_snprintf(mid, S(mid),
+          "%s never reads %s when the netlist is written", e_cell, e_prop);
+        my_snprintf(advice, S(advice),
+          "Check the spelling against the settings this cell does read, or take "
+          "it off. If you meant to change only this one copy of the cell, add a "
+          "schematic= attribute to %s naming a cell name that no other instance "
+          "asks for, and that copy is written out on its own with your setting "
+          "in it. Two instances that ask for the same name quietly share one "
+          "copy, and only the first one's setting is kept.", e_inst);
+      }
+      /* RULING D5-4: whichever shape it took, the sentence is assembled HERE and
+       * nowhere else, and handed to the info window exactly once. */
       my_snprintf(str, S(str),
-        "Warning: on sheet %s, instance %s (a %s) sets %s=%s, but %s never reads "
-        "%s when the netlist is written, so that setting did not reach the simulator "
-        "and changed nothing. Check the spelling against the settings this cell does "
-        "read, or take it off. If you meant to change only this one copy of the cell, "
-        "add a schematic= attribute to %s naming a cell name that no other instance "
-        "asks for, and that copy is written out on its own with your setting in it. "
-        "Two instances that ask for the same name quietly share one copy, and only "
-        "the first one's setting is kept.",
-        e_sheet, e_inst, e_cell, e_prop, e_val, e_cell, e_prop, e_inst);
+        "Warning: on sheet %s, instance %s (a %s) sets %s=%s, but %s, so that "
+        "setting did not reach the simulator and changed nothing. %s",
+        e_sheet, e_inst, e_cell, e_prop, e_val, mid, advice);
       statusmsg(str, 2);
     }
     p = q;

@@ -596,6 +596,25 @@ parameter of that name permanently unreportable) and **0990** (two concurrent
 and the one that finishes second reports a `FATAL: 10` that never happened —
 a fake red in the suite whose baseline is ZERO).
 
-**The next free number is 0991.** 0500-0599 and 0700-0799 remain reserved for
+**2026-08-30, item S4d sabotage pass.** Filed **0991** (the `short` half of the
+four do-not-write marks has no test row; deleting `| VHDL_SHORT` makes the netlist
+warning name VHDL as a carrier on a cell VHDL writes as a plain wire, with all 57
+checks green), **0992** (an empty `vhdl_format=""` on one instance makes the
+warning read the SYMBOL's format string while the netlister reads the instance's
+empty one -- it tells the designer to delete a setting the VHDL netlist really
+writes, and the correct fix is ALSO 57/57 green) and **0993** (a template-declared
+setting whose VALUE is empty is claimed to be carried by VHDL, which drops it).
+All three found by neutralizing every guard one at a time against a real rebuild,
+50 mutations, one per build. Recorded as an addendum on 0986, whose "ended at 0"
+count is corrected to *closed 6, opened 7*.
+
+**2026-08-30, item S4d write-up pass.** Filed **0994** (the tier list in
+`doc/claude/ledger/crew.js` prints three suites' DISPLAY-arm check counts under
+the headless command, and `test_wave_viewer`'s `--logdir` count under `--nolog`,
+so four suites can never reach their recorded baseline by the command recorded
+beside them; its `run_regression.tcl` block count is stale at 46 against a
+measured 53. Found independently FOUR times inside one item).
+
+**The next free number is 0995.** 0500-0599 and 0700-0799 remain reserved for
 other branches. No 09xx block is reserved, so 0899 is followed by 0900 — but
 **1000–1199 is** (user, 2026-08-30), so 0999 is followed by **1200**.
