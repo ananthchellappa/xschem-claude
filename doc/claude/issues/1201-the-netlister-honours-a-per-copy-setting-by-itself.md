@@ -522,3 +522,57 @@ witnessed all nine and took the suite from 34 checks to 44. That work is
 recorded in the section above. **It did not touch the six defects in the table
 here** - those came from a different pass and are product defects, not coverage
 holes.
+
+---
+
+# THE CONTRACT AFTER ITEM S6b, 2026-08-31 -- read this before the sections above
+
+Everything above still describes the feature. Two rules were added under it, and
+one of them changes when the feature fires at all, so a reader who stops before
+this section will have the wrong model.
+
+## 1. A value has to look like a value (GUARD AS-VALUE, [[1213]])
+
+XSCHEM writes a separate copy of a cell for a setting **only when the value is
+one word with at least one letter or digit in it**. Formally: not empty; no
+space, tab, line break, carriage return, form feed or vertical tab anywhere in
+it; no `@` and no `%` (the two marks XSCHEM reads as "fill this in later", and
+it really does resolve them again when the device line is written); and at least
+one letter or digit somewhere.
+
+Anything else falls through to the plain cell and is reported as a setting that
+went nowhere -- the behaviour this feature replaced. This is an ALLOW-rule on
+purpose. Two passes had patched one refused shape at a time and each one was
+walked past by the next shape along, so a shape nobody has thought of is now
+safe because it was never admitted, not because somebody wrote a guard for it.
+
+## 2. A refused setting is taken OUT, not merely left out of the name ([[1227]])
+
+The first version of rule 1 only kept a refused setting out of the **sharing
+key** -- the string that decides the cell's name and which copies share a body.
+The setting still travelled into the cell body XSCHEM wrote, so a copy with one
+good setting beside one refused one still put `sky130_fd_pr__` in the deck,
+under a sentence saying that setting "did not reach the simulator and changed
+nothing". `lost_attrs_strip_unusable()` (`src/token.c`) now hands the new body
+the copy's settings with the refused ones removed, so they fall back to the
+value the symbol's own template supplies. Two callers, one answer:
+`get_additional_symbols()` for the deck and `descend_schematic()` for the level
+a designer stands on, so the schematic and the deck cannot disagree.
+
+**A cell body the DESIGNER named keeps its property string byte for byte.**
+Explicit still beats implicit; the strip is only for a name XSCHEM minted.
+
+## 3. The rest of what S6b closed
+
+| issue | what changed |
+|---|---|
+| [[1212]] | the collision check reads the design's sheet FILES, so a cell name typed one level down is seen; what it cannot resolve it says out loud |
+| [[1214]] | a value equal to the symbol's own default writes no second body -- and says nothing, because nothing was lost |
+| [[1215]] | two copies asking for the same settings share ONE body, and it keeps the name the designer typed |
+| [[1216]] [[1217]] [[1218]] | one sentence minted once; a row that prints a comparison now makes it; the invented tick box is gone from the comments |
+| [[1221]]-[[1226]] | six load-bearing lines the sabotage pass could delete with every suite green, now each seen by a row |
+
+**Still open, and on the user's ruling queue:** [[1220]] -- across sheets the
+note's "any other copy that asks for the same settings shares that one" is still
+false, because a name harvested from a file cannot be compared by settings.
+The cost is a duplicate cell body; nothing is lost silently.

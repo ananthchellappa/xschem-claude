@@ -1,7 +1,9 @@
 # 1217 - row AS56 prints the measurement its own words say it asserts
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed. No live gap today.
+**Status:** FIXED 2026-08-31 by item S6b, folded into the EXISTING row AS56 as a
+fourth element, so it costs no new check. Was: OPEN - measured, not fixed; no
+live gap at the time of filing.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Measured by that item's verify
 pass; re-read here.
 **Related:** [[1208]], whose fix this row verifies.

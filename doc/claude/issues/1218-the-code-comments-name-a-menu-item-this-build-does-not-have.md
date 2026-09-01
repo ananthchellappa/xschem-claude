@@ -1,8 +1,10 @@
 # 1218 - the code comments name a menu item this build does not have
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed. Comment/prose accuracy only; no
-behaviour is wrong.
+**Status:** FIXED 2026-08-31 by item S6b. Verified by row AS77 -- which was
+itself blind when first written and was repaired in the same item, [[1222]].
+Was: OPEN - measured, not fixed; comment/prose accuracy only, no behaviour was
+wrong.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Measured by that item's verify
 pass; re-checked here.
 
@@ -49,8 +51,20 @@ from this suite's own row prose, replaced everywhere by the doors the user can
 actually reach: "a netlist of just the sheet on screen -- Shift-N, or `xschem
 netlist -nohier`". Row AS77 counts it at zero in all three places.
 
-**The row was blind when it was first written and had to be fixed before it
-could be trusted**: all three sites wrap the phrase across a line break (a
-continuing C comment, a Tcl row title with a trailing backslash, a `##` comment
-line), so counting raw bytes found nothing and the row passed having measured
-nothing. It now flattens the text first.
+**The row had a blind spot when first written, and it was fixed before the row
+could be trusted** -- see [[1222]]. The claim first written here, that no site
+was findable in the raw bytes, is WRONG, and the corrected measurement against
+the pre-fix sources (`2dddd540`) is:
+
+| file | occurrences | found raw | found by the first flattener |
+|---|---|---|---|
+| `src/actions.c` | 2 (`:4205` on one line, `:4471` wrapped in a C comment) | 1 | 1 |
+| `src/spice_netlist.c` | 1 (on one line) | 1 | 1 |
+| this suite's own prose | 2 (both wrapped with a Tcl backslash) | 0 | 2 |
+
+So the row was never green-while-blind against the sites that existed: it would
+have failed on four of the five. What it could not see was a **reintroduction
+wrapped across a C comment line break** -- which is how anybody actually writes
+a comment, and which is the one shape the phrase has to be kept out in. The
+flattener now drops a `/*` and a continuing ` * ` as well as a Tcl `#` and a
+trailing backslash.

@@ -1,7 +1,8 @@
 # 1216 - one sentence about a setting the cell never reads is written out in four places
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed. Latent: the four copies agree today.
+**Status:** FIXED 2026-08-31 by item S6b. Verified by row AS75. Was: OPEN -
+measured, not fixed; latent, the four copies agreed at the time of filing.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Measured by that item's verify
 pass; the line numbers below were re-checked here.
 **Caused by:** [[1205]]'s fix, which split the netlist warning's advice into four

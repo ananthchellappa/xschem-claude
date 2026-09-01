@@ -2676,13 +2676,15 @@ check {AS75 STRUCTURAL, ISSUE 1216. One sentence the designer reads is written\
 ## Assembled from pieces so that this row's own file cannot satisfy it. The
 ## phrase is a tick box that does not exist anywhere in this build.
 set AS_WIDG [string map {Z { }} {netlistZcurrentZschematicZonly}]
-## FLATTENED FIRST, AND THAT IS NOT COSMETIC. Every one of the three places
-## this phrase lives wraps it across two lines -- a C comment continuing, a
-## Tcl row title continuing with a backslash, a comment line starting with a
-## hash. Counted on the raw bytes the phrase is contiguous NOWHERE and the row
-## passes having found nothing, which is what it did when first written.
-## Comment markers and line breaks are dropped and runs of blank space become
-## one space, so a sentence is counted as the reader reads it.
+## FLATTENED FIRST, AND THAT IS NOT COSMETIC. Measured against the pre-fix
+## sources at 2dddd540: of the five places this phrase lived, two sat on one
+## line and were countable raw, two were wrapped with a Tcl backslash, and one
+## was wrapped across a continuing C comment. So the row would have failed on
+## four of them even counting raw bytes -- but the fifth shape, a C comment
+## continuing onto the next line, is the shape anybody writes a comment in, and
+## it was invisible until issue 1222. Comment markers and line breaks are
+## dropped and runs of blank space become one space, so a sentence is counted
+## as the reader reads it rather than as the file stores it.
 proc as_flat {t} {
   set out {}
   foreach l [split $t "\n"] {
@@ -2713,11 +2715,12 @@ check {AS77 ISSUE 1218. The comments describing the single-sheet netlist tell\
  is no such box anywhere in this build -- the real doors are the Shift-N key\
  and the netlist command's own no-hierarchy option. The house rule is to name\
  things the user can actually see, and an invented widget sends the next reader\
- hunting for something that is not there. Counted in the raw files, comments\
- included, because that is the only place it lives -- and in this suite's own\
- row prose too, where it has already spread. Counted on the flattened text,\
- because all three sites wrap the phrase across a line break and counting raw\
- bytes finds none of them} \
+ hunting for something that is not there. Counted in the files themselves,\
+ comments included, because that is the only place it lives -- and in this\
+ suite's own row prose too, where it had already spread. Counted on the\
+ FLATTENED text, because a comment wrapping the phrase onto a second line hides\
+ it from a raw count, and that is the shape a reintroduction takes: issue 1222\
+ measured one put back that way and this row stayed green} \
   [list [as_count $AS_SPNRAW $AS_WIDG] [as_count $AS_ACTRAW $AS_WIDG] \
         [as_count $AS_SELF $AS_WIDG]] \
   {0 0 0}

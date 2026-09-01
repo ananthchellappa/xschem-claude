@@ -1,7 +1,11 @@
 # 1215 - two copies asking for the same settings get two identical cell bodies, and the note says they share one
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed.
+**Status:** FIXED 2026-08-31 by item S6b **for two copies on one design that
+XSCHEM can compare**. Verified by rows AS70 and AS71 (the control that keeps
+[[1202]] closed). Across sheets the note's "shares that one" sentence is still
+false and is recorded as [[1220]], with row AS85.
+Was: OPEN - measured, not fixed.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Measured by that item's verify
 pass and re-measured independently here on the shipped binary.
 **Caused by:** [[1202]]'s fix (GUARD AS-TYPEDNAME), landed in item S6a. This is

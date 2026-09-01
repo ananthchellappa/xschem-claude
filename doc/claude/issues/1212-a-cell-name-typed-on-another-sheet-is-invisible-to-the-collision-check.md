@@ -1,7 +1,10 @@
 # 1212 - a cell name typed on another sheet is invisible to the collision check, so that copy still gets someone else's device
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed.
+**Status:** FIXED 2026-08-31 by item S6b. Verified by rows AS72, AS73 and
+AS74 of `tests/headless/test_auto_specialize_1201.tcl`. What the design walk
+cannot reach, and the cross-sheet copy it still refuses, are recorded as [[1220]].
+Was: OPEN - measured, not fixed.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Measured first by that item's
 verify pass and re-measured independently here on the shipped binary.
 **Caused by:** [[1201]]. This is the half of [[1202]] that [[1202]]'s fix does

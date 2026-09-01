@@ -68,5 +68,26 @@ comment's opening `/*` and its ` * ` continuation as well as a Tcl `#`, so two
 comment lines join as a reader reads them. Verified both directions on a
 throwaway fixture: the phrase wrapped across two C comment lines is found (1),
 the phrase on one line is found (1), and the Tcl-wrapped shape still is (1).
-Row AS77 is unchanged apart from that; it now sees the shape all three original
-sites were actually written in.
+Row AS77 is unchanged apart from that; it now sees the shape a comment is
+actually written in.
+
+---
+
+## Addendum, item S6b's WRITE-UP pass: the counts, exactly
+
+Two write-ups (this issue's own table, and [[1218]]'s closing paragraph) said or
+implied that the raw count found none of the sites. Re-measured against
+`2dddd540`, counting the phrase in the whole file rather than at a chosen site:
+
+| file | occurrences | raw | first flattener (Tcl `#` + trailing `\`) |
+|---|---|---|---|
+| `src/actions.c` | 2 -- `:4205` on one line, `:4471` wrapped in a C comment | 1 | 1 |
+| `src/spice_netlist.c` | 1 -- on one line | 1 | 1 |
+| this suite's own prose | 2 -- both wrapped with a Tcl backslash | 0 | 2 |
+
+So the honest statement of the blind spot is narrower than first written, and
+still worth the repair: **the row would have failed on four of the five sites,
+and was blind only to a reintroduction wrapped across a C comment line break.**
+That is the one shape it most needs to catch, because it is the shape anyone
+writing a C comment produces. The row's own prose and this file's have been
+corrected to say so; the assertion and the expected values are untouched.

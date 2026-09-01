@@ -14,6 +14,83 @@ Newest entries on top.
 
 ---
 
+## Q75. A tool refuses a setting. Is it enough to leave it out of the cell's name?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6b - issue `1227`, inside `1213`'s
+  own fix. `src/token.c`, `src/actions.c`.
+
+**No. Take it out of the payload too, or the sentence you print is a lie.**
+
+Q74's allow-rule was first wired into one place: the **sharing key**, the string
+that decides what the specialised cell is called and which copies share a body.
+That is the identity of the thing. The *payload* - the property string handed to
+the new cell body - was still the copy's whole `prop_ptr`, refused setting
+included. So a copy carrying one usable setting beside one refused one was still
+specialised on the usable one, and the refused one rode into the body anyway:
+`sky130_fd_pr__` with no device name, or with a line break in the value, a
+transistor line cut in half and a phantom element `XL=` starting the next line.
+Printed underneath, in plain English, was "that setting did not reach the
+simulator and changed nothing".
+
+Two quieter shapes came with it, and both are the same mistake. Two copies whose
+refused values *differ* spell the **same** key, so they shared one body and the
+second silently simulated the first one's transistor. And the invariant the
+name-sharing guard rests on - "equal keys mean equal bodies" - was false for as
+long as the key and the payload disagreed.
+
+**The general shape.** When you decide something is not admissible, the decision
+has to reach every place that thing flows, not just the place you were looking
+at when you made it. An identity filter that leaves the payload alone produces a
+tool that is confidently wrong: it says what it did, and does something else.
+The fix is one function (`lost_attrs_strip_unusable()`) with a caller on each
+door - the deck and the schematic - so the two cannot drift.
+
+---
+
+## Q74. How do you stop fixing one bad value shape at a time?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6b - issue `1213`. `src/token.c`.
+
+**Write an allow-rule and let everything else fall through.** An empty value had
+been guarded (`1206`); a value of a single SPACE walked straight past it, one
+character outside the guard, and put a model name that exists in no PDK into the
+deck. That was the second time a whitespace-shaped value had walked past a guard
+written for the case next to it.
+
+So the question stopped being "what else is bad" and became *what does a usable
+value look like*: **one word with at least one letter or digit in it** - no
+blank space of any kind anywhere, no `@` and no `%`, at least one alphanumeric.
+Everything else falls back to the plain cell and is reported as a setting that
+went nowhere, which is exactly how the tool behaved before the feature existed.
+
+**What it buys:** a shape nobody thought of is safe *by construction*. Seven
+shapes were measured (empty, one space, tab, newline, punctuation only, a
+trailing space on a real value, quotes around a real value) and the rule sorts
+all seven without knowing about any of them individually. The trailing-space
+shape had been producing two byte-identical cell bodies and was filed nowhere.
+
+**What it costs, and it is a real cost:** the rule is stricter than the defects
+that prompted it. A value with an invisible trailing space no longer
+specialises. The rejected alternative - trim the blanks and carry on - keeps the
+copy, but then the cell name and the deck disagree with what the designer typed,
+and the designer is never told. Refusing and saying so is the smaller lie.
+
+**Two traps met on the way, both worth knowing before you touch this file.**
+`get_tok_value()` hands every answer back in **one shared static buffer**
+(`src/token.c`, `static char *result`), so a second question overwrites the
+answer you are still holding - asking the symbol's template about a token turned
+"is this value the default?" into a comparison of the buffer with itself, which
+said yes for every value the template declares and switched the whole feature
+off. Copy before you ask, or re-read after. And this build compiles the
+**fallback** `my_snprintf()` (no `HAS_SNPRINTF` in `config.h`), a hand-written
+formatter that understands `%s` and `%d` but **not** `%%` - it reads the second
+per-cent as a new conversion and eats the words after it. A sentence about the
+`%` character has to pass the character in as a `%s` argument.
+
+---
+
 ## Q73. A netlist mode can name a specialised cell but cannot write its body. Name it anyway, or name the plain cell?
 
 - **Asked:** 2026-08-31

@@ -1,7 +1,11 @@
 # 1213 - a setting typed as a space puts a device model that does not exist into the deck
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed.
+**Status:** FIXED 2026-08-31 by item S6b. Verified by rows AS59-AS67 of
+`tests/headless/test_auto_specialize_1201.tcl`. The refused value was still
+reaching the cell body XSCHEM wrote for a copy that ALSO had a usable setting;
+that second half is [[1227]], fixed in the same item (rows AS78-AS81).
+Was: OPEN - measured, not fixed.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Measured by that item's two
 verify passes and re-measured independently here on the shipped binary.
 **Caused by:** [[1201]]. Same shape as [[1204]], which is the regression item

@@ -1,8 +1,10 @@
 # 1214 - a value that matches the symbol's own default still writes a second, identical copy of the cell
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed. This is [[1206]]'s recorded residue,
-given its own number so it is not lost inside a closed issue.
+**Status:** FIXED 2026-08-31 by item S6b. Verified by rows AS68 (the missing
+body AND the silence, in one row) and AS69 (control). This is [[1206]]'s
+recorded residue, given its own number so it was not lost inside a closed issue.
+Was: OPEN - measured, not fixed.
 **Filed by:** item S6a, write-up pass, 2026-08-31. Re-measured independently
 here on the shipped binary.
 **Caused by:** [[1201]].

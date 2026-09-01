@@ -127,3 +127,28 @@ passed as a `%s` argument instead, with the reason written beside it.
 **1213** is the issue this is the second half of. **1220** records what is still
 knowingly imperfect about the cross-sheet case. **1223** is the sibling defect
 in the same sentence, on the same shared buffer.
+
+---
+
+## Re-measured by item S6b's WRITE-UP pass, on the verifier's own fixtures
+
+The pass that found this returned FAIL on four fixtures. All four were re-run
+against the committed binary, and the fixtures are the adversary's, not the
+implementer's (`/tmp/vc/mix.tcl`, `mix3.tcl`, `at.tcl`, `door.tcl`).
+
+* **The mixed copy** (one usable setting beside a blank-shaped one): the new cell
+  body now carries `sky130_fd_pr__nfet_01v8`, the value the symbol's own template
+  supplies. The fixture's own two questions -- is there a bare `sky130_fd_pr__`
+  in the deck, does any deck line start with `XL=` -- both answer **0**.
+* **The silent device swap**: `xR1` typed `modeln="nfet_01v8_lvt "` and `xR2`
+  typed `modeln="nfet_03v3_nvt "`. Both fall back to the template, they share one
+  body honestly, and **each copy gets its own warning quoting its own value** --
+  `xR2`'s says `nfet_03v3_nvt`, not the template default, which is issue
+  [[1223]]'s re-read working in the field.
+* **The `@` value**: `modelp=@modeln` no longer mints a cell name spelling a
+  value it cannot honour; it is refused, in a sentence naming the `@`.
+* **The schematic door**: descending into `xR2` and reading what the level
+  publishes gives `name=xR2 W_P=0.5 modelp=pfet_01v8_lvt` -- the refused
+  `modeln` is **gone**, so `@modeln` on the schematic resolves to the same
+  device the deck body holds. The two doors agree. (`door.tcl`'s trailing prose
+  still narrates the old conclusion; it is fixture text, not a measurement.)
