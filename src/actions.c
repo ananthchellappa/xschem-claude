@@ -5241,6 +5241,64 @@ static const char *cellview_sch_path(const char *ref)
   return tcl_call("cellview_path", ref ? ref : "", NULL, "schematic");
 }
 
+/* ISSUES 1228 / 0979 -- THE ONE PLACE THIS SENTENCE IS WRITTEN.
+ * Ruling D5-4: a user-facing sentence is minted in ONE place and rendered by its
+ * callers. The two renderings live a few lines apart in get_sch_from_sym(): the
+ * question asked when there is a screen to ask it on, and the status line left
+ * behind when there is not. A reader would otherwise assume the wording belongs
+ * next to the dialog -- it cannot, because the headless path has to say the same
+ * thing, and until issue 0979 the headless path said nothing at all.
+ * Facts only, ninth-grade English, no internal vocabulary. The tail that says
+ * WHAT HAPPENED NEXT ("opened the cell's own schematic instead" / "nothing was
+ * opened") belongs to the caller, because only the caller knows. */
+static void descend_view_missing_sentence(char *out, size_t len, const char *instname,
+                                          const char *want, const char *base)
+{
+  if(instname && instname[0]) {
+    my_snprintf(out, len,
+      "The copy named %s on this sheet is set to open the schematic file %s, but that "
+      "file is not there. This cell's own schematic file is %s.",
+      instname, want ? want : "", base ? base : "");
+  } else {
+    my_snprintf(out, len,
+      "A copy on this sheet is set to open the schematic file %s, but that file is not "
+      "there. This cell's own schematic file is %s.",
+      want ? want : "", base ? base : "");
+  }
+}
+
+/* ISSUE 1228. The cell's OWN schematic file, worked out from the symbol alone.
+ * Lifted verbatim out of get_sch_from_sym()'s tail, and the lift is what makes the
+ * sentence above possible: the question can now NAME the file it is offering
+ * instead of asking about a file the person cannot see.
+ * A reader would otherwise assume this only ever runs when nothing else resolved.
+ * It now also runs to BUILD A SENTENCE, before anything has been decided -- so it
+ * must stay free of side effects on xctx and on `filename`. */
+static void get_base_sch_from_sym(char *out, xSymbol *sym, int web_url)
+{
+  const char *symname_tcl = tcl_hook2(sym->name);
+  const char *cv;
+  struct stat buf;
+
+  if(is_generator(symname_tcl)) my_strncpy(out, symname_tcl, PATH_MAX);
+  /* lib-qualified symbol: its schematic lives in the cell's schematic view */
+  else if(!web_url && (cv = cellview_sch_path(sym->name))[0]) my_strncpy(out, cv, PATH_MAX);
+  else if(tclgetboolvar("search_schematic")) {
+    /* for schematics referenced from web symbols do not build absolute path */
+    if(web_url) my_strncpy(out, add_ext(sym->name, ".sch"), PATH_MAX);
+    else my_strncpy(out, abs_sym_path(sym->name, ".sch"), PATH_MAX);
+  } else {
+    /* for schematics referenced from web symbols do not build absolute path */
+    if(web_url) my_strncpy(out, add_ext(sym->name, ".sch"), PATH_MAX);
+    else {
+      if(!stat(abs_sym_path(sym->name, ""), &buf)) /* symbol exists. pretend schematic exists too ... */
+        my_strncpy(out, add_ext(abs_sym_path(sym->name, ""), ".sch"), PATH_MAX);
+      else /* ... symbol does not exist (instances with schematic=... attr) so can not pretend that */
+        my_strncpy(out, abs_sym_path(sym->name, ".sch"), PATH_MAX);
+    }
+  }
+}
+
 void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
 {
   char *sch = NULL;
@@ -5250,9 +5308,13 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
   int file_exists=0;
   int cancel = 0;
   int is_gen = 0;
-  char msg[PATH_MAX + 100];
+  char basefile[PATH_MAX];
+  char sentence[2*PATH_MAX + 256];
+  char msg[2*PATH_MAX + 512];
 
   my_strncpy(filename, "", PATH_MAX);
+  basefile[0] = '\0';
+  sentence[0] = '\0';
 
   if(inst >= xctx->instances) {
     dbg(0, "get_sch_from_sym() error: called with invalid inst=%d\n", inst);
@@ -5316,40 +5378,80 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
     }
   }
 
-  if(has_x && fallback && !is_gen && filename[0]) {
+  /* ISSUE 1229 -- THE EXISTENCE TEST MUST NOT SIT BEHIND THE DISPLAY TEST.
+   * This block used to open `if(has_x && fallback && ...)`, and file_exists was
+   * assigned NOWHERE ELSE in the function. So with no display and fallback asked
+   * for, file_exists stayed 0 and the base-schematic arm below fired even when the
+   * copy's own schematic file WAS there -- a headless descend into a perfectly good
+   * per-copy `schematic=` setting silently opened the cell's own sheet instead.
+   * That was harmless only for as long as nothing could ask for the fallback
+   * without a display; issue 1228 gives `xschem descend -fallback` exactly that, so
+   * the two repairs have to land together.
+   * A reader would otherwise assume this block is about the QUESTION. It is not:
+   * the stat is the load-bearing half and the question is the optional half.
+   * Netlisting passes fallback = 0, so none of this runs for it. */
+  if(fallback && !is_gen && filename[0]) {
     file_exists = !stat(filename, &buf);
     if(!file_exists) {
-      my_snprintf(msg, S(msg), "Schematic %s\ndoes not exist.\nDescend into base schematic?", filename);
-      tcl_call("ask_save", msg, NULL, NULL);
-      if(strcmp(tclresult(), "yes") ) fallback = 0; /* 'no' or 'cancel' */
-       if(!strcmp(tclresult(), "") ) { /* 'cancel' */
-         cancel = 1;
-         my_strncpy(filename,"", PATH_MAX);
-       }
+      const char *iname = (inst >= 0 && xctx->inst[inst].instname) ? xctx->inst[inst].instname : "";
+      const char *wantshort;
+      const char *baseshort;
+      get_base_sch_from_sym(basefile, sym, web_url);
+      /* The SENTENCE names the two files by file name, the dialog shows the full
+       * paths underneath it as data. Not cosmetic: xctx->statusmsg_text is 256
+       * bytes (xschem.h), and two absolute paths inside one sentence overflow it
+       * and truncate the status line mid-word -- measured on this very fixture,
+       * where "Opened the cell's own schematic instead." was cut to "Opened the c".
+       * A sentence a person cannot finish reading is not plain English. */
+      wantshort = strrchr(filename, '/');
+      wantshort = wantshort ? wantshort + 1 : filename;
+      baseshort = strrchr(basefile, '/');
+      baseshort = baseshort ? baseshort + 1 : basefile;
+      if(has_x) {
+        descend_view_missing_sentence(sentence, S(sentence), iname, wantshort, baseshort);
+        my_snprintf(msg, S(msg),
+          "%s\n\nThe file it is looking for:\n    %s"
+          "\n\nThis cell's own schematic file:\n    %s"
+          "\n\nDo you want to open this cell's own schematic instead?"
+          "\n\nYes opens it.\nNo leaves you on the sheet you are on now."
+          "\n\nTo change which schematic file this copy opens, edit the copy's "
+          "'schematic' setting.", sentence, filename, basefile);
+        /* two buttons, Yes and No: ask_save's third (Cancel) button meant the same
+         * thing as No here and only made the choice ambiguous. issue 1230 */
+        tcl_call("ask_save", msg, NULL, "0");
+        if(strcmp(tclresult(), "yes")) {
+          /* ISSUE 1230. Answering anything but Yes used to set fallback = 0 and LEAVE
+           * `filename` pointing at the file that is not there; descend_schematic()
+           * then loaded it, and because xctx->currsch is incremented BEFORE the load
+           * the person ended up one level down on a blank page they had just declined.
+           * Refusing has to mean opening nothing. The reason is recorded here so the
+           * "has no schematic view" arm in descend_schematic() cannot overwrite it
+           * with something that did not happen. */
+          cancel = 1;
+          my_snprintf(msg, S(msg), "%s Nothing was opened -- you are still on the "
+                      "sheet you started from.", sentence);
+          descend_set_error("view-missing", NULL, msg, 1);
+          my_strncpy(filename, "", PATH_MAX);
+        }
+      }
+      if(!cancel) {
+        /* The second rendering of the minted sentence (ruling D5-4). With a display
+         * the person has just said Yes; without one nobody was asked, and this status
+         * line is the only thing that says the sheet on screen is not the file the
+         * copy names. Before issue 0979 this path said nothing whatsoever. */
+        descend_view_missing_sentence(sentence, S(sentence), iname, wantshort, baseshort);
+        my_snprintf(msg, S(msg), "%s Opened the cell's own schematic instead.", sentence);
+        descend_speak(msg);
+      }
     }
   }
 
-  /* no schematic attr from instance or symbol */
+  /* no schematic attr from instance or symbol -- or there was one and the file it
+   * names is not there and the caller asked for the fallback (issue 0979). The
+   * body of this branch is now get_base_sch_from_sym() so the sentence above and
+   * the file actually opened here can never disagree. */
   if(!cancel && (!str_tmp[0] || (fallback && !is_gen && filename[0] && !file_exists ))) {
-    const char *symname_tcl = tcl_hook2(sym->name);
-    const char *cv;
-    if(is_generator(symname_tcl))  my_strncpy(filename, symname_tcl, PATH_MAX);
-    /* lib-qualified symbol: its schematic lives in the cell's schematic view */
-    else if(!web_url && (cv = cellview_sch_path(sym->name))[0]) my_strncpy(filename, cv, PATH_MAX);
-    else if(tclgetboolvar("search_schematic")) {
-      /* for schematics referenced from web symbols do not build absolute path */
-      if(web_url) my_strncpy(filename, add_ext(sym->name, ".sch"), PATH_MAX);
-      else my_strncpy(filename, abs_sym_path(sym->name, ".sch"), PATH_MAX);
-    } else {
-      /* for schematics referenced from web symbols do not build absolute path */
-      if(web_url) my_strncpy(filename, add_ext(sym->name, ".sch"), PATH_MAX);
-      else {
-        if(!stat(abs_sym_path(sym->name, ""), &buf)) /* symbol exists. pretend schematic exists too ... */
-          my_strncpy(filename, add_ext(abs_sym_path(sym->name, ""), ".sch"), PATH_MAX);
-        else /* ... symbol does not exist (instances with schematic=... attr) so can not pretend that */
-          my_strncpy(filename, abs_sym_path(sym->name, ".sch"), PATH_MAX);
-      }
-    }
+    get_base_sch_from_sym(filename, sym, web_url);
   }
   if(sch) my_free(_ALLOC_ID_, &sch);
 
@@ -5656,9 +5758,19 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    get_sch_from_sym(filename, xctx->inst[n].ptr+ xctx->sym, n, fallback);
 
    if(!filename[0]) { /* no filename returned from get_sch_from_sym() --> abort */
-     char msg[PATH_MAX + 128];
-     my_snprintf(msg, S(msg), "Descend: %s has no schematic view", symname);
-     descend_set_error("no-schematic", NULL, msg, 1);
+     /* ISSUE 1230. get_sch_from_sym() now clears the filename when the person answers
+      * No to "the schematic file this copy names is not there", and it has ALREADY
+      * recorded view-missing with its own sentence. Without this test that accurate
+      * reason is overwritten one line later by "has no schematic view" -- which is
+      * not what happened: the cell has a schematic, the person declined to open it.
+      * Safe because descend_clear_error() runs at the top of this function, well
+      * before get_sch_from_sym(), so anything non-empty here was recorded by THIS
+      * descend attempt. */
+     if(xctx->descend_err[0] == '\0') {
+       char msg[PATH_MAX + 128];
+       my_snprintf(msg, S(msg), "Descend: %s has no schematic view", symname);
+       descend_set_error("no-schematic", NULL, msg, 1);
+     }
      return 0;
    }
    /* No save prompt on descend: a genuine edit to the parent was already
@@ -5873,7 +5985,14 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * (go_back) reloads the parent via load_schematic, which restores the parent's
     * own writability. Edit it with Ctrl-2 / View > Toggle Read Only / the
     * "Descend schematic (edit)" context-menu item. */
-   if(descend_ok && tclgetboolvar("descend_readonly")) {
+   /* ISSUE 0979. Was `descend_ok && tclgetboolvar(...)`. A reader would assume a
+    * FAILED descend left nothing behind and so needed no read-only stamp. It does
+    * not: xctx->currsch was already incremented above, so the window is one level
+    * down on a blank buffer named after the file that could not be loaded. In
+    * Cadence-style browse mode that blank buffer came back EDITABLE, so an
+    * accidental save would create that junk file -- inside the one mode whose whole
+    * purpose is looking without touching. */
+   if(tclgetboolvar("descend_readonly")) {
      xctx->readonly = 1;
      set_modify(-1); /* refresh window title to show the read-only marker */
    }

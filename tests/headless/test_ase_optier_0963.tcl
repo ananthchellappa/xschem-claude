@@ -2284,29 +2284,28 @@ proc n_dsc {nm} {
 ## the model this copy asked for.
 ##
 ## Opening such an instance falls back to the cell's own base sheet. THE PRODUCT
-## DOES THAT FOR THE USER: the descend a person performs comes through
-## callback.c:5490 with fallback on, so they are asked "Schematic ... does not
-## exist. Descend into base schematic?" and land in passgate.sch. The `xschem
-## descend` COMMAND cannot: scheduler.c:3355-3364 passes fallback as a hard 0,
-## so a script gets a blank sheet with no word said. Measured on the SHIPPED
-## gain_stage x6, with nothing of this pass's changed: sch_path becomes `.x6.`
-## and the sheet has 0 instances. Filed as issue 0979, not fixed here -- turning
-## the flag on would make every GUI suite hang on that modal prompt (issue 0803).
+## DOES THAT FOR THE USER: the right-click canvas item has always asked "open
+## this cell's own schematic instead?" and landed the person in passgate.sch.
+## The `xschem descend` COMMAND could not -- all three of its forms passed
+## fallback as a hard 0 -- so a script got a blank sheet, one level down, with no
+## word said. That was issue 0979, and this row used to work around it by arming
+## the one-shot `hi_descend_view_path` override by hand.
 ##
-## So this descends the way the PERSON does, into the cell's base sheet, using
-## the one-shot view override the product itself uses for a named view. The
-## assertion below is untouched by that; only the way the row reaches the sheet
-## the user reaches is.
+## ISSUE 0979 IS NOW FIXED, so the workaround is gone: the row simply asks for the
+## fallback, `xschem descend -fallback`, which is the same capability the
+## right-click item always had. A workaround left standing behind a fix is how the
+## next reader concludes the fix does not work.
+## No dialog can hang a GUI suite on this (issue 0803 was the fear): the question
+## is only asked when there is a display AND the caller asked for the fallback,
+## and it now has two buttons instead of three.
+## The assertion below is untouched by any of this; only the way the row reaches
+## the sheet the user reaches has changed.
 proc n_dsc_base {nm} {
   set n [xschem get instances]
   for {set i 0} {$i < $n} {incr i} {
     if {[xschem getprop instance $i name] ne $nm} { continue }
-    set sym [xschem getprop instance $i cell::name]
-    set base {}
-    catch {set base [abs_sym_path $sym .sch]}
     xschem unselect_all ; xschem select instance $i
-    if {$base ne {} && [file isfile $base]} { set ::hi_descend_view_path $base }
-    xschem descend 1 2
+    xschem descend -fallback 1 2
     return [expr {[xschem get instances] > 0 ? 1 : 0}]
   }
   return 0

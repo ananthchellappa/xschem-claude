@@ -5956,7 +5956,9 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
     xschem set raw_level $raw_level
   }
   xschem select instance $inst fast
-  if {![xschem descend]} {
+  # -fallback, issue 0979: this is a control a person presses, so it must never
+  # leave them one level down on a blank page.
+  if {![xschem descend -fallback]} {
     # before newwin_defer_fullzoom, so no `after` is scheduled against a window path
     # that is about to disappear
     return [newwin_descend_failed $current_win_path $new_window_path]
@@ -6048,6 +6050,24 @@ proc hi_descend_nameless_refuse {} {
   return {}
 }
 
+# ISSUE 1228. The schematic file THIS COPY opens, as opposed to the one its symbol
+# names. `xschem get_sch_from_sym <instname>` is the instance form of the resolver:
+# it honours a per-copy "schematic" setting, and it is the call
+# doc/claude/specs/hi_descend.md section 5 named all along. Returns {} when the
+# copy cannot be resolved.
+# The save/restore is not decoration. The instance form of the resolver READS AND
+# CLEARS the one-shot view override (src/actions.c, get_sch_from_sym) -- a reader
+# would assume a lookup is free of side effects, and this one is not. Enumerating
+# the choices must not eat an override some other caller has already armed.
+proc hi_descend_inst_defsch {instname} {
+  set save {}
+  if {[info exists ::hi_descend_view_path]} { set save $::hi_descend_view_path }
+  set r {}
+  catch { set r [xschem get_sch_from_sym $instname] }
+  set ::hi_descend_view_path $save
+  return $r
+}
+
 # Enumerate the views available for the cell behind instance $instname.
 # Returns a list of {viewname type abspath} rows, type in {schematic symbol
 # ngspice_state} (the last for ASE simulation-state views,
@@ -6081,12 +6101,39 @@ proc hi_descend_enum_views {instname} {
 
   # Always make sure the default schematic view and the symbol view are present
   # (covers legacy flat cells, and OA cells whose default sits outside cell_views).
+  # This row is deliberately still built from the SYMBOL, so it always names the
+  # cell's own schematic and every existing fixture keeps the row it had.
   set defsch {}
   catch { set defsch [xschem get_sch_from_sym -1 $sym] }
   if {$defsch ne {} && ![xschem is_generator $defsch] && [lsearch -exact $seen $defsch] < 0} {
     lappend rows [list schematic schematic $defsch]
     lappend seen $defsch
   }
+
+  # ISSUE 1228 -- THE ROW THAT WAS MISSING, AND THE WHOLE OF FAULT B.
+  # A single copy of a symbol can be told which schematic file IT opens, with its
+  # own "schematic" setting. Every row above is worked out from the SYMBOL, which
+  # cannot see that setting -- so the file the copy actually opens was not among
+  # the choices at all, hi_descend_pick_view returned the cell's own schematic,
+  # hi_descend_is_default_sch compared that against the copy's setting, found them
+  # different, and FORCED the cell's own sheet through the one-shot C override.
+  # Pressing E on a copy bound to a real, existing file opened a different real
+  # file, with no prompt, no message and no error on any channel.
+  # doc/claude/specs/hi_descend.md section 5 always said this enumeration had to
+  # use the instance form of the resolver; this is that sentence, finally obeyed.
+  set instsch [hi_descend_inst_defsch $instname]
+  if {$instsch ne {} && ![xschem is_generator $instsch] && [lsearch -exact $seen $instsch] < 0} {
+    # Name it after its own file. A copy whose bound file happens to be called
+    # schematic.sch would otherwise produce TWO rows named "schematic" pointing at
+    # two different files, and every picker here is name-keyed -- it would return
+    # whichever came first. Fall back to the literal name "instance" on a clash.
+    set iname [file rootname [file tail $instsch]]
+    if {$iname eq {}} { set iname instance }
+    foreach r $rows { if {[lindex $r 0] eq $iname} { set iname instance ; break } }
+    lappend rows [list $iname schematic $instsch]
+    lappend seen $instsch
+  }
+
   if {[lsearch -exact $seen $symabs] < 0} {
     lappend rows [list symbol symbol $symabs]
     lappend seen $symabs
@@ -6096,13 +6143,23 @@ proc hi_descend_enum_views {instname} {
 
 # Pick the view row to descend into from the enumerated $rows, honoring an
 # explicit $view name and/or $type. Returns the {name type abspath} row, or {}.
-proc hi_descend_pick_view {rows view type} {
+# ISSUE 1228: $defpath is the file THIS COPY is set to open (see
+# hi_descend_inst_defsch). It is a 4th OPTIONAL argument so no existing caller or
+# test stub breaks, and it only steers the case where the person named no view and
+# no type -- i.e. plain E. A reader would otherwise assume the row named
+# "schematic" is always the right default; it is the right default only for a copy
+# that carries no setting of its own.
+proc hi_descend_pick_view {rows view type {defpath {}}} {
   if {$view eq {}} {
     # no view name: honor an explicit type (e.g. type=symbol -> first symbol view);
-    # otherwise default to the view named "schematic", else the first schematic-type row.
+    # otherwise prefer the view this copy is set to open, then the view named
+    # "schematic", else the first schematic-type row.
     if {$type ne {}} {
       foreach r $rows { if {[lindex $r 1] eq $type} { return $r } }
       return {}
+    }
+    if {$defpath ne {}} {
+      foreach r $rows { if {[lindex $r 2] eq $defpath} { return $r } }
     }
     foreach r $rows { if {[lindex $r 0] eq {schematic} && [lindex $r 1] eq {schematic}} { return $r } }
     foreach r $rows { if {[lindex $r 1] eq {schematic}} { return $r } }
@@ -6159,7 +6216,11 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
     if {![hi_descend_is_default_sch $instname $vpath]} {
       set ::hi_descend_view_path $vpath        ;# one-shot, consumed by get_sch_from_sym
     }
-    set ok [xschem descend $iter]
+    # ISSUE 0979. -fallback: once the enumeration tells the truth (issue 1228), a
+    # copy whose "schematic" setting names a file that is not there resolves to a
+    # dangling path -- and without the flag E would go from opening the WRONG sheet
+    # to opening a BLANK one, one level down, with no way back but Pop schematic.
+    set ok [xschem descend -fallback $iter]
     set ::hi_descend_view_path {}              ;# belt-and-suspenders if descend bailed early
   }
   if {$ok} {
@@ -6295,7 +6356,7 @@ proc hi_descend_do {instname view type target iter mode} {
 proc hi_descend_do_body {instname view type target iter mode} {
   set rows [hi_descend_enum_views $instname]
   if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
-  set row [hi_descend_pick_view $rows $view $type]
+  set row [hi_descend_pick_view $rows $view $type [hi_descend_inst_defsch $instname]]
   if {$row eq {}} {
     set names {}
     foreach r $rows { lappend names [lindex $r 0] }
@@ -6477,10 +6538,22 @@ proc hi_descend_dialog_body {instname} {
   # --- View drop-down ---
   set ::hi_descend_dlg_rows $rows
   set viewnames {}; set default_view {}
+  # ISSUE 1228: the drop-down opens on the file THIS COPY is set to open, not on
+  # the cell's own schematic. Offered and preselected are two different things and
+  # both are user-visible -- a person who presses E and then OK without reading the
+  # drop-down must land where the copy says, which is what the toolbar button and
+  # the Cadence chords already did.
+  set dlgdef [hi_descend_inst_defsch $instname]
   foreach r $rows {
     lassign $r vname vtype vpath
     lappend viewnames $vname
-    if {$default_view eq {} && $vname eq {schematic} && $vtype eq {schematic}} { set default_view $vname }
+    if {$dlgdef ne {} && $vpath eq $dlgdef} { set default_view $vname }
+  }
+  if {$default_view eq {}} {
+    foreach r $rows {
+      lassign $r vname vtype vpath
+      if {$vname eq {schematic} && $vtype eq {schematic}} { set default_view $vname ; break }
+    }
   }
   if {$default_view eq {}} { set default_view [lindex $viewnames 0] }
   set ::hi_descend_dlg_view $default_view
@@ -13510,7 +13583,7 @@ proc add_toolbuttons {{topwin {}}} {
   toolbar_add EditDelete "xschem delete" "Delete" $topwin
   toolbar_add EditDuplicate "xschem copy_objects" "Duplicate objects" $topwin
   toolbar_add EditMove "xschem move_objects" "Move objects" $topwin
-  toolbar_add EditPushSch "xschem descend" "Push schematic" $topwin
+  toolbar_add EditPushSch "xschem descend -fallback" "Push schematic" $topwin
   toolbar_add EditPushSym "xschem descend_symbol" "Push symbol" $topwin
   toolbar_add EditPop "xschem go_back" "Pop" $topwin
   toolbar_add ViewRedraw "xschem redraw" "Redraw" $topwin

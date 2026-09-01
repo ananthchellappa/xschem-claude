@@ -800,6 +800,12 @@ and watching the suite stay green:
 * **1220** gained row AS85 for its case 2, and now records that the note's
   "shares that one" sentence is measurably false across sheets. Still open.
 
-**The next free number is 1228.** 1201-1227 are taken. **1000-1199 is
+**The next free number is 1234.** 1201-1233 are taken. Item **S7**'s red phase
+claimed **1228-1233** as stubs before writing its rows (1228 the E key opening the
+cell's own schematic instead of the copy's own; 1229 the fallback ignoring whether
+the bound file is there when there is no display; 1230 answering No still dropping
+you on a blank page; 1231 the symbol form of the view resolver reading instance
+minus one; 1232 a descend suite registered in no runner; 1233 the five scripted
+hierarchy walks that stay on the bare verb). **1000-1199 is
 reserved** (user, 2026-08-30), so 0999 was followed by **1200**; 0500-0599 and
 0700-0799 remain reserved for other branches.

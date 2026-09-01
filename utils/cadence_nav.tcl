@@ -259,7 +259,11 @@ proc cadence::new_blank_window {} {
 # With descend_readonly set (the cadence default) this opens the child read-only.
 proc cadence::descend_into_inst {} {
   if {![cadence::one_instance_selected]} { return }
-  xschem descend
+  # -fallback, issue 0979: Ctrl-X is a control a person presses. Without it, a copy
+  # whose "schematic" setting names a file that is not there put the person one
+  # level down on a blank, EDITABLE page named after the missing file -- inside the
+  # mode whose whole purpose is looking without touching.
+  xschem descend -fallback
 }
 
 # "Descend schematic (edit)": descend, then force the child editable regardless of
@@ -267,7 +271,7 @@ proc cadence::descend_into_inst {} {
 # comment claiming so was stale -- issue 0259: this proc has no caller in the tree today).
 proc cadence::descend_into_inst_edit {} {
   if {![cadence::one_instance_selected]} { return }
-  xschem descend
+  xschem descend -fallback
   cadence::make_editable
 }
 
@@ -348,7 +352,10 @@ proc cadence::descend_instnames {names} {
     if {[xschem select instance $name] == 0} {
       ciw_echo "instance '$name' not found while descending to $names" error ; return 0
     }
-    if {[xschem descend] == 0} {
+    # -fallback, issue 0979: Alt-X and Ctrl-Alt-D walk a remembered path back down.
+    # A copy whose bound schematic file is missing used to break the walk AND strand
+    # the person part-way down it.
+    if {[xschem descend -fallback] == 0} {
       ciw_echo "cannot descend into '$name'" error ; return 0
     }
   }

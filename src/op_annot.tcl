@@ -1859,14 +1859,19 @@ proc op_annot::place_annotator {} {
 # direction (save.c RULING D5-1: a plausible wrong answer is worse than none).
 #
 # ⚠ AND IT NEEDS ONE MORE THING, MEASURED: re-keying is NECESSARY AND NOT
-# SUFFICIENT. `schematic=passgate_1` makes `xschem descend` a CLASS-2 refusal
-# (currsch already incremented, descend_error=load-failed) because the
-# synthesised name resolves to a path that does not exist, and the
-# "Descend into base schematic?" fallback (actions.c:4176) is gated by
-# `has_x && fallback` while the descend VERB passes fallback=0. The deck already
-# names the file exactly — the callee block's `** sch_path:` — so the walk hands
-# it to the one-shot `hi_descend_view_path` override (actions.c:4139) that
-# resolves THIS descend into THAT view without rewriting the instance.
+# SUFFICIENT. `schematic=passgate_1` makes a BARE `xschem descend` a CLASS-2
+# refusal (currsch already incremented, descend_error=load-failed) because the
+# synthesised name resolves to a path that does not exist.
+# Since issue 0979 the verb CAN be asked to open the cell's own schematic instead
+# (`xschem descend -fallback`, the branch in src/scheduler.c). That is not what
+# this walk wants: the deck already names the file EXACTLY — the callee block's
+# `** sch_path:` — which is more precise than "the cell's own sheet". So the walk
+# keeps handing that file to the one-shot `hi_descend_view_path` override
+# consumed by get_sch_from_sym() in src/actions.c, which resolves THIS descend
+# into THAT view without rewriting the instance.
+# Cited by function name, not by line number, on purpose: the line numbers this
+# paragraph used to carry moved by about eleven hundred lines and silently sent
+# every later reader to the wrong place.
 #
 # ============================================================================
 # ⚠ TWO QUESTIONS, NOT ONE: `_netlisted` AND `_descendable` ARE NOT ALIASES
@@ -2680,10 +2685,10 @@ proc op_annot::_cards_for {instname root} {
 ##                         prototypes' unconditional one pops a caller's level
 ##                         and the walk then re-visits levels, emitting
 ##                         duplicate cards.
-##   currsch advanced, descend_error set -> class 2 (`load-failed`,
-##                         actions.c:4636, which returns AFTER the increment at
-##                         :4628): the hierarchy ALREADY advanced, so this one
-##                         DOES owe a go_back before the walk can continue.
+##   currsch advanced, descend_error set -> class 2 (`load-failed`, recorded in
+##                         descend_schematic() (src/actions.c) AFTER its
+##                         `xctx->currsch++`): the hierarchy ALREADY advanced, so
+##                         this one DOES owe a go_back before the walk continues.
 ##   currsch advanced, descend_error empty -> success.
 proc op_annot::_descended {c0} {
   if {[catch {xschem get currsch} c1]} { return 0 }
@@ -2697,15 +2702,21 @@ proc op_annot::_descended {c0} {
 ## Descend into instance <i>, resolving the target from the DECK rather than from
 ## the symbol's `schematic=` attribute (issue 0496).
 ##
-## ⚠ WHY THE OVERRIDE. `get_additional_symbols` (actions.c:3729) synthesises
-## `passgate_1` / `gain_stage2` for parameter-specialised instances and the deck
-## block carries the BASE cell's `** sch_path:`. `xschem descend` on such an
-## instance is a CLASS-2 refusal — currsch already incremented,
-## descend_error=load-failed — because the synthesised name resolves to a file
-## that does not exist, and the "Descend into base schematic?" fallback
-## (actions.c:4176) is unreachable from the verb (fallback=0). The deck already
-## names the file; `hi_descend_view_path` (actions.c:4139) is the tree's own
-## one-shot seam for exactly this, and it does NOT rewrite or dirty the instance.
+## ⚠ WHY THE OVERRIDE, AND WHY IT SURVIVES ISSUE 0979.
+## `get_additional_symbols()` (src/actions.c) synthesises `passgate_1` /
+## `gain_stage2` for parameter-specialised instances and the deck block carries
+## the BASE cell's `** sch_path:`. A BARE `xschem descend` on such an instance is
+## a CLASS-2 refusal — currsch already incremented, descend_error=load-failed —
+## because the synthesised name resolves to a file that does not exist.
+## The verb now accepts `-fallback`, which opens the CELL'S OWN schematic when the
+## bound file is missing. That is the right answer for a person pressing a button
+## and the WRONG one here: the deck names the exact file, which is strictly more
+## precise than "the cell's own sheet", and opening the sheet the deck did NOT
+## name would be a D5-1 plausible wrong answer. So this stays on
+## `hi_descend_view_path`, consumed by get_sch_from_sym() in src/actions.c — the
+## tree's own one-shot seam for exactly this, which does NOT rewrite or dirty the
+## instance. Function names, not line numbers: the numbers this block used to
+## carry were about eleven hundred lines stale.
 ##
 ## ⚠ ONE-SHOT AND ALWAYS CLEARED. get_sch_from_sym blanks it on use, but a
 ## descend that never reaches that call would leave it armed for the NEXT one —

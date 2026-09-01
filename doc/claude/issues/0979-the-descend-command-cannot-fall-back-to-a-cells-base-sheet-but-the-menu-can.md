@@ -1,6 +1,8 @@
 # 0979 — `xschem descend` cannot fall back to a cell's base sheet, but the menu can
 
-**STATUS: FILED, NOT FIXED (2026-08-30, item S4b).**
+**STATUS: FIXED (2026-08-31, item S7).** `xschem descend` grows an opt-in
+`-fallback` flag and the seven controls a person can press all pass it. The bare
+form is unchanged, byte for byte — see "What landed" at the bottom.
 
 ## What the user sees
 
@@ -87,3 +89,48 @@ is about to inspect while ruling on 0965. That is part of the ruling: if the
 `schematic=` mechanism is the right fix, this gap is worth closing; if it is
 not, the alternative was deleting the `modelp=` line the user typed.
 
+
+
+## What landed (2026-08-31, item S7)
+
+`xschem descend` now accepts an optional leading `-fallback` flag
+(`src/scheduler.c`, the `descend` branch). With it, all three argument shapes call
+`descend_schematic(n, 1, 1, set_title)` — exactly what the right-click canvas item
+has always done. Without it, nothing moved: same arguments, same return values,
+same `descend_error` tokens.
+
+**Why opt-in and not the default.** `tests/headless/test_op_annot.tcl` row W30a
+asserts `{x6 1 load-failed} {x3 1 load-failed}` from a bare `xschem descend 1 2` —
+the `1` is the hierarchy-level delta, so the test pins the stranding as a measured
+invariant. Two committed workarounds and three scripted hierarchy walks read the
+same `0`. Changing the default would have moved all of them at once, including
+walks whose correct answer nobody has measured (issue 1233). Row A7 of
+`tests/headless/test_descend_doors_1228.tcl` now pins the bare form from the other
+side, so a later crew meets an explained assertion rather than a surprise.
+
+**The seven controls that carry the flag:** the toolbar's `Push schematic` button,
+the command-palette row `edit.push_schematic`, `Alt-E` (open in a new window),
+`hi_descend_finish` (which is `E` and `Edit > Push schematic`), and the three
+Cadence chords `Ctrl-X`, `Ctrl-Shift-X`'s edit sibling and `Alt-X` /
+`Ctrl-Alt-D`'s path walk.
+
+**Two neighbours had to land in the same pass** or the fix would have created a
+worse defect than it cured: issue 1229 (the existence test sat behind the display
+test, so a headless fallback discarded a *valid* binding) and issue 1230
+(answering No still loaded the missing file).
+
+**Read-only.** The Cadence-mode read-only stamp no longer requires the load to
+have succeeded. A failed descend leaves the window one level down on a blank
+buffer named after the missing file; that buffer used to come back **editable**,
+so an accidental save would have created the junk file, inside the one mode whose
+whole purpose is looking without touching.
+
+**The workaround this retires:** `tests/headless/test_ase_optier_0963.tcl`'s
+`n_dsc_base` used to arm the one-shot `hi_descend_view_path` override by hand; it
+now just asks for the fallback. `src/op_annot.tcl`'s `_descend_to` **keeps** its
+override on purpose — the deck names the exact file, which is strictly more precise
+than "the cell's own sheet", and opening a sheet the deck did not name would be a
+D5-1 plausible wrong answer.
+
+Rows: `tests/headless/test_descend_doors_1228.tcl` A5, A6, A7, C3, D1, D2, D3, E1,
+E6, F1.

@@ -3317,51 +3317,76 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
-    /* descend [n] [notitle]
+    /* descend [-fallback] [n] [notitle]
      *   Descend into selected component instance. Optional number 'n' specifies the
      *   instance number to descend into for vector instances (default: 0).
      *   0 or 1: leftmost instance, 2: second leftmost instance, ...
      *  -1: rightmost instance,-2: second rightmost instance, ...
      *  if integer 'notitle' is given pass it to descend_schematic()
-     * descend -inst <name> [notitle]
+     * descend [-fallback] -inst <name> [notitle]
      *   name-addressed form: descend into the instance called <name> regardless of
      *   the current selection (selects it first). This is the replay-stable form
-     *   the action log records. doc/claude/specs/action_log_absorb.md */
+     *   the action log records. doc/claude/specs/action_log_absorb.md
+     *
+     * ISSUES 0979 / 1228 -- THE OPTIONAL LEADING FLAG, AND WHY IT IS OPT-IN.
+     * A copy on a sheet can carry its own `schematic=<file>` setting. When that file
+     * is not there, the right-click canvas item has always been able to offer the
+     * cell's own schematic instead -- it calls descend_schematic(0, 1, 1, 1). This
+     * verb could not: all three of its forms hardcoded 0, 0, so the toolbar button,
+     * the command palette row and the Cadence chords put a person ONE LEVEL DOWN on
+     * a blank page (xctx->currsch is incremented before the load) with no offer and
+     * no way back but Pop schematic.
+     * `-fallback` is the missing capability, and it is DELIBERATELY OPT-IN: without
+     * it every argument shape and every return value is byte-identical to what
+     * scripts have always seen -- tests/headless/test_op_annot.tcl W30a, the two
+     * hierarchical .save deck builders and the waveform cross-probe all read the 0
+     * and the load-failed token as a measured invariant. Row A7 of
+     * tests/headless/test_descend_doors_1228.tcl pins the bare form so a later crew
+     * meets an assertion rather than a surprise.
+     * fallback and alert move together on purpose: with the flag, this verb behaves
+     * exactly like the right-click canvas item, which is the one door that was
+     * always right. Any answer but Yes to the offer opens nothing (issue 1230). */
     else if(!strcmp(argv[1], "descend"))
     {
       int ret=0;
       int set_title = 1;
+      int fallback = 0;
+      int a = 2; /* first argument after the subcommand, past the optional flag */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > a && !strcmp(argv[a], "-fallback")) {
+        fallback = 1;
+        a++;
+      }
       if(xctx->semaphore == 0) {
-        if(argc > 2 && !strcmp(argv[2], "-inst")) {
-          /* descend -inst <name> [notitle]
+        if(argc > a && !strcmp(argv[a], "-inst")) {
+          /* descend [-fallback] -inst <name> [notitle]
            *   name-addressed, self-contained descend: resolve the instance by
            *   its instname, select it, then descend. This IS the coordinate-free
            *   replay form the action log emits (doc/claude/specs/action_log_absorb.md).
            *   Note: descend_schematic() logs its own outcome line, so no log here. */
           int inst;
-          if(argc < 4) {
+          if(argc < a + 2) {
             Tcl_SetResult(interp, "xschem descend -inst: instance name required", TCL_STATIC);
             return TCL_ERROR;
           }
-          if(argc > 4) set_title = atoi(argv[4]);
-          inst = get_instance(argv[3]);
+          if(argc > a + 2) set_title = atoi(argv[a + 2]);
+          inst = get_instance(argv[a + 1]);
           if(inst < 0) {
             Tcl_SetResult(interp, "xschem descend -inst: instance not found", TCL_STATIC);
             return TCL_ERROR;
           }
           unselect_all(1);
           select_element(inst, SELECTED, 1, 1);
-          ret = descend_schematic(0, 0, 0, set_title);
+          ret = descend_schematic(0, fallback, fallback, set_title);
         } else {
-          if(argc > 3 ) {
-            set_title = atoi(argv[3]);
+          if(argc > a + 1) {
+            set_title = atoi(argv[a + 1]);
           }
-          if(argc > 2) {
-            int n = atoi(argv[2]);
-            ret = descend_schematic(n, 0, 0, set_title);
+          if(argc > a) {
+            int n = atoi(argv[a]);
+            ret = descend_schematic(n, fallback, fallback, set_title);
           } else {
-            ret = descend_schematic(0, 0, 0, set_title);
+            ret = descend_schematic(0, fallback, fallback, set_title);
           }
         }
       } else {
@@ -5874,7 +5899,12 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             return TCL_ERROR;
           }
         }
-        if( xctx->inst[inst].ptr >= 0  && sym == -1) {
+        /* ISSUE 1231. On the `get_sch_from_sym -1 <symbol>` path inst is still -1,
+         * and this line subscripted xctx->inst[-1] before the && could help --
+         * an out-of-bounds read on every single call of the symbol form. Harmless
+         * today only because the value read is thrown away when sym is already
+         * set; a reader would otherwise assume the sym == -1 test guards it. */
+        if(inst >= 0 && xctx->inst[inst].ptr >= 0  && sym == -1) {
           sym = xctx->inst[inst].ptr;
         }
         if(sym >= 0) get_sch_from_sym(filename, sym + xctx->sym, inst, 0);

@@ -10168,12 +10168,16 @@ if {![file isfile $W_BG]} {
   #
   # ⚠ MEASURED TODAY AND NOT IN 0496: THE OBSTACLE IS NOT ONLY THE INDEX. The
   # specialisation is carried by an instance attribute `schematic=passgate_1`,
-  # and `get_sch_from_sym` (actions.c:4145) resolves it to a path that does not
-  # exist. The "Descend into base schematic?" fallback at actions.c:4176 is gated
-  # by `has_x && fallback`, and the `xschem descend` VERB passes fallback=0
-  # (scheduler.c:3238/:3245 -> descend_schematic(n, 0, 0, set_title)) — so the
-  # prompt is unreachable from Tcl on EITHER display, this row cannot hang the
-  # xvfb leg, and the class-2 refusal is the behaviour everywhere:
+  # and get_sch_from_sym() (src/actions.c) resolves it to a path that does not
+  # exist. This row calls the BARE `xschem descend`, which since issue 0979 is
+  # the form that deliberately does NOT offer the cell's own schematic instead —
+  # the offer is opt-in, spelled `xschem descend -fallback`, and every scripted
+  # caller in the tree was left on the bare form on purpose. So no dialog can
+  # appear on EITHER display, this row cannot hang the xvfb leg, and the class-2
+  # refusal is the behaviour everywhere. Row A7 of
+  # tests/headless/test_descend_doors_1228.tcl pins that bare-form default from
+  # the other side, so a later crew cannot quietly flip it and redden this row
+  # without meeting an explained assertion first:
   #
   #     x6  descend -> 0  currsch 0->1  err=load-failed  schname=<repo>/passgate_1  inst=0
   #     x3  descend -> 0  currsch 0->1  err=load-failed  schname=<repo>/gain_stage2 inst=0
@@ -10181,8 +10185,9 @@ if {![file isfile $W_BG]} {
   #
   # So re-keying the index is necessary and NOT sufficient: the walk also has to
   # reach the base schematic (the callee block's own `** sch_path:` names it
-  # exactly, and `hi_descend_view_path` is the one-shot seam that consumes it —
-  # actions.c:4139). W30a pins the obstacle; W30 is the claim.
+  # exactly, and `hi_descend_view_path`, consumed by get_sch_from_sym() in
+  # src/actions.c, is the one-shot seam for it). W30a pins the obstacle; W30 is
+  # the claim.
   set W_TB [file join $W_SKY sky130_tests_ase tb_bandgap_opamp schematic tb_bandgap_opamp.sch]
   set XSCHEM_LIBRARY_PATH $W_SKYLIBS
   catch {xschem raw clear}

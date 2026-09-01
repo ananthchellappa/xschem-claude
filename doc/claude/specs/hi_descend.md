@@ -130,9 +130,29 @@ are (don't block highlight animation timers); see issue 0009 lineage.
 For the selected instance's cell, build the candidate view set from both layouts:
 
 - **Classic / attribute layout.** The symbol's default schematic binding via
-  `xschem get_sch_from_sym <inst>` (the same call `cellview` uses at
-  `xschem.tcl:2197,2576`) → the default `schematic` view; the symbol itself → the
-  `symbol` view. Any alternate `schematic=` bindings already known are listed too.
+  `xschem get_sch_from_sym -1 <symbol>` → the default `schematic` view; the symbol
+  itself → the `symbol` view.
+- **The copy's own binding — NORMATIVE, and it was missing for a long time (issue
+  1228).** A single copy of a symbol can carry its own `schematic=<file>` setting.
+  That file **must** be one of the candidate rows, and it is found with the
+  *instance* form of the resolver, `xschem get_sch_from_sym <instname>` — the only
+  form that reaches the instance arm of `get_sch_from_sym()` in `src/actions.c`.
+  The Tcl helper is `hi_descend_inst_defsch`.
+  Until issue 1228 the enumeration used the symbol form for everything, so the file
+  the copy was actually set to open was never even offered; the picker returned the
+  cell's own sheet, `hi_descend_is_default_sch` (which *did* use the instance form)
+  found the two different, and the one-shot override then **forced** the cell's own
+  sheet. Pressing `E` on a copy bound to a real, existing file opened a different
+  real file, with no prompt, no message and no error on any channel.
+  The row is named after its own file (`[file rootname [file tail $path]]`), and
+  falls back to the literal name `instance` when that name is already taken by a
+  different path — every picker here is name-keyed, so two rows called `schematic`
+  would silently resolve to whichever came first.
+- **Which row the chooser starts on.** With no explicit `view=` and no `type=`,
+  `hi_descend_pick_view` prefers the row whose path is the copy's own binding, and
+  only then falls back to the row named `schematic`. Offered and preselected are two
+  different guarantees and both are user-visible: a person who presses `E` and then
+  `OK` without reading the drop-down must land where the copy says.
 - **OpenAccess library layout.** When the cell resolves under an OA library
   (`library/cell/<view>/`), scan the cell directory for sibling view dirs and
   classify each as schematic-type or symbol-type by the file it contains
@@ -141,6 +161,21 @@ For the selected instance's cell, build the candidate view set from both layouts
 De-duplicate by resolved absolute path; present view *names* to the user, resolve
 to absolute `.sch`/`.sym` paths internally. This enumeration is the one new piece
 of logic; everything downstream reuses existing descend primitives.
+
+### 5b. The descend itself asks for the fallback (issue 0979)
+
+`hi_descend_finish` runs `xschem descend -fallback <iter>`, not the bare verb.
+Once the enumeration tells the truth about the copy's binding (§5), a copy whose
+`schematic=` setting names a file that is **not there** resolves to a dangling
+path — and without the flag `E` would go from opening the *wrong* sheet to opening
+a *blank* one, one level down, with no way back but `Pop schematic`.
+
+`-fallback` is opt-in on purpose. Without it every argument shape and every return
+value of `xschem descend` is byte-identical to what scripts have always seen, and
+three scripted hierarchy walks (the waveform cross-probe and the two hierarchical
+`.save` deck builders) are deliberately left on the bare form — see issue 1233.
+The seven controls a person can press all carry the flag; `tests/headless/
+test_descend_doors_1228.tcl` row E6 asserts both halves **by count**.
 
 ## 6. Destination handling — retaining connectivity
 
