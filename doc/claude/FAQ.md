@@ -14,6 +14,36 @@ Newest entries on top.
 
 ---
 
+## Q73. A netlist mode can name a specialised cell but cannot write its body. Name it anyway, or name the plain cell?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6a - issue `1204`, the regression
+  inside `1201`. `src/spice_netlist.c`, `src/actions.c`.
+
+**Name the plain cell.** Pressing **Shift-N** ("netlist this sheet only", also
+`xschem netlist -nohier`) was writing `xt1 net2 advpass__modelp_pfet_01v8_lvt`
+and defining that subcircuit nowhere - not in that file, not in any other
+netlist file, not in any library. The simulator rejects the deck. The bodies are
+written by `get_additional_symbols(1)`, which lives inside the `if(global)` arm;
+the name was being minted outside it.
+
+The rejected alternative was to write the bodies on that arm too. It fails on
+what the mode *is*: "this sheet only" would start emitting sub-cell definitions,
+and anyone who netlists each level separately would get duplicate `.subckt`
+bodies across their files. A far bigger blast radius than the regression.
+
+**The general shape.** When a capability is unavailable in a mode, the honest
+output is the one the mode can actually stand behind - and *the sentence has to
+move with it*. The same run was printing "XSCHEM wrote a separate copy ... You
+do not have to add anything to the sheet" about a copy it had not written, which
+is RULING D5-1 in the area D5-1 exists for. The fix returns before the note, so
+one change silences the false claim and restores the deck; and the designer now
+reads why instead: *"XSCHEM can give this copy its own version of advpass, but
+it only writes those when it netlists the whole design, and this run wrote just
+this one sheet."*
+
+---
+
 ## Q72. When a designer types a setting on one copy of a cell and the tool cannot use it, should the tool tell them how to fix it, or fix it?
 
 - **Asked:** 2026-08-31

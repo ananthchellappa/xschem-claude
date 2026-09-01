@@ -3113,16 +3113,26 @@ extern const char *get_sym_name(int inst, int ndir, int ext, int abs_path);
 /* ISSUE 1201: the netlister writes a specialised copy of a cell by itself.
  * auto_spec_begin()/auto_spec_end() bracket ONE SPICE netlist run (GUARD
  * AS-MODE); auto_spec_name() answers "what cell body should this copy be built
- * under", or NULL for today's behaviour. See src/actions.c and issue 1201. */
-extern void auto_spec_begin(void);
+ * under", or NULL for today's behaviour. See src/actions.c and issue 1201.
+ *
+ * ISSUE 1204: <whole> is 1 when the run is writing the WHOLE design and 0 when
+ * it is writing just the sheet the user is looking at. Only the whole-design
+ * run ever writes the specialised cell bodies, so only that run may put their
+ * names on call lines -- see GUARD AS-WHOLE in src/actions.c. */
+extern void auto_spec_begin(int whole);
 extern void auto_spec_end(void);
 extern int auto_spec_would_specialize(int inst);
 extern const char *auto_spec_name(int inst);
 /* ISSUE 1201, in src/token.c: the settings this copy typed that the SPICE deck
  * drops AND the cell's own drawing uses -- the trigger, in one answer. <canon>
  * comes back with a sorted, canonical spelling of the set (GUARD AS-ORDER) and
- * <settings> with the same set written for a person to read. */
-extern int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings);
+ * <settings> with the same set written for a person to read.
+ *
+ * ISSUE 1203: <key> comes back with a THIRD spelling of the same set, the one
+ * that decides which copies share a cell body. It is length-prefixed and
+ * therefore unambiguous, which <canon> is not and is not required to be. */
+extern int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
+                                          char **key);
 extern void lost_attrs_cache_clear(void);
 /* ISSUE 0983 GUARD UA-ELIDE: one line, bounded length, whitespace runs folded.
  * Every variable-length field of a user-facing netlist-time sentence goes

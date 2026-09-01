@@ -689,6 +689,66 @@ by that item's own verify pass and none of them fixed inside it:
 * **1209** - a specialised copy loses the symbol/schematic pin-mismatch
   highlight. Error path only.
 
-**The next free number is 1210.** 1201-1209 are taken. **1000-1199 is
+**2026-08-31, item S6a (the repair pass).** No new numbers filed. **1202,
+1203, 1204, 1205, 1206 and 1208 are FIXED** and their files carry the
+measurement; **1209 stays OPEN with its symptom corrected** (the pin-mismatch
+check does still run on a specialised copy - what the designer actually gets is
+four error lines where they got two, half naming a cell they never typed);
+**1207 is untouched**, pre-existing and out of that item's scope.
+
+**2026-08-31, item S6a (the repair pass, after sabotage).** Two numbers filed,
+both for guards item S6a added that NO row could see - found by building each
+one's removal, not by reading:
+
+* **1210** - `auto_spec_begin()` keeps two flags, and the eleven-line comment
+  explaining why one will not do was enforced by nothing. Collapsing them makes
+  the single-sheet netlist re-read every cell's drawing off the disk once per
+  token (295 opens against 286, measured). **FIXED**, row AS57.
+* **1211** - the two new `xctx->tok_size` latches in `auto_spec_collides()` and
+  `auto_spec_qualifies()` cite GUARD UA-TOKSIZE in `token.c`, whose own copy IS
+  pinned by row UB9 of `test_unused_attr_0970`. These two got the citation and
+  not the row. **FIXED**, row AS58, which also pins the issue-0986-gap-4 case a
+  plain restore count cannot see.
+
+**test_auto_specialize_1201 is 59 checks, was 57.** No product code changed for
+either; `src/xschem` is byte-identical to the build item S6a shipped.
+
+**2026-08-31, item S6a (the write-up/commit pass).** Eight numbers filed,
+every one of them re-measured on the shipped binary by this pass before it was
+written down - not adopted from a report:
+
+* **1212** - a `schematic=` cell name typed on a copy one level DOWN is
+  invisible to [[1202]]'s new collision probe, which walks the sheet being
+  netlisted. That copy still gets someone else's device, silently, and the
+  device it asked for is nowhere in the deck. This is the half of 1202 its fix
+  does not reach; 1202 is now marked FIXED *for the sheet being netlisted*.
+* **1213** - a value typed as a single SPACE passes GUARD AS-EMPTY's one-byte
+  test, and the deck names a device model that exists in no PDK
+  (`sky130_fd_pr__`). Same shape as 1204: an unusable deck under a note saying
+  the designer need do nothing. RULING D5-1.
+* **1214** - a value that matches the symbol template's own default still writes
+  a second, byte-identical cell body (294 bytes each, measured). This was
+  1206's recorded residue; it now has its own number so it is not lost inside a
+  closed issue.
+* **1215** - the over-refusal twin of 1202's fix: two copies asking for the SAME
+  settings, one of which hand-types the name, get two IDENTICAL bodies (298
+  bytes each) while the note says they share one.
+* **1216** - the netlist warning's opening clause is now four separate string
+  literals in `src/token.c` (lines 3725, 3739, 3754, 3769) and only one of them
+  is pinned by a row. RULING D5-4, latent.
+* **1217** - row AS56 prints the measurement its own words say it asserts; it is
+  one `expr` short of pinning that the header strip covers every root-bearing
+  line. No live gap today.
+* **1218** - two comments name a checkbutton, "netlist current schematic only",
+  that this build does not have. The doors are Shift-N and `xschem netlist
+  -nohier`. The 1204 fix is right; only the name for the door is invented.
+* **1219** - PROCESS. The sabotage protocol's closing check, `grep -rn SABOTAGE
+  src/`, cannot see a sabotage left in a test file, and was clean for the eleven
+  minutes a live SAB-HDRSTRIP variant sat in
+  `tests/headless/test_auto_specialize_1201.tcl` and cost two verification
+  passes. Widening it to `tests/` does not work either: 60 pre-existing prose
+  hits across 28 files. Byte-compare against a pre-sabotage copy instead.
+
+**The next free number is 1220.** 1201-1219 are taken. **1000-1199 is
 reserved** (user, 2026-08-30), so 0999 was followed by **1200**; 0500-0599 and
 0700-0799 remain reserved for other branches.

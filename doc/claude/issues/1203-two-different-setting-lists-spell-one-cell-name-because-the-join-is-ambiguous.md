@@ -1,7 +1,7 @@
 # 1203 - two different setting lists spell one cell name because the join is ambiguous
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed. Found by the verify pass of item S6.
+**Status:** FIXED 2026-08-31 by item S6a. Verified by row AS52 (behavioural) and row AS53 (structural).
 **Filed by:** item S6, write-up pass, 2026-08-31
 **Caused by:** [[1201]].
 
@@ -67,3 +67,33 @@ No `make` in the write-up pass.
 `AS9` was written for this requirement (two copies with DIFFERENT values must
 get two bodies) and does not cover it, because its two values differ in an
 unambiguous place. A row needs the pair above.
+
+---
+
+## Fixed, 2026-08-31, item S6a
+
+**Two spellings, two jobs.** `lost_attrs_the_cell_body_reads()` (`src/token.c`)
+now hands back a **third** string beside `canon` and `settings`: a **key**, and
+that is what `auto_spec_name()` keys the shared-body table on (**GUARD AS-KEY**).
+
+The key is **length-prefixed** - each field written as `<length>:<text>` - so no
+value, whatever it contains, can make two different sets spell one key. The
+readable cell name is still built from `canon` and is still allowed to be
+ambiguous, because two readable names that collide are separated one step later
+by GUARD AS-COLLIDE's numeric suffix. That keeps every cell name in every deck
+anyone has already netlisted exactly as it was.
+
+**Rejected alternative:** make `canon` itself unambiguous with a separator no
+value can hold. It renames every multi-setting cell in every existing deck, to
+fix a case that needs a value containing a double underscore.
+
+Measured after: `xD` (`modeln=nfetA__modelp_pfetB`) and `xE` (`modeln=nfetA
+modelp=pfetB`) get two bodies, and each body holds the devices its own copy
+asked for.
+
+**Readability residue, not ratified.** When two different sets still spell one
+readable name, the second cell is `..._1`:
+`asp2__modeln_nfetA__modelp_pfetB` and `asp2__modeln_nfetA__modelp_pfetB_1`.
+Both are correct and distinct, and each copy's own note says in words which
+settings it carries, but the two are hard to tell apart in a simulator log. On
+the owed ledger as a `rule` debt.

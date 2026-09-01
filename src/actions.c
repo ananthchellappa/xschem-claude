@@ -4143,6 +4143,26 @@ void toggle_ignore(void)
 /* auto_spec_on is GUARD AS-MODE itself: outside a SPICE netlist run every
  * question below is answered NULL and nothing in the editor changes. */
 static int auto_spec_on = 0;
+/* GUARD AS-WHOLE's flag, issue 1204: 1 when the run under way is writing the
+ * WHOLE design, 0 when it is writing only the sheet the user is looking at.
+ *
+ * A READER WOULD ASSUME ONE FLAG WOULD DO -- just don't open the window on the
+ * single-sheet arm. It would not, and the reason is measured. auto_spec_on has
+ * to keep meaning "a SPICE netlist run owns these tables", because
+ * auto_spec_would_specialize() drops the body-read cache whenever no run owns
+ * it; with the window shut on the single-sheet arm, every question the warning
+ * asks below would re-read the cell's drawing off disk, once per token. And the
+ * warning DOES have to ask on that arm -- it is the arm where the setting
+ * really did go nowhere and the user has to be told so. So: the window opens on
+ * both arms, and only this second flag decides whether names are minted.
+ *
+ * NO BEHAVIOURAL ROW CAN SEE THIS -- the deck is byte-identical either way and
+ * only the user's time is spent -- so row AS57 of
+ * tests/headless/test_auto_specialize_1201.tcl pins it structurally. Issue
+ * 1210 records the measurement: collapsing the two flags took the fixture cell
+ * drawings from 286 disk opens to 295 while every suite in the tree stayed
+ * green. */
+static int auto_spec_whole = 0;
 /* "<symbol reference>\n<the copy's whole property string>" -> the cell name
  * chosen for it, or "" for "this copy gets nothing". Purely a speed memo: the
  * answer is a function of those two things, and get_sym_name() asks it once per
@@ -4170,6 +4190,7 @@ static Str_hashtable auto_spec_taken = {NULL, 0};
 void auto_spec_end(void)
 {
   auto_spec_on = 0;
+  auto_spec_whole = 0;                                       /* GUARD AS-WHOLE */
   str_hash_free(&auto_spec_memo);
   str_hash_free(&auto_spec_by_set);
   str_hash_free(&auto_spec_taken);
@@ -4178,14 +4199,19 @@ void auto_spec_end(void)
 
 /* ISSUE 1201. Open the window. Called from global_spice_netlist() immediately
  * before it writes the TOP sheet's own call lines, and from nowhere else. That
- * point matters and is measured -- see the comment at the call site. */
-void auto_spec_begin(void)
+ * point matters and is measured -- see the comment at the call site.
+ *
+ * ISSUE 1204: <whole> is the caller's own `global` flag -- 1 for "netlist the
+ * whole design", 0 for "netlist current schematic only". It decides GUARD
+ * AS-WHOLE below and nothing else. */
+void auto_spec_begin(int whole)
 {
   auto_spec_end();
   str_hash_init(&auto_spec_memo, 1021);
   str_hash_init(&auto_spec_by_set, 1021);
   str_hash_init(&auto_spec_taken, 1021);
   auto_spec_on = 1;
+  auto_spec_whole = whole ? 1 : 0;
 }
 
 /* GUARD AS-COLLIDE, issue 1201. Is <nm> a name this deck, this design or this
@@ -4196,13 +4222,15 @@ void auto_spec_begin(void)
  * only falls back to the cell's own drawing when the named file does NOT
  * exist, so a candidate that happens to name a real symbol next door builds
  * this copy out of THAT cell's drawing instead -- a different circuit, quietly,
- * under a name the designer never typed. Three questions, because there are
- * three ways a name can already be spoken for:
+ * under a name the designer never typed. Four questions, because there are four
+ * ways a name can already be spoken for:
  *
  *   * a symbol already loaded in this design, including one this same run has
  *     just minted;
  *   * a name this run has already handed out (two different setting lists whose
  *     names collapse to the same spelling once punctuation is folded to '_');
+ *   * a name a designer has TYPED BY HAND on another copy anywhere on this
+ *     sheet -- GUARD AS-TYPEDNAME below, issue 1202;
  *   * a file on disk, asked BOTH as a bare reference and as a reference in the
  *     base symbol's own library, because that is where a neighbouring cell of
  *     the same family actually lives and a bare name does not resolve there.
@@ -4211,9 +4239,13 @@ static int auto_spec_collides(int inst, const char *nm)
 {
   struct stat buf;
   const char *symname;
+  const char *iprop;
+  const char *ival;
   char dirref[PATH_MAX];
   const char *slash;
   size_t dlen;
+  size_t saved_tok_size;
+  int hit;
   int i;
 
   if(!nm || !nm[0]) return 1;
@@ -4222,6 +4254,44 @@ static int auto_spec_collides(int inst, const char *nm)
     if(!strcmp(get_cell(xctx->sym[i].name, 0), nm)) return 1;
   }
   if(str_hash_lookup(&auto_spec_taken, nm, "", XLOOKUP)) return 1;
+  /* GUARD AS-TYPEDNAME, issue 1202. A NAME A DESIGNER TYPED IS SPOKEN FOR, EVEN
+   * THOUGH NOTHING ELSE HERE CAN SEE IT YET.
+   *
+   * A reader would assume the loop over loaded symbols above already covers
+   * this -- a copy that names its own cell body gets a symbol of that name, so
+   * surely it is loaded. IT IS NOT LOADED YET, and the ordering is the whole
+   * defect: the top sheet's call lines are written by spice_netlist() BEFORE
+   * get_additional_symbols() builds the symbol blocks for the hand-typed names,
+   * so at the moment a name is minted the hand-typed one exists only as text in
+   * another copy's property string. Measured before this probe: one copy typed
+   * exactly the name the tool would invent and asked for a different device,
+   * both copies were pointed at one cell body, and the copy the designer typed
+   * by hand silently got the OTHER copy's device with not a word said. That is
+   * the same silent loss of a typed setting this whole feature exists to end,
+   * which is why it may not ship inside it. Row AS51 drives it.
+   *
+   * The value is read RAW, never through translate3(): a hand-typed name may be
+   * a generator call, and running one for every candidate would evaluate Tcl
+   * inside a collision test. A generator's raw text will not equal a name this
+   * function invented anyway. Rejected alternative, recorded on issue 1202.
+   *
+   * tok_size is latched and put back for the reason GUARD UA-TOKSIZE gives in
+   * token.c: an observer may never become the reason a real netlist value goes
+   * missing. Row AS58 pins this latch and the twin in auto_spec_qualifies(),
+   * including the issue-0986-gap-4 case a plain restore count cannot see -- a
+   * new way OUT of the latched region, with the restore still sitting there.
+   * Issue 1211. */
+  hit = 0;
+  saved_tok_size = xctx->tok_size;
+  for(i = 0; i < xctx->instances; ++i) {
+    iprop = xctx->inst[i].prop_ptr;
+    if(!iprop || !iprop[0]) continue;
+    ival = get_tok_value(iprop, "schematic", 0);
+    if(!ival || !ival[0]) continue;
+    if(!strcmp(get_cell(ival, 0), nm)) { hit = 1; break; }
+  }
+  xctx->tok_size = saved_tok_size;
+  if(hit) return 1;
   if(!stat(abs_sym_path(nm, ".sym"), &buf)) return 1;
   if(!stat(abs_sym_path(nm, ".sch"), &buf)) return 1;
   symname = xctx->sym[xctx->inst[inst].ptr].name;
@@ -4244,8 +4314,10 @@ static int auto_spec_collides(int inst, const char *nm)
  * time) can never answer differently about the same copy.
  *
  * Returns the number of settings that qualify and hands back the canonical and
- * the human spelling of them. */
-static int auto_spec_qualifies(int inst, char **canon, char **settings)
+ * the human spelling of them, and (issue 1203) the sharing key -- three
+ * spellings of one set, each with a different job. See GUARD AS-KEY in token.c
+ * for why the readable one may not also be the one that decides sharing. */
+static int auto_spec_qualifies(int inst, char **canon, char **settings, char **key)
 {
   xSymbol *symptr;
   size_t saved_tok_size;
@@ -4253,10 +4325,13 @@ static int auto_spec_qualifies(int inst, char **canon, char **settings)
 
   if(canon) my_strdup(_ALLOC_ID_, canon, NULL);
   if(settings) my_strdup(_ALLOC_ID_, settings, NULL);
+  if(key) my_strdup(_ALLOC_ID_, key, NULL);
   if(inst < 0 || inst >= xctx->instances) return 0;
   if(xctx->inst[inst].ptr < 0) return 0;
   symptr = xctx->inst[inst].ptr + xctx->sym;
 
+  /* Latched for the reason the twin in auto_spec_collides() gives above; row
+   * AS58 pins both, issue 1211. */
   saved_tok_size = xctx->tok_size;
   /* GUARD AS-SYMBODY, issue 1201. A SYMBOL that names its own drawing, or says
    * its insides are never to be written out, has already decided which body it
@@ -4294,7 +4369,7 @@ static int auto_spec_qualifies(int inst, char **canon, char **settings)
    * classification, in token.c, asked twice. GUARD AS-ORDER is inside it: the
    * canonical string is sorted by setting name, so two copies that typed the
    * same settings in opposite order are one request and share one body. */
-  return lost_attrs_the_cell_body_reads(inst, canon, settings);
+  return lost_attrs_the_cell_body_reads(inst, canon, settings, key);
 }
 
 /* ISSUE 1201. WOULD THE NETLISTER GIVE THIS COPY A CELL BODY OF ITS OWN?
@@ -4323,7 +4398,7 @@ int auto_spec_would_specialize(int inst)
   char *settings = NULL;
   int n;
 
-  n = auto_spec_qualifies(inst, &canon, &settings);
+  n = auto_spec_qualifies(inst, &canon, &settings, NULL);
   my_free(_ALLOC_ID_, &canon);
   my_free(_ALLOC_ID_, &settings);
   if(!auto_spec_on) lost_attrs_cache_clear();
@@ -4340,12 +4415,16 @@ int auto_spec_would_specialize(int inst)
  *
  * The guards, in order, each of which has its own test row:
  *   AS-MODE       we are not inside a SPICE netlist run
+ *   AS-WHOLE      this run is writing one sheet, not the whole design, so no
+ *                 cell bodies will be written and no names may be minted
  *   AS-SYMBODY    the SYMBOL already has an opinion about which drawing it is
  *                 built from, or says not to write its insides out at all
  *   AS-TMPLMODEL  the symbol's template names the cell body itself
  *   AS-IGNORE     this copy is not written into the SPICE deck at all
  *   AS-EXPLICIT / AS-TYPE / AS-LOST / AS-BODY, all four in token.c
  *   AS-ORDER      the answer is the SET of settings, not the order typed
+ *   AS-KEY        which copies SHARE a body is decided by an unambiguous
+ *                 encoding of that set, not by the readable name (token.c)
  *   AS-CANON      a readable, deterministic name built from that set
  *   AS-COLLIDE    and never a name something else already answers to
  */
@@ -4363,6 +4442,7 @@ const char *auto_spec_name(int inst)
   char *setkey = NULL;
   char *canon = NULL;
   char *settings = NULL;
+  char *key = NULL;
   const char *symname;
   /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK. get_cell() returns a
    * static buffer that the NEXT call overwrites, and auto_spec_collides() below
@@ -4382,6 +4462,30 @@ const char *auto_spec_name(int inst)
 
   name[0] = '\0';
   if(!auto_spec_on) return NULL;                              /* GUARD AS-MODE */
+  /* GUARD AS-WHOLE, issue 1204. A DECK MAY NOT NAME A CELL BODY IT DOES NOT
+   * ALSO WRITE, and on this arm it will not write one.
+   *
+   * A reader would assume that once the window is open the name is always safe
+   * to mint, because the body follows. It does not follow here. The bodies are
+   * written by get_additional_symbols(1) inside global_spice_netlist()'s
+   * `if(global)` block, and `global` is 0 when the user ticked "netlist current
+   * schematic only" -- so before this guard that run wrote a deck whose call
+   * lines named cells nothing defined: not that file, not any other netlist
+   * file, not any library on disk. The simulator refuses it, and it is a
+   * REGRESSION -- the same tick box used to write the plain cell name, which
+   * the designer's other netlist files do define.
+   *
+   * RETURNING HERE IS ALSO THE OTHER HALF OF THE FIX, and that is deliberate
+   * rather than incidental. The note that tells the user "XSCHEM wrote a
+   * separate copy of this cell for you and you need do nothing" is printed at
+   * the bottom of this very function, so leaving before it is what stops the
+   * tool claiming work it did not do -- RULING D5-1. What the user gets on this
+   * arm instead is the plain-English "your setting went nowhere here, netlist
+   * the whole design and it will be in the deck" sentence in token.c.
+   *
+   * The window itself still opens on this arm; see auto_spec_begin() above for
+   * why the two flags are not one. */
+  if(!auto_spec_whole) return NULL;                          /* GUARD AS-WHOLE */
   if(inst < 0 || inst >= xctx->instances) return NULL;
   if(xctx->inst[inst].ptr < 0) return NULL;
   symptr = xctx->inst[inst].ptr + xctx->sym;
@@ -4398,18 +4502,35 @@ const char *auto_spec_name(int inst)
     return name[0] ? name : NULL;
   }
 
-  nlost = auto_spec_qualifies(inst, &canon, &settings);
+  nlost = auto_spec_qualifies(inst, &canon, &settings, &key);
   if(nlost <= 0 || !canon || !canon[0]) {
     str_hash_lookup(&auto_spec_memo, memokey, "", XINSERT);
     my_free(_ALLOC_ID_, &memokey);
     my_free(_ALLOC_ID_, &canon);
     my_free(_ALLOC_ID_, &settings);
+    my_free(_ALLOC_ID_, &key);
     return NULL;
   }
 
+  /* GUARD AS-KEY, issue 1203. WHICH COPIES SHARE A CELL BODY IS DECIDED ON THE
+   * UNAMBIGUOUS KEY, NEVER ON THE READABLE NAME.
+   *
+   * A reader would assume the readable spelling below is good enough to key on,
+   * since it is built from the same set. It is not: it joins each setting to
+   * its value with one underscore and the pairs to each other with two, so a
+   * value that itself contains two underscores spells the same string as two
+   * separate settings do. Measured before this: one copy setting
+   * `modeln=nfetA__modelp_pfetB` and another setting `modeln=nfetA modelp=pfetB`
+   * landed on ONE key, so the second copy was handed the first copy's cell body
+   * and BOTH of its own settings vanished from the deck with nothing said.
+   * The key from token.c is length-prefixed and cannot do that.
+   *
+   * The readable name stays ambiguous on purpose -- it is for a person to read
+   * in a simulator log -- and two readable names that do collide are separated
+   * one step later by GUARD AS-COLLIDE's numeric suffix. */
   my_strdup2(_ALLOC_ID_, &setkey, symname);
   my_strcat(_ALLOC_ID_, &setkey, "\n");
-  my_strcat(_ALLOC_ID_, &setkey, canon);
+  my_strcat(_ALLOC_ID_, &setkey, key);
   e = str_hash_lookup(&auto_spec_by_set, setkey, "", XLOOKUP);
   if(e && e->value && e->value[0]) {
     my_strncpy(name, e->value, S(name));
@@ -4418,6 +4539,7 @@ const char *auto_spec_name(int inst)
     my_free(_ALLOC_ID_, &setkey);
     my_free(_ALLOC_ID_, &canon);
     my_free(_ALLOC_ID_, &settings);
+    my_free(_ALLOC_ID_, &key);
     return name;
   }
 
@@ -4466,6 +4588,7 @@ const char *auto_spec_name(int inst)
       my_free(_ALLOC_ID_, &setkey);
       my_free(_ALLOC_ID_, &canon);
       my_free(_ALLOC_ID_, &settings);
+      my_free(_ALLOC_ID_, &key);
       return NULL;
     }
   }
@@ -4509,6 +4632,7 @@ const char *auto_spec_name(int inst)
   my_free(_ALLOC_ID_, &setkey);
   my_free(_ALLOC_ID_, &canon);
   my_free(_ALLOC_ID_, &settings);
+  my_free(_ALLOC_ID_, &key);
   return name;
 }
 

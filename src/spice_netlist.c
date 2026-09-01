@@ -414,8 +414,20 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
   * line above them still named the plain cell -- bodies nothing called, and the
   * designer's setting still nowhere. spice_block_netlist()'s own
   * get_additional_symbols(1) and spice_netlist() are both inside this window,
-  * so sub-sheets specialise too. See src/actions.c. */
- auto_spec_begin();
+  * so sub-sheets specialise too. See src/actions.c.
+  *
+  * ISSUE 1204, AND IT IS WHY THE ARGUMENT IS `global` AND NOT 1. `global` is 0
+  * when the user ticked "netlist current schematic only" (also the Shift-N key
+  * and `xschem netlist -nohier`): that run writes THIS sheet and stops. The
+  * specialised cell bodies are written further down by get_additional_symbols(1)
+  * inside the `if(global)` block, so a single-sheet run that minted names would
+  * put call lines into the deck naming cell bodies that run never writes -- a
+  * deck no simulator accepts, and a regression on a mode that worked before this
+  * feature. So the window still OPENS on both arms, because the classification
+  * and its caches are wanted on both, but on the single-sheet arm it mints no
+  * names: GUARD AS-WHOLE, src/actions.c. The batch `xschem -n` CLI netlist
+  * passes 1 and is unaffected. */
+ auto_spec_begin(global);
  err |= spice_netlist(fd, 0);
 
  first = 0;

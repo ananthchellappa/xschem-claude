@@ -3341,14 +3341,21 @@ void lost_attrs_cache_clear(void)
  * that the deck drops AND the cell's own sheet uses.
  *
  * Returns how many there are; that is the number auto_spec_name() decides on.
- * <canon> is written with a CANONICAL, sorted, name-and-value spelling of the
- * set -- GUARD AS-ORDER. Two copies that typed the same settings in a different
- * order are the same request and must end up sharing one cell body, so the
- * order the user typed them in may not appear in the answer. <settings> is the
- * same set written for a person to read, for the note the tool prints.
+ * THREE SPELLINGS OF ONE SET COME BACK, and they have three different jobs:
  *
- * Both are handed back as freshly allocated strings the caller frees. */
-int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings)
+ *   <canon>    CANONICAL and sorted -- GUARD AS-ORDER. Two copies that typed
+ *              the same settings in a different order are the same request and
+ *              must share one cell body, so the order the user typed them in
+ *              may not appear in the answer. This is what the readable cell
+ *              name is spelled from, and it is allowed to be ambiguous.
+ *   <settings> the same set written for a person to read, for the note.
+ *   <key>      GUARD AS-KEY, issue 1203: the one that decides WHICH COPIES
+ *              SHARE A BODY, and the only one that has to be unambiguous.
+ *
+ * All three are handed back as freshly allocated strings the caller frees; any
+ * of them may be NULL if the caller does not want it. */
+int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
+                                   char **key)
 {
   char *format = NULL;
   char *toks = NULL;
@@ -3356,6 +3363,8 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings)
   char *p;
   char *q;
   char *sw;
+  const char *tval;
+  char lenbuf[32];
   char carriers[64];
   size_t saved_tok_size;
   const char *prop;
@@ -3367,6 +3376,7 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings)
 
   if(canon) my_strdup(_ALLOC_ID_, canon, NULL);
   if(settings) my_strdup(_ALLOC_ID_, settings, NULL);
+  if(key) my_strdup(_ALLOC_ID_, key, NULL);
   /* GUARD AS-EXPLICIT and GUARD AS-TYPE, both of them, and they are the SAME
    * test the warning applies -- see ua_instance_eligible() above. */
   if(!ua_instance_eligible(inst)) return 0;
@@ -3392,9 +3402,27 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings)
     while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
     if(*q) { *q = '\0'; ++q; }
     /* GUARD AS-LOST then GUARD AS-BODY, in that order: the cheap shared
-     * classification first, the file read only for what survives it. */
+     * classification first, the file read only for what survives it. Then
+     * GUARD AS-EMPTY, issue 1206, last because it is about the VALUE and the
+     * other two are about the name.
+     *
+     * GUARD AS-EMPTY: A COPY THAT DIFFERS IN NOTHING IS NOT A COPY. A designer
+     * who typed the setting name and never got round to the value has asked for
+     * nothing, and a reader would assume that falls out of the tests above --
+     * it does not, because those two ask only whether the NAME is dropped by
+     * the SPICE line and used by the drawing, and a name with no value passes
+     * both. Measured before this guard: `modelp=` with nothing after it wrote a
+     * second .subckt whose 294 bytes were byte-identical to the first, under a
+     * cell name ending in an underscore, and the info window announced it as
+     * work done on the designer's behalf. What they get now is a sentence
+     * telling them what they left unfinished (warn_unused_instance_attr below).
+     *
+     * ONE SETTING, NOT THE WHOLE COPY: a copy carrying one blank setting beside
+     * one real one is still specialised on the real one, and still warned about
+     * the blank one. Row AS55 is the only row that can see that difference. */
     if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach) &&
-       cell_body_reads_token(inst, p)) {
+       cell_body_reads_token(inst, p) &&
+       (tval = get_tok_value(prop, p, 0)) != NULL && tval[0]) {
       if(n == cap) {
         cap = cap ? cap * 2 : 8;
         my_realloc(_ALLOC_ID_, &names, (size_t)cap * sizeof(char *));
@@ -3413,17 +3441,48 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings)
     names[j] = sw;
   }
   for(i = 0; i < n; ++i) {
+    /* ⚠ ONE get_tok_value() PER SETTING, READ INTO tval AND USED THREE TIMES.
+     * It hands back a buffer the NEXT call overwrites, so the three spellings
+     * below must be built from one read, not from three. */
+    tval = get_tok_value(prop, names[i], 0);
+    if(!tval) tval = "";
+    /* GUARD AS-KEY, issue 1203. LENGTH-PREFIXED, so the encoding is a faithful
+     * one and two different sets can never spell one key.
+     *
+     * A reader would assume <canon> below could do this job as well -- it is
+     * built from the same set, sorted the same way. It cannot: it joins a
+     * setting to its value with one underscore and the pairs to each other with
+     * two, and a VALUE that itself contains two underscores then spells exactly
+     * what two separate settings spell. Measured: `modeln=nfetA__modelp_pfetB`
+     * on one copy and `modeln=nfetA modelp=pfetB` on the next produced one key,
+     * so the second copy silently inherited the first copy's cell body and both
+     * of its own settings left the deck. Writing each field as <length>:<text>
+     * removes the ambiguity outright, whatever a value contains.
+     *
+     * IT IS NOT THE CELL NAME AND IS NEVER SHOWN. Rejected alternative,
+     * recorded on issue 1203: make <canon> itself unambiguous with a separator
+     * no value can hold. That renames every multi-setting cell in every deck
+     * anyone has already netlisted, to fix a case that needs a value containing
+     * a double underscore. */
+    if(key) {
+      my_snprintf(lenbuf, S(lenbuf), "%d:", (int)strlen(names[i]));
+      my_strcat(_ALLOC_ID_, key, lenbuf);
+      my_strcat(_ALLOC_ID_, key, names[i]);
+      my_snprintf(lenbuf, S(lenbuf), "%d:", (int)strlen(tval));
+      my_strcat(_ALLOC_ID_, key, lenbuf);
+      my_strcat(_ALLOC_ID_, key, tval);
+    }
     if(canon) {
       if(i) my_strcat(_ALLOC_ID_, canon, "__");
       my_strcat(_ALLOC_ID_, canon, names[i]);
       my_strcat(_ALLOC_ID_, canon, "_");
-      my_strcat(_ALLOC_ID_, canon, get_tok_value(prop, names[i], 0));
+      my_strcat(_ALLOC_ID_, canon, tval);
     }
     if(settings) {
       if(i) my_strcat(_ALLOC_ID_, settings, (i == n - 1) ? " and " : ", ");
       my_strcat(_ALLOC_ID_, settings, names[i]);
       my_strcat(_ALLOC_ID_, settings, "=");
-      my_strcat(_ALLOC_ID_, settings, get_tok_value(prop, names[i], 0));
+      my_strcat(_ALLOC_ID_, settings, tval);
     }
     my_free(_ALLOC_ID_, &names[i]);
   }
@@ -3480,6 +3539,12 @@ static void warn_unused_instance_attr(int inst, const char *format)
   char carriers[64];
   size_t saved_tok_size;
   int reach;
+  /* ISSUE 1205: the two answers the sentence below ASSERTS, worked out once and
+   * held, because C stops evaluating a && the moment the first half is false
+   * and the sentence then states a fact nobody established. */
+  int spec;
+  int body_reads;
+  int haveval;
 
   if(!format || !format[0]) return;
 
@@ -3577,8 +3642,30 @@ static void warn_unused_instance_attr(int inst, const char *format)
        * setting on the same copy that the drawing does not use is still
        * reported, which row AS15 measures. Both are memoised, so this costs a
        * hash lookup. */
-      if(auto_spec_name(inst) && cell_body_reads_token(inst, p)) { p = q; continue; }
+      /* ISSUE 1205, AND IT IS WHY THESE ARE THREE STATEMENTS AND NOT ONE `if`.
+       * Written as one short-circuited condition, the second question -- does
+       * the cell's own drawing use this setting -- was never asked whenever the
+       * first was false, and the advice at the bottom of this block went on to
+       * tell the designer their drawing does not use the setting anywhere.
+       * Measured: a cell whose very own transistor line reads model=@modelp was
+       * described to its designer as a drawing that does not use modelp. A
+       * sentence may not assert a fact the code declined to look up, so both
+       * answers are worked out here, once, and the advice picks its shape from
+       * them. Row AS50 is the structural eye on this; grepping the file cannot
+       * see it, because the same pair of calls appears in the sibling that
+       * classifies, two hundred lines up. */
+      spec = auto_spec_name(inst) ? 1 : 0;
+      body_reads = cell_body_reads_token(inst, p);
       val = get_tok_value(prop, p, 0);
+      haveval = (val && val[0]) ? 1 : 0;
+      /* GUARD UA-HONOURED's own test, and the value is part of it, issue 1206.
+       * Without the value term, a copy carrying one blank setting beside one
+       * real one is specialised on the real one and then silently loses the
+       * sentence about the blank one -- because the copy as a whole WAS
+       * specialised. The set that was honoured is exactly "lost AND the drawing
+       * uses it AND a value was actually typed", so the skip has to test all
+       * three. Row AS55 is the only row that can see it. */
+      if(spec && body_reads && haveval) { p = q; continue; }
       /* GUARD UA-ELIDE, issue 0983: every variable-length field is shortened to
        * one line of bounded length BEFORE the sentence is built, so no value a
        * user types can cost the reader the recommended action or split the
@@ -3628,7 +3715,12 @@ static void warn_unused_instance_attr(int inst, const char *format)
           "netlist of the same cell does carry it, so deleting it would break "
           "that. To get it into the SPICE run as well, the %s symbol has to be "
           "changed so its SPICE line passes it through.", carriers, e_cell);
-      } else {
+      } else if(!body_reads) {
+        /* SHAPE 2, unchanged since issue 1201 and now TRUE rather than assumed:
+         * the cell's own drawing really was opened and really does not mention
+         * this setting, so there is nothing a separate copy of it could do
+         * differently. This is the population rows UF10 and UF13 of
+         * tests/headless/test_unused_attr_0970.tcl sit in. */
         my_snprintf(mid, S(mid),
           "%s never reads %s when the netlist is written", e_cell, e_prop);
         my_snprintf(advice, S(advice),
@@ -3639,6 +3731,47 @@ static void warn_unused_instance_attr(int inst, const char *format)
           "there is nothing a separate copy could change. To make it count, "
           "that drawing has to use %s on the part meant to follow it.",
           e_cell, e_prop, e_prop);
+      } else if(!haveval) {
+        /* SHAPE 3, issue 1206. The name is right and the drawing does read it;
+         * what is missing is the value. Telling this designer to check their
+         * spelling would send them looking for a mistake they did not make. */
+        my_snprintf(mid, S(mid),
+          "%s never reads %s when the netlist is written", e_cell, e_prop);
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so the name is right -- but you left the "
+          "value empty, so there is nothing to pass down. Put the value you "
+          "want after the '=', or take the setting off.", e_cell, e_prop);
+      } else if(auto_spec_would_specialize(inst)) {
+        /* SHAPE 4, issue 1204. Everything about this copy qualifies; the only
+         * reason it did not get its own version of the cell is that this run
+         * was writing one sheet and not the whole design, and the cell bodies
+         * are only written on the whole-design run. So the honest thing to tell
+         * the designer is the one action that puts their setting in a deck.
+         *
+         * Safe to ask auto_spec_would_specialize() here: a netlist run owns the
+         * caches on both arms, so it does not throw the body-read cache away. */
+        my_snprintf(mid, S(mid),
+          "%s never reads %s when the netlist is written", e_cell, e_prop);
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so this is not a spelling mistake. "
+          "XSCHEM can give this copy its own version of %s, but it only writes "
+          "those when it netlists the whole design, and this run wrote just "
+          "this one sheet. Netlist the whole design and this setting will be in "
+          "the deck.", e_cell, e_prop, e_cell);
+      } else {
+        /* SHAPE 5. The drawing does use the setting, but something about this
+         * cell stops a version of its own being written -- its symbol names the
+         * drawing it is built from, or its template names the cell body, or the
+         * copy is left out of the SPICE deck altogether (GUARDs AS-SYMBODY,
+         * AS-TMPLMODEL and AS-IGNORE in actions.c). The setting still went
+         * nowhere, and the way to make it count is on the symbol's SPICE line. */
+        my_snprintf(mid, S(mid),
+          "%s never reads %s when the netlist is written", e_cell, e_prop);
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so this is not a spelling mistake. "
+          "XSCHEM did not give this copy a version of its own here, so the "
+          "setting still changed nothing. For it to count, the %s symbol has to "
+          "pass %s through on its SPICE line.", e_cell, e_prop, e_cell, e_prop);
       }
       /* RULING D5-4: whichever shape it took, the sentence is assembled HERE and
        * nowhere else, and handed to the info window exactly once. */

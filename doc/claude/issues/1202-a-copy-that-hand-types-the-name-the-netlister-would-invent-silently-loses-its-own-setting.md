@@ -1,7 +1,14 @@
 # 1202 - a copy that hand-types the name the netlister would invent silently loses its own setting
 
 **Branch:** annotate
-**Status:** OPEN - measured, not fixed. Found by the verify pass of item S6.
+**Status:** FIXED 2026-08-31 by item S6a **for the sheet being netlisted**.
+Verified by row AS51 (behavioural) and the extended row AS41 (structural).
+**The same defect through the other door is still live and is filed as
+[[1212]]:** a `schematic=` name typed on a copy one level DOWN is not in
+`xctx->inst[]` when the top sheet's call lines are written, so the probe cannot
+see it and that copy still gets someone else's device, silently. The
+over-refusal twin this fix creates - two copies asking for the same settings
+getting two identical bodies - is [[1215]].
 **Filed by:** item S6, write-up pass, 2026-08-31
 **Caused by:** [[1201]]. This is a REGRESSION: the case below was correct before
 that change landed.
@@ -90,3 +97,26 @@ a filed measurement.
 None today. `AS13` covers explicit-beats-implicit only where the hand-typed name
 and the invented name differ. A row for this needs the two-copy sheet above and
 must assert BOTH copies get the device they asked for.
+
+---
+
+## Fixed, 2026-08-31, item S6a
+
+`auto_spec_collides()` (`src/actions.c`) grew a **fourth** way a name can already
+be spoken for - **GUARD AS-TYPEDNAME**: it walks `xctx->inst[]` and compares the
+candidate against the `schematic=` name typed on every other copy on the sheet.
+
+**Why none of the other three probes could see it.** The top sheet's call lines
+are written by `spice_netlist()` *before* `get_additional_symbols()` builds the
+symbol blocks for hand-typed names, so at the moment a name is minted the
+hand-typed one exists only as text inside another copy's property string - not
+as a loaded symbol, not as a name this run has handed out, and not as a file on
+disk. The ordering is the whole defect.
+
+The value is read **raw**, never through `translate3()`: a hand-typed name may be
+a generator call, and running one for every candidate would evaluate Tcl inside
+a collision test. Rejected alternative, recorded here.
+
+Measured after: the copy that hand-typed the name keeps its own device
+(`pfet_01v8_hvt`), the copy the tool named gets `..._1` and its own
+(`pfet_01v8_lvt`), and each body holds what its own copy asked for.

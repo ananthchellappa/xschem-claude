@@ -155,6 +155,30 @@ proc as_fnv {s} {
   }
   return [format %08x $h]
 }
+## ISSUE 1208. A DECK THIS SUITE PINS BY FINGERPRINT CARRIES THIS CHECKOUT'S
+## OWN ABSOLUTE PATH. The netlister writes a `** sch_path:` header per sheet and
+## a `** sym_path:` header per symbol (src/spice_netlist.c), each holding the
+## full path the file was read from -- 15 of them in the shipped bandgap deck
+## alone. Rows AS6 and AS26 fingerprint whole decks to say "nothing else moved",
+## and with those lines in the text the fingerprint is a property of WHERE the
+## repository happens to sit, so the two rows pass in this checkout and in no
+## other. Clone the tree one directory across and they go red having found no
+## defect at all.
+##
+## THE TWO HEADER SHAPES ARE THE WHOLE OF IT, AND THAT WAS MEASURED, NOT
+## ASSUMED: of the 15 lines in the shipped bandgap deck that carry this
+## checkout's root, all 15 are `** sch_path:` or `** sym_path:` headers. No
+## .include line and no other line in any deck this suite fingerprints carries
+## the root, so nothing else is dropped -- a wider strip would start hiding
+## circuit from the very rows whose job is to notice it moving.
+proc as_stripsym {deck} {
+  set out {}
+  foreach l [split $deck "\n"] {
+    if {[regexp {^\*\* (sch|sym)_path: } $l]} { continue }
+    lappend out $l
+  }
+  return [join $out "\n"]
+}
 ## Is <w> in <s> as a word of its own, not buried inside a longer name?
 proc as_word {s w} {
   return [regexp "(^|\[^A-Za-z0-9_.\])[string map {. \\.} $w](\[^A-Za-z0-9_.\]|$)" $s]
@@ -751,6 +775,24 @@ proc as_netlist {sch {type spice} {ext spice}} {
   return [as_slurp [file join $::scratch [file rootname [file tail $sch]].$ext]]
 }
 
+## ISSUE 1204. THE SAME RUN THROUGH THE OTHER DOOR: File > Netlist with "netlist
+## current schematic only" ticked, which is also the Shift-N key and `xschem
+## netlist -nohier`. It writes the sheet the user is looking at and nothing
+## below it. THE OUTPUT FILE IS DELETED FIRST: without that, a run that wrote
+## nothing at all would hand back the PREVIOUS run's deck and every row below
+## would pass on it.
+proc as_netlist_nh {sch {type spice} {ext spice}} {
+  set out [file join $::scratch [file rootname [file tail $sch]].$ext]
+  catch {file delete -force $out}
+  catch {xschem load $sch}
+  catch {xschem set netlist_type $type}
+  set ::AS_LASTTYPE ZZUNKNOWN
+  catch {set ::AS_LASTTYPE [xschem get netlist_type]}
+  catch {xschem netlist -nohier}
+  catch {xschem set netlist_type spice}
+  return [as_slurp $out]
+}
+
 # ============================================================================
 # AS1-AS7. THE ACCEPTANCE ROWS, ON THE SHIPPED BANDGAP SHEET
 # ============================================================================
@@ -809,13 +851,15 @@ check {AS5 THE FIX IS IN THE TOOL, NOT ON THE SHEET: the sheet that produced\
 ## two call lines, because "did any other deck move" is the whole risk of this
 ## change and a call-line row would not see a body that grew.
 set BG_NOW [as_netlist $BG_SHIPPED]
-puts "AS-BANDGAP committed fingerprint: [as_fnv $BG_NOW] bodies [as_bodies $BG_NOW]"
+puts "AS-BANDGAP committed fingerprint raw [as_fnv $BG_NOW] stripped\
+ [as_fnv [as_stripsym $BG_NOW]] bodies [as_bodies $BG_NOW]"
 check {AS6 EXPLICIT BEATS IMPLICIT: the committed bandgap sheet, whose two\
  copies still carry the schematic= attribute somebody typed by hand, netlists\
  to exactly the deck it does today -- same two copies pointed at the same\
  hand-named cell, same deck to the byte} \
-  [list [as_bodyfor $BG_NOW x5] [as_bodyfor $BG_NOW x6] [as_fnv $BG_NOW]] \
-  {passgate_lvtp passgate_lvtp 4b48fcb4}
+  [list [as_bodyfor $BG_NOW x5] [as_bodyfor $BG_NOW x6] \
+        [as_fnv [as_stripsym $BG_NOW]]] \
+  {passgate_lvtp passgate_lvtp ef8229a9}
 
 set BG_D2 [as_netlist $BG_NOFIX]
 check {AS7 DETERMINISTIC: netlisting the same sheet twice in one session gives\
@@ -1098,15 +1142,16 @@ foreach s $AS_SHIPPED {
   if {![file isfile $s]} { lappend AS_FP MISSING ; continue }
   incr AS_SEEN
   set d [as_netlist $s]
-  lappend AS_FP [as_fnv $d]
-  puts "AS-SHIPPED [file tail $s]: [as_fnv $d] bodies [llength [as_bodies $d]]"
+  lappend AS_FP [as_fnv [as_stripsym $d]]
+  puts "AS-SHIPPED [file tail $s]: raw [as_fnv $d] stripped\
+ [as_fnv [as_stripsym $d]] bodies [llength [as_bodies $d]]"
 }
 check {AS26 NO OTHER DECK MOVES: every shipped sheet this change could possibly\
  reach -- both copies of the bandgap and the four benches above them -- writes\
  the same deck it writes today, to the byte. A single one of these moving is a\
  stop, not a detail} \
   [list $AS_SEEN $AS_FP] \
-  {6 {4b48fcb4 35747644 4d069178 33ac9ad9 13cf2ab2 1566f812}}
+  {6 {ef8229a9 6d587df9 ac4eacfe 63ff78b7 561e2e30 64c14554}}
 
 set AS_TB 0
 set AS_TBLOST 0
@@ -1318,8 +1363,11 @@ check {AS40 EXPLICIT BEATS IMPLICIT IS WRITTEN IN TWO PLACES AND EACH ONE HIDES\
   {1 1 1 1 1 1 1 2 3}
 
 set AS_COLL [as_cfunc $AS_ACTC {static int auto_spec_collides(int inst, const char *nm)}]
-check {AS41 A NAME THE TOOL INVENTS IS CHECKED AGAINST FOUR PLACES A NAME CAN\
- ALREADY BE SPOKEN FOR, and only one of the four can be reached from a deck --\
+check {AS41 A NAME THE TOOL INVENTS IS CHECKED AGAINST FIVE PLACES A NAME CAN\
+ ALREADY BE SPOKEN FOR -- THE FIFTH IS ISSUE 1202, a name a designer has typed\
+ by hand on ANOTHER copy on the same sheet, which none of the other four can\
+ see because the top sheet's call lines are written before the hand-named cell\
+ is ever loaded as a symbol. Row AS51 drives that one. and only one of the four can be reached from a deck --\
  the other three are covered by each other, so deleting any one of them alone\
  leaves every suite green. The one that matters most is the list of names this\
  same run has already handed out: without it two copies whose settings spell\
@@ -1332,8 +1380,10 @@ check {AS41 A NAME THE TOOL INVENTS IS CHECKED AGAINST FOUR PLACES A NAME CAN\
         [as_count $AS_COLL {abs_sym_path(nm, ".sym")}] \
         [as_count $AS_COLL {abs_sym_path(nm, ".sch")}] \
         [as_count $AS_COLL {abs_sym_path(dirref, ".sym")}] \
-        [as_count $AS_COLL {abs_sym_path(dirref, ".sch")}]] \
-  {1 1 1 1 1 1 1}
+        [as_count $AS_COLL {abs_sym_path(dirref, ".sch")}] \
+        [as_count $AS_COLL {xctx->instances}] \
+        [as_count $AS_COLL {"schematic"}]] \
+  {1 1 1 1 1 1 1 1 1}
 
 set AS_CBRT [as_cfunc $AS_TOKC {static int cell_body_reads_token(int inst, const char *tok)}]
 check {AS42 ASKING WHETHER THE CELL'S DRAWING USES A SETTING MUST NOT COST THE\
@@ -1366,6 +1416,90 @@ check {AS43 AND THE SAME QUESTION ASKED FROM THE ANNOTATION SURFACE, WHICH NO\
         [as_count $AS_AEND {lost_attrs_cache_clear();}] \
         [as_count $AS_AEND {auto_spec_on = 0;}]] \
   {1 1 1 3 1 1}
+
+# ============================================================================
+# AS57/AS58. TWO GUARDS THIS ITEM ADDED THAT NO ROW COULD SEE
+# ============================================================================
+# Both were found by the sabotage pass, not by a reader: each was BUILT, the
+# binary rebuilt, and the whole tier re-run, and every suite stayed green while
+# the line that protects the user was gone. Issues 1210 and 1211.
+#
+# Neither can be reached from a deck, and grepping the whole file cannot see
+# either, because the call each one is about appears in a sibling that masks it.
+# So the question is asked of ONE function body, the way AS41, AS42 and AS43
+# already ask theirs.
+
+## The text strictly BETWEEN two anchors in one function body. Used to ask the
+## question a plain count cannot: is there a way OUT of the latched region that
+## does not put the flag back. The sentinel carries the word it is counted for,
+## so a missing anchor reds the row instead of silently answering zero.
+proc as_between {body a b} {
+  set i [string first $a $body]
+  if {$i < 0} { return {ZZNOANCHOR return} }
+  incr i [string length $a]
+  set j [string first $b $body $i]
+  if {$j < 0} { return {ZZNOANCHOR return} }
+  return [string range $body $i [expr {$j - 1}]]
+}
+
+set AS_ABEG [as_cfunc $AS_ACTC {void auto_spec_begin(int whole)}]
+puts "AS-TWOFLAG begin body: on=[as_count $AS_ABEG {auto_spec_on}]\
+ on1=[as_count $AS_ABEG {auto_spec_on = 1;}]\
+ whole=[as_count $AS_ABEG {auto_spec_whole = whole ? 1 : 0;}]"
+check {AS57 STRUCTURAL, ISSUE 1210. THE FLAG THAT SAYS "A NETLIST RUN OWNS\
+ THESE TABLES" IS SET ON BOTH ARMS, AND ONLY THE SECOND FLAG CARRIES THE MODE.\
+ A reader arrives at two flags and simplifies them to one -- just do not open\
+ the window when only the sheet on screen is being written out. That costs the\
+ user real time and nothing anywhere would say so: auto_spec_would_specialize\
+ drops the body-read note whenever no run owns it, which AS43 pins, so with the\
+ window shut on the single-sheet arm every question the warning asks re-reads\
+ the cell's drawing off the disk, once per token. Measured in the sabotage\
+ pass: 295 opens of the fixture cell drawings against 286, one fixture going\
+ from 102 to 111. And the warning HAS to ask on that arm -- it is the arm where\
+ the setting really did go nowhere. So the flag is set to 1 unconditionally and\
+ mentioned nowhere else in this function; writing it as a conditional, in\
+ either spelling, reds this row. Whether the MODE flag is told the truth by its\
+ caller is a different question and rows AS44 AS45 AS46 already measure it from\
+ a deck} \
+  [list [expr {$AS_ABEG eq {NOFUNC} ? {NOFUNC} : 1}] \
+        [as_count $AS_ABEG {auto_spec_on = 1;}] \
+        [as_count $AS_ABEG {auto_spec_on}] \
+        [as_count $AS_ABEG {auto_spec_whole = whole ? 1 : 0;}]] \
+  {1 1 1 1}
+
+set AS_QUAL [as_cfunc $AS_ACTC \
+  {static int auto_spec_qualifies(int inst, char **canon, char **settings, char **key)}]
+puts "AS-TOKSIZE collides: latch=[as_count $AS_COLL {saved_tok_size = xctx->tok_size}]\
+ restore=[as_count $AS_COLL {xctx->tok_size = saved_tok_size}]\
+ escapes=[as_count [as_between $AS_COLL {saved_tok_size = xctx->tok_size} {xctx->tok_size = saved_tok_size}] {return}]"
+puts "AS-TOKSIZE qualifies: latch=[as_count $AS_QUAL {saved_tok_size = xctx->tok_size}]\
+ restore=[as_count $AS_QUAL {xctx->tok_size = saved_tok_size}]\
+ escapes=[as_count [as_between $AS_QUAL {saved_tok_size = xctx->tok_size} {xctx->tok_size = saved_tok_size}] {return}]"
+check {AS58 STRUCTURAL, ISSUE 1211. NEITHER OF THE TWO NEW QUESTIONS MAY BECOME\
+ THE REASON A REAL NETLIST VALUE GOES MISSING. Both of them ask the property\
+ reader things of their own -- does any copy on this sheet already name this\
+ cell body, does this symbol name its own drawing -- and the property reader\
+ leaves the length of what it found in one place every caller shares. Whoever\
+ called us was in the middle of reading a token of their own, so each function\
+ latches that length before its first lookup and puts it back before it hands\
+ an answer out. Deleting either restore leaves every suite in the tree green,\
+ measured. The sibling guard this pair cites in token.c IS pinned, by row UB9\
+ of test_unused_attr_0970; these two copies got the citation and not the row.\
+ THE THIRD ELEMENT OF EACH PAIR IS THE LESSON OF ISSUE 0986 GAP 4: counting\
+ restores alone still passes when a new way out is added between the latch and\
+ the restore, so the region between them is required to contain no return at\
+ all} \
+  [list [expr {$AS_COLL eq {NOFUNC} ? {NOFUNC} : 1}] \
+        [as_count $AS_COLL {saved_tok_size = xctx->tok_size}] \
+        [as_count $AS_COLL {xctx->tok_size = saved_tok_size}] \
+        [as_count [as_between $AS_COLL {saved_tok_size = xctx->tok_size} \
+                                       {xctx->tok_size = saved_tok_size}] {return}] \
+        [expr {$AS_QUAL eq {NOFUNC} ? {NOFUNC} : 1}] \
+        [as_count $AS_QUAL {saved_tok_size = xctx->tok_size}] \
+        [as_count $AS_QUAL {xctx->tok_size = saved_tok_size}] \
+        [as_count [as_between $AS_QUAL {saved_tok_size = xctx->tok_size} \
+                                       {xctx->tok_size = saved_tok_size}] {return}]] \
+  {1 1 1 0 1 1 1 0}
 
 # ============================================================================
 # AS33. THE THIRD SURFACE, AND NOBODY NAMED THIS ONE EITHER
@@ -1406,6 +1540,519 @@ check {AS32 STRUCTURAL this suite is named once in the full regression list and\
   [list [as_wordcount $AS_REG {headless/test_auto_specialize_1201}] \
         [as_wordcount $AS_AUD {test_auto_specialize_1201}]] \
   {1 1}
+
+# ============================================================================
+# AS44-AS56. THE SIX DEFECTS S6's OWN VERIFY PASS FILED INSIDE THE NEW
+# BEHAVIOUR AND SHIPPED ANYWAY -- issues 1202, 1203, 1204, 1205, 1206, 1208.
+# ============================================================================
+# THE FIXTURES BELOW ARE WRITTEN HERE, NOT WITH THE REST, on purpose: every row
+# above this line was measured against a fixture library that did not contain
+# them, and one of those rows plants a real file under a name the tool invents
+# and leaves it on disk for the rest of the run. New cells, new sheets, nothing
+# above is disturbed.
+
+## asnh -- a cell whose own drawing uses both settings its template supplies,
+## and which is written into no netlist but the SPICE one. THE FOUR IGNORES ARE
+## LOAD-BEARING AND WERE ADDED AFTER MEASUREMENT. A setting the SPICE line drops
+## but a VHDL or Verilog netlist of the same cell carries produces the OTHER
+## warning shape -- "you should not remove it" -- which issue 1205 does not
+## touch. aspass is of that shape, so a row about the new sentence written on
+## aspass would be measuring a sentence nobody changed. With the four ignores
+## nothing anywhere reads the setting, which is the population the false
+## sentence is printed to.
+as_wr [file join $AS asnh.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P"
+spectre_ignore=true
+vhdl_ignore=true
+verilog_ignore=true
+tedax_ignore=true
+template="name=x1 W_P=1
+modeln=nfet_01v8 modelp=pfet_01v8"}
+V {}
+S {}
+E {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}}
+
+as_wr [file join $AS asnh.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {sky130_fd_pr/pfet_01v8} 400 -300 0 0 {name=M2
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modelp
+spiceprefix=X
+}
+C {sky130_fd_pr/nfet_01v8} 600 -300 0 0 {name=M3
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modeln
+spiceprefix=X
+}}
+
+## The single-sheet fixture: one copy that sets nothing, one that types a
+## setting the drawing uses, and one that also names its own cell by hand.
+as_wr [file join $AS asnhtop.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {as/asnh.sym} 120 0 0 0 {name=xN1 W_P=0.5}
+C {as/asnh.sym} 320 0 0 0 {name=xN2 W_P=0.6 modelp=pfet_01v8_lvt}
+C {as/asnh.sym} 520 0 0 0 {name=xN9 W_P=0.5 modelp=pfet_01v8_lvt schematic=asnh_lvtp}}
+
+## ISSUE 1205's population: a cell whose TEMPLATE names its own cell body, so
+## the netlister may not give it a version of its own -- while the cell's own
+## drawing does read the setting the copy typed.
+as_wr [file join $AS aslook.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @model W_P=@W_P"
+spectre_ignore=true
+vhdl_ignore=true
+verilog_ignore=true
+tedax_ignore=true
+template="name=x1 W_P=1
+model=aslookcell
+modelp=pfet_01v8"}
+V {}
+S {}
+E {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}}
+
+as_wr [file join $AS aslook.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {sky130_fd_pr/pfet_01v8} 400 -300 0 0 {name=M2
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modelp
+spiceprefix=X
+}}
+
+as_wr [file join $AS aslk.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {as/aslook.sym} 120 0 0 0 {name=xL W_P=0.5 modelp=pfet_01v8_lvt}
+C {devices/iopin} 520 0 0 1 {name=p1 lab=AA}}
+
+## ISSUE 1202. as51 is aspass again under a name of its own, because row AS11
+## planted a real file under an aspass-derived name and left it there.
+as_wr [file join $AS as51.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P"
+template="name=x1 W_P=1
+modelp=pfet_01v8"}
+V {}
+S {}
+E {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}}
+
+as_wr [file join $AS as51.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {sky130_fd_pr/pfet_01v8} 400 -300 0 0 {name=M2
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modelp
+spiceprefix=X
+}}
+
+as_wr [file join $AS as51one.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {as/as51.sym} 120 0 0 0 {name=xP W_P=0.5 modelp=pfet_01v8_lvt}}
+
+## ISSUE 1203. asp2 supplies two settings. xD types ONE of them with a value
+## that itself holds the pair separator; xE types BOTH. Joined the way the cell
+## name is spelled, the two spell one string.
+as_wr [file join $AS asp2.sym] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname W_P=@W_P"
+template="name=x1 W_P=1
+modeln=nfet_01v8 modelp=pfet_01v8"}
+V {}
+S {}
+E {}
+B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}}
+
+as_wr [file join $AS asp2.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/iopin} 200 -300 0 1 {name=p1 lab=A}
+C {sky130_fd_pr/pfet_01v8} 400 -300 0 0 {name=M2
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modelp
+spiceprefix=X
+}
+C {sky130_fd_pr/nfet_01v8} 600 -300 0 0 {name=M3
+L=0.15
+W=W_P
+nf=1
+mult=1
+model=@modeln
+spiceprefix=X
+}}
+
+as_wr [file join $AS askey.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {as/asp2.sym} 120 0 0 0 {name=xD W_P=0.5 modeln=nfetA__modelp_pfetB}
+C {as/asp2.sym} 320 0 0 0 {name=xE W_P=0.5 modeln=nfetA modelp=pfetB}}
+
+## ISSUE 1206. A setting typed with nothing after the equals sign, alone on one
+## copy and beside a real setting on another.
+as_wr [file join $AS asblank.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {as/asnh.sym} 120 0 0 0 {name=xN W_P=0.5 modelp=}
+C {devices/iopin} 520 0 0 1 {name=p1 lab=AA}}
+
+as_wr [file join $AS asmix.sch] {v {xschem version=3.4.4 file_version=1.2}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {as/asnh.sym} 120 0 0 0 {name=xR W_P=0.5 modeln=nfet_01v8_lvt modelp=}
+C {devices/iopin} 520 0 0 1 {name=p1 lab=AA}}
+
+# ----------------------------------------------------------------------------
+# AS44-AS48. ISSUE 1204: "NETLIST CURRENT SCHEMATIC ONLY" CALLS A CELL BODY IT
+# NEVER WRITES. A REGRESSION -- before this feature the same tick box wrote a
+# deck whose call line named a real cell the designer's other netlist files
+# define. It now names a cell that is defined in that file, in no other netlist
+# file, and in no library on disk, and the simulator refuses the deck.
+# ----------------------------------------------------------------------------
+set NH_D [as_netlist_nh [file join $AS astop.sch]]
+set NH_NOTES [as_notes]
+puts "AS-NOHIER astop single-sheet: x1 -> [as_bodyfor $NH_D x1] x2 ->\
+ [as_bodyfor $NH_D x2] x9 -> [as_bodyfor $NH_D x9]"
+puts "AS-NOHIER bodies defined in that file: [as_bodies $NH_D]"
+puts "AS-NOHIER notes: [llength $NH_NOTES]"
+foreach nl $NH_NOTES { puts "AS-NOHIER NOTE: $nl" }
+
+check {AS44 THE REGRESSION, issue 1204. The designer ticks "netlist current\
+ schematic only" and gets ONE file holding this sheet and nothing below it. A\
+ call line in it may only name a cell that file defines, or one the designer's\
+ other netlist files define -- so it must name the plain cell, exactly as it\
+ did before this feature. Measured before the fix: that file defined NO cell\
+ bodies at all and five of its call lines named invented cells, one of them for\
+ the copy read here, and no netlist file and no library on disk defines any of\
+ them. The copy that named its own cell by hand is untouched on this arm,\
+ because that name IS in the designer's own library} \
+  [list [as_bodyfor $NH_D x1] [as_bodyfor $NH_D x2] [as_bodyfor $NH_D x9] \
+        [as_count $NH_D {aspass__}]] \
+  {aspass aspass aspass_lvtp 0}
+
+check {AS45 AND THE TOOL MAY NOT SAY IT WROTE SOMETHING IT DID NOT WRITE,\
+ RULING D5-1. On the single-sheet run the info window carried the whole note --\
+ XSCHEM wrote a separate copy, any other copy asking for the same settings\
+ shares it, you do not have to add anything to the sheet -- about a cell body\
+ that is in no file. Not one such sentence may appear on this arm} \
+  [llength $NH_NOTES] 0
+
+set NH_D2 [as_netlist_nh [file join $AS asnhtop.sch]]
+set NH_L2 [as_for [as_lost] xN2]
+puts "AS-NOHIER asnhtop: xN2 -> [as_bodyfor $NH_D2 xN2] ; lost for xN2:\
+ [llength $NH_L2]"
+foreach nl $NH_L2 { puts "AS-NOHIER SAYS: $nl" }
+
+check {AS46 AND WHAT THE DESIGNER IS TOLD INSTEAD, issues 1204 and 1205. The\
+ setting really did go nowhere on this arm, so the tool has to say so -- once,\
+ for that copy, and in words that are true. It may NOT say the cell's drawing\
+ does not use the setting, because it does; it must say this is not a spelling\
+ mistake, and it must tell the designer the one thing that would fix it, which\
+ is to netlist the whole design} \
+  [list [llength $NH_L2] \
+        [expr {[llength $NH_L2] == 1 ?
+               [expr {[string first {does not use} [lindex $NH_L2 0]] >= 0 ? 1 : 0}] : -1}] \
+        [expr {[llength $NH_L2] == 1 ?
+               [expr {[string first {spelling mistake} [lindex $NH_L2 0]] >= 0 ? 1 : 0}] : -1}] \
+        [expr {[llength $NH_L2] == 1 ?
+               [expr {[string first {whole design} [lindex $NH_L2 0]] >= 0 ? 1 : 0}] : -1}]] \
+  {1 0 1 1}
+
+set NH_H [as_netlist [file join $AS astop.sch]]
+puts "AS-NOHIER control, whole design: x2 -> [as_bodyfor $NH_H x2]"
+check {AS47 CONTROL, GREEN BEFORE AND AFTER. Netlisting the WHOLE design still\
+ gives that copy its own version of the cell with the device the designer asked\
+ for. This is the row that stops a repair which simply switches the feature off} \
+  [list [expr {[as_bodyfor $NH_H x2] ne {aspass} &&
+               [as_bodyfor $NH_H x2] ne {NOCALL} ? 1 : 0}] \
+        [as_pmodel $NH_H [as_bodyfor $NH_H x2]]] \
+  {1 sky130_fd_pr__pfet_01v8_lvt}
+
+set NH_OTHER {}
+foreach nhp {{spectre spectre} {vhdl vhdl} {verilog v} {tedax tdx}} {
+  set nht [lindex $nhp 0]
+  set nhe [lindex $nhp 1]
+  set nhd [as_netlist_nh [file join $AS astop.sch] $nht $nhe]
+  lappend NH_OTHER [expr {$nhd eq {ZZNOFILE} ? {NOFILE} : [as_count $nhd {aspass__}]}]
+}
+catch {xschem set netlist_type spice}
+puts "AS-NOHIER other formats, invented-name count: $NH_OTHER"
+check {AS48 FENCE, GREEN BEFORE AND AFTER, issue 1204. The same sheet written\
+ single-sheet as a Spectre, VHDL, Verilog or tEDAx netlist names the plain cell\
+ in all four -- measured, not assumed. Only the SPICE deck was ever broken, and\
+ this row is what keeps a later hand from wiring this behaviour into a second\
+ backend and breaking it there too} \
+  $NH_OTHER {0 0 0 0}
+
+# ----------------------------------------------------------------------------
+# AS49-AS50. ISSUE 1205: A SENTENCE THAT ASSERTS A FACT IT NEVER ESTABLISHED.
+# ----------------------------------------------------------------------------
+set LK_D [as_netlist [file join $AS aslk.sch]]
+set LK_L [as_for [as_lost] xL]
+puts "AS-LOOK xL -> [as_bodyfor $LK_D xL] ; lost [llength $LK_L]"
+foreach ll $LK_L { puts "AS-LOOK SAYS: $ll" }
+
+check {AS49 THE TOOL MUST LOOK BEFORE IT SAYS WHAT IT SAW, issue 1205. This\
+ cell may not be given a version of its own -- its template names its own cell\
+ body, so two versions would land in the deck under one name -- and the tool\
+ rightly tells the designer their setting went nowhere. But the sentence goes\
+ on to tell them the cell's drawing does not use the setting anywhere, without\
+ having opened the drawing: the very next line of aslook.sch reads model=@modelp} \
+  [list [llength $LK_L] \
+        [expr {[llength $LK_L] == 1 ?
+               [expr {[string first {does not use} [lindex $LK_L 0]] >= 0 ? 1 : 0}] : -1}] \
+        [expr {[llength $LK_L] == 1 ?
+               [expr {[string first {drawing does use} [lindex $LK_L 0]] >= 0 ? 1 : 0}] : -1}]] \
+  {1 0 1}
+
+set AS_WARN [as_cfunc $AS_TOKC {static void warn_unused_instance_attr(int inst, const char *format)}]
+puts "AS-WARN body found: [expr {$AS_WARN eq {NOFUNC} ? {no} : {yes}}]"
+check {AS50 STRUCTURAL, AND IT IS ASKED OF ONE FUNCTION BODY. The short-circuit\
+ that causes issue 1205 is a single && in the skip test: the second half is the\
+ question "does the cell's drawing use this setting", and C never evaluates it\
+ once the first half is false. The same call appears two hundred lines up in\
+ the sibling that classifies, so grepping the file finds it and passes while\
+ the sentence below is still guessing. The answer has to be worked out once and\
+ held, and the clause that claims the drawing does not use the setting stays\
+ exactly one sentence in the file} \
+  [list [expr {$AS_WARN eq {NOFUNC} ? {NOFUNC} : 1}] \
+        [as_count $AS_WARN {auto_spec_name(inst) && cell_body_reads_token(}] \
+        [expr {[as_count $AS_WARN {body_reads}] >= 3 ? 1 : 0}] \
+        [as_count $AS_WARN {does not use}]] \
+  {1 0 1 1}
+
+# ----------------------------------------------------------------------------
+# AS51. ISSUE 1202: A COPY THAT HAND-TYPES THE NAME THE TOOL WOULD INVENT
+# SILENTLY LOSES ITS OWN SETTING.
+# ----------------------------------------------------------------------------
+# Built in two steps, like row AS11's decoy, so the row cannot be satisfied by a
+# naming scheme nobody collides with: the first run LEARNS the name this build
+# invents, and the second sheet hand-types exactly that name on a copy asking
+# for a different device.
+set K_D1 [as_netlist [file join $AS as51one.sch]]
+set K_NAME [as_bodyfor $K_D1 xP]
+set K_OK [expr {$K_NAME ne {NOCALL} && $K_NAME ne {as51} ? 1 : 0}]
+if {$K_OK} {
+  as_wr [file join $AS as51two.sch] "v \{xschem version=3.4.4 file_version=1.2\}
+G \{\}
+K \{\}
+V \{\}
+S \{\}
+E \{\}
+C \{as/as51.sym\} 120 0 0 0 \{name=xP W_P=0.5 modelp=pfet_01v8_lvt\}
+C \{as/as51.sym\} 320 0 0 0 \{name=xQ W_P=0.5 modelp=pfet_01v8_hvt schematic=$K_NAME\}"
+}
+set K_D2 [expr {$K_OK ? [as_netlist [file join $AS as51two.sch]] : {}}]
+set K_BP [expr {$K_OK ? [as_bodyfor $K_D2 xP] : {NOSTEP1}}]
+set K_BQ [expr {$K_OK ? [as_bodyfor $K_D2 xQ] : {NOSTEP1}}]
+puts "AS-TYPED learned name $K_NAME ; xP -> $K_BP ; xQ -> $K_BQ ; bodies\
+ [expr {$K_OK ? [as_bodies $K_D2] : {}}]"
+
+check {AS51 A NAME A DESIGNER TYPED BY HAND ON ANOTHER COPY IS ALREADY SPOKEN\
+ FOR, issue 1202. One copy types nothing and the tool invents a name for it;\
+ the copy beside it hand-types that very name and asks for a DIFFERENT device.\
+ Measured before the fix: both copies called one cell, the only body in the\
+ deck was built from the first copy's device, and the designer who typed the\
+ name was told nothing at all -- the same silent loss of a typed setting this\
+ whole feature exists to end. Each copy must get the device it asked for} \
+  [list $K_OK \
+        [expr {$K_OK && $K_BP ne {NOCALL} && $K_BQ ne {NOCALL} &&
+               $K_BP ne $K_BQ ? 1 : 0}] \
+        [expr {$K_OK ? [as_pmodel $K_D2 $K_BP] : {NOSTEP1}}] \
+        [expr {$K_OK ? [as_pmodel $K_D2 $K_BQ] : {NOSTEP1}}]] \
+  {1 1 sky130_fd_pr__pfet_01v8_lvt sky130_fd_pr__pfet_01v8_hvt}
+
+# ----------------------------------------------------------------------------
+# AS52-AS53. ISSUE 1203: TWO DIFFERENT SETTING LISTS SPELL ONE CELL NAME.
+# ----------------------------------------------------------------------------
+# The cell name joins each setting to its value with one underscore and the
+# pairs to each other with two. A value that itself holds two underscores
+# therefore spells the same string as two separate settings do. Row AS37 is the
+# other half of this and it does NOT cover this case: there the two names spell
+# the same and the tool separates them, because the two copies reach the naming
+# step with different canonical keys. Here the KEY itself is the same, so the
+# second copy is handed the first copy's cell body and never reaches AS37's
+# separator at all.
+set Y_D [as_netlist [file join $AS askey.sch]]
+set Y_BD [as_bodyfor $Y_D xD]
+set Y_BE [as_bodyfor $Y_D xE]
+puts "AS-KEY xD -> $Y_BD ; xE -> $Y_BE ; bodies [as_bodies $Y_D]"
+
+check {AS52 TWO COPIES ASKING FOR TWO DIFFERENT THINGS MUST GET TWO CELL\
+ BODIES, issue 1203. xD sets one setting whose value happens to hold the\
+ separator; xE sets two settings. Spelled into a cell name the two are one\
+ string, so the second copy silently gets the first copy's body and BOTH of its\
+ own settings are thrown away -- the p-device it asked for is not in the deck\
+ anywhere. Each copy gets its own body and each body holds what that copy asked\
+ for} \
+  [list [expr {$Y_BD ne {NOCALL} && $Y_BE ne {NOCALL} && $Y_BD ne $Y_BE ? 1 : 0}] \
+        [as_word [as_body $Y_D $Y_BE] sky130_fd_pr__nfetA] \
+        [as_word [as_body $Y_D $Y_BE] sky130_fd_pr__pfetB] \
+        [as_word [as_body $Y_D $Y_BD] sky130_fd_pr__nfetA__modelp_pfetB]] \
+  {1 1 1 1}
+
+set AS_NAMEF [as_cfunc $AS_ACTC {const char *auto_spec_name(int inst)}]
+check {AS53 STRUCTURAL, issue 1203, and no deck can see it. WHICH COPIES SHARE\
+ A BODY is decided by one lookup key, and that key has to be a faithful\
+ encoding of the SET of settings -- not the readable spelling, which is for a\
+ person to look at and is allowed to be ambiguous, because two readable names\
+ that collide are separated a step later. Keying the sharing on the readable\
+ spelling is what makes two different requests one cell. The readable name is\
+ still built from the readable spelling} \
+  [list [expr {$AS_NAMEF eq {NOFUNC} ? {NOFUNC} : 1}] \
+        [as_count $AS_NAMEF {&setkey, key}] \
+        [as_count $AS_NAMEF {&setkey, canon}] \
+        [as_count $AS_NAMEF {s = canon;}]] \
+  {1 1 0 1}
+
+# ----------------------------------------------------------------------------
+# AS54-AS55. ISSUE 1206: AN EMPTY SETTING VALUE WRITES A SECOND IDENTICAL COPY.
+# ----------------------------------------------------------------------------
+set Z_D [as_netlist [file join $AS asblank.sch]]
+set Z_B [as_bodyfor $Z_D xN]
+set Z_N [as_for [as_notes] xN]
+set Z_L [as_for [as_lost] xN]
+puts "AS-BLANK xN -> $Z_B ; bodies [as_bodies $Z_D] ; notes [llength $Z_N] ;\
+ lost [llength $Z_L]"
+foreach zl $Z_L { puts "AS-BLANK SAYS: $zl" }
+
+check {AS54 A COPY THAT DIFFERS IN NOTHING IS NOT A COPY, issue 1206. The\
+ designer typed the setting name and never got round to the value. The deck got\
+ a second cell body whose text is byte-identical to the first, under a name\
+ ending in an underscore, and the info window announced it as work done on the\
+ designer's behalf. There must be one body, the copy must call the plain cell,\
+ nothing may be announced -- and the designer should be told what they left\
+ unfinished and what to put there} \
+  [list $Z_B [llength [as_bodies $Z_D]] [llength $Z_N] [llength $Z_L] \
+        [expr {[llength $Z_L] == 1 ?
+               [expr {[string first {left the value empty} [lindex $Z_L 0]] >= 0 ? 1 : 0}] : -1}]] \
+  {asnh 1 0 1 1}
+
+set X_D [as_netlist [file join $AS asmix.sch]]
+set X_N [as_for [as_notes] xR]
+set X_L [as_for [as_lost] xR]
+puts "AS-MIX xR -> [as_bodyfor $X_D xR] ; notes [llength $X_N] ; lost\
+ [llength $X_L]"
+foreach xl $X_N { puts "AS-MIX NOTE: $xl" }
+foreach xl $X_L { puts "AS-MIX SAYS: $xl" }
+
+check {AS55 ONE BLANK SETTING BESIDE ONE REAL ONE, issue 1206. The copy is\
+ given its own version of the cell for the setting it really did fill in, and\
+ the blank one must take no part in it: not in the cell name, not in the\
+ sentence that announces it -- and the designer still has to be told about the\
+ one they left unfinished. This is the only row that can see the difference\
+ between skipping the whole copy and skipping the settings that were honoured} \
+  [list [llength $X_N] \
+        [expr {[llength $X_N] == 1 ?
+               [expr {[string first {called asnh__modeln_nfet_01v8_lvt and} \
+                       [lindex $X_N 0]] >= 0 ? 1 : 0}] : -1}] \
+        [expr {[llength $X_N] == 1 ? [as_word [lindex $X_N 0] modelp] : -1}] \
+        [llength $X_L] \
+        [expr {[llength $X_L] == 1 ? [as_word [lindex $X_L 0] modelp] : -1}]] \
+  {1 1 0 1 1}
+
+# ----------------------------------------------------------------------------
+# AS56. ISSUE 1208: THE ROWS THAT SAY "NOTHING ELSE MOVED" ONLY WORK HERE.
+# ----------------------------------------------------------------------------
+# AS6 and AS26 pin whole decks by fingerprint. The netlister writes the full
+# path of every sheet and every symbol it read into the deck as a comment
+# header, so those fingerprints are a property of where this repository sits on
+# this disk. This row proves the strip is doing something rather than that two
+# decks happened to agree: the SAME deck under a different repository root must
+# fingerprint the same once the headers are dropped, and must fingerprint
+# DIFFERENTLY while they are still in.
+set HD_RAW $BG_NOW
+set HD_MOVED {}
+set HD_LINES 0
+foreach hl [split $HD_RAW "\n"] {
+  if {[regexp {^\*\* (sch|sym)_path: } $hl]} {
+    incr HD_LINES
+    lappend HD_MOVED [string map [list $repo /opt/pdk/xschem] $hl]
+  } else {
+    lappend HD_MOVED $hl
+  }
+}
+set HD_MOVED [join $HD_MOVED "\n"]
+set HD_ALL 0
+foreach hl [split $HD_RAW "\n"] {
+  if {[string first $repo $hl] >= 0} { incr HD_ALL }
+}
+puts "AS-HDR lines carrying the checkout root: $HD_ALL of which headers\
+ $HD_LINES ; raw here [as_fnv $HD_RAW]\
+ raw moved [as_fnv $HD_MOVED] ; stripped here [as_fnv [as_stripsym $HD_RAW]]\
+ stripped moved [as_fnv [as_stripsym $HD_MOVED]]"
+
+check {AS56 A ROW THAT SAYS "THIS DECK DID NOT MOVE" MUST NOT ALSO SAY "AND THE\
+ REPOSITORY IS STILL IN THE SAME FOLDER", issue 1208. The shipped bandgap deck\
+ carries fifteen comment headers holding this checkout's own absolute path.\
+ Take the same deck, move the repository, and the fingerprint AS6 and AS26 pin\
+ changes without one byte of circuit having moved -- so the suite passes in\
+ this checkout and nowhere else. The header lines are dropped before the\
+ fingerprint is taken; the raw halves are compared too, so this row cannot pass\
+ by the two decks simply being equal} \
+  [list [expr {$HD_LINES >= 1 ? 1 : 0}] \
+        [expr {[as_fnv $HD_RAW] ne [as_fnv $HD_MOVED] ? 1 : 0}] \
+        [expr {[as_fnv [as_stripsym $HD_RAW]] eq
+               [as_fnv [as_stripsym $HD_MOVED]] ? 1 : 0}]] \
+  {1 1 1}
+
 
 } zzerr]} {
   puts "FATAL: uncaught error: $zzerr"
