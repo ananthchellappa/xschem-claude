@@ -123,3 +123,34 @@ Every runner drives this file with `--nogui`, so nothing was affected, but the t
 was live for anyone reaching for the dev-display arm out of habit. It now refuses in
 one second and names the right command. That choice — a loud refusal rather than a
 silent self-skip — is unratified and is on the ledger as rule debt 1228.
+
+## What is still open (write-up pass, 2026-08-31)
+
+The adversary pass measured four things this item did not fix. All four were
+re-measured independently before filing; none was fixed silently.
+
+* **1234 — the bar in this item's own brief is not met for the wider class.** The
+  brief said *"a GUI control must never leave a person one level down on a blank page
+  with no prompt."* That now holds for a copy whose own `schematic` setting names a
+  missing file. It does **not** hold when the CELL has no schematic file at all: copy
+  x7 on the same shipped sheet places a `type=subcircuit` symbol with no `.sch`
+  anywhere, and all three doors — including the one that now asks for the fallback —
+  land on `currsch=1`, 0 instances, no question asked. Pre-existing, not a regression,
+  and outside the per-copy class this item measured. `get_sch_from_sym()` stats the
+  file it REFUSES and never stats the file it OFFERS.
+* **1235 — the sentence this item minted blames the copy for a setting that lives on
+  the cell.** A `schematic` setting in a symbol's K block applies to every copy;
+  the sentence still says *"The copy named xA on this sheet is set to open …"* when
+  xA is set to nothing, and the closing advice sends the person to edit the copy,
+  which masks the cell's setting for that copy alone and leaves the rest broken.
+  Rulings D5-1 and PLAIN ENGLISH.
+* **1236 — the new drop-down row is offered whether or not its file exists**, and
+  reads identically either way. A presentation choice this item created and did not
+  make; the existing `look` debt names only x2, whose file is there.
+* **1237 — `-fallback` in any position but the first is swallowed in silence**, and a
+  misspelled flag becomes an instance number. No shipped caller trips it; filed
+  because the failure is silent and its consequence is the stranding the flag exists
+  to prevent.
+
+Unchanged and still open from the red phase: **1232** (a descend suite registered in
+no runner) and **1233** (the five scripted walks left on the bare verb).

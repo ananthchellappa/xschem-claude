@@ -134,3 +134,13 @@ D5-1 plausible wrong answer.
 
 Rows: `tests/headless/test_descend_doors_1228.tcl` A5, A6, A7, C3, D1, D2, D3, E1,
 E6, F1.
+
+## The blank page is not gone — only this issue's half of it (write-up pass, 2026-08-31)
+
+This issue is about a copy whose own `schematic` setting names a file that is not
+there, and that half is fixed. The blank page still happens when the **cell** has no
+schematic file at all — no `schematic` setting anywhere, so `filename` is empty and
+the whole fallback block, existence test and question included, is skipped. Measured
+on shipped data (copy x7 of `xschem_library/inst_sch_select`, a `type=subcircuit`
+symbol with no `.sch`): all three doors give `rc=0 currsch=1 instances=0`, no question.
+Filed as **1234**, with the cause and the repair.

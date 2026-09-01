@@ -800,7 +800,7 @@ and watching the suite stay green:
 * **1220** gained row AS85 for its case 2, and now records that the note's
   "shares that one" sentence is measurably false across sheets. Still open.
 
-**The next free number is 1234.** 1201-1233 are taken. Item **S7**'s red phase
+**The next free number is 1238.** 1201-1237 are taken. Item **S7**'s red phase
 claimed **1228-1233** as stubs before writing its rows (1228 the E key opening the
 cell's own schematic instead of the copy's own; 1229 the fallback ignoring whether
 the bound file is there when there is no display; 1230 answering No still dropping
@@ -809,3 +809,25 @@ minus one; 1232 a descend suite registered in no runner; 1233 the five scripted
 hierarchy walks that stay on the bare verb). **1000-1199 is
 reserved** (user, 2026-08-30), so 0999 was followed by **1200**; 0500-0599 and
 0700-0799 remain reserved for other branches.
+
+**Item S7's WRITE-UP pass (2026-08-31) filed 1234-1237.** All four were measured by
+the adversary pass, re-measured independently before filing, and none was fixed
+silently.
+
+* **1234** — descending into a cell whose OWN schematic file is missing still drops
+  you one level down on a blank page, through all three doors and with no question
+  asked (copy x7 of `xschem_library/inst_sch_select`, a `type=subcircuit` symbol with
+  no `.sch`). `get_sch_from_sym()` stats the file it refuses and never stats the file
+  it offers. Pre-existing; it is item S7's own stated bar, unmet for the wider class.
+* **1235** — RULING D5-1 / PLAIN ENGLISH. The sentence item S7 minted says *"The copy
+  named xA … is set to open"* when the `schematic` setting lives on the CELL, and its
+  advice sends the person to edit the copy, which masks the cell's setting for that
+  copy alone.
+* **1236** — the new View drop-down row is offered whether or not its file exists and
+  reads identically either way. Presentation choice item S7 created and did not make.
+* **1237** — LOW. `xschem descend -fallback` is swallowed in silence when it is not the
+  first word, and a misspelled flag becomes an instance number.
+
+**Still open from S7's red phase:** 1232 (a descend suite registered in no runner),
+1233 (the five scripted walks left on the bare verb). **Closed by S7:** 0979, 1228,
+1229, 1230, 1231.

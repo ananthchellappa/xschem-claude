@@ -177,6 +177,25 @@ three scripted hierarchy walks (the waveform cross-probe and the two hierarchica
 The seven controls a person can press all carry the flag; `tests/headless/
 test_descend_doors_1228.tcl` row E6 asserts both halves **by count**.
 
+### 5c. Two things §5 and §5b do NOT yet promise (measured 2026-08-31)
+
+Recorded so a reader does not take the two sections above as settled.
+
+- **A row is offered whether or not its file is there, and reads the same either
+  way** (issue 1236). On the shipped `inst_sch_select` sheet the drop-down for copy
+  x3 lists `comp3_pex`, a file that does not exist, indistinguishable from x2's
+  `comp3_parax`, which does. Choosing it raises the missing-file question, so it
+  degrades gracefully — and there is a real argument that a person should see what
+  their copy is set to open precisely because it is broken. Presentation choice, not
+  yet made.
+- **The fallback only covers a copy or cell that NAMES a file.** When neither the
+  copy nor the symbol carries a `schematic` setting, `filename` is empty and the
+  whole block in `get_sch_from_sym()` — existence test, question and sentence — is
+  skipped; the cell's own name is resolved and opened without ever being stat'ed.
+  A `type=subcircuit` symbol backed by a SPICE netlist rather than a schematic
+  therefore still lands one level down on a blank page through every door, silently.
+  Issue 1234.
+
 ## 6. Destination handling — retaining connectivity
 
 All three destinations must preserve the **hierarchy path** (so it is a true

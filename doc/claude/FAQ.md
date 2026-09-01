@@ -14,6 +14,61 @@ Newest entries on top.
 
 ---
 
+## Q76. Two controls with the same label do different things. Do you change the engine's default, or change the callers?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S7 — issues `0979` / `1228`.
+  `src/scheduler.c`, `src/actions.c`, `src/xschem.tcl`, `utils/cadence_nav.tcl`.
+
+**Change the callers, and give the engine an OPT-IN flag whose absence is
+byte-for-byte what scripts have always seen.**
+
+Seven controls a person can press ("Push schematic" on the toolbar, the same words
+in the Edit menu, the same words in the command palette, the `E` key, Alt-E, and
+three Cadence chords) reached `xschem descend`, which hardcoded "do not fall back
+to the cell's own sheet". Pressing any of them on a copy whose `schematic` setting
+named a file that was not there put the person one level down on a blank page,
+because `xctx->currsch` is incremented **before** the load is attempted.
+
+The obvious repair is to flip the engine's default. It is wrong here, and the
+reason generalises: **the same verb has two populations with opposite correct
+answers.** A person pressing a button wants the tool to cope. A script walking the
+hierarchy to build a `.save` deck or to cross-probe a waveform must give the *same*
+answer the netlister gives, and every netlister resolves with no instance at all —
+so whether a fallback is right for those callers is an unmeasured question, and
+guessing it is a D5-1 plausible wrong answer. Flipping the default would also have
+moved a committed test row (`test_op_annot` W30a) that pins the stranding as a
+measured invariant, and silently changed three walks nobody had measured.
+
+So: `xschem descend -fallback`. Seven human controls pass it; five scripted walks
+deliberately do not, and the split is asserted **by count** in both directions, so
+a later crew cannot quietly opt one in without meeting issue 1233 first.
+
+Two traps came with it, and both had to land in the same commit:
+
+- **A `has_x` guard hiding a `stat`.** The existence test that decided whether the
+  fallback was needed sat inside `if(has_x && fallback && ...)`. Latent forever,
+  because nothing could ask for a fallback without a display — until the flag
+  existed. The moment it did, every headless descend into a *perfectly good*
+  per-copy setting would have opened the cell's own sheet instead. Issue 1229.
+  General rule: when you make a previously unreachable path reachable, audit every
+  `has_x` on it first — a display test guarding a *decision* rather than a *dialog*
+  is a bug waiting for a caller.
+- **"No" that still did the thing.** Answering No to the fallback question left the
+  filename pointing at the missing file and loaded it anyway, so even the one
+  control that asked first stranded you. Issue 1230. A refusal has to clear the
+  target, and it has to record its own reason, or the next arm down overwrites it
+  with something that did not happen.
+
+What this did **not** fix, and the boundary is the useful part: the fallback only
+covers a copy or cell that *names* a file. A symbol with no `schematic` setting at
+all and no `.sch` on disk — a `type=subcircuit` symbol backed by a SPICE netlist,
+which is most vendor PDK cells — still lands on a blank page through every door,
+because the block that stats anything is gated on a filename being set. Issue 1234.
+The tool stats the file it refuses and never stats the file it opens.
+
+---
+
 ## Q75. A tool refuses a setting. Is it enough to leave it out of the cell's name?
 
 - **Asked:** 2026-08-31
