@@ -417,8 +417,8 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
   * so sub-sheets specialise too. See src/actions.c.
   *
   * ISSUE 1204, AND IT IS WHY THE ARGUMENT IS `global` AND NOT 1. `global` is 0
-  * when the user ticked "netlist current schematic only" (also the Shift-N key
-  * and `xschem netlist -nohier`): that run writes THIS sheet and stops. The
+  * when the user asked for a netlist of just the sheet on screen -- Shift-N, or
+  * `xschem netlist -nohier`: that run writes THIS sheet and stops. The
   * specialised cell bodies are written further down by get_additional_symbols(1)
   * inside the `if(global)` block, so a single-sheet run that minted names would
   * put call lines into the deck naming cell bodies that run never writes -- a
@@ -426,7 +426,10 @@ int global_spice_netlist(int global, int alert)  /* netlister driver */
   * feature. So the window still OPENS on both arms, because the classification
   * and its caches are wanted on both, but on the single-sheet arm it mints no
   * names: GUARD AS-WHOLE, src/actions.c. The batch `xschem -n` CLI netlist
-  * passes 1 and is unaffected. */
+  * passes 1 and is unaffected.
+  *
+  * ISSUE 1218: the door named here used to be a checkbutton this build does not
+  * have. The real doors are the two above -- name what the user can see. */
  auto_spec_begin(global);
  err |= spice_netlist(fd, 0);
 

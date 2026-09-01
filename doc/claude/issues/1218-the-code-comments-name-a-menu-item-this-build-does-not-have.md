@@ -39,3 +39,18 @@ and the `as_netlist_nh` helper comment).
 Say what the user really does: *"pressed Shift-N (netlist this sheet only), or
 ran `xschem netlist -nohier`"*. Three comment sites in `src/` and the suite's
 prose beside them.
+
+---
+
+## FIXED, item S6b (2026-08-31)
+
+The invented label is gone from `src/spice_netlist.c` and `src/actions.c` and
+from this suite's own row prose, replaced everywhere by the doors the user can
+actually reach: "a netlist of just the sheet on screen -- Shift-N, or `xschem
+netlist -nohier`". Row AS77 counts it at zero in all three places.
+
+**The row was blind when it was first written and had to be fixed before it
+could be trusted**: all three sites wrap the phrase across a line break (a
+continuing C comment, a Tcl row title with a trailing backslash, a `##` comment
+line), so counting raw bytes found nothing and the row passed having measured
+nothing. It now flattens the text first.

@@ -43,3 +43,13 @@ A structural row over `warn_unused_instance_attr()`'s own body, in the shape row
 AS50 and AS53 already use: the literal appears **once**. Or, behaviourally, a
 row that asserts the clause on all four populations - the four shapes are
 already reachable from the existing fixtures.
+
+---
+
+## FIXED, item S6b (2026-08-31)
+
+The clause is minted once, above the shape chain in
+`warn_unused_instance_attr()` (`src/token.c`), and the one shape that genuinely
+differs -- the setting DOES reach another netlist of the same cell -- overwrites
+it. Four literals became one, and issue 1213's new fifth shape did not make it
+five. Row AS75 counts the literal in the comment-stripped file: exactly one.

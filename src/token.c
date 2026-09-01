@@ -3136,10 +3136,29 @@ static int resolve_netlist_format(int inst, char **format)
  * exactly today's deck, byte for byte, which is why the shipped bandgap sheet
  * does not move. EXPLICIT BEATS IMPLICIT, and this is the line that does it.
  *
+ * <allow_explicit>, ISSUES 1212 AND 1215, AND IT IS THE ONE THING THAT TURNS
+ * GUARD UA-POLY OFF. Two questions asked in actions.c are about a copy that
+ * HAS named its own cell body by hand: "does the copy that typed this name ask
+ * for the same settings as the copy I am about to name?" (GUARD AS-TYPEDSAME)
+ * and "did the name I minted land on a hand-typed one that wanted something
+ * else?" (GUARD AS-CLASH). Neither can be answered while the classification
+ * refuses to look at such a copy at all -- and that refusal is exactly what
+ * issue 0982 recorded as blinding this diagnostic to the state its own advice
+ * created. So the `schematic` half of the skip is lifted on that arm ONLY. The
+ * five *_sym_def probes stay on both arms: a copy whose body comes from an
+ * attribute rather than from a drawing has settled where its insides come from
+ * by a route this feature does not touch.
+ *
+ * NOTHING ELSE CHANGES, and that is deliberate: one function, one set of
+ * tests, asked with one flag, rather than a second hand-written copy that
+ * would agree today and drift tomorrow. lost_attrs_the_cell_body_reads() and
+ * warn_unused_instance_attr() reach it through ua_instance_eligible() below and
+ * behave exactly as before.
+ *
  * It latches and restores xctx->tok_size itself, for the reason GUARD
  * UA-TOKSIZE states at the caller: an observer may never become the reason a
  * real netlist value goes missing. */
-static int ua_instance_eligible(int inst)
+static int ua_instance_eligible_ex(int inst, int allow_explicit)
 {
   const char *type;
   const char *prop;
@@ -3155,7 +3174,7 @@ static int ua_instance_eligible(int inst)
 
   saved_tok_size = xctx->tok_size;
   get_tok_value(prop, "schematic", 0);
-  skip = xctx->tok_size ? 1 : 0;
+  skip = (xctx->tok_size && !allow_explicit) ? 1 : 0;
   if(!skip) { get_tok_value(prop, "spice_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
   if(!skip) { get_tok_value(prop, "spectre_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
   if(!skip) { get_tok_value(prop, "vhdl_sym_def", 0);    skip = xctx->tok_size ? 1 : 0; }
@@ -3163,6 +3182,14 @@ static int ua_instance_eligible(int inst)
   if(!skip) { get_tok_value(prop, "tedax_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
   xctx->tok_size = saved_tok_size;
   return skip ? 0 : 1;
+}
+
+/* The ordinary arm of the classification above: a copy that has named its own
+ * cell body is somebody else's business. Every caller that existed before
+ * issues 1212 and 1215 asks through here, and the signature is unchanged. */
+static int ua_instance_eligible(int inst)
+{
+  return ua_instance_eligible_ex(inst, 0);
 }
 
 /* ISSUES 0970 AND 1201. IS THIS ONE SETTING LOST -- and if so, how far did it
@@ -3337,6 +3364,167 @@ void lost_attrs_cache_clear(void)
   str_hash_free(&ua_body_table);
 }
 
+/* GUARD AS-VALUE, issue 1213. WHAT DOES A VALUE HAVE TO LOOK LIKE BEFORE
+ * XSCHEM WILL WRITE A WHOLE SEPARATE COPY OF A CELL FOR IT?
+ *
+ * IT IS AN ALLOW-RULE, AND THAT IS THE POINT OF IT. Issue 1206 added a
+ * one-byte "the value is not empty" test, and issue 1213 is a value typed as a
+ * single SPACE walking straight past it: the copy got its own cell, the info
+ * window announced it as work done for the designer, and the deck named a
+ * device `sky130_fd_pr__` with nothing after it, which exists in no PDK. A tab
+ * did the same. A LINE BREAK was worse -- it cut the transistor line in half
+ * and started a second element line reading `XL=`, a call to a cell nobody has
+ * ever heard of. A value of nothing but punctuation gave `sky130_fd_pr__---`.
+ * That is the SECOND time a whitespace-shaped value has walked past a guard
+ * written for the shape next to it, so this is deliberately not a third guard:
+ * it says what a usable value IS, and everything else falls back to the plain
+ * cell and is reported as a setting that went nowhere -- exactly the behaviour
+ * before issue 1201. A shape nobody thought of is then safe by construction.
+ *
+ * THE RULE, in the words the user is given: a value XSCHEM can pass down has
+ * to be ONE WORD with at least one letter or digit in it. Formally: not empty,
+ * no blank space of any kind anywhere in it, and at least one [A-Za-z0-9].
+ *
+ * Measured against the seven shapes issue 1213 lists: empty REJECT, one space
+ * REJECT, one tab REJECT, one line break REJECT, punctuation only REJECT, a
+ * real value with a trailing space REJECT (that one was a duplicate-body
+ * defect of its own, two byte-identical cell bodies, and it was filed nowhere),
+ * and a real value written in quotes ACCEPTED UNCHANGED -- the .sch reader
+ * takes the quotes off long before this feature sees anything, so that value
+ * is already the plain value. Row AS64 pins that last one so a later hand does
+ * not "fix" quotes into the rule and break a spelling that works today.
+ *
+ * ASKED IN EXACTLY THREE PLACES, and row AS67 counts them: the half that
+ * decides whether a copy gets a cell of its own (lost_attrs_scan below), the
+ * half that writes the sentence the designer reads
+ * (warn_unused_instance_attr), and -- since issue 1227 -- the half that keeps
+ * the refused setting out of the new cell body
+ * (lost_attrs_strip_unusable below). A repair that moved only the first would
+ * leave the tool quietly right and silent; one that moved only the second
+ * would leave it explaining a deck it still wrote wrong; and one that moved
+ * neither of those but not the third would leave it saying the setting went
+ * nowhere while the setting sat in the deck.
+ *
+ * `@` AND `%` ARE REJECTED TOO, issue 1227. They are not ordinary characters
+ * in a value: they are the two marks XSCHEM itself reads as "fill something in
+ * here later", and the netlister really does resolve them a second time when it
+ * writes the device line. So a value holding one cannot be spelled into a cell
+ * name honestly -- measured, `modelp=pfet@01v8_lvt` minted a cell called
+ * `aswv__modelp_pfet_01v8_lvt`, the very name a copy that typed the clean
+ * `pfet_01v8_lvt` gets, while the deck carried `sky130_fd_pr__pfet@01v8_lvt`,
+ * a device in no PDK. The design walk in actions.c already refuses every `@`
+ * value for the same reason; this is that refusal in the other half.
+ *
+ * REJECTING A SETTING NOW REALLY DOES KEEP IT OUT OF THE DECK, issue 1227.
+ * Until this pass it did not: a copy carrying one good setting beside one
+ * rejected one was still specialised on the good one, and the rejected one
+ * reached the new cell body anyway through parent_prop_ptr -- which put
+ * `sky130_fd_pr__` back in the deck under a warning saying the setting "did not
+ * reach the simulator and changed nothing". lost_attrs_strip_unusable() below
+ * is what makes that sentence true; get_additional_symbols() and
+ * descend_schematic() (both actions.c) are its two callers. */
+static int ua_value_specialisable(const char *val)
+{
+  const char *s;
+  int alnum;
+
+  if(!val || !val[0]) return 0;
+  alnum = 0;
+  for(s = val; *s; ++s) {
+    if(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+       *s == '\f' || *s == '\v') return 0;
+    if(*s == '@' || *s == '%') return 0;
+    if((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+       (*s >= '0' && *s <= '9')) alnum = 1;
+  }
+  return alnum;
+}
+
+/* ISSUE 1213. The half-sentence that tells the designer WHICH way their value
+ * is unusable, for the warning only.
+ *
+ * IT IS NEVER ASKED WHETHER A VALUE QUALIFIES -- ua_value_specialisable()
+ * alone decides that, and this function only describes a value that one has
+ * already turned down. Kept apart on purpose: a second function that could
+ * disagree about what qualifies is the drift this whole area keeps being
+ * bitten by. */
+static const char *ua_value_fault(const char *val)
+{
+  const char *s;
+  int blank;
+
+  if(!val || !val[0]) return "is empty";
+  blank = 1;
+  for(s = val; *s; ++s) {
+    if(!(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+         *s == '\f' || *s == '\v')) { blank = 0; break; }
+  }
+  if(blank) return "is nothing but blank space";
+  for(s = val; *s; ++s) {
+    if(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+       *s == '\f' || *s == '\v') return "has a space, a tab or a line break in it";
+  }
+  for(s = val; *s; ++s) {
+    if(*s == '@' || *s == '%')
+      return "has an '@' or a '%' in it, which XSCHEM reads as an instruction to "
+             "fill something in later rather than as part of the value";
+  }
+  return "has no letters or digits in it";
+}
+
+/* GUARD AS-DEFAULT, issue 1214. Is this value the one the SYMBOL's own
+ * template already supplies?
+ *
+ * A COPY THAT DIFFERS IN NOTHING IS NOT A COPY -- the same sentence GUARD
+ * AS-EMPTY is written under, one step further on. Measured before this guard:
+ * a copy typing modelp=pfet_01v8 on a symbol whose template already says
+ * modelp=pfet_01v8 got a second cell body of 310 bytes, byte-identical to the
+ * first, under a note announcing it as work done on the designer's behalf.
+ * Nothing about that copy's deck differs, so there is nothing to write.
+ *
+ * IT IS ALSO A SILENCE IN THE WARNING, and that is the part a reader would get
+ * wrong. The setting had precisely the effect the designer asked for -- the
+ * template hands the same value down -- so nothing was lost, and the shared
+ * sentence frame "did not reach the simulator and changed nothing" would read
+ * as an accusation about a no-op. Rejected alternative, recorded on 1214: a
+ * sixth shape of that sentence. RULING D5-4 mints the frame once, and here it
+ * would be false-flavoured whatever the advice said. Row AS68 asserts both
+ * halves -- no second cell body AND no warning line -- in one row, because a
+ * repair that stops writing the body and starts accusing the designer is not a
+ * repair.
+ *
+ * The comparison is on the RAW value both sides, with tok_size latched and put
+ * back for the reason GUARD UA-TOKSIZE gives below, and with no return inside
+ * the latched region (row AS58's lesson). tok_size is also how "the template
+ * really declares this name" is asked: a template that never mentions the name
+ * hands back an empty string, which must not compare equal to anything. */
+static int ua_value_is_template_default(int inst, const char *tok, const char *val)
+{
+  char *mine = NULL;
+  const char *dflt;
+  size_t saved_tok_size;
+  int same;
+
+  if(!tok || !tok[0] || !val) return 0;
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  /* ⚠ A COPY OF <val> FIRST, AND IT IS NOT DEFENSIVE. get_tok_value() hands
+   * every answer back in ONE shared buffer, and <val> is almost always a
+   * pointer into it -- both callers have just read the copy's own value out of
+   * it. Reading the template below overwrites that buffer, so without this copy
+   * the comparison is the buffer against itself and answers "the same" for
+   * every value the template happens to declare. Measured while writing this:
+   * the whole feature switched itself off, and every acceptance row in
+   * test_auto_specialize_1201 went red at once. */
+  my_strdup2(_ALLOC_ID_, &mine, val);
+  saved_tok_size = xctx->tok_size;
+  dflt = get_tok_value((xctx->inst[inst].ptr + xctx->sym)->templ, tok, 0);
+  same = (xctx->tok_size && dflt && mine && !strcmp(dflt, mine)) ? 1 : 0;
+  xctx->tok_size = saved_tok_size;
+  my_free(_ALLOC_ID_, &mine);
+  return same;
+}
+
 /* ISSUE 1201. THE WHOLE TRIGGER, IN ONE ANSWER: the settings this copy typed
  * that the deck drops AND the cell's own sheet uses.
  *
@@ -3354,8 +3542,8 @@ void lost_attrs_cache_clear(void)
  *
  * All three are handed back as freshly allocated strings the caller frees; any
  * of them may be NULL if the caller does not want it. */
-int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
-                                   char **key)
+static int lost_attrs_scan(int inst, int allow_explicit, char **canon,
+                           char **settings, char **key)
 {
   char *format = NULL;
   char *toks = NULL;
@@ -3379,7 +3567,7 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
   if(key) my_strdup(_ALLOC_ID_, key, NULL);
   /* GUARD AS-EXPLICIT and GUARD AS-TYPE, both of them, and they are the SAME
    * test the warning applies -- see ua_instance_eligible() above. */
-  if(!ua_instance_eligible(inst)) return 0;
+  if(!ua_instance_eligible_ex(inst, allow_explicit)) return 0;
   saved_tok_size = xctx->tok_size;
   prop = xctx->inst[inst].prop_ptr;
   /* GUARD AS-FMTRESOLVE: the decision is made against the SPICE line this copy
@@ -3402,27 +3590,36 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
     while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
     if(*q) { *q = '\0'; ++q; }
     /* GUARD AS-LOST then GUARD AS-BODY, in that order: the cheap shared
-     * classification first, the file read only for what survives it. Then
-     * GUARD AS-EMPTY, issue 1206, last because it is about the VALUE and the
-     * other two are about the name.
+     * classification first, the file read only for what survives it. Then the
+     * two tests about the VALUE, last, because the other two are about the
+     * name.
      *
-     * GUARD AS-EMPTY: A COPY THAT DIFFERS IN NOTHING IS NOT A COPY. A designer
-     * who typed the setting name and never got round to the value has asked for
-     * nothing, and a reader would assume that falls out of the tests above --
-     * it does not, because those two ask only whether the NAME is dropped by
-     * the SPICE line and used by the drawing, and a name with no value passes
-     * both. Measured before this guard: `modelp=` with nothing after it wrote a
-     * second .subckt whose 294 bytes were byte-identical to the first, under a
-     * cell name ending in an underscore, and the info window announced it as
-     * work done on the designer's behalf. What they get now is a sentence
-     * telling them what they left unfinished (warn_unused_instance_attr below).
+     * GUARD AS-VALUE, issue 1213, replaces the one-byte `tval[0]` test issue
+     * 1206 shipped here. A COPY THAT DIFFERS IN NOTHING USABLE IS NOT A COPY.
+     * A reader would assume the two tests above already cover this -- they do
+     * not, because they ask only whether the NAME is dropped by the SPICE line
+     * and used by the drawing, and a name whose value is a single space passes
+     * both. That is exactly what 1213 measured: a second .subckt announced to
+     * the designer as work done for them, holding a device called
+     * `sky130_fd_pr__` that exists in no PDK. The rule and the seven measured
+     * shapes are written out at ua_value_specialisable() above; what matters
+     * here is that it is an ALLOW-rule, so a shape nobody has thought of falls
+     * back to the plain cell instead of into the deck.
      *
-     * ONE SETTING, NOT THE WHOLE COPY: a copy carrying one blank setting beside
-     * one real one is still specialised on the real one, and still warned about
-     * the blank one. Row AS55 is the only row that can see that difference. */
+     * GUARD AS-DEFAULT, issue 1214: and a value the symbol's own template
+     * already supplies asks for nothing either. See
+     * ua_value_is_template_default() above for what was measured and for why
+     * the warning stays silent about it too.
+     *
+     * ONE SETTING, NOT THE WHOLE COPY: a copy carrying one unusable setting
+     * beside one real one is still specialised on the real one, and still
+     * warned about the unusable one. Rows AS55 and AS65 are the only rows that
+     * can see that difference. */
     if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach) &&
        cell_body_reads_token(inst, p) &&
-       (tval = get_tok_value(prop, p, 0)) != NULL && tval[0]) {
+       (tval = get_tok_value(prop, p, 0)) != NULL &&
+       ua_value_specialisable(tval) &&
+       !ua_value_is_template_default(inst, p, tval)) {
       if(n == cap) {
         cap = cap ? cap * 2 : 8;
         my_realloc(_ALLOC_ID_, &names, (size_t)cap * sizeof(char *));
@@ -3493,6 +3690,140 @@ int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
   return n;
 }
 
+/* ISSUE 1201. THE ORDINARY ARM, and the only one that existed before issues
+ * 1212 and 1215: a copy that has named its own cell body by hand is somebody
+ * else's business and answers 0 here. Signature and callers unchanged. */
+int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
+                                   char **key)
+{
+  return lost_attrs_scan(inst, 0, canon, settings, key);
+}
+
+/* ISSUES 1215 AND 1212. THE SAME ANSWER ABOUT A COPY THAT DID NAME ITS OWN
+ * CELL BODY -- what settings would this hand-named copy have been specialised
+ * on, had it not named itself?
+ *
+ * WHY THAT QUESTION IS WORTH ASKING, in the user's terms. Two copies of a cell
+ * ask for exactly the same device; one lets XSCHEM name the new cell and the
+ * other types that same name in by hand. Before issue 1215 the tool read the
+ * typed name as "taken", invented a second name with a _1 on the end, and put
+ * two cell bodies in the deck that were byte-identical -- 314 bytes each,
+ * measured -- while the note in that very run told the designer that any other
+ * copy asking for the same settings shares the one cell. Comparing the two
+ * copies' setting keys is what makes that sentence true (GUARD AS-TYPEDSAME,
+ * actions.c), and the same comparison is what lets XSCHEM notice the opposite
+ * case and say so (GUARD AS-CLASH, issue 1212).
+ *
+ * <canon> is not offered: a hand-named copy is never NAMED by this feature, so
+ * the readable spelling has no reader. The human spelling and the key are.
+ *
+ * A copy this returns 0 for simply loses the comparison, and every caller then
+ * behaves exactly as it did before -- the name is treated as taken. Answering
+ * "I do not know" can only cost a numeric suffix; it can never share a body
+ * between two copies that wanted different things. */
+int lost_attrs_typed_copy(int inst, char **settings, char **key)
+{
+  return lost_attrs_scan(inst, 1, NULL, settings, key);
+}
+
+/* GUARD AS-STRIP, ISSUE 1227. The copy's settings AS THE NEW CELL BODY IS
+ * ALLOWED TO SEE THEM: the same property string with the settings XSCHEM has
+ * just told the designer it could not use taken out of it.
+ *
+ * WHY THIS HAS TO EXIST, in the user's terms. A copy that types one good
+ * setting beside one whose value is a space, a tab, a line break or an '@' is
+ * still given its own version of the cell, on the strength of the good one --
+ * that is issue 1213's own rule and rows AS55 and AS65 are about it. But the
+ * new cell body is fed the copy's WHOLE property string (get_additional_symbols
+ * writes it into parent_prop_ptr), so the setting XSCHEM turned down walked
+ * straight into the deck anyway: measured, `sky130_fd_pr__` with no device name
+ * after it, and with a line break, a transistor line cut in half and a second
+ * element line beginning `XL=`. The designer read a warning in the same run
+ * saying that setting "did not reach the simulator and changed nothing". It had
+ * reached it, and it had broken the deck. RULING D5-1.
+ *
+ * A SECOND, QUIETER DEFECT DIED WITH IT. Two copies whose rejected values
+ * DIFFER spell one sharing key -- the rejected settings are not in it -- so
+ * they share one cell body, and the first one written wins. The second copy
+ * then simulated the first copy's device with nothing said. Once the rejected
+ * settings are stripped, equal keys really do mean equal bodies again, which is
+ * the invariant GUARD AS-TYPEDSAME in actions.c rests on.
+ *
+ * WHAT THE DESIGNER GETS INSTEAD is what they got before issue 1201 existed:
+ * the cell falls back to the value the SYMBOL's own template supplies for that
+ * setting, and the warning that says the setting went nowhere is true.
+ *
+ * ONLY THE SETTINGS THE RULE TURNED DOWN COME OUT. A setting that is simply
+ * carried by the SPICE line, or that the drawing never reads, is not this
+ * function's business and is left exactly where it was -- the deck for every
+ * copy that types nothing unusable is byte-for-byte unchanged.
+ *
+ * Returns how many settings were removed; <out> is a freshly allocated copy of
+ * the property string the caller frees, and is set even when nothing was
+ * removed so a caller never has to ask twice. */
+int lost_attrs_strip_unusable(int inst, char **out)
+{
+  char *format = NULL;
+  char *toks = NULL;
+  char *res = NULL;
+  char *p;
+  char *q;
+  const char *tval;
+  const char *prop;
+  char carriers[64];
+  size_t saved_tok_size;
+  int reach;
+  int n = 0;
+
+  if(out) my_strdup(_ALLOC_ID_, out, NULL);
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  prop = xctx->inst[inst].prop_ptr;
+  if(!prop) return 0;
+  if(out) my_strdup2(_ALLOC_ID_, out, prop);
+  /* The SAME classification the warning and the naming use, on the ordinary
+   * arm: a copy that named its own cell body by hand keeps every byte it
+   * typed. EXPLICIT BEATS IMPLICIT, exactly as GUARD UA-POLY says. */
+  if(!ua_instance_eligible(inst)) return 0;
+  saved_tok_size = xctx->tok_size;
+  resolve_netlist_format(inst, &format);
+  if(!format || !format[0]) {
+    my_free(_ALLOC_ID_, &format);
+    xctx->tok_size = saved_tok_size;
+    return 0;
+  }
+  my_strdup2(_ALLOC_ID_, &res, prop);
+  my_strdup(_ALLOC_ID_, &toks, list_tokens(prop, 0));
+  p = toks;
+  while(p && *p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n') ++p;
+    if(!*p) break;
+    q = p;
+    while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
+    if(*q) { *q = '\0'; ++q; }
+    /* The three tests lost_attrs_scan() makes, with the VALUE test inverted:
+     * dropped by the SPICE line, read by the cell's own drawing, and a value
+     * the rule above will not pass down. A setting that fails either of the
+     * first two never reached the body through this route in the first place.
+     *
+     * ⚠ subst_token() and get_tok_value() keep SEPARATE static buffers, so the
+     * read below and the removal beside it do not tread on each other. */
+    if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach) &&
+       cell_body_reads_token(inst, p) &&
+       (tval = get_tok_value(prop, p, 0)) != NULL &&
+       !ua_value_specialisable(tval)) {
+      my_strdup2(_ALLOC_ID_, &res, subst_token(res, p, NULL));
+      ++n;
+    }
+    p = q;
+  }
+  if(out) my_strdup2(_ALLOC_ID_, out, res);
+  my_free(_ALLOC_ID_, &res);
+  my_free(_ALLOC_ID_, &toks);
+  my_free(_ALLOC_ID_, &format);
+  xctx->tok_size = saved_tok_size;
+  return n;
+}
+
 /* ISSUE 0970: say so, once per lost setting, in words a designer reads as
  * "you typed this and it had no effect".
  *
@@ -3545,6 +3876,10 @@ static void warn_unused_instance_attr(int inst, const char *format)
   int spec;
   int body_reads;
   int haveval;
+  /* ISSUE 1213: and whether the value is one XSCHEM could pass down at all.
+   * It is the SAME question the classifier asks, asked through the same
+   * function, for the reason GUARD AS-VALUE gives above. */
+  int valok;
 
   if(!format || !format[0]) return;
 
@@ -3658,14 +3993,44 @@ static void warn_unused_instance_attr(int inst, const char *format)
       body_reads = cell_body_reads_token(inst, p);
       val = get_tok_value(prop, p, 0);
       haveval = (val && val[0]) ? 1 : 0;
+      valok = ua_value_specialisable(val);
       /* GUARD UA-HONOURED's own test, and the value is part of it, issue 1206.
        * Without the value term, a copy carrying one blank setting beside one
        * real one is specialised on the real one and then silently loses the
        * sentence about the blank one -- because the copy as a whole WAS
        * specialised. The set that was honoured is exactly "lost AND the drawing
-       * uses it AND a value was actually typed", so the skip has to test all
-       * three. Row AS55 is the only row that can see it. */
-      if(spec && body_reads && haveval) { p = q; continue; }
+       * uses it AND the value was one XSCHEM could pass down", so the skip has
+       * to test all three. Rows AS55 and AS65 are the only rows that can see
+       * it.
+       *
+       * ISSUE 1213: the third test is now the ALLOW-rule and not `haveval`,
+       * because THE HONOURED SET AND THE ADMITTED SET MUST BE ONE SET. The
+       * classifier above turns down a value made of blank space; if this skip
+       * still asked only "was anything typed", the copy would be specialised
+       * on its other settings and this one would go by in silence -- the
+       * designer told nothing about the setting that did nothing. Row AS65 is
+       * the twin of AS55 for exactly that. */
+      if(spec && body_reads && valok) { p = q; continue; }
+      /* GUARD UA-DEFAULT, issue 1214. SILENCE, DELIBERATELY, for a value that
+       * is already the symbol's own default.
+       *
+       * A reader would assume every setting the SPICE line drops deserves the
+       * sentence below. This one does not: the template hands the very same
+       * value down, so the deck already carries what the designer asked for.
+       * Nothing was lost, there is nothing for them to do, and the shared frame
+       * "did not reach the simulator and changed nothing" would read as an
+       * accusation about a no-op. See ua_value_is_template_default() above for
+       * the rejected alternative. Row AS68 asserts the silence and the missing
+       * second cell body together. */
+      if(body_reads && ua_value_is_template_default(inst, p, val)) {
+        p = q;
+        continue;
+      }
+      /* ⚠ READ AGAIN. The test just above asked the property reader a question
+       * of its own, and every answer it gives comes back in ONE shared buffer,
+       * so the pointer held in <val> now names the symbol template's value and
+       * not this copy's. Everything below prints <val>. */
+      val = get_tok_value(prop, p, 0);
       /* GUARD UA-ELIDE, issue 0983: every variable-length field is shortened to
        * one line of bounded length BEFORE the sentence is built, so no value a
        * user types can cost the reader the recommended action or split the
@@ -3675,6 +4040,16 @@ static void warn_unused_instance_attr(int inst, const char *format)
       unused_attr_elide(e_cell,  S(e_cell),  sym_cell, 60, 0);
       unused_attr_elide(e_prop,  S(e_prop),  p, 60, 0);
       unused_attr_elide(e_val,   S(e_val),   val ? val : "", 120, 0);
+      /* RULING D5-4 AND ISSUE 1216. THE CLAUSE THAT SAYS WHY IS MINTED ONCE.
+       * Four of the five shapes below say the same thing here and, before this
+       * hoist, said it in four separate string literals that happened to agree.
+       * A fifth shape arrived with issue 1213 and would have made five. Four
+       * copies of a sentence drift, and the drift shows up on a stranger's
+       * screen, not in a diff. The one shape that genuinely differs -- the
+       * setting DOES reach another netlist of the same cell -- overwrites this
+       * line and says so. Row AS75 counts the literal, once. */
+      my_snprintf(mid, S(mid),
+        "%s never reads %s when the netlist is written", e_cell, e_prop);
       /* ISSUES 0987 AND 0988, THE TWO SHAPES. They differ in the clause that
        * says WHY the setting was lost and in the action they ask for, and those
        * actions are opposites -- take it off, versus do not take it off. Both
@@ -3721,8 +4096,6 @@ static void warn_unused_instance_attr(int inst, const char *format)
          * this setting, so there is nothing a separate copy of it could do
          * differently. This is the population rows UF10 and UF13 of
          * tests/headless/test_unused_attr_0970.tcl sit in. */
-        my_snprintf(mid, S(mid),
-          "%s never reads %s when the netlist is written", e_cell, e_prop);
         my_snprintf(advice, S(advice),
           "Check the spelling against the settings this cell does read, or take "
           "it off. When a cell's own drawing uses a setting you type on one "
@@ -3735,12 +4108,38 @@ static void warn_unused_instance_attr(int inst, const char *format)
         /* SHAPE 3, issue 1206. The name is right and the drawing does read it;
          * what is missing is the value. Telling this designer to check their
          * spelling would send them looking for a mistake they did not make. */
-        my_snprintf(mid, S(mid),
-          "%s never reads %s when the netlist is written", e_cell, e_prop);
         my_snprintf(advice, S(advice),
           "The %s drawing does use %s, so the name is right -- but you left the "
           "value empty, so there is nothing to pass down. Put the value you "
           "want after the '=', or take the setting off.", e_cell, e_prop);
+      } else if(!valok) {
+        /* SHAPE 3b, ISSUE 1213. The name is right, the drawing does read it,
+         * and the designer DID type something -- but what they typed is not a
+         * value XSCHEM can pass down: a space, a tab, a line break, a value
+         * with a space stuck on the end of it, one with no letters or digits
+         * in it at all, or one holding an '@' or a '%' -- the two marks XSCHEM
+         * reads as an instruction rather than as text (issue 1227). Before this
+         * shape existed those all fell through
+         * to SHAPE 5, whose advice sends the designer to the symbol's SPICE
+         * line to fix a symbol that is perfectly fine.
+         *
+         * The rule is stated as a rule, not as a complaint about this one
+         * value, so a designer who hits it once knows what every other value
+         * has to look like. ua_value_fault() supplies the middle clause and
+         * decides nothing. */
+        /* ⚠ THE PER-CENT SIGN ARRIVES AS AN ARGUMENT, and it is not a
+         * stylistic choice. This build compiles the no-HAS_SNPRINTF arm of
+         * my_snprintf() (util.c), a hand-written formatter that does not
+         * understand "%%": it reads the second per-cent as the start of a new
+         * conversion and eats the words after it. Measured, the sentence came
+         * out ending "no '@' or '% 536627636n it." */
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so the name is right -- but the value "
+          "you typed %s, and XSCHEM can only pass a value down when it is one "
+          "word made of ordinary characters, with at least one letter or digit "
+          "in it and no '@' or '%s' in it. Put the value you want after the "
+          "'=', or take the setting off.",
+          e_cell, e_prop, ua_value_fault(val), "%");
       } else if(auto_spec_would_specialize(inst)) {
         /* SHAPE 4, issue 1204. Everything about this copy qualifies; the only
          * reason it did not get its own version of the cell is that this run
@@ -3750,8 +4149,6 @@ static void warn_unused_instance_attr(int inst, const char *format)
          *
          * Safe to ask auto_spec_would_specialize() here: a netlist run owns the
          * caches on both arms, so it does not throw the body-read cache away. */
-        my_snprintf(mid, S(mid),
-          "%s never reads %s when the netlist is written", e_cell, e_prop);
         my_snprintf(advice, S(advice),
           "The %s drawing does use %s, so this is not a spelling mistake. "
           "XSCHEM can give this copy its own version of %s, but it only writes "
@@ -3765,8 +4162,6 @@ static void warn_unused_instance_attr(int inst, const char *format)
          * copy is left out of the SPICE deck altogether (GUARDs AS-SYMBODY,
          * AS-TMPLMODEL and AS-IGNORE in actions.c). The setting still went
          * nowhere, and the way to make it count is on the symbol's SPICE line. */
-        my_snprintf(mid, S(mid),
-          "%s never reads %s when the netlist is written", e_cell, e_prop);
         my_snprintf(advice, S(advice),
           "The %s drawing does use %s, so this is not a spelling mistake. "
           "XSCHEM did not give this copy a version of its own here, so the "

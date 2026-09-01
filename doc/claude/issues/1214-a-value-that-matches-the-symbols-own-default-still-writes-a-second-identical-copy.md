@@ -63,3 +63,35 @@ whose value happens not to change anything) and is more code.
 
 None. A row is one fixture: a copy typing the template's own value must call the
 plain cell, produce exactly one body, and get no note.
+
+---
+
+## FIXED, item S6b (2026-08-31)
+
+GUARD AS-DEFAULT, `ua_value_is_template_default()` in `src/token.c`: a value
+equal to the value the symbol's own template already supplies asks for nothing,
+so no second cell body is written.
+
+**And the designer hears NOTHING about it**, which is the half a reader would
+get wrong. The setting had precisely the effect they wanted -- the template
+hands the same value down -- so nothing was lost and there is nothing to do.
+The shared sentence frame is "... did not reach the simulator and changed
+nothing", and against a no-op that reads as an accusation. Rejected
+alternative: a sixth shape of that sentence; RULING D5-4 mints the frame once
+and it would be false-flavoured here whatever the advice said.
+
+Row AS68 asserts BOTH halves in one row -- one cell body, the plain name on the
+call line, no note AND no warning -- because a repair that stops writing the
+body and starts accusing the designer is not a repair. Row AS69 is its control:
+a default-valued copy beside a real-valued one, where the real one still gets
+its own cell.
+
+**A trap this cost an hour to find, recorded for the next hand.**
+`get_tok_value()` hands every answer back in ONE shared static buffer. The
+value being tested is almost always a pointer into it, so reading the template
+overwrites it and the comparison becomes the buffer against itself -- "the
+same" for every value the template declares, which switched the whole feature
+off. The guard copies the value before it looks the template up, and the
+warning re-reads the value afterwards. Both sites carry a comment saying so.
+
+**On the user's ruling queue:** the silence.

@@ -3120,6 +3120,11 @@ extern const char *get_sym_name(int inst, int ndir, int ext, int abs_path);
  * run ever writes the specialised cell bodies, so only that run may put their
  * names on call lines -- see GUARD AS-WHOLE in src/actions.c. */
 extern void auto_spec_begin(int whole);
+/* ISSUE 1212: and the backstop for the sheets the design walk cannot resolve.
+ * Called from get_additional_symbols() for a copy that names its own cell body,
+ * it says so when that name is one this run had already given to a copy asking
+ * for something else. See GUARD AS-CLASH in src/actions.c. */
+extern void auto_spec_clash_check(int inst, const char *typed);
 extern void auto_spec_end(void);
 extern int auto_spec_would_specialize(int inst);
 extern const char *auto_spec_name(int inst);
@@ -3133,6 +3138,18 @@ extern const char *auto_spec_name(int inst);
  * therefore unambiguous, which <canon> is not and is not required to be. */
 extern int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
                                           char **key);
+/* ISSUES 1215 AND 1212, in src/token.c: the same answer about a copy that HAS
+ * named its own cell body by hand. Used only to compare one copy's request
+ * with another's -- "do these two ask for the same thing?" -- so it hands back
+ * the human spelling and the sharing key and no cell name. Answers 0 when it
+ * cannot tell, and every caller then behaves exactly as it did before. */
+extern int lost_attrs_typed_copy(int inst, char **settings, char **key);
+/* GUARD AS-STRIP, ISSUE 1227, in src/token.c: this copy's property string with
+ * the settings XSCHEM has just refused to pass down taken out of it, so the
+ * cell body it is about to be given cannot see them and falls back to the
+ * symbol's own default -- which is what the warning in the same run says
+ * happened. Returns how many were removed; <out> is always set. */
+extern int lost_attrs_strip_unusable(int inst, char **out);
 extern void lost_attrs_cache_clear(void);
 /* ISSUE 0983 GUARD UA-ELIDE: one line, bounded length, whitespace runs folded.
  * Every variable-length field of a user-facing netlist-time sentence goes

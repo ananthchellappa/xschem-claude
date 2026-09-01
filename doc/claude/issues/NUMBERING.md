@@ -749,6 +749,57 @@ written down - not adopted from a report:
   passes. Widening it to `tests/` does not work either: 60 pre-existing prose
   hits across 28 files. Byte-compare against a pre-sabotage copy instead.
 
-**The next free number is 1220.** 1201-1219 are taken. **1000-1199 is
+* **1220** - the recorded RESIDUAL of 1212's fix (item S6b): the design walk
+  skips a sheet named through a generator or an `@` substitution, and a name it
+  harvests from a FILE is unconditionally taken, so 1215's same-settings
+  exemption applies on the sheet being netlisted and not across sheets. Neither
+  loses a setting silently; the first says so out loud, the second costs a
+  duplicate cell body.
+
+**Item S6b (2026-08-31) closed 1212, 1213, 1214, 1215, 1216, 1217 and 1218.**
+1219 is process-side and nothing in the repo carries it. 1207 is untouched.
+
+**Item S6b's SABOTAGE pass (2026-08-31) filed 1221-1226** -- six guards the item
+added that no test row can see, each measured by neutralising the guard, rebuilding
+and watching the suite stay green:
+
+* **1221** - the design walk's memory of sheets already read. AS74's `seen` element is
+  satisfied by the function's own parameter name, so the whole memory can be deleted
+  at 77/77. The depth limit half IS pinned.
+* **1222** - AS77 cannot see the invented tick-box name wrapped across two comment
+  lines, which is the shape all the original sites had. Only a one-line
+  reintroduction reddens it.
+* **1223** - HIGH, RULING D5-1. Deleting the shared-buffer re-read in
+  `warn_unused_instance_attr()` makes the warning quote the symbol template's value as
+  though the designer had typed it, and pick the wrong explanation, at 77/77.
+* **1224** - the walk's once-per-run latch. AS74's prose claims it; its elements count
+  call sites, not calls.
+* **1225** - `auto_spec_symbol_body()` and the fallback beside it are run by no fixture
+  and grepped by no row; the whole function can be emptied at 77/77.
+* **1226** - `ua_value_fault()`'s three explanations are printed and never asserted;
+  collapsing them to one string is green while a `---` value is called blank space.
+
+**Item S6b's REPAIR pass (2026-08-31) filed 1227 and closed 1221-1226.**
+
+* **1227** - HIGH, RULING D5-1. A setting XSCHEM said it could not use still
+  reached the cell body it wrote for that copy, whenever the copy carried one
+  usable setting beside it: `sky130_fd_pr__` back in the deck, a transistor line
+  cut in half by a line break, and two copies with different refused values
+  sharing one body so the second silently simulated the first one's transistor.
+  Closed by GUARD AS-STRIP in `token.c` with two callers in `actions.c`, plus an
+  `@`/`%` extension to the allow-rule. Rows AS78-AS81 and two new elements on
+  AS65. 648 shipped sheets re-netlisted: zero copies qualify, so no shipped deck
+  can have moved.
+* **1221, 1224** closed inside row AS74 (the visited set is counted as its two
+  table calls; the once-per-run latch is counted inside the walk's own entry
+  point). **1222** closed in `as_flat` (C block-comment continuations are now
+  dropped as well as Tcl hashes). **1223** closed by row AS82 (the sentence
+  quotes the value the DESIGNER typed). **1225** closed by row AS84 (a middle
+  cell laid out the way vendor PDKs lay them out). **1226** closed by row AS83
+  (four reasons, four sentences, and the four have to be four).
+* **1220** gained row AS85 for its case 2, and now records that the note's
+  "shares that one" sentence is measurably false across sheets. Still open.
+
+**The next free number is 1228.** 1201-1227 are taken. **1000-1199 is
 reserved** (user, 2026-08-30), so 0999 was followed by **1200**; 0500-0599 and
 0700-0799 remain reserved for other branches.

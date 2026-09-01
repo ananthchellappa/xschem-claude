@@ -46,3 +46,11 @@ widened the strip has to measure it rather than assume it.
 ## Rows
 
 This IS the row. It needs one element added, not a new row.
+
+---
+
+## FIXED, item S6b (2026-08-31)
+
+Folded into the EXISTING row AS56 as a fourth element, `HD_ALL == HD_LINES`, so
+it adds no check and no new fixture. Green before and after; it pins the fact
+the row was already printing.

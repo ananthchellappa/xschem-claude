@@ -94,3 +94,57 @@ shapes, neither measured:
 None. A row needs the two-sheet fixture above and must assert that each copy's
 body holds the device that copy asked for. Today's row AS51 is single-sheet and
 passes.
+
+---
+
+## FIXED, item S6b (2026-08-31)
+
+Two guards, because one of them cannot cover everything.
+
+**GUARD AS-HIER** (`auto_spec_scan_design()` / `auto_spec_scan_file()` in
+`src/actions.c`). Before the first cell name is minted, XSCHEM reads the
+design's sheet FILES and registers every cell name a copy has typed by hand.
+Files, not loaded instances, because at the moment a name has to be minted the
+only sheet that is loaded is the one being written -- that ordering is 1202's
+whole defect and this is the same defect one level down.
+
+* Lazy: run once per netlist run, and only after a copy has actually qualified.
+  Of the 651 shipped schematics measured, not one copy qualifies, so not one of
+  them opens an extra file. The full before/after byte-diff of all 651 decks is
+  identical.
+* Bounded: `CADMAXHIER` depth cap and a visited set on the resolved absolute
+  path, so two sheets that place each other terminate. Row AS74 requires both by
+  reading the code -- a missing bound is a HANG, not a red.
+* Conservative by construction: anything it cannot parse or resolve for certain
+  it SKIPS, which degrades to exactly today's behaviour. It never guesses.
+* **The TOP sheet registers nothing**, deliberately. Its instances are loaded, so
+  GUARD AS-TYPEDNAME already sees them -- and sees them *with their settings*,
+  which is what lets GUARD AS-TYPEDSAME (issue 1215) exempt a copy asking for
+  the same thing. A text scan cannot work a settings key out, so a name
+  harvested from a file is unconditionally taken; registering the top sheet here
+  as well would un-do 1215 on the very sheet 1215 is about.
+
+Rejected alternative: `load_schematic()` the hierarchy up front so the real
+resolver does the work. It drifts from nothing, but it reads every sheet twice
+per netlist and it cannot run where it is needed -- the mint happens inside
+`spice_netlist()` while the top sheet's call lines are being written, and
+loading another sheet there destroys the context being written.
+
+**GUARD AS-CLASH** (`auto_spec_clash_check()` in `src/actions.c`), the backstop
+for what the walk skips -- a sheet named through a generator or through an `@`
+substitution resolved only while the netlist runs. When a copy asks for a cell
+name this run already handed to a copy that wanted something else, XSCHEM says
+so in plain English, naming the sheet, the copy, the cell name and the setting
+that did not reach the simulator, and saying what to do. Severity 2, like every
+other sentence this feature prints: it appends to the info window and does not
+force it open.
+
+**Rows:** AS72 (the ordinary two-level case; both devices in the deck, the
+hand-typed name kept, the invented one stepping aside), AS73 (the backstop: one
+plain-English line, with none of the tool's internal words in it), AS74
+(structural bounds).
+
+**On the user's ruling queue:** whether a clash should be louder than an info
+window line -- open the window by itself, or fail the netlist.
+
+**RESIDUAL, filed as 1220.**

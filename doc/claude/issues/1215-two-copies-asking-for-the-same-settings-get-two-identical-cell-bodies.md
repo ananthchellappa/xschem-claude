@@ -75,3 +75,38 @@ because half the defect is a false sentence rather than a wasteful deck.
 
 None. A row is the two-line fixture above: assert one shared body, or - if the
 duplicate is deliberate - assert the note does not claim sharing.
+
+---
+
+## FIXED, item S6b (2026-08-31)
+
+GUARD AS-TYPEDSAME, inside GUARD AS-TYPEDNAME in `src/actions.c`. A cell name a
+designer typed by hand is no longer "taken" when the copy that typed it is a
+copy of the SAME cell asking for the SAME settings: XSCHEM adopts the name the
+designer typed, both call lines name it, one cell body is written, and the note
+that says "Any other copy ... that asks for the same settings shares that one"
+is finally true.
+
+The settings of a hand-named copy are read through the new
+`lost_attrs_typed_copy()` (`src/token.c`), which is the same classification with
+the "this copy named its own cell body" test lifted -- one function with a flag,
+not a second hand-written copy of the tests.
+
+**The invariant this rests on, and it is in the comment:** equal keys mean equal
+cell bodies. The only kind of setting that can make two bodies of one cell
+differ is one the SPICE line drops and the drawing reads; everything the SPICE
+line does read is a subcircuit parameter resolved per call line, the same body
+either way.
+
+A copy whose settings cannot be worked out loses the comparison and the name
+stays taken -- today's behaviour. Answering "I do not know" can only cost a
+numeric suffix; it can never share a body between two copies that wanted
+different things.
+
+**Rows:** AS70 (the fix, including that the sharing sentence is present), AS71
+(control: the same shape with DIFFERENT settings still gets two cells with the
+invented name stepping aside -- this is what keeps 1202 closed).
+
+**On the user's ruling queue:** the cell name in the deck changes for this
+shape, from two names to one, and the surviving name is the designer's rather
+than the tool's.

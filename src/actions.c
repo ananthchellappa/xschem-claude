@@ -4173,9 +4173,20 @@ static Str_hashtable auto_spec_memo = {NULL, 0};
  * the same key and therefore on ONE cell body, whatever order they typed them
  * in and whatever else differs between them. */
 static Str_hashtable auto_spec_by_set = {NULL, 0};
-/* every cell name this run has already handed out, so GUARD AS-COLLIDE can see
- * a name it minted itself as taken. */
+/* every cell name this run has already handed out -> the sharing key of the
+ * copy it was handed to, so GUARD AS-COLLIDE can see a name it minted itself as
+ * taken and GUARD AS-CLASH (issue 1212) can tell whether a hand-typed name that
+ * lands on one of them was asking for the same thing. AS-COLLIDE only tests for
+ * presence, so nothing else moved when the value stopped being "1". */
 static Str_hashtable auto_spec_taken = {NULL, 0};
+/* GUARD AS-HIER, issue 1212: every cell name a copy ANYWHERE ELSE ON THE
+ * DESIGN has typed by hand, read off the sheet files before the first name is
+ * minted. See auto_spec_scan_design() below for why a file read and not a
+ * walk of loaded instances. */
+static Str_hashtable auto_spec_typed = {NULL, 0};
+/* The walk happens once per netlist run, lazily, and only if some copy really
+ * qualifies -- so a design with nothing to specialise reads no files at all. */
+static int auto_spec_scanned = 0;
 
 /* ISSUE 1201. End the window: forget every answer, and stop answering.
  *
@@ -4194,6 +4205,8 @@ void auto_spec_end(void)
   str_hash_free(&auto_spec_memo);
   str_hash_free(&auto_spec_by_set);
   str_hash_free(&auto_spec_taken);
+  str_hash_free(&auto_spec_typed);                            /* GUARD AS-HIER */
+  auto_spec_scanned = 0;
   lost_attrs_cache_clear();
 }
 
@@ -4201,17 +4214,239 @@ void auto_spec_end(void)
  * before it writes the TOP sheet's own call lines, and from nowhere else. That
  * point matters and is measured -- see the comment at the call site.
  *
- * ISSUE 1204: <whole> is the caller's own `global` flag -- 1 for "netlist the
- * whole design", 0 for "netlist current schematic only". It decides GUARD
- * AS-WHOLE below and nothing else. */
+ * ISSUE 1204: <whole> is the caller's own `global` flag -- 1 for a netlist of
+ * the whole design, 0 for a netlist of just the sheet on screen (Shift-N, or
+ * `xschem netlist -nohier`). It decides GUARD AS-WHOLE below and nothing else.
+ *
+ * ISSUE 1218: that second door used to be described here as a checkbutton
+ * labelled with a phrase this build does not have anywhere. Name the doors the
+ * user can actually reach. */
 void auto_spec_begin(int whole)
 {
   auto_spec_end();
   str_hash_init(&auto_spec_memo, 1021);
   str_hash_init(&auto_spec_by_set, 1021);
   str_hash_init(&auto_spec_taken, 1021);
+  str_hash_init(&auto_spec_typed, 1021);                      /* GUARD AS-HIER */
+  auto_spec_scanned = 0;
   auto_spec_on = 1;
   auto_spec_whole = whole ? 1 : 0;
+}
+
+/* GUARD AS-HIER's file reader, issue 1212. The whole of one file, or NULL.
+ *
+ * A file that cannot be read, or one absurdly large, answers NULL -- which
+ * degrades to exactly today's behaviour (the design walk simply learns nothing
+ * from that sheet) rather than to a guess. Same shape and same 64 MB ceiling as
+ * ua_file_uses_token() in token.c, for the same stated reason: a name can
+ * straddle any chunk boundary, so the file is read whole or not at all. */
+static char *auto_spec_slurp(const char *path)
+{
+  struct stat st;
+  FILE *f;
+  char *buf;
+  size_t want;
+  size_t got;
+
+  if(!path || !path[0]) return NULL;
+  if(stat(path, &st)) return NULL;
+  if(st.st_size <= 0) return NULL;
+  if((double)st.st_size > 64.0 * 1024.0 * 1024.0) return NULL;
+  f = fopen(path, "r");
+  if(!f) return NULL;
+  want = (size_t)st.st_size;
+  buf = my_malloc(_ALLOC_ID_, want + 1);
+  if(!buf) { fclose(f); return NULL; }
+  got = fread(buf, 1, want, f);
+  fclose(f);
+  buf[got] = '\0';
+  return buf;
+}
+
+/* ISSUE 1212. The attribute value that starts at <i> in <b>, written into
+ * <out>, with the index just past it returned.
+ *
+ * The .sch record format quotes a value that contains blanks and escapes a
+ * quote inside one with a backslash, so both are honoured here; an unquoted
+ * value ends at the first blank or at the '}' that closes the property record.
+ * This is the RAW text as the designer typed it -- no token substitution, no
+ * generator call -- for the reason GUARD AS-TYPEDNAME gives below: resolving
+ * one would run Tcl inside what is only a name-collision test. */
+static size_t auto_spec_value_at(const char *b, size_t i, char *out, size_t osize)
+{
+  size_t w;
+  int quoted;
+
+  w = 0;
+  quoted = 0;
+  if(b[i] == '"') { quoted = 1; ++i; }
+  while(b[i]) {
+    if(b[i] == '\\' && b[i + 1]) {
+      ++i;
+      if(w + 1 < osize) out[w++] = b[i];
+      ++i;
+      continue;
+    }
+    if(quoted) {
+      if(b[i] == '"') { ++i; break; }
+    } else if(b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r' ||
+              b[i] == '}') {
+      break;
+    }
+    if(w + 1 < osize) out[w++] = b[i];
+    ++i;
+  }
+  out[w] = '\0';
+  return i;
+}
+
+/* ISSUE 1212. Is <name> a `schematic=` value written at the top of <b>, i.e.
+ * does this SYMBOL name a drawing of its own? First one only, and only when it
+ * is a plain name; "" otherwise. */
+static void auto_spec_symbol_body(const char *b, char *out, size_t osize)
+{
+  size_t i;
+  int c;
+
+  out[0] = '\0';
+  for(i = 0; b[i]; ++i) {
+    if(b[i] != 's' || strncmp(b + i, "schematic=", 10)) continue;
+    c = (i > 0) ? (unsigned char)b[i - 1] : ' ';
+    if((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+       (c >= '0' && c <= '9') || c == '_') continue;
+    auto_spec_value_at(b, i + 10, out, osize);
+    if(strchr(out, '@') || strchr(out, '(')) out[0] = '\0';
+    return;
+  }
+}
+
+/* GUARD AS-HIER, issue 1212. Read ONE sheet file: register every cell name a
+ * copy on it has typed by hand, then walk into the sheets it places.
+ *
+ * WHY A FILE AND NOT THE LOADED DESIGN, which is the first thing a reader
+ * reaches for. At the moment a name has to be minted, the only sheet that is
+ * loaded is the one being written; the netlister descends into the sub-sheets
+ * AFTER the top sheet's call lines are already on disk. That ordering is issue
+ * 1202's whole defect, and issue 1212 is the same defect one level down: the
+ * probe S6a added walks the loaded instances, so it protected ONE SHEET and not
+ * a DESIGN. Measured on a two-level fixture: the copy one level down typed
+ * modelp=pfet_01v8_hvt and hand-typed its cell name, the top sheet's copy
+ * invented that same name, both call lines pointed at one cell built from the
+ * OTHER device, and pfet_01v8_hvt appeared nowhere in the deck with not a word
+ * said. Rejected alternative, recorded on 1212: load_schematic() the hierarchy
+ * up front so the real resolver does the work. It reuses the real resolver and
+ * drifts from nothing -- but it reads every sheet twice per netlist, and it
+ * cannot run where it is needed, because the mint happens inside spice_netlist()
+ * while the top sheet's call lines are being written and loading another sheet
+ * there destroys the context being written.
+ *
+ * THE TOP SHEET REGISTERS NOTHING, and that is not an oversight. Its instances
+ * ARE loaded, so GUARD AS-TYPEDNAME below already sees them -- and it sees them
+ * with their settings, which lets it exempt a copy that asked for the SAME
+ * thing (GUARD AS-TYPEDSAME, issue 1215). A text scan cannot work a setting key
+ * out, so a name registered from a file is unconditionally "taken". Registering
+ * the top sheet here as well would therefore un-do 1215 for the very sheet
+ * 1215 is about. Below the top sheet the conservative answer stands, and it
+ * costs at worst a numeric suffix on a cell name.
+ *
+ * CONSERVATIVE BY CONSTRUCTION, everywhere: anything this cannot parse or
+ * resolve for certain it SKIPS, which is exactly today's behaviour. It never
+ * guesses a name. The sheets it cannot reach are covered instead by GUARD
+ * AS-CLASH below, which tells the designer rather than going quiet.
+ *
+ * THE TWO BOUNDS ARE LOAD-BEARING and row AS74 requires them by reading this
+ * code rather than by running it: two sheets that place each other would walk
+ * for ever, and a walk that does not come back is a hung suite, not a failing
+ * one. */
+static void auto_spec_scan_file(const char *path, int depth, Str_hashtable *seen)
+{
+  struct stat st;
+  char val[PATH_MAX];
+  char ref[PATH_MAX];
+  char child[PATH_MAX];
+  char *b;
+  char *sb;
+  size_t i;
+  size_t j;
+  size_t w;
+  int c;
+
+  if(!path || !path[0]) return;
+  if(depth > CADMAXHIER) return;
+  if(str_hash_lookup(seen, path, "", XLOOKUP)) return;
+  str_hash_lookup(seen, path, "1", XINSERT);
+  b = auto_spec_slurp(path);
+  if(!b) return;
+  for(i = 0; b[i]; ++i) {
+    if(depth > 0 && b[i] == 's' && !strncmp(b + i, "schematic=", 10)) {
+      /* not `default_schematic=`, and not the tail of any other name */
+      c = (i > 0) ? (unsigned char)b[i - 1] : ' ';
+      if(!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_')) {
+        j = auto_spec_value_at(b, i + 10, val, S(val));
+        /* a generator call or an @-substitution is worked out while the
+         * netlist runs and cannot be read off the file beforehand: skip it,
+         * and let GUARD AS-CLASH speak for it if it turns into a clash. */
+        if(val[0] && !strchr(val, '@') && !strchr(val, '(')) {
+          str_hash_lookup(&auto_spec_typed, get_cell(val, 0), "1", XINSERT);
+        }
+        if(j > i) i = j - 1;
+        continue;
+      }
+    }
+    if(b[i] == 'C' && (i == 0 || b[i - 1] == '\n') && b[i + 1] == ' ' &&
+       b[i + 2] == '{') {
+      w = 0;
+      j = i + 3;
+      while(b[j] && b[j] != '}') {
+        if(w + 1 < S(ref)) ref[w++] = b[j];
+        ++j;
+      }
+      ref[w] = '\0';
+      if(j > i) i = j - 1;
+      if(!ref[0] || strchr(ref, '@') || strchr(ref, '(')) continue;
+      /* the cell's own drawing, beside the symbol, is the ordinary case */
+      my_strncpy(child, abs_sym_path(ref, ".sch"), S(child));
+      if(child[0] && !stat(child, &st)) {
+        auto_spec_scan_file(child, depth + 1, seen);
+        continue;
+      }
+      /* otherwise the symbol may name a drawing of its own */
+      my_strncpy(child, abs_sym_path(ref, ".sym"), S(child));
+      if(!child[0] || stat(child, &st)) continue;
+      sb = auto_spec_slurp(child);
+      if(!sb) continue;
+      auto_spec_symbol_body(sb, val, S(val));
+      my_free(_ALLOC_ID_, &sb);
+      if(!val[0]) continue;
+      my_strncpy(child, abs_sym_path(val, ".sch"), S(child));
+      if(child[0] && !stat(child, &st)) auto_spec_scan_file(child, depth + 1, seen);
+    }
+  }
+  my_free(_ALLOC_ID_, &b);
+}
+
+/* GUARD AS-HIER, issue 1212. Learn the cell names the whole design has already
+ * typed by hand -- ONCE per netlist run, and only when some copy has actually
+ * qualified for a cell of its own.
+ *
+ * The laziness is the reason this costs nothing on the shipped trees: of the
+ * 654 schematics under sky130A, gf180mcuD, ihp-sg13g2, xschem_library and
+ * xschem_libs_newsym, not one copy qualifies, so not one of them reads a single
+ * extra file. */
+static void auto_spec_scan_design(void)
+{
+  Str_hashtable seen = {NULL, 0};
+  const char *top;
+
+  if(auto_spec_scanned) return;
+  auto_spec_scanned = 1;
+  top = xctx->sch[xctx->currsch];
+  if(!top || !top[0]) top = xctx->current_name;
+  if(!top || !top[0]) return;
+  str_hash_init(&seen, 1021);
+  auto_spec_scan_file(top, 0, &seen);
+  str_hash_free(&seen);
 }
 
 /* GUARD AS-COLLIDE, issue 1201. Is <nm> a name this deck, this design or this
@@ -4222,29 +4457,41 @@ void auto_spec_begin(int whole)
  * only falls back to the cell's own drawing when the named file does NOT
  * exist, so a candidate that happens to name a real symbol next door builds
  * this copy out of THAT cell's drawing instead -- a different circuit, quietly,
- * under a name the designer never typed. Four questions, because there are four
+ * under a name the designer never typed. Five questions, because there are five
  * ways a name can already be spoken for:
  *
  *   * a symbol already loaded in this design, including one this same run has
  *     just minted;
  *   * a name this run has already handed out (two different setting lists whose
  *     names collapse to the same spelling once punctuation is folded to '_');
- *   * a name a designer has TYPED BY HAND on another copy anywhere on this
- *     sheet -- GUARD AS-TYPEDNAME below, issue 1202;
+ *   * a name a designer has TYPED BY HAND on another SHEET of this design --
+ *     GUARD AS-HIER, issue 1212, which is the only one of the five that has to
+ *     read files, because those sheets are not loaded yet;
+ *   * a name a designer has TYPED BY HAND on another copy on this sheet --
+ *     GUARD AS-TYPEDNAME below, issue 1202 -- UNLESS that copy is asking for
+ *     the very same settings, in which case the two share one cell body and
+ *     XSCHEM adopts the name the designer typed: GUARD AS-TYPEDSAME, issue
+ *     1215;
  *   * a file on disk, asked BOTH as a bare reference and as a reference in the
  *     base symbol's own library, because that is where a neighbouring cell of
  *     the same family actually lives and a bare name does not resolve there.
+ *
+ * <mykey> is the sharing key of the copy a name is being minted FOR, or NULL
+ * when the caller has none; it is what makes GUARD AS-TYPEDSAME possible and it
+ * is used for nothing else.
  */
-static int auto_spec_collides(int inst, const char *nm)
+static int auto_spec_collides(int inst, const char *nm, const char *mykey)
 {
   struct stat buf;
   const char *symname;
   const char *iprop;
   const char *ival;
+  char *okey = NULL;
   char dirref[PATH_MAX];
   const char *slash;
   size_t dlen;
   size_t saved_tok_size;
+  int same;
   int hit;
   int i;
 
@@ -4254,6 +4501,11 @@ static int auto_spec_collides(int inst, const char *nm)
     if(!strcmp(get_cell(xctx->sym[i].name, 0), nm)) return 1;
   }
   if(str_hash_lookup(&auto_spec_taken, nm, "", XLOOKUP)) return 1;
+  /* GUARD AS-HIER, issue 1212. And a name a designer typed on a sheet ONE
+   * LEVEL DOWN, which nothing else here can see: the sub-sheets are not loaded
+   * yet and their instances are not in the loop below. auto_spec_scan_design()
+   * above reads the design's sheet files before the first name is minted. */
+  if(str_hash_lookup(&auto_spec_typed, nm, "", XLOOKUP)) return 1;
   /* GUARD AS-TYPEDNAME, issue 1202. A NAME A DESIGNER TYPED IS SPOKEN FOR, EVEN
    * THOUGH NOTHING ELSE HERE CAN SEE IT YET.
    *
@@ -4288,7 +4540,46 @@ static int auto_spec_collides(int inst, const char *nm)
     if(!iprop || !iprop[0]) continue;
     ival = get_tok_value(iprop, "schematic", 0);
     if(!ival || !ival[0]) continue;
-    if(!strcmp(get_cell(ival, 0), nm)) { hit = 1; break; }
+    if(strcmp(get_cell(ival, 0), nm)) continue;
+    /* GUARD AS-TYPEDSAME, issue 1215, AND IT IS THE OVER-REFUSAL TWIN OF THE
+     * GUARD IT SITS INSIDE. Two copies of ONE cell asking for exactly the SAME
+     * settings are one request: they are supposed to share one cell body, and
+     * the note this feature prints says so in as many words. Before this test
+     * the copy that typed the name won it, the copy that let XSCHEM name it got
+     * a second name with a _1 on the end, and the deck carried two cell bodies
+     * that were byte-identical -- 314 bytes each, measured -- under a sentence
+     * telling the designer they shared one. So a hand-typed name is NOT taken
+     * when it belongs to a copy of the same cell asking for the same thing:
+     * XSCHEM adopts the name the designer typed, and both call lines name it.
+     *
+     * EQUAL KEYS REALLY DO MEAN EQUAL CELL BODIES, and that is the invariant
+     * this rests on. The only kind of setting that can make two bodies of one
+     * cell differ is one the SPICE line drops and the drawing reads -- anything
+     * the SPICE line does read is a subcircuit parameter, resolved per call
+     * line, the same body either way. The key (GUARD AS-KEY, token.c) is an
+     * unambiguous encoding of exactly that set.
+     *
+     * ⚠ THAT INVARIANT WAS FALSE FOR ONE COMMIT, and issue 1227 is what put it
+     * back. A setting whose value the rule REFUSES is left out of the key --
+     * and until GUARD AS-STRIP it was still fed to the cell body through the
+     * copy's property string, so two copies with equal keys and different
+     * refused values really did get one body that matched only one of them.
+     * The strip is what makes "equal keys, equal bodies" a fact again rather
+     * than a hope, so this exemption -- which hands a designer's own cell name
+     * to BOTH copies on the strength of it -- may not be read without it.
+     *
+     * A copy the key cannot be worked out for -- lost_attrs_typed_copy()
+     * answering 0 -- loses the comparison and the name stays taken, which is
+     * today's behaviour. Row AS70 drives this; row AS71 is its control, the
+     * same shape with the two copies asking for DIFFERENT devices, which must
+     * still get two cells. `continue` and not `return`: the tok_size latch
+     * region must have no way out of its own, row AS58. */
+    same = 0;
+    if(mykey && mykey[0] && xctx->inst[i].ptr == xctx->inst[inst].ptr &&
+       lost_attrs_typed_copy(i, NULL, &okey) > 0 && okey && !strcmp(okey, mykey))
+      same = 1;
+    my_free(_ALLOC_ID_, &okey);
+    if(!same) { hit = 1; break; }
   }
   xctx->tok_size = saved_tok_size;
   if(hit) return 1;
@@ -4468,12 +4759,14 @@ const char *auto_spec_name(int inst)
    * A reader would assume that once the window is open the name is always safe
    * to mint, because the body follows. It does not follow here. The bodies are
    * written by get_additional_symbols(1) inside global_spice_netlist()'s
-   * `if(global)` block, and `global` is 0 when the user ticked "netlist current
-   * schematic only" -- so before this guard that run wrote a deck whose call
-   * lines named cells nothing defined: not that file, not any other netlist
-   * file, not any library on disk. The simulator refuses it, and it is a
-   * REGRESSION -- the same tick box used to write the plain cell name, which
-   * the designer's other netlist files do define.
+   * `if(global)` block, and `global` is 0 when the user asked for a netlist of
+   * just the sheet on screen -- Shift-N, or `xschem netlist -nohier` (issue
+   * 1218: this used to name a checkbutton the build does not have) -- so before
+   * this guard that run wrote a deck whose call lines named cells nothing
+   * defined: not that file, not any other netlist file, not any library on
+   * disk. The simulator refuses it, and it is a REGRESSION -- that same door
+   * used to write the plain cell name, which the designer's other netlist files
+   * do define.
    *
    * RETURNING HERE IS ALSO THE OTHER HALF OF THE FIX, and that is deliberate
    * rather than incidental. The note that tells the user "XSCHEM wrote a
@@ -4572,11 +4865,16 @@ const char *auto_spec_name(int inst)
   }
   cand[w] = '\0';
 
+  /* GUARD AS-HIER, issue 1212. Learn what the REST of the design has already
+   * named before choosing a name here -- once per netlist run, and only now,
+   * i.e. only after a copy has really qualified, so a design with nothing to
+   * specialise never opens a file. */
+  auto_spec_scan_design();
   suffix = 0;
   while(1) {
     if(suffix == 0) my_strncpy(name, cand, S(name));
     else my_snprintf(name, S(name), "%s_%d", cand, suffix);
-    if(!auto_spec_collides(inst, name)) break;
+    if(!auto_spec_collides(inst, name, key)) break;
     ++suffix;
     /* Nothing a user can type reaches this: it needs a thousand different
      * cells already answering to one family of names. If it ever does, the
@@ -4594,7 +4892,11 @@ const char *auto_spec_name(int inst)
   }
 
   str_hash_lookup(&auto_spec_by_set, setkey, name, XINSERT);
-  str_hash_lookup(&auto_spec_taken, name, "1", XINSERT);
+  /* THE VALUE IS THE SHARING KEY, issue 1212. GUARD AS-COLLIDE only asks
+   * whether the name is present, but GUARD AS-CLASH below needs to know WHAT
+   * this name was handed out for, so it can tell a hand-typed name that landed
+   * on it and wanted something else. */
+  str_hash_lookup(&auto_spec_taken, name, key ? key : "", XINSERT);
   str_hash_lookup(&auto_spec_memo, memokey, name, XINSERT);
 
   /* ISSUE 1201 AND THE PLAIN-ENGLISH RULING. The user gets a cell name in their
@@ -4634,6 +4936,83 @@ const char *auto_spec_name(int inst)
   my_free(_ALLOC_ID_, &settings);
   my_free(_ALLOC_ID_, &key);
   return name;
+}
+
+/* GUARD AS-CLASH, issue 1212. THE BACKSTOP FOR WHAT THE DESIGN WALK CANNOT
+ * REACH -- and the rule that XSCHEM does not go quiet about it.
+ *
+ * auto_spec_scan_design() reads the design's sheet files to learn which cell
+ * names designers have already typed, and it deliberately SKIPS anything it
+ * cannot resolve for certain: a sheet named through a generator, or through an
+ * @ substitution that is only worked out while the netlist runs. For those, the
+ * name XSCHEM invents can still land on a name somebody typed. Before this, the
+ * two copies silently shared one cell body and the second designer's setting
+ * left the deck without a word -- issue 0982's shape, inside issue 0970's own
+ * fix.
+ *
+ * So when a copy asks for a cell name this run has already handed to a copy
+ * that wanted something ELSE, say so, naming the copy, the cell name and the
+ * setting that did not reach the simulator, and say what to do about it.
+ *
+ * SEVERITY 2, the same as every other sentence this feature prints: it appends
+ * to the info window and does not force it open. Whether a clash deserves to be
+ * louder than that -- to open the window by itself, or to fail the netlist -- is
+ * the user's to rule on, and it is on their queue with issue 1212.
+ *
+ * A copy whose settings cannot be worked out says nothing, which is today's
+ * behaviour. Row AS73 drives this; row AS72 is the ordinary case, where the
+ * design walk did reach the sheet and no clash happens at all. */
+void auto_spec_clash_check(int inst, const char *typed)
+{
+  Str_hashentry *e;
+  char *settings = NULL;
+  char *key = NULL;
+  char nm[PATH_MAX];
+  char note[1600];
+  char e_sheet[160];
+  char e_inst[80];
+  char e_new[120];
+  char e_set[160];
+  const char *sheet;
+  const char *instname;
+  int clash;
+
+  if(!auto_spec_on || !auto_spec_whole) return;
+  if(!typed || !typed[0]) return;
+  if(inst < 0 || inst >= xctx->instances) return;
+  if(xctx->inst[inst].ptr < 0) return;
+  /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK: it is a static buffer the
+   * next call overwrites, and everything below asks other questions first. */
+  my_strncpy(nm, get_cell(typed, 0), S(nm));
+  e = str_hash_lookup(&auto_spec_taken, nm, "", XLOOKUP);
+  if(!e) return;
+  clash = 0;
+  if(lost_attrs_typed_copy(inst, &settings, &key) > 0 && key && key[0] &&
+     settings && settings[0]) {
+    if(!e->value || strcmp(e->value, key)) clash = 1;
+  }
+  if(clash) {
+    sheet = (xctx->current_name[0]) ? xctx->current_name :
+            (xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "?");
+    instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
+    /* GUARD UA-ELIDE on every variable-length field, issue 0983 */
+    unused_attr_elide(e_sheet, S(e_sheet), sheet, 120, 1);
+    unused_attr_elide(e_inst,  S(e_inst),  instname, 60, 0);
+    unused_attr_elide(e_new,   S(e_new),   nm, 100, 0);
+    unused_attr_elide(e_set,   S(e_set),   settings, 120, 0);
+    /* RULING D5-4: one my_snprintf, handed over exactly once. */
+    my_snprintf(note, S(note),
+      "Warning: on sheet %s, the copy %s asks to be built from a cell called "
+      "%s, but XSCHEM had already made a cell of that name for another copy on "
+      "this design, and that copy asked for different settings. The two end up "
+      "sharing the one cell, so %s's own setting %s did not reach the "
+      "simulator. Give this copy's cell a name no other copy uses and both will "
+      "be built the way you asked.",
+      e_sheet, e_inst, e_new, e_inst, e_set);
+    statusmsg(note, 2);
+  }
+  my_free(_ALLOC_ID_, &settings);
+  my_free(_ALLOC_ID_, &key);
 }
 
 /* what = 1: start
@@ -4719,6 +5098,14 @@ void get_additional_symbols(int what)
         my_strdup2(_ALLOC_ID_, &default_schematic, get_tok_value(symptr->prop_ptr,"default_schematic",0));
         ignore_schematic = !strcmp(default_schematic, "ignore");
 
+        /* GUARD AS-CLASH, issue 1212. Asked HERE and not earlier because `sch`
+         * has only just become the name that will really be used: an @
+         * substitution or a generator is resolved a few lines above, and those
+         * are exactly the shapes the design walk had to skip. It says nothing
+         * unless this name is one this same run minted for a copy that asked
+         * for different settings. */
+        auto_spec_clash_check(i, sch);
+
         dbg(1, "get_additional_symbols(): inst=%d, sch=%s instname=%s\n", i, sch, xctx->inst[i].instname);
         dbg(1, "get_additional_symbols(): current_name=%s\n", xctx->current_name);
 
@@ -4761,7 +5148,22 @@ void get_additional_symbols(int what)
           xctx->sym[j].base_name = symptr->name;
           my_strdup(_ALLOC_ID_, &xctx->sym[j].name, sym);
 
-          my_strdup(_ALLOC_ID_, &xctx->sym[j].parent_prop_ptr, xctx->inst[i].prop_ptr);
+          /* GUARD AS-STRIP, issue 1227. The copy's settings as this new cell
+           * body is allowed to see them. For a body the DESIGNER named this is
+           * the property string untouched, byte for byte -- explicit beats
+           * implicit and no shipped deck moves. For one XSCHEM named by itself,
+           * the settings it has just told the designer it could not use are
+           * taken out, so they fall back to the symbol's own default instead of
+           * walking into the deck as `sky130_fd_pr__` with no device after it.
+           * See lost_attrs_strip_unusable() in token.c for the measurement. */
+          if(auto_sch && auto_sch[0]) {
+            char *stripped = NULL;
+            lost_attrs_strip_unusable(i, &stripped);
+            my_strdup(_ALLOC_ID_, &xctx->sym[j].parent_prop_ptr, stripped);
+            my_free(_ALLOC_ID_, &stripped);
+          } else {
+            my_strdup(_ALLOC_ID_, &xctx->sym[j].parent_prop_ptr, xctx->inst[i].prop_ptr);
+          }
           /* the copied symbol will not inherit the default_schematic attribute otherwise it will also
            * be skipped */
           if(default_schematic) {
@@ -5363,6 +5765,20 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * annotation surface asks the results file for the device under the name the
     * simulator really used. */
    xctx->hier_attr[xctx->currsch].auto_spec = auto_spec_would_specialize(n);
+   /* GUARD AS-STRIP, issue 1227, AND IT IS THE SAME ANSWER THE DECK GETS. When
+    * the netlister is going to give this copy a cell of its own it feeds that
+    * cell a property string with the unusable settings taken out
+    * (get_additional_symbols above), so the sheet the designer is now standing
+    * on has to be read the same way -- otherwise the annotation surface
+    * resolves `model=@modeln` to a value the simulator never saw and asks the
+    * results file for a device under a name nothing wrote. RULING D5-1. One
+    * function answers for both doors; see lost_attrs_strip_unusable(). */
+   if(xctx->hier_attr[xctx->currsch].auto_spec) {
+     char *stripped = NULL;
+     lost_attrs_strip_unusable(n, &stripped);
+     my_strdup(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].prop_ptr, stripped);
+     my_free(_ALLOC_ID_, &stripped);
+   }
 
    dbg(1,"descend_schematic(): inst_number=%d\n", inst_number);
    my_strcat(_ALLOC_ID_, &xctx->sch_path[xctx->currsch+1], find_nth(str, ",", "", 0, inst_number));
