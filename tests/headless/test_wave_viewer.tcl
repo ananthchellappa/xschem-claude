@@ -172,13 +172,29 @@ set nwrite 0
 foreach line [split $deck "\n"] {
   if {$line eq "write $rawpath"} { incr nwrite }
 }
-check "V1 exactly one write line with the exact raw path" $nwrite 1
+## ⚠ 0929: ONE `write` PER ENABLED ANALYSIS, not one per deck. ngspice's `write`
+## writes the CURRENT plot and every analysis makes a new one, so the single
+## trailing write this row used to pin stored ONLY the last analysis -- the
+## reported defect being an op+tran bench where `6` answered "these are from a
+## 'tran' run instead". This fixture enables op AND dc, so it is exactly the
+## two-plot case: two writes, and `set appendwrite` so the second appends rather
+## than truncating the first.
+check "V1 0929 one write line per ENABLED analysis, with the exact raw path" \
+  $nwrite 2
+check "V1 0929 appendwrite is emitted once, ahead of them" \
+  [regexp -all -line {^set appendwrite$} $deck] 1
 set cidx [string first "\n.control\n" $deck]
 set pidx [string first "\nprint -i(v1)\n" $deck]
 set widx [string first "\nwrite $rawpath\n" $deck]
+set aidx [string first "\nset appendwrite\n" $deck]
 set eidx [string first "\n.endc\n" $deck]
-check_true "V1 write inside .control, after print, before .endc" \
-  [expr {$cidx >= 0 && $pidx > $cidx && $widx > $pidx && $eidx > $widx}]
+## The prints now sit BELOW the writes -- they are emitted after the analysis
+## loop, and the writes moved INTO it. They still run against the last
+## analysis's plot, which is where they ran before.
+check_true "V1 0929 appendwrite then writes, all inside .control and before\
+ .endc, with the prints below them" \
+  [expr {$cidx >= 0 && $aidx > $cidx && $widx > $aidx && $pidx > $widx &&
+         $eidx > $pidx}]
 
 # --- V2: all analyses disabled -> NO write line ------------------------------
 set st2 $st
@@ -521,6 +537,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [expr {$vtop ne {} && [winfo exists $vtop]}]
   set vdrw $vtop.drw
   check_true "G1 viewer canvas exists" [winfo exists $vdrw]
+
+  # --- G1c: THE VIEWER RECORDS ITS OWN ARRIVAL -------------------------------
+  # ⚠ THIS IS INSTRUMENTATION, AND INSTRUMENTATION DIES SILENTLY. Issue 0840's
+  # anti-congruence shove shipped dead for days and nobody noticed, because nothing
+  # recorded whether it had fired. The unconditional `window_report viewer-open`
+  # census at the end of wviewer::open is what closes that loop -- and it would rot
+  # exactly the same way if no row watched it. The WVDIAG-gated trace beside it is
+  # NOT a substitute: it was switched off on every field run that reproduced anything.
+  set _wvlog {}
+  catch {set _wvlog [xschem get actionlog_filename]}
+  if {$_wvlog ne {} && [file isfile $_wvlog]} {
+    set _fd [open $_wvlog r] ; set _b [read $_fd] ; close $_fd
+    set _ll [split [string trimright $_b \n] \n]
+    check_true "G1c the viewer logs a window census on open" \
+      [expr {[llength [lsearch -all -inline -glob $_ll {#= window_report viewer-open*}]] >= 1}]
+    # the census must name the VIEWER's own toplevel -- a census that lists everything
+    # except the window that just appeared answers nothing.
+    set _vt [file tail $vtop]
+    check_true "G1c ... and the census lists the viewer toplevel it just made" \
+      [expr {[llength [lsearch -all -inline -glob $_ll "#=*$vtop *"]] >= 1}]
+    check_true "G1c ... as a NON-replayable comment (the log stays source-able)" \
+      [expr {[llength [lsearch -all -inline -glob $_ll {window_report *}]] == 0}]
+  } else {
+    puts "SKIP: G1c needs --logdir (the census is a log artifact)"
+  }
 
   # --- G1t: editor toolbar stripped from the viewer, per-window --------------
   # the widget EXISTS (build_widgets made the surface — the strip is not

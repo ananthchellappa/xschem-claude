@@ -14,7 +14,9 @@ Newest entries on top.
 
 ---
 
-## Q49. If a config view decides which view each cell uses, what happens to the `schematic=` attributes already sitting in my designs?
+## Q78. If a config view decides which view each cell uses, what happens to the `schematic=` attributes already sitting in my designs?
+
+  *(Renumbered from Q49 when `annotate` landed on `fluid-editing`; both branches had minted a Q49. The **Asked** date below is the real one.)*
 
 - **Asked:** 2026-08-18
 - **Project state:** branch `fluid-editing` @ `b4a1c8ee` — Hierarchy Editor
@@ -73,7 +75,9 @@ does the inverse for tools that do not read configs.
 
 ---
 
-## Q48. My net is called `MidNode` but the waveform viewer shows `v(midnode)`. Why, and can I change it?
+## Q77. My net is called `MidNode` but the waveform viewer shows `v(midnode)`. Why, and can I change it?
+
+  *(Renumbered from Q48 when `annotate` landed on `fluid-editing`; both branches had minted a Q48. The **Asked** date below is the real one.)*
 
 - **Asked:** 2026-08-18
 - **Project state:** branch `fluid-editing` @ `af001a12` + this session — the casemode
@@ -154,6 +158,1440 @@ whether it should be.
   merge them into one. It is a warning, never an error, and it stays silent under
   `distinguish`, which is the one mode that agrees with the drawing. One shipped example
   (`xschem_library/examples/test_bus_tap.sch`) trips it truthfully — issue `0501`.
+## Q76. Two controls with the same label do different things. Do you change the engine's default, or change the callers?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S7 — issues `0979` / `1228`.
+  `src/scheduler.c`, `src/actions.c`, `src/xschem.tcl`, `utils/cadence_nav.tcl`.
+
+**Change the callers, and give the engine an OPT-IN flag whose absence is
+byte-for-byte what scripts have always seen.**
+
+Seven controls a person can press ("Push schematic" on the toolbar, the same words
+in the Edit menu, the same words in the command palette, the `E` key, Alt-E, and
+three Cadence chords) reached `xschem descend`, which hardcoded "do not fall back
+to the cell's own sheet". Pressing any of them on a copy whose `schematic` setting
+named a file that was not there put the person one level down on a blank page,
+because `xctx->currsch` is incremented **before** the load is attempted.
+
+The obvious repair is to flip the engine's default. It is wrong here, and the
+reason generalises: **the same verb has two populations with opposite correct
+answers.** A person pressing a button wants the tool to cope. A script walking the
+hierarchy to build a `.save` deck or to cross-probe a waveform must give the *same*
+answer the netlister gives, and every netlister resolves with no instance at all —
+so whether a fallback is right for those callers is an unmeasured question, and
+guessing it is a D5-1 plausible wrong answer. Flipping the default would also have
+moved a committed test row (`test_op_annot` W30a) that pins the stranding as a
+measured invariant, and silently changed three walks nobody had measured.
+
+So: `xschem descend -fallback`. Seven human controls pass it; five scripted walks
+deliberately do not, and the split is asserted **by count** in both directions, so
+a later crew cannot quietly opt one in without meeting issue 1233 first.
+
+Two traps came with it, and both had to land in the same commit:
+
+- **A `has_x` guard hiding a `stat`.** The existence test that decided whether the
+  fallback was needed sat inside `if(has_x && fallback && ...)`. Latent forever,
+  because nothing could ask for a fallback without a display — until the flag
+  existed. The moment it did, every headless descend into a *perfectly good*
+  per-copy setting would have opened the cell's own sheet instead. Issue 1229.
+  General rule: when you make a previously unreachable path reachable, audit every
+  `has_x` on it first — a display test guarding a *decision* rather than a *dialog*
+  is a bug waiting for a caller.
+- **"No" that still did the thing.** Answering No to the fallback question left the
+  filename pointing at the missing file and loaded it anyway, so even the one
+  control that asked first stranded you. Issue 1230. A refusal has to clear the
+  target, and it has to record its own reason, or the next arm down overwrites it
+  with something that did not happen.
+
+What this did **not** fix, and the boundary is the useful part: the fallback only
+covers a copy or cell that *names* a file. A symbol with no `schematic` setting at
+all and no `.sch` on disk — a `type=subcircuit` symbol backed by a SPICE netlist,
+which is most vendor PDK cells — still lands on a blank page through every door,
+because the block that stats anything is gated on a filename being set. Issue 1234.
+The tool stats the file it refuses and never stats the file it opens.
+
+---
+
+## Q75. A tool refuses a setting. Is it enough to leave it out of the cell's name?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6b - issue `1227`, inside `1213`'s
+  own fix. `src/token.c`, `src/actions.c`.
+
+**No. Take it out of the payload too, or the sentence you print is a lie.**
+
+Q74's allow-rule was first wired into one place: the **sharing key**, the string
+that decides what the specialised cell is called and which copies share a body.
+That is the identity of the thing. The *payload* - the property string handed to
+the new cell body - was still the copy's whole `prop_ptr`, refused setting
+included. So a copy carrying one usable setting beside one refused one was still
+specialised on the usable one, and the refused one rode into the body anyway:
+`sky130_fd_pr__` with no device name, or with a line break in the value, a
+transistor line cut in half and a phantom element `XL=` starting the next line.
+Printed underneath, in plain English, was "that setting did not reach the
+simulator and changed nothing".
+
+Two quieter shapes came with it, and both are the same mistake. Two copies whose
+refused values *differ* spell the **same** key, so they shared one body and the
+second silently simulated the first one's transistor. And the invariant the
+name-sharing guard rests on - "equal keys mean equal bodies" - was false for as
+long as the key and the payload disagreed.
+
+**The general shape.** When you decide something is not admissible, the decision
+has to reach every place that thing flows, not just the place you were looking
+at when you made it. An identity filter that leaves the payload alone produces a
+tool that is confidently wrong: it says what it did, and does something else.
+The fix is one function (`lost_attrs_strip_unusable()`) with a caller on each
+door - the deck and the schematic - so the two cannot drift.
+
+---
+
+## Q74. How do you stop fixing one bad value shape at a time?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6b - issue `1213`. `src/token.c`.
+
+**Write an allow-rule and let everything else fall through.** An empty value had
+been guarded (`1206`); a value of a single SPACE walked straight past it, one
+character outside the guard, and put a model name that exists in no PDK into the
+deck. That was the second time a whitespace-shaped value had walked past a guard
+written for the case next to it.
+
+So the question stopped being "what else is bad" and became *what does a usable
+value look like*: **one word with at least one letter or digit in it** - no
+blank space of any kind anywhere, no `@` and no `%`, at least one alphanumeric.
+Everything else falls back to the plain cell and is reported as a setting that
+went nowhere, which is exactly how the tool behaved before the feature existed.
+
+**What it buys:** a shape nobody thought of is safe *by construction*. Seven
+shapes were measured (empty, one space, tab, newline, punctuation only, a
+trailing space on a real value, quotes around a real value) and the rule sorts
+all seven without knowing about any of them individually. The trailing-space
+shape had been producing two byte-identical cell bodies and was filed nowhere.
+
+**What it costs, and it is a real cost:** the rule is stricter than the defects
+that prompted it. A value with an invisible trailing space no longer
+specialises. The rejected alternative - trim the blanks and carry on - keeps the
+copy, but then the cell name and the deck disagree with what the designer typed,
+and the designer is never told. Refusing and saying so is the smaller lie.
+
+**Two traps met on the way, both worth knowing before you touch this file.**
+`get_tok_value()` hands every answer back in **one shared static buffer**
+(`src/token.c`, `static char *result`), so a second question overwrites the
+answer you are still holding - asking the symbol's template about a token turned
+"is this value the default?" into a comparison of the buffer with itself, which
+said yes for every value the template declares and switched the whole feature
+off. Copy before you ask, or re-read after. And this build compiles the
+**fallback** `my_snprintf()` (no `HAS_SNPRINTF` in `config.h`), a hand-written
+formatter that understands `%s` and `%d` but **not** `%%` - it reads the second
+per-cent as a new conversion and eats the words after it. A sentence about the
+`%` character has to pass the character in as a `%s` argument.
+
+---
+
+## Q73. A netlist mode can name a specialised cell but cannot write its body. Name it anyway, or name the plain cell?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6a - issue `1204`, the regression
+  inside `1201`. `src/spice_netlist.c`, `src/actions.c`.
+
+**Name the plain cell.** Pressing **Shift-N** ("netlist this sheet only", also
+`xschem netlist -nohier`) was writing `xt1 net2 advpass__modelp_pfet_01v8_lvt`
+and defining that subcircuit nowhere - not in that file, not in any other
+netlist file, not in any library. The simulator rejects the deck. The bodies are
+written by `get_additional_symbols(1)`, which lives inside the `if(global)` arm;
+the name was being minted outside it.
+
+The rejected alternative was to write the bodies on that arm too. It fails on
+what the mode *is*: "this sheet only" would start emitting sub-cell definitions,
+and anyone who netlists each level separately would get duplicate `.subckt`
+bodies across their files. A far bigger blast radius than the regression.
+
+**The general shape.** When a capability is unavailable in a mode, the honest
+output is the one the mode can actually stand behind - and *the sentence has to
+move with it*. The same run was printing "XSCHEM wrote a separate copy ... You
+do not have to add anything to the sheet" about a copy it had not written, which
+is RULING D5-1 in the area D5-1 exists for. The fix returns before the note, so
+one change silences the false claim and restores the deck; and the designer now
+reads why instead: *"XSCHEM can give this copy its own version of advpass, but
+it only writes those when it netlists the whole design, and this run wrote just
+this one sheet."*
+
+---
+
+## Q72. When a designer types a setting on one copy of a cell and the tool cannot use it, should the tool tell them how to fix it, or fix it?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S6 — issue `1201` (the netlister
+  honours a per-copy setting by itself). `src/token.c`, `src/actions.c`,
+  `src/spice_netlist.c`, `src/op_annot.tcl`. Follow-ups 1202–1209.
+
+**Fix it.** The user's framing settles it before any implementation question is
+reached: *"the creator of the bandgap design did NOTHING wrong; this is a tool
+bug."* They typed `modelp=pfet_01v8_lvt` on two passgates, XSCHEM threw it away,
+and the only remedy on offer was to hand-invent a second attribute
+(`schematic=passgate_lvtp`) whose entire job was to give the netlister a name it
+could have chosen itself. In Virtuoso the netlister unique-ifies a specialised
+cell body by itself and there is no user-typed token for it.
+
+The general shape, and it recurs: **a diagnostic that tells the user to perform a
+mechanical step the tool could perform is a diagnostic standing in for a missing
+feature.** The tell is that the advice contains no judgement — "name a cell name
+no other copy asks for" needs no knowledge of the circuit, so nothing about it
+required a human. Advice that *does* need judgement ("your drawing has to use
+this setting on the part meant to follow it") is real advice and stays.
+
+Two consequences worth carrying:
+
+**A tool that fixes the problem and still tells you to fix it yourself is its own
+defect**, so the advice has to be deleted in the same change. That means finding
+*every* surface that gives it. This item's brief named one (`src/token.c`); there
+were three. The second was the annotation surface's "the model differs" sentence
+in `src/op_annot.tcl`, which said the same thing in different words. The third
+was not a sentence at all — `op_annot::model_netlist` **tested for** the
+hand-typed attribute to work out what the deck would call a device, so making the
+netlister do it automatically would have made the annotation ask the results file
+for a device under a name the simulator never used. `grep` for the *mechanism*,
+not for the wording.
+
+**Automatic naming inherits every problem hand-naming had, plus one.** Issue
+`0982` records that two copies given the same hand-typed name silently share one
+body with only the first one's setting kept. The automatic path must not
+reproduce that, and the way it does not is by keying the shared body on the
+canonical **setting set** — so sharing is correct for free, and two different sets
+can never fold together. Getting that key exactly right is the whole game:
+`1202` (the invented name collides with a hand-typed one) and `1203` (an
+ambiguous join makes two different sets spell one key) are both that same bug
+wearing different clothes, and both were found by adversarial fixtures rather
+than by a green suite.
+
+**A measurement trap, for whoever writes the next netlister suite.** `xschem
+setprop netlist_type spectre` **silently does nothing** — it reads back `spice`.
+The working spelling is `xschem set netlist_type`, and it must be issued **after**
+`xschem load`: before the load it reads back `spectre` and still writes a SPICE
+deck. The netlist *directory* is not a subcommand at all; it is the Tcl variable
+`::netlist_dir`. A row that gets any of these wrong measures SPICE while
+reporting Spectre, and passes.
+
+---
+
+## Q71. A dialog grew four guards and the operation underneath still accepts anything. Where does a check belong?
+
+- **Asked:** 2026-08-31
+- **Project state:** branch `annotate`, item S5 — issue `0799` (**Library
+  Manager ▸ New library…** registering the folder that holds your libraries, or a
+  second name for a library you already have). `src/library_defs.tcl`
+  (`library_new`), `src/library_manager.tcl`. Follow-ups 0995–0999, 1200.
+
+**Split the check by what it is a property OF, not by which form the user
+happened to reach it through.** A check that is a property of the *directory* —
+true no matter who is asking, what is running, or which dialog is on screen —
+belongs in the **choke point**, so every form inherits it. A check that is a
+property of the *run* — "this is the std-cell library the import now open reads
+its symbols from" — **cannot** move down there, because the choke point does not
+know a run is happening, and it must stay in its caller.
+
+Get that split wrong in the easy direction and you get 0799's exact shape: the
+import dialog's own `New…` form grew **four** guards, `library_new` underneath it
+grew none, and the *other* form — the menu item — sailed straight past all four.
+The user's words for the result were *"why does library manager > New Library
+menu item allow a user to do something so stupid?"*
+
+The sharper version of the same shape, and the one worth remembering:
+
+> **The defence was built in the CONSUMER; the thing that MANUFACTURES the bad
+> fixture was left alone.**
+
+This tree had already *written down* the hazard — two `DEFINE`s pointing at one
+directory — in a comment in the code that has to cope with it, and had never
+gone back to the code that creates it. A comment that describes a hazard you are
+tolerating is a filed bug in disguise; grep for the ones you have.
+
+**Record the split in the code, or it rots back into an accident.** The reason
+`library_new` now carries a paragraph naming which check lives where *and why the
+run-scoped one cannot join it* is that the next person to add a form has to be
+able to tell a decision from an oversight. On this branch that paragraph also had
+to say, in as many words, that the run-scoped caller it names **does not exist
+here** — it is on `synthesis` — so nobody reads the comment as a description of
+code they can open.
+
+**The second lesson, and it cost four issues.** The rows written to pin that
+split were `[info body library_new]` greps — does the body mention the check.
+They passed on a tree with **every check deleted**, because the words they grep
+for also appear in the paragraph above, and `string first` finds the *comment*
+first. One of them, the row asserting the checks run *before* the folder is
+created, reported `check-at=2393 mkdir-at=3416` — both indices inside the
+documentation. That is a cousin of Q67's tautology in a new disguise: **a
+structural row that reads the code's documentation instead of its code.** The
+repair is one line — strip the comments out of the body before you grep it:
+
+```tcl
+regsub -all -line {^[ \t]*#[^\n]*$} [info body library_new] {} code
+```
+
+and then anchor on something a comment would not plausibly contain — `set owner
+[library_dir_owner`, not `library_dir_owner`. Keep exactly one row whose subject
+really *is* the comment, and let it read the raw body.
+
+**Corollary about mutation matrices.** All eleven planned mutations passed
+through this without noticing, because none of them perturbed the *documentation*
+— they perturbed the code, which the hollow rows were not reading. A mutation set
+proves a row can see the thing it was aimed at; it cannot tell you the row is
+aimed at the right thing. The variant that found it was the crude one nobody
+plans: **delete the whole feature and see which rows still say ok.**
+
+---
+
+## Q70. When is a setting a user typed on an instance "unused"? Whose netlist decides?
+
+- **Asked:** 2026-08-30
+- **Project state:** branch `annotate`, item S4c (the correction of S4b's netlist
+  warning). `warn_unused_instance_attr()` in `src/token.c`, issues 0980 and 0987.
+
+**A setting is consumed if the symbol declares it — and "declares" has four
+separate spellings, three of which are invisible in the format string everyone
+reaches for first.** Getting this wrong shipped a warning that was wrong on 43 of
+the 149 lines it printed across `xschem_library`, telling designers to delete
+settings the VHDL and Verilog netlists really use.
+
+The four ways a cell consumes an instance attribute, all measured:
+
+1. **A format string names it** — `format="… K=@K"`. The obvious one. Note both
+   sigils count: the netlister treats `%tok` exactly like `@tok`
+   (`print_spice_element()`, `if(state==TOK_BEGIN && (c=='@'||c=='%') …)`).
+   And there are **six** format attributes, not one: `format`, `spice_format`,
+   `vhdl_format`, `verilog_format`, `tedax_format`, `spectre_format` — each on
+   the symbol *and* overridable on the instance.
+2. **The symbol's `template=` declares it, with no format string anywhere.**
+   This is the one that bit. `print_vhdl_element()` and
+   `print_verilog_element()` emit an instance attribute as a generic or
+   parameter *iff it is in the symbol's template* — no format string is
+   consulted at all. `ram.sym` never mentions `datafile` in a format string, and
+   `ram_tb.v` still carries `.datafile ( "ram.list" )` into a module body that
+   calls `$readmemh(datafile, mem)`.
+3. **`extra=` excludes it again.** A name in `extra=` is a **node** — a
+   subcircuit port — not a parameter, even when the template also carries it.
+   That seam is why `passgate.sym`'s `modelp` is still correctly reported.
+4. **The symbol NAME itself reads it.** The cell an instance points at is not a
+   fixed string: `link_symbols_to_instances()` runs `translate()` over
+   `xctx->inst[].name`, so `symbolgen.tcl(inv,@ROUT\)` with `ROUT=1200` produces
+   the deck line `x1 IN_INV IN symbolgen_tcl_inv_1200`. The setting **chose the
+   cell body** — the loudest way a setting can reach the simulator — and the
+   first version of the warning told the user to take it off.
+
+**The near miss:** `generic_type=` looks like the consumption test and is not.
+It only picks quoting and drops time-typed tokens from the Verilog map; reading
+it as the gate silences 31 of the 43 false lines and leaves `ram_tb`'s
+`datafile` still accused.
+
+**And the part that is still open — whose netlist?** All of the above answers
+*"can any format this symbol supports consume it?"*. It does **not** answer
+*"does the netlist I am writing right now consume it?"*, and those differ.
+`real_capa.sym` is `format="@name @pinlist @symname"`: `cap=30.0` reaches a VHDL
+netlist as `cap => 30.0` and is **dropped from the SPICE deck entirely** — all
+four capacitors on `loading.sch` simulate at the symbol default `10.0`. Today
+the tool is silent about that, which is the *sanctioned* answer and probably not
+the *right* one. Issue **0987** carries it.
+
+**The transferable lesson:** the diagnostic now uses the identical test its
+backends use — `get_tok_value(template, token, 0)` plus `tok_size` — rather than
+a second implementation that agrees today. A "is this used?" check written
+against a different oracle than the code that uses it will drift, and it will
+drift into confidently telling a user to delete working input.
+
+---
+
+## Q69. The same suite answers 17 checks headless and 109 on the dev display. Which one is "the" count?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, item S2a (the simulator-registry dollar-path
+  repair). `tests/headless/test_ase_persist.tcl`, `test_ase_view.tcl`,
+  `test_ase_plot.tcl`, `test_wave_viewer.tcl`.
+
+**Both. A check count is an *arm* number, not a property of the suite**, and a
+baseline that does not name the arm it was taken on will read as a regression to
+the next person who runs it the other way.
+
+Measured today, same tree, same binary:
+
+| suite | `--nogui` | dev display `:99` |
+|---|---|---|
+| `test_ase_persist` | 17 | 109 |
+| `test_ase_plot` | 30 | 150 |
+| `test_ase_view` | 32 | 36 |
+
+`test_ase_persist` says so out loud — `gui legs skipped (no DISPLAY)` — and then
+prints `RESULT: ALL PASS (17 checks)`, which is a **whole-line completion banner
+after a clean exit**, so by the repo's own pass rule it *passed*. It just
+answered a smaller question. `test_wave_viewer` splits on a different axis
+again: 401 with `--nolog`, 404 with `--logdir`, because three of its checks
+census the log file and it prints `SKIP: G1c needs --logdir` when there is none.
+
+**This is not free.** Three agents on one item each independently re-measured
+those five numbers to work out whether a "drop" was a red, because the list they
+were handed filed dev-display counts under a "Headless" heading. The suites were
+green the whole time.
+
+**The rule:** whenever a check count is written down — a tier list, a brief, an
+issue's acceptance section, a commit body — write the arm beside it
+(`--nogui`, `:99`, `--logdir`). And when a count comes in *lower* than a
+baseline, read the SKIP lines before reading it as a failure: a suite that
+skipped a leg says so, and a suite that died does not.
+
+---
+
+## Q68. We stopped re-deriving an answer and recorded it at the point the question was first asked. What does that buy, and what does it cost?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0938** FIXED, **0945** FIXED,
+  **0946** and **0947** filed. `src/ase.tcl`, `ase::sim_register` /
+  `ase::sim_entry_kind`, rows R13–R19.
+
+**It buys idempotence, and it costs you the freshness of anything in the
+recorded answer that can still change.** Q67 ends with the prescription — record
+the outcome where the question is first asked, re-validate only what can
+genuinely move underneath you. Shipping it turned up two things the
+prescription does not tell you.
+
+**First: a recorded verdict is only as safe as the *least* immutable fact inside
+it.** The recorded field here, `varok`, looks like one answer but carries two.
+For a location whose substitution *succeeded* and whose result still contains a
+literal `$`, it records a property of a fixed string — that can never go false,
+and freezing it is exactly right. For a location naming a setting the session
+could not read, it records **a fact about the session at one instant**, and the
+user can set that variable a minute later. Measured: the entry then goes on
+saying *"mentions a setting this session does not know about"* about a setting
+the session now knows (issue **0947**). The old code re-derived and got a
+*different* wrong sentence, so nothing regressed — but the freeze made a false
+statement possible where before there was only an unhelpful one. **Split a
+recorded verdict by whether each fact it stands for can change, before you
+freeze it.**
+
+**Second: an arm that "defers to the existing guards" needs the deferral
+tested, not the happy path.** The repair's other half says a location that
+already names a real file is a file name, not a template — and its comment
+promises it defers to the four filesystem checks below, so a folder is still a
+folder and a non-executable is still non-executable. That promise was **true and
+completely untested**. Rows R13–R16 all point the new arm at a *working*
+program, so one of its four outcomes was measured and three were not. A sabotage
+variant that deleted the deferral entirely left the whole suite green at 66
+checks while a **folder** was accepted as a simulator with nothing said about
+it. The row that closed it (R19) asserts the other three outcomes and leads with
+its own witnesses — the fixture really contains a `$`, the location really
+cannot be read as a setting, the folder really is a folder — so it cannot go
+green by drifting onto the ordinary arm two older rows already cover.
+
+**The general shape:** a new branch inherits its siblings' guarantees only on
+paper. Test the branch at each outcome those guarantees produce, or you have
+tested the one case you had in mind and written the rest down as a comment.
+
+---
+
+## Q67. Two rows compared the list against the run and both went green while the feature was broken. What kind of row is that?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0937** (the `Setup > Simulators…`
+  dialog) committed; **0938** filed as a regression it caused. `src/ase.tcl`,
+  `ase::sim_entry_kind` / `ase::sim_status`, rows R7 and S2.
+
+**A tautology — a row whose two sides are the same source, so they agree even
+when both are wrong.** Two of them showed up in one item, in different
+disguises, and each hid a real defect.
+
+**R7** was written to close a genuine gap: the list and the run gave *different*
+sentences about the same entry, so the row asserts they give the *same* one. But
+the fix made both call one new validator, and that validator turned out to be
+wrong. The list and the run now agree — **wrongly** — and R7 is green. A
+runnable simulator is refused, and the row designed to notice sentence
+disagreement cannot, because there is no disagreement left to see.
+
+**S2** was the sabotage pass's headline: the dialog's Problem column was
+asserted as `[wcell $TV 1 problem] eq [mint ase::sim_entry_why …]`. Blank the
+proc and **both sides go blank**, so the row passes while every broken simulator
+shows an empty Problem cell. The suite's own "answer discipline" — a missing
+*mint* answers `NOMINT`, a missing *widget* answers `NOWIDGET` — guards a proc
+that is **absent** and not one that **returns empty**, which is the shape a
+gutted function actually takes.
+
+**The rule that falls out:** a row must anchor at least one side to something
+the code under test cannot move. S2 was repaired by asserting properties instead
+of equality — the cell must carry *words*, and must name *that entry's own
+program* — neither of which a blanked proc can satisfy. R7 has no such repair
+available and is why 0938 needs a row that pins **idempotence** directly
+(register the portable form against a real directory with a `$` in its name; the
+simulator must still start) rather than pinning agreement.
+
+**And the second lesson, about the defect itself:** `ase::sim_register` stores
+the **already-expanded** path, and `ase::sim_entry_kind` substitutes it a second
+time. **Variable substitution is not idempotent.** Re-deriving a stored value's
+history by re-running the transform that produced it asks a different question
+from the one that was originally answered — here, a folder legitimately named
+with a `$` reads as an unknown setting. Record the outcome at the point the
+question is first asked; re-validate only the facts that can genuinely change
+underneath you (the file being deleted, losing its executable bit), which is
+what row R6 actually demands.
+
+---
+
+## Q66. A startup file's list is read inside a `catch`, and one typo still killed the whole editor. Where does the raise come from?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0931** (fixed), residuals
+  **0932**, **0933**, **0935** open. `src/ase.tcl`, the rc seed at the end of
+  the simulator-registry section.
+
+**From the `foreach` header, not from its body.** The seed was written the
+careful way, and its comment said so in capitals — *"EVERY STEP IS CAUGHT …
+A mistake in the rc must cost the user a sentence, not the feature"*:
+
+    foreach e $::ASE_SIMULATORS {
+      if {[catch {ase::sim_register …} err]} { report; continue }
+    }
+
+Every step **inside** the loop was caught. But `foreach x $v` parses `$v` as a
+Tcl list **before the body runs once**, so an unbalanced brace in
+`::ASE_SIMULATORS` — the ordinary way a hand-edited rc goes wrong — raises at
+the loop header, outside every catch in sight. The rc is sourced while
+`ase.tcl` is being sourced, so the raise aborted the source, and
+`Tcl_AppInit()` reported:
+
+    xschem: STARTUP ABORTED … Failing file: …/src/ase.tcl line 926
+    Cause: unmatched open brace in list
+
+No schematic editor at all, over a typo in somebody's PDK file. The control
+that proves this was new and not the house idiom: the identical typo in
+`::ASE_DEFAULT_MODELS` and `::ASE_DEFAULT_INCLUDES` — the two pre-existing rc
+variables this seed was modelled on — both start normally, because nothing
+iterates them at source time.
+
+**The general shape.** Any Tcl command that takes a *list-valued argument*
+parses it before it runs anything you wrapped: `foreach`, `lassign`,
+`lindex`, `dict for` over a malformed dict, `switch` with a braced pattern
+list. A `catch` around the body protects the body. To protect against the
+**value**, the catch has to be around the command that consumes it — or the
+value has to be tested first (`if {[catch {llength $v}]} …`).
+
+**Why no test row saw it.** The suite's rc row drove two *well-formed but
+wrong* values (a name that was never registered, an entry whose file is
+missing). Both take the caught path. "Malformed" and "wrong" are different
+inputs, and only one of them can reach a loop header. The row that exists now
+drives an unparsable list in the new variable **and** the same typo in
+`::ASE_DEFAULT_MODELS`, side by side, so the parity with the older variables is
+a check rather than a comment.
+
+**Second lesson, on the test rather than the code.** A row asserting the
+sentence a wrong path produces passed against the **wrong** sentence, because
+the fixture path was named `$::ZZ_NO_SUCH_SETTING/bin/ngspice` and the word
+"setting" the row was looking for was sitting in the path the sentence echoes
+back. When a message quotes the user's own words, strip the user's words out
+before reading the message.
+
+---
+
+## Q65. A shared array of "the value at the cursor" is read from seven places. What does a guard on it actually have to ask?
+
+- **Asked:** 2026-08-29
+- **Project state:** branch `annotate`, issue **0861** (fixed), residuals
+  **0920**, **0921**, **0922** open. `src/token.c`, `src/scheduler.c`,
+  `src/save.c`.
+
+**Not "what kind of run was it". Not "is the vector there". "Was anything
+actually published."** Three wrong questions were available and each one is
+plausible enough to survive review.
+
+The array is `xctx->raw->cursor_b_val` — one double per vector, "what this signal
+says where the annotation is". It is `my_calloc`'d, so **every slot reads 0.0
+until somebody fills it**, and the filler (`update_op()` in `src/save.c`) returns
+early on all its refusal paths *before* the fill loop. So a reader that asks only
+whether the vector index resolved publishes calloc zeros as measurements. On the
+shipped `devices/scope_ammeter.sym` that painted a confident **zero amps through
+the branch** — a plausible reading the results file did not contain, which is
+exactly what RULING **D5-1** exists to forbid and INVARIANT **I3** says must be
+blank.
+
+**Wrong question 1: the simulation type.** The refusal that made this reachable
+from a menu is *"a transient is not an operating point, publish nothing"*, so
+`sim_type` looks like the term. It passes every negative case. It also destroys
+the feature: a **transient that has published**, because the user dropped cursor
+B on a waveform graph, has real numbers in that array and must keep painting
+them. Nothing else in the fixture notices. The term is `annot_p >= 0` — *did a
+publisher run* — and one row (`SGN15`) exists solely to catch a guard written the
+other way.
+
+**Wrong question 2: copy the neighbours.** Six sibling readers in the same file
+carry `live && sch_waves_loaded() >= 0 && annot_p >= 0`. Copying that shape looks
+like consistency and is over-refusal: `live` folds in the live-annotate switch
+and `sch_waves_loaded()` demands the current sheet sit inside the waves
+hierarchy, and both would blank cases that are correct today. The minimum term
+that separates a published value from a calloc zero is the whole of the right
+answer.
+
+**Wrong question 3: where to put it.** The verb `xschem raw value <vec> <point>`
+has two arms under one index test: an in-range numbered point (**data
+inspection** — read that point out of the file) and a negative point (**the
+annotation read**). Hoisting the guard onto the shared index test refuses both,
+and four suites depend on the first staying live while an annotation is refused.
+Reading the data is not the same act as annotating it, and only the second is a
+claim about the schematic.
+
+**And the fix is two sites or it is nothing.** The rendered `@spice_get_node`
+text and the public verb are two faces of *"what does this node say"*; RULING
+**D5-4** makes them one sentence with one answer. Guarding only the text passes
+three of the issue's four behavioural acceptance rows, leaves the verb answering
+`0`, and leaves the two goldens that pinned the fabricated zero **green** —
+because they reach the verb and never the rendered text. A landing that looks
+clean and is not.
+
+**The residual is the interesting part.** `annot_p >= 0` answers *"was an
+annotation published"*. It does **not** answer *"is THIS column's slot a
+measurement"*, and the two come apart: adding an expression trace from the
+waveform viewer appends a fresh slot initialised to `0.0` while `annot_p` stays
+published, so the same fabricated zero reappears on the same schematic through
+the same accessor with both guards satisfied (issue **0922**). A guard is a
+question, and a question narrower than the invariant it defends will be right
+today and wrong at the next writer.
+
+**Which leaves the comment.** The wrong inventory in `update_op()` — *"six
+`live_cursor2` sites"* — is what let the seventh reader sit unguarded for as long
+as it did, and **nothing executable can watch a comment go false**. The
+structural row written to lock the corrected version turned out to assert only
+the ABSENCE of the two retired phrases: delete the whole paragraph and every
+check stays green (issue **0921**). An absence lock keeps the old lie out; only a
+presence lock keeps the new truth in.
+
+---
+
+## Q64. Every row is green, the fix is right, and the feature is broken on the bench. What did the suite fail to stage?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issues **0910** (fixed) and **0914**
+  (found by 0910's own sabotage pass, fixed the same day),
+  `src/op_annot.tcl`, `utils/annot_mode.tcl`.
+
+**The suite staged an empty window. The user's window is never empty.**
+
+Issue 0910 was a stale-numbers defect: an operating point loaded from
+`Waves > Op Annotate`, then a re-run over the same file, and every later press of
+`6` repainted the previous run. The fix was four lines and it was correct. Fifty
+two rows agreed, plus 475 in a neighbouring suite, plus a clean full regression.
+One line added to the staging of the suite's own *positive* row —
+`xschem raw read <transient> tran`, i.e. **the user has a waveform graph open**,
+which is the reason they are looking at this schematic at all — inverted the
+answer: the press blanked the sheet and **deleted** the operating point from the
+window, with nothing re-run and nothing changed on disk.
+
+The mechanism generalises past this feature. The press takes its own stale
+database off, then asks the engine *"is a raw file loaded?"* to decide what to do
+next. That question answers **"is ANY database attached to this window"**, not
+**"is one of mine"**. With an empty window the two are the same sentence and every
+row passed. With the ordinary bench they are different sentences, and the code
+took the "something is loaded, so stop" arm about a database it had no interest
+in. The repair was to keep the detach's *own* answer and ask
+`!$took && $loaded >= 0` — once this surface has taken its database off, "is
+something loaded" is not the question any more, whatever else the window holds.
+
+**Two rules fall out of it.**
+
+*For predicates:* a question whose subject is "any" cannot decide something whose
+subject is "mine". Whenever a re-read follows a mutation you just performed, ask
+what the re-read's subject actually is — the mutation usually narrowed it.
+
+*For suites, and this is the expensive one:* **a fixture's empty slots are
+assertions**. A row that stages one database is asserting that the count is one,
+silently, and it is the assertion nobody wrote down and nobody reviews. When a
+feature reads shared session state — a registry, a selection, an open-window
+list, a hierarchy stack — at least one row must stage it with **something else
+already in it**, put there by a different user gesture. That row is the whole
+difference between a green board and a user losing their numbers.
+
+Corollary, learned the same day: fixing the first door opened a second one. With
+a graph now reachable in the window, an unwind path that had always been safe —
+its comment said so, and its premise was true when it was written — became a bare
+`xschem raw clear` that would unload the user's waveform trace on a press that was
+only ever about the operating point. **A guard whose comment justifies itself by a
+precondition is a guard that expires the moment someone changes the precondition,
+and nothing in the language will tell you.** Grep for the precondition, not for
+the guard.
+
+---
+
+## Q63. The explanation the user wants exists, is correct, and never reaches them. Why, and what is the general shape of that bug?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issue **0909** (fixed, then repaired the
+  same day), issue **0460** (part 1 fixed), `utils/annot_mode.tcl`.
+
+**A suppression latch is right for a NAG and wrong for an ANSWER, and the two
+were the same sentence.**
+
+The user pressed `6`, got six blank rows on every transistor, and was told
+nothing. The explanation they remembered — the one naming the menu path and the
+pasteable command — was still in the tree, still correct, and still firing. It
+fires at **netlist time**, behind a one-turn latch keyed on (subject, cellview).
+The latch's contract is "suppress an identical notice while the underlying state
+is unchanged; re-arm when it changes". The user never ticked the box, so the
+state never changed, so it never re-armed, so it spoke once per session and then
+went quiet forever — correctly, by its own design.
+
+The moment the tool volunteers something while the user is busy is a nag, and
+suppressing a repeat is courteous. The moment a user presses a key is a
+**question**, and a question asked twice is answered twice. Attaching one
+sentence to the first moment and hoping it covers the second is the defect. The
+fix is not to un-latch the nag; it is to mint the answer where the key is
+pressed, unlatched, and leave the nag alone.
+
+**How to tell which one you are writing:** ask who chose the moment. If the tool
+chose it, you may suppress. If the user chose it, you may not — silence is
+indistinguishable from broken, which is exactly how the user read it.
+
+---
+
+**The repair taught a second, sharper lesson: a probe that INFERS is not a probe
+that MEASURES, and the difference only shows up in the field.**
+
+The first delivery had to answer "does this results file contain device
+operating-point numbers?" and answered it by looking for a vector name holding
+both `@` and `[`. Plausible, cheap, and true on **every** operating point ever
+run — because `.options savecurrents` is a *different* tickbox, it is set in 35
+of the committed ASE states, and it makes ngspice write a terminal current per
+device (`i(@m1[id])`) whether or not one save card was emitted. So the probe said
+"this file already has device numbers" always, the cause detector short-circuited
+to the wrong branch always, and the item's whole deliverable — the sentence
+naming the tickbox and its pasteable command — was **unreachable code in the
+field** while 495 checks were green.
+
+Two rules came out of it:
+
+1. **Prefer the measurement to the inference, and ask it first.** The
+   save-device-parameters tickbox is a *record of how the run was configured*.
+   The vector-name scan is a *guess about what the configuration produced*. When
+   they disagree, the record wins. The repair reversed the order for that reason
+   alone, and the guard on the order needed a fixture nothing else in the suite
+   had: a registered session with the box off **and** a real parameter in the
+   file, which is the only state in which the two orders differ.
+2. **A name is a namespace, not a type.** `@m1[id]` and `@m1[gm]` differ by the
+   thing you were actually asking about, and ngspice's own separator is the
+   `i(...)` wrapper around the first. A substring test over a name will find
+   whatever else the vendor decided to put in the same shape.
+
+**Why the suite could not see any of it.** The row that owned the user's exact
+case took the path where the simulator's output would go and **overwrote it with
+a hand-written file**. Everything downstream — the session, the deck, the press,
+the assertion — was real. The one element that decided the entire outcome was
+written by the test. A fixture may stage the *situation*; the moment it also
+supplies the *evidence the code under test reads to make its decision*, the row
+is asserting that the test agrees with itself. The tell is mechanical: if you can
+delete the product's ability to produce that input and the row stays green, the
+row is not about the product.
+
+---
+
+## Q62. We added a freshness stamp so a re-run can never show the old numbers. Two menu items still show the old numbers. Where did the stamp go wrong?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issue **0684** (fixed for the routes its
+  §8 table names), issue **0910** (filed open, **fixed later the same day** — see
+  the closing note), `src/op_annot.tcl`.
+
+**The stamp is taken when the question is first ASKED, not when the data is
+ATTACHED — and those are different moments whenever somebody else did the
+attaching.**
+
+`op_annot::db_current` decides "are these numbers still your run?" by comparing
+the attached file's `{mtime size}` against a stamp it holds. The first time it
+ever sees a given window+path it has nothing to compare against, so it records a
+stamp from the file **as it is right now** and answers "current". That is
+deliberate: a database somebody attached by another route has to be trusted once,
+or every first press after a hand-attach would re-read a perfectly good file for
+nothing (58 ms on a 40 000-vector raw).
+
+The flaw is the word *now*. `op_annot::db_attach` — the surface's own attach —
+stamps at attach time, so its stamp always describes the file the numbers
+actually came from. Every other attach route (`Simulation > Graphs > Annotate
+Operating Point into schematic`, `Waves > Op Annotate`, an `xschemrc` line) puts
+the database in without stamping. If the user then re-runs and *then* presses
+`6`, the first sight lands **after** the change: the stamp minted describes run
+2's file while the in-memory numbers are run 1's, and from that moment the cheap
+path matches forever. "Trusted once" silently became "trusted for the life of the
+session", on the exact defect the fix was written to kill.
+
+**The general lesson, and it is not about this feature.** A validity stamp is a
+claim about *provenance*, so it must be minted by whoever performs the acquisition.
+Minting it at first *use* records what the world looked like when somebody got
+around to asking — which is not evidence of anything. If a subsystem cannot stamp
+at acquisition because acquisition happens outside it, then its choices are to
+re-acquire on first sight, or to be honest that it does not know; the one thing it
+must not do is manufacture a stamp out of the present tense and treat it as
+history.
+
+**Why every test passed.** The row that owns the first-sight arm stages
+`attach → ask → rewrite → ask`. It asks while the file is still run 1, so its
+stamp *is* correct, and the row is green and truthful about a sequence nobody
+performs. The user's sequence is `attach → walk away → re-run → first ask`. Same
+states, same code, different order — and the order was the whole defect. When a
+row and a defect disagree, check whether the row has quietly chosen the one
+interleaving in which the code is right.
+
+**How it was answered (2026-08-28, issue 0910 fixed).** Of the two options this
+entry names — re-acquire on first sight, or be honest that you do not know — the
+first was taken, but only for the path this surface would have loaded itself.
+First sight of **that** file re-attaches; first sight of any other file is still
+stamped and trusted. Splitting there matters: the trust arm is not a performance
+concession, it is what stops a press about one corner **deleting** another
+corner's operating point, because the attach primitive destroys the database it
+replaces. "Distrust everything" is the stronger-looking fix and it is a data-loss
+bug (issue 0908). The price of the half that moved is one read of an unchanged
+file on the first press after a hand attach, and it is golded as one so nobody
+optimises it back to zero — zero is the defect.
+
+---
+
+## Q61. A cache that is never revalidated is a defect. So why did fixing that leave the same defect standing on another path?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issues **0900** (fixed) and **0903**
+  (filed, open), `utils/annot_mode.tcl`.
+
+**Because "revalidate" needs an authority, and the fix picked one authority when
+the feature has two.**
+
+Item A14's fix is a single question asked on every `Alt+Shift+6`: *is the results
+database this window is already holding still the run the user is looking at?*
+The mechanism was sound and the rows are real — press, re-run the simulation,
+press again, and the new numbers land. But the question is asked of
+`cadence::_annot_viewer_db`, which asks **the ASE waveform window**. When there
+is no ASE waveform window it answers empty, and the currency test reads empty as
+*"nothing on screen contradicts the cache — keep it."*
+
+That reading is right for the case it was written for: a user who pressed the
+chord, got their numbers, then **closed** the waveform window should not have
+them stripped off by the next press. Row V70 pins exactly that, and it is a good
+row.
+
+**What it misses is that XSCHEM has a second waveform surface.** The schematic
+sheet draws its own graph, with its own cursors, and this same mode reads a
+cursor off it on purpose — `cadence::_annot_tran_cursor` falls back to
+`graph_flags` bits 2 and 4 and tags its answer `sheet`. So *"no ASE waveform
+window"* is not the same as *"nothing on screen"*. On the sheet-graph path the
+old defect is untouched: measured on both arms, the second press repaints the
+first run's numbers under *"Showing each node's voltage at ..."* — RULING D5-1,
+the very thing the item was chartered to stop.
+
+**Three things generalise.**
+
+1. **An empty answer is not a state; it is a bag of states.** This is the same
+   lesson issues 0895 and 0896 taught one level down — an empty fingerprint and a
+   matching fingerprint read alike at the caller — and the fix for those was to
+   make the answer *classify itself* (`filegone` / `nopoints` / `ok`). The empty
+   answer at this level was left unclassified, and it immediately hid a second
+   meaning. If a helper can return "nothing", ask what the distinct reasons for
+   "nothing" are before the caller branches on it.
+
+2. **Two halves of one feature disagreed about what the user is looking at, and
+   nothing made them agree.** The *cursor* resolver already knows perfectly well
+   which surface answered — it returns `viewer` or `sheet`. The *currency* test
+   never asks it. The information needed to close 0903 was already in the
+   process, one proc away, and the two were written months apart against
+   different mental models.
+
+3. **A green row on the arm can be what hides the arm.** V70 is the only row on
+   the empty-answer path and it asserts the cache is *kept*. Every row that
+   stages a disagreement stages it through a viewer window, because that is the
+   surface the driver's ruling named. So the suite is at ALL PASS on both arms
+   with a live D5-1 violation in it — which is this branch's recurring shape (see
+   Q60, and `CLAUDE.md`'s note about two defects shipping past twenty-eight
+   passing checks). **A row that asserts a decision is not a row that tests the
+   decision's boundary.**
+
+*Practical rule:* when you make a cache revalidate, write down **who the
+authority is** and then go looking for the users who are not talking to that
+authority. Here the sentence *"consults the waveform window, and only that"* was
+never written until the write-up, and writing it was what exposed 0903.
+
+---
+
+## Q60. My structural row greps for the thing it is about, and it is green. Why is that not enough?
+
+- **Asked:** 2026-08-28
+- **Project state:** branch `annotate`, issue **0894**, the A12 pass on
+  `tests/headless/test_op_annot.tcl` and `tests/run_regression.tcl`.
+
+**Because a grep over a block matches the PROSE about the thing as readily as
+the thing.** Two structural rows shipped in the same commit, both green, both
+satisfiable with the thing they name entirely deleted. Neither was carelessly
+written; both fell into a trap that generalises.
+
+**Trap 1 — the search window was a block, and the block talks about itself.**
+The row asserted that the new regression display arm routes through the virtual
+display helper: `regexp {devdisplay\.sh|\$dd} $LOOP` over the whole `foreach`
+body. Strip the routing out completely — so `tclsh run_regression.tcl` opens
+real xschem windows on the human's own screen — and it still answered 1, twice
+over: the liveness variable is called `$dd_alive`, and the sentence the runner
+prints when no virtual display is up contains the words
+`tests/headless/devdisplay.sh start`. A block that explains itself in comments,
+variable names and user-facing strings will satisfy almost any keyword taken
+from its subject.
+
+*The rule:* **assert about the smallest span that can carry the claim.** Here,
+the ONE line that launches the binary — `set LAUNCH` to the line matching
+`\$xschem_cmd`, then require the routing on that line. Verified 1 → 0 across the
+removal, which is the only evidence that a structural row works.
+
+**Trap 2 — the slicing helper silently returned the rest of the file.**
+`opa_proc_src` ends a proc at the next `\nproc `. `tests/run_regression.tcl`
+contains exactly ONE proc, so the "proc body" was 100 of 137 lines — everything
+to end of file, including the loop being asserted about. The row grepped that
+slice for `NODISPLAY`, matched the loop's own printed message, and could not see
+the classifier it was written to pin. **A slicing helper with no terminator in
+sight fails open, and it fails open silently.** Slice by brace matching, and
+prefer a needle only the target can carry — here the alternation
+`NOGOLD\|NODISPLAY`, which appears in the classifier and nowhere else.
+
+**The discipline both traps share, and it is the one from Q59 wearing different
+clothes: a structural row is not finished when it is green. It is finished when
+you have DELETED ITS SUBJECT and watched it go red.** Three of item A12's
+guards were run through that and two of the three failed it. The third was a
+behavioural roll-call (`V52`, "which refusals must put back what the press
+attached") that had simply never been extended when a ninth refusal state
+shipped — the same lesson from the completeness side, and the reason issue
+**0897** now asks for that list to be derived from the source rather than typed
+twice.
+
+---
+
+## Q59. My acceptance row drives the real path and it passes. How do I know the row is not hollow?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0881**, the A10 pass on
+  `utils/annot_mode.tcl` and `tests/headless/test_op_annot.tcl`.
+
+**Delete the thing the row is supposedly about FROM ITS OWN FIXTURE and re-run.
+If the row still passes, it never tested that thing — no matter how faithfully
+the fixture drives the product's real code.**
+
+Issue 0881 is the whole argument. The transient annotation could not see the
+`.raw` the waveform viewer had loaded, because the viewer keeps it in its own
+window's context. **413 headless checks, 29 Tk checks and a zero-failure
+`run_regression.tcl` were all consistent with the feature never having worked
+from a bench**, because every row that covered the viewer path called
+`xschem raw read` in its own fixture first — manufacturing a state the product
+never produces.
+
+So the fix's acceptance rows were written the hard way: the fixture supplies the
+results through the product's own proc (`ase::attach_dbs`, `wviewer::attach_raw`)
+and never by hand. That was still not enough. The first fix re-derived a PATH
+from the session metadata rather than asking the viewer anything, and on those
+fixtures both roads lead to the same file — so a verifier **deleted the viewer
+attach from the acceptance fixture and every row stayed green**. The row was
+faithful and hollow at the same time.
+
+Three discriminators, in order of how much they cost:
+
+1. **Delete the supply from the fixture.** A row that passes with the subject
+   removed is decoration. This is one edit and it is the one that caught it.
+2. **Make the two roads disagree.** Point the metadata at a decoy file carrying
+   20 V and let the viewer hold the run carrying 2 V. Now only a build that
+   really asks the viewer can paint 2. That is what rows V50 and B12g do, and
+   B12g is the ONLY row in either suite that reds when the viewer consult is
+   deleted — B12 and B12c, both labelled "acceptance", stay green.
+3. **Assert the precondition as its own check.** The design window must be
+   asserted EMPTY (`xschem raw loaded` = -1 *and* `raw sim_type` raising) at the
+   moment before the gesture, in a row of its own, so the acceptance row cannot
+   pass on a previous row's leftovers.
+
+The general form, and it is the branch's recurring failure: **a fixture that
+manufactures the state under test is not a test of how that state arises.** When
+the bug you are chasing IS how the state arises, the fixture is the defect.
+
+---
+
+## Q58. My `.raw` fixture holds an `.op` plot and a `.tran` plot, and xschem says there is no `tran` analysis. Why?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0881**, writing a multi-plot
+  ASCII raw fixture for `tests/headless/test_op_annot.tcl`.
+
+**Each ASCII `Values:` block must end with a BLANK LINE, or the reader cannot
+skip past the plot it does not want and never reaches the one you asked for.**
+
+`skip_raw_ascii_points()` (`src/save.c:411`) walks forward to `line[0] == '\n'`
+once per point and has no other terminator and no bound:
+
+```c
+if(line[0] == '\n') { dbg(1, "found empty line --> break\n"); break; }
+```
+
+A fixture whose first plot's values run straight into the next plot's
+`Plotname:` header makes that walk eat the second plot, and the read reports
+`extra_rawfile() read: <path> not found or no "tran" analysis` — which reads
+exactly like a missing plot rather than a malformed one. Add the blank line and
+the same file gives 5 points, `sim_type=tran` and the right value.
+
+This is the fixture-writer's face of issue **0300**, which carries the same
+walk's two live defects (no CRLF support, no bound) and the direction for a real
+fix. Worth knowing because **every raw fixture in `tests/headless/` holds exactly
+one plot**, so the ordinary bench file — a deck's `.op` and `.tran` in one raw —
+is a shape the suite has never had, and it is the shape that hid a false refusal
+in the transient annotation.
+
+---
+
+## Q57. My sabotage run reddened a big pile of rows and I blamed the guard. How do I know it was the guard?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0876**/**0879**, the A3h
+  hardening pass on `utils/annot_mode.tcl`.
+
+**Check the brace balance of the file you just edited, before you run anything.
+A one-line `sed` into a braced Tcl body is a structural edit, and a broken one
+reports a SUPERSET of reds that looks exactly like a well-covered guard.**
+
+Measured. Neutralizing `cadence::_annot_ciw` by replacing *one line* of its body
+with `return 0` left an unmatched `}` that closed the proc early. That variant
+reddened **twelve** rows. Replacing the *whole proc* reddens the **three** the
+guard actually owns. The twelve-row result is not a stronger signal than the
+three-row one — it is a different bug, in the test harness, wearing the guard's
+name.
+
+This is almost certainly how issue **0876** came to record an S15b result that
+three later runs could not reproduce, and whose stated cause is mechanically
+impossible. The lesson generalizes past Tcl: **a sabotage variant that reds more
+than you predicted is a reason to re-check the edit, not a reason to upgrade your
+confidence.** A guard's blast radius can genuinely surprise you (S5 here reddened
+13 rows against a predicted 1, correctly) — so the discriminator is not the count,
+it is whether the file still parses as you intended.
+
+The check costs one line and there is no excuse for skipping it:
+
+```tcl
+set f [open utils/annot_mode.tcl]; set d [read $f]; close $f
+puts "complete=[info complete $d]"
+```
+
+`CLAUDE.md` already warns that **braces inside Tcl comments count**. This is the
+same hazard from the other end: braces inside the text you *delete* count too.
+
+---
+
+## Q56. The restored binary's md5 doesn't match the original. Did my sabotage restore fail?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0876**, sabotaging guard **G10**
+  at `src/scheduler.c:2372`.
+
+**Probably not — check the SOURCE, not the binary. `src/scheduler.c:4343`
+compiles `__DATE__ " : " __TIME__` into the program, so two back-to-back builds
+of byte-identical source differ.**
+
+Measured: exactly **one** byte differs between two such builds, a seconds digit,
+confirmed with `cmp -l`. The other three files in that guard set — `save.c`,
+`actions.c`, `callback.c` — do rebuild bit-identically, which is the trap: the
+first several restores in a session reproduce the original md5 exactly, you come
+to trust binary md5 as your restore check, and then the one variant that touches
+`scheduler.c` looks like a failed restore and sends you hunting.
+
+**The valid restore checks, in order:** `md5sum` the *source* against its backup;
+`git diff HEAD -- src/` empty; `grep -rn SABOTAGE src/ utils/` empty; and the
+baseline suite green. Binary md5 is a convenience that is only sound for
+translation units with no `__DATE__`/`__TIME__`.
+
+Related, and the reason this matters at all: the house rule is `cp backup
+src/file.c && touch src/file.c`, **never `cp -p`**. A preserved mtime makes
+`make` a no-op and every later number is measured against the previous sabotage's
+binary — a failure that produces confident, green, meaningless output.
+
+---
+
+## Q55. I put a guard at the top of the function. Why did the thing it guards against still happen?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0872**, `cadence::annot_mode` in
+  `utils/annot_mode.tcl`.
+
+**Because the function went and CHANGED the state the guard had inspected. A gate
+that runs before a search cannot speak for what the search brings back.**
+
+The shape, and it is worth recognising because it reads as correct in review:
+
+```
+proc do_the_thing {} {
+  if {![state_is_acceptable]} { return }   ;# the gate
+  ...
+  if {nothing is attached} {
+     find_a_candidate_and_attach_it        ;# the state the gate inspected is now different
+  }
+  ...
+  announce_success
+}
+```
+
+RULING **0856** says the OP chords must do nothing, silently, on a transient
+database. A gate was added at the top of `cadence::annot_mode` asking
+`xschem raw sim_type`, and it deliberately answers **yes when nothing is
+attached** — it has to, or pressing `6` with no database could never go and find
+one. Measured: with a transient at the candidate path and nothing attached, one
+`Alt-6` still wrote the mask, still attached the transient, and still announced
+*"OP annotation ON (node voltages) -- loaded &lt;that transient&gt;"*. One key press
+from the most ordinary desktop state there is, past a guard written for exactly
+that ruling.
+
+**The fix is to ask again, after the state changes, and UNWIND** — not to
+strengthen the first ask. Making the first gate refuse a no-database session was
+measured and reds six rows, because `6` with nothing loaded must still search,
+still load, and still name the file it could not find.
+
+Two details the unwind got wrong on the first attempt and that generalize:
+
+* **Restore what the user had, not a zero.** The mask goes back to `$cur`. A
+  press must not clear bits the press did not set.
+* **Undo the side effect, not just the flag.** The database this proc attached
+  itself is detached. Leaving a transient attached is not "nothing" — the
+  waveform viewer would hold data the user never loaded, and cursor motion would
+  start publishing from it.
+
+**Why no suite caught it:** one row exercised the refusal with a database already
+attached; another exercised the candidate search with no database on disk.
+**Nothing composed them** — nobody put a transient at the candidate path. That is
+the identical test-gap shape as issue **0869** one layer up, and it is the shape
+to go looking for whenever two rows each cover "half" of a path.
+
+---
+
+## Q54. I bound `<Alt-Shift-Key-6>` and my chord never fires. Why?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0868** (the transient annotation
+  chord), `src/cadence_style_rc`.
+
+**Because on a US layout Alt+Shift+6 is not "6 with two modifiers" — it is the
+keysym `asciicircum`, and Tk dispatches on the keysym.**
+
+Measured with `wish` on `:99`. Keycode 15 is the pair `6 asciicircum`, so:
+
+```
+K plain-6            (keysym=6 state=0x00) -> KEY-6
+K Alt+6              (keysym=6 state=0x08) -> ALT-KEY-6
+K Alt+Shift+6-as-6   (keysym=6 state=0x09) -> ALT-KEY-asciicircum
+K Alt+Shift+6-real   (keysym=asciicircum state=0x09) -> ALT-KEY-asciicircum
+K Shift+6-real       (keysym=asciicircum state=0x01) -> NOTHING
+```
+
+Note the third line: even an event **synthesised** with keysym `6` plus Shift+Alt
+dispatches to `<Alt-Key-asciicircum>`. `<Alt-Shift-Key-6>` never fires at all.
+
+So the real bind is `<Alt-Key-asciicircum>`; the `<Alt-Shift-Key-6>` form is kept
+only as the documented **non-US-layout fallback**, where the shifted `6` is
+something else entirely. `src/cadence_style_rc` already recorded the identical
+gotcha for Ctrl-Shift-4 → `dollar`, one screenful above.
+
+**Why this bites so hard:** a landing that writes only the Shift-Key-6 form passes
+every behavioural row in the tree — the mode itself works when driven from Tcl —
+and is dead under the user's fingers. Nothing but a **structural** row (0868's
+V20, which greps `cadence_style_rc` for both spellings) can see it, and no
+automated row can press a physical Alt+Shift+6 at all; that stays a `look` debt.
+
+---
+
+## Q53. "Only when the user requests it" — is a scripted `xschem set cursor2_x` a request?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issues **0865** / **0868**, ruling D5-1.
+
+**Unratified, and it is the sharpest question the annotation work has produced.**
+The A3 crew answered *yes* and the user has not yet ruled (rule debt `0868`).
+
+Issue 0865's complaint is real: with *Simulation > Graphs > "Live annotate probes
+with 'b' cursor"* in its shipped **unticked** state, the sheet was acquiring a
+node-voltage annotation nobody asked for, and then holding it while the cursor
+moved away — a number not measured for the state it is shown in, RULING D5-1.
+
+0865's own ruling was "gate every ungated publisher on that box". Measured, the
+inventory behind it is wrong in both directions: `src/scheduler.c:12080`, named as
+a publisher, sits inside `#if 0` and is **dead code**; and the
+`backannotate_at_cursor_b_nograph()` arm of the same `xschem set cursor2_x` is a
+**fourth** publisher nobody listed.
+
+The distinction that was drawn instead:
+
+| publisher | verdict | why |
+|---|---|---|
+| `raw_read()`'s tail (`save.c`) | **gated** | loading a waveform file is something the PROGRAM does |
+| `descend_schematic()`'s tail (`actions.c`) | **gated** | so is descending a hierarchy |
+| both `xschem set cursor2_x` arms (`scheduler.c`) | **left publishing** | somebody TYPED a sentence naming a time |
+
+Supporting measurement: the waveform viewer's own `cursor_toggle` does
+`xschem new_schematic switch` **first**, so its `set cursor2_x` publishes inside the
+VIEWER's context and never reaches the design sheet. And gating the verb would
+touch 43 call sites across five suites, three of which never mention the box, while
+buying nothing — both plans leave the identical residual, a requested snapshot that
+persists while the cursor moves on.
+
+**What makes the residual acceptable at all** is the on-request door built beside
+it (0868): before it existed, no gesture in the program could re-measure a
+published number — not `s`, not the chord again, not `Ctrl-6` then the chord.
+
+---
+
+## Q52. A test says the value is on the schematic, and the schematic is blank. Why?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issues **0864**/**0865**/**0866**, ruling 0614.
+
+**Because `xschem translate` is not a paint measurement, and two careful
+findings came apart on exactly that.**
+
+A node voltage reaches the sheet in two stages. First the token expands:
+`xschem translate <inst> {@spice_get_voltage}` reads
+`xctx->raw->cursor_b_val[]` under `!raw_is_digital(raw) && sch_waves_loaded()
+>= 0 && annot_p >= 0` (`src/token.c`). Then, and only then, the text has to
+survive **`text_hidden()`** (`src/actions.c`), where annotation classes answer to
+the `annot_show` mask that `6` / `Alt-6` / `Ctrl-6` write. The mask's resting
+value is 0, so a freshly loaded raw expands the token and paints nothing.
+
+Measured on one fixture, one binary, one run — the difference is the whole point:
+
+```
+P1 shipped annot_show=0:  token='4'  PAINTED texts = d
+P2 after Alt-6 (mask 2):  token='4'  PAINTED texts = d 4
+P4 after Ctrl-6 (mask 0): token='4'  PAINTED texts = d
+```
+
+0864's verification used `translate` and concluded both that loading a raw paints
+numbers nobody asked for and that no control takes them off again. Neither is
+true; the mask does both jobs. **If a row or a probe claims something is or is
+not on the schematic, it must read an SVG or PS export (or pixels).** The
+suite's own `opa_l_print2` / `opa_l_seen` helpers exist for this.
+
+---
+
+## Q51. I unticked "Live annotate probes with 'b' cursor" and pressed `6`. Why did the box tick itself back on?
+
+- **Asked:** 2026-08-27
+- **Project state:** branch `annotate`, issue **0864** (fixed), **0865** (open).
+
+**It was a bug, it is fixed, and the box now ships OFF.**
+
+The checkbutton in **Simulation > Graphs** promised one thing — follow cursor B
+and re-annotate as it moves — and secretly did a second: it was the *first* gate
+on whether annotation RENDERED at all, in two places at once
+(`op_annot::_annotated` for the device OP block that `6` draws, and six
+`cursor_b_val[]` gates in `src/token.c` for the node voltages `Alt-6` draws).
+Because unticking it blanked everything, the annotate path force-ticked it back
+(`tclsetboolvar("live_cursor2_backannotate", 1)`) so `6` would still show
+something — upstream's own patch for the same coupling, `89d847fb`, papering
+over `96f80d1d`.
+
+0864 split the two. The switch is no longer a render gate in either language,
+the force-set is gone, and the default is back to upstream's original `0`. `6`
+and `Alt-6` paint exactly what they painted before; what needs the box ticked is
+the *following*: with it off, dragging cursor B no longer repaints the sheet.
+
+⚠ **The half that is still open is 0865.** With the box off, a value that is
+already on the sheet does not follow the cursor and `Alt-6` will not refresh it,
+so the schematic can hold a number measured at a time point the cursor has left.
+`Ctrl-6` clears it; ticking the box makes it follow again.
+
+---
+
+## Q50. My node voltages disappeared. I load a raw and the nets are bare until I press something. What changed?
+
+- **Asked:** 2026-08-22
+- **Project state:** branch `annotate`, issues **0613**/**0614**/**0615**/**0621**, spec `op_annotation.md` §4.8.
+
+**They are now behind the annotation switch, on purpose — and the resting value
+of that switch is `0`, which is the part nobody has ratified yet (issue 0621).**
+
+Before this change, `@spice_get_voltage` texts on `lab_pin` / `ipin` / `opin` /
+`vdd` / `lab_wire` / `ngspice_probe` — and the branch currents on `ammeter` /
+`capa` / `ind` / `diode` / `isource` / `bsource` / `cccs` / `vsource` — appeared the
+moment a raw was loaded, whatever the annotation mask said. That was the complaint in 0613
+("node voltages are already displayed without asking for them") **and** the reason
+`Ctrl-6` did not mean "everything off": it cleared the device OP blocks and left
+every node voltage painted. Both halves are the same defect, and fixing it means
+the voltages now follow `annot_show` bit 1.
+
+⚠ **The two classes are on DIFFERENT bits (issue 0678).** Node voltages follow
+bit 1 (`Alt-6`); **branch currents follow bit 0 (`6`)**, beside the device OP
+blocks. 0614 first put both on bit 1; the user drove a real sky130 bench on
+2026-08-24 and ruled the other way — a source's branch current is *that device's*
+terminal current, i.e. device OP info like a FET's `id`, while a node voltage is a
+property of the *net*. `Ctrl-6` still clears both, because it clears both bits.
+
+### Three ways to get them back
+
+```tcl
+# 1. the chords, in a cadence_style_rc session
+Alt-6                    ;# adds node voltages
+6                        ;# adds device OP blocks AND branch currents
+
+# 2. the menu, in the ASE-L session this schematic is bound to (issue 0682)
+ASE-L > Results > Annotate > DC Node Voltages       ;# bit 1
+ASE-L > Results > Annotate > Operating Point info   ;# bit 0
+#    ⚠ THE `View > Show / Hide` PAIR IS GONE since 2026-08-24. It shipped for two
+#    days (issue 0457(b)) and the same user reversed the placement on a real
+#    sky130 bench: "We want to be like Cadence. It needs to ONLY be in ASE-L >
+#    Results > Annotate > Operating Point Info", because "results (including OP
+#    info) only make sense when there is a result loaded". Both entries are GREYED
+#    until the session has a raw on disk, and ticking one attaches that raw to the
+#    design if nothing is loaded there yet.
+
+# 3. permanently, in ~/.xschem/xschemrc
+set annot_show 2         ;# node voltages on from startup
+set annot_show 1         ;# device OP blocks + branch currents on from startup
+set annot_show 3         ;# ... both -- and THIS is the pre-0614 stock behaviour,
+                         ;#     not 2: before 0614 the node voltages AND the branch
+                         ;#     currents were both always-on (issue 0621)
+```
+
+### The chords are ADDITIVE now, which is not how they used to work
+
+| chord | what it does | what it does NOT do |
+|---|---|---|
+| `6` | `annot_show \|= 1` — adds device OP blocks **and branch currents** (issue 0678) | never removes node voltages; **not a toggle** — press it twice and nothing changes |
+| `Alt-6` | `annot_show \|= 2` — adds node voltages | never removes OP blocks |
+| `Ctrl-6` | `annot_show = 0` | — this is the **only** off switch |
+
+So `Ctrl-6` then `Alt-6` gives you node voltages **alone**, which the old
+three-state cascade could not produce.
+
+### And they are a different colour now
+
+Node voltages moved to **layer 9** — white on the default dark palette, teal
+(`#00aaaa`) on the light one — so you can tell them apart from the six-row device
+OP block, which stays layer 15 (`#ff7777`). Branch currents keep layer 17
+(`#00ffcc`). Remap or disable in one line:
+
+```tcl
+set annot_voltage_layer 4     ;# any layer index
+set annot_voltage_layer -1    ;# off: fall back to each text's own layer=
+```
+
+⚠ Two gotchas worth knowing. **Disabling layer 9 in the Layers menu silently
+removes every node voltage** — it looks exactly like the feature being broken.
+And on a sheet built from the generic `devices/nmos4` / `pmos4` symbols, the
+`vgs=` / `vds=` rows are a single composite text that the switch does **not**
+reach, so they survive `Ctrl-6` in the OP block's colour (issue **0623**).
+
+---
+
+## Q49. Why is `@spice_get_current<n>` not handled anywhere, when the source mentions it?
+
+- **Asked:** 2026-08-22
+- **Project state:** branch `annotate`, issue **0614**, spec `op_annotation.md` §4.8.
+
+**Because it does not exist.** It has no branch in `token.c` and never had one.
+Its **only** appearance anywhere in the tree is a stale comment at
+`save.c:5743` — `/* @spice_get_current or @spice_get_current<n> */` — and that
+comment is where every later list of "the annotation token spellings" was
+transcribed from, including issue 0614's own five-item list. A text spelled that
+way renders nothing.
+
+The real set is **six**, all verified live against a two-vector OP raw:
+
+| spelling | handler | renders |
+|---|---|---|
+| `@spice_get_voltage` | `token.c:4821` | the net's voltage |
+| `@spice_get_voltage(<net>)` | `token.c:4912` | ditto, named net — and the LCC rewrite at `save.c:5722` builds the **dotted-path** form `@spice_get_voltage(x1.inv.vout)` |
+| `@#<pin>:spice_get_voltage` | `token.c:4315` | the pin's net voltage. The pin may be a **name** (`@#A:`) or an index (`@#0:`), and it may carry a bus range (`@#A[3:0]:`) |
+| `@spice_get_diff_voltage` | `token.c:5094` | the two-pin difference |
+| `@spice_get_current` | `token.c:5163` | the device branch current |
+| `@spice_get_current_<param>(…)` | `token.c:4989` | a named device current |
+
+`@spice_get_modelparam_<p>` and `@spice_get_modelvoltage_<p>` **are** matched (by
+the regex at `token.c:4646`) and then silently produce nothing — issue **0418**.
+That is why the annotation classifier deliberately does not classify them.
+
+If you are writing a classifier over these, match the **whole string** (after
+truncating at the first `(` when `)` is the last character), never a substring:
+the tree ships 119 `@spice_get_node` records and 158 `vgs=…@#1:spice_get_voltage
+- @#2:spice_get_voltage` composites that a substring match sweeps up, and they are
+device OP info, not node voltages.
+
+---
+
+## Q48. My sky130 transistors used to show `id=` and `gm=` as soon as I loaded a simulation. They stopped. Where did they go, and how do I get them back?
+
+- **Asked:** 2026-08-22
+- **Project state:** branch `annotate` @ `df53d254` — issues **0475**, **0476**, **0457**, spec `op_annotation.md` S10.
+
+**They were switched off on purpose, and there is a one-click way back.**
+
+sky130's 40 shipped FET symbols each carried four texts baked into the symbol
+file — `id=`, `gm=`, `vgs=`, `vds=` — 119 records in all. They rendered whenever
+a raw was loaded, with no way to turn them off. The OP-annotation work replaces
+them with one formatted block (six values by default: `id gm gds vgs vth vds`),
+so leaving both on would print two sets of numbers over each other. The 119
+records gained one token, `hide=true`.
+
+### Getting the old texts back
+
+**View > Show hidden texts.** That is the whole escape hatch — the token is
+`hide=true`, which answers to `show_hidden_texts` and *not* to `annot_show`, so
+the four come back at any annotation setting. Scriptable as:
+
+```tcl
+xschem set show_hidden_texts 1 ; set ::show_hidden_texts 1
+xschem update_all_sym_bboxes
+```
+
+Set both halves. The C field is what drawing reads; the Tcl variable is what the
+menu checkbutton and a later pull read, and writing only one leaves them
+disagreeing.
+
+**Permanently, for your own library**, delete the token from the symbol files:
+
+```sh
+find sky130A/xschem_libs/sky130_fd_pr -name '*.sym' \
+  -exec perl -0pi -e 's/\{layer=(15|17)\nhide=true\}/{layer=$1}/g' {} +
+```
+
+Check first with `grep -rc 'hide=true' sky130A/xschem_libs/sky130_fd_pr --include='*.sym'`
+— expect 119 records across 40 files before, 0 after.
+
+### Why this is not simply a loss
+
+Three things, in order of how much they matter:
+
+1. **With no raw loaded the old texts were noise.** They rendered literally as
+   `id=-  gm=-  vgs= -  vds= - ` on every transistor in the schematic. The new
+   block draws nothing at all until there is data.
+2. **The new block shows more, and formats it.** Six values in an aligned
+   monospace column instead of four values in four separately-placed texts, with
+   engineering suffixes and a consistent width.
+3. **It is one keystroke.** `6` turns annotation on, `Ctrl-6` off, `Alt-6`
+   cycles. The old texts had no switch of any kind.
+
+### The honest catch
+
+The new block only fires if XSCHEM has loaded `sky130_procs.tcl`, which happens
+via `sky130A/cadence_style_rc`. **If your rc never sources it, you get neither
+the new block nor the old texts** — that is real subtraction, and it is issue
+0475's whole question. Ratified 2026-08-22: ship it, with *Show hidden texts* as
+the way back. Issue **0457** tracks the missing stock control for the mask, and
+until it lands the `6` key is the only affordance outside the cadence profile.
+
+### What hiding them did NOT fix
+
+Measured on the sky130 `bandgap_opamp` bench, 2026-08-22: the annotation block
+still collides with the symbol's **geometry** text — `pfet_01v8`, `nf=1`,
+`1 x 1 / 6` — and with the `VCC`/`VSS` pin labels, none of which carry a `hide=`
+token or answer to any knob. On a typical instance **4 of the 6 rows are
+unreadable**. Two adjacent devices in that schematic, `M2` and `M18`, show it
+cleanly: identical code, one perfectly legible, one destroyed, purely by where
+the block landed. That is issue **0605**, ruled 2026-08-22 as "the overlay's
+position, size, layer, font and anchor will all become user-controllable —
+later, after basic functionality."
+
+So: hiding `id=`/`gm=` bought **no space**. It removed the duplicate, which was
+its actual job.
+
+### Not sky130
+
+gf180's 38 records have shipped with `hide=true` all along. **IHP is the one PDK
+whose annotation texts still answer to no knob at all** (2 inductor records plus
+`annotate_fet_params`), as do 30 records in `xschem_library/devices/*.sym` —
+issue **0476** records that as a deliberate omission, not an oversight.
 
 ---
 

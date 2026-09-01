@@ -153,11 +153,18 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  const char *str_tmp;
  int multip;
  unsigned int *stored_flags;
+ /* issue 0498: stored_flags is sized at the ENTRY instance count but was read back
+  * over the CURRENT one. Nothing but pop_undo() enforces "those two are equal", and
+  * xctx->no_undo silently disables pop_undo -- so a leaked no_undo turned the restore
+  * loop below into a heap over-read that fed garbage into xctx->inst[].color and took
+  * draw_hilight_net() down. Keep the size the loop must respect. */
+ int stored_flags_n;
+ /* issue 0498: caller's xctx->no_undo, parked while this walk owns the undo slot */
+ int undo_saved;
  int i;
  const char *type;
  char *place=NULL;
  char netl_filename[PATH_MAX]; /* overflow safe 20161122 */
- char tcl_cmd_netlist[PATH_MAX + 100]; /* 20081211 overflow safe 20161122 */
  char cellname[PATH_MAX]; /* 20081211 overflow safe 20161122 */
  char *subckt_name;
  char *abs_path = NULL;
@@ -183,6 +190,10 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  exit_code = 0; /* reset exit code */
  split_f = tclgetboolvar("split_files");
  dbg(1, "global_spectre_netlist(): invoking push_undo()\n");
+ /* issue 0498: shield this walk's own save/restore pair from a leaked
+  * `xschem set no_undo 1` (see undo_shield_push(), netlist.c). Gated on `global`:
+  * a non-global run owes no pop_undo, so it must not be made to push either. */
+ undo_saved = global ? undo_shield_push() : xctx->no_undo;
  xctx->push_undo();
  xctx->netlist_unconn_cnt=0; /* unique count of unconnected pins while netlisting */
  statusmsg("",2);  /* clear infowindow */
@@ -203,6 +214,7 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  fd=fopen(netl_filename, "w");
  if(fd==NULL) {
    dbg(0, "global_spectre_netlist(): problems opening netlist file\n");
+   undo_shield_pop(undo_saved); /* issue 0498: every exit path, I6 */
    return 1;
  }
  fprintf(fd, "// sch_path: %s\n", xctx->sch[xctx->currsch]);
@@ -317,11 +329,10 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  if(split_f) {
    int save;
    fclose(fd);
-   my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} noshow {%s}", netl_filename, cellname);
    save = xctx->netlist_type;
    xctx->netlist_type = CAD_SPECTRE_NETLIST;
    set_tcl_netlist_type();
-   tcleval(tcl_cmd_netlist);
+   tcl_call_mid("netlist", netl_filename, "noshow", cellname);
    xctx->netlist_type = save;
    set_tcl_netlist_type();
 
@@ -331,8 +342,9 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  /* warning if two symbols perfectly overlapped */
  err |= warning_overlapped_symbols(0);
  /* preserve current level instance flags before descending hierarchy for netlisting, restore later */
- stored_flags = my_calloc(_ALLOC_ID_, xctx->instances, sizeof(unsigned int));
- for(i=0;i<xctx->instances; ++i) stored_flags[i] = xctx->inst[i].color;
+ stored_flags_n = xctx->instances;
+ stored_flags = my_calloc(_ALLOC_ID_, stored_flags_n, sizeof(unsigned int));
+ for(i=0;i<stored_flags_n; ++i) stored_flags[i] = xctx->inst[i].color;
 
  if(global)
  {
@@ -376,7 +388,7 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
     if(strcmp(xctx->sym[i].type,"subcircuit")==0 && check_lib(1, abs_path))
     {
       if(!web_url) {
-        tclvareval("get_directory [list ", xctx->sch[xctx->currsch - 1], "]", NULL);
+        tcl_call("get_directory", xctx->sch[xctx->currsch - 1], NULL, NULL);
         my_strncpy(xctx->current_dirname, tclresult(),  S(xctx->current_dirname));
       }
       /* xctx->sym can be SCH or SYM, use hash to avoid writing duplicate subckt */
@@ -422,7 +434,7 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
    if(web_url) {
      my_strncpy(xctx->current_dirname, current_dirname_save, S(xctx->current_dirname));
    } else {
-     tclvareval("get_directory [list ", xctx->sch[xctx->currsch], "]", NULL);
+     tcl_call("get_directory", xctx->sch[xctx->currsch], NULL, NULL);
      my_strncpy(xctx->current_dirname, tclresult(),  S(xctx->current_dirname));
    }
    my_strncpy(xctx->current_name, rel_sym_path(xctx->sch[xctx->currsch]), S(xctx->current_name));
@@ -432,7 +444,8 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
    my_free(_ALLOC_ID_, &current_dirname_save);
  }
  /* restore hilight flags from errors found analyzing top level before descending hierarchy */
- for(i=0;i<xctx->instances; ++i) if(!xctx->inst[i].color) xctx->inst[i].color = stored_flags[i];
+ for(i=0; i<stored_flags_n && i<xctx->instances; ++i)
+   if(!xctx->inst[i].color) xctx->inst[i].color = stored_flags[i];
  propagate_hilights(1, 0, XINSERT_NOREPLACE);
  draw_hilight_net(1);
  my_free(_ALLOC_ID_, &stored_flags);
@@ -492,12 +505,10 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  if(!split_f) {
    fclose(fd);
    if(tclgetboolvar("netlist_show")) {
-    my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} show {%s}", netl_filename, cellname);
-    tcleval(tcl_cmd_netlist);
+    tcl_call_mid("netlist", netl_filename, "show", cellname);
    }
    else {
-    my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} noshow {%s}", netl_filename, cellname);
-    tcleval(tcl_cmd_netlist);
+    tcl_call_mid("netlist", netl_filename, "noshow", cellname);
    }
    if(!debug_var) xunlink(netl_filename);
  }
@@ -505,6 +516,7 @@ int global_spectre_netlist(int global, int alert)  /* netlister driver */
  xctx->netlist_count = 0;
  tclvareval("show_infotext ", my_itoa(err), NULL); /* critical error: force ERC window showing */
  exit_code = err ? 10 : 0;
+ undo_shield_pop(undo_saved); /* issue 0498: every exit path, I6 */
  return err;
 }
 
@@ -514,7 +526,6 @@ int spectre_block_netlist(FILE *fd, int i, int alert)
   int err = 0;
   int spectre_stop=0;
   char netl_filename[PATH_MAX];
-  char tcl_cmd_netlist[PATH_MAX + 100];
   char cellname[PATH_MAX];
   char filename[PATH_MAX];
   /* int j; */
@@ -609,11 +620,10 @@ int spectre_block_netlist(FILE *fd, int i, int alert)
   if(split_f) {
     int save;
     fclose(fd);
-    my_snprintf(tcl_cmd_netlist, S(tcl_cmd_netlist), "netlist {%s} noshow {%s}", netl_filename, cellname);
     save = xctx->netlist_type;
     xctx->netlist_type = CAD_SPECTRE_NETLIST;
     set_tcl_netlist_type();
-    tcleval(tcl_cmd_netlist);
+    tcl_call_mid("netlist", netl_filename, "noshow", cellname);
     xctx->netlist_type = save;
     set_tcl_netlist_type();
     if(debug_var==0) xunlink(netl_filename);

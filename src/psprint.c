@@ -985,9 +985,13 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
   char *textfont;
   int c_for_text;
 
+  /* issue 0498: guard BEFORE the dereference, not after. The `ptr == -1` test that used to
+   * sit below these lines was written to prevent exactly the xctx->sym[-1] read the next
+   * line performs; upstream commit 40fd937d hoisted the `type =` assignment above it and
+   * silently disarmed it. draw.c draw_temp_symbol() is the correct in-tree ordering. */
+  if(INST_UNBOUND(n)) return;
   type = xctx->sym[xctx->inst[n].ptr].type;
   lvs_ignore=tclgetboolvar("lvs_ignore");
-  if(xctx->inst[n].ptr == -1) return;
   if(layer == 0) {
     xctx->inst[n].flags &= ~IGNORE_INST; /* clear bit */
     if( type && strcmp(type, "launcher") && strcmp(type, "logo") &&
@@ -1202,7 +1206,7 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       /* if(xscale*FONTWIDTH* xctx->mooz<1) continue; */
-      if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+      if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
       if( hide && text.txt_ptr && strcmp(text.txt_ptr, "@symname") && strcmp(text.txt_ptr, "@name") ) continue;
       txtptr= translate(n, text.txt_ptr);
       ROTATION(rot, flip, 0.0,0.0,text.x0,text.y0,x1,y1);
@@ -1211,9 +1215,16 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       if(disabled == 1) textlayer = GRIDLAYER;
       else if(disabled == 2) textlayer = PINLAYER;
       else if( xctx->inst[n].color == -10000) {
-        int lay;
+        int lay, alay;
         get_sym_text_layer(n, j, &lay);
+        /* 0615: see the identical site in draw.c. THIS BACK END IS THE ONE A PARTIAL
+         * FIX LEAVES OUT (0615's sharpest landmine: "an override in draw.c alone means
+         * the schematic on screen and the exported PDF disagree"). Only the VALUE of
+         * `textlayer` moves -- no new set_ps_colors call is added, so the existing
+         * push below and its asymmetric pop (issue 0619) are neither fixed nor
+         * deepened here. */
         if(lay != -1) textlayer = lay;
+        else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
         else textlayer = symptr->text[j].layer;
       }
       if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
@@ -1293,6 +1304,35 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
 }
 
 
+/* S9: the draw-time OP-annotation overlay, POSTSCRIPT/PDF back end -- the exact
+ * mirror of draw.c draw_annot_overlay() and svg_draw_annot_overlay(), with every
+ * decision in the shared reader get_annot_overlay() (actions.c). This is the
+ * SECOND of the two "call sites nobody looks at" and it has its own test row,
+ * because a stubbed PS site is invisible to every SVG check.
+ *
+ * Called from the export instance loop, NOT from ps_draw_symbol(): psprint.c's
+ * text loop holds `txtptr = translate(n, ...)` LIVE across its body and
+ * translate()'s result is one static buffer. Unlike SVG this back end also has
+ * to bracket the write with set_ps_colors(), exactly as the P6 pin pass does. */
+static void ps_draw_annot_overlay(int n, int c)
+{
+  const char *txt = NULL;
+  double x, y, size;
+  int layer;
+  if(!get_annot_overlay(n, &txt, &x, &y, &size, &layer)) return;
+  if(layer < 0 || layer >= cadlayers) layer = TEXTLAYER;
+  if(!xctx->enable_layer[layer]) return;
+  set_ps_colors(layer);
+  my_snprintf(ps_font_family, S(ps_font_family), "%s", ANNOT_OVERLAY_FONT);
+  my_snprintf(ps_font_name,   S(ps_font_name),   "%s", ANNOT_OVERLAY_FONT);
+  /* upright, top-left anchored: rot 0, flip 0, hcenter 0, vcenter 0 (decision D7) */
+  if(text_ps)
+    ps_draw_string(layer, txt, 0, 0, 0, 0, x, y, size, size);
+  else
+    old_ps_draw_string(layer, txt, 0, 0, 0, 0, x, y, size, size);
+  if(layer != c) set_ps_colors(c);
+}
+
 static void fill_ps_colors()
 {
  char s[200]; /* overflow safe 20161122 */
@@ -1333,6 +1373,9 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
   Hilight_hashentry *entry;
 
   dbg(1, "create_ps(): what = %d, fullzoom=%d\n", what, fullzoom);
+  /* S7/S9: freshened at the callee, for the reason svg_draw() records. */
+  annot_show_sync_cache();
+  annot_overlay_sync();
   if(tcleval("info exists ps_paper_size")[0] == '1') {
     double tmp;
     my_strncpy(papername, tcleval("lindex $ps_paper_size 0"), S(papername));
@@ -1614,6 +1657,8 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
           ps_draw_symbol(c + 1 , i, c + 1, what, 0, 0, 0.0, 0.0); /* ... draw texts */
         }
         ps_pop_hilight(hlayer, did, &sv);
+        /* S9: the OP-annotation overlay, once per instance per export (decision D3) */
+        if(c == cadlayers - 1) ps_draw_annot_overlay(i, c);
       }
     }
     prepare_netlist_structs(0); /* NEEDED: data was cleared by trim_wires() */
@@ -1660,8 +1705,13 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
 
     for(i=0;i<xctx->texts; ++i)
     {
+      int alay;
       textlayer = xctx->text[i].layer;
-      if(!xctx->show_hidden_texts && (xctx->text[i].flags & HIDE_TEXT)) continue;
+      if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
+      /* 0615: the schematic-own-text mirror of the instance-text site above. The
+       * colour itself is applied inside ps_draw_string_line() (psprint.c:748), so
+       * moving `textlayer` here is the whole override. */
+      if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
       if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
 
       my_snprintf(ps_font_family, S(ps_font_name), "Helvetica");

@@ -222,8 +222,11 @@
 # `ms_field` defined, and the globals `MSALL` / `MSREF`. It creates NO third
 # xschem context either.
 #
-# This test writes nothing: no test_scratch dir, no droppings. `xschem raw new`
-# is in-memory — no `.raw` file appears (verified with `git status`).
+# Everything ABOVE the GDI group writes nothing: no test_scratch dir, no
+# droppings. `xschem raw new` is in-memory — no `.raw` file appears (verified
+# with `git status`). The GDI group (item 0821, appended last) DOES write: it
+# must load real crafted `.sch` files, so it takes a `test_scratch` directory
+# and drops it again at group end.
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -2563,6 +2566,403 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 } else {
   # WORDING IS LOAD-BEARING — see the ⚠ in the file header.
   puts "SKIPPED: DS group (Tk/X arm only)"
+}
+
+
+# =============================================================================
+# GDI01-GDI15 — issue 0821. THE GRAPH DIALOG EXECUTES A `.sch` ATTRIBUTE.
+#
+# 0821 names only `rawfile`; the `autoload` and `sim_type` sinks three lines
+# either side of it are ISSUE 0822 (filed by the lead), and GDI05/GDI06 are
+# their rows. A fix that closes :4775 alone closes one of three.
+# `graph_fill_listbox` (src/xschem.tcl:4768) reads three attributes off the
+# selected graph rect — `autoload` (:4772), `rawfile` (:4775) and `sim_type`
+# (:4779) — and runs each through an evaluator at GLOBAL level. The trigger is
+# the ordinary way an engineer receives untrusted content: OPEN A SCHEMATIC
+# SOMEONE SENT YOU and double-click its graph (callback.c:2637 ->
+# graph_edit_properties -> :5487 graph_fill_listbox). No crafted filename on
+# disk is needed, unlike issue 0812's vector.
+#
+# ⚠ THE SINK IS NOT "subst", IT IS `uplevel`'S CONCATENATION, and getting this
+# wrong is how a repair passes its own suite. :4775 reads
+#     eval uplevel #0 \{subst $rawfile\}
+# `eval` builds the script `uplevel #0 subst $rawfile`; evaluating THAT
+# substitutes the attribute as one word; then `uplevel` CONCATENATES its
+# arguments and evaluates the result AS A SCRIPT — so the attribute is
+# RE-PARSED. Measured consequence, and it is why GDI04 exists: a `\}` in the
+# value closes `subst`'s word and everything after it RUNS AS A COMMAND, and
+# a `[...]` runs while that script's arguments are being parsed, BEFORE
+# `subst` is even called. Any repair that keeps a Tcl evaluation step —
+# including `subst -nocommands -nobackslashes`, which 0812 §1 already refuted
+# on `$a([...])` — is owned by at least one of GDI01-GDI06.
+#
+# WHY THESE ROWS OPEN A FILE INSTEAD OF CALLING THE PROC. Calling
+# `graph_fill_listbox` with a hand-made string proves nothing about the `.sch`
+# route: its first line reads a widget, the attribute arrives through
+# `xschem getprop rect`, and the `.sch` tokeniser truncates an unquoted value
+# at the first space (which is why every payload below is QUOTED in the file —
+# the unquoted spelling is a harmless truncation and would make a green row
+# out of a live sink). Every injection row here writes a real schematic, loads
+# it with `xschem load`, and opens the dialog.
+#
+# THE PAYLOAD IS A HOST FILE, not only an interpreter sentinel: `exec touch`
+# is the process reaching out and creating a file on disk, which is the shape
+# no reader can argue with. Both are asserted, because a payload can also be
+# spelled without an `exec` (GDI04).
+#
+# GDI06 TAKES A DIFFERENT DOOR ON PURPOSE. A crafted `autoload=` never reaches
+# :4772 through `graph_edit_properties`, because :4926 does
+# `if \{$autoload ne \{\} && $autoload\}` on the RAW attribute and a payload is
+# not a boolean, so the proc throws first (that throw is GDI13's subject).
+# The `autoload` sink is reached through the OTHER live door: a dialog already
+# open when the mailed schematic is loaded, and any control that refills the
+# listbox (`Incr. sort`, the Search box's <KeyRelease>, the sim_type combobox).
+# That is a real gesture, and the attribute still comes out of the `.sch`.
+#
+# GDI09/GDI10 ARE THE ANTI-HOLLOW HALF: refusing a valid attribute is a
+# different bug. The shipped corpus spells `rawfile=$netlist_dir/<name>.raw`
+# (xschem_library/ngspice/autozero_comp.sch) and a plain relative name must
+# work too; all three shipped graph schematics must still open their dialog.
+#
+# GDI11 MEASURES the double-resolution question (issue 0820) instead of
+# arguing it: `extra_rawfile()` (save.c:1774) ALREADY resolves the value this
+# proc hands it, through the one C resolver 0812 shipped. So today the graph
+# route resolves TWICE and a nested spelling proves it.
+#
+# This group WRITES: it needs real schematic files, so it takes a
+# `test_scratch` directory (issue 0148 discipline) — the "this test writes
+# nothing" note in the file header is true of everything ABOVE this line.
+# =============================================================================
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  source [file join [file dirname [info script]] scratch.tcl]
+  set GDIT [test_scratch wvgdi]
+  set GDI_NDIR [expr {[info exists ::netlist_dir] ? $::netlist_dir : {}}]
+
+  proc gdi_wr {p b} { set f [open $p w]; puts -nonewline $f $b; close $f }
+  ## `.sch` escapes a literal brace with a backslash. Payloads are written in
+  ## CLEAN form (what the resolver must end up seeing) and escaped on the way
+  ## into the file, so a reader can see the payload without decoding it.
+  proc gdi_esc {s} { return [string map [list \{ \\\{ \} \\\}] $s] }
+  proc gdi_sch {path raw simt al} {
+    gdi_wr $path "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nB 2 270 -1020 680 -860 {flags=graph,unlocked\nnode=\"a\"\nrawfile=[gdi_esc $raw]\nsim_type=[gdi_esc $simt]\nautoload=[gdi_esc $al]}\n"
+  }
+  ## a real, valid ascii ngspice tran raw, so an anti-hollow row can actually
+  ## load one and a fixed resolver has something to open
+  gdi_wr [file join $GDIT an.raw] "Title: gdi
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 3
+Variables:
+\t0\ttime\ttime
+\t1\tv(n1)\tvoltage
+Values:
+0\t0.000000000000000e+00
+\t1.000000000000000e+00
+
+1\t1.000000000000000e-08
+\t2.000000000000000e+00
+
+2\t2.000000000000000e-08
+\t3.000000000000000e+00
+
+"
+  foreach _n {plain.raw gdi_one.raw autozero_comp.raw} {
+    file copy -force [file join $GDIT an.raw] [file join $GDIT $_n]
+  }
+  ## TWO DISTINGUISHABLE DATABASES (issue 0828). `aaa.raw` carries v(naaa) and
+  ## `bbb.raw` carries v(nbbb), so a row can say WHICH raw the dialog listed.
+  ## With the current database aaa and the graph naming bbb, an intake that
+  ## reads nothing falls through graph_fill_listbox's `elseif` arm and lists
+  ## the CURRENT raw -- the wrong database, on screen, with every widget
+  ## present. `winfo exists` cannot see that; the vector names can.
+  proc gdi_named_raw {p v} {
+    set b [string map [list v(n1) v($v)] "Title: gdi
+Plotname: Transient Analysis
+Flags: real
+No. Variables: 2
+No. Points: 3
+Variables:
+\t0\ttime\ttime
+\t1\tv(n1)\tvoltage
+Values:
+0\t0.000000000000000e+00
+\t1.000000000000000e+00
+
+1\t1.000000000000000e-08
+\t2.000000000000000e+00
+
+2\t2.000000000000000e-08
+\t3.000000000000000e+00
+
+"]
+    gdi_wr $p $b
+  }
+  gdi_named_raw [file join $GDIT aaa.raw] naaa
+  gdi_named_raw [file join $GDIT bbb.raw] nbbb
+
+  ## Open the Graph dialog on the ALREADY-LOADED schematic and answer
+  ## {gep_rc listbox-content}. gdi_open destroys the dialog before it returns,
+  ## which is why every anti-hollow row before issue 0828 could only ask
+  ## whether the listbox WIDGET existed.
+  proc gdi_lb_of_open_dialog {} {
+    set rc [catch {graph_edit_properties 0} r]
+    set lb {}
+    catch {set lb [.graphdialog.center.left.list1 get 0 end]}
+    catch {destroy .graphdialog}
+    return [list $rc $lb]
+  }
+
+  ## THE USER'S DOOR. Answers \{gep_rc sentinel host-file-created\} and records
+  ## the non-vacuity evidence (GDI07) as a side effect, so no injection row has
+  ## to carry two claims at once.
+  set ::GDI_NONVAC {}
+  proc gdi_open {tag path host} {
+    set ::GDI_HIT 0
+    catch {file delete -force $host}
+    catch {destroy .graphdialog}
+    catch {xschem set_modify 0}
+    pcall xschem load $path
+    set rc [catch {graph_edit_properties 0} r]
+    lappend ::GDI_NONVAC [list $tag $rc \
+      [expr {[winfo exists .graphdialog.center.left.list1] ? 1 : 0}]]
+    set e [file exists $host]
+    catch {file delete -force $host}
+    catch {destroy .graphdialog}
+    return [list $rc $::GDI_HIT $e]
+  }
+
+  ## --- the four `rawfile=` shapes -----------------------------------------
+  ## A: a command substitution, QUOTED so the .sch tokeniser keeps the spaces
+  gdi_sch [file join $GDIT gdi_q.sch] \
+    "\"/tmp/x\[exec touch [file join $GDIT GDI1]\].raw\"" tran 1
+  check {GDI01 a quoted command substitution in a .sch rawfile= must not run when the Graph dialog opens} \
+    [gdi_open GDI01 [file join $GDIT gdi_q.sch] [file join $GDIT GDI1]] {0 0 0}
+
+  ## B: the payload arrives through a VARIABLE'S VALUE. A value is data; it is
+  ## never rescanned. This is the shape a one-pass scanner is most likely to
+  ## get right and a `subst` can only get wrong.
+  set ::gdi_advval "/tmp/y\[exec touch [file join $GDIT GDI2]\].raw"
+  gdi_sch [file join $GDIT gdi_v.sch] {$gdi_advval} tran 1
+  check {GDI02 a rawfile= naming a variable whose VALUE holds a payload must not run it} \
+    [gdi_open GDI02 [file join $GDIT gdi_v.sch] [file join $GDIT GDI2]] {0 0 0}
+
+  ## C: the ARRAY INDEX — the shape that refuted 0812 attempt 1. Tcl
+  ## substitutes a reference's index before it looks the element up, so the
+  ## command in the index runs and only then does the lookup fail. The array
+  ## deliberately does not exist.
+  gdi_sch [file join $GDIT gdi_a.sch] \
+    "\"\$gdi_noar0821(\[exec touch [file join $GDIT GDI3]\]).raw\"" tran 1
+  check {GDI03 a quoted array-index rawfile= must not run the command in the index} \
+    [gdi_open GDI03 [file join $GDIT gdi_a.sch] [file join $GDIT GDI3]] {0 0 0}
+
+  ## D: NO command substitution at all — a `\}` that closes `subst`'s word, so
+  ## the rest of the attribute is a COMMAND LIST. This is the shape the
+  ## `uplevel` re-parse adds on top of `subst`'s own, and the one a
+  ## "-nocommands" style repair leaves wide open.
+  gdi_sch [file join $GDIT gdi_b.sch] \
+    "\"q\} ; set ::GDI_HIT 1; exec touch [file join $GDIT GDI4]; list \{a.raw\"" tran 1
+  check {GDI04 a brace-escape rawfile= must not become a command list} \
+    [gdi_open GDI04 [file join $GDIT gdi_b.sch] [file join $GDIT GDI4]] {0 0 0}
+
+  ## --- the sim_type field, :4779, independently (issue 0822) --------------
+  gdi_sch [file join $GDIT gdi_s.sch] /tmp/nothere_0821.raw \
+    "\"tran\[exec touch [file join $GDIT GDI5]\]\"" 1
+  check {GDI05 a payload in the sim_type= field must not run either} \
+    [gdi_open GDI05 [file join $GDIT gdi_s.sch] [file join $GDIT GDI5]] {0 0 0}
+
+  ## --- the autoload field, :4772, dialog-already-open door (issue 0822) ----
+  gdi_sch [file join $GDIT gdi_clean.sch] [file join $GDIT plain.raw] tran 1
+  gdi_sch [file join $GDIT gdi_al.sch] [file join $GDIT plain.raw] tran \
+    "\"1\[exec touch [file join $GDIT GDI6]\]\""
+  catch {destroy .graphdialog}
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_clean.sch]
+  set GDI6_OPEN [catch {graph_edit_properties 0}]
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_al.sch]
+  catch {file delete -force [file join $GDIT GDI6]}
+  set GDI6_RC [catch {.graphdialog.top.incr invoke} GDI6_R]
+  set GDI6_HOST [file exists [file join $GDIT GDI6]]
+  catch {file delete -force [file join $GDIT GDI6]}
+  catch {.graphdialog.top.incr invoke}   ;# restore graph_sort AND the widget
+  catch {destroy .graphdialog}
+  check {GDI06 a payload in the autoload= field must not run when an open dialog refills its listbox} \
+    [list $GDI6_OPEN $GDI6_RC $GDI6_HOST] {0 0 0}
+
+  ## --- NON-VACUITY: every crafted open really RAN graph_fill_listbox ------
+  ## Without this, a fix that made `graph_edit_properties` throw on any
+  ## crafted file would turn GDI01-GDI05 green while breaking the dialog.
+  check {GDI07 every crafted schematic opened its dialog cleanly, so GDI01-GDI05 are not vacuous} \
+    $::GDI_NONVAC \
+    {{GDI01 0 1} {GDI02 0 1} {GDI03 0 1} {GDI04 0 1} {GDI05 0 1}}
+
+  ## --- GUARD: the MECHANISM row -------------------------------------------
+  ## Copied in shape from test_raw_read_dispatch.tcl's GUARD1. NECESSARY, NOT
+  ## SUFFICIENT — a resolver that called Tcl_SubstObj() from C would evaluate
+  ## the attribute without ever dispatching the `subst` COMMAND — but it names
+  ## the defect's mechanism instead of guessing a payload, which is exactly
+  ## what 0812 attempt 1 was refuted for lacking.
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_clean.sch]
+  catch {graph_edit_properties 0}
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_q.sch]
+  set ::GDI_SUBST {}
+  if {[info commands ::__gdi_real_subst] eq {}} {
+    rename ::subst ::__gdi_real_subst
+    proc ::subst {args} {
+      lappend ::GDI_SUBST $args
+      return [uplevel 1 [list ::__gdi_real_subst {*}$args]]
+    }
+  }
+  catch {file delete -force [file join $GDIT GDI1]}
+  catch {graph_fill_listbox}
+  if {[info commands ::__gdi_real_subst] ne {}} {
+    rename ::subst {} ; rename ::__gdi_real_subst ::subst
+  }
+  catch {file delete -force [file join $GDIT GDI1]}
+  catch {destroy .graphdialog}
+  check {GDI08 one graph_fill_listbox on a crafted schematic invokes the subst COMMAND zero times} \
+    [llength $::GDI_SUBST] 0
+
+  ## --- ANTI-HOLLOW: the shipped spelling must still resolve and plot ------
+  set ::netlist_dir $GDIT
+  gdi_sch [file join $GDIT gdi_nd.sch] {$netlist_dir/autozero_comp.raw} tran 1
+  xschem raw clear
+  set GDI9_RC [lindex [gdi_open GDI09 [file join $GDIT gdi_nd.sch] \
+    [file join $GDIT GDI_NEVER]] 0]
+  set GDI9_INFO [pcall xschem raw info]
+  ## ...and the DIALOG'S OWN WORD for it, not only the C-side registry. Issue
+  ## 0828: draw.c:3643-3655 reads the same three attributes with
+  ## get_tok_value() and registers the same resolved path, so the registry
+  ## assertion above holds whatever the Tcl intake returns -- it was a
+  ## draw-path test wearing a dialog test's name.
+  set GDI9_ATTR [pcall graph_rect_attr $::graph_selected rawfile]
+  check {GDI09 the shipped $netlist_dir spelling still loads, is registered under the RESOLVED absolute path, and is what the dialog itself read} \
+    [list $GDI9_RC [string match "*[file join $GDIT autozero_comp.raw]*" $GDI9_INFO] $GDI9_ATTR] \
+    [list 0 1 {$netlist_dir/autozero_comp.raw}]
+
+  ## --- GDI16: THE INTAKE ITSELF, BY ITS LITERAL BYTES (issue 0828) --------
+  ## The one row that names graph_rect_attr. An inert intake reds a row that
+  ## says so, instead of being absorbed by the C draw path.
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_nd.sch]
+  check {GDI16 graph_rect_attr hands back the .sch bytes for all three attributes} \
+    [list [pcall graph_rect_attr 0 rawfile] [pcall graph_rect_attr 0 sim_type 2] \
+          [pcall graph_rect_attr 0 autoload 2]] \
+    [list {$netlist_dir/autozero_comp.raw} tran 1]
+
+  ## --- GDI10: WHICH DATABASE DID THE DIALOG ACTUALLY LIST? (issue 0828) ---
+  ## The row this group used to have asserted `winfo exists` on the listbox --
+  ## widget EXISTENCE, not content -- so a dialog that listed nothing, or
+  ## listed another raw's vectors, passed. Measured: with the intake replaced
+  ## by a proc returning the empty string, the whole group stayed ALL PASS
+  ## while the dialog showed the wrong database's signals.
+  ## The discriminator: `aaa.raw` is the CURRENT database and the graph names
+  ## `bbb.raw`. A working intake reads bbb and lists nbbb; a dead one falls
+  ## through to the current database and lists naaa.
+  xschem raw clear
+  gdi_sch [file join $GDIT gdi_bbb.sch] [file join $GDIT bbb.raw] tran 1
+  catch {xschem set_modify 0}
+  pcall xschem load [file join $GDIT gdi_bbb.sch]
+  set GDI10_AAA [pcall xschem raw read [file join $GDIT aaa.raw] tran]
+  set GDI10_R [gdi_lb_of_open_dialog]
+  xschem raw clear
+  check {GDI10 with two databases resident the listbox holds the GRAPH's raw, not the current one} \
+    [list $GDI10_AAA [lindex $GDI10_R 0] [lindex $GDI10_R 1]] \
+    [list 1 0 {nbbb time}]
+
+  ## --- GDI10b: ANTI-HOLLOW, and it reads the listbox rather than counting --
+  ## a PLAIN RELATIVE rawfile of a real .raw must still fill the listbox, with
+  ## the vector names of that file, and all THREE shipped graph schematics must
+  ## still open their dialog.
+  set GDI_CWD [pwd]
+  cd $GDIT
+  gdi_sch [file join $GDIT gdi_rel.sch] plain.raw tran 1
+  xschem raw clear
+  catch {xschem set_modify 0}
+  set GDI10_RC [expr {[string match ERR:* [pcall xschem load [file join $GDIT gdi_rel.sch]]] ? 1 : 0}]
+  set GDI10_R2 [gdi_lb_of_open_dialog]
+  set GDI10_INFO [pcall xschem raw info]
+  cd $GDI_CWD
+  set GDI10_SHIP {}
+  foreach _s {xschem_library/ngspice/autozero_comp.sch
+              xschem_library/ngspice/solar_panel.sch
+              xschem_library/examples/cmos_example.sch} {
+    catch {xschem set_modify 0}
+    set _r [pcall xschem load [file join [file normalize [file join [file dirname [info script]] .. ..]] $_s]]
+    lappend GDI10_SHIP [list [file tail $_s] [expr {[string match ERR:* $_r] ? 1 : 0}] \
+      [catch {graph_edit_properties 0}]]
+    catch {destroy .graphdialog}
+  }
+  check {GDI10b a plain relative rawfile still loads and its listbox comes back with THAT file's vectors, and the three shipped graph schematics still open their dialog} \
+    [list $GDI10_RC [lindex $GDI10_R2 0] [lindex $GDI10_R2 1] \
+          [string match {*plain.raw*} $GDI10_INFO] $GDI10_SHIP] \
+    [list 0 0 {n1 time} 1 {{autozero_comp.sch 0 0} {solar_panel.sch 0 0} {cmos_example.sch 0 0}}]
+
+  ## --- GDI11: SINGLE PASS OR TWO? MEASURED, NOT ASSUMED (issue 0820) ------
+  ## ::gdi_lvl2 holds the LITERAL TEXT `$gdi_one`. One resolution pass turns
+  ## `$gdi_lvl2` into `$gdi_one` — a name with a dollar in it, which is not a
+  ## file — and nothing enters the registry. Two passes reach the real file.
+  ## The second half of the row is the non-vacuity: the SAME file, named in
+  ## one pass, must still load.
+  set ::gdi_one [file join $GDIT gdi_one.raw]
+  set ::gdi_lvl2 {$gdi_one}
+  gdi_sch [file join $GDIT gdi_lvl.sch] {$gdi_lvl2} tran 1
+  gdi_sch [file join $GDIT gdi_one.sch] {$gdi_one} tran 1
+  xschem raw clear
+  gdi_open GDI11a [file join $GDIT gdi_lvl.sch] [file join $GDIT GDI_NEVER]
+  set GDI11_TWO [string match {*gdi_one.raw*} [pcall xschem raw info]]
+  xschem raw clear
+  gdi_open GDI11b [file join $GDIT gdi_one.sch] [file join $GDIT GDI_NEVER]
+  set GDI11_ONE [string match {*gdi_one.raw*} [pcall xschem raw info]]
+  xschem raw clear
+  check {GDI11 the graph-dialog route resolves the rawfile exactly ONCE} \
+    [list $GDI11_TWO $GDI11_ONE] {0 1}
+
+  ## --- GDI12/GDI14: the DEAD second sink, raw_is_loaded (xschem.tcl:4839) --
+  ## Zero callers tree-wide; issue 0821 §4 says delete it rather than repair
+  ## it, so that a never-called, never-tested resolver shape cannot be wired
+  ## up later. GDI14 holds whichever way it is answered: a deleted proc makes
+  ## the call throw, the catch swallows it, and the sentinel stays 0.
+  check {GDI12 the dead second sink raw_is_loaded is gone, not repaired in place} \
+    [llength [info procs raw_is_loaded]] 0
+  set ::GDI_HIT 0
+  catch {file delete -force [file join $GDIT GDI14]}
+  catch {raw_is_loaded "q\} ; set ::GDI_HIT 1; exec touch [file join $GDIT GDI14]; list \{a" tran}
+  set GDI14_HOST [file exists [file join $GDIT GDI14]]
+  catch {file delete -force [file join $GDIT GDI14]}
+  check {GDI14 raw_is_loaded executes nothing, whether it was deleted or repaired} \
+    [list $::GDI_HIT $GDI14_HOST] {0 0}
+
+  ## --- GDI13: a mailed schematic must not BREAK the dialog ----------------
+  ## Same data-from-a-document class as the injection, one line away from it:
+  ## a non-boolean `autoload=` makes `if \{$autoload ne \{\} && $autoload\}` throw.
+  ## ⚠ MEASURED AT HEAD: the throw is at graph_edit_properties src/xschem.tcl
+  ## :4926, NOT at graph_fill_listbox :4776 — hardening only the latter leaves
+  ## this row red.
+  set GDI13 [gdi_open GDI13 [file join $GDIT gdi_al.sch] [file join $GDIT GDI_NEVER]]
+  check {GDI13 a crafted non-boolean autoload= does not throw the Graph dialog open} \
+    [lindex $GDI13 0] 0
+
+  ## --- teardown: leave the context the way DS31 left it -------------------
+  catch {destroy .graphdialog}
+  set ::netlist_dir $GDI_NDIR
+  xschem raw clear
+  xschem new_schematic switch $SLMAIN
+  xschem set readonly 0
+  xschem clear_drawing
+  xschem set_modify 0
+  check {GDI15 teardown leaves the main context empty, writable and sorted ascending} \
+    [list [xschem get rects 2] [xschem get readonly] [xschem get modified] $::graph_sort] \
+    {0 0 0 0}
+  catch {test_scratch_drop $GDIT}
+
+} else {
+  # WORDING IS LOAD-BEARING — see the ⚠ in the file header.
+  puts "SKIPPED: GDI group (Tk/X arm only)"
 }
 
 } bigerr]} {

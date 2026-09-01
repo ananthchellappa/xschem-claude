@@ -1496,6 +1496,110 @@ check "XD14 ...and leaves `raw switch_back`'s destination alone (the registry\
  cursor is a PAIR)" [pcall {nd_backto {xschem setprop rect 2 8 fullxzoom}}] {1 current}
 xschem raw switch 0
 
+# ===========================================================================
+# NINJ / NVAR — issue 0812, THE SEVENTH AND EIGHTH SITES. node_token_split()
+# resolves BOTH `%` fields with `tclvareval("subst {", <field>, "}", NULL)`
+# (draw.c:3353 and :3357), and those fields are read STRAIGHT OUT OF A .sch
+# FILE. A `[...]` in the rawfile or sim_type field is COMMAND SUBSTITUTION, and
+# a `$a([...])` there is command substitution INSIDE A VARIABLE ARRAY INDEX,
+# which no `subst` flag suppresses: opening a schematic someone sent you runs
+# their Tcl.
+#   doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
+#
+# THE TAB IS NOT A TRICK, IT IS THE MECHANISM. find_nth splits the `%` payload
+# on "\n " only, so a TAB-separated Tcl command survives the field split intact
+# and round-trips through save.c into the .sch verbatim (measured with cat -A).
+#
+# HONEST CAVEAT: XSCHEM's attribute language ALREADY evaluates Tcl from a .sch
+# by design -- the documented `tcleval(...)` property form (token.c,
+# doc/xschem_man/symbol_property_syntax.html). This is not the first way a .sch
+# can run Tcl. It is an UNINTENDED one, in a field the manual documents
+# (doc/xschem_man/graphs.html) as accepting a path plus `$netlist_dir` and
+# nothing else.
+#
+# ⚠ FIX BOTH FIELDS OR NEITHER. The rawfile field is resolved here and then
+# resolved AGAIN by extra_rawfile() downstream; that double pass is harmless
+# only while the first pass removes the metacharacters. NINJ1 watches the
+# rawfile field, NINJ2 the sim_type field, NINJ4 the ARRAY-INDEX shape that
+# refuted attempt 1, and NVAR1/NVAR2 watch that the VARIABLE substitution each
+# field must keep survived the fix -- so a resolver wired into one field and not
+# the other cannot be green on all five.
+# ===========================================================================
+set ::ndvraw  $xdraw          ;# the 0..2e-6 analog raw, named through a variable
+set ::ndvtype vcd             ;# ...and a sim_type named through a variable
+
+# --- NVAR: the substitution that must SURVIVE (green at HEAD, and the row that
+#     forbids buying safety by deleting the expansion). If `$ndvraw` does not
+#     expand, the entry names an unresolvable database and the window keeps the
+#     -1..-2 seed (XD19's ruling), so the discriminator is unambiguous.
+xd_strip 30 graph,unlocked [xd_q "a;v(anlg)%\$ndvraw tran"]
+check_true "NVAR1 a `%<rawfile>` spelled through a Tcl VARIABLE still resolves:\
+ the strip spans the named database's 0..2e-6, not the -1..-2 seed of an entry\
+ whose database could not be resolved" [xd_from0 [xd_win 30] 2.0e-6]
+xd_strip 31 graph,unlocked [xd_q "d;TOP.m.sigd%$xdvcd \$ndvtype"]
+check_true "NVAR2 ...and so does a `%<rawfile> <sim_type>` whose SIM_TYPE is a\
+ Tcl variable: the VCD's 0..5e-7. draw.c:3357 is the second field and a fix\
+ wired only into the first one reds here" [xd_from0 [xd_win 31] 5.0e-7]
+
+# --- NINJ: the same two fields, carrying a Tcl command instead of a variable.
+#     THE ASSERTION IS THE SENTINEL, NEVER A RETURN CODE -- the payload can run
+#     AND the walk can then fail to resolve anything.
+proc ninj_probe {script} {
+  set ::SC_PWNED 0
+  pcall $script
+  return $::SC_PWNED
+}
+xd_strip 32 graph,unlocked "v(anlg) % 0 \[set\t::SC_PWNED\t1\]$xdraw tran"
+check "NINJ1 a `%` RAWFILE field carrying `\[set ::SC_PWNED 1\]` does not execute\
+ it: a graph attribute is a PATH, not a script (draw.c:3353)" \
+  [ninj_probe {xschem setprop rect 2 32 fullyzoom}] 0
+xd_strip 33 graph,unlocked "v(anlg) % 0 $xdraw \[set\t::SC_PWNED\t1\]"
+check "NINJ2 ...and neither does the `%` SIM_TYPE field -- the second of the\
+ pair, which a one-field fix leaves live (draw.c:3357)" \
+  [ninj_probe {xschem setprop rect 2 33 fullyzoom}] 0
+# THE SHAPE THAT REFUTED ATTEMPT 1: a command substitution inside a VARIABLE
+# ARRAY INDEX. `-nocommands` does not suppress it, and the array need not exist
+# -- the index is substituted before the lookup fails.
+xd_strip 34 graph,unlocked "v(anlg) % 0 \$noar0812(\[set\t::SC_PWNED\t1\]).raw tran"
+check "NINJ4 ...nor does the ARRAY-INDEX shape `\$a(\[set ::SC_PWNED 1\])` in the\
+ rawfile field: the index of a variable reference is substituted before the\
+ lookup, so no `subst` flag makes it safe" \
+  [ninj_probe {xschem setprop rect 2 34 fullyzoom}] 0
+
+# --- NINJ3: THE ONE THAT MATTERS. No `setprop`, no scripting: a schematic
+#     LOADED FROM DISK, then a plain redraw. Under X this is the whole attack --
+#     someone sends you a .sch and opening it runs their code (measured PWNED=1
+#     on :99 at HEAD, both after the load and after the redraw).
+#     ⚠ VACUOUS UNDER --nogui, ON PURPOSE. draw() is inside `if(has_x)`, so the
+#     walker never runs and the row is green there for a reason that has nothing
+#     to do with the fix. It is NOT arm-gated, so the NDZ1 count stays the same
+#     in both arms; the arm that MEASURES it is :99.
+set ndev [file join $scratch nd_evil.sch]
+wr $ndev "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+B 2 0 0 800 400 {flags=graph
+x1=0
+x2=2e-9
+y1=-0.3
+y2=1.3
+node=\"v(anlg) % 0 \[set\t::SC_PWNED\t1\]$xdraw tran\"}
+"
+set ::nd_ab_save $::autosave_backup
+set ::autosave_backup 0
+set ::SC_PWNED 0
+pcall {xschem load $ndev}
+set ndj3a $::SC_PWNED
+pcall {xschem redraw}
+set ndj3b $::SC_PWNED
+set ::autosave_backup $::nd_ab_save
+check "NINJ3 loading a .sch from disk and redrawing it does not execute the Tcl\
+ in its graph `node=` field -- opening a schematic someone sent you must not run\
+ their code (vacuous under --nogui, measured on :99)" [list $ndj3a $ndj3b] {0 0}
+
 set ::nd_body_completed 1
 
 } err]} {
@@ -1514,7 +1618,9 @@ set ::nd_body_completed 1
 # 128 -> 150: batch F item 8 added the XD leg (spec D2, the joint X domain).
 # 150 -> 166: item 8's fixer round added XD0g/XD0h and XD16-XD22b -- the group
 # shapes, the X-quantity rule, and the two rulings that had no fixture at all.
-set ::nd_expect 166
+# 166 -> 172: issue 0812 added the NINJ/NVAR leg (the graph `node=` subst, both
+# `%` fields, plus the array-index shape that refuted the first attempt).
+set ::nd_expect 172
 set ndgot [expr {$npass + $fail}]
 check "NDZ1 the file ran its full complement of checks (a silent shortfall is\
  the failure this guards)" \

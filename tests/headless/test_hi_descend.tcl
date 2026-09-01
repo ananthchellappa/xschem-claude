@@ -147,6 +147,63 @@ check "NOLEAK plain descend after override uses default" \
   [expr {[has /schematic/leaf.sch] && ![has /schematic_old/leaf.sch]}] "(name=[schname])"
 xschem go_back
 
+# --- INSTVIEW: a per-copy "schematic" setting is a view the chooser must offer ----
+# ISSUE 1228. A symbol placed on a sheet can be told, one copy at a time, WHICH
+# schematic file that copy opens. Until this pass NO fixture under
+# tests/headless/fixtures/hi_descend/ carried such a setting at all -- measured
+# with grep -- so no committed row anywhere drove one through the E key, and the
+# defect below sat green.
+#
+# Measured on the shipped xschem_library/inst_sch_select sheet: pressing E on a
+# copy bound to comp3_parax.sch opens the cell's own comp3.sch instead, with no
+# prompt, no message and no error. The cause is here: the list of choices is
+# built with the SYMBOL form of the resolver, which cannot see a per-copy
+# setting, so the copy's own file is never even one of the choices.
+#
+# Built in a scratch directory rather than in the committed fixture: adding an
+# instance to top.sch would shift the instance numbers the NAMELESS rows below
+# select by.
+set ivwork /tmp/hi_descend_instview_work
+file delete -force $ivwork; file mkdir $ivwork
+set ivbound [file join $ivwork leaf_bound.sch]
+set fh [open $ivbound w]
+puts $fh "v \{xschem version=3.4.4 file_version=1.2\}"
+puts $fh "G \{\}"
+puts $fh "V \{\}"
+puts $fh "S \{\}"
+puts $fh "E \{\}"
+puts $fh "N 0 0 300 0 \{\}"
+puts $fh "T \{VIEW=bound_by_instance\} -40 -140 0 0 0.3 0.3 \{\}"
+close $fh
+set ivtop [file join $ivwork ivtop.sch]
+set fh [open $ivtop w]
+puts $fh "v \{xschem version=3.4.4 file_version=1.2\}"
+puts $fh "G \{\}"
+puts $fh "V \{\}"
+puts $fh "S \{\}"
+puts $fh "E \{\}"
+puts $fh "C \{hidlib/leaf\} 0 0 0 0 \{name=xiv"
+puts $fh "schematic=$ivbound\}"
+close $fh
+
+set ::hi_descend_view_path {}
+xschem load $ivtop
+xschem unselect_all
+set ivrows [hi_descend_enum_views xiv]
+set ivpaths {}
+foreach r $ivrows { lappend ivpaths [lindex $r 2] }
+check "INSTVIEW-OFFER the file this copy is set to open is one of the choices" \
+  [expr {[lsearch -exact $ivpaths $ivbound] >= 0}] \
+  "(rows=$ivrows)"
+
+set ivc0 [xschem get currsch]
+set ivr [hi_descend inst=xiv target=current]
+check "INSTVIEW-LAND pressing E opens the file this copy is set to open" \
+  [expr {$ivr == 1 && [xschem get currsch] == $ivc0 + 1 && [schname] eq $ivbound}] \
+  "(ret=$ivr currsch=[xschem get currsch] name=[schname])"
+catch {xschem go_back}
+file delete -force $ivwork
+
 # --- NAMELESS: an instance with no name= property (issue 0260) -------------------
 # `xschem selected_set` brace-wraps each selected instance's instname with no emptiness
 # check, so a NAMELESS instance comes back as a ONE-element list whose element is the

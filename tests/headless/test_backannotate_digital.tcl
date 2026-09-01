@@ -295,8 +295,38 @@ check_true "BA24 ...and no VCD name was annotated" \
 set ba_ok [pcall {xschem annotate_op $collraw 0 tran}]
 check_true "BA25 THE CONTROL: the same command on an ANALOG raw is not refused" \
   [expr {![string match -nocase {*is a digital results database*} $ba_ok]}]
-nearv "BA26 ...and it really annotated: the analog vector is in the array at\
- its point-0 voltage" [annot_get $SAME] 0.75
+# ⚠ THIS ROW INVERTED WITH ISSUE 0856, AND IT DID NOT GO VACUOUS.
+# It used to read "...and it really annotated: the analog vector is in the array
+# at its point-0 voltage" -- i.e. it asserted that a 41-point TRANSIENT put its
+# t=0 sample on the schematic wearing the label "operating point". The user
+# ruled that out on 2026-08-26, verbatim: "We haven't yet built anything for
+# annotating from TRAN results, so it should do nothing silently." So the
+# request is still ACCEPTED (BA25: not refused, no sentence, no complaint) and
+# the publish step declines it.
+# ⚠ BOTH halves, and the second is the load-bearing one. `<unset>` alone is
+# satisfied by a database that never loaded; `annot_names` empty says the array
+# was not merely missing THIS name but was left carrying nothing at all -- no
+# stale voltage from an earlier database either. Gate-sensitive: delete the 0856
+# guard in update_op() and this reads {0.75 {top.m.same ...}}.
+# ⚠ AND IT IS NOT A "NOTHING HAPPENED" ROW: BA26b immediately below is the
+# non-vacuity partner, and it publishes for real off the same colliding name.
+check "BA26 ...and a TRANSIENT publishes NOTHING onto the schematic (0856): the\
+ request is accepted, and the array is left EMPTY rather than carrying t=0\
+ dressed up as an operating point" \
+  [list [annot_get $SAME] [annot_names]] {<unset> {}}
+
+# THE NON-VACUITY CONTROL BA26 USED TO CARRY ITSELF. $opraw is a 1-point
+# OPERATING POINT database holding the SAME colliding node name at the SAME
+# 0.75, so the only thing that differs between this row and BA26 is the
+# sim_type -- which is exactly what the 0856 ruling is about. Without this row,
+# "a transient publishes nothing" is equally satisfied by an annotate_op that
+# publishes nothing ever, and BA20-BA24's silence would stop being evidence of a
+# refusal.
+xschem raw clear
+xschem annotate_op $opraw 0 op
+nearv "BA26b THE NON-VACUITY CONTROL: an OPERATING POINT raw off the same\
+ colliding name really does annotate, so BA26's empty array is a REFUSAL TO\
+ PUBLISH and not an inert command" [annot_get $SAME] 0.75
 
 # THE SPELLING THE GUI ACTUALLY USES (RULING D5-6). Both Op Annotate menu entries
 # in src/xschem.tcl call `xschem annotate_op $tctx::retval` -- a FILENAME ALONE,
@@ -341,13 +371,23 @@ check_true "BA2a THE CONTROL for the sniff: an untyped annotate_op on the ANALOG
 # ===========================================================================
 # BA3 -- RULING D5-3 point 1: update_op(), the point-0 publisher
 # ===========================================================================
-# the array is left carrying the analog annotation from BA26. Switching to the
-# VCD and asking to publish must EMPTY it, not overwrite it and not keep it.
+# The array is left carrying an analog annotation from the rows above. Switching
+# to the VCD and asking to publish must EMPTY it, not overwrite it and not keep
+# it.
+#
+# ⚠ THE ANALOG PREMISE DATABASE IS THE 1-POINT OP, NOT THE 41-POINT TRANSIENT,
+# AND THAT CHANGED WITH ISSUE 0856. This block needs a database that really does
+# publish, because BA30/BA31 are the premise BA32-BA35 are measured against: if
+# the analog side published nothing either, "the digital side published nothing"
+# would be worth nothing. Since 0856 a transient does not publish, so the
+# transient can no longer serve as that premise and $opraw does. $opraw carries
+# the SAME colliding name at the SAME 0.75, so nothing else about the block
+# moves.
 xschem raw clear
-xschem raw read $collraw tran
+xschem raw read $opraw op
 xschem raw read $collvcd vcd
 xschem raw switch 0
-check "BA30 premise: publishing from the ANALOG database answers 1" \
+check "BA30 premise: publishing from the ANALOG OPERATING-POINT database answers 1" \
   [pcall {xschem update_op}] 1
 nearv "BA31 ...and the analog voltage is on the schematic" [annot_get $SAME] 0.75
 xschem raw switch 1
@@ -364,6 +404,70 @@ xschem raw switch 0
 xschem update_op
 nearv "BA36 switching back to the analog database and publishing restores the\
  real voltage: the refusal is not a latch" [annot_get $SAME] 0.75
+
+# ===========================================================================
+# BA37 -- SOURCE WITNESS: THE DIGITAL REFUSAL IS STILL THERE, AND STILL FIRST
+# ===========================================================================
+# ⚠ THIS ROW EXISTS BECAUSE ISSUE 0856 SHADOWED BA32-BA35, AND WITHOUT IT THIS
+# SUITE CAN NO LONGER SEE THE RULING IT WAS WRITTEN FOR (issue 0859).
+# Measured: src/save.c's raw_reader_table has exactly ONE digital entry,
+# "vcd" -> vcd_read with the digital column set, so raw_is_digital is true for
+# sim_type "vcd" and nothing else. "vcd" is neither "op" nor "dc", so the 0856
+# gate lower down in the same function refuses a VCD too -- and with the
+# IDENTICAL observable: return 0, the array left unset, no CIW line an in-process
+# row can read. So BA32, BA33, BA34 and BA35 all stay GREEN with the D5-3 digital
+# refusal DELETED. They now witness "a VCD publishes nothing", which is still
+# true and still worth pinning, but they no longer witness WHICH guard said so.
+#
+# ⚠ SO THE ORDER TERM IS THE LOAD-BEARING HALF, not the presence terms. The
+# digital refusal is what MINTS the user-facing sentence -- backannot_refuse_
+# digital echoes it to the CIW under a display and is the only place that
+# sentence exists (RULING D5-4, one place, rendered by callers). Reorder the two
+# guards and the 0856 gate answers first, the sentence is never minted, and the
+# user who pointed Op Annotate at a .vcd gets silence instead of an explanation.
+# Nothing else in the tree would notice.
+#
+# ⚠ THE TRAILING "(" IN EACH TOKEN IS DELIBERATE: it defeats the
+# rename-the-callee-to-a-no-op sabotage, which a bare name search would not see.
+# Declared as the weaker form of evidence it is -- a source scanner, not a
+# behavioural row. The behavioural proof needs a display arm and a captured CIW,
+# which this suite has no machinery for; that is recorded in issue 0859 rather
+# than faked here.
+# ⚠ counted with string ops only, NEVER llength/lsearch -- C source lines are not
+# valid Tcl list elements, so a list operation on them throws and aborts the file
+# instead of answering. Same reason BA98 below counts the way it does.
+set ba_up [open [file join $here .. .. src save.c] r]
+set ba_uplines [split [read $ba_up] "\n"]
+close $ba_up
+set ba_un 0; set ba_uin 0; set ba_udig 0; set ba_ugate 0; set ba_uorder none
+foreach ba_ul $ba_uplines {
+  if {[string match "int update_op*" $ba_ul]} { set ba_uin 1 }
+  if {$ba_uin} {
+    incr ba_un
+    set ba_ut [string trimleft $ba_ul]
+    set ba_uc [expr {[string index $ba_ut 0] eq "*" ||
+                     [string range $ba_ut 0 1] eq "/*" ||
+                     [string range $ba_ut 0 1] eq "//"}]
+    if {!$ba_uc} {
+      if {[string first "raw_is_digital(" $ba_ul] >= 0} {
+        incr ba_udig
+        if {$ba_uorder eq "none"} { set ba_uorder digital }
+      }
+      if {[string first "backannot_refuse_digital(" $ba_ul] >= 0} { incr ba_udig }
+      if {[string first {sim_type, "op")} $ba_ul] >= 0} {
+        incr ba_ugate
+        if {$ba_uorder eq "none"} { set ba_uorder gate }
+      }
+    }
+    if {$ba_ul eq "\}"} { set ba_uin 0 }
+  }
+}
+check "BA37 SOURCE WITNESS: update_op still calls raw_is_digital and\
+ backannot_refuse_digital as CODE, and still does so BEFORE the 0856\
+ not-an-operating-point gate -- so the digital database still gets its own\
+ sentence instead of being swallowed by the wider refusal" \
+  [list [expr {$ba_un > 20}] $ba_udig [expr {$ba_ugate > 0}] $ba_uorder] \
+  {1 2 1 digital}
 
 # ===========================================================================
 # BA4 -- RULING D5-3 point 3: the CURSOR-B publisher
@@ -628,30 +732,70 @@ xc_cursor 175e-9
 check "BA86 ...and the floater is not latched off: the analog database renders\
  the same measured voltage it did before" [floater] $ba_flo_analog
 
-# ⚠ BA80-BA86 exercise ONE of the six branches -- translate()'s bare
+# ===========================================================================
+# BA88 -- ISSUE 0864: the live-cursor SWITCH is not what keeps D5 honest
+# ===========================================================================
+# `Simulation > Graphs > Live annotate probes with 'b' cursor` used to be the
+# first half of every one of these gates, so turning it off blanked the floater
+# too. 0864 splits the two: the switch now means only "follow the cursor and
+# re-annotate as it moves", and what a floater RENDERS is decided by the
+# database alone. Both halves of that are asserted here, because dropping the
+# switch term and dropping the D5 term look identical from one side:
+#   * switch OFF, ANALOG database -> the measured voltage, same bytes BA80 saw
+#   * switch OFF, DIGITAL database -> still nothing, RULING D5-1 untouched
+# This is also the ONLY behavioural cover of translate()'s bare
+# @spice_get_voltage gate with the switch off; BA87 below carries the other five.
+xschem raw clear
+xschem raw read $collraw tran
+xschem raw read $collvcd vcd
+xschem raw switch 0
+xc_cursor 175e-9
+set ba88_lv $::live_cursor2_backannotate
+set ::live_cursor2_backannotate 0
+set ba88_analog [floater]
+xschem raw switch 1
+xc_cursor 175e-9
+set ba88_digital [floater]
+set ::live_cursor2_backannotate $ba88_lv
+check "BA88 with the live-cursor switch OFF the floater still renders the\
+ measured voltage -- and a digital database still renders nothing" \
+  [list $ba88_analog $ba88_digital] [list $ba_flo_analog {}]
+
+# ⚠ BA80-BA88 exercise ONE of the six branches -- translate()'s bare
 # @spice_get_voltage, the one lab_pin.sym carries. The other five
 # (@spice_get_voltage(...), @spice_get_diff_voltage, @spice_get_current,
 # @spice_get_modelparam, and get_pin_attr()'s @#<pin>:spice_get_voltage) need a
 # wired multi-pin instance and a device-current vector to reach behaviourally,
 # and MEASURED: reverting the guard at the get_pin_attr() site alone reddens
 # NOTHING above. So the remaining five are pinned by a source witness, declared
-# as the weaker form of evidence it is: every site that reads
-# live_cursor2_backannotate to gate a cursor_b_val[] read must carry the D5 term.
+# as the weaker form of evidence it is.
+#
+# ⚠ ISSUE 0864 MADE THIS A DOUBLE WITNESS, AND THE NEEDLE MOVED WITH IT. Every
+# one of the six gate lines used to read
+#   int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(...)
+# and 0864 removed the first half from all six: what a floater RENDERS is not
+# the business of a switch labelled "follow the cursor". The D5 half MUST
+# survive, and that is still this row's first job. Its second is that the switch
+# stays out of all six -- restored at any one of them, the user unticks the box
+# and part of the schematic silently blanks again. So the needle is now the bare
+# `int live = ` and the row asserts three things about the same six lines.
 set ba_tf [open [file join $here .. .. src token.c] r]
 set ba_tl [split [read $ba_tf] "\n"]
 close $ba_tf
-set ba_live 0; set ba_guarded 0
+set ba_live 0; set ba_guarded 0; set ba_switched 0
 foreach ba_l $ba_tl {
   set ba_t [string trimleft $ba_l]
   if {[string index $ba_t 0] eq "*" || [string range $ba_t 0 1] eq "/*"} { continue }
-  if {[string first "int live = tclgetboolvar" $ba_l] >= 0} {
+  if {[string first "int live = " $ba_l] >= 0} {
     incr ba_live
     if {[string first "raw_is_digital" $ba_l] >= 0} { incr ba_guarded }
+    if {[string first "live_cursor2_backannotate" $ba_l] >= 0} { incr ba_switched }
   }
 }
-check "BA87 SOURCE WITNESS: every one of token.c's live-backannotation gates\
- carries the D5 term -- all six branches, not just the one the fixture can\
- reach" [list [expr {$ba_live == 6}] [expr {$ba_guarded == $ba_live}]] {1 1}
+check "BA87 SOURCE WITNESS: every one of token.c's cursor_b_val gates carries\
+ the D5 term, and NONE of them reads the live-cursor switch -- all six\
+ branches, not just the one the fixture can reach" \
+  [list [expr {$ba_live == 6}] [expr {$ba_guarded == $ba_live}] $ba_switched] {1 1 0}
 
 # ===========================================================================
 # BA9 -- RULING D5-7: `xschem raw switch` deliberately does NOT touch the array
@@ -749,6 +893,16 @@ catch {xschem raw clear}
 catch {test_scratch_drop $scratch}
 puts "----"
 puts "test_backannotate_digital: $npass passed, $fail failed"
-if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } else { puts "RESULT: $fail FAILED ($npass passed)" }
+# ⚠ THE DUAL BANNER IS REQUIRED BY tests/run_regression.tcl's hcases list, which
+# this file is registered in. banner_complete (tests/banner_rule.tcl) needs a
+# WHOLE-LINE "OVERALL: ok"; registering a suite there without one reproduces the
+# completion-sentinel false red filed four separate times as 0420/0492/0629/0689.
+if {$fail == 0} {
+  puts "RESULT: ALL PASS ($npass checks)"
+  puts "OVERALL: ok"
+} else {
+  puts "RESULT: $fail FAILED ($npass passed)"
+  puts "OVERALL: notok"
+}
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

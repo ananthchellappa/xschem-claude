@@ -3783,7 +3783,9 @@ a coin toss dressed as a configuration.
 
 ## 18.4 `netlist_case_mode()` — §10's layering point, taken
 
-`save.c` asks `sim_profile_netlist_casemode spice` and keeps the floor for
+`save.c` asks `sim_netlist_casemode spice` (renamed at the annotate merge, when
+the answer moved from a `sim()` profile row to the ASE-L simulator registry) and
+keeps the floor for
 anything it cannot answer. Once the run is composed from the profile, a netlister
 still asserting the global floor describes a **different run from the one about to
 happen** — and under a `distinguish` profile that is not cosmetic: C2's collision

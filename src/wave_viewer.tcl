@@ -779,17 +779,49 @@ namespace eval wviewer {
 # Scope, deliberately: only the TAB messages route through here. Converting the
 # ~120 pane-only ciw_echo sites in this file is 0207's own deferred item 2 and
 # would collide with everything else in flight.
+# ⚠ 0650: THIS PROC AND ase::echo WERE THE SAME EIGHT LINES OF CODE -- the
+# channel had TWO builders before this step, which is invariant I1's exact
+# prohibition, and a drift between them would have failed SILENTLY. The body now
+# lives once, in `xschem::notify` (src/ciw.tcl). Name, signature and every call
+# site here are unchanged; ::xschem::notify is resolved at CALL time because
+# ciw.tcl is sourced after this file (src/xschem.tcl:14854 vs :14806).
+## ⚠ 0658: the catch that used to live here HID the defect. `::xschem::notify`
+## lives in src/ciw.tcl, which src/xschem.tcl sources AFTER this file, so one
+## unavailable proc in another file turned every call site into a silent no-op
+## -- the durable log line included, and that line had been INLINE here before
+## 0650. The body is now `::xschem::notify_safe` (src/xschem.tcl, defined before
+## every caller): it still never propagates -- a notice may not break a pick or
+## a netlist -- but a raise now falls back to the degraded bootstrap channel
+## instead of returning a silent, untrue 0. ONE delegate body, shared with
+## wviewer::echo, which is what invariant I1 asks for.
+##
+## ⚠ ISSUE 0666: THE GUARANTEE IS BACK IN THIS BODY. 0658's brief said "a notice
+## must never break its caller"; the catch was not deleted, it MOVED into the
+## callee, and this line became a bare one-liner that raises `invalid command
+## name "::xschem::notify_safe"` straight into a pick or a netlist the moment
+## the delegate body is not there.
+##
+## REACHABILITY, MEASURED, AND NARROWER THAN 0666 CLAIMED: the FILE-LOAD path is
+## CLOSED by issue 0663 (src/xinit.c:3571 -- a partially loaded xschem.tcl now
+## exits 1 with an announced STARTUP ABORTED), and notify_safe is defined before
+## this file is sourced, so no ordering can leave the delegate without it. What
+## IS live is a RUNTIME `namespace delete ::xschem`: it succeeds, takes the
+## namespace from 13 procs to 0, leaves the C `xschem` command working, and is
+## reachable from ciw_exec's `uplevel #0 $cmd` (src/ciw.tcl:557) and from any
+## --script. Hence a two-line guard here, and NOT a loader-level one.
+##
+## The guard is INLINE in each delegate on purpose, four lines duplicated
+## deliberately: extracting it into a shared proc would put it in the very
+## namespace whose absence it exists to survive (0666: "a guard is not a
+## builder"). What it returns is TRUE (0652): nothing reached any sink, and
+## stderr is never counted as one (0658 D9), so 0 is the honest answer -- never
+## a 0 that merely means "I did not check".
 proc wviewer::echo {msg {tag {}}} {
-  # pane half first, unconditionally: the tests that capture notices rename
-  # ::ciw_echo, and an empty message still echoes a blank line.
-  if {[info commands ::ciw_echo] ne {}} { catch {::ciw_echo $msg $tag} }
-  if {$msg eq {}} return
-  set msg [string trimright $msg "\n"]        ;# log_output supplies the terminator
-  if {$msg eq {}} return
-  # a TRAILING BACKSLASH would make the logged `#= ` line swallow the next one
-  if {[string index $msg end] eq "\\"} { append msg { } }
-  if {$tag eq {error}} { catch {xschem log_action -error $msg} } \
-  else                 { catch {xschem log_action -result $msg} }
+  if {[catch {::xschem::notify_safe $msg $tag} r]} {
+    catch {puts stderr "xschem: notice channel unavailable: $r" ; flush stderr}
+    return 0
+  }
+  return $r
 }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from
@@ -838,6 +870,7 @@ proc wviewer::token_for_canvas {wp} {
 # open starts from an empty layout (persistence across sessions is item 14's
 # `viewer` state key, not this registry).
 proc wviewer::forget {token} {
+  wviewer::diag "forget         token=$token"
   variable windows
   variable graphbb
   variable layouts
@@ -1062,7 +1095,196 @@ proc wviewer::ctx_verdict {wp tops0 tops1 ninst nwires} {
 # the viewer is up (raised or freshly built), 0 on an unknown token (ciw_echo
 # under has_x, never a throw — ase::open_state style) and 0 headless (the
 # window shell is GUI-only; the session bookkeeping stays untouched).
+# --- window geometry: the viewer is NOT an untitled scratch buffer ------------
+#
+# ⚠ issue 0840, MEASURED. store_geom/set_geom (src/xschem.tcl) key a window's
+# saved geometry by `[xschem get current_name]`, and the viewer is built on a
+# schematic buffer whose name is `untitled.sch`. So the viewer and EVERY
+# untitled scratch buffer in the program shared ONE slot in
+# $USER_CONF_DIR/geometry:
+#
+#     sky130A/.../tb_bandgap.sch   1110x761+404+132   <- the design window
+#     untitled.sch                 1110x761+404+132   <- the viewer, restored
+#                                                        pixel-for-pixel on top
+#
+# The user reported it as "the schematic window appears to get replaced by a
+# Waveform Window": two mapped toplevels at exactly the same geometry, so the
+# design window is 100% occluded and the taskbar preview shows the waveform for
+# both. Reproduced on Xvfb + openbox with identical numbers, so it is not a
+# window-manager quirk and not the VcXsrv compositing of issue 0680.
+#
+# ⚠ AND THE NUMBERS IN THAT SLOT ARE THE MAIN WINDOW'S OWN, which is why the
+# overlap is EXACT rather than merely likely, and why it happens every session:
+#
+#   1. xschem starts with `untitled.sch` in the main window;
+#   2. the user loads a schematic, and the load path stores the geometry FIRST
+#      -- `store_geom [xschem get topwindow] [xschem get current_name]`
+#      (scheduler.c:7656) with current_name still `untitled.sch`, so the MAIN
+#      WINDOW's geometry lands in the untitled slot;
+#   3. wviewer::open's buffer is `untitled.sch` too, so set_geom hands it back.
+#
+# The read half below is therefore the load-bearing one. The write half matters
+# in the NON-tabbed window model, where store_geom persists arbitrary windows
+# (under the tabbed interface it is main-window-only) and the viewer would
+# otherwise overwrite that slot with its own place -- moving the next File > New.
+#
+# The viewer already marks its context as not-a-scratch-buffer (`xschem set
+# wave_viewer 1`, issue 0172, for exactly this family of confusion). Geometry
+# never got the memo. This gives it its own key.
+#
+# Keyed by the TOPLEVEL PATH, not the context: store_geom runs from C at moments
+# when the current context may be somebody else's, so a per-context flag cannot
+# answer "whose window is this".
+# --- OPT-IN DIAGNOSTIC TRACE (issue 0840 residuals 1-3) ----------------------
+#
+# TEMPORARY, and tied to 0840: remove it when the residuals close.
+#
+# Three things the user sees on their bench that do NOT reproduce on the dev
+# display: a SECOND viewer window hiding behind the first, that window's WM
+# title reading `untitled.sch (read-only)` instead of `Waveforms ...`, and
+# ase::ui::viewer_restore opening nothing at all here despite the state file
+# carrying `viewer {open 1 ...}`. All three are questions about WHEN, HOW OFTEN
+# and THROUGH WHICH ARM open() is entered -- which is exactly what a report from
+# the bench cannot answer and a trace can.
+#
+# Off unless $env(WVDIAG) is set, and the whole body is catch-wrapped: a
+# diagnostic that can break the thing it is diagnosing is worse than none.
+proc wviewer::diag {tag {extra {}}} {
+  if {![info exists ::env(WVDIAG)] || $::env(WVDIAG) eq {}} { return }
+  # ⚠ IT WRITES INTO THE ACTION LOG, NOT A FILE OF ITS OWN. The first version
+  # opened /tmp/wvdiag.log and, under the user's own rc, the `open` itself
+  # failed -- so the trace was silently empty and looked exactly like "the event
+  # never happened", which is the one thing a diagnostic must never look like.
+  # `xschem log_action` is already the mechanism the user's `--logdir /tmp` run
+  # uses, so the trace lands in the file they ALREADY send, with no second
+  # channel to go wrong. The `#= ` prefix is the shipped convention for a
+  # non-replayable comment (util.c:538), so the log stays source-able.
+  set toks {} ; catch {set toks [dict keys $::wviewer::windows]}
+  set cwp {}  ; catch {set cwp [xschem get current_win_path]}
+  catch {xschem log_action "#= wvdiag $tag ctx=$cwp registry={$toks} $extra"}
+  # every MAPPED toplevel with its title and geometry -- residual 1 is a COUNT
+  # and residual 2 is a TITLE, so both are read straight off this list
+  set kids {} ; catch {set kids [winfo children .]}
+  foreach t [concat . $kids] {
+    set cls {} ; if {[catch {winfo class $t} cls]} continue
+    if {$t ne {.} && $cls ne {Toplevel}} continue
+    set st ? ; catch {set st [wm state $t]}
+    if {$st eq {withdrawn}} continue
+    set ttl ? ; catch {set ttl [wm title $t]}
+    set g ?   ; catch {set g [wm geometry $t]}
+    catch {xschem log_action "#=        $t $st $g '$ttl'"}
+  }
+  return
+}
+
+proc wviewer::geom_key {win} {
+  variable windows
+  if {$win eq {} || ![info exists windows]} { return {} }
+  foreach tok [dict keys $windows] {
+    if {[catch {dict get $windows $tok top} t]} continue
+    if {$t ne {} && $t eq $win} { return {__waveviewer__} }
+  }
+  return {}
+}
+
+# Deterministic backstop for the FIRST open, when no viewer geometry is stored
+# yet and placement falls to the window manager. Openbox cascades; nothing
+# guarantees the user's does. If the new viewer landed exactly congruent with
+# the window it was launched from, step it off. Congruence is the whole defect
+# -- a viewer merely NEAR the design window is fine, one exactly on top of it
+# reads as the schematic having vanished.
+proc wviewer::uncover {top from {tries 4} {verify 2}} {
+  if {$top eq {} || $from eq {}} { return 0 }
+  if {![winfo exists $top] || ![winfo exists $from]} { return 0 }
+  # ⚠ NOT AT CREATION TIME -- AND THAT IS WHY THIS SHOVE NEVER FIRED IN THE FIELD.
+  # `wm geometry` reports the REQUESTED geometry until the window has been mapped and
+  # the window manager has answered. Called straight out of wviewer::open, it compared
+  # a not-yet-placed viewer against the design window, found them different, and did
+  # nothing -- and the WM then went on to place the viewer exactly on top anyway.
+  # Measured in the user's own session log (window_report, 2026-08-26): viewer `.x1`
+  # and design `.` BOTH at 1110x761+3597+340, byte-identical, shove never fired.
+  # So wait for the map, then decide. Bounded retries; a viewer the user has already
+  # dragged simply will not be congruent by the time we look, which is the right answer.
+  if {![winfo ismapped $top] || ![winfo ismapped $from]} {
+    if {$tries > 0} { after 120 [list wviewer::uncover $top $from [expr {$tries - 1}] $verify] }
+    return 0
+  }
+  set gt {}; set gf {}
+  catch {set gt [wm geometry $top]}
+  catch {set gf [wm geometry $from]}
+  if {$gt eq {} || $gf eq {}} { return 0 }
+  if {[scan $gt {%dx%d+%d+%d} w h x y] != 4} { return 0 }
+  if {[scan $gf {%dx%d+%d+%d} fw fh fx fy] != 4} { return 0 }
+  # ⚠ TOLERANCE, NOT STRING EQUALITY. Issue 0647's own measurement was
+  # 1000x800+13+89 against 1000x800+13+90 -- ONE PIXEL apart, which `eq` calls "not
+  # congruent" and a human calls "my schematic is gone". Congruent means the same size
+  # and the same corner to within a few pixels. Anything further out is proximity, and
+  # U2 says proximity is not the defect.
+  set tol 8
+  if {abs($w - $fw) > $tol || abs($h - $fh) > $tol} { return 0 }
+  if {abs($x - $fx) > $tol || abs($y - $fy) > $tol} { return 0 }
+  # ⚠ THE STEP IS A FRACTION OF THE WINDOW, NOT A CONSTANT -- ruled by the user
+  # 2026-08-26 after seeing the 48px version in the field. 48 broke pixel-congruence,
+  # which is what issue 0840 was filed about, and that turned out not to be what anyone
+  # actually wanted: on a 1110x761 window a 48px step leaves a 48px sliver of the
+  # schematic showing, and the user read the result as ONE window that had been
+  # corrupted with waveforms rather than two windows stacked. It also made "click the
+  # schematic to get it back" look like a repaint fix when it was only a raise.
+  #
+  # A third of the window is unmistakably two windows at any size, and being a fraction
+  # it stays right on a 600px window and on a 3000px one. The user chose this over
+  # tiling and over not raising the viewer, knowing it still overlaps.
+  set dx [expr {$w / 3}]
+  set dy [expr {$h / 3}]
+  if {$dx < 48} { set dx 48 }
+  if {$dy < 48} { set dy 48 }
+  # keep the title bar reachable: step back toward the origin rather than off
+  # the bottom-right of the screen
+  if {$x + $dx + $w > [winfo screenwidth $top]}  { set dx [expr {-$dx}] }
+  if {$y + $dy + $h > [winfo screenheight $top]} { set dy [expr {-$dy}] }
+  set nx [expr {$x + $dx}]
+  set ny [expr {$y + $dy}]
+  # ⚠ CLAMP THE FAR EDGES TOO, WITH A MARGIN. Flipping the direction above is not enough.
+  # The flip only asks "would stepping AWAY from the origin overflow"; it never checks the
+  # result, so on a window large relative to the screen the stepped-back position still
+  # hangs off. Measured on 1920x1080, a congruent 1200x800 pair at +600+600: the flip
+  # alone yields +200+334, bottom edge 1134 on a 1080-tall screen -- 54px past it. With
+  # the clamp, +200+216, bottom 1016. Row U4b.
+  #
+  # The margin also covers the decoration `wm geometry` does not report (it gives the
+  # CLIENT size, excluding the WM title bar) and keeps a grab-able strip on screen.
+  #
+  # ⚠ THIS IS NOT AN EXPLANATION OF THE VANISHING VIEWER, and an earlier revision of this
+  # comment wrongly claimed it was. The field case that prompted it -- viewer 1110x790 at
+  # +3930+665 on 5120x1440, bottom edge 1455 -- is a real overhang and this clamp is worth
+  # having, but the disappearance was measured afterwards to be a VcXsrv failure to create
+  # a native Windows window at all: the X server reported the window IsViewable while an
+  # EnumWindows sweep of the vcxsrv process found no window for it, and the fragment the
+  # user could see was exactly the geometric intersection with the schematic window, which
+  # tracked it when the X window was moved. Nothing here fixes that. Do not let this
+  # comment grow an explanation again.
+  set margin 64
+  set sw [winfo screenwidth $top]
+  set sh [winfo screenheight $top]
+  if {$nx + $w > $sw - $margin} { set nx [expr {$sw - $margin - $w}] }
+  if {$ny + $h > $sh - $margin} { set ny [expr {$sh - $margin - $h}] }
+  if {$nx < 0} { set nx 0 }
+  if {$ny < 0} { set ny 0 }
+  catch {wm geometry $top ${w}x${h}+${nx}+${ny}}
+  # ⚠ AND CHECK THAT IT STUCK. `wm geometry` is a REQUEST; the window manager answers
+  # in its own time and may decline -- which is exactly how this shove was lost for
+  # days, undone by the withdraw/deiconify re-map without anything noticing. So look
+  # again shortly. The re-check is just another uncover: if the shove held, the two
+  # windows are no longer congruent and it returns 0 and stops by itself. Bounded, so
+  # a WM that genuinely insists on this position is argued with twice, not forever.
+  if {$verify > 0} {
+    after 300 [list wviewer::uncover $top $from 1 [expr {$verify - 1}]]
+  }
+  return 1
+}
+
 proc wviewer::open {token} {
+  wviewer::diag "open-ENTER      token=$token"
   variable windows
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx; variable gridshow
@@ -1083,8 +1305,10 @@ proc wviewer::open {token} {
     if {[winfo exists $top]} {
       raise_activate_toplevel $top
       catch {focus $top}
+      wviewer::diag "open-REUSE      token=$token top=$top"
       return 1
     }
+    wviewer::diag "open-STALEENTRY token=$token top=$top registry had it, window gone"
     wviewer::forget $token   ;# window died without cleanup: stale entry
   }
   # fresh open (D4): real toplevel + untitled buffer in BOTH window models;
@@ -1112,6 +1336,21 @@ proc wviewer::open {token} {
       catch {xschem new_schematic switch $t.drw}
       if {[xschem get current_win_path] eq "$t.drw"} { set wp $t.drw; break }
     }
+  }
+  # ⚠ issue 0848: STEP OFF THE DESIGN WINDOW *BEFORE* ANYTHING IS PAINTED HERE.
+  #
+  # set_geom has just placed this window, and on a session whose `untitled.sch` slot
+  # holds the design window's own geometry that means placed exactly on top of it. Every
+  # graph drawn from here on is therefore drawn over the design window's real estate --
+  # and when the late uncover (after the raise, below) finally steps the viewer aside,
+  # it leaves those pixels behind on a window that then has to be told to repaint. Doing
+  # it now means there is nothing to leave behind. The late call stays, because a
+  # withdraw/deiconify re-map can still undo this one; it is the verification, not the
+  # first line of defence.
+  catch {
+    set _ft [expr {$before eq {.drw} ? {.} : [string range $before 0 end-4]}]
+    set _nt [expr {$wp eq {.drw} ? {.} : [string range $wp 0 end-4]}]
+    if {$_nt ne $_ft} { wviewer::uncover $_nt $_ft }
   }
   set tops1 [winfo children .]
   # ⚠ EVERYTHING BELOW STAMPS PER-CONTEXT C STATE, SO VERIFY THE CONTEXT FIRST
@@ -1164,6 +1403,20 @@ proc wviewer::open {token} {
   # every other context, and it is never cleared -- a viewer stays a viewer.
   catch {xschem set wave_viewer 1}
   dict set windows $token [dict create top $top win_path $wp]
+  # issue 0840: never land exactly on the window we were launched from. The registry
+  # entry above must come first so geom_key can already recognise $top.
+  #
+  # ⚠ THE SHOVE IS NOT DONE HERE ANY MORE, and that was the second reason it never
+  # worked. raise_activate_toplevel (further down, and unavoidable -- issue 0054's
+  # WSLg re-map) does `wm withdraw` + `wm deiconify`, and its own comment says the
+  # WM ignores the geometry it then re-requests "for client placement". A re-mapped
+  # window gets put back where the PROGRAM originally asked for it, which is the
+  # congruent spot set_geom chose. So a shove applied before that cycle is thrown
+  # away by it. Measured in the user's log.2: `viewer-open` (right after the raise)
+  # read the shoved +3676+406 out of Tk's request, and `viewer-open+` 700ms later
+  # read +3628+358 -- pixel-identical to the design window -- out of the WM's answer.
+  set _fromtop [expr {$before eq {.drw} ? {.} : [string range $before 0 end-4]}]
+  wviewer::diag "open-FRESH      token=$token top=$top from=$_fromtop"
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
   # D2 fixup: the editor TOOLBAR is a second editing-verb surface, reachable
@@ -1287,6 +1540,31 @@ proc wviewer::open {token} {
   # open_viewer, auto_plot, restore) — none want a viewer opening behind.
   raise_activate_toplevel $top
   catch {focus $top}
+  # issue 0840, after the re-map (see the note at the registry entry above): only now
+  # is the window in the place the WM has actually chosen, so only now can congruence
+  # be judged. uncover re-verifies its own work, because the WM may answer late.
+  catch {wviewer::uncover $top $_fromtop}
+  wviewer::diag "open-RETURN     token=$token top=$top"
+  # ⚠ AN UNCONDITIONAL CENSUS, twice, at the one moment that matters.
+  #
+  # The viewer-vs-design confusion is a race, and four sittings have now produced four
+  # different arrangements. The WVDIAG-gated trace above answers all of it -- and was
+  # switched off on every run that reproduced anything, because a diagnostic you must
+  # arm in advance is one you have not armed when the race finally goes your way. The
+  # user then has to remember to type `window_report` at exactly the right instant
+  # while the thing they are chasing is on screen. That is not a reasonable ask.
+  #
+  # So the viewer records its own arrival. Two lines of log, at the two instants that
+  # separate the competing explanations:
+  #   `viewer-open`  -- immediately: how many toplevels exist, and where. One window
+  #                     means the design canvas is painting viewer content (a repaint
+  #                     defect); two means the viewer is covering it (a placement one).
+  #   `viewer-open+` -- after the deferred uncover shove has had its chance to run, so
+  #                     the log says whether the anti-congruence step actually fired.
+  #                     Issue 0840's shove was dead for days precisely because nothing
+  #                     recorded whether it had happened.
+  catch {window_report viewer-open}
+  catch {after 700 {catch {window_report viewer-open+}}}
   return 1
 }
 
@@ -2542,11 +2820,27 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
 #     DB's type (draw.c:8194-8195), which for an analog current DB is `tran`, and
 #     the VCD switch then fails silently. Hence db_suffix refuses to emit a
 #     half-suffix.
-#  2. Both fields pass through Tcl `subst {…}` TWICE (draw.c:8191/8193, then
-#     again inside extra_rawfile, save.c:1649) and the sub-field separator set is
-#     "\n " — so a space TRUNCATES the path and turns the remainder into the
-#     sim_type, and `$` / `[` / `\` / unbalanced braces are live substitution
-#     syntax. `~` is NOT expanded. db_path_safe is that whole hazard list.
+#  2. Both fields are RESOLVED twice — once by node_token_split() and again
+#     inside extra_rawfile() — and the sub-field separator set is "\n ", so a
+#     space TRUNCATES the path and turns the remainder into the sim_type.
+#     `$` IS STILL LIVE: that resolution expands Tcl variables on purpose (the
+#     shipped `rawfile=$netlist_dir/...` corpus depends on it), so a literal `$`
+#     in a path still means something other than itself.
+#     `[` `]` `{` `}` `\` ARE NO LONGER SUBSTITUTION SYNTAX — issue 0812 replaced
+#     both `subst {…}` splices with a C byte scanner (util.c
+#     resolve_rawfile_path/expand_tcl_vars) that copies every byte it does not
+#     recognise as a `$name`. They stay on this reject list anyway, and the
+#     guard below is UNCHANGED: this proc is a conservative filter over a field
+#     that also has separator and tokenizer rules (3), the viewer never needs
+#     such a path, and a false reject costs a suffix while a false accept costs
+#     a silently mis-parsed field. `~/` IS expanded in this field: an earlier
+#     revision of this line said it was not, and that was wrong --
+#     node_token_split() (draw.c) resolves the `%` rawfile field with
+#     resolve_rawfile_path(), which calls expand_tilde() before extra_rawfile()
+#     ever sees it. `~` is not on the reject list below and does not need to be.
+#     Because the field is resolved TWICE, a variable whose VALUE contains a `$`
+#     expands on the second pass and the entry then keys off a path that a
+#     one-pass `xschem raw clear` cannot match — issue 0820.
 #  3. `%` itself is the field separator (find_nth(...,"%",...)), and `"` is the
 #     quote char of the tokenizer — neither can appear inside the value.
 #
@@ -2572,7 +2866,9 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
 proc wviewer::db_path_safe {s} {
   if {$s eq {}} { return 0 }
   # whitespace (field separator), % (field separator), " (tokenizer quote),
-  # backslash + $ + [ ] + braces (live through two rounds of `subst`)
+  # $ (still live: variable expansion, by design), and backslash + [ ] + braces,
+  # which stopped being substitution syntax with issue 0812 but stay rejected as
+  # a conservative filter — see rule 2 above.
   if {[regexp {[][{}%\"\\$[:space:]]} $s]} { return 0 }
   return 1
 }
@@ -14964,6 +15260,23 @@ proc wviewer::interp_value {var x} {
   set names [split [xschem raw list] "\n"]
   set sweep [lindex $names 0]
   set n [xschem raw points]
+  # ISSUE 0855, and the half of it that lives in Tcl. A simulation that is still
+  # RUNNING leaves a well-formed results file with NO POINTS IN IT YET -- ngspice
+  # writes the real count only when the run ends -- so the user who opens the
+  # waveform viewer mid-run and moves the cursor is asking about data that does
+  # not exist yet. The honest readout is nothing at all; a number here would be
+  # read as a measurement (RULING D5-1, INVARIANT I3).
+  #
+  # The boundary arms below are RULING D4-4's "hold, never extrapolate", and they
+  # are right for a cursor dragged off the end of a REAL sweep. They cannot tell
+  # that case from a sweep with no ends to hold, because nothing in this proc
+  # tested the point count -- that missing test is what issue 0855 names. Until
+  # issue 0861 the engine papered over it by answering an out-of-range point with
+  # the annotation cursor's value, which on an unpublished database is a zeroed
+  # array: the readout bar said 0 V for every trace for the whole duration of
+  # every run. The engine now says nothing there, correctly, so this proc must
+  # ask the question itself rather than do arithmetic on the blank.
+  if {$n <= 0} { return {} }
   set pos [xschem raw pos_at $sweep $x]
   if {$pos < 0} {
     set s0 [xschem raw value $sweep 0]

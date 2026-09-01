@@ -785,6 +785,17 @@ static int edit_text_property(int x)
         my_free(_ALLOC_ID_, &xctx->text[sel].floater_ptr);
         set_text_flags(&xctx->text[sel]);
       }
+      /* 0614: THE CLASS IS NOW A FUNCTION OF THE CONTENT, NOT ONLY OF prop_ptr.
+       * txt_ptr is replaced above under `text_changed` while set_text_flags() runs
+       * under `props_changed`, so a CONTENT-ONLY edit through this dialog used to
+       * leave the implicit annotation class computed from the OLD string -- a text
+       * the user just turned into `@spice_get_voltage` would not follow the mask
+       * until the file was reloaded. `xschem setprop text n txt_ptr`
+       * (scheduler.c) already re-runs it; this is the same repair for the one path
+       * a script cannot drive (it reads its new text out of a Tk widget). */
+      if(text_changed && !props_changed) {
+        set_text_flags(&xctx->text[sel]);
+      }
       if(text_changed || props_changed) {
         get_text_floater(sel); /* update xctx->text[sel].floater_ptr cache */
       }

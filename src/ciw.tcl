@@ -13,6 +13,350 @@
 ## evaluated at global scope; their result or error is shown in the pane only,
 ## never written to the file, so the file stays source-able (decision 7).
 
+# =============================================================================
+# xschem::notify -- THE ONE NOTIFICATION CHANNEL (issue 0650, rulings R-0653-a
+# .. R-0653-d, doc/claude/issues/0650-*.md and 0653-*.md)
+# =============================================================================
+# MEASURED 2026-08-23 on the user's own configuration: with the CIW closed, a
+# gate-off netlist reached ZERO visible sinks. `.statusbar.12` was {} before AND
+# after the notice, `.statusbar.1` was unchanged, no popup appeared, and the only
+# surviving trace was one `#! ` line in a log file nobody was reading. That is
+# issue 0648's report from the outside -- "I ticked the box, re-ran, and still
+# get no OP info" -- with no mention of any message, because there was none.
+#
+# ⚠ 0650's AND 0653's OWN MECHANISM SENTENCE IS FALSE, AND IT CHANGES THE FIX.
+# 0650's sink table says ciw_echo "No-ops silently when shut
+# (src/ciw.tcl:450)"; 0653 says "The CIW is a closable toplevel. Closed ->
+# silent no-op." Both are wrong. `wm protocol .ciw WM_DELETE_WINDOW
+# {wm withdraw .ciw}` (in ciw_create below) means a close WITHDRAWS: `.ciw` and
+# `.ciw.l.t` still EXIST, `winfo ismapped .ciw` is 0, and ciw_echo happily writes
+# into the invisible widget (measured: the pane text GREW). A fallback whose
+# condition is `winfo exists` is therefore dead code in EXACTLY the user's
+# situation, and it passes review. The predicate is `winfo ismapped` --
+# xschem::notify_ciw_visible below, pinned by PS17 in
+# tests/headless/test_ase_log_seam_0207.tcl.
+#
+# WHY THIS FILE (decision D1, ladder rung L2). ciw.tcl already owns two of the
+# four sinks (ciw_echo, and ciw_exec -- the entry field a printed remedy is
+# pasted into), it is already in the src/Makefile.in install list, and it is
+# sourced unconditionally in every mode including --nogui. A new src/notify.tcl
+# would force src/Makefile.in + ./configure + a rebuild on an otherwise pure-Tcl
+# step, and issue 0424 is the recorded startup SEGFAULT from getting that
+# ceremony wrong. REJECTED for the same reason: src/ase.tcl (the channel must
+# not live inside its first consumer).
+#
+# ⚠ CONSEQUENCE OF LIVING HERE: this file is sourced at src/xschem.tcl:14854,
+# AFTER ase.tcl (:14802), ase_window.tcl (:14804) and wave_viewer.tcl (:14806).
+# A SOURCE-TIME notify call from any of those files would fail. Runtime calls are
+# fine, which is all any consumer makes. (No Tcl home would help an xschemrc
+# either -- the rc is read before all of these; see the note at xschem.tcl:14795.)
+#
+# ⚠ AND THAT CONSEQUENCE HAD A SHARPER EDGE THAN THIS PARAGRAPH ADMITTED
+# (issue 0658): if THIS FILE fails to load, every consumer above loses the
+# channel entirely -- the durable log line included, which before 0650 was
+# inline in ase::echo and had no cross-file dependency at all. src/xschem.tcl
+# now defines a deliberately degraded BOOTSTRAP channel before :14796 (and
+# CATCHES the source at :14854, which used to be bare and SEGFAULTED startup),
+# so a dead ciw.tcl costs the visible sinks and nothing else. The durable-log
+# writer itself lives there too, as xschem::notify_log, and sink 2 below CALLS
+# it: one builder, two consumers (invariant I1).
+#
+# ⚠ DO NOT TEE INSIDE ciw_echo. It has ~190 direct call sites (wave_viewer 129,
+# xschem.tcl 35, ciw.tcl 13, ase.tcl 11, alt2_toggle_view 5, property_form 3,
+# cmdmode 2, calculator 1, action_registry 1) and it is also the sink the C
+# action-log mirror calls for lines ALREADY in the file. Teeing there would route
+# every one of them to the statusbar and DOUBLE every asserted notice count
+# (test_ase_locked_wire_pick_0160:175 and test_sod_pick_no_select_0204:138/295
+# assert `llength $::notices == 1`). Add a sink; do not reroute.
+
+namespace eval xschem {
+  ## the last notice, as a dict {tag msg line short menu command sinks}. THE
+  ## HEADLESS WITNESS: `sinks` lists only the sinks that ACTUALLY succeeded, so
+  ## "the statusbar was skipped" is a value rather than an absence of evidence.
+  ## Deliberately left UNSET until the first notice (the tests read
+  ## `info exists ::xschem::notify_last`).
+  variable notify_last
+  ## the generalised R-0653-c suppression latch: dict keyed on {subject state}.
+  variable notify_latch [dict create]
+}
+
+# R-0653-a: `ciw` (the shipped default) or `popup` (opt-in). `set_ne` so a user
+# rc that set it BEFORE this file was sourced still wins, and it is read at CALL
+# time (invariant I5) so setting it from the CIW entry field takes effect on the
+# very next notice with no restart.
+set_ne notify_style {ciw}
+
+# Is the CIW pane actually IN FRONT OF THE USER? Not `winfo exists` -- see the
+# refutation above. Under --nogui `winfo` itself is undefined; under --nolog
+# ciw_create is never called (xschem.tcl:16705), so `.ciw` does not exist.
+proc xschem::notify_ciw_visible {} {
+  if {![llength [info commands winfo]]} { return 0 }
+  if {![winfo exists .ciw]} { return 0 }
+  if {[catch {winfo ismapped .ciw} m]} { return 0 }
+  return [expr {$m ? 1 : 0}]
+}
+
+# THE SHORT-FORM BUDGET, one builder, two consumers (invariant I1: the sink and
+# the test that proves the budget).
+#
+# ⚠ `.statusbar.12` CLIPS SILENTLY. Measured twice on this box at
+# `wm geometry . 1000x800` with a live mouse readout in `.statusbar.1`: the
+# widget is allotted 199px and first clips at char 30, or 314px and first clips
+# at char 42, depending on what else is in the bar. Tk warns about NOTHING. 28 is
+# the floor of the two measurements. This is issue 0639's defect class (an
+# unbudgeted line into a fixed field) in a field an order of magnitude smaller;
+# the wall itself is recorded as issue 0654.
+#
+# An explicit -short wins when it fits. Newlines and tabs are collapsed to
+# spaces: a Tk label renders an embedded newline as a box glyph, not a break.
+proc xschem::notify_short {short msg} {
+  set s [expr {$short ne {} ? $short : $msg}]
+  set s [string map [list "\n" { } "\r" { } "\t" { }] $s]
+  if {[string length $s] <= 28} { return $s }
+  return "[string range $s 0 24]..."
+}
+
+# SINK 3, the can't-miss fallback: the drawing window's shared red status field.
+#
+# ⚠ ADDRESSED AS `[xschem get top_path].statusbar.12`, NEVER BARE. Both C writers
+# prefix xctx->top_path (hilight.c:2201 writes *BUSY* here; hilight.c:2305 CLEARS
+# it to {} unconditionally at the end of propagate_logic(), so a parked notice is
+# wiped by any digital propagation -- recorded in issue 0654). A bare
+# `.statusbar.12` posts to the MAIN window while the user works in `.x1`;
+# src/xschem.tcl:14146 already ships that bug for `.statusbar.7`. `xschem get
+# topwindow` returns "." and would build "..statusbar.12"; top_path is "" for the
+# main window, which is exactly what the C side prefixes.
+#
+# Returns 1 only when the text really landed, so notify's `sinks` cannot claim a
+# sink that was not there.
+proc xschem::notify_statusbar {short tag} {
+  if {![llength [info commands winfo]]} { return 0 }
+  if {[catch {xschem get top_path} tp]} { return 0 }
+  set w "$tp.statusbar.12"
+  if {![winfo exists $w]} { return 0 }
+  if {[catch {$w configure -text $short}]} { return 0 }
+  return 1
+}
+
+# SINK 4, opt-in (::notify_style popup): ONE reusable, NON-BLOCKING toplevel that
+# APPENDS and raises.
+#
+# ⚠ alert_ (src/xschem.tcl:11954) IS THE WRONG PRECEDENT. It uses a FIXED
+# `.alert` path and `tkwait window .alert`. ase::op_cards_capture emits up to SIX
+# notices inside ase::netlist inside Netlist-and-Run, so a modal would STALL THE
+# RUN and the second notice would raise `window name .alert already exists`. The
+# user asked for "dismissed with OK button or ESC button" -- never for blocking.
+proc xschem::notify_popup {line tag} {
+  if {![llength [info commands winfo]]} { return 0 }
+  if {[catch {
+    if {![winfo exists .xschem_notify]} {
+      toplevel .xschem_notify
+      wm title .xschem_notify {xschem notices}
+      text .xschem_notify.t -width 76 -height 8 -wrap word -state disabled \
+        -yscrollcommand {.xschem_notify.y set}
+      scrollbar .xschem_notify.y -command {.xschem_notify.t yview}
+      .xschem_notify.t tag configure error -foreground red
+      button .xschem_notify.ok -text OK -command {destroy .xschem_notify}
+      pack .xschem_notify.ok -side bottom -pady 4
+      pack .xschem_notify.y -side right -fill y
+      pack .xschem_notify.t -side top -fill both -expand yes
+      bind .xschem_notify <Escape> {destroy .xschem_notify}
+      wm protocol .xschem_notify WM_DELETE_WINDOW {destroy .xschem_notify}
+    } else {
+      catch {raise .xschem_notify}
+    }
+    .xschem_notify.t configure -state normal
+    .xschem_notify.t insert end "$line\n" $tag
+    .xschem_notify.t configure -state disabled
+    .xschem_notify.t see end
+  }]} { return 0 }
+  return 1
+}
+
+# --- R-0653-c: the generalised suppression latch -----------------------------
+# "Suppress an identical notice while the underlying state is unchanged; re-arm
+# when it changes." 0648's latch (ase::op_cards_nudge_ok) was keyed on the design
+# cellview; the ruling says GENERALISE it, do not write a second one, so the
+# STORAGE lives here and ase::op_cards_nudge_{ok,rearm,reset} became thin
+# wrappers over subject `opcards` -- keeping their names, their `::ase_op_card_nudge`
+# off switch and `op_cards_nudge_reset` as the test seam.
+#
+# Keyed on {subject state}, not on subject alone: a per-subject key would let
+# cellview A's nudge permanently eat cellview B's (F19n in test_ase_final).
+
+# 1 iff this (subject, state) may speak NOW -- and if so the turn is CONSUMED.
+proc xschem::notify_latch_ok {subject {state {}}} {
+  variable notify_latch
+  set k [list $subject $state]
+  if {[dict exists $notify_latch $k]} { return 0 }
+  dict set notify_latch $k 1
+  return 1
+}
+
+# Give exactly ONE (subject, state) its turn back. Idempotent, never raises, and
+# it is NOT notify_latch_reset -- an unconditional clear is 0636's
+# three-identical-lines-per-session defect.
+proc xschem::notify_latch_rearm {subject {state {}}} {
+  variable notify_latch
+  catch { dict unset notify_latch [list $subject $state] }
+  return
+}
+
+# Forget every state held for ONE subject. Subject-scoped deliberately: a reset
+# that freed every subject would let one subsystem's re-arm unsilence another's.
+proc xschem::notify_latch_reset {subject} {
+  variable notify_latch
+  foreach k [dict keys $notify_latch] {
+    if {[lindex $k 0] eq $subject} { dict unset notify_latch $k }
+  }
+  return
+}
+
+# The witness. Called on every notice that was not suppressed.
+proc xschem::notify_record {tag msg line short menu command sinks} {
+  variable notify_last
+  set notify_last [dict create tag $tag msg $msg line $line short $short \
+                               menu $menu command $command sinks $sinks]
+  return
+}
+
+# --- THE CHANNEL --------------------------------------------------------------
+#
+#   xschem::notify <msg> ?-tag {}|error? ?-short S? ?-menu M? ?-command C?
+#                        ?-once SUBJECT? ?-state KEY?
+#
+# Returns 1 when the notice was delivered, 0 when the latch suppressed it.
+#
+# THE FIRST TWO SINKS ARE ase::echo's BODY, MOVED VERBATIM, and that is
+# load-bearing in four separate ways (all four were measured, all four have rows):
+#   * the pane half runs FIRST and UNCONDITIONALLY, so an EMPTY message still
+#     echoes a blank line (the tests that capture ASE notices rename ::ciw_echo,
+#     and ase.tcl's own comment says the blank line is a contract);
+#   * an empty message logs NOTHING -- `xschem log_action -result` with a missing
+#     value fell through the dispatcher's argc gates and wrote the literal line
+#     `-result` into Xschem.log, aborting a replay `source`;
+#   * the trailing-backslash pad goes on the LOGGED copy ONLY (a `#= foo\` line
+#     continues onto the next one and swallows it on replay). The pane copy stays
+#     byte-identical to the argument;
+#   * ONE notify produces EXACTLY ONE ::ciw_echo call. A short form AND a long
+#     form to the pane would redden test_ase_locked_wire_pick_0160:175 and
+#     test_sod_pick_no_select_0204:138/295 from a distance.
+#
+# R-0653-d: -menu and -command are DISTINCT FIELDS, not prose baked into the
+# message. The rendered line carries both (the user reads one sentence) while the
+# witness keeps them separable, so a test can EXECUTE the command without parsing
+# the sentence -- which is the whole point, because `ciw_exec` runs
+# `uplevel #0 $cmd` and the printed string IS the contract.
+#
+# SUPPRESSION IS TOTAL, the log included. That contradicts 0650's sink table
+# ("log: always") and is deliberate (decision D7): it is byte-identical to
+# shipped behaviour -- op_cards_capture consults the latch BEFORE echoing
+# anything at all -- and the alternative would make `grep` on Xschem.log disagree
+# with what the user was told.
+proc xschem::notify {msg args} {
+  ## THE FIRST STATEMENT, and it must stay first (issues 0664/0665). `sinks` was
+  ## a LOCAL and died with any raise, so xschem::notify_safe had no way to know
+  ## what this call had already delivered and re-made the whole notice -- a
+  ## second durable line, and a "notices are LOG-ONLY from here on" claim
+  ## asserted while every sink below was alive. The record is
+  ## ::xschem::notify_progress, a NAMESPACE variable declared in src/xschem.tcl
+  ## (never here: the degraded state it serves is the one where this file is
+  ## absent), and `sinks` is now nothing but its snapshot -- ONE account of one
+  ## fact, invariant I1.
+  ##
+  ## ⚠ NOT DOWN WHERE `set sinks {}` USED TO SIT, after option parsing and after
+  ## the notify_latch_ok gate. A raise in EITHER of those would then leave the
+  ## PREVIOUS call's record standing, and notify_safe -- reading `log` from a
+  ## notice that succeeded minutes ago -- would skip a durable write that never
+  ## happened. That is a G1 regression wearing a 0665 fix (test_ase_core NT23).
+  set sinks [xschem::notify_mark_reset]
+  set tag {} ; set short {} ; set menu {} ; set command {}
+  set once {} ; set state {}
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -tag     { set tag $v }
+      -short   { set short $v }
+      -menu    { set menu $v }
+      -command { set command $v }
+      -once    { set once $v }
+      -state   { set state $v }
+      default  { return -code error "xschem::notify: unknown option '$o'" }
+    }
+  }
+  if {$once ne {}} {
+    if {![xschem::notify_latch_ok $once $state]} { return 0 }
+  }
+
+  ## the rendered sentence: message, then the remedy, in that order
+  set line $msg
+  if {$msg ne {}} {
+    if {$menu ne {}}    { append line " Fix: $menu." }
+    if {$command ne {}} { append line " CIW command: $command" }
+  }
+
+  ## SINK 1 -- the CIW pane. First, unconditional, catch'd, and resolved by NAME
+  ## at call time (that is the rename-able spy point every ASE suite stubs).
+  if {[info commands ::ciw_echo] ne {}} {
+    if {![catch {::ciw_echo $line $tag}]} { set sinks [xschem::notify_mark ciw] }
+  }
+
+  if {$msg eq {}} {
+    xschem::notify_record $tag $msg $line {} $menu $command $sinks
+    return 1
+  }
+
+  ## SINK 2 -- the action log FILE.
+  ##
+  ## ⚠ THE BODY NO LONGER LIVES HERE (issue 0658). It is `xschem::notify_log`,
+  ## defined in src/xschem.tcl BEFORE this file is sourced, because the degraded
+  ## bootstrap channel there must write the SAME durable line and invariant I1
+  ## forbids two builders of it: the trimright, the trailing-backslash pad, the
+  ## empty-message guard and 0657's actionlog_filename honesty gate would
+  ## otherwise exist twice, in two files, drifting silently. ONE builder, TWO
+  ## consumers -- this sink and the bootstrap. Everything the old comment here
+  ## recorded (the `#= `/`#! ` comment form, the replay landmines, why a closed
+  ## log cannot be detected from the return of `xschem log_action`) is on
+  ## notify_log itself.
+  if {[xschem::notify_log $line $tag]} { set sinks [xschem::notify_mark log] }
+
+  ## SINK 3/4 -- style-selected, and the style is read HERE, at call time (I5).
+  ##
+  ## ⚠ A WHITESPACE-ONLY MESSAGE STOPS HERE. ase::echo returned TWICE: once on
+  ## an empty argument and again AFTER `string trimright`. Moving the body here
+  ## kept the first return and narrowed the second to the log sink, so a message
+  ## that renders as nothing still reached sinks 3/4 -- and `configure -text` is
+  ## a REPLACE, not an append. Measured on :99: a parked notice, then
+  ## `xschem::notify "\n\n"`, left `.statusbar.12` reading '  '. The same hole
+  ## blanks a live *BUSY* (hilight.c:2201). Restore the second return for the Tk
+  ## sinks, which is what the moved body did. (Write-up pass, issue 0656.)
+  set style ciw
+  if {[info exists ::notify_style]} { set style $::notify_style }
+  set shortform [xschem::notify_short $short $msg]
+  if {[string trim $line] eq {}} {
+    xschem::notify_record $tag $msg $line $shortform $menu $command $sinks
+    return 1
+  }
+  if {$style eq {popup}} {
+    if {[xschem::notify_popup $line $tag]} { set sinks [xschem::notify_mark popup] }
+  } elseif {![xschem::notify_ciw_visible]} {
+    ## the CIW is not in front of the user -- withdrawn, iconified, never
+    ## created (--nolog), or absent (--nogui). Fall back to the drawing window's
+    ## status field. ⚠ THAT IS THE HONEST SCOPE OF "cannot be invisible": those
+    ## four states, and NOT occlusion (issue 0659). When the CIW IS mapped the
+    ## statusbar is left ALONE: it is shared with *BUSY* (hilight.c:2201) and
+    ## must not become ASE's private field.
+    ##
+    ## ⚠ STILL OPEN, and NOT fixed here: `winfo ismapped` is 1 for a CIW that
+    ## is open but STACKED BEHIND the design window, so that ordinary
+    ## arrangement still reaches zero visible sinks (issue 0659); the short form
+    ## carries no remedy and the field is last-writer-wins (issue 0660).
+    if {[xschem::notify_statusbar $shortform $tag]} { set sinks [xschem::notify_mark statusbar] }
+  }
+
+  xschem::notify_record $tag $msg $line $shortform $menu $command $sinks
+  return 1
+}
+
 ## Command history state (Up/Down in the entry). hist_pos == llength(history)
 ## means "on the live line"; the draft typed there is stashed in hist_pending
 ## by the first Up and restored when Down walks past the newest entry.
@@ -30,6 +374,44 @@ set ::ciw_subcommands {}
 ## the split is user-adjustable by dragging the sash (spec decision 9); the
 ## entry pane starts at its natural one-line height and stays fixed on window
 ## resize (the log pane takes the extra space).
+# ---------------------------------------------------------------------------
+# CIW text size.
+#
+# Both panes -- the log display and the command entry -- share ONE named Tk font,
+# and they share it for a timing reason, not a tidiness one: `ciw_create` runs from
+# xschem.tcl during startup, which is BEFORE a `--script` rc (cadence_style_rc and
+# friends) gets a chance to run. A size read out of a variable at build time would
+# therefore always be read too late for an rc to influence, and a literal
+# `{Monospace 10}` baked into the widget cannot be changed afterwards at all.
+# A NAMED font can: `font configure CiwFont -size N` reaches every widget using it,
+# whenever it happens.
+#
+# $::ciw_font_size (set_ne 10 in xschem.tcl) is the declared default; ciw_set_font_size
+# is the setter and works whether or not the CIW has been built yet.
+proc ciw_font {} {
+  if {![llength [info commands font]]} { return {Monospace 10} }
+  if {[lsearch -exact [font names] CiwFont] < 0} {
+    set sz 10
+    if {[info exists ::ciw_font_size]} { set sz $::ciw_font_size }
+    if {[catch {font create CiwFont -family Monospace -size $sz}]} { return {Monospace 10} }
+  }
+  return CiwFont
+}
+
+# Set the CIW text size for both panes. Order-independent: an rc may call this before
+# OR after ciw_create, so it records the value AND reconfigures a font that already
+# exists. Returns 1 if the size was accepted. Out-of-range values are REFUSED rather
+# than clamped -- a CIW rendered at size 1 or 300 is an unusable window, and silently
+# "fixing" a typo hides which value the rc actually asked for.
+proc ciw_set_font_size {size} {
+  if {![string is integer -strict $size] || $size < 4 || $size > 72} { return 0 }
+  set ::ciw_font_size $size
+  if {[llength [info commands font]] && [lsearch -exact [font names] CiwFont] >= 0} {
+    catch {font configure CiwFont -size $size}
+  }
+  return 1
+}
+
 proc ciw_create {} {
   if {[winfo exists .ciw]} {
     ## a bare `raise` is a no-op under Weston/WSLg (issue 0054): use the shared
@@ -61,7 +443,7 @@ proc ciw_create {} {
 
   # upper pane: read-only log display, fed by ciw_echo
   frame .ciw.l
-  text .ciw.l.t -width 80 -height 14 -font {Monospace 10} -state disabled \
+  text .ciw.l.t -width 80 -height 14 -font [ciw_font] -state disabled \
     -yscrollcommand {.ciw.l.yscroll set}
   scrollbar .ciw.l.yscroll -command {.ciw.l.t yview}
   .ciw.l.t tag configure input  -foreground blue
@@ -83,7 +465,7 @@ proc ciw_create {} {
   # and Return executes instead of inserting a newline ('break' stops the
   # class binding that would).
   frame .ciw.c
-  text .ciw.c.e -height 1 -font {Monospace 10} -wrap char -undo 1
+  text .ciw.c.e -height 1 -font [ciw_font] -wrap char -undo 1
   bind .ciw.c.e <Return>   {ciw_exec; break}
   bind .ciw.c.e <KP_Enter> {ciw_exec; break}
   ## shell-style line editing. 'break' everywhere: the Text class bindings

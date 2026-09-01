@@ -784,6 +784,65 @@ proc library_primary_defs_file {} {
   return {}
 }
 
+# Does this directory HOLD one of the library lists this session reads -- that
+# is, is it a registry ROOT rather than a library? Returns the list file's own
+# name ("library.defs", or "cds.lib" if that is what the user calls it), or "".
+#
+# Issue 0997. The first version of this check asked a DIFFERENT question from the
+# one the sentence it produces answers: it tested for a file literally named
+# "library.defs" in the directory, and then told the user that the folder holds
+# THEIR library list. The gap was reachable both ways.
+#   * $XSCHEM_LIBRARY_DEFS names a FILE and imposes no filename at all
+#     (library_explicit_defs_files above; this whole format is the Cadence
+#     cds.lib analog and people do call it cds.lib), so a registry root whose
+#     list is spelled anything else sailed straight through -- which is the
+#     user's original 0799 complaint, alive on the tree that fixed it.
+#   * A folder holding some OTHER setup's library.defs -- a checked-out PDK,
+#     another project's tree -- was told it holds "your" library list, a fact
+#     nobody had measured (D5-1).
+# Asking library_candidate_defs_files is asking the question the sentence
+# answers: it is the very list the write side appends to, so "the folder this
+# session's library list lives in" is exactly what it enumerates. The primary
+# defs file is always one of its entries, so this subsumes a bare $np-eq-$base
+# comparison and also catches the secondary roots that one would miss.
+# A separate proc for the same reason as library_dir_owner below: a mutation run
+# needs a callee it can no-op and the suite needs a handle it can unit-test.
+proc library_dir_listfile {dir} {
+  set n [file normalize $dir]
+  foreach f [library_candidate_defs_files] {
+    if {[file dirname [file normalize $f]] eq $n} { return [file tail $f] }
+  }
+  return {}
+}
+
+# Which registered library OWNS this directory -- its name, or "" if no library
+# has this directory as its own path.
+#
+# Issue 0799. BOTH sides of the comparison are normalized and neither normalize
+# is decoration: a reader would reasonably assume the registry already holds
+# tidy absolute paths, and it does not.
+#   * library_registry's auto-discovery block above stores the raw $pathlist
+#     string verbatim, so an entry spelled "<root>/./autolib" stays that way;
+#   * library_defs_parse_file normalizes a RELATIVE define path only -- an
+#     ABSOLUTE one is stored exactly as written, so a hand-edited
+#     "DEFINE libC /root/./libC" keeps its "/./".
+# It reads library_registry (the FULL registry) and deliberately NOT
+# library_defs_registry: with the default library_registry_defs_only 0 every
+# search-path directory is already a library the user can see in the Library
+# pane, and a check blind to those would be blind in the default setup. Under
+# the Cadence-style setup (src/cadence_style_rc sets library_registry_defs_only
+# to 1) the search path is not a library source, so the same directory honestly
+# has no owner there and naming it is the ordinary way to adopt it.
+# A separate proc rather than inline code, so a mutation run has a callee it can
+# no-op and the suite has a handle it can unit-test.
+proc library_dir_owner {dir} {
+  set n [file normalize $dir]
+  dict for {lname lpath} [library_registry] {
+    if {[file normalize $lpath] eq $n} { return $lname }
+  }
+  return {}
+}
+
 # Create and register a new library: make $path (default <defs-dir>/<name>) and
 # append "DEFINE <name> <path>" to the primary defs file (relative to the defs
 # dir when possible, per the cds.lib convention).
@@ -794,8 +853,66 @@ proc library_new {name {path {}}} {
   if {$defs eq {}} { error "no writable library.defs (set XSCHEM_LIBRARY_DEFS)" }
   set base [file dirname [file normalize $defs]]
   if {$path eq {}} { set path [file join $base $name] }
-  file mkdir $path
   set np [file normalize $path]
+
+  # --- the DIRECTORY checks (issue 0799) ------------------------------------
+  # A reader would assume the New-library form in front of this proc does the
+  # checking. It does not, and until 0799 nobody did: the three checks above
+  # look at the NAME and the REGISTRY and never at the PATH, so "New library"
+  # pointed at the folder that holds the library list, or at a folder that
+  # already IS a library, was accepted silently. That is how a DEFINE naming a
+  # git-tracked PDK root got written.
+  #
+  # These checks are STRUCTURAL -- properties of the DIRECTORY itself, true no
+  # matter who is asking or what is running -- so they live HERE, in the one
+  # choke point every New-library form calls, and every caller inherits them.
+  #
+  # A check that is a property of a RUN cannot move down here and must stay in
+  # its caller: "this is the std-cell library the import now open reads its
+  # symbols from" is true of a run, not of a directory. On the import branch
+  # those are vimport::create_library's four guards, grown for issue 0792
+  # D2/D3. There is no vimport on THIS branch -- src/library_manager.tcl is
+  # library_new's only caller here -- so that half is a decision recorded for
+  # whoever adds the second form, not a description of code you can go read.
+  #
+  # The last check is 0792 D2's hazard caught at its SOURCE: two DEFINEs
+  # pointing at one directory. The defence against that already existed in the
+  # CONSUMER (vimport::symbols_path, synthesis branch); this is the thing that
+  # manufactures the fixture.
+  #
+  # THREE situations, THREE sentences, because they are three different facts
+  # and only one of them may be stated as a fact about the user's own setup
+  # (D5-1, issue 0997): this IS the folder your list lives in / this folder
+  # holds a list that is not one of yours / this folder already has a name.
+  # All three are minted HERE and nowhere else (D5-4): callers render them
+  # verbatim rather than wording a second version.
+  #
+  # All of them run BEFORE the directory is created below, or a refused press
+  # would leave a stray empty folder behind.
+  #
+  # See doc/claude/issues/0799-new-library-accepts-a-folder-that-is-already-a-library-or-the-root-that-holds-them-all-and-registers-it-without-a-word.md
+  # STRUCTURAL TEST ROWS QUOTE THIS: tests/headless/test_lib_new_path_guards_0799.tcl
+  # strips the comments out of this proc body first (issue 0996 -- until it did,
+  # two rows were reading THIS NOTE and reporting on the checks, and stayed green
+  # on a tree with every check deleted), then greps the CODE that is left for
+  # "library_dir_listfile" and for "set owner [library_dir_owner" (row R8a) and
+  # for their order against the directory creation below (row R8d). Row R8c is
+  # the one row whose subject is this note, and it greps the raw body for the
+  # word "structural" and for "vimport::create_library". Rewording those away
+  # deletes the rows' subject; the split above is documentation, not decoration.
+  set listfile [library_dir_listfile $np]
+  if {$listfile ne {}} {
+    error "'$np' is the folder your library list lives in - the file '$listfile' in it is the list that says where all your libraries are - so it is the folder that HOLDS your libraries, not a library itself. Cells saved into it would land loose beside your real libraries instead of inside one. Pick one of the folders inside it, or leave the Directory box empty and a new folder will be made for you beside your main library list."
+  }
+  if {[file isfile [file join $np library.defs]]} {
+    error "'$np' holds a library list of its own - there is a library.defs file in it - so it is a folder that holds libraries, not a library itself. It is not one of the library lists this session is reading, so it belongs to some other setup. Cells saved into it would land loose beside those libraries instead of inside one. Pick one of the folders inside it, or a different folder."
+  }
+  set owner [library_dir_owner $np]
+  if {$owner ne {}} {
+    error "'$np' is already the library '$owner'. Giving one folder a second name means both names open the same files, so work you do under one name quietly turns up under the other. Pick a different folder, or use the library '$owner' you already have."
+  }
+
+  file mkdir $path
   set store $np
   if {[string equal -length [string length "$base/"] "$base/" $np]} {
     set store [string range $np [string length "$base/"] end]

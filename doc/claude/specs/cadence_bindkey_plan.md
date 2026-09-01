@@ -350,3 +350,41 @@ filed as [0412](../issues/0412-descend-symbol-ignores-descend-readonly.md).
 
 Covered by `tests/headless/test_cadence_descend_newwin_ro.tcl` (CY1–CY10, true headless) and
 `tests/headless/test_altf5_ciw.tcl` (CYT1–CYT3, live Tk).
+
+---
+
+## 10. Addendum, 2026-08-19 — the displaced `Ctrl-<digit>` layer chords
+
+The C default is **`Ctrl-<digit>` = select drawing layer `<digit>`**
+(`callback.c:7272`; the shared `case '6'..'9'` body acts **only** when
+`state == ControlMask`, so a *plain* digit and an *Alt* digit displace nothing).
+Three of those chords are now taken by the cadence profile, each overridden the
+same way — a `.drw` bind whose body ends in **`break`**, which is what stops the
+event reaching the C layer-select:
+
+| Chord | Now does | Bound at | Displaced verb still reachable as |
+|-------|----------|----------|-----------------------------------|
+| `Ctrl-2` | ASE plot mode | `src/cadence_style_rc:252` | Layers menu; `xschem set rectcolor 2` |
+| `Ctrl-4` | `ase::direct_plot_for_current` | `src/cadence_style_rc:264` | Layers menu; `xschem set rectcolor 4` |
+| `Ctrl-6` | `cadence::annot_mode none` (OP annotation OFF) | `src/cadence_style_rc` (S8) | Layers menu; `xschem set rectcolor 6` |
+
+**No layer-select verb is lost** — only its shortcut. `create_layers_menu` still
+lists every layer, and `xschem set rectcolor N` is the scriptable form.
+
+Two things worth knowing before adding a fourth:
+
+* **Tk matches a modifier *subset*.** Binding only `<Key-N>` makes `Ctrl-N` and
+  `Alt-N` fire it too. S8 measured this the hard way: with `<Control-Key-6>`
+  mis-spelled, `Ctrl-6` fell into the plain binding and the OFF key silently
+  meant ON. Spell out every chord you intend, and assert all of them in a test —
+  `Ctrl+Alt+N` falls into the `Alt` form, and `Shift-N` matches nothing
+  (the keysym is punctuation, e.g. `asciicircum` for Shift-6).
+* **These binds are invisible to `xschem bindings dump` and to
+  `keybindings.csv`**, so they cannot be remapped the way registered C actions
+  can — remapping means editing the rc line. That was the stated reason `Ctrl-5`
+  was moved into the C action registry (`src/cadence_style_rc:280-291`); whether
+  the S8 chords should follow it is the open question in
+  [0457](../issues/0457-annot-show-has-no-stock-affordance.md).
+
+The three OP-annotation chords are specified in
+[`op_annotation.md` §4.6](op_annotation.md); their body is `utils/annot_mode.tcl`.

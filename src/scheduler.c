@@ -246,12 +246,12 @@ static void xschem_cmd_help(int argc, const char **argv)
   done:
   my_strncpy(prog, tclresult(), S(prog));
   #ifdef __unix__
-  if(running_in_src_dir) {
-    tclvareval("launcher {", "file://", xschem_sharedir,
-               "/../doc/xschem_man/developer_info.html#cmdref", "} ", prog, NULL);
-  } else {
-    tclvareval("launcher {", "file://", xschem_sharedir,
-               "/../doc/xschem/xschem_man/developer_info.html#cmdref", "} ", prog, NULL);
+  {
+    char docurl[PATH_MAX + 100];
+    my_snprintf(docurl, S(docurl), "file://%s%s", xschem_sharedir ? xschem_sharedir : "",
+        running_in_src_dir ? "/../doc/xschem_man/developer_info.html#cmdref"
+                           : "/../doc/xschem/xschem_man/developer_info.html#cmdref");
+    tcl_call("launcher", docurl, prog, NULL);
   }
   #else
   my_snprintf(url2, S(url2), "file://%s#cmdref", url);
@@ -848,9 +848,14 @@ static int run_core(const char *verb, int argc, const char *argv[])
       Tcl_SetResult(interp, "xschem embed_rawfile needs a file argument", TCL_STATIC);
       return TCL_ERROR;
     }
-    my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-    tcleval(f);
-    my_strncpy(f, tclresult(), S(f));
+    /* issue 0812: `~/` is expanded in C. This used to be
+     * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+     * the path into a Tcl script inside a brace group -- a filename containing
+     * `}` closed the group and the rest of the name EXECUTED (measured).
+     * expand_tilde() (util.c) is the same transformation with nothing to
+     * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+     * brace-quoted word never did variable substitution either. */
+    expand_tilde(argv[2], f, (int)S(f));
     embed_rawfile(f);
     return TCL_OK;
   }
@@ -2326,6 +2331,48 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       return perform_action("align", argc, argv);
     }
 
+    /* annotate_at <time>
+     *   ISSUE 0868 -- annotate node voltages at a REQUESTED time point of the
+     *   loaded transient, with no cursor involved. Answers 1 when it annotated
+     *   and 0 when there was nothing to annotate against.
+     *
+     *   ⚠ THIS IS THE C HALF ONLY, AND IT TAKES A NUMBER. Which cursor supplies
+     *   that number is the user's rule -- "if there is only one cursor in the
+     *   waveform viewer's active tab, use that. If A and B are there, then use
+     *   cursor-A" -- and it lives in cadence::_annot_tran_cursor
+     *   (utils/annot_mode.tcl), because it has to ask the waveform viewer's
+     *   ACTIVE TAB, which is Tk state. Both of the user's entry points (the
+     *   ASE-L `Results > Annotate > Transient Node Voltages (at cursor)` item
+     *   and the `Alt-Shift-6` chord) go through cadence::annot_tran, which
+     *   resolves the cursor, calls this, arms ANNOT_SHOW_TRAN and mints the one
+     *   sentence (RULING D5-4).
+     *
+     *   ⚠ IT DOES NOT MOVE EITHER CURSOR. Reading a value at a time must not
+     *   drag the user's cursor B under their pointer; row V6 of
+     *   tests/headless/test_op_annot.tcl is the only guard on that.
+     *
+     *   ⚠ THE set_modify(-2) IS NOT OPTIONAL (guard G10). `@spice_get_voltage`
+     *   on every lab_pin / ipin / opin / vdd / probe text is a FLOATER, and
+     *   floaters render out of a cache that only this call refreshes -- both
+     *   `xschem set cursor2_x` arms carry it for the same reason. Without it the
+     *   published number is correct and the SHEET keeps painting the previous
+     *   one until something else dirties the cache, which is the invariant-I3
+     *   breach that got S9 attempt 1 reverted. Row V10 measures the FIRST frame
+     *   after this verb, with no redraw in between. */
+    else if(!strcmp(argv[1], "annotate_at"))
+    {
+      int floaters, rc;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem annotate_at <time>: missing time point", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      floaters = there_are_floaters();
+      rc = backannotate_at_time(atof_spice(argv[2]));
+      if(rc && floaters) set_modify(-2); /* refresh floater caches: see guard G10 above */
+      Tcl_SetResult(interp, rc ? "1" : "0", TCL_STATIC);
+    }
+
     /* annotate_op [raw_file] [level] [sim_type]
      *   Annotate operating point data into current schematic.
      *   use <schematic name>.raw or use supplied argument as raw file to open
@@ -2357,25 +2404,54 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* the file name is resolved BEFORE the D5 refusal below, because the
        * refusal asks the FILE what it is, not just the caller (RULING D5-6).
        *
-       * ⚠ AND IT IS RESOLVED IN C. This used to be
+       * ⚠ WHAT THIS LINE GUARANTEES, AND WHAT IT DOES NOT (issue 0812).
+       * An earlier version of this comment said the splice hazard was closed
+       * because the `~/` expansion had been moved out of
        *   my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
        *   tcleval(f);
-       * which splices a USER-SUPPLIED PATH into a Tcl script inside a brace
-       * group -- a path containing `}` closes the group early and the rest of
-       * the path EXECUTES (measured: a file named
-       *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
-       * set ::PWNED in the session). That hazard predates D5 and fires for
-       * every annotate_op, but D5's refusal now stands downstream of this line,
-       * so leaving it would mean the refusal path itself ran attacker text.
-       * A leading `~/` is all that regsub ever did; doing it with two
-       * my_snprintf branches is the same transformation with nothing to
-       * escape from. */
+       * into C. That was TRUE OF THIS LINE and FALSE OF THE PATH: the `f` it
+       * produces was handed, a few lines below, to extra_rawfile() (save.c),
+       * which resolved it by building the Tcl script `subst { <f> }` and
+       * evaluating it -- so a filename containing `}` still closed a brace
+       * group and still EXECUTED. Closed one frame up, open one frame down;
+       * that comment is why the defect survived review. It is not the only
+       * frame that had to change, and this note should not be read as a claim
+       * about any frame but its own.
+       *
+       * GUARANTEED NOW, and pinned by named checks rather than by prose:
+       *   - the leading `~/` is expanded HERE, in C, by expand_tilde()
+       *     (util.c) -- the same transformation the regsub performed, with
+       *     nothing to escape from;
+       *   - extra_rawfile() resolves what it receives with
+       *     resolve_rawfile_path() (util.c): a C byte scanner that expands
+       *     `$name` / `${name}` / `$ns::name` via Tcl_GetVar2Ex and copies
+       *     every other byte verbatim. No evaluator, and in particular NOT
+       *     `subst` under any flag combination -- the first attempt at this
+       *     fix used `subst -nobackslashes -nocommands` and was refuted by
+       *     `$a([exec touch X])`, whose command substitution runs inside the
+       *     variable's ARRAY INDEX;
+       *   - so `xschem annotate_op <file>` and `xschem annotate_op` with NO
+       *     ARGUMENT (the shipped menu entry, where the path is built from
+       *     netlist_dir and the cell name and nobody typed anything) do not
+       *     execute filename content. Checks AINJ1-AINJ4 in
+       *     tests/headless/test_op_annot.tcl, INJ1-INJ17 in
+       *     tests/headless/test_raw_read_dispatch.tcl.
+       *   - the three raw read verbs below expand the tilde too, so a `~/`
+       *     path handed on from here is expanded TWICE. Harmless by
+       *     construction: expand_tilde()'s output already starts with `/`, so
+       *     the second pass is the identity.
+       * NOT GUARANTEED by anything here: the other Tcl-splicing seams in the
+       * tree. The nine `regsub {^~/}` + tcleval() path splices outside the
+       * raw-file family (issue 0816) are now CLOSED -- all nine call
+       * expand_tilde() -- as are the three sym-path wrappers in src/actions.c
+       * (issue 0825) that two of those nine fed, and the Graph dialog's three
+       * `.sch` attribute reads in src/xschem.tcl (issues 0821 / 0822). The
+       * tclvareval() brace-group splices of file-derived strings (issue 0817)
+       * are STILL OPEN -- actions.c launcher, hilight.c's gaw copyvar,
+       * token.c sanitize, parselabel.c's modal -- and none of them is
+       * addressed by this line. */
       if(argc > 2) {
-        if(argv[2][0] == '~' && argv[2][1] == '/') {
-          my_snprintf(f, S(f), "%s/%s", home_dir, argv[2] + 2);
-        } else {
-          my_snprintf(f, S(f), "%s", argv[2]);
-        }
+        expand_tilde(argv[2], f, (int)S(f));
       } else {
         my_snprintf(f, S(f), "%s/%s.raw",  tclgetvar("netlist_dir"), get_cell(xctx->sch[xctx->currsch], 0));
       }
@@ -2406,7 +2482,22 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         return TCL_OK;
       }
 
-      tclsetboolvar("live_cursor2_backannotate", 1);
+      /* ISSUE 0864 -- NO FORCE-SET HERE, AND A READER WHO EXPECTS ONE SHOULD
+       * NOT PUT IT BACK. This arm used to open with
+       *   tclsetboolvar("live_cursor2_backannotate", 1);
+       * i.e. annotating silently re-ticked the shipped "Live annotate probes
+       * with 'b' cursor" checkbutton. The user's own words on that:
+       * "MUST ONLY HAPPEN WHEN USER REQUESTS IT!!" -- untick the box, press
+       * `6`, and the box came back ticked. It existed for one reason (upstream
+       * 89d847fb, "not showing data if Live annotation option was not set
+       * beforehand"): the switch was ALSO the first term of every render gate,
+       * so without it a fresh annotation drew nothing. 0864 removed the switch
+       * from those gates in both languages, so the reason is gone with it. An
+       * operation the user asked for must never re-enable a behaviour the user
+       * turned off. Rows A64-1/A64-3 watch the box across this arm; A64-2
+       * slices this arm and requires the variable's name to appear on no code
+       * line of it -- the slice strips C comments, which is why this paragraph
+       * may name it. */
       /* delete previously loaded OP */
       if(xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
          (!strcmp(xctx->raw->sim_type, "op") || !strcmp(xctx->raw->sim_type, "dc"))) {
@@ -2423,7 +2514,25 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           /* Xyce uses a 1-point DC transfer characteristic for operating point (OP) data */
           res = extra_rawfile(1, f, "dc", -1.0, -1.0);
         }
-        if(res != 1) { /* try to load a tran analysis (display 1stpoint as OP data in schematic) */
+        /* ISSUE 0856 -- THE TRANSIENT FALLBACK STAYS, AND THE REFUSAL MOVED
+         * ONE LEVEL DOWN. See update_op() in save.c.
+         *
+         * The user ruled 2026-08-26 that a transient must not be annotated,
+         * on the stated premise that nothing had been built for it. That
+         * premise is incomplete and the measurement is in issue 0856: cursor-
+         * driven transient annotation IS built (RULING D4, step S11) and is
+         * pinned by 23 rows, T0-T22, of tests/headless/test_op_annot.tcl -- a
+         * cursor at 3 ns on a 0..4 V ramp annotates 3 V, correctly. This line
+         * is that feature's ATTACH door; deleting it took the whole section
+         * down (20 rows red, measured) while the feature itself was untouched.
+         *
+         * So the transient still ATTACHES here, and update_op() below refuses
+         * to publish its point 0 as an operating point. Resting state on a
+         * freshly attached transient is now annot_p == -1 -- nothing shown --
+         * instead of t=0 wearing the label "operating point", which is the
+         * thing the user actually reported. Move a cursor and the real values
+         * at that time appear, exactly as before. */
+        if(res != 1) {
           res = extra_rawfile(1, f, "tran", -1.0, -1.0);
         }
       }
@@ -2662,7 +2771,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Tcl (src/library_defs.tcl). See doc/claude/code_analysis/library_manager_design.md. */
     else if(!strcmp(argv[1], "cellview_path"))
     {
-      if(argc > 3) tclvareval("cellview_path {", argv[2], "} {", argv[3], "}", NULL);
+      if(argc > 3) tcl_call("cellview_path", argv[2], argv[3], NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -2671,7 +2780,9 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   datafile). Backs the Library Manager tree (library-manager Phase 7a). */
     else if(!strcmp(argv[1], "cell_views"))
     {
-      if(argc > 3) tclvareval("cell_views {", argv[2], "} {", argv[3], "}", NULL);
+      /* issue 0831 -- the two words are argv DATA: passed as $:: globals, never
+       * concatenated. Same shape as cellview_path above (issue 0827). */
+      if(argc > 3) tcl_call("cell_views", argv[2], argv[3], NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -2689,7 +2800,8 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(has_x) {
         log_action("xschem create_instance");
         if(argc > 2) {
-          tclvareval("ciform::open {", argv[2], "}", NULL);
+          /* issue 0831 -- the lcv list is argv DATA (see tcl_call(), util.c). */
+          tcl_call("ciform::open", argv[2], NULL, NULL);
         } else {
           tcleval("ciform::open");
         }
@@ -2948,9 +3060,14 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       int ret = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         ret = compare_schematics(f);
       }
       else {
@@ -3200,51 +3317,76 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
-    /* descend [n] [notitle]
+    /* descend [-fallback] [n] [notitle]
      *   Descend into selected component instance. Optional number 'n' specifies the
      *   instance number to descend into for vector instances (default: 0).
      *   0 or 1: leftmost instance, 2: second leftmost instance, ...
      *  -1: rightmost instance,-2: second rightmost instance, ...
      *  if integer 'notitle' is given pass it to descend_schematic()
-     * descend -inst <name> [notitle]
+     * descend [-fallback] -inst <name> [notitle]
      *   name-addressed form: descend into the instance called <name> regardless of
      *   the current selection (selects it first). This is the replay-stable form
-     *   the action log records. doc/claude/specs/action_log_absorb.md */
+     *   the action log records. doc/claude/specs/action_log_absorb.md
+     *
+     * ISSUES 0979 / 1228 -- THE OPTIONAL LEADING FLAG, AND WHY IT IS OPT-IN.
+     * A copy on a sheet can carry its own `schematic=<file>` setting. When that file
+     * is not there, the right-click canvas item has always been able to offer the
+     * cell's own schematic instead -- it calls descend_schematic(0, 1, 1, 1). This
+     * verb could not: all three of its forms hardcoded 0, 0, so the toolbar button,
+     * the command palette row and the Cadence chords put a person ONE LEVEL DOWN on
+     * a blank page (xctx->currsch is incremented before the load) with no offer and
+     * no way back but Pop schematic.
+     * `-fallback` is the missing capability, and it is DELIBERATELY OPT-IN: without
+     * it every argument shape and every return value is byte-identical to what
+     * scripts have always seen -- tests/headless/test_op_annot.tcl W30a, the two
+     * hierarchical .save deck builders and the waveform cross-probe all read the 0
+     * and the load-failed token as a measured invariant. Row A7 of
+     * tests/headless/test_descend_doors_1228.tcl pins the bare form so a later crew
+     * meets an assertion rather than a surprise.
+     * fallback and alert move together on purpose: with the flag, this verb behaves
+     * exactly like the right-click canvas item, which is the one door that was
+     * always right. Any answer but Yes to the offer opens nothing (issue 1230). */
     else if(!strcmp(argv[1], "descend"))
     {
       int ret=0;
       int set_title = 1;
+      int fallback = 0;
+      int a = 2; /* first argument after the subcommand, past the optional flag */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > a && !strcmp(argv[a], "-fallback")) {
+        fallback = 1;
+        a++;
+      }
       if(xctx->semaphore == 0) {
-        if(argc > 2 && !strcmp(argv[2], "-inst")) {
-          /* descend -inst <name> [notitle]
+        if(argc > a && !strcmp(argv[a], "-inst")) {
+          /* descend [-fallback] -inst <name> [notitle]
            *   name-addressed, self-contained descend: resolve the instance by
            *   its instname, select it, then descend. This IS the coordinate-free
            *   replay form the action log emits (doc/claude/specs/action_log_absorb.md).
            *   Note: descend_schematic() logs its own outcome line, so no log here. */
           int inst;
-          if(argc < 4) {
+          if(argc < a + 2) {
             Tcl_SetResult(interp, "xschem descend -inst: instance name required", TCL_STATIC);
             return TCL_ERROR;
           }
-          if(argc > 4) set_title = atoi(argv[4]);
-          inst = get_instance(argv[3]);
+          if(argc > a + 2) set_title = atoi(argv[a + 2]);
+          inst = get_instance(argv[a + 1]);
           if(inst < 0) {
             Tcl_SetResult(interp, "xschem descend -inst: instance not found", TCL_STATIC);
             return TCL_ERROR;
           }
           unselect_all(1);
           select_element(inst, SELECTED, 1, 1);
-          ret = descend_schematic(0, 0, 0, set_title);
+          ret = descend_schematic(0, fallback, fallback, set_title);
         } else {
-          if(argc > 3 ) {
-            set_title = atoi(argv[3]);
+          if(argc > a + 1) {
+            set_title = atoi(argv[a + 1]);
           }
-          if(argc > 2) {
-            int n = atoi(argv[2]);
-            ret = descend_schematic(n, 0, 0, set_title);
+          if(argc > a) {
+            int n = atoi(argv[a]);
+            ret = descend_schematic(n, fallback, fallback, set_title);
           } else {
-            ret = descend_schematic(0, 0, 0, set_title);
+            ret = descend_schematic(0, fallback, fallback, set_title);
           }
         }
       } else {
@@ -3589,7 +3731,11 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!tclgetboolvar("tabbed_interface")) {
           int wc = get_window_count();
           dbg(1, "wc=%d\n", wc);
-          if(wc > 0 ) {
+          /* issue 0847: "another window exists" is not enough -- if every other window is
+           * a WAVEFORM VIEWER there is nothing to swap in, and swapping one in teleports
+           * the viewer's buffer into this window and destroys the viewer's own toplevel.
+           * Fall through to the clear/quit arm instead and leave the viewer alone. */
+          if(wc > 0 && first_swappable_ctx() >= 0) {
             if(!force && hierarchy_modified()) {
               tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""
                         "[get_cell [xschem get schname] 0]"
@@ -3632,7 +3778,9 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
         else {
           int wc = get_window_count();
           dbg(1, "wc=%d\n", wc);
-          if(wc > 0 ) {
+          /* issue 0847, tabbed twin of the guard above. This is the arm the Cadence
+           * workarea actually takes (tabbed_interface defaults to 1). */
+          if(wc > 0 && first_swappable_ctx() >= 0) {
             if(has_x && !force && hierarchy_modified()) {
               tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""
                         "[get_cell [xschem get schname] 0]"
@@ -4121,6 +4269,54 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           case 'a':
           if(!strcmp(argv[2], "actionlog_filename")) { /* path of the open action log, empty if disabled */
             Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
+          }
+          /* (xschem get annot_show) annotation-class visibility mask: bit0 device OP
+           * info -- hide=op AND content-classified branch currents (issue 0678) --
+           * bit1 node voltages (hide=voltage and content-classified node voltages).
+           * See the shared text visibility predicate in actions.c and the grouping in
+           * annot_class_mask beside it, and doc/claude/specs/op_annotation.md. */
+          else if(!strcmp(argv[2], "annot_show")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->annot_show), TCL_VOLATILE);
+          }
+          /* (xschem get annot_root) issue 0688: the ROOT schematic the annotation
+           * mask was armed for, or "" when the mask is off or was never armed
+           * through `xschem set annot_show` (an xschemrc `set annot_show` is not
+           * stamped -- decision D2). This is the witness for "the mask belongs to
+           * the loaded sheet": nothing else a script can read distinguishes an
+           * armed-here mask from one left over from another cellview. */
+          else if(!strcmp(argv[2], "annot_root")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->annot_root ? xctx->annot_root : "", TCL_VOLATILE);
+          }
+          /* (xschem get annot_voltage_layer) the layer a CONTENT-classified node
+           * voltage renders in, overriding the text's own layer= (issue 0615).
+           * Default 9. Out of [1, cadlayers) means no override. See the shared
+           * annotation-colour helper in actions.c. */
+          else if(!strcmp(argv[2], "annot_voltage_layer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->annot_voltage_layer), TCL_VOLATILE);
+          }
+          /* (xschem get annot_overlay_count) monotonic count of OP-annotation
+           * blocks the shared reader approved (S9). draw()'s entire body is inside
+           * if(has_x), so this is the only seam a headless or scripted check can
+           * use to see the screen call site at all. Mirrors `get drawcount`. */
+          else if(!strcmp(argv[2], "annot_overlay_count")) {
+            char b[32];
+            my_snprintf(b, S(b), "%u", annot_overlay_count);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
+          /* (xschem get annot_overlay_flushes) monotonic count of WHOLESALE
+           * OP-annotation cache flushes (S9b). The COMPANION of the count seam
+           * above and not a duplicate of it: `annot_overlay_count` proves blocks
+           * were RENDERED, this proves they were not rebuilt from scratch every
+           * frame. Without it "invalidate correctly" and "delete the cache" are
+           * indistinguishable to every check in the suite, and the measured
+           * per-frame cost of the second regresses silently. */
+          else if(!strcmp(argv[2], "annot_overlay_flushes")) {
+            char b[32];
+            my_snprintf(b, S(b), "%u", annot_overlay_flushes);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
           }
           /* the sibling of `get rects` / `get lines` / `get polygons`, which existed;
            * `get arcs` did not, so a Tcl caller asking for an arc count got the empty
@@ -5436,8 +5632,14 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       n = xctx->sel_array[0].n;
       /* delegate the lib/cell/view reverse-map to Tcl, passing the instance's
-       * symbol reference (resolved to an abs path Tcl-side via abs_sym_path). */
-      tclvareval("library_inst_lcv {", xctx->inst[n].name, "}", NULL);
+       * symbol reference (resolved to an abs path Tcl-side via abs_sym_path).
+       * issue 0831 -- inst[].name is a symbol reference read straight out of the
+       * .sch, i.e. DATA. tcl_call() passes it as a $:: global so a `}` in it is a
+       * brace, not a script terminator. tcl_call() RETURNS tclresult() and runs
+       * nothing after tcleval(), so the empty-result test below -- the only thing
+       * separating "not in a Cadence library" from a hit -- is unchanged. Do not
+       * insert anything between this call and that test. */
+      tcl_call("library_inst_lcv", xctx->inst[n].name, NULL, NULL);
       if(tclresult()[0] == '\0') {
         Tcl_SetResult(interp,
           "xschem get_inst_lcv: selected instance is not in a Cadence library", TCL_STATIC);
@@ -5697,7 +5899,12 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             return TCL_ERROR;
           }
         }
-        if( xctx->inst[inst].ptr >= 0  && sym == -1) {
+        /* ISSUE 1231. On the `get_sch_from_sym -1 <symbol>` path inst is still -1,
+         * and this line subscripted xctx->inst[-1] before the && could help --
+         * an out-of-bounds read on every single call of the symbol form. Harmless
+         * today only because the value read is thrown away when sym is already
+         * set; a reader would otherwise assume the sym == -1 test guards it. */
+        if(inst >= 0 && xctx->inst[inst].ptr >= 0  && sym == -1) {
           sym = xctx->inst[inst].ptr;
         }
         if(sym >= 0) get_sch_from_sym(filename, sym + xctx->sym, inst, 0);
@@ -5807,6 +6014,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
         my_snprintf(res, S(res), "lcc[%d].prop_ptr=%s\n", i, p);
         Tcl_AppendResult(interp, res, NULL);
         my_snprintf(res, S(res), "lcc[%d].templ=%s\n", i, t);
+        Tcl_AppendResult(interp, res, NULL);
+        /* ISSUE 1201: 1 when the netlister gives the instance this level was
+         * entered through a cell body of its own, so its own settings are in
+         * the deck. op_annot::model_netlist (GUARD GB) reads it to name a
+         * device the way the simulator named it. */
+        my_snprintf(res, S(res), "lcc[%d].auto_spec=%d\n", i,
+                    xctx->hier_attr[i].auto_spec);
         Tcl_AppendResult(interp, res, NULL);
 
       }
@@ -6014,9 +6228,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!strcmp(argv[2], "add") && argc > 5) {
         int delta = (argc > 6 && !strcmp(argv[6], "-delta"));
         int num = graph_marker_create(atoi(argv[3]), atof(argv[4]), atof(argv[5]), delta);
-        /* reset on refusal too: the engine's extra_rawfile() does a tclvareval
-         * internally and leaves the substituted filename in the interp result,
-         * so "" is only really "" if we clear it here */
+        /* reset on refusal too: a deeper call may have left something in the
+         * interp result, so "" is only really "" if we clear it here.
+         * (Until issue 0812 the something was extra_rawfile()'s own
+         * `subst { <file> }`, which left the substituted filename there. That
+         * tclvareval is gone -- the path is resolved in C now and the result is
+         * not touched -- but the reset stays: it costs nothing and this arm
+         * must not inherit ANY callee's leftovers.) */
         if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
         else Tcl_ResetResult(interp);
       }
@@ -7522,14 +7740,30 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           my_strncpy(f, tcleval("get_lastclosed"), S(f));
           i--;
           lastclosed = 0;
+          /* issue 0839: the resolver answering "nothing to reopen" is a NO-OP,
+           * not a load of the empty path. Falling through used to reach
+           * load_schematic() with f="" -- abs_sym_path("") does not stop it and
+           * the two f[0] tests below only skip the open-probe and the
+           * already-open warning -- and then handed that "" to
+           * update_recent_file, which PERSISTED it into
+           * $USER_CONF_DIR/recent_files, where it broke every subsequent
+           * Ctrl+Shift+O. get_lastopened's guard makes an already-poisoned list
+           * inert; this one stops the empty load itself. */
+          if(!f[0]) break;
         } else if(lastopened) {
           my_strncpy(f, tcleval("get_lastopened"), S(f));
           i--;
           lastopened = 0;
+          if(!f[0]) break;                                     /* issue 0839, as above */
         } else {
-          my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[i], home_dir);
-          tcleval(f);
-          my_strncpy(f, tclresult(), S(f));
+          /* issue 0816: `~/` is expanded in C. This used to be
+           * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+           * the path into a Tcl script inside a brace group -- a path containing
+           * `}` closed the group and the rest of it EXECUTED (measured on this
+           * verb). expand_tilde() (util.c) is the same transformation with nothing
+           * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+           * brace-quoted word never did variable substitution either. */
+          expand_tilde(argv[i], f, (int)S(f));
         }
         /* route_newwin: not clobbering the current window, so never prompt to save it.
          * target_done: the -window target's save prompt was already handled above. */
@@ -7551,7 +7785,9 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             FILE *probe = my_fopen(f, fopen_read_mode);
             if(probe) fclose(probe);
             else {
-              if(has_x) tclvareval("alert_ {Unable to open file: ", f, "}", NULL);
+              char amsg[PATH_MAX + 100];
+              my_snprintf(amsg, S(amsg), "Unable to open file: %s", f);
+              if(has_x) tcl_call("alert_", amsg, NULL, NULL);
               else dbg(0, "xschem load -gui: unable to open file: %s\n", f);
               skip = 1;
             }
@@ -7559,11 +7795,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!force && !skip && f[0] && check_loaded(f, win_path) &&
               xctx->current_win_path && strcmp(win_path, xctx->current_win_path)) {
             char msg[PATH_MAX + 100];
-            my_snprintf(msg, S(msg),
-               "tk_messageBox -type okcancel -icon warning -parent [xschem get topwindow] "
-               "-message {Warning: %s already open.}", f);
+            my_snprintf(msg, S(msg), "Warning: %s already open.", f);
             if(has_x) {
-              tcleval(msg);
+              tcl_call("tk_messageBox -type okcancel -icon warning "
+                       "-parent [xschem get topwindow] -message", msg, NULL, NULL);
               if(strcmp(tclresult(), "ok")) skip = 1;
             }
             else dbg(0, "xschem load: %s already open: %s\n", f, win_path);
@@ -7594,7 +7829,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
               int dr = nofullzoom * 2 + !nodraw;
               ret = new_schematic("create", "noconfirm", f, dr);
               if(undo_reset) {
-                tclvareval("update_recent_file {", f, "}", NULL);
+                tcl_call("update_recent_file", f, NULL, NULL);
               }
             } else {
               first_loaded = 1;
@@ -7606,7 +7841,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
               if(!force && has_x && tcl_braceable(f)) log_action("xschem load {%s}", f);
               dbg(1, "xschem load: f=%s, ret=%d\n", f, ret);
               if(undo_reset) {
-                tclvareval("update_recent_file {", f, "}", NULL);
+                tcl_call("update_recent_file", f, NULL, NULL);
                 my_strdup(_ALLOC_ID_, &xctx->sch_path[xctx->currsch], ".");
                 if(xctx->portmap[xctx->currsch].table) str_hash_free(&xctx->portmap[xctx->currsch]);
                 str_hash_init(&xctx->portmap[xctx->currsch], HASHSIZE);
@@ -7622,7 +7857,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
                * in GUI + interactive mode -- never on scripted/replay loads or headless.
                * doc/claude/specs/descend_hierarchy_in_memory.md (B8) */
               if(!force && has_x) {
-                tclvareval("xschem_recover_backup {", xctx->sch[xctx->currsch], "}", NULL);
+                tcl_call("xschem_recover_backup", xctx->sch[xctx->currsch], NULL, NULL);
               }
             }
           }
@@ -7632,9 +7867,23 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
        * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
        * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */
-      if(readonly_open && first_loaded && !xctx->readonly) {
-        xctx->readonly = 1;
-        set_modify(-1); /* refresh window title to show the read-only marker */
+      if(readonly_open && first_loaded) {
+        if(!xctx->readonly) {
+          xctx->readonly = 1;
+          set_modify(-1); /* refresh window title to show the read-only marker */
+        }
+        /* issue 0845 (the user's ruling, 2026-08-26): the read-only default is CORRECT --
+         * its silence was not. The window title was the only surface that said so, and a
+         * title bar is the one thing nobody reads; a whole netlist/run/annotate session
+         * went by on a read-only design before an action-log trace found it. Say it out
+         * loud through the house notify channel (CIW + durable log + statusbar short form).
+         *
+         * `!force` == an interactive -gui open: the three doors. A scripted load or an
+         * action-log replay must stay silent. Placed OUTSIDE the !xctx->readonly branch on
+         * purpose, so a NON-WRITABLE file reopened through one of these doors -- already
+         * read-only from save.c's file-protection fallback, so the block above is a no-op
+         * -- is announced too. It is the same surprise either way. */
+        if(!force) tcl_call("reopen_readonly_notice", xctx->sch[xctx->currsch], NULL, NULL);
       }
       Tcl_SetResult(interp, xctx->sch[xctx->currsch], TCL_STATIC);
     }
@@ -7679,14 +7928,33 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           } else if(!strcmp(argv[i], "-lastclosed")) {
             my_strncpy(f, tcleval("get_lastclosed"), S(f));
             reopen = 1;
+            /* issue 0839: nothing to reopen -> do nothing. Without this the
+             * empty f falls past the `if(f[0])` below into its else arm, which
+             * creates a BLANK untitled window -- so "reopen my last file" with
+             * an exhausted list answered with an empty editor. */
+            if(!f[0]) continue;
           } else if(!strcmp(argv[i], "-lastopened")) {
             my_strncpy(f, tcleval("get_lastopened"), S(f));
             reopen = 1;
+            if(!f[0]) continue;                                /* issue 0839, as above */
           } else if(!is_from_web(argv[i])) {
-            my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[i], home_dir);
-            tcleval(f);
+            char t[PATH_MAX + 100];   /* C89: declaration at the top of this block */
+            /* issue 0816: `~/` is expanded in C. This used to be
+             * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+             * the path into a Tcl script inside a brace group -- a path containing
+             * `}` closed the group and the rest of it EXECUTED (measured on this
+             * verb). expand_tilde() (util.c) is the same transformation with nothing
+             * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+             * brace-quoted word never did variable substitution either. */
+            /* ⚠ expand_tilde() closes the regsub splice, NOT the one inside
+             * abs_sym_path() (src/actions.c), which used to splice its own
+             * argument into `abs_sym_path {%s} {%s}` -- so this verb stayed
+             * exploitable until issue 0825 fixed that wrapper too. Two frames,
+             * both had to change; see the 0812 note at the annotate_op branch
+             * for the same lesson learned the expensive way. */
+            expand_tilde(argv[i], t, (int)S(t));
             /* tclvareval("file normalize {", tclresult(), "}", NULL); */
-            my_strncpy(f, abs_sym_path(tclresult(), ""), S(f));
+            my_strncpy(f, abs_sym_path(t, ""), S(f));
           } else {
             my_strncpy(f, argv[i], S(f));
           }
@@ -7708,7 +7976,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             * path can't corrupt the load command (issue 0022). */
            if(is_pristine_untitled() && tcl_braceable(f)) tclvareval("xschem load {", f, "}", NULL);
            else new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
-           tclvareval("update_recent_file {", f, "}", NULL);
+           tcl_call("update_recent_file", f, NULL, NULL);
            /* a reopen-shortcut new-window open is read mode by default, like the in-window reopen */
            if(reopen && xctx && !xctx->readonly) { xctx->readonly = 1; set_modify(-1); }
           } else {
@@ -7732,7 +8000,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
            /* action-log (file-menu plan): dialog-resolved new-window open;
             * the with-filename arm above is the replay form and stays silent */
            if(tcl_braceable(f)) log_action("xschem load_new_window {%s}", f);
-           tclvareval("update_recent_file {", f, "}", NULL);
+           tcl_call("update_recent_file", f, NULL, NULL);
           } else {
             new_schematic("create", NULL, NULL, 1);
           }
@@ -7751,9 +8019,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         char f[PATH_MAX + 100];
         FILE *fp;
 
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         fp = fopen(f, "w");
         if(fp) errfp = fp;
         else dbg(0, "xschem log: problems opening file %s\n", f);
@@ -7950,7 +8223,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Absolute path of the named library, or "" if it is not defined. */
     else if(!strcmp(argv[1], "library"))
     {
-      if(argc > 2) tclvareval("library_resolve {", argv[2], "}", NULL);
+      /* issue 0831 -- the library name is argv DATA (see tcl_call(), util.c). */
+      if(argc > 2) tcl_call("library_resolve", argv[2], NULL, NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -7959,7 +8233,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Backs the Library Manager tree (library-manager Phase 7a). */
     else if(!strcmp(argv[1], "lib_cells"))
     {
-      if(argc > 2) tclvareval("library_cells {", argv[2], "}", NULL);
+      /* issue 0831 -- the library name is argv DATA (see tcl_call(), util.c). */
+      if(argc > 2) tcl_call("library_cells", argv[2], NULL, NULL);
       else Tcl_ResetResult(interp);
     }
 
@@ -7979,7 +8254,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
          * list arg -- brace it, matching the adjacent libmgr::open call. */
         if(argc > 2) {
           log_action("xschem library_manager {%s}", argv[2]);
-          tclvareval("libmgr::open {", argv[2], "}", NULL);
+          /* issue 0831 -- the lcv list is argv DATA (see tcl_call(), util.c). */
+          tcl_call("libmgr::open", argv[2], NULL, NULL);
         } else {
           log_action("xschem library_manager");
           tcleval("libmgr::open");
@@ -8048,9 +8324,14 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
         merge_file(0, "");  /* 2nd param not used for merge 25122002 */
       }
       else {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         merge_file(0, f);
       }
       Tcl_ResetResult(interp);
@@ -8766,8 +9047,7 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(erc == 0) tclsetvar("show_infowindow_after_netlist", "never");
       if(fname) {
         my_strncpy(xctx->netlist_name, get_cell_w_ext(fname, 0), S(xctx->netlist_name));
-        tclvareval("file dirname ", fname, NULL);
-        path = tclresult();
+        path = tcl_call("file dirname", fname, NULL, NULL);
         if(strchr(fname, '/')) {
           set_netlist_dir(1, path);
         }
@@ -8905,9 +9185,14 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
         char f[PATH_MAX + 100];
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         new_xschem_process(f, 0);
       } else new_xschem_process("", 0);
       Tcl_ResetResult(interp);
@@ -8944,9 +9229,18 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
         else if(argc == 4) r = new_schematic(argv[2], argv[3], NULL, 1);
         else if(argc >= 5) {
           char f[PATH_MAX + 100];
-          my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[4], home_dir);
-          tcleval(f);
-          my_strncpy(f, abs_sym_path(tclresult(), ""), S(f));
+          char t[PATH_MAX + 100];   /* C89: declaration at the top of this block */
+          /* issue 0816: `~/` is expanded in C. This used to be
+           * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+           * the path into a Tcl script inside a brace group -- a path containing
+           * `}` closed the group and the rest of it EXECUTED (measured on this
+           * verb). expand_tilde() (util.c) is the same transformation with nothing
+           * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+           * brace-quoted word never did variable substitution either. */
+          /* ⚠ same two-frame caveat as the `load_new_window` branch: the
+           * splice inside abs_sym_path() itself is issue 0825, not this line. */
+          expand_tilde(argv[4], t, (int)S(t));
+          my_strncpy(f, abs_sym_path(t, ""), S(f));
           r = new_schematic(argv[2], argv[3], f, dr);
         }
         my_snprintf(s, S(s), "%d", r);
@@ -9571,8 +9865,25 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
-        tclvareval("set INITIALINSTDIR [file dirname {",
-             abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""), "}]", NULL);
+        /* issue 0831 -- the symbol reference is .sch DATA and the old splice sat inside
+         * a `[file dirname {...}]` COMMAND SUBSTITUTION, so a `}` or a `[` in it was
+         * script (issues 0827 + 0829 at one site). The substitution is deleted outright:
+         * the dirname is taken by tcl_call() and the result assigned with tclsetvar(),
+         * which is Tcl_SetVar/TCL_GLOBAL_ONLY -- exactly what the old global-level `set`
+         * did. abs_sym_path() returns tclresult() and tcl_call()'s tclsetvar() writes
+         * through the interpreter, invalidating it, so each result is copied out before
+         * the next call (the token.c sanitize() rule, util.c:1122). Heap copies, not a
+         * fixed buffer: a symbol reference has no length bound and a bounded copy would
+         * truncate silently. NB tcl_hook2() still evaluates a `tcleval(`-prefixed name
+         * here -- that is by design (issue 0823) and no conversion changes it. */
+        char *symref = NULL;
+        char *instdir = NULL;
+        my_strdup2(_ALLOC_ID_, &symref,
+             abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""));
+        my_strdup2(_ALLOC_ID_, &instdir, tcl_call("file dirname", symref, NULL, NULL));
+        tclsetvar("INITIALINSTDIR", instdir);
+        my_free(_ALLOC_ID_, &symref);
+        my_free(_ALLOC_ID_, &instdir);
       }
       xctx->mx_double_save = xctx->mousex_snap;
       xctx->my_double_save = xctx->mousey_snap;
@@ -9747,9 +10058,14 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       else if(argc == 4) res = preview_window(argv[2], argv[3], NULL);
       else if(argc == 5) {
         char f[PATH_MAX + 100];
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[4], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[4], f, (int)S(f));
         res = preview_window(argv[2], argv[3], f);
       }
       Tcl_SetResult(interp, my_itoa(res), TCL_VOLATILE);
@@ -9784,9 +10100,13 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* P6: the svg/ps export paths (svg_draw_symbol/ps_draw_symbol) don't go through draw(),
        * so refresh the pin-name visibility cache here (png uses the screen draw() path). */
       pin_names_sync_cache();
+      /* S7: same reason -- the annotation-class mask is a cache and the export back ends
+       * never refresh it. Without this the FIRST export after any Tcl-side change renders
+       * with the previous value, which is the measured show_hidden_texts defect (0453). */
+      annot_show_sync_cache();
       if(argc > 3) {
-        tclvareval("file normalize {", argv[3], "}", NULL);
-        my_strncpy(xctx->plotfile, Tcl_GetStringResult(interp), S(xctx->plotfile));
+        my_strncpy(xctx->plotfile, tcl_call("file normalize", argv[3], NULL, NULL),
+                   S(xctx->plotfile));
       }
       if(!strcmp(argv[2], "pdf") || !strcmp(argv[2],"ps") || !strcmp(argv[2],"eps")) {
         double save_lw = xctx->lw;
@@ -10638,7 +10958,37 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
                       raw->annot_sweep_idx);
           Tcl_SetResult(interp, s, TCL_VOLATILE);
         }
-        /* xschem raw value v(ldcp) 123 */
+        /* xschem raw value v(ldcp) 123
+         *   With a point number in range this is DATA INSPECTION: it reads that
+         *   point straight out of the database and is answerable whether or not
+         *   an annotation was ever published. With a negative point it is the
+         *   ANNOTATION read -- "what does this node say where the cursor is" --
+         *   and falls through to the cursor values below.
+         *
+         * ISSUE 0861 -- THE FALL-THROUGH IS THE SAME UNGUARDED READ AS
+         * token.c's spice_get_node(), one accessor over, and this is the face
+         * op_annot::raw_or_blank answers through. cursor_b_val is my_calloc'd
+         * and update_op() returns before filling it whenever it declines to
+         * publish, so without an annot_p term this verb reported a confident 0
+         * for a node whose value nothing had measured. RULING D5-4 says the
+         * rendered schematic text and this verb are one sentence with one
+         * answer, so the two guards are deliberately identical.
+         *
+         * ⚠ THE TERM BELONGS ON THIS ARM ALONE, NOT ON THE ENCLOSING
+         * `if(idx >= 0)`. Lifting it one level would also refuse the in-range
+         * numbered-point read above, which is data inspection and must stay
+         * live while an annotation is refused -- test_raw_read_dispatch,
+         * test_vcd_read, test_del_negative_arg and test_cosim_golden_e2e all
+         * read it that way, and rows SGN13, SGN14 and SGN22 of
+         * test_spice_get_node_0861.tcl fence it. That row also greps this arm
+         * (C comments stripped) for an annot_p term and exactly ONE
+         * cursor_b_val subscript, so the shape here is pinned by a check.
+         *
+         * An OUT-OF-RANGE explicit point also lands on this arm and is
+         * answered with the cursor's value wearing the label of a point that
+         * does not exist. The guard blanks it wherever nothing was published;
+         * that it still answers where something was is its own defect, filed
+         * and left open as issue 0920. */
         else if(argc > 4 && !strcmp(argv[2], "value")) {
           int dataset = -1;
           int point = argv[4][0] ? atoi(argv[4]) : -1;
@@ -10653,8 +11003,8 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
               ) {
               val = get_raw_value(dataset, idx, point);
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
-            } else if(xctx->raw->cursor_b_val) {
-              val = xctx->raw->cursor_b_val[idx];
+            } else if(raw->cursor_b_val && raw->annot_p >= 0) {
+              val = raw->cursor_b_val[idx];
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
             }
           }
@@ -10816,6 +11166,10 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
                 }
               }
               xctx->raw->values[idx][point] = (SPICE_DATA) atof(argv[5]);
+              /* S9 HOOK D (decision D5): an in-place value write moves no field
+               * of the overlay's epoch -- same Raw pointer, same nvars, same
+               * level, same annot_p. See raw_renamevar() (save.c). */
+              annot_data_changed();
               Tcl_SetResult(interp, dtoa(xctx->raw->values[idx][point]), TCL_VOLATILE);
             }
           }
@@ -10864,9 +11218,14 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         tcleval("array unset ngspice::ngspice_data");
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* free_rawfile(&xctx->raw, 0, 0); */
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0812: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a filename containing
+         * `}` closed the group and the rest of the name EXECUTED (measured).
+         * expand_tilde() (util.c) is the same transformation with nothing to
+         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         if(argc > 5) {
           sweep1 = atof_spice(argv[4]);
           sweep2 = atof_spice(argv[5]);
@@ -11450,9 +11809,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
 
       if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0816: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a path containing
+         * `}` closed the group and the rest of it EXECUTED (measured on this
+         * verb). expand_tilde() (util.c) is the same transformation with nothing
+         * to escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
       }
       if(argc > 3) {
         fptr = !strcmp(f, "") ? NULL : f;
@@ -12059,6 +12423,34 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             actionlog_suppress = atoi(argv[3]);
             if(actionlog_suppress < 0) actionlog_suppress = 0;
           }
+          /* set annot_show <mask>: annotation-class visibility (bit0 device OP info --
+           * hide=op plus content-classified branch currents, issue 0678; bit1 node
+           * voltages -- hide=voltage plus content-classified node voltages). Writes
+           * BOTH the C field and the Tcl
+           * mirror (decision D4) -- show_hidden_texts' setter writes only C and the next
+           * pull silently discards it, which is why the GUI never calls that one. */
+          else if(!strcmp(argv[2], "annot_show")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            /* 0688: THE one C writer (actions.c). It writes the C field, the Tcl
+             * mirror and the xctx->annot_root stamp -- "the mask is on" and "this
+             * is the sheet it was armed for" are one fact, written in one place,
+             * so a later File > Open can tell the mask no longer belongs here.
+             * Writing the two fields inline again would be the second builder
+             * invariant I1 forbids. */
+            annot_show_set(atoi(argv[3]));
+          }
+          /* set annot_voltage_layer <n> (issue 0615): the layer a CONTENT-classified
+           * node voltage renders in. Writes BOTH the C field and the Tcl mirror, for
+           * the same reason annot_show does -- and note the pull in
+           * annot_show_sync_cache() would otherwise undo a C-only write at the next
+           * export. The value is stored AS GIVEN; the shared colour helper in
+           * actions.c is what treats anything outside [1, cadlayers) as "no
+           * override" (decision D7), so a `get` reads back exactly what was `set`. */
+          else if(!strcmp(argv[2], "annot_voltage_layer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->annot_voltage_layer = atoi(argv[3]);
+            tclsetintvar("annot_voltage_layer", xctx->annot_voltage_layer);
+          }
           else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->graph_snap = atoi(argv[3]) ? 1 : 0;
@@ -12165,9 +12557,27 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           else if(!strcmp(argv[2], "cursor2_x")) { /* set graph cursor2 position */
             int floaters = there_are_floaters();
+            int i, has_graph = 0;
             xctx->graph_cursor2_x = atof_spice(argv[3]);
 
-            if(xctx->rects[GRIDLAYER] > 0) {
+            /* S11 (doc/claude/specs/op_annotation.md) -- THE TRIGGER IS A SCAN FOR A
+             * GRAPH OBJECT, NOT A RECT COUNT. GRIDLAYER is an ordinary drawing layer
+             * too, so `rects[GRIDLAYER] > 0` is true for a schematic carrying a plain
+             * rectangle and nothing plotted -- which is exactly the situation the
+             * direct arm below exists for. Only `flags & 1` means "this is a graph".
+             * Decision D1: this changes NO graph-present behaviour. Where any graph
+             * rect exists the shipped block runs byte-identically, including its two
+             * known defects, which are FILED rather than repaired here because the
+             * step's acceptance requires graph-present behaviour to be unchanged:
+             * issue 0477 (rect ZERO is hard-coded, so a plain rect at index 0 hides a
+             * real graph at index 1) and issue 0478 (`graph_flags & 4` is a DRAWING
+             * flag, and its only setter `xschem cursor 2 1` resets this very
+             * position). Rows T12-T15 and T21 of tests/headless/test_op_annot.tcl pin
+             * all of it. */
+            for(i = 0; i < xctx->rects[GRIDLAYER]; ++i) {
+              if(xctx->rect[GRIDLAYER][i].flags & 1) { has_graph = 1; break; }
+            }
+            if(has_graph) {
               Graph_ctx *gr = &xctx->graph_struct;
               xRect *r = &xctx->rect[GRIDLAYER][0];
               if(r->flags & 1) {
@@ -12176,6 +12586,15 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
                   if(floaters) set_modify(-2); /* update floater caches to reflect actual backannotation */
                 }
               }
+            }
+            /* S11: no graph anywhere -- resolve the cursor straight against
+             * xctx->raw. The helper self-gates on sch_waves_loaded() and answers 0
+             * when there is nothing to annotate, so a sheet with no data stays a
+             * byte-exact no-op down to the user's $cursor_2_hook (rows T19/T20).
+             * Decision D5: this arm neither requires nor sets `graph_flags & 4` --
+             * bit 4 draws a cursor for a graph that does not exist here. */
+            else if(backannotate_at_cursor_b_nograph()) {
+              if(floaters) set_modify(-2); /* update floater caches to reflect actual backannotation */
             }
           }
           else if(!strcmp(argv[2], "draw_window")) { /* set drawing to window (1 or 0) */
@@ -12543,7 +12962,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(tgt, cur)) continue;
           if(!undo_done) { xctx->push_undo(); undo_done = 1; }
           my_snprintf(num, S(num), "%d", i);
-          tclvareval("xschem replace_symbol {", num, "} {", dir_pin_sym(tgt), "} fast", NULL);
+          /* issue 0831 -- HYGIENE, not a live vector: `num` is %d of a loop index and
+           * dir_pin_sym() returns one of three compile-time literals (paste.c). Converted
+           * so the FN07 source scan can cover the spelling uniformly. */
+          tcl_call("xschem replace_symbol", num, dir_pin_sym(tgt), "fast");
           ++changed;
         }
       } else {
@@ -13452,9 +13874,14 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
         /* free_rawfile(&xctx->raw, 1, 0); */
         draw();
       } else if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0812: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a filename containing
+         * `}` closed the group and the rest of the name EXECUTED (measured).
+         * expand_tilde() (util.c) is the same transformation with nothing to
+         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* free_rawfile(&xctx->raw, 0, 0); */
         /* through the one dispatch (issue 0290): it stamps sim_type "table" on success.
@@ -13988,6 +14415,11 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int i;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* S7: symbol_bbox() consults the annotation-class mask through the shared text
+       * visibility predicate and does not refresh it, so ONE `update_all_sym_bboxes`
+       * must pick up a Tcl-side change (the shipped idiom is
+       * `update_all_sym_bboxes; redraw`). */
+      annot_show_sync_cache();
       for(i = 0; i < xctx->texts; i++)
       if(xctx->text[i].flags & TEXT_FLOATER) {
         my_free(_ALLOC_ID_, &xctx->text[i].floater_ptr); /* clear floater cached value */
@@ -14032,9 +14464,14 @@ static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         draw();
       } else if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
+        /* issue 0812: `~/` is expanded in C. This used to be
+         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
+         * the path into a Tcl script inside a brace group -- a filename containing
+         * `}` closed the group and the rest of the name EXECUTED (measured).
+         * expand_tilde() (util.c) is the same transformation with nothing to
+         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
+         * brace-quoted word never did variable substitution either. */
+        expand_tilde(argv[2], f, (int)S(f));
         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
         /* through the one dispatch (issue 0290), same reasoning as the `table_read`
          * verb: the sim_type stamp must not hang off sch_waves_loaded() */

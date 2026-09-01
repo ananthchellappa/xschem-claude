@@ -1,0 +1,924 @@
+# 0812 fix attempt of 2026-08-25, REVERTED. DO NOT APPLY AS IS.
+# Its sanitizer (subst -nobackslashes -nocommands, src/util.c subst_tcl_value)
+# is UNSOUND: $a([exec touch X]).raw still executes. See the issue file.
+# Kept only so the next crew can lift the test rows and the plumbing, after
+# replacing the sanitizer core with an explicit C-side variable expander.
+diff --git a/src/draw.c b/src/draw.c
+index d87e0115..a7d01835 100644
+--- a/src/draw.c
++++ b/src/draw.c
+@@ -3332,10 +3332,14 @@ static void set_thick_waves(int what, int wcnt, int wave_col, Graph_ctx *gr)
+  *                      raw's). NULL is read as "".
+  *
+  * The caller my_free()s *expr, *rawfile and *sim_type.
+- * Both the path and the type go through a Tcl `subst {...}`, exactly as
+- * draw_graph() has always done, so a token may name its database through a Tcl
+- * variable. NOTHING here switches databases: the switch, and the balanced
+- * restore that must pair with it, belong to the caller. */
++ * Both the path and the type are resolved as VALUES -- resolve_rawfile_path()
++ * and subst_tcl_value() (util.c) -- so a token may still name its database or
++ * its type through a Tcl VARIABLE, as draw_graph() has always allowed, but no
++ * other content of those fields is evaluated. They used to go through a Tcl
++ * `subst {...}` built by string concatenation, which made a `[...]` in a .sch
++ * graph attribute run as a command: issue 0812. NOTHING here switches
++ * databases: the switch, and the balanced restore that must pair with it,
++ * belong to the caller. */
+ static void node_token_split(const char *ntok, char **expr, int *dataset,
+                              char **rawfile, char **sim_type, const char *dflt_sim_type)
+ {
+@@ -3348,14 +3352,29 @@ static void node_token_split(const char *ntok, char **expr, int *dataset,
+     /* `%12 file.raw tran` -- the dataset digits are optional, so the rawfile is
+      * field 1 or field 2 of the `%` payload (separators "\n ") */
+     int pos = 1;
++    /* C89: both resolver buffers at the top of the block */
++    char rawbuf[PATH_MAX + 100];
++    char typebuf[256];
+     if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
++    /* THE SEVENTH INJECTION SITE (issue 0812), and the worst of them: these two
++     * fields are read STRAIGHT OUT OF A .sch FILE, and they used to be resolved
++     * with `tclvareval("subst {", <field>, "}", NULL)` -- so a `[...]` in a
++     * graph `node=` attribute was COMMAND SUBSTITUTION and merely OPENING a
++     * schematic someone sent you ran their Tcl (measured on :99 with a plain
++     * `xschem load` + redraw; the tab that keeps the payload inside one field
++     * survives save.c's round trip verbatim).
++     * BOTH fields are rewired, not one: the rawfile field is resolved AGAIN by
++     * extra_rawfile() downstream, and that double pass is only safe because
++     * resolve_rawfile_path() is idempotent on its own output.
++     * The `$netlist_dir/...` spelling documented in doc/xschem_man/graphs.html
++     * still resolves -- that substitution is what these fields are FOR. */
+     if(rawfile) {
+-      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
+-      my_strdup2(_ALLOC_ID_, rawfile, tclresult());
++      resolve_rawfile_path(find_nth(nd, "\n ", "\"", 0, pos), rawbuf, (int)S(rawbuf));
++      my_strdup2(_ALLOC_ID_, rawfile, rawbuf);
+     }
+     if(sim_type) {
+-      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
+-      my_strdup2(_ALLOC_ID_, sim_type, tclresult()[0] ? tclresult() : dflt_sim_type);
++      subst_tcl_value(find_nth(nd, "\n ", "\"", 0, pos + 1), typebuf, (int)S(typebuf));
++      my_strdup2(_ALLOC_ID_, sim_type, typebuf[0] ? typebuf : dflt_sim_type);
+     }
+     if(pos == 2) ds = atoi(nd);
+     if(expr) my_strdup(_ALLOC_ID_, expr, find_nth(ntok, "%", "\"", 4, 1));
+diff --git a/src/save.c b/src/save.c
+index 743a2312..67f3c67b 100644
+--- a/src/save.c
++++ b/src/save.c
+@@ -1723,6 +1723,13 @@ static void update_waves_menu_cue(void)
+  * what == 5: switch back to previous
+  * if bit 5 (32) of what is set do not issue warnings
+  * return 1 if sucessfull, 0 otherwise
++ *
++ * `file` is resolved ONCE at the top of the function by resolve_rawfile_path()
++ * (util.c): a leading `~/` in C, then Tcl VARIABLE substitution performed on a
++ * VALUE. It is NOT evaluated as script -- issue 0812, where each arm's own
++ * `subst { <file> }` meant a filename containing `}` executed. Every arm reads
++ * the resolved `f`, and the extra_raw_arr registry is keyed on it, so read /
++ * switch / clear cannot disagree about what a given spelling names.
+  */
+ int extra_rawfile(int what, const char *file, const char *type, double sweep1, double sweep2)
+ {
+@@ -1738,6 +1745,31 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+       what, no_warning, file ? file : "<NULL>", type ? type : "<NULL>");
+   if(what == 0) return 0;
+ 
++  /* THE path resolution, ONCE, in ONE place, for every arm below (issue 0812).
++   * Each arm used to do its own `tclvareval("subst {", file, "}", NULL)` --
++   * six of them, four reachable with a metacharacter -- which BUILDS A TCL
++   * SCRIPT out of the filename: a `}` in the name closed the brace group and
++   * the rest of the name EXECUTED. resolve_rawfile_path() (util.c) treats the
++   * path as a VALUE instead: `~/` in C, then Tcl VARIABLE substitution with no
++   * command substitution and no brace group to escape from. The `$netlist_dir`
++   * spelling the shipped graph attributes use still resolves; nothing else in
++   * the name is evaluated.
++   * ONE call, not one per arm, because the registry is KEYED on this string:
++   * the read arms store it in raw->rawfile and the switch and clear arms
++   * strcmp() against what was stored, so two resolutions that could ever
++   * disagree would make `xschem raw clear $f` silently miss what
++   * `xschem raw read $f` loaded.
++   * The isonlydigit()/atoi() arms below deliberately keep reading the RAW
++   * `file`, exactly as they did when their own subst result was never used --
++   * their behaviour is unchanged.
++   * NOTE the side effect that went away with the tclvareval: extra_rawfile()
++   * no longer leaves the resolved path in the interpreter result. No caller
++   * depended on it (the `raw` verb sets its own result immediately after, and
++   * the `info` arm below is reached with file == NULL, so its
++   * Tcl_AppendResult() listing is not touched). */
++  if(file) resolve_rawfile_path(file, f, (int)S(f));
++  else f[0] = '\0';
++
+   /* allocate xctx->extra_raw_arr array */
+   if(xctx->extra_raw_n >= xctx->extra_raw_size) {
+     int old_size = xctx->extra_raw_size;
+@@ -1763,8 +1795,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+    * See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md section C. */
+   if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file &&
+      raw_type_is_non_spice(type)) {
+-    tclvareval("subst {", file, "}", NULL);
+-    my_strncpy(f, tclresult(), S(f));
+     dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
+     for(i = 0; i < xctx->extra_raw_n; i++) {
+       /* Skip an entry with no filename, the way the spice loop below skips one
+@@ -1810,8 +1840,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+     }
+   /* **************** read ************* */
+   } else if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file /* && type*/) {
+-    tclvareval("subst {", file, "}", NULL);
+-    my_strncpy(f, tclresult(), S(f));
+     if(type) {
+       if(!my_strcasecmp(type, "spectrum")) type = "ac";
+       else if(!my_strcasecmp(type, "sp")) type = "ac";
+@@ -1861,8 +1889,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+   /* **************** switch ************* */
+   } else if(what == 2 && xctx->extra_raw_n > 0) {
+     if(file && type) {
+-      tclvareval("subst {", file, "}", NULL);
+-      my_strncpy(f, tclresult(), S(f));
+       for(i = 0; i < xctx->extra_raw_n; i++) {
+         dbg(1, "      extra_rawfile(): checking with %s\n",
+             xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>");
+@@ -1880,8 +1906,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+         ret = 0;
+       }
+     } else if(file && isonlydigit(file) ) {
+-      tclvareval("subst {", file, "}", NULL);
+-      my_strncpy(f, tclresult(), S(f));
+       i = atoi(file);
+       if(i >= 0 && i < xctx->extra_raw_n) { /* if file found switch to it ... */
+         dbg(1, "extra_rawfile() switch %d: found: switch %d to it\n", xctx->extra_idx, i);
+@@ -1921,8 +1945,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+       xctx->extra_raw_size = 0;
+     } else if(file && isonlydigit(file)) {
+       int n, found = 0;
+-      tclvareval("subst {", file, "}", NULL);
+-      my_strncpy(f, tclresult(), S(f));
+       n = atoi(file);
+       if(xctx->extra_raw_n > 0 ) {
+         for(i = 0; i < xctx->extra_raw_n; i++) {
+@@ -1951,8 +1973,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
+       } else ret = 0;
+     } else { /* clear provided file if found, switch to first in remaining if any */
+       int found = 0;
+-      tclvareval("subst {", file, "}", NULL);
+-      my_strncpy(f, tclresult(), S(f));
+       if(xctx->extra_raw_n > 0 ) {
+         for(i = 0; i < xctx->extra_raw_n; i++) {
+           /* the same NULL skips as the two lookup loops above (issue 0306): a
+diff --git a/src/scheduler.c b/src/scheduler.c
+index 743d58b5..e4a16fc1 100644
+--- a/src/scheduler.c
++++ b/src/scheduler.c
+@@ -848,9 +848,14 @@ static int run_core(const char *verb, int argc, const char *argv[])
+       Tcl_SetResult(interp, "xschem embed_rawfile needs a file argument", TCL_STATIC);
+       return TCL_ERROR;
+     }
+-    my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+-    tcleval(f);
+-    my_strncpy(f, tclresult(), S(f));
++    /* issue 0812: `~/` is expanded in C. This used to be
++     * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
++     * the path into a Tcl script inside a brace group -- a filename containing
++     * `}` closed the group and the rest of the name EXECUTED (measured).
++     * expand_tilde() (util.c) is the same transformation with nothing to
++     * escape from, and it is tilde-ONLY, exactly as the regsub was: a
++     * brace-quoted word never did variable substitution either. */
++    expand_tilde(argv[2], f, (int)S(f));
+     embed_rawfile(f);
+     return TCL_OK;
+   }
+@@ -2357,25 +2362,41 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
+       /* the file name is resolved BEFORE the D5 refusal below, because the
+        * refusal asks the FILE what it is, not just the caller (RULING D5-6).
+        *
+-       * ⚠ AND IT IS RESOLVED IN C. This used to be
++       * ⚠ WHAT THIS LINE GUARANTEES, AND WHAT IT DOES NOT (issue 0812).
++       * An earlier version of this comment said the splice hazard was closed
++       * because the `~/` expansion had been moved out of
+        *   my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+        *   tcleval(f);
+-       * which splices a USER-SUPPLIED PATH into a Tcl script inside a brace
+-       * group -- a path containing `}` closes the group early and the rest of
+-       * the path EXECUTES (measured: a file named
+-       *   /tmp/p} note}; set ::PWNED 1; if {1} {list a.vcd
+-       * set ::PWNED in the session). That hazard predates D5 and fires for
+-       * every annotate_op, but D5's refusal now stands downstream of this line,
+-       * so leaving it would mean the refusal path itself ran attacker text.
+-       * A leading `~/` is all that regsub ever did; doing it with two
+-       * my_snprintf branches is the same transformation with nothing to
+-       * escape from. */
++       * into C. That was TRUE OF THIS LINE and FALSE OF THE PATH: the `f` it
++       * produces was handed, a few lines below, to extra_rawfile() (save.c),
++       * which resolved it by building the Tcl script `subst { <f> }` and
++       * evaluating it -- so a filename containing `}` still closed a brace
++       * group and still EXECUTED. Closed one frame up, open one frame down;
++       * that comment is why the defect survived review. It is not the only
++       * frame that had to change, and this note should not be read as a claim
++       * about any frame but its own.
++       *
++       * GUARANTEED NOW, and pinned by named checks rather than by prose:
++       *   - the leading `~/` is expanded HERE, in C, by expand_tilde()
++       *     (util.c) -- the same transformation the regsub performed, with
++       *     nothing to escape from;
++       *   - extra_rawfile() resolves what it receives with
++       *     resolve_rawfile_path() (util.c), i.e. Tcl VARIABLE substitution on
++       *     a VALUE: no command substitution, no brace group, nothing in a
++       *     filename evaluated as script;
++       *   - so `xschem annotate_op <file>` and `xschem annotate_op` with NO
++       *     ARGUMENT (the shipped menu entry, where the path is built from
++       *     netlist_dir and the cell name and nobody typed anything) do not
++       *     execute filename content. Checks AINJ1 and AINJ2 in
++       *     tests/headless/test_op_annot.tcl, INJ1 and INJ7 in
++       *     tests/headless/test_raw_read_dispatch.tcl.
++       * NOT GUARANTEED by anything here: the other Tcl-splicing seams in the
++       * tree. The nine remaining `regsub {^~/}` + tcleval() path splices
++       * outside the raw-file family are issue 0816, and the tclvareval()
++       * brace-group splices of file-derived strings are issue 0817. Both are
++       * open and neither is addressed by this line. */
+       if(argc > 2) {
+-        if(argv[2][0] == '~' && argv[2][1] == '/') {
+-          my_snprintf(f, S(f), "%s/%s", home_dir, argv[2] + 2);
+-        } else {
+-          my_snprintf(f, S(f), "%s", argv[2]);
+-        }
++        expand_tilde(argv[2], f, (int)S(f));
+       } else {
+         my_snprintf(f, S(f), "%s/%s.raw",  tclgetvar("netlist_dir"), get_cell(xctx->sch[xctx->currsch], 0));
+       }
+@@ -10556,9 +10577,14 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
+         tcleval("array unset ngspice::ngspice_data");
+         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+         /* free_rawfile(&xctx->raw, 0, 0); */
+-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+-        tcleval(f);
+-        my_strncpy(f, tclresult(), S(f));
++        /* issue 0812: `~/` is expanded in C. This used to be
++         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
++         * the path into a Tcl script inside a brace group -- a filename containing
++         * `}` closed the group and the rest of the name EXECUTED (measured).
++         * expand_tilde() (util.c) is the same transformation with nothing to
++         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
++         * brace-quoted word never did variable substitution either. */
++        expand_tilde(argv[2], f, (int)S(f));
+         if(argc > 5) {
+           sweep1 = atof_spice(argv[4]);
+           sweep2 = atof_spice(argv[5]);
+@@ -13199,9 +13225,14 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
+         /* free_rawfile(&xctx->raw, 1, 0); */
+         draw();
+       } else if(argc > 2) {
+-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+-        tcleval(f);
+-        my_strncpy(f, tclresult(), S(f));
++        /* issue 0812: `~/` is expanded in C. This used to be
++         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
++         * the path into a Tcl script inside a brace group -- a filename containing
++         * `}` closed the group and the rest of the name EXECUTED (measured).
++         * expand_tilde() (util.c) is the same transformation with nothing to
++         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
++         * brace-quoted word never did variable substitution either. */
++        expand_tilde(argv[2], f, (int)S(f));
+         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+         /* free_rawfile(&xctx->raw, 0, 0); */
+         /* through the one dispatch (issue 0290): it stamps sim_type "table" on success.
+@@ -13784,9 +13815,14 @@ static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *
+         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+         draw();
+       } else if(argc > 2) {
+-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+-        tcleval(f);
+-        my_strncpy(f, tclresult(), S(f));
++        /* issue 0812: `~/` is expanded in C. This used to be
++         * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
++         * the path into a Tcl script inside a brace group -- a filename containing
++         * `}` closed the group and the rest of the name EXECUTED (measured).
++         * expand_tilde() (util.c) is the same transformation with nothing to
++         * escape from, and it is tilde-ONLY, exactly as the regsub was: a
++         * brace-quoted word never did variable substitution either. */
++        expand_tilde(argv[2], f, (int)S(f));
+         extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+         /* through the one dispatch (issue 0290), same reasoning as the `table_read`
+          * verb: the sim_type stamp must not hang off sch_waves_loaded() */
+diff --git a/src/util.c b/src/util.c
+index e2d55cd3..21c1beeb 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -782,6 +782,129 @@ FILE *my_fopen(const char *f, const char *m)
+   fd = fopen(f, m);
+   return fd;
+ }
++
++/* ===========================================================================
++ * PATH RESOLUTION -- A FILENAME IS DATA, NEVER SCRIPT (issue 0812)
++ * doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
++ *
++ * WHAT THIS REPLACES. Raw-file paths used to be resolved by BUILDING a Tcl
++ * script around the filename and evaluating it -- `subst { <file> }` via
++ * tclvareval() in save.c's extra_rawfile() (six call sites) and draw.c's
++ * node_token_split() (two), and `regsub {^~/} {<path>} {<home>/}` via tcleval()
++ * in scheduler.c. In both shapes the path sits INSIDE A BRACE GROUP, so a
++ * filename containing `}` closes the group early and the remainder of the name
++ * RUNS AS TCL. Measured on this tree with a real file: a raw named
++ *     q}; set ::SC_PWNED 1; list {a.raw
++ * set the sentinel through `xschem annotate_op`, `xschem raw read/switch/clear`,
++ * `xschem raw table_read/vcd_read`, and -- with the regsub-shaped payload
++ *     x} {y} {z}; set ::SC_PWNED 1; list {a
++ * -- through the `raw_read` / `table_read` / `vcd_read` / `embed_rawfile` verbs.
++ * `xschem annotate_op` WITH NO ARGUMENT (the shipped menu entry) fired too, with
++ * the payload living in the simulation DIRECTORY name: nobody typed a path.
++ *
++ * WHAT IS AND IS NOT GUARANTEED HERE. These three functions treat the path as a
++ * VALUE: there is no script text for its content to escape from, so `}` `{` `[`
++ * `]` `;` `\` and newline are all literal. Tcl VARIABLE substitution survives on
++ * purpose -- it is load-bearing, not decoration: nine draw.c/callback.c sites
++ * hand extra_rawfile() a graph `rawfile=` attribute unsubstituted and the
++ * shipped corpus spells it `$netlist_dir/...` (xschem_library/ngspice/
++ * autozero_comp.sch, .../solar_panel.sch, xschem_library/examples/
++ * cmos_example.sch). What is guaranteed is exactly the two substitutions
++ * `subst -nobackslashes -nocommands` performs and nothing more; this says
++ * NOTHING about any other caller in the tree that still splices a string into a
++ * script (the nine remaining regsub sites, issue 0816; the tclvareval brace
++ * groups, issue 0817).
++ *
++ * Checks: INJ1-INJ10 / ORD1-ORD7 / VAR1 / KEY1-KEY2 in
++ * tests/headless/test_raw_read_dispatch.tcl, NINJ1-NINJ3 / NVAR1-NVAR2 in
++ * tests/headless/test_node_token_split.tcl, AINJ1-AINJ2 / AORD1-AORD2 in
++ * tests/headless/test_op_annot.tcl, (EINJ1) in
++ * tests/headless/test_perform_action_embed_rawfile.tcl.
++ * =========================================================================== */
++
++/* The literal answer: the path exactly as given. Used for the no-`$` fast path
++ * (where substitution is provably the identity) AND as the fallback when
++ * substitution FAILS. The old code my_strncpy'd the FAILED tclresult() instead,
++ * which silently made the filename the EMPTY STRING -- the measured
++ * `raw_read(): failed to open file  for reading`, with nothing between the two
++ * spaces. Factored out so it has one definition and one meaning. */
++static const char *subst_fallback_literal(const char *s, char *dest, int destsize)
++{
++  my_strncpy(dest, s, (size_t)destsize);
++  return dest;
++}
++
++/* Expand a leading `~/` against home_dir. Pure C -- this is the two-my_snprintf
++ * shape the annotate_op branch already used (scheduler.c), lifted here so there
++ * is exactly ONE tilde expander instead of a private copy per verb. A leading
++ * `~/` is all `regsub {^~/} {...} {...}` ever did, so for every input that does
++ * not contain `}` this is byte-identical to what it replaced. `~user/` is NOT
++ * expanded -- it never was. */
++const char *expand_tilde(const char *s, char *dest, int destsize)
++{
++  if(destsize <= 0) return dest;
++  if(!s) { dest[0] = '\0'; return dest; }
++  if(s[0] == '~' && s[1] == '/') {
++    my_snprintf(dest, (size_t)destsize, "%s/%s", home_dir, s + 2);
++  } else {
++    my_strncpy(dest, s, (size_t)destsize);
++  }
++  return dest;
++}
++
++/* Tcl VARIABLE substitution on a VALUE. `subst -nobackslashes -nocommands` is
++ * invoked through Tcl_EvalObjv with the word list already built, so the string
++ * is never parsed as script -- there is no concatenation and therefore nothing
++ * to quote. TCL_EVAL_GLOBAL keeps the OLD lookup scope: the tclvareval() this
++ * replaces evaluated with TCL_EVAL_GLOBAL, so `$netlist_dir` resolved globally
++ * even when the caller was inside a proc, and dropping that would quietly break
++ * every `$netlist_dir/...` graph attribute read from inside one.
++ * No `$` means substitution is provably the identity (measured: brackets,
++ * backslashes and spaces all round-trip unchanged), so skip the interpreter.
++ * On error -- an undefined variable, the ordinary case for a file literally
++ * named `pay$something.raw` -- answer the LITERAL path and reset the result, so
++ * a failed substitution neither blanks the filename nor leaks an error message
++ * into the caller's Tcl result. */
++const char *subst_tcl_value(const char *s, char *dest, int destsize)
++{
++  Tcl_Obj *objv[4];
++  int i, code;
++
++  if(destsize <= 0) return dest;
++  if(!s) { dest[0] = '\0'; return dest; }
++  if(!s[0] || !interp || !strchr(s, '$')) return subst_fallback_literal(s, dest, destsize);
++  objv[0] = Tcl_NewStringObj("subst", -1);
++  objv[1] = Tcl_NewStringObj("-nobackslashes", -1);
++  objv[2] = Tcl_NewStringObj("-nocommands", -1);
++  objv[3] = Tcl_NewStringObj(s, -1);
++  for(i = 0; i < 4; i++) Tcl_IncrRefCount(objv[i]);
++  code = Tcl_EvalObjv(interp, 4, objv, TCL_EVAL_GLOBAL);
++  if(code == TCL_OK) my_strncpy(dest, Tcl_GetStringResult(interp), (size_t)destsize);
++  else subst_fallback_literal(s, dest, destsize);
++  Tcl_ResetResult(interp);
++  for(i = 0; i < 4; i++) Tcl_DecrRefCount(objv[i]);
++  return dest;
++}
++
++/* THE raw-file path resolver: `~/` in C, then variables as a value. One
++ * resolver for read / switch / clear because all three key the extra_raw_arr
++ * registry off the string the READ arm stored and compare it with strcmp() --
++ * if the arms resolved differently, `xschem raw clear $f` would stop matching
++ * what `xschem raw read $f` stored (src/ase.tcl does exactly that pair).
++ * It is IDEMPOTENT on its own output, which the registry needs because
++ * scheduler.c's annotate_op branch feeds an already-resolved
++ * xctx->raw->rawfile back through the clear arm: the output carries no leading
++ * `~/`, and a `$` that survives to the output survived by FAILING to
++ * substitute, so it fails again and falls back to the same literal. */
++const char *resolve_rawfile_path(const char *s, char *dest, int destsize)
++{
++  char tilde_expanded[PATH_MAX + 100];
++
++  if(destsize <= 0) return dest;
++  if(!s) { dest[0] = '\0'; return dest; }
++  expand_tilde(s, tilde_expanded, (int)S(tilde_expanded));
++  return subst_tcl_value(tilde_expanded, dest, destsize);
++}
+ size_t my_mstrcat(int id, char **str, const char *add, ...)
+ {
+   va_list args;
+diff --git a/src/xschem.h b/src/xschem.h
+index 18e8ad6b..3cfd72e5 100644
+--- a/src/xschem.h
++++ b/src/xschem.h
+@@ -3204,6 +3204,20 @@ extern void tclsetdoublevar(const char *s, const double value);
+ extern void tclsetboolvar(const char *s, const int value);
+ extern void tclsetintvar(const char *s, const int value);
+ extern int tclvareval(const char *script, ...);
++/* util.c -- PATH RESOLUTION, issue 0812. A filename is DATA, never script.
++ * expand_tilde()        leading `~/` -> home_dir, in C. Nothing else.
++ * subst_tcl_value()     Tcl VARIABLE substitution on a VALUE (`subst
++ *                       -nobackslashes -nocommands` via Tcl_EvalObjv,
++ *                       TCL_EVAL_GLOBAL). `}` `{` `[` `]` `;` `\` are literal;
++ *                       on a substitution error the LITERAL string is answered.
++ * resolve_rawfile_path() the two composed: THE raw-file path resolver, and
++ *                       idempotent on its own output because the extra_raw_arr
++ *                       registry keys off it with strcmp().
++ * Each writes at most destsize bytes into dest and returns dest. See the
++ * comment block above them in util.c for what is and is NOT guaranteed. */
++extern const char *expand_tilde(const char *s, char *dest, int destsize);
++extern const char *subst_tcl_value(const char *s, char *dest, int destsize);
++extern const char *resolve_rawfile_path(const char *s, char *dest, int destsize);
+ extern const char *tcl_hook2(const char *res);
+ extern void statusmsg(char str[],int n);
+ /* issue 0248: statusmsg() + a hold, for lines a user must be able to READ (gate messages,
+diff --git a/tests/headless/test_node_token_split.tcl b/tests/headless/test_node_token_split.tcl
+index a13d0d4f..0cd502bf 100644
+--- a/tests/headless/test_node_token_split.tcl
++++ b/tests/headless/test_node_token_split.tcl
+@@ -1496,6 +1496,99 @@ check "XD14 ...and leaves `raw switch_back`'s destination alone (the registry\
+  cursor is a PAIR)" [pcall {nd_backto {xschem setprop rect 2 8 fullxzoom}}] {1 current}
+ xschem raw switch 0
+ 
++# ===========================================================================
++# NINJ / NVAR — issue 0812, THE SEVENTH SITE. node_token_split() resolves BOTH
++# `%` fields with `tclvareval("subst {", <field>, "}", NULL)` (draw.c:3353 and
++# :3357), and those fields are read STRAIGHT OUT OF A .sch FILE. A `[...]` in
++# the rawfile or sim_type field is COMMAND SUBSTITUTION: opening a schematic
++# someone sent you runs their Tcl.
++#   doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
++#
++# THE TAB IS NOT A TRICK, IT IS THE MECHANISM. find_nth splits the `%` payload
++# on "\n " only, so a TAB-separated Tcl command survives the field split intact
++# and round-trips through save.c into the .sch verbatim (measured with cat -A).
++#
++# HONEST CAVEAT: XSCHEM's attribute language ALREADY evaluates Tcl from a .sch
++# by design -- the documented `tcleval(...)` property form (token.c,
++# doc/xschem_man/symbol_property_syntax.html). This is not the first way a .sch
++# can run Tcl. It is an UNINTENDED one, in a field the manual documents
++# (doc/xschem_man/graphs.html) as accepting a path plus `$netlist_dir` and
++# nothing else.
++#
++# ⚠ FIX BOTH FIELDS OR NEITHER. The rawfile field is resolved here and then
++# resolved AGAIN by extra_rawfile() downstream; that double pass is harmless
++# only while the first pass removes the metacharacters. NINJ1 watches the
++# rawfile field, NINJ2 the sim_type field, and NVAR1/NVAR2 watch that the
++# VARIABLE substitution each field must keep survived the fix -- so a resolver
++# wired into one field and not the other cannot be green on all four.
++# ===========================================================================
++set ::ndvraw  $xdraw          ;# the 0..2e-6 analog raw, named through a variable
++set ::ndvtype vcd             ;# ...and a sim_type named through a variable
++
++# --- NVAR: the substitution that must SURVIVE (green at HEAD, and the row that
++#     forbids buying safety by deleting the expansion). If `$ndvraw` does not
++#     expand, the entry names an unresolvable database and the window keeps the
++#     -1..-2 seed (XD19's ruling), so the discriminator is unambiguous.
++xd_strip 30 graph,unlocked [xd_q "a;v(anlg)%\$ndvraw tran"]
++check_true "NVAR1 a `%<rawfile>` spelled through a Tcl VARIABLE still resolves:\
++ the strip spans the named database's 0..2e-6, not the -1..-2 seed of an entry\
++ whose database could not be resolved" [xd_from0 [xd_win 30] 2.0e-6]
++xd_strip 31 graph,unlocked [xd_q "d;TOP.m.sigd%$xdvcd \$ndvtype"]
++check_true "NVAR2 ...and so does a `%<rawfile> <sim_type>` whose SIM_TYPE is a\
++ Tcl variable: the VCD's 0..5e-7. draw.c:3357 is the second field and a fix\
++ wired only into the first one reds here" [xd_from0 [xd_win 31] 5.0e-7]
++
++# --- NINJ: the same two fields, carrying a Tcl command instead of a variable.
++#     THE ASSERTION IS THE SENTINEL, NEVER A RETURN CODE -- the payload can run
++#     AND the walk can then fail to resolve anything.
++proc ninj_probe {script} {
++  set ::SC_PWNED 0
++  pcall $script
++  return $::SC_PWNED
++}
++xd_strip 32 graph,unlocked "v(anlg) % 0 \[set\t::SC_PWNED\t1\]$xdraw tran"
++check "NINJ1 a `%` RAWFILE field carrying `\[set ::SC_PWNED 1\]` does not execute\
++ it: a graph attribute is a PATH, not a script (draw.c:3353)" \
++  [ninj_probe {xschem setprop rect 2 32 fullyzoom}] 0
++xd_strip 33 graph,unlocked "v(anlg) % 0 $xdraw \[set\t::SC_PWNED\t1\]"
++check "NINJ2 ...and neither does the `%` SIM_TYPE field -- the second of the\
++ pair, which a one-field fix leaves live (draw.c:3357)" \
++  [ninj_probe {xschem setprop rect 2 33 fullyzoom}] 0
++
++# --- NINJ3: THE ONE THAT MATTERS. No `setprop`, no scripting: a schematic
++#     LOADED FROM DISK, then a plain redraw. Under X this is the whole attack --
++#     someone sends you a .sch and opening it runs their code (measured PWNED=1
++#     on :99 at HEAD, both after the load and after the redraw).
++#     ⚠ VACUOUS UNDER --nogui, ON PURPOSE. draw() is inside `if(has_x)`, so the
++#     walker never runs and the row is green there for a reason that has nothing
++#     to do with the fix. It is NOT arm-gated, so the NDZ1 count stays the same
++#     in both arms; the arm that MEASURES it is :99.
++set ndev [file join $scratch nd_evil.sch]
++wr $ndev "v {xschem version=3.4.8RC file_version=1.3}
++G {}
++K {}
++V {}
++S {}
++E {}
++B 2 0 0 800 400 {flags=graph
++x1=0
++x2=2e-9
++y1=-0.3
++y2=1.3
++node=\"v(anlg) % 0 \[set\t::SC_PWNED\t1\]$xdraw tran\"}
++"
++set ::nd_ab_save $::autosave_backup
++set ::autosave_backup 0
++set ::SC_PWNED 0
++pcall {xschem load $ndev}
++set ndj3a $::SC_PWNED
++pcall {xschem redraw}
++set ndj3b $::SC_PWNED
++set ::autosave_backup $::nd_ab_save
++check "NINJ3 loading a .sch from disk and redrawing it does not execute the Tcl\
++ in its graph `node=` field -- opening a schematic someone sent you must not run\
++ their code (vacuous under --nogui, measured on :99)" [list $ndj3a $ndj3b] {0 0}
++
+ set ::nd_body_completed 1
+ 
+ } err]} {
+@@ -1514,7 +1607,8 @@ set ::nd_body_completed 1
+ # 128 -> 150: batch F item 8 added the XD leg (spec D2, the joint X domain).
+ # 150 -> 166: item 8's fixer round added XD0g/XD0h and XD16-XD22b -- the group
+ # shapes, the X-quantity rule, and the two rulings that had no fixture at all.
+-set ::nd_expect 166
++# 166 -> 171: issue 0812 added the NINJ/NVAR leg (the graph `node=` subst).
++set ::nd_expect 171
+ set ndgot [expr {$npass + $fail}]
+ check "NDZ1 the file ran its full complement of checks (a silent shortfall is\
+  the failure this guards)" \
+diff --git a/tests/headless/test_op_annot.tcl b/tests/headless/test_op_annot.tcl
+index cc4a0d4d..e0ce371b 100644
+--- a/tests/headless/test_op_annot.tcl
++++ b/tests/headless/test_op_annot.tcl
+@@ -10443,6 +10443,116 @@ set XSCHEM_LIBRARY_PATH $W_LIBS
+   incr fail
+ }
+ 
++# =============================================================================
++# SECTION Z — ISSUE 0812: A RAW FILENAME IS DATA, NOT SCRIPT.
++# =============================================================================
++# `xschem annotate_op` resolves a leading `~/` IN C (scheduler.c, two
++# my_snprintf branches) and its comment block says the splice hazard is closed.
++# That is true of its own line and FALSE of the path: the `f` those branches
++# produce is handed straight to extra_rawfile() (save.c), which resolves it by
++# BUILDING THE TCL SCRIPT `subst { <f> }` and evaluating it. Closed one frame
++# up, open one frame down.
++#   doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
++#
++# ⚠ AINJ2 IS THE ROW THAT KILLS THE "THE USER TYPED THE PATH" DEFENCE. It passes
++# NO FILENAME AT ALL -- the shipped menu entry (src/xschem.tcl `Op Annotate`) --
++# and the payload lives in the SIMULATION DIRECTORY name, which scheduler.c
++# joins with the cell name to build `<netlist_dir>/<cell>.raw`. Nobody typed
++# anything; a project checked out with a sim dir named
++# `q}; set ::SC_PWNED 1; list {a` is enough.
++#
++# ⚠ THE ASSERTION IS THE SENTINEL ::SC_PWNED, NEVER A RETURN CODE. The payload
++# runs BEFORE the read fails, so a row that only checks for an error passes over
++# a live arbitrary-code-execution defect.
++#
++# AORD1/AORD2 ARE THE COUNTERWEIGHT: the easy wrong fix is to refuse anything
++# unusual. `~/` works here TODAY (and only here -- through `xschem raw read` it
++# returns 0, which tests/headless/test_raw_read_dispatch.tcl ORD7 pins as a fix
++# to deliver); a path with SPACES works here today. Both must still work after.
++# =============================================================================
++
++if {[catch {
++
++set XSCHEM_LIBRARY_PATH $Y_LIB
++
++set Z_INJ [file join $scratch "q\}; set ::SC_PWNED 1; list \{a.raw"]
++file copy -force $Y_GOLD $Z_INJ
++set Z_SPACE [file join $scratch "z op with space.raw"]
++file copy -force $Y_GOLD $Z_SPACE
++# the payload as a SIMULATION DIRECTORY, holding the raw the no-argument form
++# will name by itself: <netlist_dir>/<cell>.raw, cell = y_a
++set Z_SIMDIR [file join $scratch "q\}; set ::SC_PWNED 1; list \{a"]
++file mkdir $Z_SIMDIR
++file copy -force $Y_GOLD [file join $Z_SIMDIR y_a.raw]
++
++# The `~/` probe can only live directly under $HOME. Same 0148-class discipline
++# as tests/headless/test_perform_action_embed_rawfile.tcl check (d): removed on
++# every exit path, and dead-pid corpses of earlier runs swept on the way in,
++# because nothing else sweeps $HOME.
++set Z_HNAME opannot0812probe_[pid].raw
++set Z_HRAW  [file join $::env(HOME) $Z_HNAME]
++foreach _zf [glob -nocomplain -directory $::env(HOME) opannot0812probe_*.raw] {
++  if {![regexp {^opannot0812probe_([0-9]+)\.raw$} [file tail $_zf] -> _zp]} continue
++  if {$_zp eq [pid] || [__scratch_pid_alive $_zp]} continue
++  catch {file delete -force $_zf}
++}
++if {[info commands ::__opa_z_real_exit] eq {}} {
++  rename ::exit ::__opa_z_real_exit
++  proc ::exit {{code 0}} { catch {file delete -force $::Z_HRAW}; ::__opa_z_real_exit $code }
++}
++file copy -force $Y_GOLD $Z_HRAW
++
++set Z_NDIR [expr {[info exists ::netlist_dir] ? $::netlist_dir : {}}]
++
++## Drive one annotate_op with the sentinel armed immediately before the call, so
++## a 1 can only have been written by the filename.
++proc opa_z_probe {script} {
++  set ::SC_PWNED 0
++  catch {uplevel #0 $script}
++  return $::SC_PWNED
++}
++
++xschem load $Y_A
++catch {xschem raw clear}
++check {Z0 FIXTURE the payload-named raw, the spaced raw, the ~/ probe and the payload-named SIM DIR all exist on disk} \
++  [list [file exists $Z_INJ] [file exists $Z_SPACE] [file exists $Z_HRAW] \
++        [file exists [file join $Z_SIMDIR y_a.raw]] \
++        [expr {[string match {*y_a.sch} [xschem get schname 0]] ? 1 : 0}]] \
++  {1 1 1 1 1}
++
++check {AINJ1 a raw whose FILENAME carries Tcl does not execute it (the issue's own transcript, inverted)} \
++  [opa_z_probe {xschem annotate_op $::Z_INJ 0}] 0
++
++# THE SHIPPED MENU ENTRY, WITH NO ARGUMENT AT ALL.
++catch {xschem raw clear}
++set ::netlist_dir $Z_SIMDIR
++set z2 [opa_z_probe {xschem annotate_op}]
++set ::netlist_dir $Z_NDIR
++check {AINJ2 `xschem annotate_op` with NO ARGUMENT does not execute Tcl living in the SIMULATION DIRECTORY name -- nobody typed a path} \
++  $z2 0
++
++# --- the counterweight: the ordinary paths must still annotate ---------------
++catch {xschem raw clear}
++catch {xschem annotate_op ~/$Z_HNAME 0}
++check {AORD1 a `~/` path still annotates: the raw is read, registered under the EXPANDED name, and its value is live} \
++  [list [rcall {xschem raw rawfile}] [rcall {xschem raw value v(a) -1}]] \
++  [list [list 0 $Z_HRAW] {0 3.14}]
++
++catch {xschem raw clear}
++catch {xschem annotate_op $Z_SPACE 0}
++check {AORD2 a path containing SPACES still annotates, under its own literal name} \
++  [list [rcall {xschem raw rawfile}] [rcall {xschem raw value v(a) -1}]] \
++  [list [list 0 $Z_SPACE] {0 3.14}]
++
++catch {xschem raw clear}
++file delete -force $Z_HRAW   ;# early drop; the exit hook above is the backstop
++set XSCHEM_LIBRARY_PATH $W_LIBS
++
++} zerr]} {
++  puts "UNEXPECTED ERROR (section Z): $zerr"
++  incr fail
++}
++
+ # --- verdict -----------------------------------------------------------------
+ if {$fail == 0} {
+   puts "RESULT: ALL PASS ($npass checks)"
+diff --git a/tests/headless/test_perform_action_embed_rawfile.tcl b/tests/headless/test_perform_action_embed_rawfile.tcl
+index b9498439..ab06dabf 100644
+--- a/tests/headless/test_perform_action_embed_rawfile.tcl
++++ b/tests/headless/test_perform_action_embed_rawfile.tcl
+@@ -270,6 +270,36 @@ check "(d) ~/ form REPLAYS without error (re-expands via home_dir)" [expr {$trc
+ check "(d) ~/ form replay re-embeds IDENTICALLY" [expr {[sd] eq $sdAbs}] "replay-len=[string length [sd]] abs-len=[string length $sdAbs]"
+ file delete -force $HRAW   ;# early drop; the exit hook above is the backstop
+ 
++# ---------------------------------------------------------------------------
++# (EINJ) ISSUE 0812 -- THE `~/` EXPANSION IS A TCL SPLICE, AND A FILENAME IS NOT
++#     SCRIPT. run_core builds `regsub {^~/} {<argv[2]>} {<home_dir>/}` and
++#     tcleval()s it, so a `}` in the path CLOSES the brace group and the rest of
++#     the filename RUNS AS TCL -- measured on this tree, sentinel asserted.
++#     doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
++#
++#     ⚠ THE PAYLOAD SHAPE IS THE REGSUB ONE, NOT THE `subst` ONE. save.c's sink
++#     falls to `q}; set ::SC_PWNED 1; list {a.raw`; fed HERE that lands as
++#     `regsub {^~/} {..q}` -- too few arguments, the script errors on command 1,
++#     the sentinel never runs and the row reports a clean PWNED=0 over a live
++#     defect. The regsub sink needs `x} {y} {z}; set ::SC_PWNED 1; list {a`, and
++#     the payload itself must contain NO slash or the name becomes a directory
++#     path that never reaches the splice.
++#
++#     ⚠ ASSERT THE SENTINEL, NOT THE RETURN CODE. embed_rawfile then fails to
++#     open the mangled name and blanks spice_data (wrinkle 3), so an
++#     error-shaped row passes while the attacker's Tcl has already run.
++#
++#     Check (d) above is the counterweight and stays green: the legitimate `~/`
++#     form must still expand and embed IDENTICALLY to the absolute path.
++# ---------------------------------------------------------------------------
++set INJ [file join $SCRATCH "x\} \{y\} \{z\}; set ::SC_PWNED 1; list \{a"]
++set fd [open $INJ w]; puts -nonewline $fd "injection payload raw"; close $fd
++fixture
++set ::SC_PWNED 0
++catch {xschem embed_rawfile $INJ} injmsg
++check "(EINJ1) a filename carrying Tcl is NOT executed by the '~/' regsub splice (sentinel, not rc)" \
++  [expr {$::SC_PWNED == 0}] "SC_PWNED=$::SC_PWNED msg=>$injmsg<"
++
+ # ---------------------------------------------------------------------------
+ # (e) REPLAY. embed_rawfile is a self-contained, re-executable verb (the path is in the
+ #     line): replaying re-reads the file + re-embeds. Through the replay_action_log
+diff --git a/tests/headless/test_raw_read_dispatch.tcl b/tests/headless/test_raw_read_dispatch.tcl
+index 794a3593..4829dc79 100644
+--- a/tests/headless/test_raw_read_dispatch.tcl
++++ b/tests/headless/test_raw_read_dispatch.tcl
+@@ -182,6 +182,184 @@ pcall xschem vcd_read $tmp/t.vcd
+ eqcheck R11-topverb-vcd-simtype [pcall xschem raw sim_type] vcd
+ xschem raw clear
+ 
++# ===========================================================================
++# INJ / ORD / VAR / KEY — issue 0812: A FILENAME IS DATA, NOT SCRIPT.
++#   doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
++#
++# THE DEFECT. extra_rawfile() (save.c) resolved its `file` argument by BUILDING
++# THE TCL SCRIPT `subst { <file> }` and evaluating it — six call sites (two read
++# arms, two switch arms, two clear arms; the two behind isonlydigit() cannot be
++# reached with a metacharacter, so FOUR of the six fire). A `}` anywhere in the
++# filename CLOSES the brace group and the rest of the name RUNS AS TCL. The
++# scheduler.c verbs `raw_read` / `table_read` / `vcd_read` / `embed_rawfile`
++# reach the same end by a different road: `regsub {^~/} {<argv>} {<home>/}`
++# spliced into tcleval().
++#
++# ⚠ TWO SINKS, TWO PAYLOAD SHAPES, NOT INTERCHANGEABLE. This is the trap that
++# under-reports the defect, and it is why there are two payload files here:
++#     subst sink    q}; set ::SC_PWNED 1; list {a.raw
++#     regsub sink   x} {y} {z}; set ::SC_PWNED 1; list {a     (NO slash, or the
++#                   name becomes a directory path and never reaches the sink)
++# Feed the FIRST to the regsub sink and it lands as `regsub {^~/} {...q}` — too
++# few arguments, the script errors on command 1, the sentinel never runs, and
++# the row reports a clean PWNED=0 over a live defect.
++#
++# ⚠ EVERY INJ ROW ASSERTS THE SENTINEL ::SC_PWNED, NEVER A RETURN CODE. The
++# payload can run AND the command can then fail; a row that only checks for an
++# error has not tested this.
++#
++# THE ORD/VAR/KEY ROWS ARE THE COUNTERWEIGHT — the easy wrong fix is to refuse
++# anything unusual. Three of them are FIXES, not regression guards: measured at
++# HEAD through `xschem raw read`, plain 1 / spaces 1 / relative 1 but brackets 0
++# / dollar 0 / backslash 0 / `~/` 0. A `[` or `$` makes subst FAIL and the code
++# then my_strncpy's the FAILED result, so the filename silently becomes the
++# EMPTY STRING (`failed to open file  for reading`, nothing between the two
++# spaces); a `\` is EATEN (a real `back\slash.raw` is opened as `backslash.raw`);
++# `~/` never worked through this verb at all (subst does no tilde expansion and
++# my_fopen() just stat()s) — it works through `xschem annotate_op` ONLY because
++# scheduler.c expands it in C one frame up, which is the whole shape of the fix.
++#
++# VAR1 IS LOAD-BEARING AND IS GREEN AT HEAD. The substitution is not gratuitous:
++# nine draw.c/callback.c sites hand extra_rawfile() a graph `rawfile=` attribute
++# UNSUBSTITUTED and the shipped corpus spells it `$netlist_dir/...`
++# (xschem_library/ngspice/autozero_comp.sch, .../solar_panel.sch,
++# xschem_library/examples/cmos_example.sch). Whatever replaces the subst must
++# keep VARIABLE substitution while killing command substitution and the
++# brace-group escape. A fix that simply deletes the expansion reds VAR1.
++#
++# KEY1/KEY2 pin the ONE-RESOLVER invariant (I1). read / switch / clear all
++# strcmp() against the string the READ arm stored, so if the arms resolve
++# differently `xschem raw clear $f` stops matching what `xschem raw read $f`
++# stored — src/ase.tcl:2040-2044 does exactly that pair and is first to break.
++# ===========================================================================
++set INJ_OK   [file join $tmp inj_ok.raw]
++file copy -force $tmp/an.raw $INJ_OK
++# the two payload-named files, both VALID ascii tran raws so a fixed resolver
++# must OPEN them rather than merely refuse them (INJ10)
++set INJ_SUBST  [file join $tmp "q\}; set ::SC_PWNED 1; list \{a.raw"]
++set INJ_REGSUB [file join $tmp "x\} \{y\} \{z\}; set ::SC_PWNED 1; list \{a"]
++file copy -force $INJ_OK $INJ_SUBST
++file copy -force $INJ_OK $INJ_REGSUB
++# the ordinary-case names: a space, a literal bracket, a literal backslash, a
++# literal `$` naming a variable that does not exist
++set INJ_SPACE [file join $tmp "with space.raw"]
++set INJ_BRACK [file join $tmp "br\[1\].raw"]
++set INJ_BSLSH [file join $tmp "back\\slash.raw"]
++set INJ_DOLLR [file join $tmp "pay\$no_such_var_0812.raw"]
++foreach _p [list $INJ_SPACE $INJ_BRACK $INJ_BSLSH $INJ_DOLLR] { file copy -force $INJ_OK $_p }
++
++# The `~/` probe MUST live directly under $HOME — that is the only place the
++# `~/` form can name. Same 0148-class discipline as
++# tests/headless/test_perform_action_embed_rawfile.tcl check (d): delete on
++# EVERY exit path, and sweep dead-pid corpses of earlier runs on the way in,
++# because nothing else ever sweeps $HOME.
++set INJ_HNAME rawdisp0812probe_[pid].raw
++set INJ_HRAW  [file join $::env(HOME) $INJ_HNAME]
++foreach _f [glob -nocomplain -directory $::env(HOME) rawdisp0812probe_*.raw] {
++  if {![regexp {^rawdisp0812probe_([0-9]+)\.raw$} [file tail $_f] -> _p]} continue
++  if {$_p eq [pid] || [__scratch_pid_alive $_p]} continue
++  catch {file delete -force $_f}
++}
++if {[info commands ::__inj_real_exit] eq {}} {
++  rename ::exit ::__inj_real_exit
++  proc ::exit {{code 0}} { catch {file delete -force $::INJ_HRAW}; ::__inj_real_exit $code }
++}
++file copy -force $INJ_OK $INJ_HRAW
++
++# Drive one command with the sentinel armed; answer {sentinel result}. The
++# sentinel is set to 0 IMMEDIATELY before the call, so a 1 can only have been
++# written by the filename.
++proc inj_probe {args} {
++  set ::SC_PWNED 0
++  set r [uplevel 1 [list pcall {*}$args]]
++  return [list $::SC_PWNED $r]
++}
++
++# --- the subst sink, save.c extra_rawfile() --------------------------------
++xschem raw clear
++set inj1 [inj_probe xschem raw read $INJ_SUBST tran]
++eqcheck INJ1-read-subst-sink   [lindex $inj1 0] 0
++# ...and the SAME call must OPEN the file: refusing an unusual name is a
++# regression, not a fix. (save.c:1813, the arm `xschem annotate_op` reaches.)
++eqcheck INJ10-payload-name-loads [lindex $inj1 1] 1
++eqcheck INJ10b-payload-name-stored [pcall xschem raw rawfile] $INJ_SUBST
++
++# the switch arm (save.c:1864) is skipped wholesale when the registry is EMPTY
++# (`what == 2 && extra_raw_n > 0`), so it must be probed with something loaded
++# or the row is green over a live sink.
++xschem raw clear
++pcall xschem raw read $INJ_OK tran
++eqcheck INJ2-switch-subst-sink [lindex [inj_probe xschem raw switch $INJ_SUBST tran] 0] 0
++
++# both clear arms (save.c:1954), with a non-empty registry so the arm does work
++xschem raw clear
++pcall xschem raw read $INJ_OK tran
++eqcheck INJ3-clear-with-type   [lindex [inj_probe xschem raw clear $INJ_SUBST tran] 0] 0
++xschem raw clear
++pcall xschem raw read $INJ_OK tran
++eqcheck INJ4-clear-no-type     [lindex [inj_probe xschem raw clear $INJ_SUBST] 0] 0
++
++# the NON-SPICE read arm (save.c:1766) — a different arm, the same sink
++xschem raw clear
++eqcheck INJ5-raw-table_read    [lindex [inj_probe xschem raw table_read $INJ_SUBST] 0] 0
++xschem raw clear
++eqcheck INJ6-raw-vcd_read      [lindex [inj_probe xschem raw vcd_read $INJ_SUBST] 0] 0
++
++# --- the regsub sink, scheduler.c ------------------------------------------
++# NOTE THE OTHER PAYLOAD. These three verbs never reach extra_rawfile()'s subst
++# with their argument; they splice it into `regsub {^~/} {%s} {%s/}` themselves.
++xschem raw clear
++eqcheck INJ7-raw_read-verb     [lindex [inj_probe xschem raw_read $INJ_REGSUB tran] 0] 0
++xschem raw clear
++eqcheck INJ8-table_read-verb   [lindex [inj_probe xschem table_read $INJ_REGSUB] 0] 0
++xschem raw clear
++eqcheck INJ9-vcd_read-verb     [lindex [inj_probe xschem vcd_read $INJ_REGSUB] 0] 0
++
++# --- ORD: the ordinary filenames that must still load ----------------------
++# Answer {rc rawfile} so a row that "loads" something under a MANGLED name is
++# not mistaken for a pass.
++proc inj_rd {f {t tran}} {
++  xschem raw clear
++  set r [pcall xschem raw read $f $t]
++  return [list $r [pcall xschem raw rawfile]]
++}
++eqcheck ORD1-plain     [inj_rd $INJ_OK]    [list 1 $INJ_OK]
++eqcheck ORD2-spaces    [inj_rd $INJ_SPACE] [list 1 $INJ_SPACE]
++eqcheck ORD3-brackets  [inj_rd $INJ_BRACK] [list 1 $INJ_BRACK]
++eqcheck ORD4-backslash [inj_rd $INJ_BSLSH] [list 1 $INJ_BSLSH]
++eqcheck ORD5-dollar    [inj_rd $INJ_DOLLR] [list 1 $INJ_DOLLR]
++set INJ_CWD [pwd]
++cd $tmp
++eqcheck ORD6-relative  [lindex [inj_rd inj_ok.raw] 0] 1
++cd $INJ_CWD
++eqcheck ORD7-tilde     [inj_rd ~/$INJ_HNAME] [list 1 $INJ_HRAW]
++
++# --- VAR: the substitution that must SURVIVE (the shipped corpus) ----------
++set INJ_NDIR_SAVE [expr {[info exists ::netlist_dir] ? $::netlist_dir : {}}]
++set ::netlist_dir $tmp
++eqcheck VAR1-netlist_dir [inj_rd {$netlist_dir/inj_ok.raw}] [list 1 $INJ_OK]
++
++# --- KEY: ONE resolver, or the registry key drifts (invariant I1) ----------
++# `raw clear <f>` must match what `raw read <f>` stored, for every spelling.
++proc inj_keypair {spell} {
++  xschem raw clear
++  set rr [pcall xschem raw read $spell tran]
++  set rc [pcall xschem raw clear $spell tran]
++  return [list $rr $rc]
++}
++eqcheck KEY1-read-clear-agree \
++  [list [inj_keypair ~/$INJ_HNAME] [inj_keypair {$netlist_dir/inj_ok.raw}] \
++        [inj_keypair $INJ_SUBST]] \
++  {{1 1} {1 1} {1 1}}
++xschem raw clear
++pcall xschem raw read $INJ_SUBST tran
++check KEY2-info-literal-name [info_has $INJ_SUBST tran] \
++  "(info='[string map {\n |} [pcall xschem raw info]]')"
++
++set ::netlist_dir $INJ_NDIR_SAVE
++file delete -force $INJ_HRAW    ;# early drop; the exit hook above is the backstop
++xschem raw clear
++
+ # ===========================================================================
+ # E — END TO END: the two shipped procs that generate the failing command.
+ #     This is the bug as the user meets it. Group D can be green while these

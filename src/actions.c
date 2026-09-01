@@ -242,6 +242,17 @@ int set_modify(int mod)
       my_free(_ALLOC_ID_, &xctx->text[i].floater_ptr); /* clear floater cached value */
     }
     int_hash_free(&xctx->floater_inst_table);
+    /* S9 HOOK B (decision D3, issue 0466). THIS BLOCK is the codebase's own
+     * "my per-object rendered caches are stale" channel, and the OP-annotation
+     * overlay cache is exactly that object class -- one lazily-built rendered
+     * string per object, same as xText.floater_ptr above. The epoch's modify_seq
+     * term is NOT enough: it moves only for mod 1|3 and never when ro_suppress
+     * is set, so it misses editprop.c apply_symbol_prop()'s `set_modify(-2);
+     * draw();` -- which paints a FULL FRAME before its caller's set_modify(1) --
+     * and every read-only-buffer path. Inside the `if`, deliberately: outside it
+     * this would fire on mod 0/2/3 too, and it must not perturb the function's
+     * `return floaters` contract (callback.c and scheduler.c read that value). */
+    annot_data_changed();
   }
 
   /* force title   no mod      mod */
@@ -259,7 +270,22 @@ int set_modify(int mod)
        * run the command "N"). \[ \] make them literal. */
       char wn[20] = "";
       if(xctx->window_number > 0) my_snprintf(wn, S(wn), " \\[%d\\]", xctx->window_number);
-      if(xctx->modified == 1) {
+      /* ⚠ issue 0851: A WAVEFORM VIEWER OWNS ITS OWN TITLE. Its buffer is `untitled.sch`
+       * by construction, so deriving a title from the schematic name here renames the
+       * window from "Waveforms <cell> (<state>)" to "xschem [N] - untitled.sch
+       * (read-only)" -- and the user then reasonably reports that there is no waveform
+       * window, because the one on screen no longer says it is one. wviewer::retitle
+       * (src/wave_viewer.tcl) is the owner; this is the same surface-vs-document
+       * distinction the wave_viewer brand was added for in issue 0172.
+       *
+       * It surfaced with issue 0848. Before that fix the redraw-only restore hit
+       * switch_window's "already there" early return and never reached set_modify(-1);
+       * once the forward switch really happened, the restore had somewhere to come back
+       * FROM, called set_modify(-1) on the viewer context, and clobbered the title. The
+       * bug was always here -- 0848 only stopped hiding it. */
+      if(xctx->wave_viewer) {
+        /* leave the viewer's title to its owner */
+      } else if(xctx->modified == 1) {
         tclvareval("wm title ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
         tclvareval("wm iconname ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
       } else {
@@ -447,43 +473,75 @@ void set_grid(double newgrid)
  */
 int set_netlist_dir(int what, const char *dir)
 {
-  char cmd[PATH_MAX+200];
-  if(dir) my_snprintf(cmd, S(cmd), "set_netlist_dir %d {%s}", what, dir);
-  else    my_snprintf(cmd, S(cmd), "set_netlist_dir %d", what);
-  tcleval(cmd);
+  char cmd[64];
+  /* `what` is a C-formatted decimal (program text); `dir` is a PATH and is
+   * DATA -- a `}` in it used to close the brace group (issue 0817 Z.2). */
+  my_snprintf(cmd, S(cmd), "set_netlist_dir %d", what);
+  if(dir) tcl_call(cmd, dir, NULL, NULL);
+  else    tcleval(cmd);
   if(!strcmp("", tclresult()) ) {
     return 0;
   }
   return 1;
 }
 
+/* ⚠ THE THREE WRAPPERS BELOW TAKE A SYMBOL NAME READ STRAIGHT OUT OF A `.sch`
+ * FILE, so none of them may build its script by CONCATENATION -- issue 0825.
+ *
+ * They used to spell it
+ *     my_snprintf(c, S(c), "abs_sym_path {%s} {%s}", s, ext); tcleval(c);
+ * which puts the name inside a brace group of a script that is then evaluated.
+ * `\}` is the `.sch` format's OWN escape for a literal brace, so an ordinary,
+ * well-formed schematic can carry a name containing `}`: it closed the group
+ * and everything after it RAN AS TCL. Measured on an unmodified tree --
+ *     C {p\} {\} ; exec touch /tmp/HOST; list {a} 0 0 0 0 {name=x1}
+ * created the host file on a plain `xschem load`, --nogui, no dialog and no
+ * gesture (via get_sym_type -> abs_sym_path); an ABSOLUTE name did the same
+ * through load_inst -> rel_sym_path; and `xschem netlist` fired it three more
+ * times through sanitized_abs_sym_path in the netlisters. That trigger is
+ * strictly worse than the Graph dialog's (issue 0821), which at least needs
+ * the dialog opened.
+ *
+ * The name is handed over as a GLOBAL VARIABLE instead and referenced with
+ * `$::...` in the script. A variable substitution's result is ONE word and is
+ * NEVER re-parsed, so no content in it can escape -- the same route
+ * backannot_refuse_digital() (src/save.c) takes for a user-supplied path, and
+ * one of the two in-tree answers issue 0817 names. Signatures, return storage
+ * (the interpreter result, which ~70 call sites hold as a `const char *`) and
+ * the Tcl-side procs are all unchanged; the shipped procs already default
+ * `ext` and `paths` to `{}`, so an empty ext behaves exactly as the old `{}`
+ * group did.
+ *
+ * The globals are deliberately NOT unset afterwards: Tcl_UnsetVar can reset
+ * the interpreter result, which IS the return value here. Rejected:
+ * Tcl_Merge / Tcl_EvalObjv (correct, but a rewrite of three two-line
+ * functions), and any `subst` flag (issue 0812 §1: `-nocommands` still runs
+ * the command substitution inside `$a([...])`). */
+
 /* wrapper to TCL function */
 /* remove parameter section of symbol generator before calculating abs path : xxx(a,b) -> xxx */
 const char *sanitized_abs_sym_path(const char *s, const char *ext)
 {
-  char c[PATH_MAX+1000];
-
-  my_snprintf(c, S(c), "abs_sym_path [regsub {\\(.*} {%s} {}] {%s}", s, ext);
-  tcleval(c);
+  tclsetvar("__san_symp_name", s ? s : "");
+  tclsetvar("__san_symp_ext", ext ? ext : "");
+  tcleval("abs_sym_path [regsub {\\(.*} $::__san_symp_name {}] $::__san_symp_ext");
   return tclresult();
 }
 
 /* wrapper to TCL function */
 const char *abs_sym_path(const char *s, const char *ext)
 {
-  char c[PATH_MAX+1000];
-
-  my_snprintf(c, S(c), "abs_sym_path {%s} {%s}", s, ext);
-  tcleval(c);
+  tclsetvar("__abs_symp_name", s ? s : "");
+  tclsetvar("__abs_symp_ext", ext ? ext : "");
+  tcleval("abs_sym_path $::__abs_symp_name $::__abs_symp_ext");
   return tclresult();
 }
 
 /* Wrapper to Tcl function */
 const char *rel_sym_path(const char *s)
 {
-  char c[PATH_MAX+1000];
-  my_snprintf(c, S(c), "rel_sym_path {%s}", s);
-  tcleval(c);
+  tclsetvar("__rel_symp_name", s ? s : "");
+  tcleval("rel_sym_path $::__rel_symp_name");
   return tclresult();
 }
 
@@ -727,7 +785,7 @@ void saveas(const char *f, int type) /*  changed name from ask_save_file to save
      * `xschem saveas path` passes f and is already in the log. */
     if(!f && tcl_braceable(res))
       log_action("xschem saveas {%s} %s", res, type == SYMBOL ? "symbol" : "schematic");
-    tclvareval("update_recent_file {", res,"}",  NULL);
+    tcl_call("update_recent_file", res, NULL, NULL);
     return;
 }
 
@@ -789,15 +847,15 @@ void ask_new_file(int in_new_window, char *filename)
            * a replayed/typed `xschem load f` goes through the scheduler and
            * never re-enters this function -> no double-log. */
           if(!filename && tcl_braceable(f)) log_action("xschem load {%s}", f);
-          tclvareval("update_recent_file {", f, "}", NULL);
+          tcl_call("update_recent_file", f, NULL, NULL);
           if(xctx->portmap[xctx->currsch].table) str_hash_free(&xctx->portmap[xctx->currsch]);
           my_strdup(_ALLOC_ID_, &xctx->sch_path[xctx->currsch],".");
           xctx->sch_path_hash[xctx->currsch] = 0;
           xctx->sch_inst_number[xctx->currsch] = 1;
           zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
         } else { /* load in new window/tab */
-          tclvareval("update_recent_file {", f, "}", NULL);
-          tclvareval("xschem load_new_window {", f, "}", NULL);
+          tcl_call("update_recent_file", f, NULL, NULL);
+          tcl_call("xschem load_new_window", f, NULL, NULL);
           /* the with-filename arm of load_new_window does not log (it is the
            * replay form); record this dialog-resolved new-window open here */
           if(!filename && tcl_braceable(f)) log_action("xschem load_new_window {%s}", f);
@@ -902,6 +960,14 @@ void remove_symbols(void)
 {
   int j;
 
+  /* S9 HOOK C (decision D4, issue 0466). The ONE function that sets every
+   * inst[].ptr = -1 and tears the symbol table down. `xschem reload_symbols`
+   * (scheduler.c) is remove_symbols() + link_symbols_to_instances(-1) and
+   * NOTHING else -- no set_modify, no clear_drawing, no load_schematic -- so a
+   * .sym whose `type=` changed on disk would otherwise keep rendering the OLD
+   * descriptor's block, `type=` being exactly what op_annot::type reads to pick
+   * the descriptor. editprop.c's copy_cell path is covered here too. */
+  annot_data_changed();
   for(j = 0; j < xctx->instances; ++j) {
     delete_inst_node(j); /* must be deleted before symbols are deleted */
     xctx->inst[j].ptr = -1; /* clear symbol reference on instanecs */
@@ -1097,6 +1163,129 @@ int set_inst_flags(xInstance *inst)
   return 0;
 }
 
+/* ----------------------------------------------------------------------------
+ * 0614 -- THE IMPLICIT ANNOTATION CLASS, DERIVED FROM THE TEXT'S CONTENT
+ *
+ * The user RULED (issue 0614, superseding 0613): the three OP chords own the node
+ * voltages too. `6` |= bit0 (device OP blocks), `Alt-6` |= bit1 (node voltages and
+ * branch currents), `Ctrl-6` = 0 -- two additive setters and one clear-all. Before
+ * this, bit1 gated `hide=voltage` and NOTHING ELSE: measured, that token appears in
+ * zero shipped .sym/.sch files, so masks 1 and 3 rendered byte-identically (the
+ * user's own 169897 == 169897 on bandgap_opamp) and `Ctrl-6` still painted every
+ * voltage. Node voltages arrive by a different road entirely: a symbol text
+ * `T {@spice_get_voltage} ... {layer=15}` expanded by translate() out of
+ * xctx->raw->cursor_b_val[], which never consults annot_show.
+ *
+ * 0614's option B, taken: classify by CONTENT, so the ONE predicate text_hidden()
+ * answers for those texts too and no tenth visibility test is added anywhere.
+ *
+ * IS, NOT CONTAINS -- and that is 158 shipped records. sky130 ships 119 `hide=true`
+ * `@spice_get_node` annotations at layers 15/17 and 39
+ * `vgs=expr(@#1:spice_get_voltage - @#2:spice_get_voltage)` records, and
+ * devices/nmos4.sym:56-57 / pmos4.sym:60-61 carry
+ * `tcleval(vgs=[to_eng {@#1:spice_get_voltage ...}])` at layer 15 with NO hide token.
+ * Those are DEVICE OP info, not node voltages; a substring match would both re-gate
+ * and re-colour every one of them, and would delete the shipped prose floater
+ * `Power: @spice_get_voltage(power)\W` (xschem_library/examples/cmos_example.sch:194)
+ * that a user typed on purpose.
+ *
+ * SIX SPELLINGS, NOT THE FIVE 0614 PRINTS (decision D5). ADDED:
+ * `@#<pin>:spice_get_voltage` (get_pin_attr, token.c:4315) -- 0615's own example,
+ * devices/bus_tap.sym:37, carries exactly that form; and `@spice_get_diff_voltage`
+ * (token.c:5094). DROPPED: `@spice_get_current<n>`, which has no branch anywhere in
+ * token.c and whose only appearance in the tree is a stale comment at save.c:5743,
+ * where 0614's list was copied from. `@spice_get_modelparam*` /
+ * `@spice_get_modelvoltage*` are deliberately NOT classified: token.c:5163 matches
+ * them and they then silently produce nothing (issue 0418), and they are device OP
+ * info, i.e. bit0's business.
+ *
+ * THE `@#<pin>:` SPLIT MIRRORS get_pin_and_attr() (token.c:412) EXACTLY -- track
+ * `[`/`]` and cut at the first UNBRACKETED ':' -- so `@#A[3:0]:spice_get_voltage`
+ * classifies. Any stricter pin scan drops it, and the two rules must not drift.
+ *
+ * AN ARGUMENT LIST IS ACCEPTED ONLY WHEN ')' IS THE LAST CHARACTER, and the match is
+ * then made on the text LEFT of the first '('. That is what survives save.c:5722/5744,
+ * which rewrite an LCC-embedded `@spice_get_voltage` into
+ * `@spice_get_voltage(<parentpath><lab>)` BEFORE set_text_flags runs at save.c:5780 --
+ * the path component contains DOTS, so a classifier that validated the argument as an
+ * identifier would silently drop every LCC annotation.
+ *
+ * INVARIANT I7 IS THE WHOLE REASON FOR annot_class_free(). text_hidden() tests the
+ * CLASS bits BEFORE show_hidden_texts, so an implicit class set on top of an explicit
+ * `hide=` would silently move that text from the View > Show hidden texts switch to
+ * the annotation mask. Nine tracked records do carry both -- xschem_library/pcb/
+ * pcb_current_protection_embed.sch:174,441,456 and its xschem_libraries_oa/ and
+ * xschem_libs_newsym/ mirrors, `hide=true` on a bare @spice_get_voltage /
+ * @spice_get_current. The implicit class is therefore added ONLY when the `hide=`
+ * chain set no bit at all.
+ * ------------------------------------------------------------------------- */
+
+#define ANNOT_CONTENT_NONE    0
+#define ANNOT_CONTENT_VOLTAGE 1
+#define ANNOT_CONTENT_CURRENT 2
+
+/* 1 == the `hide=` token set NO bit, so an implicit class may be added on top. */
+static int annot_class_free(int flags)
+{
+  return !(flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED | HIDE_TEXT_OP | HIDE_TEXT_VOLTAGE));
+}
+
+static int annot_ident_char(int c)
+{
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+/* ANNOT_CONTENT_NONE / _VOLTAGE / _CURRENT for the WHOLE trimmed string. */
+static int annot_content_class(const char *txt)
+{
+  const char *s, *e, *p, *colon, *op;
+  int bracket;
+  size_t len;
+
+  if(!txt) return ANNOT_CONTENT_NONE;
+  s = txt;
+  while(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+  if(s[0] != '@') return ANNOT_CONTENT_NONE;
+  e = s + strlen(s);
+  while(e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\n' || e[-1] == '\r')) --e;
+  if(e > s && e[-1] == ')') {
+    op = NULL;
+    for(p = s; p < e; ++p) if(*p == '(') { op = p; break; }
+    if(!op) return ANNOT_CONTENT_NONE;
+    e = op;                     /* the (...) argument is not part of the token itself */
+  } else {
+    /* a stray parenthesis anywhere means this is not a bare token */
+    for(p = s; p < e; ++p) if(*p == '(' || *p == ')') return ANNOT_CONTENT_NONE;
+  }
+  /* @#<pin>:spice_get_voltage -- the pin-indexed/pin-named form. The scan is
+   * get_pin_and_attr()'s (token.c:412): bracketed ':' belongs to a bus range. */
+  if(e - s > 2 && s[1] == '#') {
+    colon = NULL;
+    bracket = 0;
+    for(p = s + 2; p < e; ++p) {
+      if(*p == '[') { bracket = 1; continue; }
+      if(*p == ']') { bracket = 0; continue; }
+      if(*p == ':' && !bracket) { colon = p; break; }
+    }
+    if(!colon || colon == s + 2) return ANNOT_CONTENT_NONE;
+    len = (size_t)(e - (colon + 1));
+    if(len == 17 && !strncmp(colon + 1, "spice_get_voltage", 17)) return ANNOT_CONTENT_VOLTAGE;
+    return ANNOT_CONTENT_NONE;
+  }
+  len = (size_t)(e - s);
+  if(len == 18 && !strncmp(s, "@spice_get_voltage", 18)) return ANNOT_CONTENT_VOLTAGE;
+  if(len == 23 && !strncmp(s, "@spice_get_diff_voltage", 23)) return ANNOT_CONTENT_VOLTAGE;
+  if(len >= 18 && !strncmp(s, "@spice_get_current", 18)) {
+    if(len == 18) return ANNOT_CONTENT_CURRENT;         /* @spice_get_current */
+    if(s[18] != '_' || len == 19) return ANNOT_CONTENT_NONE;
+    for(p = s + 19; p < e; ++p) {                       /* @spice_get_current_<param> */
+      if(!annot_ident_char((unsigned char)*p)) return ANNOT_CONTENT_NONE;
+    }
+    return ANNOT_CONTENT_CURRENT;
+  }
+  return ANNOT_CONTENT_NONE;
+}
+
 int set_text_flags(xText *t)
 {
   const char *str;
@@ -1118,7 +1307,13 @@ int set_text_flags(xText *t)
     str = get_tok_value(t->prop_ptr, "weight", 0);
     t->flags |= strcmp(str, "bold")  ? 0 : TEXT_BOLD;
     str = get_tok_value(t->prop_ptr, "hide", 0);
+    /* S7: `hide=` now also names an ANNOTATION CLASS. Exact, case-sensitive strcmp,
+     * placed before the strboolcmp fallback and mirroring the `instance` branch, so
+     * no existing value changes class: the whole tree carries only hide=instance,
+     * hide=true and hide=op, and hide=1/on/yes still reach strboolcmp (invariant I7). */
     if(!strcmp(str, "instance")) t->flags |= HIDE_TEXT_INSTANTIATED;
+    else if(!strcmp(str, "op")) t->flags |= HIDE_TEXT_OP;
+    else if(!strcmp(str, "voltage")) t->flags |= HIDE_TEXT_VOLTAGE;
     else {
       t->flags |= strboolcmp(str, "true")  ? 0 : HIDE_TEXT;
     }
@@ -1130,7 +1325,528 @@ int set_text_flags(xText *t)
     t->flags |= xctx->tok_size ? TEXT_FLOATER : 0;
     my_strdup2(_ALLOC_ID_, &t->floater_instname, str);
   }
+  /* 0614: the IMPLICIT class, from the content. OUTSIDE the if(t->prop_ptr) block so a
+   * text with no property string at all is classified too. `hide=` always wins:
+   * annot_class_free() is false the moment the chain above set any bit (invariant I7).
+   * Computed HERE, once, rather than inside text_hidden(): the predicate is evaluated
+   * per text per instance per frame and has no access to the string, `flags` rides the
+   * whole-struct copies in copy_symbol()/in_memory_undo/copy_objects() for free, and the
+   * six colour sites get the answer without being handed the string too. */
+  if(annot_class_free(t->flags)) {
+    int cls = annot_content_class(t->txt_ptr);
+    if(cls == ANNOT_CONTENT_VOLTAGE)      t->flags |= TEXT_ANNOT_VOLTAGE;
+    else if(cls == ANNOT_CONTENT_CURRENT) t->flags |= TEXT_ANNOT_CURRENT;
+  }
   return 0;
+}
+
+/* ----------------------------------------------------------------------------
+ * TEXT VISIBILITY -- ONE predicate for every render/geometry back end (S7,
+ * doc/claude/specs/op_annotation.md). Before this there were TEN copy-pasted
+ * `if(!xctx->show_hidden_texts && (flags & ...)) continue;` tests spread over
+ * draw.c, svgdraw.c, psprint.c, select.c and actions.c -- and they were not ten
+ * copies of one test but two different tests (see TEXT_CTX_* in xschem.h), which
+ * is why the predicate takes the context instead of one folded mask.
+ *
+ * Annotation classes (hide=op / hide=voltage) are tested FIRST and answer only to
+ * the annot_show mask: they are deliberately NOT overridable by show_hidden_texts
+ * (decision D3). hide=true / hide=instance keep exactly their previous behaviour
+ * (invariant I7) -- with neither class bit set this function is provably identical
+ * to the ten tests it replaced.
+ * ------------------------------------------------------------------------- */
+
+/* Cached mirror of the annot_show Tcl var, shaped after pin_names_sync_cache()
+ * above (the P6 precedent): text_hidden() is evaluated per text per instance per
+ * frame, so a tclgetvar per call is too costly. Refreshed at each BULK visibility
+ * evaluation -- draw(), calc_drawing_bbox(), `xschem print`, `xschem
+ * update_all_sym_bboxes`, startup and the CLI batch print -- because svg_draw(),
+ * create_ps() and symbol_bbox() do NOT go through draw(). NOTE this is why the
+ * mirror is a push+pull: `xschem set annot_show` writes the Tcl var too, so a later
+ * sync can never undo the setter (decision D4). show_hidden_texts' own pull cache is
+ * refreshed at only three sites and is measurably stale in the export paths -- that
+ * is issue 0453 and is deliberately NOT fixed here. */
+void annot_show_sync_cache(void)
+{
+  const char *s;
+  if(!xctx) return;
+  xctx->annot_show = tclgetintvar("annot_show");
+  /* 0615: annot_voltage_layer rides the SAME pull, deliberately -- this function is
+   * already called at all EIGHT bulk-evaluation entry points (draw.c:10504,
+   * svgdraw.c:1098, psprint.c:1370, scheduler.c x2, xinit.c x2, actions.c:4698), which
+   * is exactly the staleness trap show_hidden_texts fell into (issue 0453: refreshed at
+   * three sites, none of them an export entry, so its FIRST export after a Tcl-side
+   * change renders the old value).
+   * NOT tclgetintvar(): on a missing variable it returns 0 AND dbg(0)-logs, and 0 is
+   * BACKLAYER -- the annotation would silently paint in the background colour. */
+  s = tclgetvar("annot_voltage_layer");
+  if(s && s[0]) xctx->annot_voltage_layer = atoi(s);
+  /* 0688 -- THE BACKSTOP. A root-sheet change that never runs load_schematic()
+   * (clear_schematic() composes a fresh untitled name IN PLACE, save.c:4850) is
+   * invisible to the deterministic seam in save.c, so the pull above is followed
+   * by the same check. Placed AFTER the pull deliberately: the pull is what makes
+   * the C field agree with the Tcl var, and clearing before it would be undone by
+   * it. */
+  annot_show_check_root();
+}
+
+/* 0688 -- THE ONE C WRITER OF THE MASK (invariant I1). Every `xschem set
+ * annot_show` lands here, so "the mask is on" and "this is the sheet it was armed
+ * for" are ONE fact written in ONE place. Two independent builders of that pair is
+ * precisely the silent drift I1 exists to forbid, and it is what let the reverted
+ * 0683 attempt clear a mask it had never stamped.
+ *
+ * The stamp is xctx->sch[0], the window's ROOT sheet -- NOT sch[currsch]. Descend
+ * and go_back deliberately KEEP the mask ("this window is in annotate mode",
+ * issue 0688 section 1) and sch[0] does not move under either, so keying on the
+ * root is descend-safe by construction rather than by a special case.
+ *
+ * mask 0 FREES the stamp: an unarmed mask has nothing to belong to, and leaving a
+ * stale path there would make the next arm-by-rc look like an armed-and-stamped
+ * one. */
+void annot_show_set(int mask)
+{
+  if(!xctx) return;
+  xctx->annot_show = mask;
+  tclsetintvar("annot_show", xctx->annot_show);
+  if(mask) my_strdup(_ALLOC_ID_, &xctx->annot_root, xctx->sch[0]);
+  else     my_strdup(_ALLOC_ID_, &xctx->annot_root, NULL);
+}
+
+/* 0688 -- THE CLEAR. "Is this mask still about the sheet that is loaded?" If the
+ * root moved, the annotation goes with it.
+ *
+ * ⚠ IT TOUCHES NO WAVEFORM DATABASE, AND THAT IS THE POINT. The reverted attempt
+ * cleared op/dc/tran at the session path and RE-READ; when the re-read hit a raw
+ * ngspice was mid-rewrite (readable but truncated) the user's loaded database was
+ * destroyed and nothing replaced it. This writes one int, one Tcl var and one
+ * path stamp and never opens a file. A raw legitimately stays in the registry
+ * across a File > Open -- coming back to the first sheet answers out of memory.
+ *
+ * A NULL stamp is "never armed through the setter" and is left ALONE: an
+ * `set annot_show 1` in the user's xschemrc (honoured at xinit.c:3839) never
+ * passes through annot_show_set, so it is never stamped and must never be
+ * cleared. That is decision D2 and it is what keeps this fix inside the 0683
+ * ruling's scope. */
+void annot_show_check_root(void)
+{
+  if(!xctx) return;
+  if(!xctx->annot_show) return;
+  if(!xctx->annot_root) return;
+  if(xctx->sch[0] && !strcmp(xctx->annot_root, xctx->sch[0])) return;
+  annot_show_set(0);
+}
+
+/* 0615 -- THE COLOUR HALF, ONE helper for all SIX colour sites (draw.c x2,
+ * svgdraw.c x2, psprint.c x2), the same three-back-end fan-out text_hidden() has.
+ * Returns -1 for "no override", so every caller is one `else if` and nothing else
+ * moves. An override in draw.c alone would mean the schematic on screen and the
+ * exported PDF disagree -- 0615's sharpest landmine.
+ *
+ * THE REQUEST WAS "for node voltage display, use white, not same color as the OP
+ * info". There is no layer that is white in BOTH palettes -- layer 9 is #ffffff on
+ * the default dark one and #00aaaa on the default light one -- so a hard #ffffff
+ * would satisfy the request on the user's setup and silently delete the annotation
+ * for a light-palette user. A dedicated layer INDEX travels through the existing
+ * per-layer colour machinery instead: white out of the box, a real colour on light,
+ * remappable in one line of xschemrc with no rebuild. Layer 9 is the user's own
+ * ratification ("Go with layer 9 for node voltages", issue 0615).
+ *
+ * PRECEDENCE, deliberately: the override LOSES to a per-instance `text_layer_<n>=`
+ * token (get_sym_text_layer), to only_probes, to disabled==1/2 and to a highlighted
+ * instance (inst.color != -10000); it WINS over the text's own `layer=`, which it has
+ * to -- every shipped node-voltage carrier spells layer=15 explicitly, so respecting
+ * it would make 0615 a no-op.
+ *
+ * BRANCH CURRENTS ARE NOT HERE, AND THAT HALF SURVIVED THE REVERSAL (issue 0678).
+ * Decision D4 of 0614 ruled two things about `@spice_get_current*`: that it followed
+ * the voltage SWITCH, and that it kept its own layer 17 (`#00ffcc` in both palettes,
+ * 84 shipped records). The user drove a real sky130 bench on 2026-08-24 and reversed
+ * the FIRST half only -- a source's branch current is that DEVICE's terminal current,
+ * device OP info, so its VISIBILITY answers to `6` (bit0), not `Alt-6`. See
+ * annot_class_mask below, and doc/claude/issues/0678-*.md. The COLOUR half is
+ * untouched and this function still tests TEXT_ANNOT_VOLTAGE alone: the 15-vs-17
+ * distinction is one the user already has, and folding it away would be a loss, not
+ * a fix.
+ *
+ * THE ctx GUARD IS INVARIANT I7's, and it is the same one text_hidden() applies:
+ * a schematic-own NON-FLOATER bare token is a literal string the user typed, not an
+ * annotation, so it neither hides nor recolours. */
+int annot_text_layer(int flags, int ctx)
+{
+  if(!xctx) return -1;
+  if(!(flags & TEXT_ANNOT_VOLTAGE)) return -1;
+  if(ctx != TEXT_CTX_INSTANCE && !(flags & TEXT_FLOATER)) return -1;
+  /* Any index outside [1, cadlayers) means NO OVERRIDE (decision D7). The documented
+   * off switch (-1) therefore also covers 0 == BACKLAYER and any atoi garbage, so a
+   * typo in xschemrc cannot make annotations invisible in a way indistinguishable
+   * from the feature being broken. */
+  if(xctx->annot_voltage_layer <= 0 || xctx->annot_voltage_layer >= cadlayers) return -1;
+  return xctx->annot_voltage_layer;
+}
+
+/* 0678 -- WHICH annot_show BIT OWNS AN IMPLICIT CONTENT CLASS. Returns the mask bit
+ * to test, or 0 for "no implicit class here". Shaped exactly like its colour twin
+ * annot_text_layer(flags, ctx) above so the two answers cannot drift (invariant I1),
+ * and it is the ONE place the grouping is written down: the two flag bits (xschem.h
+ * 422-423) are separate PRECISELY so re-pointing a class is this one line, and
+ * 0678 forbids folding them back into a single test.
+ *
+ * THE GROUPING, AND WHY IT CHANGED. Decision D4 of issue 0614 put both classes on
+ * the voltage switch, grouping them by WHERE THE NUMBER COMES FROM in the raw. The
+ * user drove a real sky130 bench on 2026-08-24 and grouped them by WHAT THE NUMBER
+ * IS ABOUT -- "ALT-6 is doing its job for node voltages - but it's also displaying
+ * OP info of voltage sources - namely their current. That should be controlled by 6
+ * key, not Alt-6." A source's branch current is that DEVICE's terminal current,
+ * exactly like a FET's id; a node voltage is a property of the NET. So:
+ *   TEXT_ANNOT_VOLTAGE -> ANNOT_SHOW_VOLTAGE  (bit1, `Alt-6`)  net quantity
+ *   TEXT_ANNOT_CURRENT -> ANNOT_SHOW_OP       (bit0, `6`)      device OP info
+ * `Ctrl-6 -> nothing` (issue 0613) is unaffected: mask 0 clears both bits.
+ * Only the VISIBILITY half moved -- annot_text_layer() still tests the voltage flag
+ * alone, so currents keep layer 17. See doc/claude/issues/0678-*.md.
+ *
+ * ⚠ THE ctx TERM IS INVARIANT I7's AND IT LIVES IN HERE ON PURPOSE. Splitting the
+ * old single test into two answers would otherwise mean writing the same guard
+ * twice, and a dropped copy silently deletes a literal string a user typed. Measured
+ * on this tree with no raw loaded: a SYMBOL text `@spice_get_voltage` emits no
+ * element at all, so classifying it costs literally nothing -- but a SCHEMATIC-OWN
+ * NON-FLOATER `T {@spice_get_voltage} ... {layer=15}` renders the LITERAL STRING,
+ * because get_text_floater() translates only floaters. Blanking that at mask 0 would
+ * be a text that has sat on their sheet for years vanishing because of a mask they
+ * never touched. The same is true of the `@spice_get_current` spelling (measured;
+ * tests/headless/test_op_annot.tcl rows U27 and U33). The exemption is for the
+ * IMPLICIT class ONLY -- an author who typed `hide=voltage` on a top-level text
+ * declared a class explicitly and still follows bit1, which is why the two classes
+ * need two different bits. */
+static int annot_class_mask(int flags, int ctx)
+{
+  if(ctx != TEXT_CTX_INSTANCE && !(flags & TEXT_FLOATER)) return 0;
+  /* 0868 -- TWO BITS, ONE CONTENT CLASS. bit1 is the operating-point node
+   * voltage (`Alt-6`), bit2 the TRANSIENT node voltage at a requested time
+   * point (`Alt-Shift-6` / ASE-L Results > Annotate). They render the same
+   * texts, so this returns BOTH and text_hidden()'s `annot_show & m` shows the
+   * class when EITHER switch is on. Measured before the change: `xschem set
+   * annot_show 4` read back 4 and painted nothing at all -- a mode the user can
+   * select and not see (row V7 of tests/headless/test_op_annot.tcl). What the
+   * two bits do NOT share is where the number came from, and that provenance
+   * travels in the minted sentence, not in a second render path. Row V9 forbids
+   * the shortcut of making bit2 an alias that sets bit1. */
+  if(flags & TEXT_ANNOT_VOLTAGE) return ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN;
+  if(flags & TEXT_ANNOT_CURRENT) return ANNOT_SHOW_OP;
+  return 0;
+}
+
+/* 1 == this text must not be drawn. ctx is TEXT_CTX_INSTANCE when iterating a
+ * symbol's text[] while drawing an instance, TEXT_CTX_SCHEMATIC when iterating the
+ * schematic's own xctx->text[]. */
+int text_hidden(int flags, int ctx)
+{
+  /* 0614/0678: the IMPLICIT content class, tested FIRST and never both with an
+   * explicit one (set_text_flags only adds it when the `hide=` chain set no bit, so
+   * a text carrying a class bit carries no HIDE_TEXT* bit and m == 0 falls through to
+   * exactly the tests the old single `if` fell through to). */
+  int m = annot_class_mask(flags, ctx);
+  if(m) return (xctx->annot_show & m) ? 0 : 1;
+  if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
+  /* 0868: an author's EXPLICIT `hide=voltage` follows both node-voltage
+   * switches too -- the implicit class above and this one must not disagree
+   * about which masks show a node voltage, or the same number would appear on
+   * one sheet and vanish on another for the same mask. */
+  if(flags & HIDE_TEXT_VOLTAGE)
+    return (xctx->annot_show & (ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN)) ? 0 : 1;
+  if(xctx->show_hidden_texts) return 0;
+  if(flags & HIDE_TEXT) return 1;
+  if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
+  return 0;
+}
+
+/* ----------------------------------------------------------------------------
+ * S9 -- THE DRAW-TIME OP-ANNOTATION OVERLAY (doc/claude/specs/op_annotation.md).
+ *
+ * S6 shipped a CARRIER: the user places one devices/annotate_params per device
+ * and types the device's name into its `ref=`. This is the second carrier: the
+ * block is drawn ON THE DEVICE, with no placed symbol and no text record at all.
+ *
+ * ONE shared reader, THREE thin call sites (draw.c, svgdraw.c, psprint.c), and
+ * every policy decision here so the screen and the two exports cannot disagree:
+ *
+ *   D1  THE GATE IS A NON-BLANK op_annot::text BLOCK, not "the symbol type has a
+ *       registered descriptor". Spec 4.2 (issue 0425) and 4.3 both rule: skip on
+ *       a blank DEVPATH, never on a blank descriptor -- the `type=` key is shared
+ *       by every PDK and by the generic xschem_library/devices/*.sym, so with
+ *       only sky130 registered devices/nmos.sym answers descriptor?=1, devpath {}.
+ *       The descriptor gate would paint a block on 13 generic symbols.
+ *   D2  THE MASK GATE IS text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE), i.e. the
+ *       overlay is exactly as visible as a `hide=op` text on an instance would
+ *       be. HIDE_TEXT_OP is tested first in text_hidden and answers only to
+ *       annot_show, so this is the mask alone -- through S7's single predicate,
+ *       and NOT a fourth inline `xctx->annot_show & ANNOT_SHOW_OP` test.
+ *   D9  It also obeys xctx->sym_txt, hide_texts=true (HIDE_SYMBOL_TEXTS) and
+ *       hide=true (HIDE_INST): a user who switched symbol text off must not
+ *       still get a block of numbers pinned to the instance.
+ *   I4  NOTHING HERE MODIFIES THE SCHEMATIC. No instance placed, no set_modify,
+ *       no byte written. Every path is a read.
+ *
+ * PERFORMANCE (the step's named risk). Measured on this tree before the cache:
+ * one uncached op_annot::text sweep costs +0.67 ms on bandgap_opamp (73 inst /
+ * 13 devices), +1.22 ms on test_comparator and +2.49 ms on top -- 20..35% of a
+ * frame with the annotation gate closed, and +66..100% with a raw loaded (the
+ * sky130 descriptor's two pinexpr rows add two more `xschem translate` calls per
+ * FET). So the block is cached PER INSTANCE, lazily, and flushed wholesale by
+ * annot_overlay_sync() whenever the observed-state epoch moves.
+ * ------------------------------------------------------------------------- */
+
+/* forward: the numeric-token reader defined with the pin-name layout below.
+ * annot_dx / annot_dy are read with exactly the same helper, and the same
+ * "absent token -> default" rule, as P6's name_dx / name_dy -- deliberately. */
+static double pin_dtok(const char *prop, const char *tok, double dflt);
+
+/* The render constants are lifted VERBATIM from the shipped carrier symbol
+ * xschem_library/devices/annotate_params.sym, whose one text record is
+ *   T {tcleval([op_annot::text @ref ])} 5 5 0 0 0.2 0.2 {layer=15
+ *   font=Monospace hide=op}
+ * so a placed carrier (S6) and the overlay (S9) render the same block in the
+ * same fill, family and size when both are on screen. The carrier's SECOND text
+ * record (`T {@ref} ... layer=4`) is deliberately NOT ported: it exists only so
+ * a FLOATING annotator can say which device it belongs to, and the overlay is
+ * drawn on the device itself. */
+#define ANNOT_OVERLAY_SIZE  0.2
+#define ANNOT_OVERLAY_LAYER 15
+#define ANNOT_OVERLAY_DX    5.0
+#define ANNOT_OVERLAY_DY    0.0
+
+/* monotonic count of blocks this reader approved. draw()'s entire body is inside
+ * if(has_x), so `xschem get annot_overlay_count` is the only seam any automated
+ * check can use to prove the screen call site exists. Mirrors draw_count. */
+unsigned int annot_overlay_count = 0;
+
+/* monotonic count of WHOLESALE cache flushes (S9b). Read with
+ * `xschem get annot_overlay_flushes`. Without this seam every staleness check in
+ * the suite is satisfiable by flushing on EVERY frame -- i.e. by deleting the
+ * cache -- which is precisely the +1.77 / +3.05 / +3.33 ms regression the cache
+ * exists to avoid, and which no other check can see. Bumped INSIDE
+ * annot_overlay_sync() at the moment of the flush and NEVER inside
+ * annot_data_changed() (decision D1): several hooks legitimately fire for ONE
+ * user action -- a `reload` bumps via remove_symbols() AND clear_drawing() --
+ * so a counter of invalidation REQUESTS would report 2 where 1 flush happened. */
+unsigned int annot_overlay_flushes = 0;
+
+/* The observed-state epoch. Any field moving flushes the whole cache.
+ * data_seq is the half the epoch CANNOT observe: re-running the same deck and
+ * re-annotating republishes into the SAME Raw allocation with identical
+ * nvars/level and annot_p 0 -> 0, so without the explicit bump the overlay would
+ * keep showing the previous run's numbers (invariant I3's literal wording).
+ * desc_gen is invariant I5: a user's op_annot::register in their own rc takes
+ * effect ON REDRAW, and nothing in C can otherwise see a Tcl re-registration. */
+typedef struct {
+  void *ctx;
+  void *raw;
+  int valid;
+  int instances;
+  int currsch;
+  int annot_show;
+  int raw_level;
+  int raw_nvars;
+  int raw_annot_p;
+  unsigned int schhash;
+  unsigned int modify_seq;
+  unsigned int data_seq;
+  int desc_gen;
+} Annot_epoch;
+
+static Annot_epoch annot_epoch;      /* zero-initialised: .valid == 0 == "no epoch yet" */
+static char **annot_cache = NULL;    /* per-instance rendered block, lazily filled */
+static int annot_cache_n = 0;
+static int annot_overlay_ok = 0;     /* ::op_annot::text is defined in this interpreter */
+static int annot_overlay_busy = 0;   /* re-entrancy guard: a devproc that redraws */
+static unsigned int annot_data_seq = 0;
+static int annot_invalidate_held = 0;
+
+/* S9b -- HOLD/RELEASE, depth-counted. ONE caller: prepare_netlist_structs()
+ * (netlist.c), whose `set_modify(-2)` is a MAINTENANCE reset of derived data and
+ * not a document change. Without the hold that call lands inside the export
+ * itself (svg_draw() and create_ps() both run prepare_netlist_structs(0) after
+ * their instance loop), so a single `load` + export flushed the cache TWICE:
+ * once correctly for the load, and once more at the trailing draw() -- throwing
+ * away the very blocks the export had just built and forcing the next frame to
+ * rebuild all of them. MEASURED, not theorised: `xschem load -keep_symbols` plus
+ * one SVG export moved annot_overlay_flushes by 2 (test rows O32/O34 pin 1).
+ *
+ * It is SAFE because the hold is strictly downstream: prepare_netlist_structs()
+ * does work only when the netlist structs were invalidated, and every path that
+ * invalidates them (a document edit, a paste, a property change, a load) has
+ * ALREADY bumped through HOOK A or HOOK B before reaching here. The hold drops
+ * a redundant bump, never the first one. */
+void annot_invalidate_hold(int on)
+{
+  if(on) ++annot_invalidate_held;
+  else if(annot_invalidate_held > 0) --annot_invalidate_held;
+}
+
+/* The two OP publishers call this: update_op() (save.c, the point-0 publisher
+ * every `annotate_op` / `raw switch` / `update_op` request funnels through) and
+ * backannotate_at_cursor_b_pos() (callback.c, the cursor-B live path), plus the
+ * S9b invalidation hooks A (clear_drawing), B (set_modify's floater block),
+ * C (remove_symbols) and D (the four raw-content mutators). */
+void annot_data_changed(void)
+{
+  if(annot_invalidate_held) return;
+  ++annot_data_seq;
+}
+
+static void annot_overlay_flush(void)
+{
+  int i;
+  if(annot_cache) {
+    for(i = 0; i < annot_cache_n; ++i) {
+      if(annot_cache[i]) my_free(_ALLOC_ID_, &annot_cache[i]);
+    }
+    my_free(_ALLOC_ID_, &annot_cache);
+  }
+  annot_cache = NULL;
+  annot_cache_n = 0;
+}
+
+/* Once per frame / per export, beside annot_show_sync_cache(). Compares the epoch
+ * and flushes wholesale -- the xText.floater_ptr model (get_text_floater above),
+ * not a per-instance field: a field on xInstance would have to be copied,
+ * cleared and freed at the nine store/select/paste/undo sites `pin_sel` touches. */
+void annot_overlay_sync(void)
+{
+  Annot_epoch e;
+  const char *g;
+  /* S9b hardening (decision D8). annot_overlay_busy guarded get_annot_overlay()
+   * but NOT this function, which is the one that FREES the cache -- so a devproc
+   * that re-enters xschem from inside annot_overlay_cached_text()'s tcleval
+   * could free the block the outer frame is still holding (the documented
+   * signal-11, issue 0464 residual #2). This NARROWS that window; it does not
+   * close it, and 0464 stays open. It cannot move any golden: busy is set only
+   * inside the cached-text fill, and no legitimate sync is nested in one. */
+  if(annot_overlay_busy) return;
+  if(!xctx) {
+    annot_overlay_flush();
+    annot_epoch.valid = 0;
+    annot_overlay_ok = 0;
+    return;
+  }
+  e.valid = 1;
+  e.ctx = (void *)xctx;
+  e.instances = xctx->instances;
+  e.currsch = xctx->currsch;
+  e.annot_show = xctx->annot_show;
+  e.modify_seq = xctx->modify_seq;
+  e.data_seq = annot_data_seq;
+  e.schhash = 0;
+  if(xctx->currsch >= 0 && xctx->currsch < CADMAXHIER && xctx->sch[xctx->currsch]) {
+    e.schhash = str_hash(xctx->sch[xctx->currsch]);
+  }
+  e.raw = (void *)xctx->raw;
+  e.raw_level   = xctx->raw ? xctx->raw->level   : -1;
+  e.raw_nvars   = xctx->raw ? xctx->raw->nvars   : -1;
+  e.raw_annot_p = xctx->raw ? xctx->raw->annot_p : -1;
+  g = tclgetvar("::op_annot::gen");
+  e.desc_gen = g ? atoi(g) : -1;
+  /* ISSUE 0864 -- THERE WAS A 14th TERM HERE AND IT IS GONE; a reader who
+   * remembers it will assume the epoch still has to watch a Tcl variable. It
+   * read the shipped "Live annotate probes with 'b' cursor" checkbutton, because
+   * that switch used to be op_annot::_annotated's first gate and so flipped
+   * every row of every block between its value and blank while moving nothing
+   * else -- not modify_seq, not the raw, not ::op_annot::gen, not any field of
+   * xctx. After 0864 nothing that RENDERS reads that switch (it means "follow
+   * cursor B and re-annotate as it moves"), so the term can no longer tell two
+   * frames apart: it is a flush trigger keyed to a variable the block's content
+   * does not depend on. Removed rather than left with a corrected comment --
+   * the alternative was considered and rejected in 0864. Row O29b slices this
+   * function and is the ONLY thing that can see the term come back; O29 stays
+   * green either way, which is exactly why O29b exists. */
+  if(annot_epoch.valid &&
+     e.ctx == annot_epoch.ctx && e.raw == annot_epoch.raw &&
+     e.instances == annot_epoch.instances && e.currsch == annot_epoch.currsch &&
+     e.annot_show == annot_epoch.annot_show &&
+     e.raw_level == annot_epoch.raw_level && e.raw_nvars == annot_epoch.raw_nvars &&
+     e.raw_annot_p == annot_epoch.raw_annot_p && e.schhash == annot_epoch.schhash &&
+     e.modify_seq == annot_epoch.modify_seq && e.data_seq == annot_epoch.data_seq &&
+     e.desc_gen == annot_epoch.desc_gen) return;
+  annot_overlay_flush();
+  ++annot_overlay_flushes;
+  annot_epoch = e;
+  /* op_annot.tcl is sourced from xschem.tcl; an installed tree with a stale
+   * Makefile (issues 0424/0458) can lack it. Probing ONCE per epoch beats a
+   * per-instance tcleval that can only fail -- tcleval() swallows a Tcl error
+   * into the empty string but prints two lines to stderr first, which for a
+   * per-FET per-frame call is a flood, not a diagnostic. */
+  annot_overlay_ok = 0;
+  if(interp) {
+    const char *r = tcleval("info commands ::op_annot::text");
+    if(r && r[0]) annot_overlay_ok = 1;
+  }
+}
+
+/* The cached block for instance n. NULL == "no cache available"; "" == computed
+ * and this device carries no block. The fixed script + a carrier variable avoids
+ * every quoting hazard an instance name could raise, and the `catch` keeps a
+ * malformed user descriptor (issue 0447: op_annot::register validates only
+ * `dict size`) from printing two stderr lines per device per frame. */
+static const char *annot_overlay_cached_text(int n)
+{
+  const char *r;
+  if(!annot_cache) {
+    if(xctx->instances <= 0) return NULL;
+    annot_cache = my_calloc(_ALLOC_ID_, xctx->instances, sizeof(char *));
+    if(!annot_cache) return NULL;
+    annot_cache_n = xctx->instances;
+  }
+  if(n < 0 || n >= annot_cache_n) return NULL;
+  if(!annot_cache[n]) {
+    annot_overlay_busy = 1;
+    tclsetvar("::op_annot::_ovi", xctx->inst[n].instname ? xctx->inst[n].instname : "");
+    r = tcleval("if {[catch {::op_annot::text $::op_annot::_ovi} ::op_annot::_ovr]}"
+                " {set ::op_annot::_ovr {}}\nset ::op_annot::_ovr");
+    annot_overlay_busy = 0;
+    my_strdup2(_ALLOC_ID_, &annot_cache[n], r ? r : "");
+  }
+  return annot_cache[n];
+}
+
+/* 1 == draw instance n's operating-point block, at *x/*y, size *size, layer
+ * *layer, text *txt (owned here -- the caller must NOT free it).
+ * 0 == this instance carries no block. */
+int get_annot_overlay(int n, const char **txt, double *x, double *y,
+                      double *size, int *layer)
+{
+  const char *t;
+  int lay;
+  if(txt) *txt = NULL;
+  if(!xctx) return 0;
+  if(annot_overlay_busy) return 0;
+  if(!annot_overlay_ok) return 0;
+  if(n < 0 || n >= xctx->instances) return 0;
+  if(xctx->inst[n].ptr == -1) return 0;
+  if(!xctx->sym_txt) return 0;                                    /* D9 */
+  if(xctx->inst[n].flags & HIDE_SYMBOL_TEXTS) return 0;           /* D9 */
+  /* the same `hide` expression draw_symbol/svg_draw_symbol/ps_draw_symbol compute */
+  if((xctx->inst[n].flags & HIDE_INST) ||
+     ((xctx->inst[n].ptr + xctx->sym)->flags & HIDE_INST) ||
+     (xctx->hide_symbols == 1 && (xctx->inst[n].ptr + xctx->sym)->type &&
+      !strcmp((xctx->inst[n].ptr + xctx->sym)->type, "subcircuit")) ||
+     (xctx->hide_symbols == 2)) return 0;                         /* D9 */
+  if(text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)) return 0;      /* D2: the mask, alone */
+  t = annot_overlay_cached_text(n);
+  if(!t || !t[0]) return 0;                                       /* D1: a blank block */
+  lay = ANNOT_OVERLAY_LAYER;
+  if(lay < 0 || lay >= cadlayers) lay = TEXTLAYER;
+  /* D7: anchored at the instance's TEXT-FREE bbox corner (xx2, yy1 -- absolute,
+   * rot/flip already applied by symbol_bbox), with annot_dx / annot_dy as
+   * RELATIVE offsets. Relative, not absolute, for the P6 name_dx/name_dy reason:
+   * an absolute override breaks the moment the instance is moved. The block is
+   * always upright (rot 0 / flip 0): a 90-degree FET would otherwise print a
+   * vertical wall of monospace rows. */
+  if(x) *x = xctx->inst[n].xx2 + pin_dtok(xctx->inst[n].prop_ptr, "annot_dx", ANNOT_OVERLAY_DX);
+  if(y) *y = xctx->inst[n].yy1 + pin_dtok(xctx->inst[n].prop_ptr, "annot_dy", ANNOT_OVERLAY_DY);
+  if(size) *size = ANNOT_OVERLAY_SIZE;
+  if(layer) *layer = lay;
+  if(txt) *txt = t;
+  ++annot_overlay_count;
+  return 1;
 }
 
 /* ----------------------------------------------------------------------------
@@ -1946,6 +2662,20 @@ void clear_drawing(void)
   xctx->graph_snap_on = 0;
   xctx->graph_snap_have_prev = 0;
  int i,j;
+ /* S9 HOOK A (decision D2, issue 0466). THE file-re-read choke point, and the
+  * reason this is here rather than in load_schematic() as issue 0466 originally
+  * named: load_schematic() (save.c) has an early `return 0` reached AFTER
+  * xctx->sch[currsch] is already rewritten, and it covers strictly less. One
+  * line here covers `xschem reload` (the FileReload button -- the literal 0466
+  * repro), `xschem load` of a different file, `load -keep_symbols` of the SAME
+  * path (where remove_symbols never runs, so HOOK C cannot help), descend,
+  * ascend, descend_symbol, disk undo via pop_undo(), in-memory undo/redo via
+  * mem_restore_slot(), `xschem clear`, font reload and window/tab teardown --
+  * the last of which also retires the epoch's dangling-ctx-compared-by-value
+  * residual, since the data seq has moved by the time a recycled malloc address
+  * could alias. The netlisters reach here per sub-sheet too; that is free (this
+  * is a counter bump) but it is why every seam test wraps a SINGLE action. */
+ annot_data_changed();
  /* the document is being torn down (load / clear / new / undo reload): any in-flight
   * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
   * item #3) -- otherwise it would survive into the next document and mislead the next
@@ -2665,7 +3395,7 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  }
  dbg(1, "place_symbol(): 2: name1=%s\n",name1);
 
- tclvareval("is_xschem_file {", name1, "}", NULL);
+ tcl_call("is_xschem_file", name1, NULL, NULL);
  if(!strcmp(tclresult(), "GENERATOR")) {
    size_t len = strlen(name1);
    if( name1[len - 1] != ')') my_snprintf(name, S(name), "%s()", name1);
@@ -2998,6 +3728,7 @@ int copy_hierarchy_data(const char *from_win_path, const char *to_win_path)
     my_strdup2(_ALLOC_ID_, &to->hier_attr[i].templ, hier_attr[i].templ);
     my_strdup2(_ALLOC_ID_, &to->hier_attr[i].symname, hier_attr[i].symname);
     my_strdup2(_ALLOC_ID_, &to->hier_attr[i].sym_extra, hier_attr[i].sym_extra);
+    to->hier_attr[i].auto_spec = hier_attr[i].auto_spec;   /* issue 1201 */
     if(to->portmap[i].table) str_hash_free(&to->portmap[i]);
     str_hash_init(&to->portmap[i], HASHSIZE);
     for(j = 0; j < HASHSIZE; j++) {
@@ -3113,12 +3844,14 @@ void launcher(void)
     url = get_tok_value(prop_ptr,"url",0); /* handle backslashes */
     dbg(1, "launcher(): url=%s\n", url);
     if(url[0] || (program[0])) { /* open url with appropriate program */
-      tclvareval("launcher {", url, "} {", program, "}", NULL);
+      tcl_call("launcher", url, program, NULL);
     } else if(command && command[0]){
       dbg(1, "launcher(): command=%s\n", command);
       if(Tcl_GlobalEval(interp, command) != TCL_OK) {
-        dbg(0, "%s\n", tclresult());
-        if(has_x) tclvareval("alert_ {", tclresult(), "} {}", NULL);
+        char errmsg[PATH_MAX + 100];
+        my_strncpy(errmsg, tclresult(), S(errmsg)); /* tclsetvar() would invalidate it */
+        dbg(0, "%s\n", errmsg);
+        if(has_x) tcl_call("alert_", errmsg, NULL, "{}");
         Tcl_ResetResult(interp);
       }
     } else { /* no action defined --> warning */
@@ -3148,6 +3881,19 @@ const char *get_sym_name(int inst, int ndir, int ext, int abs_path)
   /* resolve schematic=generator.tcl( @n ) where n=11 is defined in instance attrs */
   my_strdup2(_ALLOC_ID_, &sch, get_tok_value(xctx->inst[inst].prop_ptr,"schematic", 6));
   schematic_token_found = xctx->tok_size;
+  /* ISSUE 1201. The SECOND of the two places that decide which cell body a copy
+   * belongs to -- this one writes the name onto the call line, the one in
+   * get_additional_symbols() writes the body. Both ask auto_spec_name(), so the
+   * call line and the .subckt line can never drift apart about what the copy is
+   * called. Outside a SPICE netlist run this is always NULL and nothing here
+   * changes. */
+  if(!schematic_token_found) {
+    const char *auto_sch = auto_spec_name(inst);
+    if(auto_sch && auto_sch[0]) {
+      my_strdup2(_ALLOC_ID_, &sch, auto_sch);
+      schematic_token_found = strlen(auto_sch);
+    }
+  }
   if(sch && sch[0])
     my_strdup2(_ALLOC_ID_, &sch, translate3(sch, 1, xctx->inst[inst].prop_ptr, NULL, NULL, NULL));
   if(sch && sch[0])
@@ -3350,6 +4096,925 @@ void toggle_ignore(void)
   }
 }
 
+/* ============================================================================
+ * ISSUE 1201: THE NETLISTER WRITES THE SPECIALISED COPY OF A CELL BY ITSELF
+ * ============================================================================
+ *
+ * WHAT WENT WRONG FOR THE USER. A designer opens the shipped sky130 bandgap
+ * sheet, clicks two of the five passgates and types modelp=pfet_01v8_lvt on
+ * them, because those two have to be built from the low-threshold p-device.
+ * They press netlist. The deck builds all five out of the ordinary device and
+ * the tool says the setting changed nothing. Measured: one cell body, zero
+ * occurrences of the device they asked for.
+ *
+ * The tool COULD always do it. Type a second attribute -- `schematic=` naming a
+ * cell name no other copy asks for -- and get_additional_symbols() below writes
+ * a second cell body out of the very same sheet, feeds that copy's own property
+ * string into it as parent_prop_ptr, and the deck is right. The name in that
+ * attribute is not a path; it is just a cell name nobody else uses. So the
+ * designer was being asked to invent a unique name for something the netlister
+ * could name itself. In Cadence there is no such token: the netlister
+ * unique-ifies a specialised body on its own. This is that.
+ *
+ * WHEN IT FIRES, and both halves are required:
+ *   1. the copy sets something the SPICE line it is written through never reads
+ *      (the shared classification in token.c, the same one the "your setting
+ *      went nowhere" warning uses -- see ua_instance_eligible() and
+ *      ua_token_lost() there), AND
+ *   2. the cell's OWN drawing uses that setting, as sky130_tests/passgate.sch
+ *      uses `model=@modelp` (GUARD AS-BODY, token.c).
+ * Half 2 is what keeps this small. "The SPICE line never reads it" alone is
+ * true of misspellings and leftovers, and writing a cell body for those would
+ * put cells nobody asked for into decks that are correct today.
+ *
+ * MEASURED ON THE SHIPPED TREES: of the 653 schematics under sky130A,
+ * gf180mcuD, ihp-sg13g2, xschem_library and xschem_libs_newsym, not one copy
+ * enters this path, because every copy that would qualify already carries a
+ * hand-typed `schematic=`. The BEFORE/AFTER byte-diff of all 653 decks is on
+ * issue 1201.
+ *
+ * SCOPE IS THE SPICE DECK ONLY (GUARD AS-MODE). auto_spec_begin() is called
+ * from global_spice_netlist() and nowhere else, so the GUI, descend, and the
+ * Spectre, VHDL, Verilog and tEDAx netlisters keep exactly today's behaviour.
+ * The classification this rests on has only ever run for SPICE anyway --
+ * warn_unused_instance_attr() has one call site, inside print_spice_element().
+ */
+
+/* auto_spec_on is GUARD AS-MODE itself: outside a SPICE netlist run every
+ * question below is answered NULL and nothing in the editor changes. */
+static int auto_spec_on = 0;
+/* GUARD AS-WHOLE's flag, issue 1204: 1 when the run under way is writing the
+ * WHOLE design, 0 when it is writing only the sheet the user is looking at.
+ *
+ * A READER WOULD ASSUME ONE FLAG WOULD DO -- just don't open the window on the
+ * single-sheet arm. It would not, and the reason is measured. auto_spec_on has
+ * to keep meaning "a SPICE netlist run owns these tables", because
+ * auto_spec_would_specialize() drops the body-read cache whenever no run owns
+ * it; with the window shut on the single-sheet arm, every question the warning
+ * asks below would re-read the cell's drawing off disk, once per token. And the
+ * warning DOES have to ask on that arm -- it is the arm where the setting
+ * really did go nowhere and the user has to be told so. So: the window opens on
+ * both arms, and only this second flag decides whether names are minted.
+ *
+ * NO BEHAVIOURAL ROW CAN SEE THIS -- the deck is byte-identical either way and
+ * only the user's time is spent -- so row AS57 of
+ * tests/headless/test_auto_specialize_1201.tcl pins it structurally. Issue
+ * 1210 records the measurement: collapsing the two flags took the fixture cell
+ * drawings from 286 disk opens to 295 while every suite in the tree stayed
+ * green. */
+static int auto_spec_whole = 0;
+/* "<symbol reference>\n<the copy's whole property string>" -> the cell name
+ * chosen for it, or "" for "this copy gets nothing". Purely a speed memo: the
+ * answer is a function of those two things, and get_sym_name() asks it once per
+ * token expansion, which on a large sheet is thousands of times. */
+static Str_hashtable auto_spec_memo = {NULL, 0};
+/* "<symbol reference>\n<canonical setting list>" -> the cell name. THIS is what
+ * makes sharing correct: two copies that asked for the same settings land on
+ * the same key and therefore on ONE cell body, whatever order they typed them
+ * in and whatever else differs between them. */
+static Str_hashtable auto_spec_by_set = {NULL, 0};
+/* every cell name this run has already handed out -> the sharing key of the
+ * copy it was handed to, so GUARD AS-COLLIDE can see a name it minted itself as
+ * taken and GUARD AS-CLASH (issue 1212) can tell whether a hand-typed name that
+ * lands on one of them was asking for the same thing. AS-COLLIDE only tests for
+ * presence, so nothing else moved when the value stopped being "1". */
+static Str_hashtable auto_spec_taken = {NULL, 0};
+/* GUARD AS-HIER, issue 1212: every cell name a copy ANYWHERE ELSE ON THE
+ * DESIGN has typed by hand, read off the sheet files before the first name is
+ * minted. See auto_spec_scan_design() below for why a file read and not a
+ * walk of loaded instances. */
+static Str_hashtable auto_spec_typed = {NULL, 0};
+/* The walk happens once per netlist run, lazily, and only if some copy really
+ * qualifies -- so a design with nothing to specialise reads no files at all. */
+static int auto_spec_scanned = 0;
+
+/* ISSUE 1201. End the window: forget every answer, and stop answering.
+ *
+ * A reader would assume the tables are harmless to leave lying about, since
+ * they only cache. They are not: the sheet a cell is built from is read off
+ * DISK, and the file may be edited between two netlist runs of the same
+ * session, so an answer kept past the end of a run is an answer about a file
+ * that no longer says that. No behavioural row inside one run can see this --
+ * within a run the stale answer is the right one -- which is exactly the class
+ * of defect this branch has shipped past a green suite before. Row AS30 pins it
+ * structurally. */
+void auto_spec_end(void)
+{
+  auto_spec_on = 0;
+  auto_spec_whole = 0;                                       /* GUARD AS-WHOLE */
+  str_hash_free(&auto_spec_memo);
+  str_hash_free(&auto_spec_by_set);
+  str_hash_free(&auto_spec_taken);
+  str_hash_free(&auto_spec_typed);                            /* GUARD AS-HIER */
+  auto_spec_scanned = 0;
+  lost_attrs_cache_clear();
+}
+
+/* ISSUE 1201. Open the window. Called from global_spice_netlist() immediately
+ * before it writes the TOP sheet's own call lines, and from nowhere else. That
+ * point matters and is measured -- see the comment at the call site.
+ *
+ * ISSUE 1204: <whole> is the caller's own `global` flag -- 1 for a netlist of
+ * the whole design, 0 for a netlist of just the sheet on screen (Shift-N, or
+ * `xschem netlist -nohier`). It decides GUARD AS-WHOLE below and nothing else.
+ *
+ * ISSUE 1218: that second door used to be described here as a checkbutton
+ * labelled with a phrase this build does not have anywhere. Name the doors the
+ * user can actually reach. */
+void auto_spec_begin(int whole)
+{
+  auto_spec_end();
+  str_hash_init(&auto_spec_memo, 1021);
+  str_hash_init(&auto_spec_by_set, 1021);
+  str_hash_init(&auto_spec_taken, 1021);
+  str_hash_init(&auto_spec_typed, 1021);                      /* GUARD AS-HIER */
+  auto_spec_scanned = 0;
+  auto_spec_on = 1;
+  auto_spec_whole = whole ? 1 : 0;
+}
+
+/* GUARD AS-HIER's file reader, issue 1212. The whole of one file, or NULL.
+ *
+ * A file that cannot be read, or one absurdly large, answers NULL -- which
+ * degrades to exactly today's behaviour (the design walk simply learns nothing
+ * from that sheet) rather than to a guess. Same shape and same 64 MB ceiling as
+ * ua_file_uses_token() in token.c, for the same stated reason: a name can
+ * straddle any chunk boundary, so the file is read whole or not at all. */
+static char *auto_spec_slurp(const char *path)
+{
+  struct stat st;
+  FILE *f;
+  char *buf;
+  size_t want;
+  size_t got;
+
+  if(!path || !path[0]) return NULL;
+  if(stat(path, &st)) return NULL;
+  if(st.st_size <= 0) return NULL;
+  if((double)st.st_size > 64.0 * 1024.0 * 1024.0) return NULL;
+  f = fopen(path, "r");
+  if(!f) return NULL;
+  want = (size_t)st.st_size;
+  buf = my_malloc(_ALLOC_ID_, want + 1);
+  if(!buf) { fclose(f); return NULL; }
+  got = fread(buf, 1, want, f);
+  fclose(f);
+  buf[got] = '\0';
+  return buf;
+}
+
+/* ISSUE 1212. The attribute value that starts at <i> in <b>, written into
+ * <out>, with the index just past it returned.
+ *
+ * The .sch record format quotes a value that contains blanks and escapes a
+ * quote inside one with a backslash, so both are honoured here; an unquoted
+ * value ends at the first blank or at the '}' that closes the property record.
+ * This is the RAW text as the designer typed it -- no token substitution, no
+ * generator call -- for the reason GUARD AS-TYPEDNAME gives below: resolving
+ * one would run Tcl inside what is only a name-collision test. */
+static size_t auto_spec_value_at(const char *b, size_t i, char *out, size_t osize)
+{
+  size_t w;
+  int quoted;
+
+  w = 0;
+  quoted = 0;
+  if(b[i] == '"') { quoted = 1; ++i; }
+  while(b[i]) {
+    if(b[i] == '\\' && b[i + 1]) {
+      ++i;
+      if(w + 1 < osize) out[w++] = b[i];
+      ++i;
+      continue;
+    }
+    if(quoted) {
+      if(b[i] == '"') { ++i; break; }
+    } else if(b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r' ||
+              b[i] == '}') {
+      break;
+    }
+    if(w + 1 < osize) out[w++] = b[i];
+    ++i;
+  }
+  out[w] = '\0';
+  return i;
+}
+
+/* ISSUE 1212. Is <name> a `schematic=` value written at the top of <b>, i.e.
+ * does this SYMBOL name a drawing of its own? First one only, and only when it
+ * is a plain name; "" otherwise. */
+static void auto_spec_symbol_body(const char *b, char *out, size_t osize)
+{
+  size_t i;
+  int c;
+
+  out[0] = '\0';
+  for(i = 0; b[i]; ++i) {
+    if(b[i] != 's' || strncmp(b + i, "schematic=", 10)) continue;
+    c = (i > 0) ? (unsigned char)b[i - 1] : ' ';
+    if((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+       (c >= '0' && c <= '9') || c == '_') continue;
+    auto_spec_value_at(b, i + 10, out, osize);
+    if(strchr(out, '@') || strchr(out, '(')) out[0] = '\0';
+    return;
+  }
+}
+
+/* GUARD AS-HIER, issue 1212. Read ONE sheet file: register every cell name a
+ * copy on it has typed by hand, then walk into the sheets it places.
+ *
+ * WHY A FILE AND NOT THE LOADED DESIGN, which is the first thing a reader
+ * reaches for. At the moment a name has to be minted, the only sheet that is
+ * loaded is the one being written; the netlister descends into the sub-sheets
+ * AFTER the top sheet's call lines are already on disk. That ordering is issue
+ * 1202's whole defect, and issue 1212 is the same defect one level down: the
+ * probe S6a added walks the loaded instances, so it protected ONE SHEET and not
+ * a DESIGN. Measured on a two-level fixture: the copy one level down typed
+ * modelp=pfet_01v8_hvt and hand-typed its cell name, the top sheet's copy
+ * invented that same name, both call lines pointed at one cell built from the
+ * OTHER device, and pfet_01v8_hvt appeared nowhere in the deck with not a word
+ * said. Rejected alternative, recorded on 1212: load_schematic() the hierarchy
+ * up front so the real resolver does the work. It reuses the real resolver and
+ * drifts from nothing -- but it reads every sheet twice per netlist, and it
+ * cannot run where it is needed, because the mint happens inside spice_netlist()
+ * while the top sheet's call lines are being written and loading another sheet
+ * there destroys the context being written.
+ *
+ * THE TOP SHEET REGISTERS NOTHING, and that is not an oversight. Its instances
+ * ARE loaded, so GUARD AS-TYPEDNAME below already sees them -- and it sees them
+ * with their settings, which lets it exempt a copy that asked for the SAME
+ * thing (GUARD AS-TYPEDSAME, issue 1215). A text scan cannot work a setting key
+ * out, so a name registered from a file is unconditionally "taken". Registering
+ * the top sheet here as well would therefore un-do 1215 for the very sheet
+ * 1215 is about. Below the top sheet the conservative answer stands, and it
+ * costs at worst a numeric suffix on a cell name.
+ *
+ * CONSERVATIVE BY CONSTRUCTION, everywhere: anything this cannot parse or
+ * resolve for certain it SKIPS, which is exactly today's behaviour. It never
+ * guesses a name. The sheets it cannot reach are covered instead by GUARD
+ * AS-CLASH below, which tells the designer rather than going quiet.
+ *
+ * THE TWO BOUNDS ARE LOAD-BEARING and row AS74 requires them by reading this
+ * code rather than by running it: two sheets that place each other would walk
+ * for ever, and a walk that does not come back is a hung suite, not a failing
+ * one. */
+static void auto_spec_scan_file(const char *path, int depth, Str_hashtable *seen)
+{
+  struct stat st;
+  char val[PATH_MAX];
+  char ref[PATH_MAX];
+  char child[PATH_MAX];
+  char *b;
+  char *sb;
+  size_t i;
+  size_t j;
+  size_t w;
+  int c;
+
+  if(!path || !path[0]) return;
+  if(depth > CADMAXHIER) return;
+  if(str_hash_lookup(seen, path, "", XLOOKUP)) return;
+  str_hash_lookup(seen, path, "1", XINSERT);
+  b = auto_spec_slurp(path);
+  if(!b) return;
+  for(i = 0; b[i]; ++i) {
+    if(depth > 0 && b[i] == 's' && !strncmp(b + i, "schematic=", 10)) {
+      /* not `default_schematic=`, and not the tail of any other name */
+      c = (i > 0) ? (unsigned char)b[i - 1] : ' ';
+      if(!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_')) {
+        j = auto_spec_value_at(b, i + 10, val, S(val));
+        /* a generator call or an @-substitution is worked out while the
+         * netlist runs and cannot be read off the file beforehand: skip it,
+         * and let GUARD AS-CLASH speak for it if it turns into a clash. */
+        if(val[0] && !strchr(val, '@') && !strchr(val, '(')) {
+          str_hash_lookup(&auto_spec_typed, get_cell(val, 0), "1", XINSERT);
+        }
+        if(j > i) i = j - 1;
+        continue;
+      }
+    }
+    if(b[i] == 'C' && (i == 0 || b[i - 1] == '\n') && b[i + 1] == ' ' &&
+       b[i + 2] == '{') {
+      w = 0;
+      j = i + 3;
+      while(b[j] && b[j] != '}') {
+        if(w + 1 < S(ref)) ref[w++] = b[j];
+        ++j;
+      }
+      ref[w] = '\0';
+      if(j > i) i = j - 1;
+      if(!ref[0] || strchr(ref, '@') || strchr(ref, '(')) continue;
+      /* the cell's own drawing, beside the symbol, is the ordinary case */
+      my_strncpy(child, abs_sym_path(ref, ".sch"), S(child));
+      if(child[0] && !stat(child, &st)) {
+        auto_spec_scan_file(child, depth + 1, seen);
+        continue;
+      }
+      /* otherwise the symbol may name a drawing of its own */
+      my_strncpy(child, abs_sym_path(ref, ".sym"), S(child));
+      if(!child[0] || stat(child, &st)) continue;
+      sb = auto_spec_slurp(child);
+      if(!sb) continue;
+      auto_spec_symbol_body(sb, val, S(val));
+      my_free(_ALLOC_ID_, &sb);
+      if(!val[0]) continue;
+      my_strncpy(child, abs_sym_path(val, ".sch"), S(child));
+      if(child[0] && !stat(child, &st)) auto_spec_scan_file(child, depth + 1, seen);
+    }
+  }
+  my_free(_ALLOC_ID_, &b);
+}
+
+/* GUARD AS-HIER, issue 1212. Learn the cell names the whole design has already
+ * typed by hand -- ONCE per netlist run, and only when some copy has actually
+ * qualified for a cell of its own.
+ *
+ * The laziness is the reason this costs nothing on the shipped trees: of the
+ * 654 schematics under sky130A, gf180mcuD, ihp-sg13g2, xschem_library and
+ * xschem_libs_newsym, not one copy qualifies, so not one of them reads a single
+ * extra file. */
+static void auto_spec_scan_design(void)
+{
+  Str_hashtable seen = {NULL, 0};
+  const char *top;
+
+  if(auto_spec_scanned) return;
+  auto_spec_scanned = 1;
+  top = xctx->sch[xctx->currsch];
+  if(!top || !top[0]) top = xctx->current_name;
+  if(!top || !top[0]) return;
+  str_hash_init(&seen, 1021);
+  auto_spec_scan_file(top, 0, &seen);
+  str_hash_free(&seen);
+}
+
+/* GUARD AS-COLLIDE, issue 1201. Is <nm> a name this deck, this design or this
+ * disk already means something else by?
+ *
+ * A NAME THE TOOL INVENTS MUST NEVER LAND ON A CELL THE DESIGN ALREADY HAS.
+ * The consequence if it does is not cosmetic: get_additional_symbols() below
+ * only falls back to the cell's own drawing when the named file does NOT
+ * exist, so a candidate that happens to name a real symbol next door builds
+ * this copy out of THAT cell's drawing instead -- a different circuit, quietly,
+ * under a name the designer never typed. Five questions, because there are five
+ * ways a name can already be spoken for:
+ *
+ *   * a symbol already loaded in this design, including one this same run has
+ *     just minted;
+ *   * a name this run has already handed out (two different setting lists whose
+ *     names collapse to the same spelling once punctuation is folded to '_');
+ *   * a name a designer has TYPED BY HAND on another SHEET of this design --
+ *     GUARD AS-HIER, issue 1212, which is the only one of the five that has to
+ *     read files, because those sheets are not loaded yet;
+ *   * a name a designer has TYPED BY HAND on another copy on this sheet --
+ *     GUARD AS-TYPEDNAME below, issue 1202 -- UNLESS that copy is asking for
+ *     the very same settings, in which case the two share one cell body and
+ *     XSCHEM adopts the name the designer typed: GUARD AS-TYPEDSAME, issue
+ *     1215;
+ *   * a file on disk, asked BOTH as a bare reference and as a reference in the
+ *     base symbol's own library, because that is where a neighbouring cell of
+ *     the same family actually lives and a bare name does not resolve there.
+ *
+ * <mykey> is the sharing key of the copy a name is being minted FOR, or NULL
+ * when the caller has none; it is what makes GUARD AS-TYPEDSAME possible and it
+ * is used for nothing else.
+ */
+static int auto_spec_collides(int inst, const char *nm, const char *mykey)
+{
+  struct stat buf;
+  const char *symname;
+  const char *iprop;
+  const char *ival;
+  char *okey = NULL;
+  char dirref[PATH_MAX];
+  const char *slash;
+  size_t dlen;
+  size_t saved_tok_size;
+  int same;
+  int hit;
+  int i;
+
+  if(!nm || !nm[0]) return 1;
+  for(i = 0; i < xctx->symbols; ++i) {
+    if(!xctx->sym[i].name) continue;
+    if(!strcmp(get_cell(xctx->sym[i].name, 0), nm)) return 1;
+  }
+  if(str_hash_lookup(&auto_spec_taken, nm, "", XLOOKUP)) return 1;
+  /* GUARD AS-HIER, issue 1212. And a name a designer typed on a sheet ONE
+   * LEVEL DOWN, which nothing else here can see: the sub-sheets are not loaded
+   * yet and their instances are not in the loop below. auto_spec_scan_design()
+   * above reads the design's sheet files before the first name is minted. */
+  if(str_hash_lookup(&auto_spec_typed, nm, "", XLOOKUP)) return 1;
+  /* GUARD AS-TYPEDNAME, issue 1202. A NAME A DESIGNER TYPED IS SPOKEN FOR, EVEN
+   * THOUGH NOTHING ELSE HERE CAN SEE IT YET.
+   *
+   * A reader would assume the loop over loaded symbols above already covers
+   * this -- a copy that names its own cell body gets a symbol of that name, so
+   * surely it is loaded. IT IS NOT LOADED YET, and the ordering is the whole
+   * defect: the top sheet's call lines are written by spice_netlist() BEFORE
+   * get_additional_symbols() builds the symbol blocks for the hand-typed names,
+   * so at the moment a name is minted the hand-typed one exists only as text in
+   * another copy's property string. Measured before this probe: one copy typed
+   * exactly the name the tool would invent and asked for a different device,
+   * both copies were pointed at one cell body, and the copy the designer typed
+   * by hand silently got the OTHER copy's device with not a word said. That is
+   * the same silent loss of a typed setting this whole feature exists to end,
+   * which is why it may not ship inside it. Row AS51 drives it.
+   *
+   * The value is read RAW, never through translate3(): a hand-typed name may be
+   * a generator call, and running one for every candidate would evaluate Tcl
+   * inside a collision test. A generator's raw text will not equal a name this
+   * function invented anyway. Rejected alternative, recorded on issue 1202.
+   *
+   * tok_size is latched and put back for the reason GUARD UA-TOKSIZE gives in
+   * token.c: an observer may never become the reason a real netlist value goes
+   * missing. Row AS58 pins this latch and the twin in auto_spec_qualifies(),
+   * including the issue-0986-gap-4 case a plain restore count cannot see -- a
+   * new way OUT of the latched region, with the restore still sitting there.
+   * Issue 1211. */
+  hit = 0;
+  saved_tok_size = xctx->tok_size;
+  for(i = 0; i < xctx->instances; ++i) {
+    iprop = xctx->inst[i].prop_ptr;
+    if(!iprop || !iprop[0]) continue;
+    ival = get_tok_value(iprop, "schematic", 0);
+    if(!ival || !ival[0]) continue;
+    if(strcmp(get_cell(ival, 0), nm)) continue;
+    /* GUARD AS-TYPEDSAME, issue 1215, AND IT IS THE OVER-REFUSAL TWIN OF THE
+     * GUARD IT SITS INSIDE. Two copies of ONE cell asking for exactly the SAME
+     * settings are one request: they are supposed to share one cell body, and
+     * the note this feature prints says so in as many words. Before this test
+     * the copy that typed the name won it, the copy that let XSCHEM name it got
+     * a second name with a _1 on the end, and the deck carried two cell bodies
+     * that were byte-identical -- 314 bytes each, measured -- under a sentence
+     * telling the designer they shared one. So a hand-typed name is NOT taken
+     * when it belongs to a copy of the same cell asking for the same thing:
+     * XSCHEM adopts the name the designer typed, and both call lines name it.
+     *
+     * EQUAL KEYS REALLY DO MEAN EQUAL CELL BODIES, and that is the invariant
+     * this rests on. The only kind of setting that can make two bodies of one
+     * cell differ is one the SPICE line drops and the drawing reads -- anything
+     * the SPICE line does read is a subcircuit parameter, resolved per call
+     * line, the same body either way. The key (GUARD AS-KEY, token.c) is an
+     * unambiguous encoding of exactly that set.
+     *
+     * ⚠ THAT INVARIANT WAS FALSE FOR ONE COMMIT, and issue 1227 is what put it
+     * back. A setting whose value the rule REFUSES is left out of the key --
+     * and until GUARD AS-STRIP it was still fed to the cell body through the
+     * copy's property string, so two copies with equal keys and different
+     * refused values really did get one body that matched only one of them.
+     * The strip is what makes "equal keys, equal bodies" a fact again rather
+     * than a hope, so this exemption -- which hands a designer's own cell name
+     * to BOTH copies on the strength of it -- may not be read without it.
+     *
+     * A copy the key cannot be worked out for -- lost_attrs_typed_copy()
+     * answering 0 -- loses the comparison and the name stays taken, which is
+     * today's behaviour. Row AS70 drives this; row AS71 is its control, the
+     * same shape with the two copies asking for DIFFERENT devices, which must
+     * still get two cells. `continue` and not `return`: the tok_size latch
+     * region must have no way out of its own, row AS58. */
+    same = 0;
+    if(mykey && mykey[0] && xctx->inst[i].ptr == xctx->inst[inst].ptr &&
+       lost_attrs_typed_copy(i, NULL, &okey) > 0 && okey && !strcmp(okey, mykey))
+      same = 1;
+    my_free(_ALLOC_ID_, &okey);
+    if(!same) { hit = 1; break; }
+  }
+  xctx->tok_size = saved_tok_size;
+  if(hit) return 1;
+  if(!stat(abs_sym_path(nm, ".sym"), &buf)) return 1;
+  if(!stat(abs_sym_path(nm, ".sch"), &buf)) return 1;
+  symname = xctx->sym[xctx->inst[inst].ptr].name;
+  slash = symname ? strrchr(symname, '/') : NULL;
+  if(slash) {
+    dlen = (size_t)(slash - symname) + 1;
+    if(dlen < S(dirref) - 1) {
+      my_strncpy(dirref, symname, dlen + 1);
+      my_strncpy(dirref + dlen, nm, S(dirref) - dlen);
+      if(!stat(abs_sym_path(dirref, ".sym"), &buf)) return 1;
+      if(!stat(abs_sym_path(dirref, ".sch"), &buf)) return 1;
+    }
+  }
+  return 0;
+}
+
+/* ISSUE 1201. DOES THIS COPY QUALIFY FOR A CELL BODY OF ITS OWN? Everything
+ * except GUARD AS-MODE and the naming, so that auto_spec_name() (inside a SPICE
+ * netlist run) and auto_spec_would_specialize() (the annotation surface, at any
+ * time) can never answer differently about the same copy.
+ *
+ * Returns the number of settings that qualify and hands back the canonical and
+ * the human spelling of them, and (issue 1203) the sharing key -- three
+ * spellings of one set, each with a different job. See GUARD AS-KEY in token.c
+ * for why the readable one may not also be the one that decides sharing. */
+static int auto_spec_qualifies(int inst, char **canon, char **settings, char **key)
+{
+  xSymbol *symptr;
+  size_t saved_tok_size;
+  int ok;
+
+  if(canon) my_strdup(_ALLOC_ID_, canon, NULL);
+  if(settings) my_strdup(_ALLOC_ID_, settings, NULL);
+  if(key) my_strdup(_ALLOC_ID_, key, NULL);
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  symptr = xctx->inst[inst].ptr + xctx->sym;
+
+  /* Latched for the reason the twin in auto_spec_collides() gives above; row
+   * AS58 pins both, issue 1211. */
+  saved_tok_size = xctx->tok_size;
+  /* GUARD AS-SYMBODY, issue 1201. A SYMBOL that names its own drawing, or says
+   * its insides are never to be written out, has already decided which body it
+   * uses -- and get_additional_symbols()'s missing-file fallback would silently
+   * replace that decision with "<cell>.sch beside the symbol", which is a
+   * different drawing. Ten shipped symbols are of this shape. Rejected
+   * alternative, recorded on issue 1201: resolve the symbol's own drawing and
+   * use THAT as the fallback. More code, it changes an existing fallback, and
+   * no shipped cell needs it. */
+  get_tok_value(symptr->prop_ptr, "schematic", 0);
+  ok = xctx->tok_size ? 0 : 1;
+  if(ok) {
+    get_tok_value(symptr->prop_ptr, "default_schematic", 0);
+    ok = xctx->tok_size ? 0 : 1;
+  }
+  /* GUARD AS-TMPLMODEL, issue 1201. spice_block_netlist() takes the .subckt
+   * name from the symbol template's `model` when it has one, NOT from the
+   * symbol's name -- so two specialised copies of such a cell would put two
+   * different cell bodies into the deck under ONE name, which is a deck no
+   * simulator can read. Zero of the 533 shipped subcircuit symbols do this; the
+   * fixture on row AS20 is what proves the guard. */
+  if(ok) {
+    get_tok_value(symptr->templ, "model", 0);
+    ok = xctx->tok_size ? 0 : 1;
+  }
+  xctx->tok_size = saved_tok_size;
+  /* GUARD AS-IGNORE, issue 1201. A copy the SPICE deck does not contain at all,
+   * or one written out as a plain wire joining its pins, carries no settings
+   * anywhere. Without this it would still grow a cell body nothing calls. */
+  if(ok && ((xctx->inst[inst].flags & (SPICE_IGNORE | SPICE_SHORT)) ||
+            (symptr->flags & (SPICE_IGNORE | SPICE_SHORT)))) ok = 0;
+  if(!ok) return 0;
+  /* GUARD AS-EXPLICIT, AS-TYPE, AS-LOST and AS-BODY, all four, and they are the
+   * same tests the "your setting went nowhere" warning applies -- one
+   * classification, in token.c, asked twice. GUARD AS-ORDER is inside it: the
+   * canonical string is sorted by setting name, so two copies that typed the
+   * same settings in opposite order are one request and share one body. */
+  return lost_attrs_the_cell_body_reads(inst, canon, settings, key);
+}
+
+/* ISSUE 1201. WOULD THE NETLISTER GIVE THIS COPY A CELL BODY OF ITS OWN?
+ * The same question auto_spec_name() answers, asked OUTSIDE a netlist run and
+ * without minting a name or saying anything.
+ *
+ * WHY IT EXISTS, and it is not a convenience. The annotation surface has to
+ * know which model name the DECK will build a device with, so it can ask the
+ * results file for that device by the name the simulator gave it
+ * (op_annot::model_netlist, src/op_annot.tcl, GUARD GB). Before issue 1201 the
+ * only way a copy's own setting could reach the deck was a hand-typed
+ * `schematic=`, and GUARD GB tested for exactly that string. Now the netlister
+ * does it by itself, so a copy with no attribute on it at all can have its
+ * setting in the deck -- and an annotation surface still testing for the
+ * attribute would ask the results for a device under a name the simulator never
+ * used, and put no numbers, or the wrong ones, on the user's schematic. RULING
+ * D5-1. descend_schematic() records this answer per hierarchy level; `xschem
+ * globals` publishes it as lcc[N].auto_spec.
+ *
+ * The body-read cache is dropped on the way out when no netlist run owns it,
+ * because outside that window nothing else would ever clear it and the drawing
+ * it read may be edited a moment later. */
+int auto_spec_would_specialize(int inst)
+{
+  char *canon = NULL;
+  char *settings = NULL;
+  int n;
+
+  n = auto_spec_qualifies(inst, &canon, &settings, NULL);
+  my_free(_ALLOC_ID_, &canon);
+  my_free(_ALLOC_ID_, &settings);
+  if(!auto_spec_on) lost_attrs_cache_clear();
+  return n > 0 ? 1 : 0;
+}
+
+/* ISSUE 1201. The cell name this copy should be built under, or NULL for "leave
+ * this copy exactly as it is today".
+ *
+ * Consulted from the two places that resolve which cell body a copy calls --
+ * get_additional_symbols(), which writes the body, and get_sym_name(), which
+ * writes the name onto the call line. Both ask THIS function, so the two can
+ * never disagree about what a copy is called.
+ *
+ * The guards, in order, each of which has its own test row:
+ *   AS-MODE       we are not inside a SPICE netlist run
+ *   AS-WHOLE      this run is writing one sheet, not the whole design, so no
+ *                 cell bodies will be written and no names may be minted
+ *   AS-SYMBODY    the SYMBOL already has an opinion about which drawing it is
+ *                 built from, or says not to write its insides out at all
+ *   AS-TMPLMODEL  the symbol's template names the cell body itself
+ *   AS-IGNORE     this copy is not written into the SPICE deck at all
+ *   AS-EXPLICIT / AS-TYPE / AS-LOST / AS-BODY, all four in token.c
+ *   AS-ORDER      the answer is the SET of settings, not the order typed
+ *   AS-KEY        which copies SHARE a body is decided by an unambiguous
+ *                 encoding of that set, not by the readable name (token.c)
+ *   AS-CANON      a readable, deterministic name built from that set
+ *   AS-COLLIDE    and never a name something else already answers to
+ */
+const char *auto_spec_name(int inst)
+{
+  static char name[256];
+  char cand[256];
+  char note[1600];
+  char e_sheet[160];
+  char e_inst[80];
+  char e_cell[80];
+  char e_set[160];
+  char e_new[120];
+  char *memokey = NULL;
+  char *setkey = NULL;
+  char *canon = NULL;
+  char *settings = NULL;
+  char *key = NULL;
+  const char *symname;
+  /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK. get_cell() returns a
+   * static buffer that the NEXT call overwrites, and auto_spec_collides() below
+   * calls it once per loaded symbol. Measured before this copy existed: the
+   * note told the user their passgate was "a 130_fd_pr/pfet_01v8" -- the tail
+   * of some other symbol's name, left in that buffer. */
+  char base[PATH_MAX];
+  const char *sheet;
+  const char *instname;
+  const char *s;
+  Str_hashentry *e;
+  xSymbol *symptr;
+  size_t w;
+  int nlost;
+  int suffix;
+  int c;
+
+  name[0] = '\0';
+  if(!auto_spec_on) return NULL;                              /* GUARD AS-MODE */
+  /* GUARD AS-WHOLE, issue 1204. A DECK MAY NOT NAME A CELL BODY IT DOES NOT
+   * ALSO WRITE, and on this arm it will not write one.
+   *
+   * A reader would assume that once the window is open the name is always safe
+   * to mint, because the body follows. It does not follow here. The bodies are
+   * written by get_additional_symbols(1) inside global_spice_netlist()'s
+   * `if(global)` block, and `global` is 0 when the user asked for a netlist of
+   * just the sheet on screen -- Shift-N, or `xschem netlist -nohier` (issue
+   * 1218: this used to name a checkbutton the build does not have) -- so before
+   * this guard that run wrote a deck whose call lines named cells nothing
+   * defined: not that file, not any other netlist file, not any library on
+   * disk. The simulator refuses it, and it is a REGRESSION -- that same door
+   * used to write the plain cell name, which the designer's other netlist files
+   * do define.
+   *
+   * RETURNING HERE IS ALSO THE OTHER HALF OF THE FIX, and that is deliberate
+   * rather than incidental. The note that tells the user "XSCHEM wrote a
+   * separate copy of this cell for you and you need do nothing" is printed at
+   * the bottom of this very function, so leaving before it is what stops the
+   * tool claiming work it did not do -- RULING D5-1. What the user gets on this
+   * arm instead is the plain-English "your setting went nowhere here, netlist
+   * the whole design and it will be in the deck" sentence in token.c.
+   *
+   * The window itself still opens on this arm; see auto_spec_begin() above for
+   * why the two flags are not one. */
+  if(!auto_spec_whole) return NULL;                          /* GUARD AS-WHOLE */
+  if(inst < 0 || inst >= xctx->instances) return NULL;
+  if(xctx->inst[inst].ptr < 0) return NULL;
+  symptr = xctx->inst[inst].ptr + xctx->sym;
+  symname = symptr->name ? symptr->name : "";
+
+  my_strdup2(_ALLOC_ID_, &memokey, symname);
+  my_strcat(_ALLOC_ID_, &memokey, "\n");
+  my_strcat(_ALLOC_ID_, &memokey,
+            xctx->inst[inst].prop_ptr ? xctx->inst[inst].prop_ptr : "");
+  e = str_hash_lookup(&auto_spec_memo, memokey, "", XLOOKUP);
+  if(e) {
+    if(e->value && e->value[0]) my_strncpy(name, e->value, S(name));
+    my_free(_ALLOC_ID_, &memokey);
+    return name[0] ? name : NULL;
+  }
+
+  nlost = auto_spec_qualifies(inst, &canon, &settings, &key);
+  if(nlost <= 0 || !canon || !canon[0]) {
+    str_hash_lookup(&auto_spec_memo, memokey, "", XINSERT);
+    my_free(_ALLOC_ID_, &memokey);
+    my_free(_ALLOC_ID_, &canon);
+    my_free(_ALLOC_ID_, &settings);
+    my_free(_ALLOC_ID_, &key);
+    return NULL;
+  }
+
+  /* GUARD AS-KEY, issue 1203. WHICH COPIES SHARE A CELL BODY IS DECIDED ON THE
+   * UNAMBIGUOUS KEY, NEVER ON THE READABLE NAME.
+   *
+   * A reader would assume the readable spelling below is good enough to key on,
+   * since it is built from the same set. It is not: it joins each setting to
+   * its value with one underscore and the pairs to each other with two, so a
+   * value that itself contains two underscores spells the same string as two
+   * separate settings do. Measured before this: one copy setting
+   * `modeln=nfetA__modelp_pfetB` and another setting `modeln=nfetA modelp=pfetB`
+   * landed on ONE key, so the second copy was handed the first copy's cell body
+   * and BOTH of its own settings vanished from the deck with nothing said.
+   * The key from token.c is length-prefixed and cannot do that.
+   *
+   * The readable name stays ambiguous on purpose -- it is for a person to read
+   * in a simulator log -- and two readable names that do collide are separated
+   * one step later by GUARD AS-COLLIDE's numeric suffix. */
+  my_strdup2(_ALLOC_ID_, &setkey, symname);
+  my_strcat(_ALLOC_ID_, &setkey, "\n");
+  my_strcat(_ALLOC_ID_, &setkey, key);
+  e = str_hash_lookup(&auto_spec_by_set, setkey, "", XLOOKUP);
+  if(e && e->value && e->value[0]) {
+    my_strncpy(name, e->value, S(name));
+    str_hash_lookup(&auto_spec_memo, memokey, name, XINSERT);
+    my_free(_ALLOC_ID_, &memokey);
+    my_free(_ALLOC_ID_, &setkey);
+    my_free(_ALLOC_ID_, &canon);
+    my_free(_ALLOC_ID_, &settings);
+    my_free(_ALLOC_ID_, &key);
+    return name;
+  }
+
+  /* GUARD AS-CANON, issue 1201. The name is READABLE and it is a pure function
+   * of the setting SET: `passgate__modelp_pfet_01v8_lvt`. A designer reading a
+   * simulator log, or a .subckt line, can see at a glance which copy it is and
+   * why it exists. Rejected alternative, recorded on issue 1201: an opaque
+   * `passgate__auto_7f3a1c9e`, which is shorter and says nothing.
+   *
+   * Anything a simulator would not accept in a name becomes '_', and a cell
+   * whose own name does not begin with a letter gets one, because the result
+   * has to be a name a netlist reader accepts (row AS12). The length is capped
+   * so a long setting value cannot produce an unreadable line. */
+  w = 0;
+  my_strncpy(base, get_cell(symname, 0), S(base));
+  if(!base[0]) my_strncpy(base, "cell", S(base));
+  if(!((base[0] >= 'a' && base[0] <= 'z') || (base[0] >= 'A' && base[0] <= 'Z')))
+    cand[w++] = 'x';
+  for(s = base; *s && w < 60; ++s) {
+    c = (unsigned char)*s;
+    cand[w++] = (char)(((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9')) ? c : '_');
+  }
+  cand[w++] = '_';
+  cand[w++] = '_';
+  for(s = canon; *s && w < 200; ++s) {
+    c = (unsigned char)*s;
+    cand[w++] = (char)(((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9')) ? c : '_');
+  }
+  cand[w] = '\0';
+
+  /* GUARD AS-HIER, issue 1212. Learn what the REST of the design has already
+   * named before choosing a name here -- once per netlist run, and only now,
+   * i.e. only after a copy has really qualified, so a design with nothing to
+   * specialise never opens a file. */
+  auto_spec_scan_design();
+  suffix = 0;
+  while(1) {
+    if(suffix == 0) my_strncpy(name, cand, S(name));
+    else my_snprintf(name, S(name), "%s_%d", cand, suffix);
+    if(!auto_spec_collides(inst, name, key)) break;
+    ++suffix;
+    /* Nothing a user can type reaches this: it needs a thousand different
+     * cells already answering to one family of names. If it ever does, the
+     * honest answer is today's behaviour, not a name that means something
+     * else. */
+    if(suffix > 999) {
+      str_hash_lookup(&auto_spec_memo, memokey, "", XINSERT);
+      my_free(_ALLOC_ID_, &memokey);
+      my_free(_ALLOC_ID_, &setkey);
+      my_free(_ALLOC_ID_, &canon);
+      my_free(_ALLOC_ID_, &settings);
+      my_free(_ALLOC_ID_, &key);
+      return NULL;
+    }
+  }
+
+  str_hash_lookup(&auto_spec_by_set, setkey, name, XINSERT);
+  /* THE VALUE IS THE SHARING KEY, issue 1212. GUARD AS-COLLIDE only asks
+   * whether the name is present, but GUARD AS-CLASH below needs to know WHAT
+   * this name was handed out for, so it can tell a hand-typed name that landed
+   * on it and wanted something else. */
+  str_hash_lookup(&auto_spec_taken, name, key ? key : "", XINSERT);
+  str_hash_lookup(&auto_spec_memo, memokey, name, XINSERT);
+
+  /* ISSUE 1201 AND THE PLAIN-ENGLISH RULING. The user gets a cell name in their
+   * deck that nobody typed, so the tool says so ONCE per new cell, in the words
+   * a first-time user has: sheet, copy, setting, cell, new name -- and it ends
+   * by telling them there is nothing for them to do. It does NOT tell them to
+   * type an attribute; that instruction is what this whole issue removes, and
+   * rows AS23, AS24 and AS25 assert its absence here and on the two older
+   * surfaces that used to give it.
+   *
+   * Net noise goes DOWN: this line replaces a warning that used to fire on the
+   * same copy, and like that warning it is statusmsg(..., 2), which appends to
+   * the info window without forcing it open. RULING D5-4: the sentence is
+   * assembled by ONE my_snprintf and handed over exactly once.
+   *
+   * GUARD UA-ELIDE on every variable-length field, so no value a user types can
+   * push the last sentence off the end or split the note across two entries. */
+  sheet = (xctx->current_name[0]) ? xctx->current_name :
+          (xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "?");
+  instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
+  unused_attr_elide(e_sheet, S(e_sheet), sheet, 120, 1);
+  unused_attr_elide(e_inst,  S(e_inst),  instname, 60, 0);
+  unused_attr_elide(e_cell,  S(e_cell),  base, 60, 0);
+  unused_attr_elide(e_set,   S(e_set),   settings ? settings : "", 120, 0);
+  unused_attr_elide(e_new,   S(e_new),   name, 100, 0);
+  my_snprintf(note, S(note),
+    "Note: on sheet %s, %s (a %s) sets %s, and the %s drawing uses that setting "
+    "inside it, so XSCHEM wrote a separate copy of %s called %s and pointed %s "
+    "at it. Any other copy of %s on this design that asks for the same settings "
+    "shares that one. You do not have to add anything to the sheet.",
+    e_sheet, e_inst, e_cell, e_set, e_cell, e_cell, e_new, e_inst, e_cell);
+  statusmsg(note, 2);
+
+  my_free(_ALLOC_ID_, &memokey);
+  my_free(_ALLOC_ID_, &setkey);
+  my_free(_ALLOC_ID_, &canon);
+  my_free(_ALLOC_ID_, &settings);
+  my_free(_ALLOC_ID_, &key);
+  return name;
+}
+
+/* GUARD AS-CLASH, issue 1212. THE BACKSTOP FOR WHAT THE DESIGN WALK CANNOT
+ * REACH -- and the rule that XSCHEM does not go quiet about it.
+ *
+ * auto_spec_scan_design() reads the design's sheet files to learn which cell
+ * names designers have already typed, and it deliberately SKIPS anything it
+ * cannot resolve for certain: a sheet named through a generator, or through an
+ * @ substitution that is only worked out while the netlist runs. For those, the
+ * name XSCHEM invents can still land on a name somebody typed. Before this, the
+ * two copies silently shared one cell body and the second designer's setting
+ * left the deck without a word -- issue 0982's shape, inside issue 0970's own
+ * fix.
+ *
+ * So when a copy asks for a cell name this run has already handed to a copy
+ * that wanted something ELSE, say so, naming the copy, the cell name and the
+ * setting that did not reach the simulator, and say what to do about it.
+ *
+ * SEVERITY 2, the same as every other sentence this feature prints: it appends
+ * to the info window and does not force it open. Whether a clash deserves to be
+ * louder than that -- to open the window by itself, or to fail the netlist -- is
+ * the user's to rule on, and it is on their queue with issue 1212.
+ *
+ * A copy whose settings cannot be worked out says nothing, which is today's
+ * behaviour. Row AS73 drives this; row AS72 is the ordinary case, where the
+ * design walk did reach the sheet and no clash happens at all. */
+void auto_spec_clash_check(int inst, const char *typed)
+{
+  Str_hashentry *e;
+  char *settings = NULL;
+  char *key = NULL;
+  char nm[PATH_MAX];
+  char note[1600];
+  char e_sheet[160];
+  char e_inst[80];
+  char e_new[120];
+  char e_set[160];
+  const char *sheet;
+  const char *instname;
+  int clash;
+
+  if(!auto_spec_on || !auto_spec_whole) return;
+  if(!typed || !typed[0]) return;
+  if(inst < 0 || inst >= xctx->instances) return;
+  if(xctx->inst[inst].ptr < 0) return;
+  /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK: it is a static buffer the
+   * next call overwrites, and everything below asks other questions first. */
+  my_strncpy(nm, get_cell(typed, 0), S(nm));
+  e = str_hash_lookup(&auto_spec_taken, nm, "", XLOOKUP);
+  if(!e) return;
+  clash = 0;
+  if(lost_attrs_typed_copy(inst, &settings, &key) > 0 && key && key[0] &&
+     settings && settings[0]) {
+    if(!e->value || strcmp(e->value, key)) clash = 1;
+  }
+  if(clash) {
+    sheet = (xctx->current_name[0]) ? xctx->current_name :
+            (xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "?");
+    instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
+    /* GUARD UA-ELIDE on every variable-length field, issue 0983 */
+    unused_attr_elide(e_sheet, S(e_sheet), sheet, 120, 1);
+    unused_attr_elide(e_inst,  S(e_inst),  instname, 60, 0);
+    unused_attr_elide(e_new,   S(e_new),   nm, 100, 0);
+    unused_attr_elide(e_set,   S(e_set),   settings, 120, 0);
+    /* RULING D5-4: one my_snprintf, handed over exactly once. */
+    my_snprintf(note, S(note),
+      "Warning: on sheet %s, the copy %s asks to be built from a cell called "
+      "%s, but XSCHEM had already made a cell of that name for another copy on "
+      "this design, and that copy asked for different settings. The two end up "
+      "sharing the one cell, so %s's own setting %s did not reach the "
+      "simulator. Give this copy's cell a name no other copy uses and both will "
+      "be built the way you asked.",
+      e_sheet, e_inst, e_new, e_inst, e_set);
+    statusmsg(note, 2);
+  }
+  my_free(_ALLOC_ID_, &settings);
+  my_free(_ALLOC_ID_, &key);
+}
+
 /* what = 1: start
  * what = 0 : end : should NOT be called if match_symbol() has been executed between start & end
  */
@@ -3376,6 +5041,7 @@ void get_additional_symbols(int what)
       char *spectre_sym_def = NULL;
       char *default_schematic = NULL;
       char *sch = NULL;
+      const char *auto_sch = NULL;
       char symbol_base_sch[PATH_MAX] = "";
       size_t schematic_token_found = 0;
 
@@ -3391,6 +5057,23 @@ void get_additional_symbols(int what)
       my_strdup2(_ALLOC_ID_, &sch, get_tok_value(xctx->inst[i].prop_ptr,"schematic", 6));
       dbg(1, "get_additional_symbols(): schematic=%s\n", sch);
       schematic_token_found = xctx->tok_size;
+
+      /* ISSUE 1201. The copy did not name a cell body of its own -- so ask
+       * whether the netlister should name one for it. auto_spec_name() answers
+       * NULL for everything except the one shape this issue is about, and
+       * always NULL outside a SPICE netlist run. When it does answer, the name
+       * takes exactly the route a hand-typed one takes from here on: the file
+       * of that name does not exist, so the fallback three lines below points
+       * the new symbol block at the cell's own drawing, and parent_prop_ptr
+       * further down feeds THIS copy's settings into it. That is the whole
+       * mechanism; nothing new was needed for it. */
+      if(!schematic_token_found) {
+        auto_sch = auto_spec_name(i);
+        if(auto_sch && auto_sch[0]) {
+          my_strdup2(_ALLOC_ID_, &sch, auto_sch);
+          schematic_token_found = strlen(auto_sch);
+        }
+      }
 
       my_strdup2(_ALLOC_ID_, &sch, translate3(sch, 1, xctx->inst[i].prop_ptr, NULL, NULL, NULL));
       dbg(1, "  get_additional_symbols(): sch=%s tok_size= %ld\n", sch, xctx->tok_size);
@@ -3414,6 +5097,14 @@ void get_additional_symbols(int what)
 
         my_strdup2(_ALLOC_ID_, &default_schematic, get_tok_value(symptr->prop_ptr,"default_schematic",0));
         ignore_schematic = !strcmp(default_schematic, "ignore");
+
+        /* GUARD AS-CLASH, issue 1212. Asked HERE and not earlier because `sch`
+         * has only just become the name that will really be used: an @
+         * substitution or a generator is resolved a few lines above, and those
+         * are exactly the shapes the design walk had to skip. It says nothing
+         * unless this name is one this same run minted for a copy that asked
+         * for different settings. */
+        auto_spec_clash_check(i, sch);
 
         dbg(1, "get_additional_symbols(): inst=%d, sch=%s instname=%s\n", i, sch, xctx->inst[i].instname);
         dbg(1, "get_additional_symbols(): current_name=%s\n", xctx->current_name);
@@ -3457,7 +5148,22 @@ void get_additional_symbols(int what)
           xctx->sym[j].base_name = symptr->name;
           my_strdup(_ALLOC_ID_, &xctx->sym[j].name, sym);
 
-          my_strdup(_ALLOC_ID_, &xctx->sym[j].parent_prop_ptr, xctx->inst[i].prop_ptr);
+          /* GUARD AS-STRIP, issue 1227. The copy's settings as this new cell
+           * body is allowed to see them. For a body the DESIGNER named this is
+           * the property string untouched, byte for byte -- explicit beats
+           * implicit and no shipped deck moves. For one XSCHEM named by itself,
+           * the settings it has just told the designer it could not use are
+           * taken out, so they fall back to the symbol's own default instead of
+           * walking into the deck as `sky130_fd_pr__` with no device after it.
+           * See lost_attrs_strip_unusable() in token.c for the measurement. */
+          if(auto_sch && auto_sch[0]) {
+            char *stripped = NULL;
+            lost_attrs_strip_unusable(i, &stripped);
+            my_strdup(_ALLOC_ID_, &xctx->sym[j].parent_prop_ptr, stripped);
+            my_free(_ALLOC_ID_, &stripped);
+          } else {
+            my_strdup(_ALLOC_ID_, &xctx->sym[j].parent_prop_ptr, xctx->inst[i].prop_ptr);
+          }
           /* the copied symbol will not inherit the default_schematic attribute otherwise it will also
            * be skipped */
           if(default_schematic) {
@@ -3513,12 +5219,84 @@ void get_additional_symbols(int what)
  * (<libpath>/<cell>/schematic/<cell>.sch), return its absolute path, else "".
  * Thin wrapper over the Tcl resolver (library-manager Phase 4). Lets descend and
  * the schematic= override target the cell's schematic VIEW rather than ext-swap
- * the symbol-view path. See doc/claude/code_analysis/library_manager_design.md. */
+ * the symbol-view path. See doc/claude/code_analysis/library_manager_design.md.
+ *
+ * ⚠ `ref` IS `.sch` TEXT AND MUST NOT BE CONCATENATED INTO THE SCRIPT -- issue
+ * 0827. It used to be spelled
+ *     my_snprintf(c, S(c), "cellview_path {%s} schematic", ref); tcleval(c);
+ * and both call sites below hand it attacker-controlled bytes: the instance's
+ * `schematic=` property value, and the symbol's own name. `\}` is the `.sch`
+ * format's OWN escape for a literal brace, so a WELL-FORMED sheet closed the
+ * group and the rest of the attribute RAN AS TCL. Driven: ONE mailed `.sch`
+ * referencing examples/rlc.sym (which ships with xschem) executed `exec touch`
+ * on a plain `xschem descend -inst x1`, --nogui, no dialog. The second door
+ * (sym->name) needs an EMBEDDED subcircuit symbol -- a disk symbol whose name
+ * carries `}` cannot reach it, because the load falls back to missing.sym and
+ * descend_schematic()'s type guard refuses a non-subcircuit -- and was driven
+ * too. tcl_call() (util.c) hands `ref` over as a variable; one wrapper, both
+ * doors. The PATH_MAX+100 buffer and its silent mid-escape truncation go with
+ * it. Rows CVP01-CVP07 in tests/headless/test_raw_read_dispatch.tcl. */
 static const char *cellview_sch_path(const char *ref)
 {
-  char c[PATH_MAX + 100];
-  my_snprintf(c, S(c), "cellview_path {%s} schematic", ref);
-  return tcleval(c);
+  return tcl_call("cellview_path", ref ? ref : "", NULL, "schematic");
+}
+
+/* ISSUES 1228 / 0979 -- THE ONE PLACE THIS SENTENCE IS WRITTEN.
+ * Ruling D5-4: a user-facing sentence is minted in ONE place and rendered by its
+ * callers. The two renderings live a few lines apart in get_sch_from_sym(): the
+ * question asked when there is a screen to ask it on, and the status line left
+ * behind when there is not. A reader would otherwise assume the wording belongs
+ * next to the dialog -- it cannot, because the headless path has to say the same
+ * thing, and until issue 0979 the headless path said nothing at all.
+ * Facts only, ninth-grade English, no internal vocabulary. The tail that says
+ * WHAT HAPPENED NEXT ("opened the cell's own schematic instead" / "nothing was
+ * opened") belongs to the caller, because only the caller knows. */
+static void descend_view_missing_sentence(char *out, size_t len, const char *instname,
+                                          const char *want, const char *base)
+{
+  if(instname && instname[0]) {
+    my_snprintf(out, len,
+      "The copy named %s on this sheet is set to open the schematic file %s, but that "
+      "file is not there. This cell's own schematic file is %s.",
+      instname, want ? want : "", base ? base : "");
+  } else {
+    my_snprintf(out, len,
+      "A copy on this sheet is set to open the schematic file %s, but that file is not "
+      "there. This cell's own schematic file is %s.",
+      want ? want : "", base ? base : "");
+  }
+}
+
+/* ISSUE 1228. The cell's OWN schematic file, worked out from the symbol alone.
+ * Lifted verbatim out of get_sch_from_sym()'s tail, and the lift is what makes the
+ * sentence above possible: the question can now NAME the file it is offering
+ * instead of asking about a file the person cannot see.
+ * A reader would otherwise assume this only ever runs when nothing else resolved.
+ * It now also runs to BUILD A SENTENCE, before anything has been decided -- so it
+ * must stay free of side effects on xctx and on `filename`. */
+static void get_base_sch_from_sym(char *out, xSymbol *sym, int web_url)
+{
+  const char *symname_tcl = tcl_hook2(sym->name);
+  const char *cv;
+  struct stat buf;
+
+  if(is_generator(symname_tcl)) my_strncpy(out, symname_tcl, PATH_MAX);
+  /* lib-qualified symbol: its schematic lives in the cell's schematic view */
+  else if(!web_url && (cv = cellview_sch_path(sym->name))[0]) my_strncpy(out, cv, PATH_MAX);
+  else if(tclgetboolvar("search_schematic")) {
+    /* for schematics referenced from web symbols do not build absolute path */
+    if(web_url) my_strncpy(out, add_ext(sym->name, ".sch"), PATH_MAX);
+    else my_strncpy(out, abs_sym_path(sym->name, ".sch"), PATH_MAX);
+  } else {
+    /* for schematics referenced from web symbols do not build absolute path */
+    if(web_url) my_strncpy(out, add_ext(sym->name, ".sch"), PATH_MAX);
+    else {
+      if(!stat(abs_sym_path(sym->name, ""), &buf)) /* symbol exists. pretend schematic exists too ... */
+        my_strncpy(out, add_ext(abs_sym_path(sym->name, ""), ".sch"), PATH_MAX);
+      else /* ... symbol does not exist (instances with schematic=... attr) so can not pretend that */
+        my_strncpy(out, abs_sym_path(sym->name, ".sch"), PATH_MAX);
+    }
+  }
 }
 
 void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
@@ -3530,8 +5308,13 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
   int file_exists=0;
   int cancel = 0;
   int is_gen = 0;
+  char basefile[PATH_MAX];
+  char sentence[2*PATH_MAX + 256];
+  char msg[2*PATH_MAX + 512];
 
   my_strncpy(filename, "", PATH_MAX);
+  basefile[0] = '\0';
+  sentence[0] = '\0';
 
   if(inst >= xctx->instances) {
     dbg(0, "get_sch_from_sym() error: called with invalid inst=%d\n", inst);
@@ -3595,39 +5378,80 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
     }
   }
 
-  if(has_x && fallback && !is_gen && filename[0]) {
+  /* ISSUE 1229 -- THE EXISTENCE TEST MUST NOT SIT BEHIND THE DISPLAY TEST.
+   * This block used to open `if(has_x && fallback && ...)`, and file_exists was
+   * assigned NOWHERE ELSE in the function. So with no display and fallback asked
+   * for, file_exists stayed 0 and the base-schematic arm below fired even when the
+   * copy's own schematic file WAS there -- a headless descend into a perfectly good
+   * per-copy `schematic=` setting silently opened the cell's own sheet instead.
+   * That was harmless only for as long as nothing could ask for the fallback
+   * without a display; issue 1228 gives `xschem descend -fallback` exactly that, so
+   * the two repairs have to land together.
+   * A reader would otherwise assume this block is about the QUESTION. It is not:
+   * the stat is the load-bearing half and the question is the optional half.
+   * Netlisting passes fallback = 0, so none of this runs for it. */
+  if(fallback && !is_gen && filename[0]) {
     file_exists = !stat(filename, &buf);
     if(!file_exists) {
-      tclvareval("ask_save {Schematic ", filename, "\ndoes not exist.\nDescend into base schematic?}", NULL);
-      if(strcmp(tclresult(), "yes") ) fallback = 0; /* 'no' or 'cancel' */
-       if(!strcmp(tclresult(), "") ) { /* 'cancel' */
-         cancel = 1;
-         my_strncpy(filename,"", PATH_MAX);
-       }
+      const char *iname = (inst >= 0 && xctx->inst[inst].instname) ? xctx->inst[inst].instname : "";
+      const char *wantshort;
+      const char *baseshort;
+      get_base_sch_from_sym(basefile, sym, web_url);
+      /* The SENTENCE names the two files by file name, the dialog shows the full
+       * paths underneath it as data. Not cosmetic: xctx->statusmsg_text is 256
+       * bytes (xschem.h), and two absolute paths inside one sentence overflow it
+       * and truncate the status line mid-word -- measured on this very fixture,
+       * where "Opened the cell's own schematic instead." was cut to "Opened the c".
+       * A sentence a person cannot finish reading is not plain English. */
+      wantshort = strrchr(filename, '/');
+      wantshort = wantshort ? wantshort + 1 : filename;
+      baseshort = strrchr(basefile, '/');
+      baseshort = baseshort ? baseshort + 1 : basefile;
+      if(has_x) {
+        descend_view_missing_sentence(sentence, S(sentence), iname, wantshort, baseshort);
+        my_snprintf(msg, S(msg),
+          "%s\n\nThe file it is looking for:\n    %s"
+          "\n\nThis cell's own schematic file:\n    %s"
+          "\n\nDo you want to open this cell's own schematic instead?"
+          "\n\nYes opens it.\nNo leaves you on the sheet you are on now."
+          "\n\nTo change which schematic file this copy opens, edit the copy's "
+          "'schematic' setting.", sentence, filename, basefile);
+        /* two buttons, Yes and No: ask_save's third (Cancel) button meant the same
+         * thing as No here and only made the choice ambiguous. issue 1230 */
+        tcl_call("ask_save", msg, NULL, "0");
+        if(strcmp(tclresult(), "yes")) {
+          /* ISSUE 1230. Answering anything but Yes used to set fallback = 0 and LEAVE
+           * `filename` pointing at the file that is not there; descend_schematic()
+           * then loaded it, and because xctx->currsch is incremented BEFORE the load
+           * the person ended up one level down on a blank page they had just declined.
+           * Refusing has to mean opening nothing. The reason is recorded here so the
+           * "has no schematic view" arm in descend_schematic() cannot overwrite it
+           * with something that did not happen. */
+          cancel = 1;
+          my_snprintf(msg, S(msg), "%s Nothing was opened -- you are still on the "
+                      "sheet you started from.", sentence);
+          descend_set_error("view-missing", NULL, msg, 1);
+          my_strncpy(filename, "", PATH_MAX);
+        }
+      }
+      if(!cancel) {
+        /* The second rendering of the minted sentence (ruling D5-4). With a display
+         * the person has just said Yes; without one nobody was asked, and this status
+         * line is the only thing that says the sheet on screen is not the file the
+         * copy names. Before issue 0979 this path said nothing whatsoever. */
+        descend_view_missing_sentence(sentence, S(sentence), iname, wantshort, baseshort);
+        my_snprintf(msg, S(msg), "%s Opened the cell's own schematic instead.", sentence);
+        descend_speak(msg);
+      }
     }
   }
 
-  /* no schematic attr from instance or symbol */
+  /* no schematic attr from instance or symbol -- or there was one and the file it
+   * names is not there and the caller asked for the fallback (issue 0979). The
+   * body of this branch is now get_base_sch_from_sym() so the sentence above and
+   * the file actually opened here can never disagree. */
   if(!cancel && (!str_tmp[0] || (fallback && !is_gen && filename[0] && !file_exists ))) {
-    const char *symname_tcl = tcl_hook2(sym->name);
-    const char *cv;
-    if(is_generator(symname_tcl))  my_strncpy(filename, symname_tcl, PATH_MAX);
-    /* lib-qualified symbol: its schematic lives in the cell's schematic view */
-    else if(!web_url && (cv = cellview_sch_path(sym->name))[0]) my_strncpy(filename, cv, PATH_MAX);
-    else if(tclgetboolvar("search_schematic")) {
-      /* for schematics referenced from web symbols do not build absolute path */
-      if(web_url) my_strncpy(filename, add_ext(sym->name, ".sch"), PATH_MAX);
-      else my_strncpy(filename, abs_sym_path(sym->name, ".sch"), PATH_MAX);
-    } else {
-      /* for schematics referenced from web symbols do not build absolute path */
-      if(web_url) my_strncpy(filename, add_ext(sym->name, ".sch"), PATH_MAX);
-      else {
-        if(!stat(abs_sym_path(sym->name, ""), &buf)) /* symbol exists. pretend schematic exists too ... */
-          my_strncpy(filename, add_ext(abs_sym_path(sym->name, ""), ".sch"), PATH_MAX);
-        else /* ... symbol does not exist (instances with schematic=... attr) so can not pretend that */
-          my_strncpy(filename, abs_sym_path(sym->name, ".sch"), PATH_MAX);
-      }
-    }
+    get_base_sch_from_sym(filename, sym, web_url);
   }
   if(sch) my_free(_ALLOC_ID_, &sch);
 
@@ -3638,7 +5462,7 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
     my_snprintf(sympath, S(sympath), "%s/%s",  xschem_web_dirname, get_cell_w_ext(filename, 0));
     if(stat(sympath, &buf)) { /* not found, download */
       /* download item into ${XSCHEM_TMP_DIR}/xschem_web_xxxxx */
-      tclvareval("try_download_url {", xctx->current_dirname, "} {", filename, "}", NULL);
+      tcl_call("try_download_url", xctx->current_dirname, filename, NULL);
     }
     if(stat(sympath, &buf)) { /* not found !!! build abs_sym_path to look into local fs and hope fror the best */
       my_strncpy(filename, abs_sym_path(sym->name, ".sch"), PATH_MAX);
@@ -3934,9 +5758,19 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    get_sch_from_sym(filename, xctx->inst[n].ptr+ xctx->sym, n, fallback);
 
    if(!filename[0]) { /* no filename returned from get_sch_from_sym() --> abort */
-     char msg[PATH_MAX + 128];
-     my_snprintf(msg, S(msg), "Descend: %s has no schematic view", symname);
-     descend_set_error("no-schematic", NULL, msg, 1);
+     /* ISSUE 1230. get_sch_from_sym() now clears the filename when the person answers
+      * No to "the schematic file this copy names is not there", and it has ALREADY
+      * recorded view-missing with its own sentence. Without this test that accurate
+      * reason is overwritten one line later by "has no schematic view" -- which is
+      * not what happened: the cell has a schematic, the person declined to open it.
+      * Safe because descend_clear_error() runs at the top of this function, well
+      * before get_sch_from_sym(), so anything non-empty here was recorded by THIS
+      * descend attempt. */
+     if(xctx->descend_err[0] == '\0') {
+       char msg[PATH_MAX + 128];
+       my_snprintf(msg, S(msg), "Descend: %s has no schematic view", symname);
+       descend_set_error("no-schematic", NULL, msg, 1);
+     }
      return 0;
    }
    /* No save prompt on descend: a genuine edit to the parent was already
@@ -4034,6 +5868,29 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    my_strdup(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].templ, xctx->sym[xctx->inst[n].ptr].templ);
    my_strdup(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].sym_extra,
      get_tok_value(xctx->sym[xctx->inst[n].ptr].prop_ptr, "extra", 0));
+   /* ISSUE 1201. ⚠ ASKED HERE AND NOWHERE ELSE, AND IT HAS TO BE. The question
+    * "would the netlister give this copy a cell body of its own?" needs the
+    * PARENT sheet's instance and its symbol, and one line below this the walk
+    * is inside the child and neither of them exists any more. The three
+    * attribute strings above are recorded for exactly the same reason. Read
+    * back from Tcl as lcc[N].auto_spec by op_annot::model_netlist, so the
+    * annotation surface asks the results file for the device under the name the
+    * simulator really used. */
+   xctx->hier_attr[xctx->currsch].auto_spec = auto_spec_would_specialize(n);
+   /* GUARD AS-STRIP, issue 1227, AND IT IS THE SAME ANSWER THE DECK GETS. When
+    * the netlister is going to give this copy a cell of its own it feeds that
+    * cell a property string with the unusable settings taken out
+    * (get_additional_symbols above), so the sheet the designer is now standing
+    * on has to be read the same way -- otherwise the annotation surface
+    * resolves `model=@modeln` to a value the simulator never saw and asks the
+    * results file for a device under a name nothing wrote. RULING D5-1. One
+    * function answers for both doors; see lost_attrs_strip_unusable(). */
+   if(xctx->hier_attr[xctx->currsch].auto_spec) {
+     char *stripped = NULL;
+     lost_attrs_strip_unusable(n, &stripped);
+     my_strdup(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].prop_ptr, stripped);
+     my_free(_ALLOC_ID_, &stripped);
+   }
 
    dbg(1,"descend_schematic(): inst_number=%d\n", inst_number);
    my_strcat(_ALLOC_ID_, &xctx->sch_path[xctx->currsch+1], find_nth(str, ",", "", 0, inst_number));
@@ -4082,7 +5939,41 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
        Graph_ctx *gr = &xctx->graph_struct;
        xRect *r = &xctx->rect[GRIDLAYER][0];
        if(r->flags & 1) {
-         if(xctx->graph_flags & 4) {
+         /* ISSUES 0865 / 0868 -- GUARD G2: DESCENDING IS NOT A REQUEST.
+          *
+          * This was the second of two UNGATED publishers. Walk into a child that
+          * happens to carry a graph rect with cursor B on and the child's sheet
+          * ACQUIRED a node-voltage annotation -- with `Simulation > Graphs >
+          * Live annotate probes with 'b' cursor` in its shipped UNTICKED state,
+          * i.e. with the user having asked for nothing. Move the cursor
+          * afterwards and the number stays where it was: RULING D5-1, a number
+          * that was not measured for the state it is shown in. The user's rule
+          * on this whole family is verbatim "MUST ONLY HAPPEN WHEN USER
+          * REQUESTS IT!!".
+          *
+          * The six re-annotate sites the user reaches BY MOVING A CURSOR
+          * (callback.c x5, scheduler.c swap_cursors) have always tested this
+          * switch; this site and raw_read()'s tail (save.c, guard G1) did not.
+          * The spelling is deliberately identical to those six so one grep finds
+          * one gate shape.
+          *
+          * ⚠ WHAT IS DELIBERATELY *NOT* GATED: both arms of `xschem set
+          * cursor2_x <t>`. That verb is a sentence somebody TYPED, naming a
+          * time, which is what "the user requested it" means; it is also the
+          * scripting verb and step S11's only road. See doc/claude/issues/
+          * 0868-*.md and row V25 of tests/headless/test_op_annot.tcl, which pins
+          * that decision so a later crew meets an explained row rather than what
+          * looks like a missed gate.
+          *
+          * ⚠ THE USER'S ON-REQUEST DOOR IS THE NEW MODE, not this site. Gating
+          * here without `xschem annotate_at` / cadence::annot_tran would leave a
+          * user who cannot annotate a transient at all -- measured, with the box
+          * off no gesture in the program re-measured the stale number.
+          *
+          * ⚠ ROW V23b GREPS THIS FUNCTION'S BODY for the switch name with C
+          * comments STRIPPED, so this paragraph may name it freely and the code
+          * line below is what the row actually counts. */
+         if(tclgetboolvar("live_cursor2_backannotate") && (xctx->graph_flags & 4)) {
            backannotate_at_cursor_b_pos(r, gr);
          }
        }
@@ -4094,7 +5985,14 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * (go_back) reloads the parent via load_schematic, which restores the parent's
     * own writability. Edit it with Ctrl-2 / View > Toggle Read Only / the
     * "Descend schematic (edit)" context-menu item. */
-   if(descend_ok && tclgetboolvar("descend_readonly")) {
+   /* ISSUE 0979. Was `descend_ok && tclgetboolvar(...)`. A reader would assume a
+    * FAILED descend left nothing behind and so needed no read-only stamp. It does
+    * not: xctx->currsch was already incremented above, so the window is one level
+    * down on a blank buffer named after the file that could not be loaded. In
+    * Cadence-style browse mode that blank buffer came back EDITABLE, so an
+    * accidental save would create that junk file -- inside the one mode whose whole
+    * purpose is looking without touching. */
+   if(tclgetboolvar("descend_readonly")) {
      xctx->readonly = 1;
      set_modify(-1); /* refresh window title to show the read-only marker */
    }
@@ -4125,6 +6023,7 @@ void go_back(int what)
  int from_embedded_sym;
  int save_modified;
  char filename[PATH_MAX];
+ char msg[PATH_MAX + 100];
  int prev_sch_type;
  int confirm = what & 1;
  int set_title = !(what & 2);
@@ -4156,7 +6055,8 @@ void go_back(int what)
   }
   if(save_ok==0) {
     fprintf(errfp, "go_back(): file opening for write failed! %s \n", xctx->current_name);
-    tclvareval("alert_ {file opening for write failed! ", xctx->current_name, "} {}", NULL);
+    my_snprintf(msg, S(msg), "file opening for write failed! %s", xctx->current_name);
+    tcl_call("alert_", msg, NULL, "{}");
   }
   unselect_all(1);
   if(!tclgetboolvar("keep_symbols")) remove_symbols();
@@ -4176,6 +6076,7 @@ void go_back(int what)
   my_free(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].prop_ptr);
   my_free(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].templ);
   my_free(_ALLOC_ID_, &xctx->hier_attr[xctx->currsch].sym_extra);
+  xctx->hier_attr[xctx->currsch].auto_spec = 0;            /* issue 1201 */
   save_modified = xctx->modified; /* we propagate modified flag (cleared by load_schematic */
                             /* by default) to parent schematic if going back from embedded symbol */
 
@@ -4322,6 +6223,7 @@ void calc_drawing_bbox(xRect *boundbox, int selected)
  char *estr = NULL;
 
  xctx->show_hidden_texts = tclgetboolvar("show_hidden_texts");
+ annot_show_sync_cache();
  boundbox->x1=-100;
  boundbox->x2=100;
  boundbox->y1=-100;
@@ -4419,7 +6321,7 @@ void calc_drawing_bbox(xRect *boundbox, int selected)
      double longest_line;
      if(selected == 1 && !xctx->text[i].sel) continue;
 
-     if(!xctx->show_hidden_texts && xctx->text[i].flags & (HIDE_TEXT /* | HIDE_TEXT_INSTANTIATED */)) continue;
+     if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
      #if HAS_CAIRO==1
      customfont = set_text_custom_font(&xctx->text[i]);
      #endif

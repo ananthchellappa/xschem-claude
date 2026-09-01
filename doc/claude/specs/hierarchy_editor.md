@@ -244,7 +244,7 @@ design attributes     instance schematic= , symbol schematic=      (legacy)
    **Present only when `cadence_compat` is unset.** Under `cadence_compat` this
    rank does not exist: the attribute is ignored and §3.8 warns about it.
    *(Decision **D1**, ruled by the user 2026-08-18. This rank is the one thing
-   Cadence has no equivalent for — see FAQ Q49 and §8.)*
+   Cadence has no equivalent for — see FAQ Q78 and §8.)*
 5. **View list walk** — the effective view list at *P*: the nearest ancestor
    occurrence or cell override, else `global viewlist`. The first name in the
    list for which the cell has an existing view wins.
@@ -831,7 +831,7 @@ never discharges one.
 
 1. ~~**D1**~~ — **answered 2026-08-18.** Under `cadence_compat` the config is
    the only mechanism; instance and symbol `schematic=` are ignored and
-   netlisting warns about each one (§3.8, FAQ Q49). With `cadence_compat` unset,
+   netlisting warns about each one (§3.8, FAQ Q78). With `cadence_compat` unset,
    nothing changes.
 2. ~~**D2**~~ — **answered 2026-08-18.** One stop list, all five formats.
    Per-symbol `*_stop` attributes keep working and are OR-ed on top (§3.4).

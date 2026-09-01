@@ -441,6 +441,127 @@ foreach {ci15 opener top wantfocus} {
 foreach w {.addlabel .addpin .ciform .mkinst} { catch {destroy $w} }
 catch {bind .drw <Key-Escape> {}}
 
+# === CI16/CI17/CI18 — issue 0831: the two insert-symbol brace-concat sinks ===
+# BOTH doors take a string and hand it to Tcl by C string CONCATENATION, so a
+# `}` in the string closes the brace group and the rest parses as script:
+#   scheduler.c:2726  tclvareval("ciform::open {", argv[2], "}", NULL)
+#   callback.c:559    tclvareval("set INITIALINSTDIR [file dirname {",
+#                          abs_sym_path(tcl_hook2(inst[].name), ""), "}]", NULL)
+# The second is the sharper one: `inst[].name` is a SYMBOL REFERENCE read
+# straight out of the `.sch`, `\}` is the file format's OWN escape for a literal
+# brace (so the fixture is well-formed, not corrupt), and the splice sits inside
+# a `[file dirname {…}]` COMMAND SUBSTITUTION — 0829's bracket problem on top of
+# 0827's brace problem. 0831 §4 recorded callback.c:559 as "verified present,
+# NOT individually driven"; CI17 drives it through the real key, so the claim is
+# upgraded on a measurement.
+#
+# WHY THE KEY AND NOT THE VERB. `xschem place_symbol` reaches the scheduler.c
+# twin (covered headless by LM10/LM11 in test_raw_read_dispatch.tcl). This
+# block is the ONLY cover for callback.c's copy, which is reached from key `I`
+# (callback.c:7693), the Insert key (:8831) and context-menu pick 1 (:5264),
+# and only when new_file_browser is OFF. `xschem callback . KeyPress … 73 …`
+# SEGFAULTS under --nogui (a separate, pre-existing defect), so a real
+# `event generate` under X is the only honest drive.
+#
+# ⚠ THE DIALOG IS STUBBED, and that is what makes this row terminate.
+# start_place_symbol() calls place_symbol(-1,NULL,…), which opens a MODAL
+# chooser and hangs the script AFTER the payload has already fired — measured.
+# A stub returning "" makes place_symbol hit `if(!name1[0]) return 0`
+# (actions.c:3359) and come straight back. Same pattern as
+# test_wave_clear_all.tcl / test_nh_editor_load.tcl. Never assert on a `puts`
+# placed after the keypress; assert on the host file and the variable.
+#
+# ⚠ ANTI-HOLLOW (issue 0828). CI16's positive twins are the EXISTING CI13a /
+# CI13c / CI13d (plus CI6b-CI6h, CI7e) — they drive the ARGUMENT form
+# `xschem create_instance {tlib withsym symbol}` and so run the converted
+# tcl_call at scheduler.c:2729. NOT CI1a: this comment used to name it and
+# that was WRONG (issue 0835). CI1a calls the verb BARE, taking scheduler.c's
+# untouched `else tcleval("ciform::open")` branch, so it stays green with the
+# argument path gutted. Measured under sabotage: CI13b/c/d and CI6b-CI6h went
+# red, CI1a did not. Name the row that drives the converted path.
+# CI17's twin is CI18 below — without it, deleting start_place_symbol()'s whole
+# INITIALINSTDIR block scores a pass.
+#
+# ⚠ CLAIMS (issue 0823). A `.sch` is executable BY DESIGN — and callback.c:560
+# calls tcl_hook2() on the instance name ITSELF, so a `tcleval(`-prefixed
+# reference still runs its Tcl here whatever these rows say. What they pin is
+# narrower: the path that executes WITHOUT SAYING SO.
+proc ci_sch_esc {s} { return [string map [list \{ \\\{ \} \\\}] $s] }
+proc ci_pay {host} { return "x\} ; set ::SC_PWNED 1; exec touch $host; list \{y" }
+proc ci_sch {path nm} {
+  set fp [open $path w]
+  puts -nonewline $fp "v {xschem version=3.4.6 file_version=1.2}\nG {}\nK {}\nV {}\nS {}\nE {}\nC {[ci_sch_esc $nm]} 0 0 0 0 {name=x1}\n"
+  close $fp
+}
+
+# --- CI16: scheduler.c:2726, the `xschem create_instance <lcv>` argument ----
+catch {destroy .ciform}; catch {destroy .mkinst}
+set ::SC_PWNED 0
+set CI_H16 [file join $tmp HOST_CI16]
+catch {file delete -force $CI_H16}
+set ci_p16 [ci_pay $CI_H16]
+catch {xschem create_instance $ci_p16} ci_r16
+update idletasks
+set CI_E16 [file exists $CI_H16]
+catch {file delete -force $CI_H16}
+check "CI16 create_instance lcv argument does not execute (0831, scheduler.c:2726)" \
+  [expr {$::SC_PWNED == 0 && $CI_E16 == 0}] \
+  "(=> pwned=$::SC_PWNED host=$CI_E16 answer='$ci_r16')"
+catch {destroy .ciform}; catch {destroy .mkinst}
+
+# --- CI17: callback.c:559, the REAL key-`I` route ---------------------------
+set ci_nfb [expr {[info exists ::new_file_browser] ? $::new_file_browser : 0}]
+set ::new_file_browser 0
+set ci_stub 0
+if {![catch {rename load_file_dialog __ci_real_lfd}]} {
+  proc load_file_dialog {args} { return {} }
+  set ci_stub 1
+}
+set ::SC_PWNED 0
+set CI_H17 [file join $tmp HOST_CI17]
+catch {file delete -force $CI_H17}
+ci_sch [file join $tmp ci_evil.sch] [ci_pay $CI_H17]
+catch {xschem set_modify 0}
+catch {xschem load [file join $tmp ci_evil.sch]}
+catch {xschem select_all}
+set ::INITIALINSTDIR NOTSET
+update
+focus -force .drw
+update
+event generate .drw <KeyPress> -keysym I
+update
+set CI_E17 [file exists $CI_H17]
+set CI_IID17 $::INITIALINSTDIR
+catch {file delete -force $CI_H17}
+catch {xschem abort_operation}
+check "CI17 key-I start_place_symbol does not execute the .sch symbol reference (0831, callback.c:559)" \
+  [expr {$::SC_PWNED == 0 && $CI_E17 == 0 && $CI_IID17 ne "y"}] \
+  "(=> pwned=$::SC_PWNED host=$CI_E17 INITIALINSTDIR='$CI_IID17' — `y` is the\
+ payload's own `list {y}` tail returned through the command substitution)"
+
+# --- CI18: ANTI-HOLLOW twin of CI17 -----------------------------------------
+ci_sch [file join $tmp ci_ok.sch] tlib/withsym
+catch {xschem set_modify 0}
+catch {xschem load [file join $tmp ci_ok.sch]}
+catch {xschem select_all}
+set ::INITIALINSTDIR NOTSET
+update
+focus -force .drw
+update
+event generate .drw <KeyPress> -keysym I
+update
+set CI_IID18 $::INITIALINSTDIR
+catch {xschem abort_operation}
+check "CI18 key-I still sets INITIALINSTDIR to the selected symbol's directory" \
+  [expr {$CI_IID18 eq [file join $tmp tlib withsym symbol] && [file isdirectory $CI_IID18]}] \
+  "(=> INITIALINSTDIR='$CI_IID18' want '[file join $tmp tlib withsym symbol]')"
+if {$ci_stub} {
+  catch {rename load_file_dialog {}}
+  catch {rename __ci_real_lfd load_file_dialog}
+}
+set ::new_file_browser $ci_nfb
+catch {xschem set_modify 0}
+
 catch {destroy .ciform}; catch {destroy .mkinst}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

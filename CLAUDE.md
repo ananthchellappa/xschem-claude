@@ -29,6 +29,16 @@ cd src && ./xschem   # run directly from the source tree, no install needed
   means adding it to `OBJ` and adding an explicit compile rule (or regenerate from
   `Makefile.in`).
 - A `CMakeLists.txt` exists as an alternative build but the Makefile path is canonical.
+- **Editing `src/Makefile.in` obliges you to re-run `./configure`.** `src/Makefile`
+  and `config.h` are generated, gitignored, and have **no self-regeneration rule**, so
+  a corrected `Makefile.in` sits happily next to a stale `Makefile` and `make` never
+  notices. The trap is invisible in-tree — `XSCHEM_SHAREDIR` resolves to `src/`, so a
+  helper that was never added to the install list is still found — and fatal once
+  installed: `make install` then ships an `xschem.tcl` that sources a file it did not
+  install, and the installed binary **segfaults at startup** (exit 139, via issue 0423,
+  where `Tcl_AppInit()` continues after a failed `source`). Issue 0424 is the measured
+  case: 275 in-tree checks green, installed binary dead. Verify with
+  `grep -c <newfile> src/Makefile` — expect 2, an install line and an uninstall line.
 
 ### Generated parsers (do not hand-edit the .c)
 - `expandlabel.c`/`expandlabel.h` ← bison from `expandlabel.y` (bus/label expansion)
@@ -53,6 +63,16 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `PATH`**, so an uninstalled dev tree works out of the box (issue 0147 — it used
   to be a bare `xschem`, and with nothing installed the entire suite silently
   no-op'd while still printing a plausible `results.log`).
+- **⚠ A BARE `xschem` ON `PATH` IS NOT THIS TREE.** It resolves to
+  `/usr/local/bin/xschem`, which on this machine is **3.4.6 from Jan 2025**. It
+  is not merely stale — it predates issue 0119, so it has **no `no_recent_files`
+  gate at all**: `--pipe`, `--nogui` and `--norecent` do not stop it rewriting
+  the user's `~/.xschem/recent_files`, because it has never heard of them. One
+  run of it through a tree with no built `src/xschem` is what emptied the user's
+  `File > Open Recent` (issue **0924**). The conf is now written in both the
+  modern and the legacy spelling so the round trip is lossless, but the rule
+  stands: **always give the binary a path** — `./src/xschem`, `$XSCHEM`, or
+  `devdisplay.sh exec ./src/xschem`. Never a bare `xschem`.
 - **`create_save`, `open_close` and `netlisting` have no committed `gold/`
   baseline**, so they can only report `NOGOLD` — they run the cases and produce
   `<case>/results/`, but verify nothing until someone promotes a baseline. The
@@ -63,6 +83,40 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   leading `FATAL` is counted. `couldn't execute "xschem"` or `exit 127` anywhere
   means the binary never launched and *nothing in that run is meaningful*
   (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
+- **⚠ RUN `run_regression.tcl` SOLO.** Two of them at once corrupt each other and
+  the loser reports a `FATAL` that never happened. `open_close.tcl:38` puts its
+  per-job exit-status files in a **fixed** `results/.work` (no pid), and `:108`
+  deletes that directory when the run ends — including out from under a run still
+  reading it. `read_job_status` scores a missing status file as `-1`
+  (`test_utility.tcl:119`), so the victim prints `FATAL: 10` and a nonzero count
+  in the one suite whose baseline is ZERO. **`exit -1` is the tell**: no xschem
+  process writes that; a real crash writes a real code. Both verify passes on
+  item S4c hit this in one session. Filed as **0990**; until it is fixed, a T1
+  number taken while another agent's suite was live is not evidence.
+- **T1's baseline is ZERO counted failures, as of the 0689+0690 commit.** For days
+  every crew report carried "T1 3 FAIL — pre-existing" and every reader, the lead
+  included, waved it through. Two of those three were the completion sentinel
+  false-redding a suite that appends a check count to its banner (0689, filed
+  **four** times: 0420, 0492, 0629, 0689); the third was a golden one library
+  behind its own tracked `library.defs` (0690, filed **four** times: 0421, 0455,
+  0491, 0690). Eight issue files, nobody fixing, everybody re-deriving. **A
+  standing red is a defect, not furniture** — it is the one place a real
+  regression hides in plain sight, and this branch has already shipped two
+  defects past twenty-eight passing checks. If T1 is not at zero, say which case
+  and why, per case; never carry a count forward as a known quantity.
+- **The banner rule lives in `tests/banner_rule.tcl`** (`banner_complete`,
+  `banner_died`, `regression_case_failed`) and `run_regression.tcl` is a
+  *consumer* of it. The two shell readers (`run_suites.sh`, `full_audit.sh`) keep
+  their own EREs because `/bin/sh` cannot source Tcl;
+  `test_audit_classifier.tcl` **section K** locks the Tcl rule against
+  `run_suites.sh`'s ERE and against `full_audit.sh`'s two crash literals, by
+  verdict. `full_audit.sh`'s *pass* arm is **not** locked and is only
+  prefix-anchored, so it still accepts trailing junk the other two reject — latent
+  (no suite emits it), filed as **0805**.
+  A case passes only on **exit 0 AND a whole-line completion banner AND no
+  column-0 death marker** — the exit code alone is not enough (`--nogui --pipe`
+  exits 0 on an uncaught mid-script Tcl error) and neither is the banner (a suite
+  that reported and *then* died used to score a silent pass).
 - `xschemtest.tcl` is a broader functional/perf harness, run as
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.
@@ -114,8 +168,43 @@ display does not survive a reboot**; re-run `start`.
 The arm (below) **attaches** to it when it is up, so every entry point lands on
 one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the
 right way round — the only thing that still needs it is reproducing
-WSLg-specific defects. Side wins: immune to the WSLg Xwayland aborts that kill
-`:0` clients ~3×/session, and no per-run Xvfb spawn.
+Xwayland-specific defects. Side wins: immune to the WSLg Xwayland aborts that
+kill `:0` clients ~3×/session, and no per-run Xvfb spawn.
+
+### ⚠ THERE ARE THREE X SERVERS HERE, AND `:0` IS NOT THE USER'S SCREEN
+
+Measured 2026-08-22 with `xdpyinfo`, all three live at once:
+
+| display | vendor string | what it is |
+|---|---|---|
+| `:0` | `Microsoft Corporation` | **Xwayland**, WSLg's own server |
+| `$DISPLAY` = `<win-ip>:0` | `HC-Consult` | the **Windows X server** the user actually looks at, over TCP |
+| `:99` | `The X.Org Foundation` | Xvfb, the persistent dev display |
+
+`$DISPLAY` comes from `~/.profile:48` (`export DISPLAY="$WINDOWS_IP:0"`). Note
+`~/.bashrc:152-153` would override it to `:0` when `WAYLAND_DISPLAY` is set — and
+it *is* set — but bashrc returns early for non-interactive shells, so a tool shell
+keeps the TCP display and an interactive terminal may not. **Check `$DISPLAY`
+rather than assuming.**
+
+**This matters because `AUDIT_DISPLAY=:0` exports the LITERAL string `:0`**
+(`tests/headless/xvfb_arm.sh:140`), not `$DISPLAY`. So:
+
+* every `:0` measurement recorded below — the flake rates, the 3-vs-1
+  `<Configure>` traffic, the Calculator phase-0 failures, `test_wave_modes` at
+  6.2–45.6 s — was taken against **Xwayland**, and the WSLg attributions in this
+  section are correct;
+* a **bare** `./src/xschem --script …` inherits `$DISPLAY` and therefore lands on
+  the **user's real screen**, a different server from the one the suites call
+  `:0`. That is the reason for the "never a bare run on a live `:0`" rule above,
+  and it is a sharper reason than it sounds: the two are not the same X server;
+* **"run a GUI feature's suite on `:0`" means Xwayland**, not the user's screen.
+  A look debt that says "on the real VcXsrv screen" — issue 0413's does — is
+  asking for something `AUDIT_DISPLAY=:0` **cannot** provide. Pay that one with
+  `AUDIT_DISPLAY=$DISPLAY`, or by hand from a terminal.
+
+Do not "correct" WSLg to VcXsrv in this file. Both are here; they are different
+displays; the distinction is the load-bearing part.
 
 `_gate_enabled` returns false on the dev display, deliberately: an invisible
 display would otherwise arm the gate and `_gate_attention` would relaunch the
@@ -128,28 +217,38 @@ false; and `xdpyinfo` against a dead display **hangs** on the TCP fallback rathe
 than failing — check the listen state before probing.
 
 ### The owed ledger (`tests/headless/owed.sh`)
-Two debts still cost the user's attention, and both used to arrive scattered —
-one at a time, whenever a feature happened to finish. Record them instead, pay
-them in one batch:
+Three debts still cost the user's attention, and they used to arrive scattered —
+one at a time, whenever a feature happened to finish, and out of *two different
+files*. Record them instead, pay them in one batch:
 
 ```sh
-owed.sh add suite <name> [why]   # owes a :0 run  ("run a GUI feature's suite on
-                                 #   :0 once before calling it done")
-owed.sh add look  <what> [why]   # owes the USER's eyes (pixel deliverables)
-owed.sh list | count | show
-owed.sh drain                    # runs the SUITE debts, one batch, gate live
+owed.sh add rule  <id> [why] [--eyes]  # owes the USER a RULING (a driver run's
+                                       #   E questions; --eyes if it cannot be
+                                       #   decided without looking at pixels)
+owed.sh add look  <what> [why]         # owes the USER's eyes (pixel deliverables)
+owed.sh add suite <name> [why]         # owes a :0 run ("run a GUI feature's
+                                       #   suite on :0 once before calling it done")
+owed.sh list | count | show            # `show` = the user's queue: rule + look
+owed.sh drain                          # runs the SUITE debts, one batch, gate live
 ```
 
-**The two lists are not interchangeable and no command converts one into the
-other.** A suite debt clears itself on a pass; a **look debt clears only when
-the user says so** (`owed.sh clear look <id>`). `drain` does not read the look
-list at all. A ledger that discharged an eyeball because a suite went green
-would be exactly the defect that rule was written about — two defects shipped
-past 28 passing checks. Spec: `doc/claude/specs/owed.md`.
+**`rule` and `look` are the user's queue; `suite` is not.** A suite debt clears
+itself on a pass. A **rule or look debt clears only when the user says so**
+(`clear rule <id>` / `clear look <id>`), and no command converts one kind into
+another — `drain` does not so much as open the other two lists. A ledger that
+discharged an eyeball because a suite went green would be exactly the defect
+that rule was written about (two defects shipped past 28 passing checks), and
+one that closed a *ruling* that way would be the same defect wearing a tie.
+
+**A rule entry is a pointer, not a copy.** The option set stays in
+`doc/claude/issues/NNNN-*.md`; `add rule` resolves the path from the id. Spec:
+`doc/claude/specs/owed.md` (§6 for why `rule` exists).
 
 Assistant: `add` at the moment the debt is incurred; it costs nothing and is the
 only thing that makes the batching possible. Never report a pixel deliverable
 "done" on a green suite — record a `look` and say "suites green, please look".
+Never leave a step's unratified user-visible decision in a write-up only —
+record a `rule`, or the user never sees it was theirs to make.
 
 ### The display arm: Xvfb by default (`tests/headless/xvfb_arm.sh`)
 `full_audit.sh`, `run_suites.sh`, `gated_xschem.sh` and the 7 window-mapping
@@ -159,7 +258,8 @@ borrow the screen they were launched from. That is the routine arm because it is
 measured better, not merely quieter: 30/30 soak with identical check counts where
 the same suites on `:0` flake 4-in-10 / 2-in-3 / 1-in-5, a full audit reproducing
 the recorded `:0` fail list exactly, and `test_wave_modes` at 2.3 s against
-6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (real screen), `=none` (no DISPLAY, GUI
+6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (Xwayland — **not** the user's screen,
+see the three-server table above; use `=$DISPLAY` for that), `=none` (no DISPLAY, GUI
 legs self-skip), `AUDIT_SCREEN=WxHxD` (default `1920x1080x24` — **pin it**, and
 never `1600x1200`, the one size `test_fluid_bodyshove_guards_0132` fails at).
 
@@ -171,11 +271,27 @@ invisible display, for every session sharing the control dir. Xvfb without
 
 **A window manager runs inside the virtual session** (`AUDIT_WM`, default
 `openbox`; `none` for the old empty-Xvfb behaviour). Measured: empty Xvfb does
-not reparent and silently no-ops `wm iconify`; with openbox both work — and on
-iconify openbox is *more* faithful than WSLg, which doesn't honour it either.
+not reparent and silently no-ops `wm iconify`; with a WM both work — and on
+iconify a real WM is *more* faithful than WSLg, which doesn't honour it either.
 So decoration/iconify/stacking/raise are no longer a reason to reach for `:0`.
 
-**Xvfb is still not a substitute for `:0`** for a human eyeball, or for WSLg's
+⚠ **`openbox` WAS MISSING UNTIL 2026-08-23** (issue 0645). It is installed now
+(`/usr/bin/openbox`, Openbox 3.6.1, verified), so `xvfb_arm.sh:154`'s default
+finally resolves and a WM really is live. But **every WM-dependent measurement
+recorded before that date was taken WM-less** — `:156` falls back to no WM with
+only a stderr warning, so suites that believed they had a window manager did not.
+Re-measure rather than trusting an older number.
+
+The fallback path is still real (another box, a stripped container), so the rule
+stands: a suite whose subject is reparenting, iconify, stacking or raise **must
+say in its report which WM was actually live**, and if it needs to be certain it
+should name one explicitly — `AUDIT_WM=openbox`, or `AUDIT_WM=xfwm4` as issue
+0616's did (`xfwm4 --compositor=off`; `/usr/bin/xfwm4` is also present). A report
+that omits the WM is a bare-Xvfb measurement wearing a window manager's name, and
+it will pass while the bug is live. The warning line is not cosmetic; it is the
+difference between evidence and nothing.
+
+**Xvfb is still not a substitute for `:0`** for a human eyeball, or for Xwayland's
 own quirks. The sharpest of those is **event traffic**: one `wm geometry`
 request yields 3 `<Configure>` events on `:0` against 1 under Xvfb with or
 without a WM, and Calculator phase 0 passed 49/49 under Xvfb while failing 3

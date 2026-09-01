@@ -673,10 +673,14 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
   const char *textfont;
   #endif
 
+  /* issue 0498: guard BEFORE the dereference, not after. The `ptr == -1` test that used to
+   * sit below these lines was written to prevent exactly the xctx->sym[-1] read the next
+   * line performs; upstream commit 40fd937d hoisted the `type =` assignment above it and
+   * silently disarmed it. draw.c draw_temp_symbol() is the correct in-tree ordering. */
+  if(INST_UNBOUND(n)) return;
   type = xctx->sym[xctx->inst[n].ptr].type;
   lvs_ignore=tclgetboolvar("lvs_ignore");
   if(!has_x) return;
-  if(xctx->inst[n].ptr == -1) return;
   if(layer == 0) {
     xctx->inst[n].flags &= ~IGNORE_INST; /* clear bit */
     if( type && strcmp(type, "launcher") && strcmp(type, "logo") &&
@@ -865,7 +869,7 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
-      if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+      if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
       if( hide && text.txt_ptr && strcmp(text.txt_ptr, "@symname") && strcmp(text.txt_ptr, "@name") ) continue;
       ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
       textlayer = c_for_text;
@@ -873,11 +877,16 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       if(disabled == 1) textlayer = GRIDLAYER;
       else if(disabled == 2) textlayer = PINLAYER;
       else if( xctx->inst[n].color == -10000) {
-        int lay;
+        int lay, alay;
         if(xctx->only_probes) textlayer = GRIDLAYER;
         else {
           get_sym_text_layer(n, j, &lay);
+          /* 0615: a CONTENT-classified node voltage paints in annot_voltage_layer
+           * instead of the symbol text's own layer=, so it stops wearing the OP
+           * block's colour. AFTER get_sym_text_layer() so a per-instance
+           * `text_layer_<n>=` still wins. */
           if(lay != -1) textlayer = lay;
+          else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
           else textlayer = symptr->text[j].layer;
         }
       }
@@ -1128,7 +1137,7 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
      get_sym_text_size(n, j, &xscale, &yscale);
      text = symptr->text[j];
      if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
-     if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+     if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
      ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
      #if HAS_CAIRO==1
      customfont = set_text_custom_font(&text);
@@ -3323,10 +3332,14 @@ static void set_thick_waves(int what, int wcnt, int wave_col, Graph_ctx *gr)
  *                      raw's). NULL is read as "".
  *
  * The caller my_free()s *expr, *rawfile and *sim_type.
- * Both the path and the type go through a Tcl `subst {...}`, exactly as
- * draw_graph() has always done, so a token may name its database through a Tcl
- * variable. NOTHING here switches databases: the switch, and the balanced
- * restore that must pair with it, belong to the caller. */
+ * Both the path and the type are resolved as DATA -- resolve_rawfile_path()
+ * and expand_tcl_vars() (util.c), a C byte scanner whose only Tcl call is
+ * Tcl_GetVar2Ex -- so a token may still name its database or its type through
+ * a Tcl VARIABLE, as draw_graph() has always allowed, and NOTHING else in
+ * those fields is evaluated. They used to go through a Tcl `subst {...}` built
+ * by string concatenation, which made a `[...]` in a .sch graph attribute run
+ * as a command: issue 0812. NOTHING here switches databases: the switch, and
+ * the balanced restore that must pair with it, belong to the caller. */
 static void node_token_split(const char *ntok, char **expr, int *dataset,
                              char **rawfile, char **sim_type, const char *dflt_sim_type)
 {
@@ -3339,14 +3352,42 @@ static void node_token_split(const char *ntok, char **expr, int *dataset,
     /* `%12 file.raw tran` -- the dataset digits are optional, so the rawfile is
      * field 1 or field 2 of the `%` payload (separators "\n ") */
     int pos = 1;
+    /* C89: both resolver buffers at the top of the block */
+    char rawbuf[PATH_MAX + 100];
+    char typebuf[256];
     if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
+    /* THE SEVENTH INJECTION SITE (issue 0812), and the worst of them: these two
+     * fields are read STRAIGHT OUT OF A .sch FILE, and they used to be resolved
+     * with `tclvareval("subst {", <field>, "}", NULL)` -- so a `[...]` in a
+     * graph `node=` attribute was COMMAND SUBSTITUTION and merely OPENING a
+     * schematic someone sent you ran their Tcl (measured on :99 with a plain
+     * `xschem load` + redraw; the tab that keeps the payload inside one field
+     * survives save.c's round trip verbatim). And `$a([...])` in the same
+     * field ran too, which no `subst` flag prevents -- see util.c.
+     * BOTH fields are rewired, not one: the rawfile field is resolved AGAIN by
+     * extra_rawfile() downstream. That double pass is safe against INJECTION
+     * unconditionally -- the first pass emits no metacharacter it did not
+     * receive as data, and the second parses nothing either. It is NOT
+     * value-stable in general: a variable whose VALUE contains a `$` expands
+     * on the second pass, so such a spelling loads under a registry key a
+     * one-pass `xschem raw clear <same spelling>` cannot match (issue 0820,
+     * measured, unchanged from HEAD, no shipped spelling reaches it).
+     * `~/` IS expanded in this field -- resolve_rawfile_path() calls
+     * expand_tilde() -- which settles the contradiction wave_viewer.tcl's
+     * db_path_safe comment used to carry.
+     * The sim_type field gets expand_tcl_vars() and NOT the full resolver: a
+     * sim_type is a word like `tran`, never a path, so a leading `~/` there
+     * would mean nothing.
+     * The `$netlist_dir/...` spelling documented in doc/xschem_man/graphs.html
+     * still resolves -- that expansion is what these fields are FOR.
+     * Checks NINJ1-NINJ4 / NVAR1-NVAR2, tests/headless/test_node_token_split.tcl. */
     if(rawfile) {
-      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos), "}", NULL);
-      my_strdup2(_ALLOC_ID_, rawfile, tclresult());
+      resolve_rawfile_path(find_nth(nd, "\n ", "\"", 0, pos), rawbuf, (int)S(rawbuf));
+      my_strdup2(_ALLOC_ID_, rawfile, rawbuf);
     }
     if(sim_type) {
-      tclvareval("subst {", find_nth(nd, "\n ", "\"", 0, pos + 1), "}", NULL);
-      my_strdup2(_ALLOC_ID_, sim_type, tclresult()[0] ? tclresult() : dflt_sim_type);
+      expand_tcl_vars(find_nth(nd, "\n ", "\"", 0, pos + 1), typebuf, (int)S(typebuf));
+      my_strdup2(_ALLOC_ID_, sim_type, typebuf[0] ? typebuf : dflt_sim_type);
     }
     if(pos == 2) ds = atoi(nd);
     if(expr) my_strdup(_ALLOC_ID_, expr, find_nth(ntok, "%", "\"", 4, 1));
@@ -10263,7 +10304,7 @@ static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
     #if HAS_CAIRO==1
     int customfont;
     #endif
-    if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+    if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
     get_sym_text_size(n, j, &xscale, &yscale);
     tmp_txt = translate(n, text.txt_ptr);
     if(!tmp_txt || !tmp_txt[0]) continue;
@@ -10374,6 +10415,91 @@ void draw_hover_shape(GC g, int type, int n, int c)
 }
 
 
+/* S9: the draw-time OP-annotation overlay, SCREEN back end. One of three
+ * structurally identical mirrors (svgdraw.c svg_draw_annot_overlay(),
+ * psprint.c ps_draw_annot_overlay()); every decision is in the shared reader
+ * get_annot_overlay() (actions.c) so the three cannot disagree.
+ *
+ * DELIBERATELY NOT INSIDE draw_symbol() -- decision D3. The P6 pin-name pass
+ * sits there, but the layer `cadlayers-1` text call is guarded by
+ * `((c == cadlayers-1) && symptr->texts)` in draw()'s instance loop below and by
+ * hilight.c's copy of it, while the SVG and PS export loops carry no such guard.
+ * A registered symbol with ZERO T records would therefore render its block in
+ * SVG and PS and NOT on screen -- a silent screen/export divergence. Calling
+ * from the instance loop dissolves that, and also stops hilight.c's second text
+ * pass from building and painting every highlighted device's block twice a frame.
+ *
+ * It is also the only safe place for a Tcl call: translate()'s result lives in
+ * one static buffer (token.c:4604) which svgdraw.c:924 and psprint.c:1207 hold
+ * LIVE across their text-loop bodies. Outside the loop, nothing is live. */
+static void draw_annot_overlay(int n)
+{
+  const char *txt = NULL;
+  double x, y, size;
+  int layer;
+  #if HAS_CAIRO==1
+  int didfont = 0;
+  #endif
+  if(!has_x) return;
+  if(!get_annot_overlay(n, &txt, &x, &y, &size, &layer)) return;
+  if(layer < 0 || layer >= cadlayers) layer = TEXTLAYER;
+  if(xctx->draw_single_layer != -1 && layer != xctx->draw_single_layer) return;
+  if(!xctx->enable_layer[layer]) return;
+  if(size * FONTWIDTH * xctx->mooz < 1) return;   /* zoom-cull, as the texts loop */
+  #if HAS_CAIRO==1
+  /* The face is created ONCE PER PROCESS rather than once per instance per frame.
+   * This function runs for every annotated instance on every redraw, so the
+   * original create/destroy pair ran ~13x per frame on a 13-FET sheet.
+   *
+   * ⚠ HYGIENE, NOT A FIX FOR ISSUE 0612, AND THE MEASUREMENT SAYS SO. It was
+   * made while hunting 0612 (an OP-annotation session kills VcXsrv) on the
+   * theory that destroying the face invalidated cairo's server-side glyph set.
+   * A/B on Xvfb over 100 annotated redraws, and again over 60 zoom in/out
+   * cycles, moved nothing: 100 vs 110 XCreatePixmap, 27 vs 27 glyph sets.
+   * cairo_toy_font_face_create() hits cairo's own toy-face cache, so the
+   * original pair was already nearly free. Kept because strictly less work per
+   * frame is still less work -- NOT because it closes 0612.
+   *
+   * What 0612 actually measured, on a real VcXsrv session that ended with the X
+   * SERVER dying (LD_PRELOAD counter, tools/debug/xcount.c):
+   *   XCreatePixmap 2795  XFreePixmap 2761  outstanding 34  (i.e. NO leak)
+   *   XRenderCreatePicture 3050   XRenderCreateGlyphSet 137 (27 on Xvfb)
+   *   XSCHEM's own resetwin() asked for 5 of those 2795.
+   * The client is balanced; the churn is cairo compensating for a limited Render
+   * implementation, and only on that server. Nothing on Xvfb reproduces it.
+   *
+   * The face is immutable and depends on nothing per-call: ANNOT_OVERLAY_FONT is
+   * a compile-time constant and slant/weight never vary. Size is applied
+   * separately by draw_string() -> cairo_set_font_size() (draw.c:475) and is
+   * unaffected. Never destroyed: one face for the life of the process is the
+   * point, and cairo owns it. */
+  {
+    static cairo_font_face_t *annot_face = NULL;
+    if(!annot_face) {
+      annot_face = cairo_toy_font_face_create(ANNOT_OVERLAY_FONT,
+        CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    }
+    cairo_save(xctx->cairo_ctx);
+    cairo_save(xctx->cairo_save_ctx);
+    cairo_set_font_face(xctx->cairo_ctx, annot_face);
+    cairo_set_font_face(xctx->cairo_save_ctx, annot_face);
+    didfont = 1;
+  }
+  #endif
+  /* upright, top-left anchored: rot 0, flip 0, hcenter 0, vcenter 0 (decision D7) */
+  draw_string(layer, ADD, txt, 0, 0, 0, 0, x, y, size, size);
+  #if HAS_CAIRO!=1
+  drawrect(layer, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, -1, -1);
+  drawline(layer, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
+  #endif
+  #if HAS_CAIRO==1
+  if(didfont) {
+    cairo_restore(xctx->cairo_ctx);
+    cairo_restore(xctx->cairo_save_ctx);
+  }
+  #endif
+}
+
 void draw(void)
 {
   /* inst_ptr  and wire hash iterator 20171224 */
@@ -10412,6 +10538,8 @@ void draw(void)
   #endif
   #endif
   xctx->show_hidden_texts = tclgetboolvar("show_hidden_texts");
+  annot_show_sync_cache(); /* S7: the annotation-class mask read by text_hidden() */
+  annot_overlay_sync();    /* S9: epoch compare + wholesale flush of the overlay cache */
   rebuild_selected_array();
   if(has_x) {
     Iterator_ctx ctx;
@@ -10491,6 +10619,9 @@ void draw(void)
         }
         if(xctx->inst[i].ptr == -1 || (c > 0 && (xctx->inst[i].flags & 1)) ) continue;
         symptr = (xctx->inst[i].ptr+ xctx->sym);
+        /* S9: the OP-annotation overlay, once per instance per frame, OUTSIDE the
+         * `symptr->texts` guard below (decision D3 -- see draw_annot_overlay()) */
+        if(c == cadlayers - 1) draw_annot_overlay(i);
         if(
             c==0 || /*draw_symbol call is needed on layer 0 to avoid redundant work (outside check) */
             symptr->lines[c] ||
@@ -10552,8 +10683,11 @@ void draw(void)
     for(i=0;i<xctx->texts; ++i)
     {
       const char *txt_ptr;
+      int alay;
       textlayer = xctx->text[i].layer;
-      if(!xctx->show_hidden_texts && (xctx->text[i].flags & HIDE_TEXT)) continue;
+      if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
+      /* 0615: the schematic-own-text mirror of the instance-text site above. */
+      if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
       if(xctx->only_probes) textlayer = GRIDLAYER;
       else if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
       #if HAS_CAIRO==1

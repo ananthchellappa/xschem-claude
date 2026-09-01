@@ -1,7 +1,21 @@
 # 0316 — `read_dataset()`'s malformed-header aborts leak the half-built `Raw` and destroy the loaded database
 
-**Status:** OPEN. Measured on branch `fluid-editing` at the 0306 fix commit. Documentation only —
-nothing fixed, no test written.
+> ⚠ **ATTEMPT 2 (2026-08-26) FIXED THIS AGAIN AND WAS REVERTED FOR AN UNRELATED REASON.**
+> The four malformed-header aborts dropped their `extra_rawfile(3, NULL, ...)` clear-all
+> and their `goto read_dataset_done` became `break`, so `read_dataset()`'s own
+> `if(exit_status != 1) free_rawfile(...)` runs. **The fifth `goto` (the nvars mismatch)
+> was deliberately left alone.** Valgrind on the abort path reported **0 definitely-lost
+> bytes** (the 253,152-byte leak) and 0 errors. Rows R1–R6 in
+> `test_raw_read_failure_0306` cover it. **Nothing about 0316's own fix is in doubt** —
+> it was reverted only because the same patch made
+> [0836](0836-update-op-segfaults-on-a-zero-point-database.md) reachable. See 0807 §13.
+
+
+**Status:** OPEN. Measured on branch `fluid-editing` at the 0306 fix commit. A fix was written
+under item 0807 on 2026-08-25 (the recommended variant: `break` into the function's own
+`free_rawfile()`), **confirmed to close both the data loss and the leak**, then **reverted with
+the rest of that item** — see
+[0807](0807-annotate-op-destroys-the-attached-op-database-on-a-truncated-raw.md) §7.
 **Area:** `src/save.c`, `read_dataset()` — the four `goto read_dataset_done` sites that jump over the
 function's own `free_rawfile()`.
 **Found:** 2026-08-12, by the phase-3 adversarial review (C memory-safety lens) of the issue-0306
@@ -158,3 +172,29 @@ belongs there at all.
 A test belongs in `tests/headless/test_raw_read_failure_0306.tcl`, which already owns the
 "a failed read must leave the editor as it found it" theme and has the child harness for it: read a
 good table, then read a malformed raw, then assert `xschem raw info` still lists the good file.
+
+
+---
+
+## Addendum, 2026-08-25 (item 0807) — the recommended variant was built and it works
+
+Item 0807 could not meet its own acceptance without this: a raw truncated inside
+`No. Points:` / `No. Variables:` / the `Variables:` index list makes the **reader** wipe the
+whole registry, so no amount of care in `annotate_op` survives it.
+
+The variant built was this issue's own recommendation — delete the `extra_rawfile(3, NULL, ...)`
+clear-all and its dead commented `free_rawfile()` twin, keep `exit_status = 0;`, and turn
+`goto read_dataset_done;` into `break;` so the function's existing
+`if(exit_status != 1) free_rawfile(rawptr, ...)` runs. All six abort paths in the function then
+agree. ⚠ The **fifth** `goto read_dataset_done` (the nvars-mismatch one) must **not** be
+touched — it deliberately preserves `exit_status` for datasets already read.
+
+Measured on that build, against this issue's own repro verbatim: the good entry survived the
+malformed read (`L4` listed it where it had been empty, `L5` was 0 where it had been −1), and
+**valgrind reported `definitely lost: 0 bytes in 0 blocks / indirectly lost: 0 bytes`** where
+this issue measured **253,152 bytes lost per attempt**. Five test rows were written into
+`tests/headless/test_raw_read_failure_0306.tcl` as this issue suggested — one per abort site
+plus a crash canary — and a sabotage variant that restored the clear-all reddened all of them.
+
+None of it is in the tree; the diff is at `doc/claude/evidence/0807-attempt1-reverted.patch.txt`.
+This fix was **not** the reason 0807 was reverted and it can be taken on its own.

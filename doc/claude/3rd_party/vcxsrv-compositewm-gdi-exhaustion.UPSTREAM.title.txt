@@ -1,0 +1,1 @@
+VcXsrv — server dies during sustained redraw in `-multiwindow` when composite redirection is on

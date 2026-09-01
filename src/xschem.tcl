@@ -2511,16 +2511,14 @@ proc save_sim_defaults {f} {
       #    hilight.c:941 / scheduler.c:11948 / callback.c:5598), and nothing in
       #    the tree does `array names sim` / `array get sim`. Extra elements are
       #    unreachable rather than merely harmless.
-      # Braced exactly like `cmd`/`name` above so a `$` in an exe or an arg
-      # survives to the run-time `subst`; `sim_profile_valid` refuses a value
-      # that would not come back out of this very line unchanged (see its
-      # round-trip guard -- and note that `cmd`/`name` above have no such guard,
-      # which is pre-existing and is NOT item 6's to change).
-      foreach {sp_f sp_d} [sim_profile_field_defaults] {
-        set sp_v [sim_profile_get $tool $i $sp_f]
-        if {$sp_v eq $sp_d} { continue }
-        puts $fd "set sim($tool,$i,$sp_f) {$sp_v}"
-      }
+      # ⚠ THE PROFILE FIELDS THIS BLOCK USED TO APPEND ARE GONE (the annotate
+      # merge): `exe`, `args`, `casemode`, `nospiceinit` and the probe memo now
+      # live on the ASE-L registry entry and are written by
+      # ase::sim_write_conf, not here. A simrc written by `fluid-editing` still
+      # SOURCES cleanly -- the extra `set sim(...)` lines land in unreachable
+      # array elements, exactly as the note above says an older xschem sees
+      # them -- so nobody's configuration file breaks; it simply stops being
+      # read, and stops being rewritten.
       puts $fd {}
     }
     puts $fd {}
@@ -2576,303 +2574,65 @@ proc save_sim_defaults {f} {
 # field -> default, in canonical order. The single source of truth: the
 # normalizer, the reader, the writer, the persister and the tests all walk this
 # list, so adding a field is one edit here.
-proc sim_profile_field_defaults {} {
-  return [list exe {} args {} casemode {} detected {} probed {} nospiceinit 0]
-}
+# --- THE SIMULATOR-PROFILE LAYER WAS HERE AND IS GONE ------------------------
+#
+# `fluid-editing`'s casemode batch item 6 hung a PROFILE off every `sim()` row --
+# `exe`, `args`, `casemode`, `nospiceinit`, plus the probe's `detected`/`probed`
+# memo -- and twenty-three procs read, wrote, validated, normalised and composed
+# commands out of it: sim_profile_field_defaults / _fields / _field_default /
+# _valid / _normalize / _shape_stamp / _normalize_if_changed / _get / _set /
+# _casemode / _detected / _supports / _selectable / _exe_path / _probe_stale /
+# _probe_record / _default_index / _row / _run_flags / _cmd_exe_plan /
+# _compose_cmd / _cmd_takes_flags / _compose_report.
+#
+# ALL RETIRED AT THE `annotate` MERGE. `annotate` shipped a simulator REGISTRY
+# (ase::sim_register and friends: CRUD, validation, a capability probe, and a
+# saved list that survives a restart), and two stores describing one machine is
+# not a richer configuration, it is a configuration that can disagree with
+# itself: nothing kept the case mode on a `sim()` row and the program in the
+# registry talking about the same binary, and nothing invalidated either when
+# the other changed. The case mode is now a FIELD of the registry entry -- see
+# ase::sim_casemode_requested, ase::sim_casemode_selectable and
+# ase::sim_nospiceinit in src/ase.tcl.
+#
+# ⚠ ONE USER-VISIBLE CAPABILITY GOES WITH IT, AND IT IS NOT A TIDY-UP. Issue
+# 0506 had taught STOCK xschem's `proc simulate` -- the Simulation menu's own
+# run, not ASE-L's -- to compose its command from the profile row, so what item
+# 13's Test button measured about a binary reached the button the user actually
+# presses. That bridge is gone with the store it read: `proc simulate` runs the
+# row's `cmd` verbatim again, exactly as it does on `main`. ASE-L's own run path
+# keeps every bit of it (ase::run_cmd), so nothing is lost for a session driven
+# from ASE-L. Re-teaching stock `simulate` to read the registry is a real piece
+# of work and is deliberately NOT smuggled into a merge; it is on the ledger.
+#
+# THREE PROCS SURVIVE, because none of them is about the store:
 
-# just the field names, canonical order
-proc sim_profile_fields {} {
-  set r {}
-  foreach {f d} [sim_profile_field_defaults] { lappend r $f }
-  return $r
-}
-
-# the default of one field ({} for an unknown field name)
-proc sim_profile_field_default {field} {
-  set d [sim_profile_field_defaults]
-  if {[dict exists $d $field]} { return [dict get $d $field] }
-  return {}
-}
-
-# the three real modes. `unknown` is NOT one of them: it is the absence of an
-# answer about a FILE (specs/raw_case_mode.md section 10), never a mode a
-# profile can request of a run.
+# The three case modes, and the one place their spelling is decided.
 proc sim_casemode_valid {mode} {
   return [expr {[lsearch -exact {fold preserve distinguish} $mode] >= 0}]
 }
 
-# May `value` be stored in profile field `field`?
+# A VARIABLE EXPANDER THAT IS NOT AN EVALUATOR, kept from `fluid-editing`
+# under a name that no longer claims a profile. It expands `$name`, `${name}`
+# and `$name(index)` at global level and REFUSES anything else.
 #
-# Validation happens on WRITE and again on READ, and the read half is the
-# important one: a hand-edited `~/.xschem/simrc` is plain Tcl and never goes
-# through `sim_profile_set`, so `detected {yes please}` would otherwise become a
-# capability claim and `casemode sideways` a requested mode.
-proc sim_profile_valid {field value} {
-  # PERSISTENCE GUARD, every field. save_sim_defaults writes exactly one line,
-  #     set sim(<tool>,<i>,<field>) {<value>}
-  # so the only storable values are the ones that come back out of that line
-  # unchanged WHEN THE SIMRC IS SOURCED. Two halves, and the second exists
-  # because the first is not enough.
-  #
-  # (1) The line must parse into three words whose third is the value byte for
-  #     byte. `info complete` on the braced value was the first guard here and
-  #     it is NOT this test -- MEASURED, and it shipped a broken file: a value
-  #     carrying an unbalanced CLOSE brace passes it. Take the three characters
-  #     a, close-brace, b: bracing them yields a line whose braces do not
-  #     balance, `info complete` calls it complete anyway, and sourcing the
-  #     emitted line fails with `extra characters after close-brace` -- so the
-  #     whole of the user's ~/.xschem/simrc stops loading, the exact failure
-  #     this guard exists to prevent. CS153e drives it.
-  #
-  # (2) The sequences on which the LIST parser (`llength`/`lindex`, below) and
-  #     the SCRIPT parser (`source`, which is what actually reads the simrc)
-  #     DISAGREE inside braces must be refused outright. The list parse ALONE
-  #     was the second revision of this guard and it shipped the same class of
-  #     bug one layer down: inside braces the script parser performs exactly
-  #     one substitution, backslash-newline -> space, and the list parser
-  #     performs none, so a value carrying backslash-newline passed the guard,
-  #     was written, and came back one byte shorter. MEASURED end to end through
-  #     save_sim_defaults + source: `x BACKSLASH NEWLINE y` (78-5c-0a-79) reads
-  #     back as `x SPACE y` (78-20-79) and a second save then DIFFERS from the
-  #     first, breaking the byte-stability CS153f/CS158d advertise. A bare CR is
-  #     the same defect by another route -- channel translation turns it into a
-  #     newline on the way in (78-0d-79 -> 78-0a-79, measured) -- so it cannot
-  #     survive either and is refused with it.
-  #     Everything else DOES survive and must keep being accepted, or the guard
-  #     becomes a refuse-everything: a lone backslash, a bare newline, a `$`, a
-  #     space and balanced inner braces all round-trip byte-identically
-  #     (measured in the same probe; CS153f and CS153g are the acceptance half).
-  # (No literal unbalanced brace appears in this comment on purpose: a comment
-  #  inside a proc body is still inside that body's braces, and one here aborted
-  #  the source of this entire file.)
-  set sp_line "set v \{$value\}"
-  if {[catch {llength $sp_line} sp_n]} { return 0 }
-  if {$sp_n != 3 || [lindex $sp_line 2] ne $value} { return 0 }
-  if {[string first "\\\n" $value] >= 0} { return 0 }
-  if {[string first "\r" $value] >= 0} { return 0 }
-  switch -exact -- $field {
-    exe         { return 1 }
-    args        { return [expr {![catch {llength $value}]}] }
-    casemode    { return [expr {$value eq {} || [sim_casemode_valid $value]}] }
-    detected {
-      if {[catch {llength $value}]} { return 0 }
-      foreach m $value { if {![sim_casemode_valid $m]} { return 0 } }
-      return 1
-    }
-    probed {
-      if {[catch {llength $value} n]} { return 0 }
-      return [expr {($n % 2) == 0}]
-    }
-    nospiceinit { return [string is boolean -strict $value] }
-  }
-  return 0
-}
-
-# Give every configured row every profile field, so the array shape is complete
-# whatever route populated it: a simrc that predates the fields, the built-in
-# defaults, or a `cadence_style_rc` that set only `exe`. Reads do not depend on
-# it (sim_profile_get is defensive); item 13's widgets do, because a Tk
-# -textvariable on a missing array element creates it with an empty value and
-# would silently lose a 0 default.
-#
-# UNCONDITIONAL, per row and per field: whoever calls this gets a complete
-# shape, full stop. An earlier revision short-circuited a row on `[info exists
-# sim($tool,$i,nospiceinit)]` -- the LAST field -- on the stated grounds that the
-# six fields are "only ever set as a group". THAT IS FALSE FOR THE ROUTE THAT
-# MATTERS, and it shipped a hole, MEASURED: save_sim_defaults writes only the
-# fields that DIFFER from their default, so a user who changed nothing but A2's
-# `-n` box gets a simrc row carrying `nospiceinit` and nothing else, the
-# short circuit then skips that row, and `exe args casemode detected probed` stay
-# missing on it for the whole session. Ordinary configuration, not an edge case.
-# CS151g drives it end to end through a real save + reload.
-#
-# The cost that short circuit was buying is bought at the CALLER instead, and
-# the caller's guard is a ROW-COUNT MEMO, not "did this call rebuild the array".
-# That distinction is the whole of a defect that got past a first revision of
-# this item, MEASURED: `set_sim_defaults` normalized only when it had (re)built
-# the array, so the SECOND population route B1 and the item scope both name --
-# an rc (`cadence_style_rc`, `~/.xschem/xschemrc`) that calls set_sim_defaults
-# and then APPENDS a row --
-#     set sim(spice,5,cmd) ... ; set sim(spice,5,name) ... ;
-#     set sim(spice,5,exe) /path/ngspice ; incr sim(spice,n)
-# left that row with `args casemode detected probed nospiceinit` missing for the
-# WHOLE SESSION: `sim` exists by then, so no later set_sim_defaults (and
-# `sim_is_xyce`/`sim_is_ngspice`/`simconf`/`simulate` all re-enter it) ever
-# walked again. CS151i drives exactly that route, with no hand call to this proc.
-#
-# The memo keeps the property the rebuild flag was there for, because
-# `xschem get_fqdevice` (token.c) reaches `sim_is_xyce` from a
-# `node="tcleval([xschem get_fqdevice …])"` attribute, i.e. from a graph REDRAW
-# -- item 3's rule is "never poll a walk from a redraw". MEASURED on this tree,
-# 500 iterations of set_sim_defaults with the array already built and unchanged:
-# 8.36 us when the full walk ran on every call, 1.0 us for the old rebuild flag,
-# 1.6 us for the memo. The full walk costs 19.6 us and now happens once per
-# array build AND once per row-count change, which is the only thing that can
-# introduce an unshaped row.
-proc sim_profile_normalize {} {
-  global sim
-  if {![info exists sim(tool_list)]} { return }
-  set defs [sim_profile_field_defaults]
-  foreach tool $sim(tool_list) {
-    if {![info exists sim($tool,n)]} { continue }
-    if {![string is integer -strict $sim($tool,n)]} { continue }
-    for {set i 0} {$i < $sim($tool,n)} {incr i} {
-      foreach {f d} $defs {
-        if {![info exists sim($tool,$i,$f)]} { set sim($tool,$i,$f) $d }
-      }
-    }
-  }
-}
-
-# The shape the last normalize saw: every tool and its row count. A row can only
-# become unshaped by appearing, and a row can only appear by moving some
-# `sim($tool,n)` (the setter, the persister and item 13's dialog all address rows
-# below `n`; anything at or above it is not configured and nothing reads it).
-proc sim_profile_shape_stamp {} {
-  global sim
-  set s {}
-  if {![info exists sim(tool_list)]} { return $s }
-  foreach tool $sim(tool_list) {
-    set n {}
-    if {[info exists sim($tool,n)]} { set n $sim($tool,n) }
-    lappend s $tool $n
-  }
-  return $s
-}
-
-# Normalize when the shape moved (or has never been stamped). Returns 1 when it
-# walked. The memo lives INSIDE the `sim` array on purpose: every route that
-# resets the configuration does it by `unset sim` (set_sim_defaults' own reset
-# arm, every reload, and every test), so the memo is invalidated for free. A
-# separate global would survive an `unset sim`, go stale, and silently skip the
-# one walk that mattered -- exactly the failure mode being fixed here.
-proc sim_profile_normalize_if_changed {} {
-  global sim
-  set s [sim_profile_shape_stamp]
-  if {[info exists sim(profile_shape)] && $sim(profile_shape) eq $s} { return 0 }
-  sim_profile_normalize
-  set sim(profile_shape) $s
-  return 1
-}
-
-# Read a profile field. Missing element, unknown field or a value that fails
-# validation all return the field's default -- so a garbage value from a
-# hand-edited simrc reads as "not set" instead of being believed.
-proc sim_profile_get {tool idx field} {
-  global sim
-  set d [sim_profile_field_default $field]
-  if {![info exists sim($tool,$idx,$field)]} { return $d }
-  set v $sim($tool,$idx,$field)
-  if {![sim_profile_valid $field $v]} { return $d }
-  return $v
-}
-
-# Write a profile field. Errors on an unknown field, an invalid value, or a row
-# that is not configured -- a write to an out-of-range index would land in an
-# element save_sim_defaults never visits (it loops to sim($tool,n)), i.e. a
-# setting that vanishes at the next save.
-proc sim_profile_set {tool idx field value} {
-  global sim
-  if {[lsearch -exact [sim_profile_fields] $field] < 0} {
-    return -code error "sim_profile_set: unknown profile field '$field'"
-  }
-  if {![info exists sim($tool,n)] || ![string is integer -strict $idx] ||
-      $idx < 0 || $idx >= $sim($tool,n)} {
-    return -code error "sim_profile_set: no such profile row: $tool,$idx"
-  }
-  if {![sim_profile_valid $field $value]} {
-    return -code error "sim_profile_set: invalid $field value: $value"
-  }
-  set sim($tool,$idx,$field) $value
-  return $value
-}
-
-# The mode this profile REQUESTS: its own field, else the global floor, else
-# fold. B1's "per profile, with a global floor". The floor is validated here
-# too (a `set sim_case_mode sideways` in an rc must not become a request).
-proc sim_profile_casemode {tool idx} {
-  global sim_case_mode
-  set m [sim_profile_get $tool $idx casemode]
-  if {$m ne {}} { return $m }
-  if {[info exists sim_case_mode] && [sim_casemode_valid $sim_case_mode]} {
-    return $sim_case_mode
-  }
-  return fold
-}
-
-# What the binary was measured to deliver, canonical order, garbage dropped.
-proc sim_profile_detected {tool idx} {
-  set d [sim_profile_get $tool $idx detected]
-  set r {}
-  foreach m {fold preserve distinguish} {
-    if {[lsearch -exact $d $m] >= 0} { lappend r $m }
-  }
-  return $r
-}
-
-# A1: has this binary been MEASURED to deliver `mode`? Never probed => 0 for
-# every mode, including fold: an unmeasured binary is unknown, not a claim.
-proc sim_profile_supports {tool idx mode} {
-  if {![sim_casemode_valid $mode]} { return 0 }
-  set d [sim_profile_detected $tool $idx]
-  if {$d eq {}} { return 0 }
-  return [expr {[lsearch -exact $d $mode] >= 0}]
-}
-
-# RULING (spec section 4): the modes a user may SELECT for this profile.
-# Measured => exactly what was measured (A1: nobody may pick a mode their
-# simulator will silently ignore). Never probed => `fold` alone. That is not
-# B2b-style invention: `fold` is what a released ngspice does whether or not it
-# was asked (it accepts `-D casemode=preserve` and ignores it, measured), so
-# requesting `fold` is the one request no binary can silently fail. It also
-# makes item 13's dropdown probe-driven rather than constant, which is A1's
-# consequence clause.
-proc sim_profile_selectable {tool idx} {
-  set d [sim_profile_detected $tool $idx]
-  if {$d ne {}} { return $d }
-  # MEASURED, delivering nothing we recognise: offer NOTHING. Keying this
-  # fallback off `detected` being empty was a defect -- `sim_profile_probe_record
-  # $tool $idx {}` is a legal call and documents itself as "measured, delivers
-  # nothing", and a freshly measured row then got offered `fold` while
-  # `sim_profile_supports … fold` answered 0 in the same breath: two procs of one
-  # item disagreeing about one binary, and A1's rule ("never selectable when the
-  # binary cannot deliver it") broken for the one binary we actually know about.
-  # Item 13's dropdown reads this list, so empty is the answer that lets it say
-  # "probed: no supported mode" instead of offering one the model refuses.
-  if {[sim_profile_get $tool $idx probed] ne {}} { return {} }
-  # NEVER probed: `fold` alone. That is not B2b-style invention -- `fold` is what
-  # a released ngspice does whether or not it was asked (it accepts
-  # `-D casemode=preserve` and ignores it, measured), so it is the one request no
-  # binary can silently fail.
-  return fold
-}
-
-# Expand VARIABLE references in a configured path: `$name`, `${name}` and
-# `$name(index)`, at global level, the way every `cmd` string already writes one.
-# Raises when a reference cannot be resolved (an unset variable) or when it is a
-# form this expander refuses, so a caller can answer "cannot locate" rather than
-# guess.
-#
-# THIS EXISTS BECAUSE `subst -nocommands` IS NOT A SANDBOX. MEASURED on
-# 8.6.14: `set ::RAN 0; subst -nocommands -nobackslashes {$A([set ::RAN 1])/x}`
-# leaves `$::RAN` at 1 -- Tcl still evaluates a `[...]` that sits inside the
-# ARRAY INDEX of a variable substitution, because the index is parsed as a
-# script word before the (suppressed) command substitution pass ever applies.
-# Driven end to end on this tree: an `exe` of
+# ⚠ IT EXISTS BECAUSE `subst -nocommands` IS NOT A SANDBOX, and that is measured,
+# not argued: on Tcl 8.6.14, `set ::RAN 0; subst -nocommands -nobackslashes
+# {$A([set ::RAN 1])/x}` leaves `$::RAN` at 1 -- Tcl still evaluates a `[...]`
+# sitting inside the ARRAY INDEX of a variable substitution, because the index is
+# parsed as a script word before the (suppressed) command-substitution pass ever
+# applies. Driven end to end on this tree: an `exe` of
 # `$env([exec touch /tmp/.../PWNED])/ngspice` created the file during a pure
-# STALENESS query -- `sim_profile_exe_path` returned {} and looked innocent.
-# A profile field is config data (a hand-edited simrc, a shipped rc, later a
-# dialog); it may not be able to run a process, least of all from a redraw.
-# So: no `subst` on this path at all. Literal index characters only, and an
-# index carrying `[`, `$` or a backslash is refused outright rather than
-# resolved. CS157k and CS157l drive both halves.
+# STALENESS query.
 #
-# The same hole is in `ase::expand_path` (src/ase.tcl), which expands MODEL paths
-# out of a state file with the identical `subst -nocommands -nobackslashes`. It
-# is pre-existing and out of item 6's scope; it is written down in
-# doc/claude/specs/simulator_profiles.md section 5 and flagged at its own call
-# site so whoever owns model paths next cannot miss it.
-proc sim_profile_expand_vars {s} {
+# ⚠ ITS LAST CALLER WENT WITH THE PROFILE LAYER AND IT IS KEPT ANYWAY, on
+# purpose. `ase::expand_path` (src/ase.tcl) expands MODEL paths, and now
+# SIMULATOR paths out of ase::sim_register, with the identical unsafe
+# `subst -nocommands -nobackslashes`. Deleting the one hardened expander in the
+# tree at the same commit that made the registry the only path to a simulator
+# would be moving the hole somewhere more reachable and throwing away the fix.
+# Wiring ase::expand_path to it is filed, not done here.
+proc sim_expand_vars {s} {
   set out {}
   set i 0
   set n [string length $s]
@@ -2914,7 +2674,7 @@ proc sim_profile_expand_vars {s} {
     }
     if {$hasidx} {
       if {[regexp {[\[\]\$\\]} $idx]} {
-        return -code error "sim_profile_expand_vars: refusing a substitution\
+        return -code error "sim_expand_vars: refusing a substitution\
                             inside an array index: $idx"
       }
       set ref ${name}($idx)
@@ -2927,351 +2687,23 @@ proc sim_profile_expand_vars {s} {
   return $out
 }
 
-# Absolute path of this profile's exe, resolving a bare name through PATH; {}
-# when there is no exe or it cannot be found. No process is started.
-proc sim_profile_exe_path {tool idx} {
-  set exe [sim_profile_get $tool $idx exe]
-  if {$exe eq {}} { return {} }
-  # `exe` is stored VERBATIM, so an rc or a hand-edited simrc can write
-  # `$env(HOME)/dev/ngspice` the way every `cmd` string already does. Expand
-  # variables here or this proc answers {} for a perfectly good profile and
-  # sim_profile_probe_stale then says "stale" forever.
-  #
-  # VARIABLES ONLY, and through sim_profile_expand_vars rather than `subst`
-  # (which is not a sandbox even with -nocommands -- see that proc). Catch'd:
-  # an unset variable, or a form the expander refuses, means "cannot locate",
-  # not an error.
-  if {[catch {sim_profile_expand_vars $exe} exe]} {
-    return {}
-  }
-  if {$exe eq {}} { return {} }
-  if {[file pathtype $exe] ne {relative} } {
-    return [expr {[file executable $exe] ? $exe : {}}]
-  }
-  set p [auto_execok $exe]
-  if {$p eq {}} { return {} }
-  return [lindex $p 0]
-}
-
-# Is this profile's capability measurement missing or out of date? Never
-# probed, no exe, an exe that cannot be found, or an exe whose mtime has moved
-# since the probe all answer 1. MODEL ONLY -- it stats a file, it never runs
-# one (the probe is item 7, and it needs a hard timeout).
-proc sim_profile_probe_stale {tool idx} {
-  set p [sim_profile_get $tool $idx probed]
-  if {$p eq {} || ![dict exists $p mtime]} { return 1 }
-  set path [sim_profile_exe_path $tool $idx]
-  if {$path eq {}} { return 1 }
-  if {[catch {file mtime $path} m]} { return 1 }
-  return [expr {$m ne [dict get $p mtime] ? 1 : 0}]
-}
-
-# Record a probe's OUTCOME: the modes measured plus the provenance stamp. Item
-# 7 calls this with what its probe returned; this item never probes. `modes`
-# empty is legal and means "measured, delivers nothing we recognise".
-proc sim_profile_probe_record {tool idx modes} {
-  set m {}
-  foreach x {fold preserve distinguish} {
-    if {[lsearch -exact $modes $x] >= 0} { lappend m $x }
-  }
-  sim_profile_set $tool $idx detected $m
-  set mt {}
-  set path [sim_profile_exe_path $tool $idx]
-  if {$path ne {}} { catch {set mt [file mtime $path]} }
-  sim_profile_set $tool $idx probed [list time [clock seconds] mtime $mt]
-  return $m
-}
-
-# The row index a tool actually launches: its `default`, bounded. -1 when the
-# tool has no configured row at all.
-proc sim_profile_default_index {tool} {
-  global sim
-  if {![info exists sim($tool,n)] || ![string is integer -strict $sim($tool,n)]} { return -1 }
-  set n $sim($tool,n)
-  if {$n <= 0} { return -1 }
-  set d 0
-  if {[info exists sim($tool,default)] && [string is integer -strict $sim($tool,default)]} {
-    set d $sim($tool,default)
-  }
-  if {$d < 0 || $d >= $n} { set d 0 }
-  return $d
-}
-
-# The whole row as one dict, for item 8's run path and item 13's dialog:
-# tool index name cmd fg st + every profile field + `requested` (the resolved
-# mode, floor included) and `selectable`. `casemode` stays the RAW field, so a
-# caller can still tell "this profile names no mode" from "this profile
-# requests fold".
-proc sim_profile_row {tool idx} {
-  global sim
-  set row [dict create tool $tool index $idx]
-  foreach f {name cmd fg st} {
-    set v {}
-    if {[info exists sim($tool,$idx,$f)]} { set v $sim($tool,$idx,$f) }
-    dict set row $f $v
-  }
-  foreach f [sim_profile_fields] { dict set row $f [sim_profile_get $tool $idx $f] }
-  dict set row requested [sim_profile_casemode $tool $idx]
-  dict set row selectable [sim_profile_selectable $tool $idx]
-  return $row
-}
-
-# =========================================================================
-#      THE PLAIN SIMULATE PATH, COMPOSED FROM THE PROFILE -- issue 0506
-# =========================================================================
+# THE C NETLISTER'S ONE QUESTION, and the only C->Tcl call the case-mode work
+# makes: netlist_case_mode() (src/save.c) asks it so the deck it is about to
+# write describes the run that is about to happen. `tool` is a netlist type, and
+# only `spice` has a meaning here -- every other type keeps the floor, which
+# save.c does by never asking about them.
 #
-# Items 6/7/13 built the profile -- an `exe`, a requested `Case` mode, and a
-# Test button that offers only the modes the binary was MEASURED to deliver --
-# and `proc simulate` read none of it. It runs `sim($tool,$def,cmd)` verbatim,
-# and the shipped batch row is a bare `ngspice` off PATH with no `-D casemode=`.
-# So: register a case-capable ngspice, set Case=preserve, press Test, read
-# "delivers fold preserve distinguish", press Simulate -- and a DIFFERENT binary
-# runs, at `fold`. The dialog told the truth about a binary it then did not run.
-#
-# `simulator_profiles.md` §10 forbade this wiring ("Any `cmd` rewriting. Nothing
-# derives a `cmd` from an `exe` or vice versa"), and that ban was sound reasoning
-# about a real hazard rather than squeamishness: row 0 is
-# `$terminal -e {ngspice -i "$N" -a || sh}` and row 4 is
-# `mpirun /path/to/parallel/Xyce "$N"`. "Replace the simulator in this string"
-# has no general answer. What is wired here is the NARROW case that does have
-# one; every case that does not is REPORTED, never guessed at.
-
-# The extra argv words the plain Simulate path appends for a profile row.
-# Returns {} -- the byte-identical-command-line answer -- for every
-# configuration that has not explicitly asked for something.
-#
-# RULING -- gated on a NON-`fold` request, mirroring ASE-L (§12.3). `fold` is
-# what every user gets by default (A1), so the default appends nothing and a
-# stock `apt install` command line does not move. A `fold` emission would buy
-# nothing anyway: a released ngspice ignores the flag, a case-capable one
-# defaults to `fold`, and a `.spiceinit` overrides it regardless (A2).
-#
-# RULING -- `spice` only, and never Xyce. `-D casemode=` is an ngspice spelling.
-# It means nothing to Xyce and nothing to a spectre/VACASK row, and emitting a
-# flag whose effect we cannot claim is how a "configured" tool starts lying.
-# The Xyce test is done HERE on the row's own `cmd` rather than through
-# `sim_is_xyce`, which answers only for the *default* row and reads the GLOBAL
-# `netlist_type` -- while `proc simulate` works from a LOCAL of that name. Same
-# regexp, no dependency on the two agreeing.
-#
-# RULING -- the gate is NEGATIVE (not-Xyce), not a positive "is this ngspice?".
-# A positive gate keyed on the exe/cmd spelling would silently drop the flag for
-# a case-capable binary a user installed as `spice-dev`, which is precisely the
-# defect class this issue is about. And a non-`fold` value is not idly arrived
-# at: item 13's Case menu offers a mode only where the PROBE measured the binary
-# delivering it, and that probe is ngspice-shaped (`echo CCM=$curcasemode`).
-#
-# RULING -- `casemodewrite` rides ALONG with the mode, never alone and never for
-# `fold`. ngspice stamps the self-describing `Option: casemode=<mode>` raw header
-# only when that variable is set (`outitf.c:994`), so item 3's header parser --
-# mode SOURCE 2, the second-strongest of four -- could never fire on a file this
-# tool caused to be written, because nothing here has ever set it. Measured on
-# one preserved raw of one deck: without it `xschem raw casemode` answers
-# `unknown`/`none`; with it, `preserve`/`header`.
-#
-# MEASURED 2026-08-18 on this machine, and it is what makes appending safe:
-#   * the flags MAY FOLLOW THE DECK FILENAME -- `ngspice -b -r q1.raw deck.cir
-#     -D casemode=preserve -D casemodewrite` gives rc 0, the header and `v(EN)`
-#     -- so nothing here parses a `cmd` template looking for an insertion point;
-#   * a released ngspice ignores both IN SILENCE, which is more than A1 claimed.
-#     `/usr/local/bin/ngspice` (46) with and without them, same deck: rc 0 both
-#     ways, run logs differing only in the raw filename and timing noise, no
-#     "unknown option", nothing on stderr. (An earlier reading of this said
-#     rc=141 -- that was SIGPIPE from a `| head` in the measuring command, not
-#     the simulator.)
-proc sim_profile_run_flags {tool idx} {
-  global sim
+# ⚠ IT ANSWERS OUT OF THE ASE-L REGISTRY AS OF THE `annotate` MERGE, and it
+# still CANNOT RAISE. `fluid-editing` resolved a `sim()` profile row here; the
+# registry replaced that store. The catch is load-bearing in a way it was not
+# before: stock xschem netlists with `ase.tcl` sourced but nothing registered
+# and no ASE-L session anywhere, and a netlister that raised out of a Tcl
+# helper would take the netlist with it. `{}` means "no answer", which save.c
+# reads as sim_case_mode_floor() -- the pre-merge behaviour, byte for byte, for
+# every user who has registered nothing.
+proc sim_netlist_casemode {tool} {
   if {$tool ne {spice}} { return {} }
-  if {[info exists sim($tool,$idx,cmd)] && [regexp {[xX]yce} $sim($tool,$idx,cmd)]} {
-    return {}
-  }
-  set m [sim_profile_casemode $tool $idx]
-  if {$m eq {} || $m eq {fold} || ![sim_casemode_valid $m]} { return {} }
-  return [list -D casemode=$m -D casemodewrite]
-}
-
-# Can the profile row's executable be applied to this command template, and to
-# which word? Returns a dict: `status` none|applied|declined, `exe` the resolved
-# path, `word` the template's first word.
-#
-# RULING -- the FIRST WORD, a bare LITERAL, and a matching `file tail`. Three
-# conditions, each load-bearing against a SHIPPED row:
-#   * first word -- the only position in a shell-ish template whose meaning is
-#     fixed. Anywhere else needs a parser, and §10 is right that there is none.
-#   * bare literal (no `$`, no `[`) -- row 0 is `$terminal -e {ngspice ...}`: a
-#     VARIABLE first word, with the simulator nested two levels in. Rewriting
-#     that is exactly the guess §10 forbade.
-#   * matching tail -- row 4 is `mpirun /path/to/parallel/Xyce "$N"`: a literal
-#     first word that is NOT the simulator. Requiring
-#     `[file tail $word] eq [file tail $exe]` declines it, and declines every
-#     wrapper (`nice`, `time`, `flatpak-spawn`, `mpirun`) for the same reason.
-#
-# The DECISION is taken on the RAW template, before `subst`, because that is the
-# only place a `$terminal` is still distinguishable from whatever it expands to.
-# The SUBSTITUTION is performed on the substituted string -- safe precisely
-# BECAUSE the word passed these tests: a literal carrying no `$` and no `[` is
-# what `subst` leaves alone, so it is still the first word afterwards.
-#
-# A first word is taken by regexp, not `lindex`: a `cmd` template is free text a
-# user may hand-edit in a simrc and is not required to be a valid Tcl list.
-proc sim_profile_cmd_exe_plan {tool idx cmd} {
-  set exe [sim_profile_exe_path $tool $idx]
-  if {$exe eq {}} { return [dict create status none exe {} word {}] }
-  if {![regexp {^[ \t]*([^ \t\n]+)} $cmd -> word]} {
-    return [dict create status declined exe $exe word {}]
-  }
-  if {[string first {$} $word] >= 0 || [string first {[} $word] >= 0} {
-    return [dict create status declined exe $exe word $word]
-  }
-  if {[file tail $word] ne [file tail $exe]} {
-    return [dict create status declined exe $exe word $word]
-  }
-  return [dict create status applied exe $exe word $word]
-}
-
-# Compose the command the plain Simulate path will actually run. A PURE
-# FUNCTION of the two strings and the profile, so the whole wiring is driveable
-# without launching a simulator -- which is the only reason any of item 6-13's
-# rulings could be checked at all, and this one is no different.
-#
-# `rawcmd` is the template as stored; `subcmd` is that template after
-# `proc simulate`'s own `subst`. They are separate arguments because the exe
-# decision may only be taken on the first and the edit may only be applied to
-# the second (see sim_profile_cmd_exe_plan).
-#
-# Returns a dict: `cmd` the composed string, `exe_status`/`exe`/`word` from the
-# plan, `flags` the words appended ({} when none) and `flag_status`:
-#   none         nothing was requested (the `fold` default -- the usual answer)
-#   appended     the flags are on the command line
-#   template     the template names `casemode` itself, so it was left alone
-#   unplaceable  a mode WAS requested and there is nowhere safe to put it
-#
-# RULING -- the flags are appended ONLY where the first word is known to be the
-# simulator, and this was a DEFECT in the first revision of this proc, caught by
-# driving row 0. `$terminal -e {ngspice -i "$N" -a || sh}` had the exe correctly
-# declined and the flags appended anyway, producing
-# `xterm -e {ngspice ...} -D casemode=preserve` -- flags for the TERMINAL
-# EMULATOR, two levels out from the simulator they were meant for. The measured
-# fact that licensed appending ("the flags may follow the deck filename") is
-# about a DIRECT ngspice invocation and says nothing about a wrapped one.
-#
-# Two routes to that confidence, and no third:
-#   * `exe_status` is `applied` -- the first word's tail matched the registered
-#     executable, so the first word IS the simulator, definitively;
-#   * no exe is registered and the first word's tail matches `ngspice*` -- the
-#     convenience route for a user who set only the Case field.
-# Everything else -- a shell (`sh -c "..."`), a terminal, a launcher, an
-# `mpirun` -- is `unplaceable`, because trailing words on those do not reach the
-# simulator's argv and appending anyway is how a configuration starts lying.
-#
-# RULING -- `unplaceable` is REPORTED, never silent. The user set a Case field
-# and is not getting it; swallowing that would be the same defect as the one
-# this issue exists to fix, one layer along. The earlier objection to a positive
-# "is this ngspice?" test -- that it would silently drop the flag for a binary
-# someone installed as `spice-dev` -- is answered by the first route, not by
-# guessing: registering the Exe is already required to probe the binary and
-# unlock any non-`fold` mode in item 13's menu.
-#
-# RULING -- an already-hand-written `casemode` in the template WINS, and nothing
-# is appended. A user who typed `-D casemode=distinguish` into their `cmd` has
-# stated a preference at the same level of explicitness as the Case field, and
-# two contradictory `-D casemode=` words on one command line is a coin toss
-# dressed as a configuration.
-proc sim_profile_compose_cmd {tool idx rawcmd subcmd} {
-  set plan [sim_profile_cmd_exe_plan $tool $idx $rawcmd]
-  set cmd $subcmd
-  if {[dict get $plan status] eq {applied}} {
-    if {[regexp {^([ \t]*)([^ \t\n]+)(.*)$} $cmd -> lead word rest]} {
-      set cmd $lead[list [dict get $plan exe]]$rest
-    }
-  }
-  set flags [sim_profile_run_flags $tool $idx]
-  set fstatus none
-  if {[llength $flags]} {
-    if {[regexp {casemode} $rawcmd]} {
-      set fstatus template
-      set flags {}
-    } elseif {[sim_profile_cmd_takes_flags $plan $rawcmd]} {
-      set fstatus appended
-      append cmd { } [join $flags { }]
-    } else {
-      set fstatus unplaceable
-    }
-  }
-  return [dict create tool $tool index $idx cmd $cmd \
-              exe_status [dict get $plan status] \
-              exe [dict get $plan exe] word [dict get $plan word] \
-              flags $flags flag_status $fstatus]
-}
-
-# Is this template's first word the simulator itself, so that appended words
-# land on its argv? See sim_profile_compose_cmd's placement ruling.
-proc sim_profile_cmd_takes_flags {plan rawcmd} {
-  if {[dict get $plan status] eq {applied}} { return 1 }
-  if {[dict get $plan status] ne {none}} { return 0 }
-  if {![regexp {^[ \t]*([^ \t\n]+)} $rawcmd -> word]} { return 0 }
-  if {[string first {$} $word] >= 0 || [string first {[} $word] >= 0} { return 0 }
-  return [string match -nocase {ngspice*} [file tail $word]]
-}
-
-# Say what the composition did, once, at run time. Returns the lines so the
-# behaviour is testable without a CIW (`ciw_echo` is silent with no window), the
-# same shape `sim_case_collision_lines` settled on for item 14.
-#
-# RULING -- a DECLINED exe and an UNPLACEABLE mode are both reported at tag
-# `error`, not `note`. In each case the user configured something, the dialog
-# measured it, and the run is not honouring it. A quiet note would leave them
-# with a measurement of one binary and the results of another -- the defect this
-# whole issue is about. Being loud is the point. Only a successful append is a
-# `note`, and only because a user who asked for a mode and got it is entitled to
-# see that on the record without it reading as a problem.
-proc sim_profile_compose_report {c} {
-  set out {}
-  if {[dict get $c exe_status] eq {declined}} {
-    lappend out [list error "Simulator profile names an executable\
-      '[dict get $c exe]' but the command line starts with\
-      '[dict get $c word]', so the profile's executable was NOT used. Edit the\
-      command in Simulation > Configure simulators and tools, or clear the Exe\
-      field. The Test button measured the profile's executable, not this one."]
-  }
-  switch -- [dict get $c flag_status] {
-    appended {
-      lappend out [list note "Simulator profile case mode: appending\
-        [join [dict get $c flags] { }]"]
-    }
-    unplaceable {
-      lappend out [list error "Simulator profile requests case mode\
-        '[sim_profile_casemode [dict get $c tool] [dict get $c index]]' but the\
-        command line does not start with the simulator ('[dict get $c word]'),\
-        so there is nowhere to put -D casemode= where the simulator would see\
-        it. The run will use whatever mode that command produces. Set the Exe\
-        field, or put -D casemode= in the command yourself."]
-    }
-  }
-  foreach l $out { catch {ciw_echo [lindex $l 1] [lindex $l 0]} }
-  return $out
-}
-
-# The requested case mode of the profile row a netlist of THIS tool will
-# launch. C's netlist_case_mode() calls this (issue 0506); it exists as a proc
-# rather than as an expression inlined in a tcleval() so the C side has one
-# thing to call, the fallback is written once, and the wiring is driveable from
-# a test without netlisting anything.
-#
-# `simulator_profiles.md` §10 named this expression and the two things whoever
-# wired it would own. Both are answered, and neither needed code here:
-#   * a `-1` index (a tool with no configured row) -- `sim_profile_get` returns
-#     the field default for an element that does not exist, so `casemode` reads
-#     as unset and `sim_profile_casemode` falls through to the global floor,
-#     which is exactly the pre-0506 answer;
-#   * `netlist_type` not always being a `sim()` tool name -- the C caller asks
-#     only for CAD_SPICE_NETLIST, the one type whose tool name is known and the
-#     only one where the question means anything.
-# Anything unexpected answers {} and the C side keeps the floor.
-proc sim_profile_netlist_casemode {tool} {
-  if {[catch {sim_profile_casemode $tool [sim_profile_default_index $tool]} m]} {
-    return {}
-  }
+  if {[catch {ase::sim_casemode_requested ngspice} m]} { return {} }
   return $m
 }
 
@@ -3666,29 +3098,41 @@ proc sim_probe_once {exe arglist cwd {tmo {}}} {
 
 # One probe leg for a configured row: the row's exe, args and `-n`, asking for
 # `mode` ({} = ask for nothing), in `cwd`.
-proc sim_profile_probe_once {tool idx mode cwd {tmo {}}} {
-  set exe [sim_profile_exe_path $tool $idx]
-  set arglist [sim_probe_argv [sim_profile_get $tool $idx args] $mode \
-                   [sim_profile_get $tool $idx nospiceinit]]
+# ONE LEG of the capability probe: ask `exe` for `mode` and report what came
+# back. PURE -- it reads no configuration of any kind.
+#
+# ⚠ IT USED TO TAKE (tool, idx) AND RESOLVE A `sim()` PROFILE ROW. That layer
+# was retired at the `annotate` merge: the executable, its args and its `-n`
+# flag now come from the ASE-L simulator registry entry, and the caller has
+# them in hand before it gets here. Keeping the resolution inside meant this
+# proc could only ever measure a program the `sim()` array knew about, which
+# after the merge is not the program that runs.
+proc sim_probe_leg {exe arglist mode nospiceinit cwd {tmo {}}} {
+  set argv [sim_probe_argv $arglist $mode $nospiceinit]
   if {$exe eq {}} {
     return [dict create status error answered 0 value {} mode {} nocasemode 0 ms 0 \
-                argv $arglist cwd $cwd out {} err {no executable} truncated 0 pids {}]
+                argv $argv cwd $cwd out {} err {no executable} truncated 0 pids {}]
   }
-
-  return [sim_probe_once $exe $arglist $cwd $tmo]
+  return [sim_probe_once $exe $argv $cwd $tmo]
 }
 
-# B3's AUTO-PROBE GATE: probe on Add only when the executable's filename
-# contains `ngspice`, case-insensitively. `casemode` is an ngspice feature, so
-# nothing else can answer -- and this is what stops xschem auto-launching a
-# licensed simulator (Spectre, a commercial Xyce) that may check out a license or
-# take seconds to start, merely because somebody typed a path. Everything else
-# gets item 13's Test button, which is a deliberate click.
-proc sim_profile_probe_autoprobe_ok {tool idx} {
-  set exe [sim_profile_get $tool $idx exe]
-  if {$exe eq {}} { return 0 }
-  return [expr {[string match -nocase {*ngspice*} [file tail $exe]] ? 1 : 0}]
-}
+# `sim_profile_probe_autoprobe_ok` WAS HERE AND IS GONE, at the `annotate` merge.
+#
+# B3's auto-probe gate: probe on Add only when the executable's filename contains
+# `ngspice`, so xschem never auto-launched a licensed simulator (Spectre, a
+# commercial Xyce) that might check out a license or take seconds to start,
+# merely because somebody typed a path. Everything else waited for item 13's Test
+# button, which is a deliberate click.
+#
+# THE CONCERN IS REAL AND THE GATE IS NOW MOOT, which is why it is deleted rather
+# than re-pointed. The case-mode measurement no longer has a launch of its own:
+# it rides ase::backend::ngspice::capabilities, which ALREADY runs the registered
+# program twice -- decks A and B, issue 0948 -- before it gets anywhere near the
+# casemode legs, out of one shared budget. A gate on the third launch of a
+# program that has already been launched twice guards nothing. If the concern is
+# to be honoured, it belongs on `capabilities` as a whole and on `annotate`'s
+# terms, not as a survivor of a store that no longer exists.
+
 
 # THE CAPABILITY PROBE. Which of the three modes can this binary be measured to
 # deliver? Records the answer on the profile (item 6's `detected`/`probed`) so
@@ -3759,7 +3203,21 @@ proc sim_profile_probe_autoprobe_ok {tool idx} {
 # The one exception is `nocasemode`, which is a definitive answer about the
 # binary's own variable namespace rather than a per-mode measurement: it settles
 # the question by itself and is recorded even if an earlier leg had to be killed.
-proc sim_profile_probe_capability {tool idx args} {
+# ⚠ SIGNATURE AND STORAGE CHANGED AT THE `annotate` MERGE, THE RULINGS ABOVE
+# DID NOT. It was `sim_profile_probe_capability {tool idx args}` and it RECORDED
+# its answer on a `sim()` profile row, whose staleness nothing invalidated. It
+# is now pure -- given a program, its args and its `-n` flag, it measures and
+# REPORTS -- and the ASE-L registry's own capability cache holds the answer:
+# keyed on the resolved path plus its mtime stamp, and cleared by
+# ase::sim_caps_clear on EVERY registry edit (issue 0950). That is a strictly
+# better home for it than the field this proc used to write, which went stale
+# the moment somebody pointed the row at a different binary.
+#
+# `recorded` is therefore gone from the returned dict and `complete` replaces
+# it: 1 when the measurement finished and its `detected` may be published, 0
+# when it did not and the caller must publish NOTHING. Same rule, moved to the
+# caller, because storing is no longer this proc's business.
+proc sim_probe_capability {exe arglist nospiceinit args} {
   set cwd {}
   set tmo {}
   set madetmp 0
@@ -3767,7 +3225,7 @@ proc sim_profile_probe_capability {tool idx args} {
     switch -exact -- $o {
       -cwd     { set cwd $v }
       -timeout { set tmo $v }
-      default  { return -code error "sim_profile_probe_capability: unknown option '$o'" }
+      default  { return -code error "sim_probe_capability: unknown option '$o'" }
     }
   }
   set t0 [clock milliseconds]
@@ -3791,7 +3249,7 @@ proc sim_profile_probe_capability {tool idx args} {
       set timedout 1
       break
     }
-    set leg [sim_profile_probe_once $tool $idx $m $cwd $left]
+    set leg [sim_probe_leg $exe $arglist $m $nospiceinit $cwd $left]
     dict set legs $m $leg
     switch -exact -- [dict get $leg status] {
       error   { set status error ; break }
@@ -3829,12 +3287,9 @@ proc sim_profile_probe_capability {tool idx args} {
   # are not, and the row stays "never probed" (B2b), which item 6 answers with
   # `fold` alone. `nocasemode` is recorded even alongside a killed leg: see the
   # ruling above.
-  set recorded 0
-  if {$status eq {ok} || $status eq {nocasemode}} {
-    if {![catch {sim_profile_probe_record $tool $idx $detected}]} { set recorded 1 }
-  }
+  set complete [expr {($status eq {ok} || $status eq {nocasemode}) ? 1 : 0}]
   if {$madetmp} { catch {file delete -force -- $cwd} }
-  return [dict create status $status detected $detected recorded $recorded legs $legs \
+  return [dict create status $status detected $detected complete $complete legs $legs \
               timedout $timedout cwd $cwd ms [expr {[clock milliseconds] - $t0}]]
 }
 
@@ -3846,12 +3301,46 @@ proc load_recent_file {} {
   # an older recent_files conf without this variable leaves the empty default
   set tctx::recentdirs {}
   if { [file exists $USER_CONF_DIR/recent_files] } {
-    if {[catch { source $USER_CONF_DIR/recent_files } err] } {
+    # issue 0924: source the conf at GLOBAL scope, not in this proc's frame.
+    # Stock xschem -- and every build of ours before 6be62c26 -- writes the list
+    # as an unnamespaced `set recentfile {...}`. Sourced inside a proc that name
+    # is a throwaway LOCAL: the list was read, dropped on the floor and never
+    # seen again, so File > Open Recent came up empty with no error anywhere.
+    # At #0 the same line lands in ::recentfile, where the legacy arm below
+    # picks it up. The qualified names (tctx::*, ::c_toolbar::c_t_*) are
+    # unaffected by the scope change.
+    # Clear the legacy global FIRST, so the adoption arm below can only ever
+    # pick up something THIS conf just set -- never a leftover from an earlier
+    # load or from an unrelated rc.
+    unset -nocomplain ::recentfile
+    if {[catch { uplevel #0 [list source $USER_CONF_DIR/recent_files] } err] } {
       puts "Problems opening recent_files: $err"
       if {[info exists has_x]} {
         tk_messageBox -message  "Problems opening recent_files: $err" \
             -icon warning -parent . -type ok
       }
+    }
+    # issue 0924: a conf last written by a stock/older xschem that shares this
+    # ~/.xschem (an installed /usr/local/bin/xschem is the measured case) carries
+    # only the legacy name. Adopt it, then drop the global so nothing else can
+    # read a stale copy of it. tctx::recentdirs has no legacy counterpart and is
+    # simply absent from such a file.
+    # `llength` is the list-validity test: a hand-edited or truncated conf can
+    # leave an unbalanced brace here, and the 0839 filter below is an unguarded
+    # `lsearch` that would raise on one.
+    if {$tctx::recentfile eq {} && [info exists ::recentfile] &&
+        ![catch {llength $::recentfile}]} {
+      set tctx::recentfile $::recentfile
+    }
+    unset -nocomplain ::recentfile
+    # issue 0839: an already-poisoned conf file is on disk in the wild -- the
+    # empty-filename guard in update_recent_file stops NEW ones but cannot
+    # remove one already written. Filter on the way in, so the bad entry
+    # disappears at the next write instead of needing the user to hand-edit
+    # ~/.xschem/recent_files.
+    set tctx::recentfile [lsearch -all -inline -not -exact $tctx::recentfile {}]
+    if {[info exists tctx::recentdirs]} {
+      set tctx::recentdirs [lsearch -all -inline -not -exact $tctx::recentdirs {}]
     }
     foreach i [info vars c_toolbar::c_t_*] {
       if {[set ${i}(w)] != $c_toolbar::c_t(w) ||
@@ -3870,6 +3359,15 @@ proc update_recent_file {f {topwin {} } } {
   global has_x update_recent_files
   # the recent-views list belongs to the user: no-op in gated (test/automation) sessions
   if {[info exists update_recent_files] && !$update_recent_files} return
+  # issue 0839: NEVER record an empty filename. Every caller in scheduler.c and
+  # actions.c hands us whatever `f` it ended up with, and the load path guards
+  # `f[0]` for the open-probe and the already-open check but NOT for this write.
+  # So one `xschem load {}` (which is what a poisoned recent list makes
+  # Ctrl+Shift+O do) used to append {} here and write_recent_file PERSISTED it --
+  # the bug installed itself into $USER_CONF_DIR/recent_files and survived every
+  # relaunch. This is the guard that breaks the loop; get_lastopened's is the one
+  # that makes an already-poisoned file inert.
+  if {$f eq {}} return
   # puts "update recent file, f=$f, topwin=$topwin"
   set old $tctx::recentfile
   set tctx::recentfile {}
@@ -3917,9 +3415,20 @@ proc write_recent_file {} {
   # puts "write recent file tctx::recentfile=$tctx::recentfile"
   set a [catch {open $USER_CONF_DIR/recent_files w} fd]
   if { $a } {
-    puts "write_recent_file: error opening file $f: $fd"
+    puts "write_recent_file: error opening $USER_CONF_DIR/recent_files: $fd"
     return
   }
+  # issue 0924: write the pre-6be62c26 unnamespaced name FIRST, then the
+  # namespaced one. A stock xschem sharing this ~/.xschem cannot read the tctx::
+  # line, so without the legacy line it starts from an empty list and rewrites
+  # the whole file with just the one schematic it opened -- the user's ten
+  # entries are gone from disk, and load_recent_file above then reads back an
+  # empty menu. Order matters because the conf is SOURCED: a reader whose Tcl
+  # has no tctx namespace raises on the namespaced line and abandons the rest of
+  # the file, so the line it CAN read has to come before the one it cannot.
+  # (The 3.4.6 build measured here does have the namespace and reads either
+  # order; the ordering is for the builds that do not.)
+  puts $fd "set recentfile {$tctx::recentfile}"
   puts $fd "set tctx::recentfile {$tctx::recentfile}"
   if { [info exists tctx::recentdirs] } {
     puts $fd "set tctx::recentdirs {$tctx::recentdirs}"
@@ -4441,95 +3950,52 @@ proc set_sim_defaults {{reset {}}} {
     set_ne sim(vhdlwave,n) 1
     set_ne sim(vhdlwave,default) 0
   }
-  # Give every row the item-6 profile fields, on every route that can have
-  # introduced an unshaped one: a simrc that predates them (the defaults block
-  # above is skipped entirely then, so those rows carry cmd/name/fg/st and
-  # nothing else), a simrc that carries only the one field its user changed, the
-  # built-in defaults, a `reset`, AND an rc that appended a row to an array that
-  # was already built -- that last one is the route a rebuild-only guard missed
-  # for a whole session (see sim_profile_normalize). Idempotent and Tk-free; the
-  # memo inside sim_profile_normalize_if_changed keeps this off the redraw path
-  # that reaches here through `sim_is_xyce`.
-  sim_profile_normalize_if_changed
 }
 
 # =========================================================================
-# THE SIMULATOR DIALOG -- casemode batch item 13
-#   spec: doc/claude/specs/simulator_profiles.md section 17
-#   authority: DECISIONS.md B1 (extend `sim()`, no new registry), A1
-#   (probe-driven pre-fill; nobody may select a mode their simulator will
-#   silently ignore), A2 (the per-profile `-n` checkbox), B3 (auto-probe gated
-#   on the executable's NAME, and the hard timeout).
+# THE SIMULATOR DIALOG (`Simulation > Configure simulators and tools`)
 # =========================================================================
 #
-# Item 6 built the field model, item 7 the probe. Neither wrote a widget. This
-# is the widget, and it EXTENDS the dialog xschem already has
-# (`Simulation > Configure simulators and tools`) rather than opening a second
-# one: B1's whole point is that there is one simulator configuration system.
+# What this dialog edits is the stock `sim()` array: per tool, N rows of
+# name / default-radio / free-form `cmd` / Fg / Status. The widget PATHS on that
+# line are load-bearing -- `.sim.topf.f.scrl.center.<tool>.r.<i>.cmd` is read by
+# `set_sim_defaults` and by test_ase_dialogs G13.
 #
-# Each row grows a second line: Exe / Args / Case / -n / Test / a status label.
-# The first line -- name, the default radio, the free-form `cmd` text, Fg,
-# Status -- is UNTOUCHED, and so are the widget PATHS on it
-# (`.sim.topf.f.scrl.center.<tool>.r.<i>.cmd` is read by `set_sim_defaults` and
-# by test_ase_dialogs G13).
+# ⚠ `fluid-editing`'s casemode item 13 grew a SECOND line on every row -- Exe /
+# Args / Case / -n / Test / status -- and it is gone at the `annotate` merge
+# along with the `sim()` profile fields it edited. Those fields are properties
+# of the ASE-L simulator registry entry now, and ASE-L's Setup > Simulators… is
+# their one door. See the tombstone above simconf_read_cmds.
 #
-# WHEN DOES A WIDGET COMMIT TO `sim()`? THIS IS THE ITEM'S SHARPEST QUESTION,
-# because the answer shipped before this item was "at unpredictable moments,
-# and Cancel could not take it back". MEASURED TWICE (casemode items 9 and 11,
-# and pinned by test_ase_dialogs G13): `::set_sim_defaults` IS NOT A READ -- with
-# `.sim` open its first loop slurps every `...r.$i.cmd` text widget back into
+# WHEN DOES A WIDGET COMMIT TO `sim()`? THIS IS THE SHARPEST QUESTION ABOUT THIS
+# DIALOG, because the answer it shipped with was "at unpredictable moments, and
+# Cancel could not take it back". MEASURED TWICE (casemode items 9 and 11, and
+# pinned by test_ase_dialogs G13): `::set_sim_defaults` IS NOT A READ -- with
+# `.sim` open, its first loop slurps every `...r.$i.cmd` text widget back into
 # `sim($tool,$i,cmd)`, so any code that merely ASKED a question about the
-# simulator configuration committed the user's half-typed edits. Items 9 and 11
-# stopped asking (`init 0`); that fixed the two callers, not the dialog.
+# simulator configuration committed the user's half-typed edits.
 #
-# The answer this item gives, in two halves:
+# ⚠ THE TWO ASKERS THAT CAUSED IT ARE BOTH GONE, and not by being careful. Items
+# 9 and 11 fixed themselves by asking read-only (`init 0`); the questions they
+# were asking were "what case mode does this session request", and those now go
+# to the registry, which has no lazy init and no side effect. Nothing outside
+# this file asks `sim()` a question any more.
 #
-#   1. THE NEW PROFILE FIELDS NEVER TOUCH `sim()` UNTIL A COMMIT POINT. They are
-#      staged in `::simconf_ui(<tool>,<i>,<field>)` -- that, not `sim()`, is
-#      what the entries and the checkbutton are bound to. There are exactly
-#      three commit points: `Test` (commits the row it is about to measure,
-#      because a probe of a path the user has not committed would measure the
-#      wrong binary), `Accept, no Save and Close`, and `Accept, Save and Close`.
-#      Validation happens AT the commit, through item 6's `sim_profile_set`, so
-#      a typo is REPORTED (spec section 5 says this dialog is where that
-#      happens) instead of being silently dropped by the persister.
+# WHAT STILL PROTECTS THE USER'S EDITS, and it is `fluid-editing`'s work, kept:
+# CANCEL RESTORES THE WHOLE ARRAY to the snapshot taken when the dialog opened.
+# The stock widgets bind `-textvariable`/`-variable` straight to
+# `sim($tool,$i,name)`, `,fg)`, `,st)` and `sim($tool,default)`, so those have
+# ALWAYS been written the instant a key is pressed and Cancel had never taken
+# them back; and any code anywhere may still slurp the `cmd` widgets. A
+# per-field discipline cannot fix somebody else's write, and a snapshot does:
+# Cancel means "the configuration is what it was when this window opened".
+# THE ORDER MATTERS -- the window is destroyed FIRST, because Tk re-creates a
+# `-textvariable` element the moment it is unset and an `array unset sim` under
+# a live widget would put the widget's own string straight back.
 #
-#   2. CANCEL RESTORES THE WHOLE ARRAY to the snapshot taken when the dialog
-#      opened. The pre-existing widgets bind `-textvariable`/`-variable`
-#      straight to `sim($tool,$i,name)`, `,fg)`, `,st)` and `sim($tool,default)`,
-#      so those have ALWAYS been written the instant a key is pressed and Cancel
-#      has never taken them back; and any code anywhere may still slurp the
-#      `cmd` widgets. A per-field discipline cannot fix somebody else's write,
-#      and a snapshot does: Cancel means "the configuration is what it was when
-#      this window opened", including a `detected`/`probed` the Test button
-#      recorded. THE ORDER MATTERS -- the window is destroyed FIRST, because Tk
-#      re-creates a `-textvariable` element the moment it is unset and an
-#      `array unset sim` under a live widget would put the widget's own string
-#      straight back.
-#
-# A1, WHICH IS THE HARD REQUIREMENT AND IS NOT COSMETIC. The Case menu is built
-# from `sim_profile_selectable` (item 6, spec section 4), which is built from
-# `detected`, which is what the probe MEASURED -- never from a constant list.
-# An unprobed row offers `fold` and nothing else; a probed one offers exactly
-# what came back; a row measured to deliver nothing offers nothing. A mode that
-# is stored on the row but was never measured (a hand-edited simrc, or a binary
-# that moved) is DISPLAYED, marked `NOT measured`, and is NOT an entry in the
-# menu: A1 governs what a user may SELECT, and hiding an existing setting would
-# be worse than warning about it.
-#
-# B3, AND WHY THE GATE IS NOT WIDENED. The auto-probe fires only for a row this
-# dialog just ADDED, and only when `sim_profile_probe_autoprobe_ok` says the
-# executable's filename contains `ngspice`. Two reasons, both B3's: casemode is
-# an ngspice feature so nothing else can answer usefully, and a dialog that
-# launches whatever path was typed would check out a Spectre or commercial Xyce
-# licence for nobody. Everything else gets the Test button, which is a
-# deliberate click. The arm is per-row and is consumed once.
-#
-# NO RETRY LOOP, AND NOTHING ON A REDRAW PATH. `sim_profile_probe_capability`
-# already bounds the WHOLE probe (item 7 spec section 11.6, after its own first
-# cut froze for 15016 ms); this code calls it exactly once per Test click and
-# once per armed Add, and calls it from nowhere a `<Configure>`, a redraw or a
-# keystroke can reach. Building the dialog starts no process.
+# BUILDING THIS DIALOG STARTS NO PROCESS. It never did except through item 13's
+# Test button and its armed auto-probe on Add, and both went with the profile
+# line; the registry's capability probe is deliberate and lives elsewhere.
 
 # The row frame's widget path. Hard-coded the same way `set_sim_defaults`
 # hard-codes it (and test_ase_dialogs G13 with it): the scroll frame `sframe`
@@ -4547,113 +4013,36 @@ proc simconf_dialog_open {} {
   return [expr {[winfo exists .sim] ? 1 : 0}]
 }
 
-# The fields this dialog STAGES. `detected` and `probed` are deliberately not
-# among them: they are a MEASUREMENT, written by the probe itself through item
-# 6's `sim_profile_probe_record`, and there is no widget that could edit them.
-# They are still undone by Cancel, because Cancel restores the whole array.
-proc simconf_stage_fields {} { return {exe args casemode nospiceinit} }
+# --- THE ITEM-13 PROFILE LINE WAS HERE AND IS GONE ---------------------------
+#
+# `fluid-editing`'s casemode batch item 13 gave every simulator row a second
+# line -- Exe / Args / Case / -n / Test / status -- staged in
+# `::simconf_ui(<tool>,<i>,<field>)` and committed into the `sim()` profile
+# fields on Accept. Twenty procs served it: simconf_stage_fields / _stage_row /
+# _stage_all / _stage_clear / _commit_row / _commit_all, simconf_mode_floor /
+# _mode_floor_label / _mode_menu_items / _mode_label / _mode_pick /
+# _mode_refresh, simconf_status_line / _probe_note / _do_probe / _test_row /
+# _row_register / _register_armed / _report_errors, and
+# simconf_build_profile_row.
+#
+# ALL OF IT GOES WITH THE STORE IT EDITED (the `annotate` merge). Those fields
+# now live on the ASE-L simulator registry entry, which has its own front door
+# -- ASE-L, Setup > Simulators… -- with CRUD, validation, a capability probe and
+# a saved list that survives a restart. Two dialogs editing two records that
+# describe one machine is worse than one dialog, however good each was: it is
+# the shape in which a user's case mode can end up describing a binary they are
+# no longer running.
+#
+# WHAT THIS DIALOG IS AGAIN, AND ALWAYS WAS: stock xschem's `sim()` editor --
+# the per-tool `cmd` strings, names, Fg and Status flags, and which row is the
+# default. That is not ASE-L's registry and it is not going anywhere; only the
+# profile line built on top of it is.
+#
+# The snapshot/Cancel machinery below (simconf_snapshot_take / _file_restore /
+# _snapshot_restore, simconf_read_cmds) is `fluid-editing`'s too and STAYS: it
+# is about this dialog's Cancel actually cancelling, which has nothing to do
+# with where a case mode is stored.
 
-proc simconf_stage_row {tool i} {
-  global simconf_ui
-  foreach f [simconf_stage_fields] {
-    set simconf_ui($tool,$i,$f) [sim_profile_get $tool $i $f]
-  }
-  # A2'S `-n` BOX IS A Tk CHECKBUTTON AND COMPARES AGAINST THE LITERAL 1.
-  # `sim_profile_valid` accepts every Tcl boolean spelling and B1 explicitly
-  # blesses a hand-edited simrc, so a row carrying `nospiceinit true` reached
-  # the widget as "not 1" and DISPLAYED UNCHECKED while `-n` really was being
-  # passed to the simulator -- the box telling the user the opposite of what
-  # the run does. Canonicalise on the way in; the checkbutton carries
-  # -onvalue 1 -offvalue 0 so it stays canonical on the way out.
-  set simconf_ui($tool,$i,nospiceinit) \
-    [expr {$simconf_ui($tool,$i,nospiceinit) ? 1 : 0}]
-  set simconf_ui($tool,$i,autoprobe) 0
-  set simconf_ui($tool,$i,probenote) {}
-  set simconf_ui($tool,$i,modelabel) [simconf_mode_label $tool $i $simconf_ui($tool,$i,casemode)]
-  set simconf_ui($tool,$i,note) [simconf_status_line $tool $i]
-}
-
-proc simconf_stage_all {} {
-  global sim
-  if {![info exists sim(tool_list)]} { return 0 }
-  set n 0
-  foreach tool $sim(tool_list) {
-    if {![info exists sim($tool,n)]} { continue }
-    for {set i 0} {$i < $sim($tool,n)} {incr i} { simconf_stage_row $tool $i ; incr n }
-  }
-  return $n
-}
-
-# Drop the staging area. MUST run after the window is gone: an `array unset` on
-# a live `-textvariable` makes Tk write the widget's own string back into it.
-proc simconf_stage_clear {} {
-  global simconf_ui
-  array unset simconf_ui
-  set simconf_ui(status) {}
-}
-
-# Commit one row's staged fields into `sim()`, validated. Returns a list of
-# {tool index field message} for the values that were REFUSED; a refused field
-# leaves the stored value alone -- a typo must not destroy a working setting.
-proc simconf_commit_row {tool i} {
-  global simconf_ui
-  set errs {}
-  # A MEASUREMENT BELONGS TO THE BINARY AND ARGV IT WAS TAKEN WITH. Committing
-  # a new `exe` (or `args`, or `-n`) leaves `detected`/`probed` describing a
-  # program this row no longer names, and A1's whole sentence is that nobody may
-  # select a mode their simulator will silently ignore: measured, the Case menu
-  # kept offering the PREVIOUS binary's modes and `sim_profile_supports`
-  # answered 1 for a binary nobody had measured. The status line's
-  # "(STALE - the binary moved)" is only a caption, it gates nothing, and when
-  # the two files share an mtime `sim_profile_probe_stale` cannot see the change
-  # at all -- so the measurement is DROPPED here, at the commit, before the new
-  # value is stored. The row then reads "not probed - press Test", which is the
-  # truth.
-  set drop 0
-  foreach f {exe args nospiceinit} {
-    if {![info exists simconf_ui($tool,$i,$f)]} { continue }
-    set new $simconf_ui($tool,$i,$f)
-    if {![sim_profile_valid $f $new]} { continue }
-    set old [sim_profile_get $tool $i $f]
-    if {$f eq {nospiceinit}} {
-      # a canonicalised 1 and a stored `true` are the SAME setting; dropping a
-      # measurement for that would be a spurious re-probe, not a fix
-      set new [expr {$new ? 1 : 0}]
-      set old [expr {$old ? 1 : 0}]
-    }
-    if {$new ne $old} { set drop 1 }
-  }
-  if {$drop && ([sim_profile_get $tool $i detected] ne {} ||
-                [sim_profile_get $tool $i probed] ne {})} {
-    catch {sim_profile_set $tool $i detected {}}
-    catch {sim_profile_set $tool $i probed {}}
-  }
-  foreach f [simconf_stage_fields] {
-    if {![info exists simconf_ui($tool,$i,$f)]} { continue }
-    if {[catch {sim_profile_set $tool $i $f $simconf_ui($tool,$i,$f)} msg]} {
-      lappend errs [list $tool $i $f $msg]
-    }
-  }
-  return $errs
-}
-
-proc simconf_commit_all {} {
-  global sim
-  set errs {}
-  if {![info exists sim(tool_list)]} { return $errs }
-  foreach tool $sim(tool_list) {
-    if {![info exists sim($tool,n)]} { continue }
-    for {set i 0} {$i < $sim($tool,n)} {incr i} {
-      foreach e [simconf_commit_row $tool $i] { lappend errs $e }
-    }
-  }
-  return $errs
-}
-
-# The `cmd` text widgets are the one first-line control that is NOT bound to a
-# variable, so they are read here -- at a commit point, and only here. (The copy
-# of this loop at the top of `set_sim_defaults` is the pre-existing one that
-# commits behind the user's back; Cancel's snapshot is what neutralises it.)
 proc simconf_read_cmds {} {
   global sim
   if {![simconf_dialog_open]} { return 0 }
@@ -4733,267 +4122,16 @@ proc simconf_snapshot_restore {} {
   return 1
 }
 
-# The global floor a row with no mode of its own falls back to (B1's "per
-# profile, with a global floor"), validated the same way sim_profile_casemode
-# validates it.
-proc simconf_mode_floor {} {
-  global sim_case_mode
-  if {[info exists sim_case_mode] && [sim_casemode_valid $sim_case_mode]} { return $sim_case_mode }
-  return fold
-}
-
-# A1: the Case menu, built from what the probe MEASURED. The first entry is
-# always "use the global default", because empty is a real and different setting
-# (the profile names no mode) and a user who picked one must be able to go back.
-# The floor entry's LABEL. B1 mandates that the entry exist -- "leave the choice
-# to the global default" is a real and different setting -- so it cannot be
-# filtered out of the menu the way an unmeasured mode is. But with a non-fold
-# `sim_case_mode` it is a selectable route to requesting a mode THIS row was
-# measured not to deliver, which is A1's one seam and is recorded as such in
-# spec section 17.4. It is therefore labelled with the consequence rather than
-# removed: the user is told, in the entry itself, that the mode it will request
-# is not one this binary was measured to deliver.
-proc simconf_mode_floor_label {tool i} {
-  set f [simconf_mode_floor]
-  set s "use global default ($f)"
-  if {[lsearch -exact [sim_profile_selectable $tool $i] $f] < 0} {
-    set s "use global default ($f - NOT measured)"
-  }
-  return $s
-}
-
-proc simconf_mode_menu_items {tool i} {
-  set out [list [list [simconf_mode_floor_label $tool $i] {}]]
-  foreach m [sim_profile_selectable $tool $i] { lappend out [list $m $m] }
-  return $out
-}
-
-# What the menubutton SHOWS. A stored mode the binary was never measured to
-# deliver is shown -- with the warning -- and is NOT in the menu above: A1
-# governs selection, and hiding a setting somebody's simrc really carries would
-# be worse than saying it is unverified.
-proc simconf_mode_label {tool i val} {
-  if {$val eq {}} { return [simconf_mode_floor_label $tool $i] }
-  if {[lsearch -exact [sim_profile_selectable $tool $i] $val] >= 0} { return $val }
-  return "$val (NOT measured)"
-}
-
-proc simconf_mode_pick {tool i val} {
-  global simconf_ui
-  set simconf_ui($tool,$i,casemode) $val
-  simconf_mode_refresh $tool $i
-  return $val
-}
-
-# Rebuild one row's menu and its two display strings from the current model +
-# staging state. Called after anything that can change either.
-proc simconf_mode_refresh {tool i} {
-  global simconf_ui
-  set cur {}
-  if {[info exists simconf_ui($tool,$i,casemode)]} { set cur $simconf_ui($tool,$i,casemode) }
-  set simconf_ui($tool,$i,modelabel) [simconf_mode_label $tool $i $cur]
-  set simconf_ui($tool,$i,note) [simconf_status_line $tool $i]
-  if {![simconf_dialog_open]} { return 0 }
-  # an empty status line takes its whole grid row out, or fifteen blank strips
-  # would push the useful rows off the bottom
-  set stw [simconf_rowpath $tool $i].prof.st
-  if {[winfo exists $stw]} {
-    if {$simconf_ui($tool,$i,note) eq {}} { grid remove $stw } else { grid $stw }
-  }
-  set m [simconf_rowpath $tool $i].prof.mode.m
-  if {![winfo exists $m]} { return 0 }
-  $m delete 0 end
-  foreach e [simconf_mode_menu_items $tool $i] {
-    $m add command -label [lindex $e 0] -command [list simconf_mode_pick $tool $i [lindex $e 1]]
-  }
-  return 1
-}
-
-# The per-row status line. A Test result, once there is one, outranks the
-# stored state: the point of the button is that its answer is legible.
-proc simconf_status_line {tool i} {
-  global simconf_ui
-  if {[info exists simconf_ui($tool,$i,probenote)] && $simconf_ui($tool,$i,probenote) ne {}} {
-    return $simconf_ui($tool,$i,probenote)
-  }
-  if {[info exists simconf_ui($tool,$i,exe)]} {
-    set exe $simconf_ui($tool,$i,exe)
-  } else {
-    set exe [sim_profile_get $tool $i exe]
-  }
-  if {[sim_profile_get $tool $i probed] eq {}} {
-    # SILENT for a row that names no executable, which is every shipped default
-    # row: "no executable" is already visible in the empty Exe box beside it, and
-    # fifteen copies of a sentence saying so is the noise item 14's lesson is
-    # about. The line appears the moment the row has something to say.
-    if {$exe eq {}} { return {} }
-    return {not probed - press Test}
-  }
-  set d [sim_profile_detected $tool $i]
-  if {$d eq {}} { return {probed: no supported mode} }
-  set s "probed: [join $d { }]"
-  if {[sim_profile_probe_stale $tool $i]} { append s {  (STALE - the binary moved)} }
-  return $s
-}
-
-# One sentence a human can read, for every outcome item 7's probe can return.
-# `partial`, `timeout`, `unknown` and `error` all say "nothing recorded",
-# because that is item 7's ruling and a dialog that hid it would leave the row
-# looking unprobed for no stated reason.
-proc simconf_probe_note {r} {
-  if {[catch {dict get $r status} st]} { return {Test: the probe returned nothing} }
-  set ms {?}  ; catch {set ms [dict get $r ms]}
-  set d  {}   ; catch {set d  [dict get $r detected]}
-  switch -exact -- $st {
-    ok {
-      if {$d eq {}} { return "Test: ran, delivers no mode we recognise (${ms} ms)" }
-      return "Test: delivers [join $d { }] (${ms} ms)"
-    }
-    nocasemode { return "Test: no casemode support - fold only (${ms} ms)" }
-    partial    { return "Test: INCOMPLETE - a probe leg timed out (${ms} ms); nothing recorded" }
-    timeout    { return "Test: TIMED OUT after ${ms} ms - nothing recorded" }
-    unknown    { return "Test: ran but never answered (not ngspice?) - nothing recorded" }
-    error      { return "Test: cannot run this executable - nothing recorded" }
-  }
-  return "Test: $st (${ms} ms)"
-}
-
-# Run the capability probe for one row and show the answer. ONE call, no retry:
-# item 7's probe already bounds itself, and wrapping it in a loop is exactly the
-# frozen window B3 forbids.
-#
-# A1's PRE-FILL is here and it is PROBE-DRIVEN: after a measurement that was
-# recorded, a row that names no mode is pre-filled with the FIRST mode the
-# binary was measured to deliver, in the canonical order fold, preserve,
-# distinguish. That is `fold` for anything that can fold -- A1's own
-# "no case support => pre-fill fold" -- but it is not a constant: a binary
-# measured to deliver only `preserve` pre-fills `preserve`, and one measured to
-# deliver nothing pre-fills nothing. It never overwrites a mode the user has
-# already chosen, and it is STAGED, so Cancel discards it like any other edit.
-proc simconf_do_probe {tool i why} {
-  global simconf_ui
-  set simconf_ui($tool,$i,probenote) {probing...}
-  set simconf_ui($tool,$i,note) {probing...}
-  if {[simconf_dialog_open]} { update idletasks }
-  # A THROW MUST NOT LEAVE THE ROW SAYING `probing...` FOREVER. The probe
-  # answers with a status for everything it expects, so this is the unexpected
-  # case only -- but the unexpected case is exactly the one where a stuck
-  # progress message is indistinguishable from a hung dialog, which is what B3's
-  # timeout exists to prevent.
-  if {[catch {sim_profile_probe_capability $tool $i} r]} {
-    set simconf_ui($tool,$i,probenote) "Test: the probe could not run - $r"
-    simconf_mode_refresh $tool $i
-    return {}
-  }
-  set simconf_ui($tool,$i,probenote) [simconf_probe_note $r]
-  set recorded 0 ; catch {set recorded [dict get $r recorded]}
-  if {$recorded && [info exists simconf_ui($tool,$i,casemode)] &&
-      $simconf_ui($tool,$i,casemode) eq {}} {
-    set simconf_ui($tool,$i,casemode) [lindex [sim_profile_selectable $tool $i] 0]
-  }
-  simconf_mode_refresh $tool $i
-  return $r
-}
-
-# The Test button. It commits its own row first: probing a path the user typed
-# but has not committed would measure a different binary from the one the row
-# names, and item 7's probe reads `exe`/`args`/`nospiceinit` out of `sim()`.
-proc simconf_test_row {tool i} {
-  global simconf_ui
-  set errs [simconf_commit_row $tool $i]
-  if {[llength $errs]} { simconf_report_errors $errs ; return {} }
-  # A DELIBERATE TEST IS A REGISTRATION, SO IT CONSUMES B3'S ADD ARM. Without
-  # this the arm survived the click and `simconf_accept`'s
-  # `simconf_register_armed` probed the same binary a SECOND time: six process
-  # launches for one configured row, and an Accept that blocks for another whole
-  # probe budget -- up to item 7's hard timeout if the binary hangs. Spec
-  # section 17.6's ruling is one probe per click and none on a build path, and
-  # pressing <Return> in the Exe box (the other registration gesture) already
-  # consumed it, so the two were asymmetric as well as wasteful.
-  # An armed row that still names no executable KEEPS its arm, exactly as
-  # `simconf_row_register`'s `noexe` outcome does -- a Test on an empty box
-  # measured nothing, so it registered nothing.
-  if {[sim_profile_get $tool $i exe] ne {}} { set simconf_ui($tool,$i,autoprobe) 0 }
-  return [simconf_do_probe $tool $i test]
-}
-
-# B3's AUTO-PROBE, and the only place it can fire. Returns a dict
-# {probed 0|1 reason <r> ...}; `reason` is one of
-#   notarmed  this row was not added by this dialog session
-#   noexe     the added row still names no executable (stays armed)
-#   namegate  B3 refused: the filename does not contain `ngspice`
-#   ok        it probed
-proc simconf_row_register {tool i} {
-  global simconf_ui
-  if {![info exists simconf_ui($tool,$i,autoprobe)] || !$simconf_ui($tool,$i,autoprobe)} {
-    return [dict create probed 0 reason notarmed]
-  }
-  set errs [simconf_commit_row $tool $i]
-  if {[llength $errs]} { simconf_report_errors $errs ; return [dict create probed 0 reason invalid] }
-  if {[sim_profile_get $tool $i exe] eq {}} { return [dict create probed 0 reason noexe] }
-  set simconf_ui($tool,$i,autoprobe) 0
-  if {![sim_profile_probe_autoprobe_ok $tool $i]} {
-    set simconf_ui($tool,$i,probenote) \
-      {not auto-probed: not an ngspice-named executable - press Test}
-    simconf_mode_refresh $tool $i
-    return [dict create probed 0 reason namegate]
-  }
-  set r [simconf_do_probe $tool $i add]
-  set st {} ; catch {set st [dict get $r status]}
-  set d  {} ; catch {set d  [dict get $r detected]}
-  return [dict create probed 1 reason ok status $st detected $d]
-}
-
-# Every armed row, at a commit point.
-proc simconf_register_armed {} {
-  global sim simconf_ui
-  set done {}
-  if {![info exists sim(tool_list)]} { return $done }
-  foreach tool $sim(tool_list) {
-    if {![info exists sim($tool,n)]} { continue }
-    for {set i 0} {$i < $sim($tool,n)} {incr i} {
-      if {![info exists simconf_ui($tool,$i,autoprobe)] || !$simconf_ui($tool,$i,autoprobe)} { continue }
-      lappend done [list $tool $i [simconf_row_register $tool $i]]
-    }
-  }
-  return $done
-}
-
-# A refused value is REPORTED -- on the dialog's own status line, on the row
-# that carries it, and on the CIW. Spec section 5 promised that this dialog is
-# where a typo in a hand-edited value gets reported instead of being silently
-# dropped at the next save.
-proc simconf_report_errors {errs} {
-  global simconf_ui
-  set msgs {}
-  foreach e $errs {
-    foreach {tool i f msg} $e break
-    lappend msgs "$tool row $i: $f rejected"
-    set simconf_ui($tool,$i,probenote) "INVALID $f - not stored ($msg)"
-    simconf_mode_refresh $tool $i
-  }
-  set simconf_ui(status) [join $msgs {; }]
-  catch { ciw_echo "simconf: [join $msgs {; }]" error }
-  return [llength $errs]
-}
-
 # The two Accept buttons. Returns 1 when the dialog closed. An invalid value
 # KEEPS THE WINDOW OPEN: a report destroyed together with the window it was
 # printed on is not a report.
 proc simconf_accept {save} {
-  global USER_CONF_DIR simconf_ui
+  global USER_CONF_DIR
   simconf_read_cmds
-  set errs [simconf_commit_all]
-  if {[llength $errs]} { simconf_report_errors $errs ; return 0 }
-  # an armed Add registers here if it never registered on its own
-  simconf_register_armed
-  set errs [simconf_commit_all]
-  if {[llength $errs]} { simconf_report_errors $errs ; return 0 }
   if {$save} { save_sim_defaults ${USER_CONF_DIR}/simrc }
   unset -nocomplain ::simconf_snap
   unset -nocomplain ::simconf_filesnap
   simconf_close
-  simconf_stage_clear
   return 1
 }
 
@@ -5005,40 +4143,38 @@ proc simconf_close {} {
   return 1
 }
 
-# CANCEL MEANS CANCEL. Window first, then the array, then the staging area --
-# see the header for why that order is not cosmetic.
+# CANCEL MEANS CANCEL. Window first, then the array, then the file -- see the
+# header for why that order is not cosmetic. (There was a fourth step, clearing
+# the item-13 staging area; it went with the profile line.)
 proc simconf_cancel {} {
   simconf_close
   simconf_snapshot_restore
   simconf_file_restore
   unset -nocomplain ::simconf_filesnap
-  simconf_stage_clear
   return 1
 }
 
-# Add a row to a tool and ARM B3's auto-probe on it. The arm is what makes the
-# auto-probe "on Add" and nothing else: editing an existing row's exe never
-# launches anything.
+# Add a row to a tool and build its widgets. (It used to ARM B3's auto-probe on
+# the new row as well -- the one gesture in this dialog that could start a
+# process; that went with the profile line, and the registry's own capability
+# probe replaces it.)
 proc simconf_add_gui {tool} {
-  global sim simconf_ui
+  global sim
   set i $sim($tool,n)
   simconf_add $tool
-  simconf_stage_row $tool $i
-  set simconf_ui($tool,$i,autoprobe) 1
   if {[simconf_dialog_open]} {
     set sf .sim.topf.f.scrl
     simconf_build_row $sf $tool $i
-    set e [simconf_rowpath $tool $i].prof.exe
+    set e [simconf_rowpath $tool $i].lab
     if {[winfo exists $e]} { focus $e }
     sframeyview .sim.topf
   }
   return $i
 }
 
-# One row's widgets. The FIRST line is byte-for-byte the widgets simconf built
-# before this item, at the same paths; the profile line is packed `-side bottom`
-# FIRST so it takes a full-width strip underneath and the original five widgets
-# keep the cavity above them.
+# One row's widgets: the five stock ones, at the paths they have always had.
+# (`fluid-editing` packed a second, profile line underneath; it went with the
+# store it edited, so a row is back to one line.)
 proc simconf_build_row {sf tool i} {
   global sim simconf_ui
   set bg {#dddddd}
@@ -5046,7 +4182,6 @@ proc simconf_build_row {sf tool i} {
   set row ${sf}.center.$tool.r.$i
   frame $row
   pack $row -fill x -expand yes
-  simconf_build_profile_row $row $tool $i $bg
   entry $row.lab -textvariable sim($tool,$i,name) -width 18 -background $bg -fg black
   entry_replace_selection $row.lab
   radiobutton $row.radio -background $bg -fg black \
@@ -5063,61 +4198,6 @@ proc simconf_build_row {sf tool i} {
   pack $row.fg -side left -fill y
   pack $row.st -side left -fill y
   return $row
-}
-
-# The item-13 line: Exe / Args / Case / -n / Test / status.
-proc simconf_build_profile_row {row tool i bg} {
-  global simconf_ui
-  frame $row.prof -background $bg
-  pack $row.prof -side bottom -fill x
-  label $row.prof.exel -text {Exe} -background $bg -fg black
-  entry $row.prof.exe -textvariable simconf_ui($tool,$i,exe) -width 22 \
-     -background $bg -fg black
-  entry_replace_selection $row.prof.exe
-  label $row.prof.argl -text {Args} -background $bg -fg black
-  entry $row.prof.arg -textvariable simconf_ui($tool,$i,args) -width 8 \
-     -background $bg -fg black
-  entry_replace_selection $row.prof.arg
-  label $row.prof.casel -text {Case} -background $bg -fg black
-  menubutton $row.prof.mode -textvariable simconf_ui($tool,$i,modelabel) \
-     -indicatoron 1 -relief raised -width 20 -anchor w \
-     -menu $row.prof.mode.m -background $bg -fg black
-  menu $row.prof.mode.m -tearoff 0
-  # -onvalue/-offvalue are explicit: a Tk checkbutton defaults to comparing its
-  # variable against the literal 1, and A2's field legitimately arrives as any
-  # Tcl boolean out of a hand-edited simrc. simconf_stage_row canonicalises on
-  # the way in; these keep it canonical on the way out.
-  checkbutton $row.prof.nsi -text {-n} -variable simconf_ui($tool,$i,nospiceinit) \
-     -onvalue 1 -offvalue 0 \
-     -selectcolor white -background $bg -fg black
-  button $row.prof.test -text {Test} -command [list simconf_test_row $tool $i]
-  # `-width 1` is load-bearing, not cosmetic: without it this label's own text
-  # sets the row's requested width, the scroll frame sizes the whole dialog to
-  # the LONGEST probe sentence, and every row is then clipped at the window edge
-  # -- measured on :99, "Test: delivers fold preserve distinguish (65 ms)" ran
-  # off the right-hand side, which is the one thing the Test button exists to
-  # show. At width 1 + `-fill x -expand yes` it takes whatever is left instead.
-  label $row.prof.st -textvariable simconf_ui($tool,$i,note) -anchor w -width 1 \
-     -background $bg -fg black
-  # GRID, not pack, and the status label gets a LINE OF ITS OWN spanning the
-  # whole row. MEASURED on :99 with everything on one line: the label was left
-  # 184 px -- about 26 characters -- and
-  # "Test: delivers fold preserve distinguish (65 ms)" is 48, so the one thing
-  # the Test button exists to show was clipped at the window edge on every row.
-  # Widening the window instead would have needed ~1250 px of screen for a
-  # sentence that is only ever there after a click.
-  set c 0
-  foreach w {exel exe argl arg casel mode nsi test} {
-    grid $row.prof.$w -row 0 -column $c -sticky w
-    incr c
-  }
-  grid columnconfigure $row.prof $c -weight 1
-  grid $row.prof.st -row 1 -column 0 -columnspan [expr {$c + 1}] -sticky ew
-  # B3's arm is consumed by Return in the Exe box of a row this dialog just
-  # added -- the "registration" gesture. Nothing else here starts a process.
-  bind $row.prof.exe <Return> [list simconf_row_register $tool $i]
-  simconf_mode_refresh $tool $i
-  return $row.prof
 }
 
 proc simconf_reset {} {
@@ -5165,8 +4245,6 @@ proc simconf {{keepsnap 0}} {
   # into it through -textvariable and anybody's `set_sim_defaults` may still
   # slurp the `cmd` boxes.
   if {!$keepsnap} { simconf_snapshot_take }
-  simconf_stage_clear
-  simconf_stage_all
   toplevel .sim -class Dialog
   wm title .sim {Simulation Configuration}
   wm geometry .sim 1010x520
@@ -5325,11 +4403,7 @@ proc simconf_add {tool} {
   set sim($tool,$n,name) {}
   set sim($tool,$n,fg) 0
   set sim($tool,$n,st) 0
-  # a new row gets the full item-6 shape too, so item 13's Add path can
-  # sim_profile_set into it immediately (that setter refuses an unconfigured
-  # row, and `incr sim($tool,n)` below is what configures this one)
   incr sim($tool,n)
-  foreach {sp_f sp_d} [sim_profile_field_defaults] { set sim($tool,$n,$sp_f) $sp_d }
 }
 
 
@@ -5649,7 +4723,54 @@ proc traversal_setlabels {w parent_sch instname inst_sch sym_sch default_sch
 }
 
 # This proc traverses the hierarchy and prints all instances in design.
+#
+# Issue 0600. The body sets keep_symbols / no_draw / no_undo and restores them on its
+# NORMAL path only, so any raise in between leaked all three for the rest of the
+# session (dead screen, undo silently a no-op, symbols pinned in memory). The cheapest
+# raise needs no error injection: `toplevel .trav` raises
+#   window name ".trav" already exists in parent
+# whenever a previous traversal window is still up, and .trav is destroyed only by its
+# <Escape> binding, by the Upd button, or by the WM -- none of which a second scripted
+# call performs. This wrapper restores all three unconditionally, unwinds any hierarchy
+# level the walk was still inside, and re-raises the body's error with its original
+# errorInfo (an eaten error would be a worse defect than the leak).
+#
+# Wrapper + _body rather than reindenting the body into a catch, exactly as
+# hi_descend_do (xschem.tcl:6118) -- it keeps the diff off every line of a proc that
+# lives in an actively-edited file. The body's own in-place restore stays where it is:
+# moving it to the end would put its final `update` under no_draw=1 and suppress the
+# window's first paint, and it makes the wrapper's restore an idempotent no-op on the
+# normal path.
+#
+# no_draw/no_undo go back to a hardcoded 0, which is what the body's normal-path restore
+# already did. `xschem get no_undo` does not exist (scheduler.c:12030 is a setter only),
+# so a true save/restore of that one is impossible from Tcl and remains issue 0432's
+# residual. Guardian: tests/headless/test_traversal_flag_leak.tcl.
 proc traversal {{only_subckts 1} {all_hierarchy 1}} {
+  global keep_symbols
+  set save_keep $keep_symbols
+  set save_level [xschem get currsch]
+  set rc [catch {traversal_body $only_subckts $all_hierarchy} res opts]
+  # keep_symbols first: it is a plain Tcl variable and cannot raise, so it is restored
+  # even if the `xschem set` calls below fail (they can only fail with no xctx, in which
+  # case there is no C-side flag left to restore anyway).
+  set keep_symbols $save_keep
+  set rrc [catch {
+    xschem set no_draw 0
+    xschem set no_undo 0
+    # BOUNDED: `xschem go_back` is a silent no-op while xctx->semaphore != 0
+    # (scheduler.c:5907), so an unbounded while would spin forever on a raise taken
+    # under the semaphore. CADMAXHIER is the real ceiling; 64 is comfortably above it.
+    set guard 0
+    while {[xschem get currsch] > $save_level && [incr guard] <= 64} { xschem go_back 2 }
+  } rres ropts]
+  # The body's error wins: a failure to restore must not replace it.
+  if {$rc} { return -options $opts $res }
+  if {$rrc} { return -options $ropts $rres }
+  return $res
+}
+
+proc traversal_body {only_subckts all_hierarchy} {
   global traversal keep_symbols
   set traversal(only_subckts) $only_subckts
   set traversal(all_hierarchy) $all_hierarchy
@@ -6148,18 +5269,25 @@ proc simulate {{callback {}}} {
     }
     set cmd [subst -nobackslashes $sim($tool,$def,cmd)]
 
-    ## COMPOSE FROM THE SIMULATOR PROFILE -- issue 0506.
-    ## Until this landed, everything items 6/7/13 measured about a registered
-    ## simulator -- its executable, and the case mode its Test button proved it
-    ## could deliver -- stopped at the dialog: this proc ran `cmd` verbatim, so a
-    ## user could probe one binary and simulate with another, at `fold`.
-    ## A row naming no `exe` and requesting `fold` (the shipped state, and A1's
-    ## default) composes to a BYTE-IDENTICAL command line, which is item 6's
-    ## compatibility contract. See sim_profile_compose_cmd for the three rulings
-    ## that keep the rewrite narrow enough to be sound.
-    set compose [sim_profile_compose_cmd $tool $def $sim($tool,$def,cmd) $cmd]
-    set cmd [dict get $compose cmd]
-    sim_profile_compose_report $compose
+    ## ⚠ ISSUE 0506's COMPOSER IS GONE, AND THIS IS THE ONE USER-VISIBLE LOSS OF
+    ## THE `annotate` MERGE. 0506 had taught this proc -- stock xschem's own
+    ## Simulation menu, the button most users actually press -- to compose its
+    ## command from the simulator profile, so that the executable a user
+    ## configured and the case mode item 13's Test button had PROVED the binary
+    ## could deliver reached the run instead of stopping at the dialog. Without
+    ## it a user can once again probe one binary and simulate with another, at
+    ## `fold`.
+    ##
+    ## It is gone because the store it read is gone: the profile fields moved
+    ## onto the ASE-L registry entry, and this proc knows nothing about ASE-L.
+    ## Re-teaching it to ask ase::sim_status is real work with real questions in
+    ## it -- `sim()` is per-TOOL with N rows and the registry is one in-force
+    ## entry, and stock xschem must still run with no ASE-L session anywhere --
+    ## so it is filed rather than smuggled into a merge.
+    ##
+    ## ASE-L's own run path lost NOTHING: ase::run_cmd composes exe, args, `-n`
+    ## and `-D casemode=` from the registry entry, and ase::run_precheck still
+    ## refuses a `distinguish` request the binary cannot deliver.
 
     # window interface       tabbed interface
     # -----------------------------------------
@@ -6906,19 +6034,57 @@ proc graph_update_nodelist {} {
   graph_tag_nodes $txt
 }
 
+## THE INTAKE FOR A GRAPH RECT ATTRIBUTE, AND THERE IS NO EVALUATOR IN IT.
+## Issues 0821 / 0822. A `.sch` is a document people mail each other, so every
+## byte of `rawfile=`, `sim_type=` and `autoload=` is untrusted input. This
+## proc used to be three inline reads each wrapped in
+##     uplevel #0 {subst [xschem getprop rect ...]}
+## and (for rawfile) `eval uplevel #0 {subst $rawfile}`. The sink is NOT
+## `subst`: `eval`/`uplevel` CONCATENATE their arguments and evaluate the
+## result AS A SCRIPT, so the attribute is RE-PARSED -- a `[...]` in it ran
+## while the script's own words were being parsed, before `subst` was called
+## at all, and a `}` in it closed `subst`'s word and everything after it ran
+## as a command. All three fields were measured executing an `exec touch` out
+## of a merely-opened schematic.
+##
+## THE VALUE IS HANDED ON RAW, ON PURPOSE. `rawfile` is consumed only by
+## `xschem raw read|switch|table_read`, which land in extra_rawfile()
+## (src/save.c), which resolves the path with resolve_rawfile_path()
+## (src/util.c) -- the ONE C resolver issue 0812 shipped: a byte scanner that
+## expands `$name` / `${name}` / `$ns::name` through Tcl_GetVar2Ex and copies
+## every other byte literally. src/draw.c reads the same three attributes with
+## get_tok_value() and no substitution at all, so dropping the Tcl pass makes
+## this dialog and the renderer see byte-identical values (invariant I1, ONE
+## name builder) and makes the route SINGLE-pass, which retires issue 0820's
+## double-resolution exposure for it. Do NOT add a resolver here: two
+## resolvers that disagree is worse than the bug, because the raw registry is
+## keyed by strcmp() on the resolved string (0812 constraint 3).
+##
+## Consequence, recorded rather than discovered later: a `[...]` command
+## substitution in any of the three fields no longer runs, and `$a(1)` means
+## "the value of a, then the literal (1)" (0812 decision D2). The shipped
+## corpus spells `rawfile=$netlist_dir/<name>.raw` and a bare name, both of
+## which still resolve; nothing shipped uses `$env(...)` or a `[...]`.
+proc graph_rect_attr {n tok {with_quotes 0}} {
+  return [xschem getprop rect 2 $n $tok $with_quotes]
+}
+
 proc graph_fill_listbox {} {
   global graph_selected
   set pattern [.graphdialog.center.left.search get]
   set retv {}
-  set autoload [uplevel #0 {subst [xschem getprop rect 2 $graph_selected autoload 2]}]
-  set rawfile [xschem getprop rect 2 $graph_selected rawfile]
-  if {$rawfile ne {}} {
-    if {![catch {eval uplevel #0 {subst $rawfile}} res]} {
-      set rawfile $res
-    }
+  set autoload [graph_rect_attr $graph_selected autoload 2]
+  set rawfile [graph_rect_attr $graph_selected rawfile]
+  set sim_type [graph_rect_attr $graph_selected sim_type 2]
+  ## `string is boolean -strict` because a crafted `autoload=` is not a
+  ## boolean and a bare `&& $autoload` would throw out of this proc: a mailed
+  ## schematic must not be able to BREAK the Graph dialog either. Same
+  ## data-from-a-document class as the injection, one line away from it.
+  if {$autoload ne {} && [string is boolean -strict $autoload] && $autoload} {
+    set autoload read
+  } else {
+    set autoload switch
   }
-  set sim_type [uplevel #0 {subst [xschem getprop rect 2 $graph_selected sim_type 2]}]
-  if {$autoload ne {} && $autoload } { set autoload read} else {set autoload switch}
   # puts "graph_fill_listbox: $rawfile $sim_type"
   if {$rawfile ne {}} {
     if {$sim_type eq {table}} {
@@ -6995,6 +6161,17 @@ proc graph_set_linewidth {graph_sel} {
 # (src/results.tcl) -- and read-vs-switch lives in C in `xschem raw select`.
 # LINE-NEUTRAL WITH THE PROC IT REPLACES ON PURPOSE: 478 `xschem.tcl:<line>`
 # citations point below here; deleting 18 lines would stale every one (L9).
+#
+# The second reason, from `annotate` (issue 0821 section 4), and it is a
+# DIFFERENT defect in the same proc: it carried the evaluator sink
+# `catch "uplevel #0 {subst $rawfile}"` -- the same one graph_fill_listbox
+# above had -- measured executing a payload on a direct call. Two branches
+# deleted this proc for two reasons and neither reason is redundant.
+#
+# ⚠ THE LINE-NEUTRALITY ABOVE DID NOT SURVIVE THIS MERGE. `annotate` adds
+# ~1100 lines to this file, so the 478 `xschem.tcl:<line>` citations L9 was
+# protecting are stale regardless of what happens in this block. Re-resolve a
+# citation by SYMBOL, not by line, until someone re-shoots them.
 proc set_rect_flags {graph_selected} {
       global graph_private_cursor graph_unlocked
 
@@ -7064,8 +6241,14 @@ proc graph_edit_properties {n} {
     set graph_unlocked 0
   }
 
+  ## `string is boolean -strict`: a crafted `autoload=` out of a mailed
+  ## schematic is not a boolean, and a bare `&& $autoload` threw
+  ## "expected boolean value" HERE -- before the dialog was even built, so the
+  ## Graph dialog could not be opened at all on that file. Issues 0821/0822:
+  ## a document must not be able to break the tool that reads it. The same
+  ## guard is in graph_fill_listbox; both had to change (measured).
   set autoload [xschem getprop rect 2 $n autoload]
-  if {$autoload ne {} && $autoload} {
+  if {$autoload ne {} && [string is boolean -strict $autoload] && $autoload} {
     set graph_autoload 1
   } else {
     set graph_autoload 0
@@ -7808,6 +6991,38 @@ proc force_window_repaint {win {tries 0}} {
 # come back: `-topmost` toggle (no drift but no raise), `wm iconify` (stuck minimized in tray),
 # a user-set flag. The trailing `xschem activate_window` (_NET_ACTIVE_WINDOW) is a no-op on
 # Weston but helps real EWMH WMs / the title-bar active tint. Callers add their own focus. (0054)
+# ⚠ issue 0843: A DROPPED RE-MAP USED TO LOSE THE WINDOW OUTRIGHT, and nothing
+# noticed. The mapped arm below is `wm withdraw` + `wm deiconify` -- the WSLg
+# idiom of issue 0054, because a plain `raise` is an inert no-op there once a
+# window is mapped. But issue 0616 already records that that WM is *documented
+# to DROP a re-map*, and the withdraw is not conditional on the deiconify
+# succeeding: withdraw always works, deiconify may not, and the net effect is a
+# window the user was looking at a moment ago that is simply GONE.
+#
+# The user hit it twice on `Session > Design Window`, which passes the default
+# `always` raise_mode precisely because it is the documented recovery for a
+# missing window -- so the one command whose job is to bring a window back was
+# the one most likely to make one disappear.
+#
+# VERIFY, DEFERRED. Not a synchronous check: `winfo ismapped` reflects Tk's view
+# of the last MapNotify, so an immediate read races the server's reply and would
+# false-negative on a re-map that is merely in flight. And an `update` here would
+# re-enter -- this proc is called from menu commands, focus handlers and the
+# viewer open path. `after` is the idiom the surrounding code already uses for
+# exactly this (ase_window.tcl's `after 120 force_window_repaint`, issue 0052).
+#
+# The recovery is deliberately dumb -- deiconify again, then `wm state normal`
+# -- because the failure being recovered from is the WM ignoring a request, and
+# the only useful response to that is to ask again.
+proc _remap_verify {top {tries 2}} {
+  if {![winfo exists $top]} return
+  if {[winfo ismapped $top]} return
+  catch { wm deiconify $top }
+  catch { wm state $top normal }
+  catch { raise $top }
+  if {$tries > 1} { after 250 [list _remap_verify $top [expr {$tries - 1}]] }
+}
+
 proc raise_activate_toplevel {top} {
   global has_x
   if { ![info exists has_x] || !$has_x } return
@@ -7817,8 +7032,10 @@ proc raise_activate_toplevel {top} {
     wm withdraw $top
     wm deiconify $top
     catch { wm geometry $top $geo }   ;# best-effort; this WM ignores it for client placement
+    after 150 [list _remap_verify $top]   ;# issue 0843: the withdraw is not undone by a dropped deiconify
   } else {
     catch { wm deiconify $top }       ;# never mapped / withdrawn: a deiconify maps + raises it
+    after 150 [list _remap_verify $top]   ;# issue 0843: same request, same WM, same risk
   }
   raise $top
   catch { xschem activate_window [winfo id $top] }
@@ -7975,7 +7192,9 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
     xschem set raw_level $raw_level
   }
   xschem select instance $inst fast
-  if {![xschem descend]} {
+  # -fallback, issue 0979: this is a control a person presses, so it must never
+  # leave them one level down on a blank page.
+  if {![xschem descend -fallback]} {
     # before newwin_defer_fullzoom, so no `after` is scheduled against a window path
     # that is about to disappear
     return [newwin_descend_failed $current_win_path $new_window_path]
@@ -8067,6 +7286,24 @@ proc hi_descend_nameless_refuse {} {
   return {}
 }
 
+# ISSUE 1228. The schematic file THIS COPY opens, as opposed to the one its symbol
+# names. `xschem get_sch_from_sym <instname>` is the instance form of the resolver:
+# it honours a per-copy "schematic" setting, and it is the call
+# doc/claude/specs/hi_descend.md section 5 named all along. Returns {} when the
+# copy cannot be resolved.
+# The save/restore is not decoration. The instance form of the resolver READS AND
+# CLEARS the one-shot view override (src/actions.c, get_sch_from_sym) -- a reader
+# would assume a lookup is free of side effects, and this one is not. Enumerating
+# the choices must not eat an override some other caller has already armed.
+proc hi_descend_inst_defsch {instname} {
+  set save {}
+  if {[info exists ::hi_descend_view_path]} { set save $::hi_descend_view_path }
+  set r {}
+  catch { set r [xschem get_sch_from_sym $instname] }
+  set ::hi_descend_view_path $save
+  return $r
+}
+
 # Enumerate the views available for the cell behind instance $instname.
 # Returns a list of {viewname type abspath} rows, type in {schematic symbol
 # ngspice_state} (the last for ASE simulation-state views,
@@ -8100,12 +7337,39 @@ proc hi_descend_enum_views {instname} {
 
   # Always make sure the default schematic view and the symbol view are present
   # (covers legacy flat cells, and OA cells whose default sits outside cell_views).
+  # This row is deliberately still built from the SYMBOL, so it always names the
+  # cell's own schematic and every existing fixture keeps the row it had.
   set defsch {}
   catch { set defsch [xschem get_sch_from_sym -1 $sym] }
   if {$defsch ne {} && ![xschem is_generator $defsch] && [lsearch -exact $seen $defsch] < 0} {
     lappend rows [list schematic schematic $defsch]
     lappend seen $defsch
   }
+
+  # ISSUE 1228 -- THE ROW THAT WAS MISSING, AND THE WHOLE OF FAULT B.
+  # A single copy of a symbol can be told which schematic file IT opens, with its
+  # own "schematic" setting. Every row above is worked out from the SYMBOL, which
+  # cannot see that setting -- so the file the copy actually opens was not among
+  # the choices at all, hi_descend_pick_view returned the cell's own schematic,
+  # hi_descend_is_default_sch compared that against the copy's setting, found them
+  # different, and FORCED the cell's own sheet through the one-shot C override.
+  # Pressing E on a copy bound to a real, existing file opened a different real
+  # file, with no prompt, no message and no error on any channel.
+  # doc/claude/specs/hi_descend.md section 5 always said this enumeration had to
+  # use the instance form of the resolver; this is that sentence, finally obeyed.
+  set instsch [hi_descend_inst_defsch $instname]
+  if {$instsch ne {} && ![xschem is_generator $instsch] && [lsearch -exact $seen $instsch] < 0} {
+    # Name it after its own file. A copy whose bound file happens to be called
+    # schematic.sch would otherwise produce TWO rows named "schematic" pointing at
+    # two different files, and every picker here is name-keyed -- it would return
+    # whichever came first. Fall back to the literal name "instance" on a clash.
+    set iname [file rootname [file tail $instsch]]
+    if {$iname eq {}} { set iname instance }
+    foreach r $rows { if {[lindex $r 0] eq $iname} { set iname instance ; break } }
+    lappend rows [list $iname schematic $instsch]
+    lappend seen $instsch
+  }
+
   if {[lsearch -exact $seen $symabs] < 0} {
     lappend rows [list symbol symbol $symabs]
     lappend seen $symabs
@@ -8115,13 +7379,23 @@ proc hi_descend_enum_views {instname} {
 
 # Pick the view row to descend into from the enumerated $rows, honoring an
 # explicit $view name and/or $type. Returns the {name type abspath} row, or {}.
-proc hi_descend_pick_view {rows view type} {
+# ISSUE 1228: $defpath is the file THIS COPY is set to open (see
+# hi_descend_inst_defsch). It is a 4th OPTIONAL argument so no existing caller or
+# test stub breaks, and it only steers the case where the person named no view and
+# no type -- i.e. plain E. A reader would otherwise assume the row named
+# "schematic" is always the right default; it is the right default only for a copy
+# that carries no setting of its own.
+proc hi_descend_pick_view {rows view type {defpath {}}} {
   if {$view eq {}} {
     # no view name: honor an explicit type (e.g. type=symbol -> first symbol view);
-    # otherwise default to the view named "schematic", else the first schematic-type row.
+    # otherwise prefer the view this copy is set to open, then the view named
+    # "schematic", else the first schematic-type row.
     if {$type ne {}} {
       foreach r $rows { if {[lindex $r 1] eq $type} { return $r } }
       return {}
+    }
+    if {$defpath ne {}} {
+      foreach r $rows { if {[lindex $r 2] eq $defpath} { return $r } }
     }
     foreach r $rows { if {[lindex $r 0] eq {schematic} && [lindex $r 1] eq {schematic}} { return $r } }
     foreach r $rows { if {[lindex $r 1] eq {schematic}} { return $r } }
@@ -8178,7 +7452,11 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
     if {![hi_descend_is_default_sch $instname $vpath]} {
       set ::hi_descend_view_path $vpath        ;# one-shot, consumed by get_sch_from_sym
     }
-    set ok [xschem descend $iter]
+    # ISSUE 0979. -fallback: once the enumeration tells the truth (issue 1228), a
+    # copy whose "schematic" setting names a file that is not there resolves to a
+    # dangling path -- and without the flag E would go from opening the WRONG sheet
+    # to opening a BLANK one, one level down, with no way back but Pop schematic.
+    set ok [xschem descend -fallback $iter]
     set ::hi_descend_view_path {}              ;# belt-and-suspenders if descend bailed early
   }
   if {$ok} {
@@ -8314,7 +7592,7 @@ proc hi_descend_do {instname view type target iter mode} {
 proc hi_descend_do_body {instname view type target iter mode} {
   set rows [hi_descend_enum_views $instname]
   if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
-  set row [hi_descend_pick_view $rows $view $type]
+  set row [hi_descend_pick_view $rows $view $type [hi_descend_inst_defsch $instname]]
   if {$row eq {}} {
     set names {}
     foreach r $rows { lappend names [lindex $r 0] }
@@ -8496,10 +7774,22 @@ proc hi_descend_dialog_body {instname} {
   # --- View drop-down ---
   set ::hi_descend_dlg_rows $rows
   set viewnames {}; set default_view {}
+  # ISSUE 1228: the drop-down opens on the file THIS COPY is set to open, not on
+  # the cell's own schematic. Offered and preselected are two different things and
+  # both are user-visible -- a person who presses E and then OK without reading the
+  # drop-down must land where the copy says, which is what the toolbar button and
+  # the Cadence chords already did.
+  set dlgdef [hi_descend_inst_defsch $instname]
   foreach r $rows {
     lassign $r vname vtype vpath
     lappend viewnames $vname
-    if {$default_view eq {} && $vname eq {schematic} && $vtype eq {schematic}} { set default_view $vname }
+    if {$dlgdef ne {} && $vpath eq $dlgdef} { set default_view $vname }
+  }
+  if {$default_view eq {}} {
+    foreach r $rows {
+      lassign $r vname vtype vpath
+      if {$vname eq {schematic} && $vtype eq {schematic}} { set default_view $vname ; break }
+    }
   }
   if {$default_view eq {}} { set default_view [lindex $viewnames 0] }
   set ::hi_descend_dlg_view $default_view
@@ -15529,7 +14819,7 @@ proc add_toolbuttons {{topwin {}}} {
   toolbar_add EditDelete "xschem delete" "Delete" $topwin
   toolbar_add EditDuplicate "xschem copy_objects" "Duplicate objects" $topwin
   toolbar_add EditMove "xschem move_objects" "Move objects" $topwin
-  toolbar_add EditPushSch "xschem descend" "Push schematic" $topwin
+  toolbar_add EditPushSch "xschem descend -fallback" "Push schematic" $topwin
   toolbar_add EditPushSym "xschem descend_symbol" "Push symbol" $topwin
   toolbar_add EditPop "xschem go_back" "Pop" $topwin
   toolbar_add ViewRedraw "xschem redraw" "Redraw" $topwin
@@ -15586,6 +14876,126 @@ proc readonly_notice {} {
   tk_messageBox -type ok -icon info -parent [xschem get topwindow] \
     -title {Read-only view} \
     -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
+}
+
+# Issue 0845, RULED by the user 2026-08-26: the three reopen doors -- Open Most Recent
+# (Ctrl+Shift+O), Open Last Closed (Ctrl+Shift+T) and File > Open Recent -- KEEP opening
+# read-only. That default is ratified. What was not acceptable is how quietly it happened:
+# the ONLY surface that said so was the window title, and a title bar is the one thing a
+# person never reads. A whole session of netlist / run / annotate went by on a read-only
+# design, and it took an action-log trace to find out.
+#
+# So the door announces itself, through the house channel (CIW pane, durable log, and the
+# short form in the statusbar). Deliberately NOT latched with `-once`: the fact worth
+# saying is which window you are in NOW, not that the rule exists. Called from the single
+# read-only convergence point in scheduler.c, and only for an INTERACTIVE (-gui) open, so
+# scripted loads and action-log replays stay silent.
+#
+# ⚠ THE SENTENCE IS THE USER'S, VERBATIM, AND IT IS SHORT ON PURPOSE. The first
+# version explained the whole rule -- which three doors do this, and why -- and the
+# user's verdict on reading it was "full line is too much". A notice fired on EVERY
+# reopen, EVERY session, is read once and skimmed forever; length is what turns it
+# from a fact into noise. So: what happened, and what to do about it. Nothing else.
+#
+# That is also why `-menu`/`-command` are NOT passed. They are text-only options
+# (src/ciw.tcl xschem::notify appends " Fix: <menu>." and " CIW command: <cmd>" to
+# the rendered line) and they were most of the length that was objected to. The
+# remedy lives INSIDE the sentence instead, which is the same information in half
+# the words. Do not "restore" them here -- that silently re-lengthens the line.
+#
+# The filename is deliberately gone with them: the notice fires at the instant you
+# open the thing, so the name it would repeat is the name you just picked.
+# A one-word window census, for the user to type in the CIW at the moment something
+# looks wrong.
+#
+# The waveform-viewer-vs-design confusion (issues 0647, 0840, 0844) is a RACE: the user
+# gets a different arrangement every run -- viewer on top, viewer absent, a window that
+# shows waveforms until it is clicked -- and prose written after the fact cannot say
+# which toplevel was where, which one held which cellview, or what the stacking was.
+# This writes the arrangement into the action log they are ALREADY producing, as `#= `
+# non-replayable comments, so a bug report can carry evidence instead of memory.
+#
+# ⚠ NOT gated on a debug flag, unlike wviewer::diag's WVDIAG. A diagnostic you must set
+# an environment variable to reach is one you will not have set on the run that finally
+# reproduced the thing -- which is exactly what happened to WVDIAG on three sittings.
+# It costs nothing until it is typed.
+proc window_report {{tag {}}} {
+  set cwp {} ; catch {set cwp [xschem get current_win_path]}
+  set cn  {} ; catch {set cn  [xschem get current_name]}
+  set ro  ?  ; catch {set ro  [xschem get readonly]}
+  set out [list "window_report $tag current_win_path='$cwp' current_name='$cn' readonly=$ro"]
+  # `wm stackorder .` lists MAPPED toplevels bottom-to-top; an unmapped one is absent
+  # from it, which is itself worth seeing, so the two lists are gathered separately and
+  # a window missing from the stack prints `stack=-` rather than being dropped.
+  set order {} ; catch {set order [wm stackorder .]}
+  set tops  {} ; catch {set tops [concat . [winfo children .]]}
+  foreach t $tops {
+    set cls {} ; if {[catch {winfo class $t} cls]} continue
+    if {$t ne {.} && $cls ne {Toplevel}} continue
+    set st ? ; catch {set st [wm state $t]}
+    set g  ? ; catch {set g  [wm geometry $t]}
+    set ti ? ; catch {set ti [wm title $t]}
+    # ⚠ `wm state` IS TK'S OWN RECORD. The user hit runs where the census listed a
+    # waveform window they could not see anywhere, and the question "does the X SERVER
+    # agree this window exists and is on screen" is not answerable from `wm state`
+    # alone. Three more facts, all cheap, all from a different source:
+    #   id   -- the X window id, so the server's own tree can be cross-checked against
+    #           this line afterwards (xwininfo -id <id>) instead of guessed at;
+    #   map  -- winfo ismapped, which follows the server's MapNotify rather than Tk's
+    #           intent, so `normal`+map=0 is a window Tk believes in and X does not;
+    #   OFF-SCREEN -- because a window parked past the screen edge is invisible while
+    #           every other field on this line looks perfectly healthy. Measured: a
+    #           viewer at +3930+665 sized 1110x790 on a 5120x1440 screen has its bottom
+    #           edge at 1455, i.e. under the taskbar and off the display.
+    set id ? ; catch {set id [winfo id $t]}
+    set mp ? ; catch {set mp [winfo ismapped $t]}
+    set off {}
+    if {[scan $g {%dx%d+%d+%d} gw gh gx gy] == 4} {
+      set sw [winfo screenwidth $t]
+      set sh [winfo screenheight $t]
+      if {$gx + $gw > $sw || $gy + $gh > $sh || $gx < 0 || $gy < 0} {
+        set off [format { OFF-SCREEN(right=%d bottom=%d screen=%dx%d)} \
+                   [expr {$gx + $gw}] [expr {$gy + $gh}] $sw $sh]
+      }
+    }
+    set z [lsearch -exact $order $t]
+    lappend out [format {  %-10s stack=%-3s %-10s map=%-2s %-20s %-11s '%s'%s} \
+      $t [expr {$z < 0 ? {-} : $z + 1}] $st $mp $g $id $ti $off]
+  }
+  # ⚠ THE FILE, NOT THE PANE. A census is SEVEN lines and the viewer takes two of them
+  # 700ms apart, so a plain `log_action` -- which MIRRORS file -> pane (src/util.c
+  # log_action_echo, one way) -- put fourteen lines of forensics into the user's CIW
+  # every time a waveform window opened. That is where this instrument was read from
+  # WRONG: the durable log is where a census is useful (it can be diffed against a
+  # later one, and the user hands over /tmp/Xschem.log.N after the fact), the pane is
+  # where it is only noise. `-noecho` writes the identical line to the file and skips
+  # the mirror (log_action_noecho, util.c:517), and it still sets actionlog_cmd_logged,
+  # so the -reset/-emitted gate below reads exactly as it did before.
+  #
+  # The direct echo stays as the FALLBACK for the case the log cannot take it at all --
+  # no --logdir, or a --pipe session -- where the file write is a no-op and a silently
+  # dropped census would be worse than a noisy one. Same gate libmgr::open_view uses.
+  foreach l $out {
+    set done 0
+    catch {
+      xschem log_action -reset
+      xschem log_action -noecho "#= $l"
+      set done [xschem log_action -emitted]
+    }
+    if {!$done} { catch {ciw_echo $l} }
+  }
+  return [llength $out]
+}
+
+proc reopen_readonly_notice {{name {}}} {
+  # `name` is unused -- kept in the signature because scheduler.c passes the loaded
+  # path and a future recipient (a per-window sink) would want it. See the note above
+  # for why the sentence does not spend words on it.
+  catch {
+    ::xschem::notify {Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed} \
+      -short {opened read-only}
+  }
+  return
 }
 
 # Shown when instance creation is attempted on a symbol view (single source of the
@@ -15880,6 +15290,17 @@ proc tab_queue {what {win_path {}}} {
 proc store_geom {win filename} {
   global tabbed_interface USER_CONF_DIR
 
+  # issue 0840: a waveform viewer is built on an `untitled.sch` buffer, so
+  # without this it stores its geometry in the slot every untitled scratch
+  # buffer shares -- and the next File > New opens where the waveform window
+  # was. wviewer::geom_key answers {} for every ordinary window, so this is
+  # inert unless a viewer really owns $win.
+  if {[llength [info commands ::wviewer::geom_key]]} {
+    set _k {}
+    catch {set _k [::wviewer::geom_key $win]}
+    if {$_k ne {}} { set filename $_k }
+  }
+
   # set geom [winfo width $win]x[winfo height $win]+[winfo rootx $win]+[winfo rooty $win]
   set geom [wm geometry $win]
   # puts "store_geom: geom=$geom"
@@ -15929,6 +15350,14 @@ proc store_geom {win filename} {
 proc set_geom {win {filename {}}} {
   global USER_CONF_DIR initial_geometry fullscreen
   set geom {}
+  # issue 0840, the read half of store_geom's key swap. Without it the viewer
+  # RESTORED `untitled.sch`'s geometry -- measured as pixel-for-pixel congruent
+  # with the design window, so the schematic looked like it had been replaced.
+  if {[llength [info commands ::wviewer::geom_key]]} {
+    set _k {}
+    catch {set _k [::wviewer::geom_key $win]}
+    if {$_k ne {}} { set filename $_k }
+  }
   if {$fullscreen ne 0} {return}
   if {[info exists initial_geometry]} {
     set geom $initial_geometry
@@ -16001,14 +15430,34 @@ proc get_lastclosed {} {
   return $ret
 }
 
+# The reopen shortcut Ctrl+Shift+O (callback.c case 'O' + ControlMask, `xschem
+# load -gui -lastopened`) resolves through here: the most recent entry that is
+# not ALREADY open in some window.
+#
+# ⚠ issue 0839, two ways this used to answer wrongly:
+#
+#  1. AN EMPTY ELEMENT ALWAYS WON. `xschem check_loaded {}` reports "not
+#     loaded", so a {} in the list satisfied the break and Ctrl+Shift+O issued
+#     `xschem load {}`. It was reached exactly when the real first entry was
+#     already open, which is why the failure looked intermittent -- reopening a
+#     file you did NOT have open worked, reopening one you DID silently loaded
+#     nothing. Measured list: {/…/tb_bandgap.sch {}}.
+#  2. `foreach` LEAVES THE LOOP VARIABLE SET. With every entry already loaded the
+#     loop never broke and the proc returned the LAST element -- a file that IS
+#     open. The `set f {}` on entry looks like it covers this and does not:
+#     foreach overwrites it on the first iteration.
+#
+# So: skip empties explicitly, and return from inside the loop so falling out of
+# it can only mean "nothing suitable" -> {}. The caller must treat {} as "do
+# nothing", NOT as a path (scheduler.c, same issue).
 proc get_lastopened {} {
-  set f {}
   foreach f $tctx::recentfile {
+    if {$f eq {}} continue
     if {[xschem check_loaded $f] eq {}} {
-      break
+      return $f
     }
   }
-  return $f
+  return {}
 }
 
 # Cadence-style hierarchy close: when closing/quitting while descended, walk UP the
@@ -16177,7 +15626,7 @@ set tctx::global_list {
  preserve_unchanged_attrs prev_symbol ps_colors
  ps_paper_size rainbow_colors rotated_text search_case search_exact
  search_found search_schematic search_select search_value select_touch
- show_hidden_texts show_infowindow show_infowindow_after_netlist simconf_default_geometry
+ show_hidden_texts annot_show annot_voltage_layer show_infowindow show_infowindow_after_netlist simconf_default_geometry
  simconf_vpos simulate_bg snap_cursor snap_cursor_size spiceprefix split_files svg_colors
  svg_font_name sym_txt symbol symbol_width tabstop tclcmd_txt tclstop
  tctx::colors tctx::delay_flag tctx::hsize tctx::recentfile tctx::recentdirs
@@ -16745,12 +16194,16 @@ proc select_raw {{parent {.}}} {
 #   menu bodies were rejected: they drift, and a T-L that greps eight entry
 #   bodies is satisfied by editing one of them.
 # R505b -- CREW RULING: `Op Annotate` carries its OWN gate, because it is the one
-#   Waves entry that does not route through `load_raw`. Its menu body is LIFTED
-#   VERBATIM into `waves_op_annotate` below so the gate is a call and not a ninth
-#   copy -- and so the entry is drivable without a menubar. The lift keeps the
-#   body's global-scope semantics by declaring `global show_hidden_texts` (the
-#   menu body ran at global scope and set the global; a proc would otherwise set
-#   a local). The IDENTICAL body under `Simulation > Graphs > Annotate Operating
+#   Waves entry that does not route through `load_raw`.
+#   ⚠ AMENDED AT THE `annotate` MERGE. R505b's mechanism was to lift the menu body
+#   VERBATIM into `waves_op_annotate` so the gate was a call and not a ninth copy.
+#   Issue 0683 then added a second guard to that same entry, pinned by a row that
+#   scans the live `-command` script's own text, so the body had to come back
+#   inline; see the note where that proc used to live, below. The RULING is intact
+#   -- the entry still carries its own cadence gate, as the left, short-circuiting
+#   term of the guard expression -- only the ninth-copy argument is spent, and it
+#   buys less than it looks: this is the only Waves entry that needs it.
+#   The IDENTICAL body under `Simulation > Graphs > Annotate Operating
 #   Point into schematic` is NOT touched -- U12 names the Waves cascade, and that
 #   entry is recorded as a remaining door in spec section 18.
 # R505c -- CREW RULING: ONE SENTENCE, COMPOSED ONCE, in `waves_gate_msg`. It says
@@ -16854,22 +16307,23 @@ proc waves_gate_blocked {entry why} {
 
 ## The Waves cascade's `Op Annotate` entry (R505b). Body lifted verbatim from the
 ## menu `-command` it used to be, with the gate in front of it.
-proc waves_op_annotate {} {
-  global show_hidden_texts
-  # R505e: Op Annotate's OWN reason. It does NOT discard the registry -- see the
-  # block above: `xschem annotate_op` does a targeted delete plus an APPENDING
-  # read. Telling the user it wipes their results would be a sentence this very
-  # item measured to be false.
-  if {[waves_gate_blocked {Waves > Op Annotate} \
-       {it adopts a result without going through Results > Select}]} { return }
-  set tctx::retval [select_raw [xschem get topwindow]]
-  set show_hidden_texts 1
-  if {$tctx::retval ne {}} {
-    xschem annotate_op $tctx::retval
-  } else {
-    xschem annotate_op
-  }
-}
+# `proc waves_op_annotate` WAS HERE AND IS GONE, at the `annotate` merge.
+#
+# R505b lifted the Waves > Op Annotate menu body into this proc so the
+# cadence_compat gate could be a call and not a ninth copy. Issue 0683's ruling
+# then put a SECOND guard on that entry -- refuse without a bound ASE-L session --
+# and pinned it with a row that reads the live `-command` script's own text
+# (test_annot_show_menu C3, a positional scan). A body living out here is a body
+# that row cannot see, and worse, a body a script could still call to annotate
+# with no binding at all: precisely the second unguarded annotation path 0683
+# refuses. So the body went back inline and both guards now sit in one
+# short-circuiting expression at the top of it -- the cadence gate as the left
+# term, so it still refuses before anything is read or cleared.
+#
+# What R505b bought is not lost. `global show_hidden_texts` is unnecessary again
+# because the menu body really does run at global scope, and R505's real claim --
+# that no Waves door reaches a result in Cadence mode -- is still asserted, now
+# against the entry rather than against this proc.
 
 proc load_raw {{type {}}} {
   global netlist_dir has_x
@@ -16942,6 +16396,357 @@ source $XSCHEM_SHAREDIR/copy_form.tcl
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
 source $XSCHEM_SHAREDIR/save_as_form.tcl
+
+# --- THE NOTICE BOOTSTRAP (issue 0658) ---------------------------------------
+#
+# THE MEASURED DEFECT. `ase::echo` (src/ase.tcl) and `wviewer::echo`
+# (src/wave_viewer.tcl) are one-line delegates onto `::xschem::notify`, and that
+# channel lives in src/ciw.tcl -- which THIS FILE sources at :14648, i.e. AFTER
+# op_annot (:14600), cmdmode (:14604), ase (:14606), ase_window (:14608),
+# wave_viewer (:14610) and calculator (:14613). The channel therefore loads
+# after every one of its callers and lives in the very file whose failure is the
+# hazard. Measured under `--nogui --pipe -q --logdir`, with the channel renamed
+# away: both delegates returned 0, raised nothing, and the DURABLE LOG LINE --
+# the sink 0650's own table calls "the one that survives a shut window" -- was
+# NOT written. Before 0650 that write was INLINE in ase::echo and had no
+# cross-file dependency, so this is a regression 0650 introduced, not a
+# pre-existing limitation.
+#
+# THE FIX IS IN TWO HALVES, because measurement showed one half is not enough:
+#
+#  1. A MINIMAL BOOTSTRAP CHANNEL, here, BEFORE every caller. src/ciw.tcl
+#     REDEFINES `xschem::notify` (and the latch trio) with the full four-sink
+#     implementation exactly as before, so in a healthy session nothing below is
+#     ever reached. When ciw.tcl does not load, these survive and every notice
+#     still reaches the durable log.
+#
+#  2. A CATCH AROUND `source .../ciw.tcl` (:14648) AND AROUND `ciw_create`
+#     (:16705). ⚠ 0658's own reachability sentence -- "any Tcl error anywhere in
+#     src/ciw.tcl kills the whole file, and xschem.tcl continues past a failed
+#     source" -- IS FALSE, measured three ways by two agents (error at the top
+#     of ciw.tcl, error at the end, file absent): :14648 was a BARE `source`, the
+#     raise propagated OUT of xschem.tcl, source_tcl_file() (src/xinit.c:1513)
+#     merely printed and returned, and Tcl_AppInit walked on into
+#     `tclgetdoublevar(cairo_font_line_spacing)` against unset variables. The
+#     process SIGSEGV'd at startup -- exit 139, the 0423/0424 signature -- and
+#     the bootstrap never got to speak. It is Tcl_AppInit that continues past a
+#     failed source of *xschem.tcl*, NOT xschem.tcl past a failed source of
+#     *ciw.tcl*. Catching the source is what makes the degraded state REAL; the
+#     bootstrap is what makes it SURVIVABLE. This is not 0423's "a silent
+#     continue hides the problem": the catch site ANNOUNCES, once, on stderr and
+#     in the durable log.
+#
+# THE BOOTSTRAP IS A DELIBERATELY DEGRADED MODE, NOT A SECOND COPY OF THE
+# CHANNEL (invariant I1). It has NO short form, NO 28-char clipping, NO
+# statusbar, NO popup, NO latch, NO remedy rendering. The one thing it shares
+# with ciw.tcl's sink 2 -- the durable-log write -- is EXTRACTED into
+# `xschem::notify_log` below and CONSUMED BY BOTH, which is precisely what stops
+# the trimright / trailing-backslash pad / empty-guard block from existing
+# twice. Duplicating it is 0658's own rejected alternative #1, and it would
+# re-create the two-byte-identical-builders situation 0650 had just deleted.
+#
+# WHY NOT A NEW src/notify.tcl (the driver floated it and WITHDREW it): a new
+# helper needs a src/Makefile.in edit plus a ./configure re-run, which is
+# CLAUDE.md's issue-0424 trap -- a helper missing from the install list ships a
+# binary that SEGFAULTS at startup while the in-tree tree stays green -- and it
+# does not even solve the problem, because notify.tcl could itself fail to load.
+# The bootstrap covers the failure of ANY file except xschem.tcl, and if
+# xschem.tcl fails nothing works anyway.
+#
+# SCOPE LIMITS, written down here rather than discovered later:
+#   * under `--nolog` (or `--nogui` with no `--logdir`) there is NO action log at
+#     all (src/util.c:351), so a degraded notice survives only as the stderr line
+#     of last resort. That is honest -- the user asked for no log.
+#   * degraded notices carry no remedy and no short form: the remedy contract
+#     (R-0653-d) is about the VISIBLE channel, which by definition is not there.
+#   * stderr is NEVER counted as a sink. 0650's sink table does not contain it
+#     and a GUI user reached nothing by it, so `sinks` stays {} and the return
+#     value stays 0 in that case (0652/0657: a report must not lie). It also sits
+#     BEHIND the durable log, never in front of it, which is what keeps it from
+#     being 0658's rejected alternative #2 (`ihp-sg13g2/sg13g2_procs.tcl:811` is
+#     the standing example of a `puts stderr` no GUI user ever sees).
+namespace eval xschem {
+  ## 1 once the degraded-state announcement has been made. A latch AND a
+  ## deliberate test seam: 0497 rule 1 is "count per pass, never alert per
+  ## item", so the announcement fires ONCE per session, never once per notice.
+  variable notify_degraded 0
+
+  ## 1 once the CHANNEL-FAULT announcement has been made. A SECOND, SEPARATE
+  ## one-shot latch, and the separation is the whole of issue 0664's fix: a
+  ## raise out of a channel that is still fully alive is a FAULT, not a
+  ## degradation, and it must not burn the latch that belongs to the state
+  ## where the user really has lost every visible sink. At HEAD the false
+  ## positive burnt it and the genuine degradation that followed announced
+  ## NOTHING -- measured, in the log the driver read.
+  variable notify_fault 0
+
+  ## THE SINKS-FIRED RECORD (issues 0664/0665). Which sinks a single notice has
+  ## ACTUALLY reached, appended to as each one succeeds and reset at the
+  ## channel's first statement.
+  ##
+  ## ⚠ IT IS A NAMESPACE VARIABLE ON PURPOSE, and that is the only reason the
+  ## mechanism works: ciw.tcl's `sinks` was a LOCAL, so it unwound with the very
+  ## raise the record exists to survive. The case that produced 0665's double
+  ## durable line is a raise at the channel's LAST statement -- after sink 2 has
+  ## already written -- and a record that dies with the error cannot tell
+  ## notify_safe that.
+  ##
+  ## ⚠ IT LIVES HERE, IN src/xschem.tcl, never in src/ciw.tcl. The degraded
+  ## state it exists to serve is precisely the state where ciw.tcl is absent.
+  variable notify_progress {}
+}
+
+## THE ONE APPENDER AND THE ONE RESET of that record (invariant I1). ciw.tcl's
+## local `sinks` becomes notify_mark's RETURN VALUE rather than a second list
+## kept in step by hand -- one account of one fact, so the record and the
+## `::xschem::notify_last` witness cannot drift apart silently (the rejected
+## alternative was mirroring every `lappend` into a namespace list, which is two
+## accounts and exactly the I1 breach 0658's D2 had just deleted).
+proc xschem::notify_mark {sink} {
+  variable notify_progress
+  lappend notify_progress $sink
+  return $notify_progress
+}
+proc xschem::notify_mark_reset {} {
+  variable notify_progress
+  set notify_progress {}
+  return {}
+}
+
+## IS THE LIVE NOTICE CHANNEL THE LOG-ONLY FALLBACK? -- the MEASUREMENT behind
+## the announcement (issue 0664, which is 0652's defect class: a report that
+## LIES). The old announcement asserted "notices are LOG-ONLY from here on (no
+## CIW pane, no status field, no popup)" without ever checking, and was measured
+## saying it in a session where `info body ::xschem::notify` was the four-sink
+## channel and `::ciw_echo` was alive. The whole feature exists to be believed.
+##
+## Degraded means exactly one thing: the name `::xschem::notify` resolves to the
+## bootstrap below rather than to ciw.tcl's channel. Three states answer that --
+## the command is GONE (PS21/NT17's shape, where `info body` itself raises), it
+## is not a proc at all, or its body names notify_bootstrap. That last is the
+## same discriminator test_ase_core NT16 and test_ase_log_seam_0207 PS20 already
+## use to prove the bootstrap was OVERRIDDEN, so the product and the tests now
+## measure the identical fact.
+proc xschem::notify_channel_degraded {} {
+  if {[info commands ::xschem::notify] eq {}} { return 1 }
+  if {[catch {info body ::xschem::notify} b]}  { return 1 }
+  return [expr {[string first notify_bootstrap $b] >= 0 ? 1 : 0}]
+}
+
+## THE ONE DURABLE-LOG WRITER, consumed by ciw.tcl's sink 2 AND by the bootstrap
+## below (invariant I1). The body is ciw.tcl's sink 2, moved verbatim.
+##
+## `#= ` / `#! ` COMMENT lines via log_output() in src/util.c, keyed off the same
+## tag the pane got. Comments keep the log source-able, and log_output prefixes
+## every embedded newline (a hand-built `# ase: $msg` would not, so a multi-line
+## message would become live Tcl on replay). Two replay landmines are guarded:
+##   * an EMPTY message logs NOTHING -- `xschem log_action -result` with a
+##     missing value fell through the dispatcher's argc gates and wrote the
+##     literal line `-result` into Xschem.log, aborting a replay `source`;
+##   * a TRAILING BACKSLASH makes the logged line continue onto the NEXT one and
+##     swallow it, so it is padded. trimright comes FIRST: log_output emits no
+##     prefix after a final newline, so "foo\\\n" also lands as `#= foo\`.
+##
+## ⚠ `xschem log_action` NEVER REPORTS A CLOSED LOG (src/scheduler.c:7806ff;
+## log_output() silently no-ops on a NULL actionlog_fp), so the catch proves only
+## that the CALL was well formed. The `log` claim is therefore gated on the file
+## really being open -- issue 0657, where notify_last reported `sinks = ciw log`
+## under --nolog with no log at all. Returns 1 only when the line really landed.
+proc xschem::notify_log {line tag} {
+  set lmsg [string trimright $line "\n"]   ;# log_output supplies the terminator
+  if {$lmsg eq {}} { return 0 }
+  if {[string index $lmsg end] eq "\\"} { append lmsg { } }
+  set logopen [expr {![catch {xschem get actionlog_filename} lf] && $lf ne {}}]
+  if {$tag eq {error}} {
+    if {[catch {xschem log_action -error $lmsg}]}  { return 0 }
+  } else {
+    if {[catch {xschem log_action -result $lmsg}]} { return 0 }
+  }
+  return [expr {$logopen ? 1 : 0}]
+}
+
+## A CHANNEL FAILURE ANNOUNCES ITSELF -- ONCE PER SESSION, NOT PER NOTICE
+## (0497 rule 1: count per pass, never alert per item), AND IT SAYS ONLY WHAT IT
+## HAS MEASURED (issue 0664).
+##
+## ⚠ THE NAME IS HISTORICAL AND THE PROC NOW SPEAKS TWO SENTENCES. It kept its
+## name and its {cause} signature because test_ase_core NT1 enumerates it and
+## three call sites (:14855's caught ciw.tcl source, :16920's ciw_create guard,
+## and notify_safe) would have moved for cosmetics; what changed is that it asks
+## notify_channel_degraded which sentence is TRUE before saying either:
+##
+##   * DEGRADED -- the live channel IS the log-only bootstrap. The consequence
+##     clause is a claim about what happens to the user's NEXT notice, not an
+##     inventory of which widgets exist (decision D7): under --nogui there are
+##     none to inventory, and what matters is where the next notice lands. It is
+##     proved rather than asserted by test_ase_log_seam_0207 PS33, which emits a
+##     notice immediately afterwards and checks the pane did not grow, the
+##     shared statusbar still reads its sentinel, no popup exists and only the
+##     log gained a line.
+##   * FAULT -- something raised, but the live ::xschem::notify is still the
+##     full channel and not the fallback. Announced (0423's standing objection:
+##     a silent continue hides the problem) but on its OWN latch, so it can
+##     never eat the announcement that belongs to a real degradation.
+##
+##     ⚠ THIS SENTENCE DELIBERATELY CLAIMS NOTHING ABOUT LATER NOTICES, and an
+##     earlier revision of it did -- "the next notice still reaches every sink".
+##     That was 0664's own defect wearing the new marker, and it was MEASURED
+##     false twice (issue 0675): with a PERSISTENT post-sink-2 raiser
+##     (notify_short renamed away, :99, notify_style popup) notice 2 reached
+##     {ciw log} while the control reached {ciw log popup} and created
+##     .xschem_notify; and with a ciw.tcl that fails BETWEEN notify (:256) and
+##     ciw_echo (:464) the pane is dead for the whole session. What this proc
+##     measures is PROC IDENTITY, never sink reachability, so reachability is
+##     the one thing it must not assert. Issue 0675 carries the real fix.
+##
+## ⚠ THE FAULT SENTENCE MUST NOT CONTAIN THE SUBSTRING `NOTICE CHANNEL
+## DEGRADED`. That marker is golden: NTD1/PS20 assert its ABSENCE in the healthy
+## case and NTD4/PS23/NTD6/PS27 count exactly one of it, so re-using it here
+## would break four committed rows and re-tell 0664's lie in a new voice.
+##
+## Returns 1 the one time it actually spoke.
+proc xschem::notify_degraded_once {cause} {
+  variable notify_degraded
+  variable notify_fault
+  if {![xschem::notify_channel_degraded]} {
+    if {$notify_fault} { return 0 }
+    set notify_fault 1
+    set l "NOTICE CHANNEL FAULT: $cause. Measured: the live xschem::notify is\
+ the full channel, not the log-only fallback. NOT measured, and therefore NOT\
+ claimed: which sinks any later notice reaches -- if this cause persists, later\
+ notices can keep missing a sink with no further word."
+    catch {puts stderr "xschem: $l" ; flush stderr}
+    catch {xschem::notify_log $l error}
+    return 1
+  }
+  if {$notify_degraded} { return 0 }
+  set notify_degraded 1
+  ## 0657's honesty gate, reused: with `--nolog` (or `--nogui` and no
+  ## `--logdir`) there is no action log AT ALL (src/util.c:351), so "notices are
+  ## LOG-ONLY from here on" would be false in exactly the way 0657's
+  ## `sinks = log` with no log open was false. Say where they really go.
+  if {![catch {xschem get actionlog_filename} lf] && $lf ne {}} {
+    set l "NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW\
+ pane, no status field, no popup, no remedy). Cause: $cause"
+  } else {
+    set l "NOTICE CHANNEL DEGRADED: no durable log is open (--nolog, or --nogui\
+ with no --logdir), so notices reach STDERR ONLY from here on (no CIW pane, no\
+ status field, no popup, no remedy). Cause: $cause"
+  }
+  catch {puts stderr "xschem: $l" ; flush stderr}
+  catch {xschem::notify_log $l error}
+  return 1
+}
+
+## THE DEGRADED CHANNEL. Signature-compatible with xschem::notify so a caller
+## needs no knowledge of which one it reached, but deliberately SMALLER: -tag
+## (and -cause, which only the delegate fallback passes) are honoured, EVERY
+## other option is accepted and IGNORED, and nothing here ever raises. One
+## durable line, the honest sink count returned.
+##
+## Ignoring unknown options rather than mirroring ciw.tcl:257's strict switch is
+## deliberate twice over: copying the option table would copy the channel (I1),
+## and "the live notify RAISES on -no_such_option" is the sharpest behavioural
+## discriminator a test has for proving the bootstrap was OVERRIDDEN rather than
+## silently winning (test_ase_core NT16, test_ase_log_seam_0207 PS20).
+proc xschem::notify_bootstrap {msg args} {
+  set tag {} ; set cause {}
+  foreach {o v} $args {
+    switch -exact -- $o {
+      -tag   { set tag $v }
+      -cause { set cause $v }
+    }
+  }
+  if {$cause eq {}} {
+    set cause {the notice channel is unavailable (src/ciw.tcl failed to source?)}
+  }
+  xschem::notify_degraded_once $cause
+  ## the SAME one account the full channel keeps, so notify_safe reads an
+  ## honest record whichever channel was live (issue 0665)
+  set sinks [xschem::notify_mark_reset]
+  if {[xschem::notify_log $msg $tag]} { set sinks [xschem::notify_mark log] }
+  ## LAST RESORT ONLY, and never claimed as a sink: with no log open there is
+  ## nowhere else at all for this to go.
+  if {$sinks eq {} && $msg ne {}} { catch {puts stderr "xschem: $msg" ; flush stderr} }
+  ## the witness, when it exists (it lives in ciw.tcl, which may be the very
+  ## file that failed) -- degraded mode records no short form and no remedy
+  catch {xschem::notify_record $tag $msg $msg {} {} {} $sinks}
+  return [llength $sinks]
+}
+
+## The channel EXISTS from this line on. src/ciw.tcl REDEFINES it with the full
+## four-sink implementation; every caller between here and :14648 resolves the
+## name at CALL time, so in a healthy session this wrapper is never entered.
+proc xschem::notify {msg args} {
+  return [xschem::notify_bootstrap $msg {*}$args]
+}
+
+## DEGENERATE LATCH TRIO, redefined by ciw.tcl with the real state-keyed one.
+## NOT optional, and not decoration: src/ase.tcl:619 and src/ase.tcl:550 call
+## ::xschem::notify_latch_ok / _reset UNCAUGHT, they RAISE `invalid command
+## name` when the family is missing, and ase.tcl:795's `catch` swallows the raise
+## along with the ENTIRE OP-card block -- so a bootstrap that defined only
+## `notify` would turn the log rows green while the user's actually-reported
+## gate-off nudge stayed dead. Degraded mode keeps no state, so every subject
+## gets its turn: noisier than the real latch, and visible, which is the right
+## way round when the visible sinks are already gone.
+proc xschem::notify_latch_ok {subject {state {}}} { return 1 }
+proc xschem::notify_latch_rearm {subject {state {}}} { return }
+proc xschem::notify_latch_reset {subject} { return }
+
+## THE ONE DELEGATE BODY behind ase::echo AND wviewer::echo (invariant I1: those
+## two were byte-identical eight-line copies before 0650 and must not become two
+## copies again). It answers "the catch that hid it", in scope for 0658:
+##
+##   * the catch is NOT deleted -- a notice may never break a pick or a netlist;
+##   * with the bootstrap in place ::xschem::notify ALWAYS exists, so the catch
+##     can now only fire on a GENUINE BUG INSIDE notify, and silently returning 0
+##     for that is exactly how this class of defect survives. So the raise
+##     becomes the CAUSE of the one-time degradation announcement and the notice
+##     is re-made through the bootstrap;
+##   * what it returns is TRUE (0652 is about a report that LIES): the value is
+##     the bootstrap's honest sink count, never a 0 that merely means "I did not
+##     check". 0 from the full channel still means "the latch suppressed it",
+##     and 0 from here still means "nothing was delivered" -- both are true.
+##
+## ⚠ ISSUES 0664/0665: IT READS WHAT THE CHANNEL DID, IT NO LONGER ASSUMES.
+## The three-line version above treated ANY raise as "the channel is dead,
+## re-make the whole notice". But src/ciw.tcl's SINK 2 is the durable log, and
+## notify_short, notify_popup, notify_ciw_visible, notify_statusbar and
+## notify_record all run AFTER it -- so a raise in any of them re-made a notice
+## whose durable line was already on disk. Measured, in one Xschem.log, in this
+## order: the real line, a `NOTICE CHANNEL DEGRADED` claim made while the
+## four-sink channel was demonstrably alive, the SAME line a second time.
+##
+## So: on a raise, COMPLETE the notice, never RE-MAKE it. If the record says the
+## durable sink already fired, the only thing genuinely missing is the witness;
+## write that and announce the raise as a FAULT. Sinks 1/3/4 are NEVER retried
+## -- "exactly one ::ciw_echo per notify" is a committed fence (PS8/PS19,
+## test_ase_locked_wire_pick_0160:175, test_sod_pick_no_select_0204:138/295) and
+## the sink that just raised is the least safe call in the program to repeat.
+proc xschem::notify_safe {msg {tag {}}} {
+  variable notify_progress
+  ## A FRESH record for THIS call, before anything can consult it. Without this
+  ## a delegate whose ::xschem::notify is ABSENT would inherit whatever a direct
+  ## call left behind and skip a durable write that never happened.
+  xschem::notify_mark_reset
+  if {![catch {::xschem::notify $msg -tag $tag} r]} { return $r }
+  set done $notify_progress   ;# a namespace variable: it SURVIVED the unwind
+  if {[lsearch -exact $done log] >= 0} {
+    catch {xschem::notify_record $tag $msg $msg {} {} {} $done}
+    xschem::notify_degraded_once "xschem::notify raised AFTER delivering to\
+ [list $done]: $r"
+    return [llength $done]
+  }
+  if {[catch {::xschem::notify_bootstrap $msg -tag $tag -cause $r} b]} { return 0 }
+  return $b
+}
+# Operating-point annotation: the ONE raw-vector name builder (op_annot::vector) that
+# the save-card emitter and the on-screen display must share -- invariant I1 of
+# doc/claude/specs/op_annotation.md. Proc definitions only at source time; nothing is
+# registered here (a PDK does that from its own procs file; a user from a file sourced
+# after startup -- NOT from xschemrc, which is read before this line, spec I5).
+source $XSCHEM_SHAREDIR/op_annot.tcl
 # Generic command-mode suspend/resume registry (cmdmode; no Tk, no ASE knowledge).
 # doc/claude/issues/0201-no-command-suspend-resume-contract.md. MUST precede ase_window.tcl,
 # which calls cmdmode::register at source time.
@@ -16997,7 +16802,19 @@ foreach row $action_table {
 # CIW (Command Interpreter Window): live action-log pane + command entry
 # (doc/claude/specs/action_logging.md section 3). Auto-opened for interactive sessions
 # in the build-widgets block below.
-source $XSCHEM_SHAREDIR/ciw.tcl
+## ⚠ CAUGHT, DELIBERATELY (issue 0658). This was a BARE `source`, and a bare
+## source here is not survivable: a Tcl error anywhere in ciw.tcl (or an absent
+## file -- the pure issue-0424 shape) propagates OUT of xschem.tcl,
+## source_tcl_file() (src/xinit.c:1513) merely prints it and returns, and
+## Tcl_AppInit walks on into `tclgetdoublevar(cairo_font_line_spacing)` against
+## variables the rest of this file never got to set. Measured three ways: exit
+## 139, SIGSEGV at startup, script never runs. Catching it turns that into a
+## degraded-but-alive session in which the bootstrap channel above still carries
+## every notice to the durable log. NOT a silent continue (0423's standing
+## objection): notify_degraded_once announces it, ONCE, on stderr and in the log.
+if {[catch {source $XSCHEM_SHAREDIR/ciw.tcl} ciw_source_err]} {
+  xschem::notify_degraded_once "src/ciw.tcl failed to source: $ciw_source_err"
+}
 
 # issue 0123: Help>Debug FLUID_TRACE control. Start picks a PID-named file in the system temp dir
 # and hands the path to the C side (`xschem fluid_trace start <path>`), then reports it in the CIW so
@@ -17037,6 +16854,84 @@ proc fluid_trace_menu_update {m} {
   catch {$m entryconfigure {*FLUID trace} -label $lab}
 }
 
+## ISSUE 0682 -- THE VIEW-MENU PAIR THAT LIVED HERE IS GONE, AND THIS NOTE IS
+## ITS HEADSTONE so the next person does not "restore" it.
+##
+## `annot_show_menu_sync` (PULL, the View > Show submenu's -postcommand) and
+## `annot_show_menu_apply` (PUSH, both checkbuttons' -command) existed ONLY to
+## serve the `View > Show / Hide` annotation pair added by issue 0457(b) on
+## 2026-08-22 -- measured, exactly three call sites in src/, all of them that
+## pair. On 2026-08-24, driving the shipped feature on a real sky130 bench, the
+## same user REVERSED that placement, verbatim: "What is View > Show? We want to
+## be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+## Operating Point Info", and "results (including OP info) only make sense when
+## there is a result loaded - meaning an ASE-L is active, to which this schematic
+## is 'bound'". 0457(b) answered the question it was asked (where can this control
+## live with no new C code); this is a change of DESTINATION, not a repair.
+##
+## The control now lives in src/ase_window.tcl as `ase::ui::annot_apply` /
+## `annot_menu_sync` / `annot_mask` / `annot_goto_design` / `annot_ensure_loaded`,
+## hung off the session window's `Results > Annotate` submenu, greyed by
+## `ase::has_results` (src/ase.tcl). It has to do more than these two procs did,
+## because an ASE-L window is a plain Tk toplevel and the mask is per DESIGN
+## CONTEXT -- see the header there.
+##
+## THE THREE CHORDS ARE UNAFFECTED: `6` / `Alt-6` / `Ctrl-6` (cadence_style_rc)
+## write the mask themselves through cadence::annot_mode (utils/annot_mode.tcl),
+## never through these procs. Issue 0678 confirmed all three on a real bench.
+##
+## Guards: tests/headless/test_annot_show_menu.tcl rows B1-B10 (the deletion,
+## plus the anti-hollow rows that the replacement exists), and
+## test_op_annot.tcl N22/N22b/N22c (which writer lives in which file).
+
+# --- 0683 / R-0653-d req 2: THE ANNOTATION MENU LABELS, ONE SOURCE ------------
+#
+# The user's 2026-08-25 ruling on issue 0683 is "both stock items check for a live
+# bound session and refuse with a clear message naming the ASE-L path if there is
+# none". A refusal that names a menu path has to name the path the user can
+# actually see, so the two entry labels, the remedy entry's label and the four
+# cascade labels above them are DEFINED HERE and the menubar below is BUILT from
+# them -- the printed sentence and the widget cannot drift apart because they are
+# the same string.
+#
+# ⚠ THE DRIFT THIS PREVENTS IS MEASURED, NOT HYPOTHETICAL. src/ase_window.tcl's
+# `lbl_outputs` / `lbl_save_all` / `lbl_save_op_params` (~:3173) were added for
+# exactly this reason after a remedy printed `Outputs > Save All` while the menu
+# read `Outputs > Save All… > Save device OP parameters (gm, gds, vth, ...)` --
+# one word off, entirely plausible, and `string match` against both constants
+# returned 0 (issue 0661). This is that pattern, ported.
+#
+# ⚠ THE CONSTANTS MUST KEEP RETURNING THE STRINGS THE MENUS ARE LOOKED UP BY:
+# tests/headless/test_annot_show_menu.tcl rows C2/C6 read the labels back OFF THE
+# LIVE WIDGETS and compare them to BOTH these procs AND the literal goldens, which
+# is what stops a constant-vs-constant tautology (the test_ase_window W1t
+# discipline). Renaming an entry is a deliberate act; doing it here moves the
+# refusal message with it.
+#
+# `>`-separated, because that is the shipped convention for a printed menu path
+# (ase::ui::remedy_op_params_menu) and nothing in these labels contains a `>`.
+proc annot_lbl_waves        {} { return {Waves} }
+proc annot_lbl_op_annotate  {} { return {Op Annotate} }
+proc annot_lbl_simulation   {} { return {Simulation} }
+proc annot_lbl_graphs       {} { return {Graphs} }
+proc annot_lbl_annotate_op  {} { return {Annotate Operating Point into schematic} }
+proc annot_lbl_tools        {} { return {Tools} }
+proc annot_lbl_launch_ase   {} { return {Launch ASE-L} }
+
+## The two stock annotation entry points, as the user reads them in the menubar.
+proc annot_menu_path_waves_op {} {
+  return "[annot_lbl_waves] > [annot_lbl_op_annotate]"
+}
+proc annot_menu_path_graphs_op {} {
+  return "[annot_lbl_simulation] > [annot_lbl_graphs] > [annot_lbl_annotate_op]"
+}
+## WHERE THE FUNCTION WENT. The ruling's own words: the refusal message is more
+## useful than a missing menu "because it tells the user where the function
+## went", so this path is the message's payload and not decoration.
+proc annot_remedy_menu {} {
+  return "[annot_lbl_tools] > [annot_lbl_launch_ase]"
+}
+
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
   global XSCHEM_SHAREDIR tabbed_interface simulate_bg OS sim
@@ -17068,13 +16963,13 @@ proc build_widgets { {topwin {} } } {
 
   $topwin.menubar add cascade -label "Layers" -menu $topwin.menubar.layers
   menu $topwin.menubar.layers -tearoff 0 -takefocus 0
-  $topwin.menubar add cascade -label "Tools" -menu $topwin.menubar.tools
+  $topwin.menubar add cascade -label [annot_lbl_tools] -menu $topwin.menubar.tools
   menu $topwin.menubar.tools -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Symbol" -menu $topwin.menubar.sym
   menu $topwin.menubar.sym -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Highlight" -menu $topwin.menubar.hilight
   menu $topwin.menubar.hilight -tearoff 0 -takefocus 0
-  $topwin.menubar add cascade -label "Simulation" -menu $topwin.menubar.simulation
+  $topwin.menubar add cascade -label [annot_lbl_simulation] -menu $topwin.menubar.simulation
   menu $topwin.menubar.simulation -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Help" -menu $topwin.menubar.help
   menu $topwin.menubar.help -tearoff 0 -takefocus 0
@@ -17327,7 +17222,7 @@ proc build_widgets { {topwin {} } } {
      simulate_from_button
   }
 
-  $topwin.menubar add cascade -label "Waves" -background {#888888} \
+  $topwin.menubar add cascade -label [annot_lbl_waves] -background {#888888} \
     -activebackground orange -menu $topwin.menubar.waves
   menu  $topwin.menubar.waves -tearoff 0 -takefocus 0
   $topwin.menubar.waves add command -label {External viewer} -command {waves external}
@@ -17335,10 +17230,85 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.waves add command -label Clear -command {xschem raw_clear}
   $topwin.menubar.waves add separator
   $topwin.menubar.waves add command -label {Load first analysis found} -command {waves {}}
-  # R505b: the one Waves entry that does NOT route through load_raw -- it calls
-  # select_raw itself -- so its body is lifted into waves_op_annotate, which
-  # carries the same cadence_compat gate. See the block above proc load_raw.
-  $topwin.menubar.waves add command -label {Op Annotate} -command {waves_op_annotate}
+  $topwin.menubar.waves add command -label [annot_lbl_op_annotate] -command {
+     # --- ISSUE 0683, THE USER'S RULING OF 2026-08-25 -------------------------
+     #   "Refuse without a bound session. Both stock items check for a live bound
+     #    session and refuse with a clear message naming the ASE-L path if there
+     #    is none."
+     # The trade was stated in the question and accepted: stock xschem with no
+     # ASE-L can no longer annotate at all. Two alternatives were explicitly
+     # rejected -- making this entry a TOGGLE (a second working annotation control
+     # outside ASE-L, a partial retreat from issue 0682's ruling) and DELETING it
+     # (the refusal is more useful than a missing menu, because it says where the
+     # function went). So the entry stays enabled and the guard is a WRAP.
+     #
+     # ⚠ IT IS THE FIRST STATEMENT OF THE BODY, AND THAT IS FUNCTIONAL. The raw
+     # chooser called just below pops a MODAL tk_getOpenFile (~:14518) and
+     # rewrites the global `netlist_dir` merely by being read; a refused user must
+     # not be made to answer a file dialog first (issue 0683 section 7). The test
+     # that pins the ORDER reads this script's own text, so no name of a later
+     # statement may appear in this comment.
+     #
+     # ⚠ A WRAP, NOT AN EARLY `return`. This script is evaluated at global level
+     # by Tk, where a TCL_RETURN out of a -command is not a documented no-op; and
+     # the wrap is what keeps the mask-writer count in this file at 2, which four
+     # committed rows pin (test_op_annot N22/N22b, test_annot_show_menu B6/B10).
+     #
+     # The guard speaks the refusal itself -- see ase::annot_no_binding_notice in
+     # src/ase.tcl for why that message is a new proc rather than a second
+     # spelling of ase::no_session_notice.
+     # R505b/R505e, FROM `fluid-editing`: this is the one Waves entry that does NOT
+     # route through load_raw -- it opens the chooser itself -- so it carries its
+     # own copy of the cadence_compat gate rather than inheriting one. It is the
+     # LEFT term and && SHORT-CIRCUITS, so in Cadence mode nothing below runs and
+     # nothing is read or cleared, which is the property R505 asks for. Its reason
+     # is its own (R505e): this item adopts a result without going through
+     # Results > Select. It does NOT discard the registry -- the annotate verb does
+     # a targeted delete plus an APPENDING read -- so it must not say it does.
+     #
+     # ⚠ NOTHING NAMED IN A LATER STATEMENT MAY BE NAMED IN THIS COMMENT EITHER,
+     # for the reason the block above gives: the row that pins the order does a
+     # POSITIONAL scan of this script's raw text, and a mention above the guard
+     # reads to it as a call above the guard. Being the left term of the guard's
+     # own expression keeps the binding check ahead of both things it must precede.
+     #
+     # ⚠ `proc waves_op_annotate` IS GONE at this merge. It existed only to host
+     # this body, and hosting it there put the binding guard outside the -command
+     # script -- leaving a second, unguarded annotation path, which is exactly what
+     # 0683's ruling refuses.
+     if {![waves_gate_blocked {Waves > Op Annotate} \
+           {it adopts a result without going through Results > Select}] &&
+         [ase::annot_binding_ok [annot_menu_path_waves_op]]} {
+         set tctx::retval [select_raw [xschem get topwindow]]
+         set show_hidden_texts 1
+         # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
+         # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
+         # show_hidden_texts entirely (its decision D3), so this item used to
+         # produce a loaded raw and a STILL-DARK annotator -- measured, the
+         # carrier's bbox never grew.
+         # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
+         # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
+         # voltage and branch current XSCHEM's native OP back-annotation paints. An
+         # "Op Annotate" that loaded the raw and then hid the voltages it had just
+         # resolved would be a worse first run than the dark annotator this line was
+         # written to fix. Deliberately a HARD SET and not an OR: this item is a
+         # one-click "annotate this cell", not one of the two additive chords. The
+         # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+         # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
+         # writers of this mask.
+         xschem set annot_show 3
+         if {$tctx::retval ne {}} {
+           xschem annotate_op $tctx::retval
+         } else {
+           xschem annotate_op
+         }
+         # Bboxes change when hidden texts appear: the `Show hidden texts`
+         # checkbutton's own pair, and annot_show_sync_cache() rides inside the
+         # first of them (scheduler.c), so no extra sync call is needed.
+         xschem update_all_sym_bboxes
+         xschem redraw
+     }
+  }
   $topwin.menubar.waves add command -label Op -command {waves op}
   $topwin.menubar.waves add command -label Dc -command {waves dc}
   $topwin.menubar.waves add command -label Ac -command {waves ac}
@@ -17539,7 +17509,7 @@ proc build_widgets { {topwin {} } } {
       -selectcolor $selectcolor -variable pin_rename_propagate
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
-  $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
+  $topwin.menubar.tools add command -label [annot_lbl_launch_ase] -command "ase::launch_for_current"
   $topwin.menubar.tools add command -label "Calculator" -command "calc::open"
   # PLAN item 12: the schematic -> Signal Browser mirror of the viewer's
   # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
@@ -17696,7 +17666,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.simulation add separator
 
 
-  $topwin.menubar.simulation add cascade -label "Graphs" -menu $topwin.menubar.simulation.graph
+  $topwin.menubar.simulation add cascade -label [annot_lbl_graphs] -menu $topwin.menubar.simulation.graph
   menu $topwin.menubar.simulation.graph -tearoff 0 -takefocus 0
   $topwin.menubar.simulation.graph add checkbutton -label {Auto highlight plotted nets} \
    -selectcolor $selectcolor  -variable auto_hilight_graph_nodes
@@ -17706,14 +17676,101 @@ proc build_widgets { {topwin {} } } {
 tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get current_name]]].raw tran\"
 "
   }
-  $topwin.menubar.simulation.graph add command -label "Annotate Operating Point into schematic" \
+  $topwin.menubar.simulation.graph add command -label [annot_lbl_annotate_op] \
     -command {
-       set tctx::retval [select_raw [xschem get topwindow]]
-       set show_hidden_texts 1
-       if {$tctx::retval ne {}} {
-         xschem annotate_op $tctx::retval
-       } else {
-         xschem annotate_op
+     # --- ISSUE 0683, THE USER'S RULING OF 2026-08-25 -------------------------
+     #   "Refuse without a bound session. Both stock items check for a live bound
+     #    session and refuse with a clear message naming the ASE-L path if there
+     #    is none."
+     # The trade was stated in the question and accepted: stock xschem with no
+     # ASE-L can no longer annotate at all. Two alternatives were explicitly
+     # rejected -- making this entry a TOGGLE (a second working annotation control
+     # outside ASE-L, a partial retreat from issue 0682's ruling) and DELETING it
+     # (the refusal is more useful than a missing menu, because it says where the
+     # function went). So the entry stays enabled and the guard is a WRAP.
+     #
+     # ⚠ IT IS THE FIRST STATEMENT OF THE BODY, AND THAT IS FUNCTIONAL. The raw
+     # chooser called just below pops a MODAL tk_getOpenFile (~:14518) and
+     # rewrites the global `netlist_dir` merely by being read; a refused user must
+     # not be made to answer a file dialog first (issue 0683 section 7). The test
+     # that pins the ORDER reads this script's own text, so no name of a later
+     # statement may appear in this comment.
+     #
+     # ⚠ A WRAP, NOT AN EARLY `return`. This script is evaluated at global level
+     # by Tk, where a TCL_RETURN out of a -command is not a documented no-op; and
+     # the wrap is what keeps the mask-writer count in this file at 2, which four
+     # committed rows pin (test_op_annot N22/N22b, test_annot_show_menu B6/B10).
+     #
+     # The guard speaks the refusal itself -- see ase::annot_no_binding_notice in
+     # src/ase.tcl for why that message is a new proc rather than a second
+     # spelling of ase::no_session_notice.
+     if {[ase::annot_binding_ok [annot_menu_path_graphs_op]]} {
+         set tctx::retval [select_raw [xschem get topwindow]]
+         set show_hidden_texts 1
+         # doc/claude/specs/op_annotation.md step S8, decision D8. S7 put `hide=op`
+         # and `hide=opvolt` texts behind xctx->annot_show and made them ignore
+         # show_hidden_texts entirely (its decision D3), so this item used to
+         # produce a loaded raw and a STILL-DARK annotator -- measured, the
+         # carrier's bbox never grew.
+         # MASK 3, NOT 1, SINCE ISSUE 0614. D8 deferred the third bit to "the moment
+         # bit1 gets producers"; 0614 is that moment -- bit1 now gates every node
+         # voltage and branch current XSCHEM's native OP back-annotation paints. An
+         # "Op Annotate" that loaded the raw and then hid the voltages it had just
+         # resolved would be a worse first run than the dark annotator this line was
+         # written to fix. Deliberately a HARD SET and not an OR: this item is a
+         # one-click "annotate this cell", not one of the two additive chords. The
+         # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+         # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
+         # writers of this mask.
+         xschem set annot_show 3
+         if {$tctx::retval ne {}} {
+           xschem annotate_op $tctx::retval
+         } else {
+           xschem annotate_op
+         }
+         # Bboxes change when hidden texts appear: the `Show hidden texts`
+         # checkbutton's own pair, and annot_show_sync_cache() rides inside the
+         # first of them (scheduler.c), so no extra sync call is needed.
+         xschem update_all_sym_bboxes
+         xschem redraw
+     }
+    }
+  # doc/claude/specs/op_annotation.md §4.4 — the PDK-neutral OP-parameter
+  # carrier. Every moving part lives in the proc called below (src/op_annot.tcl)
+  # so a headless test can drive it; this cascade is built under
+  # `if {[info exists has_x]}` and --nogui never enters it.
+  $topwin.menubar.simulation.graph add command -label {Add device OP annotator} \
+    -command {op_annot::place_annotator}
+  # doc/claude/specs/op_annotation.md step S3. The other half of the feature:
+  # nothing puts the device vectors INTO the raw, so on an ordinary bench run
+  # every `params` row of the annotator above renders blank (issue 0617 is the
+  # user-visible report: six blank rows after a real ASE run). This item walks
+  # the hierarchy below the current cell and writes one `.save` card per
+  # descriptor parameter per NETLISTED device, with `.save all` first (rule R2 —
+  # any explicit save cancels the implicit save-everything, so without it every
+  # node voltage disappears from the raw). `.include` the file from your
+  # testbench.
+  #
+  # Modelled on IHP's `Create FET and BIP .save file` (ihp-sg13g2/
+  # sg13g2_procs.tcl:602-606), generalized off that PDK: the walk is
+  # descriptor-driven and the device filter is asked of the netlister rather
+  # than mirrored from it.
+  #
+  # ⚠ IT RUNS A NETLIST, so it can refuse (a pending placement or paste — the
+  # netlister tears those down, issue 0263; or unsaved edits with autosave off,
+  # issue 0626) and it can raise (a broken oracle). Both must reach the user as
+  # text, not as a silent no-op: an empty .save file would kill the very
+  # simulation it was generated for. Everything that can go wrong lives in
+  # op_annot::write_save_file (src/op_annot.tcl) where
+  # tests/headless/test_op_annot.tcl row W26 drives it; what stays here is a
+  # label, a call and the one thing only this layer can do — show the message.
+  $topwin.menubar.simulation.graph add command -label {Create device OP .save file} \
+    -command {
+       if {[catch {op_annot::write_save_file} tctx::retval]} {
+         alert_ "$tctx::retval"
+       } elseif {$tctx::retval eq {}} {
+         alert_ "No operating-point save cards: no device below this cell has an\
+ op_annot descriptor, or none of them is in the netlist. Nothing written."
        }
     }
   $topwin.menubar.simulation.graph add checkbutton -label "Live annotate probes with 'b' cursor" \
@@ -18267,6 +18324,14 @@ set wm_fix 0
 
 # 20171010
 set tclcmd_txt {}
+# `simulate_bg` is the Simulate menu entry's own background and is only assigned
+# when a menubar is built (see create_toolbar/menu setup below). A --nogui or
+# --pipe session never builds one, yet C set_modify() writes
+# `set tctx::${win}_netlist $simulate_bg` unconditionally, so every scripted
+# load/netlist/save threw `can't read "simulate_bg": no such variable` on
+# stderr -- a Tcl error on a completely ordinary headless run. A default makes
+# the read legal; a GUI session still overwrites it with the real colour.
+set simulate_bg {}
 
 ###
 ### user preferences: set default values
@@ -18363,10 +18428,37 @@ set_ne change_lw 1
 ## See doc/claude/specs/snap_spacing_bindkeys.md section 5.
 set_ne linewidth_follows_snap 0
 set_ne line_width 0
-set_ne live_cursor2_backannotate 1
+## ISSUE 0864 -- SHIPPED OFF, AND THAT IS A CHANGE, NOT AN OVERSIGHT. This is
+## the menu checkbutton `Simulation > Graphs > Live annotate probes with 'b'
+## cursor`: while it is on, every drag of cursor B in a graph re-annotates the
+## schematic. It shipped ON and `xschem annotate_op` additionally FORCE-SET it,
+## so a user who unticked it found it ticked again the next time they pressed
+## `6`. It is opt-in now. Nothing that `6` or `Alt-6` PAINT depends on it any
+## more (see op_annot::_annotated and token.c's six cursor_b_val branches), so
+## flipping this default changes only when the schematic follows the cursor.
+## This also restores upstream's own original default: 96f80d1d shipped 0, and
+## fc19e646 flipped it to 1 in 2024.
+set_ne live_cursor2_backannotate 0
 set_ne cursor_2_hook {}
 set_ne draw_window 0
 set_ne show_hidden_texts 0
+## S7 annotation classes: visibility mask. bit0 = device operating-point info --
+## hide=op texts AND content-classified branch currents (`@spice_get_current*`, issue
+## 0678: a device's terminal current is device OP info). bit1 = node voltages --
+## hide=voltage texts and content-classified node voltages. MIRRORED IN C as
+## xctx->annot_show; see text_hidden()/annot_class_mask in src/actions.c and
+## doc/claude/specs/op_annotation.md. Default 0 = annotations off at rest; put
+## `set annot_show 1` in ~/.xschem/xschemrc to have them on from startup.
+set_ne annot_show 0
+## issue 0615: the layer a CONTENT-classified node voltage renders in, overriding the
+## symbol text's own layer= so node voltages stop wearing the device OP block's colour.
+## MIRRORED IN C as xctx->annot_voltage_layer; see annot_text_layer() in src/actions.c.
+## 9 is #ffffff on the default dark palette (the user's ratified choice) and #00aaaa on
+## the default light one -- a layer INDEX, so it travels through the per-layer colour
+## machinery instead of hard-coding a white that a light-palette user cannot see.
+## Any index outside [1, cadlayers) is the documented off switch: put
+## `set annot_voltage_layer -1` in ~/.xschem/xschemrc for the pre-0615 look.
+set_ne annot_voltage_layer 9
 set_ne en_pin_select 0
 set_ne incr_hilight 1
 set_ne enable_stretch 0
@@ -18433,6 +18525,13 @@ set_ne auto_set_wire_bus 0
 # (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
+## CIW text size, in points, for BOTH panes (log display + command entry). The two
+## share one named Tk font, CiwFont, built by ciw_font in src/ciw.tcl. Change it at
+## runtime with `ciw_set_font_size N` -- NOT by setting this variable, which is only
+## read when the font is first created: ciw_create runs during startup, before any
+## --script rc, so a later assignment here reaches nothing. See src/cadence_style_rc,
+## which bumps it for the Cadence-style workarea.
+set_ne ciw_font_size 10
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
 # C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
 # harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES
@@ -18881,6 +18980,16 @@ set_ne copy_cell 0
 
 load_recent_file
 load_net_hilight_conf
+# ASE-L simulator list: the simulators the user pointed at builds of their
+# own, saved in USER_CONF_DIR/ase_simulators by ase::sim_write_conf. Sits with
+# the other startup loaders because it has their lifetime: read once here,
+# written back only from an explicit save. Issue 0931. ase.tcl is sourced far
+# above, so the proc exists; it never throws, and a missing or damaged file
+# just leaves the list empty.
+#
+# A WRITER WITH NO READER IS THE RECORDED WAY THIS GOES WRONG (issue 0925),
+# which is why the suite greps this file for this call.
+ase::sim_load_conf
 # signal_browser_batch item 13: the waveform viewer's Location-bar raw history,
 # read from its own store ($USER_CONF_DIR/raw_history) -- NEVER the recent-files
 # list. Sits with the other two loaders because it has their lifetime: read once
@@ -18927,7 +19036,16 @@ if { ( $OS== "Windows" || [string length [lindex [array get env DISPLAY] 1] ] > 
   # (doc/claude/specs/action_logging.md decision 8; issue 0002 -- test runs pass --nolog
   # so short-lived windows don't leak WSLg ghost frames); closing it merely
   # withdraws the window
-  if {![info exists cli_opt_nolog] || !$cli_opt_nolog} { ciw_create }
+  ## issue 0658: guarded for the same reason the `source` of ciw.tcl is. This
+  ## is the ONLY startup use of a ciw.tcl proc, it runs solely under
+  ## [info exists has_x] -- i.e. in exactly the GUI session the user was in --
+  ## and an uncaught `invalid command name "ciw_create"` here would take the
+  ## whole startup down after the caught source had already saved it.
+  if {![info exists cli_opt_nolog] || !$cli_opt_nolog} {
+    if {[catch {ciw_create} ciw_create_err]} {
+      xschem::notify_degraded_once "ciw_create failed: $ciw_create_err"
+    }
+  }
 
   # update
   # xschem windowid . ;# set icon for window

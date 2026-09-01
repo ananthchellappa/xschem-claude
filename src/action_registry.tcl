@@ -200,6 +200,108 @@ proc menu_action_logged {cmd} {
   if {$err ne {}} { ciw_echo $err result ; xschem log_action -result $err }
 }
 
+# --- EVERY menu pick is logged, by construction (issue 0930) -------------------
+#
+# THE STANDING REQUIREMENT, the user's words: "We want to log everything! I said
+# that 3 months ago!" -- prompted by ASE-L > Tools > Waveform Viewer producing no
+# log line at all. The action-logging spec's own sentence is "Every user action
+# is logged" (doc/claude/specs/action_logging.md section 2).
+#
+# ⚠ WHY THIS IS AN INTERCEPTOR AND NOT A `-command` WRAPPER. `menu_action_logged`
+# above is the per-entry wrapper, and it works -- but it is attached in exactly
+# ONE place, `build_menu_from_table`, which is called for the single menu key
+# `file`. MEASURED: 6 of 238 command-bearing entries in a live main window were
+# wrapped; the other 232 logged only by accident, when their command happened to
+# be an `xschem` verb whose C core self-logs. ASE-L was the pure case -- 15 of
+# its 24 menubar entries wrote nothing whatever, and its 68 `ase::echo` calls
+# emit `#= ` COMMENTS, which are not replayable actions. Hand-attaching a
+# wrapper to every entry is what produced that state; the spec's three-layer
+# table never named Tk menu items as a layer at all, and section 5 defers
+# "non-File menus" explicitly. So this closes a spec gap, not a regression.
+#
+# ⚠ AND WHY IT WRAPS `invoke` RATHER THAN REWRITING `-command`. Rewriting the
+# entry's `-command` at build time costs 19 exact-equality test rows across 11
+# files that read the string back with `entrycget -command`. Wrapping the widget
+# command leaves every `-command` string byte-identical.
+#
+# It catches a real pick because Tk's own `::tk::MenuInvoke` ends in
+# `uplevel #0 [list $w invoke active]` (/usr/share/tcltk/tk8.6/menu.tcl:652-665,
+# read on this machine) -- so mouse picks, keyboard traversal and a test's
+# `$m invoke N` all arrive at the same place.
+#
+# ⚠ WHAT IT DOES NOT CATCH, stated rather than discovered later: a Tk menubar
+# CLONE is created by Tk's C `CloneMenu`, not by the `menu` command, so it is
+# unwrapped. On this Tk the menubar posts the original widget path, so picks are
+# caught; a platform that clones would lose the line, not the action.
+#
+# Dedup is `menu_action_logged`'s: reset the emitted flag, run the pick, and
+# write the command only if nothing underneath already self-logged it. That is
+# what keeps a file-menu row -- already wrapped -- from being logged twice, and
+# what keeps an `xschem` verb that self-logs in the C core from doubling up.
+#
+# `::menu_action_log 0` turns it off wholesale.
+set_ne ::menu_action_log 1
+
+# The intercepted `invoke`. `$real` is the renamed widget command; everything
+# that is not an `invoke` is passed straight through untouched.
+proc ::menu_invoke_logged {w real args} {
+  if {[lindex $args 0] ne {invoke} || ![info exists ::menu_action_log] ||
+      !$::menu_action_log} {
+    return [uplevel 1 [list $real {*}$args]]
+  }
+  set idx [lindex $args 1]
+  set cmd {}
+  catch {set cmd [$real entrycget $idx -command]}
+  ## A cascade or a separator has no command; nothing to record, and the pick
+  ## is navigation rather than an action.
+  if {$cmd eq {}} { return [uplevel 1 [list $real {*}$args]] }
+  catch {xschem log_action -reset}
+  set rc [catch {uplevel 1 [list $real {*}$args]} res]
+  ## After evaluation, exactly like menu_action_logged and the CIW: a pick that
+  ## FAILED becomes a `#` comment so the log file stays source-able.
+  set emitted 0
+  catch {set emitted [xschem log_action -emitted]}
+  if {!$emitted} {
+    if {$rc} {
+      catch {xschem log_action "# failed: $cmd"}
+    } else {
+      catch {xschem log_action $cmd}
+    }
+  }
+  if {$rc} { return -code error $res }
+  return $res
+}
+
+# Install once.
+#
+# ⚠ TWO GUARDS, AND THE FIRST ONE IS NOT OPTIONAL. Under `--nogui` there is no
+# Tk, so `::menu` does not exist and a bare `rename` raises at SOURCE time --
+# which does not merely skip the feature, it aborts the whole startup:
+#   can't rename "::menu": command doesn't exist
+#   xschem: STARTUP ABORTED: ... action_registry.tcl ... See issue 0663.
+# i.e. every headless run of the binary, including the entire regression suite.
+# MEASURED before this guard existed. The second guard is on the renamed name so
+# a re-source cannot stack two layers of interception and log every pick twice.
+if {[info commands ::menu] ne {} && [info commands ::menu_unlogged] eq {}} {
+  rename ::menu ::menu_unlogged
+  proc ::menu {w args} {
+    set r [uplevel 1 [list ::menu_unlogged $w {*}$args]]
+    ## The widget command moves aside and an alias takes its name. An alias
+    ## rather than a generated proc so the widget path can contain any
+    ## character Tk allows without quoting games.
+    set real ::menu_real_$w
+    if {[catch {rename $w $real}]} { return $r }
+    interp alias {} $w {} ::menu_invoke_logged $w $real
+    ## Tk deletes the real widget command on destroy and would leave the alias
+    ## dangling; drop it with the widget.
+    bind $w <Destroy> +[list apply {{ww} {
+      if {[winfo exists $ww]} return
+      catch {interp alias {} $ww {}}
+    }} $w]
+    return $r
+  }
+}
+
 # --- (removed) Phase-2 Tcl-intercept accelerators ------------------------------
 # Phase 2 generated Tk key-detail bindings from the 'accel' column
 # (migrated_action_ids / bind_accelerators_from_table / remap_action_accel).

@@ -177,6 +177,10 @@ source [file join $_ut find_helper.tcl]
 # Instance Update form (Ctrl+Shift+I). The Tk bind lives inside the util file; see
 # its header for why it is a .drw bind and not a keybindings.csv row.
 source [file join $_ut instance_update.tcl]
+# OP-annotation mode (6 / Ctrl-6 / Alt-6). Proc DEFINITIONS only -- the three Tk
+# binds live below, next to the Ctrl-4 precedent, because that is where someone
+# remapping a displaced chord reads. doc/claude/specs/op_annotation.md step S8.
+source [file join $_ut annot_mode.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
@@ -274,6 +278,82 @@ bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
 # replace "dollar" with whatever your Shift-4 produces (`xev`).
 bind .drw <Control-Key-dollar>  {ase::plot_mode_for_current invert; break}
 bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
+# 6 / Ctrl-6 / Alt-6 : OPERATING-POINT ANNOTATION MODE (doc/claude/specs/op_annotation.md
+# step S8, issue 0614). These write xctx->annot_show, the bitmask text_hidden()
+# (src/actions.c) gates the annotation classes on -- so device OP numbers and node
+# voltages appear on the schematic without the annotator symbol being moved, edited
+# or placed (invariant I4: the overlay never modifies the .sch).
+#
+# TWO ADDITIVE SETTERS AND ONE CLEAR-ALL. Ruled by the user 2026-08-22 (issue 0614);
+# this table replaced a three-state cascade whose two lower rows were wrong:
+#   6       annot_show |= 1   ADD device OP info AND branch currents (bit1 untouched)
+#   Alt-6   annot_show |= 2   ADD node voltages    (bit0 untouched)
+#   Ctrl-6  annot_show  = 0   clear BOTH -- the ONLY off switch
+# (The branch currents sat on `Alt-6` until issue 0678: the user drove a real bench
+# 2026-08-24 and ruled that a source's current is that DEVICE's OP info, so it
+# belongs to `6`. Only the MEMBERSHIP moved -- the three rows above are the ruling
+# the same bench confirmed correct, and the mask arithmetic did not change.)
+# So `6` never turns anything off and is not a toggle (press it twice, nothing
+# moves; press it with voltages on, they stay on), and `Alt-6` from a clean start
+# gives mask 2 -- voltages ALONE, which the old cascade could not reach.
+# Each press also loads the cell's raw if nothing is annotated yet (ASE session
+# first, else $netlist_dir/<cell>.raw) and SAYS WHAT HAPPENED on the status line,
+# held -- "there is no results file for this cell yet" and "these symbol types
+# have no operating-point values to show" are the two first-run confusions and
+# both are silent without it. (Issue 0886 put every one of those sentences into
+# plain English; the two confusions themselves are unchanged.) Body:
+# utils/annot_mode.tcl.
+#
+# Ctrl-6 overrides the C default (Ctrl+<digit> = select drawing layer <digit>,
+# callback.c:7272), so it ends in `break`, exactly like Ctrl-2 and Ctrl-4 above.
+# THE DISPLACED VERB SURVIVES: layer 6 is still selectable from the Layers menu
+# and as `xschem set rectcolor 6`; see doc/claude/specs/cadence_bindkey_plan.md
+# section 10 for the full displaced-chord list. Plain 6 and Alt-6 displace
+# nothing -- measured, callback.c's `case '6'` acts only when state == ControlMask.
+#
+# ALL FOUR CHORDS ARE SPELLED OUT AND THAT IS NOT REDUNDANCY: Tk matches a
+# pattern whose modifiers are a SUBSET of the event's, so with only the plain
+# chord bound BOTH Ctrl-6 and Alt-6 would fire it and the OFF key would silently
+# mean ON. (Measured too: Ctrl+Alt+6 falls into the Alt form.) The fourth chord
+# (issue 0868, below) does not disturb the three: a physical Alt+Shift+6 arrives
+# as a DIFFERENT KEYSYM, `asciicircum`, so plain Alt+6 still lands on
+# <Alt-Key-6> -- measured, and nothing else in src/ or utils/ binds asciicircum.
+# Like every bind in this file these are invisible to `xschem bindings dump` and
+# to keybindings.csv; remap by editing the chord on these lines.
+bind .drw <Key-6>               {cadence::annot_mode op;          break}
+bind .drw <Control-Key-6>       {cadence::annot_mode none;        break}
+bind .drw <Alt-Key-6>           {cadence::annot_mode opvolt;      break}
+# Alt-Shift-6 : TRANSIENT NODE VOLTAGES AT THE WAVEFORM CURSOR (issue 0868).
+# The user's own request: "Alt-6 and 6 are for OP info and OP node voltages. We
+# can add a menu item in Results > Annotate for annotating TRAN node voltages
+# for time-point given by cursor B, or A ... Give user a way to enter this mode
+# with a different shortcut through cadence_style_rc - maybe Alt-Shift-6".
+#
+# NOT a fourth `cadence::annot_mode` spelling, and that is deliberate. The three
+# chords above are pure mask arithmetic -- they turn a rendering switch on over
+# numbers that were already published. This one PUBLISHES: it resolves which
+# cursor supplies the time point (A when both are on, otherwise whichever one
+# is), asks the engine to annotate there, arms annot_show bit2 only if that
+# succeeded, and SAYS what happened in the CIW and on the held status line. Its
+# five outcomes are minted in one place, cadence::_annot_tran_msg
+# (utils/annot_mode.tcl); this line and the ASE-L `Results > Annotate >
+# Transient Node Voltages (at cursor)` item are the two doors onto ONE body.
+# Ctrl-6 still clears everything, bit2 included.
+#
+# SAME SHIFTED-KEYSYM GOTCHA AS Ctrl-Shift-4 ABOVE, and it is measured, not
+# inherited: with wish on :99, keycode 15 is `6 asciicircum`, a physical
+# Alt+Shift+6 on a US layout arrives as keysym `asciicircum`, and even an event
+# synthesised with keysym `6` plus Shift+Alt dispatches to
+# <Alt-Key-asciicircum>. <Alt-Shift-Key-6> NEVER fires. So the asciicircum form
+# is THE REAL BIND; the Shift-Key-6 form is kept for layouts where Shift-6 stays
+# "6". Non-US layout: replace "asciicircum" with whatever your Shift-6 produces
+# (`xev`). A landing that wrote only the Shift-Key-6 form passes every
+# behavioural test row in the tree and is dead under the user's fingers, which
+# is why row V20 of tests/headless/test_op_annot.tcl is a source grep.
+# Both end in `break` for the same reason the three above do.
+bind .drw <Alt-Key-asciicircum> {cadence::annot_tran;             break}
+bind .drw <Alt-Shift-Key-6>     {cadence::annot_tran;             break}
+
 # "Show in Signal Browser" USED TO BE BOUND HERE, as Ctrl-5 (PLAN item 12).
 # TWO-PANE item 17 (R10) MOVED IT INTO THE C ACTION REGISTRY as Ctrl+Alt+V --
 # see src/callback.c's `wave.show_in_signal_browser` row and its
@@ -558,3 +638,12 @@ unset _ut
 # scientific notation, uncomment:
 # set ase_eng_notation 0
 
+
+# --- CIW text size ----------------------------------------------------------
+# The CIW is where every notice, echo and command result lands, and it ships at
+# Monospace 10 -- small enough on a large or HiDPI display that the pane gets
+# skimmed instead of read. Bump it 20% (10 -> 12) for the Cadence-style workarea.
+# `ciw_set_font_size`, not `set ciw_font_size`: this rc is sourced AFTER
+# ciw_create has already built the window, so only the setter (which reconfigures
+# the live named font) reaches it. See src/ciw.tcl.
+catch {ciw_set_font_size 12}

@@ -1,0 +1,293 @@
+# 0683 — annotation is reachable with NO bound ASE-L session (the orphan state)
+
+STATUS: **FIXED 2026-08-25 (attempt 2, status E) — both stock items now refuse.
+Read §8 for what landed and what it does NOT cover.** §7 records the reverted
+attempt 1 and is kept because its inventory is still the reference. Blocking sibling of
+[0682](0682-annotation-visibility-belongs-in-ase-l-results-annotate.md).
+Related: 0457, 0614, 0621, 0678, 0682, [0684](0684-annot-ensure-loaded-guards-on-the-wrong-predicate.md)
+(the other half of "annotation and its session are not actually bound": 0683 is annotation
+with no session, 0684 is a session whose numbers are not the ones on screen).
+
+---
+
+## 1. Why this exists
+
+The user's 2026-08-24 ruling (0682 §1, verbatim):
+
+> results (including OP info) only make sense when there is a result loaded -
+> meaning an ASE-L is active, to which this schematic is "bound".
+
+0682 §4 draws the consequence and says it out loud: *"There is no 'annotated
+schematic with no session' state to design an escape hatch for. **If one is
+reachable today, that is a binding defect** to be found and fixed, not a menu to
+be added."*
+
+It is reachable today. This issue records the measurement. Per the 0682 brief it
+is **filed here and NOT fixed inside 0682**.
+
+## 2. The measurement
+
+Measured 2026-08-24 against `src/xschem` (build 2026-08-24 18:40:47), by two
+agents independently:
+
+* With `ase::session_for_current` returning `{}` — no ASE-L session anywhere in
+  the process — `xschem set annot_show 3` succeeds and `xschem get annot_show`
+  reads back `3`.
+* The RENDER half needs no new fixture: `tests/headless/test_op_annot.tcl`
+  section L (rows L5–L16, inside `RESULT: ALL PASS (335 checks)`) drives
+  `xschem set annot_show 0|1|2|3` and measures the annotated instance's bbox
+  growing `0 -> $L_W`, in a `--nogui` process where **no ASE-L toplevel can
+  exist at all**. Annotation renders end to end with nothing bound, and a green
+  committed suite proves it.
+
+## 3. The producers, all five
+
+> ⚠ **There are SIX, and two anchors below are stale.** Re-measured 2026-08-25:
+> `ase::ui::close` (`src/ase_window.tcl:300-330`) is a sixth producer of the orphan
+> STATE — it tears the session down and never clears the mask. Filed as
+> [0686](0686-ase-ui-close-leaves-the-design-annotated-after-the-session-is-gone.md).
+> And this section's file:line anchors for producers (a) and (b) are wrong:
+> `src/xschem.tcl:15408` is `Waves > Sp`, and `:15804`/`:15822` are comment lines in
+> the next menu item. The two real mask writes are **`:15391`** (`Waves > Op Annotate`,
+> body `:15373-15402`) and **`:15789`** (`Simulation > Graphs > Annotate Operating
+> Point into schematic`, body `:15770-15800`) — `grep -n 'xschem set annot_show 3'`
+> returns exactly those two, and both bodies are straight-line with no predicate
+> ahead of the write.
+
+
+None of these involves ASE-L:
+
+| # | producer | site |
+|---|---|---|
+| a | `Waves > Op Annotate` | `src/xschem.tcl:15391`, `:15408` — `xschem set annot_show 3` + `annotate_op` |
+| b | `Simulation > Graphs > Annotate Operating Point into schematic` | `src/xschem.tcl:15804`, `:15822` — identical body |
+| c | `set annot_show 1` in `~/.xschem/xschemrc` | honoured at `src/xinit.c:3839` |
+| d | `cadence::annot_mode`'s `netlist_dir` fallback | `utils/annot_mode.tcl:160-167` — returns source `netlist_dir`, written **on purpose** for the no-ASE case |
+| e | the `View > Show / Hide` pair | **deleted by 0682** |
+
+(e) is gone. (a)–(d) ship.
+
+## 4. Why it is blocking, not cosmetic
+
+0682 deletes the View pair, so after it lands a stock user who clicks (a) or (b)
+is annotated ON **with no menu anywhere that turns it off** — the ASE-L entries
+stay greyed because there is no session. That is verbatim the complaint
+[0457](0457-annot-show-has-no-stock-affordance.md) was filed about, arriving by a
+different road.
+
+So this is not "tidy up an unreachable state later". Until it is fixed, 0682's
+own ruling ("that state should not exist") is a statement about code that must be
+made true, not a description of the tree.
+
+## 5. Options, none chosen — the user rules
+
+1. **Bind at the producer.** (a) and (b) refuse (or first Launch ASE-L) when
+   `ase::session_for_current` is `{}`. Smallest, and it makes the ruling true at
+   the only two GUI entry points. Costs: two shipped menu items change behaviour
+   for users who never open ASE-L.
+2. **Bind at the mask.** `xschem set annot_show` (or `annot_show_sync_cache()`)
+   refuses a non-zero mask with no bound session. Largest blast radius; reaches
+   (c) and (d) too; C work.
+3. **Auto-bind.** A producer with no session opens/attaches one. Most Cadence-
+   like, most surprising, most code.
+
+Option (1) is what §4's reasoning points at; recorded as a recommendation, not a
+decision.
+
+## 6. Acceptance rows (for whoever takes this)
+
+* With no session: (a) and (b) leave `annot_show` at 0 and say why, through
+  `ase::no_session_notice`'s wording (never a second spelling — issue 0168).
+* With a session: (a) and (b) behave exactly as today (mask 3 + `annotate_op`).
+* `tests/headless/test_op_annot.tcl` section L keeps working — it drives the mask
+  directly, which is a scripted call, not a producer.
+
+---
+
+## 7. ⚠ ATTEMPT 1 (2026-08-25) — REFUTED AND REVERTED. READ BEFORE RETRYING
+
+A full fix for 0683 **and** [0684](0684-annot-ensure-loaded-guards-on-the-wrong-predicate.md)
+was implemented, tested and reverted in one run. It reached 22 + 207 + 342 green
+checks with a fully trustworthy sabotage matrix (8/8 variants, every predicted red
+observed, plus 9 unpredicted ones) and was then refuted by the adversary pass on
+three independent counts, all re-measured by the write-up pass on a clean tree.
+
+### What it built (pure Tcl, no build; the shape is mostly right)
+
+| proc | file | what |
+|---|---|---|
+| `ase::annot_binding_ok` | `ase.tcl` | 1 iff `session_for_current` yields a key AND `ase::has_results $key`; else speaks one refusal and returns 0 |
+| `ase::no_results_notice` | `ase.tcl` | the second refusal wording, beside the shipped `no_session_notice` |
+| `ase::ui::annot_entry_state` | `ase_window.tcl` | `normal` when the session has results **or** the entry's bit is already set — never grey away an off switch |
+| `ase::ui::annot_attached_current` | `ase_window.tcl` | calls `op_annot::_annotated` (I1, not a fourth copy) + path identity + freshness stamp; every catch falls to RE-ATTACH, never to `return` |
+| `ase::ui::annot_stamp` | `ase_window.tcl` | `annot($key,src)` = `{normpath mtime size}`, written only after the attach is VERIFIED by re-asking `op_annot::_annotated` |
+| `ase::ui::annot_drop_stale` | `ase_window.tcl` | the [0685](0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md) workaround — **this one caused a regression, see below** |
+| `ase::ui::annot_clear_on_close` | `ase_window.tcl` | [0686](0686-ase-ui-close-leaves-the-design-annotated-after-the-session-is-gone.md)'s clear, through the existing writer |
+| `ase::ui::annot_notify_displaced` | `ase_window.tcl` | echoes before `annotate_op` destroys another 1-point op/dc db |
+
+Both producer bodies were wrapped whole in `if {[ase::annot_binding_ok]} { … }`,
+with the guard **above** `select_raw` so a refused user never answers a modal file
+dialog (`select_raw` also rewrites the global `netlist_dir` as a side effect of being
+read). The mask-writer counts held: 2 in `xschem.tcl`, 1 in `ase_window.tcl`, so
+`test_op_annot` N22 and `test_annot_show_menu` B6/B10 stayed green untouched.
+
+### Why it was reverted — three refutations, each re-measured on the clean tree
+
+1. **The orphan is still reachable, end to end, through sanctioned doors only.**
+   Annotate from ASE-L → `File > Open` another cell in the design window →
+   `Session > Close` → open the original cell again. Final state: `annot_show = 3`,
+   `raw loaded = 0`, `op_annot::_annotated = 1`, `xschem raw value v(a) -1 = 3.14`,
+   `session_for_current = ''`, 0 sessions, no `cadence::annot_mode`, and **0 of 6**
+   annotation-ish menubar entries that clear the mask. Root cause and full transcript:
+   [0688](0688-the-annotation-mask-outlives-the-schematic-so-window-keyed-binding-cannot-hold.md).
+   The binding was keyed on cellview→window, and `File > Open` defeats it.
+2. **The ASE-L off switch fails in the same state**, for the same reason —
+   `annot_apply` → `annot_goto_design` returns 0, echoes *"cannot reach this session's
+   design window"*, and the mask stays 3.
+3. **A new data-loss regression.** `annot_drop_stale` cleared `op`/`dc`/`tran` at the
+   session path; when the re-read then failed (ngspice mid-rewrite — readable but
+   truncated), the user's loaded waveform database was destroyed and nothing replaced
+   it. The old guard survived that scenario. Detail in
+   [0685](0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md) §4.
+
+Plus a trade the user was never asked about: with the guard in place, both
+`Waves > Op Annotate` and `Simulation > Graphs > Annotate Operating Point` become
+**dead on stock xschem** for a user who never opens ASE-L, even with a perfectly good
+`.raw` on disk. That is a working upstream feature deleted, in exchange for an orphan
+that survived anyway.
+
+### Binding on attempt 2
+
+* **Fix [0688](0688-the-annotation-mask-outlives-the-schematic-so-window-keyed-binding-cannot-hold.md) first.**
+  0683 is a **lifetime** problem, not an entry problem. A producer-side guard does
+  nothing about a mask that is already on, and every session-keyed clear is defeated
+  by an ordinary `File > Open`.
+* **The refusal predicate is a separate, unratified user-visible decision** and it
+  should be put to the user *with* the cost above, not on its own.
+* **`vc/atk4.tcl`'s five steps must be a test row.** 571 green checks passed over it.
+* The attempt's patch is kept out of the tree at
+  `/tmp/claude-1000/-home-analog-dev-xschem-claude/scratch_0683+0684/rejected/0683_0684_attempt.patch`
+  (same-day artifact only). The proc inventory above is the durable part.
+
+
+---
+
+## RULING — the user, 2026-08-25
+
+Presented with the measured state (two stock menu items switch annotation ON —
+`Waves > Op Annotate` at `src/xschem.tcl:15391` and
+`Simulation > Graphs > Annotate Operating Point into schematic` at `:15789` — while
+every OFF-ramp is conditional on a live ASE-L session, on the cadence profile, or
+on an rc edit), the user chose:
+
+> **Refuse without a bound session.**
+>
+> Both stock items check for a live bound session and refuse with a clear message
+> naming the ASE-L path if there is none.
+
+**The trade is accepted explicitly**, having been stated in the question: *stock
+xschem with no ASE-L can no longer annotate at all.* That was the part 0682's
+ruling did not cover — 0682 settled where the CONTROL lives; this settles whether
+stock xschem keeps the CAPABILITY. It does not.
+
+The other two options were rejected: making the stock items TOGGLE (it would put a
+second working annotation control outside ASE-L, a partial retreat from 0682), and
+REMOVING both items outright (the refusal message is more useful than a missing
+menu, because it tells the user where the function went).
+
+### What this ruling does NOT settle
+
+The refusal has to be delivered through the notification channel, and that channel
+has open defects — 0674, 0675, 0677, 0699, 0800 — of which **0675 is exactly the
+hazard here**: a channel can pass its own liveness test and reach nobody. A
+refusal nobody sees is *worse* than the bug being fixed, because the menu item
+then does nothing at all with no explanation. Any implementation must prove the
+refusal REACHED a sink, not that `notify` returned.
+
+
+---
+
+## 8. ✅ ATTEMPT 2 (2026-08-25) — LANDED. What the ruling bought, and what it did not
+
+Implemented by the 0688+0683 crew, in the ruling's order: **0688 first (the
+lifetime), then this (the entry)**. Attempt 1 failed because it treated 0683 as an
+entry problem; §7's "Binding on attempt 2" was followed literally.
+
+### The BEFORE, quoted from the measure agent (2026-08-25, real menubar widgets under X)
+
+```
+BEFORE| sessions registered = 0
+BEFORE| ase::annot_binding_ok exists = 0
+BEFORE| A entry -state = normal
+BEFORE| A annot_show AFTER invoke = 3
+BEFORE| A CIW grew by (chars) = 0
+BEFORE| B annot_show AFTER invoke = 3
+BEFORE| B CIW grew by (chars) = 0
+   '#! ' notice lines: 0
+```
+
+Both entries drove the mask 0 → 3 with zero sessions, attached the raw, and **said
+nothing**: CIW +0 chars, statusbar `-text` empty, durable log 0 notice lines. The
+measure agent also stubbed `select_raw` and recorded `select_raw was called = 1` in
+both legs — positive proof no guard sat above the modal file chooser.
+
+### The AFTER
+
+```
+C4  no session: annot_show 0, select_raw call count 0, op_annot::_annotated 0
+C5  a sink NEWLY carries the marker after the invoke  ->  {0 1}
+C7  uplevel #0 [dict get $::xschem::notify_last command]  ->  sessions 1
+C8  with that session live, the SAME entry annotates: select_raw 1, mask 3, v(a) 3.14
+```
+
+The rendered sentence, derived end to end:
+
+> `ASE: Waves > Op Annotate did NOT annotate -- annotation is driven by ASE-L and
+> no ASE-L session is bound to this design or to any of its parents.
+> Fix: Tools > Launch ASE-L. CIW command: ase::launch_for_current`
+
+### What landed
+
+| piece | file | what |
+|---|---|---|
+| `ase::annot_binding_ok {{menupath {}}}` | `src/ase.tcl` | 1 iff `ase::session_for_current` yields a key; else speaks the refusal and returns 0 |
+| `ase::annot_no_binding_notice {menupath}` | `src/ase.tcl` | ONE `::xschem::notify` carrying `-tag error`, `-short {not annotated: no ASE-L}`, `-menu`, `-command` |
+| `annot_lbl_*` ×7 + `annot_menu_path_waves_op` / `annot_menu_path_graphs_op` / `annot_remedy_menu` | `src/xschem.tcl` | the label constants the menubar is now BUILT from, so the printed path and the widget are one string |
+| both producer bodies | `src/xschem.tcl` | WRAPPED whole in `if {[ase::annot_binding_ok …]} { … }`, guard first, **above** `select_raw` |
+
+Both rejected options are pinned by row **C1**: the entries still exist (deletion
+rejected) and are plain `-state normal` commands, not checkbuttons (toggle
+rejected).
+
+### ⚠ THE RULING'S "what this does NOT settle" WAS THE RIGHT WORRY, AND IT WAS PAID
+
+0675 is **live and reproducible**, and both the measure and the adversary pass hit
+it independently: in a `--nogui` process with `llength [info commands winfo]` = 0,
+`dict get $::xschem::notify_last sinks` still reads `{ciw log}`, and
+`::xschem::notify`'s return value was `1` in **every** arm including the one with no
+on-screen sink at all. A row asserting reachability through either would pass
+identically whether the refusal reached a human or reached nobody.
+
+So every reachability row reads a **sink**: `.ciw.l.t` text containment under X,
+`[xschem get top_path].statusbar.12 -text` with the CIW absent or withdrawn, and a
+grep of the `--logdir` `Xschem.log` file. The hardest arm was measured: `--nolog`
+on `:99` with `winfo exists .ciw` = 0 and `actionlog_filename` empty — the
+statusbar read back `not annotated: no ASE-L` verbatim. Sabotage variant **SAB-F**
+(the notice proc neutered, the guard left working) is the discriminator: the item
+still refuses, **C4 stays green**, and C5/C6/C7/C9 go red. A refusal nobody sees is
+detectable.
+
+The one remaining visibility hole is pre-existing and out of this item's fence:
+issue **0659** — a CIW that is mapped but stacked *behind* the design window.
+
+### What this does NOT cover
+
+The ruling's intent — no annotated-with-no-session state — is **not yet true**.
+[0809](0809-the-annotation-mask-leaks-into-a-new-window-with-a-null-stamp.md): the
+mask leaks into a new window/tab with a NULL stamp, and the orphan reproduces end
+to end through `File > Open in new window`. This item's honest claim is *"the
+plain-`File > Open` sequence ends clean and both stock producers refuse"*.
+
+And [0686](0686-ase-ui-close-leaves-the-design-annotated-after-the-session-is-gone.md)
+was deliberately left open (decision **D8**) — the state it leaves is recoverable by
+the road the new refusal message names.

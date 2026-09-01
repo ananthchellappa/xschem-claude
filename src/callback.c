@@ -556,8 +556,25 @@ static void start_place_symbol(void)
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
-      tclvareval("set INITIALINSTDIR [file dirname {",
-           abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""), "}]", NULL);
+      /* issue 0831 -- the symbol reference is .sch DATA and the old splice sat inside
+       * a `[file dirname {...}]` COMMAND SUBSTITUTION, so a `}` or a `[` in it was
+       * script (issues 0827 + 0829 at one site). The substitution is deleted outright:
+       * the dirname is taken by tcl_call() and the result assigned with tclsetvar(),
+       * which is Tcl_SetVar/TCL_GLOBAL_ONLY -- exactly what the old global-level `set`
+       * did. abs_sym_path() returns tclresult() and tcl_call()'s tclsetvar() writes
+       * through the interpreter, invalidating it, so each result is copied out before
+       * the next call (the token.c sanitize() rule, util.c:1122). Heap copies, not a
+       * fixed buffer: a symbol reference has no length bound and a bounded copy would
+       * truncate silently. NB tcl_hook2() still evaluates a `tcleval(`-prefixed name
+       * here -- that is by design (issue 0823) and no conversion changes it. */
+      char *symref = NULL;
+      char *instdir = NULL;
+      my_strdup2(_ALLOC_ID_, &symref,
+           abs_sym_path(tcl_hook2(xctx->inst[xctx->sel_array[0].n].name), ""));
+      my_strdup2(_ALLOC_ID_, &instdir, tcl_call("file dirname", symref, NULL, NULL));
+      tclsetvar("INITIALINSTDIR", instdir);
+      my_free(_ALLOC_ID_, &symref);
+      my_free(_ALLOC_ID_, &instdir);
     }
     xctx->mx_double_save = xctx->mousex_snap;
     xctx->my_double_save = xctx->mousey_snap;
@@ -1318,8 +1335,22 @@ static double interpolate_yval(int idx, int p, double x, int sweep_idx, int poin
  * This is the shipped body of backannotate_at_cursor_b_pos(), moved down one
  * level so it can be run once per contributing database; nothing inside it
  * changed except the two Tcl_* publishing arms becoming conditional and the
- * point_not_last argument (RULING D4-4). */
-static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
+ * point_not_last argument (RULING D4-4).
+ *
+ * 0868 -- `at` IS THE WHOLE OF THE NEW MODE'S C SIDE. NULL means "read the
+ * position out of the cursor", which is every shipped caller and is
+ * byte-identical to what this function always did. Non-NULL means "resolve at
+ * THIS time instead", which is what `xschem annotate_at <t>` needs, and it is a
+ * pointer rather than a sentinel double because every finite time -- 0 included
+ * -- is a legal request.
+ *
+ * ⚠ IT IS A READ, NOT A CURSOR MOVE, AND THE DIFFERENCE IS A GUARD. The obvious
+ * alternative is to write xctx->graph_cursor2_x = t and call the shipped path;
+ * that passes every value row and makes the waveform viewer's cursor B jump
+ * under the user's pointer every time the sheet is annotated. Row V6 of
+ * tests/headless/test_op_annot.tcl is the only thing that can see it, which is
+ * why it sits beside the value rows rather than inside one. */
+static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl, const double *at)
 {
   {
     int dset, first = -1, last, dataset = gr->dataset, i, p, ofs = 0, ofs_end;
@@ -1339,7 +1370,14 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
     }
     sweep_idx = get_raw_index(find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1), NULL);
     if(sweep_idx < 0) sweep_idx = 0;
-    if(r->flags & 4) { /* private_cursor */
+    /* 0868 (guard G3): a REQUESTED time point short-circuits the cursor read
+     * entirely -- the private_cursor token and the global alike. Everything
+     * below still works off the local `cursor2`, so the scan, RULING D4-7's
+     * window rescan and RULING D4-4's clamp are the shipped ones (invariant I1:
+     * one behaviour, never two builders that drift). */
+    if(at) {
+      cursor2 = *at;
+    } else if(r->flags & 4) { /* private_cursor */
       const char *s = get_tok_value(r->prop_ptr, "cursor2_x", 0);
       if(s[0]) {
         cursor2 = atof_spice(s);
@@ -1526,8 +1564,18 @@ static void backannotate_cursor_b_in_db(xRect *r, Graph_ctx *gr, int write_tcl)
  * the viewer's readout bar still reads the digital trace at the cursor. D5 is
  * about the SCHEMATIC, not about the waveform window.
  */
-void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
+/* 0868 -- THE SHIPPED BODY, one level down, with the requested-time pointer
+ * threaded through. `at` NULL is the cursor read, i.e. byte-identical to what
+ * backannotate_at_cursor_b_pos() has always done; `at` non-NULL is
+ * `xschem annotate_at <t>`. Splitting it here rather than adding a parameter to
+ * the public entry keeps all ten shipped call sites untouched, which is the
+ * point: this item must not change one pixel of the cursor path. */
+static void backannot_pos_at(xRect *r, Graph_ctx *gr, const double *at)
 {
+  /* S9 / invariant I3: the cursor-B live path republishes the annotation point
+   * without changing anything the overlay's epoch can observe. See update_op()
+   * (save.c) for the same bump and the reason it exists. */
+  annot_data_changed();
   tcleval("catch {eval $cursor_2_hook}");
   if(sch_waves_loaded() >= 0) {
     int *slots = NULL, n, k;
@@ -1539,7 +1587,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
     if(!publish) Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
     n = graph_cursor_dbs(r, &slots);
     if(n <= 0) {                      /* no rect, or no registry: the current DB */
-      backannotate_cursor_b_in_db(r, gr, publish);
+      backannotate_cursor_b_in_db(r, gr, publish, at);
       my_free(_ALLOC_ID_, &slots);
       return;
     }
@@ -1551,7 +1599,7 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
         my_snprintf(buf, S(buf), "%d", slots[k]);
         if(!extra_rawfile(2, buf, NULL, -1.0, -1.0)) continue;
       }
-      backannotate_cursor_b_in_db(r, gr, k == 0 && publish);
+      backannotate_cursor_b_in_db(r, gr, k == 0 && publish, at);
     }
     if(n > 1) {
       char buf[30];
@@ -1564,6 +1612,158 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
     }
     my_free(_ALLOC_ID_, &slots);
   }
+}
+
+/* The shipped public entry, unchanged for all ten of its callers: cursor B,
+ * read where it stands. 0868 added the `at` parameter one level down; NULL here
+ * is what this function has always done. */
+void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
+{
+  backannot_pos_at(r, gr, NULL);
+}
+
+/* S11 -- THE SAME CURSOR, WITH NO GRAPH IN THE PICTURE.
+ * doc/claude/specs/op_annotation.md step S11; issues 0477-0480.
+ *
+ * `xschem set cursor2_x <t>` used to annotate ONLY when a graph rect sat on
+ * GRIDLAYER with cursor B enabled (scheduler.c), so a schematic with a
+ * transient raw loaded and NOTHING plotted -- the ordinary state for the
+ * op_annot `6` / `Alt-6` keys -- moved a global nobody read while every
+ * annotated value stayed frozen at update_op()'s point 0 (save.c). This
+ * resolves cursor B directly against xctx->raw instead.
+ *
+ * NOTHING IS REIMPLEMENTED HERE. The sample scan, RULING D4-7's window rescan,
+ * RULING D4-4's clamp and RULING D4-1's per-database fan-out are all reached
+ * through the shipped public entry below, with a synthetic rect and a
+ * stack-local Graph_ctx standing in for the graph that is not there. Invariant
+ * I1 -- one behaviour, never two builders that drift: an out-of-range t
+ * therefore HOLDS the endpoint here exactly as it does on the graph path, and a
+ * vector missing from the raw still renders blank (I3), because both answers
+ * come out of the same code rather than out of a private copy of it.
+ *
+ * THE ZEROED xRect IS A CORRECT ONE, and that was verified in the callees, not
+ * assumed. backannotate_cursor_b_in_db() reads only two things out of the rect:
+ * the `sweep` token -- and get_tok_value() returns "" for a NULL prop_ptr
+ * (token.c), so sweep_idx falls back to 0, the time column -- and `flags & 4`
+ * (private_cursor), clear, so the position is xctx->graph_cursor2_x.
+ * graph_cursor_dbs() (draw.c) has an explicit non-graph arm,
+ * `if(!(r->flags & 1)) goto cursor_dbs_done;`, that yields the current database
+ * and nothing else: no `%` parse, no extra_rawfile() switch.
+ *
+ * THE Graph_ctx IS A STACK LOCAL AND CARRIES AN EXPLICIT WHOLE-SWEEP WINDOW.
+ * Both halves of that are load-bearing:
+ *
+ *   - A STACK LOCAL, NEVER &xctx->graph_struct. save.c's raw_read() already
+ *     does exactly this, for exactly this reason: the shared struct is live
+ *     inside draw_graph(), which calls raw_read(). Writing into it from here
+ *     would corrupt an in-progress draw. There is also no rect 0 to
+ *     setup_graph_data() from -- that function indexes
+ *     xctx->rect[GRIDLAYER][i] on its first line.
+ *
+ *   - [-HUGE_VAL, +HUGE_VAL], NOT a memset-0 window, and this is the step's
+ *     sharpest trap because the zeroed one looks safe. A zeroed Graph_ctx is
+ *     the degenerate window [0,0], and EVERY transient raw has a sample at
+ *     exactly t = 0, which passes the scan's `xx >= start && xx <= end`. So
+ *     `first` becomes 0 rather than -1, D4-7's rescan_no_window never fires,
+ *     the scan exits with p = first = 0, and interpolate_yval() then clamps
+ *     frac to 1 and walks one segment forward: POINT 1's value for every t past
+ *     the second sample. Measured, v(d) = 1 at t = 3 ns on a raw whose point 3
+ *     holds 3.0 -- a plausible wrong number on a schematic, which is precisely
+ *     what invariant I3 and save.c RULING D5-1 forbid. The wide window admits
+ *     every sample and reproduces the no-window answer exactly (nearest sample,
+ *     clamped at both ends, never extrapolated) without touching the shipped
+ *     scan. Row T4 of tests/headless/test_op_annot.tcl is the discriminator,
+ *     and issue 0480 records the same defect where it is NOT fixed: the graph
+ *     path, which borrows the shared struct and can therefore answer from a
+ *     window belonging to a schematic that is no longer loaded.
+ *
+ * THE sch_waves_loaded() GATE IS HERE, AHEAD OF THE CALL, rather than left to
+ * the one inside backannotate_at_cursor_b_pos(). That function fires
+ * annot_data_changed() and `catch {eval $cursor_2_hook}` BEFORE its own test,
+ * so calling it unconditionally would fire a user hook that has been graph-only
+ * since it was written, and would move the very S9b flush counter that exists
+ * to detect over-flushing, on every sheet with no data (rows T19/T20).
+ *
+ * Returns 1 when it annotated, so the caller knows whether the floater caches
+ * need refreshing; 0 when there is nothing to annotate against and the call was
+ * a byte-exact no-op. */
+int backannotate_at_cursor_b_nograph(void)
+{
+  xRect r;
+  Graph_ctx gr;
+  if(!xctx || sch_waves_loaded() < 0) return 0;
+  memset(&r, 0, sizeof(r));
+  memset(&gr, 0, sizeof(gr));
+  gr.gx1 = -HUGE_VAL;
+  gr.gx2 = HUGE_VAL;
+  backannotate_at_cursor_b_pos(&r, &gr);
+  return 1;
+}
+
+/* 0868 -- ANNOTATE AT A TIME POINT THE USER ASKED FOR, WITH NO CURSOR IN THE
+ * PICTURE. doc/claude/issues/0868-*.md; `xschem annotate_at <t>` (scheduler.c)
+ * is the only caller, and the two entry points the user has -- the ASE-L
+ * `Results > Annotate > Transient Node Voltages (at cursor)` item and the
+ * `Alt-Shift-6` chord -- both reach it through cadence::annot_tran
+ * (utils/annot_mode.tcl), which resolves WHICH cursor supplies the time and
+ * mints the one sentence. Nothing about a cursor is decided here: this function
+ * takes a number.
+ *
+ * WHY THE MODE EXISTS AT ALL. Guards G1 and G2 (save.c, actions.c) stopped the
+ * program from acquiring a transient annotation nobody asked for. Measured with
+ * the Live-annotate box unticked, NO gesture in the program could then
+ * re-measure a published number -- not `s`, not the chord again, not Ctrl-6 then
+ * the chord. This is the on-request door that makes the gating shippable.
+ *
+ * NOTHING IS REIMPLEMENTED HERE, and that is invariant I1 rather than economy.
+ * The sample scan, RULING D4-7's window rescan, RULING D4-4's clamp and RULING
+ * D4-1's per-database fan-out are all reached through backannot_pos_at() with a
+ * synthetic rect and a stack-local Graph_ctx, exactly as
+ * backannotate_at_cursor_b_nograph() above does. So an out-of-range t HOLDS the
+ * boundary sample here for the same reason it does on the graph path, and a
+ * vector missing from the raw still renders blank (I3) -- one answer, one place.
+ *
+ * THE ZEROED xRect IS A CORRECT ONE, verified in the callees rather than
+ * assumed: backannotate_cursor_b_in_db() reads only the `sweep` token
+ * (get_tok_value() answers "" for a NULL prop_ptr, so sweep_idx falls back to 0,
+ * the time column) and `flags & 4`, clear -- and with `at` non-NULL that branch
+ * is not even reached. graph_cursor_dbs() (draw.c) has an explicit non-graph arm
+ * yielding the current database and nothing else.
+ *
+ * ⚠ THE WINDOW IS [-HUGE_VAL, +HUGE_VAL] AND A memset-0 ONE IS A WRONG-NUMBER
+ * BUG THAT LOOKS SAFE. A zeroed Graph_ctx is the degenerate window [0,0]; every
+ * transient has a sample at exactly t = 0, which passes the scan's
+ * `xx >= start && xx <= end`, so `first` comes back 0 instead of -1, D4-7's
+ * rescan_no_window never fires, the scan exits at p = first = 0 and
+ * interpolate_yval() then clamps frac to 1 and walks one segment forward:
+ * POINT 1's value for every t past the second sample. Measured on the graph path
+ * with an un-zoomed rect: v(d) = 1 at t = 3 ns where the truth is 3.0. A
+ * plausible wrong number on a schematic is precisely RULING D5-1's failure. Row
+ * V3 of tests/headless/test_op_annot.tcl is the only row that can see it, and
+ * callback.c's nograph entry above carries the same reasoning for the same
+ * reason.
+ *
+ * ⚠ THE sch_waves_loaded() GATE IS HERE, AHEAD OF THE CALL (guard G4).
+ * backannot_pos_at() fires annot_data_changed() and `catch {eval
+ * $cursor_2_hook}` BEFORE its own test, so calling it unconditionally would fire
+ * a user hook that has been graph-only since it was written and would move the
+ * very S9b flush counter that exists to detect over-flushing -- on every sheet
+ * with no data. Rows T19/T20 taught this; row V5 re-earns it for this verb.
+ *
+ * Returns 1 when it annotated, so the caller knows whether the floater caches
+ * need refreshing; 0 when there was nothing to annotate against and the call was
+ * a byte-exact no-op. */
+int backannotate_at_time(double t)
+{
+  xRect r;
+  Graph_ctx gr;
+  if(!xctx || sch_waves_loaded() < 0) return 0;
+  memset(&r, 0, sizeof(r));
+  memset(&gr, 0, sizeof(gr));
+  gr.gx1 = -HUGE_VAL;
+  gr.gx2 = HUGE_VAL;
+  backannot_pos_at(&r, &gr, &t);
+  return 1;
 }
 
 /* ---------------------------------------------------------------------------
@@ -4465,7 +4665,7 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     if(n >= 0) {
       statusmsg_hold_clear();   /* same as the ESC path: the blank must land (issue 0248) */
       statusmsg(" ", 1);
-      tclvareval("hi_descend_pick_done {", xctx->inst[n].instname, "}", NULL);
+      tcl_call("hi_descend_pick_done", xctx->inst[n].instname, NULL, NULL);
     } else { /* clicked empty space or a non-instance: cancel the armed descend cleanly */
       statusmsg_hold("Descend: cancelled (no instance there)", 1);
       tcleval("hi_descend_pick_cancel");
@@ -9760,7 +9960,29 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
        strcmp(xctx->current_win_path, win_path) ) {
       struct stat buf;
 
-      if(xctx->pending_fullzoom == 1) return 0; /* no switching if opening a new window */
+      /* ⚠ issue 0848: AN EXPOSE IS NOT A CONTEXT STEAL, and dropping it corrupts a
+       * window that is not the one this guard protects.
+       *
+       * The guard exists so a window being opened cannot have its context yanked away
+       * by focus/enter events arriving mid-creation. True for FocusIn and EnterNotify.
+       * False for Expose: an Expose is another window reporting that its pixels are
+       * gone and asking to be repainted, and the arm below answers with a redraw-ONLY
+       * switch that restores the previous context immediately (`redraw_only` /
+       * `restore_win`). Refusing it does not protect the window being opened -- it
+       * leaves a DIFFERENT window carrying whatever was drawn over it, until something
+       * else happens to force a full redraw.
+       *
+       * ⚠ AND IT WAS INVISIBLE UNTIL THE OTHER HALF WAS FIXED. This is one of two
+       * bugs in series: new_schematic("switch_no_tcl_ctx", ...) silently no-opped for
+       * the main window under the tabbed interface (xinit.c, same issue), so the
+       * redraw never happened whether or not this guard fired. Measured with a
+       * detached window current and the main window uncovered, as a fraction of
+       * differing canvas pixels against a correct repaint:
+       *     both bugs present     guard armed 0.0263   guard clear 0.0263
+       *     switch fixed only     guard armed 0.0263   guard clear 0.0000
+       *     both fixed            guard armed 0.0000   guard clear 0.0000
+       * The middle row is why the first measurement of this guard read as innocent. */
+      if(xctx->pending_fullzoom == 1 && event != Expose) return 0;
       dbg(1, "handle_window_switching(): event=%d, ui_state=%d win_path=%s\n",
           event, xctx->ui_state, win_path);
       /* This will switch context only when copying stuff across windows

@@ -271,6 +271,55 @@ check "(d) ~/ form replay re-embeds IDENTICALLY" [expr {[sd] eq $sdAbs}] "replay
 file delete -force $HRAW   ;# early drop; the exit hook above is the backstop
 
 # ---------------------------------------------------------------------------
+# (EINJ) ISSUE 0812 -- THE `~/` EXPANSION IS A TCL SPLICE, AND A FILENAME IS NOT
+#     SCRIPT. run_core builds `regsub {^~/} {<argv[2]>} {<home_dir>/}` and
+#     tcleval()s it, so a `}` in the path CLOSES the brace group and the rest of
+#     the filename RUNS AS TCL -- measured on this tree, sentinel asserted.
+#     doc/claude/issues/0812-extra-rawfile-substs-the-raw-path-so-a-crafted-filename-executes-tcl.md
+#
+#     ⚠ THE PAYLOAD SHAPE IS THE REGSUB ONE, NOT THE `subst` ONE AND NOT THE
+#     ARRAY-INDEX ONE. save.c's sink falls to `q}; set ::SC_PWNED 1; list {a.raw`;
+#     fed HERE that lands as `regsub {^~/} {..q}` -- too few arguments, the script
+#     errors on command 1, the sentinel never runs and the row reports a clean
+#     PWNED=0 over a live defect. The ARRAY-INDEX payload `$a([exec ...]).raw` is
+#     likewise INERT here and was measured so (host file NOT created at HEAD):
+#     this splice puts the path inside a BRACE GROUP, which performs no
+#     substitution at all, so only a `}` escapes it. The regsub sink needs
+#     `x} {y} {z}; set ::SC_PWNED 1; list {a`, and the payload itself must
+#     contain NO SLASH or the name becomes a directory path that never reaches
+#     the splice -- which is why EINJ2's `exec` target is reached through a
+#     global variable instead of being spelled out.
+#
+#     ⚠ ASSERT THE SIDE EFFECT, NOT THE RETURN CODE. embed_rawfile then fails to
+#     open the mangled name and blanks spice_data (wrinkle 3), so an
+#     error-shaped row passes while the attacker's Tcl has already run. EINJ1
+#     asserts the sentinel; EINJ2 asserts a FILE CREATED ON DISK, which is the
+#     form no reader can argue with.
+#
+#     Check (d) above is the counterweight and stays green: the legitimate `~/`
+#     form must still expand and embed IDENTICALLY to the absolute path.
+# ---------------------------------------------------------------------------
+set INJ [file join $SCRATCH "x\} \{y\} \{z\}; set ::SC_PWNED 1; list \{a"]
+set fd [open $INJ w]; puts -nonewline $fd "injection payload raw"; close $fd
+fixture
+set ::SC_PWNED 0
+catch {xschem embed_rawfile $INJ} injmsg
+check "(EINJ1) a filename carrying Tcl is NOT executed by the '~/' regsub splice (sentinel, not rc)" \
+  [expr {$::SC_PWNED == 0}] "SC_PWNED=$::SC_PWNED msg=>$injmsg<"
+
+set ::OWN0812 [file join $SCRATCH OWNED_EMBED]
+catch {file delete -force $::OWN0812}
+set INJ2 [file join $SCRATCH "x\} \{y\} \{z\}; exec touch \$::OWN0812; list \{a"]
+set fd [open $INJ2 w]; puts -nonewline $fd "injection payload raw"; close $fd
+fixture
+catch {xschem embed_rawfile $INJ2} injmsg2
+set injowned [file exists $::OWN0812]
+catch {file delete -force $::OWN0812}
+check "(EINJ2) ...and it does not reach the HOST: `exec touch` in the path creates no file" \
+  [expr {$injowned == 0}] "created=$injowned msg=>$injmsg2<"
+
+
+# ---------------------------------------------------------------------------
 # (e) REPLAY. embed_rawfile is a self-contained, re-executable verb (the path is in the
 #     line): replaying re-reads the file + re-embeds. Through the replay_action_log
 #     suppress seam the effect applies but does NOT re-log; a control unwrapped `source`

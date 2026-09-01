@@ -1,10 +1,12 @@
 #!/bin/bash
-# test_owed.sh — the owed ledger (doc/claude/specs/owed.md, O1..O13).
+# test_owed.sh — the owed ledger (doc/claude/specs/owed.md, O1..O22).
 #
-# The headline is O9: `drain` must not touch the look list. That is the rule the
-# whole design exists to protect -- an automated verdict may never discharge a
-# human one -- and it is the one a future refactor is most likely to "simplify"
-# away.
+# The headline is O9 and its twin O18: `drain` must not touch the look list, and
+# must not touch the RULE list either. That is the rule the whole design exists
+# to protect -- an automated verdict may never discharge a human one -- and it
+# is the one a future refactor is most likely to "simplify" away. O18 exists
+# because the `rule` kind arrived AFTER O9 was written, and a new list that no
+# check defends is a list the next refactor drains by accident.
 #
 # Most checks run against a STUBBED run_suites.sh so pass/fail is deterministic
 # and the suite is fast; O13 then drains a real suite on a real (virtual)
@@ -56,7 +58,7 @@ STUB="$TMP/bin/owed.sh"
 ck "O1 add suite exits 0" 0 "$?"
 "$OWED" add look "the pane proportions" "pixels, tests cannot see it" >/dev/null 2>&1
 ck "O2 add look exits 0" 0 "$?"
-ck "O1 count reports both lists" "1 suite, 1 look" "$("$OWED" count)"
+ck "O1 count reports every list, in rule/look/suite order" "0 rule, 1 look, 1 suite" "$("$OWED" count)"
 ck "O2 suite list has only the suite" 1 \
    "$("$OWED" list suite | grep -c alpha_suite)"
 ck "O2 suite list does NOT contain the look entry" 0 \
@@ -64,13 +66,16 @@ ck "O2 suite list does NOT contain the look entry" 0 \
 
 # --- O3/O4: dedupe for suites, never for looks -------------------------------
 "$OWED" add suite alpha_suite "a newer reason" >/dev/null 2>&1
-ck "O3 re-adding a suite does not duplicate it" "1 suite, 1 look" "$("$OWED" count)"
+ck "O3 re-adding a suite does not duplicate it" "0 rule, 1 look, 1 suite" "$("$OWED" count)"
 ck "O3 ...and the newer reason wins" 1 \
    "$("$OWED" list suite | grep -c 'a newer reason')"
 "$OWED" add look "the pane proportions" "a DIFFERENT thing, same words" >/dev/null 2>&1
-ck "O4 an identically-worded look is NOT merged away" "1 suite, 2 look" "$("$OWED" count)"
+ck "O4 an identically-worded look is NOT merged away" "0 rule, 2 look, 1 suite" "$("$OWED" count)"
 
-# --- O5: an unknown kind is an error, not a third list -----------------------
+# --- O5: an unknown kind is an error, not a FOURTH list ----------------------
+# (It said "third list" until 2026-08-22, when `rule` became the third. The
+# check is unchanged -- the point was never the number, it was that a typo must
+# not quietly open a new list nothing reads.)
 "$OWED" add banana x y >/dev/null 2>&1
 ck "O5 unknown kind is an error" 2 "$?"
 ck "O5 ...and created nothing" 0 \
@@ -79,7 +84,7 @@ ck "O5 ...and created nothing" 0 \
 # --- O11: only `clear look` clears a look ------------------------------------
 lookid=$(ls -1 "$XSCHEM_OWED_DIR/look" | head -1)
 "$OWED" clear look "$lookid" >/dev/null 2>&1
-ck "O11 clear look removes exactly one" "1 suite, 1 look" "$("$OWED" count)"
+ck "O11 clear look removes exactly one" "0 rule, 1 look, 1 suite" "$("$OWED" count)"
 "$OWED" clear look "no_such_id" >/dev/null 2>&1
 ck "O11 clearing a missing id is an error, not a silent success" 4 "$?"
 
@@ -230,6 +235,98 @@ ck "O15 ...names the stub dir's ghost_suite.sh once, extension not doubled" 1 \
    "$(grep -c "looked for $TMP/bin/ghost_suite.sh -- no such file" "$TMP/drain8.out")"
 ck "O15 ...and does not invent a .tcl candidate it never stat'd" 0 \
    "$(grep -c 'ghost_suite.sh.tcl' "$TMP/drain8.out")"
+
+# =============================================================================
+# O16..O22 — the `rule` kind (2026-08-22). A ruling is owed by the user exactly
+# as a look is; it lives here so there is ONE queue to read, not a shell ledger
+# plus a markdown table in doc/claude/ledger/.
+# =============================================================================
+
+rm -rf "$XSCHEM_OWED_DIR"
+
+# --- O16: recording, and dedupe BY ID ----------------------------------------
+"$OWED" add rule 0444 "keep the whitespace fix, or revert" >/dev/null 2>&1
+ck "O16 add rule exits 0" 0 "$?"
+ck "O16 ...and lands in its own list" "1 rule, 0 look, 0 suite" "$("$OWED" count)"
+"$OWED" add rule 0444 "restated with a newer reason" >/dev/null 2>&1
+ck "O16 re-adding the SAME ruling does not duplicate it" "1 rule, 0 look, 0 suite" \
+   "$("$OWED" count)"
+ck "O16 ...and the newer reason wins" 1 \
+   "$("$OWED" list rule | grep -c 'restated with a newer reason')"
+
+# --- O17: the three lists stay apart -----------------------------------------
+"$OWED" add look  "the pane proportions" "pixels" >/dev/null 2>&1
+"$OWED" add suite alpha_suite            "needs :0" >/dev/null 2>&1
+ck "O17 rule list holds only the ruling" 1 "$("$OWED" list rule | grep -c '^  \[0444\]')"
+ck "O17 ...and not the look" 0 "$("$OWED" list rule | grep -c 'pane proportions')"
+ck "O17 ...and not the suite" 0 "$("$OWED" list rule | grep -c 'alpha_suite')"
+ck "O17 the look list does not hold the ruling" 0 "$("$OWED" list look | grep -c '^  \[0444\]')"
+
+# --- O19: only `clear rule` clears a ruling ----------------------------------
+"$OWED" clear look 0444 >/dev/null 2>&1
+ck "O19 clear look cannot reach a rule id" 4 "$?"
+ck "O19 ...and the ruling is still standing" 1 "$("$OWED" list rule | grep -c '^  \[0444\]')"
+"$OWED" clear rule 0444 >/dev/null 2>&1
+ck "O19 clear rule removes it" "0 rule, 1 look, 1 suite" "$("$OWED" count)"
+
+# --- O20/O21: the `eyes` tag and the `ref` pointer ---------------------------
+# Four of the nine rulings this kind was built for (0457, 0458, 0468, 0475)
+# cannot be decided without looking at pixels, so a ruling can be tagged. And a
+# rule entry is a POINTER: the option set stays in the issue file.
+"$OWED" add rule 0457 "annot_show default 0 or 1" --eyes >/dev/null 2>&1
+ck "O20 an --eyes ruling is marked in the listing" 1 \
+   "$("$OWED" list rule | grep -c 'needs eyes')"
+ck "O20 ...and show says the ruling needs looking" 1 \
+   "$("$OWED" show | grep -c 'one you must LOOK to make')"
+ck "O20 a plain ruling is NOT marked" 1 \
+   "$("$OWED" add rule 0479 "stale-cursor seam" >/dev/null 2>&1; \
+      "$OWED" list rule | grep -c 'needs eyes')"
+ck "O21 a 4-digit id resolves to its issue file" 1 \
+   "$("$OWED" list rule | grep -c 'doc/claude/issues/0457-')"
+ck "O21 ...and show names it as where the options are" 1 \
+   "$("$OWED" show | grep -c 'the options are in: doc/claude/issues/0457-')"
+"$OWED" add rule X0498 "no_undo netlist cost" --ref "doc/claude/ledger/driver_run_2026-08-16.md" \
+   >/dev/null 2>&1
+ck "O21 an explicit --ref is kept for a non-issue-numbered ruling" 1 \
+   "$("$OWED" list rule | grep -c 'ledger/driver_run_2026-08-16.md')"
+"$OWED" add rule 9999 "an id with no issue file yet" >/dev/null 2>&1
+ck "O21 an id with no issue file gets NO ref, not an invented one" 0 \
+   "$("$OWED" list rule | grep -c 'issues/9999')"
+
+# --- O22: --eyes is a rule tag ------------------------------------------------
+"$OWED" add look "x" "y" --eyes >/dev/null 2>&1
+ck "O22 --eyes on a look is an error (a look already needs eyes)" 2 "$?"
+"$OWED" add suite s "y" --eyes >/dev/null 2>&1
+ck "O22 --eyes on a suite is an error" 2 "$?"
+
+# --- O18: THE HEADLINE'S TWIN. drain must not touch the RULE list ------------
+rm -rf "$XSCHEM_OWED_DIR"
+"$STUB" add suite PASSME_suite "should clear"           >/dev/null 2>&1
+"$STUB" add rule  0446 "a ruling the drain must not touch" >/dev/null 2>&1
+# TWO looks against ONE rule, deliberately: with the counts equal, the very
+# defect the last row of O18 pins (reading the look count POSITIONALLY, as the
+# last field of `count`) would print the rule count under the look label and
+# still agree. Unequal counts are what make that row able to fail.
+"$STUB" add look  "a pixel thing"      "eyes" >/dev/null 2>&1
+"$STUB" add look  "a second pixel thing" "eyes" >/dev/null 2>&1
+rules_before=$(ls -1 "$XSCHEM_OWED_DIR/rule" | sort)
+"$STUB" drain --display ":test" > "$TMP/drain9.out" 2>&1
+ck "O18 the drain itself passed" 0 "$?"
+ck "O18 ...the suite debt cleared, so the drain really ran" 0 \
+   "$(ls -1 "$XSCHEM_OWED_DIR/suite" 2>/dev/null | wc -l | tr -d ' ')"
+ck "O18 drain did not touch the rule list" "$rules_before" \
+   "$(ls -1 "$XSCHEM_OWED_DIR/rule" | sort)"
+ck "O18 ...and said so, naming the list" 1 \
+   "$(grep -c 'rule debts untouched: 1' "$TMP/drain9.out")"
+# The defect this pins: drain used to read the look count as `count | sed
+# 's/.*, //'`, i.e. "the last field", which became the RULE count the instant a
+# third kind existed. Both counts are now selected BY NAME, and the fixture
+# above keeps them unequal (2 looks, 1 rule) so the positional read prints 1
+# here and the row goes red.
+ck "O18 ...and reports the LOOK count under the look label" 1 \
+   "$(grep -c 'look debts untouched: 2' "$TMP/drain9.out")"
+
+rm -rf "$XSCHEM_OWED_DIR"
 
 # --- O13: one REAL drain, so the stub cannot hide an integration break --------
 rm -rf "$XSCHEM_OWED_DIR"

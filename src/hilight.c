@@ -2643,7 +2643,7 @@ void hilight_net(int viewer)
    }
   }
   if( viewer == XSCHEM_GRAPH && s) {
-    tclvareval("graph_add_nodes_from_list {", s, "}", NULL);
+    tcl_call("graph_add_nodes_from_list", s, NULL, NULL); /* net names are .sch text, 0817 Z.4 */
     my_free(_ALLOC_ID_, &s);
   }
   if(!incr_hi) incr_hilight_color();
@@ -4355,6 +4355,14 @@ void draw_hilight_net(int on_window)
        ++i;
        if(i >= xctx->instances) break;
      }
+     /* issue 0498: an instance whose symbol never got linked (.ptr < 0) makes the
+      * symptr assignment below (sym[] indexed by that .ptr) read xctx->sym[-1] and SEGFAULT.
+      * propagate_hilights() above already guards this and only prints; this loop -- the
+      * copy that actually dereferences sym[] -- never got the guard. One int compare,
+      * placed before the color gate so the hash and the linear iteration are both covered
+      * (the color values themselves can be garbage: the netlisters' stored_flags restore
+      * loop can overrun its allocation when the walk left more instances than it found). */
+     if(INST_UNBOUND(i)) continue;
      if(xctx->inst[i].color != -10000)
      {
       int val = xctx->inst[i].color;

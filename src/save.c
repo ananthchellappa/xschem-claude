@@ -1311,6 +1311,15 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
   int res = 0;
   Raw *raw = xctx->raw;
   if(!raw || !raw->values) return 0;
+  /* S9 HOOK D (decision D5, issue 0466). A raw MUTATED IN PLACE keeps the same
+   * Raw allocation, the same level and the same annot_p, so the overlay epoch's
+   * four raw terms all stand still while the numbers under them changed. rename
+   * and set provably move nothing else; add/delete usually move nvars, so their
+   * bumps are belt. Invariant I3: a vector that has gone away must render BLANK,
+   * never the value it had a moment ago. The whole `raw` dispatcher arm was NOT
+   * hooked instead -- `xschem raw value` is called by op_annot::text itself,
+   * once per row per device, so that would self-invalidate every frame. */
+  annot_data_changed();
 
   if(!int_hash_lookup(&raw->table, varname, 0, XLOOKUP)) {
     raw->nvars++;
@@ -1397,7 +1406,31 @@ int raw_read(const char *f, Raw **rawptr, const char *type, int no_warning, doub
       dbg(0, "points=%d, vars=%d, datasets=%d sim_type=%s\n",
              raw->allpoints, raw->nvars, raw->datasets, raw->sim_type ? raw->sim_type : "<NULL>");
 
-      if(xctx->graph_flags & 4) { /* if cursor2 is enabled in first graph setup schematic annotation */
+      /* ISSUES 0865 / 0868 -- GUARD G1: LOADING A WAVEFORM FILE IS NOT A REQUEST.
+       *
+       * This was the first of two UNGATED publishers, and it is the one the 0865
+       * transcript opens with. With `Simulation > Graphs > Live annotate probes
+       * with 'b' cursor` UNTICKED -- its shipped state -- a sheet carrying a
+       * graph rect with cursor B on ACQUIRED a node-voltage annotation the
+       * moment a raw was read, before the user pressed anything. Move the cursor
+       * afterwards and the painted number does not follow: RULING D5-1, a number
+       * that was not measured for the state it is shown in. The user's words on
+       * the family: "MUST ONLY HAPPEN WHEN USER REQUESTS IT!!".
+       *
+       * It also drove a straight RULING 0856 breach. update_op() below already
+       * refuses to publish a transient's point 0 as an operating point, so the
+       * `6` chord paints nothing on a pure transient -- while this site put a
+       * transient node voltage on that same surface unasked. 0856 closed one
+       * road and left this one open; this closes it.
+       *
+       * The spelling matches the six cursor-motion sites (callback.c x5,
+       * scheduler.c swap_cursors) exactly, so one grep finds one gate shape.
+       * ⚠ Both arms of `xschem set cursor2_x` are deliberately NOT gated -- a
+       * typed verb naming a time IS a request. doc/claude/issues/0868-*.md;
+       * pinned by row V25 of tests/headless/test_op_annot.tcl. Rows V22 (both
+       * legs) and V24 are this guard's measurement. */
+      if(tclgetboolvar("live_cursor2_backannotate") && (xctx->graph_flags & 4)) {
+        /* cursor2 enabled in first graph, AND the user asked to follow it */
         if(xctx->rects[GRIDLAYER] > 0)  {
           xRect *r;
           r = &xctx->rect[GRIDLAYER][0];
@@ -1441,6 +1474,15 @@ int raw_renamevar(const char *old_name, const char *new_name)
 
   n = get_raw_index(old_name, &entry);
   if(n < 0) return ret;
+  /* S9 HOOK D (decision D5, issue 0466). A raw MUTATED IN PLACE keeps the same
+   * Raw allocation, the same level and the same annot_p, so the overlay epoch's
+   * four raw terms all stand still while the numbers under them changed. rename
+   * and set provably move nothing else; add/delete usually move nvars, so their
+   * bumps are belt. Invariant I3: a vector that has gone away must render BLANK,
+   * never the value it had a moment ago. The whole `raw` dispatcher arm was NOT
+   * hooked instead -- `xschem raw value` is called by op_annot::text itself,
+   * once per row per device, so that would self-invalidate every frame. */
+  annot_data_changed();
   dbg(1, "n=%d, %s \n", n, entry->token);
   int_hash_lookup(&raw->table, entry->token, 0, XDELETE);
   my_strdup2(_ALLOC_ID_, &raw->names[n], new_name);
@@ -1459,6 +1501,15 @@ int raw_deletevar(const char *name)
 
   n = get_raw_index(name, &entry);
   if(n < 0) return ret;
+  /* S9 HOOK D (decision D5, issue 0466). A raw MUTATED IN PLACE keeps the same
+   * Raw allocation, the same level and the same annot_p, so the overlay epoch's
+   * four raw terms all stand still while the numbers under them changed. rename
+   * and set provably move nothing else; add/delete usually move nvars, so their
+   * bumps are belt. Invariant I3: a vector that has gone away must render BLANK,
+   * never the value it had a moment ago. The whole `raw` dispatcher arm was NOT
+   * hooked instead -- `xschem raw value` is called by op_annot::text itself,
+   * once per row per device, so that would self-invalidate every frame. */
+  annot_data_changed();
   dbg(1, "n=%d, %s \n", n, entry->token);
   int_hash_lookup(&raw->table, entry->token, 0, XDELETE);
   my_free(_ALLOC_ID_, &raw->names[n]);
@@ -1760,6 +1811,43 @@ const char *backannot_refuse_digital(const char *dbname)
   return msg;
 }
 
+/* ISSUE 0836 -- THE SAME SENTENCE SHAPE FOR THE OTHER "PUBLISHES NOTHING" CASE.
+ * A results database with no simulation points in it carries no operating
+ * point either, and unguarded it does not merely publish nothing -- it
+ * SIGSEGVs (see the guard in update_op() for the mechanism).
+ *
+ * WHY THIS IS THE ORDINARY PATH AND NOT A CORNER: ngspice writes
+ * `No. Points: 0` into the raw header when a run STARTS and backfills the real
+ * count only when it ENDS. So for the entire duration of every simulation the
+ * file on disk is a well-formed, UNTRUNCATED, zero-point raw. Measured
+ * 2026-08-26 against a real 868 KB mid-run /usr/local/bin/ngspice-46+ transient
+ * raw: read_dataset() reports it a success with points=0, no truncation logic
+ * is involved at all, and there is no `binary block is not of correct size`
+ * warning to notice. Pressing Annotate Operating Point while a simulation runs
+ * is therefore this sentence's routine, intended audience.
+ *
+ * Minted here rather than at the caller for the same reason D5-4 gives: the
+ * refusal is where the reason is known. Same anti-splice discipline as
+ * backannot_refuse_digital() above -- `dbname` is a user-supplied path and is
+ * handed to Tcl as a VARIABLE, never concatenated into a script. */
+const char *backannot_refuse_empty(const char *dbname)
+{
+  static char msg[512];
+  const char *n = (dbname && dbname[0]) ? dbname : "that results database";
+  my_snprintf(msg, S(msg),
+    "backannotation: '%s' holds no simulation points yet -- a spice raw file "
+    "reports 'No. Points: 0' from the moment its run starts until the moment it "
+    "ends, so while the simulation is still running there is nothing in it to "
+    "annotate onto the schematic", n);
+  dbg(0, "%s\n", msg);
+  if(has_x) {
+    tclsetvar("__backannot_refuse_msg", msg);
+    tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $::__backannot_refuse_msg note}");
+    Tcl_UnsetVar(interp, "__backannot_refuse_msg", TCL_GLOBAL_ONLY);
+  }
+  return msg;
+}
+
 /* RULING D5-6 -- THE TYPE TOKEN IS NOT THE ONLY WAY TO ASK FOR A DIGITAL
  * DATABASE, so it cannot be the only thing the refusal keys on.
  *
@@ -1974,6 +2062,15 @@ static void raw_restamp_design(void)
  * -case option already does exactly that (src/scheduler.c:10385-10402).
  * 0 means nothing changed: file not found, no such analysis in it, or no such
  * slot -- and on a failed read the previously current raw is restored.
+ *
+ * `file` is resolved ONCE at the top of the function by resolve_rawfile_path()
+ * (util.c): a leading `~/` in C, then Tcl VARIABLE expansion by a C BYTE
+ * SCANNER whose only Tcl call is Tcl_GetVar2Ex(). It is NOT evaluated -- issue
+ * 0812, where each arm's own `subst { <file> }` meant a filename containing `}`
+ * executed, and where the FIRST fix's `subst -nobackslashes -nocommands` was
+ * refuted by `$a([exec ...])`. Every arm reads the resolved `f`, and the
+ * extra_raw_arr registry is keyed on it, so read / switch / clear cannot
+ * disagree about what a given spelling names.
  */
 int extra_rawfile(int what, const char *file, const char *type, double sweep1, double sweep2)
 {
@@ -1991,6 +2088,33 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   dbg(1, "extra_rawfile(): what=%d, no_warning=%d, file=%s, type=%s\n",
       what, no_warning, file ? file : "<NULL>", type ? type : "<NULL>");
   if(what == 0) return 0;
+
+  /* THE path resolution, ONCE, in ONE place, for every arm below (issue 0812).
+   * Each arm used to do its own `tclvareval("subst {", file, "}", NULL)` --
+   * six of them, four reachable with a metacharacter -- which BUILDS A TCL
+   * SCRIPT out of the filename: a `}` in the name closed the brace group and
+   * the rest of the name EXECUTED. resolve_rawfile_path() (util.c) treats the
+   * path as DATA instead: `~/` in C, then a C byte scanner that recognises
+   * `$name` / `${name}` / `$ns::name`, looks each up with Tcl_GetVar2Ex() and
+   * copies every other byte through verbatim. There is no evaluator in it at
+   * all -- not `subst` under any flags, which is what refuted the first
+   * attempt. The `$netlist_dir` spelling the shipped graph attributes use
+   * still resolves; nothing else in the name is interpreted.
+   * ONE call, not one per arm, because the registry is KEYED on this string:
+   * the read arms store it in raw->rawfile and the switch and clear arms
+   * strcmp() against what was stored, so two resolutions that could ever
+   * disagree would make `xschem raw clear $f` silently miss what
+   * `xschem raw read $f` loaded.
+   * The isonlydigit()/atoi() arms below deliberately keep reading the RAW
+   * `file`, exactly as they did when their own subst result was never used --
+   * their behaviour is unchanged.
+   * NOTE the side effect that went away with the tclvareval: extra_rawfile()
+   * no longer leaves the resolved path in the interpreter result. No caller
+   * depended on it (the `raw` verb sets its own result immediately after, and
+   * the `info` arm below is reached with file == NULL, so its
+   * Tcl_AppendResult() listing is not touched). */
+  if(file) resolve_rawfile_path(file, f, (int)S(f));
+  else f[0] = '\0';
 
   /* allocate xctx->extra_raw_arr array */
   if(xctx->extra_raw_n >= xctx->extra_raw_size) {
@@ -2017,8 +2141,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
    * See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md section C. */
   if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file &&
      raw_type_is_non_spice(type)) {
-    tclvareval("subst {", file, "}", NULL);
-    my_strncpy(f, tclresult(), S(f));
     dbg(1, "extra_rawfile: %s_read: f=%s\n", type, f);
     for(i = 0; i < xctx->extra_raw_n; i++) {
       /* Skip an entry with no filename, the way the spice loop below skips one
@@ -2070,8 +2192,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
     }
   /* **************** read ************* */
   } else if(what == 1 && xctx->extra_raw_n < xctx->extra_raw_size && file /* && type*/) {
-    tclvareval("subst {", file, "}", NULL);
-    my_strncpy(f, tclresult(), S(f));
     if(type) {
       if(!my_strcasecmp(type, "spectrum")) type = "ac";
       else if(!my_strcasecmp(type, "sp")) type = "ac";
@@ -2130,8 +2250,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   /* **************** switch ************* */
   } else if(what == 2 && xctx->extra_raw_n > 0) {
     if(file && type) {
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       for(i = 0; i < xctx->extra_raw_n; i++) {
         dbg(1, "      extra_rawfile(): checking with %s\n",
             xctx->extra_raw_arr[i]->rawfile ? xctx->extra_raw_arr[i]->rawfile : "<NULL>");
@@ -2149,8 +2267,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
         ret = 0;
       }
     } else if(file && isonlydigit(file) ) {
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       i = atoi(file);
       if(i >= 0 && i < xctx->extra_raw_n) { /* if file found switch to it ... */
         dbg(1, "extra_rawfile() switch %d: found: switch %d to it\n", xctx->extra_idx, i);
@@ -2190,8 +2306,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       xctx->extra_raw_size = 0;
     } else if(file && isonlydigit(file)) {
       int n, found = 0;
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       n = atoi(file);
       if(xctx->extra_raw_n > 0 ) {
         for(i = 0; i < xctx->extra_raw_n; i++) {
@@ -2220,8 +2334,6 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       } else ret = 0;
     } else { /* clear provided file if found, switch to first in remaining if any */
       int found = 0;
-      tclvareval("subst {", file, "}", NULL);
-      my_strncpy(f, tclresult(), S(f));
       if(xctx->extra_raw_n > 0 ) {
         for(i = 0; i < xctx->extra_raw_n; i++) {
           /* the same NULL skips as the two lookup loops above (issue 0306): a
@@ -3330,7 +3442,7 @@ int netlist_case_mode(void)
    * `sim_case_mode_floor()` reads -- and the two answers are identical until a
    * user sets a per-profile mode in item 13's dialog. */
   if(!xctx || xctx->netlist_type != CAD_SPICE_NETLIST) return sim_case_mode_floor();
-  tcleval("sim_profile_netlist_casemode spice");
+  tcleval("sim_netlist_casemode spice");
   mode = raw_case_word_parse(tclresult());
   if(mode <= RAW_CASE_UNKNOWN) return sim_case_mode_floor();
   return mode;
@@ -3340,6 +3452,14 @@ int update_op()
 {
   int res = 0, p = 0, i;
   Tcl_UnsetVar(interp, "ngspice::ngspice_data", TCL_GLOBAL_ONLY);
+  /* S9 / invariant I3: the OP-annotation overlay caches one rendered block per
+   * instance and flushes it on an observed-state epoch. Re-running the SAME deck
+   * and re-annotating republishes into the SAME Raw allocation with identical
+   * nvars/level and annot_p 0 -> 0, so nothing observable moves and the overlay
+   * would keep showing THE PREVIOUS RUN'S NUMBERS. This is the explicit bump.
+   * It is placed before the digital refusal below on purpose: "nothing was
+   * published" invalidates the cache exactly as a new point does. */
+  annot_data_changed();
   /* RULING D5-3, enforcement point 1 of 3 -- THE POINT-0 PUBLISHER.
    * This is the choke point every "annotate the operating point" request funnels
    * through: the `annotate_op` arm, both `raw switch` gates and the bare
@@ -3350,6 +3470,188 @@ int update_op()
    * what `xschem update_op` reports to the script that asked. */
   if(raw_is_digital(xctx->raw)) {
     backannot_refuse_digital(xctx->raw->rawfile);
+    return 0;
+  }
+  /* ISSUE 0836, enforcement point 1 of 1 -- A ZERO-POINT DATABASE PUBLISHES
+   * NOTHING, and unguarded it SIGSEGVs rather than merely publishing nothing.
+   *
+   * THE MECHANISM: read_raw_data_block() sizes every column with
+   *   my_realloc(_ALLOC_ID_, &raw->values[p], (offset + npoints) * sizeof(SPICE_DATA))
+   * (save.c, the loop just below the values[] calloc), and my_realloc() with a
+   * size of 0 FREES AND NULLS (util.c). So with npoints == 0 and offset == 0
+   * `raw->values` is non-NULL while every `raw->values[v]` is NULL, and
+   * read_dataset() still returns 1. The gate below tests the OUTER array and
+   * then dereferences the INNER one, with `p` pinned at 0 -- a NULL[0] read.
+   *
+   * WHY IT IS THE ORDINARY PATH: see backannot_refuse_empty() above. ngspice
+   * writes `No. Points: 0` at the start of a run and backfills it at the end,
+   * so every simulation leaves a well-formed zero-point raw on disk for its
+   * whole duration. Three shipped verbs reach this with one, measured
+   * 2026-08-26: `xschem update_op` after `xschem raw read <f> op 999 1000`
+   * (a sweep window that excludes every point), `xschem annotate_op <live raw>`,
+   * and `xschem raw switch <n>` -- the last because scheduler.c snapshots
+   * `Raw *raw = xctx->raw` BEFORE the switch and then gates update_op() on the
+   * OUTGOING database's allpoints while update_op() reads the INCOMING one.
+   *
+   * WHICH FIELD, AND WHAT THE OTHER ONE ANSWERED. Guarded on `allpoints`,
+   * a plain int that cannot be indexed wrong. Issue 0836 suggested
+   * `npoints[raw->datasets] > 0` instead; that is an OUT-OF-BOUNDS READ.
+   * Measured on both fixtures: `datasets` is 1 by the time update_op() runs
+   * (read_dataset() does raw->datasets++ AFTER read_raw_data_block()), while
+   * the npoints array was realloc'd to `datasets+1` entries BEFORE that
+   * increment and therefore holds exactly ONE. So npoints[datasets] is
+   * npoints[1], one past the live entry; npoints[0] answers 0 correctly and
+   * allpoints answers 0 correctly. allpoints is also the field every other
+   * point-count guard in the tree already uses (draw.c's `point >= allpoints`,
+   * callback.c's `allpoints > 1`), and it is set on all four reader paths
+   * (raw_read, table_read, vcd_read, new_rawfile).
+   *
+   * SHAPE: the D5-3 refusal above, not a second idiom -- refuse, say why once,
+   * `return 0` meaning "nothing was published", and leave whatever was
+   * previously attached alone rather than half-publishing (invariant I3).
+   *
+   * ⚠ IT MUST RETURN BEFORE `annot_p = 0` BELOW, not after. `annot_p >= 0` is
+   * the term every published-annotation gate in the tree is built on: the
+   * live_cursor2 readers in token.c, spice_get_node() in the same file, the
+   * `xschem raw value <node> -1` arm of scheduler.c, and op_annot.tcl. A guard
+   * that let annot_p reach 0 would make every one of them read the
+   * my_calloc-zeroed cursor_b_val and print 0 V on the schematic instead of
+   * blanking -- a fabricated number, which is the exact outcome RULING D5-1
+   * exists to prevent.
+   *
+   * ⚠ THAT INVENTORY WAS ONCE SHORTER THAN THE TRUTH -- ISSUE 0861, NOW
+   * FIXED, AND THE LESSON IS THE PART THAT STILL MATTERS. An earlier revision
+   * of this comment listed only the live_cursor2 readers and op_annot.tcl, and
+   * two readers of cursor_b_val carried no annot_p term at all: token.c's
+   * spice_get_node(), which renders a @spice_get_node text on a schematic, and
+   * the cursor fall-through of scheduler.c's `raw value` verb. Both tested only
+   * that the vector index resolved, so a probe symbol -- or the shipped
+   * devices/scope_ammeter.sym -- printed the calloc zero WHENEVER nothing had
+   * been published. Measured 2026-08-27: the same three data points rendered
+   * `-` with nothing loaded, `0` as a refused transient, and the true `1.8` as
+   * an operating point; on the ammeter that read as a confident zero amps
+   * through the branch. The audit that produced the old count stopped at
+   * op_annot.tcl's _annotated and never reached the C renderers. Both are
+   * guarded now, and tests/headless/test_spice_get_node_0861.tcl pins them --
+   * including a structural row over THIS comment, because no behaviour can see
+   * a comment go false. Adding a reader of cursor_b_val obliges you to add the
+   * annot_p term to it and to this list, in the same commit.
+   *
+   * ⚠ NOT COVERED HERE: this guard is update_op()-local by ruling (the
+   * narrow option of 0836's open question). The other zero-point dereferences
+   * on the same database are fixed SEPARATELY and elsewhere -- get_raw_value()
+   * now bounds `point` from below and raw_get_pos() refuses an empty dataset
+   * (issue 0852, which also covers waves_callback()'s identical shape). Do not
+   * read THIS guard as closing them, and do not read their fix as closing this
+   * one: three call sites, three guards, one input. Still open on the same
+   * input: `xschem raw switch` gates the republish on the OUTGOING database's
+   * point count (issue 0853), which this guard catches one frame late. */
+  if(xctx->raw && xctx->raw->allpoints <= 0) {
+    backannot_refuse_empty(xctx->raw->rawfile);
+    return 0;
+  }
+  /* ISSUE 0856 -- A TRANSIENT DOES NOT PUBLISH AN OPERATING POINT.
+   * (An earlier draft of this line claimed the stronger "ONLY AN OPERATING
+   * POINT PUBLISHES AN OPERATING POINT". That is not yet true -- see the
+   * ISSUE 0862 note below -- and a comment must not out-claim its code.)
+   * RULED BY THE USER 2026-08-26: "We haven't yet built anything for annotating
+   * from TRAN results, so it should do nothing silently."
+   *
+   * `p` is pinned at 0 twenty lines below and there was NO sim_type test here at
+   * all, so a 5-point transient published values[i][0] -- t=0, the DC initial
+   * condition -- as the operating point. Measured: v(a) 0,1,2,3,4 published 0.
+   *
+   * THIS IS THE CHOKE POINT, which is why the guard is here and not at the one
+   * caller that was reported. FOUR routes reach this function with a non-op
+   * database and this single guard answers all four identically: scheduler.c's
+   * annotate_op transient fallback, the route the user actually hit; `xschem
+   * annotate_op <f> <lvl> tran`, which names the type explicitly; `xschem raw
+   * switch`, whose op/dc gate lives in the caller and which issue 0853 measured
+   * asking the WRONG database; and the bare `xschem update_op` verb.
+   *
+   * ⚠ THE scheduler.c FALLBACK STAYS -- IT IS NOT DEAD CODE, AND AN EARLIER
+   * DRAFT OF THIS COMMENT WRONGLY SAID IT HAD BEEN DELETED. Do not read "the
+   * user ruled against annotating a transient" as "nothing should attach one".
+   * That line is the ATTACH door for CURSOR-DRIVEN transient annotation, which
+   * is a built and shipping feature (RULING D4, step S11) pinned by section T
+   * of tests/headless/test_op_annot.tcl; deleting it takes ~20 rows down while
+   * changing nothing whatever about this ruling. The transient still attaches,
+   * and this guard refuses to publish its point 0 as an operating point. See
+   * the matching comment at that line in scheduler.c.
+   *
+   * SILENT, DELIBERATELY, AND UNLIKE ITS TWO NEIGHBOURS. The digital (D5-3) and
+   * zero-point (0836) refusals each mint a sentence because each describes a
+   * database the user deliberately pointed at and deserves an explanation for.
+   * This one is a policy the user asked not to dress up -- "why complicate
+   * things?" -- and the explanation the user actually needs arrives one level
+   * up, from the chord (issue 0857) which re-asks `xschem raw loaded` and
+   * reports for itself. `return 0` still means "nothing was published", which is
+   * what a calling script reads.
+   *
+   * ⚠ "SILENT" NAMES THE CHANNELS A PERSON LOOKS AT, and all three hold: no
+   * CIW line, no status line, no number on the schematic. The dbg(0) below is
+   * not one of them -- it reaches stderr and the action log, where someone
+   * editing a schematic never sees it but a script grepping a log will, once
+   * per call. dbg(0) is the level both neighbouring refusals in this function
+   * already use, so it stays; demoting this one alone would be a second idiom
+   * for no reader's benefit. Recorded, unratified, in issue 0860.
+   *
+   * `dc` IS ACCEPTED, and that is not slack: read_dataset() rewrites a
+   * multi-point OP to `dc`, and Xyce spells its operating point as a 1-point DC
+   * transfer characteristic. Both `raw switch` gates spell the same op/dc PAIR.
+   * A NULL sim_type is refused -- nothing that cannot name itself gets to be an
+   * operating point.
+   *
+   * ⚠ BUT THIS TEST IS ONE TERM WEAKER THAN THOSE TWO GATES -- ISSUE 0862.
+   * scheduler.c's `raw switch` and `switch_back` both require `allpoints == 1`
+   * as well as the op/dc pair; this guard tests the TYPE ONLY. So a genuine
+   * multi-point .dc SWEEP still publishes its FIRST STEP as the operating
+   * point. Measured 2026-08-27: a 5-point DC transfer characteristic answers
+   * update_op() with 1, puts its v-sweep=0 step on the schematic, and even
+   * declares "n points = 1" while holding 5. That is pre-existing -- this guard
+   * did not change the dc path -- but it means the transient is refused while
+   * the sweep is not, which is why the headline above was narrowed. Do NOT
+   * "fix" it by bolting `allpoints == 1` on here: row T26 is a THREE-point
+   * Operating Point that read_dataset() rewrote to `dc`, and it must keep
+   * publishing. Point count alone does not separate the two; the sweep
+   * variable does. Measure before choosing.
+   *
+   * ⚠ THE WIDENING (ISSUE 0860): THIS REFUSES EVERY sim_type THAT IS NOT
+   * op/dc, NOT MERELY `tran`. The user ruled about transients; the test is
+   * written as an ALLOW-LIST, so `ac`, `noise`, `table` and `vcd` are refused
+   * by it too -- measured 2026-08-27, an ascii table database answers `xschem
+   * update_op` with 0 and puts nothing on the schematic. That is deliberate,
+   * and it is the NARROWER reading that would be unsafe: a denylist testing
+   * only for `tran` leaves ac, noise and table publishing values[i][0] as an
+   * operating point, which is a number that was never measured for the device
+   * it is drawn beside -- precisely what RULING D5-1 forbids. Nothing but op/dc
+   * has ever held a meaningful operating point. Row T27 of
+   * tests/headless/test_op_annot.tcl pins the widening AS BEHAVIOUR, so a later
+   * change of mind reds a test instead of passing unnoticed.
+   *
+   * ⚠ THIS GUARD SHADOWS THE D5-3 DIGITAL REFUSAL ABOVE. DO NOT REORDER THE
+   * TWO (ISSUE 0859). "vcd" is the only sim_type raw_is_digital() answers true
+   * for -- raw_reader_table above has exactly one digital entry -- and "vcd" is
+   * neither "op" nor "dc", so THIS guard would refuse a digital database as
+   * well, with the identical observable: return 0, the array left unset. The
+   * refusal above is the ONLY place the user-facing "is a digital results
+   * database" sentence is minted (RULING D5-4). Put this guard first and that
+   * sentence is never spoken: someone who points Op Annotate at a .vcd gets
+   * silence instead of an explanation, and NO behavioural row in the tree would
+   * notice, because from Tcl the two refusals are indistinguishable. That is
+   * why BA37 of tests/headless/test_backannotate_digital.tcl pins the ORDER.
+   *
+   * ⚠ BA37 GREPS THIS FUNCTION, AND THIS COMMENT QUOTES ITS TOKENS. It looks
+   * for `raw_is_digital(`, `backannot_refuse_digital(` and this guard's own
+   * `sim_type, "op")` -- all three appear in the prose here. It counts them on
+   * CODE LINES ONLY, skipping every line whose first non-blank character is a
+   * star or which opens a comment, so the quotations above are invisible to it
+   * and only moving real code can change its answer. Keep any new prose in this
+   * block in that shape, or BA37 starts counting sentences as calls. */
+  if(!xctx->raw || !xctx->raw->sim_type ||
+     (strcmp(xctx->raw->sim_type, "op") && strcmp(xctx->raw->sim_type, "dc"))) {
+    dbg(0, "update_op(): '%s' is not an operating point database, publishing nothing\n",
+        (xctx->raw && xctx->raw->sim_type) ? xctx->raw->sim_type : "<none>");
     return 0;
   }
   if(xctx->raw && xctx->raw->values) {
@@ -3572,6 +3874,20 @@ int raw_get_pos(const char *node, double value, int dset, int from_start, int to
   if(sch_waves_loaded() >= 0) {
     if(dset >= raw->datasets) dset = raw->datasets - 1;
     if(dset < 0) dset = 0;
+    /* ISSUE 0852: a search over a dataset with NO POINTS has no answer, so say
+     * so instead of clamping the window to `lastpoint = npoints[dset] - 1` ==
+     * -1 and then asking get_raw_value() for point -1. That clamp was the
+     * caller half of the SIGSEGV described in get_raw_value() above; the lower
+     * bound added there stops the dereference, but arriving at the bisection
+     * with start == end == -1 is still asking a question about points that do
+     * not exist. -1 is this function's own "not found", the value `x` is
+     * already initialised to, and what every out-of-range search returns.
+     *
+     * The npoints NULL test is not decoration: sch_waves_loaded() (draw.c)
+     * tests raw->values / names / schname and raw->level, never the point
+     * count and never npoints, so it admits a database this function must not
+     * index. That is the same outer-array-only shape as issue 0836's defect. */
+    if(!raw->npoints || raw->npoints[dset] <= 0) return -1;
     idx = get_raw_index(node, NULL);
     if(idx >= 0) {
       double vx;
@@ -4442,16 +4758,48 @@ double get_raw_value(int dataset, int idx, int point)
     dbg(0, "get_raw_value(): dataset(%d) >= datasets(%d)\n", dataset,  xctx->raw->datasets);
   }
   if(xctx->raw && xctx->raw->values && dataset < xctx->raw->datasets) {
-    if(dataset == -1) {
-      if(point < xctx->raw->allpoints)
-        return xctx->raw->values[idx][point];
-    } else {
+    /* ISSUE 0852: BOUND `point` FROM BELOW AS WELL AS FROM ABOVE.
+     *
+     * This used to be two arms -- `dataset == -1` testing `point < allpoints`
+     * and `dataset >= 0` testing `ofs + point < allpoints` -- and NEITHER had a
+     * lower bound. `allpoints` is a signed int (xschem.h), so there is no
+     * unsigned wrap to save a negative index: on a ZERO-POINT database
+     * `allpoints` is 0 and `-1 < 0` is TRUE, and the return dereferenced
+     * values[idx][-1] on a column that my_realloc(id, ptr, 0) had already freed
+     * and NULLed. That is a SIGSEGV, and a zero-point database is the ORDINARY
+     * case, not a corner: ngspice writes `No. Points: 0` into the raw header
+     * when a run STARTS and backfills the real count only when it ENDS, so for
+     * the whole duration of every simulation the file on disk is a well-formed,
+     * untruncated, zero-point raw. See issue 0836 for that mechanism.
+     *
+     * WHO SENDS A NEGATIVE POINT. raw_get_pos() below clamps its search window
+     * to `lastpoint = npoints[dset] - 1`, which is -1 on an empty dataset, and
+     * waves_callback() (callback.c) computes `npoints[dset] - 1` the same way
+     * with no point-count test in its guard chain. raw_get_pos() now refuses an
+     * empty dataset outright (see there), but this function is the shared root
+     * and must be safe for EVERY caller, present and future -- callback.c's
+     * site needs a GUI event to reach and is covered only from here.
+     *
+     * ONE GUARD, NOT TWO. The arms are merged so there is exactly one bound.
+     * The old shape let a fix land on one `if` and not the other, and the
+     * `dataset == -1` arm is not reachable with a negative point from any
+     * `xschem raw ...` subcommand, so it could not have been pinned by a
+     * behavioural test row. With `dataset >= 0` gating the offset walk, `ofs`
+     * is 0 for `dataset == -1` exactly as before -- and for any `dataset < -1`
+     * too, which is what the old `else` arm's zero-iteration loop produced.
+     * Behaviour is bit-identical to the old code for every non-negative point.
+     *
+     * The shape matches the rest of the tree: draw.c spells
+     * `if(point < 0 || point >= xctx->raw->allpoints) goto done;` and
+     * scheduler.c's `xschem raw value` / `raw set` arms both spell
+     * `point >= 0 && point < ...`. get_raw_value() was the outlier. */
+    if(dataset >= 0) {
       for(i = 0; i < dataset; ++i) {
         ofs += xctx->raw->npoints[i];
       }
-      if(ofs + point < xctx->raw->allpoints) {
-        return xctx->raw->values[idx][ofs + point];
-      }
+    }
+    if(point >= 0 && ofs + point < xctx->raw->allpoints) {
+      return xctx->raw->values[idx][ofs + point];
     }
   }
   return 0.0;
@@ -5655,7 +6003,6 @@ void remove_backup(void)
 int load_backup_as(const char *cellfile, int set_title)
 {
   char bak[PATH_MAX];
-  char msg[PATH_MAX+100];
   struct stat sb;
   if(!cellfile || !cellfile[0]) return 0;
   if(!tclgetboolvar("autosave_backup")) return 0;
@@ -5665,8 +6012,8 @@ int load_backup_as(const char *cellfile, int set_title)
   /* restore the logical identity: this buffer IS cellfile, not cellfile~ */
   my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], cellfile);
   my_strncpy(xctx->current_name, rel_sym_path(cellfile), S(xctx->current_name));
-  my_snprintf(msg, S(msg), "get_directory {%s}", cellfile);
-  my_strncpy(xctx->current_dirname, tcleval(msg), S(xctx->current_dirname));
+  my_strncpy(xctx->current_dirname, tcl_call("get_directory", cellfile, NULL, NULL),
+             S(xctx->current_dirname));
   if(!stat(cellfile, &sb)) xctx->time_last_modify = sb.st_mtime;
   set_modify(1);                                     /* unsaved vs cellfile        */
   return 1;
@@ -5719,8 +6066,10 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
   else { /* user asks to save to same filename */
     if(!stat(xctx->sch[xctx->currsch], &buf)) {
       if(xctx->time_last_modify && xctx->time_last_modify != buf.st_mtime) {
-        tclvareval("ask_save \"Schematic file: ", xctx->sch[xctx->currsch],
-            "\nHas been changed since opening.\nSave anyway?\" 0", NULL);
+        my_snprintf(msg, S(msg),
+            "Schematic file: %s\nHas been changed since opening.\nSave anyway?",
+            xctx->sch[xctx->currsch]);
+        tcl_call("ask_save", msg, NULL, "0");
         if(strcmp(tclresult(), "yes") ) return 0;
       }
     }
@@ -5746,8 +6095,8 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
     xctx->time_last_modify =  buf.st_mtime;
   }
   my_strncpy(xctx->current_name, rel_sym_path(schname), S(xctx->current_name));
-  my_snprintf(msg, S(msg), "get_directory {%s}", schname);
-  my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+  my_strncpy(xctx->current_dirname, tcl_call("get_directory", schname, NULL, NULL),
+             S(xctx->current_dirname));
   /* why clear all these? */
   /*
    * xctx->prep_hi_structs=0;
@@ -5836,7 +6185,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   if(ffname && ffname[0]) {
     int generator = 0;
     /* if ffname is a generator add () at end of filename if not already present */
-    tclvareval("is_xschem_file {", ffname, "}", NULL);
+    tcl_call("is_xschem_file", ffname, NULL, NULL);
     if(!strcmp(tclresult(), "GENERATOR")) {
       size_t len = strlen(ffname);
       if( ffname[len - 1] != ')') my_strcat(_ALLOC_ID_, &ffname, "()");
@@ -5847,12 +6196,12 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     /* remote web object specified */
     if(is_from_web(ffname) && xschem_web_dirname[0]) {
       /* download into ${XSCHEM_TMP_DIR}/xschem_web */
-      tclvareval("download_url {", ffname, "}", NULL);
+      tcl_call("download_url", ffname, NULL, NULL);
       /* build local file name of downloaded object */
       my_snprintf(name, S(name), "%s/%s",  xschem_web_dirname, get_cell_w_ext(ffname, 0));
       /* build current_dirname by stripping off last filename from url */
-      my_snprintf(msg, S(msg), "get_directory {%s}", ffname);
-      my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+      my_strncpy(xctx->current_dirname, tcl_call("get_directory", ffname, NULL, NULL),
+                 S(xctx->current_dirname));
       /* local file name */
       my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], name);
       /* local relative reference */
@@ -5865,8 +6214,8 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       /* ffname does not begin with $XSCHEM_TMP_DIR/xschem_web and ffname does not exist */
 
       if(strstr(ffname, sympath) != ffname /* && stat(ffname, &buf)*/) {
-        my_snprintf(msg, S(msg), "get_directory {%s}", ffname);
-        my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+        my_strncpy(xctx->current_dirname, tcl_call("get_directory", ffname, NULL, NULL),
+                   S(xctx->current_dirname));
       }
       /* local file name */
       my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], ffname);
@@ -5874,8 +6223,8 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       my_strncpy(xctx->current_name, rel_sym_path(ffname), S(xctx->current_name));
     } else { /* local file specified and not coming from web url */
       /* build current_dirname by stripping off last filename from url */
-      my_snprintf(msg, S(msg), "get_directory {%s}", ffname);
-      my_strncpy(xctx->current_dirname,  tcleval(msg), S(xctx->current_dirname));
+      my_strncpy(xctx->current_dirname, tcl_call("get_directory", ffname, NULL, NULL),
+                 S(xctx->current_dirname));
       /* local file name */
       my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], ffname);
       /* local relative reference */
@@ -5912,8 +6261,9 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       if(alert) {
         fprintf(errfp, "load_schematic(): unable to open file: %s, ffname=%s\n", name, ffname );
         if(has_x) {
-          my_snprintf(msg, S(msg), "update; alert_ {Unable to open file: %s}", ffname);
-          tcleval(msg);
+          my_snprintf(msg, S(msg), "Unable to open file: %s", ffname);
+          tcleval("update");
+          tcl_call("alert_", msg, NULL, NULL);
         }
       }
       len = strlen(name);
@@ -5937,7 +6287,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
       dbg(2, "load_schematic(): loaded file:wire=%d inst=%d\n",xctx->wires , xctx->instances);
       if(load_symbols) link_symbols_to_instances(-1);
       if(reset_undo) {
-        tclvareval("is_xschem_file {", xctx->sch[xctx->currsch], "}", NULL);
+        tcl_call("is_xschem_file", xctx->sch[xctx->currsch], NULL, NULL);
         if(!strcmp(tclresult(), "SYMBOL") || xctx->instances == 0) {
           if(xctx->netlist_type != CAD_SYMBOL_ATTRS) xctx->save_netlist_type = xctx->netlist_type;
           xctx->netlist_type = CAD_SYMBOL_ATTRS;
@@ -6005,6 +6355,23 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   my_free(_ALLOC_ID_, &ffname);
   if(reset_undo == 1) tcleval("eval_load_file_postprocess");
   xctx->no_autosave = save_no_autosave;
+  /* 0688 -- THE DETERMINISTIC SEAM. The annotation mask belongs to the ROOT sheet
+   * it was armed for (xctx->annot_root, stamped by annot_show_set in actions.c);
+   * when a load has replaced that root, the annotation goes with it. Here rather
+   * than only in annot_show_sync_cache() because `xschem get annot_show` must
+   * already read 0 the instant this returns -- the ASE-L menu PULL and every
+   * scripted reader look before the next bulk bbox evaluation.
+   *
+   * DESCEND-SAFE BY CONSTRUCTION, not by a special case: descend_schematic() and
+   * go_back() come through here with currsch > 0 and never move sch[0], so the
+   * comparison cannot fire on them. 0688 section 1 records descend+go_back KEEPING
+   * the mask as deliberate. Same-path reloads (Session > Design Window, `xschem
+   * reload`, `load -keep_symbols`) keep it for the same reason.
+   *
+   * It reads and writes only the mask, its Tcl mirror and its stamp -- no raw is
+   * cleared, re-read or re-attached (the reverted 0683 attempt's data-loss
+   * regression, 0683 section 7). */
+  annot_show_check_root();
   return ret;
 }
 
@@ -6770,7 +7137,7 @@ int load_sym_def(const char *name, FILE *embed_fd)
         my_snprintf(sympath, S(sympath), "%s/%s", xschem_web_dirname, get_cell_w_ext(transl_name, 0));
         if((lcc[level].fd=my_fopen(sympath,fopen_read_mode))==NULL) {
           /* not already cached in .../xschem_web_xxxxx/ so download */
-          tclvareval("try_download_url {", xctx->current_dirname, "} {", transl_name, "}", NULL);
+          tcl_call("try_download_url", xctx->current_dirname, transl_name, NULL);
         }
         lcc[level].fd=my_fopen(sympath,fopen_read_mode);
       }
@@ -7537,6 +7904,7 @@ void create_sch_from_sym(void)
   char *dir = NULL;
   char *prop = NULL;
   char schname[PATH_MAX];
+  char msg[PATH_MAX + 100];
   char *sub_prop;
   char *sub2_prop=NULL;
   char *str=NULL;
@@ -7563,8 +7931,9 @@ void create_sch_from_sym(void)
              ".sch"), S(schname));
       }
       if( !stat(schname, &buf) ) {
-        tclvareval("ask_save \"Create schematic file: ", schname,
-            "?\nWARNING: This schematic file already exists, it will be overwritten\"", NULL);
+        my_snprintf(msg, S(msg), "Create schematic file: %s?\n"
+            "WARNING: This schematic file already exists, it will be overwritten", schname);
+        tcl_call("ask_save", msg, NULL, NULL);
         if(strcmp(tclresult(), "yes") ) {
           return;
         }

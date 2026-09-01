@@ -748,9 +748,13 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
   char *textfont;
   int c_for_text;
 
+  /* issue 0498: guard BEFORE the dereference, not after. The `ptr == -1` test that used to
+   * sit below these lines was written to prevent exactly the xctx->sym[-1] read the next
+   * line performs; upstream commit 40fd937d hoisted the `type =` assignment above it and
+   * silently disarmed it. draw.c draw_temp_symbol() is the correct in-tree ordering. */
+  if(INST_UNBOUND(n)) return;
   type = xctx->sym[xctx->inst[n].ptr].type;
   lvs_ignore=tclgetboolvar("lvs_ignore");
-  if(xctx->inst[n].ptr == -1) return;
   if(layer == 0) {
     xctx->inst[n].flags &= ~IGNORE_INST; /* clear bit */
     if( type && strcmp(type, "launcher") && strcmp(type, "logo") &&
@@ -920,7 +924,7 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       /* if(xscale*FONTWIDTH* xctx->mooz<1) continue; */
-      if(!xctx->show_hidden_texts && (symptr->text[j].flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+      if(text_hidden(symptr->text[j].flags, TEXT_CTX_INSTANCE)) continue;
       if( hide && text.txt_ptr && strcmp(text.txt_ptr, "@symname") && strcmp(text.txt_ptr, "@name") ) continue;
       txtptr= translate(n, text.txt_ptr);
       ROTATION(rot, flip, 0.0,0.0,text.x0,text.y0,x1,y1);
@@ -929,9 +933,12 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
       if(disabled == 1) textlayer = GRIDLAYER;
       else if(disabled == 2) textlayer = PINLAYER;
       else if( xctx->inst[n].color == -10000) {
-        int lay;
+        int lay, alay;
         get_sym_text_layer(n, j, &lay);
+        /* 0615: see the identical site in draw.c -- the override must reach all three
+         * back ends or screen and exported SVG/PDF disagree. */
         if(lay != -1) textlayer = lay;
+        else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
         else textlayer = symptr->text[j].layer;
       }
       if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
@@ -1004,6 +1011,33 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
 }
 
 
+/* S9: the draw-time OP-annotation overlay, SVG back end -- the exact mirror of
+ * draw.c draw_annot_overlay(), with every decision in the shared reader
+ * get_annot_overlay() (actions.c). This is one of the two "call sites nobody
+ * looks at"; it is a separate site from the screen one and has its own test row.
+ *
+ * Called from the export instance loop, NOT from svg_draw_symbol(): svgdraw.c's
+ * text loop holds `txtptr = translate(n, ...)` LIVE (it does not copy, unlike
+ * draw.c), and translate()'s result is one static buffer -- a Tcl call inserted
+ * between those points would corrupt the symbol text being drawn. */
+static void svg_draw_annot_overlay(int n)
+{
+  const char *txt = NULL;
+  double x, y, size;
+  int layer;
+  if(!get_annot_overlay(n, &txt, &x, &y, &size, &layer)) return;
+  if(layer < 0 || layer >= cadlayers) layer = TEXTLAYER;
+  if(!xctx->enable_layer[layer]) return;
+  my_snprintf(svg_font_family, S(svg_font_family), "%s", ANNOT_OVERLAY_FONT);
+  my_snprintf(svg_font_style,  S(svg_font_style),  "normal");
+  my_snprintf(svg_font_weight, S(svg_font_weight), "normal");
+  /* upright, top-left anchored: rot 0, flip 0, hcenter 0, vcenter 0 (decision D7) */
+  if(text_svg)
+    svg_draw_string(layer, txt, 0, 0, 0, 0, x, y, size, size);
+  else
+    old_svg_draw_string(layer, txt, 0, 0, 0, 0, x, y, size, size);
+}
+
 static void fill_svg_colors()
 {
  char s[200]; /* overflow safe 20161122 */
@@ -1059,6 +1093,13 @@ void svg_draw(void)
   int *unused_layer;
   int color;
   Hilight_hashentry *entry;
+
+  /* S7/S9: svg_draw() is reached from `xschem print svg` (which syncs) but ALSO
+   * straight from callback.c's print path (which does not), so both bulk
+   * visibility caches are freshened at the callee -- every present and future
+   * caller is then covered with no edit at the call sites. */
+  annot_show_sync_cache();
+  annot_overlay_sync();
 
   if(!lastdir[0]) my_strncpy(lastdir, pwd_dir, S(lastdir));
   if(has_x && !xctx->plotfile[0]) {
@@ -1241,6 +1282,8 @@ void svg_draw(void)
        svg_draw_symbol(c + 1 , i, c + 1, 0, 0, 0.0, 0.0); /* ... draw texts */
      }
      svg_clr_hilight();
+     /* S9: the OP-annotation overlay, once per instance per export (decision D3) */
+     if(c == cadlayers - 1) svg_draw_annot_overlay(i);
    }
   }
   prepare_netlist_structs(0); /* NEEDED: data was cleared by trim_wires() */
@@ -1286,8 +1329,11 @@ void svg_draw(void)
 
   for(i=0;i<xctx->texts; ++i)
   {
+    int alay;
     textlayer = xctx->text[i].layer;
-    if(!xctx->show_hidden_texts && (xctx->text[i].flags & HIDE_TEXT)) continue;
+    if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
+    /* 0615: the schematic-own-text mirror of the instance-text site above. */
+    if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
     if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
     my_snprintf(svg_font_family, S(svg_font_family), tclgetvar("svg_font_name"));
     my_snprintf(svg_font_style, S(svg_font_style), "normal");

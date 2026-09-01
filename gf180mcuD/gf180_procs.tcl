@@ -52,3 +52,62 @@ spice_ignore=false
     }
   }
 }
+
+########################## op_annot descriptors (S2) #########################
+# doc/claude/specs/op_annotation.md §4.2. gf180 has NO prototype save/display
+# procs to port — annotation lives entirely inside the 19 FET symbols as
+# `tcleval(gm=[ngspice::get_node …\@m.${path}@spiceprefix@name\.m0\[gm\]])`
+# texts. Those texts are therefore the ORACLE for the descriptor below, and they
+# are uniformly `m0` across all 19 nfet*/pfet* symbols (measured, not assumed).
+#
+# ⚠ THE TEMPLATE MUST BE ESCAPED — issue 0422. `xschem translate` tokenises on
+# whitespace only (token.c:24), so an unescaped `.` does NOT terminate an
+# @-token and an @-token that misses get_tok_value() appends NOTHING: the
+# unescaped spelling yields a plausible wrong string with no error at all. The
+# escaping below is the shipped symbols' own.
+#
+# ⚠ GUARDED, NOT MERELY APPENDED — see the same block in
+# ../sky130A/sky130_procs.tcl for the measurement (a raise here abandons the
+# rest of cadence_style_rc, menu and all, while still exiting 0). `register`'s
+# own malformed-dict raise is deliberately NOT caught.
+if {[info commands ::op_annot::register] ne {}} {
+  # ⚠ BOTH nmos AND pmos (§4.2 registers only nmos; op_annot's key is an exact
+  # index, not the prototypes' `[pn]mos` regexp).
+  # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, IHP and
+  # xschem_library/devices/nmos.sym.
+  # ⚠ THE DEFAULT SIX — RULING D9 (the user, 2026-08-22). Spec §4.2a.
+  #     id  gm  gds  vgs  vth  vds        and nothing else, on every PDK.
+  # GONE from this descriptor: vdsat, and the derived row gm/id. "Too many
+  # parameters displayed is just clutter."
+  #
+  # ⚠ vgs/vds ARE NOW params, NOT pinexpr, so this descriptor carries no pinexpr
+  # at all and the load-bearing-space trap (issue 0444) and the fabricated
+  # `vgs = 0` on a GND source (issue 0446) are OFF THE SHIPPED PATH. Neither C
+  # defect is fixed; both remain reachable by a user-written pinexpr, and their
+  # guardians live on test-local descriptors in test_op_annot.tcl.
+  #
+  # ⚠ MEASURED ON GF180 ITSELF, not inherited from the sky130 measurement —
+  # nfet_03v3, models/design.ngspice + sm141064.ngspice typical, one deck, both
+  # ngspice binaries, `.control … write … .endc`:
+  #     rc=0 checkvalid=0 raw written on BOTH, with vectors
+  #       i(@m.xm1.m0[id])  @m.xm1.m0[gm]  @m.xm1.m0[gds]
+  #       v(@m.xm1.m0[vgs]) v(@m.xm1.m0[vth]) v(@m.xm1.m0[vds])
+  # i.e. exactly the 0/1/2 kind convention already in the descriptor.
+  #
+  # RECOVERY for the old rows is one round-trip in a --script rc (invariant I5):
+  #     set d [op_annot::descriptor nmos]
+  #     dict set d params [concat [dict get $d params] {{vdsat vdsat 2}}]
+  #     dict set d derived {{gm/id {$gm/$id}}}
+  #     op_annot::register nmos $d
+  # A first-class means for a user to choose her own set is OWED and TBD.
+  foreach _gf180_op_type {nmos pmos} {
+    op_annot::register $_gf180_op_type {
+      devpath {\@m.@path@spiceprefix@name\.m0}
+      match   {*gf180mcu_pr/*}
+      params  {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+    }
+  }
+  unset _gf180_op_type
+} else {
+  puts stderr {gf180_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
+}

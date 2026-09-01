@@ -653,3 +653,160 @@ pre_osdi $::SG13G2_OSDI/mosvar.osdi
     }
   }
 }
+
+########################## op_annot descriptors (S2) #########################
+# doc/claude/specs/op_annotation.md §4.2. This is a DATA lift of
+# sg13g2_write_save_lines (:304-341): its two `if/elseif` arms become two
+# registrations, its ten FET `.save` lines and thirteen HBT ones become the
+# `params` lists IN THAT ORDER, and its device-path concatenation becomes the
+# template / devproc below. Nothing of its control flow survives — S3's generic
+# hierarchy walk plus these descriptors replace it.
+#
+# ⚠ THE PROTOTYPE PROCS ABOVE ARE LEFT EXACTLY AS THEY WERE, ON PURPOSE. They
+# are the acceptance ORACLE: tests/headless/test_op_annot.tcl rows P19/P20/P21
+# diff `.save [op_annot::devpath $i][param]` against live `sg13g2_save_params`
+# output on dc_lv_nmos / dc_lv_pmos / dc_hbt_13g2_5t and require it byte for
+# byte (10, 10 and 26 cards). Editing them in the same step would destroy the
+# only evidence the generalization lost nothing.
+#
+# ⚠ THE CARDS ARE BARE. The diff goes through `devpath`, never `vector`:
+# measured on ngspice-42, `.save i(@n.…[ids])` puts NOTHING in the raw while
+# `.save @n.…[ids]` yields `i(@n.…[ids])` — ngspice applies the i()/v() wrapper
+# itself from the parameter's own type (spec §3 R4).
+#
+# ⚠ kinds are NOT invented here: they are sg13g2_display_fet_params:461-470 and
+# sg13g2_display_bip_params:524-536 read off verbatim (`i($devpath[ids])` -> 0,
+# bare `$devpath[gm]` -> 1, `v($devpath[vth])` -> 2). Those lines are the only
+# authority for kind in the tree, and a wrong kind makes the save card succeed
+# while the read silently misses.
+
+# The ONE part of the prototype that cannot be a template: `xschem translate`
+# has no regsub, so the `_5t` model-suffix strip (:321-324) needs a devproc.
+# ⚠ NO `string tolower` (op_annot::devpath lowercases every exit) and NO
+# `getprop instance … spiceprefix` (the prototype's :374/:453/:512 read it that
+# way and work only because IHP's own test schematics spell `spiceprefix=` on
+# the instance line; the prefix arrives here as an argument, from `translate`).
+proc sg13g2_op_npn_devpath {instname model path spiceprefix} {
+  if {[regexp {_5t$} $model]} {
+    set model [string range $model 0 end-3]
+  }
+  return "@q.$path$spiceprefix$instname.q$model"
+}
+
+# ⚠ GUARDED, NOT MERELY APPENDED — see ../sky130A/sky130_procs.tcl for the
+# measurement. `register`'s own malformed-dict raise is deliberately NOT caught.
+if {[info commands ::op_annot::register] ne {}} {
+  # ⚠ BOTH nmos AND pmos, sharing one dict: measured on dc_lv_pmos, IHP spells
+  # the inner device `n<model>` for the PMOS too (`@n.xm1.nsg13_lv_pmos`).
+  # ⚠ `match`: issue 0425 — `type=nmos` is shared with sky130, gf180 and
+  # xschem_library/devices/nmos.sym.
+  # ⚠ NO pinexpr: vgs and vds are saved DEVICE parameters on this PDK, so they
+  # are already rows in `params` and need no pin-voltage expression. Since
+  # ruling D9 that is true of sky130 and gf180 too — BSIM4 publishes vgs/vds as
+  # instance parameters — so NO shipped descriptor carries a pinexpr any more.
+  #
+  # ⚠ THE DEFAULT SIX — RULING D9 (the user, 2026-08-22). Spec §4.2a.
+  #     id  gm  gds  vgs  vth  vds        and nothing else, on every PDK.
+  # "Too many parameters displayed is just clutter." GONE from this descriptor:
+  # vdss, cgg, cgsol, cgdol, and the three derived rows cgg_tot, ft and gm/id.
+  # No simulator computes ft or gm/id — they were Tcl arithmetic here and, with
+  # a DIFFERENT formula, in sky130's procs file.
+  #
+  # ⚠ THE LABEL IS `id`, THE PARAMETER IS STILL `ids`. IHP spells the current
+  # `ids` where BSIM4 spells it `id`; the descriptor's {label param kind} triple
+  # exists for exactly this, and one display vocabulary across all three PDKs is
+  # worth more than matching the raw's spelling on screen.
+  #
+  # ✅ MEASURED ON A REAL RAW, 2026-08-22 — and the claim this comment used to
+  # make ("no IHP parameter name can be checked against a real raw here") was
+  # WRONG, not merely cautious. It was measured against /usr/bin/ngspice (42),
+  # which supports OSDI v0.3 while the vendored psp103.osdi targets v0.4, and
+  # then generalised to "this box". THE BOX HAS TWO ngspice BINARIES:
+  #
+  #     /usr/bin/ngspice       (42)    pre_osdi psp103.osdi -> "couldn't be
+  #                                    loaded ... only supports OSDI v0.3"
+  #     /usr/local/bin/ngspice (46+)   pre_osdi psp103.osdi -> loads, and the
+  #                                    bench runs
+  #
+  # On 46+, sg13g2_tests/dc_lv_nmos with these six as its `.save` file: rc=0,
+  # ZERO checkvalid warnings, and every vector present in the shapes the `kind`
+  # convention predicts --
+  #     i(@n.xm1.nsg13_lv_nmos[ids])   @n.xm1.nsg13_lv_nmos[gm] / [gds]
+  #     v(@n.xm1.nsg13_lv_nmos[vgs]) / [vth] / [vds]
+  # then annotated live: ids 259.1u, gm 464u, gds 17.78u, vgs 1.2, vth 0.2966,
+  # vds 1.5. So this PDK's six are MEASURED, exactly like sky130's and gf180's,
+  # not inferred from being a subset of the prototype's list.
+  #
+  # ⚠ WHAT IS STILL TRUE: an IHP bench needs ngspice-46+. On 42 it does not fail
+  # in the annotation path, it fails to simulate at all.
+  #
+  # RECOVERY for the old rows is one round-trip in a --script rc (invariant I5):
+  #     set d [op_annot::descriptor nmos]
+  #     dict set d params [concat [dict get $d params] \
+  #        {{vdss vdss 2} {cgg cgg 1} {cgsol cgsol 1} {cgdol cgdol 1}}]
+  #     dict set d derived {{cgg_tot {$cgg + $cgsol + $cgdol}} \
+  #        {ft {$gm/(2*3.141592654*($cgg + $cgsol + $cgdol))}} {gm/id {$gm/$id}}}
+  #     op_annot::register nmos $d
+  # A first-class means for a user to choose her own set is OWED and TBD.
+  #
+  # ⚠ vertical_npn BELOW IS UNTOUCHED BY D9 — the six are MOS quantities and an
+  # HBT has no vgs. Whether a bipolar default wants the same trim is OPEN.
+  foreach _sg13g2_op_type {nmos pmos} {
+    op_annot::register $_sg13g2_op_type {
+      devpath {\@n.@path@spiceprefix@name\.n@model}
+      match   {*sg13g2_pr/*}
+      params  {{id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+    }
+  }
+  unset _sg13g2_op_type
+
+  # ⚠ THIRTEEN params, in sg13g2_write_save_lines:327-339's order. Spec §4.2
+  # shows six ({ic ib gm go vbe vbc}); that list silently drops gmu gpi gx cbe
+  # cbc cbep cbcp, and with them the prototype's `rin` and `ft`.
+  # ⚠ RULING D9b (the user, 2026-08-22): "For ANY PDK, ANY device, only display
+  # max of six parameters UNLESS there is a setting to do otherwise. We can't
+  # have BJT (NPN,PNP) causing clutter." This descriptor shipped SIXTEEN rows —
+  # thirteen params and three derived — and is the case that prompted the rule.
+  #
+  # The cap itself is enforced in op_annot::text (spec §4.2b), so an untrimmed
+  # descriptor would not actually paint sixteen rows. It would paint the first
+  # six IN DECLARED ORDER, which here was `gm go gmu gpi gx vbe` — the internal
+  # small-signal conductances and no current at all. A cap chooses how MANY; a
+  # descriptor still has to choose WHICH, so this list is reordered and trimmed
+  # rather than left to be truncated.
+  #
+  # The six mirror the MOS six as closely as a bipolar allows: output current,
+  # input current, transconductance, output conductance, and the two junction
+  # voltages.
+  #     MOS   id   —    gm  gds  vgs  vds
+  #     BJT   ic   ib   gm  go   vbe  vbc
+  #
+  # ⚠ `vce` IS NOT HERE, AND THAT IS A CONSEQUENCE OF THE CAP, NOT AN OVERSIGHT.
+  # psp103 publishes vbe and vbc, not vce; the prototype showed vce as a DERIVED
+  # row over both. A derived row can only reference labels that are THEMSELVES
+  # displayed rows, so `vce` costs three rows (vbe, vbc, vce) to show one number
+  # — seven in total, one over the cap, and the cap would then drop `vce` itself
+  # as the last row. Showing vbe and vbc directly gives the reader the same
+  # information (vce = vbe - vbc) inside the budget. To get the derived row back:
+  #     set d [op_annot::descriptor vertical_npn]
+  #     dict set d derived {{vce {$vbe - $vbc}}}
+  #     set ::op_annot_max_rows 7
+  #
+  # GONE, and recoverable in one round-trip in a --script rc (invariant I5):
+  # gmu gpi gx cbe cbc cbep cbcp, and the derived rin, vce and ft.
+  #     set d [op_annot::descriptor vertical_npn]
+  #     dict set d params [concat [dict get $d params] \
+  #        {{gmu gmu 1} {gpi gpi 1} {gx gx 1} {cbe cbe 1} {cbc cbc 1}}]
+  #     dict set d derived [concat [dict get $d derived] \
+  #        {{rin {1.0/$gx + 1.0/($gmu + $gpi)}}}]
+  #     set ::op_annot_max_rows 0
+  # ⚠ NOTE THE LAST LINE. Adding rows is not enough — the cap must be lifted too,
+  # or the extra rows are built and then dropped.
+  op_annot::register vertical_npn {
+    devproc sg13g2_op_npn_devpath
+    match   {*sg13g2_pr/*}
+    params  {{ic ic 0} {ib ib 0} {gm gm 1} {go go 1} {vbe vbe 2} {vbc vbc 2}}
+  }
+} else {
+  puts stderr {sg13g2_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
+}

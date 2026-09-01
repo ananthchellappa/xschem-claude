@@ -1,10 +1,14 @@
 # Spec — the owed ledger
 
-*Two debts that need the real screen, recorded when they are incurred and paid
-in one batch instead of dozens of interruptions.*
+*Everything a piece of work still owes — the user's rulings, the user's eyes,
+and a real-screen run — recorded when it is incurred and paid in one batch
+instead of dozens of interruptions.*
 
 Status: implemented. `tests/headless/owed.sh`, tests in
 `tests/headless/test_owed.sh`.
+
+**Three kinds since 2026-08-22.** `rule` joined `look` and `suite` at the user's
+instruction — see §6 for why, and for what the split it replaced was costing.
 
 Related: `doc/claude/specs/dev_display.md` (why routine testing no longer takes
 the screen at all), `doc/claude/specs/gui_test_gate.md` (the panel, and its
@@ -19,13 +23,13 @@ reproduces the `:0` verdict set exactly. What remains are two obligations that
 still cost the user's attention, and both arrive at the worst possible cadence:
 **scattered, one at a time, whenever a feature happens to finish.**
 
-| | suite owes a `:0` run | item owes the user's look |
-|---|---|---|
-| where it comes from | `CLAUDE.md`: "run a GUI feature's suite on `:0` once before calling it done" | `pixel-deliverables-need-eyeball`: "the report is *suites green, please look* — not *done*" |
-| who performs it | a script | **the user** |
-| verdict | PASS/FAIL, machine-readable | judgment |
-| clears itself | **yes**, on a pass | **never** — only the user clears it |
-| what it needs | the real display | *the user's attention*; a VNC view of `:99` serves equally |
+| | ruling owed by the user | item owes the user's look | suite owes a `:0` run |
+|---|---|---|---|
+| where it comes from | a driver run's **E questions**: "ratify this user-visible change, or revert it" | `pixel-deliverables-need-eyeball`: "the report is *suites green, please look* — not *done*" | `CLAUDE.md`: "run a GUI feature's suite on `:0` once before calling it done" |
+| who performs it | **the user** | **the user** | a script |
+| verdict | a decision | judgment | PASS/FAIL, machine-readable |
+| clears itself | **never** — only the user clears it | **never** — only the user clears it | **yes**, on a pass |
+| what it needs | *the user's attention*, and often a look first | *the user's attention*; a VNC view of `:99` serves equally | the real display |
 
 The cost is not runtime. A suite is seconds; the batch of GUI tests that show
 windows is 195 of 319 files, of which 23 replay real press/motion/release
@@ -51,15 +55,22 @@ have different clearing rules, and no code path converts one into the other.
 ## 2. Interface
 
 ```
-owed.sh add   suite <name> [why]     # a suite owing a :0 run
+owed.sh add   rule  <id> [why] [--eyes] [--ref <path>]   # a ruling owed by the user
 owed.sh add   look  <what> [why]     # something owing the user's eyes
-owed.sh list  [suite|look]           # what is queued, and since when
+owed.sh add   suite <name> [why]     # a suite owing a :0 run
+owed.sh list  [rule|look|suite]      # what is queued, and since when
 owed.sh drain [--display :0]         # run the SUITE debts, one batch, one gate
-owed.sh show                         # the LOOK debts, formatted to read aloud
+owed.sh show                         # the USER'S QUEUE (rule + look), read aloud
+owed.sh clear rule <id>              # only the user closes a ruling
 owed.sh clear look <id>              # only the user clears a look
 owed.sh clear suite <id>             # escape hatch: abandon a suite debt
-owed.sh count                        # "3 suite, 2 look" — for status lines
+owed.sh count                        # "9 rule, 2 look, 3 suite" — for status lines
 ```
+
+**`count` prints in `rule, look, suite` order and every consumer selects by
+name.** The one consumer that did not — `drain`'s "look debts untouched",
+written as `count | sed 's/.*, //'`, i.e. *the last field* — silently began
+reporting the **rule** count the moment a third kind existed. Guarded by O18.
 
 State: `${XSCHEM_OWED_DIR:-$HOME/.claude/xschem_owed}`, under `$HOME` so one
 ledger serves the main session and every worktree — the same argument that put
@@ -78,14 +89,17 @@ the gate dir there.
 - **R103** Adding the same suite twice does not duplicate it; the newer reason
   and timestamp win. `look` entries are **never** deduplicated — two different
   things can share a description, and silently merging them would drop one.
-- **R104** An unknown kind is an error, not a third list.
+- **R104** An unknown kind is an error, not a **fourth** list. (It read "third"
+  until `rule` became the third; the point was never the number, but that a typo
+  must not quietly open a list nothing reads.)
 - **R105** Entries survive across sessions and reboots.
 
 ### R2 — reading
 
 - **R201** `list` shows both lists with ids, ages in days, and reasons.
 - **R202** `list <kind>` shows one.
-- **R203** `count` prints a single machine-readable line.
+- **R203** `count` prints a single machine-readable line, one field per kind in
+  `rule, look, suite` order. **Consumers select by name, never by position.**
 - **R204** An empty ledger says so and exits 0. Nothing owed is a normal state.
 
 ### R3 — draining the suite debts
@@ -97,7 +111,9 @@ the gate dir there.
 - **R303** A suite that **fails** stays, with its failure recorded, so a drain
   cannot be a way to lose work.
 - **R304** `drain` prints a summary: how many ran, passed, failed, remain.
-- **R305** `drain` never touches the `look` list. Not even to reorder it.
+- **R305** `drain` never touches the `look` list **or the `rule` list**. Not
+  even to reorder them. Its summary names both, because an unmentioned list is
+  one a reader can believe was drained.
 - **R306** `drain` with nothing queued exits 0 and runs nothing.
 - **R307** The user can stop a drain mid-way (the gate's Stop); already-passed
   entries stay cleared and the rest stay queued.
@@ -193,6 +209,43 @@ cleared on a run that was not clean and two independent reviewers caught it.
   it: poll for the effect, and if it has not arrived after ~3 s the event was
   lost and no amount of waiting in the test will fix it.
 
+### R6 — the rule debts (added 2026-08-22)
+
+- **R601** `add rule <id> [why]` records a **ruling the user owes**: an E
+  question from a driver run, or any user-visible decision a step took without
+  authority. The id is the issue number the question is filed under.
+- **R602** Rule entries are **deduped by id**, like suites and unlike looks. A
+  ruling *is* its issue number; re-adding `0444` restates one open question,
+  and two `0444` entries would let the user answer one and still see the other
+  standing.
+- **R603** **A rule entry is a POINTER, not a copy.** The option set (a/b/c),
+  the measurements and the history stay in `doc/claude/issues/NNNN-*.md`.
+  Flattening a three-option ruling into one ledger line is how the options get
+  lost. `add` resolves the path from a 4-digit id and records it as `ref:`;
+  `--ref <path>` supplies one for a ruling with no issue file (an E question
+  keyed to a step, say `X0498`).
+  - **R603a** An id that resolves to no file gets **no ref**, never an invented
+    one. An id with no issue yet is a normal early state; a fabricated path
+    sends the reader to a file that was never written.
+- **R604** **`--eyes` tags a ruling that cannot be made without looking.** Four
+  of the nine open on the OP-annotation branch are of this kind (0457 the
+  resting value of `annot_show`, 0458 its stock control, 0468 the overlay's
+  compiled-in geometry, 0475 the annotation-silent sky130 symbols). `list` marks
+  them `[needs eyes]` and `show` says so in words. It is a **rule** tag: a look
+  debt already needs eyes and a suite debt never does, so `--eyes` on either is
+  an error rather than a no-op.
+- **R605** **Only `clear rule <id>` closes a ruling.** Not `drain`, not a green
+  suite, not age, and not `clear look` — the kinds are separate namespaces.
+- **R606** `show` prints **rule and look together**, because from where the user
+  sits they are one queue: both are owed by them, both are cleared only by them,
+  and an R604 ruling needs a look before it can be made at all. Suite debts stay
+  out — nobody needs to be told about work a script will do.
+- **R607** **Optional per-entry data lives on lines 2+ as `key:value`, never as
+  a fourth tab-separated column.** Line 1 is frozen at
+  `<epoch>\t<subject>\t<reason>`; `_read_entry` hands everything after the
+  second tab to `reason`, so a fourth column would appear glued to the end of
+  every reason string in every existing reader. Growth happens downward.
+
 ### R5 — not lying
 
 - **R501** Every command exits non-zero on real failure.
@@ -222,7 +275,50 @@ Runs against a throwaway `XSCHEM_OWED_DIR`.
 | O12 | a corrupt entry is skipped with a warning, the rest of the ledger survives (R503) |
 | O13 | one REAL drain of a real `.tcl` suite, so the stub cannot hide an integration break |
 | O14 | a **`.sh`** suite drains: it really runs (its own witness file), **not** through the suite runner, gets the display in **both spellings, pinned separately** (`DISPLAY` and `AUDIT_DISPLAY` on their own anchored lines — one grep for the substring `DISPLAY=…` matches the other spelling and proves neither), clears on a pass and is **kept** on a failure (R308/R303) |
+| O16 | `add rule` records; re-adding the same id updates rather than duplicates, newer reason wins (R601/R602) |
+| O17 | the **three** lists stay apart — a ruling is not in the look list or the suite list, and vice versa |
+| O18 | **`drain` does not touch the RULE list** (R305/R605) — O9's twin, and the row that exists because `rule` arrived *after* O9 was written. Also pins the positional-`count` defect: the fixture keeps 2 looks against 1 rule so a last-field read prints the wrong number under the look label |
+| O19 | `clear rule` is the only thing that closes a ruling; `clear look <rule-id>` is an error and leaves it standing (R605) |
+| O20 | `--eyes` is marked in `list` and stated in `show`; an untagged ruling is not marked (R604) |
+| O21 | a 4-digit id auto-resolves to its issue file; `--ref` is kept verbatim; an id with **no** issue file gets no ref rather than an invented one (R603/R603a) |
+| O22 | `--eyes` on a `look` or a `suite` is an error, not a silent no-op (R604) |
 | O15 | a name with neither extension: non-zero exit, **both** candidate paths named, runner never invoked, debt kept and marked as misnamed (R309); plus a **path-shaped** and an **already-suffixed** name, whose message must name the **one** path really stat'd, with neither the directory nor the extension doubled |
 
-Each needs a sabotage that turns it red. O9 especially: it is the one guarding
-the rule the whole design exists to protect.
+Each needs a sabotage that turns it red. O9 and O18 especially: they are the two
+guarding the rule the whole design exists to protect.
+
+**Sabotage matrix run 2026-08-22** when `rule` landed, 77 checks green:
+
+| variant | predicted red | measured |
+|---|---|---|
+| `drain` clears the rule list | O18 | 2 rows red |
+| rule ids stop deduping | O16 | 4 rows red (O16, O17, O19×2) |
+| `_issue_ref` fabricates a path | O21 | 1 row red |
+| look count read positionally (`sed 's/.*, //'`) | O18 last row | 1 row red |
+| `--eyes` accepted on any kind | O22 | 2 rows red |
+
+No variant was footnoted; every predicted red appeared.
+
+---
+
+## 6. Why `rule` exists — the two-queue split it replaced
+
+Added 2026-08-22, at the user's instruction, after they asked the question the
+split could not survive: *"What is the difference? Why isn't it one list? What
+is 'the list'?"*
+
+The E questions a driver run emits — "ratify this user-visible change, or revert
+it" — are owed by the user **exactly as a look is**. They were living in a
+markdown table in `doc/claude/ledger/driver_run_*.md` for one reason: that is
+where the run's own results table happened to be. So the person who owed nine
+rulings and eight looks had to know which of two files each lived in, and the
+assistant referring to "the list" was naming one of two and meaning either.
+
+Worse, **the split does not cut cleanly**. Four of the nine rulings open on the
+OP-annotation branch cannot be decided without looking at pixels (R604). A
+taxonomy whose two categories overlap in 44% of one of them is not a taxonomy.
+
+What *is* a real difference, and what R603 is built around: a look clears with
+no artefact, whereas a ruling clears by landing text in a spec or an issue and
+usually code after it. That is an argument for the rule entry being a **pointer**
+into `doc/claude/issues/`, not an argument for a second ledger in a second file.

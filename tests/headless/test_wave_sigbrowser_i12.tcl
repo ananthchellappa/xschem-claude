@@ -1172,8 +1172,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [list [expr {$::bx_calls - $bx_c0}] \
               [pcall $BXVTV selection] [bx_vis_m $BXVTV g:x1.x2]] \
         [list 1 {g:x1.x2} visible]
-      # NEGATIVE CONTROL on the SAME recorder: an unbound chord must read ZERO,
-      # which is what stops the recorder passing vacuously
+      # NEGATIVE CONTROL on the SAME recorder: a chord that reaches no ASE
+      # binding must read ZERO, which is what stops the recorder passing
+      # vacuously.
+      # ⚠ Ctrl-6 IS NOT UNBOUND EVERYWHERE ANY MORE. S8 of
+      # doc/claude/specs/op_annotation.md binds it in the CADENCE PROFILE
+      # (src/cadence_style_rc: Ctrl-6 -> cadence::annot_mode none). This suite
+      # never sources that rc, so the row still holds -- but it is now "no ASE
+      # binding here", not "unbound in this tree". Pick a different chord if this
+      # file ever starts loading the profile.
       bx_ctx_to $bx_dwin
       catch {raise_activate_toplevel .}
       catch {focus -force .drw}
@@ -1181,7 +1188,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set bx_c1 $::bx_calls
       catch {event generate .drw <Control-Key-6>}
       update
-      check {BX43 (NEGATIVE CONTROL) an unbound Ctrl-6 records ZERO on the same spy} \
+      check {BX43 (NEGATIVE CONTROL) a Ctrl-6 that reaches no ASE binding records ZERO on the same spy} \
         [expr {$::bx_calls - $bx_c1}] 0
     }
 

@@ -36,6 +36,16 @@ if {![winfo exists [xschem get top_path].statusbar.1]} {
   puts "RESULT: SKIP (no status bar widget; needs a real GUI window)"; flush stdout; exit 0
 }
 
+# Issue 0601: this suite edits the startup UNTITLED buffer, and set_modify(1) ->
+# write_backup() (src/actions.c:208 -> src/save.c:4149) then writes `untitled~.sch` into
+# the cwd captured at STARTUP (pwd_dir, src/xinit.c:2952) -- the repo root for a hand run,
+# tests/ under run_regression.tcl. Nothing here descends or recovers, so suppress it:
+# write_backup() returns early when autosave_backup is off (src/save.c:4156). See
+# tests/headless/test_undo_selection.tcl for the full note; guarded by
+# tests/headless/test_no_untitled_litter.tcl.
+set ::saved_autosave_0601 $::autosave_backup
+set ::autosave_backup 0
+
 set fail 0; set npass 0
 if {[info exists ::env(XSCHEM_TEST_LOG)]} { set ::LOGF $::env(XSCHEM_TEST_LOG) } \
 else { set ::LOGF [file join [file dirname [info script]] results test_statusmsg_hold_0248.log] }
@@ -93,6 +103,7 @@ wiggle 25 260 260
 check "4 survives 25 motion events"      [sb] "Wire: pending placement abandoned"
 xschem abort_operation ; xschem abort_operation
 
+set ::autosave_backup $::saved_autosave_0601   ;# issue 0601
 if {$fail == 0} { say "RESULT: ALL PASS ($npass checks)"; say "OVERALL: ok"; set rc 0 } \
 else { say "RESULT: $fail FAILED ($npass passed)"; say "OVERALL: notok"; set rc 1 }
 close $::LOG

@@ -1,0 +1,2813 @@
+diff --git a/src/op_annot.tcl b/src/op_annot.tcl
+index 276d32f3..3adf7e35 100644
+--- a/src/op_annot.tcl
++++ b/src/op_annot.tcl
+@@ -47,19 +47,32 @@
+ #   op_annot::register <symbol-type> <dict>    store/override a PDK descriptor
+ #   op_annot::descriptor <symbol-type>         -> the dict, or {} if unregistered
+ #   op_annot::type <instname>                  -> the symbol K-record `type=` token
+-#   op_annot::devpath <instname>               -> "@m.x1.xm1.msky130_fd_pr__nfet_01v8"
++#   op_annot::devpath <instname> ?basis? ?root?
++#                                              -> "@m.x1.xm1.msky130_fd_pr__nfet_01v8"
++#                                                 basis `read` (default, the
++#                                                 raw-relative DISPLAY name) or
++#                                                 `deck` (the entry-relative
++#                                                 SAVE-CARD name)          (S3)
+ #   op_annot::vector <instname> <param> ?kind? -> "i(…[id])" / "…[gm]" / "v(…[vth])"
+ #   op_annot::raw_or_blank <vector>            -> the value at the annotation
+ #                                                 point, or {}          (S5)
+ #   op_annot::eng_or_blank <value>             -> to_eng of it, or {}   (S5)
+ #   op_annot::text <instname>                  -> the `label = value` block for
+ #                                                 one device, or {}     (S5)
++#   op_annot::save_cards {}                    -> the `.save` block for the
++#                                                 hierarchy below the current
++#                                                 cell, or {}           (S3)
++#   op_annot::write_save_file {}               -> writes it to
++#                                                 $netlist_dir/<cell>.save (S3)
++#   op_annot::last_warnings {}                 -> what the last walk could not
++#                                                 do, as a list         (S3)
+ #
+ # ============================================================================
+ # ⚠ A SAVE CARD IS BARE. `vector` IS THE READ SHAPE ONLY.  (spec §3 rule R4)
+ # ============================================================================
+-# Read this before adding op_annot::save_cards (S3) to this file. Measured on
+-# ngspice-42, one card per throwaway deck so no card could mask another:
++# op_annot::save_cards (S3, at the bottom of this file) writes the BARE form and
++# has its own guardian row. Measured on ngspice-42, one card per throwaway deck
++# so no card could mask another, and re-measured on 46+ when S3 landed:
+ #
+ #     .save @m.xm1.m1[id]      -> raw contains  i(@m.xm1.m1[id])
+ #     .save i(@m.xm1.m1[id])   -> raw contains  NOTHING. no vector, no message.
+@@ -78,8 +91,14 @@
+ #
+ # Second measured trap for that emitter: a card naming a device that is NOT in
+ # the netlist still writes a full column under exactly the requested name,
+-# holding 0.0, with only `Warning: unrecognized variable` on stderr. A wrong
+-# descriptor therefore surfaces as zeros, not as blanks, which I3 cannot catch.
++# holding 0.0. A wrong descriptor therefore surfaces as zeros, not as blanks,
++# which I3 cannot catch. ⚠ AND IT DOES NOT SURFACE ON STDERR EITHER — re-measured
++# on 46+ under the `.control … write … .endc` idiom every shipped PDK bench
++# uses, good cards plus ONE bogus card exit 0, write the raw, and print LITERALLY
++# NOTHING; only an ALL-bogus block loses the raw and warns. The marker that is
++# always there is `dims=0` in the raw header (issue 0489). That is why S3 does
++# not build the filter by hand at all: it asks the netlister which instances are
++# in the deck.
+ #
+ # The descriptor dict keys (spec §4.2). S1 stores all of them; it only READS
+ # `devpath`, `devproc` and `params`. `derived` and `pinexpr` are carried verbatim
+@@ -217,6 +236,25 @@ namespace eval op_annot {
+   ## without them a cross-frame cache silently defeats I5.
+   variable gen
+   if {![info exists gen]} { set gen 0 }
++
++  ## S3's hierarchy walk. All five are namespace state and not proc locals
++  ## because the walk RECURSES and its restore runs from a sibling proc.
++  ##   _acc        the accumulating card list
++  ##   warnings    what the walk could not do, read back by op_annot::last_warnings
++  ##   _busy       the re-entrancy latch (issue 0438); cleared in _restore, which
++  ##               runs on the error path too, so a raise cannot wedge the feature
++  ##   _miss_dev   devices a descriptor claimed that the netlist does not contain
++  ##   _miss_sub   subcircuit instances the netlist does not expand here
++  variable _acc
++  if {![info exists _acc]} { set _acc {} }
++  variable warnings
++  if {![info exists warnings]} { set warnings {} }
++  variable _busy
++  if {![info exists _busy]} { set _busy 0 }
++  variable _miss_dev
++  if {![info exists _miss_dev]} { set _miss_dev 0 }
++  variable _miss_sub
++  if {![info exists _miss_sub]} { set _miss_sub 0 }
+ }
+ 
+ ## op_annot::register <symbol-type> <dict>
+@@ -363,14 +401,144 @@ proc op_annot::_kind {instname param} {
+  descriptor for symbol type \"$t\" (pass an explicit kind, or add it to params)"
+ }
+ 
+-## op_annot::devpath <instname> -> the lowercased raw-file device path, without
+-## the `[param]` suffix; {} for every data condition.
++## ============================================================================
++## THE TWO BASES — S3, AND WHAT REVERTED ATTEMPT 1 (issue 0436)
++## ============================================================================
++## `devpath` has TWO consumers and they measure the hierarchy from two different
++## places:
++##
++##   read (default)  `xschem get sim_sch_path` (scheduler.c:5178) — the .sch path
++##                   with the RAW-LOAD levels stripped. Correct for READING a
++##                   vector out of a raw that is loaded right now, which is what
++##                   S5's formatter and S9's overlay do.
++##   deck            `xschem get sch_path` minus the WALK-ENTRY root. Correct for
++##                   WRITING a save card into a deck nobody has simulated yet.
++##
++## Attempt 1 built save cards on the `read` basis. Measured on the S3 fixture,
++## with a raw loaded one level down and the walk run from the top:
++##
++##     no raw        xok1 -> @m.xok1.mp1.dp     xok2 -> @m.xok2.mp1.dp
++##     raw at lvl 1  xok1 -> @m.mp1.dp          xok2 -> @m.mp1.dp    <- COLLAPSED
+ ##
+-##   op_annot::devpath M1   ->  @m.x1.xm1.msky130_fd_pr__nfet_01v8
++## Two instances of one subcell, ONE device name, no warning anywhere — and a
++## card naming a device the deck does not contain is not cosmetic: under the
++## `.control … write … .endc` idiom every shipped PDK bench uses it writes a
++## column of zeros marked `dims=0`, and if EVERY device card is bogus ngspice
++## writes no raw at all.
++##
++## The fix is a BASIS on the ONE builder, not path arithmetic in the walk — that
++## would be the second name builder invariant I1 forbids.
++
++## Validate the basis/root pair. THE ONLY RAISER in the basis machinery: a
++## caller that asked for the wrong shape must hear about it even when the
++## instance would have answered blank anyway.
++proc op_annot::_check_basis {basis root} {
++  if {$basis eq {read}} {
++    if {[string trim $root] ne {}} {
++      return -code error \
++        "op_annot::devpath: a \"root\" argument is meaningless with basis\
++ \"read\" — the read name is measured from the level the RAW was loaded at, not\
++ from a walk entry. Pass basis \"deck\" to root a name at a walk entry."
++    }
++    return read
++  }
++  if {$basis ne {deck}} {
++    return -code error \
++      "op_annot::devpath: unknown basis \"$basis\" — expected \"read\" (the\
++ raw-relative name a LOADED raw uses, for display) or \"deck\" (the\
++ entry-relative name an UNSIMULATED deck uses, for save cards)."
++  }
++  ## deck: the root is the walk's entry `sch_path` and must still be a prefix of
++  ## where we now stand. A root from a different walk is a caller bug, and a
++  ## blank answer would be worse than a raise: `string range` over a mismatched
++  ## prefix yields a plausible truncation, and a wrong device name does NOT
++  ## blank at read time — under the dot-card idiom it removes the whole raw.
++  if {[catch {xschem get sch_path} p]} { return deck }
++  set r [::op_annot::_root $root]
++  if {[string first $r $p] != 0} {
++    return -code error \
++      "op_annot::devpath: root \"$r\" is not a prefix of the current hierarchy\
++ path \"$p\" — the root must be the sch_path of the level the walk started from."
++  }
++  return deck
++}
++
++## The walk-entry root, defaulted. `.` is level 0, i.e. `xschem get sch_path` at
++## the top, which is what makes `deck` with no root mean "rooted at the top".
++proc op_annot::_root {root} {
++  if {[string trim $root] eq {}} { return {.} }
++  return $root
++}
++
++## THE ONE PREFIX SEAM. Every name this file builds — template arm and devproc
++## arm alike — takes its hierarchy prefix from here. Both answers include the
++## trailing `.`, which is what makes `@m.` + prefix + spiceprefix + name + `.` +
++## inner-device concatenate.
++##
++## Never cached and never memoised — caching would pass every golden and produce
++## the wrong path the moment the walk descends (landmine 4).
++##
++## ⚠ NO RAISE. Validation lives in _check_basis; this proc must stay usable from
++## the draw path, so a mismatched root here degrades to a blank prefix.
++proc op_annot::_pathfor {basis root} {
++  if {$basis ne {deck}} { return [::op_annot::_simpath] }
++  if {[catch {xschem get sch_path} p]} { return {} }
++  set r [::op_annot::_root $root]
++  if {[string first $r $p] != 0} { return {} }
++  return [string range $p [string length $r] end]
++}
++
++## Substitute the prefix into a devpath TEMPLATE, before `xschem translate` runs.
++##
++## ⚠ BOTH SPELLINGS ARE MAPPED, AND `@path` IS THE WHOLE POINT. `$path` is spec
++## §4.2's spelling; `@path` is translate-native — and translate resolves it with
++## a byte-for-byte copy of sim_sch_path's stripping loop (token.c:4719), i.e.
++## RAW-RELATIVELY. Leaving `@path` to translate would leave gf180's and IHP's
++## descriptors (both `@path` templates) raw-relative in the `deck` basis while
++## every sky130 row — sky130 registers a devproc — still passed. Two arms, two
++## bugs, one of them in the C.
++##
++## For basis `read` the two routes are measurably identical (token.c:4719 and
++## scheduler.c:5178 are the same loop over the same data), so mapping it here
++## costs nothing and keeps ONE code path.
++##
++## ⚠ `string map`, NEVER `subst`: a template is user data and `subst` would
++## execute any `[...]` inside it. Documented consequence, unchanged: a literal
++## `$pathological` / `@pathological` is also rewritten.
++proc op_annot::_subst_path {tmpl dp} {
++  return [string map [list {$path} $dp {@path} $dp] $tmpl]
++}
++
++## Call a descriptor's `devproc`, handing it the SAME prefix the template arm
++## substitutes. The devproc contract is unchanged:
++##     <proc> <instname> <model> <path> <spiceprefix>
++## ⚠ `uplevel #0` so a PDK proc that reaches for a global finds one.
++proc op_annot::_devproc_call {p instname model dp pfx} {
++  return [uplevel #0 [list $p $instname $model $dp $pfx]]
++}
++
++## op_annot::devpath <instname> ?basis? ?root? -> the lowercased raw-file device
++## path, without the `[param]` suffix; {} for every data condition.
++##
++##   op_annot::devpath M1            ->  @m.x1.xm1.msky130_fd_pr__nfet_01v8
++##   op_annot::devpath M1 deck .     ->  the same string with the hierarchy
++##                                       rooted at `.`, and no loaded raw able
++##                                       to move a single character of it
++##
++## `basis` is `read` (the default, the raw-relative DISPLAY name) or `deck` (the
++## entry-relative SAVE-CARD name); `root` is the walk-entry `sch_path` and is
++## legal only with `deck`. See the two-bases block above.
++##
++## ⚠ THE DEFAULT MUST STAY `read`. Every S5/S6/S9 consumer calls this from a
++## draw path with one argument; if the default became `deck` the on-screen
++## display would silently change basis.
+ ##
+ ## I4: this reads context, it never moves in it. No descend, no set_modify, no
+ ## write to the .sch.
+-proc op_annot::devpath {instname} {
++proc op_annot::devpath {instname {basis read} {root {}}} {
++  ## Loud FIRST: a caller that asked for the wrong shape must hear about it even
++  ## when the instance would have answered blank anyway.
++  set basis [::op_annot::_check_basis $basis $root]
+   set t [::op_annot::type $instname]
+   if {$t eq {}} { return {} }
+   set d [::op_annot::descriptor $t]
+@@ -379,6 +547,9 @@ proc op_annot::devpath {instname} {
+   ## devices/*.sym. A descriptor only builds a name for a cell it claims.
+   if {![::op_annot::_matches $instname $d]} { return {} }
+ 
++  ## THE ONE PREFIX, for whichever arm follows.
++  set dp [::op_annot::_pathfor $basis $root]
++
+   ## devproc wins over devpath when a descriptor carries both: a PDK that needed
+   ## the escape hatch needs it for every device of that type.
+   if {[dict exists $d devproc] && [dict get $d devproc] ne {}} {
+@@ -392,8 +563,9 @@ proc op_annot::devpath {instname} {
+     ## line; ported verbatim the device path silently loses its `x`.
+     if {[catch {xschem translate $instname @model} model]} { return {} }
+     if {[catch {xschem translate $instname @spiceprefix} pfx]} { set pfx {} }
+-    if {[catch {uplevel #0 [list $p $instname $model \
+-                                 [::op_annot::_simpath] $pfx]} r]} { return {} }
++    if {[catch {::op_annot::_devproc_call $p $instname $model $dp $pfx} r]} {
++      return {}
++    }
+     if {$r eq {}} { return {} }
+     return [::op_annot::_lower $r]
+   }
+@@ -401,11 +573,7 @@ proc op_annot::devpath {instname} {
+   if {![dict exists $d devpath]} { return {} }
+   set tmpl [dict get $d devpath]
+   if {$tmpl eq {}} { return {} }
+-  ## `$path` is spec §4.2's spelling and is substituted here; `@path` is
+-  ## translate-native and costs nothing, so it is the canonical one. NEVER subst.
+-  if {[string first {$path} $tmpl] >= 0} {
+-    set tmpl [string map [list {$path} [::op_annot::_simpath]] $tmpl]
+-  }
++  set tmpl [::op_annot::_subst_path $tmpl $dp]
+   if {[catch {xschem translate $instname $tmpl} r]} { return {} }
+   if {$r eq {}} { return {} }
+   return [::op_annot::_lower $r]
+@@ -791,3 +959,980 @@ proc op_annot::place_annotator {} {
+     xschem place_symbol devices/annotate_params
+   }
+ }
++
++# ============================================================================
++# S3 — THE HIERARCHY WALK AND THE SAVE-CARD GENERATOR
++# ============================================================================
++#   op_annot::save_cards {}       -> the `.save` block for the whole hierarchy
++#                                    below the CURRENT cell, as text; {} when
++#                                    no device produced a card
++#   op_annot::write_save_file {}  -> writes it to $netlist_dir/<cell>.save and
++#                                    returns the path; {} when nothing to save
++#   op_annot::last_warnings {}    -> what the walk could not do, as a list
++#
++# PORTED FROM ihp-sg13g2/sg13g2_procs.tcl, the single-PDK prototype, whose twin
++# sky130A/sky130_procs.tcl:72-146 is byte-for-byte the same design:
++#   * sg13g2_sch_expand (:345-364) contributes the ENTRY SHAPE — accumulator
++#     reset, keep_symbols save/set, unselect_all, no_draw 1, no_undo 1, recurse,
++#     restore — and op_annot::save_cards keeps that ordering.
++#   * sg13g2_hier_sch_expand (:366-421) contributes the RECURSION — instance
++#     loop, nolist_libs skip, emit-before-descend, vector-member count through
++#     `xschem expandlabel`, select + descend, change_sch_path for members 2..N,
++#     go_back at the last member.
++#   * sg13g2_save_params (:425-429) contributes the BLOCK ASSEMBLER, minus its
++#     two-pass `{npn}` / `{[pn]mos}` call: one descriptor-driven pass replaces it.
++#   * the menu item (:602-606) contributes write_save_file, `file mkdir
++#     $netlist_dir` included — which sky130_procs.tcl:235 lacks.
++#
++# DELIBERATELY NOT PORTED, each for a MEASURED reason:
++#   * `sg13g2_write_save_lines` (:304-341) itself. Its FET arm is 10 hardcoded
++#     `.save` lines and its HBT arm 13, both already lifted into S2's `params`
++#     lists; with them die the `[pn]mos`/`vertical_npn` regexp dispatch, the
++#     `@n.`/`@q.` element letters, the `n$model`/`q$model` inner device and the
++#     `_5t` strip (which is the entire justification for the descriptor's
++#     `devproc` key).
++#   * `startpath` (:350, `[string length [xschem get sch_path]]`, consumed at
++#     :369). That is a SECOND name builder, which invariant I1 forbids. The basis
++#     lives on op_annot::devpath instead — see the two-bases block above.
++#   * `xschem getprop symbol <cell> type` (:377). MEASURED: it RAISES for
++#     generator cells — 6 of the 14 instances of
++#     xschem_library/generators/test_generators.sch — while `getprop instance
++#     <n> cell::type` raises 0 times and resolves for a vector instance name too.
++#     op_annot::type is the index form (issue 0431).
++#   * `xschem getprop instance $i spiceprefix` (:374). getprop reads
++#     inst->prop_ptr only and is EMPTY when the token lives in the symbol
++#     `template=`, which is why both prototypes lose the leading `x` on 3 of 45
++#     shipped sky130 cells (issue 0430). `xschem translate … @spiceprefix` is
++#     the form that answers.
++#   * `if {$res} … else {xschem go_back 2}` (:400-408). `xschem descend` returns
++#     0 in TWO classes and the unconditional go_back pops a level it never
++#     pushed for the class-1 refusal, corrupting sch_path for the rest of the
++#     walk (issue 0433). op_annot::_descended is the replacement.
++#   * the straight-line restore (:359-361). It is on the NORMAL path with no
++#     catch, so a raise below entry — `sky130_save_fet_params` on
++#     `sky130_tests/test_generators` is the measured case — returns with
++#     no_draw=1 and keep_symbols=1 still set (issue 0431). op_annot::_restore
++#     runs unconditionally.
++#
++# ============================================================================
++# ⚠ THE FILTER IS NOT MIRRORED, IT IS ASKED. (issue 0442)
++# ============================================================================
++# A save card naming a device that is not in the deck damages the simulation it
++# was generated for. Measured on /usr/local/bin/ngspice 46+ under the
++# `.control … write … .endc` idiom every shipped PDK bench uses:
++#
++#   good cards + ONE bogus card  -> rc 0, RAW WRITTEN, a column under exactly the
++#                                   requested name marked `dims=0`, stderr EMPTY
++#   EVERY device card bogus      -> rc 0, NO RAW AT ALL, and then it warns
++#
++# So "which instances are in the deck?" must be answered exactly. The SPICE
++# netlister drops instances in SEVEN classes, in two different files:
++#
++#   spice_netlist.c:188/:209  skip_instance(i,1,lvs_ignore)  spice_ignore=true
++#   spice_netlist.c:188/:209  skip_instance(i,1,lvs_ignore)  spice_ignore=short
++#   spice_netlist.c:216       only_toplevel, gated on netlist_count
++#   spice_netlist.c:639       an empty or absent symbol `format`
++#   spice_netlist.c:643       default_schematic=ignore
++#   spice_netlist.c:665       spice_sym_def
++#   spice_netlist.c:635/:695  spice_stop=true
++#
++# Attempt 2 hand-mirrored these and implemented THREE — the first three, all in
++# skip_instance; the four SYMBOL-level ones it missed are reachable on ordinary
++# PDK symbols. A hand-maintained mirror of another module's rules is wrong by
++# construction and had already drifted twice.
++#
++# SO THE NETLISTER IS THE ORACLE: run the netlist the design would actually
++# simulate, read back which instances appear, emit cards only for those. Costed
++# on this tree with `xschem netlist -keep_symbols -noalert <abs path>`:
++# greycnt 15 ms / 2 blocks, TwoStageAmp 12 ms, sky130 bandgap_opamp 40 ms,
++# tb_charge_pump 78 ms / 7 blocks, and the pathological 102-block
++# 0_examples_top 767 ms. lvs_ignore comes free, because the oracle runs under
++# the user's own setting rather than a copy of it.
++#
++# ============================================================================
++# ⚠ TWO QUESTIONS, NOT ONE: `_netlisted` AND `_descendable` ARE NOT ALIASES
++# ============================================================================
++# Three of the seven classes drop the SUBTREE while the instance CALL survives
++# in the deck. Measured on the S3 fixture, one deck, all seven visible:
++#
++#   class                       instance line   its .subckt block     descend?
++#   spice_ignore=true           absent          -                     no
++#   spice_ignore=short          absent          -                     no
++#   only_toplevel=true (below)  absent          -                     no
++#   empty/absent `format`       ABSENT          none at all           no
++#   default_schematic=ignore    present         NO BLOCK AT ALL       no
++#   spice_sym_def               present         `** sym_path:` only   no
++#   spice_stop=true             present         `** sch_path:` EMPTY  no
++#
++# "May I emit a card for this instance?" and "may I walk into it?" therefore
++# have different answers on the same instance. Attempt 2 aliased them, and its
++# own sabotage variant for that reddened nothing — on a FLAT fixture that could
++# not reach the divergence. Per spec landmine 11 a predicted red that does not
++# appear is a fixture defect, and that tell was ignored.
++#
++# ============================================================================
++# ⚠ THE ORACLE'S NETLIST HAS SIDE EFFECTS, AND ONE OF THEM DELETES USER WORK
++# ============================================================================
++# `xschem netlist` calls leave_placement_for("Netlist") and
++# leave_merge_for("Netlist") (scheduler.c:8848-8849) whose teardown IS a
++# delete() (issue 0263), and neither is suppressible from Tcl. A read-only
++# annotation menu item that ran a netlist would destroy the symbol the user is
++# carrying on the cursor, or the paste they have not dropped. _assert_idle
++# refuses instead — the door itself belongs to
++# tests/headless/test_placement_preview_doors.tcl.
++#
++# It also destroys the SELECTION (measured 1 -> 0), which is why the oracle runs
++# ONCE at entry and never inside the walk: the walk drives descend by selection.
++# And it sets xctx->netlist_name from the filename (scheduler.c:8796) and clears
++# it at :8869, so a user's custom netlist name dies in any oracle run unless it
++# is snapshotted — which is why _netlist_env covers what the run CHANGES rather
++# than what we deliberately force.
++#
++# ============================================================================
++# ⚠ I6, AND WHY EVERY EXIT PATH MEANS EVERY EXIT PATH
++# ============================================================================
++# The walk sets no_draw 1, no_undo 1, keep_symbols 1 and descends the REAL
++# design. no_undo has no getter (issue 0432), so 0 is the only restorable value
++# and a caller that wrapped this in its own `no_undo 1` is silently disarmed.
++# The unwind is bounded by the ENTRY currsch and not by 0: `while {[xschem get
++# currsch]} {xschem go_back}` (src/xschem.tcl's own idiom) would ascend past a
++# caller who was already descended, and S4's render_deck is exactly such a
++# caller.
++
++## op_annot::last_warnings -> what the last save_cards could not do, as a list
++## of one-line strings. Empty after a clean walk.
++##
++## ⚠ IT EXISTS BECAUSE SILENT UNDER-EMISSION IS THE FAILURE THAT SURVIVED 85 AND
++## THEN 96 GREEN CHECKS. An alert per cell would be intolerable on a real sheet
++## — mips_cpu/controller alone would fire twice — so the walk counts instead,
++## and write_save_file puts the counts where the user is already looking.
++proc op_annot::last_warnings {} {
++  variable warnings
++  return $warnings
++}
++
++## ============================================================================
++## THE ORACLE SEAMS. EACH ONE IS A PROC BECAUSE EACH ONE CAN BE WRONG ON ITS OWN.
++## ============================================================================
++
++## Where the throwaway deck is written. A NAME, so a test can prove no temp file
++## survives and can force the "no deck was written" path without a broken PDK.
++##
++## op_annot's OWN directory, never `$netlist_dir`: the user's netlist directory
++## holds the deck they are about to simulate and a read-only menu item may not
++## put a file next to it — nor may it inherit `local_netlist_dir`, which sends
++## every write into `<design dir>/simulation/` (src/xschem.tcl:9008, measured).
++proc op_annot::_oracle_dir {} {
++  if {[info exists ::USER_CONF_DIR] && [string trim $::USER_CONF_DIR] ne {}} {
++    return [file join $::USER_CONF_DIR op_annot]
++  }
++  if {[info exists ::env(HOME)] && [string trim $::env(HOME)] ne {}} {
++    return [file join $::env(HOME) .xschem op_annot]
++  }
++  return [file join [pwd] .op_annot]
++}
++
++## Snapshot of every netlist global the oracle forces OR PERTURBS, INCLUDING
++## whether it existed at all. Six entries of {name existed value}: four Tcl
++## globals, then two pieces of C-side state read and written through
++## `xschem get/set`.
++##
++## ⚠ `netlist_name` IS IN THIS LIST ALTHOUGH THE ORACLE NEVER FORCES IT, AND
++## THAT IS THE POINT. `xschem netlist <file>` SETS xctx->netlist_name from the
++## filename it was handed (scheduler.c:8796) and then, with erc==0 — which the
++## oracle's netlist always is — CLEARS it (scheduler.c:8869). MEASURED: a user
++## who typed a custom netlist name lost it to a read-only annotation click, and
++## on the RAISING path it was worse still, left reading op_annot's own
++## `op_annot_oracle_<pid>.spice`. A snapshot list covering only what we
++## deliberately force is the wrong list — what matters is what the run CHANGES.
++## I4's read-only discipline covers editor state and not only the .sch.
++proc op_annot::_netlist_env {} {
++  set snap {}
++  foreach v {netlist_dir local_netlist_dir flat_netlist split_files} {
++    if {[info exists ::$v]} {
++      lappend snap [list $v 1 [set ::$v]]
++    } else {
++      lappend snap [list $v 0 {}]
++    }
++  }
++  foreach v {netlist_type netlist_name} {
++    if {[catch {xschem get $v} cv]} {
++      lappend snap [list $v 0 {}]
++    } else {
++      lappend snap [list $v 1 $cv]
++    }
++  }
++  return $snap
++}
++
++## Force the deck SHAPE the parser can read, and only that.
++##
++##   netlist_type spice   skip_instance() branches on xctx->netlist_type
++##                        (netlist.c:1247) and a verilog/spectre deck has no
++##                        `.subckt` blocks and no `** sch_path:` markers at all.
++##   flat_netlist 0       flatten.awk (src/xschem.tcl:2274) rewrites the deck
++##                        with NO `.subckt` and every device renamed and
++##                        UPPERCASED, so a block index of it is meaningless.
++##   split_files 0        sub-blocks would go to separate per-cell files.
++##   local_netlist_dir 0  otherwise set_netlist_dir(1,dir) throws the requested
++##                        directory away and writes into the DESIGN tree.
++##
++## ⚠ `lvs_ignore` IS DELIBERATELY NOT HERE. It is different in kind: it changes
++## which devices the user's OWN run will contain, so forcing it would emit cards
++## for devices their deck drops. Read it, never write it — and the oracle reads
++## it for free by simply running the netlist under the user's own setting.
++## `top_is_subckt`, `lvs_netlist` and `uppercase_subckt` are inherited too: the
++## parser handles both top-block delimiters and both cases.
++proc op_annot::_force_netlist_env {dir} {
++  set ::netlist_dir $dir
++  set ::local_netlist_dir 0
++  set ::flat_netlist 0
++  set ::split_files 0
++  catch {xschem set netlist_type spice}
++  return {}
++}
++
++## THE ONE RESTORER of the forced netlist environment, on every path out of the
++## oracle — including the one where the netlist could not be written at all.
++proc op_annot::_restore_netlist_env {snap} {
++  foreach row $snap {
++    set v   [lindex $row 0]
++    set had [lindex $row 1]
++    set val [lindex $row 2]
++    ## The C-side pair. `xschem set netlist_name {}` is a real restore, not a
++    ## no-op: an EMPTY name is the tree's own "use the default" state and a
++    ## restore that skipped it would fabricate a name the user never typed.
++    if {$v eq {netlist_type} || $v eq {netlist_name}} {
++      if {$had} { catch {xschem set $v $val} }
++      continue
++    }
++    if {$had} {
++      catch {set ::$v $val}
++    } else {
++      catch {unset ::$v}
++    }
++  }
++  return {}
++}
++
++## Can this directory hold the throwaway deck at all?  A NAMED SEAM, and it is
++## checked BEFORE `xschem netlist` is ever issued.
++##
++## ⚠ THE REASON IS A MODAL DIALOG NO FLAG REACHES. `xschem netlist <path>` with
++## a slash in it goes through set_netlist_dir(1, <dirname>), and a failing
++## `file mkdir` THERE pops a raw `tk_messageBox` (src/xschem.tcl:9039, and :9001
++## for the what==0 arm) that `-noalert` does not touch and that names a
++## directory the USER NEVER CHOSE. A user with a read-only HOME, or with a file
++## sitting where `~/.xschem/op_annot` should be, would get that dialog INSTEAD
++## of this module's named diagnostic — and an unattended X run would block on it
++## forever.
++##
++## `file writable` on the DIRECTORY, not a probe write: a probe would leave a
++## file behind on the path where the whole point is that nothing is left behind.
++proc op_annot::_oracle_dir_ready {dir} {
++  catch {file mkdir $dir}
++  if {![file isdirectory $dir]} { return 0 }
++  if {![file writable $dir]}    { return 0 }
++  return 1
++}
++
++## THE ONE PLACE the oracle's netlist is issued. A proc of its own so the "the
++## netlist ran and wrote nothing" branch below stays reachable from a test after
++## _oracle_dir_ready short-circuits the unwritable-directory case — an
++## unreachable branch is a green check certifying nothing, which is the exact
++## shape that has now reverted this step twice.
++##
++## `-keep_symbols` for the same reason xschem.tcl's own machinery passes it:
++## this netlist is a READ, not the user's netlist verb. It also keeps the branch
++## from self-logging (scheduler.c:8887), a seam this module DEPENDS ON and does
++## NOT OWN — its guardians are tests/headless/test_netlist_log.tcl:152-157 and
++## the source-grep row in tests/headless/test_selflog_grep_guard.tcl:429-430.
++##
++## `-noalert` because this netlist is INVISIBLE to the user: they clicked an
++## annotation item, not Netlist. MEASURED under X — a subcircuit whose .sch
++## cannot be opened makes load_schematic() pop a MODAL dialog (save.c:4451), and
++## the netlister threads its `alert` flag all the way down to it
++## (spice_netlist.c:695), so `-noalert` is the netlister's own answer for a
++## background read. ⚠ IT IS NOT COMPLETE: the Tcl-side `has_included_subcircuit`
++## (src/xschem.tcl:2200/:2239) pops an `alert_` that NO flag reaches, so a
++## `spice_sym_def` whose text has no matching `.subckt` still blocks an
++## unattended X run — issue 0490, filed and not worked around.
++##
++## ⚠ NEVER RAISES, AND ITS RETURN VALUE IS NOT A FAILURE SIGNAL. Measured, the
++## verb answers 1 for an unconnected net and for a `spice_sym_def` with no
++## matching `.subckt`, both of which still write a complete deck. The ONLY
++## failure test is whether a deck file exists, which is the caller's.
++proc op_annot::_oracle_run {out} {
++  if {[catch {xschem netlist -keep_symbols -noalert $out} nres]} {
++    set nres "raised: $nres"
++  }
++  return $nres
++}
++
++## Run the netlist the design would actually simulate FROM WHERE WE STAND, and
++## return the deck as text. RAISES when no deck was written.
++##
++## ⚠ IT NEVER RETURNS {} ON FAILURE. An empty answer would build an empty index,
++## find no instance in it, emit zero cards and report success — indistinguishable
++## from "no PDK descriptor claims anything here".
++proc op_annot::_oracle_deck {} {
++  set dir [::op_annot::_oracle_dir]
++  set out [file join $dir "op_annot_oracle_[pid].spice"]
++  set snap [::op_annot::_netlist_env]
++  set body {}
++  set rc [catch {
++    ## ⚠ PRE-CHECKED, NOT ATTEMPTED. An unwritable/unmakeable oracle directory
++    ## must reach the user as THIS proc's named diagnostic, not as
++    ## `can't create directory …: not a directory` from a Tcl primitive three
++    ## frames down and NOT as set_netlist_dir's modal tk_messageBox naming a
++    ## directory the user never chose (see _oracle_dir_ready). The caller's whole
++    ## job is to tell a broken oracle apart from "nothing here is annotated", and
++    ## only the named message does that.
++    if {![::op_annot::_oracle_dir_ready $dir]} {
++      error "op_annot: the netlist ORACLE has nowhere to write. \"$dir\" is not\
++ a writable directory. The save block is not generated rather than generated\
++ empty: a card for a device the deck does not contain makes ngspice write no\
++ raw file at all."
++    }
++    catch {file delete -force $out}
++    ::op_annot::_force_netlist_env $dir
++    ## THE NETLIST, through its own named seam (see _oracle_run above).
++    set nres [::op_annot::_oracle_run $out]
++    if {![file isfile $out]} {
++      error "op_annot: the netlist ORACLE wrote no deck to \"$out\"\
++ (xschem netlist answered \"$nres\"). The save block is not generated rather\
++ than generated empty: a card for a device the deck does not contain makes\
++ ngspice write no raw file at all."
++    }
++    set fh [open $out r]
++    set body [read $fh]
++    close $fh
++  } res opts]
++  catch {file delete -force $out}
++  ::op_annot::_restore_netlist_env $snap
++  if {$rc} { return -options $opts $res }
++  return $body
++}
++
++## THE ONE PATH NORMALIZER, used on BOTH sides of every comparison.
++##
++## `regsub {\(.*}` then `abs_sym_path` is the Tcl twin of the C's
++## sanitized_abs_sym_path (actions.c:473) — a generator cell is spelled
++## `foo(a,b)` and its path is `foo`. `file normalize` on top of it is not
++## belt-and-braces: measured, `xschem get_sch_from_sym` answers
++## `…/lib/../lib/psub.sch` for an instance placed as `../lib/psub.sym` while the
++## deck's `** sch_path:` says `…/lib/psub.sch`, and abs_sym_path alone does NOT
++## collapse the `..`. Without this the cell's whole subtree is silently dropped.
++proc op_annot::_normkey {p} {
++  if {[string trim $p] eq {}} { return {} }
++  regsub {\(.*} [string trim $p] {} q
++  if {[catch {abs_sym_path $q {}} r]} { set r $q }
++  if {[string trim $r] eq {}} { set r $q }
++  if {[catch {file normalize $r} n]} { return $r }
++  return $n
++}
++
++## The parser's ONE hand-written rule, kept in its own proc so it can be named
++## in a sabotage variant: is the parser inside the deck's user-architecture
++## region after this line?
++##
++## ⚠ ITS FALSE-POSITIVE DIRECTION IS THE DANGEROUS ONE, AND IT IS MEASURED. A
++## `code_shown` / `netlist_commands` symbol puts the user's own literal text
++## INSIDE the enclosing block, between `**** begin user architecture code` and
++## `**** end user architecture code`. A symbol whose value is the line
++## `MGHOST net1 net2 net3 net4 nch` would otherwise be read as proof that an
++## instance named MGHOST — carrying `spice_ignore=true` and nowhere in the deck
++## — is present, and the walk would emit cards for it: issue 0442's defect
++## arriving from the parser instead of from a mirror.
++##
++## ⚠ THE PATTERNS ARE ANCHORED AND THE `*`s ARE ESCAPED. Written as
++## `string match {****begin*}` every `*` is a WILDCARD, so the pattern means
++## "any line containing begin" and the `end` twin then swallows `.ends`, leaving
++## the previous block open.
++proc op_annot::_deck_user_region {line inside} {
++  if {[string match {\*\*\*\* begin user architecture*} $line]} { return 1 }
++  if {[string match {\*\*\*\* end user architecture*} $line]}   { return 0 }
++  return $inside
++}
++
++## The deck, as a dict: normalized absolute .sch path -> list of lowercased
++## element names, in deck order. A block that exists and is EMPTY is a key with
++## an empty list — that is how `spice_stop` shows up, and it is the only thing
++## that tells "the call is in the deck but the body is not" apart from "the
++## whole instance is in the deck".
++##
++## ⚠ KEYED ON `** sch_path:`, NOT ON THE CELL NAME and NOT ON `** sym_path:`.
++##   * the cell NAME is precisely the get_cell() hash the netlister itself
++##     dedups blocks on (spice_netlist.c:92-104), so two same-basename cells
++##     from different libraries collapse onto one block — keying on it would
++##     make the second cell's devices look present, and over-emission is the
++##     raw-destroying direction;
++##   * `** sym_path:` is measurably wrong for a `schematic=` polymorphic
++##     instance: get_additional_symbols (actions.c:3729) synthesizes the symbol,
++##     and the block carries the OVERRIDDEN .sch with the ORIGINAL .sym.
++##
++## Line classes, all measured on real decks: `* expanding   symbol:` resets the
++## pending key (a block with no `** sch_path:` at all — `spice_sym_def` — must
++## not inherit the previous one), `**`-prefixed top-block delimiters are the
++## same `.subckt`/`.ends` after the marker is stripped, and `*` comments, `.`
++## dot-cards and `+` continuations (break.awk splits element lines over 130
++## chars) are not elements.
++proc op_annot::_deck_index {text} {
++  set blocks {}
++  set cur     {}
++  set pending {}
++  set inuser  0
++  foreach line [split $text "\n"] {
++    set t [string trim $line]
++    if {$t eq {}} { continue }
++    set inuser [::op_annot::_deck_user_region $t $inuser]
++    ## ⚠ THE REGION TEST RUNS BEFORE THE `.subckt`/`.ends` TESTS, NOT AFTER
++    ## THEM. A `code_shown` / `netlist_commands` symbol may put a COMPLETE
++    ## `.subckt`/`.ends` pair inside the user-architecture region — a helper
++    ## subcircuit is ordinary practice — and with this line below the delimiter
++    ## tests that inner `.ends` ran `set cur {}` and EVERY ELEMENT AFTER IT IN
++    ## THE ENCLOSING BLOCK was silently dropped. MEASURED both ways: the old
++    ## order loses the element written after the region, and the two parsers are
++    ## byte-identical over all 38 shipped xschem_library/examples designs,
++    ## including the 97-block 0_examples_top.
++    ##
++    ## REJECTED: a `.subckt` nesting-depth counter. A `.subckt` inside a user
++    ## region is not nesting, it is opaque user text the netlister never
++    ## expands, so a depth model would be modelling a structure that does not
++    ## exist.
++    if {$inuser} { continue }
++    if {[regexp {^\*\* sch_path:[ \t]*(.*)$} $t -> p]} {
++      set pending [::op_annot::_normkey $p]
++      continue
++    }
++    if {[string match {\* expanding*} $t]} { set pending {} ; set cur {} ; continue }
++    ## the deck top is `**.subckt` / `**.ends`; everything below it is bare.
++    set d $t
++    if {[string range $d 0 1] eq {**}} { set d [string trim [string range $d 2 end]] }
++    if {[regexp -nocase {^\.subckt[ \t]} $d]} {
++      set cur $pending
++      if {$cur ne {} && ![dict exists $blocks $cur]} { dict set blocks $cur {} }
++      continue
++    }
++    if {[regexp -nocase {^\.ends} $d]} { set cur {} ; set pending {} ; continue }
++    if {$cur eq {}} { continue }
++    set c [string index $t 0]
++    if {$c eq {*} || $c eq {.} || $c eq {+}} { continue }
++    ## ⚠ regexp, NOT `lindex`: a deck line is not a Tcl list and an unbalanced
++    ## brace or quote in a parameter would make lindex raise mid-parse.
++    if {![regexp {^([^ \t]+)} $t -> tok]} { continue }
++    dict lappend blocks $cur [string tolower $tok]
++  }
++  return $blocks
++}
++
++## The instance's identity IN THE DECK: `@spiceprefix@name`, lowercased.
++##
++## ⚠ `xschem translate`, NEVER `getprop instance <n> spiceprefix`. getprop reads
++## inst->prop_ptr only, so it is EMPTY whenever the token lives in the symbol
++## `template=` — issue 0430, and the reason both PDK prototypes lose the leading
++## `x` on 3 of 45 shipped sky130 cells.
++##
++## These are the same two tokens every descriptor's devpath already
++## concatenates, which is what makes the membership test and the CARD agree by
++## construction: if they disagree the card was already wrong, and the wrong card
++## then becomes an absent card (blank, I3) instead of a raw-destroying one.
++proc op_annot::_element {instname} {
++  if {[catch {xschem translate $instname {@spiceprefix@name}} e]} { return {} }
++  return [string tolower [string trim $e]]
++}
++
++## Every element name ONE instance can appear under in the deck.
++##
++## ⚠ A VECTOR INSTANCE IS THE ORACLE'S FIRST TRAP. The netlister writes one
++## element line PER MEMBER (`x2[1]`, `x2[0]`) while the instance's own name is
++## the bracketed RANGE `x2[1:0]`, which appears in the deck nowhere. A bare
++## comparison answers 0 for every vector instance and the walk then refuses to
++## descend into it — a plausible-looking short block with nothing to say so.
++## `xschem expandlabel` is the same tool the member loop below already uses.
++proc op_annot::_elements {instname} {
++  set e [::op_annot::_element $instname]
++  if {$e eq {}} { return {} }
++  if {[string first {[} $e] < 0} { return [list $e] }
++  if {[catch {xschem expandlabel $e} x]} { return [list $e] }
++  set names [lindex [split $x { }] 0]
++  set out {}
++  foreach n [split $names {,}] {
++    if {[string trim $n] ne {}} { lappend out [string tolower [string trim $n]] }
++  }
++  if {[llength $out] == 0} { return [list $e] }
++  return $out
++}
++
++## The block of the cell we are STANDING IN, or {} when the deck has none.
++proc op_annot::_here_block {idx} {
++  if {[catch {xschem get schname} s]} { return {} }
++  set k [::op_annot::_normkey $s]
++  if {$k ne {} && [dict exists $idx $k]} { return [dict get $idx $k] }
++  return {}
++}
++
++## Is instance <i> in the deck, i.e. may it have a save card?
++## <idx> is op_annot::_deck_index's answer, passed as a VALUE rather than read
++## from a hidden armed variable so a test can put the truth table on the page.
++proc op_annot::_netlisted {i idx} {
++  if {[catch {xschem getprop instance $i name} nm]} { return 0 }
++  set blk [::op_annot::_here_block $idx]
++  if {[llength $blk] == 0} { return 0 }
++  foreach e [::op_annot::_elements $nm] {
++    if {[lsearch -exact $blk $e] >= 0} { return 1 }
++  }
++  return 0
++}
++
++## May the walk DESCEND into instance <i>?  NOT an alias of _netlisted — see the
++## two-questions block in this section's header.
++proc op_annot::_descendable {i idx} {
++  if {![::op_annot::_netlisted $i $idx]} { return 0 }
++  if {[catch {xschem get_sch_from_sym $i} c]} { return 0 }
++  set k [::op_annot::_normkey $c]
++  if {$k eq {}} { return 0 }
++  if {![dict exists $idx $k]} { return 0 }
++  return [expr {[llength [dict get $idx $k]] > 0}]
++}
++
++## Does the hierarchy path we now stand on still SPELL this instance the way the
++## deck does?  (issue 0488)
++##
++## ⚠ MEASURED, AND IT IS THE RAW-DESTROYING SHAPE. `sch_path`, `sim_sch_path`
++## and translate's `@path` all carry the instance NAME ONLY and DROP
++## `spiceprefix`. With `name=SUB1 spiceprefix=X` on a subcircuit symbol the deck
++## writes `XSUB1` while all three path sources answer `SUB1.`, so every card
++## below would say `@m.sub1.<inner>` against a raw holding `@m.xsub1.<inner>` —
++## EVERY card in that subtree bogus, which is the all-bogus case that makes
++## ngspice write no raw file at all.
++##
++## So the subtree is SUPPRESSED and named, not emitted and hoped for: save.c
++## RULING D5-1 — a plausible wrong number on a schematic is worse than none —
++## and a plausible wrong CARD is worse still, because it takes the whole raw
++## with it. Mitigation and not a fix, hence the issue: zero of the 533 shipped
++## `type=subcircuit` symbols in sky130A/gf180mcuD/ihp-sg13g2/xschem_libs_newsym
++## carry spiceprefix, so this is user-reachable and not shipped-reachable.
++##
++## Checked AFTER the descend (and after each `change_sch_path`), against the
++## real `sch_path`, because that is the string devpath will actually build from
++## — not against a second prediction of it, which would be a second builder.
++##
++## ⚠ IT TAKES THE ELEMENT LIST, IT DOES NOT LOOK IT UP. By the time this runs
++## the hierarchy has ALREADY moved, and `xschem translate SUB1 @spiceprefix@name`
++## in the CHILD cell has no instance called SUB1 to translate: it answers
++## nothing, `_elements` returns {}, and a guard that recomputed here would take
++## the permissive branch on exactly the case it exists to catch. Measured — the
++## first cut of this proc did precisely that and W18 stayed red with the guard
++## nominally in place. The caller reads `_elements` BEFORE descending and threads
++## it down.
++proc op_annot::_prefix_ok {els} {
++  if {[llength $els] == 0} { return 1 }
++  set seg [::op_annot::_pathseg]
++  if {$seg eq {}} { return 1 }
++  return [expr {[lsearch -exact $els $seg] >= 0}]
++}
++
++## Refuse while a modal gesture is pending (I4).
++##
++## ⚠ THIS IS THE SHARPEST SEAM OF THE ORACLE INVERSION. `xschem netlist` calls
++## leave_placement_for("Netlist") and leave_merge_for("Netlist")
++## (scheduler.c:8848-8849) whose teardown IS a delete() (issue 0263), and
++## neither is suppressible from Tcl. Without this gate a read-only annotation
++## menu item would silently destroy the symbol the user is carrying on the
++## cursor, or the paste they have not dropped yet. Masks are
++## START_SYMPIN|PLACE_SYMBOL|PLACE_TEXT (25600) and STARTMERGE (256), i.e.
++## exactly leave_placement_for()'s and leave_merge_for()'s own tests
++## (callback.c:706, :433). Numeric literals are this tree's established Tcl
++## idiom for ui_state (src/xschem.tcl:6558/11000/11394, create_instance.tcl:38).
++##
++## REJECTED: inheriting `xschem netlist`'s gesture semantics — zero code, and it
++## opens precisely the door tests/headless/test_placement_preview_doors.tcl
++## exists to keep shut.
++proc op_annot::_assert_idle {} {
++  if {[catch {xschem get ui_state} st]} { return {} }
++  if {![string is integer -strict $st]} { return {} }
++  if {$st & 25600} {
++    return -code error "op_annot::save_cards: a symbol/text PLACEMENT is\
++ pending. This walk runs a netlist to find out which devices are in the deck,\
++ and the netlister tears a pending placement down (issue 0263). Drop or cancel\
++ it (Esc) first."
++  }
++  if {$st & 256} {
++    return -code error "op_annot::save_cards: a PASTE/merge is pending. This\
++ walk runs a netlist to find out which devices are in the deck, and the\
++ netlister tears a pending paste down (issue 0263). Drop or cancel it (Esc)\
++ first."
++  }
++  return {}
++}
++
++## The cards for ONE instance, or {} when it contributes none.
++##
++## ⚠ THE 0425 CONSUMER CONTRACT (see the header): skip on a blank DEVPATH, never
++## on a blank DESCRIPTOR. A descriptor whose `match` globs do not claim this
++## cell is still fully registered; emitting its params against an empty device
++## name would write `.save [id]` cards.
++##
++## ⚠ `deck` BASIS, ALWAYS (issue 0436). The root is threaded from save_cards'
++## entry level; nothing here does path arithmetic of its own.
++##
++## ⚠ THE CARD IS BARE — `[devpath][param]`, never op_annot::vector (rule R4).
++## Re-measured on ngspice 46+: `.save i(@m.xm1.m1[id])` puts NOTHING in the raw
++## and says nothing, because ngspice applies the i()/v() wrapper ITSELF from the
++## parameter's own type. `vector` is the READ shape and belongs to S5.
++##
++## ⚠ NO CATCH. devpath returns {} for every DATA condition, so anything that
++## raises in here is a caller bug or a broken PDK three levels down, and I6's
++## whole point is that such a raise reaches save_cards' restore.
++##
++## `derived` and `pinexpr` are not iterated: neither has a vector in any raw
++## (spec §4.3). `derived` is computed from params after they are read, `pinexpr`
++## is an expression over pin voltages.
++proc op_annot::_cards_for {instname root} {
++  set t [::op_annot::type $instname]
++  if {$t eq {}} { return {} }
++  set d [::op_annot::descriptor $t]
++  if {![dict exists $d params]} { return {} }
++  set dev [::op_annot::devpath $instname deck $root]
++  if {$dev eq {}} { return {} }
++  set out {}
++  foreach row [dict get $d params] {
++    lappend out ".save ${dev}\[[lindex $row 1]\]"
++  }
++  return $out
++}
++
++## Did the descend just issued actually land us in a USABLE child?
++## <c0> is `xschem get currsch` from immediately BEFORE the descend.
++##
++## THIS IS THE CLASS SPLIT OF ISSUE 0433. The return value of `xschem descend`
++## is deliberately not consulted: it is 0 for both classes.
++##   currsch unchanged  -> class 1, nothing was pushed. NO go_back — the
++##                         prototypes' unconditional one pops a caller's level
++##                         and the walk then re-visits levels, emitting
++##                         duplicate cards.
++##   currsch advanced, descend_error set -> class 2 (`load-failed`,
++##                         actions.c:4432, which returns AFTER the increment at
++##                         :4430): the hierarchy ALREADY advanced, so this one
++##                         DOES owe a go_back before the walk can continue.
++##   currsch advanced, descend_error empty -> success.
++proc op_annot::_descended {c0} {
++  if {[catch {xschem get currsch} c1]} { return 0 }
++  if {$c1 <= $c0} { return 0 }
++  if {[catch {xschem get descend_error} derr]} { set derr {} }
++  if {$derr eq {}} { return 1 }
++  catch {xschem go_back 2}
++  return 0
++}
++
++## The recursion. Ported from sg13g2_hier_sch_expand (sg13g2_procs.tcl:366-421).
++## Appends to the namespace accumulator; a raise anywhere inside it is caught
++## exactly once, by save_cards.
++##
++## <root> is the walk's ENTRY sch_path, threaded down unchanged: it is the basis
++## every card is rooted at. <idx> is the deck index, built ONCE by save_cards —
++## one netlist per call, never one per instance.
++proc op_annot::_walk {root idx} {
++  variable _acc
++  variable warnings
++  variable _miss_dev
++  variable _miss_sub
++  global nolist_libs
++  set ninstances [xschem get instances]
++  for {set i 0} {$i < $ninstances} {incr i} {
++    set instname [xschem getprop instance $i name]
++    ## ⚠ `getprop instance <n> cell::type`, NOT `getprop symbol <cell> type`.
++    ## The symbol form RAISES for generator cells (measured: 6 of the 14
++    ## instances of xschem_library/generators/test_generators.sch) and is the
++    ## literal trigger of issue 0431. The index form resolves for a vector
++    ## instance name too.
++    set type [::op_annot::type $i]
++
++    ## nolist_libs, verbatim from the prototype: libraries the user has excluded
++    ## from hierarchy traversal (empty in every stock workarea).
++    set skip 0
++    if {[info exists nolist_libs] && [llength $nolist_libs]} {
++      if {[catch {abs_sym_path [xschem getprop instance $i cell::name]} abs_symbol]} {
++        set abs_symbol {}
++      }
++      foreach j $nolist_libs {
++        if {[catch {regexp $j $abs_symbol} hit]} { set hit 0 }
++        if {$hit} { set skip 1 ; break }
++      }
++    }
++    if {$skip} { continue }
++
++    ## Emit BEFORE descending: depth-first, parents before children. Order is
++    ## part of this step's golden. A device the deck does not contain gets no
++    ## card and is COUNTED — silence there is how two attempts shipped.
++    if {[::op_annot::_netlisted $i $idx]} {
++      foreach c [::op_annot::_cards_for $instname $root] { lappend _acc $c }
++    } elseif {[::op_annot::devpath $instname deck $root] ne {}} {
++      incr _miss_dev
++    }
++
++    if {$type ne {subcircuit}} { continue }
++
++    ## The deck may hold the CALL and not the body (spice_stop, spice_sym_def,
++    ## default_schematic=ignore, spice_primitive), and it may hold a perfectly
++    ## good body that THIS instance does not reach (a spice_ignore'd caller of a
++    ## shared cell). Both are "do not walk in".
++    if {![::op_annot::_descendable $i $idx]} { incr _miss_sub ; continue }
++
++    ## ⚠ READ BEFORE DESCENDING. Once the walk is in the child, `xschem
++    ## translate <instname> …` has no such instance to resolve (see _prefix_ok).
++    set els [::op_annot::_elements $instname]
++
++    ## Vector instances: `expandlabel x2[1:0]` -> `x2[1],x2[0] 2` (never raises,
++    ## answers `x1 1` for a scalar). Descend ONCE, then walk the members with
++    ## change_sch_path, then go_back ONCE.
++    set ninst [lindex [split [xschem expandlabel $instname] { }] 1]
++    for {set n 1} {$n <= $ninst} {incr n} {
++      if {$n == 1} {
++        set c0 [xschem get currsch]
++        ## ⚠ `xschem select instance <i>` TOGGLES, and go_back leaves the
++        ## instance we came from selected — so unselect first or the next
++        ## descend refuses with `no-selection` / picks the wrong target.
++        ## `fast nodraw` is src/xschem.tcl:3717's cheaper form: no status
++        ## traffic, no selection draw.
++        catch {xschem unselect_all}
++        catch {xschem select instance $i fast nodraw}
++        xschem descend $n 2
++        if {[catch {xschem get descend_error} derr]} { set derr {} }
++        if {![::op_annot::_descended $c0]} {
++          lappend warnings "cannot descend into $instname ($derr)"
++          break
++        }
++      }
++      if {$n > 1} { xschem change_sch_path $n }
++      ## ⚠ THE PREFIX GUARD (issue 0488) SITS BETWEEN THE DESCEND AND THE
++      ## RECURSION, INSIDE THE go_back PAIRING. Suppressing the subtree may not
++      ## also suppress the ascent: an early `break` here would leave the walk a
++      ## level down for every remaining instance of the parent.
++      if {[::op_annot::_prefix_ok $els]} {
++        ::op_annot::_walk $root $idx
++      } else {
++        incr _miss_sub
++        set w "cannot name the subtree of $instname: the hierarchy path spells\
++ it \"[::op_annot::_pathseg]\" but the netlist element is\
++ \"[join $els {, }]\" (sch_path does not carry spiceprefix - issue 0488). No\
++ cards emitted below it."
++        if {[lsearch -exact $warnings $w] < 0} { lappend warnings $w }
++      }
++      if {$n == $ninst} { xschem go_back 2 }
++    }
++  }
++  return 1
++}
++
++## The last component of `xschem get sch_path`, lowercased — the string the deck
++## basis will really put in front of every card built below this level. Shared
++## by _prefix_ok and by its warning so the two cannot disagree about what was
++## compared.
++proc op_annot::_pathseg {} {
++  if {[catch {xschem get sch_path} p]} { return {} }
++  set seg [string trimright $p {.}]
++  set i [string last {.} $seg]
++  if {$i >= 0} { set seg [string range $seg [expr {$i + 1}] end] }
++  return [string tolower $seg]
++}
++
++## Ascend back to the level the walk started from — and NO FURTHER.
++##
++## Bounded by the ENTRY currsch, not by 0 (see I6 in this section's header). The
++## guards are because this runs on an unattended error path: a go_back that
++## refuses to move must break the loop rather than spin it forever.
++proc op_annot::_unwind {entry} {
++  set target [lindex $entry 0]
++  set guard 0
++  while {1} {
++    if {[catch {xschem get currsch} c]} { break }
++    if {$c <= $target} { break }
++    if {[catch {xschem go_back 2}]} { break }
++    if {[catch {xschem get currsch} c2]} { break }
++    if {$c2 >= $c} { break }
++    if {[incr guard] > 64} { break }
++  }
++}
++
++## THE UNCONDITIONAL RESTORE (I6). Every line is individually catch-wrapped so
++## one failure cannot skip the rest — the prototypes' straight-line reset is
++## simply not reached when the walk raises, which is issue 0431.
++##
++## <rc> is the catch code of the walk. It is deliberately NOT branched on: the
++## whole point is that this block runs identically on both paths. The netlist
++## environment is NOT restored here — the oracle gives it back itself, before
++## the walk ever starts, so it is already the user's during the walk.
++proc op_annot::_restore {entry rc} {
++  variable _busy
++  catch {::op_annot::_unwind $entry}
++  ## no_undo has no getter (issue 0432), so 0 is the only restorable value.
++  catch {xschem set no_undo 0}
++  catch {xschem set no_draw [lindex $entry 2]}
++  catch {set ::keep_symbols [lindex $entry 3]}
++  catch {xschem log_action -suppress pop}
++  set _busy 0
++}
++
++## `.save all` first (I2 / rule R2), then the cards.
++##
++## ⚠ THE DOT-CARD, AND IT IS NOT A SPELLING NICETY. Re-measured on ngspice 46+:
++## a bare deck-level `save all` is parsed as an `s`-prefixed SWITCH instance and
++## the run dies with `Unable to find definition of model`, writing NO RAW AT ALL
++## — strictly worse than omitting it. `.save all` is the form that works. And
++## inside a `.control` block it is the other way round: there the dot form is
++## `save: no such command available` at rc 0, so this block belongs at DECK
++## level, which is where write_save_file's `.include` puts it.
++##
++## An empty walk returns {} and NOT a lone `.save all`: a file whose entire
++## content is a header says nothing while reporting success.
++proc op_annot::_block {cards} {
++  if {[llength $cards] == 0} { return {} }
++  return "[join [linsert $cards 0 {.save all}] \n]\n"
++}
++
++## op_annot::save_cards -> the `.save` block for the whole hierarchy below the
++## CURRENT cell, as text; {} when no device produced a card.
++##
++## The block is rooted HERE: every card is `deck`-based with this level's
++## `sch_path` as its root, so the file is a save block for a deck of the cell
++## you are standing in, and no loaded raw can move a single name (issue 0436).
++## It names ONLY devices the netlister itself put in that deck (issue 0442).
++##
++## ⚠ IT RE-RAISES. A partial block silently returned is the raw-destroying card
++## wearing a different hat: the devices the walk never reached are missing, and
++## the ones it did reach are not necessarily complete. Callers must call this
++## inside a catch.
++##
++## I4: reads context, never writes it. No instance placed, no set_modify,
++## nothing written to the .sch — and it refuses outright rather than let the
++## oracle's netlist eat a pending gesture.
++proc op_annot::save_cards {} {
++  variable _acc
++  variable warnings
++  variable _busy
++  variable _miss_dev
++  variable _miss_sub
++
++  ## FIRST, and before any state is touched: a nested call would overwrite the
++  ## outer walk's accumulator and its idea of the user's netlist settings, then
++  ## "restore" the forced ones (issue 0438).
++  if {[info exists _busy] && $_busy} {
++    return -code error "op_annot::save_cards: already running — the walk is not\
++ re-entrant (issue 0438). A nested call would overwrite the outer walk's cards\
++ and restore the netlist settings it forced."
++  }
++  ## SECOND: refuse on a pending gesture, before the oracle's netlist can eat it.
++  ::op_annot::_assert_idle
++
++  set _acc {}
++  set warnings {}
++  set _miss_dev 0
++  set _miss_sub 0
++  set kd 0
++  if {[info exists ::keep_symbols]} { set kd $::keep_symbols }
++  set entry [list [xschem get currsch] [xschem get sch_path] \
++                  [xschem get no_draw] $kd]
++  ## THE ROOT OF THIS BLOCK. Read once, before anything moves.
++  set root [lindex $entry 1]
++  ## ⚠ THE LATCH IS SET AFTER THE ENTRY SNAPSHOT, NOT BEFORE IT. _restore is the
++  ## only thing that clears it and it runs only from below this line, so a raise
++  ## while READING the entry state would otherwise leave _busy set and wedge the
++  ## feature for the rest of the session (issue 0438) with no walk ever having
++  ## started. Everything above this line is a read or a reset.
++  set _busy 1
++  ## Pushed OUTSIDE the catch and popped inside _restore, so the pair survives a
++  ## raise. descend and go_back self-log (actions.c:4446, :4602) and the
++  ## oracle's netlist would too but for `-keep_symbols` (scheduler.c:8887); a
++  ## walk over a real design would otherwise flood a log whose contract is
++  ## REPLAYABLE USER EDITS.
++  catch {xschem log_action -suppress push}
++  set rc [catch {
++    ## THE ORACLE, ONCE, FIRST, AND AT THE ENTRY LEVEL — the deck the user would
++    ## simulate from here is the one whose devices these cards must name.
++    ## Before no_undo/no_draw/keep_symbols: the netlister does its own
++    ## push_undo/pop_undo round trip.
++    set idx [::op_annot::_deck_index [::op_annot::_oracle_deck]]
++    set ::keep_symbols 1
++    ## The prototype's entry unselect_all, kept: descend acts on the selection,
++    ## so this is a real precondition. The selection is NOT saved and restored —
++    ## `xschem selected_set` answers instance NAMES only, so a "restore" would
++    ## silently drop every wire and text the user had selected, which is more
++    ## surprising than clearing it. (The oracle's own netlist has already
++    ## cleared it: global_spice_netlist calls unselect_all.)
++    xschem unselect_all
++    xschem set no_draw 1
++    xschem set no_undo 1
++    ::op_annot::_walk $root $idx
++  } res opts]
++  ::op_annot::_restore $entry $rc
++  if {$rc} { return -options $opts $res }
++  ## The two aggregates, appended after the walk's own per-cell failures and
++  ## emitted only when non-zero: a clean walk says nothing.
++  if {$_miss_dev > 0} {
++    lappend warnings "$_miss_dev device(s) claimed by a descriptor are not in\
++ the netlist and got no save card"
++  }
++  if {$_miss_sub > 0} {
++    ## ⚠ WORDING, NOT BEHAVIOUR. This line fires on perfectly HEALTHY designs —
++    ## mips_cpu/controller reports 2, because maindec and aludec are behavioural
++    ## cells whose whole body is schprop Verilog, i.e. genuinely empty `.subckt`
++    ## blocks with nothing to save. It read as breakage, so it now names the
++    ## ordinary causes.
++    ##
++    ## REJECTED: suppressing the count when a block is empty because the cell has
++    ## no instances. The walk would have to know WHY it is empty — i.e. re-derive
++    ## spice_stop / spice_sym_def / behavioural — which is the hand-maintained
++    ## mirror of the netlister this whole step exists to delete.
++    lappend warnings "$_miss_sub subcircuit instance(s) got no cards because the\
++ netlist does not expand them here (spice_stop, spice_sym_def, an ignored or\
++ behavioural cell, or an empty block) - normal for such cells"
++  }
++  return [::op_annot::_block $_acc]
++}
++
++## op_annot::write_save_file -> writes the block to
++## $netlist_dir/<current cell>.save and returns the path; {} when there was
++## nothing to save (and then NO file is written — a .save file containing only a
++## header says nothing while reporting success).
++##
++## ⚠ THE FILENAME AGREES WITH THE BODY, and only because the cards are
++## entry-relative: `<current cell>.save` describes a deck whose top IS the
++## current cell, which is also the cell `xschem netlist` would write from here.
++##
++## Modelled on IHP's `Create FET and BIP .save file` menu command
++## (ihp-sg13g2/sg13g2_procs.tcl:602-606), including its `file mkdir
++## $netlist_dir`, which sky130A/sky130_procs.tcl:235 lacks. The textwindow is
++## X-only: under --nogui / --pipe there is no Tk and `textwindow` would raise.
++proc op_annot::write_save_file {} {
++  global netlist_dir
++  set block [::op_annot::save_cards]
++  if {$block eq {}} { return {} }
++  file mkdir $netlist_dir
++  set path [file join $netlist_dir \
++    "[file rootname [file tail [xschem get current_name]]].save"]
++  ## THE WARNINGS REACH THE USER HERE, AND NOWHERE ELSE.
++  ##
++  ## The two aggregates and the per-cell descend failures exist because a filter
++  ## that UNDER-emits IN SILENCE is exactly the failure that survived 85 and then
++  ## 96 green checks. The textwindow this proc already opens is the channel, at
++  ## zero new UI.
++  ##
++  ## REJECTED: an `alert_` on success. X-only, untestable headless, and it would
++  ## fire on healthy designs (see the _miss_sub note in save_cards). REJECTED
++  ## also: leaving them computed and discarded, which reproduces at the UI layer
++  ## the very silence this step exists to delete.
++  ##
++  ## ⚠ ONE LINE PER WARNING, NEWLINES FLATTENED. A note that wrapped would put a
++  ## continuation line with no leading `*` into a file a SPICE parser reads, and
++  ## the parser would take it for a card.
++  set notes {}
++  foreach w [::op_annot::last_warnings] {
++    append notes "* NOTE: [string map [list \n { } \r { }] $w]\n"
++  }
++  ## ASCII only: these lines go into a file a SPICE parser reads.
++  write_data "* operating-point .save cards - .include this file in your testbench\n$notes\n$block" $path
++  if {[info exists ::has_x] && $::has_x} { catch {textwindow $path} }
++  return $path
++}
+diff --git a/src/xschem.tcl b/src/xschem.tcl
+index 9972069c..fe39589d 100644
+--- a/src/xschem.tcl
++++ b/src/xschem.tcl
+@@ -15356,6 +15356,36 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
+   # `if {[info exists has_x]}` and --nogui never enters it.
+   $topwin.menubar.simulation.graph add command -label {Add device OP annotator} \
+     -command {op_annot::place_annotator}
++  # doc/claude/specs/op_annotation.md step S3. The other half of the feature:
++  # nothing puts the device vectors INTO the raw, so on an ordinary bench run
++  # every `params` row of the annotator above renders blank (measured: 8 of 10
++  # rows, only the two `pinexpr` rows populate). This item walks the hierarchy
++  # below the current cell and writes one `.save` card per descriptor parameter
++  # per NETLISTED device, with `.save all` first (rule R2 — any explicit save
++  # cancels the implicit save-everything, so without it every node voltage
++  # disappears from the raw). `.include` the file from your testbench.
++  #
++  # Modelled on IHP's `Create FET and BIP .save file` (ihp-sg13g2/
++  # sg13g2_procs.tcl:602-606), generalized off that PDK: the walk is
++  # descriptor-driven and the device filter is asked of the netlister rather
++  # than mirrored from it.
++  #
++  # ⚠ IT RUNS A NETLIST, so it can refuse (a pending placement or paste — the
++  # netlister tears those down, issue 0263) and it can raise (a broken oracle).
++  # Both must reach the user as text, not as a silent no-op: an empty .save file
++  # would kill the very simulation it was generated for. Everything that can go
++  # wrong lives in op_annot::write_save_file (src/op_annot.tcl) where
++  # tests/headless/test_op_annot.tcl row W26 drives it; what stays here is a
++  # label, a call and the one thing only this layer can do — show the message.
++  $topwin.menubar.simulation.graph add command -label {Create device OP .save file} \
++    -command {
++       if {[catch {op_annot::write_save_file} tctx::retval]} {
++         alert_ "$tctx::retval"
++       } elseif {$tctx::retval eq {}} {
++         alert_ "No operating-point save cards: no device below this cell has an\
++ op_annot descriptor, or none of them is in the netlist. Nothing written."
++       }
++    }
+   $topwin.menubar.simulation.graph add checkbutton -label "Live annotate probes with 'b' cursor" \
+      -selectcolor $selectcolor -variable live_cursor2_backannotate
+   $topwin.menubar.simulation.graph add checkbutton -label "Hide graphs if no spice data loaded" \
+diff --git a/tests/headless/test_op_annot.tcl b/tests/headless/test_op_annot.tcl
+index 8adff886..7d8cc2d8 100644
+--- a/tests/headless/test_op_annot.tcl
++++ b/tests/headless/test_op_annot.tcl
+@@ -6119,6 +6119,1519 @@ set XSCHEM_LIBRARY_PATH $S_LIBS
+   incr fail
+ }
+ 
++# =============================================================================
++# SECTION W — S3 of doc/claude/specs/op_annotation.md: THE HIERARCHY WALK AND
++#             THE SAVE-CARD GENERATOR
++# =============================================================================
++# S1 built the name builder, S2 filled the descriptor store, S5 built the READ
++# side and S9b put it on the canvas. NOTHING PUTS THE DEVICE VECTORS INTO THE
++# RAW. On an ordinary bench run every `params` row and every `derived` row that
++# depends on one renders BLANK — measured on this tree: 8 of 10 rows blank, only
++# the two `pinexpr` rows (`vgs`, `vds`) populate, because pin voltages need no
++# save card at all. S3 is the missing half:
++#
++#   op_annot::save_cards {}      -> the `.save` block for the hierarchy below
++#                                   the CURRENT cell, as text; {} when empty
++#   op_annot::write_save_file {} -> writes it to $netlist_dir/<cell>.save and
++#                                   returns the path
++#   op_annot::last_warnings {}   -> what the walk could not do, as a list
++#   op_annot::devpath <i> ?basis? ?root?   <- the ONE builder, now with a BASIS
++#
++# ============================================================================
++# ⚠ THE CARD IS BARE, AND `op_annot::vector` MUST NEVER APPEAR IN ONE (rule R4)
++# ============================================================================
++# Re-measured for this section on /usr/local/bin/ngspice (46+), on the section-X
++# deck below:
++#
++#   .save @m.xmx0.m1[id]      -> raw carries  i(@m.xmx0.m1[id])
++#   .save @m.xmx0.m1[gm]      -> raw carries    @m.xmx0.m1[gm]
++#   .save @m.xmx0.m1[vdsat]   -> raw carries  v(@m.xmx0.m1[vdsat])
++#   .save i(@m.xmx0.m1[id])   -> raw carries  NOTHING, and says nothing
++#
++# ngspice applies the i()/v() wrapper itself from the parameter's own type. The
++# emitter writes [devpath][param]; `vector` is the READ shape and belongs to S5.
++# Row W4 is the guardian: the block contains no `(` at all.
++#
++# ============================================================================
++# ⚠ THE TWO BASES. THIS IS WHAT REVERTED ATTEMPT 1 (issue 0436)
++# ============================================================================
++# `op_annot::devpath`'s hierarchy prefix came from `xschem get sim_sch_path`,
++# which is measured from the level the RAW was loaded at — the right basis for
++# READING a vector out of a loaded raw and the wrong one for WRITING a card into
++# a deck nobody has simulated yet. Reproduced on THIS section's fixture, with a
++# raw loaded one level down and the walk run from the top:
++#
++#     no raw        xok1 -> @m.xok1.mp1.dp     xok2 -> @m.xok2.mp1.dp
++#     raw at lvl 1  xok1 -> @m.mp1.dp          xok2 -> @m.mp1.dp     <-- COLLAPSED
++#
++# Two different instances of one subcell, one device name, no warning anywhere.
++# The fix is a BASIS on the one builder — `deck` = `xschem get sch_path` minus
++# the walk-entry root, which no loaded raw can perturb — not path arithmetic in
++# the walk, which would be the second builder invariant I1 forbids. Rows W5/W6/W7
++# are the guardians, and they are non-vacuous ONLY because a raw is loaded: with
++# no raw the two bases coincide, which is why 85 green checks missed this.
++#
++# ⚠ AND `@path` IS A SECOND RAW-RELATIVE SOURCE, IN THE C (token.c:4719 is a
++# byte-for-byte copy of sim_sch_path's stripping loop). A fix that only swaps the
++# Tcl call passes every sky130 row — sky130 registers a DEVPROC — and leaves
++# gf180's and IHP's `@path` TEMPLATES raw-relative. That is why this section
++# registers TWO arms, `w_nmos` (a `@path` template) and `w_nmos2` (a devproc),
++# and why W5 and W6 assert on DISJOINT subsets of the same block: a variant that
++# reds both means the fixture has lost one of the arms.
++#
++# ============================================================================
++# ⚠ THE FILTER IS SEVEN CLASSES. THIS IS WHAT REVERTED ATTEMPT 2 (issue 0442)
++# ============================================================================
++# A card naming a device that is not in the deck is not a cosmetic defect: under
++# the `.control … write … .endc` idiom every shipped PDK bench uses, if EVERY
++# device card is bogus ngspice writes NO RAW AT ALL, and if one among good ones
++# is bogus it writes a full column marked `dims=0` and prints nothing. Either
++# way the generator has damaged the simulation it was generated for.
++#
++# Attempt 2 hand-mirrored the netlister's rules and implemented three of seven.
++# The four it missed are all SYMBOL-level and all reachable on ordinary PDK
++# symbols. This fixture carries all seven, in one hierarchical deck, measured on
++# this tree with `xschem netlist`:
++#
++#   class                       instance line   its .subckt block     descend?
++#   spice_ignore=true           absent          -                     no
++#   spice_ignore=short          absent          -                     no
++#   only_toplevel=true (below)  absent          -                     no
++#   empty/absent `format`       ABSENT          none at all           no
++#   default_schematic=ignore    present         NO BLOCK AT ALL       no
++#   spice_sym_def               present         `** sym_path:` only   no
++#   spice_stop=true             present         `** sch_path:` EMPTY  no
++#
++# The last three are why `_netlisted` and `_descendable` cannot be aliases:
++# the deck holds the CALL and not the BODY. Attempt 2 aliased them and its
++# `filter_skips_cards_but_still_descends` sabotage variant reddened nothing —
++# the visible edge of the whole gap, on a FLAT fixture that could not reach it.
++# Per spec landmine 11 a predicted red that does not appear is a fixture defect.
++#
++# ⚠ THE ORACLE IS THE NETLISTER ITSELF, READ AND NOT REIMPLEMENTED. Rows W11-W15
++# assert against `xschem netlist` output; W15 cross-checks BOTH directions
++# against a deck this file expands ITSELF, so the row cannot be satisfied by the
++# implementation agreeing with its own copy of the rules.
++#
++# ============================================================================
++# ⚠ I6 IS THE DESTRUCTIVE HALF, AND THE PROTOTYPES DO NOT SATISFY IT
++# ============================================================================
++# The walk sets no_draw 1, no_undo 1, keep_symbols 1 and descends the REAL
++# design. `sky130_save_fet_params` on `sky130_tests/test_generators` raises and
++# returns with no_draw=1 keep_symbols=1 still set, because its restore is on the
++# normal path (issue 0431). W19/W20/W21 force a raise below the entry level and
++# assert the restore anyway; W21 enters ALREADY DESCENDED, because the unwind is
++# bounded by the ENTRY level and `while {[xschem get currsch]} {go_back}` would
++# ascend past a caller. `no_undo` has no getter (issue 0432) so W22 probes its
++# EFFECT and carries its own non-vacuity control.
++
++# --- section W locations ------------------------------------------------------
++set W_LIB  [file join $scratch wlib]
++set W_NL   [file join $scratch wnl]      ;# $netlist_dir for write_save_file
++set W_TNL  [file join $scratch wtnl]     ;# THIS FILE's own netlist runs
++set W_CONF [file join $scratch wconf]    ;# USER_CONF_DIR, so the oracle never
++                                         ;# writes into the developer's ~/.xschem
++file mkdir $W_LIB $W_NL $W_TNL $W_CONF
++
++## The fixture, written fresh. Two device symbols with the SAME shape and two
++## different descriptor ARMS, plus one subcircuit symbol per netlister drop
++## class. Nothing here is committed and nothing lands in the repo.
++proc opa_w_sym {lib name type extra {pins 4}} {
++  set body "v \{xschem version=3.4.4 file_version=1.2\}\nG \{type=$type\n$extra"
++  append body "\}\nV \{\}\nS \{\}\nE \{\}\nL 4 -20 -20 20 -20 \{\}\n"
++  set y -2.5
++  foreach p [lrange {D G S B} 0 [expr {$pins - 1}]] {
++    append body "B 5 -22.5 $y -17.5 [expr {$y + 5}] \{name=$p dir=inout\}\n"
++    set y [expr {$y + 20}]
++  }
++  append body "T \{@symname\} -20 -34 0 0 0.2 0.2 \{\}"
++  set f [open [file join $lib $name.sym] w] ; puts $f $body ; close $f
++}
++proc opa_w_sch {lib name insts} {
++  set body "v \{xschem version=3.4.4 file_version=1.2\}\nG \{\}\nV \{\}\nS \{\}\nE \{\}"
++  set x 0
++  foreach i $insts {
++    append body "\nC \{[lindex $i 0]\} $x 0 0 0 \{[lindex $i 1]\}"
++    incr x 100
++  }
++  set f [open [file join $lib $name.sch] w] ; puts $f $body ; close $f
++}
++proc opa_w_fixture {lib} {
++  ## ⚠ THE `w_` TYPE NAMES ARE DELIBERATE. `nmos` is registered by sections C/P
++  ## above and by three PDKs; a fixture that reused it would be measuring
++  ## whichever registration ran last (issue 0425).
++  opa_w_sym $lib w_prim  w_nmos  "format=\"@name @pinlist @model\"\ntemplate=\"name=M1 model=nch\"\n"
++  opa_w_sym $lib w_prim2 w_nmos2 "format=\"@name @pinlist @model\"\ntemplate=\"name=M1 model=nch2\"\n"
++  set F "format=\"@name @pinlist @symname\"\ntemplate=\"name=x1\"\n"
++  opa_w_sym $lib w_ok     subcircuit $F 1
++  opa_w_sym $lib w_deep   subcircuit $F 1
++  opa_w_sym $lib w_vec    subcircuit $F 1
++  ## class 4: NO `format` at all — spice_netlist.c:639 returns before anything is
++  ## written, so the instance AND its block are absent from the deck entirely.
++  opa_w_sym $lib w_nofmt  subcircuit "template=\"name=x1\"\n" 1
++  ## class 5: the call survives, the block is never emitted (spice_netlist.c:643)
++  opa_w_sym $lib w_dsign  subcircuit "$F default_schematic=ignore\n" 1
++  ## class 6: the body is replaced by attribute text — `** sym_path:` and NO
++  ## `** sch_path:` (spice_netlist.c:665). ⚠ The .subckt port name MATCHES the
++  ## symbol pin on purpose: a mismatch pops has_included_subcircuit's alert_
++  ## (src/xschem.tcl:2200), which no netlist flag reaches and which would HANG
++  ## the xvfb leg of this suite.
++  opa_w_sym $lib w_symdef subcircuit "$F spice_sym_def=\".subckt w_symdef D\nRSD D 0 1k\n.ends\"\n" 1
++  ## class 7: the block is emitted EMPTY (spice_netlist.c:635 + :695)
++  opa_w_sym $lib w_stop   subcircuit "$F spice_stop=true\n" 1
++  ## the spiceprefix'd subcircuit: the deck says XSUB1, every path source says
++  ## SUB1 (issue 0488). Its own top, so W2's golden does not depend on the guard.
++  opa_w_sym $lib w_pfx    subcircuit "format=\"@spiceprefix@name @pinlist @symname\"\ntemplate=\"name=x1 spiceprefix=X\"\n" 1
++  ## level 1: the DEVPROC arm, an only_toplevel device, an lvs_ignore device and
++  ## the level-2 subcircuit.
++  opa_w_sch $lib w_ok [list \
++    {w_prim2.sym {name=MP1 model=nch2}} \
++    {w_prim.sym  {name=MONLY model=nch only_toplevel=true}} \
++    {w_prim.sym  {name=MLVS model=nch lvs_ignore=true}} \
++    {w_deep.sym  {name=xdeep}}]
++  ## level 2: the TEMPLATE arm
++  opa_w_sch $lib w_deep [list {w_prim.sym {name=MT1 model=nch}}]
++  opa_w_sch $lib w_vec  [list {w_prim.sym {name=MV model=nch}}]
++  opa_w_sch $lib w_pfx  [list {w_prim.sym {name=MPX model=nch}}]
++  foreach n {w_nofmt w_dsign w_symdef w_stop} {
++    file copy -force [file join $lib w_ok.sch] [file join $lib $n.sch]
++  }
++  ## the top: all seven drop classes, TWO instances of one cell, and a vector
++  ## instance.
++  opa_w_sch $lib w_top [list \
++    {w_prim.sym   {name=MT0 model=nch}} \
++    {w_prim.sym   {name=MTIGN model=nch spice_ignore=true}} \
++    {w_prim.sym   {name=MTSHORT model=nch spice_ignore=short}} \
++    {w_ok.sym     {name=xok1}} \
++    {w_ok.sym     {name=xok2}} \
++    {w_ok.sym     {name=xign spice_ignore=true}} \
++    {w_ok.sym     {name=xshort spice_ignore=short}} \
++    {w_nofmt.sym  {name=xnofmt}} \
++    {w_dsign.sym  {name=xdsign}} \
++    {w_symdef.sym {name=xsymdef}} \
++    {w_stop.sym   {name=xstop}} \
++    {w_vec.sym    {name=x2[1:0]}}]
++  ## W18's own top, and W3's empty one.
++  opa_w_sch $lib w_pfxtop [list {w_prim.sym {name=MT0 model=nch}} {w_pfx.sym {name=SUB1}}]
++  opa_w_sch $lib w_bare   [list {w_stop.sym {name=xstop}}]
++  ## W16's cell: a shipped `code_shown` symbol whose text carries BOTH traps —
++  ## a line that looks like an element and names a really-ignored instance, and
++  ## a .subckt/.ends pair that would close the enclosing block early. MAFTER is
++  ## written into the deck AFTER that region and is the only card this cell owes.
++  ## ⚠ No braces in the value: they break the .sch record scan (see section X).
++  opa_w_sym $lib w_code subcircuit "format=\"@name @pinlist @symname\"\ntemplate=\"name=x1\"\n" 1
++  set ghost "value=\"MGHOST net1 net2 net3 net4 nch
++.subckt w_ghost D
++RG D 0 1k
++.ends\""
++  set f [open [file join $lib w_code.sch] w]
++  puts $f "v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {code_shown.sym} 0 -200 0 0 {name=s1 only_toplevel=false $ghost}
++C {w_prim.sym} 0 0 0 0 {name=MGHOST model=nch spice_ignore=true}
++C {w_prim.sym} 100 0 0 0 {name=MAFTER model=nch}"
++  close $f
++  opa_w_sch $lib w_codetop [list {w_code.sym {name=xcode}}]
++}
++
++## ⚠ THE DEVPROC ARM. It returns a shape no template could build (`.dp`), so a
++## card can be attributed to its arm by inspection — that is what lets W5 and W6
++## assert on DISJOINT subsets of one block.
++proc opa_w_devproc {instname model path spiceprefix} {
++  return "@m.${path}${spiceprefix}${instname}.dp"
++}
++## Register both arms. `derived` and `pinexpr` are present so W3 can assert that
++## neither contributes a card (spec §4.3: there is nothing to save for them).
++proc opa_w_register {} {
++  op_annot::register w_nmos [list devpath {\@m.@path@spiceprefix@name} \
++    params {{id id 0} {gm gm 1}} derived {{gm/id {$gm/$id}}} \
++    pinexpr {{vgs {expr(@#1:spice_get_voltage - @#0:spice_get_voltage )}}}]
++  op_annot::register w_nmos2 [list devproc opa_w_devproc params {{id id 0} {gm gm 1}}]
++}
++
++## Load a fixture cell and sweep the `~.sch` backups the loader drops, so the
++## fixture dir stays byte-stable for the rows that compare deck text.
++proc opa_w_load {name} {
++  global W_LIB
++  foreach f [glob -nocomplain [file join $W_LIB *~.sch]] { catch {file delete -force $f} }
++  catch {xschem load [file join $W_LIB $name]}
++  foreach f [glob -nocomplain [file join $W_LIB *~.sch]] { catch {file delete -force $f} }
++  return [list [xschem get instances] [xschem get currsch] [xschem get sch_path]]
++}
++## The four things I6 must give back. `no_undo` is NOT here: there is no getter
++## (issue 0432) and it returns {} whether the flag is 0 or 1 — W22 probes the
++## effect instead.
++proc opa_w_state {} {
++  set kd 0
++  if {[info exists ::keep_symbols]} { set kd $::keep_symbols }
++  return [list [xschem get no_draw] $kd [xschem get currsch] [xschem get sch_path]]
++}
++## Every line of a block, the trailing empty element dropped. {} -> {}.
++proc opa_w_lines {block} {
++  set b [string trimright $block "\n"]
++  if {$b eq {}} { return {} }
++  return [split $b "\n"]
++}
++## The DEVICE PATHS a block names: `.save @m.x.y[gm]` -> `@m.x.y`.
++proc opa_w_devs {block} {
++  set out {}
++  foreach l [opa_w_lines $block] {
++    if {![regexp {^\.save[ \t]+(.*)\[[^]]*\]$} $l -> d]} { continue }
++    lappend out $d
++  }
++  return $out
++}
++## The subset of a block's cards whose device path matches a glob.
++proc opa_w_pick {block pat} {
++  set out {}
++  foreach l [opa_w_lines $block] { if {[string match $pat $l]} { lappend out $l } }
++  return $out
++}
++## Does any card name a device under this hierarchy prefix?
++proc opa_w_under {block prefix} {
++  set n 0
++  foreach d [opa_w_devs $block] { if {[string first $prefix $d] == 0} { incr n } }
++  return $n
++}
++
++# ---------------------------------------------------------------------------
++# THIS FILE'S OWN ORACLE — deliberately NOT op_annot's
++# ---------------------------------------------------------------------------
++# W15 must be able to fail when the implementation and its own deck reader agree
++# with each other and both are wrong. So the deck is netlisted, parsed and
++# expanded HERE, by code that shares nothing with src/op_annot.tcl.
++proc opa_w_netlist {name} {
++  global W_LIB W_TNL
++  set out [file join $W_TNL [file rootname $name].spice]
++  catch {file delete -force $out}
++  set keep {}
++  foreach v {netlist_dir local_netlist_dir flat_netlist split_files} {
++    lappend keep [list $v [expr {[info exists ::$v] ? [set ::$v] : {}}]]
++  }
++  set ::netlist_dir $W_TNL ; set ::local_netlist_dir 0
++  set ::flat_netlist 0 ; set ::split_files 0
++  catch {xschem netlist -keep_symbols -noalert $out}
++  foreach r $keep { if {[lindex $r 1] ne {}} { set ::[lindex $r 0] [lindex $r 1] } }
++  if {![file isfile $out]} { return {} }
++  set fh [open $out r] ; set t [read $fh] ; close $fh
++  return $t
++}
++## cell -> list of {element lasttoken}, user-architecture regions excluded.
++proc opa_w_blocks {text} {
++  set out {} ; set cur {} ; set inuser 0
++  foreach line [split $text "\n"] {
++    set t [string trim $line]
++    if {$t eq {}} continue
++    if {[string match {\*\*\*\* begin user architecture*} $t]} { set inuser 1 ; continue }
++    if {[string match {\*\*\*\* end user architecture*} $t]}   { set inuser 0 ; continue }
++    if {$inuser} continue
++    set d $t
++    if {[string range $d 0 1] eq {**}} { set d [string trim [string range $d 2 end]] }
++    if {[regexp -nocase {^\.subckt[ \t]+([^ \t]+)} $d -> cell]} {
++      set cur [string tolower $cell]
++      if {![dict exists $out $cur]} { dict set out $cur {} }
++      continue
++    }
++    if {[regexp -nocase {^\.ends} $d]} { set cur {} ; continue }
++    if {$cur eq {}} continue
++    set c [string index $t 0]
++    if {$c eq {*} || $c eq {.} || $c eq {+}} continue
++    set toks {}
++    foreach w [split $t] { if {$w ne {}} { lappend toks $w } }
++    if {[llength $toks] < 1} continue
++    dict lappend out $cur [list [string tolower [lindex $toks 0]] \
++                                [string tolower [lindex $toks end]]]
++  }
++  return $out
++}
++## Expand the deck from <cell>: every DEVICE the simulator will really see,
++## as `<hierarchy-prefix><element>`. A call is an element whose last token names
++## another block.
++proc opa_w_expand {blocks cell prefix} {
++  set out {}
++  if {![dict exists $blocks $cell]} { return {} }
++  foreach e [dict get $blocks $cell] {
++    set nm [lindex $e 0] ; set last [lindex $e 1]
++    if {[dict exists $blocks $last]} {
++      foreach x [opa_w_expand $blocks $last "${prefix}${nm}."] { lappend out $x }
++    } else {
++      lappend out "${prefix}${nm}"
++    }
++  }
++  return $out
++}
++## The `m`-lettered devices of an expansion: exactly the ones this section's two
++## descriptors claim.
++proc opa_w_mdevs {l} {
++  set out {}
++  foreach d $l {
++    set tail [lindex [split $d {.}] end]
++    if {[string index $tail 0] eq {m}} { lappend out $d }
++  }
++  return [lsort $out]
++}
++## -> {unmatched-cards missing-devices per-device-counts-that-are-not-N}
++## Both directions, so neither an orphan card nor a silently dropped device can
++## pass. THIS is the row two attempts shipped past.
++proc opa_w_xcheck {block expected nparams} {
++  set orphan {} ; set counts {}
++  foreach e $expected { dict set counts $e 0 }
++  foreach d [opa_w_devs $block] {
++    if {[string range $d 0 2] ne {@m.}} { lappend orphan $d ; continue }
++    set bare [string range $d 3 end]
++    set hit {}
++    foreach e $expected {
++      if {$bare eq $e} { set hit $e ; break }
++      if {[string first "${e}." $bare] == 0} { set hit $e ; break }
++    }
++    if {$hit eq {}} { lappend orphan $d ; continue }
++    dict incr counts $hit
++  }
++  set bad {}
++  dict for {k v} $counts { if {$v != $nparams} { lappend bad [list $k $v] } }
++  return [list [lsort -unique $orphan] [lsort $bad]]
++}
++## The no_undo EFFECT probe (issue 0432): push, delete, undo. {n 1-less n} when
++## undo is live, {n 1-less 1-less} when no_undo is still set.
++proc opa_w_undo_probe {} {
++  set n0 [xschem get instances]
++  catch {xschem push_undo}
++  catch {xschem unselect_all}
++  catch {xschem select instance 0 fast nodraw}
++  catch {xschem delete}
++  set n1 [xschem get instances]
++  catch {xschem undo}
++  return [list $n0 $n1 [xschem get instances]]
++}
++## Force a raise BELOW the entry level, through the production proc the walk
++## calls. ⚠ The shim forwards all three arguments: a one-argument shim would make
++## the walk die on `wrong # args` instead of on the forced failure, and W20/W21
++## would go red for a harness bug wearing the right colour.
++proc opa_w_shim_on {} {
++  set ::opa_w_shim_hits 0
++  if {[info commands ::op_annot::devpath_real] eq {}} {
++    catch {rename ::op_annot::devpath ::op_annot::devpath_real}
++  }
++  proc ::op_annot::devpath {instname {basis read} {root {}}} {
++    if {[xschem get currsch] > 0} {
++      incr ::opa_w_shim_hits
++      return -code error "opa forced mid-walk failure"
++    }
++    return [::op_annot::devpath_real $instname $basis $root]
++  }
++}
++proc opa_w_shim_off {} {
++  if {[info commands ::op_annot::devpath_real] ne {}} {
++    catch {rename ::op_annot::devpath {}}
++    catch {rename ::op_annot::devpath_real ::op_annot::devpath}
++  }
++}
++## A row that only exists under --logdir prints this instead of counting.
++proc opa_w_skiprow {name why} { puts "skip: $name  ($why)" ; flush stdout }
++proc opa_w_logcount {pat} {
++  if {[catch {open [xschem get actionlog_filename] r} fd]} { return -1 }
++  set b [read $fd] ; close $fd
++  set n 0
++  foreach line [split $b "\n"] { if {[string match $pat $line]} { incr n } }
++  return $n
++}
++## The netlist environment a walk must give back untouched, C side included.
++proc opa_w_netenv {} {
++  set out {}
++  foreach v {netlist_dir local_netlist_dir flat_netlist split_files} {
++    lappend out [list $v [expr {[info exists ::$v] ? [set ::$v] : {-unset-}}]]
++  }
++  foreach v {netlist_type netlist_name} {
++    lappend out [list $v [expr {[catch {xschem get $v} c] ? {-raised-} : $c}]]
++  }
++  return $out
++}
++proc opa_w_dirsig {d} {
++  set out {}
++  foreach f [lsort [glob -nocomplain -directory $d *]] {
++    if {[file isfile $f]} { lappend out [list [file tail $f] [file size $f]] }
++  }
++  return $out
++}
++## Cards built by the DEVPROC arm — the `.dp` inner device no template can build.
++proc opa_w_dpcards {block} {
++  set o {}
++  foreach l [opa_w_lines $block] { if {[string match {*.dp\[*} $l]} { lappend o $l } }
++  return $o
++}
++## Cards built by the `@path` TEMPLATE arm: every card that is not a devproc one.
++proc opa_w_tmplcards {block} {
++  set o {}
++  foreach l [opa_w_lines $block] {
++    if {$l eq {.save all}} continue
++    if {[string match {*.dp\[*} $l]} continue
++    lappend o $l
++  }
++  return $o
++}
++## Does the `* expanding symbol: <sym>` section carry a sym_path / a sch_path?
++## The two answers are what tell spice_sym_def (body replaced by attribute text)
++## apart from spice_stop (real block, emitted EMPTY).
++proc opa_w_pathkinds {deck symname} {
++  set in 0 ; set sym 0 ; set sch 0
++  foreach l [split $deck "\n"] {
++    set t [string trim $l]
++    if {[string match {\* expanding*} $t]} { set in [string match "*$symname*" $t] ; continue }
++    if {!$in} continue
++    if {[string match {\*\* sym_path:*} $t]} { set sym 1 }
++    if {[string match {\*\* sch_path:*} $t]} { set sch 1 }
++  }
++  return [list $sym $sch]
++}
++
++## The GOLDEN block. Depth-first, parents before children, one card per `params`
++## entry per netlisted device, `.save all` first (I2). Derived from the fixture
++## by hand and cross-checked against `xschem netlist` by row W15.
++##   MT0                 top-level device, template arm
++##   xok1/xok2           TWO instances of ONE cell -> two distinct prefixes
++##     MP1               devproc arm (`.dp`)
++##     MLVS              lvs_ignore, and ::lvs_ignore is 0 here
++##     xdeep.MT1         level 2, template arm
++##   x2[1] / x2[0]       the two members of one vector instance
++## and NOT: MTIGN MTSHORT (spice_ignore), MONLY (only_toplevel below entry),
++## xign xshort xnofmt xdsign xsymdef xstop (the six subtree drops).
++set W_BLOCK {.save all
++.save @m.mt0[id]
++.save @m.mt0[gm]
++.save @m.xok1.mp1.dp[id]
++.save @m.xok1.mp1.dp[gm]
++.save @m.xok1.mlvs[id]
++.save @m.xok1.mlvs[gm]
++.save @m.xok1.xdeep.mt1[id]
++.save @m.xok1.xdeep.mt1[gm]
++.save @m.xok2.mp1.dp[id]
++.save @m.xok2.mp1.dp[gm]
++.save @m.xok2.mlvs[id]
++.save @m.xok2.mlvs[gm]
++.save @m.xok2.xdeep.mt1[id]
++.save @m.xok2.xdeep.mt1[gm]
++.save @m.x2[1].mv[id]
++.save @m.x2[1].mv[gm]
++.save @m.x2[0].mv[id]
++.save @m.x2[0].mv[gm]
++}
++## The same walk entered ONE LEVEL DOWN. Rooted THERE (ruling D2), and MONLY is
++## now in the deck because only_toplevel is relative to the deck's top — the
++## sharpest evidence that the filter is answered by the netlister and not by a
++## Tcl mirror.
++set W_BLOCK_MID {.save all
++.save @m.mp1.dp[id]
++.save @m.mp1.dp[gm]
++.save @m.monly[id]
++.save @m.monly[gm]
++.save @m.mlvs[id]
++.save @m.mlvs[gm]
++.save @m.xdeep.mt1[id]
++.save @m.xdeep.mt1[gm]
++}
++
++if {[catch {
++
++set W_LIBS ":$W_LIB:[file join $repo xschem_library devices]"
++set XSCHEM_LIBRARY_PATH $W_LIBS
++opa_w_fixture $W_LIB
++opa_w_register
++set W_CONF_SAVE $::USER_CONF_DIR
++set ::USER_CONF_DIR $W_CONF
++set netlist_dir $W_NL
++
++# ===========================================================================
++# W0 — FIXTURE, ASSERTED. Green before and after; it makes every row below a
++# claim about save_cards instead of a claim about the library path.
++# ===========================================================================
++opa_w_load w_top.sch
++check {W0 FIXTURE w_top.sch: 12 instances, both device arms resolve, no raw} \
++  [list [xschem get instances] [rcall {op_annot::type MT0}] [rcall {op_annot::type MP1}] \
++        [xschem get sch_path] [xschem raw loaded]] \
++  [list 12 {0 w_nmos} {0 {}} {.} -1]
++
++# ===========================================================================
++# W1 — THE SURFACE, AND THE BASIS ARGUMENT devpath GREW
++# ===========================================================================
++# ⚠ `op_annot::devpath MT0` WITH NO BASIS MUST NOT MOVE. Every S5/S6/S9 consumer
++# calls it that way from inside a draw path; if the default became `deck` the
++# display would silently change and section P's byte-diffs would be the only
++# thing left to notice.
++check {W1 save_cards / write_save_file / last_warnings exist, devpath takes ?basis? ?root?, and the READ default is unmoved} \
++  [list [expr {[info commands ::op_annot::save_cards]      ne {}}] \
++        [expr {[info commands ::op_annot::write_save_file] ne {}}] \
++        [expr {[info commands ::op_annot::last_warnings]   ne {}}] \
++        [rcall {llength [info args ::op_annot::devpath]}] \
++        [rcall {op_annot::devpath MT0}]] \
++  [list 1 1 1 {0 3} {0 @m.mt0}]
++
++check_raises {W1b an unrecognised basis RAISES, naming `basis`} \
++  {op_annot::devpath MT0 sideways} basis
++check_raises {W1c a root with basis `read` RAISES, naming `root`} \
++  {op_annot::devpath MT0 read .xok1.} root
++
++# ===========================================================================
++# W2 — THE ACCEPTANCE GOLDEN: the whole block, exactly
++# ===========================================================================
++opa_w_load w_top.sch
++set w2 [rcall {op_annot::save_cards}]
++set W_BLK [lindex $w2 1]
++check {W2 GOLDEN the 19-line block: depth-first, one card per params entry per NETLISTED device} \
++  $w2 [list 0 $W_BLOCK]
++
++# ===========================================================================
++# W3 — THE BLOCK'S SHAPE (invariant I2, rule R2)
++# ===========================================================================
++# ⚠ THE DOT-CARD. A bare deck-level `save all` is not a spelling nicety: ngspice
++# parses it as an `s`-prefixed SWITCH instance and dies with `Unable to find
++# definition of model`, writing NO RAW AT ALL — strictly worse than omitting it.
++# Re-measured on 46+ for this section. And an empty walk must return {}, not a
++# lone `.save all`: a file whose entire content is a header says nothing while
++# reporting success.
++set w3lines [opa_w_lines $W_BLK]
++set w3all 0 ; foreach l $w3lines { if {$l eq {.save all}} { incr w3all } }
++opa_w_load w_bare.sch
++set w3empty [rcall {op_annot::save_cards}]
++opa_w_load w_top.sch
++check {W3 I2 `.save all` is the first line and appears once; no BARE `save all`; an empty walk is {}; derived/pinexpr add no card} \
++  [list [lindex $w3lines 0] $w3all [llength [opa_w_pick $W_BLK {save all*}]] \
++        $w3empty \
++        [string first {[gm/id]} $W_BLK] [string first {[vgs]} $W_BLK]] \
++  [list {.save all} 1 0 {0 {}} -1 -1]
++
++# ===========================================================================
++# W4 — RULE R4: THE CARD IS BARE, AND IT IS [devpath][param]
++# ===========================================================================
++# `.save i(@m.xm1.m1[id])` puts NOTHING in the raw and says nothing. The block
++# must therefore contain no wrapper at all — and the second leg ties the emitted
++# text to the ONE builder (I1), so an emitter that grew its own concatenation
++# cannot pass by accident.
++check {W4 R4/I1 no card carries an i()/v() wrapper, and each card is [devpath][param]} \
++  [list [string first {(} $W_BLK] \
++        [rcall {list ".save [op_annot::devpath MT0 deck .]\[id\]" \
++                     ".save [op_annot::devpath MT0 deck .]\[gm\]"}]] \
++  [list -1 [list 0 [list {.save @m.mt0[id]} {.save @m.mt0[gm]}]]]
++
++# ===========================================================================
++# W5/W6/W7 — ISSUE 0436: A RAW LOADED ONE LEVEL DOWN MOVES NOTHING
++# ===========================================================================
++# The raw is loaded while standing in xok1, exactly as the menu item directly
++# ABOVE the new one does ("Annotate Operating Point into schematic" loads at the
++# current level), then the walk is run from the top. `raw->schname` is bound to
++# w_ok.sch (save.c:1269) and sch_waves_loaded() re-matches it AS THE WALK
++# DESCENDS, so `sim_sch_path` strips a component at BOTH xok1 and xok2 and the
++# read basis answers one name for two devices.
++set W_RAW [file join $scratch w_lvl1.raw]
++set fd [open $W_RAW w]
++puts -nonewline $fd "Title: w level1 fixture
++Date: Mon Jan 1 00:00:00 2026
++Plotname: Operating Point
++Flags: real
++No. Variables: 2
++No. Points: 1
++Variables:
++\t0\t@m.mp1.dp\[gm\]\tadmittance
++\t1\tv(net1)\tvoltage
++Values:
++0\t1e-04
++\t1.0
++"
++close $fd
++opa_w_load w_top.sch
++xschem unselect_all ; xschem select instance 3 fast nodraw ; xschem descend 1 2
++set w5_ann [rcall {xschem annotate_op $W_RAW}]
++set w5_lvl [list [xschem raw loaded] [xschem get sim_sch_path]]
++xschem go_back 2
++set w5 [rcall {op_annot::save_cards}]
++set W_BLKR [lindex $w5 1]
++
++## ⚠ W5 AND W6 ASSERT ON DISJOINT SUBSETS ON PURPOSE. The devproc arm and the
++## `@path` TEMPLATE arm reach the hierarchy prefix by different routes — the Tcl
++## `_pathfor` seam and translate's own copy of the stripping loop (token.c:4719)
++## — and a fix to one leaves the other raw-relative. A sabotage variant that reds
++## BOTH rows means the fixture has lost one of its two arms.
++check {W5 0436 the DEVPROC arm's cards are byte-identical with a raw loaded one level down} \
++  [list [lindex $w5_ann 0] $w5_lvl \
++        [opa_w_dpcards $W_BLKR]] \
++  [list 0 {1 {}} [opa_w_dpcards $W_BLOCK]]
++
++check {W6 0436 the @path TEMPLATE arm's cards are byte-identical too (token.c:4719)} \
++  [opa_w_tmplcards $W_BLKR] [opa_w_tmplcards $W_BLOCK]
++
++## ⚠ THE CONTROL LEGS ARE THE NON-VACUITY. With no raw loaded the two bases give
++## the same string, so this row can only bite while the raw is resident: the last
++## two elements are what the READ basis answers for the SAME instance name in the
++## two subcells, measured live.
++xschem unselect_all ; xschem select instance 3 fast nodraw ; xschem descend 1 2
++set w7r1 [rcall {op_annot::devpath MP1}]
++xschem go_back 2
++xschem unselect_all ; xschem select instance 4 fast nodraw ; xschem descend 1 2
++set w7r2 [rcall {op_annot::devpath MP1}]
++xschem go_back 2
++## ⚠ 18 CARDS OVER 9 DISTINCT DEVICES — two params each, so the card count and
++## the device count are different numbers and both are load-bearing. Under the
++## raw-relative basis the block still has 18 cards but only SIX distinct devices:
++## xok1's and xok2's three devices collapse pairwise, which is issue 0436's
++## measured "8 cards, only 5 unique" on a 3-level fixture.
++check {W7 0436 two instances of ONE subcell keep two names -- 18 cards over 9 devices -- while the READ basis collapses them} \
++  [list [llength [opa_w_devs $W_BLKR]] \
++        [llength [lsort -unique [opa_w_devs $W_BLKR]]] $w7r1 $w7r2] \
++  [list 18 9 {0 @m.mp1.dp} {0 @m.mp1.dp}]
++
++catch {xschem raw clear}
++opa_w_load w_top.sch
++
++# ===========================================================================
++# W8 — RULING D2: THE BASIS IS ENTRY-RELATIVE, NOT LEVEL-0 ABSOLUTE
++# ===========================================================================
++# `xschem netlist` from a descended cell makes THAT cell the deck top — measured
++# on this fixture — so entry-relative is the only basis naming devices the deck
++# the user would simulate from here actually contains, and it is what makes
++# `<cell>.save` agree with its own body. MONLY appears here and nowhere in W2:
++# only_toplevel is answered by the deck, at the level the deck starts from.
++xschem unselect_all ; xschem select instance 3 fast nodraw ; xschem descend 1 2
++set w8 [rcall {op_annot::save_cards}]
++set w8_at [list [xschem get currsch] [xschem get sch_path]]
++while {[xschem get currsch] > 0} { catch {xschem go_back 2} }
++check {W8 D2 a walk entered one level down is rooted THERE, and only_toplevel changes answer} \
++  [list $w8 $w8_at] [list [list 0 $W_BLOCK_MID] {1 .xok1.}]
++
++# ===========================================================================
++# W9 — THE THREE INSTANCE-LEVEL DROP CLASSES (issue 0437, invariant I2b)
++# ===========================================================================
++# One `spice_ignore=true` device anywhere is enough to make a generated .save
++# file kill the simulation it was generated for.
++opa_w_load w_top.sch
++check {W9 0437 spice_ignore=true/short and only_toplevel contribute NO card, while the plain sibling does} \
++  [list [opa_w_under $W_BLK {@m.mtign}] [opa_w_under $W_BLK {@m.mtshort}] \
++        [string first {monly} $W_BLK] \
++        [opa_w_under $W_BLK {@m.xign.}] [opa_w_under $W_BLK {@m.xshort.}] \
++        [opa_w_under $W_BLK {@m.mt0}]] \
++  [list 0 0 -1 0 0 2]
++
++# ===========================================================================
++# W10 — lvs_ignore IS THE USER'S SETTING, INHERITED AND NOT FORCED
++# ===========================================================================
++# `skip_instance()` consults the `lvs_ignore` Tcl var (spice_netlist.c:178). No
++# Tcl mirror of the netlister's rules has ever read it; an oracle that RUNS the
++# netlister gets it for free — and must not clobber it.
++set w10_before [expr {[info exists ::lvs_ignore] ? $::lvs_ignore : 0}]
++set ::lvs_ignore 1
++set w10on [rcall {op_annot::save_cards}]
++set w10_still $::lvs_ignore
++set ::lvs_ignore $w10_before
++set w10off [rcall {op_annot::save_cards}]
++check {W10 ::lvs_ignore 1 drops the MLVS cards, 0 keeps them, and the walk does not clobber the setting} \
++  [list [lindex $w10on 0] [opa_w_under [lindex $w10on 1] {@m.xok1.mlvs}] \
++        $w10_still \
++        [lindex $w10off 0] [opa_w_under [lindex $w10off 1] {@m.xok1.mlvs}] \
++        [lindex $w10off 1]] \
++  [list 0 0 1 0 2 $W_BLOCK]
++
++# ===========================================================================
++# W11-W14 — THE FOUR SYMBOL-LEVEL DROP CLASSES ATTEMPT 2 MISSED (issue 0442)
++# ===========================================================================
++# Each row states the DECK fact first and the CARD fact second, so a row that
++# reds says which half moved. The deck is netlisted by this file, into this
++# file's own directory, by code that shares nothing with src/op_annot.tcl.
++opa_w_load w_top.sch
++set W_DECK [opa_w_netlist w_top.sch]
++set W_DBLK [opa_w_blocks $W_DECK]
++opa_w_load w_top.sch
++
++## ⚠ THE LAST LEG OF EACH OF W11-W13 IS THE NON-VACUITY ANCHOR, AND IT IS NOT
++## DECORATION. "No card under this prefix" is trivially true of an EMPTY block,
++## so without a leg that requires the walk to have emitted the ALLOWED subtree
++## these three rows are green against an absent save_cards -- measured, all three
++## passed before the anchor was added. w_nofmt.sch, w_dsign.sch, w_symdef.sch and
++## w_stop.sch are byte-copies of w_ok.sch, so a leaked class emits exactly the
++## six cards the healthy sibling emits.
++check {W11 0442 an empty `format` removes the instance AND its block from the deck: no card, no descend} \
++  [list [expr {[lsearch -exact [opa_w_expand $W_DBLK w_top {}] xnofmt] >= 0}] \
++        [dict exists $W_DBLK w_nofmt] \
++        [opa_w_under $W_BLK {@m.xnofmt.}] [opa_w_under $W_BLK {@m.xok1.}]] \
++  {0 0 0 6}
++
++check {W12 0442 default_schematic=ignore keeps the CALL and emits no block: no card, no descend} \
++  [list [expr {[lsearch -exact [opa_w_expand $W_DBLK w_top {}] xdsign] >= 0}] \
++        [dict exists $W_DBLK w_dsign] \
++        [opa_w_under $W_BLK {@m.xdsign.}] [opa_w_under $W_BLK {@m.xok1.}]] \
++  {1 0 0 6}
++
++check {W13 0442 spice_sym_def emits `** sym_path:` and NO `** sch_path:`: the subtree contributes nothing} \
++  [list [opa_w_pathkinds $W_DECK w_symdef.sym] \
++        [dict exists $W_DBLK w_symdef] \
++        [opa_w_under $W_BLK {@m.xsymdef.}] [opa_w_under $W_BLK {@m.xok1.}]] \
++  [list {1 0} 1 0 6]
++
++# ⚠ W14 IS THE ROW ATTEMPT 2 COULD NOT HAVE: `_netlisted` and `_descendable`
++# must genuinely DIVERGE on one instance. spice_stop emits a real `.subckt`
++# block, with a `** sch_path:`, EMPTY — the deck holds the call and not the body.
++# Aliasing the two predicates is what attempt 2 shipped, and its own sabotage
++# variant reddened nothing because its fixture was flat.
++set w14_pred [rcall {
++  set idx [op_annot::_deck_index [op_annot::_oracle_deck]]
++  set r {}
++  set n [xschem get instances]
++  for {set i 0} {$i < $n} {incr i} {
++    if {[xschem getprop instance $i name] eq {xstop}} {
++      set r [list [op_annot::_netlisted $i $idx] [op_annot::_descendable $i $idx]]
++    }
++  }
++  set r
++}]
++check {W14 0442 spice_stop emits a PRESENT but EMPTY block, and _netlisted / _descendable diverge on it} \
++  [list [opa_w_pathkinds $W_DECK w_stop.sym] \
++        [dict exists $W_DBLK w_stop] [llength [dict get $W_DBLK w_stop]] \
++        [opa_w_under $W_BLK {@m.xstop}] $w14_pred] \
++  [list {1 1} 1 0 0 {0 {1 0}}]
++
++# ===========================================================================
++# W15 — THE CROSS-CHECK, BOTH DIRECTIONS, ON A HIERARCHICAL FIXTURE
++# ===========================================================================
++# ⚠ THIS IS THE ROW THAT DECIDES THE STEP, AND ITS PREDECESSOR WAS GREEN WHILE
++# BROKEN. Attempt 2's cross-check was the right oracle asked of a FLAT fixture
++# whose only variants were the classes it already handled, so it could not fail.
++# Here the deck is expanded by opa_w_expand — this file's own recursion over the
++# netlister's output — and compared in BOTH directions: an orphan card (a device
++# no deck contains, i.e. the raw-destroying card) and a missing device (silent
++# under-emission, i.e. blank rows the user will read as "unsupported PDK").
++set W_EXP [opa_w_mdevs [opa_w_expand $W_DBLK w_top {}]]
++check {W15 0442 the cards name EXACTLY the devices the netlister put in the deck: 9 devices, 2 params, no orphan, none missing} \
++  [list [llength $W_EXP] [opa_w_xcheck $W_BLK $W_EXP 2]] \
++  [list 9 {{} {}}]
++
++# ===========================================================================
++# W16 — THE DECK IS TEXT, AND THE USER-ARCHITECTURE REGION IS NOT ELEMENTS
++# ===========================================================================
++# Two traps in one cell, both reachable from a shipped `code_shown` symbol:
++#   * a line that LOOKS like an element (`MGHOST ...`) inside the user region,
++#     naming an instance that is really spice_ignore'd. An index that reads the
++#     region would call it netlisted and write a card for a device the deck does
++#     not contain.
++#   * a `.subckt`/`.ends` pair inside the region. An index that closes the
++#     enclosing block at that `.ends` loses every element after it — here
++#     MAFTER, whose cards are the only ones this cell owes.
++opa_w_load w_codetop.sch
++set w16 [rcall {op_annot::save_cards}]
++check {W16 a fabricated element line in the user-architecture region adds no card, and its .subckt/.ends does not truncate the block} \
++  [list $w16 [opa_w_under [lindex $w16 1] {@m.xcode.mghost}]] \
++  [list [list 0 ".save all\n.save @m.xcode.mafter\[id\]\n.save @m.xcode.mafter\[gm\]\n"] 0]
++
++# ===========================================================================
++# W17 — A VECTOR INSTANCE IS DESCENDED ONCE AND WALKED PER MEMBER
++# ===========================================================================
++# `xschem expandlabel x2[1:0]` -> `x2[1],x2[0] 2`. The netlister writes one
++# element line per MEMBER while the instance's own name is the bracketed RANGE,
++# which appears in the deck nowhere — a membership test that compares the raw
++# name answers 0 for every vector instance and the walk then refuses to descend.
++opa_w_load w_top.sch
++check {W17 both members of x2[1:0] are walked, in order, with distinct cards, and the hierarchy is back at entry} \
++  [list [opa_w_pick $W_BLK {*@m.x2*}] [opa_w_state]] \
++  [list [list {.save @m.x2[1].mv[id]} {.save @m.x2[1].mv[gm]} \
++              {.save @m.x2[0].mv[id]} {.save @m.x2[0].mv[gm]}] \
++        {0 0 0 .}]
++
++# ===========================================================================
++# W18 — THE HIERARCHY PREFIX DROPS spiceprefix (issue 0488)
++# ===========================================================================
++# ⚠ MEASURED, AND IT IS THE RAW-DESTROYING SHAPE. `sch_path`, `sim_sch_path` and
++# `@path` all carry the instance NAME only, so with `name=SUB1 spiceprefix=X` the
++# deck says `XSUB1` while every card below says `@m.sub1.…`. EVERY card in that
++# subtree is then bogus, which is the all-bogus case that makes ngspice write no
++# raw at all. The walk warns and emits nothing for the subtree (I3: blank beats
++# a plausible wrong number). Mitigation, not a fix: zero of the 533 shipped
++# type=subcircuit symbols carry spiceprefix, so this is user-reachable and not
++# shipped-reachable.
++opa_w_load w_pfxtop.sch
++set w18 [rcall {op_annot::save_cards}]
++set w18w [rcall {op_annot::last_warnings}]
++check {W18 0488 a spiceprefix'd subcircuit emits NO cards for its subtree, and says so by name} \
++  [list $w18 \
++        [regexp -nocase {sub1} [lindex $w18w 1]] \
++        [regexp -nocase {xsub1} [lindex $w18w 1]]] \
++  [list [list 0 ".save all\n.save @m.mt0\[id\]\n.save @m.mt0\[gm\]\n"] 1 1]
++
++# ===========================================================================
++# W19 — INVARIANT I6 (happy path) AND I4
++# ===========================================================================
++# ⚠ `xschem get modified` IS READ BEFORE ANY SAVE. The S9 crew's own I4 row was
++# vacuous because it read `modified` after its own `xschem save`.
++opa_w_load w_top.sch
++set w19_before [opa_w_state]
++set w19_m0 [xschem get modified]
++set w19_n0 [xschem get instances]
++set w19_rc [lindex [rcall {op_annot::save_cards}] 0]
++check {W19 I6/I4 no_draw, keep_symbols, currsch and sch_path are back at entry, and the sheet is untouched} \
++  [list $w19_rc $w19_before [opa_w_state] \
++        [expr {[opa_w_state] eq $w19_before}] \
++        $w19_m0 [xschem get modified] $w19_n0 [xschem get instances]] \
++  [list 0 {0 0 0 .} {0 0 0 .} 1 0 0 12 12]
++
++# ===========================================================================
++# W20 — INVARIANT I6 ON THE ERROR PATH (issue 0431), AND RE-ENTRANCY (0438)
++# ===========================================================================
++# The prototypes' restore is straight-line code on the normal path: measured,
++# `sky130_save_fet_params` on `sky130_tests/test_generators` raises and leaves
++# no_draw=1 keep_symbols=1 set. The shim forces the same shape BELOW the entry
++# level. The last leg is 0438: a second call must SUCCEED, or the walk left its
++# own busy flag set and the feature is dead for the rest of the session.
++opa_w_load w_top.sch
++set w20_before [opa_w_state]
++opa_w_shim_on
++set w20 [rcall {op_annot::save_cards}]
++set w20_after [opa_w_state]
++set w20_hits $::opa_w_shim_hits
++opa_w_shim_off
++set w20_again [rcall {op_annot::save_cards}]
++check {W20 I6/0431/0438 a forced mid-walk raise propagates, restores everything, and does not wedge the next call} \
++  [list [expr {$w20_hits > 0}] [lindex $w20 0] \
++        [string match {*opa forced mid-walk failure*} [lindex $w20 1]] \
++        $w20_before $w20_after [expr {$w20_after eq $w20_before}] \
++        $w20_again] \
++  [list 1 1 1 {0 0 0 .} {0 0 0 .} 1 [list 0 $W_BLOCK]]
++
++# ===========================================================================
++# W21 — THE UNWIND IS BOUNDED BY THE ENTRY LEVEL, NOT BY 0
++# ===========================================================================
++# `src/xschem.tcl:3857`'s idiom `while {[xschem get currsch]} {xschem go_back}`
++# would ascend past a caller who was already descended — and S4's render_deck is
++# exactly such a caller. Issue 0431 never measured this half: its cell raises at
++# the top, where sch_path survives by luck.
++opa_w_load w_top.sch
++xschem unselect_all ; xschem select instance 3 fast nodraw ; xschem descend 1 2
++set w21_before [opa_w_state]
++opa_w_shim_on
++set w21 [rcall {op_annot::save_cards}]
++set w21_after [opa_w_state]
++set w21_hits $::opa_w_shim_hits
++opa_w_shim_off
++while {[xschem get currsch] > 0} { catch {xschem go_back 2} }
++check {W21 I6 a raise below a DESCENDED entry unwinds to currsch 1, not to 0} \
++  [list [expr {$w21_hits > 0}] [lindex $w21 0] $w21_before $w21_after] \
++  [list 1 1 {0 0 1 .xok1.} {0 0 1 .xok1.}]
++
++# ===========================================================================
++# W22 — no_undo HAS NO GETTER (issue 0432), SO PROBE ITS EFFECT
++# ===========================================================================
++# `xschem get no_undo` returns {} whether the flag is 0 or 1, so "back to its
++# entry value" is unwritable as a flag read: as `== 0` it fails, as "equals the
++# entry value" it passes vacuously against {}. The probe pushes, deletes and
++# undoes. ⚠ THE SECOND LEG IS THE NON-VACUITY: with no_undo left set the SAME
++# probe on the SAME fixture does not come back, so the row provably discriminates
++# instead of passing against any binary at all.
++opa_w_load w_top.sch
++set w22_rc [lindex [rcall {op_annot::save_cards}] 0]
++set w22_live [opa_w_undo_probe]
++opa_w_load w_top.sch
++xschem set no_undo 1
++set w22_dead [opa_w_undo_probe]
++xschem set no_undo 0
++check {W22 0432 undo still works after the walk; control: with no_undo left set it does not} \
++  [list $w22_rc $w22_live $w22_dead] [list 0 {12 11 12} {12 11 11}]
++
++# ===========================================================================
++# W23 — THE WALK SELF-LOGS, AND MUST SUPPRESS ITSELF (--logdir only)
++# ===========================================================================
++# `descend`/`go_back` self-log (actions.c:4446, :4602) and the oracle's netlist
++# would too but for `-keep_symbols` (scheduler.c:8887). A walk over a real design
++# floods a log whose contract is REPLAYABLE USER EDITS. ⚠ MEASURED COVERAGE TRAP:
++# under --nolog dropping the `log_action -suppress pop` still gives ALL PASS, so
++# this row is DARK unless the suite is also run with --logdir. The second half is
++# what makes it a test of the POP: an unpopped scope silences the user's log for
++# the rest of the session, which is worse than the flood it prevents.
++set W_LOG [xschem get actionlog_filename]
++if {$W_LOG eq {}} {
++  opa_w_skiprow {W23 the walk adds no descend/go_back/netlist lines, and pops its suppress scope} \
++                {no action log -- run with --logdir}
++} else {
++  opa_w_load w_top.sch
++  set w23_0 [list [opa_w_logcount {*descend*}] [opa_w_logcount {*go_back*}] \
++                  [opa_w_logcount {*netlist*}]]
++  set w23_rc [lindex [rcall {op_annot::save_cards}] 0]
++  set w23_1 [list [opa_w_logcount {*descend*}] [opa_w_logcount {*go_back*}] \
++                  [opa_w_logcount {*netlist*}]]
++  xschem unselect_all ; xschem select instance 3 fast nodraw
++  xschem descend 1 2 ; xschem go_back 2
++  set w23_2 [opa_w_logcount {*descend*}]
++  check {W23 the walk adds no descend/go_back/netlist lines, and a real descend after it STILL logs} \
++    [list $w23_rc [expr {$w23_1 eq $w23_0}] \
++          [expr {$w23_2 > [lindex $w23_1 0]}]] \
++    {0 1 1}
++}
++
++# ===========================================================================
++# W24 — THE NETLIST ENVIRONMENT IS BORROWED AND GIVEN BACK
++# ===========================================================================
++# The oracle must force netlist_type=spice (skip_instance branches on it,
++# netlist.c:1247), flat_netlist 0 (flatten.awk removes every .subckt, so there
++# would be no `** sch_path:` blocks at all), split_files 0 and local_netlist_dir
++# 0 (set_netlist_dir discards a requested dir when it is 1). It must give all of
++# them back, including the C-side `netlist_name`, which `xschem netlist <file>`
++# sets from the filename (scheduler.c:8796) and clears at :8869.
++#
++# ⚠ AND IT MUST NOT WRITE INTO $netlist_dir. That directory holds the user's
++# netlists; the oracle's deck goes to its own place and is deleted. The last leg
++# is the pre-check: an unwritable oracle directory must reach the user as a NAMED
++# diagnostic, not as set_netlist_dir's modal tk_messageBox (src/xschem.tcl:9001,
++# which no -noalert reaches) and not as a Tcl primitive error three frames down.
++## ⚠ THE ENVIRONMENT IS DELIBERATELY PUT IN THE *WRONG* STATE FIRST, AND THAT IS
++## WHAT MAKES THIS ROW DISCRIMINATE. Measured: with every variable already at the
++## value the oracle forces, a restore that does nothing at all is invisible —
++## `netlist_dir` is given back by the netlister itself (scheduler.c:8891) and the
++## other five never moved. Forcing local/flat/split/name to non-default values
++## first is what turns "restored" into a claim.
++opa_w_load w_top.sch
++set fdz [open [file join $W_NL decoy.spice] w] ; puts $fdz "* decoy, must not move" ; close $fdz
++set ::local_netlist_dir 1
++set ::flat_netlist 1
++set ::split_files 1
++catch {xschem set netlist_name w_top_custom.spice}
++set w24_env0 [opa_w_netenv]
++set w24_sig0 [opa_w_dirsig $W_NL]
++set w24_rc [lindex [rcall {op_annot::save_cards}] 0]
++set w24_env1 [opa_w_netenv]
++set w24_sig1 [opa_w_dirsig $W_NL]
++set w24_left [llength [glob -nocomplain -directory [file join $W_CONF op_annot] *]]
++set W_NOTDIR [file join $scratch w_notadir]
++set fdz [open $W_NOTDIR w] ; puts $fdz x ; close $fdz
++set ::USER_CONF_DIR $W_NOTDIR
++set w24_bad [rcall {op_annot::save_cards}]
++set ::USER_CONF_DIR $W_CONF
++check {W24 netlist_dir/local/flat/split/type/name all restored from a NON-DEFAULT state, $netlist_dir untouched, no deck left behind, and an unwritable oracle dir raises BY NAME} \
++  [list $w24_rc [expr {$w24_env1 eq $w24_env0}] [expr {$w24_sig1 eq $w24_sig0}] \
++        $w24_left [lindex $w24_bad 0] \
++        [string match {*op_annot*} [lindex $w24_bad 1]] \
++        [expr {[opa_w_netenv] eq $w24_env0}]] \
++  [list 0 1 1 0 1 1 1]
++set ::local_netlist_dir 0
++set ::flat_netlist 0
++set ::split_files 0
++catch {xschem set netlist_name {}}
++
++# ===========================================================================
++# W25 — THE ORACLE RUNS A NETLIST, AND A NETLIST EATS A PENDING GESTURE (0263)
++# ===========================================================================
++# ⚠ THE SHARPEST SEAM OF THE INVERSION, MEASURED ON THIS FIXTURE: with a
++# wire-label placement live (ui_state 16424, 13 instances) a bare `xschem
++# netlist` calls leave_placement_for("Netlist") (scheduler.c:8848) whose teardown
++# IS a delete() — after it, ui_state 0 and 12 instances. Neither that call nor
++# leave_merge_for is suppressible from Tcl. So a read-only annotation menu item
++# would silently destroy the symbol the user is carrying on the cursor, or the
++# paste they have not dropped. save_cards must REFUSE and leave the gesture where
++# it was; the door itself belongs to tests/headless/test_placement_preview_doors.tcl.
++opa_w_load w_top.sch
++set ::label_new_name FOO
++catch {xschem add_wire_label -place}
++set w25_p0 [list [expr {([xschem get ui_state] & 16384) ? 1 : 0}] [xschem get instances]]
++set w25_p [rcall {op_annot::save_cards}]
++set w25_p1 [list [expr {([xschem get ui_state] & 16384) ? 1 : 0}] [xschem get instances]]
++xschem abort_operation ; xschem abort_operation ; xschem abort_operation
++opa_w_load w_top.sch
++set W_MERGE [file join $scratch w_one_wire.sch]
++set fdz [open $W_MERGE w]
++puts $fdz "v {xschem version=3.4.8RC file_version=1.3}"
++puts $fdz "G {}" ; puts $fdz "K {}" ; puts $fdz "V {}" ; puts $fdz "S {}" ; puts $fdz "E {}"
++puts $fdz "N 900 900 1000 900 {}"
++close $fdz
++catch {xschem merge $W_MERGE}
++set w25_m0 [list [expr {([xschem get ui_state] & 256) ? 1 : 0}] [xschem get wires]]
++set w25_m [rcall {op_annot::save_cards}]
++set w25_m1 [list [expr {([xschem get ui_state] & 256) ? 1 : 0}] [xschem get wires]]
++xschem abort_operation ; xschem abort_operation ; xschem abort_operation
++check {W25 0263 save_cards REFUSES on a pending placement and on a pending paste, and neither gesture is eaten} \
++  [list $w25_p0 [lindex $w25_p 0] [regexp -nocase {plac|pending|gesture|paste|merge} [lindex $w25_p 1]] $w25_p1 \
++        $w25_m0 [lindex $w25_m 0] [regexp -nocase {plac|pending|gesture|paste|merge} [lindex $w25_m 1]] $w25_m1] \
++  [list {1 13} 1 1 {1 13} {1 1} 1 1 {1 1}]
++
++# ===========================================================================
++# W26 — THE MENU ITEM'S ONE MOVING PART: write_save_file
++# ===========================================================================
++# Modelled on IHP's `Create FET and BIP .save file` (sg13g2_procs.tcl:602-606),
++# including its `file mkdir $netlist_dir` — which sky130_procs.tcl:235 lacks.
++# ⚠ WARNINGS BECOME `* NOTE:` COMMENT LINES, ONE PER LINE. A wrapped continuation
++# with no leading `*` in a file a SPICE parser reads would be taken for a card.
++# ⚠ AND NOTHING-TO-SAVE WRITES NO FILE: a .save file whose entire content is a
++# header says nothing while reporting success.
++opa_w_load w_top.sch
++catch {file delete -force [file join $W_NL w_top.save]}
++catch {file delete -force [file join $W_NL w_bare.save]}
++set w26 [rcall {op_annot::write_save_file}]
++set w26_txt {}
++if {[lindex $w26 0] == 0 && [lindex $w26 1] ne {} && [file isfile [lindex $w26 1]]} {
++  set fdz [open [lindex $w26 1] r] ; set w26_txt [read $fdz] ; close $fdz
++}
++set w26_first {}
++foreach l [split $w26_txt "\n"] {
++  if {[string trim $l] eq {}} continue
++  if {[string index [string trim $l] 0] eq {*}} continue
++  set w26_first [string trim $l] ; break
++}
++opa_w_load w_bare.sch
++set w26e [rcall {op_annot::write_save_file}]
++if {[info commands winfo] ne {}} {
++  foreach wv [winfo children .] { if {[string match {.win*} $wv]} { catch {destroy $wv} } }
++}
++check {W26 write_save_file writes $netlist_dir/<cell>.save whose first non-comment line is `.save all`, and writes NO file when there is nothing to save} \
++  [list $w26 $w26_first [string first $W_BLOCK $w26_txt] \
++        $w26e [file exists [file join $W_NL w_bare.save]]] \
++  [list [list 0 [file join $W_NL w_top.save]] {.save all} \
++        [expr {[string length $w26_txt] - [string length $W_BLOCK]}] {0 {}} 0]
++
++# ===========================================================================
++# W27 — ISSUE 0433: THE TWO DESCEND FAILURE CLASSES, AS A UNIT
++# ===========================================================================
++# ⚠ THIS ROW EXISTS BECAUSE A SABOTAGE VARIANT REDDENED NOTHING. Neutralizing
++# `op_annot::_descended` to `return 1` — the prototypes' own shape, which reads
++# `xschem descend`'s return value and then issues an unconditional `go_back 2`
++# — left the suite at ALL PASS. Every descend in this fixture SUCCEEDS, so the
++# refusal split was covered by no row at all, and a walk that mistook a class-1
++# refusal for a descent would pop a level it never pushed, corrupt sch_path for
++# the rest of the walk and re-emit the parent's cards. Per spec landmine 11 a
++# predicted red that does not appear is a fixture defect, not a footnote.
++#
++# The class-1 shape is reproducible without a broken cell: currsch UNCHANGED
++# across the attempt is the whole test (`xschem descend` returns 0 for BOTH
++# classes, which is why its return value is not consulted). The second leg is
++# what makes it a test of the go_back discipline rather than of the return
++# value: after a class-1 answer the hierarchy must not have moved.
++opa_w_load w_top.sch
++set w27_c1  [rcall {op_annot::_descended [xschem get currsch]}]
++set w27_at1 [opa_w_state]
++xschem unselect_all ; xschem select instance 3 fast nodraw ; xschem descend 1 2
++set w27_ok  [rcall {op_annot::_descended 0}]
++set w27_at2 [list [xschem get currsch] [xschem get sch_path]]
++xschem go_back 2
++check {W27 0433 _descended is 0 for a class-1 refusal and issues NO go_back, and 1 for a real descend} \
++  [list $w27_c1 $w27_at1 $w27_ok $w27_at2 [opa_w_state]] \
++  [list {0 0} {0 0 0 .} {0 1} {1 .xok1.} {0 0 0 .}]
++
++# ===========================================================================
++# W28 — THE UNDER-EMISSION COUNTS ARE LIVE, AND THEY ARE WHAT PROVES THE WALK
++#       DID NOT ENTER THE THREE CALL-PRESENT/BODY-ABSENT CELLS
++# ===========================================================================
++# ⚠ ALSO WRITTEN BECAUSE A SABOTAGE VARIANT UNDER-REDDENED. Aliasing
++# `_descendable` to `_netlisted` — exactly what attempt 2 shipped — reddens W14
++# and NOTHING ELSE, because `_netlisted` inside the leaked child then finds no
++# block for that cell and emits no cards. The cards are masked; the WALK is not.
++# Measured on this fixture, correct against aliased:
++#
++#     _miss_dev   4  ->  13      (three leaked cells, three devices each)
++#     _miss_sub   6  ->   6      (coincidence: each leaked cell contributes its
++#                                 own undescendable child back)
++#
++# So the device count is the discriminator and the subcircuit count is not — and
++# the row asserts BOTH, so the coincidence is on the page rather than in a
++# reviewer's head.
++#
++# It is also the only row that reads op_annot::last_warnings on a HEALTHY walk.
++# The counts existed in two prior attempts and nothing ever read them; a filter
++# that under-emits IN SILENCE is the failure that survived 85 and then 96 green
++# checks, and a counter nobody reads is that silence with extra steps.
++opa_w_load w_top.sch
++set w28_rc [lindex [rcall {op_annot::save_cards}] 0]
++set w28w [lindex [rcall {op_annot::last_warnings}] 1]
++set w28_dev {} ; set w28_sub {}
++foreach w $w28w {
++  if {[regexp {^([0-9]+) device\(s\)} $w -> n]}      { set w28_dev $n }
++  if {[regexp {^([0-9]+) subcircuit instance} $w -> n]} { set w28_sub $n }
++}
++check {W28 0442 the walk COUNTS what it did not emit: 4 dropped devices, 6 unexpanded subcircuits, and it says so in words} \
++  [list $w28_rc [llength $w28w] $w28_dev $w28_sub \
++        [regexp -nocase {spice_stop} $w28w]] \
++  [list 0 2 4 6 1]
++
++# ===========================================================================
++# W29 — THE MENU ITEM ITSELF, WHICH NEEDS A DISPLAY
++# ===========================================================================
++# `Create device OP .save file` is a THIRD of this step's deliverable and the
++# Graphs cascade is built inside `if {[info exists has_x]}`, so --nogui never
++# constructs it and every row above would stay green if the item did not exist
++# at all. Same self-skip contract as sections M and O2:
++#
++#   DISPLAY=:99 GUI_GATE=0 ./src/xschem --pipe -q --nolog \
++#       --script tests/headless/test_op_annot.tcl
++#
++# ⚠ THE WORKER IS STUBBED AND THE WRAPPER IS WHAT IS MEASURED. write_save_file
++# has its own row (W26); what has none is the five lines in src/xschem.tcl that
++# decide what the user is TOLD. All three of its outcomes must reach the user as
++# text — a menu click that writes nothing and says nothing is the same silence
++# this step exists to delete, and here it would be silence about a file the user
++# is going to `.include` into a testbench.
++if {![info exists has_x]} {
++  opa_w_skiprow {W29 the Graphs-cascade menu item and its three outcomes} \
++                {needs a display -- the cascade is built under `if {[info exists has_x]}`}
++} else {
++  set w29m .menubar.simulation.graph
++  set w29i {}
++  for {set i 0} {$i <= [$w29m index end]} {incr i} {
++    if {[catch {$w29m type $i} ty]} continue
++    if {$ty ne {command}} continue
++    if {[$w29m entrycget $i -label] eq {Create device OP .save file}} { set w29i $i }
++  }
++  ## Position is part of the claim: the item belongs beside the other two
++  ## op_annot items, not at the end of a cascade that also holds unrelated
++  ## checkbuttons.
++  set w29_prev {}
++  if {$w29i ne {} && $w29i > 0} { catch {set w29_prev [$w29m entrycget [expr {$w29i - 1}] -label]} }
++  rename ::op_annot::write_save_file ::op_annot::write_save_file_realw29
++  rename ::alert_ ::alert_realw29
++  proc ::alert_ {txt args} { set ::opa_w29_alert $txt }
++  set w29out {}
++  foreach leg {ok empty raise} {
++    switch -- $leg {
++      ok     { proc ::op_annot::write_save_file {} { return /tmp/opa_w29.save } }
++      empty  { proc ::op_annot::write_save_file {} { return {} } }
++      raise  { proc ::op_annot::write_save_file {} {
++                 return -code error "op_annot::save_cards: a PASTE/merge is pending." } }
++    }
++    set ::opa_w29_alert {}
++    set rc [catch {$w29m invoke $w29i}]
++    lappend w29out [list $leg $rc [expr {$::opa_w29_alert ne {}}]]
++  }
++  set w29_emptymsg {}
++  proc ::op_annot::write_save_file {} { return {} }
++  set ::opa_w29_alert {} ; catch {$w29m invoke $w29i} ; set w29_emptymsg $::opa_w29_alert
++  set w29_raisemsg {}
++  proc ::op_annot::write_save_file {} {
++    return -code error "op_annot::save_cards: a PASTE/merge is pending." }
++  set ::opa_w29_alert {} ; catch {$w29m invoke $w29i} ; set w29_raisemsg $::opa_w29_alert
++  catch {rename ::op_annot::write_save_file {}}
++  rename ::op_annot::write_save_file_realw29 ::op_annot::write_save_file
++  catch {rename ::alert_ {}}
++  rename ::alert_realw29 ::alert_
++  check {W29 the menu item exists beside the annotator, never raises, is SILENT on success and SPEAKS on both failures} \
++    [list [expr {$w29i ne {}}] $w29_prev $w29out \
++          [regexp -nocase {save card|nothing written} $w29_emptymsg] \
++          [regexp -nocase {pending} $w29_raisemsg]] \
++    [list 1 {Add device OP annotator} \
++          {{ok 0 0} {empty 0 1} {raise 0 1}} 1 1]
++}
++
++set ::USER_CONF_DIR $W_CONF_SAVE
++catch {xschem raw clear}
++
++} werr]} {
++  puts "UNEXPECTED ERROR (section W): $werr"
++  incr fail
++}
++
++# =============================================================================
++# SECTION X — THE LOOP NOBODY CLOSED: GENERATE, SIMULATE, READ BACK
++# =============================================================================
++# ⚠ WHY THIS SECTION EXISTS. Every earlier section verifies the READ path against
++# a raw THIS FILE HAND-WROTE — section S spells `i(@m.xm1.msky130_fd_pr__nfet_01v8[id])`
++# into its own fixture header. So the display has never been exercised against a
++# raw that the feature's OWN save cards caused to exist, and a save-card
++# generator can be certified green while emitting cards ngspice rejects. That is
++# exactly how three attempts shipped: 85 checks, then 96, then a 241-check suite
++# that cannot see this at all.
++#
++# The loop here is the whole feature, end to end and in one direction:
++#   op_annot::save_cards  ->  a deck  ->  ngspice  ->  a raw  ->  op_annot::text
++#
++# ============================================================================
++# ⚠ THE DETECTOR IS `dims=0`, NOT STDERR. MEASURED ON /usr/local/bin/ngspice 46+
++# ============================================================================
++# The step brief says to capture ngspice's stderr and assert the values are not
++# all zero. Re-measured on this section's own deck, under the `.control … write
++# … .endc` idiom every shipped PDK bench uses:
++#
++#   good cards + ONE bogus card  -> rc 0, RAW WRITTEN, a column under exactly the
++#                                   requested name marked `dims=0`, stderr EMPTY
++#   EVERY device card bogus      -> rc 0, NO RAW AT ALL, and then it warns
++#                                   (`checkvalid` + `no writable vector found`)
++#
++# So a stderr-only detector is blind in precisely the realistic case, and a
++# raw-header NAME diff cannot see it either — the name is there, holding zeros.
++# `dims=0` is present on every bogus vector and absent on every genuine one, and
++# it also catches a right-device/wrong-PARAM card (a level-1 MOS has no `vth`).
++# Row X3 carries its own control, so the detector cannot pass by never firing.
++#
++# ============================================================================
++# THE FIXTURE, AND WHY ITS DEVICES ARE SUBCKT-WRAPPED
++# ============================================================================
++# ngspice names a device inside a subcircuit `@m.<instance-path>.<device>` and a
++# TOP-LEVEL one just `@<name>` — measured: every `@m.mx0[…]` card on a bare
++# top-level MOS is rejected. Every PDK device is subckt-wrapped, which is why the
++# shipped descriptors all read `@m.…`, and the fixture matches that shape: a
++# `nmod` wrapper subckt holding the real level-1 MOS `m1`.
++#
++# The preamble (globals, sources, wrapper, model) is carried by a `code_shown`
++# instance, the way a bench carries it — so the deck this section simulates is
++# the netlister's own output plus the generated block plus `.control`, and
++# nothing else. ⚠ THE BLOCK IS AT DECK LEVEL: inside `.control` the dot form is
++# not a command (`save: no such command available`) at rc 0, and the deck then
++# silently behaves as if it had no save card at all.
++
++set X_NG {}
++foreach c {/usr/local/bin/ngspice /usr/bin/ngspice} {
++  if {[file executable $c]} { set X_NG $c ; break }
++}
++if {$X_NG eq {}} { set X_NG [lindex [auto_execok ngspice] 0] }
++
++set X_LIB [file join $scratch xlib]
++set X_NL  [file join $scratch xnl]
++file mkdir $X_LIB $X_NL
++
++proc opa_x_fixture {lib} {
++  set f [open [file join $lib x_prim.sym] w]
++  puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {type=x_nmos
++format="@spiceprefix@name vdd gbias 0 0 @model"
++template="name=M1 model=nmod spiceprefix=X"}
++V {}
++S {}
++E {}
++L 4 -20 -20 20 -20 {}
++B 5 -22.5 -2.5 -17.5 2.5 {name=D dir=inout}
++T {@symname} -20 -34 0 0 0.2 0.2 {}}
++  close $f
++  foreach s {x_sub x_deep} {
++    set f [open [file join $lib $s.sym] w]
++    puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {type=subcircuit
++format="@name @symname"
++template="name=x1"}
++V {}
++S {}
++E {}
++L 4 -20 -20 20 -20 {}
++B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=inout}
++T {@symname} -20 -34 0 0 0.2 0.2 {}}
++    close $f
++  }
++  ## ⚠ NO BRACES ANYWHERE IN THIS TEXT. A `{`…`}` inside an instance property
++  ## breaks the .sch reader's record scan (measured: the value silently reverts
++  ## to the template default and the deck loses its model), so the wrapper takes
++  ## no parameters.
++  set code "value=\".global vdd gbias
++Vdd vdd 0 1.8
++Vg gbias 0 0.9
++.subckt nmod d g s b
++M1 d g s b nlevel1 W=2u L=0.15u
++.ends
++.model nlevel1 nmos level=1 vto=0.5 kp=100u lambda=0.05\""
++  set f [open [file join $lib x_top.sch] w]
++  puts $f "v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {code_shown.sym} 0 -200 0 0 {name=s1 only_toplevel=true $code}
++C {x_prim.sym} 0 0 0 0 {name=MX0}
++C {x_prim.sym} 100 0 0 0 {name=MXIGN spice_ignore=true}
++C {x_sub.sym} 200 0 0 0 {name=x1}"
++  close $f
++  set f [open [file join $lib x_sub.sch] w]
++  puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {x_prim.sym} 0 0 0 0 {name=MX1}
++C {x_deep.sym} 100 0 0 0 {name=x2}}
++  close $f
++  set f [open [file join $lib x_deep.sch] w]
++  puts $f {v {xschem version=3.4.4 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C {x_prim.sym} 0 0 0 0 {name=MX2}}
++  close $f
++}
++## The raw's variable NAMES, exactly as the header spells them, plus the ones
++## carrying `dims=0` — a marker ngspice writes for a vector it could not build.
++proc opa_x_rawvars {path} {
++  if {![file isfile $path]} { return {} }
++  set fh [open $path r] ; set t [read $fh] ; close $fh
++  set names {} ; set zero {} ; set in 0
++  foreach l [split $t "\n"] {
++    if {[string match {Variables:*} $l]} { set in 1 ; continue }
++    if {[string match {Values:*} $l] || [string match {Binary:*} $l]} { break }
++    if {!$in} continue
++    set f {}
++    foreach p [split $l "\t"] { if {$p ne {}} { lappend f $p } }
++    if {[llength $f] < 2} continue
++    set nm [lindex $f 1]
++    lappend names $nm
++    if {[string match {*dims=0*} $l]} { lappend zero $nm }
++  }
++  return [list $names $zero]
++}
++## Assemble a runnable deck: the netlister's output with its `.end` removed, the
++## generated block AT DECK LEVEL, then `.control`.
++proc opa_x_deck {deck block rawpath out {extra {}}} {
++  set body {}
++  foreach l [split $deck "\n"] {
++    if {[string trim $l] eq {.end}} continue
++    append body $l "\n"
++  }
++  set fh [open $out w]
++  puts $fh "* op_annot section X"
++  puts -nonewline $fh $body
++  puts -nonewline $fh $block
++  if {$extra ne {}} { puts $fh $extra }
++  puts $fh ".control"
++  puts $fh "op"
++  puts $fh "set filetype=ascii"
++  puts $fh "write $rawpath"
++  puts $fh ".endc"
++  puts $fh ".end"
++  close $fh
++  return $out
++}
++proc opa_x_run {ng deck errfile} {
++  catch {exec $ng -b $deck 2>$errfile} out
++  set e {}
++  if {[file isfile $errfile]} { set fh [open $errfile r] ; set e [read $fh] ; close $fh }
++  return $e
++}
++## Every params vector of one instance, THROUGH op_annot::vector — the read shape
++## the display uses, so X2 closes I1 against a raw the save cards caused to exist.
++proc opa_x_vecs {inst type} {
++  set d [op_annot::descriptor $type]
++  set out {}
++  foreach row [dict get $d params] {
++    if {[catch {op_annot::vector $inst [lindex $row 1]} v]} { lappend out RAISED } \
++    else { lappend out $v }
++  }
++  return $out
++}
++
++if {[catch {
++
++if {$X_NG eq {}} {
++  opa_w_skiprow {X1 the generated block simulates and a raw is written} {no ngspice on PATH}
++  opa_w_skiprow {X2 every card appears in the raw under op_annot::vector's name} {no ngspice on PATH}
++  opa_w_skiprow {X3 no vector in the raw carries dims=0} {no ngspice on PATH}
++  opa_w_skiprow {X4 the deepest FET renders real numbers through op_annot::text} {no ngspice on PATH}
++} else {
++
++set X_LIBS ":$X_LIB:[file join $repo xschem_library devices]"
++set XSCHEM_LIBRARY_PATH $X_LIBS
++opa_x_fixture $X_LIB
++op_annot::register x_nmos [list devpath {\@m.@path@spiceprefix@name\.m1} \
++  params {{id id 0} {gm gm 1} {gds gds 1} {vdsat vdsat 2}} \
++  derived {{gm/id {$gm/$id}}}]
++set X_CONF_SAVE $::USER_CONF_DIR
++set ::USER_CONF_DIR $W_CONF
++set netlist_dir $X_NL
++
++catch {xschem raw clear}
++foreach f [glob -nocomplain [file join $X_LIB *~.sch]] { catch {file delete -force $f} }
++xschem load [file join $X_LIB x_top.sch]
++foreach f [glob -nocomplain [file join $X_LIB *~.sch]] { catch {file delete -force $f} }
++## ⚠ A RAISE MUST NOT REACH THE DECK. Pasting an error string into a .spice file
++## makes ngspice die on a syntax error, and every row below would then be red for
++## the wrong reason. An absent block is the honest input: the deck still runs,
++## and the rows red on what is MISSING from the raw.
++set x_sc [rcall {op_annot::save_cards}]
++set X_BLOCK {}
++if {[lindex $x_sc 0] == 0} { set X_BLOCK [lindex $x_sc 1] }
++set X_DECKTXT [opa_w_netlist x_top.sch]
++set X_RAW  [file join $X_NL x.raw]
++catch {file delete -force $X_RAW}
++opa_x_deck $X_DECKTXT $X_BLOCK $X_RAW [file join $X_NL x_run.spice]
++set X_ERR [opa_x_run $X_NG [file join $X_NL x_run.spice] [file join $X_NL x_ng.err]]
++set X_VARS [opa_x_rawvars $X_RAW]
++
++# ===========================================================================
++# X1 — THE GENERATED BLOCK SIMULATES
++# ===========================================================================
++# 12 cards (3 netlisted devices x 4 params) plus `.save all`. If ANY of them
++# named a device the deck does not contain, this row is where the whole raw
++# disappears — which is the harm the generator exists not to cause.
++check {X1 the generated block + the netlister's own deck run under ngspice and a raw IS written} \
++  [list [llength [opa_w_lines $X_BLOCK]] [file exists $X_RAW] \
++        [string match {*no writable vector*} $X_ERR]] \
++  [list 13 1 0]
++
++# ===========================================================================
++# X2 — INVARIANT I1, CLOSED AGAINST A REAL RAW FOR THE FIRST TIME
++# ===========================================================================
++# The SAVE shape is bare `[devpath][param]`; the READ shape is
++# `op_annot::vector`, i.e. the same devpath under the descriptor's kind wrapper.
++# Nothing in this tree has ever checked that the two agree against a raw the
++# cards themselves produced: section S reads a raw it wrote by hand, so a drift
++# in either shape would leave it green. Here the names are collected by
++# descending to each device and asking op_annot::vector, and every one must be a
++# vector the simulator actually wrote.
++xschem load [file join $X_LIB x_top.sch]
++set x2_ann [rcall {xschem annotate_op $X_RAW 0}]
++set x2_want [opa_x_vecs MX0 x_nmos]
++xschem unselect_all ; xschem select instance 3 fast nodraw ; xschem descend 1 2
++foreach v [opa_x_vecs MX1 x_nmos] { lappend x2_want $v }
++xschem unselect_all ; xschem select instance 1 fast nodraw ; xschem descend 1 2
++set x2_deep [opa_x_vecs MX2 x_nmos]
++foreach v $x2_deep { lappend x2_want $v }
++set x2_missing {}
++foreach v $x2_want { if {[lsearch -exact [lindex $X_VARS 0] $v] < 0} { lappend x2_missing $v } }
++check {X2 I1 every card's READ name (op_annot::vector) is a vector ngspice really wrote} \
++  [list [lindex $x2_ann 0] [llength $x2_want] $x2_missing] \
++  [list 0 12 {}]
++
++# ===========================================================================
++# X3 — THE DETECTOR THAT WORKS, WITH ITS OWN NON-VACUITY CONTROL
++# ===========================================================================
++# A card for a device that is not in the deck writes a full column under exactly
++# the requested name, marked `dims=0`, at rc 0 and in silence. So the second leg
++# is not decoration: it adds ONE bogus card to the SAME deck and asserts the
++# detector fires. Without it "no dims=0" would be satisfied by a parser that
++# never finds anything.
++set X_RAW2 [file join $X_NL x_bogus.raw]
++catch {file delete -force $X_RAW2}
++opa_x_deck $X_DECKTXT "$X_BLOCK.save @m.xnope.m1\[gm\]\n" $X_RAW2 \
++           [file join $X_NL x_bogus.spice]
++set X_ERR2 [opa_x_run $X_NG [file join $X_NL x_bogus.spice] [file join $X_NL x_ng2.err]]
++set X_VARS2 [opa_x_rawvars $X_RAW2]
++## ⚠ THE FIRST LEG IS THIS ROW'S OWN NON-VACUITY. "No dims=0 anywhere" is
++## trivially true of a deck with no device cards at all, so the card count comes
++## first: without it the row is GREEN against an absent save_cards.
++check {X3 no vector in the raw carries dims=0 — and the SAME deck with one bogus card does, at rc 0 and in silence} \
++  [list [llength [opa_w_devs $X_BLOCK]] [lindex $X_VARS 1] [string trim $X_ERR] \
++        [lindex $X_VARS2 1] [string trim $X_ERR2]] \
++  [list 12 {} {} [list {@m.xnope.m1[gm]}] {}]
++
++# ===========================================================================
++# X4 — WHAT THE USER SEES: NUMBERS, ON THE DEEPEST DEVICE
++# ===========================================================================
++# ⚠ A FULL COLUMN OF 0.0 IS A FAIL, NOT A PASS (spec landmine 9). And the node
++# voltages must STILL be there: rule R2 says an explicit save cancels the
++# implicit save-everything, so a block that forgot `.save all` would not merely
++# fail to add the `params` rows — it would DELETE the two `pinexpr` rows that are
++# the only ones working today.
++set x4_text [rcall {op_annot::text MX2}]
++set x4_vals {}
++foreach v $x2_deep { lappend x4_vals [rcall {op_annot::raw_or_blank $v}] }
++set x4_nodes {}
++foreach n {v(vdd) v(gbias) i(vdd) i(vg)} {
++  lappend x4_nodes [expr {[lsearch -exact [lindex $X_VARS 0] $n] >= 0}]
++}
++while {[xschem get currsch] > 0} { catch {xschem go_back 2} }
++check {X4 the deepest FET renders five real rows, the node voltages and source currents survived, and the spice_ignore'd FET got no card} \
++  [list $x4_text \
++        [expr {[lindex [lindex $x4_vals 0] 1] != 0}] \
++        [expr {[lindex [lindex $x4_vals 1] 1] != 0}] \
++        $x4_nodes \
++        [expr {[string first {mxign} $X_BLOCK] >= 0}]] \
++  [list [list 0 "id    = 116.3u\ngm    = 581.3u\ngds   = 5.333u\nvdsat = 0.4\ngm/id = 5\n"] \
++        1 1 {1 1 1 1} 0]
++
++catch {xschem raw clear}
++set ::USER_CONF_DIR $X_CONF_SAVE
++set XSCHEM_LIBRARY_PATH $W_LIBS
++}
++
++} xerr]} {
++  puts "UNEXPECTED ERROR (section X): $xerr"
++  incr fail
++}
++
+ # --- verdict -----------------------------------------------------------------
+ if {$fail == 0} {
+   puts "RESULT: ALL PASS ($npass checks)"

@@ -566,6 +566,7 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->fill_type);
   my_free(_ALLOC_ID_, &xctx->format);
   my_free(_ALLOC_ID_, &xctx->custom_format);
+  my_free(_ALLOC_ID_, &xctx->annot_root); /* 0688: the annotation mask's root stamp */
   /* Gesture-scoped state that survives if the ctx is torn down MID-GESTURE (closing a tab or the
    * window during a drag). This funnel does not run clear_schematic()/abort_operation() first, so
    * whatever a live move START allocated is otherwise lost with the ctx.
@@ -938,6 +939,16 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->fill_type=my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
   xctx->case_insensitive = 0;
   xctx->show_hidden_texts = 0;
+  xctx->annot_show = 0; /* S7: annotation classes off by default (decision D2) */
+  /* 0688: the ROOT sheet the mask above was armed for. NULL == never armed
+   * through `xschem set annot_show`, which is also what an xschemrc-set mask
+   * looks like -- and it must stay that way, or the first real load would clear
+   * it (decision D2). Written only by annot_show_set(), freed with the ctx. */
+  xctx->annot_root = NULL;
+  /* 0615: the layer CONTENT-classified node voltages paint in. 9 is #ffffff on the
+   * default dark palette -- the user's ratified choice. Per-context, exactly like
+   * annot_show, and mirrored in Tcl (src/xschem.tcl set_ne + tctx::global_list). */
+  xctx->annot_voltage_layer = 9;
   xctx->x_strcmp = strcmp;
   xctx->fill_pattern = 1;
   xctx->draw_window = 0;
@@ -1669,6 +1680,35 @@ int get_tab_or_window_number(const char *win_path)
 
 /* swap primary view (.drw) with first valid tab (x1.drw, x2.drw, ...)
  * used for window close ('xschem exit' command) */
+/* issue 0847: the context a closing window's document is swapped WITH must not be a
+ * WAVEFORM VIEWER.
+ *
+ * swap_tabs() and swap_windows() both used to take `the first non-NULL save_xctx[j]`,
+ * j from 1. With a viewer open that is the viewer -- so closing the design (Ctrl-W ->
+ * `xschem exit`) teleported the viewer's untitled buffer into the main window and then
+ * destroyed the viewer's own toplevel. Measured in the user's session log via
+ * window_report, 2026-08-26: `.` went from 'xschem [3] - tb_bandgap.sch (read-only)' to
+ * 'xschem [5] - untitled.sch (read-only)' and `.x1` disappeared, in one keystroke. That
+ * is the "my schematic window vanished" report, and it had been blamed on window
+ * management races for days.
+ *
+ * Issue 0172 already noticed the neighbouring hazard and fixed the wrong half: it swaps
+ * the wave_viewer BRAND back so the surviving canvas is not mis-branded, but nobody asked
+ * whether a viewer should be a swap TARGET at all. It should not -- a viewer is a
+ * surface, not a document the user asked to keep.
+ *
+ * Returns the index of the first swappable (non-viewer) context, or -1 if every other
+ * context is a viewer. Callers that get -1 must NOT swap: leave the viewer in its own
+ * window and clear the closing one instead. */
+int first_swappable_ctx(void)
+{
+  int j;
+  for(j = 1; j < MAX_NEW_WINDOWS; j++) {
+    if(save_xctx[j] && !save_xctx[j]->wave_viewer) return j;
+  }
+  return -1;
+}
+
 void swap_tabs(void)
 {
   int wc = window_count;
@@ -1680,11 +1720,10 @@ void swap_tabs(void)
     int i = 0;
     int j;
     int wv;
-    for(j = 1; j < MAX_NEW_WINDOWS; j++) {
-      if(save_xctx[j]) break;
-    }
-    if(j >= MAX_NEW_WINDOWS) {
-      dbg(0, "swap_tabs(): no tab to swap to found\n");
+    /* issue 0847: never swap a WAVEFORM VIEWER into the closing window's place. */
+    j = first_swappable_ctx();
+    if(j < 0) {
+      dbg(0, "swap_tabs(): no non-viewer tab to swap to found\n");
       return;
     }
     if(!save_xctx[i]) {
@@ -1755,11 +1794,10 @@ void swap_windows(int dr)
     int wv;
     char geometry[80];
 
-    for(j = 1; j < MAX_NEW_WINDOWS; j++) {
-      if(save_xctx[j]) break;
-    }
-    if(j >= MAX_NEW_WINDOWS) {
-      dbg(0, "swap_windows(): no tab to swap to found\n");
+    /* issue 0847: never swap a WAVEFORM VIEWER into the closing window's place. */
+    j = first_swappable_ctx();
+    if(j < 0) {
+      dbg(0, "swap_windows(): no non-viewer window to swap to found\n");
       return;
     }
     if(!save_xctx[i]) {
@@ -2659,7 +2697,31 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
     net_hilight_anim_update();
     return ret;
   } else if(!strcmp(what, "switch_no_tcl_ctx")) {
-    if(!tabbed_interface || is_window_context(win_path)) switch_window(&window_count, win_path, 0);
+    /* ⚠ issue 0848: NO GATE HERE. This used to read
+     *     if(!tabbed_interface || is_window_context(win_path)) switch_window(...);
+     * with no else, so under the tabbed interface a redraw-only switch to the MAIN
+     * window silently did nothing -- is_window_context() returns 0 for slot 0 by
+     * design ("slot 0 is the main window, handled by the normal paths"), and there
+     * were no normal paths on this arm. The sibling "switch" arm above has the
+     * three-way fallback this one was never given.
+     *
+     * The caller is callback()'s Expose handling: "a temporary switch just to redraw
+     * obscured window parts". When it no-ops, callback() carries on believing the
+     * switch happened and repaints the WRONG context -- measured with a detached
+     * window current and the main window uncovered:
+     *     switching window context for redraw ONLY: .x1.drw --> .drw
+     *     handle_expose: ctx=.x1.drw ... win=4195017      <- .x1, not .drw
+     * so the main window's canvas kept whatever had been drawn over it and was never
+     * repainted until something forced a full redraw. That is the "double-click
+     * corrupts the schematic window with waveforms" report: the viewer opens over the
+     * design window, paints, is stepped aside, and the design window's Expose for the
+     * vacated area is serviced against the viewer's context.
+     *
+     * switch_window(..., tcl_ctx=0) already handles n == 0 (it maps slot 0 to ".drw")
+     * and is exactly the tcl-context-free swap this path wants, for tabs and windows
+     * alike -- a genuine tab shares the .drw X window, so pointing xctx at it and
+     * repainting is correct there too. */
+    switch_window(&window_count, win_path, 0);
   }
   return window_count;
 }
@@ -2919,6 +2981,168 @@ void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int h)
 void tclmainloop(void)
 {
   while(1) Tcl_DoOneEvent(TCL_ALL_EVENTS);
+}
+
+/* ---------------------------------------------------------------------------
+ * issue 0663: a failed `source` of xschem.tcl must not walk on into unset
+ * variables.
+ *
+ * THE CLASS. src/xschem.tcl sources fifteen helpers with a BARE `source`
+ * (:14568 action_registry ... :14815 alt2_toggle_view) plus one guarded by
+ * issue 0658 (:14854 ciw.tcl), and it also makes bare top-level CALLS into
+ * helper namespaces (:14569 load_action_table, :16873 wviewer::rawhist_load).
+ * A Tcl error anywhere in that file propagates OUT of xschem.tcl, so the REST
+ * of the file -- the statusbar widgets, build_widgets, ciw_create, the colour
+ * and layer setup -- never runs. source_tcl_file() below then merely PRINTS the
+ * error and returns TCL_ERROR, and until this fix Tcl_AppInit DISCARDED that
+ * return and walked on into tclgetdoublevar("cairo_font_line_spacing") and its
+ * siblings against variables that were never set, then into
+ * alloc_xschem_data(), whose strcmp(tclgetvar("undo_type"), "disk") was handed
+ * a NULL. SIGSEGV -- and main.c's handler then derefs xctx->sch[xctx->currsch]
+ * on a half-initialised xctx and double-faults, which is why the code was 139
+ * and not the handler's own exit(1).
+ *
+ * This is the root cause of issue 0424 (op_annot.tcl lost from the install
+ * list: 275 in-tree checks green, the INSTALLED binary dead on arrival), not a
+ * relative of it -- 0424 put the file back on the list and left the mechanism
+ * alone.
+ *
+ * THE ANSWER IS (b) ANNOUNCE AND ABORT, not announce-and-continue, and it is a
+ * measurement not a preference: src/xschem.tcl sets line_width, undo_type,
+ * cairo_font_scale, cairo_font_line_spacing and cadlayers AFTER the bare-source
+ * block, and src/xschemrc ships `set undo_type`/`set cadlayers` commented out.
+ * So "stop crashing and continue" is a session with cadlayers=0, line_width=0,
+ * undo_type NULL, no colour lists, no menus and no bindings -- that can still
+ * be told to load and SAVE a schematic, with issue 0619 (ps_colors[cadlayers]
+ * over-read) already open in exactly that state. A subtly wrong tool is worse
+ * than a refusal. Continuing is also unreachable from C: only running the REST
+ * of xschem.tcl sets those defaults, and C cannot resume an aborted
+ * Tcl_EvalFile.
+ *
+ * WHICHEVER OPTION, IT ANNOUNCES (issue 0423's standing objection: a caught
+ * failure that is not announced is worse than the crash). The announcement
+ * names the FAILING FILE, on stderr and in the durable action log, in ONE line,
+ * once. It deliberately calls no Tcl proc: seven of the fifteen helpers are
+ * sourced BEFORE ::xschem::notify_log exists, so a Tcl-routed announcement
+ * would be silent for exactly the earliest failures.
+ *
+ * Scope: ONLY the xschem.tcl call site is guarded. The six xschemrc-side
+ * source_tcl_file() callers keep their measured, survivable behaviour (a broken
+ * xschemrc still exits 0 -- doc/claude/specs/op_annotation.md documents that for
+ * PDK procs files), and source_tcl_file() itself is unchanged so its
+ * `Tcl_AppInit() error:` block, which tests/headless/full_audit.sh classify()
+ * anchors on, stays byte-for-byte.
+ *
+ * Tests: tests/headless/test_startup_guard_0663.tcl (rows SG0-SG21).
+ * --------------------------------------------------------------------------- */
+
+/* Copy s up to (but not including) its first newline into dest[n].
+ * THE SEAM that keeps one failure to ONE durable line: log_output()
+ * (src/util.c) prefixes EVERY physical line with "#! ", so an announcement
+ * carrying a multi-line ::errorInfo would write six-plus durable lines from one
+ * failure -- issue 0665's exact shape, which 0663 R5 forbids. */
+static void xschem_first_line(const char *s, char *dest, int n)
+{
+  int i = 0;
+  if(n <= 0) return;
+  if(s) {
+    while(s[i] && s[i] != '\n' && i < n - 1) {
+      dest[i] = s[i];
+      ++i;
+    }
+  }
+  dest[i] = '\0';
+  if(i > 0 && dest[i - 1] == '\r') dest[i - 1] = '\0'; /* a CRLF-terminated helper */
+}
+
+/* Write the INNERMOST `(file "F" line N)` frame of ::errorInfo into dest as
+ * `F line N`. Measured with tclsh: a helper that RAISES puts the HELPER in that
+ * first frame; a helper that is ABSENT never opens, so the first frame is the
+ * OUTER file and the helper is named in the error RESULT instead. Carrying both
+ * this and the first line of tclresult() is what makes both shapes name the
+ * failing file. Falls back to `fallback` plus the interpreter's error line when
+ * ::errorInfo carries no file frame at all. */
+static void xschem_failed_source_origin(char *dest, int n, const char *fallback)
+{
+  const char *info, *p, *eol, *q;
+  char num[64];
+  int flen;
+
+  if(n <= 0) return;
+  dest[0] = '\0';
+  info = Tcl_GetVar(interp, "errorInfo", TCL_GLOBAL_ONLY);
+  p = info ? strstr(info, "(file \"") : NULL;
+  if(p) {
+    p += 7;                                    /* first char of the file name */
+    eol = strchr(p, '\n');
+    if(!eol) eol = p + strlen(p);
+    q = p;
+    while(q < eol && *q != '"') ++q;           /* closing quote of the name */
+    if(q < eol) {
+      const char *ln = q + 1;                  /* what is left is ` line N)` */
+      int k = 0;
+      num[0] = '\0';
+      while(ln < eol && *ln == ' ') ++ln;
+      if(eol - ln > 5 && !strncmp(ln, "line ", 5)) {
+        ln += 5;
+        while(ln < eol && *ln != ')' && k < (int)sizeof(num) - 1) num[k++] = *ln++;
+      }
+      num[k] = '\0';
+      flen = (int)(q - p);
+      if(flen > n - 1) flen = n - 1;
+      memcpy(dest, p, (size_t)flen);
+      dest[flen] = '\0';
+      if(num[0]) {
+        char joined[PATH_MAX + 128];
+        my_snprintf(joined, S(joined), "%s line %s", dest, num);
+        my_strncpy(dest, joined, (size_t)n);
+      }
+      return;
+    }
+  }
+  #if TCL_MAJOR_VERSION > 8 || (TCL_MAJOR_VERSION == 8 && TCL_MINOR_VERSION >= 6)
+  my_snprintf(dest, (size_t)n, "%s line %d", fallback ? fallback : "?",
+              Tcl_GetErrorLine(interp));
+  #else
+  my_snprintf(dest, (size_t)n, "%s", fallback ? fallback : "?");
+  #endif
+}
+
+/* ONE line, to BOTH sinks: stderr and the durable action log. The log is
+ * already open here -- init_action_log() runs from main() BEFORE Tcl_AppInit,
+ * and even the segfaulting runs wrote its header. The literal deliberately does
+ * NOT begin with "Tcl_AppInit() error" or "FATAL: signal": full_audit.sh's
+ * classify() scores a whole suite CRASH on those two line anchors. */
+static void xschem_startup_announce(const char *sourced)
+{
+  char origin[PATH_MAX + 128];
+  char cause[512];
+  char line[2 * PATH_MAX + 900];
+
+  xschem_failed_source_origin(origin, (int)S(origin), sourced);
+  xschem_first_line(tclresult(), cause, (int)S(cause));
+  my_snprintf(line, S(line),
+    "STARTUP ABORTED: %s did not finish. Failing file: %s. Cause: %s. "
+    "The rest of it -- layers, colours, menus, key bindings, undo, the "
+    "statusbar -- was never set up, so xschem is exiting instead of running "
+    "structurally invalid. See doc/claude/issues/0663.",
+    sourced ? sourced : "?", origin, cause);
+  fprintf(errfp, "xschem: %s\n", line);
+  log_output(1, line);
+}
+
+/* Announce, then leave. EXIT_FAILURE matches the sibling interactive-GUI path
+ * inside source_tcl_file(), so both halves of the same failure agree. Tcl_Exit
+ * runs the exit handler registered in Tcl_AppInit, which no-ops because
+ * init_done is still 0, so nothing touches the half-built context. Returning
+ * TCL_ERROR from Tcl_AppInit would NOT do: Tcl_MainEx prints
+ * "application-specific initialization failed" and walks on into the script
+ * with xctx unallocated, and the detach path in main.c discards it entirely. */
+static void xschem_startup_abort(const char *sourced)
+{
+  xschem_startup_announce(sourced);
+  fflush(NULL);
+  Tcl_Exit(EXIT_FAILURE);
 }
 
 int Tcl_AppInit(Tcl_Interp *inter)
@@ -3398,7 +3622,10 @@ int Tcl_AppInit(Tcl_Interp *inter)
    return TCL_ERROR;
  }
  dbg(1, "Tcl_AppInit(): sourcing %s\n", name);
- source_tcl_file(name);
+ /* issue 0663: a failed source of xschem.tcl leaves every config variable this
+  * function is about to read UNSET. Never walk on -- announce, naming the file
+  * that failed, and leave. xschem_startup_abort() does not return. */
+ if(source_tcl_file(name) != TCL_OK) xschem_startup_abort(name);
  dbg(1, "Tcl_AppInit(): done executing xschem.tcl\n");
  /*                                */
  /*  END EXECUTE xschem.tcl        */
@@ -3666,6 +3893,8 @@ int Tcl_AppInit(Tcl_Interp *inter)
  if(tclgetboolvar("show_hidden_texts")) {
    xctx->show_hidden_texts = 1;
  }
+ /* S7: honor an `set annot_show ...` done in xschemrc before the first draw. */
+ annot_show_sync_cache();
 
  /*                                */
  /*  START PROCESSING USER OPTIONS */
@@ -3676,8 +3905,9 @@ int Tcl_AppInit(Tcl_Interp *inter)
    my_strncpy(xctx->netlist_name, cli_opt_initial_netlist_name, S(cli_opt_initial_netlist_name));
    #ifdef __unix__
    if(strchr(xctx->netlist_name, '/')) {
-     tclvareval("file dirname ", xctx->netlist_name, NULL);
-     tclsetvar("netlist_dir", tclresult());
+     char ndir[PATH_MAX + 100];
+     my_strncpy(ndir, tcl_call("file dirname", xctx->netlist_name, NULL, NULL), S(ndir));
+     tclsetvar("netlist_dir", ndir);
    }
    #endif
  }
@@ -3742,7 +3972,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
    file_loaded = load_schematic(1, fname, !cli_opt_do_netlist, 1);
    if(cli_opt_do_netlist) if(!file_loaded) tcleval("exit 1");
    if(cli_opt_do_netlist) set_modify(-1); /* set tab/window title */
-   tclvareval("update_recent_file {", fname, "}", NULL);
+   tcl_call("update_recent_file", fname, NULL, NULL);
  } else /* if(!cli_opt_filename[0]) */
  {
    char *tmp;
@@ -3795,6 +4025,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
     * `xschem print` handler), so the show_pin_names visibility cache is never refreshed here;
     * sync it so a show_pin_names on/off set in xschemrc is honored (png uses the draw() path). */
    pin_names_sync_cache();
+   annot_show_sync_cache(); /* S7: same, for the annotation-class mask */
    if(cli_opt_do_print==1) {
 
      xctx->xrect[0].x = 0;
@@ -3880,7 +4111,10 @@ int Tcl_AppInit(Tcl_Interp *inter)
  if(cli_opt_lastopened || cli_opt_lastclosed) i = 1;
  else i = 2;
  for(; i < cli_opt_argc; ++i) {
-   tclvareval("xschem load_new_window ",  cli_opt_argv[i], NULL);
+   /* one file per argument: the name is DATA. Before this it was spliced
+    * UNBRACED, so a command-line path containing a space became several
+    * arguments and opened nothing (issue 0817 Z.2 / 0829 decision L3). */
+   tcl_call("xschem load_new_window", cli_opt_argv[i], NULL, NULL);
  }
 
  /* Execute tcl script given on command line with --command */

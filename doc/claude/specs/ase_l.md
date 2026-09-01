@@ -93,10 +93,258 @@ pre_commands {{cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}}}
    `.include` includes, `.lib` models, `.param` variables, `.options`,
    `.save` outputs, `.control` analyses block, `.end`.
 3. Write `<rundir>/<cell>_ase.spice` (schematic netlist artifact stays
-   untouched); run `ngspice -b <cell>_ase.spice -o <cell>_ase.log`.
+   untouched); run `<simulator> -b <cell>_ase.spice 2>@1` from the run
+   directory. **There is no `-o`**: stdout must flow into `execute(data,$id)`
+   so the session window can show it live, and `2>@1` folds the simulator's
+   warnings into the same stream. The log file is written by ASE itself
+   (`ase::run_log_write`), framed with the command, directory, deck and
+   elapsed time. This paragraph used to describe an `-o` redirect that the
+   code had not emitted for a long time.
 
 Per-simulator seam: step 2+3 live behind `ase::backend::<sim>::render_deck` /
 `run_cmd` table; v1 registers `ngspice` only.
+
+### Which simulator program actually starts (issue 0931)
+
+`ase::sim_status <backend>` is the **one** resolver, and every caller renders
+what it says — `run_cmd` builds the command from it, `ase::sim_exe` raises its
+sentence, and a caller asking merely "is a simulator available" reads its
+`resolved` field. Registering nothing leaves the answer exactly as it always
+was: the bare backend name, `auto_execok`'s file, and a byte-identical command.
+
+* **Registry entries** are `{name <label> path <program> args <extra argv>
+  backend <name or empty>}`. `ase::sim_register` / `ase::sim_unregister` /
+  `ase::sim_select` / `ase::sim_list` drive them; the path is expanded
+  (`$::VAR` form, as `models` paths are) and normalised to absolute at
+  registration, because `ase::run_deck` `cd`s into the run directory before it
+  launches anything.
+* **A path that is missing, is a folder, or is not marked executable is
+  reported out loud** and the entry is kept, flagged unusable, so the user can
+  fix it. Every sentence is minted once in `ase::sim_why`.
+* **A path that names a setting this session does not have** (`$::PDK_ROOT/...`
+  with `PDK_ROOT` unset) gets its own sentence, because "there is no such file"
+  would send the user to look at a disk when the thing to fix is a setting.
+* **Layers**: `::ASE_SIMULATORS` / `::ASE_SIMULATOR` from an rc
+  (`xschemrc`/`cadence_style_rc`, same idiom as `::ASE_DEFAULT_MODELS`), then
+  `$USER_CONF_DIR/ase_simulators` (written by `ase::sim_write_conf`, read at
+  startup by `xschem.tcl` beside the other loaders), then the session. rc
+  entries are never copied into the user file, and removing one from inside
+  xschem says so — it is back at the next start until the rc itself is edited.
+* **A mistake in the rc costs a sentence, never the editor.** The seed's
+  `foreach` header is itself inside the catch: `foreach x $v` parses `$v` as a
+  list *before* the body runs once, so an unbalanced brace in `::ASE_SIMULATORS`
+  used to raise out of reach of the body's own catch and abort the source of
+  `ase.tcl` — xschem exited with no schematic editor at all, where the identical
+  typo in `::ASE_DEFAULT_MODELS` starts normally. Row E12 of
+  `tests/headless/test_ase_simreg_0931.tcl` measures the two side by side.
+* **The door is `Setup > Simulators…` (issue 0937).** One dialog, listing
+  every registered simulator with the reason any one of them cannot be started
+  in a Problem column, Add / Edit / Remove, and a "use this one" control whose
+  first line is *(none — use the program my system finds on the PATH)*. It
+  drives the procs above and saves through `ase::sim_write_conf` — one writer,
+  two front doors — and it re-words nothing: every sentence it shows is
+  `ase::sim_why`'s, read back through `ase::sim_said` when it is reporting what
+  a gesture just did. Feedback lands IN the dialog (`.status`) and in the row
+  editor (`.simrow.status`), not only in the CIW, because silence is this
+  area's failure mode. Edit shows Name and Program only and carries the extra
+  arguments and the backend through untouched; the Name field is read-only,
+  so a rename is a Remove plus an Add.
+* **Removing the simulator in force says what happens next.** Either the one
+  survivor is named as the one that will start now, or the user is told nothing
+  of theirs is picked and the program on the `PATH` takes over. Both sentences
+  are minted in `ase::sim_why`; the "it will be back at the next start" one for
+  an rc entry is always said LAST.
+* **"None of mine" is a choice and is saved as one (issue 0932).** The saved
+  list carries `ase::sim_select {}`, so a cleared choice survives a restart
+  instead of the first entry being put silently back in force — and it
+  therefore overrides an rc's own `::ASE_SIMULATOR` at the next start.
+* **The saved list is written beside itself and moved into place.** A failed
+  write used to truncate the user's list before the first line was written and
+  then raise out of a proc that promises not to; now the file they have keeps
+  what it had until a complete new one is ready.
+* **The suite is hermetic about the user's own saved list.** A machine whose
+  user has registered a simulator has a real `$USER_CONF_DIR/ase_simulators`,
+  which xschem reads at startup, so "nothing is registered" is false in the
+  test process too: the in-process rows clear the registry first and every
+  fresh-start claim is measured in a child with `HOME` redirected into the
+  suite's scratch tree.
+
+### What that program can actually do (issue 0948)
+
+`ase::sim_capabilities <backend>` answers what the build that will ACTUALLY
+start can do — resolved through `ase::sim_status`, never a bare name. The
+answer is a dict: `{known 0}`, `{known 0 unmeasured <reason> ...}`, or
+`{known 1 usable 0|1 appendwrite 0|1 blanket_op_save 0|1 hier_op_names 0|1}`.
+When `known` is 0 the capability keys are **absent, not 0**; absent means
+nobody measured, 0 means measured-and-no. `unmeasured` is a REASON, never a
+capability: `timeout` (the program had not finished inside the budget, and
+`secs` says how long the user waited) or `noplace` (the simulation folder could
+not be written into at all).
+
+* **The method is a PROBE RUN, never a version string.** Measured: a stock
+  ngspice and one patched to ignore the add-each-analysis line print the
+  byte-identical `** ngspice-46+ : Circuit level simulation program`. The probe
+  is two tiny PDK-free decks (a level-1 MOS two subcircuits deep, op + tran),
+  and it runs **lazily on first use** — measured at ~10 ms, never at startup.
+* **The verdict is the RESULT, never the exit code and never the log.**
+  Measured: a blanket device save exits 0, writes a results file, and logs no
+  warning and no error, while holding a `constants` plot and no operating point
+  at all. Every answer is read out of the results file the probe's own deck
+  asked for, by `ase::cap_raw_plots` — the probe's own reader, so it never
+  touches the results database the waveform viewer has attached (ruling 0881).
+* **The cache key is the resolved absolute path; the stamp is path + mtime +
+  size.** A user who rebuilds their simulator in place is re-measured with
+  nothing to do on their part, which is the whole point. `ase::sim_caps_clear`
+  forces a re-measure. Nothing is ever cached under an empty `resolved`, which
+  is what two unrunnable backends both answer (issue 0935).
+* **An answer nobody worked out is NEVER remembered (issue 0950).** Only a
+  `known 1` answer is cached. Before that rule, a failure of the RUN — a folder
+  that could not be written into, a program that did not answer in time — was
+  stored as if it were a fact about the PROGRAM and served for the rest of the
+  session, in an ordinary folder, with nothing in the GUI able to clear it.
+  `ase::sim_register` and `ase::sim_unregister` also clear the whole cache, so
+  adding, editing or removing an entry makes the tree look again. **That call
+  sits on the registry writer, not on the dialog**: Setup > Simulators and the
+  Command window are two doors onto the same writer, and putting it in the
+  dialog would leave the other door broken. It is deliberately NOT in
+  `ase::sim_select` — switching back to a simulator already measured is not a
+  statement that anything about a program changed.
+* **The probe works in a directory of its own, per measurement (issue 0951).**
+  `ase::cap_workdir` answers a fresh, empty
+  `<simulation folder>/.ase_probe/p<pid>_<n>` that no other probe is using, or
+  EMPTY when no such place can be made — which `ase::sim_capabilities` turns
+  into `{known 0 unmeasured noplace}` rather than into an accusation about the
+  user's program. `ase::cap_workdir_done` removes it on every path out,
+  including the one where the probe raised (and then re-raises, so a defect in a
+  probe stays loud); it deletes the shared `.ase_probe` parent WITHOUT `-force`,
+  so the parent goes when it is empty and survives when another process's probe
+  is still using it. **And no verdict is taken from a results file this run did
+  not see appear**: `ase::cap_claim` / `ase::cap_result` are the second guard,
+  for the collision a private name cannot cover — a recycled process number, a
+  predecessor that died without tidying up, a caller that hands the probe a
+  directory of its own. The probe never deletes a results file it did not
+  create. Before all that, a program that wrote not one byte measured
+  `usable 1 appendwrite 1 hier_op_names 1` because a separate process dropped
+  its own results at the one fixed name.
+* **The program is run with the probe's directory under it, and its deck names
+  its results with a BARE FILE NAME (issue 0949).** Not a quoting fix, and the
+  distinction is load-bearing: measured on ngspice-46+, an absolute path with a
+  space in it is read as a file name followed by a VECTOR name, no such vector
+  is found, and nothing is written anywhere. Six write forms were measured
+  against five hostile folder names and none of the in-deck forms — bare,
+  double-quoted, backslash-escaped, `.control`-level `cd`, or an indirection
+  through a variable — survives a folder called `do$llar`, because the program
+  expands `$` inside `.control` regardless of quoting. Giving the process the
+  target folder as its own current directory is the only form that survived a
+  space, a dollar, a bracket, a single quote and a semicolon alike.
+  `ase::cap_run` resolves a RELATIVE program location before the move, so a user
+  who registered `./build/ngspice` keeps working; a bare name with no folder in
+  it is left alone, because that is a PATH lookup the move cannot affect.
+  ⚠ That last clause describes the intent, not the code: the test is
+  `[file dirname $prog] ne {.}`, and `./ng` has dirname `.` too, so a
+  single-segment relative location is left alone and then fails. Latent — the
+  registry normalizes — and filed as **issue 0961**.
+* **`appendwrite` means the writes ADDED UP, and nothing else (issue 0952).**
+  Deck A asks for two analyses and two writes into one file; two plots coming
+  back in that one file is the answer, whatever the plots are called. It used to
+  be decided by whether the vectors the probe expected turned up under the names
+  it expected, so a build that appends perfectly but spells device parameters
+  differently — whose operating point therefore degenerates to a `constants`
+  plot — was told it keeps only the last analysis and advised to run one
+  analysis at a time, which is a wrong diagnosis AND advice that changes
+  nothing. Whether an operating point holds device numbers this tree can read is
+  `hier_op_names`, which is where the "at least one data point" requirement now
+  lives; the two questions must never be able to fail each other.
+* **`capabilities` is an OPTIONAL sixth backend hook**, beside `render_deck`,
+  `run_cmd`, `log_file`, `result_probe` and `raw_file`. A backend that declares
+  none is answered `known 0` — never a guessed yes.
+* **`ase::cap_report`, called once from `ase::run_deck`,** is the only say-site:
+  a program that produced nothing is reported whatever the run looks like, and a
+  build that keeps only the last analysis is reported when the run has more than
+  one. Both sentences are minted in `ase::sim_why` like every other one here.
+  **The run, not the command builder** — building a command line happens in
+  places that must stay silent, and `test_ase_simcaps_0948` row F8 pins both
+  ends of that so the report cannot be refactored out of the one place the user
+  meets it.
+* **Four belts around the probe run, each pinned by its own row.** The program
+  is given nothing to read (`< /dev/null`, row G3) so a build that drops into
+  its own prompt cannot hang the user's Run; it is given a bounded number of
+  seconds (row G5) so one that never returns for any other reason cannot
+  either; the extra arguments the user registered are handed to it when
+  it is measured (row G6), so what was measured is the program they will
+  actually get; and `ase::cap_raw_plots` reads a results file written as raw
+  numbers as well as one written as text (rows B7/B8), stepping over each
+  payload by its own length so a run of numbers that happens to spell a plot
+  header is never mistaken for one.
+* **ONE budget for the whole measurement, not one cap per run (issue 0953).**
+  `ase::cap_budget_ms` is 30000 and `ase::cap_left` hands each run what is left
+  of it; once a run has been cut off the second is not attempted. The measured
+  20.0 s freeze of the user's Run gesture was two runs each paying a literal
+  ten-second cap that nothing could ask to be smaller. Thirty seconds is
+  deliberately generous — a healthy probe is 0.014 s cold and nothing warm, and
+  a tighter bound would cut off exactly the slow-to-start build 0953 is about.
+  `ase::cap_run` returns `{exitcode output was-it-cut-off elapsed-ms}`, and
+  **was-it-cut-off needs all three of** a cap actually applied, child status
+  124, and elapsed time that reached the cap — so a simulator that exits 124 of
+  its own accord is not called a timeout and a cap that was never applied cannot
+  manufacture one. The cap is `timeout -k 2 <secs>` where the box has it:
+  measured, the plain form lets a stop-ignoring program run its full thirty
+  seconds. A cut-off answers `{known 0 unmeasured timeout secs N}`, which is
+  never cached, and `ase::cap_report` says the `cap_no_answer` sentence — which
+  claims only what was established, that the program had not finished, and never
+  that it is not a circuit simulator.
+  ⚠ **All of that is conditional on the box having `timeout(1)`, and nothing
+  says so when it does not.** With no cap the run is unbounded, the answer falls
+  through to the ordinary `usable 0` verdict, that verdict is `known 1`, and
+  `known 1` is cached — so the bound, the honest sentence and the never-cache
+  rule fail together and silently. Measured on this box with the prefix emptied:
+  16.0 s unbounded, `cap_not_a_simulator` said, remembered. Filed as
+  **issue 0959**.
+* **`ase::cap_run` belongs to no one simulator (issue 0954).** Everything after
+  the program name comes from the caller: the arguments the user registered, the
+  backend's own flags, and the deck. It used to append ngspice's `-b` itself,
+  against this file's own seam rule (`src/ase.tcl:24`).
+
+* **Where the shipped code does not yet meet this contract.** Issues 0949 (the
+  probe half), 0950, 0951, 0952, 0953 (the bound and the sentence) and 0954 were
+  all fixed on 2026-08-30 and are described above. What is still genuinely open:
+  * **0957** — the REAL deck's own `write [raw_file $state]` line
+    (`src/ase.tcl:5613`) is still absolute and unquoted, so a user running from
+    a folder whose name has a space in it gets a run that writes its results
+    nowhere. This is 0949's older half and it is deck emission, not the probe.
+    The measured mitigation is on the issue: `ase::run_deck` already cd's into
+    the very folder `raw_file` joins, so a bare basename resolves to the same
+    file.
+  * **0953's other half** — the probe is still paid inside the user's Run
+    gesture, so a program that never answers still costs a bounded pause.
+    Getting the measurement off that path is the larger fix and is not done.
+  * **0958** — and that pause is paid on EVERY press of Run, not once. A
+    cut-off answers `known 0`, `known 0` is correctly never remembered, so the
+    next press measures again from scratch: measured 3004 / 3003 / 3005 ms at a
+    lowered budget, and 30.0 s x 3 at the shipped one. Before this contract
+    existed the same user paid 20 s once and nothing after.
+  * **0959** — the bound, the honest sentence and the never-cache rule all
+    depend on `timeout(1)` being on the box, and evaporate together in silence
+    when it is not.
+  * **0960** — the two states that answer `{known 0 unmeasured noplace}` say
+    NOTHING, on every Run, for good. A read-only simulation folder, or an
+    ordinary file sitting where `.ase_probe` needs to be, silently switches off
+    every warning this section exists to give — including the one about a build
+    that keeps only the last analysis, which is the one that costs the user
+    their results. This section's own rule for the sibling arm is "never a
+    silent failure".
+  * **0961** — a program location written `./name` is not made absolute before
+    the folder change and cannot then be started. Latent behind the registry's
+    own `file normalize`; the comment in `ase::cap_run` states the opposite rule.
+  * **0962** — a coverage gap, not a behaviour one: no committed row reproduces
+    the CONCURRENT write that issue 0951 is actually about. Row I4's headline
+    half passes on the defective tree, because the old delete-at-top destroyed a
+    file planted beforehand; the race itself was staged by hand and the fix does
+    hold against it.
+  * **0952's other half** — a build whose device parameter names this tree
+    cannot read is MEASURED (`hier_op_names 0`) and still says nothing about it.
+    Giving that its own sentence belongs with deck emission, which is what would
+    have to do something different about it.
 
 ## Migration tool (cluttered testbench → clean + state view)
 
@@ -148,6 +396,97 @@ Recon (2026-07-20):
   creates empty `<cell>.<ext>`); Save-As form type mapping
   save_as_form.tcl:47/71. Extend all three: type `ngspice_state1` →
   `.state` seeded with the default state dict (not empty — must parse).
+
+### The simulation log file is FRAMED (issue 0618, 2026-08-23)
+
+The log on disk is no longer the simulator's stdout and nothing else. `ase::run_deck`
+writes a **header** at launch (mode `w`, immediately before `eval execute`) and
+`ase::run_done` rewrites the whole file as header + delimiter + output + **footer**:
+
+```
+=== ase run <cell> <timestamp> ===
+simulator : <backend>
+command   : <the exact argument list handed to execute, 2>@1 included>
+directory : <rundir>
+deck      : <deckpath>
+--- simulator output ---
+<the simulator's stdout, byte for byte>
+=== exit <N> after <X.XX> s ===
+```
+
+**Binding constraints on anyone touching this**:
+
+* **The output region is byte-identical to `$::execute(data,last)`, and must stay so.**
+  `$data` is never mutated. `ase::run_done`'s result parsing, the `result_probe`
+  backend hook (an anchored per-line regexp, `ase.tcl:3510`) and `ase::run_diagnostics`
+  all read `$data` **in memory**, not the file — the framing is added to the FILE only.
+  Row `E1g` in `test_ase_core` pins it.
+* **`ase::run_done {logpath state callback {meta {}}}` — the 4th parameter is
+  DEFAULTED and must stay defaulted.** `test_ase_cosim` calls it with three arguments
+  at six sites (`:1019 :1036 :1049 :1056 :1061 :1067`); a required parameter kills 341
+  checks with `wrong # args`. With an empty `meta` the file is written unframed,
+  byte-identical to the pre-0618 behaviour.
+* **The framing owns the newline before the footer.** Relying on `$data`'s trailing
+  newline breaks for a simulator whose last line has none, and cannot express an empty
+  output region.
+* **Elapsed time is stamped in `run_deck` and carried**, never recomputed in the
+  callback — `run_done` fires from `execute_fileevent` on EOF, which measures the wrong
+  interval. Do **not** guard a `clock milliseconds` value with
+  `string is integer -strict`: it is a wide integer and that test answers 0, which
+  silently prints `0.00 s` forever.
+* Known cost, filed as **0641**: the launch-time header truncates the previous run's
+  log, and `ase::ui::show_log` shows a header-only file mid-run when it has no run_id.
+
+### Netlist and Run must not RE-MAP the design window (issue 0616, 2026-08-23)
+
+`do_run`'s guard `[file normalize [xschem get schname]] ne $dpath` asks whether the
+design is the **current xschem context**, because that is what `ase::netlist`'s own
+guard requires. It does **not** ask whether the design window is visible — and the
+two are routinely different: a session whose state carries `viewer {open 1 …}` has
+`viewer_restore` leave the context on the viewer canvas while the design window is
+fully visible and front. So the guard fires on a window that needs nothing.
+
+Routing that through `ase::ui::design_window` reached `raise_activate_toplevel`
+(`src/xschem.tcl`), whose WSLg-safe raise is **`wm withdraw` + `wm deiconify`** — a
+re-MAP of the whole main toplevel (`tabbed_interface` defaults to 1, so the "design
+window" is a tab of `.`). That WM is documented to **drop** a re-map outright and to
+cost ~32px of NW creep per raise, which is the user's report: *"when I press Netlist
+and Run, the schematic window disappears; I have to do Session > Design window to get
+it back"*.
+
+**The contract now:** `design_window` → `raise_design_editor` → `raise_window_entry`
+take an optional trailing `raise_mode`.
+
+| `raise_mode` | context switch (`new_schematic switch`) | `raise` + `activate_window` | `wm withdraw`+`wm deiconify` re-map |
+|---|---|---|---|
+| `always` (default — Session menu, `select_on_design`/`direct_plot`, `browser_descend_to`, the post-load re-scan) | yes | yes | yes |
+| `ifhidden` (`do_run` only) | yes | yes | **only when the toplevel is not mapped** |
+
+Three things are load-bearing and must not be "simplified":
+
+* **The context switch stays unconditional.** Drop it and `ase::netlist`'s "design is
+  not the current schematic" error comes back. It is also the *only* half covered by
+  a test anywhere in the tree (`test_ase_window` W6m2/W6m3) — `test_ase_plot` P9 and
+  `test_ase_hier_plot_0168` HL23-HL25 all stay green with it no-op'd.
+* **The cheap half of the raise stays in the `ifhidden` arm.** Dropping it was the
+  first cut and it was refuted by measurement: the restored viewer opens
+  pixel-coincident *over* the design (issue **0647**), so "still mapped" left the
+  schematic still invisible — the reported symptom with a new mechanism. A bare
+  `raise` costs 0 unmaps and is an inert no-op on WSLg (issue 0054), so it cannot
+  bring the vanish back.
+* **Anything that is not literally `ifhidden` means `always`.** A typo must degrade
+  to raising, never to silently disabling every raise in the program.
+
+`raise_activate_toplevel` itself is **not** to be changed for this: 11 call sites, and
+issue 0054 records that the user ratified raise-with-creep as the price of a working
+WSLg raise. Fix the caller.
+
+**Still broken on this button, filed not fixed:** issue **0643** — pressed while the
+user is *descended* into the design, the guard fires, `raise_design_editor`'s
+issue-0168 stack loop matches the descended window and returns 1 **without
+ascending**, so `do_run`'s post-check refuses the run: `Status: Error`, red, `run_id`
+empty, no simulation. That is exactly where the OP-annotation *run → descend → press
+6* workflow stands.
 
 ### Window numbering
 
@@ -367,7 +706,11 @@ the schematic's name, not the simulator's.
   a confirmation popup); Close.
 - **Setup** — Design (L/C/V dropdown dialog; after Cell chosen, View
   dropdown lists ONLY schematic views); Model Files (dialog: one row per
-  model file + corner/section entry per row, e.g. `tt`).
+  model file + corner/section entry per row, e.g. `tt`); Simulators…
+  (the simulator-registry dialog, issue 0937: the registered simulators with
+  the reason any one of them cannot be started, Add / Edit / Remove, and
+  which one is in force — or none of them, which means the program the
+  system finds on the PATH).
 - **Analyses** — Choose… (Choose Analyses dialog).
 - **Variables** — Edit… (variables editor).
 - **Outputs** — To Be Saved > Select On Design; To Be Plotted > Select On
@@ -378,9 +721,24 @@ the schematic's name, not the simulator's.
   Run (uses EXISTING netlist — supports hand-edited decks); Stop; Log
   (reopen log window); Options… (simulator-specific options dialog,
   minimal for now).
-- **Results** — Direct Plot (DEFERRED: command mode, click signals on
-  schematic, queue, ESC → plot); Annotate > Operating Point info (DEFERRED);
-  Annotate > DC Node Voltages (DEFERRED). Menu entries may exist disabled.
+- **Results** — Direct Plot (**LIVE since item 13**: command mode, click
+  signals on schematic, queue, ESC → plot); Annotate > Operating Point info
+  and Annotate > DC Node Voltages (**LIVE since issue 0682**, and this menu is
+  now the ONLY annotation visibility control in the program — the user reversed
+  0457(b)'s `View > Show / Hide` placement on a real sky130 bench: "We want to
+  be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+  Operating Point Info"). Two **checkbuttons** over the two `annot_show` bits,
+  session-keyed, **greyed by `ase::has_results`** — an entry is live only while
+  this session has a raw on disk, because "results only make sense when there is
+  a result loaded". The submenu carries a `-postcommand` PULL (the three cadence
+  chords and both `Annotate Operating Point` menu items write the mask without
+  telling any menu), the PUSH reaches the design through a **verified**
+  `new_schematic switch` (landmine 17 — a blind one lands the mask in a foreign
+  schematic), and ticking a bit ON attaches the session's raw when the design
+  context has none — **but that last arm is measured wrong and is filed as issue
+  0684**: it guards on `xschem raw loaded`, so a second run's numbers never reach
+  the screen and an unrelated waveform-graph raw blocks it silently. See
+  `doc/claude/issues/0682-*.md` and `0684-*.md`.
 - **Tools** — Waveform Viewer (raise-or-open THE waveform viewer bound to
   this ASE-L session — `wviewer::open` is per-token idempotent, so a session
   never gets two viewer windows; same seam as the `~` strip button);

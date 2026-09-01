@@ -387,6 +387,84 @@ typedef int Tcl_Size;
 #define HIDE_TEXT 8
 #define TEXT_FLOATER 16
 #define HIDE_TEXT_INSTANTIATED 32
+/* ANNOTATION CLASSES (S7, doc/claude/specs/op_annotation.md). A text whose hide=
+ * token names a class is shown iff the matching bit of the annot_show mask is set,
+ * and ignores show_hidden_texts entirely (decision D3: the two shipped "Annotate
+ * Operating Point" menu items already do `set show_hidden_texts 1`, so letting it
+ * override would make the annotation off-switch a no-op exactly when it is needed).
+ * These are a DIFFERENT namespace from HIDE_TEXT / HIDE_TEXT_INSTANTIATED, whose
+ * semantics are unchanged for every existing symbol (invariant I7). */
+#define HIDE_TEXT_OP 64        /* hide=op      : device operating-point info */
+#define HIDE_TEXT_VOLTAGE 128  /* hide=voltage : node voltages */
+/* THE IMPLICIT ANNOTATION CLASS (issues 0614/0615). set_text_flags() classifies a
+ * text by its CONTENT -- a whole-string `@spice_get_voltage` /
+ * `@#<pin>:spice_get_voltage` / `@spice_get_diff_voltage` /
+ * `@spice_get_current[_<param>]`, with or without a trailing (...) argument -- and
+ * sets one of these two bits, so the annot_show mask owns the node voltages and
+ * branch currents XSCHEM's native OP back-annotation paints. Before 0614 bit1 gated
+ * `hide=voltage` and NOTHING ELSE (that token appears in zero shipped .sym/.sch), so
+ * `6` and `Alt-6` rendered byte-identically and `Ctrl-6` still painted every voltage.
+ *
+ * THEY ARE A SECOND NAMESPACE, NOT A REUSE OF HIDE_TEXT_VOLTAGE, and that is
+ * load-bearing twice over:
+ *   - text_hidden() exempts a SCHEMATIC-OWN NON-FLOATER from the implicit class only
+ *     (invariant I7: measured, `T {@spice_get_voltage} ... {layer=15}` renders the
+ *     LITERAL token today and must keep doing so), while an author's explicit
+ *     `hide=voltage` on the same record must still follow bit1;
+ *   - the COLOUR override (0615) applies to TEXT_ANNOT_VOLTAGE only: a text whose
+ *     author typed `hide=voltage` chose its own `layer=` and keeps it.
+ * TEXT_ANNOT_CURRENT follows bit0, ANNOT_SHOW_OP (`6`), and takes NO colour override
+ * -- layer 17 `#00ffcc` in both palettes, 84 shipped records. ⚠ THAT IS ISSUE 0678
+ * REVERSING HALF OF DECISION D4. 0614 read 0613's "surviving Ctrl-6" list, saw branch
+ * currents in it beside the node voltages, and put both classes on bit1 -- grouping
+ * them by where the number comes from in the raw. The user drove a real sky130 bench
+ * on 2026-08-24 and grouped them by what the number is ABOUT: a source's branch
+ * current is that DEVICE's terminal current, device OP info like a FET's id, so it
+ * belongs to `6`. `Ctrl-6 -> nothing` still holds -- mask 0 clears both bits. The
+ * COLOUR half of D4 was not reversed. The one place the grouping is written down is
+ * annot_class_mask in actions.c; see doc/claude/issues/0678-*.md.
+ * The implicit class is set ONLY when the `hide=` chain set no bit at all, so the
+ * nine tracked records carrying BOTH hide=true and a bare token keep answering
+ * show_hidden_texts alone (invariant I7). */
+#define TEXT_ANNOT_VOLTAGE 256 /* content-classified node voltage  (visibility + colour) */
+#define TEXT_ANNOT_CURRENT 512 /* content-classified branch current (visibility only)   */
+/* the annot_show mask bits (xctx->annot_show, MIRRORED IN TCL as ::annot_show) */
+#define ANNOT_SHOW_OP 1
+#define ANNOT_SHOW_VOLTAGE 2
+/* 0868 -- bit2, the TRANSIENT node-voltage mode: ASE-L `Results > Annotate >
+ * Transient Node Voltages (at cursor)` and the `Alt-Shift-6` chord. It is a
+ * SECOND SWITCH ONTO THE NODE-VOLTAGE CONTENT CLASS, not a third class:
+ * annot_class_mask() (actions.c) returns ANNOT_SHOW_VOLTAGE|ANNOT_SHOW_TRAN for
+ * TEXT_ANNOT_VOLTAGE, so a bare bit2 renders exactly the texts bit1 renders.
+ *
+ * ⚠ MEASURED BEFORE THE CHANGE, AND IT IS WHY THE OR IS THERE RATHER THAN A
+ * THIRD ARM: `xschem set annot_show 4` read back 4 and painted NOTHING, because
+ * both render gates tested bit1 alone -- a mode the user can select and not see.
+ * Row V7 of tests/headless/test_op_annot.tcl is that measurement, and row V9
+ * (masks 2 / 4 / 6 all paint, mask 1 paints none) is what forbids "fixing" this
+ * by making bit2 simply set bit1.
+ *
+ * WHAT DISTINGUISHES THE TWO BITS IS WHERE THE NUMBER CAME FROM, not what is
+ * drawn: bit1's number is an operating point, bit2's is a transient sample the
+ * user asked for AT ONE TIME POINT. That provenance is carried by the sentence
+ * cadence::_annot_tran_msg mints (utils/annot_mode.tcl) -- which names the time
+ * and the cursor letter -- and never by a second render path. RULING D5-1: a
+ * held snapshot is honest only because the user was told what it was measured
+ * at. See doc/claude/issues/0868-*.md. */
+#define ANNOT_SHOW_TRAN 4
+/* S9: the font the draw-time OP-annotation overlay renders in, needed by all three
+ * back ends. Lifted verbatim from the shipped carrier xschem_library/devices/
+ * annotate_params.sym (font=Monospace) so carrier and overlay look identical side
+ * by side. Its size/layer siblings travel through get_annot_overlay() instead. */
+#define ANNOT_OVERLAY_FONT "Monospace"
+/* text_hidden() context. The ten former copy-pasted visibility tests were not ten
+ * copies of one test but TWO tests: the six iterating a SYMBOL's text masked
+ * (HIDE_TEXT | HIDE_TEXT_INSTANTIATED), the four iterating the schematic's own text
+ * masked HIDE_TEXT alone. That difference IS the meaning of hide=instance -- hidden
+ * through an instance, visible while editing the symbol itself -- so the predicate
+ * takes the context rather than folding both into one mask. */
+#define TEXT_CTX_SCHEMATIC 0   /* iterating xctx->text[]: the schematic's own texts */
+#define TEXT_CTX_INSTANCE 1    /* iterating symptr->text[]: a symbol drawn as an instance */
 
 #define S(a) (sizeof(a)/sizeof(a[0]))
 #define BUS_WIDTH 4
@@ -589,6 +667,13 @@ typedef int Tcl_Size;
 #define IS_LABEL_OR_PIN(type) (!(strcmp(type,"label") && strcmp(type,"ipin") && \
                                  strcmp(type,"opin") && strcmp(type,"iopin")))
 #define IS_PIN(type) (!(strcmp(type,"ipin") && strcmp(type,"opin") && strcmp(type,"iopin")))
+/* issue 0498: instance n has no resolved symbol (xctx->inst[n].ptr < 0), which happens
+ * whenever a load_schematic() with load_symbols=0 (the *_stop=true arm of the netlisters)
+ * or a remove_symbols() leaves the instance array pointing at nothing. Dereferencing
+ * xctx->sym[xctx->inst[n].ptr] then reads xctx->sym[-1] and SEGFAULTS -- measured at
+ * hilight.c draw_hilight_net(). Test the flag BEFORE the deref, never after.
+ * See doc/claude/issues/0498-leaked-keep-symbols-across-a-load-segfaults-the-c-core.md */
+#define INST_UNBOUND(n) (xctx->inst[n].ptr < 0)
 #define XSIGN(x) ( (x) < 0 ? -1 : 1)
 #define XSIGN0(x) ( (x) < 0 ? -1 : (x) > 0 ? 1 : 0)
 
@@ -817,9 +902,20 @@ typedef struct
   char *font; /*  20171201 for cairo */
   int flags; /* bit 0 : TEXT_BOLD
               * bit 1 : TEXT_OBLIQUE
-              * bit 2 : TEXT_ITALICi
+              * bit 2 : TEXT_ITALIC
               * bit 3 : HIDE_TEXT
-              * bit 4 : TEXT_FLOATER */
+              * bit 4 : TEXT_FLOATER
+              * bit 5 : HIDE_TEXT_INSTANTIATED
+              * bit 6 : HIDE_TEXT_OP        (annotation class, gated by annot_show)
+              * bit 7 : HIDE_TEXT_VOLTAGE   (annotation class, gated by annot_show)
+              * bit 8 : TEXT_ANNOT_VOLTAGE  (implicit content class: node voltage,
+              *                              gated by annot_show, painted in
+              *                              annot_voltage_layer -- issues 0614/0615)
+              * bit 9 : TEXT_ANNOT_CURRENT  (implicit content class: branch current,
+              *                              gated by annot_show BIT0 -- device OP
+              *                              info, issue 0678 -- keeps its own layer)
+              * recomputed by set_text_flags() from prop_ptr AND from txt_ptr (bits 8/9
+              * carry the implicit content class, issues 0614/0678), never serialised */
   unsigned int id; /* session-stable identity, stamped at birth in store.c
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is
@@ -1016,6 +1112,14 @@ typedef struct
   char *templ;
   char *symname;
   char *sym_extra;
+  /* ISSUE 1201. Used only for the DESCEND hierarchy stack (xctx->hier_attr[]),
+   * never by load_sym_def()'s local Lcc array: 1 when the netlister would give
+   * the instance this level was entered through a cell body of its own for a
+   * setting typed on it. descend_schematic() records it, because the question
+   * needs the PARENT's instance and symbol and neither survives the descend;
+   * `xschem globals` publishes it as lcc[N].auto_spec and
+   * op_annot::model_netlist reads it (GUARD GB). */
+  int auto_spec;
 } Lcc;
 
 typedef struct {
@@ -2260,6 +2364,34 @@ typedef struct {
   void (*clear_undo)(void);
   int case_insensitive; /* for case insensitive compare where needed MIRRORED IN TCL*/
   int show_hidden_texts; /* force show texts that have hide=true attribute set MIRRORED IN TCL*/
+  int annot_show; /* annotation-class visibility mask: bit0 device OP info (hide=op AND
+                   * content-classified branch currents, issue 0678), bit1 node voltages
+                   * (hide=voltage and content-classified node voltages). Independent of
+                   * show_hidden_texts (decision D3). See text_hidden() in actions.c and
+                   * the grouping in annot_class_mask beside it MIRRORED IN TCL*/
+  char *annot_root; /* 0688: the ROOT schematic (xctx->sch[0]) the mask above was
+                   * armed for, my_strdup'd, NULL when the mask is off or when it
+                   * was never armed through the C setter. The mask is per-CONTEXT
+                   * (a WINDOW), but an ASE-L session's only handle on its design is
+                   * a cellview PATH, so `File > Open` in the design window used to
+                   * leave the mask on over a completely different sheet with every
+                   * session-side reader answering 0 -- annotation nobody could turn
+                   * off. This stamp is what makes "the mask belongs to THAT sheet"
+                   * a fact the load path can check. Written ONLY by annot_show_set()
+                   * and never adopted lazily (decision D2: at startup sch[0] is
+                   * <launchdir>/untitled.sch and the rc sync runs BEFORE the CLI
+                   * file loads, so an adopting sync would stamp untitled.sch and
+                   * then silently clear an `set annot_show` done in xschemrc).
+                   * NOT mirrored in Tcl; read back with `xschem get annot_root`. */
+  int annot_voltage_layer; /* 0615: the layer a CONTENT-classified node voltage renders
+                   * in, overriding the symbol text's own layer=. Default 9 (#ffffff on
+                   * the default dark palette, which is what the user asked for; #00aaaa
+                   * on the default light one -- a layer INDEX travels through the
+                   * per-layer colour machinery, a hard #ffffff would not). Any index
+                   * outside [1, cadlayers) means NO OVERRIDE: that is the documented,
+                   * rebuild-free off switch AND it keeps 0 == BACKLAYER from painting
+                   * the annotation in the background colour (decision D7).
+                   * See annot_text_layer() in actions.c MIRRORED IN TCL*/
   int en_pin_select; /* enable selecting individual instance pins (click on pin) MIRRORED IN TCL*/
   int (*x_strcmp)(const char *, const char *);
   Lcc hier_attr[CADMAXHIER]; /* hierarchical recursive attribute substitution when descending */
@@ -2525,6 +2657,7 @@ extern int raw_file_is_digital(const char *f);
  * the debug channel and returns it, so a caller with a Tcl result to set hands
  * the script the same words the user reads. */
 extern const char *backannot_refuse_digital(const char *dbname);
+extern const char *backannot_refuse_empty(const char *dbname);
 extern double get_raw_value(int dataset, int idx, int point);
 extern int plot_raw_custom_data(int sweep_idx, int first, int last, const char *ntok, const char *yname);
 extern int calc_custom_data_yrange(int sweep_idx, const char *express, Graph_ctx *gr);
@@ -2867,6 +3000,17 @@ extern void leave_shape_draw_for(const char *what);
  * carrying both facts (issue 0241). See callback.c. */
 extern const char *abort_click_mode(void);
 extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
+/* S11: resolve cursor B against xctx->raw with NO graph object involved, so
+ * `xschem set cursor2_x <t>` annotates on a schematic with nothing plotted.
+ * Returns 1 if it annotated, 0 if there was no data and the call was a no-op.
+ * See callback.c for why the rect is synthetic and the Graph_ctx is a stack
+ * local carrying an explicit whole-sweep window. */
+extern int backannotate_at_cursor_b_nograph(void);
+/* 0868 -- resolve ONE requested time point against xctx->raw and publish it,
+ * without going through either graph cursor. `xschem annotate_at <t>`
+ * (scheduler.c) is its only caller. Returns 1 when it annotated, 0 when there
+ * was nothing to annotate against and the call was a byte-exact no-op. */
+extern int backannotate_at_time(double t);
 /* extern void snapped_wire(double c_snap); */
 extern void unselect_attached_floaters(void);
 extern int callback(const char *win_path, int event, int mx, int my, KeySym key,
@@ -3064,6 +3208,14 @@ extern void store_poly(int pos, double *x, double *y, int points,
 extern void store_arc(int pos, double x, double y, double r, double a, double b,
                unsigned int rectcolor, unsigned short sel, const char *prop_ptr);
 
+/* issue 0498: the hierarchy walks (the five global_*_netlist drivers and hier_psprint)
+ * save and restore the user's document with their OWN xctx->push_undo()/pop_undo() pair.
+ * That pair is the WALK's save/restore, not editing undo, so it must not be disableable by
+ * xctx->no_undo (which silently no-ops both halves -- save.c, in_memory_undo.c). Take the
+ * shield immediately before push_undo(), drop it on EVERY exit path (spec op_annotation.md
+ * section 5, invariant I6). */
+extern int undo_shield_push(void);
+extern void undo_shield_pop(int saved);
 extern void hier_psprint(char **res, int what);
 extern int global_spice_netlist(int global, int alert);
 extern int global_spectre_netlist(int global, int alert);
@@ -3130,6 +3282,9 @@ extern int get_tab_or_window_number(const char *win_path);
 extern int allocate_window_number(void);
 extern void swap_tabs(void);
 extern void swap_windows(int dr);
+/* first context index (1..MAX_NEW_WINDOWS-1) that is NOT a waveform viewer, or -1.
+ * See the comment on the definition in xinit.c (issue 0847). */
+extern int first_swappable_ctx(void);
 extern int check_loaded(const char *f, char *win_path);
 extern char *get_last_created_window_path(void);
 extern int get_last_created_window(void);
@@ -3148,6 +3303,52 @@ extern void read_record(int firstchar, FILE *fp, int dbg_level);
 extern void create_sch_from_sym(void);
 extern void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback);
 extern const char *get_sym_name(int inst, int ndir, int ext, int abs_path);
+/* ISSUE 1201: the netlister writes a specialised copy of a cell by itself.
+ * auto_spec_begin()/auto_spec_end() bracket ONE SPICE netlist run (GUARD
+ * AS-MODE); auto_spec_name() answers "what cell body should this copy be built
+ * under", or NULL for today's behaviour. See src/actions.c and issue 1201.
+ *
+ * ISSUE 1204: <whole> is 1 when the run is writing the WHOLE design and 0 when
+ * it is writing just the sheet the user is looking at. Only the whole-design
+ * run ever writes the specialised cell bodies, so only that run may put their
+ * names on call lines -- see GUARD AS-WHOLE in src/actions.c. */
+extern void auto_spec_begin(int whole);
+/* ISSUE 1212: and the backstop for the sheets the design walk cannot resolve.
+ * Called from get_additional_symbols() for a copy that names its own cell body,
+ * it says so when that name is one this run had already given to a copy asking
+ * for something else. See GUARD AS-CLASH in src/actions.c. */
+extern void auto_spec_clash_check(int inst, const char *typed);
+extern void auto_spec_end(void);
+extern int auto_spec_would_specialize(int inst);
+extern const char *auto_spec_name(int inst);
+/* ISSUE 1201, in src/token.c: the settings this copy typed that the SPICE deck
+ * drops AND the cell's own drawing uses -- the trigger, in one answer. <canon>
+ * comes back with a sorted, canonical spelling of the set (GUARD AS-ORDER) and
+ * <settings> with the same set written for a person to read.
+ *
+ * ISSUE 1203: <key> comes back with a THIRD spelling of the same set, the one
+ * that decides which copies share a cell body. It is length-prefixed and
+ * therefore unambiguous, which <canon> is not and is not required to be. */
+extern int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
+                                          char **key);
+/* ISSUES 1215 AND 1212, in src/token.c: the same answer about a copy that HAS
+ * named its own cell body by hand. Used only to compare one copy's request
+ * with another's -- "do these two ask for the same thing?" -- so it hands back
+ * the human spelling and the sharing key and no cell name. Answers 0 when it
+ * cannot tell, and every caller then behaves exactly as it did before. */
+extern int lost_attrs_typed_copy(int inst, char **settings, char **key);
+/* GUARD AS-STRIP, ISSUE 1227, in src/token.c: this copy's property string with
+ * the settings XSCHEM has just refused to pass down taken out of it, so the
+ * cell body it is about to be given cannot see them and falls back to the
+ * symbol's own default -- which is what the warning in the same run says
+ * happened. Returns how many were removed; <out> is always set. */
+extern int lost_attrs_strip_unusable(int inst, char **out);
+extern void lost_attrs_cache_clear(void);
+/* ISSUE 0983 GUARD UA-ELIDE: one line, bounded length, whitespace runs folded.
+ * Every variable-length field of a user-facing netlist-time sentence goes
+ * through it -- the warning in token.c and issue 1201's note in actions.c. */
+extern void unused_attr_elide(char *dest, size_t dest_size, const char *src,
+                              size_t max_chars, int from_tail);
 extern void toggle_ignore(void);
 extern void get_additional_symbols(int what);
 extern int change_sch_path(int instnumber, int dr);
@@ -3280,6 +3481,54 @@ extern void tclsetdoublevar(const char *s, const double value);
 extern void tclsetboolvar(const char *s, const int value);
 extern void tclsetintvar(const char *s, const int value);
 extern int tclvareval(const char *script, ...);
+/* util.c -- PATH RESOLUTION, issue 0812. A filename is DATA, never script.
+ * expand_tilde()        leading `~/` -> home_dir, in C. Nothing else.
+ * expand_tcl_vars()     Tcl VARIABLE expansion by a C BYTE SCANNER. It
+ *                       recognises `$name`, `${name}` and `$ns::name`, looks
+ *                       them up with Tcl_GetVar2Ex(..., TCL_GLOBAL_ONLY) and
+ *                       copies EVERY other byte through verbatim -- `{` `}`
+ *                       `[` `]` `;` `\` `(` `)` included. `(` is never an index
+ *                       opener; an undefined reference is copied as its own
+ *                       literal text. It ADDS no evaluator and PARSES nothing;
+ *                       the only Tcl API it calls is Tcl_GetVar2Ex. That is a
+ *                       variable READ, not a hash lookup: a user's
+ *                       `trace ... read` on the named global still runs on it
+ *                       (issue 0819; none ships, GUARD3 pins it). It is NOT
+ *                       named subst_tcl_value(), and it does not call subst --
+ *                       the first attempt at this fix used
+ *                       `subst -nobackslashes -nocommands` and was refuted by
+ *                       `$a([exec touch X])`, whose command substitution runs
+ *                       inside the ARRAY INDEX no matter which -no* flags are
+ *                       passed.
+ * resolve_rawfile_path() the two composed: THE raw-file path resolver. The
+ *                       extra_raw_arr registry keys off its output with
+ *                       strcmp(), so it is idempotent on every spelling that
+ *                       ships -- but NOT in general: a defined variable whose
+ *                       VALUE contains a `$` expands on a second pass, and a
+ *                       graph `%` rawfile field IS resolved twice (issue 0820).
+ * Each writes at most destsize bytes into dest (NUL included) and returns dest.
+ * See the comment block above them in util.c for what is and is NOT
+ * guaranteed. Reusable beyond the raw-file family: expand_tilde() is the
+ * drop-in for the remaining `regsub {^~/}` + tcleval splices (issue 0816) and
+ * expand_tcl_vars() for the tclvareval brace groups that exist only to expand
+ * variables (issue 0817). */
+extern const char *expand_tilde(const char *s, char *dest, int destsize);
+extern const char *expand_tcl_vars(const char *s, char *dest, int destsize);
+extern const char *resolve_rawfile_path(const char *s, char *dest, int destsize);
+/* tcl_call() -- CALLING a Tcl proc with DATA arguments, issues 0817 Z.2 / 0827 /
+ * 0829. The sibling of the three above and the other half of the same rule: a
+ * filename, a `.sch` property value or a symbol name is DATA, so it is never
+ * concatenated into the script. `cmd` and `tail` are PROGRAM TEXT (a C string
+ * literal at every call site); `a1`/`a2` are handed over as globals and
+ * referenced with `$::`, whose substitution result is one word and is never
+ * re-parsed. It EXPANDS nothing and RESOLVES nothing -- it is a caller, not a
+ * resolver, so it neither competes with resolve_rawfile_path() for the
+ * registry's strcmp() key (0812) nor adds a second pass (0820), and it reads
+ * no variable, so it adds no `trace ... read` surface (0819).
+ * A caller must not pass tclresult() straight in: tclsetvar() invalidates it.
+ * See the comment block above it in util.c. */
+extern const char *tcl_call(const char *cmd, const char *a1, const char *a2, const char *tail);
+extern const char *tcl_call_mid(const char *cmd, const char *a1, const char *mid, const char *a2);
 extern const char *tcl_hook2(const char *res);
 extern void statusmsg(char str[],int n);
 /* issue 0248: statusmsg() + a hold, for lines a user must be able to READ (gate messages,
@@ -3303,6 +3552,64 @@ extern void pin_views_reconcile_after_move(void);
 extern void pin_views_reconcile_all(void);
 extern int pin_name_visible(const char *prop);
 extern void pin_names_sync_cache(void);
+/* THE single text-visibility predicate, shared by draw/svg/ps/select/bbox (S7). */
+extern int text_hidden(int flags, int ctx);
+/* THE single annotation-colour override, shared by the same three back ends (0615).
+ * -1 == "no override, use the layer you already computed". */
+extern int annot_text_layer(int flags, int ctx);
+extern void annot_show_sync_cache(void);
+/* 0688 -- THE ONE C WRITER of the annotation mask (invariant I1), and the one
+ * checker that drops it when the window's ROOT sheet changes underneath it.
+ * annot_show_set() writes xctx->annot_show, the Tcl mirror ::annot_show AND the
+ * xctx->annot_root stamp, so no caller can arm the mask without recording what
+ * it was armed for. annot_show_check_root clears the mask (through that same
+ * setter) when the stamp no longer names xctx->sch[0]; it is called from the
+ * deterministic load seam in save.c and from annot_show_sync_cache() as the
+ * backstop for root changes that never run load_schematic(). It touches NO
+ * waveform database -- one int, one Tcl var and one path. */
+extern void annot_show_set(int mask);
+extern void annot_show_check_root(void);
+/* ---------------------------------------------------------------------------
+ * S9 -- THE DRAW-TIME OP-ANNOTATION OVERLAY (doc/claude/specs/op_annotation.md).
+ * ONE shared reader, three thin call sites (draw.c, svgdraw.c, psprint.c). Every
+ * policy decision -- the visibility gate, the "is this device annotated at all"
+ * gate, the anchor, the render constants -- lives in get_annot_overlay() so the
+ * screen and the two exports cannot disagree (decision D2/D3/D9).
+ *
+ * get_annot_overlay() answers "draw instance n's operating-point block, here":
+ * returns 1 and fills *txt (a cached, my_strdup'd block owned by actions.c --
+ * do NOT free), the ABSOLUTE anchor *x/*y, the text *size and the text *layer;
+ * returns 0 when the instance must not carry a block. It NEVER modifies the
+ * schematic (invariant I4): no set_modify, no instance placed, nothing written.
+ *
+ * annot_overlay_sync() compares the observed-state epoch and flushes the whole
+ * per-instance cache when anything it depends on moved. Call it ONCE per frame /
+ * per export, beside annot_show_sync_cache().
+ *
+ * annot_data_changed() is the explicit invalidation the epoch cannot observe: a
+ * re-run of the SAME deck republishes into the SAME Raw allocation with identical
+ * nvars/level, so without this bump the overlay would show the previous run's
+ * numbers -- the one thing invariant I3 forbids. Called by update_op() (save.c)
+ * and backannotate_at_cursor_b_pos() (callback.c).
+ * ------------------------------------------------------------------------- */
+extern int get_annot_overlay(int n, const char **txt, double *x, double *y,
+                             double *size, int *layer);
+extern void annot_overlay_sync(void);
+extern void annot_data_changed(void);
+/* hold(1)/hold(0) around an INTERNAL maintenance reset that must not be read as
+ * a document change. One caller: prepare_netlist_structs() (netlist.c). */
+extern void annot_invalidate_hold(int on);
+/* monotonic count of blocks the overlay reader approved; the ONLY seam that can
+ * see the draw.c call site, whose whole body is inside if(has_x). Read with
+ * `xschem get annot_overlay_count` (scheduler.c), mirroring draw_count. */
+extern unsigned int annot_overlay_count;
+/* monotonic count of WHOLESALE cache flushes; read with
+ * `xschem get annot_overlay_flushes`. The companion seam to annot_overlay_count:
+ * that one proves blocks were rendered, this one proves the cache still EXISTS
+ * (a correct implementation flushes once per real change and zero times on an
+ * unchanged repeat frame). Bumped in annot_overlay_sync() at the flush, never in
+ * annot_data_changed() -- several hooks fire for one user action. */
+extern unsigned int annot_overlay_flushes;
 extern int check_pin_names(char **result);
 /* pin name-label layout (offset/size/rot/flip) read from a pin's prop tokens by
  * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */

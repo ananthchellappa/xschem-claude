@@ -145,9 +145,14 @@ const char *sanitize(const char *name)
     return empty;
   }
   dbg(1, "sanitize(): name=%s\n", name);
-  tclvareval("regsub -all { *[.(),] *} {", name, "} _", NULL);
-  tclvareval("regsub  {_$} {", tclresult(), "} {}", NULL);
-  my_strdup2(_ALLOC_ID_, &s, tclresult());
+  {
+    /* the symbol name is DATA -- issue 0817 Z.4. tclresult() may not be handed
+     * to tcl_call() directly: tclsetvar() writes through the interpreter and
+     * invalidates it, so the first pass is copied out before the second. */
+    char pass1[PATH_MAX + 100];
+    my_strncpy(pass1, tcl_call("regsub -all { *[.(),] *}", name, NULL, "_"), S(pass1));
+    my_strdup2(_ALLOC_ID_, &s, tcl_call("regsub {_$}", pass1, NULL, "{}"));
+  }
   dbg(1, "sanitize(): s=%s\n", s);
   return s;
 }
@@ -1974,8 +1979,10 @@ static int has_included_subcircuit(int inst, int symbol, char **result)
     dbg(1, "exp_no_of_pins=%d\n", exp_no_of_pins);
     /* process spice_sym_def spice netlist */
     strtolower(symname);
-    tclvareval("has_included_subcircuit {", get_cell(symname, 0), "} {",
-                translated_sym_def, "} ", my_itoa(exp_no_of_pins), NULL);
+    /* the cell name and the `spice_sym_def` attribute are both `.sym` text
+     * (issue 0817 Z.4); the pin count is a decimal the C side formatted */
+    tcl_call("has_included_subcircuit", get_cell(symname, 0), translated_sym_def,
+             my_itoa(exp_no_of_pins));
 
     my_free(_ALLOC_ID_, &symname_attr);
     if(tclresult()[0]) { /* a valid spice_sym_def netlist was found */
@@ -2012,9 +2019,12 @@ static int has_included_subcircuit(int inst, int symbol, char **result)
       } else {
         dbg(0, "has_included_subcircuit(): %s symbol and .subckt pins do not match. Discard port order\n",
                 symname);
-        if(has_x)
-           tclvareval("alert_ {has_included_subcircuit(): ", symname,
-                   " symbol and .subckt pins do not match. Discard .subckt port order}", NULL);
+        if(has_x) {
+          char amsg[PATH_MAX + 200];
+          my_snprintf(amsg, S(amsg), "has_included_subcircuit(): %s symbol and .subckt pins"
+              " do not match. Discard .subckt port order", symname);
+          tcl_call("alert_", amsg, NULL, NULL);
+        }
       }
       if(tmp_result) my_free(_ALLOC_ID_, &tmp_result);
       my_free(_ALLOC_ID_, &subckt_pinlist);
@@ -2440,6 +2450,1738 @@ static void warn_hash_extra_node(int inst, const char *tokname, const char *valu
   }
 }
 
+/* ISSUE 0970: THE SETTINGS A USER TYPES ON A SHEET THAT NEVER REACH THE DECK.
+ *
+ * A designer clicks a cell on their schematic and types `modelp=pfet_01v8_lvt`
+ * on it, meaning "build THIS copy of the cell out of the low-threshold device".
+ * If the symbol's format= string never mentions modelp, the netlister writes
+ * ONE .subckt body for every copy of that cell out of the SYMBOL TEMPLATE's own
+ * default, and the setting the user typed is discarded without a word. Measured
+ * on the shipped sky130_tests bandgap bench before this pass: one `.subckt
+ * passgate` body, zero occurrences of `modelp` anywhere in the deck, and two
+ * transistors that had never once been simulated as the device their schematic
+ * line names.
+ *
+ * THE SILENCE IS THE DEFECT, not the dropping. The netlister finds the breath
+ * to warn about an open net on that very sheet; about the setting it threw away
+ * it said nothing, ever, on any sheet.
+ *
+ * WHY THIS IS NARROWED RATHER THAN GENERAL, with the measurement. Run over
+ * every schematic in both shipped PDK trees (321 sheets, 13630 instances), the
+ * unnarrowed rule -- "any instance attribute the format string does not use" --
+ * emits 16876 lines. That is not a diagnostic, it is wallpaper, and a warning
+ * nobody can read is worse than no warning at all. Each guard below is the
+ * reason a number that large becomes a number a person can act on; the counts
+ * are recorded in doc/claude/issues/0970-*.md.
+ *
+ * ISSUE 0980, THE CORRECTION. The first version of this check asked only
+ * whether the SPICE format string referenced the property, and shipped ON BY
+ * DEFAULT. Netlisting the whole of xschem_library to SPICE, it printed 149
+ * lines on 18 sheets and 43 of them were false; on six of those sheets every
+ * line was false. The missing half was that a symbol is netlisted in six
+ * formats and that VHDL and Verilog pass an instance attribute in as a
+ * generic/parameter on the strength of the SYMBOL TEMPLATE, no format string
+ * involved. GUARD UA-TMPL and GUARD UA-ALTFMT below are that half; the same
+ * sweep after them is recorded in doc/claude/issues/0980-*.md.
+ *
+ * ISSUES 0987 AND 0988, THE SECOND CORRECTION, AND WHY THERE ARE TWO SENTENCES
+ * NOW. The 0980 pass asked ONE question -- "can ANY netlist of this cell use
+ * this setting?" -- and went silent whenever the answer was yes. That turned 43
+ * wrong accusations into 43 silences, one for one: shipped
+ * xschem_library/examples/loading.sch types cap=100.0, 30.0, 20.0 and 40.0 on
+ * four capacitors, the SPICE deck writes one `.subckt real_capa USC  cap=10.0`
+ * and none of those four numbers appears in it anywhere, so all four simulate
+ * at 10.0 -- and the tool said nothing whatever. The honest question is BOTH:
+ * can any format use it, AND does the format being written right now use it.
+ * ua_reach() below answers in three states, and the sentence has two shapes.
+ * A reader would assume "not a mistake" and "silent" are the same thing. They
+ * are opposites here: one of them costs the designer their setting.
+ *
+ * DELIBERATELY NOT IN THE STOPLIST: `schematic` and the *_sym_def family. Those
+ * are guard UA-POLY's business, one block down, because for them the override
+ * really does reach the deck and the instance must be skipped ENTIRELY -- not
+ * merely have one attribute excused. Keeping them out of the list keeps the two
+ * guards separately visible, and separately sabotage-able.
+ *
+ * A reader would otherwise assume every name here is arbitrary. They are not:
+ * each is either a netlist-time attribute the backends read for themselves
+ * (device_model is hashed straight off the instance at spice_netlist.c:235-241,
+ * outside any format string -- measured, 2 false hits on devices/vsource
+ * without it), an ERC/LVS directive, or a drawing/GUI attribute that was never
+ * going to appear in a deck.
+ *
+ * `select` USED TO BE THE LAST OF THOSE AND IS NOT ON THIS LIST ANY MORE --
+ * issue 0989. It moved to unused_attr_cellparam_stoplist just below, which asks
+ * the question per CELL rather than per NAME. That list records why the other
+ * 55 names deliberately did not move with it. */
+static const char * const unused_attr_stoplist[] = {
+  "name", "lab", "sig_type", "verilog_type", "verilog_gate",
+  "spice_ignore", "vhdl_ignore", "verilog_ignore", "tedax_ignore",
+  "spectre_ignore", "lvs_ignore", "lvs_netlist", "only_toplevel",
+  "embed", "url", "symversion", "place", "hide", "hide_texts",
+  "locked", "lock", "comment", "text", "tclcommand", "analysis",
+  "format", "spice_format", "vhdl_format", "verilog_format",
+  "tedax_format", "spectre_format", "extra", "extra_pinnumber",
+  "numslots", "sim_pinnumber", "pinnumber", "spiceprefix",
+  "highlight", "net_name", "propag", "dir", "global",
+  "generic_type", "template", "device_model", "spectre_device_model",
+  "model-name", "attach", "program", "file", "class", "savecurrent",
+  "top_is_subckt", "hiersep", "bus_replacement_char",
+  NULL
+};
+
+/* GUARD UA-STOP2, issue 0989. The names above are excused WHATEVER cell they
+ * are typed on. This second list is excused only while the cell does NOT
+ * declare the name as one of its own parameters.
+ *
+ * THE CAUSE OF 0989 IS NOT A KEYWORD AND NOT A TCL OR C LIST COMMAND, which is
+ * what a reader -- and the issue as filed -- would assume from the symptom. It
+ * is a plain case-sensitive strcmp() against the list above, applied to the
+ * ATTRIBUTE NAME alone with no regard for the cell. Measured on one instance
+ * carrying ten settings the cell reads nothing of: `select`, `dir`, `class` and
+ * `global` were silent while `selectt`, `dirr`, `classs`, `globall`, `Select`
+ * (the same word with a capital S) and `knobx` were every one of them reported.
+ * One extra letter, or one capital, and the tool speaks. So `select` was never
+ * special: it was one of 56 doors, and a designer who names a real subcircuit
+ * parameter after any of those words could never be told their setting went
+ * nowhere, however the cell was written.
+ *
+ * WHEN A NAME BELONGS ON THIS LIST RATHER THAN THE ONE ABOVE: when the only
+ * thing that reads it is a UI convenience OUTSIDE any netlist, so a symbol
+ * author who declares it in template= has the stronger claim to the name.
+ * `select` is read by the property editor to decide which field to put the
+ * cursor in (src/property_form.tcl, `xschem get_tok $::tctx::retval select`),
+ * and shipped xschem_library/ngspice/solar_panel.sch sets select=OFFSET and
+ * select=AMPLITUDE on two comparators for exactly that. comp_ngspice.sym's
+ * template declares no `select`, so those two stay silent -- while a mux whose
+ * template DOES declare one is now reportable, which is the whole of 0989.
+ *
+ * THE OTHER 55 DELIBERATELY DID NOT MOVE, and a blanket rule would manufacture
+ * false positives on shipped data. Thirteen of them are already declared in
+ * some shipped symbol's template while no shipped format string reads them --
+ * numslots by 271 symbols, class by 67, symversion by 48, only_toplevel by 20,
+ * model-name by 20, file by 11, comment by 9, sig_type by 5, text, spice_ignore,
+ * generic_type, device_model and bus_replacement_char by one or two each. The
+ * netlister, loader and drawing code read those off the instance whether or not
+ * the cell declares them, so the cell's template says nothing about whether the
+ * setting was consumed. Recorded as a rule debt on issue 0989. */
+static const char * const unused_attr_cellparam_stoplist[] = {
+  "select",
+  NULL
+};
+
+/* GUARD UA-FMT, issue 0970. Does <format> reference <tok> as @tok or %tok?
+ *
+ * WHOLE-TOKEN, NEVER strstr(). A reader would assume a substring test is good
+ * enough here; it is the exact defect this check exists to catch, in a new
+ * place. passgate.sym's format carries `W_P=@W_P`, so a plain strstr() for "W"
+ * finds it and the diagnostic goes quiet about an instance that really did set
+ * a stray `W` -- one name hiding inside another, which is how issue 0972 was
+ * filed one layer down. So the character after the match must not continue the
+ * identifier. */
+static int format_uses_token(const char *format, const char *tok)
+{
+  const char *p;
+  size_t n;
+  int c;
+
+  if(!format || !tok || !tok[0]) return 0;
+  n = strlen(tok);
+  for(p = format; *p; ++p) {
+    if((*p != '@' && *p != '%') || strncmp(p + 1, tok, n)) continue;
+    c = (unsigned char)p[1 + n];
+    if(!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_')) return 1;
+  }
+  return 0;
+}
+
+/* GUARD UA-ELIDE, issue 0983. Copy <src> into <dest> as ONE line of at most
+ * <max_chars> characters, marking a shortened result with "...".
+ *
+ * TWO MEASURED DEFECTS LIVE HERE and a reader would assume neither was
+ * possible. (a) The sentence below is built into a fixed 2048-byte buffer, so
+ * ONE instance attribute carrying a 1705-character value pushed the whole
+ * recommended action off the end: the line stopped dead at "...give xLONG",
+ * with nothing whatever to say it had been cut. (b) A value the user typed over
+ * two physical lines -- shipped xschem_library/examples/tb_symbol_include.sch
+ * writes its comm= value exactly that way -- put a newline INSIDE the sentence,
+ * so the info window showed one warning as two entries and the second began
+ * mid-word with "symbol reference to use in netlist, but SYMBOL_include never
+ * reads comm...". Every variable-length field of the sentence goes through here,
+ * so neither shape can come back whatever a user types on a sheet.
+ *
+ * <from_tail> keeps the END of the string rather than its beginning, and exists
+ * for the sheet path: a path is identified by its last components, so a long one
+ * must read ".../rom8k/rom2_predec1.sch" and never "/home/some/long/prefix...".
+ *
+ * Any run of whitespace -- spaces, tabs, newlines, carriage returns -- becomes a
+ * single space, which is what makes (b) impossible rather than merely unlikely. */
+void unused_attr_elide(char *dest, size_t dest_size, const char *src,
+                       size_t max_chars, int from_tail)
+{
+  const char *p;
+  size_t flen = 0;
+  size_t skip = 0;
+  size_t seen = 0;
+  size_t w = 0;
+  int prev_space;
+  int c;
+
+  if(!dest || dest_size < 8) { if(dest && dest_size) dest[0] = '\0'; return; }
+  dest[0] = '\0';
+  if(!src || !src[0]) return;
+  if(max_chars > dest_size - 4) max_chars = dest_size - 4;
+  if(max_chars < 4) max_chars = 4;
+
+  /* pass 1: how long the field becomes once every whitespace run is one space */
+  prev_space = 0;
+  for(p = src; *p; ++p) {
+    c = (unsigned char)*p;
+    if(c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      if(prev_space) continue;
+      prev_space = 1;
+    } else prev_space = 0;
+    ++flen;
+  }
+  if(flen > max_chars && from_tail) {
+    skip = flen - max_chars + 3;      /* +3: the "..." stands in for them */
+    if(skip > flen) skip = flen;
+    dest[w++] = '.'; dest[w++] = '.'; dest[w++] = '.';
+  }
+
+  prev_space = 0;
+  for(p = src; *p; ++p) {
+    c = (unsigned char)*p;
+    if(c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      if(prev_space) continue;
+      prev_space = 1;
+      c = ' ';
+    } else prev_space = 0;
+    if(seen < skip) { ++seen; continue; }
+    ++seen;
+    if(w + 1 >= dest_size) break;
+    if(!from_tail && w >= max_chars) {
+      dest[w++] = '.'; dest[w++] = '.'; dest[w++] = '.';
+      break;
+    }
+    dest[w++] = (char)c;
+  }
+  dest[w] = '\0';
+}
+
+/* GUARD UA-TMPL, issue 0980. Does the SYMBOL declare <tok> as one of the cell's
+ * own settings -- that is, does the symbol's template= carry it?
+ *
+ * THIS IS THE FIX FOR THE WARNING THE PREVIOUS PASS SHIPPED, and a reader would
+ * assume the question this diagnostic must answer is "does the format string
+ * being written this minute mention it?". It is not. A symbol is netlisted in
+ * six formats, and the VHDL and Verilog backends do not consult a format string
+ * at all: print_vhdl_element() (this file, the TOK_END arm, `get_tok_value(
+ * template, token, 0); if(xctx->tok_size)`) and print_verilog_element() (same
+ * shape, plus an extra= exclusion) emit an instance attribute into the generic
+ * or parameter map exactly when the SYMBOL's template= declares it. So a
+ * setting the template declares does reach a netlist, even when the SPICE
+ * format string never mentions it, and calling it dead is a lie.
+ *
+ * MEASURED, which is why this is a correction and not a refinement: before this
+ * guard, netlisting the whole of xschem_library to SPICE printed 149 lines of
+ * this kind on 18 sheets and 43 of them were false -- on SIX of those eighteen
+ * sheets every single line was false. xschem_library/logic/ram_tb.sch was told
+ * its datafile, dim, width, hex, modulename, access_delay and oe_delay "did not
+ * reach the simulator and changed nothing", while the Verilog netlist of the
+ * same sheet carries all seven into a module body that runs
+ * $readmemh(datafile, mem) and `assign #access_delay iidata = idata;`.
+ * xschem_library/examples/loading.sch was told the same about the capacitances,
+ * conductances and delays its VHDL netlist writes as `cap => 30.0` and
+ * `conduct => 1.0/20000.0`. A designer who followed that advice broke a working
+ * shipped example, and the tool told them to.
+ *
+ * NOT generic_type=, which is the near miss: that attribute only picks quoting
+ * and drops time-typed tokens from the Verilog map. Reading IT as the
+ * consumption test silences 31 of the 43 and leaves ram_tb's datafile still
+ * accused. Template membership is what separates 43 from 106 cleanly on the
+ * shipped data.
+ *
+ * GUARD UA-EXTRA, deliberately inside this one: a name the symbol lists in
+ * extra= is a NODE the cell gets wired to, not a setting the cell reads, so it
+ * stays reportable even when the template also carries it. That is the seam
+ * that keeps issue 0970's own case alive -- sky130_tests/passgate.sym declares
+ * modelp in its template AND names it in extra=, and a designer who types
+ * modelp= on one passgate still has to be told it went nowhere. Note the VHDL
+ * backend disagrees with Verilog about extra= and writes such names into the
+ * generic map; that asymmetry is filed as issue 0985 and is deliberately not
+ * settled here. attr_is_extra_node() is hilight.c's, shared with
+ * warn_hash_extra_node() above for the reason stated there. */
+static int symbol_declares_param(int inst, const char *tok)
+{
+  const char *templ;
+  const char *extra;
+  int declared;
+
+  if(!tok || !tok[0]) return 0;
+  templ = (xctx->inst[inst].ptr + xctx->sym)->templ;
+  if(!templ || !templ[0]) return 0;
+  get_tok_value(templ, tok, 0);
+  /* latch FIRST: the extra= lookup below overwrites xctx->tok_size */
+  declared = xctx->tok_size ? 1 : 0;
+  if(!declared) return 0;
+  extra = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "extra", 0);
+  if(attr_is_extra_node(extra, tok)) return 0;        /* GUARD UA-EXTRA */
+  return 1;
+}
+
+/* GUARD UA-ALTFMT, issue 0987. Is <attr> -- one of the cell's alternate netlist
+ * format strings -- there at all, and does it reference <tok>?
+ *
+ *   0 = the attribute is on neither the instance nor the symbol
+ *   1 = it is there and does NOT reference tok
+ *   2 = it is there and references tok
+ *
+ * THE INSTANCE IS ASKED FIRST AND WINS, because that is exactly what the
+ * netlisters do: every one of them resolves a format attribute as instance
+ * override, then symbol (print_spice_element, print_vhdl_element,
+ * print_verilog_element, print_spectre_element, print_tedax_element all carry
+ * the same four-step resolution). The previous version of this code OR'd the
+ * two together, which is wrong twice over: an instance that brings its own
+ * Spectre line is netlisted through THAT line and the symbol's is never parsed.
+ * Row UF31 is the witness, and it is a separate row from UF25: deleting the
+ * instance-side lookup altogether reddens UF25, but putting the OR back reddens
+ * only UF31, because until that fixture no sheet anywhere carried an
+ * instance-side format string that read a DIFFERENT token from the one the
+ * symbol's reads, and OR and instance-wins give the same answer on every other.
+ *
+ * A READER WOULD ASSUME `1` IS JUST `0` WITH LESS INFORMATION. It is not, and
+ * the difference is what issues 0987 and 0988 turn on: a backend that has a
+ * format string of its own does NOT also emit the symbol template's parameters
+ * -- print_vhdl_element and print_verilog_element both hand off to their
+ * _primitive() form the moment fmt[0] is non-empty -- so `1` means "this
+ * backend will not carry the setting either", and collapsing it into `0` would
+ * put a format on the carrier list that carries nothing. That is a fabricated
+ * claim about the user's own design, RULING D5-1.
+ *
+ * ISSUE 0992, AND IT IS THE WHOLE REASON THE PRESENCE TEST BELOW IS
+ * xctx->tok_size ALONE. "Is the attribute there?" and "does it hold anything?"
+ * are two different questions, and the netlisters ask only the first when they
+ * decide whether to stop looking. print_vhdl_element and print_verilog_element
+ * both read `get_tok_value(inst->prop_ptr, fmt_attr, 2); if(!xctx->tok_size)
+ * <look at the symbol>` -- xctx->tok_size is the length of the token NAME that
+ * matched, so an instance carrying vhdl_format="" IS the answer as far as they
+ * are concerned and the symbol's own line is never read. They then find the
+ * string empty, take the ordinary path, and write the cell's template
+ * parameters after all.
+ *
+ * An earlier version of this function tested (xctx->tok_size && f && f[0]),
+ * which reads as the same question and is not: an empty override on ONE COPY
+ * of a cell made this code fall through to the SYMBOL's format string, which
+ * the netlist being described never looks at. MEASURED, on a one-pin cell whose
+ * template declares knob and whose symbol carries a VHDL line reading some
+ * other token: the sheet types knob=99 and vhdl_format="" on one copy, the VHDL
+ * netlist really does write `knob => 99` in that copy's generic map, and the
+ * tool told the designer "uaemptf never reads knob when the netlist is written
+ * ... or take it off". Following that advice deletes a live setting -- issue
+ * 0980's harm, arriving through a new door. The mirror shape fabricated
+ * instead: with the symbol's VHDL line reading knob and the template declaring
+ * nothing, the tool named VHDL as a carrier while neither the VHDL nor the
+ * Verilog netlist of that sheet mentioned knob anywhere, RULING D5-1.
+ *
+ * So: presence is tok_size, exactly as the netlisters have it, and an override
+ * that IS there but empty resolves to state 0 -- no format string governs this
+ * backend, the template path is the one taken -- which is what the netlisters
+ * do one line later at `if(fmt[0])`. Rows UF33a and UF33b are the two shapes.
+ *
+ * get_tok_value() hands back a pointer into a static buffer that the NEXT call
+ * overwrites, so the result is consumed before anything else is looked up. */
+static int ua_fmt_attr_state(int inst, const char *attr, const char *tok)
+{
+  const char *f;
+  int found;
+
+  f = get_tok_value(xctx->inst[inst].prop_ptr, attr, 2);
+  found = xctx->tok_size ? 1 : 0;
+  if(!found) {
+    f = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, attr, 2);
+    found = xctx->tok_size ? 1 : 0;
+  }
+  if(!found || !f || !f[0]) return 0;
+  return format_uses_token(f, tok) ? 2 : 1;
+}
+
+/* GUARD UA-IGNORE, issue 0988. Would this instance be written out AT ALL in the
+ * netlist format these flag bits belong to?
+ *
+ * THIS IS THE CASE THE WHOLE DIAGNOSTIC EXISTS FOR AND IT WAS THE ONE THAT GOT
+ * AWAY. A symbol or an instance may carry vhdl_ignore=true, verilog_ignore,
+ * spectre_ignore or tedax_ignore, and then no netlist of that format contains
+ * the instance at all -- so a setting its template happens to declare reaches
+ * nothing, anywhere, and the accusing sentence is the truthful one. Before this
+ * guard a template declaration alone silenced the warning, so a cell marked
+ * un-netlistable in every other format was the quietest thing in the tree.
+ * Measured on a fixture: the sheet types knob=99, the SPICE deck carries only
+ * the template default knob=1, the VHDL netlist holds no instance of the cell
+ * at all, and the tool said nothing.
+ *
+ * The bits are the ones skip_instance2() (netlist.c) tests, set from the
+ * *_ignore attributes by set_sym_flags() and set_inst_flags() in actions.c, so
+ * this asks the netlisters' own question. skip_instance2() itself cannot be
+ * called here: it is static to netlist.c AND keyed to xctx->netlist_type, which
+ * is SPICE at this call site, so it can only ever answer about SPICE. A
+ * three-line reader of the same bits keeps this change to one file.
+ *
+ * LVS_IGNORE is deliberately NOT consulted. When it applies, spice_netlist.c's
+ * own skip_instance() means print_spice_element() -- and so this whole check --
+ * is never reached for that instance. */
+static int ua_inst_or_sym_flag(int inst, int mask)
+{
+  return ((xctx->inst[inst].flags & mask) ||
+          (xctx->sym[xctx->inst[inst].ptr].flags & mask)) ? 1 : 0;
+}
+
+/* GUARD UA-GENTIME, issue 0987. A generic the symbol types as `time` is dropped
+ * from the Verilog instance parameter map -- print_verilog_element's
+ * `strcmp(get_tok_value(generic_type, token, 0), "time")` test -- so Verilog
+ * does not carry it even though the template declares it. A reader would assume
+ * template membership settles both VHDL and Verilog together; on this one
+ * attribute type it does not, and VHDL has no matching exclusion. Shipped
+ * xschem_library/examples/loading.sch is the witness: switch_rreal.sym types
+ * del as a time, so naming Verilog beside VHDL on those lines would name a
+ * netlist that carries nothing -- RULING D5-1.
+ *
+ * generic_type= is read into a copy because the inner get_tok_value() overwrites
+ * the static buffer the outer one just returned. */
+static int ua_generic_is_time(int inst, const char *tok)
+{
+  char *gt = NULL;
+  int r;
+
+  my_strdup(_ALLOC_ID_, &gt,
+            get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "generic_type", 0));
+  if(!gt || !gt[0]) {
+    my_free(_ALLOC_ID_, &gt);
+    return 0;
+  }
+  r = !strcmp(get_tok_value(gt, tok, 0), "time");
+  my_free(_ALLOC_ID_, &gt);
+  return r;
+}
+
+/* GUARD UA-EMPTY, issue 0993. A setting with an EMPTY value is not written
+ * into the generic/parameter map at all, and the two backends that walk the
+ * template disagree about what "empty" means.
+ *
+ * A reader would assume template membership settles it -- the 0988 pass assumed
+ * exactly that -- so here is the measurement, taken on the same one-pin cell
+ * whose template declares knob, with the sheet typing knob="" on one copy: the
+ * VHDL netlist writes `xEM : uatpl` with NO generic map, only the component's
+ * own default, while the Verilog netlist writes `.knob ( "" )`. Naming VHDL
+ * beside Verilog on that line would be a claim about the designer's own circuit
+ * that nobody measured, RULING D5-1.
+ *
+ * WHY TWO MODES AND NOT ONE. Both netlisters end the value at `if(value[0] !=
+ * '\0')`, but they build `value` differently: print_vhdl_element strips the
+ * unescaped quotes as it parses (`if(c=='"' && !escape) quote=!quote; else
+ * value[value_pos++]=c`), so "" leaves nothing behind, and
+ * print_verilog_element keeps every character it sees, so "" is two characters
+ * and counts. get_tok_value's bit 0 is that same difference -- 3 keeps quotes
+ * and backslashes, 2 drops the unescaped ones -- and bit 1 is set in both so
+ * that merely LOOKING at a value can never run a tcleval() hook.
+ *
+ * Shipped instances already carry attrs="", write="", sweep="", store="" and
+ * nodeset=""; this needs only a cell whose template declares one of those
+ * names. Row UF32 is the witness. */
+#define UA_TMPL_NO      0   /* this backend never walks the symbol template */
+#define UA_TMPL_DEQUOTE 1   /* VHDL: the parser strips "..." before the test */
+#define UA_TMPL_RAW     2   /* Verilog: the parser keeps "..." so "" is a value */
+
+static int ua_value_is_empty(int inst, const char *tok, int mode)
+{
+  const char *v;
+
+  v = get_tok_value(xctx->inst[inst].prop_ptr, tok,
+                    (mode == UA_TMPL_RAW) ? 3 : 2);
+  return (!v || !v[0]) ? 1 : 0;
+}
+
+/* GUARD UA-FMTWINS, issues 0987 and 0988. Does the netlist format described by
+ * <attr> and <mask> carry <tok> for THIS instance?
+ *
+ * <uses_template> is UA_TMPL_NO, UA_TMPL_DEQUOTE or UA_TMPL_RAW: whether that
+ * backend emits the symbol template's parameters when it has no format string
+ * of its own, and if it does, which spelling of "empty" it applies to the value
+ * (GUARD UA-EMPTY above). VHDL and Verilog do; Spectre and tEDAx do NOT.
+ *
+ * A reader would assume all six formats behave alike
+ * -- the 0980 pass assumed exactly that -- so here is the measurement, taken on
+ * a one-pin subcircuit whose template declares knob and whose sheet sets
+ * knob=99: the VHDL netlist writes `knob => 99`, the Verilog one writes
+ * `.knob ( 99 )`, the Spectre product has no instance line for the cell at all
+ * and the tEDAx one mentions knob nowhere. print_spectre_element() and
+ * print_tedax_element() read spectre_format and tedax_format and nothing else;
+ * neither falls back to `format` and neither walks the template. So template
+ * membership is evidence for two backends and for no others.
+ *
+ * GUARD UA-FMTWINS is the `st == 1` line: a backend that has a format string of
+ * its own is netlisted through that string and never through the parameter map,
+ * so for that backend template membership counts for nothing. */
+static int ua_backend_carries(int inst, const char *attr, int mask,
+                              int uses_template, int drop_time, const char *tok)
+{
+  int st;
+
+  if(ua_inst_or_sym_flag(inst, mask)) return 0;             /* GUARD UA-IGNORE */
+  st = ua_fmt_attr_state(inst, attr, tok);
+  if(st == 2) return 1;                                     /* GUARD UA-ALTFMT */
+  if(st == 1) return 0;                                     /* GUARD UA-FMTWINS */
+  if(uses_template == UA_TMPL_NO) return 0;
+  if(drop_time && ua_generic_is_time(inst, tok)) return 0;   /* GUARD UA-GENTIME */
+  if(ua_value_is_empty(inst, tok, uses_template)) return 0;   /* GUARD UA-EMPTY */
+  return symbol_declares_param(inst, tok);      /* GUARD UA-TMPL + GUARD UA-EXTRA */
+}
+
+/* ISSUE 0987. How far does <tok> actually get? THREE answers, not two, and
+ * <carriers> is filled in with the netlist formats measured for THIS instance.
+ *
+ *   UA_HERE      the deck being written right now reads it. Say nothing.
+ *   UA_ELSEWHERE this deck drops it, but another netlist of the same cell
+ *                really does carry it. Say so, and say DO NOT REMOVE IT.
+ *   UA_NOWHERE   nothing anywhere reads it. The original 0970 sentence.
+ *
+ * A reader would assume UA_ELSEWHERE deserves silence -- the 0980 pass did, and
+ * that is issue 0987: it turned 43 wrong accusations into 43 silences, one for
+ * one, and shipped loading.sch's four capacitors went on simulating at the cell
+ * default with nothing said.
+ *
+ * `spice_format` IS NOT IN THIS TABLE and its absence is deliberate. It is a
+ * phantom: no backend reads it -- print_spice_element() resolves `format`, or
+ * xctx->format when an LVS or custom-format run has set one -- and it is
+ * declared by zero .sym files in xschem_library, sky130A, ihp-sg13g2, gf180mcuD
+ * and xschem_libs_newsym. The 0980 pass silenced the warning on it, which was
+ * silencing on nothing. It stays on the stoplist above, because a user may
+ * still type the name.
+ *
+ * GUARD UA-CARRIERS, RULING D5-1: the sentence names the formats measured here,
+ * joined as "VHDL or Verilog" or "Spectre, VHDL or Verilog", never a fixed
+ * phrase. A hardcoded list would be a claim about the user's design that nobody
+ * measured. */
+#define UA_HERE      0
+#define UA_ELSEWHERE 1
+#define UA_NOWHERE   2
+
+static int ua_reach(int inst, const char *format, const char *tok,
+                    char *carriers, size_t csize)
+{
+  const char *names[4];
+  const char *sep;
+  size_t len;
+  int n = 0;
+  int i;
+
+  /* Defensive, and deliberately invisible to any row -- the only caller resets
+   * this itself one line before the call, and every path out of here that
+   * returns UA_ELSEWHERE has written the join into it. It is here so that a
+   * later caller cannot inherit the previous token's list. Deleting it changes
+   * nothing a user sees, and no test row should be written to see it. */
+  carriers[0] = '\0';
+  if(format_uses_token(format, tok)) return UA_HERE;         /* GUARD UA-FMT */
+
+  /* GUARD UA-LVSFMT, issue 0987. <format> is the string the deck is written
+   * from, and in an LVS or custom-format run that is lvs_format, not `format`.
+   * 110 files in this tree carry an lvs_format, so narrowing the first test to
+   * the resolved string alone would newly call every setting only the ordinary
+   * format line reads dead, and offer it for deletion -- issue 0980's harm
+   * arriving through a new door.
+   *
+   * ⚠ THE `xctx->format &&` HALF IS A COST GUARD, NOT A CORRECTNESS ONE, and no
+   * test row can see it or should try -- issue 0986's rule is about halves that
+   * hide a defect. When xctx->format is NULL the resolved <format> above IS the
+   * plain `format` attribute, resolved instance-then-symbol by exactly the same
+   * four steps, so this second lookup would return the same answer the first
+   * test already gave. Removing the condition changes no output; it only pays
+   * two get_tok_value() calls per token per instance on every ordinary SPICE
+   * netlist. Delete the whole line, though, and UF26 reddens. */
+  if(xctx->format && ua_fmt_attr_state(inst, "format", tok) == 2) return UA_HERE;
+
+  /* THE `| *_SHORT` HALF OF EACH MASK, issue 0991, and it is not decoration.
+   * *_ignore takes THREE spellings, not two: `true`/`open` set the _IGNORE bit
+   * and `short` sets the _SHORT bit (set_sym_flags and set_inst_flags in
+   * actions.c). A cell or a copy marked `vhdl_ignore=short` is netlisted as a
+   * plain WIRE joining its pins -- netlist.c's skip_instance(i, 1, ...) hands
+   * skip_instance2 the _SHORT bit as well, so print_vhdl_element is never
+   * reached for it -- and a wire carries no settings at all. Without this half
+   * the sentence names a netlist in which the instance does not appear as an
+   * instance, RULING D5-1. Rows UF30a-d take the four marks one at a time and
+   * each demands the exact list that survives. */
+  if(ua_backend_carries(inst, "spectre_format", SPECTRE_IGNORE | SPECTRE_SHORT,
+                        UA_TMPL_NO, 0, tok)) names[n++] = "Spectre";
+  if(ua_backend_carries(inst, "vhdl_format", VHDL_IGNORE | VHDL_SHORT,
+                        UA_TMPL_DEQUOTE, 0, tok)) names[n++] = "VHDL";
+  if(ua_backend_carries(inst, "verilog_format", VERILOG_IGNORE | VERILOG_SHORT,
+                        UA_TMPL_RAW, 1, tok)) names[n++] = "Verilog";
+  if(ua_backend_carries(inst, "tedax_format", TEDAX_IGNORE | TEDAX_SHORT,
+                        UA_TMPL_NO, 0, tok)) names[n++] = "tEDAx";
+  if(!n) return UA_NOWHERE;
+
+  /* The join, and BOTH separators are load-bearing English. Two names read "VHDL
+   * or Verilog"; three or four need the commas as well, "Spectre, VHDL, Verilog
+   * or tEDAx". Until row UF29 there was no sheet anywhere -- shipped or fixture
+   * -- that produced more than two carriers, so the ", " branch was executed by
+   * nothing and "a VHDL, Verilog netlist" or "a VHDLVerilog netlist" could have
+   * shipped past every check, against the PLAIN ENGLISH ruling. UF29 demands
+   * the joined phrase verbatim, not the set of names.
+   *
+   * The length test is the same shape as GUARD UA-ELIDE's destination clamp and
+   * is unreachable for the same reason: four names at most, the longest join is
+   * "Spectre, VHDL, Verilog or tEDAx" at 31 characters, and the only caller
+   * hands in a 64-byte buffer. No sentence a user can produce reaches it, so row
+   * UF22 pins it structurally rather than trading a field the reader needs for a
+   * test -- issue 0986 gap 5, same argument. */
+  len = 0;
+  for(i = 0; i < n; ++i) {
+    sep = "";
+    if(i > 0) sep = (i == n - 1) ? " or " : ", ";
+    if(len + strlen(sep) + strlen(names[i]) + 1 >= csize) break;
+    strcpy(carriers + len, sep);
+    len += strlen(sep);
+    strcpy(carriers + len, names[i]);
+    len += strlen(names[i]);
+  }
+  return UA_ELSEWHERE;
+}
+
+/* GUARD UA-SYMNAME, issue 0980. Does the instance's own SYMBOL REFERENCE read
+ * the setting?
+ *
+ * A reader would assume the cell an instance points at is a fixed name somebody
+ * typed on the sheet. It is not. xschem substitutes the instance's attributes
+ * into the symbol reference before resolving it -- link_symbols_to_instances()
+ * in save.c calls translate() on xctx->inst[].name -- and the shipped library
+ * uses that on purpose. xschem_library/generators/test_symbolgen.sch places
+ * `symbolgen.tcl(inv,@ROUT\)` and sets ROUT=1200 on it, and the SPICE deck
+ * really does get `x1 IN_INV IN symbolgen_tcl_inv_1200`. The setting chose the
+ * cell body: it is the loudest way a setting can possibly reach the simulator,
+ * and the first version of this diagnostic told the user on six shipped lines
+ * that it had changed nothing and they should take it off. Doing so would point
+ * the sheet at symbolgen_tcl_inv_ , a different cell that is not there.
+ *
+ * xctx->inst[].name is the RAW reference, with the @ still in it; the resolved
+ * name lives on the symbol, so this is the only place the question can be
+ * asked. The tree ships two more of this shape, mosgen.tcl(@model\) and
+ * tier.tcl(@lab\), both under xschem_library/generators/. Whole-token test, for
+ * the reason GUARD UA-FMT states. */
+static int symbol_name_uses_token(int inst, const char *tok)
+{
+  return format_uses_token(xctx->inst[inst].name, tok);
+}
+
+/* ISSUES 0970 AND 1201. WHICH SPICE LINE IS THIS COPY ACTUALLY WRITTEN THROUGH?
+ *
+ * The four steps below are the netlister's own; they were lifted VERBATIM out
+ * of print_spice_element() so that the two things that now ask "did this
+ * setting reach the deck?" -- the warning, and issue 1201's automatic separate
+ * copy of the cell -- can never ask the question about two different strings
+ * for the same copy. Row AS29 counts the definition and the callers.
+ *
+ * A reader would assume the symbol's `format` attribute settles it. It does
+ * not, twice over: a copy may bring a format line of its OWN, and an LVS or
+ * custom-format run puts some other attribute name in xctx->format so THAT is
+ * the string the deck is written from, with plain `format` as the fallback.
+ * Instance first, then symbol, then the same two again for the plain name.
+ *
+ * my_strdup() of an empty source leaves *format NULL, which is the caller's
+ * "this copy produces no element line at all" signal. */
+static int resolve_netlist_format(int inst, char **format)
+{
+  const char *fmt_attr;
+
+  fmt_attr = xctx->format ? xctx->format : "format";
+  /* allow format string override in instance */
+  my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->inst[inst].prop_ptr, fmt_attr, 2));
+  /* get netlist format rule from symbol */
+  if(!xctx->tok_size)
+    my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, fmt_attr, 2));
+  /* allow format string override in instance */
+  if(!xctx->tok_size && strcmp(fmt_attr, "format"))
+    my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->inst[inst].prop_ptr, "format", 2));
+  /* get netlist format rule from symbol */
+  if(!xctx->tok_size && strcmp(fmt_attr, "format"))
+    my_strdup(_ALLOC_ID_, format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "format", 2));
+  return (*format && (*format)[0]) ? 1 : 0;
+}
+
+/* GUARD UA-TYPE + GUARD UA-POLY, issues 0970 and 1201. Is this copy one the
+ * whole question can be asked about at all?
+ *
+ * ONE CLASSIFICATION, ASKED TWICE. Until issue 1201 this was the head of
+ * warn_unused_instance_attr() and had exactly one caller. It has two now -- the
+ * warning, and auto_spec_name() in actions.c which writes the separate copy --
+ * and a second hand-written copy of these tests would agree on the day it was
+ * written and drift silently afterwards, with nothing a user could do to show
+ * it. So it is a function. Row AS28 counts the definition and the callers.
+ *
+ * GUARD UA-TYPE: only cells whose insides are written out ONCE from a template.
+ * That is what this whole class IS: a per-copy setting has nowhere to go
+ * precisely because there is only one body. A reader would assume the check is
+ * about "unused attributes" in general -- it is not, and measured without this
+ * guard the rule emits 6863 lines across the two shipped PDK trees instead of
+ * 10. A transistor placed straight on a sheet gets its own line in the deck and
+ * is nobody's problem here.
+ *
+ * GUARD UA-POLY, and for issue 1201 it is GUARD AS-EXPLICIT as well: a copy
+ * that already carries a `schematic` attribute (or one of the *_sym_def
+ * bodies) ALREADY gets a symbol block of its own from get_additional_symbols(),
+ * whose parent property string is this copy's, so `model=@modelp` inside the
+ * cell resolves to what THIS copy asked for and the deck really does get a
+ * second body. Accusing it of having typed something that changed nothing would
+ * be exactly backwards -- and a designer who named the copy by hand must keep
+ * exactly today's deck, byte for byte, which is why the shipped bandgap sheet
+ * does not move. EXPLICIT BEATS IMPLICIT, and this is the line that does it.
+ *
+ * <allow_explicit>, ISSUES 1212 AND 1215, AND IT IS THE ONE THING THAT TURNS
+ * GUARD UA-POLY OFF. Two questions asked in actions.c are about a copy that
+ * HAS named its own cell body by hand: "does the copy that typed this name ask
+ * for the same settings as the copy I am about to name?" (GUARD AS-TYPEDSAME)
+ * and "did the name I minted land on a hand-typed one that wanted something
+ * else?" (GUARD AS-CLASH). Neither can be answered while the classification
+ * refuses to look at such a copy at all -- and that refusal is exactly what
+ * issue 0982 recorded as blinding this diagnostic to the state its own advice
+ * created. So the `schematic` half of the skip is lifted on that arm ONLY. The
+ * five *_sym_def probes stay on both arms: a copy whose body comes from an
+ * attribute rather than from a drawing has settled where its insides come from
+ * by a route this feature does not touch.
+ *
+ * NOTHING ELSE CHANGES, and that is deliberate: one function, one set of
+ * tests, asked with one flag, rather than a second hand-written copy that
+ * would agree today and drift tomorrow. lost_attrs_the_cell_body_reads() and
+ * warn_unused_instance_attr() reach it through ua_instance_eligible() below and
+ * behave exactly as before.
+ *
+ * It latches and restores xctx->tok_size itself, for the reason GUARD
+ * UA-TOKSIZE states at the caller: an observer may never become the reason a
+ * real netlist value goes missing. */
+static int ua_instance_eligible_ex(int inst, int allow_explicit)
+{
+  const char *type;
+  const char *prop;
+  size_t saved_tok_size;
+  int skip;
+
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  prop = xctx->inst[inst].prop_ptr;
+  if(!prop || !prop[0]) return 0;
+  type = (xctx->inst[inst].ptr + xctx->sym)->type;
+  if(!type || strcmp(type, "subcircuit")) return 0;
+
+  saved_tok_size = xctx->tok_size;
+  get_tok_value(prop, "schematic", 0);
+  skip = (xctx->tok_size && !allow_explicit) ? 1 : 0;
+  if(!skip) { get_tok_value(prop, "spice_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "spectre_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "vhdl_sym_def", 0);    skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "verilog_sym_def", 0); skip = xctx->tok_size ? 1 : 0; }
+  if(!skip) { get_tok_value(prop, "tedax_sym_def", 0);   skip = xctx->tok_size ? 1 : 0; }
+  xctx->tok_size = saved_tok_size;
+  return skip ? 0 : 1;
+}
+
+/* The ordinary arm of the classification above: a copy that has named its own
+ * cell body is somebody else's business. Every caller that existed before
+ * issues 1212 and 1215 asks through here, and the signature is unchanged. */
+static int ua_instance_eligible(int inst)
+{
+  return ua_instance_eligible_ex(inst, 0);
+}
+
+/* ISSUES 0970 AND 1201. IS THIS ONE SETTING LOST -- and if so, how far did it
+ * get? The exemption chain, in the order it was measured, and it is shared for
+ * the same reason ua_instance_eligible() is: two copies of it would drift.
+ *
+ * The guards keep their own names so a reader can find the measurement behind
+ * each one in the blocks above: UA-NAME, UA-STOP, UA-POLY's own token names,
+ * UA-STOP2, UA-SYMNAME, then ua_reach() itself.
+ *
+ * Returns 1 when the setting really is lost to the deck being written, and
+ * writes *reach so the caller can tell the two shapes of the sentence apart. */
+static int ua_token_lost(int inst, const char *format, const char *tok,
+                         char *carriers, size_t csize, int *reach)
+{
+  int i;
+  int r;
+
+  *reach = UA_NOWHERE;
+  carriers[0] = '\0';
+  if(!tok || !tok[0]) return 0;
+  /* GUARD UA-NAME, issue 0970. A token that does not read as an attribute NAME
+   * is not a setting the user typed, and the tree really contains such tokens:
+   * the shipped sky130_tests/charge_pump_phasegen sheet writes its instance
+   * properties over three lines with SPICE-style continuation markers, so
+   * list_tokens() hands back a bare "+" twice per instance. Measured: without
+   * this guard the shipped tb_charge_pump bench emits 8 lines reading
+   * `instance x7 (a lvtnot) sets +=`, which is nonsense to a reader and would
+   * have been the whole of this diagnostic's noise budget. An attribute name
+   * starts with a letter or an underscore. */
+  if(!((tok[0] >= 'a' && tok[0] <= 'z') || (tok[0] >= 'A' && tok[0] <= 'Z') ||
+       tok[0] == '_')) return 0;
+  /* GUARD UA-STOP: the measured exemptions, by name whatever cell they sit on. */
+  for(i = 0; unused_attr_stoplist[i]; ++i) {
+    if(!strcmp(tok, unused_attr_stoplist[i])) return 0;
+  }
+  /* GUARD UA-POLY's own tokens: an instance carrying one of these never gets
+   * here, but naming them keeps a reader from adding them to the stoplist and
+   * quietly turning the skip-the-whole-instance rule into a skip-one-attribute
+   * rule. */
+  if(!strcmp(tok, "schematic") || !strcmp(tok, "spice_sym_def") ||
+     !strcmp(tok, "spectre_sym_def") || !strcmp(tok, "vhdl_sym_def") ||
+     !strcmp(tok, "verilog_sym_def") || !strcmp(tok, "tedax_sym_def")) return 0;
+  /* GUARD UA-STOP2, issue 0989: a name the EDITOR reads for itself is excused
+   * only while the cell does not declare it as one of its own parameters. */
+  for(i = 0; unused_attr_cellparam_stoplist[i]; ++i) {
+    if(!strcmp(tok, unused_attr_cellparam_stoplist[i]) &&
+       !symbol_declares_param(inst, tok)) return 0;
+  }
+  /* GUARD UA-SYMNAME, issue 0980: a setting the copy's symbol reference
+   * substitutes into the cell name picks WHICH cell body is written out. It
+   * stays the FIRST of the reach tests: it is the loudest way a setting can
+   * reach the simulator, so there is nothing to report about it in any shape --
+   * and for issue 1201 nothing to specialise either, since the setting has
+   * already chosen a body of its own. */
+  if(symbol_name_uses_token(inst, tok)) return 0;
+  /* ISSUE 0987: and then how far it gets -- this deck, some other netlist of
+   * the same cell, or nothing anywhere. Only the first of those is silent. */
+  r = ua_reach(inst, format, tok, carriers, csize);
+  *reach = r;
+  return (r == UA_HERE) ? 0 : 1;
+}
+
+/* GUARD AS-BODY's cache, issue 1201. Answers keyed "<symbol reference>\n<token>"
+ * and thrown away by auto_spec_end() (actions.c) when the netlist run ends.
+ *
+ * WHY IT IS KEYED ON THE SYMBOL AND NOT ON THE COPY: the sheet a cell is built
+ * from is a property of the symbol here, not of the copy, because a copy that
+ * names its own sheet has already been sent away by GUARD AS-EXPLICIT and a
+ * SYMBOL that names its own sheet by GUARD AS-SYMBODY. So one lookup answers
+ * for every copy of the cell on the design, and a 200-copy sheet reads the
+ * cell's file once instead of 200 times.
+ *
+ * WHY IT MUST BE THROWN AWAY: without that, the answer remembered about one
+ * design is handed to the next design opened in the same session, and the file
+ * it was read from may have been edited in between. No behavioural row inside a
+ * single run can see this; row AS30 pins it structurally. */
+static Str_hashtable ua_body_table = {NULL, 0};
+
+/* Does the text of a cell's own sheet reference <tok> as @tok or %tok?
+ *
+ * WHOLE-TOKEN, NEVER strstr(), for the reason GUARD UA-FMT gives one block up:
+ * a sheet reading `@model` must not answer yes to a question about `modelp`.
+ *
+ * The file is read once, whole, because a token can straddle any chunk
+ * boundary. A file that cannot be read, or one absurdly large, answers NO --
+ * which is today's behaviour, i.e. no separate copy is written -- rather than
+ * guessing. */
+static int ua_file_uses_token(const char *path, const char *tok)
+{
+  struct stat st;
+  FILE *f;
+  char *buf;
+  size_t want;
+  size_t got;
+  int r;
+
+  if(!path || !path[0]) return 0;
+  if(stat(path, &st)) return 0;
+  if(st.st_size <= 0) return 0;
+  if((double)st.st_size > 64.0 * 1024.0 * 1024.0) return 0;
+  f = fopen(path, "r");
+  if(!f) return 0;
+  want = (size_t)st.st_size;
+  buf = my_malloc(_ALLOC_ID_, want + 1);
+  if(!buf) { fclose(f); return 0; }
+  got = fread(buf, 1, want, f);
+  fclose(f);
+  buf[got] = '\0';
+  r = format_uses_token(buf, tok);
+  my_free(_ALLOC_ID_, &buf);
+  return r;
+}
+
+/* GUARD AS-BODY, issue 1201. Does the cell's OWN SHEET use this setting?
+ *
+ * THIS IS THE SECOND HALF OF THE TRIGGER AND IT IS WHAT KEEPS THE CHANGE SMALL.
+ * "The SPICE line never reads it" alone is true of a great many settings that a
+ * separate copy of the cell could do nothing whatever about -- a misspelling, a
+ * note to oneself, a leftover. Writing a second body for those would put cells
+ * nobody asked for into decks that are correct today. The setting has to be one
+ * the cell's own drawing actually consumes, as sky130_tests/passgate.sch
+ * consumes `model=@modelp`, before a copy of that drawing can be worth making.
+ *
+ * A reader would assume the cell's sheet can be asked about the loaded state.
+ * It cannot: at the moment this question has to be answered the sub-sheet has
+ * not been loaded and will not be until the netlister descends into it, which
+ * is after the decision. So the file is read from disk. */
+static int cell_body_reads_token(int inst, const char *tok)
+{
+  char fn[PATH_MAX];
+  char key[PATH_MAX];
+  const char *symname;
+  Str_hashentry *e;
+  int r;
+
+  if(!tok || !tok[0]) return 0;
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  symname = xctx->sym[xctx->inst[inst].ptr].name;
+  if(!symname) symname = "";
+  my_snprintf(key, S(key), "%s\n%s", symname, tok);
+  if(ua_body_table.size == 0) str_hash_init(&ua_body_table, 1021);
+  e = str_hash_lookup(&ua_body_table, key, "", XLOOKUP);
+  if(e) return (e->value && e->value[0] == '1') ? 1 : 0;
+  /* ⚠ inst = -1, NOT inst, AND fallback = 0. NEITHER IS COSMETIC.
+   *
+   * -1 because get_sch_from_sym()'s instance arm READS AND CLEARS the one-shot
+   * Tcl variable hi_descend_view_path -- the "descend into this named view just
+   * this once" override (doc/claude/specs/hi_descend.md). Asking it a question
+   * here would eat that override before the descend it was set for ever saw
+   * it, and the user would land in the default view with nothing said.
+   * Answering about the SYMBOL is also the right question: both callers have
+   * already established that neither the copy (GUARD AS-EXPLICIT) nor the
+   * symbol (GUARD AS-SYMBODY) names a drawing of its own, so the arm this takes
+   * is the plain "<cell>.sch beside the symbol" one, and that is a property of
+   * the symbol alone -- which is what makes the cache key above sound.
+   *
+   * fallback = 0 because with a real display up, get_sch_from_sym()'s fallback
+   * arm asks the user a question in a dialog box, and a netlist run may never
+   * stop to ask one. */
+  get_sch_from_sym(fn, xctx->inst[inst].ptr + xctx->sym, -1, 0);
+  r = ua_file_uses_token(fn, tok);
+  str_hash_lookup(&ua_body_table, key, r ? "1" : "0", XINSERT);
+  return r;
+}
+
+/* ISSUE 1201. Throw away what GUARD AS-BODY remembered. Called by
+ * auto_spec_end() (actions.c) at the end of every SPICE netlist run. */
+void lost_attrs_cache_clear(void)
+{
+  str_hash_free(&ua_body_table);
+}
+
+/* GUARD AS-VALUE, issue 1213. WHAT DOES A VALUE HAVE TO LOOK LIKE BEFORE
+ * XSCHEM WILL WRITE A WHOLE SEPARATE COPY OF A CELL FOR IT?
+ *
+ * IT IS AN ALLOW-RULE, AND THAT IS THE POINT OF IT. Issue 1206 added a
+ * one-byte "the value is not empty" test, and issue 1213 is a value typed as a
+ * single SPACE walking straight past it: the copy got its own cell, the info
+ * window announced it as work done for the designer, and the deck named a
+ * device `sky130_fd_pr__` with nothing after it, which exists in no PDK. A tab
+ * did the same. A LINE BREAK was worse -- it cut the transistor line in half
+ * and started a second element line reading `XL=`, a call to a cell nobody has
+ * ever heard of. A value of nothing but punctuation gave `sky130_fd_pr__---`.
+ * That is the SECOND time a whitespace-shaped value has walked past a guard
+ * written for the shape next to it, so this is deliberately not a third guard:
+ * it says what a usable value IS, and everything else falls back to the plain
+ * cell and is reported as a setting that went nowhere -- exactly the behaviour
+ * before issue 1201. A shape nobody thought of is then safe by construction.
+ *
+ * THE RULE, in the words the user is given: a value XSCHEM can pass down has
+ * to be ONE WORD with at least one letter or digit in it. Formally: not empty,
+ * no blank space of any kind anywhere in it, and at least one [A-Za-z0-9].
+ *
+ * Measured against the seven shapes issue 1213 lists: empty REJECT, one space
+ * REJECT, one tab REJECT, one line break REJECT, punctuation only REJECT, a
+ * real value with a trailing space REJECT (that one was a duplicate-body
+ * defect of its own, two byte-identical cell bodies, and it was filed nowhere),
+ * and a real value written in quotes ACCEPTED UNCHANGED -- the .sch reader
+ * takes the quotes off long before this feature sees anything, so that value
+ * is already the plain value. Row AS64 pins that last one so a later hand does
+ * not "fix" quotes into the rule and break a spelling that works today.
+ *
+ * ASKED IN EXACTLY THREE PLACES, and row AS67 counts them: the half that
+ * decides whether a copy gets a cell of its own (lost_attrs_scan below), the
+ * half that writes the sentence the designer reads
+ * (warn_unused_instance_attr), and -- since issue 1227 -- the half that keeps
+ * the refused setting out of the new cell body
+ * (lost_attrs_strip_unusable below). A repair that moved only the first would
+ * leave the tool quietly right and silent; one that moved only the second
+ * would leave it explaining a deck it still wrote wrong; and one that moved
+ * neither of those but not the third would leave it saying the setting went
+ * nowhere while the setting sat in the deck.
+ *
+ * `@` AND `%` ARE REJECTED TOO, issue 1227. They are not ordinary characters
+ * in a value: they are the two marks XSCHEM itself reads as "fill something in
+ * here later", and the netlister really does resolve them a second time when it
+ * writes the device line. So a value holding one cannot be spelled into a cell
+ * name honestly -- measured, `modelp=pfet@01v8_lvt` minted a cell called
+ * `aswv__modelp_pfet_01v8_lvt`, the very name a copy that typed the clean
+ * `pfet_01v8_lvt` gets, while the deck carried `sky130_fd_pr__pfet@01v8_lvt`,
+ * a device in no PDK. The design walk in actions.c already refuses every `@`
+ * value for the same reason; this is that refusal in the other half.
+ *
+ * REJECTING A SETTING NOW REALLY DOES KEEP IT OUT OF THE DECK, issue 1227.
+ * Until this pass it did not: a copy carrying one good setting beside one
+ * rejected one was still specialised on the good one, and the rejected one
+ * reached the new cell body anyway through parent_prop_ptr -- which put
+ * `sky130_fd_pr__` back in the deck under a warning saying the setting "did not
+ * reach the simulator and changed nothing". lost_attrs_strip_unusable() below
+ * is what makes that sentence true; get_additional_symbols() and
+ * descend_schematic() (both actions.c) are its two callers. */
+static int ua_value_specialisable(const char *val)
+{
+  const char *s;
+  int alnum;
+
+  if(!val || !val[0]) return 0;
+  alnum = 0;
+  for(s = val; *s; ++s) {
+    if(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+       *s == '\f' || *s == '\v') return 0;
+    if(*s == '@' || *s == '%') return 0;
+    if((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+       (*s >= '0' && *s <= '9')) alnum = 1;
+  }
+  return alnum;
+}
+
+/* ISSUE 1213. The half-sentence that tells the designer WHICH way their value
+ * is unusable, for the warning only.
+ *
+ * IT IS NEVER ASKED WHETHER A VALUE QUALIFIES -- ua_value_specialisable()
+ * alone decides that, and this function only describes a value that one has
+ * already turned down. Kept apart on purpose: a second function that could
+ * disagree about what qualifies is the drift this whole area keeps being
+ * bitten by. */
+static const char *ua_value_fault(const char *val)
+{
+  const char *s;
+  int blank;
+
+  if(!val || !val[0]) return "is empty";
+  blank = 1;
+  for(s = val; *s; ++s) {
+    if(!(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+         *s == '\f' || *s == '\v')) { blank = 0; break; }
+  }
+  if(blank) return "is nothing but blank space";
+  for(s = val; *s; ++s) {
+    if(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' ||
+       *s == '\f' || *s == '\v') return "has a space, a tab or a line break in it";
+  }
+  for(s = val; *s; ++s) {
+    if(*s == '@' || *s == '%')
+      return "has an '@' or a '%' in it, which XSCHEM reads as an instruction to "
+             "fill something in later rather than as part of the value";
+  }
+  return "has no letters or digits in it";
+}
+
+/* GUARD AS-DEFAULT, issue 1214. Is this value the one the SYMBOL's own
+ * template already supplies?
+ *
+ * A COPY THAT DIFFERS IN NOTHING IS NOT A COPY -- the same sentence GUARD
+ * AS-EMPTY is written under, one step further on. Measured before this guard:
+ * a copy typing modelp=pfet_01v8 on a symbol whose template already says
+ * modelp=pfet_01v8 got a second cell body of 310 bytes, byte-identical to the
+ * first, under a note announcing it as work done on the designer's behalf.
+ * Nothing about that copy's deck differs, so there is nothing to write.
+ *
+ * IT IS ALSO A SILENCE IN THE WARNING, and that is the part a reader would get
+ * wrong. The setting had precisely the effect the designer asked for -- the
+ * template hands the same value down -- so nothing was lost, and the shared
+ * sentence frame "did not reach the simulator and changed nothing" would read
+ * as an accusation about a no-op. Rejected alternative, recorded on 1214: a
+ * sixth shape of that sentence. RULING D5-4 mints the frame once, and here it
+ * would be false-flavoured whatever the advice said. Row AS68 asserts both
+ * halves -- no second cell body AND no warning line -- in one row, because a
+ * repair that stops writing the body and starts accusing the designer is not a
+ * repair.
+ *
+ * The comparison is on the RAW value both sides, with tok_size latched and put
+ * back for the reason GUARD UA-TOKSIZE gives below, and with no return inside
+ * the latched region (row AS58's lesson). tok_size is also how "the template
+ * really declares this name" is asked: a template that never mentions the name
+ * hands back an empty string, which must not compare equal to anything. */
+static int ua_value_is_template_default(int inst, const char *tok, const char *val)
+{
+  char *mine = NULL;
+  const char *dflt;
+  size_t saved_tok_size;
+  int same;
+
+  if(!tok || !tok[0] || !val) return 0;
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  if(xctx->inst[inst].ptr < 0) return 0;
+  /* ⚠ A COPY OF <val> FIRST, AND IT IS NOT DEFENSIVE. get_tok_value() hands
+   * every answer back in ONE shared buffer, and <val> is almost always a
+   * pointer into it -- both callers have just read the copy's own value out of
+   * it. Reading the template below overwrites that buffer, so without this copy
+   * the comparison is the buffer against itself and answers "the same" for
+   * every value the template happens to declare. Measured while writing this:
+   * the whole feature switched itself off, and every acceptance row in
+   * test_auto_specialize_1201 went red at once. */
+  my_strdup2(_ALLOC_ID_, &mine, val);
+  saved_tok_size = xctx->tok_size;
+  dflt = get_tok_value((xctx->inst[inst].ptr + xctx->sym)->templ, tok, 0);
+  same = (xctx->tok_size && dflt && mine && !strcmp(dflt, mine)) ? 1 : 0;
+  xctx->tok_size = saved_tok_size;
+  my_free(_ALLOC_ID_, &mine);
+  return same;
+}
+
+/* ISSUE 1201. THE WHOLE TRIGGER, IN ONE ANSWER: the settings this copy typed
+ * that the deck drops AND the cell's own sheet uses.
+ *
+ * Returns how many there are; that is the number auto_spec_name() decides on.
+ * THREE SPELLINGS OF ONE SET COME BACK, and they have three different jobs:
+ *
+ *   <canon>    CANONICAL and sorted -- GUARD AS-ORDER. Two copies that typed
+ *              the same settings in a different order are the same request and
+ *              must share one cell body, so the order the user typed them in
+ *              may not appear in the answer. This is what the readable cell
+ *              name is spelled from, and it is allowed to be ambiguous.
+ *   <settings> the same set written for a person to read, for the note.
+ *   <key>      GUARD AS-KEY, issue 1203: the one that decides WHICH COPIES
+ *              SHARE A BODY, and the only one that has to be unambiguous.
+ *
+ * All three are handed back as freshly allocated strings the caller frees; any
+ * of them may be NULL if the caller does not want it. */
+static int lost_attrs_scan(int inst, int allow_explicit, char **canon,
+                           char **settings, char **key)
+{
+  char *format = NULL;
+  char *toks = NULL;
+  char **names = NULL;
+  char *p;
+  char *q;
+  char *sw;
+  const char *tval;
+  char lenbuf[32];
+  char carriers[64];
+  size_t saved_tok_size;
+  const char *prop;
+  int cap = 0;
+  int n = 0;
+  int reach;
+  int i;
+  int j;
+
+  if(canon) my_strdup(_ALLOC_ID_, canon, NULL);
+  if(settings) my_strdup(_ALLOC_ID_, settings, NULL);
+  if(key) my_strdup(_ALLOC_ID_, key, NULL);
+  /* GUARD AS-EXPLICIT and GUARD AS-TYPE, both of them, and they are the SAME
+   * test the warning applies -- see ua_instance_eligible() above. */
+  if(!ua_instance_eligible_ex(inst, allow_explicit)) return 0;
+  saved_tok_size = xctx->tok_size;
+  prop = xctx->inst[inst].prop_ptr;
+  /* GUARD AS-FMTRESOLVE: the decision is made against the SPICE line this copy
+   * is really written through, which may be one the copy itself carries. */
+  resolve_netlist_format(inst, &format);
+  if(!format || !format[0]) {
+    my_free(_ALLOC_ID_, &format);
+    xctx->tok_size = saved_tok_size;
+    return 0;
+  }
+  /* GUARD UA-INST: the tokens come from the COPY's own property string, never
+   * from the symbol template. A template default the format does not read is
+   * the symbol author's business, not a setting anybody typed on this sheet. */
+  my_strdup(_ALLOC_ID_, &toks, list_tokens(prop, 0));
+  p = toks;
+  while(p && *p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n') ++p;
+    if(!*p) break;
+    q = p;
+    while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
+    if(*q) { *q = '\0'; ++q; }
+    /* GUARD AS-LOST then GUARD AS-BODY, in that order: the cheap shared
+     * classification first, the file read only for what survives it. Then the
+     * two tests about the VALUE, last, because the other two are about the
+     * name.
+     *
+     * GUARD AS-VALUE, issue 1213, replaces the one-byte `tval[0]` test issue
+     * 1206 shipped here. A COPY THAT DIFFERS IN NOTHING USABLE IS NOT A COPY.
+     * A reader would assume the two tests above already cover this -- they do
+     * not, because they ask only whether the NAME is dropped by the SPICE line
+     * and used by the drawing, and a name whose value is a single space passes
+     * both. That is exactly what 1213 measured: a second .subckt announced to
+     * the designer as work done for them, holding a device called
+     * `sky130_fd_pr__` that exists in no PDK. The rule and the seven measured
+     * shapes are written out at ua_value_specialisable() above; what matters
+     * here is that it is an ALLOW-rule, so a shape nobody has thought of falls
+     * back to the plain cell instead of into the deck.
+     *
+     * GUARD AS-DEFAULT, issue 1214: and a value the symbol's own template
+     * already supplies asks for nothing either. See
+     * ua_value_is_template_default() above for what was measured and for why
+     * the warning stays silent about it too.
+     *
+     * ONE SETTING, NOT THE WHOLE COPY: a copy carrying one unusable setting
+     * beside one real one is still specialised on the real one, and still
+     * warned about the unusable one. Rows AS55 and AS65 are the only rows that
+     * can see that difference. */
+    if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach) &&
+       cell_body_reads_token(inst, p) &&
+       (tval = get_tok_value(prop, p, 0)) != NULL &&
+       ua_value_specialisable(tval) &&
+       !ua_value_is_template_default(inst, p, tval)) {
+      if(n == cap) {
+        cap = cap ? cap * 2 : 8;
+        my_realloc(_ALLOC_ID_, &names, (size_t)cap * sizeof(char *));
+      }
+      names[n] = NULL;
+      my_strdup2(_ALLOC_ID_, &names[n], p);
+      ++n;
+    }
+    p = q;
+  }
+  /* GUARD AS-ORDER: sort by name, so the answer is a property of the SET the
+   * user asked for and not of the order they happened to type it in. */
+  for(i = 1; i < n; ++i) {
+    sw = names[i];
+    for(j = i; j > 0 && strcmp(names[j - 1], sw) > 0; --j) names[j] = names[j - 1];
+    names[j] = sw;
+  }
+  for(i = 0; i < n; ++i) {
+    /* ⚠ ONE get_tok_value() PER SETTING, READ INTO tval AND USED THREE TIMES.
+     * It hands back a buffer the NEXT call overwrites, so the three spellings
+     * below must be built from one read, not from three. */
+    tval = get_tok_value(prop, names[i], 0);
+    if(!tval) tval = "";
+    /* GUARD AS-KEY, issue 1203. LENGTH-PREFIXED, so the encoding is a faithful
+     * one and two different sets can never spell one key.
+     *
+     * A reader would assume <canon> below could do this job as well -- it is
+     * built from the same set, sorted the same way. It cannot: it joins a
+     * setting to its value with one underscore and the pairs to each other with
+     * two, and a VALUE that itself contains two underscores then spells exactly
+     * what two separate settings spell. Measured: `modeln=nfetA__modelp_pfetB`
+     * on one copy and `modeln=nfetA modelp=pfetB` on the next produced one key,
+     * so the second copy silently inherited the first copy's cell body and both
+     * of its own settings left the deck. Writing each field as <length>:<text>
+     * removes the ambiguity outright, whatever a value contains.
+     *
+     * IT IS NOT THE CELL NAME AND IS NEVER SHOWN. Rejected alternative,
+     * recorded on issue 1203: make <canon> itself unambiguous with a separator
+     * no value can hold. That renames every multi-setting cell in every deck
+     * anyone has already netlisted, to fix a case that needs a value containing
+     * a double underscore. */
+    if(key) {
+      my_snprintf(lenbuf, S(lenbuf), "%d:", (int)strlen(names[i]));
+      my_strcat(_ALLOC_ID_, key, lenbuf);
+      my_strcat(_ALLOC_ID_, key, names[i]);
+      my_snprintf(lenbuf, S(lenbuf), "%d:", (int)strlen(tval));
+      my_strcat(_ALLOC_ID_, key, lenbuf);
+      my_strcat(_ALLOC_ID_, key, tval);
+    }
+    if(canon) {
+      if(i) my_strcat(_ALLOC_ID_, canon, "__");
+      my_strcat(_ALLOC_ID_, canon, names[i]);
+      my_strcat(_ALLOC_ID_, canon, "_");
+      my_strcat(_ALLOC_ID_, canon, tval);
+    }
+    if(settings) {
+      if(i) my_strcat(_ALLOC_ID_, settings, (i == n - 1) ? " and " : ", ");
+      my_strcat(_ALLOC_ID_, settings, names[i]);
+      my_strcat(_ALLOC_ID_, settings, "=");
+      my_strcat(_ALLOC_ID_, settings, tval);
+    }
+    my_free(_ALLOC_ID_, &names[i]);
+  }
+  if(names) my_free(_ALLOC_ID_, &names);
+  my_free(_ALLOC_ID_, &toks);
+  my_free(_ALLOC_ID_, &format);
+  xctx->tok_size = saved_tok_size;
+  return n;
+}
+
+/* ISSUE 1201. THE ORDINARY ARM, and the only one that existed before issues
+ * 1212 and 1215: a copy that has named its own cell body by hand is somebody
+ * else's business and answers 0 here. Signature and callers unchanged. */
+int lost_attrs_the_cell_body_reads(int inst, char **canon, char **settings,
+                                   char **key)
+{
+  return lost_attrs_scan(inst, 0, canon, settings, key);
+}
+
+/* ISSUES 1215 AND 1212. THE SAME ANSWER ABOUT A COPY THAT DID NAME ITS OWN
+ * CELL BODY -- what settings would this hand-named copy have been specialised
+ * on, had it not named itself?
+ *
+ * WHY THAT QUESTION IS WORTH ASKING, in the user's terms. Two copies of a cell
+ * ask for exactly the same device; one lets XSCHEM name the new cell and the
+ * other types that same name in by hand. Before issue 1215 the tool read the
+ * typed name as "taken", invented a second name with a _1 on the end, and put
+ * two cell bodies in the deck that were byte-identical -- 314 bytes each,
+ * measured -- while the note in that very run told the designer that any other
+ * copy asking for the same settings shares the one cell. Comparing the two
+ * copies' setting keys is what makes that sentence true (GUARD AS-TYPEDSAME,
+ * actions.c), and the same comparison is what lets XSCHEM notice the opposite
+ * case and say so (GUARD AS-CLASH, issue 1212).
+ *
+ * <canon> is not offered: a hand-named copy is never NAMED by this feature, so
+ * the readable spelling has no reader. The human spelling and the key are.
+ *
+ * A copy this returns 0 for simply loses the comparison, and every caller then
+ * behaves exactly as it did before -- the name is treated as taken. Answering
+ * "I do not know" can only cost a numeric suffix; it can never share a body
+ * between two copies that wanted different things. */
+int lost_attrs_typed_copy(int inst, char **settings, char **key)
+{
+  return lost_attrs_scan(inst, 1, NULL, settings, key);
+}
+
+/* GUARD AS-STRIP, ISSUE 1227. The copy's settings AS THE NEW CELL BODY IS
+ * ALLOWED TO SEE THEM: the same property string with the settings XSCHEM has
+ * just told the designer it could not use taken out of it.
+ *
+ * WHY THIS HAS TO EXIST, in the user's terms. A copy that types one good
+ * setting beside one whose value is a space, a tab, a line break or an '@' is
+ * still given its own version of the cell, on the strength of the good one --
+ * that is issue 1213's own rule and rows AS55 and AS65 are about it. But the
+ * new cell body is fed the copy's WHOLE property string (get_additional_symbols
+ * writes it into parent_prop_ptr), so the setting XSCHEM turned down walked
+ * straight into the deck anyway: measured, `sky130_fd_pr__` with no device name
+ * after it, and with a line break, a transistor line cut in half and a second
+ * element line beginning `XL=`. The designer read a warning in the same run
+ * saying that setting "did not reach the simulator and changed nothing". It had
+ * reached it, and it had broken the deck. RULING D5-1.
+ *
+ * A SECOND, QUIETER DEFECT DIED WITH IT. Two copies whose rejected values
+ * DIFFER spell one sharing key -- the rejected settings are not in it -- so
+ * they share one cell body, and the first one written wins. The second copy
+ * then simulated the first copy's device with nothing said. Once the rejected
+ * settings are stripped, equal keys really do mean equal bodies again, which is
+ * the invariant GUARD AS-TYPEDSAME in actions.c rests on.
+ *
+ * WHAT THE DESIGNER GETS INSTEAD is what they got before issue 1201 existed:
+ * the cell falls back to the value the SYMBOL's own template supplies for that
+ * setting, and the warning that says the setting went nowhere is true.
+ *
+ * ONLY THE SETTINGS THE RULE TURNED DOWN COME OUT. A setting that is simply
+ * carried by the SPICE line, or that the drawing never reads, is not this
+ * function's business and is left exactly where it was -- the deck for every
+ * copy that types nothing unusable is byte-for-byte unchanged.
+ *
+ * Returns how many settings were removed; <out> is a freshly allocated copy of
+ * the property string the caller frees, and is set even when nothing was
+ * removed so a caller never has to ask twice. */
+int lost_attrs_strip_unusable(int inst, char **out)
+{
+  char *format = NULL;
+  char *toks = NULL;
+  char *res = NULL;
+  char *p;
+  char *q;
+  const char *tval;
+  const char *prop;
+  char carriers[64];
+  size_t saved_tok_size;
+  int reach;
+  int n = 0;
+
+  if(out) my_strdup(_ALLOC_ID_, out, NULL);
+  if(inst < 0 || inst >= xctx->instances) return 0;
+  prop = xctx->inst[inst].prop_ptr;
+  if(!prop) return 0;
+  if(out) my_strdup2(_ALLOC_ID_, out, prop);
+  /* The SAME classification the warning and the naming use, on the ordinary
+   * arm: a copy that named its own cell body by hand keeps every byte it
+   * typed. EXPLICIT BEATS IMPLICIT, exactly as GUARD UA-POLY says. */
+  if(!ua_instance_eligible(inst)) return 0;
+  saved_tok_size = xctx->tok_size;
+  resolve_netlist_format(inst, &format);
+  if(!format || !format[0]) {
+    my_free(_ALLOC_ID_, &format);
+    xctx->tok_size = saved_tok_size;
+    return 0;
+  }
+  my_strdup2(_ALLOC_ID_, &res, prop);
+  my_strdup(_ALLOC_ID_, &toks, list_tokens(prop, 0));
+  p = toks;
+  while(p && *p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n') ++p;
+    if(!*p) break;
+    q = p;
+    while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
+    if(*q) { *q = '\0'; ++q; }
+    /* The three tests lost_attrs_scan() makes, with the VALUE test inverted:
+     * dropped by the SPICE line, read by the cell's own drawing, and a value
+     * the rule above will not pass down. A setting that fails either of the
+     * first two never reached the body through this route in the first place.
+     *
+     * ⚠ subst_token() and get_tok_value() keep SEPARATE static buffers, so the
+     * read below and the removal beside it do not tread on each other. */
+    if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach) &&
+       cell_body_reads_token(inst, p) &&
+       (tval = get_tok_value(prop, p, 0)) != NULL &&
+       !ua_value_specialisable(tval)) {
+      my_strdup2(_ALLOC_ID_, &res, subst_token(res, p, NULL));
+      ++n;
+    }
+    p = q;
+  }
+  if(out) my_strdup2(_ALLOC_ID_, out, res);
+  my_free(_ALLOC_ID_, &res);
+  my_free(_ALLOC_ID_, &toks);
+  my_free(_ALLOC_ID_, &format);
+  xctx->tok_size = saved_tok_size;
+  return n;
+}
+
+/* ISSUE 0970: say so, once per lost setting, in words a designer reads as
+ * "you typed this and it had no effect".
+ *
+ * Called once per instance from print_spice_element(), after the format string
+ * has been resolved and before it is parsed, so the four-way resolution above
+ * (instance override, symbol, then the same two again for a per-format
+ * attribute) has already decided WHICH format string this instance is netlisted
+ * through -- the check must ask about that one, not about the symbol's.
+ *
+ * SEVERITY IS DELIBERATE: statusmsg(str, 2) appends to the info/ERC window's
+ * text and does NOT raise the netlister's error flag, so it reads exactly like
+ * the existing open-net and '#'-node notices and does not force the info window
+ * open (show_infowindow_after_netlist defaults to `onerror`). A discarded
+ * setting is worth telling the user about; it is not worth interrupting every
+ * netlist of a design that has one. That loudness is on the user's ruling queue
+ * with issue 0970. */
+static void warn_unused_instance_attr(int inst, const char *format)
+{
+  const char *prop;
+  const char *val;
+  /* ⚠ A COPY, NOT THE POINTER get_cell() HANDS BACK, issue 1201. get_cell()
+   * returns a static buffer that the NEXT call overwrites, and GUARD
+   * UA-HONOURED below reaches auto_spec_name(), which walks every loaded symbol
+   * calling get_cell() on each. Held as a pointer, the cell name in the
+   * sentence became the tail of whatever symbol happened to be last. */
+  char sym_cell[PATH_MAX];
+  const char *instname;
+  const char *sheet;
+  char *toks = NULL;
+  char *p;
+  char *q;
+  char str[2048];
+  char e_sheet[160];
+  char e_inst[80];
+  char e_cell[80];
+  char e_prop[80];
+  char e_val[160];
+  /* ISSUE 0987: the two clauses that differ between the two shapes of the
+   * sentence. They are separate buffers so that RULING D5-4 stays true -- the
+   * sentence itself is still built by ONE my_snprintf into str, and handed to
+   * the info window exactly once, whichever shape it took. */
+  char mid[240];
+  char advice[640];
+  char carriers[64];
+  size_t saved_tok_size;
+  int reach;
+  /* ISSUE 1205: the two answers the sentence below ASSERTS, worked out once and
+   * held, because C stops evaluating a && the moment the first half is false
+   * and the sentence then states a fact nobody established. */
+  int spec;
+  int body_reads;
+  int haveval;
+  /* ISSUE 1213: and whether the value is one XSCHEM could pass down at all.
+   * It is the SAME question the classifier asks, asked through the same
+   * function, for the reason GUARD AS-VALUE gives above. */
+  int valok;
+
+  if(!format || !format[0]) return;
+
+  /* get_tok_value() overwrites xctx->tok_size, which print_spice_element() uses
+   * as its "token ABSENT" signal while resolving the format string. Latch it and
+   * put it back, exactly as warn_hash_extra_node() does and for the same stated
+   * reason: an observer may never become the reason a real netlist value goes
+   * missing if this call site ever moves. GUARD UA-TOKSIZE -- invisible at
+   * today's call site, which is why only a structural test row can see it. */
+  saved_tok_size = xctx->tok_size;
+
+  /* GUARD UA-TYPE and GUARD UA-POLY, both of them, and they are asked HERE by
+   * calling the same function issue 1201's automatic separate copy calls -- see
+   * ua_instance_eligible() above for the measurements behind each. A reader
+   * would assume these tests are cheap enough to write out twice. They are; the
+   * cost of the second copy is not the typing, it is that the two would agree
+   * on the day they were written and drift apart afterwards, with the warning
+   * accusing a copy the netlister had quietly repaired, and nothing a user
+   * could do would show it. Row AS28 counts the callers. */
+  if(!ua_instance_eligible(inst)) {
+    xctx->tok_size = saved_tok_size;
+    return;
+  }
+  prop = xctx->inst[inst].prop_ptr;
+
+  instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "?";
+  my_strncpy(sym_cell, get_cell((xctx->inst[inst].ptr + xctx->sym)->name, 0),
+             S(sym_cell));
+
+  /* GUARD UA-SHEET, issue 0981. Which sheet is this instance actually ON?
+   *
+   * The sentence used to open "on this sheet", and a reader would assume that
+   * is true because the netlister is writing the sheet the user opened. It is
+   * not: the netlister descends, and print_spice_element() runs once per
+   * instance of every sub-cell too. Measured on the shipped ROM,
+   * xschem_library/rom8k/rom8k.sch, which contains not one lvnand2: netlisting
+   * it printed 23 paragraphs saying "on this sheet, instance x2 (a lvnand2)",
+   * 10 distinct, with four instance names each printed three times
+   * byte-identically -- three DIFFERENT x2s, on rom2_predec1.sch,
+   * rom2_predec3.sch and rom2_predec4.sch, that the user could not tell apart.
+   *
+   * xctx->current_name is right at this moment because spice_block_netlist()
+   * calls load_schematic() (save.c, which sets it) before spice_netlist() walks
+   * the sub-cell's instances, and global_spice_netlist() puts the top sheet's
+   * name back on the way out (spice_netlist.c). The two fallbacks are for a
+   * caller that never went through either. */
+  sheet = (xctx->current_name[0]) ? xctx->current_name :
+          (xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "?");
+
+  /* GUARD UA-INST, issue 0970. The tokens come from the INSTANCE's own property
+   * string, never from the symbol template. "You typed this and it had no
+   * effect" is a claim about what the user wrote on the sheet; a template
+   * default the format does not read is the symbol author's business and not a
+   * lost setting, so it must never be reported. list_tokens() returns a static
+   * buffer, hence the copy. */
+  my_strdup(_ALLOC_ID_, &toks, list_tokens(prop, 0));
+  p = toks;
+  while(p && *p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n') ++p;
+    if(!*p) break;
+    q = p;
+    while(*q && *q != ' ' && *q != '\t' && *q != '\n') ++q;
+    if(*q) { *q = '\0'; ++q; }
+
+    /* Defensive, and deliberately invisible to any row: reach is written by
+     * ua_token_lost() on every path that can reach the print block below, so
+     * this reset cannot change what the user sees. It is here so that a later
+     * hand adding a test between the two cannot inherit the previous token's
+     * answer. */
+    reach = UA_NOWHERE;
+    carriers[0] = '\0';
+    /* THE EXEMPTION CHAIN -- UA-NAME, UA-STOP, UA-POLY's own token names,
+     * UA-STOP2, UA-SYMNAME and then ua_reach() -- lives in ua_token_lost()
+     * above, ONE copy of it, because issue 1201's automatic separate copy of a
+     * cell has to answer the very same question about the very same token. Two
+     * hand-written copies would agree on the day they were written and drift
+     * silently afterwards: the netlister would write a copy of a cell for a
+     * setting the warning still called dead, or accuse a designer of a setting
+     * it had just honoured. Nothing a user does could show that. Row AS28
+     * counts the callers. */
+    if(ua_token_lost(inst, format, p, carriers, S(carriers), &reach)) {
+      /* GUARD UA-HONOURED, issue 1201, AND IT IS THE OTHER HALF OF THAT ISSUE.
+       * The netlister now writes this copy its own version of the cell when the
+       * cell's own drawing uses the setting -- so the setting DID reach the
+       * simulator, and saying it changed nothing would be a false accusation
+       * about a thing the tool had just done correctly, in the same run, one
+       * step earlier. Measured on the 0970 fixture before this guard: x5 and X7
+       * got their cell body, their low-threshold device really was in the deck,
+       * and the tool still told the designer their setting had gone nowhere.
+       *
+       * The two tests are the exact membership test of the specialised set --
+       * auto_spec_name() answers non-NULL only when at least one setting on
+       * this copy is both lost and used by the cell's drawing, and
+       * cell_body_reads_token() picks out WHICH ones -- so a second lost
+       * setting on the same copy that the drawing does not use is still
+       * reported, which row AS15 measures. Both are memoised, so this costs a
+       * hash lookup. */
+      /* ISSUE 1205, AND IT IS WHY THESE ARE THREE STATEMENTS AND NOT ONE `if`.
+       * Written as one short-circuited condition, the second question -- does
+       * the cell's own drawing use this setting -- was never asked whenever the
+       * first was false, and the advice at the bottom of this block went on to
+       * tell the designer their drawing does not use the setting anywhere.
+       * Measured: a cell whose very own transistor line reads model=@modelp was
+       * described to its designer as a drawing that does not use modelp. A
+       * sentence may not assert a fact the code declined to look up, so both
+       * answers are worked out here, once, and the advice picks its shape from
+       * them. Row AS50 is the structural eye on this; grepping the file cannot
+       * see it, because the same pair of calls appears in the sibling that
+       * classifies, two hundred lines up. */
+      spec = auto_spec_name(inst) ? 1 : 0;
+      body_reads = cell_body_reads_token(inst, p);
+      val = get_tok_value(prop, p, 0);
+      haveval = (val && val[0]) ? 1 : 0;
+      valok = ua_value_specialisable(val);
+      /* GUARD UA-HONOURED's own test, and the value is part of it, issue 1206.
+       * Without the value term, a copy carrying one blank setting beside one
+       * real one is specialised on the real one and then silently loses the
+       * sentence about the blank one -- because the copy as a whole WAS
+       * specialised. The set that was honoured is exactly "lost AND the drawing
+       * uses it AND the value was one XSCHEM could pass down", so the skip has
+       * to test all three. Rows AS55 and AS65 are the only rows that can see
+       * it.
+       *
+       * ISSUE 1213: the third test is now the ALLOW-rule and not `haveval`,
+       * because THE HONOURED SET AND THE ADMITTED SET MUST BE ONE SET. The
+       * classifier above turns down a value made of blank space; if this skip
+       * still asked only "was anything typed", the copy would be specialised
+       * on its other settings and this one would go by in silence -- the
+       * designer told nothing about the setting that did nothing. Row AS65 is
+       * the twin of AS55 for exactly that. */
+      if(spec && body_reads && valok) { p = q; continue; }
+      /* GUARD UA-DEFAULT, issue 1214. SILENCE, DELIBERATELY, for a value that
+       * is already the symbol's own default.
+       *
+       * A reader would assume every setting the SPICE line drops deserves the
+       * sentence below. This one does not: the template hands the very same
+       * value down, so the deck already carries what the designer asked for.
+       * Nothing was lost, there is nothing for them to do, and the shared frame
+       * "did not reach the simulator and changed nothing" would read as an
+       * accusation about a no-op. See ua_value_is_template_default() above for
+       * the rejected alternative. Row AS68 asserts the silence and the missing
+       * second cell body together. */
+      if(body_reads && ua_value_is_template_default(inst, p, val)) {
+        p = q;
+        continue;
+      }
+      /* ⚠ READ AGAIN. The test just above asked the property reader a question
+       * of its own, and every answer it gives comes back in ONE shared buffer,
+       * so the pointer held in <val> now names the symbol template's value and
+       * not this copy's. Everything below prints <val>. */
+      val = get_tok_value(prop, p, 0);
+      /* GUARD UA-ELIDE, issue 0983: every variable-length field is shortened to
+       * one line of bounded length BEFORE the sentence is built, so no value a
+       * user types can cost the reader the recommended action or split the
+       * warning across two info-window entries. */
+      unused_attr_elide(e_sheet, S(e_sheet), sheet, 120, 1);
+      unused_attr_elide(e_inst,  S(e_inst),  instname, 60, 0);
+      unused_attr_elide(e_cell,  S(e_cell),  sym_cell, 60, 0);
+      unused_attr_elide(e_prop,  S(e_prop),  p, 60, 0);
+      unused_attr_elide(e_val,   S(e_val),   val ? val : "", 120, 0);
+      /* RULING D5-4 AND ISSUE 1216. THE CLAUSE THAT SAYS WHY IS MINTED ONCE.
+       * Four of the five shapes below say the same thing here and, before this
+       * hoist, said it in four separate string literals that happened to agree.
+       * A fifth shape arrived with issue 1213 and would have made five. Four
+       * copies of a sentence drift, and the drift shows up on a stranger's
+       * screen, not in a diff. The one shape that genuinely differs -- the
+       * setting DOES reach another netlist of the same cell -- overwrites this
+       * line and says so. Row AS75 counts the literal, once. */
+      my_snprintf(mid, S(mid),
+        "%s never reads %s when the netlist is written", e_cell, e_prop);
+      /* ISSUES 0987 AND 0988, THE TWO SHAPES. They differ in the clause that
+       * says WHY the setting was lost and in the action they ask for, and those
+       * actions are opposites -- take it off, versus do not take it off. Both
+       * keep the contract phrase "did not reach the simulator" verbatim, which
+       * is how the test suite recognises the whole class, and both open the
+       * same way, so a reader who has seen one recognises the other.
+       *
+       * THE SECOND SHAPE MUST NEVER TELL THE USER TO DELETE ANYTHING. That one
+       * clause is the whole of issue 0980's harm: following it on shipped
+       * xschem_library/examples/loading.sch or logic/ram_tb.sch breaks a working
+       * example, because the VHDL and Verilog netlists of those very sheets
+       * carry the settings the SPICE deck drops. So neither half of the accusing
+       * advice appears below in the UA_ELSEWHERE arm, and a test row asserts
+       * their absence from every line of that shape the whole run produces.
+       *
+       * ISSUE 1201, AND IT IS WHY THE SECOND HALF OF THE ACCUSING ADVICE IS
+       * GONE. That advice used to end by telling the designer to type a second
+       * attribute on the copy, naming a cell name no other copy asks for, and
+       * the tool would then write that copy out on its own. THE TOOL NOW DOES
+       * THAT BY ITSELF -- auto_spec_name() in actions.c -- whenever the cell's
+       * own sheet uses the setting, and it says so in its own note. A tool that
+       * fixes the problem and still tells you to fix it yourself is its own
+       * defect, so the instruction had to go, and rows AS24 and AS25 assert it
+       * is gone from every line of this shape the whole run produces.
+       *
+       * WHAT SURVIVES HERE IS THE POPULATION A SEPARATE COPY CANNOT HELP: the
+       * cell's sheet does not use the setting ANYWHERE, so there is nothing for
+       * a copy of that sheet to do differently. Saying "make a copy" to that
+       * designer was always wrong; issue 0982 recorded the further harm, that
+       * two copies given the same hand-typed name silently share one body and
+       * only the first one's setting survives, with GUARD UA-POLY blinding this
+       * very diagnostic to the state its own advice created. */
+      if(reach == UA_ELSEWHERE) {
+        my_snprintf(mid, S(mid),
+          "a SPICE netlist of %s does not pass %s through", e_cell, e_prop);
+        my_snprintf(advice, S(advice),
+          "It is not a spelling mistake and you should not remove it: a %s "
+          "netlist of the same cell does carry it, so deleting it would break "
+          "that. To get it into the SPICE run as well, the %s symbol has to be "
+          "changed so its SPICE line passes it through.", carriers, e_cell);
+      } else if(!body_reads) {
+        /* SHAPE 2, unchanged since issue 1201 and now TRUE rather than assumed:
+         * the cell's own drawing really was opened and really does not mention
+         * this setting, so there is nothing a separate copy of it could do
+         * differently. This is the population rows UF10 and UF13 of
+         * tests/headless/test_unused_attr_0970.tcl sit in. */
+        my_snprintf(advice, S(advice),
+          "Check the spelling against the settings this cell does read, or take "
+          "it off. When a cell's own drawing uses a setting you type on one "
+          "copy, XSCHEM gives that copy its own version of the cell and you "
+          "need do nothing -- but the %s drawing does not use %s anywhere, so "
+          "there is nothing a separate copy could change. To make it count, "
+          "that drawing has to use %s on the part meant to follow it.",
+          e_cell, e_prop, e_prop);
+      } else if(!haveval) {
+        /* SHAPE 3, issue 1206. The name is right and the drawing does read it;
+         * what is missing is the value. Telling this designer to check their
+         * spelling would send them looking for a mistake they did not make. */
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so the name is right -- but you left the "
+          "value empty, so there is nothing to pass down. Put the value you "
+          "want after the '=', or take the setting off.", e_cell, e_prop);
+      } else if(!valok) {
+        /* SHAPE 3b, ISSUE 1213. The name is right, the drawing does read it,
+         * and the designer DID type something -- but what they typed is not a
+         * value XSCHEM can pass down: a space, a tab, a line break, a value
+         * with a space stuck on the end of it, one with no letters or digits
+         * in it at all, or one holding an '@' or a '%' -- the two marks XSCHEM
+         * reads as an instruction rather than as text (issue 1227). Before this
+         * shape existed those all fell through
+         * to SHAPE 5, whose advice sends the designer to the symbol's SPICE
+         * line to fix a symbol that is perfectly fine.
+         *
+         * The rule is stated as a rule, not as a complaint about this one
+         * value, so a designer who hits it once knows what every other value
+         * has to look like. ua_value_fault() supplies the middle clause and
+         * decides nothing. */
+        /* ⚠ THE PER-CENT SIGN ARRIVES AS AN ARGUMENT, and it is not a
+         * stylistic choice. This build compiles the no-HAS_SNPRINTF arm of
+         * my_snprintf() (util.c), a hand-written formatter that does not
+         * understand "%%": it reads the second per-cent as the start of a new
+         * conversion and eats the words after it. Measured, the sentence came
+         * out ending "no '@' or '% 536627636n it." */
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so the name is right -- but the value "
+          "you typed %s, and XSCHEM can only pass a value down when it is one "
+          "word made of ordinary characters, with at least one letter or digit "
+          "in it and no '@' or '%s' in it. Put the value you want after the "
+          "'=', or take the setting off.",
+          e_cell, e_prop, ua_value_fault(val), "%");
+      } else if(auto_spec_would_specialize(inst)) {
+        /* SHAPE 4, issue 1204. Everything about this copy qualifies; the only
+         * reason it did not get its own version of the cell is that this run
+         * was writing one sheet and not the whole design, and the cell bodies
+         * are only written on the whole-design run. So the honest thing to tell
+         * the designer is the one action that puts their setting in a deck.
+         *
+         * Safe to ask auto_spec_would_specialize() here: a netlist run owns the
+         * caches on both arms, so it does not throw the body-read cache away. */
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so this is not a spelling mistake. "
+          "XSCHEM can give this copy its own version of %s, but it only writes "
+          "those when it netlists the whole design, and this run wrote just "
+          "this one sheet. Netlist the whole design and this setting will be in "
+          "the deck.", e_cell, e_prop, e_cell);
+      } else {
+        /* SHAPE 5. The drawing does use the setting, but something about this
+         * cell stops a version of its own being written -- its symbol names the
+         * drawing it is built from, or its template names the cell body, or the
+         * copy is left out of the SPICE deck altogether (GUARDs AS-SYMBODY,
+         * AS-TMPLMODEL and AS-IGNORE in actions.c). The setting still went
+         * nowhere, and the way to make it count is on the symbol's SPICE line. */
+        my_snprintf(advice, S(advice),
+          "The %s drawing does use %s, so this is not a spelling mistake. "
+          "XSCHEM did not give this copy a version of its own here, so the "
+          "setting still changed nothing. For it to count, the %s symbol has to "
+          "pass %s through on its SPICE line.", e_cell, e_prop, e_cell, e_prop);
+      }
+      /* RULING D5-4: whichever shape it took, the sentence is assembled HERE and
+       * nowhere else, and handed to the info window exactly once. */
+      my_snprintf(str, S(str),
+        "Warning: on sheet %s, instance %s (a %s) sets %s=%s, but %s, so that "
+        "setting did not reach the simulator and changed nothing. %s",
+        e_sheet, e_inst, e_cell, e_prop, e_val, mid, advice);
+      statusmsg(str, 2);
+    }
+    p = q;
+  }
+  my_free(_ALLOC_ID_, &toks);
+  xctx->tok_size = saved_tok_size;
+}
+
 int print_spice_element(FILE *fd, int inst)
 {
   int i=0, multip, itmp;
@@ -2456,7 +4198,6 @@ int print_spice_element(FILE *fd, int inst)
   char *result = NULL;
   size_t size = 0;
   char *spiceprefixtag = NULL;
-  const char *fmt_attr = NULL;
 
   size = CADCHUNKALLOC;
   my_realloc(_ALLOC_ID_, &result, size);
@@ -2466,18 +4207,11 @@ int print_spice_element(FILE *fd, int inst)
   my_strdup(_ALLOC_ID_, &name,xctx->inst[inst].instname);
   if (!name) my_strdup(_ALLOC_ID_, &name, get_tok_value(template, "name", 0));
 
-  fmt_attr = xctx->format ? xctx->format : "format";
-  /* allow format string override in instance */
-  my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->inst[inst].prop_ptr, fmt_attr, 2));
-  /* get netlist format rule from symbol */
-  if(!xctx->tok_size)
-    my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, fmt_attr, 2));
-  /* allow format string override in instance */
-  if(!xctx->tok_size && strcmp(fmt_attr, "format") )
-    my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->inst[inst].prop_ptr, "format", 2));
-  /* get netlist format rule from symbol */
-  if(!xctx->tok_size && strcmp(fmt_attr, "format"))
-     my_strdup(_ALLOC_ID_, &format, get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "format", 2));
+  /* ISSUE 1201: the four-step resolution that used to stand here, verbatim, in
+   * resolve_netlist_format() above -- so that the warning below and the
+   * automatic separate copy of a cell can never decide against two different
+   * SPICE lines for the same copy. Row AS29 counts the callers. */
+  resolve_netlist_format(inst, &format);
   if ((name==NULL) || (format==NULL)) {
     my_free(_ALLOC_ID_, &template);
     my_free(_ALLOC_ID_, &format);
@@ -2485,6 +4219,12 @@ int print_spice_element(FILE *fd, int inst)
     my_free(_ALLOC_ID_, &result);
     return 0; /* do no netlist unwanted insts(no format) */
   }
+  /* ISSUE 0970: here, and only here. The four-way resolution above has just
+   * settled WHICH format string this instance is netlisted through, and the
+   * parse loop below has not started consuming it yet, so this is the one point
+   * where the question "does this instance set anything the deck will never
+   * see?" can be asked against the string the deck is actually written from. */
+  warn_unused_instance_attr(inst, format);
   no_of_pins= (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
   s=format;
   dbg(1, "print_spice_element(): name=%s, format=%s xctx->netlist_count=%d\n",name,format, xctx->netlist_count);
@@ -4315,7 +6055,7 @@ static char *get_pin_attr(const char *token, int inst, int engineering)
     else if(!pin_attr_value && !is_net_name && !strcmp(pin_attr, "spice_get_voltage"))
     {
       int start_level; /* hierarchy level where waves were loaded */
-      int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+      int live = !raw_is_digital(xctx->raw);
       /* SPEC D5 / RULING D5-5 -- THE `@spice_get_*` FLOATERS ARE THE SCHEMATIC
        * VOLTAGE OVERLAY BY A SECOND ROAD, and they do not go through
        * ngspice::ngspice_data at all: each branch below reads
@@ -4335,7 +6075,30 @@ static char *get_pin_attr(const char *token, int inst, int engineering)
        * NOTHING. "Contributes nothing" is not "contributes a dash"; there is
        * no measurement to report, so no placeholder is invented for one. The
        * Tcl-side overlay says the same thing in its own vocabulary (`?`).
-       * The other five sites carry the one-line back-reference. */
+       * The other five sites carry the one-line back-reference.
+       *
+       * ISSUE 0864 -- `live` USED TO READ THE MENU CHECKBUTTON TOO, and a
+       * reader who remembers that will assume the switch still decides what
+       * these tokens render. It does not, in any of the six branches. The line
+       * was
+       *   int live = tclgetboolvar("live_cursor2_backannotate") &&
+       *              !raw_is_digital(xctx->raw);
+       * and `Simulation > Graphs > Live annotate probes with 'b' cursor` means
+       * "follow cursor B and re-annotate as it moves" -- WHEN to re-read, never
+       * whether there is anything to read. With it in here, unticking a box
+       * about the cursor silently blanked every node voltage and every
+       * device-current floater `Alt-6` draws, while the numbers sat untouched
+       * in the database. The callers that decide whether to RE-ANNOTATE on
+       * cursor motion (callback.c, scheduler.c) still read the switch; that is
+       * its whole remaining meaning.
+       *
+       * WHAT SURVIVES IS THE D5 TERM, and it is not optional: drop
+       * !raw_is_digital() and a digital database prints logic levels as volts
+       * again. test_backannotate_digital row BA87 is the source witness for all
+       * six lines at once -- it counts every `int live = ` line in this file,
+       * requires each to carry raw_is_digital, and requires none to name the
+       * switch. Its needle is the bare `int live = `, so do not respell these
+       * six declarations. */
       if(live && (start_level = sch_waves_loaded()) >= 0 && xctx->raw->annot_p>=0) {
         int multip;
         char *fqnet = NULL;
@@ -4459,6 +6222,7 @@ const char *spice_get_node(const char *token)
     char sp;
     int n;
     size_t len;
+    int published;
     double val = 0.0;
     const char *valstr;
     const char *s;
@@ -4468,13 +6232,50 @@ const char *spice_get_node(const char *token)
     n = sscanf(pos, "%*[^ ] %[^ ]%c", node, &sp);
     len = strlen(node);
     dbg(1, "node=%s, n=%d, sp=|%c|\n", node, n, sp);
+    /* ISSUE 0861 -- ASK WHETHER ANYTHING WAS PUBLISHED, NOT MERELY WHETHER THE
+     * VECTOR EXISTS. cursor_b_val is my_calloc'd, so every entry reads 0.0
+     * until update_op() (save.c) or a waveform cursor fills it. update_op()
+     * returns early -- an empty database, a non-operating-point run (the 0856
+     * refusal, ruled by the user), a digital database -- BEFORE it sets
+     * annot_p = 0 and before the fill loop. A reader that tests only the
+     * vector index therefore publishes those calloc zeros as if they were
+     * measurements: the shipped devices/scope_ammeter.sym painted a confident
+     * `0` amps through the branch on a transient the annotation had explicitly
+     * declined to answer from, which is precisely the fabricated number
+     * RULING D5-1 forbids and the blank INVARIANT I3 requires.
+     *
+     * WHY annot_p AND NOT THE SIMULATION TYPE. A transient that HAS published,
+     * because the user dropped cursor B on a waveform graph, has real values in
+     * here and must keep painting them. The question is "was an annotation
+     * published", never "what kind of run was it" -- a guard written the second
+     * way passes every negative row and silently kills the feature.
+     *
+     * WHY NOT THE SIX SIBLINGS' FULL SHAPE. The live_cursor2 readers in this
+     * file also carry `live && sch_waves_loaded() >= 0`, which folds in the
+     * live_cursor2_backannotate switch and demands the current sheet sit inside
+     * the waves hierarchy. Those terms are right for a cursor-following
+     * annotation and wrong here: they would blank cases that are correct today.
+     * annot_p is the minimum term that separates a published value from a
+     * calloc zero.
+     *
+     * The guard must reach the BLANK below, not merely skip the read -- with
+     * `val` left at 0.0 the else arm would still print "0".
+     *
+     * ⚠ tests/headless/test_spice_get_node_0861.tcl row SGN20 greps this
+     * function body (C comments stripped first) for an `annot_p` term and for
+     * exactly ONE `cursor_b_val` subscript, so the SHAPE of these two lines is
+     * pinned by a check, not only their behaviour. */
+    published = xctx->raw && xctx->raw->cursor_b_val && xctx->raw->annot_p >= 0;
     idx = get_raw_index(node, NULL);
-    if(idx >= 0) {
+    if(published && idx >= 0) {
       val = xctx->raw->cursor_b_val[idx];
     }
     if(!strcmp(node, "0") || !my_strcasecmp(node, "GND")) {
+      /* ground is a definition, not a measurement: it reads 0.0 in every state,
+       * with nothing loaded at all included. This arm stays FIRST and outside
+       * the published test on purpose (row SGN16). */
       valstr = "0.0";
-    } else if(idx < 0) {
+    } else if(!published || idx < 0) {
       valstr = "-";
     } else {
       /* always use engineering as these tokens are generated from single
@@ -4821,7 +6622,7 @@ const char *translate(int inst, const char* s)
       else if(inst >= 0 && strcmp(token,"@spice_get_voltage")==0 && xctx->inst[inst].ptr >= 0)
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -4912,7 +6713,7 @@ const char *translate(int inst, const char* s)
       else if(strncmp(token,"@spice_get_voltage(", 19)==0 )
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -4999,7 +6800,7 @@ const char *translate(int inst, const char* s)
       #endif
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -5094,7 +6895,7 @@ const char *translate(int inst, const char* s)
       else if(inst >= 0 && strcmp(token,"@spice_get_diff_voltage")==0  && xctx->inst[inst].ptr >= 0)
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */
@@ -5167,7 +6968,7 @@ const char *translate(int inst, const char* s)
              )
       {
         int start_level; /* hierarchy level where waves were loaded */
-        int live = tclgetboolvar("live_cursor2_backannotate") && !raw_is_digital(xctx->raw);
+        int live = !raw_is_digital(xctx->raw);
         /* the D5 guard -- see the long note at the first `@spice_get_voltage`
          * branch in get_pin_attr() above: a digital database contributes
          * NOTHING to the schematic overlay, floaters included. */

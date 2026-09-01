@@ -26,6 +26,16 @@ set here [file dirname [file normalize [info script]]]
 source [file join $here .. .. utils instance_update.tcl]
 source [file join $here scratch.tcl]
 
+# Issue 0601: this suite edits the startup UNTITLED buffer, and set_modify(1) ->
+# write_backup() (src/actions.c:208 -> src/save.c:4149) then writes `untitled~.sch` into
+# the cwd captured at STARTUP (pwd_dir, src/xinit.c:2952) -- the repo root for a hand run,
+# tests/ under run_regression.tcl. Nothing here descends or recovers, so suppress it:
+# write_backup() returns early when autosave_backup is off (src/save.c:4156). See
+# tests/headless/test_undo_selection.tcl for the full note; guarded by
+# tests/headless/test_no_untitled_litter.tcl.
+set ::saved_autosave_0601 $::autosave_backup
+set ::autosave_backup 0
+
 # convenience
 proc iu_set {args} { foreach {v val} $args { set ::inst_update::$v $val } }
 proc inst_name  {i} { xschem getprop instance $i name }
@@ -344,5 +354,6 @@ check "symview list guard"  $::inst_update::last_guard symbol
 catch {file delete -force $symf}
 
 # ===========================================================================
+set ::autosave_backup $::saved_autosave_0601   ;# issue 0601
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

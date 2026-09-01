@@ -304,11 +304,23 @@ check "HW13 a design of engine-auto-named nets produces NO 0165 warning" \
 
 } err]} { puts "FATAL: $err" ; incr fail }
 
-# House banner form: full_audit.sh is_pass() scores on "RESULT: ALL PASS".
+# ISSUE 0977: THE DUAL BANNER, because this suite is now RUN by something.
+#
+# It was registered nowhere -- not in tests/run_regression.tcl's hcases, not in
+# tests/headless/full_audit.sh's nogui_tests -- so nothing had ever run it, and
+# it could not have been run by the regression runner even if it had been
+# listed: banner_complete needs a whole-line "OVERALL:" as well as the RESULT
+# line, and this file printed only the RESULT one. Both are here now, and the
+# suite is registered in both places. It covers the netlist-time warning emitted
+# from print_spice_element() in src/token.c, which is the very function issue
+# 0970's "you typed this and it had no effect" check was added to; leaving it
+# unrun meant a change in one could silently break the other.
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
+  puts "OVERALL: ok"
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"
+  puts "OVERALL: notok"
 }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

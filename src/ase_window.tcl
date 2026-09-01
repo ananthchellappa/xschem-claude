@@ -89,11 +89,24 @@ namespace eval ase::ui {
   variable edrow;   array set edrow {}
   # edchk(key,plot|save): the output editor's checkbutton variables
   variable edchk;   array set edchk {}
+  # annot(key,op|volt): the `Results > Annotate` checkbutton variables (issue
+  # 0682). SESSION-KEYED, not two globals: the ASE-L window is a plain toplevel
+  # and several sessions can be open at once, so a bare ::annot_show_op would
+  # make every session's menu show the last one's state. Re-derived from the
+  # DESIGN context's mask by the submenu's -postcommand; cleaned in close.
+  variable annot;   array set annot {}
   # dlg(key,...): per-window records of the item-07 dialog layer — Choose
   # Analyses antype/anen/anextra, Save All allv/alli, the Design/Save-As
   # combo full-value lists (dlib/dcell/dview/salib), and the list-dialog row
   # index (models/simopt). Cleaned on dialog proceed/cancel AND in close.
   variable dlg;     array set dlg {}
+  # simuse(key): the Simulators dialog's "which one is in force" combobox
+  # variable (issue 0937). Session-keyed for the same reason `annot` is: two
+  # ASE-L windows can be open at once, and Tk resolves a -textvariable in the
+  # global namespace, so one shared name would make both dialogs fight over
+  # one value. The REGISTRY behind it is process-global; two open dialogs do
+  # not refresh each other until reopened, which is recorded in issue 0937.
+  variable simuse;  array set simuse {}
   # the shared two-column list-dialog configs (Setup > Model Files and
   # Simulation > Options share one engine): toplevel suffix, state list key,
   # row dict fields, column headings, row-editor toplevel suffix + title
@@ -294,7 +307,7 @@ proc ase::ui::open {key lib cell view} {
 proc ase::ui::close {key} {
   variable wins; variable wnum; variable meta; variable idlebg
   variable loglen; variable selclear; variable edrow; variable edchk
-  variable dlg
+  variable dlg; variable annot; variable simuse
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
   ase::ui::drop_trace $key
@@ -310,7 +323,12 @@ proc ase::ui::close {key} {
   catch {unset selclear($key)}
   array unset edrow $key,*
   array unset edchk $key,*
+  array unset annot $key,*
   array unset dlg $key,*
+  # issue 0937: the Simulators dialog's in-force combobox variable is keyed by
+  # session, not by dialog, so it outlives the dialog on purpose and has to be
+  # dropped with the session.
+  catch {unset simuse($key)}
   catch {destroy $top}
   # item 13 (D10): the session's waveform viewer dies with the session
   # (wviewer::close destroys its OWN toplevel and is registry-keyed — no-op
@@ -471,6 +489,15 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::design_dialog $key]
   $top.mb.setup add command -label "Model Files\u2026" \
     -command [list ase::ui::model_files_dialog $key]
+  # Simulators… = the registry issue 0931 shipped with no door at all (issue
+  # 0937). Setup, not Simulation: this is configuration that outlives a run,
+  # and it is where the other configuration dialogs already live. The menu
+  # LABEL is v2-spec-fixed the way the Session ones are (doc/claude/specs/
+  # ase_l.md, and W1m/S16 assert it). NO LOG CALL BELONGS HERE OR IN THE
+  # DIALOG: the 0930 interceptor logs this pick by construction, from the
+  # entry's own -command, and a second call would double every line.
+  $top.mb.setup add command -label "Simulators\u2026" \
+    -command [list ase::ui::simulators_dialog $key]
 
   menu $top.mb.analyses -tearoff 0
   $top.mb add cascade -label Analyses -menu $top.mb.analyses
@@ -486,7 +513,7 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::edit_variables $key]
 
   menu $top.mb.outputs -tearoff 0
-  $top.mb add cascade -label Outputs -menu $top.mb.outputs
+  $top.mb add cascade -label [ase::ui::lbl_outputs] -menu $top.mb.outputs
   menu $top.mb.outputs.saved -tearoff 0
   # Select On Design (item 08): click mode on the design schematic — wire /
   # net-label clicks queue v(<net>), source clicks queue i(<inst>); the To Be
@@ -499,7 +526,7 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::select_on_design $key {save 1 plot 1}]
   $top.mb.outputs add cascade -label {To Be Plotted} \
     -menu $top.mb.outputs.plotted
-  $top.mb.outputs add command -label "Save All\u2026" \
+  $top.mb.outputs add command -label [ase::ui::lbl_save_all] \
     -command [list ase::ui::save_all_dialog $key]
 
   menu $top.mb.sim -tearoff 0
@@ -521,8 +548,39 @@ proc ase::ui::build {key top} {
 
   # Results: Direct Plot is LIVE (item 13) — the Select-On-Design click mode
   # in the `plot` flavor: clicks queue traces, ESC opens/raises the session's
-  # waveform viewer with a new stacked graph. The Annotate entries stay
-  # disabled (spec: "Menu entries may exist disabled").
+  # waveform viewer with a new stacked graph.
+  #
+  # ⚠ ANNOTATE IS LIVE SINCE ISSUE 0682, AND IT IS NOW THE ONLY ANNOTATION
+  # VISIBILITY CONTROL IN THE PROGRAM. Both entries were `add command ...
+  # -state disabled` placeholders for as long as this menu has existed (the
+  # ase_l spec: "(DEFERRED) ... Menu entries may exist disabled"), and probed
+  # they were deader than that -- `-command` was an EMPTY string and nothing
+  # anywhere called entryconfigure on them. Driving the shipped feature on a
+  # real sky130 bench the user ruled, verbatim: "What is View > Show? We want
+  # to be like Cadence. It needs to ONLY be in ASE-L > Results > Annotate >
+  # Operating Point Info", and "results (including OP info) only make sense
+  # when there is a result loaded - meaning an ASE-L is active, to which this
+  # schematic is 'bound'". That REVERSES issue 0457(b) (the same user, two days
+  # earlier, put the pair in the schematic's `View > Show / Hide`); 0457(b)
+  # answered the question it was asked, so this is a change of destination and
+  # not a repair. The View pair is deleted in the same change.
+  #
+  # CHECKBUTTON, not command (decision D1): the two bits are booleans
+  # (xschem.h:431), text_hidden() gates them independently (actions.c:1437-1439)
+  # and all four mask states are coherent and reachable. `add command` cannot
+  # display state, and state is the entire content of a visibility control.
+  #
+  # BUILT DISABLED on purpose. Nothing is live until the predicate
+  # (ase::has_results) has been asked, and the -postcommand always runs before
+  # the submenu can be used, so this costs the user nothing while making it
+  # impossible for a click to reach the mask before anyone asked whether
+  # results exist.
+  #
+  # THE LABELS ARE THE USER'S OWN TWO STRINGS (decision D9) and Cadence's:
+  # `Operating Point info` / `DC Node Voltages`. Consequence, recorded rather
+  # than hidden: the deleted View pair's labels PARTITIONED the two content
+  # classes (issue 0678 -- bit0 covers device OP info AND branch currents),
+  # and these do not. That partition property has no successor here.
   menu $top.mb.results -tearoff 0
   $top.mb add cascade -label Results -menu $top.mb.results
   # RESULTS BATCH item 7 (R401): `Select\u2026` is the door onto
@@ -545,11 +603,43 @@ proc ase::ui::build {key top} {
   $top.mb.results add separator
   $top.mb.results add command -label {Direct Plot} \
     -command [list ase::ui::direct_plot $key]
-  menu $top.mb.results.annotate -tearoff 0
-  $top.mb.results.annotate add command -label {Operating Point info} \
-    -state disabled
-  $top.mb.results.annotate add command -label {DC Node Voltages} \
-    -state disabled
+  menu $top.mb.results.annotate -tearoff 0 \
+    -postcommand [list ase::ui::annot_menu_sync $key]
+  $top.mb.results.annotate add checkbutton -label {Operating Point info} \
+    -variable ::ase::ui::annot($key,op) -state disabled \
+    -command [list ase::ui::annot_apply $key op]
+  $top.mb.results.annotate add checkbutton -label {DC Node Voltages} \
+    -variable ::ase::ui::annot($key,volt) -state disabled \
+    -command [list ase::ui::annot_apply $key volt]
+  # ISSUE 0868 -- THE THIRD ENTRY, and the user asked for it by name: "We can add
+  # a menu item in Results > Annotate for annotating TRAN node voltages for
+  # time-point given by cursor B, or A - whatever the convention is".
+  #
+  # THE LABEL NAMES ITS TIME SOURCE, and that is a decision rather than a
+  # phrasing. The two entries above name a CONTENT class; a transient has no
+  # single meaningful time, so a bare `Transient Node Voltages` would leave the
+  # user asking "at when?". Rejected: that bare form, and `Annotate at Cursor`
+  # (which says nothing about what). Unratified -- see doc/claude/issues/0868-*.md.
+  #
+  # CHECKBUTTON and BUILT DISABLED for exactly the reasons the pair above are:
+  # it is a third independently clearable bit of one mask (ANNOT_SHOW_TRAN,
+  # xschem.h), and nothing in this menu may be clickable before
+  # `ase::has_results` has been asked.
+  # ⚠ AND THE BODY IS MADE REACHABLE HERE, WHERE THE ENTRY IS BUILT. The mode
+  # lives in utils/annot_mode.tcl, which only the CADENCE profile's rc sources,
+  # while this menu belongs to every ASE-L user -- so building the entry without
+  # the body would ship a control that greys correctly and does nothing. The
+  # helper never clobbers an existing definition and never sources a file that
+  # is not there (it `file isfile`s each candidate first), so a session that
+  # already loaded the profile, and an installation that ships no utils/, are
+  # both no-ops rather than errors. Deliberately NOT a `source` line in
+  # src/xschem.tcl: utils/ is not in the install list, and a shipped xschem.tcl
+  # sourcing a file it did not install is the startup segfault CLAUDE.md records
+  # as issues 0423/0424.
+  catch {ase::ui::annot_tran_helper}
+  $top.mb.results.annotate add checkbutton -label {Transient Node Voltages (at cursor)} \
+    -variable ::ase::ui::annot($key,tran) -state disabled \
+    -command [list ase::ui::annot_apply $key tran]
   $top.mb.results add cascade -label Annotate -menu $top.mb.results.annotate
 
   # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
@@ -1009,7 +1099,7 @@ proc ase::ui::sod_expr {kind token mode} {
 #
 # It DELEGATES rather than re-validating, and that is deliberate. A first cut
 # ended `if {$m ne {preserve} && $m ne {distinguish}} { return fold }` — a second
-# copy of the validation `::sim_profile_casemode` already does (spec §3: a
+# copy of the validation ase::sim_casemode_requested already does (spec §3: a
 # `set sim_case_mode sideways` in an rc cannot become a request). It survived
 # every sabotage green, because the authority above it had already answered
 # `fold`; worse, it MASKED a real one — with the copy in place, a mutation that
@@ -1021,24 +1111,27 @@ proc ase::ui::sod_expr {kind token mode} {
 # return value is always one; it has no behavioural drive of its own, since
 # sod_expr folds `{}` exactly as it folds `fold`.
 #
-# THE INIT IS OURS, NOT THE RESOLVER'S, and that is the fix round's other half.
-# `ase::sim_profile_resolve` opens with `::set_sim_defaults` because `sim()` is
+# ⚠ THE `init 0` DANCE IS GONE, AND SO IS THE DEFECT IT GUARDED (the `annotate`
+# merge). `fluid-editing` resolved the mode off a `sim()` profile row, and
+# ase::sim_profile_resolve opened with `::set_sim_defaults` because `sim()` is
 # built lazily — but `::set_sim_defaults` is NOT a read: with the Simulation
-# Configuration dialog open it slurps every `.sim…r.$i.cmd` widget back into
+# Configuration dialog open it slurped every `.sim…r.$i.cmd` widget back into
 # `sim($tool,$i,cmd)`. Reached from here it therefore COMMITTED the user's
 # unsaved dialog edits on every Direct-Plot / Select-On-Design click and defeated
 # that dialog's Cancel — measured, `USER-IS-STILL-TYPING` typed into the spice
-# row-0 cmd box survived one pick AND the Cancel that followed. A read-only pick
-# (issue 0204) must not write unrelated global config. So we ask with `init 0`
-# and do the lazy build ourselves, ONCE, and only when the array does not exist
-# yet — a state in which `.sim` cannot exist either, since `simconf` builds
-# `sim()` before it builds the dialog. SC208 pins that a pick makes no
-# `set_sim_defaults` call; SC208b pins that a virgin array is still built;
-# test_ase_dialogs G13 pins the dialog symptom itself, with real widgets.
+# row-0 cmd box survived one pick AND the Cancel that followed. This proc's
+# answer was to ask read-only and do the lazy build itself.
+#
+# The mode now comes from the ASE-L simulator registry, which is built eagerly
+# and has no side effect to guard against: reading it is a read, so a pick can
+# simply ask. SC208's claim (a pick makes no `set_sim_defaults` call) holds by
+# construction rather than by care, which is the stronger form of the same
+# property; SC208b's virgin-array build has nothing left to build; and
+# test_ase_dialogs G13 still pins the dialog symptom itself, with real widgets.
 proc ase::ui::sod_case_mode {key} {
-  if {![info exists ::sim(tool_list)]} { catch {::set_sim_defaults} }
   set m {}
-  if {[catch {ase::sim_profile_casemode [ase::session_state $key] 0} m]} {
+  if {[catch {ase::sim_casemode_requested \
+                [ase::state_get [ase::session_state $key] simulator ngspice]} m]} {
     catch {::ase::echo "ase: cannot resolve this session's requested case mode\
  ($m) — writing FOLDED expressions" error}
     return fold
@@ -2376,10 +2469,498 @@ proc ase::ui::direct_plot {key {do_raise 1}} {
   ase::ui::select_on_design $key {save 0 plot 1} plot $do_raise
 }
 
+# --- Results > Annotate: the annotation visibility control (issue 0682) ------
+#
+# THE WHOLE PROBLEM IN ONE SENTENCE: the mask this menu governs (`annot_show`)
+# is per DESIGN CONTEXT, and an ASE-L window is a plain Tk toplevel
+# (ase_window.tcl `toplevel $top`), not an xschem drawing context. So a
+# a `-command` that wrote the mask directly, hung off `.aseN`, writes into whatever
+# xschem context happens to be CURRENT when the user clicks -- which after any
+# tab switch is not the session's design. Everything below exists to make the
+# menu READ and WRITE the DESIGN's mask instead of the current one's.
+#
+# OWNERSHIP, MEASURED 2026-08-24 rather than assumed (0682 §4 asks for exactly
+# this): `xctx->annot_show` (xschem.h:2241) is per-context, but
+# annot_show_sync_cache() (actions.c:1321-1325) does
+# `xctx->annot_show = tclgetintvar("annot_show")` at all eight bulk-evaluation
+# entry points -- the C field is a per-frame PULL-CACHE of the one global Tcl
+# var. Probe: after setting the mask to 3, a bare `set ::annot_show 0` still
+# read back 3, and one `xschem update_all_sym_bboxes` made it 0. What makes the
+# mask nevertheless behave per-context is that `annot_show` is a member of
+# tctx::global_list (xschem.tcl), so the tab/window switch swaps the Tcl var and
+# snapshots the outgoing one into `::tctx::<win_path>(...)`.
+#
+# DECISION D2, and it is why nothing here is session-scoped: the mask STAYS per
+# design context. Making it per-ASE-session means teaching that C pull, at all
+# eight entry points, where a session's value lives -- and it would make `6` and
+# this menu's tick describe different things, which is worse than the problem.
+# The ASE-L control REACHES the session's design context instead.
+
+# The `xschem windows` entry path of the window holding session `key`'s design,
+# or {} when no window holds it. Same resolution ORDER as raise_design_editor --
+# exact `current_name` first, then a window DESCENDED into the design (issue
+# 0168) -- so the window this reads is the window annot_goto_design switches to.
+proc ase::ui::annot_design_win {key} {
+  set dpath [ase::ui::design_path $key]
+  if {$dpath eq {}} { return {} }
+  set wins {}
+  if {[catch {xschem windows} wins]} { return {} }
+  foreach e $wins {
+    if {[catch {file normalize [lindex $e 4]} p]} { continue }
+    if {$p eq $dpath} { return [lindex $e 0] }
+  }
+  foreach e $wins {
+    foreach sp [lindex $e 6] {
+      if {$sp eq {}} { continue }
+      if {[catch {file normalize $sp} p]} { continue }
+      if {$p eq $dpath} { return [lindex $e 0] }
+    }
+  }
+  return {}
+}
+
+# The DESIGN context's annot_show mask, WITHOUT switching context (decision D7).
+# 0 when the design is not open anywhere, or anything is unreadable.
+#
+# ⚠ NO CONTEXT SWITCH HERE, deliberately: the one caller is a menu
+# -postcommand, i.e. code that runs while the menu is POSTING, and a switch
+# does save_ctx/restore_ctx/housekeeping_ctx and moves focus -- a menu that
+# mutates program state and moves focus while posting can unpost itself.
+#
+# ⚠ AND NOT $::annot_show EITHER: the Tcl mirror describes whichever context
+# wrote it last, not the one this menu is about. For a NON-current window the
+# honest source is that window's tctx snapshot -- `xschem windows` field 0 is
+# both the win_path and the tctx array name (measured 2026-08-24: with .x1.drw
+# non-current holding mask 2, `::tctx::.x1.drw(annot_show)` read exactly 2 while
+# the current .drw read 0). The snapshot is EXACT, not approximate: every writer
+# writes the CURRENT xctx, so a non-current window's mask cannot move between
+# its save_ctx and this read.
+proc ase::ui::annot_mask {key} {
+  set win [ase::ui::annot_design_win $key]
+  if {$win eq {}} { return 0 }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  set m {}
+  if {$cur ne {} && $cur eq $win} {
+    if {[catch {xschem get annot_show} m]} { return 0 }
+  } else {
+    if {[catch {set ::tctx::${win}(annot_show)} m]} { return 0 }
+  }
+  if {![string is integer -strict $m]} { return 0 }
+  return $m
+}
+
+# The submenu's -postcommand: GREY the two entries by the predicate, then PULL
+# the two ticks out of the design's mask.
+#
+# ⚠ A PULL IS NOT OPTIONAL (decision D4, invariant I5). The three cadence chords
+# (utils/annot_mode.tcl), both `Annotate Operating Point` menu items and a user's
+# own rc all write this mask without telling any menu, so a design that needed
+# every writer to remember this menu would show a stale tick the first time
+# anyone pressed `6`. Same reasoning that put a -postcommand on the View submenu
+# this control replaces.
+#
+# GREYING uses ase::has_results (ase.tcl), the ONE named predicate -- the same
+# one issue 0683's reasoning about the orphan state names, so the two cannot
+# drift apart.
+proc ase::ui::annot_menu_sync {key} {
+  variable wins
+  variable annot
+  if {![dict exists $wins $key]} { return }
+  set m [dict get $wins $key].mb.results.annotate
+  if {[catch {winfo exists $m} ex] || !$ex} { return }
+  set hr 0
+  catch {set hr [ase::has_results $key]}
+  set st [expr {$hr ? {normal} : {disabled}}]
+  catch {$m entryconfigure {Operating Point info} -state $st}
+  catch {$m entryconfigure {DC Node Voltages}     -state $st}
+  # 0868: the third entry greys and pulls with the other two. A sync that knew
+  # about two bits and left the third alone would show a stale tick on the very
+  # first Alt-Shift-6 the user pressed -- decision D4's reasoning, widened.
+  catch {$m entryconfigure {Transient Node Voltages (at cursor)} -state $st}
+  set mask [ase::ui::annot_mask $key]
+  set annot($key,op)   [expr {($mask & 1) ? 1 : 0}]
+  set annot($key,volt) [expr {($mask & 2) ? 1 : 0}]
+  set annot($key,tran) [expr {($mask & 4) ? 1 : 0}]
+  return
+}
+
+# Make session `key`'s design the CURRENT xschem context and VERIFY it. 1 on
+# success, 0 when no window holds the design or the switch was refused.
+#
+# ⚠ LANDMINE 17 (wave_viewer.tcl:1352-1355): `xschem new_schematic switch`
+# SILENTLY NO-OPS while the current context's semaphore is raised. A blind
+# switch followed by a write lands the mask in a FOREIGN schematic -- an
+# annotation toggle that silently annotates somebody else's sheet. So the switch
+# is verified by comparing `xschem get current_win_path`, exactly as
+# wviewer::switch_ctx does.
+#
+# `ifhidden`, not `always` (issue 0616): the `always` arm re-MAPs the toplevel,
+# which on WSLg costs a ~32px NW creep per call -- a design window that jumped
+# on every tick would be its own defect. A hidden or minimised design window is
+# still brought back.
+#
+# It never OPENS a window: `Session > Design Window` is the seam that does that,
+# and loading a schematic as a side effect of a visibility toggle would be a
+# surprise out of all proportion to the gesture.
+proc ase::ui::annot_goto_design {key} {
+  set win [ase::ui::annot_design_win $key]
+  if {$win eq {}} { return 0 }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  if {$cur ne {} && $cur eq $win} { return 1 }
+  set dpath [ase::ui::design_path $key]
+  if {$dpath eq {}} { return 0 }
+  catch {ase::ui::raise_design_editor $dpath ifhidden}
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  return [expr {$cur ne {} && $cur eq $win}]
+}
+
+# Attach the session's raw to the DESIGN context when it has none (decision D8).
+# Caller must already be IN the design context.
+#
+# ⚠ WHY A VISIBILITY CONTROL LOADS ANYTHING AT ALL. MEASURED:
+# `grep -rn 'annotate_op|raw_read' src/ase.tcl src/ase_window.tcl
+# src/wave_viewer.tcl` returns NOTHING -- ASE-L never loads a raw into the DESIGN
+# context (the waveform viewer attaches into its OWN context). So after a real
+# `Netlist and Run` the design has no database, and a visibility-only tick would
+# turn annotation on and render BLANKS (invariant I3), i.e. a control that looks
+# dead on the very next bench run. That is the class of defect this batch is
+# made of.
+#
+# ⚠ A DATABASE THE USER LOADED FROM SOMEWHERE ELSE IS NEVER THROWN AWAY, and
+# that is now a property of the PREDICATE rather than of a blanket early return.
+# `op_annot::db_current` answers "current, leave it alone" whenever the attached
+# database is at a path other than this session's -- another corner's operating
+# point, say -- because replacing it really would destroy it (`xschem
+# annotate_op` deletes a 1-point op/dc it replaces, scheduler.c). Row W1a16 of
+# tests/headless/test_ase_window.tcl is that claim's owner.
+#
+# ⚠ ISSUE 0684 IS FIXED HERE, AND THE GUARD IT REPLACED IS WHAT A READER WILL
+# EXPECT TO FIND. This proc used to open with
+#     set ld -1 ; catch {set ld [xschem raw loaded]}
+#     if {$ld >= 0} { return }
+# which answers "is SOME database attached", not "are THIS session's CURRENT
+# results attached". Two defects fell out of it. (a) ngspice overwrites ONE
+# stable raw path in place, so after a second run that early return kept the
+# FIRST run's numbers on screen forever -- invariant I3's own phrase, "not the
+# previous run's number". (b) An ordinary waveform graph's `xschem raw_read`
+# leaves `raw loaded` = 0 with `raw annot` = -1, so the tick returned without
+# annotating, the mask went on and NOTHING rendered -- and it was the one path
+# here that echoed nothing, i.e. a dead-looking control.
+#
+#   GUARD G12  the currency question is the FIRST question and the ONLY early
+#              return. `op_annot::db_current` (src/op_annot.tcl) is the mint;
+#              every catch inside it falls to "re-attach", never to a return,
+#              because `xschem raw rawfile` RAISES with nothing attached and an
+#              early return on an unanswerable question is precisely how the old
+#              guard painted run 1 forever. Row F28 of
+#              tests/headless/test_annot_stale_0684.tcl greps this body and
+#              requires `xschem raw loaded` to appear on no code line of it.
+#
+#   GUARD G13  RE-ATTACH OR BLANK. When the attached database is this surface's
+#              and is out of date, it comes OFF before anything below can
+#              refuse -- the 0838 staleness refusal, or a failed attach. A
+#              refusal spoken over the previous run's numbers is RULING D5-1
+#              with a caption, which is worse than the silent version because
+#              the caption makes it look checked. The `$ann` term is what stops
+#              this taking off a waveform graph the user is looking at: that
+#              database is not something this surface attached or can paint
+#              from, so defect B is repaired by ADDING ours beside it, not by
+#              destroying theirs. Rows F24 and F25 -- and specifically F24's
+#              LAST leg, which asks whether the graph is still in the registry
+#              afterwards. ⚠ WITHOUT THAT LEG NOTHING SEES THE `$ann` TERM
+#              (measured 2026-08-28): making the detach unconditional still
+#              renders the numbers and still leaves the session's own file
+#              current, so every other gold in every suite is satisfied while
+#              the trace the user was looking at has been unloaded from under
+#              their waveform window.
+proc ase::ui::annot_ensure_loaded {key} {
+  set path {}
+  catch {set path [ase::last_rawfile $key]}
+  set ann 0
+  catch {set ann [::op_annot::_annotated]}
+  if {[::op_annot::db_current $path]} { return }
+  if {$ann} { ::op_annot::db_detach }
+  if {$path eq {}} { return }
+  # ⚠ issue 0838: A STALE RAW IS NOT ATTACHED. `last_rawfile` answers "the raw
+  # path, if the file exists" and deliberately stays that loose — the three
+  # WAVEFORM callers (:2118, :4035, :4583) are right to plot an old raw, and
+  # refusing to plot last good run's traces after a failed netlist would be a
+  # regression. ANNOTATION is the opposite case: a number painted onto a
+  # schematic carries no provenance and no timestamp, so an out-of-date one is
+  # indistinguishable from a live one. This is the door the user came through —
+  # a failed run, then `6`, then id=/gm= from a run five minutes and one netlist
+  # earlier. Ask the named predicate, and SAY SO rather than silently drawing
+  # nothing.
+  set stale 0
+  catch {set stale [ase::results_stale $key]}
+  if {$stale} {
+    ## ⚠ ISSUE 0886 -- THIS SURFACE GETS ITS OWN WORDS, NOT THE MINT'S.
+    ## Row V43 of tests/headless/test_op_annot.tcl requires the fragment "is
+    ## older than the circuit it describes" to appear in utils/annot_mode.tcl
+    ## and in NO other file, ase_window.tcl included, so pasting the mint's
+    ## sentence here would red that row. It says the same thing about the same
+    ## situation from ASE-L's own side, with the `ase:` prefix its channel uses.
+    ## The file is still NAMED, because "not used" without saying which file is
+    ## not something a user can act on (issue 0838's argument, unchanged).
+    catch {::ase::echo "ase: [file tail $path] is from an earlier run than the circuit now on screen, so it was not used. Run the simulation again first." error}
+    return
+  }
+  # the hierarchy LEVEL the raw refers to, from the same seam
+  # cadence::_annot_raw_candidate uses (utils/annot_mode.tcl), so the two cannot
+  # disagree about level semantics. Unknown -> let annotate_op decide.
+  set level {}
+  set s {}
+  catch {set s [ase::session_for_current]}
+  if {[llength $s] >= 2 && [lindex $s 0] eq $key} { set level [lindex $s 1] }
+  ## ⚠ ONE CALL SITE NOW, AND THE FAILURE CAN ACTUALLY BE SPOKEN (issue 0684).
+  ## There used to be two `xschem annotate_op` calls here, one with a level and
+  ## one without, each inside its own `catch` -- and MEASURED, that catch never
+  ## fires: annotate_op returns TCL_OK for a file that does not exist and for
+  ## one that will not parse, so this surface's failure sentence could never
+  ## reach a user. `op_annot::db_attach` verifies by RE-ASKING and hands back
+  ## {ok reason}, so the sentence below is now reachable. Rows F26 and F32.
+  set att [::op_annot::db_attach $path $level]
+  if {![lindex $att 0]} {
+    catch {::ase::echo [ase::ui::annot_fail_msg $path [lindex $att 1]] error}
+  }
+  return
+}
+
+# ISSUE 0684, THE HALF THAT REACHES THE DISPLAY WITH NO GESTURE AT ALL.
+#
+# ⚠ THIS IS WHAT REFUTED THE 2026-08-25 ATTEMPT, and a reader who only fixes the
+# tick will re-ship the defect. That attempt made run completion drop the
+# freshness stamp, so the cache stopped lying -- and the SCREEN kept painting
+# run 1's number, because nothing re-attached. Issue 0684 section 7's own words:
+# "what it must do is re-attach-or-blank, not merely invalidate." The user's
+# gesture is: annotation is already on, the simulation is re-run, and with no
+# key press and no tick the numbers must be the new ones or blank.
+#
+#   GUARD G15  ANNOTATION OFF -> NOTHING IS OWED. Attaching a raw is not a
+#              neutral act -- it can destroy a 1-point op/dc it replaces -- and
+#              the user's own ruling on 0684 was about what the TICK shows, not
+#              about firing a data operation nobody asked for. Bits 0 and 1 are
+#              this surface's; bit 2 is the transient chord's and is not this
+#              seam's business. Row F29.
+#   GUARD G16  THE BORROW ALWAYS GIVES THE CONTEXT BACK. Same discipline and
+#              same reason as wviewer::enter_ctx: a borrow that entered and
+#              never left would strand the user in another window's context with
+#              the schematic still on screen (issue 0173's shape). And the switch
+#              is VERIFIED, never assumed -- landmine 17: `new_schematic switch`
+#              silently no-ops while the current context's semaphore is raised,
+#              and a blind switch followed by a write lands the numbers in a
+#              FOREIGN schematic. It never RAISES or opens a window either: a
+#              finished run must not pop the design over the ASE-L window.
+#              ⚠ THIS GUARD NEEDS TWO SCHEMATIC WINDOWS TO BE SEEN AT ALL, and
+#              for a while it had none. The tick's own `annot_goto_design`
+#              leaves the design current, so every fixture that drove this proc
+#              entered it with cur == win and the borrow branch was dead code
+#              under test -- both halves could be deleted with every suite
+#              green (measured 2026-08-28, 12 of 12 calls). The witnesses are
+#              rows W1a28 and W1a29 of tests/headless/test_ase_window.tcl,
+#              which drive a finished run from a foreign tab; W1a29 stages the
+#              refused switch through `xschem set semaphore`, the landmine
+#              itself, and shows the numbers landing in the foreign schematic
+#              when the verification is removed. Row F33 of
+#              tests/headless/test_annot_stale_0684.tcl is the single-window
+#              floor only: it cannot reach this branch, and says so.
+proc ase::ui::annot_refresh_after_run {key} {
+  set win [ase::ui::annot_design_win $key]
+  if {$win eq {}} { return 0 }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  if {$cur eq {}} { return 0 }
+  set back 0
+  if {$cur ne $win} {
+    catch {xschem new_schematic switch $win}
+    set now {}
+    catch {set now [xschem get current_win_path]}
+    if {$now eq {} || $now ne $win} { return 0 }
+    set back 1
+  }
+  set did 0
+  catch {set did [ase::ui::annot_refresh_here $key]}
+  if {$back} { catch {xschem new_schematic switch $cur} }
+  return $did
+}
+
+# The design-context half of the refresh. Caller must already BE in the design
+# context; `annot_refresh_after_run` is the seam that arranges that.
+#
+# ⚠ IT GOES THROUGH `annot_ensure_loaded`, NOT ROUND IT (RULING D5-4). The tick
+# and a finished run are the same question -- "are the numbers on this sheet the
+# ones this session just produced" -- and one body answers it, so the 0838
+# staleness refusal, the level resolution and the single failure sentence cannot
+# drift between the two doors.
+proc ase::ui::annot_refresh_here {key} {
+  set m 0
+  catch {set m [xschem get annot_show]}
+  if {![string is integer -strict $m]} { set m 0 }
+  if {($m & 3) == 0} { return 0 }
+  ase::ui::annot_ensure_loaded $key
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  return 1
+}
+
+# The deferred entry `run_finished` schedules. WHY `after idle`, and it is the
+# same reason `auto_plot_idle` already carries: run_finished fires from the
+# execute fileevent, which can be dispatched INSIDE ase::wait's semaphore
+# bracket -- and with the current window's semaphore raised every
+# `new_schematic switch` is a silent no-op (xinit.c switch_window), so the
+# borrow above would run its whole body in the WRONG context and re-attach the
+# session's raw to whatever window happened to be current. At idle time the
+# bracket is balanced. The catch keeps an idle-time failure out of Tk's bgerror
+# modal.
+proc ase::ui::annot_refresh_idle {key} {
+  catch {ase::ui::annot_refresh_after_run $key}
+}
+
+## THE ONE SENTENCE FOR "the engine refused to put these numbers on the sheet".
+##
+## ⚠ ISSUE 0886, RULING D5-4. It was written out TWICE, at the two
+## `xschem annotate_op` call sites in `ase::ui::annot_ensure_loaded` -- one with
+## a hierarchy level and one without -- which is one message with two places to
+## edit and only a reader comparing them can tell they were meant to agree. Row
+## A11-8 of tests/headless/test_op_annot.tcl greps for exactly one copy of the
+## fragment "could not put the results from", and for zero copies of the old
+## `ase: cannot annotate` spelling.
+##
+## ⚠ `$e` IS THE ENGINE'S OWN RAISE TEXT and is passed through unedited.
+## It is the only part of this sentence that says WHICH thing went wrong, and
+## paraphrasing it would leave the user a polite apology with no fact in it.
+proc ase::ui::annot_fail_msg {path e} {
+  return "ase: could not put the results from '$path' onto the schematic. The reason given was: $e"
+}
+
+# ISSUE 0868 -- make `cadence::annot_tran` reachable from a session that never
+# loaded the cadence profile, and do it WITHOUT clobbering an existing
+# definition. utils/ sits beside the installed share dir in a source tree; when
+# neither candidate resolves the caller says so rather than doing nothing (the
+# silence issue 0857 is about).
+proc ase::ui::annot_tran_helper {} {
+  if {[llength [info commands ::cadence::annot_tran]]} { return 1 }
+  set sd {}
+  catch {set sd [uplevel #0 {set XSCHEM_SHAREDIR}]}
+  if {$sd eq {}} { return 0 }
+  foreach cand [list [file join $sd .. utils annot_mode.tcl] \
+                     [file join $sd utils annot_mode.tcl]] {
+    if {[file isfile $cand]} {
+      catch {uplevel #0 [list source $cand]}
+      if {[llength [info commands ::cadence::annot_tran]]} { return 1 }
+    }
+  }
+  return 0
+}
+
+# The two visibility checkbuttons' -command: PUSH the clicked bit into the
+# DESIGN's mask. (The third entry, issue 0868, takes the request arm below.)
+#
+# ⚠ BIT-WISE FROM THE DESIGN'S LIVE VALUE (decision D6), never composed from
+# both ticks. The ticks were painted by a PULL that ran BEFORE any context
+# switch, so composing the whole mask from both of them can write a stale OTHER
+# bit over the design's real value. The View pair this replaces could compose
+# from both because pair and mask lived in the same context; this one does not.
+#
+# ⚠ ON A REFUSAL, THE TICK IS SNAPPED BACK. Tk has ALREADY flipped the variable
+# by the time -command runs, so a refusal that merely writes nothing leaves the
+# user looking at a ticked box over an un-annotated schematic.
+#
+# The mask is written THROUGH `xschem set` (S7 decision D4): a bare
+# `set ::annot_show` leaves the C field stale until the next bulk sync. The bbox
+# pass is not optional either -- an annotation block changes the instance's own
+# bbox (select.c:709), the same reason `Show hidden texts` carries one.
+#
+# ⚠ THE DESIGN IS LEFT CURRENT ON PURPOSE -- this is NOT the wave_viewer
+# enter_ctx/leave_ctx LOAN (issue 0173), and it must not be "fixed" into one.
+# That bracket exists because switching into a VIEWER rewrites the viewer's wm
+# title from its nameless read-only buffer; here the destination is the user's
+# own design, and the gesture means "show me these numbers on that schematic".
+# Putting the context back would leave the annotated sheet behind whatever was
+# current when the user clicked.
+proc ase::ui::annot_apply {key which} {
+  variable annot
+  set bit [expr {$which eq {op} ? 1 : ($which eq {volt} ? 2 : 4)}]
+  if {![ase::ui::annot_goto_design $key]} {
+    catch {::ase::echo "ase: this session's design window is not open, or switching to it was refused, so there is nothing to annotate. Session > Design Window opens it." error}
+    ase::ui::annot_menu_sync $key
+    return
+  }
+  set cur 0
+  if {[catch {xschem get annot_show} cur]} { set cur 0 }
+  if {![string is integer -strict $cur]} { set cur 0 }
+  set want 0
+  if {[info exists annot($key,$which)] && $annot($key,$which)} { set want 1 }
+  # ISSUE 0868 -- TICKING THE TRANSIENT ENTRY IS A REQUEST, NOT A VISIBILITY
+  # TOGGLE, so this arm composes NO mask of its own (RULING D5-4). The other two
+  # bits describe numbers that are already published; bit2's are not published
+  # until somebody asks, at a time point that has to be resolved from the
+  # waveform viewer's cursors. So the work is handed to `cadence::annot_tran`
+  # (utils/annot_mode.tcl), which resolves the cursor, publishes, mints the ONE
+  # sentence and arms bit2 ITSELF. The `Alt-Shift-6` chord in
+  # src/cadence_style_rc is the other door onto that same body.
+  #
+  # ⚠ ON A REFUSAL THE TICK SNAPS BACK, and that is the sync call below doing it:
+  # Tk has ALREADY flipped the variable by the time this -command runs, so a mode
+  # that declines (no cursor on, no transient loaded) and writes nothing would
+  # otherwise leave the user looking at a ticked box over a mask with no bit2 in
+  # it. Same shape as the unreachable-design arm above.
+  #
+  # ⚠ UNTICKING IS NOT ROUTED HERE. Clearing bit2 is pure visibility and falls
+  # through to the bit-wise write below, so `Ctrl-6`, this entry and the mask all
+  # agree about how the mode goes off.
+  #
+  # ⚠ THE HELPER IS SOURCED ON DEMAND. `cadence::*` lives in
+  # utils/annot_mode.tcl, which only the CADENCE profile's rc sources -- and this
+  # menu belongs to every ASE-L user. The source is attempted ONLY when the proc
+  # is absent, so a test spy or a user's own override is never clobbered.
+  if {$which eq {tran} && $want} {
+    ase::ui::annot_tran_helper
+    if {![llength [info commands ::cadence::annot_tran]]} {
+      ## ⚠ ISSUE 0886 -- IT CANNOT BE MINTED IN utils/annot_mode.tcl, and a
+      ## reader tidying the surface would move it there first. This is the
+      ## sentence for the session where that file is ABSENT; a mint inside it
+      ## could never render. It also stops naming the file to the user: the
+      ## path is a fact about the installation, not an action the user can take.
+      catch {::ase::echo "ase: transient annotation is not available in this installation. The helper it needs was not installed." error}
+      ase::ui::annot_menu_sync $key
+      return
+    }
+    catch {::cadence::annot_tran}
+    catch {xschem update_all_sym_bboxes}
+    catch {xschem redraw}
+    ase::ui::annot_menu_sync $key
+    return
+  }
+  set new [expr {($cur & ~$bit) | ($want ? $bit : 0)}]
+  xschem set annot_show $new
+  if {$new != 0} { ase::ui::annot_ensure_loaded $key }
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  ase::ui::annot_menu_sync $key
+  return
+}
+
 # `~` strip button / raise-or-open the session's waveform viewer (item 13,
 # D13): no traces added; headless / unknown-session safe via the catch.
 proc ase::ui::open_viewer {key} {
-  catch {wviewer::open $key}
+  ## ⚠ 0930: THIS USED TO BE A BARE `catch {wviewer::open $key}` -- one line that
+  ## discarded both halves of what the user needs to see. `wviewer::open` builds
+  ## a real toplevel and its own comments record a past raise out of
+  ## `build_menubar` when the new window's context did not follow; a raise on
+  ## that path leaves a half-built or vanished window and, behind a bare catch,
+  ## NO message anywhere. The user reported exactly that shape -- "it launched a
+  ## window which disappeared soon" -- with nothing in the log to say which arm
+  ## ran. Still caught, because a viewer failure must not take the ASE-L window
+  ## down with it, but now REPORTED.
+  if {[catch {wviewer::open $key} err]} {
+    catch {::ase::echo "ase: the waveform viewer could not be opened: $err" error}
+    return 0
+  }
+  return 1
 }
 
 # ===========================================================================
@@ -3811,6 +4392,381 @@ proc ase::ui::sim_options_dialog {key} {
   return [ase::ui::listdlg_open $key simopt {Simulation Options}]
 }
 
+# --- Setup > Simulators… : the front door of the simulator registry -------
+# ISSUE 0937. Issue 0931 built a working registry -- register a simulator of
+# your own by name, say which one is in force, save the list so it comes back
+# next start -- and shipped it with no way into it: nine menus walked on the
+# real session window at 439d1087 and not one entry anywhere mentioned a
+# simulator program. The only lever was typing Tcl into the CIW, and even that
+# forgot itself, because nothing in the tree called the writer.
+#
+# ONE WRITER, TWO FRONT DOORS. Everything below drives the SAME procs the CIW
+# route drives -- ase::sim_register / sim_unregister / sim_select / sim_list /
+# sim_status / sim_entry_why -- and saves through ase::sim_write_conf. No
+# validation, no path resolution and no persistence is re-implemented here; a
+# second copy of any of them is how the two doors would start disagreeing.
+#
+# AND NO SENTENCE IS WRITTEN HERE. Ruling D5-4: every user-facing sentence
+# about a simulator is minted in ase::sim_why (src/ase.tcl) and only RENDERED
+# here, and where the dialog has to show what a gesture just said it reads
+# ase::sim_said back rather than composing its own version. Row R9 of
+# tests/headless/test_ase_simreg_0931.tcl greps THIS file for the minted
+# phrases and reds if one appears; rows S7/S17 compare the label text against
+# the mint byte for byte.
+#
+# NOTHING HERE LOGS. The 0930 menu interceptor already records the pick from
+# the Setup entry's own -command; row S13 greps these bodies for a second log
+# call.
+
+# The combobox line that means "none of mine". Minted once so the suite can
+# ask for it instead of hardcoding a string that would drift (row S4).
+proc ase::ui::simdlg_none_label {} {
+  return "(none — use the program my system finds on the PATH)"
+}
+
+# The backend the session will run, which is what "the program on your PATH"
+# is the name of. Defaulted rather than raised: this feeds a label.
+proc ase::ui::simdlg_backend {key} {
+  set b {}
+  catch {set b [ase::state_get [ase::session_state $key] simulator]}
+  if {$b eq {}} { set b ngspice }
+  return $b
+}
+
+# A refusal raised by the registry, made fit to show in a dialog: the internal
+# "ase: " prefix is a CIW convention and means nothing to someone reading a
+# label three inches from the field they just got wrong.
+proc ase::ui::simdlg_plain {msg} {
+  if {[string first {ase: } $msg] == 0} { return [string range $msg 5 end] }
+  return $msg
+}
+
+# Setup > Simulators…
+proc ase::ui::simulators_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simdlg
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Simulators}
+  ttk::treeview $w.tv -columns {name path problem} -show headings \
+    -selectmode browse -height 8 -style Ase.Treeview \
+    -yscrollcommand [list $w.sb set]
+  foreach c {name path problem} h {Name Program Problem} width {140 300 420} {
+    $w.tv heading $c -text $h
+    $w.tv column $c -width $width -anchor w -stretch 1
+  }
+  scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+  label $w.usel -text {Use this one:} -anchor w
+  ttk::combobox $w.use -state readonly -font AseEntryFont \
+    -style Ase.TCombobox -textvariable ase::ui::simuse($key)
+  bind $w.use <<ComboboxSelected>> [list ase::ui::simdlg_use $key]
+  # THE IN-DIALOG FEEDBACK SURFACE, and it is the point of the dialog rather
+  # than decoration. Silence is this area's failure mode: Setup > Design and
+  # the shared list dialog behind Model Files report their refusals to the
+  # CIW only, so the user sits looking at a dialog that did nothing and says
+  # nothing. Every sentence that lands here is minted in ase.tcl.
+  label $w.status -anchor w -justify left -wraplength 560 -text {}
+  set cf {}
+  catch {set cf [ase::sim_conf_file]}
+  if {$cf ne {}} {
+    label $w.where -anchor w -justify left -wraplength 560 \
+      -text "Your list is saved in $cf and comes back the next time xschem starts."
+  } else {
+    label $w.where -anchor w -justify left -wraplength 560 \
+      -text {This list cannot be saved in this session, so it will be gone when xschem closes.}
+  }
+  frame $w.btns
+  button $w.btns.add -text {Add…} -command [list ase::ui::simdlg_editor $key {}]
+  button $w.btns.edit -text {Edit…} -command [list ase::ui::simdlg_edit $key]
+  button $w.btns.remove -text Remove -command [list ase::ui::simdlg_remove $key]
+  button $w.btns.close -text Close -command [list ase::ui::simdlg_close $key]
+  pack $w.btns.add -side left -padx 5
+  pack $w.btns.edit -side left -padx 5
+  pack $w.btns.remove -side left -padx 5
+  pack $w.btns.close -side right -padx 5
+  grid $w.tv     -row 0 -column 0 -sticky nsew -padx {8 0} -pady {8 2}
+  grid $w.sb     -row 0 -column 1 -sticky ns   -padx {0 8} -pady {8 2}
+  grid $w.usel   -row 1 -column 0 -columnspan 2 -sticky w  -padx 8 -pady {6 0}
+  grid $w.use    -row 2 -column 0 -columnspan 2 -sticky we -padx 8
+  grid $w.status -row 3 -column 0 -columnspan 2 -sticky we -padx 8 -pady {6 2}
+  grid $w.where  -row 4 -column 0 -columnspan 2 -sticky we -padx 8
+  grid $w.btns   -row 5 -column 0 -columnspan 2 -sticky we -padx 8 -pady 6
+  grid rowconfigure $w 0 -weight 1
+  grid columnconfigure $w 0 -weight 1
+  # item 10: ESC = the Close button, through the same path, so the per-key
+  # records go with it
+  ase::ui::bind_dialog_esc $w [list ase::ui::simdlg_close $key]
+  ase::ui::simdlg_fill $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# Re-read the registry into the list, the combobox and the status line. Called
+# after every gesture: the registry is the truth, the widgets are a view of it.
+proc ase::ui::simdlg_fill {key} {
+  variable wins; variable dlg; variable simuse
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simdlg
+  if {![winfo exists $w]} { return }
+  $w.tv delete [$w.tv children {}]
+  set names {}
+  set i 0
+  foreach e [ase::sim_list] {
+    set n [dict get $e name]
+    lappend names $n
+    # The Problem cell is ase::sim_entry_why VERBATIM -- the same sentence
+    # the user was given when they registered it, worked out fresh now rather
+    # than read back from the entry's `ok` flag, which is a boolean with no
+    # words in it and answers a question about the past.
+    $w.tv insert {} end -id $i \
+      -values [list $n [dict get $e path] [ase::sim_entry_why $n]]
+    incr i
+  }
+  set dlg($key,simnames) $names
+  set none [ase::ui::simdlg_none_label]
+  $w.use configure -values [linsert $names 0 $none]
+  set sel [ase::sim_selected]
+  if {$sel eq {}} { set simuse($key) $none } else { set simuse($key) $sel }
+  ase::ui::simdlg_status $key
+}
+
+# THE ONE WRITER OF THE STATUS LABEL. A non-empty `msg` wins -- that is a
+# caller handing over the sentence a gesture just said. Otherwise the line
+# describes the state, and every branch of it is a rendered mint.
+#
+# THE ORDER OF THE THREE BRANCHES IS THE PART A READER WOULD GET WRONG. Asking
+# "is there anything to say" first looks right and is not: with two simulators
+# registered and the user's choice deliberately cleared, the resolver's `why`
+# carries the "more than one is registered and none is picked" sentence, which
+# is true but is an answer to a question this dialog is the answer to -- the
+# list is right there. So a problem is shown only when the resolver could NOT
+# honour what is in force (row S4 pins the cleared-choice case).
+proc ase::ui::simdlg_status {key {msg {}}} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simdlg
+  if {![winfo exists $w]} { return }
+  if {$msg ne {}} {
+    $w.status configure -text $msg
+    return
+  }
+  set backend [ase::ui::simdlg_backend $key]
+  set st [ase::sim_status $backend]
+  if {![dict get $st ok]} {
+    $w.status configure -text [dict get $st why]
+  } elseif {[dict get $st source] eq {registry}} {
+    $w.status configure -text \
+      [ase::sim_why in_force [dict get $st entry] [dict get $st exe]]
+  } else {
+    $w.status configure -text [ase::sim_why path_in_force $backend {}]
+  }
+}
+
+# SAVE, THROUGH THE ONE WRITER. Not "also save": ase::sim_write_conf is the
+# whole of what this dialog does about persistence, and it reports its own
+# failure through ase::sim_say, which is what leaves a sentence for the
+# gesture that called it to show. `key` is unused on purpose -- the registry
+# is process-global -- and is carried so every gesture below reads the same.
+proc ase::ui::simdlg_commit {key} {
+  catch {ase::sim_write_conf}
+  return
+}
+
+# The name of the row the user clicked, or {} with the status line telling
+# them to click one. Two buttons need it, so the sentence is written once.
+proc ase::ui::simdlg_selected_name {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].simdlg
+  if {![winfo exists $w]} { return {} }
+  set sel [$w.tv selection]
+  if {$sel eq {}} {
+    ase::ui::simdlg_status $key \
+      {Click the simulator you want in the list above first, then press that button again.}
+    return {}
+  }
+  set names {}
+  if {[info exists dlg($key,simnames)]} { set names $dlg($key,simnames) }
+  set i [lindex $sel 0]
+  if {![string is integer -strict $i] || $i < 0 || $i >= [llength $names]} { return {} }
+  return [lindex $names $i]
+}
+
+# The two-field row editor. An empty `name` is the Add flavor; anything else
+# is Edit, and then the Name field is READ-ONLY -- a rename here would have to
+# be a remove plus an add, which moves the entry to the end of the list and
+# fires the "you removed X" sentence in the middle of what the user
+# experienced as a rename.
+proc ase::ui::simdlg_editor {key name} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set top [dict get $wins $key]
+  set title {Add Simulator}
+  if {$name ne {}} { set title {Edit Simulator} }
+  set w [ase::ui::dialog_frame $top.simrow $title]
+  set dlg($key,simrow) $name
+  set en [ase::ui::dialog_row $w 0 {Name:} name]
+  set ep [ase::ui::dialog_row $w 1 {Program:} path]
+  button $w.browse -text {Browse…} -command [list ase::ui::simdlg_browse $key]
+  grid $w.browse -row 1 -column 2 -sticky w -padx {6 8} -pady 2
+  # the editor's OWN feedback surface: a refusal about what was just typed
+  # belongs where the typing is, not only in the CIW behind the dialog. Empty
+  # until there is something to say, so an untouched editor makes no claim.
+  label $w.status -anchor w -justify left -wraplength 420 -text {}
+  grid $w.status -row 2 -column 0 -columnspan 3 -sticky we -padx 8 -pady {4 0}
+  if {$name ne {}} {
+    $en insert 0 $name
+    foreach e [ase::sim_list] {
+      if {[dict get $e name] eq $name} { $ep insert 0 [dict get $e path] }
+    }
+    $en configure -state readonly
+  }
+  bind $en <Return> [list ase::ui::simdlg_ok $key]
+  bind $ep <Return> [list ase::ui::simdlg_ok $key]
+  ase::ui::dialog_buttons $w 3 [list ase::ui::simdlg_ok $key] \
+    [list ase::ui::simdlg_cancel $key]
+  ase::ui::apply_theme $w
+  if {$name eq {}} { focus $en } else { focus $ep }
+  return $w
+}
+
+# Edit… on the clicked row.
+proc ase::ui::simdlg_edit {key} {
+  set n [ase::ui::simdlg_selected_name $key]
+  if {$n eq {}} { return }
+  ase::ui::simdlg_editor $key $n
+}
+
+# Browse… beside the Program field.
+#
+# NOT COVERED BY ANY SUITE, AND THAT IS A PROPERTY OF tk_getOpenFile, NOT AN
+# OVERSIGHT: it grabs the display and waits for a human, so no headless or
+# Xvfb run can press OK in it (wviewer::rawbar_browse declares the same
+# limit). Row S14a asserts this body instead -- that it really opens a file
+# browser and really writes the answer into the Program field.
+proc ase::ui::simdlg_browse {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simrow
+  if {![winfo exists $w]} { return }
+  set init [string trim [$w.path get]]
+  if {$init ne {}} { set init [file dirname $init] }
+  if {$init eq {} || ![file isdirectory $init]} { set init [pwd] }
+  set f {}
+  catch {set f [tk_getOpenFile -parent $w -initialdir $init \
+                  -title {Choose the simulator program to run}]}
+  if {$f eq {}} { return }
+  $w.path delete 0 end
+  $w.path insert 0 $f
+}
+
+# OK in the row editor.
+#
+# A BAD PATH IS RECORDED, NOT REFUSED -- that is the registry's own rule, and
+# the dialog must not quietly tighten it: refusing would throw the user's
+# typing away mid-gesture and leave them nothing to fix. What the dialog adds
+# is that the reason lands where they are looking, in the row's Problem cell
+# and on the status line, in the same words the CIW got.
+#
+# A malformed CALL is different and does keep the editor up: an entry with no
+# name cannot be stored, looked up or removed, so there is nothing to record.
+#
+# EVERYTHING THE DIALOG DOES NOT SHOW IS CARRIED THROUGH. An entry can also
+# carry extra arguments and the backend it was registered for; they have no
+# fields here, and an editor that rebuilt the entry from its two visible
+# fields would silently delete them (row S9).
+proc ase::ui::simdlg_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simrow
+  if {![winfo exists $w]} { return }
+  set editing {}
+  if {[info exists dlg($key,simrow)]} { set editing $dlg($key,simrow) }
+  set name [string trim [$w.name get]]
+  set path [string trim [$w.path get]]
+  set eargs {}
+  set backend {}
+  if {$editing ne {}} {
+    set name $editing
+    foreach e [ase::sim_list] {
+      if {[dict get $e name] ne $editing} { continue }
+      set eargs [dict get $e args]
+      set backend [dict get $e backend]
+    }
+  }
+  ase::sim_said_clear
+  if {[catch {ase::sim_register $name $path -args $eargs -backend $backend} err]} {
+    $w.status configure -text [ase::ui::simdlg_plain $err]
+    return
+  }
+  array unset dlg $key,simrow
+  destroy $w
+  ase::ui::simdlg_commit $key
+  ase::ui::simdlg_fill $key
+  set said [ase::sim_said]
+  if {$said ne {}} { ase::ui::simdlg_status $key $said }
+}
+
+proc ase::ui::simdlg_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,simrow
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].simrow}
+  }
+}
+
+# Remove. WORKS ON THE ENTRY CURRENTLY IN FORCE, by construction -- and says
+# what happens next, which is the half that did not exist before issue 0937:
+# removing the one in force silently promoted the survivor, or silently handed
+# control back to the program on the PATH, and printed nothing at all.
+proc ase::ui::simdlg_remove {key} {
+  set n [ase::ui::simdlg_selected_name $key]
+  if {$n eq {}} { return }
+  ase::sim_said_clear
+  if {[catch {ase::sim_unregister $n} err]} {
+    ase::ui::simdlg_status $key [ase::ui::simdlg_plain $err]
+    return
+  }
+  ase::ui::simdlg_commit $key
+  ase::ui::simdlg_fill $key
+  set said [ase::sim_said]
+  if {$said ne {}} { ase::ui::simdlg_status $key $said }
+}
+
+# The in-force combobox. "None of mine" clears the choice, which is a choice
+# like any other and is written down as one (issue 0932): without that, the
+# next start puts the first entry back in force and the gesture is undone.
+proc ase::ui::simdlg_use {key} {
+  variable simuse
+  set v {}
+  if {[info exists simuse($key)]} { set v $simuse($key) }
+  ase::sim_said_clear
+  if {$v eq [ase::ui::simdlg_none_label]} { set v {} }
+  if {[catch {ase::sim_select $v} err]} {
+    ase::ui::simdlg_fill $key
+    ase::ui::simdlg_status $key [ase::ui::simdlg_plain $err]
+    return
+  }
+  ase::ui::simdlg_commit $key
+  ase::ui::simdlg_fill $key
+  set said [ase::sim_said]
+  if {$said ne {}} { ase::ui::simdlg_status $key $said }
+}
+
+# Close / ESC. The row editor goes with it: it is a child dialog of this one
+# in everything but Tk parentage.
+proc ase::ui::simdlg_close {key} {
+  variable wins; variable dlg; variable simuse
+  array unset dlg $key,simnames
+  array unset dlg $key,simrow
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].simrow}
+    catch {destroy [dict get $wins $key].simdlg}
+  }
+  catch {unset simuse($key)}
+}
+
 proc ase::ui::listdlg_open {key which title} {
   variable wins; variable listdlg
   if {![dict exists $wins $key]} { return }
@@ -3985,54 +4941,536 @@ proc ase::ui::listdlg_delete {key which} {
 
 # --- (d) Outputs > Save All --------------------------------------------------
 
-# Outputs > Save All…: the two blanket checkboxes writing save_all_v /
-# save_all_i (deck mapping in ase.tcl: allv -> `.save all`, alli ->
-# `.options savecurrents`); the Levels entry is present-but-DISABLED and
-# backed by NO state key (D11 — a schema addition would ripple into the
-# protected byte-identity fixture).
+# Outputs > Save All…: the THREE blanket checkboxes writing save_all_v /
+# save_all_i / save_op_params (deck mapping in ase.tcl: allv -> `.save all`,
+# alli -> `.options savecurrents`, opparams -> the op_annot device
+# operating-point `.save` card block, plan step S4 / issue 0617); the Levels
+# entry is present-but-DISABLED and backed by NO state key (D11 — a schema
+# addition would ripple into the protected byte-identity fixture).
+#
+# ⚠ THE GRID ROWS ARE HARDCODED. opparams takes row 2, so Levels moved to 3
+# and the button bar to 4. The widget PATHS (.allv .alli .levels
+# .btns.proceed) are what the dialog suites drive, and they are unchanged.
+# --- 0650 / R-0653-d req 2: ONE SOURCE FOR THE THREE LABELS ------------------
+# "The menu path must be derived from the live menu, or asserted against it --
+# never hardcoded prose. Real labels carry ellipses: `Save All\u2026`. A hardcoded
+# 'Outputs > Save All' that drops the ellipsis or misses a cascade level is a
+# wrong direction printed with authority, which is worse than printing none."
+#
+# The SHIPPED gate-off nudge was exactly that failure -- it said
+# "Tick Outputs > Save All > Save device OP parameters", dropping both the
+# ellipsis and the parenthetical the checkbutton actually carries. So the menu
+# entry (:502), the dialog checkbutton (:2879) and the printed remedy are now all
+# built from these three procs: invariant I1 applied to a LABEL rather than to a
+# vector name. W1r/W1u/W1t in tests/headless/test_ase_window.tcl read the labels
+# back off the REAL widgets, so a constant-compared-to-constant tautology cannot
+# pass.
+#
+# ⚠ "ONE SOURCE" IS NOT YET TRUE OF THE WHOLE FILE, and the heading overclaimed
+# until this line was added. `ase::ui::save_all_report_discard` (below, ~:3016)
+# STILL hardcodes both labels and both spellings have already DRIFTED -- measured
+# in one process: the nudge prints `Outputs > Save All… > Save device OP
+# parameters (gm, gds, vth, ...)` while the discard prints `Outputs > Save All`
+# and `'Save device OP parameters'`, i.e. `string match` against BOTH constants
+# returns 0. The discard is one of the four messages issue 0650's acceptance A3
+# names by name. Filed as issue 0661; the older `*Outputs*Save All*` matcher rows
+# do NOT catch it (SAB-N7 proved that), so the fix needs a W1t-shaped row.
+proc ase::ui::lbl_outputs {}        { return {Outputs} }
+proc ase::ui::lbl_save_all {}       { return "Save All\u2026" }
+proc ase::ui::lbl_save_op_params {} { return {Save device OP parameters (gm, gds, vth, ...)} }
+
+# The remedy path a notice prints, composed from those three. `>`-separated
+# because that is what the shipped sentence used and what the user reads as a
+# menu path; nothing else in the path may contain a `>`.
+proc ase::ui::remedy_op_params_menu {} {
+  return "[ase::ui::lbl_outputs] > [ase::ui::lbl_save_all] > [ase::ui::lbl_save_op_params]"
+}
+
+# --- 0650 / R-0653-d req 3: ONE WRITER FOR THE THREE BLANKETS ----------------
+# "The command must invoke THE SAME PROC THE MENU INVOKES, not poke the state
+# underneath it." The menu's own entry is `Save All\u2026` -> save_all_dialog, which
+# is a DIALOG and commits nothing; the proc that actually commits the tick was
+# save_all_ok, which reads dlg() and therefore cannot be run headlessly or pasted
+# into the CIW. So the commit is extracted HERE, and both paths call it:
+#   * save_all_ok  -- reads the checkbutton records, then calls this;
+#   * save_op_params_on -- the pasteable remedy: reads the CURRENT blankets, then
+#     calls this with opparams forced on.
+# SAB-N6 is the discriminator that keeps them honest: neutralizing this one proc
+# must redden the existing Save All OK rows TOO, not only the remedy row.
+#
+# ⚠ THE EMPTY VALUE IS `ON`, NOT `OFF` (issue 0927, 2026-08-29 — the user's
+# call). `save_op_params` is in ase::omit_if_empty, and an empty value is what
+# keeps the key OUT of ase::state_serialize -- which is what keeps the 104
+# committed .state files byte-identical (F3/G3/R4/V4/R2). Before the flip that
+# empty value meant off; now it means "the default", and the default is on. So
+# OFF is the value that costs a key. Nothing here invents the mapping: it is
+# `ase::op_gate_value`, the one writer paired with `ase::op_gate_on`, the one
+# reader (invariant I1).
+proc ase::ui::save_all_apply {key allv alli opparams} {
+  set st [ase::session_state $key]
+  dict set st save_all_v [expr {$allv ? 1 : 0}]
+  dict set st save_all_i [expr {$alli ? 1 : 0}]
+  dict set st save_op_params [ase::op_gate_value $opparams]
+  ## ⚠ 0679: THE RETURN IS MEASURED, NOT MANUFACTURED. This line used to be a
+  ## bare `ase::session_update $key $st` with the answer discarded and the proc
+  ## ending in a hardcoded `return 1`.
+  set rc [ase::ui::save_all_commit $key $st]
+  ase::ui::populate $key    ;# the Save Options auto-cells react (item 06); no-op with no window
+  return $rc
+}
+
+# THE ONE WRITE, AND IT IS ALLOWED TO FAIL (issue 0679).
+#
+# `ase::session_update` is honest -- its docstring says "Returns 1, or 0 for an
+# unknown key" (ase.tcl:2714-2715) and it does exactly that. save_all_apply
+# used to throw that answer away and return a hardcoded `1`. That fabricated 1
+# is what the user read in the CIW after pasting the printed remedy, and it is
+# why they trusted a command that had changed nothing:
+#   update_rc 0   <- ase::session_update: "unknown key"
+#   apply_rc  1   <- ase::ui::save_all_apply: "success"
+#   gate_real 0   <- the gate never moved
+# A witness that cannot fail is not a witness (issue 0652's class, third
+# occurrence after 0664 and 0677).
+#
+# Its OWN named proc, not an inline `return [ase::session_update ...]`: the
+# honesty has to be independently neutralizable, and an inline return offers no
+# callee to stub short of session_update itself, which reddens the whole
+# session model and discriminates nothing (SAB-0679-B / -B2).
+#
+# ON FAILURE, ONE SENTENCE (issue 0635's rule), tagged `error`, naming the key
+# it could not find. `ciw_exec` echoes a command's value as a bare result
+# (ciw.tcl:602-605), so an honest `0` alone is barely better than the lie for
+# the user at the keyboard. The remedy still RETURNS 0 rather than RAISING --
+# raising would red-tag it through `ciw_echo $res error` but turns a
+# value-returning proc into a throwing one and needs `catch` at every caller;
+# that choice is user-visible and unratified, so it is recorded as a `rule`
+# debt on 0679 rather than taken silently. The echo is caught because issue
+# 0666 records the echo family raising into its caller.
+proc ase::ui::save_all_commit {key st} {
+  set rc [ase::session_update $key $st]
+  if {!$rc} {
+    catch {::ase::echo "ase: no ASE-L session is open under '$key'; the Save\
+ All settings were NOT applied." error}
+  }
+  return $rc
+}
+
+# The printed remedy itself. Takes ONLY the session key, because that is all a
+# notice can name -- and it goes through the shared writer above, so the other
+# two blankets keep the values the user left them at (F19r).
+proc ase::ui::save_op_params_on {key} {
+  set cur [ase::ui::save_all_current $key]
+  return [ase::ui::save_all_apply $key [dict get $cur allv] [dict get $cur alli] 1]
+}
+
 proc ase::ui::save_all_dialog {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
   set w [ase::ui::dialog_frame [dict get $wins $key].saveall {Save All}]
-  set st [ase::session_state $key]
-  set dlg($key,allv) [expr {[ase::state_get $st save_all_v 0] eq {1} ? 1 : 0}]
-  set dlg($key,alli) [expr {[ase::state_get $st save_all_i 0] eq {1} ? 1 : 0}]
+  ## 0648: initialised from the SAME normaliser save_all_cancel diffs against.
+  ## Two independent readings of the three blankets would report a phantom
+  ## discard for a box the user never touched (invariant I1).
+  set cur [ase::ui::save_all_current $key]
+  set dlg($key,allv)     [dict get $cur allv]
+  set dlg($key,alli)     [dict get $cur alli]
+  set dlg($key,opparams) [dict get $cur opparams]
+  ## 0695: THE TOUCH SET, CLEARED EXPLICITLY AT OPEN — not merely at close.
+  ## `ase::ui::dialog_frame` (:1391) DESTROYS an existing toplevel of this name
+  ## with NO cancel, so re-opening Save All from the menu while one is already
+  ## up runs no teardown at all. A touch record that survived that would make
+  ## the fresh dialog believe a box was hand-ticked, and a box the dialog
+  ## believes was hand-ticked is exactly the box that must NOT follow an
+  ## external write. Guarded by GE10j (this clear) and W1zb/GE10i (the close).
+  ## It REPLACES 0692's as-opened `seed` record — see save_all_mark_touched.
+  set dlg($key,touched) {}
+  ## 0695: EACH BOX REPORTS ITS OWN HAND TICK. Before this the three
+  ## checkbuttons carried `command={}` — there was no touch EVENT at all, which
+  ## is why "the user changed this box" had to be a value diff, and a value diff
+  ## cannot survive a box that follows the live value (save_all_mark_touched
+  ## carries the measurement). Pinned structurally by GE10k, which is the only
+  ## row that fails loudly if a later edit re-adds a box without its -command.
   checkbutton $w.allv -text {Save all voltages} \
-    -variable ::ase::ui::dlg($key,allv)
+    -variable ::ase::ui::dlg($key,allv) \
+    -command [list ase::ui::save_all_mark_touched $key allv]
   checkbutton $w.alli -text {Save all terminal currents} \
-    -variable ::ase::ui::dlg($key,alli)
+    -variable ::ase::ui::dlg($key,alli) \
+    -command [list ase::ui::save_all_mark_touched $key alli]
+  checkbutton $w.opparams -text [ase::ui::lbl_save_op_params] \
+    -variable ::ase::ui::dlg($key,opparams) \
+    -command [list ase::ui::save_all_mark_touched $key opparams]
   grid $w.allv -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   grid $w.alli -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
-  set le [ase::ui::dialog_row $w 2 Levels: levels]
-  ase::ui::dialog_buttons $w 3 [list ase::ui::save_all_ok $key] \
+  grid $w.opparams -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  set le [ase::ui::dialog_row $w 3 Levels: levels]
+  ase::ui::dialog_buttons $w 4 [list ase::ui::save_all_ok $key] \
     [list ase::ui::save_all_cancel $key]
   bind $w <Return> [list ase::ui::save_all_ok $key]
+  ## ⚠ 0648: WITHOUT THIS, A WINDOW-MANAGER CLOSE NEVER RUNS save_all_cancel.
+  ## Measured at HEAD under a real WM: `wm protocol $w WM_DELETE_WINDOW` is ''
+  ## for every ASE dialog (the only WM_DELETE_WINDOW in this file is :277, the
+  ## session toplevel), so Tk's built-in default destroys the toplevel, the
+  ## cancel path never runs and the ticked box vanishes with its dlg record
+  ## still set. Issue 0648's own text says the WM close "reaches
+  ## save_all_cancel"; it does not. Registered HERE and NOT in the shared
+  ## ase::ui::dialog_frame — that would change WM-close semantics for ~8
+  ## dialogs at once, none of them covered by a test (filed as issue 0651).
+  ase::ui::dialog_close_protocol $w [list ase::ui::save_all_cancel $key]
   ase::ui::apply_theme $w
   $le configure -state disabled       ;# after theming: inert v1 field
   return $w
 }
 
+# ⚠ 0679 AUDITED THIS CALLER, which the issue named specifically: it discarded
+# save_all_apply's return too, so making the writer honest without touching OK
+# would have left the MENU'S OWN path closing the dialog silently on a failed
+# apply -- R-0653-d req 3 guaranteeing only that both paths lie identically.
+# It now RETURNS the apply's answer, and its two early guards return a real 0
+# instead of falling off the end. THE DIALOG STILL CLOSES ON FAILURE: a user
+# cannot repair a session that is gone from inside that dialog, so holding it
+# open would only strand them; the non-silence lives in the shared writer's one
+# error line, which this path inherits precisely because it shares the writer.
 proc ase::ui::save_all_ok {key} {
   variable wins; variable dlg
-  if {![dict exists $wins $key]} { return }
-  if {![winfo exists [dict get $wins $key].saveall]} { return }
-  set st [ase::session_state $key]
-  dict set st save_all_v \
-    [expr {[info exists dlg($key,allv)] && $dlg($key,allv) ? 1 : 0}]
-  dict set st save_all_i \
-    [expr {[info exists dlg($key,alli)] && $dlg($key,alli) ? 1 : 0}]
-  ase::session_update $key $st
-  ase::ui::populate $key    ;# the Save Options auto-cells react (item 06)
-  ase::ui::save_all_cancel $key
+  if {![dict exists $wins $key]} { return 0 }
+  if {![winfo exists [dict get $wins $key].saveall]} { return 0 }
+  ## 0650 / R-0653-d req 3: the three blankets are written by ONE proc, which the
+  ## printed remedy (ase::ui::save_op_params_on) also calls. This path's only job
+  ## is to turn the checkbutton records into that call.
+  ## ⚠ 0692: RECONCILED, NOT COPIED. These three arguments used to be the raw
+  ## dlg records, which made an OPEN dialog a snapshot that overwrote anything
+  ## that had moved behind it — the pasted remedy included. save_all_resolve
+  ## takes the user's value for a box they TOUCHED and the LIVE value for one
+  ## they did not. save_all_ok's `1` was honest before and still is; what it
+  ## writes is no longer stale.
+  ## ⚠ 0695, THE ORDER ON THIS PATH, AND WHY IT IS SAFE:
+  ##   resolve -> apply -> save_all_commit -> session_update -> session_notify
+  ##   -> ase::ui::save_all_refresh -> (back here) save_all_close
+  ## So a refresh DOES fire against this dialog one statement before it is
+  ## destroyed. It is idempotent BY CONSTRUCTION, not by luck: it recomputes the
+  ## same `save_all_resolve`, whose touched fields answer the boxes' own values
+  ## and whose untouched fields answer the live state apply has just written —
+  ## the same dict, painted back onto the same boxes. Reordering resolve AFTER
+  ## apply would break exactly that, and would also make OK depend on the follow
+  ## having fired; keep them in this order.
+  set vals [ase::ui::save_all_resolve $key]
+  set rc [ase::ui::save_all_apply $key \
+    [dict get $vals allv] [dict get $vals alli] [dict get $vals opparams]]
+  ## 0648: the CLOSE half, never save_all_cancel. The OK path must not be able
+  ## to emit a discard notice by accident, and "the diff happens to be empty by
+  ## now" is not a thing to depend on.
+  ase::ui::save_all_close $key
+  return $rc
 }
 
-proc ase::ui::save_all_cancel {key} {
+# --- 0648: the three blankets AS THE STATE HOLDS THEM, normalised to 0/1 -----
+# ONE normaliser, FOUR consumers (invariant I1) — still one builder, which is
+# the half of I1 that matters. ⚠ CORRECTED 2026-08-25 (0692): this said "TWO
+# consumers ... save_all_cancel diffs the pending records against it", and after
+# 0692 that second clause is FALSE — save_all_cancel does not diff this at all
+# any more. ⚠ CORRECTED AGAIN 2026-08-25 (0695/0696), because the 0692 wording
+# ("diffs against the AS-OPENED seed, through save_all_touched") went stale in
+# its turn: there is no seed. The live call sites are now THREE —
+#   save_op_params_on (the pasted remedy)   save_all_dialog's three records
+#   save_all_resolve's live read            save_all_discarded's live compare
+# — four readers, still ONE reading. A stale docstring surviving the very commit
+# that fixed one is exactly how the 0692 window opened; that has now happened to
+# this same comment twice, which is itself the argument for one normaliser.
+proc ase::ui::save_all_current {key} {
+  set st [ase::session_state $key]
+  return [list \
+    allv     [expr {[ase::state_get $st save_all_v 0] eq {1} ? 1 : 0}] \
+    alli     [expr {[ase::state_get $st save_all_i 0] eq {1} ? 1 : 0}] \
+    opparams [ase::op_gate_on [ase::state_get $st save_op_params {}]]]
+}
+
+# --- 0692/0695: WHAT "THE USER TOUCHED THIS BOX" MEANS ----------------------
+# `dlg($key,allv|alli|opparams)` are the three checkbuttons' linked variables.
+# Until 0695 they were written in exactly ONE place — the three lines in
+# save_all_dialog — at dialog CREATION time, and `ase::ui::populate` never
+# touched them. So an OPEN Save All dialog was a frozen snapshot of the three
+# blankets and nothing in the product could refresh it. After 0679 the pasted
+# CIW remedy became a writer aimed straight at one of those blankets, and
+# `Session > Load State` was always another, so the 0679 fix is what opened the
+# window. 0692 made OK and ESC correct about the STATE, by diffing the records
+# against an as-opened SEED. 0695 is the residual that left, measured through
+# two SHIPPED menu items on :99 with openbox 3.6.1 live:
+#   WU-B2 box_at_open=1 load_rc=1 live_after_load=0 box_still=1 ok_rc=1
+#         gate_after_ok=0   <- the user SEES a ticked box and OK writes it OFF
+# Read that carefully: before 0692 the dialog was WYSIWYG-but-stale; after it
+# the WIDGET AND THE ACTION DISAGREE, which is the worse failure of the two.
+# The repair is `save_all_refresh` below — the box follows the live value, so
+# what the user sees is what OK will write.
+#
+# ⚠ AND THE MOMENT THE BOX CAN MOVE UNDERNEATH THE USER, A VALUE DIFF CANNOT
+# MEAN "THE USER CHANGED THIS BOX" ANY MORE. That is measured on this binary,
+# in BOTH directions, with src/ untouched and the follow simulated by writing
+# the linked variable (which is provably what a follow does):
+#   H2  the box follows to 0, the user hand-ticks it back to 1 -> dlg(1) eq
+#       seed(1) -> touched={} -> resolve answers 0 -> gate_after_ok=0:
+#       THE USER'S OWN TICK IS SILENTLY DISCARDED (0695 inverted, and worse)
+#   H1  an untouched box follows an external write -> touched={opparams} ->
+#       ESC prints a discard for a box nobody touched: 0692 REINSTATED
+# So the touch is an EVENT ON THE WIDGET, recorded by the three checkbuttons'
+# own `-command`, and never a diff. Measured Tk seam (TK1/TK2/TK3, in the
+# array-element `-variable` shape ASE actually uses): writing the linked
+# variable moves the DISPLAY and does NOT fire `-command`, while `invoke` DOES.
+# A programmatic follow is therefore invisible here, and every existing suite
+# hand tick — all of which use `invoke` — still registers as a hand tick.
+#
+# ⚠ THE AS-OPENED SEED IS DELETED. `ase::ui::save_all_seed` / `dlg($key,seed)`
+# had exactly two readers and both are replaced above. Its own docstring said
+# the no-seed fallback existed for "a dlg record poked in directly with no
+# dialog, which several suites do" — measured FALSE: no product path and no
+# suite writes those three records without a dialog (the only direct pokes are
+# `dlg($key,anen|antype)`, for Choose Analyses). A fallback documented as live
+# and measured as dead is the family of defect this branch keeps meeting, so it
+# goes rather than staying as a speculative branch. COST ACCEPTED: SAB-0692-B
+# ("stub save_all_seed to a no-op" as an exact revert-0692 discriminator) no
+# longer exists; SAB-0695-A/B/E replace it, and W1zb's 5th term pins the
+# deletion itself so this cannot quietly grow back.
+#
+# ⚠ A TOUCHED FIELD STAYS TOUCHED, even when the live value later drifts to
+# equal what the user set. The box the user put their hand on must never move
+# again under that hand. "Re-cleaning" a field once live catches up reads well
+# for the ESC notice and re-opens H2 for OK, because the field would go back to
+# following. The ESC half is solved at the CONSUMER instead, by
+# `save_all_discarded`, which changes nothing about what OK writes.
+proc ase::ui::save_all_mark_touched {key field} {
+  variable dlg
+  ## ONLY while a dialog is up: a stray `invoke` arriving after teardown must
+  ## not resurrect the record `save_all_close` has just dropped.
+  if {![info exists dlg($key,touched)]} { return {} }
+  if {[lsearch -exact $dlg($key,touched) $field] < 0} {
+    lappend dlg($key,touched) $field
+  }
+  ## ⚠ RETURNS THE EMPTY STRING, AND THAT IS A CONTRACT. A checkbutton's
+  ## `invoke` returns its -command's result, and every hand-tick gesture in the
+  ## suites is written as a bare `$w.opparams invoke`. GE10k pins it.
+  ## It also writes NOTHING to the session state — GE10h's byte-identical
+  ## contract (tick + WM close leaves the state untouched) depends on that.
+  return {}
+}
+
+# THE ONE DEFINITION OF "THE USER CHANGED THIS BOX", with TWO consumers
+# (invariant I1): `save_all_resolve`'s OK reconcile, and `save_all_discarded`'s
+# cancel notice. Two independent readings are exactly how the ESC arm drifted
+# into reporting a phantom discard for a box nobody touched.
+#
+# The recorded list, FILTERED to fields that still have a dlg record, so a
+# half-torn-down dialog cannot name a box that no longer exists. Its evidence
+# changed with 0695 — from "differs from the as-opened seed" to "the widget's
+# own -command fired" — but its name, signature and role did not.
+proc ase::ui::save_all_touched {key} {
+  variable dlg
+  if {![info exists dlg($key,touched)]} { return {} }
+  set out {}
+  foreach f {allv alli opparams} {
+    if {![info exists dlg($key,$f)]} { continue }
+    if {[lsearch -exact $dlg($key,touched) $f] >= 0} { lappend out $f }
+  }
+  return $out
+}
+
+# What OK should write: the user's value for every box they TOUCHED, the LIVE
+# value for every box they did not. A fix that simply re-read the live state
+# would lose a hand tick; the shipped snapshot lost the external write; this
+# loses neither, per field.
+#
+# ⚠ THE VALUES HERE ARE 0/1 BOOLEANS, NOT STATE VALUES. They round-trip through
+# `save_all_current` / `ase::op_gate_on` and land in `save_all_apply`, which is
+# the only place that turns a boolean back into what the state stores — via
+# `ase::op_gate_value`, where ON is `{}` and OFF is `0` (issue 0927). Nothing in
+# this proc may spell either literal.
+#
+# ⚠ ON A CONFLICT THE USER'S HAND WINS, SILENTLY (hand-untick vs external tick).
+# That is user-visible and unratified: recorded as `rule` debt [0692].
+proc ase::ui::save_all_resolve {key} {
+  variable dlg
+  if {[catch {ase::ui::save_all_current $key} live]} {
+    set live [list allv 0 alli 0 opparams 0]
+  }
+  set touched [ase::ui::save_all_touched $key]
+  set out {}
+  foreach f {allv alli opparams} {
+    if {[lsearch -exact $touched $f] >= 0} {
+      lappend out $f [expr {$dlg($key,$f) ? 1 : 0}]
+    } elseif {[dict exists $live $f]} {
+      lappend out $f [dict get $live $f]
+    } else {
+      lappend out $f 0
+    }
+  }
+  return $out
+}
+
+# --- 0695: THE BOX FOLLOWS, BY PAINTING THE SAME DICT OK WILL WRITE ----------
+# INVARIANT I1 IN ITS EXACT SHAPE: ONE builder (`save_all_resolve`), TWO
+# consumers — the widget and the OK write (`save_all_ok`) — so what the user is
+# looking at and what OK will write CANNOT drift silently. That is the whole
+# point: 0695's failure was two answers to one question.
+#
+# ⚠ IT PAINTS `save_all_resolve`, NOT `save_all_current`. Painting the raw live
+# state would give the widget a second, independent definition of what the
+# dialog means (I1's silent-failure mode, and how the ESC arm drifted in the
+# first place) and it would MOVE A BOX THE USER HAD TOUCHED. With resolve, a
+# touched box is left alone for free — resolve answers that box's own value for
+# it — and an untouched box lands on exactly the value OK is going to write.
+#
+# ⚠ THE REFRESH CANNOT MARK ANYTHING TOUCHED. It writes the linked variables,
+# and a variable write provably does NOT fire a checkbutton's `-command`
+# (measured TK1/TK3); only `invoke` does. That is the property that keeps H1
+# (a followed box read as a hand tick -> 0692's phantom discard) impossible.
+#
+# TOTAL NO-OP unless a Save All dialog for THIS key is really up:
+# `ase::ui::session_changed` is reached from EVERY `ase::session_update` of
+# EVERY key — pane edits, the temperature FocusOut, toggle_flag — so the guards
+# are the proc's main body, not paranoia.
+proc ase::ui::save_all_refresh {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  if {[catch {winfo exists [dict get $wins $key].saveall} ex] || !$ex} { return }
+  foreach f {allv alli opparams} {
+    if {![info exists dlg($key,$f)]} { return }
+  }
+  if {[catch {ase::ui::save_all_resolve $key} vals]} { return }
+  foreach f {allv alli opparams} {
+    if {[dict exists $vals $f]} { set dlg($key,$f) [dict get $vals $f] }
+  }
+  return
+}
+
+# --- 0696: WHAT THE CANCEL ARM IS ALLOWED TO CALL "DISCARDED" ----------------
+# Measured at HEAD, i.e. AFTER 0692 narrowed the cancel diff to the as-opened
+# seed — this notice is NEW as of that commit:
+#   WU-B1 seedbox=0 remedy_rc=1 gate=1 pending={opparams} notices=1
+#         gate_after_esc=1
+#   "ASE: Save All was closed without OK — 'Save device OP parameters' was NOT
+#    applied. Reopen Outputs > Save All and press OK."
+# The gesture: the user hand-ticks the box AND an external write sets the same
+# blanket to the SAME value; ESC. Nothing was lost — the gate IS on and STAYS
+# on — and the dialog tells the user to redo work that is already done, and
+# re-arms the OP-card nudge on the way out. A notice that reports the OPPOSITE
+# of what happened is worse than no notice at all.
+#
+# 0648's diff/cancel model is NOT reworked (that model is the scope fence):
+# `save_all_report_discard` and the nudge re-arm are untouched, only the
+# PREDICATE feeding them changes. 0648's own sentence already said it — "a
+# change THE USER MADE and LOST is stated" — and the missing half is that a
+# change the user made and the WORLD AGREED WITH was not lost. So: TOUCHED
+# **AND** still differing from the LIVE value.
+#
+# Its OWN named proc rather than an inline filter in save_all_cancel, so the
+# narrowing is independently neutralizable — SAB-0696-D is exactly "return the
+# raw touched list", and it must redden W1zd and nothing else. That is the
+# 0679/0691 precedent for honesty living in a stub-able callee.
+#
+# The contrast arms this must NOT move, both measured: a plain hand tick with
+# the live value still 0, dropped by ESC, is STILL reported exactly once
+# (GE10c/GE10d/GE10f/GE10g, W1za's hand arm); an UNTOUCHED dialog with an
+# external write behind it is STILL silent (0692's fix, W1za's ext arm).
+proc ase::ui::save_all_discarded {key} {
+  variable dlg
+  if {[catch {ase::ui::save_all_current $key} live]} { return {} }
+  set out {}
+  foreach f [ase::ui::save_all_touched $key] {
+    ## no live reading for this field -> cannot prove it survived; say so.
+    if {![dict exists $live $f]} { lappend out $f; continue }
+    if {$dlg($key,$f) ne [dict get $live $f]} { lappend out $f }
+  }
+  return $out
+}
+
+# One-line registrar for a dialog's window-manager close button. Called ONLY
+# from save_all_dialog (see the comment there for why not from dialog_frame).
+proc ase::ui::dialog_close_protocol {w cmd} {
+  catch {wm protocol $w WM_DELETE_WINDOW $cmd}
+}
+
+# The pure teardown: drop the dialog's records and destroy it. Shared by the
+# OK path and the cancel path; it says nothing and decides nothing.
+proc ase::ui::save_all_close {key} {
   variable wins; variable dlg
   array unset dlg $key,allv
   array unset dlg $key,alli
+  array unset dlg $key,opparams
+  ## 0695: AND THE PER-KEY TOUCH SET (this replaced 0692's as-opened seed). A
+  ## leaked touch record would outlive OK, ESC and the WM close with zero rows
+  ## red and then make the NEXT dialog for this key believe a box was
+  ## hand-ticked — and a box the dialog believes was hand-ticked is exactly the
+  ## box that must NOT follow an external write, i.e. 0695 wearing the fix's
+  ## clothes. Guarded by W1zb and GE10i, which are the only rows that will ever
+  ## see it; save_all_dialog clears it at OPEN too, for the re-open path that
+  ## runs no teardown at all (GE10j).
+  array unset dlg $key,touched
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].saveall}
   }
+}
+
+# 0648: SAY SO WHEN A TICK IS THROWN AWAY. This dialog's entire content is
+# three checkboxes, so a user who ticks one has expressed the whole intent and
+# a visibly-toggled checkbutton reads as applied — the user's 2026-08-23 report
+# is exactly that trap ("I went to Outputs > Save and checked the 'Save device
+# OP parameters'. I re-ran the sim and still don't get OP info."). Plain tag,
+# not `error`: a deliberate ESC is not an error. Precedent for both the wording
+# and the tag: ase::ui::close's "closed $key with unsaved state edits
+# (discarded)".
+proc ase::ui::save_all_report_discard {key pending} {
+  set names {}
+  foreach {f label} {allv     {Save all voltages}
+                     alli     {Save all terminal currents}
+                     opparams {Save device OP parameters}} {
+    if {[lsearch -exact $pending $f] >= 0} { lappend names '$label' }
+  }
+  if {$names eq {}} { return }
+  set verb [expr {[llength $names] > 1 ? {were} : {was}}]
+  ase::echo "ASE: Save All was closed without OK — [join $names {, }] $verb NOT applied. Reopen Outputs > Save All and press OK."
+}
+
+# The cancel path — ESC, the Cancel button, and (0648) the window-manager close
+# button. It DIFFS the pending checkbutton records against the state before
+# tearing them down: a change the user made and lost is stated, and a discarded
+# OP-card tick gives the gate-off nudge its turn back so the user's NEXT
+# card-less run is not silent too (that silence is the whole of issue 0648).
+# Keeps its name and its one-argument signature: dialog_buttons wires ESC and
+# the Cancel button to it centrally.
+proc ase::ui::save_all_cancel {key} {
+  variable dlg
+  ## ⚠ 0692: DIFFED AGAINST THE AS-OPENED SEED, NOT AGAINST THE LIVE STATE.
+  ## This block used to read `save_all_current` here and call any difference
+  ## "pending". That was equivalent to "the user changed it" only while nothing
+  ## could change the live state behind an open dialog — and after 0679 the
+  ## pasted remedy does exactly that. Measured at HEAD: an untouched dialog
+  ## dismissed with ESC printed "'Save device OP parameters' was NOT applied"
+  ## about a gate that WAS applied (gate_after_esc=1) and re-armed the nudge,
+  ## telling the user to redo work already done.
+  ## This is not a rework of 0648's diff/cancel model (that model is the scope
+  ## fence): it is the sentence 0648 already wrote — "a change THE USER MADE and
+  ## lost is stated" — finally measured as written. GE10c/GE10d/GE10f/GE10g,
+  ## which all drive a REAL hand tick, are untouched by it.
+  ##
+  ## ⚠ 0696: AND "TOUCHED" IS NOT ENOUGH EITHER. The seed diff above still
+  ## reported a hand-ticked box as discarded when an external write had set the
+  ## same blanket to the SAME value — a NEW false notice, measured
+  ## `WU-B1 pending={opparams} notices=1 gate_after_esc=1`: told the user their
+  ## setting was NOT applied about a gate that IS applied. `save_all_discarded`
+  ## is the narrowing: touched AND still differing from the LIVE value.
+  ##
+  ## ⚠ THE NUDGE RE-ARM READS THE SAME NARROWED LIST. Keying the re-arm off the
+  ## raw touched set would silence the sentence and still fire the nudge, which
+  ## is 0696 half-fixed and arguably more confusing than not fixing it.
+  set pending {}
+  catch { set pending [ase::ui::save_all_discarded $key] }
+  ## D6: only the OP-card box re-arms the nudge. A discarded allv/alli tick is
+  ## reported but must not re-nudge — the nudge is about this gate and nothing
+  ## else, and re-nudging for an unrelated blanket is 0636 noise for nothing.
+  if {[lsearch -exact $pending opparams] >= 0} {
+    catch {ase::op_cards_nudge_rearm [ase::session_state $key]}
+  }
+  if {$pending ne {}} {
+    catch {ase::ui::save_all_report_discard $key $pending}
+  }
+  ase::ui::save_all_close $key
 }
 
 # --- (e) Session > Load State ------------------------------------------------
@@ -4214,13 +5652,56 @@ proc ase::ui::do_load_state_from {key path} {
     catch {::ase::echo $st error}
     return 0
   }
-  ase::session_update $key $st
+  ## ⚠ 0691: THE RETURN IS MEASURED, NOT MANUFACTURED. This line used to be a
+  ## bare `ase::session_update $key $st` with the answer discarded and the proc
+  ## ending in a hardcoded `return 1` — honest about the FILE (the arm above)
+  ## and never about the KEY, so "Load State into a session that is gone"
+  ## reported success, changed nothing and said nothing. Measured at HEAD, at
+  ## the same commit as the twin 0679 had just repaired one proc over:
+  ##   session_update(BOGUS)      = 0    <- honest
+  ##   do_load_state_from(BOGUS)  = 1    <- fabricated
+  ##   save_all_apply(BOGUS)      = 0    <- 0679's repair holding
+  ## THE TWO ERROR ARMS ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION (both return
+  ## early), which is how "exactly one error-tagged sentence" is satisfied
+  ## structurally rather than by luck — row H4d exists to keep it that way.
+  ## populate/viewer_restore are SKIPPED on the failed arm on purpose:
+  ## repopulating panes from a session that is gone would blank a live window
+  ## as a side effect of a REFUSED import.
+  if {![ase::ui::load_state_commit $key $st]} { return 0 }
   ase::ui::populate $key
   # item 14 (D7): an imported state with `viewer open 1` relaunches/rebuilds
   # the viewer; open 0 / absent leaves an already-open viewer exactly as it
   # is (minimal contract arm — viewer_restore gates internally)
   ase::ui::viewer_restore $key
   return 1
+}
+
+# THE ONE IMPORT WRITE, AND IT IS ALLOWED TO FAIL (issue 0691), the exact twin
+# of `ase::ui::save_all_commit` (:3240) that 0679 introduced — same shape, same
+# reasoning, so the two read alike.
+#
+# Its OWN named proc, not an inline `return [ase::session_update ...]`: the
+# honesty has to be independently neutralizable, and an inline return offers no
+# callee to stub short of session_update itself, which reddens the whole session
+# model and discriminates nothing (SAB-0691-A / -A2, after 0679's SAB-B / -B2).
+#
+# ON FAILURE, ONE SENTENCE (issue 0635's rule), tagged `error`, naming the key
+# it could not find — its own sentence and not save_all_commit's, whose wording
+# is Save-All-specific and would be wrong for an import. Both production callers
+# (:3564 as `ase::ui::confirm`'s detached oncmd, and :3566) discard the return,
+# so this line IS the user-facing half; that is the same reasoning 0679 applied
+# to save_all_ok, and making `confirm` rc-carrying would be a contract change to
+# every confirm caller. Returning 0 rather than RAISING, and whether a caller
+# should hold its dialog open on a failed apply, is the open `rule` debt [0679]
+# — restated, not answered, here. The echo is caught because issue 0666 records
+# the echo family raising into its caller.
+proc ase::ui::load_state_commit {key st} {
+  set rc [ase::session_update $key $st]
+  if {!$rc} {
+    catch {::ase::echo "ase: no ASE-L session is open under '$key'; the state\
+ was NOT imported." error}
+  }
+  return $rc
 }
 
 # --- (f) Session > Save State ------------------------------------------------
@@ -4503,7 +5984,9 @@ proc ase::ui::viewer_restore {key} {
   # up for whatever it still cannot attach.
   set vcds {}
   foreach v [ase::last_vcdfiles $key] { lappend vcds [list $v vcd] }
+  catch {wviewer::diag "viewer_restore  key=$key rawfile='$rf' sim_type=$sim_t"}
   set rc [wviewer::restore $key $vd $rf $sim_t $vcds]
+  catch {wviewer::diag "viewer_restore  key=$key rc=$rc"}
   # ...and this one keeps the case it was written for, gated on `said` so R604's
   # "reported ONCE" holds: an `invalid` state with nothing to fall back to has
   # already been told which result went missing, and saying "no simulation
@@ -4536,6 +6019,26 @@ proc ase::ui::viewer_restore {key} {
 # up-to-date `viewer` dict.
 proc ase::ui::do_save_state_as {key l c v} {
   variable wins; variable dlg; variable meta
+  ## ⚠ 0691, THE WEAKER SECOND ARM, REFUSED BEFORE ANY WRITE. `ase::session_path`
+  ## returns {} for an unknown key — the SAME value that marks a registered but
+  ## UNTITLED session (issue 0141) — so at HEAD an unknown key sailed past every
+  ## `return 0` below, reached the `own eq {}` adopt arm, CREATED a view, wrote a
+  ## defaults-state file into it, discarded `ase::session_adopt`'s 0 (:3804) and
+  ## returned a hardcoded 1. Measured:
+  ##   H3B catch=0 res=1
+  ##   H3B viewpath = .../aselib/nfet_clean/ngspice_stateH3B/nfet_clean.state
+  ## The lie and the litter arrive together, so one guard removes both — and it
+  ## cannot touch a registered key, untitled ones included (an untitled session
+  ## IS in the registry; only its path is {}). `ase::session_exists` is the
+  ## registration predicate this layer never had; using session_path for it is
+  ## the conflation that caused this.
+  ## After this guard the discarded adopt rc genuinely cannot be 0, which is the
+  ## same reasoning 0691 used to CLEAR `viewer_snapshot`.
+  if {![ase::session_exists $key]} {
+    catch {::ase::echo "ase: no ASE-L session is open under '$key'; the state\
+ was NOT saved to $l/$c/$v." error}
+    return 0
+  }
   ase::ui::viewer_snapshot $key
   set target [xschem cellview_path "$l/$c" $v]
   set own [ase::session_path $key]
@@ -4648,6 +6151,22 @@ proc ase::ui::status_text {key} {
 proc ase::ui::session_changed {key} {
   ase::ui::refresh_title $key
   ase::ui::refresh_status $key
+  ## 0695: AND AN OPEN Save All DIALOG FOLLOWS THE WRITE THAT LANDED BEHIND IT.
+  ## LAST, so a broken refresh cannot cost the title/status their update. This
+  ## hook is the ONE seam that covers BOTH external writers the issue names —
+  ## the pasted CIW remedy (save_op_params_on -> save_all_commit) and
+  ## `Session > Load State` (do_load_state_from -> load_state_commit) — because
+  ## both funnel through `ase::session_update`, which fires it AFTER the state
+  ## is stored. `save_all_refresh` is a total no-op when no such dialog is up.
+  ## ⚠ `ase::session_notify` (ase.tcl:71, set at :277) is a SINGLE-SLOT
+  ## variable: anything that overwrites it disables the follow with no other row
+  ## red. W1zg asserts the slot and the callee structurally, for that reason.
+  ## ⚠ KNOWN GAP, FILED AS 0697 rather than widened into here:
+  ## `ase::session_open`'s re-open refresh arm (ase.tcl:2696) replaces a clean
+  ## session's whole state from disk and fires nothing, so a re-launch onto the
+  ## same cellview moves the live state without moving the box (or the dirty
+  ## marker, or the status bar).
+  ase::ui::save_all_refresh $key
 }
 
 # --- Session menu ------------------------------------------------------------
@@ -4700,17 +6219,17 @@ proc ase::ui::design_path {key} {
 # descended window is now matched on any level of it. Exact `current_name`
 # matches still WIN (first loop): a window actually showing the design is the
 # better answer, and that ordering keeps the shipped behavior byte for byte.
-proc ase::ui::raise_design_editor {dpath} {
+proc ase::ui::raise_design_editor {dpath {raise_mode always}} {
   set wins [xschem windows]
   foreach e $wins {
     if {[file normalize [lindex $e 4]] eq $dpath} {
-      return [ase::ui::raise_window_entry $e]
+      return [ase::ui::raise_window_entry $e $raise_mode]
     }
   }
   foreach e $wins {
     foreach s [lindex $e 6] {
       if {$s ne {} && [file normalize $s] eq $dpath} {
-        return [ase::ui::raise_window_entry $e]
+        return [ase::ui::raise_window_entry $e $raise_mode]
       }
     }
   }
@@ -4719,11 +6238,49 @@ proc ase::ui::raise_design_editor {dpath} {
 
 # Make the window described by an `xschem windows` entry current + frontmost.
 # Always returns 1 (the caller has already decided this window is the one).
-proc ase::ui::raise_window_entry {e} {
+#
+# TWO JOBS, and callers need them separately (issue 0616). Job 1 is the CONTEXT
+# switch -- `xschem new_schematic switch` -- which is what makes ase::netlist's
+# own "the design must BE the current schematic" guard (ase.tcl) pass. Job 2 is
+# bringing the owning TOPLEVEL to the front, which on WSLg can only be done by
+# re-MAPping it (raise_activate_toplevel = wm withdraw + wm deiconify, see its
+# header and issue 0054). Job 2 is not free: that WM is documented to DROP a
+# re-map outright, and each one costs a ~32px NW creep -- so a caller that only
+# wants job 1 must not be made to pay for job 2. `raise_mode ifhidden` does job
+# 1 always and job 2 only when the toplevel is NOT currently mapped, so a
+# minimised (or already-lost) window is still brought back while a visible one
+# is left exactly where the user put it. Anything that is not literally
+# `ifhidden` means `always` -- the shipped behaviour -- so a typo or a future
+# third mode degrades to raising rather than silently disabling every raise in
+# the program. `vis` defaults to 0 so the headless path (no winfo) takes the
+# always arm and raise_activate_toplevel's own has_x guard no-ops it, exactly
+# as today.
+#
+# `ifhidden` on an ALREADY-MAPPED toplevel still does the CHEAP half of the
+# raise -- a plain `raise` + `xschem activate_window`, the tail of
+# raise_activate_toplevel (xschem.tcl) with only the withdraw/deiconify re-map
+# ahead of it dropped. Measured (issue 0616): a bare `raise .` restacked the
+# design above a pixel-coincident waveform viewer with Unmap/Map = 0/0, and
+# issue 0054 records that a plain raise is an inert NO-OP on WSLg once a window
+# is mapped -- so it cannot bring back the vanish, and it is what keeps
+# "the design window is still VISIBLE after a run" true on every other X server
+# (including the user's own, which is a Windows X server over TCP, not WSLg).
+# Dropping it too was the first cut of this fix and it was REFUTED by
+# measurement: the run left the schematic underneath the viewer that
+# viewer_restore had opened over it, i.e. the reported symptom with a different
+# mechanism. Do not "simplify" these two lines away.
+proc ase::ui::raise_window_entry {e {raise_mode always}} {
   xschem new_schematic switch [lindex $e 0]
   set tp [lindex $e 1]
   if {$tp eq {}} { set tp . }
-  raise_activate_toplevel $tp
+  set vis 0
+  catch {set vis [winfo ismapped $tp]}
+  if {$raise_mode ne {ifhidden} || !$vis} {
+    raise_activate_toplevel $tp
+  } else {
+    catch {raise $tp}
+    catch {xschem activate_window [winfo id $tp]}
+  }
   catch {focus $tp}
   return 1
 }
@@ -4734,13 +6291,20 @@ proc ase::ui::raise_window_entry {e} {
 # v1 bug was loading into a stacked-under main window and never raising it,
 # so nothing visibly happened. Returns 1 on success, 0 when the design does
 # not resolve.
-proc ase::ui::design_window {key} {
+#
+# `raise_mode` is forwarded to the already-open arm only (issue 0616): Session >
+# Design Window, select_on_design/direct_plot and wave_viewer's browser descend
+# all pass nothing and keep the shipped always-raise -- the Session menu item in
+# particular IS the user's documented recovery when a window has gone missing,
+# so it must keep re-mapping. do_run passes `ifhidden`. The post-load re-scan
+# below always raises, for the v1 reason above.
+proc ase::ui::design_window {key {raise_mode always}} {
   set dpath [ase::ui::design_path $key]
   if {$dpath eq {}} {
     catch {::ase::echo "ase: cannot resolve the session's design cellview" error}
     return 0
   }
-  if {[ase::ui::raise_design_editor $dpath]} { return 1 }
+  if {[ase::ui::raise_design_editor $dpath $raise_mode]} { return 1 }
   # not open anywhere: interactive open (reuses a pristine untitled window,
   # else opens a new one — load_window_routing), action-log dedup-gated
   xschem log_action -reset
@@ -5046,6 +6610,14 @@ proc ase::ui::run_finished {key} {
     # this callback can run inside ase::wait's semaphore bracket where
     # window switches silently no-op — see auto_plot_idle.
     after idle [list ase::ui::auto_plot_idle $key]
+    # ISSUE 0684 (GUARD G14): annotation was the ONLY consumer of new results
+    # that was not on this event -- a finished run already re-reads the results,
+    # refreshes the output values and re-plots, while the schematic went on
+    # showing the PREVIOUS run's id / gm / gds until somebody pressed a key.
+    # BELOW the auto-plot line deliberately: the viewer's own context borrow
+    # runs first and balances itself, so ours reads a restored context rather
+    # than the viewer's. Row F34 pins that order, row F31 the behaviour.
+    after idle [list ase::ui::annot_refresh_idle $key]
   } else {
     ase::ui::set_status $key fail
   }
@@ -5071,9 +6643,19 @@ proc ase::ui::do_run {key} {
     return
   }
   # ase::netlist's GUI guard requires the design to BE the current schematic:
-  # route through Design Window first when it is not
+  # route through Design Window first when it is not. `ifhidden`, NOT the
+  # default: this guard tests the xschem CONTEXT, not visibility, so it fires
+  # routinely while the design window is fully visible and front (a restored
+  # waveform viewer leaves the context on the viewer canvas -- the user's
+  # reported case). The default arm would then withdraw+deiconify the whole main
+  # toplevel for no reason, and on WSLg a dropped re-map is a schematic window
+  # that simply vanished -- issue 0616, "when I press Netlist and Run, the
+  # schematic window disappears". `ifhidden` still restores a design window that
+  # really IS hidden, and still `raise`s a visible one to the front (the cheap
+  # half of the raise -- see raise_window_entry), so the schematic ends up on
+  # screen either way and no user is left hunting the Session menu.
   if {[file normalize [xschem get schname]] ne $dpath} {
-    ase::ui::design_window $key
+    ase::ui::design_window $key ifhidden
     update
     if {[file normalize [xschem get schname]] ne $dpath} {
       catch {::ase::echo "ase: design is not the current schematic; open it via Session > Design Window first" error}

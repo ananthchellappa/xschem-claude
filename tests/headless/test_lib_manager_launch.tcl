@@ -58,6 +58,75 @@ if {[winfo exists $m]} {
 }
 check "LL7 Tools menu wired to 'xschem library_manager'" [expr {$cmd eq {xschem library_manager}}] "(=> '$cmd')"
 
+# LL8 — issue 0831: the optional lcv argument must not EXECUTE.
+# `scheduler.c:8097` builds the call by C string concatenation:
+#     tclvareval("libmgr::open {", argv[2], "}", NULL);
+# so a `}` in the argument closes the brace group and everything after it parses
+# as script. ⚠ 0831 §3 is binding: this is NOT "protected because libmgr::open
+# errors on wrong args" — a wrong-args abort is an accident of payload shape,
+# and the payload below is shaped for the sink. Measured at head on the dev
+# display: the host file is created and the verb ANSWERS `y`, the payload's own
+# `list {y}` tail, which is the receipt that the argument was parsed as SCRIPT.
+# The host file lives outside the repo so nothing is left behind either way.
+#
+# ⚠ ANTI-HOLLOW (issue 0828): the positive twin is LL9 below, NOT LL1.
+# This comment used to name LL1 and that was WRONG, disproved by sabotage
+# (issue 0835): LL1 and LL6 launch with NO argument, so they take scheduler.c's
+# untouched `else tcleval("libmgr::open")` branch and never reach the converted
+# `tcl_call("libmgr::open", argv[2], ...)`. Measured: with that call gutted to a
+# no-op the whole file still scored RESULT: ALL PASS. A negative row plus a
+# same-file positive row that exercises a DIFFERENT branch is not anti-hollow
+# coverage — name the row that drives the converted path, not the nearest
+# green one.
+#
+# ⚠ WHAT THIS ROW DOES NOT COVER: the SAME branch also writes an UNGUARDED
+# action-log line, `log_action("xschem library_manager {%s}", argv[2])`
+# (scheduler.c:8096), and the action log is a replayable Tcl script by design —
+# its four siblings are `tcl_braceable()`-guarded and this one is not. That is a
+# separate finding (issue 0832) and LL8 asserts nothing about it.
+set LL_TMPD [expr {[info exists ::env(TMPDIR)] ? $::env(TMPDIR) : "/tmp"}]
+set LL_H [file join $LL_TMPD "HOST_LL8_[pid]"]
+catch {file delete -force $LL_H}
+set ::SC_PWNED 0
+set LL_PAY "x\} ; set ::SC_PWNED 1; exec touch $LL_H; list \{y"
+catch {xschem library_manager $LL_PAY} LL_R
+update idletasks
+set LL_E [file exists $LL_H]
+catch {file delete -force $LL_H}
+check "LL8 library_manager lcv argument does not execute (0831, scheduler.c:8097)" \
+  [expr {$::SC_PWNED == 0 && $LL_E == 0}] \
+  "(=> pwned=$::SC_PWNED host=$LL_E answer='$LL_R')"
+
+# LL9 — issue 0835: THE POSITIVE TWIN FOR THE CONVERTED ARGUMENT PATH.
+# LL8 proves the lcv argument does not EXECUTE; this proves it still ARRIVES.
+# `xschem library_manager {lib cell view}` must reach `libmgr::open` with the
+# list intact and pre-select all three panes (libmgr::open -> libmgr::locate).
+# Nothing else in the repo drives the argument form of this verb: every other
+# call site, here and in test_action_log_libmgr, launches bare. Without this row
+# a misspelled proc name or a dropped argument at scheduler.c:8109 is invisible.
+# NOTE the registry: the launch suite's default `library_defs_registry` is EMPTY,
+# so this row points XSCHEM_LIBRARY_DEFS at the in-repo OA registry the way
+# test_lib_manager_locate.tcl does, and restores both globals afterwards.
+set LL_SAVE_DEFS [expr {[info exists ::XSCHEM_LIBRARY_DEFS] ? $::XSCHEM_LIBRARY_DEFS : {}}]
+set LL_SAVE_ONLY [expr {[info exists ::library_registry_defs_only] ? $::library_registry_defs_only : {}}]
+set LL_REPO [file normalize [file join [file dirname [file normalize [info script]]] .. ..]]
+set ::XSCHEM_LIBRARY_DEFS [file join $LL_REPO xschem_libraries_oa library.defs]
+set ::library_registry_defs_only 1
+set LL_LIB  [lindex [dict keys [library_defs_registry]] 0]
+set LL_CELL [lindex [xschem lib_cells $LL_LIB] 0]
+set LL_VIEW [lindex [xschem cell_views $LL_LIB $LL_CELL] 0]
+catch {destroy .libmgr}; update
+xschem library_manager [list $LL_LIB $LL_CELL $LL_VIEW]
+update
+set LL_S1 [.libmgr.pw.lib.lb selection]
+set LL_S2 [.libmgr.pw.cell.lb selection]
+set LL_S3 [.libmgr.pw.view.lb selection]
+check "LL9 library_manager lcv argument still ARRIVES and pre-selects (0835)" \
+  [expr {$LL_LIB ne {} && $LL_S1 eq $LL_LIB && $LL_S2 eq $LL_CELL && $LL_S3 eq $LL_VIEW}] \
+  "(=> got $LL_S1/$LL_S2/$LL_S3 want $LL_LIB/$LL_CELL/$LL_VIEW)"
+if {$LL_SAVE_DEFS eq {}} { catch {unset ::XSCHEM_LIBRARY_DEFS} } else { set ::XSCHEM_LIBRARY_DEFS $LL_SAVE_DEFS }
+if {$LL_SAVE_ONLY eq {}} { catch {unset ::library_registry_defs_only} } else { set ::library_registry_defs_only $LL_SAVE_ONLY }
+
 catch {destroy .libmgr}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

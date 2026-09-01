@@ -140,16 +140,15 @@ set d [ase::state_default]
 check "R1 state_default has viewer {}" [dict get $d viewer] {}
 # `cosim` joined in §E of doc/claude/specs/mixed_signal_signal_browser.md. It is
 # in ase::omit_if_empty, so an empty one is not serialized and R2's
-# byte-identical round trip below is unaffected.
-# RESTATED 2026-08-17 (casemode item 6): 16 -> 17 keys, `sim_profile` added —
-# the simulator-profile row an ASE session runs with (DECISIONS.md B1,
-# doc/claude/specs/simulator_profiles.md). Neither renumbered nor deleted: the
-# closed-set property it asserts is unchanged, only the set. It is in
-# ase::omit_if_empty, so R2's byte-identical round trip below is unaffected.
+# byte-identical round trip below is unaffected. `save_op_params` (plan step S4
+# / issue 0617 -- the gate that carries op_annot's device OP `.save` cards into
+# the deck) joined for exactly the same reason and with the same `{}` default:
+# a `0` default would be serialized into all 104 committed .state files and
+# would break R2 here and F3/G3/R4/V4 in the sibling suites.
 check "R1 exactly the 17 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator sim_profile design rundir temperature models \
-          variables analyses outputs save_all_v save_all_i options includes \
-          pre_commands cosim viewer}]
+  [lsort {version simulator design rundir temperature models variables \
+          analyses outputs save_all_v save_all_i save_op_params options \
+          includes pre_commands cosim viewer}]
 
 # --- R2: viewer round-trip byte-stability ------------------------------------
 set vgraphs [list \
