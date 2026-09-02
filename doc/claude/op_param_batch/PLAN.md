@@ -537,7 +537,20 @@ which makes them obligations rather than polish.
 A3's gate is "the `op_annot::text` block is non-blank", which is what the
 overlay paints. But a registered device over a **dead raw** renders label-only
 rows — `zid =`, `zgm =`, with nothing after them — and that block is non-blank,
-so the device is decluttered. The user loses `W/L` and gains two empty labels:
+so the device is decluttered.
+
+⚠ **And item A4 measured that it is worse than "a dead raw".** With **no raw
+loaded at all** — `xschem raw loaded` = −1, i.e. before any simulation has been
+run — the sheet is still stripped:
+
+```
+mask 1  ->  MC1 CW=1u {cid =}
+mask 9  ->  MC1 {cid =}
+```
+
+So a user who presses `6` then `Ctrl-Alt-6` before simulating loses `CW=1u` and
+gets an empty label in exchange. That is the whole feature inverted, and it is
+reachable in the first thirty seconds of using it. The user loses `W/L` and gains two empty labels:
 strictly worse than before. **RULING D-6 says the declutter reaches instances
 that "got OP numbers", and a label with no number did not get one.** Require at
 least one row with an actual value. (Driver ruling, recorded in `LEDGER.md`;
@@ -568,6 +581,29 @@ is the exact failure mode this branch has a standing rule about.
 `show_pinname=true` pin names vanish under declutter in all three back-ends. The
 gate agrees at both `symbol_bbox()` callers — drive both, do not reason about it.
 The two vacuous rows fail when the feature is sabotaged.
+
+---
+
+## A6 — the two consistency gaps A4 found  *(needs A4; independent of A5)*
+
+**A6-a — 1256, the stock menu is silent about the declutter.** `Waves > Op
+Annotate` in `src/xschem.tcl` does not emit the sentence item A4 added to the
+chords, so the menu and the keys describe the same state differently. Item A3
+already fixed that menu's *mask* arithmetic (issue 1246); this is its *wording*.
+
+**A6-b — 1255, `db stat` mtime granularity is one second.** The product half of
+issue 1250's part 2, in `src/op_annot.tcl`'s guard family: a staleness check
+resolved to one-second granularity cannot distinguish a raw written twice in the
+same second, which is exactly what a fast headless suite does. This is a
+correctness gap in a *guard*, so it fails in the safe-looking direction — it says
+"fresh" when it does not know.
+
+**Files.** `src/xschem.tcl` · `src/op_annot.tcl` · rows in the declutter and
+`test_op_annot` suites
+
+**Accept.** The menu and every chord emit the same declutter clause for the same
+state — drive both doors, do not compare source. A raw rewritten inside one
+second is detected as changed; show the failing case first, then the fix.
 
 ---
 
