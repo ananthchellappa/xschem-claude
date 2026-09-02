@@ -1,6 +1,18 @@
 # 0634 — `test_op_annot` W19a depends on a gitignored, untracked `~.sch` that nothing can restore
 
-**Status:** open — filed 2026-08-23 by the S4 RED agent.
+**Status:** CLOSED 2026-09-01 — **option 2**, on the user's ruling. W19a now
+byte-copies the cell into `$scratch/wbga`, plants the `~` there from the same
+bytes, and walks that; nothing is written into a committed library and nothing
+untracked is required.
+
+⚠ PROVEN ON A TREE THAT NEVER HAD THE FILE, which is the only evidence that
+counts here. The machine this was fixed on is a fresh clone: the shipped
+`bandgap_opamp~.sch` **does not exist on it at all**, which is precisely why
+W19a was red in every run of the day. After the fix, `test_op_annot` is
+`RESULT: ALL PASS (484 checks)` on that same tree, and the whole T1 regression
+suite counts **0** signals — the first zero this branch has had.
+
+Filed 2026-08-23 by the S4 RED agent.
 **Severity:** test-suite fragility. One check goes red for a reason unrelated to
 any code change, and `git` cannot put the tree back.
 

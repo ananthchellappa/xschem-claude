@@ -10068,21 +10068,54 @@ if {![file isfile $W_BG]} {
   set XSCHEM_LIBRARY_PATH $W_SKYLIBS
   set w_sky_src [opa_source [file join $repo sky130A sky130_procs.tcl]]
 
-  ## ⚠ THE `~` CONTROL (0495, risk note): this bench SHIPS with a
-  ## `bandgap_opamp~.sch`. A row that did not record its presence would be
-  ## measuring the developer's directory, not the code. It is byte-identical to
-  ## the `.sch` today, which is why the CONTENT half of the harm is invisible
-  ## here and W19b plants a differing one.
-  set w19a_bakdir [file dirname $W_BG]
+  ## ⚠ THE `~` IS PLANTED, NOT FOUND — ISSUE 0634, THE USER'S RULING (option 2).
+  ##
+  ## WHAT THIS ROW USED TO DO AND WHY IT WAS WRONG. It walked the SHIPPED
+  ## `bandgap_opamp.sch` in place and asserted `file exists bandgap_opamp~.sch`
+  ## was 1. That `~` is an AUTOSAVE BACKUP: untracked, and gitignored by
+  ## `.gitignore:75  *~.sch`. So a committed check required a file the repository
+  ## does not contain and cannot restore — measured on 2026-08-23, an agent
+  ## deleted it while probing something else and this row went red with NO diff,
+  ## `git status` clean and `git checkout` able to put nothing back. Worse, it
+  ## fails in any FRESH CLONE, which is what someone following the project's own
+  ## link gets. The row's own comment had warned about exactly this shape ("a row
+  ## that did not record its presence would be measuring the developer's
+  ## directory, not the code") and then required it anyway.
+  ##
+  ## THE FIX IS W19b's SHAPE, one row up the file. The cell is byte-copied into
+  ## $scratch and the `~` is planted there from the same bytes, so the row is
+  ## hermetic and writes nothing into a committed library. `$w19a_bak` therefore
+  ## no longer reports a discovery — it asserts the PLANT SUCCEEDED, which is the
+  ## fixture-before-verdict discipline the rest of this file uses: a row whose
+  ## fixture failed to build must red as a fixture, not as a verdict.
+  ##
+  ## ⚠ BYTE-IDENTICAL ON PURPOSE, and that is the difference from W19b. The
+  ## shipped `~` was byte-identical to its `.sch`, which is why the CONTENT half
+  ## of 0495's harm is invisible HERE; W19b plants one that differs by an
+  ## instance and catches that half. Copying the same bytes preserves W19a's
+  ## exact premise rather than quietly strengthening it.
+  ##
+  ## WHAT IS LOST, said plainly: the walk is no longer over the file that ships.
+  ## The property the row is named for is really about CONTENT — 73 instances,
+  ## the real hierarchy, resolved out of the shipped library through
+  ## XSCHEM_LIBRARY_PATH below — and a byte-copy keeps all of it. What it also
+  ## buys back is that a walk which DID write (issue 0632's hazard) can no longer
+  ## write into a committed library directory.
+  set w19a_bakdir [file join $scratch wbga]
+  file delete -force $w19a_bakdir ; file mkdir $w19a_bakdir
+  set w19a_cell [file join $w19a_bakdir bandgap_opamp.sch]
+  file copy -force $W_BG $w19a_cell
+  file copy -force $W_BG [file join $w19a_bakdir bandgap_opamp~.sch]
   set w19a_bak [file exists [file join $w19a_bakdir bandgap_opamp~.sch]]
+  set XSCHEM_LIBRARY_PATH "$W_SKYLIBS:$w19a_bakdir"
   catch {xschem raw clear}
-  xschem load $W_BG
+  xschem load $w19a_cell
   set w19a_sig0 [opa_w_filesig $w19a_bakdir *.sch]
   set w19a_st0  [list [xschem get instances] [xschem get modified] [xschem get currsch]]
   set w19a [opa_w_walk {op_annot::save_cards}]
   set w19a_st1  [list [xschem get instances] [xschem get modified] [xschem get currsch]]
   set w19a_sig1 [opa_w_filesig $w19a_bakdir *.sch]
-  check {W19a I4/0495 a walk over the SHIPPED bandgap_opamp leaves modified 0, the instance count and every byte on disk unchanged} \
+  check {W19a I4/0495 a walk over a byte-copy of the shipped bandgap_opamp, `~` planted beside it, leaves modified 0, the instance count and every byte on disk unchanged} \
     [list [lindex $w19a 0] $w19a_bak $w19a_st0 $w19a_st1 \
           [expr {$w19a_sig1 eq $w19a_sig0}]] \
     [list 0 1 {73 0 0} {73 0 0} 1]
