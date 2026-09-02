@@ -417,6 +417,15 @@ Note it is gated on **both** bits, which is the user's "ONLY when OP info is
 displayed" in one expression: with annotation off the declutter bit is inert and
 every parameter draws.
 
+> ⚠ **`HIDE_TEXT_PARAM` DOES NOT EXIST AND WILL NOT** (item A2, 2026-09-02). The
+> snippet above predates **D-1** and is superseded by **A3** below: there is no
+> parameter classifier, so the rung's test is *"carries neither
+> `TEXT_ANNOT_NAME` nor an annotation class"*, not a `HIDE_TEXT_PARAM` bit.
+> `TEXT_ANNOT_NAME 1024` is the only new `xText.flags` bit in feature A, and it
+> is the **eleventh and last free power of two documented in the map** — the ten
+> below it are `TEXT_BOLD 1` … `TEXT_ANNOT_CURRENT 512`. Item A3 needs no bit of
+> its own: its per-instance gate cannot live in `xText.flags` at all (A3a).
+
 **A3. The rule — settled by D-1.** There is no "parameter classifier". While
 decluttering, an instance draws **its name and its OP annotation, and nothing
 else**. That inverts the problem: instead of recognising ~33,000 shipped `T`
@@ -443,6 +452,64 @@ the annotation overlay off would be the whole feature eating itself.
 `devices/nmos4.sym`.** `draw.c:873`'s shipped keep-name test misses it; a rule
 that copies that test inherits a measured bug in which those instances lose
 their names entirely.
+
+> **LANDED — item A2, 2026-09-02** (`src/xschem.h`, `src/actions.c`,
+> `tests/headless/test_annot_declutter_1244.tcl` 36 → 52 checks). Full record:
+> `doc/claude/op_param_batch/receipts/A2.md`. Six things the implementation
+> settled or contradicted, all of which bind item A3:
+>
+> * ⚠ **The bit is set UNCONDITIONALLY, and this section implied otherwise.**
+>   "gains one more implicit content class beside `annot_content_class()`'s
+>   existing two" reads as *inside* the `annot_class_free()` gate. It is not.
+>   The gate exists for one named mechanism — the two class bits are a
+>   **visibility authority** that `text_hidden()` early-returns on *before*
+>   `show_hidden_texts`, so an implicit class stacked on an explicit `hide=`
+>   would move that text from *View > Show hidden texts* to the `annot_show`
+>   mask. `TEXT_ANNOT_NAME` is deliberately **absent** from the
+>   content-class-to-mask helper, which returns 0 for any bit it does not name,
+>   so it gates nothing and that mechanism does not exist for it. Invariant
+>   **I7** holds in both directions, and the bit can never make a hidden text
+>   appear. **Measured before choosing, and it does not discriminate:** ZERO of
+>   the 4,823 shipped name records carry any `hide=` token — 4,632 in `.sym`
+>   plus **191 in `.sch`**, a figure this section did not have. So the choice is
+>   about the **user's own future files**, and it is `rule` debt
+>   **`1244_A2_name_bit_vs_hide_true`**, wanted **before A3 lands**.
+> * **It is a separate `annot_name_token()`, not a third arm of
+>   `annot_content_class()`.** That function carries two rules that exist solely
+>   because `load_sym_def()` rewrites an LCC-embedded `@spice_get_voltage` into
+>   `@spice_get_voltage(<parentpath><lab>)` *before* `set_text_flags` runs: the
+>   trailing-`)` argument rule and the `@#<pin>:` split. Nothing rewrites a name
+>   spelling, so inheriting them would classify `@name(anything)` as a name.
+>   Copied instead, exactly: the two-ended trim, the `s[0] != '@'` fast reject,
+>   and a length-exact `strncmp` — the length pairing is **forced**, because the
+>   trim walks two pointers into a `const` string and cannot NUL-terminate it.
+> * **"Under both contexts" is not implementable — it is unavoidable.**
+>   `set_text_flags()` takes **no ctx argument**; it is called from `load_text()`
+>   for the schematic's own `xctx->text[]` and from `load_sym_def()` for a
+>   symbol's `tt[]`. The ctx distinction lives downstream, in the mask helper.
+> * ⚠ **`xText.flags` is NOT observable from Tcl, and the obvious probe lies.**
+>   `xschem get text_flags` does not raise — it returns the **empty string**
+>   through the generic `get` fall-through, with or without an index; only
+>   `xschem text_flags 0` errors. `scheduler.c` reads `text[i].flags` once (a
+>   `TEXT_FLOATER` test) and never exposes `text_hidden`. **A3's rows will have
+>   the same problem**, and A2's answer was C function-body slices plus an
+>   out-of-suite gdb probe and a `-std=c89 -Wall -Wextra -pedantic` unit harness.
+>   Budget for it; do not let a green structural suite be reported as
+>   behavioural (issue **1248**).
+> * ⚠ **42 shipped records put the name and a parameter in ONE `T` record** — 29
+>   `.sym` + 13 `.sch`, 11 distinct strings (`@name\n@value` in `isource` and
+>   `filesource`, `@symname\n@file`, `@name\n@wn/@ln\n@modeln` in `inv-2`,
+>   `passgate`, sky130's `passgate_nlvt`, …). Whole-string correctly denies them
+>   the bit, which means **once A3's rung lands those devices lose their NAMES
+>   along with their parameters.** That is a consequence of **D-1**, not a bug,
+>   and it is user-visible and unratified. A3 should surface it.
+> * **`flags` is never serialised**, confirmed both ways: `save_text()` writes
+>   `txt_ptr`, six numbers and `prop_ptr` and no flags field (structural row
+>   N13), and the round-trip `.sch` is byte-identical across a mask sweep with
+>   `modified` never set (row N12, and cross-binary against the pre-A2 build).
+>   `XSCHEM_FILE_VERSION` does not move. Invariants **I-A** and **I-C** hold: a
+>   60-schematic sweep across `xschem_library`, `xschem_libs_newsym`, sky130A,
+>   gf180mcuD and ihp-sg13g2 is byte-invariant at masks 0/1/8/9.
 
 **A3a. Which instances does it apply to? — OPEN, Q3.** Applying it to *every*
 symbol would strip a hierarchical block of its pin names and cell name, which is
@@ -731,7 +798,15 @@ Still open:
    string-backed, read-only, `-exportselection` pane of its own.
 10. **The three name spellings are three, not one.** `@name`, `@symname` and
     `@spiceprefix@name`. `draw.c:873`'s shipped keep-name test misses the third
-    (81 records, including gf180's FETs and `devices/nmos4.sym`).
+    (81 records, including gf180's FETs and `devices/nmos4.sym`). **FILED as
+    issue 1249** by item A2, which reproduced it *behaviourally* — at
+    `hide_symbols=2` on `cmos_inv.sch` the render keeps `R1 V1 Vmeas` and loses
+    `M1 M2` — and did **not** fix it (three files A2 does not own; three
+    byte-identical copies at `draw.c:873`, `svgdraw.c:928`, `psprint.c:1210`, so
+    screen, SVG and PDF lose the name together). Row **N14** of
+    `test_annot_declutter_1244.tcl` pins the defect; whoever fixes it flips that
+    row. `annot_name_token()` **is** the right predicate — export it rather than
+    writing a fourth copy (invariant I1). Item A3 touches all three files.
 11. **A zero-length vector is not a zero.** `savecurrents` publishes `ig`/`is`/
     `ib` as `0 long` on sky130 FETs, and an explicit `save …[ib]` card gives a
     `dims=0` column of `0.0`. Both are *absent*, and neither says so on stderr.

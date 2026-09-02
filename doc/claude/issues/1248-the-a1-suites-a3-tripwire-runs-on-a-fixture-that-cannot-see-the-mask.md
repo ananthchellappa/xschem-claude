@@ -81,3 +81,27 @@ cheap, but both change what the item's own suite asserts *after* its verificatio
 passes had signed off on it, and the batch's rule is that a discovered defect is
 filed, never fixed silently. **Item A3 should fix hole 1 as part of replacing row
 I2** — it is the same edit.
+
+## Addendum (item A2's implement pass, 2026-09-02): the name rows share hole 1
+
+Item A2's section N rows **N5–N8** — the ones that prove `annot_name_token()`
+compares against all three shipped spellings, whole-string, and is applied
+outside the `annot_class_free()` gate — are **structural**, read out of the C
+source with a function-body slicer, and they say so in their own comments. They
+have to be: `xText.flags` is not observable from Tcl at all (`xschem get
+text_flags` does not even raise — it returns the empty string through the generic
+`get` fall-through), `src/scheduler.c` reads `text[i].flags` only for
+`TEXT_FLOATER` and never exposes `text_hidden`, and adding a reflection accessor
+means editing a file item A2 does not own. Row **N10** is labelled `A3 MUST
+REPLACE THIS ROW` for the same reason this issue's hole 1 is: the honest
+behavioural proof needs a raw fixture in `test_op_annot.tcl`'s `opa_o_mkrlraw`
+shape. A2's *behavioural* rows (**N11–N14**) are all negative — "nothing moved" —
+and were additionally checked cross-binary: the warmed SVG export and the
+round-trip `.sch` are byte-identical to the pre-A2 binary's, not merely
+self-consistent across masks.
+
+A2 did fix the vacuous-fixture half for its own rows: section N brings
+`xschem_libs_newsym/examples/cmos_inv/schematic/cmos_inv.sch`, which loads
+cleanly under `src/cadence_style_rc` (14 instances) and renders all three name
+spellings plus two parameter texts on one sheet. **Rows I2/I3 were deliberately
+left alone** — replacing them is item A3's, per this issue. A3 closes both.

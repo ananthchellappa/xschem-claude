@@ -428,6 +428,40 @@ typedef int Tcl_Size;
  * show_hidden_texts alone (invariant I7). */
 #define TEXT_ANNOT_VOLTAGE 256 /* content-classified node voltage  (visibility + colour) */
 #define TEXT_ANNOT_CURRENT 512 /* content-classified branch current (visibility only)   */
+/* 1244 -- THE IMPLICIT NAME CLASS (item A2 of doc/claude/op_param_batch/PLAN.md).
+ * set_text_flags() sets it when the WHOLE trimmed text is exactly one of the three
+ * shipped name spellings. Re-measured on this tree 2026-09-02 with a brace-balanced
+ * record scanner over `git ls-files` (not a line grep):
+ *     .sym  3,686 files / 47,334 T records -> @name 3,165 . @symname 1,386 .
+ *                                             @spiceprefix@name 81   = 4,632
+ *     .sch    990 files /  4,009 T records -> @name   150 . @symname    41 .
+ *                                             @spiceprefix@name  0   =   191
+ * THE THIRD SPELLING IS THE TRAP AND IT IS WHY THERE ARE THREE. The shipped
+ * keep-name test in the three render back ends compares against `@symname` and
+ * `@name` only, so gf180's whole FET family and the generic xschem_library/devices/
+ * nmos4.sym lose their names at hide_symbols=2 -- reproduced, filed as issue 1249,
+ * and deliberately NOT copied here.
+ *
+ * IT IS AN EXEMPTION MARKER, NOT A VISIBILITY AUTHORITY, and that is the whole
+ * difference from the two bits above it. It is deliberately absent from the
+ * content-class-to-mask helper in actions.c, which returns 0 for any bit it does not
+ * name -- so this bit gates nothing and can move no text between View > Show hidden
+ * texts and the annot_show mask. Its ONE reader is item A3's declutter rung in
+ * text_hidden(); until that lands the bit is inert and the binary is behaviourally
+ * identical to the one before it. Rows N9/N11 of
+ * tests/headless/test_annot_declutter_1244.tcl are that claim, measured.
+ *
+ * BECAUSE IT IS NOT A VISIBILITY AUTHORITY IT IS SET UNCONDITIONALLY, outside the
+ * annot_class_free() gate the two bits above obey. Invariant I7 holds in both
+ * directions: a `hide=true` on an @name text still answers show_hidden_texts alone,
+ * exactly as it does today. Measured before choosing: ZERO of the 4,823 shipped name
+ * records carry any `hide=` token, so the two readings are byte-identical on every
+ * file in this tree -- the choice is about the USER's own future files. See
+ * doc/claude/op_param_batch/receipts/A2.md.
+ *
+ * A DIFFERENT NAMESPACE FROM ANNOT_SHOW_NOPARAM 8 below, which is a bit of
+ * xctx->annot_show. These are xText.flags. Do not confuse the two. */
+#define TEXT_ANNOT_NAME 1024   /* content-classified device name (exemption only)      */
 /* the annot_show mask bits (xctx->annot_show, MIRRORED IN TCL as ::annot_show) */
 #define ANNOT_SHOW_OP 1
 #define ANNOT_SHOW_VOLTAGE 2
@@ -946,8 +980,13 @@ typedef struct
               * bit 9 : TEXT_ANNOT_CURRENT  (implicit content class: branch current,
               *                              gated by annot_show BIT0 -- device OP
               *                              info, issue 0678 -- keeps its own layer)
-              * recomputed by set_text_flags() from prop_ptr AND from txt_ptr (bits 8/9
-              * carry the implicit content class, issues 0614/0678), never serialised */
+              * bit 10 : TEXT_ANNOT_NAME    (implicit content class: the whole trimmed
+              *                              text is exactly @name / @symname /
+              *                              @spiceprefix@name. An EXEMPTION marker for
+              *                              item A3's declutter rung, gated by NOTHING
+              *                              and named by no mask helper -- issue 1244)
+              * recomputed by set_text_flags() from prop_ptr AND from txt_ptr (bits 8/9/10
+              * carry the implicit content class, issues 0614/0678/1244), never serialised */
   unsigned int id; /* session-stable identity, stamped at birth in store.c
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is

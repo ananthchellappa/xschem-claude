@@ -1218,6 +1218,15 @@ int set_inst_flags(xInstance *inst)
  * xschem_libs_newsym/ mirrors, `hide=true` on a bare @spice_get_voltage /
  * @spice_get_current. The implicit class is therefore added ONLY when the `hide=`
  * chain set no bit at all.
+ *
+ * THE NAME CLASS (TEXT_ANNOT_NAME, issue 1244, item A2) SITS OUTSIDE THAT GATE ON
+ * PURPOSE. It is not a visibility authority: it is absent from the
+ * content-class-to-mask helper below, so text_hidden() early-returns on nothing for
+ * it and it can move no text between View > Show hidden texts and the annotation
+ * mask. The mechanism annot_class_free() protects against therefore does not exist
+ * for it, and annot_name_token() below is applied unconditionally. Measured before
+ * choosing: ZERO of the 4,823 shipped name records carry a `hide=` token, so gated
+ * and ungated are byte-identical on every file in this tree.
  * ------------------------------------------------------------------------- */
 
 #define ANNOT_CONTENT_NONE    0
@@ -1286,6 +1295,45 @@ static int annot_content_class(const char *txt)
   return ANNOT_CONTENT_NONE;
 }
 
+/* 1244 -- 1 when the WHOLE trimmed text is one of the three shipped name spellings,
+ * 0 otherwise. A SEPARATE function from annot_content_class(), not a third arm of it,
+ * for two reasons that are both structural rather than stylistic:
+ *   - annot_content_class carries two rules that exist SOLELY because load_sym_def()
+ *     rewrites an LCC-embedded `@spice_get_voltage` into
+ *     `@spice_get_voltage(<parentpath><lab>)` BEFORE set_text_flags runs: the
+ *     trailing-`)` argument rule and the `@#<pin>:` split. Nothing anywhere rewrites
+ *     a name spelling -- `@spiceprefix@name` reaches set_text_flags verbatim -- so
+ *     inheriting those rules would classify `@name(anything)` as a name, which is not
+ *     a whole-string match;
+ *   - this class is UNCONDITIONAL while annot_content_class's result feeds the gated
+ *     block, so folding them would force a restructure of the caller.
+ * WHAT IS COPIED, DELIBERATELY AND EXACTLY: the two-ended whitespace trim, the
+ * `s[0] != '@'` fast reject, and a length + strncmp pairing. The length is not a
+ * style choice -- the trim walks two pointers into a const string and cannot
+ * NUL-terminate it, so strcmp is unavailable without allocating in a function called
+ * per text per load. That pairing IS the whole-string discipline: it is why `@names`,
+ * `@name_foo`, `x=@name` and the 42 shipped multi-line `@name\n@value` records are
+ * all correctly denied. Measured: all 4,823 shipped name records are already exact
+ * without the trim, so the trim is inert on this tree and is kept for the user's own
+ * files and for consistency with the classifier above. */
+static int annot_name_token(const char *txt)
+{
+  const char *s, *e;
+  size_t len;
+
+  if(!txt) return 0;
+  s = txt;
+  while(*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+  if(s[0] != '@') return 0;
+  e = s + strlen(s);
+  while(e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\n' || e[-1] == '\r')) --e;
+  len = (size_t)(e - s);
+  if(len ==  5 && !strncmp(s, "@name", 5)) return 1;
+  if(len ==  8 && !strncmp(s, "@symname", 8)) return 1;
+  if(len == 17 && !strncmp(s, "@spiceprefix@name", 17)) return 1;
+  return 0;
+}
+
 int set_text_flags(xText *t)
 {
   const char *str;
@@ -1325,6 +1373,27 @@ int set_text_flags(xText *t)
     t->flags |= xctx->tok_size ? TEXT_FLOATER : 0;
     my_strdup2(_ALLOC_ID_, &t->floater_instname, str);
   }
+  /* 1244 -- THE IMPLICIT NAME CLASS (item A2), and it is set UNCONDITIONALLY, which is
+   * the one place this class departs from the two below it. The annot_class_free()
+   * gate exists for ONE named mechanism: those two bits are a VISIBILITY AUTHORITY
+   * that text_hidden() early-returns on BEFORE show_hidden_texts, so an implicit class
+   * stacked on an explicit `hide=` would silently move that text from View > Show
+   * hidden texts to the annotation mask, and nine tracked records really do carry
+   * both. TEXT_ANNOT_NAME is deliberately NOT named by the content-class-to-mask
+   * helper further down, so it gates nothing and can move no text between the two
+   * switches -- the mechanism the gate protects against does not exist for it, and
+   * invariant I7 holds in BOTH directions: a `hide=true` on an @name text keeps
+   * answering show_hidden_texts alone, exactly as it does today, and this bit can
+   * never make a hidden text appear.
+   * MEASURED FIRST, AND IT DOES NOT DISCRIMINATE: ZERO of the 4,823 shipped name
+   * records (4,632 .sym + 191 .sch, brace-balanced props scan) carry any `hide=`
+   * token, so gated and ungated are byte-identical on every file in this tree, in
+   * every PDK, today and after item A3. The choice is therefore about the USER's own
+   * future files: gating it would cost a name under the one feature whose promise is
+   * "its name and the OP numbers, nothing else". Rows N7/N8 of
+   * tests/headless/test_annot_declutter_1244.tcl pin this; the full argument and the
+   * rejected alternative are in doc/claude/op_param_batch/receipts/A2.md. */
+  if(annot_name_token(t->txt_ptr)) t->flags |= TEXT_ANNOT_NAME;
   /* 0614: the IMPLICIT class, from the content. OUTSIDE the if(t->prop_ptr) block so a
    * text with no property string at all is classified too. `hide=` always wins:
    * annot_class_free() is false the moment the chain above set any bit (invariant I7).

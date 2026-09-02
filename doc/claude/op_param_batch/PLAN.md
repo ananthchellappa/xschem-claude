@@ -60,7 +60,7 @@ diff by name and status, never by count.**
 
 ---
 
-## A2 — the name classifier
+## A2 — the name classifier  ✅ **DONE (status x), 2026-09-02**
 
 **Do.** Add `TEXT_ANNOT_NAME 1024` and set it in `set_text_flags()`
 (`src/actions.c:1289`) beside the existing `annot_content_class()` call, on a
@@ -88,6 +88,102 @@ A2's own insertion shifts the mask block in turn. A1's suite already exists and
 already carries the three readers A2 needs (`opa_n_grep`, `opa_proc_src`,
 `opa_n_rcbind`, the last extended with a `declutter` arm); append rows to it and
 keep the banner shape `RESULT: ALL PASS (N checks)` / `RESULT: N FAILED`.
+
+**Landed.** `#define TEXT_ANNOT_NAME 1024` beside `TEXT_ANNOT_CURRENT 512`, a new
+`static annot_name_token()` in `src/actions.c`, and one call in
+`set_text_flags()`. Suite **36 → 52 checks, ALL PASS** (new section N; the two
+extra rows over the planned 50 are N6b/N8b, see below). Every tier
+name-identical to the baseline; audit denominator unchanged at **378** because
+A2 added rows, not a suite. Eight sabotage variants, **every predicted red
+observed**. Full record: `doc/claude/op_param_batch/receipts/A2.md`. Filed and
+not fixed: **1249**, **1250**. **Status x** — nothing is user-visible until A3
+(measured cross-binary: the SVG and the round-trip `.sch` are byte-identical to
+the pre-A2 build) — but one **`rule` debt is wanted before A3 lands**, see below.
+
+---
+
+### What A2 learned that binds item A3
+
+1. ⚠ **The bit is set UNCONDITIONALLY, outside the `annot_class_free()` gate**,
+   and the spec's *"one more implicit content class beside `annot_content_class()`'s
+   existing two"* implied otherwise. The gate exists for one mechanism — the two
+   class bits are a **visibility authority** that `text_hidden()` early-returns
+   on before `show_hidden_texts` — and `TEXT_ANNOT_NAME` is deliberately absent
+   from the content-class-to-mask helper, so that mechanism does not exist for
+   it. **The consequence is invisible until A3's rung lands**, which is why
+   `rule` debt **`1244_A2_name_bit_vs_hide_true`** is wanted **first**: *should a
+   `hide=true` `@name` be drawn under declutter with View > Show hidden texts
+   ON?* A2 chose yes. Zero shipped symbols in any PDK are affected either way.
+2. ⚠ **`HIDE_TEXT_PARAM` does not exist and must not be invented.** The spec's
+   §4.1/A2 snippet predates D-1; the rung's test is *"carries neither
+   `TEXT_ANNOT_NAME` nor an annotation class"*. `TEXT_ANNOT_NAME 1024` is the
+   **eleventh and last** documented power of two in `xText.flags`, and A3 needs
+   no bit of its own — its per-instance gate cannot live there at all.
+3. ⚠ **Do NOT add a NAME arm to the content-class-to-mask helper.** Row **N9** is
+   labelled PERMANENT and applies to A3 too: a NAME arm there makes every `@name`
+   on every symbol follow `annot_show`, and additionally blanks the **eleven
+   shipped `@name` FLOATERS** on `mos_power_ampli.sch` / `pv_ngspice.sch` and
+   their four mirrors (a schematic-own floater is not exempted by the ctx guard).
+   `test_op_annot`'s row U35 **cannot** catch it — it counts calls, not contents.
+   A3's rung goes in `text_hidden`, **after** the class tests.
+4. ⚠ **`xText.flags` is NOT observable from Tcl and the obvious probe lies.**
+   `xschem get text_flags` does not raise — it returns the **empty string**
+   through the generic `get` fall-through, with or without an index; only
+   `xschem text_flags 0` errors. `scheduler.c` reads `text[i].flags` once (a
+   `TEXT_FLOATER` test) and never exposes `text_hidden`. So A2's positive rows
+   are **structural** (C function-body slices via the new `dc_cbody`) and its
+   behavioural rows can only be **negative**. **A3 hits the same wall**, and A3
+   already owns `scheduler.c`-adjacent work nowhere — decide explicitly whether
+   to add a three-line reflection accessor or to say in writing that it did not.
+5. ⚠ **Structural rows need MUTATION testing, not just the sabotage list.** All
+   eight A2 variants were caught, and the adversary then found **two further
+   mutations that passed every row**: `len >= 5` instead of `len == 5` (which
+   classifies `@name_foo`, `@names` and ~34 shipped `@name <param>` records — the
+   brief's own ACCEPT row) and `annot_name_token(t->prop_ptr)` (feature wholly
+   inert). Closed by rows **N6b** and **N8b**, both re-run against the mutations.
+   Budget a mutation pass for A3's structural rows.
+6. ⚠ **A red row whose expected value is produced by a path the RED state cannot
+   execute is not a tested row.** A2's RED pass wrote `regexp "…$L(…)"` — bare
+   `$L(` is a Tcl **array** reference. It could not fire during RED (`dc_cbody`
+   returned `{}` for a function that did not exist yet), and the moment the C
+   landed it aborted the suite mid-run with `variable isn't array`: 40 `ok` rows
+   and **no verdict**. Run every new row once against the GREEN tree too.
+7. ⚠ **`owed.sh add rule <id>` dedupes by id and writes with `>` — it
+   OVERWRITES.** `add rule 1244` would have silently destroyed item A1's standing
+   1244 question. A crew of parallel items on one feature number must suffix the
+   id (A2 used `1244_A2_name_bit_vs_hide_true`). Worth fixing in `owed.sh`.
+8. **The rows A3 inherits by name.** **N10** is labelled `A3 MUST REPLACE THIS
+   ROW` for the same reason issue 1248's row I2 is — an honest behavioural proof
+   of `get_annot_overlay()`'s synthetic `text_hidden(HIDE_TEXT_OP,
+   TEXT_CTX_INSTANCE)` call needs a raw fixture in `test_op_annot.tcl`'s
+   `opa_o_mkrlraw` shape. **N14** is labelled `1249 PINNED — WHOEVER FIXES 1249
+   FLIPS THIS ROW`. **N9** and **N13** are PERMANENT.
+9. **A2's fixture works where nand2 does not.**
+   `xschem_libs_newsym/examples/cmos_inv/schematic/cmos_inv.sch` loads cleanly
+   under `src/cadence_style_rc` (14 instances, 2 texts) and carries all three
+   spellings on one sheet — `M1`/`M2` from `@spiceprefix@name`, `R1`/`V1`/`Vmeas`
+   from `@name`, plus the schematic-own literals — at viewport
+   `{2000 1600 0 -520 420 -20}`. **Use it when replacing I2/I3** rather than
+   hunting for another.
+10. ⚠ **42 shipped records put the name and a parameter in ONE `T` record** (29
+    `.sym` + 13 `.sch`, 11 distinct strings: `@name\n@value` in `isource` and
+    `filesource`, `@symname\n@file`, `@name\n@wn/@ln\n@modeln` in `inv-2`,
+    `passgate`, sky130's `passgate_nlvt`, …). Whole-string correctly denies them
+    the bit, so **A3's rung makes those devices lose their NAMES along with their
+    parameters.** A consequence of **D-1**, not a bug — but user-visible and
+    unratified. A3 should surface it, not discover it.
+11. **The comment inside `text_hidden()`** — *"set_text_flags only adds it when
+    the `hide=` chain set no bit"* — is now true only of the two mask-named bits.
+    A2 could not edit that function. **A3 owns it; tighten the wording.**
+12. ⚠ **Issue 1250: a T1 red naming `test_annot_stale_0684` F17 or F21 is NOT
+    evidence about the change under test.** Its status-message rows are
+    sensitive to the scratch path length (`_annot_fit` elides at 255 bytes and
+    the sentence embeds the raw's absolute path, which `test_scratch` builds from
+    the repo location **and the pid**): deterministic red at a scratch root of
+    124 bytes, green at 120, shipped default 54. **Separately unexplained**, F21
+    red once in a real `run_regression.tcl` run at the default path and did not
+    reproduce in 3 further T1 runs or 10 standalone ones. Re-run solo and
+    standalone before attributing it, and record both numbers.
 
 ---
 

@@ -636,6 +636,379 @@ check "I3 invariant I-C (PERMANENT): with OP off, the SVG at mask 0 and mask 8 i
 dc_annot 0
 
 # ============================================================================
+# SECTION N — THE NAME CLASSIFIER (item A2: TEXT_ANNOT_NAME 1024)
+# ============================================================================
+# Item A2 adds ONE define and ONE arm: `TEXT_ANNOT_NAME 1024` in src/xschem.h,
+# set in `set_text_flags()` (src/actions.c) on a WHOLE-STRING match against the
+# three shipped name spellings. NOTHING ON SCREEN MOVES — the rung that reads
+# the bit is item A3.
+#
+# ⚠ THE THREE SPELLINGS, AND WHY THREE. Re-measured on this tree 2026-09-02 with
+# a brace-balanced record scanner over `git ls-files` (not a line grep):
+#     .sym  3,686 files / 47,334 T records ->  @name 3,165 · @symname 1,386 ·
+#                                              @spiceprefix@name 81   = 4,632
+#     .sch    990 files /  4,009 T records ->  @name   150 · @symname    41 ·
+#                                              @spiceprefix@name  0   =   191
+# The third spelling is the trap: draw.c's shipped keep-name test compares
+# against `@symname` and `@name` only, so gf180's whole FET family and the
+# generic xschem_library/devices/nmos4.sym are missed. Row N14 pins that defect
+# behaviourally; it is filed, not fixed, by item A2.
+#
+# ⚠ THE HONESTY LIMIT, SAID OUT LOUD (this is what issue 1248 is about).
+# xText.flags is NOT observable from Tcl: `xschem get text_flags` does not even
+# raise — it returns the EMPTY STRING through the generic `get` fall-through,
+# with or without an index — and scheduler.c neither exposes text_hidden nor
+# reads text[i].flags for anything but TEXT_FLOATER. Adding a reflection
+# accessor means editing src/scheduler.c, which item A2 does not own. So:
+#   * A2's POSITIVE evidence is STRUCTURAL — N1..N8, read out of the C source;
+#   * A2's BEHAVIOURAL evidence can only be NEGATIVE — N11..N14, "nothing moved".
+# A whole-file grep would be satisfied by A2's own comment (which names all three
+# spellings), so every structural row below reads a C FUNCTION-BODY SLICE via
+# `dc_cbody`, the C analogue of `opa_proc_src` and for exactly the same reason.
+#
+# RED BEFORE A2 LANDS (8): N1 N2 N3 N4 N5 N6 N7 N8
+# GREEN BEFORE AND AFTER (6) — controls, not evidence for A2:
+#   N9  PERMANENT — the catastrophic mis-implementation guard. A NAME arm in the
+#       function that maps a content class onto an annot_show bit would make
+#       every @name on every symbol follow the mask, and would additionally
+#       blank the eleven shipped `@name` FLOATERS on mos_power_ampli.sch /
+#       pv_ngspice.sch and their four mirrors. ⚠ ITEM A3 MUST NOT ADD IT THERE
+#       EITHER: A3's rung goes in text_hidden AFTER the class tests.
+#       ⚠ test_op_annot.tcl's row U35 CANNOT catch this — it counts CALLS.
+#   N10 A3 MUST REPLACE THIS ROW (with a raw fixture, per issue 1248).
+#   N11 the render oracle. ⚠ ON cmos_inv, NOT nand2 — see below.
+#   N12 no file-format change, behavioural.  N13 the same, structural.
+#   N14 1249 PINNED — WHOEVER FIXES 1249 FLIPS THIS ROW.
+#
+# ⚠ WHY NOT ROWS I2/I3's nand2 FIXTURE. src/cadence_style_rc sets
+# XSCHEM_LIBRARY_PATH {} and repoints the registry at
+# xschem_libs_newsym/library.defs. This suite MUST source that rc (there is no
+# ::cadence without it), after which xschem_library/examples/nand2.sch loads
+# with eight unresolved symbols and renders ZERO symbol text — so I2/I3 are
+# byte-identical at every mask for a reason that has nothing to do with the
+# mask. That is issue 1248, and it is item A3's to close. Section N therefore
+# brings its own fixture: xschem_libs_newsym/examples/cmos_inv/schematic/
+# cmos_inv.sch loads CLEANLY under the same rc (14 instances, 2 texts) and
+# carries all three spellings on one sheet — M1/M2 from `@spiceprefix@name`
+# (nmos4/pmos4), R1/V1/Vmeas from `@name`, and the schematic-own literals
+# `@name` and `@symname`. DO NOT touch row I2 or its fixture from here.
+
+## The body of ONE C function: from the column-0 definition line naming <name>
+## followed by '(' — skipping a prototype, which ends in ';' — up to and
+## INCLUDING the first later column-0 `}`. Every top-level function in actions.c
+## and save.c closes its brace at column 0 (checked: set_text_flags,
+## annot_content_class, annot_class_mask, text_hidden, save_text).
+## ⚠ WHY A SLICE AND NOT A GREP, exactly as opa_proc_src above: A2's own comment
+## names all three spellings, so a whole-file grep is satisfied by prose and
+## stays green over a renamed no-op shim.
+proc dc_cbody {path name} {
+  set lines [split [opa_slurp $path] \n]
+  set n [llength $lines] ; set start -1
+  for {set i 0} {$i < $n} {incr i} {
+    set l [lindex $lines $i]
+    if {![regexp "^\[A-Za-z_\].*\[^A-Za-z0-9_\]${name}\\s*\\(" $l]} continue
+    if {[string match {*;} [string trimright $l]]} continue     ;# a prototype
+    set start $i ; break
+  }
+  if {$start < 0} { return {} }
+  set out {}
+  for {set i $start} {$i < $n} {incr i} {
+    lappend out [lindex $lines $i]
+    if {$i > $start && [regexp {^\}} [lindex $lines $i]]} break
+  }
+  return [join $out \n]
+}
+
+set N_ACTIONS [file join $repo src actions.c]
+set N_SAVE    [file join $repo src save.c]
+set N_BODY    [dc_cbody $N_ACTIONS annot_name_token]
+
+# --- N1..N4: THE DEFINE AND THE BIT MAP -------------------------------------
+
+## ⚠ NOT A NAIVE GREP. The literal string TEXT_ANNOT_NAME ALREADY appears in
+## src/xschem.h — item A1 wrote it into prose — so `grep -c` reads 1 today and a
+## feature-absent grep is already satisfied. `dc_define` anchors on `#define`.
+check "N1 src/xschem.h defines TEXT_ANNOT_NAME exactly once as 1024" \
+  [dc_define $DC_H TEXT_ANNOT_NAME] 1024
+
+## ⚠ THE VALUE, NOT MERELY THE NAME — S6's discipline, one namespace over. A
+## `#define TEXT_ANNOT_NAME 512` would collide with TEXT_ANNOT_CURRENT, compile
+## clean, and make every @name follow annot_show bit 0. The eleven xText.flags
+## bits are asserted as a sorted set of eleven distinct powers of two.
+set N2_NAMES {TEXT_BOLD TEXT_OBLIQUE TEXT_ITALIC HIDE_TEXT TEXT_FLOATER \
+              HIDE_TEXT_INSTANTIATED HIDE_TEXT_OP HIDE_TEXT_VOLTAGE \
+              TEXT_ANNOT_VOLTAGE TEXT_ANNOT_CURRENT TEXT_ANNOT_NAME}
+set N2_V {}
+foreach n $N2_NAMES { lappend N2_V [dc_define $DC_H $n] }
+## `lsort -integer` raises on MISSING; sort only once every value is a number,
+## and report the unsorted list when one is not (copied verbatim from row S6).
+set N2_ok 1
+foreach v $N2_V { if {![string is integer -strict $v]} { set N2_ok 0 } }
+if {$N2_ok} { set N2_SET [lsort -integer -unique $N2_V] } else { set N2_SET $N2_V }
+check "N2 the eleven xText.flags bits are eleven distinct powers of two ending 1024" \
+  [list $N2_SET [llength $N2_V]] \
+  {{1 2 4 8 16 32 64 128 256 512 1024} 11}
+
+## The brief's explicit worry, pinned: ANNOT_SHOW_NOPARAM 8 (item A1) lives in
+## the xctx->annot_show mask, TEXT_ANNOT_NAME 1024 in xText.flags. Different
+## namespaces; src/xschem.h says so in prose and this row says so by value.
+check "N3 the two namespaces do not touch: ANNOT_SHOW_NOPARAM is 8, TEXT_ANNOT_NAME is 1024" \
+  [list [dc_define $DC_H ANNOT_SHOW_NOPARAM] [dc_define $DC_H TEXT_ANNOT_NAME] \
+        [expr {[dc_define $DC_H ANNOT_SHOW_NOPARAM] eq [dc_define $DC_H TEXT_ANNOT_NAME]}]] \
+  {8 1024 0}
+
+## The `int flags;` bit map inside xText documents bits 0-9 and closes with
+## "(bits 8/9 carry the implicit content class...)". It is the thing the NEXT
+## implementer reads before choosing a value, so a stale map is a real defect
+## here: A2 must add the `bit 10 : TEXT_ANNOT_NAME` line AND widen the closing
+## sentence to `bits 8/9/10`.
+check "N4 the xText.flags bit map is not stale: it documents bit 10 and closes with bits 8/9/10" \
+  [list [opa_n_grep $DC_H {bit 10 : TEXT_ANNOT_NAME}] [opa_n_grep $DC_H {bits 8/9/10}]] \
+  {1 1}
+
+# --- N5..N8: THE CLASSIFIER ITSELF, READ OUT OF THE C -----------------------
+
+## THE HEADLINE STRUCTURAL ROW. The comparison set is EXACTLY three literals: a
+## fourth, a dropped third spelling (`@spiceprefixname` re-introduces the shipped
+## draw.c bug verbatim) or a renamed no-op shim all red here.
+check "N5 annot_name_token compares against exactly the three shipped spellings" \
+  [list [lsort [regexp -all -inline {"[^"]*"} $N_BODY]] \
+        [llength [regexp -all -inline {"[^"]*"} $N_BODY]]] \
+  [list [lsort [list {"@name"} {"@symname"} {"@spiceprefix@name"}]] 3]
+
+## WHOLE-STRING, NOT SUBSTRING — the existing classifier's discipline and the
+## whole reason annot_content_class is correct. Each spelling must be compared
+## LENGTH-EXACT: the trim walks two pointers into a const string and cannot
+## NUL-terminate it, so a length + strncmp pairing is forced, not a style
+## preference. The lengths are computed in Tcl, never hardcoded here, so a wrong
+## constant in the C reds this row. `strstr` anywhere in the body IS the
+## substring rewrite and must not appear.
+set N6_PAIR {}
+foreach sp {@name @symname @spiceprefix@name} {
+  set L [string length $sp] ; set hit 0
+  foreach l [split $N_BODY \n] {
+    if {[string first "\"$sp\"" $l] < 0} continue
+    ## ${L} in braces, NOT $L: bare `$L(` is parsed by Tcl as an ARRAY reference and
+    ## raises "variable isn't array". Latent until the C function body is non-empty —
+    ## before item A2 landed, dc_cbody returned {} and this line was never reached.
+    if {[regexp "(^|\[^0-9\])${L}(\[^0-9\]|\$)" $l]} { set hit 1 ; break }
+  }
+  lappend N6_PAIR $hit
+}
+set N6_STRSTR 0
+foreach l [split $N_BODY \n] { if {[string first strstr $l] >= 0} { incr N6_STRSTR } }
+set N6_AT   [expr {[regexp {\[0\]\s*!=\s*'@'} $N_BODY] ? 1 : 0}]
+set N6_TRIM [expr {([regexp {(\+\+s|s\+\+)} $N_BODY] && [regexp {(--e|e--)} $N_BODY]) ? 1 : 0}]
+check "N6 whole-string: each spelling paired with its own length, no strstr, the '@' fast reject and the two-ended trim" \
+  [list $N6_PAIR $N6_STRSTR $N6_AT $N6_TRIM] \
+  {{1 1 1} 0 1 1}
+
+## ⚠ CLOSES A HOLE FOUND BY MUTATION, NOT BY READING (item A2's adversary
+## pass, 2026-09-02). N6 above pairs each spelling with its OWN length on the
+## same line, but it never reads the OPERATOR — so a `len >= 5` mutation
+## survives it, and that mutation classifies `@name_foo`, `@names` and the ~34
+## shipped `@name <param>` records: precisely the substring failure the brief's
+## ACCEPT list names and the one this item exists to prevent. Assert the
+## operator itself: three `len ==` comparisons and no relational length test
+## anywhere in the body. The mutation matrix that found this hole is in
+## doc/claude/op_param_batch/receipts/A2.md.
+set N6b_EQ 0 ; set N6b_REL 0
+foreach l [split $N_BODY \n] {
+  if {[regexp {len\s*==} $l]} { incr N6b_EQ }
+  if {[regexp {len\s*(>=|<=|>|<)} $l]} { incr N6b_REL }
+}
+check "N6b whole-string: the three length comparisons are EQUALITY and no relational length test exists" \
+  [list $N6b_EQ $N6b_REL] {3 0}
+
+## THE NEAR-MISS TABLE. ⚠ STRUCTURAL, NOT BEHAVIOURAL — the bit is invisible to
+## Tcl (see the section header), so this row drives a Tcl oracle built FROM THE
+## LITERAL SET READ OUT OF THE C rather than from a hardcoded list. It therefore
+## reds before A2 and reds on a dropped or renamed spelling, but it tests the
+## SET, not the discipline; N6 is the only row that sees a substring rewrite.
+## ⚠ THE FIRST FIVE REJECTS OCCUR ZERO TIMES IN THE SHIPPED TREE — legitimate
+## synthetic rows, but not evidence about real files. The last two are what the
+## tree ACTUALLY ships: 29 multi-line .sym records and 13 .sch records across 11
+## distinct strings put the name and a parameter in ONE text record
+## (`@name\n@value` in isource/filesource, `@symname\n@file`, `@name\n@wn/@ln\n
+## @modeln` in inv-2/passgate/sky130's passgate_nlvt). A trimmed whole-string
+## match correctly denies all 42 — which is right for A2, and means that once
+## A3's rung lands those devices lose their NAMES along with their parameters.
+## That is a design consequence of ruling D-1, not a bug in A2.
+proc dc_name_oracle {lst s} {
+  return [expr {[lsearch -exact $lst [string trim $s " \t\n\r"]] >= 0 ? 1 : 0}]
+}
+set N7_SET {}
+foreach q [regexp -all -inline {"[^"]*"} $N_BODY] { lappend N7_SET [string range $q 1 end-1] }
+set N7_IN [list "@name" "@symname" "@spiceprefix@name" " @name " "@symname\n" \
+                "x=@name" "@names" "@name_foo" "tcleval(@name)" "name" \
+                "@name\n@value" "@symname\n@file"]
+set N7_GOT {}
+foreach s $N7_IN { lappend N7_GOT [dc_name_oracle $N7_SET $s] }
+check "N7 the three spellings classify (padded too) and the seven near-misses do not" \
+  $N7_GOT {1 1 1 1 1 0 0 0 0 0 0 0}
+
+## ADDITIVE AND UNCONDITIONAL, PROVED BY ORDER. Decision (item A2, receipt):
+## TEXT_ANNOT_NAME is set OUTSIDE the `if(annot_class_free(t->flags))` gate,
+## unlike the two classes beside it. The gate exists for ONE named mechanism —
+## the two class bits are a VISIBILITY AUTHORITY that text_hidden early-returns
+## on BEFORE show_hidden_texts, so an implicit class stacked on an explicit
+## `hide=` would silently move that text from View > Show hidden texts to the
+## annotation mask. TEXT_ANNOT_NAME is deliberately not a visibility authority
+## (row N9 pins that permanently), so it can move no text between switches and
+## the mechanism the gate protects against does not exist for it. Measured
+## first, as the brief demanded: ZERO of the 4,823 shipped name records carry
+## any `hide=` token, so gated and ungated are byte-identical on every file in
+## this tree — the choice is about the USER's own future files only.
+## The comparison is LINE-WISE, so a reflow cannot move it, and it is also the
+## only row that proves the bit is ever actually ASSIGNED.
+set N8_B [dc_cbody $N_ACTIONS set_text_flags]
+set N8_i -1 ; set N8_g -1 ; set N8_k 0
+foreach l [split $N8_B \n] {
+  if {$N8_i < 0 && [regexp {\|=\s*TEXT_ANNOT_NAME} $l]} { set N8_i $N8_k }
+  if {$N8_g < 0 && [string first {annot_class_free(t->flags)} $l] >= 0} { set N8_g $N8_k }
+  incr N8_k
+}
+check "N8 set_text_flags sets TEXT_ANNOT_NAME, and does so BEFORE the annot_class_free gate" \
+  [list [expr {$N8_i >= 0 ? 1 : 0}] [expr {$N8_g >= 0 ? 1 : 0}] \
+        [expr {($N8_i >= 0 && $N8_g > $N8_i) ? 1 : 0}]] \
+  {1 1 1}
+
+## ⚠ ALSO FROM THE MUTATION PASS. N8 proves a `|= TEXT_ANNOT_NAME` line
+## exists above the gate, but not what the guard READS: changing the call to
+## `annot_name_token(t->prop_ptr)` leaves the feature wholly inert — the bit
+## is then never set on any real text — and N8 stays green. The bit must be
+## computed FROM THE TEXT, so pin the argument. See the mutation matrix in
+## doc/claude/op_param_batch/receipts/A2.md.
+set N8b_TXT 0 ; set N8b_OTHER 0
+foreach l [split $N8_B \n] {
+  if {[string first "annot_name_token(" $l] < 0} continue
+  if {[regexp {annot_name_token\(\s*t->txt_ptr\s*\)} $l]} { incr N8b_TXT } else { incr N8b_OTHER }
+}
+check "N8b the name bit is computed FROM THE TEXT: the call in set_text_flags reads t->txt_ptr" \
+  [list $N8b_TXT $N8b_OTHER] {1 0}
+
+# --- N9, N10: THE TWO FUNCTIONS A2 MUST NOT TOUCH ---------------------------
+
+## ⚠ PERMANENT — ITEM A3 MUST NOT ADD IT HERE EITHER. The function that maps a
+## content class onto an annot_show bit returns 0 for any bit it does not name,
+## and THAT is why item A2 is a no-op on screen by construction rather than by
+## care. A NAME arm here would make every @name on every symbol follow the mask
+## and would additionally blank the eleven shipped `@name` FLOATERS on
+## mos_power_ampli.sch / pv_ngspice.sch and their four mirrors (a schematic-own
+## floater is NOT exempted by the ctx guard). A3's rung belongs in text_hidden,
+## AFTER the class tests. ⚠ test_op_annot.tcl's row U35 cannot catch this: it
+## counts CALLS, not contents. The second element is the non-vacuity control —
+## a mistyped function name would otherwise slice nothing and pass.
+set N9_B [dc_cbody $N_ACTIONS annot_class_mask]
+check "N9 PERMANENT: the content-class-to-mask function still names no NAME bit" \
+  [list [expr {[string first TEXT_ANNOT_NAME $N9_B] >= 0 ? 1 : 0}] \
+        [expr {[string first TEXT_ANNOT_CURRENT $N9_B] >= 0 ? 1 : 0}]] \
+  {0 1}
+
+## ⚠ A3 MUST REPLACE THIS ROW. Together with N9 this is the fully honest form of
+## the acceptance row "text_hidden()'s answer is unchanged for every input,
+## including get_annot_overlay()'s synthetic literal call": the predicate and its
+## mask helper are byte-unchanged and the helper returns 0 for a bit it does not
+## name. A BEHAVIOURAL proof of that eleventh call site needs a raw fixture in
+## test_op_annot.tcl's opa_o_mkrlraw shape — which is precisely what issue 1248
+## assigns to item A3. This is a structural row and must not be reported as more.
+set N10_B [dc_cbody $N_ACTIONS text_hidden]
+check "N10 A3 MUST REPLACE THIS ROW: text_hidden itself is unchanged and names no NAME bit" \
+  [list [expr {[string first TEXT_ANNOT_NAME $N10_B] >= 0 ? 1 : 0}] \
+        [expr {[string first show_hidden_texts $N10_B] >= 0 ? 1 : 0}]] \
+  {0 1}
+
+# --- N11..N14: NOTHING MOVES ON SCREEN, AND THE .sch IS UNTOUCHED -----------
+
+## ⚠ LOAD THE SHIPPED FILE, THEN `saveas` INTO THE SCRATCH DIR — row I1's
+## warnings apply verbatim: never a plain `file copy` of the .sch (the copy
+## resolves its symbols against a different directory and comes up short of
+## instances), and never a `xschem save` onto the shipped file.
+set N_FIX [file join $scratch a2_name_fixture.sch]
+xschem load [file join $repo xschem_libs_newsym examples cmos_inv schematic cmos_inv.sch]
+xschem saveas $N_FIX schematic
+update idletasks
+
+## The viewport form of `xschem print`, and a WARMED export, exactly as section I
+## — one throwaway of the same format first, so a first-export difference cannot
+## alias into a pass. A separate proc from dc_print because the viewport differs;
+## section I's I_VP is left alone.
+set N_VP {2000 1600 0 -520 420 -20}
+proc dc_nprint {out} {
+  if {[catch {eval [linsert $::N_VP 0 xschem print svg $out]} r]} { return RAISED:$r }
+  if {![file isfile $out]} { return NO-FILE }
+  set fd [open $out r] ; set d [read $fd] ; close $fd ; return $d
+}
+proc dc_nprint2 {out} { dc_nprint $out.warm ; return [dc_nprint $out] }
+## Every <text ...>BODY</text> body of an SVG export, in document order.
+proc dc_ntexts {svg} {
+  set o {}
+  foreach m [regexp -all -inline {<text[^>]*>[^<]*} $svg] {
+    lappend o [string range $m [expr {[string first > $m] + 1}] end]
+  }
+  return $o
+}
+
+foreach m {0 1 8 9} { dc_annot $m ; set N_SVG($m) [dc_nprint2 [file join $scratch a2_m$m.svg]] }
+dc_annot 0
+## NON-VACUITY BY CONTENT, NOT BY LENGTH: the byte count moves with the length of
+## the scratch path (it is drawn on the sheet), so it is never asserted. What is
+## asserted is that all three spellings, a parameter text item A3 will hide, and
+## the two schematic-own literals really do render here.
+set N11_MISSING {}
+foreach t {>M1< >M2< >R1< >V1< >Vmeas< >WN/LLN/1< >WP/LLP/1< >@name< >@symname<} {
+  if {[string first $t $N_SVG(0)] < 0} { lappend N11_MISSING $t }
+}
+check "N11 A2 changes nothing on screen: the SVG is byte-identical at masks 0, 1, 8 and 9, and is not vacuous" \
+  [list [expr {$N_SVG(0) eq $N_SVG(1)}] [expr {$N_SVG(0) eq $N_SVG(8)}] \
+        [expr {$N_SVG(0) eq $N_SVG(9)}] $N11_MISSING] \
+  {1 1 1 {}}
+
+## The acceptance row "flags is still NEVER serialised, so a saved/reloaded .sch
+## is byte-identical", behaviourally. The scratch copy is xschem's own output, so
+## this compares two writes of the same in-memory schematic.
+set N12_B0 [opa_slurp $N_FIX]
+set N12_MODS {}
+foreach m {0 1 8 9} { dc_annot $m ; lappend N12_MODS [xschem get modified] }
+catch {xschem save}
+set N12_B1 [opa_slurp $N_FIX]
+dc_annot 0
+check "N12 invariant I-A: a mask sweep sets no modify flag and the .sch bytes are identical" \
+  [list $N12_MODS [expr {$N12_B0 eq $N12_B1}] [expr {[string length $N12_B0] > 0}]] \
+  {{0 0 0 0} 1 1}
+
+## The same acceptance row STRUCTURALLY, which is what makes it honest rather
+## than a coincidence of this fixture: save_text writes txt_ptr, six numbers and
+## prop_ptr, and never `flags`. So no file-format change and XSCHEM_FILE_VERSION
+## does not move. PERMANENT.
+set N13_B [dc_cbody $N_SAVE save_text]
+check "N13 PERMANENT: save_text writes txt_ptr and prop_ptr and never writes flags" \
+  [list [expr {[string first txt_ptr  $N13_B] >= 0 ? 1 : 0}] \
+        [expr {[string first prop_ptr $N13_B] >= 0 ? 1 : 0}] \
+        [expr {[string first flags    $N13_B] >= 0 ? 1 : 0}] \
+        [expr {[string length $N13_B] > 0}]] \
+  {1 1 0 1}
+
+## ⚠ 1249 PINNED — WHOEVER FIXES 1249 FLIPS THIS ROW. This is a DEFECT recorded,
+## not a promise kept. The shipped keep-name test is THREE byte-identical copies
+## (draw.c, svgdraw.c, psprint.c), each comparing against `@symname` and `@name`
+## only, so at hide_symbols=2 a device whose name text is `@spiceprefix@name`
+## loses its name on screen, in SVG and in PDF. Reproduced here rather than read:
+## R1/V1/Vmeas (`@name`) survive and M1/M2 (nmos4/pmos4) do not. Item A2 owns
+## none of those three files, so it files the issue and does not fix it; item A3
+## owns all three and is its natural home, but it is NOT assigned there.
+set N14_HS 0 ; catch {set N14_HS $::hide_symbols}
+catch {xschem set hide_symbols 2} ; catch {xschem update_all_sym_bboxes}
+set N14_T [dc_ntexts [dc_nprint2 [file join $scratch a2_hs2.svg]]]
+catch {xschem set hide_symbols $N14_HS} ; catch {xschem update_all_sym_bboxes}
+set N14_GOT {}
+foreach t {R1 V1 Vmeas M1 M2} { lappend N14_GOT [expr {[lsearch -exact $N14_T $t] >= 0 ? 1 : 0}] }
+check "N14 1249 PINNED: at hide_symbols=2 the at-name devices keep their names and the spiceprefix-at-name FETs lose theirs" \
+  $N14_GOT {1 1 1 0 0}
+
+dc_annot 0
+
+# ============================================================================
 # SECTION R — REGISTRATION
 # ============================================================================
 # full_audit.sh selects by GLOB (`ls "$HERE"/test_*.tcl | sort`); the three named

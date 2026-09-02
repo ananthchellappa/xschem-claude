@@ -875,4 +875,29 @@ was fixed silently, and none is in a file item A1 owns.
   the `off` arm is untested above bit 3. Item A3 should fix the first as part of
   replacing row I2.
 
-**The next free number is 1249.**
+**Item A2's implement pass (2026-09-02) filed 1249.** Measured behaviourally,
+not fixed, and in files item A2 does not own.
+
+* **1249** — the shipped keep-name test (`src/draw.c:873`, `src/svgdraw.c:928`,
+  `src/psprint.c:1210`, three byte-identical copies) compares against `@symname`
+  and `@name` only and misses the third shipped spelling `@spiceprefix@name`, so
+  at `hide_symbols` 1/2 gf180's whole FET family and the generic
+  `xschem_library/devices/nmos4.sym` lose their names on screen, in SVG and in
+  PDF. 81 shipped `.sym` records. Pinned behaviourally by row **N14** of
+  `tests/headless/test_annot_declutter_1244.tcl`, which whoever fixes 1249 flips.
+
+**Item A2's write-up pass (2026-09-02) filed 1250.** Measured, not fixed, in
+files item A2 does not own.
+
+* **1250** — `cadence::_annot_fit` elides the held status line at 255 bytes
+  (ratified in 0886), and the sentence embeds the raw's absolute path, so
+  `tests/headless/test_annot_stale_0684.tcl`'s message rows are sensitive to the
+  length of the scratch path — which `test_scratch` builds from the repo
+  location and the **pid**. Deterministic: the suite passes at a scratch root of
+  120 bytes and reds F17 at 124 (the shipped default is 54, so ~67 bytes of
+  headroom). Separately and **not explained by that**, F21 red once in a real
+  `run_regression.tcl` run at the default path and did not reproduce in 3 further
+  T1 runs or 10 standalone ones. **A T1 red naming this suite's F17/F21 is not
+  evidence about the change under test until part 2 has a cause.**
+
+**The next free number is 1251.**
