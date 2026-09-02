@@ -452,6 +452,38 @@ typedef int Tcl_Size;
  * held snapshot is honest only because the user was told what it was measured
  * at. See doc/claude/issues/0868-*.md. */
 #define ANNOT_SHOW_TRAN 4
+/* 1244 -- bit3, the SCHEMATIC PARAMETER DECLUTTER: the `Ctrl-Alt-6` chord in
+ * src/cadence_style_rc, whose one writer is `cadence::annot_declutter` in
+ * utils/annot_mode.tcl. RULING D-8, the user verbatim: "Declutter is active ONLY
+ * when OP info (6 key triggered) is displayed. I thought that was clear." So it
+ * is a bit on THIS mask and NOT a preference -- `Ctrl-6` clears it with
+ * everything else (cadence::_annot_mask none returns a hard 0), and nothing
+ * writes it to disk. Do not add a persisted setting for it; that ruling forbids
+ * one. See doc/claude/op_param_batch/DECISIONS.md and
+ * doc/claude/specs/op_param_lists.md section 4.1.
+ *
+ * NO C CODE READS THIS BIT YET, AND THAT IS THE WHOLE OF ITEM A1. The plan item
+ * (doc/claude/op_param_batch/PLAN.md, A1) adds the bit and the chord only: the
+ * draw-time rung in text_hidden() is item A3 and the TEXT_ANNOT_NAME content
+ * class -- which lives in the OTHER block above, beside TEXT_ANNOT_CURRENT -- is
+ * item A2. Until A3 lands this define is inert and the binary it produces is
+ * functionally identical to the one before it. Row I2 of
+ * tests/headless/test_annot_declutter_1244.tcl asserts exactly that (the SVG at
+ * mask 1 and at mask 9 is byte-identical) and is the row item A3 MUST REPLACE.
+ *
+ * IT IS AN AND-GATE, NOT A FOURTH MODE. A3's rung is gated on ANNOT_SHOW_OP AND
+ * this bit, which is D-8 in one expression: with annotation off the declutter is
+ * inert and every parameter still draws (invariant I-C, row I3, which is
+ * PERMANENT). A bit3 set on its own is armed, not active.
+ *
+ * IT IS A TOGGLE WHERE ITS THREE NEIGHBOURS ARE ADDITIVE SETTERS, AND THAT
+ * ASYMMETRY IS DELIBERATE -- do not "correct" it. RULING 0614 made `6` and
+ * `Alt-6` OR their bits in; the user asked for hide/show here, so
+ * cadence::annot_declutter XORs. For the same reason it is NOT a fourth spelling
+ * of cadence::_annot_mask: that table is the ADDITIVE-SETTER table (row N1 of
+ * tests/headless/test_op_annot.tcl golds it as such), so `declutter` raises
+ * there exactly as `tran` already does. */
+#define ANNOT_SHOW_NOPARAM 8
 /* S9: the font the draw-time OP-annotation overlay renders in, needed by all three
  * back ends. Lifted verbatim from the shipped carrier xschem_library/devices/
  * annotate_params.sym (font=Monospace) so carrier and overlay look identical side

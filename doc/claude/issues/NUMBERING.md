@@ -857,4 +857,22 @@ parameters).
 
 The measurement transcript both rest on is
 `doc/claude/code_analysis/1244_op_param_list_measurements.md`.
-**The next free number is 1246.**
+**Item A1's passes (2026-09-02) filed 1246-1248.** All three were measured, none
+was fixed silently, and none is in a file item A1 owns.
+
+* **1246** — `Waves > Op Annotate` hard-sets `annot_show 3` (`src/xschem.tcl:17299`
+  and `:17725`), so it silently clears the declutter bit item A1 added. Measured
+  by A1, which owns neither line.
+* **1247** — a NET-ZERO pair of `Ctrl-Alt-6` presses arms the 0688 root-change
+  clear. `annot_show_set()` stamps `xctx->annot_root` for any nonzero mask, so
+  two presses of a chord that changes nothing turn an `xschemrc`-armed
+  `annot_show` from one that survives a `File > Open` into one that is cleared
+  by it. Pre-existing mechanism, first *exposed* by A1. The repair reverses a
+  prior ruling whichever way it goes, so it is a question, not a patch.
+* **1248** — the A1 suite's three coverage holes: rows I2/I3 render on a fixture
+  that is byte-identical at every mask (so the "A3 MUST REPLACE" tripwire cannot
+  trip), sabotage SB5 is caught by a source grep and by no behavioural row, and
+  the `off` arm is untested above bit 3. Item A3 should fix the first as part of
+  replacing row I2.
+
+**The next free number is 1249.**

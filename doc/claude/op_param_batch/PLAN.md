@@ -20,7 +20,7 @@ B3 ──┴─> B4
 
 ---
 
-## A1 — the mask bit and the chord
+## A1 — the mask bit and the chord  ✅ **DONE (status E), 2026-09-02**
 
 **Do.** Add `ANNOT_SHOW_NOPARAM 8` to the `annot_show` mask. Add
 `cadence::annot_declutter toggle` in `utils/annot_mode.tcl`, writing the mask
@@ -42,6 +42,22 @@ new `tests/headless/test_annot_declutter_1244.tcl`
 throughout, and `xschem set annot_show true` still reads back 0 (the trap, pinned
 so nobody "fixes" it).
 
+**Landed.** `tests/headless/test_annot_declutter_1244.tcl`, **36 checks, ALL
+PASS**. Audit **364/11/0/2 of 377 → 365/11/0/2 of 378**, the eleven reds
+identical by name. Full record:
+`doc/claude/op_param_batch/receipts/A1.md`. **Status E** — the three status
+sentences are unratified (`rule` debt 1244) and the ON one describes the world
+A3 creates. Filed and not fixed: **1246**, **1247**, **1248**.
+
+**⚠ Deviation, deliberate, and it binds every later item.** This item's Do cell
+said "register it in `tests/headless/full_audit.sh`". **That file was not edited
+and must not be.** Registration on this tree *is* the
+`ls "$HERE"/test_*.tcl | sort` glob at `:393`; the three named lists
+(`nogui_tests`, `logdir_tests`, `nolog_tests`) are opt-ins for special run modes,
+and putting an `event generate` suite on `nogui_tests` strips X and breaks
+`bind` outright. **Every new suite in this batch moves the audit denominator, so
+diff by name and status, never by count.**
+
 ---
 
 ## A2 — the name classifier
@@ -61,6 +77,17 @@ not copy that test — it carries a measured bug.
 **Accept.** All three spellings classify; a text merely *containing* `@name`
 (e.g. `x=@name`) does **not**; the bit is additive and changes no existing
 `hide=` behaviour; `flags` is still never serialised.
+
+**From A1, 2026-09-02.** `src/xschem.h` moved: A1 inserted 32 lines
+**immediately after** `ANNOT_SHOW_TRAN`, a pure insertion, so `ANNOT_SHOW_OP`,
+`ANNOT_SHOW_VOLTAGE` and `ANNOT_SHOW_TRAN` are still at 432/433/454 and
+**everything below 454 shifted by +32**. `TEXT_ANNOT_NAME 1024` belongs in the
+*other* block, beside `TEXT_ANNOT_CURRENT 512` — a different block, so the two
+edits do not collide — but **do not cite a line number in any comment you add**:
+A2's own insertion shifts the mask block in turn. A1's suite already exists and
+already carries the three readers A2 needs (`opa_n_grep`, `opa_proc_src`,
+`opa_n_rcbind`, the last extended with a `declutter` arm); append rows to it and
+keep the banner shape `RESULT: ALL PASS (N checks)` / `RESULT: N FAILED`.
 
 ---
 
@@ -92,6 +119,36 @@ are **byte-identical** across a toggle and the modify flag is not set. SVG and
 PS exports agree with the screen. And the click target: `select.c:709` shrinks
 the with-text bbox that `findnet.c:461` gates on, so record what happens to
 `find_closest_element` rather than discovering it later.
+
+**From A1, 2026-09-02 — four things that bind this item.**
+
+1. **⚠ ROW I2's FIXTURE CANNOT SEE THE MASK — issue 1248.** A1's row I2 is
+   labelled "A3 MUST REPLACE", but it renders `nand2.sch` with no raw and eight
+   unresolved symbols, and *every* mask exports byte-identically there —
+   measured `0=1 1=1 2=1 3=1 8=1 9=1 11=1`, **including 1 vs 3**, a pair that
+   genuinely differ in meaning. **A3 can land, work perfectly, and leave I2
+   green.** Replacing the row means replacing the fixture: a real raw, in
+   `test_op_annot.tcl`'s `opa_o_mkrlraw` shape, so that 1 vs 3 differ *before*
+   A3 lands and the row has a non-vacuity control. Row I3 (invariant I-C,
+   permanent) needs the same fixture for the same reason.
+2. **Use the SPEC's `text_hidden` call-site list, §2.3 — re-verified against the
+   tree on 2026-09-02 and correct.** Eleven sites: `draw.c:872, 1140, 10307,
+   10688` · `svgdraw.c:927, 1334` · `psprint.c:1209, 1710` · `select.c:709` ·
+   `actions.c:1832` (the synthetic literal) · `actions.c:6324`. Six of them are
+   `TEXT_CTX_INSTANCE`: `draw.c:872, 1140, 10307`, `svgdraw.c:927`,
+   `psprint.c:1209`, `select.c:709`. **The list in CLAUDE.md and in the crew
+   brief is stale on nine of ten entries** and names `actions.c:4422`, which is
+   not a call site at all.
+3. **Exposure grows here.** Issue **1246** (`Waves > Op Annotate` hard-sets
+   `annot_show 3`, silently clearing bit 3) is invisible today and user-visible
+   the moment A3 makes the bit hide text. Issue **1247** (a net-zero pair of
+   presses arms the 0688 root-change clear) is the same shape.
+4. **`cadence::_annot_msg` is blind to bit 3** — it switches on `$mask & 7`
+   (`utils/annot_mode.tcl:906`), so after the declutter a subsequent `6` writes
+   a status line that says nothing about the hidden parameters. A1 left it alone
+   deliberately: row V21 of `test_op_annot.tcl` golds its eight arms
+   byte-for-byte and A1 owns neither file. **A3 should decide whether to close
+   that gap**, because A3 is the item that makes the silence wrong.
 
 ---
 
@@ -194,6 +251,42 @@ test-drivable path in the **first** commit, not retrofitted.
 **Accept.** Reorder persists through Save/reload. Narrow scope touches one
 flavor and leaves siblings alone; broad scope moves the class. Delete is greyed
 on list 3. Add from list 3 asks *which* list. Every dialog is driven headlessly.
+
+---
+
+## What A1 learned that every later item needs
+
+* **Issue numbers come from `doc/claude/issues/NUMBERING.md` and nowhere else.**
+  The crew brief's "number from 0619 upward" and "hard ceiling 0499" are **both
+  false on this tree** — `0619`…`0629` exist as files. **The next free number is
+  1249**; 1244 and 1245 stay reserved as feature numbers with no files.
+* **The default `xschemrc` does NOT source `src/cadence_style_rc`.** A bare
+  `./src/xschem --pipe --script t.tcl` has no `::cadence` namespace at all and
+  every `.drw` chord bind is the empty string. Any suite or probe that touches a
+  cadence chord must `source .../src/cadence_style_rc` first — this cost A1's
+  measure pass a whole probe run.
+* **`full_audit.sh` is not edited to register a suite.** The glob at `:393` is
+  the registration. Every new suite moves the denominator, so **the baseline
+  diff is by name and status** — A1 went 377 → 378 and its +1 is its own suite.
+* **The item's own suite is not the tier list.** A1's 36 checks were green while
+  `run_regression.tcl` was red on a *structural* contract in a file A1 does not
+  own (`test_op_annot.tcl` row A11-2: every line in `utils/annot_mode.tcl` that
+  writes `xschem statusmsg -hold` must name `_annot_fit` on the **same line**).
+  Run T1 solo, every time, and read it.
+* **`callback.c`'s layer-select arm is `:7470 case '6':` / `:7474
+  if(state==ControlMask)`** — the brief's `callback.c:7272` is a mouse
+  select-by-area and is wrong.
+* **`event generate` is fine for Tk-side chords.**
+  `test_wave_sigbrowser_i12.tcl:1141`'s warning that `<Control-Alt-Key-…>` "does
+  not work under `event generate`" is true only for a **C-side** handler reading
+  the numeric `%s` (a synthesised Alt sets the virtual META bit, not Mod1). A Tk
+  `bind` pattern matches fine — A1 confirmed it both ways, including with a
+  physical `-state 12`.
+* **Nothing installs `utils/`** (issue **0458**, pre-existing and open), yet the
+  installed `cadence_style_rc` sources twelve helpers from it. In-tree
+  everything passes because `XSCHEM_SHAREDIR` resolves to `src/`. Any item that
+  adds a `src/*.tcl` still owes `Makefile.in` ×2 and a `./configure` (issue
+  0424); an item that adds a `utils/*.tcl` inherits 0458.
 
 ---
 

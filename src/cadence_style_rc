@@ -311,18 +311,45 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 # section 10 for the full displaced-chord list. Plain 6 and Alt-6 displace
 # nothing -- measured, callback.c's `case '6'` acts only when state == ControlMask.
 #
-# ALL FOUR CHORDS ARE SPELLED OUT AND THAT IS NOT REDUNDANCY: Tk matches a
+# ALL FIVE CHORDS ARE SPELLED OUT AND THAT IS NOT REDUNDANCY: Tk matches a
 # pattern whose modifiers are a SUBSET of the event's, so with only the plain
 # chord bound BOTH Ctrl-6 and Alt-6 would fire it and the OFF key would silently
-# mean ON. (Measured too: Ctrl+Alt+6 falls into the Alt form.) The fourth chord
-# (issue 0868, below) does not disturb the three: a physical Alt+Shift+6 arrives
-# as a DIFFERENT KEYSYM, `asciicircum`, so plain Alt+6 still lands on
+# mean ON. (Measured too: Ctrl+Alt+6 falls into the Alt form.) The Alt-Shift
+# chord (issue 0868, below) does not disturb the three: a physical Alt+Shift+6
+# arrives as a DIFFERENT KEYSYM, `asciicircum`, so plain Alt+6 still lands on
 # <Alt-Key-6> -- measured, and nothing else in src/ or utils/ binds asciicircum.
+#
+# THAT PARENTHESIS WAS A PREDICTION AND ISSUE 1244 COLLECTED ON IT. Before the
+# fifth line below existed, Ctrl+Alt+6 was UNBOUND and therefore fell into the
+# Alt form and TURNED NODE VOLTAGES ON -- a chord meant to hide clutter adding
+# a whole layer of it. Measured on 2026-09-02 two independent ways: by mask
+# (annot_show 1, press the chord, annot_show 3) and by a rename-stub dispatch
+# recorder, which showed it reaching `cadence::annot_mode opvolt`, byte
+# identical to what Alt-6 reaches. The cure is the explicit fifth pattern, and
+# it is only a cure because it ends in `break` like the rest: `bind all
+# <Alt-Key>` is Tk's own `tk::TraverseToMenu`, on the `all` bindtag, which the
+# body below falls through to without one. Rows D2, D3 and T4 of
+# tests/headless/test_annot_declutter_1244.tcl are those three measurements
+# turned into checks.
 # Like every bind in this file these are invisible to `xschem bindings dump` and
 # to keybindings.csv; remap by editing the chord on these lines.
 bind .drw <Key-6>               {cadence::annot_mode op;          break}
 bind .drw <Control-Key-6>       {cadence::annot_mode none;        break}
 bind .drw <Alt-Key-6>           {cadence::annot_mode opvolt;      break}
+# Ctrl-Alt-6 : THE SCHEMATIC PARAMETER DECLUTTER (issue 1244). While the
+# operating point is on the sheet, a device draws its name and its OP numbers
+# and nothing else, so the numbers are legible. RULING D-8, the user verbatim:
+# "Declutter is active ONLY when OP info (6 key triggered) is displayed."
+#
+# A TOGGLE, WHERE ITS THREE NEIGHBOURS ABOVE ARE ADDITIVE SETTERS. The user
+# asked for hide/show, so `cadence::annot_declutter` XORs bit3 of annot_show
+# (ANNOT_SHOW_NOPARAM, src/xschem.h) instead of ORing it. That asymmetry is
+# deliberate and is why this is NOT a fourth `cadence::annot_mode` spelling --
+# `cadence::_annot_mask` is the additive-setter table and `declutter` raises
+# there, exactly as `tran` does. Ctrl-6 above still clears everything, bit3
+# included, and that costs no code at all: `_annot_mask none` returns a hard 0.
+# There is no persisted preference and D-8 forbids adding one.
+bind .drw <Control-Alt-Key-6>   {cadence::annot_declutter toggle; break}
 # Alt-Shift-6 : TRANSIENT NODE VOLTAGES AT THE WAVEFORM CURSOR (issue 0868).
 # The user's own request: "Alt-6 and 6 are for OP info and OP node voltages. We
 # can add a menu item in Results > Annotate for annotating TRAN node voltages

@@ -2730,3 +2730,148 @@ proc cadence::annot_tran {} {
   cadence::_annot_say $m
   return ok
 }
+
+# ===========================================================================
+# ISSUE 1244 -- THE SCHEMATIC PARAMETER DECLUTTER. The FIFTH 6-chord.
+# ===========================================================================
+# The user's request, 2026-09-02: while the operating point is on the sheet, a
+# device should draw its NAME and its OP numbers and nothing else, so the
+# numbers are legible. RULING D-8, verbatim:
+#
+#   "Declutter is active ONLY when OP info (6 key triggered) is displayed.
+#    I thought that was clear."
+#
+#      Ctrl-Alt-6 -> cadence::annot_declutter toggle   annot_show ^= 8
+#
+# So it is a BIT ON annot_show (ANNOT_SHOW_NOPARAM, src/xschem.h), not a
+# preference. There is NO persisted setting and none may be added: `Ctrl-6`
+# clears bit3 with everything else, for free, because `cadence::_annot_mask
+# none` returns a hard 0. Nothing here had to be written to make that true --
+# rows D6/D7 of tests/headless/test_annot_declutter_1244.tcl were green before
+# this section existed, and that is the point of them.
+#
+# WHAT THIS SECTION DOES NOT DO, AND MUST NOT BE "COMPLETED" INTO. This is item
+# A1 of doc/claude/op_param_batch/PLAN.md and it adds the BIT and the CHORD only.
+# Nothing disappears from the screen yet: the draw-time rung in text_hidden() is
+# item A3, and the TEXT_ANNOT_NAME content class it needs is item A2. Row I2 of
+# the suite asserts the SVG is byte-identical at mask 1 and mask 9 and is the
+# row A3 must REPLACE; row I3 (identical at mask 0 and mask 8) is invariant I-C
+# and is PERMANENT.
+#
+# IT IS NOT A FOURTH `annot_mode` SPELLING, AND `_annot_mask` IS DELIBERATELY
+# NOT TOUCHED -- `declutter` still raises there, exactly as `tran` does. That
+# table is the ADDITIVE-SETTER table: `op` and `opvolt` OR their bits in under
+# RULING 0614, and row N1 of tests/headless/test_op_annot.tcl golds it AS SUCH.
+# This chord is a TOGGLE, because the user asked for hide/show. Folding a toggle
+# into the additive table would stop it being that table.
+#
+# THE CHORD WAS NOT FREE, AND THAT IS THIS ITEM'S HEADLINE. Tk matches a
+# pattern whose modifiers are a SUBSET of the event's, so with only the Alt form
+# bound a physical Ctrl+Alt+6 fell into it -- measured twice on 2026-09-02, by
+# mask (annot_show 1 -> 3) and by a rename-stub dispatch recorder (the chord
+# reached `cadence::annot_mode opvolt`, byte-identical to Alt-6). i.e. before
+# this landed, the declutter chord TURNED NODE VOLTAGES ON. The explicit bind in
+# src/cadence_style_rc, with its trailing `break`, is what stops that; rows D2
+# and D3 are the two statements of it.
+#
+# ONE SINK, THE HELD STATUS LINE -- NOT `cadence::_annot_say`, AND NOT THE CIW.
+# The declutter PUBLISHES NOTHING; it is pure mask arithmetic, exactly like the
+# three chords `cadence::annot_mode` serves, whose success tail writes the bar
+# alone. `cadence::annot_tran` uses both sinks because it does publish, and the
+# CIW is the session's record: a chord the user taps repeatedly to compare two
+# views of the same sheet would fill that record with toggle noise. Recorded as
+# an unratified decision -- `owed.sh add rule 1244`.
+# ---------------------------------------------------------------------------
+
+## THE SENTENCE, MINTED IN ONE PLACE. <on> is the NEW state of bit3; <gated> is
+## 1 when ANNOT_SHOW_OP is set, i.e. when the declutter actually has an effect.
+##
+## A PURE FUNCTION, and rows V1a/V1b are what keep it one: the live mask never
+## reaches it, so the wording is directly testable and cannot drift with session
+## state. Same shape as `cadence::_annot_tran_msg`.
+##
+## THE THREE SENTENCES ARE UNRATIFIED (status E). The first of them describes
+## the world item A3 creates -- between A1 and A3 landing it promises a
+## declutter that has not arrived. It is written here anyway because A3's Files
+## cell does not include this file, so the wording is written once, now, or
+## never. The alternative considered and rejected was a placeholder sentence
+## sharpened by A3, which would make A3 edit a file it does not own.
+##
+## THE SECOND SENTENCE IS WHY THE WRITER NEVER REFUSES. Arming the bit with the
+## operating point off is legal (invariant I-C) and inert, so instead of a
+## refusal the user is told what the state means and which key completes it.
+proc cadence::_annot_declutter_msg {on gated} {
+  if {!$on} {
+    return "Decluttering is off. Devices draw all of their text again."
+  }
+  if {$gated} {
+    return "Decluttering the schematic: a device showing operating-point values\
+            draws its name and those values only. Press Ctrl-Alt-6 again to\
+            bring the rest of its text back."
+  }
+  return "Decluttering is on, but nothing changes yet: it applies only while\
+          operating-point values are showing. Press 6 to show them."
+}
+
+## THE ONE WRITER OF ANNOT_SHOW_NOPARAM. `toggle` is what the chord sends; `on`
+## and `off` cost two lines and make the writer idempotent and bit-wise, so a
+## future menu tick or a user's own rc (invariant I5) has a door that cannot
+## get out of step with the bit. Row M2 is that property.
+##
+## AN UNKNOWN SPELLING RAISES, AND NAMES THE THREE THAT WORK -- the same
+## discipline as `cadence::_annot_mask` and `cadence::_annot_tran_msg`. A mode
+## spelling is a caller bug, not data, and a caller bug that renders as "the
+## declutter quietly stayed off" is the failure this proc exists to prevent.
+##
+## THE MASK IS PULLED THROUGH `xschem get annot_show` AND WRITTEN THROUGH
+## `xschem set annot_show`, NEVER A BARE `set ::annot_show`. Two independent
+## reasons, both measured: the mask is PER CONTEXT (xctx->annot_show), so the
+## Tcl mirror belongs to whichever context wrote it last and the C field reads
+## stale until the next annot_show_sync_cache(); and the variable is an INTEGER
+## read by a bare atoi() with no clamp (scheduler.c), so `true`, `on` and `yes`
+## all read back 0 -- silently off. Row S4 greps this body for the two verbs and
+## the whole file for zero bare sets; row T1 pins the atoi trap so nobody
+## "repairs" it.
+##
+## IT NEVER REFUSES WHEN ANNOT_SHOW_OP IS CLEAR. The gate belongs to A3's
+## draw-time predicate, which is AND-ed on both bits (spec section 4.1/A2), not
+## to the writer -- refusing here would contradict invariant I-C and make the
+## plan's own accept row (the chord toggles bit3 from a clean start)
+## unreachable. The `on, ungated` sentence is what tells the user instead.
+proc cadence::annot_declutter {{mode toggle}} {
+  set mask 0
+  catch {set mask [xschem get annot_show]}
+  if {![string is integer -strict $mask]} { set mask 0 }
+  switch -exact -- $mode {
+    toggle  { set new [expr {$mask ^ 8}] }
+    on      { set new [expr {$mask | 8}] }
+    off     { set new [expr {$mask & ~8}] }
+    default {
+      error "cadence::annot_declutter: unknown mode \"$mode\": use toggle, on or off"
+    }
+  }
+  xschem set annot_show $new
+
+  ## The `Show hidden texts` pair (src/xschem.tcl): bboxes change when hidden
+  ## texts appear or vanish, and annot_show_sync_cache() rides inside the first.
+  ## Nothing visible depends on them until item A3 -- which is exactly why row
+  ## V3 reads this tail out of the SOURCE. Dropping them would be invisible to
+  ## every behavioural row in the suite today and would break A3 silently.
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+
+  ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot
+  ## erase it before it has been read (issue 0248). Through `_annot_fit`, the
+  ## one 255-byte trimmer this surface owns -- never a second one.
+  ## ONE LINE, AND THAT IS A CONTRACT, NOT A LAYOUT CHOICE: row A11-2 of
+  ## tests/headless/test_op_annot.tcl counts the lines of THIS FILE that write
+  ## `xschem statusmsg -hold` and requires every one of them to name
+  ## `_annot_fit` too, so that a sentence added later cannot bypass the 255-byte
+  ## budget and bring back the mid-token amputation. Splitting this call across
+  ## two lines reds that row -- measured, 2026-09-02.
+  set on [expr {($new & 8) ? 1 : 0}]
+  set gated [expr {($new & 1) ? 1 : 0}]
+  set m [cadence::_annot_declutter_msg $on $gated]
+  catch {xschem statusmsg -hold [cadence::_annot_fit $m]}
+  return $on
+}

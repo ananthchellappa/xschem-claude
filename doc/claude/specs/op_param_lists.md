@@ -376,6 +376,34 @@ mirrored in Tcl as `annot_show` like its neighbours, set and cleared through
 `xschem set annot_show N` (never a bare `set ::annot_show` — the C field reads
 stale, and the variable is an integer so `true`/`on` `atoi` to 0, silently off).
 
+> **LANDED — item A1, 2026-09-02** (`src/xschem.h`, `utils/annot_mode.tcl`,
+> `src/cadence_style_rc`, `tests/headless/test_annot_declutter_1244.tcl`, 36
+> checks). Three things the implementation settled that this section did not say:
+>
+> * **The one writer is `cadence::annot_declutter {{mode toggle}}`**, appended at
+>   the end of `utils/annot_mode.tcl`. It takes `toggle` | `on` | `off` and
+>   **raises** on anything else, naming the three — the same discipline as
+>   `cadence::_annot_mask`, which is deliberately **not** extended: `declutter`
+>   still raises there, exactly as `tran` does, because that table is the
+>   ADDITIVE-SETTER table and row N1 of `test_op_annot.tcl` golds it as such.
+> * **It never refuses when `ANNOT_SHOW_OP` is clear.** Arming ahead of
+>   annotation is legal and inert (invariant **I-C**), and the user is told so by
+>   a sentence rather than by a refusal. The gate is A2's draw-time predicate,
+>   AND-ed on both bits — not the writer.
+> * **The status line is minted by a pure proc**, `cadence::_annot_declutter_msg
+>   {on gated}`, three sentences, written to the **held status line only** and
+>   never to the CIW (the declutter publishes nothing; `annot_tran` uses both
+>   sinks *because* it does). ⚠ **The wording is UNRATIFIED** — `rule` debt 1244,
+>   §5.1 below.
+> * **D-8's "`Ctrl-6` clears it with the rest" cost no code at all**:
+>   `cadence::_annot_mask none` returns a hard 0. The rows asserting it were
+>   green before the writer existed.
+> * ⚠ **A net-zero pair of presses is not a no-op** — `annot_show_set()` stamps
+>   `xctx->annot_root`, so two presses convert an `xschemrc`-armed `annot_show`
+>   from one that survives a `File > Open` into one that is cleared by it. Issue
+>   **1247**, measured, open, and it reverses a prior ruling whichever way it is
+>   repaired.
+
 **A2. The predicate.** One new rung in `text_hidden(flags, ctx)`, before the
 `show_hidden_texts` fall-through:
 
@@ -450,6 +478,32 @@ bind .drw <Control-Alt-Key-6> {cadence::annot_declutter toggle; break}
 Unlike `6` and `Alt-6`, which RULING 0614 made additive setters, this one is a
 **toggle** — the user asked for "hide/show". That asymmetry is deliberate and is
 recorded here so it is not "corrected" later.
+
+> **LANDED — item A1, 2026-09-02, and the prediction was collected on.** Before
+> the bind existed, the chord was measured reaching `cadence::annot_mode opvolt`
+> **two independent ways**: by mask (`annot_show` 1 → **3**, i.e. it turned node
+> voltages on) and by a rename-stub dispatch recorder, whose answer was
+> byte-identical to `<Alt-Key-6>`'s. After: `1 → 9`, `9 → 1`, `0 → 8`, and
+> `rectcolor` is 4 throughout.
+>
+> Two corrections to this section's assumptions:
+>
+> * **Placement in the file is irrelevant.** Tk orders bindings by *specificity*
+>   within a bindtag, not by file position — measured. The bind sits after
+>   `<Alt-Key-6>` for readability alone.
+> * **The `break` matters for a reason this section did not give.** It is not the
+>   C layer-select (`callback.c:7474` tests `state==ControlMask` *exactly*, so a
+>   Ctrl+Alt chord never reaches it). It is `bind all <Alt-Key>`, which is Tk's
+>   own `tk::TraverseToMenu`, on the `all` bindtag — without `break` the chord
+>   falls through to menu traversal. Row T4 measures it: 0 calls with the
+>   `break`, 1 without.
+> * **`<Control-Alt-Key-6>` is Tk's canonical spelling**; `<Alt-Control-Key-6>`
+>   normalises to it. (Contrast `<Alt-Shift-Key-6>`, which lists as
+>   `<Shift-Alt-Key-6>`.)
+> * **One bind reaches all four profiles.** Each of `sky130A/`, `gf180mcuD/` and
+>   `ihp-sg13g2/`'s `cadence_style_rc` is a single `source … src/cadence_style_rc`
+>   line — measured — which is how landmine 6 is discharged without editing three
+>   files.
 
 ### 4.2 Feature B — the Results Display Window
 
@@ -617,6 +671,18 @@ owed ledger as a `rule` debt at the moment this spec lands.
 
 Still open:
 
+* **Q11 — the declutter's three status sentences** (added by item A1,
+  2026-09-02; `rule` debt **1244**). `cadence::_annot_declutter_msg` mints one of
+  three: *"Decluttering the schematic: a device showing operating-point values
+  draws its name and those values only. Press Ctrl-Alt-6 again to bring the rest
+  of its text back."* · *"Decluttering is on, but nothing changes yet: it applies
+  only while operating-point values are showing. Press 6 to show them."* ·
+  *"Decluttering is off. Devices draw all of their text again."* ⚠ **The first
+  describes the world item A3 creates** — between A1 and A3 landing it promises a
+  declutter that has not arrived. It was written at A1 anyway because A3's Files
+  cell does not include `utils/annot_mode.tcl`, so the wording is written once,
+  there, or never. The rejected alternative was a placeholder sharpened by A3,
+  which would make A3 edit a file it does not own.
 * **Q6 — the dump header.** `M2B:/xdut/xbg/xamp1` as asked. ⚠ The tree has three
   spellings and **none is that one**: `xschem get sch_path` gives
   `.xdut.xbg.xamp1.` (leading *and* trailing dot); `xschem get sim_sch_path`
@@ -638,9 +704,13 @@ Still open:
 
 ## 6. Landmines
 
-1. **`Ctrl-Alt-6` currently fires `Alt-6`** and switches node voltages on
-   (§4.4/A4). Bind it explicitly, with `break`, and add a check that proves the
-   neighbouring three chords still yield their recorded masks.
+1. ~~**`Ctrl-Alt-6` currently fires `Alt-6`** and switches node voltages on
+   (§4.4/A4).~~ **DISARMED by item A1, 2026-09-02** — bound explicitly with
+   `break`, and rows D2/D3/S1/S2/S3/T4 of
+   `tests/headless/test_annot_declutter_1244.tcl` hold it disarmed, by dispatch
+   as well as by mask. Kept here because the *class* of trap is live for every
+   future chord in this file: **a modifier chord that is not spelled out fires
+   its subset**, silently and plausibly.
 2. **A new `src/*.tcl` needs two `Makefile.in` lines and a `./configure` re-run.**
    In-tree it works either way; installed, the binary segfaults at startup
    (issue 0424). `grep -c rdw.tcl src/Makefile` must be 2.
@@ -684,7 +754,14 @@ Still open:
 
 ## 8. Verification
 
-* A headless suite per feature, registered in `full_audit.sh`'s list.
+* A headless suite per feature. ⚠ **"Registered" means the glob, not a list** —
+  corrected by item A1: `full_audit.sh:393` is
+  `ls "$HERE"/test_*.tcl | sort`, so a suite named `test_*.tcl` registers itself
+  and **`full_audit.sh` must not be edited**. Its three named lists
+  (`nogui_tests`, `logdir_tests`, `nolog_tests`) are opt-ins for special run
+  modes, and a chord suite on `nogui_tests` loses X and cannot `bind` or
+  `event generate` at all. The consequence: **every new suite moves the audit
+  denominator**, so the acceptance diff is by name and status, never by count.
 * Feature A: a check that the `.sch` bytes are unchanged across a toggle; a
   check per PDK that the right texts vanish and `@name` survives; a check that
   with `annot_show` bit0 clear the declutter bit changes nothing.
