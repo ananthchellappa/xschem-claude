@@ -31,8 +31,9 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 |---|------|---------|--------|--------|-------|---------|------|
 | A1 | the mask bit and the chord | `[E]` | `59b67766` | 36 new, ALL PASS | xschem.h, annot_mode.tcl, cadence_style_rc | owed | ✅ `Ctrl-Alt-6` no longer fires `Alt-6`. Filed 1246, 1247, 1248 |
 | A2 | the name classifier | `[x]` | `dcbb85c3` | 36→52, ALL PASS | xschem.h, actions.c | — | `TEXT_ANNOT_NAME 1024`, unconditional. Filed 1249, 1250 |
-| A3 | the draw rung and the per-instance gate | `[ ]` | | | | | needs A1+A2; the 11th call site; **also owns 1246, 1247, 1248, 1249** |
-| A4 | the status line is not path-length-sensitive | `[ ]` | | | | | fixes **1250**, an INTERMITTENT T1 red |
+| A3 | the draw rung and the per-instance gate | `[E]` | `39769294` | 52→82, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, xschem.tcl | owed | closed 1246-1249. Filed 1251-1254 |
+| A4 | the status line is not path-length-sensitive | `[ ]` | | | | | fixes **1250** (intermittent T1 red) and **1251** |
+| A5 | D-1 / D-6 conformance, and A3's staleness | `[ ]` | | | | | needs A3; fixes **1252, 1253, 1254** + the blank-block gate |
 | B1 | the backend seam | `[ ]` | | | | | D-4/D-5 are the whole item |
 | B2 | the list store and the settings file | `[ ]` | | | | | `Makefile.in` ×2 + `./configure` |
 | B3 | the window | `[ ]` | | | | | `rdw::`, not `results::` |
@@ -52,6 +53,25 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
   that owns the files each needs (`src/xschem.tcl` for 1246, `src/actions.c` for
   1247) and the first at which any of them has a visible effect. A1 correctly
   measured and filed all three without fixing them; none is A1's to own.
+
+### Driver rulings on A3's six queued questions (2026-09-02)
+
+Six `rule` debts reached the user's queue from items A1-A3. **Five of them follow
+from rulings the user has already given**, so the driver has read each one and
+said how — they stay on the queue because only the user clears a rule debt, but
+no item is blocked waiting for them.
+
+| debt | driver's reading | follows from |
+|---|---|---|
+| `1244` (A1's three status sentences) | accepted as written; the safeguard moved to A3, which has now landed a real rendering check | driver decision, recorded above |
+| `1244_A2_name_bit_vs_hide_true` | **unconditional is right.** Gating it would make a name vanish under the one feature whose whole promise is "its name and the OP numbers, nothing else". Zero shipped records are affected either way | **D-1** |
+| `1244_A3_blank_valued_block` | **the gate must require a value.** A label-only block (`zid =`) did not "get OP numbers", and decluttering there loses `W/L` for nothing. **This changes code** — item **A5-a** | **D-6** |
+| `1244_A3_click_target` | **correct as measured.** The text is not drawn, so it is not clickable; a bbox that still covered it would be the bug. Item **B4** must click the device body, and item **A5-c** must first make the gate agree at both `symbol_bbox()` callers (issue 1252) | **D-1** |
+| `1244_A3_hide_true_op_texts` | **intended.** S10b deduplicated the PDK symbols' own OP texts with `hide=true` precisely so the draw-time overlay replaces them; hiding them under declutter is that trade working, not breaking | issue **0475** §3 |
+| `1244_A3_rc_armed_stamp` | **the correct consequence of the 1247 fix.** A net-zero pair of presses changing a sheet's arming was the defect; leaving it rc-armed is the fix behaving | issue **1247** |
+
+If the user disagrees with any of these, the item that implements it is named in
+the row and the ruling is cheap to reverse — none has shipped to a user.
 
 ## Debts this batch owes the user
 
@@ -80,3 +100,4 @@ three `look` debts from the merge.
    DECISIONS file states this in the negative on purpose.
 | A1 | E | 59b67766 | test_annot_declutter_1244 new->ALL PASS 36; full_audit 364/11/0/2 of 377->365/11/0/2 of 378 (+1 = this suite, 11 reds identical by name); T1 0->0 solo; T2 HARNESS PASS 6/6->6/6; test_op_annot 492->492; annot siblings 36/52/27/15/22 unchanged; accelerators+launch_context+keybind_snap_grid 6+clone_canvas 3+audit_classifier 69 unchanged | 1246,1247,1248 | Accept the three Ctrl-Alt-6 declutter status sentences as written — including that, until item A3 lands, the ON one ("a device showing operating-point values draws its name and those values only") promises a declutter that has not arrived yet? |
 | A2 | x | dcbb85c3 | test_annot_declutter_1244 36->52 ALL PASS \| test_op_annot 492->492 \| annot_show_menu 36 \| stale_0684 52 \| hier_0911 15 \| blank_cause_0909 27 \| op_behind_tran_1242 22 \| selflog_grep_guard (no count) \| T1 0->0 solo (1 unattributed F21 red in 4 runs, filed 1250) \| T2 HARNESS PASS 6/6 \| audit 365/11/0/2 of 378, all 11 reds + 2 skips identical BY NAME | 1249, 1250 | A2 landed and committed: TEXT_ANNOT_NAME 1024 set unconditionally on a whole-string match of all three spellings, nothing visible until A3 (proved cross-binary byte-identical); rule debt 1244_A2_name_bit_vs_hide_true is wanted BEFORE A3. |
+| A3 | E | 39769294 | test_annot_declutter_1244 52->82 ALL PASS \| test_op_annot 492->492 \| annot_show_menu 36->36 \| stale_0684 52->52 \| hier_0911 15 \| blank_cause_0909 27 \| op_behind_tran_1242 22 \| spice_get_node_0861 23 \| sod_pick_0204 66 \| select_at 15 (--logdir) \| verb_noun_descend 25 \| hover_repair 5 \| cmdmode_descend 90 \| locked_wire_pick 16 \| no_untitled_litter 12 — all ALL PASS, row-id diff 0 \| te | 1251,1252,1253,1254 | The declutter fires on any instance whose descriptor RESOLVES, not one that got numbers — a registered FET over a raw with no matching vectors is decluttered while its OP block shows "zid =" with nothing after it (common, per rule R1: gm/vth exist only if the deck saved them) — is that "only instances that got OP numbers" per D-6, or must the block carry at least one actual value before any parame |

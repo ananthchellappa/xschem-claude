@@ -411,7 +411,13 @@ furniture*. This one is worse than standing: it is intermittent, so a crew that
 re-runs and sees green waves it through. That is precisely how this branch has
 already shipped two defects past twenty-eight passing checks.
 
-**Files.** `utils/annot_mode.tcl` · `tests/headless/test_annot_stale_0684.tcl`
+**Also fix 1251.** `cadence::_annot_msg` builds the sentence shown after every
+annotation key by switching on the mask **with the top bit masked off**, so the
+status line is blind to the declutter bit: press `Ctrl-Alt-6` and the line
+describes a state that is no longer the whole truth. Same file, same proc family.
+
+**Files.** `utils/annot_mode.tcl` · `tests/headless/test_annot_stale_0684.tcl` ·
+rows in `tests/headless/test_annot_declutter_1244.tcl`
 
 **⚠ ALSO TAKE ISSUE 1251, added 2026-09-02 by item A3.** `cadence::_annot_msg`
 switches on `[expr {$mask & 7}]` (`utils/annot_mode.tcl:906`), so it cannot
@@ -429,6 +435,50 @@ deliberately long one — drive both, do not argue from the code. Run T1 solo
 **four times** and show four zeros; one green run is not evidence about an
 intermittent red. Do not widen the 255-byte cap without reading issue **0886**,
 where the elision was chosen.
+
+---
+
+## A5 — D-1 / D-6 conformance, and the staleness A3 left  *(needs A3)*
+
+A3 landed the rung and measured four things it could not fix inside its own
+scope. Three are conformance gaps against rulings the user has already given,
+which makes them obligations rather than polish.
+
+**A5-a — the gate must require a VALUE, not a resolving descriptor.**
+A3's gate is "the `op_annot::text` block is non-blank", which is what the
+overlay paints. But a registered device over a **dead raw** renders label-only
+rows — `zid =`, `zgm =`, with nothing after them — and that block is non-blank,
+so the device is decluttered. The user loses `W/L` and gains two empty labels:
+strictly worse than before. **RULING D-6 says the declutter reaches instances
+that "got OP numbers", and a label with no number did not get one.** Require at
+least one row with an actual value. (Driver ruling, recorded in `LEDGER.md`;
+`rule 1244_A3_blank_valued_block` stays on the user's queue for confirmation.)
+
+**A5-b — 1253, pin names.** D-1 is explicit, in the user's own words, that pin
+labels are in scope. A3's rung sits in `text_hidden()`, which gates the loop over
+a symbol's `text[]` records — and **not** the fourth pass, the P6 feature that
+draws a pin's name from the pin's own tokens behind `pin_name_visible()`
+(`draw.c:959`, `svgdraw.c:986`, `psprint.c:1279`). So a symbol spelling
+`show_pinname=true` keeps its pin names on a fully decluttered device. That is a
+straight D-1 violation, in three back-ends.
+
+**A5-c — 1252, the stale gate.** The per-instance gate is **fresh at one
+`symbol_bbox()` caller and stale at the other**, so a decluttered device's
+with-text bbox is correct by one path and wrong by the other. Same shape as issue
+**0453**. Item B4 clicks these devices, so this must be right before B4 runs.
+
+**A5-d — 1254, two coverage holes.** The `scheduler.c` overlay-sync line is
+guarded by nothing, and row A17 is vacuous. Neither is a defect in the shipped
+feature; both are places the suite stays green while the feature breaks — which
+is the exact failure mode this branch has a standing rule about.
+
+**Files.** `src/actions.c` · `src/draw.c` · `src/svgdraw.c` · `src/psprint.c` ·
+`src/select.c` · `src/scheduler.c` · `tests/headless/test_annot_declutter_1244.tcl`
+
+**Accept.** A dead-raw device keeps its parameters and is not decluttered.
+`show_pinname=true` pin names vanish under declutter in all three back-ends. The
+gate agrees at both `symbol_bbox()` callers — drive both, do not reason about it.
+The two vacuous rows fail when the feature is sabotaged.
 
 ---
 
