@@ -108,8 +108,27 @@ proxy for "should the overlay paint?". The new rung must sit **after** the class
 tests so this answer is unchanged. A declutter that switches the annotation
 overlay off is the feature eating itself.
 
+**Also owns the three defects A1 found and correctly did not fix:**
+
+* **1246** — `Waves > Op Annotate` does `xschem set annot_show 3` at
+  `src/xschem.tcl:17299` and `:17725`, a **hard set** that silently clears the
+  declutter bit. Make it OR in `1|2` and leave bit 3 alone. (Adds
+  `src/xschem.tcl` to this item's files.)
+* **1247** — `annot_show_set()` (`src/actions.c:1406`) stamps `xctx->annot_root`
+  for **any** nonzero mask, so two `Ctrl-Alt-6` presses — a net-zero pair whose
+  advertised effect is nothing — convert an `xschemrc`-armed annotation into one
+  a later `File > Open` clears. Pre-existing mechanism (issue **0688**); A1 owned
+  no C file that could fix it. You do.
+* **1248** — A1's suite proves the mask arithmetic well and the **rendering** not
+  at all: its "A3 MUST REPLACE" tripwire runs on a fixture that cannot see the
+  mask, so it cannot trip. **Replacing it with a real rendering check is this
+  item's obligation, not an optional extra** — A1's status sentence *"a device
+  showing operating-point values draws its name and those values only"* is a
+  promise only this item can make true, and the driver accepted that wording on
+  the explicit condition that A3 proves it.
+
 **Files.** `src/xschem.h` · `src/actions.c` · `src/draw.c` · `src/svgdraw.c` ·
-`src/psprint.c` · `src/select.c` · rows in A1's suite
+`src/psprint.c` · `src/select.c` · `src/xschem.tcl` (1246) · rows in A1's suite
 
 **Accept.** Per PDK (sky130, gf180, IHP): with annotation + declutter on, an
 annotated FET draws its name and its OP block and nothing else; a subcircuit
