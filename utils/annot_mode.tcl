@@ -1010,6 +1010,72 @@ proc cadence::_annot_msg {mask state path types {cause {}}} {
 ## and short-circuited every load path. It now also asks
 ## `op_annot::db_current`. Said here because the resemblance between the two
 ## lines is exactly what cost this branch one refuted attempt.
+## ONE SLOT OF `xschem raw info`, PARSED FROM THE ENDS IN.
+##
+## The blob is LINE-structured -- `<i> <rawfile> <sim_type>` per slot, after a
+## first `<n> current` line -- and a rawfile path may contain SPACES, which is
+## issue 0507's hazard: a word-range read turns one database into two malformed
+## slots and truncates the path. So the index is the FIRST field, the type is the
+## LAST, and the path is everything between; that is correct for any path a
+## filesystem allows except one ending in whitespace, which `raw info` could not
+## express either way.
+proc cadence::_annot_slot_parse {line} {
+  set line [string trim $line]
+  if {$line eq {}} { return {} }
+  set n [llength $line]
+  if {$n < 3} { return {} }
+  set i [lindex $line 0]
+  if {![string is integer -strict $i]} { return {} }
+  return [list $i [join [lrange $line 1 end-1] { }] [lindex $line end]]
+}
+
+## THE SLOTS CURRENTLY LOADED IN THIS WINDOW, as {index path type} triples.
+proc cadence::_annot_slots {} {
+  set blob {}
+  if {[catch {xschem raw info} blob]} { return {} }
+  set out {}
+  foreach ln [split $blob "\n"] {
+    if {[string match {* current} [string trim $ln]]} { continue }
+    set t [cadence::_annot_slot_parse $ln]
+    if {[llength $t]} { lappend out $t }
+  }
+  return $out
+}
+
+## IS THERE AN OPERATING POINT FOR THIS PRESS TO SHOW -- and if there is one to
+## be HAD rather than one already selected, GO AND GET IT.
+##
+## ⚠ ISSUE 1242, AND IT USED TO ASK ONLY ABOUT THE CURRENT SLOT. That is the
+## whole defect and it was reported from a real bench: a `tb_bandgap` run whose
+## deck carried BOTH an operating point and a transient produced ONE raw file
+## holding both plots -- `Transient Analysis` (424 vars, 20500 points) and,
+## appended behind it by `set appendwrite`, `Operating Point` (891 vars, 1
+## point). ASE-L's auto-plot attaches the plot that HAS A SWEEP, so the current
+## slot was the transient, and Alt-6 answered "No operating point results are
+## loaded" with 891 of them in the file it had open. The user's words: "The sim
+## has both OP and TRAN results available. The user can annotate whatever she
+## chooses to."
+##
+## THREE RUNGS, cheapest first, and each is a real case:
+##   1. the current slot IS an operating point         -- nothing to do
+##   2. ANOTHER LOADED SLOT is one                     -- switch to it
+##   3. the current slot's FILE carries one behind the plot that is current --
+##      read it, which adds a slot and makes it current
+## Only when all three fail is the refusal honest, and then it says exactly what
+## it always said.
+##
+## ⚠ RUNG 3 IS A READ, AND THAT IS A DELIBERATE SIDE EFFECT OF A KEYPRESS. It
+## is bounded: `xschem raw read` on a file+type already registered DEDUPES (it
+## makes the existing slot current and re-parses nothing), so holding Alt-6 down
+## costs one read, not one per press. The registry is PER WINDOW (xctx), so the
+## slot this adds belongs to the schematic window and cannot disturb the traces
+## in the waveform window.
+##
+## ⚠ IT DOES NOT INVENT AN OPERATING POINT. Every rung either selects a database
+## the simulator actually wrote or fails; rung 3 asks the ENGINE to find an `op`
+## plot and believes its answer. RULING 0856 is untouched: a run that produced
+## only a transient still has no operating point, still publishes nothing, and
+## still gets the sentence.
 proc cadence::_annot_op_db_ok {} {
   set loaded -1
   catch {set loaded [xschem raw loaded]}
@@ -1017,6 +1083,35 @@ proc cadence::_annot_op_db_ok {} {
   set st {}
   if {[catch {xschem raw sim_type} st]} { set st {} }
   if {$st eq {op} || $st eq {dc}} { return 1 }
+
+  ## rung 2 -- an operating point is already loaded, just not selected
+  set slots [cadence::_annot_slots]
+  foreach t $slots {
+    set ty [lindex $t 2]
+    if {$ty eq {op} || $ty eq {dc}} {
+      if {![catch {xschem raw switch [lindex $t 0]}]} {
+        set now {}
+        if {[catch {xschem raw sim_type} now]} { set now {} }
+        if {$now eq {op} || $now eq {dc}} { return 1 }
+      }
+    }
+  }
+
+  ## rung 3 -- the current file may carry one behind the plot that is current
+  set cur -1
+  catch {set cur [xschem raw loaded]}
+  foreach t $slots {
+    if {[lindex $t 0] ne $cur} { continue }
+    set path [lindex $t 1]
+    if {$path eq {} || ![file isfile $path]} { break }
+    foreach ty {op dc} {
+      if {[catch {xschem raw read $path $ty} r] || $r ne {1}} { continue }
+      set now {}
+      if {[catch {xschem raw sim_type} now]} { set now {} }
+      if {$now eq {op} || $now eq {dc}} { return 1 }
+    }
+    break
+  }
   return 0
 }
 
