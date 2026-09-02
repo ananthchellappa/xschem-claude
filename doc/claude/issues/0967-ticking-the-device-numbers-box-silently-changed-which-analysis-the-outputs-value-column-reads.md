@@ -1,6 +1,11 @@
 # 0967 — ticking the device-numbers box silently changed which analysis the Outputs Value column reads
 
 **Status:** FIXED (2026-08-30, item S4's repair pass)
+**Superseded in part:** the question this issue deliberately did NOT answer —
+*which* analysis the Value column reads — was ruled by the user on 2026-09-02
+and is issue **1243**. The prints now follow the operating point. What survives
+here is 0967's own claim: the anchor comes from the ENABLED SET, so the
+device-numbers tick cannot move it.
 **Found by:** the S4 sabotage pass, as an unguarded behaviour change — no
 committed row could see it.
 

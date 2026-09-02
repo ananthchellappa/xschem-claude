@@ -7883,21 +7883,20 @@ namespace eval ase::backend::ngspice {
     # Both readers pick their plot BY NAME out of the multi-plot results file,
     # so nothing downstream depends on which analysis ran last.
     set anorder {op dc ac tran}
-    # --- 0967: THE PRINTED OUTPUTS KEEP READING THE PLOT THEY ALWAYS READ ----
+    # --- 0967: WHERE THE PRINTED OUTPUTS SIT IS NOT THE REORDER'S TO DECIDE --
     # `print` reads whichever plot the simulator is standing in, and these lines
-    # have always sat after every analysis -- so before the reorder above they
-    # read the LAST analysis of `op dc ac tran`, and after it they would read the
-    # operating point instead. The Outputs pane's Value column is filled from
-    # them (see result_probe), so ticking a box about DEVICE numbers would put a
-    # DC operating-point number in a column that had been showing the transient,
-    # with nothing said. That is a number that was not measured for the thing it
-    # is displayed next to (ruling D5-1), and the tick that caused it is about
-    # something else entirely.
+    # used to sit after every analysis -- so before the 0964 reorder above they
+    # read the LAST analysis of `op dc ac tran`, and after it they would have
+    # read the operating point instead. The Outputs pane's Value column is filled
+    # from them (see result_probe), so ticking a box about DEVICE numbers would
+    # have changed which analysis that column reports, with nothing said. That is
+    # ruling D5-1's class, and the tick that caused it is about something else
+    # entirely.
     #
-    # So the prints are emitted after the write of the analysis that is last in
-    # the CANONICAL order, not after whatever ran last. With no reorder the two
-    # are the same analysis and the deck renders BYTE-IDENTICALLY, which is what
-    # keeps the committed deck goldens green. Rows P1/P2/P3 of
+    # So the anchor is computed from the ENABLED SET alone and the emit order
+    # cannot move it. WHICH analysis it picks is issue 1243's ruling, below --
+    # 0967 only established that a checkbox about device parameters does not get
+    # to answer that question. Rows P1/P2/P3 of
     # tests/headless/test_ase_optier_0963.tcl.
     set printlines {}
     foreach o [ase::state_get $state outputs] {
@@ -7905,8 +7904,51 @@ namespace eval ase::backend::ngspice {
         lappend printlines "print [ase::backend::ngspice::print_arg [dict get $o expr]]"
       }
     }
+    # --- 1243: THE PRINTS GO WITH THE OPERATING POINT WHEN THERE IS ONE -----
+    # RULED BY THE USER 2026-09-02, on their own tb_bandgap: "in the ASE-L
+    # output pane, nothing is displayed for values if both OP and TRAN are
+    # enabled, whereas, if only OP is enabled, then values are displayed after
+    # simulation."
+    #
+    # ⚠ THIS IS THE RULING ISSUE 0967 DEFERRED, and section P of
+    # tests/headless/test_ase_optier_0963.tcl said so in as many words: "0967 IS
+    # NOT BEING SETTLED HERE. Which analysis the Outputs Value column reads is
+    # the user's ruling to make." 0967 measured the two candidate answers and
+    # chose neither; it only froze the answer against an unrelated checkbox. The
+    # deferred half is settled here, and the rows in section P now pin the
+    # ruling rather than the freeze.
+    #
+    # WHY THE OPERATING POINT AND NOT "THE LAST ANALYSIS". The Value column is a
+    # SCALAR column: `result_probe` accepts `<expr> = <number>` and nothing else,
+    # and `print` reads whichever plot the simulator is standing in. On a
+    # multi-point plot `print VBG` emits a paged `Index time vbg` TABLE, so the
+    # column has never had a value to show for a transient -- measured on the
+    # user's own run log, 20,514 rows per printed output and 108,275 log lines
+    # for five of them, from which `result_probe` extracts exactly nothing. The
+    # operating point is the only analysis in the set that yields a scalar, so
+    # "prefer the last analysis" was preferring the one answer that cannot be
+    # read.
+    #
+    # ⚠ NOTHING DISPLAYED CHANGES VALUE, and that is what keeps this clear of
+    # ruling D5-1. With op+tran the column was EMPTY before this line, so no
+    # number is being replaced by a differently-measured one; a number appears
+    # where there was none, and it is the operating point's. Side effect,
+    # measured on the same bench: the run log loses those ~102,000 table rows.
+    #
+    # THE ORDER BELOW IS THE ANCHOR'S, NOT THE EMIT ORDER'S. It is the canonical
+    # `op dc ac tran` with `op` moved to the END so that last-enabled-wins picks
+    # it whenever it is enabled. With the operating point OFF the two orders
+    # select the same analysis, so every op-less deck -- transient-only included
+    # -- renders byte-identically and its Value column stays exactly as empty or
+    # as full as it was.
+    #
+    # ⚠ TRANSIENT-ONLY IS STILL BLANK, deliberately and on the ledger. What a
+    # scalar column should show for a waveform (the final point? t=0? nothing?)
+    # is a separate ruling, recorded as a `rule` debt rather than guessed at
+    # here -- guessing would put an unlabelled number beside a row, which is the
+    # defect 0967 was filed about.
     set printanchor {}
-    foreach type $anorder {
+    foreach type {dc ac tran op} {
       set ai -1
       foreach a [ase::state_get $state analyses] {
         incr ai

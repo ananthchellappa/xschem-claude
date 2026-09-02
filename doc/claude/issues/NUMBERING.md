@@ -804,9 +804,10 @@ and watching the suite stay green:
 the `annotate` → `fluid-editing` merge (2026-09-01) for the two capabilities that
 merge deliberately did not carry across — stock `proc simulate`'s exe/casemode
 composer, and `ase::expand_path`'s `subst`, which the merge made more reachable.
-**The next free number is 1243.** 1201-1242 are taken. ⚠ 1243 was very nearly
-spent on a defect that already had a number: the `raw switch` publish gate
-reading the OUTGOING database is **0513**, filed 2026-08-19, and
+**The next free number is 1244.** 1201-1243 are taken. **1243** went to the
+Outputs pane's blank Value column, but only on the second attempt: it was very
+nearly spent on a defect that already had a number, because the `raw switch`
+publish gate reading the OUTGOING database is **0513**, filed 2026-08-19, and
 `test_results_select`'s SEL195 had been carrying the note "WHEN 0513 IS FIXED,
 SEL195 INVERTS" the whole time. Grep the issues directory before minting. (1240 records the
 update_op() ruling collision the merge found; 1241 the log_action buffer
