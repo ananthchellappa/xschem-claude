@@ -416,13 +416,15 @@ ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
 `doc/claude/FAQ.md` (a running design Q&A, newest entries on top).
 Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).
 
-**Issue numbers on `fluid-editing` start at 0500.** File every new issue at the
-next free number **≥ 0500** (highest in use: 0512 → next 0513). The 04xx tail
-belongs to the live `annotate` branch, which has filed through 0448 and keeps
-counting upward; `open_pdk` is frozen at 0415 and already merged here. Taking a
-number below 0500 collides with `annotate` file-for-file — that has happened
-once already (0420–0432, renumbered +80 on 2026-08-19). The rule, the mapping
-and the derivation command are at the top of `doc/claude/issues/status.md`.
+**Issue numbers: `doc/claude/issues/NUMBERING.md` is the ONLY authority.** Read
+its tail before filing — it carries the next free number, the reserved blocks
+that must be skipped, and why. Do not trust a number quoted anywhere else,
+including here: this paragraph itself said "next 0513" until 2026-09-02, by
+which time the tree had filed through **1243**, and it also told you to file at
+"≥ 0500" when NUMBERING.md reserves **0500–0599** for another branch. A
+duplicated number rots silently and a collision costs a renumbering (0420–0432,
++80, 2026-08-19). Grep the issues directory before minting, and record the new
+number in NUMBERING.md as part of the same commit.
 
 **Wiring work**: before touching anything that creates, moves, deletes, or reroutes wires
 (move.c, the fluid passes, trim/break/merge, connected drag/rotate/flip), read

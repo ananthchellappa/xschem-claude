@@ -842,3 +842,19 @@ silently.
 **Still open from S7's red phase:** 1232 (a descend suite registered in no runner),
 1233 (the five scripted walks left on the bare verb). **Closed by S7:** 0979, 1228,
 1229, 1230, 1231.
+
+**2026-09-02 — 1244 and 1245 are RESERVED for the OP-parameter-lists feature.**
+Not defects: two features the user asked for on 2026-09-02, specified together
+in `doc/claude/specs/op_param_lists.md` because they are the same object seen
+twice (a per-primitive-class, user-owned, ordered list of operating-point
+parameters).
+
+* **1244** — `Ctrl-Alt-6`, the schematic parameter declutter. Hide a primitive's
+  parameter text (W, L, m, nf, model) while — and only while — operating-point
+  info is annotated.
+* **1245** — the Results Display Window. Cadence ADE-L > Results > Print, but
+  the printed dump is also where the annotation and summary lists are edited.
+
+The measurement transcript both rest on is
+`doc/claude/code_analysis/1244_op_param_list_measurements.md`.
+**The next free number is 1246.**
