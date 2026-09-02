@@ -674,34 +674,87 @@ Issues **1252**, **1253**, **1254** closed. Filed and not fixed: **1257**,
 
 ---
 
-## A6 — the two consistency gaps A4 found  *(needs A4; independent of A5)*
+## ⚠ FEATURE A CLOSES AT A7. A DRIVER BOUNDARY, SET 2026-09-02.
 
-**⚠ ITEM A5 ADDED A THIRD GAP TO THIS FAMILY — issue 1257.** After A5-a a press
-with **no results file hides nothing**, while
-`cadence::_annot_declutter_clause` — gated on bit 3 AND bit 0 only — still says
-other device text is hidden. Row **E6** of the declutter suite golds that gap on
-purpose. The clause lives in `utils/annot_mode.tcl`, which is in **no** Files cell
-of A5 or A6: whoever takes 1257 must be given that file, and the user's ruling
-first (follow the gate, or refuse the press with "Run a simulation first"?).
+Feature A is six landed items and **sixteen filed issues** (1246-1261). Every one
+was measured and several were real defects — a D-1 violation, an intermittent T1
+red, and a feature that inverted itself before you had simulated. The crews did
+exactly what they should. But three consecutive items have now each produced
+residue from the item before, and that recursion has to be bounded by a decision
+rather than by exhaustion.
 
-**A6-a — 1256, the stock menu is silent about the declutter.** `Waves > Op
-Annotate` in `src/xschem.tcl` does not emit the sentence item A4 added to the
-chords, so the menu and the keys describe the same state differently. Item A3
-already fixed that menu's *mask* arithmetic (issue 1246); this is its *wording*.
+**A6 and A7 close feature A.** Anything found after A7 is **filed and deferred to
+a later batch** — not spawned as another item. Feature B has not started, and it
+is the half the user actually asked for first.
 
-**A6-b — 1255, `db stat` mtime granularity is one second.** The product half of
-issue 1250's part 2, in `src/op_annot.tcl`'s guard family: a staleness check
-resolved to one-second granularity cannot distinguish a raw written twice in the
-same second, which is exactly what a fast headless suite does. This is a
-correctness gap in a *guard*, so it fails in the safe-looking direction — it says
-"fresh" when it does not know.
+---
 
-**Files.** `src/xschem.tcl` · `src/op_annot.tcl` · rows in the declutter and
-`test_op_annot` suites
+## A6 — close the value gate and the last bbox doors  *(needs A5)*
 
-**Accept.** The menu and every chord emit the same declutter clause for the same
-state — drive both doors, do not compare source. A raw rewritten inside one
-second is detected as changed; show the failing case first, then the fix.
+Three pieces of correctness residue in what A5 just built. All C.
+
+**A6-a — 1258, the value gate accepts a descriptor label containing `=`.** The
+gate decides "did this row get a number" by looking for a value after the label;
+a label that itself contains an `=` fools it. A gate that can be fooled by data
+is not a gate.
+
+**A6-b — 1259, the value gate accepts a published zero.** So a `savecurrents`
+run still declutters. ⚠ This is the trap the batch's own measurements recorded
+twice before it was written: `.options savecurrents` publishes a sky130 FET's
+`ig`/`is`/`ib` as **zero-length** vectors, and an explicit `save …[ib]` card
+yields a **`dims=0`** column of `0.0`. Both are **absent**, and neither says so on
+stderr. See `doc/claude/code_analysis/1244_op_param_list_measurements.md` §22 and
+the spec's landmine 11. Absent is not zero, and a real measured 0.0 is not absent
+— distinguish them, do not pick whichever is easier.
+
+**A6-c — 1260, 1252's residue.** Two *more* `symbol_bbox()` doors, plus the mask
+half of the gate. A5 measured the live case itself: after
+`setprop instance M1 name MZ1` the render shows `MZ1 VCW=1u PD {zid =} {zgm =}`
+while the stored bbox is unchanged and `instance_at` disagrees with what is
+drawn. **Item B4 clicks these devices.** This is the last chance to make every
+door agree before something depends on it.
+
+**Files.** `src/actions.c` · `src/draw.c` · `src/svgdraw.c` · `src/psprint.c` ·
+`src/select.c` · `tests/headless/test_annot_declutter_1244.tcl`
+
+**Accept.** A label containing `=` does not satisfy the gate. A published zero
+does not, and an absent vector does not, and a genuinely measured `0.0` **does**
+— three rows, not one. Every `symbol_bbox()` door agrees after a rename, drive
+each. `instance_at` and the render agree on the same fixture.
+
+---
+
+## A7 — the wording follows the gate, and the guards stop lying  *(needs A6)*
+
+**A7-a — 1257, the status clause claims a declutter that no longer happens.**
+With no results file, `Ctrl-Alt-6` now correctly hides nothing — but the held
+line still says other device text is hidden. **Driver ruling: the clause follows
+the gate.** Item A1 already minted the right sentence for this exact state
+(*"Decluttering is on, but nothing changes yet: it applies only while
+operating-point values are showing. Press 6 to show them."*), so this is a
+consistency fix, not a new product decision, and the press is **not** refused —
+the user asked for a mode, and a mode you cannot arm before simulating would be
+worse than one that tells you it is waiting.
+
+**A7-b — 1256**, the stock `Waves > Op Annotate` menu is silent about the
+declutter, so the menu and the keys describe the same state differently.
+
+**A7-c — 1255**, `db stat` mtime granularity is one second, so a staleness
+**guard** cannot tell a raw rewritten inside the same second. It fails in the
+safe-looking direction: it says "fresh" when it does not know.
+
+**A7-d — 1261**, `draw.c`'s leg of 1253 is guarded by **source text** rather than
+by behaviour — and `print png` is a real window onto that path, so the guard can
+be green while the back-end is wrong.
+
+**Files.** `utils/annot_mode.tcl` · `src/xschem.tcl` · `src/op_annot.tcl` ·
+`tests/headless/test_annot_declutter_1244.tcl` · `tests/headless/test_op_annot.tcl`
+
+**Accept.** The clause is absent when nothing was hidden and present when
+something was — drive both. The menu and every chord emit the same clause for
+the same state; drive both doors, do not compare source. A raw rewritten inside
+one second is detected as changed. 1261's guard fails when the back-end is
+sabotaged, driven through `print png` rather than read out of the source.
 
 ---
 

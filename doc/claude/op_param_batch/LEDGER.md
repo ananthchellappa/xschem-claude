@@ -33,8 +33,9 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 | A2 | the name classifier | `[x]` | `dcbb85c3` | 36→52, ALL PASS | xschem.h, actions.c | — | `TEXT_ANNOT_NAME 1024`, unconditional. Filed 1249, 1250 |
 | A3 | the draw rung and the per-instance gate | `[E]` | `39769294` | 52→82, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, xschem.tcl | owed | closed 1246-1249. Filed 1251-1254. **Audit run by the DRIVER: 365/11/0/2 of 378, 11 reds identical by name** (`audit_A3_2026-09-02.txt`) |
 | A4 | the status line is not path-length-sensitive | `[E]` | `ccd2aec1` | 82→93; stale_0684 52→54 | annot_mode.tcl | owed | **T1 solo ×4 = 0/0/0/0** — the flake is dead. Filed 1255, 1256. **Driver audit: 365/11/0/2, IDENTICAL BY NAME to A3's** (`audit_A4_2026-09-02.txt`) |
-| A5 | D-1 / D-6 conformance, and A3's staleness | `[ ]` | | | | | needs A3; fixes **1252, 1253, 1254** + the blank-block gate |
-| A6 | the two consistency gaps A4 found | `[ ]` | | | | | needs A4; fixes **1255, 1256** |
+| A5 | D-1 / D-6 conformance, and A3's staleness | `[E]` | `cd212b69` | 93→105, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, scheduler.c | owed | closed 1252-1254 + the gate. **Ran its own audit; by-name diff vs A4 EMPTY.** Filed 1257-1261 |
+| A6 | close the value gate and the last bbox doors | `[ ]` | | | | | needs A5; fixes **1258, 1259, 1260** |
+| A7 | the wording follows the gate, guards stop lying | `[ ]` | | | | | needs A6; fixes **1255, 1256, 1257, 1261**. **FEATURE A CLOSES HERE** |
 | B1 | the backend seam | `[ ]` | | | | | D-4/D-5 are the whole item |
 | B2 | the list store and the settings file | `[ ]` | | | | | `Makefile.in` ×2 + `./configure` |
 | B3 | the window | `[ ]` | | | | | `rdw::`, not `results::` |
@@ -54,6 +55,17 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
   that owns the files each needs (`src/xschem.tcl` for 1246, `src/actions.c` for
   1247) and the first at which any of them has a visible effect. A1 correctly
   measured and filed all three without fixing them; none is A1's to own.
+
+### ⚠ FEATURE A CLOSES AT A7 — a driver boundary, set 2026-09-02
+
+Six landed items, **sixteen filed issues** (1246-1261). Every one measured; several
+were real — a D-1 violation, an intermittent T1 red against a zero baseline, and
+a feature that inverted itself before you had simulated. The crews behaved
+correctly. But three consecutive items have each produced residue from the item
+before, and that recursion must be bounded by a decision rather than by
+exhaustion. **A6 and A7 close feature A. Anything found after A7 is filed and
+deferred to a later batch, not spawned as another item.** Feature B — the half
+the user described first and at greater length — has not started.
 
 ### ⚠ A3's receipt carried no full audit, and the driver ran it
 
@@ -121,3 +133,4 @@ three `look` debts from the merge.
 | A2 | x | dcbb85c3 | test_annot_declutter_1244 36->52 ALL PASS \| test_op_annot 492->492 \| annot_show_menu 36 \| stale_0684 52 \| hier_0911 15 \| blank_cause_0909 27 \| op_behind_tran_1242 22 \| selflog_grep_guard (no count) \| T1 0->0 solo (1 unattributed F21 red in 4 runs, filed 1250) \| T2 HARNESS PASS 6/6 \| audit 365/11/0/2 of 378, all 11 reds + 2 skips identical BY NAME | 1249, 1250 | A2 landed and committed: TEXT_ANNOT_NAME 1024 set unconditionally on a whole-string match of all three spellings, nothing visible until A3 (proved cross-binary byte-identical); rule debt 1244_A2_name_bit_vs_hide_true is wanted BEFORE A3. |
 | A3 | E | 39769294 | test_annot_declutter_1244 52->82 ALL PASS \| test_op_annot 492->492 \| annot_show_menu 36->36 \| stale_0684 52->52 \| hier_0911 15 \| blank_cause_0909 27 \| op_behind_tran_1242 22 \| spice_get_node_0861 23 \| sod_pick_0204 66 \| select_at 15 (--logdir) \| verb_noun_descend 25 \| hover_repair 5 \| cmdmode_descend 90 \| locked_wire_pick 16 \| no_untitled_litter 12 — all ALL PASS, row-id diff 0 \| te | 1251,1252,1253,1254 | The declutter fires on any instance whose descriptor RESOLVES, not one that got numbers — a registered FET over a raw with no matching vectors is decluttered while its OP block shows "zid =" with nothing after it (common, per rule R1: gm/vth exist only if the deck saved them) — is that "only instances that got OP numbers" per D-6, or must the block carry at least one actual value before any parame |
 | A4 | E | ccd2aec1 | test_annot_stale_0684 52->54 (default + roots 121/142/201, and :99); test_annot_declutter_1244 82->93 (:99); test_op_annot 485/492, blank_cause_0909 27, hier_0911 15, results_freshness 21, show_menu 36, op_behind_tran_1242 22 all unchanged; T1 SOLO x4 = 0/0/0/0; T2 HARNESS PASS 6/6; full_audit 365 pass / 11 fail / 0 crash / 2 skip of 378, eleven reds identical BY NAME to audit_A3_2026-09-02.txt | 1255,1256 | After Ctrl-Alt-6, every 6 / Alt-6 / Alt-Shift-6 press now also says " Decluttering is on, so other device text is hidden." — including before you have run a simulation, because the sheet is stripped then too: is that the right reminder, should it be shorter, should it repeat the way out (Ctrl-Alt-6), or should the other keys stay silent about it? |
+| A5 | E | cd212b69 | test_annot_declutter_1244 93->105 ALL PASS; T1 0->0 solo; T2 6/6 HARNESS PASS; op_annot 492, show_menu 36, stale_0684 54, blank_cause 27, hier 15, op_behind_tran 22, pin-name x4 + pick/descend x6 all unmoved; full_audit 365 pass/11 fail/0 crash/2 skip of 378, by-name-and-status diff vs audit_A4 EMPTY | 1257,1258,1259,1260,1261 | With no results file, Ctrl-Alt-6 now hides nothing but the held status line still says other device text is hidden - should the clause follow the gate (say nothing when nothing was hidden), or should the press be refused outright with "Run a simulation first"? |
