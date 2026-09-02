@@ -275,6 +275,62 @@ set F_M1 {Showing device operating-point values on the schematic.}
 set F_M3 {Showing device operating-point values and DC node voltages on the schematic.}
 set F_LIVE { These results were already loaded.}
 
+# ============================================================================
+# ISSUE 1250 -- THE STATUS ROWS MUST NOT DEPEND ON HOW LONG THE SCRATCH PATH IS
+# ============================================================================
+# Six rows below used to assert `string match "$F_M1 Loaded results from
+# *mos.raw."` against `xschem get statusmsg`, i.e. against the FITTED line.
+# `cadence::_annot_fit` (utils/annot_mode.tcl:724) elides anything over 255
+# bytes AT THE LAST SPACE, and an absolute path holds no space, so the whole
+# path clause is dropped in ONE step and the trailing anchor stops matching.
+# It is a cliff, not a gradual truncation.
+#
+# MEASURED on this tree by driving XSCHEM_TEST_SCRATCH and changing nothing
+# else (default root = 54 bytes, pids are 7 digits here):
+#     root <= 120   ALL PASS (52 checks)
+#     root    121   F17                       <- the cliff
+#     root    136   F17 F36 F39 F43 F44
+#     root    142   F16 as well               -> 6 FAILED (46 passed)
+# At root 121 the F17 sentence goes 256 bytes unfitted -> 99 bytes fitted.
+# A developer who clones one directory deeper than this checkout walks into a
+# deterministic red that has nothing to do with their change.
+#
+# THE REPAIR IS THE BC5 / BC5b IDIOM of tests/headless/test_annot_blank_cause_0909.tcl
+# (:847-856): compose the sentence the surface OUGHT to say and render the
+# EXPECTATION through the same `cadence::_annot_fit` before comparing. That is
+# path-length independent BY CONSTRUCTION, and it is strictly STRONGER than the
+# two anchors it replaces -- whole sentence, not a prefix and a suffix -- and on
+# a failure `check` prints the string it actually got, which is the
+# instrumentation issue 1250 part 2 asked for and never had.
+#
+# ⚠ IT IS NOT A WIDENING OF THE 255-BYTE CAP AND MUST NOT BECOME ONE. The cap is
+# `char statusmsg_text[256]` (src/xschem.h:1859), which no Tcl edit can move;
+# issue 0886 ratified a marked elision over an amputation, and issue 0639's
+# closing section rejected BOTH raising it and shortening the path in the mint
+# ("not a free win -- it silently rewrites a message the 0617 brief pinned as
+# unchanged"). So the honest repair is here, in the assertion, not there.
+#
+# ⚠ WHAT THIS SHAPE GIVES UP, AND WHERE IT IS BOUGHT BACK. At a path long enough
+# to elide, the row degrades to "the surface said the fitted form of the right
+# sentence" -- the tail is gone from both sides. Row F48 buys that back by
+# spying on `cadence::_annot_fit` itself and golding the UNFITTED sentence whole,
+# which is full strength at any path length.
+#
+# ⚠ AND ISSUE 1250 NAMED THE WRONG REPAIR AND THE WRONG ROWS. Its recommended
+# fix -- "assert the message against the CIW sentence, which `_annot_say` emits
+# whole" -- IS NOT AVAILABLE ON THIS PATH: the `6` / `Alt-6` success path never
+# calls `cadence::_annot_say`. utils/annot_mode.tcl:1546 writes the bar directly
+# and the CIW leg at :1533-1536 emits the cause + types clause ONLY, so no whole
+# copy of the mask+state sentence exists anywhere to assert against. Its row list
+# is wrong too: SIX rows are path-sensitive, not the two it names, and F21 -- the
+# row it files under the elision -- is not one of them at all. F21's `live` arm
+# pastes NO path (90 bytes, verified unchanged against a 4009-byte path); it is a
+# one-second `file mtime` race, and it is fixed in its own staging with issue
+# 1255 filed for the product half.
+proc f_loadedmsg {mask path} {
+  return [f_ans ::cadence::_annot_fit "$mask Loaded results from [file normalize $path]."]
+}
+
 # reach the surfaces under test the way a real session does
 source [file join $repo utils annot_mode.tcl]
 source [file join $repo src ase.tcl]
@@ -785,12 +841,13 @@ catch {cadence::annot_mode op}
 set f16_r2 [f_rows]
 set f16_m2 [f_msg]
 set f16_val [f_val $F_ID]
+## ⚠ THE TWO MESSAGE LEGS ARE WHOLE-STRING (issue 1250) -- see f_loadedmsg.
 check {F16 THE HEADLINE press 6, re-run the simulation, press 6 again: the schematic shows the NEW numbers and says which file it loaded} \
-  [list $f16_r1 [string match "$F_M1 Loaded results from *mos.raw." $f16_m1] \
+  [list $f16_r1 $f16_m1 \
         $f16_nogesture $f16_r2 $f16_val \
         [expr {$f16_m2 eq "$F_M1$F_LIVE" ? {SAID-ALREADY-LOADED} : {}}] \
-        [string match "$F_M1 Loaded results from *mos.raw." $f16_m2]] \
-  [list $F_R1 1 $F_R1 $F_R2 0.009 {} 1]
+        $f16_m2] \
+  [list $F_R1 [f_loadedmsg $F_M1 $F_RAW] $F_R1 $F_R2 0.009 {} [f_loadedmsg $F_M1 $F_RAW]]
 
 # ---- the same through Alt-6 ----------------------------------------------
 catch {xschem raw clear}
@@ -805,10 +862,11 @@ catch {cadence::annot_mode opvolt}
 set f17_m2 [f_mask]
 set f17_rows [f_rows]
 set f17_msg [f_msg]
+## ⚠ THE MESSAGE LEG IS WHOLE-STRING (issue 1250). This is the row that reds
+## first as the scratch path grows -- the cliff is at a root of 121 bytes.
 check {F17 the same through Alt-6: the second chord adds DC node voltages AND brings the numbers up to date} \
-  [list $f17_m1 $f17_m2 $f17_rows \
-        [string match "$F_M3 Loaded results from *mos.raw." $f17_msg]] \
-  [list 1 3 $F_R2 1]
+  [list $f17_m1 $f17_m2 $f17_rows $f17_msg] \
+  [list 1 3 $F_R2 [f_loadedmsg $F_M3 $F_RAW]]
 
 # ---- re-attach OR BLANK, never the old numbers under a caption ------------
 # A captioned refusal sitting above a stale number is not an improvement on a
@@ -910,6 +968,31 @@ catch {xschem set annot_show 0}
 # refuses it first, under RULING 0856's sentence. Row N10b of
 # tests/headless/test_op_annot.tcl is the same fixture at its own address.
 catch {xschem raw_read $F_RAW}
+## ⚠ ISSUE 1250 PART 2 -- THE STAMP IS MINTED HERE, NOT INHERITED FROM ROW F19,
+## AND THAT IS WHAT MAKES THIS ROW DETERMINISTIC. `op_annot::_db_stat` is
+## {mtime size} and `file mtime` is 1-SECOND granular (this file's own header,
+## lines 55-57, already says so about the FIXTURES). Row F19's press stamps
+## $F_RAW; row F20 then rewrites the SAME path with byte-identical content a
+## millisecond later and does not sleep first. Land both in one second and the
+## stamp survives, this press takes the `live` arm and says "already loaded".
+## Let the wall clock tick between them and the stamp mismatches,
+## src/op_annot.tcl:1354-1358 answers 0, guard G11 detaches, the selector
+## re-attaches and the sentence becomes "Loaded results from <path>." -- which
+## is the intermittent T1 red filed as issue 1250, and it is one `f_bump`
+## inserted before F20's rewrite away, reproduced byte for byte. Measured
+## window between the two writes: 0.7-1.5 ms on the --nogui arm, 9.8-10.9 ms on
+## the display arm; ~1.1% of T1 runs, which is the whole of the "unexplained"
+## half of that issue.
+##
+## So this row stamps $F_RAW AS IT STANDS ON DISK AT THIS INSTANT. Its subject
+## is what the PRESS does -- publish, take nothing off, re-read nothing -- not
+## what the clock did between two earlier rows. Row F49 is the deterministic
+## twin that proves the staging is load-bearing rather than decorative.
+##
+## THE PRODUCT HALF IS FILED, NOT FIXED: issue 1255. A same-second rewrite is
+## invisible to any stamp, and a byte-identical rewrite one second later forces
+## a needless detach and re-read of the database the user is looking at.
+catch {::op_annot::_db_stamp [file normalize $F_RAW]}
 set f21_pre [f_call {xschem raw annot}]
 catch {cadence::annot_mode op}
 set f21_msg [f_msg]
@@ -1353,11 +1436,11 @@ set f36_val [f_val $F_ID]
 set f36_n3 $::f_natt
 check {F36 THE HEADLINE OF 0910 the operating point was attached from the menu and the run was redone at the same path: the FIRST press of 6 paints the NEW numbers and says which file it loaded, and the two presses after it agree without reading anything again} \
   [list $f36_same $f36_r1 \
-        [string match "$F_M1 Loaded results from *mos.raw." $f36_m1] \
+        $f36_m1 \
         [expr {$f36_m1 eq "$F_M1$F_LIVE" ? {SAID-ALREADY-LOADED} : {}}] \
         $f36_r2 $f36_r3 $f36_val $f36_m2 \
         [expr {$f36_n1 >= 1 ? 1 : 0}] $f36_n3] \
-  [list 1 $F_R2 1 {} $F_R2 $F_R2 0.009 "$F_M1$F_LIVE" 1 1]
+  [list 1 $F_R2 [f_loadedmsg $F_M1 $R910] {} $F_R2 $F_R2 0.009 "$F_M1$F_LIVE" 1 1]
 
 # ---- the same defect on ASE-L's `Results > Annotate` tick -----------------
 # Same staging, driven through the loader the tick calls. Measured on the
@@ -1435,10 +1518,9 @@ set f39_n $::f_natt
 set f39_val [f_val $F_ID]
 check {F39 POSITIVE TWIN an operating point attached from the menu with nothing re-run survives three presses of 6 unchanged, at the cost of exactly ONE read on the first press and none after it} \
   [list [expr {$f39_rf0 eq [file normalize $R910] ? 1 : 0}] \
-        $f39_a $f39_b $f39_c $f39_val \
-        [string match "$F_M1 Loaded results from *mos.raw." $f39_ma] \
+        $f39_a $f39_b $f39_c $f39_val $f39_ma \
         $f39_mb $f39_n] \
-  [list 1 $F_R1 $F_R1 $F_R1 1e-05 1 "$F_M1$F_LIVE" 1]
+  [list 1 $F_R1 $F_R1 $F_R1 1e-05 [f_loadedmsg $F_M1 $R910] "$F_M1$F_LIVE" 1]
 
 # ---- THE 0908 TWIN: a different path is still nobody else's business ------
 # GREEN BEFORE AND AFTER, and it is the row that stops the repair being "stop
@@ -1561,10 +1643,9 @@ set f43_n $::f_natt
 set f43_val [f_val $F_ID]
 set f43_graph [f_info_has $F_TRAN]
 check {F43 issue 0914 with an ordinary waveform graph open, an operating point attached from the menu and nothing re-run survives three presses of 6, the graph is still in the window afterwards, and the whole thing costs one read} \
-  [list $f43_pre $f43_a $f43_b $f43_c $f43_val \
-        [string match "$F_M1 Loaded results from *mos.raw." $f43_ma] \
+  [list $f43_pre $f43_a $f43_b $f43_c $f43_val $f43_ma \
         $f43_n $f43_graph] \
-  [list 1 $F_R1 $F_R1 $F_R1 1e-05 1 1 1]
+  [list 1 $F_R1 $F_R1 $F_R1 1e-05 [f_loadedmsg $F_M1 $R910] 1 1]
 
 # ---- F44: the headline of 0684 with the same graph open ------------------
 # The half that was broken on the shipped tree as well: the press that follows
@@ -1588,10 +1669,9 @@ set f44_val [f_val $F_ID]
 set f44_n $::f_natt
 set f44_graph [f_info_has $F_TRAN]
 check {F44 issue 0914 with a waveform graph open, the press after a re-run at the same path paints the NEW numbers and leaves the graph in the window} \
-  [list $f44_a $f44_b $f44_val \
-        [string match "$F_M1 Loaded results from *mos.raw." $f44_ma] \
+  [list $f44_a $f44_b $f44_val $f44_ma \
         $f44_n $f44_graph] \
-  [list $F_R2 $F_R2 0.009 1 1 1]
+  [list $F_R2 $F_R2 0.009 [f_loadedmsg $F_M1 $R910] 1 1]
 
 # ---- F45: the unwind must not take the user's graph away -----------------
 # The other end of the same change. Letting the press reach the file selector
@@ -1751,6 +1831,117 @@ set f47_after [f_cur $R914]
 check {F47 taking the database off throws away the freshness stamp with it, so re-attaching the same file from the menu is a FIRST sight again and is re-read rather than trusted} \
   [list $f47_att $f47_cheap $f47_none $f47_after] [list 1 1 0 0]
 set ::netlist_dir $nd
+catch {xschem raw clear}
+
+# ===========================================================================
+# F48 / F49 -- ISSUE 1250, THE TWO HALVES, EACH WITH ITS OWN INSTRUMENT
+# ===========================================================================
+# F48 is part 1's full-strength backstop. The six rewritten rows above compare
+# the FITTED line against an expectation rendered through the same
+# `cadence::_annot_fit`, which is path-length independent but which, at a path
+# long enough to elide, can only say "the surface said the fitted form of the
+# right sentence". This row asserts the sentence the mint actually BUILT, taken
+# at `_annot_fit`'s own door, so it is byte-exact at ANY path length -- and it
+# is also the "print the string it actually got" instrumentation issue 1250's
+# part 2 asked for and never had.
+#
+# ⚠ THE SPY IS ON `_annot_fit`, NOT ON `_annot_msg`, AND THAT IS THE POINT.
+# Row A11-2 of tests/headless/test_op_annot.tcl requires EVERY line of
+# utils/annot_mode.tcl that writes `xschem statusmsg -hold` to name `_annot_fit`
+# on the same line, so a status write cannot reach the bar without passing
+# through here. A spy on the mint would miss a second sink; a spy here cannot.
+# (Park/restore engine copied from opa_v_spy, test_op_annot.tcl:12308-12318;
+# the restore runs on the error path too, which is why it is not a plain
+# `rename` pair around an uplevel.)
+proc f_fit_spy {script} {
+  set ::f_fit_seen {}
+  if {![llength [info commands ::cadence::_annot_fit]]} { return NOPROC }
+  rename ::cadence::_annot_fit ::cadence::__f_saved_fit
+  proc ::cadence::_annot_fit {m} {
+    lappend ::f_fit_seen $m
+    return [::cadence::__f_saved_fit $m]
+  }
+  set rc [catch {uplevel #0 $script} r]
+  catch {rename ::cadence::_annot_fit {}}
+  catch {rename ::cadence::__f_saved_fit ::cadence::_annot_fit}
+  if {$rc} { return "RAISED:$r" }
+  return $::f_fit_seen
+}
+## The CODE lines of this file matching <re>. Comment lines are skipped because
+## the header paragraph above quotes the very pattern leg 3 is counting.
+proc f_selfgrep {re} {
+  set path [info script]
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] {
+    if {[regexp {^\s*#} $l]} continue
+    if {[regexp -- $re $l]} { incr n }
+  }
+  return $n
+}
+
+set ::netlist_dir $nd
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+f_mkop $F_RAW 1e-05 1e-04 1e-06
+set f48_seen [f_fit_spy {catch {cadence::annot_mode op}}]
+set f48_bar  [f_msg]
+set f48_arg  [lindex $f48_seen 0]
+check {F48 ISSUE 1250 PART 1 the sentence the mint BUILT, golded whole at _annot_fit's own door: one call per press, the unfitted text byte for byte, the bar is that text fitted, and no row of this file matches on a path fragment any more} \
+  [list [llength $f48_seen] $f48_arg \
+        [expr {$f48_bar eq [f_ans ::cadence::_annot_fit $f48_arg] ? 1 : 0}] \
+        [f_selfgrep {Loaded results from \*mos\.raw\.}]] \
+  [list 1 "$F_M1 Loaded results from [file normalize $F_RAW]." 1 0]
+
+# ---------------------------------------------------------------------------
+# F49 -- ISSUE 1250 PART 2, THE DETERMINISTIC TWIN OF F21's FLAKE
+# ---------------------------------------------------------------------------
+# F21 is a coin flip on the shipped staging and green about 99% of the time, so
+# it can never be the row that proves the repair. This one forces the losing
+# side of the coin: a press stamps $F_RAW (row F19's shape), a full second
+# passes, and the SAME BYTES are written back over it (row F20's shape). The two
+# stats now differ in mtime and agree in size, i.e. the stamp is provably stale
+# and `op_annot::db_current` will answer 0 -- which is exactly the state the
+# intermittent T1 red is taken in. F21's own staging, the local re-stamp, is
+# then applied, and the press must STILL say the results were already loaded and
+# leave the same file attached.
+#
+# ⚠ REMOVE THE `_db_stamp` LINE FROM F21 AND THIS ROW REDS EVERY TIME, with the
+# same element pattern issue 1250 quotes from the real run: {{0 {-1 0 -1}} 0 1 1}
+# against {{0 {-1 0 -1}} 1 1 1}. That asymmetry -- F21 intermittent, F49
+# deterministic -- is the whole reason this row exists.
+#
+# ⚠ AND IT IS NOT "F21 TWICE". Legs 1 and 2 are the fixture's own non-vacuity:
+# without them a staging that quietly stopped ticking the clock would leave this
+# row measuring the same easy case F21 measures.
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+f_mkop $F_RAW 1e-05 1e-04 1e-06
+catch {cadence::annot_mode op}
+set f49_s1 [f_ans ::op_annot::_db_stat [file normalize $F_RAW]]
+f_bump
+f_mkop $F_RAW 1e-05 1e-04 1e-06
+set f49_s2 [f_ans ::op_annot::_db_stat [file normalize $F_RAW]]
+catch {xschem raw clear}
+xschem load $F_SCH
+catch {xschem set annot_show 0}
+catch {xschem raw_read $F_RAW}
+catch {::op_annot::_db_stamp [file normalize $F_RAW]}
+set f49_pre [f_call {xschem raw annot}]
+catch {cadence::annot_mode op}
+set f49_msg [f_msg]
+set f49_rf  [f_rawfile]
+check {F49 ISSUE 1250 PART 2 the mtime race forced: a byte-identical rewrite ONE SECOND after the stamp still leaves the press saying the results were already loaded, and takes nothing off} \
+  [list [expr {([llength $f49_s1] == 2 && [lindex $f49_s1 0] != [lindex $f49_s2 0]) ? 1 : 0}] \
+        [expr {([llength $f49_s1] == 2 && [lindex $f49_s1 1] == [lindex $f49_s2 1]) ? 1 : 0}] \
+        $f49_pre \
+        [expr {[string first {already loaded} $f49_msg] >= 0 ? 1 : 0}] \
+        [expr {$f49_rf eq [file normalize $F_RAW] ? 1 : 0}]] \
+  [list 1 1 {0 {-1 0 -1}} 1 1]
+
 catch {xschem raw clear}
 
 # --- teardown ----------------------------------------------------------------

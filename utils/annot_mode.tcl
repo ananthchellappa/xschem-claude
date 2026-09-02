@@ -920,6 +920,42 @@ proc cadence::_annot_msg {mask state path types {cause {}}} {
     default { set m "Annotation settings changed." }
   }
   if {$cause ne {}} { append m " $cause" }
+
+  ## ISSUE 1251 -- THE DECLUTTER BIT, WHICH THE SWITCH ABOVE CANNOT SEE.
+  ## `cadence::_annot_declutter_clause` owns the wording and the bit3+bit0 gate
+  ## (RULING D-8); this is only where it lands.
+  ##
+  ## ⚠ THERE IS NO STATE GATE, AND THE ONE THAT WAS HERE FIRST WAS WRONG.
+  ## Item A4 shipped this clause behind `$state eq {live} || $state eq {loaded}`,
+  ## on issue 0909's `canask` reasoning -- "a press that found no results file
+  ## has already been told so; telling it as well that its sheet is decluttered
+  ## describes a sheet the press never drew". THAT PREMISE IS FALSE AND WAS
+  ## MEASURED FALSE the same day. The draw rung does NOT wait for numbers: item
+  ## A3's own gate is `annot_overlay_gate(n)` AND a non-blank `op_annot::text`
+  ## block, and src/actions.c:2075 says it in as many words -- "a registered
+  ## device over a dead raw is therefore decluttered while its block shows empty
+  ## rows". Driven on a one-instance fixture with NO raw loaded at all
+  ## (`xschem raw loaded` = -1, i.e. exactly the `noraw` state):
+  ##     mask 1 texts = M1 W4GATE W4W=1u {zid =}
+  ##     mask 9 texts = M1 {zid =}
+  ## The sheet IS stripped, so the suppressed sentence was the inaccurate one --
+  ## and `noraw` is the most common first press there is, `6` before the
+  ## simulation has been run. The gate is bit 3 AND bit 0 and nothing else.
+  ## Row S8 leg 3 and row S12 are the two halves of that, and state `off` is a
+  ## can't-happen pairing: `cadence::annot_mode` only leaves `state` at `off`
+  ## when the mask is 0 (utils/annot_mode.tcl:1237), where bit 0 is clear anyway.
+  ##
+  ## ⚠ THE PLACEMENT WAS MEASURED, NOT STYLED, and it is AFTER the 0909 cause
+  ## and BEFORE the state clause. Appended last -- issue 1251's own literal
+  ## suggestion -- mask 15 + `live` + five symbol types fits to 254 bytes with
+  ## the CLAUSE ITSELF eaten by `cadence::_annot_fit`, so the fix would be
+  ## invisible exactly when the line is longest; here the same combination fits
+  ## to 249 with the clause whole. Measured 2026-09-02, row B1 leg 2.
+  ## Ahead of the cause it does NOT go: A11-12b's ruling is that when the line
+  ## must be cut, what is sacrificed is the file name and not the answer to the
+  ## question the key just asked. Row B1 leg 3 is that order, asserted.
+  append m [cadence::_annot_declutter_clause $mask]
+
   switch -exact -- $state {
     live    { append m " These results were already loaded." }
     noop    { append m " The loaded results do not include an operating point, so\
@@ -2691,7 +2727,13 @@ proc cadence::annot_tran {} {
   set mask 0
   catch {set mask [xschem get annot_show]}
   if {![string is integer -strict $mask]} { set mask 0 }
-  xschem set annot_show [expr {$mask | 4}]
+  ## ISSUE 1251: the mask is named so the sentence below can describe the mask
+  ## this press WROTE, rather than re-reading a field anything between the two
+  ## lines could have moved -- an rc hook, a menu tick, another window's
+  ## annot_show_sync_cache(). Row E5 is that property, in the source, because no
+  ## behavioural row on this bench can tell the two apart.
+  set newmask [expr {$mask | 4}]
+  xschem set annot_show $newmask
 
   ## The `Show hidden texts` pair (src/xschem.tcl): bboxes change when hidden
   ## texts appear, and annot_show_sync_cache() rides inside the first.
@@ -2727,6 +2769,20 @@ proc cadence::annot_tran {} {
   } else {
     set m [cadence::_annot_tran_msg ok $t $which]
   }
+
+  ## ⚠ ISSUE 1251, AND IT IS APPENDED HERE RATHER THAN MINTED INSIDE
+  ## `cadence::_annot_tran_msg` ON PURPOSE. That proc is a PURE four-argument
+  ## function that takes no mask, RAISES on any state it does not know, and is
+  ## golded byte for byte in tests/headless/test_op_annot.tcl -- a file item A4
+  ## does not own. Giving it a mask would change its signature and redden rows
+  ## in someone else's file for a clause that belongs to this caller. So the
+  ## minter stays mask-free and the CALL SITE composes. Rows E4 and E5.
+  ##
+  ## ⚠ ONLY ON THE SUCCESS PATH. The refusal arms above unwind the mask they
+  ## found and publish nothing, so a clause about what the sheet is showing has
+  ## nothing to describe there.
+  append m [cadence::_annot_declutter_clause $newmask]
+
   cadence::_annot_say $m
   return ok
 }
@@ -2811,6 +2867,58 @@ proc cadence::_annot_declutter_msg {on gated} {
   }
   return "Decluttering is on, but nothing changes yet: it applies only while\
           operating-point values are showing. Press 6 to show them."
+}
+
+## ISSUE 1251 -- THE SAME BIT, IN THE *OTHER* KEYS' SENTENCE.
+##
+## `cadence::_annot_declutter_msg` above is the chord's own sentence, spoken
+## once, at the moment the user arms or disarms the bit. This is the CLAUSE the
+## other four annotation chords carry afterwards. Before item A4 they could not:
+## `cadence::_annot_msg` switches on `[expr {$mask & 7}]`, so the bit never
+## reached the wording, and after item A3's draw rung landed that silence became
+## a lie -- press `6` after a `Ctrl-Alt-6` and the editor said "Showing device
+## operating-point values on the schematic" about a sheet it had just stripped
+## every parameter from.
+##
+## ⚠ IT IS A CLAUSE APPENDED TO THE EIGHT ARMS, NOT A NINTH ARM. Widening that
+## switch would redden row V21 of tests/headless/test_op_annot.tcl, which golds
+## all eight arms byte for byte and which item A4 does not own. Appending leaves
+## them byte-identical, so masks 0..7 -- everything V21 and row A11-10 sweep --
+## render exactly what they rendered before.
+##
+## ⚠ THE GATE IS BIT 3 **AND** BIT 0, AND THE SECOND TERM IS A RULING, NOT A
+## REFINEMENT. RULING D-8, verbatim: "Declutter is active ONLY when OP info
+## (6 key triggered) is displayed", and item A3's draw predicate is AND-ed on
+## both bits. At masks 8/10/12/14 the bit is armed and NOTHING on the sheet is
+## hidden, so a clause claiming otherwise would be a caption with no measurement
+## behind it -- save.c RULING D5-1's shape. Issue 1251's own suggested gate,
+## `if {$mask & 8}` alone, gets that case wrong; rows S8 and E2 are the guard.
+##
+## ⚠ A PURE FUNCTION OF ITS ARGUMENT. The live mask never reaches it -- same
+## discipline as `cadence::_annot_declutter_msg` and `cadence::_annot_tran_msg`,
+## and rows V1a/V1b/S9 are what keep the family one. TWO consumers and ONE mint
+## (invariant I1): `cadence::_annot_msg` for the three OP chords, and
+## `cadence::annot_tran`'s success tail for `Alt-Shift-6`, which mints through a
+## proc that takes no mask at all. Two independent spellings of one sentence
+## drift SILENTLY, which is the failure invariant I1 is named after.
+##
+## ⚠ IT LEADS WITH A SPACE, like every other clause `cadence::_annot_msg`
+## appends, so both consumers stay `append`-shaped. 52 bytes including it, and
+## that size is a decision: row B1 of tests/headless/test_annot_declutter_1244.tcl
+## sweeps all eight bit-3 masks against the 255 bytes of `char
+## statusmsg_text[256]` (src/xschem.h:1859), which is the only place in the tree
+## that budgets a bit-3 sentence. The longer wordings considered are costed in
+## issue 1251.
+##
+## THE WORDING IS UNRATIFIED (status E) -- `owed.sh add rule 1251`. Item A1's
+## three sentences above are on the user's queue separately as rule debt `1244`
+## and are NOT reworded here; this composes with them (row S10).
+proc cadence::_annot_declutter_clause {mask} {
+  if {![string is integer -strict $mask]} { return {} }
+  if {($mask & 8) && ($mask & 1)} {
+    return { Decluttering is on, so other device text is hidden.}
+  }
+  return {}
 }
 
 ## THE ONE WRITER OF ANNOT_SHOW_NOPARAM. `toggle` is what the chord sends; `on`

@@ -398,7 +398,7 @@ AFTER    SVG identical 1 vs 9 : 0        (and 0 vs 8 : 1 — the bit alone still
 
 ---
 
-## A4 — the status line is not path-length-sensitive  *(needs A1; independent of A3)*
+## A4 — the status line is not path-length-sensitive  ✅ **DONE (status E), 2026-09-02**
 
 **Do.** Fix issue **1250**. `cadence::_annot_fit` (`utils/annot_mode.tcl:724`)
 elides anything over 255 bytes, and the held status line embeds a scratch path,
@@ -435,6 +435,95 @@ deliberately long one — drive both, do not argue from the code. Run T1 solo
 **four times** and show four zeros; one green run is not evidence about an
 intermittent red. Do not widen the 255-byte cap without reading issue **0886**,
 where the elision was chosen.
+
+**Landed.** The 255-byte cap is **untouched** — 0639 rejects both widening
+`char statusmsg_text[256]` and shortening the path in the mint, so **1250 part 1
+is fixed test-side**: the six path-sensitive rows now compose the whole expected
+sentence and render **the expectation** through `cadence::_annot_fit` before
+comparing (the BC5/BC5b idiom of `test_annot_blank_cause_0909.tcl`), which is
+also strictly stronger than the old two-anchor `string match`. **1250 part 2 was
+never a path defect**: it is a one-second `file mtime` race in
+`op_annot::_db_stat`, forced on demand and fixed in row F21's own staging, with
+row **F49** as its deterministic twin. **1251** is a pure minter,
+`cadence::_annot_declutter_clause {mask}`, gated on **bit 3 AND bit 0** (D-8) and
+appended after 0909's cause and before the state clause; `Alt-Shift-6` composes
+at the **call site** because `_annot_tran_msg` takes no mask and is golded in a
+file this item does not own. Suites: `test_annot_stale_0684` **52 → 54**,
+`test_annot_declutter_1244` **82 → 93**; `test_op_annot` 485/492,
+`test_annot_blank_cause_0909` 27, `test_annot_hier_0911` 15,
+`test_results_freshness` 21, `test_annot_show_menu` 36,
+`test_annot_op_behind_tran_1242` 22, all unchanged. T1 **solo ×4, four zeros**.
+Full record: `doc/claude/op_param_batch/receipts/A4.md`.
+Full audit `SUMMARY: 365 pass  11 fail  0 crash/timeout  2 skip  (total 378)`,
+the eleven reds **identical by name** to `audit_A3_2026-09-02.txt`. Filed and not
+fixed: **1255**, **1256**. **Status E** — the clause is a fourth unratified
+sentence (`owed.sh` rule debt `1251`).
+
+**⚠ THE ADVERSARY REFUTED THIS ITEM ONCE, AND THE REPAIR IS WHY THE COUNT IS 93
+AND NOT 92.** A4 first shipped the clause behind a fourth condition,
+`$state eq {live} || $state eq {loaded}`, on issue 0909's `canask` reasoning.
+**The premise was false and was measured false**: item A3's rung is gated on
+`annot_overlay_gate(n)` **and a non-blank `op_annot::text` block**, not on numbers
+arriving — `src/actions.c:2075` says so in as many words — so with **no raw
+loaded at all** the sheet is stripped just the same:
+
+```
+raw loaded = -1
+mask 1 texts = MC1 CW=1u {cid =}
+mask 9 texts = MC1 {cid =}
+```
+
+`noraw` is the most common press there is (`6` before the simulation has been
+run), so the suppressed sentence was the inaccurate one. The gate was deleted,
+row **S8**'s third leg inverted, row **B1** widened to sweep all eight states,
+and row **E6** added to drive it end to end with no results file. Before the
+repair the `state-gate-restored` sabotage reddened **nothing**; it now reds three
+rows. **This repair was made by the write-up agent after Verify-C, so it has no
+independent adversary pass** — the re-verification (tiers, five sabotage
+variants, T1 ×4 solo, full audit) is one agent's.
+
+---
+
+### What A4 learned that binds later items
+
+1. **⚠ `test_annot_declutter_1244` emits NO `RESULT:` line under `--nogui`.** It
+   needs X (`bind` / `event generate`). Run it as
+   `tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script …`.
+   A crew that runs it headless reads silence as a pass. Its count is now **93**.
+2. **⚠ A ROW THAT ONLY EVER WARMS TO A LOADED RAW CANNOT SEE A `noraw` DEFECT.**
+   Every one of rows E1–E5 calls `c_press`, which does `dc_setmask 1 ; dc_fire
+   <Key-6>` first. That is why an entire section agreed with a wrong gate. Any
+   later item asserting annotation behaviour should carry at least one row with
+   **no results file on disk at all** — and note `xschem raw clear` only
+   *unloads*: the press re-reads the file from `$::netlist_dir` and lands on
+   `loaded`, so a genuine `noraw` row needs its own empty directory (row E6).
+3. **The declutter fires on DESCRIPTOR RESOLUTION, not on numbers arriving.** A
+   registered device over a dead raw is decluttered while its block shows blank
+   rows (`src/actions.c:2075`, rule debt `1244_A3_blank_valued_block`). Item A5's
+   blank-block gate is the same fact from the other side — whatever A5 decides
+   there, **the 1251 clause's truth condition moves with it**, and row E6 is the
+   row that will notice.
+4. **The 255-byte budget now has a bit-3 consumer, and it is nearly full.** Row
+   A11-10 of `test_op_annot.tcl` and row V21 sweep masks **0..7 only** (verified
+   by reading them), so nothing outside `test_annot_declutter_1244.tcl` row **B1**
+   budgets a bit-3 sentence. Measured at an ordinary 55-byte path: with issue
+   0909's cause present the clause is amputated at masks **11, 13 and 15** in
+   every state and never at mask 9. Anything a later item adds to this sentence
+   competes for the same bytes.
+5. **Issue 1250's own recommended repair is refuted and must not be re-attempted:**
+   *"assert the message against the CIW sentence, which `_annot_say` emits
+   whole"*. The `6` / `Alt-6` success path never calls `_annot_say` —
+   `utils/annot_mode.tcl:1569` writes the bar directly and the CIW leg emits only
+   the cause + types clause. **No whole copy of the mask+state sentence exists.**
+6. **Two doors, one bit.** `src/xschem.tcl:17311` and `:17749` (the stock
+   `Waves > Op Annotate` menu) preserve bit 3 and emit **no status sentence at
+   all** — issue **1256**, filed and not fixed. Whoever next owns `src/xschem.tcl`
+   should mint the clause from `cadence::_annot_declutter_clause` when it exists,
+   not spell it a second time (invariant I1).
+7. **T1 is trustworthy again for the rest of this batch.** The ~1.1 % per-run
+   intermittent red was `file mtime`'s one-second granularity, not the elision;
+   the product half is issue **1255**, filed and unfixed, so a suite elsewhere
+   that stamps and rewrites inside one second keeps the same flake shape.
 
 ---
 

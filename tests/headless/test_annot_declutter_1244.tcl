@@ -166,6 +166,32 @@ proc opa_slurp {path} {
   set fd [open $path r] ; set d [read $fd] ; close $fd
   return $d
 }
+## Count the CODE lines of <path> matching <re> -- whole-line Tcl comments are
+## skipped, so a sentence quoted in a header paragraph is not counted as a
+## second mint. Copied from opa_v_ngrep, tests/headless/test_op_annot.tcl:11529.
+## ⚠ NOT opa_n_grep: that one counts comments too, and item A4's rows count a
+## SENTENCE, which the file above them is entitled to quote in prose.
+proc dc_ngrep {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] {
+    if {[regexp {^\s*#} $l]} continue
+    if {[regexp -- $re $l]} { incr n }
+  }
+  return $n
+}
+## THE ANSWER DISCIPLINE -- an absent proc must never satisfy a golden. Copied
+## from b_ans, tests/headless/test_annot_blank_cause_0909.tcl:117. Without it
+## "invalid command name cadence::_annot_declutter_clause" would satisfy a row
+## expecting the empty string, i.e. the whole clause section would read green
+## against a tree that never got the clause.
+proc dc_ans {cmd args} {
+  if {![llength [info commands $cmd]]} { return NOPROC }
+  set rc [catch {uplevel #0 [linsert $args 0 $cmd]} r]
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
 ## The source text of ONE proc: from its `proc <name> {` header (column 0) up to
 ## the next such header, or end of file. {} when the proc is absent.
 ## ⚠ WHY THE SLICE: `.` matches a newline in Tcl, so a whole-file
@@ -278,6 +304,27 @@ proc dc_dispatch {seq} { set ::dc_seen {} ; dc_fire $seq ; return $::dc_seen }
 set DC_ON  {Decluttering the schematic: a device showing operating-point values draws its name and those values only. Press Ctrl-Alt-6 again to bring the rest of its text back.}
 set DC_ARM {Decluttering is on, but nothing changes yet: it applies only while operating-point values are showing. Press 6 to show them.}
 set DC_OFF {Decluttering is off. Devices draw all of their text again.}
+
+# ============================================================================
+# THE FOURTH SENTENCE — ISSUE 1251, AND IT IS A CLAUSE, NOT A SENTENCE
+# ============================================================================
+# The three above belong to the Ctrl-Alt-6 chord itself and are on the USER's
+# queue as rule debt `1244`. This one belongs to the OTHER keys: press `6` after
+# a `Ctrl-Alt-6` and, before item A4, the editor said "Showing device
+# operating-point values on the schematic" about a sheet it had just stripped
+# every parameter from. It is APPENDED to the eight `& 7` arms rather than
+# widening the switch, so those arms stay byte-identical and row V21 of
+# tests/headless/test_op_annot.tcl (a file item A4 does not own, and which
+# sweeps masks 0..7 only) cannot see it.
+#
+# ⚠ IT COMPOSES WITH A1's THREE, IT DOES NOT REPLACE THEM. Row S10.
+# ⚠ IT LEADS WITH A SPACE, like every other clause `cadence::_annot_msg`
+#   appends, so the mint stays `append`-shaped. 52 bytes including that space.
+# ⚠ IT IS ALSO UNRATIFIED (status E). Ctrl-Alt-6 already says the long version
+#   at the moment the user arms the bit; whether every later press should carry
+#   this reminder, carry a shorter one, repeat the way out, or say nothing, is
+#   the user's call. Recorded against issue 1251.
+set DC_CLAUSE { Decluttering is on, so other device text is hidden.}
 
 # ============================================================================
 # SECTION D — THE CHORD MATRIX
@@ -421,14 +468,164 @@ check "S6 src/xschem.h defines ANNOT_SHOW_NOPARAM exactly once as 8, four distin
 check_raises "S7 cadence::_annot_mask still RAISES on `declutter` - the toggle is a separate proc" \
   {cadence::_annot_mask declutter 0} {unknown mode "declutter"}
 
-## `cadence::_annot_msg` switches on `[expr {$mask & 7}]`, so it is BLIND to
-## bit 3 by construction. Do NOT widen it: row V21 of test_op_annot.tcl golds
-## its eight arms byte for byte and A1 does not own that file. This row pins the
-## blindness so a later "improvement" reds here instead of there.
-check "S8 _annot_msg is blind to bit3: mask 1 == mask 9 and mask 3 == mask 11, byte for byte" \
-  [list [expr {[cadence::_annot_msg 1 off {} {}] eq [cadence::_annot_msg 9 off {} {}]}] \
-        [expr {[cadence::_annot_msg 3 off {} {}] eq [cadence::_annot_msg 11 off {} {}]}]] \
-  {1 1}
+## ============================================================================
+## S8 — ISSUE 1251. THIS ROW WAS THE PIN; IT IS NOW THE PROOF.
+## ============================================================================
+## It used to assert that `cadence::_annot_msg` was BLIND to bit 3 -- it switches
+## on `[expr {$mask & 7}]` (utils/annot_mode.tcl:906) so the bit never reaches
+## the eight arms. That was CORRECT while item A1 was the whole feature: the bit
+## moved no pixel, so a sentence ignoring it was accurate, and widening the
+## switch would have reddened row V21 of test_op_annot.tcl, a file A1 does not
+## own. After item A3's draw rung landed, mask 1 and mask 9 draw DIFFERENT
+## SHEETS and produced the SAME SENTENCE -- "Showing device operating-point
+## values on the schematic" about a sheet every parameter had just been stripped
+## from. Issue 1251 says in as many words that this row must be inverted, and its
+## non-vacuity is the behavioural proof of the fix.
+##
+## THE SWITCH IS STILL NOT WIDENED. Item A4 APPENDS a clause, so the eight arms
+## stay byte-identical and V21 keeps passing on the `& 7` part.
+##
+## THE FOUR LEGS ARE THE FOUR HALVES OF THE GATE, AND THREE OF THEM ARE RULINGS:
+##   1. bit 3 WITH bit 0, at a state that is showing numbers -> the sentence
+##      CHANGES. The defect, inverted.
+##   2. bit 3 WITHOUT bit 0 -> the sentence does NOT change. RULING D-8,
+##      verbatim: "Declutter is active ONLY when OP info (6 key triggered) is
+##      displayed", and A3's draw rung is AND-ed on both bits (rows A5/A16,
+##      invariant I-C, PERMANENT). At masks 8/10/12/14 nothing is hidden, so a
+##      clause claiming otherwise would be a caption with no measurement behind
+##      it -- save.c RULING D5-1's shape. Note this is why the gate is NOT issue
+##      1251's own literal suggestion `if {$mask & 8}`.
+##   3. EVERY state carries it, the refusal states included -- and THIS LEG WAS
+##      GOLDED THE OTHER WAY ROUND FOR HALF A DAY. Item A4 first shipped the
+##      clause behind `$state eq {live} || $state eq {loaded}`, reasoning from
+##      issue 0909's `canask` term that a press which found no results file must
+##      not ALSO be told its sheet is decluttered. THE PREMISE WAS FALSE AND WAS
+##      MEASURED FALSE: item A3's rung is gated on `annot_overlay_gate(n)` AND a
+##      NON-BLANK `op_annot::text` block, and src/actions.c:2075 says so in as
+##      many words -- "a registered device over a dead raw is therefore
+##      decluttered while its block shows empty rows". Driven with NO raw loaded
+##      at all (`xschem raw loaded` = -1, the `noraw` state):
+##          mask 1 texts = M1 W4GATE W4W=1u {zid =}
+##          mask 9 texts = M1 {zid =}
+##      i.e. the sheet IS stripped and it was the SILENCE that was inaccurate --
+##      in the most common first press there is, `6` before the simulation has
+##      been run. Row E6 is that same fact end to end, on this file's own
+##      fixture. State `off` is in the list as a can't-happen pairing: the mint
+##      is a pure function of its two arguments, and `cadence::annot_mode` only
+##      leaves `state` at `off` when the mask is 0 (utils/annot_mode.tcl:1237),
+##      where bit 0 is clear and leg 2 covers it.
+##   4. the difference is EXACTLY the clause and nothing else -- which is what
+##      keeps the eight arms, and therefore V21, byte-identical.
+set S8_STATES {off live noop loaded failed noraw nopath stale}
+set S8_DIFF {}
+foreach st {live loaded} {
+  foreach p {1 3 5 7} {
+    lappend S8_DIFF [expr {[cadence::_annot_msg $p $st /tmp/zz.raw {}] ne \
+                           [cadence::_annot_msg [expr {$p | 8}] $st /tmp/zz.raw {}] ? 1 : 0}]
+  }
+}
+set S8_SAME {}
+foreach st $S8_STATES {
+  foreach p {0 2 4 6} {
+    lappend S8_SAME [expr {[cadence::_annot_msg $p $st /tmp/zz.raw {}] eq \
+                           [cadence::_annot_msg [expr {$p | 8}] $st /tmp/zz.raw {}] ? 1 : 0}]
+  }
+}
+## NAMED, not counted: a golden of ones would read the same whichever way the
+## comparison ran, and this leg was inverted once already.
+set S8_ST {}
+foreach st $S8_STATES {
+  if {[cadence::_annot_msg 9 $st /tmp/zz.raw {}] ne \
+      [cadence::_annot_msg 1 $st /tmp/zz.raw {}]} { lappend S8_ST $st }
+}
+set S8_ONLY {}
+foreach st $S8_STATES {
+  lappend S8_ONLY [expr {[string map [list $DC_CLAUSE {}] \
+                           [cadence::_annot_msg 9 $st /tmp/zz.raw {}]] eq \
+                         [cadence::_annot_msg 1 $st /tmp/zz.raw {}] ? 1 : 0}]
+}
+check "S8 ISSUE 1251 FIXED: with bit0 set the sentence names the declutter in EVERY state, with bit0 clear it does not (D-8), and the whole difference is the clause" \
+  [list $S8_DIFF $S8_SAME $S8_ST $S8_ONLY] \
+  [list {1 1 1 1 1 1 1 1} {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} \
+        {off live noop loaded failed noraw nopath stale} {1 1 1 1 1 1 1 1}]
+
+## ---------------------------------------------------------------------------
+## S9 — ONE MINTER, PURE, AND `_annot_msg` CALLS IT RATHER THAN SPELLING IT
+## ---------------------------------------------------------------------------
+## Invariant I1, in this file's own shape: `cadence::_annot_declutter_msg` and
+## `cadence::_annot_tran_msg` are both PURE functions of their arguments -- the
+## live mask never reaches them -- and rows V1a/V1b exist to keep that family
+## one. The clause joins it: two consumers (`cadence::_annot_msg` and
+## `cadence::annot_tran`'s success tail), ONE mint. Two independent builders of
+## the same sentence drift SILENTLY, which is the failure invariant I1 names.
+##
+## ⚠ THE LITERAL IS COUNTED ON CODE LINES ONLY (dc_ngrep). Prose above the proc
+## may quote the sentence freely; a SECOND code line spelling it is the defect.
+set S9_SRC [opa_slurp $DC_SRC]
+dc_setmask 0  ; set S9_P0 [dc_ans ::cadence::_annot_declutter_clause 9]
+dc_setmask 15 ; set S9_P1 [dc_ans ::cadence::_annot_declutter_clause 9]
+dc_setmask 0
+check "S9 the clause is minted in ONE PURE proc, gated on bit3 AND bit0, spelled on exactly one code line, and _annot_msg CALLS the minter" \
+  [list [dc_ans ::cadence::_annot_declutter_clause 9] \
+        [dc_ans ::cadence::_annot_declutter_clause 15] \
+        [dc_ans ::cadence::_annot_declutter_clause 1] \
+        [dc_ans ::cadence::_annot_declutter_clause 8] \
+        [dc_ans ::cadence::_annot_declutter_clause 0] \
+        [expr {$S9_P0 eq $S9_P1 ? 1 : 0}] \
+        [dc_ngrep $DC_SRC {Decluttering is on, so other device text is hidden}] \
+        [expr {[string first {_annot_declutter_clause} \
+                 [opa_proc_src $S9_SRC cadence::_annot_msg]] >= 0 ? 1 : 0}]] \
+  [list $DC_CLAUSE $DC_CLAUSE {} {} {} 1 1 1]
+
+## ---------------------------------------------------------------------------
+## S10 — IT COMPOSES WITH ITEM A1's THREE SENTENCES, IT DOES NOT REPLACE THEM
+## ---------------------------------------------------------------------------
+## ⚠ A1's three are on the USER's queue as rule debt `1244` and are NOT item
+## A4's to reword. This row is the guard on that: they are asserted byte for
+## byte against the same goldens A1 shipped, and the clause is required to be a
+## FOURTH string minted by a SECOND proc.
+set S10_CL [dc_ans ::cadence::_annot_declutter_clause 9]
+check "S10 the clause COMPOSES with A1's three sentences: DC_ON / DC_ARM / DC_OFF byte-identical (rule debt 1244 is the user's, not A4's) and the clause is a fourth string from a second proc" \
+  [list [dc_ans ::cadence::_annot_declutter_msg 1 1] \
+        [dc_ans ::cadence::_annot_declutter_msg 1 0] \
+        [dc_ans ::cadence::_annot_declutter_msg 0 1] \
+        [expr {($S10_CL ne {} && $S10_CL ne {NOPROC} && \
+                [string trim $S10_CL] ne $DC_ON && \
+                [string trim $S10_CL] ne $DC_ARM && \
+                [string trim $S10_CL] ne $DC_OFF) ? 1 : 0}] \
+        [expr {([llength [info procs ::cadence::_annot_declutter_msg]] == 1 && \
+                [llength [info procs ::cadence::_annot_declutter_clause]] == 1) ? 1 : 0}] \
+        [dc_ngrep $DC_SRC {Press Ctrl-Alt-6 again to}]] \
+  [list $DC_ON $DC_ARM $DC_OFF 1 1 1]
+
+## ---------------------------------------------------------------------------
+## S11 — PLAIN ENGLISH, FOR THE ONE SENTENCE ROW A11-7 CANNOT SEE
+## ---------------------------------------------------------------------------
+## Row A11-7 of tests/headless/test_op_annot.tcl judges every sentence this
+## surface can render against RULING 0886's ban list. Verified by reading it:
+## it sweeps EIGHT MASKS BY EIGHT STATES, i.e. masks 0..7 only, so a bit-3
+## clause is invisible to it -- and A4 does not own that file. The ban list is
+## reproduced here for the one sentence A11-7 will never see.
+## ⚠ THE SHAPES, NOT JUST THE SPELLINGS. An underscore or an equals sign is an
+## identifier, not English; `::` or `xschem ` is the machine talking; and the
+## bare state words are names this code calls itself by. Leg 3 is the control
+## that stops the detector reading green while unplugged.
+set DC_BANNED [list {*_*} {*=*} {*::*} {*xschem *} {*OP *} {*database*} \
+                    {*sim_type*} {*annot_show*} {*raw file*} \
+                    {*noop*} {*nopath*} {*noraw*} {*notop*} {*notran*} \
+                    {*nocursor*} {*staleraw*} {*viewerdiff*} {*okclamped*} \
+                    {*nodata*} {*viewerunread*} {*viewergone*} {*viewerfilling*}]
+proc dc_jargon {s} {
+  set hits {}
+  foreach pat $::DC_BANNED { if {[string match $pat $s]} { lappend hits $pat } }
+  if {![regexp {^[\x20-\x7e]*$} $s]} { lappend hits NON-ASCII }
+  return $hits
+}
+check "S11 the clause is plain English by RULING 0886's own ban list - no identifier, no operator, no namespace, no internal state word, printable ASCII" \
+  [list [expr {$S10_CL eq $DC_CLAUSE ? 1 : 0}] \
+        [dc_jargon $S10_CL] \
+        [expr {[llength [dc_jargon {_annot_msg: mask & 8 -> ::cadence, xschem get annot_show}]] >= 4 ? 1 : 0}]] \
+  [list 1 {} 1]
 
 # ============================================================================
 # SECTION T — THE TRAPS, PINNED SO NOBODY "FIXES" THEM
@@ -1715,6 +1912,427 @@ check "A29 the 1246 literal rows in the two suites this item does not own are re
   {2 0 0 2 2}
 
 dc_annot 0
+
+# ============================================================================
+# SECTION C — THE DECLUTTER CLAUSE ON THE OTHER KEYS' SENTENCE (issue 1251)
+# ============================================================================
+# Item A4. Section S above proves the MINT; this section proves the SURFACE --
+# what the user actually reads after each of the four annotation chords, in both
+# declutter states, plus the 255-byte budget nothing else in the tree sweeps for
+# bit 3.
+#
+# ⚠ WHY A FIXTURE OF ITS OWN, AND NOT SECTION A's. Measured on section A's
+# fixture with the clause prototyped: at mask 11 the held line is 365 bytes
+# unfitted and `cadence::_annot_fit` elides it at 253 -- the CLAUSE survives the
+# cut but the sentence is being trimmed for reasons that have nothing to do with
+# item A4 (that sheet's raw has no device parameters, so issue 0909's 132-byte
+# cause clause is on every press, and its `examples/nand2` instance adds a
+# symbol-types clause). A row asserting "the user reads the clause" on that
+# fixture would be measuring the elision. This fixture is ONE registered device
+# with its ONE vector present in the raw: no cause clause, no types clause, and
+# every sentence below fits whole. Measured: 156 / 142 / 111 / 163 / 77 / 67
+# bytes for the six chord outcomes.
+#
+# ⚠ THE BUSY-SHEET CASE IS NOT DROPPED, it is row B1 leg 3 -- where the cause
+# and the clause cannot both fit, issue 0909's ordering makes the CAUSE win.
+#
+# ⚠ EVERY ROW WARMS FIRST. The first press of `6` after an attach reports state
+# `loaded` ("Loaded results from <path>.") and every press after it reports
+# `live` ("These results were already loaded."). Without a warm-up the
+# declutter-on and declutter-off legs would be in DIFFERENT states and the
+# "the whole difference is the clause" leg would be comparing two sentences
+# that differ for a second reason.
+
+# --- the section's own fixture ----------------------------------------------
+set C_SYM [file join $scratch cfet.sym]
+set C_FIX [file join $scratch cfix.sch]
+set C_RAW [file join $scratch cfix.raw]
+set C_TRAW [file join $scratch ctran.raw]
+
+set C_FD [open $C_SYM w]
+puts $C_FD {v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=c4fet
+format="@name @pinlist @model w=@w"
+template="name=MC1 model=c4n w=1u"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+T {@name} 0 -40 0 0 0.2 0.2 {}
+T {CW=@w} 60 30 0 0 0.2 0.2 {}}
+close $C_FD
+set C_FD [open $C_FIX w]
+puts $C_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$C_SYM\} 300 -300 0 0 \{name=MC1\}"
+close $C_FD
+
+## ⚠ THE ORDER IS LOAD, THEN REGISTER, THEN `op_annot::vector` -- section A's
+## order, and it is load-bearing: `op_annot::vector` resolves the device path
+## through the LOADED instance, so calling it before the load answers {} and the
+## fixture silently becomes a raw with a nameless vector, a blank block and
+## issue 0909's cause clause on every press. Measured while writing this section.
+catch {xschem raw clear}
+set ::netlist_dir $scratch
+xschem load $C_FIX
+update idletasks
+catch {op_annot::register c4fet [list devpath {@m.@path@name} params {{cid cid 0}}]}
+set C_PAIRS {}
+catch {lappend C_PAIRS [op_annot::vector MC1 cid] 1.11e-05}
+set C_FD [open $C_RAW w]
+puts -nonewline $C_FD "Title: 1251 clause fixture\nDate: Mon Jan 1 00:00:00 2026\n"
+puts -nonewline $C_FD "Plotname: Operating Point\nFlags: real\n"
+puts -nonewline $C_FD "No. Variables: [expr {[llength $C_PAIRS]/2}]\nNo. Points: 1\nVariables:\n"
+set C_K 0
+foreach {v val} $C_PAIRS { puts -nonewline $C_FD "\t$C_K\t$v\tvoltage\n" ; incr C_K }
+puts -nonewline $C_FD "Values:\n0\t[lindex $C_PAIRS 1]\n"
+close $C_FD
+## A two-point transient for the Alt-Shift-6 leg, with cursor B at 4 ns.
+set C_FD [open $C_TRAW w]
+puts -nonewline $C_FD "Title: 1251 clause transient\nDate: Mon Jan 1 00:00:00 2026\n"
+puts -nonewline $C_FD "Plotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: 2\n"
+puts -nonewline $C_FD "Variables:\n\t0\ttime\ttime\n\t1\tv(zzz)\tvoltage\n"
+puts -nonewline $C_FD "Values:\n0\t0\n\t1.5\n\n1\t4e-09\n\t2.5\n"
+close $C_FD
+
+proc c_msg {} { set m {} ; catch {set m [xschem get statusmsg]} ; return $m }
+## THE SPY. `cadence::_annot_fit` is the ONE door every status write in
+## utils/annot_mode.tcl goes through -- row A11-2 of test_op_annot.tcl counts the
+## lines writing `xschem statusmsg -hold` and requires each to name `_annot_fit`
+## on the same line -- so a spy here sees the sentence the mint BUILT, before the
+## 255-byte budget touches it, on all four chords including the transient one,
+## whose success tail goes through `cadence::_annot_say`. Park/restore engine
+## copied from opa_v_spy (test_op_annot.tcl:12308-12318); the restore runs on the
+## error path too.
+proc c_spy {from seq} {
+  dc_setmask $from
+  set ::c_fit {}
+  if {![llength [info commands ::cadence::_annot_fit]]} { return NOPROC }
+  rename ::cadence::_annot_fit ::cadence::__c_saved_fit
+  proc ::cadence::_annot_fit {m} { lappend ::c_fit $m ; return [::cadence::__c_saved_fit $m] }
+  catch {dc_fire $seq}
+  catch {rename ::cadence::_annot_fit {}}
+  catch {rename ::cadence::__c_saved_fit ::cadence::_annot_fit}
+  return [list [dc_mask] [c_msg] $::c_fit]
+}
+## Warm to the `live` state (see the header), then press.
+proc c_press {from seq} { dc_setmask 1 ; dc_fire <Key-6> ; return [c_spy $from $seq] }
+proc c_mask {r} { return [lindex $r 0] }
+proc c_bar  {r} { return [lindex $r 1] }
+proc c_unf  {r} { return [lindex [lindex $r 2] 0] }
+proc c_nfit {r} { return [llength [lindex $r 2]] }
+proc c_has  {s} { return [expr {[string first $::DC_CLAUSE $s] >= 0 ? 1 : 0}] }
+## The bar really is the fitted form of what the mint built -- the C round trip
+## through `statusmsg -hold` and `xschem get statusmsg`, which is the seam issue
+## 0887 found broken (bytes against characters).
+proc c_trip {r} { return [expr {[c_bar $r] eq [cadence::_annot_fit [c_unf $r]] ? 1 : 0}] }
+
+catch {xschem annotate_op $C_RAW 0}
+update idletasks
+
+check "C0 CONTROL the clause fixture is live: one instance, a NUMERIC block on MC1, a resolved vector, and no issue-0909 cause clause on the press" \
+  [list [xschem get instances] \
+        [expr {[string first {11.1u} [dc_ans ::op_annot::text MC1]] >= 0 ? 1 : 0}] \
+        [expr {[lindex $C_PAIRS 0] ne {} ? 1 : 0}] \
+        [expr {[string first {Some values are blank} [c_bar [c_press 0 <Key-6>]]] >= 0 ? 1 : 0}]] \
+  [list 1 1 1 0]
+
+# ---------------------------------------------------------------------------
+# B1 — THE BIT-3 BUDGET, WHICH NOTHING ELSE IN THE TREE SWEEPS
+# ---------------------------------------------------------------------------
+# ⚠ VERIFIED BY READING THEM, NOT ASSUMED: row A11-10 of test_op_annot.tcl
+# (:15741-15779, 386 combinations) and row V21 both iterate masks 0..7 ONLY, and
+# item A4 does not own that file. So this is the only place in the tree where a
+# bit-3 sentence is held to the 255 bytes of `char statusmsg_text[256]`
+# (src/xschem.h:1859).
+#
+# ⚠ AND A11-10 COULD NOT CATCH THE INTERESTING FAILURE ANYWAY: it asserts the
+# FITTED string is <= 255, which a clause that has been silently amputated
+# satisfies. Leg 2 is the leg that matters -- the clause must SURVIVE the
+# elision, not merely fit when nothing else is competing.
+#
+# ⚠ LEG 2 IS ALSO THE PLACEMENT ASSERTION, AND THE PLACEMENT WAS MEASURED, NOT
+# STYLED. With the clause appended LAST (issue 1251's own literal suggestion),
+# mask 15 + live + five symbol types fits to 254 bytes with `clause_in` 0 -- the
+# elision eats the clause itself, so the fix would be invisible exactly when the
+# line is longest. Appended after issue 0909's cause and BEFORE the state clause,
+# the same combination fits to 249 with the clause intact. Measured 2026-09-02.
+#
+# ⚠ AN ORDINARY RESULTS PATH, NOT THIS SUITE'S SCRATCH PATH. The budget must be
+# measured against what a user's tree looks like; the scratch root varies by 50+
+# bytes between checkouts, which is issue 1250's whole subject.
+set C_PATH /home/user/work/proj/sim/run1/netlist/mycell_ase.raw
+set C_TYPES5 {resistor capacitor inductor diode subcircuit}
+set C_CAUSE {Some values are blank because the results file has no device values like gm and vth in it. Run the simulation again with them saved.}
+set C_STATES {off live noop loaded failed noraw nopath stale}
+
+set C_OVER {}
+foreach mask {8 9 10 11 12 13 14 15} {
+  foreach st $C_STATES {
+    foreach ty [list {} $C_TYPES5] {
+      foreach cz [list {} $C_CAUSE] {
+        set u [cadence::_annot_msg $mask $st $C_PATH $ty $cz]
+        set nb [cadence::_annot_bytes [cadence::_annot_fit $u]]
+        if {$nb > 255} { lappend C_OVER "$mask/$st/[llength $ty]/[string length $cz]=$nb" }
+      }
+    }
+  }
+}
+## ⚠ LEG 2 SWEEPS ALL EIGHT STATES, NOT JUST live/loaded. It used to sweep two,
+## because the clause used to be gated on those two -- and that gate was the
+## defect the adversary pass found (row S8 leg 3). A survival leg that only
+## visits the states the clause is allowed into cannot notice the day the gate
+## widens and the budget does not.
+set C_SURV {}
+foreach st $C_STATES {
+  foreach ty [list {} $C_TYPES5] {
+    foreach mask {9 15} {
+      lappend C_SURV [c_has [cadence::_annot_fit [cadence::_annot_msg $mask $st $C_PATH $ty {}]]]
+    }
+  }
+}
+## ⚠ LEG 5 IS A MEASURED LIMIT, RECORDED SO IT CANNOT BE MISREAD AS COVERAGE.
+## When issue 0909's cause clause is ALSO present, 132 bytes of it, the wall is
+## reached and something must go. Measured over the same 256 sentences: at mask 9
+## the clause always survives; at masks 11, 13 and 15 -- the arms whose own base
+## sentence is longest -- it never does, in ANY state, with or without symbol
+## types. That is A11-12b's ordering doing its job (the answer to the question
+## the key just asked outranks the rest), not an accident, and legs 3/4 assert
+## the same trade on one worked case. It is also the reason the wording is 52
+## bytes and not the 98-byte one issue 1251 costs out.
+set C_EAT {}
+foreach mask {9 11 13 15} {
+  set bad 0
+  foreach st $C_STATES {
+    foreach ty [list {} $C_TYPES5] {
+      if {![c_has [cadence::_annot_fit \
+                     [cadence::_annot_msg $mask $st $C_PATH $ty $C_CAUSE]]]} { incr bad }
+    }
+  }
+  lappend C_EAT $mask=$bad
+}
+## ⚠ LEG 6 CLOSES A HOLE THE SABOTAGE MATRIX FOUND IN THIS VERY ROW. Legs 1..5
+## only ever look at masks with bit 0 SET, so a gate widened to `$mask & 8` alone
+## -- issue 1251's own literal suggestion -- left B1 green while masks 8/10/12/14
+## gained a clause about a sheet nothing had hidden (RULING D-8). Rows S8/S9/E2/E4
+## caught it; this row did not, and now does.
+set C_NOCL 0
+foreach mask {8 10 12 14} {
+  foreach st $C_STATES {
+    foreach ty [list {} $C_TYPES5] {
+      foreach cz [list {} $C_CAUSE] {
+        if {[c_has [cadence::_annot_msg $mask $st $C_PATH $ty $cz]]} { incr C_NOCL }
+      }
+    }
+  }
+}
+set C_L3U [cadence::_annot_msg 15 loaded $C_PATH $C_TYPES5 $C_CAUSE]
+set C_L3F [cadence::_annot_fit $C_L3U]
+check "B1 the bit-3 budget: 256 sentences all fit 255 bytes, the clause SURVIVES the elision in every no-cause case in every state, and where the cause and the clause cannot both fit issue 0909's ordering makes the CAUSE win" \
+  [list $C_OVER $C_SURV \
+        [expr {[cadence::_annot_bytes $C_L3F] < [cadence::_annot_bytes $C_L3U] ? 1 : 0}] \
+        [expr {[string first {Some values are blank} $C_L3F] >= 0 ? 1 : 0}] \
+        [c_has $C_L3F] $C_EAT $C_NOCL] \
+  [list {} [lrepeat 32 1] 1 1 0 {9=0 11=16 13=16 15=16} 0]
+
+# ---------------------------------------------------------------------------
+# E1 — END TO END, CHORD `6`
+# ---------------------------------------------------------------------------
+# The brief's acceptance row, driven rather than argued: a real
+# `event generate .drw <Key-6>` through src/cadence_style_rc's binding, and what
+# `xschem get statusmsg` holds afterwards.
+set E1_OFF [c_press 0 <Key-6>]
+set E1_ON  [c_press 8 <Key-6>]
+check "E1 END TO END chord 6: from mask 8 the held status line NAMES the declutter, from mask 0 it does not, and the two sentences differ by the clause and nothing else" \
+  [list [c_mask $E1_OFF] [c_mask $E1_ON] \
+        [c_has [c_bar $E1_ON]] [c_has [c_bar $E1_OFF]] \
+        [c_nfit $E1_OFF] [c_nfit $E1_ON] \
+        [c_trip $E1_OFF] [c_trip $E1_ON] \
+        [expr {[string map [list $DC_CLAUSE {}] [c_unf $E1_ON]] eq [c_unf $E1_OFF] ? 1 : 0}]] \
+  [list 1 9 1 0 1 1 1 1 1]
+
+# ---------------------------------------------------------------------------
+# E2 — END TO END, CHORD `Alt-6`
+# ---------------------------------------------------------------------------
+# ⚠ THE THIRD LEG IS RULING D-8 AT THE SURFACE. `Alt-6` from mask 8 lands on
+# mask 10: the declutter bit is armed and ANNOT_SHOW_OP is not, so A3's rung
+# hides nothing and the line must stay silent about it. That is the case issue
+# 1251's own suggested gate (`if {$mask & 8}` alone) would get wrong.
+set E2_OFF [c_press 1 <Alt-Key-6>]
+set E2_ON  [c_press 9 <Alt-Key-6>]
+set E2_ARM [c_press 8 <Alt-Key-6>]
+set E2_CTL [c_press 0 <Alt-Key-6>]
+check "E2 END TO END chord Alt-6: mask 9 -> 11 names the declutter, mask 1 -> 3 does not, and mask 8 -> 10 does NOT either because bit0 is clear and nothing is hidden (D-8)" \
+  [list [c_mask $E2_OFF] [c_mask $E2_ON] [c_mask $E2_ARM] [c_mask $E2_CTL] \
+        [c_has [c_bar $E2_ON]] [c_has [c_bar $E2_OFF]] [c_has [c_bar $E2_ARM]] \
+        [expr {[string map [list $DC_CLAUSE {}] [c_unf $E2_ON]] eq [c_unf $E2_OFF] ? 1 : 0}] \
+        [expr {[c_unf $E2_ARM] eq [c_unf $E2_CTL] ? 1 : 0}]] \
+  [list 3 11 10 2 1 0 0 1 1]
+
+# ---------------------------------------------------------------------------
+# E3 — END TO END, CHORD `Ctrl-6`: THE CAN'T-HAPPEN CONTROL
+# ---------------------------------------------------------------------------
+# ⚠ GREEN BEFORE AND AFTER ITEM A4, ON PURPOSE. RULING D-8 gives `Ctrl-6` bit 3
+# for free: `cadence::_annot_mask none` returns a hard 0, so the chord clears the
+# declutter with everything else and there is no "declutter on" state left for
+# the sentence to name. Rows D6/D7 say that by mask; this says it by SENTENCE,
+# which is the half the brief's acceptance list asks for. A clause appearing here
+# would mean the gate had lost its bit-0 term.
+set E3_OFF [c_press 3 <Control-Key-6>]
+set E3_ON  [c_press 11 <Control-Key-6>]
+check "E3 END TO END chord Ctrl-6 (the can't-happen control): from mask 3 and from mask 11 the line is the same Annotation-is-off sentence with no clause, and the mask is a hard 0 both times (D-8, row D7)" \
+  [list [c_mask $E3_OFF] [c_mask $E3_ON] \
+        [c_has [c_bar $E3_ON]] [c_has [c_bar $E3_OFF]] \
+        [expr {[c_bar $E3_ON] eq [c_bar $E3_OFF] ? 1 : 0}] \
+        [c_bar $E3_OFF]] \
+  [list 0 0 0 0 1 {Annotation is off. The schematic is not showing simulation numbers.}]
+
+# ---------------------------------------------------------------------------
+# E4 — END TO END, CHORD `Alt-Shift-6`, AND THE MINTER THAT STAYED PURE
+# ---------------------------------------------------------------------------
+# ⚠ THIS CHORD DOES NOT GO THROUGH `cadence::_annot_msg` AT ALL, WHICH IS WHY IT
+# NEEDED A DECISION RATHER THAN A ONE-LINE APPEND. `cadence::annot_tran` mints
+# through `cadence::_annot_tran_msg` (utils/annot_mode.tcl:1754), a PURE
+# four-argument function that takes NO mask, RAISES on any unknown state, and is
+# golded byte for byte in tests/headless/test_op_annot.tcl -- a file item A4 does
+# not own. So the clause is appended at the CALL SITE, on the mask `annot_tran`
+# has just WRITTEN, and the minter's signature and every one of its goldens are
+# untouched. Leg 6 is that claim: the minter alone still returns the shipped
+# sentence, with no clause in it, whatever the mask says.
+catch {xschem raw clear}
+xschem load $C_FIX
+update idletasks
+catch {xschem raw read $C_TRAW tran}
+catch {xschem cursor 2 1}
+catch {xschem set cursor2_x 4e-9}
+update idletasks
+set E4_CUR [dc_ans ::cadence::_annot_tran_cursor]
+set E4_OFF [c_spy 1 <Alt-Shift-Key-6>]
+set E4_ON  [c_spy 9 <Alt-Shift-Key-6>]
+set E4_ARM [c_spy 8 <Alt-Shift-Key-6>]
+check "E4 END TO END chord Alt-Shift-6: from mask 9 the transient sentence names the declutter and the mask lands on 13, from mask 1 it does not and lands on 5, from mask 8 it does not either (bit0 clear), and _annot_tran_msg itself is byte-unchanged and mask-free" \
+  [list $E4_CUR [c_mask $E4_OFF] [c_mask $E4_ON] [c_mask $E4_ARM] \
+        [c_has [c_bar $E4_ON]] [c_has [c_bar $E4_OFF]] [c_has [c_bar $E4_ARM]] \
+        [expr {[string map [list $DC_CLAUSE {}] [c_unf $E4_ON]] eq [c_unf $E4_OFF] ? 1 : 0}] \
+        [dc_ans ::cadence::_annot_tran_msg ok 4e-09 B]] \
+  [list {4e-09 B sheet} 5 13 12 1 0 0 1 \
+        {Showing each node's voltage at 4 ns, where cursor B is on the waveform.}]
+
+# ---------------------------------------------------------------------------
+# E5 — STRUCTURAL: THE TRANSIENT TAIL FEEDS THE CLAUSE THE MASK IT JUST WROTE
+# ---------------------------------------------------------------------------
+# ⚠ NO BEHAVIOURAL ROW CAN SEE THIS ONE. A tail that re-read `xschem get
+# annot_show` between the write and the clause would answer identically on this
+# bench and differently in a session where anything at all sits between them --
+# an rc hook, a menu tick, another window's `annot_show_sync_cache()`. The mask
+# the sentence describes must be the mask the press WROTE, and the only way to
+# say that is in the source.
+set E5_SRC [opa_slurp $DC_SRC]
+set E5_AT  [opa_proc_src $E5_SRC cadence::annot_tran]
+set E5_TM  [opa_proc_src $E5_SRC cadence::_annot_tran_msg]
+set E5_WI  [string first {xschem set annot_show $newmask} $E5_AT]
+set E5_CI  [string first {_annot_declutter_clause $newmask} $E5_AT]
+check "E5 STRUCTURAL annot_tran's success tail hands the clause the mask it just WROTE, with no second `xschem get annot_show` between them, and _annot_tran_msg is left mask-free" \
+  [list [expr {[string length $E5_AT] > 0 ? 1 : 0}] \
+        [dc_ngrep $DC_SRC {set newmask \[expr \{\$mask \| 4\}\]}] \
+        [expr {$E5_WI >= 0 ? 1 : 0}] \
+        [expr {$E5_CI >= 0 ? 1 : 0}] \
+        [expr {($E5_WI >= 0 && $E5_CI > $E5_WI) ? 1 : 0}] \
+        [expr {[string first {xschem get annot_show} \
+                 [string range $E5_AT $E5_WI $E5_CI]] < 0 ? 1 : 0}] \
+        [expr {[string first {_annot_declutter_clause} $E5_TM] < 0 ? 1 : 0}] \
+        [expr {[string first {mask} [lindex [split $E5_TM "\n"] 0]] < 0 ? 1 : 0}]] \
+  [list 1 1 1 1 1 1 1 1]
+
+# ---------------------------------------------------------------------------
+# E6 — END TO END WITH NO RESULTS FILE AT ALL, WHICH IS THE COMMON FIRST PRESS
+# ---------------------------------------------------------------------------
+# ⚠ THIS ROW EXISTS BECAUSE ITEM A4 GOT IT WRONG FIRST, AND EVERY OTHER ROW IN
+# THIS SECTION AGREED WITH IT. The clause shipped behind
+# `$state eq {live} || $state eq {loaded}`, reasoned from issue 0909's `canask`
+# term: a press that found no results file has already been told so, and telling
+# it as well that its sheet is decluttered would describe a sheet the press never
+# drew. E1..E5 all warm to a LOADED raw first (`c_press` does `dc_setmask 1 ;
+# dc_fire <Key-6>` before it measures), so not one of them could see it.
+#
+# THE PREMISE IS FALSE, AND THE SHEET IS THE WITNESS. Item A3's rung is gated on
+# `annot_overlay_gate(n)` AND a NON-BLANK `op_annot::text` block, not on numbers
+# arriving -- src/actions.c:2075 says exactly that: "a registered device over a
+# dead raw is therefore decluttered while its block shows empty rows". So with
+# `xschem raw loaded` = -1 the parameter text is stripped just the same, and the
+# sentence that did NOT say so was the inaccurate one. `noraw` is also the most
+# common press there is: `6` before the simulation has been run.
+#
+# ⚠ THE VIEWPORT IS ITS OWN, and the export is WARMED like sections I, N and A --
+# one throwaway of the same format first, so a first-export difference cannot
+# alias into a pass.
+set C_VP {2000 1600 100 -420 620 -180}
+proc c_pr {out} {
+  if {[catch {eval [linsert $::C_VP 0 xschem print svg $out]} r]} { return RAISED:$r }
+  if {![file isfile $out]} { return NO-FILE }
+  set fd [open $out r] ; set d [read $fd] ; close $fd ; return $d
+}
+proc c_pr2 {out} { c_pr $out.warm ; return [c_pr $out] }
+proc c_hasl {lst n} { return [expr {[lsearch -exact $lst $n] >= 0 ? 1 : 0}] }
+
+## ⚠ THE `Run a simulation first` LEG READS THE UNFITTED SENTENCE, NOT THE BAR.
+## This suite's scratch root is ~90 bytes and it is pasted into the `noraw`
+## clause, so the bar really is elided here -- which is issue 1250's whole
+## subject, met head on in the one row of this file that carries a path. The
+## clause is asserted on the BAR (it is early, so the elision cannot reach it)
+## and the tail on the sentence the mint built; leg 12 is the C round trip that
+## ties the two together.
+
+## ⚠ A FIXTURE DIRECTORY OF ITS OWN, WITH NO RAW IN IT. `xschem raw clear` only
+## UNLOADS; section C's cfix.raw is still on disk beside $C_FIX, and the press
+## re-reads it from `$::netlist_dir` and lands on `loaded`, not `noraw`. Measured
+## while writing this row -- the first draft asserted `noraw` and got
+## "Loaded results from .../cfix.raw." So the sheet is written into an empty
+## subdirectory and `::netlist_dir` points at it for the length of the row.
+set E6_DIR [file join $scratch e6noraw]
+file mkdir $E6_DIR
+set E6_FIX [file join $E6_DIR e6fix.sch]
+set C_FD [open $E6_FIX w]
+puts $C_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$C_SYM\} 300 -300 0 0 \{name=MC1\}"
+close $C_FD
+foreach f [glob -nocomplain [file join $E6_DIR *.raw]] { catch {file delete $f} }
+catch {xschem raw clear}
+set ::netlist_dir $E6_DIR
+xschem load $E6_FIX
+update idletasks
+set E6_LOADED -99 ; catch {set E6_LOADED [xschem raw loaded]}
+dc_annot 1 ; set E6_T1 [dc_ntexts [c_pr2 [file join $scratch e6_m1.svg]]]
+dc_annot 9 ; set E6_T9 [dc_ntexts [c_pr2 [file join $scratch e6_m9.svg]]]
+dc_annot 0
+set E6_ON  [c_spy 8 <Key-6>]
+set E6_OFF [c_spy 0 <Key-6>]
+check "E6 END TO END with NO results file: the sheet IS decluttered at mask 9, and the held line says so while still naming the missing raw - the state gate item A4 shipped first was wrong" \
+  [list $E6_LOADED \
+        [c_hasl $E6_T1 MC1] [c_hasl $E6_T1 CW=1u] \
+        [c_hasl $E6_T9 MC1] [c_hasl $E6_T9 CW=1u] \
+        [c_mask $E6_ON] [c_mask $E6_OFF] \
+        [c_has [c_bar $E6_ON]] [c_has [c_bar $E6_OFF]] \
+        [expr {[string first {Run a simulation first} [c_unf $E6_ON]] >= 0 ? 1 : 0}] \
+        [expr {[string map [list $DC_CLAUSE {}] [c_unf $E6_ON]] eq [c_unf $E6_OFF] ? 1 : 0}] \
+        [c_trip $E6_ON]] \
+  [list -1 1 1 1 0 9 1 1 0 1 1 1]
+
+set ::netlist_dir $scratch
+catch {xschem raw clear}
+dc_setmask 0
 
 # ============================================================================
 # SECTION R — REGISTRATION

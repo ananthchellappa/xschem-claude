@@ -430,7 +430,10 @@ stale, and the variable is an integer so `true`/`on` `atoi` to 0, silently off).
 >   {on gated}`, three sentences, written to the **held status line only** and
 >   never to the CIW (the declutter publishes nothing; `annot_tran` uses both
 >   sinks *because* it does). ⚠ **The wording is UNRATIFIED** — `rule` debt 1244,
->   §5.1 below.
+>   §5.1 below. ⚠ **Item A4 added a SECOND pure minter to this family**,
+>   `cadence::_annot_declutter_clause {mask}` — the clause the *other* four
+>   annotation chords carry afterwards (issue **1251**). It composes with these
+>   three and reworded none of them; its own wording is `rule` debt **1251**.
 > * **D-8's "`Ctrl-6` clears it with the rest" cost no code at all**:
 >   `cadence::_annot_mask none` returns a hard 0. The rows asserting it were
 >   green before the writer existed.
@@ -715,6 +718,54 @@ recorded here so it is not "corrected" later.
 >   render differently, all of them the `@spiceprefix@name` spelling, and zero
 >   because of the whitespace trim. The repair is **ungated by `annot_show`**.
 
+> **LANDED — item A4, 2026-09-02** (`utils/annot_mode.tcl`,
+> `tests/headless/test_annot_stale_0684.tcl` **52 → 54**,
+> `tests/headless/test_annot_declutter_1244.tcl` **82 → 93**). Issues **1250**
+> and **1251** closed; **1255** and **1256** filed and not fixed. **Status E** —
+> the clause's wording is `rule` debt **1251**. Three things this section did not
+> say, and one it implied wrongly:
+>
+> * ⚠ **THE DECLUTTER FIRES ON DESCRIPTOR RESOLUTION, NOT ON NUMBERS ARRIVING,
+>   AND THE SENTENCE HAD TO FOLLOW IT.** §4.1's D-6 gate is a **non-blank**
+>   `op_annot::text` block, so a registered device over a dead raw — or over *no
+>   raw at all* — is decluttered while its block shows `zid =` with no value
+>   (already recorded at §4.1 and as `rule` debt `1244_A3_blank_valued_block`).
+>   Item A4 first gated the 1251 clause on `$state eq {live} || $state eq
+>   {loaded}`, reasoning from issue 0909's `canask` term, and **that was measured
+>   wrong the same day**:
+>
+>   ```
+>   raw loaded = -1
+>   mask 1 texts = MC1 CW=1u {cid =}
+>   mask 9 texts = MC1 {cid =}
+>   ```
+>
+>   `noraw` is the most common press there is (`6` before the simulation is run),
+>   so the silence was the inaccuracy. **The gate is bit 3 AND bit 0 and nothing
+>   else.** Whatever item A5 decides about the blank-block gate moves this
+>   clause's truth condition with it; row **E6** is the row that notices.
+> * ⚠ **THE 255-BYTE STATUS BUDGET NOW HAS A BIT-3 CONSUMER AND IT IS NEARLY
+>   FULL.** Row A11-10 of `test_op_annot.tcl` and row V21 sweep masks **0..7
+>   only**, so `test_annot_declutter_1244.tcl` row **B1** is the only place in the
+>   tree that budgets a bit-3 sentence. Measured at an ordinary 55-byte results
+>   path: with issue 0909's cause clause also present the declutter clause is
+>   amputated by `cadence::_annot_fit` at masks **11, 13 and 15** in every state,
+>   and never at mask 9 — A11-12b's ordering (the answer outranks the rest) doing
+>   its job. The cap itself was **not** widened: 0639 rejects both that and
+>   shortening the path, and `char statusmsg_text[256]` is a C array no `.tcl`
+>   edit can move.
+> * ⚠ **`Alt-Shift-6` composes at the CALL SITE.** `cadence::_annot_tran_msg` is a
+>   pure four-argument minter that takes **no mask**, raises on unknown states, and
+>   is golded in `tests/headless/test_op_annot.tcl` — a file item A4 does not own.
+>   `cadence::annot_tran` therefore names the mask it writes
+>   (`set newmask [expr {$mask | 4}]`) and appends the clause itself, on the
+>   success path only.
+> * **The bit still has two doors, and only one of them speaks.** The stock
+>   `Waves > Op Annotate` menu (`src/xschem.tcl:17311`, `:17749`) preserves bit 3
+>   — deliberately, since item A3's 1246 fix — and emits **no status sentence at
+>   all**. Issue **1256**, filed and not fixed; `src/xschem.tcl` is in no Files
+>   cell of items A4 or A5.
+
 ### 4.2 Feature B — the Results Display Window
 
 **B1. Naming.** `results::` is taken (§2.6). This feature takes **`rdw::`**, in a
@@ -903,6 +954,22 @@ Still open:
   needs a second parser of the block's format (two builders, against **I1**) and
   would let a sheet show an OP block over parameters it had decided not to hide.
   See §4.1 A3b.
+* **Q14 — the clause the OTHER four chords now carry** (added by item A4,
+  2026-09-02; `rule` debt **1251**; **this is item A4's status-E question**).
+  After a `Ctrl-Alt-6`, every `6` / `Alt-6` / `Alt-Shift-6` press appends
+  *" Decluttering is on, so other device text is hidden."* — 52 bytes, whenever
+  bit 3 **and** bit 0 are both set, **in every state, including a press that
+  found no results file**, because the sheet is stripped there too (§4.1, item A4's
+  landing note). `Ctrl-Alt-6` already said the long version at the moment the bit
+  was armed (Q11). Is that the right reminder on the other keys, should it be
+  shorter, should it repeat the way out, or should the other keys stay silent?
+  ⚠ **The 255-byte status bar is why it is not longer**, and the three rejected
+  wordings are costed in issue **1251**: `" Device parameters are hidden."` (30 B)
+  names a class **D-1 explicitly rejected**; the precise per-device form (98 B)
+  puts mask 3 + `loaded` over the wall at this suite's own path; the
+  remedy-bearing form (114 B) is eaten by the elision exactly where it would be
+  needed. A1's three sentences (Q11) are **not** reworded — this composes with
+  them.
 * **Q13 — after item A3's 1247 fix, may a declutter press adopt an rc-armed
   mask?** (`rule` debt **`1244_A3_rc_armed_stamp`**). `annot_show_set()` now
   declines to stamp `xctx->annot_root` when the write moves the declutter bit
