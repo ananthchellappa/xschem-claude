@@ -30,8 +30,9 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 | # | item | verdict | commit | checks | files | eyeball | note |
 |---|------|---------|--------|--------|-------|---------|------|
 | A1 | the mask bit and the chord | `[E]` | `59b67766` | 36 new, ALL PASS | xschem.h, annot_mode.tcl, cadence_style_rc | owed | ✅ `Ctrl-Alt-6` no longer fires `Alt-6`. Filed 1246, 1247, 1248 |
-| A2 | the name classifier | `[ ]` | | | | | three spellings, not one |
-| A3 | the draw rung and the per-instance gate | `[ ]` | | | | | needs A1+A2; the 11th call site; **also owns 1246, 1247, 1248** |
+| A2 | the name classifier | `[x]` | `dcbb85c3` | 36→52, ALL PASS | xschem.h, actions.c | — | `TEXT_ANNOT_NAME 1024`, unconditional. Filed 1249, 1250 |
+| A3 | the draw rung and the per-instance gate | `[ ]` | | | | | needs A1+A2; the 11th call site; **also owns 1246, 1247, 1248, 1249** |
+| A4 | the status line is not path-length-sensitive | `[ ]` | | | | | fixes **1250**, an INTERMITTENT T1 red |
 | B1 | the backend seam | `[ ]` | | | | | D-4/D-5 are the whole item |
 | B2 | the list store and the settings file | `[ ]` | | | | | `Makefile.in` ×2 + `./configure` |
 | B3 | the window | `[ ]` | | | | | `rdw::`, not `results::` |
@@ -78,3 +79,4 @@ three `look` debts from the merge.
 5. **A crew "improving" key 3** by inferring parameters violates D-4. The
    DECISIONS file states this in the negative on purpose.
 | A1 | E | 59b67766 | test_annot_declutter_1244 new->ALL PASS 36; full_audit 364/11/0/2 of 377->365/11/0/2 of 378 (+1 = this suite, 11 reds identical by name); T1 0->0 solo; T2 HARNESS PASS 6/6->6/6; test_op_annot 492->492; annot siblings 36/52/27/15/22 unchanged; accelerators+launch_context+keybind_snap_grid 6+clone_canvas 3+audit_classifier 69 unchanged | 1246,1247,1248 | Accept the three Ctrl-Alt-6 declutter status sentences as written — including that, until item A3 lands, the ON one ("a device showing operating-point values draws its name and those values only") promises a declutter that has not arrived yet? |
+| A2 | x | dcbb85c3 | test_annot_declutter_1244 36->52 ALL PASS \| test_op_annot 492->492 \| annot_show_menu 36 \| stale_0684 52 \| hier_0911 15 \| blank_cause_0909 27 \| op_behind_tran_1242 22 \| selflog_grep_guard (no count) \| T1 0->0 solo (1 unattributed F21 red in 4 runs, filed 1250) \| T2 HARNESS PASS 6/6 \| audit 365/11/0/2 of 378, all 11 reds + 2 skips identical BY NAME | 1249, 1250 | A2 landed and committed: TEXT_ANNOT_NAME 1024 set unconditionally on a whole-string match of all three spellings, nothing visible until A3 (proved cross-binary byte-identical); rule debt 1244_A2_name_bit_vs_hide_true is wanted BEFORE A3. |

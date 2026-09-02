@@ -223,6 +223,13 @@ overlay off is the feature eating itself.
   promise only this item can make true, and the driver accepted that wording on
   the explicit condition that A3 proves it.
 
+* **1249** — the shipped keep-name test misses `@spiceprefix@name` in **all
+  three render back-ends** (`draw.c:873` and its siblings in `svgdraw.c` /
+  `psprint.c`). Measured by A2 and reproduced: at `hide_symbols=2` the render
+  shows `@name` and `@symname` and drops the `@spiceprefix@name` instances
+  entirely. You are rewriting exactly those loops, and A2 has already given you
+  the correct predicate — `TEXT_ANNOT_NAME`. Fix it as you pass.
+
 **Files.** `src/xschem.h` · `src/actions.c` · `src/draw.c` · `src/svgdraw.c` ·
 `src/psprint.c` · `src/select.c` · `src/xschem.tcl` (1246) · rows in A1's suite
 
@@ -264,6 +271,29 @@ the with-text bbox that `findnet.c:461` gates on, so record what happens to
    deliberately: row V21 of `test_op_annot.tcl` golds its eight arms
    byte-for-byte and A1 owns neither file. **A3 should decide whether to close
    that gap**, because A3 is the item that makes the silence wrong.
+
+---
+
+## A4 — the status line is not path-length-sensitive  *(needs A1; independent of A3)*
+
+**Do.** Fix issue **1250**. `cadence::_annot_fit` (`utils/annot_mode.tcl:724`)
+elides anything over 255 bytes, and the held status line embeds a scratch path,
+so `test_annot_stale_0684`'s status rows go red when the path is long — and F21
+flaked once at the **default** path, i.e. in an ordinary run.
+
+**Why it is its own item and not a footnote.** T1's baseline is **zero** counted
+failures, and CLAUDE.md's rule is that *a standing red is a defect, not
+furniture*. This one is worse than standing: it is intermittent, so a crew that
+re-runs and sees green waves it through. That is precisely how this branch has
+already shipped two defects past twenty-eight passing checks.
+
+**Files.** `utils/annot_mode.tcl` · `tests/headless/test_annot_stale_0684.tcl`
+
+**Accept.** The status rows pass at the default scratch path **and** under a
+deliberately long one — drive both, do not argue from the code. Run T1 solo
+**four times** and show four zeros; one green run is not evidence about an
+intermittent red. Do not widen the 255-byte cap without reading issue **0886**,
+where the elision was chosen.
 
 ---
 
