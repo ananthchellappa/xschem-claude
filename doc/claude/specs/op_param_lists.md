@@ -583,10 +583,11 @@ which do know the instance — most cheaply as a new context value
 > n)` is the instance entry. Ladder **L2** — smallest blast radius — reinforced by
 > **I1**.
 
-**A3b. What the gate actually tests — and where it departs from D-6's words.**
-Shipped as `annot_instance_annotated(n)` = `get_annot_overlay()`'s own
-precondition chain (factored out as `annot_overlay_gate(n)` so the two readers
-cannot drift, **I1**) **plus** a non-blank `annot_overlay_cached_text(n)`. It must
+**A3b. What the gate actually tests.** Shipped as `annot_instance_annotated(n)` =
+`get_annot_overlay()`'s own precondition chain (factored out as
+`annot_overlay_gate(n)` so the two readers cannot drift, **I1**) **plus** — since
+item **A5-a**, 2026-09-02 — a block carrying **at least one actual VALUE**
+(`annot_block_has_value()`, a pure scan of the same cached string). It must
 **not** call `get_annot_overlay()` itself: that function does
 `++annot_overlay_count` and row **O13** of `test_op_annot.tcl` golds the delta
 exactly, so one call per text per instance per frame would both red O13 and
@@ -595,17 +596,51 @@ destroy the only seam an automated check has on the overlay.
 ⚠ **`op_annot::text` emits blank-VALUED rows when the raw publishes nothing for a
 registered device.** Measured, twice, first-hand: with a descriptor registered and
 a raw loaded whose vectors do not resolve, `op_annot::text M1` returns
-`"zid =\nzgm =\n"` — non-blank — while a descriptor-less `R1` returns `{}`. So the
-gate reads *"this device has a descriptor whose `match`/`devpath` resolve and which
-declares at least one row"*, **not** *"numbers arrived"*. D-6's words are "only
-instances that got OP numbers". Subcircuits and descriptor-less devices are
-untouched, which is what D-6 asks for; a **registered device over a dead or partial
-raw is decluttered while showing empty rows**, which D-6's words do not cover — and
-per measured rule **R1** (`gm`/`gds`/`vth` exist only if the deck saved them
-explicitly) that is common rather than exotic. The gate follows the **pixels** — it
-is exactly what the overlay already paints, and the alternative needs a second
-parser of the block's format (two builders, against **I1**). `rule` debt
-**`1244_A3_blank_valued_block`**; **it is item A3's status-E question.**
+`"zid =\nzgm =\n"` — non-blank — while a descriptor-less `R1` returns `{}`.
+
+**Item A3 therefore shipped a gate that read *"this device has a descriptor whose
+`match`/`devpath` resolve and which declares at least one row"*, not *"numbers
+arrived"* — and that was wrong.** It followed the *pixels* (what the overlay
+paints) where D-6's words are "only instances that got **OP numbers**". Item A4
+then measured the consequence with **no raw loaded at all**, i.e. before any
+simulation has been run:
+
+```
+raw loaded = -1
+mask 1  ->  MC1 CW=1u {cid =}
+mask 9  ->  MC1 {cid =}
+```
+
+The user presses `6`, presses `Ctrl-Alt-6`, and trades `W/L` for an empty label:
+the whole feature inverted, in the first thirty seconds of using it.
+
+**CORRECTED by item A5-a, 2026-09-02 (driver ruling).** The gate now requires
+`annot_block_has_value()` — per line of the cached block, after the first `=`, any
+character that is not a space or a tab. It is a **pure function of the string
+`annot_overlay_cached_text()` already returns**: no `tcleval`, no `tclgetvar`, no
+`xschem raw value`. That is deliberate and is the whole answer to issue **0466**
+(thirteen epoch fields and not one moved on `xschem reload`, so the overlay painted
+the previous file's numbers): value-ness acquires **zero** invalidation inputs of
+its own and rides the one wholesale flush `annot_overlay_sync()` already performs,
+so it cannot be staler than the block the overlay paints. Answering from a *second*
+source would be 0466 re-opened. `rule` debt **`1244_A3_blank_valued_block`** stays
+on the user's queue as confirmation of the gate itself.
+
+⚠ **SO THE GATE AND `get_annot_overlay()`'s D1 TERM NOW DELIBERATELY DISAGREE, AND
+D1 IS UNCHANGED.** The overlay keeps **painting** a label-only block, because a
+user is entitled to see *which* parameters this device would show once the raw
+carries them (invariant **I3**'s spirit — a missing vector renders blank, never a
+stale or invented number). The declutter is the stronger half because it removes
+the **user's own text**, so it may fire only where numbers actually replaced it.
+An earlier draft of the C comment asserted the two "answer to ONE fact and cannot
+disagree"; that sentence was **false** and has been rewritten in place.
+
+⚠ **Two ways a valueless device still slips through, both measured after the fix
+and both filed:** a descriptor **label containing `=`** parses as valued (issue
+**1258** — the mint writes the separator as `` ` = ` ``, so requiring that, or
+taking the last `=`, closes it), and a raw that publishes **0.0** renders `zid = 0`
+and opens the gate (issue **1259** — absent-vs-zero is a distinction the block
+string does not carry, and belongs with item B1's backend seam).
 
 ⚠ **Feature A shrinks the target feature B clicks.** `select.c:709` calls
 `text_hidden` inside `symbol_bbox`'s text loop, so a hidden text shrinks the
@@ -693,21 +728,33 @@ recorded here so it is not "corrected" later.
 >   `update_all_sym_bboxes` arm — because the D-6 gate reads the overlay cache and
 >   that cache was synced at three draw/export entry points only. Without it the
 >   shipped `annotate_op; update_all_sym_bboxes; redraw` computes the click target
->   from the pre-annotate cache. The other **38** `symbol_bbox()` callers still run
->   outside any overlay sync: issue **1252**.
+>   from the pre-annotate cache. The other **38** `symbol_bbox()` callers still ran
+>   outside any overlay sync: issue **1252**, **fixed at the second Tcl-reachable
+>   door by item A5-c** (`annot_overlay_sync()` in the `recompute_inst_bbox` arm).
+>   1252's own recommended repair — *"call `annot_overlay_sync()` wherever
+>   `annot_show_sync_cache()` is already called"* — is **refuted**: the stale door
+>   calls neither sync, so that repair leaves the defect where it was found.
+>   Residue in issue **1260**: `xschem setprop instance` and `xschem move_instance
+>   … nodraw` still write the click box from a stale gate (and A5-a *widened* the
+>   first — a rename over a dead raw now flips the gate where before it did not),
+>   and the **mask** half is still unsynced at `recompute_inst_bbox`.
 > * ⚠ **The PDK symbols' OWN operating-point texts carry `hide=true`** (3 in
 >   sky130 `nfet_01v8`, 2 in gf180 `nfet_03v3`, 0 in IHP `sg13_lv_nmos`), so they
 >   are **not** annotation-classed, and once *View > Show hidden texts* is on —
 >   the state both menu bodies create — **the rung hides them**, replaced by the
 >   overlay block. Intended trade, unstated anywhere until now. `rule` debt
 >   `1244_A3_hide_true_op_texts`.
-> * ⚠ **P6 pin-owned pin names are NOT reached** (issue **1253**): they are drawn
+> * ⚠ **P6 pin-owned pin names were NOT reached** (issue **1253**): they are drawn
 >   by a **fourth** pass gated by `pin_name_visible()`, not by `text_hidden()`, so
->   a pin spelling `show_pinname=true` keeps its name on a fully decluttered
+>   a pin spelling `show_pinname=true` kept its name on a fully decluttered
 >   device — measured first-hand. Inert on all three PDK acceptance devices (four
 >   pins each, all `false`); live for the 2,968 shipped `true` records. D-1 says
->   pin labels are in scope, so this is a gap in the *implementation*, not in the
->   ruling.
+>   pin labels are in scope, so this was a gap in the *implementation*, not in the
+>   ruling. **FIXED by item A5-b**: one shared `if(text_hidden_inst(0, n)) continue;`
+>   immediately after the `pin_name_visible()` anchor in each of `draw.c`,
+>   `svgdraw.c` and `psprint.c`. The **click target does not move** — `symbol_bbox()`
+>   walks only `symptr->text[]` and has no P6 pass, so this is purely a render
+>   change.
 > * **The 42 one-record `name+parameter` symbols are spared on this tree by the
 >   gate**, not by luck: every shipped PDK descriptor is `match`-narrowed and
 >   registers only `nmos`/`pmos` (+ IHP `vertical_npn`), so none of the 42 resolves
@@ -765,6 +812,48 @@ recorded here so it is not "corrected" later.
 >   — deliberately, since item A3's 1246 fix — and emits **no status sentence at
 >   all**. Issue **1256**, filed and not fixed; `src/xschem.tcl` is in no Files
 >   cell of items A4 or A5.
+
+> **LANDED — item A5, 2026-09-02** (`src/actions.c`, `src/draw.c`, `src/svgdraw.c`,
+> `src/psprint.c`, `src/scheduler.c`;
+> `tests/headless/test_annot_declutter_1244.tcl` **93 → 105**). Issues **1252**,
+> **1253** and **1254** closed; **1257**, **1258**, **1259**, **1260**, **1261**
+> filed and not fixed. **Status E.** Four changes, five added code lines and one
+> 12-line pure function:
+>
+> * **A5-a — the gate requires a NUMBER** (§4.1 A3b above, rewritten). Driver
+>   ruling. Rows **A30** (no raw at all), **A32** (a raw that publishes nothing for
+>   this device), **A33** (the valued control, still decluttered), **A34** (the
+>   mint contract pinned from the Tcl side, so a change to `::op_annot::text`'s
+>   width pass reds a row instead of silently re-opening the defect) and **A35**
+>   (structural: one definition, one call, and the helper's body contains no
+>   `tcleval`/`tclget`/`op_annot`/`xctx` — the 0466 guarantee written as structure).
+> * **A5-b — 1253, pin names**, three byte-identical one-liners.
+> * **A5-c — 1252, the stale `symbol_bbox()` door.** ⚠ **ORDER IS LOAD-BEARING in
+>   any row that measures this**: any sync repairs the cache, so the stale door must
+>   be read **first**. Row **A40**.
+> * **A5-d — 1254, the two vacuous rows**, repaired in place and **shown failing**
+>   under the sabotage that used to leave them green (`SB7b` → A15; `SB-GATE-ALWAYS`
+>   → A17). Row **A22**'s source census golden moved `{3 1 1 1 0}` → `{4 2 2 1 0}`
+>   deliberately; the regexp was **not** widened.
+>
+> Three things this section did not say:
+>
+> * ⚠ **TWO SUITE READERS PUNISH COMMENT PROSE IN `draw.c`/`svgdraw.c`/`psprint.c`.**
+>   Row **A22** (`opa_n_grep`) counts comment lines, so writing `text_hidden_inst(`
+>   in prose inflates the census; and row **L27** of `test_op_annot.tcl` asserts the
+>   literal `HIDE_TEXT` survives in exactly **one** `.c` file. Both tripped item A5's
+>   first draft and both are avoided by wording. Whoever next comments those three
+>   files will hit them again.
+> * ⚠ **Row A38 requires the new guard on the line IMMEDIATELY after the
+>   `pin_name_visible()` anchor** (an exact trimmed-line match), so rationale prose
+>   must live *above* the loop, not between the anchor and the guard.
+> * ⚠ **`draw.c` DOES have a behavioural seam, contrary to what item A5 believed**
+>   (issue **1261**): `print_image()` calls `draw()`, so a warm-then-real
+>   `xschem print png` pair at a **tight** viewport measures a pin name going away
+>   (12912 → 8301 bytes, with an 8744/8744 `show_pinname=false` control). At the
+>   suite's usual wide viewport the name is zoom-culled at both masks and the PNGs
+>   are byte-identical — which is how the seam was missed. `draw.c`'s leg is
+>   therefore guarded by a **grep census** today.
 
 ### 4.2 Feature B — the Results Display Window
 
@@ -944,16 +1033,22 @@ Still open:
   cell does not include `utils/annot_mode.tcl`, so the wording is written once,
   there, or never. The rejected alternative was a placeholder sharpened by A3,
   which would make A3 edit a file it does not own.
-* **Q12 — does the declutter reach a registered device that got NO numbers?**
-  (added by item A3, 2026-09-02; `rule` debt **`1244_A3_blank_valued_block`**;
-  **this is item A3's status-E question**). D-6 says "only instances that got OP
-  numbers". The shipped gate is "the descriptor resolves and declares at least one
-  row", because that is exactly what the overlay paints — so a registered FET over
-  a dead or partial raw is decluttered **while its block shows `zid =` with no
-  number**. Per measured rule **R1** that is common, not exotic. The alternative
-  needs a second parser of the block's format (two builders, against **I1**) and
-  would let a sheet show an OP block over parameters it had decided not to hide.
-  See §4.1 A3b.
+* ~~**Q12 — does the declutter reach a registered device that got NO numbers?**~~
+  **ANSWERED NO by driver ruling, item A5-a, 2026-09-02.** D-6 says "only
+  instances that got OP numbers", and a label with no number did not get one. The
+  gate now requires at least one row carrying an actual value; a registered FET
+  over a dead raw — or with no raw loaded at all — keeps every one of its texts.
+  `rule` debt **`1244_A3_blank_valued_block`** stays on the user's queue as
+  confirmation. See §4.1 A3b for the mechanism, the deliberate disagreement with
+  `get_annot_overlay()`, and the two remaining slips (issues **1258**, **1259**).
+* **Q15 — with NO results file, `Ctrl-Alt-6` now hides nothing, but the status
+  line still says other device text is hidden** (added by item A5, 2026-09-02;
+  `rule` debt **1257**; **this is item A5's status-E question**). The gate moved
+  (A5-a) and `cadence::_annot_declutter_clause` did not — it is gated on bit 3 AND
+  bit 0 only, and lives in `utils/annot_mode.tcl`, item A4's landed file, which
+  item A5 does not own. Should the clause **follow the gate** (say nothing when
+  nothing was hidden), or should the press be **refused outright** with "Run a
+  simulation first"? Row **E6** golds the gap on purpose, so it stays visible.
 * **Q14 — the clause the OTHER four chords now carry** (added by item A4,
   2026-09-02; `rule` debt **1251**; **this is item A4's status-E question**).
   After a `Ctrl-Alt-6`, every `6` / `Alt-6` / `Alt-Shift-6` press appends

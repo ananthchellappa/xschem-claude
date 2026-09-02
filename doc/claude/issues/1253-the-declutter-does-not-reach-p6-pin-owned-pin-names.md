@@ -1,7 +1,8 @@
 # 1253 — the declutter does not reach P6 pin-owned pin names
 
-Status: **open** (measured first-hand by item A3's write-up pass, 2026-09-02;
-**not fixed** — deliberately, see below) · Branch: `fluid-editing`
+Status: **FIXED** by item **A5-b**, 2026-09-02 (measured first-hand by item A3's
+write-up pass; three one-liners, one per back end). **Coverage residue filed as
+1261.** · Branch: `fluid-editing`
 Related: **1244**, ruling **D-1**, the P6 pin-name feature
 
 ## The defect
@@ -84,3 +85,57 @@ placed beside the `pin_name_visible()` test. `text_hidden_inst(0, n)` is exactly
 existing predicate, not a fourth copy of the decision (invariant I1). Verify
 against a fixture whose pins spell `show_pinname=true`; the four PDK acceptance
 rows cannot see it.
+
+
+---
+
+## FIXED by item A5-b, 2026-09-02
+
+**What landed — this issue's own recommended one-liner, taken verbatim**, on the
+line immediately after the `pin_name_visible()` anchor and **before**
+`get_pin_name_layout()`, so the `pnm`/`pfont` malloc/free pair is never reached
+for a hidden pin. Byte-identical in all three back ends:
+
+```c
+      if(!pin_name_visible(pin->prop_ptr)) continue;
+      if(text_hidden_inst(0, n)) continue;    /* 1253 / D-1, see above */
+```
+
+`src/draw.c:975` · `src/svgdraw.c:1002` · `src/psprint.c:1295`. `flags` 0 carries
+no annotation class and no explicit `hide=` bit, so the call falls through to the
+declutter rung and returns 0 whenever the bit is clear — nothing outside mask 9
+moves. `pin_name_visible()` itself is untouched (it is shared with the
+symbol-edit views through `pin_name_shown()`).
+
+**Measured before (item A5's measure pass, verbatim), fully valued block:**
+
+```
+A5b SVG mask 9 texts = MA1 XDRAIN {aid = 11.1u} {agm = 333u}
+A5b PS  mask 1 : (MA1)=1 (A5W=1u)=1 (XDRAIN)=1 (XGATE)=0
+A5b PS  mask 9 : (MA1)=1 (A5W=1u)=0 (XDRAIN)=1 (XGATE)=0
+```
+
+**After:** rows **A36** (SVG) and **A37** (PostScript) gold the pin name gone at
+mask 9 and present at mask 1, with the `show_pinname=false` twin rendering at
+**neither** mask — the non-vacuity control that the P6 pass is what is being
+observed. Row **A39** golds invariant I-C: with `ANNOT_SHOW_OP` clear, masks 0 and
+8 are identical and both keep the pin name. Row **A38** is the source census, and
+row **A22**'s census golden moved `{3 1 1 1 0}` → `{4 2 2 1 0}` deliberately — the
+regexp was **not** widened.
+
+**Sabotage:** `SB-A5b-PINS` (a `text_hidden_inst_pin_off` shim at *only* the three
+new call sites, the other six instance sites keeping the real predicate) reds
+**A22, A36, A37, A38**, exactly as predicted.
+
+## Still open
+
+* **1261** — `draw.c`'s leg is asserted by the source census A38 only. The belief
+  that `draw()` has no observable seam is **wrong**: `print_image()` calls
+  `draw()`, and a warm-then-real `xschem print png` pair at a tight viewport
+  measures the pin name going away (12912 → 8301 bytes, with an 8744/8744
+  `show_pinname=false` control).
+* **The click target does not move.** `symbol_bbox()` (`src/select.c`) walks only
+  `symptr->text[]` and has no P6 pass, so hiding a pin name changes no bbox and
+  nothing about picking changes. Adding a fourth pin pass there would be new
+  geometry, not a conformance gap; nothing in D-1 asks for it. Deliberately not
+  done, and row A38 golds `select.c` at **zero** on purpose.

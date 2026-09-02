@@ -1,7 +1,8 @@
 # 1252 — the declutter's gate is fresh at one `symbol_bbox()` caller and stale at the other 38
 
-Status: **open** (measured by item A3, 2026-09-02; **partially mitigated**, not
-fixed) · Branch: `fluid-editing`
+Status: **FIXED** by item **A5-c**, 2026-09-02 (measured by item A3; the
+`recompute_inst_bbox` door now syncs). **Residue filed as 1260** — two further
+doors and the mask half of the gate. · Branch: `fluid-editing`
 Related: **1244**, ruling **D-6**, issue **0453** (same staleness shape), item
 **B4** (which clicks these devices)
 
@@ -75,3 +76,60 @@ the *epoch* boundary rather than at the draw entry points — i.e. call
 sites), which costs a struct compare when the epoch has not moved. Item **B4**
 should either do that or call `update_all_sym_bboxes` itself before its first
 pick, and its suite should carry a row that fails if it does not.
+
+
+---
+
+## FIXED by item A5-c, 2026-09-02 — and this issue's recommended repair was refuted
+
+**What landed.** One line in the `recompute_inst_bbox` arm of `scheduler()`
+(`src/scheduler.c`), after the `!xctx` guard and before either `symbol_bbox()`
+branch:
+
+```c
+      annot_overlay_sync();
+```
+
+with a comment naming the measurement and both rejected repairs.
+
+**THE SENTENCE THIS ISSUE RECOMMENDED IS REFUTED, and item A5 says which one:**
+
+> *"i.e. call `annot_overlay_sync()` wherever `annot_show_sync_cache()` is already
+> called (12 sites)"*
+
+The measured stale door — the `recompute_inst_bbox` arm — calls **neither** cache
+sync, so that repair as written leaves the defect exactly where it was found. (The
+real `annot_show_sync_cache()` call sites are 8, not 12; four of the greps are
+comments. The four not already paired are `xschem print`, `calc_drawing_bbox`,
+startup and the CLI batch print, and none of them is a `symbol_bbox()` caller that
+can observe a stale gate.) This issue's *rejection* of syncing inside
+`symbol_bbox()` itself is **not** refuted and still stands.
+
+**Measured before (item A5's measure pass, verbatim):**
+
+```
+A5c warm  bbox           = 277.5 -340 322.629 -280
+A5c after re-register, op_annot::text MA1 = <<>>   (no draw, no export)
+A5c STALE door  recompute_inst_bbox : bbox 277.5 -340 322.629 -280  flushes 21  instance_at(430,-245)={}
+A5c FRESH door  update_all_sym_bboxes: bbox 277.5 -340 495.71 -232.78  flushes 22  instance_at(430,-245)={MA1}
+```
+
+**After:** row **A40** of `tests/headless/test_annot_declutter_1244.tcl` drives
+both doors — **stale door read first**, because any sync repairs the cache and a
+row that syncs before the stale read measures nothing — and asserts the two boxes
+equal and both `instance_at` picks returning the instance.
+
+**Sabotage:** `SB-A5c-RECOMPUTE` (an `annot_overlay_sync_noop()` shim at *only*
+the new call, leaving the `update_all_sym_bboxes` site and the three draw/export
+sites correct) reds **A40 and A41**, exactly as predicted, and nothing else.
+
+## Still open — see **1260**
+
+Item A5's acceptance sentence *"the gate agrees at both `symbol_bbox()` callers"*
+is true of the two **Tcl-reachable bbox verbs** and of the **overlay-cache half**
+of the gate. Measured after the fix and filed as **1260**: `xschem setprop
+instance` and `xschem move_instance … nodraw` both write the click box from a
+stale gate (and item A5-a *widened* the first of those, because a rename over a
+dead raw now flips the gate where before it did not), and a bare
+`set ::annot_show` makes the two doors answer opposite picks because the **mask**
+half is deliberately not synced at `recompute_inst_bbox`.

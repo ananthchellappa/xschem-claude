@@ -949,7 +949,22 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
      * show_pin_names tri-state + per-pin show_pinname (pin_name_visible). Way A: the shared
      * sym[] cache is never augmented with synthetic view texts, so an instance draws the name
      * here from tokens (mirroring the symbol-edit view). Not drawn on a bbox-hidden symbol;
-     * honors zoom-cull and the text-layer enable / single-layer gates like the loop above. */
+     * honors zoom-cull and the text-layer enable / single-layer gates like the loop above.
+     *
+     * 1253 (item A5-b) / RULING D-1, in the user's own words: "even pin labels can be
+     * hidden when user is hiding other things that are not @name. We are only
+     * interested in name and annotation of OP info." The declutter's rung lives in
+     * text_hidden(), which gates the loop over a SYMBOL's text[] records -- this pass
+     * walks symptr->rect[PINLAYER] instead, so the rung never saw it and a symbol
+     * spelling show_pinname=true kept its pin names on a fully decluttered device, in
+     * all three back ends. Hence the guard below. It is the SHARED instance-aware
+     * predicate, not a pin-specific one -- a fourth gate would be exactly the drift
+     * invariant I1 forbids -- and flags 0 carries no annotation class and no explicit
+     * hide= bit, so the call falls straight through to the declutter rung and returns 0
+     * whenever the bit is clear. It sits immediately after pin_name_visible() and
+     * BEFORE get_pin_name_layout(), so the pnm/pfont malloc/free pair is never reached
+     * for a pin the declutter hides, and it is byte-identical in draw.c, svgdraw.c and
+     * psprint.c. Rows A36..A39 of tests/headless/test_annot_declutter_1244.tcl. */
     if(!hide && !pin_names_all_off()) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
       xRect *pin = &(symptr->rect[PINLAYER])[j];
       Pin_name_layout lay;
@@ -957,6 +972,7 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       double pcx, pcy, tx, ty;
       int plw;
       if(!pin_name_visible(pin->prop_ptr)) continue;
+      if(text_hidden_inst(0, n)) continue;    /* 1253 / D-1, see above */
       if(!get_pin_name_layout(pin->prop_ptr, &lay, &pnm, &pfont)) continue;
       if(lay.size * FONTWIDTH * xctx->mooz < 1) {                   /* zoom-cull, as texts */
         my_free(_ALLOC_ID_, &pnm); my_free(_ALLOC_ID_, &pfont); continue;

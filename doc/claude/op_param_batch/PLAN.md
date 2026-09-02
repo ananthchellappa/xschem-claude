@@ -527,7 +527,7 @@ variants, T1 ×4 solo, full audit) is one agent's.
 
 ---
 
-## A5 — D-1 / D-6 conformance, and the staleness A3 left  *(needs A3)*
+## A5 — D-1 / D-6 conformance, and the staleness A3 left  ✅ **DONE (status E), 2026-09-02**
 
 A3 landed the rung and measured four things it could not fix inside its own
 scope. Three are conformance gaps against rulings the user has already given,
@@ -582,9 +582,107 @@ is the exact failure mode this branch has a standing rule about.
 gate agrees at both `symbol_bbox()` callers — drive both, do not reason about it.
 The two vacuous rows fail when the feature is sabotaged.
 
+**Landed.** Five added code lines and one 12-line pure function, across five `.c`
+files. **A5-a**: `annot_block_has_value()` — per line of the cached block, after
+the first `=`, any character that is not a space or a tab — and
+`annot_instance_annotated()` returns it. **A5-b**: one shared
+`if(text_hidden_inst(0, n)) continue;` immediately after the `pin_name_visible()`
+anchor in `draw.c`, `svgdraw.c` and `psprint.c` (issue 1253's own one-liner,
+verbatim). **A5-c**: `annot_overlay_sync()` in the `recompute_inst_bbox` arm of
+`scheduler()`. **A5-d**: rows A15 and A17 repaired in place and **shown failing**
+under the sabotage that used to leave them green. `src/select.c` is in the Files
+cell and was **deliberately not edited** — `symbol_bbox()` has no P6 pin pass, so
+hiding a pin name moves no bbox.
+
+**INVALIDATION RECEIPT (the brief's explicit question, against 0466 §S9b): A5-a
+rides NO NEW HOOK.** `annot_block_has_value()` is a **pure function** of the string
+`annot_overlay_cached_text()` already returns — no `tcleval`, no `tclgetvar`, no
+`xschem raw value` — so the gate acquires **zero** invalidation inputs of its own
+and cannot be staler than the block `get_annot_overlay()` paints. It rides the one
+wholesale flush the overlay cache already performs on every epoch move (raw
+pointer / level / nvars / annot_p, `annot_show`, `modify_seq`, `data_seq`,
+`schhash`, `desc_gen`) plus the explicit bumps in `clear_drawing` (`src/actions.c`
+— the `xschem reload` path 0466 was filed about; **0466's own text cites `:2321`
+and is stale**), `set_modify`, `remove_symbols`, `save.c`'s raw vector edits,
+`update_op()` and the scheduler's `raw set` arm. Measured: flushes 21 → 22 on an
+`op_annot::register`, 24 → 25 on an `annotate_op`. Row **A35** asserts the purity
+as *structure*. The only way to re-open 0466 here is to answer from a **second**
+source; that is deliberately not done.
+
+**Suites.** `test_annot_declutter_1244` **93 → 105** checks, ALL PASS. T1 zero,
+T2 6/6, and the whole annotation + pin-name + pick families unmoved. Full audit
+`SUMMARY: 365 pass  11 fail  0 crash/timeout  2 skip  (total 378)`, diffed **by
+name and status** against `audit_A4_2026-09-02.txt`: **empty**, 385 sorted verdict
+lines each side. Sabotage: six variants, every predicted red observed;
+`SB7b` → **A15** (it reddened nothing before) and `SB-GATE-ALWAYS` → **A17** (it
+left A17 green before) are the two 1254 deliverables, shown failing both ways.
+Issues **1252**, **1253**, **1254** closed. Filed and not fixed: **1257**,
+**1258**, **1259**, **1260**, **1261**. **Status E** — see below.
+
+---
+
+### What A5 learned that binds later items
+
+1. **⚠ ITEM B4 MUST STILL REFRESH THE BBOXES, AND FOR A SHARPER REASON THAN 1252
+   (issue 1260).** A5-c fixed the `recompute_inst_bbox` door, but **`xschem setprop
+   instance` and `xschem move_instance … nodraw` still write the click box from a
+   stale gate** — measured, with the frame on screen showing the text while
+   `instance_at 430 -245` answers empty over it. **A5-a widened the first of
+   those**: before A5-a a label-only block still opened the gate, so a rename over
+   a dead raw flipped nothing; now an ordinary property edit is enough. B4 calls
+   `xschem update_all_sym_bboxes` before its first pick **and carries a row that
+   reds if it does not**.
+2. **⚠ "The gate agrees at both `symbol_bbox()` callers" is true of the
+   overlay-cache half only.** The **mask** half is deliberately not synced at
+   `recompute_inst_bbox` (`annot_show_sync_cache()` ends in the 0688 backstop,
+   which can *clear* the mask, in a verb documented as not redrawing). Measured
+   with a bare `set ::annot_show`: the two doors answer **opposite** picks. Latent
+   — shipped code always writes through `xschem set annot_show` — but do not quote
+   the accept sentence as more than it is. Issue **1260** part 3.
+3. **⚠ ITEM A6 INHERITS A5-a's CONSEQUENCE (issue 1257).** With no results file
+   `Ctrl-Alt-6` now hides **nothing**, and `cadence::_annot_declutter_clause` is
+   still gated on bit 3 AND bit 0 only, so the held line still says other device
+   text is hidden. Row **E6** golds the gap on purpose. A6 owns `src/xschem.tcl`
+   and not `utils/annot_mode.tcl`, so whoever takes 1257 must be given that file.
+4. **⚠ ITEM B1 INHERITS THE ABSENT-vs-ZERO HALF (issue 1259).** A raw publishing
+   `0.0` renders `zid = 0` and **opens** A5-a's gate. B1's own rule — *"a
+   zero-length or `dims=0` vector is **absent**, not zero"* — is exactly the
+   distinction the block string does not carry, and `savecurrents` publishing
+   sky130 `ig`/`is`/`ib` as 0 makes it a real PDK case, not a fixture artefact.
+5. **⚠ TWO SUITE READERS PUNISH COMMENT PROSE IN `draw.c` / `svgdraw.c` /
+   `psprint.c`.** Row **A22** of the declutter suite (`opa_n_grep`) counts comment
+   lines, so `text_hidden_inst(` written in prose inflates its census; and row
+   **L27** of `test_op_annot.tcl` asserts the literal `HIDE_TEXT` survives in
+   exactly **one** `.c` file. Both reddened A5's first draft — L27 took T1 with it.
+   Reword; do not widen either reader.
+6. **⚠ `draw.c` HAS A BEHAVIOURAL SEAM AFTER ALL (issue 1261).** A5 believed the
+   screen leg was structural-only because `draw()`'s body is inside `if(has_x)`.
+   `print_image()` calls `draw()`, so a warm-then-real `xschem print png` pair at a
+   **tight** viewport measures a pin name going away: **12912 → 8301** bytes, with
+   an **8744 / 8744** `show_pinname=false` control. At the suite's usual wide
+   viewport the name is zoom-culled at both masks and the PNGs are byte-identical —
+   which is how it was missed. `draw.c`'s leg of 1253 is guarded by a grep census
+   today; the row and its sabotage are specified in 1261 for whoever may rebuild.
+7. **The A5-a gate is a PURE FUNCTION on purpose, and that is not decoration.**
+   Any later "improvement" that asks `::op_annot::_annotated`, `xschem raw value`
+   or a fresh `tcleval` from inside the gate re-opens issue **0466**. Row A35 reds
+   if you do.
+8. **⚠ ORDER IS LOAD-BEARING when measuring a stale cache.** Any sync — a draw, an
+   export, `update_all_sym_bboxes` — repairs it, after which the two doors agree.
+   The stale reading must be taken **first**; two attempts at the A5-c measurement
+   were lost to exactly this.
+
 ---
 
 ## A6 — the two consistency gaps A4 found  *(needs A4; independent of A5)*
+
+**⚠ ITEM A5 ADDED A THIRD GAP TO THIS FAMILY — issue 1257.** After A5-a a press
+with **no results file hides nothing**, while
+`cadence::_annot_declutter_clause` — gated on bit 3 AND bit 0 only — still says
+other device text is hidden. Row **E6** of the declutter suite golds that gap on
+purpose. The clause lives in `utils/annot_mode.tcl`, which is in **no** Files cell
+of A5 or A6: whoever takes 1257 must be given that file, and the user's ruling
+first (follow the gate, or refuse the press with "Run a simulation first"?).
 
 **A6-a — 1256, the stock menu is silent about the declutter.** `Waves > Op
 Annotate` in `src/xschem.tcl` does not emit the sentence item A4 added to the
@@ -617,6 +715,15 @@ the backend can enumerate. Pure Tcl, no UI, no deck change.
 probe-and-prune. A zero-length or `dims=0` vector is **absent**, not zero. The
 seam exists so the user's custom ngspice can supply a wildcard later without
 anything above it changing.
+
+**⚠ FEATURE A NOW DEPENDS ON THAT ABSENT-vs-ZERO DISTINCTION — issue 1259.** Item
+A5-a's declutter gate asks whether a rendered block row carries anything after the
+`=`, and a raw publishing `0.0` renders `zid = 0` and **opens** it — so a
+`savecurrents` run (sky130 `ig`/`is`/`ib` published as 0; `save [ib]` giving a
+`dims=0` column of `0.0`) declutters a sheet whose whole annotation is zeros. The
+block string cannot carry the distinction and must not be re-derived from a second
+source (issue 0466). If `op_param_set` publishes absence as a first-class answer,
+say so in 1259 so the gate can read it.
 
 **Files.** `src/ase.tcl` · new `tests/headless/test_rdw_seam_1245.tcl`
 
@@ -693,6 +800,19 @@ for this item: **(a)** a pick fixture written against pre-A3 coordinates will mi
 so **call `xschem update_all_sym_bboxes` before the first pick** or the pick reads
 a stale overlay epoch and answers over blank canvas. `xschem instance_at` itself is
 still the right verb — read-only, selects nothing.
+
+**⚠ AND ITEM A5 MADE (b) SHARPER, NOT SOFTER — issue 1260.** A5-c fixed the
+`recompute_inst_bbox` door, but **`xschem setprop instance` and `xschem
+move_instance … nodraw` still write the click box from a stale gate**, measured
+after the fix: the frame on screen showed `MZ1 VCW=1u PD {zid =} {zgm =}` while
+`instance_at 430 -245` answered **empty** over it, and one
+`update_all_sym_bboxes` then answered `MZ1`. A5-a *widened* this — before it, a
+label-only block still opened the gate, so a rename over a dead raw flipped
+nothing; now an ordinary property edit is enough. **So: refresh before the first
+pick, and carry a row that reds if the refresh is dropped.** Also note the mask
+half of the gate is still unsynced at `recompute_inst_bbox` (1260 part 3): a bare
+`set ::annot_show` makes the two doors answer opposite picks. Write the mask
+through `xschem set annot_show`, never a bare `set`.
 
 **Files.** `src/cadence_style_rc` · `src/rdw.tcl` · rows in B3's suite
 

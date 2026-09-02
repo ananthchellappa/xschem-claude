@@ -18,11 +18,21 @@
 # The draw-time rung is item A3 and the name classifier is item A2; A2 and A3
 # add their rows to THIS file.
 #
-# ⚠ THE FILE NOW COVERS ALL THREE ITEMS, IN THREE PASSES OVER ONE FEATURE:
+# ⚠ THE FILE NOW COVERS FIVE ITEMS, IN FIVE PASSES OVER ONE FEATURE:
 #   sections D M S T V I   item A1 — the mask bit and the Ctrl-Alt-6 chord
 #   section  N             item A2 — TEXT_ANNOT_NAME, the name classifier
-#   section  A             item A3 — THE DRAW RUNG, the per-instance D-6 gate,
+#   section  A, A0..A29    item A3 — THE DRAW RUNG, the per-instance D-6 gate,
 #                          and the four defects it inherits (1246 1247 1248 1249)
+#   sections C/B/E         item A4 — the declutter clause on the other keys'
+#                          sentence (issue 1251)
+#   section  A, A30..A41   item A5 — D-1 / D-6 CONFORMANCE and the staleness A3
+#                          left: the gate must require a VALUE (ruling D-6), the
+#                          P6 pin-owned pin names (1253, ruling D-1), the other
+#                          symbol_bbox() door (1252), and 1254's two coverage
+#                          holes — which are REPAIRED IN PLACE at rows A15 and
+#                          A17, keeping their numbers because 1254 names them.
+#                          A5 also EDITS two goldens: A22's call-site census
+#                          {3 1 1 1 0} -> {4 2 2 1 0}, and E6's fifth leg 0 -> 1.
 # Rows N10 and N14 were written by A2 as "A3 MUST REPLACE" / "1249 PINNED" and
 # were flipped in place by A3; row I2 was superseded by row A3 and re-purposed.
 # Each carries the reason on itself. Section A's own header lists which of its
@@ -1585,15 +1595,45 @@ check "A14 CLICK TARGET: at mask 9 the decluttered device's with-text bbox shrin
 ## is computed from the PRE-annotate state and the screen and the pick disagree
 ## for one pass. Nothing is exported or redrawn between the sync and the read
 ## here, deliberately.
+##
+## ⚠ REPAIRED IN PLACE BY ITEM A5 — ISSUE 1254 HOLE 1, AND THE ASSERTION FLIPS
+## DIRECTION. As written this row was UNFALSIFIABLE: item A3 asserted "the sync
+## alone reds A15" and the sabotage variant SB7b (neutralize ONLY
+## scheduler.c:14453) reddened NOTHING — 82/492/36 all pass. Two causes, both
+## measured. (1) `xschem load $A_SAV` immediately before `annotate_op` leaves the
+## overlay cache COLD, so the first gate call after the sync populates it fresh
+## and no staleness can exist. (2) Sharper than 1254 knew: `xschem annotate_op`
+## itself runs `update_op(); draw();` (scheduler.c:2544-2545) and draw() calls
+## annot_overlay_sync() at draw.c:10545, ABOVE the `if(has_x)` guard, so it runs
+## HEADLESS too — measured on this very sequence, the line under test flushed
+## ZERO times. So the row now WARMS to one annotation state, then moves the epoch
+## with an operation that does NOT draw (`xschem raw clear` — scheduler.c's raw
+## arm reaches extra_rawfile() and neither draws nor bumps annot_data_changed),
+## and only then runs ONE update_all_sym_bboxes. After item A5-a a raw-less sheet
+## is NOT decluttered, so the box must have GROWN BACK and the two pick points
+## must answer M1 again — the opposite sign of what this row golded before, and
+## now falsifiable. Leg 3 is the flush counter, which is what actually reds under
+## SB7b; leg 4 is the non-vacuity control that the warm box really was shrunken.
+## Row A40 below guards the OTHER door with a DIFFERENT mover, on purpose.
 xschem load $A_SAV
 update idletasks
 dc_setmask 9
 catch {xschem annotate_op $A_RAW 0}
 catch {xschem update_all_sym_bboxes}
+set A15_WARM [a3_ibox 0]
+set A15_F0 -1 ; catch {set A15_F0 [xschem get annot_overlay_flushes]}
+catch {xschem raw clear}
+catch {xschem update_all_sym_bboxes}
+set A15_F1 -1 ; catch {set A15_F1 [xschem get annot_overlay_flushes]}
 set A15_GOT [list [xschem instance_at 430 -245] [xschem instance_at 300 -300]]
+set A15_FIN [a3_ibox 0]
+catch {xschem annotate_op $A_RAW 0}
 dc_annot 0
-check "A15 THE BBOX IS NOT ONE PASS STALE: after annotate_op + ONE update_all_sym_bboxes (no redraw, no export) the box is ALREADY the shrunken one" \
-  $A15_GOT [list {} M1]
+check "A15 THE BBOX IS NOT ONE PASS STALE: warm at mask 9, move the epoch with NO draw, and ONE update_all_sym_bboxes must re-read the gate - the box grows back and the sync really flushed" \
+  [list $A15_GOT \
+        [expr {($A15_F1 - $A15_F0) > 0 ? 1 : 0}] \
+        [a3_lt [lindex $A15_WARM 2] [lindex $A15_FIN 2]]] \
+  [list {M1 M1} 1 1]
 
 ## Invariant I-C in GEOMETRY, not only in pixels: with bit0 clear the declutter
 ## bit must move no bounding box either.
@@ -1611,12 +1651,39 @@ check "A16 INVARIANT I-C in geometry: with ANNOT_SHOW_OP clear the declutter bit
 ## there), so the rung must not fire and the render is the KEEP-NAME render — not
 ## a doubly-stripped one. Compared mask-for-mask so this row says exactly one
 ## thing.
+##
+## ⚠ REPAIRED IN PLACE BY ITEM A5 — ISSUE 1254 HOLE 2. As written this row could
+## not detect the thing its name claims: under sabotage SB-GATE-ALWAYS
+## (annot_instance_annotated -> return 1, so hide_symbols is ignored entirely) it
+## stayed GREEN, because at hide_symbols=2 the keep-name filter has already
+## reduced BOTH renders to names only and the rung has nothing left to remove.
+## ⚠ AND 1254's FIRST REPAIR IS REFUTED ON THIS TREE — do not attempt it. It
+## says "give A17 a text the keep-name filter keeps and the rung would hide".
+## That text CANNOT EXIST: survivor and exempt are ONE predicate —
+## annot_name_token(text.txt_ptr) at draw.c:876 / svgdraw.c:931 / psprint.c:1213
+## against `flags & TEXT_ANNOT_NAME`, set by annot_name_token(t->txt_ptr) at
+## actions.c:1404 on the same string — so the intersection is empty. Take the
+## issue's SECOND option and assert the GATE, which the BBOX is the one open
+## window on: measured, at hide_symbols=2 the box is the UN-DECLUTTERED box at
+## both masks (identical to the hide_symbols=0 mask-1 box), while at
+## hide_symbols=0 mask 9 the same instance's box is shrunken. SB-GATE-ALWAYS
+## shrinks the hide_symbols=2 mask-9 box and reds legs 3 and 4; leg 5 is the
+## non-vacuity control that says the gate is capable of moving this box at all.
+## ⚠ THE hide_symbols=0 REFERENCE BOXES ARE TAKEN FIRST, deliberately: row A18
+## below runs at hide_symbols=2 and restores it, so this row must leave it set.
 set A17_HS 0 ; catch {set A17_HS $::hide_symbols}
+dc_annot 1 ; set A17_H0B1 [a3_ibox 0]
+dc_annot 9 ; set A17_H0B9 [a3_ibox 0]
 catch {xschem set hide_symbols 2}
 dc_annot 9 ; set A17_T9 [dc_ntexts [a3_pr2 [file join $scratch a3_hs2m9.svg]]]
+set A17_B9 [a3_ibox 0]
 dc_annot 1 ; set A17_T1 [dc_ntexts [a3_pr2 [file join $scratch a3_hs2m1.svg]]]
-check "A17 hide_symbols=2 CLOSES the D-6 gate, so the declutter does not fire there: the mask-1 and mask-9 renders are identical" \
-  [list [expr {$A17_T9 eq $A17_T1}] [expr {[llength $A17_T9] > 0}]] {1 1}
+set A17_B1 [a3_ibox 0]
+check "A17 hide_symbols=2 CLOSES the D-6 gate, so the declutter does not fire there: the renders AND the bboxes are identical at mask 1 and mask 9, and the box is the UN-decluttered one" \
+  [list [expr {$A17_T9 eq $A17_T1}] [expr {[llength $A17_T9] > 0}] \
+        [expr {$A17_B9 eq $A17_B1}] [expr {$A17_B9 eq $A17_H0B1}] \
+        [a3_lt [lindex $A17_H0B9 2] [lindex $A17_B9 2]]] \
+  {1 1 1 1 1}
 
 ## ⚠ ROW N14 FLIPPED — ISSUE 1249 FIXED HERE, DELIBERATELY. The shipped
 ## keep-name test is THREE byte-identical copies comparing against `@symname`
@@ -1702,14 +1769,22 @@ check "A21 THE ELEVENTH SITE, STRUCTURAL: get_annot_overlay still carries the sy
 ## ps_draw_symbol and symbol_bbox. The last element is what says the sweep was
 ## COMPLETE — a two-argument instance-context call left behind is a site the
 ## declutter silently does not reach.
-check "A22 CALL-SITE CENSUS: exactly six instance-aware calls (draw 3, svg 1, ps 1, select 1) and no two-argument instance-context call left behind" \
+## ⚠ THE GOLDEN MOVED {3 1 1 1 0} -> {4 2 2 1 0} WITH ITEM A5, AND DELIBERATELY.
+## A5-b (issue 1253, ruling D-1) adds the SEVENTH..NINTH instance-aware sites:
+## one `text_hidden_inst(0, n)` in each of the three P6 pin-name loops, which
+## walk symptr->rect[PINLAYER] and which text_hidden() never saw. select.c stays
+## at 1 — symbol_bbox() has no P6 pass (row A38). The golden is EDITED, not the
+## regexp widened: widening it so the count does not move is verbatim the
+## "the suite stays green while the feature changes" failure this batch has now
+## filed three times against this very suite (1248, 1254).
+check "A22 CALL-SITE CENSUS: exactly nine instance-aware calls (draw 4, svg 2, ps 2, select 1) and no two-argument instance-context call left behind" \
   [list [opa_n_grep $A_DRAW {text_hidden_inst\(}] [opa_n_grep $A_SVGD {text_hidden_inst\(}] \
         [opa_n_grep $A_PS {text_hidden_inst\(}]   [opa_n_grep $A_SEL {text_hidden_inst\(}] \
         [expr {[opa_n_grep $A_DRAW {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
                [opa_n_grep $A_SVGD {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
                [opa_n_grep $A_PS   {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
                [opa_n_grep $A_SEL  {text_hidden\(.*TEXT_CTX_INSTANCE}]}]] \
-  {3 1 1 1 0}
+  {4 2 2 1 0}
 
 # --- A23, A24: ISSUE 1246, THE TWO HARD SETS --------------------------------
 # `Waves > Op Annotate` and `Graphs > Annotate Operating Point into schematic`
@@ -1910,6 +1985,428 @@ check "A29 the 1246 literal rows in the two suites this item does not own are re
         [opa_n_grep $A_OPANNOT {regexp \{.*xschem set annot_show \\\[expr}] \
         [opa_n_grep $A_MENU    {regexp \{.*xschem set annot_show \\\[expr}]] \
   {2 0 0 2 2}
+
+dc_annot 0
+
+# ============================================================================
+# A30..A41 — ITEM A5: D-1 / D-6 CONFORMANCE, AND THE STALENESS A3 LEFT
+# ============================================================================
+# Four parts, all of feature 1244, three of them CONFORMANCE GAPS against
+# rulings the user has already given (DECISIONS.md D-1 and D-6):
+#
+#   A30..A35  A5-a — THE GATE MUST REQUIRE A VALUE, NOT A RESOLVING DESCRIPTOR.
+#   A36..A39  A5-b — issue 1253: the declutter must reach the P6 pin-owned
+#                    pin names, in all three back ends (ruling D-1).
+#   A40 A41   A5-c — issue 1252: the per-instance gate must be FRESH at BOTH
+#                    `symbol_bbox()` doors, not just at `update_all_sym_bboxes`.
+#   A15 A17   A5-d — issue 1254's two coverage holes, REPAIRED IN PLACE above
+#   A22 E6           (same row numbers — 1254 names A15 and A17 by number) plus
+#                    the two goldens A5-b and A5-a move.
+#
+# ⚠ WHAT A5-a INVERTS, AND WHY IT IS NOT POLISH. Measured on THIS fixture
+# against the pre-A5 binary, with `xschem raw loaded` = -1 (i.e. before any
+# simulation has been run at all):
+#
+#   mask 1 -> M1 a3fet XM1 A3OPTEXT A3W=1u A3GATE {zid =} {zgm =} ...
+#   mask 9 -> M1 a3fet XM1 A3OPTEXT                {zid =} {zgm =} ...
+#
+# The user presses `6`, presses `Ctrl-Alt-6`, and loses `A3W=1u` in exchange for
+# two EMPTY labels — strictly worse than before, reachable in the first thirty
+# seconds. RULING D-6 says the declutter reaches instances that "got OP
+# numbers"; a label with no number did not get one. So the gate must require at
+# least one row carrying an ACTUAL VALUE.
+#
+# ⚠ AND THE OVERLAY MUST NOT FOLLOW IT. `op_annot::text` emits every declared
+# row even when nothing resolved, deliberately — the user is entitled to see
+# WHICH parameters this device would show. So after A5-a the declutter's gate is
+# strictly STRONGER than `get_annot_overlay()`'s D1 term and the two
+# DELIBERATELY disagree. Row A31 is that accept criterion; row A9 above is the
+# one that catches the feature eating itself, and neither may move.
+#
+# ⚠ INVALIDATION (issue 0466 §S9b, the recorded case of exactly this going
+# wrong: thirteen epoch fields and not one moved on `xschem reload`, so the
+# overlay painted the previous file's numbers). The value test is a PURE
+# FUNCTION of the block string `annot_overlay_cached_text()` already returns —
+# no `xschem raw value`, no `::op_annot::_annotated`, no second tcleval — so the
+# gate acquires ZERO invalidation inputs of its own and cannot be staler than
+# the block the overlay paints. Row A35's last leg is that guarantee written as
+# structure; rows A30/A32/A33 drive the three raw states end to end.
+#
+# RED BEFORE A5 LANDS (9): A30 A32 A35 A36 A37 A38 A40 A41 — plus the two
+#   REPAIRED rows A15 and A22, and E6's fifth leg.
+# GREEN BEFORE AND AFTER (5) — controls and accept rows, NOT evidence for A5:
+#   A31  the overlay still paints on a label-only block (the accept row, and the
+#        row that says gate and overlay now deliberately disagree);
+#   A33  the DISCRIMINATION control — a valued device IS still decluttered, so a
+#        "fix" that closes the gate by refusing everything reds here;
+#   A34  the mint contract `op_annot::text` publishes, pinned from Tcl so the C
+#        helper's coupling to src/op_annot.tcl's width pass is visible if item
+#        A6 changes the mint;
+#   A39  invariant I-C for the pin pass: with ANNOT_SHOW_OP clear the declutter
+#        bit touches no pin name;
+#   A17  (repaired above) — 1254 hole 2. It is green today and green after; its
+#        whole point is that it must go RED under SB-GATE-ALWAYS, which it did
+#        not before the repair.
+
+set A_VP {2400 1600 100 -420 1000 -20}
+set A5_DEAD [file join $scratch a5dead.raw]
+set A5_PSYM [file join $scratch a5pin.sym]
+set A5_PFIX [file join $scratch a5pin.sch]
+set A5_PRAW [file join $scratch a5pin.raw]
+
+## Count the CODE lines of a C file matching <re> — a line whose first non-blank
+## characters are `*`, `/*` or `//` is a comment and is skipped.
+## ⚠ NOT opa_n_grep, which counts comments too: every helper A5 adds is NAMED in
+## the prose beside it (actions.c's rewritten gate comment names
+## annot_block_has_value; 1252's rejected repair is named in scheduler.c's), so a
+## comment-blind census would gold a number that prose alone can satisfy.
+proc a5_ccount {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split $d \n] {
+    if {[regexp {^\s*(\*|/\*|//)} $l]} continue
+    if {[regexp -- $re $l]} { incr n }
+  }
+  return $n
+}
+## 1 when the line IMMEDIATELY AFTER the (trimmed) exact line <anchor> contains
+## <needle>; 0 when it does not; -1 when the anchor is absent. The anchor is an
+## exact trimmed match on purpose: src/draw.c:949 mentions `pin_name_visible` in
+## a COMMENT, and a `string first` reader would anchor on the prose.
+proc a5_after_line {path anchor needle} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set lines [split $d \n]
+  set n [llength $lines]
+  for {set i 0} {$i < $n} {incr i} {
+    if {[string trim [lindex $lines $i]] ne $anchor} continue
+    if {$i + 1 >= $n} { return 0 }
+    return [expr {[string first $needle [lindex $lines [expr {$i + 1}]]] >= 0 ? 1 : 0}]
+  }
+  return -1
+}
+## 1 when a CODE line matching <needle> appears within <span> lines after the
+## first line matching <anchorRe>; 0 when it does not; -1 when the anchor is
+## absent.
+proc a5_near {path anchorRe needle span} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set lines [split $d \n]
+  set n [llength $lines] ; set start -1
+  for {set i 0} {$i < $n} {incr i} {
+    if {[regexp -- $anchorRe [lindex $lines $i]]} { set start $i ; break }
+  }
+  if {$start < 0} { return -1 }
+  for {set i $start} {$i < $n && $i <= $start + $span} {incr i} {
+    set l [lindex $lines $i]
+    if {[regexp {^\s*(\*|/\*|//)} $l]} continue
+    if {[regexp -- $needle $l]} { return 1 }
+  }
+  return 0
+}
+
+# --- A30..A35: A5-a, THE GATE MUST REQUIRE A NUMBER -------------------------
+
+## ⚠ STATE 1 — NO RAW LOADED AT ALL, which is the common first press and the
+## case item A4 measured. `xschem raw clear` unloads and NOTHING re-reads it
+## here (no key press, so no `$::netlist_dir` re-read — the trap row E6 records).
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+set A30_LOADED -99 ; catch {set A30_LOADED [xschem raw loaded]}
+set A30_BLOCK [a3_optext M1]
+foreach m {0 1 8 9} {
+  dc_annot $m
+  set A5_NC($m) [a3_ovl]
+  set A5_NS($m) [a3_pr2 [file join $scratch a5_nr$m.svg]]
+  set A5_ND($m) [expr {[a3_ovl] - $A5_NC($m)}]
+  set A5_NT($m) [dc_ntexts $A5_NS($m)]
+}
+dc_annot 0
+
+## THE HEADLINE OF ITEM A5. Nothing is decluttered before a simulation has been
+## run: the mask-9 text list is the mask-1 text list, and both still carry the
+## parameter and the pin label.
+check "A30 A5-a HEADLINE with NO RAW LOADED AT ALL (raw loaded = -1) the declutter hides NOTHING - mask 9 == mask 1, and the parameter and the pin label survive" \
+  [list $A30_LOADED \
+        [a3_hasl $A5_NT(1) $A_PARAMS] \
+        [a3_hasl $A5_NT(9) $A_PARAMS] \
+        [expr {$A5_NT(1) eq $A5_NT(9)}] \
+        [expr {[llength $A5_NT(9)] > 0}]] \
+  {-1 {1 1} {1 1} 1 1}
+
+## ⚠ THE ACCEPT ROW, AND IT IS GREEN BEFORE AND AFTER. `op_annot::text` emits
+## the declared rows with nothing after the `=` when the raw publishes nothing,
+## and `get_annot_overlay()` PAINTS that block on purpose. A5-a makes the
+## declutter's gate strictly stronger than the overlay's D1 term — they now
+## deliberately disagree — so the four paint deltas row A9 golds must not move
+## and the blank rows must still reach the page. A fix that "tidied" the overlay
+## to match the gate would delete op_annot.tcl's deliberate behaviour and is
+## exactly what row A9 exists to catch.
+check "A31 A5-a NON-VACUITY: on the SAME no-raw sheet the overlay still paints the label-only block, and its paint delta is unmoved at masks 0/1/8/9" \
+  [list [expr {[lsearch -glob $A5_NT(9) {zid *=}] >= 0 ? 1 : 0}] \
+        [expr {[lsearch -glob $A5_NT(9) {zgm *=}] >= 0 ? 1 : 0}] \
+        [list $A5_ND(0) $A5_ND(1) $A5_ND(8) $A5_ND(9)]] \
+  {1 1 {0 8 0 8}}
+
+## ⚠ STATE 2 — A REAL RAW THAT PUBLISHES NOTHING FOR THIS DEVICE. `xschem raw
+## loaded` = 0 and the descriptor resolves, so A3's gate opened; the block is
+## still label-only, so ruling D-6's "got OP numbers" is still false. This is the
+## OTHER half of the ruling, distinct from A30's no-raw half.
+a3_mkraw $A5_DEAD {v(a5zzz) 1.0}
+catch {xschem annotate_op $A5_DEAD 0}
+update idletasks
+set A32_LOADED -99 ; catch {set A32_LOADED [xschem raw loaded]}
+dc_annot 1 ; set A5_DT1 [dc_ntexts [a3_pr2 [file join $scratch a5_dr1.svg]]]
+dc_annot 9 ; set A5_DT9 [dc_ntexts [a3_pr2 [file join $scratch a5_dr9.svg]]]
+dc_annot 0
+check "A32 A5-a DEAD RAW (raw loaded = 0, descriptor resolves, no matching vectors): the block is label-only, so nothing is decluttered" \
+  [list $A32_LOADED \
+        [a3_hasl $A5_DT9 $A_PARAMS] \
+        [expr {$A5_DT1 eq $A5_DT9}] \
+        [expr {[lsearch -glob $A5_DT9 {zid *=}] >= 0 ? 1 : 0}]] \
+  {0 {1 1} 1 1}
+
+## ⚠ STATE 3 — THE DISCRIMINATION CONTROL, GREEN BEFORE AND AFTER. A device with
+## at least one real value IS decluttered, exactly as item A3 shipped it. This is
+## what reds a "fix" that closes the gate by refusing everything (variant
+## SB-A5a-NEVER), and it is the same claim rows A1/A27 make one fixture over.
+catch {xschem annotate_op $A_RAW 0}
+update idletasks
+set A33_BLOCK [a3_optext M1]
+dc_annot 1 ; set A5_VT1 [dc_ntexts [a3_pr2 [file join $scratch a5_v1.svg]]]
+dc_annot 9 ; set A5_VT9 [dc_ntexts [a3_pr2 [file join $scratch a5_v9.svg]]]
+dc_annot 0
+check "A33 A5-a DISCRIMINATION (the A3 control): with the VALUED raw the same device IS still decluttered at mask 9 and keeps everything at mask 1" \
+  [list [a3_hasl $A5_VT9 $A_PARAMS] \
+        [a3_hasl $A5_VT1 $A_PARAMS] \
+        [expr {[lsearch -glob $A5_VT9 {zid = [0-9]*}] >= 0 ? 1 : 0}]] \
+  {{0 0} {1 1} 1}
+
+## ⚠ THE MINT CONTRACT, PINNED FROM THE Tcl SIDE. The value test must be
+## answered from the ALREADY-CACHED block string (the whole 0466 argument), which
+## couples one C helper to the format `op_annot::text`'s width pass mints —
+## src/op_annot.tcl: "A blank row is `label =` with NOTHING after the `=`, not
+## even a space; every row ends in exactly one newline." src/op_annot.tcl is item
+## A6's file, not A5's, so the coupling is pinned here instead: if the mint
+## changes, this row reds rather than the defect silently re-opening.
+set A34_BLANKOK 1 ; set A34_BLANKN 0
+foreach A34_L [split $A30_BLOCK \n] {
+  if {[string trim $A34_L] eq {}} continue
+  incr A34_BLANKN
+  if {![regexp {^\S+ *=$} $A34_L]} { set A34_BLANKOK 0 }
+}
+set A34_VALN 0
+foreach A34_L [split $A33_BLOCK \n] { if {[regexp {^\S+ *= \S} $A34_L]} { incr A34_VALN } }
+check "A34 THE MINT CONTRACT: with no raw EVERY row of op_annot::text is `label =` with nothing after the `=`, and with the valued raw at least one row is `label = <eng>`" \
+  [list $A34_BLANKOK [expr {$A34_BLANKN >= 1 ? 1 : 0}] [expr {$A34_VALN >= 1 ? 1 : 0}]] \
+  {1 1 1}
+
+## ⚠ ONE HELPER, ONE READER, AND NO SECOND OBSERVER — the 0466 guarantee written
+## as structure. Legs 1/2: the value test exists exactly twice (its definition
+## and its ONE call) and `annot_instance_annotated()` is the only thing that
+## returns it, so invariant I1 holds (one builder, one reader). Leg 3:
+## `get_annot_overlay()`'s D1 term is UNCHANGED — the overlay keeps painting the
+## label-only block (row A31). Leg 4 is the one that closes issue 0466: the
+## helper reads NOTHING but its argument, so it adds no invalidation input of its
+## own and rides the wholesale flush `annot_overlay_sync()` already performs.
+set A35_HB [dc_cbody $N_ACTIONS annot_block_has_value]
+set A35_IB [dc_cbody $N_ACTIONS annot_instance_annotated]
+set A35_OB [dc_cbody $N_ACTIONS get_annot_overlay]
+check "A35 A5-a STRUCTURAL: one pure helper, ONE call, get_annot_overlay untouched, and the helper reads no Tcl and no raw (issue 0466)" \
+  [list [a5_ccount $N_ACTIONS {annot_block_has_value\(}] \
+        [expr {[regexp {return\s+annot_block_has_value} $A35_IB] ? 1 : 0}] \
+        [expr {[string first {annot_block_has_value} $A35_OB] >= 0 ? 1 : 0}] \
+        [expr {[string length $A35_HB] > 0 ? 1 : 0}] \
+        [expr {[regexp {tcleval|tclget|tclset|op_annot|annot_overlay|xctx} $A35_HB] ? 1 : 0}]] \
+  {2 1 0 1 0}
+
+# --- A36..A39: A5-b / ISSUE 1253, THE P6 PIN-OWNED PIN NAMES ----------------
+# RULING D-1, in the user's own words: "even pin labels can be hidden when user
+# is hiding other things that are not @name." Item A3's rung sits in
+# text_hidden(), which gates the loop over a SYMBOL's text[] records. The P6 pass
+# draws a pin's name from the PIN's own tokens — it walks symptr->rect[PINLAYER]
+# behind pin_name_visible() (src/draw.c:959, src/svgdraw.c:986,
+# src/psprint.c:1279) — so text_hidden() never sees it and a symbol spelling
+# show_pinname=true keeps its pin names on a fully decluttered device.
+#
+# ⚠ WHY THIS FIXTURE AND NOT SECTION A's. Not one pin of a3fet.sym carries a
+# show_pinname token at all, and pin_name_visible() returns 0 for an un-owned
+# pin, so the P6 pass never runs there. `A3GATE` is a `T` record — a pin LABEL
+# that the rung already hides — which is a different thing from a pin's own NAME.
+#
+# ⚠ AND WHY ONLY TWO BEHAVIOURAL BACK ENDS. draw.c has NO seam: draw()'s body is
+# inside `if(has_x)` and pin names bump no counter, and symbol_bbox()
+# (src/select.c:670-738) walks only symptr->text[] and has no P6 pass at all — so
+# hiding a pin name moves NO bbox and this is unmeasurable through
+# instance_bbox / instance_at. The screen leg is row A38's, structurally. Said
+# out loud rather than implied: two behavioural rows plus one source row, not
+# three behavioural rows.
+#
+# ⚠ THE ACCEPTANCE ROWS A27/A28 CANNOT SEE THIS. All four pins of each of the
+# three PDK FETs the batch accepts against spell show_pinname=false; the 2,968
+# `show_pinname=true` records censused in issue 1253 are elsewhere in the
+# libraries. That is the whole reason this fixture exists.
+set A5_FD [open $A5_PSYM w]
+puts $A5_FD {v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=a3nmos
+format="@spiceprefix@name @pinlist @model w=@w"
+template="name=MP1 model=a3n w=1u spiceprefix=X"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -12.5 -17.5 -7.5 {name=PD dir=inout show_pinname=true}
+B 5 -22.5 7.5 -17.5 12.5 {name=PG dir=inout show_pinname=false}
+T {@name} 0 -40 0 0 0.2 0.2 {}
+T {A5PW=@w} 150 55 0 0 0.2 0.2 {}}
+close $A5_FD
+set A5_FD [open $A5_PFIX w]
+puts $A5_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$A5_PSYM\} 300 -300 0 0 \{name=MP1\}"
+close $A5_FD
+
+## LOAD, THEN op_annot::vector, THEN mint — section A's own order, and it is
+## load-bearing: the vector resolves the device path through the LOADED instance.
+catch {xschem raw clear}
+xschem load $A5_PFIX
+update idletasks
+set A5_PP {}
+catch {lappend A5_PP [op_annot::vector MP1 zid] 1.11e-05 [op_annot::vector MP1 zgm] 3.33e-04}
+a3_mkraw $A5_PRAW $A5_PP
+catch {xschem annotate_op $A5_PRAW 0}
+update idletasks
+foreach m {0 1 8 9} {
+  dc_annot $m
+  set A5_PT($m) [dc_ntexts [a3_pr2 [file join $scratch a5_p$m.svg]]]
+}
+dc_annot 9 ; set A5_PS9 [a3_pr2 [file join $scratch a5_p9.ps] ps]
+dc_annot 1 ; set A5_PS1 [a3_pr2 [file join $scratch a5_p1.ps] ps]
+dc_annot 0
+
+## The last two legs are the NON-VACUITY control that the P6 pass is really what
+## is being observed: PG spells show_pinname=false and renders at NEITHER mask,
+## so a row that passed by rendering no pin names at all would red here.
+check "A36 1253 SVG: at mask 9 the pin's OWN name PD is gone with the parameter, and PG (show_pinname=false) renders at neither mask" \
+  [list [a3_hasl $A5_PT(1) {MP1 A5PW=1u PD}] \
+        [a3_hasl $A5_PT(9) {MP1 A5PW=1u PD}] \
+        [a3_hasl $A5_PT(1) {PG}] \
+        [a3_hasl $A5_PT(9) {PG}]] \
+  {{1 1 1} {1 0 0} 0 0}
+
+## psprint.c is the back end a partial fix leaves out (issue 0615's sharpest
+## landmine) — an exported PDF that still carries the pin names is a defect.
+check "A37 1253 PS: the PostScript agrees with the SVG - (MP1) at both masks, (A5PW=1u) and (PD) at mask 1 only, (PG) at neither" \
+  [list [regexp {\(MP1\)} $A5_PS1] [regexp {\(A5PW=1u\)} $A5_PS1] \
+        [regexp {\(PD\)} $A5_PS1] [regexp {\(PG\)} $A5_PS1] \
+        [regexp {\(MP1\)} $A5_PS9] [regexp {\(A5PW=1u\)} $A5_PS9] \
+        [regexp {\(PD\)} $A5_PS9] [regexp {\(PG\)} $A5_PS9]] \
+  {1 1 1 0 1 0 0 0}
+
+## ⚠ THE draw.c LEG, WHICH HAS NO BEHAVIOURAL WINDOW (see the section header).
+## The guard must be the EXISTING predicate — `text_hidden_inst(0, n)`, issue
+## 1253's own recommended one-liner — and it must sit on the line immediately
+## after pin_name_visible() and BEFORE get_pin_name_layout(), so the pnm/pfont
+## malloc/free pair is never reached for a pin the declutter hides. Byte-
+## identical in all three back ends; a fourth, pin-specific gate is exactly the
+## drift invariant I1 forbids. select.c is asserted at ZERO deliberately:
+## symbol_bbox() has no P6 pass and adding one would be new geometry, not a
+## conformance gap (recorded as 1253's residue).
+set A38_ANCHOR {if(!pin_name_visible(pin->prop_ptr)) continue;}
+check "A38 1253 STRUCTURAL: one text_hidden_inst(0, n) in each of the three P6 loops, on the line right after pin_name_visible(), and none in select.c" \
+  [list [a5_ccount $A_DRAW {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
+        [a5_ccount $A_SVGD {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
+        [a5_ccount $A_PS   {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
+        [a5_ccount $A_SEL  {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
+        [a5_after_line $A_DRAW $A38_ANCHOR {text_hidden_inst}] \
+        [a5_after_line $A_SVGD $A38_ANCHOR {text_hidden_inst}] \
+        [a5_after_line $A_PS   $A38_ANCHOR {text_hidden_inst}]] \
+  {1 1 1 0 1 1 1}
+
+## INVARIANT I-C FOR THE PIN PASS (ruling D-8: "declutter is active ONLY when OP
+## info is displayed"). Green before and after — it reds a fix that hides pin
+## names unconditionally.
+check "A39 1253 INVARIANT I-C: with ANNOT_SHOW_OP clear the declutter bit touches no pin name - mask 0 == mask 8 and PD is drawn in both" \
+  [list [expr {$A5_PT(0) eq $A5_PT(8)}] \
+        [a3_hasl $A5_PT(0) {PD}] [a3_hasl $A5_PT(8) {PD}]] \
+  {1 1 1}
+
+# --- A40, A41: A5-c / ISSUE 1252, THE OTHER symbol_bbox() DOOR --------------
+# The per-instance gate reads the overlay cache, and that cache is refreshed by
+# annot_overlay_sync(), which item A3 wired into `update_all_sym_bboxes` and
+# NOWHERE ELSE outside the three draw/export entry points. `xschem
+# recompute_inst_bbox` is the OTHER Tcl-reachable symbol_bbox() door and it syncs
+# neither cache — so a decluttered device's with-text bbox is right by one path
+# and wrong by the other, and findnet.c:461's find_closest_element uses
+# POINTINSIDE against exactly that box as its candidate gate. ITEM B4 CLICKS
+# THESE DEVICES.
+#
+# ⚠ ORDER IS LOAD-BEARING AND IS THE WHOLE ROW. Any sync — a draw, an export, an
+# `update_all_sym_bboxes` — repairs the cache, after which the two doors agree
+# and the row measures nothing. So the epoch is moved with NO draw and NO export,
+# and the STALE door is read FIRST.
+#
+# ⚠ THE EPOCH MOVER IS A RE-REGISTRATION, NOT `xschem raw clear`. Re-registering
+# the type with an EMPTY params list blanks the block and bumps
+# ::op_annot::gen -> the epoch's desc_gen, with no draw. It closes the gate under
+# the OLD gate and the NEW one alike, so this row reds for the 1252 reason ALONE
+# and not for A5-a's. (`raw clear` would only close the gate after A5-a lands —
+# row A15 above uses it for exactly that reason, which is what makes A15 and A40
+# guard two DIFFERENT lines.) Measured against the pre-A5 binary: warm box x2
+# 354.835, stale door 354.835 with `instance_at 430 -245` = {}, fresh door
+# 496.305 with the same pick answering M1.
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+dc_setmask 9
+catch {xschem annotate_op $A_RAW 0}
+catch {xschem update_all_sym_bboxes}
+set A40_WARM [a3_ibox 0]
+catch {op_annot::register a3nmos [list devpath {@m.@path@name} params {}]}
+set A40_BLANK [expr {[string trim [a3_optext M1]] eq {} ? 1 : 0}]
+catch {xschem recompute_inst_bbox M1}
+set A40_STALE [a3_ibox 0]
+set A40_PICKS [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A40_FRESH [a3_ibox 0]
+set A40_PICKF [xschem instance_at 430 -245]
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+catch {xschem annotate_op $A_RAW 0}
+dc_annot 0
+check "A40 1252 THE TWO symbol_bbox DOORS AGREE, STALE DOOR READ FIRST: recompute_inst_bbox answers the same box and the same pick as update_all_sym_bboxes" \
+  [list $A40_BLANK \
+        [a3_lt [lindex $A40_WARM 2] [lindex $A40_FRESH 2]] \
+        [expr {$A40_STALE eq $A40_FRESH}] \
+        $A40_PICKS $A40_PICKF] \
+  [list 1 1 1 M1 M1]
+
+## THE CENSUS THE BEHAVIOURAL ROW CANNOT SEE. Two sites in scheduler.c — the
+## `update_all_sym_bboxes` arm item A3 added and the `recompute_inst_bbox` arm
+## A5-c adds — and the second must sit in the arm it names, not somewhere else in
+## a 15k-line file. ZERO in select.c is the repair 1252 REJECTED for blast
+## radius: symbol_bbox() has 39 callers, six in save.c, and annot_overlay_busy
+## exists precisely because filling the cache tclevals ::op_annot::text, which
+## re-enters that machinery.
+check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once each and from scheduler.c TWICE, the second inside the recompute_inst_bbox arm, and never from select.c" \
+  [list [a5_ccount $A_DRAW {annot_overlay_sync\(\)}] \
+        [a5_ccount $A_SVGD {annot_overlay_sync\(\)}] \
+        [a5_ccount $A_PS   {annot_overlay_sync\(\)}] \
+        [a5_ccount [file join $repo src scheduler.c] {annot_overlay_sync\(\)}] \
+        [a5_ccount $A_SEL  {annot_overlay_sync\(\)}] \
+        [a5_near [file join $repo src scheduler.c] \
+                 {strcmp\(argv\[1\], "recompute_inst_bbox"\)} {annot_overlay_sync\(\)} 30]] \
+  {1 1 1 2 0 1}
 
 dc_annot 0
 
@@ -2263,13 +2760,23 @@ check "E5 STRUCTURAL annot_tran's success tail hands the clause the mask it just
 # drew. E1..E5 all warm to a LOADED raw first (`c_press` does `dc_setmask 1 ;
 # dc_fire <Key-6>` before it measures), so not one of them could see it.
 #
-# THE PREMISE IS FALSE, AND THE SHEET IS THE WITNESS. Item A3's rung is gated on
-# `annot_overlay_gate(n)` AND a NON-BLANK `op_annot::text` block, not on numbers
-# arriving -- src/actions.c:2075 says exactly that: "a registered device over a
-# dead raw is therefore decluttered while its block shows empty rows". So with
-# `xschem raw loaded` = -1 the parameter text is stripped just the same, and the
-# sentence that did NOT say so was the inaccurate one. `noraw` is also the most
-# common press there is: `6` before the simulation has been run.
+# ⚠ AND THE SHEET'S HALF OF THIS ROW WAS INVERTED BY ITEM A5 — LEG 5 FLIPS 0 -> 1.
+# Item A4 wrote this row on the reading "the sheet IS decluttered at mask 9 even
+# with no raw", which was true of item A3's gate: that gate opened on a RESOLVING
+# DESCRIPTOR (`annot_overlay_gate(n)` AND a non-blank `op_annot::text` block),
+# not on numbers arriving. Ruling D-6 says the declutter reaches instances that
+# "got OP numbers", and a label with no number did not get one, so item A5-a
+# requires at least one row carrying an ACTUAL VALUE. With `xschem raw loaded` =
+# -1 NOTHING is now hidden and `CW=1u` survives at mask 9. Rows A30/A32 are that
+# fact on section A's fixture; this row is it end to end, through the chord.
+#
+# ⚠ THE KNOWN GAP THIS ROW DELIBERATELY KEEPS ASSERTING — NEW ISSUE 1257. Legs 8
+# and 11 still gold the clause PRESENT on that press, i.e. the held status line
+# still says other device text is hidden on a sheet where nothing was hidden.
+# `cadence::_annot_declutter_clause` is gated on bit3 AND bit0 only, and it lives
+# in utils/annot_mode.tcl, which is item A4's landed file and NOT item A5's to
+# edit. Filed as 1257 and handed on; the gap is documented here rather than
+# hidden, so whoever fixes it flips legs 8/11 and this comment together.
 #
 # ⚠ THE VIEWPORT IS ITS OWN, and the export is WARMED like sections I, N and A --
 # one throwaway of the same format first, so a first-export difference cannot
@@ -2319,7 +2826,7 @@ dc_annot 9 ; set E6_T9 [dc_ntexts [c_pr2 [file join $scratch e6_m9.svg]]]
 dc_annot 0
 set E6_ON  [c_spy 8 <Key-6>]
 set E6_OFF [c_spy 0 <Key-6>]
-check "E6 END TO END with NO results file: the sheet IS decluttered at mask 9, and the held line says so while still naming the missing raw - the state gate item A4 shipped first was wrong" \
+check "E6 END TO END with NO results file: ruling D-6 needs a NUMBER so the sheet is NOT decluttered, while the held line still names the declutter (issue 1257) and still names the missing raw" \
   [list $E6_LOADED \
         [c_hasl $E6_T1 MC1] [c_hasl $E6_T1 CW=1u] \
         [c_hasl $E6_T9 MC1] [c_hasl $E6_T9 CW=1u] \
@@ -2328,7 +2835,7 @@ check "E6 END TO END with NO results file: the sheet IS decluttered at mask 9, a
         [expr {[string first {Run a simulation first} [c_unf $E6_ON]] >= 0 ? 1 : 0}] \
         [expr {[string map [list $DC_CLAUSE {}] [c_unf $E6_ON]] eq [c_unf $E6_OFF] ? 1 : 0}] \
         [c_trip $E6_ON]] \
-  [list -1 1 1 1 0 9 1 1 0 1 1 1]
+  [list -1 1 1 1 1 9 1 1 0 1 1 1]
 
 set ::netlist_dir $scratch
 catch {xschem raw clear}

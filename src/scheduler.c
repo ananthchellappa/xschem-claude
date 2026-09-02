@@ -10635,6 +10635,24 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "recompute_inst_bbox"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* 1252 (item A5-c): the OTHER Tcl-reachable symbol_bbox() door. symbol_bbox()
+       * consults the declutter's per-instance gate (ruling D-6), which reads the overlay
+       * cache -- and item A3 wired that cache's epoch sync into `update_all_sym_bboxes`
+       * and the three draw/export entry points, NOT here. Measured: warm at mask 9, move
+       * the epoch with no draw and no export, and this door answered a box 173 units
+       * narrower in x2 than `update_all_sym_bboxes` did, with `xschem instance_at
+       * 430 -245` returning EMPTY where the fresh door returned the instance --
+       * findnet.c's find_closest_element uses POINTINSIDE against exactly that box as its
+       * candidate gate, so it is a PICK that disagrees, not merely a number. Row A40
+       * drives both doors, stale one first (any sync repairs the cache, so order is
+       * load-bearing). Deliberately NOT inside symbol_bbox() itself -- 39 callers, six in
+       * save.c, and the re-entrancy guard exists because filling the cache evaluates
+       * ::op_annot::text, which re-enters that machinery. And deliberately WITHOUT
+       * annot_show_sync_cache() beside it: that one ends in the 0688 mask backstop, which
+       * can CLEAR the mask, and this verb is documented as not redrawing or pushing undo.
+       * A sync only flushes when the epoch actually moved, so this costs a struct compare
+       * on every other call. */
+      annot_overlay_sync();
       if(argc > 2) {
         int i = get_instance(argv[2]);
         if(i < 0) { Tcl_SetResult(interp, "xschem recompute_inst_bbox: instance not found",
