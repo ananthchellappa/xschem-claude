@@ -32,7 +32,7 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 | A1 | the mask bit and the chord | `[E]` | `59b67766` | 36 new, ALL PASS | xschem.h, annot_mode.tcl, cadence_style_rc | owed | ✅ `Ctrl-Alt-6` no longer fires `Alt-6`. Filed 1246, 1247, 1248 |
 | A2 | the name classifier | `[x]` | `dcbb85c3` | 36→52, ALL PASS | xschem.h, actions.c | — | `TEXT_ANNOT_NAME 1024`, unconditional. Filed 1249, 1250 |
 | A3 | the draw rung and the per-instance gate | `[E]` | `39769294` | 52→82, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, xschem.tcl | owed | closed 1246-1249. Filed 1251-1254. **Audit run by the DRIVER: 365/11/0/2 of 378, 11 reds identical by name** (`audit_A3_2026-09-02.txt`) |
-| A4 | the status line is not path-length-sensitive | `[E]` | `ccd2aec1` | 82→93; stale_0684 52→54 | annot_mode.tcl | owed | **T1 solo ×4 = 0/0/0/0** — the flake is dead. Filed 1255, 1256 |
+| A4 | the status line is not path-length-sensitive | `[E]` | `ccd2aec1` | 82→93; stale_0684 52→54 | annot_mode.tcl | owed | **T1 solo ×4 = 0/0/0/0** — the flake is dead. Filed 1255, 1256. **Driver audit: 365/11/0/2, IDENTICAL BY NAME to A3's** (`audit_A4_2026-09-02.txt`) |
 | A5 | D-1 / D-6 conformance, and A3's staleness | `[ ]` | | | | | needs A3; fixes **1252, 1253, 1254** + the blank-block gate |
 | A6 | the two consistency gaps A4 found | `[ ]` | | | | | needs A4; fixes **1255, 1256** |
 | B1 | the backend seam | `[ ]` | | | | | D-4/D-5 are the whole item |
