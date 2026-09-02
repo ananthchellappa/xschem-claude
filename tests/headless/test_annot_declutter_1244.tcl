@@ -14,9 +14,19 @@
 #      `<Control-Alt-Key-6>` chord that calls it (src/cadence_style_rc).
 #
 # So at the end of A1, pressing Ctrl-Alt-6 toggles bit 3 of `annot_show` and
-# NOTHING ON SCREEN CHANGES. That is correct, and rows I2/I3 assert it.
+# NOTHING ON SCREEN CHANGES. That is correct, and rows I2/I3 asserted it.
 # The draw-time rung is item A3 and the name classifier is item A2; A2 and A3
 # add their rows to THIS file.
+#
+# ⚠ THE FILE NOW COVERS ALL THREE ITEMS, IN THREE PASSES OVER ONE FEATURE:
+#   sections D M S T V I   item A1 — the mask bit and the Ctrl-Alt-6 chord
+#   section  N             item A2 — TEXT_ANNOT_NAME, the name classifier
+#   section  A             item A3 — THE DRAW RUNG, the per-instance D-6 gate,
+#                          and the four defects it inherits (1246 1247 1248 1249)
+# Rows N10 and N14 were written by A2 as "A3 MUST REPLACE" / "1249 PINNED" and
+# were flipped in place by A3; row I2 was superseded by row A3 and re-purposed.
+# Each carries the reason on itself. Section A's own header lists which of its
+# rows are red before A3 lands and which are controls.
 #
 # ============================================================================
 # THE HEADLINE, AND WHY THE CHORD IS NOT FREE
@@ -586,8 +596,11 @@ check "V3 annot_declutter: integer-guards the pulled mask, tails bboxes -> redra
 # ⚠ THE THREE ROWS BELOW ARE GREEN BEFORE A1 LANDS AND THAT IS THE POINT.
 # They are CONTROLS, not claims about the writer: I1 is invariant I-A (feature A
 # mutates no object), I3 is invariant I-C (with bit0 clear the declutter bit
-# changes nothing) and is PERMANENT, and I2 says "A1 changes nothing on screen".
-# ⚠ ITEM A3 MUST REPLACE I2 — after A3 the two exports MUST differ.
+# changes nothing) and is PERMANENT, and I2 used to say "A1 changes nothing on
+# screen".
+# ⚠ I2 HAS BEEN SUPERSEDED BY ROW A3 and re-purposed in place; see the note on
+# the row itself. The "after A3 the two exports MUST differ" claim lives in row
+# A3, on a fixture that can see the mask.
 
 ## ⚠ LOAD THE SHIPPED FILE, THEN `saveas` INTO THE SCRATCH DIR — never a plain
 ## `file copy` of the .sch. Loading the copy resolves its symbols against a
@@ -626,7 +639,15 @@ check "I1 invariant I-A: the chord matrix sets no modify flag and leaves the .sc
 
 dc_annot 1 ; set i2_a [dc_print2 [file join $scratch i2_m1.svg]]
 dc_annot 9 ; set i2_b [dc_print2 [file join $scratch i2_m9.svg]]
-check "I2 A3 MUST REPLACE THIS ROW: with OP on, the SVG at mask 1 and mask 9 is byte-identical - A1 adds the bit and the chord only" \
+## ⚠ SUPERSEDED BY ROW A3 (item A3, 2026-09-02), AND RE-PURPOSED RATHER THAN
+## DELETED. It used to say "A3 MUST REPLACE THIS ROW". Row A3 is that
+## replacement, on a fixture that can see the mask (issue 1248: this one cannot
+## — every mask exports byte-identically here, INCLUDING 1 vs 3). What is left
+## is still worth a row, but it is a DIFFERENT claim: nand2.sch has no
+## registered descriptor and no raw, so ruling D-6's per-instance gate never
+## opens on it and the declutter must change NOTHING. That is the D-6
+## "untouched" case at whole-sheet scale, and it stays byte-identical after A3.
+check "I2 SUPERSEDED BY ROW A3 - now the D-6 control: on a sheet with no descriptor and no raw the declutter bit changes NOTHING" \
   [list [expr {$i2_a eq $i2_b}] [expr {[string length $i2_a] > 4000}]] {1 1}
 
 dc_annot 0 ; set i3_a [dc_print2 [file join $scratch i3_m0.svg]]
@@ -905,18 +926,24 @@ check "N9 PERMANENT: the content-class-to-mask function still names no NAME bit"
         [expr {[string first TEXT_ANNOT_CURRENT $N9_B] >= 0 ? 1 : 0}]] \
   {0 1}
 
-## ⚠ A3 MUST REPLACE THIS ROW. Together with N9 this is the fully honest form of
-## the acceptance row "text_hidden()'s answer is unchanged for every input,
-## including get_annot_overlay()'s synthetic literal call": the predicate and its
-## mask helper are byte-unchanged and the helper returns 0 for a bit it does not
-## name. A BEHAVIOURAL proof of that eleventh call site needs a raw fixture in
-## test_op_annot.tcl's opa_o_mkrlraw shape — which is precisely what issue 1248
-## assigns to item A3. This is a structural row and must not be reported as more.
+## ⚠ REPLACED BY ITEM A3, exactly as this row's old name demanded. It used to
+## say "text_hidden itself is unchanged and names no NAME bit", which was the
+## most honest thing item A2 could say about the eleventh call site without a
+## raw fixture. A3 has that fixture (section A) and three behavioural windows on
+## the predicate, so this row now carries the ONE structural fact behaviour
+## cannot see: `text_hidden(flags, ctx)` is a pure DELEGATE onto
+## `text_hidden_core(flags, ctx, n)` passing n = -1. That -1 is why the rung is
+## unreachable for get_annot_overlay()'s synthetic literal call TWICE OVER —
+## once by placement (row A20) and once by the index — so a declutter can never
+## switch the annotation overlay off. Rows A9 and A21 are the other two halves.
+## ⚠ THE THIRD ELEMENT IS THE NON-VACUITY CONTROL: a renamed or missing function
+## slices to {} and would otherwise satisfy two `string first` misses.
 set N10_B [dc_cbody $N_ACTIONS text_hidden]
-check "N10 A3 MUST REPLACE THIS ROW: text_hidden itself is unchanged and names no NAME bit" \
-  [list [expr {[string first TEXT_ANNOT_NAME $N10_B] >= 0 ? 1 : 0}] \
-        [expr {[string first show_hidden_texts $N10_B] >= 0 ? 1 : 0}]] \
-  {0 1}
+check "N10 REPLACED BY A3: the two-argument entry is a pure delegate onto text_hidden_core, passing n = -1" \
+  [list [expr {[string length $N10_B] > 0}] \
+        [expr {[string first {text_hidden_core} $N10_B] >= 0 ? 1 : 0}] \
+        [expr {[regexp {text_hidden_core\s*\([^)]*-1\s*\)} $N10_B] ? 1 : 0}]] \
+  {1 1 1}
 
 # --- N11..N14: NOTHING MOVES ON SCREEN, AND THE .sch IS UNTOUCHED -----------
 
@@ -989,22 +1016,703 @@ check "N13 PERMANENT: save_text writes txt_ptr and prop_ptr and never writes fla
         [expr {[string length $N13_B] > 0}]] \
   {1 1 0 1}
 
-## ⚠ 1249 PINNED — WHOEVER FIXES 1249 FLIPS THIS ROW. This is a DEFECT recorded,
-## not a promise kept. The shipped keep-name test is THREE byte-identical copies
-## (draw.c, svgdraw.c, psprint.c), each comparing against `@symname` and `@name`
-## only, so at hide_symbols=2 a device whose name text is `@spiceprefix@name`
-## loses its name on screen, in SVG and in PDF. Reproduced here rather than read:
-## R1/V1/Vmeas (`@name`) survive and M1/M2 (nmos4/pmos4) do not. Item A2 owns
-## none of those three files, so it files the issue and does not fix it; item A3
-## owns all three and is its natural home, but it is NOT assigned there.
+## ⚠ 1249 FIXED — THIS ROW WAS FLIPPED BY ITEM A3, DELIBERATELY. Item A2 wrote
+## it as a DEFECT RECORDED: the shipped keep-name test was THREE byte-identical
+## copies (draw.c, svgdraw.c, psprint.c), each comparing against `@symname` and
+## `@name` only, so at hide_symbols=2 a device whose name text is
+## `@spiceprefix@name` lost its name on screen, in SVG and in PDF — measured
+## here, not read: R1/V1/Vmeas (`@name`) survived and M1/M2 (nmos4/pmos4) did
+## not, i.e. {1 1 1 0 0}. Item A2 owned none of those three files and filed the
+## issue; item A3 rewrites exactly those three loops and fixes it as it passes,
+## replacing all three copies with one call to the exported annot_name_token()
+## — four copies of one predicate become one builder (invariant I1). The
+## expectation below therefore moved {1 1 1 0 0} -> {1 1 1 1 1} ON PURPOSE.
+## Row A18 carries the same flip on section A's fixture WITH the annotation
+## live, which is the state row A17 says must not double-strip.
 set N14_HS 0 ; catch {set N14_HS $::hide_symbols}
 catch {xschem set hide_symbols 2} ; catch {xschem update_all_sym_bboxes}
 set N14_T [dc_ntexts [dc_nprint2 [file join $scratch a2_hs2.svg]]]
 catch {xschem set hide_symbols $N14_HS} ; catch {xschem update_all_sym_bboxes}
 set N14_GOT {}
 foreach t {R1 V1 Vmeas M1 M2} { lappend N14_GOT [expr {[lsearch -exact $N14_T $t] >= 0 ? 1 : 0}] }
-check "N14 1249 PINNED: at hide_symbols=2 the at-name devices keep their names and the spiceprefix-at-name FETs lose theirs" \
-  $N14_GOT {1 1 1 0 0}
+check "N14 1249 FIXED (was PINNED): at hide_symbols=2 every device keeps its name, including the spiceprefix-at-name FETs" \
+  $N14_GOT {1 1 1 1 1}
+
+dc_annot 0
+
+# ============================================================================
+# SECTION A — THE DRAW RUNG AND THE PER-INSTANCE GATE (item A3, feature 1244)
+# ============================================================================
+# ⚠ THE ROW NAMES A0..A29 ARE THE PLAN'S, NOT THE ITEM NAMES. `A1` here is a
+# CHECK in this file; item A1 is the mask bit that landed in commit 59b67766.
+# doc/claude/op_param_batch/PLAN.md's A3 cell names these rows and the sabotage
+# matrix predicts reds by them, so they are kept verbatim.
+#
+# WHAT A3 ADDS. One rung in the shared visibility predicate: in an INSTANCE
+# context, on an instance that actually got operating-point numbers (ruling
+# D-6), with BOTH ANNOT_SHOW_OP and ANNOT_SHOW_NOPARAM set, every text that
+# carries neither TEXT_ANNOT_NAME nor an annotation class is hidden (ruling
+# D-1: pin labels included, "we are only interested in name and annotation of
+# OP info"). Plus the four defects the item inherits: 1246, 1247, 1248, 1249.
+#
+# ⚠ THE FIXTURE IS PURPOSE-BUILT AND THAT IS THE POINT — ISSUE 1248. Rows I2/I3
+# above render xschem_library/examples/nand2.sch with no raw and eight
+# unresolved symbols, and EVERY mask exports byte-identically there: measured
+# 0=1 1=1 2=1 3=1 8=1 9=1 11=1, INCLUDING 1 vs 3, a pair that genuinely differ
+# in meaning. A3 can land, work perfectly, and leave I2 green. So this section
+# brings a fixture that can SEE the mask: a symbol whose text records cover
+# every class the rung must tell apart, two instances of it with a real
+# operating-point raw behind them, plus a descriptor-less shipped resistor and a
+# type=subcircuit instance for ruling D-6's two "untouched" cases. Row A4 is the
+# non-vacuity control the nand2 fixture could never give — mask 1 and mask 3
+# differ here BEFORE the rung matters.
+#
+# THE SYMBOL'S SEVEN TEXT RECORDS, and which arm of the predicate each one is:
+#   @name              TEXT_ANNOT_NAME  (item A2)      KEPT under declutter
+#   @symname           TEXT_ANNOT_NAME                 KEPT
+#   @spiceprefix@name  TEXT_ANNOT_NAME — the spelling  KEPT   (and the one
+#                      draw.c's shipped keep-name test misses: issue 1249)
+#   A3OPTEXT   hide=op       explicit annotation class KEPT while bit0 is on
+#   A3VOLTTEXT hide=voltage  explicit annotation class KEPT while bit1/bit2 on
+#   A3TRUETEXT hide=true     ordinary hidden text      hidden; and STILL hidden
+#                      under declutter even with View > Show hidden texts ON,
+#                      which is what makes the rung's PLACEMENT visible (row A10)
+#   A3W=@w             a parameter                     HIDDEN under declutter
+#   A3GATE             a pin label                     HIDDEN under declutter (D-1)
+# The last two sit far outside the symbol body ON PURPOSE: they are what
+# stretches inst[i].x1..y2, so the click-target rows A14/A15 can watch that box
+# shrink instead of arguing about it.
+#
+# RED BEFORE A3 LANDS (18): A1 A3 A10 A11 A12 A14 A15 A18 A19 A20 A22 A23 A24
+#                           A25 A27 A29 — plus the two REPLACED rows N10/N14.
+# GREEN BEFORE AND AFTER (12) — controls, not evidence for A3:
+#   A0 A2 A28   the fixture is live and the strings A1/A27 assert absent really
+#               are present at mask 1;
+#   A4          issue 1248 hole 1: 1 vs 3 differ here;
+#   A5 A16      invariant I-C (PERMANENT): with bit0 clear, bit3 changes nothing,
+#               in pixels AND in geometry;
+#   A6 A7 A8    ruling D-6's two untouched cases and D-1's kept name;
+#   A9          THE 1248 ROW THAT MATTERS: get_annot_overlay() paints exactly
+#               when it did. A declutter that switches the annotation overlay
+#               off would leave A1 and A3 GREEN;
+#   A13         invariant I-A: no byte of the .sch moves;
+#   A17         hide_symbols=2 closes the D-6 gate, so the rung must not fire;
+#   A21 A26     the eleventh call site is byte-unchanged; 0688 is not weakened.
+#
+# ⚠ A9 AND A21 ARE THE PAIR THAT MATTER MOST AND BOTH ARE GREEN TODAY. The
+# failure they exist for — the declutter switching the annotation overlay off,
+# the feature eating itself — looks like SUCCESS in a suite that only checks
+# that the parameters vanished.
+
+set A_VP  {2400 1600 100 -420 1000 -20}
+set A_SYM [file join $scratch a3fet.sym]
+set A_FIX [file join $scratch a3fix.sch]
+set A_SAV [file join $scratch a3fix_saved.sch]
+set A_RAW [file join $scratch a3fix.raw]
+
+## The fixture symbol. Written here rather than picked off the tree because no
+## shipped symbol carries all six visibility classes on one device.
+set A_FD [open $A_SYM w]
+puts $A_FD {v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=a3nmos
+format="@spiceprefix@name @pinlist @model w=@w l=@l m=@m"
+template="name=M1 model=a3n w=1u l=0.15u m=1 spiceprefix=X"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}
+B 5 -22.5 7.5 -17.5 12.5 {name=g dir=inout}
+T {@name} 0 -40 0 0 0.2 0.2 {}
+T {@symname} 0 -25 0 0 0.2 0.2 {}
+T {@spiceprefix@name} 0 -10 0 0 0.2 0.2 {}
+T {A3OPTEXT} 0 5 0 0 0.2 0.2 {hide=op}
+T {A3VOLTTEXT} 0 20 0 0 0.2 0.2 {hide=voltage}
+T {A3TRUETEXT} 0 35 0 0 0.2 0.2 {hide=true}
+T {A3W=@w} 150 55 0 0 0.2 0.2 {}
+T {A3GATE} -150 -80 0 0 0.2 0.2 {}}
+close $A_FD
+
+## The sheet. `devices/res` and `examples/nand2` are REGISTRY-qualified and
+## resolve through the absolute XSCHEM_LIBRARY_DEFS src/cadence_style_rc set, so
+## this file is loadable from the scratch directory (row I1's warning about a
+## plain `file copy` is about a RELATIVE resolution, which none of these are).
+set A_FD [open $A_FIX w]
+puts $A_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$A_SYM\} 300 -300 0 0 \{name=M1\}
+C \{$A_SYM\} 300 -120 0 0 \{name=M2\}
+C \{devices/res\} 700 -300 0 0 \{name=R1
+value=10
+m=1\}
+C \{examples/nand2\} 800 -120 0 0 \{name=X1\}"
+close $A_FD
+
+## An OP raw in test_op_annot.tcl's opa_o_mkrlraw shape, one point, one value
+## per vector. The vector NAMES come from op_annot::vector — invariant I1, ONE
+## name builder — so this fixture cannot drift from the descriptor.
+proc a3_mkraw {path pairs} {
+  set f [open $path w]
+  puts -nonewline $f "Title: A3 declutter fixture\nDate: Mon Jan 1 00:00:00 2026\n"
+  puts -nonewline $f "Plotname: Operating Point\nFlags: real\n"
+  puts -nonewline $f "No. Variables: [expr {[llength $pairs]/2}]\nNo. Points: 1\nVariables:\n"
+  set k 0
+  foreach {v val} $pairs { puts -nonewline $f "\t$k\t$v\tvoltage\n" ; incr k }
+  puts -nonewline $f "Values:\n"
+  set k 0
+  foreach {v val} $pairs {
+    if {$k == 0} { puts -nonewline $f "0\t$val\n" } else { puts -nonewline $f "\t$val\n" }
+    incr k
+  }
+  close $f
+}
+## The viewport form of `xschem print`, warmed exactly as sections I and N.
+proc a3_pr {out {fmt svg}} {
+  if {[catch {eval [linsert $::A_VP 0 xschem print $fmt $out]} r]} { return RAISED:$r }
+  if {![file isfile $out]} { return NO-FILE }
+  set fd [open $out r] ; set d [read $fd] ; close $fd ; return $d
+}
+proc a3_pr2 {out {fmt svg}} { a3_pr $out.warm $fmt ; return [a3_pr $out $fmt] }
+## 1/0 per name, membership in an SVG text list (dc_ntexts, section N).
+proc a3_hasl {lst names} {
+  set o {}
+  foreach n $names { lappend o [expr {[lsearch -exact $lst $n] >= 0 ? 1 : 0}] }
+  return $o
+}
+## The `Instance:` half of `xschem instance_bbox <n>`, as four numbers.
+proc a3_ibox {n} {
+  set r {}
+  catch {set r [xschem instance_bbox $n]}
+  if {[regexp {Instance:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)} $r -> x1 y1 x2 y2]} {
+    return [list $x1 $y1 $x2 $y2]
+  }
+  return NO-BBOX
+}
+## op_annot::text without a raise reaching the suite.
+proc a3_optext {n} { set r {} ; catch {set r [op_annot::text $n]} ; return $r }
+proc a3_ovl {} { set v -1 ; catch {set v [xschem get annot_overlay_count]} ; return $v }
+## A numeric comparison that reds instead of aborting the section when a bbox
+## reader answered NO-BBOX.
+proc a3_lt {a b} { if {[catch {expr {$a < $b}} r]} { return BAD } ; return [expr {$r ? 1 : 0}] }
+
+xschem load $A_FIX
+update idletasks
+xschem saveas $A_SAV schematic
+update idletasks
+
+## The descriptor is registered on a PRIVATE symbol type, so no shipped symbol
+## and no PDK registration is disturbed by it, and the `match`-narrowed sky130 /
+## gf180 / IHP descriptors rows A27/A28 source later cannot collide with it.
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+set A_PAIRS {}
+foreach d {M1 M2} vi {1.11e-05 2.22e-05} vg {3.33e-04 4.44e-04} {
+  catch {lappend A_PAIRS [op_annot::vector $d zid] $vi [op_annot::vector $d zgm] $vg}
+}
+a3_mkraw $A_RAW $A_PAIRS
+catch {xschem annotate_op $A_RAW 0}
+update idletasks
+
+## The warmed exports and the overlay-paint delta of each, in one sweep.
+foreach m {0 1 3 8 9 11} {
+  dc_annot $m
+  set A_C0($m) [a3_ovl]
+  set A_SVG($m) [a3_pr2 [file join $scratch a3_m$m.svg]]
+  set A_DELTA($m) [expr {[a3_ovl] - $A_C0($m)}]
+  set A_T($m) [dc_ntexts $A_SVG($m)]
+}
+dc_annot 0
+
+set A_NAMES  {M1 a3fet XM1 M2 XM2}
+set A_OPROWS {{zid = 11.1u} {zgm = 333u}}
+set A_PARAMS {A3W=1u A3GATE}
+
+check "A0 CONTROL the A3 fixture is live: 4 instances, a NUMERIC block on M1, none on R1, and the overlay paints at mask 1" \
+  [list [xschem get instances] \
+        [expr {[string first {11.1u} [a3_optext M1]] >= 0 ? 1 : 0}] \
+        [expr {[string trim [a3_optext R1]] eq {} ? 1 : 0}] \
+        $A_DELTA(1)] \
+  {4 1 1 8}
+
+## THE HEADLINE. Ruling D-1: name + operating-point block, and nothing else.
+check "A1 HEADLINE at mask 9 an annotated device draws its names and its OP rows ONLY - the parameter and the pin label are gone" \
+  [list [a3_hasl $A_T(9) $A_NAMES] [a3_hasl $A_T(9) $A_OPROWS] [a3_hasl $A_T(9) $A_PARAMS]] \
+  {{1 1 1 1 1} {1 1} {0 0}}
+
+## ⚠ NON-VACUITY FOR A1, BY CONTENT AND NEVER BY BYTE COUNT (the scratch path is
+## drawn on the sheet). Every string A1 asserts ABSENT at mask 9 is PRESENT at
+## mask 1 on the very same fixture, so A1 cannot pass by rendering nothing.
+check "A2 NON-VACUITY for A1: at mask 1 the parameter and the pin label ARE drawn, beside the names and the OP rows" \
+  [list [a3_hasl $A_T(1) $A_NAMES] [a3_hasl $A_T(1) $A_OPROWS] [a3_hasl $A_T(1) $A_PARAMS]] \
+  {{1 1 1 1 1} {1 1} {1 1}}
+
+## REPLACES ROW I2 (issue 1248). I2 renders a fixture that cannot see the mask;
+## this one can, and after A3 the two exports MUST differ.
+check "A3 REPLACES ROW I2: the warmed SVG at mask 1 and at mask 9 now DIFFER, and neither is vacuous" \
+  [list [expr {$A_SVG(1) ne $A_SVG(9)}] \
+        [expr {[string length $A_SVG(1)] > 4000}] \
+        [expr {[string length $A_SVG(9)] > 4000}]] \
+  {1 1 1}
+
+## ISSUE 1248 HOLE 1, CLOSED. On row I2's nand2 fixture mask 1 and mask 3 export
+## byte-identically although they differ in MEANING (bit1 is the node-voltage
+## switch). Here they do not: A3VOLTTEXT carries `hide=voltage` and answers bit1.
+## This is the control that says the fixture can see the mask at all.
+check "A4 1248 HOLE 1 CLOSED: on this fixture mask 1 and mask 3 already differ BEFORE the rung matters" \
+  [list [expr {$A_SVG(1) ne $A_SVG(3)}] \
+        [a3_hasl $A_T(3) {A3VOLTTEXT}] [a3_hasl $A_T(1) {A3VOLTTEXT}]] \
+  {1 1 0}
+
+## ROW I3 REBUILT ON A FIXTURE THAT CAN SEE THE MASK — invariant I-C, PERMANENT.
+## Ruling D-8: "declutter is active ONLY when OP info is displayed."
+check "A5 INVARIANT I-C (PERMANENT): with ANNOT_SHOW_OP clear the declutter bit changes NOTHING - mask 0 == mask 8, byte for byte" \
+  [list [expr {$A_SVG(0) eq $A_SVG(8)}] [expr {[string length $A_SVG(0)] > 4000}]] \
+  {1 1}
+
+## RULING D-6, first untouched case: a descriptor-less device. R1 is the shipped
+## devices/res; `op_annot::text R1` is blank (row A0), so the gate never opens.
+check "A6 D-6: at mask 9 a descriptor-less device is UNTOUCHED - R1 keeps its name, its value and its m= text" \
+  [a3_hasl $A_T(9) {R1 10 m=1}] {1 1 1}
+
+## RULING D-6, second untouched case: a type=subcircuit instance. Its name, its
+## symbol name and BOTH its parameter texts survive.
+check "A7 D-6: at mask 9 a type=subcircuit instance is UNTOUCHED - name, symname and both parameter texts" \
+  [a3_hasl $A_T(9) [list X1 nand2 {P: 8u/1u} {N: 5u/1u}]] {1 1 1 1} 
+
+## RULING D-1's other half, isolated: the NAMES survive. All three spellings.
+check "A8 D-1: the names survive the declutter - @name, @symname and @spiceprefix@name are all still drawn at mask 9" \
+  [a3_hasl $A_T(9) {M1 a3fet XM1 M2 XM2}] {1 1 1 1 1}
+
+## ⚠ THE 1248 ROW THAT MATTERS, AND IT IS GREEN BEFORE AND AFTER. The eleventh
+## text_hidden() call site (get_annot_overlay, actions.c) passes a SYNTHETIC
+## literal and is asking "would an OP text be visible right now?" as a proxy for
+## "should the overlay paint?". A rung placed above it switches the annotation
+## overlay OFF — the feature eating itself — and rows A1 and A3 would still
+## PASS. Measured before the change, per two warmed exports: 0 at mask 0, 8 at
+## mask 1, 0 at mask 8, 8 at mask 9. Those four numbers must not move.
+check "A9 get_annot_overlay PAINTS EXACTLY WHEN IT DID: the overlay delta per two warmed exports is 0/8/0/8 at masks 0/1/8/9" \
+  [list $A_DELTA(0) $A_DELTA(1) $A_DELTA(8) $A_DELTA(9)] {0 8 0 8}
+
+## ⚠ THE RUNG'S PLACEMENT, AND IT IS FORCED RATHER THAN STYLISTIC. Both shipped
+## Op-Annotate menu bodies do `set show_hidden_texts 1` ONE LINE above the mask
+## write (src/xschem.tcl), so a rung below the show_hidden_texts arm would be a
+## no-op on the exact workflow the feature was written for. The first element is
+## the non-vacuity control on this very symbol: at mask 0 the hide=true text DOES
+## appear when the switch is on.
+## ⚠ THROUGH THE Tcl VARIABLE, NOT `xschem set`: measured on this tree, the C
+## field is re-pulled from `show_hidden_texts` by the bulk evaluation
+## (draw.c/actions.c), so a bare `xschem set show_hidden_texts 1` followed by
+## `update_all_sym_bboxes` is undone before the export and the row would be
+## vacuous. The menu bodies write the Tcl variable; so does this row.
+set A10_SHT 0 ; catch {set A10_SHT $::show_hidden_texts}
+set ::show_hidden_texts 1
+dc_annot 0 ; set A10_T0 [dc_ntexts [a3_pr2 [file join $scratch a3_sht0.svg]]]
+dc_annot 9 ; set A10_T9 [dc_ntexts [a3_pr2 [file join $scratch a3_sht9.svg]]]
+set ::show_hidden_texts $A10_SHT
+dc_annot 0
+check "A10 show_hidden_texts=1 (the state BOTH Op-Annotate menu bodies create) does NOT defeat the rung" \
+  [list [a3_hasl $A10_T0 {A3TRUETEXT}] \
+        [a3_hasl $A10_T9 {A3TRUETEXT}] \
+        [a3_hasl $A10_T9 $A_PARAMS] \
+        [a3_hasl $A10_T9 {M1}]] \
+  {1 0 {0 0} 1}
+
+## The rung goes AFTER the class tests, so a text that DECLARED itself an
+## annotation is never eaten by it. `hide=op` at mask 11 and `hide=voltage` at
+## mask 11 both render; the parameter and the pin label do not.
+check "A11 an annotation-classed text survives the rung: at mask 11 both hide=op and hide=voltage texts still render" \
+  [list [a3_hasl $A_T(11) {A3OPTEXT A3VOLTTEXT}] [a3_hasl $A_T(11) $A_PARAMS]] \
+  {{1 1} {0 0}}
+
+## SVG AND PS MUST AGREE WITH THE SCREEN. psprint.c is the back end a partial fix
+## leaves out (issue 0615's sharpest landmine) — an exported PDF that still
+## carries the parameters is a defect.
+dc_annot 9 ; set A12_P9 [a3_pr2 [file join $scratch a3_m9.ps] ps]
+dc_annot 1 ; set A12_P1 [a3_pr2 [file join $scratch a3_m1.ps] ps]
+dc_annot 0
+check "A12 PS AGREES WITH SVG: at mask 9 the PostScript carries (M1) and not (A3W=1u)/(A3GATE); at mask 1 it carries all three" \
+  [list [regexp {\(M1\)} $A12_P9] [regexp {\(A3W=1u\)} $A12_P9] [regexp {\(A3GATE\)} $A12_P9] \
+        [regexp {\(M1\)} $A12_P1] [regexp {\(A3W=1u\)} $A12_P1] [regexp {\(A3GATE\)} $A12_P1]] \
+  {1 0 0 1 1 1}
+
+## INVARIANT I-A / I4: the overlay and the rung modify NOTHING. `xschem saveas`
+## above wrote this file, so the comparison is two writes of the same in-memory
+## schematic — the bytes, not the absence of a dirty marker.
+set A13_B0 [opa_slurp $A_SAV]
+set A13_MODS {}
+foreach m {0 1 3 8 9 11} { dc_annot $m ; lappend A13_MODS [xschem get modified] }
+catch {xschem save}
+set A13_B1 [opa_slurp $A_SAV]
+dc_annot 0
+check "A13 INVARIANT I-A: a full mask sweep sets no modify flag and leaves the .sch BYTE-IDENTICAL" \
+  [list $A13_MODS [expr {$A13_B0 eq $A13_B1}] [expr {[string length $A13_B0] > 0}]] \
+  {{0 0 0 0 0 0} 1 1}
+
+## ⚠ THE CLICK TARGET — MEASURED, NOT DISCOVERED LATER. select.c's symbol_bbox
+## gates its text loop on the same predicate, so a hidden text SHRINKS the
+## with-text box inst[i].x1..y2, and findnet.c's find_closest_element uses
+## POINTINSIDE against exactly that box as its candidate gate. `xschem
+## instance_at` (scheduler.c) is that pick, read-only. So with the declutter on,
+## every decluttered device's clickable area gets smaller. That is arguably
+## correct — the text is not there any more — but ITEM B4 CLICKS THESE DEVICES.
+## Measured before the change: M1's box is 150 -380 496.601 -233.165 at BOTH
+## mask 1 and mask 9, and all three points below answer M1 at both.
+##   (430,-245) sits inside the A3W= parameter text, outside the body
+##   (180,-380) sits inside the A3GATE pin label, outside the body
+##   (300,-300) is the symbol body itself and must NEVER stop answering
+dc_annot 1
+set A14_M1 [list [xschem instance_at 430 -245] [xschem instance_at 180 -380] [xschem instance_at 300 -300]]
+set A14_B1 [a3_ibox 0]
+dc_annot 9
+set A14_M9 [list [xschem instance_at 430 -245] [xschem instance_at 180 -380] [xschem instance_at 300 -300]]
+set A14_B9 [a3_ibox 0]
+dc_annot 0
+check "A14 CLICK TARGET: at mask 9 the decluttered device's with-text bbox shrinks and the two text-only pick points stop answering it" \
+  [list $A14_M1 $A14_M9 \
+        [a3_lt [lindex $A14_B9 2] [lindex $A14_B1 2]] \
+        [a3_lt [lindex $A14_B1 1] [lindex $A14_B9 1]]] \
+  [list {M1 M1 M1} [list {} {} M1] 1 1]
+
+## ⚠ THE BBOX MUST NOT BE ONE PASS STALE. The shipped idiom is
+## `annotate_op; update_all_sym_bboxes; redraw`, and symbol_bbox has ~20 callers
+## that run outside any draw or export frame. If the per-instance gate is read
+## from a cache that only the three DRAW entry points refresh, the click target
+## is computed from the PRE-annotate state and the screen and the pick disagree
+## for one pass. Nothing is exported or redrawn between the sync and the read
+## here, deliberately.
+xschem load $A_SAV
+update idletasks
+dc_setmask 9
+catch {xschem annotate_op $A_RAW 0}
+catch {xschem update_all_sym_bboxes}
+set A15_GOT [list [xschem instance_at 430 -245] [xschem instance_at 300 -300]]
+dc_annot 0
+check "A15 THE BBOX IS NOT ONE PASS STALE: after annotate_op + ONE update_all_sym_bboxes (no redraw, no export) the box is ALREADY the shrunken one" \
+  $A15_GOT [list {} M1]
+
+## Invariant I-C in GEOMETRY, not only in pixels: with bit0 clear the declutter
+## bit must move no bounding box either.
+dc_annot 0 ; set A16_0 {}
+for {set i 0} {$i < [xschem get instances]} {incr i} { lappend A16_0 [a3_ibox $i] }
+dc_annot 8 ; set A16_8 {}
+for {set i 0} {$i < [xschem get instances]} {incr i} { lappend A16_8 [a3_ibox $i] }
+dc_annot 0
+check "A16 INVARIANT I-C in geometry: with ANNOT_SHOW_OP clear the declutter bit moves NO instance bbox" \
+  [list [expr {$A16_0 eq $A16_8}] [expr {[llength $A16_0] == 4}] \
+        [expr {[lindex $A16_0 0] ne {NO-BBOX}}]] \
+  {1 1 1}
+
+## hide_symbols=2 CLOSES the D-6 gate (get_annot_overlay's own D9 chain refuses
+## there), so the rung must not fire and the render is the KEEP-NAME render — not
+## a doubly-stripped one. Compared mask-for-mask so this row says exactly one
+## thing.
+set A17_HS 0 ; catch {set A17_HS $::hide_symbols}
+catch {xschem set hide_symbols 2}
+dc_annot 9 ; set A17_T9 [dc_ntexts [a3_pr2 [file join $scratch a3_hs2m9.svg]]]
+dc_annot 1 ; set A17_T1 [dc_ntexts [a3_pr2 [file join $scratch a3_hs2m1.svg]]]
+check "A17 hide_symbols=2 CLOSES the D-6 gate, so the declutter does not fire there: the mask-1 and mask-9 renders are identical" \
+  [list [expr {$A17_T9 eq $A17_T1}] [expr {[llength $A17_T9] > 0}]] {1 1}
+
+## ⚠ ROW N14 FLIPPED — ISSUE 1249 FIXED HERE, DELIBERATELY. The shipped
+## keep-name test is THREE byte-identical copies comparing against `@symname`
+## and `@name` only, so at hide_symbols=2 a device whose name text is
+## `@spiceprefix@name` loses its name on screen, in SVG and in PDF. Item A2
+## measured it and filed it; item A3 rewrites exactly those three loops and
+## fixes it as it passes, with the exported annot_name_token() as the single
+## predicate (invariant I1). Row N14 above carries the same flip on section N's
+## own fixture; this row carries it WITH the annotation live, which is the state
+## A17 says must not double-strip.
+dc_annot 9
+set A18_T [dc_ntexts [a3_pr2 [file join $scratch a3_hs2names.svg]]]
+catch {xschem set hide_symbols $A17_HS}
+dc_annot 0
+check "A18 ROW N14 FLIPPED (1249 fixed): at hide_symbols=2 every device keeps its name, INCLUDING the two spelled @spiceprefix@name" \
+  [list [a3_hasl $A18_T {M1 a3fet XM1 M2 XM2 R1 nand2 X1}] [a3_hasl $A18_T $A_PARAMS]] \
+  {{1 1 1 1 1 1 1 1} {0 0}}
+
+# --- A19..A22: THE STRUCTURE THE BEHAVIOURAL ROWS CANNOT SEE ----------------
+# ⚠ These four are CORROBORATION, not the proof. Item A2 had to argue
+# structurally because xText.flags is invisible from Tcl; A3 does not — it has
+# three independent behavioural windows on the predicate (the SVG and PS
+# renders, `xschem instance_bbox` and `xschem instance_at`). What they add is
+# the two things behaviour cannot see: that the eleventh call site is
+# byte-unchanged, and that four copies of one predicate became one.
+
+set A_DRAW [file join $repo src draw.c]
+set A_SVGD [file join $repo src svgdraw.c]
+set A_PS   [file join $repo src psprint.c]
+set A_SEL  [file join $repo src select.c]
+
+## ISSUE 1249, STRUCTURALLY: four copies become one builder (invariant I1).
+check "A19 1249 STRUCTURAL: no `@symname` keep-name literal survives in the three render back ends, each calls annot_name_token once, and it is exported" \
+  [list [opa_n_grep $A_DRAW {"@symname"}] [opa_n_grep $A_SVGD {"@symname"}] \
+        [opa_n_grep $A_PS {"@symname"}] \
+        [opa_n_grep $A_DRAW {annot_name_token\(}] [opa_n_grep $A_SVGD {annot_name_token\(}] \
+        [opa_n_grep $A_PS {annot_name_token\(}] \
+        [opa_n_grep $DC_H {extern int annot_name_token}]] \
+  {0 0 0 1 1 1 1}
+
+## REPLACES ROW N10. The rung's PLACEMENT, read out of the C: below the explicit
+## HIDE_TEXT_VOLTAGE arm (so the class tests answer first, which is what keeps
+## the eleventh call site's answer bit-for-bit unchanged) and above the
+## show_hidden_texts arm (row A10's measurement). The second element is the
+## anti-hollow half: the name bit must actually be READ somewhere, not merely
+## written by item A2.
+set A20_B [dc_cbody $N_ACTIONS text_hidden_core]
+set A20_iv -1 ; set A20_in -1 ; set A20_is -1 ; set A20_k 0
+foreach l [split $A20_B \n] {
+  if {$A20_iv < 0 && [string first HIDE_TEXT_VOLTAGE   $l] >= 0} { set A20_iv $A20_k }
+  if {$A20_in < 0 && [string first ANNOT_SHOW_NOPARAM  $l] >= 0} { set A20_in $A20_k }
+  if {$A20_is < 0 && [string first show_hidden_texts   $l] >= 0} { set A20_is $A20_k }
+  incr A20_k
+}
+set A20_READS 0
+foreach l [split [opa_slurp $N_ACTIONS] \n] {
+  if {[string first TEXT_ANNOT_NAME $l] < 0} continue
+  if {[regexp {\|=\s*TEXT_ANNOT_NAME} $l]} continue
+  if {[regexp {^\s*\*} $l] || [regexp {^\s*/\*} $l]} continue
+  incr A20_READS
+}
+check "A20 REPLACES ROW N10: the rung sits in text_hidden_core BELOW the HIDE_TEXT_VOLTAGE arm and ABOVE show_hidden_texts, and the name bit is READ" \
+  [list [expr {[string length $A20_B] > 0}] \
+        [expr {($A20_iv >= 0 && $A20_in > $A20_iv) ? 1 : 0}] \
+        [expr {($A20_is >= 0 && $A20_in >= 0 && $A20_is > $A20_in) ? 1 : 0}] \
+        [expr {$A20_READS >= 1 ? 1 : 0}]] \
+  {1 1 1 1}
+
+## ⚠ THE ELEVENTH CALL SITE, BYTE-UNCHANGED. get_annot_overlay() asks "would an
+## OP text be visible right now?" with a SYNTHETIC literal, as a proxy for
+## "should the overlay paint?". It must keep asking exactly that: the
+## instance-aware entry point must not appear in this function, or the declutter
+## switches the annotation overlay off and A9 is the only row that notices.
+set A21_B [dc_cbody $N_ACTIONS get_annot_overlay]
+check "A21 THE ELEVENTH SITE, STRUCTURAL: get_annot_overlay still carries the synthetic literal and no instance-aware call" \
+  [list [expr {[string first {text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)} $A21_B] >= 0 ? 1 : 0}] \
+        [expr {[string first {text_hidden_inst} $A21_B] >= 0 ? 1 : 0}] \
+        [expr {[string length $A21_B] > 0}]] \
+  {1 0 1}
+
+## THE CALL-SITE CENSUS. Six instance sites, and every one of them carries the
+## instance index: draw_symbol, draw_temp_symbol, inst_text_bbox, svg_draw_symbol,
+## ps_draw_symbol and symbol_bbox. The last element is what says the sweep was
+## COMPLETE — a two-argument instance-context call left behind is a site the
+## declutter silently does not reach.
+check "A22 CALL-SITE CENSUS: exactly six instance-aware calls (draw 3, svg 1, ps 1, select 1) and no two-argument instance-context call left behind" \
+  [list [opa_n_grep $A_DRAW {text_hidden_inst\(}] [opa_n_grep $A_SVGD {text_hidden_inst\(}] \
+        [opa_n_grep $A_PS {text_hidden_inst\(}]   [opa_n_grep $A_SEL {text_hidden_inst\(}] \
+        [expr {[opa_n_grep $A_DRAW {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
+               [opa_n_grep $A_SVGD {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
+               [opa_n_grep $A_PS   {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
+               [opa_n_grep $A_SEL  {text_hidden\(.*TEXT_CTX_INSTANCE}]}]] \
+  {3 1 1 1 0}
+
+# --- A23, A24: ISSUE 1246, THE TWO HARD SETS --------------------------------
+# `Waves > Op Annotate` and `Graphs > Annotate Operating Point into schematic`
+# both HARD SET the mask, which silently clears the declutter bit — so the menu
+# item and the chord disagree about ruling D-8. Invisible today; user-visible
+# the moment A3 makes bit 3 hide text. The repair is the shipped bit-wise idiom
+# at src/ase_window.tcl (`($cur & ~$bit) | ...`), reading `xschem get
+# annot_show` and NEVER `$::annot_show` — the mask is PER-CONTEXT, so the Tcl
+# mirror belongs to whichever context wrote it last (row N22c of
+# test_op_annot.tcl pins that trap).
+set A_XSTCL [file join $repo src xschem.tcl]
+set A_XSSRC [opa_slurp $A_XSTCL]
+
+check "A23 1246 SOURCE: src/xschem.tcl carries ZERO hard sets of the mask and exactly two bit-wise writers, one under each menu label" \
+  [list [opa_n_grep $A_XSTCL {^\s*xschem set annot_show 3\s*$}] \
+        [opa_n_grep $A_XSTCL {xschem set annot_show \[expr}] \
+        [opa_n_grep $A_XSTCL {xschem set annot_show}] \
+        [expr {[regexp {Op Annotate.*?xschem set annot_show \[expr} $A_XSSRC] ? 1 : 0}] \
+        [expr {[regexp {Annotate Operating Point into schematic.*?xschem set annot_show \[expr} $A_XSSRC] ? 1 : 0}]] \
+  {0 2 2 1 1}
+
+## ⚠ THE EXPRESSION IS EXTRACTED FROM THE SOURCE AND EVALUATED, not eyeballed.
+## `| 3` alone is wrong: clearing bit 2 (the held transient snapshot, issue
+## 0868) is deliberate and is ruling D5-1's shape, so the merge must take
+## 9 -> 11 (bit 3 SURVIVES) and 4 -> 3 (bit 2 is CLEARED).
+set A24_EXPR {}
+foreach l [split $A_XSSRC \n] {
+  if {[regexp {xschem set annot_show \[expr \{(.*)\}\]} $l -> A24_BODY]} {
+    set A24_EXPR $A24_BODY ; break
+  }
+}
+proc a3_merge {body cur} {
+  if {$body eq {}} { return NO-EXPR }
+  set s [string map [list {[xschem get annot_show]} $cur] $body]
+  if {[catch {expr $s} r]} { return RAISED }
+  return $r
+}
+set A24_GOT {}
+foreach c {9 4 0 15 8} { lappend A24_GOT [a3_merge $A24_EXPR $c] }
+check "A24 1246 BEHAVIOUR: the merge expression EXTRACTED FROM THE SOURCE sets bits 0/1, clears bit 2 and leaves bit 3 alone" \
+  $A24_GOT {11 3 3 11 11}
+
+# --- A25, A26: ISSUE 1247, THE NET-ZERO PAIR --------------------------------
+# annot_show_set() stamps xctx->annot_root for ANY nonzero mask, so two
+# Ctrl-Alt-6 presses — a pair whose advertised effect is NOTHING — convert an
+# xschemrc-armed annotation into one a later File > Open clears (the 0688
+# root-change clear). Pre-existing mechanism; A1 owned no C file that could fix
+# it.
+# ⚠ HOW THE rc SHAPE IS REACHED FROM A SCRIPT. `xschem set annot_show 3` stamps
+# the root immediately, so the armed-with-NULL-stamp state cannot be produced
+# through the setter. A bare `set ::annot_show 3` followed by ONE bulk
+# evaluation pulls the value into xctx->annot_show WITHOUT stamping — the same
+# shape xinit.c gives an rc-armed mask. Measured on this tree: mask 3, stamp
+# empty, both before and after.
+focus -force .drw
+update idletasks
+set A25_A [file join $scratch a3_sheetA.sch]
+set A25_B [file join $scratch a3_sheetB.sch]
+foreach {p n} [list $A25_A A $A25_B B] {
+  set fd [open $p w]
+  puts $fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+T {a3 sheet $n} 0 0 0 0 0.4 0.4 {}"
+  close $fd
+}
+proc a3_rcarm {sheet mask} {
+  xschem load $sheet ; update idletasks
+  dc_setmask 0
+  set ::annot_show $mask
+  catch {xschem update_all_sym_bboxes}
+  set r {} ; catch {set r [xschem get annot_root]}
+  return [list [dc_mask] [expr {$r eq {} ? {EMPTY} : {STAMPED}}]]
+}
+set A25_CTRL_ARM [a3_rcarm $A25_A 3]
+xschem load $A25_B ; update idletasks
+set A25_CTRL_OPEN [dc_mask]
+set A25_VAR_ARM [a3_rcarm $A25_A 3]
+dc_fire <Control-Alt-Key-6>
+set A25_VAR_P1 [dc_mask]
+dc_fire <Control-Alt-Key-6>
+set A25_VAR_P2 [dc_mask]
+xschem load $A25_B ; update idletasks
+set A25_VAR_OPEN [dc_mask]
+check "A25 1247 CONTROL/VARIANT on two root sheets: an rc-armed mask survives File>Open WITH and WITHOUT a net-zero pair of presses" \
+  [list $A25_CTRL_ARM $A25_CTRL_OPEN $A25_VAR_ARM $A25_VAR_P1 $A25_VAR_P2 $A25_VAR_OPEN] \
+  [list {3 EMPTY} 3 {3 EMPTY} 11 3 3]
+
+## ⚠ THE FIX MUST NOT WEAKEN ISSUE 0688. A mask armed THROUGH THE SETTER still
+## belongs to the sheet it was armed for, still names it, and is still cleared
+## when the root moves. That is decision D2 of 0688 and it is not A3's to
+## reverse.
+xschem load $A25_A ; update idletasks
+dc_setmask 3
+set A26_ROOT {} ; catch {set A26_ROOT [xschem get annot_root]}
+set A26_ARM [list [dc_mask] [expr {$A26_ROOT eq $A25_A ? 1 : 0}]]
+xschem load $A25_B ; update idletasks
+set A26_OPEN [dc_mask]
+dc_setmask 0
+check "A26 1247 DOES NOT WEAKEN 0688: a SETTER-armed mask names its sheet and is still cleared by opening another root" \
+  [list $A26_ARM $A26_OPEN] [list {3 1} 0]
+
+# --- A27, A28: PER PDK (sky130A, gf180mcuD, ihp-sg13g2) ---------------------
+# ⚠ THE ACCEPTANCE ROW, ON THE REAL SHIPPED SYMBOLS. Each PDK's procs file is
+# sourced (it is what calls op_annot::register, with a `match` glob narrowing to
+# that PDK's cell names — issue 0425), one of its FETs is placed, and a raw
+# built FROM THE DESCRIPTOR'S OWN params list through op_annot::vector is
+# annotated. Then: the device draws its NAME and its OP block and nothing else.
+# ⚠ THE SYMBOL IS REFERENCED BY ABSOLUTE PATH, deliberately. The three PDK rcs
+# repoint XSCHEM_LIBRARY_DEFS at their own tree, which this session cannot do
+# after startup; an absolute reference resolves without it and still yields a
+# `cell::name` containing `sky130_fd_pr/` / `gf180mcu_pr/` / `sg13g2_pr/`, which
+# is exactly what op_annot::_matches globs against.
+# ⚠ NOTE WHICH NAME EACH PDK SPELLS: sky130 and IHP carry `@name`, gf180 carries
+# `@spiceprefix@name` — the third spelling, and the one issue 1249 drops.
+set A_PDK [list \
+  sky130 [file join $repo sky130A sky130_procs.tcl] \
+         [file join $repo sky130A xschem_libs sky130_fd_pr nfet_01v8 symbol nfet_01v8.sym] \
+         {name=M1 W=1 L=0.15 nf=1 model=nfet_01v8 spiceprefix=X} \
+         M1 {nfet_01v8 {1 x 1 / 0.15} nf=1 S D B G} \
+  gf180  [file join $repo gf180mcuD gf180_procs.tcl] \
+         [file join $repo gf180mcuD xschem_libs gf180mcu_pr nfet_03v3 symbol nfet_03v3.sym] \
+         {name=M1 L=0.28u W=0.22u nf=1 m=1 model=nfet_03v3 spiceprefix=X} \
+         XM1 {nfet_03v3 {1 x 0.22u / 0.28u} nf=1 S D B G} \
+  ihp    [file join $repo ihp-sg13g2 sg13g2_procs.tcl] \
+         [file join $repo ihp-sg13g2 xschem_libs sg13g2_pr sg13_lv_nmos symbol sg13_lv_nmos.sym] \
+         {name=M1 l=0.13u w=0.15u ng=1 m=1 model=sg13_lv_nmos spiceprefix=X} \
+         M1 {sg13_lv_nmos m=1 ng=1 l=0.13u w=0.15u G S D B}]
+
+set A27_GOT {} ; set A28_GOT {}
+set A_VP {800 600 200 -420 620 -180}
+foreach {tag procs sym props keep drop} $A_PDK {
+  catch {source $procs}
+  set sch [file join $scratch a3_$tag.sch]
+  set fd [open $sch w]
+  puts $fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$sym\} 400 -300 0 0 \{$props\}"
+  close $fd
+  xschem load $sch ; update idletasks
+  set d {}
+  catch {set d [op_annot::descriptor nmos]}
+  set pr {} ; set v 1.0
+  catch {
+    foreach row [dict get $d params] {
+      lappend pr [op_annot::vector M1 [lindex $row 1] [lindex $row 2]] $v
+      set v [expr {$v * 2}]
+    }
+  }
+  a3_mkraw [file join $scratch a3_$tag.raw] $pr
+  catch {xschem annotate_op [file join $scratch a3_$tag.raw] 0}
+  dc_annot 9 ; set t9 [dc_ntexts [a3_pr2 [file join $scratch a3_${tag}_m9.svg]]]
+  dc_annot 1 ; set t1 [dc_ntexts [a3_pr2 [file join $scratch a3_${tag}_m1.svg]]]
+  dc_annot 0
+  lappend A27_GOT [list [a3_hasl $t9 [list $keep]] \
+                        [expr {[lsearch -glob $t9 {id *= 1}] >= 0 ? 1 : 0}] \
+                        [a3_hasl $t9 $drop]]
+  lappend A28_GOT [list [a3_hasl $t1 [list $keep]] \
+                        [expr {[lsearch -glob $t1 {id *= 1}] >= 0 ? 1 : 0}] \
+                        [a3_hasl $t1 $drop]]
+}
+set A_VP {2400 1600 100 -420 1000 -20}
+
+check "A27 PER PDK (sky130A, gf180mcuD, ihp-sg13g2): at mask 9 each annotated FET draws its name and its OP block and NOTHING else" \
+  $A27_GOT \
+  {{1 1 {0 0 0 0 0 0 0}} {1 1 {0 0 0 0 0 0 0}} {1 1 {0 0 0 0 0 0 0 0 0}}}
+
+check "A28 PER PDK NON-VACUITY: the same three FETs at mask 1 still draw @model, their sizing text and their pin labels" \
+  $A28_GOT \
+  {{1 1 {1 1 1 1 1 1 1}} {1 1 {1 1 1 1 1 1 1}} {1 1 {1 1 1 1 1 1 1 1 1}}}
+
+# --- A29: THE TWO SUITES THIS ITEM DOES NOT OWN BUT MUST KEEP HONEST --------
+# ⚠ FIXING 1246 REDS TWO ROWS IN TWO OTHER FILES. Row N22b of
+# tests/headless/test_op_annot.tcl and row B6 of
+# tests/headless/test_annot_show_menu.tcl both gold the LITERAL hard set against
+# the raw src/xschem.tcl text. Worse, as written neither can tell the two writer
+# sites apart — `.` matches a newline in Tcl, so both labelled regexps are
+# satisfied by whichever site comes first — so fixing only ONE site would leave
+# both rows green. They are re-pointed at the bit-wise writer in the same commit
+# and each gains a "zero hard sets survive" element. This row is the seam
+# between the three files: what those two suites gold must be what src/xschem.tcl
+# actually carries.
+set A_OPANNOT [file join $here test_op_annot.tcl]
+set A_MENU    [file join $here test_annot_show_menu.tcl]
+## ⚠ THE GREPS ARE SCOPED TO THE GOLDEN LINES, not to the whole file. Eight
+## other lines of test_op_annot.tcl legitimately WRITE `xschem set annot_show 3`
+## as test setup (rows L3, O32..O35 and the U section); only a line that carries
+## the literal INSIDE a `regexp {...}` is a golden about src/xschem.tcl's text.
+check "A29 the 1246 literal rows in the two suites this item does not own are re-pointed at the bit-wise writer, and agree with src/xschem.tcl" \
+  [list [opa_n_grep $A_XSTCL {xschem set annot_show \[expr}] \
+        [opa_n_grep $A_OPANNOT {regexp \{.*xschem set annot_show 3}] \
+        [opa_n_grep $A_MENU    {regexp \{.*xschem set annot_show 3}] \
+        [opa_n_grep $A_OPANNOT {regexp \{.*xschem set annot_show \\\[expr}] \
+        [opa_n_grep $A_MENU    {regexp \{.*xschem set annot_show \\\[expr}]] \
+  {2 0 0 2 2}
 
 dc_annot 0
 

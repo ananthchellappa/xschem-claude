@@ -145,6 +145,18 @@ S7 (2026-08-19) collapsed ten copy-pasted visibility tests into one predicate:
 int text_hidden(int flags, int ctx)      /* TEXT_CTX_INSTANCE | TEXT_CTX_SCHEMATIC */
 ```
 
+> ⚠ **SUPERSEDED IN SHAPE BY ITEM A3, 2026-09-02** — one core, two entry points:
+>
+> ```c
+> static int text_hidden_core(int flags, int ctx, int n);  /* the five arms + the rung */
+> int text_hidden(int flags, int ctx);        /* delegate, n = -1: the 5 schematic sites
+>                                                and get_annot_overlay()'s probe */
+> int text_hidden_inst(int flags, int n);     /* the 6 instance sites; n is the instance */
+> ```
+>
+> **A new instance-context call site must use `text_hidden_inst()`.** The plan's
+> `TEXT_CTX_INSTANCE_ANNOTATED` was rejected — see §4.1 A3a.
+
 Bits (`src/xschem.h:387-424`): `HIDE_TEXT 8`, `HIDE_TEXT_INSTANTIATED 32`,
 `HIDE_TEXT_OP 64`, `HIDE_TEXT_VOLTAGE 128`, plus the two **content-derived**
 classes `TEXT_ANNOT_VOLTAGE 256` and `TEXT_ANNOT_CURRENT 512` — **1024 is free**.
@@ -157,9 +169,33 @@ with a **synthetic literal** `text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)`
 rather than a real text's flags — it is asking "would an OP text be visible right
 now?" as a proxy for "should the overlay paint?". Any new rung added to
 `text_hidden` is therefore also answering *that* question, and must not change
-its answer. The other ten: `draw.c:872`, `:1140`, `:10307`, `svgdraw.c:927`,
-`psprint.c:1209`, `select.c:709` (TEXT_CTX_INSTANCE); `draw.c:10688`,
-`svgdraw.c:1334`, `psprint.c:1710`, `actions.c:6324` (TEXT_CTX_SCHEMATIC).
+its answer.
+
+⚠ **THE `actions.c` NUMBERS IN THIS SECTION WERE STALE AND ARE CORRECTED HERE**
+(item A3, 2026-09-02). Item A2's `dcbb85c3` inserted 69 lines above them, so
+"`actions.c:1832`" above and "`actions.c:6324`" below both read +69 low; item A3
+moved them again. The census as of item A3's commit — **re-derive with grep, do
+not trust a number in a document**:
+
+| site | line | ctx |
+|---|---|---|
+| `draw.c` `draw_symbol()` | **872** | instance (`text_hidden_inst`) |
+| `draw.c` `draw_temp_symbol()` | **1143** | instance |
+| `draw.c` `inst_text_bbox()` | **10310** | instance |
+| `svgdraw.c` `svg_draw_symbol()` | **927** | instance |
+| `psprint.c` `ps_draw_symbol()` | **1209** | instance |
+| `select.c` `symbol_bbox()` | **709** | instance |
+| `draw.c` `draw()` | **10691** | schematic |
+| `svgdraw.c` | **1337** | schematic |
+| `psprint.c` | **1713** | schematic |
+| `actions.c` `calc_drawing_bbox()` | **6590** | schematic |
+| `actions.c` `get_annot_overlay()` | **2098** | **the synthetic literal** |
+
+The safety of the eleventh is now **arithmetic, not etiquette**: `HIDE_TEXT_OP`
+is 64 and the content-class-to-mask helper names only 256 and 512, so
+`annot_class_mask(64, TEXT_CTX_INSTANCE)` is 0 and the probe returns at the
+`HIDE_TEXT_OP` arm — *above* the rung — and it passes `n = -1`, which the rung's
+`n >= 0` term rejects independently. Unreachable twice over.
 
 ⚠⚠ **SYMBOL TEXTS ARE SHARED BY EVERY INSTANCE OF A SYMBOL.** `draw_symbol()`
 walks `symptr->text[j]` — the **symbol's** array, not the instance's. So a
@@ -524,6 +560,50 @@ cached, so it costs nothing.
 which do know the instance — most cheaply as a new context value
 (`TEXT_CTX_INSTANCE_ANNOTATED`) rather than a third argument.
 
+> ⚠ **THAT LAST SENTENCE IS WRONG AND ITEM A3 MEASURED WHY** (2026-09-02). A new
+> context value is the **expensive** option, not the cheap one:
+>
+> * `annot_class_mask()` and `annot_text_layer()` both open with
+>   `ctx != TEXT_CTX_INSTANCE`, so a fourth value silently kills the implicit
+>   node-voltage class **and** issue 0615's annotation-colour override on exactly
+>   the annotated instances the feature targets. Both guards would have to be
+>   inverted in the same commit — and `annot_text_layer(text.flags,
+>   TEXT_CTX_INSTANCE)` is a hardcoded literal *inside the same three render
+>   loops*, so a careless sweep rewrites it too.
+> * A ctx **value** cannot carry the datum. Each of the six sites would have had
+>   to compute the gate itself and choose between two constants: six copies of one
+>   decision, against invariant **I1**.
+>
+> **Shipped instead:** a third argument, behind two entry points on one core
+> (§2.3). `text_hidden()` keeps its exact signature and its exact behaviour for
+> all five schematic sites *and* for the overlay's probe; `text_hidden_inst(flags,
+> n)` is the instance entry. Ladder **L2** — smallest blast radius — reinforced by
+> **I1**.
+
+**A3b. What the gate actually tests — and where it departs from D-6's words.**
+Shipped as `annot_instance_annotated(n)` = `get_annot_overlay()`'s own
+precondition chain (factored out as `annot_overlay_gate(n)` so the two readers
+cannot drift, **I1**) **plus** a non-blank `annot_overlay_cached_text(n)`. It must
+**not** call `get_annot_overlay()` itself: that function does
+`++annot_overlay_count` and row **O13** of `test_op_annot.tcl` golds the delta
+exactly, so one call per text per instance per frame would both red O13 and
+destroy the only seam an automated check has on the overlay.
+
+⚠ **`op_annot::text` emits blank-VALUED rows when the raw publishes nothing for a
+registered device.** Measured, twice, first-hand: with a descriptor registered and
+a raw loaded whose vectors do not resolve, `op_annot::text M1` returns
+`"zid =\nzgm =\n"` — non-blank — while a descriptor-less `R1` returns `{}`. So the
+gate reads *"this device has a descriptor whose `match`/`devpath` resolve and which
+declares at least one row"*, **not** *"numbers arrived"*. D-6's words are "only
+instances that got OP numbers". Subcircuits and descriptor-less devices are
+untouched, which is what D-6 asks for; a **registered device over a dead or partial
+raw is decluttered while showing empty rows**, which D-6's words do not cover — and
+per measured rule **R1** (`gm`/`gds`/`vth` exist only if the deck saved them
+explicitly) that is common rather than exotic. The gate follows the **pixels** — it
+is exactly what the overlay already paints, and the alternative needs a second
+parser of the block's format (two builders, against **I1**). `rule` debt
+**`1244_A3_blank_valued_block`**; **it is item A3's status-E question.**
+
 ⚠ **Feature A shrinks the target feature B clicks.** `select.c:709` calls
 `text_hidden` inside `symbol_bbox`'s text loop, so a hidden text shrinks the
 with-text box `inst[i].x1..y2`; `findnet.c:461`'s `find_closest_element` uses
@@ -531,6 +611,14 @@ with-text box `inst[i].x1..y2`; `findnet.c:461`'s `find_closest_element` uses
 clickable area of every decluttered device gets smaller. That is arguably
 correct — the text is not there any more — but it must be a check, not a
 surprise.
+
+> **MEASURED, item A3, 2026-09-02** — `cmos_inv.sch`, `M1` annotated, at mask 9:
+> the with-text bbox `x2` goes **177.376 → 157.433** (`y1`/`y2` unchanged, and the
+> surviving `@name` is what still stretches it); `xschem instance_at <x> -170`
+> stops answering `M1` at x = **160/170/175** and still answers at 130/140/150,
+> where before it answered at all six. Descriptor-less `R1` does not move at any
+> mask. `rule` debt `1244_A3_click_target`; **item B4 clicks these devices** and
+> must refresh the bboxes first (issue **1252**).
 
 **A4. The chord.** ⚠ **`Ctrl-Alt-6` is not free today.** Tk matches a pattern
 whose modifiers are a **subset** of the event's, and `op_annotation.md` §4.6
@@ -571,6 +659,61 @@ recorded here so it is not "corrected" later.
 >   `ihp-sg13g2/`'s `cadence_style_rc` is a single `source … src/cadence_style_rc`
 >   line — measured — which is how landmine 6 is discharged without editing three
 >   files.
+
+> **LANDED — item A3, 2026-09-02** (`src/xschem.h`, `src/actions.c`, `src/draw.c`,
+> `src/svgdraw.c`, `src/psprint.c`, `src/select.c`, **`src/scheduler.c`**,
+> `src/xschem.tcl`, and rows in three suites; `test_annot_declutter_1244.tcl`
+> **52 → 82 checks, ALL PASS**). Full record:
+> `doc/claude/op_param_batch/receipts/A3.md`. **Feature A is complete.** The
+> headline, on `cmos_inv.sch` with a descriptor and an OP raw:
+>
+> ```
+> BEFORE   SVG identical 1 vs 9 : 1    mask 9: ... WP/LLP/1 M2 D {vgs=- - -} {vds=- - -} WN/LLN/1 M1 D vgs=0 vds=0 ...
+> AFTER    SVG identical 1 vs 9 : 0    mask 9: ... M2 - {zid =} {zgm =} M1 - {zid =} {zgm =} ... R1 10 m=1 ...
+> ```
+>
+> `0 vs 8 : 1` — with `ANNOT_SHOW_OP` clear the declutter bit still changes not one
+> byte, invariant **I-C**, swept over four mask pairs. `modified` 0 and the `.sch`
+> byte-identical across the sweep, invariant **I-A**, diffed rather than inferred.
+>
+> Five things this section did not say, and one it said wrongly:
+>
+> * ⚠ **The rung's position is forced on BOTH sides.** Below the class arms, for
+>   the overlay probe (§2.3) — which this section did say. **Above** the
+>   `show_hidden_texts` arm, which it did not: both shipped Op-Annotate menu
+>   bodies do `set show_hidden_texts 1` **one line before** writing the mask
+>   (`src/xschem.tcl`), so a rung below that arm would be a no-op on the exact
+>   workflow the feature was written for. Row **A10** measures it; row **A20**
+>   reads the arm order back out of the C.
+> * ⚠ **`src/scheduler.c` had to join the file set.** One line —
+>   `annot_overlay_sync();` beside `annot_show_sync_cache();` in the
+>   `update_all_sym_bboxes` arm — because the D-6 gate reads the overlay cache and
+>   that cache was synced at three draw/export entry points only. Without it the
+>   shipped `annotate_op; update_all_sym_bboxes; redraw` computes the click target
+>   from the pre-annotate cache. The other **38** `symbol_bbox()` callers still run
+>   outside any overlay sync: issue **1252**.
+> * ⚠ **The PDK symbols' OWN operating-point texts carry `hide=true`** (3 in
+>   sky130 `nfet_01v8`, 2 in gf180 `nfet_03v3`, 0 in IHP `sg13_lv_nmos`), so they
+>   are **not** annotation-classed, and once *View > Show hidden texts* is on —
+>   the state both menu bodies create — **the rung hides them**, replaced by the
+>   overlay block. Intended trade, unstated anywhere until now. `rule` debt
+>   `1244_A3_hide_true_op_texts`.
+> * ⚠ **P6 pin-owned pin names are NOT reached** (issue **1253**): they are drawn
+>   by a **fourth** pass gated by `pin_name_visible()`, not by `text_hidden()`, so
+>   a pin spelling `show_pinname=true` keeps its name on a fully decluttered
+>   device — measured first-hand. Inert on all three PDK acceptance devices (four
+>   pins each, all `false`); live for the 2,968 shipped `true` records. D-1 says
+>   pin labels are in scope, so this is a gap in the *implementation*, not in the
+>   ruling.
+> * **The 42 one-record `name+parameter` symbols are spared on this tree by the
+>   gate**, not by luck: every shipped PDK descriptor is `match`-narrowed and
+>   registers only `nmos`/`pmos` (+ IHP `vertical_npn`), so none of the 42 resolves
+>   a devpath. Live only for a user's own `op_annot::register`.
+> * **Issue 1249 was fixed as this section demanded**, by exporting
+>   `annot_name_token()` — four copies of one predicate become one builder (**I1**).
+>   Censused over 44,177 `T` records in five libraries: **exactly 69 symbols**
+>   render differently, all of them the `@spiceprefix@name` spelling, and zero
+>   because of the whitespace trim. The repair is **ungated by `annot_show`**.
 
 ### 4.2 Feature B — the Results Display Window
 
@@ -750,6 +893,25 @@ Still open:
   cell does not include `utils/annot_mode.tcl`, so the wording is written once,
   there, or never. The rejected alternative was a placeholder sharpened by A3,
   which would make A3 edit a file it does not own.
+* **Q12 — does the declutter reach a registered device that got NO numbers?**
+  (added by item A3, 2026-09-02; `rule` debt **`1244_A3_blank_valued_block`**;
+  **this is item A3's status-E question**). D-6 says "only instances that got OP
+  numbers". The shipped gate is "the descriptor resolves and declares at least one
+  row", because that is exactly what the overlay paints — so a registered FET over
+  a dead or partial raw is decluttered **while its block shows `zid =` with no
+  number**. Per measured rule **R1** that is common, not exotic. The alternative
+  needs a second parser of the block's format (two builders, against **I1**) and
+  would let a sheet show an OP block over parameters it had decided not to hide.
+  See §4.1 A3b.
+* **Q13 — after item A3's 1247 fix, may a declutter press adopt an rc-armed
+  mask?** (`rule` debt **`1244_A3_rc_armed_stamp`**). `annot_show_set()` now
+  declines to stamp `xctx->annot_root` when the write moves the declutter bit
+  **and nothing else**, which is what makes a net-zero pair of presses a true
+  no-op again. The consequence: pressing `6` or `Alt-6` on a sheet whose
+  `annot_show` came from `xschemrc` leaves it **rc-armed** — a later `File > Open`
+  does *not* clear it — where today that press adopts the mask. Every other write,
+  including one that changes nothing, still stamps, so issue **0688** is whole
+  (row A26).
 * **Q6 — the dump header.** `M2B:/xdut/xbg/xamp1` as asked. ⚠ The tree has three
   spellings and **none is that one**: `xschem get sch_path` gives
   `.xdut.xbg.xamp1.` (leading *and* trailing dot); `xschem get sim_sch_path`
@@ -796,8 +958,15 @@ Still open:
    `-state disabled`), and its Save button writes back to that same file. An RDW
    built on it would offer to save the dump over a design file. The RDW needs a
    string-backed, read-only, `-exportselection` pane of its own.
-10. **The three name spellings are three, not one.** `@name`, `@symname` and
-    `@spiceprefix@name`. `draw.c:873`'s shipped keep-name test misses the third
+10. ~~**The three name spellings are three, not one.**~~ **DISARMED by item A3,
+    2026-09-02** — `annot_name_token()` is exported and all three render loops
+    call it; zero `strcmp(…,"@symname")` keep-name pairs remain (row **A19**), row
+    **N14** flipped to `{1 1 1 1 1}`, and a census of 44,177 `T` records puts the
+    blast radius at exactly 69 symbols. Kept in full because the *class* of trap —
+    **four hand-written copies of one predicate, drifting silently** — is what
+    invariant I1 exists for, and because the paragraph below is the measurement.
+    `@name`, `@symname` and
+    `@spiceprefix@name`. `draw.c:873`'s shipped keep-name test missed the third
     (81 records, including gf180's FETs and `devices/nmos4.sym`). **FILED as
     issue 1249** by item A2, which reproduced it *behaviourally* — at
     `hide_symbols=2` on `cmos_inv.sch` the render keeps `R1 V1 Vmeas` and loses
@@ -813,6 +982,20 @@ Still open:
 12. **`save m`, `save @m*[*]` and friends do not merely fail — they destroy the
     plot.** A card that matches nothing takes the whole operating point with it
     (R5's all-bogus case), so an over-eager wildcard is worse than no wildcard.
+13. **The declutter's per-instance gate must never call `get_annot_overlay()`**
+    (item A3). That function does `++annot_overlay_count`, and row **O13** of
+    `test_op_annot.tcl` golds the delta exactly — calling it once per text per
+    instance per frame both reds O13 and destroys the only seam an automated check
+    has on the overlay. Read the factored `annot_overlay_gate()` +
+    `annot_overlay_cached_text()` instead, and keep the `annot_overlay_busy`
+    guard: filling the cache tclevals `::op_annot::text`, which reaches
+    `xschem translate` → `prepare_netlist_structs()` — the same machinery
+    `symbol_bbox()` drives, and `symbol_bbox()` is one of the gate's own callers.
+14. **`symbol_bbox()` is BOTH a declutter consumer and a click-target producer**
+    (item A3). It has **39** callers across eight files; `annot_overlay_sync()`
+    has **four**. So the gate can be stale exactly where the pick is computed
+    (issue **1252**) — the same staleness shape as issue 0453. Any item that picks
+    an instance by coordinate must refresh the bboxes first.
 
 ---
 

@@ -3894,11 +3894,23 @@ check {N22 the shipped writers of the mask, by count and by file} \
 # matched inside the SLICED body of ase::ui::annot_apply (opa_proc_src), because
 # the anchored-regexp form this row used to carry was measured to match straight
 # through a no-op shim into a renamed `..._real` body.
+# ⚠ RE-POINTED BY ITEM A3 (issue 1246), AND THE FOURTH ELEMENT IS WHY. Both
+# menu bodies used to HARD SET the mask, which silently cleared the declutter
+# bit that item A1 added at src/xschem.h — so `Waves > Op Annotate` and the
+# Ctrl-Alt-6 chord disagreed about ruling D-8. They now merge bit-wise, in
+# src/ase_window.tcl's shipped idiom, reading `xschem get annot_show` and never
+# `$::annot_show` (row N22c's mirror trap). ⚠ THE FIRST TWO ELEMENTS CANNOT TELL
+# THE TWO SITES APART — `.` matches a newline in Tcl, so both are satisfied by
+# whichever writer comes first in the file, and fixing only ONE site would leave
+# them both green. The fourth element is what closes that: ZERO hard sets of the
+# mask survive anywhere in src/xschem.tcl. Row A29 of
+# tests/headless/test_annot_declutter_1244.tcl is the seam between the files.
 check {N22b ...and each one is where it is supposed to be} \
-  [list [regexp {Op Annotate.*?xschem set annot_show 3} $N_TCL_SRC] \
-        [regexp {Annotate Operating Point into schematic.*?xschem set annot_show 3} $N_TCL_SRC] \
-        [regexp {xschem set annot_show} [opa_proc_src $N_ASE_SRC ase::ui::annot_apply]]] \
-  {1 1 1}
+  [list [regexp {Op Annotate.*?xschem set annot_show \[expr} $N_TCL_SRC] \
+        [regexp {Annotate Operating Point into schematic.*?xschem set annot_show \[expr} $N_TCL_SRC] \
+        [regexp {xschem set annot_show} [opa_proc_src $N_ASE_SRC ase::ui::annot_apply]] \
+        [opa_n_grep $N_TCL {^\s*xschem set annot_show 3\s*$}]] \
+  {1 1 1 0}
 # ⚠ RE-POINTED BY 0682. The PULL half is no longer `annot_show_menu_sync`
 # reading `xschem get annot_show` in its own context -- the ASE-L window is a
 # plain Tk toplevel, not an xschem drawing context, so the menu must read the

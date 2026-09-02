@@ -1316,7 +1316,15 @@ static int annot_content_class(const char *txt)
  * all correctly denied. Measured: all 4,823 shipped name records are already exact
  * without the trim, so the trim is inert on this tree and is kept for the user's own
  * files and for consistency with the classifier above. */
-static int annot_name_token(const char *txt)
+/* ⚠ EXPORTED (item A3, issue 1249). It was static until the three render back ends
+ * needed it: draw.c, svgdraw.c and psprint.c each carried a byte-identical
+ * `strcmp(txt, "@symname") && strcmp(txt, "@name")` keep-name test for
+ * hide_symbols=2, which misses the third spelling -- so at that setting gf180's
+ * whole FET family and the generic devices/nmos4.sym lost their names on screen,
+ * in SVG and in PDF. Four copies of one predicate are now one builder (invariant
+ * I1); row N14 of tests/headless/test_annot_declutter_1244.tcl was flipped from
+ * {1 1 1 0 0} to {1 1 1 1 1} deliberately to record the repair. */
+int annot_name_token(const char *txt)
 {
   const char *s, *e;
   size_t len;
@@ -1474,11 +1482,38 @@ void annot_show_sync_cache(void)
  * one. */
 void annot_show_set(int mask)
 {
+  int old;
   if(!xctx) return;
+  old = xctx->annot_show;
   xctx->annot_show = mask;
   tclsetintvar("annot_show", xctx->annot_show);
-  if(mask) my_strdup(_ALLOC_ID_, &xctx->annot_root, xctx->sch[0]);
-  else     my_strdup(_ALLOC_ID_, &xctx->annot_root, NULL);
+  if(!mask) { my_strdup(_ALLOC_ID_, &xctx->annot_root, NULL); return; }
+  /* 1244 / ISSUE 1247 -- A PURE DECLUTTER TOGGLE DOES NOT ADOPT A MASK IT DID NOT ARM.
+   * Measured before the change: an xschemrc-armed `annot_show 3` reaches xctx through
+   * annot_show_sync_cache() and is therefore NEVER stamped -- decision D2 of issue
+   * 0688, and what makes a rc-armed annotation survive File > Open. Two `Ctrl-Alt-6`
+   * presses are a NET-ZERO PAIR whose advertised effect is nothing (3 -> 11 -> 3), but
+   * each of them went through this setter and stamped the root, so the pair silently
+   * converted that annotation into one the next File > Open cleared. CONTROL/VARIANT,
+   * both driven: with no presses the mask survives the open; with the pair it read 0.
+   * Row A25 is that pair of runs.
+   *
+   * THE TEST IS `THE DECLUTTER BIT AND NOTHING ELSE MOVED`, exact rather than subset,
+   * and the exactness is what keeps issue 0688 whole: any write that changes an
+   * ARMING bit -- including a write that changes nothing at all, which is how a menu
+   * or a script says "annotate THIS sheet" -- still stamps, so a setter-armed mask
+   * still names its sheet and is still dropped when the root moves (row A26).
+   * REJECTED, and it is refuted by measurement rather than by taste: "do not stamp
+   * when the mask is unchanged" does not fix 1247 at all -- the pair is 3 -> 11 -> 3
+   * and BOTH writes change the mask. Also rejected: routing the xschemrc arm through
+   * this setter, which reverses decision D2 of 0688 outright.
+   *
+   * ⚠ THIS IS A LADDER L3 CALL AND THE QUESTION IS THE USER'S. After it, pressing the
+   * declutter chord on an rc-armed sheet leaves the mask rc-armed; today that press
+   * adopts it and the next File > Open clears it. Recorded as `rule` debt
+   * 1244_A3_rc_armed_stamp. See doc/claude/issues/1247-*.md. */
+  if(old && (old ^ mask) == ANNOT_SHOW_NOPARAM) return;
+  my_strdup(_ALLOC_ID_, &xctx->annot_root, xctx->sch[0]);
 }
 
 /* 0688 -- THE CLEAR. "Is this mask still about the sheet that is loaded?" If the
@@ -1604,15 +1639,66 @@ static int annot_class_mask(int flags, int ctx)
   return 0;
 }
 
+/* 1244 (item A3) -- THE DECLUTTER'S PER-INSTANCE GATE, declared here and defined
+ * beside get_annot_overlay() below because it needs that function's own precondition
+ * chain and its cache. 1 == "this instance got operating-point numbers", which is
+ * RULING D-6 in one predicate: an annotated FET is decluttered, a hierarchical block
+ * and a descriptor-less cap or resistor are not. */
+static int annot_instance_annotated(int n);
+
+/* 1244 (item A3) -- THE DECLUTTER'S EXEMPTION TEST. 1 == "the declutter must not
+ * touch this text". RULING D-1, the user verbatim: "even pin labels can be hidden
+ * when user is hiding other things that are not @name. We are only interested in name
+ * and annotation of OP info." So the exemption list has exactly two members: the
+ * device NAME, and anything that IS operating-point annotation.
+ *
+ * ⚠ ONLY THE NAME IS TESTED HERE, AND THE OTHER MEMBER'S ABSENCE IS DELIBERATE, NOT
+ * AN OMISSION. The rung sits BELOW both class arms of text_hidden_core(), so any text
+ * carrying an annotation class -- explicit `hide=op` / `hide=voltage`, or the implicit
+ * content class -- has ALREADY returned by the time the rung is reached: the second
+ * member is unreachable here, and its guarantee is the PLACEMENT, which row A20 of
+ * tests/headless/test_annot_declutter_1244.tcl reads back out of the C. Spelling it
+ * out anyway would cost more than it documents, and both spellings are pinned against
+ * by a row this item does not own: a second call to the content-class-to-mask helper
+ * reds row U35 of tests/headless/test_op_annot.tcl ("defined once and called once"),
+ * and writing the two content flags as one OR-ed test is verbatim the folded
+ * expression the SAME row forbids -- issue 0678's own landmine. Two dead lines are
+ * not worth reopening either.
+ *
+ * So what is load-bearing here is the one line that IS present: TEXT_ANNOT_NAME (item
+ * A2) has exactly one reader in the whole program, and this is it. */
+static int annot_declutter_exempt(int flags)
+{
+  return (flags & TEXT_ANNOT_NAME) ? 1 : 0;   /* D-1: the device name always survives */
+}
+
 /* 1 == this text must not be drawn. ctx is TEXT_CTX_INSTANCE when iterating a
  * symbol's text[] while drawing an instance, TEXT_CTX_SCHEMATIC when iterating the
- * schematic's own xctx->text[]. */
-int text_hidden(int flags, int ctx)
+ * schematic's own xctx->text[]. `n` is the INSTANCE INDEX in an instance context and
+ * -1 wherever there is no instance to name.
+ *
+ * ⚠ WHY A THIRD ARGUMENT AND NOT A THIRD CONTEXT VALUE (item A3, ladder L2). The
+ * declutter's gate is PER INSTANCE and draw_symbol() walks symptr->text[j] -- the
+ * SYMBOL's text array, shared by every instance of that symbol -- so the answer
+ * cannot live in xText.flags. The plan proposed carrying it as a new context value
+ * TEXT_CTX_INSTANCE_ANNOTATED; that was measured and rejected. The mask helper
+ * and annot_text_layer() both open with `ctx != TEXT_CTX_INSTANCE`, so a fourth
+ * context value silently kills the implicit node-voltage class and 0615's colour
+ * override on exactly the annotated instances the feature targets -- and a ctx VALUE
+ * cannot carry the datum anyway, so each of the six instance sites would have had to
+ * compute the gate itself and pick between two constants: six copies of one decision.
+ * The split leaves both guards, and get_annot_overlay()'s synthetic probe, untouched. */
+static int text_hidden_core(int flags, int ctx, int n)
 {
   /* 0614/0678: the IMPLICIT content class, tested FIRST and never both with an
-   * explicit one (set_text_flags only adds it when the `hide=` chain set no bit, so
-   * a text carrying a class bit carries no HIDE_TEXT* bit and m == 0 falls through to
-   * exactly the tests the old single `if` fell through to). */
+   * explicit one. ⚠ THAT SENTENCE IS TRUE OF THE TWO MASK-NAMED BITS ONLY (tightened
+   * by item A3): set_text_flags() adds TEXT_ANNOT_VOLTAGE / TEXT_ANNOT_CURRENT only
+   * when the `hide=` chain set no bit, so a text carrying one of THOSE carries no
+   * HIDE_TEXT* bit and m == 0 falls through to exactly the tests the old single `if`
+   * fell through to. TEXT_ANNOT_NAME is set UNCONDITIONALLY and is deliberately not
+   * named by the content-class-to-mask helper, so it is not a visibility authority,
+   * gates nothing here, and can move no text between the annotation mask and
+   * View > Show hidden texts. Its one reader is annot_declutter_exempt() above. */
   int m = annot_class_mask(flags, ctx);
   if(m) return (xctx->annot_show & m) ? 0 : 1;
   if(flags & HIDE_TEXT_OP)      return (xctx->annot_show & ANNOT_SHOW_OP)      ? 0 : 1;
@@ -1622,10 +1708,70 @@ int text_hidden(int flags, int ctx)
    * one sheet and vanish on another for the same mask. */
   if(flags & HIDE_TEXT_VOLTAGE)
     return (xctx->annot_show & (ANNOT_SHOW_VOLTAGE | ANNOT_SHOW_TRAN)) ? 0 : 1;
+  /* 1244 -- THE DECLUTTER RUNG (item A3, feature 1244). On an instance that actually
+   * got operating-point numbers, with BOTH bit0 and bit3 of the mask set, every text
+   * that is neither the device name nor operating-point annotation is hidden, and the
+   * draw-time overlay block prints the numbers in their place.
+   *
+   * THE MASK TEST IS FIRST DELIBERATELY: it is two int compares, and until both bits
+   * are set nothing below it is evaluated -- no exemption walk, and above all no
+   * per-instance gate, whose first uncached call per device per epoch tclevals into
+   * ::op_annot::text. With the feature off the rung costs one AND and one compare.
+   *
+   * IT IS AN AND-GATE, WHICH IS RULING D-8 IN ONE EXPRESSION ("Declutter is active
+   * ONLY when OP info (6 key triggered) is displayed"): bit3 alone is armed, not
+   * active, and with bit0 clear the bit changes nothing at all -- invariant I-C, rows
+   * A5 and A16 of tests/headless/test_annot_declutter_1244.tcl, both PERMANENT.
+   *
+   * ⚠ ITS POSITION IS FORCED, ON BOTH SIDES, AND NEITHER SIDE IS STYLISTIC.
+   * BELOW the two class arms, because get_annot_overlay()'s eleventh call site asks
+   * this predicate `text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)` as a proxy for
+   * "should the overlay paint?" -- that probe returns at the HIDE_TEXT_OP arm above,
+   * and it passes n == -1, so the rung is unreachable for it TWICE OVER. A declutter
+   * that switched the annotation overlay off would be the feature eating itself, and
+   * it would look like success in a suite that only checked that the parameters
+   * vanished (row A9 is the one that would notice).
+   * ABOVE the View > Show hidden texts arm, because both shipped Op-Annotate menu
+   * bodies (src/xschem.tcl) turn that switch ON one line before writing the mask --
+   * so a rung below it would be a no-op on the exact workflow the feature was written
+   * for. Row A10 measures that; row A20 reads the order back out of this function. */
+  if(n >= 0 &&
+     (xctx->annot_show & (ANNOT_SHOW_OP | ANNOT_SHOW_NOPARAM)) ==
+                         (ANNOT_SHOW_OP | ANNOT_SHOW_NOPARAM) &&
+     !annot_declutter_exempt(flags) &&
+     annot_instance_annotated(n)) return 1;
   if(xctx->show_hidden_texts) return 0;
   if(flags & HIDE_TEXT) return 1;
   if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
   return 0;
+}
+
+/* THE TWO-ARGUMENT ENTRY -- every context that has no instance index to give: the
+ * five TEXT_CTX_SCHEMATIC sites (draw.c, svgdraw.c, psprint.c, actions.c) and
+ * get_annot_overlay()'s synthetic literal probe. It passes n = -1, which is the
+ * second half of why that probe's answer is bit-for-bit what it was before the
+ * declutter existed. A DELEGATE, not a second builder: there is one core. */
+int text_hidden(int flags, int ctx)
+{
+  return text_hidden_core(flags, ctx, -1);
+}
+
+/* THE INSTANCE ENTRY -- the six sites that walk a SYMBOL's text[] while drawing or
+ * measuring instance n: draw_symbol() and draw_temp_symbol() and inst_text_bbox()
+ * (draw.c), svg_draw_symbol() (svgdraw.c), ps_draw_symbol() (psprint.c) and
+ * symbol_bbox() (select.c). Every one of them already had `n` (or `i`) in scope.
+ *
+ * ⚠ symbol_bbox() IS ONE OF THE SIX ON PURPOSE, AND IT MOVES THE CLICK TARGET. It
+ * gates the loop that GROWS inst[i].x1..y2 past the symbol body, and
+ * find_closest_element() (findnet.c) uses POINTINSIDE against exactly that box as
+ * its candidate gate -- so a decluttered device's clickable area shrinks to what is
+ * still drawn. That is the correct answer (the text is not there any more) but it is
+ * user-visible: measured and recorded in rows A14/A15, and as `rule` debt
+ * 1244_A3_click_target. Leaving this site on the two-argument entry would have been
+ * the opposite defect -- a pick that answers over blank canvas. */
+int text_hidden_inst(int flags, int n)
+{
+  return text_hidden_core(flags, TEXT_CTX_INSTANCE, n);
 }
 
 /* ----------------------------------------------------------------------------
@@ -1876,15 +2022,22 @@ static const char *annot_overlay_cached_text(int n)
   return annot_cache[n];
 }
 
-/* 1 == draw instance n's operating-point block, at *x/*y, size *size, layer
- * *layer, text *txt (owned here -- the caller must NOT free it).
- * 0 == this instance carries no block. */
-int get_annot_overlay(int n, const char **txt, double *x, double *y,
-                      double *size, int *layer)
+/* EVERY PRECONDITION OF THE OVERLAY EXCEPT THE MASK (D2) AND THE BLOCK ITSELF (D1),
+ * factored out of get_annot_overlay() by item A3 so its two readers cannot drift
+ * (invariant I1). 1 == "an overlay block would be legal on instance n right now".
+ * The re-entrancy guard is part of it, and it matters more now that symbol_bbox() is
+ * one of the gate's callers: filling the cache tclevals ::op_annot::text, which reaches
+ * `xschem translate` -> translate() -> prepare_netlist_structs() -- the very machinery
+ * symbol_bbox() itself drives ("symbol_bbox() might call translate() that might call
+ * prepare_netlist_structs()", save.c in link_symbols_to_instances()). annot_overlay_busy
+ * is what keeps that from re-entering the gate.
+ * ⚠ CORRECTED 2026-09-02 (item A3's write-up pass): an earlier draft of this comment
+ * named the cycle as prepare_netlist_structs() -> check_unique_names() -> symbol_bbox().
+ * That edge does not exist -- check_unique_names() has exactly two callers, callback.c
+ * and the scheduler verb, and prepare_netlist_structs() is neither. The guard is right;
+ * the chain it was justified with was not. */
+static int annot_overlay_gate(int n)
 {
-  const char *t;
-  int lay;
-  if(txt) *txt = NULL;
   if(!xctx) return 0;
   if(annot_overlay_busy) return 0;
   if(!annot_overlay_ok) return 0;
@@ -1898,6 +2051,50 @@ int get_annot_overlay(int n, const char **txt, double *x, double *y,
      (xctx->hide_symbols == 1 && (xctx->inst[n].ptr + xctx->sym)->type &&
       !strcmp((xctx->inst[n].ptr + xctx->sym)->type, "subcircuit")) ||
      (xctx->hide_symbols == 2)) return 0;                         /* D9 */
+  return 1;
+}
+
+/* 1244 (item A3) -- RULING D-6's GATE: "the declutter reaches only instances that got
+ * OP numbers", the user's own selection. It is the carrier the overlay already
+ * computes -- gate + a NON-BLANK op_annot::text block, i.e. D9 + D1 -- so the
+ * declutter and the block that replaces the parameters answer to ONE fact and cannot
+ * disagree (invariant I1). A hierarchical block keeps its cell name and pin labels; a
+ * descriptor-less cap or resistor is untouched; hide_symbols=2 closes the gate, so
+ * the keep-name render is never doubly stripped (row A17).
+ *
+ * ⚠ IT MUST NOT CALL get_annot_overlay(), WHICH IS WHY THE CHAIN WAS FACTORED. That
+ * function does `++annot_overlay_count` on every success and row O13 of
+ * tests/headless/test_op_annot.tcl golds that delta exactly; calling it once per text
+ * per instance per frame would both red O13 and destroy the only seam an automated
+ * check has on the overlay. D2 is not re-tested here either: the rung's own
+ * ANNOT_SHOW_OP term already implies it, and re-asking would be self-referential.
+ *
+ * ⚠ WHAT "GOT OP NUMBERS" MEANS, MEASURED RATHER THAN ASSUMED: op_annot::text emits
+ * blank-VALUED rows when the raw publishes nothing for a registered device, so the
+ * gate reads "this device has a descriptor whose match/devpath resolve and which
+ * declares at least one row", not "numbers arrived". A registered device over a dead
+ * raw is therefore decluttered while its block shows empty rows. That is what the
+ * overlay already PAINTS, so the gate follows the pixels rather than inventing a
+ * second parser of the block's format; recorded as `rule` debt
+ * 1244_A3_blank_valued_block. */
+static int annot_instance_annotated(int n)
+{
+  const char *t;
+  if(!annot_overlay_gate(n)) return 0;
+  t = annot_overlay_cached_text(n);
+  return (t && t[0]) ? 1 : 0;
+}
+
+/* 1 == draw instance n's operating-point block, at *x/*y, size *size, layer
+ * *layer, text *txt (owned here -- the caller must NOT free it).
+ * 0 == this instance carries no block. */
+int get_annot_overlay(int n, const char **txt, double *x, double *y,
+                      double *size, int *layer)
+{
+  const char *t;
+  int lay;
+  if(txt) *txt = NULL;
+  if(!annot_overlay_gate(n)) return 0;                            /* D9 + re-entrancy */
   if(text_hidden(HIDE_TEXT_OP, TEXT_CTX_INSTANCE)) return 0;      /* D2: the mask, alone */
   t = annot_overlay_cached_text(n);
   if(!t || !t[0]) return 0;                                       /* D1: a blank block */

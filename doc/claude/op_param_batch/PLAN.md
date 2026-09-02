@@ -187,7 +187,7 @@ the pre-A2 build) — but one **`rule` debt is wanted before A3 lands**, see bel
 
 ---
 
-## A3 — the draw rung and the per-instance gate  *(needs A1, A2)*
+## A3 — the draw rung and the per-instance gate  ✅ **DONE (status E), 2026-09-02**
 
 **Do.** One rung in `text_hidden()`: in an instance context, with **both**
 `ANNOT_SHOW_OP` and `ANNOT_SHOW_NOPARAM` set, hide any text carrying neither
@@ -272,6 +272,130 @@ the with-text bbox that `findnet.c:461` gates on, so record what happens to
    byte-for-byte and A1 owns neither file. **A3 should decide whether to close
    that gap**, because A3 is the item that makes the silence wrong.
 
+**Landed.** `text_hidden()` split into a `static text_hidden_core(flags, ctx, n)`
+holding the five existing arms verbatim plus **one** new rung, a two-line
+`text_hidden(flags, ctx)` delegate passing `n = -1`, and a new
+`text_hidden_inst(flags, n)` at the six instance sites. The D-6 gate is
+`annot_instance_annotated(n)` = `get_annot_overlay()`'s own precondition chain,
+factored out as `annot_overlay_gate(n)`, **plus** a non-blank
+`annot_overlay_cached_text(n)`. All four inherited defects fixed: **1246**
+(both writers, bit-wise), **1247** (the exact-XOR stamp rule), **1248** (rows
+I2/I3/N10/N14 replaced against a live fixture), **1249** (`annot_name_token()`
+exported, three `strcmp` pairs become one call). Suite **52 → 82 checks, ALL
+PASS**; `test_op_annot` 492, `test_annot_show_menu` 36, `test_annot_stale_0684`
+52, T1 zero solo, T2 HARNESS PASS 6/6, `test_ase_window` 1 FAILED (227) — the
+recorded pre-existing W7 red, bit-identical. Eight sabotage variants plus two
+supplementary ones; the adversary did not refute. Full record:
+`doc/claude/op_param_batch/receipts/A3.md`. Filed and not fixed: **1251**,
+**1252**, **1253**, **1254**. **Status E** — two ladder-L3 questions are the
+user's (below) and the per-PDK pixels are a `look` debt.
+
+**The headline, measured on `cmos_inv.sch` + a descriptor + an OP raw:**
+
+```
+BEFORE   SVG identical 1 vs 9 : 1
+         mask 9 texts: ... WP/LLP/1 M2 D {vgs=- - -} {vds=- - -} WN/LLN/1 M1 D vgs=0 vds=0 ...
+AFTER    SVG identical 1 vs 9 : 0        (and 0 vs 8 : 1 — the bit alone still does nothing)
+         mask 9 texts: ... M2 - {zid =} {zgm =} M1 - {zid =} {zgm =} ... R1 10 m=1 ...
+```
+
+---
+
+### What A3 learned that binds the later items
+
+1. ⚠ **`TEXT_CTX_INSTANCE_ANNOTATED` WAS REJECTED — the instance travels as a
+   THIRD ARGUMENT.** `annot_class_mask()` and `annot_text_layer()` both open with
+   `ctx != TEXT_CTX_INSTANCE`, so a fourth context value silently kills the
+   implicit node-voltage class **and** 0615's colour override on exactly the
+   annotated instances the feature targets — and a ctx *value* cannot carry a
+   per-instance datum anyway, so each of the six sites would have had to compute
+   the gate itself. **Any new instance-context call site must call
+   `text_hidden_inst(flags, n)`, never `text_hidden(flags, TEXT_CTX_INSTANCE)`.**
+   Row **A22** is the census: exactly six, `draw.c` 3 · `svgdraw.c` 1 ·
+   `psprint.c` 1 · `select.c` 1.
+2. ⚠ **`src/scheduler.c` joined this item's file set** and the PLAN's Files cell
+   did not name it. One line — `annot_overlay_sync();` beside the existing
+   `annot_show_sync_cache();` in the `update_all_sym_bboxes` arm — without which
+   the shipped `annotate_op; update_all_sym_bboxes; redraw` computes every bbox,
+   and therefore the **click target**, from the pre-annotate cache. It is
+   currently **guarded by no test row** (issue **1254**).
+3. ⚠ **THE CLICK TARGET MOVED, AND ITEM B4 CLICKS THESE DEVICES.** Measured on
+   `cmos_inv` at mask 9: `M1`'s with-text bbox `x2` goes **177.376 → 157.433**,
+   and `xschem instance_at <x> -170` stops answering `M1` at x = 160/170/175
+   while 130/140/150 still answer (the surviving `@name` still stretches the box).
+   Descriptor-less `R1` does not move at any mask. **B4 must call
+   `xschem update_all_sym_bboxes` before its first pick** or its picks read from a
+   stale overlay epoch — issue **1252**, whose exposure is exactly a hand-written
+   pick path. Recorded as `rule` debt `1244_A3_click_target`.
+4. ⚠ **Row U35 of `test_op_annot.tcl` constrains what may be written in
+   `actions.c`.** It golds "`annot_class_mask(` appears exactly twice — defined
+   once, called once", and it also forbids the folded
+   `flags & (TEXT_ANNOT_VOLTAGE | TEXT_ANNOT_CURRENT)` spelling (issue 0678's
+   landmine). A3's planned three-arm `annot_declutter_exempt()` reddened it on the
+   first build; the shipped one is the single reachable test,
+   `(flags & TEXT_ANNOT_NAME)`, and its soundness rests on the rung's **placement**
+   below both class arms — pinned by row **A20**. A later item that moves the rung
+   must move that reasoning with it.
+5. ⚠ **The overlay's synthetic probe is safe twice over, and only one of the two
+   is behavioural.** `get_annot_overlay()`'s `text_hidden(HIDE_TEXT_OP,
+   TEXT_CTX_INSTANCE)` is byte-unchanged and now also passes `n = -1`. Sabotage
+   `SB-OVERLAY-EATS-ITSELF` as the plan wrote it (repoint the probe at
+   `text_hidden_inst`) is **behaviourally inert** — `HIDE_TEXT_OP` is 64, the mask
+   helper returns 0 for it, and the probe returns at the arm above the rung — so
+   only the structural row A21 notices. A supplementary variant that killed the
+   overlay for real reds row **A9** at `{0 8 0 0}` against `{0 8 0 8}`, so A9 is
+   not vacuous. **Overlay paint deltas per two warmed exports, hold later items to
+   these: masks 0/1/8/9 → 0/+8/0/+8.**
+6. ⚠ **D-6 SHIPPED AS "THE DESCRIPTOR RESOLVES", NOT "GOT OP NUMBERS", and that
+   is a question for the user, not a settled fact.** `op_annot::text` emits
+   blank-**valued** rows when the raw publishes nothing for a registered device,
+   so a registered FET over a dead or partial raw is decluttered **while its block
+   shows `zid =` with no number**. Reproduced twice, first-hand. Given measured
+   rule **R1** (`gm`/`gds`/`vth` exist only if the deck saved them explicitly;
+   `save all` does not include them) this is **common, not a corner**. `rule` debt
+   `1244_A3_blank_valued_block`; it is this item's E question.
+7. **The PDK symbols' own `hide=true` operating-point texts are hidden by the
+   rung** once View > Show hidden texts is on — which is the state **both** shipped
+   Op-Annotate menu bodies create one line before writing the mask (3 such texts in
+   sky130 `nfet_01v8`, 2 in gf180 `nfet_03v3`, 0 in IHP). They are replaced by the
+   overlay block, so nothing is lost on screen, but it is a user-visible trade the
+   plan never stated. `rule` debt `1244_A3_hide_true_op_texts`.
+8. **The 42 one-record `name+parameter` symbols (A2's note 10) are spared on this
+   tree**, and by the gate rather than by luck: every shipped PDK descriptor is
+   match-narrowed (`{*sky130_fd_pr/*}`, `{*gf180mcu_pr/*}`, `{*sg13g2_pr/*}`) and
+   registers only `nmos`/`pmos` (+ IHP `vertical_npn`), so none of the 42 gets a
+   devpath. **Live only for a user's own `op_annot::register`.**
+9. **1249's repair is UNGATED by `annot_show`** — censused over all 44,177 `T`
+   records in five libraries, **exactly 69 symbols** now draw a name they did not
+   draw before, at `hide_symbols=2`, at `hide_symbols=1` on subcircuits, and on any
+   `HIDE_INST` instance. Intended; no other text moves; but it is a user-visible
+   change with no mask behind it.
+10. **P6 pin-owned pin names survive the declutter** (issue **1253**) — they are a
+    **fourth** pass, gated by `pin_name_visible()` in `draw.c` / `svgdraw.c` /
+    `psprint.c`, not by `text_hidden()`. Inert on the acceptance rows (all four
+    pins of each of the three PDK FETs spell `show_pinname=false`), live for the
+    2,968 shipped records that spell `true`. The one-line repair is in the issue.
+11. **`cadence::_annot_msg`'s `& 7` blindness was NOT closed (issue 1251), and the
+    decision is written down rather than left implied.** `utils/annot_mode.tcl` is
+    **item A4's** file and row V21 of `test_op_annot.tcl` golds all eight arms
+    byte-for-byte. **A4 should take 1251 with 1250** — the recommended repair
+    appends a clause instead of widening the switch, so V21 keeps passing on the
+    `& 7` part.
+12. **A2's open question (its note 4) is answered NO, in writing:** no
+    `xschem text_hidden` reflection verb was added. A3 had three independent
+    *behavioural* windows on the predicate that A2 lacked — the SVG and PS renders,
+    `xschem instance_bbox`, and `xschem instance_at` — so rows A19–A22 corroborate
+    rather than carry the proof, and widening the dispatcher for a test-only verb
+    was not warranted.
+13. ⚠ **Anchors: `src/actions.c` line numbers below ~1300 are stale by +69 in the
+    brief, the spec and this file** (A2's `dcbb85c3` inserted 69 lines).
+    `text_hidden` was `:1610` not `:1541`, the eleventh call site `:1901` not
+    `:1832`, `annot_show_set` `:1475` not `:1406`, the schematic-context site
+    `:6393` not `:6324`. **Spec §2.3 has been corrected.** The `draw.c` /
+    `svgdraw.c` / `psprint.c` / `select.c` / `xschem.tcl` anchors were all correct
+    as filed. Post-A3, `src/xschem.tcl`'s two mask writers are at **:17311** and
+    **:17749**.
+
 ---
 
 ## A4 — the status line is not path-length-sensitive  *(needs A1; independent of A3)*
@@ -288,6 +412,17 @@ re-runs and sees green waves it through. That is precisely how this branch has
 already shipped two defects past twenty-eight passing checks.
 
 **Files.** `utils/annot_mode.tcl` · `tests/headless/test_annot_stale_0684.tcl`
+
+**⚠ ALSO TAKE ISSUE 1251, added 2026-09-02 by item A3.** `cadence::_annot_msg`
+switches on `[expr {$mask & 7}]` (`utils/annot_mode.tcl:906`), so it cannot
+mention the declutter bit: **now that A3's rung has landed, mask 1 and mask 9
+draw different sheets and produce the same sentence** — press `6` after a
+`Ctrl-Alt-6` and the editor says "showing operating point values" about a sheet it
+has just stripped every parameter from. A4 is the only item that owns the file.
+The recommended repair **appends** a clause rather than widening the switch, so
+row **V21** of `test_op_annot.tcl` (which golds all eight arms byte-for-byte) keeps
+passing on the `& 7` part — and the appended clause counts against the same
+255-byte `_annot_fit` budget this item is fixing.
 
 **Accept.** The status rows pass at the default scratch path **and** under a
 deliberately long one — drive both, do not argue from the code. Run T1 solo
@@ -371,6 +506,18 @@ CIW line for >1 selected, or nothing available.
 **⚠ What it costs.** `logic_set` has no menu entry and no second accelerator, so
 inside the cadence profile these keys are its only door. `xschem logic_set n`
 stays scriptable. Say so in the commit.
+
+**⚠ THE CLICK TARGET MOVED UNDER YOU — item A3, 2026-09-02.** With annotation +
+declutter on, a decluttered device's **with-text** bbox shrinks to what is still
+drawn, and `find_closest_element()` gates candidates on exactly that box. Measured
+on `cmos_inv` at mask 9: `M1`'s `x2` 177.376 → 157.433, and
+`xschem instance_at <x> -170` stops answering `M1` at x = 160/170/175 while
+130/140/150 still answer. Descriptor-less instances do not move. Two consequences
+for this item: **(a)** a pick fixture written against pre-A3 coordinates will miss;
+**(b)** the gate behind that box is refreshed at only four sites (issue **1252**),
+so **call `xschem update_all_sym_bboxes` before the first pick** or the pick reads
+a stale overlay epoch and answers over blank canvas. `xschem instance_at` itself is
+still the right verb — read-only, selects nothing.
 
 **Files.** `src/cadence_style_rc` · `src/rdw.tcl` · rows in B3's suite
 

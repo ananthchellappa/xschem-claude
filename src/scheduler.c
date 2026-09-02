@@ -14438,8 +14438,19 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* S7: symbol_bbox() consults the annotation-class mask through the shared text
        * visibility predicate and does not refresh it, so ONE `update_all_sym_bboxes`
        * must pick up a Tcl-side change (the shipped idiom is
-       * `update_all_sym_bboxes; redraw`). */
+       * `update_all_sym_bboxes; redraw`).
+       * 1244 (item A3): and the OVERLAY epoch beside it, for the same reason one
+       * layer down. symbol_bbox() now also consults the declutter's per-instance gate
+       * (ruling D-6), which reads the overlay cache -- and that cache was synced at
+       * only THREE places, all of them draw or export entry points. Without this line
+       * the shipped `annotate_op; update_all_sym_bboxes; redraw` computes every
+       * bounding box, and therefore the CLICK TARGET, from the pre-annotate cache: the
+       * pick would disagree with the screen for one pass. Row A15 drives exactly that
+       * sequence with no redraw and no export between the sync and the read. A sync
+       * only flushes when the epoch actually moved, so this costs a struct compare on
+       * every other call. */
       annot_show_sync_cache();
+      annot_overlay_sync();
       for(i = 0; i < xctx->texts; i++)
       if(xctx->text[i].flags & TEXT_FLOATER) {
         my_free(_ALLOC_ID_, &xctx->text[i].floater_ptr); /* clear floater cached value */

@@ -1206,8 +1206,11 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       /* if(xscale*FONTWIDTH* xctx->mooz<1) continue; */
-      if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
-      if( hide && text.txt_ptr && strcmp(text.txt_ptr, "@symname") && strcmp(text.txt_ptr, "@name") ) continue;
+      if(text_hidden_inst(text.flags, n)) continue;
+      /* 1249: ONE keep-name predicate for all three back ends (invariant I1). The
+       * three byte-identical strcmp pairs this replaces missed `@spiceprefix@name`,
+       * so at hide_symbols=2 gf180's whole FET family lost its names. */
+      if( hide && text.txt_ptr && !annot_name_token(text.txt_ptr) ) continue;
       txtptr= translate(n, text.txt_ptr);
       ROTATION(rot, flip, 0.0,0.0,text.x0,text.y0,x1,y1);
       textlayer = c_for_text;

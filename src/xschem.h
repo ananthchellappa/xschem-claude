@@ -446,10 +446,13 @@ typedef int Tcl_Size;
  * difference from the two bits above it. It is deliberately absent from the
  * content-class-to-mask helper in actions.c, which returns 0 for any bit it does not
  * name -- so this bit gates nothing and can move no text between View > Show hidden
- * texts and the annot_show mask. Its ONE reader is item A3's declutter rung in
- * text_hidden(); until that lands the bit is inert and the binary is behaviourally
- * identical to the one before it. Rows N9/N11 of
- * tests/headless/test_annot_declutter_1244.tcl are that claim, measured.
+ * texts and the annot_show mask. Its ONE reader is the declutter's exemption list,
+ * annot_declutter_exempt() in actions.c, which item A3 landed on 2026-09-02: below
+ * both class arms of text_hidden_core(), so this bit still gates nothing and answers
+ * only the question "does the declutter keep this text?". Row N9 of
+ * tests/headless/test_annot_declutter_1244.tcl is PERMANENT and forbids the other
+ * reading -- a NAME arm in annot_class_mask() would make every @name on every symbol
+ * follow annot_show and would blank the eleven shipped @name floaters.
  *
  * BECAUSE IT IS NOT A VISIBILITY AUTHORITY IT IS SET UNCONDITIONALLY, outside the
  * annot_class_free() gate the two bits above obey. Invariant I7 holds in both
@@ -496,14 +499,12 @@ typedef int Tcl_Size;
  * one. See doc/claude/op_param_batch/DECISIONS.md and
  * doc/claude/specs/op_param_lists.md section 4.1.
  *
- * NO C CODE READS THIS BIT YET, AND THAT IS THE WHOLE OF ITEM A1. The plan item
- * (doc/claude/op_param_batch/PLAN.md, A1) adds the bit and the chord only: the
- * draw-time rung in text_hidden() is item A3 and the TEXT_ANNOT_NAME content
- * class -- which lives in the OTHER block above, beside TEXT_ANNOT_CURRENT -- is
- * item A2. Until A3 lands this define is inert and the binary it produces is
- * functionally identical to the one before it. Row I2 of
- * tests/headless/test_annot_declutter_1244.tcl asserts exactly that (the SVG at
- * mask 1 and at mask 9 is byte-identical) and is the row item A3 MUST REPLACE.
+ * ITS ONE C READER IS THE DECLUTTER RUNG in text_hidden_core() (actions.c), landed
+ * by item A3 on 2026-09-02 together with the TEXT_ANNOT_NAME exemption above and the
+ * per-instance gate annot_instance_annotated(). Section A of
+ * tests/headless/test_annot_declutter_1244.tcl is the acceptance: at mask 9 an
+ * annotated device draws its name and its operating-point block and nothing else,
+ * per PDK, in SVG and in PostScript alike.
  *
  * IT IS AN AND-GATE, NOT A FOURTH MODE. A3's rung is gated on ANNOT_SHOW_OP AND
  * this bit, which is D-8 in one expression: with annotation off the declutter is
@@ -3623,8 +3624,21 @@ extern void pin_views_reconcile_after_move(void);
 extern void pin_views_reconcile_all(void);
 extern int pin_name_visible(const char *prop);
 extern void pin_names_sync_cache(void);
-/* THE single text-visibility predicate, shared by draw/svg/ps/select/bbox (S7). */
+/* THE single text-visibility predicate, shared by draw/svg/ps/select/bbox (S7).
+ * TWO ENTRY POINTS ON ONE CORE, not two predicates (item A3, feature 1244):
+ * text_hidden() is for a caller with no instance to name -- the five
+ * TEXT_CTX_SCHEMATIC sites and get_annot_overlay()'s synthetic probe -- and
+ * text_hidden_inst() for the six that walk a SYMBOL's text[] while drawing or
+ * measuring instance n. The declutter's per-instance gate (ruling D-6) cannot live in
+ * xText.flags, because draw_symbol() walks symptr->text[j] and that array is SHARED
+ * by every instance of the symbol; the instance index is how it travels instead. */
 extern int text_hidden(int flags, int ctx);
+extern int text_hidden_inst(int flags, int n);
+/* 1249 -- THE single keep-name predicate: 1 == this text is one of the three shipped
+ * device-name spellings, whole-string. Exported for the hide_symbols=2 loops in
+ * draw.c / svgdraw.c / psprint.c, which used to carry three byte-identical strcmp
+ * pairs that missed `@spiceprefix@name`. Four copies, one builder (invariant I1). */
+extern int annot_name_token(const char *txt);
 /* THE single annotation-colour override, shared by the same three back ends (0615).
  * -1 == "no override, use the layer you already computed". */
 extern int annot_text_layer(int flags, int ctx);

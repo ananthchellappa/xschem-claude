@@ -1,8 +1,7 @@
 # 1248 — the A1 suite's "A3 MUST REPLACE" tripwire runs on a fixture that cannot see the mask
 
-Status: **open** (measured by item A1's adversary pass, re-measured by the
-write-up pass; **not fixed** — the repair needs a raw fixture, which is item A3's
-material) · Branch: `fluid-editing`
+Status: **FIXED** by item A3, 2026-09-02 (holes 1 and 2; hole 3 see below) ·
+Branch: `fluid-editing`
 Related: **1244**, item A3 of `doc/claude/op_param_batch/PLAN.md`
 
 Three coverage holes in `tests/headless/test_annot_declutter_1244.tcl`, filed
@@ -105,3 +104,70 @@ A2 did fix the vacuous-fixture half for its own rows: section N brings
 cleanly under `src/cadence_style_rc` (14 instances) and renders all three name
 spellings plus two parameter texts on one sheet. **Rows I2/I3 were deliberately
 left alone** — replacing them is item A3's, per this issue. A3 closes both.
+
+---
+
+## FIXED by item A3, 2026-09-02
+
+**BEFORE** — item A3's measure agent re-measured hole 1 independently rather than
+trusting this file. On row I2's `nand2.sch` fixture **every** mask exports
+byte-identically:
+
+```
+=== 1248: row I2's fixture cannot see the mask (re-measured independently) ===
+instances=14  texts=0
+   mask 0 vs mask 0 : 1   bytes 5882
+   mask 1 vs mask 0 : 1   bytes 5882
+   mask 2 vs mask 0 : 1   bytes 5882
+   mask 3 vs mask 0 : 1   bytes 5882
+   mask 8 vs mask 0 : 1   bytes 5882
+   mask 9 vs mask 0 : 1   bytes 5882
+   mask 11 vs mask 0 : 1   bytes 5882
+   mask 1 vs mask 3 : 1   <- 1=OP only, 3=OP+node voltages
+```
+
+**including `1` vs `3`**, a pair that genuinely differ in meaning. The tripwire
+could not trip.
+
+**ONE CORRECTION to this file's original text, measured:** the eight
+"Symbol not found" lines appear only when `src/cadence_style_rc` has been sourced;
+a *fresh* load of `nand2.sch` resolves all 14 instances. The fixture's blindness is
+a library-path artefact of the suite's own preamble, not a property of `nand2.sch`.
+
+**AFTER** — the three rows were replaced **in place**, against a live fixture
+(`cmos_inv.sch` + a hand-written OP raw + a descriptor registered on types
+`nmos`/`pmos`), and the suite grew from **52 to 82 checks**:
+
+| row | before | after |
+|---|---|---|
+| **I2** | `A3 MUST REPLACE THIS ROW` — SVG at mask 1 == mask 9, on a blind fixture | `SUPERSEDED BY ROW A3` — now the D-6 control |
+| **I3** | invariant I-C on the same blind fixture | rebuilt on the live fixture (row **A5**), PERMANENT |
+| **N10** | `text_hidden names no NAME bit` | `REPLACED BY A3: the two-argument entry is a pure delegate` |
+| **N14** | `1249 PINNED` `{1 1 1 0 0}` | `1249 FIXED (was PINNED)` `{1 1 1 1 1}` |
+
+The non-vacuity control this file asked for exists: row **A4** asserts that on the
+new fixture mask 1 and mask 3 **already differ** before the rung matters, and row
+**A2** asserts that every string row A1 claims absent at mask 9 is **present** at
+mask 1.
+
+**Hole 2 (sabotage SB5 caught by a source grep and by no behavioural row) is
+closed**: rows **A1/A3/A10/A12/A14/A15/A27** are behavioural and item A3's
+sabotage pass reds seven of them on a dead rung. **Hole 3 (the `off` arm untested
+above bit 3) is closed** by rows **A5** and **A16**, both PERMANENT: with
+`ANNOT_SHOW_OP` clear, the declutter bit moves neither a byte of SVG nor a
+bounding box, swept over four mask pairs (0/8, 2/10, 4/12, 6/14).
+
+### Still open, from item A3's own sabotage pass — now filed as **1254**
+
+Row **A17** ("hide_symbols=2 closes the D-6 gate") **did not fire** under the
+`SB-GATE-ALWAYS` variant. It compares the mask-1 and mask-9 renders at
+`hide_symbols=2` and asserts they are identical — but at that setting the
+keep-name filter has already reduced both to names only, so the rung has nothing
+left to remove and the row is identical either way. It cannot detect that the gate
+stopped honouring `hide_symbols`, which is the one thing its name claims. To bite,
+A17 needs a text the keep-name filter keeps and the rung would hide, or it should
+assert the gate directly rather than through a doubly-filtered render.
+
+That hole, and a second one item A3's sabotage pass found (the new
+`src/scheduler.c` overlay-sync line is guarded by no row at all), are filed
+together as issue **1254**.

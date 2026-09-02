@@ -706,7 +706,7 @@ void symbol_bbox(int i, double *x1,double *y1, double *x2, double *y2)
      get_sym_text_size(i, j, &xscale, &yscale);
 
      text = (xctx->inst[i].ptr+ xctx->sym)->text[j];
-     if(text_hidden(text.flags, TEXT_CTX_INSTANCE)) continue;
+     if(text_hidden_inst(text.flags, i)) continue;
      sym_flip = flip;
      sym_rot = rot;
      dbg(1, "symbol_bbox(): instance %d text n: %d text str=%s\n", i,j, text.txt_ptr? text.txt_ptr:"<NULL>");

@@ -900,4 +900,30 @@ files item A2 does not own.
   T1 runs or 10 standalone ones. **A T1 red naming this suite's F17/F21 is not
   evidence about the change under test until part 2 has a cause.**
 
-**The next free number is 1251.**
+**Item A3's passes (2026-09-02) filed 1251-1254.** All four were measured, none
+was fixed silently. A3 **fixed and closed 1246, 1247, 1248 and 1249**.
+
+* **1251** — `cadence::_annot_msg` switches on `[expr {$mask & 7}]`
+  (`utils/annot_mode.tcl:906`), so the status line cannot mention the declutter
+  bit. Harmless until A3's rung landed; now mask 1 and mask 9 draw different
+  sheets and produce the same sentence. `utils/annot_mode.tcl` is **item A4's**
+  file and row V21 of `test_op_annot.tcl` golds all eight arms byte-for-byte, so
+  A3 recorded the decision instead of reddening a row it does not own.
+* **1252** — the declutter's per-instance gate reads the overlay cache, which is
+  refreshed at **four** sites; `symbol_bbox()` has **thirty-nine** callers. A3
+  synced the one that matters (`update_all_sym_bboxes`, so the click target is not
+  one epoch behind the screen) and left the rest. Same staleness shape as 0453.
+  **Item B4 picks by coordinate and is the exposed caller.**
+* **1253** — P6 pin-owned pin names are drawn by a **fourth** pass gated by
+  `pin_name_visible()`, not by `text_hidden()`, so a `show_pinname=true` pin keeps
+  its name on a fully decluttered device — against ruling D-1, which puts pin
+  labels in scope. Measured first-hand. Inert on all three PDK acceptance devices
+  (four pins each, all `false`); 2,968 shipped records spell `true`.
+* **1254** — two coverage holes in `test_annot_declutter_1244.tcl` found by A3's
+  own sabotage pass: the new `src/scheduler.c` sync line is guarded by **no** row
+  (removing it leaves all 610 checks green, because row A15's `load` leaves the
+  cache cold), and row **A17** cannot detect the thing its name claims (at
+  `hide_symbols=2` the keep-name filter has already reduced both renders to names,
+  so the row is identical with the gate disabled).
+
+**The next free number is 1255.**

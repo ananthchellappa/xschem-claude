@@ -187,11 +187,20 @@ check "B5 the View>Show submenu no longer carries the pair's -postcommand" \
 # ---------------------------------------------------------- source contract --
 # ⚠ A RUNTIME ROW CANNOT SEE A DELETION THAT LEFT DEAD CODE BEHIND. B4/B5 pass
 # over a proc that is defined but never reached; these greps do not.
+# ⚠ RE-POINTED BY ITEM A3 (issue 1246). The two Op-Annotate bodies used to HARD
+# SET the mask, silently clearing the declutter bit item A1 added — the menu
+# item and the Ctrl-Alt-6 chord then disagreed about ruling D-8. They now merge
+# bit-wise (`| 3` to set bits 0/1, `& ~4` to clear the held transient snapshot of
+# issue 0868, bit 3 left alone). ⚠ THE FOURTH ELEMENT IS LOAD-BEARING: `.`
+# matches a newline, so the two labelled regexps are both satisfied by whichever
+# writer comes first and cannot tell the two sites apart; "zero hard sets
+# survive" is what makes fixing only one of them red.
 check "B6 src/xschem.tcl keeps exactly the two Op-Annotate writers of the mask" \
       [list [src_grep $F_XS {xschem set annot_show}] \
-            [regexp {Op Annotate.*?xschem set annot_show 3} $S_XS] \
-            [regexp {Annotate Operating Point into schematic.*?xschem set annot_show 3} $S_XS]] \
-      {2 1 1}
+            [regexp {Op Annotate.*?xschem set annot_show \[expr} $S_XS] \
+            [regexp {Annotate Operating Point into schematic.*?xschem set annot_show \[expr} $S_XS] \
+            [src_grep $F_XS {^\s*xschem set annot_show 3\s*$}]] \
+      {2 1 1 0}
 
 check "B7 the derived vars annot_show_op / annot_show_voltage are gone from src/xschem.tcl" \
       [list [src_grep $F_XS {annot_show_op}] [src_grep $F_XS {annot_show_voltage}]] \

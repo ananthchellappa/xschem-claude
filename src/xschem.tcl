@@ -17291,12 +17291,24 @@ proc build_widgets { {topwin {} } } {
          # voltage and branch current XSCHEM's native OP back-annotation paints. An
          # "Op Annotate" that loaded the raw and then hid the voltages it had just
          # resolved would be a worse first run than the dark annotator this line was
-         # written to fix. Deliberately a HARD SET and not an OR: this item is a
-         # one-click "annotate this cell", not one of the two additive chords. The
-         # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+         # written to fix.
+         # ⚠ NOT A HARD SET SINCE ISSUE 1246 (item A3, 2026-09-02). It used to write a
+         # bare 3, which silently cleared bit 3 -- the schematic-parameter declutter
+         # (ruling D-8) -- so this menu item and the Ctrl-Alt-6 chord disagreed about
+         # whether the parameters were hidden, and the disagreement was invisible
+         # until item A3 made the bit hide text. The merge is src/ase_window.tcl's
+         # shipped bit-wise idiom: `| 3` arms operating point + node voltages (this
+         # item is still a one-click "annotate this cell", not one of the additive
+         # chords), `& ~4` drops the HELD TRANSIENT SNAPSHOT of issue 0868 because a
+         # fresh operating point is not the sample the held sentence was minted about
+         # (ruling D5-1), and bit 3 is left exactly as the user set it.
+         # ⚠ `xschem get annot_show`, NEVER `$::annot_show`: the mask is PER-CONTEXT
+         # and the Tcl mirror belongs to whichever context wrote it last (row N22c of
+         # tests/headless/test_op_annot.tcl pins that trap).
+         # The cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
          # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
          # writers of this mask.
-         xschem set annot_show 3
+         xschem set annot_show [expr {([xschem get annot_show] | 3) & ~4}]
          if {$tctx::retval ne {}} {
            xschem annotate_op $tctx::retval
          } else {
@@ -17717,12 +17729,24 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
          # voltage and branch current XSCHEM's native OP back-annotation paints. An
          # "Op Annotate" that loaded the raw and then hid the voltages it had just
          # resolved would be a worse first run than the dark annotator this line was
-         # written to fix. Deliberately a HARD SET and not an OR: this item is a
-         # one-click "annotate this cell", not one of the two additive chords. The
-         # cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
+         # written to fix.
+         # ⚠ NOT A HARD SET SINCE ISSUE 1246 (item A3, 2026-09-02). It used to write a
+         # bare 3, which silently cleared bit 3 -- the schematic-parameter declutter
+         # (ruling D-8) -- so this menu item and the Ctrl-Alt-6 chord disagreed about
+         # whether the parameters were hidden, and the disagreement was invisible
+         # until item A3 made the bit hide text. The merge is src/ase_window.tcl's
+         # shipped bit-wise idiom: `| 3` arms operating point + node voltages (this
+         # item is still a one-click "annotate this cell", not one of the additive
+         # chords), `& ~4` drops the HELD TRANSIENT SNAPSHOT of issue 0868 because a
+         # fresh operating point is not the sample the held sentence was minted about
+         # (ruling D5-1), and bit 3 is left exactly as the user set it.
+         # ⚠ `xschem get annot_show`, NEVER `$::annot_show`: the mask is PER-CONTEXT
+         # and the Tcl mirror belongs to whichever context wrote it last (row N22c of
+         # tests/headless/test_op_annot.tcl pins that trap).
+         # The cadence profile's 6 / Ctrl-6 / Alt-6 (utils/annot_mode.tcl) and ASE-L's
          # Results > Annotate pair (issue 0682, src/ase_window.tcl) are the other
          # writers of this mask.
-         xschem set annot_show 3
+         xschem set annot_show [expr {([xschem get annot_show] | 3) & ~4}]
          if {$tctx::retval ne {}} {
            xschem annotate_op $tctx::retval
          } else {
