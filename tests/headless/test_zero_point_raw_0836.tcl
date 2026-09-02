@@ -547,26 +547,50 @@ eqcheck {R5s3 WITNESS(0856): and NO number reaches the schematic -- not the prev
 
 # ===========================================================================
 # ROW 7 -- THE THIRD DOOR, found while fixing this and not in the issue's list.
-# `xschem raw switch <n>` snapshots `Raw *raw = xctx->raw` BEFORE the switch and
-# then gates update_op() on the OUTGOING database's allpoints, while update_op()
-# reads the INCOMING one. So switching FROM a 1-point op database INTO a
-# zero-point one calls update_op() on the zero-point database.
+# `xschem raw switch <n>` snapshotted `Raw *raw = xctx->raw` BEFORE the switch
+# and then gated update_op() on the OUTGOING database's allpoints, while
+# update_op() read the INCOMING one. So switching FROM a 1-point op database
+# INTO a zero-point one called update_op() on the zero-point database.
+#
+# ⚠ THAT DOOR IS SHUT AS OF 2026-09-01 -- issue 0513 is fixed, and the gate now
+# asks the INCOMING database for both halves. A zero-point database has
+# `allpoints == 0`, so update_op() is no longer reached through `raw switch` at
+# all. 0836's guard inside update_op() stays as defence in depth (two other
+# doors reach it), and R7a still asserts survival.
+#
+# ⚠ THE MEASUREMENT HAD TO CHANGE WITH IT, AND NOT BECAUSE THE CLAIM DID. R7e
+# read `array size ngspice::ngspice_data` and asserted 0. That worked only while
+# the FIRST switch -- into the good 1-point database -- also published nothing,
+# which was the same defect wearing its other face. Now that switch publishes
+# correctly (6 elements), so a global size can no longer tell "the zero-point
+# database published nothing" from "something published earlier". The claim is
+# unchanged and is now asserted where it belongs: the array still holds the GOOD
+# database's values, unaltered by the switch into the empty one.
 # ===========================================================================
 set r7 [kid r7 {
   xschem raw read $::G op          ;# arr = [0 G op]         current 0
   xschem raw read $::Z op          ;# arr = [0 G op|1 Z op]  current 1
   puts "Z_SW0=[xschem raw switch 0]"
   puts "Z_CUR=[xschem raw points]"
-  puts "Z_SW1=[xschem raw switch 1]"   ;# gate reads G (1 point), update_op reads Z (0)
+  puts "Z_ND0=[nd]"                    ;# what the GOOD database published
+  puts "Z_VA0=[nv v(a)]"
+  puts "Z_SW1=[xschem raw switch 1]"   ;# into the ZERO-POINT database
   puts "Z_PTS=[xschem raw points]"
   puts "Z_ND=[nd]"
+  puts "Z_VA=[nv v(a)]"
   puts "Z_SURVIVED"
 }]
 check {R7a raw switch INTO a zero-point database survives} [survived $r7] [ctail $r7]
 eqcheck {R7b PRECONDITION: the switch really did land on the 1-point db first} [zval $r7 Z_CUR] 1
 eqcheck {R7c PRECONDITION: and the second switch reported success} [zval $r7 Z_SW1] 1
 eqcheck {R7d the current database is the zero-point one} [zval $r7 Z_PTS] 0
-eqcheck {R7e and nothing was published from it} [zval $r7 Z_ND] 0
+eqcheck {R7e the switch into the 1-point database published it (0513 fixed)} \
+  [list [zval $r7 Z_ND0] [zval $r7 Z_VA0]] {6 3.14}
+## ⚠ THE ZERO-POINT SWITCH CHANGED NOTHING, which is the claim R7e always made,
+## now asserted against the values rather than against a global count that can
+## no longer distinguish. A publish from the empty database would zero these.
+eqcheck {R7f and the switch into the ZERO-POINT one published nothing over it} \
+  [list [zval $r7 Z_ND] [zval $r7 Z_VA]] [list [zval $r7 Z_ND0] [zval $r7 Z_VA0]]
 
 # ===========================================================================
 # ROW 6 -- WHAT A ZERO-POINT DATABASE REPORTS ABOUT ITSELF. Decided AND RECORDED

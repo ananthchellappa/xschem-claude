@@ -4198,10 +4198,44 @@ set ::live_cursor2_backannotate $n10_lv
 # `xschem annotate_op` force-sets it. Both must go.
 xschem load [file join $lib n_dev.sch] ; xschem raw_clear
 catch {xschem raw_read $N_RAW}
-check {N10b a raw that published no OP point names THAT, not the backannotate flag} \
+## ⚠ THIS ROW INVERTED ON 2026-09-01, AND THE SENTENCE IT USED TO PIN WAS FALSE.
+## It asserted `$A11_M1$A11_NOOP` -- "The loaded results do not include an
+## operating point, so there are no device values to show. Load a different
+## results file from Waves > Op Annotate, then press again." $N_RAW IS AN
+## OPERATING POINT: `Plotname: Operating Point`, one point, three device
+## parameters (opa_n_mkraw above). The tool was telling the user to go and find
+## a file it already had open.
+##
+## What was actually true is that `xschem raw_read` -- the `Waves > Op` route --
+## does not PUBLISH, so `annot_p` was -1 and nothing could render. Pressing `6`
+## did not publish either, so the press produced a sentence instead of numbers.
+## It now publishes. MEASURED on this fixture's own bytes: before the press
+## `annot_p` is -1 with an empty array; after it, `annot_p` is 0, the array holds
+## 5 entries and `@m.xmzz1.mzz[gm]` reads 0.0001 -- the value in the file.
+##
+## So the row keeps its id and its subject (WHICH sentence a press mints) and
+## changes the answer, in the direction the user reported from a real bench:
+## a tool that says there is nothing there while the numbers sit in the file it
+## has open is the defect, not the message wording. `_annotated` stays 0 and is
+## still asserted: this sheet's device is not one the overlay renders here, so
+## the row is about the sentence and does not quietly become an overlay row.
+check {N10b a loaded operating point is PUBLISHED by the press, not refused with a false sentence} \
   [list $::live_cursor2_backannotate [xschem raw loaded] [op_annot::_annotated] \
         [opa_n_mode op] [xschem get statusmsg]] \
-  [list 0 0 0 {} "$A11_M1$A11_NOOP"]
+  [list 0 0 0 {} "$A11_M1$A11_LIVE"]
+## THE HALF THAT MAKES IT NON-VACUOUS: the press really did publish. Without
+## this the row above is satisfied by any change of wording.
+## ⚠ READ THROUGH `array get`, NOT `$arr(key)`. The published keys carry square
+## brackets (`@m.xmzz1.mzz[gm]`), and a Tcl array index is parsed as a script
+## word -- so the obvious spelling asks the interpreter to run a command called
+## `gm`. Measured while writing this row.
+set n10b2_pairs {}
+catch {set n10b2_pairs [array get ::ngspice::ngspice_data]}
+set n10b2_i [lsearch -exact $n10b2_pairs {@m.xmzz1.mzz[gm]}]
+check {N10b2 ...and the numbers from that file are now readable} \
+  [list [expr {[lindex [xschem raw annot] 0] >= 0}] \
+        [expr {$n10b2_i >= 0 ? [lindex $n10b2_pairs [expr {$n10b2_i + 1}]] : {absent}}]] \
+  {1 0.0001}
 xschem raw_clear
 
 # ⚠ N10c — MANDATORY, NOT BELT-AND-BRACES, and the reason is this branch's own

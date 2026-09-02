@@ -175,6 +175,132 @@ eqcheck R7b-...and-the-operating-point-behind-it-is-still-reachable \
   [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type]] {1 op}
 catch {xschem raw clear}
 
+
+# ===========================================================================
+# ISSUE 1242 (second half) + ISSUE 0513 — SELECTING IS NOT SHOWING
+# ===========================================================================
+# The 1242 fix made Alt-6 SELECT the operating point. It did not make it SHOW
+# one. Reported by the user immediately afterwards: "Once the Alt-Shift-6 has
+# been exercised, there is no way to go back to annotating from the OP results.
+# Bad." Measured on their bench, and the numbers say it exactly:
+#
+#     1. Alt-6        mask=2  db=op    annot(p x idx) = -1 0 -1
+#
+# `annot_p == -1` is what token.c gates the painted text on, so the mask said
+# "Showing DC node voltages on the schematic" while every node read `?`.
+#
+# TWO CAUSES, and each is enough on its own:
+#   * `xschem raw read` does not publish, and must not -- a read is "load this",
+#     not "show this". Rung 3 used it.
+#   * `xschem raw switch` DID publish, but its gate straddled two databases:
+#     `raw->allpoints` is the OUTGOING one (snapshotted before the switch) while
+#     `xctx->raw->sim_type` is the INCOMING one. Switching from a 20500-point
+#     transient into the 1-point operating point behind it therefore published
+#     nothing. Rung 2 used that.
+proc annotp {} {
+  set an {}
+  if {[catch {xschem raw annot} an]} { return ERR }
+  return [lindex $an 0]
+}
+
+# --- R8 RUNG 3 SHOWS, not merely selects ------------------------------------
+catch {xschem raw clear}
+pcall xschem raw read $BOTH tran
+eqcheck R8-rung-3-publishes-so-a-number-reaches-the-sheet \
+  [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type] \
+        [expr {[annotp] >= 0}]] {1 op 1}
+
+# --- R9 RUNG 2 shows too ----------------------------------------------------
+catch {xschem raw clear}
+pcall xschem raw read $BOTH op
+pcall xschem raw read $BOTH tran
+eqcheck R9-PRECONDITION-op-loaded-but-transient-selected-and-nothing-published \
+  [list [pcall xschem raw sim_type] [annotp]] {tran -1}
+eqcheck R9b-rung-2-switches-AND-publishes \
+  [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type] \
+        [expr {[annotp] >= 0}]] {1 op 1}
+
+# --- R10 THE C STRADDLE, driven through the verb itself ---------------------
+# ⚠ NOT THROUGH THE RUNGS. They now publish for themselves, so they would go
+# green over the C defect and this row would prove nothing. `xschem raw switch`
+# is asserted DIRECTLY: switching from the 2-point transient INTO the 1-point
+# operating point must publish, and before the fix it did not because the gate
+# asked the outgoing database how many points it had.
+catch {xschem raw clear}
+pcall xschem raw read $BOTH op
+pcall xschem raw read $BOTH tran
+set r10_slots [pcall cadence::_annot_slots]
+set r10_op -1
+foreach t $r10_slots { if {[lindex $t 2] eq {op}} { set r10_op [lindex $t 0] } }
+eqcheck R10-PRECONDITION-a-multi-point-transient-is-selected \
+  [list [expr {$r10_op >= 0}] [pcall xschem raw sim_type] [annotp]] {1 tran -1}
+pcall xschem raw switch $r10_op
+eqcheck R10b-raw-switch-INTO-a-1-point-op-publishes \
+  [list [pcall xschem raw sim_type] [expr {[annotp] >= 0}]] {op 1}
+
+# --- R11 THE REPORTED SEQUENCE, END TO END ----------------------------------
+# Alt-6, then the transient annotation, then Ctrl-6, then Alt-6 again. The last
+# step is the one the user could not get back to.
+catch {xschem raw clear}
+pcall xschem raw read $BOTH tran
+pcall cadence::annot_mode opvolt                      ;# Alt-6
+set r11_a [list [pcall xschem raw sim_type] [expr {[annotp] >= 0}]]
+# Alt-Shift-6's effect: the transient is re-supplied and published at a time
+# point, and bit2 is armed. (The chord itself needs a waveform window with a
+# cursor on it; what it LEAVES BEHIND is what this row is about.)
+pcall xschem raw read $BOTH tran
+pcall xschem annotate_at 1e-09
+pcall xschem set annot_show [expr {[pcall xschem get annot_show] | 4}]
+set r11_b [list [pcall xschem raw sim_type] [expr {[annotp] >= 0}]]
+pcall cadence::annot_mode none                        ;# Ctrl-6
+set r11_c [pcall xschem get annot_show]
+pcall cadence::annot_mode opvolt                      ;# Alt-6 again
+set r11_d [list [pcall xschem raw sim_type] [expr {[annotp] >= 0}] \
+                [pcall xschem get annot_show]]
+pcall cadence::annot_mode op                          ;# 6
+set r11_e [list [pcall xschem raw sim_type] [expr {[annotp] >= 0}] \
+                [pcall xschem get annot_show]]
+eqcheck R11-the-reported-sequence-gets-back-to-the-operating-point \
+  [list $r11_a $r11_b $r11_c $r11_d $r11_e] \
+  {{op 1} {tran 1} 0 {op 1 2} {op 1 3}}
+
+# --- R12 rung 1: SELECTED is not PUBLISHED ----------------------------------
+# An operating point that is already the selected database may still never have
+# been published -- `cursor_b_val` is per database and starts zeroed with
+# annot_p at -1. Rung 1 has to publish it, not wave it through.
+catch {xschem raw clear}
+pcall xschem raw read $BOTH op
+eqcheck R12-PRECONDITION-selected-op-with-nothing-published \
+  [list [pcall xschem raw sim_type] [annotp]] {op -1}
+eqcheck R12b-rung-1-publishes-rather-than-waving-it-through \
+  [list [pcall cadence::_annot_op_db_ok] [expr {[annotp] >= 0}]] {1 1}
+
+# --- R13 THE WAY BACK OUT: Alt-Shift-6 after Alt-6 --------------------------
+# The user's requirement is both directions, so the transient side is asserted
+# too. With the schematic holding the OPERATING POINT and the waveform window
+# holding the transient, `_annot_tran_db_current` must answer 0 -- "that is not
+# the run you are looking at" -- which is what sends cadence::annot_tran to
+# re-supply the transient instead of refusing `notran`.
+#
+# ⚠ THE VIEWER IS STUBBED, and it has to be: `cadence::_annot_viewer_db` reads
+# a live waveform window, which a headless run has none of, and with none it
+# answers "no opinion" (return 1, supply skipped). Stubbing it with a REAL
+# fingerprint taken from the transient -- not a hand-written one -- is what
+# makes this row about the comparison rather than about the stub.
+catch {xschem raw clear}
+pcall xschem raw read $BOTH tran
+set r13_tranprint [pcall cadence::_annot_db_print]
+pcall xschem raw read $BOTH op
+set r13_had [expr {[info procs ::cadence::_annot_viewer_db] ne {}}]
+if {$r13_had} { rename ::cadence::_annot_viewer_db r13_real_vdb }
+proc ::cadence::_annot_viewer_db {args} { return [list x $::r13_tranprint ok] }
+set r13 [pcall cadence::_annot_tran_db_current]
+rename ::cadence::_annot_viewer_db {}
+if {$r13_had} { rename r13_real_vdb ::cadence::_annot_viewer_db }
+eqcheck R13-with-the-op-selected-the-transient-side-knows-to-re-supply \
+  [list [pcall xschem raw sim_type] $r13] {op 0}
+catch {xschem raw clear}
+
 } err]} {
   puts "FATAL: $err"
   puts "  $::errorInfo"

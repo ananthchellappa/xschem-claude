@@ -886,11 +886,21 @@ check {F20 guard G4 path arm through the chord: another corner's operating point
         [expr {$f20_rf eq [file normalize $F_OTHER] ? 1 : 0}]] \
   [list 1 1 "$F_M1$F_LIVE" 1 "$F_M1$F_LIVE" 1]
 
-# ---- the noop arm must not become a detach --------------------------------
-# A database that published no operating point (annot_p < 0) is the `noop`
-# state, and it has its own sentence naming the real cause. The detach above
-# is conditional on something publishable being attached precisely so this arm
-# is untouched -- row N10b of test_op_annot.tcl is its behavioural owner there.
+# ---- the already-loaded arm must not become a detach -----------------------
+# ⚠ THIS CONTROL INVERTED ON 2026-09-01 ALONG WITH ITS OWNER, row N10b of
+# test_op_annot.tcl. It used to describe the `noop` state -- "a database that
+# published no operating point (annot_p < 0) ... has its own sentence naming the
+# real cause" -- and that sentence ("The loaded results do not include an
+# operating point") was FALSE for this fixture: $F_RAW IS an operating point.
+# What was true is that `xschem raw_read` does not publish, so nothing could
+# render; the press now publishes, so the results really are shown and the
+# sentence is the already-loaded one.
+#
+# WHAT THIS ROW IS FOR IS UNCHANGED and is why it survives the inversion: the
+# detach above must not reach into this arm. That claim lives in the THIRD
+# element -- the attached rawfile is still $F_RAW, nothing was taken off and
+# nothing was re-read behind the user's back -- and it is asserted identically
+# before and after.
 catch {xschem raw clear}
 xschem load $F_SCH
 catch {xschem set annot_show 0}
@@ -904,10 +914,11 @@ set f21_pre [f_call {xschem raw annot}]
 catch {cadence::annot_mode op}
 set f21_msg [f_msg]
 set f21_rf [f_rawfile]
-check {F21 CONTROL a database that published no operating point keeps its own explanation, and nothing is taken off or re-read behind it} \
-  [list $f21_pre [expr {[string first {do not include an operating point} $f21_msg] >= 0 ? 1 : 0}] \
-        [expr {$f21_rf eq [file normalize $F_RAW] ? 1 : 0}]] \
-  [list {0 {-1 0 -1}} 1 1]
+check {F21 CONTROL an already-loaded operating point is published by the press, and nothing is taken off or re-read behind it} \
+  [list $f21_pre [expr {[string first {already loaded} $f21_msg] >= 0 ? 1 : 0}] \
+        [expr {$f21_rf eq [file normalize $F_RAW] ? 1 : 0}] \
+        [expr {[lindex [f_call {xschem raw annot}] 1 0] >= 0 ? 1 : 0}]] \
+  [list {0 {-1 0 -1}} 1 1 1]
 
 # ---- the guard that has to be ONE source line -----------------------------
 # Item A14 pinned the same shape on the transient surface for the same reason:

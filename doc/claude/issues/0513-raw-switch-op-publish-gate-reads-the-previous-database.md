@@ -1,8 +1,48 @@
 # 0513 — `raw switch`'s operating-point publish gate reads the PREVIOUS database, so switching into an OP usually does not annotate
 
-**Status:** OPEN. Measured on branch `fluid-editing` at `226302f9` (the results
-batch base) with a **pristine** binary — this predates the batch and is not
-caused by it.
+**Status:** FIXED 2026-09-01, on `fluid-editing` after the `annotate` merge.
+Both arms (`switch` and `switch_back`) now ask `xctx->raw` for BOTH halves —
+`allpoints` and `sim_type` — which is the shape the neighbouring `select` arm
+has always had.
+
+**Found again by a user, from the other end.** They reported that after using
+Alt-Shift-6 (transient annotation at the waveform cursor) there was no way back
+to annotating the operating point. The immediate cause was on the Tcl side
+(issue 1242's second half), but the reason `xschem raw switch` could not be
+leaned on to do the job was this: switching from a 20500-point transient into
+the 1-point operating point behind it in the same file published nothing.
+
+**Three rows had been waiting for this.** `test_results_select`'s SEL195 carried
+the note *"⚠ WHEN 0513 IS FIXED, SEL195 INVERTS — it will publish. Update it
+there; it is written as a measurement of today's engine, not as a rule."* It has
+been updated there. `test_zero_point_raw_0836` row 7 was built on this straddle
+as its THIRD DOOR into `update_op()` with a zero-point database — that door is
+now shut, since a zero-point database has `allpoints == 0`; 0836's own guard
+stays as defence in depth for the two doors that remain. `test_op_annot` N10b
+and `test_annot_stale_0684` F21 were pinning a sentence this defect made the
+tool say, and both inverted; see below.
+
+**A false sentence went with it.** With the publish gate broken, pressing `6` on
+a loaded operating point produced *"The loaded results do not include an
+operating point, so there are no device values to show. Load a different results
+file from Waves > Op Annotate, then press again."* — about a file that **is** an
+operating point and that the editor already had open. Measured on N10b's own
+fixture: before the press `annot_p` is -1 with an empty array; after it,
+`annot_p` is 0, the array holds 5 entries and `@m.xmzz1.mzz[gm]` reads `0.0001`,
+the value in the file.
+
+Regression rows: `tests/headless/test_annot_op_behind_tran_1242.tcl` R10/R10b
+drive `xschem raw switch` DIRECTLY — not through the Tcl rungs, which publish
+for themselves and would go green over this defect. Sabotage-verified: restoring
+the straddle reddens R10b and nothing else.
+
+---
+
+*Original report follows.*
+
+**Status when filed:** OPEN. Measured on branch `fluid-editing` at `226302f9`
+(the results batch base) with a **pristine** binary — this predates the batch and
+is not caused by it.
 **Area:** the `switch` and `switch_back` arms of `xschem raw`,
 `src/scheduler.c` (`grep -n 'only update_op() if switching into a 1-point OP or DC' src/scheduler.c`).
 **Found:** 2026-08-19, results batch item 3, while giving `xschem raw select`

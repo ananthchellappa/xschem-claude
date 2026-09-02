@@ -1246,25 +1246,30 @@ eqcheck SEL192-W-no-slot-added     [slot_list] $w_slots
 #      call. TWO contrasts make SEL194 non-vacuous, and both are measurements
 #      of shipped behaviour taken right here rather than claims:
 #        SEL193 -- `raw read` of the same file publishes NOTHING.
-#        SEL195 -- `raw switch` into it, from a multi-point database, publishes
-#                  nothing either: the shipped gate tests `allpoints` on the
-#                  database it is LEAVING and `sim_type` on the one it is
-#                  ARRIVING at (issue 0513). That is why the select arm gates on
-#                  xctx->raw AFTER the call, and why a select-gate copied
-#                  verbatim from the switch arm would fail SEL194 here.
-#      ⚠ WHEN 0513 IS FIXED, SEL195 INVERTS -- it will publish. Update it there;
-#      it is written as a measurement of today's engine, not as a rule.
+#        SEL195 -- `raw switch` into it, from a multi-point database, USED to
+#                  publish nothing either, because the shipped gate tested
+#                  `allpoints` on the database it was LEAVING and `sim_type` on
+#                  the one it was ARRIVING at (issue 0513).
+#      ⚠ 0513 IS FIXED (2026-09-01) AND SEL195 HAS INVERTED, exactly as the note
+#      here said it would: "WHEN 0513 IS FIXED, SEL195 INVERTS -- it will
+#      publish. Update it there; it is written as a measurement of today's
+#      engine, not as a rule." This is that update. The row is kept rather than
+#      deleted because the contrast it draws is still the reason SEL194 is not
+#      vacuous -- it is simply now a contrast between `read` (does not publish,
+#      SEL193) and `switch`/`select` (both do), which is the coherent story the
+#      straddle was hiding.
 # ===========================================================================
 xschem raw clear
 loadcell $tmp/cellA.sch
 eqcheck SEL193-X-read-does-not-publish \
   [list [pcall xschem raw read $tmp/op.raw op] [pcall ngspice::get_voltage o1]] {1 ?}
-# a MULTI-POINT database becomes current, so the two halves of the shipped
-# switch gate now disagree
+# a MULTI-POINT database becomes current -- the case the straddled gate got
+# wrong, and the one that now works
 xschem raw read $tmp/an.raw tran
 set x_src [pcall xschem raw switch $tmp/op.raw op]
 set x_sv  [pcall ngspice::get_voltage o1]
-eqcheck SEL195-X-switch-does-not-publish-here-0513 [list $x_src $x_sv] {1 ?}
+eqcheck SEL195-X-switch-into-a-1-point-op-DOES-publish-0513-fixed \
+  [list $x_src [expr {$x_sv ne {?} && $x_sv ne {}}]] {1 1}
 # back onto the multi-point database, so the SELECT below also runs with a
 # 3-point raw current. Without this line the select is made FROM the op itself
 # and a gate copied verbatim from the switch arm would pass by coincidence --

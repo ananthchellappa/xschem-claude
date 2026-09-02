@@ -1042,6 +1042,30 @@ proc cadence::_annot_slots {} {
   return $out
 }
 
+## THE SELECTED DATABASE IS AN OPERATING POINT **AND ITS NUMBERS ARE PUBLISHED**.
+##
+## Answers 1 only when both hold, so a rung can use it as its own success test.
+## `xschem update_op` is the one publisher for point 0 of an op/dc database and
+## carries its own guards -- a digital database publishes nothing, a zero-point
+## one publishes nothing and does not crash doing it (issues 0856 and 0836) --
+## so this proc adds no judgement of its own and simply asks.
+##
+## ⚠ `annot_p >= 0` IS THE OBSERVABLE, NOT update_op's RETURN VALUE. `annot_p`
+## is exactly what token.c gates the painted text on, so asking it asks the
+## question the user is actually asking -- "will a number appear on the sheet" --
+## instead of a proxy for it.
+proc cadence::_annot_op_publish {} {
+  set ty {}
+  if {[catch {xschem raw sim_type} ty]} { return 0 }
+  if {$ty ne {op} && $ty ne {dc}} { return 0 }
+  catch {xschem update_op}
+  set an {}
+  if {[catch {xschem raw annot} an]} { return 0 }
+  set p [lindex $an 0]
+  if {![string is integer -strict $p]} { return 0 }
+  return [expr {$p >= 0 ? 1 : 0}]
+}
+
 ## IS THERE AN OPERATING POINT FOR THIS PRESS TO SHOW -- and if there is one to
 ## be HAD rather than one already selected, GO AND GET IT.
 ##
@@ -1082,7 +1106,32 @@ proc cadence::_annot_op_db_ok {} {
   if {![string is integer -strict $loaded] || $loaded < 0} { return 1 }
   set st {}
   if {[catch {xschem raw sim_type} st]} { set st {} }
-  if {$st eq {op} || $st eq {dc}} { return 1 }
+  if {$st eq {op} || $st eq {dc}} {
+    ## ⚠ RUNG 1 PUBLISHES TOO, AND IT IS NOT A FORMALITY. The selected database
+    ## being an operating point does NOT mean its numbers are on the schematic:
+    ## `cursor_b_val` is per database and starts zeroed with `annot_p` at -1, so
+    ## a slot that was read but never published is selected and BLANK. That is
+    ## precisely the state Alt-6 landed in on the reported bench.
+    if {[cadence::_annot_op_publish]} { return 1 }
+    ## It is an op/dc database and it still will not publish -- a zero-point run,
+    ## or a digital one. There is nothing to show and the refusal below is right.
+    return 0
+  }
+
+  ## ⚠ SELECTING IS NOT SHOWING, AND THAT IS THE OTHER HALF OF ISSUE 1242. Every rung ends by
+  ## PUBLISHING, because the schematic's numbers come from the selected
+  ## database's `cursor_b_val` with `annot_p >= 0` (token.c), and neither verb a
+  ## rung uses fills them reliably: `xschem raw read` deliberately does not
+  ## publish (a read is "load this", not "show this"), and `xschem raw switch`
+  ## published only when the OUTGOING database happened to have one point.
+  ## Measured on the reported bench: Alt-6 selected the operating point, armed
+  ## the mask, and left `annot_p` at -1 -- the status line said values were
+  ## showing and every node on the sheet read `?`. A rung that acquires without
+  ## publishing has moved the defect, not fixed it.
+  ##
+  ## The C straddle is fixed too (src/scheduler.c, issue 0513), and the publish
+  ## STILL stays here: this proc knows it is acquiring a database in order to
+  ## SHOW it, which is a fact no raw verb can infer from its arguments.
 
   ## rung 2 -- an operating point is already loaded, just not selected
   set slots [cadence::_annot_slots]
@@ -1090,9 +1139,7 @@ proc cadence::_annot_op_db_ok {} {
     set ty [lindex $t 2]
     if {$ty eq {op} || $ty eq {dc}} {
       if {![catch {xschem raw switch [lindex $t 0]}]} {
-        set now {}
-        if {[catch {xschem raw sim_type} now]} { set now {} }
-        if {$now eq {op} || $now eq {dc}} { return 1 }
+        if {[cadence::_annot_op_publish]} { return 1 }
       }
     }
   }
@@ -1106,9 +1153,7 @@ proc cadence::_annot_op_db_ok {} {
     if {$path eq {} || ![file isfile $path]} { break }
     foreach ty {op dc} {
       if {[catch {xschem raw read $path $ty} r] || $r ne {1}} { continue }
-      set now {}
-      if {[catch {xschem raw sim_type} now]} { set now {} }
-      if {$now eq {op} || $now eq {dc}} { return 1 }
+      if {[cadence::_annot_op_publish]} { return 1 }
     }
     break
   }

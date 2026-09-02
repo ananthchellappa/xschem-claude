@@ -1,6 +1,9 @@
 # 1242 — Alt-6 refuses an operating point that is in the file it has open
 
-**Status:** FIXED 2026-09-01. Reported by the user from a real bench.
+**Status:** FIXED 2026-09-01, **in two rounds**. Reported by the user from a
+real bench, twice — the first fix made Alt-6 *select* the operating point and
+the user immediately reported that it still did not *show* one. See
+"Round two" at the end.
 
 ## What happened
 
@@ -79,3 +82,51 @@ the suite would have passed while testing a file that is not the file the bug is
 about. The committed fixture is binary, with the second header butting straight
 against the first plot's data and carrying a `Command:` line — verified byte for
 byte against the reported bench's own raw.
+
+
+---
+
+# Round two — selecting is not showing
+
+The user, immediately after the first fix landed:
+
+> *"Once the Alt-Shift-6 has been exercised, there is no way to go back to
+> annotating from the OP results. Bad. One should always be able to do Ctrl-6 to
+> dismiss simulation annotations and then do either Alt-6 or Alt-Shift-6 and 6"*
+
+Measured on their bench, and the numbers say it exactly:
+
+```
+0. after the run     mask=0  db=tran  annot(p x idx) = -1 0 -1
+1. Alt-6             mask=2  db=op    annot(p x idx) = -1 0 -1     <-- selected, blank
+2. Alt-Shift-6       mask=6  db=tran  annot(p x idx) = 1359 1.344e-05 0
+3. Ctrl-6            mask=0  db=tran  annot(p x idx) = 1359 1.344e-05 0
+4. Alt-6 again       mask=2  db=op    annot(p x idx) = -1 0 -1     <-- selected, blank
+```
+
+`annot_p == -1` is what `token.c` gates the painted text on. So round one's fix
+selected the operating point, armed the mask, and left the status line saying
+"Showing DC node voltages on the schematic" while every node read `?`.
+
+**Two causes, each sufficient on its own:**
+
+* `xschem raw read` does not publish — and must not. A read is *"load this"*,
+  not *"show this"*. Rung 3 used it.
+* `xschem raw switch` does publish, but its gate straddled two databases —
+  **issue 0513**, open since 2026-08-19 and fixed alongside this. Rung 2 used it.
+
+**The fix:** every rung now ends in `cadence::_annot_op_publish`, which calls
+`xschem update_op` and reports `annot_p >= 0` — the observable the painted text
+actually depends on, rather than a proxy for it. Rung 1 publishes too, because a
+database being *selected* does not mean its numbers were ever *published*:
+`cursor_b_val` is per database and starts zeroed.
+
+The publish stays in the Tcl even with 0513 fixed, deliberately: this proc knows
+it is acquiring a database **in order to show it**, which is a fact no `raw` verb
+can infer from its arguments.
+
+After: every step above publishes, and the user's stated requirement holds —
+Ctrl-6 dismisses, and 6 / Alt-6 / Alt-Shift-6 each work from there, in any order.
+Rows R8–R13 of the regression suite; R11 is the reported sequence end to end and
+R13 is the way back out (with the operating point selected, the transient side
+knows to re-supply rather than refuse `notran`).

@@ -10737,8 +10737,24 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         } else {
           ret = extra_rawfile(2, NULL, NULL, -1.0, -1.0);
         }
-        /* only update_op() if switching into a 1-point OP or DC */
-        if(ret && raw && raw->rawfile && raw->allpoints == 1 &&
+        /* only update_op() if switching INTO a 1-point OP or DC.
+         *
+         * ⚠ IT USED TO ASK THE OUTGOING DATABASE HOW MANY POINTS IT HAD, and
+         * that is issue 0513, filed 2026-08-19 and open ever since. `raw` is snapshotted BEFORE extra_rawfile()
+         * switches, so `raw->allpoints` describes the database being LEFT while
+         * `xctx->raw->sim_type` describes the one being ENTERED -- one condition
+         * straddling two databases, and the comment above it stating the
+         * intention the code did not implement. Switching from a 20500-point
+         * transient into the 1-point operating point behind it in the same file
+         * therefore published NOTHING: the schematic kept `annot_p` at -1 and
+         * every node read `?` while the mask said values were showing.
+         * (save.c's 0836 comment records this straddle as a hazard it had to
+         * work around; it was never fixed as a defect of its own.)
+         *
+         * Both halves now ask xctx->raw, which is the shape the `select` arm
+         * below has always had. */
+        if(ret && xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
+           xctx->raw->sim_type &&
            (!strcmp(xctx->raw->sim_type, "op") || !strcmp(xctx->raw->sim_type, "dc"))) {
           update_op();
         }
@@ -10796,8 +10812,12 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         ret = extra_rawfile(4, NULL, NULL, -1.0, -1.0);
       } else if(argc > 2 && !strcmp(argv[2], "switch_back")) {
         ret = extra_rawfile(5, NULL, NULL, -1.0, -1.0);
-        /* only update_op() if switching into a 1-point OP or DC */
-        if(ret && raw && raw->rawfile && raw->allpoints == 1 &&
+        /* only update_op() if switching INTO a 1-point OP or DC -- the same
+         * outgoing/incoming straddle the `switch` arm above carried, and the
+         * same fix (issue 0513). `switch_back` reaches it identically: the
+         * database being returned TO is the one whose point count decides. */
+        if(ret && xctx->raw && xctx->raw->rawfile && xctx->raw->allpoints == 1 &&
+           xctx->raw->sim_type &&
            (!strcmp(xctx->raw->sim_type, "op") || !strcmp(xctx->raw->sim_type, "dc"))) {
           update_op();
         }
