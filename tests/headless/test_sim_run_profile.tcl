@@ -137,30 +137,37 @@ proc said_count {pat} {
   return $n
 }
 
-# a private sim() configuration; nothing below reads or writes the user's simrc
+# A private simulator configuration; nothing below reads or writes the user's own.
+#
+# ⚠ IT WAS A `sim()` PROFILE ROW UNTIL THE `annotate` MERGE, and almost every row
+# in this suite is unchanged by that: what they assert is how ase::run_cmd
+# COMPOSES a command and how the B4 gate decides, and both survived intact. Only
+# these three fixture procs know where the exe, the args, the case mode and the
+# `-n` flag come from, so re-pointing them is the whole migration. `add_row` now
+# returns an entry NAME rather than a row index, and the rows below pass it to
+# `mkstate` exactly as they passed the index.
 proc reset_sim {} {
-  if {[info exists ::sim]} { unset ::sim }
+  ase::sim_clear
   set ::sim_case_mode fold
-  set_sim_defaults
 }
 proc add_row {tool name exe {args_ {}} {casemode {}} {nsi 0}} {
-  set i $::sim($tool,n)
-  set ::sim($tool,$i,cmd)  "$exe \"\$N\""
-  set ::sim($tool,$i,name) $name
-  set ::sim($tool,$i,exe)  $exe
-  incr ::sim($tool,n)
-  set_sim_defaults
-  if {$args_ ne {}}    { sim_profile_set $tool $i args $args_ }
-  if {$casemode ne {}} { sim_profile_set $tool $i casemode $casemode }
-  if {$nsi}            { sim_profile_set $tool $i nospiceinit 1 }
-  return $i
+  ase::sim_register $name $exe -args $args_ -backend ngspice \
+                    -casemode $casemode -nospiceinit $nsi
+  return $name
 }
-# a state pointing at profile row $i, with a real rundir and a design cell
+# A state with a real rundir and a design cell, run by simulator `$i`.
+#
+# ⚠ `$i` EMPTY MEANS "NOTHING CHOSEN", AND IT HAS TO SAY SO OUT LOUD. Registering
+# the first simulator puts it in force (ase::sim_register), so after any add_row
+# a state built with no simulator would silently inherit that one -- and CS175,
+# whose whole subject is what a user with nothing configured gets, would be
+# measuring the opposite of what it says. `ase::sim_select {}` is the gesture
+# that hands control back to the program on PATH.
 proc mkstate {rundir cell {tool spice} {i {}}} {
   set s [ase::state_default]
   dict set s design [dict create lib dlib cell $cell view schematic]
   dict set s rundir $rundir
-  if {$i ne {}} { set s [ase::sim_profile_stamp $s $tool $i] }
+  if {$i ne {}} { ase::sim_select $i } else { ase::sim_select {} }
   return $s
 }
 proc runcmd {state deck} {
@@ -175,17 +182,27 @@ set DECK [file join $rd cell_ase.spice]
 # A — THE COMPATIBILITY CONTRACT, and the composition
 # ===========================================================================
 
+# ONE assertion, both halves: the untouched default must equal the literal this
+# item replaced, AND a registered simulator must compose from its entry. The
+# first half alone passes on a tree where this item does not exist yet.
+#
+# ⚠ EACH HALF IS COMPOSED WHILE ITS OWN CHOICE IS IN FORCE, and that is a real
+# change from the profile store (the `annotate` merge). A profile row was STAMPED
+# ON THE STATE, so a state built before any row existed stayed "no profile"
+# forever; the registry's choice is one global in-force entry, so composing both
+# halves at the end would have measured the second choice twice -- and the first
+# half, whose whole subject is what a user with nothing configured gets, would
+# have quietly become a second copy of the second half.
+set exeA [fake $tmp ngspice_A {echo CCM=fold}]
 reset_sim
 set st0 [mkstate $rd cell]
-# ONE assertion, both halves: the untouched default must equal the literal this
-# item replaced, AND a configured row must compose from the profile. The first
-# half alone passes on a tree where this item does not exist yet.
-set exeA [fake $tmp ngspice_A {echo CCM=fold}]
+set cmd_def [runcmd $st0 $DECK]
 reset_sim
 set iA [add_row spice {row A} $exeA]
 set stA [mkstate $rd cell spice $iA]
-eqcheck CS175-noprofile-is-the-literal-and-a-row-composes \
-  "def=<[runcmd $st0 $DECK]> row=<[runcmd $stA $DECK]>" \
+set cmd_row [runcmd $stA $DECK]
+eqcheck CS175-nothing-registered-is-the-literal-and-an-entry-composes \
+  "def=<$cmd_def> row=<$cmd_row>" \
   "def=<[list ngspice -b $DECK 2>@1]> row=<[list $exeA -b $DECK 2>@1]>"
 
 # args, `-n` and `-D` word order, all against one composed command
@@ -431,9 +448,9 @@ eqcheck CS180b-a-locatable-exe-does-not-refuse \
 
 # only the ngspice composer is subject to the policy: a backend with its own
 # run_cmd hardcodes its own binary and reads no profile
-eqcheck CS180c-policy-applies-only-to-the-profile-composer \
-  "ngspice=<[pcall ase::run_composes_profile ngspice]>\
- unknown=<[pcall ase::run_composes_profile nosuchsim]>" \
+eqcheck CS180c-policy-applies-only-to-the-registry-composer \
+  "ngspice=<[pcall ase::run_composes_registry ngspice]>\
+ unknown=<[pcall ase::run_composes_registry nosuchsim]>" \
   {ngspice=<1> unknown=<0>}
 
 # A `stale` or `invalid` resolve is REPORTED (item 6 delegated the decision to
@@ -454,22 +471,25 @@ set_sim_defaults
 set nS [pcall ase::run_precheck $stS]
 set saidS [said_tags]
 said_clear
-# `invalid`: the stored index is gone entirely and resolve fell back to the
-# tool's default row
-set iS3 [add_row spice {row that vanishes} $exeS1 {} fold]
-set stI [mkstate $rd cell spice $iS3]
-set ::sim(spice,n) $iS3
-set_sim_defaults
-set nI [pcall ase::run_precheck $stI]
-eqcheck CS187-a-stale-or-invalid-profile-is-reported \
-  "stale=<[string match {ase: simulator profile*Ngspice ver_50*Ngspice 44*} $nS]>\
- stale-exe=<[string match "*$exeS2*" $nS]> stale-tags=<$saidS>\
- invalid=<[string match "ase: simulator profile*'$iS3'*does not exist*" $nI]>\
- invalid-tags=<[said_tags]>" \
-  {stale=<1> stale-exe=<1> stale-tags=<note> invalid=<1> invalid-tags=<note>}
+# ⚠ CS187 WAS HERE AND IS GONE, with its subject (the `annotate` merge). It
+# asserted that a `stale` or `invalid` PROFILE ROW is reported: rows were
+# addressed by INDEX, so inserting one above silently re-pointed every saved
+# session that had stored an index, and ase::run_status_note existed to say so
+# out loud rather than let the substitution happen quietly.
+#
+# A registry entry is addressed by NAME. Nothing re-points a saved session by
+# being inserted above it, so there is no substitution left to report and no
+# sentence left to assert. What replaced the concern is stronger and is asserted
+# elsewhere: ase::sim_status RE-VALIDATES the program at every run instead of
+# trusting what registration recorded, and CS180 below drives the case that
+# remains -- an entry whose program has gone REFUSES rather than falling back to
+# something else on PATH, which is the harm CS187's report was a consolation
+# prize for.
 
-# ...and an `ok` resolve says nothing at all. The control: without it the check
-# above would pass on a proc that reports on every run.
+# AN `ok` RESOLVE SAYS NOTHING AT ALL. Kept from CS187's pair as the standing
+# control it always was: a precheck that reported on every run would be noise,
+# and this is the row that reddens for it. It is worth more now that its partner
+# is gone, not less -- it is the only thing asserting the precheck's silence.
 reset_sim ; said_clear
 set iS4 [add_row spice {fine} $exeS1 {} fold]
 set nOK [pcall ase::run_precheck [mkstate $rd cell spice $iS4]]
@@ -503,12 +523,12 @@ set iFL [add_row spice {configured} $exeFold {} distinguish]
 set cFL3 [catch {ase::run_precheck [mkstate $rd cell spice $iFL]} eFL3]
 eqcheck CS188-the-advice-names-a-lever-that-exists \
   "refuse=<$cFL> floor-named=<[string match {*sim_case_mode*} $eFL]>\
- no-profile-n=<[string match {*profile's -n*} $eFL]> report-raised=<$cFL2>\
+ no-sim-n=<[string match {*simulator's -n*} $eFL]> report-raised=<$cFL2>\
  report-floor=<[string match {*sim_case_mode*} $eFL2]>\
- report-no-profile-n=<[string match {*profile's -n*} $eFL2]>\
- row-refused=<$cFL3> row-keeps-n=<[string match {*profile's -n*} $eFL3]>" \
-  {refuse=<1> floor-named=<1> no-profile-n=<0> report-raised=<0> report-floor=<1>\
- report-no-profile-n=<0> row-refused=<1> row-keeps-n=<1>}
+ report-no-sim-n=<[string match {*simulator's -n*} $eFL2]>\
+ row-refused=<$cFL3> row-keeps-n=<[string match {*simulator's -n*} $eFL3]>" \
+  {refuse=<1> floor-named=<1> no-sim-n=<0> report-raised=<0> report-floor=<1>\
+ report-no-sim-n=<0> row-refused=<1> row-keeps-n=<1>}
 
 # THE PROBE IS ASKED FROM THE RUNDIR. That is the ONLY reason a `.spiceinit`
 # beside the deck is detectable at all (A2), and no other check in this file can
@@ -624,11 +644,22 @@ set stY [mkstate $rd3 cell spice $iY]
 set idY [pcall ase::run_deck $stY [file join $rd3 cell.spice]]
 set ecY [pcall ase::wait $idY]
 set logY [readfile [file join $rd3 cell_ase.log]]
+# ⚠ WHERE "THE HEAD OF THE FILE" IS MOVED (the `annotate` merge). Item 8 asked
+# for the note in "the head of the file, the one place a reader who scrolls
+# nothing at all still sees", and prefixed the whole log with it. Issue 0618 then
+# gave the log a real header -- which run, which command, which directory, which
+# deck -- so the head of the file IS that block, and prefixing above it would put
+# a run's most important sentence above the line saying which run it was. The
+# note is the header's `notes :` field; `above-output` is what keeps the ruling's
+# actual claim, that a reader sees it before the simulator's own bytes.
+set cs182_hdr [string range $logY 0 [expr {[string first {--- simulator output ---} $logY] - 1}]]
 eqcheck CS182-the-mismatch-is-reported-in-the-log-and-the-CIW \
-  "exit=<$ecY> head=<[string match {ase: casemode*} $logY]>\
+  "exit=<$ecY> head=<[string match {*ase: casemode*} $cs182_hdr]>\
+ above-output=<[expr {[string first {ase: casemode} $logY] <\
+                      [string first {SIMULATOR-OUTPUT-HERE} $logY]}]>\
  sim=<[string match {*SIMULATOR-OUTPUT-HERE*} $logY]>\
  ciw=<[said_match {ase: casemode*}]>" \
-  {exit=<0> head=<1> sim=<1> ciw=<1>}
+  {exit=<0> head=<1> above-output=<1> sim=<1> ciw=<1>}
 
 # ...and with NO mismatch the log is exactly the simulator's own output
 set rd4 [file join $tmp run4]
@@ -640,23 +671,50 @@ set stZ [mkstate $rd4 cell spice $iZ]
 set idZ [pcall ase::run_deck $stZ [file join $rd4 cell.spice]]
 set ecZ [pcall ase::wait $idZ]
 set logZ [readfile [file join $rd4 cell_ase.log]]
-eqcheck CS182b-no-mismatch-leaves-the-log-untouched \
-  "exit=<$ecZ> log=<[string map {\n |} [string trim $logZ]]>\
+# ⚠ "UNTOUCHED" NOW MEANS "NO NOTES FIELD", NOT "NO FRAMING" (the `annotate`
+# merge). Issue 0618 gives every run log a header and a footer, so the bytes this
+# row used to compare against are the SIMULATOR'S REGION alone -- which is
+# exactly what it always cared about, and is still asserted byte-for-byte here.
+# What it adds is the claim that matters after 0618: a run with nothing to say
+# writes no `notes` field, so the file is byte-identical to any other quiet run.
+set cs182b_body $logZ
+set cs182b_i [string first {--- simulator output ---} $cs182b_body]
+if {$cs182b_i >= 0} {
+  set cs182b_body [string range $cs182b_body \
+    [expr {$cs182b_i + [string length {--- simulator output ---}] + 1}] end]
+  set cs182b_j [string first {=== exit } $cs182b_body]
+  if {$cs182b_j >= 0} { set cs182b_body [string range $cs182b_body 0 $cs182b_j-1] }
+}
+eqcheck CS182b-no-mismatch-writes-no-notes-and-leaves-the-output-untouched \
+  "exit=<$ecZ> log=<[string map {\n |} [string trim $cs182b_body]]>\
+ notes-field=<[string match {*notes *:*} $logZ]>\
  casemode-lines=<[said_count {ase: casemode*}]>" \
-  {exit=<0> log=<CCM=fold|SIMULATOR-OUTPUT-HERE> casemode-lines=<0>}
+  {exit=<0> log=<CCM=fold|SIMULATOR-OUTPUT-HERE> notes-field=<0> casemode-lines=<0>}
 
-# ase::run_done's new parameter is OPTIONAL: a 3-argument call (every caller
-# before this item, and any stale execute(callback,<id>)) still writes the log.
+# ase::run_done's fourth parameter is OPTIONAL: a 3-argument call (every caller
+# before item 8, and any stale execute(callback,<id>)) still writes the log.
+#
+# ⚠ IT IS THE METADATA RECORD NOW, NOT THE NOTE (the `annotate` merge). Issue
+# 0618 claimed argument four for the run's provenance, so the casemode note
+# travels as a FIELD of that record rather than as a rival fourth argument --
+# two callbacks disagreeing about what argument four means is the defect neither
+# branch would have caught alone. With no record the file is the simulator's
+# bytes and nothing else, which is what keeps a stale callback working.
 set lp3 [file join $tmp done3.log]
 set lp4 [file join $tmp done4.log]
 set ::execute(data,last) "RAWDATA"
 set ::execute(exitcode,last) 0
 catch {ase::run_done $lp3 $stZ {}}
-catch {ase::run_done $lp4 $stZ {} "ase: casemode — a note"}
-eqcheck CS183-run_done-notes-are-optional-and-prepended \
+catch {ase::run_done $lp4 $stZ {} \
+        [dict create cell c simulator ngspice casenote {ase: casemode — a note}]}
+set cs183_four [readfile $lp4]
+eqcheck CS183-run_done-metadata-is-optional-and-carries-the-note \
   "three=<[string trim [readfile $lp3]]>\
- four=<[string map {\n |} [string trim [readfile $lp4]]]>" \
-  "three=<RAWDATA> four=<ase: casemode — a note||RAWDATA>"
+ note-in-header=<[string match {*ase: casemode — a note*} $cs183_four]>\
+ above-output=<[expr {[string first {casemode — a note} $cs183_four] <\
+                      [string first {RAWDATA} $cs183_four]}]>\
+ data-untouched=<[string match {*RAWDATA*} $cs183_four]>" \
+  "three=<RAWDATA> note-in-header=<1> above-output=<1> data-untouched=<1>"
 
 # ===========================================================================
 # F — no Tk (this file runs under --nogui, where Tk does not exist)
@@ -670,7 +728,17 @@ proc strip_tcl_comments {body} {
   }
   return [join $out "\n"]
 }
-set tkre {(^|[^a-zA-Z0-9_:.])(toplevel|frame|button|label|entry|canvas|winfo|wm|grid|pack|place|bind|tk_messageBox|ttk::[a-z]+)([^a-zA-Z0-9_]|$)}
+# ⚠ THE LEADING CONTEXT IS A COMMAND POSITION, NOT MERELY A NON-WORD CHARACTER,
+# and that is a repair, not a loosening (the `annotate` merge). Half these names
+# are ordinary English -- `entry`, `label`, `place`, `bind` -- and the old
+# `[^a-zA-Z0-9_:.]` context matched them ANYWHERE: `dict get $s entry` read as a
+# Tk `entry` call and reddened this row for procs that have never touched Tk.
+# A false positive here is not harmless, because the fix a reader reaches for is
+# to rename the innocent variable, which is how a true detector gets turned off.
+# Tk commands are CALLED, so they sit at the start of a line or straight after
+# `[`, `{`, `;` or `|`. The `tk_blind` sentinel below still proves the detector
+# sees all three of its shapes, so this is tested in both directions.
+set tkre {(^|[\[\{;|]|^[ \t]*|[\[\{;|][ \t]*)(toplevel|frame|button|label|entry|canvas|winfo|wm|grid|pack|place|bind|tk_messageBox|ttk::[a-z]+)([^a-zA-Z0-9_]|$)}
 # the detector's own blind-spot sentinel: it must SEE Tk when Tk is there
 set tk_blind {}
 foreach s {{ set w [toplevel .p] } { button .b -text x } { winfo exists .x }} {
@@ -679,7 +747,8 @@ foreach s {{ set w [toplevel .p] } { button .b -text x } { winfo exists .x }} {
 set tk_hits {}
 foreach p {ase::run_filter_args ase::run_safe_args ase::run_profile
            ase::run_casemode_flag ase::run_casemode_verdict
-           ase::run_composes_profile ase::run_status_note ase::run_mode_advice
+           ase::run_composes_registry ase::run_mode_advice
+           ase::sim_casemode_requested ase::sim_nospiceinit
            ase::run_precheck ase::backend::ngspice::run_cmd} {
   if {[catch {info body $p} b]} { lappend tk_hits MISSING:$p ; continue }
   if {[regexp $tkre [strip_tcl_comments $b] -> _pre cmdname]} { lappend tk_hits $p:$cmdname }
@@ -697,19 +766,29 @@ set pN [pcall ase::run_profile [mkstate $rd cell spice $iN]]
 eqcheck CS185-run_profile-is-one-answer-for-both-halves \
   "exe=<[dg $pN exe]> named=<[dg $pN exe_named]> args=<[dg $pN args]>\
  drop=<[dg $pN dropped]> nsi=<[dg $pN nospiceinit]> req=<[dg $pN requested]>\
- tool=<[dg $pN tool]> st=<[dg $pN status]>" \
+ entry=<[dg $pN entry]> st=<[dg $pN status]>" \
   "exe=<$exeA> named=<1> args=<-r x.raw> drop=<| cat> nsi=<1> req=<preserve>\
- tool=<spice> st=<ok>"
+ entry=<shared> st=<ok>"
 
-# the unconfigured state: nothing named, and the resolution says `default` --
-# not `ok`, which is what an "index -1 is fine" answer would claim
+# NOTHING REGISTERED: no entry is named, and the resolution is `ok` because the
+# program on PATH is a perfectly good answer to "what runs".
+#
+# ⚠ THE TWO CHANGED TERMS ARE BOTH REAL (the `annotate` merge). `st` was
+# `default`, a PROFILE resolve status distinguishing "the tool's own row" from a
+# named one; the registry has no such state and answers `ok`, with `entry` empty
+# saying the same thing more directly -- which is why `entry` is asserted here
+# and is what stops this row passing on an answer that named something. And
+# `exe` was `{}`: a profile that named no executable left run_cmd to supply a
+# bare `ngspice` of its own, so run_profile could not say what would run. The
+# registry resolves it here, once, so `exe` is the program that will actually
+# start -- the single-resolution property issue 0931 was for.
 reset_sim
 set pD [pcall ase::run_profile [mkstate $rd cell]]
-eqcheck CS185b-an-unconfigured-state-names-no-exe \
+eqcheck CS185b-nothing-registered-names-no-entry-and-runs-the-PATH \
   "exe=<[dg $pD exe]> named=<[dg $pD exe_named]> args=<[dg $pD args]>\
  drop=<[dg $pD dropped]> nsi=<[dg $pD nospiceinit]> req=<[dg $pD requested]>\
- tool=<[dg $pD tool]> st=<[dg $pD status]>" \
-  {exe=<> named=<0> args=<> drop=<> nsi=<0> req=<fold> tool=<spice> st=<default>}
+ entry=<[dg $pD entry]> st=<[dg $pD status]>" \
+  {exe=<ngspice> named=<0> args=<> drop=<> nsi=<0> req=<fold> entry=<> st=<ok>}
 
 if {[info commands ::ciw_echo_orig] ne {}} {
   rename ::ciw_echo {}

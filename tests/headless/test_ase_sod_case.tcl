@@ -334,8 +334,8 @@ check "SC211b ... and under preserve both the prefix and the name keep their cas
   [pick 700 30] {i(E.Xm.Xl.E1)}
 
 # --- SC205-SC207  where the mode comes from --------------------------------------
-## B1's "per profile, with a global floor", read through item 8's
-## ase::sim_profile_casemode. `k` names no session, so the floor answers.
+## B1's "per simulator, with a global floor", read through
+## ase::sim_casemode_requested. Nothing is registered, so the floor answers.
 casemode fold
 check "SC205 sod_case_mode reads the global floor: fold" \
   [pcall {ase::ui::sod_case_mode k}] fold
@@ -351,24 +351,22 @@ check "SC206b ... and the pick that follows it folds too" \
   [pick 300 60] {v(xm.xl.midnode)}
 casemode fold
 
-## a PROFILE row's own casemode beats the floor (B1). The row is the tool's default
-## row, which is what a session naming no profile resolves to.
-pcall {::set_sim_defaults}
-set didx [pcall {::sim_profile_default_index spice}]
-check_true "SC207 fixture: the spice tool has a default profile row" \
-  [expr {[string is integer -strict $didx] && $didx >= 0}]
-set prev_casemode [pcall "::sim_profile_get spice $didx casemode"]
-pcall "::sim_profile_set spice $didx casemode preserve"
-check "SC207b the profile row's casemode beats the floor" \
+## THE REGISTERED SIMULATOR'S OWN CASEMODE BEATS THE FLOOR (B1). It was a `sim()`
+## profile row until the `annotate` merge; B1 is unchanged, the store moved.
+pcall {ase::sim_clear}
+pcall {ase::sim_register sc207 /bin/sh -casemode preserve}
+check_true "SC207 fixture: a simulator really is registered and in force" \
+  [expr {[pcall {dict get [ase::sim_status ngspice] entry}] eq {sc207}}]
+check "SC207b the registered simulator's casemode beats the floor" \
   [pcall {ase::ui::sod_case_mode k}] preserve
-check "SC207c ... and the queued expression follows the row, not the floor" \
+check "SC207c ... and the queued expression follows it, not the floor" \
   [pick 300 60] {v(Xm.Xl.MidNode)}
-pcall "::sim_profile_set spice $didx casemode [list $prev_casemode]"
-check "SC207d the row restored, the floor answers again" \
+pcall {ase::sim_clear}
+check "SC207d nothing registered, the floor answers again" \
   [pcall {ase::ui::sod_case_mode k}] fold
 
-# --- SC208  the resolve is READ-ONLY (fix round) ---------------------------------
-# Raised in review, with a reproducer: `ase::sim_profile_resolve` opens with
+# --- SC208  the pick is READ-ONLY (fix round) ------------------------------------
+# Raised in review, with a reproducer: `ase::sim_profile_resolve` opened with
 # `::set_sim_defaults`, and that proc is NOT a read — with the Simulation
 # Configuration dialog open it slurps every `.sim…r.$i.cmd` widget straight back
 # into `sim($tool,$i,cmd)`. Reached from `sod_case_mode` it therefore COMMITTED
@@ -378,9 +376,15 @@ check "SC207d the row restored, the floor answers again" \
 # `USER-IS-STILL-TYPING` typed into the spice row-0 cmd box, one `sod_click`, and
 # the array held that text afterwards — Cancel included.
 #
+# ⚠ THE CAUSE IS GONE, NOT GUARDED, as of the `annotate` merge: the mode comes
+# from the ASE-L registry now, which is built eagerly and has no lazy init, so
+# there is nothing on this path that could call `set_sim_defaults`. This row is
+# kept anyway and is worth more than it was — it used to assert that a guard was
+# in place, and now it asserts that the whole class of write is unreachable, so
+# it reddens if anyone re-introduces a `sim()` read here.
+#
 # The Tk half of this (real dialog, real widget, the string itself) is
-# test_ase_dialogs G13, which runs on a display. Here, headless, we pin the CAUSE
-# it cannot have: the pick makes NO `set_sim_defaults` call at all.
+# test_ase_dialogs G13, which runs on a display.
 casemode fold
 rename ::set_sim_defaults ase_sod_case_real_ssd
 set ::ssd_calls 0
@@ -393,16 +397,18 @@ set ::sc208_ex [pick 300 60]
 check "SC208 a pick never calls set_sim_defaults — it cannot commit dialog edits" \
   [list $::ssd_calls $::sc208_ex] {0 v(xm.xl.midnode)}
 
-## ...but the array is still built LAZILY when it genuinely is not there, which is
-## the reason the resolver did the call in the first place (item 6, CS163k). The
-## init is ours now, guarded, and a virgin array must still produce the right
-## answer rather than `index -1`.
+## ...and with `sim()` NOT THERE AT ALL it still answers correctly, without
+## building it. That is the inverse of what this row used to assert: item 6's
+## resolver needed a lazily-built array and the fix was to build it ourselves,
+## once, guarded (CS163k). The registry needs no array, so the honest claim is
+## that a virgin `sim()` is left virgin AND the answer is still right — which is
+## also the sharpest possible statement of SC208's read-only property.
 set ::ssd_calls 0
 catch {unset ::sim}
 casemode preserve
 set ::sc208b [pcall {ase::ui::sod_case_mode k}]
-check "SC208b a virgin sim() is still built, ONCE, and answers correctly" \
-  [list $::ssd_calls [info exists ::sim(tool_list)] $::sc208b] {1 1 preserve}
+check "SC208b a virgin sim() is left virgin, and the answer is still right" \
+  [list $::ssd_calls [info exists ::sim(tool_list)] $::sc208b] {0 0 preserve}
 rename ::set_sim_defaults {}
 rename ase_sod_case_real_ssd ::set_sim_defaults
 
@@ -411,45 +417,55 @@ rename ase_sod_case_real_ssd ::set_sim_defaults
 ## made the mode argument required to prevent. A throw must still fall back to
 ## fold (we cannot invent a mode) but it must SAY SO.
 casemode preserve
-rename ase::sim_profile_casemode ase_sod_case_real_spc
-proc ase::sim_profile_casemode {state {init 1}} { error {resolver exploded} }
+rename ase::sim_casemode_requested ase_sod_case_real_spc
+proc ase::sim_casemode_requested {backend} { error {resolver exploded} }
 set ::notices {}
 set ::sc208c [pcall {ase::ui::sod_case_mode k}]
 set ::sc208c_said [expr {[llength $::notices] ? 1 : 0}]
-rename ase::sim_profile_casemode {}
-rename ase_sod_case_real_spc ase::sim_profile_casemode
+rename ase::sim_casemode_requested {}
+rename ase_sod_case_real_spc ase::sim_casemode_requested
 check "SC208c a resolver THROW folds but is ANNOUNCED, never silent" \
   [list $::sc208c $::sc208c_said] {fold 1}
 check "SC208c-sane the real resolver is back" \
   [pcall {ase::ui::sod_case_mode k}] preserve
 
-# --- SC209  a REAL session, stamped at a NON-default row -------------------------
+# --- SC209  a REAL session, and the KEY has to matter -----------------------------
 # Raised in review: every SC205-SC207 check passes the literal key `k`, which
 # names no session, so `ase::session_state` returns `{}` and the answer always
-# came from the tool's DEFAULT row. A `sod_case_mode` rewritten to ignore its key
-# entirely stayed green across all 42 checks. This drives the binding the §13.4
-# ruling actually rests on: the SESSION's own profile row.
+# came from the same place. A `sod_case_mode` rewritten to ignore its key
+# entirely stayed green across all 42 checks. This drives the binding.
+#
+# ⚠ WHAT THE KEY SELECTS CHANGED AT THE `annotate` MERGE, AND THE ROW IS WEAKER
+# FOR IT — said plainly rather than quietly re-scoped. It used to select the
+# session's own STAMPED PROFILE ROW, so two sessions could run two different
+# simulators at two different case modes. The ASE-L registry has ONE in-force
+# entry, so that capability is gone (it is written down in src/ase.tcl, above
+# ase::sim_probe_run). What the key still selects is the session's `simulator`
+# BACKEND, and that is what these rows now drive: a session naming a backend the
+# in-force entry is not for must NOT inherit that entry's case mode.
 casemode fold
-set nrows 0 ; catch {set nrows $::sim(spice,n)}
-set didx [pcall {::sim_profile_default_index spice}]
-set altidx -1
-for {set i 0} {$i < $nrows} {incr i} { if {$i != $didx} { set altidx $i ; break } }
-pcall "::sim_profile_set spice $altidx casemode distinguish"
-dict set ::ase::sessions sc209 state [pcall "ase::sim_profile_stamp {} spice $altidx"]
-## the floor is `fold` and the DEFAULT row carries no casemode, so `distinguish`
-## can only have come from the stamped row — and `k`, in the same breath, must
-## still answer `fold`.
-check "SC209 a REAL session follows the row it is STAMPED at, not the default row" \
-  [list [expr {$altidx >= 0}] [pcall {ase::ui::sod_case_mode sc209}] \
-        [pcall {ase::ui::sod_case_mode k}]] {1 distinguish fold}
+pcall {ase::sim_clear}
+pcall {ase::sim_register sc209 /bin/sh -backend ngspice -casemode distinguish}
+dict set ::ase::sessions sc209 state [dict create version 1 simulator ngspice]
+## a session on ANOTHER backend: ase::sim_status answers `wrongbackend`, i.e. the
+## entry cannot run it, so no mode may be read off that entry. The floor is
+## `fold`, so `distinguish` leaking through would be visible here and nowhere
+## else.
+dict set ::ase::sessions sc209x state [dict create version 1 simulator notngspice]
+check "SC209 a REAL session follows the entry in force for ITS backend" \
+  [list [pcall {ase::ui::sod_case_mode sc209}] \
+        [pcall {ase::ui::sod_case_mode sc209x}] \
+        [pcall {ase::ui::sod_case_mode k}]] {distinguish fold distinguish}
 set ::pickkey sc209
-check "SC209b ... and the QUEUED EXPRESSION follows the stamped row" \
+check "SC209b ... and the QUEUED EXPRESSION follows it" \
   [pick 300 60] {v(Xm.Xl.MidNode)}
-set ::pickkey k
-check "SC209c ... while the unstamped key, same floor, same click, still folds" \
+set ::pickkey sc209x
+check "SC209c ... while a session on another backend, same floor, same click, folds" \
   [pick 300 60] {v(xm.xl.midnode)}
-pcall "::sim_profile_set spice $altidx casemode {}"
+set ::pickkey k
+pcall {ase::sim_clear}
 catch {dict unset ::ase::sessions sc209}
+catch {dict unset ::ase::sessions sc209x}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

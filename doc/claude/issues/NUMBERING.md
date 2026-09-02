@@ -800,7 +800,13 @@ and watching the suite stay green:
 * **1220** gained row AS85 for its case 2, and now records that the note's
   "shares that one" sentence is measurably false across sheets. Still open.
 
-**The next free number is 1238.** 1201-1237 are taken. Item **S7**'s red phase
+~~**The next free number is 1238.**~~ superseded: 1238 and 1239 were taken at
+the `annotate` → `fluid-editing` merge (2026-09-01) for the two capabilities that
+merge deliberately did not carry across — stock `proc simulate`'s exe/casemode
+composer, and `ase::expand_path`'s `subst`, which the merge made more reachable.
+**The next free number is 1242.** 1201-1241 are taken. (1240 records the
+update_op() ruling collision the merge found; 1241 the log_action buffer
+overflow it made reachable.) Item **S7**'s red phase
 claimed **1228-1233** as stubs before writing its rows (1228 the E key opening the
 cell's own schematic instead of the copy's own; 1229 the fallback ignoring whether
 the bound file is there when there is no display; 1230 answering No still dropping

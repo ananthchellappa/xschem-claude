@@ -1889,6 +1889,18 @@ proc ase::sim_casemode_selectable {backend} {
 # in an rc must not become a request.
 proc ase::sim_casemode_requested {backend} {
   set s [ase::sim_status $backend]
+  # ⚠ A REFUSED RESOLUTION YIELDS NO MODE OF ITS OWN. `ok 0` still carries an
+  # `entry` -- the entry the user chose, whose program has since gone or was
+  # never for this backend -- and reading a case mode off it would attribute a
+  # request to a simulator that is not going to run. The floor answers instead,
+  # which is what a backend with nothing registered gets, and is the same answer
+  # this proc gave before anybody registered anything.
+  if {![dict get $s ok]} {
+    if {[info exists ::sim_case_mode] && [sim_casemode_valid $::sim_case_mode]} {
+      return $::sim_case_mode
+    }
+    return fold
+  }
   set e [dict get $s entry]
   if {$e ne {}} {
     variable simulators
@@ -2617,9 +2629,9 @@ proc ase::run_mode_advice {p kind} {
  register a simulator that supports distinguish (ASE-L, Setup > Simulators…)\
  and give it that case mode."
     }
-    return "Point the registered simulator at one that supports distinguish, or\
- turn on its -n if a .spiceinit is overriding the request, or request a mode the\
- binary delivers."
+    return "Point the registered simulator at a program that supports distinguish,\
+ or turn on the registered simulator's -n if a .spiceinit is overriding the\
+ request, or request a mode the binary delivers."
   }
   if {$floor} {
     return "A .spiceinit — beside the deck or in \$HOME — overrides -D casemode=.\
@@ -5695,11 +5707,30 @@ proc ase::raw_content_verdict {path} {
  a node the circuit does not have). Signature: [join $sig {; }]."
     return $v
   }
-  if {([string is integer -strict $np] && $np == 0) ||
-      ([string is integer -strict $nv] && $nv == 0)} {
+  # ⚠ ZERO POINTS IS NOT AN EMPTY RESULT, AND THIS GUARD USED TO SAY IT WAS
+  # (the `annotate` merge). `fluid-editing` rejected `np == 0` OR `nv == 0` alike
+  # as "an analysis that did not run". MEASURED on `annotate` and written up in
+  # issue 0896: ngspice writes `No. Points: 0` at the START of a run and backfills
+  # the count when it finishes, so EVERY simulation leaves a well-formed
+  # zero-point raw on disk for its whole duration -- and reading it is how the
+  # waveform window watches a run fill. Rejecting it made that impossible: the
+  # window could not attach a run until the run was over.
+  #
+  # The same fact is already load-bearing one layer down: update_op()'s zero-point
+  # guard (save.c, issue 0836) exists precisely because a zero-point database is
+  # the ORDINARY path and used to SIGSEGV there. A guard here that treats it as
+  # malformed contradicts a guard there that treats it as normal.
+  #
+  # ⚠ `nv == 0` STILL REJECTS, and the split is the point. A file with no
+  # VARIABLES holds nothing and never will; a file with variables and no points
+  # yet holds a run that has not got there. And the case this guard was written
+  # for -- a finished analysis that produced nothing, typically a `.save` of a
+  # node the circuit does not have -- is caught by the `constants`-plot arm
+  # above, which is untouched. The guard is narrower and sharper, not weaker.
+  if {[string is integer -strict $nv] && $nv == 0} {
     dict set v ok 0
-    dict set v why "this raw file's first plot '$pn' carries $nv variable(s) over\
- $np point(s) — an empty result, which is what an analysis that did not run\
+    dict set v why "this raw file's first plot '$pn' carries no variables at all\
+ over $np point(s) — an empty result, which is what an analysis that did not run\
  leaves behind."
     return $v
   }
@@ -5781,7 +5812,7 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
 
 # The registry slot indices, and the current one; {} / -1 when nothing is
 # loaded. `xschem raw info` prints "<cur> current" then one "<i> <path> <type>"
-# line per slot (save.c:2264-2277, what == 4) and nothing at all with no raw.
+# line per slot (save.c:2379-2388, what == 4) and nothing at all with no raw.
 proc ase::raw_indices {} {
   if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
   set out {}

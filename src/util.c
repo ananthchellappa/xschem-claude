@@ -486,30 +486,65 @@ void log_action_descend(const char *verb, int inst_n, const char *instname)
 /* Append one action to the log as a single line and mirror it to the CIW
  * log pane. No-op when logging is disabled. Each call is one line; the
  * trailing newline is added here. */
+/* ⚠ THE PANE COPY IS SIZED FROM THE FILE WRITE, AND THAT IS A FIX FOR A REAL
+ * CRASH, MEASURED (the `annotate` merge, 2026-09-01). This buffer was
+ * `char buf[4096]` with the comment "action lines are short xschem commands",
+ * filled by:
+ *
+ *     #ifdef HAS_SNPRINTF
+ *       vsnprintf(buf, S(buf), fmt, args);
+ *     #else
+ *       vsprintf(buf, fmt, args);
+ *     #endif
+ *
+ * `HAS_SNPRINTF` IS DEFINED NOWHERE IN THIS TREE -- not in config.h, not in
+ * scconfig, not on any command line -- so the UNBOUNDED arm is the one that has
+ * always been compiled, on every platform, and the safe arm has never once run.
+ * The `#ifdef` read as protection and was decoration.
+ *
+ * WHAT REACHED IT: `xschem callback` logs the invoked command, and a Tk menu
+ * entry's `-command` is its whole SCRIPT -- comments included. The Waves
+ * `Op Annotate` entry's body is 4971 bytes after the merge (it carries issue
+ * 0683's ruling and R505b's cadence gate in prose), and clicking it aborted the
+ * process outright: `*** buffer overflow detected ***`, glibc _FORTIFY_SOURCE,
+ * inside __vsprintf_internal called from log_action. Not a hang, not a wrong
+ * answer -- the editor died on a menu click, with the user's unsaved schematic
+ * in it.
+ *
+ * THE FIX IS EXACT RATHER THAN LARGER. `vfprintf` above already formats the
+ * same text and RETURNS ITS LENGTH, so the pane copy is allocated at exactly
+ * that size instead of guessed at. A bigger fixed buffer would only move the
+ * cliff, and this codebase is C89 (no `snprintf` to reach for). If the count
+ * comes back negative -- an output error -- nothing is mirrored, which is the
+ * correct answer for text that was not written.
+ *
+ * ⚠ THE SECOND va_start IS STILL REQUIRED. A va_list may not be reused after
+ * being passed to vfprintf; that was already true of the code this replaces. */
 void log_action(const char *fmt, ...)
 {
-  char buf[4096]; /* pane copy only; the file write below is unbounded */
+  char *buf;
+  int n;
   va_list args;
   if(!actionlog_fp || actionlog_suppress) return;
   /* commit any provisional select_at first, so it precedes this line in order.
    * flush clears the buffer BEFORE re-entering here, so no recursion. */
   log_action_flush_pending();
   va_start(args, fmt);
-  vfprintf(actionlog_fp, fmt, args);
+  n = vfprintf(actionlog_fp, fmt, args);
   va_end(args);
   fputc('\n', actionlog_fp);
   /* a command line was recorded: let a wrapper (dispatch/context-menu/CIW/menu)
    * skip its own duplicate of the same command (self-log-at-core dedup). */
   actionlog_cmd_logged = 1;
-  va_start(args, fmt);
-#ifdef HAS_SNPRINTF
-  vsnprintf(buf, S(buf), fmt, args);
-#else
-  vsprintf(buf, fmt, args); /* action lines are short xschem commands */
-#endif
-  va_end(args);
   /* the CIW entry already echoed the typed line; suppress the mirror then */
-  if(!actionlog_suppress_echo) log_action_echo(buf);
+  if(actionlog_suppress_echo || n < 0) return;
+  buf = my_malloc(_ALLOC_ID_, (size_t)n + 1);
+  if(!buf) return;
+  va_start(args, fmt);
+  vsprintf(buf, fmt, args);
+  va_end(args);
+  log_action_echo(buf);
+  my_free(_ALLOC_ID_, &buf);
 }
 
 /* log_action without the CIW mirror: used for commands typed INTO the CIW

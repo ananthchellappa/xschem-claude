@@ -292,20 +292,25 @@ eqcheck PF215d-both-stale-rows-are-named [llength [dg $sc absent]] 2
 eqcheck PF215e-an-unsaved-row-is-not-checked \
   [llength [dg [pcall ase::preflight_scan \
      [mkstate $RD c {{expr v(nosuchnode) save 0}}] $NL] absent]] 0
-## the PROFILE ROW beats the floor: with the floor at `fold`, a stamped row
-## carrying `distinguish` must still refuse — a scan that read $::sim_case_mode
-## raw would pass this state
+## THE SIMULATOR'S OWN MODE BEATS THE FLOOR: with the floor at `fold`, a
+## registered simulator carrying `distinguish` must still refuse — a scan that
+## read $::sim_case_mode raw would pass this state.
+##
+## ⚠ IT WAS A STAMPED `sim()` PROFILE ROW UNTIL THE `annotate` MERGE, and B1's
+## "per simulator, with a global floor" is unchanged; only where the per-
+## simulator half is stored moved, onto the ASE-L registry entry. The `entry=`
+## term replaces the old `altidx >= 0` guard for the same reason it was there:
+## without it a fixture that silently registered nothing would leave this row
+## comparing the floor against itself and passing.
 set ::sim_case_mode fold
-set nrows 0 ; catch {set nrows $::sim(spice,n)}
-set didx [pcall ::sim_profile_default_index spice]
-set altidx -1
-for {set i 0} {$i < $nrows} {incr i} { if {$i != $didx} { set altidx $i ; break } }
-pcall ::sim_profile_set spice $altidx casemode distinguish
-set stampd [pcall ase::sim_profile_stamp [mkstate $RD c $STALE] spice $altidx]
-eqcheck PF215f-a-stamped-profile-row-beats-the-global-floor \
-  [list [expr {$altidx >= 0}] [dg [pcall ase::preflight_scan $stampd $NL] mode] \
+pcall ase::sim_clear
+pcall ase::sim_register pf215f /bin/sh -casemode distinguish
+set stampd [mkstate $RD c $STALE]
+eqcheck PF215f-a-registered-simulators-mode-beats-the-global-floor \
+  [list [expr {[dg [pcall ase::sim_status ngspice] entry] ne {}}] \
+        [dg [pcall ase::preflight_scan $stampd $NL] mode] \
         [llength [dg [pcall ase::preflight_scan $stampd $NL] absent]]] {1 distinguish 2}
-pcall ::sim_profile_set spice $altidx casemode {}
+pcall ase::sim_clear
 set ::sim_case_mode fold
 ## and the blind spot is reported as `unknown`, never counted as absent
 set unk [pcall ase::preflight_scan [mkstate $RD c {{expr v(xpdk.internal) save 1}}] $NL]
@@ -788,14 +793,35 @@ eqcheck PF221ae-a-top-level-card-AFTER-a-subckt-lands-at-the-TOP \
 eqcheck PF221af-and-it-resolves-present-from-the-top \
   [dg [pcall ase::netlist_map_resolve $MT voltage TOPAFTER 1] status] present
 
-## --- the empty-result DISJUNCTION -------------------------------------------
+## --- the empty-result test is about VARIABLES, not points -------------------
 ## PF219h's fixture sets BOTH counters to 0, so `&&` in place of `||` stayed
-## green. Real variables over zero points is the actual shape of an analysis
-## that started and produced nothing.
+## green there. This pair still separates them; what INVERTED at the `annotate`
+## merge is which half rejects.
+##
+## ⚠ PF221ag WAS `...-is-rejected` AND IS NOW `...-is-ACCEPTED`, and the comment
+## it carried -- "real variables over zero points is the actual shape of an
+## analysis that started and produced nothing" -- was half the truth. It is
+## equally the shape of an analysis that started and HAS NOT GOT THERE YET:
+## MEASURED on `annotate` (issue 0896), ngspice writes `No. Points: 0` at the
+## START of a run and backfills the count at the end, so every simulation leaves
+## exactly these bytes on disk for its whole duration. Nothing in the file tells
+## the two apart -- only time does.
+##
+## SO THE TIE IS BROKEN ON CONSEQUENCE, not on which reading is likelier.
+## Rejecting makes the waveform window unable to attach a run until the run is
+## over, which is the feature 0896 is about. Accepting costs nothing: the
+## downstream guards already treat a zero-point database as the ordinary path --
+## update_op()'s zero-point guard (save.c, issue 0836) exists precisely because
+## it is, and it used to SIGSEGV there -- and update_op publishes nothing from it
+## anyway. A guard here calling it malformed contradicted a guard there calling
+## it normal.
+##
+## PF221ah below is untouched and is what keeps this pair honest: NO VARIABLES is
+## still a rejection, because a file with no vectors holds nothing and never will.
 set zraw [file join $tmp zeropoints.raw]
 putfile $zraw "Title: * t\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: 0\nVariables:\nBinary:\n"
-eqcheck PF221ag-variables-but-ZERO-POINTS-is-rejected \
-  [dg [pcall ase::raw_content_verdict $zraw] ok] 0
+eqcheck PF221ag-variables-but-ZERO-POINTS-is-ACCEPTED-a-run-that-has-not-got-there-yet \
+  [dg [pcall ase::raw_content_verdict $zraw] ok] 1
 set zvraw [file join $tmp zerovars.raw]
 putfile $zvraw "Title: * t\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 0\nNo. Points: 59\nVariables:\nBinary:\n"
 eqcheck PF221ah-points-but-ZERO-VARIABLES-is-rejected \

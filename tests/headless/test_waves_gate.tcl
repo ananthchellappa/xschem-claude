@@ -139,11 +139,17 @@ proc wg_proc_range {lines name} {
   return {}
 }
 # {first last} of the Waves cascade construction block.
+# ⚠ THE LABEL IS A PROC CALL, NOT A LITERAL, AS OF THE `annotate` MERGE
+# (`-label [annot_lbl_waves]`), and matching only the literal made this range
+# never start -- which silently reclassified the whole cascade as `other` and
+# reddened SEL418/SEL419 for a reason that had nothing to do with their subject.
+# Both spellings are accepted so this suite does not care which is in force.
 proc wg_cascade_range {lines} {
   set i 0 ; set start -1
   foreach line $lines {
     if {$start < 0} {
-      if {[string match {*add cascade -label "Waves"*} $line]} { set start $i }
+      if {[string match {*add cascade -label "Waves"*} $line]
+          || [string match {*add cascade -label \[annot_lbl_waves\]*} $line]} { set start $i }
     } elseif {[string match {*set simulate_bg *} $line]} {
       return [::list $start $i]
     }
@@ -153,7 +159,29 @@ proc wg_cascade_range {lines} {
 }
 set wg_code    [wg_code_lines $wg_lines]
 set wg_lr      [wg_proc_range $wg_lines load_raw]
-set wg_opann   [wg_proc_range $wg_lines waves_op_annotate]
+# THE Op Annotate ENTRY'S OWN SCRIPT.
+#
+# ⚠ IT WAS `proc waves_op_annotate` UNTIL THE `annotate` MERGE, and the body
+# moved back inline into the menu `-command` for a reason SEL423 has to respect:
+# issue 0683 put a SECOND guard on this entry -- refuse without a bound ASE-L
+# session -- pinned by a row that reads the live `-command` script's own text.
+# A body living in a proc is a body that row cannot see, and is also a body a
+# script could still call to annotate with no binding at all. So the range is now
+# the entry, from its `add command` line to the lone close-brace that ends the
+# script, and SEL423's claim is unchanged: the gate precedes the chooser.
+proc wg_opann_range {lines} {
+  set i 0 ; set start -1
+  foreach line $lines {
+    if {$start < 0} {
+      if {[string match {*add command -label \[annot_lbl_op_annotate\]*} $line]} { set start $i }
+    } elseif {$line eq "\}"} {
+      return [::list $start $i]
+    }
+    incr i
+  }
+  return {}
+}
+set wg_opann   [wg_opann_range $wg_lines]
 set wg_casc    [wg_cascade_range $wg_lines]
 
 # --- the census. Every CODE line that calls one of the two destructive verbs,
@@ -260,8 +288,8 @@ proc wg_gate_before {code first last needle} {
   if {$hit < 0} { return no-hit }
   return [expr {$gate < $hit ? "gate-first" : "GATE-TOO-LATE"}]
 }
-eqcheck SEL423-WA-waves_op_annotate-is-gated-BEFORE-it-calls-select_raw \
-  [expr {$wg_opann eq {} ? "no-proc" : [wg_gate_before $wg_code [lindex $wg_opann 0] [lindex $wg_opann 1] {*select_raw *}]}] \
+eqcheck SEL423-WA-the-Op-Annotate-entry-is-gated-BEFORE-it-opens-the-chooser \
+  [expr {$wg_opann eq {} ? "no-entry" : [wg_gate_before $wg_code [lindex $wg_opann 0] [lindex $wg_opann 1] {*select_raw *}]}] \
   gate-first
 
 # ===========================================================================
@@ -312,7 +340,13 @@ foreach l $wg_asecode {
 # editor's own menubar (comment-stripped, so a comment cannot answer for it).
 set wg_launch 0
 foreach pair $wg_code {
-  if {[string match {*add command -label "Launch ASE-L"*} [lindex $pair 1]]} { incr wg_launch }
+  # ⚠ BOTH SPELLINGS. The label became `[annot_lbl_launch_ase]` at the
+  # `annotate` merge (test_annot_show_menu C2 pins that proc's return against the
+  # live widget), and matching only the literal made this row claim the door had
+  # been deleted.
+  set wgl [lindex $pair 1]
+  if {[string match {*add command -label "Launch ASE-L"*} $wgl]
+      || [string match {*add command -label \[annot_lbl_launch_ase\]*} $wgl]} { incr wg_launch }
 }
 eqcheck SEL452-WB-the-pointer-is-FOLLOWABLE-it-names-the-step-that-opens-the-door \
   [::list [expr {[string match {*Tools > Launch ASE-L*} $wg_msg] ? 1 : 0}] $wg_launch] {1 1}
@@ -383,10 +417,59 @@ foreach p {select_raw ciw_echo alert_ set_netlist_dir} {
 }
 set wg_selcalls 0 ; set wg_said {} ; set wg_alerts 0 ; set wg_ext 0
 proc select_raw {{parent {.}}} { incr ::wg_selcalls ; return $::tmp/an.raw }
-proc ciw_echo {line {tag {}}} { lappend ::wg_said $line }
+# ⚠ THE ACTION-LOG MIRROR IS NOT A SENTENCE, AND IT ARRIVES HERE (the `annotate`
+# merge). `log_action` (util.c) mirrors every recorded command to the CIW pane
+# through this very proc, so since the merge each menu click ALSO delivers the
+# command it replayably logged. MEASURED, same click, same flags: pre-merge
+# `fluid-editing` delivers nothing for a Clear; `annotate` delivers
+# `{{} {xschem raw_clear}}`. Every row in this suite counts CIW lines to ask
+# "did the gate SAY WHY", so an unfiltered count read one refusal too many in
+# five of them.
+#
+# ⚠ FILTERED BY TAG, NOT BY TEXT, AND THE FIRST DRAFT GOT THAT WRONG. Dropping
+# lines matching `xschem *` cleaned up Clear and left `External viewer` still
+# over-counting, because what log_action mirrors is the ACTION -- `waves
+# external` -- and not always a bare `xschem` verb. The tag is exact: the log
+# mirror is the one untagged emitter (log_action_echo passes no tag), and every
+# sentence this suite is about is tagged -- `waves_gate_blocked` echoes at
+# `error`. So the discriminator is provenance, not spelling, and it cannot be
+# defeated by a message that happens to start with a verb.
+proc ciw_echo {line {tag {}}} {
+  if {$tag eq {}} { return }
+  lappend ::wg_said $line
+}
 proc alert_ {txt {position {}} {nowait 0} {yesno 0}} { incr ::wg_alerts ; return 1 }
 proc set_netlist_dir {{a 0} {b {}}} { incr ::wg_ext ; return {} }
 proc wg_reset {} { set ::wg_selcalls 0 ; set ::wg_said {} ; set ::wg_alerts 0 ; set ::wg_ext 0 }
+# DRIVE THE Op Annotate ENTRY'S OWN SCRIPT.
+#
+# ⚠ IT WAS `pcall waves_op_annotate` UNTIL THE `annotate` MERGE. The body moved
+# back inline into the menu `-command` (see wg_opann_range for why), so there is
+# no proc left to call and the script has to be read off the source and run.
+#
+# ⚠ THE BINDING GUARD IS SATISFIED, NOT BYPASSED, and that is the honest way to
+# do it. Issue 0683 put a second guard on this entry -- refuse without a live
+# ASE-L session -- and it is the LEFT-hand neighbour of the cadence gate in one
+# `&&`. Headless there is no session, so the binding guard alone would refuse
+# every row below and they would all pass for the wrong reason: `select_raw` not
+# called, nothing said, and this suite would be asserting 0683's behaviour while
+# claiming to assert R505's. So the binding guard is stubbed TRUE for the
+# duration, which is exactly the state in which the cadence gate is the only
+# thing that can refuse. test_annot_show_menu owns the other guard.
+set ::wg_opann_script {}
+if {$wg_opann ne {}} {
+  set ::wg_opann_script [join [lrange $wg_lines \
+    [expr {[lindex $wg_opann 0] + 1}] [expr {[lindex $wg_opann 1] - 1}]] "\n"]
+}
+proc wg_run_opann {} {
+  if {$::wg_opann_script eq {}} { lappend ::wg_said {NO-OP-ANNOTATE-ENTRY} ; return }
+  set had [expr {[info commands ::ase::annot_binding_ok] ne {}}]
+  if {$had} { rename ::ase::annot_binding_ok wg_real_abo }
+  proc ::ase::annot_binding_ok {args} { return 1 }
+  catch {uplevel #0 $::wg_opann_script}
+  rename ::ase::annot_binding_ok {}
+  if {$had} { rename wg_real_abo ::ase::annot_binding_ok }
+}
 proc wg_said_ok {} {
   if {[llength $::wg_said] != 1} { return "said:[llength $::wg_said]" }
   set m [lindex $::wg_said 0]
@@ -451,12 +534,12 @@ eqcheck SEL437-WC-cc0-all-EIGHT-still-wipe-the-other-result-legacy-behaviour-int
 #     select_raw itself. Blocked under cadence_compat, live without it.
 set cadence_compat 1
 wg_two ; wg_reset
-pcall waves_op_annotate
+wg_run_opann
 eqcheck SEL438-WC-cc1-Op-Annotate-refuses-before-it-selects \
   [::list [tails [slot_list]] [wg_said_ok] $wg_selcalls] {{an.raw bn.raw} refused 0}
 set cadence_compat 0
 wg_two ; wg_reset
-pcall waves_op_annotate
+wg_run_opann
 eqcheck SEL439-WC-cc0-Op-Annotate-runs-and-selects-as-it-always-did \
   [::list [wg_said_ok] $wg_selcalls] {said:0 1}
 
@@ -501,7 +584,7 @@ wg_two ; wg_reset
 pcall waves tran
 set wg_why_load [lindex $wg_said 0]
 wg_two ; wg_reset
-pcall waves_op_annotate
+wg_run_opann
 set wg_why_op [lindex $wg_said 0]
 # ...and the ENTRY NAME each call site passes is asserted here too, off the wire,
 # because SEL428 above composes with the TEST's own literal and so cannot see what
@@ -624,8 +707,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [winfo exists .menub
   }
   eqcheck SEL444-WD-cadence_compat-greys-out-NOTHING-blocked-is-not-disabled \
     [lsort -unique $wg_inv1] normal
-  eqcheck SEL445-WD-Op-Annotate-is-wired-to-the-lifted-proc \
-    [::list [wg_lbl $m 5] [pcall $m entrycget 5 -command]] {{Op Annotate} waves_op_annotate}
+  # ⚠ THE BODY IS INLINE AGAIN AS OF THE `annotate` MERGE, so this row can no
+  # longer assert a proc NAME. R505b had lifted it into `waves_op_annotate` so
+  # the cadence gate was a call and not a ninth copy; issue 0683 then put a
+  # second guard on this entry pinned by a row that reads the live `-command`
+  # script's own text, and a body in a proc is a body that row cannot see.
+  #
+  # What is asserted instead is stronger than the name ever was: the LIVE script
+  # carries BOTH guards, and the cadence gate is the LEFT one -- which is the
+  # property R505 actually wants (nothing is read or cleared in Cadence mode) and
+  # which a proc name only ever implied.
+  set wg_c5 [pcall $m entrycget 5 -command]
+  eqcheck SEL445-WD-Op-Annotate-carries-BOTH-guards-with-the-cadence-one-FIRST \
+    [::list [wg_lbl $m 5] \
+            [expr {[string first {waves_gate_blocked} $wg_c5] >= 0}] \
+            [expr {[string first {ase::annot_binding_ok} $wg_c5] >= 0}] \
+            [expr {[string first {waves_gate_blocked} $wg_c5] <
+                   [string first {ase::annot_binding_ok} $wg_c5]}] \
+            [expr {[string first {ase::annot_binding_ok} $wg_c5] <
+                   [string first {select_raw} $wg_c5]}]] \
+    {{Op Annotate} 1 1 1 1}
 
   # --- cadence_compat 1: click each of the eight loading entries, plus
   #     Op Annotate. Indices 4..12 of the cascade.
@@ -708,8 +809,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [winfo exists .menub
   }
   eqcheck SEL449-WD-cc0-every-loading-entry-still-wipes-and-says-nothing \
     [lsort -unique $wg_click0] {{wiped 0 0}}
+  # ⚠ THE BINDING GUARD IS SATISFIED, NOT BYPASSED. Issue 0683's guard is the
+  # RIGHT-hand term of the same `&&`, and headless there is no ASE-L session, so
+  # without this stub the entry would refuse for 0683's reason and this row would
+  # go green on a state that says nothing about R505. Note the contrast with
+  # SEL446 above, which does NOT stub it and does not need to: under
+  # cadence_compat the LEFT term short-circuits first, which is itself the
+  # ordering proof.
   wg_two ; wg_reset
+  set wg_had_abo [expr {[info commands ::ase::annot_binding_ok] ne {}}]
+  if {$wg_had_abo} { rename ::ase::annot_binding_ok wg_real_abo2 }
+  proc ::ase::annot_binding_ok {args} { return 1 }
   pcall $m invoke 5                               ;# Op Annotate
+  rename ::ase::annot_binding_ok {}
+  if {$wg_had_abo} { rename wg_real_abo2 ::ase::annot_binding_ok }
   eqcheck SEL450-WD-cc0-Op-Annotate-still-selects-a-file-as-it-always-did \
     [::list [llength $wg_said] $wg_alerts $wg_selcalls] {0 0 1}
   set cadence_compat 0

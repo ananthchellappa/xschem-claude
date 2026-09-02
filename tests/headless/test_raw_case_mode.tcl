@@ -66,6 +66,21 @@ set here [file normalize [file dirname [info script]]]
 set fixdir [file normalize [file join $here .. .. doc claude casemode_batch fixtures]]
 set foldraw [file join $fixdir tr_fold.raw]
 set presraw [file join $fixdir tr_preserve.raw]
+# ⚠ THE OPERATING-POINT MIRRORS, ADDED AT THE `annotate` MERGE (issue 1240).
+# Same four variable names, same two spellings, one point, `Plotname: Operating
+# Point`. They exist because update_op() -- the point-0 publisher that arms the
+# lazy view -- REFUSES a non-op database: the user ruled on 2026-08-26 that
+# annotating from a transient must do nothing silently, and the array update_op
+# arms is also what `ngspice::get_voltage` reads onto the schematic, so arming it
+# for a transient would put t=0 there wearing the label "operating point".
+#
+# The ladder under test is about NAME SPELLING, which is identical in every
+# analysis, so nothing is lost by asking it through an op database -- and what is
+# gained is that these rows now exercise the publisher on the analysis kind it
+# actually serves. The TRANSIENT fixtures stay and are still used everywhere the
+# subject is the reader, the sweep window or the cursor.
+set oppres [file join $fixdir op_preserve.raw]
+set opfold [file join $fixdir op_fold.raw]
 
 # A missing fixture must FAIL, never skip: full_audit.sh scores a whole file
 # SKIP on the substring, and "the fixtures went away" is a finding.
@@ -210,7 +225,7 @@ eqcheck CS20c-and-the-flag-took [pcall xschem raw case] 1
 # in the direction D3 predicted. Each check still fails on a broken publisher --
 # an unarmed view makes every half false.
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 catch {array unset ::ngspice::ngspice_data}
 eqcheck CS21-update_op [pcall xschem update_op] 1
 # FOUR halves in one assertion, and no half is redundant: the stored name has

@@ -106,14 +106,16 @@ proc said_count {pat {tag {}}} {
   return $n
 }
 
-# a private sim() configuration; nothing here reads or writes the user's simrc.
-# With no profile row stamped on the state, ase::sim_profile_casemode falls
-# through the tool's default row to the GLOBAL FLOOR — which is what `casemode`
-# sets (item 9's idiom, spec §13.4).
-proc reset_sim {} {
-  if {[info exists ::sim]} { unset ::sim }
-  set_sim_defaults
-}
+# A private simulator configuration; nothing here reads or writes the user's own.
+# With NOTHING REGISTERED, ase::sim_casemode_requested falls through to the
+# GLOBAL FLOOR — which is what `casemode` below sets.
+#
+# ⚠ IT USED TO CLEAR A `sim()` ARRAY (the `annotate` merge). The per-simulator
+# case mode moved onto the ASE-L registry entry, so the thing to clear is the
+# registry; `sim()` no longer carries a case mode at all and reset_sim's own
+# `set_sim_defaults` call went with it, which is also why NC229's spy below
+# still reads 0 for a reason it no longer has to work for.
+proc reset_sim {} { ase::sim_clear }
 reset_sim
 proc casemode {m} { set ::sim_case_mode $m }
 casemode fold
@@ -285,16 +287,25 @@ check "NC229 reading a log never calls set_sim_defaults (it cannot commit dialog
 ## gates rung 2 off while the floor still says `preserve`
 reset_sim
 casemode preserve
-set ti $::sim(spice,n)
-set ::sim(spice,$ti,cmd)  {ngspice "$N"}
-set ::sim(spice,$ti,name) {rc probe row}
-set ::sim(spice,$ti,exe)  {/nonexistent/ngspice}
-incr ::sim(spice,n)
-set_sim_defaults
-sim_profile_set spice $ti casemode distinguish
-set pst [pcall ase::sim_profile_stamp [outstate [list $srow]] spice $ti]
+# ⚠ THE ENTRY MUST BE RUNNABLE, and the first draft of this row used
+# `/nonexistent/ngspice` on the theory that a probe is never launched here. It is
+# not -- but ase::sim_casemode_requested REFUSES to read a mode off an entry
+# whose program cannot be started (a request must not be attributed to a
+# simulator that is not going to run; test_sim_casemode_registry CS155f is that
+# rule), so the floor answered and this row measured the floor against itself.
+# `/bin/sh` is a program that certainly exists and is certainly never run here.
+pcall ase::sim_register {rc probe sim} /bin/sh -casemode distinguish
+set pst [outstate [list $srow]]
 set res [pcall $probe $pst $LOG_KEPT]
-check "NC229b the stamped profile row outranks the floor (row distinguish, floor preserve)" [pcall dict size $res] 0
+check "NC229b the registered simulator's mode outranks the floor (its distinguish, floor preserve)" \
+  [pcall dict size $res] 0
+# ⚠ THE ENTRY IS DELIBERATELY UNRUNNABLE, and that is not a mistake in the
+# fixture: what is being asserted is that the requested MODE is read off the
+# entry, which is a question about the record and not about the program. An
+# entry that pointed at a real binary would let a reader believe the answer came
+# from a measurement.
+check "NC229c ...and it really is the entry answering, not the floor" \
+  [pcall ase::sim_casemode_requested ngspice] distinguish
 reset_sim
 
 # ===========================================================================

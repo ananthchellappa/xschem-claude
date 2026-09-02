@@ -3648,6 +3648,35 @@ int update_op()
    * star or which opens a comment, so the quotations above are invisible to it
    * and only moving real code can change its answer. Keep any new prose in this
    * block in that shape, or BA37 starts counting sentences as calls. */
+  /* ⚠ BOTH BRANCHES CHANGED THIS FUNCTION AND GIT MERGED THEM WITH NO CONFLICT
+   * MARKER, which is the sharpest thing the `annotate` merge found. `annotate`
+   * added the op/dc guard below; `fluid-editing` (item 5b, DECISIONS.md D3)
+   * turned the publisher into ngspice_data_arm(), a read-traced LAZY VIEW that
+   * resolves any name through get_raw_index_in(). Merged, the guard returns
+   * before the arm, so a transient armed nothing and ~40 checks across
+   * test_raw_case_mode, test_ngspice_data_view and test_ngspice_data_ctx went
+   * red at once -- none of them with a conflict to point at.
+   *
+   * THE GUARD STAYS, AND HERE IS WHY IT IS NOT MERELY THE OLDER RULING. It was
+   * tempting to move it to `annot_p` alone -- token.c gates the C overlay on
+   * `annot_p >= 0`, so leaving annot_p at -1 stops the C road while the array
+   * still resolves names for a script. MEASURED FALSE AS A SEPARATION: the
+   * array is ALSO the schematic's value source on the Tcl road
+   * (`ngspice::get_voltage` reads it, and test_backannotate_digital's own
+   * annot_get calls that "what the SCHEMATIC would print"). Arming it for a
+   * transient therefore puts t=0 on the schematic wearing the label
+   * "operating point" -- which is exactly what the user ruled out, verbatim, on
+   * 2026-08-26: *"We haven't yet built anything for annotating from TRAN
+   * results, so it should do nothing silently."* One array, two consumers, and
+   * no way to serve one without serving the other.
+   *
+   * WHAT THAT COSTS `fluid-editing`, said plainly: its case-mode ladder can no
+   * longer be exercised through a TRANSIENT. It does not need to be -- the
+   * ladder is about NAME SPELLING, which is the same in every analysis -- so
+   * those suites now arm the view from an op/dc database and assert the same
+   * rulings. Issue 1240 records the collision and the option that was NOT
+   * taken (splitting the array into an annotation channel and a resolution
+   * channel), because that is a design change and not a merge's business. */
   if(!xctx->raw || !xctx->raw->sim_type ||
      (strcmp(xctx->raw->sim_type, "op") && strcmp(xctx->raw->sim_type, "dc"))) {
     dbg(0, "update_op(): '%s' is not an operating point database, publishing nothing\n",

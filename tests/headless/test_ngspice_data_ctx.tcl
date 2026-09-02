@@ -64,6 +64,21 @@ proc num {v {dflt -9999}} {
 set fixdir [file join [file dirname [info script]] .. .. doc claude casemode_batch fixtures]
 set presraw [file normalize [file join $fixdir tr_preserve.raw]]
 set foldraw [file normalize [file join $fixdir tr_fold.raw]]
+# ⚠ THE FIXTURES MOVED FROM TRANSIENT TO OPERATING POINT AT THE `annotate` MERGE
+# (issue 1240), AND THE SUBJECT DID NOT. Every row here arms the lazy view
+# through `xschem update_op`, and update_op() REFUSES a non-op database: the user
+# ruled on 2026-08-26 that annotating from a transient must do nothing silently,
+# and the array update_op arms is also what `ngspice::get_voltage` reads onto the
+# schematic -- so arming it for a transient puts t=0 there wearing the label
+# "operating point".
+#
+# `op_preserve.raw` / `op_fold.raw` carry the SAME four variable names in the
+# SAME two spellings as the transient pair, one point, `Plotname: Operating
+# Point`. What this suite is about -- the view surviving a context switch, the
+# trace, enumeration -- is about NAME SPELLING and is identical in every
+# analysis, so nothing here is weakened.
+set oppres [file normalize [file join $fixdir op_preserve.raw]]
+set opfold [file normalize [file join $fixdir op_fold.raw]]
 
 check CS113-fixtures-present [expr {[file exists $presraw] && [file exists $foldraw]}] \
   "($presraw)"
@@ -71,7 +86,7 @@ check CS113-fixtures-present [expr {[file exists $presraw] && [file exists $fold
 # ---------------------------------------------------------------------------
 # publish in the first window
 # ---------------------------------------------------------------------------
-eqcheck CS113a-premise-read [pcall xschem raw read $presraw tran -case preserve] 1
+eqcheck CS113a-premise-read [pcall xschem raw read $oppres op -case preserve] 1
 eqcheck CS113b-premise-published [pcall xschem update_op] 1
 set owner [xschem get current_win_path]
 check CS113c-the-overlay-reads-a-number-in-the-publishing-window \
@@ -141,7 +156,7 @@ eqcheck CS113k-and-enumeration-is-rebuilt-from-the-database \
 pcall xschem new_schematic switch $sibling
 after 200
 update
-eqcheck CS113l-sibling-loads-its-own-database [pcall xschem raw read $foldraw tran] 1
+eqcheck CS113l-sibling-loads-its-own-database [pcall xschem raw read $opfold op] 1
 # it did not publish (no update_op), and it does not own ours
 eqcheck CS113m-sibling-still-reads-? [ngspice::get_voltage in] {?}
 pcall xschem new_schematic switch $owner

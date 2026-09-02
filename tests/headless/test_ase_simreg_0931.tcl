@@ -473,8 +473,22 @@ check {B5 THE HEADLINE the run now starts the user's own build, not whatever ngs
 
 a_reset
 a_ans ase::sim_register ng-args $STUB -args {-q --foo}
-check {B6 extra arguments the user typed land where they would type them, before the deck, and -b and 2>@1 are untouched} \
-  [a_runcmd $DECK] [list $STUB -q --foo -b $DECK 2>@1]
+# ⚠ `-b` MOVED IN FRONT OF THE USER'S ARGS AT THE `annotate` MERGE, and this
+# golden moved with it, deliberately. 0931 appended `-b` AFTER the user's words
+# so that a user who registered nothing got a byte-identical command; the merge
+# took `fluid-editing`'s order instead -- `<exe> -b <args> [-n] [-D casemode=]
+# <deck>` -- because it is the order ase::sim_probe_argv composes, and a
+# capability probe that measures a differently-shaped command from the one that
+# runs is measuring the wrong thing. That is the class of defect the whole
+# case-mode batch exists to close, so it outranks a one-token golden.
+#
+# WHAT 0931's CONTRACT ACTUALLY WAS is untouched and is asserted by B5 above: a
+# user who registers nothing still gets `<exe> -b <deck> 2>@1`, byte for byte.
+# The user's own words still land between the program and the deck, which is
+# where they would type them; only `-b`, which is ours and not theirs, moved
+# ahead of them.
+check {B6 extra arguments the user typed land between the program and the deck, and 2>@1 is untouched} \
+  [a_runcmd $DECK] [list $STUB -b -q --foo $DECK 2>@1]
 
 a_reset
 a_ans ase::sim_register ng-one $STUB

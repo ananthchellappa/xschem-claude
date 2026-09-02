@@ -91,6 +91,22 @@ set here [file normalize [file dirname [info script]]]
 set fixdir [file normalize [file join $here .. .. doc claude casemode_batch fixtures]]
 set presraw [file join $fixdir tr_preserve.raw]
 set foldraw [file join $fixdir tr_fold.raw]
+# ⚠ THE FIXTURES MOVED FROM TRANSIENT TO OPERATING POINT AT THE `annotate` MERGE
+# (issue 1240), AND THE SUBJECT DID NOT. Every row here arms the lazy view
+# through `xschem update_op`, and update_op() REFUSES a non-op database: the user
+# ruled on 2026-08-26 that annotating from a transient must do nothing silently,
+# and the array update_op arms is also what `ngspice::get_voltage` reads onto the
+# schematic -- so arming it for a transient puts t=0 there wearing the label
+# "operating point".
+#
+# `op_preserve.raw` / `op_fold.raw` carry the SAME four variable names in the
+# SAME two spellings as the transient pair, one point, `Plotname: Operating
+# Point`. What this suite is about -- the resolution ladder, enumeration, the
+# trace, arming across a context switch -- is about NAME SPELLING and is
+# identical in every analysis, so nothing here is weakened; the rows now
+# exercise the publisher on the analysis kind it actually serves.
+set oppres [file join $fixdir op_preserve.raw]
+set opfold [file join $fixdir op_fold.raw]
 
 # A missing fixture must FAIL, never skip: full_audit.sh scores a whole file
 # SKIP on that substring, and "the fixtures went away" is a finding.
@@ -118,7 +134,7 @@ proc wr {path body} {
 # is then the ONLY one that can resolve.
 xschem raw clear
 eqcheck CS96b-read-preserve-distinguish \
-  [pcall xschem raw read $presraw tran -case distinguish] 1
+  [pcall xschem raw read $oppres op -case distinguish] 1
 eqcheck CS96c-case-flag-took [pcall xschem raw case] 1
 eqcheck CS96d-update_op [pcall xschem update_op] 1
 
@@ -151,7 +167,7 @@ check CS97c-get_node-distinguish-exact-hits-folded-misses \
 # ...and under the DEFAULT mode the folded rung rescues the wrong-case query, so
 # nothing a user has today stops working. Same fixture, same capitals stored.
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 xschem update_op
 set cs98_e [ngspice::get_voltage MidNode]
 set cs98_f [ngspice::get_voltage midnode]
@@ -224,7 +240,7 @@ eqcheck CS99c-get_diff_voltage-one-bad-node-reads-? \
 eqcheck CS99d-get_diff_voltage-other-bad-node-reads-? \
   [pcall ngspice::get_diff_voltage nosuchnet Bb] {?}
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 xschem update_op
 
 # ===========================================================================
@@ -235,7 +251,7 @@ xschem update_op
 # the publisher has run and see whether the array follows. An eager copy was
 # taken at publish time and still answers under the old name.
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 xschem update_op
 set cs100_before [arr_get {v(MidNode)}]
 eqcheck CS100-premise-the-name-resolves-before-the-rename \
@@ -274,7 +290,7 @@ eqcheck CS100f-and-the-rebuild-dropped-the-stale-element [arr_get {v(MidNode)}] 
 # UNDEFINED array answers 0 (measured), so the two bookkeeping entries have to
 # stay real elements. D3's "Costs, accepted" names exactly this.
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 catch {array unset ::ngspice::ngspice_data}
 eqcheck CS101-array-gone-before-publishing [info exists ::ngspice::ngspice_data] 0
 eqcheck CS101b-update_op [pcall xschem update_op] 1
@@ -322,7 +338,7 @@ Values:
 
 "
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 xschem update_op
 set cs103_pub [arr_get {v(MidNode)}]
 set cs103_ivs [pcall xschem raw value {i(Vs)} 0]
@@ -345,7 +361,7 @@ eqcheck CS103d-and-not-the-current-database [arr_get {v(other)}] <unset>
 # memory. free_rawfile() calls ngspice_data_forget() for exactly this; without
 # it the next read of an unmaterialised name resolves through a dead Raw.
 eqcheck CS103e-clear-the-PUBLISHER-and-leave-the-other-loaded \
-  [pcall xschem raw clear $presraw tran] 1
+  [pcall xschem raw clear $oppres op] 1
 eqcheck CS103f-the-registry-is-not-empty [pcall xschem raw loaded] 0
 # `v(In)` has not been read in this block, so this is a FRESH resolve: a cached
 # element would answer out of Tcl without touching the freed Raw at all.
@@ -359,7 +375,7 @@ eqcheck CS103h-nor-does-it-fall-through-to-the-survivor [arr_get {v(other)}] <un
 # trace (tcl 8.6.14; the manual is not explicit). So `array unset` IS the reset,
 # and after one nothing resolves lazily until a publisher arms again.
 xschem raw clear
-xschem raw read $presraw tran
+xschem raw read $oppres op
 xschem update_op
 eqcheck CS104-premise-armed [expr {[arr_get {v(In)}] ne {<unset>}}] 1
 array unset ::ngspice::ngspice_data
@@ -423,7 +439,7 @@ Variables:
 Binary:
 "
   xschem raw clear
-  xschem raw read $presraw tran
+  xschem raw read $oppres op
   xschem update_op
   eqcheck CS105b-premise-the-C-view-is-armed [expr {[arr_get {i(Vs)}] ne {<unset>}}] 1
   cs105_tcl_publish $tmp/tclpub.raw
@@ -603,7 +619,7 @@ eqcheck CS109e-and-the-overlay-says-? [ngspice::get_voltage top.M.Count] {?}
 # exist under --nogui and aborts the file. The array arm -- the one under test --
 # is untouched by that.
 xschem raw clear
-xschem raw read $presraw tran -case preserve
+xschem raw read $oppres op -case preserve
 eqcheck CS110-premise-published [pcall xschem update_op] 1
 eqcheck CS110b-and-the-overlay-reads-a-number \
   [expr {[string is double -strict [ngspice::get_voltage MidNode]]}] 1
@@ -655,7 +671,7 @@ unset -nocomplain ::dircolor(cs110_marker)
 # it: the growth fix below, and CS100e's real reason (which is that the ladder can
 # no longer resolve the renamed name -- NOT that the trace was skipped).
 xschem raw clear
-xschem raw read $presraw tran -case preserve
+xschem raw read $oppres op -case preserve
 eqcheck CS111-premise-published [pcall xschem update_op] 1
 set cs111_v [arr_get {v(In)}]
 eqcheck CS111b-premise-materialised [string is double -strict $cs111_v] 1
@@ -717,7 +733,7 @@ check CS111j-and-does-not-run-memory-away \
 # nothing resolved lazily any more, and `array names` stopped being rebuilt from
 # names[] and started reporting stale alias keys. Measured.
 xschem raw clear
-xschem raw read $presraw tran -case preserve
+xschem raw read $oppres op -case preserve
 eqcheck CS112-premise-published [pcall xschem update_op] 1
 eqcheck CS112b-premise-one-element-materialised \
   [string is double -strict [arr_get {v(In)}]] 1

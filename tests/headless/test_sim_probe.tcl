@@ -176,23 +176,36 @@ foreach c {/usr/local/bin/ngspice /usr/bin/ngspice} {
 }
 puts "note: case-capable ngspice = '$NG50'   released ngspice = '$NGSTOCK'"
 
-# a private sim() configuration; nothing below reads or writes the user's simrc
-proc reset_sim {} {
-  if {[info exists ::sim]} { unset ::sim }
-  set_sim_defaults
-}
-# append a configured row and return its index
+# ⚠ THERE IS NO CONFIGURATION HERE ANY MORE, AND THAT IS THE POINT (the
+# `annotate` merge). This suite used to build a private `sim()` array and hand
+# the probe a (tool, index) pair; the probe resolved the row itself, so every row
+# below was really testing the resolver as much as the measurement. The probe is
+# PURE now -- given an executable, its args and its `-n` flag it measures and
+# reports -- and where those three came from is the simulator registry's business
+# and is tested in test_ase_simcaps_0948. So a "row" here is just three values.
+proc reset_sim {} { }
+# A probe subject: exe, its args, its -n flag. Returned as a list so the rows
+# below read the same way they did when it was an index.
 proc add_row {tool name exe {args_ {}} {casemode {}} {nsi 0}} {
-  set i $::sim($tool,n)
-  set ::sim($tool,$i,cmd)  "$exe \"\$N\""
-  set ::sim($tool,$i,name) $name
-  set ::sim($tool,$i,exe)  $exe
-  incr ::sim($tool,n)
-  set_sim_defaults
-  if {$args_ ne {}}    { sim_profile_set $tool $i args $args_ }
-  if {$casemode ne {}} { sim_profile_set $tool $i casemode $casemode }
-  if {$nsi}            { sim_profile_set $tool $i nospiceinit 1 }
-  return $i
+  return [list $exe $args_ $nsi]
+}
+# Probe one subject. `casemode` is not passed: the capability probe ASKS for each
+# mode in turn, so a stored request would be describing the wrong question.
+proc cap {row args} {
+  return [pcall sim_probe_capability [lindex $row 0] [lindex $row 1] [lindex $row 2] {*}$args]
+}
+# Was `mode` measured as deliverable? The membership test that
+# `sim_profile_supports` used to do against a stored field.
+proc detects {r mode} {
+  return [expr {[lsearch -exact [dg $r detected] $mode] >= 0 ? 1 : 0}]
+}
+# What ase::sim_casemode_selectable would offer for this ANSWER (A1, restated as
+# a pure function of the dict so this suite needs no registry):
+#   a COMPLETE measurement -> exactly what was measured, the empty answer included
+#   anything else          -> `fold` alone, i.e. "never probed"
+proc offers {r} {
+  if {[dg $r complete] ne {1}} { return fold }
+  return [dg $r detected]
 }
 
 # ===========================================================================
@@ -370,75 +383,71 @@ set i_garb   [add_row spice {fake garbage} $f_garb]
 set i_hang   [add_row spice {fake hang}    $f_hang]
 
 # it ran and never answered: unknown, and NOTHING is recorded (B2b)
-set r [pcall sim_profile_probe_capability spice $i_silent -timeout 1500]
-eqcheck CS169f-a-silent-binary-is-unknown-and-records-nothing \
-  "status=[dg $r status] detected=<[dg $r detected]> recorded=[dg $r recorded]\
- probed=<[pcall sim_profile_get spice $i_silent probed]>\
- selectable=[pcall sim_profile_selectable spice $i_silent]" \
-  {status=unknown detected=<> recorded=0 probed=<> selectable=fold}
+set r [cap $i_silent -timeout 1500]
+eqcheck CS169f-a-silent-binary-is-unknown-and-publishes-nothing \
+  "status=[dg $r status] detected=<[dg $r detected]> complete=[dg $r complete]\
+ offers=[offers $r]" \
+  {status=unknown detected=<> complete=0 offers=fold}
 
 # A1's "no case support => pre-fill fold and offer nothing else", and the
 # short circuit: one leg settles it, so only ONE leg was run.
-set r [pcall sim_profile_probe_capability spice $i_stock -timeout 1500]
-eqcheck CS169g-no-casemode-support-is-an-ANSWER-recorded-as-fold \
-  "status=[dg $r status] detected=<[dg $r detected]> recorded=[dg $r recorded]\
+set r [cap $i_stock -timeout 1500]
+eqcheck CS169g-no-casemode-support-is-an-ANSWER-published-as-fold \
+  "status=[dg $r status] detected=<[dg $r detected]> complete=[dg $r complete]\
  legs=[llength [dkeys [dg $r legs]]]\
- supports_fold=[pcall sim_profile_supports spice $i_stock fold]\
- selectable=[pcall sim_profile_selectable spice $i_stock]\
- stale=[pcall sim_profile_probe_stale spice $i_stock]" \
-  {status=nocasemode detected=<fold> recorded=1 legs=1 supports_fold=1 selectable=fold stale=0}
+ supports_fold=[detects $r fold]\
+ offers=[offers $r]" \
+  {status=nocasemode detected=<fold> complete=1 legs=1 supports_fold=1 offers=fold}
 
 # THE REASON EACH MODE IS PROBED SEPARATELY: this binary accepts every
 # `-D casemode=` and delivers `fold` regardless — exactly the silent-ignore shape
 # item 3 measured for a wrong-case KEY. Presence-implies-support would have
 # offered all three.
-set r [pcall sim_profile_probe_capability spice $i_fold -timeout 1500]
+set r [cap $i_fold -timeout 1500]
 eqcheck CS169h-a-silently-ignored-request-is-measured-as-fold-only \
   "status=[dg $r status] detected=<[dg $r detected]> legs=[llength [dkeys [dg $r legs]]]\
- supports_preserve=[pcall sim_profile_supports spice $i_fold preserve]\
- selectable=[pcall sim_profile_selectable spice $i_fold]" \
-  {status=ok detected=<fold> legs=3 supports_preserve=0 selectable=fold}
+ supports_preserve=[detects $r preserve]\
+ offers=[offers $r]" \
+  {status=ok detected=<fold> legs=3 supports_preserve=0 offers=fold}
 
 # measured, and it delivers nothing we recognise: spec section 4's third row.
 # `probed` is set, `detected` is empty, and the dropdown offers NOTHING.
-set r [pcall sim_profile_probe_capability spice $i_garb -timeout 1500]
+# ⚠ THE TWO EMPTIES, AND THE WHOLE RULE IS TELLING THEM APART. `detected {}`
+# with `complete 1` means MEASURED, and it delivers nothing we recognise -- so
+# nothing may be offered. `detected {}` with `complete 0` means nobody asked --
+# so `fold` is offered. CS169f above is the other half of this pair, and the two
+# differ in `complete` alone.
+set r [cap $i_garb -timeout 1500]
 eqcheck CS169i-a-measured-binary-that-delivers-no-known-mode-offers-nothing \
-  "status=[dg $r status] detected=<[dg $r detected]> recorded=[dg $r recorded]\
- probed_set=[expr {[pcall sim_profile_get spice $i_garb probed] ne {}}]\
- selectable=<[pcall sim_profile_selectable spice $i_garb]>" \
-  {status=ok detected=<> recorded=1 probed_set=1 selectable=<>}
+  "status=[dg $r status] detected=<[dg $r detected]> complete=[dg $r complete]\
+ offers=<[offers $r]>" \
+  {status=ok detected=<> complete=1 offers=<>}
 
 # A TIMED-OUT LEG NEVER CONTRIBUTES A MODE, even though it parsed one.
-set r [pcall sim_profile_probe_capability spice $i_hang -timeout 700]
-eqcheck CS169j-a-timed-out-leg-parses-a-mode-and-still-records-nothing \
+set r [cap $i_hang -timeout 700]
+eqcheck CS169j-a-timed-out-leg-parses-a-mode-and-still-publishes-nothing \
   "status=[dg $r status] leg_mode=[dg [dg [dg $r legs] fold] mode] detected=<[dg $r detected]>\
- recorded=[dg $r recorded] probed=<[pcall sim_profile_get spice $i_hang probed]>\
- selectable=[pcall sim_profile_selectable spice $i_hang]" \
-  {status=timeout leg_mode=preserve detected=<> recorded=0 probed=<> selectable=fold}
+ complete=[dg $r complete] offers=[offers $r]" \
+  {status=timeout leg_mode=preserve detected=<> complete=0 offers=fold}
 
-# B3's auto-probe gate: an ngspice-named executable only.
-set i_xyce [add_row spice {fake xyce} [file join $fdir Xyce]]
-eqcheck CS169k-autoprobe-only-for-ngspice-named-executables \
-  "ng=[pcall sim_profile_probe_autoprobe_ok spice $i_fold]\
- stock=[pcall sim_profile_probe_autoprobe_ok spice $i_stock]\
- xyce=[pcall sim_profile_probe_autoprobe_ok spice $i_xyce]\
- builtin_noexe=[pcall sim_profile_probe_autoprobe_ok spice 0]" \
-  {ng=0 stock=0 xyce=0 builtin_noexe=0}
-set i_ngname [add_row spice {ngspice-named} [file join $fdir ngspice]]
-set i_NGname [add_row spice {NGSPICE-named} [file join $fdir bin NGspice-46]]
-# the third row is the one that says FILENAME rather than path: it lives in a
-# directory called `ngspice_builds` and is called `Xyce`, so a gate that matched
-# the whole path would auto-launch a licensed simulator -- which is the exact
-# outcome B3's name gate exists to prevent.
-set i_ngdir [add_row spice {xyce under an ngspice dir} [file join $fdir ngspice_builds Xyce]]
-eqcheck CS169k2-the-name-gate-is-case-insensitive-and-reads-the-FILENAME \
-  "lower=[pcall sim_profile_probe_autoprobe_ok spice $i_ngname]\
- upper=[pcall sim_profile_probe_autoprobe_ok spice $i_NGname]\
- ngspice_dir=[pcall sim_profile_probe_autoprobe_ok spice $i_ngdir]" \
-  {lower=1 upper=1 ngspice_dir=0}
+# ⚠ CS169k AND CS169k2 WERE HERE AND ARE GONE, with B3's auto-probe gate (the
+# `annotate` merge). The gate probed on Add only when the executable's FILENAME
+# contained `ngspice`, so xschem never auto-launched a licensed simulator merely
+# because somebody typed a path -- and CS169k2 pinned the sharp case, a binary
+# called `Xyce` sitting in a directory called `ngspice_builds`, which a
+# whole-path match would have launched.
+#
+# The concern did not go away; the gate became unable to serve it. The case-mode
+# measurement no longer has a launch of its own -- it rides
+# ase::backend::ngspice::capabilities, which has ALREADY run the registered
+# program twice (decks A and B, issue 0948) before the casemode legs start. A
+# gate on the third launch of a program launched twice guards nothing, and
+# leaving it here would have been a green row asserting a protection that was
+# not there. If the concern is to be honoured it belongs on `capabilities` as a
+# whole; that is filed, not silently dropped.
 
 # the probe's own scratch directory is not a leak
-set r [pcall sim_profile_probe_capability spice $i_stock -timeout 1500]
+set r [cap $i_stock -timeout 1500]
 # The `ran=` term is what keeps this one honest: without it, a probe proc that
 # does not exist at all returns a non-dict, `dg` answers `NO:cwd`, and both
 # halves read as "a directory was made and cleaned up" (measured -- this check
@@ -450,12 +459,12 @@ eqcheck CS169l-the-capability-probe-removes-its-own-temp-dir \
 # otherwise pass this, and so would a proc that does not exist (the master red's
 # other survivor).
 eqcheck CS169m-an-unknown-option-is-refused-and-a-known-one-is-not \
-  "good=[raises sim_profile_probe_capability spice $i_stock -timeout 1500]\
- bad=[raises sim_profile_probe_capability spice $i_stock -nosuchopt 1]" {good=0 bad=1}
+  "good=[raises sim_probe_capability [lindex $i_stock 0] {} 0 -timeout 1500]\
+ bad=[raises sim_probe_capability [lindex $i_stock 0] {} 0 -nosuchopt 1]" {good=0 bad=1}
 # a row with no exe cannot be probed, and says so rather than probing something
-eqcheck CS169n-a-row-with-no-exe-is-an-error-not-a-guess \
-  "status=[dg [pcall sim_profile_probe_once spice 0 fold $tmp 700] status]\
- cap=[dg [pcall sim_profile_probe_capability spice 0 -timeout 700] status]" \
+eqcheck CS169n-no-executable-is-an-error-not-a-guess \
+  "status=[dg [pcall sim_probe_leg {} {} fold 0 $tmp 700] status]\
+ cap=[dg [pcall sim_probe_capability {} {} 0 -timeout 700] status]" \
   {status=error cap=error}
 # THE PROBE LEAVES NOTHING IN THE DIRECTORY IT ASKS ABOUT. `cwd` is the user's
 # own rundir for a run probe; the deck belongs in a temp directory of the
@@ -489,7 +498,7 @@ eqcheck CS169q-the-childs-stdin-is-the-null-device-not-ours \
 
 # the row's args and A2's `-n` really reach the argv
 set i_args [add_row spice {fake with args} $f_answer {--alpha 7} preserve 1]
-set r [pcall sim_profile_probe_once spice $i_args preserve $tmp 1500]
+set r [pcall sim_probe_leg [lindex $i_args 0] [lindex $i_args 1] preserve [lindex $i_args 2] $tmp 1500]
 # argv is exe + these words + THE PROBE DECK, which sim_probe_once owns and whose
 # name carries a timestamp; the deck is asserted separately, by shape.
 eqcheck CS169o-the-rows-args-and--n-reach-the-probe-argv \
@@ -535,21 +544,21 @@ eqcheck CS173c-a-relative-TMPDIR-still-hands-the-child-an-ABSOLUTE-deck \
 # mode three times passed the whole suite on any machine without ver_50. This
 # stand-in reads `-D casemode=<m>` out of its own argv and answers THAT.
 set i_echo [add_row spice {fake echoback} $f_echo]
-set r [pcall sim_profile_probe_capability spice $i_echo -timeout 3000]
+set r [cap $i_echo -timeout 3000]
 eqcheck CS173d-each-mode-is-ASKED-separately-and-answers-for-itself \
   "status=[dg $r status] detected=<[dg $r detected]> legs=[llength [dkeys [dg $r legs]]]\
- selectable=<[pcall sim_profile_selectable spice $i_echo]>" \
+ selectable=<[offers $r]>" \
   {status=ok detected=<fold preserve distinguish> legs=3\
  selectable=<fold preserve distinguish>}
 # and the partial implementation A1 is actually about: `preserve` honoured,
 # `distinguish` silently downgraded to `fold`. Presence-implies-support would
 # offer all three; per-mode measurement offers two.
 set i_sub [add_row spice {fake subset} $f_subset]
-set r [pcall sim_profile_probe_capability spice $i_sub -timeout 3000]
+set r [cap $i_sub -timeout 3000]
 eqcheck CS173e-a-binary-that-honours-only-SOME-modes-is-measured-mode-by-mode \
   "status=[dg $r status] detected=<[dg $r detected]>\
- supports_distinguish=[pcall sim_profile_supports spice $i_sub distinguish]\
- selectable=<[pcall sim_profile_selectable spice $i_sub]>" \
+ supports_distinguish=[detects $r distinguish]\
+ selectable=<[offers $r]>" \
   {status=ok detected=<fold preserve> supports_distinguish=0 selectable=<fold preserve>}
 
 # ONE STALLED LEG INVALIDATES THE WHOLE MEASUREMENT. This is the case CS169j
@@ -560,15 +569,12 @@ eqcheck CS173e-a-binary-that-honours-only-SOME-modes-is-measured-mode-by-mode \
 # row would claim it cannot deliver the global default.) So: `partial`, nothing
 # recorded, `probed` empty, `fold` still selectable, still stale.
 set i_mixed [add_row spice {fake mixed} $f_mixed]
-set r [pcall sim_profile_probe_capability spice $i_mixed -timeout 1200]
+set r [cap $i_mixed -timeout 1200]
 after 200
 eqcheck CS173f-a-partly-stalled-probe-is-partial-and-records-NOTHING \
   "status=[dg $r status] timedout=[dg $r timedout] detected=<[dg $r detected]>\
- recorded=[dg $r recorded] probed=<[pcall sim_profile_get spice $i_mixed probed]>\
- selectable=[pcall sim_profile_selectable spice $i_mixed]\
- stale=[pcall sim_profile_probe_stale spice $i_mixed]" \
-  {status=partial timedout=1 detected=<fold preserve> recorded=0 probed=<>\
- selectable=fold stale=1}
+ complete=[dg $r complete] offers=[offers $r]" \
+  {status=partial timedout=1 detected=<fold preserve> complete=0 offers=fold}
 
 # THE TIMEOUT IS A BUDGET FOR THE WHOLE PROBE, NOT PER LEG. Three sequential
 # legs against a silent binary used to block this interpreter for 3x the
@@ -577,13 +583,13 @@ eqcheck CS173f-a-partly-stalled-probe-is-partial-and-records-NOTHING \
 # other half: once the budget is gone the remaining legs are not started.
 set i_mute [add_row spice {fake mute} $f_mute]
 set t0 [clock milliseconds]
-set r [pcall sim_profile_probe_capability spice $i_mute -timeout 900]
+set r [cap $i_mute -timeout 900]
 set el [expr {[clock milliseconds] - $t0}]
 after 200
 eqcheck CS173g-the-capability-probes-timeout-bounds-the-WHOLE-probe \
   "status=[dg $r status] fired=[expr {$el >= 900}] bounded=[expr {$el < 1800}]\
- legs=[llength [dkeys [dg $r legs]]] recorded=[dg $r recorded]" \
-  {status=timeout fired=1 bounded=1 legs=1 recorded=0}
+ legs=[llength [dkeys [dg $r legs]]] complete=[dg $r complete]" \
+  {status=timeout fired=1 bounded=1 legs=1 complete=0}
 
 # `-cwd` IS THE OPTION THE WHOLE TWO-PROBES RULING RESTS ON (one mechanism,
 # parameterised by cwd) and nothing drove it: making it a no-op left the suite
@@ -594,8 +600,8 @@ set markdir [file join $tmp markdir]
 file mkdir $markdir
 putfile [file join $markdir MARKER] "x\n"
 set i_mark [add_row spice {fake marker} $f_mark]
-set r1 [pcall sim_profile_probe_capability spice $i_mark -cwd $markdir -timeout 3000]
-set r2 [pcall sim_profile_probe_capability spice $i_mark -timeout 3000]
+set r1 [cap $i_mark -cwd $markdir -timeout 3000]
+set r2 [cap $i_mark -timeout 3000]
 eqcheck CS173h-the--cwd-option-selects-the-directory-the-probe-runs-in \
   "given=[expr {[dg $r1 cwd] eq $markdir}] kept=[file exists $markdir]\
  withcwd=<[dg $r1 detected]> without=<[dg $r2 detected]>" \
@@ -619,11 +625,13 @@ eqcheck CS173i-a--o-in-the-args-reaches-neither-the-probe-nor-the-users-file \
 # THE RUN PROBE'S `-exe` AND `-args`: item 8's own route (it passes the
 # executable it is really about to run), and both were accepted, documented and
 # driven by nothing -- emptying their switch arms left the suite green. The
-# profile here answers `fold`; the override answers what it was asked.
+# registered simulator here answers `fold`; the override answers what it was
+# asked. (It was a `sim()` profile row until the `annotate` merge.)
 set rpdeck [file join $rundir rp_deck.cir]
 putfile $rpdeck "* run probe deck\n.end\n"
-pcall sim_profile_set spice $i_fold casemode preserve
-set st_f [pcall ase::sim_profile_stamp [pcall ase::state_default] spice $i_fold]
+pcall ase::sim_clear
+pcall ase::sim_register probe-subject [lindex $i_fold 0] -casemode preserve
+set st_f [pcall ase::state_default]
 set r [pcall ase::sim_probe_run $st_f -deck $rpdeck -exe $f_echo -args {--zzz 1} -timeout 2500]
 eqcheck CS173j-the-run-probes--exe-and--args-beat-the-profiles-own \
   "exe=[file tail [lindex [dg $r argv] 0]] words=[lrange [dg $r argv] 1 end-1]\
@@ -637,11 +645,13 @@ eqcheck CS173j-the-run-probes--exe-and--args-beat-the-profiles-own \
 # this item disagreeing about the same reply: the capability probe records those
 # exact bytes as `detected {fold}`. Both directions in one expectation, so a
 # `delivers` hardcoded to `fold` fails the second half.
-pcall sim_profile_set spice $i_stock casemode distinguish
-set st_s [pcall ase::sim_profile_stamp [pcall ase::state_default] spice $i_stock]
+pcall ase::sim_clear
+pcall ase::sim_register probe-subject [lindex $i_stock 0] -casemode distinguish
+set st_s [pcall ase::state_default]
 set rd [pcall ase::sim_probe_run $st_s -deck $rpdeck -timeout 2500]
-pcall sim_profile_set spice $i_stock casemode fold
+pcall ase::sim_register probe-subject [lindex $i_stock 0] -casemode fold
 set rf [pcall ase::sim_probe_run $st_s -deck $rpdeck -timeout 2500]
+pcall ase::sim_clear
 eqcheck CS173k-a-no-casemode-binary-DELIVERS-fold-and-the-run-probe-compares-it \
   "nocm=[dg $rd nocasemode] req=[dg $rd requested] delivers=[dg $rd delivers]\
  agree=[dg $rd agree] foldreq=[dg $rf requested] folddelivers=[dg $rf delivers]\
@@ -655,13 +665,12 @@ eqcheck CS173k-a-no-casemode-binary-DELIVERS-fold-and-the-run-probe-compares-it 
 if {$NG50 ne {}} {
   reset_sim
   set i50 [add_row spice {ver_50} $NG50]
-  set r [pcall sim_profile_probe_capability spice $i50]
+  set r [cap $i50]
   eqcheck CS170-ver_50-delivers-all-three-modes-and-it-is-recorded \
-    "status=[dg $r status] detected=<[dg $r detected]> recorded=[dg $r recorded]\
- selectable=<[pcall sim_profile_selectable spice $i50]>\
- stale=[pcall sim_profile_probe_stale spice $i50]" \
-    {status=ok detected=<fold preserve distinguish> recorded=1\
- selectable=<fold preserve distinguish> stale=0}
+    "status=[dg $r status] detected=<[dg $r detected]> complete=[dg $r complete]\
+ offers=<[offers $r]>" \
+    {status=ok detected=<fold preserve distinguish> complete=1\
+ offers=<fold preserve distinguish>}
   eqcheck CS170b-the-capability-probe-is-fast \
     "under3s=[expr {[dg $r ms] < 3000}] legs=[llength [dkeys [dg $r legs]]]" \
     {under3s=1 legs=3}
@@ -736,16 +745,15 @@ if {$NG50 ne {}} {
     "status=[dg $r status] parsed=<[dg $r mode]> fired=[expr {$el >= 1200}]\
  bounded=[expr {$el < 6000}] child=[alive [lindex [dg $r pids] 0]]" \
     {status=timeout parsed=<> fired=1 bounded=1 child=dead}
-  set r [pcall sim_profile_probe_capability spice $i_nq -timeout 1200]
+  set r [cap $i_nq -timeout 1200]
   eqcheck CS170g-a-hanging-real-binary-records-no-capability \
-    "status=[dg $r status] recorded=[dg $r recorded]\
- probed=<[pcall sim_profile_get spice $i_nq probed]>" \
-    {status=timeout recorded=0 probed=<>}
+    "status=[dg $r status] complete=[dg $r complete]" \
+    {status=timeout complete=0}
 
   # --- the ASE-L run probe, end to end ---
   set st [pcall ase::state_default]
-  set st [pcall ase::sim_profile_stamp $st spice $i50]
-  pcall sim_profile_set spice $i50 casemode preserve
+  pcall ase::sim_clear
+  pcall ase::sim_register ver50 $NG50 -casemode preserve
   set deck [file join $deckdir probe_deck.cir]
   putfile $deck "* probe deck\n.end\n"
   set r [pcall ase::sim_probe_run $st -deck $deck -timeout 5000]
@@ -753,9 +761,13 @@ if {$NG50 ne {}} {
     "pstat=[dg $r profile_status] requested=[dg $r requested] got=[dg $r mode]\
  agree=[dg $r agree] cwd_is_deckdir=[expr {[dg $r cwd] eq [file normalize $deckdir]}]" \
     {pstat=ok requested=preserve got=fold agree=0 cwd_is_deckdir=1}
-  # THE RUN PROBE RECORDS NOTHING: `detected` still says all three, not `fold`
-  eqcheck CS170i-the-run-probe-does-not-touch-the-recorded-capability \
-    [pcall sim_profile_get spice $i50 detected] {fold preserve distinguish}
+  # THE RUN PROBE RECORDS NOTHING, and after the `annotate` merge that is true by
+  # CONSTRUCTION rather than by care: there is no field for it to write. It used
+  # to be checkable as `sim_profile_get ... detected`; what is left to assert is
+  # that the capability answer, taken from a clean directory, still says all
+  # three after a run probe that measured `fold` in a .spiceinit'd one.
+  eqcheck CS170i-the-run-probe-does-not-touch-the-measured-capability \
+    [dg [cap [list $NG50 {} 0]] detected] {fold preserve distinguish}
   # and out of a clean directory it agrees
   set deck2 [file join $cleandir probe_deck.cir]
   putfile $deck2 "* probe deck\n.end\n"
@@ -764,18 +776,20 @@ if {$NG50 ne {}} {
     "got=[dg $r mode] agree=[dg $r agree]" {got=preserve agree=1}
   # A2's per-profile `-n` is what a user turns on when their .spiceinit is the
   # problem, and it reaches the run probe
-  pcall sim_profile_set spice $i50 nospiceinit 1
+  pcall ase::sim_register ver50 $NG50 -casemode preserve -nospiceinit 1
   set r [pcall ase::sim_probe_run $st -deck $deck -timeout 5000]
-  pcall sim_profile_set spice $i50 nospiceinit 0
-  eqcheck CS170k-the-profiles--n-reaches-the-run-probe \
+  pcall ase::sim_register ver50 $NG50 -casemode preserve -nospiceinit 0
+  eqcheck CS170k-the-registered-simulators--n-reaches-the-run-probe \
     "got=[dg $r mode] agree=[dg $r agree]" {got=preserve agree=1}
-  # a state whose profile names no executable: `noexe`, and item 8 decides what
-  # ASE-L falls back to (this proc does not reimplement run_cmd's bare ngspice)
-  set st0 [pcall ase::sim_profile_stamp [pcall ase::state_default] spice 0]
+  # a registry whose in-force entry cannot be started: `noexe`, and item 8 decides
+  # what ASE-L falls back to (this proc does not reimplement run_cmd's fallback)
+  pcall ase::sim_clear
+  pcall ase::sim_register gone /nonexistent/ngspice
+  set st0 [pcall ase::state_default]
   set r [pcall ase::sim_probe_run $st0 -deck $deck2 -timeout 1000]
   # `delivers=<>` is part of it: every return from the run probe carries the same
   # keys, so item 8 reads one field instead of asking which branch answered.
-  eqcheck CS170l-a-profile-with-no-exe-reports-noexe \
+  eqcheck CS170l-an-unrunnable-registered-simulator-reports-noexe \
     "status=[dg $r status] requested=[dg $r requested] delivers=<[dg $r delivers]>\
  agree=<[dg $r agree]>" \
     {status=noexe requested=fold delivers=<> agree=<>}
@@ -783,7 +797,9 @@ if {$NG50 ne {}} {
   # binary managed to print, but `agree` must stay EMPTY (B2b -- no answer is
   # unknown, never `fold`), or item 8 would apply B4's policy to a comparison
   # against a run that never finished.
-  set stnq [pcall ase::sim_profile_stamp [pcall ase::state_default] spice $i_nq]
+  pcall ase::sim_clear
+  pcall ase::sim_register hangs [lindex $i_nq 0]
+  set stnq [pcall ase::state_default]
   set r [pcall ase::sim_probe_run $stnq -deck $deck2 -timeout 1200]
   eqcheck CS170m-a-timed-out-run-probe-compares-nothing \
     "status=[dg $r status] parsed=<[dg $r mode]> agree=<[dg $r agree]>" \
@@ -801,9 +817,10 @@ if {$NG50 ne {}} {
   putfile [file join $clobdir tb.log] "PREVIOUS-RUN-LOG\n"
   set clobdeck [file join $clobdir tb.cir]
   putfile $clobdeck "* run deck\n.end\n"
-  pcall sim_profile_set spice $i50 args {-r tb.raw -o tb.log}
+  pcall ase::sim_clear
+  pcall ase::sim_register ver50 $NG50 -args {-r tb.raw -o tb.log} -casemode preserve
   set r [pcall ase::sim_probe_run $st -deck $clobdeck -timeout 5000]
-  pcall sim_profile_set spice $i50 args {}
+  pcall ase::sim_clear
   eqcheck CS174-the-run-probe-leaves-the-rundirs-own-output-files-alone \
     "got=[dg $r mode] agree=[dg $r agree] raw=<[readfile [file join $clobdir tb.raw]]>\
  log=<[readfile [file join $clobdir tb.log]]>\
@@ -839,14 +856,14 @@ if {$NG50 ne {}} {
 if {$NGSTOCK ne {}} {
   reset_sim
   set ist [add_row spice {released ngspice} $NGSTOCK]
-  set r [pcall sim_profile_probe_capability spice $ist]
+  set r [cap $ist]
   # THE NEGATIVE CONTROL. A released ngspice has no `$curcasemode`, and that
   # reply IS the capability answer: fold, and nothing else on offer (A1).
   eqcheck CS171-a-released-ngspice-answers-no-casemode-and-is-offered-fold-alone \
-    "status=[dg $r status] detected=<[dg $r detected]> recorded=[dg $r recorded]\
- selectable=<[pcall sim_profile_selectable spice $ist]>\
- supports_preserve=[pcall sim_profile_supports spice $ist preserve]" \
-    {status=nocasemode detected=<fold> recorded=1 selectable=<fold> supports_preserve=0}
+    "status=[dg $r status] detected=<[dg $r detected]> complete=[dg $r complete]\
+ offers=<[offers $r]>\
+ supports_preserve=[detects $r preserve]" \
+    {status=nocasemode detected=<fold> complete=1 offers=<fold> supports_preserve=0}
   # it ACCEPTS `-D casemode=preserve` and ignores it — the measurement A1 rests
   # on, re-taken here rather than inherited
   set r [pcall sim_probe_once $NGSTOCK [pargv {} preserve 0] $tmp 5000]
@@ -862,7 +879,17 @@ if {$NGSTOCK ne {}} {
 # E — no Tk in the probe (src/ase.tcl is sourced at startup and runs headless,
 # and item 13 owns every widget)
 # ===========================================================================
-set tkre {(^|[^a-zA-Z0-9_:.])(tk_[a-zA-Z_]+|winfo|wm|toplevel|grab|ttk::[a-z]+|bind|focus|frame|button|entry|label|canvas|listbox|checkbutton|radiobutton|menu|labelframe|combobox|text|scrollbar|update idletasks)([^a-zA-Z0-9_:.]|$)}
+# ⚠ THE LEADING CONTEXT IS A COMMAND POSITION, NOT MERELY A NON-WORD CHARACTER,
+# and that is a repair, not a loosening (the `annotate` merge). Half these names
+# are ordinary English -- `entry`, `text`, `label`, `menu` -- and the old
+# `[^a-zA-Z0-9_:.]` context matched them ANYWHERE: `dict get $p entry` read as a
+# Tk `entry` call and reddened this row for a proc that has never touched Tk.
+# A false positive here is not harmless, because the fix a reader reaches for is
+# to rename the innocent variable, which is how a true detector gets turned off.
+# Tk commands are CALLED, so they sit at the start of a line or straight after
+# `[`, `{`, `;` or `|`. The `tk_blind` control below still proves the detector
+# can see all three of its shapes, so this is tested in both directions.
+set tkre {(^|[\[\{;|]|^[ \t]*|[\[\{;|][ \t]*)(tk_[a-zA-Z_]+|winfo|wm|toplevel|grab|ttk::[a-z]+|bind|focus|frame|button|entry|label|canvas|listbox|checkbutton|radiobutton|menu|labelframe|combobox|text|scrollbar|update idletasks)([^a-zA-Z0-9_:.]|$)}
 proc strip_tcl_comments {body} {
   set out {}
   foreach l [split $body "\n"] {
@@ -879,8 +906,7 @@ foreach s {{ set w [toplevel .p] } { button .b -text x } { winfo exists .x }} {
 }
 set tk_hits {}
 foreach p {sim_probe_timeout_ms sim_probe_kill sim_probe_tmpdir sim_probe_argv
-           sim_probe_parse sim_probe_once sim_profile_probe_once
-           sim_profile_probe_autoprobe_ok sim_profile_probe_capability
+           sim_probe_parse sim_probe_once sim_probe_leg sim_probe_capability
            ase::sim_probe_run} {
   if {[catch {info body $p} b]} { lappend tk_hits MISSING:$p ; continue }
   if {[regexp $tkre [strip_tcl_comments $b] -> _pre cmdname]} { lappend tk_hits $p:$cmdname }
