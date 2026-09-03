@@ -393,7 +393,16 @@ if {[info commands ::op_annot::register] ne {}} {
   #     dict set d params [concat [dict get $d params] {{vdsat vdsat 2} {cgg cgg 1}}]
   #     dict set d derived {{ft {$gm/(2*3.141592654*$cgg)}} {gm/id {$gm/$id}}}
   #     op_annot::register nmos $d
-  # A first-class means for a user to choose her own set is OWED and TBD.
+  # A first-class means for a user to choose her own set now EXISTS, and this
+  # is it: the OP parameter list store, src/op_param_lists.tcl. It SEEDS from
+  # the descriptor registered just below (ruling D-7 -- seed from the PDK, the
+  # user's file wins per class) and keeps the user's own choice in
+  # <project>/.xschem/op_param_lists.conf, with ~/.xschem/op_param_lists.conf as
+  # the user-global fallback. That settings file is DATA and is never sourced
+  # (ruling DD-3): a strict parser reads it and runs nothing in it, so it can be
+  # shared with a teammate. See doc/claude/specs/op_param_lists.md section 4.4.
+  # The RECOVERY round-trip above is untouched and is still the quickest way to
+  # change one list from an rc (invariant I5, live on the next redraw).
   foreach _sky130_op_type {nmos pmos} {
     op_annot::register $_sky130_op_type {
       devproc sky130_op_devpath

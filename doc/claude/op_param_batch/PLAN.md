@@ -1289,7 +1289,7 @@ PASS, `test_annot_declutter_1244` **134 ALL PASS** on the dev display,
 
 ---
 
-## B2 — the list store and the settings file  *(no dependencies)*
+## B2 — the list store and the settings file  ✅ **DONE (status E), 2026-09-03**  *(no dependencies)*
 
 **Do.** The class map (`type=` token → broad class: `nmos`/`pmos`→`mos`,
 `res`/`poly_resistor`/`high_precision_poly_resistor`/`high_precision_poly_p`→
@@ -1308,6 +1308,111 @@ overrides its class and leaves the others seeded. Round-trips through a
 save/reload. An interrupted write never truncates. The vocabulary really is
 ragged — sky130 spells a resistor three ways — so the map is data, not a
 `switch`.
+
+---
+
+#### What B2 SHIPPED, and what binds B3 · B5
+
+**Landed as `src/op_param_lists.tcl`** (752 lines, pure Tcl, no C), sourced
+bare from `src/xschem.tcl:16756`, installed and uninstalled from
+`src/Makefile.in`'s `install_shares` — receipt `grep -c op_param_lists.tcl
+src/Makefile` **0 → 2**, `./configure` re-run, `Makefile.conf` byte-identical
+across runs. New suite `tests/headless/test_op_param_store_1245.tcl`, **ALL
+PASS (39)**, registered by `full_audit.sh:393`'s glob with that file unedited;
+the audit denominator moves **379 → 380**.
+
+* **⚠ THE SETTINGS FILE IS `<pwd>/.xschem/op_param_lists.conf`, AND THE WORD
+  `<project>` WAS B2'S TO PICK — IT IS UNRATIFIED.** DD-3 names the tier and
+  leaves the word undefined; there is no `<dir>/.xschem/` precedent in this
+  tree. B2 shipped **pwd** by ladder L2, because `xschem get current_dirname`
+  **moves under a descend** (a Save taken inside a PDK library cell would write
+  the project file into the PDK tree and the next read would not find it) while
+  pwd is stable for a whole session, and because `xinit.c:3500-3515`'s
+  `./xschemrc` is the tree's only analogue. **Rule debt 1273**; it is one proc
+  to move. **B3 and B5 must name the path they resolve through
+  `op_param_lists::conf_path project`, never build one themselves**, or the two
+  halves can diverge the moment this is overruled.
+* **⚠ THE TIER WIN IS PER (scope, key, listname), WHICH REFINES DD-3.** DD-3
+  says the project file wins *"per class"*; B2 shipped per **list**, which is
+  finer and never coarser — a project file that customises `mos annotation` no
+  longer silently discards the user-global's `mos summary`. **Rule debt 1275**
+  carries the whole grammar, which DD-3 does not state. Row **T2** is the single
+  row that flips if the driver disagrees.
+* **THE GRAMMAR, so B5 writes what the reader reads.** Whitespace-delimited,
+  every row self-contained (so skipping a malformed one cannot silently
+  reassign the rows after it), `#` and blank skipped, trailing `\r` trimmed,
+  `-encoding utf-8` pinned on **both** channels with `-translation` left at
+  `auto`:
+  `version 1` · `class <type-token> <broad-class>` ·
+  `list <scope> <key> <listname>` ·
+  `param <scope> <key> <listname> <label> <rawparam> <kind>`.
+  `scope` ∈ {class, flavor}, `listname` ∈ {annotation, summary}. A `param` row
+  implicitly declares its list; the `list` row exists only to express an
+  **emptied** list, which stays empty rather than degrading to the seed.
+* **⚠ FIELDS ARE SPLIT WITH `regexp -inline -all {\S+}`, NEVER `llength` /
+  `lindex` ON THE LINE.** Measured: `llength "mos annotation { id 0"` **raises**
+  `unmatched open brace in list`, so a stray `{` in a teammate's file would kill
+  the reader from inside. A parser its own input can raise in is not a strict
+  parser. Any later row-reader must copy this.
+* **LIST 3 (`all`) IS NEVER PERSISTED** (D-4). `owns` answers 0 for it always,
+  `effective` answers `{}`, and a conf row naming it is reported and skipped
+  with a sentence saying why. **B5's Add-from-list-3 writes into `annotation` or
+  `summary`**, and needs no slot of its own — spec §4.2 B7 already greys its
+  Delete.
+* **`owns 1` WITH AN EMPTY LIST AND `owns 0` ARE DIFFERENT FACTS, AND B3 MUST
+  NOT COLLAPSE THEM.** *Not customised* (fall back to the seed) versus *the user
+  emptied this* (show nothing) is the same absent-vs-value distinction that
+  refuted B1 the day before (issue 1272), one class further out.
+* **`op_param_lists::apply` IS THE ONLY DOOR THAT REACHES THE SCREEN, AND B5
+  MUST USE IT.** Only `op_annot::register` bumps `::op_annot::gen`, which
+  `actions.c:2032` folds into the overlay epoch; a direct `set
+  ::op_annot::desc(...)` is stored, correct in Tcl and **invisible** (invariant
+  I5). `apply` is deliberately **called from nowhere** in B2: `op_param_lists.tcl`
+  is sourced *before* any PDK `_procs.tcl` runs, so an auto-apply would write
+  into an empty registry and `register`'s REPLACE semantics would discard it.
+* **FIRST-REGISTERED-WINS IS UNIMPLEMENTABLE AS THE DRIVER STATED IT** —
+  `::op_annot::desc` is a Tcl array and `op_annot` publishes no enumerator, so
+  B2 shipped *first in lexical order of the `type=` token* (deterministic, and
+  it coincides with registration order for all three shipped PDKs). Issue
+  **1274**, one-line repair named, not fixed here.
+* **⚠ THE THREE PDK COMMENT LINE NUMBERS IN THIS PLAN AND IN THE BRIEF ARE
+  WRONG FOR TWO OF THE THREE.** The *"A first-class means for a user to choose
+  her own set is OWED and TBD"* line is at `sky130A/sky130_procs.tcl:396`,
+  `gf180mcuD/gf180_procs.tcl:102`, `ihp-sg13g2/sg13g2_procs.tcl:750` — sky130's
+  `:405` is `} else {` and IHP's `:749` is a recovery-recipe line. **Grep for
+  the text, never seek by line.** All three now point at
+  `src/op_param_lists.tcl`; each file's invariant-I5 recovery recipe above it is
+  untouched and still round-trips (rows C0/C1).
+
+##### ⚠ SIX DEFECTS THE ADVERSARY MEASURED IN B2's OWN NEW CODE. B3 AND B5 INHERIT ALL SIX.
+
+None is live today — `grep` for `op_param_lists::` outside its own file and its
+suite returns nothing — and **all six become live the moment B3 calls
+`effective` or B5 calls `write_conf` / `apply`. Fix them at B2's seam, not in
+the UI.** B2's suite fences **none** of them; 39/39 is a statement about the
+fence (B1's lesson, one item later).
+
+| # | what | who trips it |
+|---|---|---|
+| **1276** | `write_conf` returns **1 with no report** when the target is a **directory** (the temp is moved *inside* it) or a **symlink** (replaced by a regular file, real target untouched). Save says it worked; the settings are gone | **B5**'s Save |
+| **1277** | the **flavor glob wins by `lsort` order**, not narrowness or file order — `*fet*` beats `*nfet_01v8*` in both insertion orders — and a flavor key carries **no class**, so it can answer another class's query. The class field is a **grammar** change, so settle it *before* the first flavor entry is written | **B5**'s scope dialog |
+| **1278** | a shared conf can **freeze the consumer**: `effective` runs `string match` on an unbounded pattern from the file (129 ms at 9 stars, >70 s at 13), accepted at load with zero reports. The parser is safe; the consumer is not | **B3**'s redraw |
+| **1279** | bare `apply` iterates the **class map**, so a type the map does not name is never a candidate — the list is stored, correct, and **invisible** (`gen` never moves, invariant I5). Every unmapped shipped token inherits it | **B5**'s Save |
+| **1280** | `apply` writes list 1 into `params`, and `op_annot::_cards_for` emits one `.save` per `params` row — so **trimming the annotation list stops the deck saving what the summary list asks for**, and those rows go permanently blank (R1, I3). ⚠ the fix carries a **user question**: does Delete stop *drawing*, or stop *saving*? | **B5**'s Delete |
+| **1281** | writing the **project** file exports the author's **user-global** map and lists into it — the store keeps no provenance. For a file whose headline is shareability, Save checks in one person's personal taste | **B5**'s Save |
+
+* **EVERY REPORT GOES TO stderr AND AN UNREAD BUFFER.** `_say` writes stderr
+  plus an internal `reports` list readable as `op_param_lists::said`. Nothing
+  reads it yet and the GUI shows stderr nowhere, so today every *"reported and
+  skipped"* outcome — a malformed row in a teammate's file, the class-seed
+  divergence — is, to a GUI user, **silence**. **B3 owes that channel**: drain
+  `said` into the CIW after every `load`/`write_conf`.
+* **Minor, measured, not defects.** A UTF-8 BOM is silently tolerated (Tcl's
+  `\S` treats U+FEFF as space, so a Notepad-saved conf parses). An NBSP inside a
+  label is reported and skipped, symmetrically with `_triple`'s `\s` rejection —
+  no silent rewrite either way. Label/param **case is preserved and never
+  folded**, which is required, because `op_annot::vector` builds the raw name
+  from the exact `param` string.
 
 ---
 
@@ -1401,6 +1506,18 @@ test-drivable path in the **first** commit, not retrofitted.
 **Accept.** Reorder persists through Save/reload. Narrow scope touches one
 flavor and leaves siblings alone; broad scope moves the class. Delete is greyed
 on list 3. Add from list 3 asks *which* list. Every dialog is driven headlessly.
+
+**⚠ B5 STARTS BY PAYING B2's SIX (see "What B2 SHIPPED" above).** Five of the
+six land on this item's own buttons and none is fenced by B2's suite:
+**1276** (Save reports success when the file went elsewhere), **1279** (Save
+cannot reach a type the class map does not name — the list is stored and
+invisible), **1281** (Save exports the author's personal global settings into
+the team's file), **1277** (the scope dialog's flavor glob wins by `lsort` order
+and carries no class — this one is a **grammar** change, so it must be settled
+*before* the first flavor entry is written, i.e. before B5's first commit), and
+**1280** (Delete trims the deck's `.save` cards, blanking the summary list —
+and its fix carries a **user question**: does Delete stop *drawing*, or stop
+*saving*?). Fix them in `src/op_param_lists.tcl`, not in the button column.
 
 ---
 

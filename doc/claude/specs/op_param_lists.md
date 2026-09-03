@@ -1000,6 +1000,14 @@ shipped editing action for cadence-profile users only. Question Q5.
 | **Add** | — | add to annotation | add to **annotation or summary** (the dialog asks which) |
 | **Save** | write the settings file | write the settings file | write the settings file |
 
+> ✅ **ITEM B2, 2026-09-03 — LIST 3 HAS NO PERSISTED STATE, AND THE STORE HAS
+> NO SLOT FOR IT.** It is live from the run, its Delete is greyed above, and a
+> persisted `all` would be a list no simulator ever published — the invented
+> data **D-4** forbids. `op_param_lists::owns` answers 0 for it always,
+> `effective` answers `{}`, and a settings-file row naming it is reported and
+> skipped with a sentence saying why. **B5's Add-from-list-3 writes into
+> `annotation` or `summary`** and so is left with nowhere to write.
+
 Every Delete and Add raises a **scope dialog**: *this device flavor only*, or
 *every device of this broad class*. That maps onto the descriptor's `match`
 glob (§2.1) — narrow writes a flavor-specific entry, broad writes the class
@@ -1023,23 +1031,149 @@ vertical_npn vertical_pnp                        -> bipolar
 
 Shipped as a default, **overridable and extendable in the settings file**, so a
 PDK with a token nobody anticipated is a one-line user fix and not a tool
-release. Question Q3 settles whether the class is what the lists key on, or
-whether flavor is the primary key with class as a fallback.
+release. ~~Question Q3 settles whether the class is what the lists key on, or
+whether flavor is the primary key with class as a fallback.~~ ✅ **Q3 is
+settled by DD-2: the class is the primary key and a flavor entry is an optional
+override that wins when present.**
+
+> ✅ **AS BUILT, item B2, 2026-09-03 — `src/op_param_lists.tcl`.** The map above
+> ships **verbatim and unextended**, as a namespace variable (`defaultmap`),
+> not a `switch`; row M3 fences that structurally.
+>
+> **⚠ AN UNMAPPED TOKEN IS ITS OWN CLASS — identity, never `{}` and never a
+> raise.** That is what makes the map an *override table* rather than a gate,
+> and it is what this section's one-line-user-fix promise actually rests on.
+> Measured `type=` tokens present in this tree and **not** in the map above:
+> sky130 `varactor`, `npn`, `pnp`, `pwell_resistor`, `p_diffusion_resistor`,
+> `n_diffusion_resistor`, `high_precision_p`; IHP `pnp` (**not**
+> `vertical_pnp`), `inductor`, `esd`; and `xschem_library` uses `type=` for
+> arbitrary part numbers (`2N3906`, `4001`, `12SK7`). The token space is open,
+> which is why a `switch` is provably wrong here.
+>
+> **The default was deliberately NOT extended with that census.** A map entry
+> is a *claim* that two tokens share one list; `varactor` → capacitor or `esd`
+> → diode are groupings no ruling covers, and inventing them is the shape D-4
+> forbids one level up. Each is a one-line `class` row in the settings file, as
+> this section promises.
+>
+> **⚠ THE MAP IS NOT ONTO, AND MUST NOT RAISE.** IHP registers `vertical_npn`
+> and **no** `vertical_pnp` although the map names both, and three of the five
+> classes — `resistor`, `capacitor`, `diode` — are registered by **no PDK in
+> this tree at all**. Each seeds to `{}` without raising (row S2).
+>
+> **⚠ `apply` GATES ON THIS MAP AND SO CANNOT REACH AN UNMAPPED TOKEN** — the
+> identity fallback works for `class` and `effective` and fails for `apply`,
+> leaving a stored, correct, **invisible** list. Issue **1279**, not fixed.
 
 ### 4.4 The settings file
 
 Requirements the user stated: findable, editable by hand, shareable with
 teammates, written once per project.
 
-Proposed: **`<project>/.xschem/op_param_lists.tcl`**, with
-`~/.xschem/op_param_lists.tcl` as the user-global fallback and the project file
-winning. Written with the house **write-beside-and-move** pattern (issue 0937,
-`ase::sim_write_conf`) so an interrupted write never truncates the file. The
-window's title bar and a CIW line on every Save name the exact path, so
+> ⚠ **THIS SECTION CONFLATED TWO FILES AND IS CORRECTED BY DD-3.** There are
+> **two**: `src/op_param_lists.tcl` is the **implementation** (Tcl code,
+> shipped, sourced, installed); the **settings file** it reads is
+> `<project>/.xschem/op_param_lists.conf`, which is **data and is never
+> sourced**. The `.tcl` proposal struck through below was the vulnerability, not
+> the design.
+
+~~Proposed: **`<project>/.xschem/op_param_lists.tcl`**~~ →
+**`<project>/.xschem/op_param_lists.conf`**, with
+`~/.xschem/op_param_lists.conf` as the user-global fallback and the project
+file winning. Written with the house **write-beside-and-move** pattern (issue
+0937, `ase::sim_write_conf`) so an interrupted write never truncates the file.
+The window's title bar and a CIW line on every Save name the exact path, so
 "where is it?" is never a question.
 
-⚠ **Format.** A sourced Tcl file is arbitrary code execution, and issue 0812
-already burned this tree on `subst` and paths. Question Q8.
+~~⚠ **Format.** A sourced Tcl file is arbitrary code execution, and issue 0812
+already burned this tree on `subst` and paths. Question Q8.~~ ✅ **Q8 is
+settled by DD-3: data, never sourced.** The premise was measured rather than
+assumed — feeding a plausible shared conf to `ase::sim_load_conf`'s
+`uplevel #0 [list source $path]` idiom with the payload placed **first**, under
+a friendly `# share freely` header, gave `OPL_PWNED=1 marker_on_disk=1` and the
+Tcl error that followed was **cosmetic: the payload had already run**. A test
+row that only checked for a raise would have scored that file as safe.
+
+#### AS BUILT — item B2, 2026-09-03
+
+**The grammar.** Line-oriented, whitespace-delimited, **every row
+self-contained** so skipping a malformed row cannot silently reassign the rows
+after it. Blank lines and `#` comments skipped; a trailing `\r` trimmed
+defensively; `-encoding utf-8` pinned on **both** the read and the write
+channel with `-translation` left at `auto`.
+
+```
+version 1
+class <type-token> <broad-class>
+list  <scope> <key> <listname>
+param <scope> <key> <listname> <label> <rawparam> <kind>
+```
+
+* `scope` ∈ {`class`, `flavor`}; a `flavor` key is a **cell-name glob** matched
+  with `string match -nocase`, which is exactly the narrowing
+  `op_annot::_matches` already performs — not a second flavor concept.
+* `listname` ∈ {`annotation`, `summary`}.
+* `kind` is any integer. The store is deliberately **not stricter than
+  `op_annot::_wrap`**, whose default arm copies `token.c`'s *"anything but 0/1
+  → `v(`"*.
+* A `param` row **implicitly declares its list**, so a hand-editing user never
+  has to write the `list` line. `list` exists only to express an **emptied**
+  list, which stays empty rather than degrading to the PDK seed; a lost `list`
+  line therefore degrades to the seed, which is the safe direction.
+* Anything unrecognised — an unknown verb, a wrong field count, a non-integer
+  kind, an unknown scope or list name — is **reported and skipped**, and the
+  rest of the file still loads. An unknown `version` is reported and the file is
+  still parsed row by row.
+
+**⚠ THE VALUE TRIPLE IS `{label param kind}` AND ALL THREE FIELDS MUST SURVIVE
+THE ROUND TRIP.** `sky130A:401` and `gf180mcuD:107` both spell it `{id id 0}`;
+`ihp-sg13g2:758` spells it **`{id ids 0}`** — label `id`, param `ids`, **they
+differ**. A store that keeps only the name round-trips two PDKs *perfectly* and
+**silently rewrites IHP**. Any suite over this file that does not carry the IHP
+shape cannot see that failure.
+
+**⚠ FIELDS ARE SPLIT WITH `regexp -inline -all {\S+}`, NEVER `llength` /
+`lindex` ON THE LINE.** Measured: `llength "mos annotation { id 0"` **raises**
+`unmatched open brace in list`, so treating a teammate's line as a Tcl list
+lets a stray `{` kill the reader from inside. A parser its own input can raise
+in is not a strict parser.
+
+**⚠ THE ENCODING MUST BE PINNED, THE TRANSLATION MUST NOT BE.** Measured, same
+bytes, two locales: with `encoding system` = `utf-8` a line reads as 15
+characters; under `LC_ALL=C`, where it is `iso8859-1`, the **same bytes** read
+as 16. A file that travels between teammates is otherwise a different string
+depending on the reader's locale. CRLF, by contrast, is **already** handled by
+the default `auto` translation — copying the tree's `-translation binary` idiom
+(`ase.tcl:1625`, `xschem.tcl:7910`) would *reintroduce* the bug it looks like
+it prevents.
+
+**The tiers.** PDK seed → `~/.xschem/op_param_lists.conf` →
+`<project>/.xschem/op_param_lists.conf`, later winning. A missing file at either
+tier is the ordinary first-run case, not a failure. **The win is per
+`(scope, key, listname)`**, which *refines* DD-3's "per class": finer, never
+coarser, so a project file customising `mos annotation` no longer silently
+discards the user-global's `mos summary`. Unratified — **rule debt 1275**.
+
+**⚠ `<project>` MEANS `[pwd]`, AND THAT WAS B2's CHOICE, NOT A RULING.** There
+is no `<dir>/.xschem/` precedent in this tree. Measured: `xschem get
+current_dirname` **moves under a descend**, so a Save taken while descended into
+a PDK library cell would write the project file into the PDK tree and the next
+read, back at the top, would not find it — reader and writer silently
+disagreeing about a path the CIW names out loud. `[pwd]` is stable for a whole
+session and matches `xinit.c:3500-3515`'s `./xschemrc`. Unratified — **rule debt
+1273**; one proc to move.
+
+**List 3 (`all`) is never persisted** (D-4, and §4.2 B7 already greys its
+Delete). `owns` answers 0, `effective` answers `{}`, and a conf row naming it is
+reported and skipped with a sentence saying why.
+
+**Six defects measured in this implementation and NOT fixed**, all latent while
+the store is unwired, all inherited by B3/B5: **1276** (the writer reports
+success when the file went elsewhere), **1277** (the flavor glob wins by `lsort`
+order and carries no class), **1278** (an unbounded glob from a shared file
+freezes the consumer), **1279** (`apply` cannot reach an unmapped token),
+**1280** (`apply` narrows the deck's `.save` cards, blanking list 2), **1281**
+(Save exports the author's personal user-global settings into the team's file).
 
 ---
 
@@ -1072,7 +1206,44 @@ owed ledger as a `rule` debt at the moment this spec lands.
 * ~~**Q7** — one instance, many primitives?~~ **RULED D-3**: print all of them.
   §3.6 shows `.options savecurrents` finds them for us.
 
+* ~~**Q3** — do the lists key on the broad class, or on the device flavor?~~
+  **RULED DD-2**: the class is the primary key; a per-flavor entry is an optional
+  override that wins when present. Both kinds exist, or §4.2 B7's scope dialog
+  has nothing to write. Implemented by item **B2**; ⚠ the flavor arm's
+  precedence is issue **1277**.
+* ~~**Q8** — what format is the settings file?~~ **RULED DD-3**: a line-oriented
+  **data** file, never sourced, read by a strict parser that does no `source`,
+  no `eval`, no `subst` and no substitution of any kind. Anything unrecognised is
+  reported and skipped, never executed. Grammar as built in §4.4. ⚠ **The
+  ruling names the tier and leaves the *word* `<project>` undefined, and does not
+  state the grammar** — those are `rule` debts **1273** and **1275**, raised by
+  item B2 and still owed.
+
 Still open:
+
+* **Q16 — is the project settings file found beside the directory xschem was
+  LAUNCHED from, or beside the schematic being edited?** (added by item B2,
+  2026-09-03; `rule` debt **1273**; **this is item B2's status-E question**).
+  B2 shipped `[pwd]/.xschem/op_param_lists.conf` on ladder L2, because
+  `xschem get current_dirname` **moves under a descend** — a Save taken inside a
+  PDK library cell would write the project file into the PDK tree and the next
+  read, from the top, would not find it — while `[pwd]` is stable for a whole
+  session and matches `xinit.c:3500-3515`'s `./xschemrc`. **The cost of the
+  choice, stated:** the file a teammate is meant to find depends on the *launch
+  directory*, not on where the design lives, so cloning a project and starting
+  xschem from `$HOME` silently finds no project settings at all. The rejected
+  alternatives are `current_dirname` (moves) and the top-of-hierarchy
+  schematic's dirname (no Tcl accessor exists, and minting one is `op_annot` /
+  `scheduler` work B2 does not own). It is one proc to move, and **B3 and B5
+  must both resolve the path through `op_param_lists::conf_path project`** so
+  that overruling it stays one edit.
+* **Q17 — does removing a parameter from the annotation list stop *drawing* it,
+  or stop *saving* it?** (added by item B2, 2026-09-03; issue **1280**).
+  Measured coupling, not a preference: `op_annot::_cards_for` emits one `.save`
+  card per `params` row and `op_param_lists::apply` writes the annotation list
+  into `params`, so a Delete on list 1 today stops the deck saving what list 2
+  asks for, and those rows go permanently blank with no report (rule R1,
+  invariant I3). The question belongs with the item that ships Delete — **B5**.
 
 * **Q11 — the declutter's three status sentences** (added by item A1,
   2026-09-02; `rule` debt **1244**). `cadence::_annot_declutter_msg` mints one of

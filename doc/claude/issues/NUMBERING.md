@@ -1008,4 +1008,66 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   outcome has one place to get it. All six acceptance rows green; sabotage
   (deleting the `_finite` line) reds NF1 NF2 NF5 NF6 NF7 and nothing else.
 
-**The next free number is 1273.**
+* **1273** — which directory is `<project>` for `op_param_lists.conf`? DD-3
+  names the tier and leaves the word undefined, and there is no `<dir>/.xschem/`
+  precedent in this tree. Claimed by item **B2**, 2026-09-03. **RULE DEBT** —
+  B2 shipped `[pwd]/.xschem/` by ladder L2 (measured: `current_dirname` moves
+  under a descend and pwd does not) and the user can overrule it in one proc.
+* **1274** — `op_annot` publishes **no registration order**: `::op_annot::desc`
+  is a Tcl array, `array names` answers hash order, and there is no
+  `op_annot::types`. So the driver's "first registered wins" for item B2's class
+  seed is unimplementable as written. Claimed by item **B2**, 2026-09-03, which
+  shipped *first in lexical order of the `type=` token* — deterministic, and it
+  coincides with registration order for all three shipped PDKs. Carries the
+  one-line repair. **FILED, NOT FIXED** (B2 may not edit op_annot.tcl).
+* **1275** — the `op_param_lists.conf` grammar is **unratified**: DD-3 rules the
+  file is data and never sourced, and states the cost, but not the grammar.
+  Claimed by item **B2**, 2026-09-03. **RULE DEBT** — carries the grammar as
+  shipped, verbatim, plus the one place B2 *refines* DD-3 (the tier win is per
+  (scope,key,listname), not per class).
+
+* **1276** — `op_param_lists::write_conf` returns **1 with no report** when the
+  settings went somewhere else: a target that is a **directory** takes the temp
+  *inside* it (`file rename -force` does not fail on a directory destination),
+  and a target that is a **symlink** is replaced by a regular file while the real
+  file keeps its old bytes. Atomicity and the never-truncate row both hold; the
+  "returns 1, or 0 with a report" half does not. Found by item **B2**'s
+  adversary on B2's own new code. **FILED, NOT FIXED** — carries both guards.
+* **1277** — the **flavor glob wins by `lsort` order**, not by narrowness or
+  file order, so with `*fet*` and `*nfet_01v8*` both matching, the broad one wins
+  in both insertion orders and the winner flips when the *loser* is renamed. Part
+  2: a flavor key carries **no class**, so a MOS flavor list can answer a
+  `capacitor` query. Found by item **B2**'s adversary. **FILED, NOT FIXED** —
+  blocks nothing, but the class field is a **grammar** change and so must be
+  settled before **B5** writes the first flavor entry (see 1275).
+* **1278** — a shared `op_param_lists.conf` can **wedge its reader and freeze its
+  consumer** without executing anything: `effective` runs `string match` on an
+  unbounded pattern from the file (measured 0.85 ms / 14.6 ms / 129 ms / 11.6 s /
+  >70 s at 5/7/9/11/13 stars, accepted at load with zero reports), and
+  `_parse_line`'s duplicate check is quadratic (19/67/249/1035 ms at
+  1k/2k/4k/8k rows). DD-3's parser is safe; the consumer is not. Found by item
+  **B2**'s adversary. **FILED, NOT FIXED** — fix is a wildcard cap at parse time.
+* **1279** — `op_param_lists::apply` with no arguments iterates the **class map**,
+  so a type the map does not name is never a candidate: an owned list for it is
+  stored, correct, and **invisible on screen** because `::op_annot::gen` never
+  moves (invariant **I5** failing silently). Every shipped-but-unmapped token
+  inherits it (`varactor`, `esd`, `inductor`, `pnp`, part numbers). Found by item
+  **B2**'s adversary. **FILED, NOT FIXED** — carries the two-line fix, and
+  re-rejects growing the default map.
+* **1280** — `op_param_lists::apply` **silently narrows the deck's `.save`
+  cards**: `op_annot::_cards_for` (op_annot.tcl:2808-2820) emits one card per
+  `params` row and `apply` writes the **annotation** list into `params`, so
+  trimming list 1 stops the deck saving what list 2 asks for and those rows go
+  **permanently blank** (rule R1, invariant I3) with no report. The three lists
+  are not independent. Found by item **B2**'s adversary. **FILED, NOT FIXED** —
+  the recommended union fix carries a **user question for B5** (does Delete stop
+  drawing, or stop saving?).
+* **1281** — writing the **project** settings file exports the author's
+  **user-global** class map and lists into it, because the store flattens the
+  tiers and keeps no provenance. For a file whose headline feature is
+  shareability, Save checks one person's personal taste into the team's file and
+  the next teammate's Save carries theirs back. Found by item **B2**'s adversary.
+  **FILED, NOT FIXED** — fix is a per-entry `origin` tag, needed in B2's seam
+  before **B5** can write only the right half.
+
+**The next free number is 1282.**

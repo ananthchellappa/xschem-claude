@@ -16747,6 +16747,13 @@ proc xschem::notify_safe {msg {tag {}}} {
 # registered here (a PDK does that from its own procs file; a user from a file sourced
 # after startup -- NOT from xschemrc, which is read before this line, spec I5).
 source $XSCHEM_SHAREDIR/op_annot.tcl
+# The OP parameter list store: the class map, the per-class/per-flavor ordered
+# lists, the PDK seed and the strict reader / atomic writer for
+# <pwd>/.xschem/op_param_lists.conf (doc/claude/specs/op_param_lists.md section 4.4,
+# ruling DD-3 -- that file is DATA and is never sourced). Proc definitions only at
+# source time; it reads no file and touches op_annot:: not at all until called, and
+# it must follow op_annot.tcl because it seeds from that registry.
+source $XSCHEM_SHAREDIR/op_param_lists.tcl
 # Generic command-mode suspend/resume registry (cmdmode; no Tk, no ASE knowledge).
 # doc/claude/issues/0201-no-command-suspend-resume-contract.md. MUST precede ase_window.tcl,
 # which calls cmdmode::register at source time.
