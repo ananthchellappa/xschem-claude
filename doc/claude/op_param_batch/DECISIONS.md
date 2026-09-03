@@ -96,3 +96,38 @@ accept from a colleague without reading it first.
 reads is `<project>/.xschem/op_param_lists.conf`, with
 `~/.xschem/op_param_lists.conf` as the user-global fallback and the project file
 winning per class. Two different files; the spec's §4.4 conflates them.
+
+### DD-4 — issue 1280: Delete is a DISPLAY decision, never a SAVE decision
+
+Taken 2026-09-03 by the driver. On the owed ledger as rule debt **1280**; the
+user can overrule and the cost is one proc.
+
+Item B2 measured a coupling nobody had specified: `op_annot::_cards_for` emits
+one `.save` card per row of a descriptor's `params`, and `op_param_lists::apply`
+writes the **annotation** list into `params`. So deleting a parameter from the
+on-sheet annotation list would also stop the **deck** saving it — and the
+summary list's rows for that parameter would then render permanently blank, on a
+schematic, with no report anywhere.
+
+**Decision: Delete removes a parameter from what is DRAWN. It never changes what
+the simulator is asked to save.** `apply` writes the **union** of the annotation
+and summary lists into `params`, and the display narrows to the annotation list.
+
+*Why it is forced:*
+
+1. **The user's own framing.** The whole feature is a *declutter* — the word is
+   the user's — and the button lives in a column described as editing "what gets
+   printed and what gets annotated". Nothing the user said asks for a button
+   that quietly reduces what a simulation measures.
+2. **Invariant I3.** The alternative makes key 2 render blank for a parameter the
+   user can still see listed, with nothing on screen explaining why. That is the
+   plausible-wrong-answer failure this batch has now hit three times.
+3. **Nothing is invented.** Every row of the union was declared either by the
+   user or by the PDK, so the union violates no ruling — where a *narrowing*
+   would silently destroy data the user never asked to lose.
+
+*Cost, stated:* a user who deletes a row to make the deck smaller does not get a
+smaller deck. Saving an operating-point parameter is measured free (spec §3.3),
+so the cost is a slightly larger raw and nothing else. If the user later wants a
+"stop saving this" control, it is a **separate** control with a separate name,
+not an overloaded Delete.
