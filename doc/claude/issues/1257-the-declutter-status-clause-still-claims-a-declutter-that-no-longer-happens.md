@@ -59,3 +59,16 @@ repair, the row that must go with it, and the whole preserved implementation
 sentence (`DC_ARM` in the armed-but-no-numbers state) that is **no longer in the
 tree**. It is left standing — a rule debt clears only when the user says so — but
 the re-do should reach the same state before the question is answerable.
+
+## Closed by item A7's re-do, 2026-09-03
+
+Item **A7** implemented this, was refuted on a state nobody had named
+(issue **1270** — the declutter counter counted the *rung*, not what came off
+the sheet), was reverted with every line preserved as
+`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`, and was re-done by
+the driver: patch re-applied, the four-line repair added at A7's own edit point,
+and two new suite rows (**A64**, **A65**) that catch the 1270 defect and the
+tempting wrong repair, both proved by sabotage rather than asserted.
+
+Read **1270** for the full account, including the residual risks that survive
+this fix. Item A7 closes feature A of `doc/claude/op_param_batch/PLAN.md`.

@@ -4318,6 +4318,21 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             my_snprintf(b, S(b), "%u", annot_overlay_flushes);
             Tcl_SetResult(interp, b, TCL_VOLATILE);
           }
+          /* (xschem get annot_declutter_count) monotonic count of texts the 1244
+           * declutter rung actually removed (issue 1257). The THIRD seam of this
+           * family and not a duplicate of either: the two above say how much the
+           * annotation overlay painted, this one says how much was taken away.
+           * A Tcl status-line producer brackets one `update_all_sym_bboxes` +
+           * `redraw` with two reads and believes the DELTA -- so "decluttering is
+           * on, so other device text is hidden" is said only where the renderer
+           * really hid something, instead of wherever the mask happened to carry
+           * two bits. See actions.c for why the answer is a measurement and not a
+           * second copy of the gate. */
+          else if(!strcmp(argv[2], "annot_declutter_count")) {
+            char b[32];
+            my_snprintf(b, S(b), "%u", annot_declutter_count);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
           /* the sibling of `get rects` / `get lines` / `get polygons`, which existed;
            * `get arcs` did not, so a Tcl caller asking for an arc count got the empty
            * string with rc 0 (an unknown `get` does not error). Added for the issue-0172

@@ -16932,6 +16932,63 @@ proc annot_remedy_menu {} {
   return "[annot_lbl_tools] > [annot_lbl_launch_ase]"
 }
 
+# ===========================================================================
+# ISSUE 1256 -- THE TWO STOCK Op-Annotate DOORS SAY WHAT THE CHORDS SAY
+# ===========================================================================
+# `Waves > Op Annotate` and `Simulation > Graphs > Annotate Operating Point into
+# schematic` both PRESERVE bit 3 of the mask on purpose (issue 1246) and then
+# said nothing at all -- so a user who armed the schematic-parameter declutter
+# and then annotated from the MENU got a stripped sheet and not a word about
+# why, while the cadence chords describe the same state in full. Two doors, one
+# state, two descriptions: that IS the defect.
+#
+# ⚠ ONE PROC FOR BOTH DOORS, BECAUSE DUPLICATING IT WOULD REBUILD 1256 ONE LAYER
+# UP. The two -command bodies are byte-identical duplicates of each other; a copy
+# of this tail in each is two more places for one sentence to drift. Row A63 of
+# tests/headless/test_annot_declutter_1244.tcl asserts exactly that shape --
+# ZERO spellings of the sentence in this file, the cadence mint named on exactly
+# ONE code line, and both live -command scripts tailing into this proc.
+#
+# ⚠ IT OWNS THE REFRESH PAIR, AND THE PAIR IS ALSO THE MEASUREMENT. Bboxes change
+# when hidden texts appear (the `Show hidden texts` checkbutton's own pair, with
+# annot_show_sync_cache() riding inside the first), and the declutter rung bumps
+# `annot_declutter_count` as it removes each text -- so bracketing the pair with
+# two reads of that counter answers "did anything actually get hidden" without
+# re-deriving the gate. That question is issue 1257 and it is not optional here:
+# after the value gate a sheet with no results file carries bit0|bit3 and hides
+# NOTHING, so a menu that spoke on the mask alone would ship 1257 in stock code.
+#
+# ⚠ NOTHING CADENCE-SPECIFIC MAY BE REQUIRED. `::cadence` does not exist in stock
+# xschem, so the mint is BORROWED behind an `info commands` guard and this proc
+# is silent -- not broken, silent -- wherever the profile is not loaded. It emits
+# only the declutter sentence, trimmed to stand alone, and only where something
+# was hidden; every other state stays as quiet as it has always been, because a
+# stock menu is not the place to grow a state machine the chords already own.
+proc annot_declutter_say {} {
+  set a {}
+  catch {set a [xschem get annot_declutter_count]}
+  xschem update_all_sym_bboxes
+  xschem redraw
+  set b {}
+  catch {set b [xschem get annot_declutter_count]}
+  set hid 0
+  if {[string is integer -strict $a] && [string is integer -strict $b] && $b > $a} { set hid 1 }
+  # ONE line names the cadence mint, and it is this one: the sentence itself is
+  # spelled nowhere in this file (invariant I1, row A63 leg 1).
+  set cl ::cadence::_annot_declutter_clause
+  if {![llength [info commands $cl]]} { return 0 }
+  set mask 0
+  catch {set mask [xschem get annot_show]}
+  set m {}
+  catch {set m [$cl $mask $hid]}
+  set m [string trim $m]
+  if {$m eq {}} { return 0 }
+  # Through the surface's own 255-byte trimmer, never a second one: the C field
+  # behind the status line is `char statusmsg_text[256]` (src/xschem.h).
+  catch {xschem statusmsg -hold [::cadence::_annot_fit $m]}
+  return 1
+}
+
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
   global XSCHEM_SHAREDIR tabbed_interface simulate_bg OS sim
@@ -17316,9 +17373,13 @@ proc build_widgets { {topwin {} } } {
          }
          # Bboxes change when hidden texts appear: the `Show hidden texts`
          # checkbutton's own pair, and annot_show_sync_cache() rides inside the
-         # first of them (scheduler.c), so no extra sync call is needed.
-         xschem update_all_sym_bboxes
-         xschem redraw
+         # first of them (scheduler.c), so no extra sync call is needed. Both
+         # live in annot_declutter_say, which runs them and then -- ONLY when the
+         # declutter rung really took text off this sheet -- says so on the held
+         # status line, in the same words the cadence chords use (issues 1256,
+         # 1257). It is silent in stock xschem and silent when nothing was
+         # hidden; it writes no mask and moves no guard.
+         annot_declutter_say
      }
   }
   $topwin.menubar.waves add command -label Op -command {waves op}
@@ -17754,9 +17815,13 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
          }
          # Bboxes change when hidden texts appear: the `Show hidden texts`
          # checkbutton's own pair, and annot_show_sync_cache() rides inside the
-         # first of them (scheduler.c), so no extra sync call is needed.
-         xschem update_all_sym_bboxes
-         xschem redraw
+         # first of them (scheduler.c), so no extra sync call is needed. Both
+         # live in annot_declutter_say, which runs them and then -- ONLY when the
+         # declutter rung really took text off this sheet -- says so on the held
+         # status line, in the same words the cadence chords use (issues 1256,
+         # 1257). It is silent in stock xschem and silent when nothing was
+         # hidden; it writes no mask and moves no guard.
+         annot_declutter_say
      }
     }
   # doc/claude/specs/op_annotation.md §4.4 — the PDK-neutral OP-parameter

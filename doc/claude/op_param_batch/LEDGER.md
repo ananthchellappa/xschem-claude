@@ -35,7 +35,7 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 | A4 | the status line is not path-length-sensitive | `[E]` | `ccd2aec1` | 82→93; stale_0684 52→54 | annot_mode.tcl | owed | **T1 solo ×4 = 0/0/0/0** — the flake is dead. Filed 1255, 1256. **Driver audit: 365/11/0/2, IDENTICAL BY NAME to A3's** (`audit_A4_2026-09-02.txt`) |
 | A5 | D-1 / D-6 conformance, and A3's staleness | `[E]` | `cd212b69` | 93→105, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, scheduler.c | owed | closed 1252-1254 + the gate. **Ran its own audit; by-name diff vs A4 EMPTY.** Filed 1257-1261 |
 | A6 | close the value gate and the last bbox doors | `[E]` | `c8bb41f9` (driver) | 105→120, ALL PASS | actions.c, save.c, scheduler.c, select.c, xschem.h | owed | crew returned **F** — destroyed its own work, then blocked from building. Driver built, ran the suite, attributed the 12th red (**1269**, the display). **1259 only PARTIALLY closed** → **1263** to B1 |
-| A7 | the wording follows the gate, guards stop lying | `[ ]` | | | | | needs A6; fixes **1255, 1256, 1257, 1261**. **FEATURE A CLOSES HERE** |
+| A7 | the wording follows the gate, guards stop lying | `[E]` (driver re-do) | see commit | 120→**134**, ALL PASS | actions.c, op_annot.tcl, scheduler.c, xschem.h, xschem.tcl, annot_mode.tcl | owed | crew returned **F**, refuted by its own adversary (**1270**). Driver re-did from the crew's preserved patch + 4 lines + rows **A64/A65**, both sabotage-proved. Closes **1255, 1256, 1257, 1261**; fixes **1270**. T1 **0**. Audit 364/12/0/2, by-name diff vs A6 **EMPTY**. **FEATURE A CLOSES HERE** |
 | B1 | the backend seam | `[ ]` | | | | | D-4/D-5 are the whole item |
 | B2 | the list store and the settings file | `[ ]` | | | | | `Makefile.in` ×2 + `./configure` |
 | B3 | the window | `[ ]` | | | | | `rdw::`, not `results::` |
@@ -111,6 +111,51 @@ destruction honestly is behaving correctly and its work is still usable — chec
 it, do not discard it. And an unexplained red is attributed, never absorbed:
 this one cost a worktree build and it was still cheaper than a batch that learns
 to wave reds through.
+
+### ⚠ A7: the crew was refuted, was right to be, and the re-do cost four lines
+
+A7 is the second item to return **F**, and unlike A6 nothing was lost. Its own
+adversary refuted the central mechanism, its write-up agent **agreed with the
+adversary against its own work**, reverted, and preserved every line as a
+re-appliable patch that was dry-run-applied to a pristine `git archive`
+extraction *before* anything was touched. The driver's re-do was: apply the
+patch, add four lines, write two rows.
+
+**The defect is worth remembering because it is a class, not an incident.** A7
+needed to answer *"was anything actually hidden?"* and answered it with a counter
+bumped at the declutter rung's `return 1` — which sits **above** the three
+predicates that would have hidden the text anyway. So the counter measured *which
+predicate fired first*, not *what came off the sheet*. On any annotated device
+whose only non-`@name` text already carries `hide=instance` — **57 shipped
+symbols** — the sheet was byte-identical at mask 1 and mask 9 while all three
+status-line producers claimed a declutter. That is the very defect A7 was written
+to fix, in a state nobody had named, and it was green past **132 checks**.
+
+**The lesson: a measurement taken at a seam inherits the seam's position, and
+the seam's position was chosen for a different question.** Visibility only needs
+to know that something says "hide". A sentence that says *"other device text is
+hidden"* is a claim about what the user can no longer see. Those are two
+questions and one `return`.
+
+Three things from the re-do that the rest of this batch should copy:
+
+* **A golden was wrong and the measurement was right.** A64 was written expecting
+  the stock `Graphs` door to stay silent on the counterexample sheet, like the
+  two chords. It does not, and it should not: the menu body runs
+  `set show_hidden_texts 1` one line before writing the mask, so on that door the
+  text really *is* drawn and really *is* taken away. The row now goldens the
+  asymmetry and **reads the switch back to prove the reason**. When a new row
+  reds, find out which side is wrong before changing either.
+* **Both repairs were sabotaged, not asserted.** The 1270 defect restored reds
+  A64; the tempting repair that tests only the two `HIDE_*` bits reds A65. A65
+  exists solely to catch a fix that would work for the keyboard and silently
+  break the menus — the workflow the feature was written for.
+* **A62 was green against a menu that raises**, because `xschem set annot_show`
+  runs early in the `-command` body and the mask merges before the raise. It now
+  reports whether the body raised. And the mechanism was corrected a second time
+  in the re-do: deleting the `info commands` guard raises *nothing*, because the
+  call below it is already inside a `catch`. The guard is not what keeps stock
+  xschem quiet — **the inner catch is**.
 
 ### ⚠ FEATURE A CLOSES AT A7 — a driver boundary, set 2026-09-02
 
@@ -191,3 +236,4 @@ three `look` debts from the merge.
 | A4 | E | ccd2aec1 | test_annot_stale_0684 52->54 (default + roots 121/142/201, and :99); test_annot_declutter_1244 82->93 (:99); test_op_annot 485/492, blank_cause_0909 27, hier_0911 15, results_freshness 21, show_menu 36, op_behind_tran_1242 22 all unchanged; T1 SOLO x4 = 0/0/0/0; T2 HARNESS PASS 6/6; full_audit 365 pass / 11 fail / 0 crash / 2 skip of 378, eleven reds identical BY NAME to audit_A3_2026-09-02.txt | 1255,1256 | After Ctrl-Alt-6, every 6 / Alt-6 / Alt-Shift-6 press now also says " Decluttering is on, so other device text is hidden." — including before you have run a simulation, because the sheet is stripped then too: is that the right reminder, should it be shorter, should it repeat the way out (Ctrl-Alt-6), or should the other keys stay silent about it? |
 | A5 | E | cd212b69 | test_annot_declutter_1244 93->105 ALL PASS; T1 0->0 solo; T2 6/6 HARNESS PASS; op_annot 492, show_menu 36, stale_0684 54, blank_cause 27, hier 15, op_behind_tran 22, pin-name x4 + pick/descend x6 all unmoved; full_audit 365 pass/11 fail/0 crash/2 skip of 378, by-name-and-status diff vs audit_A4 EMPTY | 1257,1258,1259,1260,1261 | With no results file, Ctrl-Alt-6 now hides nothing but the held status line still says other device text is hidden - should the clause follow the gate (say nothing when nothing was hidden), or should the press be refused outright with "Run a simulation first"? |
 | A6 | F | a728d198 | Before the loss (Tk arm unless noted): test_annot_declutter_1244 105->120 ALL PASS (re-run by me), test_op_annot 485(nogui)/492(Tk)->492 ALL PASS, test_results_select ->377 ALL PASS, test_raw_read_dispatch 137->137, test_raw_read_failure_0306 63->63, test_zero_point_raw_0836 74->74, test_backannotate_digital 84->84, test_spice_get_node_0861 23->23, test_annot_show_menu 36->36, test_annot_stale_068 | 1262,1263,1264,1265,1266,1267,1268 | A6 was implemented, built and fully verified, then I destroyed A6-b's uncommitted src/save.c half with `git checkout -- src/save.c`; no code is committed, the work is preserved in doc/claude/op_param_batch/A6_working_tree_UNVERIFIED.patch and in the working tree, and A6 must be re-run starting with `cd src && make`. |
+| A7 | F | b169d5ff | As built, now REVERTED: declutter_1244 120->132 ALL PASS, stale_0684 54->56 ALL PASS both arms, op_annot 492/485 unchanged, show_menu 36, waves_gate 42, hier_0911 15, blank_cause 27, behind_tran 22, results_select 377, raw_read_dispatch 137, T1 0 counted, T2 6/6, full audit 364/12/0/2 with the twelve names verdict-identical; after the revert every suite is back at its baseline count. | 1270 | A7 is F: all four parts implemented, built and green everywhere including the audit, then refuted on a fourth state nobody had named — reverted, preserved as a re-appliable patch, and the re-do is four lines of C. |

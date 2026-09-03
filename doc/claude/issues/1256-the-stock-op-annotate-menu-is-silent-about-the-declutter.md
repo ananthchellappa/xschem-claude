@@ -104,3 +104,16 @@ Also recorded: the **Waves** door is refused outright under `cadence_compat=1`
 clause producer exists. The door that can actually speak the clause under cadence
 is the **Graphs** door. Any suite row touching the Waves door needs the
 `alert_`, `ase::annot_binding_ok` and `select_raw` stubs.
+
+## Closed by item A7's re-do, 2026-09-03
+
+Item **A7** implemented this, was refuted on a state nobody had named
+(issue **1270** — the declutter counter counted the *rung*, not what came off
+the sheet), was reverted with every line preserved as
+`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`, and was re-done by
+the driver: patch re-applied, the four-line repair added at A7's own edit point,
+and two new suite rows (**A64**, **A65**) that catch the 1270 defect and the
+tempting wrong repair, both proved by sabotage rather than asserted.
+
+Read **1270** for the full account, including the residual risks that survive
+this fix. Item A7 closes feature A of `doc/claude/op_param_batch/PLAN.md`.

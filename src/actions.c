@@ -1762,7 +1762,32 @@ static int text_hidden_core(int flags, int ctx, int n)
      (xctx->annot_show & (ANNOT_SHOW_OP | ANNOT_SHOW_NOPARAM)) ==
                          (ANNOT_SHOW_OP | ANNOT_SHOW_NOPARAM) &&
      !annot_declutter_exempt(flags) &&
-     annot_instance_annotated(n)) return 1;
+     annot_instance_annotated(n)) {
+       /* ⚠ THE COUNTER IS NOT THE RUNG -- ISSUE 1270. The `return 1` above is the
+        * VISIBILITY answer and its position is forced (see the paragraph above);
+        * the COUNT is a different question. Visibility only needs to know that
+        * something says "hide". The status line asks who said it FIRST, because
+        * its sentence is "other device text IS HIDDEN" -- a claim about what the
+        * user can no longer see, not about which predicate fired. The three lines
+        * below are exactly the ones that would have hidden this text anyway, so a
+        * counter bumped unconditionally here says a declutter happened on any
+        * annotated device whose only non-@name text already carries hide=instance
+        * (57 shipped xschem_library/devices/*.sym) or hide=true -- a sheet that is
+        * byte-identical at mask 1 and mask 9. That is issue 1257's own defect in a
+        * fourth state, and it is what refuted item A7's first attempt.
+        *
+        * THE show_hidden_texts ARM IS LOAD-BEARING, in the direction people forget:
+        * with View > Show hidden texts ON -- which both shipped Op-Annotate menu
+        * bodies turn on one line before writing the mask -- a hide=instance text IS
+        * drawn, so the rung really does take it away and the counter MUST bump. A
+        * guard testing only the two HIDE_* bits would fix the chord and break the
+        * menu. Rows A64/A65 drive both halves. */
+       if(xctx->show_hidden_texts ||
+          (!(flags & HIDE_TEXT) &&
+           !(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED))))
+         ++annot_declutter_count;
+       return 1;
+     }
   if(xctx->show_hidden_texts) return 0;
   if(flags & HIDE_TEXT) return 1;
   if(ctx == TEXT_CTX_INSTANCE && (flags & HIDE_TEXT_INSTANTIATED)) return 1;
@@ -1867,6 +1892,29 @@ unsigned int annot_overlay_count = 0;
  * user action -- a `reload` bumps via remove_symbols() AND clear_drawing() --
  * so a counter of invalidation REQUESTS would report 2 where 1 flush happened. */
 unsigned int annot_overlay_flushes = 0;
+
+/* 1257 -- monotonic count of texts the DECLUTTER rung above actually took off the
+ * sheet. Read with `xschem get annot_declutter_count`, in the same shape as the two
+ * counters above it.
+ *
+ * ⚠ IT MEASURES THE RUNG, IT DOES NOT RE-DERIVE THE GATE, and that distinction is
+ * the whole reason it exists. After the value gate landed, `annot_show` carrying
+ * bit0|bit3 stopped meaning "the sheet is decluttered": on a sheet with no results
+ * file -- and on one whose raw loads but publishes nothing for the device -- the
+ * mask is armed and NOTHING is hidden, while `op_annot::_annotated` answers 1 in the
+ * second of those exactly as it does in the first. Every status-line producer that
+ * asked the MASK therefore described a declutter that did not happen (issue 1257).
+ * The honest answer is a measurement taken where the decision is made, so this is
+ * bumped on the rung's single `return 1` and nowhere else; a Tcl caller brackets one
+ * `update_all_sym_bboxes` + `redraw` with two reads and the DELTA is the answer.
+ *
+ * ⚠ NOT annot_overlay_count WEARING A NEW NAME. That one moves for every annotated
+ * instance at bit0 alone, i.e. it says "numbers were painted", not "text was taken
+ * away"; row A58 of tests/headless/test_annot_declutter_1244.tcl is the
+ * discrimination. Both symbol_bbox() and draw_symbol() reach the rung, so the delta
+ * is nonzero after a bbox pass alone -- which is what lets the seam work on the
+ * hidden-text side even where draw() is not reached. */
+unsigned int annot_declutter_count = 0;
 
 /* The observed-state epoch. Any field moving flushes the whole cache.
  * data_seq is the half the epoch CANNOT observe: re-running the same deck and

@@ -1098,7 +1098,8 @@ proc op_annot::_annotated {} {
 # operating-point callers. Invariant I1 is honoured by the CALLERS, not by
 # pretending two different questions are one.
 #
-# ⚠ THE STAMP IS A PATH + mtime + size, AND THAT IS DELIBERATELY CHEAP.
+# ⚠ THE STAMP IS A PATH + mtime + size + A BOUNDED FINGERPRINT OF THE FILE'S OWN
+# BYTES, AND IT IS STILL DELIBERATELY CHEAP.
 # `cadence::_annot_db_print` -- the transient surface's fingerprint -- is one
 # `xschem raw value` per SAVED VECTOR and costs 28.3 ms on a 40000-vector
 # database (issue 0904). The operating-point path reads DEVICE PARAMETER
@@ -1108,10 +1109,43 @@ proc op_annot::_annotated {} {
 # `_annot_db_print` and requires ZERO hits; that grep is why the name must not
 # appear on a code line here.
 #
-# ⚠ KNOWN LIMITATION, STATED RATHER THAN HIDDEN: `file mtime` is 1-second
-# resolution, so a same-second rewrite of identical size is invisible to this
-# stamp. That hole is open on every re-run route and is not closed by anything
-# in this file.
+# ⚠ THE ONE-SECOND HOLE IS NARROWED, NOT CLOSED -- ISSUE 1255. Read the residue
+# paragraph at the end of this comment before quoting this line: what is closed
+# is every same-second rewrite in a file of 8 KiB or less, and every one that
+# touches the first or last 4096 bytes of a larger file. A rewrite confined to
+# the MIDDLE of a bigger file, at exactly the same size, inside the same second,
+# is still invisible -- 82 % of a 45 KB raw, measured. The headline used to say
+# "IS CLOSED" and that is the sentence a later reader would have quoted.
+# `file mtime` is 1-second
+# resolution and Tcl exposes nothing finer, so a run that finished inside the
+# same wall-clock second at the same path and the same length read as UNCHANGED
+# and the sheet went on painting the PREVIOUS run's numbers under "These results
+# were already loaded" -- issue 0684's own headline defect, arriving through the
+# guard that exists to prevent it. It failed in the safe-looking direction: no
+# error, no delay, no missing number, just the wrong one under a sentence saying
+# it was the right one (invariant I3, save.c RULING D5-1).
+#
+# The third term therefore comes FROM THE FILE and never from a counter this
+# process keeps. A "we wrote this" token minted at publish time is a guess about
+# the file: it cannot see a rewrite this process did not do, which is exactly
+# this case -- ngspice rewrites the raw, xschem does not.
+#
+# ⚠ THE WINDOW IS BOUNDED BECAUSE THIS PREDICATE RUNS ON EVERY KEY PRESS and row
+# F35 of tests/headless/test_annot_stale_0684.tcl is its budget (flat in the size
+# of the results file: big <= 3 * small + 100 microseconds). Measured in this
+# interpreter, medians of 21, on F35's own 1,218,055-byte fixture:
+#     mtime+size only          1 us small     1 us big
+#     crc32 head+tail 4096     3 us small     5 us big   <- chosen
+#     crc32 WHOLE FILE         2 us small   239 us big   <- reds F35 leg 4
+#     exec stat -c %.9Y                    1355 us big   <- reds F35 legs 2 and 3,
+#                                                           forks per press, GNU-only
+#
+# ⚠ SO A RESIDUE REMAINS, AND IT IS ASSERTED RATHER THAN GLOSSED: a rewrite
+# confined to the MIDDLE of a file larger than 8 KiB, at exactly the same size,
+# inside the same second, is still invisible. Row F51 pins that as a MEASURED
+# limit -- widen the window and it reds, which is a conversation about F35's
+# budget rather than a silent drift -- and pins its counterweight, that in a file
+# of 8 KiB or less the whole file IS the window.
 
 ## The stamp table. Keyed "<current_win_path>|<normalized raw path>", because
 ## the mask and xctx->raw are BOTH per-context: under the tabbed interface two
@@ -1130,15 +1164,65 @@ proc op_annot::_db_key {np} {
   return "$w|$np"
 }
 
-## {mtime size} for a file, or {} when it cannot be stat'ed. Both terms, not
-## just mtime: a simulator that rewrites within the same second usually changes
-## the length too, so the pair sees a little more than the clock alone.
+## A BOUNDED FINGERPRINT OF <np>'s OWN BYTES: `zlib crc32` over the first 4096
+## and the last 4096 bytes, or over the WHOLE file when it is 8192 bytes or less.
+##
+## THREE ANSWERS, AND THE DIFFERENCE BETWEEN THEM MATTERS:
+##   a crc            -- the file was sampled.
+##   {}               -- it could NOT be sampled (opened, seeked or read failed).
+##                       The caller turns that into an UNKNOWN stamp, which sends
+##                       op_annot::db_current down its re-read path. A constant
+##                       sentinel here would read as "unchanged" and would
+##                       silently restore the very defect this closes -- invariant
+##                       I3 and save.c RULING D5-1: never the previous run's
+##                       number.
+##   NO-ZLIB          -- this interpreter has no `zlib` command (Tcl 8.4/8.5).
+##                       The caller degrades to the old {mtime size} stamp, out
+##                       loud, rather than pretending. This tree runs 8.6.
+proc op_annot::_db_fingerprint {np size} {
+  if {![llength [info commands ::zlib]]} { return NO-ZLIB }
+  set fd {}
+  if {[catch {open $np rb} fd]} { return {} }
+  set d {}
+  if {[catch {
+        if {$size <= 8192} {
+          set d [read $fd]
+        } else {
+          set d [read $fd 4096]
+          seek $fd -4096 end
+          append d [read $fd 4096]
+        }
+      }]} {
+    catch {close $fd}
+    return {}
+  }
+  catch {close $fd}
+  set c {}
+  if {[catch {zlib crc32 $d} c]} { return NO-ZLIB }
+  return $c
+}
+
+## {mtime size fingerprint} for a file, or {} when it cannot be stat'ed OR cannot
+## be sampled. THREE terms since issue 1255, and each earns its place: mtime and
+## size are free and catch almost every re-run, and the fingerprint is what sees
+## the one they cannot -- a re-run that lands inside the same wall-clock second at
+## the same length. On an interpreter with no `zlib` the stamp degrades to the old
+## two terms, which is the old behaviour and is said rather than discovered.
+##
+## ⚠ IT MUST BE OF THE FILE, NOT OF US. A term stirred from a counter or a clock
+## would close issue 1255's first direction by permanently opening its second:
+## every rewrite would look different, including a byte-identical one, and every
+## press would re-read. Row F49 is the guard on that -- its rewrite is
+## byte-identical and this term must come back EQUAL across it.
 proc op_annot::_db_stat {np} {
   set m {}
   set s {}
   if {[catch {file mtime $np} m]} { return {} }
   if {[catch {file size $np} s]} { return {} }
-  return [list $m $s]
+  set fp [::op_annot::_db_fingerprint $np $s]
+  if {$fp eq {NO-ZLIB}} { return [list $m $s] }
+  if {$fp eq {}} { return {} }
+  return [list $m $s $fp]
 }
 
 ## Forget one path's stamp, or -- with no argument -- every stamp belonging to

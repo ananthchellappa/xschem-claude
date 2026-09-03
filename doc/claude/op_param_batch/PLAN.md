@@ -914,7 +914,20 @@ identical" is unverified. Twelve names: `test_altf5_ciw`, `test_ase_core`,
 
 ---
 
-## A7 — the wording follows the gate, and the guards stop lying  ⛔ **NOT LANDED (status F), 2026-09-03 — implemented, built and verified, then REFUTED by its own adversary pass and REVERTED. Re-run it; the work is preserved and needs four lines changed.**  *(needs A6)*
+## A7 — the wording follows the gate, and the guards stop lying  ✅ **DONE, 2026-09-03. FEATURE A IS CLOSED.**
+
+> The crew reached `[F]` honestly: its own adversary refuted the central
+> mechanism (issue **1270** — the declutter counter counted the *rung*, not what
+> came off the sheet), and it reverted rather than ship a suite that was green
+> over a live lie. Nothing was lost — every line was preserved as
+> `A7_working_tree_REFUTED.patch`, dry-run-applied to a pristine extraction
+> before the revert. The driver re-did it from that patch plus a four-line repair
+> at A7's own edit point and two new rows, **A64/A65**, both proved by sabotage
+> rather than asserted. Issues **1255, 1256, 1257, 1261** are closed; **1270** is
+> fixed and carries the residual risks that survive it.
+>
+> **Next: B1-B5, the Results Display Window** — the half the user described first
+> and at greater length, still unstarted.
 
 **A7-a — 1257, the status clause claims a declutter that no longer happens.**
 With no results file, `Ctrl-Alt-6` now correctly hides nothing — but the held
@@ -1079,8 +1092,11 @@ shipped binary does today:
 > captured at simulate time, never asked for from inside the gate (issue 0466,
 > row A35). Also **1264** (a zero-length vector destroys the raw entirely) and
 > **1265** (the rule reached one of three readers of `cursor_b_val[]`).
-> ⚠ A6 did not land — see its entry — so the predicate lives in
-> `A6_working_tree_UNVERIFIED.patch` until A6 is re-run.
+> ✅ **A6 DID land after all** — the crew returned `[F]` because it had destroyed
+> its own unstaged work and was then blocked from building, but the driver built
+> the reconstruction, ran the suite and committed it as **`c8bb41f9`**. So
+> `raw_vector_absent()` is **in the tree now**; read it there, not from
+> `A6_working_tree_UNVERIFIED.patch`.
 
 **Do.** `ase::backend::ngspice::op_param_set <devpath>` → ordered `{param value}`
 pairs, read **from the run's own raw**, plus a capability answer saying whether

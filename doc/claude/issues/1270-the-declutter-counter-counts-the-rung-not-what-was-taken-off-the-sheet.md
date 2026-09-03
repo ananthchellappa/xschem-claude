@@ -1,7 +1,7 @@
 # 1270 — the declutter counter counts the RUNG, not what was taken off the sheet
 
-Status: **open** · Branch: `fluid-editing` · Filed by item **A7**'s write-up
-agent, 2026-09-03, from its own adversary pass.
+Status: **FIXED** by the driver's A7 re-do, 2026-09-03 · Branch: `fluid-editing`
+· Filed by item **A7**'s write-up agent, 2026-09-03, from its own adversary pass.
 Related: **1257** (the defect A7 set out to close), **1256**, **1244**, ruling
 **D-6**, ruling **D-8**.
 
@@ -297,6 +297,53 @@ refutation above; the rest survive the re-do and must be answered by it.
   census could not see `if(0 && text_hidden_inst(0, n))` and the PNG row could
   (`show_pinname=true mask1=16874 mask9=16874` sabotaged, `16874/15189`
   restored), with A36/A37 green throughout.
+
+## THE RE-DO, 2026-09-03 — what the driver actually did
+
+The crew's judgement was right on every count and nothing had to be re-derived.
+`A7_working_tree_REFUTED.patch` applied clean (`git apply --check` green, md5 as
+filed), the repair below went in at A7's own edit point, and the two rows the
+report asked for were written and **proved by sabotage rather than asserted**:
+
+| sabotage | predicted | observed |
+|---|---|---|
+| the 1270 defect restored (unconditional `++`) | A64 red | **A64 red** — seam counts 2 not 0, chord 6 emits the clause, Ctrl-Alt-6 gives the wrong sentence |
+| the tempting repair that tests only the two `HIDE_*` bits | A65 red | **A64 and A65 both red** — A65 is load-bearing exactly as predicted |
+
+**One golden in the first draft was wrong, and the measurement was right.** A64
+was written expecting the stock `Graphs` door to stay silent on the
+counterexample sheet like the two chords. It does not, and it *should* not: the
+menu body runs `set show_hidden_texts 1` (`src/xschem.tcl:17340`, `:17782`) one
+line before it writes the mask, so on that door — and only on that door — the
+`hide=instance` text really is drawn and really is taken away. The clause is
+true. A64 now golden that asymmetry and reads the switch back afterwards to
+prove the reason rather than assert it. **This is not issue 1256 returning:**
+1256 is two doors describing the *same* state differently, and after the menu
+runs the state is not the same.
+
+The other four residual risks the report asked the re-do to answer:
+
+* **A62's blindness — closed, and the mechanism corrected again.** `a7_door` now
+  reports whether the `-command` body raised, and A62 golden `raised` 0 on both
+  doors. But deleting the `info commands` guard alone still raises **nothing** —
+  the call below it is already inside a `catch`, which swallows the error. The
+  mutation the new legs catch is the coarse twin (guard removed *and* the inner
+  `catch` unwrapped), driven and confirmed red. The guard is worth keeping; it is
+  simply not the thing that keeps stock xschem quiet. **The inner catch is.**
+* **A7-c's headline reworded.** `src/op_annot.tcl` said *"THE ONE-SECOND HOLE IS
+  CLOSED"*. It now says **NARROWED, NOT CLOSED**, and quantifies it in the same
+  breath, because the headline is the sentence a later reader quotes.
+* **`_annot_declutter_clause` now guards `hid`** the way it already guarded
+  `mask`. The cost of not guarding it was never a missing clause: every shipped
+  caller wraps the whole message build in `catch`, so a non-boolean would have
+  taken the **entire status line** with it.
+* **A38b compares bytes, not file size.** A crc32 leg each way, with the length
+  kept in the answer so a size-only regression stays legible in the failure text.
+
+Carried forward unfixed, and still listed below: the geometry-pass caveat (2),
+A7-c's blind region growing with file size (4), the two defaulted `_annot_msg`
+call sites (6), the display-arm-only PNG guards (8), the `unsigned` wrap (9), and
+the untested off-screen / disabled-layer case (10).
 
 ## The one thing the next agent must do first
 

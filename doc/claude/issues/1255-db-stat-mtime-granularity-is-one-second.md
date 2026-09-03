@@ -106,3 +106,16 @@ and the cost table are all in
    Widening the window is not free: a full-file crc32 measures **258 µs** against
    a 5 µs baseline and reds F35's `big <= 3*small + 100` leg. `exec stat -c %.9Y`
    measures 1460–1772 µs, reds two more legs, forks per press and is GNU-only.
+
+## Closed by item A7's re-do, 2026-09-03
+
+Item **A7** implemented this, was refuted on a state nobody had named
+(issue **1270** — the declutter counter counted the *rung*, not what came off
+the sheet), was reverted with every line preserved as
+`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`, and was re-done by
+the driver: patch re-applied, the four-line repair added at A7's own edit point,
+and two new suite rows (**A64**, **A65**) that catch the 1270 defect and the
+tempting wrong repair, both proved by sabotage rather than asserted.
+
+Read **1270** for the full account, including the residual risks that survive
+this fix. Item A7 closes feature A of `doc/claude/op_param_batch/PLAN.md`.

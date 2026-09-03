@@ -18,7 +18,7 @@
 # The draw-time rung is item A3 and the name classifier is item A2; A2 and A3
 # add their rows to THIS file.
 #
-# ⚠ THE FILE NOW COVERS SIX ITEMS, IN SIX PASSES OVER ONE FEATURE:
+# ⚠ THE FILE NOW COVERS SEVEN ITEMS, IN SEVEN PASSES OVER ONE FEATURE:
 #   sections D M S T V I   item A1 — the mask bit and the Ctrl-Alt-6 chord
 #   section  N             item A2 — TEXT_ANNOT_NAME, the name classifier
 #   section  A, A0..A29    item A3 — THE DRAW RUNG, the per-instance D-6 gate,
@@ -43,6 +43,24 @@
 #                          annot_overlay_sync() in select.c 0 -> 1, which is a
 #                          deliberate reversal of the option issue 1252
 #                          rejected and is argued out loud beside the row.
+#   section  A, A57..A63   item A7 — THE WORDING FOLLOWS THE GATE. After A5-a's
+#   plus A38b/A38c         value gate the declutter hides nothing on a sheet
+#   plus E7..E9            with no numbers, and BOTH the clause (1257) and the
+#   plus V1c               two stock menu doors (1256) went on describing a
+#                          declutter that did not happen. A7 adds a C seam that
+#                          MEASURES the rung (`xschem get annot_declutter_count`)
+#                          rather than re-deriving the gate, gives the clause a
+#                          third term, and gives both stock doors ONE shared
+#                          tail that borrows the ONE mint. It also replaces
+#                          A38's belief that draw.c has no behavioural window
+#                          with row A38b, which drives `print png` through
+#                          `print_image()` -> `draw()` (issue 1261).
+#                          A7 EDITS four goldens, each argued beside its row:
+#                          V2a DC_ON -> DC_ARM, E4 leg 5 1 -> 0, E6 leg 8 1 -> 0,
+#                          and S8/S9/B1 grow a `hid` term. ⚠ Its plan cells name
+#                          these rows A54..A60; item A6 had already taken those
+#                          numbers in this file, so they are shifted by three —
+#                          the mapping is recorded at the head of the A57 block.
 # Rows N10 and N14 were written by A2 as "A3 MUST REPLACE" / "1249 PINNED" and
 # were flipped in place by A3; row I2 was superseded by row A3 and re-purposed.
 # Each carries the reason on itself. Section A's own header lists which of its
@@ -209,6 +227,20 @@ proc dc_ngrep {path re} {
 proc dc_ans {cmd args} {
   if {![llength [info commands $cmd]]} { return NOPROC }
   set rc [catch {uplevel #0 [linsert $args 0 $cmd]} r]
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+## THE SAME DISCIPLINE FOR THE *ARITY* OF `cadence::_annot_msg`, AND IT IS NOT
+## STYLE. Item A7 gives it an OPTIONAL trailing `hid` (issue 1257). Until that
+## lands a six-argument call RAISES, and a raise from a sweep at global level
+## under --pipe stops Tcl_AppInit DEAD -- measured here: the whole file died at
+## row S8 with twenty `ok` lines and NO verdict, which is verbatim the failure
+## item A2's lesson 6 records. Every call in this file that passes the new
+## argument goes through this wrapper, so a missing arity reds the rows that
+## claim it instead of deleting the rest of the suite.
+proc dc_msg {args} {
+  if {![llength [info commands ::cadence::_annot_msg]]} { return NOPROC }
+  set rc [catch {uplevel #0 [linsert $args 0 ::cadence::_annot_msg]} r]
   if {$rc} { return "RAISED:$r" }
   return $r
 }
@@ -536,38 +568,60 @@ check_raises "S7 cadence::_annot_mask still RAISES on `declutter` - the toggle i
 ##      where bit 0 is clear and leg 2 covers it.
 ##   4. the difference is EXACTLY the clause and nothing else -- which is what
 ##      keeps the eight arms, and therefore V21, byte-identical.
+##   5. ⚠ ITEM A7 ADDS A THIRD TERM AND A FIFTH LEG: `hid`. After item A5-a the
+##      draw rung needs a NUMBER (ruling D-6), so on a sheet with no results
+##      file -- or with a raw that publishes nothing for the device -- bit3 AND
+##      bit0 are both set and NOTHING IS HIDDEN. Issue 1257. The clause must
+##      follow the gate, so `cadence::_annot_msg` takes an OPTIONAL trailing
+##      `hid` (defaulting to 0, so the 29 foreign call sites in
+##      tests/headless/test_op_annot.tcl -- which sweep masks 0..7 only -- cannot
+##      move) and legs 1..4 now say what happens WHEN SOMETHING WAS HIDDEN.
+##      Leg 5 is the new half: at `hid` 0 the clause appears in NONE of the eight
+##      states at either mask, i.e. the sentence stops claiming a declutter that
+##      did not happen.
 set S8_STATES {off live noop loaded failed noraw nopath stale}
 set S8_DIFF {}
 foreach st {live loaded} {
   foreach p {1 3 5 7} {
-    lappend S8_DIFF [expr {[cadence::_annot_msg $p $st /tmp/zz.raw {}] ne \
-                           [cadence::_annot_msg [expr {$p | 8}] $st /tmp/zz.raw {}] ? 1 : 0}]
+    lappend S8_DIFF [expr {[dc_msg $p $st /tmp/zz.raw {} {} 1] ne \
+                           [dc_msg [expr {$p | 8}] $st /tmp/zz.raw {} {} 1] ? 1 : 0}]
   }
 }
 set S8_SAME {}
 foreach st $S8_STATES {
   foreach p {0 2 4 6} {
-    lappend S8_SAME [expr {[cadence::_annot_msg $p $st /tmp/zz.raw {}] eq \
-                           [cadence::_annot_msg [expr {$p | 8}] $st /tmp/zz.raw {}] ? 1 : 0}]
+    lappend S8_SAME [expr {[dc_msg $p $st /tmp/zz.raw {} {} 1] eq \
+                           [dc_msg [expr {$p | 8}] $st /tmp/zz.raw {} {} 1] ? 1 : 0}]
   }
 }
 ## NAMED, not counted: a golden of ones would read the same whichever way the
 ## comparison ran, and this leg was inverted once already.
 set S8_ST {}
 foreach st $S8_STATES {
-  if {[cadence::_annot_msg 9 $st /tmp/zz.raw {}] ne \
-      [cadence::_annot_msg 1 $st /tmp/zz.raw {}]} { lappend S8_ST $st }
+  if {[dc_msg 9 $st /tmp/zz.raw {} {} 1] ne \
+      [dc_msg 1 $st /tmp/zz.raw {} {} 1]} { lappend S8_ST $st }
 }
 set S8_ONLY {}
 foreach st $S8_STATES {
   lappend S8_ONLY [expr {[string map [list $DC_CLAUSE {}] \
-                           [cadence::_annot_msg 9 $st /tmp/zz.raw {}]] eq \
-                         [cadence::_annot_msg 1 $st /tmp/zz.raw {}] ? 1 : 0}]
+                           [dc_msg 9 $st /tmp/zz.raw {} {} 1]] eq \
+                         [dc_msg 1 $st /tmp/zz.raw {} {} 1] ? 1 : 0}]
 }
-check "S8 ISSUE 1251 FIXED: with bit0 set the sentence names the declutter in EVERY state, with bit0 clear it does not (D-8), and the whole difference is the clause" \
-  [list $S8_DIFF $S8_SAME $S8_ST $S8_ONLY] \
+## ITEM A7 / ISSUE 1257 -- THE hid=0 TWIN. Nothing was hidden, so no mask may
+## produce the clause. Counted as a NUMBER OF OFFENDING STATES so the failure
+## line names how wide the lie is, and the default-argument form is swept too:
+## a caller that does not know whether anything was hidden must not claim it did.
+set S8_NOHID 0
+foreach st $S8_STATES {
+  foreach p {9 11 13 15} {
+    if {[string first $DC_CLAUSE [dc_msg $p $st /tmp/zz.raw {} {} 0]] >= 0} { incr S8_NOHID }
+    if {[string first $DC_CLAUSE [dc_msg $p $st /tmp/zz.raw {}]] >= 0} { incr S8_NOHID }
+  }
+}
+check "S8 ISSUE 1251 FIXED: with bit0 set AND something hidden the sentence names the declutter in EVERY state, with bit0 clear it does not (D-8), the whole difference is the clause, and with NOTHING HIDDEN no mask names it at all (issue 1257)" \
+  [list $S8_DIFF $S8_SAME $S8_ST $S8_ONLY $S8_NOHID] \
   [list {1 1 1 1 1 1 1 1} {1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1} \
-        {off live noop loaded failed noraw nopath stale} {1 1 1 1 1 1 1 1}]
+        {off live noop loaded failed noraw nopath stale} {1 1 1 1 1 1 1 1} 0]
 
 ## ---------------------------------------------------------------------------
 ## S9 — ONE MINTER, PURE, AND `_annot_msg` CALLS IT RATHER THAN SPELLING IT
@@ -581,21 +635,29 @@ check "S8 ISSUE 1251 FIXED: with bit0 set the sentence names the declutter in EV
 ##
 ## ⚠ THE LITERAL IS COUNTED ON CODE LINES ONLY (dc_ngrep). Prose above the proc
 ## may quote the sentence freely; a SECOND code line spelling it is the defect.
+##
+## ⚠ ITEM A7 GIVES IT A SECOND ARGUMENT, `hid`, AND IT IS STILL PURE. The gate
+## is now bit3 AND bit0 AND "something was actually hidden" (issue 1257). The
+## third term is PASSED IN by each of the two consumers rather than looked up:
+## a minter that reached for `xschem get annot_declutter_count` itself would
+## make the wording depend on session state and would put a C-seam read inside a
+## pure function, which is the family discipline rows V1a/V1b/V1c keep.
 set S9_SRC [opa_slurp $DC_SRC]
-dc_setmask 0  ; set S9_P0 [dc_ans ::cadence::_annot_declutter_clause 9]
-dc_setmask 15 ; set S9_P1 [dc_ans ::cadence::_annot_declutter_clause 9]
+dc_setmask 0  ; set S9_P0 [dc_ans ::cadence::_annot_declutter_clause 9 1]
+dc_setmask 15 ; set S9_P1 [dc_ans ::cadence::_annot_declutter_clause 9 1]
 dc_setmask 0
-check "S9 the clause is minted in ONE PURE proc, gated on bit3 AND bit0, spelled on exactly one code line, and _annot_msg CALLS the minter" \
-  [list [dc_ans ::cadence::_annot_declutter_clause 9] \
-        [dc_ans ::cadence::_annot_declutter_clause 15] \
-        [dc_ans ::cadence::_annot_declutter_clause 1] \
-        [dc_ans ::cadence::_annot_declutter_clause 8] \
-        [dc_ans ::cadence::_annot_declutter_clause 0] \
+check "S9 the clause is minted in ONE PURE proc, gated on bit3 AND bit0 AND hid (issue 1257), spelled on exactly one code line, and _annot_msg CALLS the minter" \
+  [list [dc_ans ::cadence::_annot_declutter_clause 9 1] \
+        [dc_ans ::cadence::_annot_declutter_clause 15 1] \
+        [dc_ans ::cadence::_annot_declutter_clause 1 1] \
+        [dc_ans ::cadence::_annot_declutter_clause 8 1] \
+        [dc_ans ::cadence::_annot_declutter_clause 0 1] \
+        [dc_ans ::cadence::_annot_declutter_clause 9 0] \
         [expr {$S9_P0 eq $S9_P1 ? 1 : 0}] \
         [dc_ngrep $DC_SRC {Decluttering is on, so other device text is hidden}] \
         [expr {[string first {_annot_declutter_clause} \
                  [opa_proc_src $S9_SRC cadence::_annot_msg]] >= 0 ? 1 : 0}]] \
-  [list $DC_CLAUSE $DC_CLAUSE {} {} {} 1 1 1]
+  [list $DC_CLAUSE $DC_CLAUSE {} {} {} {} 1 1 1]
 
 ## ---------------------------------------------------------------------------
 ## S10 — IT COMPOSES WITH ITEM A1's THREE SENTENCES, IT DOES NOT REPLACE THEM
@@ -604,12 +666,13 @@ check "S9 the clause is minted in ONE PURE proc, gated on bit3 AND bit0, spelled
 ## A4's to reword. This row is the guard on that: they are asserted byte for
 ## byte against the same goldens A1 shipped, and the clause is required to be a
 ## FOURTH string minted by a SECOND proc.
-set S10_CL [dc_ans ::cadence::_annot_declutter_clause 9]
+set S10_CL [dc_ans ::cadence::_annot_declutter_clause 9 1]
 check "S10 the clause COMPOSES with A1's three sentences: DC_ON / DC_ARM / DC_OFF byte-identical (rule debt 1244 is the user's, not A4's) and the clause is a fourth string from a second proc" \
   [list [dc_ans ::cadence::_annot_declutter_msg 1 1] \
         [dc_ans ::cadence::_annot_declutter_msg 1 0] \
         [dc_ans ::cadence::_annot_declutter_msg 0 1] \
         [expr {($S10_CL ne {} && $S10_CL ne {NOPROC} && \
+                ![string match {RAISED:*} $S10_CL] && \
                 [string trim $S10_CL] ne $DC_ON && \
                 [string trim $S10_CL] ne $DC_ARM && \
                 [string trim $S10_CL] ne $DC_OFF) ? 1 : 0}] \
@@ -779,14 +842,46 @@ dc_setmask 0
 check "V1b the minter is PURE: the same arguments give the same sentence at mask 0 and at mask 15" \
   [list [expr {$v1p0 eq $v1p1}] [expr {$v1p0 eq $DC_ON}]] {1 1}
 
+## ---------------------------------------------------------------------------
+## V1c — ITEM A7 / ISSUE 1257: THE CLAUSE IS PURE IN **TWO** ARGUMENTS
+## ---------------------------------------------------------------------------
+## `cadence::_annot_declutter_clause` grows a second argument, `hid`, because
+## after item A5-a the draw rung requires a NUMBER (ruling D-6) and the clause
+## was still gated on the mask alone — so on a sheet with no results file the
+## held line said other device text was hidden when nothing was. The third term
+## is SUPPLIED by the caller and never looked up here: this row is what keeps
+## the whole sentence family pure, exactly as V1a/V1b do for the chord's own
+## minter. Five mask cases at hid 1, the same five at hid 0, and the purity pair
+## at live masks 0 and 15.
+set V1C {}
+foreach a {{9 1} {15 1} {1 1} {8 1} {0 1} {9 0} {15 0} {11 0}} {
+  lappend V1C [dc_ans ::cadence::_annot_declutter_clause [lindex $a 0] [lindex $a 1]]
+}
+dc_setmask 0  ; set v1cp0 [dc_ans ::cadence::_annot_declutter_clause 9 1]
+dc_setmask 15 ; set v1cp1 [dc_ans ::cadence::_annot_declutter_clause 9 1]
+dc_setmask 0
+check "V1c the clause is a PURE function of BOTH arguments: it needs bit3, bit0 and hid, and the live mask never reaches it" \
+  [list $V1C [expr {$v1cp0 eq $v1cp1 ? 1 : 0}] [expr {$v1cp0 eq $DC_CLAUSE ? 1 : 0}]] \
+  [list [list $DC_CLAUSE $DC_CLAUSE {} {} {} {} {} {}] 1 1]
+
 ## The chord really speaks, on the HELD status line, LAST.
+##
+## ⚠ V2a's GOLDEN WAS FLIPPED BY ITEM A7 — DC_ON BECAME DC_ARM, AND IT IS THE
+## SAME DEFECT AS ISSUE 1257. This section runs before any fixture exists: there
+## is no descriptor registered, no raw loaded and no annotated instance, so the
+## declutter hides NOTHING here. Item A1 wrote `gated` as bit 0 alone, so the
+## chord announced "a device showing operating-point values draws its name and
+## those values only" about a session where no device shows any. The gate is now
+## bit 0 AND "something was actually hidden", which is DC_ARM's own state —
+## armed, and waiting for numbers. The DC_ON half is not lost: rows E8/E9 drive
+## it end to end on a VALUED fixture, which is the only state that earns it.
 dc_setmask 1 ; dc_fire <Control-Alt-Key-6>
 set v2a [list [dc_mask] [xschem get statusmsg]]
 dc_fire <Control-Alt-Key-6>
 set v2b [list [dc_mask] [xschem get statusmsg]]
 dc_setmask 0 ; dc_fire <Control-Alt-Key-6>
 set v2c [list [dc_mask] [xschem get statusmsg]]
-check "V2a with OP showing, Ctrl-Alt-6 sets mask 9 and says the ON sentence" $v2a [list 9 $DC_ON]
+check "V2a ISSUE 1257: with OP showing but NOTHING annotated, Ctrl-Alt-6 sets mask 9 and says the ARMED sentence, not the ON one" $v2a [list 9 $DC_ARM]
 check "V2b a second press restores mask 1 and says the OFF sentence"        $v2b [list 1 $DC_OFF]
 check "V2c from mask 0 it sets mask 8 and says so - decluttering armed but inert" $v2c [list 8 $DC_ARM]
 dc_setmask 0
@@ -794,18 +889,33 @@ dc_setmask 0
 ## The structural row: the tail order the whole annotation surface uses, and the
 ## two things this proc must NOT do. Sabotage SB8 (dropping the redraw pair) is
 ## invisible until A3, so it has to be seen HERE, in the source.
+##
+## ⚠ ITEM A7 MOVED THE PAIR INTO A HELPER, AND THE ORDER MOVED WITH IT. The
+## refresh pair is now `cadence::_annot_declutter_refresh`, which owns
+## `update_all_sym_bboxes` -> `xschem redraw` AND the two reads of the C seam
+## `xschem get annot_declutter_count` that bracket them — that delta IS the
+## answer to "was anything actually hidden" (issue 1257), measured at the rung
+## rather than re-derived from a second copy of the gate. Three tails call it
+## (`annot_mode`, `annot_tran`, `annot_declutter`), which is invariant I1 in this
+## file's own shape: one measurement, three consumers.
 set V3B [opa_proc_src [opa_slurp $DC_SRC] cadence::annot_declutter]
-set v3_i_bbox [string first {update_all_sym_bboxes} $V3B]
-set v3_i_draw [string first {xschem redraw} $V3B]
+set V3R [opa_proc_src [opa_slurp $DC_SRC] cadence::_annot_declutter_refresh]
+set v3_i_ref  [string first {_annot_declutter_refresh} $V3B]
 set v3_i_stat [string first {statusmsg -hold} $V3B]
-check "V3 annot_declutter: integer-guards the pulled mask, tails bboxes -> redraw -> held status line LAST, uses _annot_fit, and never _annot_say" \
+set v3_r_bbox [string first {update_all_sym_bboxes} $V3R]
+set v3_r_draw [string first {xschem redraw} $V3R]
+set v3_r_cnt  [string last  {annot_declutter_count} $V3R]
+check "V3 annot_declutter: integer-guards the pulled mask, tails the refresh helper -> held status line LAST, uses _annot_fit, never _annot_say; and the helper holds bboxes -> redraw -> the second counter read" \
   [list [expr {[regexp {string is integer -strict} $V3B] ? 1 : 0}] \
-        [expr {$v3_i_bbox > 0 ? 1 : 0}] \
-        [expr {$v3_i_draw > $v3_i_bbox ? 1 : 0}] \
-        [expr {$v3_i_stat > $v3_i_draw ? 1 : 0}] \
+        [expr {$v3_i_ref > 0 ? 1 : 0}] \
+        [expr {$v3_i_stat > $v3_i_ref ? 1 : 0}] \
         [expr {[regexp {cadence::_annot_fit} $V3B] ? 1 : 0}] \
-        [expr {[regexp {cadence::_annot_say} $V3B] ? 1 : 0}]] \
-  {1 1 1 1 1 0}
+        [expr {[regexp {cadence::_annot_say} $V3B] ? 1 : 0}] \
+        [expr {[string length $V3R] > 0 ? 1 : 0}] \
+        [expr {$v3_r_bbox > 0 ? 1 : 0}] \
+        [expr {$v3_r_draw > $v3_r_bbox ? 1 : 0}] \
+        [expr {$v3_r_cnt > $v3_r_draw ? 1 : 0}]] \
+  {1 1 1 1 0 1 1 1 1}
 
 # ============================================================================
 # SECTION I — THE INVARIANTS
@@ -2337,7 +2447,22 @@ check "A37 1253 PS: the PostScript agrees with the SVG - (MP1) at both masks, (A
         [regexp {\(PD\)} $A5_PS9] [regexp {\(PG\)} $A5_PS9]] \
   {1 1 1 0 1 0 0 0}
 
-## ⚠ THE draw.c LEG, WHICH HAS NO BEHAVIOURAL WINDOW (see the section header).
+## ⚠ A38 IS A SHAPE CENSUS, AND ITS CLAIM ABOUT draw.c WAS WRONG — ISSUE 1261.
+## It used to carry the sentence "the draw.c leg has no behavioural window", and
+## the whole of item A5-b's screen-renderer evidence rested on it. Both halves of
+## the reasoning were true — `draw()`'s body is inside `if(has_x)` and pin names
+## bump no counter — and the conclusion still did not follow: `print_image()`
+## (src/draw.c) sets `draw_no_ui_decorations` and then calls `draw()` directly,
+## `scheduler.c`'s print arm says so in its own comment ("png uses the screen
+## draw() path"), this suite already runs under a display, and a decluttered pin
+## name is visible in the PNG's bytes. A grep census is defeated by any refactor
+## that keeps the token and moves the behaviour — `if(0 && text_hidden_inst(0,
+## n))` reads identically to this row — which is the failure mode item A5-d
+## existed to close for two other rows. **ROW A38b IS THAT WINDOW**; this row
+## keeps its structural legs unchanged, because the SHAPE claims (one call per
+## loop, on the line right after pin_name_visible(), zero in select.c) are still
+## worth pinning and A38b cannot see any of them.
+##
 ## The guard must be the EXISTING predicate — `text_hidden_inst(0, n)`, issue
 ## 1253's own recommended one-liner — and it must sit on the line immediately
 ## after pin_name_visible() and BEFORE get_pin_name_layout(), so the pnm/pfont
@@ -2347,7 +2472,7 @@ check "A37 1253 PS: the PostScript agrees with the SVG - (MP1) at both masks, (A
 ## symbol_bbox() has no P6 pass and adding one would be new geometry, not a
 ## conformance gap (recorded as 1253's residue).
 set A38_ANCHOR {if(!pin_name_visible(pin->prop_ptr)) continue;}
-check "A38 1253 STRUCTURAL: one text_hidden_inst(0, n) in each of the three P6 loops, on the line right after pin_name_visible(), and none in select.c" \
+check "A38 1253 STRUCTURAL (the SHAPE only - the draw.c BEHAVIOUR is row A38b, issue 1261): one text_hidden_inst(0, n) in each of the three P6 loops, on the line right after pin_name_visible(), and none in select.c" \
   [list [a5_ccount $A_DRAW {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
         [a5_ccount $A_SVGD {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
         [a5_ccount $A_PS   {text_hidden_inst\(\s*0\s*,\s*n\s*\)}] \
@@ -2356,6 +2481,148 @@ check "A38 1253 STRUCTURAL: one text_hidden_inst(0, n) in each of the three P6 l
         [a5_after_line $A_SVGD $A38_ANCHOR {text_hidden_inst}] \
         [a5_after_line $A_PS   $A38_ANCHOR {text_hidden_inst}]] \
   {1 1 1 0 1 1 1}
+
+## ---------------------------------------------------------------------------
+## A38b — ISSUE 1261: THE SCREEN RENDERER'S OWN WINDOW, DRIVEN
+## ---------------------------------------------------------------------------
+## `xschem print png` renders THROUGH `draw()`: `print_image()` (src/draw.c) sets
+## `draw_no_ui_decorations` and calls `draw()`, and `scheduler.c`'s print arm
+## syncs `pin_names_sync_cache()` and `annot_show_sync_cache()` first and says in
+## its own comment that "png uses the screen draw() path". So the third back end
+## of issue 1253 — the one row A38 guards by GREP — has a behavioural seam after
+## all, and this row is it.
+##
+## ⚠ RELATIONS, NEVER ABSOLUTE BYTE GOLDENS. Issue 1261 rejects them explicitly
+## and it is right: they are cairo / libpng / depth / font dependent, and the
+## sizes measured here differ from the ones in 1261's own report by about 3 kB on
+## the same fixture. What is asserted is: with `show_pinname=true` the two masks
+## differ, with `show_pinname=false` they are byte-identical, and all four files
+## exist, carry the PNG magic and are non-empty.
+##
+## ⚠ THE FIXTURE CARRIES **ONLY** `@name` PLUS THE PIN, AND THAT IS NOT TIDINESS.
+## Row A36's fixture also carries `A5PW=@w`, which the rung hides on its own — so
+## the `show_pinname=false` twin would ALSO differ between the masks and the
+## non-vacuity control would be worthless. Measured that false negative while
+## writing this row. One text record, one pin, one difference.
+##
+## ⚠ A TIGHT VIEWPORT. At the suite's usual 2400x1600 wide frame the pin name can
+## be zoom-culled at both masks and the two PNGs come out byte-identical — the
+## first attempt at this measurement in issue 1261 produced exactly that false
+## negative. The wide frame is REPORTED by row A38c below and asserted by nothing.
+##
+## ⚠ WARM-THEN-REAL, like every other export in this file, and `> 0` legs are not
+## decoration: under `--nogui` `print_image()` early-returns on `!has_x` and
+## `xschem print png` is a silent no-op — rc 0, empty result, NO FILE — so without
+## them this row would pass vacuously on the wrong arm. This suite needs X anyway
+## (row R1), but the legs say so rather than assuming it.
+set A38_TSYM [file join $scratch a38pin_true.sym]
+set A38_FSYM [file join $scratch a38pin_false.sym]
+set A38_TFIX [file join $scratch a38pin_true.sch]
+set A38_FFIX [file join $scratch a38pin_false.sch]
+set A38_RAW  [file join $scratch a38pin.raw]
+foreach {A38_P A38_SHOW} [list $A38_TSYM true $A38_FSYM false] {
+  set A5_FD [open $A38_P w]
+  puts $A5_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=a3nmos
+format=\"@spiceprefix@name @pinlist @model w=@w\"
+template=\"name=MQ1 model=a3n w=1u spiceprefix=X\"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -12.5 -17.5 -7.5 {name=PD dir=inout show_pinname=$A38_SHOW}
+T {@name} 0 -40 0 0 0.2 0.2 {}"
+  close $A5_FD
+}
+foreach {A38_P A38_S} [list $A38_TFIX $A38_TSYM $A38_FFIX $A38_FSYM] {
+  set A5_FD [open $A38_P w]
+  puts $A5_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$A38_S\} 300 -300 0 0 \{name=MQ1\}"
+  close $A5_FD
+}
+## THE TIGHT FRAME issue 1261 measured, and the wide one row A38c reports.
+set A38_VPT {1200 900 250 -360 460 -240}
+set A38_VPW {2400 1600 100 -420 1000 -20}
+proc a38_png {out vp} {
+  if {[catch {eval [linsert $vp 0 xschem print png $out]} r]} { return RAISED:$r }
+  if {![file isfile $out]} { return NO-FILE }
+  return [file size $out]
+}
+proc a38_png2 {out vp} { a38_png $out.warm $vp ; return [a38_png $out $vp] }
+## The PNG magic, so a zero-length or truncated file cannot satisfy a `differ` leg.
+proc a38_magic {out} {
+  if {![file isfile $out]} { return NO-FILE }
+  if {[catch {open $out rb} fd]} { return NO-OPEN }
+  set d [read $fd 8] ; close $fd
+  return [expr {[string range $d 1 3] eq {PNG} ? 1 : 0}]
+}
+## ⚠ THE FILE'S BYTES, NOT ITS LENGTH. `a38_png` answers a SIZE, and a rendering
+## change that happens to compress to the same number of bytes satisfies both a
+## `differ` leg and an `identical` leg written on sizes alone. Low probability,
+## and cheap enough to remove rather than to reason about. Length is kept in the
+## answer so a size-only regression is still legible in the failure text.
+proc a38_sum {out} {
+  if {![file isfile $out]} { return NO-FILE }
+  if {[catch {open $out rb} fd]} { return NO-OPEN }
+  fconfigure $fd -translation binary
+  set d [read $fd] ; close $fd
+  return [list [string length $d] [zlib crc32 $d]]
+}
+## Load, then op_annot::vector, then mint — section A's own order.
+foreach {A38_K A38_FIXP} [list T $A38_TFIX F $A38_FFIX] {
+  catch {xschem raw clear}
+  xschem load $A38_FIXP
+  update idletasks
+  if {$A38_K eq {T}} {
+    set A38_PP {}
+    catch {lappend A38_PP [op_annot::vector MQ1 zid] 1.11e-05 \
+                          [op_annot::vector MQ1 zgm] 3.33e-04}
+    a3_mkraw $A38_RAW $A38_PP
+  }
+  catch {xschem annotate_op $A38_RAW 0}
+  update idletasks
+  foreach A38_M {1 9} {
+    dc_annot $A38_M
+    set A38_SZ($A38_K$A38_M) [a38_png2 [file join $scratch a38_$A38_K$A38_M.png] $A38_VPT]
+    set A38_MG($A38_K$A38_M) [a38_magic [file join $scratch a38_$A38_K$A38_M.png]]
+    set A38_BY($A38_K$A38_M) [a38_sum [file join $scratch a38_$A38_K$A38_M.png]]
+    set A38_WD($A38_K$A38_M) [a38_png2 [file join $scratch a38w_$A38_K$A38_M.png] $A38_VPW]
+  }
+}
+dc_annot 0
+puts "PNG| A38b tight viewport {$A38_VPT}: show_pinname=true mask1=$A38_SZ(T1) mask9=$A38_SZ(T9) ; show_pinname=false mask1=$A38_SZ(F1) mask9=$A38_SZ(F9)"
+check "A38b 1261 BEHAVIOURAL: the declutter is visible in the SCREEN RENDERER's own output - print png goes through print_image() -> draw(), so at a tight viewport the show_pinname=true PNGs differ between mask 1 and mask 9 while the show_pinname=false twin is byte-identical" \
+  [list [expr {[string is integer -strict $A38_SZ(T1)] && $A38_SZ(T1) > 0 ? 1 : 0}] \
+        [expr {[string is integer -strict $A38_SZ(T9)] && $A38_SZ(T9) > 0 ? 1 : 0}] \
+        [expr {[string is integer -strict $A38_SZ(F1)] && $A38_SZ(F1) > 0 ? 1 : 0}] \
+        [expr {[string is integer -strict $A38_SZ(F9)] && $A38_SZ(F9) > 0 ? 1 : 0}] \
+        [list $A38_MG(T1) $A38_MG(T9) $A38_MG(F1) $A38_MG(F9)] \
+        [expr {$A38_SZ(T1) ne $A38_SZ(T9) ? 1 : 0}] \
+        [expr {$A38_SZ(F1) eq $A38_SZ(F9) ? 1 : 0}] \
+        [expr {$A38_BY(T1) ne $A38_BY(T9) ? 1 : 0}] \
+        [expr {$A38_BY(F1) eq $A38_BY(F9) ? 1 : 0}]] \
+  [list 1 1 1 1 {1 1 1 1} 1 1 1 1]
+
+## ---------------------------------------------------------------------------
+## A38c — ISSUE 1261's ZOOM CULL: REPORTED, NOT ASSERTED
+## ---------------------------------------------------------------------------
+## 1261 warns that at a wide viewport the pin name is zoom-culled at both masks
+## and the two PNGs come out byte-identical. That did NOT reproduce on this
+## binary and this display (both frames separate the masks), and a leg that
+## depends on font metrics and a cull threshold is how a display-sensitive red
+## enters the audit — issue 1269 is already one such red this batch may not add
+## to. So the wide-frame numbers are PRINTED, in row F35's `COST|` idiom, and the
+## claim stays visible without becoming a check.
+puts "PNG| A38c wide viewport {$A38_VPW}: show_pinname=true mask1=$A38_WD(T1) mask9=$A38_WD(T9) ; show_pinname=false mask1=$A38_WD(F1) mask9=$A38_WD(F9)"
 
 ## INVARIANT I-C FOR THE PIN PASS (ruling D-8: "declutter is active ONLY when OP
 ## info is displayed"). Green before and after — it reds a fix that hides pin
@@ -2960,6 +3227,576 @@ dc_annot 0
 
 
 # ============================================================================
+# A57..A63 — ITEM A7: THE SEAM THAT MEASURES THE GATE, AND THE TWO STOCK DOORS
+# ============================================================================
+# Two of item A7's four parts land here.
+#
+#   A57 A58   A7-a / ISSUE 1257 — the C SEAM. "Was anything actually hidden" is
+#             answered by the RENDERER, not by a second copy of the gate: the
+#             declutter rung in `text_hidden_core()` bumps a counter, and the
+#             counter is read back as `xschem get annot_declutter_count`, in the
+#             exact shape `annot_overlay_count` already has (declared in
+#             src/actions.c, exported in src/xschem.h, one three-line `get` arm
+#             in src/scheduler.c). A Tcl twin of `annot_block_has_value` was
+#             REJECTED — a second parser of `op_annot::text`'s block format is
+#             precisely how issue 1252 became 1260 — and so was an
+#             instance-walking accessor, which would tcleval into
+#             `::op_annot::text` from inside a `get` and re-open issue 0466
+#             (row A35).
+#   A59..A63  A7-b / ISSUE 1256 — the two STOCK doors. `Waves > Op Annotate` and
+#             `Simulation > Graphs > Annotate Operating Point into schematic`
+#             both preserve bit 3 deliberately and then say NOTHING, so a user
+#             who armed the declutter with Ctrl-Alt-6 and then annotates from the
+#             MENU gets a stripped sheet and not a word about why. Both bodies
+#             now tail into ONE new stock proc that owns the refresh pair and,
+#             behind `info commands ::cadence::_annot_declutter_clause`, borrows
+#             the ONE mint.
+#
+# ⚠ THE ROW NUMBERS SKIP A54..A56. The plan's cells name these rows A54..A60;
+# those numbers were already taken by item A6 in this same file, so they are
+# shifted by three and the mapping is recorded here rather than silently:
+# plan A54->A57, A55->A58, A56->A59, A57->A60, A58->A61, A59->A62, A60->A63.
+#
+# ⚠ WHICH ROWS ARE RED BEFORE A7 LANDS, AND WHICH ARE CONTROLS.
+#   RED (6): A57 A58 A59 A60 A61 A63
+#   GREEN BEFORE AND AFTER (1): A62 — the stock-xschem guarantee. With the
+#     cadence mint renamed away both doors must still run, still merge the mask
+#     and still say nothing; today they say nothing in EVERY profile, so this row
+#     passes on the unmodified tree. It is here for the sabotage
+#     SB-A7b-DOOR-UNGUARDED, which deletes the `info commands` guard and makes
+#     the stock profile raise inside a menu -command.
+#
+# ⚠ THE TRAP NEITHER ISSUE MENTIONS, MEASURED: `src/cadence_style_rc:40` sets
+# `cadence_compat 1`, and `Waves > Op Annotate` carries `waves_gate_blocked` as
+# the LEFT term of its guard — so in the ONE profile where
+# `::cadence::_annot_declutter_clause` exists, door 1 is REFUSED and pops a
+# blocking `alert_` (`tkwait window .alert`, its `grab` commented out). Every row
+# below therefore parks `alert_`, `select_raw` and `ase::annot_binding_ok`, and
+# row A60 toggles `::cadence_compat` explicitly around its two legs. Without the
+# `alert_` stub this section HANGS the suite.
+
+## The menu locators, copied from tests/headless/test_annot_show_menu.tcl:75-95
+## and :407-416 — a missing entry must red ONE row, not abort the file
+## (`$M type -1` raises out of Tcl_AppInit under --pipe).
+proc a7_idx {m label} {
+  if {![winfo exists $m]} { return -1 }
+  for {set i 0} {$i <= [$m index end]} {incr i} {
+    if {[catch {$m entrycget $i -label} l]} { continue }
+    if {$l eq $label} { return $i }
+  }
+  return -1
+}
+proc a7_cmd {m idx} {
+  if {![winfo exists $m] || $idx < 0} { return {} }
+  if {[catch {$m entrycget $idx -command} c]} { return {} }
+  return $c
+}
+set A7_MW [a7_idx .menubar.waves {Op Annotate}]
+set A7_MG [a7_idx .menubar.simulation.graph {Annotate Operating Point into schematic}]
+
+## THE C SEAM, and the delta across ONE refresh pair. NO-COUNTER when the `get`
+## answers anything but an integer — today it answers the EMPTY STRING through
+## scheduler.c's generic `get` fall-through, which would otherwise satisfy a
+## golden of {} and read green against a tree that never got the seam.
+proc a7_dcnt {} { set v NO-GET ; catch {set v [xschem get annot_declutter_count]} ; return $v }
+proc a7_delta {m} {
+  dc_setmask $m
+  set a [a7_dcnt]
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  set b [a7_dcnt]
+  if {![string is integer -strict $a] || ![string is integer -strict $b]} { return NO-COUNTER }
+  return [expr {$b - $a}]
+}
+
+## The three states, each on its own sheet in its own directory, because the
+## chord re-reads `$::netlist_dir` (row E6's measured trap).
+set A7_SYM  [file join $scratch a7fet.sym]
+set A7_VDIR [file join $scratch a7valued]
+set A7_DDIR [file join $scratch a7dead]
+set A7_NDIR [file join $scratch a7noraw]
+file mkdir $A7_VDIR $A7_DDIR $A7_NDIR
+set A7_VFIX [file join $A7_VDIR a7fix.sch]
+set A7_DFIX [file join $A7_DDIR a7fix.sch]
+set A7_NFIX [file join $A7_NDIR a7fix.sch]
+set A7_VRAW [file join $A7_VDIR a7fix.raw]
+set A7_DRAW [file join $A7_DDIR a7fix.raw]
+set A5_FD [open $A7_SYM w]
+puts $A5_FD {v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=a7fet
+format="@name @pinlist @model w=@w"
+template="name=MA1 model=a7n w=1u"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+T {@name} 0 -40 0 0 0.2 0.2 {}
+T {A7W=@w} 60 30 0 0 0.2 0.2 {}}
+close $A5_FD
+foreach A7_P [list $A7_VFIX $A7_DFIX $A7_NFIX] {
+  set A5_FD [open $A7_P w]
+  puts $A5_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$A7_SYM\} 300 -300 0 0 \{name=MA1\}"
+  close $A5_FD
+}
+foreach A7_F [glob -nocomplain [file join $A7_NDIR *.raw]] { catch {file delete $A7_F} }
+## LOAD, THEN register, THEN op_annot::vector — section A's order, and it is
+## load-bearing: the vector resolves the device path through the LOADED instance.
+catch {xschem raw clear}
+set ::netlist_dir $A7_VDIR
+xschem load $A7_VFIX
+update idletasks
+catch {op_annot::register a7fet [list devpath {@m.@path@name} params {{aid aid 0}}]}
+set A7_PP {}
+catch {lappend A7_PP [op_annot::vector MA1 aid] 1.11e-05}
+a3_mkraw $A7_VRAW $A7_PP
+a3_mkraw $A7_DRAW {v(a7zzz) 1.0}
+
+## Bring a sheet up in one of the three states and leave it attached.
+proc a7_state {which} {
+  catch {xschem raw clear}
+  switch -exact -- $which {
+    valued { set ::netlist_dir $::A7_VDIR ; xschem load $::A7_VFIX ; update idletasks
+             catch {xschem annotate_op $::A7_VRAW 0} }
+    dead   { set ::netlist_dir $::A7_DDIR ; xschem load $::A7_DFIX ; update idletasks
+             catch {xschem annotate_op $::A7_DRAW 0} }
+    noraw  { set ::netlist_dir $::A7_NDIR ; xschem load $::A7_NFIX ; update idletasks }
+  }
+  update idletasks
+  set l -99 ; catch {set l [xschem raw loaded]}
+  return $l
+}
+
+# --- A57: THE SEAM ITSELF, MEASURED IN ALL THREE STATES ---------------------
+a7_state valued
+set A57_MIN [a7_dcnt]
+set A57_V0 [a7_delta 0]
+set A57_V8 [a7_delta 8]
+set A57_V9 [a7_delta 9]
+set A57_VMAX [a7_dcnt]
+a7_state dead
+set A57_D9 [a7_delta 9]
+a7_state noraw
+set A57_N9 [a7_delta 9]
+set A57_NLOADED -99 ; catch {set A57_NLOADED [xschem raw loaded]}
+dc_setmask 0
+check "A57 ISSUE 1257 THE SEAM: `xschem get annot_declutter_count` is a real counter bumped by the declutter rung itself - its delta across one refresh pair is 0 at mask 0, 0 at mask 8, NONZERO at mask 9 on a VALUED sheet, and 0 at mask 9 on both a dead raw and no raw at all" \
+  [list [expr {[string is integer -strict $A57_MIN] && $A57_MIN >= 0 ? 1 : 0}] \
+        $A57_V0 $A57_V8 \
+        [expr {[string is integer -strict $A57_V9] && $A57_V9 > 0 ? 1 : 0}] \
+        $A57_D9 $A57_N9 $A57_NLOADED \
+        [expr {([string is integer -strict $A57_MIN] && [string is integer -strict $A57_VMAX] \
+                && $A57_VMAX >= $A57_MIN) ? 1 : 0}]] \
+  [list 1 0 0 1 0 0 -1 1]
+
+# --- A58: THE TWO COUNTERS ARE INDEPENDENT ----------------------------------
+## ⚠ NOT A DUPLICATE OF A57. `annot_overlay_count` already exists and already
+## moves on every annotated instance at mask 1 — so a seam that simply returned
+## IT would pass every leg of A57 except the mask-1 case, and would then report
+## "something was hidden" on a sheet with the declutter bit clear. This row is
+## the discrimination: at mask 1 the overlay paints and the declutter hides
+## nothing; at mask 9 both move.
+a7_state valued
+dc_setmask 1
+set A58_O0 [a3_ovl] ; set A58_D0 [a7_dcnt]
+catch {xschem update_all_sym_bboxes} ; catch {xschem redraw}
+set A58_O1 [a3_ovl] ; set A58_D1 [a7_dcnt]
+dc_setmask 9
+set A58_O2 [a3_ovl] ; set A58_D2 [a7_dcnt]
+catch {xschem update_all_sym_bboxes} ; catch {xschem redraw}
+set A58_O3 [a3_ovl] ; set A58_D3 [a7_dcnt]
+dc_setmask 0
+proc a7_moved {a b} {
+  if {![string is integer -strict $a] || ![string is integer -strict $b]} { return NO-COUNTER }
+  return [expr {$b > $a ? 1 : 0}]
+}
+check "A58 THE SEAM IS NOT annot_overlay_count WEARING A NEW NAME: at mask 1 the overlay counter moves and the declutter counter does not; at mask 9 both do" \
+  [list [a7_moved $A58_O0 $A58_O1] [a7_moved $A58_D0 $A58_D1] \
+        [a7_moved $A58_O2 $A58_O3] [a7_moved $A58_D2 $A58_D3]] \
+  {1 0 1 1}
+
+# --- A59..A63: THE TWO STOCK DOORS ------------------------------------------
+## THE STUBS. `select_raw` is a MODAL tk_getOpenFile and `alert_` blocks in
+## `tkwait window .alert`; without both, this block hangs rather than fails.
+## Parked and restored, including on the error path.
+set A7_SENT ZZA7SENTINEL
+set A7_MENU_LINE [string trim $DC_CLAUSE]
+set ::a7_sel 0
+set ::a7_alerts 0
+set ::a7_shown [expr {[info exists ::show_hidden_texts] ? $::show_hidden_texts : 0}]
+set ::a7_compat [expr {[info exists ::cadence_compat] ? $::cadence_compat : 0}]
+set ::a7_had_sel [expr {[llength [info procs ::select_raw]] ? 1 : 0}]
+set ::a7_had_alert [expr {[llength [info procs ::alert_]] ? 1 : 0}]
+set ::a7_had_abo [expr {[llength [info commands ::ase::annot_binding_ok]] ? 1 : 0}]
+if {$::a7_had_sel}   { catch {rename ::select_raw ::a7_saved_select_raw} }
+if {$::a7_had_alert} { catch {rename ::alert_ ::a7_saved_alert_} }
+if {$::a7_had_abo}   { catch {rename ::ase::annot_binding_ok ::a7_saved_abo} }
+proc ::select_raw {args} { incr ::a7_sel ; return $::a7_selret }
+proc ::alert_ {txt {position {}} {nowait 0} {yesno 0}} { incr ::a7_alerts ; return 1 }
+proc ::ase::annot_binding_ok {args} { return 1 }
+proc a7_unstub {} {
+  catch {rename ::select_raw {}}
+  catch {rename ::alert_ {}}
+  catch {rename ::ase::annot_binding_ok {}}
+  if {$::a7_had_sel}   { catch {rename ::a7_saved_select_raw ::select_raw} }
+  if {$::a7_had_alert} { catch {rename ::a7_saved_alert_ ::alert_} }
+  if {$::a7_had_abo}   { catch {rename ::a7_saved_abo ::ase::annot_binding_ok} }
+  set ::show_hidden_texts $::a7_shown
+  set ::cadence_compat $::a7_compat
+}
+## Drive ONE door from mask <from>, with the sentinel planted, and report
+## {mask held-line select_raw-calls alerts}.
+## ⚠ THE FIFTH ELEMENT IS NOT DECORATION -- it is the fix for a hole item A7's
+## own sabotage pass found and could not close in time. `xschem set annot_show`
+## runs EARLY in both `-command` bodies, so a body that raises AFTERWARDS has
+## already merged the mask and has not touched the sentinel: every other leg of
+## row A62 stays green through a mutation that provably raises. Without a leg
+## that asserts the invoke did NOT raise, A62 -- the stock-xschem guarantee --
+## is green against a menu that background-errors on every real stock session.
+##
+## ⚠ AND THE SABOTAGE THAT PROVES IT IS NOT THE OBVIOUS ONE. Deleting the
+## `info commands` guard in `annot_declutter_say` raises NOTHING -- the call
+## below it is already inside `catch`, which swallows the error and leaves the
+## empty string, so the door still says nothing and every leg stays green
+## (measured 2026-09-03, and it is why item A7's own sabotage pass predicted one
+## red here and observed zero). The mutation these legs catch is the COARSE
+## twin: guard removed AND the inner `catch` unwrapped, which is what a real
+## unguarded call looks like -- both doors then report `raised` 1.
+## The guard is still worth having; it is just not the thing that keeps stock
+## xschem quiet. The inner catch is.
+proc a7_door {menu idx from raw} {
+  set ::a7_selret $raw
+  set ::a7_sel 0 ; set ::a7_alerts 0
+  dc_setmask $from
+  catch {xschem statusmsg -hold $::A7_SENT}
+  if {$idx < 0} { return [list NO-ENTRY {} 0 0 NO-ENTRY] }
+  set a7_raised [catch {$menu invoke $idx} a7_why]
+  if {!$a7_raised} { set a7_why {} }
+  update idletasks
+  set m {} ; catch {set m [xschem get statusmsg]}
+  return [list [dc_mask] $m $::a7_sel $::a7_alerts $a7_raised $a7_why]
+}
+## 1 when the `-command` body raised, and the message it raised with.
+proc a7_drai {r} { return [lindex $r 4] }
+proc a7_dwhy {r} { return [lindex $r 5] }
+proc a7_dmask {r} { return [lindex $r 0] }
+proc a7_dbar  {r} { return [lindex $r 1] }
+proc a7_dsaid {r} { return [expr {[lindex $r 1] eq $::A7_SENT ? 0 : 1}] }
+proc a7_dsel  {r} { return [lindex $r 2] }
+proc a7_dalr  {r} { return [lindex $r 3] }
+
+# --- A59: THE GRAPHS DOOR, DRIVEN -------------------------------------------
+## The only stock door reachable under the cadence profile (see the trap above).
+a7_state valued
+set A59_R [a7_door .menubar.simulation.graph $A7_MG 8 $A7_VRAW]
+dc_setmask 0
+check "A59 ISSUE 1256 THE GRAPHS DOOR: with the declutter armed and something really hidden, `Annotate Operating Point into schematic` merges 8 -> 11 AND names the declutter on the held line, in the same words the chords use" \
+  [list [expr {$A7_MG >= 0 ? 1 : 0}] [a7_dmask $A59_R] [a7_dsel $A59_R] \
+        [a7_dsaid $A59_R] \
+        [expr {[string first $A7_MENU_LINE [a7_dbar $A59_R]] >= 0 ? 1 : 0}] \
+        [expr {[a7_dbar $A59_R] eq [dc_ans ::cadence::_annot_fit $A7_MENU_LINE] ? 1 : 0}]] \
+  [list 1 11 1 1 1 1]
+
+# --- A60: THE WAVES DOOR, BOTH FLAG STATES ----------------------------------
+## ⚠ THE LEFT HALF IS THE TRAP, NOT A BONUS LEG. Under the cadence profile —
+## which is the only profile where the mint exists — this door REFUSES, so a
+## "both doors say the same thing" claim measured only here would be measuring a
+## refusal. Both flag states are driven, and `::cadence_compat` is restored.
+a7_state valued
+set ::cadence_compat 1
+set A60_BLK [a7_door .menubar.waves $A7_MW 8 $A7_VRAW]
+a7_state valued
+set ::cadence_compat 0
+set A60_RUN [a7_door .menubar.waves $A7_MW 8 $A7_VRAW]
+set ::cadence_compat $::a7_compat
+dc_setmask 0
+check "A60 ISSUE 1256 THE WAVES DOOR: with cadence_compat 1 it refuses and the held line is untouched; with cadence_compat 0 it merges 8 -> 11 and speaks the SAME clause the Graphs door speaks" \
+  [list [expr {$A7_MW >= 0 ? 1 : 0}] \
+        [a7_dmask $A60_BLK] [a7_dsaid $A60_BLK] \
+        [expr {[a7_dalr $A60_BLK] >= 1 ? 1 : 0}] [a7_dsel $A60_BLK] \
+        [a7_dmask $A60_RUN] [a7_dsel $A60_RUN] [a7_dsaid $A60_RUN] \
+        [expr {[a7_dbar $A60_RUN] eq [dc_ans ::cadence::_annot_fit $A7_MENU_LINE] ? 1 : 0}] \
+        [expr {[a7_dbar $A60_RUN] eq [a7_dbar $A59_R] ? 1 : 0}]] \
+  [list 1 8 0 1 0 11 1 1 1 1]
+
+# --- A61: THE MENU FOLLOWS THE GATE TOO -------------------------------------
+## The other half of A7-a, one door over: a menu that always spoke the clause
+## whenever bit 3 survived the merge would be issue 1257 rebuilt in stock code.
+## Leg 7 is the non-vacuity delta — the SAME door, the SAME mask arithmetic, on
+## the valued sheet, DOES speak.
+##
+## ⚠ SIX OF THESE SEVEN LEGS ARE GREEN BEFORE ITEM A7 LANDS, AND THAT IS SAID
+## HERE RATHER THAN DISCOVERED LATER. Today the stock doors say nothing in EVERY
+## state, so "it says nothing on a sheet where nothing was hidden" is satisfied
+## by a menu that has never spoken at all. Leg 7 is the only leg that reds on the
+## unmodified tree, and it is what turns the other six from a description of the
+## defect into a claim about the fix. Measured: {11 0 0 11 0 0 0} against
+## {11 0 0 11 0 0 1}.
+a7_state noraw
+set A61_N [a7_door .menubar.simulation.graph $A7_MG 8 {}]
+a7_state dead
+set A61_D [a7_door .menubar.simulation.graph $A7_MG 8 $A7_DRAW]
+dc_setmask 0
+check "A61 ISSUE 1256 + 1257 TOGETHER: on a sheet with no results file, and on one whose raw publishes nothing for the device, the Graphs door still merges the mask and says NOTHING about a declutter that did not happen - while the same door on the valued sheet does speak" \
+  [list [a7_dmask $A61_N] [a7_dsaid $A61_N] \
+        [expr {[string first $A7_MENU_LINE [a7_dbar $A61_N]] >= 0 ? 1 : 0}] \
+        [a7_dmask $A61_D] [a7_dsaid $A61_D] \
+        [expr {[string first $A7_MENU_LINE [a7_dbar $A61_D]] >= 0 ? 1 : 0}] \
+        [a7_dsaid $A59_R]] \
+  [list 11 0 0 11 0 0 1]
+
+# --- A62: CROSS-PROFILE, DRIVEN RATHER THAN GREPPED -------------------------
+## ⚠ GREEN BEFORE AND AFTER, AND IT IS A CONTROL. `::cadence` does not exist in
+## stock xschem at all, and a naked `::cadence::_annot_declutter_clause` call in
+## a menu `-command` would raise a background error there — invisible to every
+## row above, all of which run with the profile sourced. The mint is renamed
+## AWAY for the length of this row, which is the closest a cadence-profile
+## session can come to being stock, and both doors must still merge the mask and
+## still say nothing. Its sabotage is SB-A7b-DOOR-UNGUARDED.
+a7_state valued
+set A62_HAD [expr {[llength [info commands ::cadence::_annot_declutter_clause]] ? 1 : 0}]
+if {$A62_HAD} { catch {rename ::cadence::_annot_declutter_clause ::cadence::__a7_saved_clause} }
+set ::cadence_compat 0
+set A62_W [a7_door .menubar.waves $A7_MW 8 $A7_VRAW]
+a7_state valued
+set A62_G [a7_door .menubar.simulation.graph $A7_MG 8 $A7_VRAW]
+set ::cadence_compat $::a7_compat
+if {$A62_HAD} { catch {rename ::cadence::__a7_saved_clause ::cadence::_annot_declutter_clause} }
+set A62_BACK [expr {[llength [info commands ::cadence::_annot_declutter_clause]] ? 1 : 0}]
+dc_setmask 0
+## ⚠ THE TWO `raised` LEGS ARE THE ROW'S POINT, not a garnish. "Raise nothing"
+## was in this row's own title from the day it was written and was not being
+## measured: the mask merges before the raise, so the other six legs cannot see
+## it. Its sabotage SB-A7b-DOOR-UNGUARDED predicted one red here and observed
+## ZERO. These two legs are what make the prediction come true.
+check "A62 THE STOCK-XSCHEM GUARANTEE: with the cadence mint renamed away both doors still run, still merge 8 -> 11, RAISE NOTHING (measured, not merely titled) and say nothing - and the mint is put back" \
+  [list $A62_HAD \
+        [a7_dmask $A62_W] [a7_dsel $A62_W] [a7_dsaid $A62_W] [a7_drai $A62_W] \
+        [a7_dmask $A62_G] [a7_dsel $A62_G] [a7_dsaid $A62_G] [a7_drai $A62_G] \
+        $A62_BACK] \
+  [list 1 11 1 0 0 11 1 0 0 1]
+
+a7_unstub
+catch {xschem raw clear}
+set ::netlist_dir $scratch
+dc_setmask 0
+
+# --- A63: ONE MINT, TWO DOORS, AND THE GUARD DID NOT MOVE -------------------
+## ⚠ THE SENTENCE MUST NOT BE SPELLED IN src/xschem.tcl AT ALL (invariant I1).
+## Two doors describing one state differently IS issue 1256; a copy of the words
+## in the stock file would rebuild it one layer up, and a copy in EACH of the two
+## byte-identical menu bodies would rebuild it twice. So: zero spellings, one
+## proc naming the cadence mint, and both `-command` bodies tailing into that
+## proc. Read off the LIVE `-command` scripts, not the file, so there is no
+## whole-file `.*?` to walk out of one body and into the other.
+##
+## ⚠ AND THE BINDING GUARD MUST STILL BE FIRST. `select_raw` is modal and
+## rewrites the global `netlist_dir` merely by being read, so a refused user must
+## never reach it (issue 0683 §7). Reader copied from `c_guard_first`,
+## tests/headless/test_annot_show_menu.tcl:483-491, plus a fourth term for the
+## new tail: the guard must precede it too.
+proc a7_guard_first {cmd} {
+  set g [string first {ase::annot_binding_ok} $cmd]
+  set r [string first {select_raw} $cmd]
+  set m [string first {xschem set annot_show} $cmd]
+  set d [string first {annot_declutter_say} $cmd]
+  if {$g < 0} { return 0 }
+  if {$r >= 0 && $g > $r} { return 0 }
+  if {$m >= 0 && $g > $m} { return 0 }
+  if {$d >= 0 && $g > $d} { return 0 }
+  return 1
+}
+set A63_CW [a7_cmd .menubar.waves $A7_MW]
+set A63_CG [a7_cmd .menubar.simulation.graph $A7_MG]
+set A63_SAY [opa_proc_src $A_XSSRC annot_declutter_say]
+check "A63 ISSUE 1256 STRUCTURAL: src/xschem.tcl spells the clause ZERO times, names the cadence mint inside exactly ONE proc, both live -command bodies tail into that proc, and the binding guard is still first in both" \
+  [list [dc_ngrep $A_XSTCL {Decluttering is on, so other device text is hidden}] \
+        [dc_ngrep $A_XSTCL {cadence::_annot_declutter_clause}] \
+        [expr {[string length $A63_SAY] > 0 ? 1 : 0}] \
+        [expr {[string first {_annot_declutter_clause} $A63_SAY] >= 0 ? 1 : 0}] \
+        [expr {[string first {annot_declutter_say} $A63_CW] >= 0 ? 1 : 0}] \
+        [expr {[string first {annot_declutter_say} $A63_CG] >= 0 ? 1 : 0}] \
+        [a7_guard_first $A63_CW] [a7_guard_first $A63_CG]] \
+  {0 1 1 1 1 1 1 1}
+
+# --- A64, A65: ISSUE 1270 — THE COUNTER MUST COUNT THE SHEET, NOT THE RUNG ---
+## ⚠ THESE TWO ROWS ARE WHY ITEM A7 IS A RE-DO. A7's first attempt bumped the
+## counter at the declutter rung's `return 1`, which sits ABOVE the three
+## predicates that would have hidden the text anyway. So it answered "the
+## declutter rung was the FIRST predicate to say hide" and not "this text would
+## otherwise have been DRAWN" — and on an annotated device whose only non-@name
+## text already carries `hide=instance`, the sheet is byte-identical at mask 1
+## and mask 9 while all three status-line producers claim a declutter happened.
+## That is issue 1257's own defect in a fourth state, and it went green past a
+## hundred and thirty-two checks because no fixture in this file had that shape.
+##
+## THE SHAPE IS NOT EXOTIC: 57 shipped xschem_library/devices/*.sym carry
+## `hide=instance`, and any symbol whose parameter texts the user hid before
+## arming the declutter has it too.
+##
+## ⚠ A65 IS LOAD-BEARING AND IS NOT A MIRROR OF A64. With `View > Show hidden
+## texts` ON — which BOTH shipped Op-Annotate menu bodies turn on one line
+## before writing the mask — a `hide=instance` text IS drawn, so the rung really
+## does take it away and the counter MUST bump. A repair that tested only the
+## two HIDE_* bits would fix the chord and silently break the menu, which is the
+## workflow the feature was written for. A64 alone would call that repair green.
+##
+## ⚠ AND THAT IS WHY A64'S LAST TWO LEGS ARE `1 1`, NOT `0`. On ONE sheet the
+## two chords correctly stay silent and the menu door correctly speaks, because
+## the door's own body ran `set show_hidden_texts 1` first and therefore really
+## did take the text away. That is not issue 1256 coming back: 1256 is two doors
+## describing the SAME state differently, and after the menu runs the state is
+## not the same. The last leg reads the switch back to prove the reason rather
+## than assert it. The first draft of this row goldened the door to silence and
+## red -- measured 2026-09-03, and the measurement was right and the golden was
+## wrong.
+set A7H_DIR [file join $scratch a7hide]
+file mkdir $A7H_DIR
+set A7H_SYM [file join $A7H_DIR a7hfet.sym]
+set A7H_FIX [file join $A7H_DIR a7hfix.sch]
+set A7H_RAW [file join $A7H_DIR a7hfix.raw]
+set A7H_FD [open $A7H_SYM w]
+puts $A7H_FD {v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=a7hfet
+format="@name @pinlist @model w=@w"
+template="name=MH1 model=a7n w=1u"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+T {@name} 0 -40 0 0 0.2 0.2 {}
+T {A7H=@w} 60 30 0 0 0.2 0.2 {hide=instance}}
+close $A7H_FD
+set A7H_FD [open $A7H_FIX w]
+puts $A7H_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$A7H_SYM\} 300 -300 0 0 \{name=MH1\}"
+close $A7H_FD
+catch {xschem raw clear}
+set ::netlist_dir $A7H_DIR
+xschem load $A7H_FIX
+update idletasks
+catch {op_annot::register a7hfet [list devpath {@m.@path@name} params {{aid aid 0}}]}
+set A7H_PP {}
+catch {lappend A7H_PP [op_annot::vector MH1 aid] 1.23e-05}
+a3_mkraw $A7H_RAW $A7H_PP
+
+## Bring the counterexample sheet up, annotated, with `show_hidden_texts` set.
+proc a7h_state {shown} {
+  catch {xschem raw clear}
+  set ::netlist_dir $::A7H_DIR
+  xschem load $::A7H_FIX
+  update idletasks
+  catch {xschem annotate_op $::A7H_RAW 0}
+  set ::show_hidden_texts $shown
+  update idletasks
+  set l -99 ; catch {set l [xschem raw loaded]}
+  return $l
+}
+## 1/0 -- does a held line carry the declutter clause? Section C's `c_has` is
+## the same test, but it is defined BELOW this block; this is not a second
+## spelling of the sentence, both read the one $DC_CLAUSE.
+proc a7_hasclause {s} { return [expr {[string first $::DC_CLAUSE $s] >= 0 ? 1 : 0}] }
+## The chord form of a7_door: plant the sentinel, fire, report {mask held-line}.
+proc a7_chord {from seq} {
+  dc_setmask $from
+  catch {xschem statusmsg -hold $::A7_SENT}
+  dc_fire $seq
+  set m {} ; catch {set m [xschem get statusmsg]}
+  return [list [dc_mask] $m]
+}
+## Re-install the A59..A62 stubs; `a7_unstub` above already tore them down and
+## the two door legs below are modal without them. Same renames, same order.
+proc a7_restub {} {
+  set ::a7_sel 0 ; set ::a7_alerts 0
+  set ::a7_shown [expr {[info exists ::show_hidden_texts] ? $::show_hidden_texts : 0}]
+  set ::a7_compat [expr {[info exists ::cadence_compat] ? $::cadence_compat : 0}]
+  set ::a7_had_sel [expr {[llength [info procs ::select_raw]] ? 1 : 0}]
+  set ::a7_had_alert [expr {[llength [info procs ::alert_]] ? 1 : 0}]
+  set ::a7_had_abo [expr {[llength [info commands ::ase::annot_binding_ok]] ? 1 : 0}]
+  if {$::a7_had_sel}   { catch {rename ::select_raw ::a7_saved_select_raw} }
+  if {$::a7_had_alert} { catch {rename ::alert_ ::a7_saved_alert_} }
+  if {$::a7_had_abo}   { catch {rename ::ase::annot_binding_ok ::a7_saved_abo} }
+  proc ::select_raw {args} { incr ::a7_sel ; return $::a7_selret }
+  proc ::alert_ {txt {position {}} {nowait 0} {yesno 0}} { incr ::a7_alerts ; return 1 }
+  proc ::ase::annot_binding_ok {args} { return 1 }
+}
+
+# --- A64: show_hidden_texts OFF — the sheet does not move, so nobody claims it
+a7h_state 0
+## CONTROL FIRST: the device really is annotated and really does carry a number,
+## or every "no clause" leg below is green for the wrong reason (ruling D-6).
+set A64_LOADED [expr {[xschem raw loaded] >= 0 ? 1 : 0}]
+set A64_NUM [expr {[string first {12.3u} [a3_optext MH1]] >= 0 ? 1 : 0}]
+set A64_D9 [a7_delta 9]
+dc_annot 1 ; set A64_S1 [a3_pr2 [file join $scratch a7h_off_m1.svg]]
+dc_annot 9 ; set A64_S9 [a3_pr2 [file join $scratch a7h_off_m9.svg]]
+set A64_SAME [expr {$A64_S1 eq $A64_S9 ? 1 : 0}]
+set A64_C6 [a7_chord 8 <Key-6>]
+set A64_CA [a7_chord 1 <Control-Alt-Key-6>]
+a7_restub
+a7h_state 0
+set A64_DOOR [a7_door .menubar.simulation.graph $A7_MG 8 $A7H_RAW]
+## MEASURED, NOT ASSUMED, and it is the whole reason the door's golden differs
+## from the chords': the menu body runs `set show_hidden_texts 1`
+## (src/xschem.tcl:17340 and :17782) one line before it writes the mask.
+set A64_SHOWN [expr {[info exists ::show_hidden_texts] ? $::show_hidden_texts : -1}]
+a7_unstub
+dc_setmask 0
+check "A64 ISSUE 1270 THE COUNTEREXAMPLE: on an annotated device whose only non-@name text is already hide=instance the CHORDS' sheet is BYTE-IDENTICAL at mask 1 and mask 9, the seam counts ZERO and neither chord claims a declutter (Ctrl-Alt-6 says armed-and-waiting instead) - while the MENU door, which turns Show hidden texts ON first, really does hide it and so really does say so" \
+  [list $A64_LOADED $A64_NUM $A64_D9 $A64_SAME \
+        [lindex $A64_C6 0] [a7_hasclause [lindex $A64_C6 1]] \
+        [lindex $A64_CA 0] [expr {[lindex $A64_CA 1] eq [dc_ans ::cadence::_annot_fit $DC_ARM] ? 1 : 0}] \
+        [a7_dmask $A64_DOOR] [a7_dsaid $A64_DOOR] \
+        [expr {[string first $A7_MENU_LINE [a7_dbar $A64_DOOR]] >= 0 ? 1 : 0}] \
+        $A64_SHOWN] \
+  [list 1 1 0 1 9 0 9 1 11 1 1 1]
+
+# --- A65: show_hidden_texts ON — now it IS taken away, so all three must speak
+a7h_state 1
+set A65_D9 [a7_delta 9]
+dc_annot 1 ; set A65_S1 [a3_pr2 [file join $scratch a7h_on_m1.svg]]
+dc_annot 9 ; set A65_S9 [a3_pr2 [file join $scratch a7h_on_m9.svg]]
+set A65_DIFF [expr {$A65_S1 ne $A65_S9 ? 1 : 0}]
+set A65_T1 [a3_hasl [dc_ntexts $A65_S1] {A7H=1u}]
+set A65_T9 [a3_hasl [dc_ntexts $A65_S9] {A7H=1u}]
+set A65_C6 [a7_chord 8 <Key-6>]
+a7_restub
+a7h_state 1
+set A65_DOOR [a7_door .menubar.simulation.graph $A7_MG 8 $A7H_RAW]
+a7_unstub
+set ::show_hidden_texts 0
+dc_setmask 0
+check "A65 ISSUE 1270 THE OTHER HALF, AND IT IS THE MENUS' OWN WORKFLOW: with View > Show hidden texts ON the same hide=instance text IS drawn at mask 1 and GONE at mask 9, so the seam counts nonzero and all three producers DO name the declutter - a repair testing only the HIDE_* bits fixes the chord and breaks this" \
+  [list [expr {[string is integer -strict $A65_D9] && $A65_D9 > 0 ? 1 : 0}] \
+        $A65_DIFF $A65_T1 $A65_T9 \
+        [lindex $A65_C6 0] [a7_hasclause [lindex $A65_C6 1]] \
+        [a7_dmask $A65_DOOR] [a7_dsaid $A65_DOOR] \
+        [expr {[string first $A7_MENU_LINE [a7_dbar $A65_DOOR]] >= 0 ? 1 : 0}]] \
+  [list 1 1 1 0 9 1 11 1 1]
+
+catch {xschem raw clear}
+set ::netlist_dir $scratch
+dc_setmask 0
+
+# ============================================================================
 # SECTION C — THE DECLUTTER CLAUSE ON THE OTHER KEYS' SENTENCE (issue 1251)
 # ============================================================================
 # Item A4. Section S above proves the MINT; this section proves the SURFACE --
@@ -3125,7 +3962,7 @@ foreach mask {8 9 10 11 12 13 14 15} {
   foreach st $C_STATES {
     foreach ty [list {} $C_TYPES5] {
       foreach cz [list {} $C_CAUSE] {
-        set u [cadence::_annot_msg $mask $st $C_PATH $ty $cz]
+        set u [dc_msg $mask $st $C_PATH $ty $cz 1]
         set nb [cadence::_annot_bytes [cadence::_annot_fit $u]]
         if {$nb > 255} { lappend C_OVER "$mask/$st/[llength $ty]/[string length $cz]=$nb" }
       }
@@ -3141,7 +3978,7 @@ set C_SURV {}
 foreach st $C_STATES {
   foreach ty [list {} $C_TYPES5] {
     foreach mask {9 15} {
-      lappend C_SURV [c_has [cadence::_annot_fit [cadence::_annot_msg $mask $st $C_PATH $ty {}]]]
+      lappend C_SURV [c_has [cadence::_annot_fit [dc_msg $mask $st $C_PATH $ty {} 1]]]
     }
   }
 }
@@ -3160,7 +3997,7 @@ foreach mask {9 11 13 15} {
   foreach st $C_STATES {
     foreach ty [list {} $C_TYPES5] {
       if {![c_has [cadence::_annot_fit \
-                     [cadence::_annot_msg $mask $st $C_PATH $ty $C_CAUSE]]]} { incr bad }
+                     [dc_msg $mask $st $C_PATH $ty $C_CAUSE 1]]]} { incr bad }
     }
   }
   lappend C_EAT $mask=$bad
@@ -3175,19 +4012,36 @@ foreach mask {8 10 12 14} {
   foreach st $C_STATES {
     foreach ty [list {} $C_TYPES5] {
       foreach cz [list {} $C_CAUSE] {
-        if {[c_has [cadence::_annot_msg $mask $st $C_PATH $ty $cz]]} { incr C_NOCL }
+        if {[c_has [dc_msg $mask $st $C_PATH $ty $cz 1]]} { incr C_NOCL }
       }
     }
   }
 }
-set C_L3U [cadence::_annot_msg 15 loaded $C_PATH $C_TYPES5 $C_CAUSE]
+## ⚠ LEG 7 IS ITEM A7's, AND IT CLOSES THE HOLE LEG 6 LEAVES OPEN ONE DIMENSION
+## OVER. Legs 1..6 all pass `hid` 1, i.e. they describe the world in which
+## something really was hidden. After item A5-a's value gate (ruling D-6) that
+## world is NOT the common one: a first press with no results file arms bit 3,
+## hides nothing, and — until issue 1257 — still carried this clause. So the same
+## 256 sentences are swept again at `hid` 0 and the clause must appear in ZERO of
+## them, at every one of the four bit-0 masks.
+set C_NOHID 0
+foreach mask {9 11 13 15} {
+  foreach st $C_STATES {
+    foreach ty [list {} $C_TYPES5] {
+      foreach cz [list {} $C_CAUSE] {
+        if {[c_has [dc_msg $mask $st $C_PATH $ty $cz 0]]} { incr C_NOHID }
+      }
+    }
+  }
+}
+set C_L3U [dc_msg 15 loaded $C_PATH $C_TYPES5 $C_CAUSE 1]
 set C_L3F [cadence::_annot_fit $C_L3U]
-check "B1 the bit-3 budget: 256 sentences all fit 255 bytes, the clause SURVIVES the elision in every no-cause case in every state, and where the cause and the clause cannot both fit issue 0909's ordering makes the CAUSE win" \
+check "B1 the bit-3 budget: 256 sentences all fit 255 bytes, the clause SURVIVES the elision in every no-cause case in every state, where the cause and the clause cannot both fit issue 0909's ordering makes the CAUSE win, and with NOTHING HIDDEN the clause is in none of the 256 (issue 1257)" \
   [list $C_OVER $C_SURV \
         [expr {[cadence::_annot_bytes $C_L3F] < [cadence::_annot_bytes $C_L3U] ? 1 : 0}] \
         [expr {[string first {Some values are blank} $C_L3F] >= 0 ? 1 : 0}] \
-        [c_has $C_L3F] $C_EAT $C_NOCL] \
-  [list {} [lrepeat 32 1] 1 1 0 {9=0 11=16 13=16 15=16} 0]
+        [c_has $C_L3F] $C_EAT $C_NOCL $C_NOHID] \
+  [list {} [lrepeat 32 1] 1 1 0 {9=0 11=16 13=16 15=16} 0 0]
 
 # ---------------------------------------------------------------------------
 # E1 — END TO END, CHORD `6`
@@ -3260,16 +4114,29 @@ catch {xschem raw read $C_TRAW tran}
 catch {xschem cursor 2 1}
 catch {xschem set cursor2_x 4e-9}
 update idletasks
+##
+## ⚠ LEG 5 WAS FLIPPED 1 -> 0 BY ITEM A7, AND LEG 9 IS THE MEASUREMENT THAT SAYS
+## WHY. Reading the transient raw REPLACES the annotatable dataset, so on this
+## sheet `op_annot::text MC1` goes from `cid = 11.1u` back to the label-only
+## `cid =` -- driven, both directions, while writing this row. After item A5-a's
+## value gate (ruling D-6) a label-only block gets NOTHING decluttered, so at
+## mask 13 the sheet still draws `CW=1u` and a clause saying other device text is
+## hidden was describing a sheet nobody stripped. That is issue 1257 at the
+## FOURTH chord, and item A4's own measurement did not reach it. Leg 9 asserts
+## the block really is label-only here, so the absent clause is a measured
+## consequence and not a row that went quiet.
 set E4_CUR [dc_ans ::cadence::_annot_tran_cursor]
 set E4_OFF [c_spy 1 <Alt-Shift-Key-6>]
 set E4_ON  [c_spy 9 <Alt-Shift-Key-6>]
 set E4_ARM [c_spy 8 <Alt-Shift-Key-6>]
-check "E4 END TO END chord Alt-Shift-6: from mask 9 the transient sentence names the declutter and the mask lands on 13, from mask 1 it does not and lands on 5, from mask 8 it does not either (bit0 clear), and _annot_tran_msg itself is byte-unchanged and mask-free" \
+set E4_BLK [string trim [dc_ans ::op_annot::text MC1]]
+check "E4 END TO END chord Alt-Shift-6: the mask lands on 13 / 5 / 12, the transient sentence names the declutter in NONE of them because the transient raw leaves the block label-only (issue 1257), and _annot_tran_msg itself is byte-unchanged and mask-free" \
   [list $E4_CUR [c_mask $E4_OFF] [c_mask $E4_ON] [c_mask $E4_ARM] \
         [c_has [c_bar $E4_ON]] [c_has [c_bar $E4_OFF]] [c_has [c_bar $E4_ARM]] \
         [expr {[string map [list $DC_CLAUSE {}] [c_unf $E4_ON]] eq [c_unf $E4_OFF] ? 1 : 0}] \
+        [expr {[regexp {^\S+ *=$} $E4_BLK] ? 1 : 0}] \
         [dc_ans ::cadence::_annot_tran_msg ok 4e-09 B]] \
-  [list {4e-09 B sheet} 5 13 12 1 0 0 1 \
+  [list {4e-09 B sheet} 5 13 12 0 0 0 1 1 \
         {Showing each node's voltage at 4 ns, where cursor B is on the waveform.}]
 
 # ---------------------------------------------------------------------------
@@ -3319,13 +4186,21 @@ check "E5 STRUCTURAL annot_tran's success tail hands the clause the mask it just
 # -1 NOTHING is now hidden and `CW=1u` survives at mask 9. Rows A30/A32 are that
 # fact on section A's fixture; this row is it end to end, through the chord.
 #
-# ⚠ THE KNOWN GAP THIS ROW DELIBERATELY KEEPS ASSERTING — NEW ISSUE 1257. Legs 8
-# and 11 still gold the clause PRESENT on that press, i.e. the held status line
-# still says other device text is hidden on a sheet where nothing was hidden.
-# `cadence::_annot_declutter_clause` is gated on bit3 AND bit0 only, and it lives
-# in utils/annot_mode.tcl, which is item A4's landed file and NOT item A5's to
-# edit. Filed as 1257 and handed on; the gap is documented here rather than
-# hidden, so whoever fixes it flips legs 8/11 and this comment together.
+# ⚠ LEG 8 WAS FLIPPED 1 -> 0 BY ITEM A7, AND THIS PARAGRAPH IS THE OTHER HALF OF
+# THE SAME EDIT — ISSUE 1257, CLOSED. The row used to gold the clause PRESENT on
+# this press, i.e. the held status line said other device text was hidden on a
+# sheet where nothing was, and said so in the most common first press there is.
+# `cadence::_annot_declutter_clause` was gated on bit3 AND bit0 only; it lives in
+# utils/annot_mode.tcl, which item A5 did not own, so A5 filed 1257 and left the
+# gap asserted rather than hidden. Item A7 gives the clause a third term, `hid`,
+# measured at the rung itself through the C seam `xschem get
+# annot_declutter_count` — the DRIVER'S RULING, made before the item started:
+# THE CLAUSE FOLLOWS THE GATE, and the press is NOT refused. The armed-but-inert
+# sentence item A1 already minted (DC_ARM) is what the user reads instead, which
+# is why leg 10's "Run a simulation first" tail is untouched: the line still says
+# there is no results file, it just no longer claims a declutter that did not
+# happen. Leg 11 does NOT move — with the clause gone from both sentences the two
+# are equal for the same reason they were equal modulo the clause before.
 #
 # ⚠ THE VIEWPORT IS ITS OWN, and the export is WARMED like sections I, N and A --
 # one throwaway of the same format first, so a first-export difference cannot
@@ -3384,7 +4259,141 @@ check "E6 END TO END with NO results file: ruling D-6 needs a NUMBER so the shee
         [expr {[string first {Run a simulation first} [c_unf $E6_ON]] >= 0 ? 1 : 0}] \
         [expr {[string map [list $DC_CLAUSE {}] [c_unf $E6_ON]] eq [c_unf $E6_OFF] ? 1 : 0}] \
         [c_trip $E6_ON]] \
-  [list -1 1 1 1 1 9 1 1 0 1 1 1]
+  [list -1 1 1 1 1 9 1 0 0 1 1 1]
+
+set ::netlist_dir $scratch
+catch {xschem raw clear}
+dc_setmask 0
+
+# ---------------------------------------------------------------------------
+# E7 .. E9 — ITEM A7 / ISSUE 1257: THREE STATES, THREE SENTENCES
+# ---------------------------------------------------------------------------
+# THE DRIVER'S RULING, made before this item started and quoted here so nobody
+# re-opens it: **THE CLAUSE FOLLOWS THE GATE.** It is emitted only when
+# something was actually hidden; the press is NOT refused, because item A1
+# already minted the right sentence for the armed-but-inert state (DC_ARM) and a
+# mode you cannot arm before simulating would be worse than one that says it is
+# waiting.
+#
+# ⚠ THERE ARE **THREE** STATES, NOT TWO, AND THE MIDDLE ONE IS NOT IN ISSUE
+# 1257. Measured on this tree while writing these rows:
+#   state 1  NO RAW AT ALL      `xschem raw loaded` = -1, `op_annot::_annotated` 0
+#   state 2  A DEAD RAW         `xschem raw loaded` =  0, `op_annot::_annotated` 1
+#   state 3  A VALUED RAW       the block carries a number
+# In states 1 AND 2 the sheet is IDENTICAL at mask 1 and mask 9 — nothing is
+# hidden — and the clause was emitted in all three. State 2 is the one that
+# decides the shape of the fix: `op_annot::_annotated` answers **1** there,
+# exactly as in state 3, and `cadence::annot_mode`'s own `state` reads `live`,
+# so a repair built on either of those signals fixes state 1 and goes on lying
+# in state 2. Row E7 is the row no Tcl-only fix can pass; row E8 is the
+# discrimination control that reds a "fix" which simply deletes the clause.
+
+## --- E7: STATE 2, THE DEAD RAW, END TO END -------------------------------
+set E7_DIR [file join $scratch e7dead]
+file mkdir $E7_DIR
+set E7_FIX [file join $E7_DIR e7fix.sch]
+set E7_RAW [file join $E7_DIR e7dead.raw]
+set C_FD [open $E7_FIX w]
+puts $C_FD "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$C_SYM\} 300 -300 0 0 \{name=MC1\}"
+close $C_FD
+a3_mkraw $E7_RAW {v(e7zzz) 1.0}
+catch {xschem raw clear}
+set ::netlist_dir $E7_DIR
+xschem load $E7_FIX
+update idletasks
+catch {xschem annotate_op $E7_RAW 0}
+update idletasks
+set E7_LOADED -99 ; catch {set E7_LOADED [xschem raw loaded]}
+set E7_ANN [dc_ans ::op_annot::_annotated]
+set E7_BLK [string trim [a3_optext MC1]]
+dc_annot 1 ; set E7_T1 [dc_ntexts [c_pr2 [file join $scratch e7_m1.svg]]]
+dc_annot 9 ; set E7_T9 [dc_ntexts [c_pr2 [file join $scratch e7_m9.svg]]]
+dc_annot 0
+set E7_ON [c_press 8 <Key-6>]
+check "E7 ISSUE 1257 STATE 2 THE DEAD RAW: a results file that LOADS and ANNOTATES but publishes no matching vector hides nothing, so the held line must not name the declutter - and op_annot::_annotated answers 1 here, which is why no Tcl-only fix can pass this row" \
+  [list $E7_LOADED $E7_ANN \
+        [expr {[regexp {^\S+ *=$} $E7_BLK] ? 1 : 0}] \
+        [c_hasl $E7_T1 MC1] [c_hasl $E7_T1 CW=1u] \
+        [c_hasl $E7_T9 MC1] [c_hasl $E7_T9 CW=1u] \
+        [expr {$E7_T1 eq $E7_T9 ? 1 : 0}] \
+        [c_mask $E7_ON] [c_has [c_bar $E7_ON]]] \
+  [list 0 1 1 1 1 1 1 1 9 0]
+
+## --- E8: STATE 3, THE VALUED CONTROL, END TO END --------------------------
+## ⚠ GREEN BEFORE AND AFTER, ON PURPOSE. Every other row in this group is a
+## claim that the clause went away; without this one a "fix" that deleted the
+## clause outright would satisfy all of them. Here something really IS hidden
+## (`CW=1u` goes off the sheet at mask 9), so the clause must still be spoken,
+## and the two sentences must still differ by the clause and nothing else.
+catch {xschem raw clear}
+set ::netlist_dir $scratch
+xschem load $C_FIX
+update idletasks
+catch {xschem annotate_op $C_RAW 0}
+update idletasks
+set E8_BLK [string trim [a3_optext MC1]]
+dc_annot 1 ; set E8_T1 [dc_ntexts [c_pr2 [file join $scratch e8_m1.svg]]]
+dc_annot 9 ; set E8_T9 [dc_ntexts [c_pr2 [file join $scratch e8_m9.svg]]]
+dc_annot 0
+set E8_ON  [c_press 8 <Key-6>]
+set E8_OFF [c_press 0 <Key-6>]
+check "E8 ISSUE 1257 STATE 3 THE VALUED CONTROL: with a real number on the sheet the declutter DOES fire and the held line DOES name it, and the two sentences still differ by the clause and nothing else" \
+  [list [expr {[regexp {^\S+ *= \S} $E8_BLK] ? 1 : 0}] \
+        [c_hasl $E8_T1 MC1] [c_hasl $E8_T1 CW=1u] \
+        [c_hasl $E8_T9 MC1] [c_hasl $E8_T9 CW=1u] \
+        [c_mask $E8_ON] [c_mask $E8_OFF] \
+        [c_has [c_bar $E8_ON]] [c_has [c_bar $E8_OFF]] \
+        [expr {[string map [list $DC_CLAUSE {}] [c_unf $E8_ON]] eq [c_unf $E8_OFF] ? 1 : 0}]] \
+  [list 1 1 1 1 0 9 1 1 0 1]
+
+## --- E9: THE CHORD'S OWN THREE SENTENCES, DRIVEN ---------------------------
+## ⚠ `cadence::_annot_declutter_msg` IS NOT REWORDED AND ITS SIGNATURE DOES NOT
+## MOVE — rule debt 1244 is the USER's and item A7 is not entitled to spend it
+## (row S10 is the guard). What changes is the `gated` term its CALLER supplies:
+## it used to be bit 0 alone, so `Ctrl-Alt-6` promised "a device showing
+## operating-point values draws its name and those values only" in states 1 and
+## 2 as well, where no device shows any. It is now bit 0 AND "something was
+## actually hidden", which is exactly the distinction DC_ON and DC_ARM were
+## written to carry.
+proc e9_chord {} {
+  dc_setmask 1
+  dc_fire <Control-Alt-Key-6>
+  set a [list [dc_mask] [xschem get statusmsg]]
+  dc_fire <Control-Alt-Key-6>
+  set b [list [dc_mask] [xschem get statusmsg]]
+  dc_setmask 0
+  return [list $a $b]
+}
+## state 3 — the valued sheet is still loaded and attached from row E8
+set E9_V [e9_chord]
+## state 2 — the dead raw
+catch {xschem raw clear}
+set ::netlist_dir $E7_DIR
+xschem load $E7_FIX
+update idletasks
+catch {xschem annotate_op $E7_RAW 0}
+update idletasks
+set E9_D [e9_chord]
+## state 1 — no results file at all (row E6's own empty directory)
+catch {xschem raw clear}
+set ::netlist_dir $E6_DIR
+xschem load $E6_FIX
+update idletasks
+set E9_N_LOADED -99 ; catch {set E9_N_LOADED [xschem raw loaded]}
+set E9_N [e9_chord]
+check "E9 ISSUE 1257 THE CHORD ITSELF: Ctrl-Alt-6 says the ON sentence only where something was hidden - valued raw -> ON, dead raw -> ARMED, no raw -> ARMED - and the OFF sentence on the way back out of all three" \
+  [list $E9_N_LOADED \
+        [lindex $E9_V 0] [lindex $E9_V 1] \
+        [lindex $E9_D 0] [lindex $E9_D 1] \
+        [lindex $E9_N 0] [lindex $E9_N 1]] \
+  [list -1 [list 9 $DC_ON]  [list 1 $DC_OFF] \
+           [list 9 $DC_ARM] [list 1 $DC_OFF] \
+           [list 9 $DC_ARM] [list 1 $DC_OFF]]
 
 set ::netlist_dir $scratch
 catch {xschem raw clear}

@@ -861,7 +861,7 @@ proc cadence::_annot_types_clause {types} {
 ## `cadence::annot_mode` therefore hands this proc the SHORT form of the cause
 ## (see `cadence::_annot_cause_msg`) and hands the CIW pane the long one. This
 ## proc renders whatever it is given and chooses neither.
-proc cadence::_annot_msg {mask state path types {cause {}}} {
+proc cadence::_annot_msg {mask state path types {cause {}} {hid 0}} {
   ## ⚠ ISSUE 0857, RULED BY THE USER 2026-08-27, VERBATIM: "Yes, 6 does
   ## nothing when there is ONLY a TRAN result. But, it's a good idea to say
   ## 'No OP results available' in the CIW." So RULING 0856's "do nothing"
@@ -954,7 +954,7 @@ proc cadence::_annot_msg {mask state path types {cause {}}} {
   ## Ahead of the cause it does NOT go: A11-12b's ruling is that when the line
   ## must be cut, what is sacrificed is the file name and not the answer to the
   ## question the key just asked. Row B1 leg 3 is that order, asserted.
-  append m [cadence::_annot_declutter_clause $mask]
+  append m [cadence::_annot_declutter_clause $mask $hid]
 
   switch -exact -- $state {
     live    { append m " These results were already loaded." }
@@ -1575,11 +1575,13 @@ proc cadence::annot_mode {mode} {
 
   ## The `Show hidden texts` pair (src/xschem.tcl:15036): bboxes change when
   ## hidden texts appear, and annot_show_sync_cache() rides inside the first.
-  catch {xschem update_all_sym_bboxes}
-  catch {xschem redraw}
+  ## ISSUE 1257: the pair is inside `cadence::_annot_declutter_refresh` now, and
+  ## what comes back is whether the declutter rung actually hid anything on this
+  ## press -- measured at the rung, not inferred from the mask.
+  set hid [cadence::_annot_declutter_refresh]
 
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot.
-  catch {xschem statusmsg -hold [cadence::_annot_fit [cadence::_annot_msg $mask $state $path $types $cmsgs]]}
+  catch {xschem statusmsg -hold [cadence::_annot_fit [cadence::_annot_msg $mask $state $path $types $cmsgs $hid]]}
   return
 }
 
@@ -2736,9 +2738,11 @@ proc cadence::annot_tran {} {
   xschem set annot_show $newmask
 
   ## The `Show hidden texts` pair (src/xschem.tcl): bboxes change when hidden
-  ## texts appear, and annot_show_sync_cache() rides inside the first.
-  catch {xschem update_all_sym_bboxes}
-  catch {xschem redraw}
+  ## texts appear, and annot_show_sync_cache() rides inside the first. ISSUE
+  ## 1257: the pair now lives in `cadence::_annot_declutter_refresh`, which runs
+  ## it and reports whether the declutter rung actually took anything off, so the
+  ## clause below can follow the gate instead of the mask.
+  set hid [cadence::_annot_declutter_refresh]
 
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot
   ## erase it (issue 0248). Both sinks: the CIW is where the user asked for it
@@ -2781,7 +2785,7 @@ proc cadence::annot_tran {} {
   ## ⚠ ONLY ON THE SUCCESS PATH. The refusal arms above unwind the mask they
   ## found and publish nothing, so a clause about what the sheet is showing has
   ## nothing to describe there.
-  append m [cadence::_annot_declutter_clause $newmask]
+  append m [cadence::_annot_declutter_clause $newmask $hid]
 
   cadence::_annot_say $m
   return ok
@@ -2913,12 +2917,61 @@ proc cadence::_annot_declutter_msg {on gated} {
 ## THE WORDING IS UNRATIFIED (status E) -- `owed.sh add rule 1251`. Item A1's
 ## three sentences above are on the user's queue separately as rule debt `1244`
 ## and are NOT reworded here; this composes with them (row S10).
-proc cadence::_annot_declutter_clause {mask} {
+proc cadence::_annot_declutter_clause {mask hid} {
   if {![string is integer -strict $mask]} { return {} }
-  if {($mask & 8) && ($mask & 1)} {
+  ## ⚠ `hid` IS GUARDED FOR THE SAME REASON `mask` IS, and the reason is not
+  ## tidiness. `$hid` reaches the `&&` below as a bare word, so a caller that
+  ## passed a non-boolean would raise INSIDE this proc -- and every shipped
+  ## caller wraps the WHOLE message build in `catch`, so the cost would not be a
+  ## missing clause, it would be the ENTIRE status line silently vanishing. A
+  ## clause producer must never be able to take the sentence with it.
+  if {![string is boolean -strict $hid]} { return {} }
+  if {($mask & 8) && ($mask & 1) && $hid} {
     return { Decluttering is on, so other device text is hidden.}
   }
   return {}
+}
+
+## THE THIRD TERM, MEASURED AT THE RUNG -- ISSUE 1257.
+##
+## `update_all_sym_bboxes` then `xschem redraw` is the pair every tail on this
+## surface already ran (the `Show hidden texts` checkbutton's own pair, with
+## annot_show_sync_cache() riding inside the first). This proc OWNS it now, and
+## brackets it with two reads of the C seam `xschem get annot_declutter_count` --
+## a monotonic counter bumped by the declutter rung itself, on its single
+## `return 1` (src/actions.c). The DELTA is the answer to "did this press
+## actually hide anything", and it is the only honest one available:
+##
+##   * the MASK cannot answer it. After the value gate (ruling D-6) bit0|bit3
+##     hides nothing on a sheet with no results file -- which is the most common
+##     first press there is -- and the clause said otherwise anyway.
+##   * `op_annot::_annotated` cannot answer it either, and that is the finding
+##     that decided the shape. A raw that LOADS and annotates but publishes no
+##     matching vector leaves it answering **1**, exactly as a valued raw does,
+##     while the sheet is byte-identical at mask 1 and mask 9. Every Tcl-only
+##     repair fixes the no-raw state and goes on lying in that one.
+##   * a Tcl twin of the C gate would be a SECOND parser of `op_annot::text`'s
+##     block format for one question -- invariant I1's named failure, and
+##     precisely how issue 1252 became 1260.
+##
+## THREE CONSUMERS, ONE MEASUREMENT (invariant I1): `cadence::annot_mode`,
+## `cadence::annot_tran` and `cadence::annot_declutter`. The stock file's
+## `annot_declutter_say` (src/xschem.tcl) makes the same measurement for the two
+## menu doors, because it may not depend on this file existing at all.
+##
+## ⚠ IT ANSWERS 0, NEVER AN ERROR, ON A BINARY WITHOUT THE SEAM. An unknown
+## `xschem get` returns the empty string with rc 0, so the integer tests below
+## are what tell the two apart -- and 0 means "say nothing", which is the answer
+## that cannot invent a declutter.
+proc cadence::_annot_declutter_refresh {} {
+  set a {}
+  catch {set a [xschem get annot_declutter_count]}
+  catch {xschem update_all_sym_bboxes}
+  catch {xschem redraw}
+  set b {}
+  catch {set b [xschem get annot_declutter_count]}
+  if {![string is integer -strict $a] || ![string is integer -strict $b]} { return 0 }
+  return [expr {$b > $a ? 1 : 0}]
 }
 
 ## THE ONE WRITER OF ANNOT_SHOW_NOPARAM. `toggle` is what the chord sends; `on`
@@ -2962,11 +3015,12 @@ proc cadence::annot_declutter {{mode toggle}} {
 
   ## The `Show hidden texts` pair (src/xschem.tcl): bboxes change when hidden
   ## texts appear or vanish, and annot_show_sync_cache() rides inside the first.
-  ## Nothing visible depends on them until item A3 -- which is exactly why row
-  ## V3 reads this tail out of the SOURCE. Dropping them would be invisible to
-  ## every behavioural row in the suite today and would break A3 silently.
-  catch {xschem update_all_sym_bboxes}
-  catch {xschem redraw}
+  ## ISSUE 1257: both live in `cadence::_annot_declutter_refresh`, which also
+  ## reports whether the rung took anything off -- so this chord's own sentence
+  ## can tell "decluttering, and here is the effect" from "decluttering, armed,
+  ## with nothing yet to hide". Row V3 reads the order out of the SOURCE, here
+  ## and in the helper, because no behavioural row on this bench can see it.
+  set hid [cadence::_annot_declutter_refresh]
 
   ## LAST, so nothing above can overwrite it, and HELD so pointer motion cannot
   ## erase it before it has been read (issue 0248). Through `_annot_fit`, the
@@ -2977,8 +3031,16 @@ proc cadence::annot_declutter {{mode toggle}} {
   ## `_annot_fit` too, so that a sentence added later cannot bypass the 255-byte
   ## budget and bring back the mid-token amputation. Splitting this call across
   ## two lines reds that row -- measured, 2026-09-02.
+  ## ⚠ `gated` IS BIT 0 **AND** A MEASUREMENT, AND THE SECOND TERM IS ISSUE 1257.
+  ## `_annot_declutter_msg`'s wording and signature are untouched -- the three
+  ## sentences are the USER's to reword under rule debt 1244 and row S10 is the
+  ## guard on that. What changed is what this caller means by `gated`: it used to
+  ## be bit 0 alone, so Ctrl-Alt-6 promised "a device showing operating-point
+  ## values draws its name and those values only" on sheets where no device shows
+  ## any. DC_ARM -- "on, but nothing changes yet" -- is already the right sentence
+  ## for that state, so the fix is to hand it the right question.
   set on [expr {($new & 8) ? 1 : 0}]
-  set gated [expr {($new & 1) ? 1 : 0}]
+  set gated [expr {(($new & 1) && $hid) ? 1 : 0}]
   set m [cadence::_annot_declutter_msg $on $gated]
   catch {xschem statusmsg -hold [cadence::_annot_fit $m]}
   return $on

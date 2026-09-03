@@ -53,8 +53,25 @@
 # * NO SIMULATOR. A re-run is a rewrite of the same raw path, which is exactly
 #   what ngspice does to <rundir>/<cell>_ase.raw.
 # * file mtime is 1-second resolution, so every rewrite below is preceded by a
-#   real sleep. A same-second rewrite of identical size is invisible to any
-#   stamp and is a stated, unremoved limitation of the fix.
+#   real sleep. ⚠ THE SENTENCE THAT USED TO FOLLOW HERE -- "a same-second
+#   rewrite of identical size is invisible to any stamp and is a stated,
+#   unremoved limitation of the fix" -- WAS REMOVED BY ITEM A7, BECAUSE THE
+#   LIMITATION WAS REMOVED (issue 1255). It failed in the SAFE-LOOKING
+#   direction: the guard answered "fresh" when it did not know, so the sheet
+#   kept painting the previous run's numbers under "These results were already
+#   loaded", which is this file's own headline defect. `op_annot::_db_stat` now
+#   answers {mtime size fingerprint}, the fingerprint being a `zlib crc32` over
+#   a BOUNDED window of the file's OWN BYTES -- head 4096 + tail 4096, the whole
+#   file at 8192 bytes or under. It must be something the FILE carries, never a
+#   counter this process keeps: a stamp that lives only in our process is a
+#   guess about the file. Rows F50 and F51 are that, driven; row F35 is the cost
+#   budget it has to stay inside, and a FULL-file crc does not (258 us on F35's
+#   1.2 MB fixture against a 5 us baseline, measured).
+#   ⚠ THE RESIDUE, STATED RATHER THAN GLOSSED: a rewrite confined to the
+#   MIDDLE of a file larger than 8 KiB, at exactly the same size, inside the
+#   same second, is still invisible. Row F51 asserts that as a MEASURED limit
+#   rather than leaving it as a hope, and asserts that the same change in a file
+#   of 8 KiB or less IS caught.
 #
 # Runs on BOTH arms, unchanged:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_annot_stale_0684.tcl
@@ -1916,6 +1933,15 @@ check {F48 ISSUE 1250 PART 1 the sentence the mint BUILT, golded whole at _annot
 # ⚠ AND IT IS NOT "F21 TWICE". Legs 1 and 2 are the fixture's own non-vacuity:
 # without them a staging that quietly stopped ticking the clock would leave this
 # row measuring the same easy case F21 measures.
+#
+# ⚠ LEGS 1 AND 2 WERE RESTATED BY ITEM A7 (issue 1255) AND A THIRD WAS ADDED.
+# `op_annot::_db_stat` now answers THREE elements -- {mtime size fingerprint} --
+# so the old `llength == 2` legs would red on a correct tree. They are restated
+# at the new arity rather than loosened, and the new leg is the sharp one: this
+# row's rewrite is BYTE-IDENTICAL, so the fingerprint must be EQUAL across it.
+# That is what stops a "fix" that stirs a counter or a clock into the stamp:
+# such a stamp would make every rewrite look different, i.e. it would close
+# issue 1255's first direction by permanently opening its second.
 catch {xschem raw clear}
 xschem load $F_SCH
 catch {xschem set annot_show 0}
@@ -1935,14 +1961,180 @@ catch {cadence::annot_mode op}
 set f49_msg [f_msg]
 set f49_rf  [f_rawfile]
 check {F49 ISSUE 1250 PART 2 the mtime race forced: a byte-identical rewrite ONE SECOND after the stamp still leaves the press saying the results were already loaded, and takes nothing off} \
-  [list [expr {([llength $f49_s1] == 2 && [lindex $f49_s1 0] != [lindex $f49_s2 0]) ? 1 : 0}] \
-        [expr {([llength $f49_s1] == 2 && [lindex $f49_s1 1] == [lindex $f49_s2 1]) ? 1 : 0}] \
+  [list [expr {([llength $f49_s1] == 3 && [lindex $f49_s1 0] != [lindex $f49_s2 0]) ? 1 : 0}] \
+        [expr {([llength $f49_s1] == 3 && [lindex $f49_s1 1] == [lindex $f49_s2 1]) ? 1 : 0}] \
+        [expr {([llength $f49_s2] == 3 && [lindex $f49_s1 2] eq [lindex $f49_s2 2]) ? 1 : 0}] \
         $f49_pre \
         [expr {[string first {already loaded} $f49_msg] >= 0 ? 1 : 0}] \
         [expr {$f49_rf eq [file normalize $F_RAW] ? 1 : 0}]] \
-  [list 1 1 {0 {-1 0 -1}} 1 1]
+  [list 1 1 1 {0 {-1 0 -1}} 1 1]
 
 catch {xschem raw clear}
+
+# ---------------------------------------------------------------------------
+# F50 -- ISSUE 1255, THE HEADLINE: A SAME-SECOND REWRITE AT THE SAME SIZE
+# ---------------------------------------------------------------------------
+# THE DEFECT IN ONE SENTENCE. `op_annot::_db_stat` answered {mtime size} and
+# Tcl's `file mtime` is ONE-SECOND granular, so a run that finished inside the
+# same wall-clock second as the last stamp, at the same path and the same
+# length, read as UNCHANGED -- and the sheet went on painting the previous run's
+# numbers under "These results were already loaded". That is this file's own
+# headline defect, arriving through the guard that exists to prevent it.
+#
+# ⚠ IT FAILS IN THE SAFE-LOOKING DIRECTION, WHICH IS WHY IT SURVIVED. Answering
+# "fresh" when you do not know costs nothing visible: no error, no delay, no
+# missing number -- just the wrong number, under a sentence that says it is the
+# right one. Invariant I3 and save.c's RULING D5-1 in their own words: not the
+# previous run's number.
+#
+# ⚠ WHY THE FIX MUST READ THE FILE AND NOT KEEP A COUNTER. The three candidate
+# repairs issue 1255 lists are not equal. A "we wrote this" token minted at
+# publish time (candidate 2) is a stamp that lives only in OUR process, so it is
+# a GUESS about the file -- it cannot see a rewrite this process did not do,
+# which is exactly the case here (ngspice rewrites the raw; xschem does not).
+# Treating "same size, mtime within 1 s" as unchanged (candidate 3) trades a
+# needless re-read for a stale number, which is the wrong way round under I3.
+# So the third stamp term is computed FROM THE FILE'S OWN BYTES.
+#
+# ⚠ THE SAME SECOND IS FORCED, NOT WAITED FOR. Two `f_mkop` writes take
+# microseconds, so they land in one second unless the block straddles a tick;
+# the staging is retried on a FRESH directory until it does, and if it never
+# does the first leg answers NO-SAME-SECOND and reds honestly rather than
+# quietly measuring the easy case F49 measures.
+#
+# ⚠ SAME SIZE IS ASSERTED, NOT ASSUMED. `1e-05 1e-04 1e-06` and
+# `9e-03 7e-03 5e-05` are five characters each, so the two files differ in
+# CONTENT and in nothing a stat can see. Leg 2 says so.
+proc f_bytes {path} {
+  if {![file isfile $path]} { return NO-FILE }
+  if {[catch {open $path rb} fd]} { return NO-OPEN }
+  set d [read $fd] ; close $fd ; return $d
+}
+proc f50_stage {n} {
+  set raw [f_blockraw f50_$n]
+  catch {xschem raw clear}
+  xschem load $::F_SCH
+  catch {xschem set annot_show 0}
+  f_mkop $raw 1e-05 1e-04 1e-06
+  catch {cadence::annot_mode op}
+  set rows1 [f_rows]
+  set s1 [f_ans ::op_annot::_db_stat [file normalize $raw]]
+  set b1 [f_bytes $raw]
+  ## THE RE-RUN: same path, same length, different numbers, same second.
+  f_mkop $raw 9e-03 7e-03 5e-05
+  set s2 [f_ans ::op_annot::_db_stat [file normalize $raw]]
+  set b2 [f_bytes $raw]
+  set cur [f_cur $raw]
+  catch {cadence::annot_mode op}
+  return [list $raw $rows1 $s1 $b1 $s2 $b2 $cur [f_rows] [f_msg]]
+}
+set f50_r {}
+set f50_same 0
+for {set f50_i 1} {$f50_i <= 25 && !$f50_same} {incr f50_i} {
+  set f50_r [f50_stage $f50_i]
+  set f50_s1 [lindex $f50_r 2]
+  set f50_s2 [lindex $f50_r 4]
+  if {[llength $f50_s1] >= 1 && [llength $f50_s2] >= 1 && \
+      [lindex $f50_s1 0] eq [lindex $f50_s2 0]} { set f50_same 1 }
+}
+set f50_s1   [lindex $f50_r 2]
+set f50_b1   [lindex $f50_r 3]
+set f50_s2   [lindex $f50_r 4]
+set f50_b2   [lindex $f50_r 5]
+set f50_cur  [lindex $f50_r 6]
+set f50_rows1 [lindex $f50_r 1]
+set f50_rows2 [lindex $f50_r 7]
+set f50_msg  [lindex $f50_r 8]
+puts "SECOND| F50 same-second rewrite reached on attempt $f50_i of 25 (mtime {[lindex $f50_s1 0]} -> {[lindex $f50_s2 0]}, size {[lindex $f50_s1 1]} -> {[lindex $f50_s2 1]})"
+check {F50 ISSUE 1255 a re-run that lands inside the SAME SECOND at the SAME SIZE is seen: the stamp moves, the freshness question answers re-read, and the next press paints THIS run's numbers instead of the last one's} \
+  [list [expr {$f50_same ? 1 : {NO-SAME-SECOND}}] \
+        [expr {([llength $f50_s1] >= 2 && [lindex $f50_s1 1] eq [lindex $f50_s2 1]) ? 1 : 0}] \
+        [expr {$f50_b1 ne $f50_b2 ? 1 : 0}] \
+        [expr {[string first {id = 10u} $f50_rows1] >= 0 ? 1 : 0}] \
+        [expr {$f50_s1 ne $f50_s2 ? 1 : 0}] \
+        [expr {([llength $f50_s1] == 3 && [llength $f50_s2] == 3 && \
+                [lindex $f50_s1 2] ne [lindex $f50_s2 2]) ? 1 : 0}] \
+        $f50_cur \
+        [expr {[string first {id = 9m} $f50_rows2] >= 0 ? 1 : 0}] \
+        [expr {[string first {already loaded} $f50_msg] >= 0 ? 1 : 0}] \
+        [expr {[string first {Loaded results from} $f50_msg] >= 0 ? 1 : 0}]] \
+  [list 1 1 1 1 1 1 0 1 0 1]
+
+# ---------------------------------------------------------------------------
+# F51 -- THE FINGERPRINT IS OF THE FILE, AND ITS BLIND SPOT IS MEASURED
+# ---------------------------------------------------------------------------
+# Row F50 says the stamp now sees a same-second rewrite. This row says WHAT it
+# is looking at, and -- just as importantly -- what it is NOT.
+#
+# ⚠ THE WINDOW IS BOUNDED BECAUSE ROW F35 IS A BUDGET, AND THE BUDGET WAS
+# MEASURED BEFORE THE SHAPE WAS CHOSEN. F35 requires `op_annot::db_current` to
+# be flat in the size of the results file -- `f35_big <= 3 * f35_small + 100`
+# microseconds -- and this predicate runs on EVERY key press. RE-MEASURED HERE
+# rather than taken on trust, in xschem's own interpreter, medians of 21, on
+# F35's own 1,218,055-byte fixture and a 271-byte raw:
+#     mtime+size only        1 us small   1 us big
+#     crc32 head+tail 4096   3 us small   5 us big   <- chosen
+#     crc32 WHOLE FILE       2 us small 239 us big   <- reds F35 leg 4:
+#                                                       239 <= 3*2+100 is false
+#     exec stat -c %.9Y                 1355 us big  <- reds F35 legs 2 AND 3
+#                                                       (`< 1000`), forks per
+#                                                       press, GNU-only
+# (An earlier note in item A7's plan recorded 258 us and 1460-1772 us for the
+# last two; same conclusion, different machine minute.)
+#
+# ⚠ SO THERE IS A BLIND SPOT, AND IT IS ASSERTED RATHER THAN HOPED FOR. A change
+# confined to the MIDDLE of a file bigger than 8 KiB, at the same size, in the
+# same second, is invisible. Leg 5 pins that as a MEASURED limit -- if a later
+# implementation widens the window it reds, and that is a conversation about
+# F35's budget, not a silent drift. Leg 6 is its counterweight: in a file of
+# 8 KiB or less the whole file IS the window, so the same middle change IS seen.
+proc f51_mk {path n} {
+  set f [open $path wb]
+  for {set i 0} {$i < $n} {incr i 64} { puts -nonewline $f [string repeat A 64] }
+  close $f
+  return [file size $path]
+}
+proc f51_poke {path off ch} {
+  if {[catch {open $path r+b} f]} { return 0 }
+  seek $f $off
+  puts -nonewline $f $ch
+  close $f
+  return 1
+}
+proc f51_fp {path} {
+  set st [f_ans ::op_annot::_db_stat [file normalize $path]]
+  if {[llength $st] != 3} { return NO-FP }
+  return [lindex $st 2]
+}
+set F51_A [file join $scratch f51_a.bin]
+set F51_B [file join $scratch f51_b.bin]
+set F51_S [file join $scratch f51_small.bin]
+set f51_na [f51_mk $F51_A 40960]
+set f51_nb [f51_mk $F51_B 40960]
+set f51_ns [f51_mk $F51_S 4096]
+set f51_same_paths [expr {[f51_fp $F51_A] eq [f51_fp $F51_B] ? 1 : 0}]
+set f51_have [expr {[f51_fp $F51_A] ne {NO-FP} ? 1 : 0}]
+## head window
+set f51_h0 [f51_fp $F51_B] ; f51_poke $F51_B 100 Z    ; set f51_h1 [f51_fp $F51_B]
+## tail window
+f51_mk $F51_B 40960
+set f51_t0 [f51_fp $F51_B] ; f51_poke $F51_B 40900 Z  ; set f51_t1 [f51_fp $F51_B]
+## the middle of a big file -- the measured residue
+f51_mk $F51_B 40960
+set f51_m0 [f51_fp $F51_B] ; f51_poke $F51_B 20480 Z  ; set f51_m1 [f51_fp $F51_B]
+## the middle of a SMALL file -- the whole file is the window, so it IS seen
+set f51_s0 [f51_fp $F51_S] ; f51_poke $F51_S 2048 Z   ; set f51_s1v [f51_fp $F51_S]
+check {F51 the third stamp term is a fingerprint OF THE FILE: identical bytes at two paths agree, a byte changed in the head window or the tail window moves it, a byte changed in the middle of a >8 KiB file does NOT (the measured cost limit), and in a file of 8 KiB or less it does} \
+  [list $f51_have [list $f51_na $f51_nb $f51_ns] $f51_same_paths \
+        [expr {$f51_h0 ne $f51_h1 ? 1 : 0}] \
+        [expr {$f51_t0 ne $f51_t1 ? 1 : 0}] \
+        [expr {$f51_m0 eq $f51_m1 ? 1 : 0}] \
+        [expr {$f51_s0 ne $f51_s1v ? 1 : 0}]] \
+  [list 1 {40960 40960 4096} 1 1 1 1 1]
+
+catch {xschem raw clear}
+catch {xschem set annot_show 0}
+set ::netlist_dir $nd
 
 # --- teardown ----------------------------------------------------------------
 catch {rename ase::last_rawfile {}}

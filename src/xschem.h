@@ -3722,6 +3722,13 @@ extern unsigned int annot_overlay_count;
  * unchanged repeat frame). Bumped in annot_overlay_sync() at the flush, never in
  * annot_data_changed() -- several hooks fire for one user action. */
 extern unsigned int annot_overlay_flushes;
+/* monotonic count of texts the declutter rung actually removed; read with
+ * `xschem get annot_declutter_count` (scheduler.c). The seam issue 1257 needed: the
+ * mask alone stopped meaning "the sheet is decluttered" once the value gate landed,
+ * so a status-line producer that wants to say "other device text is hidden" brackets
+ * one bbox+redraw pass with two reads of this and believes the DELTA. Bumped at the
+ * rung's own `return 1` in actions.c, never re-derived. */
+extern unsigned int annot_declutter_count;
 extern int check_pin_names(char **result);
 /* pin name-label layout (offset/size/rot/flip) read from a pin's prop tokens by
  * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */
