@@ -34,7 +34,7 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 | A3 | the draw rung and the per-instance gate | `[E]` | `39769294` | 52→82, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, xschem.tcl | owed | closed 1246-1249. Filed 1251-1254. **Audit run by the DRIVER: 365/11/0/2 of 378, 11 reds identical by name** (`audit_A3_2026-09-02.txt`) |
 | A4 | the status line is not path-length-sensitive | `[E]` | `ccd2aec1` | 82→93; stale_0684 52→54 | annot_mode.tcl | owed | **T1 solo ×4 = 0/0/0/0** — the flake is dead. Filed 1255, 1256. **Driver audit: 365/11/0/2, IDENTICAL BY NAME to A3's** (`audit_A4_2026-09-02.txt`) |
 | A5 | D-1 / D-6 conformance, and A3's staleness | `[E]` | `cd212b69` | 93→105, ALL PASS | actions.c, draw.c, svgdraw.c, psprint.c, select.c, scheduler.c | owed | closed 1252-1254 + the gate. **Ran its own audit; by-name diff vs A4 EMPTY.** Filed 1257-1261 |
-| A6 | close the value gate and the last bbox doors | `[ ]` | | | | | needs A5; fixes **1258, 1259, 1260** |
+| A6 | close the value gate and the last bbox doors | `[E]` | `c8bb41f9` (driver) | 105→120, ALL PASS | actions.c, save.c, scheduler.c, select.c, xschem.h | owed | crew returned **F** — destroyed its own work, then blocked from building. Driver built, ran the suite, attributed the 12th red (**1269**, the display). **1259 only PARTIALLY closed** → **1263** to B1 |
 | A7 | the wording follows the gate, guards stop lying | `[ ]` | | | | | needs A6; fixes **1255, 1256, 1257, 1261**. **FEATURE A CLOSES HERE** |
 | B1 | the backend seam | `[ ]` | | | | | D-4/D-5 are the whole item |
 | B2 | the list store and the settings file | `[ ]` | | | | | `Makefile.in` ×2 + `./configure` |
@@ -55,6 +55,62 @@ judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
   that owns the files each needs (`src/xschem.tcl` for 1246, `src/actions.c` for
   1247) and the first at which any of them has a visible effect. A1 correctly
   measured and filed all three without fixing them; none is A1's to own.
+
+### ⚠ A6: what a crew could not do, and what the driver had to
+
+A6 is the first item to return **F**, and the reason is worth keeping. Its
+write-up agent ran `git checkout -- src/save.c` to undo a comment edit and
+destroyed ~99 lines of its own **unstaged, already-verified** implementation.
+Never staged, so `git fsck` recovered nothing. It reconstructed 88 lines
+verbatim plus one 8-line hunk from prose, **said so plainly**, and was then
+denied permission to run `make` — so it could not certify the reconstruction and
+**refused to commit unbuilt C**. That refusal was correct.
+
+The driver did the half the crew could not: built it (clean; the one `save.c`
+warning is pre-existing, confirmed by building both HEAD and the change and
+diffing by *content*, since A6 shifts line numbers by ~99), ran the suite
+(105 → 120, ALL PASS), and **attributed the twelfth red instead of accepting
+it** — five binaries, including A4's own commit rebuilt in a clean worktree,
+all of which fail it, against a freshly restarted display which passes all 126.
+It is the display, not the code: issue **1269**.
+
+**And then the driver's own audit turned out to be worthless, for a reason worth
+keeping.** The first post-A6 full audit reported two extra reds — including
+`test_annot_declutter_1244` itself, with every one of A6's own checks failing.
+The tree was correct; the **binary was a build behind**, left there by the
+`git stash` / build / `git stash pop` cycle run during the 1269 attribution. No
+test harness builds — `full_audit.sh:49` runs `src/xschem` as it finds it — so
+the transcript was entirely plausible and entirely false. One `make -C src`
+(which recompiled *every* object, the tell) and the suite passed 120/120.
+Recorded as a standing trap in CLAUDE.md. **The driver's rule for the rest of
+this batch: rebuild immediately before any audit that is meant to be evidence,
+and read an unexpected red as a question about the binary before it is a
+question about the code.** The 1269 table has been amended, because two of its
+rows were taken with that stale binary.
+
+**The audit re-run against a correct binary** (`audit_A6_2026-09-03.txt`):
+
+```
+SUMMARY: 364 pass  12 fail  0 crash/timeout  2 skip  (total 378)
+```
+
+`test_annot_declutter_1244` is **green in the audit**, which is what A6 had to
+prove. The list is the eleven known reds plus **`test_wave_sigbrowser_i12`**,
+which the re-measurement excludes the binary from: it passes on a freshly started
+display, passes on a second run, passes even after the red suite that precedes it
+in the audit - and fails after a full audit. Issue 1269 now carries the excluded
+candidates and the named-but-unproven mechanism (BX42 reads
+`xschem get current_win_path`, which follows X focus and `<Enter>`, so it is
+really asking where the pointer and focus are).
+
+**The baseline for A7 is therefore TWELVE NAMES, carried by name and by reason -
+never as a count.** A7 must not add a thirteenth.
+
+**Two standing lessons for the rest of this batch.** A crew that reports its own
+destruction honestly is behaving correctly and its work is still usable — check
+it, do not discard it. And an unexplained red is attributed, never absorbed:
+this one cost a worktree build and it was still cheaper than a batch that learns
+to wave reds through.
 
 ### ⚠ FEATURE A CLOSES AT A7 — a driver boundary, set 2026-09-02
 

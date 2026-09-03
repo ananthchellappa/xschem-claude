@@ -93,6 +93,19 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   process writes that; a real crash writes a real code. Both verify passes on
   item S4c hit this in one session. Filed as **0990**; until it is fixed, a T1
   number taken while another agent's suite was live is not evidence.
+- **⚠ NO TEST HARNESS BUILDS. `full_audit.sh` runs `$REPO/src/xschem` as it
+  finds it** (`full_audit.sh:49`), and so does every standalone suite. So a
+  source tree that is correct and a binary that is stale produce a *plausible*
+  audit — right suite names, right check names, wrong answers — and nothing in
+  the transcript says so. The way in is ordinary: `git stash` → build → test the
+  stashed state → `git stash pop` restores the sources and leaves the binary a
+  build behind. Measured 2026-09-02: a full audit taken that way reported two
+  extra reds, one of them the very suite the change was meant to green, which
+  passed 120/120 the moment the tree was rebuilt. **Rebuild before any audit that
+  is meant to be evidence**, and when a suite reds unexpectedly check the binary
+  before the code — `make -C src` recompiling *everything* means a header moved
+  under the objects, which is itself the tell.
+
 - **T1's baseline is ZERO counted failures, as of the 0689+0690 commit.** For days
   every crew report carried "T1 3 FAIL — pre-existing" and every reader, the lead
   included, waved it through. Two of those three were the completion sentinel
