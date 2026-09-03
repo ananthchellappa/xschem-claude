@@ -179,7 +179,16 @@ only**: two coverage holes, filed as **1267**.
 
 ## ITEM B1's ANSWER, IN WRITING — 2026-09-03. **NO, `op_param_set` DOES NOT CLOSE THIS ISSUE.**
 
-> ⚠ **AND THE SEAM DESCRIBED BELOW IS NOT IN THE TREE.** Item **B1** built it,
+> ✅ **UPDATE, SAME DAY: THE SEAM IS IN THE TREE AFTER ALL.** The driver re-did
+> B1 from the preserved patch, fixed both blockers and landed it — 37 → 49
+> checks, ALL PASS. So everything below is now a description of live code, not
+> of a patch file, with **one correction**: the answer dict has **five** keys,
+> not four. `nonfinite` was added, carrying `{<rawdev> <param> <text>}` triples
+> for columns the raw DOES hold on a device that did not converge (issue 1272).
+> That does not change this issue's answer, which is still NO, and the
+> paragraph below explaining why is unaffected.
+>
+> ⚠ *The following was written while it was still reverted:* Item **B1** built it,
 > passed every tier and its own 37-check suite, was then **refuted by its
 > adversary pass on a separate defect** (issue **1272** — it read through
 > `op_annot::raw_or_blank` without `op_annot::_finite`, so a binary raw carrying

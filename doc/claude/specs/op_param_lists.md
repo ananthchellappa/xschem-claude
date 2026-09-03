@@ -905,14 +905,26 @@ ase::backend::<sim>::op_param_set <devpath>   ->  ordered {param value} pairs
 > independently forbids handing a caller the pairs without the incompleteness
 > riding alongside them, and there is nowhere in a flat list to put it.
 >
-> **The shape that survives measurement is an ANSWER DICT with four keys:**
+> **The shape that survives measurement is an ANSWER DICT with FIVE keys:**
 >
 > | key | what it carries |
 > |---|---|
 > | `devices` | ordered `{<rawdev> {{<param> <value>} …}}` — one entry per **primitive** the request covers, raw-file order throughout |
 > | `absent` | ordered `{<rawdev> <param>}` — columns the raw **names** and the simulator **did not compute** |
+> | `nonfinite` | ordered `{<rawdev> <param> <text>}` — columns the raw **does** carry, holding Inf/NaN: **a device that did not converge** |
 > | `complete` | the honesty flag **as data** (DD-1's corollary): the value the capability declares, `0` for today's ngspice |
 > | `state` | `no_devpath` \| `no_raw` \| `not_op` \| `not_annotated` \| `ok` — four silences a caller must tell apart, which otherwise all arrive as the same empty list |
+>
+> ⚠ **`nonfinite` IS A SEPARATE BUCKET ON PURPOSE, AND IT WAS THE FIFTH KEY
+> ADDED BY B1's RE-DO** (issue 1272). It renders blank today, exactly like
+> `absent`, which is what makes collapsing the two tempting and wrong: *"the raw
+> does not carry `id`"* and *"the raw carries `id` and the simulator produced
+> NaN"* are different facts about the run, and the second is the one a designer
+> most wants surfaced — a non-converged operating point is a **result**, not a
+> gap. ⚠ And an **empty** `nonfinite` is not proof the run converged: the same
+> NaN in an **ascii** raw arrives as a finite `0` and lands in `devices`,
+> because `src/save.c`'s fast `my_atof()` path never parsed the words. That
+> asymmetry is deliberate there and is still open at the end of issue 1272.
 >
 > **The capability is a second, optional hook** — `op_param_enumerable` — beside
 > `op_param_set` in the same backend dict, because it is a question about the
@@ -920,11 +932,14 @@ ase::backend::<sim>::op_param_set <devpath>   ->  ordered {param value} pairs
 > Neither may join `ase::register_backend`'s required-hook loop: two suites
 > hand-build five-hook registrations that raise if a sixth becomes required.
 >
-> **B1 nonetheless returned `[F]`** on a separate defect (issue **1272**: it read
+> **B1 first returned `[F]`** on two separate defects — issue **1272** (it read
 > through `op_annot::raw_or_blank` without `op_annot::_finite`, so a binary raw
-> carrying a NaN returned `nan` in the **value** bucket — I3's own failure). The
-> shape above is not what was refuted; it is what was measured, and it binds
-> **B2**, **B3** and **B5**.
+> carrying a NaN returned `nan` in the **value** bucket, I3's own failure), and
+> an over-strip in `ase::op_dev_norm` that silently lost any device whose path
+> began with a one-character segment. The shape above is not what was refuted;
+> it is what was measured. ✅ **Both were fixed the same day in a driver re-do
+> and the seam is in the tree: 37 → 49 checks, ALL PASS.** It binds **B2**,
+> **B3** and **B5**, and B3 renders from **five** keys, not two.
 >
 > **⚠ ABSENCE MAY BE REPORTED ONLY IN STATE `ok`.** Measured: `xschem raw value
 > <v> -1` is the only reader carrying the absent/zero distinction — a `dims=0`

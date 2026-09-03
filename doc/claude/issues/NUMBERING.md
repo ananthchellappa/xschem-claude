@@ -1000,6 +1000,12 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   …}}`, and B3 rendering that would put `id = nan` on a schematic, which is
   verbatim what invariant I3 forbids. Carries the ascii/binary asymmetry
   (`nan`→`0` through `my_atof()`), the recommended one-stage fix and its two
-  rejected alternatives. **FILED, NOT FIXED.**
+  rejected alternatives. ~~**FILED, NOT FIXED.**~~ ✅ **FIXED 2026-09-03** in
+  item B1's driver re-do, by option 1 plus a companion accessor: the three
+  outcomes moved into a new `op_annot::raw_class` (`absent` / `nonfinite` /
+  `value`) and `raw_or_blank` became one line on top of it, so every present and
+  future consumer is correct by default and the seam that needs the third
+  outcome has one place to get it. All six acceptance rows green; sabotage
+  (deleting the `_finite` line) reds NF1 NF2 NF5 NF6 NF7 and nothing else.
 
 **The next free number is 1273.**

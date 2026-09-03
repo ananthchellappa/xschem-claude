@@ -1,7 +1,8 @@
 # 1272 — `op_annot::raw_or_blank` passes a non-finite through; only `op_annot::_finite` rejects it, and nothing at the seam says so
 
-Status: **FILED, NOT FIXED** — measured 2026-09-03 by item **B1** of
-`doc/claude/op_param_batch/PLAN.md`, which fell into it · Branch: `fluid-editing`
+Status: **FIXED, 2026-09-03** (option 1, plus a companion accessor) — measured
+the same day by item **B1** of `doc/claude/op_param_batch/PLAN.md`, which fell
+into it, and repaired in B1's driver re-do · Branch: `fluid-editing`
 
 Related: invariant **I3**, ruling **D5-1**, issues **1259**, **1263**, **0213**,
 **1245** (the Results Display Window), `src/save.c`'s own non-finite decision
@@ -118,6 +119,59 @@ explicitly — a `nonfinite` bucket, or `absent` with a reason — not inherit i
 4. A `dims=0` column still answers `{}` and is still distinguishable from (3).
 5. `test_op_annot` and `test_annot_declutter_1244` unchanged by name and count.
 6. A structural row that reds if the finite test is removed from the accessor.
+
+## What was actually done, 2026-09-03
+
+**Option 1 was taken, and it grew one companion.** Folding `_finite` into
+`raw_or_blank` makes every consumer correct by default, but it also makes the
+accessor two-outcome forever — and item B1's seam needs three, because it has to
+report a non-converged device as such. So the three outcomes moved into a new
+accessor and `raw_or_blank` became one line on top of it:
+
+```tcl
+proc op_annot::raw_class {v} {          ;# absent | nonfinite | value
+  if {$v eq {}} { return [list absent {}] }
+  if {[catch {xschem raw value $v -1} r]} { return [list absent {}] }
+  if {![string is double -strict $r]} { return [list absent {}] }
+  if {![::op_annot::_finite $r]} { return [list nonfinite $r] }
+  return [list value $r]
+}
+proc op_annot::raw_or_blank {v} {
+  set c [::op_annot::raw_class $v]      ;# ONE call: this is the annotation
+  if {[lindex $c 0] eq {value}} { return [lindex $c 1] }   ;# hot path
+  return {}
+}
+```
+
+That is one place that reads the vector and one place that classifies it, so
+neither of option 1's costs is paid twice. The four `_finite` calls in
+`op_annot.tcl` and the one in `eng_or_blank` are now belt-and-braces and are
+**deliberately left**: they cost nothing, and removing them would make this one
+edit load-bearing for five call sites at once.
+
+**Item B1's seam gives the non-finite its own bucket**, which is this issue's
+option-3 note applied at the layer it belongs to: `op_param_set` returns
+`{devices absent nonfinite complete state}`, and `nonfinite` carries
+`{<rawdev> <param> <text>}` triples. `absent` keeps meaning exactly one thing.
+
+### The acceptance rows, all six, all green
+
+| row | where | verdict |
+|---|---|---|
+| 1 binary NaN answers `{}`, not `nan`, not `0` | `test_rdw_seam_1245` **NF1** | pass |
+| 2 the same for `inf` | **NF2** | pass |
+| 3 a genuinely computed `0.0` still answers `0` | **NF3** | pass |
+| 4 a `dims=0` column still `{}`, distinguishable from (3) | **NF5**, and the pre-existing A1/A2 pair | pass |
+| 5 `test_op_annot` / `test_annot_declutter_1244` unchanged | 485 ALL PASS · **134 ALL PASS** | pass |
+| 6 a structural row that reds if the finite test is removed | **NF7** | pass |
+
+Row **NF0** was added beneath all of them: it asserts the fixture really carries
+a non-finite. Without it the five rows after it would pass vacuously the day
+someone rewrites the fixture as ascii — which is precisely how the original
+defect shipped green at 37/37.
+
+**Sabotage, measured:** deleting the `_finite` line from `raw_class` reds
+**NF1 NF2 NF5 NF6 NF7** and nothing else.
 
 ## Still open
 

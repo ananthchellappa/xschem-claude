@@ -524,6 +524,13 @@ proc ase::state_save {path state} {
 # backend to write a probe before it could register at all. A caller that
 # wants the answer asks ase::sim_capabilities, which says "not known" rather
 # than guessing when a backend declares no probe.
+#
+# THE SAME IS TRUE OF THE RESULTS DISPLAY WINDOW'S PAIR (issue 1245):
+# `op_param_set` and `op_param_enumerable` ride in the dict and are reached
+# through ase::backend_hook like everything else, but they are NOT in this loop
+# either. A backend with no operating-point reader of its own must still be
+# able to register, and a caller that asks for a hook nobody declared gets the
+# dispatch's own clean "unknown hook" error rather than a silent guess.
 proc ase::register_backend {name hooks} {
   variable backends
   foreach h {render_deck run_cmd log_file result_probe raw_file} {
@@ -3714,6 +3721,141 @@ proc ase::op_dev_of {nm} {
   set i [string last {[} $nm]
   if {$i <= 0} { return {} }
   return [string range $nm 0 [expr {$i - 1}]]
+}
+
+# THE OTHER HALF OF THE SAME CUT — issue 1245 item B1, the Results Display
+# Window's backend seam.
+#
+# ase::op_dev_of above answers "which device is this name about". These four
+# answer the reverse question the RDW asks: given a variable name a RESULTS FILE
+# published, which device and which PARAMETER is it, and does it belong to the
+# instance the user pointed at.
+#
+# ⚠ ONE STRIPPER, NOT TWO (invariant I1). ase::op_param_split is the reverse of
+# op_annot::_wrap (src/op_annot.tcl:427), which is the ONE forward builder, and
+# it delegates BOTH halves — the device half to op_dev_of, the parameter half to
+# op_param_of — so the two halves of one name are cut in the same two places
+# every other caller cuts them. A seam that re-cut a bracket of its own would
+# drift from the builder the moment token.c's kind table moved, and that failure
+# is SILENT: the numbers keep coming, they are just the wrong device's.
+
+# The PARAMETER half of a device-parameter variable name: what sits between the
+# LAST `[` and the LAST `]`.
+#
+# The last bracket, for op_dev_of's own reason (issue 0972): a bussed instance
+# netlists as `@m.xm1[9:0].msky130_fd_pr__nfet_01v8[id]`, so the FIRST bracket
+# belongs to the bus index and only the last one is the parameter's. A name with
+# no bracket, or with an empty `[]`, answers {} rather than guessing.
+proc ase::op_param_of {nm} {
+  set i [string last {[} $nm]
+  if {$i < 0} { return {} }
+  set j [string last {]} $nm]
+  if {$j <= $i + 1} { return {} }
+  return [string range $nm [expr {$i + 1}] [expr {$j - 1}]]
+}
+
+# ase::op_param_split <results-file variable name> -> {device parameter}, or {}
+# when the name is not a device parameter at all.
+#
+# THREE SPELLINGS, ONE ANSWER. Issue 0963 measured that one run can spell the
+# same parameter three different ways depending on how the file was written:
+#
+#     i(@m.x1.m1[id])      kind 0, the current wrapper
+#     v(@m.x1.m1[vth])     kind 2, the voltage wrapper
+#     @m.x1.m1[gm]         kind 1, bare
+#
+# so the reverse map takes the name from its `@` to its end and drops one
+# trailing `)` if a wrapper put one there. It strips whatever wrapper is
+# present rather than re-encoding token.c's 0/1/2 kind table, which is
+# op_annot::_wrap's job and must stay spelled once.
+#
+# A node voltage (`v(in)`), a source current (`i(v1)`) and the sweep column
+# (`time`) carry no `@` and answer {} — they are in the same raw, in the same
+# slot, and are none of this seam's business.
+proc ase::op_param_split {nm} {
+  set a [string first {@} $nm]
+  if {$a < 0} { return {} }
+  set core [string range $nm $a end]
+  if {[string index $core end] eq {)}} { set core [string range $core 0 end-1] }
+  set dev [ase::op_dev_of $core]
+  set p   [ase::op_param_of $core]
+  if {$dev eq {} || $p eq {}} { return {} }
+  return [list $dev $p]
+}
+
+# A device path reduced to the part two spellings of the same device can be
+# compared on: no leading `@`, no leading single-character ELEMENT segment
+# (ngspice's `m.` / `r.` / `c.` / `b.` prefix), lower case.
+#
+# THE ELEMENT LETTER IS DROPPED ON PURPOSE, AND IT IS RULING D-3. One XR1
+# resolves to primitives that do not share it:
+#
+#     @r.xr1.x0.rend1   @r.xr1.x0.rend2   @c.xr1.x0.xc0.c0
+#     @c.xr1.x0.xc1.c0  @b.xr1.x0.brbody
+#
+# — three element letters, two depths, and their only common token is the
+# segment `xr1.`. A comparison that kept the letter would answer with two of
+# the five and call that the device's operating point.
+#
+# LOWER CASE because op_annot::devpath mints every request through
+# op_annot::_lower while a raw preserves whatever the simulator wrote, and
+# `xschem raw case` exists precisely because a database can be case-preserving.
+# An exact-case compare would answer "this device is not in this run" about a
+# device that is — a plausible wrong answer in the empty direction.
+#
+# ⚠ THE STRIP IS GATED ON THE LEADING `@`, AND THAT GATE IS THE WHOLE OF THE
+# 2026-09-03 REPAIR. The first version stripped ANY leading one-character
+# segment from either side, which is right for a raw device name and wrong for
+# a hierarchical path the user typed. Measured on the refuted tree:
+#
+#     norm(a.b.c)  -> b.c
+#     req @m.a.b.c -> devices {@m.a.b.c {{id 7} {gm 8}}}   state ok
+#     req a.b.c    -> devices {}                            state ok
+#
+# `a` is a perfectly ordinary one-character subcircuit instance name, and the
+# device silently vanished -- reported as `state ok, devices {}`, which is
+# BYTE-IDENTICAL to "no such device". A wrong answer wearing a healthy state is
+# worse than an error.
+#
+# The gate works because the element letter only ever reaches this proc in
+# ngspice's own spelling, which is ALWAYS `@`-prefixed: ase::op_param_split
+# takes the device from its `@` to the end (:3776-3778), so every DEVICE side
+# strips; and every real REQUEST producer is `@`-prefixed too -- gf180's
+# descriptor is the literal {\@m.@path@spiceprefix@name\.m0}, sky130's devproc
+# builds the same shape. A bare `a.b.c` with no `@` is therefore not raw
+# spelling, is not carrying an element letter, and keeps every segment.
+#
+# ⚠ COST, STATED: a caller that writes raw spelling WITHOUT the `@`
+# (`m.x1.m1`) no longer matches `@m.x1.m1`. No producer in this tree does that,
+# and the alternative -- trying both readings -- silently over-collects, since
+# request `a.b` would then also gather every device under `b`.
+proc ase::op_dev_norm {d} {
+  set at [expr {[string index $d 0] eq {@}}]
+  if {$at} { set d [string range $d 1 end] }
+  if {$at && [string first {.} $d] == 1} { set d [string range $d 2 end] }
+  return [string tolower $d]
+}
+
+# Does the device the raw named belong to the device path that was asked for?
+#
+# ⚠ NOT A SUBSTRING TEST, AND THAT IS THE WHOLE OF THE RULE. Row Q7 of
+# tests/headless/test_ase_optier_0963.tcl exists because `@m.x1.m1` is a PREFIX
+# of `@m.x1.m1foo`, so a substring test hands one transistor another
+# transistor's numbers. The two answers here are whole-string equality and a
+# descent across a `.` SEGMENT BOUNDARY — `xr1.` matches `xr1.x0.rend1` and does
+# not match `xr10.x0.rend1`.
+#
+# NAMED PROPERTY, NOT A DEFECT: a partial path such as `@m.x1` therefore
+# collects every device under x1. That is the same rule D-3 needs, asked one
+# level higher, and it is what makes "the whole of this subcircuit" expressible.
+proc ase::op_dev_covers {req dev} {
+  set r [ase::op_dev_norm $req]
+  set d [ase::op_dev_norm $dev]
+  if {$r eq {}} { return 0 }
+  if {$r eq $d} { return 1 }
+  if {[string length $d] > [string length $r] &&
+      [string range $d 0 [string length $r]] eq "$r."} { return 1 }
+  return 0
 }
 
 # The distinct devices a captured block names, in block order, with the
@@ -8515,6 +8657,199 @@ write probe_b.raw
     return $out
   }
 
+  # ==========================================================================
+  # THE RESULTS DISPLAY WINDOW'S BACKEND SEAM — issue 1245, item B1.
+  # Spec: doc/claude/specs/op_param_lists.md §4.2. Rulings:
+  # doc/claude/op_param_batch/DECISIONS.md D-3, D-4, D-5 and DRIVER DECISION
+  # DD-1, which is this seam's central ruling.
+  # ==========================================================================
+  #
+  # THE ONE SENTENCE EACH, because a measurement taken at a seam inherits the
+  # seam's position and this is a seam other items will measure through:
+  #   WHAT op_param_set ANSWERS — which parameter columns THIS RUN'S CURRENTLY
+  #     SELECTED RAW SLOT actually holds and actually computed for exactly this
+  #     device path, in the order the file lists them.
+  #   WHAT IT DOES NOT ANSWER — which parameters this device HAS. It cannot see
+  #     a parameter nobody saved, it cannot see a device the raw does not name,
+  #     it is blind to absence on any raw written by `ngspice -b -r`
+  #     (doc/claude/issues/1263-*.md), and it says nothing about a slot that is
+  #     not the current one.
+  #
+  # ⚠ IT READS THE CURRENT SLOT AND SELECTS NOTHING. Every `xschem raw` verb
+  # reads xctx->raw (scheduler.c:10694). A user who was looking at waveforms
+  # has a TRANSIENT slot current; the sim_type gate below is what stops this
+  # seam publishing interpolated transient numbers as operating-point
+  # parameters. Choosing a slot is a caller's decision and mutates global
+  # state; this seam does not make it.
+
+  # DD-1 — CAN THIS BACKEND ENUMERATE A DEVICE'S PARAMETERS?  A DECLARATION.
+  #
+  # Today's ngspice answers NO: it has no wildcard operating-point save, so it
+  # says so, and key 3 falls back to "what this run's raw actually holds",
+  # which is the dumb approach D-5 names. A backend that answers YES is
+  # promising completeness, and only a build that really has the wildcard save
+  # is entitled to.
+  #
+  # ⚠ NEVER MEASURED, AND THAT IS THE RULING, NOT A PREFERENCE. D-4 forbids
+  # guessing what the simulator publishes, and any scheme that measures this
+  # answer — a probe, a `show` parse, a save tried to see what came back — is a
+  # guess dressed as data. The only honest YES is a declaration.
+  #
+  # ⚠ THIS IS DELIBERATELY NOT THE EXISTING `blanket_op_save` KEY, and a later
+  # reader must not "remove the duplication" by reaching for it. That key
+  # (this file, in ::capabilities above) asks THIS proc's question — can one
+  # card save every parameter of a device at once — the forbidden way, by
+  # probe. Reading it is also operationally poisonous: ase::sim_capabilities is
+  # lazy, and on a cache miss it builds a workdir and STARTS THE USER'S
+  # SIMULATOR, which the comment on ase::op_run_report already forbids putting
+  # on a path with no Run behind it. A key-3 press is exactly such a path.
+  # Rows C3 and C4 of tests/headless/test_rdw_seam_1245.tcl red if either
+  # happens.
+  proc op_param_enumerable {} {
+    return 0
+  }
+
+  # ase::backend::ngspice::op_param_set <devpath> -> the ANSWER DICT
+  #
+  #   devices   ordered {<rawdev> {{<param> <value>} ...}}, raw-file order
+  #             throughout, one entry per PRIMITIVE the request covers
+  #   absent    ordered {<rawdev> <param>} pairs — columns the raw NAMES but
+  #             the simulator did not compute
+  #   nonfinite ordered {<rawdev> <param> <text>} triples — columns the raw
+  #             DOES carry, holding Inf/NaN: a device that did not converge
+  #   complete  the honesty flag, AS DATA — the value op_param_enumerable
+  #             declares
+  #   state     no_devpath | no_raw | not_op | not_annotated | ok
+  #
+  # ⚠ WHY `nonfinite` IS ITS OWN BUCKET AND NOT PART OF `absent` — ISSUE 1272,
+  # AND IT IS WHY THIS ITEM CAME BACK [F] ON ITS FIRST RUN. Both render blank
+  # today, so collapsing them is tempting and was rejected: "the raw does not
+  # carry id" and "the raw carries id and the simulator produced NaN" are
+  # different facts about the run, and the second is the one a designer most
+  # wants to be told about — it is a non-converged operating point, which is a
+  # result, not a gap. A seam that reports it as absence throws that away
+  # exactly where it matters.
+  #
+  # ⚠ AND `nonfinite` IS RELIABLE ONLY FOR A BINARY RAW. The same NaN written
+  # to an ASCII raw comes back as a confident `0` and lands in `devices` as a
+  # measurement, because src/save.c's fast my_atof() continuation path has
+  # never parsed the words. Binary is what a real ngspice `write` produces, so
+  # this is the case that matters — but an EMPTY `nonfinite` is not proof the
+  # run converged. The asymmetry is src/save.c's, is deliberate there, and is
+  # recorded as still-open at the end of issue 1272.
+  #
+  # WHY THE FLAG IS DATA AND NOT A COMMENT — DD-1's corollary. Because the
+  # capability is NO, this answer is INCOMPLETE BY CONSTRUCTION, and a caller
+  # that renders it silently reads as a complete list, which is exactly the
+  # failure D-4 exists to prevent. The flag rides in the same answer so no
+  # consumer can render the pairs without having been handed the incompleteness
+  # alongside them.
+  #
+  # WHY FOUR NON-ok STATES. A caller has to be able to tell four different
+  # silences apart: you gave me nothing, there is no raw at all, the current
+  # slot is not an operating point, and nothing has been published from it yet.
+  # All four otherwise arrive as the same empty list.
+  #
+  # ⚠ ABSENCE IS REPORTED ONLY IN STATE `ok`, AND THIS IS THE ITEM'S CENTRAL
+  # CONSTRAINT. Measured on this tree 2026-09-03: op_annot::raw_or_blank reads
+  # at point -1, which is the ONLY reader carrying the absent/zero distinction
+  # — a `dims=0` column answers the empty string there and `0` at point 0,
+  # while a genuinely computed 0.0 answers `0` at both. But before update_op()
+  # has published, point -1 is empty FOR EVERY VECTOR, good ones included. A
+  # reader that filled `absent` there would report "the simulator did not
+  # compute id" about a run nobody had annotated yet. So outside `ok` both
+  # lists are empty and no vector is read at all.
+  #
+  # ⚠ THE sim_type GATE IS ASKED BEFORE THE PUBLISHED-YET GATE, and the order
+  # is load-bearing. backannotate_at_cursor_b_pos() (callback.c:1531) sets
+  # annot_p on ANY swept database, so a transient with cursor B placed has a
+  # published point and answers interpolated transient numbers at point -1.
+  # Publishing those as operating-point parameters is the plausible-wrong-
+  # number failure invariant I3 exists to prevent. The allow-list {op dc} is
+  # COPIED from update_op()'s own guard (src/save.c) and row G3b of
+  # tests/headless/test_rdw_seam_1245.tcl reds if the C list moves and leaves
+  # this copy behind.
+  #
+  # A GENUINELY COMPUTED 0.0 IS RETURNED AS 0 AND IS NOT AN ABSENCE. A
+  # transistor that is off has id = 0 and that is a measurement; blanking every
+  # zero would hide a cut-off device (issue 1259's other half).
+  #
+  # TWO SPELLINGS OF ONE PARAMETER IN ONE FILE ARE REPORTED TWICE, NOT DEDUPED.
+  # This seam's whole job is "what does this run's raw actually hold"; dropping
+  # a column the file holds is the kind of tidying that makes a seam lie, and
+  # each row carries its own device so a caller can see what happened.
+  proc op_param_set {devpath} {
+    set complete [::ase::backend::ngspice::op_param_enumerable]
+    set devices   [dict create]
+    set absent    {}
+    set nonfinite {}
+    set state     ok
+
+    if {[string trim $devpath] eq {}} { set state no_devpath }
+
+    if {$state eq {ok}} {
+      set l {}
+      if {[catch {xschem raw loaded} l]} {
+        set state no_raw
+      } elseif {![string is integer -strict $l] || $l < 0} {
+        set state no_raw
+      }
+    }
+
+    if {$state eq {ok}} {
+      set stp {}
+      if {[catch {xschem raw sim_type} stp]} {
+        set state not_op
+      } elseif {[lsearch -exact {op dc} $stp] < 0} {
+        set state not_op
+      }
+    }
+
+    if {$state eq {ok}} {
+      if {![::op_annot::_annotated]} { set state not_annotated }
+    }
+
+    if {$state eq {ok}} {
+      set names {}
+      catch {set names [split [xschem raw list] "\n"]}
+      foreach v $names {
+        set sp [::ase::op_param_split $v]
+        if {$sp eq {}} { continue }
+        set dev [lindex $sp 0]
+        set p   [lindex $sp 1]
+        if {![::ase::op_dev_covers $devpath $dev]} { continue }
+        ## ⚠ raw_class, NOT raw_or_blank -- ISSUE 1272, AND IT IS WHY THIS ITEM
+        ## CAME BACK [F] THE FIRST TIME. raw_or_blank answers a two-outcome
+        ## question (a number, or nothing) and this seam asks a three-outcome
+        ## one. The first version took the two-outcome answer and put `nan`
+        ## straight into the VALUE bucket, which item B3 would have painted on
+        ## a schematic as `id = nan` -- exactly what invariant I3 forbids. It
+        ## was green at 37/37, because the suite had no non-finite row.
+        ##
+        ## The three buckets are three different facts and a caller renders
+        ## each differently: `devices` is a measurement, `absent` is a column
+        ## the raw does not carry, `nonfinite` is a column it DOES carry for a
+        ## device that did not converge. Collapsing the last two -- which was
+        ## tempting, both render blank today -- would throw away the one of the
+        ## two that a designer most wants to be told about.
+        set cls [::op_annot::raw_class $v]
+        set val [lindex $cls 1]
+        switch -exact -- [lindex $cls 0] {
+          absent    { lappend absent    [list $dev $p] ; continue }
+          nonfinite { lappend nonfinite [list $dev $p $val] ; continue }
+        }
+        set cur {}
+        if {[dict exists $devices $dev]} { set cur [dict get $devices $dev] }
+        lappend cur [list $p $val]
+        dict set devices $dev $cur
+      }
+    }
+
+    return [dict create devices $devices absent $absent \
+                        nonfinite $nonfinite \
+                        complete $complete state $state]
+  }
+
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
@@ -8524,5 +8859,7 @@ write probe_b.raw
     log_file     ::ase::backend::ngspice::log_file \
     result_probe ::ase::backend::ngspice::result_probe \
     raw_file     ::ase::backend::ngspice::raw_file \
-    capabilities ::ase::backend::ngspice::capabilities]
+    capabilities ::ase::backend::ngspice::capabilities \
+    op_param_set        ::ase::backend::ngspice::op_param_set \
+    op_param_enumerable ::ase::backend::ngspice::op_param_enumerable]
 }

@@ -54,8 +54,13 @@
 #                                                 `deck` (the entry-relative
 #                                                 SAVE-CARD name)          (S3)
 #   op_annot::vector <instname> <param> ?kind? -> "i(…[id])" / "…[gm]" / "v(…[vth])"
-#   op_annot::raw_or_blank <vector>            -> the value at the annotation
-#                                                 point, or {}          (S5)
+#   op_annot::raw_or_blank <vector>            -> the FINITE value at the
+#                                                 annotation point, or {}  (S5)
+#   op_annot::raw_class <vector>               -> {absent|nonfinite|value
+#                                                 <text>} — the three outcomes
+#                                                 told apart, for a caller that
+#                                                 must report a non-converged
+#                                                 device as such      (S5,1272)
 #   op_annot::eng_or_blank <value>             -> to_eng of it, or {}   (S5)
 #   op_annot::text <instname>                  -> the `label = value` block for
 #                                                 one device, or {}     (S5)
@@ -910,7 +915,8 @@ proc op_annot::vector {instname param {kind {}}} {
 # ============================================================================
 # S5 — THE DISPLAY FORMATTER
 # ============================================================================
-#   op_annot::raw_or_blank <vector-name>  -> the number, or {}
+#   op_annot::raw_or_blank <vector-name>  -> the FINITE number, or {}
+#   op_annot::raw_class <vector-name>     -> {absent|nonfinite|value <text>}
 #   op_annot::eng_or_blank <value>        -> to_eng of it, or {}
 #   op_annot::text <instname>             -> the `label = value` block, or {}
 #
@@ -995,11 +1001,64 @@ proc op_annot::_finite {v} {
 ##   vector present   -> the number at cursor-B / the OP point.
 ## Point -1 is THE accessor (scheduler.c:10326): it falls through to
 ## xctx->raw->cursor_b_val[idx], i.e. whatever update_op() last published.
+##
+## ⚠ THE FINITE TEST IS PART OF THIS ACCESSOR NOW -- ISSUE 1272, ITEM B1.
+## It used to gate on `string is double -strict` alone, which ACCEPTS `nan` and
+## `inf`, so this proc returned the string `nan` as though it were a number and
+## the only thing in the tree that rejected it was a SECOND, SEPARATE call to
+## op_annot::_finite that every existing consumer happened to make. That made
+## correctness a property of whether the next author had read four other call
+## sites -- and item B1 is the measured case of a new one that had not: its
+## seam returned `devices {@m.x1.m1 {{id nan} ...}}` from a BINARY raw, which
+## item B3 would have rendered as `id = nan` on a schematic, verbatim what
+## invariant I3 forbids. It was green at 37/37 because its suite had no
+## non-finite row. src/save.c records that ngspice-46 on this box emits all
+## four of inf/-inf/nan/-nan, and a non-converged operating point is the
+## ordinary way to get one, so this is not an exotic input.
+##
+## The four `_finite` calls in this file and the one in eng_or_blank are now
+## belt-and-braces rather than load-bearing. They are DELIBERATELY LEFT: they
+## cost nothing, and removing them would make this one edit load-bearing for
+## five call sites at once.
+##
+## ⚠ A CALLER THAT NEEDS TO TELL "the column is not there" FROM "the column is
+## there and holds NaN" MUST USE op_annot::raw_class, NOT THIS PROC. Both
+## answer {} here, on purpose: a two-outcome accessor cannot carry a
+## three-outcome distinction, and 1272 rejected making `{}` mean two things.
 proc op_annot::raw_or_blank {v} {
-  if {$v eq {}} { return {} }
-  if {[catch {xschem raw value $v -1} r]} { return {} }
-  if {[string is double -strict $r]} { return $r }
+  ## ONE raw_class call, not two: this is the annotation hot path -- once per
+  ## parameter, per annotated device, per redraw -- and each call is an
+  ## `xschem raw value` round trip into the C.
+  set c [::op_annot::raw_class $v]
+  if {[lindex $c 0] eq {value}} { return [lindex $c 1] }
   return {}
+}
+
+## op_annot::raw_class <vector-name> -> {class value}, the THREE outcomes told
+## apart. Added by item B1 (issue 1272) because the Results Display Window's
+## backend seam must report a non-finite as its own answer and not as absence.
+##
+##   absent    {}    no raw loaded, the raw does not carry the column, or what
+##                   came back is not a number at all. Renders BLANK (I3).
+##   nonfinite <str> the raw CARRIES the column and the simulator produced
+##                   Inf/NaN -- a device that did not converge. That is a fact
+##                   about the run and a caller may want to say so.
+##   value     <num> a finite number, 0.0 INCLUDED. A cut-off transistor has
+##                   id = 0 and that is a measurement, not an absence (1259).
+##
+## ⚠ THE ASCII/BINARY ASYMMETRY IS NOT FIXED HERE AND IS NOT FIXABLE HERE.
+## The same NaN written to an ASCII raw reads back as a confident `0` and
+## reaches this proc as a finite value, because src/save.c's fast my_atof()
+## continuation path has never parsed the words. So `nonfinite` is reliable
+## only for binary raws -- which is what a real ngspice `write` produces, so it
+## is the case that matters, but a caller must not read a missing `nonfinite`
+## as proof the run converged. Still open at the end of issue 1272.
+proc op_annot::raw_class {v} {
+  if {$v eq {}} { return [list absent {}] }
+  if {[catch {xschem raw value $v -1} r]} { return [list absent {}] }
+  if {![string is double -strict $r]} { return [list absent {}] }
+  if {![::op_annot::_finite $r]} { return [list nonfinite $r] }
+  return [list value $r]
 }
 
 ## op_annot::eng_or_blank <value> -> `46.78u`, or {} for anything that is not a

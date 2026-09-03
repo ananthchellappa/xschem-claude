@@ -1079,7 +1079,7 @@ shipped binary does today:
 
 ---
 
-## B1 — the backend seam  ❌ **RETURNED [F] (refuted, reverted), 2026-09-03**  *(no dependencies)*
+## B1 — the backend seam  ✅ **DONE, 2026-09-03 (driver re-do after an [F])**  *(no dependencies)*
 
 > **⚠ FROM A6 (2026-09-02).** B1's rule *"a zero-length or `dims=0` vector is
 > **absent**, not zero"* is **half answered already**, behind ONE exported
@@ -1125,16 +1125,22 @@ multi-primitive case of D-3 — one `XR1` resolving to its several primitives.
 
 ---
 
-### ⚠ B1 RETURNED **[F]** — WHAT THE NEXT CREW MUST KNOW BEFORE RETYPING IT
+### ⚠ B1 RETURNED **[F]**, AND THE RE-DO COST THREE EDITS AND TWELVE ROWS
 
-**The seam is NOT in the tree.** `ase::backend::ngspice::op_param_set` does not
-exist at `HEAD`; `ase::backend_hook ngspice op_param_set` still raises
-*"unknown hook"*. The implementation — 275 lines of `src/ase.tcl` and a 908-line
-`tests/headless/test_rdw_seam_1245.tcl` — is preserved as
-**`doc/claude/op_param_batch/B1_working_tree_REFUTED.patch`**, verified to apply
-cleanly to `9f1d9153`. **Apply it, fix the two blockers below, re-verify, and it
-is done** — do not start from a blank file. Full record:
-`doc/claude/op_param_batch/receipts/B1.md`. The defect is **1272**.
+**⚠ THIS SECTION IS HISTORY NOW. The seam IS in the tree.** It was refuted,
+reverted, and re-done by the driver on the same day, exactly as A7 was: apply
+the crew's preserved patch, fix the two named blockers, prove the fixes with
+rows that red without them. **37 → 49 checks, ALL PASS.** What follows is kept
+because every later item reads the seam, and the two blockers are the two ways
+to get it wrong again.
+
+**The crew was right to return `[F]`.** Its own adversary refuted the central
+read, it reproduced the attack first-hand before deciding, it reverted by
+reverse-applying its diff rather than with `git checkout --`, and it preserved
+275 lines of `src/ase.tcl` plus a 908-line suite as
+`doc/claude/op_param_batch/B1_working_tree_REFUTED.patch`, dry-run-verified to
+apply to `9f1d9153`. Nothing was lost and nothing was retyped. Full record:
+`doc/claude/op_param_batch/receipts/B1.md`; the defect is **1272**.
 
 **Why it was refuted, in one line.** It read values through
 `op_annot::raw_or_blank` and did **not** pass them through `op_annot::_finite`,
@@ -1149,23 +1155,67 @@ schematic, which is verbatim what invariant **I3** forbids.
 row. That is A7's lesson wearing a new costume: not a measurement taken at the
 wrong seam, but a fence built around every question its author had thought of.
 
-#### The two blockers, both one-shaped
+#### The two blockers, and how each was actually fixed
 
-1. **Gate the read on `::op_annot::_finite`** and route a non-finite somewhere
-   that is not the value bucket. Do **not** silently fold it into `absent`:
-   *"the column is not there"* and *"the column is there and holds NaN"* are the
-   two things this seam exists to keep apart — give it a reason, or a third
-   bucket. **Add a BINARY fixture row**: an ascii raw hides the whole failure,
-   because `my_atof()` flattens `nan`→`0`, `inf`→`0`, `1e999`→`1.0000001e+38`
-   (documented in `src/save.c`; the same failed run reports `nan` one way and a
-   confident `0` the other).
-2. **Fix the one-character-segment over-strip.** `ase::op_dev_norm` drops **any**
-   leading one-char segment to make the element letter irrelevant per D-3, so
-   `norm(a.b.c)` = `b.c` and a legitimate hierarchical request whose first segment
-   is one character silently returns `state ok, devices {}` — byte-identical to
-   "unknown device". Strip a leading `<letter>.` only when the letter is an
-   ngspice element letter **and** the remainder still contains a `.`, or compare
-   on tail segments instead of normalising a prefix away.
+1. **The non-finite. FIXED IN THE ACCESSOR, NOT IN THE CALLER — issue 1272,
+   option 1.** `op_annot::raw_or_blank` gated on `string is double -strict`,
+   which **accepts `nan` and `inf`**, and the only thing rejecting them was a
+   *second, separate* `op_annot::_finite` call that all five existing consumers
+   happened to make. Fixing it at B1's caller would have left correctness a
+   property of whether the next author read those five sites. So the three
+   outcomes now live in one new accessor, **`op_annot::raw_class`** → `{absent |
+   nonfinite | value} <text>`, and `raw_or_blank` is one line on top of it:
+   every present and future consumer is correct by default, and the seam that
+   needs the third outcome has one place to get it.
+   **The non-finite got its own bucket, not `absent`.** Both render blank today,
+   so folding them was tempting and is wrong: *"the raw does not carry `id`"* and
+   *"the raw carries `id` and the simulator produced NaN"* are different facts,
+   and the second — a device that did not converge — is the one a designer most
+   wants to be told about. It is a result, not a gap.
+   **The fixture had to be BINARY**, and that is the whole reason the defect
+   shipped green: an ascii raw flattens `nan`→`0`, `inf`→`0`,
+   `1e999`→`1.0000001e+38` in `my_atof()`'s continuation path, so an ascii
+   version of every row below passes against the defect. Row **NF0** exists only
+   to prove the fixture really carries a non-finite, so the five rows after it
+   cannot pass vacuously.
+2. **The one-character-segment over-strip. FIXED BY GATING THE STRIP ON `@`.**
+   `ase::op_dev_norm` dropped **any** leading one-char segment, so `norm(a.b.c)`
+   = `b.c` and a request whose first segment is a one-character subcircuit
+   instance silently returned `state ok, devices {}` — byte-identical to
+   "unknown device", which is a wrong answer wearing a healthy state.
+   The repair is one condition: **strip the element letter only when the string
+   was `@`-prefixed.** That works because the element letter only ever arrives in
+   ngspice's own spelling, which is always `@`-prefixed — `ase::op_param_split`
+   takes the device from its `@` to the end, and every real request producer
+   (gf180's literal `{\@m.@path@spiceprefix@name\.m0}`, sky130's devproc) is
+   `@`-prefixed too. A bare `a.b.c` is not raw spelling and keeps every segment.
+   *Rejected: trying both readings.* It never loses a match, but request `a.b`
+   would then also collect every device under `b`. Silent over-collection for
+   silent under-collection is not a trade.
+   *Cost, stated:* a caller writing raw spelling **without** the `@`
+   (`m.x1.m1`) no longer matches. No producer in this tree does that.
+
+#### What the re-do added, and what proves it
+
+Twelve rows, in two new sections, all of which red without their fix:
+
+| section | rows | sabotage verdict |
+|---|---|---|
+| **NF** — the non-finite, on a **binary** fixture | NF0 … NF7 | remove the finite gate from `raw_class` → **NF1 NF2 NF5 NF6 NF7 red**, nothing else |
+| **DN** — the one-character segment | DN1 … DN4 | restore the unconditional strip → **DN1 DN3 red**, nothing else |
+| the bucket choice itself | NF6 | route the non-finite into `absent` → **NF6 red**, nothing else |
+
+Row **I3** (the structural "one value accessor" fence) named `raw_or_blank` and
+**caught the repair that fixed its own item** — it was re-aimed at `raw_class`,
+which is the fence working, not the fence being wrong. What it protects is
+unchanged: `op_param_set` reads through ONE published accessor and calls
+`xschem raw value` nowhere itself.
+
+**Feature A did not move**, which is issue 1272's acceptance row 5 and the
+thing most at risk from changing a shared accessor: `test_op_annot` 485 ALL
+PASS, `test_annot_declutter_1244` **134 ALL PASS** on the dev display,
+`test_annot_stale_0684` 56, `test_annot_blank_cause_0909` 27,
+`test_ase_optier_0963` 94 — every one unmoved.
 
 #### What B1 SETTLED, and what binds B2 · B3 · B4 · B5
 
@@ -1175,8 +1225,17 @@ wrong seam, but a fence built around every question its author had thought of.
   `r.xr1.x0.rend1` **and** `r.xr1.x0.rend2`, both publishing a parameter spelled
   `i`, so a flat `{param value}` list loses which primitive each number belongs
   to and **ruling D-3 becomes unimplementable**. DD-1's corollary independently
-  forbids handing a caller the pairs without the incompleteness. **B3 must render
-  from four keys, not two.**
+  forbids handing a caller the pairs without the incompleteness.
+  ⚠ **THE RE-DO MADE IT FIVE KEYS, NOT FOUR:**
+  `{devices absent nonfinite complete state}`. **B3 must render from five.**
+  `nonfinite` carries `{<rawdev> <param> <text>}` triples — columns the raw DOES
+  hold for a device that did not converge. B3 rendering them as blanks is
+  acceptable; B3 rendering them as `absent` is a lie, and B3 rendering their
+  text is `id = nan` on a schematic, which invariant I3 forbids.
+  ⚠ **AND AN EMPTY `nonfinite` IS NOT PROOF THE RUN CONVERGED** — the same NaN
+  in an ascii raw arrives as a finite `0` and lands in `devices`. That
+  asymmetry is `src/save.c`'s, is deliberate there, and is recorded as
+  still-open at the end of issue 1272.
 * **⚠ Q10 IS ANSWERED: YES.** `ngspice -b -r` on a deck with `.op` then `.tran`
   writes **one** file holding **two** plots; `xschem raw read <f>` lands on the
   Operating Point, `xschem annotate_op <f> 0` publishes (`raw annot` = `0 0 -1`)
