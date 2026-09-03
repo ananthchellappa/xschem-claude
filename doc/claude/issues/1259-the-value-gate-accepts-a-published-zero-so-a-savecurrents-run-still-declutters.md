@@ -174,3 +174,109 @@ only**: two coverage holes, filed as **1267**.
 * **1265** — the absence rule reached one of three readers of `cursor_b_val[]`.
 * The user-visible change is **unratified**: a parameter that used to print `0`
   now prints blank. On the user's ruling queue.
+
+---
+
+## ITEM B1's ANSWER, IN WRITING — 2026-09-03. **NO, `op_param_set` DOES NOT CLOSE THIS ISSUE.**
+
+> ⚠ **AND THE SEAM DESCRIBED BELOW IS NOT IN THE TREE.** Item **B1** built it,
+> passed every tier and its own 37-check suite, was then **refuted by its
+> adversary pass on a separate defect** (issue **1272** — it read through
+> `op_annot::raw_or_blank` without `op_annot::_finite`, so a binary raw carrying
+> a NaN returned `nan` in the **value** bucket) and was **reverted**. The code is
+> preserved as `doc/claude/op_param_batch/B1_working_tree_REFUTED.patch`
+> (applies cleanly to `9f1d9153`); the record is
+> `doc/claude/op_param_batch/receipts/B1.md`.
+>
+> **What follows is therefore B1's measured DESIGN answer to this issue, not a
+> description of code you can call today.** Every sentence of it survived the
+> refutation — the defect was in how a value was read, not in what the seam says
+> about absence — so it stands as the answer this issue asked for, and the
+> reconstruction should keep it. **One correction it forces:** with 1272 fixed, a
+> **non-finite** value is a third outcome, distinct from both "computed" and
+> "the column is not there", and `absent` must not quietly absorb it.
+
+This issue names the honest fix as B1-shaped — *"`op_param_set` publishes absence
+as a first-class answer"* — and item B1's brief obliges B1 to say plainly whether
+it does. It does publish absence as a first-class answer. It does **not** close
+this issue, and the two statements are not in tension. Three separate reasons,
+each measured rather than reasoned:
+
+### 1. Absence IS now first-class, and here is exactly what to call
+
+`ase::backend::ngspice::op_param_set <devpath>`, reached through the one
+dispatch as `[ase::backend_hook ngspice op_param_set]`, returns a dict with four
+keys, and **two** of them answer this issue's question:
+
+| key | what it carries |
+|---|---|
+| `absent` | ordered `{<rawdev> <param>}` pairs — every column the raw **named** and the simulator **did not compute**. A device whose whole annotation is absences comes back with an **empty** `devices` entry and a populated `absent`. |
+| `complete` | the honesty flag as **data** (DD-1's corollary): `0` today, because `op_param_enumerable` **declares** that stock ngspice has no wildcard operating-point save. So the pairs are what the run saved, never everything the device has. |
+
+The other two keys are `devices` (ordered `{<rawdev> {{<param> <value>} ...}}`)
+and `state` (`no_devpath` | `no_raw` | `not_op` | `not_annotated` | `ok`).
+**`absent` is populated only in state `ok`**, and that is not fastidiousness:
+measured on this tree, `xschem raw value <v> -1` is empty **for every vector**
+until `update_op()` has published, so a seam that filled `absent` outside `ok`
+would report *"the simulator did not compute id"* about a run nobody had
+annotated. Rows `A1`, `A1c`, `A2`, `A3`, `G1`, `G2` of
+`tests/headless/test_rdw_seam_1245.tcl` are that contract.
+
+A genuinely computed `0.0` is still returned **as `0`, in `devices`, never in
+`absent`** (row `P3`). A transistor that is off has `id = 0` and that is a
+measurement — the same rule this issue's own "Rejected alternative" paragraph
+states, kept on B1's side of the seam.
+
+### 2. But A5-a's gate cannot read it, and that is a language boundary, not an omission
+
+The declutter gate is `annot_instance_annotated()` → `annot_block_has_value()`
+in **C** (`src/actions.c`), and it reads the **rendered block string**. Reaching
+`op_param_set` from there means a `tcleval` from inside the gate — which is
+issue **0466** re-opened (row A35), the thing this issue's own "Rejected"
+paragraph already forbids, and spec landmine 13. B1 adds a Tcl seam a Tcl caller
+can read; it does not, and may not, hand the C gate a second source.
+
+**And it would buy nothing on the flavour A6-b already closed.** For the
+`.control` + `write` writer the `dims=0` case is closed *at the mint*:
+`op_annot::raw_or_blank` answers `{}`, the row renders `zid =` blank, and the
+gate stays shut (row A45 of `test_annot_declutter_1244`). `op_param_set` adds no
+information there.
+
+### 3. On the flavour that is still open, `op_param_set` is blind for the same reason everything else is
+
+On xschem's shipped `ngspice -b -r` command an unsatisfiable `.save` card
+arrives as an ordinary `current` column of `0.0` **with no `dims=0` token at
+all** (issue **1263**, re-measured 2026-09-03: `grep -ac 'dims=' q11.raw` = 0,
+the only signal on stderr). `op_param_set` reads the raw through
+`raw_vector_absent()` like everything else, so on that writer it reports the
+fabricated zero as a value, exactly as `op_annot::text` does. **The carrier is
+not in the file.** No seam on the read side can invent it; issue 1263 is where
+that is fixed, at simulate time.
+
+### What a future item would have to call
+
+To ask *"did this device get real OP numbers, or only absences?"* from **Tcl**,
+with a raw loaded and annotated:
+
+```tcl
+set ans [[ase::backend_hook ngspice op_param_set] $devpath]
+# real numbers?      [dict get $ans devices]   non-empty
+# only absences?     [dict get $ans devices] empty AND [dict get $ans absent] non-empty
+# nothing to say?    [dict get $ans state] ne {ok}
+# and ALWAYS render  [dict get $ans complete] == 0 means "what the run saved,
+#                    not everything the device has" (DD-1)
+```
+
+Its **caller must be in Tcl and must not be the C gate.** The natural home is
+the mint — `src/op_annot.tcl` — publishing a per-instance absence count the C
+side can read the way it already reads a rendered string, i.e. the
+`::op_annot::dropped` side-channel shape this issue named a year of work ago.
+That is still an item nobody has taken, and it is still the fix.
+
+### Status, restated
+
+**Unchanged: PARTIALLY FIXED by A6-b.** B1 did not move it. The user-ratifiable
+question this issue records — *should a device whose every published OP number
+is `0` count as "got OP numbers" for ruling D-6?* — is **still open and still
+the user's**, and B1 deliberately did not answer it: A5-a is Feature A and
+Feature A closed at commit `4f711e80`.

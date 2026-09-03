@@ -986,4 +986,20 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   `doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`, applying cleanly to
   `355a3dc6`.
 
-**The next free number is 1271.**
+* **1271** — `ase::op_report_missing` counts a device whose every saved parameter
+  came back `dims=0` as "answered", because `ase::cap_raw_plots` keeps only the
+  second tab-separated field of a `Variables:` line and throws the `dims=0`
+  carrier away. Claimed and written by item **B1**, 2026-09-03; it is why B1's
+  seam enumerated from `xschem raw list` and not from that parser. **FILED, NOT
+  FIXED.**
+* **1272** — `op_annot::raw_or_blank` passes a **non-finite** through (`string is
+  double -strict` accepts `nan`/`inf`) and only a **second**, separate
+  `op_annot::_finite` call rejects it; nothing at the seam obliges a new caller to
+  make that call. Measured by item **B1**, which did not make it and was refuted
+  for it — a binary raw carrying a NaN came back as `devices {@m.x1.m1 {{id nan}
+  …}}`, and B3 rendering that would put `id = nan` on a schematic, which is
+  verbatim what invariant I3 forbids. Carries the ascii/binary asymmetry
+  (`nan`→`0` through `my_atof()`), the recommended one-stage fix and its two
+  rejected alternatives. **FILED, NOT FIXED.**
+
+**The next free number is 1273.**

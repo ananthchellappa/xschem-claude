@@ -1079,7 +1079,7 @@ shipped binary does today:
 
 ---
 
-## B1 — the backend seam  *(no dependencies)*
+## B1 — the backend seam  ❌ **RETURNED [F] (refuted, reverted), 2026-09-03**  *(no dependencies)*
 
 > **⚠ FROM A6 (2026-09-02).** B1's rule *"a zero-length or `dims=0` vector is
 > **absent**, not zero"* is **half answered already**, behind ONE exported
@@ -1122,6 +1122,111 @@ say so in 1259 so the gate can read it.
 saved params returns six pairs in order; an unknown device returns empty, not an
 error; a `dims=0` column is omitted; the capability answer is honest. Plus the
 multi-primitive case of D-3 — one `XR1` resolving to its several primitives.
+
+---
+
+### ⚠ B1 RETURNED **[F]** — WHAT THE NEXT CREW MUST KNOW BEFORE RETYPING IT
+
+**The seam is NOT in the tree.** `ase::backend::ngspice::op_param_set` does not
+exist at `HEAD`; `ase::backend_hook ngspice op_param_set` still raises
+*"unknown hook"*. The implementation — 275 lines of `src/ase.tcl` and a 908-line
+`tests/headless/test_rdw_seam_1245.tcl` — is preserved as
+**`doc/claude/op_param_batch/B1_working_tree_REFUTED.patch`**, verified to apply
+cleanly to `9f1d9153`. **Apply it, fix the two blockers below, re-verify, and it
+is done** — do not start from a blank file. Full record:
+`doc/claude/op_param_batch/receipts/B1.md`. The defect is **1272**.
+
+**Why it was refuted, in one line.** It read values through
+`op_annot::raw_or_blank` and did **not** pass them through `op_annot::_finite`,
+so a **binary** raw carrying a NaN — which is what a real `write` produces, and
+`src/save.c` records that *ngspice-46 on this box* emits all four non-finite
+spellings — comes back as `devices {@m.x1.m1 {{id nan} …}}`: `nan` in the
+**value** bucket of a seam whose own contract says `absent` carries the columns
+the simulator did not compute. B3 rendering that puts **`id = nan`** on a
+schematic, which is verbatim what invariant **I3** forbids.
+
+**The suite was green at 37/37 with that live**, because it had no non-finite
+row. That is A7's lesson wearing a new costume: not a measurement taken at the
+wrong seam, but a fence built around every question its author had thought of.
+
+#### The two blockers, both one-shaped
+
+1. **Gate the read on `::op_annot::_finite`** and route a non-finite somewhere
+   that is not the value bucket. Do **not** silently fold it into `absent`:
+   *"the column is not there"* and *"the column is there and holds NaN"* are the
+   two things this seam exists to keep apart — give it a reason, or a third
+   bucket. **Add a BINARY fixture row**: an ascii raw hides the whole failure,
+   because `my_atof()` flattens `nan`→`0`, `inf`→`0`, `1e999`→`1.0000001e+38`
+   (documented in `src/save.c`; the same failed run reports `nan` one way and a
+   confident `0` the other).
+2. **Fix the one-character-segment over-strip.** `ase::op_dev_norm` drops **any**
+   leading one-char segment to make the element letter irrelevant per D-3, so
+   `norm(a.b.c)` = `b.c` and a legitimate hierarchical request whose first segment
+   is one character silently returns `state ok, devices {}` — byte-identical to
+   "unknown device". Strip a leading `<letter>.` only when the letter is an
+   ngspice element letter **and** the remainder still contains a `.`, or compare
+   on tail segments instead of normalising a prefix away.
+
+#### What B1 SETTLED, and what binds B2 · B3 · B4 · B5
+
+* **⚠ THE RETURN SHAPE IS AN ANSWER DICT, NOT FLAT PAIRS — spec §4.2 B5's own
+  sentence is WRONG and is amended.** `{devices absent complete state}`. The
+  refutation is measured, not stylistic: §3.1's `XR1` resolves to
+  `r.xr1.x0.rend1` **and** `r.xr1.x0.rend2`, both publishing a parameter spelled
+  `i`, so a flat `{param value}` list loses which primitive each number belongs
+  to and **ruling D-3 becomes unimplementable**. DD-1's corollary independently
+  forbids handing a caller the pairs without the incompleteness. **B3 must render
+  from four keys, not two.**
+* **⚠ Q10 IS ANSWERED: YES.** `ngspice -b -r` on a deck with `.op` then `.tran`
+  writes **one** file holding **two** plots; `xschem raw read <f>` lands on the
+  Operating Point, `xschem annotate_op <f> 0` publishes (`raw annot` = `0 0 -1`)
+  and `raw value <v> -1` returns real device numbers. So the RDW **is** reachable
+  after an ordinary OP+TRAN run and `update_op()`'s op/dc guard is never reached
+  with `sim_type=tran` on that path. **B3's suite can assert this rather than
+  ask it.** Two caveats: on the `.control`+`write` writer the second `write`
+  overwrites the first without `set appendwrite`; and once the tran slot is read
+  it becomes **current**, at which point `raw list` answers about the transient.
+* **⚠ THE SEAM READS THE CURRENT SLOT AND CHOOSES NOTHING.** Every `xschem raw`
+  verb reads `xctx->raw`. A user who was looking at waveforms has a **transient**
+  slot current. B1 refuses that with `state not_op`, checked **before** the
+  published-yet gate — order is load-bearing, because
+  `backannotate_at_cursor_b_pos()` sets `annot_p` on any swept database, so a
+  transient with cursor B placed answers interpolated numbers at point −1.
+  **B4/B3's consequence, unratified (`rule` debt `1245_B1_not_op_refusal`):** key
+  3 pressed while a transient is loaded says *"no operating point"* rather than
+  silently printing transient numbers.
+* **⚠ POINT −1 IS THE ONLY HONEST READER, AND ONLY AFTER `update_op()`.** A
+  `dims=0` column answers the empty string at point −1 and `0` at point 0; a
+  genuinely computed `0.0` answers `0` at both. But **before** publication point
+  −1 is empty for **every** vector — so absence may be reported only in state
+  `ok`, or the seam says *"the simulator did not compute id"* about a run nobody
+  annotated.
+* **⚠ THE CAPABILITY IS DECLARED, AND `blanket_op_save` IS A TRAP.** `src/ase.tcl`
+  already answers B1's own question — *can one card save every parameter of a
+  device at once* — by **probe**, which D-4/DD-1 forbid. Reaching it is also
+  operationally poisonous: `ase::sim_capabilities` builds a workdir and **starts
+  the user's simulator** on a cache miss, on a path with no Run behind it. Any
+  later item that "removes the duplication" by reading that key is violating a
+  ruling. Rows C3/C4 of the preserved suite are the fence.
+* **⚠ NEITHER HOOK MAY JOIN `register_backend`'s required-hook `foreach`.**
+  `test_ase_core.tcl:1116` and `:1171` hand-build **five**-hook registrations that
+  raise if a sixth becomes required, in a suite that already carries a baseline
+  red where a second is easy to misread as pre-existing. Ride in the dict like
+  `capabilities` does. Same rule for **B2** and **B5**.
+* **A NEW `.tcl` FILE IS NOT FREE, BUT B1 NEEDED NONE.** `src/ase.tcl` is already
+  sourced and installed, so B1 was pure Tcl with **no build and no
+  `./configure`**. **B2 and B3 both add new files** and therefore both owe the
+  `Makefile.in` install **and** uninstall lines plus `./configure` — receipt
+  `grep -c <newfile> src/Makefile` = **2** (issue 0424).
+* **Harness arms, twice paid for.** Suites on `full_audit.sh`'s `nogui_tests`
+  (`test_ase_optier_0963`, `test_raw_read_dispatch`) **hang** on the display arm
+  and pass in under 300 s with `--nogui` — they shell out to real ngspice dozens
+  of times. `test_ase_log_seam_0207` needs `--logdir <tmpd>` and **no** `--nolog`.
+  A number taken on the wrong arm is fiction.
+* **The `untitled~.sch` phantom can vanish under a suite sweep**, and with it gone
+  `test_ase_core` goes ALL PASS (182) — the phantom fix the brief forbids,
+  arriving by accident. Re-check it before any audit taken straight after a sweep;
+  `test_backannotate_digital` recreates it.
 
 ---
 

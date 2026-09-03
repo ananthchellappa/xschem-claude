@@ -895,6 +895,44 @@ Key 3 never asks ngspice a question directly. It asks the **backend** one:
 ase::backend::<sim>::op_param_set <devpath>   ->  ordered {param value} pairs
 ```
 
+> ⚠ **THAT RETURN SHAPE IS WRONG, AND THIS SPEC IS THE THING THAT IS WRONG.**
+> Item **B1** implemented it, measured it against this section's own examples and
+> refuted it (2026-09-03; receipt `../op_param_batch/receipts/B1.md`). §3.1's
+> `XR1` resolves to `r.xr1.x0.rend1` **and** `r.xr1.x0.rend2`, and **both**
+> publish a parameter spelled `i` — so a flat `{param value}` list cannot say
+> which primitive each number belongs to, and **ruling D-3 becomes
+> unimplementable in the shape this line asks for**. DD-1's corollary
+> independently forbids handing a caller the pairs without the incompleteness
+> riding alongside them, and there is nowhere in a flat list to put it.
+>
+> **The shape that survives measurement is an ANSWER DICT with four keys:**
+>
+> | key | what it carries |
+> |---|---|
+> | `devices` | ordered `{<rawdev> {{<param> <value>} …}}` — one entry per **primitive** the request covers, raw-file order throughout |
+> | `absent` | ordered `{<rawdev> <param>}` — columns the raw **names** and the simulator **did not compute** |
+> | `complete` | the honesty flag **as data** (DD-1's corollary): the value the capability declares, `0` for today's ngspice |
+> | `state` | `no_devpath` \| `no_raw` \| `not_op` \| `not_annotated` \| `ok` — four silences a caller must tell apart, which otherwise all arrive as the same empty list |
+>
+> **The capability is a second, optional hook** — `op_param_enumerable` — beside
+> `op_param_set` in the same backend dict, because it is a question about the
+> **backend** that must be answerable before any run, click or devpath exists.
+> Neither may join `ase::register_backend`'s required-hook loop: two suites
+> hand-build five-hook registrations that raise if a sixth becomes required.
+>
+> **B1 nonetheless returned `[F]`** on a separate defect (issue **1272**: it read
+> through `op_annot::raw_or_blank` without `op_annot::_finite`, so a binary raw
+> carrying a NaN returned `nan` in the **value** bucket — I3's own failure). The
+> shape above is not what was refuted; it is what was measured, and it binds
+> **B2**, **B3** and **B5**.
+>
+> **⚠ ABSENCE MAY BE REPORTED ONLY IN STATE `ok`.** Measured: `xschem raw value
+> <v> -1` is the only reader carrying the absent/zero distinction — a `dims=0`
+> column answers the empty string there and `0` at point 0, while a genuinely
+> computed `0.0` answers `0` at both — but **before `update_op()` has published,
+> point −1 is empty for every vector**. A seam that filled `absent` outside `ok`
+> would report *"the simulator did not compute id"* about a run nobody annotated.
+
 with a companion capability answer saying whether the backend can enumerate at
 all. Two implementations, one contract:
 
@@ -1099,12 +1137,22 @@ Still open:
   slash-separated with the leading and trailing dots stripped — and put the
   raw's own device path on a second, dimmer line, because that is the string a
   user pastes into ngspice. Recorded as a `look` debt, not a blocker.
-* **Q10 — does the RDW work on the ordinary post-run desktop?** `update_op()`
-  refuses to publish when `sim_type` is not `op`/`dc` (`save.c:3680`). The
-  annotation nevertheless works with OP **and** TRAN enabled, because the raw
-  registry holds a separate op slot — that is the configuration issue 1243 was
-  measured in. **To be verified, not assumed**, as the first check of the RDW's
-  suite. Entangled with the open `rule` debts **1240** and **1243**.
+* **Q10 — does the RDW work on the ordinary post-run desktop?** ✅ **ANSWERED
+  YES, MEASURED by item B1 with real ngspice, 2026-09-03.** `ngspice -b -r
+  <raw> <deck>` on a deck carrying `.op` then `.tran` writes **one** file holding
+  **two** plots (`Operating Point`, 1 point; then `Transient Analysis`).
+  `xschem raw read <f>` with no `sim_type` argument lands on the **op** plot,
+  `xschem annotate_op <f> 0` publishes (`raw annot` = `0 0 -1`), and
+  `raw value <v> -1` returns real device-parameter numbers — so `update_op()`'s
+  op/dc guard (`src/save.c`, and note the guard is **not** at the `:3680` this
+  line quotes) is never reached with `sim_type=tran` on that path. **The RDW is
+  reachable after an ordinary OP+TRAN run.** Two measured caveats: on the
+  `.control` + `write` writer the second `write` **overwrites** the first without
+  `set appendwrite`; and once the tran slot is read it becomes **current**, at
+  which point `raw list` and `raw value` answer about the transient — the seam
+  reads whatever slot is current and chooses none. B3's suite should now **assert**
+  this rather than ask it. Still entangled with the open `rule` debts **1240** and
+  **1243**.
 
 ---
 
