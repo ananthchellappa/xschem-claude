@@ -131,3 +131,35 @@ smaller deck. Saving an operating-point parameter is measured free (spec §3.3),
 so the cost is a slightly larger raw and nothing else. If the user later wants a
 "stop saving this" control, it is a **separate** control with a separate name,
 not an overloaded Delete.
+
+### DD-5 — issue 1282: a DC sweep is rendered, and the window NAMES the analysis
+
+Taken 2026-09-03 by the driver, option (a) of the three the issue lists. On the
+owed ledger as rule debt **1282**; the user can overrule.
+
+The seam's allow-list is `{op dc}`, copied deliberately from `update_op()`'s own
+guard in `src/save.c`. So a DC sweep is accepted and the window prints its
+point-0 numbers — under a heading saying these are the operating-point columns
+this run saved, **with the word `dc` nowhere on screen**. Measured: `sim_type =
+dc`, `state = ok`, block mentions `dc` zero times.
+
+**Decision: keep rendering it, and add a sentence naming the analysis** —
+*"these numbers come from the `dc` analysis at its first point, not from a
+standalone operating point."*
+
+*Why not (b), render it silently:* that is defensible only if a `.dc` point 0
+**is** an operating point, which it is when the sweep source sits at its nominal
+value and is not otherwise. The window cannot tell which, so it must not assert
+the stronger reading. This is the same failure as rendering `complete 0`
+silently, one state further in.
+
+*Why not (c), refuse it:* that contradicts the seam's allow-list, which was
+copied from the C on purpose so that the RDW and the on-sheet annotation agree
+about what counts as an operating point. Refusing in the window only would make
+the two disagree, which is worse than either answer alone.
+
+*And the same sentence rule applies to `rdw::sim`'s two refusals* (1282 part 2):
+"no such simulator" and "a simulator with no operating-point reader" are
+different facts with different remedies, and this feature's own obligation is
+that different silences get different sentences. **Item B5 is the first thing
+that sets `::rdw::sim`, so it must land the split.**
