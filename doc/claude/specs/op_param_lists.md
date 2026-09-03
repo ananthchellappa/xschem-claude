@@ -879,6 +879,70 @@ The header is the instance name, a colon, and the hierarchical path. ⚠ **That 
 not the tree's native spelling.** xschem's own is dot-separated and
 element-lettered — `@m.x1.x1.xm2.msky130_fd_pr__nfet_01v8_lvt`. Question Q6.
 
+> ✅ **ITEM B3, 2026-09-03 — BUILT, AND THE BLOCK IS BIGGER THAN THIS SECTION
+> DRAWS IT.** `src/rdw.tcl`, 675 lines, pure Tcl. `grep -c rdw.tcl src/Makefile`
+> **0 → 2** and the **installed** binary starts `rc=0` against the installed
+> sharedir, so issue 0424 is closed in fact and not only in the generated
+> Makefile. Singleton `.rdw`, raise-if-exists, `wm protocol … rdw::close`. The
+> pane is `text -state disabled -exportselection 1`: measured on Tk 8.6.17 with
+> `openbox` live, a real click plus `x` / `Return` / `BackSpace` / `Delete` /
+> `<<Paste>>` leaves the buffer **byte-identical**, `<<SelectAll>>` takes the X
+> `PRIMARY` selection and `<<Copy>>` lands the text on the clipboard — and the
+> clipboard text equals `rdw::block_text` of the store, so the paste shape and
+> the pane provably cannot drift. Every Tk command sits behind `rdw::have_tk`,
+> proved **behaviourally** by sourcing the file into a bare `interp create`
+> slave that has neither `winfo` nor `xschem`.
+>
+> **The block as shipped, against the four lines drawn above:**
+>
+> ```
+> M2B:/xdut/xbg/xamp1                      <- tag hdr (Q6's default, bold)
+> @m.x1.x1.xm2.msky130_fd_pr__nfet_01v8    <- tag dim (op_annot::devpath's OWN
+>                                             string — what a user pastes into
+>                                             ngspice; invariant I1, B3 builds
+>                                             no @-name of its own, ever)
+> Not a complete list: these are the operating-point columns this run saved
+> for this device, not everything the device has.        <- tag note, DD-1's
+>                                                           corollary, only when
+>                                                           complete=0 AND state
+>                                                           ok AND union non-empty
+>   @r.xr1.x0.rend1                        <- per-primitive sub-header, needed by
+>     i     : 1e-06                           D-3 (two primitives of one XR1 both
+>   @r.xr1.x0.rend2                           publish a parameter spelled `i`);
+>     i     : 2e-06                           suppressed only when there is
+>                                             exactly one primitive whose name
+>                                             equals line 2
+>     vth   : (did not converge)           <- from `nonfinite`, never `nan`/`inf`
+>     ib    :                              <- from `absent`, BLANK (invariant I3)
+> A blank value means the raw names that column but the simulator did not
+> compute it.                              <- tag note, only when absent non-empty
+> ```
+>
+> **⚠ THE ROW SET IS THE UNION OF ALL THREE BUCKETS, AND THIS IS THE ITEM'S
+> SHARPEST TRAP.** A device can appear in **no** `devices` entry at all:
+> measured, an all-`dims=0` device answers `devices {} absent {…} state ok` and
+> a binary NaN/Inf device answers `devices {} nonfinite {…} state ok`. Anything
+> that walks `dict keys [dict get $ans devices]` prints an **empty dump for a
+> real, named, non-converged device**.
+>
+> **A FIFTH SILENCE WAS NEEDED AND IS NOT IN THIS SPEC.** The seam's four non-`ok`
+> states are four silences; **`state ok` with nothing in any bucket is a fifth**,
+> and under measured rule **R1** it is the *common* one. It gets its own
+> sentence, because saying nothing is indistinguishable from a rendering bug. All
+> seven user-visible sentences are **unratified** — rule debt
+> `1245_B3_window_wording`.
+>
+> **⚠ AND A SIXTH STATE NOBODY NAMED IS LIVE AND WRONG — issue 1282.** The seam's
+> allow-list is `{op dc}`, not `{op}`, so a **DC sweep** answers `ok` with real
+> point-0 numbers and the block presents them as an operating point with the word
+> `dc` nowhere. Measured `sim_type = dc`, `state = ok`,
+> `block-mentions-dc = 0`. Filed, **not fixed**: naming it, rendering it silently
+> and refusing it are three different answers and the choice is the user's.
+>
+> **The dumps survive a close and reopen** (`::rdw::blocks` is namespace state;
+> `rdw::close` touches it not at all), deliberately diverging from the
+> Calculator, which clears its history. Rule debt `1245_B3_dumps_survive_close`.
+
 **B4. The three lists.**
 
 | key | list | source |
@@ -999,6 +1063,22 @@ shipped editing action for cadence-profile users only. Question Q5.
 | **Delete** | remove from annotation | remove from summary | **greyed** |
 | **Add** | — | add to annotation | add to **annotation or summary** (the dialog asks which) |
 | **Save** | write the settings file | write the settings file | write the settings file |
+
+> ✅ **ITEM B3, 2026-09-03 — THE COLUMN IS BUILT, GREYED AND INERT, AND THE
+> `—` IN THE `Add` CELL IS NOW `greyed`.** Five buttons `Up · Down · Delete ·
+> Add · Save`, the greying driven by `rdw::button_state {id kind}` — **this
+> table as data**, so B5 can assert it with no Tk. The `Add`/annotation cell was
+> an em dash, which does not say *greyed* versus *absent*; B3 shipped **greyed**
+> by ladder **L2**, because the column then keeps a constant shape as the user
+> switches lists and the other four buttons do not move under the pointer.
+> Unratified — rule debt `1245_B3_add_greyed_on_list1`; overruling costs one line
+> of `rdw::button_state` and one golden row. **Every enabled button is INERT**
+> and names item **B5** in the window's own status line; **B5 replaces
+> `rdw::inert`, it does not add a parallel command path.** The list identity is
+> `::rdw::listkind`, moved only by `rdw::set_list` — **B4 must drive that setter
+> rather than mint a second one** (invariant I1's shape). The greying keys on
+> list **identity**, never on list **content**, which is why issue **1278**'s
+> unbounded-glob freeze does **not** land on this window's redraw.
 
 > ✅ **ITEM B2, 2026-09-03 — LIST 3 HAS NO PERSISTED STATE, AND THE STORE HAS
 > NO SLOT FOR IT.** It is live from the run, its Delete is greyed above, and a
@@ -1323,6 +1403,18 @@ Still open:
   slash-separated with the leading and trailing dots stripped — and put the
   raw's own device path on a second, dimmer line, because that is the string a
   user pastes into ngspice. Recorded as a `look` debt, not a blocker.
+  ✅ **IMPLEMENTED AS THE DEFAULT by item B3, 2026-09-03 — NOT re-litigated.**
+  `rdw::_cadence_path` is `string map {. /} [string trim $schpath .]`, kept
+  rooted, so `.xdut.xbg.xamp1.` → `M2B:/xdut/xbg/xamp1`; line 2 is
+  `op_annot::devpath`'s own string, dimmed (`option get . disabledForeground`).
+  ⚠ **At the top sheet `sch_path` is `.` and the trim yields the empty string, so
+  the header degenerates to `M1:/`** — an edge nobody has ruled, chosen by ladder
+  L2 to keep the header's shape constant with depth (two pastes from different
+  sheets still align), and now locked by suite rows `H1`/`H2` so it cannot drift
+  silently. `sim_sch_path` was rejected: it strips every level above where the
+  raw was loaded, so the header would stop matching the schematic on screen.
+  **The `look` debt stays open — it is the spelling that needs eyes, and B3's own
+  `look` debt points at it rather than duplicating it.**
 * **Q10 — does the RDW work on the ordinary post-run desktop?** ✅ **ANSWERED
   YES, MEASURED by item B1 with real ngspice, 2026-09-03.** `ngspice -b -r
   <raw> <deck>` on a deck carrying `.op` then `.tran` writes **one** file holding
@@ -1339,6 +1431,12 @@ Still open:
   reads whatever slot is current and chooses none. B3's suite should now **assert**
   this rather than ask it. Still entangled with the open `rule` debts **1240** and
   **1243**.
+  ✅ **ASSERTED by item B3, 2026-09-03** — suite row `Q1`: one raw holding an
+  `Operating Point` plot **then** a `Transient Analysis` plot, read with
+  `annotate_op`, gives `sim_type=op` and renders its six real numbers with the
+  honesty line. It is a check now, not a question. ⚠ **But the adjacent state is
+  a live defect:** the allow-list is `{op dc}`, so a **dc** slot answers `ok` and
+  the window calls it an operating point — issue **1282**.
 
 ---
 

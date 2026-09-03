@@ -16775,6 +16775,19 @@ source $XSCHEM_SHAREDIR/results.tcl
 # Calculator — waveform expression builder (calc; doc/claude/specs/calculator.md).
 # Proc definitions only at source time; the window is built on first calc::open.
 source $XSCHEM_SHAREDIR/calculator.tcl
+# Results Display Window -- the read-only, selectable, copyable pane that
+# renders the operating-point parameter set a run's raw actually holds for one
+# device (rdw; doc/claude/specs/op_param_lists.md section 4.2, feature 1245).
+# Proc definitions only at source time; the window is built on the first
+# rdw::open, and every Tk command inside sits behind rdw::have_tk -- this
+# `source` block is UNGUARDED, so a Tk command run at source time would abort
+# startup (issue 0663). Reaches the simulator only through ase::backend_hook,
+# so it must follow ase.tcl, and reads device paths only through
+# op_annot::devpath, so it must follow op_annot.tcl. Also listed in
+# src/Makefile.in's /local/install_shares -- a helper .tcl that is sourced but
+# NOT installed works in the source tree and segfaults for every installed
+# user (issue 0424).
+source $XSCHEM_SHAREDIR/rdw.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
@@ -17591,6 +17604,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
   $topwin.menubar.tools add command -label [annot_lbl_launch_ase] -command "ase::launch_for_current"
   $topwin.menubar.tools add command -label "Calculator" -command "calc::open"
+  $topwin.menubar.tools add command -label "Results Display Window" -command "rdw::open"
   # PLAN item 12: the schematic -> Signal Browser mirror of the viewer's
   # `Descend to here`. `${topwin}.drw` is the window the gesture happened in
   # (`{}` for the main window, so `.drw`) — the command switches context there

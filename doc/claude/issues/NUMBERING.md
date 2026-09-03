@@ -1070,4 +1070,39 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   **FILED, NOT FIXED** — fix is a per-entry `origin` tag, needed in B2's seam
   before **B5** can write only the right half.
 
-**The next free number is 1282.**
+* **1282** — the RDW renders a **DC sweep as an operating point**: the seam's
+  allow-list is `{op dc}` (`ase.tcl:8803`, copied from `update_op()`'s own
+  guard), so a `dc` raw answers `ok` with real point-0 numbers and the window
+  prints them under *"these are the **operating-point** columns this run
+  saved"* with the word `dc` nowhere in the block. Measured: `sim_type = dc`,
+  `state = ok`, `block-mentions-dc = 0`. `ctx` already carries `simtype` and
+  `_state_sentence` already reads it — only the `not_op` arm uses it. Part 2:
+  `rdw::sim` collapses *not registered* and *registered without the hook* into
+  one sentence. Found by item **B3**'s adversary, re-measured by its write-up
+  agent. **FILED, NOT FIXED** — the choice between naming it, rendering it
+  silently and refusing it is the **user's**, and refusing reaches into B1's
+  landed seam.
+* **1283** — three things **B3's own new suite** claims to fence and does not,
+  behind a green 32/42: newest-first **store** order has no headless witness
+  (row `Q1b` pushes one block and asserts it is at index 0 — true either way,
+  so `SB-OLDEST-ON-TOP` passes the whole `--nogui` arm); the union's
+  **cross-bucket order** is unfenced on both arms although the file's own
+  comment promises it; and the **inert-button message** is fenced only on the
+  display arm. Also records two predicted sabotage reds that did **not** appear
+  (`F5` under `SB-NO-UNION`, `F3` under `SB-HONESTY-ALWAYS`) so the matrix is
+  honest. Found by item **B3**'s sabotage and adversary passes. **FILED, NOT
+  FIXED** — item **B4** already touches this suite by its Files cell.
+* **1284** — a **backend's answer dict** can make the RDW lie, blank, or raise,
+  because `rdw::format_answer` treats the five-key dict as trusted input and it
+  is whatever a **D-5** backend hands it. Four measured shapes: malformed at the
+  dict level → the **fifth silence**, a confident false claim about the raw (the
+  shape that returned B1 `[F]`); malformed at the **value** level → an
+  **uncaught raise** out of the pure renderer (found by the write-up agent, not
+  the adversary); a value-less pair → blank with no footnote, byte-identical to
+  `absent`; a newline in a value → one pair split across two untagged lines.
+  Plus one reachable relative: the blank footnote is **per-block**, so an
+  empty-string value inherits a footnote that is false about it. **Unreachable
+  through the shipped ngspice backend**; live for whoever adds the second one.
+  **FILED, NOT FIXED.**
+
+**The next free number is 1285.**

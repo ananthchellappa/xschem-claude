@@ -1416,7 +1416,7 @@ fence (B1's lesson, one item later).
 
 ---
 
-## B3 — the window  *(no dependencies)*
+## B3 — the window  ✅ **DONE (status E), 2026-09-03**
 
 **Do.** `src/rdw.tcl`, namespace **`rdw::`** (⚠ `results::` is taken by
 `Results > Select`). Singleton toplevel, raise-if-exists. A **string-backed,
@@ -1433,6 +1433,122 @@ offer to save the dump over a design file.
 **Accept.** `grep -c rdw.tcl src/Makefile` is **2**. Opens, raises, closes,
 reopens. Text is selectable and copyable and cannot be edited. Survives
 `--nogui` by not being constructed there.
+
+---
+
+#### What B3 SHIPPED, and what binds B4 · B5
+
+**Landed as `src/rdw.tcl`** (675 lines, pure Tcl, no C), sourced bare from
+`src/xschem.tcl:16790`, one entry on the **main** menubar at `:17607`, installed
+and uninstalled from `src/Makefile.in`'s `install_shares` — receipt
+`grep -c rdw.tcl src/Makefile` **0 → 2** (`src/Makefile:228` install,
+`:292` uninstall), `./configure` re-run with `config.h` and `Makefile.conf`
+byte-identical across it. New suite `tests/headless/test_rdw_window_1245.tcl`,
+**ALL PASS 32 (`--nogui`) / 42 (`:99`)**, registered by `full_audit.sh:393`'s
+glob with that file unedited; the audit denominator moves **380 → 381**.
+
+**The receipt was proved installed, not by proxy.** `make install DESTDIR=<tmp>`
+ships `rdw.tcl` beside `op_param_lists.tcl`, and the **installed** binary run
+against the **installed** sharedir starts `rc=0` (not 139) with `rdw` live.
+Issue **0424**'s failure mode is closed in fact.
+
+* **⚠ THE `--nogui` ARM IS THE ONE THAT CATCHES THE WINDOW BEING BROKEN, AND
+  VICE VERSA — BOTH ARMS ARE LOAD-BEARING.** Measured, not argued:
+  `SB-PANE-EDITABLE` (the pane made writable) reds **only** on `:99` and the
+  headless arm is ALL PASS; `SB-HAVETK-TRUE` (the live-Tk guard forced true)
+  reds **6 rows on `--nogui`** and is ALL PASS 42/42 on the display. A suite with
+  either arm alone passes while the other half is dead. B4 and B5 must keep
+  adding rows to **both**.
+* **THE THREE SEAMS B3 MINTED. DRIVE THEM; DO NOT MINT A SECOND.** This is
+  invariant **I1**'s shape (one builder, two consumers) applied to the window:
+  * **`::rdw::listkind` + `rdw::set_list {annotation|summary|all}`** is *the*
+    list-identity state. **B4 owns the keys that select a list and must call that
+    setter.** `rdw::button_state {id kind}` is spec §4.2 B7's table **as data**,
+    so B5 can assert the greying with no Tk at all.
+  * **`rdw::dump {instname}`** is the whole round trip — header →
+    `op_annot::devpath` → the seam → push — and is what **B4's keys should
+    call**. `rdw::sim` resolves the backend; the seam is **never** named by its
+    proc name (row `S1` is structural for exactly that reason).
+  * **`::rdw::blocks`** is the store, newest-first, namespace state that works
+    headless. The pane is only its projection. **B4's key `4`** (*clear
+    everything but the most recent*) operates on that list, not on the widget.
+* **`rdw::status {msg}` SETS THE VARIABLE ALWAYS AND THE WIDGET ONLY IF IT
+  EXISTS**, which is what makes the inert path drivable in the `--nogui` arm.
+  **B5's Save must name the exact settings-file path there**, and must resolve it
+  through `op_param_lists::conf_path project` (B2's rule) rather than building
+  one.
+* **⚠ B3 CALLS `op_param_lists::` NOWHERE, SO B2's SIX DEFECTS ARE STILL NOT
+  LIVE — AND B5 IS THE ITEM THAT MAKES THEM LIVE.** In particular **1278**'s
+  unbounded-glob freeze was listed above as landing on *"B3's redraw"*: it does
+  **not**, because the greying keys on list **identity**, never on list
+  **content**. Whoever first calls `effective` from the window inherits it.
+* **⚠ PLAN's B2 NOTE *"B3 owes that channel: drain `said` into the CIW after
+  every `load`/`write_conf`"* HAS NO TRIGGER IN B3 AND MOVES TO B5.** B3's
+  buttons are inert by its own brief, so B3 calls neither `load` nor
+  `write_conf`; a channel drained after calls that never happen is untestable.
+  **B5 ships Save and therefore owns the drain.**
+* **THE BUTTONS ARE BUILT, GREYED AND INERT.** Five ids `up down delete add
+  save`, every enabled one routing to `rdw::inert`, which names itself **and
+  names item B5** in the window's own status line. **B5 replaces `rdw::inert`,
+  it does not add a parallel command path.**
+* **⚠ THE WINDOW OPENED FROM THE MENU TODAY IS COMPLETELY BLANK** — pane empty,
+  status empty — because **B4 ships the keys that put a dump in it**. That is by
+  design and in scope, but it means *"Tools > Results Display Window"* is a
+  dead-looking entry until B4 lands. If B4 slips, consider whether the empty
+  window should say how to fill it.
+* **SEVEN USER-VISIBLE SENTENCES WERE MINTED AND ARE UNRATIFIED** (rule debt
+  `1245_B3_window_wording`), including a **FIFTH silence nobody specified**:
+  `state ok` with nothing in any bucket, which under measured rule **R1** is the
+  **common** case. **B4 and B5 must not reword these ad hoc** — they are locked
+  by golden rows in B3's suite, and the user has not ruled on them.
+* **THE UNION IS THE RENDERER'S LOAD-BEARING RULE.** A device can appear in
+  **no** `devices` entry at all: an all-`dims=0` device answers
+  `devices {} absent {...} state ok`, and a binary NaN/Inf device answers
+  `devices {} nonfinite {...} state ok`. The row set is built from the union of
+  all three buckets' rawdev names. **Any later code that walks
+  `dict keys [dict get $ans devices]` prints an empty dump for a real, named,
+  non-converged device.**
+* **Q6's HEADER SHIPPED AS THE DEFAULT, NOT RE-LITIGATED.** Line 1 is
+  `<inst>:` + `sch_path` with leading **and** trailing dots stripped and dots →
+  slashes, kept rooted; line 2 is `op_annot::devpath`'s **own** string, dimmed.
+  ⚠ **At the top sheet `sch_path` is `.`, so the header degenerates to `M1:/`** —
+  an edge nobody has ruled, now locked by rows `H1`/`H2` so it cannot drift
+  silently.
+* **Q10 IS NOW AN ASSERTION, NOT A QUESTION** (row `Q1`): one raw holding an
+  `Operating Point` plot then a `Transient Analysis` plot, annotated, renders the
+  six real numbers with the honesty line.
+* **Minor, measured, not defects.** `test_startup_guard_0663.tcl`'s **header
+  prose is stale** — it says *"FIFTEEN helpers"* and cites `:14568`/`:14796`/
+  `:14815` where the real lines are `:16749`/`:16756` and the block now runs to
+  ~`:16828` with `rdw.tcl` in it. **No CHECK counts the sources**, so the suite
+  is PASS and adding a helper reds nothing; the prose is simply one more helper
+  out of date. `src/actions.csv` is **untouched** (outside B3's Files cell) —
+  Calculator has a `tools` row there feeding the command palette and cheat-sheet,
+  `build_menu_from_table` is `file`-only (`xschem.tcl:17075`) so no csv row can
+  duplicate the hand-written entry, and **the palette row is deferred to B4**,
+  which owns the keys.
+
+##### ⚠ THE IMPLEMENTER EDITED ONE ROW OF ITS OWN NEW SUITE — read this before trusting `M1`
+
+Row `M1`'s third leg was **unsatisfiable by any correct Makefile** and was
+repaired in the same item. It counted **substring occurrences** and expected 2,
+but its own name says *"so `grep -c` is 2"* and `grep -c` counts **lines**.
+scconfig's install template names the file on **both sides of the copy**
+(`install -f rdw.tcl "$(XSHAREDIR)"/rdw.tcl`), so every shipped helper is
+**3 substrings on 2 lines** — verified against `op_param_lists.tcl`,
+`results.tcl` and `calculator.tcl`, none of which B3 touched. The leg is now a
+**line** count, still expecting 2, with the measurement written into the file as
+a comment. **The row is not weakened**: its first two legs still pin exactly one
+install line and exactly one uninstall line **by name**, so "2" cannot be reached
+by two install lines and no uninstall line, which was the row's whole point.
+
+##### ⚠ THREE DEFECTS B3's OWN PASSES MEASURED. B4 AND B5 INHERIT THEM.
+
+| # | what | who trips it |
+|---|---|---|
+| **1282** | the RDW renders a **DC sweep as an operating point**. The seam's allow-list is `{op dc}`, so a `dc` raw answers `ok` with real point-0 numbers and the block says *"operating-point columns"* with `dc` nowhere. `ctx` already carries `simtype`; only the `not_op` arm uses it. ⚠ the choice — name it / render it silently / refuse it — is the **user's**, and refusing reaches into **B1's landed seam**. Part 2: `rdw::sim` collapses *not registered* and *registered without the hook* into one sentence | **B5** (first to set `::rdw::sim`) |
+| **1283** | three things **B3's own suite** claims to fence and does not, behind a green 32/42: newest-first **store** order has no headless witness at all (row `Q1b` pushes one block and asserts it is at index 0 — true either way); the union's **cross-bucket order** is unfenced on both arms; the **inert-button message** is fenced only on the display arm | **B4** (its Files cell already says *rows in B3's suite*) |
+| **1284** | a **backend's answer dict** can make the window lie, blank or **raise** — `format_answer` treats the five-key dict as trusted and it is whatever a **D-5** backend hands it. Unreachable through ngspice; live for the second backend | whoever adds backend #2 |
 
 ---
 
