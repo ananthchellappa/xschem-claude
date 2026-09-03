@@ -966,4 +966,24 @@ and in the working tree. Read PLAN.md's A6 entry before re-running it.
 same batch, not by a crew: `test_wave_sigbrowser_i12`'s BX42 reds on a dev
 display that has been used and greens on a freshly started one — measured across
 five binaries including A4's own commit built in a clean worktree, so it is the
-display and not the code. **The next free number is 1270.**
+display and not the code. ~~**The next free number is 1270.**~~ (1270 taken by item A7 — see below)
+
+**Item A7 (2026-09-03) filed 1270 and closed nothing.** A7 attempted
+**1255**, **1256**, **1257** and **1261** in one pass; its adversary refuted the
+central mechanism and the item is **`[F]`, reverted**. The four target issues
+stay **open**; each carries an "A7 attempt" section pointing at 1270.
+
+* **1270** — A7's declutter counter is bumped at `text_hidden_core()`'s rung
+  `return 1`, which sits **above** the `show_hidden_texts` / `HIDE_TEXT` /
+  `HIDE_TEXT_INSTANTIATED` arms, so it answers "the rung said hide first" and not
+  "this text would otherwise have been drawn". On any annotated device whose only
+  non-`@name` text is already `hide=instance` (**57 shipped
+  `xschem_library/devices/*.sym`**) or `hide=true`, the sheet is byte-identical
+  at mask 1 and mask 9 and all three status producers still claim a declutter.
+  Carries the four-line repair, A7's whole sabotage matrix, the one real coverage
+  hole it found (row A62 is blind to its own sabotage), and the adversary's ten
+  residual risks. A7's code is preserved as
+  `doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`, applying cleanly to
+  `355a3dc6`.
+
+**The next free number is 1271.**

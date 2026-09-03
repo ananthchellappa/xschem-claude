@@ -74,3 +74,35 @@ It did **not** touch `_db_stat`. That is this issue.
 
 Nothing here is a recommendation. The measurement is the deliverable; the choice
 needs a bench where the simulator, not a test fixture, is doing the writing.
+
+---
+
+## A7 attempt, 2026-09-03 — **`[F]`, reverted. This issue stays OPEN.**
+
+Item **A7-c** implemented the fix and it **worked for the shape asked**:
+`op_annot::_db_stat` returned `{mtime size fingerprint}`, the fingerprint being
+a `zlib crc32` over a bounded window (whole file at ≤ 8192 bytes, else head 4096
++ tail 4096, read binary); a sampling failure answered `{}` = UNKNOWN so
+`db_current` re-reads; a `zlib`-less interpreter degraded to `{mtime size}` out
+loud. Driven: a same-second, same-size, different-bytes rewrite moved the stamp
+(`66994941 -> 2796787623`) and `db_current` answered 0, where before it answered
+1 and the sheet kept painting the previous run's number. Cost re-measured at
+3.7 µs (276 B) and 5.0 µs (1,218,048 B), inside row F35's budget.
+
+**It was reverted with the rest of A7**, whose A7-a leg was refuted (issue
+**1270**). Nothing here needs re-deriving — the implementation, rows F50 and F51,
+and the cost table are all in
+`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`.
+
+**Two corrections the re-do must carry**, both measured by A7's adversary:
+
+1. The comment A7 wrote reads `⚠ THE ONE-SECOND HOLE IS CLOSED -- ISSUE 1255`.
+   It is closed for files ≤ 8 KiB and for changes touching the first or last 4096
+   bytes. **Reword the headline**; the residue paragraph below it is accurate.
+2. The blind middle is **82 % of a 45 KB raw** (a same-second, same-size,
+   one-value rewrite at offset 29050 left the fingerprint identical at
+   `1286397804`) and **99.3 % of F35's 1.2 MB fixture**, and ngspice binary raws
+   are same-size by construction across a re-run with the same vector set.
+   Widening the window is not free: a full-file crc32 measures **258 µs** against
+   a 5 µs baseline and reds F35's `big <= 3*small + 100` leg. `exec stat -c %.9Y`
+   measures 1460–1772 µs, reds two more legs, forks per press and is GNU-only.

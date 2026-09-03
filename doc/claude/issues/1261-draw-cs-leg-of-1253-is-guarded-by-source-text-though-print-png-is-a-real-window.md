@@ -87,3 +87,47 @@ mask 1 == mask 9.
 * Whether `xschem print png` should get a cheaper seam (a drawn-pin-name counter
   behind `xschem get`) so the row does not depend on image bytes at all. That is
   new instrumentation, not a conformance gap, and is nobody's item yet.
+
+---
+
+## A7 attempt, 2026-09-03 — **`[F]`, reverted. This issue stays OPEN.**
+### …but the demonstration this issue asked for succeeded, and is recorded here so it is not re-derived.
+
+Item **A7-d** replaced the grep census's draw.c claim with a behavioural row
+**A38b**: on a symbol carrying only `@name` plus one `show_pinname=true` pin with
+a valued raw, warm-then-real `xschem print png` at the tight viewport
+`1200 900 250 -360 460 -240`, asserting mask1 ≠ mask9 with a `show_pinname=false`
+twin as the non-vacuity control and PNG-magic / `> 0` legs. A38 kept its
+structural legs for `svgdraw.c` / `psprint.c` / `select.c`.
+
+**The sabotage this issue asked for was run and it worked.** `SB-A7d-PINS-TOKEN`
+— `src/draw.c:975` changed to `if(0 && text_hidden_inst(0, n)) continue;`, the
+refactor-shaped defect, token and grep count preserved — rebuilt:
+
+```
+sabotaged: show_pinname=true  mask1=16874 mask9=16874   (identical)
+restored:  show_pinname=true  mask1=16874 mask9=15189
+           show_pinname=false mask1=15561 mask9=15561
+RESULT: 1 FAILED (131 passed)   -- the one red is A38b
+A36 (svg), A37 (ps), A38 (the grep census, count still exactly 1): all GREEN
+```
+
+The grep row provably could not see the defect; the behavioural row could. A
+coarse twin (callee replaced by a static always-0) reds A22, A38 and A38b.
+
+**Two corrections to this issue's own text**, both re-measured: the absolute byte
+sizes are nothing like the 12912/8301/8744 recorded here (assert **relations**,
+as this issue itself recommends — never absolute goldens, they are
+cairo/libpng/display dependent); and the warning that "a wide viewport hides it"
+does **not** reproduce on this binary/display — the wide viewport works too, and
+A7 reported it as a `COST|`-style line rather than asserting it.
+
+**Residue to carry into the re-do:** A38b asserts the difference by **file
+size**, and its non-vacuity twin by size **equality** — a rendering change that
+preserves the compressed size passes both; cheap to strengthen to a byte compare.
+And A38b/A38c are **display-arm only** (under `--nogui` `print png` writes no
+file), so draw.c's behavioural guard vanishes on any headless leg.
+
+The row and its fixture are preserved in
+`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`; A7 was reverted for
+its A7-a leg (issue **1270**), not for this one.

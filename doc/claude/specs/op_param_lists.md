@@ -1049,6 +1049,21 @@ Still open:
   item A5 does not own. Should the clause **follow the gate** (say nothing when
   nothing was hidden), or should the press be **refused outright** with "Run a
   simulation first"? Row **E6** golds the gap on purpose, so it stays visible.
+  ⚠ **ANSWERED 2026-09-02 by the DRIVER, and NOT YET LANDED.** The ruling is
+  *"the clause follows the gate — emitted only when something was actually
+  hidden"*, and the press is **not** refused (a mode you cannot arm before
+  simulating would be worse than one that says it is waiting): three states,
+  three sentences. Item **A7-a** implemented exactly that, was **refuted** by its
+  own adversary pass and **reverted** — see issue **1270** and the A7 entry in
+  `PLAN.md`. So Q15 is no longer an open *question*; it is unlanded *work*, and
+  row **E6** still golds the gap.
+  ⚠ **AND THE RULING'S OWN PREMISE IS OFF BY ONE: THERE ARE FOUR STATES.**
+  Measured by A7: (1) no raw (`raw loaded` -1); (2) **dead raw** — loads and
+  annotates, publishes no matching vector; (3) valued raw; (4) valued raw whose
+  only non-`@name` text was **already invisible** (`hide=instance` / `hide=true`).
+  States 2 and 4 both hide nothing while every mask-shaped and `_annotated`-shaped
+  test says otherwise, and state 4 is what refuted A7. A re-run must drive all
+  four; three sentences still suffice, because 2 and 4 both take the armed one.
 * **Q14 — the clause the OTHER four chords now carry** (added by item A4,
   2026-09-02; `rule` debt **1251**; **this is item A4's status-E question**).
   After a `Ctrl-Alt-6`, every `6` / `Alt-6` / `Alt-Shift-6` press appends
@@ -1191,6 +1206,26 @@ Still open:
     **The "refresh the bboxes first" instruction still stands anyway**, because
     `xschem annotate_op` and `xschem raw clear` move the gate's answer while
     calling `symbol_bbox()` not at all — issue **1266**.
+15. **"Did the declutter hide anything?" cannot be answered by the mask, by
+    `op_annot::_annotated`, or by the rung's `return 1`** (item A7, issue
+    **1270**). The mask stopped meaning "the sheet is decluttered" when the value
+    gate landed. `_annotated` answers **1** on a dead raw — one that loads and
+    annotates but publishes no matching vector — exactly as on a valued one, and
+    `cadence::annot_mode`'s `state` reads `live` there too, so **no Tcl-visible
+    signal separates the states**. A C measurement is required. But the obvious
+    place to take it is wrong: `text_hidden_core()`'s declutter `return 1` sits
+    **above** the `show_hidden_texts` / `HIDE_TEXT` / `HIDE_TEXT_INSTANTIATED`
+    arms, so a counter bumped there answers *"the rung said hide first"*, not
+    *"this text would otherwise have been drawn"* — and on any annotated device
+    whose only non-`@name` text is already `hide=instance` (**57 shipped
+    `xschem_library/devices/*.sym`**) the sheet is byte-identical at mask 1 and
+    mask 9 while all three status producers claim a declutter. Count it only when
+    the tail below **would have returned 0** — and remember the `show_hidden_texts`
+    arm, because both Op-Annotate menu bodies turn that switch **on** one line
+    before writing the mask, so there the rung really does take the text away.
+    ⚠ A related trap for the *reader* of such a counter: the delta is moved by
+    `update_all_sym_bboxes` **alone** (measured: bbox-only 1, redraw-only 1), so
+    it is a **geometry** answer, not a screen answer. Today they agree.
 
 ---
 

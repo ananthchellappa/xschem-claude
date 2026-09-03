@@ -33,3 +33,29 @@ The row asserts the gap on purpose so it stays visible.
 Should the clause follow the gate — say nothing when nothing was hidden — or
 should the press be refused outright with "Run a simulation first"? Recorded so
 the decision is seen to be the user's.
+
+---
+
+## A7 attempt, 2026-09-03 — **`[F]`, reverted. This issue stays OPEN.**
+
+Item **A7-a** implemented the driver's ruling (*"THE CLAUSE FOLLOWS THE GATE …
+three states, three sentences"*) with a new C counter `annot_declutter_count`
+bumped at `text_hidden_core()`'s declutter rung, a pure `hid` argument on
+`cadence::_annot_declutter_clause`, and a `cadence::_annot_declutter_refresh`
+helper that reads the counter delta across one `update_all_sym_bboxes` +
+`redraw`. **The two states this issue names were fixed and driven** — no raw, and
+the dead-raw state this issue never named (`op_annot::_annotated` answers 1 there
+exactly as on a valued raw, which is why no Tcl-only fix can pass).
+
+It was refuted on a **fourth** state and reverted: the counter is bumped above
+the `show_hidden_texts` / `HIDE_TEXT` / `HIDE_TEXT_INSTANTIATED` arms, so on any
+annotated device whose only non-`@name` text is already `hide=instance` (57
+shipped device symbols) the sheet is byte-identical at mask 1 and mask 9 and the
+clause is still emitted. **See issue 1270** for the measurement, the four-line
+repair, the row that must go with it, and the whole preserved implementation
+(`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch`).
+
+`rule` debt **1257_A7_armed_no_values** was recorded by A7 and describes a
+sentence (`DC_ARM` in the armed-but-no-numbers state) that is **no longer in the
+tree**. It is left standing — a rule debt clears only when the user says so — but
+the re-do should reach the same state before the question is answerable.

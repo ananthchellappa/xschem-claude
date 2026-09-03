@@ -71,3 +71,36 @@ chords do, minted from the one place it lives
 exists**, and nothing when it does not. That keeps invariant **I1** (one mint)
 and costs the stock profile nothing. The wording itself is unratified — `owed.sh`
 rule debt `1251` — so this should land after that ruling, not before it.
+
+---
+
+## A7 attempt, 2026-09-03 — **`[F]`, reverted. This issue stays OPEN.**
+
+Item **A7-b** implemented the fix and its **plumbing was found sound** by both
+verifiers: one new stock proc `annot_declutter_say` in `src/xschem.tcl` owned the
+`update_all_sym_bboxes` + `redraw` pair for both Op-Annotate bodies (`:17311` and
+`:17749`), measured the same counter delta, and — behind `info commands
+::cadence::_annot_declutter_clause`, routed through `cadence::_annot_fit` for the
+255-byte budget — borrowed the **one** cadence mint. Driven, not grepped, through
+both doors and both `::cadence_compat` states. No mask writer added, guard not
+moved, silent in stock xschem (driven with no `::cadence` namespace at all: both
+doors rc 0, zero bgerrors, mask merged, planted sentinel untouched).
+
+It was reverted because it **inherits** A7-a's refuted measurement (issue
+**1270**): on an annotated device whose only non-`@name` text is already
+`hide=instance`, the new `Graphs > Annotate` door emitted `Decluttering is on, so
+other device text is hidden.` while the sheet was byte-identical. The repair is
+in 1270 and is four lines of C; this item's own Tcl needs no change.
+
+**One test-design defect the re-do must fix**, found by A7's sabotage pass: row
+**A62**, the stock-xschem guarantee, is blind to its own sabotage. Its driver
+wraps the invoke in `catch {$menu invoke $idx}` and `xschem set annot_show` runs
+earlier in the `-command` body, so a raise leaves the mask already merged and the
+sentinel untouched, and all eight legs still pass. A62 needs a leg asserting the
+invoke did not raise, or a bgerror count.
+
+Also recorded: the **Waves** door is refused outright under `cadence_compat=1`
+(`waves_gate_blocked` → a blocking `alert_`), i.e. in the one profile where the
+clause producer exists. The door that can actually speak the clause under cadence
+is the **Graphs** door. Any suite row touching the Waves door needs the
+`alert_`, `ase::annot_binding_ok` and `select_raw` stubs.

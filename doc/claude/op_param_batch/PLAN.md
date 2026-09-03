@@ -687,6 +687,14 @@ rather than by exhaustion.
 a later batch** — not spawned as another item. Feature B has not started, and it
 is the half the user actually asked for first.
 
+**⚠ STATUS, 2026-09-03: the boundary HOLDS but neither closing item has landed.**
+A6 is `[F]` (destroyed by its own write-up agent) and A7 is `[F]` (refuted by its
+own adversary and reverted). Both are preserved as patches in this directory and
+both re-apply cleanly to `355a3dc6`. Feature A's *design* is closed; its last two
+items are re-runs, not new work, and A7's re-run is **four lines** of correction on
+top of its own patch (issue **1270**). Anything found after A7 is still filed and
+deferred — A7 filed 1270 and grew nothing.
+
 ---
 
 ## A6 — close the value gate and the last bbox doors  ⛔ **NOT LANDED (status F), 2026-09-02 — implemented and verified, then DESTROYED BY ITS OWN WRITE-UP AGENT. Re-run it; the work is preserved.**  *(needs A5)*
@@ -906,7 +914,7 @@ identical" is unverified. Twelve names: `test_altf5_ciw`, `test_ase_core`,
 
 ---
 
-## A7 — the wording follows the gate, and the guards stop lying  *(needs A6)*
+## A7 — the wording follows the gate, and the guards stop lying  ⛔ **NOT LANDED (status F), 2026-09-03 — implemented, built and verified, then REFUTED by its own adversary pass and REVERTED. Re-run it; the work is preserved and needs four lines changed.**  *(needs A6)*
 
 **A7-a — 1257, the status clause claims a declutter that no longer happens.**
 With no results file, `Ctrl-Alt-6` now correctly hides nothing — but the held
@@ -937,6 +945,124 @@ something was — drive both. The menu and every chord emit the same clause for
 the same state; drive both doors, do not compare source. A raw rewritten inside
 one second is detected as changed. 1261's guard fails when the back-end is
 sabotaged, driven through `print png` rather than read out of the source.
+
+### ⛔ WHAT HAPPENED TO A7, AND WHAT THE NEXT CREW MUST DO FIRST
+
+**A7 was implemented, built, and passed T1/T2/T3 and the full audit with the
+twelve-name baseline reproduced exactly. Its adversary pass then found that the
+central mechanism answers the wrong question, and the item was reverted.** The
+refutation is **issue 1270**; read it before touching anything here.
+
+**1. THE BINARY IS AHEAD OF THE TREE RIGHT NOW.** `src/xschem` (2026-09-03
+02:03:58) carries A7's C change; the reverted sources do not. The write-up agent
+could not rebuild (crew rule 2). The revert leaves every source **newer** than
+the binary, so `make -q` reports out of date — but this is batch trap 1 and it is
+armed. **Rebuild first**, then check
+`strings src/xschem | grep -c annot_declutter_count`: **0** on the reverted tree,
+**2** once the patch below is re-applied.
+
+**2. THE WORK IS PRESERVED AND RE-APPLIES CLEANLY.**
+`doc/claude/op_param_batch/A7_working_tree_REFUTED.patch` — 1802 lines, md5
+`fe5571930f02cdaa3f816b1e3b3ab871`, dry-run-verified against a pristine
+`git archive` extraction of all eight files at `355a3dc6` **before** anything was
+reverted. `patch -p1 <` it and the whole item is back: the C seam, the three Tcl
+producers, the stock menu helper, the bounded-window stamp, and **14 new suite
+rows** (`test_annot_declutter_1244` 120 → 132, `test_annot_stale_0684` 54 → 56,
+both ALL PASS). Nothing needs re-deriving.
+
+**3. THE FIX IS FOUR LINES, INSIDE A7's OWN EDIT POINT.** `++annot_declutter_count`
+sits at `text_hidden_core()`'s rung `return 1`, which is **above** the
+`show_hidden_texts` / `HIDE_TEXT` / `HIDE_TEXT_INSTANTIATED` arms — so it counts
+*"the rung said hide first"*, not *"this text would otherwise have been drawn"*.
+Bump it only when the tail below would have returned 0. The exact replacement is
+in issue 1270, and the `show_hidden_texts` arm of it is load-bearing in the
+direction people will forget: both Op-Annotate menu bodies turn that switch **on**
+one line before writing the mask, so there the rung really does take the text
+away and the counter **must** bump.
+
+**4. THE ROW THAT WOULD HAVE CAUGHT IT, AND MUST BE ADDED.** A fixture whose only
+non-`@name` text carries `hide=instance` — the shape of **57 shipped
+`xschem_library/devices/*.sym`** — with a valued raw: the sheet identical at mask
+1 and mask 9 (assert the SVG bytes equal), **no** clause from `6`, **DC_ARM** from
+`Ctrl-Alt-6`, **silence** from both menu doors; plus its twin with
+`show_hidden_texts` on, where all four must speak. Driven, this is what the
+shipped binary does today:
+
+```
+   mask1 texts=MP {aid = 12.3u}
+   mask9 texts=MP {aid = 12.3u}
+   SVG BYTES IDENTICAL: YES
+   chord 6 -> mask 9, clause PRESENT   (A7 requires: absent)
+```
+
+### What A7 learned that binds later items
+
+1. **⚠ THE DECLUTTER HAS FOUR STATES, NOT THREE.** The driver's brief said
+   *"three states, three sentences — hid something / armed but nothing to hide /
+   not armed"*. Measured, there are four: **no raw** (`raw loaded` -1), **dead raw**
+   (loads and annotates, publishes no matching vector), **valued raw**, and
+   **valued raw whose text was already invisible**. The dead-raw state is the one
+   that forces a C seam — `op_annot::_annotated` answers 1 and
+   `cadence::annot_mode`'s `state` reads `live` there, identically to a valued raw,
+   so **every Tcl-only repair fixes the no-raw state and goes on lying**. Any
+   later item that wants to know "is this sheet decluttered" must ask a
+   measurement, not the mask and not `_annotated`.
+
+2. **⚠ A7's Files cell was wrong and the next one may be too.** It named no `.c`
+   file; the honest fix needs `src/actions.c`, `src/xschem.h` and
+   `src/scheduler.c`. That overrun was correct and is not the reason A7 failed.
+   Row **L27** of `test_op_annot.tcl` is the trap it navigates: the literal
+   `HIDE_TEXT` must appear in exactly ONE `.c` and `text_hidden` in exactly five,
+   counted by `string first` over the **whole file including comments** — so a new
+   accessor, *or even a comment*, in `scheduler.c` naming either token reds L27 and
+   takes T1 with it. A7's arm named neither and `grep -c 'text_hidden\|HIDE_TEXT'
+   src/scheduler.c` stayed 0. Keep it that way.
+
+3. **⚠ ROW A62's SHAPE IS A TRAP FOR EVERY MENU-DOOR ROW, INCLUDING B-FEATURE
+   ONES (issue 1270).** A driver that does `catch {$menu invoke $idx}` cannot see a
+   raise, and `xschem set annot_show` runs **early** in the `-command` body — so the
+   mask is already merged and a planted sentinel already untouched when the raise
+   happens, and every "the door ran and said nothing" leg still passes. A7's own
+   sabotage proved this on a coarse twin that provably raises. **A menu-door row
+   needs a leg asserting the invoke did not raise, or a bgerror count.**
+
+4. **The `Waves > Op Annotate` door is unreachable under the cadence profile.**
+   `src/cadence_style_rc:40` sets `cadence_compat 1`, and `waves_gate_blocked` is
+   the left term of that entry's guard, so it refuses and pops a **blocking**
+   `alert_` (`tkwait window .alert`) — in the one profile where the clause producer
+   exists. The door that can speak under cadence is **Graphs**. Any row touching
+   Waves needs the `alert_`, `ase::annot_binding_ok` and `select_raw` stubs, and
+   must toggle `::cadence_compat` explicitly. This bites **B4**.
+
+5. **`xschem print png` is a real behavioural window onto `draw()`** — A7-d proved
+   it, and proved a grep census cannot see `if(0 && text_hidden_inst(0, n))` while
+   the PNG row can. But it is **display-arm only**: under `--nogui` `print png`
+   writes no file, silently, rc 0. Any later back-end row must carry `> 0` and
+   PNG-magic legs or it passes vacuously. Assert **relations**, never absolute byte
+   sizes — they are cairo/libpng/display dependent and A7's differ from issue
+   1261's by ~3 KB.
+
+6. **A bounded content fingerprint on the staleness stamp is affordable and a
+   full-file one is not.** Head 4096 + tail 4096 measures 3.7–5.0 µs across a
+   276 B and a 1.2 MB raw; a full-file `zlib crc32` measures **258 µs** and reds
+   row F35's `big <= 3*small + 100` budget leg; `exec stat -c %.9Y` measures
+   1460–1772 µs, reds two more legs, forks per press and is GNU-only. The residue
+   — 82 % of a 45 KB raw is blind, 99.3 % of a 1.2 MB one — is measured in issue
+   1255 and must be stated, not glossed. **B1 inherits this** if it touches
+   `db_current`.
+
+7. **The baseline of record is still the TWELVE names in
+   `audit_A6_2026-09-03.txt`.** A7's audit reproduced them verdict-for-verdict
+   (a 378-line diff came back **empty**). Note `test_ase_core`'s C11 red is caused
+   by a **gitignored** `untitled~.sch` in the repo root that
+   `test_backannotate_digital` rewrites; deleting it would turn that suite green
+   and shrink the baseline to eleven **with no code change** — a phantom fix. It is
+   deliberately left in place. Also: `test_raw_read_dispatch` is `--nogui`-only
+   (137 checks in 1.1 s; on `:99` it had emitted 94 ok lines at a 500 s timeout).
+
+8. **The brief's issue-numbering block is stale and self-contradictory** ("from
+   0619 upward", "hard ceiling 0499"). `doc/claude/issues/NUMBERING.md` is the only
+   authority; after A7 the next free number is **1271**.
 
 ---
 
