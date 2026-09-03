@@ -18,7 +18,7 @@
 # The draw-time rung is item A3 and the name classifier is item A2; A2 and A3
 # add their rows to THIS file.
 #
-# ⚠ THE FILE NOW COVERS FIVE ITEMS, IN FIVE PASSES OVER ONE FEATURE:
+# ⚠ THE FILE NOW COVERS SIX ITEMS, IN SIX PASSES OVER ONE FEATURE:
 #   sections D M S T V I   item A1 — the mask bit and the Ctrl-Alt-6 chord
 #   section  N             item A2 — TEXT_ANNOT_NAME, the name classifier
 #   section  A, A0..A29    item A3 — THE DRAW RUNG, the per-instance D-6 gate,
@@ -33,6 +33,16 @@
 #                          A17, keeping their numbers because 1254 names them.
 #                          A5 also EDITS two goldens: A22's call-site census
 #                          {3 1 1 1 0} -> {4 2 2 1 0}, and E6's fifth leg 0 -> 1.
+#   section  A, A42..A56   item A6 — THE TWO HOLES IN THE VALUE GATE and the
+#                          LAST bbox DOORS: a descriptor label containing `=`
+#                          satisfies the gate (1258), a `dims=0` column's
+#                          published zero satisfies it while a genuinely
+#                          measured 0.0 must (1259), and four MORE Tcl-reachable
+#                          symbol_bbox() doors plus the mask half of the gate
+#                          (1260). A6 EDITS one golden: A41's fifth leg,
+#                          annot_overlay_sync() in select.c 0 -> 1, which is a
+#                          deliberate reversal of the option issue 1252
+#                          rejected and is argued out loud beside the row.
 # Rows N10 and N14 were written by A2 as "A3 MUST REPLACE" / "1249 PINNED" and
 # were flipped in place by A3; row I2 was superseded by row A3 and re-purposed.
 # Each carries the reason on itself. Section A's own header lists which of its
@@ -1366,13 +1376,27 @@ close $A_FD
 ## An OP raw in test_op_annot.tcl's opa_o_mkrlraw shape, one point, one value
 ## per vector. The vector NAMES come from op_annot::vector — invariant I1, ONE
 ## name builder — so this fixture cannot drift from the descriptor.
-proc a3_mkraw {path pairs} {
+##
+## ⚠ ITEM A6 EXTENDED THIS WRITER RATHER THAN ADDING A SECOND ONE (invariant I1
+## again, one fixture minter). The optional trailing <types> is the per-column
+## THIRD field of the `Variables:` block — the field ngspice writes as `voltage`
+## / `current`, and as `current dims=0` for a `.save` card the model does not
+## publish (doc/claude/code_analysis/1244_op_param_list_measurements.md §22,
+## spec landmine 11). It defaults to `voltage` for every column, so every call
+## written before A6 mints byte-identical bytes. Rows A45/A46 are the two raws
+## that differ ONLY in this field, which is the whole of issue 1259: with it
+## stripped they are the same file.
+proc a3_mkraw {path pairs {types {}}} {
   set f [open $path w]
   puts -nonewline $f "Title: A3 declutter fixture\nDate: Mon Jan 1 00:00:00 2026\n"
   puts -nonewline $f "Plotname: Operating Point\nFlags: real\n"
   puts -nonewline $f "No. Variables: [expr {[llength $pairs]/2}]\nNo. Points: 1\nVariables:\n"
   set k 0
-  foreach {v val} $pairs { puts -nonewline $f "\t$k\t$v\tvoltage\n" ; incr k }
+  foreach {v val} $pairs {
+    set a3_ty [lindex $types $k]
+    if {$a3_ty eq {}} { set a3_ty voltage }
+    puts -nonewline $f "\t$k\t$v\t$a3_ty\n" ; incr k
+  }
   puts -nonewline $f "Values:\n"
   set k 0
   foreach {v val} $pairs {
@@ -2394,11 +2418,37 @@ check "A40 1252 THE TWO symbol_bbox DOORS AGREE, STALE DOOR READ FIRST: recomput
 ## THE CENSUS THE BEHAVIOURAL ROW CANNOT SEE. Two sites in scheduler.c — the
 ## `update_all_sym_bboxes` arm item A3 added and the `recompute_inst_bbox` arm
 ## A5-c adds — and the second must sit in the arm it names, not somewhere else in
-## a 15k-line file. ZERO in select.c is the repair 1252 REJECTED for blast
-## radius: symbol_bbox() has 39 callers, six in save.c, and annot_overlay_busy
-## exists precisely because filling the cache tclevals ::op_annot::text, which
-## re-enters that machinery.
-check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once each and from scheduler.c TWICE, the second inside the recompute_inst_bbox arm, and never from select.c" \
+## a 15k-line file.
+##
+## ⚠⚠ THE FIFTH GOLDEN MOVED 0 -> 1 WITH ITEM A6, AND IT IS A DELIBERATE REVERSAL
+## OF THE OPTION ISSUE 1252 REJECTED. Said out loud rather than done quietly:
+## A5-c's per-door repair closed TWO of the 39 symbol_bbox() callers, and item A6
+## then measured FOUR MORE Tcl-reachable doors writing the click box from a stale
+## gate — `setprop instance`, `move_instance … nodraw`, `reset_inst_prop` (which
+## issue 1260 does not even name) and `select_element`'s deselect write — with
+## `instance_at` answering EMPTY over a device the very same frame renders in
+## full (rows A49..A53). Thirty-nine callers cannot each carry a correct copy of a
+## freshness decision (invariant I1), so the sync moves to the ONE function they
+## all pass through, `symbol_bbox()` (src/select.c).
+##   1252's two reasons are ANSWERED, not ignored:
+##     re-entrancy — annot_overlay_sync() early-returns on annot_overlay_busy
+##       (src/actions.c), which annot_overlay_cached_text() sets around exactly
+##       the tcleval that re-enters, so the ::op_annot::text -> translate ->
+##       prepare_netlist_structs -> link_symbols_to_instances -> symbol_bbox
+##       cycle is already closed;
+##     cost — the sync is behind a bit-3 prefilter, so with the declutter unarmed
+##       (every other row in this file, every load, every netlist pass, the whole
+##       audit) symbol_bbox does two Tcl var reads and NO sync. Measured on a
+##       49-instance sheet: symbol_bbox 9.97 us, a no-op annot_overlay_sync
+##       ~0.11 us — about 1%.
+## ⚠ THE GOLDEN IS EDITED; THE REGEXP IS NOT WIDENED. Widening the reader so the
+## count does not move is verbatim the failure this suite has now filed three
+## times against itself (1248, 1254). Rows A55/A56 are the shape and the
+## placement that the count alone cannot see.
+## ⚠ scheduler.c STAYS AT 2. A5-c's two sites are redundant under the single
+## point and are LEFT IN PLACE deliberately — row A40 golds the second one inside
+## the arm it names, and removing them is a refactor beyond item A6's step.
+check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once each, from scheduler.c TWICE (the second inside the recompute_inst_bbox arm), and ONCE from select.c" \
   [list [a5_ccount $A_DRAW {annot_overlay_sync\(\)}] \
         [a5_ccount $A_SVGD {annot_overlay_sync\(\)}] \
         [a5_ccount $A_PS   {annot_overlay_sync\(\)}] \
@@ -2406,9 +2456,508 @@ check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once
         [a5_ccount $A_SEL  {annot_overlay_sync\(\)}] \
         [a5_near [file join $repo src scheduler.c] \
                  {strcmp\(argv\[1\], "recompute_inst_bbox"\)} {annot_overlay_sync\(\)} 30]] \
-  {1 1 1 2 0 1}
+  {1 1 1 2 1 1}
 
 dc_annot 0
+
+# ============================================================================
+# A42..A56 — ITEM A6: THE TWO HOLES IN THE VALUE GATE, AND THE LAST bbox DOORS
+# ============================================================================
+# Issues 1258 (a label containing `=` satisfies the gate), 1259 (a published
+# zero satisfies it, so a `savecurrents` run still declutters) and 1260 (1252's
+# residue: more symbol_bbox() doors, plus the mask half of the gate).
+#
+# ⚠ ALL FIFTEEN ROWS WERE MEASURED RED (or GREEN, where they are controls)
+# AGAINST THE A5 BINARY BEFORE ANY OF THEM WAS WRITTEN. The numbers quoted
+# below are from that run, not from reasoning.
+#
+# ---------------------------------------------------------------------------
+# A42..A44 — 1258. THE GATE IS FOOLED BY THE DATA IT INSPECTS.
+# ---------------------------------------------------------------------------
+# annot_block_has_value() (src/actions.c) latches at the FIRST `=` on a row and
+# calls the next non-space character a value. The descriptor `label` is
+# USER-EDITABLE by design (invariant I5; item B5 lets people type these), and
+# ::op_annot::text prints it verbatim, so a label spelled `v=x` mints the BLANK
+# row `v=x =` and the gate reads the `x` as a number. Measured with `xschem raw
+# loaded` = -1, i.e. before any simulation has been run:
+#     block   = <<v=x =|q   =|>>              (| = newline; NO values at all)
+#     mask 1  = M1 a3fet XM1 A3OPTEXT A3W=1u A3GATE {v=x =} {q   =}
+#     mask 9  = M1 a3fet XM1 A3OPTEXT         {v=x =} {q   =}
+# The user pressed 6, pressed Ctrl-Alt-6, and traded W and the pin label for two
+# empty rows — item A5-a's exact defect, reproduced through a label spelling.
+#
+# ⚠ A44 IS THE ROW THAT SEPARATES THE TWO CANDIDATE REPAIRS, and it is the whole
+# reason it exists. Issue 1258's own "Still open" recommends the ` = ` SEPARATOR
+# reading. A label spelled `a = b` mints the blank row `a = b =` — measured —
+# which contains ` = ` with `b` after it, so the separator reading calls that row
+# VALUED and is still fooled. Taking the LAST `=` on the line is strictly
+# stronger and is what this suite golds. Both are two-line changes; only one is
+# right, and A44 is the difference between them written as a check.
+#
+# ---------------------------------------------------------------------------
+# A45..A48 — 1259. THREE STATES, THREE ROWS, AND NO COLLAPSE IN EITHER DIRECTION.
+# ---------------------------------------------------------------------------
+# ⚠ THE TWO RAWS A45 AND A46 LOAD DIFFER IN ONE FIELD OF ONE HEADER LINE. That
+# is the whole of issue 1259: with the type field stripped they are the same
+# file, and everything downstream — `xschem raw value`, ::op_annot::raw_or_blank,
+# the block string, the gate — sees the same bytes. Measured against the A5
+# binary, the two are INDISTINGUISHABLE:
+#     A45 (`current dims=0`)  raw index 0   raw value <0>   block <<zid = 0|...>>
+#     A46 (plain `voltage`)   raw index 0   raw value <0>   block <<zid = 0|...>>
+# and both declutter at mask 9. One of those is right and the other is the
+# defect, so the distinction cannot be made from the block string, from the
+# rendered digits, or from anything else the declutter can reach. It has to be
+# read where it is written — the raw's own `Variables:` type field, which
+# ngspice writes as `current dims=0` for a `.save` card the model does not
+# publish (measurements §22, spec landmine 11).
+#
+#   (1) ABSENT.  No vector at all is row A32 above, and A5-a's gate ALREADY
+#       closes on it. `dims=0` is the OTHER absence, and it is row A45: the
+#       column IS in the file (`raw index` >= 0, so this is not A32 again) but
+#       nothing was computed for it. It must render BLANK — invariant I3, "a
+#       missing vector renders BLANK. Not 0, not NaN on screen" — and therefore
+#       must NOT satisfy the gate.
+#   (2) A REAL COMPUTED 0.0 is row A46, and it MUST still satisfy the gate. A
+#       transistor that is off has id = 0 and that is a measurement, not a hole;
+#       ::op_annot::eng_or_blank prints a measured 0 deliberately. A46 is the row
+#       that reds a "fix" that collapses (1) and (2) toward absent, which would
+#       hide a genuinely cut-off device from the user reading it.
+#   (3) A NORMAL VALUE is row A47, unchanged.
+# A48 is the seam: ONE predicate, at the raw reader, with the numbered-point
+# read (`xschem raw value <v> 0` — data inspection, not annotation) deliberately
+# still live. That last leg mirrors rows SGN13/SGN14/SGN22 of
+# test_spice_get_node_0861.tcl, so a repair that swallows the arm next to it reds
+# here as well as there.
+#
+# ---------------------------------------------------------------------------
+# A49..A56 — 1260. THE DRAWN THING AND THE CLICKABLE THING MUST BE ONE OBJECT.
+# ---------------------------------------------------------------------------
+# Row A40 above closed the `recompute_inst_bbox` door. Driving the verbs rather
+# than reading the code found FOUR more, all measured on the A5 binary with the
+# A40 protocol (warm at mask 9, move the epoch with a params-{} re-registration,
+# NO draw and NO export, read the STALE door FIRST):
+#     warm box                              277.5 -340 354.343 -280
+#     A49 setprop instance M1 name MZ1  ->  277.5 -340 354.343 -280  pick <>
+#     A50 move_instance … nodraw noundo ->  277.5 -340 354.343 -280  pick <>
+#     A51 reset_inst_prop M1            ->  277.5 -340 354.343 -280  pick <>
+#     A52 select instance M1 clear      ->  277.5 -340 354.343 -280  pick <>
+#     update_all_sym_bboxes             ->  150 -380 495.133 -233.026  pick M1
+# ⚠ A51 IS A DOOR ISSUE 1260 DOES NOT NAME (scheduler.c's reset_inst_prop arm
+# writes the box twice and then ENDS IN draw()) — so it also proves that a full
+# redraw does NOT repair a box already written from a stale gate: the draw
+# refreshes both caches, but the number was stored before it ran.
+# ⚠ A52's door is select_element()'s DESELECT write (src/select.c), which no
+# issue in this batch had noticed at all.
+# A53 is the headline in one row: on the SAME fixture, with the render taken
+# first, the SVG says `MZ1 a3fet XMZ1 A3OPTEXT A3W=1u A3GATE` and
+# `instance_at 430 -245` answers EMPTY over it. ITEM B4 CLICKS THESE DEVICES,
+# and findnet.c's find_closest_element uses POINTINSIDE against exactly this box.
+# A54 is 1260 part 3, the MASK half, in BOTH directions — measured with a bare
+# `set ::annot_show`, the two doors answer OPPOSITE picks:
+#     C mask 1, bare set 9:  recompute 150 -380 495.133 -233.026 pick M1
+#                            update_all 277.5 -340 354.343 -280  pick <>
+#     C mask 9, bare set 1:  recompute 277.5 -340 354.757 -280   pick <>
+#                            update_all 150 -380 496.307 -232.832 pick M1
+# ⚠ THE TWO DOORS ARE COMPARED TO EACH OTHER, NEVER TO LITERAL COORDINATES: the
+# two directions differ in the third decimal (495.133 vs 496.307), which is
+# sub-pixel text-metric noise and is not the subject of any row here.
+#
+# RED BEFORE A6 LANDS (10): A42 A44 A45 A48 A49 A50 A51 A52 A53 A54 — plus the
+#   REPAIRED row A41, whose fifth golden moves 0 -> 1.
+# GREEN BEFORE AND AFTER (4) — controls, NOT evidence for A6:
+#   A43  a valued '='-bearing label IS still decluttered (a fix that refuses any
+#        row containing two `=` reds here);
+#   A46  A REAL COMPUTED ZERO still satisfies the gate — the row that reds the
+#        collapse toward "absent";
+#   A47  a normal value still satisfies it;
+#   A55 A56 are structural and red before A6 lands for the SHAPE, not the
+#        behaviour.
+
+## `xschem raw value <v> -1` — THE annotation accessor — and `… 0`, the numbered
+## point, which is data inspection and must stay live while the annotation is
+## refused. Both answer {} rather than raising into the suite.
+proc a6_rval  {v} { set r {} ; catch {set r [xschem raw value $v -1]} ; return $r }
+proc a6_rval0 {v} { set r {} ; catch {set r [xschem raw value $v 0]}  ; return $r }
+proc a6_ridx  {v} { set r -99 ; catch {set r [xschem raw index $v]}   ; return $r }
+## 1 when EVERY non-blank row of a block is `label =` with nothing after the `=`
+## (A34's contract), and there is at least one row — so an empty block, which is
+## row A32's case and not row A45's, cannot satisfy it.
+proc a6_blank_block {t} {
+  set n 0
+  foreach l [split $t \n] {
+    if {[string trim $l] eq {}} continue
+    incr n
+    if {![regexp {^\S+ *=$} $l]} { return 0 }
+  }
+  return [expr {$n >= 1 ? 1 : 0}]
+}
+## ROW A40's PROTOCOL, AS A PROC, because five rows need it and getting it wrong
+## measures nothing. Warm BOTH caches at mask 9 over the valued raw, then move
+## the epoch with a params-{} re-registration — NOT `xschem raw clear`, so the
+## row reds for the 1260 reason alone and not for A5-a's — with no draw and no
+## export. Returns the warm (decluttered, narrow) box.
+## ⚠ EVERY DOOR GETS A FRESH FIXTURE STILL NAMED M1. Renaming M1 -> MZ1 unmatches
+## the descriptor's @name-derived vector names, so a second door driven on a
+## renamed sheet never re-opens the gate and reads falsely CLEAN.
+proc a6_warm {} {
+  catch {xschem raw clear}
+  xschem load $::A_SAV
+  update idletasks
+  catch {op_annot::register a3nmos \
+    [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+  dc_setmask 9
+  catch {xschem annotate_op $::A_RAW 0}
+  catch {xschem update_all_sym_bboxes}
+  set w [a3_ibox 0]
+  catch {op_annot::register a3nmos [list devpath {@m.@path@name} params {}]}
+  return $w
+}
+## A C file with its comments stripped, and the source between two needles.
+## Copied from sgn_code / sgn_span, tests/headless/test_spice_get_node_0861.tcl:
+## the thing under test is ONE ARM of a dispatcher inside a function thousands of
+## lines long, and the comment above that arm quotes the very tokens being
+## counted, so an unstripped grep matches prose and stays green over dead code.
+proc a6_code {path} {
+  if {![file isfile $path]} { return NOFILE }
+  set h [open $path r] ; set d [read $h] ; close $h
+  regsub -all {/\*.*?\*/} $d " " d
+  return $d
+}
+proc a6_span {src a b} {
+  set i [string first $a $src]
+  if {$i < 0} { return NOFUNC }
+  set j [string first $b $src $i]
+  if {$j < 0} { return NOEND }
+  return [string range $src $i $j]
+}
+
+# --- A42..A44: 1258, A LABEL CONTAINING `=` -------------------------------
+
+set A6_EQRAW [file join $scratch a6eq.raw]
+
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{v=x zid 0} {q zgm 1}}]}
+set A42_LOADED -99 ; catch {set A42_LOADED [xschem raw loaded]}
+set A42_BLOCK [a3_optext M1]
+dc_annot 1 ; set A42_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_eq1.svg]]]
+dc_annot 9 ; set A42_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_eq9.svg]]]
+dc_annot 0
+
+## THE HEADLINE OF ITEM A6-a, and the same claim row A30 makes one label
+## spelling over: with no raw loaded NOTHING is decluttered.
+check "A42 1258 HEADLINE a descriptor label containing `=` over NO RAW (raw loaded = -1) must NOT satisfy the gate - mask 9 == mask 1, parameter and pin label survive" \
+  [list $A42_LOADED \
+        [a6_blank_block $A42_BLOCK] \
+        [a3_hasl $A42_T1 $A_PARAMS] \
+        [a3_hasl $A42_T9 $A_PARAMS] \
+        [expr {$A42_T1 eq $A42_T9}]] \
+  {-1 1 {1 1} {1 1} 1}
+
+## THE DISCRIMINATION CONTROL FOR A42, GREEN BEFORE AND AFTER. The same
+## '='-bearing label over the VALUED raw mints `v=x = 11.1u`, which really did
+## get a number, so the device IS still decluttered. A "fix" that refuses any row
+## carrying two `=` characters reds here.
+catch {xschem annotate_op $A_RAW 0}
+update idletasks
+set A43_BLOCK [a3_optext M1]
+dc_annot 1 ; set A43_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_eqv1.svg]]]
+dc_annot 9 ; set A43_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_eqv9.svg]]]
+dc_annot 0
+check "A43 1258 DISCRIMINATION: the SAME '='-bearing label over the VALUED raw IS still decluttered at mask 9 and keeps everything at mask 1" \
+  [list [a3_hasl $A43_T9 $A_PARAMS] \
+        [a3_hasl $A43_T1 $A_PARAMS] \
+        [expr {[lsearch -glob $A43_T9 {v=x = [0-9]*}] >= 0 ? 1 : 0}]] \
+  {{0 0} {1 1} 1}
+
+## ⚠ THE ROW THAT SEPARATES THE LAST-`=` REPAIR FROM THE ` = ` SEPARATOR READING
+## ISSUE 1258 RECOMMENDS. Measured: a label spelled `a = b` mints the BLANK row
+## `a = b =` (and pads its neighbour to `q     =`). The separator reading finds
+## ` = ` at offset 1 with `b` after it and calls the row VALUED — i.e. it is
+## fooled by exactly the same class of data. Taking the LAST `=` is not fooled.
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{{a = b} zid 0} {q zgm 1}}]}
+set A44_LOADED -99 ; catch {set A44_LOADED [xschem raw loaded]}
+set A44_BLOCK [a3_optext M1]
+dc_annot 1 ; set A44_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_ab1.svg]]]
+dc_annot 9 ; set A44_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_ab9.svg]]]
+dc_annot 0
+check "A44 1258 THE LAST-`=` CONTRACT: a label spelled `a = b` mints the blank row `a = b =`, which the ` = ` separator reading calls valued - mask 9 must still equal mask 1" \
+  [list $A44_LOADED \
+        [expr {[string first "a = b =" $A44_BLOCK] >= 0 ? 1 : 0}] \
+        [a3_hasl $A44_T1 $A_PARAMS] \
+        [a3_hasl $A44_T9 $A_PARAMS] \
+        [expr {$A44_T1 eq $A44_T9}]] \
+  {-1 1 {1 1} {1 1} 1}
+
+# --- A45..A48: 1259, ABSENT vs A PUBLISHED ZERO vs A REAL ZERO -------------
+
+set A6_D0RAW [file join $scratch a6dims0.raw]
+set A6_Z0RAW [file join $scratch a6zero.raw]
+
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+## The SAME vector names and the SAME zero values, twice, differing ONLY in the
+## `Variables:` type field. Invariant I1: the names still come from
+## op_annot::vector, so neither fixture can drift from the descriptor.
+set A6_ZPAIRS {} ; set A6_D0TYPES {}
+foreach d {M1 M2} {
+  catch {lappend A6_ZPAIRS [op_annot::vector $d zid] 0.0 [op_annot::vector $d zgm] 0.0}
+  lappend A6_D0TYPES {current dims=0} {current dims=0}
+}
+a3_mkraw $A6_D0RAW $A6_ZPAIRS $A6_D0TYPES
+a3_mkraw $A6_Z0RAW $A6_ZPAIRS
+set A6_V0 [lindex $A6_ZPAIRS 0]
+
+## ⚠ STATE 1b — ABSENT, BY `dims=0`. The column IS in the raw (so `raw index` is
+## >= 0 and this is NOT row A32's no-vector case) but the simulator computed
+## nothing for it. Invariant I3: it renders BLANK, so the gate stays closed.
+catch {xschem annotate_op $A6_D0RAW 0}
+update idletasks
+set A45_IDX [a6_ridx $A6_V0]
+set A45_VAL [a6_rval $A6_V0]
+set A45_BLOCK [a3_optext M1]
+dc_annot 1 ; set A45_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_d01.svg]]]
+dc_annot 9 ; set A45_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_d09.svg]]]
+dc_annot 0
+check "A45 1259 STATE 1b ABSENT-BY-dims=0: the column is in the raw (index >= 0) but `raw value -1` is EMPTY, the block is label-only, and nothing is decluttered" \
+  [list [expr {$A45_IDX >= 0 ? 1 : 0}] \
+        [expr {$A45_VAL eq {} ? 1 : 0}] \
+        [a6_blank_block $A45_BLOCK] \
+        [a3_hasl $A45_T9 $A_PARAMS] \
+        [expr {$A45_T1 eq $A45_T9}]] \
+  {1 1 1 {1 1} 1}
+
+## ⚠ STATE 2 — A REAL COMPUTED 0.0, AND IT MUST STILL SATISFY THE GATE. The same
+## vectors, the same zeros, the type field alone removed. A transistor that is
+## off has id = 0 and that is a measurement, not a hole. THIS IS THE ROW THAT
+## REDS A COLLAPSE TOWARD "ABSENT" — the wrong answer in the other direction,
+## and the one a user can never diagnose from the screen.
+catch {xschem annotate_op $A6_Z0RAW 0}
+update idletasks
+set A46_VAL [a6_rval $A6_V0]
+dc_annot 1 ; set A46_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_z1.svg]]]
+dc_annot 9 ; set A46_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_z9.svg]]]
+dc_annot 0
+check "A46 1259 STATE 2 A REAL COMPUTED ZERO: `raw value -1` answers 0, the block reads `zid = 0`, and the device IS decluttered at mask 9" \
+  [list $A46_VAL \
+        [expr {[lsearch -exact $A46_T9 {zid = 0}] >= 0 ? 1 : 0}] \
+        [a3_hasl $A46_T9 $A_PARAMS] \
+        [a3_hasl $A46_T1 $A_PARAMS] \
+        [expr {$A46_T1 ne $A46_T9 ? 1 : 0}]] \
+  {0 1 {0 0} {1 1} 1}
+
+## STATE 3 — an ordinary value, on the same fixture family, so all three states
+## are read out of one place. Green before and after.
+catch {xschem annotate_op $A_RAW 0}
+update idletasks
+set A47_VAL [a6_rval $A6_V0]
+dc_annot 1 ; set A47_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_n1.svg]]]
+dc_annot 9 ; set A47_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_n9.svg]]]
+dc_annot 0
+check "A47 1259 STATE 3 A NORMAL VALUE: `raw value -1` answers the number, the block reads `zid = 11.1u`, and the device IS decluttered at mask 9" \
+  [list $A47_VAL \
+        [expr {[lsearch -exact $A47_T9 {zid = 11.1u}] >= 0 ? 1 : 0}] \
+        [a3_hasl $A47_T9 $A_PARAMS] \
+        [a3_hasl $A47_T1 $A_PARAMS]] \
+  {1.11e-05 1 {0 0} {1 1}}
+
+## ⚠ THE SEAM, AND THE ARM NEXT TO IT. The absent/zero distinction exists in
+## exactly one place — the raw's own type field — so it is read where it is
+## written (src/save.c) and published through ONE predicate that item B1
+## inherits, rather than re-derived by anyone downstream (invariant I1; a second
+## detector is how 1252 became 1260). The last three legs are the fence copied
+## from rows SGN13/SGN14/SGN22 of test_spice_get_node_0861.tcl: the guard belongs
+## on the ANNOTATION fall-through alone, so the arm keeps its annot_p term and
+## EXACTLY ONE cursor_b_val subscript, and the in-range numbered-point read —
+## data inspection, not annotation — still answers 0 for a dims=0 column.
+catch {xschem annotate_op $A6_D0RAW 0}
+update idletasks
+set A48_NUM [a6_rval0 $A6_V0]
+set A48_ARM [a6_span [a6_code [file join $repo src scheduler.c]] \
+                     "!strcmp(argv\[2\], \"value\")" "!strcmp(argv\[2\], \"del\")"]
+check "A48 1259 THE SEAM: one absence predicate in save.c and ONE consumer in scheduler.c, on the annotation fall-through only - the numbered-point read still answers 0" \
+  [list [a5_ccount $N_SAVE {raw_vector_absent\(}] \
+        [a5_ccount [file join $repo src scheduler.c] {raw_vector_absent\(}] \
+        [expr {[regexp {raw_vector_absent} $A48_ARM] ? 1 : 0}] \
+        [expr {[regexp {annot_p} $A48_ARM] ? 1 : 0}] \
+        [regexp -all {cursor_b_val\[} $A48_ARM] \
+        [expr {[regexp {get_raw_value\(dataset, idx, point\)} $A48_ARM] ? 1 : 0}] \
+        $A48_NUM] \
+  {2 1 1 1 1 1 0}
+
+# --- A49..A54: 1260, THE FOUR MORE DOORS AND THE MASK HALF -----------------
+
+## DOOR 1 — `xschem setprop instance`, issue 1260 part 1. Item A5-a WIDENED this
+## one: before A5-a a label-only block still opened the gate, so a rename over a
+## dead raw flipped nothing. Now an ordinary property edit is enough.
+set A49_WARM [a6_warm]
+catch {xschem setprop instance M1 name MZ1}
+set A49_STALE [a3_ibox 0]
+set A49_PICKS [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A49_FRESH [a3_ibox 0]
+set A49_PICKF [xschem instance_at 430 -245]
+check "A49 1260 DOOR 1 setprop instance, STALE DOOR READ FIRST: the box it stores and the pick it answers are the ones update_all_sym_bboxes gives" \
+  [list [a3_lt [lindex $A49_WARM 2] [lindex $A49_FRESH 2]] \
+        [expr {$A49_STALE eq $A49_FRESH}] \
+        $A49_PICKS $A49_PICKF] \
+  [list 1 1 MZ1 MZ1]
+
+## DOOR 2 — `xschem move_instance … nodraw noundo`, issue 1260 part 2.
+set A50_WARM [a6_warm]
+catch {xschem move_instance 0 300 -300 0 0 nodraw noundo}
+set A50_STALE [a3_ibox 0]
+set A50_PICKS [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A50_FRESH [a3_ibox 0]
+set A50_PICKF [xschem instance_at 430 -245]
+check "A50 1260 DOOR 2 move_instance nodraw noundo, STALE DOOR READ FIRST: same box and same pick as update_all_sym_bboxes" \
+  [list [a3_lt [lindex $A50_WARM 2] [lindex $A50_FRESH 2]] \
+        [expr {$A50_STALE eq $A50_FRESH}] \
+        $A50_PICKS $A50_PICKF] \
+  [list 1 1 M1 M1]
+
+## ⚠ DOOR 3 — `xschem reset_inst_prop`, WHICH ISSUE 1260 DOES NOT NAME. Found by
+## driving verbs, not by reading. Its arm writes the box TWICE and then ends in
+## draw(), so this row also says out loud that a full redraw does NOT repair a
+## box already written from a stale gate: the draw refreshes both caches, but the
+## number was stored before it ran.
+set A51_WARM [a6_warm]
+catch {xschem reset_inst_prop M1}
+set A51_STALE [a3_ibox 0]
+set A51_PICKS [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A51_FRESH [a3_ibox 0]
+set A51_PICKF [xschem instance_at 430 -245]
+check "A51 1260 DOOR 3 reset_inst_prop (the door 1260 does not name, and its arm ENDS IN draw): same box and same pick as update_all_sym_bboxes" \
+  [list [a3_lt [lindex $A51_WARM 2] [lindex $A51_FRESH 2]] \
+        [expr {$A51_STALE eq $A51_FRESH}] \
+        $A51_PICKS $A51_PICKF] \
+  [list 1 1 M1 M1]
+
+## ⚠ DOOR 4 — select_element()'s DESELECT write (src/select.c). Selecting draws
+## temp symbols; DEselecting recomputes the box, and no issue in this batch had
+## noticed it. Both verbs are under catch so a signature mismatch reds this row
+## rather than aborting the section.
+set A52_WARM [a6_warm]
+catch {xschem select instance M1}
+catch {xschem select instance M1 clear}
+set A52_STALE [a3_ibox 0]
+set A52_PICKS [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A52_FRESH [a3_ibox 0]
+set A52_PICKF [xschem instance_at 430 -245]
+check "A52 1260 DOOR 4 select_element's deselect write: same box and same pick as update_all_sym_bboxes" \
+  [list [a3_lt [lindex $A52_WARM 2] [lindex $A52_FRESH 2]] \
+        [expr {$A52_STALE eq $A52_FRESH}] \
+        $A52_PICKS $A52_PICKF] \
+  [list 1 1 M1 M1]
+
+## ⚠ THE HEADLINE OF A6-c, IN ONE ROW: the drawn thing and the clickable thing
+## are ONE object. The render is taken FIRST and the pick straight after it, with
+## no update_all_sym_bboxes in between — an export syncs both caches but
+## recomputes no bbox, which is why it does not repair this and why the row is
+## honest. Measured on the A5 binary: the SVG says
+## `MZ1 a3fet XMZ1 A3OPTEXT A3W=1u A3GATE` and the pick answers EMPTY over it.
+set A53_WARM [a6_warm]
+catch {xschem setprop instance M1 name MZ1}
+set A53_T [dc_ntexts [a3_pr2 [file join $scratch a6_d1.svg]]]
+set A53_PICK [xschem instance_at 430 -245]
+check "A53 1260 THE HEADLINE: the frame renders MZ1 with its parameter and its pin label, and instance_at inside that rendered extent answers MZ1" \
+  [list [a3_hasl $A53_T {MZ1 A3W=1u A3GATE}] $A53_PICK] \
+  [list {1 1 1} MZ1]
+
+## ⚠ 1260 PART 3 — THE MASK HALF, IN BOTH DIRECTIONS. `annot_show_sync_cache()`
+## ends in the 0688 backstop, which can CLEAR the mask, so item A5-c deliberately
+## left the mask unsynced at `recompute_inst_bbox` — and the two doors then
+## answer OPPOSITE picks for a mask written with a bare `set ::annot_show`. The
+## repair is to split the PULL out of the backstop, not to run the backstop on a
+## read-only geometry verb. THE DOORS ARE COMPARED TO EACH OTHER, NEVER TO
+## LITERAL COORDINATES (the two directions differ in the third decimal).
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+dc_setmask 1
+catch {xschem annotate_op $A_RAW 0}
+catch {xschem update_all_sym_bboxes}
+set ::annot_show 9
+catch {xschem recompute_inst_bbox M1}
+set A54_AR [a3_ibox 0] ; set A54_ARP [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A54_AU [a3_ibox 0] ; set A54_AUP [xschem instance_at 430 -245]
+
+catch {xschem raw clear}
+xschem load $A_SAV
+update idletasks
+dc_setmask 9
+catch {xschem annotate_op $A_RAW 0}
+catch {xschem update_all_sym_bboxes}
+set ::annot_show 1
+catch {xschem recompute_inst_bbox M1}
+set A54_BR [a3_ibox 0] ; set A54_BRP [xschem instance_at 430 -245]
+catch {xschem update_all_sym_bboxes}
+set A54_BU [a3_ibox 0] ; set A54_BUP [xschem instance_at 430 -245]
+
+## THE LAST LEG IS THE GUARD ON THE SPLIT, AND IT IS GREEN BEFORE AND AFTER: with
+## the mask written properly (`xschem set annot_show`, so the C field and the Tcl
+## mirror agree) a read-only geometry verb must leave it exactly where it was. A
+## bbox path that ran the 0688 backstop instead of the pull could clear it.
+dc_setmask 9
+catch {xschem recompute_inst_bbox M1}
+set A54_KEEP [dc_mask]
+check "A54 1260 PART 3 THE MASK HALF, BOTH DIRECTIONS: recompute_inst_bbox and update_all_sym_bboxes answer the same box and the same pick, and a geometry verb does not move the mask" \
+  [list [expr {$A54_AR eq $A54_AU}] [expr {$A54_ARP eq $A54_AUP}] \
+        [expr {$A54_BR eq $A54_BU}] [expr {$A54_BRP eq $A54_BUP}] \
+        $A54_KEEP] \
+  {1 1 1 1 9}
+
+# --- A55, A56: 1260 STRUCTURAL - THE SHAPE THE FOUR DOORS CANNOT SEE -------
+
+## ⚠ ONE SYNC POINT, AND THE BACKSTOP IS NOT ON THE GEOMETRY PATH. Row A41 above
+## carries the census that moved (select.c 0 -> 1, deliberately, reversing the
+## option issue 1252 rejected); this row carries the two things the census cannot
+## see. `annot_show_pull_cache()` — the annot_show + annot_voltage_layer pull
+## SPLIT OUT of annot_show_sync_cache() — is what the bbox path calls;
+## `annot_show_sync_cache()` itself, which ends in the 0688 root backstop and can
+## annot_show_set(0), is NOT called from select.c, and its own call sites are
+## unmoved so the 0688 semantics and row Y11 of test_op_annot.tcl are untouched.
+check "A55 1260 STRUCTURAL: select.c calls the PULL exactly once and the 0688-carrying sync never, and annot_show_check_root's call sites are unmoved" \
+  [list [a5_ccount $A_SEL     {annot_show_pull_cache\(}] \
+        [a5_ccount $A_SEL     {annot_show_sync_cache\(}] \
+        [a5_ccount $N_ACTIONS {annot_show_check_root\(}] \
+        [a5_ccount $N_SAVE    {annot_show_check_root\(}] \
+        [expr {[opa_n_grep $DC_H {annot_show_pull_cache}] >= 1 ? 1 : 0}]] \
+  {1 0 2 1 1}
+
+## ⚠ THE COST ARGUMENT, WRITTEN AS SHAPE. The pair sits in symbol_bbox()'s
+## PROLOGUE — once per call, not once per text — and the overlay sync is behind
+## the bit-3 prefilter, so with the declutter unarmed the function does two Tcl
+## var reads and NO sync and annot_overlay_flushes cannot move (rows O32/O33/O34/
+## O35/O38 of test_op_annot.tcl, a file item A6 does not own and must not edit).
+check "A56 1260 SHAPE: the sync pair is in symbol_bbox()'s prologue, once each, behind the ANNOT_SHOW_NOPARAM prefilter" \
+  [list [a5_near $A_SEL {void symbol_bbox\(} {annot_overlay_sync\(\)} 20] \
+        [a5_near $A_SEL {void symbol_bbox\(} {annot_show_pull_cache\(} 20] \
+        [a5_ccount $A_SEL {annot_overlay_sync\(\)}] \
+        [a5_ccount $A_SEL {ANNOT_SHOW_NOPARAM}]] \
+  {1 1 1 1}
+
+## Leave section A as section C found it: the valued descriptor, no raw, mask 0.
+catch {op_annot::register a3nmos \
+  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+catch {xschem raw clear}
+dc_annot 0
+
 
 # ============================================================================
 # SECTION C — THE DECLUTTER CLAUSE ON THE OTHER KEYS' SENTENCE (issue 1251)

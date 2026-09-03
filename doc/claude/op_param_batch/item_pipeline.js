@@ -30,7 +30,7 @@ const REPO = '/home/analog/dev/xschem-claude'
 const LEDGER = REPO + '/doc/claude/op_param_batch/LEDGER.md'
 const SPEC = 'doc/claude/specs/op_param_lists.md'
 const PLAN = 'doc/claude/op_param_batch/PLAN.md'
-const SESSION_URL = 'https://claude.ai/code/session_01178ETXPaQzMeMf8iEYEeaY'
+const SESSION_URL = 'https://claude.ai/code/session_01B52FS3HgaqHXFbN7foxcd7'
 const DECISIONS = 'doc/claude/op_param_batch/DECISIONS.md'
 const MEASURED = 'doc/claude/code_analysis/1244_op_param_list_measurements.md'
 

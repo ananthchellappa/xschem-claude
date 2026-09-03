@@ -1437,12 +1437,41 @@ int set_text_flags(xText *t)
  * frame, so a tclgetvar per call is too costly. Refreshed at each BULK visibility
  * evaluation -- draw(), calc_drawing_bbox(), `xschem print`, `xschem
  * update_all_sym_bboxes`, startup and the CLI batch print -- because svg_draw(),
- * create_ps() and symbol_bbox() do NOT go through draw(). NOTE this is why the
- * mirror is a push+pull: `xschem set annot_show` writes the Tcl var too, so a later
+ * create_ps() and symbol_bbox() do NOT go through draw(). Since item A6-c
+ * symbol_bbox() refreshes it ITSELF, through annot_show_pull_cache() below -- the
+ * pull WITHOUT this function's 0688 backstop, for the reason written there.
+ * NOTE this is why the mirror is a push+pull: `xschem set annot_show` writes the
+ * Tcl var too, so a later
  * sync can never undo the setter (decision D4). show_hidden_texts' own pull cache is
  * refreshed at only three sites and is measurably stale in the export paths -- that
  * is issue 0453 and is deliberately NOT fixed here. */
 void annot_show_sync_cache(void)
+{
+  annot_show_pull_cache();
+  /* 0688 -- THE BACKSTOP. A root-sheet change that never runs load_schematic()
+   * (clear_schematic() composes a fresh untitled name IN PLACE, save.c:4850) is
+   * invisible to the deterministic seam in save.c, so the pull above is followed
+   * by the same check. Placed AFTER the pull deliberately: the pull is what makes
+   * the C field agree with the Tcl var, and clearing before it would be undone by
+   * it. */
+  annot_show_check_root();
+}
+
+/* 1244 (item A6-c, issue 1260 part 3) -- THE PULL ALONE, WITHOUT THE 0688 BACKSTOP.
+ * A SPLIT of annot_show_sync_cache() above, not a second pull: that function now IS
+ * this one plus the 0688 root check, so there is still exactly one place that
+ * makes the C mirror agree with the Tcl var (invariant I1) and the backstop still has
+ * exactly the eight bulk entry points it had.
+ *
+ * ⚠ WHY A READ-ONLY GEOMETRY VERB MAY NOT RUN THE BACKSTOP. That check can
+ * annot_show_set(0), i.e. CLEAR the mask -- which is why item A5-c left the mask
+ * unsynced at `recompute_inst_bbox` and accepted that the two symbol_bbox() doors then
+ * answered opposite picks for a bare `set ::annot_show` (issue 1260 part 3, measured:
+ * one door answered M1 and the other answered nothing, on the same instant and the
+ * same pick). symbol_bbox() computes a bounding box; it must not be able to disarm the
+ * annotation as a side effect. So the geometry path calls THIS, and the eight bulk
+ * evaluation entry points keep calling the function above. */
+void annot_show_pull_cache(void)
 {
   const char *s;
   if(!xctx) return;
@@ -1452,18 +1481,12 @@ void annot_show_sync_cache(void)
    * svgdraw.c:1098, psprint.c:1370, scheduler.c x2, xinit.c x2, actions.c:4698), which
    * is exactly the staleness trap show_hidden_texts fell into (issue 0453: refreshed at
    * three sites, none of them an export entry, so its FIRST export after a Tcl-side
-   * change renders the old value).
+   * change renders the old value). Item A6-c added a NINTH caller of the pull,
+   * symbol_bbox() (src/select.c) -- see the block above this function.
    * NOT tclgetintvar(): on a missing variable it returns 0 AND dbg(0)-logs, and 0 is
    * BACKLAYER -- the annotation would silently paint in the background colour. */
   s = tclgetvar("annot_voltage_layer");
   if(s && s[0]) xctx->annot_voltage_layer = atoi(s);
-  /* 0688 -- THE BACKSTOP. A root-sheet change that never runs load_schematic()
-   * (clear_schematic() composes a fresh untitled name IN PLACE, save.c:4850) is
-   * invisible to the deterministic seam in save.c, so the pull above is followed
-   * by the same check. Placed AFTER the pull deliberately: the pull is what makes
-   * the C field agree with the Tcl var, and clearing before it would be undone by
-   * it. */
-  annot_show_check_root();
 }
 
 /* 0688 -- THE ONE C WRITER OF THE MASK (invariant I1). Every `xschem set
@@ -2077,19 +2100,44 @@ static int annot_overlay_gate(int n)
  *
  * ⚠ THE FORMAT READ HERE IS MINTED IN EXACTLY ONE PLACE, the width pass of
  * ::op_annot::text (src/op_annot.tcl): "A blank row is `label =` with NOTHING after the
- * `=`, not even a space; every row ends in exactly one newline." So: per line, after
- * the first `=`, any character that is not a space or a tab is a value. Row A34 pins
- * that contract from the Tcl side, so a change to the mint reds a row instead of
- * silently re-opening this defect. */
+ * `=`, not even a space; every row ends in exactly one newline." Row A34 pins that
+ * contract from the Tcl side, so a change to the mint reds a row instead of silently
+ * re-opening this defect.
+ *
+ * ⚠ THE SPLIT IS THE **LAST** `=` ON THE ROW, NOT THE FIRST -- ISSUE 1258, AND THE
+ * FIRST-`=` READING IS A GATE THAT THE DATA IT INSPECTS CAN FOOL. The label half of a
+ * row is whatever the user typed in their own `params` list (invariant I5; nothing
+ * rejects an `=` in it, and item B5 will let people type these), so a descriptor
+ * registered with the label `v=x` mints the BLANK row `v=x =` -- and the first-`=`
+ * reading found the `x` after that `=` and called it a value. Measured 2026-09-02 with
+ * `xschem raw loaded` = -1, i.e. before any simulation had run: mask 1 drew
+ * `M1 VCW=1u PD {v=x =} {q   =}` and mask 9 drew `M1 {v=x =} {q   =}` -- the user's own
+ * parameter and pin label traded for two empty rows, which is verbatim the defect item
+ * A5-a was written to close. Rows A42/A43 drive it.
+ *
+ * ⚠ AND THE LAST `=`, NOT THE THREE-BYTE SEPARATOR ` = ` issue 1258 recommends. Both
+ * are the same two lines; only one is right. A label spelled `a = b` mints the BLANK
+ * row `a = b   =`, which carries ` = ` and which the separator reading therefore calls
+ * valued. The last-`=` reading is strictly stronger: the mint always puts the
+ * separator's `=` after the whole padded label, so the final `=` of a row IS the
+ * separator, whatever the label contains. Row A44 is that difference written as a
+ * check. */
 static int annot_block_has_value(const char *t)
 {
-  const char *p;
-  int seen_eq = 0;
+  const char *p, *q, *eq;
   if(!t) return 0;
-  for(p = t; *p; ++p) {
-    if(*p == '\n') { seen_eq = 0; continue; }
-    if(!seen_eq) { if(*p == '=') seen_eq = 1; continue; }
-    if(*p != ' ' && *p != '\t') return 1;
+  eq = NULL;
+  for(p = t; ; ++p) {
+    if(*p == '=') { eq = p; continue; }
+    if(*p != '\n' && *p != '\0') continue;
+    /* end of a row: the value field is everything after its LAST `=` */
+    if(eq) {
+      for(q = eq + 1; q < p; ++q) {
+        if(*q != ' ' && *q != '\t') return 1;
+      }
+    }
+    eq = NULL;
+    if(*p == '\0') break;
   }
   return 0;
 }

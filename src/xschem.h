@@ -1351,6 +1351,14 @@ typedef struct {
                    * need to interpolate the Y value between annot_p and annot_p + 1 */
   int annot_sweep_idx; /* index of sweep variable where cursor annotation has occurred */
   double *cursor_b_val;
+  /* 1244 (item A6-b, issue 1259) -- one byte per column: 1 when the raw's own
+   * `Variables:` line marked that vector `dims=0`, i.e. the simulator wrote a
+   * column for a `.save` card it could not satisfy. Read ONLY through
+   * raw_vector_absent(); allocated, grown, shifted and freed exactly where
+   * cursor_b_val[] is, plus the shift in raw_deletevar() that cursor_b_val is
+   * missing (filed separately). NULL is legal and means `this reader did not
+   * record the field`, which answers `not absent` for every column. */
+  char *dims0;
   /* when descending hierarchy xctx->current_name changes, xctx->raw_schname
    * holds the name of the top schematic from which the raw file was loaded */
   char *schname;
@@ -2585,6 +2593,17 @@ extern int raw_read_from_attr(Raw **rawptr, const char *type, double sweep1, dou
 extern int raw_add_vector(const char *varname, const char *expr, int sweep_idx);
 extern int raw_renamevar(const char *old_name, const char *new_name);
 extern int raw_deletevar(const char *name);
+/* 1244 (item A6-b, issue 1259) -- 1 when column <idx> of <raw> is a vector the
+ * simulator DID NOT COMPUTE, even though the file carries a column for it: ngspice
+ * answers a `.save` card naming a parameter the model does not publish with a
+ * `dims=0` column of 0.0 and says nothing on stderr (measurements section 22, spec
+ * landmine 11). That is an ABSENT vector, not a measured zero, and invariant I3
+ * says it renders BLANK -- while a transistor that is genuinely off has id = 0 and
+ * must still print 0. The two are byte-identical everywhere downstream, so the
+ * distinction is read where it is WRITTEN, in the raw's own type field, and
+ * published through this ONE predicate rather than re-derived by each consumer.
+ * 0 for any raw whose reader never recorded the field, so nothing else moves. */
+extern int raw_vector_absent(Raw *raw, int idx);
 extern int new_rawfile(const char *name, const char *type, const char *sweepvar,
                        double start, double end, double step);
 extern char *base64_from_file(const char *f, size_t *length);
@@ -3643,6 +3662,14 @@ extern int annot_name_token(const char *txt);
  * -1 == "no override, use the layer you already computed". */
 extern int annot_text_layer(int flags, int ctx);
 extern void annot_show_sync_cache(void);
+/* 1244 (item A6-c, issue 1260 part 3) -- annot_show_sync_cache() WITHOUT the 0688
+ * root backstop: the annot_show + annot_voltage_layer pull alone. A SPLIT of the
+ * function above (which is now this one plus annot_show_check_root()), so the
+ * mirror still has ONE builder. It exists because symbol_bbox() has to see the
+ * mask the renderers see -- the two symbol_bbox() doors otherwise answer opposite
+ * picks for the same instant -- and a read-only geometry verb must not be able to
+ * CLEAR the mask, which annot_show_check_root() can. src/actions.c has the rest. */
+extern void annot_show_pull_cache(void);
 /* 0688 -- THE ONE C WRITER of the annotation mask (invariant I1), and the one
  * checker that drops it when the window's ROOT sheet changes underneath it.
  * annot_show_set() writes xctx->annot_show, the Tcl mirror ::annot_show AND the

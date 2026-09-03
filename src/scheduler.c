@@ -11026,7 +11026,22 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * answered with the cursor's value wearing the label of a point that
          * does not exist. The guard blanks it wherever nothing was published;
          * that it still answers where something was is its own defect, filed
-         * and left open as issue 0920. */
+         * and left open as issue 0920.
+         *
+         * ⚠ THE SECOND TERM, raw_vector_absent(), IS ISSUE 1259 AND IT IS THE SAME
+         * SENTENCE ONE STEP FURTHER. annot_p answers "was anything published at
+         * all"; this answers "did the simulator actually compute THIS column".
+         * ngspice writes a `.save` card the model cannot satisfy as a `dims=0`
+         * column of 0.0 and says nothing on stderr, so without it the verb -- and
+         * therefore ::op_annot::raw_or_blank, and therefore the schematic --
+         * reported a confident 0 for a number nothing measured, and the D-6
+         * declutter then traded the user's own W/L and pin labels for it. A
+         * genuinely computed 0.0 is NOT absent and still answers 0: a transistor
+         * that is off has id = 0 and that is a measurement. The predicate lives at
+         * the raw reader (src/save.c), where the distinction is written, and this
+         * is its ONE consumer. ⚠ It belongs on THIS arm for the same reason the
+         * annot_p term does -- the numbered-point read above is data inspection
+         * and must keep answering 0 for a dims=0 column. */
         else if(argc > 4 && !strcmp(argv[2], "value")) {
           int dataset = -1;
           int point = argv[4][0] ? atoi(argv[4]) : -1;
@@ -11041,7 +11056,8 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
               ) {
               val = get_raw_value(dataset, idx, point);
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
-            } else if(raw->cursor_b_val && raw->annot_p >= 0) {
+            } else if(raw->cursor_b_val && raw->annot_p >= 0 &&
+                      !raw_vector_absent(raw, idx)) {
               val = raw->cursor_b_val[idx];
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
             }

@@ -668,6 +668,45 @@ int select_dangling_nets(void)
   return ret;
 }
 
+/* 1244 (item A6-c, issues 1252 and 1260) -- THE DRAWN THING AND THE CLICKABLE THING
+ * ARE ONE OBJECT, AND THIS IS THE ONE FUNCTION EVERY DOOR TO THAT FACT PASSES THROUGH.
+ * The per-instance D-6 gate below decides whether a decluttered device's own texts
+ * count toward its bounding box, and that gate reads two caches -- the annotation mask
+ * mirror and the overlay's epoch. Both were refreshed at the RENDER entry points and
+ * at two of this function's THIRTY-NINE callers, so any other caller stored a click box
+ * built from a stale answer. Measured 2026-09-02, four Tcl-reachable doors, each with
+ * the box read BEFORE anything could repair it: `setprop instance M1 name MZ1` stored
+ * 277.5 -340 322.829 -280 and `instance_at` answered NOTHING, while the very same
+ * frame rendered `MZ1 VCW=1u PD {zid =} {zgm =}` -- and the same for
+ * `move_instance ... nodraw`, for `reset_inst_prop` (whose arm ENDS IN draw(), so a
+ * full redraw does not repair a box already written) and for the deselect write in
+ * select_element() below. Item B4 clicks these devices, and findnet.c's
+ * find_closest_element() uses POINTINSIDE against exactly this box.
+ *
+ * ⚠ THIS DELIBERATELY REVERSES THE OPTION ISSUE 1252 REJECTED -- said out loud, not
+ * done quietly -- and both of that issue's reasons are ANSWERED rather than ignored:
+ *
+ *   RE-ENTRANCY. Filling the overlay cache evaluates ::op_annot::text, which can come
+ *   back through translate() -> prepare_netlist_structs() -> link_symbols_to_instances()
+ *   -> here. annot_overlay_sync() is the function that FREES that cache, so it early-
+ *   returns while the fill is in progress (the annot_overlay_busy guard in
+ *   src/actions.c, set around exactly that evaluation). The cycle was already closed;
+ *   1252 argued from the hazard, not from the code that answers it.
+ *
+ *   COST. The sync is behind the declutter bit, which is a strictly WEAKER necessary
+ *   condition than the rung it feeds -- it can only ever sync more often than needed,
+ *   never less, so it is not a second copy of that decision (invariant I1). With the
+ *   declutter unarmed -- every load, every netlist pass, every existing suite -- this
+ *   function does two Tcl variable reads and no sync at all. Measured on a 49-instance
+ *   sheet: symbol_bbox 9.97 us against ~0.11 us for a no-op sync, about 1%.
+ *
+ * ONE site against the alternative's six (the four doors above plus the two arms A5-c
+ * already carries), and the alternative would still have left the other thirty-three
+ * callers stale -- which is how issue 1252 became issue 1260. The mask is
+ * pulled WITHOUT the 0688 root backstop (annot_show_pull_cache(), not
+ * annot_show_sync_cache()): that backstop can CLEAR the mask, and a function that
+ * computes a bounding box must not be able to disarm the annotation as a side effect.
+ * Rows A49..A56 of tests/headless/test_annot_declutter_1244.tcl drive all of it. */
 void symbol_bbox(int i, double *x1,double *y1, double *x2, double *y2)
 {
    int j, tmp;
@@ -681,6 +720,8 @@ void symbol_bbox(int i, double *x1,double *y1, double *x2, double *y2)
    #if HAS_CAIRO==1
    int customfont;
    #endif
+   annot_show_pull_cache();
+   if(xctx->annot_show & ANNOT_SHOW_NOPARAM) annot_overlay_sync();
    /* symbol bbox */
    flip = xctx->inst[i].flip;
    rot = xctx->inst[i].rot;

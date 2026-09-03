@@ -2656,8 +2656,8 @@ proc wviewer::signal_list {token {statusVar {}}} {
 # it.
 
 # PURE. `xschem raw info`'s output -> {cur <int> dbs {{idx .. path .. type ..} ..}}.
-# The engine prints (src/save.c:2379-2388, extra_rawfile() what == 4, RE-GREPPED
-# 2026-08-20) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
+# The engine prints (src/save.c:2475-2488, extra_rawfile() what == 4, RE-GREPPED
+# 2026-09-02, item A6 having inserted ~96 lines above it) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
 # <NULL>>` line per registry slot — and NOTHING AT ALL when no raw is loaded,
 # which is why the empty text has to answer `cur -1` rather than throw.
 #

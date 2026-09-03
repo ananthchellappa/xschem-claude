@@ -5812,7 +5812,8 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
 
 # The registry slot indices, and the current one; {} / -1 when nothing is
 # loaded. `xschem raw info` prints "<cur> current" then one "<i> <path> <type>"
-# line per slot (save.c:2379-2388, what == 4) and nothing at all with no raw.
+# line per slot (save.c:2475-2488, what == 4; re-grepped 2026-09-02, item A6)
+# and nothing at all with no raw.
 proc ase::raw_indices {} {
   if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
   set out {}

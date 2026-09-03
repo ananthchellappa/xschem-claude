@@ -756,6 +756,79 @@ static int read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
   return res;
 }
 
+/* 1244 (item A6-b, issue 1259) -- 1 when a `Variables:` line marks its column
+ * `dims=0`, i.e. the simulator wrote a column for a `.save` card it could not
+ * satisfy. THE ONE ANCHOR FOR THAT TOKEN, on the raw_header_case_mode() precedent
+ * a few hundred lines above: one header key, parsed in one place, with its
+ * anchoring rules written beside it rather than spread over the callers.
+ *
+ * WHY THE RAW'S OWN TYPE FIELD IS THE CARRIER, WHEN THERE IS ONE. An explicit
+ * `save @m...[ib]` card the model cannot satisfy yields a dims=0 column of 0.0 --
+ * on all 78 devices of the user's own bandgap
+ * (doc/claude/code_analysis/1244_op_param_list_measurements.md section 22, spec
+ * landmine 11). Downstream the column is a plain 0.0, byte-identical to a
+ * transistor that is genuinely off, so no consumer can tell them apart. Here they
+ * are still distinguishable, and this is the last place they are.
+ *
+ * ANCHORING, and it is three rules, not one:
+ *   - the type is the THIRD tab-separated field of the line (`\t<idx>\t<name>\t
+ *     <type>`), the same shape the sscanf below reads the first two out of, so a
+ *     `dims=0` inside a VECTOR NAME cannot be mistaken for the marker;
+ *   - the token must be `dims=0` exactly: ngspice writes a real dimension list as
+ *     `dims=2,3`, so a following digit or comma means a shaped vector, not an
+ *     empty one;
+ *   - a line with fewer than three fields carries no type and is never absent.
+ *
+ * IT IS NOT THE ONLY FLAVOUR OF THE TRAP, AND NOT THE ONE src/xschem.tcl:3854
+ * PRODUCES. Measured 2026-09-02 against ngspice 45.2, not assumed: ngspice's batch
+ * `-r <file>` writer -- which is what the shipped simulate command runs -- emits
+ * the SAME unsatisfiable save card as a plain `current` column of 0.0 with NO
+ * dims=0 token at all, warning `unrecognized variable` on stderr instead, which
+ * xschem never reads; so a `.options savecurrents` run through it STILL
+ * declutters. A genuinely zero-LENGTH vector makes `write` refuse the whole plot
+ * and produce no raw. Issues 1263 and 1264. This closes the `.control`+`write`
+ * flavour only; item B1 inherits the rest through raw_vector_absent(), which is
+ * the one seam. */
+static int raw_line_dims_zero(const char *line)
+{
+  const char *p;
+  int tabs = 0;
+  if(!line) return 0;
+  for(p = line; *p && tabs < 3; ++p) {
+    if(*p == '\t') ++tabs;
+  }
+  if(tabs < 3) return 0;
+  for(; *p; ++p) {
+    if(*p != 'd' || strncmp(p, "dims=0", 6)) continue;
+    if(p[6] == ',' || (p[6] >= '0' && p[6] <= '9')) continue;
+    return 1;
+  }
+  return 0;
+}
+
+/* 1244 (item A6-b, issue 1259) -- THE SEAM, and the ONE reader of dims0[]
+ * (invariant I1). Item B1's backend seam inherits it rather than building a second
+ * detector: "a zero-length or dims=0 vector is ABSENT, not zero" is already B1's
+ * stated rule, and two independent answers to one question is how issue 1252 became
+ * issue 1260.
+ *
+ * THREE STATES, AND THIS PREDICATE SEPARATES THE FIRST TWO. (1) ABSENT -- no
+ * column at all, or one the simulator did not compute -- renders BLANK, invariant
+ * I3 and ruling D5-1: a plausible wrong number on a schematic is worse than none.
+ * (2) A REAL COMPUTED 0.0 renders 0 and still counts as an OP number: a transistor
+ * that is off has id = 0 and that is a measurement, not a hole. (3) a normal value.
+ * Collapsing (1) and (2) toward `absent` hides real zeros from a user reading a
+ * cut-off device; collapsing them toward `present` is the defect being fixed. */
+int raw_vector_absent(Raw *raw, int idx)
+{
+  int absent;
+  if(!raw || !raw->dims0) return 0;
+  if(idx < 0 || idx >= raw->nvars) return 0;
+  absent = raw->dims0[idx] ? 1 : 0;
+  dbg(2, "raw_vector_absent(): idx=%d absent=%d\n", idx, absent);
+  return absent;
+}
+
 /* parse ascii raw header section:
  * returns: 1 if dataset and variables were read.
  *          0 if transient sim dataset not found
@@ -784,6 +857,7 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
   int variables = 0, i, done_points = 0;
   char *line = NULL, *varname = NULL, *lowerline = NULL;
   int n = 0, done_header = 0, ac = 0;
+  int d0 = 0; /* 1244 (item A6-b): the `dims=0` marker of the Variables: line in hand */
   /* npoints/nvars are set by the `No. Points:`/`No. Variables:` header lines,
    * which a malformed file need not carry -- a `Values:`/`Binary:` line before
    * either of them reaches the block handlers below with both still unset.
@@ -1053,6 +1127,9 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
       /* get the list of lines with index and node name */
       if(!raw->names) raw->names = my_calloc(_ALLOC_ID_, raw->nvars, sizeof(char *));
       if(!raw->cursor_b_val) raw->cursor_b_val = my_calloc(_ALLOC_ID_, raw->nvars, sizeof(double));
+      /* 1244 (item A6-b) -- one byte per column, beside the value array it qualifies */
+      if(!raw->dims0) raw->dims0 = my_calloc(_ALLOC_ID_, raw->nvars, sizeof(char));
+      d0 = raw_line_dims_zero(line);
       my_realloc(_ALLOC_ID_, &varname, strlen(line) + 1) ;
       n = sscanf(line, "%*[\t]%d%*[\t]%[^\t]", &i, varname); /* read index and name of saved waveform */
       if(n < 2) {
@@ -1139,10 +1216,16 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 3], "im(", varname, ")", NULL);
         }
         int_hash_lookup(&raw->table, raw->names[(i << 2) + 3], (i << 2) + 3, XINSERT_NOREPLACE);
+        /* 1244 (item A6-b): all four derived columns come from the one absent column */
+        if(d0 && raw->dims0) {
+          raw->dims0[i << 2] = 1;       raw->dims0[(i << 2) + 1] = 1;
+          raw->dims0[(i << 2) + 2] = 1; raw->dims0[(i << 2) + 3] = 1;
+        }
 
       } else {
         my_strcat(_ALLOC_ID_, &raw->names[i], varname);
         int_hash_lookup(&raw->table, raw->names[i], i, XINSERT_NOREPLACE);
+        if(d0 && raw->dims0) raw->dims0[i] = 1;   /* 1244 (item A6-b) */
       }
       /* use hash table to store index number of variables */
       dbg(dbglev, "read_dataset(): get node list -> names[%d] = %s\n", i, raw->names[i]);
@@ -1203,6 +1286,7 @@ void free_rawfile(Raw **rawptr, int dr, int no_warning)
    * introduced by the casemode work; fixed here because the same review that
    * measured it also measured that the alias index itself leaks nothing. */
   if(raw->cursor_b_val) my_free(_ALLOC_ID_, &raw->cursor_b_val);
+  if(raw->dims0) my_free(_ALLOC_ID_, &raw->dims0);   /* 1244 (item A6-b) */
   if(raw->values) {
     /* free also extra column for custom data plots */
     for(i = 0 ; i <= raw->nvars; ++i) {
@@ -1326,6 +1410,13 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
     my_realloc(_ALLOC_ID_, &raw->names, raw->nvars * sizeof(char *));
     my_realloc(_ALLOC_ID_, &raw->cursor_b_val, raw->nvars * sizeof(double));
     raw->cursor_b_val[raw->nvars - 1] = 0.0;
+    /* 1244 (item A6-b). Only when the array exists: a reader that never recorded the
+     * field leaves it NULL, and my_realloc() on NULL would hand back UNINITIALISED
+     * bytes, i.e. columns declared absent at random. A computed column is present. */
+    if(raw->dims0) {
+      my_realloc(_ALLOC_ID_, &raw->dims0, raw->nvars * sizeof(char));
+      raw->dims0[raw->nvars - 1] = 0;
+    }
     raw->names[raw->nvars - 1] = NULL;
     my_strdup2(_ALLOC_ID_, &raw->names[raw->nvars - 1], varname);
     int_hash_lookup(&raw->table, raw->names[raw->nvars - 1], raw->nvars - 1, XINSERT_NOREPLACE);
@@ -1520,6 +1611,14 @@ int raw_deletevar(const char *name)
   my_free(_ALLOC_ID_, &raw->values[n]);
   for(i = n + 1; i <= raw->nvars; i++) {
     raw->values[i - 1] = raw->values[i];
+  }
+  /* 1244 (item A6-b) -- the absence byte follows its column, like names[] and
+   * values[] above. The array is left at its old length: over-allocated by one
+   * is harmless, and raw_vector_absent() bounds every read on nvars.
+   * raw->cursor_b_val, the array this one qualifies, is NOT shifted here --
+   * pre-existing, measured while writing this loop, filed as issue 1262. */
+  if(raw->dims0) {
+    for(i = n + 1; i < raw->nvars; i++) raw->dims0[i - 1] = raw->dims0[i];
   }
   raw->nvars--;
   my_realloc(_ALLOC_ID_, &raw->names, sizeof(char *) * raw->nvars);

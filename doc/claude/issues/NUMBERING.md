@@ -962,4 +962,8 @@ and in the working tree. Read PLAN.md's A6 entry before re-running it.
   and only **two** are under a resolve-check; several are already rotted by up to
   1874 lines.
 
-**The next free number is 1269.**
+~~**The next free number is 1269.**~~ **1269** was filed by the DRIVER of the
+same batch, not by a crew: `test_wave_sigbrowser_i12`'s BX42 reds on a dev
+display that has been used and greens on a freshly started one — measured across
+five binaries including A4's own commit built in a clean worktree, so it is the
+display and not the code. **The next free number is 1270.**
