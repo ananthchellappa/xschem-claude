@@ -689,7 +689,7 @@ is the half the user actually asked for first.
 
 ---
 
-## A6 — close the value gate and the last bbox doors  *(needs A5)*
+## A6 — close the value gate and the last bbox doors  ⛔ **NOT LANDED (status F), 2026-09-02 — implemented and verified, then DESTROYED BY ITS OWN WRITE-UP AGENT. Re-run it; the work is preserved.**  *(needs A5)*
 
 Three pieces of correctness residue in what A5 just built. All C.
 
@@ -721,6 +721,188 @@ door agree before something depends on it.
 does not, and an absent vector does not, and a genuinely measured `0.0` **does**
 — three rows, not one. Every `symbol_bbox()` door agrees after a rename, drive
 each. `instance_at` and the render agree on the same fixture.
+
+---
+
+### ⛔ WHAT HAPPENED TO A6, AND WHAT THE NEXT CREW MUST DO FIRST
+
+**A6 was implemented, built, and passed every verification pass. Then the
+write-up agent ran `git checkout -- src/save.c` to undo a one-paragraph comment
+edit and destroyed A6-b's entire implementation in that file** — ~99 uncommitted
+lines, never staged, unrecoverable from `git fsck` (nine dangling blobs, none of
+them it). **Nothing else was touched.** The step is **F** for that reason and
+that reason only.
+
+**The work is NOT lost.** Two durable copies exist in this commit:
+
+1. `doc/claude/op_param_batch/A6_working_tree_UNVERIFIED.patch` — the complete
+   working-tree diff, all eight files, 1072 lines.
+2. The working tree itself, left in place and **not** reverted.
+
+**Seven of the eight files in that patch are BYTE-IDENTICAL to what Verify-A,
+Verify-B and Verify-C measured** — `src/actions.c`, `src/select.c`,
+`src/xschem.h`, `src/scheduler.c`, `src/ase.tcl`, `src/wave_viewer.tcl` and
+`tests/headless/test_annot_declutter_1244.tcl` (120 checks, ALL PASS, re-run by
+the write-up agent). **`src/save.c` is a hand RECONSTRUCTION** from a verbatim
+capture of 88 of its ~97 changed lines plus one 8-line hunk (the
+`raw_deletevar()` `dims0` shift) rewritten from its description. It has **never
+been compiled**: the write-up agent is forbidden to build and was denied the
+attempt. One independent landmark does check out — the reconstruction lands
+`extra_rawfile()`'s `what == 4` printer at **exactly line 2475**, the line the
+implement pass's restated `save.c:2475-2488` citation was verified against — but
+that is a consistency check, not a compile.
+
+**FIRST ACTION FOR WHOEVER PICKS THIS UP, in order.** Do **not** re-derive the
+design; it is all recorded in issues 1258 / 1259 / 1260 and below.
+
+1. `cd src && make`. If `src/save.c` does not build, fix it against issue 1259's
+   "What changed" section, which names every hunk and every guard.
+2. Re-run `tests/headless/test_annot_declutter_1244.tcl` — expect **120 checks,
+   ALL PASS**. Rows **A45 A46 A47 A48** are precisely the ones that exercise the
+   reconstructed file.
+3. Re-run the raw-reader family, which exercises `read_dataset()` and
+   `raw_deletevar()`: `test_raw_read_dispatch` (137), `test_raw_read_failure_0306`
+   (63), `test_zero_point_raw_0836` (74), `test_backannotate_digital` (84),
+   `test_spice_get_node_0861` (23), `test_results_select` (377).
+4. Full audit, diffed **by name and status** against
+   `doc/claude/op_param_batch/audit_A6_2026-09-02.txt` (committed here):
+   **364 pass / 12 fail / 0 crash / 2 skip of 378**, twelve names listed below.
+5. Then commit, and the step is **E**, not `x` — see "the two things that keep
+   A6 off `x` even when it builds".
+
+**⚠ THE BASELINE OF RECORD MOVED and it is not A6's doing.** The brief said
+365/11; the Measure agent measured **364 pass / 12 fail / 0 crash / 2 skip of
+378** and Verify-A reproduced it byte-identically. The one addition is
+`test_wave_sigbrowser_i12` check **BX42**, deterministic on the persistent `:99`
+display with openbox live and **PASS on a WM-less private Xvfb** — window-manager
+dependent, no part of A6's subject. The Measure agent's two candidate causes were
+"A5's binary introduced it" and "accumulated openbox state"; Verify-A then found
+the dev display had been **restarted** (Xvfb pid 28419, not the 25524 the Measure
+agent recorded) and BX42 still failed, which weakens the accumulated-state
+hypothesis. **A5 committed no audit transcript**, so its "365/11, re-measured
+identical" is unverified. Twelve names: `test_altf5_ciw`, `test_ase_core`,
+`test_ase_window`, `test_cadence_drag`, `test_cosim_golden_e2e`,
+`test_lib_manager_gui`, `test_lib_sweep`, `test_rotate_stretch_short_0104`,
+`test_selflog_output`, `test_wave_sigbrowser_0312`, `test_wave_sigbrowser_i12`,
+`test_wave_sigbrowser_keys`. Skips unchanged: `test_expose_repaint`,
+`test_window_report`.
+
+### The two things that keep A6 off `x` even when it builds
+
+1. **⚠ A6-b IS A PARTIAL CLOSE OF 1259, and the adversary pass refuted its
+   headline.** `dims=0` is the detector for the `.control` + `write` flavour
+   **only**. On **xschem's own shipped simulate command** —
+   `ngspice -b -r "$n.raw" "$N"`, `src/xschem.tcl:3854` — an unsatisfiable
+   `.save` card, *including everything `.options savecurrents` adds for a FET's*
+   `ig`/`is`/`ib`, is written as an **ordinary `current` column of 0.0 with no
+   `dims=0` token at all**. Re-measured independently by the write-up agent,
+   ngspice 45.2, BSIM4:
+
+   ```
+           5       i(@m1[is])      current
+           6       i(@m1[ig])      current
+           7       i(@m1[ib])      current
+   $ grep -ac 'dims=' sc.raw
+   0
+   $ head -1 sc.err
+   Warning: unrecognized variable - @m1[is]
+   PT0 i(@m1[id]) = 0.00031215789
+   PT0 i(@m1[ib]) = 0
+   ```
+
+   **So on that path a `savecurrents` run still declutters** — the literal title
+   of issue 1259. Filed as **1263**. The ACCEPT row's third absent state,
+   *zero-length*, is unhandled for a related reason (**1264**): a genuinely
+   zero-length vector makes `write` refuse the whole plot and produce **no raw at
+   all**, so it never reaches xschem as a zero-length vector.
+2. **The user-visible change is unratified.** A parameter that used to print `0`
+   now prints **blank**. The question is in the receipt and belongs on
+   `owed.sh add rule`.
+
+---
+
+### What A6 learned that binds later items
+
+1. **⚠ ITEM B1 INHERITS MORE OF 1259 THAN A5 THOUGHT, and it inherits a SEAM
+   rather than a blank slate.** A5's lesson 4 said B1 inherits the absent-vs-zero
+   half. It now inherits: the `dims=0` flavour **closed** behind one exported
+   predicate `raw_vector_absent()` (`src/save.c`, prototype in `src/xschem.h`),
+   and **1263** + **1264** open. **Widen that one predicate; do not build a second
+   detector** — invariant I1, and two independent answers to one question is how
+   1252 became 1260. The only remaining carrier for 1263 is the simulator's
+   **stderr** (`Warning: unrecognized variable - <name>`), which must be captured
+   at simulate time and carried beside the raw — asking for it from inside the
+   gate re-opens issue **0466** and reds row A35.
+2. **⚠ ITEM B4 STILL MUST REFRESH THE BBOXES — the instruction survives A6
+   intact, for a NEW reason (issue 1266).** A6-c made all **39** `symbol_bbox()`
+   callers fresh by syncing inside the callee, which closes 1252/1260 completely.
+   But `xschem annotate_op` and `xschem raw clear` change the gate's answer while
+   calling `symbol_bbox()` **not at all**, so the stored click box and the render
+   disagree until something triggers a bbox pass. Driven both directions:
+   after `annotate_op`, `instance_at 430 -245` answers `M1` **over blank canvas**;
+   after `raw clear`, a click **on the visible text** answers **nothing**. The
+   shipped chord paths call `update_all_sym_bboxes` and are safe;
+   `op_annot::db_attach`'s own return path, ASE flows and a user typing the verb
+   are not. **B4 calls `xschem update_all_sym_bboxes` before its first pick and
+   carries a row that reds if it does not.**
+3. **⚠ ISSUE 1252's RECORDED REASONING IS NOW WRONG IN THE TREE, deliberately.**
+   A6-c put the sync inside `symbol_bbox()` — the option 1252 rejected. Both of
+   1252's reasons were answered, not ignored: re-entrancy is already closed by
+   `annot_overlay_busy` (set around exactly the `tcleval` that re-enters), and
+   cost by the bit-3 prefilter, which makes the sync a **no-op whenever the
+   declutter is unarmed** — every load, every netlist pass, every other suite, all
+   378 audit cases. Measured flush delta **0**. 1252's issue file has been
+   updated; do not "restore" the rejection.
+4. **⚠ A SUITE ROW'S GOLDEN WAS MOVED, NOT ITS READER.** Row **A41**'s fifth
+   golden went `select.c` **0 → 1** with the argument written beside it. That is
+   the third time this suite has had a golden edited; the rule that made it legal
+   is that the **regexp was not widened**. Widening the reader so the count does
+   not move is the failure filed as 1248 and 1254. Keep the distinction.
+5. **⚠ `annot_show_sync_cache()` IS NOW A SPLIT.** It is
+   `annot_show_pull_cache()` (the `annot_show` + `annot_voltage_layer` pull) plus
+   `annot_show_check_root()` (the 0688 backstop). Anything that needs the mask
+   mirror fresh on a **read-only** path calls the pull; anything that is a real
+   entry point calls the whole thing. The backstop can `annot_show_set(0)`, and a
+   verb that computes geometry must not be able to disarm the annotation.
+   `annot_show_check_root()`'s tree-wide census stays **3** (`test_op_annot` Y11).
+6. **⚠ TWO SUITE COUNTS ARE ARM-DEPENDENT, NOT CHANGE-DEPENDENT.** `test_op_annot`
+   is **485 under `--nogui`** and **492 under Tk**; `test_deselect_mode` is **9**
+   and **18**. Both files were unmodified throughout. A crew that measures a
+   baseline headless and re-measures under Tk will report a phantom regression.
+   **Say which arm every count was taken on.**
+7. **⚠ `test_raw_read_dispatch` HANGS under a display.** It is on
+   `full_audit.sh`'s `nogui_tests` list and stalls at check SC06 with Tk live.
+   Run it `--nogui`.
+8. **⚠ EDITING `src/save.c` MOVES A CITATION UNDER A RESOLVE-CHECK.** Rows
+   **SEL468 / SEL469** of `test_results_select.tcl` resolve two `.tcl` comments
+   that cite `extra_rawfile()`'s `what == 4` printer by line number. Inserting
+   anything above it reds the suite — **by design**; the check's own prose tells
+   you to re-grep and restate. About a dozen such `save.c:NNNN` citations exist in
+   `.tcl` comments and **only those two are under a check**; several are already
+   rotted by up to 1874 lines (`src/op_annot.tcl:385`). Filed as **1268**.
+9. **⚠ THREE COVERAGE HOLES IN A6's OWN SUITE (issue 1267).** The `dims=0`
+   **parse** is guarded by row **A45 alone** (A48's structural legs do not move
+   when the parser is dead). The defence of the numbered-point data-inspection
+   read is **one list element of A48**, and neither `test_raw_read_dispatch` (137
+   checks) nor `test_spice_get_node_0861`'s SGN13/14/22 notices when it breaks.
+   And the hazard the pull/backstop split exists to prevent has **no behavioural
+   coverage at all** — `test_op_annot` Y11 is a *census* and cannot see a new
+   **transitive** caller. Close hole 3 with a row that warms the mask, **swaps the
+   root sheet**, then calls `recompute_inst_bbox` and asserts the mask survives.
+10. **⚠ THE ABSENCE RULE REACHED ONE OF THREE READERS of `raw->cursor_b_val[]`
+    (issue 1265).** `xschem raw value <v> -1` blanks a `dims=0` column;
+    `src/token.c`'s six `@spice_get_*` branches and `ngspice::ngspice_data` still
+    publish the fabricated `0`. `ngspice::get_current` is used by **five shipped
+    library schematics**, so the split is reachable on a stock sheet.
+11. **⚠ `raw_deletevar()` SHIFTS `names[]` AND `values[]` AND NOT `cursor_b_val[]`
+    (issue 1262).** Pre-existing. After `xschem raw del`, every column from the
+    deleted index on reports its neighbour's OP number. Found only because A6-b
+    had to decide what to do with the array beside it.
+12. **⚠ NEVER `git checkout -- <file>` TO UNDO AN EDIT IN A CREW RUN.** It
+    discards *every* uncommitted change in that file, not the last one, and an
+    unstaged change leaves no blob for `git fsck` to find. Undo an edit with the
+    inverse edit. This paragraph exists because that command cost this batch a
+    verified implementation.
 
 ---
 
@@ -759,6 +941,20 @@ sabotaged, driven through `print png` rather than read out of the source.
 ---
 
 ## B1 — the backend seam  *(no dependencies)*
+
+> **⚠ FROM A6 (2026-09-02).** B1's rule *"a zero-length or `dims=0` vector is
+> **absent**, not zero"* is **half answered already**, behind ONE exported
+> predicate: `raw_vector_absent()` (`src/save.c`, prototype `src/xschem.h`), fed
+> by `raw_line_dims_zero()` and `Raw.dims0`. **Widen that predicate; do not build
+> a second detector** (invariant I1). Still open and inherited: **1263** — on
+> `ngspice -b -r`, which is what `src/xschem.tcl:3854` runs, an unsatisfiable
+> `.save` card arrives as an ordinary `current` column of 0.0 with **no `dims=0`
+> token**, so the only carrier is the simulator's **stderr** and it must be
+> captured at simulate time, never asked for from inside the gate (issue 0466,
+> row A35). Also **1264** (a zero-length vector destroys the raw entirely) and
+> **1265** (the rule reached one of three readers of `cursor_b_val[]`).
+> ⚠ A6 did not land — see its entry — so the predicate lives in
+> `A6_working_tree_UNVERIFIED.patch` until A6 is re-run.
 
 **Do.** `ase::backend::ngspice::op_param_set <devpath>` → ordered `{param value}`
 pairs, read **from the run's own raw**, plus a capability answer saying whether
@@ -830,6 +1026,14 @@ reopens. Text is selectable and copyable and cannot be edited. Survives
 ---
 
 ## B4 — the keys and the two grammars  *(needs B3)*
+
+> **⚠ FROM A6 (2026-09-02).** A6-c closed **every** `symbol_bbox()` door by
+> syncing inside the callee, so 1252/1260 are done. **The instruction to call
+> `xschem update_all_sym_bboxes` before B4's first pick still stands**, for a new
+> reason: `xschem annotate_op` and `xschem raw clear` move the gate's answer
+> while calling `symbol_bbox()` **not at all** (issue **1266**, driven both
+> directions — a click lands on blank canvas one way and misses visible text the
+> other). Carry a row that reds if the refresh is removed.
 
 **Do.** Bind bare `1`/`2`/`3`/`4` in `src/cadence_style_rc` with `break` (D-2).
 **noun-verb**: one instance selected → dump it. **verb-noun**: nothing selected →

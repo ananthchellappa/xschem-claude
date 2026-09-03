@@ -133,3 +133,31 @@ stale gate (and item A5-a *widened* the first of those, because a rename over a
 dead raw now flips the gate where before it did not), and a bare
 `set ::annot_show` makes the two doors answer opposite picks because the **mask**
 half is deliberately not synced at `recompute_inst_bbox`.
+
+
+---
+
+## ⚠ THIS ISSUE'S REJECTED OPTION WAS DELIBERATELY REVERSED — item A6-c, 2026-09-02
+
+This issue rejected "one `annot_overlay_sync()` inside `symbol_bbox()`" on two
+grounds, re-entrancy and cost. **Item A6-c took it anyway**, and answered both
+rather than ignoring them:
+
+* **Re-entrancy** was already closed in code. `annot_overlay_sync()` is the
+  function that *frees* the cache, and it early-returns on `annot_overlay_busy`,
+  which `annot_overlay_cached_text()` sets around exactly the `tcleval` that can
+  re-enter through `translate()` → `prepare_netlist_structs()` →
+  `link_symbols_to_instances()` → `symbol_bbox()`. This issue argued from the
+  hazard, not from the code that answers it. Separately verified: `draw.c`,
+  `svgdraw.c` and `psprint.c` contain **zero** calls to `symbol_bbox()`, so no
+  drawer can free the block it is holding.
+* **Cost** is answered by a bit-3 prefilter. With the declutter unarmed — every
+  load, every netlist pass, every other suite, all 378 audit cases —
+  `symbol_bbox()` does two Tcl variable reads and **no sync**. Measured flush
+  delta **0** for `update_all_sym_bboxes` and for 20 consecutive
+  `recompute_inst_bbox` at every mask; ~1% on a 49-instance sheet.
+
+The alternative — syncing at each named door — would have been six sites and
+**still left ~33 callers stale**, which is precisely how this issue became issue
+**1260**. **Do not "restore" the rejection.** Full record: issue 1260's closing
+section. ⚠ A6 did not land; see PLAN.md's A6 entry.

@@ -266,3 +266,38 @@ THE SELF-CORRECTING SHAPE THIS ARGUES FOR: save the whole `show` catalogue once,
 then PRUNE by measurement -- drop every name that came back dims=0 and cache the
 survivors per model. The catalogue then converges on the savable set after one
 run and never lies again. `dims=0` -- not stderr -- is the only detector.
+
+⚠ **CORRECTED 2026-09-02 by item A6, re-measured against ngspice 45.2 on
+throwaway BSIM4 decks. THE SENTENCE ABOVE IS TRUE OF THIS `.control`+`write`
+RUN AND FALSE AS A GENERAL CLAIM, and the difference matters because the writer
+xschem itself calls is the other one.** Run through the shipped simulate
+command -- `ngspice -b -r "$n.raw" "$N"`, `src/xschem.tcl:3854` -- the SAME
+unsatisfiable save card comes back as an **ordinary `current` column of 0.0 with
+no `dims=0` token anywhere in the file**:
+
+    Variables:
+            4       i(@m1[id])      current
+            5       i(@m1[is])      current
+            6       i(@m1[ig])      current
+            7       i(@m1[ib])      current
+    $ grep -ac 'dims=' sc.raw
+    0
+    $ head -3 sc.err
+    Warning: unrecognized variable - @m1[is]
+    Warning: unrecognized variable - @m1[ig]
+    Warning: unrecognized variable - @m1[ib]
+
+and read back through xschem: `i(@m1[id])` = 3.12e-4, `is`/`ig`/`ib` = 0,
+indistinguishable from a transistor that is off. **So on that path the detector
+is stderr and nothing else** -- the exact inverse of the sentence above -- and
+xschem never reads stderr. Also measured: a genuinely zero-LENGTH vector makes
+`write` refuse the WHOLE plot (`Error during 'write': no writable vector
+found`), producing no raw at all and in one form segfaulting; the finding-21
+claim that these flavours are silent is wrong for that one too.
+
+CONSEQUENCE FOR THE "SELF-CORRECTING SHAPE" ABOVE: probe-and-prune was already
+rejected by ruling **D-5**; this measurement makes the rejection
+over-determined, because the token it would prune on is absent on the path the
+tool uses. Item A6-b closes the `dims=0` flavour only, behind
+`raw_vector_absent()`. Issues **1263** (the `-r` writer) and **1264** (the
+zero-length flavour).

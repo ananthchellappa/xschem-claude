@@ -926,4 +926,40 @@ was fixed silently. A3 **fixed and closed 1246, 1247, 1248 and 1249**.
   `hide_symbols=2` the keep-name filter has already reduced both renders to names,
   so the row is identical with the gate disabled).
 
-**The next free number is 1255.**
+**Item A5's passes (2026-09-02) filed 1255-1261.** A5 **fixed and closed 1252,
+1253 and 1254**.
+
+**Item A6's passes (2026-09-02) filed 1262-1268.** A6-a closed **1258**, A6-c
+closed **1260**, and A6-b **partially** closed **1259** — the `dims=0` flavour
+only. ⚠ **A6 did not land**: its write-up agent ran `git checkout -- src/save.c`
+to undo a comment edit and destroyed A6-b's uncommitted implementation. The
+issue files record the design and the measurements in full and are correct; the
+code is preserved as `doc/claude/op_param_batch/A6_working_tree_UNVERIFIED.patch`
+and in the working tree. Read PLAN.md's A6 entry before re-running it.
+
+* **1262** — `raw_deletevar()` shifts `names[]` and `values[]` but leaves
+  `cursor_b_val[]` unshifted, so after `xschem raw del` every column from the
+  deleted index on reports its neighbour's OP number. Pre-existing.
+* **1263** — ngspice's batch `-r` writer, which is what `src/xschem.tcl:3854`
+  runs, emits an unsatisfiable `.save` card as a plain `current` column of 0.0
+  with **no `dims=0` token**, warning only on stderr. **This is the refutation of
+  A6-b's headline**: on that path a `savecurrents` run still declutters. Item B1
+  inherits it.
+* **1264** — a genuinely zero-length vector makes ngspice's `write` refuse the
+  whole plot and produce no raw at all, in one form segfaulting. A deck-generator
+  defect, and it corrects "neither says a word on stderr" in measurements §22 and
+  spec landmine 11 — both now corrected in place.
+* **1265** — the absence rule reached **one of three** readers of
+  `cursor_b_val[]`; `src/token.c`'s six `@spice_get_*` branches and
+  `ngspice::ngspice_data` still publish the fabricated `0`.
+* **1266** — `annotate_op` and `raw clear` move the declutter gate **without
+  touching geometry**, so the click box and the render disagree though every
+  `symbol_bbox()` door now agrees. **Item B4 must still refresh the bboxes.**
+* **1267** — three coverage holes found by A6's own sabotage pass, in the shape
+  of 1254: the `dims=0` parse is guarded by one row, the numbered-point defence
+  by one list element, and the pull/backstop split by nothing behavioural.
+* **1268** — about a dozen `save.c:NNNN-MMMM` citations live in `.tcl` comments
+  and only **two** are under a resolve-check; several are already rotted by up to
+  1874 lines.
+
+**The next free number is 1269.**

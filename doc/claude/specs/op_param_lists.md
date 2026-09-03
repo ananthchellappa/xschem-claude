@@ -1140,7 +1140,29 @@ Still open:
     writing a fourth copy (invariant I1). Item A3 touches all three files.
 11. **A zero-length vector is not a zero.** `savecurrents` publishes `ig`/`is`/
     `ib` as `0 long` on sky130 FETs, and an explicit `save …[ib]` card gives a
-    `dims=0` column of `0.0`. Both are *absent*, and neither says so on stderr.
+    `dims=0` column of `0.0`. Both are *absent*.
+    ⚠ **CORRECTED 2026-09-02 by item A6, measured against ngspice 45.2 — this
+    landmine used to end "and neither says so on stderr", and that is false in
+    both directions.** There are **three** flavours and they behave differently:
+    * **`dims=0`** — the `.control` + `write` path. The **file** says so, in the
+      third tab-separated field of the `Variables:` line, and that is the only
+      in-file carrier. Item A6-b parses it (`raw_line_dims_zero()`) and publishes
+      it through `raw_vector_absent()`; `xschem raw value <v> -1` then answers
+      **empty** and invariant I3 is satisfied.
+    * **no marker at all** — the batch `-r <file>` writer, which is what
+      `src/xschem.tcl:3854` runs. The same unsatisfiable card arrives as an
+      **ordinary `current` column of 0.0**, byte-identical to a measured zero;
+      ngspice warns `unrecognized variable` on **stderr**, which xschem never
+      reads. **This flavour is not closed** — issue **1263** — so a
+      `savecurrents` run through the shipped simulate command still declutters.
+    * **genuinely zero-LENGTH** — `write` refuses the **whole plot**
+      (`no writable vector found`) and produces **no raw at all**, in one form
+      segfaulting. So this state never reaches xschem as a vector — issue
+      **1264**, and it is landmine 12's shape reached through an *option line*
+      rather than a wildcard `save` card.
+    A **real computed 0.0** is none of these and must still render `0`: a
+    transistor that is off has `id = 0` and that is a measurement, not a hole.
+    Collapsing absent and zero in **either** direction is a defect.
 12. **`save m`, `save @m*[*]` and friends do not merely fail — they destroy the
     plot.** A card that matches nothing takes the whole operating point with it
     (R5's all-bogus case), so an over-eager wildcard is worse than no wildcard.
@@ -1158,6 +1180,17 @@ Still open:
     has **four**. So the gate can be stale exactly where the pick is computed
     (issue **1252**) — the same staleness shape as issue 0453. Any item that picks
     an instance by coordinate must refresh the bboxes first.
+    ⚠ **UPDATED 2026-09-02 by item A6-c.** The repair went **inside the callee**:
+    `symbol_bbox()`'s own prologue pulls the mask (`annot_show_pull_cache()`,
+    without the 0688 backstop, which can *clear* the mask and must not ride a
+    geometry verb) and, **behind the declutter bit**, syncs the overlay epoch. All
+    39 callers are therefore fresh, and issue 1252's rejection of exactly this
+    option is **deliberately reversed**, with both of its reasons answered:
+    re-entrancy is already closed by `annot_overlay_busy`, and the bit-3 prefilter
+    makes the sync a measured no-op whenever the declutter is unarmed.
+    **The "refresh the bboxes first" instruction still stands anyway**, because
+    `xschem annotate_op` and `xschem raw clear` move the gate's answer while
+    calling `symbol_bbox()` not at all — issue **1266**.
 
 ---
 

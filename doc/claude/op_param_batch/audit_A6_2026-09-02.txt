@@ -1,0 +1,1702 @@
+display arm: :99 (explicit; the gate is left as you set it)
+PASS     | test_accelerators
+PASS     | test_action_log_dispatch
+PASS     | test_action_log_libmgr
+PASS     | test_actionlog_suppress_gate
+PASS     | test_add_pin_lib_symbol_view
+PASS     | test_add_wire_label
+PASS     | test_alt_transform_group_0116
+FAIL     | test_altf5_ciw
+PASS     | test_annot_blank_cause_0909
+PASS     | test_annot_declutter_1244
+PASS     | test_annot_hier_0911
+PASS     | test_annot_op_behind_tran_1242
+PASS     | test_annot_show_menu
+PASS     | test_annot_stale_0684
+PASS     | test_apply_hilight_log
+PASS     | test_apply_properties_readonly
+PASS     | test_ase_bus_bits_0159
+FAIL     | test_ase_core
+PASS     | test_ase_cosim
+PASS     | test_ase_current_repair
+PASS     | test_ase_dialogs
+PASS     | test_ase_dirty
+PASS     | test_ase_final
+PASS     | test_ase_final_gf180
+PASS     | test_ase_hier_pick_0161
+PASS     | test_ase_hier_plot_0168
+PASS     | test_ase_interact
+PASS     | test_ase_launch
+PASS     | test_ase_locked_wire_pick_0160
+PASS     | test_ase_log_seam_0207
+PASS     | test_ase_optier_0963
+PASS     | test_ase_persist
+PASS     | test_ase_plot
+PASS     | test_ase_preflight
+PASS     | test_ase_print_bracket_0167
+PASS     | test_ase_result_case
+PASS     | test_ase_savestate_adopt
+PASS     | test_ase_simcaps_0948
+PASS     | test_ase_simdlg_0937
+PASS     | test_ase_simreg_0931
+PASS     | test_ase_sod_case
+PASS     | test_ase_unnamed_net
+PASS     | test_ase_view
+FAIL     | test_ase_window
+PASS     | test_audit_classifier
+PASS     | test_auto_specialize_1201
+PASS     | test_autosave_hook
+PASS     | test_backannotate_digital
+PASS     | test_backing_store_0413
+PASS     | test_backup_file
+PASS     | test_backup_hidden
+PASS     | test_backup_recovery
+PASS     | test_binding_precedence
+PASS     | test_bindings_file
+PASS     | test_cadence_descend_newwin_ro
+FAIL     | test_cadence_drag
+PASS     | test_cadence_stretch_move
+PASS     | test_cadence_window_hop_log
+PASS     | test_calc_skeleton
+PASS     | test_calc_widgets
+PASS     | test_callback_argc
+PASS     | test_cellview_resolve
+PASS     | test_ciw
+PASS     | test_ciw_actionlog_output
+PASS     | test_ciw_autocomplete
+PASS     | test_ciw_interactive_load
+PASS     | test_ciw_puts_capture
+PASS     | test_clone_canvas_bindings
+PASS     | test_close_window_force
+PASS     | test_close_window_restores_prev_tab
+PASS     | test_close_with_viewer
+PASS     | test_cmdmode_0201
+PASS     | test_cmdmode_descend_0201
+PASS     | test_connected_drag_group_transform_0114
+PASS     | test_connected_drag_keeps_selection_0113
+PASS     | test_context_menu_descend_edit
+PASS     | test_context_menu_descend_refusal_0249
+PASS     | test_context_menu_log
+PASS     | test_coordlog_precision
+PASS     | test_copy_form
+FAIL     | test_cosim_golden_e2e
+PASS     | test_create_instance
+PASS     | test_crossview_paste
+PASS     | test_dblclick_connected_grow
+PASS     | test_del_negative_arg
+PASS     | test_delete_cut_selflog
+PASS     | test_descend_doors_1228
+PASS     | test_descend_efficiency
+PASS     | test_descend_fidelity
+PASS     | test_descend_goback_selflog
+PASS     | test_descend_inert_class
+PASS     | test_descend_log_absorb
+PASS     | test_descend_newwin_return
+PASS     | test_descend_preserve
+PASS     | test_descend_readonly
+PASS     | test_descend_refusal_channel_0251
+PASS     | test_descend_symbol
+PASS     | test_descend_untitled_preserve
+PASS     | test_descend_views
+PASS     | test_deselect_mode
+PASS     | test_drag_keeps_selection
+PASS     | test_edit_vi_prop_readonly
+PASS     | test_editprop_preserve
+PASS     | test_empty_value_swallows_token_0183
+PASS     | test_expandlabel_zero_neg_mult_0182
+SKIP     | test_expose_repaint
+PASS     | test_find_helper
+PASS     | test_fluid_backbone_short_vertical_0098
+PASS     | test_fluid_bodyshove_guards_0132
+PASS     | test_fluid_collinear_backbone_short_0105
+PASS     | test_fluid_compact_escape_stub_0137
+PASS     | test_fluid_compact_named_crossbar_0138
+PASS     | test_fluid_diagonal_neighbor_bus_0134
+PASS     | test_fluid_diagonal_ref_drop_0132
+PASS     | test_fluid_diagonal_shove_throughbody_0135
+PASS     | test_fluid_drag_onto_backbone_row_0106
+PASS     | test_fluid_drag_through_anchor_0109
+PASS     | test_fluid_editing
+PASS     | test_fluid_exit_stub_staircase_0111
+PASS     | test_fluid_jog_separated_trunk_0136
+PASS     | test_fluid_loop_0088
+PASS     | test_fluid_ortho_ctrl1_shove_0132
+PASS     | test_fluid_ortho_second_drag_0132
+PASS     | test_fluid_relay_manhattanize_0107
+PASS     | test_fluid_relay_reanchor_0108
+PASS     | test_fluid_reversal_0089
+PASS     | test_fluid_reversal_0096
+PASS     | test_fluid_rotate_body_route_0130
+PASS     | test_fluid_rotate_second_drag_0132
+PASS     | test_fluid_second_gesture_body_cross_0139
+PASS     | test_fluid_sibling_pin_backbone_short_0098
+PASS     | test_flylines_render
+PASS     | test_geometry_sanity
+PASS     | test_gesture_bindings
+PASS     | test_gesture_end_log
+PASS     | test_getprop_index_bounds
+PASS     | test_gf180_ase_defaults
+PASS     | test_gf180mcud_libmgr
+PASS     | test_graph_box_zoom_xy
+PASS     | test_graph_context
+PASS     | test_grid_toggle_sel_gc
+PASS     | test_hash_extra_node_warn_0165
+PASS     | test_hash_label_crash_0156
+PASS     | test_hi_descend
+PASS     | test_hier_close_prompt
+PASS     | test_hier_walkup
+PASS     | test_hilight_case_senders
+PASS     | test_hover_highlight
+PASS     | test_hover_selection_repair
+PASS     | test_ihp_sg13g2_libmgr
+PASS     | test_instance_refusal
+PASS     | test_instance_update
+PASS     | test_isources
+PASS     | test_key_graph_context
+PASS     | test_key_make_sch_from_sel_log
+PASS     | test_keybind_snap_grid
+PASS     | test_keybindings_help
+PASS     | test_label_ride
+PASS     | test_label_strand_oracle
+PASS     | test_launch_context
+PASS     | test_lib_browse
+PASS     | test_lib_manager_bold
+PASS     | test_lib_manager_checkin
+PASS     | test_lib_manager_ctx
+FAIL     | test_lib_manager_gui
+PASS     | test_lib_manager_history
+PASS     | test_lib_manager_launch
+PASS     | test_lib_manager_locate
+PASS     | test_lib_manager_maintain
+PASS     | test_lib_new_discovered_defs
+PASS     | test_lib_new_path_guards_0799
+PASS     | test_lib_roundtrip
+FAIL     | test_lib_sweep
+PASS     | test_libmgr_mutation_log
+PASS     | test_libmgr_refresh_reentrancy
+PASS     | test_library_defs
+PASS     | test_library_git
+PASS     | test_library_git_history
+PASS     | test_library_git_report
+PASS     | test_library_ops
+PASS     | test_list_nets_null_token_0180
+PASS     | test_load_window_routing
+PASS     | test_make_symbol_dialog
+PASS     | test_make_symbol_view
+PASS     | test_migrate_engine
+PASS     | test_migrate_pin_names
+PASS     | test_modify_symbol_pins
+PASS     | test_mouse_bindings
+PASS     | test_multi_window
+PASS     | test_netlist_case_collision
+PASS     | test_netlist_log
+PASS     | test_ngspice_data_ctx
+PASS     | test_ngspice_data_view
+PASS     | test_nh_angle_clamp
+PASS     | test_nh_angle_editor
+PASS     | test_nh_angle_range
+PASS     | test_nh_angle_render
+PASS     | test_nh_anim_rearm
+PASS     | test_nh_editor_align
+PASS     | test_nh_editor_buttons
+PASS     | test_nh_editor_cells
+PASS     | test_nh_editor_discover
+PASS     | test_nh_editor_flush_scroll
+PASS     | test_nh_editor_free
+PASS     | test_nh_editor_load
+PASS     | test_nh_editor_persist
+PASS     | test_nh_editor_preview
+PASS     | test_nh_editor_rowops
+PASS     | test_nh_editor_staged
+PASS     | test_nh_editor_table
+PASS     | test_nh_export_custom_color
+PASS     | test_nhse_mutation_log
+PASS     | test_no_untitled_litter
+PASS     | test_node_token_split
+PASS     | test_nogui
+PASS     | test_nolog
+PASS     | test_noncairo_verbs_ungated
+PASS     | test_op_annot
+PASS     | test_palette
+PASS     | test_paste_at_log
+PASS     | test_paste_modify_flag_0244
+PASS     | test_pdk_launcher
+PASS     | test_perform_action_add_pin_stubs
+PASS     | test_perform_action_align
+PASS     | test_perform_action_apply_pin_prop
+PASS     | test_perform_action_attach_labels
+PASS     | test_perform_action_break_wires
+PASS     | test_perform_action_change_elem_order
+PASS     | test_perform_action_check_unique_names
+PASS     | test_perform_action_clear_drawing
+PASS     | test_perform_action_delete
+PASS     | test_perform_action_embed_rawfile
+PASS     | test_perform_action_flip
+PASS     | test_perform_action_flip_in_place
+PASS     | test_perform_action_flipv
+PASS     | test_perform_action_flipv_in_place
+PASS     | test_perform_action_floaters_from_selected_inst
+PASS     | test_perform_action_image
+PASS     | test_perform_action_instance_number
+PASS     | test_perform_action_move_instance
+PASS     | test_perform_action_redo
+PASS     | test_perform_action_replace_symbol
+PASS     | test_perform_action_reset_inst_prop
+PASS     | test_perform_action_reset_symbol
+PASS     | test_perform_action_rotate
+PASS     | test_perform_action_rotate_in_place
+PASS     | test_perform_action_show_unconnected_pins
+PASS     | test_perform_action_toggle_ignore
+PASS     | test_perform_action_trim_wires
+PASS     | test_perform_action_undo
+PASS     | test_perform_action_wire_cut
+PASS     | test_phase3_mints
+PASS     | test_pin_name_size_win
+PASS     | test_pin_rename_propagate
+PASS     | test_pin_type_edit
+PASS     | test_placement_preview_doors
+PASS     | test_placement_wire_gate
+PASS     | test_prep_result_contamination_0155
+PASS     | test_pristine_untitled_basename
+PASS     | test_pristine_untitled_viewer_0172
+PASS     | test_prop_form_field_width_0170
+PASS     | test_raw_ascii_point_bounds
+PASS     | test_raw_case_mode
+PASS     | test_raw_read_dispatch
+PASS     | test_raw_read_failure_0306
+PASS     | test_readonly
+PASS     | test_readonly_action_dispatch
+PASS     | test_readonly_guard
+PASS     | test_recent_conf_compat_0924
+PASS     | test_remap
+PASS     | test_remap_verify
+PASS     | test_reopen_readonly
+PASS     | test_reopen_recent
+PASS     | test_resolved_net_attr_scope_0163
+PASS     | test_resolved_net_bus_global_0157
+PASS     | test_resolved_net_hash_bus_0158
+PASS     | test_resolved_net_templ_fallback_0164
+PASS     | test_results_dialog
+PASS     | test_results_freshness
+PASS     | test_results_select
+PASS     | test_rotate_prompt_object
+PASS     | test_rotate_stretch_dangling_0103
+PASS     | test_rotate_stretch_reconnect
+PASS     | test_rotate_stretch_reconnect_0099
+PASS     | test_rotate_stretch_reconnect_0100
+PASS     | test_rotate_stretch_route_quality_0110
+FAIL     | test_rotate_stretch_short_0104
+PASS     | test_rotmove_drop_log
+PASS     | test_save_as_cellview
+PASS     | test_save_as_form
+PASS     | test_save_reload_copy_selflog
+PASS     | test_sch_add_pin
+PASS     | test_schpins_stale_lab_0185
+PASS     | test_scripted_shape_undo
+PASS     | test_select_at
+PASS     | test_select_inside_argc
+PASS     | test_select_same_net_by_label
+PASS     | test_selflog_grep_guard
+FAIL     | test_selflog_output
+PASS     | test_shape_draw_gate
+PASS     | test_shape_setprop_log
+PASS     | test_signal_short_nohier_0230
+PASS     | test_sim_casemode_registry
+PASS     | test_sim_plain_run
+PASS     | test_sim_probe
+PASS     | test_sim_run_profile
+PASS     | test_sky130a_libmgr
+PASS     | test_snap_bindkeys
+PASS     | test_sod_pick_no_select_0204
+PASS     | test_spice_get_node_0861
+PASS     | test_startup_guard_0663
+PASS     | test_statusmsg_hold_0248
+PASS     | test_stdin_tcp_log
+PASS     | test_sweep_diff
+PASS     | test_symbol_view_resolve
+PASS     | test_sympin_drop_log
+PASS     | test_tedax_extra_pinnumber_0179
+PASS     | test_text_view_model
+PASS     | test_toggle_editmode_log
+PASS     | test_transform_keys_remap
+PASS     | test_traversal_flag_leak
+PASS     | test_undo_link_symbols
+PASS     | test_undo_move_keep_selection
+PASS     | test_undo_selection
+PASS     | test_untitled_name_dir_0323
+PASS     | test_untitled_reuse
+PASS     | test_unused_attr_0970
+PASS     | test_vcd_read
+PASS     | test_vcd_time_base
+PASS     | test_verb_noun_copy_move
+PASS     | test_verb_noun_descend_0200
+PASS     | test_verilog_view_model
+PASS     | test_viewer_title
+PASS     | test_vpulse
+PASS     | test_vpwl
+PASS     | test_wave_axis_zoom
+PASS     | test_wave_casemode
+PASS     | test_wave_clear_all
+PASS     | test_wave_crossdb_trace
+PASS     | test_wave_cursor_crossdb
+PASS     | test_wave_drag_preview
+PASS     | test_wave_empty_strips
+PASS     | test_wave_grid
+PASS     | test_wave_hilight
+PASS     | test_wave_legend
+PASS     | test_wave_markers
+PASS     | test_wave_modes
+PASS     | test_wave_sigbrowser
+FAIL     | test_wave_sigbrowser_0312
+PASS     | test_wave_sigbrowser_0315
+PASS     | test_wave_sigbrowser_0318
+PASS     | test_wave_sigbrowser_0319
+PASS     | test_wave_sigbrowser_2pane
+PASS     | test_wave_sigbrowser_digital
+PASS     | test_wave_sigbrowser_i11
+FAIL     | test_wave_sigbrowser_i12
+PASS     | test_wave_sigbrowser_i1315
+PASS     | test_wave_sigbrowser_i14
+FAIL     | test_wave_sigbrowser_keys
+PASS     | test_wave_sigbrowser_panes
+PASS     | test_wave_sigbrowser_sea
+PASS     | test_wave_sigsearch
+PASS     | test_wave_snap
+PASS     | test_wave_split_strip
+PASS     | test_wave_tabs
+PASS     | test_wave_trace_menu
+PASS     | test_wave_viewer
+PASS     | test_wave_viewer_geometry
+PASS     | test_waves_gate
+PASS     | test_window_numbering
+SKIP     | test_window_report
+PASS     | test_window_switch_bogus_enter
+PASS     | test_wire_complete_with_selection
+PASS     | test_wire_split
+PASS     | test_wire_stub_bindings
+PASS     | test_wire_vertex_grab
+PASS     | test_zero_point_pos_at_0852
+PASS     | test_zero_point_raw_0836
+--------- wireedit suite ---------
+test_wireedit_00_selftest.tcl: RESULT: ALL PASS
+test_wireedit_01_stretch_off.tcl: RESULT: ALL PASS
+test_wireedit_02_parallel_stretch.tcl: RESULT: ALL PASS
+test_wireedit_03_perp_lone.tcl: RESULT: ALL PASS
+test_wireedit_04_subgrid.tcl: RESULT: ALL PASS
+test_wireedit_05_tjunction.tcl: RESULT: ALL PASS
+test_wireedit_06_corner_slide.tcl: RESULT: ALL PASS
+test_wireedit_07_colinear_merge.tcl: RESULT: ALL PASS
+test_wireedit_08_overlap_dedup.tcl: RESULT: ALL PASS
+test_wireedit_09_orphan_stub.tcl: RESULT: ALL PASS
+test_wireedit_10_exit_stub.tcl: RESULT: ALL PASS
+test_wireedit_11_two_nets_no_short.tcl: RESULT: ALL PASS
+test_wireedit_12_bus.tcl: RESULT: ALL PASS
+test_wireedit_13_multi_rigid.tcl: RESULT: ALL PASS
+test_wireedit_14_undo.tcl: RESULT: ALL PASS
+test_wireedit_15_far_fixed_pin.tcl: RESULT: ALL PASS
+test_wireedit_16_pin_abutment.tcl: RESULT: ALL PASS
+test_wireedit_17_wire_drag_junction.tcl: RESULT: ALL PASS
+test_wireedit_18_subgrid_corner.tcl: RESULT: ALL PASS
+test_wireedit_19_multipin_exit_stub.tcl: RESULT: ALL PASS
+test_wireedit_20_F1_netlabel_tap.tcl: RESULT: ALL PASS
+test_wireedit_22_F5_no_short.tcl: RESULT: ALL PASS
+test_wireedit_23_F4_body_detour.tcl: RESULT: ALL PASS
+test_wireedit_24_F3_same_edge.tcl: RESULT: ALL PASS
+test_wireedit_25_F8_mos_bundle.tcl: RESULT: ALL PASS
+test_wireedit_26_phase1_runtime_guard.tcl: RESULT: ALL PASS
+test_wireedit_27_phase1_disconnect.tcl: RESULT: ALL PASS
+test_wireedit_28_escape_normal.tcl: RESULT: ALL PASS
+test_wireedit_29_exit_stub_connectivity.tcl: RESULT: ALL PASS
+test_wireedit_30_F2_two_pin_res.tcl: RESULT: ALL PASS
+test_wireedit_31_tapped_leg_connectivity.tcl: RESULT: ALL PASS
+test_wireedit_32_decouple_ownership.tcl: RESULT: ALL PASS
+test_wireedit_33_incremental_step.tcl: RESULT: ALL PASS
+test_wireedit_34_r18_no_short.tcl: RESULT: ALL PASS
+test_wireedit_35_flip_generality.tcl: RESULT: ALL PASS
+test_wireedit_36_both_blocked_detour.tcl: RESULT: ALL PASS
+test_wireedit_37_connected_wire_shove.tcl: RESULT: ALL PASS
+test_wireedit_38_shove_declines.tcl: RESULT: ALL PASS
+test_wireedit_39_p6_min_bend.tcl: RESULT: ALL PASS
+test_wireedit_40_diagonal_shove.tcl: RESULT: ALL PASS
+test_wireedit_41_no_short_offset_solder.tcl: RESULT: ALL PASS
+test_wireedit_42_farpin_never_worse.tcl: RESULT: ALL PASS
+test_wireedit_43_diagonal_fallback_no_short.tcl: RESULT: ALL PASS
+test_wireedit_44_diagonal_manhattan_quality.tcl: RESULT: ALL PASS
+test_wireedit_45_redundant_loop_0088.tcl: RESULT: ALL PASS
+test_wireedit_46_reversal_0089.tcl: RESULT: ALL PASS
+test_wireedit_47_staircase_0090.tcl: RESULT: ALL PASS
+test_wireedit_48_body_cross_0091.tcl: RESULT: ALL PASS
+test_wireedit_49_axis_overshoot_0092.tcl: RESULT: ALL PASS
+test_wireedit_50_regrab_partial_disconnect_0093.tcl: RESULT: ALL PASS
+test_wireedit_51_offpin_foreign_backbone_0094.tcl: RESULT: ALL PASS
+test_wireedit_52_pushthrough_amnesty_0112.tcl: RESULT: ALL PASS
+test_wireedit_53_mixed_selection_safetynet_0113.tcl: RESULT: ALL PASS
+test_wireedit_54_enforce_refuse_named_rail_0105.tcl: RESULT: ALL PASS
+test_wireedit_55_failsafe_counter_b4.tcl: RESULT: ALL PASS
+test_wireedit_56_fluid_pass_harness_d6.tcl: RESULT: ALL PASS
+test_wireedit_57_enforce_preexisting_foreign_short_0123.tcl: RESULT: ALL PASS
+test_wireedit_58_user_hash_label_0162.tcl: RESULT: ALL PASS
+WIREEDIT: ALL PASS
+========================================
+SUMMARY: 364 pass  12 fail  0 crash/timeout  2 skip  (total 378)
+WIREEDIT: PASS
+SCRATCH:  0 leaked dir(s)
+TREE:     0 appeared  0 vanished (report only, gitignored paths excluded; issues 0352/0353)
+========================================
+
+=== FAIL / CRASH / TIMEOUT output ===
+
+###### FAIL: test_altf5_ciw ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok   - action registered / bindable
+ok   - Alt-F5 raises/opens the CIW
+FAIL - un-bound Alt-F5 no longer raises CIW
+ok   - rebound Alt-F5 raises CIW again
+ok   - cadence_style_rc sources
+ok   - cadence F5 forwards Alt-F5 to the C dispatch
+ok   - cadence F5 keeps plain-F5 highlight
+ok   - CYT1 cadence Ctrl-Y is installed and non-empty on .drw
+ok   - CYT2 cadence Ctrl-Y runs the bare `xschem descend_symbol`
+ok   - CYT3 cadence Ctrl-Y did not displace the `i` -> Create Instance steal
+RESULT: FAIL
+
+###### FAIL: test_ase_core ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   R1 default has exactly the 17 schema keys
+ok:   R1 cosim defaults to empty and is omitted from the serialized form
+ok:   R1 a NON-empty cosim IS serialized
+ok:   C2 save_op_params defaults to empty
+ok:   C2 0927 the empty default reads ON
+ok:   C2 0927 an ABSENT key reads ON too (a state written before the key)
+ok:   C2 0927 only an explicit false reads OFF
+ok:   C2 0927 op_gate_value is the one writer: on -> {} (omitted), off -> 0
+ok:   C2 save_op_params is OMITTED from the serialized default state
+ok:   C2 save_op_params sits right after save_all_i in the canonical order
+ok:   C2 save_op_params is in ase::omit_if_empty
+ok:   C3 0927 save_op_params 0 IS serialized (OFF is what costs a key)
+ok:   C3 save_op_params 1 IS serialized too (the key is not write-only)
+ok:   R1 version is 1
+ok:   R1 temperature default 27
+ok:   R1 save_all_v and save_all_i default 0
+ok:   R1 analyses are the four types in order
+ok:   R1 only op enabled by default
+ok:   R2 every key equal after save->load
+ok:   R3 custom_key preserved on load
+ok:   R3 loaded value overrides default (merge over)
+ok:   R3 saved file contains custom_key {hello world}
+ok:   R3 saved file keeps the known value
+ok:   R4 load->save byte-identical
+ok:   B1 ngspice registered, all four hooks resolve to commands
+ok:   D1 golden deck for the nfet state
+ok:   D2 no dc line while dc disabled
+ok:   D2 op renders before tran 1n 1u
+ok:   D3 exactly one .end
+ok:   D3 .end is the last non-blank line
+ok:   D4 custom temperature renders .temp 33.5
+ok:   D4 non-numeric temperature errors cleanly
+ok:   D4 temperature error is the clean ase message
+ok:   D4 missing temperature key still emits .temp 27
+ok:   D5 save_all_v renders .save all
+ok:   D5 .save all precedes the per-output .save
+ok:   D5 save_all_i renders .options savecurrents
+ok:   D5 blankets off leave no blanket lines
+ok:   C0 the S4 op-cards seam exists (0679: the remedy's registry lookup too)
+ok:   C4 empty cache leaves the D1 golden deck byte-identical
+ok:   C5 gate off emits no device save cards
+ok:   C5 gate off emits no op_annot marker line
+ok:   C5 gate off is byte-identical to the D1 golden
+ok:   D6 0929/0964 op+tran: appendwrite once, then analysis/remzerovec/write per analysis, in that order, with the operating point LAST
+ok:   D6 0929 exactly one write per ENABLED analysis, and both name the raw
+ok:   C5b 0928 gate ON but no `op` analysis emits NO device save cards
+ok:   C5b2 0928 no `op` analysis: the walk is never called, a HIT is left, and nothing is echoed
+ok:   C6 the deck still has a .control line
+ok:   C6 exactly one op_annot marker line
+ok:   C6 the block sits VERBATIM in the lines immediately above .control
+ok:   C6 the marker line is the line immediately above the block
+ok:   C6 all three cards land ABOVE .control (deck level)
+ok:   C6 the per-output .save row is still emitted, ahead of the block
+ok:   C7 a stale/absent cache emits no device save cards
+ok:   C7 a stale/absent cache emits no marker line
+ok:   C7 the miss is REPORTED as an error naming Netlist and Run
+ok:   C8 gate on adds exactly one .save all line (I2 / rule R2)
+ok:   C8 that .save all precedes the first device card
+ok:   C9 no emitted card wears an i()/v() wrapper
+ok:   C10 an empty walk is REPORTED (no device produced a card)
+ok:   C10 an empty block appends nothing
+ok:   C10 an empty block appends no marker line
+ok:   C10 an empty HIT is NOT reported as a stale cache
+ok:   C11 design_is_dirty agrees with xschem get modified (clean)
+ok:   C11 design_is_dirty agrees with xschem get modified (dirty)
+ok:   C11 design_is_dirty back to 0
+FAIL: C11 no untitled~.sch was dropped in the repo root (issue 0609) -> {1} (exp {0}) : FAIL
+ok:   C12 a dirty sheet never reaches op_annot::save_cards
+ok:   C12 a dirty sheet leaves the cache empty
+ok:   C12 the refusal is reported and names the unsaved edits
+ok:   C12 the refusal points at the open ruling (issue 0632)
+ok:   C12 the deck carries no device cards after a refusal
+ok:   C13 0635 the dirty refusal still names the unsaved edits
+ok:   C13 0635 and NO contradicting Netlist-and-Run sentence follows it
+ok:   C13 0635 exactly ONE save-card sentence reaches the user
+ok:   C13b 0635 the refusal leaves a HIT for this netlist text
+ok:   C13b ...whose block is still EMPTY (C12's claim survives)
+ok:   C13 the deck still carries no device cards after a refusal
+ok:   C13c 0635 a save_cards RAISE is reported, naming the failure
+ok:   C13c 0635 a save_cards RAISE also leaves a HIT
+ok:   C13c 0635 and no contradicting Netlist-and-Run sentence follows it
+ok:   C13c exactly ONE save-card sentence reaches the user
+ok:   C13d 0635 NON-VACUITY a DIFFERENT netlist text is still reported (C7 stands)
+ok:   D6 pre_ command rendered with its $::VAR expanded
+ok:   D6 pre_ commands sit inside .control, ahead of the analyses
+ok:   D6 both entries rendered, in order
+ok:   D6 a bare-string entry renders verbatim
+ok:   D6 no pre_ line when the state has none
+ok:   D6 pre_commands is in the canonical schema order
+ok:   P1 result_probe keys unnamed outputs by expr
+ok:   P1 named output still keyed by name
+ok:   F0 gate defaults to 1
+ok:   F1 1.04e-4 -> 104u
+ok:   F1 4.096837e-4 -> 409.7u
+ok:   F1 1e-3 -> 1m
+ok:   F1 27 -> 27
+ok:   F1 1.5e6 -> 1.5Meg
+ok:   F1 0 -> 0
+ok:   F1 negative keeps sign (-1.04e-4 -> -104u)
+ok:   F1 sub-unity gets a suffix (0.5 -> 500m)
+ok:   F1 mantissa rounding rolls over (999.96e-6 -> 1m)
+ok:   F1 sub-femto clamps to f (5e-16 -> 0.5f)
+ok:   F1 clamp edge (1e-18 -> 0.001f)
+ok:   F1 exponent-form unity (1.000000e+00 -> 1)
+ok:   F1 plain decimal unchanged (1.8 -> 1.8)
+ok:   F2 1e15 falls back to %g
+ok:   F2 9e-19 falls back to %g
+ok:   F3 expression verbatim (vdd/2)
+ok:   F3 blank verbatim
+ok:   F3 already-suffixed verbatim (1k)
+ok:   F4 gate off returns raw (set ::ase_eng_notation 0 -> 1.04e-4)
+ok:   F4 gate restored -> 104u again
+ok:   N1 design window bound before the first netlist (0698)
+ok:   N1 netlist path
+ok:   N1 netlist file exists
+ok:   N1 netlist contains XM1
+ok:   N1 netlist has no .control
+ok:   N1 netlist has no .lib
+ok:   N1 last non-blank netlist line is .end
+ok:   N2 empty rundir falls back to netlist_dir
+ok:   N2 default rundir was created
+ok:   E1a ngspice exit code 0
+ok:   E1a deck file written
+ok:   E1b log file exists, non-empty, has data rows
+ok:   E1c parsed Id within 1e-3 of 4.096837e-04
+ok:   E1d user callback fired
+ok:   E1e the log opens with a run banner naming the cell
+ok:   E1e the header carries simulator, command, directory and deck
+ok:   E1f the log closes with the exit code and the elapsed seconds
+ok:   E1g the simulator's region is BYTE-IDENTICAL to execute(data,last)
+Proc execute error: couldn't execute "ase_definitely_missing_binary_xyz": no such file or directory
+ok:   E2 missing binary raises an error
+ok:   E2 error is the clean ase message
+ok:   E2b 0618 a failed LAUNCH still leaves a log, and it is header-only
+ok:   E3 unknown simulator raises an error
+ok:   E3 error mentions nosuchsim
+ok:   E4 the empty run exits non-zero
+ok:   E4 0618 a run with NO output still has a header, a delimiter and a footer
+ok:   E4 0618 and the simulator's own region is EMPTY, not absent
+ok:   E4b 0618 run_done still accepts THREE arguments (test_ase_cosim's shape)
+ok:   E4b 0618 with no metadata the file is execute(data,last), byte for byte
+ok:   NT0 0650 the ::xschem NAMESPACE and the `xschem` COMMAND coexist
+ok:   NT1 0650+0658+0665 xschem::notify and every named callee exist
+ok:   NT2 0653 R-0653-a ::notify_style defaults to `ciw` at source time
+ok:   NT3 0653 I5 the style is read at CALL time: setting ::notify_style popup after the proc was defined selects the popup sink on the very next notice
+ok:   NT4 0650 ONE xschem::notify produces EXACTLY ONE ::ciw_echo call, with the message byte-identical
+ok:   NT5 0650 xschem::notify {} still echoes ONE blank pane line
+ok:   NT6 0650 a trailing backslash is NOT padded in the pane copy
+ok:   NT7 0650 -tag error reaches ::ciw_echo tagged `error`; the default tag is {}
+ok:   NT8 0653 R-0653-d -menu and -command are DISTINCT fields in ::xschem::notify_last, and the rendered line carries both
+ok:   NT9 0654 notify_short caps a 300-char message at exactly 28 chars ending `...`
+ok:   NT10 0654 notify_short returns an explicit -short verbatim when it fits, and collapses newlines/tabs to spaces
+ok:   NT11 0653 R-0653-c the latch is keyed on (subject, STATE), not on subject alone: take, hold, and a DIFFERENT state still speaks
+ok:   NT12 0653 rearm gives back EXACTLY ONE turn, and reset frees ONE subject (subject B's held key stays held)
+ok:   NT13 0653 a suppressed -once/-state notice returns 0 and reaches NO sink
+ok:   NT14 0650 headless: no sink raises, and neither Tk-only sink is claimed
+ok:   NT15 0650 a notice leaves `xschem get statusmsg` and statusmsg_hold untouched (the rejected .statusbar.1 sink stays rejected)
+ok:   NT16 0658 R3 the LIVE ::xschem::notify is the FOUR-SINK one, not the bootstrap: it raises on an unknown option, names both Tk sinks in its body, keeps -menu/-command as distinct fields, and its body differs from notify_bootstrap's
+xschem: NOTICE CHANNEL DEGRADED: no durable log is open (--nolog, or --nogui with no --logdir), so notices reach STDERR ONLY from here on (no CIW pane, no status field, no popup, no remedy). Cause: invalid command name "::xschem::notify"
+xschem: NT17 the notification channel is gone and this notice must still be made
+ok:   NT17 0658 R1/R2 with ::xschem::notify RENAMED AWAY, ase::echo still reaches the bootstrap: it does not raise, and notify_last is FRESH FOR THIS CALL with no short form, no remedy and an HONEST (empty, --nolog) sink list
+xschem: NT18 the waveform viewer delegate must reach the durable log too
+ok:   NT18 0658 R2 with the channel gone wviewer::echo reaches the bootstrap too, with its own fresh witness
+ok:   NT19 0658 I1: notify_bootstrap is STRICTLY SMALLER than notify and names none of the sinks/policies it deliberately lacks, and BOTH delegates call the ONE shared notify_safe body
+ok:   NT20 0658 the REAL state-keyed latch still wins over the bootstrap's degenerate always-1 one (a second identical (subject,state) is suppressed)
+xschem: NOTICE CHANNEL FAULT: NT21 a simulated bug inside the channel itself. Measured: the live xschem::notify is the full channel, not the log-only fallback. NOT measured, and therefore NOT claimed: which sinks any later notice reaches -- if this cause persists, later notices can keep missing a sink with no further word.
+xschem: NT21 the channel itself is broken and the notice must survive that
+ok:   NT21 0658 a channel that RAISES (a real bug inside notify) is caught, falls back to the bootstrap, never propagates, and records THIS notice
+ok:   NT22 0665 the channel RECORDS WHAT IT DID in a namespace variable that SURVIVES the unwind: with notify_record gone it raises at its LAST statement and the record still names the sink that had already fired
+note: NT22 record after the raise = {ciw}
+note: NT22 raise message = {invalid command name "xschem::notify_record"}
+ok:   NT23 0665 the record is RESET at notify's FIRST statement, before option parsing and before the latch gate: a raise in OPTION PARSING leaves an EMPTY record, never the previous call's
+ok:   NT24 0664 the degradation claim is a MEASUREMENT, not an assumption: the LIVE four-sink channel reads 0, an ABSENT ::xschem::notify reads 1, and the bootstrap wrapper INSTALLED (never called) reads 1
+xschem: NOTICE CHANNEL FAULT: invalid command name "xschem::notify_record". Measured: the live xschem::notify is the full channel, not the log-only fallback. NOT measured, and therefore NOT claimed: which sinks any later notice reaches -- if this cause persists, later notices can keep missing a sink with no further word.
+xschem: NT25 the channel raised AFTER delivering and that is not a degradation
+ok:   NT25 0664 a raise AFTER the sinks fired is a FAULT, not a degradation: the LOG-ONLY claim is NOT made while the four-sink channel is alive, and the degraded latch is left unburnt for the state that really needs it
+xschem: NOTICE CHANNEL DEGRADED: no durable log is open (--nolog, or --nogui with no --logdir), so notices reach STDERR ONLY from here on (no CIW pane, no status field, no popup, no remedy). Cause: invalid command name "::xschem::notify"
+xschem: NT26 the channel is genuinely gone and must say so
+ok:   NT26 0664 the GENUINE degradation still announces itself after NT25's fault -- a false positive must never eat the real announcement
+xschem: notice channel unavailable: invalid command name "::xschem::notify_safe"
+xschem: notice channel unavailable: invalid command name "::xschem::notify_safe"
+ok:   NT27 0666 neither delegate RAISES INTO ITS CALLER when notify_safe is gone, and the 0 they return is TRUE -- the witness is byte-identical before and after, so nothing was delivered and nothing pretends it was
+ok:   NT28 0666 BOTH delegates carry the guarantee in their own body (a catch and a last-resort stderr line), not merely by NT27's grace
+ok:   NT29 0665 I1 ONE ACCOUNT: after a healthy notice the surviving record IS the witness's own `sinks` list, so the two cannot drift
+note: NTD ok  status = {0}
+note: NTD bad status = {0}
+ok:   NTD1 0658 a child on a NORMAL share farm exits 0, its durable log carries the notice, and it announces NO degradation
+ok:   NTD7 0658 the broken farm really loses ciw.tcl (::ciw_echo present on the normal farm, ABSENT on the broken one)
+ok:   NTD2 0658 R1 a child whose ciw.tcl FAILS TO SOURCE still starts (exit 0, not SIGSEGV) and ase::echo's line IS in the durable log
+ok:   NTD3 0658 R2 the same degraded child writes wviewer::echo's line to the durable log too
+ok:   NTD4 0658 R4 the degraded-state announcement appears EXACTLY ONCE in the whole log, while all five volume notices are still logged
+ok:   NTD5 0658 in the degraded child notify_latch_ok answers 1 and rearm/reset do not raise, so ase::op_cards_nudge_* survives
+ok:   NTD6 0658 the degraded child SAYS SO and names ciw.tcl as the cause (a caught source is not a silent continue)
+note: NTD8 child status = {0}
+ok:   NTD8 0665 R1 with notify_record renamed away the channel raises at its LAST statement, after every sink -- and ONE ase::echo leaves EXACTLY ONE durable line in a session whose channel is demonstrably ALIVE
+ok:   NTD9 0664/0665 G1+G5 the notice made with the channel ENTIRELY GONE still leaves exactly one durable line, exactly ONE degradation is announced and it names the MISSING COMMAND, and the late raise is announced separately as a FAULT
+note: NTD9 the DEGRADED line = {#! NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW pane, no status field, no popup, no remedy). Cause: invalid command name "::xschem::notify"}
+note: NTD9 the FAULT line = {#! NOTICE CHANNEL FAULT: xschem::notify raised AFTER delivering to {ciw log}: invalid command name "xschem::notify_record". Measured: the live xschem::notify is the full channel, not the log-only fallback. NOT measured, and therefore NOT claimed: which sinks any later notice reaches -- if this cause persists, later notices can keep missing a sink with no further word.}
+ok:   NTD10 0666 with the WHOLE ::xschem namespace deleted at RUNTIME neither delegate raises into its caller: the child exits 0, the session survives, both answer {0 0} -- rc 0 and an honest 0 sinks -- and the last resort says so on stderr
+note: NTD11 child status = {0}
+ok:   NTD11 0664 a ciw.tcl that fails at its END leaves the channel FULLY LIVE: the four-sink notify and ::ciw_echo are both there, the notice reaches the durable log, and the startup failure is announced as a FAULT NAMING ciw.tcl -- never as the LOG-ONLY degradation claim, which would be false in every clause
+ok:   NTD12 0664 G5 the FAULT does NOT burn the degraded latch: when the same child then loses the channel for real, the LOG-ONLY announcement fires exactly once and names the MISSING COMMAND
+note: NTD12 the DEGRADED line = {#! NOTICE CHANNEL DEGRADED: notices are LOG-ONLY from here on (no CIW pane, no status field, no popup, no remedy). Cause: invalid command name "::xschem::notify"}
+note: NTD12 the FAULT line = {#! NOTICE CHANNEL FAULT: src/ciw.tcl failed to source: 0664 deliberate failure at the END of ciw.tcl. Measured: the live xschem::notify is the full channel, not the log-only fallback. NOT measured, and therefore NOT claimed: which sinks any later notice reaches -- if this cause persists, later notices can keep missing a sink with no further word.}
+RESULT: 1 FAILED (181 passed)
+
+###### FAIL: test_ase_window ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   H1 design lib
+ok:   H1 design cell
+ok:   H1 design view points at the schematic
+ok:   H1 fresh session not dirty
+ok:   H2 dirty after update
+ok:   H2 saved file contains the new Vgs value
+ok:   H2 clean after save
+ok:   H3 dirty after second update
+ok:   H3 revert restores the saved variables
+ok:   H3 clean after revert
+ok:   H3 session_load re-reads the file from disk
+ok:   H4 existing view -> 1
+ok:   H4 session registered by open_state
+ok:   H4 missing view throws no error
+ok:   H4 missing view -> 0
+ok:   H5 allocator returns integers
+ok:   H5 second call == first+1 (counter advances)
+ok:   H5 numbers start at/after the editor floor (>= 3)
+ok:   H6 backend_names contains ngspice
+ok:   T1 run_existing without a netlist artifact raises
+ok:   T1 error points at Netlist > Recreate
+ok:   P2 output_display_name prefers the user name
+ok:   P2 unnamed short expr shown whole
+ok:   P2 unnamed long expr truncated to 21+...
+ok:   P2 truncated form is exactly 24 chars
+ok:   P3 output_kind v(net) -> voltage
+ok:   P3 output_kind -i(v1) -> current
+ok:   P3 save_options_cell voltage+save_all_v -> allv
+ok:   P3 current+save_all_i -> alli
+ok:   P3 blanket off -> blank
+ok:   P4 arg_summary dc row
+ok:   W1 open_state -> 1
+ok:   W1 window_for returns a live toplevel
+ok:   W1 toplevel named .ase<N>
+ok:   W1 v2 title Analog Sim Environment <design cell>
+ok:   W1 no log pane in the session window
+ok:   W1 temperature entry shows 27
+ok:   W1 toplevel panel background #f2f2f2
+ok:   W1 named fonts exist
+ok:   W1 pane title dark-red accent
+ok:   W1 temperature entry white + AseEntryFont
+ok:   W1m menubar cascades in order
+ok:   W1m Launch cascade disabled
+ok:   W1m Tools cascade NOT disabled
+ok:   W1m Tools menu entries
+ok:   W1m Tools Waveform Viewer NOT disabled
+ok:   W1m Tools Waveform Viewer command
+ok:   W1m Tools Calculator NOT disabled (item 13: live)
+ok:   W1m Tools Calculator command is the bare calc::open
+ok:   W1m2 0930 the menu-pick log interceptor is installed AND an ASE-L menubar pick routes through it, carrying the entry's own command
+ok:   W1m Results Direct Plot NOT disabled (item 13: live)
+ok:   W1m Results Direct Plot has a command
+ok:   W1a1 both Annotate entries are checkbuttons, not commands
+ok:   W1a2 they are wired to the session-keyed ticks and to ase::ui::annot_apply
+ok:   W1a3 the Annotate submenu re-derives on open (-postcommand)
+ok:   W1a4 both are BUILT -state disabled (nothing is live before the predicate is asked)
+ok:   W1a18 issue 0868: a THIRD Annotate entry, a checkbutton on the session-keyed tick, built disabled
+ok:   W1a18b the Annotate submenu carries exactly these three entries, in this order
+ok:   W1m Simulation menu entries
+ok:   W1m Netlist cascade entries
+ok:   W1m Session menu entries (v2, no Revert)
+ok:   W1r 0653 R-0653-d the Outputs cascade and its Save All entry are built FROM the shared label constants (live widget == constant)
+ok:   W1u 0653 R-0653-d the Save All dialog's OP-parameters checkbutton is built FROM the shared constant, parenthetical included
+ok:   W1t 0653 R-0653-d REQ 2: the printed menu path is exactly the three LIVE labels, in order -- no dropped ellipsis, no missing cascade level
+ok:   W1v2 0679 the printed remedy names a key the session is REGISTERED under (the state view), not the design view it was built from
+ok:   W1v 0679 THE USER'S GESTURE: pasting the printed remedy leaves the LIVE Outputs > Save All checkbutton TICKED (read off the widget's own -variable, never from the remedy's return value)
+ok:   W1w 0679 THE MENU'S OWN OK PATH REPORTS THE SAME TRUTH: OK on a session that is gone returns 0 and says so exactly once; OK on a live one returns 1 and says nothing -- and both still close the dialog
+ok:   W1x 0692 THE OTHER ORDER: a Save All dialog opened BEFORE the printed remedy and OK'd after it must NOT write its stale snapshot back -- the gate the remedy turned on is still on, and the checkbutton the user is looking at agrees with it (3rd term = 0695, flipped from its pinned 0)
+ok:   W1y 0692 NON-VACUITY: with no external write at all, a box ticked BY HAND in the open dialog still commits on OK, and a hand un-tick still turns it back off
+ok:   W1z 0692 the OK reconcile is PER-FIELD: the box the user ticked by hand wins AND the box an external write moved behind the dialog survives, in one OK, with the untouched third blanket left exactly as it was
+ok:   W1za 0692 THE ESC ARM: a dialog whose boxes the user never touched emits NO discard notice and re-arms NO nudge when an EXTERNAL write moved the gate behind it (and the gate stays on) -- while a REAL hand tick dropped by the same gesture is still reported exactly once, naming the box
+ok:   W1za2 0692 the W1za latch precondition, so its `no re-arm` term cannot pass on a dead latch: take, hold, and the HAND arm really does re-arm
+ok:   W1zc 0695 THE OTHER EXTERNAL WRITER: a `Session > Load State` behind an open Save All must MOVE the checkbuttons it moved -- the OP gate box down AND the `Save all voltages` box up -- and OK must then write exactly what those boxes are showing
+ok:   W1zc2 0695 acceptance row 4: what OK wrote EQUALS what the checkbutton was displaying when it was pressed
+ok:   W1zf 0695/0696 an external write that MOVES a box is not a hand tick: neither the touched set nor the discard set names a field the user never touched
+ok:   W1zd 0696 THE ESC ARM STOPS LYING: a box the user ticked BY HAND that an external write ALSO set to the same value is NOT reported as discarded and does NOT re-arm the OP-card nudge -- the gate is on, and it stays on
+ok:   W1ze 0695 A FOLLOWED BOX THE USER THEN TICKS BACK BY HAND STILL WINS: the box follows the import down, the user ticks it back up, and OK writes the tick -- a `touched` defined as a diff against the as-opened value loses it silently
+ok:   W1zg 0695 the session-notify hook is the ONE seam the follow hangs off, and the refresh it must call is a real proc
+ok:   W1zb 0695 record hygiene: save_all_close leaves NO dlg record for this key -- allv, alli, opparams AND the touched set -- and no as-opened seed record is created in the first place
+ok:   W1p exactly the three v2 panes
+ok:   W1p no inline add/del buttons under the panes
+ok:   W1p variables columns
+ok:   W1p analyses columns
+ok:   W1p outputs columns
+ok:   W1p analyses rows numbered 1..4
+ok:   W1p variables pane has a Vgs row
+ok:   W1p Vgs row shows 1.8
+ok:   W1p outputs pane has the id row
+ok:   W1p id output row Value blank pre-run
+ok:   W1p id Save Options blank while blankets off
+ok:   W1p treeview themed (style Ase.Treeview)
+ok:   W1p heading strip carries the locked header color
+ok:   W1s strip buttons in order
+ok:   W1s plot button normal (item 13: ~ live)
+ok:   W1c vars context menu entries
+ok:   W1c ana context menu entries
+ok:   W1c outs context menu entries
+ok:   W2 re-open returns 1
+ok:   W2 same toplevel
+ok:   W2 still exactly one .ase* toplevel
+ok:   W2 no number consumed by the re-open (delta == the probe only)
+ok:   W3 double-click opens the variable editor
+ok:   W3 editor prefilled with the row name
+ok:   W3 editor prefilled with the row value
+ok:   W3 editor closed on Return
+ok:   W3 title gained the dirty marker
+ok:   W3 session dirty after widget commit
+ok:   W3 tree shows 2.2
+ok:   W3 saved file contains the widget's value
+ok:   W3 dirty marker gone after save
+ok:   W3 session clean after save
+ok:   W3 Vgs restored to 1.8 + saved
+ok:   W3t session dirty after temperature commit
+ok:   W3t status bar carries T=33 C
+ok:   W3t saved file contains temperature 33
+ok:   W3t non-numeric input keeps the stored temperature
+ok:   W3t entry restored after invalid input
+ok:   W3t temperature restored + saved
+ok:   W3s variables row selected
+ok:   W3s selecting in outputs clears the variables selection
+ok:   W3c analyses pane has the dc row
+ok:   W3c click toggles dc enabled in state
+ok:   W3c save persists the toggle
+ok:   W3c second click + save restores enabled 0
+ok:   W3v = opens the Add Variable dialog
+ok:   W3v add dialog closed on Return
+ok:   W3v tmpA in the tree
+ok:   W3v tmpA in the session state
+ok:   W3v tmpB added too
+ok:   W3v duplicate name rejected (state unchanged)
+ok:   W3v duplicate add keeps the dialog up
+ok:   W3v cancel closes the dialog
+ok:   W3x X removed both rows from the state
+ok:   W3x survivors intact
+ok:   W3x X with empty selection is a clean no-op
+ok:   W3o id row Save Options shows alli
+ok:   W3o blanket off -> Save Options blank again
+ok:   W3o session clean after the round trip
+ok:   W3e add-variable 1.04e-4 shows 104u in the pane
+ok:   W3e session state keeps the raw value
+ok:   W3e saved state file stores the raw value
+ok:   W3e saved state file has no formatted value
+ok:   W3e gate off shows the raw scientific value
+ok:   W3e gate back on shows 104u again
+ok:   W3e double-click opens the variable editor
+ok:   W3e editor prefill is the RAW value
+ok:   W3e cleanup leaves the session clean
+ok:   W3e cleanup restored the seeded variables
+ok:   W4 design is now the current schematic
+ok:   W4 window list has the design schematic
+ok:   W4 design toplevel raised above the ASE window
+ok:   W1a5f fixture: the design's window path resolved
+ok:   W1a5 no results: the postcommand DISABLES both entries (poisoned to normal first)
+ok:   W1a6 no results: the entry is disabled AND invoking it moves no mask
+ok:   W1a7 results present: the postcommand ENABLES both entries (poisoned to disabled first)
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a8 ticking OP info sets bit0 and PRESERVES bit1 (2 -> 3)
+ok:   W1a9 unticking it clears bit0 and still preserves bit1 (3 -> 2): the off-ramp
+ok:   W1a10 mask 2 is reachable from ASE-L (the three chords cannot make it)
+ok:   W1a11 PULL: design mask 1 -> the ticks re-derive to {1 0} over a 9/9 poison
+ok:   W1a12f fixture: the decoy tab is a foreign, CURRENT context
+ok:   W1a12 FOREIGN PULL: the ticks report the DESIGN's mask (1), not the current one's (3)
+ok:   W1a13 FOREIGN PUSH: the DESIGN's mask gains bit1, the decoy's is untouched
+ok:   W1a14 unreachable design: NO context's mask moves, and the tick snaps back
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a15 ticking a bit ON attaches the session's raw when the design has none
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_sentinel.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a16 the invoke ran (mask -> 2) AND a loaded database is never thrown away
+ok:   W1a19 the postcommand enables and disables ALL THREE entries by ase::has_results
+ok:   W1a20 PULL: a design mask of 4 re-derives the ticks to 0 0 1, and 6 to 0 1 1, over a 9/9/9 poison
+ok:   W1a21 PUSH: ticking the third entry calls cadence::annot_tran and composes NO mask of its own
+ok:   W1a22 unticking the third entry clears bit2 and PRESERVES the other two (6 -> 2, 5 -> 1)
+ok:   W1a23 a REFUSED transient annotation leaves the mask alone and snaps the tick back
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a24 issue 0684: a finished run repaints the schematic's numbers by itself, with the tick already on and no further gesture
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+free_rawfile(): clearing data
+free_rawfile(): clearing data
+raw_read(): no useful data found
+extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw not found or no "op" analysis
+free_rawfile(): clearing data
+raw_read(): no useful data found
+extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw not found or no "dc" analysis
+free_rawfile(): clearing data
+raw_read(): no useful data found
+extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw not found or no "tran" analysis
+ok:   W1a25 issue 0684: a finished run whose results cannot be read blanks the numbers and says so exactly once
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_sentinel.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a26 issue 0684: the fix does not change what the tick does to an empty design, nor to a database the user loaded from somewhere else
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0684_foreign.raw
+points=2, vars=2, datasets=1 sim_type=tran
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a27 issue 0684 defect B: an unrelated waveform graph no longer leaves the tick a dead control
+free_rawfile(): clearing data
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+free_rawfile(): clearing data
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_91404/a0682_session.raw
+points=1, vars=2, datasets=1 sim_type=op
+ok:   W1a28 issue 0684: a run finishing while ANOTHER schematic is in front repaints the design's numbers, leaves the foreign tab holding nothing, and gives the user back the window they were looking at
+free_rawfile(): clearing data
+ok:   W1a29 landmine 17: when the context switch is silently refused the refresh declines instead of writing the numbers into whichever schematic happens to be in front
+ok:   W1a17 teardown: decoy gone, design current, no raw attached, mask 0, predicate real
+ok:   W5 Recreate produced the netlist artifact
+ok:   W5 netlist textwindow opened (titled with the path)
+ok:   W5 netlist viewer shows the device line (XM1)
+ok:   W6 run started (integer execute id)
+ok:   W6 log toplevel appears
+ok:   W6 status orange while running
+ok:   W6 status text Running
+ok:   W6 log window non-empty
+ok:   W6 log window has the Data Rows banner
+ok:   W6 log window has the -i(v1) result line
+ok:   W6 status light Green on success
+ok:   W6 status text back to Ready
+ok:   W6 log file written in the scratch rundir
+ok:   W6 deck contains .temp 27
+ok:   W6 id row Value filled after run
+ok:   W6m0 decoy tab makes the design NOT the current schematic
+ok:   W6m1 Netlist and Run does NOT unmap the design toplevel
+ok:   W6m2 the run still made the design the current schematic
+ok:   W6m3 the run started from a foreign context (integer id)
+ok:   W6m3 the run from a foreign context exited 0
+ok:   W6m4 design toplevel still mapped/normal after the run (weak row)
+ok:   W6m5 the run brings the BURIED design window back to the front
+ok:   W6m6 Session > Design Window still re-maps the design toplevel
+ok:   W6m7 a HIDDEN design toplevel is still re-mapped
+ok:   W6m8 decoy tab torn down, design current, window list back to pre-leg
+ok:   W6b run-existing started
+ok:   W6b run-existing exit 0
+ok:   W6b netlist artifact still carries the sentinel
+ok:   W6b deck carries the sentinel
+ok:   W6c log toplevel open before Ctrl-W
+ok:   W6c Ctrl-W destroyed the log window
+ok:   W6c Simulation > Log reopened the window
+ok:   W6c reopened log shows the log file content
+ok:   W7 long tran started
+FAIL: W7 simulator produced output before Stop -> {0} (exp {1}) : FAIL
+ok:   W7 nonzero exit after Stop
+ok:   W7 status light red after Stop
+ok:   W7 status text Error after Stop
+ok:   W7 execute pipe cleaned up
+ok:   W7 revert leaves the session clean
+ok:   W7v Tools > Waveform Viewer opened a viewer toplevel
+ok:   W7v the viewer is a toplevel
+ok:   W7v second invoke raises the SAME viewer
+ok:   W7v no second viewer window
+ok:   W7v Calculator invoke does not throw
+ok:   W7v Calculator invoke opened .calc
+ok:   W7v ...and it is a NEW toplevel, not one that was already there
+ok:   W7v Calculator closed again, toplevel set back as it was
+ok:   W7v viewer closed, registry clean
+ok:   W8 toplevel destroyed
+ok:   W8 window_for now empty
+RESULT: 1 FAILED (227 passed)
+
+###### FAIL: test_cadence_drag ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   fixture has instances
+ok:   plain click selects instance 0
+ok:   Shift+drag duplicates the instance (copy)
+ok:   forced intuitive: plain drag moves the instance (intuitive_interface=0)
+fluid_editing INVARIANT (P2): net label 'VCC' (l5) on net 'A' -- possible short/merge
+fluid_editing INVARIANT (P1): 3 instance pin(s) changed net partition after move -- possible disconnect
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 1,3 were on distinct nets ('B','VCC'), now both on 'A' after move -- device short/merge
+ok:   plain drag moves the gate
+ok:   plain drag carries attached wires (enable_stretch=0)
+fluid_editing INVARIANT (P1): 6 instance pin(s) changed net partition after move -- possible disconnect
+fluid_editing INVARIANT (P2 device): instance 'm1' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 1,3 were on distinct nets ('B','VCC'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P1): net label 'VCC' (l5) was on copper at move START and now touches none -- stranded, its net reverts to an auto #net name
+ok:   Ctrl+drag moves the gate
+FAIL: Ctrl+drag leaves wires behind (detached)
+ok:   Ctrl+drag is a move not a copy (count unchanged)
+fluid_editing INVARIANT (P1): 6 instance pin(s) changed net partition after move -- possible disconnect
+fluid_editing INVARIANT (P2 device): instance 'm1' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 1,3 were on distinct nets ('B','VCC'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P2 device): instance 'm2' pins 0,1 were on distinct nets ('Z','A'), now both on 'A' after move -- device short/merge
+fluid_editing INVARIANT (P1): net label 'VCC' (l5) was on copper at move START and now touches none -- stranded, its net reverts to an auto #net name
+ok:   non-cadence plain drag still moves the gate
+FAIL: non-cadence plain drag leaves wires behind (enable_stretch=0 stock)
+ok:   abutment fixture starts with no wire
+ok:   plain cadence drag of abutted pin GENERATES a connecting wire
+ok:   no-motion click on abutted instance leaves no stub wire
+ok:   no-motion click on abutted (kissing) instance stays selected
+ok:   Shift+copy after a no-kiss click draws no spurious wire
+ok:   Shift+copy still duplicated the instance
+ok:   cadence click-to-isolate still leaves exactly one selected
+RESULT: 2 FAILED
+
+###### FAIL: test_cosim_golden_e2e ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   GG1-golden-file-present (/home/analog/dev/xschem-claude/tests/headless/fixtures/cosim_e2e_counter.golden)
+ok:   GG2-golden-record-count (got '72' want '72')
+ok:   GG3-golden-parses-cleanly (badlines=0 records=72)
+ok:   GG4-golden-signals (got 'TOP.counter.carry TOP.counter.half TOP.counter.next_count TOP.counter.phase TOP.counter.prev TOP.counter.tc' want 'TOP.counter.carry TOP.counter.half TOP.counter.next_count TOP.counter.phase TOP.counter.prev TOP.counter.tc')
+ok:   GG5-golden-has-no-ports (TOP.counter.phase TOP.counter.half TOP.counter.tc TOP.counter.carry TOP.counter.prev TOP.counter.next_count)
+ok:   GG10-identical-is-empty (72 records)
+ok:   GG11-one-corrupted-value-is-reported (got '1' want '1')
+ok:   GG11b-and-the-report-names-it ({VALUE TOP.counter.phase 50012 got 2 want 1})
+ok:   GG12-a-missing-record-is-reported (got '1' want '1')
+ok:   GG12b-missing-is-labelled-MISSING ({MISSING TOP.counter.next_count 1950011 (golden says 5)})
+ok:   GG13-an-extra-record-is-reported (got '1' want '1')
+ok:   GG13b-extra-is-labelled-EXTRA ({EXTRA TOP.counter.ghost 12345 (= 1)})
+ok:   GG14-a-moved-edge-is-reported (got '2' want '2')
+ok:   GG14b-moved-is-one-MISSING-and-one-EXTRA ({MISSING TOP.counter.phase 50012 (golden says 1)} {EXTRA TOP.counter.phase 50019 (= 1)})
+ok:   GG15-empty-measurement-is-not-a-pass (got '72' want '72')
+ok:   GE1-rundir (got '/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run' want '/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run')
+ok:   GE2-netlist-written (/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/tb_counter_wrapper.spice)
+ok:   GE3-deck-has-the-d_cosim-card 
+ok:   GE4-one-code-block (got '1' want '1')
+ok:   GE5-map-cell (got 'counter' want 'counter')
+ok:   GE6-map-module (got 'counter' want 'counter')
+ok:   GE7-map-vfile (got '/home/analog/dev/xschem-claude/xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v' want '/home/analog/dev/xschem-claude/xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v')
+ok:   GE8-map-not-multi (got '0' want '0')
+ok:   GE9-map-vcd (got 'tb_counter_wrapper_counter.vcd' want 'tb_counter_wrapper_counter.vcd')
+ok:   GE10-artifact-cleared (exists=0 gone='/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/tb_counter_wrapper_counter.vcd' vcd=/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/tb_counter_wrapper_counter.vcd)
+ok:   GE11-trace-policy-is-on (got '1' want '1')
+ok:   GE12-build-script-found (got '/home/analog/dev/xschem-claude/tools/cosim/build_cosim_so.sh' want '/home/analog/dev/xschem-claude/tools/cosim/build_cosim_so.sh')
+ok:   GE13-no--t-on-any-build-path 
+ok:   GE14-build-status (got 'built' want 'built')
+ok:   GE15-so-produced (/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/counter.so)
+ok:   GE16-stamp-says-trace-1 (src /home/analog/dev/xschem-claude/xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v trace 1 src_mtime 1788281815 src_size 1964 tool_mtime 1788281815 tool_size 5159 shim_mtime 1788281815 shim_size 13919
+)
+ok:   GE17-sim_args-rewritten (.model counter d_cosim simulation="./counter.so" sim_args=["tb_counter_wrapper_counter.vcd"] delay=0)
+ok:   GE18-ngspice-ran (see /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/ngspice.log)
+ok:   GE19-no-xspice-desync 
+ok:   GE20-both-artifacts-exist (raw=1 vcd=1)
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/tb_counter_wrapper_ase.raw
+points=200386, vars=13, datasets=1 sim_type=tran
+VCD data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_93288/run/tb_counter_wrapper_counter.vcd
+points=80, vars=29, datasets=1, timescale=1e-12 s
+ok:   GE21-two-dbs (got '2' want '2')
+ok:   GE22-analog-is-current (got 'tran' want 'tran')
+ok:   GE23-internal-is-not-in-the-raw 
+ok:   GE23b-a-port-IS-in-the-raw 
+ok:   GE24a-vcd-is-current (got 'vcd' want 'vcd')
+ok:   GE24b-measured-record-count (got '72' want '72')
+FAIL: GE24-matches-the-golden (6 difference(s): MISSING TOP.counter.next_count 1950011 (golden says 5) | MISSING TOP.counter.phase 1950011 (golden says 0) | MISSING TOP.counter.prev 1950011 (golden says 3) | EXTRA TOP.counter.next_count 1950012 (= 5) | EXTRA TOP.counter.phase 1950012 (= 0))
+ok:   GE24c-one-picosecond-would-fail (72 measured)
+ok:   GE25-half-toggles-once-at-1550012ps (got '0 1550012' want '0 1550012')
+ok:   GE26-tc-fires-for-one-clock (got '0 1450012 1550012' want '0 1450012 1550012')
+ok:   GE27-carry-fires-twice (got '0 650012 750012 1450012 1550012' want '0 650012 750012 1450012 1550012')
+free_rawfile(): clearing data
+free_rawfile(): clearing data
+----
+test_cosim_golden_e2e: 45 passed, 1 failed
+RESULT: 1 FAILED (45 passed)
+
+###### FAIL: test_lib_manager_gui ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   GUI1 three panes exist 
+ok:   GUI2 library pane populated (=> 12 libs)
+ok:   GUI3 cell+view panes start empty 
+ok:   GUI4 selecting a library fills cells (=> 126 cells)
+ok:   GUI5 switching library replaces cells (=> 73 cells)
+ok:   GUI6 selecting a cell fills views (=> schematic symbol)
+ok:   GUI7 current_cell resolves selection (=> examples cmos_inv)
+FAIL: GUI8 new-window mode adds a tab per open (=> 0 0 1)
+FAIL: GUI9 current-window mode reuses the tab (=> 1 -> 2)
+ok:   GUI10 symbol view opens for editing (=> /home/analog/dev/xschem-claude/xschem_library/devices/res.sym)
+RESULT: 2 FAILED
+
+###### FAIL: test_lib_sweep ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+    (missing cells for devices)
+    (missing cells for examples)
+    (missing cells for ngspice)
+    (missing cells for ngspice_verilog_cosim)
+    (missing cells for logic)
+    (missing cells for xschem_simulator)
+    (missing cells for binto7seg)
+    (missing cells for pcb)
+    (missing cells for rom8k)
+    (missing cells for analyses)
+    (missing cells for xTAG)
+    (missing cells for rulz-r8c33)
+FAIL: P1 all 12 libraries migrated with view dirs 
+FAIL: P1b flat tree untouched 
+FAIL: P2 library.defs registers all 12 (=> 0/12)
+FAIL: P3 refs lib-qualified 
+FAIL: P4 netlist equivalence over all migrated schematics (compared=0, diffs=0)
+RESULT: 5 FAILED
+
+###### FAIL: test_rotate_stretch_short_0104 ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   fixture has R18
+ok:   pre: R18.P=#net2
+ok:   pre: R18.M=#net1
+ok:   rot90-ip user drop (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip user drop (-30,70): pre-existing user stubs survive
+ok:   rot90-ip user drop (-30,70): R18 landed at delta (-30,70)
+ok:   rot90-ip user drop (-30,70): R18 rot == 1
+ok:   rot90-ip user drop (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip user drop (-30,70): R18.P still shares a C12 pin net
+ok:   rot90-ip user drop (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip user drop (-30,70): R18.M still on the v8/backbone subtree
+ok:   user drop: no wire endpoint left at stale anchor (-120,-40)
+ok:   rot90-ip (-60,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-60,70): pre-existing user stubs survive
+ok:   rot90-ip (-60,70): R18 landed at delta (-60,70)
+ok:   rot90-ip (-60,70): R18 rot == 1
+ok:   rot90-ip (-60,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-60,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-60,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-60,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-50,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-50,70): pre-existing user stubs survive
+ok:   rot90-ip (-50,70): R18 landed at delta (-50,70)
+ok:   rot90-ip (-50,70): R18 rot == 1
+ok:   rot90-ip (-50,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-50,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-50,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-50,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-40,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-40,70): pre-existing user stubs survive
+ok:   rot90-ip (-40,70): R18 landed at delta (-40,70)
+ok:   rot90-ip (-40,70): R18 rot == 1
+ok:   rot90-ip (-40,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-40,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-40,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-40,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-20,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-20,70): pre-existing user stubs survive
+ok:   rot90-ip (-20,70): R18 landed at delta (-20,70)
+ok:   rot90-ip (-20,70): R18 rot == 1
+ok:   rot90-ip (-20,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-20,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-20,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-20,70): R18.M still on the v8/backbone subtree
+ok:   rot90-ip (-10,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90-ip (-10,70): pre-existing user stubs survive
+ok:   rot90-ip (-10,70): R18 landed at delta (-10,70)
+ok:   rot90-ip (-10,70): R18 rot == 1
+ok:   rot90-ip (-10,70): R18.P and R18.M distinct + non-empty
+ok:   rot90-ip (-10,70): R18.P still shares a C12 pin net
+ok:   rot90-ip (-10,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90-ip (-10,70): R18.M still on the v8/backbone subtree
+ok:   rot90+flip-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot90+flip-ip (-30,70): pre-existing user stubs survive
+ok:   rot90+flip-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot90+flip-ip (-30,70): R18 flip toggled
+ok:   rot90+flip-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot90+flip-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot90+flip-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot90+flip-ip (-30,70): R18.M still on the v8/backbone subtree
+FAIL: rot180-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300} {-120 -50})
+ok:   rot180-ip (-30,70): pre-existing user stubs survive
+ok:   rot180-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot180-ip (-30,70): R18 rot == 2
+ok:   rot180-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot180-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot180-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot180-ip (-30,70): R18.M still on the v8/backbone subtree
+ok:   rot270-ip (-30,70): no NEW dangling endpoints (pre={-550 160} {-550 120} {-420 -300} post={-550 160} {-550 120} {-420 -300})
+ok:   rot270-ip (-30,70): pre-existing user stubs survive
+ok:   rot270-ip (-30,70): R18 landed at delta (-30,70)
+ok:   rot270-ip (-30,70): R18 rot == 3
+ok:   rot270-ip (-30,70): R18.P and R18.M distinct + non-empty
+ok:   rot270-ip (-30,70): R18.P still shares a C12 pin net
+ok:   rot270-ip (-30,70): C12 pins on distinct nets (no C12 self-short)
+ok:   rot270-ip (-30,70): R18.M still on the v8/backbone subtree
+
+RESULT: 1 FAIL (76 checks)
+OVERALL: FAIL
+
+###### FAIL: test_selflog_output ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok   - action log open
+ok   - raw delete self-logs
+ok   - raw undo self-logs
+ok   - raw redo self-logs
+ok   - raw cut self-logs
+ok   - menu wrapper logs undo exactly once
+ok   - core self-log sets -emitted
+ok   - non-mutating cmd leaves -emitted 0
+ok   - flip self-logs with pivot
+ok   - flipv self-logs with pivot
+ok   - rotate self-logs with pivot
+ok   - flip_in_place self-logs
+ok   - flipv_in_place self-logs
+ok   - rotate_in_place self-logs
+ok   - align self-logs
+ok   - menu wrapper logs rotate exactly once
+ok   - trim_wires self-logs
+ok   - break_wires (bare) self-logs
+ok   - break_wires 1 self-logs with arg
+ok   - menu wrapper logs trim_wires exactly once
+ok   - read-only rejects flipv with no log line
+ok   - read-only rejects flip_in_place with no log line
+ok   - read-only rejects flipv_in_place with no log line
+ok   - read-only rejects rotate_in_place with no log line
+ok   - read-only rejects break_wires with no log line
+FAIL - key Shift-F logs flip
+FAIL - key Alt-F logs flip_in_place
+FAIL - key Shift-R logs rotate
+FAIL - key Alt-R logs rotate_in_place
+FAIL - key Shift-V logs flipv
+FAIL - key Alt-V logs flipv_in_place
+ok   - key Alt-U logs align
+ok   - key & logs trim_wires
+ok   - key ! logs break_wires
+ok   - key Ctrl-! logs break_wires 1
+ok   - setprop instance (non-fast) self-logs
+ok   - setprop -fast does NOT log
+ok   - setprop -fastundo (undoable) self-logs
+ok   - setprop rect (graph) is nolog
+ok   - change_elem_order (w/ sel) self-logs
+ok   - key Shift-S logs change_elem_order
+ok   - change_elem_order (no sel) is nolog
+ok   - set rectcolor w/ selection logs
+ok   - set rectcolor w/o selection is nolog
+ok   - set rectcolor on read-only rejects (TCL_ERROR)
+ok   - make_symbol read-only does NOT overwrite .sch
+ok   - make_symbol self-logs
+ok   - key 'a' logs make_symbol
+ok   - make_sch multi-select logs nothing (no phantom)
+ok   - make_sch_from_sel cancel logs nothing (no phantom)
+ok   - make_sch_from_sel (real edit) self-logs
+ok   - make_sch_from_sel read-only rejects (TCL_ERROR)
+ok   - make_sch_from_sel read-only logs nothing
+ok   - edit wire property logs a replayable setprop line
+ok   - edit rect property logs a replayable setprop line
+can't read "user_wants_copy_cell": no such variable
+ok   - edit instance property (vi editor) logs a replayable setprop line
+ok   - edit global schematic property logs a replayable set line
+ok   - property-edit marker no longer emitted
+ok   - cancelled property edit logs nothing
+ok   - attach_labels self-logs
+ok   - floaters_from_selected_inst self-logs
+check_unique_names(): found duplicate: i=11 name=m1
+check_unique_names(): found duplicate: i=13 name=m2
+ok   - check_unique_names 1 (rename) self-logs
+ok   - check_unique_names 0 (highlight) self-logs
+ok   - print_hilight_net 4 (create labels) self-logs
+ok   - print_hilight_net 1 (print) self-logs
+ok   - add_pin_stubs no-op STILL logs +1 (atom 25 option c no-op-still-logs)
+ok   - set header_text self-logs replayable
+ok   - set header_text no-op logs nothing
+ok   - set header_text read-only rejects (TCL_ERROR)
+ok   - set header_text read-only logs nothing
+ok   - set cadsnap self-logs resolved value
+ok   - set cadgrid self-logs resolved value
+ok   - set cadsnap 0 logs the RESOLVED default (not 0)
+ok   - pure-display set (color_ps) is nolog
+ok   - unhilight_all self-logs (key 0)
+ok   - hilight_net_interactive noun-verb self-logs (key 9)
+ok   - unhilight_net_interactive noun-verb self-logs (key 8)
+ok   - hilight_net_interactive interactive-mode logs nothing (gesture start)
+ok   - change_index (+/-) routes through logged setprop
+ok   - result -> '#= ' comment
+ok   - error  -> '#! ' comment
+ok   - multiline result prefixes each line
+ok   - log file is source-able
+RESULT: FAIL
+
+###### FAIL: test_wave_sigbrowser_0312 ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   BG00 every proc this file names was found in the source
+ok:   BG01 browser_show still packs the sidebar into the TOPLEVEL, verbatim,
+       exactly once (frozen BS01/BS02's claim, restated)
+ok:   BG02 the grip packs into the same LEFT slot, before the canvas
+ok:   BG03 the grip's hide is spelled against $g, never $f
+ok:   BG04 the drag handler carries NO cap/floor arithmetic of its own
+ok:   BG05 browser_width still carries all four of BT08's literals
+ok:   BG06b the three gesture bindings exist, on the right sequences, and pass
+       the ROOT x (%X) the delta arithmetic needs
+ok:   BG07a the idle flush is GATED on the deriving path, so a drag does
+            not pump the event loop once per motion event
+ok:   BG07b ...and the derivation ignores the WRAP by asking what the bar
+            needs FLAT
+ok:   BG07c browser_build destroys the grip with the sidebar it belongs to
+ok:   BG07d the divider drag has a guide row, and GH8's sixteen bseq rows are
+       untouched
+ok:   BG06 the teardown sweep drops BOTH new per-token arrays
+ok:   BG07 an unknown token has NO width preference
+ok:   BG08 a positive integer is stored and read back; 0, a negative and a
+       word are all IGNORED rather than stored
+ok:   BF01 searchbar_build leaves the bar FLAT and grids nothing itself
+ok:   BF02 the build arms the ONE trigger: <Configure> -> searchbar_reflow
+ok:   BF03 each layout releases the other geometry manager before claiming the
+       children
+ok:   BF04 the requirement EXCLUDES the error label, exactly as the width
+            rule's derivation does
+ok:   BF05 the wrapped layout weights column 1 only, so the entry is what
+            grows and what shrinks
+ok:   BF06 searchbar_forget drops the layout flag with the bar
+ok:   BF20a the fixture bar is really on screen
+  BF: bar requirement (excluding err) = 669 px
+ok:   BF20b the requirement is a sane pixel count, not 0 and not the
+              whole screen
+ok:   BF20c the requirement AGREES with browser_width's own derivation
+              (reqwidth of the bar minus the clippable err label)
+FAIL: BF21a wide: the bar really got the width, is FLAT — every child packed, none gridded, and the
+         pack order is ViVA §3.2's -> {0 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err}} (exp {1 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err}}) : FAIL
+ok:   BF21b wide: every control is ON SCREEN
+ok:   BF22a (THE DEFECT) flat at the shipped 450 px: All DBs, Search and the
+         error label are BUILT but NOT ON SCREEN
+ok:   BF22b ...while `winfo exists` and the checkbutton's variable both still
+         answer normally — which is why 353 green checks missed this
+ok:   BF22c (THE FIX) reflowed at the SAME 450 px: two rows, and All DBs and
+         Search are on screen
+ok:   BF23a wrapped: the children are GRID-managed, none packed, and the error
+         label is the one deliberately withheld
+ok:   BF23b wrapped: row 0 is the QUERY, row 1 the MODIFIERS
+FAIL: BF24a widened again: back to FLAT, with BAR03's pack order restored
+         byte-for-byte -> {0 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err} {1 1 1 1 1 1 1}} (exp {1 0 {7 0} {.wvbf1.c.wvsearch.type .wvbf1.c.wvsearch.pat .wvbf1.c.wvsearch.syntax .wvbf1.c.wvsearch.case .wvbf1.c.wvsearch.alldb .wvbf1.c.wvsearch.search .wvbf1.c.wvsearch.err} {1 1 1 1 1 1 1}}) : FAIL
+ok:   BF24b ...including the asymmetric pads the build shipped
+ok:   BF25a the hysteresis band holds: wrapped just under the requirement,
+         and still wrapped 8 px over it — it unwraps only past the band
+ok:   BF25b ...and past the band it really does go flat again
+ok:   BF26a reflow DECLINES on a bar in a FIXED container that was never
+         mapped, and leaves it flat
+ok:   BF26b ...and on a widget that is not a searchbar at all
+ok:   BF28a the -showbutton 0 variant needs LESS width than the full bar
+ok:   BF28b ...and wraps on its own five, keeping all four visible controls
+ok:   BF30 a bar in an AUTO-SIZING container is never reflowed, however
+         narrow the container gets — no latch, and BAR03's pack slaves survive
+ok:   BF29 destroying a bar drops its layout flag
+ok:   BG20 before the sidebar is shown there is no grip at all
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg1.drw
+ok:   BG21 the grip exists and is packed, and the ORDER is sidebar, grip,
+         canvas — the sidebar is STILL a pack slave of the toplevel
+ok:   BG22 it is a full-height strip, wide enough to actually grab, with the
+         resize cursor
+  BG: sidebar width at the shipped default = 450 px
+ok:   BG23a the window is really 1000 px and the sidebar starts at its 45%
+         cap
+ok:   BG33a (THE REAL GESTURE) a Button-1 / B1-Motion / ButtonRelease-1
+         sequence generated ON THE GRIP WIDGET moves the sidebar by the drag
+         delta — the bindings are reachable, not just the procs
+ok:   BG33b ...and the real release stored the preference and dropped the
+         anchor
+ok:   BG23b dragging LEFT narrows the sidebar to the dragged width (item 5
+         step 7's ~250 px is now reachable)
+ok:   BG23c ...and the canvas grew by what the sidebar gave up
+ok:   BG24a the 240 px FLOOR holds — dragging past the left edge stops there
+         rather than collapsing or jumping back to the derived width
+ok:   BG24b (THE DISCRIMINATING ONE's PRECONDITION) a 1600 px window with a
+         700 px sidebar really does hold the bar FLAT, so the derived width and
+         the floor now disagree
+ok:   BG24c (THE DISCRIMINATING ONE) with the two answers apart, dragging off
+         the left edge stops at the 240 px floor — it does not jump right to the
+         derivation
+ok:   BG24d the window is back at the shipped size before the cap is measured
+ok:   BG25 the 45% CAP holds — a right drag from 300 px stops at 450 on a
+         1000 px window, which is browser_width's own clamp
+ok:   BG26 the RELEASE clears the anchor, so a stray motion afterwards is a
+         NO-OP rather than a divider that follows the mouse for good
+ok:   BG27a the RELEASE is what stores the preference, and it stores the
+         CLAMPED width the frame really has
+ok:   BG27b hiding the sidebar unpacks the GRIP too — no orphan divider
+         against a hidden pane
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg1.drw
+ok:   BG28a a Ctrl-B/Ctrl-B round trip re-applies the dragged width — it does
+         NOT re-derive it from the (now wrapped) bar
+ok:   BG28b (BG28a's PREMISE, measured) the sidebar's own bar is wrapped at
+         this width, so its RAW reqwidth would floor at 240 — the dragged 320
+         can only have come from the stored preference
+ok:   BF27 (END TO END) at the shipped default 450 px the sidebar's search
+         bar shows All DBs and Search — the controls issue 0312 dropped
+ok:   BG29a a fresh window has NO width preference before its first show
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+ok:   BG29b the FIRST show derives 450 and leaves the window with NO
+         preference of its own
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+ok:   BG29c (THE REGRESSION GUARD) a Ctrl-B/Ctrl-B on a never-dragged,
+         WRAPPED sidebar re-derives 450 — it does NOT collapse onto the floor,
+         and it still mints no preference
+ok:   BG29d (BG29c's PREMISE) the wrapped bar's raw reqwidth really is under
+         the floor, while what it needs FLAT is not
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg2.drw
+ok:   BG32 a RESTORED width becomes the preference, so it survives hiding and
+         re-showing the sidebar
+ok:   BG34 rebuilding the sidebar takes the grip with it
+new_schematic("switch_tab"...): no tab to switch to found: .wvbg1.drw
+ok:   BG34 ...and the next show puts it back on the RIGHT side, between the
+         sidebar and the canvas
+ok:   BG35 press anchors on the CONFIGURED width: with the two reads 80 px
+         apart and the cap far away, a zero-delta drag lands on the configured
+         500, not on the granted 420
+ok:   BG30 wviewer::forget drops the width preference AND a live mid-drag
+         anchor with the window
+ok:   BG31 the three grip gestures answer 0 on a forgotten token instead of
+         throwing
+----
+test_wave_sigbrowser_0312: 67 passed, 2 failed
+RESULT: 2 FAILED (67 passed)
+
+###### FAIL: test_wave_sigbrowser_i12 ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   BX01 (fixture) the row set really carries the two group levels
+ok:   BX01 an EXACT two-segment path finds the deep group
+ok:   BX02 (CASE) the SCHEMATIC's X1.X2 finds the raw's lowercase x1.x2
+ok:   BX03 (EXACT-FIRST) a level carrying BOTH x1 and X1 resolves each to itself
+ok:   BX04 (FALLBACK) a path one segment too deep answers the deepest ancestor
+ok:   BX04 ...and two segments too deep answers the same node, matched 2
+ok:   BX05 a path with nothing in common answers {} and matched 0
+ok:   BX06 an EMPTY segment list is {} 0 — the sim-root case, handled elsewhere
+ok:   BX07 (DECLARED LIMIT) leaves are NOT matched — a top-level signal name
+ok:   BX07 ...nor a leaf under a real group: x1.x2.net5 stops at x1.x2
+ok:   BX08 browser_origin_drop: no raw in the design ctx -> drop `level` segments
+ok:   BX08 ...a raw AT the session's level cancels out; below it is NEGATIVE (refused)
+ok:   BX08 ...and junk from either getter degrades to the level-0/no-raw case
+ok:   BX09 ase::show_in_browser_for_current was found in the source
+ok:   BX09 it pivots on hier_now (sim_sch_path) and NEVER reads sch_path
+ok:   BX09 ...and neither viewer-side body reads sch_path either
+ok:   BX10 the PIVOT is read BEFORE wviewer::open moves the context
+ok:   BX10 ...and it does NOT re-implement an opener — wviewer::open is the only one
+ok:   BX11 (INVERTED by two-pane item 17b) cadence_style_rc no longer binds
+       .drw <Control-Key-5> — the chord moved to the C registry
+ok:   BX11 (INVERTED) ...no Control-Key-5 line survives at all, and the rc is
+       not simply emptied: Ctrl-4 (Direct Plot) and Ctrl-$ are still bound
+ok:   BX12 the design window's Tools cascade carries `Show in Signal Browser`
+ok:   BX12 ...exactly once, and right after Launch ASE-L (Tools stays one ASE block)
+ok:   BX13 test_wave_grid's GH0 literals are UNCHANGED at 16/11
+ok:   BX13 ...and the guide gained NO data-seq/data-menu row for the schematic
+       key — NEITHER the old chord NOR two-pane item 17b's new one
+ok:   BX13 (control) the guide DOES still carry item 11's viewer key row
+ok:   BX14 browser_msg: ok
+ok:   BX14 browser_msg: partial names BOTH the asked path and the landing
+ok:   BX14 browser_msg: root
+ok:   BX14 browser_msg: err passes its own reason through
+ok:   BX15 (fixture) the rooted list carries `g:`; the root-less one answers {} — absence is an ANSWER
+ok:   BX15 (ITEM 8) a ROOTED list walked with NO start DEAD-ENDS — declared, not defended
+ok:   BX15 ...and seeded with browser_root_id the same walk finds the same node
+ok:   BX16 (PRECONDITION) the prologue's design is still loaded, still at its
+       TOP level, and nothing is selected — the pure band above walks synthetic
+       row lists and must not have moved the design window
+ok:   BX16 (RULING 3's FALLBACK) nothing selected answers `none`, which is what
+       keeps every pre-item-17 invocation answering exactly as it did
+ok:   BX16 (FIXTURE) the top level's six instances, in index order — two
+       spellings of the same cell (`X1`, `x1`) and the non-subcircuit `V9`
+ok:   BX17 ONE selected instance answers `ok` and its name — the SCHEMATIC's
+       own spelling, capital and all, because the browser's own walk is what
+       folds case (browser_node_for's -nocase fallback) and a second folding
+       here would be a second answer to one question
+ok:   BX17 (CONTROL) ...and unselecting puts it back to `none`, so the reader
+       is reading the LIVE selection and not something it cached
+ok:   BX18 (RULING 2) TWO selected instances answer `many` WITH THE COUNT — the
+       lower pane shows ONE level, so two targets is not a question it can
+       answer, and the count is what the CIW sentence needs
+ok:   BX18 (THE -type FILTER) select-all selects more OBJECTS than instances,
+       and the reducer still counts only the INSTANCES
+ok:   BX18 (RESTORE) the selection is clear again, so BX20 onward starts where
+       it always did
+ok:   BX20 (FIXTURE) the sidebar built, is mapped, and the tree is seeded
+ok:   BX20 (FIXTURE) no design root, NODES only, still nested — the shape BX30/BX32/BX36 rest on
+ok:   BX30 (POSITIVE CONTROL) item 10's freshly populated tree is COLLAPSED
+ok:   BX30 (POSITIVE CONTROL) OPENING the ancestor reads `visible` — same node, other value
+ok:   BX30 (POSITIVE CONTROL) collapsing it again reads `collapsed`, selection empty
+ok:   BX31 browser_show_path returns ok with the exact node
+ok:   BX31 ...the node is SELECTED
+ok:   BX31 ...and it is VISIBLE: `see` re-opened the COLLAPSED ANCESTOR —
+         while TWO-PANE item 13 leaves the TARGET ITSELF CLOSED (R3: the lower
+         pane is the answer to "what is inside")
+ok:   BX32 (control) the fill really minted NODES — 63 items, so the scroll has something to do
+ok:   BX32 (POSITIVE CONTROL) scrolled to the bottom, x1.x2 reads `offscreen`
+ok:   BX32 browser_reveal scrolls it back into view
+ok:   BX33 revealing a MISSING id returns 0 and does not throw
+ok:   BX33 revealing the EMPTY id returns 0 — `exists {}` is TRUE, so this is explicit
+ok:   BX33 ...and neither raised a bgerror
+ok:   BX34 (control) the selection really is empty before the fallback runs
+new_schematic("switch_tab"...): no tab to switch to found: .wvbx1.drw
+ok:   BX34 a path one segment too deep answers `partial` naming BOTH paths
+ok:   BX34 ...and the DEEPEST ANCESTOR is selected and visible
+ok:   BX36 an EMPTY path is the `root` branch
+ok:   BX36 ...and it CLEARS the selection deliberately
+ok:   BX37 the status line says `showing <path>` on a hit
+new_schematic("switch_tab"...): no tab to switch to found: .wvbx1.drw
+ok:   BX37 ...names both paths on the fallback
+ok:   BX37 ...and says so at the sim root
+new_schematic("switch_tab"...): no tab to switch to found: .wvbx1.drw
+ok:   BX35 a path matching nothing is an `err` that names what was asked
+ok:   BX35 ...the status line carries it
+ok:   BX35 ...and the user's SELECTION SURVIVED the refusal
+ok:   BX38 (control) with both bars EMPTY the message carries no bar clause
+new_schematic("switch_tab"...): no tab to switch to found: .wvbx1.drw
+ok:   BX38 with a bar non-empty the message NAMES the bars
+ok:   BX38 ...and the bars were NOT cleared behind the user's back (declared limit)
+new_schematic("switch_tab"...): no tab to switch to found: .wvbx1.drw
+ok:   BX39 a MISS whose reload fails RESTORES the rows byte-for-byte
+ok:   BX39 ...and the widget still holds them, so the tree is not emptied
+ok:   BX33 (ORACLE) a withdrawn tree reads `unmapped`, and bbox still answers
+ok:   BX39 (teardown) the throwaway toplevel and its registry entry are gone
+ok:   BX40 (FIXTURE) the design window is on wvhier_top, at its top level
+ok:   BX40 (POSITIVE CONTROL) a fresh viewer's sidebar is HIDDEN, but BUILT
+ok:   BX40 (control) the context is back on the DESIGN window
+ok:   BX41 at X1.X2 with the MID session closed, the TOP session resolves at level 0
+ok:   BX42 the command returns the session key
+ok:   BX42 (SIDEBAR) it UN-HID the sidebar — authority AND packing agree
+ok:   BX42 (SELECTION) the node for X1.X2 is selected — the raw's x1.x2
+ok:   BX42 (VISIBLE) and it is on screen with its ancestors open
+ok:   BX42 the browser status line reports the landing
+FAIL: BX42 (DECLARED) the context is LEFT ON THE VIEWER, the raised window -> {0} (exp {1}) : FAIL
+ok:   BX42 ...and the DESIGN window never moved: still wvhier_top, still at X1.X2
+ok:   BX42 (POSITIVE CONTROL) with its ancestor collapsed the node reads `collapsed`
+ok:   BX42 (SECOND INVOKE) on an already-shown COLLAPSED tree it still lands VISIBLE
+ok:   BX49 (0168 AGREEMENT) drop-0 equals sod_rel_path 0, byte for byte
+ok:   BX49 ...and drop-1 equals sod_rel_path 1 — the ancestor-owned-raw case
+ok:   BX48 (control) with the MID session back, X1.X2 resolves it at level 1
+ok:   BX48 (ORIGIN) one position, two session levels, two DIFFERENT browser paths
+ok:   BX48 (control) the design ctx now really has a raw at level 1
+ok:   BX48 a raw at the session's OWN level needs no drop — same path, no double-strip
+ok:   BX48 (NEGATIVE DROP) a raw read BELOW the session's design is REFUSED, not guessed
+free_rawfile(): clearing data
+ok:   BX48 (teardown) both spied procs are back in place
+ok:   BX44 the Tools entry exists, with its accelerator and its command
+ok:   BX44 invoking it really re-targets the browser at x1
+ok:   BX45 (control) ONE top-level root, and a NON-root node selected going in
+ok:   BX45 at the sim top the DESIGN ROOT is selected (R4) and the reason given
+ok:   BX45 ...and the sidebar is STILL shown (a no-op must not re-hide it)
+ok:   BX50 (control) a HIT does not reload — the row snapshot is byte-identical
+ok:   BX50 (control) the snapshot really carries item 2's design root to walk from
+ok:   BX50 (control) the browser has NOT seen the new signal yet (D6 snapshot)
+ok:   BX50 a MISS reloads once and FINDS the late signal's group
+free_rawfile(): clearing data
+ok:   BX46 (control) the selection really is EMPTY before the command runs
+ok:   BX46 with no raw loaded it says so rather than doing nothing
+ok:   BX46 ...the emptied tree is ONE `design` root, selected (R4), sidebar still shown
+ok:   BX43 a REAL Ctrl-Alt-V on the design canvas targets the browser at x1.x2
+ok:   BX43 (NEGATIVE CONTROL) a Ctrl-6 that reaches no ASE binding records ZERO on the same spy
+ok:   BX54 (X, THE BEHAVIOUR) a Ctrl-Alt-V through the REAL dispatcher runs
+           the command once and lands the browser on x1.x2; Ctrl-Alt-Shift-v is
+           the SAME chord (Shift is stripped for printable keysyms) and fires
+           too; Ctrl-Super-v — the right shape, the wrong modifier — does not
+ok:   BX55 (X, REMAPPABILITY) the chord is the BINDING TABLE's, not a Tk
+           bind: unbind it and the same drive does nothing; rebind it and it
+           works again
+ok:   BX43 the real ase::show_in_browser_for_current is back in place
+ok:   BX51 (PRECONDITION) the design window is descended to X1 with NOTHING
+           selected, the browser's selection is cleared and g:x1 is COLLAPSED —
+           so nothing below can be true of the state it started in
+ok:   BX51 (NEGATIVE CONTROL) with NOTHING selected the command still lands
+           on the descend level, exactly as it did before item 17 — the
+           selection is an EXTENSION of the answer, never a replacement for it
+ok:   BX51 (PRECONDITION) `X2` is what is selected, and the window has NOT
+           descended into it — that is the whole point of the item
+ok:   BX51 (THE DRIVER'S OWN CASE) selecting X2 one level up reveals
+           g:x1.x2 — the raw's lowercase node, found through browser_node_for's
+           -nocase fallback — with its ancestors open and ON SCREEN
+ok:   BX51 ...and the LOWER PANE is showing that level's own signals, which
+           is what the user asked for — not x1's
+ok:   BX51 (DECLARED) the DESIGN window never descended: still at X1, with
+           X2 still merely SELECTED
+ok:   BX52 (PRECONDITION) back at the top level with a cleared browser
+ok:   BX52 (RULING 1) with the non-subcircuit `V9` selected the command
+           lands on the PARENT — here the design root, because the parent of a
+           top-level pick is the design — instead of refusing
+ok:   BX52 (RULING 1, "SAY SO") ...and the user is TOLD, by name, that the
+           thing they picked has no level and what was shown instead
+ok:   BX53 (PRECONDITION) both spellings of the same cell are selected
+ok:   BX53 (RULING 2) two selected instances do NOT pick a winner — the
+           answer is the DESCEND LEVEL's, which at the top is the design root
+ok:   BX53 (RULING 2, THE CIW COMMENT) the CIW is told BOTH the ambiguity
+           AND the action taken — the count, and that the selection was ignored
+           in favour of the hierarchy position
+ok:   BX53 (NOT AN ERROR) it is a COMMENT, not a failure — the command
+           still answers with the session key, which is how a caller tells a
+           refusal from a fallback
+ok:   BX53 (RESTORE) the real ciw_echo is back and the stand-in is gone
+ok:   BX56 (X) the new chord carries item 17's selection arm: nothing
+           selected lands on the descend level, ONE selected `X2` lands on
+           x1.x2 — SAME fixture, SAME gesture, one difference
+ok:   BX47 with no session bound the command returns {} and opens nothing
+free_rawfile(): clearing data
+----
+test_wave_sigbrowser_i12: 125 passed, 1 failed
+RESULT: 1 FAILED (125 passed)
+
+###### FAIL: test_wave_sigbrowser_keys ######
+Using run time directory XSCHEM_SHAREDIR = /home/analog/dev/xschem-claude/src
+Sourcing /home/analog/dev/xschem-claude/src/xschemrc init file
+ok:   BK01 (SOURCE) the carve-out names BOTH keysyms in ONE expression, and the
+       single-keysym form is gone
+ok:   BK02 (PURE) the SHIPPED expression, evaluated: bare b forwards, Ctrl-b
+       does not, Ctrl-d does not, Ctrl-a / Ctrl-Shift-B / bare d all still do
+ok:   BK03 (SOURCE, POSITIVE CONTROL) graphkeys STILL contains 98 and is
+       otherwise untouched — the fix is a carve-out, not a deletion
+ok:   BK04 (FILE) no ctrl row for 98 survives in the shipped keybindings.csv,
+       and the file is not simply empty
+ok:   BK05 (FILE, BK04's CONTROL) ...while the BARE-b graph row does
+ok:   BK06 (SOURCE, C) callback.c lost the Ctrl-b over_graph row and KEPT the
+       bare-b idle one
+ok:   BK07 install_default_binds was found in the source
+ok:   BK07 (SOURCE) the default is <Control-Key-b>, behind the rc-wins guard,
+       with the break — and <Control-Key-l> is gone from the proc
+ok:   BK08 build_menubar was found in the source
+ok:   BK08 (SOURCE) the View entry spells the new accelerator adjacently, and
+       Ctrl+L is gone from the proc
+ok:   BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
+       no Ctrl-L spelling survives anywhere in the guide
+ok:   BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide still has
+       sixteen data-seq rows and eleven menu/accel pairs, and test_wave_grid
+       still pins exactly those two numbers
+ok:   BK20 (FILE) actions.csv carries EXACTLY ONE wave.show_in_signal_browser
+       row, and it is the row the cheat-sheet and the palette read: the label
+       and the DISPLAY accel
+ok:   BK21 (FILE) the regenerated keybindings.csv row is spelled EXACTLY,
+       mods order included, and it is the file's only ctrl+alt row
+FAIL: BK22 (SOURCE, C) the registry row is Tcl-backed with a NULL fn, and the
+       action id appears in callback.c exactly TWICE -> {1 3} (exp {1 2}) : FAIL
+ok:   BK23 (SOURCE, C) the canvas chord is ControlMask|Mod1Mask on keysym 'v',
+       and the Tcl command takes NO window argument and no %W
+ok:   BK24 (FILE) cadence_style_rc no longer binds Control-Key-5 — R10 is a
+       MOVE, not an ADD
+ok:   BK25 (BK24's CONTROL, SAME FILE) ...and it still binds Control-Key-4 for
+       Direct Plot and Control-Key-dollar for the plot mode
+ok:   BK26 (FILE, REMAPPABILITY) no rc file binds the chord in EITHER Tk
+       spelling — an rc bind bypasses `xschem bind` — and the C table does
+ok:   BK27 (FILE) the Tools entry spells the new accelerator adjacent to the
+       label, and the phrase still occurs EXACTLY ONCE in src/xschem.tcl
+ok:   BK28 (FILE, GUIDE, LOCKSTEP) the guide's prose names the new chord, the
+       old one is gone, and NO guide row was added for either
+ok:   BK32 (PURE, TWO-PANE item 18) browser_msg renders the new `unhidden`
+       result as ONE sentence naming the node it had to unhide to reach
+ok:   BK33 (BK32's CONTROL, RESTATED by batch F item 5) all NINE shipped
+       renderings are byte-unchanged, the tenth is §F's new `alldbs`, and the
+       count leg still moves so "nothing happened" cannot pass this
+ok:   BK34 (SOURCE, THE ONE-FORMATTER ORACLE) the sentence is spelled in
+       exactly ONE place in the file and that place is browser_msg; the kind is
+       minted in browser_say and called from exactly one arm
+ok:   BK35 (SOURCE, TP44's TWIN) the R12 arm reuses the ONE decode, adds no
+       third refresh and no sch_path read — while really adding the two
+       class-scope reads that make its probe scoped
+ok:   BK11 wviewer::open returns 1
+ok:   BK12 (X, THE LANDMINE) Ctrl-b over a strip is NOT forwarded, so it
+         cannot fall through to the C switch and flip sym_txt — and the drive
+         really was over a graph
+ok:   BK13 (X, R9's SAFETY CLAIM) bare b over the same strip still forwards,
+         still moves the cursor-B engine bit AND its Tcl mirror, and still
+         leaves sym_txt alone
+ok:   BK14 (X, CONTROL) Ctrl-d is still refused (the carve-out's other half,
+         unchanged by this item)
+ok:   BK14 (X, CONTROL) ...and Ctrl-Shift-B (keysym 66) still forwards, so
+         the carve-out did not swallow the shifted twin
+ok:   BK15 (X) Ctrl-B is on the WaveViewer tag, calls browser_toggle_at with
+         the EVENT's canvas, and breaks so the chord never travels on
+ok:   BK15 (X) ...it survives the strip_bindings sweep, and it is NOT bound
+         on the canvas widget itself (which is what the sweep would take)
+ok:   BK16 (X) the live binding table's 98 rows are exactly the bare-b
+         idle over_graph row — the ctrl row is gone from the TABLE, not just
+         from the file
+ok:   BK17 (X) the shipped keybindings.csv is byte-identical to a fresh
+         generation from the live table, and that generation is a real table
+ok:   BK18 (X, MEASURED) Ctrl-B typed INTO the browser's search entry moves
+           no insert cursor, edits no text, toggles no sidebar and flips no
+           sym_txt — the chord's one new collision class does not fire
+ok:   BK18 (X) a REAL Ctrl-B on the canvas flipped the sidebar and its mirror together
+           and left sym_txt exactly where it was
+FAIL: BK29 (X) the LIVE binding table carries the ctrl+alt row, still has no
+         canvas row for keysym 53, and grew by exactly one -> {1 0 78} (exp {1 0 72}) : FAIL
+ok:   BK30 (X) the cheat-sheet renders the chord WITH its actions.csv label,
+         lowercase v, and no `(bare:` fallback anywhere
+FAIL: BK31 (X, REMAPPABILITY) bound -> unbind removes the row and the table
+         shrinks -> rebind puts it back and the table grows again -> {1 0 77 1 78} (exp {1 0 71 1 72}) : FAIL
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK36 (FIXTURE) the item-18 toplevel builds, the sidebar is PACKED, and
+         the 424-name corpus really drove the measured 45-node box-OFF tree
+ok:   BK36 (X, R12) with the box OFF and the node genuinely ABSENT, a reveal
+         onto a device instance unhides it, lands on it, selects it, and leaves
+         the box TICKED
+ok:   BK37 (X) ...and it SAYS SO, in the SAME "Signal Browser\n<msg>" format
+         the rest of the family pins byte-for-byte
+ok:   BK38 (X, R12's LAST SENTENCE) one refresh later the box is STILL
+         ticked, the accessor and the -variable agree, the node is still
+         selected, and item 13's reveal left the ANCESTORS open and the TARGET
+         closed
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK39 (X, THE DUAL PAIR) the SAME call that ticks for a hidden device
+         node leaves the box UNTICKED for a path in NEITHER model, reports the
+         SHIPPED err sentence, and spends exactly the ONE refresh the shipped
+         retry already spent
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK40 (X, THE OTHER CONTROL) with a pattern in the Search bar the same
+         absent path STILL does not tick and the sentence still carries the
+         shipped bars hedge — while clearing the bar and asking for a real
+         hidden node ticks it after all
+ok:   BK41 (X) the auto-tick costs exactly ONE refresh — and with the box
+         ALREADY on the very same call is a plain `ok` costing ZERO, so there is
+         no spurious "I turned it on"
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK43 (X, THE FULL-RESOLUTION RULE) a path whose would-be model resolves
+         DEEPER but still NOT FULLY leaves the box UNTICKED, leaves the tree at
+         its 45 nodes and reports the SHIPPED partial sentence at the shallower
+         landing — while the fully-resolving path on the same fixture moments
+         later ticks, says so, and grows the tree to 129
+new_schematic("switch_tab"...): no tab to switch to found: .wvbk18.drw
+ok:   BK42 (X, THE IMPROVE-OR-RESTORE CONTROL) the shipped retry re-reads the
+         raw, finds LESS, and puts browsersigs, browserrows, browserdbsigs AND
+         the selection back exactly — and the restored inventory is one the R12
+         probe can still see a hidden node through
+ok:   BK42 (TEARDOWN, spec §9's live note) the fixture leaves NOTHING behind
+         — no toplevel, no windows entry, no ticked box for another file's
+         snapshot to inherit, and the refresh spy really was un-installed
+----
+test_wave_sigbrowser_keys: 46 passed, 3 failed
+RESULT: 3 FAILED (46 passed)

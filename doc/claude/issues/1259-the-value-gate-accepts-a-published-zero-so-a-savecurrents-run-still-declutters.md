@@ -1,8 +1,16 @@
 # 1259 — the value gate accepts a published zero, so a `savecurrents` run still declutters
 
-Status: **open** (measured first-hand by item A5's adversary pass and again by
-its write-up pass, 2026-09-02; **not fixed** — arguably not a defect, see the
-open question) · Branch: `fluid-editing`
+Status: **PARTIALLY FIXED by item A6-b**, 2026-09-02 — the `dims=0` flavour is
+closed, the flavour xschem's own simulate command produces is **not** (issue
+**1263**) · Branch: `fluid-editing`
+
+> ⚠ **NOT LANDED. The fix below was implemented, built and verified, then its
+> write-up agent destroyed `src/save.c`'s half with `git checkout -- src/save.c`.
+> The code is preserved in
+> `doc/claude/op_param_batch/A6_working_tree_UNVERIFIED.patch` and in the working
+> tree; PLAN.md's A6 entry says what to do first. Everything recorded below was
+> measured and is correct.**
+
 Related: **1244**, ruling **D-6**, invariant **I3**, item **A5-a**
 
 ## The defect, in one sentence
@@ -63,3 +71,106 @@ Should a device whose every published OP number is **0** count as "got OP
 numbers" for ruling D-6? If not, the fix is B1-shaped: `op_annot::text` (or
 `op_param_set`) must distinguish an absent vector from a zero-valued one and the
 gate must read that distinction, not the rendered digits.
+
+---
+
+## PARTIALLY FIXED — item A6-b, 2026-09-02. ⚠ READ THE LIMIT BEFORE THE FIX.
+
+### The three states, and where each ended up
+
+**Before** (Measure agent, driven on A5's binary):
+
+```
+PROBE 1259 dims=0 xschem raw value = 0
+PROBE 1259 dims=0 block = zid = 0|zgm = 0|
+PROBE 1259 dims=0 mask9==mask1 (1 == gate correctly CLOSED on an ABSENT value; 0 == THE DEFECT) = 0
+PROBE 1259 real-0.0 mask9==mask1 (0 == gate correctly OPEN: a real 0 is a measurement) = 0
+PROBE 1259 absent-vector block = zid =|zgm =|
+PROBE 1259 absent-vector mask9==mask1 (1 == already correct, A5's gate) = 1
+```
+
+| state | before | after |
+|---|---|---|
+| (1a) no column at all | blank, gate closed — already correct (A5-a) | unchanged |
+| (1b) a `dims=0` column | `zid = 0`, **gate opens** — the defect | **blank, gate closed** |
+| (1b′) an unsatisfiable card on the `-r` writer | `zid = 0`, gate opens | **unchanged — see the limit** |
+| (1c) a genuinely zero-**length** vector | never reaches xschem | unchanged (issue **1264**) |
+| (2) a real computed 0.0 | `zid = 0`, gate opens — correct | unchanged, deliberately |
+| (3) a normal value | gate opens | unchanged |
+
+### What changed
+
+**The gate was not touched. It was already correct.** The defect was one rung
+upstream and is a plain invariant **I3** violation — xschem rendered a
+fabricated `0` for a vector the simulator did not compute. Ladder rung **L1**.
+
+* `src/save.c` `raw_line_dims_zero()` — the one anchor for the `dims=0` token,
+  parsed out of the **third tab-separated field** of a `Variables:` line, on the
+  `raw_header_case_mode()` precedent. `src/save.c:1057`'s
+  `sscanf(line, "%*[\t]%d%*[\t]%[^\t]", &i, varname)` reads index and name and
+  stops at the next tab, which is why the carrier was being thrown away.
+* `Raw.dims0` — one byte per column, allocated / grown / freed exactly where
+  `cursor_b_val` is, and **shifted** in `raw_deletevar()`, which `cursor_b_val`
+  is not (filed as **1262**).
+* `raw_vector_absent()` — the single exported predicate. **This is the seam item
+  B1 inherits**: B1's own rule ("a zero-length or `dims=0` vector is absent, not
+  zero") is answered here, once, rather than re-derived. Invariant **I1**.
+* `src/scheduler.c`'s `raw value` **annotation fall-through** gains one term.
+  The **numbered-point** read (`xschem raw value <v> 0`) deliberately still
+  answers `0` — that arm is data inspection, not annotation.
+
+**Rejected**, and both were forbidden: treating the rendered string `0` as blank
+inside `annot_block_has_value()` (it would hide a genuinely cut-off device);
+asking a second source from inside the gate (that is issue **0466** re-opened,
+and row A35 reds on it). Also rejected: keeping the `dims=0` name out of
+`Raw.table` so `get_raw_index()` answers −1 — one file smaller, far wider in
+reach, and it **leaks**, because `raw_deletevar()`'s re-index loop re-inserts
+every later name.
+
+### ⚠ THE LIMIT — issue 1263, and it is the literal headline of this issue
+
+**`dims=0` is the detector for the `.control` + `write` flavour only.** On
+**xschem's own shipped simulate command** — `ngspice -b -r "$n.raw" "$N"`,
+`src/xschem.tcl:3854` — an unsatisfiable `.save` card, *including everything
+`.options savecurrents` adds for a FET's `ig`/`is`/`ib`*, is written as an
+**ordinary `current` column of 0.0 with no `dims=0` token at all**. Re-measured
+by the write-up agent, ngspice 45.2, BSIM4:
+
+```
+        5       i(@m1[is])      current
+        6       i(@m1[ig])      current
+        7       i(@m1[ib])      current
+$ grep -ac 'dims=' sc.raw
+0
+$ head -3 sc.err
+Warning: unrecognized variable - @m1[is]
+...
+PT0 i(@m1[id]) = 0.00031215789
+PT0 i(@m1[ib]) = 0
+```
+
+The only signal is on **stderr**, which xschem never reads. **So on that path a
+`savecurrents` run still declutters.** Full record and fix options: issue
+**1263**.
+
+### Rows and sabotage
+
+Rows **A45** (`dims=0`: `raw index` ≥ 0 so the column *is* in the file, `raw
+value … -1` empty, block label-only, mask 9 == mask 1) · **A46** (a real
+computed 0.0, same zeros, type field alone removed: `raw value` = 0, block
+`zid = 0`, device **is** decluttered — the row that reds a fix collapsing (1)
+and (2) toward *absent*) · **A47** (a normal value) · **A48** (the seam, plus
+the numbered-point data-inspection leg).
+
+Sabotage: `SB-A6b-ALWAYS-ABSENT` (`return 1;` — the forbidden collapse toward
+absent) → 27 red in the owned suite, 3 in `test_spice_get_node_0861`, 64 in
+`test_op_annot`. `SB-A6b-NOPARSE` → **A45 only** and `SB-A6b-NUMBERED` → **A48
+only**: two coverage holes, filed as **1267**.
+
+### Still open
+
+* **1263** — the `-r` writer flavour. The headline case, on the path xschem uses.
+* **1264** — the zero-**length** flavour never reaches xschem at all.
+* **1265** — the absence rule reached one of three readers of `cursor_b_val[]`.
+* The user-visible change is **unratified**: a parameter that used to print `0`
+  now prints blank. On the user's ruling queue.

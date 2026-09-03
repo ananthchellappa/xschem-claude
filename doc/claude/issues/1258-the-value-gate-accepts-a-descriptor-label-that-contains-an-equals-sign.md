@@ -1,7 +1,14 @@
 # 1258 — the value gate accepts a descriptor label that contains an `=`
 
-Status: **open** (measured first-hand by item A5's adversary pass and again by
-its write-up pass, 2026-09-02; **not fixed**) · Branch: `fluid-editing`
+Status: **FIXED by item A6-a**, 2026-09-02 · Branch: `fluid-editing`
+
+> ⚠ **NOT LANDED. The fix below was implemented, built and verified, then its
+> write-up agent destroyed `src/save.c`'s half with `git checkout -- src/save.c`.
+> The code is preserved in
+> `doc/claude/op_param_batch/A6_working_tree_UNVERIFIED.patch` and in the working
+> tree; PLAN.md's A6 entry says what to do first. Everything recorded below was
+> measured and is correct.**
+
 Related: **1244**, ruling **D-6**, invariant **I5**, items **A3** / **A5-a**
 
 ## The defect, in one sentence
@@ -68,3 +75,52 @@ a label that renders perfectly well.
   parsed correctly. This issue recommends parsing correctly (the separator is
   ` = `), because that leaves `::op_annot::text` — the one minter, invariant I1 —
   untouched.
+
+---
+
+## FIXED — item A6-a, 2026-09-02
+
+**Before** (Measure agent's transcript, `xschem raw loaded` = −1, i.e. before any
+simulation, `params {{v=x zid 0} {q zgm 1}}`):
+
+```
+PROBE 1258 op_annot::text(M1) block = v=x =|q   =|
+PROBE 1258 mask1 texts = M1 P6W=1u P6GATE {v=x =} {q   =}
+PROBE 1258 mask9 texts = M1 {v=x =} {q   =}
+PROBE 1258 mask9==mask1 (1 == gate correctly CLOSED, 0 == decluttered on a valueless block) = 0
+PROBE 1258 CONTROL mask9==mask1 (expected 1: no value, so no declutter) = 1
+```
+
+**After.** `annot_block_has_value()` (`src/actions.c`) splits each block row at
+the **LAST** `=` on the line instead of latching the first. Body unchanged in
+every other respect — still a pure function of its argument, so row A35's
+purity slice is unmoved.
+
+**⚠ THE REPAIR IS NOT THE ONE THIS ISSUE RECOMMENDED, and the refuted sentence is
+named.** The "Still open" clause above said:
+
+> This issue recommends parsing correctly (the separator is ` = `)
+
+A label spelled `a = b` mints the **blank** row `a = b   =`, which *carries* the
+` = ` separator and which the separator reading therefore calls **valued**. The
+last-`=` reading calls it blank, correctly. Both are two-line repairs; only one
+is right. Row **A44** of `tests/headless/test_annot_declutter_1244.tcl` is that
+difference expressed as a check, and it is red under the separator repair.
+Ladder rung **L2**. Also rejected, as this issue already did: validating the
+label at `op_annot::register` time, which moves the check to the registry layer
+and makes a perfectly renderable rc entry fail loudly.
+
+**Rows.** A42 (a `=`-bearing label over no raw: mask 9 == mask 1, the user's
+parameter and pin label survive) · A43 (the same label over a **valued** raw is
+still decluttered — the row that reds a fix refusing any two-`=` row) · A44 (the
+last-`=` contract).
+
+**Adversary battery, all eight shapes held**: `zid` (control), `v=x`, `a=b`,
+`a=b=c`, `zid=` (trailing), `=z` (leading), a label containing a CR, and a label
+containing a TAB plus `=`. No fooling case was constructible within the mint
+contract — the value half is always `eng_or_blank()` output, which can neither
+contain nor end in `=`.
+
+**Sabotage.** `SB-A6a-FIRSTEQ` (A5's first-`=` latch restored verbatim) →
+**exactly** A42 and A44 red, nothing else. `SB-A6a-ALWAYS`
+(`return 1;`) → 17 red.

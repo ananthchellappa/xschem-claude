@@ -1,0 +1,1072 @@
+diff --git a/src/actions.c b/src/actions.c
+index 77b40f8c..d83367eb 100644
+--- a/src/actions.c
++++ b/src/actions.c
+@@ -1437,12 +1437,41 @@ int set_text_flags(xText *t)
+  * frame, so a tclgetvar per call is too costly. Refreshed at each BULK visibility
+  * evaluation -- draw(), calc_drawing_bbox(), `xschem print`, `xschem
+  * update_all_sym_bboxes`, startup and the CLI batch print -- because svg_draw(),
+- * create_ps() and symbol_bbox() do NOT go through draw(). NOTE this is why the
+- * mirror is a push+pull: `xschem set annot_show` writes the Tcl var too, so a later
++ * create_ps() and symbol_bbox() do NOT go through draw(). Since item A6-c
++ * symbol_bbox() refreshes it ITSELF, through annot_show_pull_cache() below -- the
++ * pull WITHOUT this function's 0688 backstop, for the reason written there.
++ * NOTE this is why the mirror is a push+pull: `xschem set annot_show` writes the
++ * Tcl var too, so a later
+  * sync can never undo the setter (decision D4). show_hidden_texts' own pull cache is
+  * refreshed at only three sites and is measurably stale in the export paths -- that
+  * is issue 0453 and is deliberately NOT fixed here. */
+ void annot_show_sync_cache(void)
++{
++  annot_show_pull_cache();
++  /* 0688 -- THE BACKSTOP. A root-sheet change that never runs load_schematic()
++   * (clear_schematic() composes a fresh untitled name IN PLACE, save.c:4850) is
++   * invisible to the deterministic seam in save.c, so the pull above is followed
++   * by the same check. Placed AFTER the pull deliberately: the pull is what makes
++   * the C field agree with the Tcl var, and clearing before it would be undone by
++   * it. */
++  annot_show_check_root();
++}
++
++/* 1244 (item A6-c, issue 1260 part 3) -- THE PULL ALONE, WITHOUT THE 0688 BACKSTOP.
++ * A SPLIT of annot_show_sync_cache() above, not a second pull: that function now IS
++ * this one plus the 0688 root check, so there is still exactly one place that
++ * makes the C mirror agree with the Tcl var (invariant I1) and the backstop still has
++ * exactly the eight bulk entry points it had.
++ *
++ * ⚠ WHY A READ-ONLY GEOMETRY VERB MAY NOT RUN THE BACKSTOP. That check can
++ * annot_show_set(0), i.e. CLEAR the mask -- which is why item A5-c left the mask
++ * unsynced at `recompute_inst_bbox` and accepted that the two symbol_bbox() doors then
++ * answered opposite picks for a bare `set ::annot_show` (issue 1260 part 3, measured:
++ * one door answered M1 and the other answered nothing, on the same instant and the
++ * same pick). symbol_bbox() computes a bounding box; it must not be able to disarm the
++ * annotation as a side effect. So the geometry path calls THIS, and the eight bulk
++ * evaluation entry points keep calling the function above. */
++void annot_show_pull_cache(void)
+ {
+   const char *s;
+   if(!xctx) return;
+@@ -1452,18 +1481,12 @@ void annot_show_sync_cache(void)
+    * svgdraw.c:1098, psprint.c:1370, scheduler.c x2, xinit.c x2, actions.c:4698), which
+    * is exactly the staleness trap show_hidden_texts fell into (issue 0453: refreshed at
+    * three sites, none of them an export entry, so its FIRST export after a Tcl-side
+-   * change renders the old value).
++   * change renders the old value). Item A6-c added a NINTH caller of the pull,
++   * symbol_bbox() (src/select.c) -- see the block above this function.
+    * NOT tclgetintvar(): on a missing variable it returns 0 AND dbg(0)-logs, and 0 is
+    * BACKLAYER -- the annotation would silently paint in the background colour. */
+   s = tclgetvar("annot_voltage_layer");
+   if(s && s[0]) xctx->annot_voltage_layer = atoi(s);
+-  /* 0688 -- THE BACKSTOP. A root-sheet change that never runs load_schematic()
+-   * (clear_schematic() composes a fresh untitled name IN PLACE, save.c:4850) is
+-   * invisible to the deterministic seam in save.c, so the pull above is followed
+-   * by the same check. Placed AFTER the pull deliberately: the pull is what makes
+-   * the C field agree with the Tcl var, and clearing before it would be undone by
+-   * it. */
+-  annot_show_check_root();
+ }
+ 
+ /* 0688 -- THE ONE C WRITER OF THE MASK (invariant I1). Every `xschem set
+@@ -2077,19 +2100,44 @@ static int annot_overlay_gate(int n)
+  *
+  * ⚠ THE FORMAT READ HERE IS MINTED IN EXACTLY ONE PLACE, the width pass of
+  * ::op_annot::text (src/op_annot.tcl): "A blank row is `label =` with NOTHING after the
+- * `=`, not even a space; every row ends in exactly one newline." So: per line, after
+- * the first `=`, any character that is not a space or a tab is a value. Row A34 pins
+- * that contract from the Tcl side, so a change to the mint reds a row instead of
+- * silently re-opening this defect. */
++ * `=`, not even a space; every row ends in exactly one newline." Row A34 pins that
++ * contract from the Tcl side, so a change to the mint reds a row instead of silently
++ * re-opening this defect.
++ *
++ * ⚠ THE SPLIT IS THE **LAST** `=` ON THE ROW, NOT THE FIRST -- ISSUE 1258, AND THE
++ * FIRST-`=` READING IS A GATE THAT THE DATA IT INSPECTS CAN FOOL. The label half of a
++ * row is whatever the user typed in their own `params` list (invariant I5; nothing
++ * rejects an `=` in it, and item B5 will let people type these), so a descriptor
++ * registered with the label `v=x` mints the BLANK row `v=x =` -- and the first-`=`
++ * reading found the `x` after that `=` and called it a value. Measured 2026-09-02 with
++ * `xschem raw loaded` = -1, i.e. before any simulation had run: mask 1 drew
++ * `M1 VCW=1u PD {v=x =} {q   =}` and mask 9 drew `M1 {v=x =} {q   =}` -- the user's own
++ * parameter and pin label traded for two empty rows, which is verbatim the defect item
++ * A5-a was written to close. Rows A42/A43 drive it.
++ *
++ * ⚠ AND THE LAST `=`, NOT THE THREE-BYTE SEPARATOR ` = ` issue 1258 recommends. Both
++ * are the same two lines; only one is right. A label spelled `a = b` mints the BLANK
++ * row `a = b   =`, which carries ` = ` and which the separator reading therefore calls
++ * valued. The last-`=` reading is strictly stronger: the mint always puts the
++ * separator's `=` after the whole padded label, so the final `=` of a row IS the
++ * separator, whatever the label contains. Row A44 is that difference written as a
++ * check. */
+ static int annot_block_has_value(const char *t)
+ {
+-  const char *p;
+-  int seen_eq = 0;
++  const char *p, *q, *eq;
+   if(!t) return 0;
+-  for(p = t; *p; ++p) {
+-    if(*p == '\n') { seen_eq = 0; continue; }
+-    if(!seen_eq) { if(*p == '=') seen_eq = 1; continue; }
+-    if(*p != ' ' && *p != '\t') return 1;
++  eq = NULL;
++  for(p = t; ; ++p) {
++    if(*p == '=') { eq = p; continue; }
++    if(*p != '\n' && *p != '\0') continue;
++    /* end of a row: the value field is everything after its LAST `=` */
++    if(eq) {
++      for(q = eq + 1; q < p; ++q) {
++        if(*q != ' ' && *q != '\t') return 1;
++      }
++    }
++    eq = NULL;
++    if(*p == '\0') break;
+   }
+   return 0;
+ }
+diff --git a/src/ase.tcl b/src/ase.tcl
+index 1cbedcaa..333d4202 100644
+--- a/src/ase.tcl
++++ b/src/ase.tcl
+@@ -5812,7 +5812,8 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
+ 
+ # The registry slot indices, and the current one; {} / -1 when nothing is
+ # loaded. `xschem raw info` prints "<cur> current" then one "<i> <path> <type>"
+-# line per slot (save.c:2379-2388, what == 4) and nothing at all with no raw.
++# line per slot (save.c:2475-2488, what == 4; re-grepped 2026-09-02, item A6)
++# and nothing at all with no raw.
+ proc ase::raw_indices {} {
+   if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
+   set out {}
+diff --git a/src/save.c b/src/save.c
+index 8160bcdd..13d051ba 100644
+--- a/src/save.c
++++ b/src/save.c
+@@ -756,6 +756,79 @@ static int read_raw_data_block(int binary, FILE *fd, Raw *raw, int ac)
+   return res;
+ }
+ 
++/* 1244 (item A6-b, issue 1259) -- 1 when a `Variables:` line marks its column
++ * `dims=0`, i.e. the simulator wrote a column for a `.save` card it could not
++ * satisfy. THE ONE ANCHOR FOR THAT TOKEN, on the raw_header_case_mode() precedent
++ * a few hundred lines above: one header key, parsed in one place, with its
++ * anchoring rules written beside it rather than spread over the callers.
++ *
++ * WHY THE RAW'S OWN TYPE FIELD IS THE CARRIER, WHEN THERE IS ONE. An explicit
++ * `save @m...[ib]` card the model cannot satisfy yields a dims=0 column of 0.0 --
++ * on all 78 devices of the user's own bandgap
++ * (doc/claude/code_analysis/1244_op_param_list_measurements.md section 22, spec
++ * landmine 11). Downstream the column is a plain 0.0, byte-identical to a
++ * transistor that is genuinely off, so no consumer can tell them apart. Here they
++ * are still distinguishable, and this is the last place they are.
++ *
++ * ANCHORING, and it is three rules, not one:
++ *   - the type is the THIRD tab-separated field of the line (`\t<idx>\t<name>\t
++ *     <type>`), the same shape the sscanf below reads the first two out of, so a
++ *     `dims=0` inside a VECTOR NAME cannot be mistaken for the marker;
++ *   - the token must be `dims=0` exactly: ngspice writes a real dimension list as
++ *     `dims=2,3`, so a following digit or comma means a shaped vector, not an
++ *     empty one;
++ *   - a line with fewer than three fields carries no type and is never absent.
++ *
++ * IT IS NOT THE ONLY FLAVOUR OF THE TRAP, AND NOT THE ONE src/xschem.tcl:3854
++ * PRODUCES. Measured 2026-09-02 against ngspice 45.2, not assumed: ngspice's batch
++ * `-r <file>` writer -- which is what the shipped simulate command runs -- emits
++ * the SAME unsatisfiable save card as a plain `current` column of 0.0 with NO
++ * dims=0 token at all, warning `unrecognized variable` on stderr instead, which
++ * xschem never reads; so a `.options savecurrents` run through it STILL
++ * declutters. A genuinely zero-LENGTH vector makes `write` refuse the whole plot
++ * and produce no raw. Issues 1263 and 1264. This closes the `.control`+`write`
++ * flavour only; item B1 inherits the rest through raw_vector_absent(), which is
++ * the one seam. */
++static int raw_line_dims_zero(const char *line)
++{
++  const char *p;
++  int tabs = 0;
++  if(!line) return 0;
++  for(p = line; *p && tabs < 3; ++p) {
++    if(*p == '\t') ++tabs;
++  }
++  if(tabs < 3) return 0;
++  for(; *p; ++p) {
++    if(*p != 'd' || strncmp(p, "dims=0", 6)) continue;
++    if(p[6] == ',' || (p[6] >= '0' && p[6] <= '9')) continue;
++    return 1;
++  }
++  return 0;
++}
++
++/* 1244 (item A6-b, issue 1259) -- THE SEAM, and the ONE reader of dims0[]
++ * (invariant I1). Item B1's backend seam inherits it rather than building a second
++ * detector: "a zero-length or dims=0 vector is ABSENT, not zero" is already B1's
++ * stated rule, and two independent answers to one question is how issue 1252 became
++ * issue 1260.
++ *
++ * THREE STATES, AND THIS PREDICATE SEPARATES THE FIRST TWO. (1) ABSENT -- no
++ * column at all, or one the simulator did not compute -- renders BLANK, invariant
++ * I3 and ruling D5-1: a plausible wrong number on a schematic is worse than none.
++ * (2) A REAL COMPUTED 0.0 renders 0 and still counts as an OP number: a transistor
++ * that is off has id = 0 and that is a measurement, not a hole. (3) a normal value.
++ * Collapsing (1) and (2) toward `absent` hides real zeros from a user reading a
++ * cut-off device; collapsing them toward `present` is the defect being fixed. */
++int raw_vector_absent(Raw *raw, int idx)
++{
++  int absent;
++  if(!raw || !raw->dims0) return 0;
++  if(idx < 0 || idx >= raw->nvars) return 0;
++  absent = raw->dims0[idx] ? 1 : 0;
++  dbg(2, "raw_vector_absent(): idx=%d absent=%d\n", idx, absent);
++  return absent;
++}
++
+ /* parse ascii raw header section:
+  * returns: 1 if dataset and variables were read.
+  *          0 if transient sim dataset not found
+@@ -784,6 +857,7 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+   int variables = 0, i, done_points = 0;
+   char *line = NULL, *varname = NULL, *lowerline = NULL;
+   int n = 0, done_header = 0, ac = 0;
++  int d0 = 0; /* 1244 (item A6-b): the `dims=0` marker of the Variables: line in hand */
+   /* npoints/nvars are set by the `No. Points:`/`No. Variables:` header lines,
+    * which a malformed file need not carry -- a `Values:`/`Binary:` line before
+    * either of them reaches the block handlers below with both still unset.
+@@ -1053,6 +1127,9 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+       /* get the list of lines with index and node name */
+       if(!raw->names) raw->names = my_calloc(_ALLOC_ID_, raw->nvars, sizeof(char *));
+       if(!raw->cursor_b_val) raw->cursor_b_val = my_calloc(_ALLOC_ID_, raw->nvars, sizeof(double));
++      /* 1244 (item A6-b) -- one byte per column, beside the value array it qualifies */
++      if(!raw->dims0) raw->dims0 = my_calloc(_ALLOC_ID_, raw->nvars, sizeof(char));
++      d0 = raw_line_dims_zero(line);
+       my_realloc(_ALLOC_ID_, &varname, strlen(line) + 1) ;
+       n = sscanf(line, "%*[\t]%d%*[\t]%[^\t]", &i, varname); /* read index and name of saved waveform */
+       if(n < 2) {
+@@ -1139,10 +1216,16 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
+           my_mstrcat(_ALLOC_ID_, &raw->names[(i << 2) + 3], "im(", varname, ")", NULL);
+         }
+         int_hash_lookup(&raw->table, raw->names[(i << 2) + 3], (i << 2) + 3, XINSERT_NOREPLACE);
++        /* 1244 (item A6-b): all four derived columns come from the one absent column */
++        if(d0 && raw->dims0) {
++          raw->dims0[i << 2] = 1;       raw->dims0[(i << 2) + 1] = 1;
++          raw->dims0[(i << 2) + 2] = 1; raw->dims0[(i << 2) + 3] = 1;
++        }
+ 
+       } else {
+         my_strcat(_ALLOC_ID_, &raw->names[i], varname);
+         int_hash_lookup(&raw->table, raw->names[i], i, XINSERT_NOREPLACE);
++        if(d0 && raw->dims0) raw->dims0[i] = 1;   /* 1244 (item A6-b) */
+       }
+       /* use hash table to store index number of variables */
+       dbg(dbglev, "read_dataset(): get node list -> names[%d] = %s\n", i, raw->names[i]);
+@@ -1203,6 +1286,7 @@ void free_rawfile(Raw **rawptr, int dr, int no_warning)
+    * introduced by the casemode work; fixed here because the same review that
+    * measured it also measured that the alias index itself leaks nothing. */
+   if(raw->cursor_b_val) my_free(_ALLOC_ID_, &raw->cursor_b_val);
++  if(raw->dims0) my_free(_ALLOC_ID_, &raw->dims0);   /* 1244 (item A6-b) */
+   if(raw->values) {
+     /* free also extra column for custom data plots */
+     for(i = 0 ; i <= raw->nvars; ++i) {
+@@ -1326,6 +1410,13 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
+     my_realloc(_ALLOC_ID_, &raw->names, raw->nvars * sizeof(char *));
+     my_realloc(_ALLOC_ID_, &raw->cursor_b_val, raw->nvars * sizeof(double));
+     raw->cursor_b_val[raw->nvars - 1] = 0.0;
++    /* 1244 (item A6-b). Only when the array exists: a reader that never recorded the
++     * field leaves it NULL, and my_realloc() on NULL would hand back UNINITIALISED
++     * bytes, i.e. columns declared absent at random. A computed column is present. */
++    if(raw->dims0) {
++      my_realloc(_ALLOC_ID_, &raw->dims0, raw->nvars * sizeof(char));
++      raw->dims0[raw->nvars - 1] = 0;
++    }
+     raw->names[raw->nvars - 1] = NULL;
+     my_strdup2(_ALLOC_ID_, &raw->names[raw->nvars - 1], varname);
+     int_hash_lookup(&raw->table, raw->names[raw->nvars - 1], raw->nvars - 1, XINSERT_NOREPLACE);
+@@ -1521,6 +1612,14 @@ int raw_deletevar(const char *name)
+   for(i = n + 1; i <= raw->nvars; i++) {
+     raw->values[i - 1] = raw->values[i];
+   }
++  /* 1244 (item A6-b) -- the absence byte follows its column, like names[] and
++   * values[] above. The array is left at its old length: over-allocated by one
++   * is harmless, and raw_vector_absent() bounds every read on nvars.
++   * raw->cursor_b_val, the array this one qualifies, is NOT shifted here --
++   * pre-existing, measured while writing this loop, filed as issue 1262. */
++  if(raw->dims0) {
++    for(i = n + 1; i < raw->nvars; i++) raw->dims0[i - 1] = raw->dims0[i];
++  }
+   raw->nvars--;
+   my_realloc(_ALLOC_ID_, &raw->names, sizeof(char *) * raw->nvars);
+   /* (nvars + 1), NOT nvars + 1 byte: `values` carries nvars+1 columns, the last
+diff --git a/src/scheduler.c b/src/scheduler.c
+index 914e23b4..d3109672 100644
+--- a/src/scheduler.c
++++ b/src/scheduler.c
+@@ -11026,7 +11026,22 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
+          * answered with the cursor's value wearing the label of a point that
+          * does not exist. The guard blanks it wherever nothing was published;
+          * that it still answers where something was is its own defect, filed
+-         * and left open as issue 0920. */
++         * and left open as issue 0920.
++         *
++         * ⚠ THE SECOND TERM, raw_vector_absent(), IS ISSUE 1259 AND IT IS THE SAME
++         * SENTENCE ONE STEP FURTHER. annot_p answers "was anything published at
++         * all"; this answers "did the simulator actually compute THIS column".
++         * ngspice writes a `.save` card the model cannot satisfy as a `dims=0`
++         * column of 0.0 and says nothing on stderr, so without it the verb -- and
++         * therefore ::op_annot::raw_or_blank, and therefore the schematic --
++         * reported a confident 0 for a number nothing measured, and the D-6
++         * declutter then traded the user's own W/L and pin labels for it. A
++         * genuinely computed 0.0 is NOT absent and still answers 0: a transistor
++         * that is off has id = 0 and that is a measurement. The predicate lives at
++         * the raw reader (src/save.c), where the distinction is written, and this
++         * is its ONE consumer. ⚠ It belongs on THIS arm for the same reason the
++         * annot_p term does -- the numbered-point read above is data inspection
++         * and must keep answering 0 for a dims=0 column. */
+         else if(argc > 4 && !strcmp(argv[2], "value")) {
+           int dataset = -1;
+           int point = argv[4][0] ? atoi(argv[4]) : -1;
+@@ -11041,7 +11056,8 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
+               ) {
+               val = get_raw_value(dataset, idx, point);
+               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
+-            } else if(raw->cursor_b_val && raw->annot_p >= 0) {
++            } else if(raw->cursor_b_val && raw->annot_p >= 0 &&
++                      !raw_vector_absent(raw, idx)) {
+               val = raw->cursor_b_val[idx];
+               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
+             }
+diff --git a/src/select.c b/src/select.c
+index ffc802a5..344068a5 100644
+--- a/src/select.c
++++ b/src/select.c
+@@ -668,6 +668,45 @@ int select_dangling_nets(void)
+   return ret;
+ }
+ 
++/* 1244 (item A6-c, issues 1252 and 1260) -- THE DRAWN THING AND THE CLICKABLE THING
++ * ARE ONE OBJECT, AND THIS IS THE ONE FUNCTION EVERY DOOR TO THAT FACT PASSES THROUGH.
++ * The per-instance D-6 gate below decides whether a decluttered device's own texts
++ * count toward its bounding box, and that gate reads two caches -- the annotation mask
++ * mirror and the overlay's epoch. Both were refreshed at the RENDER entry points and
++ * at two of this function's THIRTY-NINE callers, so any other caller stored a click box
++ * built from a stale answer. Measured 2026-09-02, four Tcl-reachable doors, each with
++ * the box read BEFORE anything could repair it: `setprop instance M1 name MZ1` stored
++ * 277.5 -340 322.829 -280 and `instance_at` answered NOTHING, while the very same
++ * frame rendered `MZ1 VCW=1u PD {zid =} {zgm =}` -- and the same for
++ * `move_instance ... nodraw`, for `reset_inst_prop` (whose arm ENDS IN draw(), so a
++ * full redraw does not repair a box already written) and for the deselect write in
++ * select_element() below. Item B4 clicks these devices, and findnet.c's
++ * find_closest_element() uses POINTINSIDE against exactly this box.
++ *
++ * ⚠ THIS DELIBERATELY REVERSES THE OPTION ISSUE 1252 REJECTED -- said out loud, not
++ * done quietly -- and both of that issue's reasons are ANSWERED rather than ignored:
++ *
++ *   RE-ENTRANCY. Filling the overlay cache evaluates ::op_annot::text, which can come
++ *   back through translate() -> prepare_netlist_structs() -> link_symbols_to_instances()
++ *   -> here. annot_overlay_sync() is the function that FREES that cache, so it early-
++ *   returns while the fill is in progress (the annot_overlay_busy guard in
++ *   src/actions.c, set around exactly that evaluation). The cycle was already closed;
++ *   1252 argued from the hazard, not from the code that answers it.
++ *
++ *   COST. The sync is behind the declutter bit, which is a strictly WEAKER necessary
++ *   condition than the rung it feeds -- it can only ever sync more often than needed,
++ *   never less, so it is not a second copy of that decision (invariant I1). With the
++ *   declutter unarmed -- every load, every netlist pass, every existing suite -- this
++ *   function does two Tcl variable reads and no sync at all. Measured on a 49-instance
++ *   sheet: symbol_bbox 9.97 us against ~0.11 us for a no-op sync, about 1%.
++ *
++ * ONE site against the alternative's six (the four doors above plus the two arms A5-c
++ * already carries), and the alternative would still have left the other thirty-three
++ * callers stale -- which is how issue 1252 became issue 1260. The mask is
++ * pulled WITHOUT the 0688 root backstop (annot_show_pull_cache(), not
++ * annot_show_sync_cache()): that backstop can CLEAR the mask, and a function that
++ * computes a bounding box must not be able to disarm the annotation as a side effect.
++ * Rows A49..A56 of tests/headless/test_annot_declutter_1244.tcl drive all of it. */
+ void symbol_bbox(int i, double *x1,double *y1, double *x2, double *y2)
+ {
+    int j, tmp;
+@@ -681,6 +720,8 @@ void symbol_bbox(int i, double *x1,double *y1, double *x2, double *y2)
+    #if HAS_CAIRO==1
+    int customfont;
+    #endif
++   annot_show_pull_cache();
++   if(xctx->annot_show & ANNOT_SHOW_NOPARAM) annot_overlay_sync();
+    /* symbol bbox */
+    flip = xctx->inst[i].flip;
+    rot = xctx->inst[i].rot;
+diff --git a/src/wave_viewer.tcl b/src/wave_viewer.tcl
+index 45eedb1e..32145e4a 100644
+--- a/src/wave_viewer.tcl
++++ b/src/wave_viewer.tcl
+@@ -2656,8 +2656,8 @@ proc wviewer::signal_list {token {statusVar {}}} {
+ # it.
+ 
+ # PURE. `xschem raw info`'s output -> {cur <int> dbs {{idx .. path .. type ..} ..}}.
+-# The engine prints (src/save.c:2379-2388, extra_rawfile() what == 4, RE-GREPPED
+-# 2026-08-20) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
++# The engine prints (src/save.c:2475-2488, extra_rawfile() what == 4, RE-GREPPED
++# 2026-09-02, item A6 having inserted ~96 lines above it) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
+ # <NULL>>` line per registry slot — and NOTHING AT ALL when no raw is loaded,
+ # which is why the empty text has to answer `cur -1` rather than throw.
+ #
+diff --git a/src/xschem.h b/src/xschem.h
+index 7f577298..79a6f6d6 100644
+--- a/src/xschem.h
++++ b/src/xschem.h
+@@ -1351,6 +1351,14 @@ typedef struct {
+                    * need to interpolate the Y value between annot_p and annot_p + 1 */
+   int annot_sweep_idx; /* index of sweep variable where cursor annotation has occurred */
+   double *cursor_b_val;
++  /* 1244 (item A6-b, issue 1259) -- one byte per column: 1 when the raw's own
++   * `Variables:` line marked that vector `dims=0`, i.e. the simulator wrote a
++   * column for a `.save` card it could not satisfy. Read ONLY through
++   * raw_vector_absent(); allocated, grown, shifted and freed exactly where
++   * cursor_b_val[] is, plus the shift in raw_deletevar() that cursor_b_val is
++   * missing (filed separately). NULL is legal and means `this reader did not
++   * record the field`, which answers `not absent` for every column. */
++  char *dims0;
+   /* when descending hierarchy xctx->current_name changes, xctx->raw_schname
+    * holds the name of the top schematic from which the raw file was loaded */
+   char *schname;
+@@ -2585,6 +2593,17 @@ extern int raw_read_from_attr(Raw **rawptr, const char *type, double sweep1, dou
+ extern int raw_add_vector(const char *varname, const char *expr, int sweep_idx);
+ extern int raw_renamevar(const char *old_name, const char *new_name);
+ extern int raw_deletevar(const char *name);
++/* 1244 (item A6-b, issue 1259) -- 1 when column <idx> of <raw> is a vector the
++ * simulator DID NOT COMPUTE, even though the file carries a column for it: ngspice
++ * answers a `.save` card naming a parameter the model does not publish with a
++ * `dims=0` column of 0.0 and says nothing on stderr (measurements section 22, spec
++ * landmine 11). That is an ABSENT vector, not a measured zero, and invariant I3
++ * says it renders BLANK -- while a transistor that is genuinely off has id = 0 and
++ * must still print 0. The two are byte-identical everywhere downstream, so the
++ * distinction is read where it is WRITTEN, in the raw's own type field, and
++ * published through this ONE predicate rather than re-derived by each consumer.
++ * 0 for any raw whose reader never recorded the field, so nothing else moves. */
++extern int raw_vector_absent(Raw *raw, int idx);
+ extern int new_rawfile(const char *name, const char *type, const char *sweepvar,
+                        double start, double end, double step);
+ extern char *base64_from_file(const char *f, size_t *length);
+@@ -3643,6 +3662,14 @@ extern int annot_name_token(const char *txt);
+  * -1 == "no override, use the layer you already computed". */
+ extern int annot_text_layer(int flags, int ctx);
+ extern void annot_show_sync_cache(void);
++/* 1244 (item A6-c, issue 1260 part 3) -- annot_show_sync_cache() WITHOUT the 0688
++ * root backstop: the annot_show + annot_voltage_layer pull alone. A SPLIT of the
++ * function above (which is now this one plus annot_show_check_root()), so the
++ * mirror still has ONE builder. It exists because symbol_bbox() has to see the
++ * mask the renderers see -- the two symbol_bbox() doors otherwise answer opposite
++ * picks for the same instant -- and a read-only geometry verb must not be able to
++ * CLEAR the mask, which annot_show_check_root() can. src/actions.c has the rest. */
++extern void annot_show_pull_cache(void);
+ /* 0688 -- THE ONE C WRITER of the annotation mask (invariant I1), and the one
+  * checker that drops it when the window's ROOT sheet changes underneath it.
+  * annot_show_set() writes xctx->annot_show, the Tcl mirror ::annot_show AND the
+diff --git a/tests/headless/test_annot_declutter_1244.tcl b/tests/headless/test_annot_declutter_1244.tcl
+index caacd952..70a35ed2 100644
+--- a/tests/headless/test_annot_declutter_1244.tcl
++++ b/tests/headless/test_annot_declutter_1244.tcl
+@@ -18,7 +18,7 @@
+ # The draw-time rung is item A3 and the name classifier is item A2; A2 and A3
+ # add their rows to THIS file.
+ #
+-# ⚠ THE FILE NOW COVERS FIVE ITEMS, IN FIVE PASSES OVER ONE FEATURE:
++# ⚠ THE FILE NOW COVERS SIX ITEMS, IN SIX PASSES OVER ONE FEATURE:
+ #   sections D M S T V I   item A1 — the mask bit and the Ctrl-Alt-6 chord
+ #   section  N             item A2 — TEXT_ANNOT_NAME, the name classifier
+ #   section  A, A0..A29    item A3 — THE DRAW RUNG, the per-instance D-6 gate,
+@@ -33,6 +33,16 @@
+ #                          A17, keeping their numbers because 1254 names them.
+ #                          A5 also EDITS two goldens: A22's call-site census
+ #                          {3 1 1 1 0} -> {4 2 2 1 0}, and E6's fifth leg 0 -> 1.
++#   section  A, A42..A56   item A6 — THE TWO HOLES IN THE VALUE GATE and the
++#                          LAST bbox DOORS: a descriptor label containing `=`
++#                          satisfies the gate (1258), a `dims=0` column's
++#                          published zero satisfies it while a genuinely
++#                          measured 0.0 must (1259), and four MORE Tcl-reachable
++#                          symbol_bbox() doors plus the mask half of the gate
++#                          (1260). A6 EDITS one golden: A41's fifth leg,
++#                          annot_overlay_sync() in select.c 0 -> 1, which is a
++#                          deliberate reversal of the option issue 1252
++#                          rejected and is argued out loud beside the row.
+ # Rows N10 and N14 were written by A2 as "A3 MUST REPLACE" / "1249 PINNED" and
+ # were flipped in place by A3; row I2 was superseded by row A3 and re-purposed.
+ # Each carries the reason on itself. Section A's own header lists which of its
+@@ -1366,13 +1376,27 @@ close $A_FD
+ ## An OP raw in test_op_annot.tcl's opa_o_mkrlraw shape, one point, one value
+ ## per vector. The vector NAMES come from op_annot::vector — invariant I1, ONE
+ ## name builder — so this fixture cannot drift from the descriptor.
+-proc a3_mkraw {path pairs} {
++##
++## ⚠ ITEM A6 EXTENDED THIS WRITER RATHER THAN ADDING A SECOND ONE (invariant I1
++## again, one fixture minter). The optional trailing <types> is the per-column
++## THIRD field of the `Variables:` block — the field ngspice writes as `voltage`
++## / `current`, and as `current dims=0` for a `.save` card the model does not
++## publish (doc/claude/code_analysis/1244_op_param_list_measurements.md §22,
++## spec landmine 11). It defaults to `voltage` for every column, so every call
++## written before A6 mints byte-identical bytes. Rows A45/A46 are the two raws
++## that differ ONLY in this field, which is the whole of issue 1259: with it
++## stripped they are the same file.
++proc a3_mkraw {path pairs {types {}}} {
+   set f [open $path w]
+   puts -nonewline $f "Title: A3 declutter fixture\nDate: Mon Jan 1 00:00:00 2026\n"
+   puts -nonewline $f "Plotname: Operating Point\nFlags: real\n"
+   puts -nonewline $f "No. Variables: [expr {[llength $pairs]/2}]\nNo. Points: 1\nVariables:\n"
+   set k 0
+-  foreach {v val} $pairs { puts -nonewline $f "\t$k\t$v\tvoltage\n" ; incr k }
++  foreach {v val} $pairs {
++    set a3_ty [lindex $types $k]
++    if {$a3_ty eq {}} { set a3_ty voltage }
++    puts -nonewline $f "\t$k\t$v\t$a3_ty\n" ; incr k
++  }
+   puts -nonewline $f "Values:\n"
+   set k 0
+   foreach {v val} $pairs {
+@@ -2394,11 +2418,37 @@ check "A40 1252 THE TWO symbol_bbox DOORS AGREE, STALE DOOR READ FIRST: recomput
+ ## THE CENSUS THE BEHAVIOURAL ROW CANNOT SEE. Two sites in scheduler.c — the
+ ## `update_all_sym_bboxes` arm item A3 added and the `recompute_inst_bbox` arm
+ ## A5-c adds — and the second must sit in the arm it names, not somewhere else in
+-## a 15k-line file. ZERO in select.c is the repair 1252 REJECTED for blast
+-## radius: symbol_bbox() has 39 callers, six in save.c, and annot_overlay_busy
+-## exists precisely because filling the cache tclevals ::op_annot::text, which
+-## re-enters that machinery.
+-check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once each and from scheduler.c TWICE, the second inside the recompute_inst_bbox arm, and never from select.c" \
++## a 15k-line file.
++##
++## ⚠⚠ THE FIFTH GOLDEN MOVED 0 -> 1 WITH ITEM A6, AND IT IS A DELIBERATE REVERSAL
++## OF THE OPTION ISSUE 1252 REJECTED. Said out loud rather than done quietly:
++## A5-c's per-door repair closed TWO of the 39 symbol_bbox() callers, and item A6
++## then measured FOUR MORE Tcl-reachable doors writing the click box from a stale
++## gate — `setprop instance`, `move_instance … nodraw`, `reset_inst_prop` (which
++## issue 1260 does not even name) and `select_element`'s deselect write — with
++## `instance_at` answering EMPTY over a device the very same frame renders in
++## full (rows A49..A53). Thirty-nine callers cannot each carry a correct copy of a
++## freshness decision (invariant I1), so the sync moves to the ONE function they
++## all pass through, `symbol_bbox()` (src/select.c).
++##   1252's two reasons are ANSWERED, not ignored:
++##     re-entrancy — annot_overlay_sync() early-returns on annot_overlay_busy
++##       (src/actions.c), which annot_overlay_cached_text() sets around exactly
++##       the tcleval that re-enters, so the ::op_annot::text -> translate ->
++##       prepare_netlist_structs -> link_symbols_to_instances -> symbol_bbox
++##       cycle is already closed;
++##     cost — the sync is behind a bit-3 prefilter, so with the declutter unarmed
++##       (every other row in this file, every load, every netlist pass, the whole
++##       audit) symbol_bbox does two Tcl var reads and NO sync. Measured on a
++##       49-instance sheet: symbol_bbox 9.97 us, a no-op annot_overlay_sync
++##       ~0.11 us — about 1%.
++## ⚠ THE GOLDEN IS EDITED; THE REGEXP IS NOT WIDENED. Widening the reader so the
++## count does not move is verbatim the failure this suite has now filed three
++## times against itself (1248, 1254). Rows A55/A56 are the shape and the
++## placement that the count alone cannot see.
++## ⚠ scheduler.c STAYS AT 2. A5-c's two sites are redundant under the single
++## point and are LEFT IN PLACE deliberately — row A40 golds the second one inside
++## the arm it names, and removing them is a refactor beyond item A6's step.
++check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once each, from scheduler.c TWICE (the second inside the recompute_inst_bbox arm), and ONCE from select.c" \
+   [list [a5_ccount $A_DRAW {annot_overlay_sync\(\)}] \
+         [a5_ccount $A_SVGD {annot_overlay_sync\(\)}] \
+         [a5_ccount $A_PS   {annot_overlay_sync\(\)}] \
+@@ -2406,10 +2456,509 @@ check "A41 1252 STRUCTURAL: annot_overlay_sync() is called from draw/svg/ps once
+         [a5_ccount $A_SEL  {annot_overlay_sync\(\)}] \
+         [a5_near [file join $repo src scheduler.c] \
+                  {strcmp\(argv\[1\], "recompute_inst_bbox"\)} {annot_overlay_sync\(\)} 30]] \
+-  {1 1 1 2 0 1}
++  {1 1 1 2 1 1}
++
++dc_annot 0
++
++# ============================================================================
++# A42..A56 — ITEM A6: THE TWO HOLES IN THE VALUE GATE, AND THE LAST bbox DOORS
++# ============================================================================
++# Issues 1258 (a label containing `=` satisfies the gate), 1259 (a published
++# zero satisfies it, so a `savecurrents` run still declutters) and 1260 (1252's
++# residue: more symbol_bbox() doors, plus the mask half of the gate).
++#
++# ⚠ ALL FIFTEEN ROWS WERE MEASURED RED (or GREEN, where they are controls)
++# AGAINST THE A5 BINARY BEFORE ANY OF THEM WAS WRITTEN. The numbers quoted
++# below are from that run, not from reasoning.
++#
++# ---------------------------------------------------------------------------
++# A42..A44 — 1258. THE GATE IS FOOLED BY THE DATA IT INSPECTS.
++# ---------------------------------------------------------------------------
++# annot_block_has_value() (src/actions.c) latches at the FIRST `=` on a row and
++# calls the next non-space character a value. The descriptor `label` is
++# USER-EDITABLE by design (invariant I5; item B5 lets people type these), and
++# ::op_annot::text prints it verbatim, so a label spelled `v=x` mints the BLANK
++# row `v=x =` and the gate reads the `x` as a number. Measured with `xschem raw
++# loaded` = -1, i.e. before any simulation has been run:
++#     block   = <<v=x =|q   =|>>              (| = newline; NO values at all)
++#     mask 1  = M1 a3fet XM1 A3OPTEXT A3W=1u A3GATE {v=x =} {q   =}
++#     mask 9  = M1 a3fet XM1 A3OPTEXT         {v=x =} {q   =}
++# The user pressed 6, pressed Ctrl-Alt-6, and traded W and the pin label for two
++# empty rows — item A5-a's exact defect, reproduced through a label spelling.
++#
++# ⚠ A44 IS THE ROW THAT SEPARATES THE TWO CANDIDATE REPAIRS, and it is the whole
++# reason it exists. Issue 1258's own "Still open" recommends the ` = ` SEPARATOR
++# reading. A label spelled `a = b` mints the blank row `a = b =` — measured —
++# which contains ` = ` with `b` after it, so the separator reading calls that row
++# VALUED and is still fooled. Taking the LAST `=` on the line is strictly
++# stronger and is what this suite golds. Both are two-line changes; only one is
++# right, and A44 is the difference between them written as a check.
++#
++# ---------------------------------------------------------------------------
++# A45..A48 — 1259. THREE STATES, THREE ROWS, AND NO COLLAPSE IN EITHER DIRECTION.
++# ---------------------------------------------------------------------------
++# ⚠ THE TWO RAWS A45 AND A46 LOAD DIFFER IN ONE FIELD OF ONE HEADER LINE. That
++# is the whole of issue 1259: with the type field stripped they are the same
++# file, and everything downstream — `xschem raw value`, ::op_annot::raw_or_blank,
++# the block string, the gate — sees the same bytes. Measured against the A5
++# binary, the two are INDISTINGUISHABLE:
++#     A45 (`current dims=0`)  raw index 0   raw value <0>   block <<zid = 0|...>>
++#     A46 (plain `voltage`)   raw index 0   raw value <0>   block <<zid = 0|...>>
++# and both declutter at mask 9. One of those is right and the other is the
++# defect, so the distinction cannot be made from the block string, from the
++# rendered digits, or from anything else the declutter can reach. It has to be
++# read where it is written — the raw's own `Variables:` type field, which
++# ngspice writes as `current dims=0` for a `.save` card the model does not
++# publish (measurements §22, spec landmine 11).
++#
++#   (1) ABSENT.  No vector at all is row A32 above, and A5-a's gate ALREADY
++#       closes on it. `dims=0` is the OTHER absence, and it is row A45: the
++#       column IS in the file (`raw index` >= 0, so this is not A32 again) but
++#       nothing was computed for it. It must render BLANK — invariant I3, "a
++#       missing vector renders BLANK. Not 0, not NaN on screen" — and therefore
++#       must NOT satisfy the gate.
++#   (2) A REAL COMPUTED 0.0 is row A46, and it MUST still satisfy the gate. A
++#       transistor that is off has id = 0 and that is a measurement, not a hole;
++#       ::op_annot::eng_or_blank prints a measured 0 deliberately. A46 is the row
++#       that reds a "fix" that collapses (1) and (2) toward absent, which would
++#       hide a genuinely cut-off device from the user reading it.
++#   (3) A NORMAL VALUE is row A47, unchanged.
++# A48 is the seam: ONE predicate, at the raw reader, with the numbered-point
++# read (`xschem raw value <v> 0` — data inspection, not annotation) deliberately
++# still live. That last leg mirrors rows SGN13/SGN14/SGN22 of
++# test_spice_get_node_0861.tcl, so a repair that swallows the arm next to it reds
++# here as well as there.
++#
++# ---------------------------------------------------------------------------
++# A49..A56 — 1260. THE DRAWN THING AND THE CLICKABLE THING MUST BE ONE OBJECT.
++# ---------------------------------------------------------------------------
++# Row A40 above closed the `recompute_inst_bbox` door. Driving the verbs rather
++# than reading the code found FOUR more, all measured on the A5 binary with the
++# A40 protocol (warm at mask 9, move the epoch with a params-{} re-registration,
++# NO draw and NO export, read the STALE door FIRST):
++#     warm box                              277.5 -340 354.343 -280
++#     A49 setprop instance M1 name MZ1  ->  277.5 -340 354.343 -280  pick <>
++#     A50 move_instance … nodraw noundo ->  277.5 -340 354.343 -280  pick <>
++#     A51 reset_inst_prop M1            ->  277.5 -340 354.343 -280  pick <>
++#     A52 select instance M1 clear      ->  277.5 -340 354.343 -280  pick <>
++#     update_all_sym_bboxes             ->  150 -380 495.133 -233.026  pick M1
++# ⚠ A51 IS A DOOR ISSUE 1260 DOES NOT NAME (scheduler.c's reset_inst_prop arm
++# writes the box twice and then ENDS IN draw()) — so it also proves that a full
++# redraw does NOT repair a box already written from a stale gate: the draw
++# refreshes both caches, but the number was stored before it ran.
++# ⚠ A52's door is select_element()'s DESELECT write (src/select.c), which no
++# issue in this batch had noticed at all.
++# A53 is the headline in one row: on the SAME fixture, with the render taken
++# first, the SVG says `MZ1 a3fet XMZ1 A3OPTEXT A3W=1u A3GATE` and
++# `instance_at 430 -245` answers EMPTY over it. ITEM B4 CLICKS THESE DEVICES,
++# and findnet.c's find_closest_element uses POINTINSIDE against exactly this box.
++# A54 is 1260 part 3, the MASK half, in BOTH directions — measured with a bare
++# `set ::annot_show`, the two doors answer OPPOSITE picks:
++#     C mask 1, bare set 9:  recompute 150 -380 495.133 -233.026 pick M1
++#                            update_all 277.5 -340 354.343 -280  pick <>
++#     C mask 9, bare set 1:  recompute 277.5 -340 354.757 -280   pick <>
++#                            update_all 150 -380 496.307 -232.832 pick M1
++# ⚠ THE TWO DOORS ARE COMPARED TO EACH OTHER, NEVER TO LITERAL COORDINATES: the
++# two directions differ in the third decimal (495.133 vs 496.307), which is
++# sub-pixel text-metric noise and is not the subject of any row here.
++#
++# RED BEFORE A6 LANDS (10): A42 A44 A45 A48 A49 A50 A51 A52 A53 A54 — plus the
++#   REPAIRED row A41, whose fifth golden moves 0 -> 1.
++# GREEN BEFORE AND AFTER (4) — controls, NOT evidence for A6:
++#   A43  a valued '='-bearing label IS still decluttered (a fix that refuses any
++#        row containing two `=` reds here);
++#   A46  A REAL COMPUTED ZERO still satisfies the gate — the row that reds the
++#        collapse toward "absent";
++#   A47  a normal value still satisfies it;
++#   A55 A56 are structural and red before A6 lands for the SHAPE, not the
++#        behaviour.
++
++## `xschem raw value <v> -1` — THE annotation accessor — and `… 0`, the numbered
++## point, which is data inspection and must stay live while the annotation is
++## refused. Both answer {} rather than raising into the suite.
++proc a6_rval  {v} { set r {} ; catch {set r [xschem raw value $v -1]} ; return $r }
++proc a6_rval0 {v} { set r {} ; catch {set r [xschem raw value $v 0]}  ; return $r }
++proc a6_ridx  {v} { set r -99 ; catch {set r [xschem raw index $v]}   ; return $r }
++## 1 when EVERY non-blank row of a block is `label =` with nothing after the `=`
++## (A34's contract), and there is at least one row — so an empty block, which is
++## row A32's case and not row A45's, cannot satisfy it.
++proc a6_blank_block {t} {
++  set n 0
++  foreach l [split $t \n] {
++    if {[string trim $l] eq {}} continue
++    incr n
++    if {![regexp {^\S+ *=$} $l]} { return 0 }
++  }
++  return [expr {$n >= 1 ? 1 : 0}]
++}
++## ROW A40's PROTOCOL, AS A PROC, because five rows need it and getting it wrong
++## measures nothing. Warm BOTH caches at mask 9 over the valued raw, then move
++## the epoch with a params-{} re-registration — NOT `xschem raw clear`, so the
++## row reds for the 1260 reason alone and not for A5-a's — with no draw and no
++## export. Returns the warm (decluttered, narrow) box.
++## ⚠ EVERY DOOR GETS A FRESH FIXTURE STILL NAMED M1. Renaming M1 -> MZ1 unmatches
++## the descriptor's @name-derived vector names, so a second door driven on a
++## renamed sheet never re-opens the gate and reads falsely CLEAN.
++proc a6_warm {} {
++  catch {xschem raw clear}
++  xschem load $::A_SAV
++  update idletasks
++  catch {op_annot::register a3nmos \
++    [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
++  dc_setmask 9
++  catch {xschem annotate_op $::A_RAW 0}
++  catch {xschem update_all_sym_bboxes}
++  set w [a3_ibox 0]
++  catch {op_annot::register a3nmos [list devpath {@m.@path@name} params {}]}
++  return $w
++}
++## A C file with its comments stripped, and the source between two needles.
++## Copied from sgn_code / sgn_span, tests/headless/test_spice_get_node_0861.tcl:
++## the thing under test is ONE ARM of a dispatcher inside a function thousands of
++## lines long, and the comment above that arm quotes the very tokens being
++## counted, so an unstripped grep matches prose and stays green over dead code.
++proc a6_code {path} {
++  if {![file isfile $path]} { return NOFILE }
++  set h [open $path r] ; set d [read $h] ; close $h
++  regsub -all {/\*.*?\*/} $d " " d
++  return $d
++}
++proc a6_span {src a b} {
++  set i [string first $a $src]
++  if {$i < 0} { return NOFUNC }
++  set j [string first $b $src $i]
++  if {$j < 0} { return NOEND }
++  return [string range $src $i $j]
++}
++
++# --- A42..A44: 1258, A LABEL CONTAINING `=` -------------------------------
++
++set A6_EQRAW [file join $scratch a6eq.raw]
++
++catch {xschem raw clear}
++xschem load $A_SAV
++update idletasks
++catch {op_annot::register a3nmos \
++  [list devpath {@m.@path@name} params {{v=x zid 0} {q zgm 1}}]}
++set A42_LOADED -99 ; catch {set A42_LOADED [xschem raw loaded]}
++set A42_BLOCK [a3_optext M1]
++dc_annot 1 ; set A42_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_eq1.svg]]]
++dc_annot 9 ; set A42_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_eq9.svg]]]
++dc_annot 0
++
++## THE HEADLINE OF ITEM A6-a, and the same claim row A30 makes one label
++## spelling over: with no raw loaded NOTHING is decluttered.
++check "A42 1258 HEADLINE a descriptor label containing `=` over NO RAW (raw loaded = -1) must NOT satisfy the gate - mask 9 == mask 1, parameter and pin label survive" \
++  [list $A42_LOADED \
++        [a6_blank_block $A42_BLOCK] \
++        [a3_hasl $A42_T1 $A_PARAMS] \
++        [a3_hasl $A42_T9 $A_PARAMS] \
++        [expr {$A42_T1 eq $A42_T9}]] \
++  {-1 1 {1 1} {1 1} 1}
++
++## THE DISCRIMINATION CONTROL FOR A42, GREEN BEFORE AND AFTER. The same
++## '='-bearing label over the VALUED raw mints `v=x = 11.1u`, which really did
++## get a number, so the device IS still decluttered. A "fix" that refuses any row
++## carrying two `=` characters reds here.
++catch {xschem annotate_op $A_RAW 0}
++update idletasks
++set A43_BLOCK [a3_optext M1]
++dc_annot 1 ; set A43_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_eqv1.svg]]]
++dc_annot 9 ; set A43_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_eqv9.svg]]]
++dc_annot 0
++check "A43 1258 DISCRIMINATION: the SAME '='-bearing label over the VALUED raw IS still decluttered at mask 9 and keeps everything at mask 1" \
++  [list [a3_hasl $A43_T9 $A_PARAMS] \
++        [a3_hasl $A43_T1 $A_PARAMS] \
++        [expr {[lsearch -glob $A43_T9 {v=x = [0-9]*}] >= 0 ? 1 : 0}]] \
++  {{0 0} {1 1} 1}
++
++## ⚠ THE ROW THAT SEPARATES THE LAST-`=` REPAIR FROM THE ` = ` SEPARATOR READING
++## ISSUE 1258 RECOMMENDS. Measured: a label spelled `a = b` mints the BLANK row
++## `a = b =` (and pads its neighbour to `q     =`). The separator reading finds
++## ` = ` at offset 1 with `b` after it and calls the row VALUED — i.e. it is
++## fooled by exactly the same class of data. Taking the LAST `=` is not fooled.
++catch {xschem raw clear}
++xschem load $A_SAV
++update idletasks
++catch {op_annot::register a3nmos \
++  [list devpath {@m.@path@name} params {{{a = b} zid 0} {q zgm 1}}]}
++set A44_LOADED -99 ; catch {set A44_LOADED [xschem raw loaded]}
++set A44_BLOCK [a3_optext M1]
++dc_annot 1 ; set A44_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_ab1.svg]]]
++dc_annot 9 ; set A44_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_ab9.svg]]]
++dc_annot 0
++check "A44 1258 THE LAST-`=` CONTRACT: a label spelled `a = b` mints the blank row `a = b =`, which the ` = ` separator reading calls valued - mask 9 must still equal mask 1" \
++  [list $A44_LOADED \
++        [expr {[string first "a = b =" $A44_BLOCK] >= 0 ? 1 : 0}] \
++        [a3_hasl $A44_T1 $A_PARAMS] \
++        [a3_hasl $A44_T9 $A_PARAMS] \
++        [expr {$A44_T1 eq $A44_T9}]] \
++  {-1 1 {1 1} {1 1} 1}
++
++# --- A45..A48: 1259, ABSENT vs A PUBLISHED ZERO vs A REAL ZERO -------------
++
++set A6_D0RAW [file join $scratch a6dims0.raw]
++set A6_Z0RAW [file join $scratch a6zero.raw]
++
++catch {xschem raw clear}
++xschem load $A_SAV
++update idletasks
++catch {op_annot::register a3nmos \
++  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
++## The SAME vector names and the SAME zero values, twice, differing ONLY in the
++## `Variables:` type field. Invariant I1: the names still come from
++## op_annot::vector, so neither fixture can drift from the descriptor.
++set A6_ZPAIRS {} ; set A6_D0TYPES {}
++foreach d {M1 M2} {
++  catch {lappend A6_ZPAIRS [op_annot::vector $d zid] 0.0 [op_annot::vector $d zgm] 0.0}
++  lappend A6_D0TYPES {current dims=0} {current dims=0}
++}
++a3_mkraw $A6_D0RAW $A6_ZPAIRS $A6_D0TYPES
++a3_mkraw $A6_Z0RAW $A6_ZPAIRS
++set A6_V0 [lindex $A6_ZPAIRS 0]
++
++## ⚠ STATE 1b — ABSENT, BY `dims=0`. The column IS in the raw (so `raw index` is
++## >= 0 and this is NOT row A32's no-vector case) but the simulator computed
++## nothing for it. Invariant I3: it renders BLANK, so the gate stays closed.
++catch {xschem annotate_op $A6_D0RAW 0}
++update idletasks
++set A45_IDX [a6_ridx $A6_V0]
++set A45_VAL [a6_rval $A6_V0]
++set A45_BLOCK [a3_optext M1]
++dc_annot 1 ; set A45_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_d01.svg]]]
++dc_annot 9 ; set A45_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_d09.svg]]]
++dc_annot 0
++check "A45 1259 STATE 1b ABSENT-BY-dims=0: the column is in the raw (index >= 0) but `raw value -1` is EMPTY, the block is label-only, and nothing is decluttered" \
++  [list [expr {$A45_IDX >= 0 ? 1 : 0}] \
++        [expr {$A45_VAL eq {} ? 1 : 0}] \
++        [a6_blank_block $A45_BLOCK] \
++        [a3_hasl $A45_T9 $A_PARAMS] \
++        [expr {$A45_T1 eq $A45_T9}]] \
++  {1 1 1 {1 1} 1}
++
++## ⚠ STATE 2 — A REAL COMPUTED 0.0, AND IT MUST STILL SATISFY THE GATE. The same
++## vectors, the same zeros, the type field alone removed. A transistor that is
++## off has id = 0 and that is a measurement, not a hole. THIS IS THE ROW THAT
++## REDS A COLLAPSE TOWARD "ABSENT" — the wrong answer in the other direction,
++## and the one a user can never diagnose from the screen.
++catch {xschem annotate_op $A6_Z0RAW 0}
++update idletasks
++set A46_VAL [a6_rval $A6_V0]
++dc_annot 1 ; set A46_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_z1.svg]]]
++dc_annot 9 ; set A46_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_z9.svg]]]
++dc_annot 0
++check "A46 1259 STATE 2 A REAL COMPUTED ZERO: `raw value -1` answers 0, the block reads `zid = 0`, and the device IS decluttered at mask 9" \
++  [list $A46_VAL \
++        [expr {[lsearch -exact $A46_T9 {zid = 0}] >= 0 ? 1 : 0}] \
++        [a3_hasl $A46_T9 $A_PARAMS] \
++        [a3_hasl $A46_T1 $A_PARAMS] \
++        [expr {$A46_T1 ne $A46_T9 ? 1 : 0}]] \
++  {0 1 {0 0} {1 1} 1}
++
++## STATE 3 — an ordinary value, on the same fixture family, so all three states
++## are read out of one place. Green before and after.
++catch {xschem annotate_op $A_RAW 0}
++update idletasks
++set A47_VAL [a6_rval $A6_V0]
++dc_annot 1 ; set A47_T1 [dc_ntexts [a3_pr2 [file join $scratch a6_n1.svg]]]
++dc_annot 9 ; set A47_T9 [dc_ntexts [a3_pr2 [file join $scratch a6_n9.svg]]]
++dc_annot 0
++check "A47 1259 STATE 3 A NORMAL VALUE: `raw value -1` answers the number, the block reads `zid = 11.1u`, and the device IS decluttered at mask 9" \
++  [list $A47_VAL \
++        [expr {[lsearch -exact $A47_T9 {zid = 11.1u}] >= 0 ? 1 : 0}] \
++        [a3_hasl $A47_T9 $A_PARAMS] \
++        [a3_hasl $A47_T1 $A_PARAMS]] \
++  {1.11e-05 1 {0 0} {1 1}}
++
++## ⚠ THE SEAM, AND THE ARM NEXT TO IT. The absent/zero distinction exists in
++## exactly one place — the raw's own type field — so it is read where it is
++## written (src/save.c) and published through ONE predicate that item B1
++## inherits, rather than re-derived by anyone downstream (invariant I1; a second
++## detector is how 1252 became 1260). The last three legs are the fence copied
++## from rows SGN13/SGN14/SGN22 of test_spice_get_node_0861.tcl: the guard belongs
++## on the ANNOTATION fall-through alone, so the arm keeps its annot_p term and
++## EXACTLY ONE cursor_b_val subscript, and the in-range numbered-point read —
++## data inspection, not annotation — still answers 0 for a dims=0 column.
++catch {xschem annotate_op $A6_D0RAW 0}
++update idletasks
++set A48_NUM [a6_rval0 $A6_V0]
++set A48_ARM [a6_span [a6_code [file join $repo src scheduler.c]] \
++                     "!strcmp(argv\[2\], \"value\")" "!strcmp(argv\[2\], \"del\")"]
++check "A48 1259 THE SEAM: one absence predicate in save.c and ONE consumer in scheduler.c, on the annotation fall-through only - the numbered-point read still answers 0" \
++  [list [a5_ccount $N_SAVE {raw_vector_absent\(}] \
++        [a5_ccount [file join $repo src scheduler.c] {raw_vector_absent\(}] \
++        [expr {[regexp {raw_vector_absent} $A48_ARM] ? 1 : 0}] \
++        [expr {[regexp {annot_p} $A48_ARM] ? 1 : 0}] \
++        [regexp -all {cursor_b_val\[} $A48_ARM] \
++        [expr {[regexp {get_raw_value\(dataset, idx, point\)} $A48_ARM] ? 1 : 0}] \
++        $A48_NUM] \
++  {2 1 1 1 1 1 0}
++
++# --- A49..A54: 1260, THE FOUR MORE DOORS AND THE MASK HALF -----------------
++
++## DOOR 1 — `xschem setprop instance`, issue 1260 part 1. Item A5-a WIDENED this
++## one: before A5-a a label-only block still opened the gate, so a rename over a
++## dead raw flipped nothing. Now an ordinary property edit is enough.
++set A49_WARM [a6_warm]
++catch {xschem setprop instance M1 name MZ1}
++set A49_STALE [a3_ibox 0]
++set A49_PICKS [xschem instance_at 430 -245]
++catch {xschem update_all_sym_bboxes}
++set A49_FRESH [a3_ibox 0]
++set A49_PICKF [xschem instance_at 430 -245]
++check "A49 1260 DOOR 1 setprop instance, STALE DOOR READ FIRST: the box it stores and the pick it answers are the ones update_all_sym_bboxes gives" \
++  [list [a3_lt [lindex $A49_WARM 2] [lindex $A49_FRESH 2]] \
++        [expr {$A49_STALE eq $A49_FRESH}] \
++        $A49_PICKS $A49_PICKF] \
++  [list 1 1 MZ1 MZ1]
++
++## DOOR 2 — `xschem move_instance … nodraw noundo`, issue 1260 part 2.
++set A50_WARM [a6_warm]
++catch {xschem move_instance 0 300 -300 0 0 nodraw noundo}
++set A50_STALE [a3_ibox 0]
++set A50_PICKS [xschem instance_at 430 -245]
++catch {xschem update_all_sym_bboxes}
++set A50_FRESH [a3_ibox 0]
++set A50_PICKF [xschem instance_at 430 -245]
++check "A50 1260 DOOR 2 move_instance nodraw noundo, STALE DOOR READ FIRST: same box and same pick as update_all_sym_bboxes" \
++  [list [a3_lt [lindex $A50_WARM 2] [lindex $A50_FRESH 2]] \
++        [expr {$A50_STALE eq $A50_FRESH}] \
++        $A50_PICKS $A50_PICKF] \
++  [list 1 1 M1 M1]
++
++## ⚠ DOOR 3 — `xschem reset_inst_prop`, WHICH ISSUE 1260 DOES NOT NAME. Found by
++## driving verbs, not by reading. Its arm writes the box TWICE and then ends in
++## draw(), so this row also says out loud that a full redraw does NOT repair a
++## box already written from a stale gate: the draw refreshes both caches, but the
++## number was stored before it ran.
++set A51_WARM [a6_warm]
++catch {xschem reset_inst_prop M1}
++set A51_STALE [a3_ibox 0]
++set A51_PICKS [xschem instance_at 430 -245]
++catch {xschem update_all_sym_bboxes}
++set A51_FRESH [a3_ibox 0]
++set A51_PICKF [xschem instance_at 430 -245]
++check "A51 1260 DOOR 3 reset_inst_prop (the door 1260 does not name, and its arm ENDS IN draw): same box and same pick as update_all_sym_bboxes" \
++  [list [a3_lt [lindex $A51_WARM 2] [lindex $A51_FRESH 2]] \
++        [expr {$A51_STALE eq $A51_FRESH}] \
++        $A51_PICKS $A51_PICKF] \
++  [list 1 1 M1 M1]
++
++## ⚠ DOOR 4 — select_element()'s DESELECT write (src/select.c). Selecting draws
++## temp symbols; DEselecting recomputes the box, and no issue in this batch had
++## noticed it. Both verbs are under catch so a signature mismatch reds this row
++## rather than aborting the section.
++set A52_WARM [a6_warm]
++catch {xschem select instance M1}
++catch {xschem select instance M1 clear}
++set A52_STALE [a3_ibox 0]
++set A52_PICKS [xschem instance_at 430 -245]
++catch {xschem update_all_sym_bboxes}
++set A52_FRESH [a3_ibox 0]
++set A52_PICKF [xschem instance_at 430 -245]
++check "A52 1260 DOOR 4 select_element's deselect write: same box and same pick as update_all_sym_bboxes" \
++  [list [a3_lt [lindex $A52_WARM 2] [lindex $A52_FRESH 2]] \
++        [expr {$A52_STALE eq $A52_FRESH}] \
++        $A52_PICKS $A52_PICKF] \
++  [list 1 1 M1 M1]
++
++## ⚠ THE HEADLINE OF A6-c, IN ONE ROW: the drawn thing and the clickable thing
++## are ONE object. The render is taken FIRST and the pick straight after it, with
++## no update_all_sym_bboxes in between — an export syncs both caches but
++## recomputes no bbox, which is why it does not repair this and why the row is
++## honest. Measured on the A5 binary: the SVG says
++## `MZ1 a3fet XMZ1 A3OPTEXT A3W=1u A3GATE` and the pick answers EMPTY over it.
++set A53_WARM [a6_warm]
++catch {xschem setprop instance M1 name MZ1}
++set A53_T [dc_ntexts [a3_pr2 [file join $scratch a6_d1.svg]]]
++set A53_PICK [xschem instance_at 430 -245]
++check "A53 1260 THE HEADLINE: the frame renders MZ1 with its parameter and its pin label, and instance_at inside that rendered extent answers MZ1" \
++  [list [a3_hasl $A53_T {MZ1 A3W=1u A3GATE}] $A53_PICK] \
++  [list {1 1 1} MZ1]
++
++## ⚠ 1260 PART 3 — THE MASK HALF, IN BOTH DIRECTIONS. `annot_show_sync_cache()`
++## ends in the 0688 backstop, which can CLEAR the mask, so item A5-c deliberately
++## left the mask unsynced at `recompute_inst_bbox` — and the two doors then
++## answer OPPOSITE picks for a mask written with a bare `set ::annot_show`. The
++## repair is to split the PULL out of the backstop, not to run the backstop on a
++## read-only geometry verb. THE DOORS ARE COMPARED TO EACH OTHER, NEVER TO
++## LITERAL COORDINATES (the two directions differ in the third decimal).
++catch {xschem raw clear}
++xschem load $A_SAV
++update idletasks
++catch {op_annot::register a3nmos \
++  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
++dc_setmask 1
++catch {xschem annotate_op $A_RAW 0}
++catch {xschem update_all_sym_bboxes}
++set ::annot_show 9
++catch {xschem recompute_inst_bbox M1}
++set A54_AR [a3_ibox 0] ; set A54_ARP [xschem instance_at 430 -245]
++catch {xschem update_all_sym_bboxes}
++set A54_AU [a3_ibox 0] ; set A54_AUP [xschem instance_at 430 -245]
++
++catch {xschem raw clear}
++xschem load $A_SAV
++update idletasks
++dc_setmask 9
++catch {xschem annotate_op $A_RAW 0}
++catch {xschem update_all_sym_bboxes}
++set ::annot_show 1
++catch {xschem recompute_inst_bbox M1}
++set A54_BR [a3_ibox 0] ; set A54_BRP [xschem instance_at 430 -245]
++catch {xschem update_all_sym_bboxes}
++set A54_BU [a3_ibox 0] ; set A54_BUP [xschem instance_at 430 -245]
++
++## THE LAST LEG IS THE GUARD ON THE SPLIT, AND IT IS GREEN BEFORE AND AFTER: with
++## the mask written properly (`xschem set annot_show`, so the C field and the Tcl
++## mirror agree) a read-only geometry verb must leave it exactly where it was. A
++## bbox path that ran the 0688 backstop instead of the pull could clear it.
++dc_setmask 9
++catch {xschem recompute_inst_bbox M1}
++set A54_KEEP [dc_mask]
++check "A54 1260 PART 3 THE MASK HALF, BOTH DIRECTIONS: recompute_inst_bbox and update_all_sym_bboxes answer the same box and the same pick, and a geometry verb does not move the mask" \
++  [list [expr {$A54_AR eq $A54_AU}] [expr {$A54_ARP eq $A54_AUP}] \
++        [expr {$A54_BR eq $A54_BU}] [expr {$A54_BRP eq $A54_BUP}] \
++        $A54_KEEP] \
++  {1 1 1 1 9}
++
++# --- A55, A56: 1260 STRUCTURAL - THE SHAPE THE FOUR DOORS CANNOT SEE -------
++
++## ⚠ ONE SYNC POINT, AND THE BACKSTOP IS NOT ON THE GEOMETRY PATH. Row A41 above
++## carries the census that moved (select.c 0 -> 1, deliberately, reversing the
++## option issue 1252 rejected); this row carries the two things the census cannot
++## see. `annot_show_pull_cache()` — the annot_show + annot_voltage_layer pull
++## SPLIT OUT of annot_show_sync_cache() — is what the bbox path calls;
++## `annot_show_sync_cache()` itself, which ends in the 0688 root backstop and can
++## annot_show_set(0), is NOT called from select.c, and its own call sites are
++## unmoved so the 0688 semantics and row Y11 of test_op_annot.tcl are untouched.
++check "A55 1260 STRUCTURAL: select.c calls the PULL exactly once and the 0688-carrying sync never, and annot_show_check_root's call sites are unmoved" \
++  [list [a5_ccount $A_SEL     {annot_show_pull_cache\(}] \
++        [a5_ccount $A_SEL     {annot_show_sync_cache\(}] \
++        [a5_ccount $N_ACTIONS {annot_show_check_root\(}] \
++        [a5_ccount $N_SAVE    {annot_show_check_root\(}] \
++        [expr {[opa_n_grep $DC_H {annot_show_pull_cache}] >= 1 ? 1 : 0}]] \
++  {1 0 2 1 1}
++
++## ⚠ THE COST ARGUMENT, WRITTEN AS SHAPE. The pair sits in symbol_bbox()'s
++## PROLOGUE — once per call, not once per text — and the overlay sync is behind
++## the bit-3 prefilter, so with the declutter unarmed the function does two Tcl
++## var reads and NO sync and annot_overlay_flushes cannot move (rows O32/O33/O34/
++## O35/O38 of test_op_annot.tcl, a file item A6 does not own and must not edit).
++check "A56 1260 SHAPE: the sync pair is in symbol_bbox()'s prologue, once each, behind the ANNOT_SHOW_NOPARAM prefilter" \
++  [list [a5_near $A_SEL {void symbol_bbox\(} {annot_overlay_sync\(\)} 20] \
++        [a5_near $A_SEL {void symbol_bbox\(} {annot_show_pull_cache\(} 20] \
++        [a5_ccount $A_SEL {annot_overlay_sync\(\)}] \
++        [a5_ccount $A_SEL {ANNOT_SHOW_NOPARAM}]] \
++  {1 1 1 1}
+ 
++## Leave section A as section C found it: the valued descriptor, no raw, mask 0.
++catch {op_annot::register a3nmos \
++  [list devpath {@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
++catch {xschem raw clear}
+ dc_annot 0
+ 
++
+ # ============================================================================
+ # SECTION C — THE DECLUTTER CLAUSE ON THE OTHER KEYS' SENTENCE (issue 1251)
+ # ============================================================================
