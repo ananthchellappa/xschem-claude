@@ -443,3 +443,68 @@ part worth arguing, because Escape closes a dialog in many applications:
 *Cost, stated:* a user who expects Escape to dismiss the window will press it
 and see nothing happen. The window has its own close control, and the dumps are
 worth more than the keystroke.
+
+### DD-13 — issue 1312: THREE fields, because `seed` was the reader I never checked
+
+**This corrects DD-6, which corrected DD-4. That is the same mistake three
+times, and the pattern is the point.** Taken 2026-09-04 after item B5 was
+refuted by it. On the owed ledger as rule debt **1314**.
+
+**What B5 measured.** `op_param_lists::apply` writes the annotation+summary
+union into the descriptor's `params`, and `op_param_lists::seed` reads *"the
+PDK's own list"* back out of **that same field**, through `_params`
+(`src/op_param_lists.tcl:700`). So after the first `apply`, the seed is no
+longer the PDK's declaration — it is whatever the last apply computed:
+
+```
+seed0        = {id ids 0} {gm gm 1} {gds gds 1}
+              # the user reorders the ANNOTATION list only
+apply
+seed1        = {gm gm 1} {id ids 0} {gds gds 1}
+eff summary1 = {gm gm 1} {id ids 0} {gds gds 1}   <- the list nobody owns, moved
+```
+
+And with the button column owning **both** lists, two broad-scope Deletes strip
+the parameter from `params` **and** from the seed, and from the sibling type —
+so the `.save` card goes with it, and Add cannot put it back. That is a direct
+violation of DD-4/DD-6, whose whole content is that Delete never changes what the
+simulator computes.
+
+`_save_set`'s in-code claim that the union *"can only ever be a SUPERSET, so no
+PDK row is ever lost"* is true **only while one of the two lists is unowned.**
+The button column is precisely the thing that owns both. The claim was correct
+when written and the feature grew out from under it.
+
+**Decision: issue 1312's option (a). The descriptor carries THREE lists.**
+
+| field | means | written by |
+|---|---|---|
+| the **declaration** key | what the PDK declared | `op_annot::register` **only** |
+| `params` | what the run computes | `apply` (the union) |
+| the **display** key | what the sheet draws | `apply` (the annotation list) |
+
+`_params` — and therefore `seed` — reads the **declaration**, so the seed means
+what its name says and no edit can destroy it.
+
+*Rejected, both from the issue:* (b) refusing to overwrite `params` when only the
+ORDER differs — it would freeze the drawn order, which is what Up/Down exist to
+change; (c) caching the first `_params` answer — a cache that outlives a user's
+own `op_annot::register` breaks invariant I5.
+
+### ⚠ THE PATTERN, STATED PLAINLY, BECAUSE IT IS MINE
+
+* **DD-4** said `apply` writes the union into `params` and the display narrows.
+  One field, two meanings. Refuted: `op_annot::text` and `_cards_for` read the
+  same list.
+* **DD-6** split off a display key. Two fields. Refuted: `seed`/`_params` reads
+  `params` too, and it is a **third** consumer with a **third** meaning.
+* **DD-13** splits off the declaration. Three fields.
+
+Each time I reasoned about what the lists *mean* and did not enumerate **every
+reader of the field** before ruling. DD-6 even says the lesson out loud — *"a
+ruling about behaviour inherits the shape of the data structure underneath it"* —
+and I then made the same error one layer down.
+
+**The rule for any future ruling that assigns meaning to a stored field: grep
+every reader FIRST, list them, and say what each one will now see.** Two of the
+three refutations here cost a full crew run.
