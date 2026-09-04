@@ -206,3 +206,98 @@ lists *mean* and never checked what field the tree actually reads them from.
 That is item A7's lesson arriving at the decision layer instead of the code
 layer — a ruling about behaviour inherits the shape of the data structure
 underneath it, and that structure was built for a different question.
+
+---
+
+## Three decisions taken after item B2a was refuted TWICE on the same two issues
+
+Two independent crews implemented issue **1281** and both **deleted rows the
+user had typed**. Two independent crews implemented issue **1277**'s precedence
+and both produced an order in which a bare `*` beats a specific pattern — the
+filed defect, under its own fix, twice. When two competent attempts fail the
+same way, the design is wrong and no third implementation will save it. These
+are the driver's design corrections. Each is on the owed ledger.
+
+### DD-7 — issue 1281: Save is a READ-MODIFY-WRITE of one tier's own file
+
+**Decision: writing a tier reads that tier's existing file, changes only the
+keys this session actually changed, and writes it back. Every other row is
+preserved verbatim, including rows this build does not understand.**
+
+Both failed attempts serialized a **merged model** and tried to tag each row
+with the tier it came from. Both lost rows — B2a deleted a user's `class mydiode
+diode`; B2a-2 deleted a user's explicit `class nmos mos` because its value
+happened to equal the shipped default. The second one is the sharper warning: a
+row was destroyed for *agreeing with a default*, which is exactly the row a user
+writes down to protect against a default changing.
+
+*Why the new shape cannot fail that way:* **you cannot delete a row you never
+parsed into a model.** Provenance stops being a field to get right and becomes a
+property of which file you opened. A row this build cannot interpret survives a
+save by a build that has never heard of it — which is what "shareable with
+teammates" requires when two people are on different versions.
+
+*Cost, stated:* Save must re-read the file it is about to write, so a file
+edited by hand between load and save is merged rather than overwritten. That is
+the behaviour a user expects from a config file and the opposite of what both
+attempts did.
+
+### DD-8 — issue 1277: precedence is FILE ORDER. Nothing is ranked.
+
+**Decision: when two flavor globs both match a cell, the FIRST one in the file
+wins. The file says exactly that, and no code anywhere tries to decide which
+glob is "narrower".**
+
+Two attempts tried to rank by narrowness and both produced a bare `*` beating a
+specific pattern. That is not a coding slip repeated twice — **"narrower" has no
+defensible total order over globs.** Is `sky130_fd_pr__*` narrower than
+`*nfet_01v8_lvt*`? Neither contains the other; they are two different opinions
+about what matters. Any tie-break is a heuristic the user must reverse-engineer
+from behaviour, and both attempts also wrote *"narrowest matching glob wins"*
+into the settings file while implementing something else — a file lying to its
+own reader.
+
+*Why file order is the right answer here specifically:* **the user already has a
+reordering UI.** The spec's own button column gives every list Up and Down. So
+precedence becomes something the user sets by dragging, visible in the file in
+the order they set it, rather than a rule they have to infer. The feature that
+was going to explain the heuristic instead removes the need for one.
+
+*Cost, stated:* a user who wants a specific pattern to win must put it above the
+general one. The file's header says so in one line, and because it is file
+order, the file itself is the documentation.
+
+⚠ **The class field on a flavor entry is still required** — that half of 1277
+stands. `effective <class>` must not scan another class's flavors. Only the
+*ranking* is deleted. And the key must be a **canonical string**, never an
+uncanonicalised two-element list used as an array index, which is how B2a-2 lost
+entries on a round trip.
+
+### DD-9 — issue 1289: `derived` rows read the RUN, not the sheet
+
+**Decision: issue 1289's option 2.** `op_annot::text` evaluates its `vars` over
+`params` (what the run computed) and *displays* over the narrowed key (what the
+sheet draws). A derived row keeps working when its operand is merely hidden.
+
+*Why:* `derived` is already a display-only concept — it appears in no `.save`
+card — so its operands naturally come from what was computed, not from what is
+drawn. It is the only option under which the sheet never shows a row that cannot
+carry a value. Option 3 (hide a derived row whose operands are hidden) is
+defensible but makes one Delete silently remove two rows, and the user has not
+asked for that.
+
+*Constraint that binds the implementation:* `op_annot::text` runs **per instance
+per redraw** from C. It may gain no new `xschem` call and no new raise site
+(issue 0447).
+
+### DD-6 AMENDED — the display key's two guarantees must be BUILT, not asserted
+
+B2a-2 measured both of DD-6's written guarantees false. The amendment:
+
+1. **The display key is a SUBSET of `params` by construction**, not by
+   assertion: derive it by filtering `params`, so the property cannot be
+   violated by any caller. B2a-2's `apply` produced the violation itself and
+   `_kind` then raised.
+2. **A malformed display key falls back to `params`. It never raises.**
+   `op_annot::text` is a draw-time proc; a raise there is a black schematic. A
+   key that does not parse as a list is treated as absent.
