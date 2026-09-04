@@ -60,3 +60,30 @@ item after 1278 is closed. Row **K11** of `test_rdw_window_1245.tcl` pins
 today's answer (zero occurrences of the store's namespace in `src/rdw.tcl`), so
 whichever way this is ruled, the fix reds that row rather than passing in
 silence.
+
+---
+
+## UPDATE, 2026-09-04 — the keys are still not in the tree, and this ruling gains a THIRD sentence to judge
+
+Items **B4** and **B4-2** were both refuted and reverted, so **nothing above is
+running code**: `src/rdw.tcl` and `src/cadence_style_rc` are byte-identical to
+`735ea26e`, bare `1`-`4` still reach C's `logic_set`, and this ruling is owed
+against the preserved patch
+(`doc/claude/op_param_batch/B4-2_working_tree_REVERTED.patch`), not against
+behaviour the user can go and press.
+
+**B4-2 proposes a third sentence on the same CIW channel**, and it is the only
+one a user should never see:
+
+> Results window: this build cannot report the un-snapped mouse position, so a
+> click cannot be resolved to the device under the cursor - press ESC to leave.
+
+It fires only when `xschem get mousex` / `mousey` are missing — a Tcl half newer
+than the binary. **The choice was to REFUSE rather than fall back to the
+grid-snapped pair**, under invariant **I3**, because that fallback *is* issue
+**1303**: measured on the shipped `cmos_inv.sch`, `175.175 -199.612 → M1` and
+`180 -200 → R1`, with 0.5% of a whole-sheet sweep naming a different device
+silently. **Ratify the refusal, or say it should fall back and be wrong
+quietly.**
+
+No new debt id was minted for it; it is on this one. Rule debt **1300**.

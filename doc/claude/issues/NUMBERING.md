@@ -1268,4 +1268,33 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   `src/ase_window.tcl` at `735ea26e`. Found by item **B4**'s adversary; **it is
   why B4 was reverted**. **FILED, NOT FIXED.**
 
-**The next free number is 1305.**
+* **1305** — **a canvas command mode re-armed while SUSPENDED latches its own
+  seize as the predecessor.** `rdw::pick_start`'s guard lets a suspended mode
+  fall through into `_pick_seize` without clearing `pick(suspended)`, so the
+  later `resume_all` seizes a second time and latches the seize's own scripts;
+  `ESC` then restores them and the canvas is seized for the rest of the session.
+  Measured on `:99`, with the control that `ase::ui::select_on_design` is immune
+  because it ends the previous mode first. In item **B4-2**'s reverted patch,
+  not in the tree. Found by B4-2's adversary; **it is one of the three
+  refutations that reverted B4-2.** **FILED, NOT FIXED.**
+
+* **1306** — **the Results-window focus hand-back bounces a DELIBERATE click
+  into the text pane.** `rdw::_focus_handback`'s `%W eq .rdw` guard is reasoned
+  from bindtags; the real mechanism is X's ancestor `FocusIn` chain, which
+  delivers `%W = .rdw` with detail `NotifyNonlinearVirtual` when focus crosses
+  into `.rdw.p.t`. Measured, both halves in one process on a WM-less server: a
+  real first-of-session dump leaves `focus_pending 1`, and the user's next click
+  into the pane is bounced to the canvas. The pane is what the feature exists
+  for. In item **B4-2**'s reverted patch, not in the tree. **FILED, NOT FIXED.**
+
+* **1307** — **`clone_canvas_bindings` copies a LIVE command-mode seize onto
+  every new window or tab, and the mode's `ESC` restores only its own canvas.**
+  `src/cmdmode.tcl:44-50` documents the hazard and states the invariant that
+  saves it — *"every suspend site in the descend chain runs before
+  `schematic_in_new_window`"* — which is true of the descend chain and of
+  nothing else; `File > New Window` has no suspend site. **TRUE OF THE TREE
+  TODAY**: measured against shipped `ase::ui::select_on_design` with no B4-2
+  code loaded — the child keeps `sod_click`/`sod_end` and its `ESC` is dead.
+  **FILED, NOT FIXED.**
+
+**The next free number is 1308.**

@@ -114,3 +114,42 @@ state to restore, and it fixes every future Tcl pick rather than one call site.
    `xschem instance_bbox` centres cannot see this defect**; that is why B4's
    21-check suite was green while the defect was live.
 2. The 175.175/180 pair above, as a regression row.
+
+---
+
+## UPDATE, 2026-09-04 — half the ground moved, and the issue is still open
+
+**The C is in.** Commit `0ce85dda` landed option **(a)**: `xschem get mousex`
+and `xschem get mousey` now answer the unsnapped schematic coordinates
+(`src/scheduler.c:5047`, `:5051`), beside the snapped pair at `:5055`/`:5059`.
+Rows **P1**/**P2** of `tests/headless/test_rdw_window_1245.tcl` fence both
+pairs. **So the first paragraph of the Options section above is out of date: a
+Tcl pick can now agree with C, and the fix costs no further C.**
+
+**The Tcl consumer is NOT in.** Item **B4-2** wrote it — `rdw::pick_click`
+defaulting from the unsnapped pair, with *no* fallback to the grid pair, because
+that fallback is this defect — and B4-2 was reverted for three *other*
+refutations (issues **1305**, **1306**, **1307**). The work is preserved,
+unmodified and re-appliable in both directions, in
+`doc/claude/op_param_batch/B4-2_working_tree_REVERTED.patch`. **Do not retype
+it.**
+
+**The measurement re-ran unchanged** on the reverted tree at `0ce85dda`:
+
+```
+exact   175.175 -199.612  ->  'M1'
+snapped 180     -200      ->  'R1'
+```
+
+**`src/ase_window.tcl` is untouched and still resolves its pick from the snapped
+pair.** That half was outside B4-2's Files cell and is outside item B4-3's too.
+**This issue may not be closed on the rdw fix alone.**
+
+⚠ **One constraint the next crew must not rediscover the hard way.** A synthetic
+`<Motion>` cannot carry the filed pair: `sx(175.175) = 158`, `sy(-199.612) =
+551` at zoom 1.2165, and the event lands at `mousex = 173.95876`,
+`mousey = -200.82845` / `mousex_snap = 170`, `mousey_snap = -200` — where
+**both** pairs answer `M1`. A synthetic-event-only row is therefore **vacuous**
+for this issue: it passes against the broken code. Carry the filed pair through
+an explicit-coordinate call, and drive the *default* path at a straddling pixel
+found at run time, with "a discriminating pixel exists" as its own leg.

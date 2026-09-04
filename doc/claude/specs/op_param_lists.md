@@ -257,11 +257,26 @@ turns anything off and is not a toggle; `Ctrl-6` is the only off switch.
   `ui_state 16` alive **after `ESC`**, and an eight-step drag **selected 13
   objects** — with the no-mode control terminating cleanly at `ui_state 8`.
   Issue **1304**. And `sod_click` defaults its coordinates to
-  `mousex_snap`/`mousey_snap`, the only pair Tcl has, while every C click path
-  reads the **unsnapped** pair — issue **1303**, measured at one pixel on
-  `cmos_inv.sch` as `M1` versus `R1`. **A mode copied from this precedent
-  inherits both.** Feature B's verb-noun requirement is that clicking changes
-  nothing; these two are how it silently does.
+  `mousex_snap`/`mousey_snap`, while every C click path reads the **unsnapped**
+  pair — issue **1303**, measured at one pixel on `cmos_inv.sch` as `M1` versus
+  `R1`. **A mode copied from this precedent inherits both.** Feature B's
+  verb-noun requirement is that clicking changes nothing; these two are how it
+  silently does.
+* ⚠ **AND ITEM B4-2 MEASURED TWO MORE WAYS A SEIZE ENDS UP PERMANENT, 2026-09-04.**
+  Both end with a canvas on which every click runs the mode's handler, nothing
+  can ever be selected again, and `ESC` restores nothing:
+  **(a) issue 1305** — a mode re-armed while `cmdmode` has it **suspended** and
+  which does not clear its own suspended flag is seized *twice*; the resume then
+  latches **the seize's own scripts** as the predecessors. `select_on_design` is
+  immune only because it **ends the previous mode first**, which is the one part
+  of the precedent worth copying;
+  **(b) issue 1307, TRUE OF THE TREE TODAY** — `clone_canvas_bindings` copies
+  `.drw`'s bindings onto every new window and tab, and a mode's end cleans only
+  the canvas it seized. `cmdmode.tcl:44-50` documents this and its invariant
+  covers **only the descend chain**; `File > New Window` has no suspend site.
+  Measured against shipped ASE with no other mode loaded.
+  ⚠ **Fixing 1304 WIDENS both**: `<B1-Motion> {break}` joins the leaked set, so
+  the leaked canvas also loses its rubber band. **Land 1305's fix with 1304's.**
 
 ### 2.6 Namespace already taken
 
@@ -1991,10 +2006,15 @@ Still open:
     F25 covers the unrecognised-state arm — with a newline-free word. **Two green
     rows crossing a class is not the class fenced.**
 
-17. **THE ONLY Tcl MOUSE PAIR IS SNAPPED, AND A PICK BUILT ON IT CAN NAME THE
-    WRONG DEVICE** (item B4, 2026-09-04). `scheduler.c` exposes `mousex_snap` /
-    `mousey_snap` and nothing else — `xschem get mousex` does not exist — while
-    every C click path reads the unsnapped `xctx->mousex/mousey`. Measured on the
+17. **A PICK BUILT ON THE SNAPPED MOUSE PAIR CAN NAME THE WRONG DEVICE** (item
+    B4, 2026-09-04). ⚠ **CORRECTED 2026-09-04:** this landmine used to say
+    *"`xschem get mousex` does not exist"* — **it does now**, since commit
+    `0ce85dda`: `xschem get mousex` / `mousey` answer the unsnapped coordinates
+    at `scheduler.c:5047`/`:5051`, beside `mousex_snap`/`mousey_snap` at
+    `:5055`/`:5059`. **The landmine is unchanged in substance**: every C click
+    path reads the unsnapped pair, so a Tcl pick that reads the snapped one
+    disagrees with C, and there must be **no fallback** from one to the other —
+    the fallback *is* the defect. Measured on the
     shipped `cmos_inv.sch`: the exact point `175.175 -199.612` answers `M1`, the
     snapped point `180 -200` answers `R1`. Swept over every instance bbox: **6.4%
     of points miss the device, 0.5% resolve to a different one**, with nothing on
@@ -2004,13 +2024,35 @@ Still open:
     note why no suite saw it: the pick fixture computed click points from
     `xschem instance_bbox` **centres** — correct, adopted so the A3 declutter
     coordinates would not be transcribed, and **a centre snaps safely**. Drive at
-    least one pick at a point measured to straddle an edge.
+    least one pick at a point measured to straddle an edge. ⚠ **And a synthetic
+    `<Motion>` cannot carry the filed pair**: `sx(175.175) = 158`,
+    `sy(-199.612) = 551` at zoom 1.2165, and the event lands at
+    `173.95876 / -200.82845`, where *both* pairs answer `M1`. An event-only row
+    is therefore **vacuous** for 1303 — it passes against the broken code.
 18. **A COMMAND MODE THAT SWALLOWS THE RELEASE LEAVES C's GESTURE HALF-STARTED**
     (item B4, 2026-09-04). See §2.5: seize `<B1-Motion>` as well, or a drifted
     click selects objects in a mode whose whole promise is that clicking selects
     nothing. Live in `ase_window.tcl`, so it is a defect to fix and not merely a
     precedent to avoid. Issue **1304**. ⚠ The class: **the three sequences a mode
     seizes are not the three sequences a gesture uses.**
+19. **A FENCE THAT COUNTS A BINDING'S NAME DOES NOT FENCE THE BINDING** (item
+    B4-2's sabotage agent, 2026-09-04). The row written for landmine 18 asserted
+    that all four sequence names appear in the seize and the hand-back. Turning
+    `bind $cv <B1-Motion> {break}` into `bind $cv <B1-Motion> {}` — which
+    **destroys** the binding and is exactly the pre-fix behaviour — left the row
+    **green on both arms**, because the name still appeared twice in the body.
+    Only deleting the lines outright reddened it. **Fence the script, not the
+    mention** — and remember that a suite which self-skips headless leaves its
+    structural row as the *only* fence on that arm.
+20. **A ONE-SHOT FLAG ARMED BY A MAP AND CLEARED BY A `FocusIn` CANNOT BE TESTED
+    UNDER A WINDOW MANAGER** (item B4-2, 2026-09-04, issue **1306**). On
+    `:99`/openbox the WM's map-time grant consumes the flag before any row can
+    observe it, so 27 green checks and eight sabotage variants never reached the
+    interesting branch. And Tk delivers `FocusIn` **to every ancestor** of the
+    window that gains focus, with detail `NotifyNonlinearVirtual` — so a guard
+    of the form `%W eq <toplevel>` does **not** distinguish "the toplevel was
+    focused" from "a child of it was". Test such a flag WM-less, or arm it by
+    hand.
 
 ---
 

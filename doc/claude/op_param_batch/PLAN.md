@@ -1671,7 +1671,7 @@ write-up agent **reproduced four attacks first-hand** before deciding.
 | **3** | **1281**, the default-skip | **A SECOND SILENT DELETION OF A ROW THE USER TYPED.** With the shipped default already `nmos → mos`, a **user** file carrying the explicit pin `class nmos mos` and a **project** file carrying `class nmos weirdclass`: `write_conf <user path>` returns **rc=1, zero reports**, and the user's file afterwards holds **`version 2` and nothing else**. The fix's own improvement causes it — the default check now compares against `_tier_class` (the user's own value) instead of the merged one, so the row is skipped as "not an override". HEAD leaked a wrong value there; this destroys the line. Row **T6** cannot see it: its contested token maps to a **non-default** value. **Fix:** a row a tier's file *contains* is written back to that tier even when its value equals the default. |
 | **4** | **1285 / DD-6** | **Two claims the code asserts in writing are false.** (a) *"`shown` is always a SUBSET of the union by construction"* — `_save_set` dedups by **label** and `set_list` accepts a duplicate label (issue **1288**), so `apply` itself produces `shown` ⊄ `params` and `op_annot::_kind`/`vector` **raise**; the same run emits a `.save` card **twice**, against rule **R1**. (b) *"gains no raise site that issue 0447 does not already cover"* — a descriptor with `shown` = `{a` registers cleanly (`register` validates only `dict size`) and then **raises on every redraw**, in a proc C calls per instance per redraw, with `params` well formed. **Fix:** validate `shown` in `register`, not in `text`; and fix **1288** in the same pass or stop relying on the subset. |
 
-### What this item learned that binds every later step
+#### What B4 learned that binds every later step
 
 * **The batch's lesson, for the fifth consecutive item: a green count is a
   statement about the fence, not about the code.** B2a-2 was green at 71/49/59
@@ -1740,7 +1740,7 @@ seven issues that rode along with them last time were not in this commit at all.
 * `tests/headless/test_op_param_store_1245.tcl` **39 → 51**. `test_op_annot`
   **485/492** and `test_annot_declutter_1244` **134** unmoved, by name and count.
 
-### What this item learned that binds every later step
+#### What B4 learned that binds every later step
 
 * **⚠ THE BRIEF'S OWN FIXTURE DID NOT EXIST, AND THE ISSUE SAID SO TWICE.**
   *"IHP ships the fixture: `gm/id` and `ft`"* is **false on this tree**, as are
@@ -1906,7 +1906,7 @@ the working tree before deciding.
   about, introduced by the fix for it.** Latent; B5's scope dialog is the first
   door that could reach it.
 
-### What this item learned that binds every later step
+#### What B4 learned that binds every later step
 
 * **⚠ THE LESSON, AND IT IS NEW: under a read-modify-write, the WRITER'S ROW
   CLASSIFIER MUST BE EXACTLY AS STRICT AS THE READER.** DD-7's safety argument
@@ -2039,17 +2039,82 @@ truncation, and `_named`'s `string trim` vs the seam's exact-empty).
 
 ---
 
-## B4 — the keys and the two grammars  ⛔ **NOT LANDED (status F), 2026-09-04 — everything green, REFUTED AND REVERTED.**  *(needs B3; still blocks B5)*
+## B4 — the keys and the two grammars  ⛔ **NOT LANDED. TWO ATTEMPTS, BOTH REFUTED AND REVERTED (status F): B4 2026-09-04, B4-2 2026-09-04.**  *(needs B3; still blocks B5)*
 
-> **THE WORK IS PRESERVED AND MUST NOT BE RETYPED.**
-> `doc/claude/op_param_batch/B4_working_tree_REVERTED.patch` (md5
-> `10b8eaf272c1406acf8796ca9156bf92`, 1,688 lines, four files) **applies clean
-> to `735ea26e`** — verified with `git apply --check` in **both** directions.
-> The next crew's job is **apply → fix the five holes below → re-verify**, not
-> rewrite. Read the Do/Accept cells below as still binding; they were not the
-> problem.
+> **THE WORK IS PRESERVED AND MUST NOT BE RETYPED — USE THE B4-2 PATCH, NOT B4's.**
+> `doc/claude/op_param_batch/B4-2_working_tree_REVERTED.patch` (md5
+> `31c9419d8ac0713155ddc5a1ec77ec9a`, 2,335 lines, four files) **applies clean
+> to `0ce85dda` in BOTH directions** — verified with `git apply --check` after
+> the revert. It is **B4's patch plus B4-2's five fixes**, so it *supersedes*
+> `B4_working_tree_REVERTED.patch`, which is kept only as history.
+> **Item B4-3's job is: apply → fix the THREE things in the B4-2 table below →
+> re-verify.** The Do/Accept cells further down are still binding; they were
+> never the problem.
 
-### What B4 produced, and why it was reverted anyway
+### B4-2 (2026-09-04) — it closed all five of B4's holes and was refuted on three NEW ones
+
+B4-2 did what it was asked. Every one of B4's five holes was fixed and fenced
+red-before-green; T1 zero, T2 6/6, window suite **58 → 74** headless / **68 →
+84** on `:99`, a restored **27**-check keys suite, a full audit
+**367/12/0/2 of 381 → 368/12/0/2 of 382** whose non-PASS **name** diff was one
+line (`> PASS|test_rdw_keys_1245`) with all 43 failing-check detail lines
+byte-identical, and an eight-variant sabotage matrix run on copies.
+
+**Its adversary then refuted the central claim on three counts, and the write-up
+agent reproduced all three first-hand before reverting.** Full record:
+`doc/claude/op_param_batch/receipts/B4-2.md`.
+
+| # | issue | what is wrong |
+|---|---|---|
+| **1** | **1306** | **THE FOCUS HAND-BACK BOUNCES A DELIBERATE CLICK INTO THE TEXT PANE.** `rdw::_focus_handback`'s `%W eq .rdw` guard is reasoned from bindtags; the mechanism is X's **ancestor `FocusIn` chain**, which delivers `%W = .rdw` (detail `NotifyNonlinearVirtual`) when focus crosses into `.rdw.p.t`. Measured, both halves in one process on a WM-less server: a real first-of-session dump leaves `focus_pending 1`, and the user's next click into the pane is bounced to the canvas. The pane is what the feature exists for — the user's own use is pasting dumps into review documents. The code's stated cost says the bounce hits *"the window's FRAME — not its text"*; it hits the text. |
+| **2** | **1305** | **A KEY PRESSED WHILE A DESCEND HAS THE MODE SUSPENDED SEIZES THE CANVAS FOR THE SESSION.** `rdw::pick_start` falls through into `_pick_seize` without clearing `pick(suspended)`, so `resume_all` seizes a second time and latches **the seize's own scripts** as predecessors; `ESC` restores them and a second `ESC` returns 0. Every click dumps, nothing can be selected again, the rubber band is dead — **the inverse of the user's own *"clicking will not change selected set"***. The control names the cause: `ase::ui::select_on_design` runs the same sequence clean because it **ends the previous mode first**, which `rdw::pick_start`'s comment argues against copying. |
+| **3** | **1307** | **A NEW WINDOW OR TAB INHERITS A LIVE SEIZE, and this one is TRUE OF THE TREE TODAY.** `clone_canvas_bindings` (`xinit.c:2121`, `:2337`) copies `.drw`'s bindings onto every new canvas; the mode's end cleans only the canvas it seized. `cmdmode.tcl:44-50` documents the hazard and its invariant covers **only the descend chain** — `File > New Window` has no suspend site. Measured against **shipped ASE with no B4-2 code loaded**. **Not B4-3's to fix** (the door is `cmdmode::suspend_all` before `schematic_in_new_window`), but B4-3 must not widen it silently. |
+
+**⚠ 1304's fourth sequence WIDENS 1305 and 1307 both.** Once
+`<B1-Motion> {break}` is in the seized set it joins whatever leaks, so 1304's
+*transient* harm becomes *permanent* on a canvas nobody can un-seize. **Land
+1305's fix with 1304's, not after it.**
+
+### What B4-2 proved works, and B4-3 must not re-litigate
+
+* **1303's unsnapped default** — `rdw::pick_click` reads `xschem get
+  mousex`/`mousey` with **no** grid fallback (the fallback *is* the defect) and
+  refuses through the one CIW channel instead. `grep -c 'mousex_snap'
+  src/rdw.tcl` = 0, comments included.
+* **1304's fourth sequence** — measured: an 8-step drag with the mode live
+  leaves `ui_state 0`, `lastsel 0`, `selection` empty mid-drag, after the
+  release and after `ESC`, against a pre-fix `ui_state 24` / `lastsel 20`. And a
+  plain no-button `<Motion>` still moves `xschem get mousex`, so the seize
+  blinds C only while Button 1 is held.
+* **Hole 5's ordering** — `rdw::key` resolves the selection before anything
+  moves. Verify-C attacked all three of these and failed.
+* **The `cadence_style_rc` bind block and its `%s & 0x4c` guard** — byte-identical
+  to B4's, twice survived sabotage. **Do not redesign.**
+
+### Three more things B4-2 measured that B4-3 must carry
+
+* **⚠ ROW K14 CANNOT TELL A SEIZING BIND FROM A DESTROYING ONE.** Sabotage
+  `SB-NO-MOTION-SEIZE` turned `bind <B1-Motion> {break}` into
+  `bind <B1-Motion> {}` — which **destroys** the binding, i.e. the pre-fix
+  behaviour — and K14 **stayed green on both arms**, because the sequence name
+  still appears twice in the body. The exposure is the **headless** arm, where
+  the keys suite self-skips and K14 is the only fence for 1304. **Fence a
+  non-empty script, not a mention.** Recorded on issue 1304.
+* **⚠ `rdw::key` with nothing selected, when `pick_start` returns 0** (no Tk, or
+  no `current_win_path`), still moves `::rdw::listkind` and reports nothing —
+  hole 5's shape on the branch its fix did not cover.
+* **⚠ THE KEYS SUITE IS SOLO-RUN EVIDENCE.** Verify-C measured
+  `2 FAILED (25 passed)` with another agent's `test_ase_plot.tcl` sharing `:99`,
+  and `ALL PASS (27)` on four subsequent solo runs. A suite whose subject is
+  keyboard focus is perturbable by any other X client on the display.
+* **⚠ A ROW FOR 1306 CANNOT RUN ON `:99`/openbox AS THE SUITES ARE WRITTEN.**
+  The WM consumes the one-shot flag before any row can observe it — which is
+  exactly why 27 green checks and eight sabotage variants missed it. Arm the
+  flag deliberately, or run that row WM-less (`AUDIT_WM=none`).
+
+### The five holes of the FIRST attempt (B4), all now FIXED in the preserved patch — kept for the record
+
+#### What B4 produced, and why it was reverted anyway
 
 Everything the item was asked for, it produced, and every tier was clean:
 
@@ -2070,22 +2135,27 @@ deciding. Two of the three are defects in *shipped* code that B4 merely
 inherited by copying the ASE precedent — which is why they are issue files and
 not just patch holes.
 
-### The five holes that forced the revert
+#### The five holes that forced B4's revert — ALL FIVE ARE FIXED IN `B4-2_working_tree_REVERTED.patch`
 
 | # | Where | What is wrong, and who measured it |
 |---|---|---|
-| **1** | **issue 1303** — `rdw::pick_click`'s coordinate default | **THE WINDOW CAN NAME A DEVICE THE USER DID NOT CLICK.** `scheduler.c` exposes only `mousex_snap`/`mousey_snap`; every C click path reads the **unsnapped** `xctx->mousex/mousey`. Reproduced by the write-up agent on the shipped `cmos_inv.sch`: exact `175.175 -199.612` → `M1`, snapped `180 -200` → `R1`. Swept over every instance bbox: **6.4% miss, 0.5% wrong device**, silently. This is invariant **I3**'s plausible-wrong-answer class one object further out. **Fix:** issue 1303 option (a) — add an unsnapped accessor in `scheduler.c` (which makes B4 a C change, and B4 was scoped pure-Tcl: **the next crew must be given that scope**). |
+| **1** | **issue 1303** — `rdw::pick_click`'s coordinate default | **THE WINDOW CAN NAME A DEVICE THE USER DID NOT CLICK.** `scheduler.c` exposes only `mousex_snap`/`mousey_snap`; every C click path reads the **unsnapped** `xctx->mousex/mousey`. Reproduced by the write-up agent on the shipped `cmos_inv.sch`: exact `175.175 -199.612` → `M1`, snapped `180 -200` → `R1`. Swept over every instance bbox: **6.4% miss, 0.5% wrong device**, silently. This is invariant **I3**'s plausible-wrong-answer class one object further out. **Fix:** issue 1303 option (a) — an unsnapped accessor in `scheduler.c`. **DONE by the driver in `0ce85dda`**, and B4-2 consumed it: `xschem get mousex`/`mousey`, no grid fallback. |
 | **2** | **issue 1304** — the seize's missing `<B1-Motion>` | **A DRIFTED CLICK CHANGES THE SELECTION — the user's own headline requirement.** The mode seizes press, release and Escape and **not** motion, so C keeps getting Button1Mask motion and starts a rubber band it never terminates. Measured: 1 px of drift leaves `ui_state 16` alive **after `ESC`**; an eight-step drag selects **13 objects**; the no-mode control terminates at `ui_state 8`. **Fix:** seize `<B1-Motion>` with `break` and hand it back in the same released-latch proc. Live in `ase_window.tcl` too. |
 | **3** | the first dump of a session | **`ESC` CANNOT LEAVE THE MODE ON FIRST USE.** `rdw::open` ends in `focus .rdw`; `rdw::_focus_canvas`'s `focus -force` then loses the race against the WM focusing the newly **mapped** toplevel. Measured on a fresh session with `.rdw` not yet built: after the first click `[focus]` is `.rdw` and a real `<Key-Escape>` does **not** run `rdw::pick_end` — the mode stays live and seized. Second dump onward, focus is `.drw` and `ESC` works. **Row V8 passed anyway**, because the row before it pressed key 4, which maps `.rdw` by a different path. **Fix:** re-force after `update idletasks`, or do not `focus .rdw` from `rdw::open` while a pick mode is live — and write the row so it maps `.rdw` **inside itself**. |
 | **4** | `rdw::show`, and the suite | **A HOLE NO VARIANT WAS PREDICTED TO FIND.** Deleting `rdw::open` from `rdw::show` reds **nothing** — 68/78/21 all green — while a user pressing `1` with a device selected in a fresh session sees **nothing at all** and the block lands silently in the store (measured: `winfo exists .rdw` 0, blocks 1, pane absent). No row in either suite ever presses a dump key with `.rdw` absent. **Fix:** one row — destroy `.rdw`, select one instance, press key 1, assert the window exists *and* the pane names the device. |
 | **5** | `rdw::key`, the refused path | **A REFUSED KEY STILL MOVES THE LIST IDENTITY.** `rdw::key` calls `rdw::set_list` **before** resolving the selection, so pressing `2` with three objects selected refuses in the CIW *and* silently changes `::rdw::listkind` to `summary` and re-greys the buttons. Unspecified, unfenced, visible. **Fix:** resolve first, set the list only on the path that dumps — or rule that the list identity is a mode setting and say so on screen. |
 
-### What this item learned that binds every later step
+#### What B4 learned that binds every later step
 
-* **⚠ `xschem get mousex` DOES NOT EXIST, and this reaches B5 and every future
-  canvas pick.** The only Tcl mouse pair is snapped. Any Tcl feature that must
-  agree with where the user actually clicked needs issue **1303** fixed first.
-  Do not write another pick against `mousex_snap` and assume it agrees with C.
+* **⚠ ~~`xschem get mousex` DOES NOT EXIST~~ — IT DOES NOW, since `0ce85dda`.**
+  `xschem get mousex` / `mousey` answer the UNSNAPPED schematic coordinates
+  (`scheduler.c:5047`, `:5051`) beside the snapped pair at `:5055`/`:5059`, and
+  window-suite rows **P1**/**P2** fence both. **The rule that still binds B5 and
+  every future canvas pick: never resolve a click through `mousex_snap`.** The
+  snapped pair is for PLACING geometry. Measured on the shipped `cmos_inv.sch`,
+  one pixel apart: `175.175 -199.612 → M1`, `180 -200 → R1`. And note a
+  synthetic `<Motion>` cannot carry that pair (it lands at `173.959/-200.828`,
+  where both pairs answer `M1`), so an event-only row is **vacuous** for 1303.
 * **⚠ A PICK FIXTURE BUILT FROM BBOX CENTRES CANNOT SEE A COORDINATE DEFECT.**
   `bbox_centre` was adopted (correctly) so the A3 declutter numbers would not be
   transcribed — and a centre snaps safely, so the whole 21-check suite was blind
@@ -2170,9 +2240,13 @@ line.
 
 ## B5 — the button column and the two scope dialogs  *(needs B2, B3, and see B2a)*
 
-> **⚠ FROM B4 (2026-09-04). THE KEYS ARE NOT IN THE TREE.** B4 was refuted and
-> reverted; `src/rdw.tcl` and `src/cadence_style_rc` are byte-identical to
-> `735ea26e` again. So **nothing yet puts a block in the window** and the
+> **⚠ FROM B4 AND B4-2 (2026-09-04). THE KEYS ARE STILL NOT IN THE TREE, AFTER
+> TWO ATTEMPTS.** Both were refuted and reverted; `src/rdw.tcl` and
+> `src/cadence_style_rc` are byte-identical to `735ea26e` again (`0ce85dda`
+> touched only `scheduler.c` and two test rows). The whole feature is preserved
+> and re-appliable in `B4-2_working_tree_REVERTED.patch`; **B5 must not retype
+> any of it and must not depend on it landing.** So **nothing yet puts a block
+> in the window** and the
 > `Tools > Results Display Window` entry still opens an empty pane. If you need
 > a populated window to drive your buttons, either apply
 > `doc/claude/op_param_batch/B4_working_tree_REVERTED.patch` (fixing its five
