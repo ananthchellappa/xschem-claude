@@ -1,6 +1,39 @@
 # 1294 — under DD-7's read-modify-write, a writer classifier LAXER than the reader deletes the rows the reader rejected
 
-**Status: MEASURED, FILED, NOT FIXED. THIS IS THE DEFECT THAT REFUTED ITEM
+✅ **FIXED 2026-09-04 by the DRIVER**, in the B2c re-do, by making `_row_id`
+run **every gate the reader runs** — the live-list name, `_valid_list`, and
+`_triple` for a `param` row — in the reader's own order.
+
+**But the rule that was learned is not "share a key builder". It is "the two
+doors reach the SAME VERDICT ON EVERY LINE".** This issue offered two fixes and
+neither is quite it: `_parse_line` delegating to `_row_id` does not help if
+`_row_id` is the laxer one, and `_row_id` gaining the gates today says nothing
+about the gate somebody adds to `_parse_line` tomorrow. So the fence is
+**row Y1**, which drives a fifteen-line corpus through *both* doors and asserts
+they agree line by line — the divergence itself, not the one instance of it that
+was measured. **Y1b** asserts the shared verdict is the *right* one, so agreeing
+on a wrong answer cannot pass either.
+
+Measured on this issue's own N3 fixture (startup restore, edit that class's
+list, Save): `NEWROW_kept` **0 → 1**, and all **5/5** unreadable kinds survive
+(row Y3). Sabotage — restoring the lax `_row_id` — reds **Y1, Y2, Y3** and
+nothing else. `test_op_param_store_1245` 79 → **86**.
+
+Feature A unmoved: `test_op_annot` 485, `test_annot_declutter_1244` 134,
+`test_rdw_seam_1245` 49, `test_rdw_window_1245` 32, `test_ase_optier_0963` 94.
+
+⚠ **STILL OPEN from this issue's "also measured" section:** a `>2`-element
+flavor key is silently truncated by `_key`, so `owns flavor {mos *cap* JUNK}
+annotation` answers 1. Not fixed here — the honest repair is for `owns` and its
+siblings to validate through `_key_why` before building a key, which is wider
+than this re-do, and item **B5**'s scope dialog is the first door that can
+produce such a key.
+
+---
+
+*Original filing follows.*
+
+**Status: ~~MEASURED, FILED, NOT FIXED.~~ THIS IS THE DEFECT THAT REFUTED ITEM
 B2c.** Found by B2c's adversary pass and **reproduced first-hand by the
 write-up agent** before the item was downgraded to F and the patch reverted.
 

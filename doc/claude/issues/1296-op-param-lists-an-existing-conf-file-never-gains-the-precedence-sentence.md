@@ -1,6 +1,33 @@
 # 1296 — an existing settings file never gains the precedence sentence, and a v1 file keeps `version 1` while gaining v2 rows
 
-**Status: MEASURED, FILED, NEEDS A RULING.** Found by item **B2c**'s adversary
+✅ **RULED AND HALF-FIXED 2026-09-04 — ruling DD-11.** The two halves are not
+equally important and only one is a correctness bug, so they are answered
+differently.
+
+* **The `version` line IS rewritten.** A v1 file gaining v2 rows while still
+  claiming `version 1` is self-refuting on disk — the next `load_conf` reports
+  the mismatch and skips rows this build just wrote. The version line is a
+  machine field naming the grammar, not something the user authored, and DD-7's
+  promise is about *the rows they wrote*. Fixed; rows **V1** and **V3**. Bumping
+  it silences nothing: a v1 `flavor` row is one field short under v2, so it is
+  still reported — by the arity gate rather than the version gate, which is a
+  better message on the row that is actually wrong.
+* **The header prose is NOT refreshed**, and that is deliberate, not deferred.
+  Silently rewriting sentences a person typed is worse than an out-of-date
+  comment, and this batch has reverted three items for deleting things the user
+  wrote. Row **V2** fences it, and sabotaging it — rewriting comments on every
+  save — reds V2 **plus** B2c's own T4, T5, T6 and W9, the DD-7
+  preserve-verbatim rows catching it independently.
+
+*The rule, in one line:* **xschem owns the `version` line; the user owns every
+comment.** Where they conflict, correctness wins on the machine field and the
+user wins on the prose.
+
+---
+
+*Original filing follows.*
+
+**Status: ~~MEASURED, FILED, NEEDS A RULING.~~** Found by item **B2c**'s adversary
 pass and reproduced by the write-up agent, 2026-09-03, before B2c was reverted.
 
 **This is a collision between two things the item was told to do**, not a slip.

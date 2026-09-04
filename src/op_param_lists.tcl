@@ -85,10 +85,39 @@
 ## silently reassign the rows after it):
 ##
 ##     # a whole-line comment ; blank lines are skipped
-##     version 1
+##     version 2
 ##     class  <type-token> <broad-class>
-##     list   <scope> <key> <listname>
-##     param  <scope> <key> <listname> <label> <rawparam> <kind>
+##     list   class  <class> <listname>
+##     list   flavor <class> <cell-name glob> <listname>
+##     param  class  <class> <listname> <label> <rawparam> <kind>
+##     param  flavor <class> <cell-name glob> <listname> <label> <rawparam> <kind>
+##
+## GRAMMAR v2 -- ITEM B2c, ISSUE 1277. A `flavor` row carries its CLASS as a
+## field of its own, so `effective <class>` can never be answered by a flavor
+## somebody wrote with another class in mind, and so the class and the glob
+## reach the file as TWO SEPARATE unquoted fields. Emitting the two-element key
+## WHOLE is what corrupted a metacharacter-bearing glob in both earlier
+## attempts: Tcl's list-to-string rule braces the element and the reader's
+## `regexp -inline -all` split reads the braces literally. v1 had no class
+## field, so a v1 `flavor` row is a WRONG FIELD COUNT under v2 and is reported
+## and skipped -- never migrated by inference, because guessing which class
+## `*nfet_01v8_lvt*` meant is the invention ruling D-4 forbids one level up.
+## THE ARITY THEREFORE DEPENDS ON THE SCOPE, so the scope is validated FIRST.
+##
+## PRECEDENCE AMONG FLAVOR ROWS IS FILE ORDER (ruling DD-8). When two globs of
+## the SAME class both match a cell name, THE FIRST ONE IN THE FILE WINS.
+## Nothing is ranked and no code anywhere decides which glob is "narrower".
+## Two crews ranked and both shipped a bare `*` beating a specific pattern --
+## the filed defect, under its own fix, twice -- because "narrower" has no
+## defensible total order over globs: neither `sky130_fd_pr__*` nor
+## `*nfet_01v8_lvt*` contains the other. File order is something the user SETS
+## and can SEE, and the spec's button column already gives every list Up and
+## Down, so the reordering UI exists before the rule needs one.
+## ACROSS TWO FILES "first in the file" has no answer, so read order decides:
+## the user-global file is read first, and a project row outranks a personal
+## one only by using the SAME class and the SAME glob. The emitted header says
+## all of this, and the suite's row F5 BUILDS ITS CASE OUT OF THAT SENTENCE --
+## a file that states a rule its own code does not obey reds.
 ##
 ## A `param` row implicitly declares its list, so a hand-editing user never has
 ## to write the `list` line; `list` exists so an EMPTIED list can be expressed,
@@ -104,6 +133,49 @@
 ## customises `mos annotation` no longer silently discards the user-global's
 ## `mos summary`.
 ##
+## ===========================================================================
+## DD-7: SAVE IS A READ-MODIFY-WRITE OF ONE TIER'S OWN FILE
+## ===========================================================================
+## Writing a tier READS THAT TIER'S EXISTING FILE, changes only the keys THIS
+## SESSION actually changed, and writes it back. Every other row is preserved
+## VERBATIM -- comments, blank lines, the `version` row, and rows this build
+## does not understand.
+##
+## Two earlier attempts serialized a MERGED model and tagged each row with the
+## tier it came from. Both lost rows the user had typed: one deleted a user's
+## `class mydiode diode`, the other deleted a user's explicit `class nmos mos`
+## BECAUSE ITS VALUE EQUALLED THE SHIPPED DEFAULT -- which is exactly the row
+## somebody writes down to protect themselves against a default changing. Both
+## reported success with zero messages.
+##
+## The new shape cannot fail that way because YOU CANNOT DELETE A ROW YOU
+## NEVER PARSED INTO A MODEL. Provenance stops being a field to get right and
+## becomes a property of which file you opened. A row a FUTURE build writes
+## survives a save by THIS one, which is what "shareable with teammates"
+## requires the moment two people are on different versions.
+##
+## WHAT "THIS SESSION CHANGED" MEANS, spelled out because DD-7 does not spell
+## it: `set_list` and `set_class` stamp; a DIRECT `load_conf <path>` stamps,
+## because importing a file into your session IS a session change; `load` --
+## the two-tier startup restore -- stamps NOTHING, because that is the
+## session's initial state and not a change. Ladder L2. Stamping only in the
+## setters would make an imported file unsaveable; stamping in `load` too
+## would re-open the leak that writes the project tier's rows into the user's
+## own file.
+##
+## COST, STATED: Save re-reads the file it is about to write, so a file edited
+## by hand between load and save is MERGED rather than overwritten. That is
+## what a person expects of a config file. And an existing target that cannot
+## be READ stops the save with a sentence rather than proceeding -- writing
+## this session's few changed keys over a file whose other rows were never
+## read would be DD-7's own failure mode arriving through its own fix.
+##
+## THE CLASS MAP HAS NO DEFAULT-COMPARISON FILTER. A token this session set is
+## written whether or not its value equals the shipped default, so no row can
+## ever be dropped for agreeing with a default. That is the second refutation
+## retired structurally rather than by care.
+##
+## ===========================================================================
 ## THE PROJECT TIER IS `<pwd>/.xschem/`, NOT `[xschem get current_dirname]`.
 ## Measured: after loading a schematic from elsewhere current_dirname MOVES
 ## while pwd does not, so a Save taken while descended into a PDK library cell
@@ -205,6 +277,30 @@ namespace eval ::op_param_lists {
   variable warned
   if {![array exists warned]} { array set warned {} }
 
+  ## THE INSERTION ORDER OF THE STORE KEYS (ruling DD-8). A plain LIST, not a
+  ## dict and not an array: `array names` answers hash order, and reaching for
+  ## `lsort` because an array offers no other deterministic order is exactly
+  ## how both earlier attempts ended up ranking globs. Appended by `set_list`
+  ## and by `_parse_line` the first time a key is seen, emptied by `reset`, and
+  ## read back through `_keys` by the ONLY two consumers that need an order:
+  ## `effective`, which returns the first matching flavor, and the writer,
+  ## which appends new entries in the order the user made them.
+  variable keyorder
+  if {![info exists keyorder]} { set keyorder {} }
+
+  ## WHAT THIS SESSION ACTUALLY CHANGED (ruling DD-7). Two sets, keyed exactly
+  ## as their stores are: `dirty` on the store key, `dirtyclass` on the `type=`
+  ## token. They are NOT provenance -- nothing here records which file a row
+  ## came from, which is the design that lost rows twice. They record only that
+  ## this session touched the thing, so the writer knows which of the target
+  ## file's own rows it is entitled to rewrite and leaves every other row alone.
+  ## Cleared by `reset` and by nothing else: a successful write does NOT clear
+  ## them, so a user who saves both tiers gets the change in both.
+  variable dirty
+  if {![array exists dirty]} { array set dirty {} }
+  variable dirtyclass
+  if {![array exists dirtyclass]} { array set dirtyclass {} }
+
   ## The report buffer. A LIST, one element per report, so a caller can count
   ## how many times the user was told something.
   variable reports
@@ -214,7 +310,8 @@ namespace eval ::op_param_lists {
   variable listnames {annotation summary}
   ## Section 4.2's list 3. Live from the simulator, never persisted (D-4).
   variable livelist  all
-  variable version   1
+  ## GRAMMAR v2 (issue 1277): a `flavor` row carries its class as a field.
+  variable version   2
   variable basename  op_param_lists.conf
 
   ## -----------------------------------------------------------------------
@@ -239,6 +336,7 @@ namespace eval ::op_param_lists {
   proc reset {} {
     variable classmap ; variable defaultmap ; variable lists
     variable owned ; variable warned ; variable reports
+    variable keyorder ; variable dirty ; variable dirtyclass
     array unset classmap
     array set classmap $defaultmap
     array unset lists
@@ -247,6 +345,11 @@ namespace eval ::op_param_lists {
     array set owned {}
     array unset warned
     array set warned {}
+    set keyorder {}
+    array unset dirty
+    array set dirty {}
+    array unset dirtyclass
+    array set dirtyclass {}
     set reports {}
     return {}
   }
@@ -269,13 +372,216 @@ namespace eval ::op_param_lists {
   proc set_class {token cls} {
     variable classmap
     set classmap($token) $cls
+    _mark_dirty class $token
     return $cls
   }
 
   ## -----------------------------------------------------------------------
   ## KEYS AND VALIDATION
   ## -----------------------------------------------------------------------
-  proc _key {scope key listname} { return [list $scope $key $listname] }
+  ## THE ONE KEY BUILDER, AND IT CANONICALISES (invariant I1). A flavor key is
+  ## the TWO-ELEMENT list {<class> <cell-name glob>}; the store key stays THREE
+  ## elements so `lindex $k 2` is still the listname for every scope.
+  ##
+  ## ⚠ THE CANONICALISATION IS THE WHOLE OF ISSUE 1277's KEY-IDENTITY HOLE. An
+  ## earlier attempt used an uncanonicalised two-element list as an array index,
+  ## so a hand-typed key and a parsed one landed in DIFFERENT slots: a re-set
+  ## emitted two conflicting rows and the reader discarded one with nothing said
+  ## anywhere. `[list [lindex $key 0] [lindex $key 1]]` is idempotent for every
+  ## glob shape the format can carry, so the hand-typed spelling and the parsed
+  ## one collapse onto one index -- at ONE door, not four.
+  proc _key {scope key listname} {
+    if {$scope eq "flavor"} {
+      if {![catch {list [lindex $key 0] [lindex $key 1]} ck]} { set key $ck }
+    }
+    return [list $scope $key $listname]
+  }
+
+  ## THE KEY'S SHAPE, PER SCOPE (grammar v2). Answers {} when the key is
+  ## storable and a SENTENCE when it is not, so both doors report the same thing
+  ## and neither can store a key no reader will ever look for.
+  ##   class  -> one non-empty whitespace-free token
+  ##   flavor -> exactly {<class> <cell-name glob>}, both fields non-empty and
+  ##             whitespace-free, because the settings file is
+  ##             whitespace-delimited and a field with a space in it could not
+  ##             be read back.
+  proc _key_why {scope key} {
+    if {$scope eq "flavor"} {
+      if {[catch {llength $key} n]} {
+        return "the flavor key \"$key\" is not a well-formed list; grammar v2 wants {<class> <cell-name glob>}"
+      }
+      if {$n != 2} {
+        return "the flavor key \"$key\" has $n fields; grammar v2 wants exactly two, {<class> <cell-name glob>}"
+      }
+      foreach fld $key {
+        if {$fld eq {} || [regexp {\s} $fld]} {
+          return "the flavor key \"$key\" has a field that is empty or carries whitespace, so it could not be written back"
+        }
+      }
+      return {}
+    }
+    if {$key eq {} || [regexp {\s} $key]} {
+      return "the $scope key \"$key\" is empty or carries whitespace, so it could not be written back"
+    }
+    return {}
+  }
+
+  ## THE KEY AS FILE FIELDS. A flavor key becomes TWO unquoted fields; every
+  ## other scope is one.
+  ## ⚠ THIS IS THE METACHARACTER FIX AND IT IS THE WRITER'S, NOT THE READER'S.
+  ## `puts $fp "list $scope $key $ln"` interpolates a two-element key WHOLE, so
+  ## Tcl's list-to-string rule escapes any list metacharacter in the glob while
+  ## the reader's plain whitespace split reads the escape LITERALLY. Measured on
+  ## the earlier attempt, every one of these read back different with no report:
+  ##   a{b* -> a\{b*   a}b* -> a\}b*   a[b* -> {a[b*}   a\b* -> {a\b*}
+  ## Emitting the fields SEPARATELY carries all of them unchanged, which is why
+  ## the other arm -- refuse a metacharacter at write time -- is not taken: it
+  ## would cost `[nm]` and `\*`, both documented `string match` features, to
+  ## solve a problem the writer created. `_key_why` already refuses whitespace
+  ## at both doors, so nothing that reaches here can split into the wrong count.
+  ## BOTH the `list` row and the `param` row go through here: fixing only one
+  ## would turn a corrupted glob into a corrupted glob whose EMPTINESS is also
+  ## lost, because the `list` row is what carries an emptied list.
+  proc _key_fields {scope key} {
+    if {$scope eq "flavor"} { return "[lindex $key 0] [lindex $key 1]" }
+    return $key
+  }
+
+  ## DOES THIS FLAVOR ENTRY BELONG TO THIS CLASS? Grammar v2's whole point, and
+  ## the half of issue 1277 that ruling DD-8 keeps: before it a flavor entry
+  ## carried no class at all and answered every query whose cell name its glob
+  ## happened to match, so a capacitor could be answered by a list somebody
+  ## wrote with MOS in mind.
+  proc _flavor_matches_class {k cls} {
+    set kk [lindex $k 1]
+    if {[catch {llength $kk} n]} { return 0 }
+    if {$n != 2} { return 0 }
+    return [expr {[lindex $kk 0] eq $cls ? 1 : 0}]
+  }
+
+  ## THE FIELD COUNT ONE ROW OF THE GRAMMAR HAS. It depends on the SCOPE, which
+  ## is why `_parse_line` validates the scope before it counts fields.
+  proc _row_arity {verb scope} {
+    set n [expr {$verb eq "list" ? 4 : 7}]
+    if {$scope eq "flavor"} { incr n }
+    return $n
+  }
+
+  ## ONE FIELDS-TO-KEY BUILDER, used by the READER and by the WRITER's merge
+  ## classifier (invariant I1). The alternative is a second, laxer grammar
+  ## reader inside the writer, and when the two disagree the writer either
+  ## duplicates a row or replaces the wrong one, silently.
+  ## Answers {} for anything that is not a well-formed data row of this
+  ## grammar -- and a row the writer cannot identify is a row it copies
+  ## verbatim, which is the safe direction under DD-7.
+  ## ⚠ EVERY GATE THE READER APPLIES IS APPLIED HERE TOO -- ISSUE 1294, AND IT
+  ## IS THE DEFECT THAT REVERTED ITEM B2c.
+  ##
+  ## This proc used to stop after verb + scope + arity, which made it LAXER
+  ## than `_parse_line`. Under ruling DD-7 the writer merges by identifying
+  ## rows, so a row the READER refused but the WRITER could still identify was
+  ## treated as part of a dirty key's group and DROPPED. Measured, with
+  ## `param class mos annotation NEWROW raw ratio` -- seven fields, verb
+  ## `param`, scope `class`, and a kind the reader rejects:
+  ##
+  ##     load:  <path>:3: kind "ratio" is not an integer   (READER refuses)
+  ##     save:  write=1  writereports=0  NEWROW_kept=0     (WRITER deletes)
+  ##
+  ## rc=1, zero reports, a line the user typed destroyed -- byte-for-byte the
+  ## signature that reverted B2a and B2a-2. Reproduced for 5/5 unreadable
+  ## kinds. And it falsifies BOTH of DD-7's public promises at once: "you
+  ## cannot delete a row you never parsed into a model" is only true while the
+  ## writer cannot IDENTIFY such a row, and the emitted header's "rows a newer
+  ## xschem wrote that this one does not understand" is exactly this case --
+  ## a newer build that extends a VALUE vocabulary rather than adding a
+  ## keyword writes a known verb with a field this build cannot read.
+  ##
+  ## ⚠ SO THE RULE IS NOT "share a key builder", IT IS "the two doors reach the
+  ## SAME VERDICT ON EVERY LINE". Row Y1 drives a corpus through both and
+  ## asserts they agree, which fences the divergence itself rather than the one
+  ## instance of it that was measured.
+  ##
+  ## An unidentifiable row is copied VERBATIM by the writer, which is the safe
+  ## direction: the cost of failing to recognise a row is a duplicate the user
+  ## can see and delete, and the cost of wrongly recognising one is a silent
+  ## deletion they cannot.
+  proc _row_id {f} {
+    set verb [lindex $f 0]
+    if {$verb ne "list" && $verb ne "param"} { return {} }
+    if {[llength $f] < 2} { return {} }
+    set scope [lindex $f 1]
+    if {![_valid_scope $scope]} { return {} }
+    if {[llength $f] != [_row_arity $verb $scope]} { return {} }
+    if {$scope eq "flavor"} {
+      set key  [list [lindex $f 2] [lindex $f 3]]
+      set ln   [lindex $f 4]
+      set rest 5
+    } else {
+      set key  [lindex $f 2]
+      set ln   [lindex $f 3]
+      set rest 4
+    }
+    ## The reader's remaining gates, in the reader's own order.
+    variable livelist
+    if {$ln eq $livelist} { return {} }
+    if {![_valid_list $ln]} { return {} }
+    if {$verb eq "param"} {
+      if {[_triple [list [lindex $f $rest] [lindex $f [expr {$rest + 1}]] \
+                         [lindex $f [expr {$rest + 2}]]]] eq {}} { return {} }
+    }
+    return [_key $scope $key $ln]
+  }
+
+  ## THE STORE KEYS IN THE ORDER THEY WERE FIRST SEEN (ruling DD-8). This is
+  ## the accessor that replaced `lsort [array names owned]` in `effective` and
+  ## in the writer. Renaming it is the sabotage that puts the ranking back.
+  proc _keys {} {
+    variable keyorder ; variable owned
+    set out {}
+    foreach k $keyorder { if {[info exists owned($k)]} { lappend out $k } }
+    return $out
+  }
+
+  proc _key_touch {k} {
+    variable keyorder
+    if {[lsearch -exact $keyorder $k] < 0} { lappend keyorder $k }
+    return {}
+  }
+
+  ## THE DIRT (ruling DD-7). `kind` is `class` for a `type=` token and `list`
+  ## for a store key. One predicate, so a reviewer can disable it and watch the
+  ## suite say which promise broke.
+  proc _mark_dirty {kind id} {
+    variable dirty ; variable dirtyclass
+    if {$kind eq "class"} { set dirtyclass($id) 1 } else { set dirty($id) 1 }
+    return {}
+  }
+
+  proc _is_dirty {kind id} {
+    variable dirty ; variable dirtyclass
+    if {$kind eq "class"} { return [expr {[info exists dirtyclass($id)] ? 1 : 0}] }
+    return [expr {[info exists dirty($id)] ? 1 : 0}]
+  }
+
+  ## THE DUPLICATE-LABEL RULE, IN ONE PLACE, FOR BOTH DOORS (issue 1288).
+  ## `set_list` and the file parser are the only two ways an entry enters the
+  ## store and they used to disagree about the very same input: the parser
+  ## replaced the earlier triple in place and said so, `set_list` accepted both
+  ## rows in silence and `_save_set`'s first-wins dedup then dropped the user's
+  ## second row with nothing said anywhere. The parser is right, so the parser's
+  ## rule lives here and both doors call it.
+  proc _dup_index {cur label} {
+    set i 0
+    foreach e $cur {
+      if {![catch {lindex $e 0} l] && $l eq $label} { return $i }
+      incr i
+    }
+    return -1
+  }
+
+  proc _dup_why {label scope key listname} {
+    return "a second entry for label \"$label\" in $scope $key $listname; the later one replaces it in place"
+  }
 
   proc _valid_scope {scope} {
     variable scopes
@@ -323,8 +629,17 @@ namespace eval ::op_param_lists {
     return $lists([_key $scope $key $listname])
   }
 
-  ## Store one whole list. Returns 1, or 0 WITH A REPORT and no change at all:
-  ## a half-applied list is a list the user never chose.
+  ## Store one whole list.
+  ##
+  ## ⚠ THE CONTRACT MOVED, DELIBERATELY (issue 1288, ladder L3). It used to read
+  ## "Returns 1, or 0 WITH A REPORT and no change at all". That still holds of a
+  ## MALFORMED TRIPLE -- half a list is a list the user never chose -- but a
+  ## repeated LABEL is now a REDUCTION, not a refusal: the later triple replaces
+  ## the earlier one IN PLACE, the user is told once, and the call returns 1.
+  ## That is what the file parser has always done with the same input, and issue
+  ## 1288 requires the two doors to reach the same verdict with the same
+  ## sentence. The alternative -- refuse, and keep the old wording -- leaves the
+  ## two doors disagreeing about the same rule, which is the defect itself.
   proc set_list {scope key listname triples} {
     variable lists ; variable owned
     if {![_valid_scope $scope]} {
@@ -340,8 +655,9 @@ namespace eval ::op_param_lists {
       _say "unknown list name \"$listname\"; expected `annotation` or `summary`"
       return 0
     }
-    if {$key eq {} || [regexp {\s} $key]} {
-      _say "the $scope key \"$key\" is empty or carries whitespace, so it could not be written back"
+    set why [_key_why $scope $key]
+    if {$why ne {}} {
+      _say $why
       return 0
     }
     if {[catch {llength $triples} n]} {
@@ -355,11 +671,22 @@ namespace eval ::op_param_lists {
         _say "refusing the $scope list \"$key $listname\": the entry \"$t\" is not a {label param kind} triple of three whitespace-free fields with an integer kind"
         return 0
       }
-      lappend out $tt
+      ## The file parser's own rule, through the shared predicate (issue 1288).
+      set hit [_dup_index $out [lindex $tt 0]]
+      if {$hit >= 0} {
+        _say [_dup_why [lindex $tt 0] $scope $key $listname]
+        set out [lreplace $out $hit $hit $tt]
+      } else {
+        lappend out $tt
+      }
     }
     set k [_key $scope $key $listname]
     set lists($k) $out
     set owned($k) 1
+    _key_touch $k
+    ## Changed HERE, so the tier saved next is entitled to rewrite this key's
+    ## rows in its own file and nothing else (ruling DD-7).
+    _mark_dirty list $k
     return 1
   }
 
@@ -467,14 +794,27 @@ namespace eval ::op_param_lists {
   ## concept keyed on anything else would fork the narrowing.
   ## DD-2's own sentence: `nfet_01v8_lvt` with no entry of its own uses the
   ## `mos` lists.
+  ##
+  ## ⚠ PRECEDENCE IS FILE ORDER AND NOTHING IS RANKED (ruling DD-8). The scan
+  ## used to be `foreach k [lsort [array names owned]]`, returning the first
+  ## glob that matched. `lsort` orders by the character after the leading `*`,
+  ## so with `*fet*` and `*nfet_01v8*` both matching `nfet_01v8_lvt` the BROAD
+  ## one won -- in BOTH insertion orders -- and the winner FLIPPED when the
+  ## LOSER was merely renamed. Two later attempts replaced that with a
+  ## narrowness ranking and both shipped a bare `*` beating a specific pattern,
+  ## which is how the ranking died: "narrower" has no defensible total order
+  ## over globs. `_keys` answers the order the entries were declared in, which
+  ## for a settings file IS the order of its rows, so the file is its own
+  ## documentation and the user reorders with the buttons they already have.
   proc effective {cls listname {cellname {}}} {
     variable lists ; variable owned
     if {![_valid_list $listname]} { return {} }
     if {$cellname ne {}} {
-      foreach k [lsort [array names owned]] {
+      foreach k [_keys] {
         if {[lindex $k 0] ne "flavor"} { continue }
         if {[lindex $k 2] ne $listname} { continue }
-        if {[string match -nocase [lindex $k 1] $cellname]} { return $lists($k) }
+        if {![_flavor_matches_class $k $cls]} { continue }
+        if {[string match -nocase [lindex [lindex $k 1] 1] $cellname]} { return $lists($k) }
       }
     }
     if {[owns class $cls $listname]} { return [get_list class $cls $listname] }
@@ -510,7 +850,13 @@ namespace eval ::op_param_lists {
       if {[lsearch -exact $seen $n] >= 0} { continue }
       lappend seen $n
       if {![file isfile $p]} { continue }
-      if {[load_conf $p]} { lappend got $p }
+      ## ⚠ STAMP NOTHING. This is the session's INITIAL STATE, not a change the
+      ## session made, so a later Save of one tier rewrites only the keys the
+      ## user actually touched and leaves the other tier's rows in the other
+      ## tier's file (ruling DD-7). A direct `load_conf` DOES stamp -- importing
+      ## a file into your session is a session change -- which is the whole of
+      ## the difference between the two doors.
+      if {[load_conf $p 0]} { lappend got $p }
     }
     return $got
   }
@@ -518,39 +864,60 @@ namespace eval ::op_param_lists {
   ## -----------------------------------------------------------------------
   ## THE STRICT READER (DD-3)
   ## -----------------------------------------------------------------------
-  proc load_conf {path} {
+  ## ⚠ THE OPTIONAL `stamp` IS RULING DD-7's, AND THE REQUIRED ARITY DOES NOT
+  ## MOVE. A DIRECT `load_conf <path>` stamps the keys it sets as
+  ## changed-this-session, because importing a file into your session IS a
+  ## session change and a user who imports then saves must get what she
+  ## imported. `load`, the two-tier startup restore, passes 0.
+  proc load_conf {path {stamp 1}} {
     if {![file isfile $path]} {
       _say "no settings file at $path"
       return 0
     }
-    if {[catch {open $path r} fp]} {
-      _say "cannot read $path: $fp"
+    set rd [_read_lines $path]
+    if {[lindex $rd 0] ne "ok"} {
+      _say "cannot read $path: [lindex $rd 1]"
       return 0
     }
-    _chanconf $fp
-    if {[catch {read $fp} data]} {
-      catch {close $fp}
-      _say "cannot read $path: $data"
-      return 0
-    }
-    catch {close $fp}
     set touched {}
     set n 0
-    foreach raw [split $data "\n"] {
+    foreach line [lindex $rd 1] {
       incr n
-      ## The default `auto` translation already maps \r\n -> \n on read, so
-      ## this is a no-op on the normal path; it keeps the parser correct if the
-      ## channel is ever opened in a non-auto translation mode.
-      set line [string trimright $raw "\r"]
       if {[string trim $line] eq {}} { continue }
       if {[string index [string trimleft $line] 0] eq "#"} { continue }
-      _parse_line $path $n $line touched
+      _parse_line $path $n $line touched $stamp
     }
     return 1
   }
 
+  ## THE ONE SPLITTER, TWO CONSUMERS (invariant I1): the strict reader above and
+  ## the writer's read-modify-write below. A second splitter inside the writer
+  ## would merge a teammate's CRLF file differently from the way the parser read
+  ## it, and no existing row could see the difference -- the CRLF row fences the
+  ## PARSE, not the merge.
+  ## Answers {ok <lines>} or {err <message>}; never raises.
+  ## ⚠ `split` on a file that ends in a newline yields ONE TRAILING EMPTY
+  ## ELEMENT that is not a line. Dropping exactly one is what keeps a save from
+  ## growing the file by a blank line every single time.
+  proc _read_lines {path} {
+    if {[catch {open $path r} fp]} { return [list err $fp] }
+    _chanconf $fp
+    if {[catch {read $fp} data]} {
+      catch {close $fp}
+      return [list err $data]
+    }
+    catch {close $fp}
+    set out {}
+    ## The default `auto` translation already maps \r\n -> \n on read, so the
+    ## trim is a no-op on the normal path; it keeps the reader correct if the
+    ## channel is ever opened in a non-auto translation mode.
+    foreach raw [split $data "\n"] { lappend out [string trimright $raw "\r"] }
+    if {[llength $out] && [lindex $out end] eq {}} { set out [lrange $out 0 end-1] }
+    return [list ok $out]
+  }
+
   ## ONE ROW. Nothing here runs, expands or substitutes anything the file says.
-  proc _parse_line {path lineno line tvar} {
+  proc _parse_line {path lineno line tvar {stamp 1}} {
     variable classmap ; variable lists ; variable owned
     variable livelist ; variable version
     upvar 1 $tvar touched
@@ -564,7 +931,14 @@ namespace eval ::op_param_lists {
         return 0
       }
       if {[lindex $f 1] ne $version} {
-        _say "$at: settings file version [lindex $f 1] is not the version $version this xschem writes; reading it row by row anyway: $line"
+        ## ⚠ NAME BOTH VERSIONS AND SAY WHAT CHANGED. A v1 `flavor` row has one
+        ## field too few under v2 and is skipped; it is NEVER migrated by
+        ## inference, because guessing which class `*nfet_01v8_lvt*` meant is
+        ## exactly the invention ruling D-4 forbids one level up -- and the
+        ## guess would be silent, so a user whose flavor quietly stopped
+        ## applying would have nothing on screen to read. This row is the thing
+        ## that tells her.
+        _say "$at: settings file version [lindex $f 1] is not the version $version this xschem writes; grammar v2 gave every `flavor` row a class field of its own, so a v1 flavor row is one field short and is reported and skipped. Reading the rest row by row anyway: $line"
         return 0
       }
       return 1
@@ -583,21 +957,38 @@ namespace eval ::op_param_lists {
         lappend touched $ck
       }
       set classmap($tok) [lindex $f 2]
+      if {$stamp} { _mark_dirty class $tok }
       return 1
     }
 
     if {$verb eq "list" || $verb eq "param"} {
-      set want [expr {$verb eq "list" ? 4 : 7}]
-      if {[llength $f] != $want} {
-        _say "$at: `$verb` takes $want whitespace-separated fields, got [llength $f]: $line"
+      ## ⚠ THE SCOPE IS VALIDATED BEFORE THE FIELDS ARE COUNTED, because under
+      ## grammar v2 the arity DEPENDS on the scope. Counting first would report
+      ## a field count for an unknown scope -- and it is the same row either
+      ## way, so only one of the two orders tells the reader what is actually
+      ## wrong with the line.
+      if {[llength $f] < 2} {
+        _say "$at: `$verb` needs a scope (`class` or `flavor`) as its first field, got [llength $f] fields: $line"
         return 0
       }
       set scope [lindex $f 1]
-      set key   [lindex $f 2]
-      set ln    [lindex $f 3]
       if {![_valid_scope $scope]} {
         _say "$at: unknown scope \"$scope\"; expected `class` or `flavor`: $line"
         return 0
+      }
+      set want [_row_arity $verb $scope]
+      if {[llength $f] != $want} {
+        _say "$at: `$verb $scope` takes $want whitespace-separated fields, got [llength $f]: $line"
+        return 0
+      }
+      if {$scope eq "flavor"} {
+        set key [list [lindex $f 2] [lindex $f 3]]
+        set ln  [lindex $f 4]
+        set rest 5
+      } else {
+        set key [lindex $f 2]
+        set ln  [lindex $f 3]
+        set rest 4
       }
       if {$ln eq $livelist} {
         _say "$at: the `$livelist` list is live from the simulator and is never stored in a settings file (ruling D-4): $line"
@@ -609,9 +1000,10 @@ namespace eval ::op_param_lists {
       }
       set t {}
       if {$verb eq "param"} {
-        set t [_triple [list [lindex $f 4] [lindex $f 5] [lindex $f 6]]]
+        set t [_triple [list [lindex $f $rest] [lindex $f [expr {$rest + 1}]] \
+                             [lindex $f [expr {$rest + 2}]]]]
         if {$t eq {}} {
-          _say "$at: kind \"[lindex $f 6]\" is not an integer: $line"
+          _say "$at: kind \"[lindex $f [expr {$rest + 2}]]\" is not an integer: $line"
           return 0
         }
       }
@@ -622,17 +1014,17 @@ namespace eval ::op_param_lists {
         lappend touched $k
         set lists($k) {}
         set owned($k) 1
+        ## FILE ORDER (ruling DD-8): a key keeps the position of its FIRST
+        ## appearance, so an earlier tier's row is not re-ordered by a later
+        ## tier restating it.
+        _key_touch $k
+        if {$stamp} { _mark_dirty list $k }
       }
       if {$verb eq "list"} { return 1 }
       set cur $lists($k)
-      set hit -1
-      set i 0
-      foreach e $cur {
-        if {[lindex $e 0] eq [lindex $t 0]} { set hit $i ; break }
-        incr i
-      }
+      set hit [_dup_index $cur [lindex $t 0]]
       if {$hit >= 0} {
-        _say "$at: a second entry for label \"[lindex $t 0]\" in $scope $key $ln; the later one replaces it in place: $line"
+        _say "$at: [_dup_why [lindex $t 0] $scope $key $ln]: $line"
         set lists($k) [lreplace $cur $hit $hit $t]
       } else {
         lappend cur $t
@@ -666,11 +1058,85 @@ namespace eval ::op_param_lists {
     return {}
   }
 
+  ## WHERE THE WRITE ACTUALLY LANDS, RESOLVED ONCE (issue 1276).
+  ##
+  ## ⚠ `file normalize` DOES NOT RESOLVE A PATH'S FINAL COMPONENT, and neither
+  ## `file rename -force` nor `open` complains about any of this: measured, a
+  ## target that was a DIRECTORY left the bytes at `<dir>/<name>.new` INSIDE it
+  ## and reported success, and a target that was a SYMLINK had its link
+  ## REPLACED by a regular file while the real file stayed empty -- both with
+  ## zero reports. There is nothing to check afterwards, so the guard has to be
+  ## a PRECONDITION.
+  ##
+  ## ⚠ AND IT HAS TO RUN FIRST. A symlink to a DIRECTORY answers `file
+  ## isdirectory` 1, so the chain must be resolved before the directory guard;
+  ## a DANGLING symlink answers exists=0 / isfile=0 / isdirectory=0 while `file
+  ## link` still succeeds, so resolution must also precede the permission
+  ## capture and the temp name.
+  ##
+  ## ⚠ THE RELATIVE-TARGET CORRECTION. Issue 1276's own recommended one-liner,
+  ## `file normalize [file link $path]`, resolves a relative target against the
+  ## CURRENT WORKING DIRECTORY: for a link at <d>/sub/link.conf -> real.conf it
+  ## answers <d>/real.conf, not <d>/sub/real.conf, so a fix built on it writes
+  ## the user's settings into the cwd. Join against the LINK's own directory.
+  ##
+  ## Answers the file the write should land on, or {} for a chain deeper than
+  ## 16 links, which is what a loop looks like from here.
+  proc _resolve_target {path} {
+    set p $path
+    for {set i 0} {$i < 16} {incr i} {
+      if {[catch {file link $p} tgt]} { return $p }
+      if {$tgt eq {}} { return $p }
+      set p [file normalize [file join [file dirname $p] $tgt]]
+    }
+    return {}
+  }
+
+  ## THE TARGET'S OWN PRECONDITIONS, NAMED ONCE so the choice has one place and
+  ## a reviewer can disable it and watch the suite say which promise broke.
+  ## Answers {} when the resolved target may be written, and the sentence
+  ## otherwise.
+  proc _target_why {path target} {
+    if {$target eq {}} {
+      return "cannot save the parameter lists to $path: it is a symbolic link chain more than 16 links deep, which is what a loop looks like from here. The file you already had is untouched."
+    }
+    if {[file isdirectory $target]} {
+      set what $path
+      if {$target ne $path} { append what " (which resolves to $target)" }
+      return "cannot save the parameter lists to $what: it is a directory, not a settings file. Nothing was written inside it, and the file you already had is untouched."
+    }
+    return {}
+  }
+
   proc write_conf {{path {}}} {
     if {$path eq {}} { set path [conf_path project] }
     if {$path eq {}} {
       _say "no settings file path to write to"
       return 0
+    }
+    ## BEFORE `file dirname`, BEFORE `file mkdir`, BEFORE the temp name and
+    ## BEFORE the permission capture -- see _resolve_target's comment.
+    set target [_resolve_target $path]
+    set why [_target_why $path $target]
+    if {$why ne {}} {
+      _say $why
+      return 0
+    }
+    set path $target
+    ## RULING DD-7: READ THE FILE WE ARE ABOUT TO WRITE. Every row this session
+    ## did not change is preserved verbatim, so a row this build never parsed
+    ## cannot be deleted by it.
+    ## ⚠ AN EXISTING TARGET THAT CANNOT BE READ STOPS THE SAVE. Proceeding would
+    ## write this session's few changed keys over a file whose other rows were
+    ## never read -- DD-7's own failure mode arriving through its own fix.
+    set old {}
+    if {[file exists $path]} {
+      set rd [_read_lines $path]
+      if {[lindex $rd 0] ne "ok"} {
+        _say "cannot save the parameter lists to $path: it already exists but could not be read ([lindex $rd 1]), and saving would overwrite rows this xschem never saw. The file you already had is untouched."
+        return 0
+      }
+      set old [lindex $rd 1]
     }
     set dir [file dirname $path]
     if {![file isdirectory $dir]} {
@@ -686,7 +1152,7 @@ namespace eval ::op_param_lists {
       _say "cannot save the parameter lists to $path: $fp. The file you already had is untouched."
       return 0
     }
-    if {[catch {_chanconf $fp ; write_body $fp ; close $fp} err]} {
+    if {[catch {_chanconf $fp ; write_body $fp $old ; close $fp} err]} {
       catch {close $fp}
       catch {file delete -force $tmp}
       _say "cannot save the parameter lists to $path: $err. The file you already had is untouched."
@@ -703,50 +1169,164 @@ namespace eval ::op_param_lists {
     return 1
   }
 
+  ## THE HEADER BLOCK, EMITTED ONLY INTO A FILE THAT HAS NO LINES YET.
+  ##
+  ## ⚠ THE PRECEDENCE PARAGRAPH MUST BE TRUE OF THE CODE BELOW IT. Both earlier
+  ## attempts wrote "narrowest matching glob wins" into every settings file they
+  ## emitted while implementing something else entirely -- a file lying to its
+  ## own reader. The suite's row F5 reads the worked example back OUT of a
+  ## freshly written file, builds the two-row file the example describes and
+  ## asserts the winner the FILE names, so the sentence and the code cannot
+  ## drift apart without reddening. Change the wording and the case it builds
+  ## changes with it; change the rule and the row goes red. If you edit the
+  ## `e.g.` line, keep its shape:
+  ##     e.g. `flavor <class> <glob>` above `flavor <class> <glob>` wins on cell
+  ##          <cellname>;
+  proc _header_lines {} {
+    variable version
+    set out {}
+    lappend out {# xschem operating-point parameter lists -- written by xschem.}
+    lappend out {# See doc/claude/specs/op_param_lists.md section 4.4.}
+    lappend out {#}
+    lappend out {# THIS FILE IS DATA AND xschem RUNS NOTHING THAT IS IN IT. A strict}
+    lappend out {# reader parses it row by row; a row it does not recognise is reported}
+    lappend out {# and skipped. That is what makes it safe to accept from a teammate.}
+    lappend out {#}
+    lappend out {#   class <type-token> <broad-class>}
+    lappend out {#   list  class  <class> <listname>}
+    lappend out {#   list  flavor <class> <cell-name glob> <listname>}
+    lappend out {#   param class  <class> <listname> <label> <rawparam> <kind>}
+    lappend out {#   param flavor <class> <cell-name glob> <listname> <label> <rawparam> <kind>}
+    lappend out {#}
+    lappend out {# scope:    class | flavor (a cell-name glob, matched case-insensitively)}
+    lappend out {# listname: annotation | summary}
+    lappend out {# kind:     0 -> i(dev[p]) , 1 -> bare dev[p] , 2 -> v(dev[p])}
+    lappend out {#}
+    lappend out {# PRECEDENCE among `flavor` rows: when two globs of the SAME class both}
+    lappend out {# match a cell name, THE FIRST ONE IN THIS FILE WINS. Nothing is ranked}
+    lappend out {# and nothing is measured for narrowness: put the row you want to win}
+    lappend out {# ABOVE the other one.}
+    lappend out {#   e.g. `flavor mos *nfet_01v8_lvt*` above `flavor mos *` wins on cell}
+    lappend out {#        sky130_fd_pr__nfet_01v8_lvt; swap the two rows and the bare *}
+    lappend out {#        wins.}
+    lappend out {# A `flavor` row answers ONLY for the class named in its own row.}
+    lappend out {# Your personal file is read BEFORE this project's, so its flavor rows}
+    lappend out {# are tried first; a project row outranks a personal one only by using}
+    lappend out {# the SAME class and the SAME glob.}
+    lappend out {#}
+    lappend out {# xschem edits only the rows it changed and leaves everything else in}
+    lappend out {# this file exactly as you wrote it -- your comments, your ordering, and}
+    lappend out {# rows a newer xschem wrote that this one does not understand.}
+    lappend out "version $version"
+    return $out
+  }
+
+  ## ONE ENTRY, AS FILE ROWS. The `list` row is what lets an EMPTIED list
+  ## survive a round trip instead of degrading to the PDK seed.
+  proc _entry_lines {k} {
+    variable lists
+    set scope [lindex $k 0]
+    set kf    [_key_fields $scope [lindex $k 1]]
+    set ln    [lindex $k 2]
+    set out [list "list $scope $kf $ln"]
+    if {[info exists lists($k)]} {
+      foreach t $lists($k) {
+        lappend out "param $scope $kf $ln [lindex $t 0] [lindex $t 1] [lindex $t 2]"
+      }
+    }
+    return $out
+  }
+
+  ## THE MERGE (ruling DD-7). `old` is the lines already in the file being
+  ## written, in order. Everything this session did not change is copied
+  ## VERBATIM -- comments, blank lines, the `version` row, and any row this
+  ## build cannot identify. A dirty group is replaced IN PLACE at its FIRST
+  ## line and its later lines are dropped; a dirty thing the file had no row
+  ## for is appended.
+  ##
+  ## ⚠ WHY THERE IS NO PROVENANCE FIELD ANYWHERE HERE. Two attempts serialized
+  ## a MERGED model and tagged each row with the tier it came from, and both
+  ## deleted rows the user had typed -- one a personal `class mydiode diode`,
+  ## the other an explicit `class nmos mos` BECAUSE ITS VALUE EQUALLED THE
+  ## SHIPPED DEFAULT, which is precisely the row somebody writes down to
+  ## protect against a default changing. You cannot delete a row you never
+  ## parsed into a model, so provenance stops being a field to get right and
+  ## becomes a property of which file you opened.
+  ##
+  ## ⚠ AND THE CLASS MAP HAS NO DEFAULT-COMPARISON FILTER any more. A token this
+  ## session set is written whether or not it agrees with the shipped default.
+  ## NOTHING IS STAMPED -- no timestamp, no pid, no hostname -- so writing the
+  ## same store twice gives the same bytes and the file a team checks in diffs
+  ## only when somebody changed something.
+  proc _merge_lines {old} {
+    variable classmap ; variable dirtyclass ; variable version
+    set out {}
+    if {![llength $old]} {
+      foreach l [_header_lines] { lappend out $l }
+    }
+    set doneclass {} ; set donekey {}
+    foreach line $old {
+      set f [regexp -inline -all {\S+} $line]
+      ## ⚠ XSCHEM OWNS THE `version` LINE. THE USER OWNS EVERY COMMENT.
+      ## RULING DD-11, issue 1296. This is the ONE line of an existing file
+      ## that is rewritten, and it is rewritten because leaving it is a
+      ## correctness bug rather than a cosmetic one: a v1 file that gains v2
+      ## rows still claiming `version 1` is SELF-REFUTING ON DISK -- the next
+      ## load_conf reports the version mismatch and skips rows this build just
+      ## wrote. DD-7's promise is about the rows the user WROTE, not about a
+      ## machine stamp saying which dialect those rows are in.
+      ## ⚠ AND THE HEADER PROSE IS DELIBERATELY *NOT* REFRESHED, though it goes
+      ## stale the same way. Silently rewriting sentences a person typed is
+      ## worse than an out-of-date comment, and this batch has reverted three
+      ## items for deleting things the user wrote. Correctness wins on the
+      ## machine field; the user wins on the prose.
+      ## Bumping it does not silence anything: a v1 `flavor` row is one field
+      ## short under v2, so it is still reported, by the arity gate instead of
+      ## the version gate -- a better message, on the row that is actually
+      ## wrong.
+      if {[lindex $f 0] eq "version" && [llength $f] == 2 \
+          && [lindex $f 1] ne $version} {
+        lappend out "version $version"
+        continue
+      }
+      if {[lindex $f 0] eq "class" && [llength $f] == 3 \
+          && [_is_dirty class [lindex $f 1]]} {
+        set tok [lindex $f 1]
+        if {[lsearch -exact $doneclass $tok] >= 0} { continue }
+        lappend doneclass $tok
+        if {[info exists classmap($tok)]} { lappend out "class $tok $classmap($tok)" }
+        continue
+      }
+      set k [_row_id $f]
+      if {$k ne {} && [_is_dirty list $k]} {
+        if {[lsearch -exact $donekey $k] >= 0} { continue }
+        lappend donekey $k
+        foreach l [_entry_lines $k] { lappend out $l }
+        continue
+      }
+      lappend out $line
+    }
+    foreach tok [lsort [array names dirtyclass]] {
+      if {![_is_dirty class $tok]} { continue }
+      if {[lsearch -exact $doneclass $tok] >= 0} { continue }
+      if {![info exists classmap($tok)]} { continue }
+      lappend out "class $tok $classmap($tok)"
+    }
+    foreach k [_keys] {
+      if {![_is_dirty list $k]} { continue }
+      if {[lsearch -exact $donekey $k] >= 0} { continue }
+      foreach l [_entry_lines $k] { lappend out $l }
+    }
+    return $out
+  }
+
   ## The body, split out only so the writer above can wrap the whole of it plus
   ## the close in ONE catch.
   ##
-  ## ONLY WHAT THE USER OWNS IS WRITTEN (D-7: nothing has to be checked in
-  ## until something is changed), and the class map is written as OVERRIDES
-  ## rather than whole, so a future change to the shipped default still reaches
-  ## a project that never touched that token.
-  ## EVERYTHING IS SORTED AND NOTHING IS STAMPED: no timestamp, no pid, no
-  ## hostname, so writing the same store twice gives the same bytes and the
-  ## file a team checks in diffs only when someone changed something.
-  proc write_body {fp} {
-    variable classmap ; variable defaultmap ; variable lists ; variable owned
-    variable version
-    puts $fp {# xschem operating-point parameter lists -- written by xschem.}
-    puts $fp {# See doc/claude/specs/op_param_lists.md section 4.4.}
-    puts $fp {#}
-    puts $fp {# THIS FILE IS DATA AND xschem RUNS NOTHING THAT IS IN IT. A strict}
-    puts $fp {# reader parses it row by row; a row it does not recognise is reported}
-    puts $fp {# and skipped. That is what makes it safe to accept from a teammate.}
-    puts $fp {#}
-    puts $fp {#   class <type-token> <broad-class>}
-    puts $fp {#   list  <scope> <key> <listname>}
-    puts $fp {#   param <scope> <key> <listname> <label> <rawparam> <kind>}
-    puts $fp {#}
-    puts $fp {# scope:    class | flavor (a cell-name glob, matched case-insensitively)}
-    puts $fp {# listname: annotation | summary}
-    puts $fp {# kind:     0 -> i(dev[p]) , 1 -> bare dev[p] , 2 -> v(dev[p])}
-    puts $fp "version $version"
-    array set dflt $defaultmap
-    foreach tok [lsort [array names classmap]] {
-      if {[info exists dflt($tok)] && $dflt($tok) eq $classmap($tok)} { continue }
-      puts $fp "class $tok $classmap($tok)"
-    }
-    foreach k [lsort [array names owned]] {
-      set scope [lindex $k 0]
-      set key   [lindex $k 1]
-      set ln    [lindex $k 2]
-      ## The `list` row is what lets an EMPTIED list survive a round trip
-      ## instead of degrading to the PDK seed.
-      puts $fp "list $scope $key $ln"
-      foreach t $lists($k) {
-        puts $fp "param $scope $key $ln [lindex $t 0] [lindex $t 1] [lindex $t 2]"
-      }
-    }
+  ## ⚠ `old` IS AN OPTIONAL TRAILING ARGUMENT AND THE REQUIRED ARITY DOES NOT
+  ## MOVE: every existing caller passes exactly one argument and row J1 pins it.
+  proc write_body {fp {old {}}} {
+    foreach line [_merge_lines $old] { puts $fp $line }
     return 1
   }
 

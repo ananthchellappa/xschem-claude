@@ -31,3 +31,31 @@ in either direction.
 
 Append it to `LEDGER.md` yourself. If you cannot, say so loudly in the write-up
 so the driver can — a missing row is how a batch loses track of itself.
+
+## Two traps this batch paid for during Feature B
+
+**Sabotage must run on a COPY, never on the tree the other verifiers are using.**
+Item B2c's crew ran three verify agents in parallel; one of them mutated
+`src/op_param_lists.tcl` in place to test a sabotage variant, and that voided
+Verify-A's first T1 number and Verify-C's first suite number — both agents
+measured a tree somebody else was editing underneath them, and neither could
+tell. Copy the file, mutate the copy, restore by `cp` and **verify the restore
+with `md5sum`** before reporting any number.
+
+**Never write an unbalanced brace as a literal — in a comment, a test, or a
+fixture.** It makes *that whole file* fail `info complete`, and no test will tell
+you: the file simply stops loading. Build such a string with `format %c`, the
+way rows Z0–Z4 and Y1 of `test_op_param_store_1245.tcl` do. The driver hit this
+writing issue 1291's own fix comment and it was caught by a syntax check, not by
+a suite.
+
+## And one about what a green count means
+
+Three items in this batch shipped green and were wrong: B1 at 37/37 returning
+`nan` as a value, B3's suite claiming three fences it did not have, and B2c at
+79 green while deleting the user's rows — its "a row this build does not
+understand survives a save" row used an **unknown verb**, the one shape its
+classifier genuinely could not identify, so the row passed while the promise was
+false. **A suite fences the questions its author thought of.** Before you call
+one done, write down the input most likely to break your change, and check
+whether any row would see it.

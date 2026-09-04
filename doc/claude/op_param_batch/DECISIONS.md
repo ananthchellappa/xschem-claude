@@ -331,3 +331,40 @@ of which has the side effect of un-hiding everything else.
 state is asking for "no annotation on this device", which is a different feature
 and does not exist yet; if it is ever wanted it should be its own control, not
 an emptied list with a surprising side effect.
+
+### DD-11 — issue 1296: the `version` line belongs to xschem; comments belong to the user
+
+Taken 2026-09-04 by the driver. On the owed ledger; the user can overrule.
+
+Issue 1296 is a genuine collision between two things item B2c was told to do:
+DD-7 says preserve every row verbatim, and DD-8's whole argument is *"because
+it is file order, the file itself is the documentation."* If an existing file is
+decorated nowhere, then the precedence sentence is true only of files this build
+created from scratch — and every file is pre-existing from its second save on.
+
+**The two halves are not equally important, and only one is a correctness bug.**
+
+**Half one, a real defect: a v1 file keeps `version 1` while gaining v2 rows.**
+The next `load_conf` then reports the version mismatch and skips rows this build
+just wrote. The file becomes self-refuting on disk. **Decision: the `version`
+line is xschem's own field, not user content, and is rewritten to the version
+of the grammar actually being written.** A machine field that describes the
+grammar is not a thing the user authored, and DD-7's promise is about *the rows
+they wrote*, not about a stamp that says which dialect those rows are in.
+
+**Half two, documentation: an existing file never gains the precedence
+sentence.** **Decision: leave it.** xschem refreshes only the header block it
+can recognise as its own; anything else in the file is left alone, including a
+hand-written header. A user who wants the current explanatory header can delete
+the file's header lines and save, or read the shipped documentation. **Silently
+rewriting prose a person typed is worse than an out-of-date comment** — and this
+batch has now reverted three items for deleting things the user wrote.
+
+*So the rule, in one line:* **xschem owns the `version` line. The user owns
+every comment.** Where the two conflict, correctness wins on the machine field
+and the user wins on the prose.
+
+*Cost, stated:* a long-lived settings file will carry the header sentence of
+whatever xschem first created it, which may describe an older precedence rule.
+That is why the version line matters: it is the field that tells a reader —
+human or machine — which rules the file's rows are written under.
