@@ -758,6 +758,21 @@ if {[info commands ::op_annot::register] ne {}} {
   # The RECOVERY round-trip above is untouched and is still the quickest way to
   # change one list from an rc (invariant I5, live on the next redraw).
   #
+  # ⚠ TWO LISTS NOW, AND THEY ARE NOT THE SAME LIST (ruling DD-6, issue 1285).
+  # A descriptor may carry `params` and, optionally, `shown`, and they have
+  # different jobs: params is what the run computes — op_annot::_cards_for
+  # builds the `.save` cards out of it, so a parameter must stay in that list
+  # for its value to exist in the raw at all, even when nobody wants it drawn —
+  # while shown is what the sheet draws, and op_annot::text is its only reader.
+  # A descriptor that omits `shown`, which every register site in this tree
+  # does, draws every `params` row exactly as it always has (invariant I7).
+  # op_param_lists::apply writes both: the UNION of the annotation and summary
+  # lists into `params`, and the annotation half of that union into `shown`.
+  # Getting the two the wrong way round is how a wider `params` un-declutters
+  # the schematic, and a `derived` row is why they must stay separate at all —
+  # it reads the RUN, so it keeps its value when its operand is merely hidden
+  # (ruling DD-9, issue 1289).
+  #
   # ⚠ vertical_npn BELOW IS UNTOUCHED BY D9 — the six are MOS quantities and an
   # HBT has no vgs. Whether a bipolar default wants the same trim is OPEN.
   foreach _sg13g2_op_type {nmos pmos} {

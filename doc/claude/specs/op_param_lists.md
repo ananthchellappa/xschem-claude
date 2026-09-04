@@ -1355,20 +1355,65 @@ design-of-record, and the first two **correct this spec**:
    carry.** The new descriptor key is **`shown`**: `op_annot::text` prefers it
    and falls back to `params`; `_cards_for`, `_claims` and `_kind` stay on
    `params`; `apply` writes both. A descriptor declaring only `params` — all four
-   shipped PDK register sites — behaves exactly as before (**I7**). **But**
-   (a) `shown ⊆ params` is **not** true "by construction": `_save_set` dedups by
-   **label** while `set_list` accepts a duplicate label (issue **1288**), so
-   `apply` itself can put a row in `shown` that is not in `params`, and
-   `op_annot::_kind` raises on it; and (b) `shown` is a **new draw-time raise
-   door** — `register` validates only `dict size`, so a malformed `shown` raises
-   on every redraw in a proc C calls per instance. **Validate the display list
-   where it enters (`register`), never where it draws.**
+   shipped PDK register sites — behaves exactly as before (**I7**).
+
+   > ⚠ **BOTH CONDITIONS THIS PARAGRAPH USED TO CARRY WERE WRONG, AND ITEM B2b
+   > SHIPPED SOMETHING ELSE.** They said (a) `shown ⊆ params` is *not* true "by
+   > construction", and (b) validate the key **where it enters (`register`),
+   > never where it draws**. The DD-6 amendment overrules the second outright
+   > (*"a key that does not parse as a list is treated as absent, full stop"*)
+   > and measurement refutes both:
+   >
+   > * **(a) is refuted by deriving the key differently.** The premise was
+   >   right — `_save_set` dedups by **label** while `set_list` still accepts a
+   >   duplicate label (issue **1288**, live and B2c's to fix) — but the
+   >   conclusion does not follow. `op_param_lists::_show_set` **filters the
+   >   union it is about to write into `params`**, keeping a triple iff its
+   >   label is among the annotation list's labels, so every element of `shown`
+   >   is *literally an element of* `params` for every input, 1288 or no 1288.
+   >   Copying the annotation list wholesale is what made (a) true, and that
+   >   copy is exactly what B2a-2 was refuted over. Attacked, not asserted:
+   >   `test_op_param_store_1245.tcl` row **D5** computes the membership under
+   >   1288's own duplicate-label input.
+   > * **(b) does not close the door it names.** MEASURED, two shapes:
+   >   `shown` = `{broken` makes even `llength` raise `unmatched open brace in
+   >   list`, but `shown` = `{id id 0} {d "x}` has `llength` **2** and raises
+   >   `unmatched open quote in list` only at the `lindex` of its second row —
+   >   so the `catch {llength …}` this sentence recommends leaves the second
+   >   shape wide open. And a register-side *raise* would reject the whole
+   >   descriptor, which is strictly worse than ignoring one key. What shipped
+   >   is `op_annot::_display_rows`, the `op_annot::_matches` idiom with the
+   >   catch enclosing **the `lindex` of every row**: malformed → absent → the
+   >   `params` rows draw. Row **D6** registers both shapes.
+   >
+   > The fallback deliberately hands back **nothing**, so `params` is still
+   > walked unvalidated and issue **0447**'s existing door is still open. A
+   > blanket catch there would close a filed defect by accident and turn it
+   > into a silently blank sheet; row **D7** and `test_op_annot`'s **K17** fence
+   > it from both sides.
 
 5. **`derived` is a THIRD consumer of the list and DD-6 does not mention it**
    (issue **1289**). `op_annot::text` builds `vars` **inside** the loop the
    ruling narrows, so a derived row whose operand was deleted renders **blank**
-   though the deck still saves it — and IHP ships exactly such rows (`gm/id`,
-   `ft`). Honest under **I3**, surprising to a user, and it **needs a ruling**.
+   though the deck still saves it. Honest under **I3**, surprising to a user.
+   **Ruled on by DD-9 and implemented by item B2b**: `op_annot::text` builds
+   `vars` over `params` — what the run computed — and draws over `shown`, so a
+   derived row keeps its value when its operand is merely hidden. The params
+   loop stays the single place that reads the raw (no new `xschem` call), and
+   the narrowed rows are minted from that pass's label→value cache.
+
+   > ⚠ **"IHP ships exactly such rows (`gm/id`, `ft`)" IS FALSE ON THIS TREE**,
+   > as are issue 1289's lines 39 and 74 which say the same. MEASURED: all four
+   > shipped register sites — `sky130_procs.tcl:422`, `gf180_procs.tcl:128`,
+   > `sg13g2_procs.tcl:779` and `:829` (line numbers as of this edit; B2b's own
+   > comment block moved each down by 15) — carry `devpath`/`devproc` + `match` +
+   > `params` and nothing else; every `derived` in the three PDK files sits
+   > inside the **recovery-recipe comment**, because ruling D9 removed them, and
+   > `test_op_annot`'s gold table `P_DERIVEDACC` (`:904-911`) golds
+   > `derived` = `{}` for all seven shipped types. DD-9's substance is
+   > untouched — the fixture is **built** from that documented recipe under
+   > **I5**, which is what the recipe is for, and both named rows (`gm/id` and
+   > `ft`) are exercised by row **D4**.
 
 6. **`seed` reads the field `apply` overwrites** (issue **1287**), so **D-7**'s
    "the seed comes from the PDK" is false after the first apply and `reset`
@@ -1376,6 +1421,33 @@ design-of-record, and the first two **correct this spec**:
    `{id id 0}` after apply **plus reset**. DD-6 makes the stale seed the *union*,
    i.e. silently wider. **Any acceptance row that applies and then asserts a seed
    is fencing the wrong value**; capture it in a fresh process first.
+
+7. **`apply` now reaches the PDK seed, and therefore raises on a malformed one**
+   (issue **1291**, opened by item B2b). `_save_set` / `_show_set` walk
+   `effective`, which falls through to `seed` for an unowned list and returns the
+   registered `params` **string, verbatim and unvalidated**. Measured A/B on
+   issue 0447's own shape: HEAD `rc=0` writing a clean `params`, after B2b
+   `rc=1 unmatched open brace in list` and nothing written. Latent — `apply` has
+   no caller until **B5** — but **B5 must not wire a button to this** before it
+   is settled. Recommended: skip the class and `_say` why, the way `apply`
+   already handles a failing `register`. **Never** treat a malformed seed as
+   empty: that silently drops the PDK's rows out of the union and breaks the
+   union's own superset guarantee.
+
+8. **Narrowing is one-way** (issue **1292**). Nothing removes the `shown` key,
+   and `apply` deliberately `continue`s a class the user owns nothing for, so
+   `reset` + `apply` leaves the sheet narrowed for the session. `shown`'s
+   **absence is meaningful** — it is the only value that means "draw every row" —
+   so "leave the descriptor alone" and "restore the PDK's behaviour" are
+   different outcomes and only the first is reachable. **B5's Reset button
+   cannot be built on `reset` + `apply` as it stands.** The honest fix is the
+   pristine-descriptor stash that issue **1287** already needs.
+
+9. **One `params` label, two rows, two answers** (issue **1293**). The
+   label→value cache the narrowed rows are minted from is FIRST wins;
+   `_evalrow`'s binding loop is LAST wins. Unreachable through `apply` (it dedups
+   by label, which is also what makes the subset hold under **1288**), so it
+   needs a hand-written descriptor or a PDK rc. Decide it with 1288, not alone.
 
 ---
 

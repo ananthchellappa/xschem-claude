@@ -1155,4 +1155,22 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   defect, but a standing intermittent red in a 381-suite audit. **FILED, NOT
   FIXED.**
 
-**The next free number is 1291.**
+* **1291** — `op_param_lists::apply` **raises** on a descriptor whose registered
+  `params` is malformed (issue 0447's own live shape), because `_save_set` /
+  `_show_set` walk `effective`, which falls through to `seed`, i.e. the
+  registered string verbatim. HEAD's `apply` never called `seed` and answered
+  `rc=0`. Measured A/B on the same fixture. A **new** raise door opened by item
+  **B2b** in its own file; latent — `apply` has no caller until **B5**.
+  **FILED, NOT FIXED.**
+* **1292** — `apply` can **narrow** the sheet but nothing ever un-narrows it: no
+  code path removes the `shown` key, and a class the user owns nothing for is
+  `continue`d by design, so `reset` + `apply` leaves a stale `shown` and the
+  schematic stays narrowed for the session. The sheet-visible half of issue
+  **1287**; it is what B5's Reset button will hit. **FILED, NOT FIXED.**
+* **1293** — a **duplicate label** in `params` gives a narrowed sheet and a
+  `derived` row two different values: the new label→value cache is FIRST wins,
+  `_evalrow`'s binding loop is LAST wins. Unreachable through `apply` (it dedups
+  by label); needs a hand-written descriptor or a PDK rc. Minor, filed for
+  completeness beside issue **1288**. **FILED, NOT FIXED.**
+
+**The next free number is 1294.**

@@ -1701,6 +1701,108 @@ write-up agent **reproduced four attacks first-hand** before deciding.
   first flavor row; `src/ase.tcl:8803` must stay untouched (row `G3b`); no
   build, no `Makefile.in` — both files are already installed.
 
+## B2b — what the sheet draws  ✅ **LANDED, status E, 2026-09-03.** DD-6 as amended + 1285 + 1289/DD-9. *(unblocks B5's Delete; one question is the user's)*
+
+**Scope was exactly three things** — issue **1285**, issue **1289**, and the
+**DD-6 amendment** — and nothing else was touched. This is the first of the
+three items the B2a/B2a-2 bundle was split into, and the split worked: the two
+guarantees that refuted B2a-2 are now **built** rather than asserted, and the
+seven issues that rode along with them last time were not in this commit at all.
+
+**What shipped.**
+
+* `src/op_annot.tcl` — the optional descriptor key **`shown`**, plus
+  `op_annot::_display_rows`, plus DD-9's split inside `op_annot::text`.
+  * **`params` is what the run computes; `shown` is what the sheet draws.**
+    `_cards_for`, `_claims` and `_kind` stay on `params` and **must**, or a user
+    who hides a row also stops the deck saving it.
+  * **DD-9 in one line: `vars` is built over `params`, rows are drawn over
+    `shown`.** The `params` loop stayed exactly where it was and stayed the only
+    place that reads the raw, so the proc gains **no new `xschem` call and no new
+    raise site** (row **D9** counts both structurally: 1 and 0, unmoved). The
+    narrowed rows are minted from that same pass's label→value cache — never a
+    second read loop, never a swap of the list the loop walks.
+  * **A malformed `shown` is treated as ABSENT, full stop.** `_display_rows` is
+    the `op_annot::_matches` idiom with the catch enclosing **the `lindex` of
+    every row**, because two different malformed shapes reach it and a guard that
+    closes one leaves the other open (below).
+  * **A `shown` row whose label is in no `params` row draws BLANK** — no read, no
+    `_kind`, no raise (**I3**) — whoever wrote the key.
+* `src/op_param_lists.tcl`, **`apply` only** — `_apply_owns`, `_save_set`,
+  `_show_set`, and two passes. `params` gets the annotation ∪ summary union over
+  `effective` (never `get_list`, so an unowned list answers the PDK seed and the
+  union can only be a **superset**); `shown` gets **that union filtered by the
+  annotation list's labels**, so the subset holds **by construction** for every
+  input.
+* One comment block in each of the three PDK `_procs.tcl` naming which list is
+  which. Every shipped register site still declares `params` alone, so every
+  shipped PDK draws exactly as it did (**I7**, row **D1**).
+* `tests/headless/test_op_param_store_1245.tcl` **39 → 51**. `test_op_annot`
+  **485/492** and `test_annot_declutter_1244` **134** unmoved, by name and count.
+
+### What this item learned that binds every later step
+
+* **⚠ THE BRIEF'S OWN FIXTURE DID NOT EXIST, AND THE ISSUE SAID SO TWICE.**
+  *"IHP ships the fixture: `gm/id` and `ft`"* is **false on this tree**, as are
+  issue 1289's lines 39 and 74 and the same sentence in the spec. Measured: all
+  four shipped register sites carry `devpath`/`devproc` + `match` + `params` and
+  **nothing else**; every `derived` in the three PDK files sits inside the
+  **recovery-recipe comment** (ruling D9 removed them), and `test_op_annot`'s
+  `P_DERIVEDACC` golds `derived` = `{}` for all seven shipped types. DD-9's
+  substance was unaffected — the fixture is **built** from that documented recipe
+  under **I5**, which is what the recipe is for. **Corrected in place** in the
+  issue and the spec. *Before writing a row that asserts a PDK ships something,
+  grep the PDK.*
+* **A `catch {llength …}` is not a list guard.** Two shapes, both measured:
+  `{broken` makes even `llength` raise, but `{id id 0} {d "x}` has `llength`
+  **2** and raises only at the `lindex` of its **second row**. The guard has to
+  walk the rows. Issue 1285's own "Still open" item 2 and spec §4(b) both
+  recommended the register-side `llength` check; **both are refuted** and both
+  are corrected.
+* **The fallback deliberately hands back NOTHING**, so `params` is still walked
+  unvalidated and issue **0447**'s door is still open. Wrapping that walk too
+  would close a filed defect **by accident** and turn it into a silently blank
+  sheet. Row **D7** here and **K17** in `test_op_annot` fence it from both sides,
+  and the `blanket_catch` sabotage reds both. **Do not "harden" that walk.**
+* **⚠ THREE NEW ISSUES, AND TWO OF THEM ARE B5's PROBLEM BEFORE THEY ARE
+  ANYONE'S.**
+  * **1291 — `apply` now RAISES on a malformed registered `params`**, because
+    `_save_set`/`_show_set` walk `effective`, which falls through to `seed`, i.e.
+    the registered string verbatim. A/B measured on issue 0447's own shape: HEAD
+    `rc=0`, after B2b `rc=1 unmatched open brace in list` with nothing written.
+    **Latent — `apply` has no caller until B5 — so B5 must settle it before
+    wiring a button to it.** Recommended: skip the class and `_say` why.
+  * **1292 — narrowing is ONE-WAY.** Nothing removes `shown`, and `apply`
+    deliberately skips a class the user owns nothing for, so `reset` + `apply`
+    leaves the sheet narrowed for the session. **B5's Reset/Defaults button
+    cannot be built on `reset` + `apply` as it stands.** The honest fix is the
+    pristine-descriptor stash issue **1287** already needs.
+  * **1293** — a duplicate `params` label gives the narrowed sheet (FIRST wins)
+    and a `derived` row (`_evalrow`, LAST wins) different values. Unreachable
+    through `apply`, which dedups by label. Decide it with **1288**.
+* **Issue 1287 got WIDER, not fixed.** After an apply, `seed` answers the
+  **union**, so the PDK's own list is unrecoverable without a restart. It is
+  assigned to none of B2b/B2c/B2d.
+* **`shown`'s ABSENCE IS MEANINGFUL and PRESENT-AND-EMPTY IS NOT ABSENT.** An
+  empty `shown` draws no `params` rows at all, and because the declutter's gate
+  is `actions.c:1764` → `annot_instance_annotated()` →
+  `annot_block_has_value()` over the **rendered block**, a device whose block
+  goes empty also **drops out of the declutter** and the texts it was hiding come
+  back. That is **the item's status-E question** (below), it is on the owed
+  ledger as rule debt `1285_empty_display_key`, and row **D10** fences it either
+  way to a one-line change.
+* **The declutter is coupled to what `text` DRAWS.** Any later item that changes
+  which rows are minted changes which instances declutter. There is no test that
+  will tell you; the coupling is one C call deep.
+* **B2c and B2d are untouched by this.** `apply`'s conf reader and writer, the
+  flavor grammar and the RDW window were not opened. The two `look` debts B2a-2
+  recorded remain stale except one: **`DD-6 narrowing on the schematic` is TRUE
+  AGAIN VERBATIM** and was not re-filed.
+* **Unchanged and still true:** no build, no `Makefile.in` — both files are
+  already installed; pure Tcl takes effect on the next launch.
+
+---
+
 ## B4 — the keys and the two grammars  *(needs B3)*
 
 > **⚠ FROM A6 (2026-09-02).** A6-c closed **every** `symbol_bbox()` door by
@@ -1762,19 +1864,33 @@ line.
 > REVERTED (2026-09-03) — apply
 > `doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch` and fix the four
 > holes in the B2a-2 section above before starting here.**
-> 0. **Issue 1289 needs a RULING before Delete ships.** DD-6's narrowing blanks
->    a `derived` row whose operand the user deleted — `gm/id` goes blank when
->    `gm` is removed, though the deck still saves `gm`, and **IHP registers
->    exactly such rows**. Three options are costed in the issue; the user has to
->    pick one, because option 3 makes one Delete remove two rows.
+> 0. ~~**Issue 1289 needs a RULING before Delete ships.**~~ **RULED DD-9 and
+>    LANDED by item B2b, 2026-09-03.** `op_annot::text` builds `vars` over
+>    `params` and draws over `shown`, so a derived row keeps its value when its
+>    operand is merely hidden. (Note the issue's *"IHP registers exactly such
+>    rows"* was **false** — no shipped descriptor carries `derived` at all; the
+>    fixture is built from the recovery recipe under **I5**.)
 > **AND THE TWO ALREADY KNOWN:**
-> 1. **Issue 1285 is ANSWERED by ruling DD-6 and IMPLEMENTED in the B2a-2
->    patch, but not landed.** The new descriptor key `shown` (preferred by
->    `op_annot::text`, falling back to `params`) is written and was fenced by
->    rows A5–A8/C2/J5 with `test_op_annot` and the declutter suite unmoved. Two
->    points in it are wrong and are hole 4 of the B2a-2 table: the subset
->    guarantee is false (issue **1288**) and a malformed `shown` raises at draw
->    time. Fix those, do not rewrite DD-6.
+> 1. ~~**Issue 1285 is ANSWERED by ruling DD-6 and IMPLEMENTED in the B2a-2
+>    patch, but not landed.**~~ **LANDED by item B2b**, with both of the wrong
+>    points fixed the way the DD-6 amendment requires: `shown` is derived by
+>    **filtering** the list written to `params` (so the subset holds by
+>    construction, whether or not **1288** is ever fixed) and a malformed `shown`
+>    is treated as **absent**, never raising. Do not rewrite either.
+>    **⚠ BUT B2b LEFT YOU TWO OF ITS OWN, BOTH IN THE BUTTONS YOU ARE ABOUT TO
+>    BUILD:** issue **1291** — `apply` **raises** on a malformed registered
+>    `params` (`_save_set`/`_show_set` → `effective` → `seed`, the registered
+>    string verbatim); HEAD returned `rc=0`. You are its first caller: settle it
+>    before wiring Apply. And issue **1292** — nothing ever removes `shown`, so
+>    **Reset/Defaults cannot be built on `reset` + `apply`**; the sheet stays
+>    narrowed for the session. Both are latent only because nothing calls
+>    `apply` yet.
+>    **⚠ AND ONE QUESTION IS THE USER'S, NOT YOURS:** an **empty** `shown` draws
+>    no `params` rows, so deleting the last row makes the whole OP block vanish
+>    *and* drops the device out of the declutter (`actions.c:1764` →
+>    `annot_instance_annotated()` → `annot_block_has_value()` reads the rendered
+>    block). Recorded as rule debt `1285_empty_display_key`; row **D10** fences
+>    whichever way it is ruled.
 > 2. **You are the first caller of `write_conf` and of the flavor-row grammar.**
 >    Both are unfixed at `825cd3bd`: `write_conf` reports success while writing
 >    somewhere else (**1276**) and flattens the two tiers (**1281**), and a

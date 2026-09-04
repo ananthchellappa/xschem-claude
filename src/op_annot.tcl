@@ -118,8 +118,35 @@
 #   params   ordered {label param kind} triples. `label` is what the display
 #            prints, `param` is the raw-file parameter name, `kind` is the
 #            wrapper (below). The lookup in `vector` matches `param`, not `label`.
+#            WHAT THE RUN COMPUTES: the `.save` cards are built from THIS list
+#            (`_cards_for`), `_claims` gates the hierarchy walk on it and
+#            `_kind` answers out of it. See `shown` below for the split.
 #   derived  ordered {label expr} — computed from params after they are read (S5)
 #   pinexpr  ordered {label expr-over-pin-voltages} — needs no save card (S5)
+#   shown    OPTIONAL ordered {label param kind} triples — WHAT THE SHEET DRAWS.
+#            `op_annot::text` PREFERS this list over `params` when it is
+#            present; nothing else in this file reads it. ABSENT means the old
+#            behaviour exactly: the sheet draws every `params` row (invariant
+#            I7 — all four shipped PDK register sites are this case). Ruling
+#            DD-6, doc/claude/op_param_batch/DECISIONS.md.
+#            THE SPLIT, IN ONE LINE: `params` is what the run computes and
+#            `shown` is what the sheet draws. Without it a user who deletes a
+#            row gets no visible change at all — the deck must keep saving it
+#            (the run needs it, and a `derived` row may need it as an operand)
+#            while the sheet must stop drawing it, which is *declutter*, the
+#            word the feature is named after.
+#            THREE PROPERTIES, EACH BUILT RATHER THAN ASSERTED:
+#              · `op_param_lists::apply` derives it by FILTERING the list it
+#                writes into `params`, so `shown` ⊆ `params` by construction
+#                for every input — including issue 1288's duplicate labels.
+#              · a `shown` row whose label is in no `params` row draws BLANK
+#                (I3). No raw read, no `_kind`, no raise, whoever wrote the key.
+#              · a MALFORMED value — one that does not parse as a list of rows
+#                — is treated as ABSENT, full stop (the DD-6 amendment). See
+#                op_annot::_display_rows; this key opens NO raise door.
+#            PRESENT AND EMPTY is NOT absent: it draws no `params` rows at all.
+#            Only an absent key falls back. *** STATUS E, unratified: see
+#            doc/claude/issues/1285 and the `1285_empty_display_key` rule debt.
 #   match    OPTIONAL list of globs tested against the instance's CELL NAME
 #            (`getprop instance <n> cell::name`, e.g. `sky130_fd_pr/nfet_01v8.sym`).
 #            Absent or empty = permissive, i.e. exactly the behaviour before this
@@ -1723,6 +1750,71 @@ proc op_annot::_evalrow {__opa_expr __opa_vars} {
 ## Fix at register (loud, preferred) or with a read-side catch (quiet) — see
 ## doc/claude/issues/0447. S6 must not land the carrier symbol until it is
 ## closed or explicitly accepted.
+##
+## ⚠ RULINGS DD-6 AND DD-9 (item B2b, issues 1285 and 1289). TWO LISTS NOW:
+## `params` is WHAT THE RUN COMPUTES and the OPTIONAL `shown` key is WHAT THE
+## SHEET DRAWS. This proc is the ONLY reader of `shown` in the tree —
+## `_cards_for`, `_claims` and `_kind` stay on `params` and must, or a user who
+## hides a row also stops the deck saving it and the value she still wants
+## through a `derived` row vanishes with it.
+##
+## DD-9, IN ONE LINE: `vars` IS BUILT OVER `params`, ROWS ARE DRAWN OVER
+## `shown`. So `gm/id` keeps its value when `gm` is merely hidden. That is why
+## the loop below still walks `params` and still reads the raw exactly once per
+## `params` row — the narrowing is a SELECTION applied afterwards out of a
+## label→value cache, never a second read loop and never a swap of the list
+## this loop walks. Both alternatives were measured and rejected: swapping the
+## list blanks the derived rows (1289's exact failure) and a second loop adds
+## an `xschem` call per row per instance per redraw, which 1289's acceptance
+## forbids outright.
+##
+## A `shown` row whose label appears in no `params` row draws BLANK: no read,
+## no `_kind`, no raise (I3). That containment is independent of whatever
+## wrote the key, and it is deliberately belt-and-braces on top of
+## `op_param_lists::apply` deriving `shown` by FILTERING `params`.
+##
+## ⚠ THE FALLBACK HANDS BACK NOTHING, SO `params` IS STILL WALKED
+## UNVALIDATED AND ISSUE 0447's DOOR IS STILL OPEN, EXACTLY AS ABOVE. That is
+## deliberate: wrapping the `params` walk in a catch too would close 0447 by
+## accident, silently, and turn a filed defect into a blank sheet nobody can
+## see. tests/headless/test_op_annot.tcl row K17 golds that raise and
+## tests/headless/test_op_param_store_1245.tcl row D7 fences it from this side.
+
+## op_annot::_display_rows <descriptor> -> {<narrowed?> <rows>}
+##
+## {0 {}} = "this descriptor does not narrow": draw every `params` row, i.e.
+##          the behaviour of every descriptor written before the key existed.
+## {1 $v} = draw exactly these rows. NOTE {1 {}} is a real answer and is NOT
+##          the same as {0 {}} — a present-and-empty key draws no `params` rows
+##          (see the `shown` entry in the key table at the top of this file).
+##
+## ⚠ NEVER RAISES — THE DD-6 AMENDMENT'S SECOND GUARANTEE, AND IT IS BUILT,
+## NOT ASSERTED. Same shape as op_annot::_matches (`dict exists` → catch the
+## `dict get` → catch the WALK → a DATA answer), and for the same reason: this
+## runs per instance per redraw from a draw path, so a malformed value is a
+## DATA condition, i.e. "no narrowing", not an error.
+##
+## ⚠ THE CATCH ENCLOSES THE `lindex` OF EVERY ROW, NOT MERELY THE `foreach`,
+## AND THAT IS MEASURED, NOT DEFENSIVE. Two DIFFERENT malformed shapes reach
+## here and a guard that closes one leaves the other open:
+##     shown = `{broken`          -> even `llength` raises `unmatched open
+##                                   brace in list`
+##     shown = `{id id 0} {d "x}` -> `llength` is 2; only the `lindex` of the
+##                                   SECOND ROW raises `unmatched open quote`
+## A `catch {llength …}`, at register time or here, does not close the second.
+## A register-side check cannot help either: a raise there would reject the
+## whole descriptor, which is strictly worse than ignoring one key.
+proc op_annot::_display_rows {d} {
+  if {![dict exists $d shown]} { return [list 0 {}] }
+  if {[catch {dict get $d shown} v]} { return [list 0 {}] }
+  if {[catch {
+    foreach row $v {
+      lindex $row 0 ; lindex $row 1 ; lindex $row 2
+    }
+  }]} { return [list 0 {}] }
+  return [list 1 $v]
+}
+
 proc op_annot::text {instname} {
   set t [::op_annot::type $instname]
   if {$t eq {}} { return {} }
@@ -1737,6 +1829,12 @@ proc op_annot::text {instname} {
   set gate [::op_annot::_annotated]
   set rows {}
   set vars {}
+  ## DD-9's split. `prows` is the params rows in params order — what a
+  ## descriptor with no `shown` key draws, byte for byte as before this key
+  ## existed. `vals` is the same pass's label→value cache, FIRST WINS, and it
+  ## is the only thing the narrowed rows are valued from: no second read.
+  set prows {}
+  set vals [dict create]
 
   if {[dict exists $d params]} {
     foreach row [dict get $d params] {
@@ -1755,13 +1853,35 @@ proc op_annot::text {instname} {
           if {[::op_annot::_finite $val]} { break }
         }
       }
+      ## ⚠ DD-9: THIS `lappend vars` IS UNCONDITIONAL ON THE DISPLAY DECISION.
+      ## The whole ruling is this one line — a `derived` row's operand comes
+      ## from the RUN, so the row keeps its value when the operand is hidden.
       if {![::op_annot::_finite $val]} {
         set val {}
       } else {
         lappend vars $lbl $val
       }
+      lappend prows [list $lbl $val]
+      if {![dict exists $vals $lbl]} { dict set vals $lbl $val }
+    }
+  }
+
+  ## DD-6: what the SHEET draws. A descriptor with no `shown` key (every
+  ## shipped PDK register site, invariant I7) takes the `else` and is
+  ## byte-identical to the behaviour before this key existed. A narrowed one
+  ## mints its rows out of the cache above — a label the cache does not carry
+  ## draws BLANK, which is I3 and is also the draw-side containment of a key
+  ## that is not a subset of `params`.
+  set disp [::op_annot::_display_rows $d]
+  if {[lindex $disp 0]} {
+    foreach row [lindex $disp 1] {
+      set lbl [lindex $row 0]
+      set val {}
+      if {[dict exists $vals $lbl]} { set val [dict get $vals $lbl] }
       lappend rows [list $lbl $val]
     }
+  } else {
+    set rows $prows
   }
 
   ## pinexpr needs no save card: it is pin voltages, which `save all` already

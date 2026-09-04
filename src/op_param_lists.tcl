@@ -718,15 +718,76 @@ namespace eval ::op_param_lists {
   ## -----------------------------------------------------------------------
   ## THE APPLY DOOR (invariant I5)
   ## -----------------------------------------------------------------------
-  ## Re-register the effective ANNOTATION list of every type whose class the
-  ## user owns, through op_annot::register and nothing else. Returns the list of
-  ## types re-registered. A class the user owns nothing for is left strictly
-  ## alone -- applying the seed back over the PDK's own descriptor would be a
-  ## no-op that still bumped the generation counter and still rewrote a dict
-  ## this file does not own.
+  ## Write the user's lists into the descriptor registry, through
+  ## op_annot::register and nothing else. Returns the list of types
+  ## re-registered. A class the user owns nothing for is left strictly alone --
+  ## applying the seed back over the PDK's own descriptor would be a no-op that
+  ## still bumped the generation counter and still rewrote a dict this file
+  ## does not own.
   ## The FLAVOR entries are deliberately not applied: a descriptor is keyed on
   ## the `type=` token and a flavor is a cell-name glob, so only the display
   ## path can narrow that far.
+  ##
+  ## ⚠ TWO FIELDS ARE WRITTEN, NOT ONE (rulings DD-4 and DD-6):
+  ##   params  the UNION of the annotation and summary lists -- WHAT THE RUN
+  ##           COMPUTES. op_annot::_cards_for builds the .save cards from it,
+  ##           so a parameter the user only summarises is still in the raw, and
+  ##           so is one she hid but a `derived` row still needs as an operand.
+  ##   shown   the annotation half of that union -- WHAT THE SHEET DRAWS.
+  ##           op_annot::text is its only reader. Without it a Delete has no
+  ##           visible effect at all: `params` would keep growing and the sheet
+  ##           would keep drawing every row of it.
+  ##
+  ## ⚠ THE SUBSET IS BUILT, NOT ASSERTED, AND THAT DISTINCTION IS THE WHOLE
+  ## POINT. An earlier revision of this door copied the annotation list
+  ## wholesale into `shown` and asserted in a comment that it was a subset of
+  ## `params`; it was MEASURED FALSE on issue 1288's live duplicate-label door
+  ## (`set_list class mos annotation {{A id 0} {A gm 1}}` is accepted with no
+  ## report), _save_set's label dedup dropped the second row, and
+  ## op_annot::_kind then raised on a label that was in no params list. So
+  ## `shown` is DERIVED BY FILTERING the very list written to `params`: every
+  ## element of `shown` is literally an element of `params`, for every input,
+  ## whether or not 1288 is ever fixed.
+  proc _apply_owns {c} {
+    return [expr {[owns class $c annotation] || [owns class $c summary]}]
+  }
+
+  ## The union, in annotation-then-summary order, deduped BY LABEL with the
+  ## annotation triple winning. Taken over `effective`, NEVER `get_list`: an
+  ## UNOWNED list answers the PDK seed, so the union can only ever be a
+  ## SUPERSET of what `params` already held and no PDK row is ever lost.
+  proc _save_set {cls} {
+    set out {}
+    set seen [dict create]
+    foreach ln {annotation summary} {
+      foreach t [effective $cls $ln] {
+        set l [lindex $t 0]
+        if {[dict exists $seen $l]} { continue }
+        dict set seen $l 1
+        lappend out $t
+      }
+    }
+    return $out
+  }
+
+  ## The display list: the union FILTERED by the annotation list's labels.
+  ## Never a copy of the annotation list -- see the subset paragraph above.
+  proc _show_set {cls saveset} {
+    set keep [dict create]
+    foreach t [effective $cls annotation] { dict set keep [lindex $t 0] 1 }
+    set out {}
+    foreach t $saveset {
+      if {[dict exists $keep [lindex $t 0]]} { lappend out $t }
+    }
+    return $out
+  }
+
+  ## ⚠ TWO PASSES, AND THE FIRST ONE TOUCHES NOTHING (invariant I1: one seed,
+  ## read once, before anything rewrites it). `_save_set` reaches the PDK seed
+  ## through ::op_annot::descriptor and the second pass rewrites exactly those
+  ## descriptors, so a single loop would let the first type applied become the
+  ## seed the second type reads -- nmos sorts before pmos and both map to the
+  ## same class, so it is reachable, not theoretical.
   proc apply {args} {
     variable classmap
     if {[llength $args]} {
@@ -734,15 +795,30 @@ namespace eval ::op_param_lists {
     } else {
       set cands [array names classmap]
     }
-    set done {}
+    set save [dict create]
+    set show [dict create]
+    set order {}
     foreach t [lsort -unique $cands] {
       set c [class $t]
-      if {![owns class $c annotation]} { continue }
+      if {![_apply_owns $c]} { continue }
       if {[catch {::op_annot::descriptor $t} d]} { continue }
       if {$d eq {}} { continue }
-      if {[catch {dict set d params [get_list class $c annotation]} d2]} { continue }
-      if {[catch {::op_annot::register $t $d2} err]} {
-        _say "cannot register the annotation list for symbol type \"$t\": $err"
+      lappend order [list $t $c $d]
+      if {![dict exists $save $c]} {
+        set s [_save_set $c]
+        dict set save $c $s
+        dict set show $c [_show_set $c $s]
+      }
+    }
+    set done {}
+    foreach e $order {
+      set t [lindex $e 0]
+      set c [lindex $e 1]
+      set d [lindex $e 2]
+      if {[catch {dict set d params [dict get $save $c]} d2]} { continue }
+      if {[catch {dict set d2 shown [dict get $show $c]} d3]} { continue }
+      if {[catch {::op_annot::register $t $d3} err]} {
+        _say "cannot register the parameter lists for symbol type \"$t\": $err"
         continue
       }
       lappend done $t

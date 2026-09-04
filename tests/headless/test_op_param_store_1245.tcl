@@ -212,6 +212,32 @@
 #     same bytes, so P5's FIRST term is the load-bearing one.
 #
 # ============================================================================
+# ITEM B2b ADDED SECTION D AND ROW C2, AND REVISED ROW A1 (1285, 1289, DD-6)
+# ============================================================================
+# 39 checks -> 51. B2b is the DISPLAY half of the same feature and its rows had
+# nowhere else to go: test_op_annot (485 --nogui / 492 Tk) and
+# test_annot_declutter_1244 (134) are pinned BY NAME AND COUNT as a hard
+# acceptance row for that item, and a suite whose count is pinned cannot also
+# be where new rows land.
+#
+# WHAT B2b ADDS, IN ONE LINE: `op_annot::text` and `op_annot::_cards_for` read
+# THE SAME `params` list, so under DD-4's union the sheet gets WIDER when the
+# user trims it. DD-6 adds a second descriptor key the display prefers; DD-9
+# keeps `derived` rows reading the RUN so a hidden operand still computes.
+# Section D's own header carries the measurement, the two amendment guarantees
+# and the three premise corrections.
+#
+# ⚠ ROW A1's `params` GOLDEN MOVED. It golded the annotation list ALONE, which
+# is HEAD's behaviour and issue 1280; under DD-4 it is the UNION. A1's other
+# seven legs are untouched and a `shown` leg was added beside them.
+#
+# ⚠ AND TWO OF SECTION D's ROWS CANNOT BE RED AT HEAD — said out loud in that
+# section's header rather than left for a reader to discover. HEAD reads no
+# display key at all, so a MALFORMED one is inert (D6) and no subset can be
+# violated through it. D6 is red against the presence-only guard item B2a-2
+# shipped, which is the state it exists to catch.
+
+# ============================================================================
 # THIS SUITE NEEDS NO X, AND full_audit.sh IS NOT EDITED
 # ============================================================================
 # There is no `bind` and no `event generate` here, so it runs identically under
@@ -340,6 +366,64 @@ proc ol_reset {} {
   ol_ans ::op_param_lists::reset
   ol_ans ::op_param_lists::said_clear
   return {}
+}
+
+# ============================================================================
+# THE DISPLAY-KEY HELPERS (item B2b — rulings DD-6, its AMENDMENT, and DD-9)
+# ============================================================================
+# Section D below asks three questions HEAD cannot be asked directly, so the
+# reading of an answer needs the same discipline `ol_ans` gives a call:
+#
+#   * `dict get $d shown` RAISES at HEAD (`key "shown" not known in
+#     dictionary`), and a raise at global level under --pipe stops
+#     Tcl_AppInit DEAD — MEASURED: the planner's own driver died mid-file at
+#     its first bare `dict get ... shown`, printing four sections and no
+#     verdict. `ol_dkey` answers the DATA word NOKEY instead, so a row can
+#     FIRE in the red state and say WHY.
+#   * a rendered annotation block is a formatted STRING, not a list, and the
+#     interesting question is which LABELS reached the sheet and what value
+#     each carries. `ol_rowlabels` / `ol_rowval` read the mint actions.c:2172
+#     parses (`label = value`, and `label =` with nothing after it for a blank
+#     row — ruling D9b's format, pinned from the C side by
+#     test_annot_declutter_1244.tcl:2336).
+proc ol_rc {cmd args} {
+  if {![llength [info commands $cmd]]} { return NOPROC }
+  return [catch {uplevel #0 [linsert $args 0 $cmd]}]
+}
+## one key of one descriptor, without a raise: NOPROC / RAISED:... / NOKEY.
+proc ol_dkey {type key} {
+  set d [ol_ans ::op_annot::descriptor $type]
+  if {$d eq {NOPROC}} { return NOPROC }
+  if {[string match {RAISED:*} $d]} { return $d }
+  if {[catch {dict exists $d $key} e]} { return BADDESC }
+  if {!$e} { return NOKEY }
+  if {[catch {dict get $d $key} v]} { return "RAISED:$v" }
+  return $v
+}
+## the LABELS a rendered block actually drew, in draw order.
+proc ol_rowlabels {block} {
+  set out {}
+  foreach l [split [string trimright $block "\n"] "\n"] {
+    if {[string trim $l] eq {}} continue
+    set i [string first "=" $l]
+    if {$i < 0} { lappend out "NOEQ:$l" ; continue }
+    lappend out [string trim [string range $l 0 [expr {$i - 1}]]]
+  }
+  return $out
+}
+## the VALUE drawn against <label>: {} for a blank row, NOROW when not drawn.
+proc ol_rowval {block label} {
+  foreach l [split [string trimright $block "\n"] "\n"] {
+    set i [string first "=" $l]
+    if {$i < 0} continue
+    if {[string trim [string range $l 0 [expr {$i - 1}]]] ne $label} continue
+    return [string trim [string range $l [expr {$i + 1}] end]]
+  }
+  return NOROW
+}
+## is <label> drawn at all?
+proc ol_drawn {block label} {
+  return [expr {[ol_rowval $block $label] eq {NOROW} ? 0 : 1}]
 }
 
 # --- the goldens the PDKs ship ----------------------------------------------
@@ -1133,21 +1217,384 @@ set A1_NMOS [expr {[catch {dict get [::op_annot::descriptor nmos] params} p] ? "
 set A1_PMOS [expr {[catch {dict get [::op_annot::descriptor pmos] params} q] ? "RAISED" : $q}]
 set A1_NPN  [expr {[catch {dict get [::op_annot::descriptor vertical_npn] params} r] ? "RAISED" : $r}]
 set A1_MATCH [expr {[catch {dict get [::op_annot::descriptor nmos] match} m] ? "RAISED" : $m}]
+set A1_SHOWN [ol_dkey nmos shown]
 set A1_BODY [ol_body ::op_param_lists::apply]
 ## the three PDK files' RECOVERY recipe (invariant I5) must still round-trip
 set A1_D [::op_annot::descriptor nmos]
 dict set A1_D params {{vdsat vdsat 2}}
 ::op_annot::register nmos $A1_D
 set A1_REC [expr {[catch {dict get [::op_annot::descriptor nmos] params} s] ? "RAISED" : $s}]
-check {A1 the apply door is op_annot::register: gen MOVES, both mos types take the user's list, a class the user owns nothing for is left alone, the rest of the descriptor survives, `apply` assigns ::op_annot::desc nowhere, and the PDK recovery recipe still round-trips afterwards} \
+# ⚠ THIS ROW'S `params` GOLDEN CHANGED WITH ITEM B2b, AND THAT IS THE POINT.
+# Under ruling DD-4 `apply` writes the UNION of the annotation and summary
+# lists into `params` — what the RUN computes — and the narrowed annotation
+# list into the display key `shown`, which is what the SHEET draws (DD-6). The
+# union is taken over `effective`, never `get_list`, so an UNOWNED summary
+# answers the PDK seed and `params` can only ever be a SUPERSET of what it held
+# before. Here the user owns `annotation` only, so the summary half is IHP's
+# own six ($OL_MOS6) and no label collides — the union is the two user rows
+# followed by all six. `shown` is those six-plus-two FILTERED by the annotation
+# list's labels, which is what makes `shown` a subset of `params` BY
+# CONSTRUCTION (see section D, row D5).
+# The row's other seven legs are UNCHANGED and must stay so: gen moves, both
+# mos types take it, a class the user owns nothing for is left alone, `match`
+# survives, `apply` assigns ::op_annot::desc nowhere, and the PDK recovery
+# recipe still round-trips. RED BEFORE B2b on the `params` and `shown` legs.
+## ⚠ ONE LINE ON PURPOSE: `check` compares STRINGS, so a golden broken across
+## two lines carries the newline and the indent into the comparison.
+set A1_UNION {{aid aid 0} {agm agm 1} {id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}}
+check {A1 the apply door is op_annot::register: gen MOVES, both mos types take the UNION in `params` and the user's narrowed list in `shown`, a class the user owns nothing for is left alone, the rest of the descriptor survives, `apply` assigns ::op_annot::desc nowhere, and the PDK recovery recipe still round-trips afterwards} \
   [list [expr {$A1_G1 > $A1_G0 ? 1 : 0}] \
-        [lsort $A1_RET] $A1_NMOS $A1_PMOS $A1_NPN $A1_MATCH \
+        [lsort $A1_RET] $A1_NMOS $A1_PMOS $A1_NPN $A1_MATCH $A1_SHOWN \
         [ol_count $A1_BODY {op_annot::desc(}] \
         [ol_count $A1_BODY {desc(}] \
         [ol_has $A1_BODY {op_annot::register}] \
         $A1_REC] \
-  [list 1 {nmos pmos} {{aid aid 0} {agm agm 1}} {{aid aid 0} {agm agm 1}} $OL_NPN6 \
-        {*sg13g2_pr/*} 0 0 1 {{vdsat vdsat 2}}]
+  [list 1 {nmos pmos} $A1_UNION $A1_UNION $OL_NPN6 \
+        {*sg13g2_pr/*} {{aid aid 0} {agm agm 1}} 0 0 1 {{vdsat vdsat 2}}]
+
+# ============================================================================
+# SECTION D — WHAT THE SHEET DRAWS (item B2b: 1285, 1289, DD-6 + AMENDMENT)
+# ============================================================================
+# ONE FIELD, TWO CONSUMERS, AND THAT IS THE DEFECT. `op_annot::text` iterates
+# `dict get $d params` (op_annot.tcl:1742) and `op_annot::_cards_for` iterates
+# THE SAME LIST (:2816). DD-4's union makes `params` a SUPERSET of what the
+# user asked to see, so with one field the sheet gets WIDER when the user trims
+# it — the opposite of *declutter*, the word the feature is named after, and
+# item B5's Delete button would have no visible effect at all.
+#
+# DD-6 adds a SECOND descriptor key, `shown`, which the display PREFERS and
+# `_cards_for` never reads. `op_param_lists::apply` writes BOTH: the UNION into
+# `params` (what the run computes) and the narrowed list into `shown` (what the
+# sheet draws).
+#
+# ⚠ THE AMENDMENT IS WHY THIS SECTION EXISTS AT ALL. Item B2a-2 shipped a
+# `shown` key whose two written guarantees were both MEASURED FALSE, and it was
+# reverted for exactly that. Both are attacked here, not asserted:
+#   (1) SUBSET BY CONSTRUCTION — row D5 does not read a comment claiming
+#       `shown` ⊆ `params`; it computes the membership of every `shown` triple
+#       under issue 1288's LIVE duplicate-label door, which is the input that
+#       produced the violation last time.
+#   (2) A MALFORMED KEY NEVER RAISES — row D6 registers two DIFFERENT broken
+#       shapes, because a guard that closes one leaves the other open.
+#       MEASURED on this tree: `shown` = `{broken` makes even `llength` raise
+#       `unmatched open brace in list`, but `shown` = `{id id 0} {d "x}` has
+#       `llength` 2 and raises `unmatched open quote in list` only at the
+#       `lindex` of its SECOND ROW. A `catch {llength ...}` — which issue
+#       1285's "Still open" item 2 and spec §4(b) both recommend, at REGISTER
+#       time — does not close the second shape. The guard must walk the rows.
+#
+# ⚠ AND THE OTHER DOOR MUST STAY OPEN. Row D7 is the fence: a malformed
+# `params` STILL raises, exactly as test_op_annot's K17 (:2586-2599) golds it.
+# A fallback implemented as a blanket catch around the row build would swallow
+# that raise too, silently closing issue 0447 and moving a count this item's
+# acceptance pins at 485/492. D7 is red against that mistake and nothing else.
+#
+# ============================================================================
+# WHICH OF THESE ARE RED BEFORE B2b, AND WHICH ARE NOT — SAY IT OUT LOUD
+# ============================================================================
+# MEASURED at HEAD 81ecfc4d against src/xschem as built 2026-09-03 14:21:
+#   RED    D2 D3 D4 D5 D8 D10 and C2, and the REVISED A1 above.
+#   GREEN  D0 D1 D9, which are CONTROLS AND FENCES and prove nothing about the
+#          fix: D1 is invariant I7 (all four shipped PDK register sites declare
+#          `params` alone, so every shipped PDK is D1's case and must draw
+#          exactly as it does today), D0 says the fixture is live, D9 says the
+#          draw-time proc gained no `xschem` call.
+#   GREEN VACUOUSLY  D6 and D7. HEAD reads no display key at all, so a
+#          malformed one is INERT — D6 cannot be red at HEAD and a receipt
+#          claiming otherwise would be false. D6 is red against the PRESENCE-
+#          ONLY guard item B2a-2 shipped, and that is the state it is written
+#          to catch; the landing shows it red there before showing it green.
+#          D7 is a fence on an existing behaviour and is green in every state
+#          except the mistake it names.
+#
+# ============================================================================
+# THE FIXTURE, AND WHY IT IS BUILT RATHER THAN READ OFF A PDK
+# ============================================================================
+# ⚠ THE BRIEF'S "IHP SHIPS THE FIXTURE: gm/id AND ft" IS FALSE ON THIS TREE,
+# and so are issue 1289's line 39 ("IHP registers exactly such rows (`gm/id`,
+# `ft`) in `ihp-sg13g2/sg13g2_procs.tcl`") and its line 74. MEASURED: all four
+# shipped register sites — sky130_procs.tcl:407, gf180_procs.tcl:113,
+# sg13g2_procs.tcl:764 and :814 — carry `devpath`/`devproc` + `match` +
+# `params` AND NOTHING ELSE. Every `derived` in the three PDK files sits inside
+# the RECOVERY-RECIPE COMMENT, and test_op_annot's own gold table P_DERIVEDACC
+# (:904-911) golds `derived` = {} for all seven shipped types, because ruling
+# D9 removed them. So DD-9's substance is untouched, but its fixture must be
+# BUILT from that documented recipe under invariant I5 — which is what the
+# recipe is FOR — and no row here may assert that IHP registers a `derived`
+# key, because it does not.
+#
+# Both of the brief's named rows are exercised: `gm/id` AND `ft`.
+#
+# ⚠ THE RAW'S VECTOR NAMES COME FROM `op_annot::vector`, NEVER TYPED BY HAND
+# (invariant I1: ONE name builder, two consumers). A fixture with hand-typed
+# names cannot drift from the reader and therefore cannot see the failure I1
+# exists to prevent.
+#
+# ⚠ THIS SECTION MUTATES THE REGISTRY AND LOADS A SCHEMATIC, so it runs after
+# every row that reads the shipped IHP descriptors. It writes only under the
+# scratch tree, changes no directory, and creates no untitled* — row H1 still
+# has to pass at the end.
+ol_reset
+set D_LIB [file join $scratch b2blib]
+file mkdir $D_LIB
+set D_SCH [file join $D_LIB b2bd.sch]
+set D_SYM [file join $repo xschem_library devices nmos.sym]
+set _fd [open $D_SCH w]
+puts $_fd "v \{xschem version=3.4.4 file_version=1.2\}"
+puts $_fd "G \{\}"
+puts $_fd "V \{\}"
+puts $_fd "S \{\}"
+puts $_fd "E \{\}"
+puts $_fd "C \{$D_SYM\} 0 0 0 0 \{name=M1 model=nmosmod W=1 L=0.15\}"
+close $_fd
+set D_LOAD [catch {xschem load $D_SCH}]
+
+## The RECOVERY RECIPE's own rows (sg13g2_procs.tcl:747-749, sky130:394,
+## gf180:100), applied the way the recipe says to apply them (I5). `cgg` is
+## there so `ft` has an operand; `gm/id` and `ft` are DD-9's two subjects.
+set D_BASE [list devpath {@m.@path@name} \
+                 params  {{id id 0} {gm gm 1} {cgg cgg 1}} \
+                 derived {{gm/id {$gm/$id}} {ft {$gm/(2*3.14159265*$cgg)}}}]
+## the same descriptor with NO derived rows — row D10's second half needs the
+## difference between "the block emptied" and "only the params rows went".
+set D_NODER [list devpath {@m.@path@name} \
+                   params  {{id id 0} {gm gm 1} {cgg cgg 1}}]
+ol_ans ::op_annot::register nmos $D_BASE
+ol_ans ::op_annot::register pmos $D_BASE
+
+set D_RAW [file join $scratch b2bd.raw]
+set D_NAMES {}
+foreach _p {id gm cgg} { lappend D_NAMES [ol_ans ::op_annot::vector M1 $_p] }
+set _fp [open $D_RAW w]
+puts -nonewline $_fp "Title: b2bd\nDate: Mon Jan 1 00:00:00 2026\n"
+puts -nonewline $_fp "Plotname: Operating Point\nFlags: real\n"
+puts -nonewline $_fp "No. Variables: [llength $D_NAMES]\nNo. Points: 1\nVariables:\n"
+set _i 0
+foreach _n $D_NAMES { puts -nonewline $_fp "\t$_i\t$_n\tnotype\n" ; incr _i }
+## id = 10u, gm = 100u, cgg = 10f  ->  gm/id = 10, ft = 1.592G
+puts -nonewline $_fp "Values:\n0\t1e-05\n\t1e-04\n\t1e-14\n"
+close $_fp
+set D_ANN [catch {xschem annotate_op $D_RAW}]
+
+## THE GOLDEN BLOCKS, spelled out rather than eyeballed. The mint is
+## `%-<w>s = %s` with w the widest LABEL (5, for `gm/id`), and a blank row is
+## `label =` with nothing after the `=` — ruling D9b's format.
+set D_ALL5   "id    = 10u\ngm    = 100u\ncgg   = 10f\ngm/id = 10\nft    = 1.592G\n"
+set D_NARROW "id    = 10u\ngm/id = 10\nft    = 1.592G\n"
+set D_CARDS3 {{.save m1[id]} {.save m1[gm]} {.save m1[cgg]}}
+set D_CARDS4 {{.save m1[id]} {.save m1[gm]} {.save m1[cgg]} {.save m1[vth]}}
+
+set D0_FIN {}
+foreach _p {id gm cgg} {
+  lappend D0_FIN [ol_ans ::op_annot::_finite \
+                    [ol_ans ::op_annot::raw_or_blank [ol_ans ::op_annot::vector M1 $_p]]]
+}
+check {D0 CONTROL the fixture is live: the schematic loaded, the OP raw annotated, M1 is an nmos the registry claims, and all three vectors read back finite — without this every row below could pass by drawing nothing} \
+  [list $D_LOAD $D_ANN [ol_ans ::op_annot::type M1] \
+        [ol_ans ::op_annot::_annotated] [ol_ans ::op_annot::_claims M1] $D0_FIN] \
+  {0 0 nmos 1 1 {1 1 1}}
+
+# ---------------------------------------------------------------------------
+# D1 — RED (b) OF THE BRIEF, AND INVARIANT I7. THIS ONE MUST NOT MOVE.
+# A descriptor a PDK registered with NO narrowing key draws every `params` row
+# exactly as it does today, and the save side is untouched. All four shipped
+# register sites are this case, so D1 is the row that says the three PDKs draw
+# exactly as they do now. GREEN BEFORE THE CHANGE — a control, not evidence.
+set D1_TXT [ol_ans ::op_annot::text M1]
+check {D1 CONTROL (invariant I7) a descriptor with NO display key draws EVERY params row and its derived rows, byte for byte as today, and _cards_for emits one card per params row} \
+  [list [ol_dkey nmos shown] $D1_TXT [ol_rowlabels $D1_TXT] \
+        [ol_ans ::op_annot::_cards_for M1 {}]] \
+  [list NOKEY $D_ALL5 {id gm cgg gm/id ft} $D_CARDS3]
+
+# ---------------------------------------------------------------------------
+# D2 — RED (a): THE SHEET NARROWS AND THE DESCRIPTOR CARRIES BOTH FIELDS.
+# RED AT HEAD: `params` is the annotation list ALONE ({{id id 0}}, issue 1280 —
+# DD-4's union is not implemented at HEAD) and `shown` does not exist, so
+# ol_dkey answers NOKEY.
+ol_reset
+ol_ans ::op_param_lists::set_list class mos annotation {{id id 0}}
+ol_ans ::op_param_lists::set_list class mos summary    {{gm gm 1} {cgg cgg 1}}
+set D2_RET [ol_ans ::op_param_lists::apply nmos]
+set D2_TXT [ol_ans ::op_annot::text M1]
+check {D2 after apply with a trimmed annotation list the descriptor carries BOTH lists — `params` is the UNION the run computes and `shown` is the narrowed list the sheet draws — and the sheet draws the annotation row and the derived rows and NOTHING ELSE} \
+  [list $D2_RET [ol_dkey nmos params] [ol_dkey nmos shown] \
+        $D2_TXT [ol_rowlabels $D2_TXT] \
+        [ol_drawn $D2_TXT gm] [ol_drawn $D2_TXT cgg]] \
+  [list nmos {{id id 0} {gm gm 1} {cgg cgg 1}} {{id id 0}} \
+        $D_NARROW {id gm/id ft} 0 0]
+
+# ---------------------------------------------------------------------------
+# D3 — RED (a), THE OTHER HALF: THE SAVE SIDE DOES NOT NARROW WITH THE DISPLAY.
+# `_cards_for` and `_claims` and `_kind` read `params` and must be blind to the
+# display key — that is the whole reason DD-6 adds a second field instead of
+# trimming the first. RED AT HEAD: one card, and `_kind M1 gm` RAISES because
+# today's apply dropped `gm` out of `params` altogether.
+check {D3 the SAVE side is blind to the display key: _cards_for still emits one card per params row including the two the sheet no longer draws, _claims still claims the instance, and _kind answers for a hidden parameter instead of raising} \
+  [list [ol_ans ::op_annot::_cards_for M1 {}] \
+        [ol_ans ::op_annot::_claims M1] \
+        [ol_ans ::op_annot::_kind M1 gm] \
+        [ol_ans ::op_annot::_kind M1 cgg]] \
+  [list $D_CARDS3 1 1 1]
+
+# ---------------------------------------------------------------------------
+# D4 — RED (c), RULING DD-9: A DERIVED ROW READS THE RUN, NOT THE SHEET.
+# `op_annot::text` evaluates its `vars` dict over `params` and DISPLAYS over
+# the narrowed key, so a derived row keeps working when its operand is merely
+# hidden. Both of the brief's named rows are here: `gm/id` needs `gm`, `ft`
+# needs `gm` AND `cgg`, and neither operand is drawn.
+# RED AT HEAD: both values are EMPTY — issue 1289's exact failure, reproduced
+# at HEAD through `params` because today's apply removes the operand from the
+# only list there is.
+check {D4 DD-9 a derived row whose operand is in `params` but not in the display key STILL CARRIES A VALUE — gm/id and ft both compute while neither gm nor cgg is drawn} \
+  [list [ol_rowval $D2_TXT gm/id] [ol_rowval $D2_TXT ft] \
+        [ol_rowval $D2_TXT gm] [ol_rowval $D2_TXT cgg] \
+        [ol_rowval $D2_TXT id]] \
+  {10 1.592G NOROW NOROW 10u}
+
+# ---------------------------------------------------------------------------
+# D5 — RED (d): THE SUBSET IS ATTACKED, NOT ASSERTED.
+# Issue 1288 is LIVE on this tree: `set_list class mos annotation {{A ids 0}
+# {A vth 2}}` returns 1 with ZERO reports and `get_list` hands both rows back.
+# So a `shown` built by COPYING the annotation list wholesale — which is what
+# item B2a-2 shipped — can contain a triple that the union's label-dedup kept
+# OUT of `params`, and `op_annot::_kind` raises on exactly that. The row
+# computes the membership itself; it does not read a comment claiming it.
+# RED AT HEAD (there is no `shown` key at all) AND RED against B2a-2's
+# wholesale copy (`shown` would carry {A gm 1}, which is in no params list).
+ol_ans ::op_annot::register nmos $D_BASE
+ol_reset
+ol_ans ::op_param_lists::set_list class mos annotation {{A id 0} {A gm 1}}
+ol_ans ::op_param_lists::set_list class mos summary    {{cgg cgg 1}}
+set D5_DUP [ol_ans ::op_param_lists::get_list class mos annotation]
+set D5_RET [ol_ans ::op_param_lists::apply nmos]
+set D5_P   [ol_dkey nmos params]
+set D5_S   [ol_dkey nmos shown]
+set D5_SUB 1
+if {[catch {
+  foreach _t $D5_S { if {[lsearch -exact $D5_P $_t] < 0} { set D5_SUB 0 } }
+} _e]} { set D5_SUB "RAISED:$_e" }
+set D5_TXT [ol_ans ::op_annot::text M1]
+check {D5 THE SUBSET HOLDS BY CONSTRUCTION under issue 1288's live duplicate-label door: every `shown` triple is literally an element of `params`, the second duplicate is deduped out of both, and the draw does not raise} \
+  [list $D5_DUP $D5_RET $D5_P $D5_S $D5_SUB \
+        [ol_rc ::op_annot::text M1] [ol_rowlabels $D5_TXT]] \
+  [list {{A id 0} {A gm 1}} nmos {{A id 0} {cgg cgg 1}} {{A id 0}} 1 \
+        0 {A gm/id ft}]
+
+# ---------------------------------------------------------------------------
+# D6 — RED (e): A MALFORMED DISPLAY KEY DRAWS THE `params` ROWS AND NEVER
+# RAISES. `op_annot::text` runs PER INSTANCE PER REDRAW from C
+# (actions.c:2085-2090). That call IS already `catch`-wrapped, so a raise is
+# not literally a black schematic — MEASURED, it is worse in one way: the
+# instance's WHOLE annotation block silently becomes empty, and because
+# actions.c:1764 -> annot_instance_annotated() -> annot_block_has_value() reads
+# the rendered block, the declutter then switches OFF for that instance too,
+# with no message anywhere.
+# ⚠ GREEN VACUOUSLY AT HEAD — no display key is read, so nothing can be
+# malformed. This row is red against B2a-2's presence-only guard, and against
+# any guard that checks only the OUTER list.
+set D_OB "\x7b"      ;# a literal open brace, K17's trick (test_op_annot.tcl:2586)
+set _d $D_BASE ; dict set _d shown "${D_OB}broken"
+ol_ans ::op_annot::register nmos $_d
+set D6_RC1  [ol_rc ::op_annot::text M1]
+set D6_TXT1 [ol_ans ::op_annot::text M1]
+## the NESTED break: `llength` is 2 and only the `lindex` of row 2 raises
+set _d $D_BASE ; dict set _d shown {{id id 0} {d "x}}
+ol_ans ::op_annot::register nmos $_d
+set D6_LEN  [ol_ans ::llength [ol_dkey nmos shown]]
+set D6_RC2  [ol_rc ::op_annot::text M1]
+set D6_TXT2 [ol_ans ::op_annot::text M1]
+check {D6 a MALFORMED display key is treated as ABSENT and the params rows draw: BOTH measured shapes — the outer unmatched brace AND the nested one whose llength is 2 and which raises only at the lindex of its second row} \
+  [list $D6_RC1 $D6_TXT1 $D6_LEN $D6_RC2 $D6_TXT2] \
+  [list 0 $D_ALL5 2 0 $D_ALL5]
+
+# ---------------------------------------------------------------------------
+# D7 — THE FENCE ON THE OTHER DOOR. A malformed `params` STILL raises, with or
+# without a well-formed display key beside it. test_op_annot's K17 (:2586-2599)
+# golds that raise from the other suite; a fallback written as a blanket catch
+# around the row build would swallow it, close issue 0447 by accident, and move
+# a count this item's acceptance pins at 485/492. GREEN BEFORE THE CHANGE.
+set _d $D_BASE ; dict set _d params "{id id 0} ${D_OB}broken"
+ol_ans ::op_annot::register nmos $_d
+set D7_A [ol_ans ::op_annot::text M1]
+dict set _d shown {{id id 0}}
+ol_ans ::op_annot::register nmos $_d
+set D7_B [ol_ans ::op_annot::text M1]
+check {D7 FENCE issue 0447's existing raise door SURVIVES: a malformed `params` still raises at draw time, both with no display key and with a WELL-FORMED one present — the fallback must not become a blanket catch} \
+  [list $D7_A $D7_B] \
+  [list {RAISED:unmatched open brace in list} {RAISED:unmatched open brace in list}]
+
+# ---------------------------------------------------------------------------
+# D8 — apply's OWNERSHIP GUARD, AND ITS TWO PASSES.
+# HEAD's guard is `owns class $c annotation` ALONE, so a user who owns only a
+# SUMMARY list gets nothing written: the deck never saves her parameters and
+# every summary row renders permanently blank (invariant I3) with no report —
+# the precise failure DD-4 exists to prevent. Under the union the guard must be
+# `annotation OR summary`, and the cost is DD-4's stated one, a slightly larger
+# raw: the SHEET here is byte-identical to D1's.
+# The pmos leg is the two-pass fence. `_save_set` reads the PDK seed through
+# ::op_annot::descriptor and the second pass rewrites exactly those
+# descriptors, so a single loop would hand pmos the `params` apply had just
+# rewritten for nmos.
+# RED AT HEAD: apply returns {} and writes nothing at all.
+ol_ans ::op_annot::register nmos $D_BASE
+ol_ans ::op_annot::register pmos $D_BASE
+ol_reset
+ol_ans ::op_param_lists::set_list class mos summary {{vth vth 2}}
+set D8_RET [ol_ans ::op_param_lists::apply nmos pmos]
+set D8_TXT [ol_ans ::op_annot::text M1]
+check {D8 with ONLY a summary list owned, apply still writes both fields: `params` GAINS the summary row so the deck saves it, `shown` is the PDK seed unchanged, the sheet is BYTE-IDENTICAL to D1's, and pmos gets the seed too rather than the list nmos was just given} \
+  [list $D8_RET [ol_dkey nmos params] [ol_dkey nmos shown] [ol_dkey pmos shown] \
+        [expr {$D8_TXT eq $D_ALL5 ? 1 : 0}] \
+        [ol_ans ::op_annot::_cards_for M1 {}]] \
+  [list {nmos pmos} {{id id 0} {gm gm 1} {cgg cgg 1} {vth vth 2}} \
+        {{id id 0} {gm gm 1} {cgg cgg 1}} {{id id 0} {gm gm 1} {cgg cgg 1}} \
+        1 $D_CARDS4]
+
+# ---------------------------------------------------------------------------
+# D9 — DD-9's BINDING CONSTRAINT, STRUCTURALLY: `op_annot::text` may gain NO
+# new `xschem` call and NO new raise site (issue 0447). It is a draw-time proc
+# and 1289's own acceptance says so. MEASURED at HEAD: the comment-stripped
+# body carries exactly ONE `xschem ` literal (the pinexpr `xschem translate` at
+# :1775, already inside a catch) and ZERO `return -code`.
+# ⚠ AT HEAD THE DISPLAY-HELPER GLOB MATCHES NOTHING, so its two legs are
+# vacuously 0 and the live legs are `text`'s. They arm the moment the helper
+# exists — which is the point of a fence. GREEN BEFORE THE CHANGE.
+set D9_TBODY [ol_body ::op_annot::text]
+set D9_DBODY {}
+foreach _p [lsort [info procs ::op_annot::_display*]] { append D9_DBODY [ol_body $_p] "\n" }
+check {D9 FENCE the draw-time proc gains no `xschem` call and no raise site: op_annot::text's comment-stripped body still carries exactly ONE `xschem ` literal and ZERO `return -code`, and the display helper adds neither} \
+  [list [ol_count $D9_TBODY {xschem }] [ol_count $D9_TBODY {return -code}] \
+        [ol_count $D9_DBODY {xschem }] [ol_count $D9_DBODY {return -code}]] \
+  {1 0 0 0}
+
+# ---------------------------------------------------------------------------
+# D10 — PRESENT-AND-EMPTY IS NOT ABSENT. *** STATUS E: THE USER HAS NOT RULED
+# ON THIS. *** Only an ABSENT key falls back to `params`; a key that is present
+# and EMPTY draws no params rows at all. The default falls this way because the
+# alternative makes item B5's Delete of the LAST row a silent no-op, which is
+# the invisible-Delete failure DD-6 exists to prevent.
+# THE QUESTION FOR THE USER, recorded as rule debt `1285_empty_display_key`:
+# when a user deletes EVERY row from a device's annotation list, that device's
+# whole OP block disappears from the sheet — and because actions.c:1764 reads
+# the rendered block, the device also drops OUT of the declutter, so the texts
+# the declutter was hiding come back. Is that what "delete them all" should do?
+# Note the effect is NOT uniform: a descriptor that also carries `derived` or
+# `pinexpr` rows still draws a block, which is the second half of this row.
+# RED AT HEAD (no key is read, so both descriptors draw their full block).
+set _d $D_NODER ; dict set _d shown {}
+ol_ans ::op_annot::register nmos $_d
+set D10_A [ol_ans ::op_annot::text M1]
+set _d $D_BASE ; dict set _d shown {}
+ol_ans ::op_annot::register nmos $_d
+set D10_B [ol_ans ::op_annot::text M1]
+check {D10 a display key PRESENT AND EMPTY is not the same as ABSENT: with no derived rows the instance draws NO BLOCK AT ALL, and with derived rows it still draws those — only an absent key falls back to `params`} \
+  [list $D10_A $D10_B [ol_rowlabels $D10_B]] \
+  [list {} "gm/id = 10\nft    = 1.592G\n" {gm/id ft}]
+
+## leave the registry as section D found it for anything appended after it
+ol_ans ::op_annot::register nmos $D_BASE
+ol_ans ::op_annot::register pmos $D_BASE
+ol_reset
 
 # ============================================================================
 # SECTION C — THE SHIPPED COMMENT THIS ITEM FINALLY ANSWERS
@@ -1179,6 +1626,27 @@ check {C0 CONTROL all three PDK files carry the invariant-I5 recovery recipe tod
   $C0_GOT {1 1 1 1 1 1}
 check {C1 all three PDK procs files now POINT AT src/op_param_lists.tcl instead of saying the means is OWED and TBD, and each one's recovery recipe is untouched} \
   $C1_GOT {1 0 1 1 1 0 1 1 1 0 1 1}
+
+# C2 — WHICH LIST IS WHICH, SAID IN THE PDK FILE ITSELF (item B2b, DD-6).
+# A PDK author reading these files sees ONE list today and there are now TWO,
+# with different jobs: `params` is what the RUN computes — the .save cards are
+# built from it — and the display key `shown` is what the SHEET draws. Getting
+# that backwards is how DD-4's union un-declutters the schematic, so it is
+# named where a PDK author will actually read it rather than only in the spec.
+# The two sentences are pinned as LITERALS because a row that greps for the
+# word `shown` alone would be satisfied by the word appearing in any sentence,
+# including a wrong one.
+# ⚠ The recovery recipe above each must stay byte-identical — that is row C0's
+# job, and C0 is checked again here by still being green.
+# RED BEFORE B2b: neither sentence is in any of the three files.
+set C2_GOT {}
+foreach _f $C_FILES {
+  set _t [ol_slurp $_f]
+  lappend C2_GOT [ol_has $_t {params is what the run computes}] \
+                 [ol_has $_t {shown is what the sheet draws}]
+}
+check {C2 all three PDK procs files now say WHICH LIST IS WHICH: params is what the run computes and the display key is what the sheet draws} \
+  $C2_GOT {1 1 1 1 1 1}
 
 # ============================================================================
 # SECTION R — REGISTRATION
