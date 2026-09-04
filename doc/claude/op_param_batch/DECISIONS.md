@@ -163,3 +163,46 @@ the two disagree, which is worse than either answer alone.
 different facts with different remedies, and this feature's own obligation is
 that different silences get different sentences. **Item B5 is the first thing
 that sets `::rdw::sim`, so it must land the split.**
+
+### DD-6 — issue 1285: DD-4 NAMED ONE FIELD WHERE TWO ARE NEEDED
+
+**This corrects DD-4, and the correction is the driver's own error, caught by
+item B2a while implementing it.** Taken 2026-09-03; on the owed ledger as rule
+debt **1285**.
+
+DD-4 says *"`apply` writes the union of the annotation and summary lists into
+`params`, and the display narrows to the annotation list."* **Those two clauses
+cannot both be true of one field.** Verified directly in the tree at `825cd3bd`:
+`op_annot::text` builds the on-sheet rows by iterating `dict get $d params`
+(`src/op_annot.tcl:1742`), and `op_annot::_cards_for` builds the `.save` cards
+by iterating **the same list** (`:2816`). One field, two consumers, and DD-4
+asks them to differ.
+
+Left as written, DD-4 would ship a Delete button whose visible effect is
+**nothing at all**: the deck would keep saving the row (correct) and the sheet
+would keep drawing it (the opposite of *declutter*, the word the feature is
+named after).
+
+**Decision: take issue 1285's Option 1 — a new descriptor key the display
+prefers over `params`.** `op_annot::text` reads that key when it exists and
+falls back to `params` when it does not. `apply` writes both: the **union** into
+`params` (what the simulator is asked to compute) and the **annotation list**
+into the new key (what is drawn).
+
+*Why not Option 2 —* `op_annot::text` calling `op_param_lists::effective`
+directly: it needs no new key and gives the narrowing exactly one definition,
+but it makes `op_annot.tcl` depend on `op_param_lists.tcl` when the dependency
+today runs the other way, and **`op_annot.tcl` is sourced first**. A load-order
+inversion to save one dict key is a bad trade.
+
+*Cost, stated:* a descriptor now carries two lists and a PDK author must be told
+which is which. The header comment and all three PDK `_procs.tcl` files must say
+it in one line: **`params` is what the run computes; the display key is what the
+sheet draws.** A PDK that registers only `params` — which is all three of them
+today — behaves exactly as it does now.
+
+**The lesson, and it is the driver's own:** DD-4 was reasoned from what the two
+lists *mean* and never checked what field the tree actually reads them from.
+That is item A7's lesson arriving at the decision layer instead of the code
+layer — a ruling about behaviour inherits the shape of the data structure
+underneath it, and that structure was built for a different question.
