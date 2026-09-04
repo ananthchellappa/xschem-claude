@@ -1220,4 +1220,52 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   unreachable through shipped ngspice, reachable by the user's custom backend.
   Found by item **B2d**'s adversary. **FILED, NOT FIXED.**
 
-**The next free number is 1300.**
+* **1300** — **the RDW's keys 1, 2 and 3 select a list IDENTITY and narrow no
+  CONTENT.** `rdw::format_answer` takes no list argument and row **S1** forbids
+  naming the list store inside `src/rdw.tcl`, so the three keys render
+  byte-identical blocks; only `::rdw::listkind` differs. The spec's §4.2 B4
+  table says they should narrow, and **no item in PLAN owns that work**. Found
+  by item **B4**; three options costed, all rejected for now. This is B4's own
+  **E question**. **FILED, NOT FIXED.**
+
+* **1301** — **the cadence profile's own descend never suspends a canvas
+  command mode.** `cmdmode::suspend_all` is called from `hi_descend_do` and
+  `hi_descend_pick_arm` only; `cadence::descend_into_inst`
+  (`utils/cadence_nav.tcl:260`, bound to Ctrl-x) calls `xschem descend
+  -fallback` directly. Measured with a live pick mode: the descend happens, the
+  suspend arm is never called and the mode stays seized. With Ctrl-Shift-X
+  `clone_canvas_bindings` then copies the seized bindings onto the child — the
+  exact ordering `src/cmdmode.tcl:44-50` exists to prevent. Predates item B4
+  (ASE Direct Plot has it too); pinned by row **D2** of
+  `tests/headless/test_rdw_keys_1245.tcl`. **FILED, NOT FIXED.**
+
+* **1302** — **the RDW pick mode has no on-canvas indicator.** ASE Direct Plot
+  keeps a bottom-status-line prompt alive with `sod_prompt_pump` because the C
+  engine blanks `.statusbar.10` on every event; those procs live in
+  `src/ase_window.tcl`, outside item B4's Files cell. B4's mode therefore
+  announces itself with one CIW line and nothing after. Carries a `look` debt.
+  **FILED, NOT FIXED.**
+
+* **1303** — **a Tcl canvas pick reads SNAPPED mouse coordinates and can answer
+  for a device the user did not click.** `scheduler.c` exposes only
+  `mousex_snap`/`mousey_snap` (`:5018`, `:5022`); there is no unsnapped
+  accessor, while every C click path reads the unsnapped `xctx->mousex/mousey`.
+  Reproduced on the shipped `cmos_inv.sch`: the exact point `175.175 -199.612`
+  answers `M1`, the snapped point `180 -200` answers `R1` — a different device,
+  from one pixel. Swept: 6.4% of in-bbox points miss, 0.5% resolve to another
+  device. The same default is live in `ase::ui::sod_click`, though the harm
+  there is not measured. Found by item **B4**'s adversary; **it is why B4 was
+  reverted**. **FILED, NOT FIXED.**
+
+* **1304** — **a canvas command mode swallows `<ButtonRelease-1>` and leaves
+  C's rubber band alive, so pointer drift CHANGES THE SELECTION.** The seize
+  binds `<ButtonPress-1>`, `<ButtonRelease-1>` and `<Key-Escape>` and **not**
+  `<B1-Motion>`, so C keeps getting Button1Mask motion and starts a selection C
+  can never terminate. Measured on item B4's mode: 1 px of drift leaves
+  `ui_state 16` alive after `ESC`; an eight-step drag selects 13 objects; the
+  same gesture with no mode leaves `ui_state 8`, terminated. Breaks the user's
+  own *"clicking will not change selected set"*. The binding shape is live in
+  `src/ase_window.tcl` at `735ea26e`. Found by item **B4**'s adversary; **it is
+  why B4 was reverted**. **FILED, NOT FIXED.**
+
+**The next free number is 1305.**

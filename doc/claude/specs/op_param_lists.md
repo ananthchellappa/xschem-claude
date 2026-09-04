@@ -237,7 +237,8 @@ turns anything off and is not a toggle; `Ctrl-6` is the only off switch.
 
 ### 2.5 Command mode already exists, and so does the read-only pick
 
-* **`xschem instance_at <x> <y>`** (`scheduler.c:6919`) returns the instance name
+* **`xschem instance_at <x> <y>`** (`scheduler.c:6935`; the doc comment opens at
+  `:6927` — the `:6919` this spec carried until 2026-09-04 was stale) returns the instance name
   under a point. Its own comment: *"READ-ONLY: it selects nothing and changes
   nothing — this is the probe half of the verb-noun descend pick, and the
   deliberate opposite of `select_at`, which is the mutating coordinate pick."*
@@ -248,6 +249,19 @@ turns anything off and is not a toggle; `Ctrl-6` is the only off switch.
   click queues a trace."* `cmdmode::register <key> <suspend_cb> <resume_cb>` is
   the participation contract, so a descend mid-command can pause and resume the
   mode. Feature B's 1/2/3 mode is the same shape and must register too.
+* ⚠ **BUT THE SHIPPED SEIZE IS NOT SAFE TO COPY VERBATIM, MEASURED BY ITEM B4,
+  2026-09-04.** `select_on_design` seizes `<ButtonPress-1>`,
+  `<ButtonRelease-1>` and `<Key-Escape>` and **not `<B1-Motion>`**, so C keeps
+  receiving Button1Mask motion and starts a rubber band that the swallowed
+  release can never terminate: 1 px of drift inside a live mode left
+  `ui_state 16` alive **after `ESC`**, and an eight-step drag **selected 13
+  objects** — with the no-mode control terminating cleanly at `ui_state 8`.
+  Issue **1304**. And `sod_click` defaults its coordinates to
+  `mousex_snap`/`mousey_snap`, the only pair Tcl has, while every C click path
+  reads the **unsnapped** pair — issue **1303**, measured at one pixel on
+  `cmos_inv.sch` as `M1` versus `R1`. **A mode copied from this precedent
+  inherits both.** Feature B's verb-noun requirement is that clicking changes
+  nothing; these two are how it silently does.
 
 ### 2.6 Namespace already taken
 
@@ -950,6 +964,15 @@ element-lettered — `@m.x1.x1.xm2.msky130_fd_pr__nfet_01v8_lvt`. Question Q6.
 | `1` | **annotation** | the descriptor's `params` — the very list `6` paints |
 | `2` | **summary** | a new per-class ordered list; **default = all available** |
 | `3` | **all** | every parameter the simulator published for this device |
+
+⚠ **THE NARROWING IN THIS TABLE IS NOT IMPLEMENTED AND NO ITEM OWNS IT** (item
+B4, 2026-09-04). `rdw::format_answer` takes **no list argument**, and row `S1`
+of `tests/headless/test_rdw_window_1245.tcl` structurally forbids naming the
+list store inside `src/rdw.tcl` — so keys 1, 2 and 3 select a list **identity**
+and render **byte-identical blocks**. B4's Do cell does not mention narrowing
+and B5's is buttons and dialogs. Issue **1300**, and B4's own **E question**:
+either an item takes it, or the window must stop implying a narrowing it does
+not do. Do not read this table as describing the tree.
 
 **B5. Where "all" comes from — the seam, RULED D-4 + D-5.**
 
@@ -1967,6 +1990,27 @@ Still open:
     it. F20 covers newline/CR/tab in a value, a parameter name and a device name;
     F25 covers the unrecognised-state arm — with a newline-free word. **Two green
     rows crossing a class is not the class fenced.**
+
+17. **THE ONLY Tcl MOUSE PAIR IS SNAPPED, AND A PICK BUILT ON IT CAN NAME THE
+    WRONG DEVICE** (item B4, 2026-09-04). `scheduler.c` exposes `mousex_snap` /
+    `mousey_snap` and nothing else — `xschem get mousex` does not exist — while
+    every C click path reads the unsnapped `xctx->mousex/mousey`. Measured on the
+    shipped `cmos_inv.sch`: the exact point `175.175 -199.612` answers `M1`, the
+    snapped point `180 -200` answers `R1`. Swept over every instance bbox: **6.4%
+    of points miss the device, 0.5% resolve to a different one**, with nothing on
+    screen saying which happened — invariant **I3**'s harm, one object out from a
+    number. Instance bodies are the bad case because their bbox edges are not on
+    grid; a wire, drawn on grid, usually snaps onto itself. Issue **1303**. ⚠ And
+    note why no suite saw it: the pick fixture computed click points from
+    `xschem instance_bbox` **centres** — correct, adopted so the A3 declutter
+    coordinates would not be transcribed, and **a centre snaps safely**. Drive at
+    least one pick at a point measured to straddle an edge.
+18. **A COMMAND MODE THAT SWALLOWS THE RELEASE LEAVES C's GESTURE HALF-STARTED**
+    (item B4, 2026-09-04). See §2.5: seize `<B1-Motion>` as well, or a drifted
+    click selects objects in a mode whose whole promise is that clicking selects
+    nothing. Live in `ase_window.tcl`, so it is a defect to fix and not merely a
+    precedent to avoid. Issue **1304**. ⚠ The class: **the three sequences a mode
+    seizes are not the three sequences a gesture uses.**
 
 ---
 

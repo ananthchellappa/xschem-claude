@@ -1,0 +1,1688 @@
+diff --git a/src/cadence_style_rc b/src/cadence_style_rc
+index 990cf86e..ddf1abdc 100644
+--- a/src/cadence_style_rc
++++ b/src/cadence_style_rc
+@@ -140,6 +140,49 @@ bind .drw <Key-9> {xschem hilight_net_interactive;   break}
+ bind .drw <Key-8> {xschem unhilight_net_interactive; break}
+ bind .drw <Key-0> {xschem unhilight_all;             break}
+ 
++# --------------------------------------------------------------------------
++# 1 / 2 / 3 / 4 : THE RESULTS DISPLAY WINDOW (feature 1245, item B4).
++# Spec doc/claude/specs/op_param_lists.md 4.2; RULING D-2, the user's own
++# choice: "Take 1-4, cadence profile only". Stock xschem is untouched.
++#
++#   1  the device's ANNOTATION list        2  its SUMMARY list
++#   3  everything this run's raw holds     4  refresh: keep only the newest dump
++#
++# TWO GRAMMARS, and which one you get depends only on what is selected.
++#   noun-verb : exactly ONE instance selected -> that device is dumped.
++#   verb-noun : NOTHING selected -> a COMMAND MODE arms on the canvas. Click
++#               devices to dump them, ESC to leave. Clicking does NOT change
++#               the selection -- the user's own requirement -- because the hit
++#               test is the read-only `xschem instance_at`, and a descend
++#               mid-mode suspends and resumes the mode (src/cmdmode.tcl).
++#   refusal   : more than one selected, or a selection that is not an instance
++#               -> one short line in the CIW, and nothing else happens.
++#
++# ⚠ WHAT THESE FOUR KEYS COST, INSIDE THIS PROFILE ONLY. callback.c:7434-7448
++# gives a bare 0-4 to `logic_set()` -- "toggle pin logic level" -- with `4`
++# being the toggle (logic_set(-1, 1, NULL), :7443). logic_set has NO menu entry
++# and NO second accelerator, so inside this profile these keys were its only
++# door. `xschem logic_set 0|1|2|3|4` (scheduler.c:8213) stays scriptable and is
++# the survivor. Ruling D-2 authorises the trade; remap by editing these lines.
++#
++# ⚠ AND THE GUARD IS NOT DECORATION -- IT IS ISSUE 1244 ONE FEATURE LATER. Tk
++# matches a pattern whose modifiers are a SUBSET of the event's, so a bare
++# `bind .drw <Key-1> {...; break}` fires on Ctrl-1 and Alt-1 too and the
++# `break` then EATS what they did. Measured on this tree: with a bare bind in
++# place Ctrl-1 and Ctrl-3 stopped selecting drawing layers 1 and 3, and
++# Alt-2 stopped reaching its shipped, documented, remappable action
++# (view.toggle_view_type, keybindings.csv:73). So each line discriminates on
++# the modifier mask and forwards any Control/Alt/Super press verbatim into the
++# C dispatcher, exactly as hi_descend_keybind_script (src/xschem.tcl:7868)
++# does for the descend key: 0x4c = Control|Mod1(Alt)|Mod4(Super), with
++# Lock/NumLock ignored so a plain key plus NumLock still reaches the window.
++# Ctrl-2 and Ctrl-4 keep their own more-specific chords below (make_editable,
++# ase::direct_plot_for_current), which win by Tk specificity.
++bind .drw <Key-1> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key annotation}; break}
++bind .drw <Key-2> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key summary};    break}
++bind .drw <Key-3> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key all};        break}
++bind .drw <Key-4> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key refresh};    break}
++
+ # Alt-minus : step the highlight STYLE cursor back one (wrapping). The cursor
+ # auto-advances after each highlight; this re-applies a recently used style to the
+ # next highlight. Bound for both the main-row minus and the numeric-keypad minus.
+diff --git a/src/rdw.tcl b/src/rdw.tcl
+index b0beafa7..8ca03d67 100644
+--- a/src/rdw.tcl
++++ b/src/rdw.tcl
+@@ -991,3 +991,379 @@ proc rdw::inert {what} {
+     return [rdw::status \
+         "$what: the button column is built but not wired yet (item B5 wires it)."]
+ }
++
++# ===========================================================================
++# ITEM B4 -- THE KEYS AND THE TWO GRAMMARS
++# ===========================================================================
++# Ruling D-2, the user's own choice: this window takes bare 1 / 2 / 3 / 4 IN
++# THE CADENCE PROFILE ONLY.  Stock xschem keeps `logic_set`.  The four binds
++# live in src/cadence_style_rc; everything they do once the event has arrived
++# lives here, so the grammar is testable with no Tk at all.
++#
++#   1 -> annotation list   2 -> summary list   3 -> everything
++#   4 -> refresh: keep only the most recent dump
++#
++# TWO GRAMMARS, THE USER'S OWN WORDS FOR BOTH.
++#   NOUN-VERB  exactly one instance selected, press a key, dump it.
++#   VERB-NOUN  nothing selected, press a key: enter a COMMAND MODE and click
++#              devices.  "This is a command mode, so clicking will not change
++#              selected set."  So the click is resolved with the READ-ONLY
++#              `xschem instance_at` (findnet.c:553, override_lock=1), which
++#              writes neither `.sel` nor `sel_array`.  Its mutating twin was
++#              measured at one instance's bbox centre answering `poly 0 2 698`
++#              and setting lastsel 1 -- it does not merely select, it selects a
++#              DIFFERENT OBJECT than the instance under the cursor.  Do not
++#              reach for it here, and row K10 is the structural fence that says
++#              so.
++#   REFUSE     more than one selected, or a selection that is not an instance:
++#              ONE short CIW line, no block, and the selection untouched.
++#
++# WHERE EACH REFUSAL GOES, AND WHY THE TWO CHANNELS ARE NOT DOUBLE-BOOKED.
++# Item B3 already minted five window sentences for "there is nothing to say
++# about this device", and PLAN forbids rewording them ad hoc.  The user asked
++# for "a short message in CIW if more than one selected or nothing is
++# available".  Echoing both says the same fact twice, so the split is:
++#   a DEVICE was resolved  -> the WINDOW answers, in B3's locked sentence, and
++#                             the CIW stays silent (this includes a device with
++#                             no descriptor and a run with no raw);
++#   NO device was resolved -> ONE CIW line, no block, no window.
++# That is the second half of the user's sentence landing in the window rather
++# than the CIW, and it is this item's E question: see the ledger row.
++#
++# WHAT THE KEYS DELIBERATELY DO NOT DO.  Keys 1, 2 and 3 select a list
++# IDENTITY through rdw::set_list -- B3's ONE setter -- and narrow no CONTENT.
++# The narrowing has exactly one definition in this tree (the list store's
++# `effective`, plus ruling DD-6's display key that item B2b built), and row S1
++# of this file's own suite forbids naming op_param_lists:: here at all.  A
++# second definition of "the annotation list" living in this file is precisely
++# the two-builders drift invariant I1 exists to prevent, and a block LABELLED
++# with a list whose content is identical for all three would imply a narrowing
++# that did not happen -- the DD-1 failure shape.  Filed as issue 1300.
++#
++# Suite: tests/headless/test_rdw_window_1245.tcl section K (both arms) and
++# tests/headless/test_rdw_keys_1245.tcl (the binds, the mode, the pick and the
++# descend; :99 only, because src/cadence_style_rc cannot be sourced under
++# --nogui -- it dies at its first `bind`).
++
++namespace eval rdw {
++    # THE COMMAND MODE'S WHOLE STATE.  One array, not a per-session dict:
++    # there is one canvas pick mode at a time, exactly as ASE Direct Plot has
++    # one `sod(active)`.
++    #   canvas     the widget the seize is currently on
++    #   prevpress prevrel prevesc   the three predecessors, handed back verbatim
++    #   suspended  set only between cmdmode's suspend and resume arms
++    variable pick
++    if {![info exists pick]} { array set pick {} }
++}
++
++# ---------------------------------------------------------------------------
++# THE ONE REFUSAL CHANNEL.  Every "there is no device to ask about" line in
++# this item goes through here, so the wording cannot drift between the two
++# grammars and a suite can observe the channel by stubbing one command.
++# `ciw_echo` (ciw.tcl:502) is defined under --nogui and silently returns when
++# there is no CIW widget, so this is safe on every arm.
++proc rdw::_ciw {msg} {
++    catch {ciw_echo $msg}
++    return {}
++}
++
++# ---------------------------------------------------------------------------
++# WHAT IS SELECTED, IN THE FOUR ANSWERS THE KEYS HAVE TO TELL APART:
++#   {none {}}  {one <instname>}  {many {}}  {notinst {}}
++#
++# ⚠ THE MEASUREMENT IS COPIED FROM cadence::one_instance_selected
++# (utils/cadence_nav.tcl:38), NOT ITS CALL.  This file is installed and is
++# sourced by stock xschem; utils/cadence_nav.tcl is neither, so calling across
++# would make an installed helper depend on a profile file that may not be
++# there.  The measurement itself is `xschem get lastsel` and then the row's
++# TYPE -- never `llength [xschem selected_set]`, which throws on an instance
++# name holding an unbalanced brace (issue 0388) and which filters wires away
++# entirely, so a single selected WIRE would read as "nothing selected" and the
++# key would arm the pick mode over a live selection.
++proc rdw::_selected_instance {} {
++    set n 0
++    catch {set n [xschem get lastsel]}
++    if {![string is integer -strict $n] || $n <= 0} { return [list none {}] }
++    if {$n != 1} { return [list many {}] }
++    set rows {}
++    catch {set rows [xschem selection]}
++    set row [lindex $rows 0]
++    if {[lindex $row 0] ne {instance}} { return [list notinst {}] }
++    set name {}
++    catch {set name [xschem getprop instance [lindex $row 1] name]}
++    if {[string trim $name] eq {}} { return [list notinst {}] }
++    return [list one $name]
++}
++
++# ---------------------------------------------------------------------------
++# Hand the keyboard back to the design canvas.
++#
++# ⚠ `-force`, AND THE REASON IS MEASURED IN ASE.  rdw::open ends in
++# `focus .rdw`, and the command mode's Escape binding lives on the CANVAS.  A
++# dump that leaves keyboard focus on the results toplevel therefore leaves a
++# mode the user cannot escape -- ase_window.tcl:1908-1912 records the same
++# failure from the other side.  A plain `focus $cv` only moves the focus WITHIN
++# a toplevel, so it cannot undo a focus that has already crossed to another
++# one; `-force` can.  This is a hand-back, not a steal: the key that started
++# this was pressed on the canvas.
++proc rdw::_focus_canvas {} {
++    if {![rdw::have_tk]} { return {} }
++    set cv {}
++    catch {set cv [xschem get current_win_path]}
++    if {$cv eq {} || ![winfo exists $cv]} { return {} }
++    catch {focus -force $cv}
++    return $cv
++}
++
++# ---------------------------------------------------------------------------
++# NOUN-VERB.  Open the window FIRST and dump second: rdw::render_pane no-ops
++# when .rdw.p.t does not exist, so a key that dumped without opening would put
++# the block in the store and NOTHING on screen.
++proc rdw::show {instname} {
++    rdw::open
++    set blk [rdw::dump $instname]
++    rdw::_focus_canvas
++    return $blk
++}
++
++# ---------------------------------------------------------------------------
++# KEY 4.  Trim the store to the most recent block.
++#
++# ⚠ WHICH END IS NEWEST IS ASKED OF rdw::_insert_index, THE SAME ACCESSOR
++# rdw::push BRANCHES ON.  A hard-coded `lrange $blocks 0 0` is right today and
++# silently keeps the OLDEST block the day the accessor is flipped -- exactly
++# the gap issue 1283 filed against row Q1b.  Invariant I1: one definition of
++# "newest", several consumers.
++#
++# It always NAMES what it did in the status line, empty store included: a
++# control that silently does nothing cannot be told from a broken one
++# (calc::inert's own reason, calculator.tcl:607).
++proc rdw::keep_latest {} {
++    variable blocks
++    set n [llength $blocks]
++    if {$n > 1} {
++        if {[rdw::_insert_index] eq {1.0}} {
++            set blocks [lrange $blocks 0 0]
++        } else {
++            set blocks [lrange $blocks end end]
++        }
++    }
++    rdw::render_pane
++    if {$n > 1} {
++        rdw::status "Refresh: kept the most recent dump and cleared [expr {$n - 1}] earlier one(s)."
++    } elseif {$n == 1} {
++        rdw::status {Refresh: the window already shows one dump - there was nothing to clear.}
++    } else {
++        rdw::status {Refresh: the window is already empty - there was nothing to clear.}
++    }
++    return {}
++}
++
++# ---------------------------------------------------------------------------
++# THE KEY ITSELF.  `kind` is annotation | summary | all | refresh.
++proc rdw::key {kind} {
++    if {$kind eq {refresh}} {
++        rdw::open
++        rdw::keep_latest
++        rdw::_focus_canvas
++        return {}
++    }
++    ## B3's ONE list-identity setter.  A second state variable here would be
++    ## the drift invariant I1 forbids, and the button greying reads this one.
++    if {[catch {rdw::set_list $kind} e]} {
++        return [rdw::_ciw "Results window: $e"]
++    }
++    lassign [rdw::_selected_instance] what name
++    switch -exact -- $what {
++        one  { rdw::show $name ; return {} }
++        none { rdw::pick_start ; return {} }
++        many {
++            return [rdw::_ciw {Results window: more than one object is selected - select exactly one device instance, or select nothing at all and press the key again to pick devices by clicking.}]
++        }
++    }
++    return [rdw::_ciw {Results window: the selected object is not a device instance - select one instance, or select nothing at all and press the key again to pick devices by clicking.}]
++}
++
++# ---------------------------------------------------------------------------
++# THE PICK'S TWO NAMED READERS.  Both exist as named callees rather than
++# inline calls so that a sabotage variant has something to neutralise and so
++# that row K10 can fence WHICH verb the canvas is read through.
++
++# ⚠ THE CLICK BOX IS A CACHE, AND THREE MEASURED OPERATIONS MOVE IT WITHOUT
++# REFRESHING IT.  find_closest_element() gates candidates on the CACHED
++# inst[i].x1..y2 (findnet.c:461) and nothing recomputes that cache except a
++# symbol_bbox() call.  Item A6 closed every symbol_bbox() door from inside the
++# callee (select.c:723), which does not help when nothing calls it:
++#   * issue 1266 -- `xschem annotate_op` and `xschem raw clear` move the gate's
++#     answer while calling symbol_bbox() NOT AT ALL.  Driven both directions: a
++#     click lands on blank canvas one way and misses visible text the other.
++#   * issue 1260 -- `xschem setprop instance` and `xschem move_instance
++#     ... nodraw` still write the click box from a stale gate.
++#   * item A3 -- with the declutter on, a device's with-text box SHRINKS to
++#     what is still drawn, so a fixture written against pre-A3 coordinates
++#     misses.
++# So the gate is refreshed before EVERY pick, not once at mode entry: the mode
++# seizes only Button-1 and Escape, so 6 / Ctrl-6 / Ctrl-Alt-6 and any
++# annotate_op still move the gate WHILE the mode is live, and a first-pick-only
++# refresh is stale by the second click.  Rows P1 and P2 are those two cases.
++proc rdw::_refresh_pick_gate {} {
++    catch {xschem update_all_sym_bboxes}
++    return {}
++}
++
++# THE READ-ONLY COORDINATE PICK.  Answers an instance name or the empty string
++# and changes nothing at all -- no selection, no highlight, no modify flag.
++proc rdw::_pick_at {x y} {
++    set r {}
++    catch {set r [xschem instance_at $x $y]}
++    return $r
++}
++
++# ---------------------------------------------------------------------------
++# THE SEIZE.  Copied from ase::ui::select_on_design (ase_window.tcl:1877): latch
++# the three predecessors, take Button-1 and Escape, take the lone RELEASE too
++# (the press it pairs with was swallowed, so it must not reach C on its own),
++# and give the canvas keyboard focus or a real ESC never arrives.
++#
++# ⚠ Measured on this tree: `.drw` is a FRAME whose shipped bindings are the
++# GENERIC <Button> and <Key>, so all three predecessors are the EMPTY STRING.
++# `bind w seq {}` DESTROYS a binding, which is what makes the restore
++# byte-identical -- a restore that writes an empty script back would leave an
++# empty-but-PRESENT binding that passes a string comparison and fails the
++# sequence-list one.  Row V6 holds both legs.
++proc rdw::_pick_seize {cv} {
++    variable pick
++    set pick(canvas)    $cv
++    set pick(prevpress) [bind $cv <ButtonPress-1>]
++    set pick(prevrel)   [bind $cv <ButtonRelease-1>]
++    set pick(prevesc)   [bind $cv <Key-Escape>]
++    bind $cv <ButtonPress-1>   "[list rdw::pick_click]; break"
++    bind $cv <ButtonRelease-1> {break}
++    bind $cv <Key-Escape>      "[list rdw::pick_end]; break"
++    catch {focus -force $cv}
++    return $cv
++}
++
++# Arm the mode.  1 when it is armed (or already was), 0 when it could not be.
++#
++# ⚠ AN ALREADY-LIVE MODE RE-ARMS IN PLACE AND DOES NOT RELEASE AND RETAKE.
++# ASE's select_on_design self-serialises by ENDING the previous mode first
++# (ase_window.tcl:1879); copying that here would drop the pick every time the
++# user pressed a different list key, releasing and retaking the same seize for
++# nothing.  ESC is the only exit -- that is what "this is a command mode"
++# means, and it is the user's own phrase.
++proc rdw::pick_start {} {
++    variable pick
++    if {![rdw::have_tk]} { return 0 }
++    if {[info exists pick(canvas)] && ![info exists pick(suspended)]} { return 1 }
++    set cv {}
++    catch {set cv [xschem get current_win_path]}
++    if {$cv eq {} || ![winfo exists $cv]} { return 0 }
++    rdw::_pick_seize $cv
++    rdw::_ciw {Results window: click a device to show its operating-point columns; ESC ends. Clicking does not change the selection.}
++    return 1
++}
++
++# ONE CLICK.  Coordinates default to the snapped mouse position, which is the
++# only pair scheduler.c exposes (mousex_snap / mousey_snap, :5018 and :5022) --
++# defaulting rather than requiring them is what lets a suite drive this proc
++# with exact coordinates AND through real events.
++#
++# A MISS IS NOT THE END OF THE COMMAND.  Empty canvas and a wire are the same
++# answer here (the reader resolves instances only), and both keep the mode
++# live: a mode that ended on a mis-click would be unusable.
++proc rdw::pick_click {{x {}} {y {}}} {
++    if {$x eq {}} { catch {set x [xschem get mousex_snap]} }
++    if {$y eq {}} { catch {set y [xschem get mousey_snap]} }
++    if {$x eq {} || $y eq {}} { return {} }
++    rdw::_refresh_pick_gate
++    set inst [rdw::_pick_at $x $y]
++    if {[string trim $inst] eq {}} {
++        return [rdw::_ciw {Results window: no device under the click - click on a device body, or press ESC to leave.}]
++    }
++    rdw::show $inst
++    return $inst
++}
++
++# Hand the three bindings back, verbatim and under catch (the canvas may be
++# dead).  ONE proc shared by the end path and the suspend path, exactly as
++# ase::ui::sod_release is, so the two cannot drift.  Returns 1 only if it
++# released a live mode.
++proc rdw::pick_release {} {
++    variable pick
++    if {![info exists pick(canvas)]} { return 0 }
++    set cv $pick(canvas)
++    catch {bind $cv <ButtonPress-1>   $pick(prevpress)}
++    catch {bind $cv <ButtonRelease-1> $pick(prevrel)}
++    catch {bind $cv <Key-Escape>      $pick(prevesc)}
++    return 1
++}
++
++# Leave the mode.  Safe to call when nothing is live, on every arm.
++proc rdw::pick_end {} {
++    variable pick
++    set r [rdw::pick_release]
++    array unset pick
++    return $r
++}
++
++# ---------------------------------------------------------------------------
++# THE SUSPEND/RESUME CONTRACT (src/cmdmode.tcl, issue 0201).  A descend
++# mid-mode must pause the seize and put it back on the canvas it LANDS on.
++#
++# ⚠ THE SUSPEND ARM NOW RUNS ON EVERY DESCEND IN EVERY PROFILE FOREVER, so
++# "0 and no damage when there is nothing to release" is a permanent obligation,
++# not a convenience.
++proc rdw::pick_suspend {} {
++    variable pick
++    if {![info exists pick(canvas)]} { return 0 }
++    if {[info exists pick(suspended)]} { return 0 }
++    if {![rdw::pick_release]} { return 0 }
++    set pick(suspended) 1
++    return 1
++}
++
++# ⚠ THE PREDECESSORS ARE RE-LATCHED FROM THE CANVAS WE ARE LANDING ON, not
++# carried over from the one the mode was seized on: a new window or tab has its
++# own binding set (set_bindings + clone_canvas_bindings), and the predecessors
++# latched on the parent do not describe it.  ase::ui::sod_resume:2038 records
++# the same, and it is the load-bearing half of ruling D2 of issue 0201.
++proc rdw::pick_resume {{canvas {}}} {
++    variable pick
++    if {![info exists pick(suspended)]} { return 0 }
++    if {$canvas eq {} || ![winfo exists $canvas]} {
++        set canvas {}
++        catch {set canvas $pick(canvas)}
++    }
++    if {$canvas eq {} || ![winfo exists $canvas]} {
++        ## Nowhere left to come back to -- the window was closed while the mode
++        ## was paused.  Drop it rather than leave an unreachable record behind.
++        array unset pick
++        return 0
++    }
++    unset -nocomplain pick(suspended)
++    rdw::_pick_seize $canvas
++    return 1
++}
++
++# ⚠ AT SOURCE TIME, AND THAT IS SAFE.  cmdmode.tcl is pure Tcl and is sourced
++# at xschem.tcl:16760, BEFORE this file at :16790; ase_window.tcl:2055 already
++# registers the same way.  Nothing here touches Tk, so --nogui is unaffected --
++# and the registration being source-time is what lets the headless arm prove it
++# happened at all.
++#
++# ⚠ BUT IT IS GUARDED, AND NOT FOR TIDINESS.  Row N2 of this file's own suite
++# sources rdw.tcl into a BARE `interp create` slave -- an interpreter with
++# neither `winfo` nor `xschem` -- as the non-brittle proof that nothing here
++# runs at source time.  That slave has no cmdmode either, so an unguarded
++# `cmdmode::register` would fail the very row that polices this file's --nogui
++# survival.  The guard is therefore a statement about WHERE this file can be
++# loaded, not a silent fallback: it returns 0 when the contract is absent, and
++# the caller can say so.  Inside xschem the contract is always there, which is
++# what the headless arm of row K9 measures.
++proc rdw::_register_cmdmode {} {
++    if {![llength [info commands ::cmdmode::register]]} { return 0 }
++    ::cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume
++    return 1
++}
++rdw::_register_cmdmode
+diff --git a/tests/headless/test_rdw_keys_1245.tcl b/tests/headless/test_rdw_keys_1245.tcl
+new file mode 100644
+index 00000000..0b03608c
+--- /dev/null
++++ b/tests/headless/test_rdw_keys_1245.tcl
+@@ -0,0 +1,889 @@
++# tests/headless/test_rdw_keys_1245.tcl — item B4 of
++# doc/claude/op_param_batch/PLAN.md (feature 1245, the Results Display Window):
++# THE KEYS AND THE TWO GRAMMARS.
++#
++# Ruling D-2, the user's own choice: the RDW takes bare 1 / 2 / 3 / 4 IN THE
++# CADENCE PROFILE ONLY. Stock xschem keeps logic_set. Rulings DD-1 and DD-5 (as
++# corrected) reach this item through rdw::dump, which already renders both.
++#
++# ============================================================================
++# WHY THIS IS A SEPARATE FILE FROM test_rdw_window_1245.tcl
++# ============================================================================
++# src/cadence_style_rc CANNOT BE SOURCED UNDER --nogui. It dies at its first
++# `bind` (line 129) with `invalid command name "bind"`, so every binding row,
++# every command-mode row and every `event generate` row is :99-only. B3's suite
++# runs its majority on BOTH arms and PLAN records that split as load-bearing —
++# measured, each arm catches a defect the other passes. Putting the keys in
++# there would have killed the headless arm. So: the noun-verb grammar's pure
++# and context halves, and every new proc that needs no Tk, went into B3's suite
++# as section K on BOTH arms; the BINDINGS, the COMMAND MODE, the PICK and the
++# DESCEND live here, on :99 only.
++#
++#   display :  GUI_GATE=0 tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script tests/headless/test_rdw_keys_1245.tcl
++# ⚠ Never a bare `./src/xschem --script` (it inherits $DISPLAY, the user's real
++# Windows X server) and never a bare `xschem` on PATH (3.4.6, issue 0924).
++# full_audit.sh selects by GLOB and is NOT edited; this file joins none of its
++# three named lists, so it runs on the display arm. The denominator moves
++# 381 -> 382: diff the baseline BY NAME, never by count.
++#
++# ============================================================================
++# THE CONTRACT THIS FILE FENCES — the procs item B4 must add to src/rdw.tcl
++# ============================================================================
++#   rdw::key <kind>          kind is annotation | summary | all | refresh.
++#                            The first three drive rdw::set_list (B3's ONE
++#                            list-identity setter) and then branch on the
++#                            selection; `refresh` leaves the list alone and
++#                            trims the store to the newest block.
++#   rdw::_selected_instance  -> a two element list, one of
++#                              `none {}` / `one <name>` / `many {}` /
++#                              `notinst {}`
++#   rdw::show <instname>     open the window, rdw::dump, hand focus back
++#   rdw::pick_start          arm the command mode; 1 if armed, 0 if it could not
++#   rdw::pick_click ?x? ?y?  resolve ONE click, coordinates defaulting to
++#                            mousex_snap / mousey_snap; the mode STAYS LIVE
++#   rdw::pick_release        hand the three bindings back; 1 if it released one
++#   rdw::pick_end            leave the mode
++#   rdw::pick_suspend        cmdmode arm; 1 only if it released a LIVE mode
++#   rdw::pick_resume <cv>    cmdmode arm; re-latch on the canvas it LANDS on
++#   rdw::_refresh_pick_gate  the ONE named wrapper for update_all_sym_bboxes
++#   rdw::_pick_at <x> <y>    the ONE named wrapper for `xschem instance_at`
++#   rdw::keep_latest         key 4: trim ::rdw::blocks to the newest block
++#   rdw::_ciw <msg>          the ONE refusal channel
++#   and, at SOURCE time (safe: cmdmode.tcl is pure Tcl and is sourced BEFORE
++#   rdw.tcl, exactly as ase_window.tcl:2055 already does),
++#     cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume
++#
++# ============================================================================
++# THE FOUR MEASUREMENTS THIS FILE IS BUILT ON. ALL RE-RUN 2026-09-04, AT HEAD
++# 735ea26e, ON THIS BINARY. NONE IS TRANSCRIBED FROM A PLAN.
++# ============================================================================
++# 1. THE DISPLACED VERB IS OBSERVABLE, AND WITHOUT A SPY IT IS NOT.
++#    callback.c:7440 runs logic_set() for a bare 0-4 and hilight.c:2505 is its
++#    FIRST statement: tclsetvar("tclstop", "0"). So setting ::tclstop to a
++#    sentinel, pressing the key and reading it back says whether the C verb ran.
++#    Measured with cadence_style_rc sourced and no bind in the way: bare 1, 2, 3
++#    and 4 each set ::tclstop to 0. `logic_set` is C and is NOT reachable by a
++#    Tcl rename, so this is the only spy there is.
++# 2. THE ALT-CHORD VACUITY TRAP. `event generate .drw <Alt-Key-2>` produces
++#    Tk's VIRTUAL Alt bit (131072), not Mod1Mask, and never reaches the C
++#    dispatcher: measured, it scored ZERO hits on a renamed alt2_toggle_view
++#    with NOTHING bound in its way. `-state 8` scored one. A guard row written
++#    the first way passes while the guard is absent.
++# 3. THE CTRL COLLATERAL IS ONLY REAL FOR 1 AND 3. From rectcolor 7: Ctrl-1
++#    -> 1, Ctrl-2 -> unchanged, Ctrl-3 -> 3, Ctrl-4 -> unchanged. Ctrl-2 and
++#    Ctrl-4 never reach C because cadence_style_rc:256 and :268 already own
++#    them (make_editable, ase::direct_plot_for_current).
++# 4. THE PICK GATE REALLY GOES STALE, and this file reproduces it rather than
++#    citing it. On the fixture below, with the OP annotated and mask 9 set
++#    THROUGH `xschem set annot_show`: refresh -> M1's box is 277.5 -340
++#    354.587 -280; `xschem raw clear` leaves that box UNCHANGED while the text
++#    comes back on screen, so a click at 213.75 -310 answers the EMPTY STRING
++#    over visible text; ONE `xschem update_all_sym_bboxes` widens the box to
++#    150 -380 496.5 -232.869 and the same click answers M1. That is issue 1266
++#    driven in reverse, live at HEAD, and it is row P1.
++#    ⚠ The point is COMPUTED from `xschem instance_bbox` at run time, never
++#    transcribed: item A3's own numbers moved once already.
++#
++# ============================================================================
++# WHAT IS RED BEFORE B4, AND WHY EACH ONE IS RED
++# ============================================================================
++# Measured against the unmodified tree: `bind .drw <Key-1>` .. `<Key-4>` are
++# the EMPTY STRING both before AND after sourcing src/cadence_style_rc, while
++# <Key-6> and <Key-9> in the same file are not — so the file loads and it is
++# exactly these four keys that are unbound. src/rdw.tcl contains zero `bind`,
++# zero `cmdmode`, zero `instance_at` and zero `update_all_sym_bboxes`, and
++# `cmdmode::registered` answers `ase_sod` alone.
++#   GREEN BEFORE THE CHANGE — controls and today's-behaviour rows, evidence
++#   for NOTHING about B4; each says only that B4 broke nothing:
++#     FX0   the canvas is mapped (without it every row below is vacuous)
++#     B1    the CONTROL half: the four binds are empty BEFORE the source
++#     B3    Ctrl-1 / Ctrl-3 still select a drawing layer
++#     B4    Ctrl-2 still makes the view editable, Ctrl-4 still enters ASE
++#     B5    Alt-2 still runs view.toggle_view_type
++#     S1    hygiene, and the event-delivery control
++#   B3, B4 and B5 are the rows a GREEDY bind kills, so they are green now and
++#   must STAY green: they are the fence around the collateral, not the feature.
++#   EVERYTHING ELSE IS RED: the four binds, the mode, the pick, the refresh
++#   and the descend round trip do not exist.
++
++if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; canvas bindings and real key events)"; flush stdout; exit 0 }
++
++# ⚠ WAIT FOR THE CANVAS TO BE MAPPED, and assert it at FX0 — do not merely hope.
++# Copied from test_cmdmode_descend_0201.tcl:76. `update idletasks` processes NO
++# X events at all, so the MapNotify that gives .drw its real size can still be
++# in the queue when a --script starts. Everything downstream of an unmapped
++# canvas is nonsense: zoom_full fits the drawing into one pixel, every sx/sy
++# computes 0 and every synthesised click lands on the corner.
++for {set _kx 0} {$_kx < 200} {incr _kx} {
++  if {[winfo ismapped .drw] && [winfo width .drw] > 1 && [winfo height .drw] > 1} break
++  update ; after 25
++}
++update idletasks
++focus -force .drw
++update idletasks
++
++set fail 0; set npass 0
++proc check {name got exp} {
++  global fail npass
++  if {$got eq $exp} { puts "ok:   $name"; incr npass } \
++  else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
++}
++
++set no_recent_files 1                       ;# issue 0119: keep Open Recent clean
++
++set here [file normalize [file dirname [info script]]]
++set repo [file normalize [file join $here .. ..]]
++source [file join $here scratch.tcl]
++set scratch [test_scratch rdw_keys_1245]
++set ::netlist_dir $scratch
++set KX_RC [file join $repo src cadence_style_rc]
++
++## Taken BEFORE anything can write a file (hygiene row S1).
++set S1_ROOT0 [lsort [glob -nocomplain -directory $repo -tails untitled*]]
++
++check {FX0 the canvas is mapped and really sized before anything is measured - every row below is silently vacuous without it} \
++  [list [winfo ismapped .drw] [expr {[winfo width .drw] > 1 && [winfo height .drw] > 1 ? 1 : 0}]] \
++  {1 1}
++
++# ============================================================================
++# THE ANSWER DISCIPLINE — AN ABSENT MODE MUST NEVER SATISFY A ROW
++# ============================================================================
++# Same two rules as B3's suite. A bare call to a proc that does not exist
++# raises, and a raise at global level under --pipe stops Tcl_AppInit DEAD: the
++# file dies mid-run with `ok` lines and NO verdict. Every call below goes
++# through a wrapper, and "invalid command name ..." must not be able to satisfy
++# a row expecting the empty string.
++proc kx_ans {cmd args} {
++  if {![llength [info commands $cmd]]} { return NOPROC }
++  set rc [catch {uplevel #0 [linsert $args 0 $cmd]} r]
++  if {$rc} { return "RAISED:$r" }
++  return $r
++}
++proc kx_bad {v} { return [expr {$v eq {NOPROC} || [string match {RAISED:*} $v] ? 1 : 0}] }
++proc kx_body {cmd} {
++  if {![llength [info commands $cmd]]} { return NOPROC }
++  if {[catch {info body $cmd} b]} { return "RAISED:$b" }
++  return $b
++}
++proc kx_slurp {path} {
++  if {![file isfile $path]} { return {} }
++  set fd [open $path r] ; set d [read $fd] ; close $fd ; return $d
++}
++proc kx_has {hay needle} { return [expr {[string first $needle $hay] >= 0 ? 1 : 0}] }
++proc kx_oneline {s} { return [expr {[string first "\n" $s] < 0 && [string trim $s] ne {} ? 1 : 0}] }
++
++## Screen coordinates from user coordinates, and the two mouse readers. There is
++## no un-snapped pair: scheduler.c exposes mousex_snap / mousey_snap only.
++proc sx {u} { expr {int(($u + [xschem get xorigin]) / [xschem get zoom])} }
++proc sy {v} { expr {int(($v + [xschem get yorigin]) / [xschem get zoom])} }
++## The pick's own seize, as a predicate. `.drw` is a FRAME whose shipped
++## bindings are the GENERIC <Button> and <Key>, so <ButtonPress-1> is the empty
++## string until something takes it — measured.
++proc seized {{cv .drw}} { expr {[string match {*rdw::pick_click*} [bind $cv <ButtonPress-1>]] ? 1 : 0} }
++## The two things the user's own requirement is read through. `xschem selection`
++## and not `selected_set`: selected_set filters to instances, so a wire, a text
++## or a pin the pick wrongly selected would be INVISIBLE to it — and it is
++## hand-brace-wrapped, so `llength` on it throws for a name holding an
++## unbalanced brace (issue 0388).
++proc kx_sel {} { return [xschem selection] }
++## The Instance: half of `xschem instance_bbox`, as four numbers.
++proc kx_ibox {n} {
++  set r {} ; catch {set r [xschem instance_bbox $n]}
++  if {[regexp {Instance:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)} $r -> a b c d]} { return [list $a $b $c $d] }
++  return NO-BBOX
++}
++proc kx_centre {n} {
++  set b [kx_ibox $n]
++  if {$b eq {NO-BBOX}} { return {0 0} }
++  return [list [expr {([lindex $b 0]+[lindex $b 2])/2.0}] [expr {([lindex $b 1]+[lindex $b 3])/2.0}]]
++}
++## A real mouse click through the seized binding, the way the user's hand does
++## it. <Motion> FIRST so mousex_snap updates before the press — without it the
++## pick reads the previous point and every "the click picked X" leg is a lie
++## about a click that landed somewhere else (test_sod_pick_no_select_0204 SO11).
++proc kx_click {ux uy {cv .drw}} {
++  event generate $cv <Motion>          -x [sx $ux] -y [sy $uy] -when now
++  update
++  event generate $cv <ButtonPress-1>   -x [sx $ux] -y [sy $uy] -when now
++  event generate $cv <ButtonRelease-1> -x [sx $ux] -y [sy $uy] -when now
++  update
++}
++
++# ============================================================================
++# SECTION B — THE FOUR BINDS, AND EVERY CHORD THEY COULD HAVE EATEN
++# ============================================================================
++# B1's first half is the CONTROL that makes all of section B non-vacuous: the
++# four binds must be EMPTY before the profile is sourced. If they were already
++# bound by something else, "after sourcing they are bound" would say nothing.
++set B1_PRE {}
++foreach k {1 2 3 4} { lappend B1_PRE [bind .drw <Key-$k>] }
++
++set KX_SRC [catch {source $KX_RC} KX_SRCERR]
++update idletasks
++
++# ============================================================================
++# THE PREDECESSORS, TAKEN AFTER THE PROFILE IS SOURCED AND BEFORE ANYTHING ARMS
++# ============================================================================
++# ⚠ AFTER, not before: src/cadence_style_rc adds a dozen bindings to `.drw`, so
++# a sequence list captured before it can never come back. The predecessors the
++# seize must hand back are whatever is on the canvas at the moment the mode
++# arms, which is here.
++#
++# The restore assertion has TWO legs on purpose. `bind w seq {}` DESTROYS a
++# binding, so when the predecessor was the empty string a correct restore
++# removes the sequence from `[bind .drw]` entirely - while a restore that
++# writes an empty script back leaves an empty-but-PRESENT binding, which
++# satisfies a string comparison and fails the sequence-list comparison. Row V6
++# holds both. Measured on this tree: `.drw` is a FRAME whose shipped bindings
++# are the GENERIC <Button> and <Key>, so all three predecessors really are the
++# empty string and the destroy-versus-empty distinction is live.
++set PRE_P [bind .drw <ButtonPress-1>]
++set PRE_R [bind .drw <ButtonRelease-1>]
++set PRE_E [bind .drw <Key-Escape>]
++set PRE_SEQ [lsort [bind .drw]]
++
++set B1_POST {} ; set B1_BRK {}
++foreach k {1 2 3 4} {
++  set s [bind .drw <Key-$k>]
++  lappend B1_POST [expr {$s ne {} ? 1 : 0}]
++  lappend B1_BRK  [expr {[string match {*break*} $s] ? 1 : 0}]
++}
++check {B1 CONTROL before src/cadence_style_rc is sourced the four bare digit binds are the empty string, after it all four are bound and every one ends in break - the control that makes every row below non-vacuous} \
++  [list $KX_SRC $B1_PRE $B1_POST $B1_BRK] \
++  [list 0 {{} {} {} {}} {1 1 1 1} {1 1 1 1}]
++
++## THE SPY ON THE NEW DOOR. rdw::key is renamed aside for section B so a press
++## can be observed without running the whole round trip; the real proc is put
++## back before section V.
++proc kx_spy_key {} {
++  set ::B_KEYHITS {}
++  if {[llength [info commands ::rdw::key]] && ![llength [info commands ::rdw::key_kxreal]]} {
++    rename ::rdw::key ::rdw::key_kxreal
++  }
++  proc ::rdw::key {kind} { lappend ::B_KEYHITS $kind ; return {} }
++}
++proc kx_unspy_key {} {
++  catch {rename ::rdw::key {}}
++  if {[llength [info commands ::rdw::key_kxreal]]} { rename ::rdw::key_kxreal ::rdw::key }
++}
++kx_spy_key
++
++## THE SPY ON THE DISPLACED VERB. logic_set is C and cannot be renamed; its
++## first statement sets the Tcl variable ::tclstop to 0 (hilight.c:2505), so a
++## sentinel says whether it ran. Measured today: with no bind in the way all
++## four bare digits set it.
++proc kx_logic_ran {k} {
++  set ::tclstop KX_SPY_SENTINEL
++  event generate .drw <Key-$k> -state 0 -when now
++  update
++  return [expr {$::tclstop eq {KX_SPY_SENTINEL} ? 0 : 1}]
++}
++set B2_HITS {} ; set B2_LOGIC {}
++foreach k {1 2 3 4} {
++  set ::B_KEYHITS {}
++  lappend B2_LOGIC [kx_logic_ran $k]
++  lappend B2_HITS $::B_KEYHITS
++}
++check {B2 a bare 1/2/3/4 reaches rdw::key with the right list and the displaced C verb does NOT run - logic_set spied through its own first statement, measured not assumed} \
++  [list $B2_HITS $B2_LOGIC] \
++  [list {annotation summary all refresh} {0 0 0 0}]
++
++## Ctrl-1 and Ctrl-3 are the only two Ctrl-digit chords in 1..4 that reach C at
++## all: cadence_style_rc:256 and :268 already own Ctrl-2 and Ctrl-4. Measured
++## from rectcolor 7 with nothing bound: 1 -> 1, 2 -> unchanged, 3 -> 3,
++## 4 -> unchanged. A greedy bare bind eats both of the two that do reach.
++xschem set rectcolor 7
++event generate .drw <Key-1> -state 4 -when now ; update
++set B3_C1 [xschem get rectcolor]
++event generate .drw <Key-3> -state 4 -when now ; update
++set B3_C3 [xschem get rectcolor]
++check {B3 Ctrl-1 and Ctrl-3 still move rectcolor to 1 and 3 - select drawing layer survives, because the guard forwards any Control/Alt/Super press verbatim into the C dispatcher} \
++  [list $B3_C1 $B3_C3] {1 3}
++
++## Ctrl-2 and Ctrl-4 belong to the profile's OWN more-specific chords. They are
++## rename-stubbed rather than run: direct_plot_for_current would arm a REAL ASE
++## command mode on the canvas this suite is about to seize, and make_editable
++## would flip the view under the rows below.
++set ::B4_EDIT 0 ; set ::B4_PLOT 0
++rename cadence::make_editable cadence::make_editable_kxreal
++proc cadence::make_editable {} { incr ::B4_EDIT }
++rename ase::direct_plot_for_current ase::direct_plot_for_current_kxreal
++proc ase::direct_plot_for_current {} { incr ::B4_PLOT }
++event generate .drw <Key-2> -state 4 -when now ; update
++event generate .drw <Key-4> -state 4 -when now ; update
++set B4_GOT [list $::B4_EDIT $::B4_PLOT]
++rename cadence::make_editable {} ; rename cadence::make_editable_kxreal cadence::make_editable
++rename ase::direct_plot_for_current {} ; rename ase::direct_plot_for_current_kxreal ase::direct_plot_for_current
++check {B4 Ctrl-2 still makes the view editable and Ctrl-4 still enters ASE Direct Plot - the file's own more-specific chords win by Tk specificity and the new bare binds neither overwrite nor shadow them} \
++  $B4_GOT {1 1}
++
++## THE VACUITY TRAP, NAMED IN THE ROW. `event generate .drw <Alt-Key-2>`
++## produces Tk's virtual ALT bit 131072, never reaches C, and scores ZERO even
++## with NOTHING bound in its way - measured both ways today. Mod1Mask is 8 and
++## must be passed explicitly, or this row passes while the guard is absent.
++set ::B5_ALT 0
++rename alt2_toggle_view alt2_toggle_view_kxreal
++proc alt2_toggle_view {} { incr ::B5_ALT }
++event generate .drw <Key-2> -state 8 -when now ; update
++set B5_REAL $::B5_ALT
++event generate .drw <Alt-Key-2> -when now ; update
++set B5_VIRT [expr {$::B5_ALT - $B5_REAL}]
++rename alt2_toggle_view {} ; rename alt2_toggle_view_kxreal alt2_toggle_view
++check {B5 Alt-2 still runs the shipped view.toggle_view_type action, driven with -state 8 because the literal Alt-Key-2 form produces Tk's virtual ALT bit and would score zero with NO bind in the way} \
++  [list $B5_REAL $B5_VIRT] {1 0}
++
++## The source grep sees what no behavioural row can: that the guard is spelled
++## on every one of the four, and that B4 added no <Control-Key-2> or
++## <Control-Key-4> line, which would OVERWRITE a chord the file already owns.
++set B6_RC [kx_slurp $KX_RC]
++set B6_G {} ; set B6_B {}
++foreach k {1 2 3 4} {
++  set ln {}
++  foreach l [split $B6_RC "\n"] {
++    if {[regexp "^\\s*bind\\s+\\.drw\\s+<Key-$k>" $l]} { set ln $l ; break }
++  }
++  lappend B6_G [expr {[kx_has $ln {%s & 0x4c}] ? 1 : 0}]
++  lappend B6_B [expr {[string match {*break*} $ln] ? 1 : 0}]
++}
++proc kx_countlines {hay pat} {
++  set n 0
++  foreach l [split $hay "\n"] { if {[regexp $pat $l]} { incr n } }
++  return $n
++}
++check {B6 SOURCE GREP cadence_style_rc binds Key-1..Key-4, each carrying the modifier guard and a trailing break, and adds no second Control-Key-2 or Control-Key-4 line that would overwrite a chord the file already owns} \
++  [list $B6_G $B6_B \
++        [kx_countlines $B6_RC {^\s*bind\s+\.drw\s+<Control-Key-2>}] \
++        [kx_countlines $B6_RC {^\s*bind\s+\.drw\s+<Control-Key-4>}]] \
++  [list {1 1 1 1} {1 1 1 1} 1 1]
++
++kx_unspy_key
++
++# ============================================================================
++# THE FIXTURE — A PRIVATE SYMBOL, A PRIVATE SHEET, AND A RAW BUILT BY THE ONE
++# NAME BUILDER
++# ============================================================================
++# ⚠ THE DEVPATH TEMPLATE IS ESCAPED, AND THAT IS NOT A TYPO. Registering
++# `devpath {@m.@path@name}` looks healthy and is measurably wrong: `xschem
++# translate` swallows the leading `@m.` and yields `m1`, so ase::op_param_split
++# returns the empty list, the seam answers `state ok` with an EMPTY union and
++# the window prints the fifth silence over a device that has numbers. The
++# escaped spelling `{\@m.@path@name}` yields `@m.m1` and is what
++# gf180_procs.tcl:129 itself ships. test_annot_declutter_1244.tcl:1560
++# registers the UNESCAPED form; do not copy that line.
++#
++# The symbol carries the declutter's whole text set on purpose: with only
++# `@name` on it, mask 9 hides nothing extra and the with-text bbox does not
++# move, so row P1's staleness cannot be reproduced at all. Measured — the same
++# fixture with one text answered the same box in every phase.
++set KX_SYM [file join $scratch b4dev.sym]
++set fd [open $KX_SYM w]
++puts $fd {v {xschem version=3.4.5 file_version=1.2}
++G {}
++K {type=b4dev
++format="@spiceprefix@name @pinlist @model w=@w l=@l"
++template="name=M1 model=b4n w=1u l=0.15u spiceprefix=X"
++}
++V {}
++S {}
++E {}
++L 4 -20 -20 20 -20 {}
++L 4 20 -20 20 20 {}
++L 4 20 20 -20 20 {}
++L 4 -20 20 -20 -20 {}
++B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}
++B 5 -22.5 7.5 -17.5 12.5 {name=g dir=inout}
++T {@name} 0 -40 0 0 0.2 0.2 {}
++T {@symname} 0 -25 0 0 0.2 0.2 {}
++T {@spiceprefix@name} 0 -10 0 0 0.2 0.2 {}
++T {B4OPTEXT} 0 5 0 0 0.2 0.2 {hide=op}
++T {B4VOLTTEXT} 0 20 0 0 0.2 0.2 {hide=voltage}
++T {B4TRUETEXT} 0 35 0 0 0.2 0.2 {hide=true}
++T {B4W=@w} 150 55 0 0 0.2 0.2 {}
++T {B4GATE} -150 -80 0 0 0.2 0.2 {}}
++close $fd
++
++set KX_SUBSCH [file join $scratch b4sub.sch]
++set fd [open $KX_SUBSCH w]
++puts $fd "v {xschem version=3.4.5 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++C \{$KX_SYM\} 100 -100 0 0 \{name=M3\}"
++close $fd
++
++set KX_SUBSYM [file join $scratch b4sub.sym]
++set fd [open $KX_SUBSYM w]
++puts $fd {v {xschem version=3.4.5 file_version=1.2}
++G {}
++K {type=subcircuit
++format="@name @pinlist @symname"
++template="name=X1"
++}
++V {}
++S {}
++E {}
++L 4 -40 -40 40 -40 {}
++L 4 40 -40 40 40 {}
++L 4 40 40 -40 40 {}
++L 4 -40 40 -40 -40 {}
++T {@name} 0 -55 0 0 0.2 0.2 {}}
++close $fd
++
++set KX_SCH [file join $scratch b4top.sch]
++set fd [open $KX_SCH w]
++puts $fd "v {xschem version=3.4.5 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++N 600 -400 800 -400 {}
++C \{$KX_SYM\} 300 -300 0 0 \{name=M1\}
++C \{$KX_SYM\} 300 -120 0 0 \{name=M2\}
++C \{devices/res\} 700 -100 0 0 \{name=R1
++value=10\}
++C \{$KX_SUBSYM\} 700 -250 0 0 \{name=X1\}"
++close $fd
++
++set fd [open [file join $scratch library.defs] w]
++puts $fd "DEFINE devices [file join $repo xschem_libs_newsym devices]"
++close $fd
++set ::XSCHEM_LIBRARY_DEFS [file join $scratch library.defs]
++set ::library_registry_defs_only 1
++set ::XSCHEM_LIBRARY_PATH {}
++
++xschem load $KX_SCH
++xschem zoom_full ; update idletasks
++catch {op_annot::register b4dev \
++  [list devpath {\@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
++
++## M3's vector names come from op_annot::vector while DESCENDED, so the raw
++## cannot drift from the descriptor (invariant I1, one name builder) and the
++## descended dump at row D1 renders real numbers rather than the fifth silence.
++xschem unselect_all
++xschem select instance X1
++catch {xschem descend}
++update idletasks
++set KX_M3V {}
++catch {set KX_M3V [list [op_annot::vector M3 zid] [op_annot::vector M3 zgm]]}
++catch {xschem go_back}
++update idletasks
++xschem unselect_all
++
++set KX_PAIRS {}
++foreach d {M1 M2} vi {1.11e-05 2.22e-05} vg {3.33e-04 4.44e-04} {
++  catch {lappend KX_PAIRS [op_annot::vector $d zid] $vi [op_annot::vector $d zgm] $vg}
++}
++if {[llength $KX_M3V] == 2} {
++  lappend KX_PAIRS [lindex $KX_M3V 0] 5.55e-05 [lindex $KX_M3V 1] 6.66e-04
++}
++set KX_RAW [file join $scratch b4.raw]
++proc kx_mkraw {path pairs} {
++  set f [open $path w]
++  puts -nonewline $f "Title: B4 keys fixture\nDate: Mon Jan 1 00:00:00 2026\n"
++  puts -nonewline $f "Plotname: Operating Point\nFlags: real\n"
++  puts -nonewline $f "No. Variables: [expr {[llength $pairs]/2}]\nNo. Points: 1\nVariables:\n"
++  set k 0
++  foreach {v val} $pairs { puts -nonewline $f "\t$k\t$v\tvoltage\n" ; incr k }
++  puts -nonewline $f "Values:\n"
++  set k 0
++  foreach {v val} $pairs {
++    if {$k == 0} { puts -nonewline $f "0\t$val\n" } else { puts -nonewline $f "\t$val\n" }
++    incr k
++  }
++  close $f
++}
++kx_mkraw $KX_RAW $KX_PAIRS
++proc kx_annot {} {
++  catch {xschem raw clear}
++  catch {xschem annotate_op $::KX_RAW 0}
++  update idletasks
++}
++kx_annot
++catch {xschem update_all_sym_bboxes}
++
++## THE REFUSAL CHANNEL, OBSERVED. ciw_echo is DEFINED headless and on a
++## widget-less display and silently does nothing, so a row that did not stub it
++## would assert nothing at all (the rename idiom is
++## test_sod_pick_no_select_0204.tcl:139).
++set ::KX_CIW {}
++if {[llength [info commands ciw_echo]]} { rename ciw_echo kx_ciw_echo_real }
++proc ciw_echo {msg args} { lappend ::KX_CIW $msg }
++
++## Counting wrappers on the three arms whose ABSENCE is the interesting event.
++## `rdw::key summary` while the mode is live must not release and retake the
++## seize (row V7), a descend must call the suspend arm (row D1), and the resume
++## arm must be handed the canvas that is current NOW (row D1's D2-of-0201 leg).
++set ::KX_REL 0 ; set ::KX_SUSP 0 ; set ::KX_RESUME_CV {}
++if {[llength [info commands ::rdw::pick_release]]} {
++  rename ::rdw::pick_release ::rdw::pick_release_kxreal
++  proc ::rdw::pick_release {args} {
++    incr ::KX_REL
++    return [uplevel 1 [linsert $args 0 ::rdw::pick_release_kxreal]]
++  }
++}
++if {[llength [info commands ::rdw::pick_suspend]]} {
++  rename ::rdw::pick_suspend ::rdw::pick_suspend_kxreal
++  proc ::rdw::pick_suspend {args} {
++    incr ::KX_SUSP
++    return [uplevel 1 [linsert $args 0 ::rdw::pick_suspend_kxreal]]
++  }
++}
++if {[llength [info commands ::rdw::pick_resume]]} {
++  rename ::rdw::pick_resume ::rdw::pick_resume_kxreal
++  proc ::rdw::pick_resume {cv} {
++    set ::KX_RESUME_CV $cv
++    return [uplevel 1 [list ::rdw::pick_resume_kxreal $cv]]
++  }
++}
++
++## The store, emptied between rows, and the newest block's header line.
++proc kx_reset {} {
++  set ::rdw::blocks {}
++  set ::KX_CIW {}
++  catch {xschem unselect_all}
++}
++proc kx_top_hdr {} {
++  if {![info exists ::rdw::blocks] || ![llength $::rdw::blocks]} { return NO-BLOCK }
++  return [lindex [lindex [lindex $::rdw::blocks 0] 0] 1]
++}
++proc kx_nblocks {} {
++  if {![info exists ::rdw::blocks]} { return -1 }
++  return [llength $::rdw::blocks]
++}
++## ⚠ NOT `expr {[info exists v] ? $v : {NO-VAR}}`. The list identity is a WORD,
++## and expr evaluates a bare word as an operand: `annotation` raises
++## "invalid bareword". Measured while writing this file.
++proc kx_listkind {} {
++  if {![info exists ::rdw::listkind]} { return NO-VAR }
++  return $::rdw::listkind
++}
++
++# ============================================================================
++# SECTION V — THE VERB-NOUN COMMAND MODE. THE USER'S OWN REQUIREMENT LIVES HERE.
++# ============================================================================
++# "This is a command mode, so clicking will not change selected set." Every row
++# below that clicks carries the selection oracle beside it, and row V2 carries
++# the leg that stops the oracle passing on a click that did nothing.
++
++## V0 IS SECTION V's OWN PRECONDITION. Every row below claims a click
++## "answered M1" or "hit nothing"; without this the whole section could be
++## measuring a hit-test that moved under it (item A3 moved it once already).
++## The four points are COMPUTED from `xschem instance_bbox` at the annotation
++## state the rows actually run at, never transcribed.
++catch {xschem update_all_sym_bboxes}
++lassign [kx_centre M1] V0_M1X V0_M1Y
++lassign [kx_centre M2] V0_M2X V0_M2Y
++lassign [kx_centre R1] V0_R1X V0_R1Y
++check {V0 CONTROL the fixture's four click points really are what section V says they are: two devices with a descriptor, one without, a bare wire and empty canvas - measured through the read-only pick itself, so no row below can be vacuous} \
++  [list [xschem instance_at $V0_M1X $V0_M1Y] [xschem instance_at $V0_M2X $V0_M2Y] \
++        [xschem instance_at $V0_R1X $V0_R1Y] [xschem instance_at 700 -400] \
++        [xschem instance_at 9000 9000] \
++        [lindex [xschem select_at 700 -400] 0]] \
++  {M1 M2 R1 {} {} wire}
++xschem unselect_all
++
++kx_reset
++set V1_ARM [kx_ans ::rdw::key annotation]
++update idletasks
++check {V1 nothing selected plus key 1 arms the mode: ButtonPress-1 is seized by rdw::pick_click, ButtonRelease-1 is taken so a lone release cannot reach C, Key-Escape is seized, and ONE CIW line says how to pick and how to leave} \
++  [list [kx_bad $V1_ARM] [seized] \
++        [expr {[bind .drw <ButtonRelease-1>] ne $PRE_R ? 1 : 0}] \
++        [expr {[bind .drw <Key-Escape>] ne $PRE_E ? 1 : 0}] \
++        [llength $::KX_CIW] [kx_oneline [lindex $::KX_CIW 0]]] \
++  {0 1 1 1 1 1}
++
++## THE SHARPEST ROW IN THE SUITE. Three legs, and the second and third are what
++## stop the first being a statement about a click that never happened.
++lassign [kx_centre M1] V2X V2Y
++set V2_SEL0 [kx_sel]
++set ::KX_CIW {}
++kx_click $V2X $V2Y
++set V2_SEL1 [kx_sel]
++set V2_H1 [kx_top_hdr]
++## and again with a NON-EMPTY selection standing, so the oracle is not merely
++## "empty stayed empty": a wire is selected by hand, a second device is clicked,
++## and the selection must come back byte-identical including the wire.
++xschem select wire 0
++set V2_SEL2 [kx_sel]
++lassign [kx_centre M2] V2X2 V2Y2
++kx_click $V2X2 $V2Y2
++set V2_SEL3 [kx_sel]
++set V2_H2 [kx_top_hdr]
++xschem unselect_all
++check {V2 THE USER'S OWN REQUIREMENT: a real Motion+ButtonPress+ButtonRelease over a device leaves xschem selection BYTE-IDENTICAL - empty and non-empty alike - AND the block's header names the device under the cursor, without which the first leg passes on a click that did nothing} \
++  [list [expr {$V2_SEL1 eq $V2_SEL0 ? 1 : 0}] $V2_H1 \
++        [expr {$V2_SEL2 ne {} ? 1 : 0}] \
++        [expr {$V2_SEL3 eq $V2_SEL2 ? 1 : 0}] $V2_H2] \
++  {1 M1:/ 1 1 M2:/}
++
++set V3_N0 [kx_nblocks]
++lassign [kx_centre M1] V3X V3Y
++kx_click $V3X $V3Y
++check {V3 the mode stays live across a click: a second click on a second device pushes a second block with the seize still in place - ESC is the only exit, which is what "this is a command mode" means} \
++  [list [seized] [expr {[kx_nblocks] == $V3_N0 + 1 ? 1 : 0}] [kx_top_hdr]] \
++  {1 1 M1:/}
++
++## The four inputs most likely to break this change, driven rather than
++## reasoned about: empty canvas, a wire, a subcircuit with no descriptor, and a
++## device with no descriptor at all.
++set ::KX_CIW {} ; set V4_N0 [kx_nblocks] ; set V4_SEL0 [kx_sel]
++kx_click 9000 9000
++set V4_EMPTY [list [llength $::KX_CIW] [kx_oneline [lindex $::KX_CIW 0]] \
++                   [expr {[kx_nblocks] == $V4_N0 ? 1 : 0}] \
++                   [expr {[kx_sel] eq $V4_SEL0 ? 1 : 0}] [seized]]
++set ::KX_CIW {}
++kx_click 700 -400
++set V4_WIRE [list [llength $::KX_CIW] [kx_oneline [lindex $::KX_CIW 0]] \
++                  [expr {[kx_nblocks] == $V4_N0 ? 1 : 0}] \
++                  [expr {[kx_sel] eq $V4_SEL0 ? 1 : 0}] [seized]]
++check {V4 a click on EMPTY canvas and a click on a WIRE each produce ONE CIW line, NO block, an unchanged selection and a still-live mode - a miss is not a reason to end a command} \
++  [list $V4_EMPTY $V4_WIRE] [list {1 1 1 1 1} {1 1 1 1 1}]
++
++## A device the seam has nothing for still gets a BLOCK: the window's own
++## locked no_devpath sentence. The refusal channel and the window are NOT
++## double-booked - a device that resolved is the window's to answer.
++set ::KX_CIW {} ; set V5_N0 [kx_nblocks]
++lassign [kx_centre R1] V5X V5Y
++kx_click $V5X $V5Y
++set V5_TXT [kx_ans ::rdw::block_text [lindex $::rdw::blocks 0]]
++check {V5 a click on an instance with NO descriptor pushes a BLOCK carrying the window's locked sentence and emits NO CIW line - the device resolved even though the seam had nothing to say about it} \
++  [list [expr {[kx_nblocks] == $V5_N0 + 1 ? 1 : 0}] [kx_top_hdr] \
++        [kx_has $V5_TXT {has no operating-point descriptor}] [llength $::KX_CIW]] \
++  {1 R1:/ 1 0}
++
++## ESC, delivered as a real key event on the canvas.
++## ⚠ THE FIRST LEG IS THE ONE THAT STOPS THIS ROW PASSING VACUOUSLY. With no
++## mode ever armed the bindings are trivially at their predecessors and every
++## other leg is green while nothing was tested - measured, this row was ALL
++## PASS against the unmodified tree until the seized-before leg was added.
++set V6_PRE [seized]
++focus -force .drw ; update idletasks
++event generate .drw <Key-Escape> -when now
++update
++check {V6 a real Key-Escape on the canvas ends the mode and hands the three bindings back BYTE-IDENTICALLY, and returns the whole sequence list of .drw to its pre-entry value - an empty-but-present binding passes the first leg and fails the second} \
++  [list $V6_PRE [seized] [bind .drw <ButtonPress-1>] [bind .drw <ButtonRelease-1>] \
++        [bind .drw <Key-Escape>] [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}]] \
++  [list 1 0 $PRE_P $PRE_R $PRE_E 1]
++
++## A list key pressed while the mode is live must RE-ARM IN PLACE. ASE's own
++## select_on_design self-serialises by ENDING the previous mode first
++## (ase_window.tcl:1879); copying that here would drop the pick on a list
++## switch, releasing and retaking the seize for nothing. The release counter is
++## how that is observed - a re-take is string-identical and invisible without it.
++kx_reset
++kx_ans ::rdw::key annotation
++update idletasks
++set V7_REL0 $::KX_REL
++kx_ans ::rdw::key summary
++update idletasks
++set V7_LK [kx_listkind]
++set V7_SEIZED [seized]
++lassign [kx_centre M1] V7X V7Y
++kx_click $V7X $V7Y
++set V7_N [kx_nblocks]
++kx_ans ::rdw::key refresh
++check {V7 key 2 pressed while the mode is live re-arms IN PLACE - listkind moves to summary, the seize is the SAME one and was never released and retaken - and key 4 then trims the store to one block without dropping the mode} \
++  [list $V7_LK $V7_SEIZED [expr {$::KX_REL - $V7_REL0}] \
++        [expr {$V7_N >= 1 ? 1 : 0}] [kx_nblocks] [seized]] \
++  {summary 1 0 1 1 1}
++
++## The window steals keyboard focus on open (rdw::open does `focus .rdw`), and
++## the mode's Escape lives on the CANVAS. So a dump that does not hand focus
++## back leaves a mode that can never be escaped - measured in ASE and recorded
++## at ase_window.tcl:1908-1912. ESC is delivered to WHATEVER HAS FOCUS, which
++## is the only delivery that can tell the two states apart.
++set V8_PRE [seized]
++set V8_FOCUS [focus]
++set V8_WIN [expr {[winfo exists .rdw] ? 1 : 0}]
++set V8_TARGET [expr {$V8_FOCUS eq {} ? {.} : $V8_FOCUS}]
++catch {event generate $V8_TARGET <Key-Escape> -when now}
++update
++check {V8 after every dump the keyboard focus is back on the CANVAS and not on .rdw - proved by a real ESC delivered to whatever holds focus still ending the mode with the window open} \
++  [list $V8_PRE $V8_WIN [expr {[string match {.rdw*} $V8_FOCUS] ? 1 : 0}] [seized]] \
++  {1 1 0 0}
++
++# ============================================================================
++# SECTION P — THE CLICK TARGET, WHICH MOVED UNDER THIS ITEM THREE TIMES
++# ============================================================================
++# A3 (the with-text bbox shrinks under the declutter and find_closest_element
++# gates on exactly that box), A5 / issue 1260 (setprop and move_instance write
++# the click box from a stale gate), A6 / issue 1266 (annotate_op and raw clear
++# move the gate's answer while calling symbol_bbox not at all). The cure is one
++# named callee, rdw::_refresh_pick_gate, run before EVERY pick.
++#
++# ⚠ THE MASK IS WRITTEN THROUGH `xschem set annot_show`, NEVER A BARE SET.
++# Measured today: after `set ::annot_show 9`, `xschem get annot_show` still
++# reads 0 and `xschem get annot_root` is EMPTY - unstamped, so the 0688 root
++# backstop can clear it. `xschem set annot_show 9` moves the C field, the Tcl
++# mirror and the stamp together.
++
++kx_ans ::rdw::pick_end
++kx_reset
++kx_annot
++xschem set annot_show 9
++catch {xschem update_all_sym_bboxes}
++set P_NARROW [kx_ibox M1]
++## What the box WOULD be with the raw gone and the gate refreshed. Measured
++## first, so the probe point can be computed rather than transcribed, and then
++## the stale state is built again from scratch.
++catch {xschem raw clear} ; update idletasks
++catch {xschem update_all_sym_bboxes}
++set P_WIDE [kx_ibox M1]
++set P_PX [expr {([lindex $P_WIDE 0] + [lindex $P_NARROW 0])/2.0}]
++set P_PY [expr {([lindex $P_NARROW 1] + [lindex $P_NARROW 3])/2.0}]
++
++kx_annot
++xschem set annot_show 9
++catch {xschem update_all_sym_bboxes}
++catch {xschem raw clear} ; update idletasks
++## The staleness itself, asserted as a leg: without it the row would pass on a
++## gate that never went stale, which is the whole failure this row exists for.
++set P1_STALE [xschem instance_at $P_PX $P_PY]
++kx_reset
++set P1_ARM [kx_ans ::rdw::key annotation]
++set P1_HIT [kx_ans ::rdw::pick_click $P_PX $P_PY]
++check {P1 THE REFRESH ROW: raw clear moves the gate's answer while calling symbol_bbox not at all, so a click over now-visible text answers EMPTY - and one pick through rdw::pick_click answers the device, because the refresh runs first. The point is computed from instance_bbox, never transcribed from A3} \
++  [list [expr {$P_NARROW ne $P_WIDE ? 1 : 0}] $P1_STALE [kx_bad $P1_ARM] [kx_top_hdr]] \
++  {1 {} 0 M1:/}
++
++## THE SECOND PICK. A first-pick-only refresh passes P1 and fails here: the
++## mode seizes only Button-1 and Escape, so 6 / Ctrl-6 / Ctrl-Alt-6 and any
++## annotate_op still move the gate WHILE the mode is live.
++kx_annot
++xschem set annot_show 9
++catch {xschem update_all_sym_bboxes}
++set P2_MASK [xschem get annot_show]
++set P2_ROOT [expr {[xschem get annot_root] ne {} ? 1 : 0}]
++## ⚠ THE TWO PICKS NAME DIFFERENT DEVICES ON PURPOSE. With both aimed at M1
++## the second leg is satisfied by the FIRST pick's block still sitting on top
++## of the store, and the row would pass while the second pick did nothing at
++## all. M2 first, M1 second, and the header has to move.
++lassign [kx_centre M2] P2X P2Y
++set P2_FIRST [kx_ans ::rdw::pick_click $P2X $P2Y]
++set P2_H1 [kx_top_hdr]
++set P2_N1 [kx_nblocks]
++catch {xschem raw clear} ; update idletasks
++set P2_STALE [xschem instance_at $P_PX $P_PY]
++set P2_SECOND [kx_ans ::rdw::pick_click $P_PX $P_PY]
++check {P2 the refresh is PER CLICK and not once at mode entry: a first pick lands on one device, then raw clear moves the gate under the LIVE mode, and the SECOND pick still answers the OTHER device - and the mask reads back set and stamped, proving it went through xschem set annot_show and not a bare set} \
++  [list $P2_MASK $P2_ROOT [kx_bad $P2_FIRST] $P2_H1 $P2_STALE [kx_bad $P2_SECOND] \
++        [kx_top_hdr] [expr {[kx_nblocks] == $P2_N1 + 1 ? 1 : 0}]] \
++  {9 1 0 M2:/ {} 0 M1:/ 1}
++
++kx_ans ::rdw::pick_end
++xschem set annot_show 0
++kx_annot
++catch {xschem update_all_sym_bboxes}
++
++# ============================================================================
++# SECTION D — THE DESCEND ROUND TRIP, AND THE GAP THE CADENCE CHORD LEAVES
++# ============================================================================
++kx_reset
++set D1_ARM [kx_ans ::rdw::key annotation]
++set D1_LK [kx_listkind]
++lassign [kx_centre M1] D1X D1Y
++kx_click $D1X $D1Y
++set D1_N0 [kx_nblocks]
++set ::KX_SUSP 0 ; set ::KX_RESUME_CV {}
++set D1_OK [catch {hi_descend inst=X1 target=current mode=readonly} D1_R]
++update idletasks
++set D1_CV [xschem get current_win_path]
++## ⚠ CAPTURED HERE, NOT IN THE `check` LINE. Every leg written as a bare
++## command inside the argument list is evaluated when `check` runs - i.e.
++## AFTER the ESC below - so "still seized after the resume" would read the
++## post-ESC state and be false by construction.
++set D1_DESC   [expr {[xschem get currsch] > 0 ? 1 : 0}]
++set D1_SUSP   [expr {$::KX_SUSP >= 1 ? 1 : 0}]
++set D1_RESCV  $::KX_RESUME_CV
++set D1_UNSUSP [kx_ans ::cmdmode::is_suspended]
++set D1_SEIZED [seized $D1_CV]
++set D1_LK2    [kx_listkind]
++set D1_SEL0 [kx_sel]
++lassign [kx_centre M3] D1MX D1MY
++kx_click $D1MX $D1MY $D1_CV
++set D1_H [kx_top_hdr]
++set D1_N1 [kx_nblocks]
++set D1_SEL1 [kx_sel]
++focus -force $D1_CV ; update idletasks
++event generate $D1_CV <Key-Escape> -when now
++update
++check {D1 the descend round trip: a descend with the mode live SUSPENDS and RESUMES it on the canvas that is current NOW, the store and the list survive untouched, a click on the DESCENDED canvas dumps the descended device with the selection still byte-identical, and ESC then restores that canvas's own predecessors} \
++  [list $D1_OK $D1_DESC $D1_SUSP $D1_RESCV $D1_UNSUSP $D1_SEIZED \
++        $D1_LK $D1_LK2 [expr {$D1_N1 > $D1_N0 ? 1 : 0}] $D1_H \
++        [expr {$D1_SEL1 eq $D1_SEL0 ? 1 : 0}] [seized $D1_CV] \
++        [bind $D1_CV <ButtonPress-1>] [bind $D1_CV <Key-Escape>]] \
++  [list 0 1 1 $D1_CV 0 1 annotation annotation 1 M3:/X1 1 0 $PRE_P $PRE_E]
++
++## TODAY'S BEHAVIOUR, PINNED SO THE FIX WILL RED IT. The cadence profile's OWN
++## descend - Ctrl-x, cadence::descend_into_inst, utils/cadence_nav.tcl:260 -
++## calls `xschem descend -fallback` directly and NEVER cmdmode::suspend_all.
++## Only hi_descend_do and hi_descend_pick_arm suspend. So cmdmode::register
++## buys item B4 the E-key descend and NOT the chord the cadence user actually
++## presses, and the same gap affects ASE Direct Plot identically today. Filed
++## as issue 1301; utils/cadence_nav.tcl is outside B4's Files cell.
++catch {xschem go_back} ; update idletasks
++kx_reset
++kx_ans ::rdw::key annotation
++update idletasks
++xschem select instance X1
++set ::KX_SUSP 0
++catch {cadence::descend_into_inst}
++update idletasks
++set D2_CV [xschem get current_win_path]
++check {D2 MEASURED GAP PINNED (issue 1301): the cadence profile's own Ctrl-x descend never calls cmdmode::suspend_all, so the mode stays seized straight across it - today's behaviour asserted so that fixing it reds this row rather than passing in silence} \
++  [list [expr {[xschem get currsch] > 0 ? 1 : 0}] $::KX_SUSP \
++        [kx_ans ::cmdmode::is_suspended] [seized $D2_CV]] \
++  {1 0 0 1}
++
++kx_ans ::rdw::pick_end
++catch {xschem go_back} ; update idletasks
++xschem unselect_all
++
++# ============================================================================
++# SECTION S — HYGIENE, AND THE CONTROL THAT STOPS SECTION B PASSING VACUOUSLY
++# ============================================================================
++## An untracked untitled*.sch in the repo root turns THREE tests red. ⚠ The
++## repo root ALREADY holds untitled~.sch and untitled~.sym and they are
++## DELIBERATELY LEFT THERE (the known cause of test_ase_core's C11 baseline
++## red, a phantom nothing in this batch may "fix"), so the row compares the
++## glob against itself rather than asserting it is empty.
++kx_ans ::rdw::pick_end
++kx_ans ::rdw::close
++catch {xschem raw clear}
++update idletasks
++
++catch {destroy .kxctl}
++toplevel .kxctl
++text .kxctl.t -width 24 -height 3
++pack .kxctl.t
++update idletasks
++set S1_TRIES 0
++while {$S1_TRIES < 12 && [string trim [.kxctl.t get 1.0 end]] eq {}} {
++  incr S1_TRIES
++  catch {focus -force .kxctl.t}
++  catch {event generate .kxctl.t <Key-x> -when now}
++  catch {update}
++}
++set S1_CTL [string trim [.kxctl.t get 1.0 end]]
++catch {destroy .kxctl}
++update idletasks
++
++check {S1 HYGIENE and the CONTROL in one row: the suite creates no untitled* anywhere, leaves no window and no seize behind, ends unsuspended - and the event-generate mechanism every binding row above depends on really does deliver, so B2..B5 cannot pass by delivering nothing} \
++  [list [expr {[lsort [glob -nocomplain -directory $repo -tails untitled*]] eq $S1_ROOT0 ? 1 : 0}] \
++        [llength [glob -nocomplain -directory $scratch -tails untitled*]] \
++        [llength [glob -nocomplain -directory $here -tails untitled*]] \
++        [expr {[winfo exists .rdw] ? 1 : 0}] \
++        [seized] \
++        [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}] \
++        [kx_ans ::cmdmode::is_suspended] \
++        $S1_CTL] \
++  {1 0 0 0 0 1 0 x}
++
++# --- clean up ---------------------------------------------------------------
++catch {rename ciw_echo {}}
++if {[llength [info commands kx_ciw_echo_real]]} { rename kx_ciw_echo_real ciw_echo }
++catch {xschem raw clear}
++
++if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
++else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }
+diff --git a/tests/headless/test_rdw_window_1245.tcl b/tests/headless/test_rdw_window_1245.tcl
+index a0a3c810..4136e8f0 100644
+--- a/tests/headless/test_rdw_window_1245.tcl
++++ b/tests/headless/test_rdw_window_1245.tcl
+@@ -1799,6 +1799,350 @@ check {ND4 and the not_op refusal uses it, so the sentence reads "an op analysis
+   [expr {[string match {*a op *} [rdw::format_answer [rw_ansd {} {} {} 0 not_op] \
+             [dict create header H devpath D instname M1 simtype op]]] ? 1 : 0}] 0
+ 
++# ============================================================================
++# SECTION K — ITEM B4: THE KEYS. THE HALF THAT NEEDS NO Tk, ON BOTH ARMS.
++# ============================================================================
++# B4 makes this window reachable from the keyboard: bare 1 / 2 / 3 / 4 in the
++# cadence profile only (ruling D-2; stock xschem keeps logic_set). The BINDINGS
++# and the verb-noun COMMAND MODE cannot live here — src/cadence_style_rc dies
++# at its first `bind` under --nogui — so they are in the sibling suite
++# tests/headless/test_rdw_keys_1245.tcl, :99 only. What CAN and MUST run on
++# both arms is everything the keys do once the event has arrived: the list
++# identity, the noun-verb grammar, the refusals, the store trim, and the
++# structural fences over the pick.
++#
++# Measured on this binary 2026-09-04: `xschem select instance`, `xschem select
++# wire`, `xschem selection`, `xschem getprop instance <index> name`, `xschem
++# instance_at` and `xschem update_all_sym_bboxes` ALL work under --nogui, so
++# none of these rows needs a display and none of them is a display row in
++# disguise.
++#
++# THE CONTRACT (the sibling suite's header carries it in full):
++#   rdw::key <annotation|summary|all|refresh>   rdw::_selected_instance
++#   rdw::show <inst>   rdw::keep_latest   rdw::_ciw <msg>
++#   rdw::pick_start / pick_click / pick_release / pick_end
++#   rdw::pick_suspend / pick_resume   rdw::_refresh_pick_gate / rdw::_pick_at
++#   cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume, at SOURCE
++#   time (safe: cmdmode.tcl is pure Tcl and is sourced BEFORE rdw.tcl)
++#
++# ⚠ THE REFUSAL WORDING IS NOT LOCKED BYTE-FOR-BYTE HERE, AND THAT IS
++# DELIBERATE. B3 minted seven user-visible sentences and they are on rule debt
++# 1245_B3_window_wording, unratified; B4 mints two more (more than one selected,
++# and a selection that is not an instance) and PLAN forbids rewording B3's ad
++# hoc. So rows K6/K7/K8 fence the SHAPE the user asked for — "refuse with short
++# message in CIW" — one line, pairwise distinct, naming the action to take, and
++# NOT double-booked against the window's own sentence. The prose itself goes on
++# the same rule debt for the user to rule on.
++#
++# RED BEFORE B4: K1 K2 K3 K4 K5 K6 K7 K8 K9 K10 K11 — every one for the same
++# single reason, that none of the procs above exists. GREEN BEFORE B4: K0, the
++# fixture's own control.
++
++## The fixture. A PRIVATE symbol type so no shipped symbol and no PDK
++## registration is disturbed, one device that HAS numbers, one that has no
++## descriptor at all, and a wire — the four answers rdw::_selected_instance
++## has to tell apart.
++##
++## ⚠ THE DEVPATH TEMPLATE IS ESCAPED AND THAT IS NOT A TYPO. `devpath
++## {@m.@path@name}` looks healthy and is measurably wrong: `xschem translate`
++## swallows the leading `@m.` and yields `m1`, so ase::op_param_split returns
++## the empty list and the seam answers `state ok` with an EMPTY union — the
++## fifth silence over a device that has numbers. `{\@m.@path@name}` yields
++## `@m.m1` and is gf180_procs.tcl:129's own spelling.
++## test_annot_declutter_1244.tcl:1560 registers the UNESCAPED form; do not copy
++## that line.
++set K_SYM [file join $scratch b4k.sym]
++set fd [open $K_SYM w]
++puts $fd {v {xschem version=3.4.5 file_version=1.2}
++G {}
++K {type=b4kdev
++format="@spiceprefix@name @pinlist @model"
++template="name=M1 model=b4kn spiceprefix=X"
++}
++V {}
++S {}
++E {}
++L 4 -20 -20 20 -20 {}
++L 4 20 -20 20 20 {}
++L 4 20 20 -20 20 {}
++L 4 -20 20 -20 -20 {}
++B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}
++T {@name} 0 -40 0 0 0.2 0.2 {}}
++close $fd
++
++set K_SCH [file join $scratch b4k.sch]
++set fd [open $K_SCH w]
++puts $fd "v {xschem version=3.4.5 file_version=1.2}
++G {}
++V {}
++S {}
++E {}
++N 600 -400 800 -400 {}
++C \{$K_SYM\} 300 -300 0 0 \{name=M1\}
++C \{$K_SYM\} 300 -120 0 0 \{name=M2\}
++C \{devices/res\} 700 -100 0 0 \{name=R1
++value=10\}"
++close $fd
++
++set fd [open [file join $scratch library.defs] w]
++puts $fd "DEFINE devices [file join $repo xschem_libs_newsym devices]"
++close $fd
++set ::XSCHEM_LIBRARY_DEFS [file join $scratch library.defs]
++set ::library_registry_defs_only 1
++set ::XSCHEM_LIBRARY_PATH {}
++
++catch {xschem raw clear}
++xschem load $K_SCH
++catch {update idletasks}
++catch {op_annot::register b4kdev \
++  [list devpath {\@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
++set K_PAIRS {}
++foreach d {M1 M2} vi {1.11e-05 2.22e-05} vg {3.33e-04 4.44e-04} {
++  catch {lappend K_PAIRS [::op_annot::vector $d zid] $vi [::op_annot::vector $d zgm] $vg}
++}
++set K_RAW [file join $scratch b4k.raw]
++rw_mkraw $K_RAW [list [list {Operating Point} $K_PAIRS {}]]
++rw_annot $K_RAW
++catch {xschem update_all_sym_bboxes}
++
++## The refusal channel, observed. ciw_echo is DEFINED under --nogui and
++## silently does nothing without the widget, so a row that did not stub it
++## would assert nothing at all (the rename idiom is
++## test_sod_pick_no_select_0204.tcl:139).
++set ::K_CIW {}
++if {[llength [info commands ciw_echo]]} { rename ciw_echo k_ciw_echo_real }
++proc ciw_echo {msg args} { lappend ::K_CIW $msg }
++
++proc k_reset {} { set ::rdw::blocks {} ; set ::K_CIW {} ; catch {xschem unselect_all} }
++proc k_nblocks {} {
++  if {![info exists ::rdw::blocks]} { return -1 }
++  return [llength $::rdw::blocks]
++}
++proc k_top_hdr {} {
++  if {![info exists ::rdw::blocks] || ![llength $::rdw::blocks]} { return NO-BLOCK }
++  return [lindex [lindex [lindex $::rdw::blocks 0] 0] 1]
++}
++## ⚠ NOT `expr {[info exists v] ? $v : {NO-VAR}}`: the list identity is a WORD
++## and expr evaluates a bare word as an operand — `annotation` raises "invalid
++## bareword". Measured while writing this file.
++proc k_listkind {} {
++  if {![info exists ::rdw::listkind]} { return NO-VAR }
++  return $::rdw::listkind
++}
++## A block with a known header, for the store rows.
++proc k_blk {name} {
++  set dp "@m.[string tolower $name]"
++  return [rw_block [rw_ansd [dict create $dp {{id 1}}] {} {} 0 ok] \
++                   [rw_ctx "$name:/" $dp op $name]]
++}
++
++check {K0 CONTROL the fixture is what section K says it is: two devices the ONE name builder resolves and annotates, one instance with no descriptor at all, and a wire - so every row below is about B4 and not about a fixture that missed} \
++  [list [rw_ans ::op_annot::devpath M1] [rw_ans ::op_annot::devpath M2] \
++        [rw_ans ::op_annot::devpath R1] \
++        [expr {[llength $K_PAIRS] == 8 ? 1 : 0}] \
++        [xschem instance_at 300 -300] \
++        [lindex [rw_w xschem select_at 700 -400] 0]] \
++  {@m.m1 @m.m2 {} 1 M1 wire}
++xschem unselect_all
++
++# --- K1 K2  key 4: the store trim, and which end is new ----------------------
++k_reset
++rw_ans ::rdw::status {}
++set K1_EMPTY [rw_ans ::rdw::keep_latest]
++set K1_N0 [k_nblocks]
++set K1_S0 $::rdw::statusmsg
++rw_ans ::rdw::status {}
++set K1_B [k_blk KONE]
++rw_ans ::rdw::push $K1_B
++set K1_ONE [rw_ans ::rdw::keep_latest]
++check {K1 key 4 on an EMPTY store and on a one-block store changes nothing, raises nothing, and NAMES WHAT IT DID in the window's own status line - a control that silently does nothing cannot be told from a broken one} \
++  [list [rw_bad $K1_EMPTY] $K1_N0 [expr {$K1_S0 ne {} ? 1 : 0}] \
++        [rw_bad $K1_ONE] [k_nblocks] [k_top_hdr] \
++        [expr {$::rdw::statusmsg ne {} ? 1 : 0}]] \
++  {0 0 1 0 1 KONE:/ 1}
++
++k_reset
++foreach n {KA KB KC} { rw_ans ::rdw::push [k_blk $n] }
++set K2_N0 [k_nblocks]
++set K2_TOP0 [k_top_hdr]
++rw_ans ::rdw::keep_latest
++check {K2 three distinct blocks, key 4 leaves exactly ONE and it is the NEWEST - asserted by that block's own header text, never by index alone - and STRUCTURAL its body reads rdw::_insert_index, the same accessor rdw::push uses, so the store and the pane cannot disagree about which end is new} \
++  [list $K2_N0 $K2_TOP0 [k_nblocks] [k_top_hdr] \
++        [rw_has [rw_body ::rdw::keep_latest] {_insert_index}]] \
++  {3 KC:/ 1 KC:/ 1}
++
++# --- K3  the four answers of the selection reader ----------------------------
++## ⚠ COPIES cadence::one_instance_selected's MEASUREMENT, NOT ITS CALL.
++## rdw.tcl is installed and sourced by stock xschem; utils/cadence_nav.tcl is
++## neither, so a cross-call would make an installed helper depend on a profile
++## file that may not be there. The measurement is `xschem get lastsel` then the
++## row TYPE — never `llength [xschem selected_set]`, which throws on an
++## instance name holding an unbalanced brace (issue 0388) and which filters
++## wires away entirely, so a single selected WIRE would read as "nothing
++## selected" and the key would arm the pick mode over a live selection.
++xschem unselect_all
++set K3_NONE [rw_ans ::rdw::_selected_instance]
++xschem select instance M1
++set K3_ONE [rw_ans ::rdw::_selected_instance]
++xschem select instance M2
++set K3_MANY [rw_ans ::rdw::_selected_instance]
++xschem unselect_all
++xschem select wire 0
++set K3_WIRE [rw_ans ::rdw::_selected_instance]
++set K3_LASTSEL [xschem get lastsel]
++xschem unselect_all
++check {K3 rdw::_selected_instance's four answers, including the trap a count-only test passes: ONE selected WIRE has lastsel 1 and is NOT an instance, and the name comes from getprop on the row's own index} \
++  [list $K3_NONE $K3_ONE $K3_MANY $K3_WIRE $K3_LASTSEL] \
++  [list {none {}} {one M1} {many {}} {notinst {}} 1]
++
++# --- K4 K5  the list identity, and the one key that does not touch it --------
++xschem unselect_all
++xschem select instance M1
++rw_ans ::rdw::set_list annotation
++set K4 {}
++foreach k {annotation summary all} {
++  rw_ans ::rdw::key $k
++  lappend K4 [k_listkind] [rw_ans ::rdw::button_state add [k_listkind]] \
++             [rw_ans ::rdw::button_state delete [k_listkind]]
++}
++check {K4 keys 1/2/3 move the list identity through rdw::set_list - B3's ONE setter - and the button table follows in step across all three lists, so no second list-identity variable is minted} \
++  [list $K4 [rw_has [rw_body ::rdw::key] {set_list}]] \
++  [list {annotation disabled normal summary normal normal all normal disabled} 1]
++
++k_reset
++xschem select instance M1
++rw_ans ::rdw::key summary
++rw_ans ::rdw::key annotation
++rw_ans ::rdw::key summary
++set K5_N0 [k_nblocks]
++rw_ans ::rdw::key refresh
++xschem unselect_all
++check {K5 key 4 is the ONLY one of the four that leaves the list identity alone: pressed straight after key 2 the list is still summary, and the store it just trimmed holds one block} \
++  [list $K5_N0 [k_listkind] [k_nblocks]] \
++  [list 3 summary 1]
++
++# --- K6 K7 K8  the refusals, and the channel that must NOT be double-booked --
++xschem unselect_all
++xschem select instance M1
++xschem select instance M2
++set ::K_CIW {}
++set K6_MANYR [rw_ans ::rdw::key annotation]
++set K6_MANY [lindex $::K_CIW 0]
++xschem unselect_all
++xschem select wire 0
++set ::K_CIW {}
++set K6_NIR [rw_ans ::rdw::key annotation]
++set K6_NI [lindex $::K_CIW 0]
++xschem unselect_all
++proc k_oneline {s} { return [expr {[string first "\n" $s] < 0 && [string trim $s] ne {} ? 1 : 0}] }
++check {K6 the two key-level refusals - more than one selected, and a single selection that is not an instance - are pairwise distinct, ONE line each, name the action to take, and go to the CIW, which is where the user asked for them} \
++  [list [rw_bad $K6_MANYR] [rw_bad $K6_NIR] \
++        [k_oneline $K6_MANY] [k_oneline $K6_NI] \
++        [expr {$K6_MANY ne $K6_NI ? 1 : 0}] \
++        [string match -nocase {*select*} $K6_MANY] \
++        [string match -nocase {*select*} $K6_NI]] \
++  {0 0 1 1 1 1 1}
++
++k_reset
++xschem select instance M1
++xschem select instance M2
++set K7_SEL0 [xschem selection]
++set ::K_CIW {}
++rw_ans ::rdw::key annotation
++set K7_SEL1 [xschem selection]
++xschem unselect_all
++check {K7 a key-level refusal pushes NO block and leaves xschem selection BYTE-IDENTICAL - the refusal path may touch neither the store nor the user's selection} \
++  [list [expr {$K7_SEL0 ne {} ? 1 : 0}] [k_nblocks] \
++        [expr {$K7_SEL1 eq $K7_SEL0 ? 1 : 0}] [llength $::K_CIW]] \
++  {1 0 1 1}
++
++k_reset
++xschem select instance M1
++rw_ans ::rdw::key annotation
++set K8_N1 [k_nblocks]
++set K8_H1 [k_top_hdr]
++set K8_T1 [rw_ans ::rdw::block_text [lindex $::rdw::blocks 0]]
++set K8_C1 [llength $::K_CIW]
++k_reset
++xschem select instance R1
++rw_ans ::rdw::key annotation
++set K8_N2 [k_nblocks]
++set K8_T2 [rw_ans ::rdw::block_text [lindex $::rdw::blocks 0]]
++set K8_C2 [llength $::K_CIW]
++xschem unselect_all
++check {K8 THE TWO CHANNELS ARE NOT DOUBLE-BOOKED: one instance selected pushes exactly ONE block whose header names it, with its numbers and ZERO CIW lines, and an instance with NO descriptor still pushes a BLOCK carrying B3's locked no_devpath sentence and ZERO CIW lines - the window speaks whenever a device resolved} \
++  [list $K8_N1 $K8_H1 [rw_has $K8_T1 {zid : 1.11e-05}] $K8_C1 \
++        $K8_N2 [k_top_hdr] [rw_has $K8_T2 [RW_NODEVPATH R1]] $K8_C2] \
++  [list 1 {M1:/} 1 0 1 {R1:/} 1 0]
++
++# --- K9  the headless safety, and the contract registration ------------------
++## ⚠ THE pick_start LEG IS A CONSTANT ON THE DISPLAY ARM AND SAYS SO. On :99
++## the mode really does arm, which is the sibling suite's whole section V; here
++## the question is only that a key pressed with no Tk at all arms nothing and
++## raises nothing. The suspend arm's leg runs on BOTH arms and matters on both:
++## once registered it runs on EVERY descend in EVERY profile forever, so "0 and
++## no damage when there is nothing to release" is a permanent obligation.
++k_reset
++set K9_KEY [rw_ans ::rdw::key annotation]
++set K9_PS [expr {$live_tk ? 0 : [rw_ans ::rdw::pick_start]}]
++rw_ans ::rdw::pick_end
++set K9_SUS [rw_ans ::rdw::pick_suspend]
++set K9_REG [expr {[lsearch -exact [rw_ans ::cmdmode::registered] rdw_pick] >= 0 ? 1 : 0}]
++check {K9 the --nogui safety and the cmdmode registration in one row: key 1 with nothing selected raises nothing and arms no mode when have_tk is 0, the suspend arm returns 0 and damages nothing when no mode is live, and cmdmode carries rdw_pick beside ase_sod - green on the headless arm proving it was registered at SOURCE time with no Tk} \
++  [list [rw_bad $K9_KEY] $K9_PS $K9_SUS $K9_REG] \
++  {0 0 0 1}
++
++# --- K10 K11  the structural fences over the pick ----------------------------
++## `xschem instance_at` is READ-ONLY and `xschem select_at` is the mutating
++## twin. Measured on this binary at one instance bbox centre: instance_at
++## answers the instance and leaves `xschem selection` empty with lastsel 0,
++## while select_at at the SAME point answers `poly 0 2 698` and sets lastsel 1
++## — it does not merely select, it selects a DIFFERENT OBJECT. That is the
++## sharpest argument there is for the brief's "do not use select_at".
++set K10_PC [rw_body ::rdw::pick_click]
++set K10_ORDER 0
++if {![rw_bad $K10_PC]} {
++  set _r [string first {_refresh_pick_gate} $K10_PC]
++  set _p [string first {_pick_at} $K10_PC]
++  set K10_ORDER [expr {$_r >= 0 && $_p >= 0 && $_r < $_p ? 1 : 0}]
++}
++set K10_F [expr {[file isfile $RW_FILE] ? [rw_nocomment [rw_slurp $RW_FILE]] : {NOFILE}}]
++check {K10 STRUCTURAL the pick reads the canvas ONLY through rdw::_pick_at -> xschem instance_at, names select_at / select_object / unselect_all nowhere in the file, and rdw::pick_click calls rdw::_refresh_pick_gate BEFORE it in its own body} \
++  [list [rw_has [rw_body ::rdw::_pick_at] {instance_at}] \
++        [rw_has [rw_body ::rdw::_refresh_pick_gate] {update_all_sym_bboxes}] \
++        [rw_count $K10_F {select_at}] [rw_count $K10_F {select_object}] \
++        [rw_count $K10_F {unselect_all}] $K10_ORDER] \
++  {1 1 0 0 0 1}
++
++set K11_N 0
++foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
++           ::rdw::pick_click ::rdw::pick_end} {
++  if {[llength [info commands $p]]} { incr K11_N }
++}
++set K11_TAGS 0
++foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
++           ::rdw::pick_click ::rdw::pick_end ::rdw::_ciw} {
++  set b [rw_body $p]
++  if {[rw_bad $b]} continue
++  foreach t {{[list hdr } {[list dim } {[list dev } {[list note }} {
++    incr K11_TAGS [rw_count $b $t]
++  }
++}
++check {K11 STRUCTURAL row S1's fence re-run over the grown file: op_param_lists:: is still ZERO occurrences, so keys 1/2/3 select a list IDENTITY and narrow no CONTENT (issue 1300), and no new proc builds a block line by hand - every line still goes through rdw::_line, row F29's rule} \
++  [list $K11_N [rw_count $K10_F {op_param_lists::}] $K11_TAGS \
++        [rw_has $K10_F {ase::backend_hook}]] \
++  {6 0 0 1}
++
++# --- section K leaves nothing behind -----------------------------------------
++rw_ans ::rdw::pick_end
++rw_ans ::rdw::close
++set ::rdw::blocks {}
++rw_ans ::rdw::set_list annotation
++catch {xschem unselect_all}
++catch {xschem raw clear}
++catch {rename ciw_echo {}}
++if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo }
++
+ # ============================================================================
+ # SECTION S — THE STRUCTURAL FENCES, AND HYGIENE
+ # ============================================================================
