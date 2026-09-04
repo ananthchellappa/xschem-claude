@@ -256,3 +256,96 @@ Since the grammar change is the one with the B5 deadline, the next crew must
 settle quoting **in the same pass**: either write one field per line with an
 explicit escape, or refuse a glob containing a list metacharacter at both doors
 the way whitespace is already refused.
+
+---
+
+## Item B2a-2 — ATTEMPTED, MEASURED, AND REVERTED, 2026-09-03
+
+B2a-2 took **the second arm of the fork** it was given: it changed the ranking
+*and* rewrote the sentence the file emits. Both halves were fenced by new rows
+(F6, F6b, F6c, F7, F7b) and both went green. **The item was still reverted,
+because the rewritten sentence is itself false.**
+
+### What B2a-2 changed
+
+`_flavor_order` was re-keyed from *fewest `*`* to **most non-wildcard
+characters, then fewest wildcards (`*` and `?`), then lexical**. That does fix
+the filed defect **for `*`-only globs**: on cell `sky130_fd_pr__nfet_01v8_lvt`
+the order is `sky130_fd_pr__*  *nfet_01v8_lvt*  *` in **both** insertion orders
+— the bare `*` last, which is what this issue was filed about.
+
+The round-trip half was fixed **at the writer**: a new `_key_fields` emits the
+class and the glob as two separate unquoted fields in **both** the `list` row
+and the `param` row. All nine metacharacters (`{ } [ ] \ " $ ?` and
+`a[nm]fet*`) then round-trip clean, where eight of nine corrupted before. **That
+half was not refuted and should be kept.**
+
+### Why it was reverted — the emitted sentence is still a lie
+
+The file now says, in every settings file `write_body` emits:
+
+```
+#           So a bare `*` is always the last resort, and a longer vendor
+#           prefix outranks a shorter device-name pattern.
+```
+
+Reproduced by the write-up agent, first-hand, on the patched tree:
+
+```
+_flavor_order * **     -> *   **      bare * WINS
+_flavor_order * *?*    -> *   *?*     bare * WINS
+_flavor_order * ?*     -> *   ?*      bare * WINS   (?* is strictly narrower)
+_flavor_order *ab* ?ab? -> *ab*  ?ab?  the BROADER glob wins on cell xaby
+```
+
+`?` is counted as a wildcard in the rank key — so it **reduces** the literal
+count — but its narrowing is **never credited**, and `_glob_why` caps only `*`
+(an eight-`?` glob is accepted, rc=1, no report). The clause *"a bare `*` is
+always the last resort"* is false of the code that prints it, which is the exact
+condition this item's ACCEPT row forbade:
+
+> The settings file's own precedence sentence is TRUE of the code that emits it.
+
+Row **F6b**'s fence could not see it: its four-glob set `{ab a*b *ab* *}` is
+**all `*`**, so it never pits a `?` against anything.
+
+### The sentence in *this issue* that the measurement refutes
+
+This issue's own "what the next crew must do" recommends:
+
+> Rank by literal length of the non-`*` text (most literal characters wins).
+
+That is **half refuted, by the very case this issue cites**. It fixes the bare
+`*`; it **cannot** order `sky130_fd_pr__*` against `*nfet_01v8_lvt*`, because
+`sky130_fd_pr__` is **14** non-wildcard characters and `nfet_01v8_lvt` is **13**
+— so literal length ranks that pair the same way star count did. **No
+string-intrinsic metric separates a vendor prefix from a device name.** B2a-2
+measured this and fenced the pair with both counts in row F6c; the honesty of
+the emitted sentence is what has to carry it.
+
+## Still open after B2a-2 — what the third crew must fix
+
+1. **Credit `?` as narrowing, or stop claiming a bare `*` loses.** A defensible
+   order must rank `?*` above `*`, and `?ab?` above `*ab*`. Counting `?` as a
+   literal-position (it matches exactly one character) rather than as a
+   wildcard is the smallest change that does it — and then re-check the
+   sentence against `**` too.
+2. **Whatever the order, prove the sentence.** The fence must be generated
+   *from the emitted comment*, not written beside it, or the two drift again —
+   they drifted twice now.
+3. **Keep `_key_fields`.** The round-trip fix is sound and survives.
+4. **The key-identity hole is separate and still open** (below).
+
+### A second, separate hole B2a-2 introduced and did not close
+
+The v2 flavor key is a **two-element Tcl list used as an array index**, and it
+is not canonicalised. `set_list flavor {mos a[nm]fet*} annotation …` (a plain
+list literal, the obvious spelling) stores one index; `_parse_line` rebuilds the
+key with `list`, whose string rep braces the `[` element (`mos {a[nm]fet*}`), so
+after write→reset→load `owns flavor {mos a[nm]fet*} annotation` is **0** and
+`get_list` is empty. Setting it again creates a **second** `owned` slot, and
+`write_conf` then emits **two identical `list` rows and two conflicting `param`
+rows**; the reader's first-touch rule silently discards one, with **zero
+reports**. HEAD has no such divergence — a v1 key was one element that `list`
+quoted identically from both doors — so **grammar v2 introduces it**. The store
+must canonicalise the key at both doors (build it with `list` on the way in too).

@@ -187,3 +187,28 @@ items B1, B2 and B3.
 `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` applies clean to
 `825cd3bd`. The next crew's job is **apply → fix the three named holes →
 re-verify**, and this issue's portion should survive that pass unchanged.
+
+---
+
+## Item B2a-2 — REVERTED A SECOND TIME, 2026-09-03, AGAIN AS COLLATERAL
+
+**This issue's own fix was still not refuted.** Item **B2a-2** re-applied
+B2a's patch unchanged, re-fixed the three holes, added ruling **DD-6**'s display
+key, and went green everywhere — store **39→71**, RDW window **32→49** headless
+and **42→59** on `:99`, `test_op_annot` **485/492** and
+`test_annot_declutter_1244` **134** all unmoved, audit back at the 367/12/0/2
+baseline with an empty non-PASS diff.
+
+**It was reverted anyway**, because the adversary refuted the central claim on
+**1277**, **1281** and **1285** and the write-up agent reproduced **four**
+attacks first-hand. Same reasoning as the first revert: the diff was one
+2,838-line change across eight files, and splitting it at write-up time would
+commit code no verification pass had ever seen.
+
+**The work is preserved and must not be retyped.**
+`doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch` (md5
+`1977a39e5d419d31fcbbbc3932c2606f`, 3,573 lines, eight files) **applies clean to
+`849f2231`** — verified with `git apply --check` in both directions. It contains
+**both** attempts: B2a's six sound fixes *and* B2a-2's re-fixes. This issue's
+portion should survive the third pass unchanged; apply the patch and fix only
+what §"Still open after B2a-2" in **1277**, **1281** and **1285** names.

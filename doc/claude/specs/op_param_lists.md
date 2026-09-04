@@ -1305,10 +1305,92 @@ are design-of-record:
    `src/op_annot.tcl`, which item B2a did not own.
 
 
+### What item B2a-2 measured about the same six, 2026-09-03 — **attempted, then reverted again**
+
+Item **B2a-2** applied B2a's patch unchanged, re-fixed its three refuted fixes,
+implemented ruling **DD-6**, and went green (store 39→**71**, window 32→**49** /
+42→**59**, ten sabotage variants, **red-before-green on every row**, Feature A's
+485/492 and 134 unmoved). It was **reverted in full** after its adversary pass;
+the diff — a **superset** of B2a's — is preserved at
+`doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch` and applies clean
+to `849f2231`. **The tree is still as B2 and B3 left it.** Six findings are
+design-of-record, and the first two **correct this spec**:
+
+1. **⚠ CORRECTION TO FINDING 1 ABOVE: "rank by literal (non-`*`) length" DOES
+   NOT WORK EITHER, and this spec's own cited case refutes it.**
+   `sky130_fd_pr__` is **14** non-wildcard characters; `nfet_01v8_lvt` is **13**.
+   So literal length ranks that pair exactly the way star count did. **No
+   string-intrinsic metric separates a vendor prefix from a device name** — the
+   information simply is not in the two strings. B2a-2 implemented *most
+   non-wildcard characters, then fewest wildcards, then lexical* and it is still
+   wrong in a second way: **`?` is counted as a wildcard but its narrowing is
+   never credited**, so `_flavor_order {* ?*}` puts the bare `*` first and
+   `{*ab* ?ab?}` prefers the broader glob. **What the design must accept:** state
+   the implemented rule in the emitted file and make the fence *generate itself
+   from that sentence*, or DD-2's "narrower wins" keeps meaning whatever the last
+   implementer assumed. A settings file that documents a precedence its own code
+   does not implement is worse than one that says "first match wins".
+
+2. **⚠ A v2 flavor key is a two-element list used as an ARRAY INDEX, and must be
+   canonicalised at both doors.** Finding 2's quoting hole is real and B2a-2
+   fixed the *bytes* (emit class and glob as two separate unquoted fields, in
+   **both** the `list` row and the `param` row — keep that). But the **key
+   identity** hole is separate and remained: `set_list flavor {mos a[nm]fet*} …`
+   and the parser's `list`-built key are different indices, so a round trip
+   loses the entry, a re-set creates a **second** `owned` slot, and `write_conf`
+   then emits two conflicting rows one of which the reader silently discards.
+   **v1 had no such divergence** — a one-element key quoted identically from both
+   doors. **Build the key with `list` on the way in too.**
+
+3. **Finding 3's contract is CONFIRMED and was implemented correctly.** *"only
+   `state` is required, and a non-`ok` state is rendered from `state` alone"* —
+   B2a-2's implementation of it survived a 22-shape adversarial matrix with no
+   counterexample, including an answer that is not a dict at all. Two additions
+   worth writing down: **an answer with no readable `state` is itself malformed**
+   and should name the backend; and the *order* needs a **structural** fence
+   (read `format_answer`'s own body), because the ordering is the half a later
+   edit silently restores.
+
+4. **Finding 4 is settled by ruling DD-6, with two conditions this spec must
+   carry.** The new descriptor key is **`shown`**: `op_annot::text` prefers it
+   and falls back to `params`; `_cards_for`, `_claims` and `_kind` stay on
+   `params`; `apply` writes both. A descriptor declaring only `params` — all four
+   shipped PDK register sites — behaves exactly as before (**I7**). **But**
+   (a) `shown ⊆ params` is **not** true "by construction": `_save_set` dedups by
+   **label** while `set_list` accepts a duplicate label (issue **1288**), so
+   `apply` itself can put a row in `shown` that is not in `params`, and
+   `op_annot::_kind` raises on it; and (b) `shown` is a **new draw-time raise
+   door** — `register` validates only `dict size`, so a malformed `shown` raises
+   on every redraw in a proc C calls per instance. **Validate the display list
+   where it enters (`register`), never where it draws.**
+
+5. **`derived` is a THIRD consumer of the list and DD-6 does not mention it**
+   (issue **1289**). `op_annot::text` builds `vars` **inside** the loop the
+   ruling narrows, so a derived row whose operand was deleted renders **blank**
+   though the deck still saves it — and IHP ships exactly such rows (`gm/id`,
+   `ft`). Honest under **I3**, surprising to a user, and it **needs a ruling**.
+
+6. **`seed` reads the field `apply` overwrites** (issue **1287**), so **D-7**'s
+   "the seed comes from the PDK" is false after the first apply and `reset`
+   cannot restore it — measured `{id id 0} {gm gm 1} {gds gds 1}` before,
+   `{id id 0}` after apply **plus reset**. DD-6 makes the stale seed the *union*,
+   i.e. silently wider. **Any acceptance row that applies and then asserts a seed
+   is fencing the wrong value**; capture it in a fresh process first.
+
 ---
 
 ## 5. Contracts and invariants
 
+* **I-TIER (added by B2a-2, 2026-09-03).** **Writing one tier's settings file
+  must never remove a row that the file being written declared** — not a row
+  belonging to the other tier, and **not a row belonging to the tier being
+  written**. B2a leaked; B2a-2 fixed the leak and then deleted a user's own
+  explicit `class nmos mos` because the value happened to equal the shipped
+  default (`rc=1`, **zero reports**, the file left holding `version 2` alone).
+  The override-compression that skips a default-valued row is fair for a row the
+  store **synthesised** and is data loss for a row the user **typed** — the store
+  must tell those apart, and a fence must construct a tier conflict on a
+  **default-valued** token, which is the case both attempts left invisible.
 * **I1 (inherited).** One vector-name builder. Every consumer goes through
   `op_annot::devpath` / `op_annot::vector`. A list editor that lets the user type
   a parameter name must not become a second builder.

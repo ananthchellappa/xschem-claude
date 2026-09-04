@@ -43,3 +43,15 @@ Mirrors of `W6`, `W7` and `W7b` in
 `tests/headless/test_op_param_store_1245.tcl`: a directory target refused with
 nothing created inside it, a **relative** symlink written through from a
 different cwd, and a chain plus a dangling link.
+
+---
+
+## Item B2a-2, 2026-09-03 — unchanged, and the written fix is now in the second patch too
+
+Item **B2a-2** was also forbidden to edit `src/ase.tcl` (item **B1**'s landed
+seam), so this issue is untouched: **still FILED, NOT FIXED**. Its written fix —
+`_resolve_target` + `_target_why` — is preserved in **both**
+`doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` and
+`doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch`, in the
+`op_param_lists.tcl` copy of the writer. Whoever fixes `ase::sim_write_conf`
+should lift it from there rather than rewrite it.

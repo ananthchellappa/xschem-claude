@@ -1552,7 +1552,7 @@ by two install lines and no uninstall line, which was the row's whole point.
 
 ---
 
-## B2a — harden what B2 and B3 shipped  ⛔ **NOT LANDED (status F), 2026-09-03 — implemented, verified green, then REFUTED AND REVERTED. Re-run it; the work is preserved.**  *(blocks B4 and B5)*
+## B2a — harden what B2 and B3 shipped  ⛔ **NOT LANDED (status F), 2026-09-03.** Re-done as **B2a-2**, which was ALSO reverted — **read the B2a-2 section below, not this one, and apply the B2a-2 patch.**  *(blocks B4 and B5)*
 
 **Scope was nine filed issues**: 1276–1281 in `src/op_param_lists.tcl`,
 1282–1284 in `src/rdw.tcl` and its suite. All nine were implemented, both suites
@@ -1622,6 +1622,85 @@ regression. **A green count is a statement about the fence.**
 
 ---
 
+## B2a-2 — the re-do of B2a  ⛔ **NOT LANDED (status F), 2026-09-03 — apply + fix three + add DD-6, all done and green, REFUTED AND REVERTED AGAIN.**  *(still blocks B4 and B5)*
+
+**Scope was 1276–1285 plus ruling DD-6.** B2a's patch was applied unchanged (not
+retyped), its three refuted fixes re-fixed, and DD-6's display key added.
+Everything the item was asked to produce, it produced:
+
+* store **39 → 71**, RDW window **32 → 49** headless / **42 → 59** on `:99`;
+* `test_op_annot` **485/492** and `test_annot_declutter_1244` **134** unmoved,
+  `test_rdw_seam_1245` **49** unmoved (the Feature A fences held);
+* audit back at **367 pass / 12 fail / 0 crash / 2 skip of 381**, non-PASS diff
+  **empty by name and verdict**; T1 at zero;
+* **red-before-green on every row**, each carrying the adversary's own
+  reproduced input;
+* a **ten-variant** sabotage matrix, trustworthy, with the two predicted-reds
+  that did not appear explained and closed by an added variant.
+
+**It was reverted anyway.** The adversary refuted the central claim and the
+write-up agent **reproduced four attacks first-hand** before deciding.
+
+> **THE WORK IS PRESERVED AND MUST NOT BE RETYPED — AND IT NOW CONTAINS BOTH
+> ATTEMPTS.** `doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch`
+> (md5 `1977a39e5d419d31fcbbbc3932c2606f`, 3,573 lines, eight files) **applies
+> clean to `849f2231`**, verified with `git apply --check` in both directions.
+> **Use this patch, not B2a's** — it is a superset. The third crew's job is
+> **apply → fix the four holes below → re-verify**.
+
+### What is SOUND in the patch and must be kept
+
+* **1276, 1278, 1279, 1280, 1282, 1283** — untouched by either adversary, twice.
+* **1284 — the fix is right and survived a 22-shape adversarial matrix with no
+  counterexample.** State first, shape only under `ok`, an absent bucket empty
+  rather than malformed; row **F26** fences the *order* structurally. Apply
+  unchanged.
+* **1277's round-trip half** — `_key_fields` emitting class and glob as two
+  separate unquoted fields in **both** the `list` and the `param` row. Nine
+  metacharacters round-trip clean where eight of nine corrupted.
+* **All of DD-6 except two points** — the key name `shown`, the fall-back, the
+  `_cards_for`/`_claims`/`_kind` split, invariant **I7**'s row, and the
+  empty-`shown`-draws-nothing decision.
+
+### The four holes that forced the second revert
+
+| # | Where | What is wrong, reproduced by the write-up agent |
+|---|---|---|
+| **1** | **1277**, the emitted sentence | **THE FILE STILL LIES ABOUT ITS OWN PRECEDENCE — a named ACCEPT row.** The re-keyed order (most non-wildcard chars, then fewest wildcards, then lexical) fixes the bare `*` **only among `*`-only globs**. Measured: `_flavor_order {* **}` → bare `*` **wins**; `{* ?*}` → bare `*` **wins** though `?*` is strictly narrower; `{*ab* ?ab?}` on cell `xaby` → the **broader** glob wins. `?` is counted as a wildcard (so it *reduces* the literal count) but its narrowing is never credited, and `_glob_why` caps only `*`. The file nonetheless prints *"So a bare `*` is always the last resort"*. Row **F6b**'s fence is **all `*`**, so it cannot see it. **Fix:** credit `?` as narrowing (it matches exactly one character), re-check `**`, and **generate the fence from the emitted comment** so the two cannot drift a third time. |
+| **2** | **1277**, key identity | **The v2 flavor key is a two-element Tcl list used as an array index and is not canonicalised.** `set_list flavor {mos a[nm]fet*} …` and `_parse_line`'s `list`-built key are **different indices**; after a round trip `owns` is 0, setting it again makes a **second** `owned` slot, and `write_conf` then emits **two** `list` rows and two conflicting `param` rows, one silently discarded, **zero reports**. **New with grammar v2** (a v1 key was one element). **Fix:** canonicalise with `list` at both doors. |
+| **3** | **1281**, the default-skip | **A SECOND SILENT DELETION OF A ROW THE USER TYPED.** With the shipped default already `nmos → mos`, a **user** file carrying the explicit pin `class nmos mos` and a **project** file carrying `class nmos weirdclass`: `write_conf <user path>` returns **rc=1, zero reports**, and the user's file afterwards holds **`version 2` and nothing else**. The fix's own improvement causes it — the default check now compares against `_tier_class` (the user's own value) instead of the merged one, so the row is skipped as "not an override". HEAD leaked a wrong value there; this destroys the line. Row **T6** cannot see it: its contested token maps to a **non-default** value. **Fix:** a row a tier's file *contains* is written back to that tier even when its value equals the default. |
+| **4** | **1285 / DD-6** | **Two claims the code asserts in writing are false.** (a) *"`shown` is always a SUBSET of the union by construction"* — `_save_set` dedups by **label** and `set_list` accepts a duplicate label (issue **1288**), so `apply` itself produces `shown` ⊄ `params` and `op_annot::_kind`/`vector` **raise**; the same run emits a `.save` card **twice**, against rule **R1**. (b) *"gains no raise site that issue 0447 does not already cover"* — a descriptor with `shown` = `{a` registers cleanly (`register` validates only `dict size`) and then **raises on every redraw**, in a proc C calls per instance per redraw, with `params` well formed. **Fix:** validate `shown` in `register`, not in `text`; and fix **1288** in the same pass or stop relying on the subset. |
+
+### What this item learned that binds every later step
+
+* **The batch's lesson, for the fifth consecutive item: a green count is a
+  statement about the fence, not about the code.** B2a-2 was green at 71/49/59
+  with ten sabotage variants and **red-before-green on every row**, and still
+  carried four defects. Red-first is necessary and is **not sufficient** — every
+  one of the four hid in a case the row's author did not think to construct
+  (a `?` glob, a default-valued token, a duplicate label, a malformed new key).
+  **When a row asserts a sentence, generate the row from the sentence.**
+* **A comment that denies a hazard is worse than no comment.** Three of the four
+  holes are places where the code *asserts in writing* that it is safe: the
+  emitted precedence sentence, the subset guarantee, the no-new-raise-door
+  claim. Each assertion was written by the agent that introduced the
+  counterexample. **Do not write a guarantee you have not fenced.**
+* **New issues from this item: 1287** (the `apply`→`seed` clobber, live at HEAD,
+  and DD-6 makes it wider), **1288** (`set_list` accepts a duplicate label its
+  own parser rejects — a HEAD defect, and the root of hole 4a), **1289** (DD-6
+  blanks a `derived` row whose operand it removed — **a property of the ruling**,
+  it needs a **ruling**, and it binds B5), **1290** (`test_ase_optier_0963` X7
+  is an intermittent red).
+* **Capture any seed BEFORE the first `apply`** (issue 1287) or an acceptance
+  row fences the union and passes while the defect is live. One false-clean was
+  produced exactly this way.
+* **`doc/claude/op_param_batch/receipts/B2a.md` does not exist** and never did —
+  the B2a record is the LEDGER rows, commit `849f2231`, and the issue files.
+  The brief that sent the second crew told it to read that file first.
+* **Unchanged and still true:** the grammar deadline is free until B5 writes the
+  first flavor row; `src/ase.tcl:8803` must stay untouched (row `G3b`); no
+  build, no `Makefile.in` — both files are already installed.
+
 ## B4 — the keys and the two grammars  *(needs B3)*
 
 > **⚠ FROM A6 (2026-09-02).** A6-c closed **every** `symbol_bbox()` door by
@@ -1679,13 +1758,23 @@ line.
 
 ## B5 — the button column and the two scope dialogs  *(needs B2, B3, and see B2a)*
 
-> **⚠ TWO BLOCKERS, BOTH OPENED BY B2a's REVERTED ATTEMPT (2026-09-03).**
-> 1. **Issue 1285 blocks the Delete button.** `op_annot::text` draws the
->    on-sheet rows from the **same `params` list** `_cards_for` saves from, so
->    ruling **DD-4**'s two clauses ("`apply` writes the union" / "the display
->    narrows") cannot both be true of one field. Until it is answered, Delete
->    either stops the deck saving (which DD-4 forbids) or leaves the row still
->    drawn (the opposite of *declutter*). It needs `src/op_annot.tcl`.
+> **⚠ THREE BLOCKERS. B2a AND B2a-2 BOTH ATTEMPTED THIS GROUND AND BOTH WERE
+> REVERTED (2026-09-03) — apply
+> `doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch` and fix the four
+> holes in the B2a-2 section above before starting here.**
+> 0. **Issue 1289 needs a RULING before Delete ships.** DD-6's narrowing blanks
+>    a `derived` row whose operand the user deleted — `gm/id` goes blank when
+>    `gm` is removed, though the deck still saves `gm`, and **IHP registers
+>    exactly such rows**. Three options are costed in the issue; the user has to
+>    pick one, because option 3 makes one Delete remove two rows.
+> **AND THE TWO ALREADY KNOWN:**
+> 1. **Issue 1285 is ANSWERED by ruling DD-6 and IMPLEMENTED in the B2a-2
+>    patch, but not landed.** The new descriptor key `shown` (preferred by
+>    `op_annot::text`, falling back to `params`) is written and was fenced by
+>    rows A5–A8/C2/J5 with `test_op_annot` and the declutter suite unmoved. Two
+>    points in it are wrong and are hole 4 of the B2a-2 table: the subset
+>    guarantee is false (issue **1288**) and a malformed `shown` raises at draw
+>    time. Fix those, do not rewrite DD-6.
 > 2. **You are the first caller of `write_conf` and of the flavor-row grammar.**
 >    Both are unfixed at `825cd3bd`: `write_conf` reports success while writing
 >    somewhere else (**1276**) and flattens the two tiers (**1281**), and a

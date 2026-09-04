@@ -182,3 +182,88 @@ overrode it" — it discards the losing value at load time, and the writer then
 has nothing to write. Add the acceptance row above (`load` both tiers, override
 the same key, save the user tier, assert the user's own value survives) — the
 existing rows T4/T5 do not construct a *conflict*, which is why they passed.
+
+---
+
+## Item B2a-2 — ATTEMPTED, MEASURED, AND REVERTED, 2026-09-03
+
+B2a-2 implemented **exactly what this issue's own "what the next crew must do"
+paragraph demanded** — a **per-tier value store** — and it fixed the case B2a
+destroyed. It was still reverted, because it **destroys a different row the user
+typed**, and this issue exists to stop precisely that.
+
+### What B2a-2 changed, and what it genuinely fixed
+
+`origin` and `classorigin` became **sets** of tiers (`_origin_add` joins,
+`_origin_only` replaces for a session edit) instead of one slot the later `load`
+overwrote; two new arrays `tierlists` / `tierclass` hold **what each tier's file
+actually said**; `_origin_ok` became `_writes_here` (*may this row be written
+here*) and `_tier_list` / `_tier_class` supply **which value**.
+
+Measured on the adversary's own fixture, both tiers contesting both rows: the
+user file comes back holding the user's `USER_Id` and keeping the user's own
+`class mydiode diode` and their user-only diode list; the project file holds
+`PROJ_Id` and emits **no** row for the user-only list. The B2a data-loss case is
+fixed and row **T6** fences it.
+
+### Why it was reverted — a second deletion, on a path T6 cannot see
+
+Reproduced first-hand by the write-up agent on the patched tree. Fixture: the
+shipped default already maps `nmos → mos`; the **user** file carries the
+explicit pin `class nmos mos`; the **project** file carries
+`class nmos weirdclass`.
+
+```
+after load: classmap(nmos)=weirdclass  classorigin=user project
+_tier_class nmos user   = mos
+--- USER FILE AS WRITTEN BACK ---
+   |version 2
+user's own 'class nmos mos' present: NO -- DESTROYED
+```
+
+`write_conf <user path>` returns **rc=1 with zero reports** and the user's own
+file afterwards holds **`version 2` and nothing else**. The mechanism is the
+fix's own improvement: `write_body` now compares the shipped default against
+`_tier_class $tok $tier` — the **user's own value**, `mos` — instead of the
+merged value, so the row is skipped as *"not an override"*. HEAD wrote
+`class nmos weirdclass` there: the leak, a row with the wrong value. **B2a-2
+converts that leak into a silent deletion of a line the user typed** — the exact
+transformation this item existed to undo.
+
+Stated honestly, because it changes the severity: the deleted row was already
+**inert** — the project row won the merge either way — so no behaviour flips
+today. What is destroyed is a **declaration of intent**. The class map is
+written as overrides *precisely so* a future change to the shipped default still
+reaches a project; a user who pinned `nmos` to `mos` on purpose loses that pin
+and will silently follow the default when it moves.
+
+Row **T6** cannot see it: T6's contested token maps to `diode`, a **non-default**
+value, so the default-skip branch is never taken.
+
+### A second hole: the original leak is still reachable
+
+`set_list class mos annotation {…}` — invariant **I5**'s own documented rc door
+— stamps `origin = {session}`. A **subsequent** `op_param_lists::load` calls
+`_origin_add`, which *appends*, giving `{session user}`. `_writes_here` then
+answers 1 for the **project** tier because `session` is in the set, and
+`_tier_list` returns the live list. Measured: a key declared **only** in the
+user file is written into the **project** file carrying `USER_Id`. That is this
+issue's original privacy defect, intact, one ordering away from the fixture the
+suite tests.
+
+## Still open after B2a-2 — what the third crew must fix
+
+1. **The default-skip must compare like with like.** A row a tier's own file
+   *contains* must be written back to that tier's file **even when its value
+   equals the shipped default**. The override-compression is a fair optimisation
+   for a row the store *synthesised*; it is not one for a row the user typed.
+   The store must distinguish "this tier declared it" from "this tier's value
+   happens to equal the default" — it now has `tierclass` and can.
+2. **A later `load` must not widen a session stamp.** `_origin_add` appending to
+   `{session}` is what re-opens the leak. Decide what a load means for a key the
+   session already changed, and fence **both** orders (set-then-load and
+   load-then-set) — the suite currently fences only one.
+3. **Keep the per-tier value store.** It is right and it is this issue's own
+   recommendation; only the two branches above are wrong.
+4. **The fence must construct a tier conflict on a DEFAULT-VALUED token.** That
+   is the row whose absence hid this for a whole item.

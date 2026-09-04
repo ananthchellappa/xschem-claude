@@ -1128,4 +1128,31 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   reverted, so it is not in the tree).
   **FILED, NOT FIXED.**
 
-**The next free number is 1287.**
+* **1287** — `op_param_lists::seed` reads `dict get $d params`, which `apply`
+  **overwrites**, so ruling **D-7**'s "the seed comes from the PDK" promise
+  answers whatever `apply` last wrote and `reset` cannot restore it. Measured
+  from a fresh process: `seed(mos)` = `{id id 0} {gm gm 1} {gds gds 1}` before
+  any apply, `{id id 0}` after apply **plus a full reset**. Ruling **DD-6** makes
+  it worse — the seed becomes the union, silently wider than the PDK's list.
+  Needs a pristine-descriptor stash. **FILED, NOT FIXED.**
+* **1288** — `op_param_lists::set_list` accepts two triples sharing one **label**
+  (`rc=0`, reports success) where its own file parser rejects them, measured on
+  the reverted tree so it is a **HEAD defect**. `_save_set` then dedups by label
+  and drops one row from the `.save` cards while the display draws it, which is
+  what makes **DD-6**'s `shown ⊆ params` guarantee false and `op_annot::_kind`
+  raise. **FILED, NOT FIXED.**
+* **1289** — **DD-6's display narrowing blanks a `derived` row whose operand it
+  removed**: `op_annot::text` builds `vars` inside the loop the ruling makes
+  iterate the display key, so `gm/id` renders blank when `gm` is deleted from the
+  annotation list though the deck still saves it. IHP registers exactly such
+  rows. A property of the **ruling**, so it survives B2a-2's revert and binds
+  whoever re-does DD-6. Three options costed; **needs a ruling**, on the user's
+  queue. **FILED, NOT FIXED.**
+* **1290** — `test_ase_optier_0963` check **X7** fails nondeterministically on a
+  simulator launch (`rc=1 raw=-1bytes op-vectors=0`) while check `XC` in the
+  **same process** makes the identical call successfully. Passed twice in
+  isolation and on a second full audit; a harness/environment defect, not a code
+  defect, but a standing intermittent red in a 381-suite audit. **FILED, NOT
+  FIXED.**
+
+**The next free number is 1291.**

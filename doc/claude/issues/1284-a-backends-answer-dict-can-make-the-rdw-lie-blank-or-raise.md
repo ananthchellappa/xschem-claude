@@ -255,3 +255,61 @@ own state sentence. The suite could not see this because its `rw_ansd` helper
   parameter — the exact shape `_answer_flaw` rejects for `absent`/`nonfinite` by
   its own comment ("a blank row that means nothing") and does not test for
   `devices`.
+
+---
+
+## Item B2a-2 — FIX WRITTEN AND SURVIVED A 22-SHAPE ADVERSARIAL MATRIX, then reverted as collateral, 2026-09-03
+
+**This is the one of B2a's three refuted fixes that B2a-2 got right, and the
+adversary could not break it.** Recorded in detail because the third crew should
+apply it unchanged.
+
+### The regression B2a introduced, reproduced before the fix
+
+B2a's `_answer_flaw` treated an **absent** `devices` key as malformed *and* ran
+**before** the state check, so a legal minimal refusal produced a false
+accusation. The Measure agent's transcript, and note the blast radius is **all
+four** non-`ok` states, not just `no_raw` as first reported:
+
+```
+head |    >>> No simulation results are loaded. Run a simulation, or load a raw file, then ask again.
+pat  |    >>> The ngspice operating-point reader answered in a shape this window could not read...
+pat  | ans <state not_annotated> / <state not_op> / <state no_devpath> -> ALL THREE render the SAME accusation
+```
+
+### The fix
+
+A new `rdw::_answer_state {ans}` returning `{hasstate state}`, called **first**,
+with three arms in this order: (a) no readable `state` — including an `ans` that
+is not a dict at all — is itself a malformed answer and gets `_flaw_line`;
+(b) `state ne ok` returns `_state_sentence` immediately with **no shape check of
+any kind**; (c) only under `state ok` is `_answer_flaw` consulted. `_answer_flaw`
+was narrowed at the same time so every bucket is guarded by `dict exists`
+(measured safe on a malformed dict: returns 0, never raises), making an
+**absent** `devices`/`absent`/`nonfinite` **empty, not malformed**.
+
+**Both halves are needed.** Reordering alone leaves a legal `{state ok …}`
+unvalidated in the wrong direction; narrowing alone still lets `{state no_raw}`
+reach `_flaw_line`. Rows **F21**–**F26** cover both, and **F26** is structural —
+it reads `format_answer`'s own body and asserts `_answer_state` appears before
+`_answer_flaw`, so a later edit cannot silently restore the order.
+
+### The adversary's verdict
+
+A 22-shape state/shape matrix found **no counterexample**: all four legal
+minimal refusals render their own correct sentence and none names the backend;
+a refusal carrying a *malformed data key* still renders its state sentence;
+`{state ok}` with every bucket absent renders the fifth silence;
+present-but-un-walkable `devices`/`absent`/`nonfinite`, a 1-element `absent`
+entry, an odd-length `devices`, a no-state answer and a non-dict answer all
+reach the flaw line; `{state weird}`/`{state {}}`/`{state OK}` get the
+unknown-state sentence; **no raise on any shape**.
+
+**Apply it unchanged** from
+`doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch`. The item was
+reverted for **1277**, **1281** and **1285**; nothing here was refuted.
+
+### One cosmetic defect noticed and not fixed
+
+`_state_sentence` renders *"a op analysis"* for simtype `op` (article
+agreement). Pre-existing at HEAD, not in the reverted diff.
