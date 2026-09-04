@@ -1105,4 +1105,27 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   through the shipped ngspice backend**; live for whoever adds the second one.
   **FILED, NOT FIXED.**
 
-**The next free number is 1285.**
+* **1285** — `op_annot::text` draws the **on-sheet** annotation rows from the
+  same `dict get $d params` list `_cards_for` turns into `.save` cards
+  (`src/op_annot.tcl:1726`, loop at `:1741`), so ruling **DD-4**'s two clauses
+  — `apply` writes the **union** into `params`, *and* the display narrows to the
+  annotation list — **cannot both be true of one field**. Item **B2a** attempted
+  the SAVE half (issue 1280) and **was reverted in full**, so nothing of DD-4 is
+  in the tree; this issue is unaffected, because it is a property of
+  `825cd3bd` + DD-4 and not of B2a's code. The DISPLAY half needs
+  `src/op_annot.tcl`, which B2a did not own.
+  **HARD BLOCKER FOR ITEM B5**: until it lands, Delete leaves the row drawn on
+  the sheet, the opposite of the user's own word *declutter*. Two options
+  costed, on the owed ledger as a `rule` debt. **FILED, NOT FIXED.**
+* **1286** — `ase::sim_write_conf` (`src/ase.tcl:1999-2034`), the writer
+  `op_param_lists::write_conf` was **copied from**, carries **both** of issue
+  1276's holes: no directory guard (`file rename -force` moves the temp *into*
+  a directory target and reports success) and no symlink resolution (the link is
+  replaced by a regular file, the real target left empty). Found by item **B2a**
+  while fixing the copy; `src/ase.tcl` is another item's file. A written fix
+  exists as `_resolve_target` + `_target_why` inside
+  `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` (that item was
+  reverted, so it is not in the tree).
+  **FILED, NOT FIXED.**
+
+**The next free number is 1287.**

@@ -109,3 +109,104 @@ that is already green**, and adding rows to close a fence found by one's own
 sabotage pass is the kind of same-item self-marking this batch has been careful
 about; they are named here so item **B4** — which touches this suite by its own
 Files cell (`rows in B3's suite`) — closes them as it goes.
+
+---
+
+# ITEM B2a — **ATTEMPTED, MEASURED, AND REVERTED**, 2026-09-03
+
+> **STATUS: NOT FIXED. The code below was written, verified green, and then
+> REVERSE-APPLIED out of the tree.** The item's adversary pass refuted the
+> batch's central claim and the write-up agent reproduced three of its attacks
+> independently, so item B2a is **[F]** and `src/op_param_lists.tcl`,
+> `src/rdw.tcl` and both suites are byte-identical to commit `825cd3bd`.
+>
+> **The work is not lost and must not be retyped.** The full 2,506-line diff is
+> preserved at `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` and
+> applies clean to `825cd3bd`. The next crew's job is
+> **apply + fix the named holes + re-verify**, not reconstruct.
+>
+> Everything below this banner is a record of THE ATTEMPT — what it changed and
+> what it measured. Read it as evidence, not as a description of the tree. The
+> reasons for the revert are under **"Why this was reverted"** at the end of
+> this section; the three defects that forced it are in issues 1277, 1281 and
+> 1284, and 1276/1278/1279/1280/1282/1283 were reverted as **collateral**,
+> because a 2,506-line diff is one unit and splitting it at write-up time would
+> ship a code change no verifier ever saw.
+
+## What the attempt did (item B2a — **FIXED**, 2026-09-03. All three fences now fence, and each is proved by its own sabotage.)
+
+
+**No production code changed for this issue.** All three were missing *fences*,
+not defects, so the red-before proof is the **sabotage run**, never the shipped
+tree — which is this issue's own point and the batch's recurring lesson: *a
+suite fences the questions its author thought of, and a green count is a
+statement about the FENCE, not about the code.*
+
+## Gap A — newest-first store order, which had NO headless witness at all
+
+`Q1b` was titled *"newest first"* and pushed exactly **one** block, then
+asserted it was at index 0 — true under either ordering. **Rewritten** to record
+the store length, push a **second, distinct** block, and assert that the new
+block is at index 0, `$Q1_BLK` is at index 1, and the length grew by exactly one.
+
+```
+SB-OLDEST-ON-TOP  (rdw::_insert_index -> end)
+  before B2a : ALL PASS (32 checks) --nogui   /  2 FAILED (40 passed) on :99
+  after  B2a : 1 FAILED (42 passed) --nogui   /  3 FAILED (50 passed) on :99
+```
+
+**That is the headless witness the accept row asked for.** Every `--nogui` run,
+and `full_audit.sh`'s own nogui leg, would previously have passed with the store
+reversed.
+
+## Gap B — the union's cross-bucket order, unfenced on BOTH arms
+
+New row **F16**, one mixed answer closing both halves: three devices, one in
+each bucket, and one device carrying all three kinds. It asserts
+`rdw::_rowdevs` answers `@m.x1.mA @m.x1.mB @m.x1.mC` (the *devices → absent →
+nonfinite* first-appearance order `src/rdw.tcl`'s own comment promises) **and**
+that within one device the columns render measured, then `(did not converge)`,
+then blank — bucket order, not raw-file order, which was true and stated
+nowhere.
+
+```
+SB-REVERSE-UNION  (rdw::_rowdevs, absent/nonfinite appended first)
+  before B2a : ALL PASS (32) --nogui  AND  ALL PASS (42) on :99
+  after  B2a : 1 FAILED (42 passed) --nogui  /  1 FAILED (52 passed) on :99
+```
+
+## Gap C — the inert-button message, fenced only on the display arm
+
+New row **Q9**: drive `rdw::inert Delete` and `rdw::inert Save` with no widget
+anywhere and assert `::rdw::statusmsg` names the button and the item that wires
+it, that the two differ, and that the variable is clearable. `rdw::status` was
+split for exactly this and it already worked headless — the row simply did not
+exist. W4b on the display arm is the twin it is copied from.
+
+```
+SB-STATUS-NOOP  (rdw::status -> no-op)
+  before B2a : ALL PASS (32 checks) --nogui
+  after  B2a : 1 FAILED (42 passed) --nogui  /  2 FAILED (51 passed) on :99
+```
+
+## Suite size
+
+`tests/headless/test_rdw_window_1245.tcl` grew **32 → 43** headless checks and
+**42 → 53** on `:99`. It did not shrink.
+
+## Why this was reverted
+
+**This issue's own fix was not refuted, and nothing below was measured wrong.**
+It was reverted as **collateral**. Item B2a was implemented as one 2,506-line
+diff across four files; the adversary pass refuted the batch's central claim on
+three *other* issues — **1277**, **1281** and **1284** — and the write-up agent
+reproduced all three independently before deciding. Splitting a diff that size
+into a "sound" half and an "unsound" half at write-up time would have committed
+a code change that no Measure, Verify-A, Verify-B or Verify-C pass had ever
+seen, which is precisely the failure mode this batch has already paid for in
+items B1, B2 and B3.
+
+**The work is preserved and must not be retyped.**
+`doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` applies clean to
+`825cd3bd`. The next crew's job is **apply → fix the three named holes →
+re-verify**, and this issue's portion should survive that pass unchanged.

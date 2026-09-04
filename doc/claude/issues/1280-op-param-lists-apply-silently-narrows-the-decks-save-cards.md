@@ -72,3 +72,106 @@ Delete (**B5**), not with the store.
 
 **Item B5.** It owns Delete, Add and Save, and it is where the ruling above has
 to be asked.
+
+---
+
+# ITEM B2a — **ATTEMPTED, MEASURED, AND REVERTED**, 2026-09-03
+
+> **STATUS: NOT FIXED. The code below was written, verified green, and then
+> REVERSE-APPLIED out of the tree.** The item's adversary pass refuted the
+> batch's central claim and the write-up agent reproduced three of its attacks
+> independently, so item B2a is **[F]** and `src/op_param_lists.tcl`,
+> `src/rdw.tcl` and both suites are byte-identical to commit `825cd3bd`.
+>
+> **The work is not lost and must not be retyped.** The full 2,506-line diff is
+> preserved at `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` and
+> applies clean to `825cd3bd`. The next crew's job is
+> **apply + fix the named holes + re-verify**, not reconstruct.
+>
+> Everything below this banner is a record of THE ATTEMPT — what it changed and
+> what it measured. Read it as evidence, not as a description of the tree. The
+> reasons for the revert are under **"Why this was reverted"** at the end of
+> this section; the three defects that forced it are in issues 1277, 1281 and
+> 1284, and 1276/1278/1279/1280/1282/1283 were reverted as **collateral**,
+> because a 2,506-line diff is one unit and splitting it at write-up time would
+> ship a code change no verifier ever saw.
+
+## What the attempt did (item B2a — **THE SAVE HALF IS FIXED**, 2026-09-03. THE DISPLAY HALF IS ISSUE 1285 AND BLOCKS B5.)
+
+
+Ruling **DD-4** (DECISIONS.md, driver decisions) settles this issue as its own
+**Option 1**: *Delete is a display decision, never a save decision.* `apply`
+writes the **union** of the annotation and summary lists into `params`, and the
+display narrows to the annotation list.
+
+## What landed (`src/op_param_lists.tcl`)
+
+New `_save_set {cls}`: the union of `effective $cls annotation` and
+`effective $cls summary`, **deduped by LABEL with the annotation triple
+winning**. `apply` now runs in **two passes** — every class's save set is
+computed before anything is registered, because `_save_set` reads the PDK seed
+through `::op_annot::descriptor` and the second pass rewrites exactly those
+descriptors; one loop would let the first type applied change the seed the
+second type reads.
+
+⚠ **The union is taken over `effective`, not `get_list`, and that is the whole
+fix.** With the summary **unowned**, `effective` answers the PDK seed, so the
+union is a **superset** of what `params` held before and the deck can never lose
+a card. That is precisely the measured 6 → 2.
+
+**Rejected: unconditionally adding the PDK seed as well.** It over-reads DD-4 —
+`params` could then never shrink at all, so clearing *both* lists could not
+reduce the deck, and DD-4 says a "stop saving this" control would be a separate
+control with a separate name. **Rejected: unioning only the OWNED lists** — a
+summary-only customisation would then narrow `params` below the seed, which is
+this issue again one door over.
+
+**No `src/op_annot.tcl` edit was needed.** `_cards_for` already treats `params`
+as "what this device must save", and B1's landed seam contract is untouched.
+
+## Red before green
+
+| row | red on | green after |
+|---|---|---|
+| `A3` DD-4, live one-instance fixture | **6 `.save` cards before `apply`, 2 after**; `params` = `{id ids 0} {vth vth 2}` | 6 before, **6 after**, same set, the annotation list's own two first |
+| `A4` the counterweight | a label in the SUMMARY alone got **no** card | it gets one; a label in neither list still gets none; `effective <c> annotation` still answers the annotation list by itself |
+| `A1` | `params` = the annotation list alone | `params` = the union (the user's two rows, then the PDK seed's six) — **this golden's move IS the fix** |
+
+Sabotage, with the fix in place: `SB-SAVE-NARROW` (`_save_set` →
+`effective $cls annotation`, today's narrowing) → **A1, A2, A2b, A3, A4 red**,
+`RESULT: 5 FAILED (51 passed)`.
+
+## ⚠ DD-4'S SECOND CLAUSE CANNOT LAND IN B2a — SEE ISSUE 1285
+
+MEASURED: `op_annot::text` (`src/op_annot.tcl:1726`, the `params` loop at `:1741`)
+builds the **on-sheet
+annotation rows** by iterating the **same** `dict get $d params` list that
+`_cards_for` turns into `.save` cards. So DD-4's first clause (`apply` writes
+the union into `params`) and its second (the display narrows to the annotation
+list) **cannot both be true of one field**, and B2a owns four files of which
+`op_annot.tcl` is not one.
+
+B2a implements the SAVE half — the half whose failure is silent, destructive and
+invisible on a schematic (invariant **I3**). The DISPLAY half is filed as issue
+**1285** and is a **hard blocker for item B5**: until it lands, a user who
+deletes a row from the annotation list will see the deck keep saving it
+(correct, per DD-4) **and** see the row still drawn on the sheet — the opposite
+of the user's own word *declutter*. The store's narrowing is already to hand:
+`effective <c> annotation`, which row A4 asserts by name for exactly that reason.
+
+## Why this was reverted
+
+**This issue's own fix was not refuted, and nothing below was measured wrong.**
+It was reverted as **collateral**. Item B2a was implemented as one 2,506-line
+diff across four files; the adversary pass refuted the batch's central claim on
+three *other* issues — **1277**, **1281** and **1284** — and the write-up agent
+reproduced all three independently before deciding. Splitting a diff that size
+into a "sound" half and an "unsound" half at write-up time would have committed
+a code change that no Measure, Verify-A, Verify-B or Verify-C pass had ever
+seen, which is precisely the failure mode this batch has already paid for in
+items B1, B2 and B3.
+
+**The work is preserved and must not be retyped.**
+`doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` applies clean to
+`825cd3bd`. The next crew's job is **apply → fix the three named holes →
+re-verify**, and this issue's portion should survive that pass unchanged.

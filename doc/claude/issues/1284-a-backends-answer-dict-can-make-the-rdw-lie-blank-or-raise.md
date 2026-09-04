@@ -118,3 +118,140 @@ debt `1245_B3_window_wording`):
 All of the above. **Item B5** is the first item that will drive `::rdw::sim` and
 therefore the first that can reach a second backend at all; **whoever adds the
 second backend** is the one who makes every shape here live.
+
+---
+
+# ITEM B2a — **ATTEMPTED, MEASURED, AND REVERTED**, 2026-09-03
+
+> **STATUS: NOT FIXED. The code below was written, verified green, and then
+> REVERSE-APPLIED out of the tree.** The item's adversary pass refuted the
+> batch's central claim and the write-up agent reproduced three of its attacks
+> independently, so item B2a is **[F]** and `src/op_param_lists.tcl`,
+> `src/rdw.tcl` and both suites are byte-identical to commit `825cd3bd`.
+>
+> **The work is not lost and must not be retyped.** The full 2,506-line diff is
+> preserved at `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` and
+> applies clean to `825cd3bd`. The next crew's job is
+> **apply + fix the named holes + re-verify**, not reconstruct.
+>
+> Everything below this banner is a record of THE ATTEMPT — what it changed and
+> what it measured. Read it as evidence, not as a description of the tree. The
+> reasons for the revert are under **"Why this was reverted"** at the end of
+> this section; the three defects that forced it are in issues 1277, 1281 and
+> 1284, and 1276/1278/1279/1280/1282/1283 were reverted as **collateral**,
+> because a 2,506-line diff is one unit and splitting it at write-up time would
+> ship a code change no verifier ever saw.
+
+## What the attempt did (item B2a — **FIXED**, 2026-09-03. All four shapes, plus the two the adversary did not report, plus §3.)
+
+
+Ruling **D-5** records that the user **is building a custom ngspice** that will
+supply a wildcard operating-point save, and this seam exists precisely to admit
+it — so the first backend to hand this window an unexpected shape will be the
+user's own. Every shape below was reproduced before it was fixed.
+
+## What landed (`src/rdw.tcl`)
+
+1. **`rdw::_answer_flaw {ans}`** — one verdict, taken **once, before anything
+   walks the answer**, so the renderer stays pure rather than growing a `catch`
+   per use. It validates the `devices` dict, every device's pair list, every
+   pair, and the `absent` / `nonfinite` buckets and their entries (an entry of
+   fewer than two fields would render a device sub-header with an empty
+   parameter name — a blank row that means nothing). Helper `rdw::_wellformed`.
+2. **`rdw::_flaw_line {sim}`** — a flawed answer gets its **own** sentence,
+   **naming the backend**, because the remedy is there and not in the run. So
+   `dump_devpath` now `dict set`s the resolved backend into `ctx`, and the
+   suite's `rw_ctx` gained an optional fifth `sim` argument (defaulted, so no
+   existing caller moved).
+3. **`rdw::_value_text {v}`** — a value-less pair or an empty-string value now
+   renders `(no value reported)`: **words**, in the same family as
+   `(did not converge)`, never a number and never a bare blank.
+4. **`rdw::_oneline {s}`** — `\n`, `\r` and `\t` collapse to one space in every
+   parameter name, every value and every device sub-header, so one pair is one
+   line and `block_text` and `render_pane` cannot disagree about how many lines
+   a block has.
+
+## The shapes, and what each did before
+
+| shape | before | after |
+|---|---|---|
+| (a) malformed `devices` value | the **fifth silence** — *"This run's raw holds no operating-point columns for `<dp>`"*, a statement about the RAW and **false**; the same wrong-answer-wearing-a-healthy-state that returned B1 `[F]` | its own sentence, naming the backend |
+| (b) malformed per-device **value** | **UNCAUGHT RAISE** out of the pure renderer every suite row and every widget path calls | a block, with the flaw sentence |
+| (b′) malformed **`absent`** bucket | **UNCAUGHT RAISE** — *measured while planning B2a, not in this issue* | ditto |
+| (b″) malformed **`nonfinite`** bucket | **UNCAUGHT RAISE** — *ditto* | ditto |
+| (c) value-less pair | byte-identical to an ABSENT column, and with **no** footnote | `(no value reported)`, textually distinct |
+| §3 empty-string value | inherited the per-block blank footnote, which is **false** about it | same — it is no longer a blank at all |
+| (d) newline / CR / tab in a value, a param name or a **device name** | one pair became two lines, the second unindented and untagged | one space, one line |
+
+**Rendering (c) and §3 as words closes both in one move** and leaves row `F5`'s
+*"the footnote rides exactly once"* golden exactly where it is. **Rejected:
+making the footnote per-row** — it moves F5 and repeats a sentence on every
+blank row.
+
+## Red before green
+
+| row | red on |
+|---|---|
+| `F17` | rendered the fifth silence |
+| `F18` | `RAISED: unmatched open brace in list`, **three times** |
+| `F19` | two blanks indistinguishable from the absent one, footnote false about them |
+| `F20` | **9** lines for a 7-entry block, one of them unindented and untagged |
+
+Sabotage, with the fix in place:
+
+* `SB-TRUST-THE-ANSWER` (`_answer_flaw` → `0`) → **F17, F18 red**, `2 FAILED (41 passed)`.
+* `SB-BLANK-IS-BLANK` (`_value_text` → identity) → **F19, F20 red**, `2 FAILED (41 passed)`.
+* `SB-NO-ONELINE` (`_oneline` → identity) → **F20 red**, `1 FAILED (42 passed)`.
+
+## ⚠ Why this was reverted — THE FIX IS A REGRESSION AGAINST HEAD, IN THIS ISSUE'S OWN CLASS
+
+Found by the adversary pass and **reproduced by the write-up agent** 2026-09-03,
+running HEAD's `rdw.tcl` and the attempt's `rdw.tcl` side by side under plain
+`tclsh` — `format_answer` is pure, so no xschem is needed.
+
+`rdw::_answer_flaw` returns 1 whenever `dict get $ans devices` **raises**, which
+it does when the `devices` key is simply **absent** — and it runs at
+`format_answer`'s top, *before* the state check. So a third-party backend that
+answers a refusal minimally (`{state no_raw}`) — the natural spelling, since a
+refusal genuinely has no devices — gets this:
+
+```
+===== HEAD =====
+no_raw      => No simulation results are loaded. Run a simulation, or load a raw file, then ask again.
+not_op      => The loaded results are a op analysis, not an operating point. Nothing was read from them: ...
+no_devpath  =>  has no operating-point descriptor, so there is no device path to ask about. ...
+===== WORKING TREE (the attempted fix) =====
+no_raw      => The ngspice operating-point reader answered in a shape this window could not read, ...
+not_op      => The ngspice operating-point reader answered in a shape this window could not read, ...
+no_devpath  => The ngspice operating-point reader answered in a shape this window could not read, ...
+```
+
+**Three correct, actionable sentences replaced by one false accusation against
+the backend.** The fix written to stop the window lying introduces a new lie, in
+the very reachability class this issue exists for: unreachable through the
+shipped ngspice backend (which always populates all five keys, even on refusal
+— `src/ase.tcl:8781`), reachable by any third-party backend. **Ruling D-5
+records that the first such backend will be the user's own custom ngspice.**
+
+The asymmetry proves it is a bug and not a policy: `_answer_flaw` **tolerates** a
+missing `absent` and a missing `nonfinite` (it `catch`es both) and rejects only a
+missing `devices`, while `_state_sentence`'s four non-`ok` arms need none of the
+three.
+
+**What the next crew must do.** Take the state verdict **first** and only run
+`_answer_flaw` on the `ok` path — a refusal answer has nothing to validate — or
+treat an absent `devices` key exactly as it already treats an absent `absent`
+and `nonfinite`: an empty bucket, not a flaw. Then add the acceptance row that
+would have caught it: **a refusal answer carrying ONLY `state`** must render its
+own state sentence. The suite could not see this because its `rw_ansd` helper
+*always* constructs all five keys, so no row can express a devices-less answer.
+
+## Still open — two lies the fix did not close (adversary-measured)
+
+* A `nonfinite` entry carrying only `{dev param}` passes `_answer_flaw` and
+  renders `(did not converge)` on **no evidence** — `_nonfinite_text` discards
+  its argument entirely.
+* A `devices` pair `{{} 1.5}` renders `     : 1.5`, a value belonging to no
+  parameter — the exact shape `_answer_flaw` rejects for `absent`/`nonfinite` by
+  its own comment ("a blank row that means nothing") and does not test for
+  `devices`.

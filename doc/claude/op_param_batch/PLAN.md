@@ -1552,6 +1552,76 @@ by two install lines and no uninstall line, which was the row's whole point.
 
 ---
 
+## B2a — harden what B2 and B3 shipped  ⛔ **NOT LANDED (status F), 2026-09-03 — implemented, verified green, then REFUTED AND REVERTED. Re-run it; the work is preserved.**  *(blocks B4 and B5)*
+
+**Scope was nine filed issues**: 1276–1281 in `src/op_param_lists.tcl`,
+1282–1284 in `src/rdw.tcl` and its suite. All nine were implemented, both suites
+grew (store 39→56, window 32→43 headless / 42→53 on `:99`), seventeen sabotage
+variants each red exactly their own rows, and Verify-A found no regression.
+**It was still reverted**, because the adversary pass refuted the central claim
+and the write-up agent reproduced three of its attacks independently.
+
+> **THE WORK IS PRESERVED AND MUST NOT BE RETYPED.**
+> `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` — 2,506 lines
+> across four files — **applies clean to `825cd3bd`**. The next crew's job is
+> **apply → fix the three holes below → re-verify**, not reconstruct. Each of
+> the nine issue files carries the full record of the attempt under a
+> *"Why this was reverted"* heading.
+
+### The three holes that forced the revert — fix these in the re-do
+
+| # | Where | What is wrong, measured |
+|---|---|---|
+| **1** | **1284**, `rdw::_answer_flaw` | **A REGRESSION AGAINST HEAD.** It runs *before* the state check and treats an **absent `devices` key** as a flaw, so a third-party backend answering a refusal minimally (`{state no_raw}` — the natural spelling) gets *"the reader answered in a shape this window could not read"* where HEAD correctly says *"No simulation results are loaded."* Three correct sentences replaced by one false accusation, in the exact class **D-5** says the user's own custom ngspice will occupy. **Fix:** take the state verdict first and validate only the `ok` path, or treat an absent `devices` as an empty bucket exactly as `absent`/`nonfinite` already are. |
+| **2** | **1277**, `_flavor_order` | **DD-2 IS NOT IMPLEMENTED.** The primary sort key is **fewest `*`**, and fewest-stars is not narrowness: `sky130_fd_pr__*` (the whole PDK) beats `*nfet_01v8_lvt*`, and a bare `*` beats it too — **in both insertion orders**. That is this issue's own filed defect under its own fix. Worse, `write_body` writes *"narrowest matching glob of that class wins"* into every settings file it emits. **Fix:** rank by literal (non-`*`) length or matched-prefix specificity. Separately, the v2 **round trip corrupts any glob with a Tcl list metacharacter** (writer interpolates a list rep, reader splits on whitespace) — `a[nm]fet*` returns brace-quoted and can never match, zero reports. |
+| **3** | **1281**, provenance | **A LEAK BECOMES SILENT DATA LOSS.** With the user and project files overriding the same key, `load` then `write_conf <user path>` **deletes the user's own personal rows from the user's own file** — `rc=1`, `reports=0` — because the override stamped them `project` and the store keeps no user-tier copy. HEAD merely leaks; this destroys. **Fix:** keep a **per-tier value store**, not one flat store plus an origin stamp; a one-word origin discards the losing value at load time and the writer then has nothing to write. |
+
+### What the suites could not see, and must now fence
+
+Every one of the three hid behind a green suite, and each for the same
+structural reason — **the fence only asks the question its author thought of**:
+
+* `rw_ansd` **always** constructs all five answer keys, so no row can express a
+  devices-less answer → hole 1 invisible.
+* every flavor glob in the store suite is **2-star** (`*fet*`, `*nfet_01v8*`,
+  `*_1v8_x`, `*t*`), so no row pits a 1-star broad glob against a 2-star narrow
+  one → hole 2 invisible. Row F5's round-trip fence uses `*nfet*`, which has no
+  metacharacter → the corruption invisible too.
+* rows T4/T5 never construct a **tier conflict** (the same key in both files)
+  → hole 3 invisible.
+
+**This is the batch's lesson for the fourth consecutive item.** B1 was green at
+37/37 while returning `nan`; B2 and B3 were green while shipping nine defects;
+B2a was green at 56/43/53 with seventeen sabotage variants while carrying a
+regression. **A green count is a statement about the fence.**
+
+### What still binds the next crew, revert or no revert
+
+* **The grammar deadline is unchanged and still free.** Nothing writes a flavor
+  row until **B5**, so v2 remains an *edit* rather than a migration. Issue
+  **1275** is still the ratification door and is back on the user's queue with
+  corrected wording.
+* **Issue 1285 survives the revert and BLOCKS B5.** `op_annot::text`
+  (`op_annot.tcl:1726`, params loop `:1741`) draws the on-sheet rows from the
+  **same `params` list** `_cards_for` turns into `.save` cards, so **DD-4's two
+  clauses cannot both be true of one field**. That is a property of
+  `825cd3bd` + DD-4, not of B2a's code. Answer it before the re-do, not after.
+* **Issue 1286** — `ase::sim_write_conf` (`src/ase.tcl:1999-2034`), the writer
+  `write_conf` was copied from, carries **both** of 1276's holes structurally.
+  Another item's file; filed, not fixed.
+* **DD-5's quoted specimen wording is FALSE** and must not be pasted verbatim by
+  whoever re-does 1282: `save.c:1073` and `:1120` rename a **multi-point
+  `Operating Point`** plot to `dc` themselves, so "not a standalone operating
+  point" is wrong for a case save.c creates. Rule debt **1282**.
+* **`src/ase.tcl:8803` must stay untouched** — `test_rdw_seam_1245`'s row `G3b`
+  is a cross-language fence counting save.c's own `op`/`dc` `strcmp`s, and
+  **DD-5 forbids the narrowing anyway**.
+* **No build, no `Makefile.in`.** Both files are already installed
+  (`grep -c op_param_lists.tcl src/Makefile` = 2, `grep -c rdw.tcl` = 2). Pure
+  Tcl; xschem sources `.tcl` at startup.
+
+---
+
 ## B4 — the keys and the two grammars  *(needs B3)*
 
 > **⚠ FROM A6 (2026-09-02).** A6-c closed **every** `symbol_bbox()` door by
@@ -1607,7 +1677,21 @@ line.
 
 ---
 
-## B5 — the button column and the two scope dialogs  *(needs B2, B3)*
+## B5 — the button column and the two scope dialogs  *(needs B2, B3, and see B2a)*
+
+> **⚠ TWO BLOCKERS, BOTH OPENED BY B2a's REVERTED ATTEMPT (2026-09-03).**
+> 1. **Issue 1285 blocks the Delete button.** `op_annot::text` draws the
+>    on-sheet rows from the **same `params` list** `_cards_for` saves from, so
+>    ruling **DD-4**'s two clauses ("`apply` writes the union" / "the display
+>    narrows") cannot both be true of one field. Until it is answered, Delete
+>    either stops the deck saving (which DD-4 forbids) or leaves the row still
+>    drawn (the opposite of *declutter*). It needs `src/op_annot.tcl`.
+> 2. **You are the first caller of `write_conf` and of the flavor-row grammar.**
+>    Both are unfixed at `825cd3bd`: `write_conf` reports success while writing
+>    somewhere else (**1276**) and flattens the two tiers (**1281**), and a
+>    flavor row still carries **no class** (**1277**), with precedence falling to
+>    `lsort`. **The moment B5 writes the first flavor row the grammar change
+>    stops being an edit and becomes a migration** — so land B2a's re-do first.
 
 **Do.** Up/Down reorder in all three lists. Delete and Add per the spec's table,
 each raising a **scope dialog** — *this device flavor only* vs *every device of

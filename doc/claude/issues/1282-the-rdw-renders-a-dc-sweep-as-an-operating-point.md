@@ -130,3 +130,123 @@ Everything above. Nothing was changed in `src/rdw.tcl` or `src/ase.tcl` for this
 issue — B3 shipped as measured, and this is filed rather than fixed because the
 choice between (a), (b) and (c) is the user's and because (c) reaches into
 another item's landed seam.
+
+---
+
+# ITEM B2a — **ATTEMPTED, MEASURED, AND REVERTED**, 2026-09-03
+
+> **STATUS: NOT FIXED. The code below was written, verified green, and then
+> REVERSE-APPLIED out of the tree.** The item's adversary pass refuted the
+> batch's central claim and the write-up agent reproduced three of its attacks
+> independently, so item B2a is **[F]** and `src/op_param_lists.tcl`,
+> `src/rdw.tcl` and both suites are byte-identical to commit `825cd3bd`.
+>
+> **The work is not lost and must not be retyped.** The full 2,506-line diff is
+> preserved at `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` and
+> applies clean to `825cd3bd`. The next crew's job is
+> **apply + fix the named holes + re-verify**, not reconstruct.
+>
+> Everything below this banner is a record of THE ATTEMPT — what it changed and
+> what it measured. Read it as evidence, not as a description of the tree. The
+> reasons for the revert are under **"Why this was reverted"** at the end of
+> this section; the three defects that forced it are in issues 1277, 1281 and
+> 1284, and 1276/1278/1279/1280/1282/1283 were reverted as **collateral**,
+> because a 2,506-line diff is one unit and splitting it at write-up time would
+> ship a code change no verifier ever saw.
+
+## What the attempt did (item B2a — **FIXED**, 2026-09-03, both parts. Ruling **DD-5**, option (a).)
+
+
+## Part 1 — the window names the analysis
+
+New pure `rdw::_analysis_line {ctx}` in `src/rdw.tcl`, appended by
+`format_answer` as a `note` **between the device-path line and the
+incompleteness line**, so a reader learns *what* the numbers are before being
+told the list of them is partial.
+
+**The gate is `$sty ne {} && $sty ne "op"`, and it fires only in state `ok` with
+a non-empty union.** The empty half is not decoration: a hand-built ctx and a
+failed `xschem raw sim_type` both produce `{}`, and a sentence that fired on
+those would be indistinguishable from an honest one. It deliberately does **not**
+fire on the fifth silence (F9 / F10_OKE), where it would put *"these numbers
+come from…"* over a block with no numbers.
+
+Option **(c)**, refusing `dc`, was not taken — forbidden by DD-5, and it would
+red row **G3b** of `tests/headless/test_rdw_seam_1245.tcl`, a cross-language
+fence over `save.c`'s own op/dc `strcmp`s. `src/ase.tcl:8803` is untouched.
+
+### ⚠ DD-5's QUOTED SPECIMEN WORDING IS REFUTED; ITS DECISION IS NOT
+
+The refuted sentence is DD-5's own:
+
+> *"these numbers come from the `dc` analysis at its first point, not from a
+> standalone operating point."*
+
+That asserts something **false for a case `save.c` creates itself**.
+`src/save.c:1073` and `:1120` both carry
+
+```c
+if(raw->npoints[...] > 1 && !strcmp(sim_type, "op")) sim_type = "dc";
+```
+
+so a **multi-point `Operating Point` plot is renamed `dc` by the reader**, and a
+user who ran nothing but an operating point would be told they ran a sweep.
+**Measured on this binary:** a three-point `Plotname: Operating Point` raw
+answers `xschem raw sim_type` = `dc` (row Q6's second leg). `test_op_annot`'s
+row T26 is exactly such a raw and must keep publishing, so the C is not moving
+either.
+
+The shipped sentence therefore names what the **loaded results call themselves**
+rather than what the user ran — true in both cases, asserting nothing stronger:
+
+> These numbers come from the first point of results xschem reports as a `<sty>`
+> analysis, not as a standalone operating point. A `<sty>` sweep's first point is
+> one sweep step, and xschem also reports a multi-point operating point as
+> `<sty>`.
+
+**This wording is on the owed ledger as a `rule` debt for the user**, and it is
+also a `look` debt: it is new text on screen and a green suite is not an eyeball.
+
+## Part 2 — two facts, two sentences
+
+New `rdw::_sim_refusal {s}`. `dump_devpath` tested nothing and produced one
+sentence — *"Simulator X has no operating-point reader"* — for **both** "no such
+backend" and "a backend that registered without the (deliberately non-required)
+`op_param_set` hook". The split tests membership in `ase::backend_names`
+**before** the call, rather than parsing `ase::backend_hook`'s error string, so
+there is one source of truth. `op_param_set` is deliberately absent from
+`register_backend`'s required list (`ase.tcl:534`), which is what makes
+"registered, no reader" genuinely reachable. **Item B5 is the first thing that
+sets `::rdw::sim`, so this had to exist before B5, not after.**
+
+## Red before green
+
+| row | red on | green after |
+|---|---|---|
+| `F14` a `dc` ctx | block mentions `dc` **zero** times | the sentence, as a `note`, tags `{hdr dim note note {} …}` |
+| `F15` **control** | (green before, and it is not optional) | `op` and `{}` simtypes carry no sentence, asserted as the whole block |
+| `Q6` end to end, two raws | `sim_type=dc` on both, block-mentions-dc 0 | both name the analysis; the second leg is the three-point Operating Point |
+| `Q7` unregistered name | *"…has no operating-point reader…"* — the wrong fact | *"No simulator named zznosuchsim is registered…"*, with the remedy, and `op_param_set` nowhere |
+| `Q8` registered, no hook | same one sentence | names the hook, differs from Q7, and `::ase::backends` is restored so Q5 still sees `{ngspice}` |
+
+Sabotage, with the fix in place:
+
+* `SB-NO-ANALYSIS-SENTENCE` (`_analysis_line` → `{}`) → **F14, Q6 red**, `2 FAILED (41 passed)`.
+* `SB-ONE-REFUSAL` (`_sim_refusal` → the old single sentence) → **Q7, Q8 red**, `2 FAILED (41 passed)`.
+
+## Why this was reverted
+
+**This issue's own fix was not refuted, and nothing below was measured wrong.**
+It was reverted as **collateral**. Item B2a was implemented as one 2,506-line
+diff across four files; the adversary pass refuted the batch's central claim on
+three *other* issues — **1277**, **1281** and **1284** — and the write-up agent
+reproduced all three independently before deciding. Splitting a diff that size
+into a "sound" half and an "unsound" half at write-up time would have committed
+a code change that no Measure, Verify-A, Verify-B or Verify-C pass had ever
+seen, which is precisely the failure mode this batch has already paid for in
+items B1, B2 and B3.
+
+**The work is preserved and must not be retyped.**
+`doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` applies clean to
+`825cd3bd`. The next crew's job is **apply → fix the three named holes →
+re-verify**, and this issue's portion should survive that pass unchanged.

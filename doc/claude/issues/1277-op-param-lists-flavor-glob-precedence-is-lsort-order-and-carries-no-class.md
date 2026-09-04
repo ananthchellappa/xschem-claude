@@ -91,3 +91,168 @@ from the file they are reading is not a rule; it is a coin flip with a comment.
 **Item B5** writes flavor entries from the scope dialog. If B5 ships before the
 grammar gains a class field, every flavor entry in every shared settings file
 has to be migrated later. Settle it at B2's seam.
+
+---
+
+# ITEM B2a — **ATTEMPTED, MEASURED, AND REVERTED**, 2026-09-03
+
+> **STATUS: NOT FIXED. The code below was written, verified green, and then
+> REVERSE-APPLIED out of the tree.** The item's adversary pass refuted the
+> batch's central claim and the write-up agent reproduced three of its attacks
+> independently, so item B2a is **[F]** and `src/op_param_lists.tcl`,
+> `src/rdw.tcl` and both suites are byte-identical to commit `825cd3bd`.
+>
+> **The work is not lost and must not be retyped.** The full 2,506-line diff is
+> preserved at `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch` and
+> applies clean to `825cd3bd`. The next crew's job is
+> **apply + fix the named holes + re-verify**, not reconstruct.
+>
+> Everything below this banner is a record of THE ATTEMPT — what it changed and
+> what it measured. Read it as evidence, not as a description of the tree. The
+> reasons for the revert are under **"Why this was reverted"** at the end of
+> this section; the three defects that forced it are in issues 1277, 1281 and
+> 1284, and 1276/1278/1279/1280/1282/1283 were reverted as **collateral**,
+> because a 2,506-line diff is one unit and splitting it at write-up time would
+> ship a code change no verifier ever saw.
+
+## What the attempt did (item B2a — **FIXED**, 2026-09-03. THIS IS THE GRAMMAR CHANGE, AND IT LANDED BEFORE B5.)
+
+
+`src/op_param_lists.tcl`. Both halves, in one change, because the second one
+moves the settings-file grammar and could only be free while no flavor entry
+exists in the wild.
+
+## 1. The flavor entry carries its class — SETTINGS-FILE GRAMMAR v2
+
+```
+version 2
+class  <type-token> <broad-class>                                    # unchanged
+list   class  <class> <listname>                                     # 4 fields, unchanged
+list   flavor <class> <glob> <listname>                              # 5 fields, NEW
+param  class  <class> <listname> <label> <rawparam> <kind>           # 7 fields, unchanged
+param  flavor <class> <glob> <listname> <label> <rawparam> <kind>    # 8 fields, NEW
+```
+
+**Class rows are byte-unchanged**; only flavor rows moved, and `version` moved
+1 → 2. Internally the store key stays a **three-element list** and the flavor
+key's middle field became the two-element list `{<class> <glob>}`, so
+`lindex $k 2` is still the listname everywhere. That is not a detail: a
+four-element key would have moved `lindex $k 2` off the listname and **silently
+broken issue 1279's own recommended snippet**, which the risk notes flagged as
+the collision between these two issues. The chosen shape makes 1279's snippet
+correct as written.
+
+**Public arity is unchanged on every verb.** `set_list flavor {mos *nfet*}
+annotation ...`, `owns flavor {mos *g*} annotation`. `set_list` **reports and
+returns 0** for a flavor key that is not exactly two whitespace-free non-empty
+elements (new `_key_why`), so no un-migrated caller can fail silently by
+storing a list under a key no reader will look for.
+
+**A v1 flavor row read by the v2 parser is REPORTED AND SKIPPED, never migrated
+by inference.** The class was not expressible in v1, so any value the parser
+picked would be invented data — the shape ruling **D-4** forbids one level up.
+The version arm's report now names both versions *and* says flavor rows gained
+a class field. `_parse_line` reads and validates the **scope first**, because
+the scope names the arity.
+
+**Rejected: a `<class>/<glob>` composite string.** Measured, not tasteful: every
+shipped `match` glob in this tree carries a slash — `{*sky130_fd_pr/*}` (13
+occurrences), `{*sg13g2_pr/*}`, `{*gf180mcu_pr/*}` — so a composite is
+split-once-and-hope. **Rejected: variable arity via `args`** on
+owns/get_list/set_list (three verbs grow a dispatch).
+
+## 2. Precedence is MOST SPECIFIC WINS
+
+New `_flavor_matches_class` (does this entry belong to the class being asked
+about?) and `_flavor_order` (fewest `*`, then the most non-`*` characters, then
+lexical order of the glob). `lsort` is stable, so three sorts applied
+least-significant-key first give the ordering with no comparison callback.
+
+This is DD-2's *"the narrower entry wins"* made spellable. **Rejected:
+declaration order** — it needs the insertion-ordered registry issue 1274 names
+for op_annot, and a user reading the FILE cannot predict cross-tier insertion
+order either. **Rejected: keeping `lsort` and documenting it** — this issue's
+own rejection, and it stands: a rule a user cannot predict from the file they
+are reading is a coin flip with a comment.
+
+A tie is broken lexically and is **not** reported: `effective` runs once per
+instance per redraw, and a per-redraw report is spam.
+
+## Red before green
+
+| row | red on | green after |
+|---|---|---|
+| `F3` narrowness, both insertion orders + the loser renamed | `{{cls cls 0}}`×3 (the class list, because `set_list` refused the `{class glob}` key outright) | `{{narrow narrow 0}}`×3 |
+| `F4` class filter | a MOS flavor answered the `capacitor` query | each class answered independently |
+| `F5` grammar v2 on disk | `{1 1 {} {} 1 {} 0 1 0 0 2 1}` | `{1 2 {5 5} 8 1 {{fid fid 0}} 1 0 0 0 3 0}` |
+| `P2c` a genuine v1 file | the v1 flavor row **loads**, nothing reported | reported once naming both versions; the v1 flavor row reported and skipped; owned under **neither** the bare glob nor any guessed `{class glob}` |
+
+Sabotage, with the fix in place:
+
+* `SB-FLAVOR-LSORT` (`_flavor_order` → `lsort $keys`) → **F3 red**, `1 FAILED (55 passed)`.
+* `SB-FLAVOR-CLASSBLIND` (`_flavor_matches_class` → `1`) → **F4 red**, `1 FAILED (55 passed)`.
+
+## What this obliges
+
+Issue **1275** is the ratification door and now carries grammar **v2**; the
+header of `src/op_param_lists.tcl` and of
+`tests/headless/test_op_param_store_1245.tcl` both document the change and why
+the field is separate. Every `version 1` fixture line in the suite is now
+`version 2` (12 sites), and every flavor `set_list`/`get_list`/`owns` call takes
+the `{class glob}` key.
+
+## ⚠ Why this was reverted — THE FIX DOES NOT DELIVER DD-2, AND THE FILE SAYS IT DOES
+
+Reproduced by the write-up agent 2026-09-03, `tclsh` driving the attempt's own
+`op_param_lists.tcl`, both insertion orders, cell `sky130_fd_pr__nfet_01v8_lvt`:
+
+```
+A: 'sky130_fd_pr__*' (1 star, THE WHOLE PDK) vs '*nfet_01v8_lvt*' (2 stars, ONE flavor)
+  order={sky130_fd_pr__* *nfet_01v8_lvt*} winner=sky130_fd_pr___
+  order={*nfet_01v8_lvt* sky130_fd_pr__*} winner=sky130_fd_pr___
+B: '*' (EVERYTHING) vs '*nfet_01v8_lvt*'
+  order={* *nfet_01v8_lvt*} winner=_
+  order={*nfet_01v8_lvt* *} winner=_
+```
+
+`_flavor_order`'s primary sort key is **`*` count ascending**, and fewest-stars
+is **not narrowness**. A bare `*` — match-everything — beats a specific flavor
+glob in both insertion orders. That is *this issue's own filed defect* (the
+broad entry wins) reproduced under its own fix, with a **more natural** pattern
+pair than the filed one: `<pdk-prefix>*` is how a PDK-wide row is spelled.
+
+Two things make it worse than a simple miss:
+
+1. **The shipped settings file states the rule the code does not implement.**
+   `write_body` writes this comment into every `op_param_lists.conf` it emits:
+   `narrowest matching glob of that class wins. At most four ``*``.` So the file
+   a teammate reads promises narrowest-wins while the reader does fewest-stars.
+2. **The suite cannot see it.** Every flavor glob in
+   `test_op_param_store_1245.tcl` is 2-star (`*fet*`, `*nfet_01v8*`, `*_1v8_x`,
+   `*t*`), so no row ever pits a 1-star broad glob against a 2-star narrow one.
+   Row F3 passes over the hole — **the batch's own recurring lesson, one item
+   later: a suite fences the questions its author thought of.**
+
+**What the next crew must do.** Rank by *literal length of the non-`*` text*
+(most literal characters wins), or by matched-prefix specificity — not by star
+count. Then add the counterexample rows: `<pdk>*` vs `*<flavor>*`, and bare `*`
+vs anything. Until that lands, DD-2 is not implemented.
+
+## ⚠ Also unfixed, and adversary-measured (not independently re-run here)
+
+**Grammar v2 corrupts any glob carrying a Tcl list metacharacter, silently.**
+`write_body` emits `puts $fp "list $scope $key $ln"`, interpolating the flavor
+key's *list* string representation, while `_parse_line` splits on
+`regexp -inline -all {\S+}` and takes the raw fields — the writer's quoting and
+the reader's unquoting disagree. Measured by Verify-C on a set→write→reset→load
+round trip: `a[nm]fet*` is written `{a[nm]fet*}` and read back with the braces
+**literal**, so it can never match again; same for `a\*b` (the documented way to
+match a cell whose name contains a star) and `a"b*`. **Zero reports on either
+side.** `_key_why` guards whitespace only. Row F5's round-trip fence uses
+`*nfet*`, which has no metacharacter, so the fence passes over a corrupting
+round trip.
+
+Since the grammar change is the one with the B5 deadline, the next crew must
+settle quoting **in the same pass**: either write one field per line with an
+explicit escape, or refuse a glob containing a list metacharacter at both doors
+the way whitespace is already refused.

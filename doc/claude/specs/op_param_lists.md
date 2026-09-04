@@ -1255,6 +1255,56 @@ freezes the consumer), **1279** (`apply` cannot reach an unmapped token),
 **1280** (`apply` narrows the deck's `.save` cards, blanking list 2), **1281**
 (Save exports the author's personal user-global settings into the team's file).
 
+### What item B2a measured about those six, 2026-09-03 — **attempted, then reverted**
+
+Item **B2a** implemented all six plus **1282–1284**, was green (store 39→56,
+window 32→43 / 42→53, seventeen sabotage variants each red on exactly their own
+rows), and was **reverted in full** after its adversary pass; the diff is
+preserved at `doc/claude/op_param_batch/B2a_working_tree_REVERTED.patch`.
+**The tree is still as B2 and B3 left it.** Four findings outlive the revert and
+are design-of-record:
+
+1. **DD-2's "the narrower entry wins" has no operational definition, and the
+   obvious one is wrong.** B2a ranked candidate globs by **fewest `*`**. Measured
+   on `sky130_fd_pr__nfet_01v8_lvt`, both insertion orders: `sky130_fd_pr__*` —
+   *the whole PDK* — beats `*nfet_01v8_lvt*`, and a bare `*` beats it too. Star
+   count is not narrowness. Rank by **literal (non-`*`) length**, or by
+   matched-prefix specificity, and fence it with a 1-star-vs-2-star pair; every
+   glob in the store suite today is 2-star, which is why the hole was invisible.
+
+2. **The flavor key still carries no class, and the fix is still free.** §4's
+   key is `{scope key listname}`, so `effective` scans flavors **across classes**
+   — a MOS flavor answers a `capacitor` query whenever its glob happens to match.
+   The fix adds a field to the settings grammar (**v2**, issue **1275**).
+   ⚠ **It stays an edit rather than a migration only until B5 writes the first
+   flavor row.** B2a's v2 also had a second, separate hole worth designing out
+   up front: it emitted the key by **interpolating a Tcl list representation**
+   and read it back by **splitting on whitespace**, so any glob carrying a list
+   metacharacter (`a[nm]fet*`, `a\*b`) round-tripped brace-quoted and could never
+   match again, with zero reports on either side.
+
+3. **A seam refusal legitimately carries only `state`.** The answer dict at §4's
+   table is documented as five keys, and the *shipped* ngspice backend populates
+   all five even when refusing (`src/ase.tcl:8781`) — but nothing requires that
+   of a **D-5** third-party backend, for which `{state no_raw}` is the natural
+   spelling. B2a's answer-validator treated an absent `devices` key as a
+   malformed answer and ran **before** the state check, so three correct refusal
+   sentences became one false accusation against the backend — a regression
+   against the shipped window. **The contract to write down: `devices`, `absent`
+   and `nonfinite` are OPTIONAL and default to empty; only `state` is required,
+   and a non-`ok` state is rendered from `state` alone.**
+
+4. **`params` is BOTH the save list and the display list, so DD-4 needs a new
+   field** (issue **1285**, and it **blocks B5**). `op_annot::_cards_for`
+   (`op_annot.tcl:2808`) turns `dict get $d params` into `.save` cards, and
+   `op_annot::text` (`op_annot.tcl:1726`, params loop `:1741`) draws the on-sheet
+   rows from that **same list**. DD-4 says `apply` writes the **union** and the
+   **display narrows** — two different readings of one field, which no
+   implementation can satisfy. Either `op_annot::text` prefers a new descriptor
+   key over `params`, or it calls `op_param_lists::effective` directly. Both need
+   `src/op_annot.tcl`, which item B2a did not own.
+
+
 ---
 
 ## 5. Contracts and invariants
