@@ -4,7 +4,10 @@
 **four shapes re-measured independently by the write-up agent**, which found one
 the adversary did not report (an **uncaught raise**). **FILED, NOT FIXED.**
 
-**Status:** open. **Unreachable through the shipped ngspice backend**; reachable
+**Status:** **FIXED by item B2d, 2026-09-04**, including §5's two remaining
+shapes and a SIXTH the adversary found after the fix (the `state` key is a line
+injector — §"Fixed by item B2d"). Four edges remain, filed as **1299**.
+**Unreachable through the shipped ngspice backend**; reachable
 by any third-party backend the **D-5** seam exists to admit.
 
 ---
@@ -313,3 +316,148 @@ reverted for **1277**, **1281** and **1285**; nothing here was refuted.
 
 `_state_sentence` renders *"a op analysis"* for simtype `op` (article
 agreement). Pre-existing at HEAD, not in the reverted diff.
+
+---
+
+# Fixed by item B2d, 2026-09-04
+
+**Files:** `src/rdw.tcl`, `tests/headless/test_rdw_window_1245.tcl`.
+Pure Tcl, no build, no `Makefile.in` (`grep -c rdw.tcl src/Makefile` = 2 before
+and after).
+
+## What was measured BEFORE, verbatim
+
+The four filed shapes, driven through `rdw::block_text [rdw::format_answer …]`
+on HEAD `21fcece6`:
+
+```
+--- (a) devices malformed at the DICT level
+M1:/
+@m.x1.m1
+This run's raw holds no operating-point columns for @m.x1.m1. Only parameters the deck explicitly saved appear here.
+--- (b) devices malformed at the VALUE level
+RAISED: unmatched open brace in list
+--- (b-prime) malformed ABSENT bucket
+RAISED: unmatched open brace in list
+--- (b-dprime) malformed NONFINITE bucket
+RAISED: unmatched open brace in list
+--- (c) a value-less pair
+    id :
+--- (d) a newline inside a value
+    id : 1.5
+INJECTED
+```
+
+and §5's two, which the preserved B2a-2 fix leaves open:
+
+```
+--- a NONFINITE entry with only {dev param} - no text at all
+    id : (did not converge)
+--- a DEVICES pair with an EMPTY parameter name {{} 1.5}
+     : 1.5
+```
+
+**And a SIXTH, found by B2d's adversary AFTER the fix was in the tree** — the
+one that refuted the item's central claim on the first pass:
+
+```
+state = "weird\n    id  : 1.11e-05\n    vth : 0.45", every bucket EMPTY
+  -> 4 block entries, 5 lines of block_text, 7 lines in the Tk pane on :99
+M1:/
+@m.x1.m1
+The operating-point reader answered with a state this window does not know: 'weird
+    id  : 1.11e-05
+    vth : 0.45'.
+```
+
+Two correctly indented, correctly formatted operating-point rows that **no
+bucket ever carried**, on the clipboard, indistinguishable from measured ones.
+
+## What it renders now
+
+```
+--- 1284a / 1284b / 1284b-prime / 1284b-dprime / §5's two
+M1:/
+@m.x1.m1
+The zzsim operating-point reader answered in a shape this window could not read, so nothing is shown for this device. This is a fault in that reader's answer, not a statement about the run.
+--- 1284c
+    id : (no value reported)
+--- 1284d
+    id : 1.5 INJECTED
+--- the state key as a line injector
+The operating-point reader answered with a state this window does not know: 'weird     id  : 1.11e-05     vth : 0.45'.
+```
+
+**Nothing raises**, and the four legal minimal refusals are untouched and still
+name nobody:
+
+```
+--- {state no_raw}       No simulation results are loaded. Run a simulation, or load a raw file, then ask again.
+--- {state not_op}       The loaded results are a op analysis, not an operating point. …
+--- {state no_devpath}   M1 has no operating-point descriptor, …
+--- {state not_annotated} Operating-point results are loaded but nothing has been published from them yet. …
+```
+
+(`a op analysis` is issue **1297**, filed and deliberately not fixed here.)
+
+## The decisions, with the rung and the rejected alternative
+
+* **L1 / invariant I3 — lift the preserved B2a-2 hunks verbatim and do NOT
+  re-derive the flaw the brief named.** The brief's *"`_answer_flaw` treats an
+  ABSENT `devices` key as malformed AND runs BEFORE the state check"* is true of
+  **B2a's** patch and **false of B2a-2's**, whose `_answer_flaw` guards every
+  bucket with `dict exists` and whose `format_answer` calls `_answer_state`
+  first. Measured on a patched mirror before writing a line. *Rejected:* writing
+  the state-first ordering fresh from the brief's prose — the one move that
+  could have restored the refuted order.
+* **L1 / invariant I3 — close §5's two holes as FLAWS, not as tolerated
+  renders.** This issue's ACCEPT row says *"1284 FIXED"*. *Rejected:* rendering
+  a text-less nonfinite as `(no value reported)` and a nameless pair under a
+  placeholder — a partial predicate is the redesign B2a's revert warns against,
+  and a placeholder invents data the backend never sent.
+* **L2 — two NAMED one-line predicates**, `rdw::_bucket_width` (3 for
+  `nonfinite`, 2 for `absent` — the shared `llength $e < 2` gate was the bug)
+  and `rdw::_named` (a `string trim`-non-empty test on the pair's own first
+  field and a bucket entry's second). *Rejected:* inline literals, which cannot
+  be sabotage-proved and would leave `SB-TRUST-THE-ANSWER` — five rows at once —
+  as their only witness. `_named` keys on the NAME never on arity, or F19's
+  value-less `{id}` reds.
+* **L1 / invariant I3 read one step further — the sixth shape is closed at the
+  EMIT POINT, not at the sentence.** `rdw::_line {tag text}` wraps every line
+  this file appends to a block. *Rejected:* wrapping each interpolated fragment
+  separately — nine edits, and a tenth site the next author forgets; the
+  measured escapes were in `_state_sentence`'s echo, `_flaw_line`'s backend
+  name, the `dim` device-path line, the fifth silence's `$dp`, the `no_devpath`
+  instance name and `dump_devpath`'s `"could not answer: $ans"`, which
+  interpolates a caught Tcl error and is multi-line by nature.
+
+## The sabotage matrix (`--nogui`, against 52 checks)
+
+| variant | predicted | observed |
+|---|---|---|
+| `_answer_flaw` → 0 | F17 F18 F24 F27 F28 | **as predicted** |
+| `_bucket_width` → 2 | F27 alone | **as predicted** |
+| `_named` → 1 | F28 alone | **as predicted** |
+| `_value_text` → identity | F19 **F20** | **F19 only** — see below |
+| `_oneline` → identity | F20 | F20 **F29** |
+| `_line` → `[list $tag $text]` | F20 F29 | **as predicted** |
+| flaw check hoisted above the state check | F22 F26 | **as predicted** |
+| B2a's unguarded `devices` arm restored | F23 alone (F21/F22 survive) | **as predicted** |
+
+**One predicted red did not appear, and the reason is the fix.** Before
+`_line`, a newline in a VALUE reached the block only through `_value_text`, so
+neutralising that proc broke F20's line count. Now the value is one-lined twice
+— once for the column-width computation, once at the emit point — so
+`_value_text` → identity reds F19 (the `(no value reported)` words) and F20
+stays green. F20's newline half is still fenced, by `_oneline` and by `_line`.
+Defence in depth, recorded rather than quietly enjoyed.
+
+## Still open
+
+* **1299** — four edges of the same predicate: a device that names nothing,
+  `_nonfinite_text` still discarding its argument, minimum-arity truncation, and
+  `_named`'s `string trim` disagreeing with `ase::op_param_split`'s exact-empty.
+* **1297** — `"a op analysis"`, the article, in the `not_op` arm.
+* The flaw verdict is **whole-answer**: one bad entry withholds every device in
+  the block while the sentence says *"this device"*, singular. Consistent with
+  §4 item 2 as written; the wording under-states what was withheld (in 1299 §2).

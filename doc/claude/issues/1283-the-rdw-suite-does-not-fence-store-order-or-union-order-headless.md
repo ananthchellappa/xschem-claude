@@ -4,7 +4,9 @@
 B3's sabotage agent (Verify-B) and confirmed by the adversary (Verify-C).
 **FILED, NOT FIXED.**
 
-**Status:** open. The suite is **ALL PASS 32 (`--nogui`) / 42 (`:99`)** and eight
+**Status:** **FIXED by item B2d, 2026-09-04** — all three gaps, each with the
+sabotage it now catches recorded. See §"Fixed by item B2d" at the end. When
+filed, the suite was **ALL PASS 32 (`--nogui`) / 42 (`:99`)** and eight
 of eight planned sabotage variants were caught. These are the gaps *behind* that
 number — B1's lesson one item later: **a green count is a statement about the
 fence, not about the code.**
@@ -235,3 +237,63 @@ commit code no verification pass had ever seen.
 **both** attempts: B2a's six sound fixes *and* B2a-2's re-fixes. This issue's
 portion should survive the third pass unchanged; apply the patch and fix only
 what §"Still open after B2a-2" in **1277**, **1281** and **1285** names.
+
+---
+
+# Fixed by item B2d, 2026-09-04 — all three, each with its sabotage
+
+**File:** `tests/headless/test_rdw_window_1245.tcl` only. **No production
+change**: all three are missing FENCES, not code defects, so the shipped tree is
+green before and after and **the sabotage IS the red-before proof.**
+
+Every variant below ran as a **proc override in a scratch wrapper that sources
+the suite** — the repo was never mutated, md5 verified identical before and
+after each run (trap 3, the one that voided a B2c agent's numbers).
+
+## Gap A — newest-first store order had no headless witness
+
+| | before (HEAD's suite) | after |
+|---|---|---|
+| `SB-OLDEST-ON-TOP` (`_insert_index` → `end`) `--nogui` | **ALL PASS (32)** | **1 FAILED — Q1b** |
+| the same on `:99` | 2 FAILED — W3, W3b | 3 FAILED — Q1b, W3, W3b |
+
+`Q1b` was **rewritten in place**, keeping its name. Its title already claimed
+*"newest first"* while its body pushed ONE block and asserted index 0 — true
+under either ordering. It now records the length, pushes a SECOND distinct
+block, and asserts it lands at index 0, the first is at index 1, and the length
+grew by exactly one. *(L2; rejected: adding a `Q1c` beside it and leaving the
+false title standing next to a true row, which is this issue's own thesis.)*
+
+## Gap B — union order was unfenced on BOTH arms
+
+`SB-REVERSE-UNION` (`_rowdevs` appending the `absent`/`nonfinite` devices before
+the `devices` keys) passed **ALL 32 headless AND ALL 42 display checks** when
+filed. It now reds **F16** on both arms.
+
+F16 locks two things: the union is built `devices` → `absent` → `nonfinite` in
+first-appearance order, **and** within one device the columns are measured, then
+non-finite, then absent — bucket order, not raw-file order. That second half was
+true and stated nowhere. **If a later item wants raw-file order, F16 is the row
+that will say so; do not weaken it to make that change easier.**
+
+## Gap C — the inert-button status line was display-arm only
+
+`SB-MUTE-STATUS` (`rdw::status` → a no-op) passed all 32 headless checks and red
+only `W4b` on `:99`. It now reds **Q9** headless as well: `rdw::inert Delete` and
+`rdw::inert Save` each set `::rdw::statusmsg` naming themselves and the item that
+wires them, the two differ, and the variable clears — with no widget anywhere.
+
+## The suite
+
+**32 → 52 (`--nogui`)** and **42 → 62 (`:99`)**, additive only: a row-ID diff
+against `git show HEAD:` shows **0 removed**, and every pre-existing row (S0, M1-M3,
+N1-N3, H1-H4, F1-F13, Q1-Q5, W0-W5, S1, S2) still runs. Q1b is the one row whose
+body changed, in place.
+
+## Still open
+
+Nothing from this issue. The lesson it was filed for is not closed by it: **a
+suite fences the questions its author thought of.** B2d's own adversary found a
+sixth answer shape that F20 and F25 crossed on either side and neither caught
+(issue 1284's `state` echo), which is this issue happening again one section
+over — now fenced by **F29**.

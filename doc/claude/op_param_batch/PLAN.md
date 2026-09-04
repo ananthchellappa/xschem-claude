@@ -1966,6 +1966,79 @@ the working tree before deciding.
 
 ---
 
+## B2d — the window's robustness  ✅ **LANDED, status E, 2026-09-04.** 1284 + 1282 (both parts) + 1283. *(the last of the B2a split; unblocks B4 and B5)*
+
+**Done.** `src/rdw.tcl` and `tests/headless/test_rdw_window_1245.tcl` only. Pure
+Tcl, no build, no `Makefile.in` (`grep -c rdw.tcl src/Makefile` = 2 before and
+after). Suite **32 → 52 (`--nogui`)** and **42 → 62 (`:99`)**, additive; the
+`src/rdw.tcl` hunks of `B2a-2_working_tree_REVERTED.patch` lifted verbatim, the
+other six files in that patch never touched.
+
+**⚠ THE THIRD SMALL ITEM TO LAND WHERE TWO BIG ONES LANDED NOTHING.** B2a and
+B2a-2 each carried nine interlocked issues, went green everywhere, were refuted,
+and reverted all nine. The split works: B2b, the 1291 driver fix, B2c's re-do and
+now B2d have all landed. **Keep later items this size.**
+
+### What a later item must know
+
+* **`rdw::_line {tag text}` EXISTS, AND EVERY LINE APPENDED TO A BLOCK GOES
+  THROUGH IT.** Not `[list $tag $text]`. `block_text` joins the entries with a
+  newline, so one entry containing one is one block rendering as three different
+  line counts — 4 entries, 5 lines of paste text, 7 lines in the Tk pane, all
+  measured on one answer. The escape was `_state_sentence`'s echo of the
+  backend's own `state`, and it survived the first pass of this very item: F20
+  fences a newline in a value, a parameter name and a device name; F25 fences the
+  unrecognised-state arm with the newline-free word `sideways`; the two crossed
+  the class and missed at their intersection. **Row F29 fences the emit point
+  now. A new `lappend out [list …]` is a defect.**
+* **`rdw::dump_devpath` DOES NOT PUT `simtype` IN THE CTX — issue 1298, and it
+  is aimed at B4 and B5.** The DD-5 analysis sentence is built by
+  `_analysis_line`, whose gate returns `{}` when the ctx carries no `simtype`.
+  `rdw::dump` sets it; the door does not, and the door is what B4 and B5 call.
+  Measured: the same answer through a door-shaped ctx renders `mentions-dc = 0`,
+  byte-identical to the pre-DD-5 defect. **Either fix 1298 (one line in the
+  door) or set `simtype` yourself, and carry a row.**
+* **`::rdw::sim` now selects between TWO refusals, not one.** B5 is the first
+  thing that sets it. `_sim_refusal` asks `ase::backend_names` for membership
+  *before* calling `ase::backend_hook`; do not parse the hook's error string.
+  Row Q8 registers a second backend and **restores `::ase::backends`** — a row
+  that forgets to reds Q5.
+* **Two stale anchors, both re-read on this tree.** `int update_op()` is at
+  **`save.c:3550`** and its op/dc guard at **`:3780`** — the crew brief's
+  `save.c:1988` is stale. `ase::backend_hook`'s *"unknown hook"* error is at
+  **`ase.tcl:553`**, not `:552` as the preserved patch's comment said; corrected
+  in the shipped comment and in the suite.
+* **Sabotage attribution shifted by one row, and it is the fix's doing.**
+  `_value_text` → identity used to red F19 **and** F20; it now reds F19 only,
+  because a value's newline is collapsed twice — once for the column-width
+  computation, once at the emit point. F20's newline half is still fenced by
+  `_oneline` and by `_line`. Do not "restore" the old attribution.
+* **F16 locks bucket order, not raw-file order**, within a device: measured,
+  then non-finite, then absent. It was true and written down nowhere. If a later
+  item wants raw-file order, F16 is the row that will say so — change it
+  deliberately, do not weaken it.
+
+### Status E — the one question that is the user's
+
+The shipped DD-5 sentence is **not** the ruling's quoted specimen, and
+`src/save.c` is what moved it: `:1073` and `:1120` both rename a **multi-point
+`Operating Point`** plot's `sim_type` to `dc`, so DD-5's *"these numbers come
+from the `dc` analysis at its first point"* would tell a user who ran nothing but
+an operating point that they ran a sweep. Row Q6 reproduces it on a real
+three-point raw. **DD-5's decision — render it, name the analysis, option (a) —
+is implemented unchanged; only the specimen wording is refused, and only on a
+measurement.** Rule debts `1282_analysis_sentence_wording` and
+`1284_four_new_sentences`; look debt for the five new on-screen sentences.
+
+### Filed, not fixed
+
+**1297** (`"a op analysis"`, the article) · **1298** (the door has no `simtype`)
+· **1299** (four remaining edges of the answer-shape predicate: a device that
+names nothing, `_nonfinite_text` still discarding its argument, minimum-arity
+truncation, and `_named`'s `string trim` vs the seam's exact-empty).
+
+---
+
 ## B4 — the keys and the two grammars  *(needs B3)*
 
 > **⚠ FROM A6 (2026-09-02).** A6-c closed **every** `symbol_bbox()` door by
@@ -2012,6 +2085,14 @@ half of the gate is still unsynced at `recompute_inst_bbox` (1260 part 3): a bar
 `set ::annot_show` makes the two doors answer opposite picks. Write the mask
 through `xschem set annot_show`, never a bare `set`.
 
+> **⚠ FROM B2d (2026-09-04).** You will call `rdw::dump_devpath`, and it does
+> **not** put `simtype` in the ctx — `rdw::dump` does. `_analysis_line`'s gate
+> then returns `{}` and ruling DD-5's sentence silently disappears, putting a DC
+> sweep back under an operating-point heading (issue **1298**, measured, one-line
+> fix recommended). Fix 1298 or set `simtype` yourself, and carry a row. Also:
+> every line you append to a block goes through `rdw::_line`, never
+> `[list $tag $text]` — row **F29**.
+
 **Files.** `src/cadence_style_rc` · `src/rdw.tcl` · rows in B3's suite
 
 **Accept.** Both grammars. Escape leaves the mode with bindings restored. A
@@ -2022,6 +2103,16 @@ line.
 ---
 
 ## B5 — the button column and the two scope dialogs  *(needs B2, B3, and see B2a)*
+
+> **⚠ FROM B2d (2026-09-04), AND ONE BLOCKER IS GONE.** B2a's window work
+> **landed** — issues 1284, 1282 (both parts) and 1283 are fixed, suite 52/62.
+> You are the first thing that sets `::rdw::sim`, and it now chooses between TWO
+> refusals: *"no simulator named X is registered"* and *"X is registered but
+> declares no `op_param_set` hook"*. `rdw::_sim_refusal` asks
+> `ase::backend_names` for membership before calling `ase::backend_hook` — do not
+> parse the hook's error string. A row that registers a second backend **must
+> restore `::ase::backends`**, or row Q5 reds. Issue **1298** applies to you too
+> if you call `dump_devpath` with a ctx of your own.
 
 > **⚠ THREE BLOCKERS. B2a AND B2a-2 BOTH ATTEMPTED THIS GROUND AND BOTH WERE
 > REVERTED (2026-09-03) — apply

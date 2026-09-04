@@ -158,6 +158,49 @@
 # of rdw.tcl (the plan's own algorithm, outside the repo) which scores ALL PASS.
 # A red row here is a statement about the tree, not about an unreachable golden.
 
+# ============================================================================
+# ITEM B2a — THE ROWS ADDED AFTER B3's ADVERSARY FOUND THREE DEFECTS IN B3's OWN
+# CODE AND SUITE, AND WHICH OF THEM ARE RED BEFORE B2a LANDS
+# ============================================================================
+# ⚠ ALL THREE ARE LATENT TODAY. Nothing sets `::rdw::sim` (item B5 is the first
+# thing that will), no third-party backend exists, and a `dc` slot needs a raw
+# nobody has loaded. So `make` and a green suite prove NOTHING here — every
+# behavioural row below was written to RED on the code as B3 shipped it, run
+# red, and only then fixed.
+#   1282  F14 Q6   a DC sweep, and a THREE-POINT operating point that save.c
+#                  itself renames `dc`, rendered as operating points with the
+#                  word `dc` nowhere on screen (ruling DD-5, option (a))
+#         Q7 Q8    "no such simulator" and "registered with no op_param_set
+#                  hook" collapsed into ONE sentence
+#   1284  F17      a malformed `devices` value rendered the FIFTH SILENCE — a
+#                  statement about the RAW, and false
+#         F18      a malformed VALUE, a malformed `absent` bucket and a
+#                  malformed `nonfinite` bucket each RAISED out of the pure
+#                  renderer (the last two measured while planning B2a and NOT
+#                  in the issue)
+#         F19      a value-less pair and an empty-string value rendered
+#                  byte-identically to an absent column, and inherited a
+#                  footnote that was false about them
+#         F20      a newline in a value made one pair into two lines, the
+#                  second unindented and untagged
+#
+# ⚠ THREE ROWS BELOW ARE **GREEN BEFORE B2a**, AND SAYING SO IS THE POINT.
+# Issue 1283 is filed against THIS SUITE, which was ALL PASS 32/42 with eight
+# of eight sabotage variants caught. These are the gaps BEHIND that number, and
+# each one's red-before proof is a SABOTAGE RUN, never the shipped tree:
+#   Q1b  REWRITTEN. It was titled "newest first" and pushed exactly ONE block,
+#        then asserted it was at index 0 — true under either ordering. Reversing
+#        `rdw::_insert_index` to `end` passed ALL 32 headless checks and red
+#        only W3/W3b on `:99`, so "newest dump on top" had NO HEADLESS WITNESS.
+#   F16  the union's cross-bucket order, which rdw.tcl's own comment promises
+#        and no row held: reversing `rdw::_rowdevs` passed all 32 headless AND
+#        all 42 display checks.
+#   Q9   the inert-button message: making `rdw::status` a no-op passed the full
+#        32-check headless run, because only W4b — inside the Tk-guarded
+#        section — asserted it.
+# A green count is a statement about the FENCE, not about the code. That is now
+# three items old on this branch, and this block is where it is written down.
+
 set fail 0; set npass 0
 proc check {name got exp} {
   global fail npass
@@ -268,6 +311,48 @@ proc RW_NODEVPATH {inst} { return "$inst has no operating-point descriptor, so t
 proc RW_NOTOP     {sty}  { return "The loaded results are a $sty analysis, not an operating point. Nothing was read from them: load the operating-point results and ask again. (An OP+TRAN run writes both to one file, and reading the transient makes it the current one.)" }
 
 # ============================================================================
+# FIVE MORE SENTENCES, ALL ITEM B2a's, ALL ON THE SAME RULE DEBT
+# ============================================================================
+# ⚠ RW_ANALYSIS IS NOT DD-5's QUOTED SPECIMEN, AND THE MEASUREMENT THAT MOVED
+# IT IS save.c's OWN. Ruling DD-5 proposes "these numbers come from the `dc`
+# analysis at its first point, not from a standalone operating point". That
+# asserts something FALSE for a case save.c creates itself: save.c:1073 and
+# :1120 both rewrite a MULTI-POINT `Operating Point` plot's sim_type to `dc`,
+# so a user who ran nothing but an operating point can be shown a sentence
+# telling them they ran a sweep. MEASURED on this binary: a three-point
+# `Plotname: Operating Point` raw answers `xschem raw sim_type` = dc (row Q6).
+# DD-5's DECISION — render it, and name the analysis — is NOT refuted and is
+# implemented; only its specimen wording is. The sentence below names what the
+# LOADED RESULTS CALL THEMSELVES rather than what the user ran, which is true
+# in both cases and asserts nothing stronger. The exact wording is on the owed
+# ledger as a rule debt for the user.
+proc RW_ANALYSIS {sty} { return "These numbers come from the first point of results xschem reports as a $sty analysis, not as a standalone operating point. A $sty sweep's first point is one sweep step, and xschem also reports a multi-point operating point as $sty." }
+
+## Issue 1284: a backend's answer dict is not trusted input, it is whatever a
+## backend hands over. A malformed one must not fall into the FIFTH SILENCE,
+## which is a statement about the RAW and would be false — the run may have
+## saved plenty; it is the answer that could not be read. So it gets its own
+## sentence, and that sentence names the backend, because the remedy is there.
+proc RW_FLAW {sim} { return "The $sim operating-point reader answered in a shape this window could not read, so nothing is shown for this device. This is a fault in that reader's answer, not a statement about the run." }
+
+## Issue 1282 part 2: "not registered" and "registered but declaring no
+## op_param_set hook" are DIFFERENT FACTS WITH DIFFERENT REMEDIES, and this
+## feature's whole obligation 3 is that different silences get different
+## sentences. ase::backend_hook already mints two distinct errors (ase.tcl:550
+## "unknown simulator" and :553 "unknown hook", both re-read on this tree); the
+## window collapsed them into one.
+proc RW_NOSIM    {s} { return "No simulator named $s is registered, so there is nothing to ask for this device. Check the name, or register a backend for it with ase::register_backend." }
+proc RW_NOREADER {s} { return "Simulator $s is registered but declares no operating-point reader - the op_param_set hook - so this window has nothing to show for it. A backend adds that hook to publish operating-point columns." }
+
+## Issue 1284 (c) and section 3. A value-less pair and an empty-string value
+## both rendered BYTE-IDENTICALLY to an absent column, so the one honest
+## distinction the renderer makes — "the raw names this column but nothing was
+## computed" — was lost, and the per-block blank footnote was then FALSE about
+## them. Words, in the same family as `(did not converge)`, keep the blank
+## glyph meaning exactly one thing.
+set RW_NOVAL {(no value reported)}
+
+# ============================================================================
 # THE FIXTURE MINTERS — COPIED VERBATIM FROM THE SEAM'S SUITE
 # ============================================================================
 # rs_mkraw / rs_mkraw_bin / rs_annot, tests/headless/test_rdw_seam_1245.tcl:265,
@@ -276,13 +361,19 @@ proc RW_NOTOP     {sty}  { return "The loaded results are a $sty analysis, not a
 #
 # ⚠ NO SIMULATOR IS NEEDED OR WANTED. A suite that needs a simulator is a suite
 # that will rot; every number below is a byte this file wrote.
-proc rw_mkraw {path plots} {
+## ⚠ THE OPTIONAL POINT COUNT IS ITEM B2a's, AND IT IS NOT A CONVENIENCE.
+## src/save.c:1073 and :1120 both carry
+##   if(raw->npoints[...] > 1 && !strcmp(sim_type, "op")) sim_type = "dc";
+## so a MULTI-POINT `Operating Point` plot is renamed `dc` BY THE READER, and
+## row Q6 needs a raw that reproduces it. Every existing call passes no count
+## and still writes a one-point plot, byte for byte as before.
+proc rw_mkraw {path plots {npoints 1}} {
   set f [open $path w]
   puts -nonewline $f "Title: B3 rdw window fixture\nDate: Mon Jan 1 00:00:00 2026\n"
   foreach spec $plots {
     set pname [lindex $spec 0] ; set pairs [lindex $spec 1] ; set types [lindex $spec 2]
     puts -nonewline $f "Plotname: $pname\nFlags: real\n"
-    puts -nonewline $f "No. Variables: [expr {[llength $pairs]/2}]\nNo. Points: 1\nVariables:\n"
+    puts -nonewline $f "No. Variables: [expr {[llength $pairs]/2}]\nNo. Points: $npoints\nVariables:\n"
     set k 0
     foreach {v val} $pairs {
       set ty [lindex $types $k]
@@ -290,10 +381,12 @@ proc rw_mkraw {path plots} {
       puts -nonewline $f "\t$k\t$v\t$ty\n" ; incr k
     }
     puts -nonewline $f "Values:\n"
-    set k 0
-    foreach {v val} $pairs {
-      if {$k == 0} { puts -nonewline $f "0\t$val\n" } else { puts -nonewline $f "\t$val\n" }
-      incr k
+    for {set pt 0} {$pt < $npoints} {incr pt} {
+      set k 0
+      foreach {v val} $pairs {
+        if {$k == 0} { puts -nonewline $f "$pt\t$val\n" } else { puts -nonewline $f "\t$val\n" }
+        incr k
+      }
     }
   }
   close $f
@@ -398,10 +491,17 @@ rw_mkraw     $R_TRAN   [list [list {Transient Analysis} $F_TRAN {}]]
 rw_mkraw     $R_TWO    [list [list {Operating Point} $F_SIX $T_SIX] \
                              [list {Transient Analysis} $F_TRAN {}]]
 
-## A context dict is {header devpath simtype instname}. Spelled through one
+## A context dict is {header devpath simtype instname sim}. Spelled through one
 ## helper so twenty rows cannot drift into twenty shapes.
-proc rw_ctx {hdr dp {sty op} {inst M1}} {
-  return [dict create header $hdr devpath $dp simtype $sty instname $inst]
+##
+## ⚠ THE FIFTH KEY IS ITEM B2a's (issue 1284). A malformed answer gets a
+## sentence that NAMES THE BACKEND that produced it, so the renderer has to be
+## told which one that was; `rdw::dump_devpath` sets it for the live path and
+## rows F17/F18 pass it explicitly. Defaulting it keeps every existing caller's
+## arity, and no row below asserts the contents of a ctx, so nothing moves.
+proc rw_ctx {hdr dp {sty op} {inst M1} {sim ngspice}} {
+  return [dict create header $hdr devpath $dp simtype $sty instname $inst \
+                      sim $sim]
 }
 ## An answer dict, five keys, in the seam's own order.
 proc rw_ansd {devices absent nonfinite complete state} {
@@ -751,6 +851,484 @@ check {F13 the button table IS spec 4.2 B7, as data: Add greyed on the annotatio
   {normal normal normal disabled normal normal normal disabled normal normal annotation}
 
 # ============================================================================
+# F14-F15 — THE SIXTH STATE: `ok` WITH NUMBERS, FROM AN ANALYSIS THAT IS NOT AN
+# OPERATING POINT (issue 1282 part 1, ruling DD-5)
+# ============================================================================
+# The seam's allow-list is `{op dc}`, not `{op}` — ase.tcl:8803, copied
+# DELIBERATELY from update_op()'s own guard in src/save.c so that the window
+# and the on-sheet annotation agree about what counts as an operating point.
+# So a raw whose current slot is a DC transfer characteristic answers `ok` with
+# real point-0 numbers, and B3's window presented them as an operating point:
+# MEASURED, sim_type = dc, state = ok, and the block said "operating-point"
+# twice and `dc` ZERO TIMES. A DC sweep's point 0 is the first step of the
+# sweep, not the circuit's quiescent point, and pasting that block into a
+# design-review document under a heading that says "operating point" is exactly
+# the plausible-wrong-number failure invariant I3 and ruling D5-1 exist to
+# prevent. `ctx` already carried `simtype` and `_state_sentence` already read
+# it; only the `not_op` arm used it.
+#
+# RULING DD-5, option (a) of the three issue 1282 lists: KEEP RENDERING IT AND
+# NAME THE ANALYSIS. Option (c), refusing `dc`, is forbidden — it would
+# contradict the allow-list B1 copied from the C on purpose, and it would red
+# row G3b of tests/headless/test_rdw_seam_1245.tcl, a cross-language fence that
+# counts save.c's own op/dc strcmps.
+#
+# ⚠ F15 IS THE CONTROL AND IT IS NOT OPTIONAL. The gate is
+# `$sty ne {} && $sty ne "op"`: the empty half matters because a hand-built ctx
+# and a failed `xschem raw sim_type` both produce {}, and an unconditional
+# sentence would be indistinguishable from an honest one — the same trap F3
+# carries for the incompleteness line. F15 asserts the WHOLE BLOCK, not a count
+# of zero, because a count over a NOPROC string is zero too.
+# RED BEFORE B2a: F14 and Q6. GREEN BEFORE B2a: F15.
+set F14_CTX [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} dc M1]
+set F14_T [rw_text $F_ANS1 $F14_CTX]
+check {F14 a state-ok block whose analysis is NOT an operating point carries one extra sentence naming it, between the device path and the incompleteness line, as a `note` and not a value row - so the word `dc` is on screen instead of nowhere} \
+  [list $F14_T [rw_tags $F_ANS1 $F14_CTX] \
+        [expr {[rw_count $F14_T {dc}] >= 1 ? 1 : 0}]] \
+  [list [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_ANALYSIS dc] $RW_INC \
+                  {    id  : 1.11e-05} {    is  : 0} {    vth : 0.75} \
+                  {    gm  : 0.001} {    vds : 1.25} {    vgs : 0.5} {}] \
+        {hdr dim note note {} {} {} {} {} {} {}} 1]
+
+set F15_OPBLOCK [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $RW_INC \
+                          {    id  : 1.11e-05} {    is  : 0} {    vth : 0.75} \
+                          {    gm  : 0.001} {    vds : 1.25} {    vgs : 0.5} {}]
+check {F15 CONTROL a state-ok block whose simtype IS `op`, and one whose simtype is EMPTY, carry no analysis sentence at all - asserted as the whole block, because a bare count of zero is also zero over a string that was never rendered} \
+  [list [rw_text $F_ANS1 $F_CTX1] \
+        [rw_text $F_ANS1 [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} {} M1]]] \
+  [list $F15_OPBLOCK $F15_OPBLOCK]
+
+# ============================================================================
+# F16 — THE UNION'S ORDER, AND THE COLUMN ORDER INSIDE ONE DEVICE
+# (issue 1283 gap B — A FENCE THAT WAS MISSING, NOT A DEFECT)
+# ============================================================================
+# ⚠ THIS ROW IS GREEN BEFORE B2a AND PROVES NOTHING ABOUT TODAY'S CODE. It is
+# here because src/rdw.tcl's own comment promises the row set is built in
+# "first-appearance order across devices -> absent -> nonfinite" and NO ROW HELD
+# THAT PROMISE: reversing `rdw::_rowdevs` so the absent/nonfinite devices come
+# first passed ALL 32 headless AND ALL 42 display checks. Its red-before proof
+# is therefore the SABOTAGE, not the shipped tree — B1's lesson one item on: a
+# green count is a statement about the FENCE.
+#
+# The second half was measured while filing 1283 and is also unasserted
+# anywhere: COLUMN ORDER WITHIN A DEVICE IS BUCKET ORDER, NOT RAW-FILE ORDER —
+# measured values, then non-finite, then absent. That groups the blanks
+# together, which reads better, but it is stated nowhere, so a later crew
+# cannot tell the design from the accident. One mixed answer closes both halves:
+# three devices, one in each bucket, and one device carrying all three kinds.
+set F16_ANS [rw_ansd [dict create {@m.x1.mA} {{id 1} {gm 2}}] \
+                     {{@m.x1.mB ib} {@m.x1.mA ib}} \
+                     {{@m.x1.mC gds nan} {@m.x1.mA vth nan}} 0 ok]
+set F16_CTX [rw_ctx {MX:/} {@m.x1} op MX]
+check {F16 the union is built devices -> absent -> nonfinite in first-appearance order, and within ONE device the columns are the measured ones, then the non-finite ones, then the absent ones - the promise rdw.tcl's own comment makes and no row held} \
+  [list [rw_ans ::rdw::_rowdevs $F16_ANS] [rw_text $F16_ANS $F16_CTX]] \
+  [list {@m.x1.mA @m.x1.mB @m.x1.mC} \
+        [rw_lines {MX:/} {@m.x1} $RW_INC \
+                  {  @m.x1.mA} {    id  : 1} {    gm  : 2} \
+                  {    vth : (did not converge)} {    ib  :} \
+                  {  @m.x1.mB} {    ib  :} \
+                  {  @m.x1.mC} {    gds : (did not converge)} \
+                  $RW_ABSN {}]]
+
+# ============================================================================
+# F17-F20 — A BACKEND'S ANSWER DICT MUST NOT MAKE THIS WINDOW LIE, BLANK OR
+# RAISE (issue 1284)
+# ============================================================================
+# ⚠ THIS IS THE ONE OF THE NINE THE USER'S OWN FUTURE DEPENDS ON. It is
+# UNREACHABLE through the shipped ngspice backend — that backend builds
+# `devices` with `dict set` and gates every value through
+# `op_annot::raw_class`'s `string is double -strict` — and REACHABLE by any
+# third-party backend the D-5 seam exists to admit. Ruling D-5 records that the
+# user IS BUILDING A CUSTOM NGSPICE that will supply a wildcard operating-point
+# save, and the seam exists precisely to admit it, so the first backend to
+# exercise these shapes will be the user's own. `rdw::format_answer` treated the
+# five-key dict as TRUSTED INPUT; it is whatever a backend hands it.
+#
+# FOUR SHAPES MEASURED ON THIS BINARY, plus two more found while planning:
+#   (a) F17  a malformed `devices` value -> `_rowdevs`'s dict-level catch
+#            swallows it, the union comes back empty, and the window renders the
+#            FIFTH SILENCE: "This run's raw holds no operating-point columns for
+#            <dp>". That is a STATEMENT ABOUT THE RAW and it is FALSE — the
+#            backend answered, and its answer was unreadable. This is the
+#            wrong-answer-wearing-a-healthy-state shape that returned item B1
+#            [F] (issue 1272), one layer out.
+#   (b) F18  a malformed per-device VALUE -> UNCAUGHT RAISE out of the pure
+#            renderer that every row of this suite and every widget path calls.
+#            `_rowdevs` catches at the dict level; nothing caught the
+#            `foreach {p v}` over a value. In the Tk path it surfaces as a
+#            background error and the pane paints nothing.
+#            ⚠ AND TWO MORE, MEASURED WHILE PLANNING B2a AND NOT IN THE ISSUE:
+#            a malformed `absent` bucket and a malformed `nonfinite` bucket each
+#            RAISE the same way, from the un-caught `foreach` inside _rowdevs
+#            and from the two bucket walks in format_answer.
+#   (c) F19  a value-less pair renders BYTE-IDENTICALLY to an absent column and
+#            without the footnote that says what a blank means, so the
+#            renderer's one honest distinction is lost. Section 3 of the issue
+#            is the reachable twin: the footnote is per BLOCK, so an
+#            empty-string value in a block that has any absent column inherits a
+#            footnote that is FALSE about it. Rendering both as words closes
+#            (c) and section 3 in one move and leaves F5's "the footnote rides
+#            exactly once" golden where it is.
+#   (d) F20  a newline inside a value makes ONE PAIR become TWO LINES, the
+#            second unindented and carrying NO TAG, breaking the
+#            one-pair-one-line model `block_text` and `render_pane` share. A
+#            device NAME and a parameter NAME do it too.
+# ALL FOUR RED BEFORE B2a: F17 renders the fifth silence, F18 RAISES three
+# times, F19 renders two blanks indistinguishable from the absent one, F20
+# renders nine lines for a seven-entry block.
+set F1718_CTX [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op M1 zzsim]
+## a well-formed dict whose `devices` VALUE is not a well-formed list
+set F17_BADDEV "@m.x1.m1 \{\{id 1"
+set F17_ANS [dict create devices $F17_BADDEV absent {} nonfinite {} \
+                         complete 0 state ok]
+set F17_T [rw_text $F17_ANS $F1718_CTX]
+check {F17 a malformed `devices` value gets its OWN sentence, naming the backend that produced it, instead of falling into the fifth silence - which is a claim about the RAW and would be false} \
+  [list [rw_bad $F17_T] $F17_T \
+        [rw_count $F17_T [RW_OKEMPTY {@m.x1.m1}]] \
+        [rw_tags $F17_ANS $F1718_CTX]] \
+  [list 0 [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_FLAW zzsim] {}] 0 {hdr dim note {}}]
+
+set F18_V [dict create devices [dict create {@m.x1.m1} "\{\{id 1"] \
+                       absent {} nonfinite {} complete 0 state ok]
+set F18_A [rw_ansd [dict create {@m.x1.m1} {{id 1}}] "\{\{@m.x1.m1 ib" {} 0 ok]
+set F18_N [rw_ansd [dict create {@m.x1.m1} {{id 1}}] {} "\{\{@m.x1.m1 gm nan" 0 ok]
+set F18_TV [rw_text $F18_V $F1718_CTX]
+set F18_TA [rw_text $F18_A $F1718_CTX]
+set F18_TN [rw_text $F18_N $F1718_CTX]
+set F18_FLAW [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_FLAW zzsim] {}]
+check {F18 a malformed per-device VALUE, a malformed `absent` bucket and a malformed `nonfinite` bucket each return a block instead of RAISING out of the pure renderer every row and every widget path calls, and each carries the malformed-answer sentence} \
+  [list [rw_bad $F18_TV] [rw_bad $F18_TA] [rw_bad $F18_TN] \
+        $F18_TV $F18_TA $F18_TN] \
+  [list 0 0 0 $F18_FLAW $F18_FLAW $F18_FLAW]
+
+set F19_ANS [rw_ansd [dict create {@m.x1.m1} {{id} {gm {}} {vds 1.25}}] \
+                     {{@m.x1.m1 ib}} {} 0 ok]
+set F19_T [rw_text $F19_ANS $F1718_CTX]
+check {F19 a value-less pair and an empty-string value both render as WORDS, textually distinct from the blank an absent column gets - so the blank keeps exactly one meaning and the per-block footnote, which rides exactly once, stays true of the only row it is about} \
+  [list $F19_T [rw_count $F19_T $RW_ABSN]] \
+  [list [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $RW_INC \
+                  "    id  : $RW_NOVAL" "    gm  : $RW_NOVAL" \
+                  {    vds : 1.25} {    ib  :} $RW_ABSN {}] 1]
+
+set F20_ANS [rw_ansd [dict create "@m.x1.mA\nX" \
+                       [list [list "id\ty" "1.5\nINJECTED"] [list gm "2\r3"]]] \
+                     {} {} 0 ok]
+set F20_CTX [rw_ctx {M1:/} {@m.x1} op M1 zzsim]
+set F20_B [rw_block $F20_ANS $F20_CTX]
+set F20_T [rw_text  $F20_ANS $F20_CTX]
+check {F20 a newline, a carriage return and a tab inside a value, inside a parameter name and inside a DEVICE name all collapse to one space: the block has exactly one line per entry, and no unindented untagged line appears in the middle of it} \
+  [list [expr {[rw_bad $F20_B] ? {NOT-RENDERED} : [llength $F20_B]}] \
+        [expr {[rw_bad $F20_T] ? {NOT-RENDERED} : [llength [split $F20_T "\n"]]}] \
+        [rw_count $F20_T "\n\n"] [rw_count $F20_T "\r"] [rw_count $F20_T "\t"] \
+        $F20_T] \
+  [list 7 7 0 0 0 \
+        [rw_lines {M1:/} {@m.x1} $RW_INC {  @m.x1.mA X} \
+                  {    id y : 1.5 INJECTED} {    gm   : 2 3} {}]]
+
+# ============================================================================
+# F21-F26 — ITEM B2a-2: A NON-`ok` STATE IS A COMPLETE AND LEGAL ANSWER ON ITS
+# OWN, AND A MALFORMED-INPUT PATH MAY NEVER ACCUSE AN INNOCENT BACKEND
+# (issue 1284, whose first fix was REFUTED)
+# ============================================================================
+# F17/F18 above are sound and stay: a PRESENT bucket that cannot be walked IS a
+# flaw in the backend's answer and deserves a sentence naming the backend.
+# What they could not see is what the SAME predicate does to an answer that is
+# not malformed at all.
+#
+# THE ADVERSARY'S OWN MEASUREMENT, REPRODUCED HERE AS THE RED. A third-party
+# backend's perfectly legal minimal refusal `{state no_raw}` renders:
+#   HEAD    -> No simulation results are loaded. Run a simulation, or load a
+#              raw file, then ask again.
+#   PATCHED -> The zzsim operating-point reader answered in a shape this window
+#              could not read ...
+# and MEASURED WHILE WRITING THIS SUITE, the blast radius is WIDER than the
+# issue says: `{state not_annotated}`, `{state not_op}` and `{state no_devpath}`
+# do it too. All four correct, actionable sentences become one false accusation
+# against a backend that did nothing wrong.
+#
+# TWO CAUSES, AND A FIX NEEDS BOTH:
+#   ORDER    `_answer_flaw` runs at rdw.tcl:370, ELEVEN lines BEFORE the
+#            `$state ne {ok}` branch at :381. Reordering alone still leaves a
+#            legal `{state ok devices {...}}` unvalidated in the wrong
+#            direction.
+#   SHAPE    `_answer_flaw` opens
+#              if {[catch {dict keys [dict get $ans devices]} devs]} { return 1 }
+#            so an ABSENT `devices` key is malformed BY CONSTRUCTION. Narrowing
+#            alone still lets `{state no_raw}` reach `_flaw_line`.
+# So: check the state FIRST; validate shape ONLY for an answer whose state is
+# `ok`, and there only for a bucket that is PRESENT. `devices`, `absent`,
+# `nonfinite` and `complete` are required only when `state` is `ok`.
+#
+# ⚠ THIS IS EXACTLY THE CLASS RULING D-5 EXISTS TO ADMIT. The user is building
+# a custom ngspice and it will be the first backend to occupy it; a window that
+# greets a correct minimal answer with a complaint about the backend sends its
+# author hunting a bug that is in this file.
+#
+# F21 F22 F23 F25 F26 ARE RED BEFORE B2a-2. F24 IS A FENCE and is GREEN BEFORE
+# AND AFTER — it is the half of 1284 that F17/F18 got right, held still so the
+# narrowing cannot quietly discard it.
+## The sixth sentence, and the one HEAD renders for a state it does not know.
+## Spelled here because a state name a backend invents must reach the screen.
+proc RW_UNKSTATE {s} { return "The operating-point reader answered with a state this window does not know: '$s'." }
+set F21_CTX [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} tran M1 zzsim]
+set F21_TAB [list no_raw        $RW_NORAW \
+                  not_annotated $RW_NOTANNOT \
+                  not_op        [RW_NOTOP tran] \
+                  no_devpath    [RW_NODEVPATH M1]]
+set F21_GOT {} ; set F21_EXP {}
+foreach {_s _sent} $F21_TAB {
+  ## the MINIMAL legal refusal — one key, which is all a refusal has to carry
+  set _min [rw_text [dict create state $_s] $F21_CTX]
+  ## the SAME state delivered as the seam's full five-key dict
+  set _ful [rw_text [rw_ansd {} {} {} 0 $_s] $F21_CTX]
+  set _gold [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $_sent {}]
+  lappend F21_GOT [list $_s $_min $_ful [rw_count $_min [RW_FLAW zzsim]]]
+  lappend F21_EXP [list $_s $_gold $_gold 0]
+}
+check {F21 THE ADVERSARY'S OWN INPUT: each of the four non-`ok` states delivered as a MINIMAL one-key answer renders its OWN state sentence, byte-identical to the same state delivered as a full five-key dict, and not one of the four names the backend - a non-`ok` state is a complete and legal answer on its own} \
+  $F21_GOT $F21_EXP
+
+## A REFUSAL MAKES NO DATA CLAIM, so nothing may walk its data keys — even when
+## one is present and garbage. The state is the whole answer.
+set F22_ANS [dict create state no_raw devices "\{\{id 1"]
+set F22_T [rw_text $F22_ANS $F21_CTX]
+check {F22 a non-`ok` state is legal even when a data key IS present and malformed: `{state no_raw devices <garbage>}` still renders the no_raw sentence, because a refusal makes no claim about data and nothing may walk it} \
+  [list [rw_bad $F22_T] $F22_T [rw_count $F22_T [RW_FLAW zzsim]]] \
+  [list 0 [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $RW_NORAW {}] 0]
+
+## AN ABSENT BUCKET IS EMPTY, NOT MALFORMED. `{state ok}` is the legal minimum
+## for an answer that found nothing, and it must reach the FIFTH SILENCE — the
+## sentence naming the device path — not an accusation.
+set F23_ANS [dict create state ok]
+set F23_T [rw_text $F23_ANS $F21_CTX]
+check {F23 `{state ok}` with every data key ABSENT renders the FIFTH SILENCE naming the device path, not the malformed-answer sentence - an absent bucket is EMPTY, and a backend answering the legal minimum is not a backend at fault} \
+  [list [rw_bad $F23_T] $F23_T [rw_count $F23_T [RW_FLAW zzsim]]] \
+  [list 0 [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_OKEMPTY {@m.x1.m1}] {}] 0]
+
+## THE SHAPE HALF SURVIVES THE NARROWING. A bucket that is PRESENT and cannot
+## be walked is still a flaw, in all three buckets, and so is the MIXED case —
+## no `devices` key at all beside a malformed `absent`, where the narrowing
+## must not let the absent key excuse the malformed one.
+## FENCE — GREEN BEFORE AND AFTER.
+set F24_D [dict create devices "@m.x1.m1 \{\{id 1" absent {} nonfinite {} \
+                       complete 0 state ok]
+set F24_A [dict create devices {} absent "\{\{@m.x1.m1 ib" nonfinite {} \
+                       complete 0 state ok]
+set F24_N [dict create devices {} absent {} nonfinite "\{\{@m.x1.m1 gm nan" \
+                       complete 0 state ok]
+set F24_MIX [dict create state ok absent "\{\{@m.x1.m1 ib"]
+set F24_FLAW [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_FLAW zzsim] {}]
+check {F24 FENCE under `state ok` a PRESENT but un-walkable `devices`, `absent` or `nonfinite` still gets the flaw sentence naming the backend, and so does the MIXED case of no `devices` key at all beside a malformed `absent` - the narrowing may not discard the half of 1284 that was right} \
+  [list [rw_text $F24_D $F21_CTX] [rw_text $F24_A $F21_CTX] \
+        [rw_text $F24_N $F21_CTX] [rw_text $F24_MIX $F21_CTX]] \
+  [list $F24_FLAW $F24_FLAW $F24_FLAW $F24_FLAW]
+
+## AN ANSWER WITH NO READABLE `state` IS ITSELF MALFORMED — including one that
+## is not a dict at all — and gets the sentence naming the backend, because the
+## remedy is there. HEAD instead defaults to `set state unknown`, inventing a
+## state name the backend never sent and rendering a sentence that blames the
+## window for the backend's omission. A state that IS present but unrecognised
+## is a different fact and keeps its own sentence, naming the state.
+set F25_NOSTATE [dict create devices {} absent {} nonfinite {} complete 0]
+set F25_NOTDICT {a b c}
+set F25_WEIRD   [dict create state sideways]
+set F25_TN [rw_text $F25_NOSTATE $F21_CTX]
+set F25_TD [rw_text $F25_NOTDICT $F21_CTX]
+set F25_TW [rw_text $F25_WEIRD   $F21_CTX]
+check {F25 an answer with NO `state` key, and one that is not a dict at all, each get the flaw sentence naming the backend - while an answer whose `state` is PRESENT but unrecognised gets the sentence naming THAT state, and the two are pairwise distinct} \
+  [list $F25_TN $F25_TD $F25_TW \
+        [expr {$F25_TN eq $F25_TW ? 1 : 0}]] \
+  [list $F24_FLAW $F24_FLAW \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_UNKSTATE sideways] {}] 0]
+
+## STRUCTURAL, AND IT IS THE ONLY ROW THAT CAN STOP A LATER EDIT FROM REOPENING
+## THIS. The ORDER is half the defect, and an order is not visible in any
+## output once the shape check has been narrowed — a future `_answer_flaw` that
+## quietly went back to treating an absent key as malformed would be caught by
+## F21/F23, but one that merely moved back above the state branch would not, so
+## long as the narrowing held. The call the state is read through comes FIRST.
+set F26_B  [rw_body ::rdw::format_answer]
+set F26_PS [string first {_answer_state} $F26_B]
+set F26_PF [string first {_answer_flaw}  $F26_B]
+check {F26 STRUCTURAL in `rdw::format_answer`'s own body the state is read through `_answer_state` BEFORE `_answer_flaw` is consulted, so a later edit cannot silently restore the ordering that caused the regression} \
+  [list [expr {$F26_PS >= 0 ? 1 : 0}] [expr {$F26_PF >= 0 ? 1 : 0}] \
+        [expr {($F26_PS >= 0 && $F26_PF >= 0 && $F26_PS < $F26_PF) ? 1 : 0}]] \
+  {1 1 1}
+
+# ============================================================================
+# F27-F28 — ITEM B2d: THE TWO SHAPES ISSUE 1284 SECTION 5 LEFT OPEN, AND THEY
+# ARE STILL OPEN IN THE PRESERVED FIX
+# ============================================================================
+# ⚠ THESE TWO ARE RED AGAINST **BOTH** SHIPPED STATES — against HEAD, which
+# raises or lies about every shape F17-F20 name, AND against the preserved
+# B2a-2 fix itself, which closes those four and leaves these two. Issue 1284's
+# own ACCEPT row says "1284 FIXED", so lifting the preserved hunks and stopping
+# there ships the issue half done. MEASURED on a scratch copy carrying the
+# preserved fix and nothing else, 2026-09-04:
+#     nonfinite {{@m.x1.m1 gm}}   (two fields, NO text)  ->  "    gm : (did not converge)"
+#     devices   {{{} 1.5}}        (a nameless pair)      ->  "     : 1.5"
+#
+# WHY EACH IS A FLAW AND NOT A TOLERATED RENDER:
+#   F27  `rdw::_nonfinite_text` DISCARDS its argument (src/rdw.tcl:177) and
+#        returns the words unconditionally, so an entry carrying no evidence at
+#        all still makes the window ASSERT that a column did not converge. That
+#        is obligation 2 turned inside out: the words exist to say what the raw
+#        actually holds, and here the raw was never quoted. The seam's contract
+#        is a `{<rawdev> <param> <text>}` TRIPLE (item B1's re-do), so a
+#        two-field entry is an answer that does not meet it, not a short form.
+#        `_answer_flaw`'s shared `llength $e < 2` gate lets it through because
+#        `absent` and `nonfinite` were checked at the same width; they are not
+#        the same width. The bucket's own arity is the predicate the implement
+#        agent must name (`rdw::_bucket_width`), so this row has a sabotage
+#        handle of its own and does not have to borrow F17's.
+#   F28  a pair whose parameter NAME is empty, or is nothing but whitespace,
+#        renders a value under no name — "a blank row that means nothing", in
+#        `_answer_flaw`'s OWN comment, which is the reason it rejects a
+#        one-element absent entry. The predicate was arity, and arity is the
+#        wrong question: F19's value-less `{id}` has arity 1 and a perfectly
+#        good name, and must keep rendering `(no value reported)`. The question
+#        is whether the entry NAMES a parameter (`rdw::_named`), asked of the
+#        devices pair's own first field and of an absent/nonfinite entry's
+#        SECOND field.
+#
+# ⚠ NEITHER IS REACHABLE THROUGH THE SHIPPED BACKEND, AND THAT IS THE POINT
+# ruling D-5 makes: `ase::op_param_split` returns {} for an empty parameter and
+# `ase::op_param_set` always emits a nonfinite TRIPLE, so no live path moves.
+# The user is building a custom ngspice; the first backend to occupy these
+# shapes will be their own, and a window that prints "(did not converge)" about
+# a column nobody reported would send its author hunting a convergence problem
+# that does not exist.
+#
+# Both rows carry their CONTROL in the same check, because a predicate that
+# rejects everything would satisfy the red half alone.
+set F27_BAD2 [rw_ansd [dict create {@m.x1.m1} {{id 1.5}}] {} \
+                      [list [list {@m.x1.m1} gm]] 0 ok]
+set F27_BAD1 [rw_ansd [dict create {@m.x1.m1} {{id 1.5}}] {} \
+                      [list [list {@m.x1.m1}]] 0 ok]
+set F27_GOOD [rw_ansd [dict create {@m.x1.m1} {{id 1.5}}] {} \
+                      [list [list {@m.x1.m1} gm nan]] 0 ok]
+set F27_T2 [rw_text $F27_BAD2 $F1718_CTX]
+set F27_T1 [rw_text $F27_BAD1 $F1718_CTX]
+set F27_TG [rw_text $F27_GOOD $F1718_CTX]
+set F27_FLAW [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_FLAW zzsim] {}]
+check {F27 a `nonfinite` entry that carries no text field gets the malformed-answer sentence instead of making the window assert non-convergence on no evidence - while a well-formed {rawdev param text} triple still renders the words, so the bucket's arity is the predicate and not the words} \
+  [list [rw_bad $F27_T2] [rw_bad $F27_T1] [rw_bad $F27_TG] \
+        $F27_T2 $F27_T1 \
+        [rw_count $F27_T2 $RW_NF] [rw_count $F27_T1 $RW_NF] \
+        $F27_TG] \
+  [list 0 0 0 $F27_FLAW $F27_FLAW 0 0 \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $RW_INC \
+                  {    id : 1.5} "    gm : $RW_NF" {}]]
+
+set F28_DEV [rw_ansd [dict create {@m.x1.m1} [list [list {} 1.5] [list id 2]]] \
+                     {} {} 0 ok]
+set F28_WS  [rw_ansd [dict create {@m.x1.m1} [list [list "\n\t " 1.5] [list id 2]]] \
+                     {} {} 0 ok]
+set F28_ABS [rw_ansd [dict create {@m.x1.m1} {{id 2}}] \
+                     [list [list {@m.x1.m1} {}]] {} 0 ok]
+set F28_NF  [rw_ansd [dict create {@m.x1.m1} {{id 2}}] {} \
+                     [list [list {@m.x1.m1} {} nan]] 0 ok]
+set F28_GOOD [rw_ansd [dict create {@m.x1.m1} [list [list vgs 1.5] [list id 2]]] \
+                      {{@m.x1.m1 ib}} {{@m.x1.m1 gm nan}} 0 ok]
+set F28_TD [rw_text $F28_DEV  $F1718_CTX]
+set F28_TW [rw_text $F28_WS   $F1718_CTX]
+set F28_TA [rw_text $F28_ABS  $F1718_CTX]
+set F28_TN [rw_text $F28_NF   $F1718_CTX]
+set F28_TG [rw_text $F28_GOOD $F1718_CTX]
+check {F28 a parameter NAME that is empty or nothing but whitespace - in `devices`, in `absent` and in `nonfinite` - gets the malformed-answer sentence rather than a value belonging to no parameter, while the same three entries carrying real names render exactly as before: the question is whether the entry names a parameter, not how many fields it has} \
+  [list [rw_bad $F28_TD] [rw_bad $F28_TW] [rw_bad $F28_TA] [rw_bad $F28_TN] \
+        $F28_TD $F28_TW $F28_TA $F28_TN \
+        [rw_count $F28_TD { : 1.5}] \
+        [rw_bad $F28_TG] $F28_TG] \
+  [list 0 0 0 0 \
+        $F27_FLAW $F27_FLAW $F27_FLAW $F27_FLAW 0 0 \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $RW_INC \
+                  {    vgs : 1.5} {    id  : 2} "    gm  : $RW_NF" \
+                  {    ib  :} $RW_ABSN {}]]
+
+# ============================================================================
+# F29 — ITEM B2d, THE ADVERSARY'S REFUTATION: THE FIFTH KEY IS A LINE INJECTOR
+# ============================================================================
+# ⚠ RED AGAINST HEAD **AND** AGAINST THE PRESERVED FIX, AND IT IS THE BATCH'S
+# OWN RECURRING LESSON landing on this very section. F20 fences a newline, a CR
+# and a tab inside a VALUE, a PARAMETER NAME and a DEVICE NAME — the three
+# fragments `rdw::_oneline` was applied to. F25 fences the unrecognised-state
+# arm, with the newline-free word `sideways`. The two rows cross the whole
+# class except at their intersection, and the intersection is where the hole
+# was: `_state_sentence`'s default arm echoes the backend's own `state`
+# verbatim, so an answer as small as
+#     devices {} absent {} nonfinite {} complete 0 state "weird\n    id : 1e-5"
+# rendered FOUR block entries as FIVE lines of paste text — the extra line a
+# correctly indented, correctly formatted operating-point row that NO BUCKET
+# EVER CARRIED. MEASURED on the fixed tree 2026-09-04: 4 entries, 5 lines of
+# `block_text`, 7 lines in the real Tk pane on :99. Three counts for one block,
+# and the shipped comment at src/rdw.tcl:370 states the one-line rule as
+# absolute. It is the LIE half of issue 1284's own title, reached through the
+# answer dict AFTER the fix, and invariant I3's harm exactly: on the clipboard
+# an injected row is indistinguishable from a measured one.
+#
+# THE SAME ESCAPE EXISTED AT FOUR MORE SITES, all fenced below because one row
+# per site is what stops the next author reopening the one nobody wrote down:
+# `_flaw_line`'s backend name, the `dim` device-path line and the fifth
+# silence's `$dp`, and the `no_devpath` sentence's instance name. A fifth,
+# dump_devpath's "could not answer: $ans", interpolates a CAUGHT TCL ERROR and
+# so is multi-line by nature; it is covered by the same fix and reached through
+# `rdw::_refusal`.
+#
+# ⚠ THE PREDICATE IS STRUCTURAL, NOT A GOLDEN. `block_text` joins the entries
+# with a newline, so the block carries one line per entry IF AND ONLY IF
+# `llength $blk` equals the split of its own text — which is the one-pair-one-
+# line model `block_text` and `render_pane` share, asserted as an identity
+# rather than as a count that would have to be updated whenever a row moves.
+# The goldens ride alongside so a fix that flattened the block by DELETING the
+# sentence could not pass.
+proc rw_onelines {ans ctx} {
+  set b [rw_block $ans $ctx]
+  if {[rw_bad $b]} { return $b }
+  set t [rw_ans ::rdw::block_text $b]
+  if {[rw_bad $t]} { return $t }
+  return [expr {[llength $b] == [llength [split $t "\n"]] ? 1 : 0}]
+}
+
+set F29_INJ  "weird\n    id  : 1.11e-05\r    vth : 0.45\tgm : 2"
+set F29_FLAT {weird     id  : 1.11e-05     vth : 0.45 gm : 2}
+set F29_CTX  [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op M1 zzsim]
+
+## (a) the refutation itself: an unrecognised state whose text carries rows.
+set F29_A  [rw_ansd {} {} {} 0 $F29_INJ]
+## (b) the backend NAME the flaw sentence quotes, from ctx. No `state` key, so
+##     the flaw arm is what fires.
+set F29_BC [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op M1 "zz\n    id : 4.2e-3"]
+set F29_B  [dict create devices {} absent {} nonfinite {} complete 0]
+## (c) the device path, which is BOTH line 2 and the fifth silence's subject.
+set F29_CC [rw_ctx {M1:/xdut/xbg} "@m.x1.m1\n    id : 9.9" op M1 zzsim]
+set F29_C  [rw_ansd {} {} {} 0 ok]
+## (d) the instance name, which is the schematic's and not the backend's.
+set F29_DC [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op "M1\n    id : 7.7" zzsim]
+set F29_D  [dict create state no_devpath]
+## THE CONTROL, in the same check: a healthy answer keeps its bytes and its
+## own entries-equal-lines identity, so a renderer that flattened everything
+## could not satisfy the red half alone.
+set F29_G  [rw_ansd [dict create {@m.x1.m1} {{id 1.5}}] {{@m.x1.m1 ib}} {} 0 ok]
+
+check {F29 no fragment of a backend answer or of the context can put a SECOND line inside one block entry: the unrecognised-state echo, the flaw sentence's backend name, the device-path line and the no_devpath instance name each collapse to one line, so the block's entry count and its paste text's line count stay identical - an injected row would be indistinguishable from a measured one on the clipboard} \
+  [list [rw_onelines $F29_A $F29_CTX] [rw_onelines $F29_B $F29_BC] \
+        [rw_onelines $F29_C $F29_CC]  [rw_onelines $F29_D $F29_DC] \
+        [rw_onelines $F29_G $F29_CTX] \
+        [rw_text $F29_A $F29_CTX] [rw_text $F29_B $F29_BC] \
+        [rw_text $F29_C $F29_CC]  [rw_text $F29_D $F29_DC] \
+        [rw_text $F29_G $F29_CTX]] \
+  [list 1 1 1 1 1 \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_UNKSTATE $F29_FLAT] {}] \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_FLAW {zz     id : 4.2e-3}] {}] \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1     id : 9.9} \
+                  [RW_OKEMPTY {@m.x1.m1     id : 9.9}] {}] \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} \
+                  [RW_NODEVPATH {M1     id : 7.7}] {}] \
+        [rw_lines {M1:/xdut/xbg} {@m.x1.m1} $RW_INC \
+                  {    id : 1.5} {    ib :} $RW_ABSN {}]]
+
+# ============================================================================
 # SECTION Q — END TO END THROUGH THE SEAM, AND SPEC QUESTION Q10 AS AN ASSERTION
 # ============================================================================
 # ⚠ Q10 IS ANSWERED YES AND IS ASSERTED HERE, NOT ASKED. Item B1 measured it
@@ -777,11 +1355,33 @@ check {Q1 Q10 ASSERTED: one raw holding an Operating Point plot AND a Transient 
 
 ## The block is PUSHED, and the store is namespace state that works headless —
 ## the pane is a projection of it, never the other way round.
-check {Q1b the dump is pushed onto ::rdw::blocks, newest first, on BOTH arms: the store is namespace state and the pane is only its projection} \
+##
+## ⚠ REWRITTEN BY ITEM B2a (issue 1283 gap A). AS B3 SHIPPED IT THIS ROW WAS
+## TITLED "newest first" AND PUSHED EXACTLY ONE BLOCK, then asserted that block
+## was at index 0 — which is TRUE UNDER EITHER ORDERING. Measured: sabotaging
+## `rdw::_insert_index` from `1.0` to `end`, which flips both the pane insert
+## and the prepend in `rdw::push`, passed ALL 32 HEADLESS CHECKS and reds only
+## on `:99`, in the two widget rows W3 and W3b. So the accept row "newest dump
+## on top" had NO HEADLESS WITNESS AT ALL, and every `--nogui` run and
+## full_audit.sh's own nogui leg would have passed with the store reversed. A
+## SECOND, DISTINCT block is what makes the assertion mean what its name says.
+##
+## ⚠ THIS ROW IS GREEN BEFORE B2a — it is a missing FENCE, not a defect — so
+## its red-before proof is the SB-OLDEST-ON-TOP sabotage, which must now red
+## the --nogui arm and not only the display one.
+set Q1B_N0 [expr {[info exists ::rdw::blocks] ? [llength $::rdw::blocks] : -1}]
+set Q1B_NEW [rw_ans ::rdw::push \
+  [rw_block [rw_ansd [dict create {@m.x1.mq1b} {{id 42}}] {} {} 0 ok] \
+            [rw_ctx {MQ1B:/} {@m.x1.mq1b} op MQ1B]]]
+check {Q1b the dump is pushed onto ::rdw::blocks, NEWEST FIRST, on BOTH arms: a SECOND distinct push lands at index 0 and the first one is now at index 1 - the store is namespace state and the pane is only its projection} \
   [list [expr {[info exists ::rdw::blocks] ? 1 : 0}] \
-        [expr {[info exists ::rdw::blocks] && [llength $::rdw::blocks] >= 1
-               && [lindex $::rdw::blocks 0] eq $Q1_BLK ? 1 : 0}]] \
-  {1 1}
+        [expr {$Q1B_N0 == 1 ? 1 : $Q1B_N0}] \
+        [expr {[rw_bad $Q1B_NEW] ? {NOT-PUSHED} : 1}] \
+        [expr {[llength $::rdw::blocks] == $Q1B_N0 + 1 ? 1 : 0}] \
+        [expr {[lindex $::rdw::blocks 0] eq $Q1B_NEW ? 1 : 0}] \
+        [expr {[lindex $::rdw::blocks 1] eq $Q1_BLK ? 1 : 0}] \
+        [lindex [lindex $::rdw::blocks 0] 0]] \
+  {1 1 1 1 1 1 {hdr MQ1B:/}}
 
 ## THE FOUR SILENCES, END TO END. Each is produced by driving the real seam
 ## into that state, so the row asserts the renderer AND the state plumbing.
@@ -848,6 +1448,113 @@ check {Q4 D-3 end to end: one XR1 request resolves through the seam to five prim
 check {Q5 rdw::sim resolves the one registered backend rather than naming a proc, and an explicit ::rdw::sim override wins - the door B4 and B5 drive} \
   [list [rw_ans ::rdw::sim] [ase::backend_names]] \
   [list ngspice ngspice]
+
+# ============================================================================
+# Q6 — RULING DD-5 END TO END, ON TWO RAWS THAT BOTH ANSWER `dc`
+# ============================================================================
+# The first is an ordinary DC transfer characteristic, which is what issue 1282
+# is about. THE SECOND IS THE ONE THAT MOVED THE WORDING: save.c:1073 and :1120
+# both carry `if(raw->npoints[...] > 1 && !strcmp(sim_type, "op")) sim_type =
+# "dc";`, so a MULTI-POINT `Operating Point` plot is renamed `dc` by the reader
+# and a user who ran nothing but an operating point lands in this arm too.
+# MEASURED on this binary: a three-point `Plotname: Operating Point` raw answers
+# `xschem raw sim_type` = dc. That is why RW_ANALYSIS names what the loaded
+# results CALL THEMSELVES rather than what the user ran (see the wording block),
+# and it is also why option (c) - refusing `dc` - would have been wrong on its
+# own terms and not only forbidden by DD-5: it would refuse a real operating
+# point. test_op_annot's row T26 is a three-point Operating Point that must keep
+# publishing, so the C is not moving either.
+# RED BEFORE B2a: measured sim_type=dc, block-mentions-dc=0, both raws.
+set R_DC  [file join $scratch dcsweep.raw]
+set R_OP3 [file join $scratch op3point.raw]
+rw_mkraw $R_DC  [list [list {DC transfer characteristic} $F_SIX $T_SIX]]
+rw_mkraw $R_OP3 [list [list {Operating Point} $F_SIX $T_SIX]] 3
+rw_annot $R_DC
+set Q6_STY1 {} ; catch {set Q6_STY1 [xschem raw sim_type]}
+set Q6_T1 [rw_dumptext {@m.x1.m1} [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} $Q6_STY1 M1]]
+rw_annot $R_OP3
+set Q6_STY2 {} ; catch {set Q6_STY2 [xschem raw sim_type]}
+set Q6_T2 [rw_dumptext {@m.x1.m1} [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} $Q6_STY2 M1]]
+set Q6_WANT [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_ANALYSIS dc] $RW_INC \
+                      {    id  : 1.11e-05} {    is  : 0} {    vth : 0.75} \
+                      {    gm  : 0.001} {    vds : 1.25} {    vgs : 0.5} {}]
+check {Q6 DD-5 end to end through the real seam: a DC transfer characteristic AND a three-point Operating Point (which save.c itself renames `dc`) both answer ok with real point-0 numbers, and both blocks now NAME the analysis instead of presenting it as an operating point} \
+  [list $Q6_STY1 $Q6_STY2 $Q6_T1 $Q6_T2] \
+  [list dc dc $Q6_WANT $Q6_WANT]
+
+# ============================================================================
+# Q7-Q8 — TWO DIFFERENT REFUSALS, TWO DIFFERENT SENTENCES (issue 1282 part 2)
+# ============================================================================
+# `rdw::dump_devpath` had ONE `catch {ase::backend_hook $s op_param_set}` arm
+# producing ONE sentence - "Simulator X has no operating-point reader" - for TWO
+# different facts with two different remedies: NO SUCH BACKEND, and a backend
+# that registered without the (deliberately non-required) `op_param_set` hook.
+# `ase::backend_hook` already mints two distinct errors for them (ase.tcl:550
+# "unknown simulator" and :552 "unknown hook"), so no new information is needed,
+# only a caller that asks which case it is. ITEM B5 IS THE FIRST THING THAT SETS
+# `::rdw::sim`, so the split has to exist before B5, not after.
+#
+# ⚠ Q8 REGISTERS A SECOND BACKEND AND MUST RESTORE `::ase::backends`. Row Q5
+# above asserts `ase::backend_names` is exactly {ngspice}, and `rdw::sim`
+# returns the single registered backend when there is exactly one - so a second
+# one left behind would change what Q5 and the seam suite assert. The
+# save-and-restore and the five-hook registration are copied verbatim from
+# tests/headless/test_rdw_seam_1245.tcl:505-514, whose row S3 exists to keep
+# `op_param_set` OFF the required-hook list precisely so this case is reachable.
+# BOTH RED BEFORE B2a: measured, an unregistered name produced
+# "Simulator nosuchsim has no operating-point reader, so this window has nothing
+# to show for it." - the registered-but-no-reader sentence, for the other fact.
+set Q7_OLDSIM {} ; catch {set Q7_OLDSIM $::rdw::sim}
+set ::rdw::sim zznosuchsim
+set Q7_T [rw_dumptext {@m.x1.m1} [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op M1 zznosuchsim]]
+set ::rdw::sim {}
+check {Q7 a name no backend registered says exactly that, names it, and gives the remedy - it does NOT say the simulator has no operating-point reader, which is a different fact with a different fix} \
+  [list $Q7_T [rw_count $Q7_T {has no operating-point reader}] \
+        [rw_count $Q7_T {op_param_set}]] \
+  [list [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_NOSIM zznosuchsim] {}] 0 0]
+
+set Q8_SAVED {} ; catch {set Q8_SAVED $::ase::backends}
+set Q8_REG [rw_ans ::ase::register_backend zzb2a5 [dict create \
+  render_deck  [rw_ans ::ase::backend_hook ngspice render_deck] \
+  run_cmd      [rw_ans ::ase::backend_hook ngspice run_cmd] \
+  log_file     [rw_ans ::ase::backend_hook ngspice log_file] \
+  result_probe [rw_ans ::ase::backend_hook ngspice result_probe] \
+  raw_file     [rw_ans ::ase::backend_hook ngspice raw_file]]]
+set ::rdw::sim zzb2a5
+set Q8_T [rw_dumptext {@m.x1.m1} [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op M1 zzb2a5]]
+set ::rdw::sim {}
+if {$Q8_SAVED ne {}} { set ::ase::backends $Q8_SAVED }
+if {$Q7_OLDSIM ne {}} { set ::rdw::sim $Q7_OLDSIM }
+check {Q8 a backend registered with the five required hooks and NO op_param_set says THAT instead, names the hook a backend has to add, is a different sentence from Q7's - and the second backend is put back, so ase::backend_names is {ngspice} again} \
+  [list $Q8_REG $Q8_T [rw_has $Q8_T {op_param_set}] \
+        [expr {$Q7_T ne $Q8_T ? 1 : 0}] \
+        [ase::backend_names]] \
+  [list zzb2a5 [rw_lines {M1:/xdut/xbg} {@m.x1.m1} [RW_NOREADER zzb2a5] {}] 1 1 ngspice]
+
+# ============================================================================
+# Q9 — THE INERT-BUTTON MESSAGE, HEADLESS (issue 1283 gap C)
+# ============================================================================
+# ⚠ GREEN BEFORE B2a, AND THAT IS THE POINT. `rdw::status` was split precisely
+# so the inert path is drivable with no widget (`::rdw::statusmsg` is set
+# whether or not one exists), but the ONLY row asserting that an inert button
+# SAYS anything is W4b, inside the Tk-guarded section. Measured: making
+# `rdw::status` a no-op passes the FULL 32-check headless run. Its red-before
+# proof is the sabotage, not the shipped tree. W4b on the display arm is the
+# twin this row is copied from.
+rw_ans ::rdw::status {}
+rw_ans ::rdw::inert Delete
+set Q9_M1 [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]
+rw_ans ::rdw::status {}
+rw_ans ::rdw::inert Save
+set Q9_M2 [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]
+rw_ans ::rdw::status {}
+check {Q9 an inert button SAYS SO in the window's own status line with no widget anywhere: Delete names itself and names the item that wires it, Save says something different, and the variable is clearable - a disabled-but-silent button is the failure rdw::inert exists to prevent} \
+  [list [expr {$Q9_M1 ne {} && $Q9_M1 ne {NOVAR} ? 1 : 0}] \
+        [rw_has $Q9_M1 {Delete}] [rw_has $Q9_M1 {B5}] \
+        [rw_has $Q9_M2 {Save}] [rw_has $Q9_M2 {B5}] \
+        [expr {$Q9_M1 ne $Q9_M2 ? 1 : 0}] \
+        [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]] \
+  {1 1 1 1 1 1 {}}
 
 # ============================================================================
 # SECTION W — THE WIDGETS. DISPLAY ARM ONLY, AND IT IS NOT OPTIONAL.

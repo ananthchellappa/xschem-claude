@@ -4,7 +4,8 @@
 B3's adversary, **re-measured independently by the write-up agent** before
 filing. **FILED, NOT FIXED.**
 
-**Status:** open. Not a regression — the window is new, and this is the state
+**Status:** **FIXED by item B2d, 2026-09-04** — both parts. See §"Fixed by
+item B2d" at the end. Not a regression — the window is new, and this is the state
 its own obligation 3 was written about, one state further in than anybody named.
 
 ---
@@ -275,3 +276,110 @@ commit code no verification pass had ever seen.
 **both** attempts: B2a's six sound fixes *and* B2a-2's re-fixes. This issue's
 portion should survive the third pass unchanged; apply the patch and fix only
 what §"Still open after B2a-2" in **1277**, **1281** and **1285** names.
+
+---
+
+# Fixed by item B2d, 2026-09-04 — both parts
+
+**File:** `src/rdw.tcl`. Pure Tcl, no build.
+
+## Part 1 — a DC sweep now names its analysis
+
+**BEFORE**, measured on HEAD `21fcece6` with `simtype dc`, `state ok`:
+
+```
+M1:/
+@m.x1.m1
+Not a complete list: these are the operating-point columns this run saved for this device, not everything the device has.
+    id  : 1.11e-05
+    vth : 0.45
+block-mentions-dc = 0
+```
+
+**AFTER**, the same answer and the same ctx:
+
+```
+M1:/
+@m.x1.m1
+These numbers come from the first point of results xschem reports as a dc analysis, not as a standalone operating point. A dc sweep's first point is one sweep step, and xschem also reports a multi-point operating point as dc.
+Not a complete list: these are the operating-point columns this run saved for this device, not everything the device has.
+    id  : 1.11e-05
+    vth : 0.45
+```
+
+`rdw::_analysis_line {ctx}`, gated `$sty ne {} && $sty ne "op"`, appended by
+`format_answer` as a `note` **between** the device path and the incompleteness
+line — so a reader learns *what* the numbers are before being told the list of
+them is partial. Row **F14** asserts the text and the tag list; **F15** is the
+control (`op` and `{}` carry no sentence, asserted as the WHOLE block, because a
+count of zero over a never-rendered string is also zero); **Q6** drives it end to
+end through the real seam on two raws that both answer `sim_type = dc` — a DC
+transfer characteristic, and a THREE-POINT `Plotname: Operating Point` that
+`save.c:1073`/`:1120` renames itself.
+
+### ⚠ THE SHIPPED WORDING IS NOT DD-5's SPECIMEN, AND THE STEP IS STATUS E FOR IT
+
+Ruling **DD-5** proposes *"these numbers come from the `dc` analysis at its
+first point, not from a standalone operating point"*. `src/save.c:1073` and
+`:1120` both carry
+`if(raw->npoints[…] > 1 && !strcmp(sim_type, "op")) sim_type = "dc";`, so a
+**multi-point `Operating Point` plot is renamed `dc` by the reader** and that
+sentence would tell a user who ran nothing but an operating point that they ran
+a sweep. Row Q6 reproduces it on a real three-point raw. **DD-5's DECISION —
+render it, and name the analysis, option (a) — is implemented unchanged; only
+its specimen wording is refused, and only on a measurement.** The shipped
+sentence names what the loaded results *call themselves*. On the owed ledger as
+rule debt `1282_analysis_sentence_wording`.
+
+Option **(c)**, refusing `dc`, remains forbidden: it would contradict the seam's
+`{op dc}` allow-list (`ase.tcl:8803`, copied from `update_op()`'s own guard —
+`int update_op()` is at **save.c:3550**, its op/dc guard at **:3780**; the crew
+brief's `save.c:1988` anchor is stale) and red row **G3b** of
+`tests/headless/test_rdw_seam_1245.tcl:879`, a cross-language fence over
+save.c's two strcmps. That suite is unmoved at 49.
+
+## Part 2 — two facts, two sentences
+
+**BEFORE**, driven through the real binary: an unregistered simulator and a
+backend registered with the five required hooks but no `op_param_set` produced
+**the same sentence modulo the name**:
+
+```
+unknown-simulator  : Simulator <NAME> has no operating-point reader, so this window has nothing to show for it.
+registered-no-hook : Simulator <NAME> has no operating-point reader, so this window has nothing to show for it.
+IDENTICAL = 1
+```
+
+**AFTER**: `IDENTICAL = 0`.
+
+```
+No simulator named zznosuchsim is registered, so there is nothing to ask for this device. Check the name, or register a backend for it with ase::register_backend.
+Simulator zzhookless is registered but declares no operating-point reader - the op_param_set hook - so this window has nothing to show for it. A backend adds that hook to publish operating-point columns.
+```
+
+**L1 / invariant I1 (one source of truth).** `rdw::_sim_refusal` asks
+`ase::backend_names` for MEMBERSHIP **before** calling `ase::backend_hook`,
+rather than parsing the hook's error string. *Rejected:* `string match` on the
+error text, which couples this window's wording to another file's wording and
+breaks silently when either moves. `ase::backend_hook` already mints two
+distinct errors — `ase.tcl:550` *"unknown simulator"* and **`:553`** *"unknown
+hook"* (the preserved patch's comment said `:552`; corrected in both the shipped
+comment and the suite's). `op_param_set` is deliberately **not** on
+`register_backend`'s required list (`ase.tcl:534`), so *"registered, no reader"*
+is genuinely reachable. Rows **Q7** and **Q8**; Q8 restores `::ase::backends` so
+`backend_names` is `{ngspice}` again and row Q5 still passes.
+
+**This had to land before B5**, which is the first thing that sets `::rdw::sim`.
+
+## Sabotage
+
+* `_analysis_line` → `{}` reds **F14** and **Q6**, and nothing else.
+* `_sim_refusal` → HEAD's one collapsed sentence reds **Q7** and **Q8**.
+
+## Still open
+
+* **1298** — the analysis sentence is a property of `rdw::dump`, which sets
+  `simtype`, and **not** of `rdw::dump_devpath`, the door items B4 and B5 call.
+  A caller that builds its own ctx gets the pre-DD-5 render back, silently.
+  Latent today; filed with the measurement and a one-line recommended fix.
+* The wording itself is the user's: rule debt `1282_analysis_sentence_wording`.

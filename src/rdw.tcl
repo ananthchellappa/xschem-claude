@@ -186,6 +186,230 @@ proc rdw::_absent_line {} {
     return {A blank value means the raw names that column but the simulator did not compute it.}
 }
 
+# ISSUE 1282 / RULING DD-5.  THE SEAM'S ALLOW-LIST IS `{op dc}`, NOT `{op}`.
+# ase.tcl:8803 copied it DELIBERATELY from update_op()'s own guard in
+# src/save.c, so that this window and the on-sheet annotation agree about what
+# counts as an operating point.  A raw whose current slot is a DC transfer
+# characteristic therefore answers `ok` with real point-0 numbers, and this
+# window presented them under a heading saying "operating-point" with the word
+# `dc` NOWHERE ON SCREEN (measured: sim_type dc, state ok, block mentions dc
+# zero times).  A DC sweep's point 0 is the first step of the sweep, not the
+# circuit's quiescent point, and pasting that into a design review under an
+# "operating point" heading is the plausible-wrong-number failure invariant I3
+# exists to prevent.  DD-5 takes option (a): KEEP RENDERING IT, AND NAME THE
+# ANALYSIS.  Option (c), refusing `dc`, is forbidden -- it would contradict the
+# allow-list and red row G3b of the seam's suite, a cross-language fence over
+# save.c's own op/dc strcmps.
+#
+# ⚠ THE WORDING IS NOT DD-5's QUOTED SPECIMEN, AND save.c IS WHAT MOVED IT.
+# The ruling proposes "these numbers come from the `dc` analysis at its first
+# point, not from a standalone operating point".  That asserts something FALSE
+# for a case save.c creates itself: save.c:1073 and :1120 both carry
+#     if(raw->npoints[...] > 1 && !strcmp(sim_type, "op")) sim_type = "dc";
+# so a MULTI-POINT `Operating Point` plot is renamed `dc` BY THE READER, and a
+# user who ran nothing but an operating point would be told they ran a sweep.
+# MEASURED: a three-point `Plotname: Operating Point` raw answers
+# `xschem raw sim_type` = dc.  DD-5's DECISION is implemented; only its
+# specimen wording is refuted.  The sentence below names what the LOADED
+# RESULTS CALL THEMSELVES rather than what the user ran, which is true in both
+# cases and asserts nothing stronger.  The exact wording is on the owed ledger
+# as a rule debt for the user.
+#
+# ⚠ THE GATE IS `$sty ne {} && $sty ne "op"`.  The empty half is not
+# decoration: a hand-built ctx and a failed `xschem raw sim_type` both produce
+# {}, and a sentence that fired on those would be indistinguishable from an
+# honest one.  Fired only in state `ok` with a non-empty union -- on the fifth
+# silence it would put "these numbers come from..." over a block with no
+# numbers.
+proc rdw::_analysis_line {ctx} {
+    set sty {}
+    catch {set sty [dict get $ctx simtype]}
+    if {$sty eq {} || $sty eq {op}} { return {} }
+    return "These numbers come from the first point of results xschem reports as a $sty analysis, not as a standalone operating point. A $sty sweep's first point is one sweep step, and xschem also reports a multi-point operating point as $sty."
+}
+
+# ISSUE 1284.  THE ANSWER DICT IS NOT TRUSTED INPUT.  It is whatever a backend
+# hands over, and ruling D-5 records that the user IS BUILDING A CUSTOM NGSPICE
+# the seam exists to admit -- so the first backend to hand this window a shape
+# it did not expect will be the user's own.  The shipped ngspice backend cannot
+# produce any of these (it builds `devices` with `dict set` and gates every
+# value through `op_annot::raw_class`'s `string is double -strict`), which is
+# exactly why nothing here was ever exercised.
+#
+# FOUR SHAPES MEASURED, plus two found while planning:
+#   * a malformed `devices` value fell into _rowdevs's dict-level catch, the
+#     union came back empty, and the window rendered the FIFTH SILENCE -- a
+#     statement about the RAW, and FALSE, because the run may have saved
+#     plenty and it is the ANSWER that could not be read;
+#   * a malformed per-device VALUE RAISED out of this pure renderer, which
+#     every suite row and every widget path calls;
+#   * a malformed `absent` bucket and a malformed `nonfinite` bucket RAISE the
+#     same way (measured while planning B2a, not in the issue).
+# So one predicate validates the whole answer BEFORE anything walks it, and a
+# flawed answer gets its OWN sentence naming the backend, because the remedy is
+# there and not in the run.
+#
+# Every walk below is `llength`-checked rather than `catch`-wrapped-per-use, so
+# the renderer stays PURE: one verdict, taken once, before any rendering.
+proc rdw::_wellformed {v} { return [expr {[catch {llength $v}] ? 0 : 1}] }
+
+# ⚠ ISSUE 1284, SECOND PASS: THE FIRST FIX WAS REFUTED, AND THIS IS THE HALF
+# THAT WAS WRONG.  B2a's `_answer_flaw` opened
+#     if {[catch {dict keys [dict get $ans devices]} devs]} { return 1 }
+# so an ABSENT `devices` key was malformed BY CONSTRUCTION, and the call sat
+# ELEVEN lines ABOVE the state branch.  A third-party backend's perfectly legal
+# minimal refusal `{state no_raw}` therefore rendered a complaint about the
+# BACKEND where HEAD rendered "No simulation results are loaded.  Run a
+# simulation, or load a raw file, then ask again." -- and MEASURED, all four
+# non-`ok` states did it, not just `no_raw`.  That is the exact class ruling
+# D-5 exists to admit: the user is building a custom ngspice and it will be the
+# first backend to occupy this seam, so a window that greets a correct minimal
+# answer with an accusation sends its author hunting a bug that is in here.
+#
+# THE RULE, AND BOTH HALVES ARE LOAD-BEARING:
+#   * A NON-`ok` STATE IS A COMPLETE AND LEGAL ANSWER ON ITS OWN.  `devices`,
+#     `absent`, `nonfinite` and `complete` are required only when `state` is
+#     `ok`, so the state is read FIRST (rdw::_answer_state, below) and a
+#     refusal returns its own sentence with NO shape check of any kind.
+#   * AN ABSENT BUCKET IS EMPTY, NOT MALFORMED.  Only a key that is PRESENT
+#     and un-walkable is a flaw.  `dict exists` is measured safe on a malformed
+#     dict (returns 0, never raises), so the guard cannot itself become the
+#     raise it is here to prevent.
+# Invariant I3 applied to a SENTENCE rather than to a number: a plausible wrong
+# statement on screen is the same failure as a plausible wrong value.
+#
+# ⚠ ISSUE 1284 SECTION 5, CLOSED BY ITEM B2d.  The second pass above fixed
+# the four MEASURED shapes and left two that section 5 filed and nobody closed,
+# while 1284's ACCEPT row says "1284 FIXED".  Both are UNDERSPECIFIED entries:
+# well-formed lists that do not carry what the seam contracts them to carry.
+# Each gets its own NAMED predicate rather than an inline literal, so each new
+# guarantee can be neutralised on its own and has a sabotage handle that does
+# not have to borrow the whole-predicate one.
+#
+#   * `rdw::_bucket_width` -- THE TWO BUCKETS ARE NOT THE SAME WIDTH, and the
+#     shared `llength $e < 2` gate was the bug.  `absent` is a `{<rawdev>
+#     <param>}` PAIR; `nonfinite` is a `{<rawdev> <param> <text>}` TRIPLE (item
+#     B1's re-do added the third field).  A two-field nonfinite entry passed the
+#     shared gate and then rendered `(did not converge)` -- an assertion the
+#     window made on NO evidence, because `rdw::_nonfinite_text` discards its
+#     argument and returns the words unconditionally.  Obligation 2 says the
+#     words report what the raw actually holds; here the raw was never quoted.
+#
+#   * `rdw::_named` -- ARITY WAS THE WRONG QUESTION.  A `devices` pair `{{} 1.5}`
+#     has arity 2 and rendered `     : 1.5`, a value belonging to no parameter:
+#     the "blank row that means nothing" this predicate's own comment gives as
+#     the reason it rejects a short bucket entry.  The right question is whether
+#     the entry NAMES a parameter, asked of the devices pair's FIRST field and
+#     of a bucket entry's SECOND.  It may NOT be asked as arity: F19's
+#     value-less `{id}` has arity 1, a perfectly good name, and must keep
+#     rendering `(no value reported)`.
+#
+# Neither is reachable through the shipped ngspice backend -- `ase::op_param_split`
+# returns {} for an empty parameter and `ase::op_param_set` always emits a
+# nonfinite TRIPLE -- which is ruling D-5's point, not an argument for leaving
+# them: the first backend to occupy these shapes will be the user's own custom
+# ngspice, and "(did not converge)" about a column nobody reported would send
+# its author hunting a convergence problem that does not exist.
+proc rdw::_bucket_width {key} { return [expr {$key eq {nonfinite} ? 3 : 2}] }
+proc rdw::_named {n} { return [expr {[string trim $n] eq {} ? 0 : 1}] }
+
+proc rdw::_answer_flaw {ans} {
+    if {[dict exists $ans devices]} {
+        set pairs [dict get $ans devices]
+        set devs {}
+        if {[catch {dict keys $pairs} devs]} { return 1 }
+        foreach d $devs {
+            set pv [dict get $pairs $d]
+            if {![rdw::_wellformed $pv]} { return 1 }
+            foreach e $pv {
+                if {![rdw::_wellformed $e]} { return 1 }
+                if {[llength $e] < 1} { return 1 }
+                ## A pair with no parameter NAME renders a value under nothing.
+                ## Arity is deliberately NOT the question here: a value-less
+                ## `{id}` is a named column with nothing reported for it, and
+                ## `_value_text` has words for that.
+                if {![rdw::_named [lindex $e 0]]} { return 1 }
+            }
+        }
+    }
+    foreach key {absent nonfinite} {
+        if {![dict exists $ans $key]} { continue }
+        set b [dict get $ans $key]
+        if {![rdw::_wellformed $b]} { return 1 }
+        foreach e $b {
+            if {![rdw::_wellformed $e]} { return 1 }
+            ## A short entry would render a device sub-header with an empty
+            ## parameter name, which is a blank row that means nothing -- and a
+            ## short NONFINITE entry would additionally make the window assert
+            ## non-convergence with nothing quoted from the raw.
+            if {[llength $e] < [rdw::_bucket_width $key]} { return 1 }
+            if {![rdw::_named [lindex $e 1]]} { return 1 }
+        }
+    }
+    return 0
+}
+
+# THE STATE, READ ONCE AND READ FIRST.  Answers {hasstate state}.  An answer
+# with no readable `state` -- including one that is not a dict at all -- is
+# ITSELF malformed and gets the sentence naming the backend, because the remedy
+# is there.  HEAD instead defaulted to `set state unknown`, inventing a state
+# name the backend never sent and then rendering a sentence that blames this
+# window for the backend's omission.  A state that IS present but unrecognised
+# is a different fact and keeps its own sentence, naming that state.
+proc rdw::_answer_state {ans} {
+    set st {}
+    if {[catch {dict get $ans state} st]} { return [list 0 {}] }
+    return [list 1 $st]
+}
+
+proc rdw::_flaw_line {sim} {
+    if {$sim eq {}} { set sim simulator }
+    return "The $sim operating-point reader answered in a shape this window could not read, so nothing is shown for this device. This is a fault in that reader's answer, not a statement about the run."
+}
+
+# ONE PAIR IS ONE LINE, AND DATA MAY NOT BREAK THAT.  A newline inside a value
+# made one pair render as TWO lines, the second unindented and carrying NO TAG,
+# which breaks the one-pair-one-line model `block_text` and `render_pane`
+# share -- the paste shape and the pane would then disagree about how many
+# lines a block has.  A device name and a parameter name do it too.  Collapsed
+# here rather than stripped, so nothing silently joins two words.
+proc rdw::_oneline {s} { return [string map [list "\n" { } "\r" { } "\t" { }] $s] }
+
+# ⚠ ONE BLOCK ENTRY IS ONE LINE, AND THE GUARANTEE LIVES AT THE EMIT POINT.
+# `_oneline` above covered the three DATA fragments (parameter name, value,
+# device name) and nothing else, so the guarantee held for four of the seam's
+# five keys and failed on the fifth: `_state_sentence`'s default arm echoes
+# the backend's own `state` verbatim, so an answer as small as
+#     {devices {} absent {} nonfinite {} complete 0 state "weird\n    id  : 1.11e-05"}
+# rendered 4 block entries as 5 lines of text, the extra one a correctly
+# indented, correctly formatted operating-point row that NO BUCKET EVER
+# CARRIED.  Measured on the fixed tree before this proc existed; the same
+# escape existed in `_flaw_line`'s backend name, in `_sim_refusal`, in the
+# `dim` device-path line, and in dump_devpath's "could not answer: $ans",
+# which interpolates a caught Tcl error and so is multi-line by nature.
+# Wrapping each fragment separately would have been nine edits and a tenth
+# site the next author forgets, so EVERY line this file appends to a block
+# goes through here instead: the paste shape, the pane and the block's own
+# entry count can then never disagree, whatever a backend sends.  That is
+# invariant I3 read as "a plausible wrong LINE is as bad as a plausible wrong
+# number" -- an injected row is indistinguishable from a measured one once it
+# is on the clipboard.  The pair rows still one-line their name and value
+# BEFORE this point, because the column width is computed from the name and a
+# newline would inflate it.
+proc rdw::_line {tag text} { return [list $tag [rdw::_oneline $text]] }
+
+# INVARIANT I3, AND THE BLANK'S ONE MEANING.  A `devices` pair carrying no
+# value at all, or an empty string, used to render BYTE-IDENTICALLY to an
+# ABSENT column -- so the one honest distinction this renderer makes was lost,
+# and the per-block blank footnote ("the raw names that column but the
+# simulator did not compute it") was then FALSE about them.  Words, in the same
+# family as `(did not converge)`, keep the blank glyph meaning exactly one
+# thing, and leave the footnote's "rides exactly once" golden where it is.
+proc rdw::_value_text {v} {
+    if {[string trim $v] eq {}} { return {(no value reported)} }
+    return [rdw::_oneline $v]
+}
+
 # OBLIGATION 3.  The four non-`ok` states otherwise all arrive as the same
 # empty list, and `ok` with an empty union is a FIFTH silence -- the common
 # one under measured rule R1 (gm/gds/vth exist only if the deck saved them;
@@ -242,22 +466,56 @@ proc rdw::format_answer {ans ctx} {
     catch {set hdr [dict get $ctx header]}
     set dp {}
     catch {set dp [dict get $ctx devpath]}
-    set state unknown
-    catch {set state [dict get $ans state]}
+    ## ISSUE 1284, SECOND PASS.  THE STATE COMES FIRST, AND THE ORDER IS HALF
+    ## THE FIX -- B2a's version consulted `_answer_flaw` ELEVEN LINES ABOVE
+    ## this branch, so a legal `{state no_raw}` was accused of being malformed.
+    ## Three arms, in this order and no other:
+    ##   (a) NO READABLE STATE, including an `ans` that is not a dict at all,
+    ##       is itself a malformed answer -> the sentence naming the backend.
+    ##   (b) A NON-`ok` STATE is a complete and legal answer on its own -> its
+    ##       own sentence, with NO shape check, because a refusal makes no
+    ##       claim about data and nothing may walk what it did not claim.
+    ##   (c) ONLY UNDER `ok` is the shape consulted, and there only for a
+    ##       bucket that is PRESENT.
+    lassign [rdw::_answer_state $ans] hasstate state
+    if {!$hasstate} {
+        set who {}
+        catch {set who [dict get $ctx sim]}
+        return [rdw::_refusal $ctx [rdw::_flaw_line $who]]
+    }
+    if {$state ne {ok}} {
+        return [rdw::_refusal $ctx [rdw::_state_sentence $state $ctx]]
+    }
+
+    ## A malformed answer that DOES claim `ok` must not reach any walk below,
+    ## and must not fall into the fifth silence -- which is a statement about
+    ## the RAW and would be false.  The sentence names the backend because the
+    ## remedy is there.
+    if {[rdw::_answer_flaw $ans]} {
+        set who {}
+        catch {set who [dict get $ctx sim]}
+        return [rdw::_refusal $ctx [rdw::_flaw_line $who]]
+    }
 
     set out {}
-    lappend out [list hdr $hdr]
-    if {$dp ne {}} { lappend out [list dim $dp] }
+    lappend out [rdw::_line hdr $hdr]
+    if {$dp ne {}} { lappend out [rdw::_line dim $dp] }
 
     set devs [rdw::_rowdevs $ans]
-    if {$state ne {ok} || [llength $devs] == 0} {
-        lappend out [list note [rdw::_state_sentence $state $ctx]]
+    if {[llength $devs] == 0} {
+        lappend out [rdw::_line note [rdw::_state_sentence $state $ctx]]
         lappend out [list {} {}]
         return $out
     }
 
+    ## RULING DD-5.  Between the device path and the incompleteness line, so a
+    ## reader learns WHAT the numbers are before being told the list of them is
+    ## partial.
+    set an [rdw::_analysis_line $ctx]
+    if {$an ne {}} { lappend out [rdw::_line note $an] }
+
     set inc [rdw::_incomplete_line $ans]
-    if {$inc ne {}} { lappend out [list note $inc] }
+    if {$inc ne {}} { lappend out [rdw::_line note $inc] }
 
     set pairs [dict create]
     catch {set pairs [dict get $ans devices]}
@@ -271,17 +529,26 @@ proc rdw::format_answer {ans ctx} {
     foreach d $devs {
         set r {}
         if {[dict exists $pairs $d]} {
+            ## ⚠ THE PARAMETER NAME AND THE VALUE ARE BOTH ONE-LINED, AND A
+            ## VALUE-LESS OR EMPTY PAIR BECOMES WORDS (issue 1284).  An absent
+            ## column's blank is built below and is deliberately NOT passed
+            ## through _value_text: the blank has exactly one meaning and the
+            ## per-block footnote is what says it.
             foreach pv [dict get $pairs $d] {
-                lappend r [list [lindex $pv 0] [lindex $pv 1]]
+                lappend r [list [rdw::_oneline [lindex $pv 0]] \
+                                [rdw::_value_text [lindex $pv 1]]]
             }
         }
         foreach e $nf {
             if {[lindex $e 0] eq $d} {
-                lappend r [list [lindex $e 1] [rdw::_nonfinite_text [lindex $e 2]]]
+                lappend r [list [rdw::_oneline [lindex $e 1]] \
+                                [rdw::_nonfinite_text [lindex $e 2]]]
             }
         }
         foreach e $abs {
-            if {[lindex $e 0] eq $d} { lappend r [list [lindex $e 1] {}] }
+            if {[lindex $e 0] eq $d} {
+                lappend r [list [rdw::_oneline [lindex $e 1]] {}]
+            }
         }
         foreach pv $r {
             set l [string length [lindex $pv 0]]
@@ -301,13 +568,13 @@ proc rdw::format_answer {ans ctx} {
     if {[llength $devs] == 1 && [lindex $devs 0] eq $dp} { set showdev 0 }
 
     foreach dr $rows {
-        if {$showdev} { lappend out [list dev "  [lindex $dr 0]"] }
+        if {$showdev} { lappend out [rdw::_line dev "  [lindex $dr 0]"] }
         foreach pv [lindex $dr 1] {
-            lappend out [list {} [string trimright \
+            lappend out [rdw::_line {} [string trimright \
                 [format {    %-*s : %s} $w [lindex $pv 0] [lindex $pv 1]]]]
         }
     }
-    if {[llength $abs] > 0} { lappend out [list note [rdw::_absent_line]] }
+    if {[llength $abs] > 0} { lappend out [rdw::_line note [rdw::_absent_line]] }
     lappend out [list {} {}]
     return $out
 }
@@ -405,23 +672,47 @@ proc rdw::_refusal {ctx text} {
     set dp {}
     catch {set dp [dict get $ctx devpath]}
     set out {}
-    lappend out [list hdr $hdr]
-    if {$dp ne {}} { lappend out [list dim $dp] }
-    lappend out [list note $text]
+    lappend out [rdw::_line hdr $hdr]
+    if {$dp ne {}} { lappend out [rdw::_line dim $dp] }
+    lappend out [rdw::_line note $text]
     lappend out [list {} {}]
     return $out
 }
 
 # THE SEAM'S ONLY DOOR.  Resolve the hook, call it, format the answer, push
 # the block.  Returns the block.
+# ISSUE 1282 part 2.  "No such simulator" and "a simulator that registered
+# without an operating-point reader" are DIFFERENT FACTS WITH DIFFERENT
+# REMEDIES -- check the name, versus add a hook -- and this feature's whole
+# obligation 3 is that different silences get different sentences.  One
+# `catch {ase::backend_hook $s op_param_set}` arm produced ONE sentence for
+# both.  ase::backend_hook already mints two distinct errors (ase.tcl:550
+# "unknown simulator" and :553 "unknown hook"), so no new information is
+# needed, only a caller that asks which case it is -- and asking membership
+# BEFORE the call keeps one source of truth rather than parsing an error
+# string.  `op_param_set` is deliberately NOT on register_backend's required
+# list (ase.tcl:534), so "registered, no reader" is genuinely reachable.
+# ⚠ Item B5 is the first thing that sets ::rdw::sim, so the split has to exist
+# before B5, not after.
+proc rdw::_sim_refusal {s} {
+    set names {}
+    catch {set names [::ase::backend_names]}
+    if {[lsearch -exact $names $s] < 0} {
+        return "No simulator named $s is registered, so there is nothing to ask for this device. Check the name, or register a backend for it with ase::register_backend."
+    }
+    return "Simulator $s is registered but declares no operating-point reader - the op_param_set hook - so this window has nothing to show for it. A backend adds that hook to publish operating-point columns."
+}
+
 proc rdw::dump_devpath {devpath ctx} {
     set s [rdw::sim]
+    ## The renderer's malformed-answer sentence names the backend, so the
+    ## backend has to be in the context it is handed (issue 1284).
+    catch {dict set ctx sim $s}
     if {$s eq {}} {
         set blk [rdw::_refusal $ctx \
             {No simulator backend is registered, so there is nothing to ask for this device.}]
     } elseif {[catch {::ase::backend_hook $s op_param_set} hook]} {
-        set blk [rdw::_refusal $ctx \
-            "Simulator $s has no operating-point reader, so this window has nothing to show for it."]
+        set blk [rdw::_refusal $ctx [rdw::_sim_refusal $s]]
     } elseif {[catch {uplevel #0 [list $hook $devpath]} ans]} {
         set blk [rdw::_refusal $ctx \
             "The operating-point reader for $s could not answer: $ans"]

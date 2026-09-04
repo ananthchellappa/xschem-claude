@@ -1194,4 +1194,30 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   code that emits it*). Harmless until B5 writes the first file; real from then
   on. Three options costed. **NEEDS A RULING**, on the user's queue with 1275.
 
-**The next free number is 1297.**
+* **1297** — **the `not_op` refusal says "a op analysis", and the article never
+  agrees.** `rdw::_state_sentence`'s `not_op` arm interpolates `$sty` after a
+  literal `a`, so `dc`/`tran`/`noise`/`sp` read correctly and every vowel-initial
+  analysis name — `op`, `ac` — does not. Found by item **B2d** while reproducing
+  issue 1284's legal minimal refusals; outside its three-issue scope, so filed
+  rather than fixed, on B2b/1291's precedent. Three options costed, (a)
+  recommended. **FILED, NOT FIXED.**
+
+* **1298** — **ruling DD-5's analysis sentence is a property of `rdw::dump`, not
+  of the seam's own door.** `rdw::_analysis_line` returns `{}` when the ctx
+  carries no `simtype`, and `rdw::dump_devpath` — the proc the file calls THE
+  SEAM'S ONLY DOOR, and the entry point items **B4** and **B5** call — adds
+  `sim` to the ctx but never `simtype`. A caller that builds its own ctx gets a
+  DC sweep rendered as an operating point again, silently. Latent today
+  (`rdw::dump` is the only caller and it does set it). Found by item **B2d**'s
+  adversary. Three options costed, (a) recommended. **FILED, NOT FIXED.**
+* **1299** — **four edges the RDW's answer-shape predicate still leaves open.**
+  A device that names nothing (`devices {{} {{id 1.5}}}`) renders a blank
+  sub-header above real numbers; `_nonfinite_text` still discards its argument,
+  so a triple whose third field is junk still asserts non-convergence;
+  minimum-arity checking truncates a padded entry in silence; and `_named`'s
+  `string trim` disagrees with `ase::op_param_split`'s exact-empty by exactly
+  one shape. Same reachability class as everything issue **1284** closed —
+  unreachable through shipped ngspice, reachable by the user's custom backend.
+  Found by item **B2d**'s adversary. **FILED, NOT FIXED.**
+
+**The next free number is 1300.**

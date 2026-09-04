@@ -1095,6 +1095,70 @@ entry. ⚠ Modal dialogs are a known headless-harness hazard (issue 0803: a moda
 dialog hangs any suite under X); the dialog must be drivable by the tests
 without a human.
 
+#### AS BUILT — item B2d, 2026-09-04: the answer dict is UNTRUSTED INPUT
+
+The five-key table above is a **description of what a well-behaved backend
+sends**, and item B2d makes the renderer treat it as exactly that. Ruling
+**D-5** exists so a second backend can plug in; the first one to occupy these
+shapes will be the user's own custom ngspice. The contract, now implemented and
+fenced in `tests/headless/test_rdw_window_1245.tcl` (rows F14-F29, Q6-Q9):
+
+* **Only `state` is required.** `devices`, `absent`, `nonfinite` and `complete`
+  are required **only when `state` is `ok`**, and an absent key is EMPTY, never
+  malformed. **A non-`ok` state is a complete and legal answer on its own** and
+  is rendered from `state` alone, with **no shape check of any kind** — a
+  refusal makes no claim about data and nothing may walk what it did not claim.
+  This corrects the "five keys, always" reading that made B2a accuse a correct
+  backend of malforming its own refusal. `rdw::_answer_state` runs FIRST;
+  `rdw::_answer_flaw` is consulted only under `ok`. Row **F26** asserts that
+  order **structurally**, by reading `format_answer`'s own body.
+* **An answer with no readable `state`, or that is not a dict at all, is itself
+  malformed** and gets the flaw sentence naming the backend — never the fifth
+  silence, which is a statement about the *raw* and would be false.
+* **The bucket widths are part of the contract, and they differ**: `absent` is a
+  `{<rawdev> <param>}` PAIR, `nonfinite` a `{<rawdev> <param> <text>}` TRIPLE
+  (`rdw::_bucket_width`). A two-field `nonfinite` entry is an answer that does
+  not meet the contract, not a short form — rendering `(did not converge)` from
+  it is an assertion on no evidence.
+* **Every entry must NAME a parameter** (`rdw::_named`, a `string trim`
+  non-empty test on the `devices` pair's first field and a bucket entry's
+  second). A value under no name is the "blank row that means nothing" the
+  predicate rejects elsewhere. ⚠ The predicate is on the NAME, never on arity:
+  a value-less `{id}` is legal and renders `(no value reported)`.
+* **A missing or empty value renders `(no value reported)`**, in the same word
+  family as `(did not converge)`, so it is no longer byte-identical to an absent
+  column's blank and the per-block blank footnote is no longer false about it.
+* **⚠ ONE BLOCK ENTRY IS ONE LINE, AND THE GUARANTEE LIVES AT THE EMIT POINT.**
+  `rdw::_line {tag text}` wraps every line the file appends to a block;
+  `rdw::block_text` joins the entries with a newline, so an entry containing one
+  makes the block, the paste text and the pane report three different line
+  counts (measured: 4, 5 and 7 on one answer). The escape was
+  `_state_sentence`'s verbatim echo of the backend's own `state`, which rendered
+  two fabricated, correctly formatted operating-point rows onto the clipboard.
+  The same escape existed in `_flaw_line`'s backend name, the `dim` device-path
+  line, the fifth silence's `$dp`, the `no_devpath` instance name and
+  `dump_devpath`'s `"could not answer: $ans"` — a caught Tcl error, multi-line
+  by nature. **A new `lappend out [list …]` in this file is a defect** (row F29).
+* **Nothing raises.** `rdw::format_answer` is a pure renderer called by every
+  suite row and every widget path; a raise out of it stops `Tcl_AppInit` dead
+  under `--pipe`. 22,022 fuzzed answer shapes, zero raises.
+
+**Ruling DD-5 is implemented as option (a)** — a `dc` answer is still rendered
+and the block names the analysis, as a `note` between the device path and the
+incompleteness line. ⚠ **The wording is not DD-5's specimen**, because
+`src/save.c:1073` and `:1120` rename a *multi-point* `Operating Point` plot's
+`sim_type` to `dc`; the shipped sentence names what the loaded results call
+themselves. On the owed ledger as rule debt `1282_analysis_sentence_wording`.
+⚠ **And the sentence is a property of `rdw::dump`, not of `rdw::dump_devpath`**
+(issue **1298**): the door adds `sim` to the ctx and never `simtype`, so a
+caller building its own ctx — items B4 and B5 — loses the sentence silently.
+
+**Two refusals, not one** (`rdw::_sim_refusal`): *"no simulator named X is
+registered"* and *"X is registered but declares no `op_param_set` hook"* are
+different facts with different remedies. Membership is asked of
+`ase::backend_names` **before** `ase::backend_hook` is called, so there is one
+source of truth rather than a parsed error string.
+
 ### 4.3 The class map
 
 §3.4 says `nmos` and `pmos` are separate tokens and the resistor spelling
@@ -1292,7 +1356,9 @@ are design-of-record:
    sentences became one false accusation against the backend — a regression
    against the shipped window. **The contract to write down: `devices`, `absent`
    and `nonfinite` are OPTIONAL and default to empty; only `state` is required,
-   and a non-`ok` state is rendered from `state` alone.**
+   and a non-`ok` state is rendered from `state` alone.** ✅ **WRITTEN DOWN AND
+   IMPLEMENTED by item B2d, 2026-09-04** — see *"AS BUILT — item B2d"* at the end
+   of §4.2, and row F26, which asserts the ordering structurally.
 
 4. **`params` is BOTH the save list and the display list, so DD-4 needs a new
    field** (issue **1285**, and it **blocks B5**). `op_annot::_cards_for`
@@ -1741,7 +1807,28 @@ Still open:
   `annotate_op`, gives `sim_type=op` and renders its six real numbers with the
   honesty line. It is a check now, not a question. ⚠ **But the adjacent state is
   a live defect:** the allow-list is `{op dc}`, so a **dc** slot answers `ok` and
-  the window calls it an operating point — issue **1282**.
+  the window calls it an operating point — issue **1282**. ✅ **FIXED by item
+  B2d, 2026-09-04** (rows F14, F15, Q6) — and it brought a new question with it.
+
+* **Q18 — is the analysis sentence's wording right?** (added by item **B2d**,
+  2026-09-04; `rule` debt `1282_analysis_sentence_wording`; **this is item B2d's
+  status-E question**). Ruling **DD-5** decided that a `dc` answer is still
+  rendered and that the block names the analysis, and that decision is
+  implemented unchanged. **Its quoted specimen wording is refused, on a
+  measurement**: `src/save.c:1073` and `:1120` both rename a MULTI-POINT
+  `Operating Point` plot's `sim_type` to `dc`, so *"these numbers come from the
+  `dc` analysis at its first point, not from a standalone operating point"*
+  would tell a user who ran nothing but an operating point that they ran a
+  sweep — reproduced on a real three-point raw by row Q6. What ships instead:
+  *"These numbers come from the first point of results xschem reports as a `dc`
+  analysis, not as a standalone operating point. A `dc` sweep's first point is
+  one sweep step, and xschem also reports a multi-point operating point as
+  `dc`."* It names what the loaded results **call themselves**, which is true in
+  both cases and asserts nothing stronger. **Accept that wording, or give
+  different words?** ⚠ Four more sentences went on screen with it and no ruling
+  covers their wording either (`rule` debt `1284_four_new_sentences`): the
+  malformed-answer sentence naming the backend, the two split simulator
+  refusals, and `(no value reported)`.
 
 ---
 
@@ -1863,6 +1950,23 @@ Still open:
     ⚠ A related trap for the *reader* of such a counter: the delta is moved by
     `update_all_sym_bboxes` **alone** (measured: bbox-only 1, redraw-only 1), so
     it is a **geometry** answer, not a screen answer. Today they agree.
+
+
+16. **A SENTENCE THAT INTERPOLATES SOMETHING A BACKEND SENT IS A LINE
+    INJECTOR** (item B2d, 2026-09-04). `rdw::block_text` joins a block's entries
+    with a newline, so one entry containing a newline makes the block, the paste
+    text and the Tk pane report **three different line counts** — measured 4, 5 and
+    7 on a single answer whose every data bucket was empty. The vehicle was the
+    smallest legal-looking thing in the whole seam: `_state_sentence`'s default arm
+    echoing the backend's own `state` string. The result on the clipboard is two
+    correctly indented, correctly formatted operating-point rows that no bucket ever
+    carried, indistinguishable from measured ones — invariant **I3**'s harm, one
+    level up from a number. **The fix is the emit point, not the sentence**
+    (`rdw::_line`), because wrapping each fragment leaves the next author a tenth
+    site. ⚠ And note where the hole was: between two rows that each fenced half of
+    it. F20 covers newline/CR/tab in a value, a parameter name and a device name;
+    F25 covers the unrecognised-state arm — with a newline-free word. **Two green
+    rows crossing a class is not the class fenced.**
 
 ---
 
