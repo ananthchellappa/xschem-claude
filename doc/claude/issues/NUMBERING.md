@@ -1382,4 +1382,59 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   UI door there is. Also records the two suite blind spots (BE3 fences one
   delete; SD3's fixture cannot fail) and the re-land order. **FILED, NOT FIXED.**
 
-**The next free number is 1315.**
+* **1315** — **the documented invariant-I5 round-trip no longer redeclares the
+  seed.** Filed by item **B2e** while implementing ruling DD-13 (issue 1312).
+  Not a defect: `op_annot::register`'s declaration stamp is PRESERVE-IF-PRESENT,
+  which is what makes `op_param_lists::apply` structurally incapable of
+  destroying a declaration, and its price is that the recovery recipe printed in
+  all three PDK `_procs.tcl` files now changes what the run computes and what the
+  sheet draws but NOT what `seed` answers. The escape hatch (`dict unset d
+  declared`, or a fresh dict as all four shipped sites use) is documented in the
+  three PDK files and in `register`'s header, and row **N10** of
+  test_op_param_store_1245 fences BOTH directions. **STATUS E — a `rule` debt is
+  owed; overruling costs one proc and one golden.**
+
+* **1316** — **section N's two headline rows fence less than they claim.** A
+  TEST defect in item B2e's own new suite section, found by B2e's Verify-B and
+  Verify-C passes. **N11** — the driver's own *"attack the declaration, do not
+  assert it"* row — reads all six of its terms AFTER the `reset`+`apply` that
+  fires the issue-1292 undo, so three of the seven sabotage variants broke the
+  declaration mid-storm and N11 stayed green; **N12** counts source lines
+  carrying the literal key name, so a `dict set d $key …` evades it, which is
+  the shape `_apply_state` already uses two procs away. Both fixes are pure
+  additions of terms. **FILED, NOT FIXED.**
+
+* **1317** — **the issue-1292 undo identifies "apply's own write" by byte
+  equality on two fields, not provenance.** `_restorable` reverts any descriptor
+  whose `params`/`shown` still equal what apply wrote, even one a third party
+  registered with a different `devpath` and a different `declared`. Measured;
+  contrived to reach, and the realistic neighbour (the documented I5 round-trip)
+  is benign. Three options costed, (3) recommended. **FILED, NOT FIXED.**
+
+* **1318** — **`op_param_lists::apply` returns one list holding two opposite
+  meanings**: the types it NARROWED and the types the issue-1292 undo put BACK.
+  Harmless today (no functional caller anywhere in `src/`), and it **binds the
+  re-land of item B5** — a status line saying *"updated N device types"* is
+  wrong for exactly the press, Reset/Defaults, whose accuracy matters most.
+  Recommended: return a dict. **FILED, NOT FIXED.**
+
+* **1319** — **a malformed declaration is now reported twice per type.**
+  `_merge_declared` re-reads through `_params` after `_save_set` may already
+  have, so with one class list unowned — the *common* shape — `apply` emits 4
+  reports for a two-type class where HEAD emitted 2. Measured for all three
+  ownership shapes and re-measured independently before filing. `said` is
+  documented as countable, so a count that doubles for one shape is a count
+  nobody can use. ⚠ DD-13 rejected caching `_params`; the fix must be scoped to
+  one `apply` frame or it breaks invariant I5. **FILED, NOT FIXED.**
+
+* **1320** — **with both class lists owned and EMPTY, `params` now becomes the
+  full declaration and `_claims` flips 0 → 1**, so three `.save` cards appear
+  where HEAD emitted none. Correct — it is ruling DD-4 holding for every
+  ownership shape, and DD-4 states the price itself — and **no pixel moves**
+  (traced into the C: `op_annot::text` returns empty, so the declutter gate
+  never opens). Filed because it is stated nowhere in the change and because it
+  **falsifies** the risk note item B2e was carrying (*"a settings file owning
+  both lists empty still yields zero `.save` cards"*). Records the adjacent
+  hand-written `declared {}` case too. **FILED, NOT FIXED.**
+
+**The next free number is 1321.**

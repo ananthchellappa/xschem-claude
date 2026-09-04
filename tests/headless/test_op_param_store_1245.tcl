@@ -272,6 +272,37 @@
 # shipped, which is the state it exists to catch.
 
 # ============================================================================
+# ITEM B2e ADDED SECTION N AND ROW C3, AND MOVED ROW D5's `params` GOLDEN
+# (issues 1312 and 1292, ruling DD-13)
+# ============================================================================
+# 86 checks -> 102. Item B5 built the button column, went green on every tier,
+# and REFUSED TO SHIP because its own measurement showed the wired Delete
+# violating ruling DD-4: two broad-scope Deletes destroyed the PDK's
+# declaration AND the parameter's `.save` card, and Add could not put it back.
+#
+# WHAT B2e ADDS, IN ONE LINE: `apply` writes `params` and `op_param_lists::seed`
+# reads "the PDK's own list" back out of THAT SAME FIELD through `_params`
+# (op_param_lists.tcl:705 vs :1433), so after the first apply the seed is
+# whatever the last apply computed. DD-13 splits off a THIRD list — the
+# DECLARATION, written by `op_annot::register` and by nothing else — and
+# `_params` reads it, so the seed means what its name says and no edit can
+# destroy it. Section N's own header carries B5's transcript, the fixture, and
+# the four rows that are green before the change and why each one is.
+#
+# ⚠ ROW D5's `params` GOLDEN MOVED, and it is the ONLY landed golden that did.
+# DD-13 alone fixes the seed and still leaves the deck narrowing, so `apply`'s
+# union gains a third input — the type's own declaration, appended LAST. D5's
+# six other terms are untouched. Rows A1, D1-D4 and D6-D10, E3 and Z1-Z4 were
+# each re-derived under the new union and none of them moves: every one of them
+# either owns no list, owns a list whose labels already cover the declaration,
+# or reaches the declaration through an unowned list already.
+#
+# ⚠ NOTHING IN THIS SUITE IS RED FOR THE SIBLING DEFECT UNTIL N6. Issue 1292 —
+# `apply` is the only writer of the display key and no verb removes it, so
+# Reset/Defaults cannot be built on `reset` + `apply` — is the same shape as
+# 1312 and is fixed in the same pass.
+
+# ============================================================================
 # THIS SUITE NEEDS NO X, AND full_audit.sh IS NOT EDITED
 # ============================================================================
 # There is no `bind` and no `event generate` here, so it runs identically under
@@ -721,6 +752,30 @@ check {S0 CONTROL the registry B2 seeds from is live and really does carry the I
   [list 0 {} $OL_MOS6 $OL_NPN6]
 
 ol_reset
+# ---------------------------------------------------------------------------
+# SECTION N's BACKWARD-COMPATIBILITY SNAPSHOT — TAKEN HERE BECAUSE IT CANNOT BE
+# TAKEN THERE (item B2e, ruling DD-13).
+# Row N9a asks what the SHIPPED register sites leave behind, and the registry
+# stops being shipped-shaped at :2149, where section A begins rewriting it. So
+# the shipped state is read ONCE, here, immediately after S0 has proved the PDK
+# really loaded and before any row of this suite has registered anything of its
+# own. Reading it in section N instead would gold this suite's OWN fixtures and
+# say nothing at all about a PDK.
+# ⚠ THE ENUMERATION IS DELIBERATE AND IS A TEST-ONLY LIBERTY. `op_param_lists`
+# may not enumerate ::op_annot::desc (there is no published enumerator — issue
+# 1274, and `_params`'s header says why); a suite asking "did EVERY shipped
+# descriptor keep working" has no other way to ask it.
+set N_SHIPTYPES [lsort [array names ::op_annot::desc]]
+set N_SHIPPAIRS {}
+foreach _t $N_SHIPTYPES {
+  lappend N_SHIPPAIRS [expr {[ol_dkey $_t declared] eq [ol_dkey $_t params] ? 1 : 0}]
+}
+set N_SHIPNMOS [ol_dkey nmos declared]
+set N_SHIPPMOS [ol_dkey pmos declared]
+set N_SHIPNPN  [ol_dkey vertical_npn declared]
+set N_SHIPSEED [ol_ans ::op_param_lists::seed mos]
+set N_SHIPEFF  [ol_ans ::op_param_lists::effective mos annotation]
+# ---------------------------------------------------------------------------
 set S1_SEED [ol_ans ::op_param_lists::seed mos]
 check {S1 THE IHP TRIPLE: seed mos answers six {label param kind} triples whose first is {id ids 0} — label `id`, param `ids`, THEY DIFFER — and all three fields are carried} \
   [list $S1_SEED \
@@ -2395,6 +2450,22 @@ check {D4 DD-9 a derived row whose operand is in `params` but not in the display
 # `_show_set` against a re-introduced wholesale copy, and its FIRST term is now
 # also the display path's own witness that both doors reduce — disable
 # `_dup_index` and this row reds along with E1-E4.
+#
+# ⚠ AND THE `params` GOLDEN MOVED AGAIN WITH ITEM B2e, FOR RULING DD-4's SAKE.
+# DD-13's declaration key fixes the SEED, but on its own it leaves B5's other
+# measured harm alive: after two broad Deletes the union of two OWNED lists
+# still has no row for the deleted parameter, so `_cards_for` still stops
+# emitting its `.save` card and the simulator still stops computing it — which
+# is precisely the outcome DD-4 exists to forbid, and whose price DD-4 itself
+# states ("a user who deletes a row to make the deck smaller does not get a
+# smaller deck"). So `apply`'s union takes a THIRD input, the type's own
+# DECLARATION, appended LAST — last, because `_show_set` filters the union in
+# union order and a declaration placed first would freeze the drawn order,
+# which is what DD-13 rejected option (b) for. Here the user owns both lists,
+# so the declaration's `id` and `gm` rows re-enter `params` behind them. The
+# row's other six terms are UNCHANGED: `shown` is still the annotation half,
+# the subset still holds, and the draw still does not raise.
+# RED BEFORE B2e on the `params` term and on that term alone.
 ol_ans ::op_annot::register nmos $D_BASE
 ol_reset
 ol_ans ::op_param_lists::set_list class mos annotation {{A id 0} {A gm 1}}
@@ -2411,7 +2482,7 @@ set D5_TXT [ol_ans ::op_annot::text M1]
 check {D5 THE SUBSET HOLDS BY CONSTRUCTION under issue 1288's live duplicate-label door: every `shown` triple is literally an element of `params`, the second duplicate is deduped out of both, and the draw does not raise} \
   [list $D5_DUP $D5_RET $D5_P $D5_S $D5_SUB \
         [ol_rc ::op_annot::text M1] [ol_rowlabels $D5_TXT]] \
-  [list {{A gm 1}} nmos {{A gm 1} {cgg cgg 1}} {{A gm 1}} 1 \
+  [list {{A gm 1}} nmos {{A gm 1} {cgg cgg 1} {id id 0} {gm gm 1}} {{A gm 1}} 1 \
         0 {A gm/id ft}]
 
 # ---------------------------------------------------------------------------
@@ -2531,6 +2602,507 @@ ol_ans ::op_annot::register pmos $D_BASE
 ol_reset
 
 # ============================================================================
+# SECTION N — THE DECLARATION KEY (item B2e: issues 1312 and 1292, DD-13)
+# ============================================================================
+# THREE FIELDS, BECAUSE `seed` IS A THIRD READER OF `params` WITH A THIRD
+# MEANING. Ruling DD-13 (DECISIONS.md), taken after item B5 measured it:
+#
+#   the DECLARATION key `declared`  what the PDK declared  written by
+#                                   `op_annot::register` AND BY NOTHING ELSE
+#   `params`                        what the run computes  written by `apply`
+#   the DISPLAY key `shown`         what the sheet draws   written by `apply`
+#
+# `op_param_lists::_params` — and therefore `seed`, `effective` and every
+# fall-through built on them — reads the DECLARATION. At HEAD it reads
+# `params`, which is the field `apply` overwrites, so after the first apply the
+# "PDK seed" is whatever the last apply computed.
+#
+# ⚠ THE KEY IS SPELLED `declared`. DD-13's table names the field by its MEANING
+# and not by a string; this suite picks the spelling so the rows below can be
+# exact, and states the choice here rather than leaving it implicit. It is not
+# `pdk_params`: a user's own rc register declares too (invariant I5), and a key
+# naming the PDK would make her registration read as a PDK's.
+#
+# ============================================================================
+# WHAT B5 MEASURED, AND WHAT THESE ROWS REPRODUCE
+# ============================================================================
+# Item B5 built the button column, went green on every tier, and refused to
+# ship because its own measurement showed the wired Delete violating ruling
+# DD-4. Reproduced verbatim on this tree at ee61aa4a:
+#
+#   PARAMS0 = {id ids 0} {gm gm 1} {gds gds 1}
+#     delete gm from the ANNOTATION list, BROAD scope   -> apply
+#   PARAMS1 = {id ids 0} {gds gds 1} {gm gm 1}
+#     delete gm from the SUMMARY list, BROAD scope      -> apply
+#   PARAMS2 = SEED2 = SIBPARAMS2 = {id ids 0} {gds gds 1}
+#   ADDBACK = REFUSED
+#
+# and, measured through the real `op_annot::_cards_for` on a real loaded
+# instance, the half that makes it a DD-4 violation rather than a cosmetic one:
+#   CARDS_BEFORE = {.save m1[ids]} {.save m1[gm]} {.save m1[gds]}
+#   CARDS_AFTER  = {.save m1[ids]} {.save m1[gds]}
+# Under measured simulator rule R1 the parameter is then not in the raw at all.
+# DD-4's whole content is that Delete changes what is DRAWN and never what the
+# simulator computes.
+#
+# ⚠ AND THE ORDER HALF: reordering the ANNOTATION list silently reorders what
+# the SUMMARY list answers, because the summary is UNOWNED and falls through to
+# a seed `apply` has overwritten. Row N4.
+#
+# ============================================================================
+# WHICH ROWS ARE RED BEFORE THE FIX, AND WHICH ARE NOT — SAID OUT LOUD
+# ============================================================================
+# MEASURED at ee61aa4a against src/xschem as built 2026-09-04 05:16:
+#   RED    N1 N2 N3 N4 N6 N8 N9a N9b N10 N11 N12.
+#   GREEN  N0 N5 N7 N9c, and every one of them is a CONTROL OR A FENCE that
+#          proves nothing about the fix on its own:
+#            N0  the fixture is live (without it every row could pass by
+#                drawing nothing).
+#            N5  N applies are already a fixed point at HEAD; the row exists so
+#                the declaration cannot introduce a ratchet.
+#            N7  the 1292 restore must reach ONLY what apply itself wrote. At
+#                HEAD nothing restores anything, so the row is vacuously green;
+#                it is red against an over-broad restore driven off `classmap`
+#                instead of the session record.
+#            N9c a descriptor that never met the stamp (set into
+#                ::op_annot::desc directly) must keep answering out of
+#                `params`. Green at HEAD by definition — it is the row that
+#                says the ABSENT-key fallback is really there afterwards.
+#
+# ⚠ BOTH DEFECTS ARE LATENT UNTIL ITEM B5 WIRES THE BUTTONS. `apply` has no
+# functional caller anywhere in src/ or any PDK tree today, so a green suite
+# proves nothing by itself and the RED-BEFORE state above is the whole of the
+# evidence. That is also why B2e has NO PIXELS: there is no surface a human can
+# look at, and no `look` debt is filed for it.
+#
+# ============================================================================
+# THE FIXTURE
+# ============================================================================
+# Section D's loaded M1 is reused (an `nmos` instance of
+# xschem_library/devices/nmos.sym), with a descriptor whose params are B5's own
+# three triples — IHP's distinctive `{id ids 0}`, LABEL != PARAM, so a store
+# that carried only the name could not pass. The raw is built from
+# `op_annot::vector`, never from hand-typed names (invariant I1).
+# ⚠ THE FIXTURE REGISTERS FROM A FRESH LITERAL DICT EVERY TIME. That is the
+# shipped shape (all four shipped register sites pass a literal with `params`
+# and no declaration key), and it is what makes each row's starting state
+# independent of the row before it.
+
+## ---------------------------------------------------------------------------
+## B5's OWN EDITING MODEL, REDUCED TO THE STORE
+## ---------------------------------------------------------------------------
+## `rdw::_index_of`, `rdw::_find_triple` (B5's preserved patch, :360) and the
+## delete/add arms of `rdw::_edit` (:418), with the Tk stripped out — COPIED IN
+## SHAPE rather than paraphrased, because the brief requires 1312's red to be
+## B5's own measurement reproduced and not a description of it. Every call here
+## is BROAD scope, which is what B5's two Deletes were, and each is followed by
+## the bare `apply` of `rdw::_apply_now`.
+proc ol_triple_in {lst param} {
+  if {[catch {llength $lst}]} { return BADLIST }
+  foreach t $lst {
+    if {[catch {lindex $t 1} p]} { return BADLIST }
+    if {$p eq $param} { return $t }
+  }
+  return {}
+}
+proc ol_index_of {lst param} {
+  if {[catch {llength $lst} n]} { return -1 }
+  for {set i 0} {$i < $n} {incr i} {
+    if {[catch {lindex [lindex $lst $i] 1} p]} { return -1 }
+    if {$p eq $param} { return $i }
+  }
+  return -1
+}
+## Add consults the two effective lists and THEN the seed, and refuses when all
+## three are silent — ruling D-4: it will not guess a raw-name shape.
+proc ol_find_triple {cls param} {
+  foreach ln {annotation summary} {
+    set t [ol_triple_in [ol_ans ::op_param_lists::effective $cls $ln] $param]
+    if {$t ne {} && $t ne {BADLIST}} { return $t }
+  }
+  set t [ol_triple_in [ol_ans ::op_param_lists::seed $cls] $param]
+  if {$t eq {BADLIST}} { return {} }
+  return $t
+}
+proc ol_del_broad {cls listname param} {
+  set base [ol_ans ::op_param_lists::effective $cls $listname]
+  set i [ol_index_of $base $param]
+  if {$i < 0} { return {refused-notinlist} }
+  if {[catch {llength $base} n]} { return {refused-badlist} }
+  if {$n <= 1} { return {refused-lastrow} }
+  set r [ol_ans ::op_param_lists::set_list class $cls $listname [lreplace $base $i $i]]
+  if {$r ne {1}} { return {refused-store} }
+  ol_ans ::op_param_lists::apply
+  return ok
+}
+proc ol_add_broad {cls listname param} {
+  set base [ol_ans ::op_param_lists::effective $cls $listname]
+  if {[ol_index_of $base $param] >= 0} { return {refused-already} }
+  set t [ol_find_triple $cls $param]
+  if {$t eq {}} { return {refused-nodeclaration} }
+  set r [ol_ans ::op_param_lists::set_list class $cls $listname [linsert $base end $t]]
+  if {$r ne {1}} { return {refused-store} }
+  ol_ans ::op_param_lists::apply
+  return ok
+}
+## A line that WRITES a dict key: non-comment, carrying a dict-writing command
+## AND the key's name. Counted this way rather than as a body substring,
+## because a helper NAMED after the key would satisfy a bare
+## `string first declared` and prove nothing at all.
+proc ol_dictset_lines {text key} {
+  set n 0
+  foreach l [split $text "\n"] {
+    if {[regexp {^\s*#} $l]} continue
+    if {![regexp {dict\s+(set|replace|update|lappend|append|incr)} $l]} continue
+    if {[string first $key $l] < 0} continue
+    incr n
+  }
+  return $n
+}
+
+set OL_ANNOT [file join $repo src op_annot.tcl]
+set N_PDK    {{id ids 0} {gm gm 1} {gds gds 1}}
+set N_D      [list devpath {@m.@path@name} params $N_PDK]
+set N_CARDS3 {{.save m1[ids]} {.save m1[gm]} {.save m1[gds]}}
+## After the two broad Deletes the union's ORDER changes and the `.save` cards
+## follow it: the declaration re-enters the union LAST, because DD-13 rejected
+## freezing the drawn order and a declaration placed FIRST would freeze it.
+set N_PARAMS2 {{id ids 0} {gds gds 1} {gm gm 1}}
+set N_CARDS2  {{.save m1[ids]} {.save m1[gds]} {.save m1[gm]}}
+
+proc ol_nfixture {} {
+  global N_D
+  ol_reset
+  ol_ans ::op_annot::register nmos $N_D
+  ol_ans ::op_annot::register pmos $N_D
+  return {}
+}
+
+ol_nfixture
+set N_RAW [file join $scratch b2en.raw]
+set N_NAMES {}
+foreach _p {ids gm gds} { lappend N_NAMES [ol_ans ::op_annot::vector M1 $_p] }
+set _fp [open $N_RAW w]
+puts -nonewline $_fp "Title: b2en\nDate: Mon Jan 1 00:00:00 2026\n"
+puts -nonewline $_fp "Plotname: Operating Point\nFlags: real\n"
+puts -nonewline $_fp "No. Variables: [llength $N_NAMES]\nNo. Points: 1\nVariables:\n"
+set _i 0
+foreach _n $N_NAMES { puts -nonewline $_fp "\t$_i\t$_n\tnotype\n" ; incr _i }
+## ids = 10u, gm = 100u, gds = 1u
+puts -nonewline $_fp "Values:\n0\t1e-05\n\t1e-04\n\t1e-06\n"
+close $_fp
+set N_ANN [catch {xschem annotate_op $N_RAW}]
+## The mint is `%-<w>s = %s` with w the widest LABEL — 3 here, for `gds`.
+set N_ALL3   "id  = 10u\ngm  = 100u\ngds = 1u\n"
+set N_NARROW "id = 10u\n"
+
+# ---------------------------------------------------------------------------
+# N0 — CONTROL. GREEN BEFORE AND AFTER, and it earns its place: without it
+# every row below could pass by drawing nothing at all.
+check {N0 CONTROL the section-N fixture is live: M1 is an nmos the registry claims, the descriptor carries B5's three triples, the OP raw annotated, all three rows draw with values, and _cards_for emits one .save card per row} \
+  [list $N_ANN [ol_ans ::op_annot::type M1] [ol_ans ::op_annot::_claims M1] \
+        [ol_dkey nmos params] [ol_ans ::op_annot::text M1] \
+        [ol_ans ::op_annot::_cards_for M1 {}]] \
+  [list 0 nmos 1 $N_PDK $N_ALL3 $N_CARDS3]
+
+# ---------------------------------------------------------------------------
+# N1 — RED. B5's A5 TRANSCRIPT, THE DECLARATION HALF.
+# Two broad-scope Deletes, annotation then summary, each through B5's own edit
+# arm and each followed by its bare apply. Afterwards the PDK's declaration is
+# STILL what the PDK registered — on the edited type AND on its sibling — and
+# `seed` still answers it.
+# RED AT HEAD: `declared` does not exist (NOKEY twice) and `seed mos` answers
+# {{id ids 0} {gds gds 1}} — B5's PARAMS2/SEED2/SIBPARAMS2, byte for byte.
+# ⚠ THE FIRST DELETE'S `params` LEG IS GREEN IN BOTH STATES and is kept for
+# that reason: it says the two states agree up to the second Delete, so the
+# failure the row reports is the second one and not a drifted fixture.
+ol_nfixture
+set N1_D1 [ol_del_broad mos annotation gm]
+set N1_P1 [ol_dkey nmos params]
+set N1_D2 [ol_del_broad mos summary gm]
+check {N1 after TWO broad Deletes — annotation then summary, B5's own A5 sequence — the PDK's declaration is untouched on both types of the class and `seed mos` still answers it} \
+  [list $N1_D1 $N1_D2 $N1_P1 \
+        [ol_dkey nmos declared] [ol_dkey pmos declared] \
+        [ol_ans ::op_param_lists::seed mos]] \
+  [list ok ok $N_PARAMS2 $N_PDK $N_PDK $N_PDK]
+
+# ---------------------------------------------------------------------------
+# N2 — RED. THE SIMULATOR HALF, WHICH IS RULING DD-4 IN ONE ROW.
+# "Delete removes a parameter from what is DRAWN. It never changes what the
+# simulator is asked to save." So after the same two Deletes the deck is
+# UNCHANGED — `_cards_for` still emits the card — while the sheet is
+# decluttered: `shown` no longer carries the row.
+# RED AT HEAD: the card is gone (B5's CARDS_AFTER) and `params` has lost the
+# triple, so under measured rule R1 the parameter is not in the raw at all.
+check {N2 RULING DD-4 the deck is UNCHANGED by a Delete: _cards_for still emits the .save card for the deleted parameter and `params` still carries its triple, while `shown` does not} \
+  [list [ol_ans ::op_annot::_cards_for M1 {}] \
+        [ol_triple_in [ol_dkey nmos params] gm] \
+        [ol_triple_in [ol_dkey nmos shown] gm]] \
+  [list $N_CARDS2 {gm gm 1} {}]
+
+# ---------------------------------------------------------------------------
+# N3 — RED. ADD CAN PUT IT BACK.
+# B5's `_find_triple` consults effective-annotation, effective-summary and then
+# the seed. After the two Deletes the first two are silent by design — that is
+# what the user asked for — so the seed is the only source left, and with the
+# seed reading the declaration it has one.
+# RED AT HEAD: all three are silent and Add REFUSES, which is B5's ADDBACK.
+check {N3 ADD CAN PUT IT BACK: after the two Deletes neither effective list declares the parameter, the SEED still does, and B5's add arm succeeds instead of refusing} \
+  [list [ol_triple_in [ol_ans ::op_param_lists::effective mos annotation] gm] \
+        [ol_triple_in [ol_ans ::op_param_lists::effective mos summary] gm] \
+        [ol_find_triple mos gm] \
+        [ol_add_broad mos annotation gm]] \
+  [list {} {} {gm gm 1} ok]
+
+# ---------------------------------------------------------------------------
+# N4 — RED. 1312's ORDER HALF: A REORDER MUST NOT LEAK INTO THE LIST NOBODY
+# OWNS. The user owns the ANNOTATION list only and merely reorders it. The
+# SUMMARY list is unowned, so it falls through to the seed — and the seed must
+# still be the PDK's ORDER, not the order the user just chose for a different
+# list.
+# ⚠ AND THE REORDER MUST STILL REACH THE DRAWN ORDER. `shown` follows the
+# annotation list, which is what B5's Up/Down exist to change and is why
+# DD-13 rejected option (b), "refuse to overwrite `params` when only the ORDER
+# differs". That leg is green in both states and is here to fence the fix
+# against over-correcting into (b).
+# RED AT HEAD: `effective mos summary` and `seed mos` both answer the user's
+# order, exactly as B5 measured (seed1 = effsum1 = {{gm gm 1} {id ids 0} {gds gds 1}}).
+ol_nfixture
+ol_ans ::op_param_lists::set_list class mos annotation {{gm gm 1} {id ids 0} {gds gds 1}}
+set N4_RET [ol_ans ::op_param_lists::apply]
+check {N4 reordering the ANNOTATION list does not reorder the UNOWNED summary list: `owns` still answers 0 for it, `effective` and `seed` still answer the PDK's own order, and the drawn list still follows the user's} \
+  [list [lsort $N4_RET] \
+        [ol_ans ::op_param_lists::owns class mos summary] \
+        [ol_ans ::op_param_lists::effective mos summary] \
+        [ol_ans ::op_param_lists::seed mos] \
+        [ol_dkey nmos shown]] \
+  [list {nmos pmos} 0 $N_PDK $N_PDK {{gm gm 1} {id ids 0} {gds gds 1}}]
+
+# ---------------------------------------------------------------------------
+# N5 — FENCE, AND IT IS GREEN BEFORE THE CHANGE. SAID OUT LOUD: no landed row
+# asserts that `apply` is idempotent (item B2a-2's A7 went back with its item),
+# so this row proves nothing about 1312. It exists so that the third field
+# cannot introduce a RATCHET — three consecutive applies must leave all three
+# keys byte-identical.
+ol_nfixture
+ol_ans ::op_param_lists::set_list class mos annotation {{id ids 0}}
+ol_ans ::op_param_lists::apply
+set N5_P1 [ol_dkey nmos params]
+set N5_S1 [ol_dkey nmos shown]
+set N5_D1 [ol_dkey nmos declared]
+ol_ans ::op_param_lists::apply
+ol_ans ::op_param_lists::apply
+check {N5 FENCE (GREEN BEFORE) three consecutive applies are a fixed point: `params`, `shown` and the declaration are byte-identical after the third as after the first} \
+  [list [expr {[ol_dkey nmos params] eq $N5_P1 ? 1 : 0}] \
+        [expr {[ol_dkey nmos shown] eq $N5_S1 ? 1 : 0}] \
+        [expr {[ol_dkey nmos declared] eq $N5_D1 ? 1 : 0}] \
+        $N5_P1 $N5_S1] \
+  [list 1 1 1 $N_PDK {{id ids 0}}]
+
+# ---------------------------------------------------------------------------
+# N6 — RED. ISSUE 1292: NOTHING EVER UN-NARROWS THE SHEET.
+# `apply` is the only writer of `shown` and no verb removes it, so
+# `op_param_lists::reset` followed by `apply` — which is exactly what item B5's
+# Reset/Defaults button is built on — leaves the sheet narrowed for the rest of
+# the session. `_apply_owns` `continue`s an unowned class by design, so the
+# second apply writes nothing and returns nothing.
+# RED AT HEAD, every measured leg: apply returns {}, `shown` is STILL the
+# narrowed list, ::op_annot::gen does not move (invariant I5 failing silently),
+# and the instance still draws one row where the descriptor declares three.
+ol_nfixture
+ol_ans ::op_param_lists::set_list class mos annotation {{id ids 0}}
+ol_ans ::op_param_lists::apply
+set N6_S1 [ol_dkey nmos shown]
+ol_ans ::op_param_lists::reset
+set N6_G1 $::op_annot::gen
+set N6_RET [ol_ans ::op_param_lists::apply]
+check {N6 ISSUE 1292 reset + apply UN-NARROWS the sheet: the display key is gone from both types, `params` is back to what the PDK declared, apply names the types it restored, ::op_annot::gen MOVES so the change reaches the screen on redraw, and the instance draws every row again} \
+  [list $N6_S1 [lsort $N6_RET] \
+        [ol_dkey nmos shown] [ol_dkey pmos shown] [ol_dkey nmos params] \
+        [expr {$::op_annot::gen > $N6_G1 ? 1 : 0}] \
+        [ol_ans ::op_annot::text M1]] \
+  [list {{id ids 0}} {nmos pmos} NOKEY NOKEY $N_PDK 1 $N_ALL3]
+
+# ---------------------------------------------------------------------------
+# N7 — FENCE AGAINST AN OVER-BROAD RESTORE. GREEN BEFORE THE CHANGE, because
+# at HEAD nothing restores anything at all; it is red against a restore driven
+# off `classmap` instead of off what `apply` itself actually wrote.
+# Issue 1292 §4 option 1 asks for the distinction in so many words — "removing
+# a key THIS FILE wrote is not the same as rewriting a PDK's dict" — and this
+# row is that distinction made checkable instead of stated:
+#   (a) a class the user never owned and apply never wrote is byte-identical;
+#   (b) a `shown` and a `params` written by SOMEONE ELSE between the apply and
+#       the reset are left exactly as that someone left them.
+ol_nfixture
+set N7_NPN0 [ol_ans ::op_annot::descriptor vertical_npn]
+ol_ans ::op_param_lists::set_list class mos annotation {{id ids 0}}
+ol_ans ::op_param_lists::apply
+## someone other than apply writes nmos now: a PDK re-registering, or the
+## user's own rc under invariant I5. Both keys apply wrote are replaced.
+ol_ans ::op_annot::register nmos \
+  [list devpath {@m.@path@name} params {{zz zz 0}} shown {{gm gm 1}}]
+ol_ans ::op_param_lists::reset
+ol_ans ::op_param_lists::apply
+check {N7 FENCE (GREEN BEFORE) the restore reaches ONLY what apply itself wrote: an unowned class apply never touched is byte-identical, and a `params`/`shown` pair written by someone else after the apply is left alone} \
+  [list [expr {[ol_ans ::op_annot::descriptor vertical_npn] eq $N7_NPN0 ? 1 : 0}] \
+        [ol_dkey nmos params] [ol_dkey nmos shown]] \
+  [list 1 {{zz zz 0}} {{gm gm 1}}]
+
+# ---------------------------------------------------------------------------
+# N8 — RED. THE FIELD SWAP, PROVED RATHER THAN ASSERTED.
+# At HEAD `_params` reads `dict get $d params` (op_param_lists.tcl:705) and
+# `apply` writes `dict set d params` (:1433) — ONE field. Poking `params`
+# alone, through the recovery round-trip all three PDK files document, makes
+# `seed mos` answer the poke on the very next call. Afterwards the seed reads
+# the DECLARATION and is blind to it.
+# RED AT HEAD: the declaration does not exist before or after the poke, and
+# `seed mos` answers {{zz zz 0}}.
+ol_nfixture
+set N8_DECL0 [ol_dkey nmos declared]
+set _d [ol_ans ::op_annot::descriptor nmos]
+dict set _d params {{zz zz 0}}
+ol_ans ::op_annot::register nmos $_d
+check {N8 `seed` no longer reads the field `apply` owns: poking `params` alone through the documented round-trip changes what the run computes and leaves the declaration — and therefore the seed — exactly where the PDK put it} \
+  [list $N8_DECL0 [ol_dkey nmos params] [ol_dkey nmos declared] \
+        [ol_ans ::op_param_lists::seed mos]] \
+  [list $N_PDK {{zz zz 0}} $N_PDK $N_PDK]
+
+# ---------------------------------------------------------------------------
+# N9a — RED. BACKWARD COMPATIBILITY, THE SHIPPED SHAPE.
+# Every shipped register site passes a literal dict with `params` and NO
+# declaration key. Such a descriptor must behave EXACTLY as it does today, so
+# the declaration is stamped from `params` at registration and every shipped
+# descriptor answers the same bytes it answers now. Read from the snapshot
+# taken beside row S1, before this suite registered anything of its own.
+# RED AT HEAD: there is no third key, so all three pairs answer 0. The seed and
+# effective legs are GREEN in both states — they are what "exactly as today"
+# means, and a fix that moved them would be the regression this row guards.
+check {N9a BACKWARD COMPATIBILITY the shipped shape: every type the shipped PDK registers carries a declaration equal to its own `params`, and `seed`/`effective` answer exactly what they answer today} \
+  [list $N_SHIPTYPES $N_SHIPPAIRS $N_SHIPNMOS $N_SHIPPMOS $N_SHIPNPN \
+        $N_SHIPSEED $N_SHIPEFF] \
+  [list {nmos pmos vertical_npn} {1 1 1} $OL_MOS6 $OL_MOS6 $OL_NPN6 \
+        $OL_MOS6 $OL_MOS6]
+
+# ---------------------------------------------------------------------------
+# N9b — RED. BACKWARD COMPATIBILITY, A USER'S OWN BARE REGISTER IN HER RC.
+# Invariant I5: a user's `op_annot::register` in her own rc overrides the
+# PDK's and takes effect with no restart. Her list IS a declaration — that is
+# why the key is not called `pdk_params` — so the seed answers it immediately.
+# RED AT HEAD on the declaration leg only; the seed leg is green because at
+# HEAD the seed reads `params`, which is the very coupling 1312 is about.
+ol_nfixture
+ol_ans ::op_annot::register nmos [list devpath {@m.@path@name} params {{MINE mine 1}}]
+check {N9b BACKWARD COMPATIBILITY invariant I5: a user's own bare op_annot::register declares, and `seed` answers her list on the next call with no restart} \
+  [list [ol_dkey nmos declared] [ol_ans ::op_param_lists::seed mos] \
+        [ol_ans ::op_param_lists::effective mos annotation]] \
+  [list {{MINE mine 1}} {{MINE mine 1}} {{MINE mine 1}}]
+
+# ---------------------------------------------------------------------------
+# N9c — FENCE, GREEN BEFORE AND AFTER. THE DESCRIPTOR THAT NEVER MET THE STAMP.
+# `op_annot::register` is the stamp's only site, so a descriptor that reached
+# ::op_annot::desc some other way carries no declaration — and must still be
+# read out of `params`, exactly as today. This is the ABSENT-key fallback the
+# brief makes a hard requirement, and it is the row that says the fallback is
+# really there rather than assumed.
+ol_nfixture
+set ::op_annot::desc(zzlegacy) {params {{q q 0}}}
+ol_ans ::op_param_lists::set_class zzlegacy zzleg
+check {N9c FENCE (GREEN BEFORE) a descriptor that never passed through op_annot::register carries no declaration and is still read out of `params`, by `_params` and by `seed` alike} \
+  [list [ol_dkey zzlegacy declared] \
+        [ol_ans ::op_param_lists::_params zzlegacy] \
+        [ol_ans ::op_param_lists::seed zzleg]] \
+  [list NOKEY {{q q 0}} {{q q 0}}]
+catch {unset ::op_annot::desc(zzlegacy)}
+
+# ---------------------------------------------------------------------------
+# N10 — RED. *** STATUS E: THE USER HAS NOT RULED ON THIS. ***
+# The declaration is PRESERVED IF PRESENT — that single rule is what makes
+# `apply` structurally incapable of destroying it, because `apply` round-trips
+# the dict it read. Its consequence, which DD-13 does not mention: the recovery
+# round-trip printed in all three PDK files
+#     set d [op_annot::descriptor nmos] ; dict set d params ... ; register
+# now changes what the RUN computes and what the SHEET draws but NOT what the
+# SEED answers. The escape hatch is one line — drop the key first — or register
+# a fresh dict, which is what all four shipped sites already do.
+# THE QUESTION FOR THE USER, recorded as a rule debt: should the documented
+# recipe itself redeclare? BOTH DIRECTIONS ARE FENCED HERE so that whichever
+# way the user rules, the other direction reds rather than drifting.
+# RED AT HEAD: there is no key, so leg 1's declaration is NOKEY and its seed
+# follows the poke, and leg 2's declaration is NOKEY too.
+ol_nfixture
+set _d [ol_ans ::op_annot::descriptor nmos]
+dict set _d params {{X x 0}}
+ol_ans ::op_annot::register nmos $_d
+set N10_A [list [ol_dkey nmos params] [ol_dkey nmos declared] \
+                [ol_ans ::op_param_lists::seed mos]]
+ol_nfixture
+set _d [ol_ans ::op_annot::descriptor nmos]
+dict unset _d declared
+dict set _d params {{X x 0}}
+ol_ans ::op_annot::register nmos $_d
+set N10_B [list [ol_dkey nmos params] [ol_dkey nmos declared] \
+                [ol_ans ::op_param_lists::seed mos]]
+check {N10 STATUS E preserve-if-present, fenced in BOTH directions: the documented round-trip keeps the PDK's declaration while changing what the run computes, and dropping the key first REDECLARES} \
+  [list $N10_A $N10_B] \
+  [list [list {{X x 0}} $N_PDK $N_PDK] [list {{X x 0}} {{X x 0}} {{X x 0}}]]
+
+# ---------------------------------------------------------------------------
+# N11 — RED. THE ADVERSARY ROW: ATTACK THE DECLARATION, DO NOT ASSERT IT.
+# The row that matters most is "after ANY sequence of edits the PDK's
+# declaration is still what the PDK registered", and an assertion is not a
+# test of it. This is a scripted storm through B5's own edit arms — reorder the
+# annotation list, delete twice from it, delete from the SUMMARY list the row
+# the annotation list has already lost, then add it back, applying after every
+# step — followed by the Reset/Defaults pair.
+# ⚠ STEP 4 IS THE KILL. At HEAD, deleting `gds` from the summary list after the
+# annotation list has already lost it takes the triple out of `params`, out of
+# the seed and out of the sibling type — so step 5's Add has no source left and
+# REFUSES, and the `.save` card never comes back. That is 1312 and the DD-4
+# violation in the same sequence.
+# RED AT HEAD: step 5 refuses, both declarations are NOKEY, `seed mos` answers
+# {{id ids 0} {gm gm 1}}, `params` has lost the triple and so has the deck.
+ol_nfixture
+set N11_STEPS {}
+lappend N11_STEPS [ol_ans ::op_param_lists::set_list class mos annotation \
+                     {{gds gds 1} {gm gm 1} {id ids 0}}]
+ol_ans ::op_param_lists::apply
+lappend N11_STEPS [ol_del_broad mos annotation gds]
+lappend N11_STEPS [ol_del_broad mos annotation gm]
+lappend N11_STEPS [ol_del_broad mos summary gds]
+lappend N11_STEPS [ol_add_broad mos annotation gds]
+ol_ans ::op_param_lists::reset
+ol_ans ::op_param_lists::apply
+check {N11 ADVERSARY after a storm of reorders, deletes and an add on BOTH lists — then reset and apply — the PDK's declaration on both types is still byte for byte what the PDK registered, the seed answers it, and the .save card was never lost} \
+  [list $N11_STEPS [ol_dkey nmos declared] [ol_dkey pmos declared] \
+        [ol_ans ::op_param_lists::seed mos] \
+        [ol_triple_in [ol_dkey nmos params] gds] \
+        [expr {[lsearch -exact [ol_ans ::op_annot::_cards_for M1 {}] {.save m1[gds]}] >= 0 ? 1 : 0}]] \
+  [list {1 ok ok ok ok} $N_PDK $N_PDK $N_PDK {gds gds 1} 1]
+
+# ---------------------------------------------------------------------------
+# N12 — STRUCTURAL. THE GUARANTEE IS BUILT, NOT ASSERTED, WHICH IS THE STANDARD
+# THE DD-6 AMENDMENT SET AND THE STANDARD THIS BATCH KEEPS FAILING.
+# `apply` must be INCAPABLE of writing the declaration — it only ever passes
+# through the dict it read — so no line anywhere in op_param_lists.tcl writes
+# the key, and op_annot.tcl has exactly the one writer DD-13's table names.
+# Two legs are GREEN BEFORE (nothing writes a key that does not exist yet); the
+# op_annot leg is the red one, and it is what says the writer exists at all.
+set N12_PL    [ol_slurp $OL_TCL]
+set N12_ANN   [ol_slurp $OL_ANNOT]
+set N12_APPLY [ol_body ::op_param_lists::apply]
+check {N12 STRUCTURAL the declaration has ONE writer: no line of op_param_lists.tcl writes the key and neither does apply's own body, while op_annot.tcl writes it} \
+  [list [ol_dictset_lines $N12_PL declared] \
+        [ol_dictset_lines $N12_APPLY declared] \
+        [expr {[ol_dictset_lines $N12_ANN declared] >= 1 ? 1 : 0}] \
+        [expr {[string first {op_annot::register} $N12_PL] >= 0 ? 1 : 0}]] \
+  {0 0 1 1}
+
+## leave the registry and the store as section N found them
+ol_ans ::op_annot::register nmos $D_BASE
+ol_ans ::op_annot::register pmos $D_BASE
+ol_reset
+
+# ============================================================================
 # SECTION C — THE SHIPPED COMMENT THIS ITEM FINALLY ANSWERS
 # ============================================================================
 # All three PDK procs files carry "A first-class means for a user to choose her
@@ -2581,6 +3153,30 @@ foreach _f $C_FILES {
 }
 check {C2 all three PDK procs files now say WHICH LIST IS WHICH: params is what the run computes and the display key is what the sheet draws} \
   $C2_GOT {1 1 1 1 1 1}
+
+# C3 — THE THIRD LIST, SAID IN THE PDK FILE ITSELF (item B2e, ruling DD-13).
+# C2 named two lists and there are now THREE. A PDK author reading these files
+# has to be told which one she is writing when she calls `op_annot::register`,
+# and — because the declaration is PRESERVED IF PRESENT — she also has to be
+# told the one line that lets the documented recovery round-trip REDECLARE it.
+# That escape hatch is the whole cost of preserve-if-present and it is exactly
+# the kind of thing that lives in a spec and is never read; it is pinned here
+# because this is the file a PDK author actually opens.
+# The three sentences are pinned as LITERALS for row C2's reason: a row
+# grepping for the word `declared` alone would be satisfied by the word
+# appearing in any sentence, including a wrong one.
+# ⚠ C0's recovery recipe and C2's two literals must survive untouched — both
+# rows are checked again here by still being green.
+# RED BEFORE B2e: none of the three sentences is in any of the three files.
+set C3_GOT {}
+foreach _f $C_FILES {
+  set _t [ol_slurp $_f]
+  lappend C3_GOT [ol_has $_t {declared is what the PDK declared}] \
+                 [ol_has $_t {op_annot::register alone writes it}] \
+                 [ol_has $_t {dict unset d declared}]
+}
+check {C3 all three PDK procs files now name the THIRD list, say that op_annot::register alone writes it, and print the one-line escape hatch that lets the documented round-trip redeclare it} \
+  $C3_GOT {1 1 1 1 1 1 1 1 1}
 
 # ============================================================================
 # SECTION R — REGISTRATION

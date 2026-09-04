@@ -147,6 +147,40 @@
 #            PRESENT AND EMPTY is NOT absent: it draws no `params` rows at all.
 #            Only an absent key falls back. *** STATUS E, unratified: see
 #            doc/claude/issues/1285 and the `1285_empty_display_key` rule debt.
+#   declared OPTIONAL ordered {label param kind} triples — THE DECLARATION:
+#            WHAT THE PDK, OR THE USER'S OWN RC, DECLARED. Ruling DD-13,
+#            doc/claude/op_param_batch/DECISIONS.md; issue 1312.
+#            WRITTEN BY `op_annot::register` AND BY NOTHING ELSE (see _declare
+#            below), READ BY `op_param_lists::_params` AND BY NOTHING ELSE —
+#            which is what `op_param_lists::seed` answers out of. That is the
+#            OPPOSITE DIRECTION from `shown` above, which `op_param_lists::apply`
+#            writes and `op_annot::text` reads, and the direction is the point.
+#            WHY IT EXISTS: `apply` writes the annotation+summary UNION into
+#            `params`, and before DD-13 `seed` read "the PDK's own list" back
+#            out of THAT SAME FIELD. So two broad-scope Deletes destroyed the
+#            PDK's declaration, took the parameter's `.save` card with it, and
+#            Add could not put it back — the exact inverse of rulings DD-4 and
+#            DD-6, whose whole content is that Delete changes what is DRAWN and
+#            never what the simulator computes. Measured by item B5.
+#            ⚠ `op_param_lists::apply` MUST NEVER WRITE IT, AND CANNOT. It
+#            round-trips the dict it read — sets `params` and `shown` on it and
+#            re-registers — so PRESERVE-IF-PRESENT (below) carries the
+#            declaration through every apply untouched and apply's body never
+#            names the key at all. Built, not asserted, which is the standard
+#            the DD-6 amendment set; row N12 of
+#            tests/headless/test_op_param_store_1245.tcl fences it.
+#            ABSENT means the old behaviour EXACTLY: `_params` falls back to
+#            `params`, so every descriptor that predates this key answers the
+#            bytes it always answered (invariant I7). Only a descriptor that
+#            reached ::op_annot::desc WITHOUT passing through `register` can be
+#            in that state.
+#            *** STATUS E, unratified: PRESERVE-IF-PRESENT means the recovery
+#            round-trip documented above and in all three PDK `_procs.tcl`
+#            files — `set d [descriptor nmos]; dict set d params …; register`
+#            — now changes what the RUN computes and what the SHEET draws but
+#            NOT what `seed` answers. The escape hatch is one line,
+#            `dict unset d declared` before re-registering, or registering a
+#            fresh dict as all four shipped sites already do. Issue 1315.
 #   match    OPTIONAL list of globs tested against the instance's CELL NAME
 #            (`getprop instance <n> cell::name`, e.g. `sky130_fd_pr/nfet_01v8.sym`).
 #            Absent or empty = permissive, i.e. exactly the behaviour before this
@@ -337,6 +371,50 @@ proc op_annot::dropped {} {
   return $dropped
 }
 
+## op_annot::_declare <descriptor> -> the same descriptor, carrying THE
+## DECLARATION key. Ruling DD-13; issue 1312. `register` is its only caller and
+## this proc is the key's only writer anywhere in the tree.
+##
+## THE WHOLE DESIGN IS PRESERVE-IF-PRESENT, and it is what makes
+## `op_param_lists::apply` STRUCTURALLY INCAPABLE of destroying a declaration:
+## apply reads a descriptor, sets `params` and `shown` on it and re-registers
+## it, so a key that is already there rides straight through. Restamping from
+## `params` on every register — which reads more obvious — reintroduces issue
+## 1312 on the very first apply, because after an apply `params` IS the union.
+##
+## THREE THINGS IT MUST NOT DO, each of them fenced by a row that already
+## existed before this key did:
+##   · STAMP THE EMPTY DICT. `register <t> {}` is the documented erasure
+##     (test_op_annot's opa_clear_store; rows P0/P11/P16 gold `{{} {} {}}`), so
+##     an empty descriptor is stored exactly as empty.
+##   · PARSE THE VALUE. `dict exists`/`dict get`/`dict set` only — no
+##     `llength`, no list operation of any kind. Row K17 of test_op_annot
+##     registers a `params` holding an unmatched open brace and golds an rc=0
+##     register; the value is carried as an opaque string, exactly as `params`
+##     itself is, and `op_param_lists::_params` is where it is validated.
+##   · RAISE. Every step is guarded and every fall-through leaves the
+##     descriptor byte-identical to what the caller wrote. A raise in
+##     `register` rejects the WHOLE descriptor, which the DD-6 amendment
+##     already ruled is strictly worse than ignoring one key.
+##
+## A NON-EMPTY DESCRIPTOR WITH NO `params` AT ALL IS STAMPED WITH THE EMPTY
+## LIST, deliberately. It is legal today (`_claims` simply answers 0 for it),
+## and without the stamp `apply` could later give that type a `params` and the
+## re-register would then record apply's own UNION as the type's declaration —
+## issue 1312 surviving in the one corner nobody would think to look at.
+proc op_annot::_declare {descriptor} {
+  if {[catch {dict size $descriptor} n]} { return $descriptor }
+  if {$n == 0} { return $descriptor }
+  if {[catch {dict exists $descriptor declared} has]} { return $descriptor }
+  if {$has} { return $descriptor }
+  set p {}
+  if {![catch {dict exists $descriptor params} hp] && $hp} {
+    if {[catch {dict get $descriptor params} p]} { set p {} }
+  }
+  if {[catch {dict set descriptor declared $p} out]} { return $descriptor }
+  return $out
+}
+
 ## op_annot::register <symbol-type> <dict>
 ##
 ## <symbol-type> is the symbol K-record `type=` token (`nmos`, `pmos`,
@@ -353,6 +431,14 @@ proc op_annot::dropped {} {
 ##     set d [op_annot::descriptor nmos]
 ##     dict set d params {{id id 0} {gm gm 1}}
 ##     op_annot::register nmos $d
+##
+## ⚠ THAT ROUND-TRIP CARRIES THE `declared` KEY WITH IT, and `register`
+## PRESERVES a declaration it is handed rather than restamping it (ruling
+## DD-13). So the recipe above changes what the run computes and what the sheet
+## draws and leaves the SEED where the PDK put it. To redeclare as well, drop
+## the key first — `dict unset d declared` — or register a fresh dict, which is
+## what all four shipped PDK register sites do. Issue 1315 carries the question
+## of whether the recipe itself should redeclare; it is unratified.
 proc op_annot::register {type descriptor} {
   variable desc
   if {[string trim $type] eq {}} {
@@ -364,7 +450,7 @@ proc op_annot::register {type descriptor} {
       "op_annot::register: descriptor for symbol type \"$type\" is not a\
  well-formed dict ($err)"
   }
-  set desc($type) $descriptor
+  set desc($type) [_declare $descriptor]
   ## I5: tell the draw-time overlay its cached blocks are stale (see the
   ## namespace header). Bumped on EVERY register, including a re-register with
   ## identical content -- a no-op bump costs one cache rebuild, a missed one

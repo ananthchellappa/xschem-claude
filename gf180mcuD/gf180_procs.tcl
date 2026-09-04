@@ -120,10 +120,27 @@ if {[info commands ::op_annot::register] ne {}} {
   # does, draws every `params` row exactly as it always has (invariant I7).
   # op_param_lists::apply writes both: the UNION of the annotation and summary
   # lists into `params`, and the annotation half of that union into `shown`.
+  # ⚠ SINCE RULING DD-13 THAT UNION HAS A THIRD INPUT — this type's own
+  # `declared` list, appended LAST (see the next paragraph) — so no edit to the
+  # two lists above can ever remove a `.save` card the PDK asked for. DD-4
+  # states the price out loud: a user who deletes a row to make the deck
+  # smaller does not get a smaller deck.
   # Getting the two the wrong way round is how a wider `params` un-declutters
   # the schematic, and a `derived` row is why they must stay separate at all —
   # it reads the RUN, so it keeps its value when its operand is merely hidden
   # (ruling DD-9, issue 1289).
+  #
+  # ⚠ AND A THIRD LIST, WHICH YOU DO NOT WRITE BY HAND (ruling DD-13, issue
+  # 1312): declared is what the PDK declared. op_annot::register alone writes it
+  # -- it is stamped from this descriptor's own `params` the first time the
+  # descriptor is registered, and PRESERVED verbatim ever after, so
+  # op_param_lists::seed keeps answering the PDK's list no matter what the user
+  # deletes from the two lists above. That preserve rule has one consequence
+  # worth knowing: the RECOVERY round-trip above carries the key with it, so it
+  # changes what the run computes and what the sheet draws but NOT what the
+  # seed answers. To redeclare as well, add one line before re-registering --
+  # dict unset d declared -- or register a fresh dict, which is what the
+  # register call below already does.
   foreach _gf180_op_type {nmos pmos} {
     op_annot::register $_gf180_op_type {
       devpath {\@m.@path@spiceprefix@name\.m0}

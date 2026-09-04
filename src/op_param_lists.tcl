@@ -35,6 +35,16 @@
 ##       with no user entry answers the ordered {label param kind} triples the
 ##       PDK registered through op_annot::register, read back through the
 ##       published op_annot::descriptor. There is no second registry here.
+##       ⚠ IT READS THE DECLARATION KEY, NOT `params` (ruling DD-13, issue
+##       1312). `apply` below writes the annotation+summary UNION into `params`,
+##       so a seed read out of `params` is not the PDK's list at all after the
+##       first apply -- it is whatever the last apply computed, which let two
+##       Deletes destroy a PDK row, its `.save` card and the sibling type's
+##       copy, with Add unable to put any of them back. `op_annot::register` is
+##       the declaration's only writer and `_params` below is its only reader.
+##       A descriptor with no declaration -- one that never passed through
+##       `register` -- falls back to `params`, which is the behaviour of every
+##       descriptor that predates the key (invariant I7).
 ##       THE SEED IS A TRIPLE, NOT A NAME, AND IHP IS THE PROOF:
 ##       sky130A/sky130_procs.tcl and gf180mcuD/gf180_procs.tcl both declare
 ##       `{id id 0}`, but ihp-sg13g2/sg13g2_procs.tcl declares `{id ids 0}` --
@@ -301,6 +311,28 @@ namespace eval ::op_param_lists {
   variable dirtyclass
   if {![array exists dirtyclass]} { array set dirtyclass {} }
 
+  ## WHAT THIS SESSION'S `apply` ACTUALLY WROTE, per `type=` token (issue 1292).
+  ## One entry per type apply rewrote, holding FOUR {present value} pairs: the
+  ## PRE-apply state of `params` and `shown`, and the state apply WROTE into
+  ## each. Nothing else is recorded and no value is ever parsed.
+  ##
+  ## WHY IT EXISTS: `apply` is the only writer of `shown` and no verb removed
+  ## it, so `reset` + `apply` -- which is exactly what a Reset/Defaults button
+  ## is built on -- left the sheet narrowed for the rest of the session. The
+  ## record is what lets `apply` UN-DO EXACTLY ITS OWN WRITE, in full or not at
+  ## all: a descriptor whose `params`/`shown` are no longer byte-identical to
+  ## what apply left there has been rewritten by someone else (a PDK, the
+  ## user's rc under I5) and is dropped from the record and LEFT ALONE. Issue
+  ## 1292 §4 option 1 asks for that distinction in so many words -- "removing a
+  ## key THIS FILE wrote is not the same as rewriting a PDK's dict" -- and this
+  ## is that distinction made real rather than stated in a comment.
+  ##
+  ## ⚠ `reset` DOES NOT CLEAR IT, deliberately: reset+apply IS the undo the
+  ## record exists to serve. Clearing it there would make issue 1292 unfixable
+  ## by the very pair of verbs the issue names.
+  variable applied
+  if {![array exists applied]} { array set applied {} }
+
   ## The report buffer. A LIST, one element per report, so a caller can count
   ## how many times the user was told something.
   variable reports
@@ -333,6 +365,8 @@ namespace eval ::op_param_lists {
   proc said_clear {} { variable reports ; set reports {} ; return {} }
 
   ## Back to the shipped map and no user lists at all.
+  ## ⚠ `applied` IS NOT CLEARED HERE. See its declaration above: reset+apply is
+  ## the undo of issue 1292, so the record must survive the reset half of it.
   proc reset {} {
     variable classmap ; variable defaultmap ; variable lists
     variable owned ; variable warned ; variable reports
@@ -691,20 +725,89 @@ namespace eval ::op_param_lists {
   }
 
   ## -----------------------------------------------------------------------
+  ## DESCRIPTOR KEY STATE: {present value}
+  ## -----------------------------------------------------------------------
+  ## A key's whole state as ONE comparable value, because ABSENT and PRESENT
+  ## AND EMPTY are different facts about a descriptor (ruling DD-6's row D10
+  ## turns on exactly that) and a plain `dict get` collapses them. Used by the
+  ## declaration read below and by the issue-1292 undo further down; nothing
+  ## here parses a value and nothing here raises.
+  proc _key_state {d key} {
+    if {[catch {dict exists $d $key} has]} { return [list 0 {}] }
+    if {!$has} { return [list 0 {}] }
+    if {[catch {dict get $d $key} v]} { return [list 0 {}] }
+    return [list 1 $v]
+  }
+
+  ## Is <key> of <d> still in exactly <state>? Byte comparison, both halves.
+  proc _state_eq {d key state} {
+    return [expr {[_key_state $d $key] eq $state ? 1 : 0}]
+  }
+
+  ## Put <key> of <d> back into <state>: SET when it was present, REMOVE when
+  ## it was absent. An undo that can only set would leave a key this file
+  ## created behind, which is the whole of issue 1292.
+  proc _apply_state {d key state} {
+    if {[lindex $state 0]} {
+      if {[catch {dict set d $key [lindex $state 1]} d2]} { return $d }
+      return $d2
+    }
+    if {[catch {dict unset d $key} d2]} { return $d }
+    return $d2
+  }
+
+  ## -----------------------------------------------------------------------
   ## THE PDK SEED (D-7)
   ## -----------------------------------------------------------------------
   ## The params of ONE registered type, read through the published accessor.
   ## Never enumerates ::op_annot::desc: the candidate types for a class are the
   ## tokens the CLASS MAP sends there, so this file reaches into no other
   ## namespace's internals and a class nobody registered answers {}.
+  ##
+  ## THE FIELD PICKER, AND THE ONE PLACE THE DECLARATION IS READ.
+  ## {1 <value>} when the descriptor carries a declaration, {0 {}} when it does
+  ## not. Its own proc so the read has exactly ONE site: `_params` below is the
+  ## only reader of the key anywhere in the tree, and this is the only line of
+  ## `_params` that knows the key's name.
+  proc _decl_state {d} {
+    return [_key_state $d declared]
+  }
+
   proc _params {type} {
     if {[catch {::op_annot::descriptor $type} d]} { return {} }
     if {$d eq {}} { return {} }
-    if {[catch {dict exists $d params} has]} { return {} }
-    if {!$has} { return {} }
-    if {[catch {dict get $d params} p]} { return {} }
+    ## ⚠ THE DECLARATION, NOT `params` -- RULING DD-13, ISSUE 1312.
+    ## `apply` writes the annotation+summary UNION into `params`, and this proc
+    ## is what `seed` calls "the PDK's own list". Reading them out of ONE field
+    ## meant that after the first apply the seed was whatever the last apply
+    ## computed: two broad-scope Deletes took a parameter out of `params`, out
+    ## of the seed and out of the SIBLING type, the `.save` card went with it,
+    ## and Add had no source left to put it back. Measured by item B5; the
+    ## exact inverse of DD-4/DD-6, whose whole content is that Delete changes
+    ## what is DRAWN and never what the simulator computes.
+    ## `op_annot::register` is the declaration's only writer (op_annot.tcl's
+    ## `_declare`), and it PRESERVES one it is handed, so `apply` -- which
+    ## round-trips the dict it read -- cannot reach it.
+    ##
+    ## THE ABSENT-KEY FALLBACK IS LOAD-BEARING, NOT A COURTESY. Every
+    ## descriptor that never passed through `register` carries no declaration
+    ## and must answer exactly the bytes it answers today (invariant I7). The
+    ## same string is then validated the same way, and the report names WHICH
+    ## list was dropped, because after an apply the two fields can differ and a
+    ## message blaming `params` for a `params` that parses fine is invariant
+    ## I3's family one layer up.
+    set _st [_decl_state $d]
+    if {[lindex $_st 0]} {
+      set p [lindex $_st 1]
+      set what declaration
+    } else {
+      if {[catch {dict exists $d params} has]} { return {} }
+      if {!$has} { return {} }
+      if {[catch {dict get $d params} p]} { return {} }
+      set what params
+    }
     if {[string trim $p] eq {}} { return {} }
-    ## ⚠ THE PDK'S `params` IS AN UNVALIDATED STRING AND THIS IS THE ONLY DOOR
+    ## ⚠ THE PDK'S LIST IS AN UNVALIDATED STRING AND THIS IS THE ONLY DOOR
     ## IT ENTERS THE STORE BY -- ISSUE 1291.
     ## Every guard above answers a question about the DICT; none asks whether
     ## the value is a well-formed Tcl LIST. It need not be: a descriptor may be
@@ -728,13 +831,13 @@ namespace eval ::op_param_lists {
     ## for the whole descriptor is deliberate: half a parameter list is not a
     ## safer answer than none, and the report says which type was dropped.
     if {[catch {llength $p}]} {
-      _say "the descriptor for `$type` has a params list that does not parse;\
+      _say "the descriptor for `$type` has a $what list that does not parse;\
             ignoring it. Fix it in the rc that registered it."
       return {}
     }
     foreach _row $p {
       if {[catch {llength $_row}]} {
-        _say "the descriptor for `$type` has a params row that does not parse;\
+        _say "the descriptor for `$type` has a $what row that does not parse;\
               ignoring the whole list. Fix it in the rc that registered it."
         return {}
       }
@@ -1343,9 +1446,22 @@ namespace eval ::op_param_lists {
   ## the `type=` token and a flavor is a cell-name glob, so only the display
   ## path can narrow that far.
   ##
-  ## ⚠ TWO FIELDS ARE WRITTEN, NOT ONE (rulings DD-4 and DD-6):
-  ##   params  the UNION of the annotation and summary lists -- WHAT THE RUN
-  ##           COMPUTES. op_annot::_cards_for builds the .save cards from it,
+  ## ⚠ TWO FIELDS ARE WRITTEN AND A THIRD IS CARRIED THROUGH UNTOUCHED
+  ## (rulings DD-4, DD-6 and DD-13). The third one first, because it is the
+  ## one this proc must be incapable of writing:
+  ##   declared  WHAT THE PDK DECLARED. `op_annot::register` is its only
+  ##             writer and `_params` its only reader. `apply` never names it:
+  ##             it reads the whole descriptor, sets the two fields below on
+  ##             it and re-registers, and `register` preserves a declaration it
+  ##             is handed -- so the declaration rides through every apply by
+  ##             CONSTRUCTION rather than by anybody remembering to copy it.
+  ##             Row N12 of tests/headless/test_op_param_store_1245.tcl counts
+  ##             the writing lines in this file and in apply's own body, and
+  ##             expects zero of each.
+  ## and the two this proc does write:
+  ##   params  the UNION of the annotation and summary lists AND OF THIS TYPE'S
+  ##           OWN DECLARATION (`_merge_declared`, appended LAST) -- WHAT THE
+  ##           RUN COMPUTES. op_annot::_cards_for builds the .save cards from it,
   ##           so a parameter the user only summarises is still in the raw, and
   ##           so is one she hid but a `derived` row still needs as an operand.
   ##   shown   the annotation half of that union -- WHAT THE SHEET DRAWS.
@@ -1368,9 +1484,26 @@ namespace eval ::op_param_lists {
   }
 
   ## The union, in annotation-then-summary order, deduped BY LABEL with the
-  ## annotation triple winning. Taken over `effective`, NEVER `get_list`: an
-  ## UNOWNED list answers the PDK seed, so the union can only ever be a
-  ## SUPERSET of what `params` already held and no PDK row is ever lost.
+  ## annotation triple winning. Taken over `effective`, NEVER `get_list`,
+  ## because an UNOWNED list answers the PDK seed.
+  ##
+  ## ⚠ THIS COMMENT USED TO SAY the union "can only ever be a SUPERSET of what
+  ## `params` already held, so no PDK row is ever lost". THAT WAS TRUE WHEN IT
+  ## WAS WRITTEN AND IS NOT TRUE NOW, and the change is worth stating rather
+  ## than deleting. It held only WHILE ONE OF THE TWO LISTS WAS UNOWNED: the
+  ## unowned one fell through to the seed and dragged every PDK row into the
+  ## union for free. Item B5's button column is precisely the thing that owns
+  ## BOTH lists, and two broad-scope Deletes then left a union with no row for
+  ## the deleted parameter at all -- so `op_annot::_cards_for` stopped emitting
+  ## its `.save` card and, under measured simulator rule R1, the parameter
+  ## stopped existing in the raw. That is the outcome ruling DD-4 exists to
+  ## forbid. The feature grew out from under the comment.
+  ##
+  ## WHAT PROTECTS THE PDK'S ROWS NOW IS NOT AN ACCIDENT OF OWNERSHIP: `apply`
+  ## unions this list with THE TYPE'S OWN DECLARATION (`_merge_declared`), so
+  ## every row the PDK declared is in `params` whoever owns what. `_save_set`
+  ## itself is unchanged and still knows nothing about the declaration -- the
+  ## third input is per TYPE and this proc is per CLASS.
   proc _save_set {cls} {
     set out {}
     set seen [dict create]
@@ -1381,6 +1514,54 @@ namespace eval ::op_param_lists {
         dict set seen $l 1
         lappend out $t
       }
+    }
+    return $out
+  }
+
+  ## The rows THIS TYPE declared, through the one door that validates them.
+  proc _declared_rows {t} {
+    return [_params $t]
+  }
+
+  ## THE THIRD INPUT TO THE UNION (ruling DD-4): the class's save set, plus the
+  ## rows this TYPE declared that the save set does not already carry by label,
+  ## APPENDED LAST.
+  ##
+  ## WHY IT IS NEEDED AT ALL. DD-13's declaration key fixes the SEED, and on
+  ## its own it still leaves item B5's other measured harm alive: with both
+  ## lists owned, the union of the two has no row for a deleted parameter, so
+  ## the `.save` card goes and the simulator stops computing it. DD-4 is
+  ## unqualified -- "Delete removes a parameter from what is DRAWN. It never
+  ## changes what the simulator is asked to save" -- and it states its own
+  ## price: "a user who deletes a row to make the deck smaller does not get a
+  ## smaller deck". Saving an operating-point parameter is measured free (spec
+  ## §3.3), so that price is a slightly larger raw and nothing else.
+  ##
+  ## WHY LAST. `_show_set` filters the union IN UNION ORDER, so a declaration
+  ## placed FIRST would freeze the drawn order -- which is exactly what DD-13
+  ## rejected its option (b) for, and what item B5's Up/Down buttons exist to
+  ## change. Appended last, the declaration re-enters `params` behind whatever
+  ## the user chose and cannot be drawn at all unless her annotation list names
+  ## its label, in which case the label was already in the union.
+  ##
+  ## WHY THE TYPE'S OWN DECLARATION AND NOT `seed $cls`. `seed` is
+  ## first-lexical-wins across the class and merges nothing, so a sibling type
+  ## that declares differently would lose its own rows to the winner's.
+  ##
+  ## NOTHING IS INVENTED (D-4): every appended row was declared by the PDK or
+  ## by the user's own rc, and a malformed row is skipped rather than guessed.
+  proc _merge_declared {saveset t} {
+    set seen [dict create]
+    foreach _r $saveset {
+      if {[catch {lindex $_r 0} l]} { return $saveset }
+      dict set seen $l 1
+    }
+    set out $saveset
+    foreach _r [_declared_rows $t] {
+      if {[catch {lindex $_r 0} l]} { continue }
+      if {[dict exists $seen $l]} { continue }
+      dict set seen $l 1
+      lappend out $_r
     }
     return $out
   }
@@ -1397,6 +1578,83 @@ namespace eval ::op_param_lists {
     return $out
   }
 
+  ## -----------------------------------------------------------------------
+  ## THE ISSUE-1292 UNDO: apply un-does EXACTLY its own write, in full or not
+  ## at all
+  ## -----------------------------------------------------------------------
+  ## Record what apply is about to overwrite and what it wrote, so that a later
+  ## apply over a class NOBODY OWNS ANY MORE can put both fields back --
+  ## including REMOVING `shown`, which no verb could do before and which is why
+  ## `reset` + `apply` used to leave the sheet narrowed for the session.
+  ##
+  ## THE PRE-STATE IS CAPTURED ONCE AND THEN HELD, so N applies undo to the
+  ## state before the FIRST of them, not to the state the previous one left.
+  ## It is RE-captured the moment the descriptor apply is about to rewrite is
+  ## no longer the one apply last left there -- a PDK re-registering, a user's
+  ## rc under invariant I5, a suite's fresh fixture -- because an undo must
+  ## never reach back past a write this file did not make.
+  proc _record_applied {t pre post} {
+    variable applied
+    set rec {}
+    if {[info exists applied($t)]} {
+      set old $applied($t)
+      if {[_state_eq $pre params [dict get $old wparams]] \
+       && [_state_eq $pre shown  [dict get $old wshown]]} {
+        set rec $old
+      }
+    }
+    if {$rec eq {}} {
+      set rec [dict create pparams [_key_state $pre params] \
+                           pshown  [_key_state $pre shown]]
+    }
+    dict set rec wparams [_key_state $post params]
+    dict set rec wshown  [_key_state $post shown]
+    set applied($t) $rec
+    return {}
+  }
+
+  ## May this type's descriptor be put back? ONLY when this session's apply
+  ## wrote it AND both fields are still byte-identical to what apply wrote.
+  ## Anything else has been rewritten by someone else and is not ours to
+  ## touch -- issue 1292 §4 option 1's demanded distinction, made checkable.
+  proc _restorable {t} {
+    variable applied
+    if {![info exists applied($t)]} { return 0 }
+    if {[catch {::op_annot::descriptor $t} d]} { return 0 }
+    if {$d eq {}} { return 0 }
+    set rec $applied($t)
+    if {![_state_eq $d params [dict get $rec wparams]]} { return 0 }
+    if {![_state_eq $d shown  [dict get $rec wshown]]}  { return 0 }
+    return 1
+  }
+
+  ## Put the recorded pre-state back, through ::op_annot::register and through
+  ## nothing else. A direct `set ::op_annot::desc(...)` would be correct Tcl,
+  ## would not bump ::op_annot::gen, and would leave the sheet narrowed until
+  ## an unrelated redraw -- invariant I5 failing silently, which is the exact
+  ## failure section A of the suite exists to prevent.
+  ## The record is dropped on the way out: the undo is not repeatable, because
+  ## after it there is nothing of this file's in the descriptor to undo.
+  proc _restore_applied {types} {
+    variable applied
+    set out {}
+    foreach t $types {
+      if {![info exists applied($t)]} { continue }
+      set rec $applied($t)
+      if {[catch {::op_annot::descriptor $t} d]} { unset applied($t) ; continue }
+      if {$d eq {}} { unset applied($t) ; continue }
+      set d [_apply_state $d params [dict get $rec pparams]]
+      set d [_apply_state $d shown  [dict get $rec pshown]]
+      if {[catch {::op_annot::register $t $d} err]} {
+        _say "cannot restore the parameter lists for symbol type \"$t\": $err"
+        continue
+      }
+      unset applied($t)
+      lappend out $t
+    }
+    return $out
+  }
+
   ## ⚠ TWO PASSES, AND THE FIRST ONE TOUCHES NOTHING (invariant I1: one seed,
   ## read once, before anything rewrites it). `_save_set` reaches the PDK seed
   ## through ::op_annot::descriptor and the second pass rewrites exactly those
@@ -1404,40 +1662,67 @@ namespace eval ::op_param_lists {
   ## seed the second type reads -- nmos sorts before pmos and both map to the
   ## same class, so it is reachable, not theoretical.
   proc apply {args} {
-    variable classmap
+    variable classmap ; variable applied
     if {[llength $args]} {
       set cands $args
     } else {
-      set cands [array names classmap]
+      ## ⚠ THE SESSION RECORD IS PART OF THE BARE CANDIDATE SET (issue 1292).
+      ## `reset` puts `classmap` back to the SHIPPED map, so a type the user
+      ## class-mapped herself would otherwise drop out of the candidate set at
+      ## the exact moment the undo needs it and stay narrowed for the session.
+      set cands [concat [array names classmap] [array names applied]]
     }
     set save [dict create]
-    set show [dict create]
     set order {}
+    set undo {}
     foreach t [lsort -unique $cands] {
       set c [class $t]
-      if {![_apply_owns $c]} { continue }
+      if {![_apply_owns $c]} {
+        ## Nobody owns this class any more. If this session's apply wrote the
+        ## descriptor and nothing has touched it since, un-do exactly that
+        ## write; otherwise forget the record and leave the descriptor alone.
+        if {[_restorable $t]} {
+          lappend undo $t
+        } elseif {[info exists applied($t)]} {
+          unset applied($t)
+        }
+        continue
+      }
       if {[catch {::op_annot::descriptor $t} d]} { continue }
       if {$d eq {}} { continue }
-      lappend order [list $t $c $d]
       if {![dict exists $save $c]} {
-        set s [_save_set $c]
-        dict set save $c $s
-        dict set show $c [_show_set $c $s]
+        dict set save $c [_save_set $c]
       }
+      ## PER TYPE, NOT PER CLASS: the third input to the union is THIS TYPE's
+      ## own declaration (DD-4, `_merge_declared`), and two types of one class
+      ## are entitled to declare differently. `_show_set` then filters the very
+      ## list that is written to `params`, so the DD-6 subset still holds by
+      ## construction.
+      set ps [_merge_declared [dict get $save $c] $t]
+      lappend order [list $t $d $ps [_show_set $c $ps]]
     }
     set done {}
     foreach e $order {
       set t [lindex $e 0]
-      set c [lindex $e 1]
-      set d [lindex $e 2]
-      if {[catch {dict set d params [dict get $save $c]} d2]} { continue }
-      if {[catch {dict set d2 shown [dict get $show $c]} d3]} { continue }
+      set d [lindex $e 1]
+      if {[catch {dict set d params [lindex $e 2]} d2]} { continue }
+      if {[catch {dict set d2 shown [lindex $e 3]} d3]} { continue }
       if {[catch {::op_annot::register $t $d3} err]} {
         _say "cannot register the parameter lists for symbol type \"$t\": $err"
         continue
       }
+      ## ⚠ `[lindex $e 1]`, NOT `$d`. `dict set d params ...` WRITES BACK INTO
+      ## THE VARIABLE `d` as well as answering the new dict, so by this line
+      ## `$d` is already the post-apply descriptor. Passing it as the PRE state
+      ## made every record's pre-state equal to its own write, and the issue-1292
+      ## undo then restored the state before the LAST apply instead of the state
+      ## before the FIRST -- measured, not reasoned: a 40-edit storm undid to a
+      ## descriptor still carrying three of the user's rows. The list element is
+      ## untouched by the dict writes above, so it is the pre state.
+      _record_applied $t [lindex $e 1] $d3
       lappend done $t
     }
+    foreach t [_restore_applied $undo] { lappend done $t }
     return $done
   }
 }

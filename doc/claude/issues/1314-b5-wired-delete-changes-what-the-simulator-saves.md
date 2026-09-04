@@ -206,3 +206,69 @@ Recorded because the count was never the problem — the fence was.
 * Issue **1278** goes live with the first working button: `effective`'s
   unbounded `string match` becomes reachable from a keypress. Inherited, not
   caused.
+
+---
+
+# ⛔ THE A5 BLOCKER IS GONE — item B2e landed the mechanism, 2026-09-04
+
+**Attack A5 is fixed. B5 can be re-landed from the preserved patch.** A6 and A7
+are untouched by B2e and still block; read them again before starting.
+
+## What changed under B5's feet
+
+Item **B2e** implemented ruling **DD-13** in `src/op_param_lists.tcl` and
+`src/op_annot.tcl` — the file B5's Files cell forbade, which is why B5 was
+**mis-scoped** rather than wrong. Issues **1312**, **1292** and **1287** are all
+marked FIXED; read 1312's "What B2e landed" section for the transcript.
+
+Re-measured on the landed tree, driving B5's own `rdw::_edit` / `rdw::_find_triple`
+shapes reduced to the store — this is A5's exact scenario:
+
+```
+   two broad-scope Deletes, annotation then summary
+declared(nmos) = declared(pmos) = seed mos = {id ids 0} {gm gm 1} {gds gds 1}
+_cards_for M1 {}                          still emits  .save m1[gm]
+ol_dkey nmos params                       still holds  {gm gm 1}
+ol_dkey nmos shown                        does NOT     (the sheet IS decluttered)
+Add                                       has a source again: seed mos declares gm
+```
+
+So the three halves of A5 are each dead: the `.save` card survives, the PDK row
+survives in the descriptor **and** in the sibling type, and Add no longer blames
+the PDK for a row xschem deleted.
+
+## ⚠ What the re-land must still honour
+
+1. **`git apply --check doc/claude/op_param_batch/B5_working_tree_REFUTED.patch`
+   is rc=0 on the landed tree** — measured before and after every B2e edit,
+   including the suite edit. B2e's new suite rows all sit above line 2788 so the
+   `@@ -2850,6 +2850,353 @@` hunk still lands.
+2. **A6 still blocks.** The broad arm decides scope by exact-key `owns` while
+   `effective` narrows by glob, so it edits a list the device does not use and
+   reports success.
+3. **A7 still blocks.** A `set_list` that silently reduced the list by label is
+   reported as a plain success, breaking **1288**'s ruled promise through the
+   only UI door there is.
+4. **Issue 1318 is new and it is B5-2's.** `op_param_lists::apply` now returns
+   one list holding two opposite meanings — the types it NARROWED and the types
+   the issue-1292 undo put BACK. The preserved patch's `rdw::_apply_now` ignores
+   the return, which is why nothing breaks today. **B5-2 must not start reading
+   it** without fixing 1318 first: a status line saying *"updated N device
+   types"* is wrong for exactly the press — Reset/Defaults — whose accuracy
+   matters most.
+5. **Reset/Defaults is now buildable on `reset` + `apply`**, which is what issue
+   1292 blocked. It un-narrows the sheet and bumps `::op_annot::gen`, so the
+   redraw is live with no restart (invariant **I5**).
+6. **The B5 look debt stays moot until B5 re-lands.** The pixels it names are
+   still out of the tree; B2e added none of its own.
+
+## What is still on the user's queue from this file
+
+Rule debt **1314** — the DD-13 question — is **answered** by the driver's ruling
+and now implemented; the ledger entry can be cleared. Rule debt **1312** is
+**moot** for the same reason (it asked *containment or option (a)?*; option (a)
+shipped). The live one is rule debt **1315**, which nothing answers yet.
+
+Also still inside this file and untouched by B2e: spec §4.2's B7 Up/Down cell for
+list 3 is undeliverable (ruling D-4 forbids persisting the live list) and the
+table needs correcting.

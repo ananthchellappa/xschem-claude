@@ -1164,7 +1164,19 @@ shipped editing action for cadence-profile users only. Question Q5.
 > Patch preserved at `doc/claude/op_param_batch/B5_working_tree_REFUTED.patch`;
 > the transcripts are in issue **1314**.
 >
-> * **The `Delete` column is not deliverable while issue 1312 stands.** Ruling
+> ✅ **UPDATE, item B2e, 2026-09-04: the first bullet's blocker is GONE.** Ruling
+> **DD-13** landed — the descriptor carries a third list, `declared`, written by
+> `op_annot::register` alone and read by `_params`/`seed` alone, and `apply`'s
+> union takes the type's own declaration as a **third input, appended last**.
+> Re-measured on B5's own A5 scenario: two broad Deletes leave `declared`, `seed`
+> and the `.save` card intact on both types, `shown` narrows the sheet, and Add
+> has a source again. **Issues 1312, 1292 and 1287 are FIXED; B5 can be
+> re-landed from the preserved patch, which still `git apply --check`s clean.**
+> The other three bullets below still stand, and issue **1318** is new and is
+> B5-2's: `apply`'s return list now conflates the types it NARROWED with the
+> types the 1292 undo put BACK, so B5-2 must not start reading it.
+>
+> * ~~**The `Delete` column is not deliverable while issue 1312 stands.**~~ Ruling
 >   **DD-4/DD-6** says Delete *"never changes what the simulator is asked to
 >   save"*. Measured: `apply` writes the union into the descriptor's `params`
 >   and `seed` reads the PDK's own list back out of **that same field**, so
@@ -1583,9 +1595,17 @@ design-of-record, and the first two **correct this spec**:
    > **I5**, which is what the recipe is for, and both named rows (`gm/id` and
    > `ft`) are exercised by row **D4**.
 
-6. **`seed` reads the field `apply` overwrites** (issue **1287**), so **D-7**'s
+6. ✅ **DISARMED by item B2e, 2026-09-04 (ruling DD-13, issues 1312/1287).**
+   `_params` — and therefore `seed` — now reads a **third** descriptor list,
+   `declared`, which `op_annot::register` alone writes and nothing else can
+   reach; `apply` still writes `params`. **D-7's "the seed comes from the PDK"
+   is true again, after any number of applies and after `reset`.** Kept below
+   because the *class* of trap is live for every future field: a ruling that
+   assigns a meaning to a stored field is a statement about **every reader of
+   that field**, and this one was refuted three times running.
+   ~~**`seed` reads the field `apply` overwrites** (issue **1287**), so **D-7**'s
    "the seed comes from the PDK" is false after the first apply and `reset`
-   cannot restore it — measured `{id id 0} {gm gm 1} {gds gds 1}` before,
+   cannot restore it~~ — measured `{id id 0} {gm gm 1} {gds gds 1}` before,
    `{id id 0}` after apply **plus reset**. DD-6 makes the stale seed the *union*,
    i.e. silently wider. **Any acceptance row that applies and then asserts a seed
    is fencing the wrong value**; capture it in a fresh process first.
@@ -1602,7 +1622,19 @@ design-of-record, and the first two **correct this spec**:
    empty: that silently drops the PDK's rows out of the union and breaks the
    union's own superset guarantee.
 
-8. **Narrowing is one-way** (issue **1292**). Nothing removes the `shown` key,
+8. ✅ **DISARMED by item B2e, 2026-09-04 (issue 1292).** `apply` now RECORDS
+   what it wrote, per type, and on a later `apply` over a class nobody owns any
+   more it **un-does exactly its own write, in full or not at all** — including
+   `dict unset`ing `shown`, which no verb could do before. `reset` + `apply` is
+   therefore a working Reset/Defaults, and it bumps `::op_annot::gen` so the
+   redraw is live (invariant **I5**). The undo fires only while both fields are
+   still byte-identical to what apply left; anything a third party rewrote is
+   dropped from the record and left alone. **The absence of `shown` is still
+   meaningful and that is exactly why the record stores `{present value}` pairs
+   rather than values.** Residual: issue **1317** (the byte-equality guard is
+   not provenance) and issue **1318** (the return list now conflates narrowed
+   with restored).
+   ~~**Narrowing is one-way** (issue **1292**). Nothing removes the `shown` key,
    and `apply` deliberately `continue`s a class the user owns nothing for, so
    `reset` + `apply` leaves the sheet narrowed for the session. `shown`'s
    **absence is meaningful** — it is the only value that means "draw every row" —
@@ -1699,6 +1731,107 @@ one class the classifier genuinely cannot identify. B2c's row T4 used
 must not (or the five copy-a-file rows go red or vacuous), and both
 `load_conf {path {stamp 1}}` and `write_body {fp {old {}}}` must keep their
 **required** arity at one argument.
+
+---
+
+### AS BUILT — item B2e, 2026-09-04: the descriptor carries **THREE** lists, and the union has **THREE** inputs
+
+**Ruling DD-13 implemented. Issues 1312, 1292 and 1287 are FIXED.** This is the
+third correction to the same ruling (DD-4 → DD-6 → DD-13) and the spec's earlier
+two-field description of the store is superseded by this section.
+
+#### The three lists
+
+| field | means | written by | read by |
+|---|---|---|---|
+| `declared` | what the PDK, or the user's own rc, **declared** | `op_annot::register` **only**, via `op_annot::_declare` | `op_param_lists::_params` **only** — hence `seed` |
+| `params` | what the **run computes** | `op_param_lists::apply` (the union) | `_cards_for`, `_claims`, `_kind`, and `text`'s `derived` operands |
+| `shown` | what the **sheet draws** | `op_param_lists::apply` (the annotation half) | `op_annot::_display_rows` → `op_annot::text` |
+
+`declared` and `shown` run in **opposite directions**, and that is the point:
+`shown` is written by `apply` and read by `op_annot`; `declared` is written by
+`op_annot` and read by `op_param_lists`.
+
+#### The stamp is PRESERVE-IF-PRESENT, and that is the whole design
+
+`register` puts a `declared` on a **non-empty** descriptor that does not already
+carry one — its own `params` verbatim when it has one, `{}` when it does not —
+and leaves an existing one **alone**. That single rule is what makes `apply`
+*structurally incapable* of destroying a declaration: `apply` reads a
+descriptor, sets `params`/`shown` on it and re-registers, so the key rides
+through untouched and `apply`'s body never names it. **Built, not asserted** —
+the standard the DD-6 amendment set with `_show_set`.
+
+Two pre-existing fences constrain the stamp and both still hold: the **empty
+dict is never stamped** (`register <t> {}` is the documented erasure), and the
+stamp **never parses the value** (`dict exists`/`dict get`/`dict set` only —
+test_op_annot row K17 registers a `params` holding an unmatched open brace and
+golds an rc=0 register). Validation stays where it always was, in `_params`,
+whose two `does not parse` reports moved with the read and now name **which**
+list was dropped.
+
+**ABSENT means the old behaviour exactly**: `_params` falls back to `params`, so
+every descriptor that never passed through `register` answers the bytes it
+always answered (invariant **I7**). All four shipped register sites — sky130
+`:422`, gf180 `:128`, IHP `:779` and `:829` — pass a literal dict with no
+declaration key, so the stamp fires for each and nothing shipped moved.
+
+#### ⚠ THE UNION HAS A THIRD INPUT, AND THE SPEC PREVIOUSLY SAID IT HAD TWO
+
+`apply` unions the class's annotation and summary lists with **the type's own
+declaration, appended LAST** (`_merge_declared`). **DD-13's own table does not
+say this; DD-4's guarantee sentence requires it.** The declaration key alone
+fixes the *seed* and still leaves item B5's other measured harm alive: with both
+lists owned, the union of the two has no row for a deleted parameter, so
+`_cards_for` drops the `.save` card and — under measured rule **R1** — the
+simulator stops computing it. That is the outcome DD-4 exists to forbid, and
+DD-4 states its own price: *"a user who deletes a row to make the deck smaller
+does not get a smaller deck."*
+
+* **LAST, not first**, because `_show_set` filters the union *in union order*, so
+  a declaration placed first would freeze the drawn order — which is exactly
+  what DD-13 rejected its option (b) for, and what B5's Up/Down exist to change.
+* **The TYPE's own declaration, not `seed $cls`**, because `seed` is
+  first-lexical-wins across the class and merges nothing, so a sibling type that
+  declares differently would lose its own rows.
+* **Nothing is invented (D-4):** every appended row was declared by the PDK or by
+  the user's own rc, and a malformed row is skipped rather than guessed.
+
+**The user-visible consequence, stated plainly:** *a Delete can never shrink the
+deck below what the PDK declared, for any user.* That is DD-4 behaving as ruled
+rather than a new decision — but the mechanism is new and is recorded here
+because DD-13's table does not name it.
+
+#### The issue-1292 undo
+
+Namespace variable `op_param_lists::applied`, one entry per type this session's
+`apply` rewrote, holding the **pre**-apply and the **written** `{present value}`
+state of `params` and `shown`. On a later `apply` over a class nobody owns any
+more, the undo restores both — SET when present, `dict unset` when absent —
+through `::op_annot::register` and through nothing else, because that is the only
+door that bumps `::op_annot::gen` (**I5**). It fires only when **both** fields are
+still byte-identical to what apply wrote; anything else is dropped from the
+record and left alone. **`reset` does NOT clear the record** — `reset` + `apply`
+IS the undo it exists to serve — and bare `apply`'s candidate set is
+`[array names classmap]` + `[array names applied]`, because `reset` wipes
+`classmap` back to the shipped map.
+
+**The pre-state is captured once and then HELD**, so N applies undo to the state
+before the **first** of them. That is not obvious and it was not free: the first
+implementation passed the live variable `$d`, which Tcl's `dict set` had already
+written back into, so every record's pre-state equalled its own write. **The
+suite was ALL PASS at 102 with that bug in** — rows N6 and N11 cannot reach the
+state that distinguishes the two. An out-of-suite 40-edit probe caught it.
+
+#### What is still open, and where
+
+Issues **1315** (STATUS E, a `rule` debt: the documented I5 round-trip no longer
+redeclares the seed), **1316** (rows N11 and N12 fence less than they claim),
+**1317** (`_restorable` is byte-equality, not provenance), **1318** (`apply`'s
+return list conflates narrowed with restored — **binds B5-2**), **1319** (the
+malformed-list report doubled for the common ownership shape) and **1320** (both
+lists owned and EMPTY now yields the full declaration in `params`, which
+**falsifies** the note that said it would yield none).
 
 ---
 
@@ -2163,6 +2296,40 @@ Still open:
     assumes** — and when you build the feature that changes that state, grep for
     the comments that assumed it. This one had been true, and correct, and
     reviewed, for three items.
+
+24. **A ROW THAT ENDS ITS OWN STORM WITH AN UNDO FENCES THE UNDO, NOT THE STORM**
+    (item B2e, 2026-09-04). Row **N11** is the driver's own *"attack the
+    declaration, do not assert it"* row: a five-step storm of edits, then a
+    `reset` + `apply`, then six assertions. But `reset` + `apply` is precisely
+    the pair that fires the issue-1292 undo, which repairs `params` one line
+    before the row looks at it. **Three of the seven sabotage variants broke the
+    declaration mid-storm and N11 stayed green** — one of them losing a `.save`
+    card *inside N11's own storm*, the live DD-4 violation, invisible. Filed as
+    issue **1316**. **Assert INSIDE the storm, not only after it**, and be
+    suspicious of any row whose last action before its assertions is a verb that
+    repairs state.
+
+25. **A STRUCTURAL FENCE THAT GREPS SOURCE TEXT ONLY FENCES THE SPELLINGS ITS
+    AUTHOR ENUMERATED** (item B2e, 2026-09-04). Row **N12** proves *"`apply` is
+    incapable of writing the declaration"* by counting lines that carry a
+    dict-writing command **and the literal key name**. A write through a
+    variable key — `dict set d $key $value` — carries no literal and is not
+    counted, and that is not hypothetical: `_apply_state`, two procs away in the
+    same file, already writes exactly that way. Nothing evades it today. **Assert
+    the property from OUTSIDE — compare the stored value against what the writer
+    was handed — rather than counting the source lines that could have changed
+    it.**
+
+26. **`dict set d k v` WRITES BACK INTO `d` AS WELL AS RETURNING THE NEW DICT**
+    (item B2e, 2026-09-04). Obvious in the man page, invisible at the call site.
+    Capturing a "pre" state as `$d` and then writing `dict set d params …`
+    records the **post** state; the issue-1292 undo then restored the state
+    before the *last* apply instead of the state before the *first*, and **the
+    suite was ALL PASS at 102 with the bug in**, because the two rows that could
+    have caught it use fixtures where those two states coincide. Caught by an
+    out-of-suite adversarial probe. **Snapshot a pre-state into a value the
+    subsequent writes cannot reach** — a list element, a `dict get` into a fresh
+    variable — never the variable you are about to write through.
 
 ---
 

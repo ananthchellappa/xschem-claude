@@ -14,9 +14,15 @@ A1 ──┐
 A2 ──┴─> A3                     (feature A — 1244)
 
 B1 ──┐
-B2 ──┼─> B5                     (feature B — 1245)
+B2 ──┼─> B2e ──> B5             (feature B — 1245)
 B3 ──┴─> B4
 ```
+
+⚠ **B2e was not in the original eight.** It was split out on 2026-09-04 after
+item B5 built the whole button column, went green on every tier, and then
+refuted itself on binding ruling DD-4/DD-6: the mechanism lived in
+`src/op_param_lists.tcl`, the one file B5's Files cell forbade. B2e landed
+ruling **DD-13** there and B5's A5 blocker is gone.
 
 ---
 
@@ -2307,8 +2313,135 @@ line.
 
 ---
 
-## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04. Built, green on every tier, REFUTED on a binding ruling and REVERTED.**  *(needs B2, B3, and see B2a — and now needs 1312 fixed FIRST)*
+## B2e — the declaration key  ✅ **LANDED, status E, 2026-09-04.** DD-13 + 1312 + 1292 + 1287, plus DD-4's third union input. *(UNBLOCKS B5's re-land)*
 
+**Do.** Give the descriptor a **third** list and make `apply` incapable of
+destroying it.
+
+**What landed.**
+
+* `src/op_annot.tcl` — new `op_annot::_declare`, called from `register` at its
+  single storage line. **PRESERVE-IF-PRESENT**: a NON-EMPTY descriptor with no
+  `declared` gets one (its `params` verbatim when it has one, `{}` when it does
+  not); one that already carries the key is stored unchanged; the **empty dict
+  is never stamped** (`register <t> {}` is the documented erasure); the value is
+  **never parsed** and no path raises.
+* `src/op_param_lists.tcl` — `_params`, and therefore `seed`, reads `declared`
+  through `_decl_state`, falling back to `params` only when the key is ABSENT.
+  Both `llength` guards and both reports moved with the read and now name
+  **which** list was dropped, keeping the literal `does not parse` that rows
+  Z1/Z3 match on.
+* **`apply`'s union gained a THIRD input** — the type's own declaration,
+  appended **LAST** (`_merge_declared`), computed in pass 1 so invariant **I1**
+  is untouched. **DD-13's table does not say this; DD-4's guarantee sentence
+  requires it** (see the propagation note below).
+* **Issue 1292's undo** — namespace variable `applied`, one record per type this
+  session's `apply` rewrote, holding the pre-apply and the written
+  `{present value}` state of `params` and `shown`. A later `apply` over a class
+  nobody owns any more restores both through `::op_annot::register` (the only
+  door that bumps `::op_annot::gen`, **I5**), but **only** while both fields are
+  still byte-identical to what apply wrote. `reset` does **not** clear the
+  record; bare `apply`'s candidate set is `classmap` + `applied`.
+* `_save_set`'s in-code SUPERSET claim was **updated, not deleted** — it now says
+  the claim held only while one of the two lists was unowned, that B5's button
+  column owns both, and what protects the PDK's rows instead.
+* The three PDK `_procs.tcl` header paragraphs gained a byte-identical third-list
+  sentence naming the escape hatch, and their stale *"the UNION of the annotation
+  and summary lists"* sentence was corrected in the same pass.
+
+**Tiers.** store **86 → 102** (15 section-N rows + row C3; the one moved golden
+is D5's `params` term) · `test_op_annot` **485/492 UNMOVED** ·
+`test_annot_declutter_1244` **134 UNMOVED** · window 76/86, keys 35, seam 49 all
+unmoved · T1 zero · T2 `HARNESS: PASS` 6/6 · full audit **369/11/0/2 of 382**
+with the eleven fail names identical by name and verdict ·
+`git apply --check` of `B5_working_tree_REFUTED.patch` **rc=0**. No build: pure
+Tcl, and no `.c/.h/.y/.l` is newer than `src/xschem`.
+
+### ⚠ WHAT B2e LEARNED THAT BINDS B5-2 AND EVERY LATER CREW
+
+1. **THE UNION HAS THREE INPUTS NOW, AND DD-13's TABLE ONLY NAMES TWO.** DD-13
+   splits off the declaration and stops there; on its own it fixes the *seed*
+   and still lets two broad Deletes strip a `.save` card, because with both
+   lists owned the union of the two has no row for the deleted parameter. B2e
+   took DD-4's **guarantee** sentence over its **mechanism** sentence and added
+   the type's own declaration as a third input. **The user-visible consequence
+   is that a Delete can never shrink the deck below the PDK's declaration, for
+   any user, forever** — which is DD-4's own stated price, not a new decision,
+   but it is a mechanism no ruling names. Do not "simplify" it back to two
+   inputs: sabotage variant SB-UNION-WITHOUT-DECLARATION reds rows N2 and D5 and
+   is B5's A5 refutation live again.
+2. **⚠ `op_param_lists::apply`'s RETURN LIST NOW HOLDS TWO OPPOSITE MEANINGS** —
+   the types it NARROWED and the types the 1292 undo put BACK. Issue **1318**.
+   The preserved B5 patch ignores the return, which is why nothing breaks today.
+   **B5-2 must not start reading it** without fixing 1318: *"updated N device
+   types"* is wrong for exactly the press — Reset/Defaults — whose accuracy
+   matters most.
+3. **Reset/Defaults is now buildable on `reset` + `apply`.** That was issue
+   1292's blocker and it is gone. The undo removes `shown`, restores `params`,
+   bumps `gen`, and a second `apply` is a no-op returning `{}`.
+4. **B5's A5 is dead; A6 and A7 are NOT.** Re-measured on the landed tree with
+   B5's own `_edit`/`_find_triple` shapes: two broad Deletes leave `declared`,
+   `seed` and the `.save` card intact on both types, and Add has a source again.
+   The scope-by-`owns`-vs-glob defect and the silent label-reduction defect are
+   untouched — read issue **1314** before re-landing.
+5. **KEEP EVERY NEW SUITE ROW ABOVE LINE 2788** of
+   `tests/headless/test_op_param_store_1245.tcl`, so B5's preserved hunk
+   `@@ -2850,6 +2850,353 @@` still applies. `git apply --check` is an acceptance
+   row, and it was measured rc=0 before and after every B2e edit.
+6. **THREE STALE-ANCHOR CORRECTIONS**, each verified by opening the line:
+   `op_annot.tcl:346` for the `gen` bump is really **:372** (cited twice — in
+   `op_param_lists.tcl` and in the store suite); issue 1285 cites
+   `op_annot::text` at `:1726/:1742` (really **:1818/:1840**) and `_cards_for` at
+   `:2808-2820` (really **:2928-2941**); issue 1287 cites `_params` at `:598`
+   (really **:700**, and after B2e the declaration read is there too). None is a
+   `.c` anchor, so `test_op_annot` row **L27** cannot have moved.
+7. **THE SUITE WAS ALL PASS AT 102 WITH A REAL BUG IN IT.** `dict set d k v`
+   writes back into `d`, so the 1292 record's "pre" state was its own write and
+   the undo restored the state before the *last* apply, not the *first*. Rows N6
+   and N11 cannot reach the state that distinguishes those. An out-of-suite
+   40-edit probe caught it in one line. **Spec landmines 24, 25 and 26 are the
+   three general forms of this**, and issue **1316** is the two rows that need
+   strengthening. This is the ninth item running where a green count was a
+   statement about the fence.
+8. **A settings file owning BOTH class lists EMPTY no longer yields zero `.save`
+   cards** — it yields the full declaration and flips `_claims` 0 → 1. Deck-only,
+   no pixel moves (traced into the C: `op_annot::text` returns empty, so the
+   declutter gate never opens). Issue **1320**. **The risk note that said
+   otherwise is now false; do not carry it forward.**
+9. **NO PIXELS, AND NO `look` DEBT WAS FILED.** `op_param_lists::apply` still has
+   no functional caller anywhere in `src/`, `xschem_library/` or the three PDK
+   trees — every hit outside its own file is a comment. Both defects stay latent
+   until B5 wires the buttons, which is exactly why the RED-before rows are the
+   whole evidence. The standing *"DD-6 narrowing on the schematic"* look debt
+   already covers this surface and belongs to B5.
+
+**Status E — the question for the user.** Preserve-if-present means the recovery
+round-trip documented in all three PDK `_procs.tcl` files
+(`set d [descriptor nmos]; dict set d params …; register`) now changes what the
+run computes and what the sheet draws but **not** what `seed` answers. The escape
+hatch is `dict unset d declared` first, or a fresh dict as all four shipped sites
+use. Issue **1315**; row **N10** fences **both** directions so whichever way the
+user rules, the other reds. Rule debts **1312** and **1314** are now moot (DD-13
+answered them and B2e implemented it) — clear them rather than answering twice.
+
+**Files.** `src/op_annot.tcl` · `src/op_param_lists.tcl` ·
+`sky130A/sky130_procs.tcl` · `gf180mcuD/gf180_procs.tcl` ·
+`ihp-sg13g2/sg13g2_procs.tcl` · `tests/headless/test_op_param_store_1245.tcl` ·
+issues 1312/1292/1287/1314/1315/1316/1317/1318/1319/1320 · `NUMBERING.md` ·
+`doc/claude/specs/op_param_lists.md`
+
+---
+
+## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04. Built, green on every tier, REFUTED on a binding ruling and REVERTED.**  *(needs B2, B3, and see B2a — ⚠ **1312 IS NOW FIXED by item B2e**, so the A5 blocker is gone; A6 and A7 still block)*
+
+> ✅ **UPDATE 2026-09-04 — THE 1312 BLOCKER IS GONE. Item B2e landed ruling
+> DD-13 and the DD-4 third union input; issues 1312, 1292 and 1287 are FIXED,
+> and `git apply --check` of the preserved patch is still rc=0.** Read the B2e
+> section immediately above — in particular its propagation note 2 (issue
+> **1318**: `apply`'s return list now conflates the types it NARROWED with the
+> types it RESTORED, and B5-2 must not read it) and note 4 (**A6 and A7 still
+> block**). Everything below stands except the first bullet.
+>
 > **⛔ READ THIS BEFORE ANYTHING ELSE IN THIS SECTION. B5 IS BLOCKED ON A B2-TIER
 > DEFECT AND CANNOT BE DELIVERED AS SCOPED.**
 >
