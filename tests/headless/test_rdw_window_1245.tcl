@@ -1835,6 +1835,596 @@ check {ND4 and the not_op refusal uses it, so the sentence reads "an op analysis
             [dict create header H devpath D instname M1 simtype op]]] ? 1 : 0}] 0
 
 # ============================================================================
+# SECTION K — ITEM B4: THE KEYS. THE HALF THAT NEEDS NO Tk, ON BOTH ARMS.
+# ============================================================================
+# ⚠ Never `git checkout --` / `git restore` / `git stash` / `git clean` this
+# file to make some patch apply: rows K12..K15 are in no patch, and destroying
+# uncommitted work that way cost an earlier agent in this batch ~99 verified
+# lines. The sibling suite tests/headless/test_rdw_keys_1245.tcl says the same.
+# B4 makes this window reachable from the keyboard: bare 1 / 2 / 3 / 4 in the
+# cadence profile only (ruling D-2; stock xschem keeps logic_set). The BINDINGS
+# and the verb-noun COMMAND MODE cannot live here — src/cadence_style_rc dies
+# at its first `bind` under --nogui — so they are in the sibling suite
+# tests/headless/test_rdw_keys_1245.tcl, :99 only. What CAN and MUST run on
+# both arms is everything the keys do once the event has arrived: the list
+# identity, the noun-verb grammar, the refusals, the store trim, and the
+# structural fences over the pick.
+#
+# Measured on this binary 2026-09-04: `xschem select instance`, `xschem select
+# wire`, `xschem selection`, `xschem getprop instance <index> name`, `xschem
+# instance_at` and `xschem update_all_sym_bboxes` ALL work under --nogui, so
+# none of these rows needs a display and none of them is a display row in
+# disguise.
+#
+# THE CONTRACT (the sibling suite's header carries it in full):
+#   rdw::key <annotation|summary|all|refresh>   rdw::_selected_instance
+#   rdw::show <inst>   rdw::keep_latest   rdw::_ciw <msg>
+#   rdw::pick_start / pick_click / pick_release / pick_end
+#   rdw::pick_suspend / pick_resume   rdw::_refresh_pick_gate / rdw::_pick_at
+#   cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume, at SOURCE
+#   time (safe: cmdmode.tcl is pure Tcl and is sourced BEFORE rdw.tcl)
+#
+# ⚠ THE REFUSAL WORDING IS NOT LOCKED BYTE-FOR-BYTE HERE, AND THAT IS
+# DELIBERATE. B3 minted seven user-visible sentences and they are on rule debt
+# 1245_B3_window_wording, unratified; B4 mints two more (more than one selected,
+# and a selection that is not an instance) and PLAN forbids rewording B3's ad
+# hoc. So rows K6/K7/K8 fence the SHAPE the user asked for — "refuse with short
+# message in CIW" — one line, pairwise distinct, naming the action to take, and
+# NOT double-booked against the window's own sentence. The prose itself goes on
+# the same rule debt for the user to rule on.
+#
+# RED BEFORE B4: K1 K2 K3 K4 K5 K6 K7 K8 K9 K10 K11 — every one for the same
+# single reason, that none of the procs above exists. GREEN BEFORE B4: K0, the
+# fixture's own control.
+
+## The fixture. A PRIVATE symbol type so no shipped symbol and no PDK
+## registration is disturbed, one device that HAS numbers, one that has no
+## descriptor at all, and a wire — the four answers rdw::_selected_instance
+## has to tell apart.
+##
+## ⚠ THE DEVPATH TEMPLATE IS ESCAPED AND THAT IS NOT A TYPO. `devpath
+## {@m.@path@name}` looks healthy and is measurably wrong: `xschem translate`
+## swallows the leading `@m.` and yields `m1`, so ase::op_param_split returns
+## the empty list and the seam answers `state ok` with an EMPTY union — the
+## fifth silence over a device that has numbers. `{\@m.@path@name}` yields
+## `@m.m1` and is gf180_procs.tcl:129's own spelling.
+## test_annot_declutter_1244.tcl:1560 registers the UNESCAPED form; do not copy
+## that line.
+set K_SYM [file join $scratch b4k.sym]
+set fd [open $K_SYM w]
+puts $fd {v {xschem version=3.4.5 file_version=1.2}
+G {}
+K {type=b4kdev
+format="@spiceprefix@name @pinlist @model"
+template="name=M1 model=b4kn spiceprefix=X"
+}
+V {}
+S {}
+E {}
+L 4 -20 -20 20 -20 {}
+L 4 20 -20 20 20 {}
+L 4 20 20 -20 20 {}
+L 4 -20 20 -20 -20 {}
+B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}
+T {@name} 0 -40 0 0 0.2 0.2 {}}
+close $fd
+
+set K_SCH [file join $scratch b4k.sch]
+set fd [open $K_SCH w]
+puts $fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+N 600 -400 800 -400 {}
+C \{$K_SYM\} 300 -300 0 0 \{name=M1\}
+C \{$K_SYM\} 300 -120 0 0 \{name=M2\}
+C \{devices/res\} 700 -100 0 0 \{name=R1
+value=10\}"
+close $fd
+
+set fd [open [file join $scratch library.defs] w]
+puts $fd "DEFINE devices [file join $repo xschem_libs_newsym devices]"
+close $fd
+set ::XSCHEM_LIBRARY_DEFS [file join $scratch library.defs]
+set ::library_registry_defs_only 1
+set ::XSCHEM_LIBRARY_PATH {}
+
+catch {xschem raw clear}
+xschem load $K_SCH
+catch {update idletasks}
+catch {op_annot::register b4kdev \
+  [list devpath {\@m.@path@name} params {{zid zid 0} {zgm zgm 1}}]}
+set K_PAIRS {}
+foreach d {M1 M2} vi {1.11e-05 2.22e-05} vg {3.33e-04 4.44e-04} {
+  catch {lappend K_PAIRS [::op_annot::vector $d zid] $vi [::op_annot::vector $d zgm] $vg}
+}
+set K_RAW [file join $scratch b4k.raw]
+rw_mkraw $K_RAW [list [list {Operating Point} $K_PAIRS {}]]
+rw_annot $K_RAW
+catch {xschem update_all_sym_bboxes}
+
+## The refusal channel, observed. ciw_echo is DEFINED under --nogui and
+## silently does nothing without the widget, so a row that did not stub it
+## would assert nothing at all (the rename idiom is
+## test_sod_pick_no_select_0204.tcl:139).
+set ::K_CIW {}
+if {[llength [info commands ciw_echo]]} { rename ciw_echo k_ciw_echo_real }
+proc ciw_echo {msg args} { lappend ::K_CIW $msg }
+
+proc k_reset {} { set ::rdw::blocks {} ; set ::K_CIW {} ; catch {xschem unselect_all} }
+proc k_nblocks {} {
+  if {![info exists ::rdw::blocks]} { return -1 }
+  return [llength $::rdw::blocks]
+}
+proc k_top_hdr {} {
+  if {![info exists ::rdw::blocks] || ![llength $::rdw::blocks]} { return NO-BLOCK }
+  return [lindex [lindex [lindex $::rdw::blocks 0] 0] 1]
+}
+## ⚠ NOT `expr {[info exists v] ? $v : {NO-VAR}}`: the list identity is a WORD
+## and expr evaluates a bare word as an operand — `annotation` raises "invalid
+## bareword". Measured while writing this file.
+proc k_listkind {} {
+  if {![info exists ::rdw::listkind]} { return NO-VAR }
+  return $::rdw::listkind
+}
+## A block with a known header, for the store rows.
+proc k_blk {name} {
+  set dp "@m.[string tolower $name]"
+  return [rw_block [rw_ansd [dict create $dp {{id 1}}] {} {} 0 ok] \
+                   [rw_ctx "$name:/" $dp op $name]]
+}
+
+check {K0 CONTROL the fixture is what section K says it is: two devices the ONE name builder resolves and annotates, one instance with no descriptor at all, and a wire - so every row below is about B4 and not about a fixture that missed} \
+  [list [rw_ans ::op_annot::devpath M1] [rw_ans ::op_annot::devpath M2] \
+        [rw_ans ::op_annot::devpath R1] \
+        [expr {[llength $K_PAIRS] == 8 ? 1 : 0}] \
+        [xschem instance_at 300 -300] \
+        [lindex [rw_w xschem select_at 700 -400] 0]] \
+  {@m.m1 @m.m2 {} 1 M1 wire}
+xschem unselect_all
+
+# --- K1 K2  key 4: the store trim, and which end is new ----------------------
+k_reset
+rw_ans ::rdw::status {}
+set K1_EMPTY [rw_ans ::rdw::keep_latest]
+set K1_N0 [k_nblocks]
+set K1_S0 $::rdw::statusmsg
+rw_ans ::rdw::status {}
+set K1_B [k_blk KONE]
+rw_ans ::rdw::push $K1_B
+set K1_ONE [rw_ans ::rdw::keep_latest]
+check {K1 key 4 on an EMPTY store and on a one-block store changes nothing, raises nothing, and NAMES WHAT IT DID in the window's own status line - a control that silently does nothing cannot be told from a broken one} \
+  [list [rw_bad $K1_EMPTY] $K1_N0 [expr {$K1_S0 ne {} ? 1 : 0}] \
+        [rw_bad $K1_ONE] [k_nblocks] [k_top_hdr] \
+        [expr {$::rdw::statusmsg ne {} ? 1 : 0}]] \
+  {0 0 1 0 1 KONE:/ 1}
+
+k_reset
+foreach n {KA KB KC} { rw_ans ::rdw::push [k_blk $n] }
+set K2_N0 [k_nblocks]
+set K2_TOP0 [k_top_hdr]
+rw_ans ::rdw::keep_latest
+check {K2 three distinct blocks, key 4 leaves exactly ONE and it is the NEWEST - asserted by that block's own header text, never by index alone - and STRUCTURAL its body reads rdw::_insert_index, the same accessor rdw::push uses, so the store and the pane cannot disagree about which end is new} \
+  [list $K2_N0 $K2_TOP0 [k_nblocks] [k_top_hdr] \
+        [rw_has [rw_body ::rdw::keep_latest] {_insert_index}]] \
+  {3 KC:/ 1 KC:/ 1}
+
+# --- K3  the four answers of the selection reader ----------------------------
+## ⚠ COPIES cadence::one_instance_selected's MEASUREMENT, NOT ITS CALL.
+## rdw.tcl is installed and sourced by stock xschem; utils/cadence_nav.tcl is
+## neither, so a cross-call would make an installed helper depend on a profile
+## file that may not be there. The measurement is `xschem get lastsel` then the
+## row TYPE — never `llength [xschem selected_set]`, which throws on an
+## instance name holding an unbalanced brace (issue 0388) and which filters
+## wires away entirely, so a single selected WIRE would read as "nothing
+## selected" and the key would arm the pick mode over a live selection.
+xschem unselect_all
+set K3_NONE [rw_ans ::rdw::_selected_instance]
+xschem select instance M1
+set K3_ONE [rw_ans ::rdw::_selected_instance]
+xschem select instance M2
+set K3_MANY [rw_ans ::rdw::_selected_instance]
+xschem unselect_all
+xschem select wire 0
+set K3_WIRE [rw_ans ::rdw::_selected_instance]
+set K3_LASTSEL [xschem get lastsel]
+xschem unselect_all
+check {K3 rdw::_selected_instance's four answers, including the trap a count-only test passes: ONE selected WIRE has lastsel 1 and is NOT an instance, and the name comes from getprop on the row's own index} \
+  [list $K3_NONE $K3_ONE $K3_MANY $K3_WIRE $K3_LASTSEL] \
+  [list {none {}} {one M1} {many {}} {notinst {}} 1]
+
+# --- K4 K5  the list identity, and the one key that does not touch it --------
+xschem unselect_all
+xschem select instance M1
+rw_ans ::rdw::set_list annotation
+set K4 {}
+foreach k {annotation summary all} {
+  rw_ans ::rdw::key $k
+  lappend K4 [k_listkind] [rw_ans ::rdw::button_state add [k_listkind]] \
+             [rw_ans ::rdw::button_state delete [k_listkind]]
+}
+check {K4 keys 1/2/3 move the list identity through rdw::set_list - B3's ONE setter - and the button table follows in step across all three lists, so no second list-identity variable is minted} \
+  [list $K4 [rw_has [rw_body ::rdw::key] {set_list}]] \
+  [list {annotation disabled normal summary normal normal all normal disabled} 1]
+
+k_reset
+xschem select instance M1
+rw_ans ::rdw::key summary
+rw_ans ::rdw::key annotation
+rw_ans ::rdw::key summary
+set K5_N0 [k_nblocks]
+rw_ans ::rdw::key refresh
+xschem unselect_all
+check {K5 key 4 is the ONLY one of the four that leaves the list identity alone: pressed straight after key 2 the list is still summary, and the store it just trimmed holds one block} \
+  [list $K5_N0 [k_listkind] [k_nblocks]] \
+  [list 3 summary 1]
+
+# --- K6 K7 K8  the refusals, and the channel that must NOT be double-booked --
+xschem unselect_all
+xschem select instance M1
+xschem select instance M2
+set ::K_CIW {}
+set K6_MANYR [rw_ans ::rdw::key annotation]
+set K6_MANY [lindex $::K_CIW 0]
+xschem unselect_all
+xschem select wire 0
+set ::K_CIW {}
+set K6_NIR [rw_ans ::rdw::key annotation]
+set K6_NI [lindex $::K_CIW 0]
+xschem unselect_all
+proc k_oneline {s} { return [expr {[string first "\n" $s] < 0 && [string trim $s] ne {} ? 1 : 0}] }
+check {K6 the two key-level refusals - more than one selected, and a single selection that is not an instance - are pairwise distinct, ONE line each, name the action to take, and go to the CIW, which is where the user asked for them} \
+  [list [rw_bad $K6_MANYR] [rw_bad $K6_NIR] \
+        [k_oneline $K6_MANY] [k_oneline $K6_NI] \
+        [expr {$K6_MANY ne $K6_NI ? 1 : 0}] \
+        [string match -nocase {*select*} $K6_MANY] \
+        [string match -nocase {*select*} $K6_NI]] \
+  {0 0 1 1 1 1 1}
+
+k_reset
+xschem select instance M1
+xschem select instance M2
+set K7_SEL0 [xschem selection]
+set ::K_CIW {}
+rw_ans ::rdw::key annotation
+set K7_SEL1 [xschem selection]
+xschem unselect_all
+check {K7 a key-level refusal pushes NO block and leaves xschem selection BYTE-IDENTICAL - the refusal path may touch neither the store nor the user's selection} \
+  [list [expr {$K7_SEL0 ne {} ? 1 : 0}] [k_nblocks] \
+        [expr {$K7_SEL1 eq $K7_SEL0 ? 1 : 0}] [llength $::K_CIW]] \
+  {1 0 1 1}
+
+k_reset
+xschem select instance M1
+rw_ans ::rdw::key annotation
+set K8_N1 [k_nblocks]
+set K8_H1 [k_top_hdr]
+set K8_T1 [rw_ans ::rdw::block_text [lindex $::rdw::blocks 0]]
+set K8_C1 [llength $::K_CIW]
+k_reset
+xschem select instance R1
+rw_ans ::rdw::key annotation
+set K8_N2 [k_nblocks]
+set K8_T2 [rw_ans ::rdw::block_text [lindex $::rdw::blocks 0]]
+set K8_C2 [llength $::K_CIW]
+xschem unselect_all
+check {K8 THE TWO CHANNELS ARE NOT DOUBLE-BOOKED: one instance selected pushes exactly ONE block whose header names it, with its numbers and ZERO CIW lines, and an instance with NO descriptor still pushes a BLOCK carrying B3's locked no_devpath sentence and ZERO CIW lines - the window speaks whenever a device resolved} \
+  [list $K8_N1 $K8_H1 [rw_has $K8_T1 {zid : 1.11e-05}] $K8_C1 \
+        $K8_N2 [k_top_hdr] [rw_has $K8_T2 [RW_NODEVPATH R1]] $K8_C2] \
+  [list 1 {M1:/} 1 0 1 {R1:/} 1 0]
+
+# --- K9  the headless safety, and the contract registration ------------------
+## ⚠ THE pick_start LEG IS A CONSTANT ON THE DISPLAY ARM AND SAYS SO. On :99
+## the mode really does arm, which is the sibling suite's whole section V; here
+## the question is only that a key pressed with no Tk at all arms nothing and
+## raises nothing. The suspend arm's leg runs on BOTH arms and matters on both:
+## once registered it runs on EVERY descend in EVERY profile forever, so "0 and
+## no damage when there is nothing to release" is a permanent obligation.
+k_reset
+set K9_KEY [rw_ans ::rdw::key annotation]
+set K9_PS [expr {$live_tk ? 0 : [rw_ans ::rdw::pick_start]}]
+rw_ans ::rdw::pick_end
+set K9_SUS [rw_ans ::rdw::pick_suspend]
+set K9_REG [expr {[lsearch -exact [rw_ans ::cmdmode::registered] rdw_pick] >= 0 ? 1 : 0}]
+check {K9 the --nogui safety and the cmdmode registration in one row: key 1 with nothing selected raises nothing and arms no mode when have_tk is 0, the suspend arm returns 0 and damages nothing when no mode is live, and cmdmode carries rdw_pick beside ase_sod - green on the headless arm proving it was registered at SOURCE time with no Tk} \
+  [list [rw_bad $K9_KEY] $K9_PS $K9_SUS $K9_REG] \
+  {0 0 0 1}
+
+# --- K10 K11  the structural fences over the pick ----------------------------
+## `xschem instance_at` is READ-ONLY and `xschem select_at` is the mutating
+## twin. Measured on this binary at one instance bbox centre: instance_at
+## answers the instance and leaves `xschem selection` empty with lastsel 0,
+## while select_at at the SAME point answers `poly 0 2 698` and sets lastsel 1
+## — it does not merely select, it selects a DIFFERENT OBJECT. That is the
+## sharpest argument there is for the brief's "do not use select_at".
+set K10_PC [rw_body ::rdw::pick_click]
+set K10_ORDER 0
+if {![rw_bad $K10_PC]} {
+  set _r [string first {_refresh_pick_gate} $K10_PC]
+  set _p [string first {_pick_at} $K10_PC]
+  set K10_ORDER [expr {$_r >= 0 && $_p >= 0 && $_r < $_p ? 1 : 0}]
+}
+set K10_F [expr {[file isfile $RW_FILE] ? [rw_nocomment [rw_slurp $RW_FILE]] : {NOFILE}}]
+check {K10 STRUCTURAL the pick reads the canvas ONLY through rdw::_pick_at -> xschem instance_at, names select_at / select_object / unselect_all nowhere in the file, and rdw::pick_click calls rdw::_refresh_pick_gate BEFORE it in its own body} \
+  [list [rw_has [rw_body ::rdw::_pick_at] {instance_at}] \
+        [rw_has [rw_body ::rdw::_refresh_pick_gate] {update_all_sym_bboxes}] \
+        [rw_count $K10_F {select_at}] [rw_count $K10_F {select_object}] \
+        [rw_count $K10_F {unselect_all}] $K10_ORDER] \
+  {1 1 0 0 0 1}
+
+set K11_N 0
+foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
+           ::rdw::pick_click ::rdw::pick_end} {
+  if {[llength [info commands $p]]} { incr K11_N }
+}
+set K11_TAGS 0
+foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
+           ::rdw::pick_click ::rdw::pick_end ::rdw::_ciw} {
+  set b [rw_body $p]
+  if {[rw_bad $b]} continue
+  foreach t {{[list hdr } {[list dim } {[list dev } {[list note }} {
+    incr K11_TAGS [rw_count $b $t]
+  }
+}
+check {K11 STRUCTURAL row S1's fence re-run over the grown file: op_param_lists:: is still ZERO occurrences, so keys 1/2/3 select a list IDENTITY and narrow no CONTENT (issue 1300), and no new proc builds a block line by hand - every line still goes through rdw::_line, row F29's rule} \
+  [list $K11_N [rw_count $K10_F {op_param_lists::}] $K11_TAGS \
+        [rw_has $K10_F {ase::backend_hook}]] \
+  {6 0 0 1}
+
+# --- K12  A REFUSED KEY CHANGES NOTHING --------------------------------------
+## THE HOLE B4 SHIPPED, AND NO ROW SAW IT. rdw::key called rdw::set_list BEFORE
+## it resolved the selection, so a key the feature then REFUSED had already
+## moved ::rdw::listkind and re-greyed the button column. Rows K4 and K6/K7/K8
+## between them assert that the list moves on an accepted key and that a refusal
+## pushes no block and touches no selection -- and none of them asks what the
+## list identity is AFTER a refusal. A refusal must change nothing at all: the
+## user pressed a key, was told why it did not apply, and the window is in the
+## state they left it in.
+k_reset
+rw_ans ::rdw::set_list annotation
+set K12_LK0 [k_listkind]
+set K12_BS0 {}
+foreach id {up down delete add save} {
+  lappend K12_BS0 [rw_ans ::rdw::button_state $id [k_listkind]]
+}
+xschem select instance M1
+xschem select instance M2
+set ::K_CIW {}
+set K12_MANYR [rw_ans ::rdw::key summary]
+set K12_MANY [list [llength $::K_CIW] [k_listkind] [k_nblocks]]
+set K12_BS1 {}
+foreach id {up down delete add save} {
+  lappend K12_BS1 [rw_ans ::rdw::button_state $id [k_listkind]]
+}
+xschem unselect_all
+## and the other refusal shape, which reaches the same door by a different arm.
+k_reset
+rw_ans ::rdw::set_list annotation
+xschem select wire 0
+set ::K_CIW {}
+set K12_NIR [rw_ans ::rdw::key all]
+set K12_NI [list [llength $::K_CIW] [k_listkind] [k_nblocks]]
+xschem unselect_all
+check {K12 A REFUSED KEY CHANGES NOTHING: with two instances selected, and again with a single WIRE selected, the key emits its one CIW line and leaves the list identity, the button table and the store exactly where they were - B4 moved the list first and refused second, so a refusal re-labelled the window with a list the user never got} \
+  [list $K12_LK0 [rw_bad $K12_MANYR] $K12_MANY \
+        [expr {$K12_BS1 eq $K12_BS0 ? 1 : 0}] \
+        [rw_bad $K12_NIR] $K12_NI] \
+  [list annotation 0 {1 annotation 0} 1 0 {1 annotation 0}]
+
+# --- K13  STRUCTURAL, ISSUE 1303: WHICH MOUSE PAIR THE PICK READS ------------
+## `xschem get mousex` / `mousey` are the UNSNAPPED pair every C click path
+## reads (scheduler.c:5047 and :5051, landed 2026-09-04); `mousex_snap` /
+## `mousey_snap` (:5055, :5059) are the SNAPPED pair, which is correct for
+## placing and moving geometry and wrong for "what is under the pointer".
+## Measured on the shipped cmos_inv.sch, one pixel apart: the exact point
+## answers M1 and the snapped point answers R1.
+##
+## ⚠ THE RAW BODY, NOT rw_body. rw_body strips whole-line comments, and the
+## point of the second half of this row is that the proc's own PROSE must not
+## still say it reads the snapped pair -- a file that argues against its own
+## code is how this batch has repeatedly re-derived the same fact. So the
+## comment says "the snapped pair" in words and the tokens appear nowhere.
+set K13_RAW [rw_w info body ::rdw::pick_click]
+check {K13 STRUCTURAL (issue 1303) rdw::pick_click defaults its coordinates from the UNSNAPPED mouse pair, and the snapped spellings appear nowhere in the proc - not in its code and not in its comment, which must describe the pair it does not use in words} \
+  [list [rw_bad $K13_RAW] \
+        [rw_has $K13_RAW {xschem get mousex]}] [rw_has $K13_RAW {xschem get mousey]}] \
+        [rw_count $K13_RAW {mousex_snap}] [rw_count $K13_RAW {mousey_snap}]] \
+  {0 1 1 0 0}
+
+# --- K14  STRUCTURAL, ISSUE 1304: THE SEIZE AND THE HAND-BACK AGREE ----------
+## The seize was copied from ase::ui::select_on_design, which takes the press,
+## the release and Escape and NOT <B1-Motion> -- so C's rubber band starts on
+## the first motion with Button 1 held (callback.c:7250-7260) and never
+## terminates, because its only terminator is the ButtonRelease the seize eats
+## (callback.c:9748). Measured: an 8-step drag left twenty objects selected and
+## ui_state still carrying STARTSELECT after a real ESC, against the user's own
+## "This is a command mode, so clicking will not change selected set."
+##
+## ⚠ HARDENED BY ITEM B4-3, BECAUSE THE ROW AS B4-2 WROTE IT PASSED FOR THE
+## WRONG REASON. It asked only whether each SEQUENCE NAME appeared in both
+## bodies, through rw_has, which is `string first`. MEASURED on a copy by this
+## item's Measure agent: replacing the seize's fourth line with
+## `bind $cv <B1-Motion> {}` -- which DESTROYS the binding, i.e. restores the
+## pre-1304 hole exactly -- left this row GREEN and the whole suite result
+## byte-identical on both arms. A fence that is green against a seizing bind
+## AND against a destroying one fences nothing, and passing for the wrong
+## reason is the failure this batch has now hit six times. So the row reads the
+## SCRIPT, not the name, in three independent ways:
+##   TAKE     the seize's own line-anchored `bind $cv <seq> <script>` exists
+##            and its script is neither empty nor the two-character string {} .
+##   GIVE     pick_release writes that sequence back from a stored pick(...)
+##            element, never from a literal.
+##   PAIRING  the element the seize LATCHED for a sequence is the element the
+##            release GIVES BACK for that same sequence.
+##
+## ⚠ THE PAIRING LEG IS NOT DECORATION. Measured on this tree: all four of
+## .drw's predecessors are the EMPTY STRING, so a crossed restore -- Escape
+## handed back the motion's predecessor and vice versa -- is byte-invisible to
+## every behavioural row in the sibling suite, which compares the restored
+## slots against those same empty strings. This is the only fence that sees it.
+##
+## ⚠ COMMENT-STRIPPED BODIES (rw_body), so a comment quoting a bind line cannot
+## satisfy a leg, and the empty-brace literal is built with `format %c%c`: an
+## unbalanced brace written literally in this file would make the WHOLE file
+## fail `info complete` and stop loading, with no test to say so.
+set K14_SZ [rw_body ::rdw::_pick_seize]
+set K14_RL [rw_body ::rdw::pick_release]
+set K14_MT [format %c%c 123 125]
+set K14_TAKE 0 ; set K14_GIVE 0 ; set K14_PAIR 0
+foreach seq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion>} {
+  set re_latch [string map [list SEQ $seq] {set pick\((\w+)\)\s+\[bind \$cv SEQ\]}]
+  set re_take  [string map [list SEQ $seq] {^[ \t]*bind \$cv SEQ[ \t]+(.*)$}]
+  set re_give  [string map [list SEQ $seq] {bind \$cv SEQ\s+\$pick\((\w+)\)}]
+  set lname {} ; set gname {} ; set script {}
+  catch {regexp $re_latch $K14_SZ -> lname}
+  catch {regexp -line $re_take $K14_SZ -> script}
+  catch {regexp $re_give $K14_RL -> gname}
+  set script [string trim $script]
+  if {$script ne {} && $script ne $K14_MT} { incr K14_TAKE }
+  if {$gname ne {}} { incr K14_GIVE }
+  if {$lname ne {} && $lname eq $gname} { incr K14_PAIR }
+}
+check {K14 STRUCTURAL (issue 1304) the seize takes FOUR sequences with a REAL script - not an emptied one, which destroys the binding and is the pre-1304 hole - the ONE shared hand-back gives all four back from a stored predecessor, and the element latched for a sequence is the element given back for that same sequence. B4-2 asserted only that the sequence NAMES appeared in both bodies, and stayed green under `bind $cv <B1-Motion> {}`} \
+  [list [rw_bad $K14_SZ] [rw_bad $K14_RL] $K14_TAKE $K14_GIVE $K14_PAIR] {0 0 4 4 4}
+
+# --- K15  STRUCTURAL: THE DUMP OPENS FIRST, AND DOES NOT KEEP THE KEYBOARD ---
+## TWO HOLES IN ONE ROW, both invisible to every behavioural row on this arm.
+##  * `rdw::show` must open BEFORE it dumps: rdw::render_pane early-returns when
+##    .rdw.p.t does not exist, so a dump without an open puts the block in the
+##    store and NOTHING on screen. Every dump row in both suites reads the STORE,
+##    which is why deleting the open reds nothing here. The sibling suite's row
+##    F2 reads the PANE; this row reads the ORDER.
+##  * rdw::open must not take the keyboard. The command mode's Escape lives on
+##    the CANVAS, and on the FIRST map of a session the window manager's own
+##    map-time focus grant beats a synchronous focus -force -- so the hand-back
+##    has to be event driven, armed by the paths that map the window and fired
+##    from .rdw's own <FocusIn>. B4's row V8 was written for this and passed,
+##    because the row before it had already mapped the window.
+set K15_SHOW [rw_body ::rdw::show]
+set K15_ORDER 0
+if {![rw_bad $K15_SHOW]} {
+  set _o [string first {rdw::open} $K15_SHOW]
+  set _d [string first {rdw::dump} $K15_SHOW]
+  set K15_ORDER [expr {$_o >= 0 && $_d >= 0 && $_o < $_d ? 1 : 0}]
+}
+set K15_BUILD [rw_body ::rdw::build]
+check {K15 STRUCTURAL rdw::show opens the window BEFORE it dumps, rdw::open takes the keyboard nowhere, and the hand-back is event driven - a named rdw::_focus_handback bound to .rdw's own FocusIn in rdw::build, because the window manager's map-time focus grant arrives after any synchronous focus -force} \
+  [list $K15_ORDER [rw_count [rw_body ::rdw::open] {focus .rdw}] \
+        [expr {[llength [info commands ::rdw::_focus_handback]] ? 1 : 0}] \
+        [rw_has $K15_BUILD {<FocusIn>}] [rw_has $K15_BUILD {_focus_handback}]] \
+  {1 0 1 1 1}
+
+# --- K16  STRUCTURAL, ISSUE 1306: THE HAND-BACK DECIDES ON WHERE FOCUS LANDED
+## B4-2's guard was `if {$w ne {} && $w ne {.rdw}} { return 0 }` and its
+## comment argued from BINDTAGS: a toplevel's name is in every child's
+## bindtags, so this binding also sees the pane's own FocusIn and %W tells the
+## two apart. THAT IS HALF THE MECHANISM AND THE OTHER HALF IS THE DEFECT.
+## When focus crosses in from OUTSIDE the window -- `.drw` -> `.rdw.p.t`, which
+## is exactly the deliberate click a user makes to select and copy a dump -- X
+## ALSO delivers a separate FocusIn to the ANCESTOR `.rdw` with detail
+## NotifyNonlinearVirtual, so `%W` is literally `.rdw`, the guard passes, and
+## the keyboard is taken off the text. MEASURED with the defect present, on
+## :99 under openbox, with the one-shot re-armed by hand:
+##     after real dump : focus='.drw'       pending=0
+##     after text click: focus='.drw'       pending=0   -> BOUNCED
+## against the fixed code, same fixture:
+##     after text click: focus='.rdw.p.t'   pending=1   -> KEPT
+## The pane is what the whole window exists for -- the user's own stated use is
+## pasting these dumps into design-review documents -- so a window that takes
+## the keyboard away from its own text at the moment you click into it is worse
+## than one that never focuses at all. Rows F3 and F4 of the sibling suite are
+## the behavioural half; this row is the headless one.
+##
+## ⚠ AND THE FIX LINE PRINTED IN ISSUE 1306 AND IN THE ITEM BRIEF DOES NOT
+## WORK. Both print `[string match .rdw* [focus]]`. Applied verbatim to a copy
+## and measured three times on each arm: STILL BOUNCED, because that glob
+## matches the DESCENDANT `.rdw.p.t` exactly as readily as `.rdw`. The
+## discriminator that does work is the one the window manager itself supplies:
+## its map-time grant lands on the TOPLEVEL (`[focus]` reads `.rdw`) while
+## every deliberate landing lands on a CHILD (`[focus]` reads `.rdw.p.t`). So
+## the test is the EXACT toplevel, and leg 2 keeps the refuted glob out of the
+## tree for good -- describe it in words on a comment LINE, which rw_body
+## strips, rather than in code or in a trailing comment.
+##
+## ⚠ THE ORDER LEG IS NOT COSMETIC. `focus` and `winfo` do not exist under
+## --nogui; this proc survives the headless arm only because the focus_pending
+## early return fires first. A landing test written ABOVE it would raise on
+## every headless dump, and row N2 -- which only SOURCES the file into a bare
+## interp -- would not catch it.
+set K16_FH [rw_body ::rdw::_focus_handback]
+set K16_IP [string first {!$focus_pending} $K16_FH]
+set K16_IF [string first {[focus]} $K16_FH]
+check {K16 STRUCTURAL (issue 1306) the hand-back decides on WHERE THE KEYBOARD LANDED and not on which window named the event: it reads [focus], compares it against the EXACT toplevel, contains no `string match` glob - the refuted `.rdw*` candidate matches the pane itself - reads the landing strictly BELOW the focus_pending early return so --nogui never evaluates it, and still spends the one-shot} \
+  [list [rw_bad $K16_FH] \
+        [rw_has $K16_FH {[focus]}] \
+        [rw_count $K16_FH {string match}] \
+        [rw_has $K16_FH {ne {.rdw}}] \
+        [expr {$K16_IP >= 0 && $K16_IF > $K16_IP ? 1 : 0}] \
+        [rw_count $K16_FH {set focus_pending 0}]] \
+  {0 1 0 1 1 1}
+
+# --- K17  STRUCTURAL, ISSUE 1305: A SUSPENDED MODE IS NOT RE-ARMED IN PLACE --
+## rdw::pick_start's "already armed" guard deliberately lets a SUSPENDED mode
+## fall through and take the canvas back: pressing 1/2/3/4 during
+## hi_descend_pick_arm's multi-frame event-loop wait (xschem.tcl:7707) is an
+## ordinary thing to do, and ruling D-2's whole premise is that those keys are
+## always live. B4-2 let it fall through WITHOUT clearing pick(suspended), so
+## the descend's own cmdmode::resume_all still believed the mode was suspended,
+## called rdw::pick_resume, and _pick_seize ran a SECOND time on a canvas that
+## was already seized -- latching THE SEIZE'S OWN SCRIPTS as the predecessors.
+## MEASURED with the defect present, :99/openbox, driving suspend_all, a real
+## <Key-N> on the canvas, resume_all and then a real ESC:
+##     after ESC   P='rdw::pick_click; break'  R='break'
+##                 E='rdw::pick_end; break'    M='break'
+##     second ESC returns 0
+## -- a PERMANENT seize. Every click dumps, nothing can be selected by clicking
+## again for the rest of the session, <B1-Motion> is `break` so the rubber band
+## is dead too, and the mode's own "press ESC to leave" cannot work. That is
+## the exact inverse of the user's ruling sentence that a command mode must not
+## change the selected set. Row D3 of the sibling suite is the behavioural
+## half -- and the keys suite self-SKIPS under --nogui, so this row is the only
+## fence issue 1305 has on the headless arm.
+##
+## THE FIX IS THE ISSUE'S OWN OPTION a1, AND IT IS ALREADY WRITTEN TWELVE LINES
+## BELOW ITS OWN BUG: rdw::pick_resume clears the flag with
+## `unset -nocomplain pick(suspended)` immediately before ITS _pick_seize, and
+## ase::ui::sod_resume (ase_window.tcl:2047) ends the same way. Clearing the
+## flag AS PART OF taking the canvas back is the house style, not an invention,
+## and it is exactly what cmdmode's ruling D6 latch -- "exactly the first one
+## to arrive wins" -- is for: the later resume then finds nothing suspended and
+## returns 0.
+##
+## ⚠ BOTH ORDER LEGS ARE THE ROW'S POINT. BELOW the `winfo exists $cv` guard,
+## so a re-arm that could NOT take a canvas leaves the suspend intact for the
+## real resume; ABOVE `_pick_seize`, so the flag is gone before the seize.
+## ⚠ AND LEG 4 STOPS THE OTHER "FIX". Deleting `![info exists pick(suspended)]`
+## from the early-return guard also stops the double seize -- by making a
+## suspended mode return 1 and never re-arm at all, silently swallowing the key
+## press ruling D-2 says is always live, and destroying the re-arm-in-place
+## property row V7 of the sibling suite measures.
+set K17_PS [rw_body ::rdw::pick_start]
+set K17_IU [string first {unset -nocomplain pick(suspended)} $K17_PS]
+set K17_IW [string first {winfo exists $cv} $K17_PS]
+set K17_IZ [string first {rdw::_pick_seize} $K17_PS]
+check {K17 STRUCTURAL (issue 1305) rdw::pick_start clears the outstanding suspend as part of taking the canvas back - the unset sits BELOW the canvas guard and ABOVE the seize, so a re-arm that could not take a canvas leaves the suspend for the real resume - and the suspended test is still in the early-return guard, so nobody greens 1305 by deleting the fall-through and swallowing the key press instead} \
+  [list [rw_bad $K17_PS] \
+        [expr {$K17_IU >= 0 ? 1 : 0}] \
+        [expr {$K17_IW >= 0 && $K17_IZ >= 0 && $K17_IU > $K17_IW && $K17_IU < $K17_IZ ? 1 : 0}] \
+        [rw_has $K17_PS {![info exists pick(suspended)]}]] \
+  {0 1 1 1}
+
+# --- section K leaves nothing behind -----------------------------------------
+rw_ans ::rdw::pick_end
+rw_ans ::rdw::close
+set ::rdw::blocks {}
+rw_ans ::rdw::set_list annotation
+catch {xschem unselect_all}
+catch {xschem raw clear}
+catch {rename ciw_echo {}}
+if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo }
+
+# ============================================================================
 # SECTION S — THE STRUCTURAL FENCES, AND HYGIENE
 # ============================================================================
 # S1 is the seam's whole point stated as a fence: "nothing above it changes

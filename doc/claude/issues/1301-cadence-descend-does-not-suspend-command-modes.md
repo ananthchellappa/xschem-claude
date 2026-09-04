@@ -57,3 +57,18 @@ Driven on the B4 fixture with the RDW pick mode live:
 `utils/cadence_nav.tcl` is outside item B4's Files cell
 (`doc/claude/op_param_batch/PLAN.md`, B4), and the defect predates B4 by the
 whole life of ASE Direct Plot.
+
+## ✅ RE-FENCED in item **B4-3**, 2026-09-04 — still not fixed, but no longer silent
+
+The revert of B4-2 took the fence with it. It is back in the tree:
+
+> `ok:   D2 MEASURED GAP PINNED (issue 1301): the cadence profile's own Ctrl-x
+> descend never calls cmdmode::suspend_all, so the mode stays seized straight
+> across it`
+
+Row **`D2`** of `tests/headless/test_rdw_keys_1245.tcl` (`:99` arm), which pins
+today's behaviour — `currsch > 0`, `cmdmode::suspend_all` hits **0**,
+`cmdmode::is_suspended` **0**, `seized` **1**. It is a *pin*, not a fix: whoever
+takes option (a) or (b) above will red this row, which is exactly what it is for.
+
+No code changed for this; the row arrived with the B4-2 patch B4-3 re-applied.

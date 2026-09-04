@@ -124,8 +124,83 @@ after `ESC`.** No row in either B4-2 suite sets or observes `pick(suspended)`
 before calling `pick_start`; that is why an eight-variant sabotage matrix and 27
 green checks did not see this.
 
+## ✅ FIXED in item **B4-3**, 2026-09-04 — option **a1**, one line
+
+```tcl
+    ## ISSUE 1305: clear the outstanding suspend as part of taking the canvas
+    ## back, so resume_all finds nothing to resume.  BELOW the guard above.
+    unset -nocomplain pick(suspended)
+    rdw::_pick_seize $cv
+```
+
+`src/rdw.tcl:1449`, placed **below** the `$cv eq {} || ![winfo exists $cv]`
+guard on purpose — a re-arm that could not take a canvas must leave the suspend
+intact for the real resume — and **above** `_pick_seize`. It is the same idiom
+`rdw::pick_resume` uses twelve lines further down, and the one
+`ase::ui::sod_resume` uses (`src/ase_window.tcl:2047`). Ladder rung **L1**, by
+precedent: cmdmode ruling **D6**, *"exactly the first one to arrive wins"*.
+
+**Rejected alternative, restated with its cost:** **(a2)** preserves the rehome
+but makes a `1`-`4` press during `hi_descend_pick_arm`'s wait **silently do
+nothing**, which contradicts ruling **D-2**'s premise that those keys are always
+live. Sabotage variant `SB-1305-SWALLOW` greens this issue the a2 way (delete
+`![info exists pick(suspended)]` from the early-return guard) and the new rows
+**red it** — `RED:D3`, `RED:K17` — so a2's behaviour cannot slip in later.
+
+### AFTER — the transcript the BEFORE section above records, re-run
+
+Row `D3` of `tests/headless/test_rdw_keys_1245.tcl`, `:99`/openbox:
+
+```
+ok:   D3 ISSUE 1305: with the mode live and a descend's suspend outstanding, a real
+      bare 2 on the canvas re-arms the pick AND clears the suspend, so the later
+      resume finds nothing to resume and a real ESC hands ALL FOUR of the canvas's
+      own predecessors back.
+RESULT: ALL PASS (30 checks)
+```
+
+The filed post-`ESC` dump — `P='rdw::pick_click; break' R='break'
+E='rdw::pick_end; break' M='break'` — is gone; all four slots come back byte-
+identical to the canvas's own predecessors. `SB-1305-REVERT` (drop the one line)
+reproduces the filed **PERMANENT SEIZE** and reds `D3` + `K17`.
+
+### The fences
+
+* **`D3`** (keys, `:99`) — behavioural, and it asserts the four `.drw` **slots**
+  after `ESC`, never `cmdmode::resume_all`'s return count: `cmdmode.tcl:130`
+  does `incr n` for every callback that does not *throw*, regardless of its
+  return value, so a count leg would read 1 before **and** after the fix.
+* **`K17`** (window, **both arms**) — structural, because the keys suite
+  self-skips under `--nogui`. It asserts the `unset` is present, that its index
+  is **below** the `winfo exists $cv` guard and **above** `_pick_seize`, and
+  that `![info exists pick(suspended)]` is still in the early return, so nobody
+  "fixes" 1305 by deleting the guard.
+
+### ⚠ COST, STATED — and it is real
+
+`pick_start` now re-seizes on the canvas **current at key-press time**, which
+during a descend's wait is still the **parent**. Because `resume_all`'s
+`pick_resume` now returns 0, a descend that lands on a **different** canvas (new
+window, new tab) leaves the mode live on the **old** one and never rehomes it.
+That residue is recorded on issue **1307**, whose own subject is a command-mode
+seize arriving on a canvas nobody armed it on. No new number was minted for it.
+
+### ⚠ AND: this issue's filed transcript is NOT user-reachable as filed
+
+B4-3's adversary drove the **real** `hi_descend_pick_arm` gesture rather than
+row `D3`'s hand-called `cmdmode::resume_all`, and found the double seize needs
+`resume_all` to run while the mode is live — and **every real terminal is eaten
+by the seize itself**, so `resume_all` never runs. `D3` calls it directly, and
+the row says so. **So this fix's practical value is defence-in-depth, not the
+unrecoverable session-wide seize this file describes.** Say so plainly rather
+than over-crediting it. The gesture's *actual* consequence is filed as issue
+**1309** — the DESCEND becomes unterminable — and 1305's fix does not reach it.
+
 ## Still open
 
-Everything above. And note that **issue 1307** (a live seize cloned onto a new
-window) reaches the same end state by a different route, and **1304's fourth
-sequence widens both**.
+* **Issue 1309**, the other side of the same key press, unfixed.
+* **Issue 1307** (a live seize cloned onto a new window) reaches the same end
+  state by a different route, and **1304's fourth sequence widens both**. 1309's
+  option (d) — a suspend that returns a lock `pick_start` must not step over —
+  probably subsumes 1307 and this; a crew taking either should read 1309 first.
+* The a1 **rehome residue** above.

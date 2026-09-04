@@ -96,8 +96,35 @@ so the child cannot select anything at all. That is not an inert leftover.
    suspends, and this must not double-suspend it (`cmdmode.tcl` D6: a second
    `suspend_all` is a no-op returning 0).
 
+## ⚠ ADDED 2026-09-04 by item **B4-3** — the a1 rehome residue lands HERE, with no new number
+
+B4-3 fixed issue **1305** with its option **a1**: `rdw::pick_start` clears
+`pick(suspended)` as part of taking the canvas back. **That is deliberate, and
+it has a stated cost that belongs to this issue's subject**, so it is recorded
+here rather than under a fresh number:
+
+> `pick_start` now re-seizes on the canvas **current at key-press time**, which
+> during a descend's wait is still the **parent**. Because `resume_all`'s
+> `pick_resume` returns 0 once the flag is gone, a descend that lands on a
+> **different** canvas (new window, new tab) leaves the mode live on the **old**
+> one and never rehomes it.
+
+So this issue now covers **two** ways a command-mode seize ends up on a canvas
+nobody armed it on: `clone_canvas_bindings` copying it forward (the original
+subject, true of shipped `src/ase.tcl` today), and a1 declining to rehome it.
+The rejected alternative that *would* have preserved the rehome — a2, the
+suspended arm returning 1 without seizing — makes a `1`-`4` press during the
+wait silently do nothing, contradicting ruling **D-2**. See issue 1305's
+"COST, STATED".
+
+**Whoever takes this issue must fix both**, or the fix will look complete and
+leave half the class live. Issue **1309**'s option (d) — a suspend that returns
+a lock `pick_start` must not step over — is the shape that covers all of it.
+
 ## Still open
 
 Everything above. Related: **1301** (the cadence descend does not suspend),
-**1305** (the other route to the same permanent-seize end state), **1304** (the
-fourth sequence that widens both).
+**1305** (the other route to the same permanent-seize end state — **fixed**
+2026-09-04, and its cost is the paragraph above), **1309** (the descend's own
+half of 1305's key press, and probably the general fix for this whole class),
+**1304** (the fourth sequence that widens both).

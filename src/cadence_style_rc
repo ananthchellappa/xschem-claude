@@ -140,6 +140,49 @@ bind .drw <Key-9> {xschem hilight_net_interactive;   break}
 bind .drw <Key-8> {xschem unhilight_net_interactive; break}
 bind .drw <Key-0> {xschem unhilight_all;             break}
 
+# --------------------------------------------------------------------------
+# 1 / 2 / 3 / 4 : THE RESULTS DISPLAY WINDOW (feature 1245, item B4).
+# Spec doc/claude/specs/op_param_lists.md 4.2; RULING D-2, the user's own
+# choice: "Take 1-4, cadence profile only". Stock xschem is untouched.
+#
+#   1  the device's ANNOTATION list        2  its SUMMARY list
+#   3  everything this run's raw holds     4  refresh: keep only the newest dump
+#
+# TWO GRAMMARS, and which one you get depends only on what is selected.
+#   noun-verb : exactly ONE instance selected -> that device is dumped.
+#   verb-noun : NOTHING selected -> a COMMAND MODE arms on the canvas. Click
+#               devices to dump them, ESC to leave. Clicking does NOT change
+#               the selection -- the user's own requirement -- because the hit
+#               test is the read-only `xschem instance_at`, and a descend
+#               mid-mode suspends and resumes the mode (src/cmdmode.tcl).
+#   refusal   : more than one selected, or a selection that is not an instance
+#               -> one short line in the CIW, and nothing else happens.
+#
+# ⚠ WHAT THESE FOUR KEYS COST, INSIDE THIS PROFILE ONLY. callback.c:7434-7448
+# gives a bare 0-4 to `logic_set()` -- "toggle pin logic level" -- with `4`
+# being the toggle (logic_set(-1, 1, NULL), :7443). logic_set has NO menu entry
+# and NO second accelerator, so inside this profile these keys were its only
+# door. `xschem logic_set 0|1|2|3|4` (scheduler.c:8250) stays scriptable and is
+# the survivor. Ruling D-2 authorises the trade; remap by editing these lines.
+#
+# ⚠ AND THE GUARD IS NOT DECORATION -- IT IS ISSUE 1244 ONE FEATURE LATER. Tk
+# matches a pattern whose modifiers are a SUBSET of the event's, so a bare
+# `bind .drw <Key-1> {...; break}` fires on Ctrl-1 and Alt-1 too and the
+# `break` then EATS what they did. Measured on this tree: with a bare bind in
+# place Ctrl-1 and Ctrl-3 stopped selecting drawing layers 1 and 3, and
+# Alt-2 stopped reaching its shipped, documented, remappable action
+# (view.toggle_view_type, keybindings.csv:73). So each line discriminates on
+# the modifier mask and forwards any Control/Alt/Super press verbatim into the
+# C dispatcher, exactly as hi_descend_keybind_script (src/xschem.tcl:7867)
+# does for the descend key: 0x4c = Control|Mod1(Alt)|Mod4(Super), with
+# Lock/NumLock ignored so a plain key plus NumLock still reaches the window.
+# Ctrl-2 and Ctrl-4 keep their own more-specific chords below (make_editable,
+# ase::direct_plot_for_current), which win by Tk specificity.
+bind .drw <Key-1> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key annotation}; break}
+bind .drw <Key-2> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key summary};    break}
+bind .drw <Key-3> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key all};        break}
+bind .drw <Key-4> {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {rdw::key refresh};    break}
+
 # Alt-minus : step the highlight STYLE cursor back one (wrapping). The cursor
 # auto-advances after each highlight; this re-applies a recently used style to the
 # next highlight. Bound for both the main-row minus and the numeric-keypad minus.

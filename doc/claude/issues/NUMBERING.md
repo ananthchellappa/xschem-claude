@@ -1297,4 +1297,27 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   code loaded — the child keeps `sod_click`/`sod_end` and its `ESC` is dead.
   **FILED, NOT FIXED.**
 
-**The next free number is 1308.**
+* **1308** — **the Results window now HOLDS the keyboard and nothing on it ENDS
+  the command mode.** Filed by item **B4-3** after its own issue-1306 fix landed:
+  once the user clicks the text pane — the gesture the window exists for — a real
+  `ESC` and a bare `2` are both dead, because the mode's four keys and its Escape
+  are bound on the **canvas** (`src/rdw.tcl:1389`, `:1393`,
+  `src/cadence_style_rc:181-184`) and `.rdw` carries none of them. Measured
+  first-hand on `:99`/openbox: `WU-4 afterESC focus=.rdw.p.t seized=1 esc_on_rdw=0
+  esc_on_pane=0`. **Identical on the unfixed arm** in the ordinary case (the WM's
+  map-time grant had already spent the one-shot), so B4-3 neither causes nor fixes
+  it — but on a WM that does not grant, the fix converts *"ESC works, copy
+  impossible"* into *"copy works, ESC stuck"*. Its ruling is the SAME ruling as
+  1306's. **FILED, NOT FIXED.**
+
+* **1309** — **a list key pressed during a suspended descend leaves the DESCEND
+  unterminable.** The other side of issue 1305's key press, and 1305's fix does
+  not reach it: the re-seized mode `break`s the canvas click and the canvas
+  `Escape`, which are `hi_descend_pick_arm`'s only two terminals
+  (`src/xschem.tcl:7707`, `hi_descend_pick_cancel`), so C's arm stays live,
+  `cmdmode::is_suspended` sticks at 1 and a later `cmdmode::suspend_all` returns
+  0 — **no command mode is suspended by any subsequent descend**. Measured by
+  B4-3's adversary, **identical on both arms**. Overlaps **1307**; option (d) in
+  the file probably subsumes both. **FILED, NOT FIXED.**
+
+**The next free number is 1310.**

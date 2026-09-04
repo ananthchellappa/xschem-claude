@@ -87,3 +87,30 @@ silently. **Ratify the refusal, or say it should fall back and be wrong
 quietly.**
 
 No new debt id was minted for it; it is on this one. Rule debt **1300**.
+
+## UPDATE, 2026-09-04 (later) — item **B4-3 LANDED**, so this is owed against RUNNING CODE
+
+The keys are in the tree. Everything this file asks the user to ratify is now
+something they can go and press: bare `1`/`2`/`3`/`4` on the canvas, **cadence
+profile only** (ruling **D-2**), keys 1/2/3 selecting a **list identity** and
+rendering byte-identical blocks (no content narrowing), key 4 clearing to the
+most recent dump.
+
+**⚠ CORRECTION to the section above: it is not "a third sentence".** The CIW
+channel carries **FIVE** literals — `src/rdw.tcl:1292`, `:1295`, `:1451`,
+`:1493`, `:1498` — plus one `format` template at `:1099`. Four came from B4, one
+(the un-snapped refusal, now at `:1493`) from B4-2. **No fourth sentence was
+invented by B4-3**, and none should be: the brief for B4-3 said "do not invent a
+fourth", and the count in the paragraph above is simply wrong about the channel,
+not about the sentence.
+
+The un-snapped refusal ships **verbatim as quoted above**, at `src/rdw.tcl:1493`.
+
+The owed-ledger row `[1300]` has been rewritten in place (`owed.sh add rule` is
+deduped by id) to say the ruling is owed against running code rather than a
+preserved patch, and to carry the same correction. **No second debt was
+created.**
+
+**Read alongside:** issue **1308**, filed by B4-3, which asks the *same* user
+the *same* kind of question about the same window — whether it should hold the
+keyboard at all — and must be ruled on together with this one.

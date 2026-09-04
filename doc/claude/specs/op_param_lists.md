@@ -237,8 +237,11 @@ turns anything off and is not a toggle; `Ctrl-6` is the only off switch.
 
 ### 2.5 Command mode already exists, and so does the read-only pick
 
-* **`xschem instance_at <x> <y>`** (`scheduler.c:6935`; the doc comment opens at
-  `:6927` — the `:6919` this spec carried until 2026-09-04 was stale) returns the instance name
+* **`xschem instance_at <x> <y>`** (`scheduler.c:6972`; the doc comment opens at
+  `:6964` — ⚠ **re-verified by item B4-3 on 2026-09-04**, because BOTH earlier
+  anchors this spec carried, `:6919` and then `:6935`, were stale. `0ce85dda`'s
+  unsnapped-mouse work moved the dispatch again. **Grep, do not trust an anchor
+  in this file**) returns the instance name
   under a point. Its own comment: *"READ-ONLY: it selects nothing and changes
   nothing — this is the probe half of the verb-noun descend pick, and the
   deliberate opposite of `select_at`, which is the mutating coordinate pick."*
@@ -277,6 +280,36 @@ turns anything off and is not a toggle; `Ctrl-6` is the only off switch.
   Measured against shipped ASE with no other mode loaded.
   ⚠ **Fixing 1304 WIDENS both**: `<B1-Motion> {break}` joins the leaked set, so
   the leaked canvas also loses its rubber band. **Land 1305's fix with 1304's.**
+* ✅ **1305 IS FIXED (item B4-3, 2026-09-04) AND THE FIX IS NOT THE PRECEDENT'S.**
+  The spec sentence above — *"`select_on_design` is immune only because it ends
+  the previous mode first, which is the one part of the precedent worth
+  copying"* — **was not taken, and should not be.** Copying it reintroduces the
+  release-and-retake on every list-key press, for nothing. What shipped is one
+  line: `unset -nocomplain pick(suspended)` immediately before the re-seize, so
+  the later `resume_all` finds nothing suspended — which is precisely what
+  `cmdmode` ruling **D6**'s *"exactly the first one to arrive wins"* latch is
+  for. **Clearing the flag as part of taking the canvas back is the house
+  style**, not an invention: `ase::ui::sod_resume` ends the same way
+  (`ase_window.tcl:2047`).
+  ⚠ **Its stated cost, and it is real:** the re-seize takes the canvas
+  **current at key-press time**, so a descend landing on a *different* canvas
+  never rehomes the mode. Recorded on issue **1307**.
+  ⚠ **AND 1305's FILED TRANSCRIPT IS NOT USER-REACHABLE AS FILED** — the double
+  seize needs `cmdmode::resume_all` to run while the mode is live, and the seize
+  itself `break`s every real terminal. The *user-reachable* consequence of that
+  key press is different and worse: **the DESCEND becomes unterminable**, C's
+  arm stays live, and `cmdmode::suspend_all` returns 0 from then on, so **no
+  later descend suspends any command mode**. Issue **1309**, filed not fixed,
+  measured identical before and after 1305's fix.
+* ⚠ **A COMMAND MODE'S KEYS LIVE ON THE CANVAS, SO ANY WINDOW THAT TAKES THE
+  KEYBOARD ENDS THE USER'S ABILITY TO LEAVE THE MODE** (item B4-3, 2026-09-04,
+  issue **1308**). Once the Results window's text pane holds focus — which is
+  the whole point of feature B's copy-into-a-review-document requirement — a
+  real `ESC` and a bare `2` are both dead, because `<Key-Escape>` and
+  `1`/`2`/`3`/`4` are bound on `.drw` and `.rdw` carries neither. **This binds
+  item B5:** Tk buttons do not take focus on X, which is the only reason the
+  button column currently hands the keyboard back; an entry, a listbox, or a
+  `-takefocus 1` widget changes that.
 
 ### 2.6 Namespace already taken
 
@@ -2053,6 +2086,39 @@ Still open:
     of the form `%W eq <toplevel>` does **not** distinguish "the toplevel was
     focused" from "a child of it was". Test such a flag WM-less, or arm it by
     hand.
+    ⚠ **CORRECTED AND SHARPENED 2026-09-04 by item B4-3, which measured the
+    other half.** "Test it WM-less" is **not** a safe instruction: WM-less is a
+    *coin flip*, not a control. The same unmodified fixture went **5/5 green
+    then 5/5 red twenty minutes apart on the same tree**, because whether the
+    consuming `FocusIn` arrives inside the dump's own `update` or after it is
+    an internal race. Pointer parking does not cure it. **The only deterministic
+    fixture asserts the flag's post-gesture value and then RE-ARMS IT BY HAND**
+    (`set ::rdw::focus_pending 1`) before the gesture under test — measured
+    BOUNCED 5/5 unfixed and KEPT 4/4 fixed on **both** arms.
+    ⚠ **And the obvious fix is wrong.** `[string match .rdw* [focus]]` — the
+    predicate issue 1306's own "Recommended fix" prints — matches the
+    **descendant** as readily as the toplevel, so the click is still bounced;
+    measured 3/3 on both arms by three independent agents. **The discriminator
+    is the one the WM supplies: the map-time grant lands on the TOPLEVEL, every
+    deliberate landing lands on a CHILD.** Test exact equality, and keep
+    `string match` out of the proc with a structural row.
+21. **A RECOMMENDED FIX IN AN ISSUE FILE IS A HYPOTHESIS, NOT A MEASUREMENT**
+    (item B4-3, 2026-09-04). Issue 1306's option (a) was reasoned correctly —
+    *decide on where the keyboard landed, not on which window named the event* —
+    and its **printed code line did not work**. Three agents measured it
+    independently before anyone shipped anything else. The batch's rule *"take
+    the recommendation unless your own measurement refutes its reasoning"* cuts
+    both ways: **run the recommendation as a sabotage variant**, so the tree
+    permanently rejects it and the next crew cannot re-derive it.
+22. **A SHARED WORKING TREE MAKES EVERY MEASUREMENT WORTHLESS, AND IT LOOKS LIKE
+    FLAKE** (item B4-3, 2026-09-04). Two verify agents independently recorded
+    ~25% spurious reds on the item's own headline rows; the cause was another
+    crew agent running sabotage variants **directly on `src/rdw.tcl` in the
+    shared tree** instead of on a copy (hard rule 3). The failure signatures
+    matched that agent's variants exactly. **Take a before/after `md5sum` of
+    every tracked file a run depends on and discard any run whose signature
+    moved.** Both agents did, and both then measured zero flake. A "flaky
+    focus suite" is the story this failure tells about itself, and it is false.
 
 ---
 

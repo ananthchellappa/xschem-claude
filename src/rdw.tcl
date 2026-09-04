@@ -851,12 +851,18 @@ proc rdw::color {role} {
 # live-Tk guard calc::open does not need and this one does: item B4 reaches
 # rdw::open from a key binding, and this window's own suite calls it under
 # --nogui.
+#
+# ⚠ IT TAKES THE KEYBOARD NOWHERE, AND THAT IS THE FIX FOR A MEASURED
+# DEFECT.  This window is a read-only record; the grammar that fills it -- bare
+# 1/2/3/4 and the command mode's Escape -- lives on the design CANVAS, so a
+# raise that moved keyboard focus here left a mode the user could not leave.
+# Raising is not focusing, and the window manager's own map-time grant is
+# caught by rdw::_focus_handback (see rdw::_arm_focus_handback below).
 proc rdw::open {} {
     if {![rdw::have_tk]} { return {} }
     if {[winfo exists .rdw]} {
         wm deiconify .rdw
         raise .rdw
-        focus .rdw
         return .rdw
     }
     return [rdw::build]
@@ -882,6 +888,11 @@ proc rdw::build {} {
     wm title .rdw {Results Display Window}
     wm protocol .rdw WM_DELETE_WINDOW rdw::close
     wm minsize .rdw 520 260
+    ## The window manager grants keyboard focus to a newly mapped toplevel
+    ## asynchronously, after every synchronous hand-back has already run.
+    ## rdw::_focus_handback catches that one grant and gives the keyboard back
+    ## to the canvas; it is inert unless a dump path armed it.
+    bind .rdw <FocusIn> {rdw::_focus_handback %W}
     catch {.rdw configure -background [rdw::color panel]}
 
     # The status line owns the bottom edge: it is where the five inert buttons
@@ -991,3 +1002,589 @@ proc rdw::inert {what} {
     return [rdw::status \
         "$what: the button column is built but not wired yet (item B5 wires it)."]
 }
+
+# ===========================================================================
+# ITEM B4 -- THE KEYS AND THE TWO GRAMMARS
+# ===========================================================================
+# Ruling D-2, the user's own choice: this window takes bare 1 / 2 / 3 / 4 IN
+# THE CADENCE PROFILE ONLY.  Stock xschem keeps `logic_set`.  The four binds
+# live in src/cadence_style_rc; everything they do once the event has arrived
+# lives here, so the grammar is testable with no Tk at all.
+#
+#   1 -> annotation list   2 -> summary list   3 -> everything
+#   4 -> refresh: keep only the most recent dump
+#
+# TWO GRAMMARS, THE USER'S OWN WORDS FOR BOTH.
+#   NOUN-VERB  exactly one instance selected, press a key, dump it.
+#   VERB-NOUN  nothing selected, press a key: enter a COMMAND MODE and click
+#              devices.  "This is a command mode, so clicking will not change
+#              selected set."  So the click is resolved with the READ-ONLY
+#              `xschem instance_at` (findnet.c:553, override_lock=1), which
+#              writes neither `.sel` nor `sel_array`.  Its mutating twin was
+#              measured at one instance's bbox centre answering `poly 0 2 698`
+#              and setting lastsel 1 -- it does not merely select, it selects a
+#              DIFFERENT OBJECT than the instance under the cursor.  Do not
+#              reach for it here, and row K10 is the structural fence that says
+#              so.
+#   REFUSE     more than one selected, or a selection that is not an instance:
+#              ONE short CIW line, no block, and the selection untouched.
+#
+# WHERE EACH REFUSAL GOES, AND WHY THE TWO CHANNELS ARE NOT DOUBLE-BOOKED.
+# Item B3 already minted five window sentences for "there is nothing to say
+# about this device", and PLAN forbids rewording them ad hoc.  The user asked
+# for "a short message in CIW if more than one selected or nothing is
+# available".  Echoing both says the same fact twice, so the split is:
+#   a DEVICE was resolved  -> the WINDOW answers, in B3's locked sentence, and
+#                             the CIW stays silent (this includes a device with
+#                             no descriptor and a run with no raw);
+#   NO device was resolved -> ONE CIW line, no block, no window.
+# That is the second half of the user's sentence landing in the window rather
+# than the CIW, and it is this item's E question: see the ledger row.
+#
+# WHAT THE KEYS DELIBERATELY DO NOT DO.  Keys 1, 2 and 3 select a list
+# IDENTITY through rdw::set_list -- B3's ONE setter -- and narrow no CONTENT.
+# The narrowing has exactly one definition in this tree (the list store's
+# `effective`, plus ruling DD-6's display key that item B2b built), and row S1
+# of this file's own suite forbids naming op_param_lists:: here at all.  A
+# second definition of "the annotation list" living in this file is precisely
+# the two-builders drift invariant I1 exists to prevent, and a block LABELLED
+# with a list whose content is identical for all three would imply a narrowing
+# that did not happen -- the DD-1 failure shape.  Filed as issue 1300.
+#
+# Suite: tests/headless/test_rdw_window_1245.tcl section K (both arms) and
+# tests/headless/test_rdw_keys_1245.tcl (the binds, the mode, the pick and the
+# descend; :99 only, because src/cadence_style_rc cannot be sourced under
+# --nogui -- it dies at its first `bind`).
+
+namespace eval rdw {
+    # THE COMMAND MODE'S WHOLE STATE.  One array, not a per-session dict:
+    # there is one canvas pick mode at a time, exactly as ASE Direct Plot has
+    # one `sod(active)`.
+    #   canvas     the widget the seize is currently on
+    #   prevpress prevrel prevesc prevmotion   the FOUR predecessors, handed
+    #              back verbatim.  The fourth is issue 1304: see rdw::_pick_seize.
+    #   suspended  set only between cmdmode's suspend and resume arms
+    variable pick
+    if {![info exists pick]} { array set pick {} }
+
+    # The one-shot flag rdw::_arm_focus_handback sets and rdw::_focus_handback
+    # clears.  Namespace state rather than a proc-local, because the arming and
+    # the firing are two different events.
+    variable focus_pending
+    if {![info exists focus_pending]} { set focus_pending 0 }
+}
+
+# ---------------------------------------------------------------------------
+# THE ONE REFUSAL CHANNEL.  Every "there is no device to ask about" line in
+# this item goes through here, so the wording cannot drift between the two
+# grammars and a suite can observe the channel by stubbing one command.
+# `ciw_echo` (ciw.tcl:502) is defined under --nogui and silently returns when
+# there is no CIW widget, so this is safe on every arm.
+proc rdw::_ciw {msg} {
+    catch {ciw_echo $msg}
+    return {}
+}
+
+# ---------------------------------------------------------------------------
+# WHAT IS SELECTED, IN THE FOUR ANSWERS THE KEYS HAVE TO TELL APART:
+#   {none {}}  {one <instname>}  {many {}}  {notinst {}}
+#
+# ⚠ THE MEASUREMENT IS COPIED FROM cadence::one_instance_selected
+# (utils/cadence_nav.tcl:38), NOT ITS CALL.  This file is installed and is
+# sourced by stock xschem; utils/cadence_nav.tcl is neither, so calling across
+# would make an installed helper depend on a profile file that may not be
+# there.  The measurement itself is `xschem get lastsel` and then the row's
+# TYPE -- never `llength [xschem selected_set]`, which throws on an instance
+# name holding an unbalanced brace (issue 0388) and which filters wires away
+# entirely, so a single selected WIRE would read as "nothing selected" and the
+# key would arm the pick mode over a live selection.
+proc rdw::_selected_instance {} {
+    set n 0
+    catch {set n [xschem get lastsel]}
+    if {![string is integer -strict $n] || $n <= 0} { return [list none {}] }
+    if {$n != 1} { return [list many {}] }
+    set rows {}
+    catch {set rows [xschem selection]}
+    set row [lindex $rows 0]
+    if {[lindex $row 0] ne {instance}} { return [list notinst {}] }
+    set name {}
+    catch {set name [xschem getprop instance [lindex $row 1] name]}
+    if {[string trim $name] eq {}} { return [list notinst {}] }
+    return [list one $name]
+}
+
+# ---------------------------------------------------------------------------
+# Hand the keyboard back to the design canvas.
+#
+# ⚠ `-force`, AND THE REASON IS MEASURED IN ASE.  The command mode's Escape
+# binding lives on the CANVAS, so a dump that leaves keyboard focus on the
+# results toplevel leaves a mode the user cannot escape --
+# ase_window.tcl:1905-1911 records the same failure from the other side.  A
+# plain `focus $cv` only moves the focus WITHIN a toplevel, so it cannot undo a
+# focus that has already crossed to another one; `-force` can.  This is a
+# hand-back, not a steal: the key that started this was pressed on the canvas.
+#
+# It arms nothing itself.  Arming here would re-arm on every hand-back and the
+# handler would then chase its own tail.
+proc rdw::_focus_canvas {} {
+    if {![rdw::have_tk]} { return {} }
+    set cv {}
+    catch {set cv [xschem get current_win_path]}
+    if {$cv eq {} || ![winfo exists $cv]} { return {} }
+    catch {focus -force $cv}
+    return $cv
+}
+
+# ---------------------------------------------------------------------------
+# THE HAND-BACK IS EVENT DRIVEN, BECAUSE A SYNCHRONOUS ONE CANNOT WIN THE RACE.
+#
+# ⚠ MEASURED, :99 under openbox, FIRST open of a session: immediately after
+# rdw::_focus_canvas has run, and again after `update idletasks`, the keyboard
+# is on the canvas; ONE `update` later it is on .rdw and it stays there.  The
+# window manager grants focus to a newly MAPPED toplevel on a MapNotify round
+# trip, which arrives after every synchronous call in the dump path has
+# returned.  On the SECOND open the same hand-back sticks, because a WM grants
+# map-time focus once.  So the first dump of a session -- and only the first --
+# used to leave a command mode whose Escape the keyboard could not reach.
+#
+# ⚠ AND THIS IS WHY B4's OWN ROW V8 PASSED WITH THE RACE LIVE: every row before
+# it had already mapped .rdw.  Ordering inside a suite is part of the fixture.
+#
+# THREE NARROWINGS, EACH ONE A CASE THAT MUST NOT BOUNCE:
+#   * ONE SHOT.  The flag is cleared by the first grant it catches, so the
+#     user's next click on the window keeps the keyboard.
+#   * ONLY WHEN A MAP IS ACTUALLY COMING.  A dump into an already-mapped window
+#     arms nothing: there is no grant to catch, and an armed flag left lying
+#     around is a bounce waiting to happen.
+#   * ONLY WHEN THE KEYBOARD LANDED ON THE TOPLEVEL ITSELF.  The decision is
+#     WHERE THE KEYBOARD ENDED UP -- `[focus]` -- and not which window named
+#     the event.  Issue 1306: deciding on `%W` alone shipped a hand-back that
+#     BOUNCED the user's deliberate click into the text pane, which is the one
+#     focus this window is entitled to keep and the whole reason the window
+#     exists (select a block, copy it into a design-review document).
+#
+#     ⚠ TWO REAL MECHANISMS PUT `.rdw` IN `%W`, AND ONLY ONE OF THEM IS THE
+#     BINDTAGS ONE.  Both measured:
+#       - INFERIOR crossing (focus already inside .rdw, moving to .rdw.p.t):
+#         Tk delivers FocusIn to .rdw.p and .rdw.p.t only, and this binding
+#         fires for them because the toplevel's name is in every child's
+#         BINDTAGS.  That is the mechanism the pre-fix comment named, and it
+#         is correct as far as it goes.
+#       - Crossing from OUTSIDE (.drw -> .rdw.p.t, the WM-less arm): X ALSO
+#         delivers a separate FocusIn to `.rdw` ITSELF, detail
+#         NotifyNonlinearVirtual, along the ANCESTOR chain.  `%W` is then
+#         literally `.rdw` for a click on the pane, so no `%W` test whatever
+#         can tell that click from the window manager's map-time grant.
+#     The discriminator that CAN is the one the WM itself supplies: the grant
+#     lands on the TOPLEVEL (`[focus]` eq `.rdw`, detail NotifyAncestor), while
+#     every deliberate landing lands on a CHILD (`[focus]` eq `.rdw.p.t`).
+#
+#     ⚠ AND THE OBVIOUS GLOB IS WRONG.  `[string match .rdw* [focus]]` -- the
+#     line issue 1306's own recommended fix prints -- matches the DESCENDANT
+#     `.rdw.p.t` exactly as readily as `.rdw`, so the click is still bounced.
+#     Measured 3/3 under a WM and 3/3 WM-less.  The test is EXACT EQUALITY
+#     against the toplevel, and row K16 of the window suite keeps `string
+#     match` out of this proc so nobody reintroduces it as a simplification.
+#
+# COST, STATED (rejected alternatives are in the receipt), AND IT IS TRUE FOR
+# THE FIRST TIME: a deliberate landing does NOT spend the one shot -- only a
+# real grant does -- so if a window manager maps this window and never focuses
+# it, the armed flag survives, and the user's next click on the window's FRAME
+# or on its BUTTON COLUMN (Tk buttons do not take focus on X, so `[focus]`
+# stays at `.rdw`) hands the keyboard back to the canvas exactly once.  A click
+# on the TEXT never does.  A timer disarm would remove that wart and
+# reintroduce the flakiness this fix exists to delete.
+proc rdw::_arm_focus_handback {} {
+    variable focus_pending
+    if {![rdw::have_tk]} { return 0 }
+    if {[winfo exists .rdw] && [winfo ismapped .rdw]} { return 0 }
+    set focus_pending 1
+    return 1
+}
+
+proc rdw::_focus_handback {{w {}}} {
+    variable focus_pending
+    if {![info exists focus_pending] || !$focus_pending} { return 0 }
+    ## %W is a cheap NECESSARY-but-not-sufficient first cut: it rejects the two
+    ## inferior child events without paying for a `focus` call.  It is NOT the
+    ## decision -- see the ancestor chain above.
+    if {$w ne {} && $w ne {.rdw}} { return 0 }
+    ## THE DECISION.  Strictly BELOW the focus_pending early return, because
+    ## --nogui has no `focus` command at all and this proc survives headless
+    ## only by returning before it gets here.
+    set land {} ; catch {set land [focus]}
+    if {$land ne {.rdw}} { return 0 }
+    set focus_pending 0
+    rdw::_focus_canvas
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# NOUN-VERB.  Open the window FIRST and dump second: rdw::render_pane no-ops
+# when .rdw.p.t does not exist, so a key that dumped without opening would put
+# the block in the store and NOTHING on screen.
+#
+# ⚠ AND THAT ORDER WAS UNFENCED UNTIL NOW.  Deleting the open reds no row that
+# reads ::rdw::blocks, which is every dump row in both suites -- the store is
+# filled either way and only the SCREEN is empty.  Row F2 of the keys suite
+# reads `.rdw.p.t get 1.0 end` for exactly that reason, and row K15 of the
+# window suite fences the order structurally on both arms.
+proc rdw::show {instname} {
+    rdw::_arm_focus_handback
+    rdw::open
+    set blk [rdw::dump $instname]
+    rdw::_focus_canvas
+    return $blk
+}
+
+# ---------------------------------------------------------------------------
+# KEY 4.  Trim the store to the most recent block.
+#
+# ⚠ WHICH END IS NEWEST IS ASKED OF rdw::_insert_index, THE SAME ACCESSOR
+# rdw::push BRANCHES ON.  A hard-coded `lrange $blocks 0 0` is right today and
+# silently keeps the OLDEST block the day the accessor is flipped -- exactly
+# the gap issue 1283 filed against row Q1b.  Invariant I1: one definition of
+# "newest", several consumers.
+#
+# It always NAMES what it did in the status line, empty store included: a
+# control that silently does nothing cannot be told from a broken one
+# (calc::inert's own reason, calculator.tcl:607).
+proc rdw::keep_latest {} {
+    variable blocks
+    set n [llength $blocks]
+    if {$n > 1} {
+        if {[rdw::_insert_index] eq {1.0}} {
+            set blocks [lrange $blocks 0 0]
+        } else {
+            set blocks [lrange $blocks end end]
+        }
+    }
+    rdw::render_pane
+    if {$n > 1} {
+        rdw::status "Refresh: kept the most recent dump and cleared [expr {$n - 1}] earlier one(s)."
+    } elseif {$n == 1} {
+        rdw::status {Refresh: the window already shows one dump - there was nothing to clear.}
+    } else {
+        rdw::status {Refresh: the window is already empty - there was nothing to clear.}
+    }
+    return {}
+}
+
+# ---------------------------------------------------------------------------
+# THE KEY ITSELF.  `kind` is annotation | summary | all | refresh.
+proc rdw::key {kind} {
+    if {$kind eq {refresh}} {
+        rdw::_arm_focus_handback
+        rdw::open
+        rdw::keep_latest
+        rdw::_focus_canvas
+        return {}
+    }
+    ## ⚠ THE SELECTION IS RESOLVED BEFORE ANY STATE MOVES, AND THAT ORDER IS
+    ## THE FIX.  B4 set the list identity first and refused second, so a
+    ## refused key still re-labelled the window and re-greyed the whole button
+    ## column with a list the user never got -- a visible state change reporting
+    ## a command that did not happen.  A refusal must change nothing: no list,
+    ## no buttons, no block, no selection.  Row K12 of the window suite holds
+    ## it on both arms.
+    lassign [rdw::_selected_instance] what name
+    if {$what eq {many}} {
+        return [rdw::_ciw {Results window: more than one object is selected - select exactly one device instance, or select nothing at all and press the key again to pick devices by clicking.}]
+    }
+    if {$what ne {one} && $what ne {none}} {
+        return [rdw::_ciw {Results window: the selected object is not a device instance - select one instance, or select nothing at all and press the key again to pick devices by clicking.}]
+    }
+    ## B3's ONE list-identity setter.  A second state variable here would be
+    ## the drift invariant I1 forbids, and the button greying reads this one.
+    ## An unknown list name is therefore reported by the setter that owns the
+    ## names, not by a second validator living here.
+    if {[catch {rdw::set_list $kind} e]} {
+        return [rdw::_ciw "Results window: $e"]
+    }
+    if {$what eq {one}} {
+        rdw::show $name
+    } else {
+        rdw::pick_start
+    }
+    return {}
+}
+
+# ---------------------------------------------------------------------------
+# THE PICK'S TWO NAMED READERS.  Both exist as named callees rather than
+# inline calls so that a sabotage variant has something to neutralise and so
+# that row K10 can fence WHICH verb the canvas is read through.
+
+# ⚠ THE CLICK BOX IS A CACHE, AND THREE MEASURED OPERATIONS MOVE IT WITHOUT
+# REFRESHING IT.  find_closest_element() gates candidates on the CACHED
+# inst[i].x1..y2 (findnet.c:461) and nothing recomputes that cache except a
+# symbol_bbox() call.  Item A6 closed every symbol_bbox() door from inside the
+# callee (select.c:723), which does not help when nothing calls it:
+#   * issue 1266 -- `xschem annotate_op` and `xschem raw clear` move the gate's
+#     answer while calling symbol_bbox() NOT AT ALL.  Driven both directions: a
+#     click lands on blank canvas one way and misses visible text the other.
+#   * issue 1260 -- `xschem setprop instance` and `xschem move_instance
+#     ... nodraw` still write the click box from a stale gate.
+#   * item A3 -- with the declutter on, a device's with-text box SHRINKS to
+#     what is still drawn, so a fixture written against pre-A3 coordinates
+#     misses.
+# So the gate is refreshed before EVERY pick, not once at mode entry: the mode
+# seizes Button-1, the lone release, Escape and the Button-1 drag and nothing
+# else, so 6 / Ctrl-6 / Ctrl-Alt-6 and any annotate_op still move the gate
+# WHILE the mode is live, and a first-pick-only refresh is stale by the second
+# click.  Rows P1 and P2 are those two cases.
+proc rdw::_refresh_pick_gate {} {
+    catch {xschem update_all_sym_bboxes}
+    return {}
+}
+
+# THE READ-ONLY COORDINATE PICK.  Answers an instance name or the empty string
+# and changes nothing at all -- no selection, no highlight, no modify flag.
+proc rdw::_pick_at {x y} {
+    set r {}
+    catch {set r [xschem instance_at $x $y]}
+    return $r
+}
+
+# ---------------------------------------------------------------------------
+# THE SEIZE.  The shape is ase::ui::select_on_design's (ase_window.tcl:1877,
+# the latch at :1897-1899):
+# latch the predecessors, take Button-1 and Escape, take the lone RELEASE too
+# (the press it pairs with was swallowed, so it must not reach C on its own),
+# and give the canvas keyboard focus or a real ESC never arrives.
+#
+# ⚠ IT TAKES A FOURTH SEQUENCE THAT ASE'S DOES NOT, AND THAT IS ISSUE 1304.
+# Copying the three-sequence shape leaves C's rubber band with a start and no
+# end: a motion with Button1Mask calls select_rect(START,1) + unselect_all(1)
+# and sets STARTSELECT (callback.c:7250-7260), and the ONLY thing that
+# terminates it is ButtonRelease's select_rect(...,END,-1) (callback.c:9748) --
+# which the seized release eats.  Measured on the shipped cmos_inv.sch, an
+# 8-step drag from empty canvas with the three-sequence seize live: ui_state
+# 24, lastsel 20, twenty objects in `xschem selection`, and all three unchanged
+# after the release AND after a real Escape.  The same gesture with no mode
+# armed terminates at ui_state 0 with nothing selected.  That is a direct
+# violation of the user's own requirement -- "This is a command mode, so
+# clicking will not change selected set" -- reached by a one-pixel drift of the
+# hand.  So <B1-Motion> is seized too.
+#
+# ⚠ IT BLINDS C ONLY WHILE BUTTON 1 IS HELD.  C's motion handler also drives
+# the crosshair, the hover highlight, the fly-lines and the status line
+# (callback.c:7169); those all run on plain <Motion>, which is untouched, so
+# the mode still tracks the pointer.  Row V2b's hover leg is that measurement.
+# The seize is on the design canvas only and never on `.` -- xschem.tcl's
+# tab-swap <B1-Motion> starts on `.tabs.x*` and is unreachable from here.
+#
+# ⚠ Measured on this tree: `.drw` is a FRAME whose shipped bindings are the
+# GENERIC <Button> and <Key>, so all four predecessors are the EMPTY STRING.
+# `bind w seq {}` DESTROYS a binding, which is what makes the restore
+# byte-identical -- a restore that writes an empty script back would leave an
+# empty-but-PRESENT binding that passes a string comparison and fails the
+# sequence-list one.  Row V6 holds both legs, and it reads the <B1-Motion> slot
+# while the mode is still LIVE, because after the release it is back at its
+# predecessor whether the seize ever took it or not.
+proc rdw::_pick_seize {cv} {
+    variable pick
+    set pick(canvas)     $cv
+    set pick(prevpress)  [bind $cv <ButtonPress-1>]
+    set pick(prevrel)    [bind $cv <ButtonRelease-1>]
+    set pick(prevesc)    [bind $cv <Key-Escape>]
+    set pick(prevmotion) [bind $cv <B1-Motion>]
+    bind $cv <ButtonPress-1>   "[list rdw::pick_click]; break"
+    bind $cv <ButtonRelease-1> {break}
+    bind $cv <Key-Escape>      "[list rdw::pick_end]; break"
+    bind $cv <B1-Motion>       {break}
+    catch {focus -force $cv}
+    return $cv
+}
+
+# Arm the mode.  1 when it is armed (or already was), 0 when it could not be.
+#
+# ⚠ AN ALREADY-LIVE MODE RE-ARMS IN PLACE AND DOES NOT RELEASE AND RETAKE.
+# ASE's select_on_design self-serialises by ENDING the previous mode first
+# (ase_window.tcl:1879); copying that here would drop the pick every time the
+# user pressed a different list key, releasing and retaking the same seize for
+# nothing.  ESC is the only exit -- that is what "this is a command mode"
+# means, and it is the user's own phrase.
+#
+# ⚠ THAT ARGUMENT IS RIGHT FOR A LIVE MODE AND WAS WRONG FOR A SUSPENDED ONE.
+# ISSUE 1305, MEASURED: a descend suspends the mode (cmdmode::suspend_all ->
+# rdw::pick_suspend, which releases the canvas and sets pick(suspended)); the
+# user then presses 1-4 during hi_descend_pick_arm's event-loop wait; pick_start
+# falls through the guard above -- correctly, the mode is not live -- and seizes
+# the canvas again WITHOUT clearing the flag.  The later cmdmode::resume_all
+# then calls rdw::pick_resume, which seizes an ALREADY-SEIZED canvas and latches
+# the seize's OWN scripts as the predecessors.  ESC restores them.  Measured
+# after ESC: P='rdw::pick_click; break' R='break' E='rdw::pick_end; break'
+# M='break' -- a PERMANENT seize, unrecoverable inside the session, in which
+# every click dumps and nothing can be selected again.  That is the exact
+# inverse of the user's ruling that a command mode must not change the selected
+# set.
+#
+# THE FIX is the one cmdmode ruling D6 already describes -- "exactly the first
+# one to arrive wins" (cmdmode.tcl:36-42).  pick_start arriving first
+# legitimately wins the latch, so clearing the suspend is PART OF TAKING THE
+# CANVAS BACK: the later resume finds nothing suspended and pick_resume's own
+# guard returns 0.  The unset sits BELOW the canvas guard on purpose -- a re-arm
+# that could not take a canvas must leave the suspend intact for the real
+# resume -- and it is the same idiom pick_resume uses twelve lines further down,
+# and the one ase::ui::sod_resume uses (ase_window.tcl:2047).
+#
+# COST, STATED: this re-seizes on the canvas CURRENT AT KEY-PRESS TIME, which
+# during a descend's wait is still the PARENT.  Because resume_all's
+# pick_resume now returns 0, a descend that lands on a DIFFERENT canvas (new
+# window, new tab) leaves the mode live on the OLD one and never rehomes it.
+# The rejected alternative that preserved the rehome -- have the suspended arm
+# return 1 without seizing -- makes a 1-4 press during the wait silently do
+# nothing, which contradicts ruling D-2's premise that those keys are always
+# live.  The un-rehomed residue is recorded on issue 1307, whose own subject is
+# a command-mode seize arriving on a canvas nobody armed it on.
+proc rdw::pick_start {} {
+    variable pick
+    if {![rdw::have_tk]} { return 0 }
+    if {[info exists pick(canvas)] && ![info exists pick(suspended)]} { return 1 }
+    set cv {}
+    catch {set cv [xschem get current_win_path]}
+    if {$cv eq {} || ![winfo exists $cv]} { return 0 }
+    ## ISSUE 1305: clear the outstanding suspend as part of taking the canvas
+    ## back, so resume_all finds nothing to resume.  BELOW the guard above.
+    unset -nocomplain pick(suspended)
+    rdw::_pick_seize $cv
+    rdw::_ciw {Results window: click a device to show its operating-point columns; ESC ends. Clicking does not change the selection.}
+    return 1
+}
+
+# ONE CLICK.  Coordinates default to the UN-SNAPPED mouse position --
+# `xschem get mousex` / `mousey`, scheduler.c:5047 and :5051 -- which is the
+# point the cursor is actually on and the pair every C click path reads.
+# Defaulting rather than requiring them is what lets a suite drive this proc
+# with exact coordinates AND through real events; issue 1303's own acceptance
+# is that the DEFAULT path is the one exercised, because that is where the
+# defect lived.
+#
+# ⚠ ISSUE 1303, MEASURED, AND WHY THERE IS NO FALLBACK TO THE GRID PAIR.
+# Resolving the click from the grid-snapped position instead names a DIFFERENT
+# DEVICE.  On the shipped xschem_library/examples/cmos_inv.sch, one pixel
+# apart:
+#       175.175 -199.612  ->  M1     the point under the cursor
+#       180     -200      ->  R1     that same point snapped to the grid
+# Lattice sweep over every instance bbox on that sheet: 23725 points, 1513
+# (6.4%) miss the device entirely and 129 (0.5%) resolve to a different device
+# -- silently, with nothing on screen saying which happened.  That is invariant
+# I3's plausible-wrong-answer failure one object out: a results window headed
+# R1 for a click on M1.  So when the un-snapped readers cannot be read this
+# proc REFUSES through the one CIW channel and names what it could not read.
+# It does NOT fall back to the grid position, because that fallback IS the
+# defect, one binary mismatch away.  The grid position remains the right pair
+# for PLACING geometry and is used nowhere in this file.
+#
+# ⚠ AND THE PAIR READ HERE IS THE LAST MOTION'S POINT, NOT THE PRESS'S.  The
+# seize `break`s the press before C sees it, and C updates both mouse pairs on
+# every event it does see (callback.c:10145).  A real hand always moves the
+# pointer onto the device before pressing, so it reads the right point; a
+# caller that presses with no preceding motion reads a stale one.  The keys
+# suite generates the motion first for exactly this reason.
+#
+# A MISS IS NOT THE END OF THE COMMAND.  Empty canvas and a wire are the same
+# answer here (the reader resolves instances only), and both keep the mode
+# live: a mode that ended on a mis-click would be unusable.
+proc rdw::pick_click {{x {}} {y {}}} {
+    if {$x eq {}} { catch {set x [xschem get mousex]} }
+    if {$y eq {}} { catch {set y [xschem get mousey]} }
+    if {$x eq {} || $y eq {}} {
+        return [rdw::_ciw {Results window: this build cannot report the un-snapped mouse position, so a click cannot be resolved to the device under the cursor - press ESC to leave.}]
+    }
+    rdw::_refresh_pick_gate
+    set inst [rdw::_pick_at $x $y]
+    if {[string trim $inst] eq {}} {
+        return [rdw::_ciw {Results window: no device under the click - click on a device body, or press ESC to leave.}]
+    }
+    rdw::show $inst
+    return $inst
+}
+
+# Hand all FOUR bindings back, verbatim and under catch (the canvas may be
+# dead).  ONE proc shared by the end path and the suspend path, exactly as
+# ase::ui::sod_release (ase_window.tcl:1948) is, so the two cannot drift --
+# which is the whole reason issue 1304's fourth sequence is added here and in
+# rdw::_pick_seize and nowhere else.  Row K14 fences the two against each
+# other.  Returns 1 only if it released a live mode.
+proc rdw::pick_release {} {
+    variable pick
+    if {![info exists pick(canvas)]} { return 0 }
+    set cv $pick(canvas)
+    catch {bind $cv <ButtonPress-1>   $pick(prevpress)}
+    catch {bind $cv <ButtonRelease-1> $pick(prevrel)}
+    catch {bind $cv <Key-Escape>      $pick(prevesc)}
+    catch {bind $cv <B1-Motion>       $pick(prevmotion)}
+    return 1
+}
+
+# Leave the mode.  Safe to call when nothing is live, on every arm.
+proc rdw::pick_end {} {
+    variable pick
+    set r [rdw::pick_release]
+    array unset pick
+    return $r
+}
+
+# ---------------------------------------------------------------------------
+# THE SUSPEND/RESUME CONTRACT (src/cmdmode.tcl, issue 0201).  A descend
+# mid-mode must pause the seize and put it back on the canvas it LANDS on.
+#
+# ⚠ THE SUSPEND ARM NOW RUNS ON EVERY DESCEND IN EVERY PROFILE FOREVER, so
+# "0 and no damage when there is nothing to release" is a permanent obligation,
+# not a convenience.
+proc rdw::pick_suspend {} {
+    variable pick
+    if {![info exists pick(canvas)]} { return 0 }
+    if {[info exists pick(suspended)]} { return 0 }
+    if {![rdw::pick_release]} { return 0 }
+    set pick(suspended) 1
+    return 1
+}
+
+# ⚠ ALL FOUR PREDECESSORS ARE RE-LATCHED FROM THE CANVAS WE ARE LANDING ON,
+# not carried over from the one the mode was seized on: a new window or tab has
+# its own binding set (set_bindings + clone_canvas_bindings), and the
+# predecessors latched on the parent do not describe it.
+# ase::ui::sod_resume (ase_window.tcl:2039-2046) records the same, and it is
+# the load-bearing half of ruling D2 of issue 0201.  It re-latches by calling
+# rdw::_pick_seize, so the count follows that proc and cannot drift from it.
+proc rdw::pick_resume {{canvas {}}} {
+    variable pick
+    if {![info exists pick(suspended)]} { return 0 }
+    if {$canvas eq {} || ![winfo exists $canvas]} {
+        set canvas {}
+        catch {set canvas $pick(canvas)}
+    }
+    if {$canvas eq {} || ![winfo exists $canvas]} {
+        ## Nowhere left to come back to -- the window was closed while the mode
+        ## was paused.  Drop it rather than leave an unreachable record behind.
+        array unset pick
+        return 0
+    }
+    unset -nocomplain pick(suspended)
+    rdw::_pick_seize $canvas
+    return 1
+}
+
+# ⚠ AT SOURCE TIME, AND THAT IS SAFE.  cmdmode.tcl is pure Tcl and is sourced
+# at xschem.tcl:16760, BEFORE this file at :16790; ase_window.tcl:2055 already
+# registers the same way.  Nothing here touches Tk, so --nogui is unaffected --
+# and the registration being source-time is what lets the headless arm prove it
+# happened at all.
+#
+# ⚠ BUT IT IS GUARDED, AND NOT FOR TIDINESS.  Row N2 of this file's own suite
+# sources rdw.tcl into a BARE `interp create` slave -- an interpreter with
+# neither `winfo` nor `xschem` -- as the non-brittle proof that nothing here
+# runs at source time.  That slave has no cmdmode either, so an unguarded
+# `cmdmode::register` would fail the very row that polices this file's --nogui
+# survival.  The guard is therefore a statement about WHERE this file can be
+# loaded, not a silent fallback: it returns 0 when the contract is absent, and
+# the caller can say so.  Inside xschem the contract is always there, which is
+# what the headless arm of row K9 measures.
+proc rdw::_register_cmdmode {} {
+    if {![llength [info commands ::cmdmode::register]]} { return 0 }
+    ::cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume
+    return 1
+}
+rdw::_register_cmdmode

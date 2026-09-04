@@ -2039,17 +2039,86 @@ truncation, and `_named`'s `string trim` vs the seam's exact-empty).
 
 ---
 
-## B4 — the keys and the two grammars  ⛔ **NOT LANDED. TWO ATTEMPTS, BOTH REFUTED AND REVERTED (status F): B4 2026-09-04, B4-2 2026-09-04.**  *(needs B3; still blocks B5)*
+## B4 — the keys and the two grammars  ✅ **LANDED as B4-3, status E, 2026-09-04.**  *(needed B3; unblocks B5)*
+### Three attempts: B4 [F], B4-2 [F], **B4-3 [E] — landed.**
 
-> **THE WORK IS PRESERVED AND MUST NOT BE RETYPED — USE THE B4-2 PATCH, NOT B4's.**
-> `doc/claude/op_param_batch/B4-2_working_tree_REVERTED.patch` (md5
-> `31c9419d8ac0713155ddc5a1ec77ec9a`, 2,335 lines, four files) **applies clean
-> to `0ce85dda` in BOTH directions** — verified with `git apply --check` after
-> the revert. It is **B4's patch plus B4-2's five fixes**, so it *supersedes*
-> `B4_working_tree_REVERTED.patch`, which is kept only as history.
-> **Item B4-3's job is: apply → fix the THREE things in the B4-2 table below →
-> re-verify.** The Do/Accept cells further down are still binding; they were
-> never the problem.
+> **✅ THE FEATURE IS IN THE TREE.** B4-3 applied
+> `doc/claude/op_param_batch/B4-2_working_tree_REVERTED.patch` whole and added
+> **exactly three lines of code**, both fixes one-liners in `src/rdw.tcl`:
+> `set land {} ; catch {set land [focus]}` + `if {$land ne {.rdw}} { return 0 }`
+> at `:1215-1216` (issue **1306**) and `unset -nocomplain pick(suspended)` at
+> `:1449` (issue **1305**, option a1). Pure Tcl — **no build, no `./configure`**;
+> `grep -c rdw.tcl src/Makefile` = 2 before and after.
+> Suites: window **58 → 76** `--nogui` / **68 → 86** on `:99`, keys suite **30**
+> on `:99` (skips headless). Receipt:
+> `doc/claude/op_param_batch/receipts/B4-3.md`.
+
+### ⚠ WHAT B4-3 LEARNED THAT BINDS B5 AND EVERY LATER CREW
+
+1. **⛔ ISSUE 1306's OWN "Recommended fix (option a)" CODE LINE IS REFUTED.**
+   `if {[winfo exists .rdw] && [string match .rdw* [focus]]} { ... }` — printed
+   in the issue *and* in B4-3's own brief — **does not fix the defect**: `.rdw*`
+   matches the descendant `.rdw.p.t` as readily as the toplevel, so the click is
+   still bounced. Measured by **three independent agents on both display arms**
+   (`DET-B ... verdict=BOUNCED  [CAND-A ... 3/3 BOTH arms]`), and re-run as
+   sabotage `SB-1306-BRIEFLINE` against the shipped tree → `RED:F3 RED:F4
+   RED:K16`. **The test is EXACT EQUALITY against the toplevel.** The
+   discriminator is the one the WM supplies: the map-time grant lands on the
+   **toplevel**, every deliberate landing lands on a **child**. Row `K16` keeps
+   `string match` out of that proc permanently. **The lesson is general: a
+   recommended fix in an issue file is a hypothesis, not a measurement.**
+2. **⚠ A `[focus]`-DEPENDENT FIXTURE IS NON-DETERMINISTIC ON BOTH ARMS.** The
+   as-written 1306 repro went 5/5 green then 5/5 red on the **same unmodified
+   tree** twenty minutes apart on WM-less Xvfb, and is **vacuous on `:99`**
+   because the WM's grant has already spent the one-shot. Pointer parking does
+   not cure it (5,5 and 960,540 both tried). **The cure is to assert the state
+   you inherit and then RE-ARM IT BY HAND** (`set ::rdw::focus_pending 1`) before
+   the gesture. Deterministic on both arms after that: BOUNCED 5/5 unfixed, KEPT
+   4/4 fixed. This is B4's `V8` failure in a third costume — *ordering inside a
+   suite is part of the fixture*, and so is any flag the environment might spend
+   for you.
+3. **⚠ A STRUCTURAL ROW THAT MATCHES A SEQUENCE **NAME** PROVES NOTHING.** Old
+   row `K14` stayed green under `bind $cv <B1-Motion> {}` — a bind that
+   **destroys** rather than seizes — because `rw_has` is a substring test.
+   Hardened `K14` now asserts, per sequence: a **non-empty script**, a
+   write-back **from the stored predecessor**, and the seize/release **pairing**.
+   The pairing leg is load-bearing, not decoration: all four of `.drw`'s
+   predecessors are the **empty string**, so `SB-K14-CROSSED` (swap the
+   Escape/B1-Motion write-backs) leaves the whole behavioural keys suite at
+   `ALL PASS (30)` and only `K14` sees it. **Assert content, never a mention.**
+4. **⚠ THE KEYS SUITE IS SOLO-RUN EVIDENCE, AND SO IS THE TREE.** B4-3's own
+   Verify-A and Verify-C both recorded ~25% spurious reds that turned out to be
+   **another crew agent running sabotage directly on `src/rdw.tcl` in the shared
+   working tree**. Hard rule 3 exists for this. **Take a before/after `md5sum`
+   of every tracked file you measure, per run**, and discard any run whose
+   signature moved. Both agents did, and both got zero flake once isolated.
+5. **⚠ TWO NEW ISSUES FILED, both measured, neither fixed, both affecting B5's
+   ground.** **1308** — the Results window now *holds* the keyboard (correct,
+   and the point of 1306) and **nothing on it ends the command mode**: `ESC` and
+   a bare `2` are bound on the **canvas**, `.rdw` has neither. **1309** — a list
+   key pressed during a suspended descend leaves the **descend** unterminable,
+   because the seize `break`s both of `hi_descend_pick_arm`'s terminals; after
+   it, `cmdmode::suspend_all` returns 0 forever, so **no later descend suspends
+   any command mode**. Both are **identical on the pre-fix arm** — B4-3 neither
+   causes nor fixes them. **B5 adds buttons to this window: if any of them takes
+   focus, read 1308 first.**
+6. **⚠ 1305's FILED TRANSCRIPT IS NOT USER-REACHABLE AS FILED.** The double
+   seize needs `cmdmode::resume_all` to run while the mode is live, and every
+   real terminal is eaten by the seize itself (that is issue 1309). Row `D3`
+   calls `resume_all` directly and says so. **The fix is defence-in-depth, not
+   the unrecoverable session-wide seize the issue describes** — do not
+   over-credit it, and do not assume the class is closed.
+7. **The `%W` first cut in `rdw::_focus_handback` is unfenced dead weight.**
+   Deleting it on a copy left both suites fully green. Harmless (the landing
+   test subsumes it), but `K15` fences only that the binding *passes* `%W`, not
+   that anything consults it.
+
+### The B4-2 table below is now HISTORY — kept because two of its three rows are still live
+
+`1306` and `1305` are **fixed** (see above). **`1307` is still open** and gained
+a second half from B4-3: option a1's stated cost is that a descend landing on a
+**different** canvas never rehomes the mode. Recorded on 1307, **no new number
+minted**.
 
 ### B4-2 (2026-09-04) — it closed all five of B4's holes and was refuted on three NEW ones
 
@@ -2240,24 +2309,40 @@ line.
 
 ## B5 — the button column and the two scope dialogs  *(needs B2, B3, and see B2a)*
 
-> **⚠ FROM B4 AND B4-2 (2026-09-04). THE KEYS ARE STILL NOT IN THE TREE, AFTER
-> TWO ATTEMPTS.** Both were refuted and reverted; `src/rdw.tcl` and
-> `src/cadence_style_rc` are byte-identical to `735ea26e` again (`0ce85dda`
-> touched only `scheduler.c` and two test rows). The whole feature is preserved
-> and re-appliable in `B4-2_working_tree_REVERTED.patch`; **B5 must not retype
-> any of it and must not depend on it landing.** So **nothing yet puts a block
-> in the window** and the
-> `Tools > Results Display Window` entry still opens an empty pane. If you need
-> a populated window to drive your buttons, either apply
-> `doc/claude/op_param_batch/B4_working_tree_REVERTED.patch` (fixing its five
-> holes) or call `rdw::dump <instname>` directly, which **is** in the tree and
-> **is** the whole round trip.
+> **✅ SUPERSEDED 2026-09-04 — B4 LANDED as B4-3. The keys ARE in the tree.**
+> Bare `1`/`2`/`3`/`4` on the canvas in the cadence profile (ruling **D-2**),
+> both grammars, the verb-noun command mode, and the focus hand-back. A key now
+> puts a block in the window, so you can drive your buttons against a populated
+> pane. **Do not retype any of it and do not apply either preserved patch — they
+> are history.** `rdw::dump <instname>` remains the seam's only door and still
+> fills `sim` **and** `simtype` itself (issue 1298); build a ctx by hand and you
+> lose ruling **DD-5**'s analysis sentence.
 >
-> **AND THE ONE THAT REACHES YOUR OWN CODE:** issue **1303** — `xschem get
-> mousex` does not exist, the only Tcl mouse pair is **snapped**, and a pick
-> built on it can answer for a device the user did not click (measured: one
-> pixel, `M1` vs `R1`). Any dialog of yours that resolves a canvas position
-> inherits this.
+> **⚠ FOUR THINGS FROM B4-3 THAT REACH YOUR OWN CODE:**
+>
+> * **Issue 1308 (new, filed not fixed): the window now HOLDS the keyboard and
+>   nothing on it ENDS the command mode.** `ESC` and the four list keys are
+>   bound on the **canvas**; `.rdw` has none of them. **You are adding buttons
+>   to this window.** Tk buttons do not take focus on X, which is the only
+>   reason the button column currently hands the keyboard back — an entry, a
+>   listbox or a `-takefocus 1` button of yours **changes that**, and it changes
+>   it into 1308's stuck state. Read the issue before you place a focusable
+>   widget.
+> * **Issue 1309 (new, filed not fixed):** a list key during a suspended descend
+>   leaves the descend unterminable and `cmdmode::suspend_all` stuck at 0
+>   thereafter. If any dialog of yours suspends a command mode, it inherits this.
+> * **Issue 1303 is FIXED and consumed** — `xschem get mousex` / `mousey`
+>   (`scheduler.c:5047`, `:5051`) are the **unsnapped** pair and are what
+>   `rdw::pick_click` defaults from, with **no** grid fallback (the fallback
+>   *is* the defect: measured `175.175 -199.612 → M1` vs `180 -200 → R1`, 0.5%
+>   of a whole-sheet sweep naming a different device silently). **Any dialog of
+>   yours that resolves a canvas position must read the same pair.** Row `K13`
+>   reds if the snapped spelling reappears anywhere, code or comment.
+> * **`xschem instance_at`** (`scheduler.c:6972` — *not* `6919`, the older
+>   anchor is stale by 53 lines) is the read-only pick and selects nothing.
+>   **Never `select_at`.** And call `xschem update_all_sym_bboxes` before a
+>   pick: `findnet.c:461` gates on the **cached** instance bbox (issues 1266,
+>   1260). Rows `P1`/`P2` red if that refresh is removed.
 
 > **⚠ FROM B2d (2026-09-04), AND ONE BLOCKER IS GONE.** B2a's window work
 > **landed** — issues 1284, 1282 (both parts) and 1283 are fixed, suite 52/62.
