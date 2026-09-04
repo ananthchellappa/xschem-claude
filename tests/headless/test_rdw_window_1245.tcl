@@ -1753,6 +1753,53 @@ check {W5 the section leaves nothing behind: .rdw and the control toplevel are b
 }
 
 # ============================================================================
+# SECTION N — 1298 AND 1297: THE DOOR OWNS THE ANALYSIS, AND THE ARTICLE AGREES
+# ============================================================================
+# 1298. `rdw::dump_devpath` is THE SEAM'S ONLY DOOR and the entry point items B4
+# and B5 call with contexts they build themselves. Ruling DD-5's "name the
+# analysis" sentence was put into the ctx by `rdw::dump` ALONE, so any other
+# caller got a DC sweep rendered as an operating point again -- the defect 1282
+# was filed and fixed for, walking straight back in through the door the fix did
+# not cover. The door now fills `simtype` in the same way it already fills
+# `sim`, so DD-5 is a property of the SEAM rather than of one caller.
+#
+# ⚠ AN EXPLICIT `simtype` IN THE CTX STILL WINS, and `{}` still means "say
+# nothing". Both matter: the suite hand-builds contexts, and `_analysis_line`
+# deliberately stays silent for `{}` because a failed `xschem raw sim_type` and
+# a hand-built ctx produce the same empty string -- a sentence that fired on
+# those would be indistinguishable from an honest one.
+#
+# 1297. The analysis kind comes from the simulator, so `"a $sty analysis"` read
+# **"a op analysis"** for the one kind this whole window exists to talk about.
+# RED before the fix: ND1, ND3.
+
+## ⚠ THE CONTEXT IS BUILT WITHOUT `simtype`, WHICH IS THE WHOLE ROW. Every
+## other context in this file goes through `rw_ctx`, which supplies one -- so
+## every existing row exercises the caller that already gets it right, and
+## none of them could have seen 1298. Items B4 and B5 build their own.
+rw_annot $R_DC
+set ND_CTX [dict create header {M1:/xdut/xbg} devpath {@m.x1.m1} instname M1 \
+                        sim ngspice]
+set ND_T [rw_dumptext {@m.x1.m1} $ND_CTX]
+check {ND1 the DOOR names the analysis, so a caller that builds its own context cannot lose ruling DD-5} \
+  [expr {[string first [RW_ANALYSIS dc] $ND_T] >= 0 ? 1 : 0}] 1
+
+## An explicit simtype must still win over the door's own read, or every
+## hand-built context in this file changes meaning.
+set ND_T2 [rw_dumptext {@m.x1.m1} [rw_ctx {M1:/xdut/xbg} {@m.x1.m1} op M1]]
+check {ND2 an EXPLICIT simtype in the context still wins over the door's own read} \
+  [expr {[string first [RW_ANALYSIS dc] $ND_T2] >= 0 ? 1 : 0}] 0
+
+check {ND3 the article agrees with the analysis kind, so the one word this window exists for is not "a op"} \
+  [list [rdw::_article op] [rdw::_article ac] [rdw::_article dc] \
+        [rdw::_article tran] [rdw::_article noise]] \
+  {an an a a a}
+
+check {ND4 and the not_op refusal uses it, so the sentence reads "an op analysis" and never "a op analysis"} \
+  [expr {[string match {*a op *} [rdw::format_answer [rw_ansd {} {} {} 0 not_op] \
+            [dict create header H devpath D instname M1 simtype op]]] ? 1 : 0}] 0
+
+# ============================================================================
 # SECTION S — THE STRUCTURAL FENCES, AND HYGIENE
 # ============================================================================
 # S1 is the seam's whole point stated as a fence: "nothing above it changes

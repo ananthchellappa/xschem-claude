@@ -1,5 +1,19 @@
 # 1297 — the `not_op` refusal says "a op analysis", and the article never agrees
 
+✅ **FIXED 2026-09-04 by the DRIVER**, immediately after B2d landed. B2d filed
+it rather than widening its own three-issue scope, which was correct.
+
+`rdw::_article {word}` returns `an` before a vowel and `a` otherwise, and the
+`not_op` sentence uses it. ⚠ **Vowel-initial is the test, not a list of known
+analyses** — the kinds are whatever the raw's `Plotname` mapped to, so a list
+would be wrong for the first kind nobody anticipated. It is right for `op`,
+`ac`, `dc`, `tran`, `noise`, `sp` and `sens`, which is every kind this tree
+produces. Rows **ND3** and **ND4**; sabotage (always returning `a`) reds both.
+
+---
+
+*Original filing follows.*
+
 **Status:** FILED, NOT FIXED. Found by item **B2d** while reproducing issue 1284's
 legal minimal refusals; it is outside B2d's three-issue scope and was deliberately
 left alone rather than smuggled in.

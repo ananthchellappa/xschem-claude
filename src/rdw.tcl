@@ -221,6 +221,17 @@ proc rdw::_absent_line {} {
 # honest one.  Fired only in state `ok` with a non-empty union -- on the fifth
 # silence it would put "these numbers come from..." over a block with no
 # numbers.
+## `a` or `an`, for a word that came from the simulator (issue 1297).
+## ⚠ VOWEL-INITIAL IS THE TEST, NOT A LIST OF KNOWN ANALYSES: the kinds are
+## whatever the raw's `Plotname` mapped to, so a list would be wrong for the
+## first kind nobody anticipated. It is not perfect English for every possible
+## token, and it does not have to be -- it is right for `op`, `ac`, `dc`,
+## `tran`, `noise`, `sp` and `sens`, which is every kind this tree produces.
+proc rdw::_article {word} {
+    if {[regexp -nocase {^[aeiou]} $word]} { return "an" }
+    return "a"
+}
+
 proc rdw::_analysis_line {ctx} {
     set sty {}
     catch {set sty [dict get $ctx simtype]}
@@ -429,7 +440,10 @@ proc rdw::_state_sentence {state ctx} {
             return {Operating-point results are loaded but nothing has been published from them yet. Annotate them first (Waves > Op Annotate, or key 6), then ask again.}
         }
         not_op {
-            return "The loaded results are a $sty analysis, not an operating point. Nothing was read from them: load the operating-point results and ask again. (An OP+TRAN run writes both to one file, and reading the transient makes it the current one.)"
+            ## ⚠ `[rdw::_article]`, NOT A BARE `a` -- ISSUE 1297. The analysis
+            ## kind comes from the simulator, so the sentence read "a op
+            ## analysis" for the one kind this window exists to talk about.
+            return "The loaded results are [rdw::_article $sty] $sty analysis, not an operating point. Nothing was read from them: load the operating-point results and ask again. (An OP+TRAN run writes both to one file, and reading the transient makes it the current one.)"
         }
         no_devpath {
             return "$inst has no operating-point descriptor, so there is no device path to ask about. A PDK registers one with op_annot::register."
@@ -708,6 +722,19 @@ proc rdw::dump_devpath {devpath ctx} {
     ## The renderer's malformed-answer sentence names the backend, so the
     ## backend has to be in the context it is handed (issue 1284).
     catch {dict set ctx sim $s}
+    ## ⚠ AND SO DOES THE ANALYSIS KIND -- ISSUE 1298. This proc is THE SEAM'S
+    ## ONLY DOOR, and items B4 and B5 call it with contexts they build
+    ## themselves. Ruling DD-5's "name the analysis" sentence was a property of
+    ## rdw::dump alone, so any other caller silently got a DC sweep rendered as
+    ## an operating point -- the defect issue 1282 was filed and fixed for,
+    ## coming straight back through the door the fix did not cover.
+    ## A ctx that already carries an explicit `simtype` still wins, so the
+    ## suite's hand-built contexts are unaffected, and `{}` stays meaningful:
+    ## a failed read and a hand-built ctx both produce it, and _analysis_line
+    ## deliberately says nothing for `{}` rather than guess.
+    if {![dict exists $ctx simtype]} {
+        catch {dict set ctx simtype [xschem raw sim_type]}
+    }
     if {$s eq {}} {
         set blk [rdw::_refusal $ctx \
             {No simulator backend is registered, so there is nothing to ask for this device.}]

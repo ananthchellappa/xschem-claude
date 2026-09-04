@@ -368,3 +368,42 @@ and the user wins on the prose.
 whatever xschem first created it, which may describe an older precedence rule.
 That is why the version line matters: it is the field that tells a reader —
 human or machine — which rules the file's rows are written under.
+
+### DD-5 CORRECTED — the driver's specimen sentence was refuted by a measurement
+
+Item B2d implemented DD-5 and **declined the specimen wording the driver put in
+the ruling**, on a measurement. It was right to.
+
+DD-5's specimen said the numbers *"come from the `$sty` analysis at its first
+point"*. But `src/save.c:1073` and `:1120` both carry
+
+```c
+if(raw->npoints[...] > 1 && !strcmp(sim_type, "op")) sim_type = "dc";
+```
+
+so **the reader renames a multi-point `Operating Point` plot to `dc`**. Measured
+on this binary: a three-point `Plotname: Operating Point` raw answers
+`xschem raw sim_type` = `dc`. The specimen would therefore have told a user who
+ran *nothing but an operating point* that they had run a sweep — a new false
+statement, introduced by the sentence written to remove one.
+
+**The shipped wording, accepted as written:**
+
+> These numbers come from the first point of results xschem reports as a `dc`
+> analysis, not as a standalone operating point. A `dc` sweep's first point is
+> one sweep step, and xschem also reports a multi-point operating point as `dc`.
+
+It is longer than the specimen and that is the price of being true: it names
+what the loaded results **call themselves** rather than what the user ran,
+because the window cannot tell those apart and must not pretend to.
+
+**And the measurement independently justifies DD-5's rejection of option (c).**
+Refusing `dc` outright would refuse a *real* operating point — the three-point
+one. `test_op_annot`'s row T26 is exactly that case and must keep publishing, so
+the C is not moving either. Option (c) was wrong on its own terms, not merely
+forbidden by the ruling.
+
+*Recorded as a `look` debt: the sentence is on screen and the user should read
+it.* The driver considered tightening it and did not, because every shorter
+phrasing tried either dropped the multi-point caveat — which is the half that
+makes it true — or re-asserted what the user ran.

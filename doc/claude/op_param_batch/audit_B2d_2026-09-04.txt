@@ -440,19 +440,11 @@ test_wireedit_56_fluid_pass_harness_d6.tcl: RESULT: ALL PASS
 test_wireedit_57_enforce_preexisting_foreign_short_0123.tcl: RESULT: ALL PASS
 test_wireedit_58_user_hash_label_0162.tcl: RESULT: ALL PASS
 WIREEDIT: ALL PASS
---------- working-tree delta (report only) ---------
-TREEADD |  M doc/claude/issues/1282-the-rdw-renders-a-dc-sweep-as-an-operating-point.md
-TREEADD |  M doc/claude/issues/1283-the-rdw-suite-does-not-fence-store-order-or-union-order-headless.md
-TREEADD |  M doc/claude/issues/1284-a-backends-answer-dict-can-make-the-rdw-lie-blank-or-raise.md
-TREEADD |  M doc/claude/op_param_batch/PLAN.md
-TREEADD |  M doc/claude/specs/op_param_lists.md
-TREEADD | ?? doc/claude/issues/1298-the-analysis-sentence-is-a-property-of-rdw-dump-not-of-the-seams-door.md
-TREEADD | ?? doc/claude/issues/1299-the-rdw-answer-shape-predicate-has-four-edges-left.md
 ========================================
 SUMMARY: 367 pass  12 fail  0 crash/timeout  2 skip  (total 381)
 WIREEDIT: PASS
 SCRATCH:  0 leaked dir(s)
-TREE:     7 appeared  0 vanished (report only, gitignored paths excluded; issues 0352/0353)
+TREE:     0 appeared  0 vanished (report only, gitignored paths excluded; issues 0352/0353)
 ========================================
 
 === FAIL / CRASH / TIMEOUT output ===
@@ -839,7 +831,7 @@ ok:   W1a5f fixture: the design's window path resolved
 ok:   W1a5 no results: the postcommand DISABLES both entries (poisoned to normal first)
 ok:   W1a6 no results: the entry is disabled AND invoking it moves no mask
 ok:   W1a7 results present: the postcommand ENABLES both entries (poisoned to disabled first)
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a8 ticking OP info sets bit0 and PRESERVES bit1 (2 -> 3)
 ok:   W1a9 unticking it clears bit0 and still preserves bit1 (3 -> 2): the off-ramp
@@ -850,11 +842,11 @@ ok:   W1a12 FOREIGN PULL: the ticks report the DESIGN's mask (1), not the curren
 ok:   W1a13 FOREIGN PUSH: the DESIGN's mask gains bit1, the decoy's is untouched
 ok:   W1a14 unreachable design: NO context's mask moves, and the tick snaps back
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a15 ticking a bit ON attaches the session's raw when the design has none
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_sentinel.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_sentinel.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a16 the invoke ran (mask -> 2) AND a loaded database is never thrown away
 ok:   W1a19 the postcommand enables and disables ALL THREE entries by ase::has_results
@@ -863,44 +855,44 @@ ok:   W1a21 PUSH: ticking the third entry calls cadence::annot_tran and composes
 ok:   W1a22 unticking the third entry clears bit2 and PRESERVES the other two (6 -> 2, 5 -> 1)
 ok:   W1a23 a REFUSED transient annotation leaves the mask alone and snaps the tick back
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a24 issue 0684: a finished run repaints the schematic's numbers by itself, with the tick already on and no further gesture
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 free_rawfile(): clearing data
 free_rawfile(): clearing data
 raw_read(): no useful data found
-extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw not found or no "op" analysis
+extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw not found or no "op" analysis
 free_rawfile(): clearing data
 raw_read(): no useful data found
-extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw not found or no "dc" analysis
+extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw not found or no "dc" analysis
 free_rawfile(): clearing data
 raw_read(): no useful data found
-extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw not found or no "tran" analysis
+extra_rawfile() read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw not found or no "tran" analysis
 ok:   W1a25 issue 0684: a finished run whose results cannot be read blanks the numbers and says so exactly once
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_sentinel.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_sentinel.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a26 issue 0684: the fix does not change what the tick does to an empty design, nor to a database the user loaded from somewhere else
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0684_foreign.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0684_foreign.raw
 points=2, vars=2, datasets=1 sim_type=tran
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a27 issue 0684 defect B: an unrelated waveform graph no longer leaves the tick a dead control
 free_rawfile(): clearing data
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 free_rawfile(): clearing data
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2349818/a0682_session.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_ase_window_2416389/a0682_session.raw
 points=1, vars=2, datasets=1 sim_type=op
 ok:   W1a28 issue 0684: a run finishing while ANOTHER schematic is in front repaints the design's numbers, leaves the foreign tab holding nothing, and gives the user back the window they were looking at
 free_rawfile(): clearing data
@@ -1013,8 +1005,8 @@ ok:   GG13b-extra-is-labelled-EXTRA ({EXTRA TOP.counter.ghost 12345 (= 1)})
 ok:   GG14-a-moved-edge-is-reported (got '2' want '2')
 ok:   GG14b-moved-is-one-MISSING-and-one-EXTRA ({MISSING TOP.counter.phase 50012 (golden says 1)} {EXTRA TOP.counter.phase 50019 (= 1)})
 ok:   GG15-empty-measurement-is-not-a-pass (got '72' want '72')
-ok:   GE1-rundir (got '/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run' want '/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run')
-ok:   GE2-netlist-written (/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/tb_counter_wrapper.spice)
+ok:   GE1-rundir (got '/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run' want '/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run')
+ok:   GE2-netlist-written (/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/tb_counter_wrapper.spice)
 ok:   GE3-deck-has-the-d_cosim-card 
 ok:   GE4-one-code-block (got '1' want '1')
 ok:   GE5-map-cell (got 'counter' want 'counter')
@@ -1022,21 +1014,21 @@ ok:   GE6-map-module (got 'counter' want 'counter')
 ok:   GE7-map-vfile (got '/home/analog/dev/xschem-claude/xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v' want '/home/analog/dev/xschem-claude/xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v')
 ok:   GE8-map-not-multi (got '0' want '0')
 ok:   GE9-map-vcd (got 'tb_counter_wrapper_counter.vcd' want 'tb_counter_wrapper_counter.vcd')
-ok:   GE10-artifact-cleared (exists=0 gone='/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/tb_counter_wrapper_counter.vcd' vcd=/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/tb_counter_wrapper_counter.vcd)
+ok:   GE10-artifact-cleared (exists=0 gone='/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/tb_counter_wrapper_counter.vcd' vcd=/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/tb_counter_wrapper_counter.vcd)
 ok:   GE11-trace-policy-is-on (got '1' want '1')
 ok:   GE12-build-script-found (got '/home/analog/dev/xschem-claude/tools/cosim/build_cosim_so.sh' want '/home/analog/dev/xschem-claude/tools/cosim/build_cosim_so.sh')
 ok:   GE13-no--t-on-any-build-path 
 ok:   GE14-build-status (got 'built' want 'built')
-ok:   GE15-so-produced (/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/counter.so)
+ok:   GE15-so-produced (/home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/counter.so)
 ok:   GE16-stamp-says-trace-1 (src /home/analog/dev/xschem-claude/xschem_libraries_oa/ngspice_verilog_cosim_ase/counter/verilog/counter.v trace 1 src_mtime 1788281815 src_size 1964 tool_mtime 1788281815 tool_size 5159 shim_mtime 1788281815 shim_size 13919
 )
 ok:   GE17-sim_args-rewritten (.model counter d_cosim simulation="./counter.so" sim_args=["tb_counter_wrapper_counter.vcd"] delay=0)
-ok:   GE18-ngspice-ran (see /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/ngspice.log)
+ok:   GE18-ngspice-ran (see /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/ngspice.log)
 ok:   GE19-no-xspice-desync 
 ok:   GE20-both-artifacts-exist (raw=1 vcd=1)
-Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/tb_counter_wrapper_ase.raw
+Raw file data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/tb_counter_wrapper_ase.raw
 points=200386, vars=13, datasets=1 sim_type=tran
-VCD data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2351700/run/tb_counter_wrapper_counter.vcd
+VCD data read: /home/analog/dev/xschem-claude/tests/headless/.scratch/_cosime2e_2418250/run/tb_counter_wrapper_counter.vcd
 points=80, vars=29, datasets=1, timescale=1e-12 s
 ok:   GE21-two-dbs (got '2' want '2')
 ok:   GE22-analog-is-current (got 'tran' want 'tran')

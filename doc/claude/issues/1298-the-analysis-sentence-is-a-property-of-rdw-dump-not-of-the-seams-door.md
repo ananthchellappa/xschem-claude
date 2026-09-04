@@ -1,5 +1,27 @@
 # 1298 — ruling DD-5's analysis sentence is a property of `rdw::dump`, not of the seam's own door
 
+✅ **FIXED 2026-09-04 by the DRIVER**, option (a) plus a row from (b), exactly
+as this issue recommends. B2d filed it rather than widening its scope; the
+driver closed it before dispatching item B4, because B4 is one of the two
+callers that would have hit it.
+
+`rdw::dump_devpath` now fills `simtype` the same way it already fills `sim`, so
+ruling DD-5 is a property of **the seam's door** rather than of `rdw::dump`
+alone. An explicit `simtype` in the context still wins — so the suite's
+hand-built contexts are unaffected — and `{}` still means *say nothing*, because
+a failed `xschem raw sim_type` and a hand-built context produce the same empty
+string.
+
+⚠ **Why no existing row could have caught this:** every other context in
+`test_rdw_window_1245.tcl` is built by `rw_ctx`, which supplies a `simtype`. So
+every row exercised the caller that already got it right. Row **ND1** builds a
+context without one — the way items B4 and B5 do — and reds without the fix.
+Row **ND2** holds the explicit-wins half.
+
+---
+
+*Original filing follows.*
+
 **Status:** FILED, NOT FIXED. **Latent today, live the moment items B4 or B5
 call the door themselves.** Found by item **B2d**'s adversary (Verify-C) and
 re-measured by the write-up agent before filing.
