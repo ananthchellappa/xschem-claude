@@ -59,3 +59,17 @@ classifier genuinely could not identify, so the row passed while the promise was
 false. **A suite fences the questions its author thought of.** Before you call
 one done, write down the input most likely to break your change, and check
 whether any row would see it.
+
+## And one about how a suite can report nothing at all
+
+`./src/xschem --script tests/headless/<name>.tcl` with a **misspelled or missing
+path** does not fail loudly. Piped through `grep -E '^RESULT'`, it produces an
+EMPTY CELL — which in a verification table reads exactly like "ran, nothing to
+say". The driver did this on 2026-09-04 with `test_cmdmode_descend`, a file that
+does not exist (the real names are `test_cmdmode_0201.tcl` and
+`test_cmdmode_descend_0201.tcl`), and reported the suite "unmoved" on the
+strength of it.
+
+**A blank result is not a pass.** Assert that every suite you claim actually
+printed a RESULT line — an empty one means you measured nothing, and it is
+indistinguishable from success in every summary table.

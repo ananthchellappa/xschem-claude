@@ -2,7 +2,43 @@
 
 **Filed** 2026-09-04 by item **B4-3**'s write-up agent, from the adversary's
 residual risk, **re-measured first-hand before filing**.
-**Status: FILED, NOT FIXED.**
+✅ **FIXED 2026-09-04 by the DRIVER (ruling DD-12)**, immediately after B4-3
+landed and before item B5 was dispatched. B4-3 filed it rather than widening its
+own scope, which was right.
+
+`<Key-Escape>` is now bound on the **`.rdw` toplevel**, so it fires wherever
+focus sits inside the window, including the text pane — the case that matters,
+because the pane holding the keyboard is the whole point of issue 1306's fix.
+
+⚠ **It ends the MODE and does NOT close the window.** Escape dismisses a dialog
+in many applications, so this is a deliberate deviation: `.rdw` holds the dumps,
+and those dumps are the artifact the feature exists to produce. `rdw::close`'s
+own comment already records that losing them to a stray click on the X is the
+worse failure; a stray Escape is the same accident with a different finger. So
+Escape does nothing when no mode is running — never a destructive default.
+
+Measured on the shipped tree, `:99`/openbox:
+
+```
+PICK_START=1  RUNNING_BEFORE=1  FOCUS_AFTER_PANE_CLICK=.rdw.p.t
+ESC_BOUND_ON_WINDOW=1
+RUNNING_AFTER_ESC=0        WINDOW_STILL_OPEN=1
+WINDOW_OPEN_AFTER_STRAY_ESC=1
+```
+
+Rows **E1-E5** of `tests/headless/test_rdw_keys_1245.tcl` (30 → 35). Sabotage:
+deleting the binding reds **E2 E3 E5**; making Escape *also* close the window —
+the destructive default DD-12 forbids — reds **E4** alone.
+
+`rdw::pick_running` was added as the predicate. ⚠ **A SUSPENDED MODE COUNTS AS
+RUNNING**: a mode paused by a descend is still one the user has to be able to
+leave, and `pick(canvas)` is what `pick_end` releases.
+
+---
+
+*Original filing follows.*
+
+**Status: ~~FILED, NOT FIXED.~~**
 **Subject:** `src/rdw.tcl` — the interaction between issue 1306's fix and the
 window's deliberate "takes the keyboard nowhere" design.
 

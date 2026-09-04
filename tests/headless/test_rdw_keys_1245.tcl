@@ -1502,6 +1502,50 @@ check {S1 HYGIENE and the CONTROL in one row: the suite creates no untitled* any
 
 # --- clean up ---------------------------------------------------------------
 catch {rename ciw_echo {}}
+# ============================================================================
+# SECTION ESC — ISSUE 1308 / RULING DD-12: ESCAPE WORKS FROM THE TEXT PANE
+# ============================================================================
+# Issue 1306's fix let this window KEEP the keyboard when the user clicks the
+# text pane -- which is the whole point of the feature, because the dumps exist
+# to be selected and pasted into a design-review document. The consequence,
+# measured immediately after: the mode's `1`/`2`/`3`/`4` and `<Key-Escape>` are
+# bound on the CANVAS, so once the pane had the keyboard the mode's documented
+# exit was DEAD.
+#
+# ⚠ ESCAPE ENDS THE MODE AND DOES NOT CLOSE THE WINDOW, and E4 is the row that
+# holds that apart. Escape closes a dialog in many applications; this is not a
+# dialog. It holds the artifact the feature exists to produce, and rdw::close's
+# own comment records that losing those to a stray click is the worse failure.
+# A stray Escape is the same accident with a different finger, so Escape does
+# NOTHING when no mode is running -- never a destructive default.
+# RED before the 1308 fix: E2, E3.
+
+if {[rdw::have_tk]} {
+  rdw::open ; update
+  set E_START [rdw::pick_start]
+  set E_RUN0  [rdw::pick_running]
+  focus -force .rdw.p.t ; update
+  set E_FOCUS [focus]
+  set E_BOUND [expr {[bind .rdw <Key-Escape>] ne {} ? 1 : 0}]
+
+  check {E1 the mode is live and the KEYBOARD IS IN THE TEXT PANE - the state the whole window exists to reach} \
+    [list $E_START $E_RUN0 $E_FOCUS] {1 1 .rdw.p.t}
+
+  check {E2 Escape is bound on the WINDOW, not only on the canvas the keyboard has left} \
+    $E_BOUND 1
+
+  event generate .rdw.p.t <Key-Escape> ; update
+  check {E3 and pressing it THERE ends the mode, so the documented exit is reachable from the pane} \
+    [rdw::pick_running] 0
+
+  check {E4 ...and the window is STILL OPEN: Escape ends a mode, it does not throw away the dumps} \
+    [expr {[winfo exists .rdw] ? 1 : 0}] 1
+
+  event generate .rdw.p.t <Key-Escape> ; update
+  check {E5 a STRAY Escape with no mode running does nothing at all - never a destructive default} \
+    [list [rdw::pick_running] [expr {[winfo exists .rdw] ? 1 : 0}]] {0 1}
+}
+
 if {[llength [info commands kx_ciw_echo_real]]} { rename kx_ciw_echo_real ciw_echo }
 catch {xschem raw clear}
 

@@ -893,6 +893,28 @@ proc rdw::build {} {
     ## rdw::_focus_handback catches that one grant and gives the keyboard back
     ## to the canvas; it is inert unless a dump path armed it.
     bind .rdw <FocusIn> {rdw::_focus_handback %W}
+    ## ⚠ ESCAPE HAS TO LIVE HERE TOO -- ISSUE 1308, RULING DD-12.
+    ## The command mode's `1`/`2`/`3`/`4` and `<Key-Escape>` are bound on the
+    ## CANVAS. Issue 1306's fix let this window keep the keyboard when the user
+    ## clicks the text pane -- which is the whole point of the feature, since
+    ## the dumps exist to be selected and pasted into a design-review document
+    ## -- and the consequence measured immediately after was that the mode's
+    ## documented exit became unreachable: the canvas no longer had the
+    ## keyboard, and nothing on `.rdw` ended the mode.
+    ##
+    ## ⚠ IT ENDS THE MODE AND DOES NOT CLOSE THE WINDOW, and that asymmetry is
+    ## deliberate. Escape closes a dialog in many applications, but this is not
+    ## a dialog: it holds an hour of dumps that are the artifact the feature
+    ## exists to produce, and rdw::close's own comment records that losing them
+    ## to a stray click is the worse failure. A stray Escape is the same
+    ## accident with a different finger. So Escape ends a mode when one is
+    ## running and does NOTHING otherwise -- never a destructive default.
+    ##
+    ## The binding is on the toplevel, so it fires wherever focus sits inside
+    ## the window, including the text pane, which is the case that matters.
+    bind .rdw <Key-Escape> {
+        if {[::rdw::pick_running]} { ::rdw::pick_end ; break }
+    }
     catch {.rdw configure -background [rdw::color panel]}
 
     # The status line owns the bottom edge: it is where the five inert buttons
@@ -1519,6 +1541,14 @@ proc rdw::pick_release {} {
 }
 
 # Leave the mode.  Safe to call when nothing is live, on every arm.
+## Is a pick mode live on some canvas right now?  ⚠ SUSPENDED COUNTS AS
+## RUNNING (issue 1308): a mode paused by a descend is still a mode the user
+## has to be able to leave, and `pick(canvas)` is what `pick_end` releases.
+proc rdw::pick_running {} {
+    variable pick
+    return [expr {[info exists pick(canvas)] ? 1 : 0}]
+}
+
 proc rdw::pick_end {} {
     variable pick
     set r [rdw::pick_release]

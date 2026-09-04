@@ -407,3 +407,39 @@ forbidden by the ruling.
 it.* The driver considered tightening it and did not, because every shorter
 phrasing tried either dropped the multi-point caveat — which is the half that
 makes it true — or re-asserted what the user ran.
+
+### DD-12 — issue 1308: Escape ends the MODE, on the window, and never closes it
+
+Taken 2026-09-04 by the driver, immediately after item B4-3 landed and before
+item B5 was dispatched. On the owed ledger; the user can overrule.
+
+Issue 1306's fix let the Results window **keep the keyboard** when the user
+clicks its text pane — which is the whole point of the feature, because the
+user's stated purpose for the window is selecting dumps and pasting them into
+design-review documents. The consequence, measured the same day: the command
+mode's `1`/`2`/`3`/`4` and `<Key-Escape>` are bound on the **canvas**, so once
+the pane held the keyboard the mode's documented exit was **dead**.
+
+B4-3 asked whether the window should hold the keyboard and gain its own Escape,
+or never take the keyboard at all.
+
+**Decision: the window holds the keyboard AND gains its own Escape.** The
+alternative is not really available — a pane that cannot hold the keyboard
+cannot be copied from with the keyboard, which is the requirement the window
+exists to satisfy. Escape is bound on the toplevel, so it fires wherever focus
+sits inside the window, including the text pane, which is the case that matters.
+
+**And Escape ends the mode WITHOUT closing the window.** That asymmetry is the
+part worth arguing, because Escape closes a dialog in many applications:
+
+* This is not a dialog. It holds an hour of dumps, and those dumps **are** the
+  artifact the feature exists to produce. `rdw::close`'s own comment already
+  records that losing them to a stray click on the window's X is the worse
+  failure; a stray Escape is the same accident with a different finger.
+* So Escape ends a mode when one is running and **does nothing otherwise** —
+  never a destructive default. Row E5 holds that, and sabotaging it (making
+  Escape also close) reds row E4 alone.
+
+*Cost, stated:* a user who expects Escape to dismiss the window will press it
+and see nothing happen. The window has its own close control, and the dumps are
+worth more than the keystroke.
