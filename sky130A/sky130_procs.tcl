@@ -392,7 +392,17 @@ if {[info commands ::op_annot::register] ne {}} {
   #     set d [op_annot::descriptor nmos]
   #     dict set d params [concat [dict get $d params] {{vdsat vdsat 2} {cgg cgg 1}}]
   #     dict set d derived {{ft {$gm/(2*3.141592654*$cgg)}} {gm/id {$gm/$id}}}
+  #     dict unset d declared        ;# ⚠ SAY "this is my new declaration"
   #     op_annot::register nmos $d
+  # ⚠ THE `dict unset d declared` LINE IS PART OF THE RECIPE, NOT AN OPTIONAL
+  # EXTRA -- ruling DD-14, issue 1315. `register` PRESERVES an existing
+  # declaration, which is what stops the parameter-list editor's Save from
+  # destroying the PDK's own list (issue 1312). The consequence for THIS
+  # round-trip is that without the unset it changes what the run computes and
+  # what the sheet draws, and leaves `seed` still answering the list shipped
+  # above -- so a later Reset restores OUR set, not yours, with nothing said.
+  # Unsetting the key first is how a user says "forget the old declaration,
+  # this one is mine". Registering a fresh dict does the same thing.
   # A first-class means for a user to choose her own set now EXISTS, and this
   # is it: the OP parameter list store, src/op_param_lists.tcl. It SEEDS from
   # the descriptor registered just below (ruling D-7 -- seed from the PDK, the

@@ -1549,5 +1549,38 @@ if {[rdw::have_tk]} {
 if {[llength [info commands kx_ciw_echo_real]]} { rename kx_ciw_echo_real ciw_echo }
 catch {xschem raw clear}
 
+# ============================================================================
+# THE COUNT FLOOR — A SUITE THAT RUNS FEWER CHECKS MUST NOT STILL SAY ALL PASS
+# ============================================================================
+# ⚠ MEASURED 2026-09-04: item B2e's adversary saw this suite report
+# **35 / 33 / 32 checks over five runs, every one of them "ALL PASS"**. A
+# varying COUNT means rows were SKIPPED, not failed — several blocks here are
+# guarded by `rdw::have_tk` or by `info commands`, and a guard that does not
+# fire takes its rows with it silently.
+#
+# That is the worst shape a green result can have, and it is this batch's
+# recurring lesson in its purest form: a green count is a statement about the
+# FENCE, not about the code. The batch's whole acceptance discipline is a
+# name-and-status diff, and a suite whose denominator moves underneath it
+# cannot support one — B2e could not use this suite's number as evidence and
+# said so.
+#
+# The driver could NOT reproduce the skid afterwards (5 runs at 35, and 5 more
+# with the pointer parked at each of the positions that decide issue 1269, all
+# 35), so the cause is still unnamed. THE FLOOR DOES NOT NEED THE CAUSE: it
+# turns "silently ran fewer" into a red, whatever the reason.
+#
+# ⚠ IT IS A FLOOR, NOT AN EQUALITY, on purpose. Adding rows must not red the
+# suite — item B5-2 will add several. Raise the floor when you add them; never
+# lower it to make a run pass, which is the one move that would put the defect
+# straight back.
+set KX_FLOOR 35
+set KX_RAN [expr {$npass + $fail}]
+if {$KX_RAN < $KX_FLOOR} {
+  puts "FAIL: KXFLOOR the suite ran only $KX_RAN checks, below its floor of\
+$KX_FLOOR — rows were SKIPPED, and a skipped row is not a passing one : FAIL"
+  incr fail
+}
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }

@@ -508,3 +508,42 @@ and I then made the same error one layer down.
 **The rule for any future ruling that assigns meaning to a stored field: grep
 every reader FIRST, list them, and say what each one will now see.** Two of the
 three refutations here cost a full crew run.
+
+### DD-14 — issue 1315: the `dict unset d declared` line is PART of the recipe
+
+Taken 2026-09-04 after item B2e landed. On the owed ledger; the user can
+overrule.
+
+Item B2e made `op_annot::register` **preserve** an existing declaration, which
+is what stops the parameter-list editor's Save from destroying the PDK's own
+list (issue 1312). B2e also documented a one-line escape hatch — but ~40 lines
+*below* the recovery recipe the three PDK files print, so the copy-paste path
+was still wrong.
+
+**Measured, both spellings, on this binary:**
+
+```
+SEED0           = {id ids 0} {gm gm 1}
+SEED_NO_UNSET   = {id ids 0} {gm gm 1}                  <- the recipe as printed
+SEED_WITH_UNSET = {id ids 0} {gm gm 1} {cgg cgg 1}
+```
+
+So the recipe as printed changed what the run computes and what the sheet draws
+and left `seed` still answering the shipped list — meaning a later Reset would
+restore *our* set, not the user's, with nothing said anywhere.
+
+**Decision: `dict unset d declared` goes IN the recipe, in all three PDK files,
+with the reason beside it.** A recipe a user copy-pastes must be correct as
+written; a caveat forty lines away is not part of what gets pasted.
+
+*Why not make `register` always redeclare:* the editor's Save path re-registers
+too, so always-redeclaring would let an ordinary Delete destroy the PDK's
+declaration again — the exact defect that refuted item B5 and cost a full crew
+run. Preserve-by-default is the safe direction, and the explicit unset is how a
+user says *"forget the old declaration, this one is mine."*
+
+*Applying the rule DD-13 wrote down:* every reader and writer of the key was
+enumerated before this was decided — `op_annot::register` (writes,
+preserve-if-present), `op_param_lists::_key_state`, `_declared_rows`,
+`_merge_declared`, and `_params`/`seed`. The unset changes what each one sees to
+the user's new list, which is what a user re-declaring wants.
