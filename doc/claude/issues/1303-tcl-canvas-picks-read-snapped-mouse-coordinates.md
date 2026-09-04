@@ -1,6 +1,38 @@
 # 1303 — a Tcl canvas pick reads SNAPPED mouse coordinates and can answer for a device the user did not click
 
-**Status: FILED, NOT FIXED.** Found by item **B4**'s adversary, reproduced
+🟡 **THE ACCESSOR LANDED 2026-09-04; THE TWO CALLERS ARE NOT FIXED YET.**
+`xschem get mousex` / `mousey` now answer the **unsnapped** schematic
+coordinates, beside the snapped pair that was previously the only thing Tcl
+could ask for. That is the piece that made the defect unfixable rather than the
+fix itself:
+
+* **`src/ase_window.tcl` still snaps** — this is a **shipped** defect, older
+  than this batch, and it is now repairable in one line. Not repaired here
+  because it is nobody's item yet; whoever takes it should carry this issue's
+  lattice numbers as the red-first evidence.
+* **item B4's re-do** is the other caller, and it is the reason the accessor
+  exists.
+
+⚠ **THE SNAPPED PAIR IS NOT DEPRECATED AND MUST NOT BE.** It is correct for
+everything that *places or moves* geometry — that is what snapping is for, and
+`new_arc` / `new_rect` / `new_polygon` and the move/copy arms all read it.
+"What is under the pointer" is a different question, and now both are askable
+with neither as a silent default. Fenced by rows **P1** and **P2** of
+`tests/headless/test_rdw_window_1245.tcl`.
+
+Driver re-measurement, independent of B4's, on the shipped example after
+`update_all_sym_bboxes`:
+
+```
+EXACT   175.175 -199.612 -> 'M1'
+SNAPPED 180 -200         -> 'R1'
+```
+
+---
+
+*Original filing follows.*
+
+**Status: ~~FILED, NOT FIXED.~~** Found by item **B4**'s adversary, reproduced
 first-hand by B4's write-up agent, and **it is why item B4 was reverted**.
 Live in the tree at `735ea26e` in `src/ase_window.tcl`; it was live in B4's
 reverted patch too.

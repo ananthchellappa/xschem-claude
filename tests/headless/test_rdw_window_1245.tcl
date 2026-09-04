@@ -1753,6 +1753,41 @@ check {W5 the section leaves nothing behind: .rdw and the control toplevel are b
 }
 
 # ============================================================================
+# SECTION P — ISSUE 1303: THE UNSNAPPED MOUSE PAIR EXISTS
+# ============================================================================
+# Until 2026-09-04 `scheduler.c` exposed ONLY `mousex_snap`/`mousey_snap`, while
+# every C click path reads the UNSNAPPED `xctx->mousex`/`mousey`. So a Tcl
+# canvas pick had no way to resolve the point the user's own click resolved: it
+# had to snap, and snapping moves the point up to half a grid step in each axis
+# -- exactly the distance that crosses an instance boundary, because instance
+# bbox edges are not on grid.
+#
+# MEASURED on the shipped cmos_inv.sch, one pixel apart:
+#     exact   175.175 -199.612  ->  M1
+#     snapped 180     -200      ->  R1
+# Swept over every instance bbox on that sheet: 23725 points, 1513 (6.4%) miss
+# the device entirely, 129 (0.5%) resolve to a DIFFERENT device -- silently.
+# That is invariant I3's failure one object out: a results window headed `R1`
+# for a click on `M1`, with nothing on screen saying which happened.
+#
+# ⚠ THE SNAPPED PAIR IS NOT REPLACED AND MUST NOT BE. It is correct for
+# everything that PLACES or MOVES geometry -- that is what snapping is for.
+# "What is under the pointer" is a different question. P2 holds both.
+# RED before the accessor landed: P1, P2.
+
+check {P1 the UNSNAPPED mouse pair is askable from Tcl at all, which it was not before issue 1303} \
+  [list [catch {xschem get mousex} p_x] [catch {xschem get mousey} p_y] \
+        [expr {[string is double -strict $p_x] ? 1 : 0}] \
+        [expr {[string is double -strict $p_y] ? 1 : 0}]] \
+  {0 0 1 1}
+
+check {P2 and the SNAPPED pair still answers too, because placing geometry still wants it} \
+  [list [catch {xschem get mousex_snap} p_sx] [catch {xschem get mousey_snap} p_sy] \
+        [expr {[string is double -strict $p_sx] ? 1 : 0}] \
+        [expr {[string is double -strict $p_sy] ? 1 : 0}]] \
+  {0 0 1 1}
+
+# ============================================================================
 # SECTION N — 1298 AND 1297: THE DOOR OWNS THE ANALYSIS, AND THE ARTICLE AGREES
 # ============================================================================
 # 1298. `rdw::dump_devpath` is THE SEAM'S ONLY DOOR and the entry point items B4

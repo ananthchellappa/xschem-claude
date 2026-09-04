@@ -5015,6 +5015,43 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->modified),TCL_VOLATILE);
           }
+          /* 1245 (item B4, issue 1303) -- THE UNSNAPPED PAIR, AND WHY IT HAD TO EXIST.
+           * Until 2026-09-04 this dispatcher exposed ONLY mousex_snap/mousey_snap,
+           * while every C click path reads the UNSNAPPED xctx->mousex/mousey
+           * (callback.c:520, :530, :4305, :4471, and :4664's own read-only
+           * find_closest_instance). So a Tcl canvas pick had no way to resolve the
+           * point the user's click actually resolved: it had to snap, and snapping
+           * moves the point up to half a grid step in each axis -- which is exactly
+           * the distance that crosses an instance boundary, because instance bbox
+           * edges are not on grid.
+           *
+           * MEASURED on the shipped xschem_library/examples/cmos_inv.sch, after an
+           * update_all_sym_bboxes, one pixel apart:
+           *     exact   175.175 -199.612  ->  'M1'
+           *     snapped 180     -200      ->  'R1'
+           * Swept over every instance bbox on that sheet at the default snap:
+           * 23725 points, 1513 (6.4%) miss the device entirely and 129 (0.5%)
+           * resolve to a DIFFERENT device -- silently, with nothing on screen
+           * saying which happened. That is invariant I3's failure one object out:
+           * a results window headed R1 for a click on M1.
+           *
+           * ⚠ NOT A REPLACEMENT. The snapped pair is correct for everything that
+           * PLACES or MOVES geometry -- that is what snapping is for -- and is
+           * still what new_arc/new_rect/new_polygon and the move/copy arms read.
+           * The unsnapped pair is for asking "what is under the pointer", which is
+           * a different question. Both are now askable and neither is a default.
+           *
+           * ⚠ src/ase_window.tcl HAS THE SAME DEFECT and is NOT fixed here: this
+           * commit adds the accessor that makes fixing it possible. Issue 1303
+           * carries the site. */
+          if(!strcmp(argv[2], "mousex")) { /* last mouse x, UNSNAPPED, schematic coords */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, dtoa(xctx->mousex),TCL_VOLATILE);
+          }
+          if(!strcmp(argv[2], "mousey")) { /* last mouse y, UNSNAPPED, schematic coords */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, dtoa(xctx->mousey),TCL_VOLATILE);
+          }
           if(!strcmp(argv[2], "mousex_snap")) { /* last snapped mouse x, schematic coords */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, dtoa(xctx->mousex_snap),TCL_VOLATILE);
