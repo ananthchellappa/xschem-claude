@@ -2,7 +2,107 @@
 
 **Filed** 2026-09-02 by the driver of the OP-parameter-lists batch, while
 attributing a twelfth red that item A6's audit reported against an eleven-name
-baseline. Status: **open**, not fixed.
+baseline.
+
+# ✅ SOLVED AND FIXED, 2026-09-04. IT IS THE POINTER POSITION, AND EVERYTHING BELOW ABOUT DISPLAY AGE IS A COINCIDENCE.
+
+Re-measured at the user's request on a display that had been up 28 hours. **One
+display, one binary, the pointer the only variable — deterministic and
+reproducible in both directions:**
+
+```
+pointer 960 540  ->  ALL PASS (126)      <- Xvfb's own start position
+pointer 533 495  ->  1 FAILED (125)
+pointer 960 540  ->  ALL PASS (126)
+pointer 533 495  ->  1 FAILED (125)
+pointer   0   0  ->  ALL PASS (126)
+```
+
+A 7×5 sweep maps the failing set to **ONE RECTANGLE**, roughly x ∈ (100, 1100)
+by y ∈ (100, 900) — a window's area, not a scatter:
+
+```
+        x=  100 400 533 800 1100 1400 1700
+y=100        .   .   .   .    .    .    .
+y=300        .   X   X   X    .    .    .
+y=495        .   X   X   X    .    .    .
+y=700        .   X   X   X    .    .    .
+y=900        .   .   .   .    .    .    .
+```
+
+## What this overturns in the analysis below
+
+* **"A used display fails, a fresh one passes" is a COINCIDENCE.** A freshly
+  started Xvfb parks the pointer at the screen centre, which is *outside* that
+  rectangle; a display that has hosted a day of suites has the pointer wherever
+  the last suite left it. Measured on the used display before restarting it:
+  pointer at **533 495** — inside.
+* **`devdisplay.sh stop && start` "fixed" it only by resetting the pointer.**
+  The mitigation worked for a reason nobody had identified, which is why it
+  looked like display *age*.
+* **The accumulated-windows hypothesis is REFUTED by measurement**, not merely
+  unproven: the mapped-toplevel count is **11 on a fresh display and 11 on a
+  used one**.
+* **"Why it passed inside the A3 and A4 audits is still unexplained" is now
+  explained.** Nothing to do with those items. The pointer happened to end up
+  outside the rectangle in those runs and inside it in A6's.
+
+## The mechanism, now proven rather than named
+
+`BX42 (DECLARED)` reads `xschem get current_win_path`, and xschem's current
+window follows X focus and `<Enter>` events. If the pointer is sitting **inside
+a window** when `ase::show_in_browser_for_current` raises the viewer, that
+call's own event pump delivers an `<Enter>` for whatever is under the pointer,
+and the context is taken back off the viewer **before** the read happens.
+
+The suite already carried a comment guarding a stray `<Enter>` delivered *after*
+the read. The reachable one arrives *before* it.
+
+## The fix
+
+`tests/headless/test_wave_sigbrowser_i12.tcl` now **parks the pointer off every
+window** immediately before the raise — root (2,2), measured outside every
+window the suite maps.
+
+⚠ **The park is NEUTRAL, not helpful.** It moves the pointer *off* every window;
+it must never move it *onto* the viewer, which would make the DECLARED rule
+assert itself and turn a measurement into a tautology.
+
+**Verified:** ALL PASS (126) from every pointer position that previously decided
+the outcome — 533 495 · 960 540 · 400 300 · 800 700 · 0 0. Sabotage (delete the
+park) restores the split exactly: 533 495 fails, 960 540 passes.
+
+**And in situ, which is the case that matters** — BX42 runs ~350 suites deep,
+where 1269 previously failed even on a display that was fresh at the audit's
+start:
+
+```
+SUMMARY: 368 pass  11 fail  0 crash/timeout  2 skip  (total 381)
+PASS     | test_wave_sigbrowser_i12
+```
+
+**The batch baseline drops from TWELVE names to ELEVEN, earned.** The only
+change in the entire non-PASS set is this suite leaving it.
+
+## What stays true from the original filing
+
+The closing rule stands and is now paid: *a bug only a dirty display reproduces
+is a test defect as well.* The fix is BX42 establishing the state it depends on
+rather than inheriting whatever the display holds — exactly what this issue
+recommended before the mechanism was known.
+
+⚠ **Still open, and worth someone's time:** the other window-mapping suites were
+never checked for the same sensitivity. Any check that reads
+`current_win_path`, or any focus-dependent property, after a raise inherits the
+pointer the same way. The seven standalone `test_*.sh` window-mapping suites are
+the place to look.
+
+---
+
+*The original analysis follows. Its conclusion — "it is the display" — was right
+in direction and wrong in mechanism.*
+
+Status: ~~**open**, not fixed.~~
 Related: **1244** (the batch that surfaced it), **0990** (the other way a suite
 number lies), `doc/claude/specs/dev_display.md`
 

@@ -25,6 +25,32 @@ dev display `:99`. The eleven are named in `PLAN.md`. Every later audit is
 judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 `run_regression.tcl` (T1) baseline is **ZERO** counted failures, run **solo**.
 
+## ⚠ THE BASELINE IS ELEVEN NAMES AS OF 2026-09-04, NOT TWELVE
+
+`test_wave_sigbrowser_i12` was carried as an accepted red for the whole of
+Feature B, by name and by reason, on the belief that it was "the display". It
+was **solved and fixed** on 2026-09-04 (issue **1269**) and now passes inside a
+full audit:
+
+```
+SUMMARY: 368 pass  11 fail  0 crash/timeout  2 skip  (total 381)
+```
+
+**The discriminator is the POINTER POSITION.** One display, one binary, the
+pointer the only variable, deterministic both directions; a 7×5 sweep maps the
+failing set to one rectangle. "Used display fails, fresh one passes" was a
+coincidence — a fresh Xvfb parks the pointer at the screen centre, outside that
+rectangle. The mapped-toplevel count is 11 on both, so the accumulated-windows
+hypothesis is refuted by measurement, not merely unproven.
+
+⚠ **This is NOT the phantom fix this batch has been avoiding.** The
+`test_ase_core` C11 red is still deliberately left in place, because deleting a
+gitignored `untitled~.sch` would green it with no code change. This one is
+earned: a test defect was found, named, fixed, and sabotage-proved.
+
+**Every audit from here diffs against ELEVEN names.** The baseline of record is
+`audit_1269_2026-09-04.txt`.
+
 ## Items
 
 | # | item | verdict | commit | checks | files | eyeball | note |
@@ -255,3 +281,4 @@ three `look` debts from the merge.
 | B2c | F | cb819fb5 | REVERTED to baseline, all re-measured after: test_op_param_store_1245 56->56 ALL PASS (was 79 before revert), test_op_annot 485->485, test_annot_declutter_1244 134->134, test_rdw_seam_1245 49->49, test_rdw_window_1245 32->32, T1 0->0 (117 lines; one earlier solo T1 read 3, all test_ase_optier_0963 = issue 1290 flake, suite then 94/94 alone), T2 6/6 PASS, no build (pure Tcl, src/ and tests/ byte-id | 1294,1295,1296 | B2c REVERTED (3rd on 1277/1281): DD-7's writer identifies rows its own reader rejected and deletes them, rc=1 zero reports; patch preserved, 1276/1288/DD-8 in it are sound and should be applied + fixed, not retyped. |
 | B2d | E | 924d722d | test_rdw_window_1245 32->52 --nogui / 42->62 :99 ALL PASS (additive, 0 rows removed); test_rdw_seam_1245 49->49; test_op_param_store_1245 86->86; test_op_annot 485->485; T1 0->0 counted; T2 HARNESS PASS 6/6; full_audit 367 pass/12 fail/0 crash/2 skip of 381, non-PASS set identical by name and status to audit_B2c_2026-09-04.txt | 1297,1298,1299 | DD-5's specimen wording is refused on a measurement (save.c:1073/:1120 rename a MULTI-POINT Operating Point plot to dc, so the specimen tells a user who ran only an operating point that they ran a sweep) - accept the shipped sentence "These numbers come from the first point of results xschem reports as a dc analysis, not as a standalone operating point. A dc sweep's first point is one sweep step,  |
 | B4 | F | 26675fd4 | Reverted, so after == baseline: test_rdw_window_1245 56/66 (peaked 68/78), test_rdw_keys_1245 0 (peaked 21, file removed), seam 49, store 86, op_annot 485/492, declutter 134, cmdmode 37, T1 0, T2 6/6, audit 367 pass/12 fail/0 crash/2 skip of 381 (peaked 368 of 382, non-PASS diff empty by name and verdict both times) | 1300,1301,1302,1303,1304 | B4 is F and REVERTED: its click reads SNAPPED coordinates and can name a device the user did not press (1303), and a 1px-drifted click selects 13 objects against the user's own "clicking will not change selected set" (1304) — both live in shipped ase_window.tcl too; work preserved in B4_working_tree_REVERTED.patch, applies clean to 735ea26e in both directions. |
+| B4-2 | F | 2206f7cd | post-revert = HEAD baseline: test_rdw_window_1245 58->58 --nogui / 68->68 :99 ALL PASS, test_rdw_keys_1245 absent->absent, T2 run.sh HARNESS PASS 6/6, T1 0 counted failures, src/ byte-identical to 0ce85dda (B4-2 had reached 74/84 + a 27-check keys suite and audit 368/12/0/2 of 382 before it was reverted) | 1305,1306,1307 | B4-2 REVERTED: the focus hand-back bounces a deliberate click out of the RDW text pane (1306) and a key pressed during a suspended descend seizes the canvas for the whole session (1305); all work preserved whole and re-appliable in doc/claude/op_param_batch/B4-2_working_tree_REVERTED.patch for item B4-3. |

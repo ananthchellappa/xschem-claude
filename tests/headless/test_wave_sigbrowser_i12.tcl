@@ -845,6 +845,43 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list [lindex $bx_sfc 0] [lindex $bx_sfc 1]] [list $bx_tok 0]
 
     # ==== THE ITEM, END TO END ====
+    # ⚠ PARK THE POINTER OFF EVERY WINDOW FIRST -- ISSUE 1269, AND THIS IS THE
+    # WHOLE OF THAT ISSUE'S FIX. BX42 (DECLARED) below reads
+    # `xschem get current_win_path`, and xschem's current window follows X
+    # focus and <Enter> events. If the pointer happens to be sitting INSIDE a
+    # window when `show_in_browser_for_current` raises the viewer, that call's
+    # own event pump delivers an <Enter> for whatever is under the pointer and
+    # the context is taken back off the viewer before the read below ever
+    # happens. The comment on that read guards a stray Enter delivered AFTER
+    # it; this guards the one delivered BEFORE it, which is the reachable one.
+    #
+    # MEASURED 2026-09-04 on :99, one display, one binary, pointer the ONLY
+    # variable -- deterministic and reproducible in both directions:
+    #     pointer 960 540 -> ALL PASS (126)      (Xvfb's start position)
+    #     pointer 533 495 -> 1 FAILED (125)
+    #     pointer 960 540 -> ALL PASS (126)
+    #     pointer 533 495 -> 1 FAILED (125)
+    #     pointer   0   0 -> ALL PASS (126)
+    # A 7x5 sweep maps the failing set to ONE RECTANGLE, roughly
+    # x in (100,1100) by y in (100,900) -- a window's area, not a scatter.
+    #
+    # ⚠ SO "IT ONLY FAILS ON A USED DISPLAY" WAS A COINCIDENCE, AND SO WAS ITS
+    # MITIGATION. A freshly started Xvfb puts the pointer at the screen centre,
+    # which is OUTSIDE that rectangle; a display that has hosted a day of
+    # suites has the pointer wherever the last one left it. Restarting the
+    # display "fixed" it only by resetting the pointer. Measured against the
+    # rival hypothesis: the mapped-toplevel count is 11 on a fresh display AND
+    # on a used one, so it is not accumulated windows.
+    #
+    # ⚠ THE PARK MUST BE NEUTRAL, NOT HELPFUL. It moves the pointer OFF every
+    # window; it must never move it ONTO the viewer, which would make the
+    # DECLARED rule below assert itself. Root (2,2) is outside every window
+    # this suite maps and is measured PASS.
+    catch {
+      event generate . <Motion> -warp 1 \
+        -x [expr {2 - [winfo rootx .]}] -y [expr {2 - [winfo rooty .]}]
+      update idletasks
+    }
     set bx_r [pcall ase::show_in_browser_for_current $bx_dwin]
     # ⚠ READ THE CONTEXT WITH NO EVENT PUMP IN BETWEEN — an `update` here can
     # deliver a stray Enter and move it, which would make the DECLARED context
