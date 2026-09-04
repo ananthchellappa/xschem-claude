@@ -1451,6 +1451,89 @@ design-of-record, and the first two **correct this spec**:
 
 ---
 
+### What item B2c measured about the settings file, 2026-09-03 — **attempted on DD-7/DD-8, then reverted**
+
+Item **B2c** was the deliberately small re-do of the two issues that had been
+implemented and refuted twice (**1277**, **1281**) plus two smaller ones
+(**1276**, **1288**), on the driver's settled designs **DD-7** (Save is a
+read-modify-write of one tier's own file) and **DD-8** (precedence is file
+order; nothing is ranked). It went green everywhere and was **reverted for issue
+1294**. Code preserved at
+`doc/claude/op_param_batch/B2c_working_tree_REVERTED.patch`.
+
+**What is now SETTLED and should be written into the design rather than
+re-derived:**
+
+* **§4.4's precedence is FILE ORDER.** Any earlier wording in this spec implying
+  the *narrower* or *more specific* glob wins is **wrong and overruled by
+  DD-8**. `"narrower"` has no defensible total order over globs — is
+  `sky130_fd_pr__*` narrower than `*nfet_01v8_lvt*`? Neither contains the other.
+  Two crews ranked and both shipped a bare `*` beating a specific pattern. The
+  store therefore needs an **insertion-order list** (`keyorder`), because a Tcl
+  array has no order and `lsort` is what both crews fell back to.
+* **A flavor entry carries a CLASS.** `effective <class>` must not scan another
+  class's flavors. That half of issue 1277 stands under DD-8; only the ranking
+  dies. The store key stays a **three**-element list whose middle field is the
+  two-element `{<class> <glob>}`, so `lindex $k 2` is still the listname.
+* **The key must be canonicalised, at exactly one door.** An uncanonicalised
+  two-element list used as an array index is how B2a-2 lost entries on a round
+  trip. `[list [lindex $key 0] [lindex $key 1]]` is idempotent for every
+  metacharacter shape measured.
+* **Metacharacters need no rejection arm.** Emit the flavor's class and glob as
+  **two separate unquoted fields**; nine of ten shapes already round-trip at v1
+  and the corruption is *created* by interpolating a two-element key whole.
+  Refusing would cost `[nm]` and `\*`, both documented `string match` features.
+* **The file must document its own precedence, and the fence must be GENERATED
+  FROM the emitted comment** — regexp the worked example out of a freshly
+  written file and build the case it describes. Both previous crews wrote
+  *"narrowest matching glob wins"* into every file they emitted **while
+  implementing something else**. This is the one row that catches that, and it
+  is cheap.
+
+**⚠ THE NEW CONSTRAINT DD-7 DID NOT STATE, AND IT IS THE REASON B2c FAILED
+(issue 1294):**
+
+> **Under a read-modify-write, the writer's row classifier must be EXACTLY as
+> strict as the reader's parser.**
+
+DD-7's safety argument is *"you cannot delete a row you never parsed into a
+model."* That holds **only while the writer cannot IDENTIFY a row the reader
+refused to parse.** B2c's `_row_id` validated verb → scope → arity and stopped,
+while `_parse_line` also ran `_valid_list`, the livelist guard and `_triple`. So
+`param class mos annotation NEWROW raw ratio` was rejected by the reader,
+**identified** by the writer, and deleted when its key was dirty — rc=1, zero
+reports, the exact signature that killed B2a and B2a-2. Any laxity in the
+classifier converts DD-7 from a preservation mechanism into a deletion
+mechanism, silently.
+
+**And the fixture that would have caught it:** a "row this build does not
+understand" must be a **known verb with an unreadable field**, not an unknown
+keyword. An unknown keyword is the easy case every crew writes, and it is the
+one class the classifier genuinely cannot identify. B2c's row T4 used
+`sometotallyfuturerow whatever 1` and passed while the promise was false.
+
+**Two more properties of the DD-7 shape, measured and filed:**
+
+* **Line endings are not preserved** (issue **1295**). Reusing the parser's
+  preamble (`string trimright \r`) is right for a parser and wrong for a
+  preserver: a teammate's CRLF file comes back all-LF with zero reports, making
+  every save a whole-file diff. Either record the dominant ending and re-emit
+  it, or say so in the header. An interleaved comment inside a rewritten group
+  also moves.
+* **An existing file never gains the header** (issue **1296**, **needs a
+  ruling**). "Emit the header only into a file with no lines" is forced by DD-7
+  and fenced by the same-path byte-identity row — and it collides with "the file
+  documents its own precedence", because every file is a pre-existing file from
+  its second save onward.
+
+**Two API shapes that are now pinned by existing green rows** — a direct
+`load_conf` must stamp its keys session-dirty while the two-tier startup `load`
+must not (or the five copy-a-file rows go red or vacuous), and both
+`load_conf {path {stamp 1}}` and `write_body {fp {old {}}}` must keep their
+**required** arity at one argument.
+
+---
+
 ## 5. Contracts and invariants
 
 * **I-TIER (added by B2a-2, 2026-09-03).** **Writing one tier's settings file
@@ -1463,6 +1546,24 @@ design-of-record, and the first two **correct this spec**:
   store **synthesised** and is data loss for a row the user **typed** — the store
   must tell those apart, and a fence must construct a tier conflict on a
   **default-valued** token, which is the case both attempts left invisible.
+* **I-CLASSIFIER (added by B2c, 2026-09-03 — the constraint DD-7 does not
+  state, and the reason B2c was reverted).** **Under a read-modify-write, the
+  writer's row classifier must be exactly as strict as the reader's parser.**
+  DD-7's whole safety argument is *"you cannot delete a row you never parsed
+  into a model"*, and that is true only while the writer cannot **identify** a
+  row the reader refused. A classifier that validates fewer gates than the
+  parser will identify — and therefore rebuild, and therefore delete — precisely
+  the rows the parser threw away, with `rc=1` and no report. The only shape that
+  cannot drift is **one builder called by both doors** (invariant I1, one level
+  down). And the fence must use a **known verb with an unreadable field**: an
+  unknown keyword is the one class every classifier rejects anyway, so a fixture
+  built from one passes while the promise is false.
+* **I-BYTES (added by B2c).** *"Preserved verbatim"* means **bytes**, not rows.
+  A preserver that reuses a parser's line-splitting preamble silently normalises
+  line endings and loses a missing final newline; a merge that replaces a group
+  at its first line silently moves any comment that sat inside the group. Either
+  preserve them or state the transformation in the emitted header — but do not
+  write *"exactly as you wrote it"* over a writer that does neither.
 * **I1 (inherited).** One vector-name builder. Every consumer goes through
   `op_annot::devpath` / `op_annot::vector`. A list editor that lets the user type
   a parameter name must not become a second builder.

@@ -234,3 +234,59 @@ commit code no verification pass had ever seen.
 **both** attempts: B2a's six sound fixes *and* B2a-2's re-fixes. This issue's
 portion should survive the third pass unchanged; apply the patch and fix only
 what §"Still open after B2a-2" in **1277**, **1281** and **1285** names.
+
+---
+
+## ATTEMPT 3 — item B2c, 2026-09-03: FIXED IN THE PATCH, NOT LANDED
+
+**The fix is right and has now survived three adversary passes without a
+counterexample.** It is in
+`doc/claude/op_param_batch/B2c_working_tree_REVERTED.patch` and must be applied
+rather than retyped. The item was reverted for issue **1294**, which is in a
+different proc and does not touch this one.
+
+### What the patch does
+
+`_resolve_target {path}` — a **16-hop bounded** symlink walk resolving each hop
+as `file normalize [file join [file dirname $p] $tgt]`. That expression is the
+**relative-target correction this issue's own recommended one-liner gets
+wrong**: for a link at `<d>/sub/link.conf` → `real.conf`, `file normalize [file
+link $path]` gives `<d>/real.conf` while the corrected form gives
+`<d>/sub/real.conf`. Re-verified on this tree.
+
+`_target_why {path target}` — the named precondition: `{}` when writable, a
+plain-English sentence otherwise. Refuses a directory and a chain deeper than 16
+hops.
+
+**Both run BEFORE `file dirname`, `file mkdir`, `_tmpname` and the permission
+capture** — mandatory, because a symlink to a directory answers `file
+isdirectory` **1** and a dangling link answers `exists` **0** while `file link`
+still succeeds. All three platform facts re-verified 2026-09-03.
+
+`_path_tier`, which shared the block in B2a-2's patch, was **not** copied: it is
+issue 1281's provenance and DD-7 deletes it.
+
+### Measured after (rows W6, W7, W7b, W8)
+
+| case | before (HEAD) | after |
+|---|---|---|
+| target is a **directory** | rc=**1**, 0 reports, bytes at `<dir>/dirtarget.new` | rc=**0**, a sentence naming it a directory, **nothing created inside** |
+| target is a **relative-target symlink** made from another cwd | rc=1, 0 reports, the **link replaced** by a 706-byte regular file, real target 0 bytes | rc=1, **still a link**, the **real file** carries the rows, no stray `real.conf` in cwd or parent |
+| **dangling** link | — | resolves and writes the real path |
+| **20-hop** chain | — | rc=0, the `>16 links` sentence, nothing written |
+| target exists but is **unreadable** (0000) | rc=1, overwrites a file it never read | rc=0, a sentence, bytes intact |
+
+The last row is **new with DD-7** and is not in this issue's original scope: once
+the writer *reads* the file it is about to write, an unreadable-but-existing
+target must report and return 0, because proceeding would write the session's
+few changed keys over a file whose other rows were never seen — DD-7's own
+failure mode arriving through the fix.
+
+### ⚠ One observability gap, found by sabotage and fixed in the patch
+
+Neutering `_target_why` initially left the suite **79/79 green**: DD-7's read
+guard covers the directory case on its own, because `open` on a directory also
+fails, so a build with **no directory guard at all** still returns 0 and still
+leaves the directory empty — while telling the user *"it already exists but
+could not be read"*. **Row W6 must assert the report's TEXT**, not just the
+verdict. It does now.

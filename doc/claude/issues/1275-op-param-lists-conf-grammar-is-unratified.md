@@ -150,3 +150,97 @@ per-(scope,key,listname) tier win.
 **Cost of overruling:** the grammar lives in three places and nowhere else —
 `_parse_line`, `write_body`, and the two suite headers. It is still free of any
 file in the wild **until item B5 ships**.
+
+---
+
+# ⚠ GRAMMAR v2 — RE-DONE BY ITEM B2c ON RULING DD-8, 2026-09-03, **REVERTED AGAIN**
+
+> **THE GRAMMAR IN THE TREE IS STILL v1.** Item **B2c** re-implemented the v2
+> above on the driver's settled design **DD-8**, **closed both of the holes the
+> B2a banner lists**, went green (store suite 56 → 79, full audit unmoved), and
+> was reverted for a **different** defect — issue **1294**, in the writer's
+> merge classifier, which does not touch the grammar. The code is preserved at
+> `doc/claude/op_param_batch/B2c_working_tree_REVERTED.patch`.
+>
+> **The grammar rows are UNCHANGED from B2a's proposal above.** Only the
+> semantics around them moved. **The deadline is unchanged and the migration is
+> still free — B5 is the first thing that writes a flavor row.**
+
+## Both holes in the B2a banner are closed
+
+* **Precedence.** Ruling **DD-8** deletes the ranking entirely: *"when two globs
+  of the SAME class both match a cell, the FIRST ONE IN THE FILE WINS. No code
+  anywhere decides which glob is 'narrower'."* Measured across all three glob
+  pairs both previous crews got backwards, in **both** insertion orders: 6/6 the
+  first row in the file, **including a bare `*` above `*nfet_01v8_lvt*`**. There
+  is **no ranking proc** in the patch.
+* **The metacharacter round trip.** `_key_fields` emits the flavor's class and
+  glob as **two separate unquoted fields** in both the `list` and the `param`
+  row, and `_key` canonicalises the key at one door. Nine `format %c` shapes
+  round-trip clean. **No rejection arm is needed** — measured, nine of ten
+  already round-trip at HEAD and the corruption was *created* by v2's whole-key
+  interpolation. Only a glob carrying **whitespace** is refused, as v1 does.
+
+## THE GRAMMAR, AS THE FILE ITSELF NOW DOCUMENTS IT
+
+This is the sentence the emitted header carries, and it is the thing the user is
+being asked to accept. **Row F5 generates its own test case out of this
+paragraph**, so the file cannot say it and the code do otherwise:
+
+```
+# PRECEDENCE among `flavor` rows: when two globs of the SAME class both
+# match a cell name, THE FIRST ONE IN THIS FILE WINS. Nothing is ranked
+# and nothing is measured for narrowness: put the row you want to win
+# ABOVE the other one.
+#   e.g. `flavor mos *nfet_01v8_lvt*` above `flavor mos *` wins on cell
+#        sky130_fd_pr__nfet_01v8_lvt; swap the two rows and the bare * wins.
+# A `flavor` row answers ONLY for the class named in its own row.
+# Your personal file is read BEFORE this project's, so its flavor rows are
+# tried first; a project row outranks a personal one only by using the SAME
+# class and the SAME glob.
+```
+
+## Two further sub-decisions, each ladder-rung and rejected alternative recorded
+
+4. **Cross-tier flavor precedence is READ ORDER — the user-global file's flavor
+   rows are tried before the project's.** Ladder **L3**: DD-8 says *"first in
+   the file"* and is **silent across two files**, and read order is the only
+   spelling that needs no new rule and agrees with D-7's literal words (*"the
+   user's file wins"*). It is stated in the emitted header, because otherwise
+   the sentence is incomplete and therefore, again, not quite true.
+   *Rejected:* project-first, which would let a project file silently outrank a
+   teammate's personal narrowing — issue 1281's privacy direction in a hat.
+   **Note the SAME-KEY tier override is unchanged**: a project row still wins per
+   (scope, key, listname).
+
+5. **The header and the `version` row are emitted only into a file with no lines
+   yet.** Ladder **L2**, forced by DD-7 (*preserve every row verbatim*) and
+   fenced by row W9 (writing the same store to the same path twice must be
+   byte-identical, or the header duplicates on every save).
+   *Rejected:* always emitting the header.
+   **⚠ THIS COLLIDES WITH THE ACCEPT ROW AND IS ISSUE 1296 — IT NEEDS A RULING.**
+   Its consequence, measured: a **pre-existing** file saved with a new v2 flavor
+   row contains `FIRST ONE IN THIS FILE WINS` **zero** times, keeps a v1 grammar
+   block directly above a 5-field v2 row, and still declares `version 1`.
+
+## What the user is being asked to rule on — CONSOLIDATED, and this supersedes the list above
+
+1. **The v2 grammar rows** (unchanged from B2a's proposal).
+2. **Precedence is FILE ORDER, and nothing is ranked.** The honest consequence
+   to accept: **a bare `*` placed FIRST now legitimately beats a specific
+   glob** — the opposite of what both previous crews' files promised. The
+   mitigation is that the user already has Up/Down buttons on every list, so
+   precedence is something they set and can see.
+3. **Your personal file's flavor rows are read before the project's.**
+4. **Whether a pre-existing file should gain the precedence paragraph and a
+   migrated `version` row** — issue **1296**, three options costed there, (b) is
+   the recommendation.
+5. **Whether skipping a v1 flavor row is the right migration**, or a
+   release-note-and-rewrite is preferred.
+6. **The wildcard cap's value (4)** — note this belongs to issue **1278** and is
+   assigned to item **B3**, not to the grammar.
+
+**Cost of overruling is unchanged and still small:** the grammar lives in
+`_parse_line`, `write_body` and the two suite headers, and **no settings file
+exists in the wild until item B5 ships.**
+

@@ -349,3 +349,91 @@ rows**; the reader's first-touch rule silently discards one, with **zero
 reports**. HEAD has no such divergence — a v1 key was one element that `list`
 quoted identically from both doors — so **grammar v2 introduces it**. The store
 must canonicalise the key at both doors (build it with `list` on the way in too).
+
+---
+
+## ATTEMPT 3 — item B2c, 2026-09-03: FIXED IN THE PATCH ON RULING DD-8, NOT LANDED
+
+**Ruling DD-8 deletes the ranking.** *"When two flavor globs both match a cell,
+the FIRST ONE IN THE FILE WINS. No code anywhere decides which glob is
+'narrower'."* Both previous attempts ranked, and both shipped a bare `*` beating
+a specific pattern — the filed defect, under its own fix, twice. `"narrower"`
+has no defensible total order over globs.
+
+**This half of the issue is now SOLVED and the design should not be reopened.**
+The item was reverted for issue **1294**, which is in the writer's merge and does
+not touch any of the below.
+
+### What the patch does
+
+* **`variable keyorder`** — a plain **list** of store keys, appended when a key
+  is first seen (by `set_list` and by `_parse_line`), cleared by `reset`,
+  consumed by **`effective`** and by the writer. It replaces `lsort [array names
+  owned]` in both. A Tcl array has no insertion order, which is the whole reason
+  both previous attempts reached for a ranking in the first place.
+  **No `_flavor_order`, no narrowness metric, no `maxstars` exists in the patch.**
+* **`_flavor_matches_class {k cls}`** — the class half of this issue, which
+  **stands** under DD-8. `effective <class>` no longer scans another class's
+  flavors.
+* **`_key_fields {scope key}`** — the flavor's class and glob are emitted as
+  **two separate unquoted fields** in both the `list` and the `param` row, and
+  `_key` canonicalises with `[list [lindex $key 0] [lindex $key 1]]` **at one
+  door only**.
+
+### Measured after
+
+| row | before (HEAD) | after |
+|---|---|---|
+| `*fet*` vs `*nfet_01v8*`, **both** insertion orders | `*fet*` wins both times (`lsort`: `f` < `n`) | **the first row in the file** wins, both times |
+| bare `*` vs `*nfet_01v8_lvt*` | **bare `*` wins** — the headline both crews shipped | the first row in the file wins |
+| `sky130_fd_pr__*` vs `*nfet_01v8_lvt*` | the **second** row wins | the first row in the file wins |
+| rename the **loser** | the winner **flips** | winner unchanged (4 renamings) |
+| `effective capacitor annotation cap_1v8_x` | returns a **`mos`** flavor's list | the capacitor's, or none |
+
+⚠ **A correction to the record.** An earlier scout note called HEAD *"accidentally
+right"* on `sky130_fd_pr__*` vs `*nfet_01v8_lvt*`. Under DD-8 it is **not**: HEAD
+answers the **second** row, so first-in-file loses, and a correct fix **flips**
+that pair. That flip is the fix working, not a regression.
+
+### The sentence the file emits — the named ACCEPT row both crews failed
+
+The emitted header now carries, verbatim:
+
+```
+# PRECEDENCE among `flavor` rows: when two globs of the SAME class both
+# match a cell name, THE FIRST ONE IN THIS FILE WINS. Nothing is ranked
+# and nothing is measured for narrowness: put the row you want to win
+# ABOVE the other one.
+#   e.g. `flavor mos *nfet_01v8_lvt*` above `flavor mos *` wins on cell
+#        sky130_fd_pr__nfet_01v8_lvt; swap the two rows and the bare *
+#        wins.
+```
+
+**And this issue's "still open" item 2 is discharged the way it asked.** Row
+**F5** does not restate the sentence beside the code — it **regexps the two
+specimen globs and the cell name out of the freshly written file** and builds
+the case the file describes, in both orders. Falsify or delete the sentence and
+F5 reds. Row **X5** additionally asserts the file contains no `narrow` / `most
+specific` and does contain `THE FIRST ONE IN THIS FILE WINS`. **Copy this shape
+wherever a comment makes a promise.**
+
+### Metacharacters: emit two fields, do NOT reject
+
+The brief allowed *"if the format cannot carry one, reject it at write time"*.
+**Measured: it can.** Nine of ten shapes (`[nm]`, `\*`, `"`, `{`, `}`, `$`,
+`?`, bare `*`, a slash-bearing PDK glob) already round-trip **at HEAD** with
+zero reports; the corruption is **created** by grammar v2's two-element key
+being interpolated whole into `puts $fp "list $scope $key $ln"`. Emitting two
+fields needs no rejection arm — and adding one would cost `[nm]` and `\*`, both
+documented `string match` features. The one refusal kept is a glob carrying
+**whitespace**, which HEAD already refuses with a sentence.
+
+### ⚠ Introduced by this fix, and still open: issue 1294's secondary
+
+`_key` **silently truncates** a >2-element flavor key, so
+`owns flavor {mos *cap* JUNK} annotation` → **1** and `get_list` returns the
+entry, while `set_list` with the identical key → **0 with a report**. Three
+doors, two rules — a new two-door disagreement of exactly the class issue
+**1288** was filed about. Latent; **B5's scope dialog is the first door that
+could reach it.** Either canonicalise by refusal (call `_key_why` from `owns` and
+`get_list` too) or say in `_key`'s comment that the truncation is intentional.

@@ -267,3 +267,92 @@ suite tests.
    recommendation; only the two branches above are wrong.
 4. **The fence must construct a tier conflict on a DEFAULT-VALUED token.** That
    is the row whose absence hid this for a whole item.
+
+---
+
+## ATTEMPT 3 — item B2c, 2026-09-03: REBUILT ON RULING DD-7, AND REFUTED AGAIN
+
+**This is the third revert on this issue.** DD-7 replaced the design that failed
+twice: *"writing a tier reads that tier's existing file, changes only the keys
+this session actually changed, and writes it back. Every other row is preserved
+verbatim, including rows this build does not understand."* No provenance model,
+no tier tags — **provenance becomes a property of which file you opened.**
+
+**The new shape is right and most of it works.** It failed on one hole, filed as
+issue **1294**, and the patch is preserved at
+`doc/claude/op_param_batch/B2c_working_tree_REVERTED.patch`.
+
+### What the patch does
+
+* **`variable dirty` / `variable dirtyclass`** — a *dirty set*, not a provenance
+  model. Stamped by `set_list`, `set_class`, and by `_parse_line` when the load
+  is stamping. **Cleared only by `reset`**, never by a successful write, so a
+  user who saves both tiers gets the change in both.
+* **`load_conf {path {stamp 1}}`** — a **direct** `load_conf` stamps (importing
+  a file into your session *is* a session change); **`load`**, the two-tier
+  startup restore, passes `0` and stamps nothing (that is the session's initial
+  state). Required arity unchanged.
+* **`_read_lines {path}`** — the raw-line reader, reusing `load_conf`'s own
+  preamble so there is one splitter and two consumers (invariant **I1**).
+* **`write_body {fp {old {}}}`** → `_merge_lines`, which walks the old file **in
+  order**: comments, blanks, `version` and any row this build does not identify
+  are copied **verbatim**; a dirty `class` row or a dirty `list`/`param` group is
+  replaced **in place at its first line**; then rows for dirty keys that had no
+  group are appended. **The header and `version` are emitted only into a file
+  with no lines.**
+* **The class map loses its default-comparison filter.** A token this session set
+  is written whether or not its value equals the shipped default. **That retires
+  B2a-2's exact refutation structurally**, not by care.
+
+### Measured after — the B2a-2 case, all four halves (row T4)
+
+User file carrying `class mydiode diode`, `class nmos mos` (**value equals the
+shipped default**), `param class mos annotation MYID id 0` and
+`sometotallyfuturerow whatever 1`; project file carrying `class nmos weirdclass`
+and `param class mos annotation TEAMID id 0`.
+
+| | before (HEAD) | after |
+|---|---|---|
+| user's `class mydiode diode` | kept | kept |
+| user's `class nmos mos` (= default) | **DELETED** | **kept** |
+| user's `param … MYID id 0` | **DELETED** (project's TEAMID won) | **kept**, TEAMID absent |
+| `sometotallyfuturerow whatever 1` | **DELETED** | **kept** |
+| whole file | rewritten | **byte-identical** |
+| `write_conf <project>` | **exports** the user's personal `mydiode` | no user-only row leaks |
+
+### ⚠ WHY IT WAS REVERTED ANYWAY — issue 1294
+
+**A `param` row this build cannot parse, whose key this session changed, is
+deleted on save. rc=1, ZERO reports.** The writer's merge classifier `_row_id`
+validates verb → scope → arity and stops; the reader `_parse_line` also runs
+`_valid_list`, the livelist guard and `_triple`. So
+`param class mos annotation NEWROW raw ratio` is refused by the reader and
+**identified** by the writer, and the group is rebuilt without it. **DD-7's own
+justification — *"you cannot delete a row you never parsed into a model"* — is
+false whenever the writer can identify what the reader rejected.**
+
+**Row T4 above cannot see it**, because its future row has an **unknown verb** —
+the one class `_row_id` genuinely cannot identify. The rows a newer build
+actually writes are known verbs whose value vocabulary grew.
+
+**The fix is named in 1294:** `_parse_line` calls `_row_id`, so there is
+genuinely one builder — which is what this item's own plan specified in writing
+and the code did not build.
+
+### Two more, filed separately, not the reason for the revert
+
+* **Issue 1295** — the merge **rewrites line endings**: a CRLF file comes back
+  all-LF, rc=1, zero reports, every untouched line's bytes changed. "Preserved
+  verbatim" is not byte-true. An interleaved user comment also moves.
+* **Issue 1296** — an existing file **never gains the precedence sentence**, and
+  a v1 file keeps `version 1` while gaining v2 rows. **Needs a ruling.**
+
+### ⚠ The seam that pins `load` vs `load_conf`, for whoever lands this
+
+Five existing green rows — **M3, X3, P5, P4, W5** — do `load_conf X` →
+`write_conf Y` → reload and assert the content copied. If stamping happens
+**only** in `set_list`/`set_class`, M3, X3 and P5 go **red** and P4 passes
+**vacuously**. If it happens in `load` too, this issue's leak reopens. The rule
+above is the only one that satisfies DD-7 literally *and* keeps all five green,
+and sabotage arm **SB-DIRTY-NEVER** reds exactly those rows. It is a ladder-**L2**
+decision and is recorded, not slid in.

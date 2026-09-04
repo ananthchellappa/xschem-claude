@@ -1173,4 +1173,25 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   by label); needs a hand-written descriptor or a PDK rc. Minor, filed for
   completeness beside issue **1288**. **FILED, NOT FIXED.**
 
-**The next free number is 1294.**
+* **1294** — **under DD-7's read-modify-write, a writer classifier LAXER than
+  the reader deletes the rows the reader rejected.** `_row_id` validated
+  verb/scope/arity while `_parse_line` also ran `_valid_list`, the livelist
+  guard and `_triple`, so a `param` row the reader refused was *identified* by
+  the writer and dropped when its key was dirty — `rc=1`, **zero reports**, the
+  exact signature that killed B2a and B2a-2. **THE DEFECT THAT REVERTED ITEM
+  B2c.** A property of the RULING's shape, not of the patch. Blast radius
+  measured for all three stamp cases. **FILED, NOT FIXED.**
+* **1295** — **DD-7's read-modify-write silently rewrites line endings.** A
+  teammate's CRLF settings file comes back all-LF, `rc=1`, zero reports, every
+  untouched line's bytes changed — so every save is a whole-file diff, against
+  the file's own reason to exist. Reusing the parser preamble (`string trimright
+  \r`) is right for a parser and wrong for a preserver. An interleaved comment
+  inside a rewritten group also moves. **FILED, NOT FIXED.**
+* **1296** — **an existing settings file never gains the precedence sentence,
+  and a v1 file keeps `version 1` while gaining v2 rows.** A collision between
+  DD-7 (*preserve every row verbatim* → emit the header only into an empty file)
+  and item B2c's named ACCEPT row (*the sentence the file emits is TRUE of the
+  code that emits it*). Harmless until B5 writes the first file; real from then
+  on. Three options costed. **NEEDS A RULING**, on the user's queue with 1275.
+
+**The next free number is 1297.**

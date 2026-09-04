@@ -72,3 +72,29 @@ diagnostic to add first is **the simulator's own stderr on the failing leg** —
   fix.
 * On failure the check reports the simulator's stderr, so the next occurrence is
   diagnosable from the transcript alone.
+
+---
+
+## WIDENED 2026-09-03 by item B2c's write-up agent: it is not one check
+
+Filed as *check X7*. A solo `T1` taken during B2c's write-up, on a tree
+**byte-identical to HEAD `adc08706`**, returned **3** counted failures, all this
+suite and **none of them X7**:
+
+```
+FAIL: X1 issue 0965 ... -> {NORAW} (exp {1 0 {}}) : FAIL
+FAIL: X2 issue 0969 ... -> {{} ZZNOTRUN} (exp {{} {}}) : FAIL
+HARNESS: headless/test_ase_optier_0963 did not complete cleanly (exit=1, OVERALL_ok=0, died=0)
+```
+
+The suite then passed **ALL PASS (94 checks)** run in isolation, immediately
+after, unchanged — and a **second solo T1** on the same unchanged tree came back
+at **0 counted failures / 117 lines**, the baseline exactly. Two independent
+measurements against one flake.
+
+So the defect is **the suite's simulator launch**, not any one check: whichever
+check happens to make the first request when the launch fails is the one that
+reds, and the rest cascade (`NORAW` → `ZZNOTRUN`). **Do not chase X7.** And note
+the consequence for every later crew: **a T1 of 3 whose three lines are all
+`test_ase_optier_0963` is this flake**, and the way to tell is to re-run that
+one suite alone — which takes well under a minute against T1's ten.

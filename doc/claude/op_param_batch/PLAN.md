@@ -1803,6 +1803,169 @@ seven issues that rode along with them last time were not in this commit at all.
 
 ---
 
+## B2c — the settings file on disk  ⛔ **NOT LANDED (status F), 2026-09-03. Third revert on the same two issues.**  *(still blocks B5)*
+
+**Scope was exactly four issues** — **1277** (the flavor class field + DD-8 file
+order), **1281** (DD-7 read-modify-write Save), **1276** (the writer's two
+target guards) and **1288** (one duplicate-label rule at both doors). The item
+was deliberately small: it is the **second** of the three the B2a bundle was
+split into, and its two headline issues are **the exact two that were
+implemented twice and refuted twice**.
+
+Everything the item was asked to produce, it produced:
+
+* store suite **56 → 79**, ALL PASS headless and on `:99`;
+* `test_op_annot` **485/492**, `test_annot_declutter_1244` **134**,
+  `test_rdw_seam_1245` **49**, `test_rdw_window_1245` **32** — all unmoved;
+* full audit back at **367 pass / 12 fail / 0 crash / 2 skip of 381**, non-PASS
+  diff **empty by name and verdict**, and identical at **check** level (25 FAIL
+  lines → 25);
+* **red-before-green on every one of the four**, each red being the previous
+  crews' own measurements reproduced;
+* an **eight-variant / ten-arm** sabotage matrix, trustworthy, with all four
+  predicted-reds-that-did-not-appear explained by construction and one arm
+  *added* by the sabotage agent to close a gap it found.
+
+**It was reverted anyway.** The adversary refuted the central claim, and the
+write-up agent **reproduced the refutation first-hand** — plus three more — on
+the working tree before deciding.
+
+> **THE WORK IS PRESERVED AND MUST NOT BE RETYPED.**
+> `doc/claude/op_param_batch/B2c_working_tree_REVERTED.patch` (2,095 lines, two
+> files) **applies clean to `adc08706`**, verified with `git apply --check` in
+> **both** directions and round-tripped twice during the write-up. It is a much
+> smaller and much better patch than B2a-2's: **no provenance machinery, no
+> glob ranking.**
+
+### What is SOUND in the patch and must be kept
+
+* **1276 — both guards, untouched by three adversaries now.** `_resolve_target`
+  (16-hop bounded symlink walk, `file normalize [file join [file dirname $p]
+  $tgt]` — the relative-target correction issue 1276's own recommended one-liner
+  gets wrong) and `_target_why`. Directory target, relative-target symlink from
+  a different cwd, dangling link, 20-hop chain, unreadable target: all correct,
+  all with a sentence. **Apply unchanged.**
+* **1288 — the shared rule.** `_dup_index` + `_dup_why` lifted out of
+  `_parse_line` and called by **both** doors. The API report is byte-identical
+  to the file report with the `<path>:<line>: ` prefix and `: <line>` suffix
+  removed, computed in one run. **Apply unchanged**, and note it moves row
+  **D5**'s golden (below).
+* **1277's file-order half — DD-8 is correct and is the first thing in this
+  batch that got it right.** `variable keyorder`, a plain list appended on first
+  sight of a key, consumed by `effective` and by the writer. All three glob
+  pairs both crews got backwards, in **both** insertion orders, 6/6 = the first
+  row in the file, **including a bare `*` above `*nfet_01v8_lvt*`**. **No
+  ranking proc exists** — no `_flavor_order`, no narrowness metric, no
+  `maxstars`.
+* **1277's class half** — `_flavor_matches_class`, so `effective capacitor` no
+  longer answers with a `mos` flavor's list.
+* **1277's metacharacter half** — `_key_fields` emitting class and glob as two
+  separate unquoted fields in **both** the `list` and the `param` row, plus
+  canonicalisation in `_key` alone. Nine `format %c` shapes round-trip clean.
+  **And the brief's "reject at write time" arm is NOT needed**: measured, nine
+  of ten shapes already round-trip at HEAD and the corruption is *created* by
+  v2's whole-key interpolation. Refusing would cost `[nm]` and `\*`, both
+  documented `string match` features. Only whitespace is refused, as HEAD does.
+* **Row F5, and it is the single best thing in the patch.** It **generates its
+  own case from the emitted comment** — regexps the two specimen globs and the
+  cell name out of the freshly written file's `e.g.` line, builds both orders,
+  asserts the stated winner and the flip. Delete or falsify the sentence and F5
+  reds. That is issue 1277's "still open" item 2, and it is the row both
+  previous crews failed. **Keep this shape and copy it wherever a comment makes
+  a promise.**
+
+### The hole that forced the third revert
+
+| # | Where | What is wrong, reproduced by the write-up agent |
+|---|---|---|
+| **1** | **1281 / DD-7**, `_row_id` vs `_parse_line` | **A ROW THIS BUILD CANNOT PARSE IS DELETED ON SAVE — rc=1, ZERO reports.** Issue **1294**. The writer's merge classifier `_row_id` validates verb → scope → arity and **nothing else**; the reader `_parse_line` also runs `_valid_list`, the livelist guard and `_triple`. So `param class mos annotation NEWROW raw ratio` is *rejected by the reader* ("kind \"ratio\" is not an integer") and *identified by the writer* as key `{class mos annotation}` — and when that key is dirty the group is rebuilt and the row is gone. Measured 5/5 unparseable kinds. **DD-7's own sentence — "you cannot delete a row you never parsed into a model" — is falsified by its own implementation**, and so is the emitted header's *"rows a newer xschem wrote that this one does not understand"*. **Row T4 cannot see it: T4's future row has an unknown VERB, the one class `_row_id` genuinely cannot identify.** Blast radius measured exactly: `stamp=0` + change the same key → **deleted** (the real Save path); `stamp=1` (any direct `load_conf`) + change *any* key → **deleted**; `stamp=0` + change another key → survives. **Fix:** `_parse_line` calls `_row_id`, so there is genuinely one builder — the shape this item's own plan specified in writing and the code did not build. |
+
+### Three more measured, filed, and NOT the reason for the revert
+
+* **1295 — the merge silently rewrites line endings.** A teammate's CRLF file
+  comes back all-LF, rc=1, zero reports; every untouched line's bytes change.
+  `_read_lines` correctly reuses the parser preamble (`string trimright \r`),
+  which is right for a parser and wrong for a preserver. **Row P4 fences the
+  parse, not the merge** — the scout named this in advance and the row was not
+  written. Makes every save a whole-file diff, against the file's own reason to
+  exist. Same issue: an interleaved user comment between two `param` rows of a
+  dirty key moves **after** the rebuilt group.
+* **1296 — an existing file never gains the precedence sentence, and needs a
+  RULING.** B2c's ladder-L2 decision *"the header goes only into a file with no
+  lines"* (taken for DD-7, fenced by row W9) collides with the item's **named
+  ACCEPT row** *"the sentence the file emits is TRUE of the code that emits
+  it"*. Measured: a pre-existing file saved with a new v2 flavor row has
+  `FIRST ONE IN THIS FILE WINS` **zero** times, keeps a v1 grammar block
+  directly above a 5-field v2 row, and still declares `version 1`. Harmless
+  today (no file exists in the wild — which is exactly why the grammar bump is
+  being done now), **real from B5 onward**. Three options costed in the issue;
+  **(b), migrate the version row and refresh the header, is the recommendation.**
+* **1294's secondary** — `_key` silently **truncates** a >2-element flavor key,
+  so `owns`/`get_list` answer for a key `set_list` refuses. Three doors, two
+  rules: **a new two-door disagreement of exactly the class 1288 was filed
+  about, introduced by the fix for it.** Latent; B5's scope dialog is the first
+  door that could reach it.
+
+### What this item learned that binds every later step
+
+* **⚠ THE LESSON, AND IT IS NEW: under a read-modify-write, the WRITER'S ROW
+  CLASSIFIER MUST BE EXACTLY AS STRICT AS THE READER.** DD-7's safety argument
+  is *"you cannot delete a row you never parsed"* — that holds only while the
+  writer cannot **identify** a row the reader refused. Any laxity in the
+  classifier converts DD-7 from a preservation mechanism into a deletion
+  mechanism, silently, with rc=1. **This binds any future DD-7 implementation
+  and it is not obvious from the ruling's text.**
+* **A "future row" fixture must use a KNOWN verb with an unreadable field, not
+  an unknown keyword.** An unknown keyword is the easy case and it is the one
+  every crew writes. The rows a newer build actually emits are known verbs whose
+  value vocabulary grew. T4 passed on the easy case for a whole verification
+  chain.
+* **DD-8 is settled and correct — do not reopen it.** File order works, the file
+  documents itself, and the F5 shape proves the sentence. This is the one design
+  question in the batch that three attempts have now converged on. The next crew
+  should **apply the patch**, not re-derive the ordering.
+* **Row D5 (item B2b's) moves when 1288 is fixed, and that is correct.** D5 was
+  built *on* 1288's open door — its own comment said *"Issue 1288 is LIVE on
+  this tree"* — so closing 1288 changes its golden from `{{A id 0} {A gm 1}}` to
+  `{{A gm 1}}`. B2c edited only the golden and the prose, never `_save_set` /
+  `_show_set` / `apply`, and SB-DUP-BLIND still reds D5 alongside E1–E4, so the
+  row stays non-vacuous. **Expect this again; it is not a regression.**
+* **`set_list`'s contract changes** — a malformed **triple** stays an
+  all-or-nothing refusal, a duplicate **label** becomes a reduction returning 1.
+  That is a **ladder-L3** change to a written contract and is on the user's
+  queue as rule debt **1288**.
+* **Two `load_conf` behaviours are now pinned by five existing green rows.** A
+  direct `load_conf` **must** stamp its keys and `load` (the two-tier startup
+  restore) **must not**, or M3, X3 and P5 go red and P4 passes vacuously. This
+  is the scout's "#1 seam", it was confirmed by sabotage arm SB-DIRTY-NEVER
+  (which reds exactly those rows), and it is the only reading that satisfies
+  DD-7 literally on the real Save path. **Spell it `load_conf {path {stamp 1}}`
+  — the required arity must not move (row J1 / OL_API pins it), and the same
+  goes for `write_body {fp {old {}}}`.**
+* **⚠ PROCESS: a sibling agent mutating the shipped source in place voids
+  another agent's tiers.** Verify-A's first T1 finished while a sabotage arm was
+  installed in `src/op_param_lists.tcl` and had to be discarded and re-run under
+  an md5 guard; Verify-C's first suite number was void for the same reason.
+  **Sabotage must be run on a COPY, or under a lock.** Nothing in a transcript
+  says the tree moved underneath a measurement. Before committing, `grep -c
+  SABOTAGE src/op_param_lists.tcl` must be **0** on a reverted tree (1 if the
+  patch is applied — the one legitimate mention in `_keys`' comment).
+* **T1 is not reliably zero on this box.** A solo T1 during this write-up
+  returned **3** counted failures, all `test_ase_optier_0963`
+  (X1 `NORAW`, X2 `ZZNOTRUN`, plus the HARNESS line) on a tree **byte-identical
+  to HEAD**; the suite then passed **94/94 in isolation**, and a second solo T1
+  came back at **0 counted / 117 lines**, the baseline exactly. That is issue
+  **1290** — filed as X7, so **widen 1290: it is the whole suite's simulator
+  launch, not one check.** Two measurements, so do not carry the 3 forward.
+* **Unchanged and still true:** pure Tcl, no build, no `Makefile.in` — both
+  files are already installed (`grep -c op_param_lists src/Makefile` = 2);
+  `xschem` sources `.tcl` at startup, so the change takes effect on the next
+  launch. The grammar deadline is still free **until B5 writes the first flavor
+  row** — but it is now the *only* thing left blocking it, so B5 must not start
+  before this patch lands.
+
+---
+
 ## B4 — the keys and the two grammars  *(needs B3)*
 
 > **⚠ FROM A6 (2026-09-02).** A6-c closed **every** `symbol_bbox()` door by
@@ -1864,6 +2027,17 @@ line.
 > REVERTED (2026-09-03) — apply
 > `doc/claude/op_param_batch/B2a-2_working_tree_REVERTED.patch` and fix the four
 > holes in the B2a-2 section above before starting here.**
+>
+> **⚠ AND THE SETTINGS FILE IS NOW THE ONLY THING BETWEEN YOU AND THE GRAMMAR
+> DEADLINE.** Item **B2c** re-did 1276/1277/1281/1288 on the driver's settled
+> designs DD-7 and DD-8, went green everywhere, and was **reverted a third
+> time** on issue **1294** — one named hole in one proc. Its patch,
+> `doc/claude/op_param_batch/B2c_working_tree_REVERTED.patch`, is small, carries
+> **no provenance machinery and no glob ranking**, and applies clean to
+> `adc08706`. **B5 writes the first flavor row, and the moment it does, every
+> settings file in the wild is v1 and the grammar bump becomes a migration.** So
+> that patch must land — apply it, fix 1294 (`_parse_line` must call `_row_id`),
+> and decide **1296** — *before* you write a file.
 > 0. ~~**Issue 1289 needs a RULING before Delete ships.**~~ **RULED DD-9 and
 >    LANDED by item B2b, 2026-09-03.** `op_annot::text` builds `vars` over
 >    `params` and draws over `shown`, so a derived row keeps its value when its
