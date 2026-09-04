@@ -1320,4 +1320,66 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   B4-3's adversary, **identical on both arms**. Overlaps **1307**; option (d) in
   the file probably subsumes both. **FILED, NOT FIXED.**
 
-**The next free number is 1310.**
+* **1310** — **a NARROW (device-flavor) list is stored, written to the settings
+  file and honoured by `effective`, and never reaches the drawn sheet.** Filed by
+  item **B5** while wiring the scope dialog: `op_param_lists::apply` re-registers
+  descriptors per `type=` token and passes no cell name, and `op_annot` holds ONE
+  descriptor per type, so a per-cell display list has nowhere to live. Measured —
+  `effective` answers the narrowed list for M1's cell and the PDK seed for M2's,
+  while `op_annot::descriptor` is byte-identical before and after. The button
+  SAYS so rather than looking broken (row BT21). ⚠ **B5 was REVERTED (issue
+  1314), so nothing says so today; the measurement stands.** **FILED, NOT
+  FIXED.**
+
+* **1311** — **DD-8's precedence is FILE ORDER, and the Results window cannot
+  reorder the entries whose order it is.** DD-8's own justification is *"the user
+  already has a reordering UI"* — but the pane shows one line per PARAMETER of one
+  dumped device, never the settings file's `flavor` ENTRIES, so Up and Down move
+  `gm` above `id` and cannot move `flavor mos *nfet*` above `flavor mos *`.
+  Measured by row BT10's third leg. Item **B5** detects the shadowed case (what it
+  just wrote is not what `effective` now answers) and named the remedy in the
+  status line — ⚠ **B5 was REVERTED (issue 1314); the measurement stands, the
+  detection does not exist in the tree.** **FILED, NOT FIXED.**
+
+* **1312** — **`apply` writes the union into `params`, and `seed` reads that same
+  field back as "the PDK's own list".** Filed by item **B5**, the first caller of
+  `op_param_lists::apply` in the tree. Measured 2026-09-04: with two type tokens
+  in one class and nothing owned, reordering the ANNOTATION list and applying
+  changes what the unowned SUMMARY list answers, because `_params`
+  (`op_param_lists.tcl:700`) reads the field `apply` just overwrote. ⚠ **THE
+  ORIGINAL ENTRY HERE SAID "content is a superset so nothing is lost". THAT IS
+  FALSE** and it is corrected in the issue file: the superset property holds only
+  while one of the two lists is UNOWNED, and two Delete presses own both — after
+  which `params` loses the PDK's row, `_cards_for` stops emitting its `.save`
+  card, and **ruling DD-4/DD-6 is violated**. This is the BLOCKER that refuted
+  and reverted item **B5** (issue **1314**). **FILED, NOT FIXED.**
+
+* **1313** — **the settings file is written by the Results window and read by
+  nobody.** `op_param_lists::load` has no caller anywhere in `src/`, so item B5's
+  Save produces a correct `<project>/.xschem/op_param_lists.conf` that a restart
+  ignores. "Reorder persists through Save and reload" is provable inside ONE
+  process (write_conf -> reset -> load_conf, rows BE1 and S1b) and not across a
+  restart. Not wired by B5 because it is a startup-ORDERING change:
+  `op_param_lists.tcl` is sourced before any PDK `_procs.tcl` and
+  `op_annot::register` has replace semantics, so the `apply` that must follow the
+  load would write into an empty registry and be discarded. Recommended (c): an
+  explicit "Reload parameter lists" verb beside the window's Save. ⚠ **B5 was
+  REVERTED (issue 1314), so there is no Save either; the analysis stands.**
+  **FILED, NOT FIXED.**
+
+* **1314** — **the wired Delete button changes what the simulator is asked to
+  save, and destroys the PDK seed doing it.** Filed by item **B5**, whose
+  implementation it refutes; **B5 was reverted in full (status F)** and the patch
+  is preserved at `doc/claude/op_param_batch/B5_working_tree_REFUTED.patch`.
+  Three attacks, each re-measured independently before the revert: **A5** two
+  broad Deletes remove the parameter's `.save` card and the PDK row with it,
+  irreversibly inside the session, with Add then blaming the PDK for a row xschem
+  deleted (mechanism = **1312**, in a file B5 may not edit — so B5 is
+  **mis-scoped**); **A6** the broad arm decides scope by exact-key `owns` while
+  `effective` narrows by glob, so it edits a list the device does not use and
+  reports success; **A7** a `set_list` that silently reduced the list by label is
+  reported as a plain success, breaking **1288**'s ruled promise through the only
+  UI door there is. Also records the two suite blind spots (BE3 fences one
+  delete; SD3's fixture cannot fail) and the re-land order. **FILED, NOT FIXED.**
+
+**The next free number is 1315.**

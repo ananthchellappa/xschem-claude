@@ -1159,6 +1159,37 @@ shipped editing action for cadence-profile users only. Question Q5.
 > skipped with a sentence saying why. **B5's Add-from-list-3 writes into
 > `annotation` or `summary`** and so is left with nowhere to write.
 
+> ⛔ **ITEM B5, 2026-09-04 — THE COLUMN WAS WIRED, WENT GREEN ON EVERY TIER,
+> AND WAS REFUTED AND REVERTED. Two cells of this table are wrong.**
+> Patch preserved at `doc/claude/op_param_batch/B5_working_tree_REFUTED.patch`;
+> the transcripts are in issue **1314**.
+>
+> * **The `Delete` column is not deliverable while issue 1312 stands.** Ruling
+>   **DD-4/DD-6** says Delete *"never changes what the simulator is asked to
+>   save"*. Measured: `apply` writes the union into the descriptor's `params`
+>   and `seed` reads the PDK's own list back out of **that same field**, so
+>   deleting one parameter from the annotation list **and then from the summary
+>   list** empties it out of `params` — `op_annot::_cards_for` stops emitting its
+>   `.save` card, the PDK seed and every sibling `type=` token lose the row, and
+>   `Add` then refuses, blaming the PDK for a row xschem itself deleted.
+>   `_save_set`'s in-code claim that the union "can only ever be a SUPERSET" is
+>   **conditional on one of the two lists being unowned**, and this column is
+>   what owns both. **Fix 1312 option (a) first; it is a `src/op_param_lists.tcl`
+>   change and therefore a re-scope of B5's Files cell.**
+> * **The `Up`/`Down` cell for list `all` is undeliverable as written.** This
+>   table says *reorder* in all three columns, but ruling **D-4** and the B2 note
+>   above mean `op_param_lists::set_list` refuses to store the live list at all,
+>   so there is no stored order to move. The honest column is *"refuses, with a
+>   sentence"* — decision D11 of the reverted item, and the spec is the half that
+>   is wrong.
+> * **Two more measured defects for the re-land** (both issue 1314): the broad
+>   scope arm decided scope with an exact-key `owns` while `effective` narrows by
+>   **glob in file order** (DD-8), so with a real flavor glob live it edited a
+>   list the device does not use **and reported success**; and a `set_list` that
+>   silently reduced a list by **label** (IHP's `{id ids 0}`, label ≠ param) was
+>   reported as a plain success, breaking **1288**'s ruled *"the user is told
+>   once"* through the only UI door there is.
+
 Every Delete and Add raises a **scope dialog**: *this device flavor only*, or
 *every device of this broad class*. That maps onto the descriptor's `match`
 glob (§2.1) — narrow writes a flavor-specific entry, broad writes the class
@@ -2119,6 +2150,19 @@ Still open:
     every tracked file a run depends on and discard any run whose signature
     moved.** Both agents did, and both then measured zero flake. A "flaky
     focus suite" is the story this failure tells about itself, and it is false.
+
+23. **A SAFETY ARGUMENT THAT DEPENDS ON A FIELD BEING UNOWNED EXPIRES THE MOMENT
+    A UI CAN OWN IT** (item B5, 2026-09-04). `op_param_lists::_save_set` carries
+    a comment asserting that the union it writes into `params` "can only ever be
+    a SUPERSET of what `params` already held and no PDK row is ever lost". The
+    reasoning is correct and the conclusion is false: it holds only while at
+    least one of the annotation and summary lists is **unowned**, because an
+    unowned list answers the seed and re-includes the row. The whole point of
+    the button column is to let a user own both. **When a comment proves an
+    invariant from the current state of a store, write down the state it
+    assumes** — and when you build the feature that changes that state, grep for
+    the comments that assumed it. This one had been true, and correct, and
+    reviewed, for three items.
 
 ---
 

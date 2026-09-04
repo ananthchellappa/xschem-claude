@@ -2307,7 +2307,91 @@ line.
 
 ---
 
-## B5 — the button column and the two scope dialogs  *(needs B2, B3, and see B2a)*
+## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04. Built, green on every tier, REFUTED on a binding ruling and REVERTED.**  *(needs B2, B3, and see B2a — and now needs 1312 fixed FIRST)*
+
+> **⛔ READ THIS BEFORE ANYTHING ELSE IN THIS SECTION. B5 IS BLOCKED ON A B2-TIER
+> DEFECT AND CANNOT BE DELIVERED AS SCOPED.**
+>
+> The item was implemented in full (`+2224` lines across `src/rdw.tcl` and the
+> three suites), passed **every** tier — window 76→96 `--nogui` / 86→107 `:99`,
+> store 86→93, keys 35→39, T1 at zero, T2 `HARNESS: PASS`, full audit
+> 369/11/0/2 with the eleven fail names byte-identical — and was then refuted by
+> its own adversary and **reverted in full**. The patch is preserved at
+> `doc/claude/op_param_batch/B5_working_tree_REFUTED.patch` (md5
+> `2bcc19ee49737ee0fbe187defb995f33`, applies clean to `79f163cb`). **Do not
+> apply it as-is.** The whole story, with the transcripts, is issue **1314**.
+>
+> * **THE BLOCKER IS ISSUE 1312, AND IT LIVES IN `src/op_param_lists.tcl` —
+>   THE ONE FILE B5's FILES CELL FORBIDS.** `apply` writes the union into the
+>   descriptor's `params`; `seed` reads the PDK's own list back out of that same
+>   field through `_params` (`op_param_lists.tcl:700`). `_save_set`'s in-code
+>   comment claims the union "can only ever be a SUPERSET … and no PDK row is
+>   ever lost" — **true only while one of the two lists is UNOWNED**, and two
+>   Delete presses own both. Measured: after deleting one parameter from the
+>   annotation list and then from the summary list, `params` loses the row,
+>   `op_annot::_cards_for` stops emitting its `.save` card, the PDK seed and the
+>   sibling `type=` token lose it too, and Add refuses — **blaming the PDK for a
+>   row xschem itself deleted.** That is binding ruling **DD-4/DD-6** violated
+>   outright: *"Delete removes a parameter from what is DRAWN. It never changes
+>   what the simulator is asked to save."*
+> * **⚠ THEREFORE A NEW ITEM MUST LAND BEFORE B5 IS RETRIED** — issue 1312
+>   option (a): a separate descriptor key holding the PDK's own declaration,
+>   written only by `op_annot::register`, read by `_params`. It is a B2-tier
+>   change (`src/op_param_lists.tcl`), roughly one key and one accessor, and
+>   **until it lands no caller of `apply` anywhere can honour DD-4/DD-6.** B5's
+>   D7 ("every mutation applies immediately") was the error: it traded a binding
+>   ruling for a responsiveness preference. Re-scope B5's Files cell to include
+>   the store, or split the store fix out as its own item.
+> * **TWO MORE DEFECTS TO FIX IN THE RE-LAND, both measured (issue 1314):**
+>   **A6** — `rdw::_scope_for` decides scope with an exact-key `owns` while
+>   `effective` narrows by **glob in file order** (DD-8), so with any real flavor
+>   glob live the broad arm edits a list the device does not use **and reports
+>   success**. The broad base must be `effective $cls $listname $cell`, and the
+>   DD-8 shadow warning must be on **both** write paths, not the narrow one only.
+>   **A7** — `_edit` reads `_store_tail` only on the `set_list → 0` arm, so a
+>   `set_list` that silently reduced the list by **label** (IHP's `{id ids 0}`
+>   shape, where label ≠ param) is reported as a plain success. That breaks
+>   **1288**'s ruled promise *"the user is told once"* through the only UI door
+>   there is — and B5 was named as that door.
+> * **TWO SUITE FENCES TO REBUILD, or the same defects pass again.** `BE3` stops
+>   at ONE delete and both per-row resets re-`register` the descriptor, so the
+>   second press is unreachable inside the suite; the successor row must delete
+>   the same parameter from **both** lists and then assert `_cards_for` **and**
+>   `seed`. `SD3` — the only row claiming the cursor rule end to end — **cannot
+>   fail**: its fixture gives M1 and M2 overlapping params and maps both types to
+>   one class, so "newest block" and "the row the cursor is in" produce a
+>   byte-identical store (Verify-B measured it green under two different
+>   sabotages). Give M2 a parameter M1 lacks, or a second class.
+> * **WHAT IS WORTH REUSING FROM THE PATCH:** the pure-function layer
+>   (`_locate`, `_row_param`, `_hdr_instname`, `_subject`, `_find_triple`,
+>   `_last_row_why`) — all drivable on `--nogui` with no Tk; the scope dialog's
+>   build/done/wrapper split copied from `ase::ui::bus_dialog`, which **answers
+>   issue 0803 by construction** (headless it returns Cancel and returns, and on
+>   `:99` the real modal is driven with `after 100 {invoke}` + a `after 5000
+>   {destroy}` deadman); and one hard-won trap worth keeping: **naming the
+>   command sink `rdw::button` shadows Tk's own `button`** for every unqualified
+>   call inside `namespace eval rdw`, which raised from inside a Button-1
+>   handler, reached `bgerror`, opened a modal nobody clicks and **hung the whole
+>   suite** — qualify every widget command (`::button`, `::toplevel`, `::label`,
+>   `::frame`, `::radiobutton`) or pick another name.
+> * **AND ONE REAL FIX THE PATCH FOUND, worth keeping whatever the re-land looks
+>   like:** a `grab` does **not** move the keyboard, and Tk redirects a key event
+>   to the **display's focus window**, not the window the event names. With
+>   `rdw::_pick_seize`'s `focus -force $cv` in effect, an Escape aimed at the
+>   scope dialog was delivered to the **canvas** and silently ended the user's
+>   command mode. The dialog must take the keyboard with `focus -force $w` and
+>   hand it back on every exit path.
+> * **STILL TRUE AND UNCHANGED BY THE REVERT:** issues **1310** (a narrow flavor
+>   list is stored, written and honoured by `effective` and never reaches the
+>   drawn sheet — `apply` is per `type=` token and `op_annot` holds one
+>   descriptor per type), **1311** (DD-8's precedence is file order and this
+>   window shows parameters, not flavor entries, so it cannot reorder the entries
+>   whose order it is), **1313** (nothing calls `op_param_lists::load`, so *"the
+>   reorder persists through Save and reload"* is provable inside ONE process
+>   only). And **spec §4.2 B7's table is wrong in one cell**: Up/Down cannot
+>   reorder list 3, because `set_list` refuses to store the live list at all
+>   (ruling D-4). Say the cell is undeliverable; do not fake it.
+
 
 > **✅ SUPERSEDED 2026-09-04 — B4 LANDED as B4-3. The keys ARE in the tree.**
 > Bare `1`/`2`/`3`/`4` on the canvas in the cadence profile (ruling **D-2**),
