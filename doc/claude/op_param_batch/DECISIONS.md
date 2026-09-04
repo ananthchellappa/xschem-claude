@@ -301,3 +301,33 @@ B2a-2 measured both of DD-6's written guarantees false. The amendment:
 2. **A malformed display key falls back to `params`. It never raises.**
    `op_annot::text` is a draw-time proc; a raise there is a black schematic. A
    key that does not parse as a list is treated as absent.
+
+### DD-10 — item B2b's question: Delete REFUSES to remove the last row
+
+Taken 2026-09-03 by the driver. On the owed ledger; the user can overrule.
+
+B2b asked what happens when the user deletes the **last** row of a device's
+annotation list, and offered two answers. **Both are bad, so neither is taken:**
+
+* *the whole OP block vanishes* — which also drops the device out of the
+  declutter, because the declutter's gate (ruling D-6) is "instances that got OP
+  numbers". So deleting one row would make **more** text appear on the sheet:
+  every W/L and pin label the declutter had been hiding comes back at once. The
+  user pressed Delete to see less and got more.
+* *an emptied list means "no narrowing"* — then Delete on the last row is a
+  **silent no-op**, a button that does nothing with no explanation.
+
+**Decision: Delete refuses to remove the last remaining row, and says why** —
+*"at least one parameter must stay. To stop showing operating-point values on
+this device, turn the annotation off instead."*
+
+*Why:* it keeps the invariant that **an annotated device always has at least one
+row**, which is what makes the declutter gate stable and the button's behaviour
+predictable. And a user who genuinely wants no OP display for a device already
+has two better tools — turning annotation off, or the declutter itself — neither
+of which has the side effect of un-hiding everything else.
+
+*Cost, stated:* the list cannot be emptied through the UI. A user who wants that
+state is asking for "no annotation on this device", which is a different feature
+and does not exist yet; if it is ever wanted it should be its own control, not
+an emptied list with a surprising side effect.

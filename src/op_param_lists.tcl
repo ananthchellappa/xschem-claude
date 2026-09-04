@@ -377,6 +377,41 @@ namespace eval ::op_param_lists {
     if {!$has} { return {} }
     if {[catch {dict get $d params} p]} { return {} }
     if {[string trim $p] eq {}} { return {} }
+    ## ⚠ THE PDK'S `params` IS AN UNVALIDATED STRING AND THIS IS THE ONLY DOOR
+    ## IT ENTERS THE STORE BY -- ISSUE 1291.
+    ## Every guard above answers a question about the DICT; none asks whether
+    ## the value is a well-formed Tcl LIST. It need not be: a descriptor may be
+    ## registered from a user's own rc (invariant I5, which is the documented
+    ## way to choose a different parameter set), and issue 0447's live shape is
+    ## a valid triple followed by an unclosed open brace -- row K17 of
+    ## test_op_annot golds that exact string. (It is not written out here: an
+    ## unbalanced brace in a comment makes THIS file fail `info complete`,
+    ## which is how this comment was first written and immediately caught.)
+    ##
+    ## Returned verbatim, that string reaches `foreach t [effective ...]` in
+    ## _save_set and _show_set and RAISES `unmatched open brace in list`. Item
+    ## B2b opened that door without meaning to: HEAD's apply never called seed
+    ## at all, and the union is what made the seed reachable. Measured: apply
+    ## went rc=0 -> rc=1, wrote nothing, and left the descriptor permanently
+    ## un-applyable for the rest of the session.
+    ##
+    ## ⚠ BOTH LEVELS ARE CHECKED, because both raise. A malformed OUTER list
+    ## breaks `foreach`; a well-formed outer list holding a malformed ELEMENT
+    ## breaks the `lindex` that reads the triple one line later. Answering {}
+    ## for the whole descriptor is deliberate: half a parameter list is not a
+    ## safer answer than none, and the report says which type was dropped.
+    if {[catch {llength $p}]} {
+      _say "the descriptor for `$type` has a params list that does not parse;\
+            ignoring it. Fix it in the rc that registered it."
+      return {}
+    }
+    foreach _row $p {
+      if {[catch {llength $_row}]} {
+        _say "the descriptor for `$type` has a params row that does not parse;\
+              ignoring the whole list. Fix it in the rc that registered it."
+        return {}
+      }
+    }
     return $p
   }
 

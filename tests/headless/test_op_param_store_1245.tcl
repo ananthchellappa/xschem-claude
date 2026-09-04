@@ -1673,6 +1673,72 @@ check {R1 registered by glob, listed in none of nogui_tests / logdir_tests / nol
 # is empty. It also asserts that this suite created no `.xschem` directory in
 # the repo root — the tier rows `cd` into the scratch tree precisely so that a
 # writer cannot drop one on the developer.
+# ============================================================================
+# SECTION Z — ISSUE 1291: THE PDK'S `params` IS AN UNVALIDATED STRING
+# ============================================================================
+# A descriptor may be registered from a user's own rc (invariant I5, the
+# documented way to choose a different parameter set), so `params` can be any
+# string at all. Every guard in `_params` asked a question about the DICT and
+# none asked whether the value parses as a LIST.
+#
+# Item B2b opened the door without meaning to: HEAD's `apply` never called
+# `seed`, and B2b's union is what made the seed reachable from `apply`. The
+# vulnerable shape is the user owning `annotation` ONLY, because `summary` then
+# falls through to the seed. Measured before the fix: apply rc 0 -> 1, message
+# `unmatched open brace in list`, nothing written, and the descriptor
+# permanently un-applyable for the rest of the session.
+#
+# ⚠ THE FIXTURE STRING IS BUILT, NOT WRITTEN AS A LITERAL. An unbalanced brace
+# in this file would make the FILE fail `info complete`. That is not a
+# hypothetical: it is how the fix's own comment was first written, and it was
+# caught immediately by a syntax check rather than by a test.
+# RED before the 1291 fix: Z1, Z2, Z3.
+
+set Z_BAD "[format %c 123]id id 0[format %c 125] [format %c 123]bad"
+
+check_true {Z0 the fixture really is malformed: llength raises on it, so the rows below are not vacuous} \
+  [catch {llength $Z_BAD}]
+
+catch {op_param_lists::reset}
+op_annot::register nmos [list devpath {@m.@path@name} params $Z_BAD]
+check {Z1 a params list that does not parse answers EMPTY instead of raising, and says which type it dropped} \
+  [list [catch {op_param_lists::_params nmos} zp] $zp \
+        [expr {[string match {*does not parse*} [op_param_lists::said]] ? 1 : 0}]] \
+  {0 {} 1}
+
+## ⚠ BOTH TYPES OF THE CLASS ARE POISONED HERE, AND THE FIRST DRAFT OF THIS ROW
+## DID NOT DO THAT AND FAILED. Class `mos` seeds from `nmos` AND `pmos`, and an
+## earlier fixture in this file leaves `pmos` valid — so poisoning `nmos` alone
+## leaves `seed mos` answering pmos's list, which is CORRECT (the map is not
+## onto; one bad type does not blind the class). The row's golden was wrong, not
+## the code. To assert "nothing leaks" the class must have no valid type left.
+op_annot::register pmos [list devpath {@m.@path@name} params $Z_BAD]
+check {Z2 with EVERY type of the class poisoned, nothing leaks through seed or effective either} \
+  [list [catch {op_param_lists::seed mos} zs] $zs \
+        [catch {op_param_lists::effective mos annotation} ze] $ze] \
+  {0 {} 0 {}}
+
+## THE ROW THE ISSUE TURNS ON: the exact vulnerable shape, user owns
+## `annotation` only. apply must still apply, must not raise, and must report.
+catch {op_param_lists::reset}
+op_annot::register nmos [list devpath {@m.@path@name} params $Z_BAD]
+op_param_lists::set_list class mos annotation {{id id 0}}
+check {Z3 THE 1291 SHAPE: apply does not raise, still applies to both mos types, and reports why the seed was dropped} \
+  [list [catch {op_param_lists::apply} za] $za \
+        [expr {[string match {*does not parse*} [op_param_lists::said]] ? 1 : 0}]] \
+  {0 {nmos pmos} 1}
+
+## A well-formed OUTER list holding a malformed ELEMENT raises one line later,
+## at the `lindex` that reads the triple. Both levels are checked, so both are
+## fenced.
+set Z_BADROW [list {id id 0} "[format %c 123]bad"]
+catch {op_param_lists::reset}
+op_annot::register nmos [list devpath {@m.@path@name} params $Z_BADROW]
+check {Z4 a well-formed list holding a malformed ROW is dropped whole, not half-read} \
+  [list [catch {op_param_lists::_params nmos} zr] $zr] {0 {}}
+
+catch {op_param_lists::reset}
+
 set H_ROOT0 [lsort [glob -nocomplain -directory $repo -tails untitled*]]
 check {H1 HYGIENE the suite creates no untitled* anywhere and no .xschem directory in the repo root, and it left the cwd where it found it} \
   [list [expr {[lsort [glob -nocomplain -directory $repo -tails untitled*]] eq $H_ROOT0 ? 1 : 0}] \

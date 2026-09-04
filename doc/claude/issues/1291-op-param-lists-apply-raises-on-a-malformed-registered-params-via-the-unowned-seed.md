@@ -2,8 +2,42 @@
 
 **Filed by:** item **B2b**, 2026-09-03, from Verify-C's adversary pass and
 re-measured by the write-up agent on the landed tree.
-**FILED, NOT FIXED.** It is a **new** raise door opened by B2b's own change, in
-B2b's own file, and it is latent: nothing calls `apply` until item **B5**.
+✅ **FIXED 2026-09-03 by the DRIVER**, immediately after B2b landed and before
+item B2c was dispatched — it was a **new** raise door opened by B2b's own
+change, in B2b's own file, and latent only because nothing calls `apply` until
+item **B5**. B2b was right to file rather than widen its own scope.
+
+**The fix, in `op_param_lists::_params`:** every guard there asked a question
+about the *dict* and none asked whether the value parses as a **list**. Two
+levels are now checked, because both raise — a malformed OUTER list breaks
+`foreach`, and a well-formed outer list holding a malformed ELEMENT breaks the
+`lindex` that reads the triple one line later. Either answers `{}` for the whole
+descriptor and reports which type was dropped: half a parameter list is not a
+safer answer than none.
+
+**Measured, the issue's own vulnerable shape** (malformed registered `params`,
+user owning `annotation` only, so `summary` falls through to the seed):
+
+```
+before:  APPLY_RC=1   APPLY_ANS=RAISED:unmatched open brace in list
+after:   APPLY_RC=0   APPLY_ANS={nmos pmos}
+         REPORTS={the descriptor for `nmos` has a params list that does not
+                  parse; ignoring it. Fix it in the rc that registered it.}
+```
+
+Fenced by rows **Z0-Z4** of `tests/headless/test_op_param_store_1245.tcl`
+(51 → 56 checks). Sabotage: deleting the guard reds **Z1 Z2 Z3 Z4** and nothing
+else. Row **Z0** proves the fixture really is malformed, so the rest cannot pass
+vacuously. Feature A unmoved: `test_op_annot` 485, `test_annot_declutter_1244`
+134, `test_rdw_seam_1245` 49, `test_rdw_window_1245` 32.
+
+⚠ **Two things the fix's own construction taught, both recorded in the code:**
+the malformed literal must never be written into a comment or a test file as a
+literal — an unbalanced brace makes *that file* fail `info complete`, which
+happened while writing this fix and was caught by a syntax check rather than a
+test. And the first draft of row Z2 was **wrong, not the code**: poisoning
+`nmos` alone leaves `seed mos` correctly answering `pmos`'s list, because the
+class map is not onto and one bad type must not blind a whole class.
 
 **Status:** open. Not a violation of the letter of B2b's brief — the DD-6
 amendment constrains `op_annot::text`, the *draw-time* proc, and `apply` is a
