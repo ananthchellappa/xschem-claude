@@ -1679,6 +1679,272 @@ if {[rdw::have_tk]} {
     [list [rdw::pick_running] [expr {[winfo exists .rdw] ? 1 : 0}]] {0 1}
 }
 
+# ============================================================================
+# SECTION SD — ITEM B5: THE SCOPE DIALOG, DRIVEN FOR REAL AND NEVER HANGING
+# ============================================================================
+# ⚠ THIS IS THE ROW SET ISSUE 0803 IS ABOUT, AND IT IS WHY THE DIALOG'S SHAPE
+# WAS FIXED IN B5's FIRST COMMIT RATHER THAN RETROFITTED. A suite that reaches
+# a `tkwait window` with nobody to click it does not FAIL - it HANGS, and takes
+# the whole audit with it. The tree has exactly one place that exercises a real
+# modal safely, tests/headless/test_ase_bus_bits_0159.tcl:263-280, and this
+# section is copied from it verbatim in shape:
+#   after 100  {invoke the widgets}      drives it while it is blocked
+#   after 5000 {destroy the toplevel}    the DEADMAN: if the first timer never
+#                                        fires the window goes away anyway and
+#                                        tkwait returns, so this can never hang
+# The consumer rows - what a Delete or an Add DOES with the answer - are in
+# test_rdw_window_1245.tcl's section BT, under the `rename`-not-`proc` stub
+# idiom, and run on BOTH arms. This section drives the widgets themselves,
+# which needs a display and therefore lives here.
+#
+# ⚠ AND THE OTHER HALF OF THE 0803 ANSWER IS ASSERTED IN THE WINDOW SUITE, NOT
+# HERE: row BT9 drives the real wrapper on the --nogui arm, where it must
+# answer Cancel and RETURN rather than block. A dialog that can only be safe
+# when a display is present is not safe.
+#
+# THE CONTRACT (spelled in full in test_rdw_window_1245.tcl's section BT):
+#   rdw::scope_dialog {op subject listname} -> {scope narrow|broad list
+#         annotation|summary}, or {} for Cancel
+#   .rdw.scope             the child toplevel
+#   .rdw.scope.sc.narrow   .rdw.scope.sc.broad          the scope choice
+#   .rdw.scope.li.annotation .rdw.scope.li.summary      the which-list choice,
+#                          built only when the identity is `all`
+#   .rdw.scope.btns.ok     .rdw.scope.btns.cancel
+#
+# RED BEFORE B5: all three, for one reason - rdw::scope_dialog is not a command
+# and rdw::button is not either.
+
+if {[kx_ans ::rdw::have_tk] eq {1}} {
+  set SD_ROOT [file join $scratch b5sd]
+  file mkdir $SD_ROOT
+  proc sd_mksym {path type} {
+    set fd [open $path w]
+    puts $fd "v {xschem version=3.4.5 file_version=1.2}"
+    puts $fd "G {}"
+    puts $fd "K {type=$type"
+    puts $fd {format="@spiceprefix@name @pinlist @model"}
+    puts $fd "template=\"name=M1 model=$type spiceprefix=X\""
+    puts $fd "}"
+    puts $fd "V {}"
+    puts $fd "S {}"
+    puts $fd "E {}"
+    puts $fd "L 4 -20 -20 20 -20 {}"
+    puts $fd "B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}"
+    puts $fd "T {@name} 0 -40 0 0 0.2 0.2 {}"
+    close $fd
+  }
+  set SD_SYMN [file join $SD_ROOT b5n.sym]
+  set SD_SYMP [file join $SD_ROOT b5p.sym]
+  sd_mksym $SD_SYMN b5ndev
+  sd_mksym $SD_SYMP b5pdev
+  set SD_SCH [file join $SD_ROOT b5.sch]
+  set _fd [open $SD_SCH w]
+  puts $_fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$SD_SYMN\} 300 -300 0 0 \{name=M1\}
+C \{$SD_SYMP\} 300 -120 0 0 \{name=M2\}"
+  close $_fd
+  catch {xschem raw clear}
+  set SD_LOAD [catch {xschem load $SD_SCH}]
+  update idletasks
+  set SD_DESC [list devpath {\@m.@path@name} \
+                    params {{id ids 0} {gm gm 1} {gds gds 1}}]
+  catch {op_annot::register b5ndev $SD_DESC}
+  catch {op_annot::register b5pdev $SD_DESC}
+  kx_ans ::op_param_lists::reset
+  kx_ans ::op_param_lists::set_class b5ndev b5cls
+  kx_ans ::op_param_lists::set_class b5pdev b5cls
+  set SD_CELL1 [expr {[catch {xschem getprop instance M1 cell::name} _c] ? {} : $_c}]
+  set SD_SUBJ [dict create instname M1 type b5ndev class b5cls cellname $SD_CELL1]
+
+  proc sd_pair {d} {
+    if {[kx_bad $d]} { return $d }
+    if {$d eq {}} { return CANCELLED }
+    if {[catch {list [dict get $d scope] [dict get $d list]} p]} { return "BADANS:$d" }
+    return $p
+  }
+  proc sd_blk {inst dp pairs} {
+    set ans [dict create devices [list $dp $pairs] absent {} nonfinite {} \
+                         complete 0 state ok]
+    set ctx [dict create header "$inst:/" devpath $dp simtype op instname $inst \
+                         sim ngspice]
+    return [kx_ans ::rdw::format_answer $ans $ctx]
+  }
+  proc sd_blocks {} {
+    set ::rdw::blocks {}
+    kx_ans ::rdw::push [sd_blk M1 @m.m1 {{ids 1.2e-05} {gm 3.4e-05} {gds 5.6e-06}}]
+    kx_ans ::rdw::push [sd_blk M2 @m.m2 {{ids 9.9e-06}}]
+    return {}
+  }
+
+  # --- SD1  THE REAL MODAL, DRIVEN, WITH A DEADMAN --------------------------
+  ## ⚠ THE POINTER IS PARKED SOMEWHERE NEUTRAL FIRST (issue 1269). A raise
+  ## followed by a focus-dependent read INHERITS the pointer position, and
+  ## parking it onto the very window whose state is asserted is the same bug
+  ## wearing a fix. The canvas is not the dialog and not the button column.
+  catch {event generate .drw <Motion> -x 5 -y 5 -when now}
+  update
+  kx_ans ::rdw::open
+  sd_blocks
+  update idletasks
+  set SD1_TL {}
+  after 100 {
+    catch {set ::SD1_TL [bindtags .rdw.scope]}
+    catch {.rdw.scope.sc.narrow invoke}
+    catch {.rdw.scope.btns.ok invoke}
+  }
+  after 5000 {catch {destroy .rdw.scope}}
+  set SD1_GOT [kx_ans ::rdw::scope_dialog delete $SD_SUBJ annotation]
+  update
+  check {SD1 the REAL scope dialog, through its real wrapper and its real widgets: narrow + OK answers this device flavor only for the list it was opened on, and it leaves NO grab and NO window behind - driven with a timer and a deadman, so it cannot hang the suite (issue 0803)} \
+    [list [sd_pair $SD1_GOT] \
+          [expr {[winfo exists .rdw.scope] ? 1 : 0}] \
+          [grab current] \
+          [expr {[llength $SD1_TL] > 0 && [lsearch -exact $SD1_TL .rdw] < 0 ? 1 : 0}]] \
+    [list {narrow annotation} 0 {} 1]
+
+  # --- SD2  ESCAPE IS CANCEL, AND IT DOES NOT END THE CANVAS MODE -----------
+  ## ⚠ SD1's LAST LEG READS THE BINDTAGS FROM INSIDE THE TIMER, WHILE THE
+  ## DIALOG IS ALIVE, AND REQUIRES THEM TO BE NON-EMPTY. A bare `lsearch < 0`
+  ## over an empty list is TRUE, so the leg would have passed in the RED state
+  ## - where no dialog is ever built - and gone on passing against a dialog
+  ## that never existed. This row's whole subject is measured below.
+  ## MEASURED while planning B5: a child toplevel `.rdw.scope` has bindtags
+  ## {.rdw.scope Toplevel all} and does NOT inherit `.rdw`'s ruling DD-12
+  ## Escape, so the dialog can bind its own Cancel with no collision. This row
+  ## is that measurement as a fence: a dialog that inherited `.rdw`'s binding
+  ## would silently END THE COMMAND MODE the user is in the middle of.
+  kx_ans ::rdw::pick_start
+  set SD2_RUN0 [kx_ans ::rdw::pick_running]
+  after 100  {catch {event generate .rdw.scope <Key-Escape> -when now}}
+  after 5000 {catch {destroy .rdw.scope}}
+  set SD2_GOT [kx_ans ::rdw::scope_dialog delete $SD_SUBJ annotation]
+  update
+  set SD2_RUN1 [kx_ans ::rdw::pick_running]
+  kx_ans ::rdw::pick_end
+  check {SD2 Escape on the scope dialog is CANCEL - it answers nothing and stores nothing - and it does NOT end a live canvas command mode, because the child toplevel does not inherit the window's own DD-12 Escape} \
+    [list $SD2_RUN0 [sd_pair $SD2_GOT] $SD2_RUN1 \
+          [expr {[winfo exists .rdw.scope] ? 1 : 0}] [grab current]] \
+    [list 1 CANCELLED 1 0 {}]
+
+  # --- SD3  THE CURSOR RULE, END TO END, WITH A REAL CLICK ------------------
+  ## nhse's own rule - "the row your cursor is in" - through a REAL Button-1 in
+  ## a `-state disabled` text pane and a REAL button invoke, with the store
+  ## read back afterwards. The dialog is stubbed for this row only: the subject
+  ## here is the TARGET, not the modal, and SD1 already drove the modal.
+  ## `rename`, never `proc` (test_ase_bus_bits_0159.tcl:129).
+  if {[llength [info commands ::rdw::scope_dialog]]} {
+    rename ::rdw::scope_dialog ::rdw::sd_real_scope_dialog
+  }
+  ## ⚠ THE TWO TYPES ARE IN TWO DIFFERENT CLASSES, BY ITEM B5-2 (issue 1314).
+  ## They used to share `b5cls`, and with one class "the newest block" and "the
+  ## row the cursor is in" write a BYTE-IDENTICAL store - the row was measured
+  ## green under two opposite sabotages. Giving M2 a parameter M1 lacks does not
+  ## help either: the parameter is read from `rdw::_locate`'s pane line and
+  ## never from the subject, so the store write is unchanged. Only a differing
+  ## CLASS makes the two rules disagree, and the last leg is where it shows.
+  proc ::rdw::scope_dialog {args} { return {scope broad list annotation} }
+  kx_ans ::op_param_lists::reset
+  kx_ans ::op_param_lists::set_class b5ndev b5cls
+  kx_ans ::op_param_lists::set_class b5pdev b5pcls
+  sd_blocks
+  kx_ans ::rdw::set_list annotation
+  update idletasks
+  set SD3_BB {}
+  catch {set SD3_BB [.rdw.p.t bbox 9.4]}
+  if {[llength $SD3_BB] == 4} {
+    set _px [expr {[lindex $SD3_BB 0] + 1}]
+    set _py [expr {[lindex $SD3_BB 1] + [lindex $SD3_BB 3] / 2}]
+    catch {event generate .rdw.p.t <Motion>          -x $_px -y $_py -when now}
+    catch {event generate .rdw.p.t <ButtonPress-1>   -x $_px -y $_py -when now}
+    catch {event generate .rdw.p.t <ButtonRelease-1> -x $_px -y $_py -when now}
+    update
+  }
+  set SD3_LINE [kx_ans ::rdw::_target_line]
+  catch {.rdw.b.delete invoke}
+  update
+  check {SD3 the cursor rule end to end: a REAL Button-1 in the read-only pane sets the target row, and a REAL Delete invoke then acts on THAT row and no other - the store loses `ids`, keeps the two rows the cursor was not on, and the NEWEST block's own class is left unowned, so acting on the newest dump instead of the cursor's would red this row} \
+    [list [expr {[llength $SD3_BB] == 4 ? 1 : 0}] $SD3_LINE \
+          [kx_ans ::op_param_lists::owns class b5cls annotation] \
+          [kx_ans ::op_param_lists::get_list class b5cls annotation] \
+          [kx_ans ::op_param_lists::owns class b5pcls annotation]] \
+    [list 1 9 1 {{gm gm 1} {gds gds 1}} 0]
+
+  # --- SD3b  THE REAL DIALOG, WITH NO STUB ANYWHERE (issue 1314) ------------
+  ## ⚠ THE REAL SCOPE DIALOG GOES BACK BEFORE THIS ROW, AND THAT IS THE ROW'S
+  ## WHOLE SUBJECT. Rows BT10, BT12 and BT17 of the window suite install their
+  ## answer by RENAMING `rdw::scope_dialog`, and SD3 above does the same - so
+  ## every one of them stays green under a sabotage in which no toplevel is ever
+  ## CONSTRUCTED. Nothing on the --nogui arm can see that, and nothing here saw
+  ## it either until this row existed. SD1 drives `rdw::scope_dialog` directly;
+  ## this row drives it the way a user does, through `.rdw.b.delete invoke`, so
+  ## the widget, the greying fence, the target rule, the modal and the store are
+  ## all on one path with no stub between them.
+  ##
+  ## THE DEADMAN IS NOT OPTIONAL (issue 0803). `after 100` drives the dialog
+  ## while it is blocked in `tkwait`; `after 5000` destroys the toplevel if the
+  ## first timer never fires, so `tkwait` returns either way and the suite
+  ## cannot hang. Copied in shape from tests/headless/test_ase_bus_bits_0159.tcl
+  ## lines 263-280, the tree's only safe real-modal drive.
+  catch {rename ::rdw::scope_dialog {}}
+  if {[llength [info commands ::rdw::sd_real_scope_dialog]]} {
+    rename ::rdw::sd_real_scope_dialog ::rdw::scope_dialog
+  }
+  kx_ans ::op_param_lists::reset
+  kx_ans ::op_param_lists::set_class b5ndev b5cls
+  kx_ans ::op_param_lists::set_class b5pdev b5pcls
+  kx_ans ::op_param_lists::said_clear
+  sd_blocks
+  kx_ans ::rdw::set_list annotation
+  kx_ans ::rdw::set_row 10
+  update idletasks
+  set ::SD3B_SEEN 0
+  set ::SD3B_GRAB {}
+  after 100 {
+    catch {set ::SD3B_SEEN [expr {[winfo exists .rdw.scope] ? 1 : 0}]}
+    catch {set ::SD3B_GRAB [grab current]}
+    catch {.rdw.scope.sc.broad invoke}
+    catch {.rdw.scope.btns.ok invoke}
+  }
+  after 5000 {catch {destroy .rdw.scope}}
+  catch {.rdw.b.delete invoke}
+  update
+  check {SD3b a REAL .rdw.b.delete invoke really BUILDS the scope dialog - no stub anywhere on the path - the dialog held a grab while it was up, broad + OK moved the class list the cursor's own block belongs to, the OTHER class was left unowned, and nothing is left behind (issue 0803's deadman, issue 1314's stub shadow)} \
+    [list $::SD3B_SEEN \
+          [expr {$::SD3B_GRAB ne {} ? 1 : 0}] \
+          [kx_ans ::op_param_lists::owns class b5cls annotation] \
+          [kx_ans ::op_param_lists::get_list class b5cls annotation] \
+          [kx_ans ::op_param_lists::owns class b5pcls annotation] \
+          [expr {[winfo exists .rdw.scope] ? 1 : 0}] \
+          [grab current]] \
+    [list 1 1 1 {{id ids 0} {gds gds 1}} 0 0 {}]
+
+  ## HYGIENE for this section: the real dialog is already back (SD3b needed it),
+  ## so forget the fixture and leave no settings file anywhere near the
+  ## developer's own tree.
+  catch {rename ::rdw::sd_stub_scope_dialog {}}
+  kx_ans ::op_param_lists::reset
+  catch {op_annot::register b5ndev {}}
+  catch {op_annot::register b5pdev {}}
+  set ::rdw::blocks {}
+  kx_ans ::rdw::set_list annotation
+  kx_ans ::rdw::status {}
+  catch {destroy .rdw.scope}
+  kx_ans ::rdw::close
+  update idletasks
+  check {SD4 HYGIENE section SD leaves nothing behind: no dialog, no window, no grab, no settings file under the repo's own .xschem and no untitled* anywhere} \
+    [list [expr {[winfo exists .rdw.scope] ? 1 : 0}] \
+          [expr {[winfo exists .rdw] ? 1 : 0}] \
+          [grab current] \
+          [expr {[file exists [file join $repo .xschem op_param_lists.conf]] ? 1 : 0}] \
+          [expr {[lsort [glob -nocomplain -directory $repo -tails untitled*]] eq $S1_ROOT0 ? 1 : 0}] \
+          [llength [glob -nocomplain -directory $scratch -tails untitled*]]] \
+    {0 0 {} 0 1 0}
+}
+
 if {[llength [info commands kx_ciw_echo_real]]} { rename kx_ciw_echo_real ciw_echo }
 catch {xschem raw clear}
 
@@ -1710,7 +1976,11 @@ catch {xschem raw clear}
 ## ⚠ RAISED 35 -> 36 BY ITEM B5-a, WHICH ADDED ROW KS1. A floor is raised when
 ## rows are added and NEVER lowered to make a run pass — lowering it is the one
 ## move that would put the skipped-row defect straight back.
-set KX_FLOOR 36
+## ⚠ AND RAISED 36 -> 41 BY ITEM B5-2, IN THE SAME COMMIT AS THE FIVE ROWS IT
+## COVERS: section SD's SD1, SD2, SD3, SD3b and SD4. The whole section is
+## guarded by `if {[kx_ans ::rdw::have_tk] eq {1}}`, so a display that fails to
+## come up drops all five silently - which is exactly what a floor is for.
+set KX_FLOOR 41
 set KX_RAN [expr {$npass + $fail}]
 if {$KX_RAN < $KX_FLOOR} {
   puts "FAIL: KXFLOOR the suite ran only $KX_RAN checks, below its floor of\

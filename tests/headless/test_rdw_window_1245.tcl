@@ -611,8 +611,14 @@ check {M3 registered by glob, and full_audit.sh is NOT edited: this suite is in 
 # mechanism, exit 1 with the guard and historically 139 without).
 # RED before B3: N1 N2 N3.
 
+## ⚠ `inert` BECAME `button`, BY ITEM B5, AND THE COUNT IS UNCHANGED. This row
+## is the fifth golden B5's own deliverable falsifies (S1, K11, W4b and Q9 are
+## the others): `rdw::inert` said "the button column is built but not wired yet
+## (item B5 wires it)", and B5 wired it. `rdw::button` is the proc that replaced
+## it - THE one command all five widgets carry - so the list still names the
+## button column's command sink and the section still counts sixteen.
 set N_PROCS {}
-foreach p {have_tk open close build push render_pane set_list inert status
+foreach p {have_tk open close build push render_pane set_list button status
            header sim dump dump_devpath format_answer block_text button_state} {
   lappend N_PROCS [expr {[llength [info procs ::rdw::$p]] ? 1 : 0}]
 }
@@ -1551,20 +1557,66 @@ check {Q8 a backend registered with the five required hooks and NO op_param_set 
 # `rdw::status` a no-op passes the FULL 32-check headless run. Its red-before
 # proof is the sabotage, not the shipped tree. W4b on the display arm is the
 # twin this row is copied from.
+## ⚠ REWRITTEN BY ITEM B5, THE HEADLESS TWIN OF W4b. It used to drive
+## `rdw::inert`, which B5 DELETES - a proc that says "item B5 wires it" after
+## item B5 wired it is a lie, and this row would have kept that lie golden. The
+## point of the row is unchanged and is issue 1283 gap C's: the "the button
+## said something" obligation must have a witness with NO WIDGET ANYWHERE, or
+## making rdw::status a no-op passes the whole headless run.
+## The two presses below are both REFUSALS - no dump has been pushed at this
+## point in the file, and Delete is greyed on list 3 - which is deliberate:
+## a refusal is the case where a silent button is most damaging, and neither
+## press can reach the store or write a file.
+## ⚠ IT MUST NOT TOUCH ::rdw::blocks. Row W1b, further down the display arm,
+## asserts that the stored dumps SURVIVE a close and are repainted, and it reads
+## a device name out of them; a row that emptied the store here would red W1b
+## from three hundred lines away. Both presses below are GREYING refusals, which
+## depend on the list identity alone - no target row, no subject, no store, no
+## file - so they say what they say whatever is in the pane.
+## ⚠ NOT `expr {[info exists v] ? $v : annotation}` - the list identity is a
+## WORD and expr evaluates a bare word as an operand, raising "invalid
+## bareword". The same trap is recorded at k_listkind and in the keys suite.
+set Q9_LK0 annotation
+if {[info exists ::rdw::listkind]} { set Q9_LK0 $::rdw::listkind }
+set Q9_NB0 [expr {[info exists ::rdw::blocks] ? [llength $::rdw::blocks] : -1}]
+rw_ans ::rdw::set_list all
 rw_ans ::rdw::status {}
-rw_ans ::rdw::inert Delete
+rw_ans ::rdw::button delete
 set Q9_M1 [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]
 rw_ans ::rdw::status {}
-rw_ans ::rdw::inert Save
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::button add
 set Q9_M2 [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]
 rw_ans ::rdw::status {}
-check {Q9 an inert button SAYS SO in the window's own status line with no widget anywhere: Delete names itself and names the item that wires it, Save says something different, and the variable is clearable - a disabled-but-silent button is the failure rdw::inert exists to prevent} \
+rw_ans ::rdw::set_list $Q9_LK0
+## ⚠ AND TWO OF ITS TERMS ARE POSITIVE CLAIMS ABOUT THE REASON (item B5-a).
+## MEASURED: with `rdw::button_state` forced to return `normal` - the greying
+## deleted - EVERY term of the row as this patch first wrote it still passed.
+## Both presses fall through to the ordinary "nothing has been dumped into this
+## window yet" refusal, which is non-empty, names its own button, differs from
+## its sibling, touches no store and clears; and `not wired yet` appears in
+## neither, because the string it was written to exclude is gone from the file.
+## A fence built entirely out of NEGATIVES cannot tell the sentence it is about
+## from any other sentence. HEAD's own Q9 carried a positive claim about the
+## reason - `[rw_has $Q9_M1 {B5}]` - and this rewrite dropped it; the two terms
+## below put that kind of claim back, over the sentence `rdw::button` actually
+## emits for a greyed press, and they name the LIST each button was greyed on
+## so the two are not the same assertion twice. The `not wired yet` negatives
+## are kept beside them: they fence a different fact.
+check {Q9 a greyed button that is invoked anyway SAYS SO in the window's own status line with no widget anywhere: Delete on list 3 names itself AND says it is greyed on the `all` list, Add on list 1 says it is greyed on the `annotation` list, neither claims the column is unwired, the two sentences differ, the store is untouched, the variable is clearable - and rdw::inert is gone} \
   [list [expr {$Q9_M1 ne {} && $Q9_M1 ne {NOVAR} ? 1 : 0}] \
-        [rw_has $Q9_M1 {Delete}] [rw_has $Q9_M1 {B5}] \
-        [rw_has $Q9_M2 {Save}] [rw_has $Q9_M2 {B5}] \
+        [rw_has $Q9_M1 {Delete}] \
+        [rw_has $Q9_M1 {greyed on the all list}] \
+        [expr {[string first {not wired yet} $Q9_M1] < 0 ? 1 : 0}] \
+        [expr {$Q9_M2 ne {} && $Q9_M2 ne {NOVAR} ? 1 : 0}] \
+        [rw_has $Q9_M2 {Add}] \
+        [rw_has $Q9_M2 {greyed on the annotation list}] \
+        [expr {[string first {not wired yet} $Q9_M2] < 0 ? 1 : 0}] \
         [expr {$Q9_M1 ne $Q9_M2 ? 1 : 0}] \
-        [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]] \
-  {1 1 1 1 1 1 {}}
+        [expr {[info exists ::rdw::blocks] ? [llength $::rdw::blocks] : -1}] \
+        [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}] \
+        [llength [info commands ::rdw::inert]]] \
+  [list 1 1 1 1 1 1 1 1 1 $Q9_NB0 {} 0]
 
 # ============================================================================
 # SECTION W — THE WIDGETS. DISPLAY ARM ONLY, AND IT IS NOT OPTIONAL.
@@ -1735,20 +1787,54 @@ check {W4 the five buttons exist with the spec's labels, and the widget greying 
                  {normal normal normal normal normal} \
                  {normal normal disabled normal normal}]]
 
+## ⚠ REWRITTEN BY ITEM B5. This row used to assert that every enabled button was
+## INERT and said so, naming the literal `B5`. B5 is the item that wires them,
+## so the golden it locked is now a statement B5's own deliverable must falsify.
+## THE OBLIGATION DOES NOT LAPSE WITH THE INERTNESS - it sharpens: an enabled
+## button that DOES something and says nothing is exactly as indistinguishable
+## from a broken one as an inert one was (calc::inert's own reason,
+## calculator.tcl:607). So the row now asserts the same three things about a
+## WIRED column: each enabled button routes to rdw::button and nothing else,
+## each one still writes a status line, and it no longer claims it is unwired.
+## ⚠ IT PRESSES Up AND Delete, NEVER Save. `conf_path project` is
+## `[pwd]/.xschem/...` and this suite runs at the repo root; a Save here would
+## drop a settings file on the developer's tree (hard rule 6). Section BT owns
+## the Save press and `cd`s first.
+## ⚠ THE TWO PRESSES ARE BOTH REFUSALS, AND THE TARGET IS PINNED TO LINE 1 SO
+## THEY STAY THAT WAY. Section W runs BEFORE section BT, so the scope dialog
+## here is the REAL one; a Delete or an Add that reached a valid parameter row
+## would raise a modal with nobody to click it and HANG the suite - issue 0803,
+## the item's single largest risk. Line 1 is a block header, so both buttons
+## refuse before any dialog, any store call or any file. They are told apart by
+## the rule this row exists to hold: EVERY message rdw::button writes NAMES THE
+## BUTTON IT CAME FROM, which is rdw::inert's own obligation surviving the
+## wiring.
 rw_ans ::rdw::set_list summary
+rw_ans ::rdw::set_row 1
 catch {update idletasks}
+set W4_CMDS {}
+foreach id {up down delete add save} {
+  lappend W4_CMDS [rw_has [rw_w .rdw.b.$id cget -command] "rdw::button $id"]
+}
 rw_ans ::rdw::status {}
 rw_w .rdw.b.up invoke
 set W4_MSG1 [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]
 rw_ans ::rdw::status {}
-rw_w .rdw.b.save invoke
+rw_w .rdw.b.add invoke
 set W4_MSG2 [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]
-check {W4b every ENABLED button is inert and SAYS SO in the window's own status line, naming itself and naming the item that wires it - a disabled-but-silent button is the failure calc::inert exists to prevent} \
-  [list [expr {$W4_MSG1 ne {} && $W4_MSG1 ne {NOVAR} ? 1 : 0}] \
-        [rw_has $W4_MSG1 {Up}] [rw_has $W4_MSG1 {B5}] \
-        [rw_has $W4_MSG2 {Save}] [rw_has $W4_MSG2 {B5}] \
-        [expr {$W4_MSG1 ne $W4_MSG2 ? 1 : 0}]] \
-  {1 1 1 1 1 1}
+rw_ans ::rdw::status {}
+check {W4b every ENABLED button routes to rdw::button and SAYS what happened in the window's own status line, each message NAMES ITS OWN BUTTON so two of them are never the same sentence, no button still claims it is not wired yet, and no scope dialog was raised - a modal nobody can click is issue 0803} \
+  [list $W4_CMDS \
+        [expr {$W4_MSG1 ne {} && $W4_MSG1 ne {NOVAR} ? 1 : 0}] \
+        [rw_has $W4_MSG1 {Up}] \
+        [expr {$W4_MSG2 ne {} && $W4_MSG2 ne {NOVAR} ? 1 : 0}] \
+        [rw_has $W4_MSG2 {Add}] \
+        [expr {[string first {not wired yet} $W4_MSG1] < 0 ? 1 : 0}] \
+        [expr {[string first {not wired yet} $W4_MSG2] < 0 ? 1 : 0}] \
+        [expr {$W4_MSG1 ne $W4_MSG2 ? 1 : 0}] \
+        [rw_w winfo exists .rdw.scope] \
+        [llength [info commands ::rdw::inert]]] \
+  {{1 1 1 1 1} 1 1 1 1 1 1 1 0 0}
 
 ## HYGIENE: hand the X PRIMARY selection back and leave no toplevel behind.
 rw_ans ::rdw::set_list annotation
@@ -2177,10 +2263,15 @@ foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
     incr K11_TAGS [rw_count $b $t]
   }
 }
-check {K11 STRUCTURAL row S1's fence re-run over the grown file: op_param_lists:: is still ZERO occurrences, so keys 1/2/3 select a list IDENTITY and narrow no CONTENT (issue 1300), and no new proc builds a block line by hand - every line still goes through rdw::_line, row F29's rule} \
-  [list $K11_N [rw_count $K10_F {op_param_lists::}] $K11_TAGS \
+## ⚠ THE `op_param_lists:: == 0` TERM MOVED TO ROW BT22 (item B5). Issue 1300's
+## substance is unchanged and is fenced by the six KEY procs still existing and
+## by BT22's allow-list: the KEYS still select a list IDENTITY and narrow no
+## CONTENT. What is no longer true is that the FILE never names the store - B5's
+## button column is the store's first caller, by design.
+check {K11 STRUCTURAL row S1's fence re-run over the grown file: the six key procs are all still here so keys 1/2/3 select a list IDENTITY and narrow no CONTENT (issue 1300), and no new proc builds a block line by hand - every line still goes through rdw::_line, row F29's rule} \
+  [list $K11_N $K11_TAGS \
         [rw_has $K10_F {ase::backend_hook}]] \
-  {6 0 0 1}
+  {6 0 1}
 
 # --- K12  A REFUSED KEY CHANGES NOTHING --------------------------------------
 ## THE HOLE B4 SHIPPED, AND NO ROW SAW IT. rdw::key called rdw::set_list BEFORE
@@ -2715,6 +2806,139 @@ rw_ans ::rdw::close
 set ::rdw::blocks {}
 catch {xschem raw clear}
 
+# ============================================================================
+# ROWS BT29 AND BT30 — RULING DD-16: THE CROSS-SHEET EDIT IS ALLOWED, AND THE
+# STATUS LINE NAMES THE SOURCE SHEET ONLY WHEN IT DIFFERS FROM THE OPEN ONE
+# ============================================================================
+# ⚠ WRITTEN RED, BEFORE ANY PRODUCTION LINE OF THE CLAUSE EXISTED. Measured on
+# this binary at HEAD 59ef24af: item B5-a's stamp WORKS — a block dumped on
+# a.sch still answers `schname` = a.sch after b.sch is loaded, which is what
+# rows BS1 and BS1b above already gold — and NOTHING READS IT. Grep the button
+# column's own patch for `schname` and every hit is inside `rdw::_subject`,
+# which copies the key into the dict it returns and hands it to nobody. So the
+# datum DD-16 needs is present, correct, and unread.
+#
+# ⚠ THESE TWO ROWS BELONG TO SECTION BT AND THEY SIT HERE, IMMEDIATELY AFTER
+# SECTION BS, ON PURPOSE. DD-16's subject IS the two-sheet, two-M1 repro, and
+# section BS is where that fixture lives — a.sch and b.sch each holding one
+# instance called M1, of two different private types. Rebuilding it a second
+# time inside section BT would be two fixtures for one question, which is how
+# two suites end up disagreeing about what they are measuring. The row NAMES
+# stay BT29/BT30 because they are section BT's questions.
+#
+# WHAT DD-16 REQUIRES, IN THREE FACTS:
+#   1. THE EDIT IS NOT REFUSED. The three lists are class- and flavor-level
+#      settings, not sheet state, so editing the `mos` list is correct wherever
+#      the user is standing.
+#   2. WHEN THE STAMPED SHEET DIFFERS FROM THE OPEN ONE, THE SENTENCE SAYS SO.
+#      One line, because `rdw::status` is one line (row BT20).
+#   3. WHEN IT DOES NOT DIFFER — OR IS ABSENT — THE SENTENCE IS SILENT ABOUT
+#      SHEETS. In the common case the source sheet IS the open one and saying so
+#      is noise on every press.
+#
+# ⚠ FACT 3's SECOND HALF IS LOAD-BEARING AND IS NOT DECORATION. Row BT28 hands
+# `rdw::_edit` a HAND-BUILT subject dict carrying instname / type / class /
+# cellname AND NO `schname` KEY AT ALL, and the keys suite's SD fixtures do the
+# same. Measured: `dict get $subj schname` RAISES on such a dict. A `_sheet_note`
+# that reads it unguarded therefore raises from inside the decision core, which
+# is a refusal the user never asked for on a path that was working — so ABSENT
+# must mean DO NOT NAME THE SHEET, and BT30's second arm drives exactly that.
+#
+# ⚠ AND THE COMPARISON IS A PLAIN STRING COMPARE, NOT `file normalize` AND NOT
+# A DEVICE+INODE IDENTITY. Both values come from the same `xschem get schname`
+# accessor, so they are byte-identical whenever they name the same sheet — the
+# fixture measures that directly, and it is why no BE/BT/SD row above moves.
+# Issue 1327 established that `file normalize` does not resolve a path's final
+# component and so establishes no file identity anyway, and `_fid` is a PRIVATE
+# store verb that row BT22 golds this file must never name.
+#
+# BOTH ROWS ARE RED AT HEAD, AND FOR ONE REASON EACH:
+#   BT29  the sentence does not name the source sheet (at HEAD, before item
+#         B5's patch lands, `rdw::_subject` and `rdw::_edit` do not exist at
+#         all and rw_ans answers NOPROC; after the patch and before DD-16 they
+#         exist and the sentence simply carries no clause).
+#   BT30  its FIRST arm is red for the same NOPROC reason today and is the
+#         two-sided partner: it golds the successful sentence BYTE-FOR-BYTE
+#         with no clause in it, so a `_sheet_note` that fires unconditionally
+#         reds here while BT29 stays green.
+
+set BT_DD16_OLDSCH [rw_ans xschem get schname]
+proc bt_dd16_fixture {} {
+  rw_ans ::op_param_lists::reset
+  catch {op_annot::register bs_ndev $::BS_DESC}
+  catch {op_annot::register bs_pdev $::BS_DESC}
+  rw_ans ::op_param_lists::said_clear
+  set ::rdw::blocks {}
+  return {}
+}
+
+# --- BT29  THE CROSS-SHEET EDIT, THROUGH SECTION BS's OWN TWO-SHEET FIXTURE --
+bt_dd16_fixture
+xschem load $BS_A
+catch {update idletasks}
+rw_ans ::rdw::push [bs_mkblk M1 {@m.m1}]
+set BT29_SRC  [bs_tail [lindex $::rdw::blocks 0] schname]
+set BT29_SUBJ [rw_ans ::rdw::_subject 0]
+xschem load $BS_B
+catch {update idletasks}
+set BT29_OPEN [file tail [rw_ans xschem get schname]]
+set BT29_BASE [rw_ans ::op_param_lists::effective bs_ndev annotation]
+set BT29_R    [rw_ans ::rdw::_edit up $BT29_SUBJ annotation governing gm]
+set BT29_SAY  [lindex $BT29_R 1]
+set BT29_GOT  [rw_ans ::op_param_lists::get_list class bs_ndev annotation]
+## ⚠ THE SHEET IS ASSERTED BY TAIL AND BY EXCLUSION, NOT BY A WHOLE SENTENCE.
+## `a.sch` is a substring of the tail and of the full path alike, so the row
+## does not pre-decide how the clause spells the sheet; the SECOND term is what
+## makes it sharp — the OPEN sheet's name must not appear, so a clause that
+## named the wrong one of the two would red here and not merely somewhere else.
+check {BT29 RULING DD-16 THROUGH THE REAL DECISION CORE: a block dumped on a.sch and edited while b.sch is open is ACCEPTED and not refused, the store really moves, and the ONE-LINE status names the SOURCE sheet a.sch and not the sheet the editor is showing} \
+  [list $BT29_SRC $BT29_OPEN $BT29_BASE \
+        [lindex $BT29_R 0] \
+        [expr {[string first "\n" $BT29_SAY] >= 0 ? 0 : 1}] \
+        [rw_has $BT29_SAY {a.sch}] [rw_has $BT29_SAY {b.sch}] \
+        $BT29_GOT] \
+  [list a.sch b.sch {{id ids 0} {gm gm 1}} ok 1 1 0 {{gm gm 1} {id ids 0}}]
+
+# --- BT30  THE TWO SILENCES --------------------------------------------------
+## ARM A — the sheets AGREE. The whole sentence is golded byte for byte, so a
+## clause that fires unconditionally cannot hide inside a substring test.
+bt_dd16_fixture
+xschem load $BS_B
+catch {update idletasks}
+rw_ans ::rdw::push [bs_mkblk M1 {@m.m1}]
+set BT30_SRC  [bs_tail [lindex $::rdw::blocks 0] schname]
+set BT30_OPEN [file tail [rw_ans xschem get schname]]
+set BT30_SUBJ [rw_ans ::rdw::_subject 0]
+set BT30_R    [rw_ans ::rdw::_edit up $BT30_SUBJ annotation governing gm]
+set BT30_SAY  [lindex $BT30_R 1]
+## ARM B — NO `schname` KEY AT ALL, which is row BT28's own subject shape.
+bt_dd16_fixture
+set BT30_HB   [dict create instname M1 type bs_ndev class bs_ndev cellname vn.sym]
+set BT30_R2   [rw_ans ::rdw::_edit up $BT30_HB annotation governing gm]
+set BT30_SAY2 [lindex $BT30_R2 1]
+check {BT30 THE TWO SILENCES, so DD-16's clause cannot pass by being unconditional: with the stamped sheet EQUAL to the open one an otherwise identical successful press carries no clause and its sentence is byte-identical to the plain one, and rdw::_edit handed a subject with NO schname key at all - which is exactly what row BT28 passes it - still answers ok, still says nothing about a sheet, and does not raise; the named callee rdw::_sheet_note exists, so a reviewer can neutralise this one sentence and watch one row say so} \
+  [list $BT30_SRC $BT30_OPEN \
+        [lindex $BT30_R 0] $BT30_SAY \
+        [expr {[dict exists $BT30_HB schname] ? 1 : 0}] \
+        [lindex $BT30_R2 0] $BT30_SAY2 [rw_bad $BT30_R2] \
+        [expr {[llength [info commands ::rdw::_sheet_note]] ? 1 : 0}]] \
+  [list b.sch b.sch \
+        ok {moved gm up in the annotation list for class bs_pdev.} \
+        0 \
+        ok {moved gm up in the annotation list for class bs_ndev.} 0 \
+        1]
+
+# --- rows BT29/BT30 leave nothing behind -------------------------------------
+bt_dd16_fixture
+rw_ans ::rdw::close
+if {$BT_DD16_OLDSCH ne {} && ![rw_bad $BT_DD16_OLDSCH]} {
+  catch {xschem load $BT_DD16_OLDSCH}
+} else {
+  catch {xschem load $BS_A}
+}
+catch {update idletasks}
+catch {xschem raw clear}
+
 # --- section K leaves nothing behind -----------------------------------------
 rw_ans ::rdw::pick_end
 rw_ans ::rdw::close
@@ -2724,6 +2948,869 @@ catch {xschem unselect_all}
 catch {xschem raw clear}
 catch {rename ciw_echo {}}
 if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo }
+
+# ============================================================================
+# SECTION BT — ITEM B5: THE BUTTON COLUMN AND THE TWO SCOPE DIALOGS
+# ============================================================================
+# ⚠ WRITTEN RED, BEFORE ANY PRODUCTION LINE OF B5 EXISTED. Every row below was
+# run against HEAD 79f163cb and every one of them failed for exactly one
+# reason: the procs named in the contract do not exist, `rdw::button` is not a
+# command, and `rdw::inert` still is. The ONE exception is BT0, the fixture's
+# own control, which is GREEN before the change and is evidence of nothing
+# except that no row below can pass vacuously.
+#
+# The row names are the PLAN's own (BT0 BT1 BT3 BT4 BT6 ... BT23), gaps
+# included, so the sabotage table in the item's plan can name a row and mean
+# this one. The gaps are not missing rows: they are numbers the plan spent on
+# rows that were folded into their neighbours while writing.
+#
+# ============================================================================
+# THE CONTRACT B5 ADDS TO src/rdw.tcl — SPELLED HERE BECAUSE THIS FILE IS
+# WHERE IT IS LOCKED
+# ============================================================================
+#   rdw::set_row {n}          the ONE target setter. `n` is a 1-based PANE LINE
+#                             number. It also moves the pane's `insert` mark
+#                             when a pane exists, so the widget and the store
+#                             cannot disagree about which row is targeted.
+#   rdw::_target_line {}      the current target line: the pane's own `insert`
+#                             line when a pane exists, the namespace variable
+#                             otherwise. 0 when there is none.
+#   rdw::_locate {line}       {blockindex entryindex} for a flat pane line, or
+#                             {} past the end. PURE — a function of
+#                             ::rdw::blocks alone, so it runs under --nogui.
+#   rdw::_row_param {entry}   the RAW parameter name of a {}-tagged, non-empty
+#                             block entry; {} for hdr / dim / dev / note and
+#                             for the separator.
+#   rdw::_hdr_instname {line} the exact inverse of rdw::header's join.
+#   rdw::_subject {blockindex}  {instname type class cellname ...} for the block
+#                             the cursor is in, or {}.
+#   rdw::_last_row_why {...}  DD-10's predicate: {} when a Delete is allowed,
+#                             else the refusal sentence.
+#   rdw::_edit {...}          the pure decision core. Performs the store call
+#                             and returns {ok|refused <sentence>}; touches no
+#                             Tk, so every sentence is asserted on BOTH arms.
+#   rdw::button {id}          THE ONE COMMAND EVERY WIDGET CARRIES. It replaces
+#                             rdw::inert, which is DELETED.
+#   rdw::scope_dialog {op subject listname}   -> a dict {scope narrow|broad
+#                             list annotation|summary}, or {} for Cancel.
+#   rdw::scope_dialog_build / rdw::scope_dialog_done   the ase::ui::bus_dialog
+#                             split, so the modal never has to be reached to
+#                             test the decision (issue 0803).
+#   widget paths the suite drives: .rdw.scope , .rdw.scope.sc.narrow ,
+#                             .rdw.scope.sc.broad , .rdw.scope.li.annotation ,
+#                             .rdw.scope.li.summary , .rdw.scope.btns.ok ,
+#                             .rdw.scope.btns.cancel
+#
+# ============================================================================
+# THE SENTENCE CONTRACT — WHAT EACH REFUSAL MUST SAY, AND WHY THESE ARE
+# PROPERTY ASSERTIONS AND NOT BYTE GOLDENS
+# ============================================================================
+# B3 minted seven user-visible sentences and B4 two more, and PLAN forbids
+# rewording any of them ad hoc; all of them sit UNRATIFIED on rule debt
+# 1245_B3_window_wording. B5 mints nine more. Locking nine unratified strings
+# byte-for-byte would gold prose the user has never read, and the first thing
+# the user's ruling would do is red nine rows that are about the CODE. So each
+# row below fences the SHAPE the sentence must have — one line, non-empty,
+# naming the thing the user must act on — plus the load-bearing NOUNS, and the
+# prose goes on the same rule debt.
+#
+# THE ONE EXCEPTION IS DD-10, WHICH THE USER'S OWN RULING SPELLS. Row BT13
+# asserts the ruling's clause VERBATIM as a substring, because DECISIONS.md
+# writes it out and a ruling's own words are not this item's to reword.
+#
+# ⚠ AND ONE RULE OVER ALL OF THEM, INHERITED FROM rdw::inert AND FENCED BY ROWS
+# W4b, Q9 AND BT15: EVERY MESSAGE rdw::button WRITES NAMES THE BUTTON IT CAME
+# FROM. calc::inert (calculator.tcl:607) exists because a control that acts and
+# says nothing cannot be told from a broken one; a control that says something
+# which does not identify itself is the same failure one step further in, and
+# the status line is shared by all five buttons.
+#
+#   no subject      contains `press 1`   (the user has not dumped anything yet)
+#   no parameter row contains `parameter row`
+#   Up at the top   contains `first`     Down at the bottom contains `last`
+#   not in the list contains the PARAM, the CLASS and the LIST NAME
+#   DD-10 annotation contains, verbatim:
+#       at least one parameter must stay. To stop showing operating-point
+#       values on this device, turn the annotation off instead.
+#   DD-10 summary    a DIFFERENT string that does NOT carry the annotation half
+#   Cancel          contains `ancel`
+#   a live pick mode contains `Escape`
+#   a greyed button  contains the button's own label and the list name
+#
+# ============================================================================
+# THE FIXTURE, AND WHY IT IS BUILT RATHER THAN BORROWED
+# ============================================================================
+# MEASURED at HEAD 79f163cb: a bare headless launch has an EMPTY op_annot
+# registry, so `op_param_lists::effective mos annotation` answers {} and every
+# list row would be vacuous. Section K's b4kdev fixture has ONE symbol file for
+# both of its devices, so a NARROW (cell-name) scope on M1 would also hit M2
+# and BT10's "leaves its siblings alone" could not fail.
+#
+# So this section builds TWO symbol files with TWO type tokens mapped to ONE
+# private class — the nmos/pmos shape, which is what makes a class-scope edit
+# and a flavor-scope edit tell each other apart — and registers an IHP-SHAPED
+# descriptor whose first triple has LABEL != PARAM ({id ids 0}).
+#
+# ⚠ THAT TRIPLE IS THE WHOLE POINT OF THE FIXTURE. MEASURED on this binary: the
+# pane prints the RAW param, `    ids : 1.2e-05`, while the store's triple is
+# `{id ids 0}`. A button column that looks its row up in the list BY LABEL
+# round-trips sky130 and gf180 perfectly and silently misses IHP — the one PDK
+# in the tree that distinguishes them, and this batch's own discriminator.
+# Every row below therefore targets a pane row whose text says `ids`.
+#
+# ⚠ AND THE STACKING IS PART OF THE FIXTURE. Two blocks are pushed, M1 FIRST,
+# so the M2 block is on top and every row that matters targets a line in the
+# OLDER block. A button column that reads `[lindex $::rdw::blocks 0]` — the
+# newest — passes every single-block row ever written.
+#
+# MEASURED PANE LAYOUT, driven out of rdw::format_answer on this binary:
+#     1 hdr  M2:/            6 hdr  M1:/
+#     2 dim  @m.m2           7 dim  @m.m1
+#     3 note (incomplete)    8 note (incomplete)
+#     4      ids : 9.9e-06   9      ids : 1.2e-05
+#     5      (separator)    10      gm  : 3.4e-05
+#                           11      gds : 5.6e-06
+#                           12      vgs : 0.5
+#                           13      (separator)
+#
+# ⚠ THIS SECTION NEVER PRESSES SAVE AT THE REPO ROOT. `conf_path project` is
+# `[pwd]/.xschem/op_param_lists.conf`, and this suite runs with pwd at the repo
+# root, so a Save taken here would drop a settings file on the developer's own
+# tree (hard rule 6). The one row that presses Save `cd`s into the scratch tree
+# first and `cd`s back; the tier behaviour itself is fenced in the STORE
+# suite's section BE, which owns the isolation idiom.
+# ============================================================================
+
+set B5_SYMN [file join $scratch b5n.sym]
+set B5_SYMP [file join $scratch b5p.sym]
+proc b5_mksym {path type} {
+  set fd [open $path w]
+  puts $fd "v {xschem version=3.4.5 file_version=1.2}"
+  puts $fd "G {}"
+  puts $fd "K {type=$type"
+  puts $fd {format="@spiceprefix@name @pinlist @model"}
+  puts $fd "template=\"name=M1 model=$type spiceprefix=X\""
+  puts $fd "}"
+  puts $fd "V {}"
+  puts $fd "S {}"
+  puts $fd "E {}"
+  puts $fd "L 4 -20 -20 20 -20 {}"
+  puts $fd "B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}"
+  puts $fd "T {@name} 0 -40 0 0 0.2 0.2 {}"
+  close $fd
+}
+b5_mksym $B5_SYMN b5ndev
+b5_mksym $B5_SYMP b5pdev
+set B5_SCH [file join $scratch b5.sch]
+set fd [open $B5_SCH w]
+puts $fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$B5_SYMN\} 300 -300 0 0 \{name=M1\}
+C \{$B5_SYMP\} 300 -120 0 0 \{name=M2\}"
+close $fd
+
+catch {xschem raw clear}
+set B5_LOAD [catch {xschem load $B5_SCH}]
+catch {update idletasks}
+## The IHP shape: label `id`, param `ids`, kind 0. `\@m.` is escaped for the
+## reason section K's own comment gives — the unescaped form yields `m1` and
+## the seam answers the fifth silence over a device that has numbers.
+set B5_DESC [list devpath {\@m.@path@name} \
+                  params {{id ids 0} {gm gm 1} {gds gds 1}}]
+catch {op_annot::register b5ndev $B5_DESC}
+catch {op_annot::register b5pdev $B5_DESC}
+rw_ans ::op_param_lists::reset
+rw_ans ::op_param_lists::set_class b5ndev b5cls
+rw_ans ::op_param_lists::set_class b5pdev b5cls
+
+proc b5_cell {n} {
+  set c {} ; catch {set c [xschem getprop instance $n cell::name]}
+  return $c
+}
+set B5_CELL1 [b5_cell M1]
+set B5_CELL2 [b5_cell M2]
+set B5_SEED  {{id ids 0} {gm gm 1} {gds gds 1}}
+
+## The two blocks, built through the renderer so the pane layout above is the
+## renderer's own and not this file's opinion of it.
+proc b5_blk {inst dp pairs} {
+  return [rw_block [rw_ansd [list $dp $pairs] {} {} 0 ok] \
+                   [rw_ctx "$inst:/" $dp op $inst]]
+}
+proc b5_fixture_blocks {} {
+  set ::rdw::blocks {}
+  rw_ans ::rdw::push [b5_blk M1 @m.m1 {{ids 1.2e-05} {gm 3.4e-05} {gds 5.6e-06} {vgs 0.5}}]
+  rw_ans ::rdw::push [b5_blk M2 @m.m2 {{ids 9.9e-06}}]
+  return {}
+}
+## The pane as a flat list of entries, computed from the STORE and not from
+## rdw::_locate — a row that read its own subject through the proc under test
+## could not see that proc go wrong.
+proc b5_flat {} {
+  set out {}
+  if {![info exists ::rdw::blocks]} { return {} }
+  foreach b $::rdw::blocks { foreach e $b { lappend out $e } }
+  return $out
+}
+proc b5_entry {ln} { return [lindex [b5_flat] [expr {$ln - 1}]] }
+proc b5_say {} { return [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}] }
+## Press one button and hand back what the window SAID about it. The status is
+## cleared first, so a button that says nothing is distinguishable from one
+## that repeated the previous message.
+proc b5_press {id} {
+  rw_ans ::rdw::status {}
+  rw_ans ::rdw::button $id
+  return [b5_say]
+}
+## A message that is present, ONE LINE, and names <needle>.
+proc b5_ok1 {m needle} {
+  if {$m eq {} || $m eq {NOVAR} || [string match {NOPROC*} $m]} { return 0 }
+  if {[string first "\n" $m] >= 0} { return 0 }
+  return [expr {[string first $needle $m] >= 0 ? 1 : 0}]
+}
+proc b5_owns {scope key ln} { return [rw_ans ::op_param_lists::owns $scope $key $ln] }
+proc b5_eff {ln {cell {}}} { return [rw_ans ::op_param_lists::effective b5cls $ln $cell] }
+## one key of one descriptor, without a raise: NOPROC / RAISED:... / NOKEY.
+## The twin of the store suite's ol_dkey, added by item B5-2 for row BT8.
+proc b5_dkey {type key} {
+  set d [rw_ans ::op_annot::descriptor $type]
+  if {[rw_bad $d]} { return $d }
+  if {[catch {dict exists $d $key} e]} { return BADDESC }
+  if {!$e} { return NOKEY }
+  if {[catch {dict get $d $key} v]} { return "RAISED:$v" }
+  return $v
+}
+proc b5_nsaid {} {
+  set s [rw_ans ::op_param_lists::said]
+  if {[rw_bad $s]} { return $s }
+  if {[catch {llength $s} n]} { return "BADSAID:$s" }
+  return $n
+}
+## ⚠ IT RESETS THE REGISTRY TOO, AND THAT IS NOT TIDINESS. `op_param_lists::apply`
+## writes the UNION into the descriptor's `params` (ruling DD-6), and
+## `op_param_lists::seed` READS THAT SAME FIELD BACK as "the PDK's own list" -
+## so the first successful Delete or Add in this section reorders the seed for
+## every row after it, and rows BT18 and BT21, which assert `effective` answers
+## the PDK seed EXACTLY, would be reading a value an earlier row wrote. The
+## store suite's twin proc `be_reset` (test_op_param_store_1245.tcl) already
+## re-registers for this reason; this one did not, which made the two suites
+## disagree about what a per-row reset is. Filed as issue 1312.
+proc b5_lists_reset {} {
+  rw_ans ::op_param_lists::reset
+  rw_ans ::op_param_lists::set_class b5ndev b5cls
+  rw_ans ::op_param_lists::set_class b5pdev b5cls
+  catch {op_annot::register b5ndev $::B5_DESC}
+  catch {op_annot::register b5pdev $::B5_DESC}
+  rw_ans ::op_param_lists::said_clear
+  return {}
+}
+
+## THE DIALOG STUB — `rename`, NEVER `proc`. test_ase_bus_bits_0159.tcl:129-132
+## records why: a bare `proc` overwrites the real one and the `rename ... {}`
+## that puts it back then DELETES it. The rename is guarded because in the RED
+## state there is nothing to rename.
+set ::b5_dlg_calls 0
+set ::b5_dlg_args {}
+set ::b5_dlg_answer {}
+if {[llength [info commands ::rdw::scope_dialog]]} {
+  rename ::rdw::scope_dialog ::rdw::b5_real_scope_dialog
+}
+proc ::rdw::scope_dialog {args} {
+  incr ::b5_dlg_calls
+  set ::b5_dlg_args $args
+  return $::b5_dlg_answer
+}
+proc b5_dlg {answer} { set ::b5_dlg_calls 0 ; set ::b5_dlg_args {} ; set ::b5_dlg_answer $answer }
+
+b5_fixture_blocks
+
+# --- BT0  THE CONTROL --------------------------------------------------------
+## GREEN BEFORE THE CHANGE, and that is the point: it says the fixture is live
+## so that no row below can pass by asserting something about nothing.
+check {BT0 CONTROL the fixture is live: two devices of ONE private class from TWO different cell files, an IHP-shaped seed whose first triple has label != param, nothing owned yet, and a two-block pane whose older block carries four parameter rows} \
+  [list $B5_LOAD [rw_ans ::op_annot::type M1] [rw_ans ::op_annot::type M2] \
+        [rw_ans ::op_param_lists::class b5ndev] [rw_ans ::op_param_lists::class b5pdev] \
+        [rw_ans ::op_param_lists::seed b5cls] [b5_eff annotation] \
+        [b5_owns class b5cls annotation] \
+        [expr {$B5_CELL1 ne {} && $B5_CELL1 ne $B5_CELL2 ? 1 : 0}] \
+        [llength $::rdw::blocks] [llength [b5_flat]] \
+        [lindex [b5_entry 9] 1]] \
+  [list 0 b5ndev b5pdev b5cls b5cls $B5_SEED $B5_SEED 0 1 2 13 {    ids : 1.2e-05}]
+
+# --- BT1  THE HEADER IS INVERTIBLE -------------------------------------------
+## rdw::header joins the instance name and the cadence path with a `:`, and an
+## instance name may itself contain one. The split must be GREEDY on the last
+## `:` that is followed by the path half, which always begins with `/`. The
+## row fences the split and the join AS ONE PAIR, so they cannot drift.
+check {BT1 rdw::_hdr_instname is the exact inverse of rdw::header's join - for a deep path, for the empty path this fixture actually has, for an instance name that itself carries a colon, and for a line that is not a header at all} \
+  [list [rw_ans ::rdw::_hdr_instname {M1:/xdut/xbg/xamp1}] \
+        [rw_ans ::rdw::_hdr_instname {M1:/}] \
+        [rw_ans ::rdw::_hdr_instname {A:B:/x}] \
+        [rw_ans ::rdw::_hdr_instname [lindex [rw_ans ::rdw::header M1] 0]] \
+        [rw_ans ::rdw::_hdr_instname {not a header at all}]] \
+  {M1 M1 A:B M1 {}}
+
+# --- BT3  THE TARGET IS PURE -------------------------------------------------
+## No Tk anywhere in this row: _locate and _row_param are functions of
+## ::rdw::blocks and of one block entry. That is what lets the whole button
+## column be driven on the --nogui arm, which is where the majority of this
+## suite lives.
+## ⚠ THE PARAM IS THE RAW NAME. `ids`, never the label `id`.
+check {BT3 rdw::_locate maps a flat pane line onto {blockindex entryindex} across TWO stacked blocks and answers {} past the end, and rdw::_row_param answers the RAW param for a parameter row and {} for the header, the device path, the note and the separator} \
+  [list [rw_ans ::rdw::_locate 4] [rw_ans ::rdw::_locate 9] \
+        [rw_ans ::rdw::_locate 11] [rw_ans ::rdw::_locate 13] \
+        [rw_ans ::rdw::_locate 14] [rw_ans ::rdw::_locate 0] \
+        [rw_ans ::rdw::_row_param [b5_entry 9]] \
+        [rw_ans ::rdw::_row_param [b5_entry 11]] \
+        [rw_ans ::rdw::_row_param [b5_entry 12]] \
+        [rw_ans ::rdw::_row_param [b5_entry 6]] \
+        [rw_ans ::rdw::_row_param [b5_entry 7]] \
+        [rw_ans ::rdw::_row_param [b5_entry 8]] \
+        [rw_ans ::rdw::_row_param [b5_entry 13]]] \
+  {{0 3} {1 3} {1 5} {1 7} {} {} ids gds vgs {} {} {} {}}
+
+# --- BT4  NO SUBJECT, AND NO ROW ---------------------------------------------
+## Two different silences, two different sentences. An empty store is "you have
+## not dumped anything yet"; a cursor on a header line is "click a parameter
+## row". Neither may open a dialog and neither may touch the store.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+set ::rdw::blocks {}
+rw_ans ::rdw::set_list summary
+rw_ans ::rdw::set_row 1
+set BT4_NOSUBJ {}
+foreach id {up down delete add} { lappend BT4_NOSUBJ [b5_ok1 [b5_press $id] {press 1}] }
+set BT4_D1 $::b5_dlg_calls
+b5_fixture_blocks
+rw_ans ::rdw::set_list annotation
+set BT4_NOROW {}
+foreach ln {6 7 8 13} {
+  rw_ans ::rdw::set_row $ln
+  lappend BT4_NOROW [b5_ok1 [b5_press up] {parameter row}]
+}
+check {BT4 with nothing dumped every mutating button refuses and tells the user to press a list key over a device first, and with dumps present a cursor on the header, the device path, the note or the separator refuses and tells them to click a parameter row - neither silence opens a dialog and neither touches the store} \
+  [list $BT4_NOSUBJ $BT4_D1 $BT4_NOROW $::b5_dlg_calls \
+        [b5_owns class b5cls annotation] [b5_owns class b5cls summary]] \
+  {{1 1 1 1} 0 {1 1 1 1} 0 0 0}
+
+# --- BT6  THE PANE'S ROW SET AND THE LIST ARE NOT THE SAME SET ---------------
+## `vgs` is published by the run and declared by no list, so it is DRAWN and
+## not REORDERABLE. Refusing by name is the only honest answer: a silent no-op
+## on a row the user can see is the failure rdw::inert existed to prevent.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 12
+set BT6_M [b5_press up]
+check {BT6 a parameter the run published but no list declares is refused BY NAME, naming the class and the list it is not in, and stores nothing - the pane's row set and the list are not the same set} \
+  [list [b5_ok1 $BT6_M vgs] [b5_ok1 $BT6_M b5cls] [b5_ok1 $BT6_M annotation] \
+        $::b5_dlg_calls [b5_owns class b5cls annotation] [b5_eff annotation]] \
+  [list 1 1 1 0 0 $B5_SEED]
+
+# --- BT7  THE BOUNDARY REFUSES, AND THE GREYING DOES NOT MOVE ----------------
+## Ladder decision D4: the greying stays keyed on LIST IDENTITY alone. A
+## position-dependent grey has to re-grey on every cursor move, which needs a
+## new binding on the pane - issue 1306/1308 ground - so the boundary is a
+## refusal with a sentence instead.
+b5_lists_reset
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 9
+set BT7_UP [b5_press up]
+rw_ans ::rdw::set_row 11
+set BT7_DN [b5_press down]
+check {BT7 Up on the first row and Down on the last refuse with a sentence naming the row and its end of the list, the list is byte-identical afterwards, and rdw::button_state has not moved - the greying stays keyed on list identity, never on position} \
+  [list [b5_ok1 $BT7_UP ids] [b5_ok1 $BT7_UP first] \
+        [b5_ok1 $BT7_DN gds] [b5_ok1 $BT7_DN last] \
+        [b5_eff annotation] [b5_owns class b5cls annotation] \
+        [rw_ans ::rdw::button_state up annotation] \
+        [rw_ans ::rdw::button_state down annotation]] \
+  [list 1 1 1 1 $B5_SEED 0 normal normal]
+
+# --- BT8  THE REORDER, AND WHAT IT SAYS --------------------------------------
+## With nothing owned the first reorder MATERIALISES the class entry, which is
+## DD-2's primary key. Exactly two entries move; the other list is untouched.
+b5_lists_reset
+set BT8_OWN0 [b5_owns class b5cls annotation]
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 10
+set BT8_M [b5_press up]
+## ⚠ ITEM B5-2 ADDED THE LAST THREE LEGS, AND THEY CONTRADICT THE PRESERVED
+## PATCH. The patch DEFERRED the redraw after a reorder and said so on screen -
+## "The drawn order follows on the next Add, Delete or reload (issue 1312)".
+## Issue 1312 is FIXED (ruling DD-13, item B2e): `seed` reads the declaration,
+## so a reorder can no longer leak through the seed into the summary list nobody
+## owns, and store row N4 fences the opposite. The deferral's stated cost is
+## gone, and a status line citing a fixed issue as its reason is a false
+## statement on a screen the user is reading. So the display key moves NOW, for
+## every type token of the class, and the sentence stops citing 1312.
+check {BT8 Up on the second row swaps exactly two entries and no more, materialises the class entry DD-2 makes the primary key, leaves the summary list alone, writes the display key for BOTH type tokens at once so the sheet follows immediately, and SAYS what moved - naming the parameter, the list and the scope, and no longer citing a fixed issue as a reason to defer} \
+  [list $BT8_OWN0 [b5_owns class b5cls annotation] [b5_eff annotation] \
+        [b5_owns class b5cls summary] [b5_eff summary] \
+        [b5_ok1 $BT8_M gm] [b5_ok1 $BT8_M annotation] [b5_ok1 $BT8_M class] \
+        [b5_dkey b5ndev shown] [b5_dkey b5pdev shown] \
+        [expr {[b5_ok1 $BT8_M gm] && [string first {1312} $BT8_M] < 0 \
+               && [string first {reload} $BT8_M] < 0 ? 1 : 0}]] \
+  [list 0 1 {{gm gm 1} {id ids 0} {gds gds 1}} 0 $B5_SEED 1 1 1 \
+        {{gm gm 1} {id ids 0} {gds gds 1}} {{gm gm 1} {id ids 0} {gds gds 1}} 1]
+
+# --- BT9  WHO ASKS THE DIALOG, AND WHO MUST NOT ------------------------------
+## The spec's B7 table gives the dialog to Delete and Add and to nothing else.
+## A dialog on every reorder makes reordering unusable, and a Save that asks a
+## scope question is asking about a decision it is not taking.
+## ⚠ THE SAVE LEG `cd`s INTO THE SCRATCH TREE. See this section's header.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 10
+rw_ans ::rdw::button up
+set BT9_UP $::b5_dlg_calls
+rw_ans ::rdw::button down
+set BT9_DN $::b5_dlg_calls
+rw_ans ::rdw::set_row 9
+rw_ans ::rdw::button delete
+set BT9_DEL $::b5_dlg_calls
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::rdw::set_list summary
+rw_ans ::rdw::set_row 9
+rw_ans ::op_param_lists::set_list class b5cls annotation {{gm gm 1}}
+rw_ans ::rdw::button add
+set BT9_ADD $::b5_dlg_calls
+set BT9_OLDPWD [pwd]
+cd $scratch
+set ::b5_dlg_calls 0
+rw_ans ::rdw::button save
+set BT9_SAVE $::b5_dlg_calls
+cd $BT9_OLDPWD
+## The REAL dialog, unstubbed, on the headless arm only: it must answer {} and
+## return, not block. On :99 it would build a window and sit in tkwait, which
+## is issue 0803 itself - SD1 of the keys suite drives it there, with a deadman.
+set BT9_HEADLESS [expr {$live_tk ? {n/a} : \
+  [expr {[llength [info commands ::rdw::b5_real_scope_dialog]] \
+         ? [rw_ans ::rdw::b5_real_scope_dialog delete {} annotation] : {NOPROC}}]}]
+check {BT9 the scope dialog is consulted EXACTLY ONCE per Delete and once per Add and NEVER for Up, Down or Save, no settings file is dropped on the repo root, and with no Tk at all the real dialog answers Cancel and returns instead of blocking (issue 0803, answered by construction)} \
+  [list $BT9_UP $BT9_DN $BT9_DEL $BT9_ADD $BT9_SAVE \
+        [expr {[file isdirectory [file join $repo .xschem]] ? 1 : 0}] \
+        [expr {$live_tk ? {n/a} : $BT9_HEADLESS}]] \
+  [list 0 0 1 1 0 0 [expr {$live_tk ? {n/a} : {}}]]
+
+# --- BT10  NARROW TOUCHES ONE FLAVOR, BROAD MOVES THE CLASS ------------------
+## The acceptance sentence, both halves, plus DD-8's shadow. A narrow write is
+## a NEW row and file order is precedence, so a `*` entry declared earlier
+## still wins - and the button must SAY so rather than looking broken.
+b5_lists_reset
+b5_dlg [list scope narrow list annotation]
+rw_ans ::op_param_lists::set_list flavor [list b5cls $B5_CELL2] annotation {{id ids 0} {gm gm 1}}
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 9
+set BT10_M1 [b5_press delete]
+set BT10_NARROW [list [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+                      [b5_owns class b5cls annotation] \
+                      [rw_ans ::op_param_lists::get_list flavor [list b5cls $B5_CELL2] annotation] \
+                      [b5_eff annotation $B5_CELL1]]
+b5_lists_reset
+b5_dlg [list scope broad list annotation]
+rw_ans ::rdw::set_row 9
+set BT10_M2 [b5_press delete]
+set BT10_BROAD [list [b5_owns class b5cls annotation] \
+                     [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+                     [b5_eff annotation $B5_CELL2]]
+b5_lists_reset
+b5_dlg [list scope narrow list annotation]
+rw_ans ::op_param_lists::set_list flavor [list b5cls *] annotation {{id ids 0} {gm gm 1}}
+rw_ans ::rdw::set_row 9
+set BT10_M3 [b5_press delete]
+set BT10_SHADOW [list [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+                      [b5_eff annotation $B5_CELL1]]
+check {BT10 narrow scope writes ONE flavor entry and leaves the sibling flavor and the class entry untouched; broad scope moves the CLASS and the sibling cell follows it; and a narrow write an earlier glob already shadows is REPORTED with the order to fix, never left looking like a dead button (DD-8, issue 1311)} \
+  [list [b5_ok1 $BT10_M1 ids] $BT10_NARROW \
+        [b5_ok1 $BT10_M2 ids] $BT10_BROAD \
+        [b5_ok1 $BT10_M3 order] $BT10_SHADOW] \
+  [list 1 [list 1 0 {{id ids 0} {gm gm 1}} {{gm gm 1} {gds gds 1}}] \
+        1 [list 1 0 {{gm gm 1} {gds gds 1}}] \
+        1 [list 1 {{id ids 0} {gm gm 1}}]]
+
+# --- BT12  CANCEL CHANGES NOTHING AT ALL -------------------------------------
+b5_lists_reset
+b5_dlg {}
+rw_ans ::op_param_lists::said_clear
+set BT12_D0 [rw_ans ::op_annot::descriptor b5ndev]
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 9
+set BT12_M [b5_press delete]
+check {BT12 Cancel on the scope dialog changes NOTHING: no key owned, no report added to the store's own log, the descriptor byte-identical, and the window SAYS it was cancelled rather than going silent} \
+  [list $::b5_dlg_calls [b5_owns class b5cls annotation] \
+        [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+        [b5_nsaid] \
+        [expr {[rw_ans ::op_annot::descriptor b5ndev] eq $BT12_D0 ? 1 : 0}] \
+        [b5_ok1 $BT12_M ancel]] \
+  {1 0 0 0 1 1}
+
+# --- BT13  DD-10: DELETE REFUSES THE LAST ROW --------------------------------
+## ⚠ THE ONE BYTE-GOLDEN SENTENCE IN THIS SECTION, AND IT IS THE USER'S OWN.
+## DECISIONS.md DD-10 writes it out; a ruling's words are not this item's to
+## reword. The second half of the row is what keeps the first half honest: a
+## Delete of a TWO-row list succeeds, so the refusal is about the LAST ROW and
+## not about Delete.
+set B5_DD10 {at least one parameter must stay. To stop showing operating-point values on this device, turn the annotation off instead.}
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::op_param_lists::set_list class b5cls annotation {{id ids 0}}
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 9
+set BT13_M [b5_press delete]
+set BT13_L1 [b5_eff annotation]
+rw_ans ::op_param_lists::set_list class b5cls annotation {{id ids 0} {gm gm 1}}
+set BT13_M2 [b5_press delete]
+check {BT13 DD-10 Delete refuses to remove the LAST remaining row of the annotation list and says the ruling's own sentence verbatim, the row is still there - and a Delete of a two-row list then succeeds, so the refusal is about the last row and not about Delete} \
+  [list [b5_ok1 $BT13_M $B5_DD10] $BT13_L1 \
+        [b5_eff annotation] \
+        [expr {$BT13_M2 ne $BT13_M ? 1 : 0}]] \
+  [list 1 {{id ids 0}} {{gm gm 1}} 1]
+
+# --- BT14  DD-10 ON THE SUMMARY LIST, WITH ITS OWN SENTENCE ------------------
+## Ladder decision D5: the ruling's text is unqualified, so the refusal applies
+## to BOTH lists - but DD-10's ARGUMENT is annotation-specific (an emptied
+## `shown` blanks the block and drops the device out of the declutter), so one
+## sentence for both lists would be FALSE about the summary case.
+b5_lists_reset
+b5_dlg {scope broad list summary}
+rw_ans ::op_param_lists::set_list class b5cls summary {{id ids 0}}
+rw_ans ::rdw::set_list summary
+rw_ans ::rdw::set_row 9
+set BT14_M [b5_press delete]
+check {BT14 DD-10 on the summary list refuses too, with its OWN sentence - one line, naming the row, and NOT carrying the annotation half of the ruling's wording, which would be false about this list} \
+  [list [b5_ok1 $BT14_M ids] \
+        [expr {[string first "turn the annotation off" $BT14_M] < 0 ? 1 : 0}] \
+        [expr {$BT14_M ne $B5_DD10 ? 1 : 0}] \
+        [b5_eff summary] [b5_owns class b5cls summary]] \
+  [list 1 1 1 {{id ids 0}} 1]
+
+# --- BT15  THE GREYING IS ALSO A COMMAND-PATH FENCE --------------------------
+## The disabled widget is not the only fence. rdw::button consults
+## rdw::button_state itself, so a caller reaching the proc directly - a key, a
+## menu, a later item - gets the same answer the widget would have given.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::rdw::set_list all
+rw_ans ::rdw::set_row 9
+set BT15_DEL [b5_press delete]
+rw_ans ::rdw::set_list annotation
+set BT15_ADD [b5_press add]
+check {BT15 Delete on list 3 and Add on list 1 are refused through rdw::button even when it is invoked directly, quoting the same rdw::button_state table the widget greying reads - and neither opens a dialog nor touches the store} \
+  [list [b5_ok1 $BT15_DEL Delete] [b5_ok1 $BT15_DEL all] \
+        [b5_ok1 $BT15_ADD Add] [b5_ok1 $BT15_ADD annotation] \
+        $::b5_dlg_calls [b5_owns class b5cls annotation]] \
+  {1 1 1 1 0 0}
+
+# --- BT16  ADD RE-ADDS THE TRIPLE, VERBATIM ----------------------------------
+## Landmine 12 / invariant I1: the KIND is the raw-name SHAPE, and this file
+## mints none. Add finds the existing {label param kind} triple by its PARAM
+## and re-adds it whole - label `id`, param `ids`, kind 0.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::op_param_lists::set_list class b5cls annotation {{gm gm 1}}
+rw_ans ::rdw::set_list summary
+rw_ans ::rdw::set_row 9
+set BT16_M [b5_press add]
+set BT16_L [rw_ans ::op_param_lists::get_list class b5cls annotation]
+check {BT16 Add from the summary list re-adds the triple VERBATIM into the annotation list - label id, param ids, kind 0, all three fields carried - with no label re-minted from the param and no kind invented} \
+  [list $BT16_L [lsearch -exact $BT16_L {id ids 0}] \
+        [b5_ok1 $BT16_M ids] [b5_ok1 $BT16_M annotation]] \
+  [list {{gm gm 1} {id ids 0}} 1 1 1]
+
+# --- BT17  ADD FROM LIST 3 ASKS WHICH LIST -----------------------------------
+## The spec's own cell: "add to annotation or summary (the dialog asks which)".
+## The stub records BOTH answers, and the row asserts the button honoured both
+## - the scope AND the list it was told.
+b5_lists_reset
+b5_dlg [list scope narrow list summary]
+rw_ans ::op_param_lists::set_list class b5cls summary {{gm gm 1}}
+rw_ans ::rdw::set_list all
+rw_ans ::rdw::set_row 9
+set BT17_M [b5_press add]
+check {BT17 Add from list 3 consults the dialog with the `all` identity - which is what makes it ask WHICH list - and writes into the list it was told at the scope it was told, leaving the class entry for that list alone} \
+  [list $::b5_dlg_calls [lindex $::b5_dlg_args end] \
+        [b5_owns flavor [list b5cls $B5_CELL1] summary] \
+        [rw_ans ::op_param_lists::get_list flavor [list b5cls $B5_CELL1] summary] \
+        [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+        [rw_ans ::op_param_lists::get_list class b5cls summary]] \
+  [list 1 all 1 {{gm gm 1} {id ids 0}} 0 {{gm gm 1}}]
+
+# --- BT18  ADD MINTS NO KIND -------------------------------------------------
+## `vgs` is drawn by the run and declared in no list and in no PDK seed, so
+## there is no triple to re-add and no honest way to guess its kind. Rule R3:
+## the kind is the raw-name SHAPE, so a wrong one writes a `.save` card that
+## matches nothing - and one bogus card destroys the whole operating point.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::rdw::set_list all
+rw_ans ::rdw::set_row 12
+set BT18_M [b5_press add]
+check {BT18 Add from list 3 of a parameter declared in no list and in no PDK seed REFUSES by name, mints no kind and stores nothing - the kind is the raw-name shape and this file invents none} \
+  [list [b5_ok1 $BT18_M vgs] \
+        [b5_owns class b5cls annotation] [b5_owns class b5cls summary] \
+        [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+        [b5_eff annotation]] \
+  [list 1 0 0 0 $B5_SEED]
+
+# --- BT19  A LIVE CANVAS PICK MODE BLOCKS THE DIALOG -------------------------
+## MEASURED while planning this item: `grab set .rdw.scope` really does take
+## `grab current`, so a modal opened while a verb-noun pick is live SWALLOWS
+## the canvas click the mode is waiting for and the mode looks dead. Ladder
+## decision D9: refuse to open one, and name the key that ends the mode. This
+## is adjacent to issue 1309 without being it - B5 adds no key and calls no
+## pick_start.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+set ::rdw::pick(canvas) .drw
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 9
+set BT19_M [b5_press delete]
+set BT19_RUN [rw_ans ::rdw::pick_running]
+array unset ::rdw::pick
+check {BT19 a Delete pressed while a canvas pick mode is live refuses and NAMES Escape, opens no dialog, creates no .rdw.scope toplevel, takes no grab and leaves the mode running} \
+  [list [b5_ok1 $BT19_M Escape] $::b5_dlg_calls $BT19_RUN \
+        [b5_owns class b5cls annotation] \
+        [expr {$live_tk ? [rw_w winfo exists .rdw.scope] : 0}] \
+        [expr {$live_tk ? [rw_w grab current] : {}}]] \
+  {1 0 1 0 0 {}}
+
+# --- BT20  THE STATUS LINE IS ONE-LINE-SAFE ----------------------------------
+## `::rdw::statusmsg` is an `entry -textvariable` and the store's own sentences
+## interpolate caught errors, which are multi-line by nature. rdw::_line has
+## carried this rule for every BLOCK line since B3; the status line was the one
+## emit point outside it, and B5 is the item that starts routing store prose
+## through it.
+rw_ans ::rdw::status "line1\nline2\tand3"
+set BT20_M [b5_say]
+rw_ans ::rdw::status {}
+check {BT20 rdw::status collapses a multi-line message onto ONE line before it reaches the entry - the store's sentences interpolate caught errors and are multi-line by nature - and an empty message still clears the field} \
+  [list $BT20_M [expr {[string first "\n" $BT20_M] < 0 ? 1 : 0}] [b5_say]] \
+  [list {line1 line2 and3} 1 {}]
+
+# --- BT21  A NARROW EDIT REPORTS HONESTLY (issue 1310) -----------------------
+## MEASURED: `apply` is per `type=` token and passes no cellname, and op_annot
+## holds ONE descriptor per type, so a per-cell display key cannot be expressed
+## at all without editing op_annot.tcl - which this item may not. The flavor
+## entry is stored, written and honoured by `effective`; it does not reach the
+## drawn sheet. The button says so rather than looking broken. Filed as 1310.
+b5_lists_reset
+b5_dlg [list scope narrow list annotation]
+set BT21_D0 [rw_ans ::op_annot::descriptor b5ndev]
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 9
+set BT21_M [b5_press delete]
+check {BT21 a NARROW edit is stored and honoured by `effective` for this cell and this cell only, the type's descriptor is byte-identical afterwards because a per-cell display key cannot be expressed at all, and the status SAYS the sheet still follows the class list (issue 1310, stated rather than discovered)} \
+  [list [b5_owns flavor [list b5cls $B5_CELL1] annotation] \
+        [b5_eff annotation $B5_CELL1] [b5_eff annotation $B5_CELL2] \
+        [expr {[rw_ans ::op_annot::descriptor b5ndev] eq $BT21_D0 ? 1 : 0}] \
+        [b5_ok1 $BT21_M class]] \
+  [list 1 {{gm gm 1} {gds gds 1}} $B5_SEED 1 1]
+
+# --- BT22  THE STRUCTURAL FENCE, REPLACING S1's AND K11's `== 0` -------------
+## ⚠ ROWS S1 AND K11 GOLDED `op_param_lists:: == 0` IN src/rdw.tcl, AND B5's
+## OWN DELIVERABLE FALSIFIES THAT GOLDEN. S1's own trailing comment already
+## says so: "B5 is where the store is wired". The fence is not deleted, it is
+## REPLACED BY A SHARPER ONE - the file may name the store only through its
+## PUBLISHED verbs, never a `_private` one, and it still names none of the six
+## forbidden doors S1 lists. S1 and K11 keep every other term they had.
+set B5_F [expr {[file isfile $RW_FILE] ? [rw_nocomment [rw_slurp $RW_FILE]] : {NOFILE}}]
+set B5_STORE_ALL [rw_count $B5_F {op_param_lists::}]
+set B5_STORE_OK 0
+## ⚠ THE ALLOW-LIST GAINED `reduce_why` AND `conf_tiers` (item B5-a). Both are
+## PUBLISHED verbs of the store, minted for issues 1323 and 1325, and the row's
+## point is unchanged: this file may name the store only through verbs the
+## store publishes, and the `op_param_lists::_` term below still golds ZERO.
+foreach v {effective set_list get_list owns apply write_conf conf_path said class seed governs reduce_why conf_tiers} {
+  incr B5_STORE_OK [rw_count $B5_F "op_param_lists::$v"]
+}
+set B5_HANDBUILT 0
+foreach t {{[list hdr } {[list dim } {[list dev } {[list note }} {
+  incr B5_HANDBUILT [rw_count $B5_F $t]
+}
+check {BT22 STRUCTURAL src/rdw.tcl reaches the list store ONLY through its published verbs and never a private one, still names none of the six forbidden doors, still reaches the seam only through ase::backend_hook, no longer defines rdw::inert - a proc that says `item B5 wires it` after B5 wired it is a lie - and still builds no block line by hand} \
+  [list [expr {$B5_STORE_ALL > 0 ? 1 : 0}] \
+        [expr {$B5_STORE_ALL == $B5_STORE_OK ? 1 : 0}] \
+        [rw_count $B5_F {op_param_lists::_}] \
+        [rw_count $B5_F {::ase::backend::ngspice::}] \
+        [rw_count $B5_F {raw value}] \
+        [rw_count $B5_F {sim_capabilities}] \
+        [rw_count $B5_F {blanket_op_save}] \
+        [rw_count $B5_F {ase::theme}] \
+        [expr {$B5_F eq {NOFILE} ? {NOFILE} : [rw_has $B5_F {ase::backend_hook}]}] \
+        [llength [info commands ::rdw::inert]] \
+        $B5_HANDBUILT] \
+  {1 1 0 0 0 0 0 0 1 0 0}
+
+# ============================================================================
+# BT25 .. BT28 — ITEM B5-2's OWN FOUR ROWS
+# ============================================================================
+# ⚠ THESE FOUR CONTRADICT THE PRESERVED PATCH, AND EACH ONE NAMES A MEASUREMENT
+# TAKEN AT HEAD c940a5df RATHER THAN AN OPINION ABOUT IT.
+#   BT25 / BT26  A6: the button asked exact-key `owns` where `effective` asks a
+#                GLOB, so with `{b5cls *b5n*}` governing a device the column
+#                edited a list that device does not read. Two write paths, two
+#                different corrections.
+#   BT27         A7: `set_list` returns 1 WITH A REPORT when it reduced the
+#                list by LABEL, and `rdw::_edit` reads the store's report only
+#                on the rc=0 arm - so the one case issue 1288's ruling exists
+#                for ("the user is told once") is the case the button drops.
+#   BT28         the narrow key is the cell name used as a `string match` GLOB,
+#                and a cell name that is not a glob matching itself mints a key
+#                that answers nothing.
+# ============================================================================
+
+# --- BT25  A6, THE Up/Down HALF: A REORDER MOVES WHAT THE DEVICE READS -------
+## MEASURED at HEAD, and it is the reason op_param_lists::governs exists:
+##     effective b5cls annotation <M1's cell>        = the FLAVOR list
+##     owns flavor {b5cls <M1's cell>} annotation    = 0
+## because the entry's key is the GLOB `*b5n*`, not the literal cell name. A
+## reorder that asked the second question would answer "broad", write the CLASS
+## entry, and leave the user looking at a pane whose order did not move - while
+## the status line said it had.
+b5_lists_reset
+rw_ans ::op_param_lists::set_list flavor [list b5cls *b5n*] annotation $B5_SEED
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 10
+set BT25_M [b5_press up]
+check {BT25 with a flavor entry whose GLOB governs this cell, an Up press writes THAT entry - the class entry stays unowned, what `effective` answers for this cell really moves, the sibling cell is still on the PDK seed, and the status line NAMES the glob it wrote at rather than claiming a class-wide change it did not make} \
+  [list [b5_owns flavor [list b5cls *b5n*] annotation] \
+        [rw_ans ::op_param_lists::get_list flavor [list b5cls *b5n*] annotation] \
+        [b5_owns class b5cls annotation] \
+        [b5_eff annotation $B5_CELL1] [b5_eff annotation $B5_CELL2] \
+        [b5_ok1 $BT25_M {*b5n*}] [b5_ok1 $BT25_M gm]] \
+  [list 1 {{gm gm 1} {id ids 0} {gds gds 1}} 0 \
+        {{gm gm 1} {id ids 0} {gds gds 1}} $B5_SEED 1 1]
+
+# --- BT26  A6, THE BROAD HALF: THE CLASS MOVES AND THE DEVICE DOES NOT -------
+## ⚠ AND THE BROAD BASE IS STILL THE CLASS LIST, NOT THIS CELL's. Taking the
+## base from `effective $cls $listname $cell` - which the item's own plan asked
+## for - would write the FLAVOR list's rows into the CLASS key and destroy every
+## class row the flavor entry does not carry. That is ruling DD-7's failure, the
+## one that reverted item B2a twice. So the cell goes into the POST-write check
+## instead: the class really moved, this device did not, and the button SAYS SO
+## instead of reporting a bare success the user cannot see.
+b5_lists_reset
+b5_dlg [list scope broad list annotation]
+rw_ans ::op_param_lists::set_list flavor [list b5cls *b5n*] annotation $B5_SEED
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::set_row 10
+set BT26_M [b5_press delete]
+check {BT26 a BROAD Delete on a device a flavor glob governs moves the CLASS list and nothing else - the flavor entry is byte-identical afterwards, what this device reads is unchanged, and the status line says so by naming the glob that still wins for it, never a bare success about rows that did not move} \
+  [list [b5_owns class b5cls annotation] \
+        [rw_ans ::op_param_lists::get_list class b5cls annotation] \
+        [rw_ans ::op_param_lists::get_list flavor [list b5cls *b5n*] annotation] \
+        [b5_eff annotation $B5_CELL1] \
+        [b5_ok1 $BT26_M {*b5n*}]] \
+  [list 1 {{id ids 0} {gds gds 1}} $B5_SEED $B5_SEED 1]
+
+# --- BT27  A7: THE STORE TELLS, AND THE BUTTON MUST NOT DROP IT -------------
+## MEASURED at HEAD: `set_list class b5cls annotation {{id vgs 2} {gds gds 1}
+## {id ids 0}}` returns **1** - success - with the report `a second entry for
+## label "id" ... the later one replaces it in place`, and the stored list
+## becomes `{id ids 0} {gds gds 1}`: the row the user never touched is GONE.
+## IHP's shipped `{id ids 0}` is exactly this label != param shape, so this is
+## not a synthetic case. Issue 1288's ruling is that the two doors reach the
+## same verdict with the same sentence and the user is told ONCE; a button that
+## reads the store's report only on the FAILURE arm tells them zero times.
+##
+## ⚠ RE-CHECKED UNDER RULING DD-15 BY ITEM B5-3, AND THIS ROW DOES NOT MOVE.
+## Item B5-a's note warned that guarding the ADD arm the way the reorder is
+## guarded would red this row, and asked whether DD-15 changed that. It does
+## not: DD-15 shuts the DECLARATION door (`op_annot::register`), and the label
+## collision HERE is minted by `set_list` from two triples the button itself
+## assembles - issue 1288's ruled accept-and-report, which DD-15 moves nothing
+## about. The refusal being at the declaration is precisely what makes
+## extending the reorder guard to Add unnecessary, so the row's assertion
+## stands unchanged and no leg is added.
+b5_lists_reset
+b5_dlg {scope broad list annotation}
+rw_ans ::op_param_lists::set_list class b5cls annotation {{id vgs 2} {gds gds 1}}
+rw_ans ::op_param_lists::said_clear
+rw_ans ::rdw::set_list summary
+rw_ans ::rdw::set_row 9
+set BT27_M [b5_press add]
+set BT27_L [rw_ans ::op_param_lists::get_list class b5cls annotation]
+check {BT27 an Add whose triple collides BY LABEL with a row already in the list repeats the STORE's own sentence in the status line, one-lined, rather than reporting a plain success - the stored list is what get_list holds and what effective answers, and the user is told once that a row they did not touch was replaced} \
+  [list $BT27_L [b5_eff annotation] \
+        [b5_ok1 $BT27_M {replaces it in place}] \
+        [b5_ok1 $BT27_M ids] \
+        [b5_owns class b5cls annotation]] \
+  [list {{id ids 0} {gds gds 1}} {{id ids 0} {gds gds 1}} 1 1 1]
+
+# --- BT28  A NARROW KEY MUST BE A GLOB THAT MATCHES ITSELF ------------------
+## The narrow key is the CELL NAME, stored and later matched with
+## `string match -nocase`. MEASURED: `a[bc].sym` and `a\b.sym` do NOT match
+## themselves, so the key would be written and then answer nothing - and the
+## DD-8 shadow branch would fire, blaming "an entry declared earlier in the
+## settings file" that does not exist. One wrong sentence produced by the code
+## written to remove another. Refuse up front, name the broad alternative, and
+## store nothing.
+## ⚠ THE SECOND HALF IS THE CONTROL: an ordinary cell name goes through the
+## SAME door and is accepted, so the guard is about self-matching and not about
+## narrow scope.
+b5_lists_reset
+set BT28_BAD [dict create instname M1 type b5ndev class b5cls cellname {a[bc].sym}]
+set BT28_R   [rw_ans ::rdw::_edit delete $BT28_BAD annotation narrow ids]
+set BT28_OK  [dict create instname M1 type b5ndev class b5cls cellname b5plain.sym]
+set BT28_R2  [rw_ans ::rdw::_edit delete $BT28_OK annotation narrow ids]
+check {BT28 a narrow write whose cell name is not a glob matching itself is REFUSED with its own sentence naming the class-wide alternative, and stores no flavor key at all - while an ordinary cell name through the same door is accepted, so the guard is about the glob and not about narrow scope} \
+  [list [lindex $BT28_R 0] \
+        [b5_ok1 [lindex $BT28_R 1] {a[bc].sym}] \
+        [b5_ok1 [lindex $BT28_R 1] b5cls] \
+        [b5_owns flavor [list b5cls {a[bc].sym}] annotation] \
+        [b5_owns class b5cls annotation] \
+        [lindex $BT28_R2 0] \
+        [b5_owns flavor [list b5cls b5plain.sym] annotation]] \
+  [list refused 1 1 0 0 ok 1]
+
+# --- BT23  THE REAL WIDGETS, DISPLAY ARM ONLY --------------------------------
+## The twin of W4b, rewritten. B3's obligation - every enabled button SAYS what
+## it did - does not lapse when the buttons stop being inert; it is exactly
+## then that a silent button becomes indistinguishable from a broken one.
+if {$live_tk} {
+  b5_lists_reset
+  b5_dlg {scope broad list annotation}
+  b5_fixture_blocks
+  rw_ans ::rdw::open
+  catch {update idletasks}
+  rw_ans ::rdw::set_list annotation
+  catch {update idletasks}
+  set BT23_CMD {}
+  foreach id {up down delete add save} { lappend BT23_CMD [rw_has [rw_w .rdw.b.$id cget -command] "rdw::button $id"] }
+  rw_ans ::rdw::set_row 10
+  rw_ans ::rdw::status {}
+  rw_w .rdw.b.up invoke
+  catch {update idletasks}
+  set BT23_M [b5_say]
+  check {BT23 every enabled button carries rdw::button and nothing else, a real .rdw.b.up invoke really moves the store, and the window still SAYS what happened without ever claiming it is not wired yet} \
+    [list $BT23_CMD [b5_owns class b5cls annotation] [b5_eff annotation] \
+          [expr {$BT23_M ne {} && $BT23_M ne {NOVAR} ? 1 : 0}] \
+          [expr {[string first {not wired yet} $BT23_M] < 0 ? 1 : 0}] \
+          [b5_ok1 $BT23_M gm]] \
+    [list {1 1 1 1 1} 1 {{gm gm 1} {id ids 0} {gds gds 1}} 1 1 1]
+  catch {destroy .rdw.scope}
+  rw_ans ::rdw::close
+  catch {update idletasks}
+}
+
+# --- the section leaves the tree as it found it ------------------------------
+catch {rename ::rdw::scope_dialog {}}
+if {[llength [info commands ::rdw::b5_real_scope_dialog]]} {
+  rename ::rdw::b5_real_scope_dialog ::rdw::scope_dialog
+}
+array unset ::rdw::pick
+rw_ans ::op_param_lists::reset
+catch {op_annot::register b5ndev {}}
+catch {op_annot::register b5pdev {}}
+set ::rdw::blocks {}
+rw_ans ::rdw::set_list annotation
+rw_ans ::rdw::status {}
+catch {xschem raw clear}
 
 # ============================================================================
 # SECTION S — THE STRUCTURAL FENCES, AND HYGIENE
@@ -2748,16 +3835,23 @@ if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo
 # through it.
 # RED before B3: S1 (the file does not exist).  GREEN before B3: S2.
 
+## ⚠ THE SEVENTH TERM MOVED TO ROW BT22, BY ITEM B5, AND THE COMMENT ABOVE
+## ANTICIPATED IT: "B5 is where the store is wired". `op_param_lists:: == 0`
+## was true only while the button column was inert; B5's whole deliverable is
+## the first real caller of `set_list`, `apply` and `write_conf`. The fence is
+## not dropped, it is REPLACED BY A SHARPER ONE - BT22 asserts the file names
+## the store ONLY through its published verbs and never a `_private` one, which
+## is a stronger statement than a bare zero ever was. The other six tokens stay
+## at zero here, unchanged.
 set S1_F [expr {[file isfile $RW_FILE] ? [rw_nocomment [rw_slurp $RW_FILE]] : {NOFILE}}]
-check {S1 STRUCTURAL the forbidden doors: rdw.tcl reaches the seam ONLY through ase::backend_hook, never by the backend proc's name, and names none of `xschem raw value` / ase::sim_capabilities / blanket_op_save / ase::theme / op_param_lists::} \
+check {S1 STRUCTURAL the forbidden doors: rdw.tcl reaches the seam ONLY through ase::backend_hook, never by the backend proc's name, and names none of `xschem raw value` / ase::sim_capabilities / blanket_op_save / ase::theme (op_param_lists:: moved to row BT22 when item B5 wired the store)} \
   [list [expr {$S1_F eq {NOFILE} ? {NOFILE} : [rw_has $S1_F {ase::backend_hook}]}] \
         [rw_count $S1_F {::ase::backend::ngspice::}] \
         [rw_count $S1_F {raw value}] \
         [rw_count $S1_F {sim_capabilities}] \
         [rw_count $S1_F {blanket_op_save}] \
-        [rw_count $S1_F {ase::theme}] \
-        [rw_count $S1_F {op_param_lists::}]] \
-  {1 0 0 0 0 0 0}
+        [rw_count $S1_F {ase::theme}]] \
+  {1 0 0 0 0 0}
 
 ## An untracked untitled*.sch in the repo root turns THREE tests red. ⚠ The
 ## repo root ALREADY holds untitled~.sch and untitled~.sym and they are
@@ -2774,6 +3868,36 @@ check {S2 HYGIENE the suite creates no untitled* anywhere and leaves no toplevel
 # --- clean up ---------------------------------------------------------------
 catch {xschem raw clear}
 if {$live_tk} { rw_ans ::rdw::close ; catch {destroy .rdwctl} }
+
+# ============================================================================
+# THE CHECK-COUNT FLOOR — TRAP 7, WHICH THIS SUITE HAD NO GUARD RAIL FOR
+# ============================================================================
+# Copied verbatim in shape from KX_FLOOR (test_rdw_keys_1245.tcl:1713), minted
+# after a run of THAT suite silently executed fewer rows and still printed ALL
+# PASS. Until item B5-3 only the keys suite carried a floor; this one gained a
+# whole section of Tk-gated and dialog-gated rows with nothing watching the
+# denominator, and a green count is a statement about the FENCE.
+#
+# ⚠ IT IS THE --nogui MINIMUM, NOT THE Tk NUMBER. The display arm runs the
+# `live_tk` rows too (121 with item B5's rows in place), so an equality would
+# red every headless run. The floor is the arm that runs FEWEST rows.
+#
+# ⚠ IT IS A FLOOR, NOT AN EQUALITY. Adding rows must not red the suite: RAISE
+# it when you add them, and NEVER lower it to make a run pass, which is the one
+# move that would put the skipped-row defect straight back.
+#
+# ⚠ IT IS AN `incr fail`, NOT A `check`. A `check` would add itself to $npass
+# and inflate the very number it is guarding.
+#
+# 83 (HEAD 59ef24af, --nogui) + 24 (item B5's preserved section BT, of whose 25
+# rows one is `live_tk`-gated) + 2 (item B5-3's BT29 and BT30) = 109.
+set RW_FLOOR 109
+set RW_RAN [expr {$npass + $fail}]
+if {$RW_RAN < $RW_FLOOR} {
+  puts "FAIL: RWFLOOR the suite ran only $RW_RAN checks, below its floor of\
+$RW_FLOOR — rows were SKIPPED, and a skipped row is not a passing one : FAIL"
+  incr fail
+}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }

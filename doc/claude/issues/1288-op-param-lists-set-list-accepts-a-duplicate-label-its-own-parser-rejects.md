@@ -3,10 +3,14 @@
 **Filed by:** item **B2a-2**, 2026-09-03. Found by B2a-2's adversary against the
 reverted patch; **root cause re-measured by the write-up agent on the reverted
 tree at `849f2231`**, where it is a **HEAD defect**, not a property of the
-patch. **FILED, NOT FIXED.**
+patch. (Filed as *not fixed*; see the Status line immediately below for where it
+ended up.)
 
-**Status:** **HALF FIXED**, 2026-09-04. The store half is fixed in the tree; the
-button half is written but **reverted** and therefore still open.
+**Status:** ✅ **CLOSED**, 2026-09-04 by item **B5-3** — see the section at the
+end of this file. (It was **HALF FIXED** between B2e and B5-3: the store half
+landed in the tree, the button half existed only inside a reverted patch. The
+body below still describes that intermediate state; the closing section is
+authoritative.)
 
 * **The store half — FIXED by item B2e (`21fcece6`/`0abba4cb`).** `_dup_index`
   and `_dup_why` are now *shared* by `set_list` and `_parse_line`, so the two
@@ -176,3 +180,38 @@ alongside E1–E4. **Expect this move; it is not a regression.**
 `owns` and `get_list` answer for a key `set_list` refuses — **a new two-door
 disagreement of exactly this class**. Recorded under issue **1294**. Latent;
 B5's scope dialog is the first door that could reach it.
+
+---
+
+## ✅ CLOSED 2026-09-04 by item **B5-3**. The button half landed.
+
+The store half was already fixed (`set_list` and the parser reach the same
+verdict with the same sentence). What was left open was that **nothing read the
+store's report on the SUCCESS arm** — `set_list` returns **1 with a report**
+when it reduced the list by label, which is this issue's own ruled behaviour
+("the later one replaces it in place"), and the preserved B5-2 patch read the
+report only on the `rc=0` arm. So in the one case the ruling exists for, the
+user was told **zero times**.
+
+`rdw::_edit` now reads `rdw::_store_tail` on the success arm and appends the
+store's own wording — never a second one for the same fact. Fenced by window row
+**BT27** by name (an Add whose triple collides by label is ACCEPTED, replaces the
+earlier row in place, and says so once) and by store row **BE6** (a refused Save
+repeats the store's sentence rather than inventing a second). Sabotage
+`store_tail_success_blind` — replacing `rdw::_store_tail`'s body with
+`return $fallback` — reds both.
+
+### ⚠ The "introduced by the fix, still open" residual above is REFUTED, not fixed
+
+That paragraph predicts *"B5's scope dialog is the first door that could reach
+it."* **It cannot.** Measured by reading the landed code: `rdw::_edit` builds its
+flavor key as `[list $cls $cell]` — always exactly **two** elements — and
+`rdw::_scope_for` returns `[lindex $g 1]` from `op_param_lists::governs`, whose
+keys came through `_key` already canonicalised to two. **The button column cannot
+mint a three-element flavor key.** The truncation itself still reproduces
+verbatim (`_key flavor {mos *n* JUNK} annotation` is byte-identical to
+`_key flavor {mos *n*} annotation`), so it stays open under issue **1294**, but
+it is latent **and unreachable**, and it was not "fixed" by changing the store's
+key canonicaliser — which is used as an array index, on the batch's last item,
+for a door this feature provably cannot open. An uncanonicalised key as an index
+is how item B2a-2 lost entries.

@@ -14,9 +14,16 @@ A1 ──┐
 A2 ──┴─> A3                     (feature A — 1244)
 
 B1 ──┐
-B2 ──┼─> B2e ──> B5             (feature B — 1245)
+B2 ──┼─> B2e ──> B5 ──> B5-2 ──> B5-a ──> B5-3   ✅ FEATURE B COMPLETE (1245)
 B3 ──┴─> B4
 ```
+
+⚠ **FEATURE B IS COMPLETE as of 2026-09-04.** The button column took four
+attempts; the first three were reverted and **not once was the defect in the
+buttons** — being the first real caller of the store and the block list, each
+attempt uncovered a latent defect underneath (DD-13/B2e, 1322/B5-a, 1323,
+1325/1327). **B5-3 landed it.** Read the **B5-3** block at the end of this file
+before B5's or B5-2's, which are history.
 
 ⚠ **B2e was not in the original eight.** It was split out on 2026-09-04 after
 item B5 built the whole button column, went green on every tier, and then
@@ -2432,7 +2439,7 @@ issues 1312/1292/1287/1314/1315/1316/1317/1318/1319/1320 · `NUMBERING.md` ·
 
 ---
 
-## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04.** Re-done as **B5-2**, which was ALSO refuted and reverted. **Read the B5-2 block first and apply the B5-2 patch, not B5's.**  *(needs B2, B3, B2a, B2e)*
+## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04.** Re-done as **B5-2** (also refuted and reverted), then as **B5-a** (foundations), and finally **LANDED AS B5-3 on 2026-09-04 — READ THE B5-3 BLOCK AT THE END OF THIS FILE.** This block and B5-2's are history; the patch they describe is now IN THE TREE.  *(needs B2, B3, B2a, B2e)*
 
 > ⛔ **ITEM B5-2, 2026-09-04 — APPLIED, CORRECTED SIX TIMES, GREEN ON EVERY
 > TIER, REFUTED AND REVERTED. FEATURE B IS NOT COMPLETE.** This is the second
@@ -2920,7 +2927,118 @@ unmoved (seam 49, op_annot 485/492, declutter 134). T1 zero, T2 `HARNESS: PASS`
 8. **`schname` IS CAPTURED AND NOTHING READS IT.** The sheet-identity axis is
    recorded so B5-3 *can* name the sheet; nothing refuses on it, so a cross-sheet
    edit is still *"the button did something you cannot see"*. **Rule debt on
-   1322, the user's.**
+   1322, the user's.** — **DISCHARGED BY B5-3** (ruling DD-16, `rdw::_sheet_note`).
+
+
+---
+
+## B5-3 — the fourth attempt at the button column  ✅ **LANDED, status E, 2026-09-04. FEATURE B IS COMPLETE.** The preserved patch + DD-15 + DD-16. *(closes B5; four new issues filed, not fixed)*
+
+**What landed.** `git apply doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch`
+(md5 `42890cf163dd9ba1e85e312e1801c6ed`, 3018 lines) — **rc=0, offsets only, and
+NOT ONE LINE OF IT RETYPED** — then exactly three additions on top:
+
+* **DD-15** in `src/op_annot.tcl` (the one change that file was opened for):
+  `op_annot::_dup_declared_label` scans **the declaration** `_declare` will store
+  under `declared`, and `register` raises before anything is stored and before
+  `::op_annot::gen` moves. Every read catch-guarded, falling through to **accept**.
+* **DD-16** in `src/rdw.tcl`: `rdw::_sheet_note`, appended inside `rdw::_edit` at
+  **one** point on the **success arm only**, so all three `ok` returns carry it
+  and no refusal arm does.
+* The test work: store section **DL** (3 rows), window **BT29**/**BT30**, new
+  legs on **BE7** and **BE9**, and a **check-count floor on both suites**
+  (`OL_FLOOR` 130, `RW_FLOOR` 109) — until B5-3 only the keys suite had one.
+
+**Counts.** store 114 → **130**, window 83 → **109** `--nogui` / 94 → **121**
+`:99`, keys 36 → **41** with `KX_FLOOR` **raised** 36 → 41. Controls **unmoved**:
+seam 49, op_annot 485/492, declutter 134. T1 zero (solo), T2 `HARNESS: PASS` 6/6,
+full audit **369 pass / 11 fail / 0 crash / 2 skip of 382**, non-PASS set
+identical **by name and verdict** to `audit_B5-3_before_2026-09-04.txt`.
+
+### ⚠ WHAT B5-3 LEARNED THAT BINDS EVERY LATER ITEM
+
+1. **⛔ AN ACCEPTANCE SENTENCE IN THE DRIVER'S OWN BRIEF WAS REFUTED BY
+   MEASUREMENT, AND THE ROW RECORDS THE REFUTATION RATHER THAN OBEYING IT.** The
+   brief asked to prove *"an Up press leaves `_cards_for`'s output
+   byte-identical"*. **It does not, and it must not.** `apply` writes the
+   reordered union back into `params` and `_cards_for` emits one card per row
+   **in `params` order**, so the card list reorders with it — measured
+   `{ids gm gds}` → `{gm ids gds}`. DD-4/DD-6 is about what the simulator is
+   asked to **compute**, and a `.save` deck is a **set**. Row **BE7** therefore
+   asserts **set identity plus length**, because a byte comparison would fence
+   the ORDER, which is the one thing Up exists to change. **A later item that
+   "restores" the byte compare makes the correct implementation red.**
+2. **⛔ DD-15's SHARPEST PREDICTED LANDMINE DOES NOT EXIST, AND TWO AGENTS
+   RE-MEASURED IT.** Both the scout and the plan said an unguarded duplicate scan
+   would red `test_op_annot` row **K17** and move op_annot off 485/492. **It does
+   not**: with BOTH catch guards deleted, `test_op_annot` still measured
+   `ALL PASS (485)`. K17 overwrites `params` **alone** on a descriptor whose
+   `declared` is already well-formed, so a guard that scans the DECLARATION never
+   reads its unmatched open brace. The real fence is store **DL2** — and with the
+   guards gone the **store suite DIES printing NO RESULT LINE AT ALL**
+   (`unmatched open brace in list`, rc still 0), which is trap 6's exact shape
+   arriving through a guard. **Assert the RESULT line, always.**
+3. **⛔ A FLOOR'S STATED RATIONALE CAN BE WRONG WHILE THE FLOOR IS RIGHT.**
+   `OL_FLOOR`'s first comment claimed eleven of section BE's rows sit behind
+   `if {[llength [info commands ::rdw::scope_dialog]]}`. **They do not** — that
+   guard wraps only the `rename`; the stub `proc` on the next line is installed
+   **unconditionally**. Measured: with `::rdw::scope_dialog` deleted before
+   sourcing, the store suite still ran **130** checks and still printed ALL PASS,
+   and the row that went red was window **BT9**. Comment corrected in place.
+   **`RW_FLOOR` 109 is the `--nogui` minimum by design**, so a `:99` run that
+   silently skipped up to 12 `live_tk` rows would still clear it — deliberate,
+   but the next crew that touches that suite should raise it **arm-aware**.
+4. **⛔ A STRING COMPARE IS NOT FILE IDENTITY, AND THIS BATCH HAS NOW MADE THAT
+   MISTAKE TWICE — issues 1327 and 1329.** DD-16's `rdw::_sheet_note` compares
+   the stamped `schname` against `xschem get schname` as plain strings, and its
+   own header claimed they *"are byte-identical whenever they name the same
+   sheet — measured directly"*. **False**: one sheet opened through a **symlink**
+   yields two different strings and the clause fires falsely. The choice stands
+   (both alternatives are worse **from `rdw.tcl`**, which row **BT22** forbids to
+   name a private store verb); the fix is a **public**
+   `op_param_lists::same_file` wrapping `_fid`, added to BT22's allow-list.
+   **Any later item needing file identity in `rdw.tcl` should land that verb
+   rather than compare strings again.**
+5. **`rdw::_apply_now` IS A SILENT-FAILURE CHANNEL — issue 1330.** `rdw::button`
+   composes its whole status sentence from `rdw::_edit` and only **then** calls
+   `_apply_now`, whose three calls are each in a bare `catch` and which returns
+   `{}` unconditionally (measured `APPLY_NOW_RC=0`, `APPLY_NOW_RES=''`,
+   `EDIT_BEFORE_APPLY=1`). Nothing reaches it today. **Any later item that gives
+   `apply` a second way to fail owns this**, and the fix is one `said`-tail read
+   after `_apply_now` in `rdw::_store_tail`'s existing idiom.
+6. **ISSUE 1326's DELETE HALF SURVIVES DD-15.** DD-15 shuts the **declaration**;
+   it cannot shut `::op_annot::desc`, which a fixture or an older session's stored
+   state still reaches — and which is exactly where rows **RD1**, **RD5**, **BE8**
+   were re-pointed (row N9c's sanctioned technique) so `reduce_why` stays fenced.
+   Reached that way one Delete still drops **two** rows (measured 3 → 1).
+   **`reduce_why` is consulted for REORDERS ONLY**, so "one rule, two doors" holds
+   for Up and Down and **not** for Delete. Unreachable in production; the ruling
+   stays the user's.
+7. **ISSUE 1288 IS CLOSED; ISSUE 1294's SECONDARY IS UNREACHABLE AND STAYS OPEN.**
+   1288's button half is the success-arm `rdw::_store_tail` read, fenced by
+   **BT27** by name. 1294's own prediction — *"B5's scope dialog is the first door
+   that could reach it"* — is **refuted by the landed code**: `rdw::_edit` builds
+   `[list $cls $cell]`, always exactly two elements, and `_scope_for` returns
+   `[lindex $g 1]` from `governs`, whose keys came through `_key` already
+   canonicalised to two. **The button column cannot mint a three-element flavor
+   key.** Do not "fix" `_key`'s truncation on this door's account.
+8. **DRIVING A REAL MODAL ON A FIXED TIMER IS A TEST DEFECT — issue 1332.** Keys
+   rows **SD1/SD2/SD3b** arm their driver on `after 100` rather than polling for
+   `.rdw.scope`, and false-redded **once in 134 runs** while a second crew agent
+   held the same `:99` display (issue **0990**'s situation). Instrumented margin:
+   the dialog appears **3–6 ms** after the invoke, **max 19 ms** over 88 runs. The
+   `after 5000` deadman **worked** — it false-redded, it did not hang, so issue
+   **0803** is honoured. **Poll; never widen the delay.** The idiom was copied
+   from `test_ase_bus_bits_0159.tcl:258`, which has the same shape.
+9. **A NARROW EDIT ON A SYMBOL PATH CONTAINING A SPACE FALLS PAST BOTH GUARDS —
+   issue 1331.** It reaches `set_list` and the user gets the store's internal key
+   jargon with brace syntax exposed and, unlike both siblings, no *"Choose every
+   device of class X instead."* A third up-front guard in `rdw::_edit`, beside the
+   two that exist — **not** a reword of `op_param_lists::_key_why`, which is the
+   store talking to the store (**BT22**).
+10. **THE `_stamped` ARITY GAP B5-a LEFT IS STILL OPEN.** B5-a's point 7 asked for
+    a cheap row asserting the header's third element is a dict with the four
+    expected keys. B5-3 did not add it. Still cheap, still unfenced.
 
 
 ---
@@ -2929,8 +3047,10 @@ unmoved (seam 49, op_annot 485/492, declutter 134). T1 zero, T2 `HARNESS: PASS`
 
 * **Issue numbers come from `doc/claude/issues/NUMBERING.md` and nowhere else.**
   The crew brief's "number from 0619 upward" and "hard ceiling 0499" are **both
-  false on this tree** — `0619`…`0629` exist as files. **The next free number is
-  1249**; 1244 and 1245 stay reserved as feature numbers with no files.
+  false on this tree** — `0619`…`0629` exist as files. 1244 and 1245 stay
+  reserved as feature numbers with no files. ⚠ **The "next free number" moves
+  every item and this line is stale the moment it is written — as of B5-3 it is
+  1333. READ `NUMBERING.md`'s TAIL; do not quote this paragraph.**
 * **The default `xschemrc` does NOT source `src/cadence_style_rc`.** A bare
   `./src/xschem --pipe --script t.tcl` has no `::cadence` namespace at all and
   every `.drw` chord bind is the empty string. Any suite or probe that touches a
@@ -2970,7 +3090,12 @@ unmoved (seam 49, op_annot 485/492, declutter 134). T1 zero, T2 `HARNESS: PASS`
   deliverable done on a green suite.
 
 **Baseline**, taken at `9ef4a37e` on the dev display: **364 pass / 11 fail /
-0 crash-timeout / 2 skip of 377**, the eleven being `test_altf5_ciw`,
+0 crash-timeout / 2 skip of 377** — and re-measured at B5-3 as **369 pass /
+11 fail / 0 crash-timeout / 2 skip of 382** (the denominator moved because
+later items registered suites; `doc/claude/op_param_batch/audit_B5-3_before_`
+and `_after_2026-09-04.txt` are the tracked receipts). **The eleven names and
+their verdicts have not changed once**, which is the only part that is the
+baseline; the eleven being `test_altf5_ciw`,
 `test_ase_core`, `test_ase_window`, `test_cadence_drag`, `test_cosim_golden_e2e`,
 `test_lib_manager_gui`, `test_lib_sweep`, `test_rotate_stretch_short_0104`,
 `test_selflog_output`, `test_wave_sigbrowser_0312`, `test_wave_sigbrowser_keys`.

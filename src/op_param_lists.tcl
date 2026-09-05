@@ -752,12 +752,28 @@ namespace eval ::op_param_lists {
   ## ⚠ ONE RULE, TWO READERS -- the `governs` precedent, applied to
   ## `_dup_index`. `set_list` is UNCHANGED: issue 1288's ruling stands, both
   ## doors still reach the same verdict with the same sentence, and this verb
-  ## adds a READER rather than a rule. The three routes the issue rejects are
-  ## rejected here too: making `op_annot::register` refuse (it punishes the PDK
-  ## author), making `seed` dedupe (it re-splits the declaration from the seed,
-  ## which is the split ruling DD-13 exists to remove) and making `set_list`
-  ## keep duplicates (it reopens 1288, and `_key`, `_save_set` and
-  ## `_merge_declared` all assume label uniqueness).
+  ## adds a READER rather than a rule.
+  ##
+  ## ⚠ THIS HEADER USED TO REJECT MAKING `op_annot::register` REFUSE, AND
+  ## RULING DD-15 OVERRULES THAT CLAUSE. It is rewritten rather than left,
+  ## because a comment that contradicts a binding ruling is how the next reader
+  ## re-derives a settled question. What was argued here -- "it punishes the PDK
+  ## author" -- was aimed at issue 1326's option (a), refusing the DELETE, which
+  ## breaks a button for every press of that class with a sentence about a row
+  ## the user never touched. DD-15 took option (c) instead: `op_annot::register`
+  ## refuses a DECLARATION carrying two triples that share a display label, once,
+  ## where the ambiguity is introduced (`op_annot::_dup_declared_label`).
+  ##
+  ## ⚠ AND THIS VERB STAYS, AS THE SECOND DOOR. DD-15 shuts the declaration; it
+  ## does not and cannot shut `::op_annot::desc`, which a fixture, an older
+  ## session's stored state, or any code assigning the array directly still
+  ## reaches. One rule, two doors -- which is the principle DD-15 itself names.
+  ##
+  ## TWO ROUTES ARE STILL REJECTED, AND THE ISSUE REJECTS THEM TOO: making
+  ## `seed` dedupe (it re-splits the declaration from the seed, which is the
+  ## split ruling DD-13 exists to remove) and making `set_list` keep duplicates
+  ## (it reopens 1288, and `_key`, `_save_set` and `_merge_declared` all assume
+  ## label uniqueness).
   ##
   ## THE WORDING IS NEW BECAUSE THE FACT IS NEW. `_dup_why` says a row WAS
   ## replaced in place; this says a row WOULD BE DROPPED and the write has not
@@ -967,19 +983,47 @@ namespace eval ::op_param_lists {
   ## over globs. `_keys` answers the order the entries were declared in, which
   ## for a settings file IS the order of its rows, so the file is its own
   ## documentation and the user reorders with the buttons they already have.
-  proc effective {cls listname {cellname {}}} {
-    variable lists ; variable owned
+  ##
+  ## ⚠ THE SCAN IS `governs`, AND `effective` IS ITS FIRST CONSUMER (item B5-2,
+  ## invariant I1). The two used to be one proc, and item B5's button column
+  ## then asked a DIFFERENT question to find the entry a reorder should be
+  ## written at -- exact-key `owns flavor {<cls> <cellname>}`. MEASURED with a
+  ## flavor entry `{b5cls *b5n*}` governing cell `devices/b5n`:
+  ##     effective b5cls annotation devices/b5n     -> the FLAVOR list
+  ##     owns flavor {b5cls devices/b5n} annotation -> 0
+  ## so the exact-key question answered "no flavor entry" about a device whose
+  ## every read goes through one, and the button edited a list the device does
+  ## not read. That is ONE narrowing with TWO lookalike definitions, which is
+  ## invariant I1's exact failure shape. Splitting the scan out gives the
+  ## narrowing one definition and two readers, and row BG1 locks the two
+  ## together by asserting `get_list` of what `governs` NAMES is byte-identical
+  ## to `effective` of the same three arguments.
+  ##
+  ##   governs {cls listname {cellname {}}}
+  ##     -> {flavor {<cls> <glob>}}   a flavor entry answered
+  ##     -> {class <cls>}             the class entry answered
+  ##     -> {}                        nothing is owned; the PDK seed answered
+  proc governs {cls listname {cellname {}}} {
     if {![_valid_list $listname]} { return {} }
     if {$cellname ne {}} {
       foreach k [_keys] {
         if {[lindex $k 0] ne "flavor"} { continue }
         if {[lindex $k 2] ne $listname} { continue }
         if {![_flavor_matches_class $k $cls]} { continue }
-        if {[string match -nocase [lindex [lindex $k 1] 1] $cellname]} { return $lists($k) }
+        if {[string match -nocase [lindex [lindex $k 1] 1] $cellname]} {
+          return [list flavor [lindex $k 1]]
+        }
       }
     }
-    if {[owns class $cls $listname]} { return [get_list class $cls $listname] }
-    return [seed $cls]
+    if {[owns class $cls $listname]} { return [list class $cls] }
+    return {}
+  }
+
+  proc effective {cls listname {cellname {}}} {
+    if {![_valid_list $listname]} { return {} }
+    set g [governs $cls $listname $cellname]
+    if {$g eq {}} { return [seed $cls] }
+    return [get_list [lindex $g 0] [lindex $g 1] $listname]
   }
 
   ## -----------------------------------------------------------------------

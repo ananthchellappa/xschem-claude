@@ -3588,12 +3588,29 @@ op_param_lists::reset
 # `set_list` itself is UNCHANGED: issue 1288's ruling stands, both doors still
 # agree, and this verb adds a reader rather than a rule.
 #
-# ⚠ THREE ROUTES ARE REJECTED, AND THE ISSUE REJECTS THEM TOO. Making
-# `op_annot::register` refuse (a forbidden file for this item, and it punishes
-# the PDK author); making `seed` dedupe (that re-splits the declaration from the
-# seed, which is the split ruling DD-13 exists to remove); making `set_list`
-# keep duplicates (that reopens 1288, and `_key`/`_save_set`/`_merge_declared`
-# all assume label uniqueness).
+# ⚠ THIS PARAGRAPH USED TO REJECT MAKING `op_annot::register` REFUSE, AND
+# RULING DD-15 OVERRULES IT. It is rewritten rather than left, because a suite
+# whose own prose contradicts a binding ruling is how the next reader
+# re-derives a settled question. What was written here — "it punishes the PDK
+# author" — was argued against issue 1326's option (a), refusing the DELETE;
+# DD-15 took option (c) instead and refuses at the DECLARATION, which punishes
+# nobody twice: the author is told once, at load time, where the ambiguity was
+# introduced, instead of a button refusing every press for that class with a
+# sentence about a row the user never touched. Section DL is that refusal.
+#
+# ⚠ AND `reduce_why` STAYS, AS THE SECOND DOOR. DD-15 shuts the declaration;
+# it does not and cannot shut `::op_annot::desc`, which a fixture, an older
+# session's state, or any code that assigns the array directly can still reach
+# (row N9c is exactly that shape and is sanctioned). One rule, two doors, which
+# is the principle DD-15 itself names — so every `reduce_why` leg below stays,
+# and the `reduce_why_blind` sabotage variant still reds RD1, RD3, RD5 and the
+# button column's own BE8.
+#
+# ⚠ TWO ROUTES ARE STILL REJECTED, AND THE ISSUE REJECTS THEM TOO. Making
+# `seed` dedupe (that re-splits the declaration from the seed, which is the
+# split ruling DD-13 exists to remove); making `set_list` keep duplicates (that
+# reopens 1288, and `_key`/`_save_set`/`_merge_declared` all assume label
+# uniqueness).
 #
 # ⚠ AND THE ISSUE'S OWN RECOMMENDED WORDING IS REFUTED BY MEASUREMENT, which
 # is recorded here because a later reader will otherwise re-propose it. Issue
@@ -3615,12 +3632,32 @@ op_param_lists::reset
 # RED AT HEAD: RD1 RD2 RD3 RD5.  GREEN BEFORE AND AFTER: RD4, which is issue
 # 1288's own behaviour and is here to prove the new verb changed no rule.
 
+# ⚠ THE FIXTURE IS ASSIGNED INTO `::op_annot::desc` DIRECTLY, AND THAT IS ROW
+# N9c's OWN SANCTIONED TECHNIQUE, NOT A DODGE. Ruling DD-15 shuts
+# `op_annot::register` against exactly this declaration (section DL), so the
+# rows below can no longer reach their subject through it — and they are not
+# ABOUT the declaration door, they are about what the STORE does once such a
+# list is live. `_params` falls back to `params` when `declared` is absent (row
+# N9c golds that fallback), so `seed`, `effective`, `_cards_for`, `set_list`
+# and `reduce_why` all measure exactly what they measured before; the only gold
+# that moves is RD1's `declared` leg, from the list to NOKEY, and it is called
+# out on the row.
+#
+# ⚠ AND THE RE-POINT IS WHAT KEEPS RD5 HONEST UNDER DD-15. RD5 calls
+# `op_param_lists::apply`, which re-registers the descriptor it read with
+# `params` replaced — so a fixture registered THROUGH `register` would carry the
+# duplicate-label `declared` key back into it, DD-15 would refuse, apply's own
+# catch would turn that into a `_say`, and the card legs would measure a failed
+# apply instead of the union. Assigned directly there is no `declared` key at
+# all, `register` stamps one from the label-unique union apply just computed,
+# and the row keeps measuring what it was written to measure.
+
 ol_reset
 set RD_DECL {{id ids 0} {id vgs 2} {gm gm 1}}
 set RD_UP   {{id vgs 2} {id ids 0} {gm gm 1}}
 set RD_DESC [list devpath {@m.@path@name} params $RD_DECL]
-ol_ans ::op_annot::register nmos $RD_DESC
-ol_ans ::op_annot::register pmos $RD_DESC
+set ::op_annot::desc(nmos) $RD_DESC
+set ::op_annot::desc(pmos) $RD_DESC
 
 set RD1_DECL [ol_dkey nmos declared]
 set RD1_SEED [ol_ans ::op_param_lists::seed mos]
@@ -3642,7 +3679,7 @@ check {RD1 THE REORDER THAT WAS A DELETION: a declaration carrying two triples t
         [ol_has $RD1_WHY {"id"}] [ol_has $RD1_WHY {mos}] \
         [ol_has $RD1_WHY {annotation}] \
         $RD1_RC $RD1_AFTER [llength $RD1_AFTER]] \
-  [list $RD_DECL $RD_DECL $RD_DECL $RD_UP 1 1 1 1 1 {{id ids 0} {gm gm 1}} 2]
+  [list NOKEY $RD_DECL $RD_DECL $RD_UP 1 1 1 1 1 {{id ids 0} {gm gm 1}} 2]
 
 ## THE GUARD MUST BE NARROW. Every ordinary reorder — which is every reorder any
 ## shipped PDK can produce — must be silently allowed, or the button column
@@ -3700,8 +3737,8 @@ check {RD4 ISSUE 1288 IS UNTOUCHED: set_list of a duplicate-label list still ret
 ## ON THE REAL LOADED M1. A length is an argument; a missing `.save` card is the
 ## thing the user loses.
 ol_reset
-ol_ans ::op_annot::register nmos $RD_DESC
-ol_ans ::op_annot::register pmos $RD_DESC
+set ::op_annot::desc(nmos) $RD_DESC
+set ::op_annot::desc(pmos) $RD_DESC
 set RD5_TYPE [ol_ans ::op_annot::type M1]
 set RD5_CARDS0 [ol_ans ::op_annot::_cards_for M1 {}]
 set RD5_WHY [ol_ans ::op_param_lists::reduce_why class mos annotation $RD_UP]
@@ -3717,6 +3754,190 @@ check {RD5 RULINGS DD-4 AND DD-6 BY NAME, IN THE SIMULATOR'S OWN UNITS: with the
   [list nmos {{.save m1[ids]} {.save m1[vgs]} {.save m1[gm]}} 1 \
         {{.save m1[ids]} {.save m1[gm]}} -1]
 
+ol_reset
+
+# ============================================================================
+# SECTION DL — RULING DD-15 (ISSUE 1326): A DUPLICATE DISPLAY LABEL IS REFUSED
+# AT THE DECLARATION, WHERE IT IS INTRODUCED
+# ============================================================================
+# ⚠ WRITTEN RED, BEFORE ANY PRODUCTION LINE OF THE REFUSAL EXISTED. Measured on
+# this binary at HEAD 59ef24af, with no button code and no guard:
+#     op_annot::register zzdup {devpath {@m.@path@name}
+#                               params {{id ids 0} {id vgs 2} {gm gm 1}}}
+#         rc                          = 0
+#         ::op_annot::gen             0 -> 1
+#         op_annot::descriptor zzdup  carries `declared` AT LENGTH 3
+#         op_param_lists::seed <cls>  = 3 rows
+# so a declaration the store cannot represent is accepted, stored and published,
+# and the harm surfaces three verbs later — rows RD1 and RD5 measure exactly
+# that, and issue 1326 records what an Up or a Delete then does to it.
+#
+# DD-15 moves the refusal to the door where the ambiguity is created:
+# `op_annot::register` refuses a DECLARATION carrying two triples that share a
+# display label. The proc already has two loud failures of exactly this kind —
+# an empty symbol type, and a descriptor that is not a well-formed dict — so
+# this is a third of the same shape and not a new contract.
+#
+# ⚠ THE DOOR IS THE DECLARATION, NOT `params`, AND THAT DISTINCTION IS ROW DL3.
+# `op_param_lists::apply` re-registers every applied type (op_param_lists.tcl
+# :1841) INSIDE A CATCH THAT TURNS A RAISE INTO A `_say`, handing back the
+# descriptor it read with `params` replaced by the union. A guard that scanned
+# `params` would therefore make an ordinary Delete report "cannot register the
+# parameter lists" instead of doing its job — while `_save_set` (:1638) and
+# `_merge_declared` (:1684) BOTH dedupe by label, so that union is label-unique
+# by construction and there is nothing there to catch.
+#
+# ⚠ AND EVERY READ IN THE SCAN MUST BE CATCH-GUARDED, FALLING THROUGH TO
+# ACCEPT. `op_annot::_declare`'s own header forbids parsing the value and
+# forbids raising for a malformed one, and a `params` — and therefore a
+# `declared` stamped from it — may be any string at all, because a user's own
+# rc is a supported door (invariant I5, and the whole of section Z).
+#
+# ⚠ THE PLAN NAMED test_op_annot's ROW K17 AS THE SHARPEST LANDMINE HERE, AND
+# THAT PREDICTION IS REFUTED BY MEASUREMENT. K17 (test_op_annot.tcl:2585) does
+# gold `register` returning rc=0 for a `params` holding an unmatched open brace
+# — but it builds its descriptor with `set k17_bad [op_annot::descriptor nmos]`
+# and then overwrites `params` ALONE, so the `declared` key it carries is the
+# well-formed one an earlier register already stamped. A guard that scans THE
+# DECLARATION never looks at K17's malformed value at all. Measured with both
+# catch guards deleted from a prototype: test_op_annot = ALL PASS (485), K17
+# green. Do not spend a pass re-deriving that.
+#
+# ⚠ THE REAL FENCE IS ROW DL2 AND THIS SUITE'S OWN SECTION Z, AND IT IS SHARPER
+# THAN K17 EVER WAS. Row Z1 registers a FRESH descriptor whose `params` is an
+# unmatched open brace, so `_declare` stamps `declared` with it — and with the
+# guards deleted the raise is uncaught at the suite's top level: measured, the
+# store suite DIES after row Z0 with `unmatched open brace in list` and prints
+# NO RESULT LINE AT ALL. That is trap 6's shape arriving through a guard, and
+# it is why DL2's four legs are worth their place even though every one of them
+# is green before the change.
+#
+# ⚠ THIS SECTION LIVES IN THE STORE SUITE AND NOT IN test_op_annot, AND THAT IS
+# A CONSTRAINT RATHER THAN A PREFERENCE. test_op_annot (485 / 492) and
+# test_annot_declutter_1244 (134) are pinned BY NAME AND COUNT as hard
+# acceptance rows for this item, and a suite whose count is pinned cannot also
+# be where new rows land. This suite already owns the declaration, through rows
+# N9b, N9c and the whole of section RD.
+#
+# WHY IT IS INLINED IN op_annot.tcl AND DOES NOT CALL `_dup_index`: op_annot.tcl
+# is sourced FIRST and op_param_lists.tcl depends on it, never the other way
+# round — ruling DD-6 already rejected that load-order inversion to save a dict
+# key. The RULE is one sentence and is written twice; the DEPENDENCY stays
+# one-way.
+#
+# WHICH ROWS ARE RED AT HEAD, AND WHICH ARE FENCES THAT PROVE NOTHING ON THEIR
+# OWN:
+#   DL1  RED, on six of its nine legs — register accepts the duplicate today.
+#   DL2  GREEN BEFORE AND AFTER. It is the K17 fence and the row the
+#        `dd15_guard_unguarded` sabotage variant exists for; it says the guard
+#        refuses ONLY what DD-15 names.
+#   DL3  RED on its DD-14 round-trip legs only. Its other legs are fences and
+#        are green before the change — including the four shipped PDK lists,
+#        quoted by value, which is what makes "latent for shipped PDKs" a
+#        measurement in this file rather than a claim in a comment.
+
+## rc AND message from one register call, without aborting the suite.
+proc dl_reg {type descriptor} {
+  if {![llength [info commands ::op_annot::register]]} { return {NOPROC {}} }
+  set rc [catch {::op_annot::register $type $descriptor} m]
+  return [list $rc $m]
+}
+## the registry's staleness counter, which a REFUSED registration must not move.
+proc dl_gen {} {
+  if {![info exists ::op_annot::gen]} { return NOVAR }
+  return $::op_annot::gen
+}
+proc dl_forget {args} {
+  foreach t $args { catch {unset ::op_annot::desc($t)} }
+  return {}
+}
+
+# ---------------------------------------------------------------------------
+# DL1 — RED. THE REFUSAL ITSELF, AND EVERYTHING IT MUST NOT LEAVE BEHIND.
+ol_reset
+dl_forget zzdup
+set DL_DUP  {{id ids 0} {id vgs 2} {gm gm 1}}
+set DL_DESC [list devpath {@m.@path@name} params $DL_DUP]
+set DL1_GEN0 [dl_gen]
+set DL1_R    [dl_reg zzdup $DL_DESC]
+set DL1_MSG  [lindex $DL1_R 1]
+ol_ans ::op_param_lists::set_class zzdup zzdupcls
+## The message is not golded WORD FOR WORD — three FACTS are, and they are the
+## three the proc's two existing loud failures already carry: its own name, the
+## symbol type in quotes, and what is wrong. The label is quoted because that is
+## this store's own convention for naming one (`_dup_why`,
+## op_param_lists.tcl:616, says `a second entry for label "id"`), and one
+## wording for one fact is what stops a user learning to distrust both.
+check {DL1 RULING DD-15 AT THE DOOR: op_annot::register REFUSES a declaration carrying two triples that share a display label - naming itself, the symbol type and the repeated label - and leaves NOTHING behind: no entry in ::op_annot::desc, an empty descriptor, the staleness counter unmoved, and neither seed nor effective answering anything for its class} \
+  [list [lindex $DL1_R 0] \
+        [ol_has $DL1_MSG {op_annot::register}] \
+        [ol_has $DL1_MSG {"zzdup"}] \
+        [ol_has $DL1_MSG {"id"}] \
+        [expr {[info exists ::op_annot::desc(zzdup)] ? 1 : 0}] \
+        [ol_ans ::op_annot::descriptor zzdup] \
+        [expr {[dl_gen] eq $DL1_GEN0 ? 1 : 0}] \
+        [ol_ans ::op_param_lists::seed zzdupcls] \
+        [ol_ans ::op_param_lists::effective zzdupcls annotation]] \
+  [list 1 1 1 1 0 {} 1 {} {}]
+dl_forget zzdup
+
+# ---------------------------------------------------------------------------
+# DL2 — FENCE, GREEN BEFORE AND AFTER. THE GUARD REFUSES ONLY WHAT DD-15 NAMES.
+# The last two legs are the Z0-style controls that say the two malformed
+# fixtures really are malformed, so this row cannot pass by scanning nothing.
+ol_reset
+dl_forget zzob zzrow zzempty zznop
+set DL_OB  [format %c 123]
+set DL_ROW [list {id id 0} "[format %c 123]bad"]
+set DL2_OB    [dl_reg zzob    [list devpath {@m.@path@name} params $DL_OB]]
+set DL2_ROW   [dl_reg zzrow   [list devpath {@m.@path@name} params $DL_ROW]]
+set DL2_EMPTY [dl_reg zzempty {}]
+set DL2_NOP   [dl_reg zznop   [list devpath {@m.@path@name}]]
+check {DL2 FENCE (GREEN BEFORE) THE GUARD IS NARROW AND NEVER RAISES ON A MALFORMED DECLARATION: a params holding an unmatched open brace still registers and is stored byte-identical (this suite's own copy of test_op_annot's row K17), a params whose ROWS do not parse registers, the empty descriptor - the documented erasure - registers, and a descriptor carrying no params at all registers} \
+  [list [lindex $DL2_OB 0] [ol_dkey zzob params] \
+        [lindex $DL2_ROW 0] [ol_dkey zzrow params] \
+        [lindex $DL2_EMPTY 0] [ol_ans ::op_annot::descriptor zzempty] \
+        [lindex $DL2_NOP 0] [ol_dkey zznop params] \
+        [catch {llength $DL_OB}] [catch {lindex [lindex $DL_ROW 1] 0}]] \
+  [list 0 $DL_OB 0 $DL_ROW 0 {} 0 NOKEY 1 1]
+dl_forget zzob zzrow zzempty zznop
+
+# ---------------------------------------------------------------------------
+# DL3 — RED on the DD-14 legs. THE DOOR IS THE DECLARATION, NOT `params`.
+ol_reset
+dl_forget zzmix zzdd14 zzpdk1 zzpdk2 zzpdk3 zzpdk4
+## `apply`'s OWN SHAPE, and it must keep working: it round-trips the descriptor
+## it read, so `declared` is whatever register stamped and `params` is the
+## label-unique union it just computed. A guard reading `params` refuses this.
+set DL3_MIX [dl_reg zzmix [list devpath {@m.@path@name} \
+                                declared {{id ids 0} {gm gm 1}} params $DL_DUP]]
+## THE DD-14 ROUND TRIP, WHICH IS THE ONE DOOR THAT REACHES `declared` DIRECTLY:
+## ruling DD-14 put `dict unset d declared` INTO the recovery recipe the three
+## PDK files print, so a user re-declaring is handed a way to write this key by
+## hand — and invariant I5 makes that a supported, documented door.
+set DL3_DD14 [dl_reg zzdd14 [list devpath {@m.@path@name} declared $DL_DUP \
+                                  params {{id ids 0}}]]
+## ⚠ THE FOUR SHIPPED PDK LISTS, QUOTED BY VALUE, so "DD-15 is latent for every
+## shipped PDK" is a measurement in this file and not a claim in a comment.
+## sky130_procs.tcl:452 · gf180_procs.tcl:158 · sg13g2_procs.tcl:809 and :859.
+set DL3_PDK {}
+set _dl_i 0
+foreach _dl_L [list {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}} \
+                    {{id id 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}} \
+                    {{id ids 0} {gm gm 1} {gds gds 1} {vgs vgs 2} {vth vth 2} {vds vds 2}} \
+                    {{ic ic 0} {ib ib 0} {gm gm 1} {go go 1} {vbe vbe 2} {vbc vbc 2}}] {
+  incr _dl_i
+  lappend DL3_PDK [lindex [dl_reg zzpdk$_dl_i \
+                            [list devpath {@m.@path@name} params $_dl_L]] 0]
+}
+check {DL3 THE DOOR IS THE DECLARATION AND NOT `params`: a descriptor carrying a distinct-label `declared` beside a duplicate-label `params` - which is exactly the shape op_param_lists::apply re-registers - is ACCEPTED and stored unchanged, a DD-14 round trip that re-introduces a duplicate INTO `declared` is REFUSED by the repeated label and stores nothing, and all four shipped PDK declarations are accepted} \
+  [list [lindex $DL3_MIX 0] [ol_dkey zzmix declared] [ol_dkey zzmix params] \
+        [lindex $DL3_DD14 0] \
+        [ol_has [lindex $DL3_DD14 1] {"id"}] \
+        [expr {[info exists ::op_annot::desc(zzdd14)] ? 1 : 0}] \
+        $DL3_PDK] \
+  [list 0 {{id ids 0} {gm gm 1}} $DL_DUP 1 1 0 {0 0 0 0}]
+dl_forget zzmix zzdd14 zzpdk1 zzpdk2 zzpdk3 zzpdk4
 ol_reset
 
 # ============================================================================
@@ -3785,6 +4006,735 @@ check {Z4 a well-formed list holding a malformed ROW is dropped whole, not half-
 
 catch {op_param_lists::reset}
 
+# ============================================================================
+# SECTION BG — ITEM B5-2: `governs` NAMES THE ENTRY `effective` ANSWERED FROM
+# ============================================================================
+# ⚠ WRITTEN RED, BEFORE ANY PRODUCTION LINE OF THE ACCESSOR EXISTED. Both rows
+# below fail at HEAD c940a5df for one reason: `op_param_lists::governs` is not
+# a command.
+#
+# WHY THE ACCESSOR EXISTS AT ALL — INVARIANT I1, AND A MEASURED DEFECT.
+# `effective` (src/op_param_lists.tcl:912) decides which entry answers for a
+# device: flavor entries in `_keys` FILE ORDER (ruling DD-8), class-field
+# checked, cell glob matched with `string match -nocase`; then the class entry;
+# then the PDK seed. The button column has to write at the SAME entry a
+# reorder is visible in, and item B5's preserved patch asked a DIFFERENT
+# question to find it — exact-key `owns flavor {<cls> <cellname>}`.
+#
+# MEASURED at HEAD with a flavor entry `{b5cls *b5n*}` governing cell
+# `devices/b5n`:
+#     effective b5cls annotation devices/b5n   = the FLAVOR list
+#     owns flavor {b5cls devices/b5n} annotation = 0
+# so the exact-key question answers "no flavor entry" about a device whose
+# every read goes through one, and the button then edits a list the device does
+# not read. That is invariant I1's exact failure shape — ONE narrowing, TWO
+# lookalike definitions — so the fix is one published accessor with `effective`
+# as its first consumer, not a second scan inside src/rdw.tcl.
+#
+# THE CONTRACT:
+#   op_param_lists::governs {cls listname {cellname {}}}
+#     -> {flavor {<cls> <glob>}}  the flavor entry that answered
+#     -> {class <cls>}            the class entry answered
+#     -> {}                       nothing is owned; the PDK seed answered
+#   and for every argument triple, `get_list` of what it names is BYTE-IDENTICAL
+#   to `effective` of the same three arguments, so the two can never disagree.
+# ============================================================================
+
+catch {op_param_lists::reset}
+set BG_DESC [list devpath {\@m.@path@name} \
+                  params {{id ids 0} {gm gm 1} {gds gds 1}}]
+ol_ans ::op_annot::register bgndev $BG_DESC
+set BG_SEED {{id ids 0} {gm gm 1} {gds gds 1}}
+set BG_CELL bgn.sym
+
+# --- BG1  THE THREE ANSWERS, AND FILE ORDER IS THE ONE THAT DECIDES ---------
+## ⚠ THE GLOBS ARE DECLARED IN THE ORDER THAT MAKES EVERY RANKING WRONG. A bare
+## `*` is declared FIRST and a specific `*bgn*` second, so under ruling DD-8 the
+## bare `*` WINS — and it must, because "narrower" has no defensible total order
+## over globs and two crews shipped a ranking that produced exactly this pair in
+## the opposite order. `governs` answers what `effective` answered, whatever
+## that is; it does not get an opinion.
+catch {op_param_lists::reset}
+ol_ans ::op_param_lists::set_class bgndev bgcls
+set BG1_NONE [ol_ans ::op_param_lists::governs bgcls annotation $BG_CELL]
+set BG1_SEED [ol_ans ::op_param_lists::effective bgcls annotation $BG_CELL]
+ol_ans ::op_param_lists::set_list class bgcls annotation {{gm gm 1} {id ids 0}}
+set BG1_CLASS [ol_ans ::op_param_lists::governs bgcls annotation $BG_CELL]
+ol_ans ::op_param_lists::set_list flavor {bgcls *} annotation {{gds gds 1}}
+ol_ans ::op_param_lists::set_list flavor {bgcls *bgn*} annotation {{id ids 0}}
+set BG1_FIRST [ol_ans ::op_param_lists::governs bgcls annotation $BG_CELL]
+set BG1_EFF   [ol_ans ::op_param_lists::effective bgcls annotation $BG_CELL]
+set BG1_VIA   [ol_ans ::op_param_lists::get_list [lindex $BG1_FIRST 0] \
+                                                 [lindex $BG1_FIRST 1] annotation]
+## No cell name at all: `effective` never scans the flavor entries in that case,
+## so `governs` must not either, or the two disagree on the commonest call.
+set BG1_NOCELL [ol_ans ::op_param_lists::governs bgcls annotation]
+check {BG1 op_param_lists::governs names the entry `effective` actually answered from - nothing owned answers {} and the seed is what came back, the class entry answers {class <cls>}, two matching globs are decided by FILE ORDER so the bare `*` declared first wins, a call with no cell name never reaches the flavor scan, and get_list of what governs names is byte-identical to effective for the same three arguments} \
+  [list $BG1_NONE $BG1_SEED $BG1_CLASS $BG1_FIRST $BG1_NOCELL \
+        [expr {$BG1_VIA eq $BG1_EFF ? 1 : 0}] $BG1_EFF] \
+  [list {} $BG_SEED [list class bgcls] [list flavor [list bgcls *]] \
+        [list class bgcls] 1 {{gds gds 1}}]
+
+# --- BG2  THE CLASS FIELD, AND AN UNKNOWN LIST NAME -------------------------
+## The half of issue 1277 ruling DD-8 KEPT: a flavor entry carries its class,
+## and `effective` refuses to be answered by another class's flavors. An
+## accessor that dropped that check would widen exactly the hole DD-8 left
+## standing, and it would do it silently, because the glob would still match.
+catch {op_param_lists::reset}
+ol_ans ::op_param_lists::set_class bgndev bgcls
+ol_ans ::op_param_lists::set_list flavor {othercls *bgn*} annotation {{gm gm 1}}
+set BG2_OTHER   [ol_ans ::op_param_lists::governs bgcls annotation $BG_CELL]
+set BG2_OTHEREFF [ol_ans ::op_param_lists::effective bgcls annotation $BG_CELL]
+set BG2_BADLIST [ol_ans ::op_param_lists::governs bgcls nosuchlist $BG_CELL]
+ol_ans ::op_param_lists::set_list flavor {bgcls *bgn*} annotation {{id ids 0}}
+set BG2_MINE [ol_ans ::op_param_lists::governs bgcls annotation $BG_CELL]
+set BG2_MISS [ol_ans ::op_param_lists::governs bgcls annotation bgp.sym]
+check {BG2 governs honours the flavor key's CLASS field - a {othercls *bgn*} entry never answers a bgcls query, and effective agrees by still answering the seed - it answers {} for a list name that is not a list name, and it answers {} for a cell no glob matches} \
+  [list $BG2_OTHER $BG2_OTHEREFF $BG2_BADLIST $BG2_MINE $BG2_MISS] \
+  [list {} $BG_SEED {} [list flavor [list bgcls *bgn*]] {}]
+
+catch {op_param_lists::reset}
+catch {op_annot::register bgndev {}}
+
+# ============================================================================
+# SECTION BE — ITEM B5: WHAT THE BUTTON COLUMN DOES TO THIS STORE
+# ============================================================================
+# ⚠ WRITTEN RED, BEFORE ANY PRODUCTION LINE OF B5 EXISTED. Every row below was
+# run against HEAD 79f163cb and every one failed for the same single reason:
+# `rdw::button` is not a command, so nothing ever reaches this file's editing
+# path. The ONE exception is BE0, the fixture's own control, which is green
+# before the change and proves nothing except that no row below is vacuous.
+#
+# ⚠ THIS SECTION EXISTS BECAUSE THE OTHER HALF OF B5 IS FENCED IN THE WINDOW's
+# SUITE, AND NEITHER HALF SEES THE OTHER. test_rdw_window_1245.tcl's section BT
+# drives every button and asserts what the STORE holds afterwards; it never
+# writes a settings file, because it runs with pwd at the repo root and
+# `conf_path project` is `[pwd]/.xschem/...` (hard rule 6). The FILE half —
+# Save's path, Save's report, DD-7's read-modify-write, and the two descriptor
+# keys DD-6 splits — belongs here, where section T's `cd` + `USER_CONF_DIR`
+# isolation idiom already lives.
+#
+# WHAT B5 PUTS ON THIS STORE, and which ruling each row is:
+#   BE1  a reorder made through the buttons survives write -> reset -> load
+#   BE2  DD-6/DD-7: a CLASS-scope edit reaches EVERY type of the class, not
+#        only the one the user pressed on, and writes BOTH descriptor keys
+#   BE3  DD-4 as corrected by DD-6: Delete is a DISPLAY decision. The row it
+#        removed is still saved by the deck and still computed by the run
+#   BE4  Save writes `conf_path project` and NAMES it, with the class field on
+#        the flavor row (DD-8's half of issue 1277 that still stands)
+#   BE5  DD-7: a row the user typed and a row this build cannot parse both
+#        survive a Save, and the OTHER tier's file is not touched at all
+#   BE6  a refused Save repeats the STORE's own sentence rather than inventing
+#        a second wording for the same fact (issue 1276's reports)
+#
+# ⚠ THE FIXTURE IS TWO TYPE TOKENS IN ONE CLASS, WHICH IS THE nmos/pmos SHAPE.
+# MEASURED on this binary: `op_param_lists::apply b5ndev` re-registers b5ndev
+# and leaves b5pdev with NO `shown` key at all — so a Save that applied only
+# the subject's own token would leave every sibling device on the sheet drawing
+# the old list. Row BE2 is that measurement as a fence. And the first triple is
+# `{id ids 0}`, IHP's shape, label != param: the pane prints `ids` and the store
+# holds `id`, and a lookup by label round-trips sky130 and gf180 and silently
+# misses IHP.
+#
+# ⚠ IT RESTORES pwd AND ::USER_CONF_DIR. Row H1 below asserts both, and asserts
+# that no `.xschem` directory was dropped in the repo root.
+# ============================================================================
+
+set BE_ROOT [file join $scratch b5be]
+file mkdir $BE_ROOT
+proc be_mksym {path type} {
+  set fd [open $path w]
+  puts $fd "v {xschem version=3.4.5 file_version=1.2}"
+  puts $fd "G {}"
+  puts $fd "K {type=$type"
+  puts $fd {format="@spiceprefix@name @pinlist @model"}
+  puts $fd "template=\"name=M1 model=$type spiceprefix=X\""
+  puts $fd "}"
+  puts $fd "V {}"
+  puts $fd "S {}"
+  puts $fd "E {}"
+  puts $fd "L 4 -20 -20 20 -20 {}"
+  puts $fd "B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}"
+  puts $fd "T {@name} 0 -40 0 0 0.2 0.2 {}"
+  close $fd
+}
+set BE_SYMN [file join $BE_ROOT b5n.sym]
+set BE_SYMP [file join $BE_ROOT b5p.sym]
+be_mksym $BE_SYMN b5ndev
+be_mksym $BE_SYMP b5pdev
+set BE_SCH [file join $BE_ROOT b5.sch]
+set _fd [open $BE_SCH w]
+puts $_fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$BE_SYMN\} 300 -300 0 0 \{name=M1\}
+C \{$BE_SYMP\} 300 -120 0 0 \{name=M2\}"
+close $_fd
+
+set BE_LOAD [catch {xschem load $BE_SCH}]
+## `\@m.` is escaped: the unescaped form is swallowed by `xschem translate` and
+## yields `m1`, and the seam then answers `state ok` with an empty union — the
+## fifth silence over a device that has numbers.
+set BE_DESC [list devpath {\@m.@path@name} \
+                  params {{id ids 0} {gm gm 1} {gds gds 1}}]
+ol_ans ::op_annot::register b5ndev $BE_DESC
+ol_ans ::op_annot::register b5pdev $BE_DESC
+set BE_CELL1 [expr {[catch {xschem getprop instance M1 cell::name} _c] ? {} : $_c}]
+set BE_CELL2 [expr {[catch {xschem getprop instance M2 cell::name} _c] ? {} : $_c}]
+set BE_SEED {{id ids 0} {gm gm 1} {gds gds 1}}
+set BE_CARDS3 [list ".save @m.m1\[ids\]" ".save @m.m1\[gm\]" ".save @m.m1\[gds\]"]
+
+proc be_reset {} {
+  ol_ans ::op_param_lists::reset
+  ol_ans ::op_param_lists::set_class b5ndev b5cls
+  ol_ans ::op_param_lists::set_class b5pdev b5cls
+  ol_ans ::op_param_lists::said_clear
+  ol_ans ::op_annot::register b5ndev $::BE_DESC
+  ol_ans ::op_annot::register b5pdev $::BE_DESC
+  return {}
+}
+## The pane, as section BT of the window suite builds it: M1 pushed FIRST so
+## the M2 block sits on top and every row below targets a line in the OLDER
+## block. MEASURED layout — 9 is `ids`, 10 is `gm`, 11 is `gds`.
+proc be_blk {inst dp pairs} {
+  set ans [dict create devices [list $dp $pairs] absent {} nonfinite {} \
+                       complete 0 state ok]
+  set ctx [dict create header "$inst:/" devpath $dp simtype op instname $inst \
+                       sim ngspice]
+  return [ol_ans ::rdw::format_answer $ans $ctx]
+}
+proc be_blocks {} {
+  set ::rdw::blocks {}
+  ol_ans ::rdw::push [be_blk M1 @m.m1 {{ids 1.2e-05} {gm 3.4e-05} {gds 5.6e-06}}]
+  ol_ans ::rdw::push [be_blk M2 @m.m2 {{ids 9.9e-06}}]
+  return {}
+}
+proc be_say {} { return [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}] }
+proc be_press {id} {
+  ol_ans ::rdw::status {}
+  ol_ans ::rdw::button $id
+  return [be_say]
+}
+proc be_ok1 {m needle} {
+  if {$m eq {} || $m eq {NOVAR} || [string match {NOPROC*} $m]} { return 0 }
+  if {[string first "\n" $m] >= 0} { return 0 }
+  return [expr {[string first $needle $m] >= 0 ? 1 : 0}]
+}
+proc be_eff {ln {cell {}}} { return [ol_ans ::op_param_lists::effective b5cls $ln $cell] }
+
+## THE DIALOG STUB — `rename`, NEVER `proc` (test_ase_bus_bits_0159.tcl:129).
+## Guarded, because in the RED state there is nothing to rename.
+set ::be_dlg_answer {}
+if {[llength [info commands ::rdw::scope_dialog]]} {
+  rename ::rdw::scope_dialog ::rdw::be_real_scope_dialog
+}
+proc ::rdw::scope_dialog {args} { return $::be_dlg_answer }
+
+set BE_OLDPWD2 [pwd]
+set BE_OLDUCD2 $::USER_CONF_DIR
+set BE_HOME [file join $BE_ROOT home]
+file mkdir $BE_HOME
+
+be_reset
+be_blocks
+check {BE0 CONTROL the fixture is live: two type tokens in ONE class from two different cell files, an IHP-shaped seed whose first triple has label != param, a two-block pane whose older block puts `ids` on line 9 and `gds` on line 11, and three deck cards - without this every row below could pass by touching nothing} \
+  [list $BE_LOAD [ol_ans ::op_annot::type M1] [ol_ans ::op_annot::type M2] \
+        [ol_ans ::op_param_lists::class b5ndev] [ol_ans ::op_param_lists::class b5pdev] \
+        [be_eff annotation] [ol_ans ::op_param_lists::owns class b5cls annotation] \
+        [expr {$BE_CELL1 ne {} && $BE_CELL1 ne $BE_CELL2 ? 1 : 0}] \
+        [llength $::rdw::blocks] \
+        [lindex [lindex [lindex $::rdw::blocks 1] 3] 1] \
+        [lindex [lindex [lindex $::rdw::blocks 1] 5] 1] \
+        [ol_ans ::op_annot::_cards_for M1 {}]] \
+  [list 0 b5ndev b5pdev b5cls b5cls $BE_SEED 0 1 2 \
+        {    ids : 1.2e-05} {    gds : 5.6e-06} $BE_CARDS3]
+
+# --- BE1  THE REORDER SURVIVES SAVE AND RELOAD -------------------------------
+## The acceptance sentence, in one process: two Up presses, the window's own
+## Save, then a full reset and a read of the file that Save wrote.
+## ⚠ THE RESET LEG IS NOT DECORATION. `reset` restores the DEFAULT class map, so
+## `seed b5cls` answers {} afterwards and `effective` answers {} with it. A row
+## that skipped that leg would pass against a store that never forgot anything
+## and never actually read the file back.
+set BE1_PROJ [file join $BE_ROOT p1]
+file mkdir [file join $BE1_PROJ .xschem]
+cd $BE1_PROJ
+set ::USER_CONF_DIR $BE_HOME
+be_reset
+be_blocks
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button up
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button up
+set BE1_ORDER [be_eff annotation]
+set BE1_SAY [be_press save]
+set BE1_PATH [ol_ans ::op_param_lists::conf_path project]
+set BE1_EXISTS [expr {[file isfile $BE1_PATH] ? 1 : 0}]
+ol_ans ::op_param_lists::reset
+set BE1_GONE [be_eff annotation]
+set BE1_RELOAD [ol_ans ::op_param_lists::load_conf $BE1_PATH]
+set BE1_BACK [be_eff annotation]
+cd $BE_OLDPWD2
+check {BE1 THE ACCEPTANCE ROW: two Up presses through the button column reorder the class list, the window's own Save writes the project file, and after a full reset - which really does forget it, the seed answers nothing - a read of that file hands the SAME order back} \
+  [list $BE1_ORDER $BE1_EXISTS $BE1_GONE $BE1_RELOAD $BE1_BACK \
+        [expr {$BE1_PATH eq [file join $BE1_PROJ .xschem op_param_lists.conf] ? 1 : 0}]] \
+  [list {{gds gds 1} {id ids 0} {gm gm 1}} 1 {} 1 \
+        {{gds gds 1} {id ids 0} {gm gm 1}} 1]
+
+# --- BE2  A CLASS EDIT REACHES THE WHOLE CLASS, AND WRITES BOTH KEYS ---------
+## DD-6: `params` is the UNION the run computes, the display key is what the
+## sheet draws. MEASURED on this binary: `apply b5ndev` alone leaves b5pdev
+## with NO display key at all, so a button that applied only the subject's own
+## `type=` token would leave every sibling on the sheet drawing the old list.
+be_reset
+be_blocks
+set ::be_dlg_answer {scope broad list annotation}
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+set BE2_SAY [be_press delete]
+check {BE2 a class-scope Delete writes BOTH descriptor keys for BOTH type tokens of the class - `params` the union the run computes and the display key the sheet draws - so the sibling type is not left drawing the old list} \
+  [list [ol_ans ::op_param_lists::owns class b5cls annotation] \
+        [ol_ans ::op_param_lists::get_list class b5cls annotation] \
+        [ol_dkey b5ndev params] [ol_dkey b5ndev shown] \
+        [ol_dkey b5pdev params] [ol_dkey b5pdev shown]] \
+  [list 1 {{id ids 0} {gm gm 1}} \
+        $BE_SEED {{id ids 0} {gm gm 1}} \
+        $BE_SEED {{id ids 0} {gm gm 1}}]
+
+# --- BE3  DELETE IS A DISPLAY DECISION, NEVER A SAVE DECISION ---------------
+## DD-4 as corrected by DD-6. `gds` has just been deleted from the annotation
+## list and is still in the summary list (unowned, so the PDK seed answers), so
+## the deck must still ask for it: three cards, not two. A Delete that narrowed
+## `params` would take the row out of the deck AND render the summary list's
+## own row permanently blank, on a schematic, with nothing said anywhere.
+check {BE3 the row Delete removed is still SAVED and still COMPUTED: _cards_for emits all three cards including the deleted one, `params` still carries it, and only the display key drops it - Delete stops the sheet drawing a row, never the simulator computing it} \
+  [list [ol_ans ::op_annot::_cards_for M1 {}] \
+        [llength [ol_dkey b5ndev params]] \
+        [llength [ol_dkey b5ndev shown]] \
+        [lsearch -exact [ol_dkey b5ndev params] {gds gds 1}] \
+        [lsearch -exact [ol_dkey b5ndev shown] {gds gds 1}]] \
+  [list $BE_CARDS3 3 2 2 -1]
+
+# --- BE3b  THE SECOND PRESS. THIS IS THE ROW ITEM B5 DIED ON ----------------
+## ⚠ NO RESET BETWEEN BE3 AND THIS ROW, AND THAT IS THE ENTIRE POINT (issue
+## 1314). `be_reset` re-registers the descriptor, so a reset here would put the
+## PDK's declaration back and the second press could never reach the state that
+## refuted item B5. BE3 removed `gds` from the ANNOTATION list; this row removes
+## the SAME parameter from the SUMMARY list, which is the moment BOTH lists are
+## owned and the union of the two no longer names it.
+##
+## WHAT B5 MEASURED, AND WHAT DD-13 CHANGED. Before ruling DD-13 the descriptor
+## carried TWO lists and `seed` read `params` -- the very field `apply`
+## overwrites -- so two broad Deletes destroyed the PDK's own declaration, the
+## `.save` card went with it, and Add could not put the row back because there
+## was no triple left anywhere to re-add. B2e split off the declaration key, and
+## `_merge_declared` now re-enters every declared row into `params` LAST, so all
+## four halves must hold: the deck still asks for `gds`, `params` still carries
+## it, `seed` is byte-identical to what the PDK registered, and Add is ACCEPTED.
+##
+## ⚠ Add finds its triple through `_find_triple`, whose LAST fallback is
+## `seed $cls`. Neither list names `gds` any more, so this Add reaches the
+## declaration and nothing else -- which is precisely why it is the fence for
+## DD-13 and not merely for Add.
+set ::be_dlg_answer {scope broad list summary}
+ol_ans ::rdw::set_list summary
+ol_ans ::rdw::set_row 11
+## ⚠ AND THREE OF ITS LEGS READ `shown`, WHICH IS THE HALF THAT WAS MISSING
+## (item B5-a). MEASURED: with `rdw::_apply_now` renamed away and replaced by
+## `proc rdw::_apply_now {subject} {}` -- so `apply` never runs and
+## `_merge_declared` never runs -- EVERY OTHER LEG OF THIS ROW WAS
+## BYTE-IDENTICAL. `_cards_for`, `params`, `declared` and `seed` are all
+## satisfied by the descriptor AS THE PDK REGISTERED IT, so the row could not
+## tell "the declaration re-entered last" from "nothing happened at all" --
+## which is precisely the ruling DD-13 mechanism it is named for. A fence that
+## survives the deletion of its own subject is this batch's own recurring
+## failure, met for the eighth time.
+## `shown` is written by `op_param_lists::apply` and by nothing else
+## (op_param_lists.tcl:319 says so in the store's own words), so a stubbed
+## `_apply_now` cannot produce it and the registration list cannot satisfy it.
+## Both type tokens, because a class edit that reached only the subject's own
+## token would leave every sibling on the sheet drawing the old list.
+set BE3B_SAY   [be_press delete]
+set BE3B_CARDS [ol_ans ::op_annot::_cards_for M1 {}]
+set BE3B_PARAM [ol_dkey b5ndev params]
+set BE3B_DECL  [ol_dkey b5ndev declared]
+set BE3B_SEED  [ol_ans ::op_param_lists::seed b5cls]
+set BE3B_SUM   [ol_ans ::op_param_lists::get_list class b5cls summary]
+set BE3B_SHOWN_N [ol_dkey b5ndev shown]
+set BE3B_SHOWN_P [ol_dkey b5pdev shown]
+set ::be_dlg_answer {scope broad list annotation}
+ol_ans ::rdw::set_list summary
+ol_ans ::rdw::set_row 11
+set BE3B_ADD [be_press add]
+set BE3B_ANN [ol_ans ::op_param_lists::get_list class b5cls annotation]
+set BE3B_SHOWN_N2 [ol_dkey b5ndev shown]
+check {BE3b THE SECOND PRESS, WITH NO RESET IN BETWEEN - the row item B5 died on: with `gds` now deleted from BOTH lists the deck STILL emits its .save card, `params` still carries the triple because the declaration re-enters last, `seed` is byte-identical to what the PDK registered, an Add of that same parameter is ACCEPTED because the declaration is still there to re-add it from, and the DISPLAY key really moved on both type tokens - a key only `apply` writes, so this row can no longer be satisfied by the descriptor as the PDK registered it} \
+  [list $BE3B_SUM $BE3B_CARDS \
+        [expr {[lsearch -exact $BE3B_PARAM {gds gds 1}] >= 0 ? 1 : 0}] \
+        $BE3B_DECL $BE3B_SEED \
+        [be_ok1 $BE3B_ADD gds] $BE3B_ANN \
+        $BE3B_SHOWN_N $BE3B_SHOWN_P $BE3B_SHOWN_N2] \
+  [list {{id ids 0} {gm gm 1}} $BE_CARDS3 1 $BE_SEED $BE_SEED 1 \
+        {{id ids 0} {gm gm 1} {gds gds 1}} \
+        {{id ids 0} {gm gm 1}} {{id ids 0} {gm gm 1}} \
+        {{id ids 0} {gm gm 1} {gds gds 1}}]
+
+# --- BE4  SAVE NAMES THE FILE IT WROTE --------------------------------------
+## Spec 4.4 and the PLAN's B3 section both require the exact path in the
+## window's own status line: a Save that says "saved" and wrote somewhere else
+## is issue 1276 wearing a success message.
+## And the flavor row carries its CLASS field - the half of issue 1277 that
+## still stands after DD-8 deleted the ranking.
+set BE4_PROJ [file join $BE_ROOT p4]
+file mkdir [file join $BE4_PROJ .xschem]
+cd $BE4_PROJ
+set ::USER_CONF_DIR $BE_HOME
+be_reset
+be_blocks
+set ::be_dlg_answer [list scope narrow list annotation]
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button delete
+set BE4_SAY [be_press save]
+set BE4_PATH [ol_ans ::op_param_lists::conf_path project]
+set BE4_TXT [ol_slurp $BE4_PATH]
+cd $BE_OLDPWD2
+check {BE4 Save writes exactly conf_path project and the window NAMES that exact path in its status line, and the flavor rows it wrote carry the class field, the cell-name glob, the list name and all three fields of every triple} \
+  [list [expr {[file isfile $BE4_PATH] ? 1 : 0}] \
+        [expr {$BE4_PATH eq [file join $BE4_PROJ .xschem op_param_lists.conf] ? 1 : 0}] \
+        [be_ok1 $BE4_SAY $BE4_PATH] \
+        [ol_lines_eq $BE4_TXT "list flavor b5cls $BE_CELL1 annotation"] \
+        [ol_lines_eq $BE4_TXT "param flavor b5cls $BE_CELL1 annotation id ids 0"] \
+        [ol_lines_eq $BE4_TXT "param flavor b5cls $BE_CELL1 annotation gm gm 1"] \
+        [ol_lines_eq $BE4_TXT "param flavor b5cls $BE_CELL1 annotation gds gds 1"] \
+        [ol_lines_eq $BE4_TXT {version 2}]] \
+  {1 1 1 1 1 1 0 1}
+
+# --- BE5  DD-7: SAVE PRESERVES WHAT IT DID NOT CHANGE ------------------------
+## Two crews serialized a merged model here and BOTH DELETED ROWS THE USER HAD
+## TYPED. The shape that cannot fail that way is a read-modify-write of ONE
+## tier's own file, so this row attacks both halves of it:
+##   * a row this build CANNOT PARSE (a `param` row whose kind is not an
+##     integer) survives byte for byte - you cannot delete a row you never
+##     parsed into a model;
+##   * the OTHER tier's file is not touched at all, by md5 of its bytes. Item
+##     B2a exported the author's user-global map into the team's project file
+##     and no row saw it.
+## ⚠ THE UNPARSEABLE ROW NAMES A KEY THIS SESSION NEVER TOUCHES. A row under a
+## key the session DID change is legitimately rewritten, so using one would
+## have fenced nothing.
+set BE5_PROJ [file join $BE_ROOT p5]
+file mkdir [file join $BE5_PROJ .xschem]
+set BE5_HOME [file join $BE_ROOT home5]
+file mkdir $BE5_HOME
+set BE5_PFILE [file join $BE5_PROJ .xschem op_param_lists.conf]
+set BE5_UFILE [file join $BE5_HOME op_param_lists.conf]
+ol_conf $BE5_PFILE {
+  {# a comment the user typed, and nobody may rewrite}
+  {version 2}
+  {param class zzother annotation lbl prm notanint}
+}
+ol_conf $BE5_UFILE {
+  {version 2}
+  {param class zzuser annotation ulbl uprm 0}
+}
+set BE5_U0 [ol_hex $BE5_UFILE]
+cd $BE5_PROJ
+set ::USER_CONF_DIR $BE5_HOME
+be_reset
+be_blocks
+set ::be_dlg_answer {scope broad list annotation}
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button delete
+ol_ans ::rdw::button save
+set BE5_TXT [ol_slurp $BE5_PFILE]
+set BE5_U1 [ol_hex $BE5_UFILE]
+cd $BE_OLDPWD2
+check {BE5 DD-7 a Save of the project tier preserves what it did not change: the comment the user typed and the row this build cannot parse both survive byte for byte, the row the session DID change is written, and the OTHER tier's file is not touched at all} \
+  [list [ol_lines_eq $BE5_TXT {# a comment the user typed, and nobody may rewrite}] \
+        [ol_lines_eq $BE5_TXT {param class zzother annotation lbl prm notanint}] \
+        [ol_lines_eq $BE5_TXT {param class b5cls annotation id ids 0}] \
+        [ol_lines_eq $BE5_TXT {param class b5cls annotation gm gm 1}] \
+        [ol_lines_eq $BE5_TXT {param class b5cls annotation gds gds 1}] \
+        [expr {$BE5_U1 eq $BE5_U0 ? 1 : 0}]] \
+  {1 1 1 1 0 1}
+
+# --- BE6  A REFUSED SAVE REPEATS THE STORE'S OWN SENTENCE -------------------
+## Issue 1276's own case: the target is a DIRECTORY, so `write_conf` returns 0
+## with a report and writes nothing. The window must SAY the store's sentence,
+## not invent a second wording for the same fact - two wordings for one failure
+## is how a user learns to distrust both - and it must one-line it, because the
+## status line is an `entry -textvariable` and the store's reports interpolate
+## caught errors.
+set BE6_PROJ [file join $BE_ROOT p6]
+file mkdir [file join $BE6_PROJ .xschem op_param_lists.conf]
+cd $BE6_PROJ
+set ::USER_CONF_DIR $BE_HOME
+be_reset
+be_blocks
+set ::be_dlg_answer {scope broad list annotation}
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button delete
+ol_ans ::op_param_lists::said_clear
+set BE6_SAY [be_press save]
+set BE6_SAID [ol_saidtext]
+set BE6_PATH [ol_ans ::op_param_lists::conf_path project]
+cd $BE_OLDPWD2
+check {BE6 a Save the store refuses reports the STORE's own sentence, one-lined into the status entry, and invents no second wording for the same fact - and nothing was written inside the directory that was in the way} \
+  [list [expr {$BE6_SAY ne {} && $BE6_SAY ne {NOVAR} ? 1 : 0}] \
+        [expr {[string first "\n" $BE6_SAY] < 0 ? 1 : 0}] \
+        [be_ok1 $BE6_SAY {it is a directory, not a settings file}] \
+        [expr {$BE6_SAID ne {} && [string first [string range $BE6_SAID 0 40] $BE6_SAY] >= 0 ? 1 : 0}] \
+        [llength [glob -nocomplain -directory $BE6_PATH *]]] \
+  {1 1 1 1 0}
+
+# --- BE7  A REORDER REACHES THE SHEET AT ONCE, NOT ON THE NEXT PRESS --------
+## ⚠ THIS ROW CONTRADICTS THE PRESERVED PATCH ON PURPOSE, AND THE MEASUREMENT
+## IS WHY. The patch deferred the redraw after an Up or a Down and said so on
+## screen - "The drawn order follows on the next Add, Delete or reload (issue
+## 1312)". Issue 1312 is FIXED (ruling DD-13, item B2e): `seed` reads the
+## declaration, so a reorder can no longer leak through the seed into the
+## summary list nobody owns, and `_show_set` filters the union in union order
+## with the annotation list first. The deferral's stated cost no longer exists,
+## and a status line citing a fixed issue as its reason is a false statement on
+## a screen the user is reading.
+##
+## So Up applies like Delete and Add: the display key moves for EVERY type
+## token of the class - the nmos/pmos shape - and `params` is unchanged as a
+## SET, because a reorder adds and removes nothing.
+##
+## ⚠ THE LAST THREE LEGS ARE ITEM B5-3's, AND THEY ARE THE ACCEPTANCE PROOF
+## NOTHING ELSE IN THIS SUITE ASSERTS. Row BE8 fences `_cards_for` on the
+## REFUSED path -- the press that never happened cannot have cost a card. The
+## brief's own proof is about the press that DID happen: after an ACCEPTED Up,
+## the deck must still ask for exactly the same set of values. MEASURED, and
+## the measurement is why this is a SET comparison and not a byte comparison:
+## `apply` writes the reordered union back into `params` (row BE7's own fourth
+## leg golds that) and `_cards_for` emits one card per row IN `params` ORDER,
+## so the card LIST is reordered with it -- {gm ids gds} where it was
+## {ids gm gds}. Ruling DD-4/DD-6 is about what the simulator is asked to
+## COMPUTE, and a `.save` deck is a set: no card is lost, none is invented, and
+## the order of `.save` lines has no meaning to ngspice. A byte comparison here
+## would fence the ORDER, which is the one thing Up exists to change.
+be_reset
+be_blocks
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 10
+set BE7_CARDS0 [ol_ans ::op_annot::_cards_for M1 {}]
+set BE7_SAY [be_press up]
+set BE7_CARDS1 [ol_ans ::op_annot::_cards_for M1 {}]
+check {BE7 an Up press writes the display key immediately and for BOTH type tokens of the class, so the sheet follows a reorder without waiting for an Add, a Delete or a reload - `params` still holds the same three rows because a reorder adds and removes nothing, the status line no longer cites issue 1312 as a reason to defer, and the deck STILL ASKS FOR EVERY ONE OF THE THREE VALUES IT ASKED FOR BEFORE THE PRESS} \
+  [list [ol_ans ::op_param_lists::get_list class b5cls annotation] \
+        [ol_dkey b5ndev shown] [ol_dkey b5pdev shown] \
+        [ol_dkey b5ndev params] \
+        [expr {[be_ok1 $BE7_SAY gm] && [string first {1312} $BE7_SAY] < 0 \
+               && [string first {reload} $BE7_SAY] < 0 ? 1 : 0}] \
+        $BE7_CARDS0 [llength $BE7_CARDS1] \
+        [expr {[lsort $BE7_CARDS1] eq [lsort $BE7_CARDS0] ? 1 : 0}]] \
+  [list {{gm gm 1} {id ids 0} {gds gds 1}} \
+        {{gm gm 1} {id ids 0} {gds gds 1}} \
+        {{gm gm 1} {id ids 0} {gds gds 1}} \
+        {{gm gm 1} {id ids 0} {gds gds 1}} 1 \
+        $BE_CARDS3 3 1]
+
+# --- BE8  A REORDER CANNOT BECOME A DELETION (issue 1323) --------------------
+## RULINGS DD-4 AND DD-6, THROUGH THE REAL BUTTON COLUMN AND IN THE
+## SIMULATOR'S OWN UNITS. `op_annot::register` accepts a declaration carrying
+## two triples that share a LABEL; `seed` returns it undeduped and `effective`
+## hands it to the reorder as a THREE-row base, but `set_list` keeps one entry
+## per label (issue 1288's ruling) -- so an UP PRESS used to store a TWO-row
+## list and `op_annot::_cards_for` stopped emitting a `.save` card the deck was
+## asking for. MEASURED at HEAD with no button code at all. An Up press is not
+## even a Delete, and DD-4/DD-6 say a display decision NEVER changes what the
+## simulator is asked to save.
+##
+## ⚠ THE ROW ASSERTS THE LOSS IT PREVENTS, NOT JUST THE REFUSAL: `effective` is
+## byte-identical afterwards, NOTHING is owned, and all THREE cards are still
+## there. Delete the `reduce_why` call from `rdw::_edit` and this row reds -
+## the store still reduces, because `set_list`'s ruled behaviour did not move.
+##
+## ⚠ THE FIXTURE IS ASSIGNED INTO `::op_annot::desc` DIRECTLY, AND THAT IS ROW
+## N9c's OWN SANCTIONED TECHNIQUE, NOT A DODGE (item B5-3). Ruling DD-15 shuts
+## `op_annot::register` against exactly this declaration -- section DL above is
+## that refusal -- so this row can no longer reach its subject through the
+## front door, and it is not ABOUT that door: it is about what the BUTTON does
+## when such a list is already live, which a fixture, an older session's stored
+## state, or any code assigning the array can still produce. `_params` falls
+## back to `params` when `declared` is absent (row N9c golds that fallback), so
+## `seed`, `effective` and `_cards_for` all measure exactly what they measured
+## before, and `reduce_why` stays as the SECOND door. One rule, two doors.
+be_reset
+set BE8_DUP {{id ids 0} {id vgs 2} {gm gm 1}}
+set BE8_DESC [list devpath {\@m.@path@name} params $BE8_DUP]
+set ::op_annot::desc(b5ndev) $BE8_DESC
+set ::op_annot::desc(b5pdev) $BE8_DESC
+set ::rdw::blocks {}
+ol_ans ::rdw::push [be_blk M1 @m.m1 {{ids 1.2e-05} {vgs 0.5} {gm 3.4e-05}}]
+ol_ans ::rdw::push [be_blk M2 @m.m2 {{ids 9.9e-06}}]
+set BE8_BASE  [be_eff annotation]
+set BE8_CARDS0 [ol_ans ::op_annot::_cards_for M1 {}]
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+set BE8_SAY [be_press up]
+set BE8_AFTER [be_eff annotation]
+set BE8_CARDS1 [ol_ans ::op_annot::_cards_for M1 {}]
+check {BE8 A REORDER CANNOT BECOME A DELETION (issue 1323, rulings DD-4 and DD-6): with a duplicate-label declaration live the Up press is REFUSED in one line that names the Up button and the repeated label, the annotation list is byte-identical to the base, nothing is owned, and all three .save cards are still standing - the row the store would have dropped is still asked for} \
+  [list $BE8_BASE [llength $BE8_BASE] \
+        [expr {$BE8_SAY ne {} && $BE8_SAY ne {NOVAR} ? 1 : 0}] \
+        [expr {[string first "\n" $BE8_SAY] < 0 ? 1 : 0}] \
+        [be_ok1 $BE8_SAY {Up:}] [be_ok1 $BE8_SAY {"id"}] \
+        [ol_ans ::op_param_lists::owns class b5cls annotation] \
+        [expr {$BE8_AFTER eq $BE8_BASE ? 1 : 0}] \
+        $BE8_CARDS0 [expr {$BE8_CARDS1 eq $BE8_CARDS0 ? 1 : 0}] \
+        [llength $BE8_CARDS1]] \
+  [list {{id ids 0} {id vgs 2} {gm gm 1}} 3 1 1 1 1 0 1 \
+        [list ".save @m.m1\[ids\]" ".save @m.m1\[vgs\]" ".save @m.m1\[gm\]"] 1 3]
+
+ol_ans ::op_annot::register b5ndev $BE_DESC
+ol_ans ::op_annot::register b5pdev $BE_DESC
+
+# --- BE9  SAVE SAYS WHICH TIER IT REALLY WROTE (issue 1325) ------------------
+## `conf_path project` is `[pwd]/.xschem/op_param_lists.conf` and `conf_path
+## user` is `$USER_CONF_DIR/op_param_lists.conf`. AT THE ORDINARY LAUNCH CWD -
+## `$HOME`, which is how xschem is normally started - THOSE TWO ARE THE SAME
+## FILE. `load` already knows it and dedupes with `file normalize`; the WRITER
+## did not, so a Save that reported a project write rewrote the USER-GLOBAL
+## settings of every design on the machine, and ruling DD-7's "a write touches
+## one tier's own file" went vacuous in the case a user meets first.
+##
+## ⚠ THIS ROW DRIVES BOTH ARMS, SO NEITHER CAN PASS VACUOUSLY: a colliding
+## configuration where the sentence MUST appear, and a genuinely distinct
+## project directory where it MUST NOT. A note that were always emitted would
+## red the second arm; one that were never emitted reds the first.
+##
+## ⚠ ISSUE 1325's OWN CLAIM ABOUT ROW BE5 IS WRONG AND IS NOT COPIED. BE5 builds
+## `$BE_ROOT/p5/.xschem` and `$BE_ROOT/home5`, which are genuinely distinct, so
+## it already fences what its title says. The gap was that NO row exercised the
+## COLLIDING configuration on the WRITE path.
+##
+## ⚠ AND WHICH TIER SAVE WRITES IS NOT CHANGED HERE. Issue 1273 - "which
+## directory IS the project" - is a live rule debt on the owed ledger and is
+## THE USER'S to settle; this item's job is to make the code honest about which
+## tier it wrote, whatever that tier turns out to be.
+set BE9_SAME [file join $BE_ROOT same9]
+file mkdir [file join $BE9_SAME .xschem]
+cd $BE9_SAME
+set ::USER_CONF_DIR [file join $BE9_SAME .xschem]
+be_reset
+be_blocks
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button up
+set BE9_SAY [be_press save]
+set BE9_PATH [ol_ans ::op_param_lists::conf_path project]
+set BE9_TIERS [ol_ans ::op_param_lists::conf_tiers $BE9_PATH]
+cd $BE_OLDPWD2
+
+set BE9_PROJ [file join $BE_ROOT p9]
+file mkdir [file join $BE9_PROJ .xschem]
+cd $BE9_PROJ
+set ::USER_CONF_DIR $BE_HOME
+be_reset
+be_blocks
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::set_row 11
+ol_ans ::rdw::button up
+set BE9_DSAY [be_press save]
+set BE9_DPATH [ol_ans ::op_param_lists::conf_path project]
+set BE9_DTIERS [ol_ans ::op_param_lists::conf_tiers $BE9_DPATH]
+cd $BE_OLDPWD2
+
+## THIRD ARM (item B5-3) — THE SAME QUESTION THROUGH A SYMLINK, WHICH IS THE
+## SHAPE THE FIRST TWO ARMS CANNOT REACH.
+##
+## Issue 1325's fix compared NORMALISED PATH STRINGS, and item B5-a's own
+## adversary refuted it here: `file normalize` does not resolve a path's final
+## component, so with the project conf a SYMLINK to the user-global file the two
+## tiers are DIFFERENT STRINGS and ONE FILE. Before the 1327 fix the Save
+## therefore reported `project` alone while the USER-GLOBAL settings of every
+## design on the machine were what actually changed — 1325's own title coming
+## back through a door its fix did not reach. Section SL fences that in the
+## store's units; THIS arm fences it where the user meets it, on the button.
+##
+## ⚠ AND IT ASSERTS THE WRITE, NOT ONLY THE SENTENCE. `write_conf` resolves the
+## link chain first (issue 1276, `_resolve_target`) and writes the RESOLVED
+## file, leaving the link intact — so the row checks that the link survived and
+## that the bytes really landed on the user-global file. A sentence that named
+## the right file over a write that had replaced the link with a regular file
+## would be true about nothing.
+##
+## ⚠ SL0's LESSON, CARRIED: the FIRST leg asserts the symlink was really
+## created. A filesystem that refuses one (a Windows share, a container without
+## the privilege) then REDS this row instead of skipping it into a silent pass.
+set BE9_SD [file join $BE_ROOT link9]
+file delete -force $BE9_SD
+file mkdir [file join $BE9_SD ucfg]
+file mkdir [file join $BE9_SD proj .xschem]
+set BE9_LU [file join $BE9_SD ucfg op_param_lists.conf]
+set BE9_LP [file join $BE9_SD proj .xschem op_param_lists.conf]
+set _be9fd [open $BE9_LU w] ; puts $_be9fd "version 2" ; close $_be9fd
+set BE9_LINKED 0
+if {![catch {file link -symbolic $BE9_LP $BE9_LU}]} { set BE9_LINKED 1 }
+set BE9_LSAY {}
+set BE9_LPATH {}
+set BE9_LSTR 1
+set BE9_LSTILL 0
+set BE9_LBYTES 0
+if {$BE9_LINKED} {
+  cd [file join $BE9_SD proj]
+  set ::USER_CONF_DIR [file join $BE9_SD ucfg]
+  be_reset
+  be_blocks
+  ol_ans ::rdw::set_list annotation
+  ol_ans ::rdw::set_row 11
+  ol_ans ::rdw::button up
+  set BE9_LSAY  [be_press save]
+  set BE9_LPATH [ol_ans ::op_param_lists::conf_path project]
+  ## the two tiers are different STRINGS: a string compare calls them two files.
+  set BE9_LSTR [expr {[file normalize [ol_ans ::op_param_lists::conf_path user]] eq
+                      [file normalize $BE9_LPATH] ? 1 : 0}]
+  cd $BE_OLDPWD2
+  set ::USER_CONF_DIR $BE_HOME
+  set BE9_LSTILL [expr {![catch {file link $BE9_LP} _l] && $_l ne {} ? 1 : 0}]
+  if {![catch {open $BE9_LU r} _fh]} {
+    set _t [read $_fh] ; close $_fh
+    set BE9_LBYTES [expr {[string first {b5cls} $_t] >= 0 ? 1 : 0}]
+  }
+}
+check {BE9 SAVE SAYS WHICH TIER IT REALLY WROTE (issue 1325), AND STILL DOES THROUGH A SYMLINK (issue 1327): in the colliding configuration - the project directory and the user configuration directory are one directory, which is what the ordinary launch cwd produces - the status line names the file it wrote AND says that file is both tiers, one line; in a genuinely distinct project directory the same Save names its file and that clause is ABSENT, so the note cannot pass by being unconditional; and where the project conf is a SYMLINK to the user-global file - two different strings, one file - the button's Save names its file, still says both tiers, leaves the link a link, and the bytes really land on the user-global file} \
+  [list $BE9_TIERS [expr {[file isfile $BE9_PATH] ? 1 : 0}] \
+        [be_ok1 $BE9_SAY $BE9_PATH] [be_ok1 $BE9_SAY {both tiers}] \
+        [expr {[string first "\n" $BE9_SAY] < 0 ? 1 : 0}] \
+        $BE9_DTIERS [expr {[file isfile $BE9_DPATH] ? 1 : 0}] \
+        [be_ok1 $BE9_DSAY $BE9_DPATH] [be_ok1 $BE9_DSAY {both tiers}] \
+        [expr {$BE9_PATH eq $BE9_DPATH ? 1 : 0}] \
+        $BE9_LINKED $BE9_LSTR \
+        [be_ok1 $BE9_LSAY $BE9_LPATH] [be_ok1 $BE9_LSAY {both tiers}] \
+        [expr {[string first "\n" $BE9_LSAY] < 0 ? 1 : 0}] \
+        $BE9_LSTILL $BE9_LBYTES] \
+  [list {user project} 1 1 1 1 {project} 1 1 0 0 \
+        1 0 1 1 1 1 1]
+file delete -force $BE9_SD
+
+# --- the section leaves the tree as it found it ------------------------------
+cd $BE_OLDPWD2
+set ::USER_CONF_DIR $BE_OLDUCD2
+catch {rename ::rdw::scope_dialog {}}
+if {[llength [info commands ::rdw::be_real_scope_dialog]]} {
+  rename ::rdw::be_real_scope_dialog ::rdw::scope_dialog
+}
+ol_ans ::op_param_lists::reset
+catch {op_annot::register b5ndev {}}
+catch {op_annot::register b5pdev {}}
+set ::rdw::blocks {}
+ol_ans ::rdw::set_list annotation
+ol_ans ::rdw::status {}
+
 set H_ROOT0 [lsort [glob -nocomplain -directory $repo -tails untitled*]]
 check {H1 HYGIENE the suite creates no untitled* anywhere and no .xschem directory in the repo root, and it left the cwd where it found it} \
   [list [expr {[lsort [glob -nocomplain -directory $repo -tails untitled*]] eq $H_ROOT0 ? 1 : 0}] \
@@ -3793,6 +4743,47 @@ check {H1 HYGIENE the suite creates no untitled* anywhere and no .xschem directo
         [expr {[file isdirectory [file join $repo .xschem]] ? 1 : 0}] \
         [expr {[pwd] eq $T_OLDPWD ? 1 : 0}]] \
   {1 0 0 0 1}
+
+# ============================================================================
+# THE CHECK-COUNT FLOOR — TRAP 7, WHICH THIS SUITE HAD NO GUARD RAIL FOR
+# ============================================================================
+# Copied verbatim in shape from KX_FLOOR (test_rdw_keys_1245.tcl:1713), which
+# was minted after a run of that suite silently executed FEWER rows and still
+# printed ALL PASS. Until item B5-3 this suite had no floor at all.
+#
+# ⚠ THIS PARAGRAPH USED TO NAME THE WRONG MECHANISM, and the correction is
+# worth more than the floor. It claimed ELEVEN of section BE's rows sit behind
+# `if {[llength [info commands ::rdw::scope_dialog]]}` and would be skipped if
+# that proc were missing. THEY DO NOT. That guard (:4230) wraps only the
+# `rename`; the stub `proc ::rdw::scope_dialog` on the line after it is
+# installed UNCONDITIONALLY, so every BE row runs whether or not the real proc
+# exists. MEASURED by item B5-3's adversary: with `::rdw::scope_dialog` deleted
+# before sourcing, this suite still ran 130 checks and still printed ALL PASS,
+# and the row that actually went red was window **BT9** — which is where the
+# real proc's existence is fenced, and where it belongs.
+#
+# WHAT THE FLOOR REALLY GUARDS is a section that returns early, an exception
+# that unwinds past rows, and a genuinely conditional block — of which BE9's
+# symlink arm is the one live example, since a filesystem that refuses a
+# symlink would otherwise take its legs away silently. A green count is a
+# statement about the FENCE; the denominator is the part nothing else watches.
+#
+# ⚠ IT IS A FLOOR, NOT AN EQUALITY. Adding rows must not red the suite: RAISE
+# it when you add them, and NEVER lower it to make a run pass, which is the one
+# move that would put the skipped-row defect straight back.
+#
+# ⚠ IT IS AN `incr fail`, NOT A `check`. A `check` would add itself to $npass
+# and inflate the very number it is guarding.
+#
+# 114 (HEAD 59ef24af) + 13 (item B5's preserved button-column rows, sections BG
+# and BE) + 3 (item B5-3's section DL) = 130.
+set OL_FLOOR 130
+set OL_RAN [expr {$npass + $fail}]
+if {$OL_RAN < $OL_FLOOR} {
+  puts "FAIL: OLFLOOR the suite ran only $OL_RAN checks, below its floor of\
+$OL_FLOOR — rows were SKIPPED, and a skipped row is not a passing one : FAIL"
+  incr fail
+}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }

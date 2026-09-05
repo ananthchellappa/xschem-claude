@@ -1364,6 +1364,142 @@ passing with their own subject deleted.
   other sheet is still open. Recorded because it is the exact failure this item
   exists to break, met by the item that exists to break it.
 
+#### AS BUILT — item B5-3, 2026-09-04: **THE COLUMN IS WIRED. FEATURE B IS COMPLETE.**
+
+The fourth attempt, and the first to land. The preserved patch
+`doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch` (md5
+`42890cf163dd9ba1e85e312e1801c6ed`, 3018 lines) applied `rc=0` with offsets only
+onto item B5-a's tree, and **nothing in it was retyped**. Three things were added
+on top of it, and only three.
+
+**⚠ THE TABLE IN B7 IS NOW LIVE, AND `rdw::inert` IS GONE.** `rdw::button {id}`
+is the one command every widget carries; `rdw::button_state` is the command
+path's fence as well as the widget's, so a key, a menu or a later item reaching
+the proc directly gets the same answer the disabled widget would have given.
+Every path out of it ends in a status line **naming the button it came from**.
+
+* **RULING DD-15 (issue 1326) — a duplicate display label is refused AT THE
+  DECLARATION.** `op_annot::_dup_declared_label` scans the declaration
+  `_declare` will store under `declared`, and `op_annot::register` raises before
+  anything is stored and before `::op_annot::gen` is bumped. **It scans the
+  declaration and NOT `params`**, because `apply` re-registers every applied type
+  handing back the descriptor it read with `params` replaced by the union, inside
+  a catch that turns a raise into a `_say` — a `params`-scanning guard would make
+  an ordinary Delete report *"cannot register the parameter lists"* instead of
+  doing its job (store row **DL3**). **Every read is catch-guarded and falls
+  through to ACCEPT** (store row **DL2**), because `_declare`'s own header forbids
+  parsing the value and forbids raising for a malformed one and a user's rc is a
+  supported door (I5). The rule is **written twice, not called across**:
+  `op_annot.tcl` is sourced first and `op_param_lists.tcl` depends on it, and
+  DD-6 already rejected that load-order inversion.
+  ⚠ **`reduce_why` STAYS, as the second door.** DD-15 shuts the declaration; it
+  cannot shut `::op_annot::desc`, which a fixture or an older session's stored
+  state still reaches. Store rows **RD1**, **RD5** and **BE8** were **re-pointed**
+  to a direct `::op_annot::desc` assignment — row **N9c**'s own sanctioned
+  technique — rather than deleted, so the guard stays fenced. The paragraphs in
+  `reduce_why`'s header and in the store suite's section RD that used to *reject*
+  making `register` refuse were **rewritten**, not left: a comment contradicting a
+  binding ruling is how the next reader re-derives a settled question.
+  ⚠ **Consequence filed, not fixed: issue 1328.** All four shipped PDK register
+  sites are uncaught, so a refusal aborts the rest of that `_procs.tcl`
+  (measured: the second, unrelated type never registers).
+* **RULING DD-16 — the cross-sheet edit is ALLOWED, and the source sheet is
+  named only when it differs from the open one.** `rdw::_sheet_note {subject}`,
+  a named callee on `rdw::_tier_note`'s precedent, appended inside
+  `rdw::_edit` at **one** insertion point on the **success arm only** — so all
+  three `ok` returns carry it and no refusal arm does; a refusal changed
+  nothing, so the false belief the clause corrects never forms.
+  **An absent or empty `schname` means DO NOT NAME THE SHEET** and every read is
+  caught: row **BT28** hands `_edit` a hand-built subject with no `schname` key
+  at all and `dict get` raises on it, so an unguarded read would refuse an edit
+  that was working. **The comparison is a plain string compare** — not
+  `file normalize` (issue 1327: it does not resolve a path's final component, so
+  it establishes no file identity anyway) and not `_fid` (a private store verb
+  row **BT22** forbids this file to name). Fenced two-sided: **BT29** (the real
+  two-sheet repro, the clause fires and names the SOURCE sheet, not the open one)
+  and **BT30** (the two silences, so the clause cannot pass by being
+  unconditional).
+  ⚠ **THE JUSTIFICATION FOR THE STRING COMPARE IS REFUTED, AND THE CHOICE STANDS
+  ANYWAY — issue 1329.** `rdw::_sheet_note`'s header claims the two values "are
+  byte-identical whenever they name the same sheet". They are not: one sheet
+  opened through a **symlink** yields two different strings and the clause fires
+  falsely (measured `STRING_EQ=0`, clause emitted naming the real path). The
+  choice stands because the alternative available to this file was worse — but
+  the correct fix is a **public** `op_param_lists::same_file` wrapping `_fid`,
+  added to BT22's allow-list. Blast radius is one wrong advisory sentence and
+  never a wrong write: DD-16 rules the cross-sheet edit ALLOWED, so the clause is
+  advice, not a gate.
+* **The test work.** New store section **DL** (3 rows) for DD-15; window rows
+  **BT29**/**BT30** for DD-16; **BE7** gains the acceptance proof nothing else
+  asserted — an ACCEPTED Up press leaves the deck asking for the same set of
+  values — and **BE9** gains a **third arm** driving issue 1327's symlink through
+  the button. **Both suites gained a CHECK-COUNT FLOOR** (`OL_FLOOR` 130,
+  `RW_FLOOR` 109), copied from `KX_FLOOR`'s idiom — until item B5-3 only the keys
+  suite carried one, and a green count is a statement about the FENCE.
+  ⚠ **`OL_FLOOR`'s FIRST STATED RATIONALE WAS FACTUALLY WRONG AND HAS BEEN
+  CORRECTED IN PLACE.** It claimed eleven of section BE's rows sit behind
+  `if {[llength [info commands ::rdw::scope_dialog]]}`. They do not: that guard
+  wraps only the `rename`, and the stub `proc ::rdw::scope_dialog` on the next
+  line is installed **unconditionally**. Measured — with `::rdw::scope_dialog`
+  deleted before sourcing, the store suite still ran 130 checks and still printed
+  ALL PASS, and the row that went red was window **BT9**, which is where that
+  proc's existence is actually fenced. The floors are correctly wired regardless
+  (both proved live by raising them one and watching them red); only **BE9**'s
+  symlink arm is a genuine skip path.
+  ⚠ **`RW_FLOOR` IS THE `--nogui` MINIMUM BY DESIGN**, so a `:99` run that
+  silently skipped up to 12 `live_tk` rows would still clear it. Deliberate — an
+  equality would red every headless run — and recorded here so the next crew
+  raises it arm-aware rather than discovering the gap.
+
+**⚠ ONE ACCEPTANCE SENTENCE IN THE BRIEF IS REFUTED BY MEASUREMENT, AND THE ROW
+RECORDS THE REFUTATION.** The brief asked that *"an Up press leaves
+`_cards_for`'s output byte-identical"*. It does not, and it must not: `apply`
+writes the reordered union back into `params` (row BE7's own fourth leg golds
+that) and `_cards_for` emits one card per row **in `params` order**, so the card
+list is reordered with it — measured
+`{.save @m.m1[ids]} {.save @m.m1[gm]} {.save @m.m1[gds]}` becoming
+`{.save @m.m1[gm]} {.save @m.m1[ids]} {.save @m.m1[gds]}`. DD-4/DD-6 is about
+what the simulator is asked to **compute**, and a `.save` deck is a **set**: no
+card is lost, none is invented, and the order of `.save` lines has no meaning to
+ngspice. **BE7 therefore asserts SET identity plus the length**, because a byte
+comparison would fence the ORDER, which is the one thing Up exists to change.
+
+**Issue 1288 is CLOSED** by the success-arm read of `rdw::_store_tail` (window
+row **BT27**). **Issue 1294's secondary is NOT fixed and its own prediction is
+refuted**: `rdw::_edit` builds `[list $cls $cell]`, always exactly two elements,
+and `_scope_for` returns `[lindex $g 1]` from `governs`, whose keys came through
+`_key` already canonicalised to two — **the button column cannot mint a
+three-element flavor key**, so the truncation stays latent *and unreachable*.
+
+**WHAT THE ADVERSARY FOUND AND THE ITEM DID NOT FIX** — four new numbers, every
+one measured, none of them a wrong write:
+
+* **1329** — DD-16's clause is false through a symlink (above).
+* **1330** — `rdw::_apply_now` swallows an `apply` failure. `rdw::button`
+  composes its whole sentence from `rdw::_edit` and only THEN calls `_apply_now`,
+  whose three calls are each in a bare `catch` and which returns `{}`
+  unconditionally (measured `APPLY_NOW_RC=0`, `APPLY_NOW_RES=''`,
+  `EDIT_BEFORE_APPLY=1`). A **silent-failure channel**: nothing reaches it today,
+  because the only measured route to an `apply` failure is issue 1326's
+  descriptor and DD-15 now refuses it. Fix is one `said`-tail read after
+  `_apply_now`, in `rdw::_store_tail`'s existing idiom.
+* **1331** — the narrow arm refuses a symbol path containing a **space** in the
+  store's internal jargon, with brace syntax exposed and — unlike both sibling
+  guards — no *"Choose every device of class X instead."* A third up-front guard
+  in `rdw::_edit`, beside the two that exist.
+* **1332** — the keys suite's **SD1/SD2/SD3b** drive the real modal on a fixed
+  `after 100` rather than polling for `.rdw.scope`; false-redded once in 134 runs
+  while a second crew agent held the same `:99` display. The deadman worked — it
+  did not hang. A TEST defect, and the fix is to poll.
+
+And one bound recorded on an existing number: **issue 1326's DELETE half
+survives** through the direct `::op_annot::desc` door DD-15 cannot shut (measured
+3 rows → 1, `{id ids 0}` leaving with the `gm` the user asked for). `reduce_why`
+is consulted for **reorders only**, so "one rule, two doors" holds for Up and
+Down and **not** for Delete. Unreachable in production — nothing outside the
+store suite assigns that array — and the choice of whether Delete gets a second
+door stays the USER's, which is what 1326 said from the start.
+
 #### AS BUILT — item B2d, 2026-09-04: the answer dict is UNTRUSTED INPUT
 
 The five-key table above is a **description of what a well-behaved backend

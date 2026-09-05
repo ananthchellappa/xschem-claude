@@ -623,6 +623,18 @@ proc rdw::button_state {id kind} {
     return normal
 }
 
+# THE COLUMN'S ids AND LABELS, ONCE (invariant I1).  `rdw::build` packs them
+# and `rdw::_button_label` reads them back to name the button in the status
+# line; two literal lists would drift the moment a label is reworded, and the
+# status line's whole obligation is that a message NAMES THE BUTTON IT CAME
+# FROM.
+proc rdw::_buttons {} { return {up Up down Down delete Delete add Add save Save} }
+
+proc rdw::_button_label {id} {
+    foreach {i l} [rdw::_buttons] { if {$i eq $id} { return $l } }
+    return {}
+}
+
 # ---------------------------------------------------------------------------
 # TWO ONE-LINE ACCESSORS THAT NAME A CHOICE THE WHOLE WINDOW RESTS ON.
 # They exist so the choice has ONE place, and so a reviewer can flip either
@@ -923,9 +935,18 @@ proc rdw::push {block} {
 # buttons are drivable under --nogui too; the entry is wired to it by
 # -textvariable, so there is nothing to update by hand.  An empty message
 # clears the field.
+# ⚠ AND IT ONE-LINES, ITEM B5.  `::rdw::statusmsg` is an `entry
+# -textvariable` and item B5 is the first thing that puts the LIST STORE's own
+# prose in it: `op_param_lists::said`'s reports interpolate caught errors
+# (write_conf's `$err`), which are multi-line by nature.  A newline in an entry
+# is not wrapped, it is swallowed -- the user reads the first line and never
+# learns the rest.  rdw::_line has carried the same rule for every BLOCK line
+# since B3; this was the one emit point outside it.  Collapsed at the emit
+# point, not at the ten call sites, for _line's own reason: the eleventh call
+# site is the one the next author forgets.
 proc rdw::status {msg} {
     variable statusmsg
-    set statusmsg $msg
+    set statusmsg [rdw::_oneline $msg]
     return {}
 }
 
@@ -1076,10 +1097,32 @@ proc rdw::build {} {
     pack .rdw.s.msg -side left -fill x -expand 1 -padx 3 -pady 3
     pack .rdw.s -side bottom -fill x
 
-    # The button column, greyed per spec 4.2 B7 and INERT until item B5.
+    # The button column, greyed per spec 4.2 B7 and WIRED by item B5.
+    #
+    # ⚠ ONE COMMAND FOR ALL FIVE, AND IT IS NOT A CONVENIENCE.  `rdw::button`
+    # consults rdw::button_state itself, so the greying table is the COMMAND
+    # PATH's fence as well as the widget's: a key, a menu or a later item that
+    # reaches the proc directly gets the same answer the widget would have
+    # given.  Five separate callbacks would have put that decision in the
+    # widget layer, where the --nogui arm cannot see it.
+    #
+    # ⚠ AND NO WIDGET HERE MAY TAKE FOCUS (issue 1308).  Tk buttons do not on
+    # X, which is the only reason the column hands the keyboard back; an entry,
+    # a listbox or a -takefocus 1 button would change that into 1308's stuck
+    # state.  The scope dialog is a separate TOPLEVEL for exactly that reason.
+    #
+    # ⚠ `::button`, WITH THE GLOBAL QUALIFIER, AND IT IS NOT STYLE.  This proc
+    # runs inside `namespace eval rdw`-scoped code and item B5 named its
+    # command sink `rdw::button`, which SHADOWS Tk's own `button` for every
+    # unqualified call in this namespace.  Measured the moment it landed: the
+    # widget line raised `wrong # args: should be "button id"`, from inside a
+    # Button-1 handler, so Tk sent it to `bgerror` -- which pops a MODAL error
+    # dialog nobody clicks, and the whole suite HUNG instead of failing (issue
+    # 0803's shape, arriving through a name collision rather than a dialog).
+    # Every widget command below is qualified for the same reason.
     frame .rdw.b -background [rdw::color panel]
-    foreach {id label} {up Up down Down delete Delete add Add save Save} {
-        button .rdw.b.$id -text $label -width 8 -command [list rdw::inert $label]
+    foreach {id label} [rdw::_buttons] {
+        ::button .rdw.b.$id -text $label -width 8 -command [list rdw::button $id]
         pack .rdw.b.$id -side top -fill x -padx 4 -pady 2
     }
     pack .rdw.b -side right -fill y
@@ -1160,14 +1203,14 @@ proc rdw::apply_button_states {} {
     return {}
 }
 
-# Every enabled button in this item routes here, and it NAMES ITSELF and names
-# the item that wires it.  Copied from calc::inert (calculator.tcl:607), which
-# exists for exactly this failure: a real, visible, enabled control that does
-# nothing and says nothing is indistinguishable from a broken one.
-proc rdw::inert {what} {
-    return [rdw::status \
-        "$what: the button column is built but not wired yet (item B5 wires it)."]
-}
+# ⚠ `rdw::inert` USED TO LIVE HERE AND ITEM B5 DELETED IT.  It said "the
+# button column is built but not wired yet (item B5 wires it)", which after B5
+# wired it is a lie -- and rows W4b and Q9 golded that lie.  Its OBLIGATION,
+# copied from calc::inert (calculator.tcl:607), does not lapse with the
+# inertness; it sharpens.  A real, visible, enabled control that DOES something
+# and says nothing is exactly as indistinguishable from a broken one, so every
+# path out of rdw::button ends in a status line that names the button it came
+# from.  See "THE BUTTON COLUMN" at the foot of this file.
 
 # ===========================================================================
 # ITEM B4 -- THE KEYS AND THE TWO GRAMMARS
@@ -1762,3 +1805,934 @@ proc rdw::_register_cmdmode {} {
     return 1
 }
 rdw::_register_cmdmode
+
+# ===========================================================================
+# ITEM B5 -- THE BUTTON COLUMN AND THE TWO SCOPE DIALOGS
+# ===========================================================================
+# Spec 4.2 B7's table, wired.  Rulings DD-2, DD-6, DD-7, DD-8, DD-9 and DD-10.
+#
+#   button        annotation (1)   summary (2)      all (3)
+#   Up / Down     reorder          reorder          reorder
+#   Delete        remove           remove           GREYED
+#   Add           GREYED           add to list 1    the dialog asks which
+#   Save          write the settings file, all three
+#
+# Every Delete and every Add first raises a SCOPE DIALOG -- this device flavor
+# only, versus every device of this broad class.  Narrow writes a `flavor`
+# entry keyed on the cell name; broad writes the `class` entry, which ruling
+# DD-2 makes the primary key.
+#
+# ⚠ WHERE THE NARROWING IS DEFINED, AND WHERE IT IS NOT.  This file computes
+# no list of its own.  `op_param_lists::effective` is the ONE definition of
+# "the annotation list for this device" (flavor in file order, then the class
+# entry, then the PDK seed), and every list this column reads or writes comes
+# from it.  Re-deriving one here from op_annot::descriptor is issue 1300's
+# rejected option (a) and invariant I1's exact failure shape.
+#
+# ⚠ AND THE KEYS STILL NARROW NOTHING.  Item B4's 1/2/3 select a list
+# IDENTITY; that is unchanged and issue 1300 stays the user's question.  What
+# B5 adds is the first CALLER of the store's editing path, which is why rows
+# S1 and K11 handed their `op_param_lists:: == 0` term to row BT22.
+#
+# ---------------------------------------------------------------------------
+# THE THREE THINGS THE COLUMN NEEDED AND B3 DID NOT HAVE
+# ---------------------------------------------------------------------------
+# 1. A TARGET.  nhse's own rule (xschem.tcl:1314) -- "the row your cursor is
+#    in" -- with no new focusable widget, because a focusable widget in this
+#    column is issue 1308's stuck state (Tk buttons do not take focus on X and
+#    that is the only reason the keyboard goes back to the canvas).  MEASURED
+#    on :99: a `-state disabled` text still moves `insert` on a real Button-1,
+#    so the pane's own insert mark is the target and `rdw::set_row` is the one
+#    setter that moves both it and the headless variable.
+#
+# 2. A SUBJECT.  `rdw::push` RECORDS what a block was about at DUMP TIME
+#    (issue 1322, item B5-a) -- instance, `type=` token, cell and sheet -- and
+#    `rdw::block_subject` reads it back out of the block itself.  This section
+#    derives nothing from the live editor: the earlier attempt split the
+#    header back into a bare name and re-resolved it, which answers about
+#    whatever sheet is open NOW and is the defect that reverted item B5-2.  A
+#    window-global "last device dumped" would be wrong the same way, one block
+#    over: it would edit a different device's list than the block the cursor
+#    is sitting in, with nothing on screen saying so.
+#
+# 3. A ROW NAME.  ⚠ THE PANE PRINTS THE RAW PARAMETER, NOT THE LABEL.  IHP's
+#    first triple is `{id ids 0}` and the block line is `    ids : 1.2e-05`, so
+#    every lookup into a list is BY THE PARAM FIELD.  Matching by label
+#    round-trips sky130 and gf180 perfectly and silently misses IHP -- the one
+#    PDK in this tree that distinguishes them.
+#
+# ---------------------------------------------------------------------------
+# WHY THE DIALOG IS A CHILD TOPLEVEL WITH A BUILD/DONE/WRAPPER SPLIT
+# ---------------------------------------------------------------------------
+# ⚠ ISSUE 0803: a modal a suite cannot click does not FAIL, it HANGS, and takes
+# the audit with it.  So the shape is `ase::ui::bus_dialog`'s
+# (ase_window.tcl:1320/1392/1406), copied deliberately:
+#   * `scope_dialog_build` builds and returns the window and touches no event
+#     loop, so the widget tree is inspectable with no `tkwait` anywhere;
+#   * `scope_dialog_done` sets the result and destroys, so a test can invoke a
+#     radiobutton and the OK button from an `after` timer;
+#   * `scope_dialog` is the thin wrapper, and its `tkwait` is GUARDED -- the
+#     build-time `update` can let a timer destroy the window first;
+#   * with NO Tk at all it answers Cancel and RETURNS.  A dialog that is only
+#     safe when a display is present is not safe.
+# MEASURED while planning: `.rdw.scope`'s bindtags are {.rdw.scope Toplevel
+# all}, so a child toplevel does NOT inherit `.rdw`'s ruling DD-12 Escape and
+# can bind its own Cancel with no collision -- a dialog that inherited it would
+# silently end the canvas command mode the user is in the middle of.
+#
+# ⚠ AND IT REFUSES TO OPEN WHILE A CANVAS PICK MODE IS LIVE.  MEASURED: `grab
+# set .rdw.scope` really does take `grab current`, so a modal opened over a
+# live verb-noun pick swallows the canvas click the mode is waiting for and the
+# mode looks dead.  Adjacent to issue 1309 without being it: this item adds no
+# key and calls no `pick_start`.
+#
+# ---------------------------------------------------------------------------
+# WHAT A SUCCESSFUL EDIT DOES *AFTER* THE STORE, AND THE ONE EXCEPTION
+# ---------------------------------------------------------------------------
+# Delete and Add call `op_param_lists::apply` -- once with the subject's own
+# `type=` token, because a token the class map does not name is unreachable
+# from the bare call (issue 1279), and once bare, because the class's mapped
+# SIBLINGS must follow: `apply nmos` alone leaves every pmos on the sheet
+# drawing the old list.  Ruling DD-6 then writes the UNION into `params` (what
+# the run computes, so `_cards_for` keeps emitting the card) and the annotation
+# list into the display key (what the sheet draws).  Delete is a DISPLAY
+# decision and never a SAVE decision.
+#
+# ⚠ A REORDER APPLIES TOO, AND THAT REVERSES THE PRESERVED PATCH ON PURPOSE
+# (item B5-2).  The patch deferred it and said so on screen, because
+# `op_param_lists::_save_set` builds the union ANNOTATION-FIRST, `apply` writes
+# it into the descriptor's `params`, and `op_param_lists::seed` read that same
+# field back as "the PDK's own list" -- so reordering list 1 silently reordered
+# list 2's answer, which nobody owns.  Ruling DD-13 (item B2e) split the
+# descriptor into THREE lists: `seed` now reads the DECLARATION, which nothing
+# but `op_annot::register` can write, and `_show_set` filters the union
+# annotation-first into the display key.  The leak is structurally gone -- issue
+# 1312 is FIXED, store row N4 fences the opposite -- so a status line citing it
+# as a reason to defer would be a false statement on a screen the user is
+# reading.  Up and Down redraw like Delete and Add.
+#
+# Suite: tests/headless/test_rdw_window_1245.tcl section BT (both arms),
+# tests/headless/test_op_param_store_1245.tcl section BE (the file half) and
+# tests/headless/test_rdw_keys_1245.tcl section SD (the real modal, :99).
+
+namespace eval rdw {
+    # The target row, as a 1-BASED PANE LINE.  It is the headless half of the
+    # pane's `insert` mark; `rdw::set_row` moves both so the widget and the
+    # store can never disagree about which row is targeted.
+    variable targetrow
+    if {![info exists targetrow]} { set targetrow 0 }
+
+    # The scope dialog's three variables.  Namespace state rather than
+    # proc-locals because the build, the radiobuttons and the wrapper are three
+    # different scopes; `scope_result` is pre-set to Cancel BEFORE the build,
+    # so a window that never reaches `scope_dialog_done` -- a deadman timer, a
+    # window-manager close -- answers Cancel rather than the previous answer.
+    variable scope_result {}
+    variable scope_choice broad
+    variable list_choice annotation
+}
+
+# ---------------------------------------------------------------------------
+# THE TARGET.  Pure enough to drive with no Tk at all, which is where the
+# majority of this feature's suite lives.
+
+# THE ONE TARGET SETTER.  `n` is a 1-based pane line.
+proc rdw::set_row {n} {
+    variable targetrow
+    if {![string is integer -strict $n]} { return $targetrow }
+    if {$n < 0} { set n 0 }
+    set targetrow $n
+    if {$n > 0 && [rdw::have_tk] && [winfo exists .rdw.p.t]} {
+        catch {.rdw.p.t mark set insert $n.0}
+    }
+    return $n
+}
+
+# The pane's own insert line when there is a pane, the variable otherwise.
+# The pane WINS when it exists: a real click moves `insert` and nothing else,
+# so reading the variable there would answer about a row the user is not on.
+proc rdw::_target_line {} {
+    variable targetrow
+    if {[rdw::have_tk] && [winfo exists .rdw.p.t]} {
+        set ix {}
+        if {![catch {.rdw.p.t index insert} ix]} {
+            set l [lindex [split $ix .] 0]
+            if {[string is integer -strict $l]} { return $l }
+        }
+    }
+    if {![info exists targetrow]} { return 0 }
+    return $targetrow
+}
+
+# A flat pane line -> {blockindex entryindex}, or {} past either end.  PURE: a
+# function of ::rdw::blocks alone, because rdw::render_pane paints one entry
+# per line in store order and nothing else.
+proc rdw::_locate {line} {
+    variable blocks
+    if {![string is integer -strict $line]} { return {} }
+    if {$line < 1} { return {} }
+    set n 0
+    set bi 0
+    foreach b $blocks {
+        set len 0
+        catch {set len [llength $b]}
+        if {$line <= $n + $len} { return [list $bi [expr {$line - $n - 1}]] }
+        incr n $len
+        incr bi
+    }
+    return {}
+}
+
+# The RAW parameter name of one block entry, or {} when the entry is not a
+# parameter row.  A tagged entry (hdr / dim / dev / note) never is, and neither
+# is the separator; what is left is `rdw::format_answer`'s own
+# "    %-*s : %s" row, whose first field is the parameter the seam published.
+proc rdw::_row_param {entry} {
+    if {[catch {llength $entry} n]} { return {} }
+    if {$n != 2} { return {} }
+    if {[lindex $entry 0] ne {}} { return {} }
+    set t [lindex $entry 1]
+    if {[string trim $t] eq {}} { return {} }
+    if {![regexp {^[ ]+(\S+)[ ]+:} $t -> p]} { return {} }
+    return $p
+}
+
+# ---------------------------------------------------------------------------
+# THE SUBJECT.
+
+# ⚠ `rdw::_hdr_instname` IS NOT DEFINED HERE ANY MORE, AND ITS ABSENCE IS THE
+# FIX (issue 1322, item B5-a).  It used to be defined twice -- once at the top
+# of this file and once in this section -- and the LAST definition silently
+# won.  It now has exactly one home, beside `rdw::header`, whose join it
+# inverts; `rdw::push` is its other caller.
+#
+# {instname type class cellname schname} for the block the cursor is in, or {}.
+# ⚠ THE BLOCK INDEX IS AN ARGUMENT AND NOT `[lindex $blocks 0]`.  The newest
+# dump is on top and the user's cursor is very often in an OLDER one; a subject
+# read from the newest block would edit a different device's list than the
+# block on screen, and every single-block row ever written would still pass.
+#
+# ⚠ AND IT RE-RESOLVES NOTHING (issue 1322, item B5-a).  THIS PROC IS THE
+# DEFECT THAT REVERTED ITEM B5-2.  It used to split the block's header back
+# into a bare instance NAME and ask the LIVE EDITOR what that name meant --
+# which answers about whatever sheet is open now, not about the sheet the block
+# was dumped from.  MEASURED with two top-level sheets each holding an `M1`,
+# which is the default template name of every device symbol in this tree:
+#     the block on screen was about   ncls / vn.sym
+#     this proc answered              type vpdev class pcls cellname vp.sym
+#     Delete's verdict                ok, and it edited pcls
+# ⚠ COMPARING THE HEADER'S PATH HALF DOES NOT CATCH IT and no reviewer should
+# spend a pass rediscovering that: both sheets are top-level, so both headers
+# are byte-identical.  THE AXIS IS SHEET IDENTITY, NOT HIERARCHY PATH.
+# `rdw::push` now records the subject AT DUMP TIME and `rdw::block_subject`
+# reads it back, so this proc reads a RECORD and asks the editor nothing.
+#
+# The CLASS is still resolved here, and only here: `op_param_lists::class` is
+# a pure classmap lookup with no sheet dependence, so it has one home already
+# (invariant I1) and is the one field that is still true whenever it is asked.
+# A block whose device could not be resolved at dump time -- a symbol xschem
+# could not find, an instance that had already gone -- carries no subject at
+# all, and `{}` here is what makes rdw::button's existing guard fire with no
+# new sentence.
+proc rdw::_subject {blockindex} {
+    variable blocks
+    set subj [rdw::block_subject [lindex $blocks $blockindex]]
+    if {$subj eq {}} { return {} }
+    set type {}
+    catch {set type [dict get $subj type]}
+    if {$type eq {}} { return {} }
+    set cls {}
+    catch {set cls [::op_param_lists::class $type]}
+    set inst {} ; set cell {} ; set sch {}
+    catch {set inst [dict get $subj instname]}
+    catch {set cell [dict get $subj cellname]}
+    catch {set sch  [dict get $subj schname]}
+    return [dict create instname $inst type $type class $cls cellname $cell \
+                        schname $sch]
+}
+
+# ---------------------------------------------------------------------------
+# THE LIST HELPERS.  Every one of them reads a list the STORE handed over;
+# none builds one.
+
+# The index of a triple by its RAW PARAM field, never by its label.
+proc rdw::_index_of {lst param} {
+    if {[catch {llength $lst}]} { return -1 }
+    set i 0
+    foreach t $lst {
+        if {[catch {lindex $t 1} p]} { return -1 }
+        if {$p eq $param} { return $i }
+        incr i
+    }
+    return -1
+}
+
+proc rdw::_triple_in {lst param} {
+    set i [rdw::_index_of $lst $param]
+    if {$i < 0} { return {} }
+    return [lindex $lst $i]
+}
+
+# ⚠ ADD MINTS NO `kind`, EVER (invariant I1, measured rule R3).  The kind is
+# the raw-name SHAPE -- 0 is i(<dev>[p]), 1 is bare, 2 is v(<dev>[p]) -- so a
+# guessed one writes a `.save` card that matches nothing, and one bogus card
+# destroys the whole operating point.  A parameter with no declared triple
+# anywhere is refused by name instead.
+proc rdw::_find_triple {cls cell param} {
+    foreach ln {annotation summary} {
+        set t [rdw::_triple_in [::op_param_lists::effective $cls $ln $cell] $param]
+        if {$t ne {}} { return $t }
+    }
+    return [rdw::_triple_in [::op_param_lists::seed $cls] $param]
+}
+
+# The STORE KEY a REORDER writes at: the flavor entry that actually GOVERNS
+# this device, else the class entry, which ruling DD-2 makes the primary key.
+# Up and Down raise NO dialog -- spec 4.2 B7 gives it to Delete and Add only,
+# and a dialog per click makes reordering unusable -- so they have no answer to
+# obey and must find the entry themselves.
+#
+# ⚠ IT ASKS `op_param_lists::governs`, AND THE QUESTION IT USED TO ASK WAS A
+# DIFFERENT ONE (item B5-2, defect A6).  This proc used to ask exact-key
+# `owns flavor {<cls> <cellname>}` while every READ of the same list goes
+# through `effective`, which matches a cell-name GLOB.  MEASURED at HEAD with a
+# flavor entry `{b5cls *b5n*}` governing cell `devices/b5n`:
+#     effective b5cls annotation devices/b5n     -> the FLAVOR list
+#     owns flavor {b5cls devices/b5n} annotation -> 0
+# so the reorder answered "no flavor entry", wrote the CLASS entry, and left
+# the user looking at a pane whose order did not move while the status line
+# said it had.  ONE narrowing with TWO lookalike definitions is invariant I1's
+# exact failure shape, so the scan now has one home in the store and this file
+# is a consumer of it.  Fenced by window row BT25 and store rows BG1/BG2.
+proc rdw::_scope_for {cls listname cell} {
+    set g {}
+    catch {set g [::op_param_lists::governs $cls $listname $cell]}
+    if {[llength $g] == 2 && [lindex $g 0] eq {flavor}} {
+        return [list flavor [lindex $g 1]]
+    }
+    return [list class $cls]
+}
+
+# ---------------------------------------------------------------------------
+# DID THE WRITE ACTUALLY REACH THE DEVICE THE USER IS LOOKING AT?
+#
+# ⚠ ONE CHECK, THREE ARMS, THREE SENTENCES (item B5-2, defect A6's second
+# half).  The preserved patch ran ruling DD-8's shadow warning on the NARROW
+# arm only, so a BROAD write over a device a flavor glob governs reported a
+# bare success about rows that did not move -- the user presses Delete, the
+# class list really does change, and the row stays on the sheet with nothing
+# said.  The comparison is `get_list` of the key just written against
+# `effective` for this cell, NOT against the list we asked for: the store
+# legitimately reduces a list by label (issue 1288), and comparing against the
+# request would fire this warning on a write that landed perfectly.
+#
+# ⚠ AND THE BROAD BASE IS STILL THE CLASS LIST.  Taking the base from
+# `effective $cls $listname $cell` -- which is the obvious way to give the
+# broad arm the cell -- would write the FLAVOR list's rows into the CLASS key
+# and destroy every class row the flavor entry does not carry.  That is ruling
+# DD-7's failure, the one that reverted item B2a twice.  So the cell reaches
+# the broad arm HERE, after the write, and never as its base.
+proc rdw::_shadow_why {scope cls listname cell skey key} {
+    if {$cell eq {}} { return {} }
+    set now {}
+    set mine {}
+    catch {set now  [::op_param_lists::effective $cls $listname $cell]}
+    catch {set mine [::op_param_lists::get_list $skey $key $listname]}
+    if {$now eq $mine} { return {} }
+    set glob {}
+    set g {}
+    catch {set g [::op_param_lists::governs $cls $listname $cell]}
+    if {[llength $g] == 2 && [lindex $g 0] eq {flavor}} {
+        set glob [lindex [lindex $g 1] 1]
+    }
+    set which [expr {$glob eq {} ? {an entry} : "the device-flavor entry $glob"}]
+    if {$scope eq {broad}} {
+        return "The $cls class list moved, but $which in the settings file also matches this cell and wins for it, so this device's own rows did not change - precedence is file order."
+    }
+    if {$scope eq {narrow}} {
+        # RULING DD-8: PRECEDENCE IS FILE ORDER AND NOTHING IS RANKED.  A
+        # narrow write is a NEW row, so an entry declared EARLIER whose glob
+        # also matches this cell still wins -- and the honest answer is to say
+        # which order to fix, not to let the button look dead.  Filed as issue
+        # 1311: the pane shows parameter rows, not flavor entries, so this
+        # window's own Up/Down cannot reorder the entries whose precedence
+        # this is.
+        return "But $which declared earlier in the settings file also matches this cell and still wins - precedence is file order, so move this entry above it."
+    }
+    return "But $which in the settings file wins for this cell - precedence is file order, so move this entry above it."
+}
+
+# RULING DD-10, AND IT IS THE USER'S OWN SENTENCE.  Both alternatives the
+# question offered are bad: an emptied annotation list makes the whole OP block
+# vanish, which drops the device out of the declutter (ruling D-6 gates on
+# "instances that got OP numbers"), so every W/L and pin label the declutter was
+# hiding comes back at once -- the user pressed Delete to see less and got more;
+# and treating an empty list as "no narrowing" makes Delete a silent no-op.
+#
+# ⚠ IT APPLIES TO BOTH LISTS, WITH TWO DIFFERENT SENTENCES.  The ruling's text
+# is unqualified so the refusal is unqualified, but its ARGUMENT is
+# annotation-specific -- an emptied summary list breaks no declutter -- so one
+# sentence for both would be false about the summary case, and this feature's
+# own obligation is that different facts get different sentences.
+proc rdw::_last_row_why {base listname param} {
+    if {[catch {llength $base} n]} { return {} }
+    if {$n > 1} { return {} }
+    if {$listname eq {annotation}} {
+        return {at least one parameter must stay. To stop showing operating-point values on this device, turn the annotation off instead.}
+    }
+    return "$param is the only row left in the summary list, and at least one parameter must stay. Add another before removing this one."
+}
+
+# What the STORE said about the call just made, or a fallback.  Read as the
+# TAIL of `said` rather than the whole of it, so a report from earlier in the
+# session is not repeated and a `said_clear` from anywhere destroys nothing.
+# ⚠ THE STORE'S OWN WORDING, NEVER A SECOND ONE FOR THE SAME FACT: two
+# wordings for one failure is how a user learns to distrust both.
+proc rdw::_store_tail {before fallback} {
+    set tail {}
+    catch {set tail [lrange [::op_param_lists::said] $before end]}
+    if {[llength $tail]} { return [join $tail { }] }
+    return $fallback
+}
+
+# RULING DD-16 -- THE SOURCE SHEET, NAMED ONLY WHEN IT IS NOT THE OPEN ONE.
+#
+# A block carries the sheet it was dumped from (item B5-a, issue 1322:
+# `rdw::_capture_subject` stamps `schname` at DUMP time and `rdw::block_subject`
+# reads it back).  The user can therefore edit, an hour later and on a different
+# sheet, a block dumped from a device that is no longer on screen.
+#
+# ⚠ THE EDIT IS NOT REFUSED, AND THAT IS THE RULING'S OWN ARGUMENT.  The three
+# lists are CLASS- and FLAVOR-level settings, not sheet state -- a block says
+# "this dump was about an nfet of class mos", and editing the mos list is a
+# global action that is correct regardless of which sheet happens to be in
+# front.  The window deliberately keeps its dumps across a close (`rdw::close`'s
+# own comment) precisely so they can be worked with later, so refusing here
+# would block a legitimate edit for a reason the user would find arbitrary.
+#
+# ⚠ AND THE SENTENCE IS CONDITIONAL, NOT UNCONDITIONAL.  In the common case the
+# source sheet IS the open one, and saying so is noise on every press.  The
+# clause earns its place exactly when the two differ -- which is the case a user
+# could otherwise misread, and which, before issue 1322 was fixed, silently
+# edited the wrong device.
+#
+# ⚠ AN ABSENT OR EMPTY `schname` MEANS DO NOT NAME THE SHEET.  A block whose
+# device could not be resolved at dump time is never stamped (`_capture_subject`
+# refuses {} and `missing`), and a hand-built subject dict -- which is what the
+# suites' own fixtures pass -- carries no `schname` key at all.  MEASURED:
+# `dict get` on such a dict RAISES, so an unguarded read here would raise from
+# inside the decision core and refuse an edit that was working.  Invariant I3's
+# spirit one layer out: a missing datum renders blank, never a wrong assertion.
+#
+# ⚠ THE COMPARISON IS A PLAIN STRING COMPARE.  NOT `file normalize`: issue
+# 1327 established it does not resolve a path's final component, so it
+# establishes no file identity anyway, and it puts a filesystem call in a status
+# path.  NOT `op_param_lists::_fid`: that is a PRIVATE store verb and row BT22
+# golds that this file names no private one.  Both values come from the same
+# `xschem get schname` accessor, which is why no existing row moves.
+#
+# ⚠ AND A STRING COMPARE IS NOT FILE IDENTITY -- ISSUE 1329.  An earlier draft
+# of this comment claimed the two values "are byte-identical whenever they name
+# the same sheet -- measured directly".  THAT IS FALSE, and item B5-3's
+# adversary measured the counter-example: one sheet opened through a SYMLINK
+# yields two different strings, so this proc emits the clause for a sheet that
+# IS the open one.  The choice stands because both alternatives above are worse
+# from THIS file; the fix is a PUBLIC `op_param_lists::same_file` wrapping
+# `_fid`, added to BT22's allow-list.  Blast radius is one wrong advisory
+# sentence and never a wrong write -- DD-16 rules the cross-sheet edit ALLOWED,
+# so this clause is advice, not a gate.
+#
+# A named callee rather than three lines inline, following `rdw::_tier_note`
+# just below and for the same reason: a reviewer can neutralise exactly this
+# sentence and watch one row say so.
+proc rdw::_sheet_note {subject} {
+    set src {}
+    catch {set src [dict get $subject schname]}
+    if {$src eq {}} { return {} }
+    set now {}
+    catch {set now [xschem get schname]}
+    if {$now eq {}} { return {} }
+    if {$src eq $now} { return {} }
+    return "That dump was taken on $src, which is not the sheet now open - these are class and device-flavor settings, not sheet state, so the edit applies wherever you are standing."
+}
+
+# ---------------------------------------------------------------------------
+# THE DECISION CORE.  It performs the store call and returns
+# {ok|refused <sentence>}, and it touches no Tk -- so every sentence and every
+# refusal in this feature is asserted on the --nogui arm.  Copied in shape from
+# `nhse_save_announce` (xschem.tcl:1409), which factors the branch and the
+# exact sentence out of the widget call for the same reason.
+proc rdw::_edit {op subject listname scope param} {
+    set cls  [dict get $subject class]
+    set cell [dict get $subject cellname]
+    if {$scope eq {governing}} {
+        # UP AND DOWN, WHICH RAISE NO DIALOG AND SO HAVE NO ANSWER TO OBEY.
+        # They write at whatever entry governs this device today, because a
+        # reorder whose only effect is invisible is a broken button.
+        set g    [rdw::_scope_for $cls $listname $cell]
+        set skey [lindex $g 0]
+        set key  [lindex $g 1]
+        if {$skey eq {flavor}} {
+            set base  [::op_param_lists::effective $cls $listname $cell]
+            set where "for cells matching [lindex $key 1] of class $cls"
+        } else {
+            set base  [::op_param_lists::effective $cls $listname]
+            set where "for class $cls"
+        }
+    } elseif {$scope eq {narrow}} {
+        if {$cell eq {}} {
+            return [list refused "this device's symbol has no cell name, so there is no device-flavor entry to write. Choose every device of class $cls instead."]
+        }
+        ## ⚠ A NARROW KEY IS A GLOB, AND NOT EVERY CELL NAME IS A GLOB THAT
+        ## MATCHES ITSELF (item B5-2).  The flavor key is stored verbatim and
+        ## later matched with `string match -nocase`, so MEASURED: `a[bc].sym`
+        ## and `a\b.sym` do NOT match themselves.  Written anyway, the entry
+        ## would answer nothing for the very device it was minted for -- and
+        ## `rdw::_shadow_why` would then fire ruling DD-8's sentence, blaming
+        ## "an entry declared earlier in the settings file" that does not
+        ## exist.  One wrong sentence produced by the code written to remove
+        ## another.  Refuse up front, name the class-wide alternative, and
+        ## store nothing.  `a*b.sym` and `a?b.sym` DO self-match but also match
+        ## siblings; that residual is filed as issue 1321, not fixed here --
+        ## this guard cannot tell a deliberate glob from a literal, and
+        ## refusing every cell name containing `*` would refuse a legal
+        ## filename for a case nobody has hit.
+        if {![string match -nocase $cell $cell]} {
+            return [list refused "the cell name $cell contains glob characters, and a device-flavor entry is matched as a glob - a key written from it would never match this device again. Choose every device of class $cls instead."]
+        }
+        set skey  flavor
+        set key   [list $cls $cell]
+        set base  [::op_param_lists::effective $cls $listname $cell]
+        set where "for cell $cell only"
+    } else {
+        set skey  class
+        set key   $cls
+        set base  [::op_param_lists::effective $cls $listname]
+        set where "for class $cls"
+    }
+    set i [rdw::_index_of $base $param]
+    set notin "$param is not in the $cls $listname list. The pane also shows rows this run published that no list declares, and only the list's own rows can be edited here."
+    ## ⚠ AND ON THE BROAD ARM IT IS NOT ALWAYS TRUE.  The broad base is the
+    ## CLASS list, which for a device a flavor entry governs is NOT the list
+    ## the pane's rows came from -- so a row the user can plainly see would be
+    ## reported "not in the list".  Name the flavor entry and the narrow choice
+    ## instead: the fact is different, so the sentence is different.
+    if {$i < 0 && $scope eq {broad} && $cell ne {}} {
+        set seen {}
+        catch {set seen [::op_param_lists::effective $cls $listname $cell]}
+        if {[rdw::_index_of $seen $param] >= 0} {
+            set notin "$param is in this device's own $listname list but not in the $cls class list, so a class-wide change cannot reach it. Choose this device flavor only instead."
+        }
+    }
+    switch -exact -- $op {
+        up -
+        down {
+            if {$i < 0} { return [list refused $notin] }
+            if {$op eq {up} && $i == 0} {
+                return [list refused "$param is already the first row of the $cls $listname list."]
+            }
+            if {$op eq {down} && $i == [expr {[llength $base] - 1}]} {
+                return [list refused "$param is already the last row of the $cls $listname list."]
+            }
+            set j [expr {$op eq {up} ? $i - 1 : $i + 1}]
+            set new [lreplace $base $i $i [lindex $base $j]]
+            set new [lreplace $new $j $j [lindex $base $i]]
+            ## ⚠ A REORDER MUST NOT BECOME A DELETION (issue 1323, rulings
+            ## DD-4 and DD-6).  `op_annot::register` accepts a declaration
+            ## carrying two triples that share a LABEL; `seed` returns it
+            ## undeduped and `effective` hands it out as the base above -- but
+            ## `set_list` keeps ONE entry per label, so the list comes back
+            ## SHORTER than it went in and `op_annot::_cards_for` stops
+            ## emitting a `.save` card the deck was asking for.  MEASURED at
+            ## HEAD with no button code at all: an UP press turned
+            ##     {id ids 0} {id vgs 2} {gm gm 1}  into  {id ids 0} {gm gm 1}
+            ## and `m1[vgs]` vanished from the deck.  DD-4/DD-6 say a display
+            ## decision NEVER changes what the simulator is asked to save, and
+            ## an Up press is not even a Delete.
+            ##
+            ## ⚠ IT GUARDS THE REORDER AND NOTHING ELSE, AND THAT IS A
+            ## MEASUREMENT, NOT A PREFERENCE.  A reorder is DEFINITIONALLY
+            ## length-preserving, so a shortening one is unambiguously a
+            ## defect.  Delete and Add are not: ruling DD-10 governs Delete's
+            ## last row, and issue 1288 RULED that an Add whose triple collides
+            ## by label is ACCEPTED, replaces the earlier row in place and
+            ## tells the user once -- which row BT27 golds by name.  Refusing
+            ## them here would be a THIRD door with a THIRD rule, which is the
+            ## disagreement issue 1288 exists to remove.  The residual -- a
+            ## Delete on a duplicate-label DECLARATION drops two display rows
+            ## -- was filed as issue 1326 and is now FIXED, one door further
+            ## back: ruling DD-15 makes `op_annot::register` refuse a
+            ## declaration carrying two triples that share a display label, so
+            ## the ambiguity is rejected where it is created and never reaches
+            ## a button.  This guard stays as the SECOND door, because DD-15
+            ## cannot shut `::op_annot::desc` against a fixture or an older
+            ## session's stored state -- one rule, two doors, which is the
+            ## principle DD-15 itself names.
+            ##
+            ## ⚠ AND IT RUNS BEFORE THE WRITE.  Issue 1323's own recommended
+            ## wording was to check afterwards and restore the base; that
+            ## cannot restore, because a `set_list` of the base dedupes it
+            ## identically -- storing a THIRD value neither the user nor the
+            ## PDK chose -- and a base that came from the SEED left the key
+            ## UNOWNED, which no verb in this store can undo.
+            ##
+            ## The STORE owns the sentence (`op_param_lists::reduce_why`, the
+            ## `governs` precedent: one rule, a second reader); this file mints
+            ## no second wording for a fact the store already words.
+            set drop {}
+            catch {set drop \
+                [::op_param_lists::reduce_why $skey $key $listname $new]}
+            if {$drop ne {}} { return [list refused $drop] }
+            set did "moved $param $op in the $listname list"
+        }
+        delete {
+            if {$i < 0} { return [list refused $notin] }
+            set why [rdw::_last_row_why $base $listname $param]
+            if {$why ne {}} { return [list refused $why] }
+            set new [lreplace $base $i $i]
+            set did "removed $param from the $listname list"
+        }
+        add {
+            if {$i >= 0} {
+                return [list refused "$param is already in the $cls $listname list."]
+            }
+            set t [rdw::_find_triple $cls $cell $param]
+            if {$t eq {}} {
+                return [list refused "$param is published by this run, but no list and no PDK descriptor declares it - so this window cannot tell which raw-name shape it has, and it will not guess one. A PDK declares it with op_annot::register."]
+            }
+            set new [linsert $base end $t]
+            set did "added $param to the $listname list"
+        }
+        default { return [list refused "there is no such edit."] }
+    }
+    set before 0
+    catch {set before [llength [::op_param_lists::said]]}
+    if {![::op_param_lists::set_list $skey $key $listname $new]} {
+        return [list refused [rdw::_store_tail $before \
+            "the list store refused that change and said nothing about why."]]
+    }
+    set say "$did $where."
+    ## ⚠ THE STORE'S OWN REPORT IS READ ON THE SUCCESS ARM TOO (item B5-2,
+    ## defect A7).  `set_list` returns 1 WITH A REPORT when it REDUCED the list
+    ## by LABEL -- issue 1288's ruling, "the two doors reach the same verdict
+    ## with the same sentence and the user is told once".  MEASURED at HEAD:
+    ## adding `{id vgs 2}` to `{{id ids 0} {gds gds 1}}` returns 1, reports
+    ## `the later one replaces it in place`, and the untouched `ids` row is
+    ## GONE.  IHP's shipped `{id ids 0}` is exactly that label != param shape,
+    ## so this is not a synthetic case.  The preserved patch read the report
+    ## only on the rc=0 arm, which told the user zero times in the one case the
+    ## ruling exists for.  ⚠ AND THE ADD IS NOT REFUSED: a third door with a
+    ## third rule is the disagreement issue 1288 is about.
+    set told [rdw::_store_tail $before {}]
+    if {$told ne {}} { append say " $told" }
+    ## RULING DD-16, ON THE SUCCESS ARM ONLY, AND AT EXACTLY ONE PLACE so all
+    ## three `ok` returns below carry it and no refusal arm does.  A refusal
+    ## changed nothing, so the false belief this clause corrects never forms --
+    ## the same argument `rdw::_do_save` makes for `_tier_note`, and the nine
+    ## refusal sentences above are already complete and true without it.
+    set sheet [rdw::_sheet_note $subject]
+    if {$sheet ne {}} { append say " $sheet" }
+    set shadow [rdw::_shadow_why $scope $cls $listname $cell $skey $key]
+    if {$shadow ne {}} { return [list ok "$say $shadow"] }
+    if {$scope ne {narrow}} { return [list ok $say] }
+    # ISSUE 1310, STATED RATHER THAN DISCOVERED.  `apply` is per `type=` token
+    # and passes no cell name, and op_annot holds ONE descriptor per type, so a
+    # per-cell display list cannot be expressed at all without editing
+    # op_annot.tcl, which this item may not.  The entry is stored, written and
+    # honoured by `effective`; it does not reach the drawn sheet.
+    return [list ok "$say The sheet still draws the $cls class list - a per-cell display list cannot be expressed yet (issue 1310)."]
+}
+
+# Ruling DD-6, both halves, and the sibling types with it.
+proc rdw::_apply_now {subject} {
+    set t {}
+    catch {set t [dict get $subject type]}
+    ## ⚠ THE ORDER IS HARMLESS AND ITS OLD REASON IS DEAD (item B5-2).  This
+    ## comment used to say the bare call MUST come first, because an
+    ## explicit-token-first order would leave the subject's type carrying the
+    ## union while its class SIBLINGS still carried the PDK's list, so the bare
+    ## call that followed would reach `seed`, see two types of one class
+    ## disagree, and report a divergence the caller had just created.  Ruling
+    ## DD-13 (item B2e) made `seed` read the DECLARATION, which nothing but
+    ## `op_annot::register` can write, so that route no longer exists:
+    ## RE-MEASURED both orders on this tree, zero reports either way and
+    ## `params` byte-identical on both type tokens.  The order is kept because
+    ## it is not worth churning; the reason is gone, and a stale reason invites
+    ## the next reader to "fix" the order on a false premise.
+    ##
+    ## WHAT DOES STILL HOLD is why there are two calls at all: a `type=` token
+    ## the class map does not name is unreachable from the bare call (issue
+    ## 1279), and the class's mapped SIBLINGS must follow, or `apply nmos`
+    ## alone leaves every pmos on the sheet drawing the old list.
+    catch {::op_param_lists::apply}
+    if {$t ne {}} { catch {::op_param_lists::apply $t} }
+    catch {xschem redraw}
+    return {}
+}
+
+# ---------------------------------------------------------------------------
+# THE SCOPE DIALOG.
+
+proc rdw::scope_dialog_build {op subject listname} {
+    variable scope_choice
+    variable list_choice
+    catch {destroy .rdw.scope}
+    set w [::toplevel .rdw.scope]
+    wm title $w {Which devices?}
+    wm transient $w .rdw
+    catch {$w configure -background [rdw::color panel]}
+    set inst {}
+    catch {set inst [dict get $subject instname]}
+    set cls {}
+    catch {set cls [dict get $subject class]}
+    set cell {}
+    catch {set cell [dict get $subject cellname]}
+    ::label $w.q -anchor w -justify left -background [rdw::color panel] \
+        -text "[string totitle $op] on $inst: which devices should this change?"
+    pack $w.q -side top -fill x -padx 8 -pady {8 4}
+    ::frame $w.sc -background [rdw::color panel]
+    ::radiobutton $w.sc.narrow -anchor w -variable ::rdw::scope_choice \
+        -value narrow -background [rdw::color panel] \
+        -text "this device flavor only ([expr {$cell eq {} ? {no cell name} : $cell}])"
+    ::radiobutton $w.sc.broad -anchor w -variable ::rdw::scope_choice \
+        -value broad -background [rdw::color panel] \
+        -text "every device of class $cls"
+    pack $w.sc.narrow $w.sc.broad -side top -fill x
+    pack $w.sc -side top -fill x -padx 16
+    # THE SECOND QUESTION, AND ONLY WHERE THE SPEC ASKS FOR IT.  List 3 is
+    # everything this run's raw holds, so an Add from it has no list of its own
+    # to land in and the dialog must ask which.  Lists 1 and 2 already name it.
+    if {$listname eq {all}} {
+        ::label $w.q2 -anchor w -background [rdw::color panel] \
+            -text {And which list should it go into?}
+        pack $w.q2 -side top -fill x -padx 8 -pady {8 4}
+        ::frame $w.li -background [rdw::color panel]
+        ::radiobutton $w.li.annotation -anchor w -variable ::rdw::list_choice \
+            -value annotation -background [rdw::color panel] \
+            -text {the annotation list (drawn on the sheet)}
+        ::radiobutton $w.li.summary -anchor w -variable ::rdw::list_choice \
+            -value summary -background [rdw::color panel] \
+            -text {the summary list (computed, not drawn)}
+        pack $w.li.annotation $w.li.summary -side top -fill x
+        pack $w.li -side top -fill x -padx 16
+    }
+    ::frame $w.btns -background [rdw::color panel]
+    ::button $w.btns.ok -text OK -width 8 \
+        -command [list rdw::scope_dialog_done $w ok]
+    ::button $w.btns.cancel -text Cancel -width 8 \
+        -command [list rdw::scope_dialog_done $w cancel]
+    pack $w.btns.cancel $w.btns.ok -side right -padx 4
+    pack $w.btns -side bottom -fill x -pady 6 -padx 6
+    # ase::ui::bind_dialog_esc's one line (ase_window.tcl:1580), and MEASURED
+    # safe here: a child toplevel's bindtags are {.rdw.scope Toplevel all}, so
+    # this cannot reach `.rdw`'s ruling DD-12 Escape and cannot end the canvas
+    # command mode by accident.
+    bind $w <Key-Escape> [list rdw::scope_dialog_done $w cancel]
+    wm protocol $w WM_DELETE_WINDOW [list rdw::scope_dialog_done $w cancel]
+    return $w
+}
+
+proc rdw::scope_dialog_done {w how} {
+    variable scope_result
+    variable scope_choice
+    variable list_choice
+    if {$how eq {ok}} {
+        set scope_result [dict create scope $scope_choice list $list_choice]
+    } else {
+        set scope_result {}
+    }
+    catch {grab release $w}
+    catch {destroy $w}
+    return {}
+}
+
+# -> {scope narrow|broad list annotation|summary}, or {} for Cancel.
+proc rdw::scope_dialog {op subject listname} {
+    variable scope_result
+    variable scope_choice
+    variable list_choice
+    # PRE-SET TO CANCEL, BEFORE THE BUILD.  A window destroyed by a deadman
+    # timer or by a window manager never reaches scope_dialog_done, and a stale
+    # result would then be read as an answer the user never gave.
+    set scope_result {}
+    set scope_choice broad
+    set list_choice [expr {$listname eq {all} ? {annotation} : $listname}]
+    if {![rdw::have_tk]} { return {} }
+    if {![winfo exists .rdw]} { return {} }
+    set prevfocus {}
+    catch {set prevfocus [focus]}
+    set w {}
+    if {[catch {rdw::scope_dialog_build $op $subject $listname} w]} { return {} }
+    catch {update}
+    catch {raise $w}
+    catch {grab set $w}
+    ## ⚠ THE DIALOG TAKES THE KEYBOARD, AND A GRAB ALONE IS NOT ENOUGH.
+    ## MEASURED: Tk REDIRECTS a keyboard event to the DISPLAY's focus window,
+    ## not to the window the event names -- so with the canvas still holding
+    ## the keyboard (rdw::_pick_seize ends in `focus -force $cv`), an Escape
+    ## aimed at this dialog was delivered to the CANVAS instead and silently
+    ## ENDED the user's command mode, while the dialog sat there waiting.  A
+    ## grab stops the pointer reaching other windows; it does not move the
+    ## keyboard.  `-force`, because the focus we are taking it from was itself
+    ## taken with `-force` and a plain `focus` cannot cross toplevels.
+    ##
+    ## ⚠ AND IT IS HANDED STRAIGHT BACK.  This is the one place in this file
+    ## that takes the keyboard, so it is the one place that must give it back:
+    ## the canvas is where the command mode's own Escape lives (issue 1308),
+    ## and a dialog that kept the keyboard would leave a mode the user cannot
+    ## leave -- the exact defect DD-12 was ruled about, one window further out.
+    catch {focus -force $w}
+    # GUARDED, for ase::ui::bus_dialog's own reason (ase_window.tcl:1414): the
+    # build-time `update` can let a timer destroy the window before we get
+    # here, and `tkwait window` on a dead path never returns.
+    if {[winfo exists $w]} { catch {tkwait window $w} }
+    catch {grab release $w}
+    if {$prevfocus ne {} && [winfo exists $prevfocus]} {
+        catch {focus -force $prevfocus}
+    }
+    return $scope_result
+}
+
+# ---------------------------------------------------------------------------
+# SAVE.
+
+# Ruling DD-7's read-modify-write is the STORE's, not this file's: `write_conf`
+# reads the tier it is about to write, changes only the keys this session
+# changed and preserves every other row verbatim, rows this build cannot parse
+# included.  This proc chooses the tier, names the file it wrote, and repeats
+# the store's own sentence when it refuses.
+# ⚠ THE TWO TIERS CAN BE ONE FILE, AND AT THE ORDINARY LAUNCH CWD THEY ARE
+# (issue 1325, item B5-a).  `op_param_lists::conf_path project` is
+# `[pwd]/.xschem/op_param_lists.conf`, so a session started in `$HOME` -- which
+# is how xschem is normally started -- resolves the PROJECT tier onto the
+# USER-GLOBAL file.  MEASURED: both answer
+# `/home/analog/.xschem/op_param_lists.conf`, and a Save taken there is read
+# back by every other design on the machine.  Ruling DD-7's whole subject is
+# that a write touches ONE TIER'S OWN FILE, so a Save that cannot say the two
+# are the same file is that ruling failing where the user cannot see it.
+#
+# THE FIX IS TO MAKE THE REPORT HONEST, NOT TO CHANGE WHICH TIER SAVE WRITES.
+# Issue 1273 -- "which directory IS the project" -- is a live rule debt on the
+# owed ledger and is the USER's to settle; this note names the collision and
+# points at it.  A named callee rather than three lines inline, so a reviewer
+# can neutralise exactly this sentence and watch a row say so.
+proc rdw::_tier_note {path} {
+    set tiers {}
+    catch {set tiers [::op_param_lists::conf_tiers $path]}
+    if {[llength $tiers] < 2} { return {} }
+    return "That file is both tiers here - this project directory and your user configuration directory are the same directory - so every design on this machine reads it back (issue 1273 asks which directory is the project)."
+}
+
+proc rdw::_do_save {label} {
+    set path {}
+    catch {set path [::op_param_lists::conf_path project]}
+    if {$path eq {}} {
+        return [rdw::status "$label: there is no project settings-file path to write to."]
+    }
+    set before 0
+    catch {set before [llength [::op_param_lists::said]]}
+    set ok 0
+    catch {set ok [::op_param_lists::write_conf $path]}
+    if {$ok} {
+        ## ON THE SUCCESS ARM ONLY.  A refused Save changed nothing, so the
+        ## false belief this sentence corrects never forms -- and the refusal
+        ## arm already carries the STORE's own wording, which must not be
+        ## diluted by a second sentence about a file that was not written.
+        set note [rdw::_tier_note $path]
+        if {$note ne {}} {
+            return [rdw::status \
+                "$label: wrote the operating-point parameter lists to $path $note"]
+        }
+        return [rdw::status "$label: wrote the operating-point parameter lists to $path"]
+    }
+    return [rdw::status "$label: [rdw::_store_tail $before \
+        "could not write the parameter lists to $path."]"]
+}
+
+# ---------------------------------------------------------------------------
+# THE ONE COMMAND EVERY WIDGET CARRIES.
+#
+# ⚠ EVERY PATH OUT OF HERE ENDS IN A STATUS LINE THAT NAMES THE BUTTON IT CAME
+# FROM.  That is rdw::inert's obligation surviving the wiring: the status line
+# is shared by all five buttons, so a message that does not identify itself is
+# the same failure as a silent one, one step further in.
+proc rdw::button {id} {
+    variable listkind
+    variable blocks
+    set label [rdw::_button_label $id]
+    if {$label eq {}} {
+        return [rdw::status "There is no button called '$id' in this window."]
+    }
+    # THE GREYING TABLE IS THE COMMAND PATH'S FENCE TOO.  A key, a menu or a
+    # later item that reaches this proc directly gets the same answer the
+    # disabled widget would have given.
+    if {[rdw::button_state $id $listkind] ne {normal}} {
+        return [rdw::status "$label: this button is greyed on the $listkind list, so there is nothing here for it to do."]
+    }
+    if {$id eq {save}} { return [rdw::_do_save $label] }
+    if {($id eq {delete} || $id eq {add}) && [rdw::pick_running]} {
+        return [rdw::status "$label: a device pick is running on the canvas - click a device, or press Escape to end the mode, then press $label again. A dialog opened now would swallow the click the mode is waiting for."]
+    }
+    if {[llength $blocks] == 0} {
+        return [rdw::status "$label: nothing has been dumped into this window yet - press 1, 2 or 3 over a device first."]
+    }
+    set line [rdw::_target_line]
+    set loc [rdw::_locate $line]
+    set param {}
+    if {$loc ne {}} {
+        set param [rdw::_row_param \
+            [lindex [lindex $blocks [lindex $loc 0]] [lindex $loc 1]]]
+    }
+    if {$param eq {}} {
+        return [rdw::status "$label: line $line is not a parameter row - click a parameter row in the pane, then press $label again."]
+    }
+    set subj [rdw::_subject [lindex $loc 0]]
+    if {$subj eq {} || [dict get $subj type] eq {} || [dict get $subj class] eq {}} {
+        return [rdw::status "$label: the device this block was dumped from has no operating-point descriptor in this design any more, so there is no list to edit."]
+    }
+    if {$id eq {up} || $id eq {down}} {
+        # List 3 is what this run's raw actually holds (ruling DD-1), which is
+        # why the store refuses to persist it at all: there is no stored order
+        # to move.  The greying stays keyed on list IDENTITY -- a
+        # position-dependent grey would have to re-grey on every cursor move,
+        # which needs a new binding on the pane and is issue 1306/1308 ground.
+        if {$listkind eq {all}} {
+            return [rdw::status "$label: list 3 is live from the simulator and has no stored order to change. Press 1 or 2 first."]
+        }
+        set ln $listkind
+        # `governing`, not narrow-or-broad: Up and Down raise no dialog, so
+        # rdw::_edit resolves the key itself through op_param_lists::governs.
+        lassign [rdw::_edit $id $subj $ln governing $param] verdict sentence
+        if {$verdict ne {ok}} { return [rdw::status "$label: $sentence"] }
+        # ⚠ AND IT APPLIES, LIKE DELETE AND ADD (item B5-2).  The preserved
+        # patch deferred the redraw here and SAID SO on screen -- "The drawn
+        # order follows on the next Add, Delete or reload (issue 1312)" --
+        # because `op_param_lists::seed` read back the very field `apply`
+        # writes, so an apply after the user owned an annotation list reordered
+        # the seed, and the SUMMARY list, which nobody owns, then answered in
+        # the annotation list's order.  Ruling DD-13 (item B2e) killed that:
+        # `seed` reads the DECLARATION now, `_show_set` filters the union
+        # annotation-first, and store row N4 fences the opposite.  The
+        # deferral's stated cost no longer exists, and a status line citing a
+        # FIXED issue as its reason is a false statement on a screen the user
+        # is reading.  Rows BT8 and BE7 assert the display key moves now, for
+        # every type token of the class.
+        rdw::_apply_now $subj
+        return [rdw::status "$label: $sentence"]
+    }
+    set deflist [expr {$id eq {add} ? {annotation} : $listkind}]
+    set ans [rdw::scope_dialog $id $subj $listkind]
+    if {$ans eq {}} {
+        return [rdw::status "$label: cancelled - nothing was changed."]
+    }
+    set scope broad
+    catch {set scope [dict get $ans scope]}
+    if {$scope ne {narrow} && $scope ne {broad}} { set scope broad }
+    set ln $deflist
+    if {$listkind eq {all}} { catch {set ln [dict get $ans list]} }
+    if {$ln ne {annotation} && $ln ne {summary}} { set ln $deflist }
+    lassign [rdw::_edit $id $subj $ln $scope $param] verdict sentence
+    if {$verdict ne {ok}} { return [rdw::status "$label: $sentence"] }
+    rdw::_apply_now $subj
+    return [rdw::status "$label: $sentence"]
+}

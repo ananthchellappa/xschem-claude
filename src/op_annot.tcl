@@ -415,6 +415,65 @@ proc op_annot::_declare {descriptor} {
   return $out
 }
 
+## RULING DD-15 (issue 1326) — THE REPEATED DISPLAY LABEL IN A DECLARATION, OR
+## {} WHEN THERE IS NONE.
+##
+## Two rows sharing one display label are ambiguous BY CONSTRUCTION: the label
+## is what identifies a row to the user and it is also what
+## `op_param_lists::set_list` and the settings-file parser dedupe on (issue
+## 1288's ruling, "a second entry for a label replaces the earlier one in
+## place"). So a declaration carrying two of them is asking the parameter-list
+## store for something it cannot represent, and nothing downstream can repair
+## that: a later Up or Delete hands the list back one row SHORTER than it went
+## in, and `_cards_for` then stops emitting a `.save` card the deck was asking
+## for. Measured before the guard existed — an Up press turned
+##     {id ids 0} {id vgs 2} {gm gm 1}   into   {id ids 0} {gm gm 1}
+## and `m1[vgs]` vanished from the deck. DD-15 refuses at the door where the
+## ambiguity is CREATED rather than at the far end where it shows up.
+##
+## ⚠ IT SCANS THE DECLARATION — what `_declare` will store under `declared` —
+## AND NOT `params`. `op_param_lists::apply` re-registers every applied type
+## (op_param_lists.tcl:1841) handing back the descriptor it read with `params`
+## replaced by the annotation+summary UNION, and it does so inside a catch that
+## turns a raise into a `_say`. A guard reading `params` would therefore make an
+## ordinary Delete report "cannot register the parameter lists" instead of doing
+## its job — while `_save_set` and `_merge_declared` both dedupe by label, so
+## that union is label-unique by construction and there is nothing there to
+## catch anyway.
+##
+## ⚠ EVERY READ IS CATCH-GUARDED AND FALLS THROUGH TO ACCEPT. `_declare`'s own
+## header forbids parsing the value and forbids raising for a malformed one, and
+## a `params` may be any string at all because a user's own rc is a supported
+## door (invariant I5). A declaration that does not parse as a list, or one
+## holding a row that does not parse, is accepted exactly as it was before this
+## guard existed and is validated where it always was, in
+## `op_param_lists::_params`.
+##
+## ⚠ WHY THE RULE IS WRITTEN TWICE RATHER THAN CALLED ACROSS.
+## `op_param_lists::_dup_index` (op_param_lists.tcl:607) is the same one-line
+## rule for the store's own two doors, and this proc deliberately does not call
+## it: op_annot.tcl is sourced FIRST and op_param_lists.tcl depends on it, never
+## the other way round, and ruling DD-6 already rejected exactly that load-order
+## inversion to save a dict key. One sentence, written twice; the dependency
+## stays one-way.
+proc op_annot::_dup_declared_label {descriptor} {
+  if {[catch {_declare $descriptor} d]} { return {} }
+  if {[catch {dict exists $d declared} has]} { return {} }
+  if {!$has} { return {} }
+  if {[catch {dict get $d declared} decl]} { return {} }
+  if {[catch {llength $decl} n]} { return {} }
+  set seen {}
+  for {set i 0} {$i < $n} {incr i} {
+    if {[catch {lindex $decl $i} row]} { return {} }
+    if {[catch {llength $row}]} { return {} }
+    if {[catch {lindex $row 0} label]} { return {} }
+    if {$label eq {}} { continue }
+    if {[lsearch -exact $seen $label] >= 0} { return $label }
+    lappend seen $label
+  }
+  return {}
+}
+
 ## op_annot::register <symbol-type> <dict>
 ##
 ## <symbol-type> is the symbol K-record `type=` token (`nmos`, `pmos`,
@@ -449,6 +508,24 @@ proc op_annot::register {type descriptor} {
     return -code error \
       "op_annot::register: descriptor for symbol type \"$type\" is not a\
  well-formed dict ($err)"
+  }
+  ## RULING DD-15 (issue 1326): THE SECOND LOUD FAILURE, AND THE SAME SHAPE AS
+  ## THE FIRST. A declaration carrying two triples that share a display label is
+  ## refused ONCE, HERE, where the duplicate is introduced — not at the Delete
+  ## or the Up, which would break a button for every press of that class with a
+  ## sentence about a row the user never touched (issue 1326's option (a),
+  ## rejected). It runs BEFORE anything is stored and before `gen` is bumped, so
+  ## a refused registration leaves the registry byte-identical.
+  ## Cost, stated by the ruling: a PDK author — or a user's own rc — gets an
+  ## error at load time instead of silence. That is the point.
+  set _dup [_dup_declared_label $descriptor]
+  if {$_dup ne {}} {
+    return -code error \
+      "op_annot::register: the declaration for symbol type \"$type\" carries a\
+ second entry for label \"$_dup\"; two rows sharing one display label are\
+ ambiguous by construction and the parameter-list store cannot represent them,\
+ so a later reorder or delete would drop both rows and the `.save` card with\
+ them (ruling DD-15, issue 1326). Give one of them a different label."
   }
   set desc($type) [_declare $descriptor]
   ## I5: tell the draw-time overlay its cached blocks are stale (see the

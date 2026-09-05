@@ -1506,4 +1506,50 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   independently. Nothing ships it yet — the only callers are in the preserved
   patch — so it is a **precondition on item B5-3**. **FILED, NOT FIXED.**
 
-**The next free number is 1328.**
+* **1328** — **a DD-15 refusal raised inside a PDK `_procs.tcl` aborts the rest
+  of that file.** All four shipped `op_annot::register` sites are UNCAUGHT
+  (`sky130A/sky130_procs.tcl:449`, `gf180mcuD/gf180_procs.tcl:155`,
+  `ihp-sg13g2/sg13g2_procs.tcl:806` and `:856`), and `source` unwinds on the
+  first raise — so one duplicate label costs every declaration after it in that
+  file, including, in sg13g2, a `vertical_npn` the author never touched
+  (measured `SOURCE_RC=1`, `SECOND_TYPE=0`). A consequence of ruling **DD-15**,
+  found while implementing it in item **B5-3**. The fix wraps three files
+  outside that item's Files cell for a case no shipped PDK hits — all four
+  shipped declarations carry distinct labels and store row **DL3** golds them
+  accepted by value. **FILED, NOT FIXED.**
+
+* **1329** — **ruling DD-16's cross-sheet clause is FALSE through a symlink.**
+  `rdw::_sheet_note` compares the block's stamped `schname` against
+  `xschem get schname` as plain strings — a recorded choice, because `_fid` is a
+  private store verb window row **BT22** forbids `rdw.tcl` from naming. One
+  sheet opened by two names is announced as two (measured `STRING_EQ=0`, clause
+  emitted). The proc's own header claims byte-identity "whenever they name the
+  same sheet"; that sentence is refuted. One wrong advisory sentence, never a
+  wrong write. Found by item **B5-3**'s adversary. **FILED, NOT FIXED.**
+
+* **1330** — **`rdw::_apply_now` swallows an `apply` failure while the status
+  line reports success.** `rdw::button` composes its whole sentence from
+  `rdw::_edit` and only THEN calls `_apply_now`, whose three calls are each in a
+  bare `catch` and which returns `{}` unconditionally (measured
+  `APPLY_NOW_RC=0`, `APPLY_NOW_RES=''`, `EDIT_BEFORE_APPLY=1`). A silent-failure
+  channel, not a live defect — the only measured route to an `apply` failure is
+  issue 1326's descriptor, which **DD-15** now refuses. **FILED, NOT FIXED.**
+
+* **1331** — **the narrow arm refuses a symbol path containing a space, in the
+  store's own internal jargon.** A cell name with whitespace matches neither of
+  `rdw::_edit`'s two up-front narrow guards and falls into `set_list`, so the
+  user gets `the flavor key "spxcls {/home/u/My Designs/sp.sym}" has a field
+  that is empty or carries whitespace…` — brace syntax exposed, two causes
+  named, and, unlike both siblings, NO *"Choose every device of class X
+  instead."* Nothing is mis-stored. **FILED, NOT FIXED.**
+
+* **1332** — **the keys suite's SD rows drive a real modal on a fixed
+  `after 100` and can false-red under load.** Rows SD1/SD2/SD3b arm their
+  driver on a fixed timer rather than polling for `.rdw.scope`; observed once in
+  134 runs as `SD3b -> {0 0 0 {} 0 0 {}}` while a second crew agent held the
+  same `:99` display (issue **0990**'s situation). Instrumented margin: the
+  dialog appears 3–6 ms after the invoke, max 19 ms over 88 runs, against a
+  100 ms timer. The deadman worked — it false-redded, it did not hang. A TEST
+  defect; the fix is to poll, not to widen the delay. **FILED, NOT FIXED.**
+
+**The next free number is 1333.**

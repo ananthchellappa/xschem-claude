@@ -219,3 +219,35 @@ both rows are present.
   `write_net_hilight_style_conf` and `write_recent_file` all rewrite whole), so
   there is no second instance **yet** — and this issue is the reason to check
   before adding one.
+
+## The SECONDARY defect (`_key`'s silent truncation): reproduced, and its own prediction REFUTED
+
+Item **B5-3**, 2026-09-04. Issue **1288** recorded this under 1294 as
+*"latent; B5's scope dialog is the first door that could reach it."*
+
+**The truncation reproduces verbatim.** Measured on this binary:
+
+```
+_key flavor {mos *n* JUNK} annotation   ==   _key flavor {mos *n*} annotation     -> 1
+```
+
+`_key` (`src/op_param_lists.tcl:427`) canonicalises a flavor key by taking the
+first two elements, so `owns` and `get_list` answer for a key `_key_why`
+(`:442`) — and therefore `set_list` — **refuses**. That is the same two-door
+disagreement this issue is named for, one layer down.
+
+**But the prediction about which door reaches it is REFUTED**, by reading the
+button column that landed in item B5-3 rather than by reasoning about it:
+
+> `rdw::_edit` builds `set key [list $cls $cell]` — always exactly two elements
+> — and `rdw::_scope_for` returns `[lindex $g 1]` from
+> `op_param_lists::governs`, whose keys came through `_key` already
+> canonicalised to two. The button column cannot mint a three-element flavor
+> key.
+
+So the scope dialog is **not** a door onto this, and no door in the tree is yet.
+**STILL OPEN, DELIBERATELY NOT FIXED**: changing the store's key canonicaliser —
+which is used as an **array index** — on the batch's last item, for a path
+nothing can reach, is the shape that lost entries in item B2a-2. The fix belongs
+with the first caller that can actually build a longer key, and that caller
+should be the thing that motivates the change.
