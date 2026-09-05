@@ -25,6 +25,68 @@ dev display `:99`. The eleven are named in `PLAN.md`. Every later audit is
 judged by DIFFING that list by test **NAME and STATUS**, never by the red count.
 `run_regression.tcl` (T1) baseline is **ZERO** counted failures, run **solo**.
 
+# ✅ THE BATCH IS COMPLETE — 2026-09-04
+
+**Feature A** (`Ctrl-Alt-6`, the schematic declutter, issue 1244) closed at
+`4f711e80`. **Feature B** (the Results Display Window, issue 1245) closed at
+`05949661`.
+
+| | `--nogui` | `:99` |
+|---|---|---|
+| `test_annot_declutter_1244` | — | **134** |
+| `test_rdw_seam_1245` | **49** | — |
+| `test_op_param_store_1245` | **130** | 130 |
+| `test_rdw_window_1245` | **109** | **121** |
+| `test_rdw_keys_1245` | (skips) | **41** |
+| `test_op_annot` (control) | **485** | **492** |
+
+Full audit **369 pass / 11 fail / 0 crash / 2 skip of 382**, the same eleven
+names by name and verdict. T1 solo **zero**.
+
+## What the record actually looks like, stated plainly
+
+**Six items were reverted before landing**, three of them on the button column
+alone. Every one of those reverts was a crew's own adversary breaking work that
+had already gone green on every tier, and every one preserved its work as a
+re-appliable patch rather than being retyped.
+
+**Not one of the button column's three reverts was caused by the buttons.** It
+was the first real caller of the store and of the block list, and each attempt
+uncovered a latent defect underneath it — the seed reading a field `apply`
+overwrites, a block that could not say which sheet it came from, a reorder that
+deleted a `.save` card, a Save that named one file and wrote another. **Two of
+those reproduced at HEAD with no button code at all.**
+
+That is what a provider looks like when it was built and tested only against its
+own tests, and then meets its consumer.
+
+## The lesson this batch paid for eight times over
+
+**A suite fences the questions its author thought of, and a green count is a
+statement about the fence, not about the code.**
+
+* B1 was green at **37/37** while returning `nan` as a value.
+* B2c was green at **79** while deleting rows the user had typed.
+* B2d was green at **56** while the seam's own door lost its analysis sentence.
+* B4's row V8 was *written for* the focus race and **passed while the race was
+  live**, because the row before it had already reached the state that hides it.
+* B5-2 was green at **100/111/113/40**, with a clean tier diff, **while editing
+  a device nobody was looking at**.
+
+The corollaries are now standing rules in `CREW_BRIEF.md`: ordering inside a
+suite is part of the fixture; a blank result is not a pass; a falling check count
+is not a pass either.
+
+## Fourteen driver decisions, and three of them were corrections of my own
+
+DD-1 … DD-16 are in `DECISIONS.md`, each with what it costs and what it
+rejected, each on the user's queue. **DD-4 → DD-6 → DD-13 is one mistake made
+three times**: ruling on what a stored field *means* without enumerating every
+reader of it. The rule that came out of it — grep every reader first, list them,
+say what each will now see — was applied for the first time at DD-14, and held.
+
+---
+
 ## ⚠ THE BASELINE IS ELEVEN NAMES AS OF 2026-09-04, NOT TWELVE
 
 `test_wave_sigbrowser_i12` was carried as an accepted red for the whole of
@@ -293,3 +355,4 @@ three `look` debts from the merge.
 | B2e | E | 0abba4cb | store 86->102 · op_annot 485->485 (--nogui) / 492->492 (:99) UNMOVED · declutter_1244 134->134 UNMOVED · rdw_window 76->76 / 86->86 · rdw_seam 49->49 · rdw_keys 35 (:99, but Verify-C saw 35/33/32 over five runs — issue-1269 focus flake, not a stable acceptance number) · T1 0->0 counted · T2 HARNESS PASS 6/6 · full audit 368/11/0/2 -> 369/11/0/2 of 382, same eleven names by name and verdict · git a | 1315,1316,1317,1318,1319,1320 | DD-13's declaration stamp is preserve-if-present, so the recovery round-trip printed in all three PDK _procs.tcl files (`set d [op_annot::descriptor nmos]; dict set d params ...; op_annot::register nmos $d`) now changes what the run computes and what the sheet draws but NOT what `seed` answers — should that recipe itself redeclare the seed, or is the one-line `dict unset d declared` escape hatch B |
 | B5-2 | F | 05fe656f | REVERTED to baseline and re-measured: window 76 --nogui / 86 :99, store 102, keys 35 (floor 35), op_annot 492, declutter 134, T1 0 fail, T2 HARNESS PASS 6/6 — the implementation had reached 100/111/113/40 green before the revert. | 1321,1322,1323,1324,1325 | B5-2 built clean and green on every tier, then the wired Delete was measured editing a device on a different sheet — reverted in full, work preserved as B5-2_working_tree_REFUTED.patch (md5 42890cf163dd9ba1e85e312e1801c6ed, applies rc=0); Feature B is NOT complete. |
 | B5-a | E | f00c90a4 | window 76→83 --nogui / 86→94 :99 · store 102→110 (both arms) · keys 35→36 :99 (KX_FLOOR RAISED 35→36) · controls unmoved seam 49, op_annot 485/492, declutter 134 · T1 0 counted fail · T2 HARNESS PASS 6/6 · T4 no build (pure Tcl, grep -c both files in src/Makefile = 2) | 1326,1327 | Three rulings are yours: (1) issue 1326 — when a PDK declares two parameters sharing a label, should Delete refuse, or keep dropping both rows and a .save card, or should op_annot::register refuse the declaration? (2) should the status line NAME the sheet a block was dumped from, and should a cross-sheet edit ever be refused? (3) do you ratify Save's new collision sentence and its project-tier def |
+| B5-3 | E | 05949661 | store 114->130 · window 83->109 nogui / 94->121 :99 · keys 36->41 (KX_FLOOR 36->41) · seam 49->49 · op_annot 485->485 / 492->492 · declutter 134->134 · T1 0 (solo) · T2 HARNESS PASS 6/6 · audit 369p/11f/0c/2s of 382, same eleven names | 1328,1329,1330,1331,1332 | Feature B is complete and committed, suites green, please look: does the wired button column, its two scope dialogs and its greying read right on screen (look debt the_B5_button_column_and_the_two_scope_dialogs, ten judgement questions, updated in place)? |
