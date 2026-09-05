@@ -5,8 +5,33 @@ reverted patch; **root cause re-measured by the write-up agent on the reverted
 tree at `849f2231`**, where it is a **HEAD defect**, not a property of the
 patch. **FILED, NOT FIXED.**
 
-**Status:** open. **Latent today** — nothing calls `set_list` outside the two
-suites; item **B5**'s scope dialog is the door that opens it.
+**Status:** **HALF FIXED**, 2026-09-04. The store half is fixed in the tree; the
+button half is written but **reverted** and therefore still open.
+
+* **The store half — FIXED by item B2e (`21fcece6`/`0abba4cb`).** `_dup_index`
+  and `_dup_why` are now *shared* by `set_list` and `_parse_line`, so the two
+  doors reach the same verdict with the same sentence. Note the CONTRACT MOVED
+  with the fix, and the rest of this file describes the pre-fix behaviour: a
+  repeated **label** is now a **reduction, not a refusal** — the later triple
+  replaces the earlier one in place, the user is told once, and `set_list`
+  returns **1**. A malformed triple is still a refusal with no change at all.
+* **The button half — WRITTEN AND THEN REVERTED WITH ITEM B5-2, 2026-09-04. STILL
+  OPEN AGAINST THE TREE.** The fix exists, measured and sabotage-proved, but only
+  inside `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch` (md5
+  `c51587ad91d65a05bbd07930ff237f9b`) — item B5-2 was reverted in full for an
+  unrelated blocker (issue **1322**), so nothing in `src/` carries it. It is
+  latent meanwhile: there is again no UI door to `set_list`. The description
+  below is what the re-do must re-land. The first UI door to
+  `set_list` read the store's report only on the **rc=0** arm, so on the success
+  arm — the one the new contract routes a label collision to — the sentence was
+  dropped and the status line reported a plain success. Measured at HEAD: adding
+  `{id vgs 2}` to `{{id ids 0} {gds gds 1}}` returns 1, reports *"the later one
+  replaces it in place"*, and the untouched `ids` row is **gone**. IHP's shipped
+  `{id ids 0}` is exactly that label != param shape. `rdw::_edit` now reads
+  `rdw::_store_tail` on the success arm too and appends the store's own wording.
+  The Add is **not** refused — a third door with a third rule is the
+  disagreement this issue is about. Fenced by window row **BT27**; sabotaged
+  (`rdw::_store_tail` stubbed to its fallback) and BT27 reds.
 
 ---
 

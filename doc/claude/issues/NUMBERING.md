@@ -1437,4 +1437,52 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   both lists empty still yields zero `.save` cards"*). Records the adjacent
   hand-written `declared {}` case too. **FILED, NOT FIXED.**
 
-**The next free number is 1321.**
+* **1321** — **a narrow scope key that self-matches can still match siblings.**
+  The scope dialog's narrow arm mints the store key `{<cls> <cellname>}`, whose
+  second field `governs` matches as a **glob**. Item B5-2 fixed the half that
+  breaks loudly — `a[bc].sym` and `a\b.sym` do not match themselves, so the key
+  answered nothing and DD-8's shadow sentence then blamed an earlier entry that
+  does not exist; the narrow arm now refuses those up front (window row BT28).
+  The residual: `a*b.sym` and `a?b.sym` **do** self-match and also match every
+  sibling, so *"this device flavor only"* silently governs a class of them. Not
+  fixed here — the guard cannot tell a deliberate glob from a literal, and no
+  PDK in this tree ships such a cell name. Recommended: an exact-match key form
+  decided inside `governs`, the one scan item B5-2 made single. **FILED, NOT
+  FIXED.** ⚠ **Item B5-2 was REVERTED**, so the half described above as fixed
+  lives only in `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch`, not
+  in the tree. Both halves are open against `fluid-editing` as it stands.
+
+* **1322** — **`rdw::_subject` resolves the block against whatever sheet is
+  open**, so a button edits a device the user is not looking at and names the
+  wrong class in the status line. `_hdr_instname` captures the header's path half
+  and returns only the name; `_subject` re-resolves that bare name against the
+  live editor; nothing clears `::rdw::blocks` on a load. `M1` is every device
+  symbol's default template name, so two sheets is the ordinary case. **This is
+  the defect that reverted item B5-2.** Records the measurement that the obvious
+  fix — comparing the cadence path — **does not catch its own reproduction**
+  (both sheets top-level, `PATHS_EQUAL=1`). **FILED, NOT FIXED.**
+
+* **1323** — **a reorder becomes a deletion when two declared triples share a
+  label**, dropping a `.save` card — rulings **DD-4/DD-6** violated by the most
+  purely-display operation the feature has. `register` accepts a duplicate label
+  and `seed` returns it verbatim, while `set_list` dedupes by label, so a
+  length-3 reorder request comes back length 2 (measured at HEAD with no B5-2
+  code). Latent with sky130, gf180 and IHP — all three checked — and reachable
+  through invariant **I5**'s user rc. **FILED, NOT FIXED.**
+
+* **1324** — **the pane's `insert` mark drifts on every new dump**, so *"the row
+  your cursor is in"* and `::rdw::targetrow` disagree (measured: widget 9,
+  variable 3) — the state `set_row`'s own comment says cannot happen.
+  `render_pane`'s `delete 1.0 end` collapses the right-gravity mark and the
+  re-inserts carry it to the end. A confusing refusal rather than a wrong edit,
+  and invisible because the pane is `-state disabled` and draws no cursor.
+  **FILED, NOT FIXED.**
+
+* **1325** — **Save writes the USER-GLOBAL settings file while reporting a
+  project write.** `rdw::_do_save` hardcodes `conf_path project`, and with cwd
+  `$HOME` — how xschem is ordinarily launched — the project and user tiers are
+  **the same path** (measured `SAME=1`). `op_param_lists::load` already dedupes
+  that collision; the writer does not. Ruling **DD-7** and store row **BE5** both
+  go vacuous in the common case. **FILED, NOT FIXED.**
+
+**The next free number is 1326.**

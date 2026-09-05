@@ -1209,6 +1209,85 @@ entry. ⚠ Modal dialogs are a known headless-harness hazard (issue 0803: a moda
 dialog hangs any suite under X); the dialog must be drivable by the tests
 without a human.
 
+> ⛔ **ITEM B5-2, 2026-09-04 — DESIGNED, BUILT, MEASURED, AND REVERTED. THE
+> COLUMN IS NOT WIRED.** The item was implemented in full from the preserved
+> patch with six corrections, went green on every tier (window 100/111, store
+> 113, keys 40), and was then **refuted and rolled back** on issue **1322** —
+> `rdw::_subject` re-resolves the block's bare instance name against whatever
+> sheet is open, so a button edits a device the user is not looking at. The work
+> is preserved at `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch`
+> (md5 `c51587ad91d65a05bbd07930ff237f9b`).
+>
+> **The design conclusions below were each measured and they SURVIVE the
+> revert** — they are what the re-do should build, not what the tree contains.
+> The three bullets above are therefore still unpaid in `src/`:
+>
+> * **`Up`/`Down` on list `all` refuses, with a sentence** — the third cell of
+>   the first row is wrong as written, exactly as the bullet above says.
+> * **A reorder raises no dialog, so it writes at the entry that GOVERNS the
+>   device** — the flavor entry whose glob matches this cell, else the class
+>   entry (ruling DD-2's primary key). Delete and Add keep asking, because their
+>   dialog's own radiobutton says *"this device flavor only (`<cell>`)"*.
+> * **The narrowing has ONE definition and TWO consumers** (invariant I1): the
+>   flavor-glob scan moved into a published accessor,
+>   `op_param_lists::governs {cls listname {cellname {}}}`, which answers
+>   `{flavor {<cls> <glob>}}`, `{class <cls>}` or `{}`, and `effective` is now
+>   three lines on top of it. Store row **BG1** locks the two together by
+>   asserting `get_list` of what `governs` *names* is byte-identical to
+>   `effective` of the same three arguments — so the lookalike that produced the
+>   third bullet's defect cannot come back.
+> * **The broad base stays the CLASS list.** Giving the broad arm
+>   `effective <cls> <list> <cell>` as its base — the obvious way to hand it the
+>   cell — writes the *flavor* list's rows into the *class* key and destroys
+>   every class row the flavor entry does not carry: ruling **DD-7**'s failure,
+>   the one that reverted item B2a twice. The cell reaches the broad arm **after**
+>   the write instead, in `rdw::_shadow_why`, which runs on all three arms with
+>   a different sentence each and says *"this device's own rows did not change"*
+>   rather than reporting a bare success.
+> * **A narrow key is a GLOB, and a cell name that does not match itself is
+>   refused up front** (`a[bc].sym`, `a\b.sym`). The residual — `a*b.sym` and
+>   `a?b.sym` self-match *and* match siblings — is issue **1321**, filed not
+>   fixed.
+> * **A reorder now applies immediately**, and the status line no longer cites
+>   issue 1312 as a reason to defer: DD-13 fixed 1312, so the deferral's stated
+>   cost (a reorder leaking through the seed into the unowned summary list) no
+>   longer exists, and a status line citing a fixed issue is a false statement on
+>   screen. ⚠ **Unratified, status E** — rule debts
+>   `1245_B5-2_reorder_applies_immediately` and
+>   `1245_B5-2_reorder_writes_the_governing_glob`.
+> * **Issue 1318 was NOT read**: `rdw::_apply_now` ignores `apply`'s return
+>   value, which is correct — reading it would make *"updated N types"* wrong for
+>   exactly the Reset press.
+>
+> **⚠ AND FOUR THINGS THE SPEC MUST SAY THAT IT DID NOT, EACH MEASURED WHEN THE
+> ITEM WAS REFUTED:**
+>
+> * **A block must carry its own SUBJECT, captured when it is dumped.** The
+>   header string `"<instname>:<path>"` is a *rendering*, not an identity:
+>   re-resolving the name half against the live editor answers about whatever
+>   sheet is open now, and nothing clears the pane on a load. `M1` is every
+>   device symbol's default template name, so two sheets is the ordinary case.
+>   Issue **1322**, which also records that the obvious guard — comparing the
+>   cadence path — **does not catch its own reproduction**, because two
+>   top-level sheets both report path `/`. The axis is sheet identity.
+> * **A reorder must not be able to shorten a list.** `register` accepts a
+>   declaration with two triples sharing a label and `seed` returns it verbatim,
+>   while `set_list` dedupes by label — so a length-3 reorder request comes back
+>   length 2 and **a `.save` card disappears**, making the most purely-display
+>   operation the feature has into a save decision. Rulings **DD-4/DD-6**. A
+>   length check on the reorder arm closes the class. Issue **1323**.
+> * **The pane must show which row is targeted.** `render_pane`'s
+>   `delete 1.0 end` collapses the right-gravity `insert` mark and the re-inserts
+>   carry it to the end, so *"the row your cursor is in"* silently becomes a
+>   different row on every dump while `::rdw::targetrow` disagrees — and the
+>   `-state disabled` pane draws no cursor, so nothing on screen says so. Issue
+>   **1324**.
+> * **Save must resolve its tier, not name one.** With cwd `$HOME` — how xschem
+>   is ordinarily launched — `conf_path project` and `conf_path user` are the
+>   **same path**. `load` already dedupes that collision; a writer that hardcodes
+>   `project` rewrites the user-global file while reporting a project write, and
+>   ruling **DD-7**'s *"one tier's own file"* goes vacuous. Issue **1325**.
+
 #### AS BUILT — item B2d, 2026-09-04: the answer dict is UNTRUSTED INPUT
 
 The five-key table above is a **description of what a well-behaved backend

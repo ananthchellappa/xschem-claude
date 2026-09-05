@@ -2432,7 +2432,175 @@ issues 1312/1292/1287/1314/1315/1316/1317/1318/1319/1320 · `NUMBERING.md` ·
 
 ---
 
-## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04. Built, green on every tier, REFUTED on a binding ruling and REVERTED.**  *(needs B2, B3, and see B2a — ⚠ **1312 IS NOW FIXED by item B2e**, so the A5 blocker is gone; A6 and A7 still block)*
+## B5 — the button column and the two scope dialogs  ⛔ **NOT LANDED (status F), 2026-09-04.** Re-done as **B5-2**, which was ALSO refuted and reverted. **Read the B5-2 block first and apply the B5-2 patch, not B5's.**  *(needs B2, B3, B2a, B2e)*
+
+> ⛔ **ITEM B5-2, 2026-09-04 — APPLIED, CORRECTED SIX TIMES, GREEN ON EVERY
+> TIER, REFUTED AND REVERTED. FEATURE B IS NOT COMPLETE.** This is the second
+> time this item has been built, measured green, and rolled back for a defect no
+> count could see. **The patch is preserved and is a SUPERSET of B5's** —
+> `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch`, md5
+> `c51587ad91d65a05bbd07930ff237f9b`, 2781 lines, `git apply --check` **rc=0** at
+> `c940a5df`. It carries B5's `src/rdw.tcl` half plus the six corrections plus
+> the three rewritten suites. **Apply THIS patch; B5's is now stale.**
+>
+> **The counts it reached, each from an actual `^RESULT:` line:** window
+> 76 → **100** `--nogui` / 86 → **111** `:99`, store 102 → **113**, keys
+> 35 → **40** with `KX_FLOOR` raised 35 → 40 in the same edit. T1 zero, T2
+> `HARNESS: PASS`, audit 369/11/0/2 with the eleven fail names byte-identical.
+> **Every one of those numbers was true while the Delete button edited a device
+> the user was not looking at.** Tenth item running.
+>
+> ### ⛔ THE BLOCKER — ISSUE 1322, AND IT IS THE ORDINARY CASE
+>
+> `rdw::_hdr_instname` regexps the block header `name:path` into two capture
+> groups and **returns only the name**. `rdw::_subject` then re-resolves that
+> bare name with `op_annot::type` and `xschem getprop instance … cell::name`,
+> both of which answer about **whatever sheet is open now** — and nothing clears
+> `::rdw::blocks` on a schematic load (`keep_latest`, key 4, is the only writer
+> that ever shortens it). Reproduced independently by the write-up agent, not
+> taken on the adversary's word:
+>
+> ```
+> SHEET A: M1 type=vndev cell=vn.sym          <- the user dumps M1 here
+> SHEET B: M1 type=vpdev cell=vp.sym  blocks=1 <- opens another sheet; block stays
+> SUBJECT of the block on screen = instname M1 type vpdev class pcls cellname vp.sym
+> SAY=<Delete: removed gm from the annotation list for class pcls.>
+> NCLS(the sheet the block came from) owns=0
+> PCLS(the sheet now open)            owns=1 list={id ids 0} {gds gds 1}
+> ```
+>
+> The block on screen is about `ncls`; the button edited `pcls`, **named the
+> wrong class confidently in the status line**, and left the device the user was
+> looking at untouched. `M1` is the default `template="name=M1 …"` of every
+> device symbol in this tree, so the name collision is not exotic — it is what
+> happens whenever a second sheet is opened.
+>
+> ### ⚠ AND THE OBVIOUS FIX IS REFUTED — MEASURED, BEFORE ANYONE SPENDS A RUN ON IT
+>
+> Issue 1314's successor and the B5-2 adversary both proposed the same *"minimum
+> honest fix"*: have `_subject` compare `[rdw::_cadence_path [xschem get
+> sch_path]]` against the header's discarded path half and refuse on a mismatch.
+> **That does not catch the reproduction above.** Both sheets are top-level, so
+> `sch_path` is `.` on both and the header is `M1:/` on both:
+>
+> ```
+> A: sch_path=<.> cadence=</> hdr=<M1:/>
+> B: sch_path=<.> cadence=</> hdr=<M1:/>      PATHS_EQUAL=1
+> ```
+>
+> The path is equal and the guard waves the wrong-device edit straight through.
+> **The axis is sheet IDENTITY, not hierarchy path.** The fix that actually
+> closes it: `rdw::push` **captures the subject at dump time** — type, class,
+> cellname, and the schematic file — into the block itself, and `_subject` reads
+> it back instead of re-resolving anything. That also kills the unmapped-token
+> hole in the same guard (`op_param_lists::class` returns the *token* when no
+> mapping exists, so a symbol xschem cannot find passes `rdw::button`'s
+> `class eq {}` test and yields *"gm is not in the missing annotation list"*).
+> It is a `src/rdw.tcl` change of moderate size and it needs its own adversary.
+>
+> ### THREE MORE MEASURED, FILED, AND NOT THE REASON FOR THE REVERT
+>
+> * **1323 — a reorder can become a deletion, which makes it a SAVE decision
+>   (DD-4/DD-6 forbid exactly that).** `_edit`'s up/down arm hands its list to
+>   `set_list`, which dedupes **by label**; `op_annot::register` accepts a
+>   declaration carrying two triples that share a label (measured rc=0) and
+>   `seed` returns it verbatim. One Up press then turns
+>   `{id ids 0} {id vgs 2} {gm gm 1}` into `{id vgs 2} {gm gm 1}` and **a
+>   `.save` card disappears**. `_merge_declared` cannot restore it — the union
+>   dedupes by label again. DD-10's last-row guard never fires (the base had 3).
+>   Latent with every PDK in this tree (sky130, gf180 and IHP all declare
+>   distinct labels — all three checked), reachable through invariant **I5**'s
+>   user rc. A length check on the up/down arm catches the whole class.
+> * **1324 — "the row your cursor is in" is silently lost on every new dump.**
+>   `render_pane` does `delete 1.0 end` then inserts at `end`, so the
+>   right-gravity `insert` mark rides to the end: after `set_row 3` then one
+>   `rdw::push`, the widget says line 9 while `::rdw::targetrow` still says 3 —
+>   the disagreement `set_row`'s own comment says cannot happen. The pane is
+>   `-state disabled`, so no cursor is drawn and the user has no cue. Consequence
+>   is a confusing refusal, not a wrong edit.
+> * **1325 — Save writes the USER-GLOBAL file while reporting a project write.**
+>   `rdw::_do_save` hardcodes `conf_path project`. Measured with cwd `$HOME`,
+>   which is how xschem is ordinarily launched: `conf_path user` and
+>   `conf_path project` are **the same path**, `/home/analog/.xschem/op_param_lists.conf`.
+>   `op_param_lists::load` already dedupes that collision — it knew; `_do_save`
+>   does not. DD-7's *"one tier's own file"* and store row BE5's *"the OTHER
+>   tier's file is not touched at all"* both go vacuous in the common case.
+>
+> ### WHAT IS SOUND IN THE PATCH AND MUST BE KEPT
+>
+> All six corrections are sabotage-proved and none is implicated in the revert.
+> Keep them verbatim in the re-do:
+>
+> 1. **`op_param_lists::governs` published, `effective` its consumer**
+>    (invariant I1) — the flavor-glob scan had one definition and one
+>    *lookalike*, which **is** defect A6. Rows BG1/BG2.
+> 2. **A reorder writes at the GOVERNING key**: `_scope_for` answers a store key,
+>    `_edit` gained a `governing` arm. Row BT25; sabotage reds it.
+> 3. **⚠ THIS PLAN'S OWN INSTRUCTION FOR A6's BROAD HALF WAS REFUTED, AND THE
+>    REFUTATION STANDS.** The B5 notes below say *"the broad base must be
+>    `effective $cls $listname $cell`"*. Doing that writes the **flavor** list's
+>    rows into the **class** key and destroys every class row the flavor entry
+>    does not carry — ruling **DD-7**'s failure, the one that reverted B2a twice.
+>    The broad base stays the class list; the cell goes into a POST-write check
+>    (`rdw::_shadow_why`) on all three arms. **Do not re-instate the old
+>    sentence.** Rows BT26/BT10.
+> 4. **`_edit` reads the store's report on the SUCCESS arm too** — defect A7,
+>    issue 1288's *"the user is told once"*. Row BT27; sabotage reds BT27+BE6.
+> 5. **A narrow write refuses a cell name that is not a glob matching itself.**
+>    Row BT28; residual filed as **1321**.
+> 6. **Two stale justifications deleted.** `_apply_now`'s "bare call must come
+>    first" is falsified post-DD-13 (both orders re-measured: zero reports,
+>    `params` byte-identical), and the reorder no longer defers, so the status
+>    clause *"follows on the next Add, Delete or reload (issue 1312)"* is gone —
+>    1312 is FIXED and a status line citing it is a false statement on screen.
+>
+> ### ⚠ TWO SUITE FENCES THAT DO NOT HOLD, AND THE RE-DO MUST REBUILD THEM
+>
+> Verify-B ran the eight planned sabotages; six behaved. Two did not, and both
+> are the same disease this batch keeps catching:
+>
+> * **`BE3b` — the row the brief calls *"the row item B5 died on"* — CANNOT FAIL.**
+>   With `rdw::_apply_now` stubbed to `{}` so the descriptor is never rewritten
+>   at all, BE3b still passes. Its seven fields are satisfied by the registration
+>   list, which is positionally identical to what `_merge_declared` would
+>   rebuild, so `_cards_for` still emits three cards and the `lsearch` still
+>   succeeds. It cannot distinguish *"apply ran and the declaration re-entered
+>   last"* from *"apply never ran"* — the precise mechanism DD-13 was ruled
+>   about. **Fix: assert `shown` on BOTH type tokens (as BE2 and BE7 do), or
+>   assert `params` differs from the pre-edit descriptor.**
+> * **`Q9` — titled *"a greyed button that is invoked anyway SAYS SO"* — passes
+>   with `button_state` forced to `normal`.** It asserts only that the message is
+>   non-empty, names its button, differs from its sibling, and clears. With the
+>   greying gone the button falls through to the ordinary path and refuses for a
+>   *different* reason, satisfying every field. **Fix: assert the message names
+>   the REASON, not just the button.** (The plan's third prediction, W4b, was
+>   mis-attributed — the widget-greying fence is row **W4**, and it did red, but
+>   only on `:99`; the `--nogui` half rides on F13/K4/BT15.)
+>
+> **Also worth keeping from Verify-B:** `SAB-DIALOGBUILD` reds **SD1 and SD3b
+> only** and leaves BT10/BT12/BT17 green — that asymmetry is issue **1314**'s
+> stub-shadow finding reproduced exactly, and it is the evidence that SD1/SD3b
+> are the rows carrying the real dialog. `SAB-SUBJECT` reds **eight** rows, not
+> the three predicted; the cursor rule is fenced far more widely than planned.
+>
+> ### THE MEASUREMENT HAZARD THIS ITEM PROVED, AND EVERY LATER CREW INHERITS
+>
+> The adversary's first four runs measured BT27 and BE6 **deterministically RED**
+> and every run after a later timestamp measured them green. Those two rows are
+> exactly `SAB-STORETAIL`'s predicted reds: it was measuring **another agent's
+> live sabotage in the shared tree**. **A concurrent measurement in this crew is
+> worthless and looks precisely like a real regression.** Serialise, or stamp
+> every measurement with the source md5 of the file it measured.
+>
+> **Status F. Nothing of the implementation is committed** — `src/rdw.tcl`,
+> `src/op_param_lists.tcl` and the three suites were reverse-applied and
+> re-measured back at baseline (window 76/86, store 102, keys 35 at floor 35,
+> `op_annot` 492, declutter 134). Only this write-up, the issues and the
+> preserved patch are committed. **No `look` debt was filed and none is owed:
+> there are no pixels in the tree.** The standing
+> `[the_B5_button_column_and_the_two_scope_dialogs…]` and
+> `[DD-6_narrowing_on_the_schematic]` debts stay as they are — still stale, still
+> the user's, and still naming pixels that do not exist.
 
 > ✅ **UPDATE 2026-09-04 — THE 1312 BLOCKER IS GONE. Item B2e landed ruling
 > DD-13 and the DD-4 third union input; issues 1312, 1292 and 1287 are FIXED,

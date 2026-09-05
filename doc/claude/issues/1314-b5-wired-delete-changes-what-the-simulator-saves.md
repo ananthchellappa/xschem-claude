@@ -1,8 +1,51 @@
 # 1314 — the wired Delete button changes what the simulator is asked to save, and destroys the PDK seed doing it
 
 **Filed by item B5 (2026-09-04), whose implementation this refutes. The
-implementation was REVERTED; this file is what survives it.** Status: **FILED,
-NOT FIXED — and it is the BLOCKER on any re-land of B5.**
+implementation was REVERTED; this file is what survives it.**
+
+**Status: PARTLY CLOSED, 2026-09-04 — the BLOCKER is gone from the tree, the
+two scope defects are NOT.**
+
+* **The A5 blocker — CLOSED, and closed in the tree.** It was removed
+  *underneath* this issue rather than inside it: ruling **DD-13** (item B2e,
+  `0abba4cb`) split the descriptor into THREE lists, so `op_param_lists::seed`
+  reads the **declaration** — which nothing but `op_annot::register` can write —
+  instead of `params`, the field `apply` overwrites. Re-measured independently at
+  `c940a5df` on a loaded schematic with a real `M1`: after two broad Deletes of
+  `gm`, `declared` is byte-identical to the PDK's registration on both `nmos` and
+  `pmos`, `seed mos` is unchanged, `_cards_for M1 {}` **still** emits
+  `.save m1[gm]`, and a following Add is accepted. Store section **N** (N0–N4)
+  fences that sequence through the store and is green in the tree.
+* **A6 and A7 — STILL OPEN.** Both were fixed by item B5-2 and **reverted with
+  it** (blocker: issue **1322**). The fixes are measured and sabotage-proved but
+  live only in `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch` (md5
+  `c51587ad91d65a05bbd07930ff237f9b`). They are latent meanwhile — `apply` again
+  has no functional caller — and they are the first thing the re-do must re-land.
+* **The three stub-shadow findings — STILL OPEN**, same reason. SD3's
+  single-class fixture and the BT10/BT12/BT17 rename-shadow are both back.
+  `SAB-DIALOGBUILD` confirmed the asymmetry exactly as this issue described it:
+  with `scope_dialog_build` stubbed, SD1 and SD3b red while BT10/BT12/BT17 stay
+  green.
+
+⚠ **Its "give M2 a parameter M1 lacks" suggestion for SD3 is refuted**: the
+parameter is read from `rdw::_locate`'s pane line and never from the subject, so
+a differing parameter set leaves the store write byte-identical under both rules.
+Only a differing **class** makes "newest block" and "the row the cursor is in"
+disagree.
+
+⚠ **AND ITS SUCCESSOR ROW `BE3b` DOES NOT FENCE WHAT IT CLAIMS — MEASURED.**
+This issue asked for a row that deletes the same parameter from **both** lists in
+one fixture and asserts `_cards_for` and `seed`. B5-2 wrote it. Verify-B then
+stubbed `rdw::_apply_now` to `{}` so the descriptor is never rewritten at all,
+**and BE3b still passed.** Its fields are satisfied by the registration list,
+which is positionally identical to what `_merge_declared` would rebuild, so
+`_cards_for` still emits three cards and the `lsearch` still succeeds — it cannot
+distinguish *"apply ran and the declaration re-entered last"* from *"apply never
+ran"*, which is the precise mechanism DD-13 was ruled about. **The re-do must
+assert `shown` on BOTH type tokens (as BE2 and BE7 do), or assert that `params`
+differs from the pre-edit descriptor** — one assertion only a real apply can
+satisfy. Asserting `_cards_for` and `seed`, as this issue originally asked, is
+not enough.
 
 Preserved patch: `doc/claude/op_param_batch/B5_working_tree_REFUTED.patch`
 (2224 lines, md5 `2bcc19ee49737ee0fbe187defb995f33`, applies clean to
