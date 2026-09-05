@@ -1025,16 +1025,44 @@ namespace eval ::op_param_lists {
   ##
   ## -> the tiers whose `conf_path` normalizes to this path, in `{user
   ##    project}` order; {} for a path that is neither.
-  proc conf_tiers {path} {
+  ## An identity a symlink cannot disguise (issue 1327).
+  ##
+  ## ⚠ `file normalize` DOES NOT RESOLVE SYMLINKS -- measured, and it is the
+  ## whole of 1327: with the project conf a symlink to the user-global file,
+  ## `conf_tiers` answered `project` alone while the USER-GLOBAL file was the
+  ## one that changed. That is issue 1325's own title coming back through a
+  ## door its fix did not cover, and it is why a Save could still name one file
+  ## and write another.
+  ##
+  ## Device + inode is the identity the filesystem itself uses, so it sees
+  ## through symlinks, hardlinks and bind mounts alike, where any amount of
+  ## string normalisation sees through none of them.
+  ##
+  ## ⚠ FALLS BACK TO THE NORMALISED STRING, deliberately. A path that does not
+  ## exist yet has no inode -- and the first Save of a first run is exactly
+  ## that case, so a stat-only answer would make the ordinary first run the
+  ## broken one. Two paths that do not exist are then compared as strings,
+  ## which is the best available answer and is what the old code did for every
+  ## case.
+  proc _fid {path} {
     if {$path eq {}} { return {} }
     set n {}
     if {[catch {file normalize $path} n]} { return {} }
+    if {[catch {file stat $n st}]} { return "name:$n" }
+    if {![info exists st(dev)] || ![info exists st(ino)]} { return "name:$n" }
+    return "ino:$st(dev):$st(ino)"
+  }
+
+  proc conf_tiers {path} {
+    if {$path eq {}} { return {} }
+    set n [_fid $path]
+    if {$n eq {}} { return {} }
     set out {}
     foreach which {user project} {
       set p [conf_path $which]
       if {$p eq {}} { continue }
-      set pn {}
-      if {[catch {file normalize $p} pn]} { continue }
+      set pn [_fid $p]
+      if {$pn eq {}} { continue }
       if {$pn eq $n} { lappend out $which }
     }
     return $out
@@ -1050,8 +1078,10 @@ namespace eval ::op_param_lists {
     foreach which {user project} {
       set p [conf_path $which]
       if {$p eq {}} { continue }
-      set n [file normalize $p]
-      if {[lsearch -exact $seen $n] >= 0} { continue }
+      ## Same identity as conf_tiers uses, for the same reason (issue 1327):
+      ## two tiers that are the same FILE through a symlink must be read once.
+      set n [_fid $p]
+      if {$n ne {} && [lsearch -exact $seen $n] >= 0} { continue }
       lappend seen $n
       if {![file isfile $p]} { continue }
       ## ⚠ STAMP NOTHING. This is the session's INITIAL STATE, not a change the

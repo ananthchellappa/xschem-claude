@@ -3313,6 +3313,65 @@ check {R1 registered by glob, listed in none of nogui_tests / logdir_tests / nol
 # the repo root — the tier rows `cd` into the scratch tree precisely so that a
 # writer cannot drop one on the developer.
 # ============================================================================
+# SECTION SL — ISSUE 1327: A SYMLINK IS NOT A DIFFERENT FILE
+# ============================================================================
+# Item B5-a made Save name the tier it actually wrote (issue 1325) by comparing
+# NORMALISED PATH STRINGS. Its own adversary refuted that in the shape the fix
+# did not cover, and the write-up agent reproduced it before filing: with the
+# project conf a SYMLINK to the user-global file, `conf_tiers` answered
+# `project` alone while the USER-GLOBAL file was the one that changed —
+# 1325's own title, coming back through a door its fix did not reach.
+#
+# ⚠ `file normalize` DOES NOT RESOLVE SYMLINKS. Device + inode is the identity
+# the filesystem itself uses, so it sees through symlinks, hardlinks and bind
+# mounts alike, where any amount of string normalisation sees through none.
+#
+# ⚠ AND IT FALLS BACK TO THE NORMALISED STRING ON PURPOSE. A path that does not
+# exist yet has no inode, and the FIRST SAVE OF A FIRST RUN is exactly that
+# case — a stat-only answer would make the ordinary first run the broken one.
+# SL3 holds that half.
+# RED before the 1327 fix: SL2.
+
+set SL_D [file join $scratch sl1327]
+file delete -force $SL_D
+file mkdir [file join $SL_D ucfg]
+file mkdir [file join $SL_D proj .xschem]
+set SL_U [file join $SL_D ucfg op_param_lists.conf]
+set SL_P [file join $SL_D proj .xschem op_param_lists.conf]
+set slfh [open $SL_U w] ; puts $slfh "version 2" ; close $slfh
+set SL_LINKED 0
+if {![catch {file link -symbolic $SL_P $SL_U}]} { set SL_LINKED 1 }
+
+if {$SL_LINKED} {
+  set SL_OLDDIR [pwd]
+  set SL_OLDUCD {}
+  if {[info exists ::USER_CONF_DIR]} { set SL_OLDUCD $::USER_CONF_DIR }
+  set ::USER_CONF_DIR [file join $SL_D ucfg]
+  cd [file join $SL_D proj]
+
+  check {SL1 the two tiers really are DIFFERENT STRINGS, so a string compare would call them different files} \
+    [expr {[file normalize [op_param_lists::conf_path user]] eq \
+           [file normalize [op_param_lists::conf_path project]] ? 1 : 0}] 0
+
+  check {SL2 THE 1327 SHAPE: they are ONE FILE through the symlink, and BOTH tiers are named - so a Save cannot report one file and write another} \
+    [list [lsort [op_param_lists::conf_tiers [op_param_lists::conf_path project]]] \
+          [lsort [op_param_lists::conf_tiers [op_param_lists::conf_path user]]]] \
+    {{project user} {project user}}
+
+  ## The first-run half: a path with no file yet has no inode, and must still
+  ## answer its own tier rather than nothing.
+  file delete -force [file join $SL_D ucfg op_param_lists.conf]
+  file delete -force [file join $SL_D proj .xschem op_param_lists.conf]
+  check {SL3 a tier whose file does not exist yet still names itself - the ordinary first run must not be the broken case} \
+    [op_param_lists::conf_tiers [op_param_lists::conf_path user]] user
+
+  cd $SL_OLDDIR
+  if {$SL_OLDUCD ne {}} { set ::USER_CONF_DIR $SL_OLDUCD } else { unset -nocomplain ::USER_CONF_DIR }
+}
+check_true {SL0 the symlink fixture was actually created, so the rows above are not silently skipped} $SL_LINKED
+file delete -force $SL_D
+
+# ============================================================================
 # SECTION Y — ISSUE 1294: THE TWO DOORS MUST REACH THE SAME VERDICT
 # ============================================================================
 # Under ruling DD-7 the writer merges by IDENTIFYING rows, so the reader and

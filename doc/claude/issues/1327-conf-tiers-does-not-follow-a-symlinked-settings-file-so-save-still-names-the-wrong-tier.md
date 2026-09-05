@@ -1,6 +1,40 @@
 # 1327 — `conf_tiers` does not follow a symlinked settings file, so Save can still name the wrong tier
 
-**Status:** FILED, NOT FIXED. Found by item **B5-a**'s adversary (Verify-C) and
+✅ **FIXED 2026-09-04 by the DRIVER**, immediately after item B5-a landed and
+before item B5-3 was dispatched — B5-a's own ledger row named this as a
+precondition on B5-3, and it was right.
+
+**The repair: device + inode, not a normalised string.** `_fid` is the one
+identity builder; `conf_tiers` and `load` both use it. Device+inode is what the
+filesystem itself uses, so it sees through symlinks, hardlinks and bind mounts
+alike, where any amount of string normalisation sees through none of them.
+
+```
+STRINGS_EQUAL = 0             <- two different path strings
+TIERS_OF_PROJ = user project  <- one file, and BOTH tiers named
+TIERS_OF_USER = user project
+```
+
+⚠ **IT FALLS BACK TO THE NORMALISED STRING, DELIBERATELY.** A path that does not
+exist yet has no inode, and the **first Save of a first run** is exactly that
+case — a stat-only answer would make the most common path the broken one in
+order to close a rare one. Row **SL3** holds that half.
+
+Rows **SL0-SL3** of `tests/headless/test_op_param_store_1245.tcl` (110 → 114).
+Two-sided sabotage, each reding exactly one row: string identity only → **SL2**;
+inode with no fallback → **SL3**. **SL0** asserts the symlink fixture was really
+created, so the rows above it cannot be silently skipped on a filesystem that
+refuses symlinks.
+
+Verified unmoved: `test_op_annot` 485, `test_rdw_seam_1245` 49,
+`test_rdw_window_1245` 83, `test_rdw_keys_1245` 36 (`:99`),
+`test_annot_declutter_1244` 134 (`:99`). T1 solo **zero**.
+
+---
+
+*Original filing follows.*
+
+**Status: ~~FILED, NOT FIXED.~~** Found by item **B5-a**'s adversary (Verify-C) and
 **reproduced independently by the write-up agent** before it was recorded.
 Measured 2026-09-04 on `fluid-editing`, on the tree as item B5-a leaves it, with
 `B5-2_working_tree_REFUTED.patch` applied on a scratch copy.
