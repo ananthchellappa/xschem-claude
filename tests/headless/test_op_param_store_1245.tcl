@@ -1704,6 +1704,115 @@ check {T3 a missing file at either tier is the ordinary first-run case — nothi
         [expr {[catch {llength $T3_P2} n] ? "RAISED" : $n}] $T3_G2] \
   [list {} 0 $OL_MOS6 1 {{sameid sameid 0}}]
 
+# ---------------------------------------------------------------------------
+# CT1 .. CT3 — ISSUE 1325: THE TWO TIERS CAN BE ONE FILE, AND NOTHING CAN SAY SO
+# ---------------------------------------------------------------------------
+# `conf_path project` is [file join [pwd] .xschem op_param_lists.conf] and
+# `conf_path user` is $USER_CONF_DIR/op_param_lists.conf. AT THE ORDINARY
+# LAUNCH CWD — $HOME, which is how xschem is normally started — those two are
+# THE SAME FILE. Measured at HEAD 9945ad43, no patch present:
+#     HOME_USER    = /home/analog/.xschem/op_param_lists.conf
+#     HOME_PROJECT = /home/analog/.xschem/op_param_lists.conf
+#     SAME         = 1
+# `load` (op_param_lists.tcl:947-973) ALREADY KNOWS IT and dedupes with `file
+# normalize` + a `seen` list, and row T3 above is that dedupe's fence. The
+# WRITER does not know it: `write_conf` (:1214) defaults to `conf_path
+# project`, so a Save that reports a project write rewrites the USER-GLOBAL
+# settings of every design on the machine. Ruling DD-7's "a write touches one
+# tier's own file" goes vacuous in exactly the case the user will meet first.
+#
+# ⚠ THE MEASURE AGENT HIT THIS FOR REAL, ON THE USER'S OWN MACHINE. A probe
+# that called the reverted Save with cwd $HOME wrote synthetic rows into
+# /home/analog/.xschem/op_param_lists.conf. It was restored, and it is why
+# EVERY row below redirects BOTH `::USER_CONF_DIR` AND the cwd into the scratch
+# tree — row T3's own fixture, copied rather than reinvented — and restores
+# both afterwards. Row H1 asserts the cwd came back.
+#
+# WHAT IS BEING ADDED, AND WHAT IS DELIBERATELY NOT:
+#   ::op_param_lists::conf_tiers <path>  -> the tiers whose `conf_path`
+#       normalizes to this path, in {user project} order; {} for neither.
+#       READ-ONLY: writes no file, owns no list, adds no report.
+# It does NOT change which tier Save writes. Issue 1273 — "which directory IS
+# the project" — is a live rule debt on the owed ledger and is THE USER'S to
+# settle; this item's job is to make the code honest about which tier it wrote,
+# whatever that tier turns out to be. Making `conf_path project` answer empty
+# on a collision is rejected by issue 1325 itself: `load` and `write_conf` both
+# depend on that accessor.
+#
+# ⚠ ISSUE 1325's CLAIM ABOUT ROW BE5 IS WRONG AND IS NOT COPIED HERE. BE5 (in
+# the preserved patch) builds `$BE_ROOT/p5/.xschem` and `$BE_ROOT/home5`, which
+# are genuinely distinct, so it already fences what its title says. The real
+# gap is that NO row anywhere exercises the COLLIDING configuration on the
+# WRITE path — which is what CT1..CT3 and the patch's own BE9 are for.
+#
+# RED AT HEAD: CT1, CT2, CT3 — all three for one reason, `conf_tiers` is not a
+# command and ol_ans answers NOPROC.
+
+set CT_VIRGIN [file join $scratch tiervirgin]
+file mkdir $CT_VIRGIN
+set CT_UNREL [file join $scratch tierunrelated op_param_lists.conf]
+
+## THE COLLIDING CONFIGURATION — row T3's fixture, reused rather than reinvented.
+ol_reset
+set ::USER_CONF_DIR [file join $T3_SAME .xschem]
+cd $T3_SAME
+set CT1_SP [ol_ans ::op_param_lists::conf_path project]
+set CT1_SU [ol_ans ::op_param_lists::conf_path user]
+set CT1_COLLIDES [expr {[file normalize $CT1_SP] eq [file normalize $CT1_SU] ? 1 : 0}]
+set CT1_ST [ol_ans ::op_param_lists::conf_tiers $CT1_SP]
+set CT2_SLOAD [ol_ans ::op_param_lists::load]
+set CT2_ST [ol_ans ::op_param_lists::conf_tiers [lindex $CT2_SLOAD 0]]
+
+## THE GENUINELY DISTINCT CONFIGURATION — the T1/T2 fixture, two real files.
+ol_reset
+set ::USER_CONF_DIR $T_HOME
+cd $T_PROJ
+set CT1_DP [ol_ans ::op_param_lists::conf_path project]
+set CT1_DU [ol_ans ::op_param_lists::conf_path user]
+set CT1_DISTINCT [expr {[file normalize $CT1_DP] ne [file normalize $CT1_DU] ? 1 : 0}]
+set CT1_DTP [ol_ans ::op_param_lists::conf_tiers $CT1_DP]
+set CT1_DTU [ol_ans ::op_param_lists::conf_tiers $CT1_DU]
+set CT1_NONE [ol_ans ::op_param_lists::conf_tiers $CT_UNREL]
+set CT2_DLOAD [ol_ans ::op_param_lists::load]
+set CT2_DT0 [ol_ans ::op_param_lists::conf_tiers [lindex $CT2_DLOAD 0]]
+set CT2_DT1 [ol_ans ::op_param_lists::conf_tiers [lindex $CT2_DLOAD 1]]
+
+check {CT1 THE TWO TIERS CAN BE ONE FILE, and conf_tiers is the accessor that says so: in the colliding configuration the one path answers BOTH tiers in {user project} order, in a genuinely distinct project directory each path answers exactly its own tier, and a path that is neither answers nothing} \
+  [list $CT1_COLLIDES $CT1_ST $CT1_DISTINCT $CT1_DTP $CT1_DTU $CT1_NONE] \
+  [list 1 {user project} 1 {project} {user} {}]
+
+check {CT2 conf_tiers and load AGREE WITHOUT BEING MERGED (the BG1 precedent, applied as an assertion rather than a merge): in the colliding configuration load returns ONE path and conf_tiers of it names TWO tiers; in the distinct one load returns TWO paths and conf_tiers of each names exactly ONE - so the reader's dedupe and the writer's report cannot drift apart unnoticed} \
+  [list [expr {[catch {llength $CT2_SLOAD} n] ? {RAISED} : $n}] $CT2_ST \
+        [expr {[catch {llength $CT2_DLOAD} n] ? {RAISED} : $n}] $CT2_DT0 $CT2_DT1] \
+  [list 1 {user project} 2 {user} {project}]
+
+## READ-ONLY, AND SAID WITH THE STORE'S OWN INSTRUMENTS. A tier reporter that
+## created the directory it was asked about, or that pushed a report, would be
+## a second writer wearing a reader's name — and DD-7's whole subject is which
+## file a write touches.
+ol_reset
+set CT3_CP0 [list [ol_ans ::op_param_lists::conf_path user] \
+                  [ol_ans ::op_param_lists::conf_path project]]
+ol_ans ::op_param_lists::said_clear
+set CT3_V [ol_ans ::op_param_lists::conf_tiers \
+             [file join $CT_VIRGIN .xschem op_param_lists.conf]]
+ol_ans ::op_param_lists::conf_tiers $CT1_DP
+ol_ans ::op_param_lists::conf_tiers {}
+set CT3_NSAID [ol_nsaid]
+set CT3_CP1 [list [ol_ans ::op_param_lists::conf_path user] \
+                  [ol_ans ::op_param_lists::conf_path project]]
+check {CT3 conf_tiers is READ-ONLY: it creates no directory and no file for a path that does not exist yet, pushes no report, owns no list, and leaves conf_path's own two answers byte-identical - a reporter that wrote anything would be a second writer wearing a reader's name} \
+  [list $CT3_V $CT3_NSAID \
+        [llength [glob -nocomplain -directory $CT_VIRGIN -tails *]] \
+        [expr {[file exists [file join $CT_VIRGIN .xschem]] ? 1 : 0}] \
+        [expr {$CT3_CP1 eq $CT3_CP0 ? 1 : 0}] \
+        [ol_ans ::op_param_lists::owns class mos annotation]] \
+  [list {} 0 0 0 1 0]
+
+cd $T_OLDPWD
+set ::USER_CONF_DIR $T_OLDUCD
+ol_reset
+
 # ============================================================================
 # T4 .. T6 — ITEM B2c: SAVE IS A READ-MODIFY-WRITE OF ONE TIER'S OWN FILE
 # ============================================================================
@@ -3379,6 +3488,177 @@ check {V3 THE POINT: the file it wrote loads back with no version complaint} \
 
 file delete -force $V_DIR
 op_param_lists::reset
+
+
+# ============================================================================
+# SECTION RD — ISSUE 1323: A REORDER MUST NOT BECOME A DELETION
+# ============================================================================
+# RULINGS DD-4 AND DD-6, IN ONE SENTENCE EACH, AND THEY ARE BINDING:
+# *"Delete removes a parameter from what is DRAWN. It never changes what the
+# simulator is asked to save."* An UP PRESS IS NOT EVEN A DELETE, and at HEAD
+# it destroys a `.save` card.
+#
+# THE MECHANISM, MEASURED END TO END AT HEAD 9945ad43 WITH NO BUTTON CODE:
+#   op_annot::register accepts a `params` list carrying two triples that share
+#   a LABEL (rc 0).  `_params` reads that `declared` key verbatim (DD-13) and
+#   `seed` returns it with no dedupe, so `effective` hands the reorder a base
+#   of THREE rows.  `set_list` (op_param_lists.tcl:677-722) dedupes BY LABEL,
+#   keeping the LATER triple in place, and returns 1 WITH a report (issue
+#   1288's ruled behaviour).  So:
+#       base            {id ids 0} {id vgs 2} {gm gm 1}          len 3
+#       the Up swap     {id vgs 2} {id ids 0} {gm gm 1}          len 3
+#       set_list rc     1
+#       effective       {id ids 0} {gm gm 1}                     len 2
+#       params (apply)  {id ids 0} {gm gm 1}
+#       .save cards     {.save m1[ids]} {.save m1[gm]}   -- m1[vgs] IS GONE
+#   `apply` unions through `_save_set` (:1507) and `_merge_declared` (:1553),
+#   BOTH of which dedupe by label again, so the row cannot be restored.  DD-10's
+#   last-row guard never fires: the base had three rows.
+#
+# WHY IT IS LATENT AND WHY IT STILL MATTERS: sky130, gf180 and IHP all declare
+# distinct labels, so no shipped PDK reaches it.  Invariant I5 does — a user's
+# own `op_annot::register` in their rc is a supported, documented door, and it
+# is the door the whole feature is built around.
+#
+# WHAT IS BEING ADDED, AND WHERE THE RULE STAYS:
+#   ::op_param_lists::reduce_why <scope> <key> <listname> <triples>
+#       -> {}        when a `set_list` of <triples> would store every row
+#       -> a sentence naming the repeated label when it would REDUCE the list.
+# It reuses `_dup_index`, so the duplicate-label RULE keeps ONE definition and
+# gains a SECOND READER — the `governs` precedent, which is this store's own.
+# `set_list` itself is UNCHANGED: issue 1288's ruling stands, both doors still
+# agree, and this verb adds a reader rather than a rule.
+#
+# ⚠ THREE ROUTES ARE REJECTED, AND THE ISSUE REJECTS THEM TOO. Making
+# `op_annot::register` refuse (a forbidden file for this item, and it punishes
+# the PDK author); making `seed` dedupe (that re-splits the declaration from the
+# seed, which is the split ruling DD-13 exists to remove); making `set_list`
+# keep duplicates (that reopens 1288, and `_key`/`_save_set`/`_merge_declared`
+# all assume label uniqueness).
+#
+# ⚠ AND THE ISSUE'S OWN RECOMMENDED WORDING IS REFUTED BY MEASUREMENT, which
+# is recorded here because a later reader will otherwise re-propose it. Issue
+# 1323 says *"after the write, if `llength` of what the store now holds is less
+# than the base, restore the base and refuse."* THAT CANNOT RESTORE: a
+# `set_list` of the base dedupes it identically, so "restoring" would store
+# `{id vgs 2} {gm gm 1}` — a THIRD value neither the user nor the PDK chose —
+# and when the base came from the SEED the key was previously UNOWNED, which no
+# verb in this store can undo.  Row RD1 measures the first half directly.  The
+# guard therefore runs BEFORE the write, not after it.
+#
+# ⚠ WHICH LEGS ARE RED AND WHICH ARE MEASUREMENTS OF THE DEFECT. Every
+# `reduce_why` leg is RED AT HEAD for one reason — the command does not exist,
+# so ol_ans answers NOPROC. The card legs and the length legs are the DEFECT
+# ITSELF, measured, and they stay green after the fix because `set_list` does
+# not move: the fix is a guard the CALLER consults, not a change to the store's
+# ruled dedupe. A row here is red iff its reduce_why legs are.
+#
+# RED AT HEAD: RD1 RD2 RD3 RD5.  GREEN BEFORE AND AFTER: RD4, which is issue
+# 1288's own behaviour and is here to prove the new verb changed no rule.
+
+ol_reset
+set RD_DECL {{id ids 0} {id vgs 2} {gm gm 1}}
+set RD_UP   {{id vgs 2} {id ids 0} {gm gm 1}}
+set RD_DESC [list devpath {@m.@path@name} params $RD_DECL]
+ol_ans ::op_annot::register nmos $RD_DESC
+ol_ans ::op_annot::register pmos $RD_DESC
+
+set RD1_DECL [ol_dkey nmos declared]
+set RD1_SEED [ol_ans ::op_param_lists::seed mos]
+set RD1_BASE [ol_ans ::op_param_lists::effective mos annotation]
+## THE SWAP AN `Up` PRESS PERFORMS, built from the base rather than typed, so
+## the row cannot drift away from what the button column actually does.
+set RD1_NEW [lreplace $RD1_BASE 1 1 [lindex $RD1_BASE 0]]
+set RD1_NEW [lreplace $RD1_NEW 0 0 [lindex $RD1_BASE 1]]
+set RD1_WHY [ol_ans ::op_param_lists::reduce_why class mos annotation $RD1_NEW]
+## ...and now really perform it, so the row refuses a MEASURED loss and not a
+## hypothetical one.
+ol_ans ::op_param_lists::said_clear
+set RD1_RC [ol_ans ::op_param_lists::set_list class mos annotation $RD1_NEW]
+set RD1_AFTER [ol_ans ::op_param_lists::effective mos annotation]
+check {RD1 THE REORDER THAT WAS A DELETION: a declaration carrying two triples that share a label reaches seed and effective INTACT at length 3, reduce_why of the exact swap an Up press performs is NON-EMPTY and names the repeated label, and a real set_list of that same value really does come back at length 2 with a row gone} \
+  [list $RD1_DECL $RD1_SEED $RD1_BASE $RD1_NEW \
+        [expr {$RD1_WHY eq {NOPROC} ? {NOPROC} :
+               ($RD1_WHY eq {} ? {SILENT} : 1)}] \
+        [ol_has $RD1_WHY {"id"}] [ol_has $RD1_WHY {mos}] \
+        [ol_has $RD1_WHY {annotation}] \
+        $RD1_RC $RD1_AFTER [llength $RD1_AFTER]] \
+  [list $RD_DECL $RD_DECL $RD_DECL $RD_UP 1 1 1 1 1 {{id ids 0} {gm gm 1}} 2]
+
+## THE GUARD MUST BE NARROW. Every ordinary reorder — which is every reorder any
+## shipped PDK can produce — must be silently allowed, or the button column
+## refuses the operation it exists to perform.
+set RD2 {}
+foreach cand [list $OL_MOS6 $OL_NPN6 \
+                   [lreplace [lreplace $OL_MOS6 1 1 [lindex $OL_MOS6 0]] \
+                             0 0 [lindex $OL_MOS6 1]] \
+                   {{only only 0}} {}] {
+  lappend RD2 [ol_ans ::op_param_lists::reduce_why class mos annotation $cand]
+}
+check {RD2 THE GUARD IS NARROW: reduce_why answers the EMPTY STRING for every distinct-label list - both shipped seeds, an actual Up swap of one of them, a single row and the empty list - so no ordinary reorder is ever refused} \
+  $RD2 {{} {} {} {} {}}
+
+## ONE RULE, TWO READERS, DRIVEN BOTH DIRECTIONS. This is the `governs`
+## precedent's own shape: the scan is published and its first consumer is
+## asserted to agree with it, rather than the two being merged.
+set RD3 {}
+foreach cand [list $OL_MOS6 $RD_DECL $RD_UP {{a a 0}} {} \
+                   {{a a 0} {a b 1}} {{a a 0} {b b 1} {a c 2}}] {
+  ol_reset
+  set _why [ol_ans ::op_param_lists::reduce_why class mos annotation $cand]
+  ol_ans ::op_param_lists::set_list class mos annotation $cand
+  set _got [ol_ans ::op_param_lists::get_list class mos annotation]
+  if {$_why eq {NOPROC}} {
+    lappend RD3 NOPROC
+  } elseif {[string match {RAISED:*} $_why]} {
+    lappend RD3 $_why
+  } elseif {$_why eq {}} {
+    if {$_got eq $cand} { lappend RD3 kept } else { lappend RD3 DRIFTED }
+  } else {
+    if {[llength $_got] < [llength $cand]} { lappend RD3 shorter } \
+    else { lappend RD3 NOTSHORTER }
+  }
+}
+check {RD3 ONE RULE, TWO READERS, BOTH DIRECTIONS DRIVEN: whenever reduce_why is NON-EMPTY the list set_list then stores is strictly SHORTER than the input, and whenever it is EMPTY the two are byte-identical - so the published scan and the door it guards cannot disagree without a red} \
+  $RD3 {kept shorter shorter kept kept shorter shorter}
+
+## ISSUE 1288 IS UNTOUCHED, AND THIS ROW IS GREEN BEFORE AND AFTER. The new verb
+## added a READER, not a rule: `set_list` still accepts the list, still replaces
+## the earlier triple IN PLACE, and still emits `_dup_why`'s own sentence -- one
+## wording for one fact (op_param_lists.tcl:616).
+ol_reset
+ol_ans ::op_param_lists::said_clear
+set RD4_RC [ol_ans ::op_param_lists::set_list class mos annotation $RD_DECL]
+set RD4_SAID [ol_ans ::op_param_lists::said]
+set RD4_GOT [ol_ans ::op_param_lists::get_list class mos annotation]
+check {RD4 ISSUE 1288 IS UNTOUCHED: set_list of a duplicate-label list still returns 1, still emits the store's ONE duplicate-label sentence exactly once, and still replaces the earlier triple in place} \
+  [list $RD4_RC [ol_nsaid] $RD4_SAID $RD4_GOT] \
+  [list 1 1 \
+        {{a second entry for label "id" in class mos annotation; the later one replaces it in place}} \
+        {{id vgs 2} {gm gm 1}}]
+
+## DD-4/DD-6 IN THE SIMULATOR'S OWN UNITS, THROUGH THE REAL `op_annot::_cards_for`
+## ON THE REAL LOADED M1. A length is an argument; a missing `.save` card is the
+## thing the user loses.
+ol_reset
+ol_ans ::op_annot::register nmos $RD_DESC
+ol_ans ::op_annot::register pmos $RD_DESC
+set RD5_TYPE [ol_ans ::op_annot::type M1]
+set RD5_CARDS0 [ol_ans ::op_annot::_cards_for M1 {}]
+set RD5_WHY [ol_ans ::op_param_lists::reduce_why class mos annotation $RD_UP]
+ol_ans ::op_param_lists::set_list class mos annotation $RD_UP
+ol_ans ::op_param_lists::apply nmos
+set RD5_CARDS1 [ol_ans ::op_annot::_cards_for M1 {}]
+check {RD5 RULINGS DD-4 AND DD-6 BY NAME, IN THE SIMULATOR'S OWN UNITS: with the duplicate-label declaration live _cards_for emits THREE .save cards, a set_list of the Up swap plus apply leaves TWO and m1[vgs] is gone from the deck, and reduce_why is the non-empty answer that would have refused that write before it happened} \
+  [list $RD5_TYPE $RD5_CARDS0 \
+        [expr {$RD5_WHY eq {NOPROC} ? {NOPROC} :
+               ($RD5_WHY eq {} ? {SILENT} : 1)}] \
+        $RD5_CARDS1 \
+        [lsearch -exact $RD5_CARDS1 {.save m1[vgs]}]] \
+  [list nmos {{.save m1[ids]} {.save m1[vgs]} {.save m1[gm]}} 1 \
+        {{.save m1[ids]} {.save m1[gm]}} -1]
+
+ol_reset
 
 # ============================================================================
 # SECTION Z — ISSUE 1291: THE PDK'S `params` IS AN UNVALIDATED STRING

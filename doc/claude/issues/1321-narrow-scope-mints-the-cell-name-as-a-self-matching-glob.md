@@ -5,7 +5,7 @@
 B5-2 was **REVERTED** (blocker: issue **1322**), so the loud half described below
 as fixed lives only in
 `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch` (md5
-`c51587ad91d65a05bbd07930ff237f9b`), not in `src/`. Re-land it with the rest.
+`42890cf163dd9ba1e85e312e1801c6ed`), not in `src/`. Re-land it with the rest.
 **Component:** `src/rdw.tcl` (`rdw::_edit`, narrow arm) · `src/op_param_lists.tcl`
 (`effective` / `governs`, the flavor scan)
 **Related:** ruling DD-2 (flavor beats class beats seed), ruling DD-8

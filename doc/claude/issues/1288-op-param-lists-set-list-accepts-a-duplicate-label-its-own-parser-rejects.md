@@ -18,7 +18,7 @@ button half is written but **reverted** and therefore still open.
 * **The button half — WRITTEN AND THEN REVERTED WITH ITEM B5-2, 2026-09-04. STILL
   OPEN AGAINST THE TREE.** The fix exists, measured and sabotage-proved, but only
   inside `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch` (md5
-  `c51587ad91d65a05bbd07930ff237f9b`) — item B5-2 was reverted in full for an
+  `42890cf163dd9ba1e85e312e1801c6ed`) — item B5-2 was reverted in full for an
   unrelated blocker (issue **1322**), so nothing in `src/` carries it. It is
   latent meanwhile: there is again no UI door to `set_list`. The description
   below is what the re-do must re-land. The first UI door to

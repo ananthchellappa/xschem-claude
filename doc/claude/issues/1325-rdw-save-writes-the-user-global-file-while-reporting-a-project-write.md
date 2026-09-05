@@ -1,6 +1,8 @@
 # 1325 — Save writes the USER-GLOBAL settings file while reporting a project write
 
-**Status:** FILED, NOT FIXED. Measured 2026-09-04 on `fluid-editing` at
+**Status:** **PARTIALLY FIXED** by item **B5-a**, 2026-09-04 (was: FILED, NOT
+FIXED; was briefly marked FIXED by B5-a's implement pass and **downgraded by
+its own adversary** — see *Still open*, and issue **1327**). Which tier Save writes is unchanged and stays issue **1273**'s, which is the user's. Measured 2026-09-04 on `fluid-editing` at
 `c940a5df`; the `conf_path` collision reproduces with **no item-B5-2 code**, and
 the caller that hardcodes the tier was reverted with B5-2.
 **Component:** `src/rdw.tcl` — `rdw::_do_save` (in the preserved patch,
@@ -70,3 +72,119 @@ with the user tier.** That changes a shipped accessor used by `load` and
 All of it, plus the suite consequence: **row BE5 must construct a project
 directory that is genuinely not the home directory** before it can fence what its
 title claims.
+
+
+---
+
+## FIXED — item B5-a, 2026-09-04
+
+**The report is made honest. Which tier Save writes is NOT changed** — issue
+**1273** ("which directory *is* the project") is a live rule debt on the owed
+ledger and is the user's to settle, and this item's job was to make the code
+honest about which tier it wrote, whatever that tier turns out to be.
+
+### `src/op_param_lists.tcl` — one new published verb
+
+```
+op_param_lists::conf_tiers <path>
+  -> the tiers whose conf_path normalizes to this path, in {user project} order
+  -> {} for a path that is neither
+```
+
+Read-only by construction: it creates no directory and no file for a path that
+does not exist yet, pushes no report, and owns no list. It copies `load`'s own
+collision detector (`file normalize` against the other tier) rather than
+inventing a second idiom, but `load` is **not** rewritten to consume it: `load`'s
+`seen` list answers a different question ("have I already read this normalized
+path") over a loop, and merging them for elegance would risk rows **T2** and
+**T3**, which are green. Store row **CT2** locks the two together **by
+assertion** instead — the `governs` precedent applied as an assertion rather
+than a merge.
+
+**Rejected, as this issue itself rejects it:** making `conf_path project` answer
+empty on a collision. `load` and `write_conf` both depend on that accessor.
+
+### `src/rdw.tcl` (in `B5-2_working_tree_REFUTED.patch`) — one named callee
+
+`rdw::_do_save` keeps `conf_path project` and gains `rdw::_tier_note {path}`,
+which appends, **on the success arm only**:
+
+> That file is both tiers here - this project directory and your user
+> configuration directory are the same directory - so every design on this
+> machine reads it back (issue 1273 asks which directory is the project).
+
+Success arm only, because a refused Save changed nothing, so the false belief
+the sentence corrects never forms — and the refusal arm already carries the
+STORE's own wording, which must not be diluted by a second sentence about a file
+that was not written. A named callee rather than three lines inline, so a
+sabotage variant has something to neutralise.
+
+### ⚠ This issue's own claim about row BE5 is wrong, and was not copied
+
+It says BE5 *"passes by writing and checking two paths that are one path"*. It
+does not: BE5 builds `$BE_ROOT/p5/.xschem` and `$BE_ROOT/home5`, which are
+genuinely distinct, so it already fences what its title says. **The real gap was
+that no row anywhere exercised the COLLIDING configuration on the WRITE path.**
+
+### Fenced by
+
+* store `CT1` `CT2` `CT3` (both arms) — the collision, the agreement with
+  `load` in both configurations, and the read-only property.
+* store `BE9` (in the patch) — **both arms in one row**: in the colliding
+  configuration the status line names its file AND says the file is both tiers;
+  in a genuinely distinct project directory the clause is ABSENT. A note that
+  were unconditional reds the second arm; one that were never emitted reds the
+  first.
+
+### Sabotage receipt
+
+`SAB-TIERS-BLIND` (`conf_tiers` replaced by `{return [list project]}`, on a COPY
+of the tree, restored by `cp`, md5-verified) reds store `CT1 CT2 CT3`.
+
+### ⚠ And the collision is not academic
+
+The Measure agent's own probe of the reverted `rdw::_do_save`, run with cwd
+`$HOME`, **wrote synthetic rows into the developer's real
+`/home/analog/.xschem/op_param_lists.conf`** before this fix existed. Every row
+that touches the save path now redirects BOTH `::USER_CONF_DIR` and the cwd into
+the scratch tree, copying store row T3's fixture.
+
+---
+
+## ⚠ Still open — THIS ISSUE'S OWN TITLE STILL REPRODUCES. See issue 1327.
+
+Item B5-a's **adversary refuted this fix**, and the write-up agent reproduced
+the refutation independently before recording it. The fix closes the case this
+issue was filed for — two tiers colliding **because of the cwd** — and does not
+close the case where the project settings file is a **symlink** to the
+user-global one:
+
+```
+CONF_TIERS_OF_PROJ=<project>                       <- names ONE tier
+USER_GLOBAL_FILE_CHANGED=<1>  (size 1627 -> 1689)  <- the bytes went to the OTHER
+GREP_zzz_IN_USER_GLOBAL=<1>
+```
+
+`file normalize` does not resolve a path's **final** component. `write_conf`
+resolves the link chain with `_resolve_target` and writes the real file (issue
+1276, and it is right to); `conf_tiers` compares unresolved strings, so it
+cannot see the collision, the note never fires, and the status line names the
+project path while the user-global settings are rewritten — **the sentence at
+the top of this file, verbatim.**
+
+**Bounded, so it is neither widened nor dismissed:** the cwd collision is caught
+(row `CT1`), a symlinked `.xschem` **directory** is caught (`file normalize`
+does resolve intermediate links, measured `user project`), and only the
+symlinked **final component** is missed. No fixture in any suite creates one.
+
+Filed as issue **1327** with its measurement, the fix shape (publish
+`_resolve_target`'s answer; make `conf_tiers` resolve both sides), the required
+both-directions fence, and why B5-a filed rather than hot-fixed it. **1327 is a
+precondition on item B5-3**, which is the item that puts Save in front of a
+user. Until it is closed, do not cite this issue as FIXED.
+
+## Still the user's, recorded as a rule debt
+
+The exact wording of the collision sentence `rdw::_tier_note` appends, and
+whether Save should keep defaulting to the **project** tier at all — which is
+issue **1273**, *"which directory IS the project"*, already on the owed ledger.

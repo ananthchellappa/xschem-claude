@@ -746,8 +746,12 @@ proc rdw::dump_devpath {devpath ctx} {
     } else {
         set blk [rdw::format_answer $ans $ctx]
     }
-    rdw::push $blk
-    return $blk
+    ## ⚠ THE VALUE HANDED BACK IS THE VALUE STORED (issue 1322).  `push`
+    ## now stamps the block with what it was about, so returning `$blk` would
+    ## hand the caller an UNSTAMPED copy of a block the store holds stamped --
+    ## two values for one dump, and the caller's is the one that cannot say
+    ## which device it came from.
+    return [rdw::push $blk]
 }
 
 # The whole round trip for one instance name: the header, the ONE name
@@ -762,10 +766,150 @@ proc rdw::dump {instname} {
     return [rdw::dump_devpath [lindex $h 1] $ctx]
 }
 
+# ---------------------------------------------------------------------------
+# WHAT A BLOCK WAS ABOUT (issue 1322).
+#
+# ⚠ A BLOCK USED TO BE A RENDERING WITH NO IDENTITY, AND THAT IS THE DEFECT
+# THAT REVERTED ITEM B5-2.  `rdw::header` joins an instance name to a cadence
+# path, and `rdw::push` stored the rendered lines and nothing else -- so the
+# only surviving trace of WHICH DEVICE a block was about was the header
+# STRING, whose NAME half a later button re-resolved against WHATEVER SHEET IS
+# OPEN.  Nothing in this tree clears the store on a schematic load, and nothing
+# should: reviewing two sheets' dumps side by side is what this window is for.
+#
+# MEASURED at HEAD with two TOP-LEVEL sheets each holding an `M1` -- the
+# default `template="name=M1 ..."` of every device symbol in this tree, which
+# makes this the ORDINARY case and not a contrivance:
+#     the block on screen was about   ncls / vn.sym
+#     the re-resolved subject said    type vpdev class pcls cellname vp.sym
+#     Delete's verdict                ok
+#     ncls kept its row; pcls lost one -- a device nobody was looking at.
+#
+# ⚠ AND THE OBVIOUS GUARD IS ALREADY REFUTED BY THAT SAME MEASUREMENT.
+# Comparing the header's PATH half catches nothing: `xschem get sch_path` is
+# `.` on both sheets, `rdw::_cadence_path` renders `/` for both, and the two
+# headers are BYTE-IDENTICAL.  THE AXIS IS SHEET IDENTITY, NOT HIERARCHY PATH,
+# and `xschem get schname` is the accessor that separates them.
+#
+# So the subject is captured AT DUMP TIME, while the sheet it came from is
+# still the sheet on screen, and it rides inside the block's OWN HEADER ENTRY
+# as a THIRD element.  The block therefore stays ONE FLAT LIST OF ENTRIES:
+# `llength $b` is still the block's LINE COUNT, `rdw::block_text` reads
+# `lindex $e 1` and is byte-identical, and `rdw::render_pane` paints exactly
+# the same number of lines.
+#
+# ⚠ WHY NOT A PARALLEL SUBJECT LIST.  It would be two structures to keep
+# aligned across THREE writers, not two -- `rdw::push`, `rdw::keep_latest`,
+# and the suites, which assign the store directly -- and a desynced parallel
+# list answers about the wrong block while every existing row stays green.
+# That is invariant I1's failure shape, and this batch's own recurring one.
+#
+# ⚠ AND WHY NOT A NEW BLOCK ENTRY.  An extra entry changes `llength $b`, which
+# the pane's line arithmetic uses as a LINE COUNT, and `rdw::block_text` would
+# put it straight into the user's paste.
+#
+# ⚠ THE CLASS IS DELIBERATELY NOT CAPTURED.  `op_param_lists::class` is a pure
+# classmap lookup with no sheet dependence, so it already has exactly one home
+# (invariant I1); only the `type=` token is sheet-dependent.  A consumer
+# derives the class from the captured type.
+#
+# Suite: tests/headless/test_rdw_window_1245.tcl section BS (both arms) and
+# tests/headless/test_rdw_keys_1245.tcl row KS1, which drives the capture
+# through the real keybinding rather than through a hand-called push.
+
+# The exact inverse of rdw::header's join.  An instance name may itself carry
+# a colon, so the split is on the LAST colon that is followed by the path half
+# -- which `rdw::_cadence_path` guarantees always begins with `/`, at the top
+# sheet included (`M1:/`).  A line that is not a header at all answers {}.
+proc rdw::_hdr_instname {line} {
+    if {[regexp {^(.*):(/.*)$} $line -> nm path]} { return $nm }
+    return {}
+}
+
+# May this `type=` token be recorded as a subject at all?
+#
+# ⚠ `missing` IS NOT A TYPE.  It is xschem's own placeholder for a symbol the
+# editor could not find (systemlib/missing.sym, save.c:7281) -- the same token
+# `descend_missing_sym` (actions.c:6049-6063) guards by name.  It matters here
+# because `op_param_lists::class` returns the TOKEN for a type nobody mapped,
+# BY CONTRACT, so a consumer's "class is empty" guard would wave the
+# placeholder straight through and the user would read a sentence naming a
+# class no PDK ever declared.  Recording nothing is the honest answer, and
+# blank is available HERE and is not available later.
+#
+# STATED COST: a user-authored symbol that really exists on disk and really
+# declares `type=missing` gets no captured subject either.  actions.c's own
+# comment records that this is a different fact wearing the same token, and no
+# shipped symbol in this tree carries it.
+proc rdw::_subject_resolved {type} {
+    if {$type eq {}} { return 0 }
+    if {$type eq {missing}} { return 0 }
+    return 1
+}
+
+# Does this block already carry a subject?  One that does is never
+# re-captured: it is the record of a dump that already happened, and reading
+# the live editor for it again is the very defect the stamp exists to remove.
+proc rdw::_stamped {block} {
+    set e {}
+    if {[catch {lindex $block 0} e]} { return 0 }
+    set n 0
+    if {[catch {llength $e} n]} { return 0 }
+    return [expr {$n >= 3 ? 1 : 0}]
+}
+
+# {instname type cellname schname} read RIGHT NOW -- from the block's own
+# header text and the sheet that is still open -- or {} when nothing can be
+# trusted.  Every read is caught: a dump must never fail because an instance
+# went away between the seam's answer and the push.
+proc rdw::_capture_subject {block} {
+    set line {}
+    catch {set line [lindex [lindex $block 0] 1]}
+    set inst [rdw::_hdr_instname $line]
+    if {$inst eq {}} { return {} }
+    set type {}
+    catch {set type [::op_annot::type $inst]}
+    if {![rdw::_subject_resolved $type]} { return {} }
+    set cell {}
+    catch {set cell [xschem getprop instance $inst cell::name]}
+    set sch {}
+    catch {set sch [xschem get schname]}
+    return [dict create instname $inst type $type cellname $cell schname $sch]
+}
+
+# THE ONE READER OF WHERE THE STAMP LIVES, AND A PURE FUNCTION OF ITS
+# ARGUMENT.  It reads no namespace state whatever, so a caller that assigns the
+# store directly -- three suites do -- cannot desync it, and a block passed
+# around by value carries its own answer with it.  {} when the block carries
+# no subject, which is the honest answer for every block whose device could
+# not be resolved at dump time.
+proc rdw::block_subject {block} {
+    set e {}
+    if {[catch {lindex $block 0} e]} { return {} }
+    if {[catch {llength $e} n]} { return {} }
+    if {$n < 3} { return {} }
+    return [lindex $e 2]
+}
+
 # Add a block to the store and repaint.  The store is namespace state and
 # works headless; the pane is only its projection.
+#
+# ⚠ IT STAMPS THE SUBJECT (issue 1322), AND ITS SIGNATURE DOES NOT MOVE.
+# The capture is here rather than in a new argument for two reasons: every
+# fixture in three suites already pushes while the sheet the block came from is
+# the sheet that is open, so they all capture the right subject with no edit at
+# all; and an optional argument a caller forgets silently restores the defect.
+# A block that already carries a subject is stored exactly as it is.
 proc rdw::push {block} {
     variable blocks
+    if {![rdw::_stamped $block]} {
+        set subj [rdw::_capture_subject $block]
+        if {$subj ne {}} {
+            set e [lindex $block 0]
+            set block [lreplace $block 0 0 \
+                [list [lindex $e 0] [lindex $e 1] $subj]]
+        }
+    }
     if {[rdw::_insert_index] eq {1.0}} {
         set blocks [linsert $blocks 0 $block]
     } else {

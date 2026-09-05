@@ -1460,6 +1460,139 @@ xschem unselect_all
 update idletasks
 
 # ============================================================================
+# SECTION KS — ISSUE 1322: THE CAPTURE HAPPENS ON THE SHIPPED KEY PATH
+# ============================================================================
+# Issue 1322's fix makes `rdw::push` record WHAT A BLOCK WAS ABOUT — instance,
+# symbol type, cell and sheet — at DUMP TIME, so a button pressed after a
+# schematic load edits the device the block came from instead of re-resolving
+# the header's bare name against whatever sheet is open. The window suite's
+# section BS drives that through `rdw::push` directly, on both arms.
+#
+# ⚠ WHAT NO OTHER ROW IN EITHER SUITE DOES IS DRIVE IT THROUGH THE REAL
+# KEYBINDING. The shipped path is
+#     cadence_style_rc's `bind .drw <Key-1>` -> rdw::key -> rdw::_selected_instance
+#     -> rdw::show -> rdw::open -> rdw::dump -> rdw::dump_devpath -> rdw::push
+# and the capture sits at the very end of it. A capture wired only into a
+# hand-called `push` would pass every row of section BS and record nothing at
+# all for a user pressing 1 — which is the only way anyone will ever reach it.
+# That is this batch's own recurring failure (a provider tested against its own
+# tests, then met by its consumer), so it gets a row on the path the user uses.
+#
+# ⚠ AND `rdw::dump_devpath` (rdw.tcl:749-750) PUSHES `$blk` AND RETURNS `$blk`,
+# not push's answer. Once push stamps, this row reads the STORE — which is what
+# the buttons read too — so it stays true whichever way that return is fixed;
+# row Q1b of the window suite is the one that pins the return itself.
+#
+# RED BEFORE THE FIX: KS1, for one reason — `rdw::block_subject` is not a
+# command, so kx_ans answers NOPROC. Its first four legs are the control that
+# says the key really arrived.
+
+proc ks_key {blk k} {
+  set s [kx_ans ::rdw::block_subject $blk]
+  if {[kx_bad $s]} { return $s }
+  if {$s eq {}} { return NOSUBJ }
+  if {[catch {dict get $s $k} v]} { return "NOKEY:$k" }
+  return $v
+}
+proc ks_tail {blk k} {
+  set v [ks_key $blk $k]
+  if {[kx_bad $v] || $v eq {NOSUBJ} || [string match {NOKEY:*} $v]} { return $v }
+  return [file tail $v]
+}
+
+kx_ans ::rdw::pick_end
+kx_reset
+xschem unselect_all
+## The list is parked on `summary` first, so the bare 1 below moves it to
+## `annotation` and that move is a POSITIVE RECEIPT that the cadence bind
+## delivered and rdw::key ran — section D3's own idiom, one key over.
+kx_ans ::rdw::set_list summary
+xschem select instance M1
+update idletasks
+set KS1_LK0 [kx_listkind]
+set KS1_N0 [kx_nblocks]
+set KS1_SEL0 [kx_sel]
+focus -force .drw ; update idletasks
+event generate .drw <Key-1> -when now
+update
+set KS1_BLK [lindex $::rdw::blocks 0]
+## Snapshotted BEFORE the second load below, because the load clears the
+## editor's selection and this leg is about what the KEY did to it.
+set KS1_LK1  [kx_listkind]
+set KS1_N1   [kx_nblocks]
+set KS1_HDR1 [kx_top_hdr]
+set KS1_SELOK [expr {[kx_sel] eq $KS1_SEL0 ? 1 : 0}]
+
+## ⚠ AND THE SECOND HALF IS WHAT MAKES THE FIRST ONE MEAN ANYTHING, MEASURED BY
+## THIS ITEM'S OWN SABOTAGE RUN. With `rdw::block_subject` replaced by a LIVE
+## re-resolution - the shipped defect restored exactly, sabotage variant
+## SAB-RESOLVE-LATE - every leg above STILL PASSED, because the sheet the key
+## was pressed on is still the sheet that is open. A fence that the deletion of
+## its own subject cannot red is this batch's recurring failure, met for the
+## ninth time. So the row now loads a SECOND top-level sheet whose `M1` is a
+## DIFFERENT type - `M1` being the default template name of every device symbol
+## in this tree, which is why the collision is the ordinary case - and reads the
+## stored subject again. It must still name b4dev, b4dev.sym and b4top.sch while
+## the editor is showing something else, and the live re-resolution leg is the
+## receipt that the sheet really changed under it.
+set KS_OSYM [file join $scratch ksother.sym]
+set fd [open $KS_OSYM w]
+puts $fd "v {xschem version=3.4.5 file_version=1.2}"
+puts $fd "G {}"
+puts $fd "K {type=ksdev"
+puts $fd {format="@spiceprefix@name @pinlist @model"}
+puts $fd "template=\"name=M1 model=ksdev spiceprefix=X\""
+puts $fd "}"
+puts $fd "V {}"
+puts $fd "S {}"
+puts $fd "E {}"
+puts $fd "L 4 -20 -20 20 -20 {}"
+puts $fd "B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}"
+puts $fd "T {@name} 0 -40 0 0 0.2 0.2 {}"
+close $fd
+set KS_OSCH [file join $scratch ksother.sch]
+set fd [open $KS_OSCH w]
+puts $fd "v {xschem version=3.4.5 file_version=1.2}
+G {}
+V {}
+S {}
+E {}
+C \{$KS_OSYM\} 300 -300 0 0 \{name=M1\}"
+close $fd
+xschem unselect_all
+xschem load $KS_OSCH
+update idletasks
+set KS1_LIVE [kx_ans ::op_annot::type M1]
+set KS1_SCH2 [file tail [kx_ans xschem get schname]]
+set KS1_BLK2 [lindex $::rdw::blocks 0]
+## ⚠ SNAPSHOTTED WHILE THE OTHER SHEET IS STILL OPEN, AND THAT IS THE WHOLE
+## ROW. `check` evaluates its argument list when it is CALLED, so reading these
+## three after the restore below would re-ask the question with the original
+## sheet back on screen - and a live re-resolution would answer b4dev again and
+## pass. Measured: the first version of this leg did exactly that, and sabotage
+## variant SAB-RESOLVE-LATE stayed green through it.
+set KS1_T2 [ks_key  $KS1_BLK2 type]
+set KS1_C2 [ks_tail $KS1_BLK2 cellname]
+set KS1_S2 [ks_tail $KS1_BLK2 schname]
+xschem load $KX_SCH
+xschem zoom_full
+update idletasks
+check {KS1 THE CAPTURE IS ON THE SHIPPED PATH, AND IT SURVIVES A LOAD: a real bare 1 on the canvas over a SELECTED device runs the whole noun-verb chain - bind, rdw::key, rdw::show, rdw::dump, rdw::dump_devpath, rdw::push - and the block it stores carries the subject of THAT device, named by its own symbol type, its own cell and the sheet it was dumped from; the list identity moving from summary to annotation is the receipt that the key arrived, and after a SECOND top-level sheet whose own M1 is a different type is loaded the stored block still names the first one while a live re-resolution answers the second} \
+  [list $KS1_LK0 $KS1_N0 $KS1_LK1 $KS1_N1 $KS1_HDR1 \
+        $KS1_SELOK \
+        [ks_key $KS1_BLK instname] [ks_key $KS1_BLK type] \
+        [ks_tail $KS1_BLK cellname] [ks_tail $KS1_BLK schname] \
+        $KS1_LIVE $KS1_SCH2 $KS1_T2 $KS1_C2 $KS1_S2] \
+  [list summary 0 annotation 1 {M1:/} 1 M1 b4dev b4dev.sym b4top.sch \
+        ksdev ksother.sch b4dev b4dev.sym b4top.sch]
+
+kx_ans ::rdw::close
+kx_reset
+xschem unselect_all
+kx_ans ::rdw::set_list annotation
+update idletasks
+
+# ============================================================================
 # SECTION S — HYGIENE, AND THE CONTROL THAT STOPS SECTION B PASSING VACUOUSLY
 # ============================================================================
 ## An untracked untitled*.sch in the repo root turns THREE tests red. ⚠ The
@@ -1574,7 +1707,10 @@ catch {xschem raw clear}
 # suite — item B5-2 will add several. Raise the floor when you add them; never
 # lower it to make a run pass, which is the one move that would put the defect
 # straight back.
-set KX_FLOOR 35
+## ⚠ RAISED 35 -> 36 BY ITEM B5-a, WHICH ADDED ROW KS1. A floor is raised when
+## rows are added and NEVER lowered to make a run pass — lowering it is the one
+## move that would put the skipped-row defect straight back.
+set KX_FLOOR 36
 set KX_RAN [expr {$npass + $fail}]
 if {$KX_RAN < $KX_FLOOR} {
   puts "FAIL: KXFLOOR the suite ran only $KX_RAN checks, below its floor of\

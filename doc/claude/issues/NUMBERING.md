@@ -1485,4 +1485,25 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   that collision; the writer does not. Ruling **DD-7** and store row **BE5** both
   go vacuous in the common case. **FILED, NOT FIXED.**
 
-**The next free number is 1326.**
+* **1326** — **a Delete on a duplicate-label declaration drops TWO display rows
+  and a `.save` card.** Issue 1323's mechanism arriving through a different
+  button: the declaration's duplicate label survives `_merge_declared`, so one
+  Delete press takes the named row AND one of the duplicate pair out of both the
+  display and the deck, with verdict `ok` (measured: 3 rows -> 1,
+  `.save @m.m1[ids]` gone). Item **B5-a** fixed 1323's reorder half and narrowed
+  its guard to the reorder ON A MEASUREMENT — guarding the Add arm reds row
+  **BT27**, which golds issue **1288**'s ruled accept-and-report. Delete has no
+  ruling either way, so the choice is the USER's. **FILED, NOT FIXED.**
+
+* **1327** — **`conf_tiers` does not follow a SYMLINKED settings file**, so Save
+  can still name the wrong tier. `file normalize` does not resolve a path's
+  final component; `write_conf` resolves the link chain and writes the real
+  file, `conf_tiers` compares unresolved strings, so a project `.conf` that is a
+  symlink to the user-global one answers `project` while the bytes land in the
+  user's (measured: `CONF_TIERS_OF_PROJ=project`, `USER_GLOBAL_FILE_CHANGED=1`).
+  **This is issue 1325's own title reproducing**, which is why 1325 is
+  PARTIALLY FIXED and not FIXED. Found by item B5-a's adversary, reproduced
+  independently. Nothing ships it yet — the only callers are in the preserved
+  patch — so it is a **precondition on item B5-3**. **FILED, NOT FIXED.**
+
+**The next free number is 1328.**

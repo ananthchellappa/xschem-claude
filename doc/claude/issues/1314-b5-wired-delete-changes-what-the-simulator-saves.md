@@ -19,7 +19,7 @@ two scope defects are NOT.**
 * **A6 and A7 — STILL OPEN.** Both were fixed by item B5-2 and **reverted with
   it** (blocker: issue **1322**). The fixes are measured and sabotage-proved but
   live only in `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch` (md5
-  `c51587ad91d65a05bbd07930ff237f9b`). They are latent meanwhile — `apply` again
+  `42890cf163dd9ba1e85e312e1801c6ed`). They are latent meanwhile — `apply` again
   has no functional caller — and they are the first thing the re-do must re-land.
 * **The three stub-shadow findings — STILL OPEN**, same reason. SD3's
   single-class fixture and the BT10/BT12/BT17 rename-shadow are both back.

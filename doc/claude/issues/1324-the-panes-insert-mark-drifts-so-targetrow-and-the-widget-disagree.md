@@ -1,7 +1,7 @@
 # 1324 — the pane's `insert` mark drifts on every new dump, so "the row your cursor is in" and `::rdw::targetrow` disagree
 
 **Status:** FILED, NOT FIXED. Measured 2026-09-04 on `:99` against item B5-2's
-working tree (preserved patch, md5 `c51587ad91d65a05bbd07930ff237f9b`); reverted
+working tree (preserved patch, md5 `42890cf163dd9ba1e85e312e1801c6ed`); reverted
 with it, so the code this describes is not in the tree.
 **Component:** `src/rdw.tcl` — `rdw::render_pane`, `rdw::set_row`,
 `rdw::_target_line`, `::rdw::targetrow`.

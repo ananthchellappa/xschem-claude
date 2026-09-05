@@ -2439,13 +2439,38 @@ issues 1312/1292/1287/1314/1315/1316/1317/1318/1319/1320 · `NUMBERING.md` ·
 > time this item has been built, measured green, and rolled back for a defect no
 > count could see. **The patch is preserved and is a SUPERSET of B5's** —
 > `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch`, md5
-> `c51587ad91d65a05bbd07930ff237f9b`, 2781 lines, `git apply --check` **rc=0** at
-> `c940a5df`. It carries B5's `src/rdw.tcl` half plus the six corrections plus
-> the three rewritten suites. **Apply THIS patch; B5's is now stale.**
+> `42890cf163dd9ba1e85e312e1801c6ed`, 3018 lines, `git apply --check` **rc=0**
+> on top of item **B5-a**. It carries B5's `src/rdw.tcl` half plus the six
+> corrections plus the three rewritten suites. **Apply THIS patch; B5's is now
+> stale.**
+>
+> ⚠ **THE PATCH WAS EDITED BY ITEM B5-a, 2026-09-04, AND ITS MD5 AND LINE COUNT
+> BOTH MOVED** (from `c51587ad91d65a05bbd07930ff237f9b` / 2781 lines). B5-a
+> repaired the two fences that passed with their own subject deleted (**BE3b**
+> gained three `shown` legs, **Q9** gained two positive greying legs), rewrote
+> `rdw::_subject` to READ the subject B5-a's `rdw::push` now records rather than
+> re-resolving it against the live editor, DELETED the patch's duplicate
+> `rdw::_hdr_instname` (B5-a's copy at the top of `src/rdw.tcl` is now the only
+> one), wired `op_param_lists::reduce_why` into `rdw::_edit`'s **reorder arm**
+> and `rdw::_tier_note` into `rdw::_do_save`, added rows **BE8** and **BE9**,
+> extended row **BT22**'s published-verb allow-list with `reduce_why` and
+> `conf_tiers`, and re-based `KX_FLOOR` on B5-a's 36 (36 → **41**).
+>
+> ⛔ **READ THE `## B5-a` SECTION BELOW BEFORE APPLYING THIS PATCH.** It carries
+> eight things that bind this re-do, including one that is a **precondition**:
+> issue **1327** — `conf_tiers` does not follow a **symlinked** settings file, so
+> Save still names the wrong tier and issue **1325 is PARTIALLY FIXED, not
+> FIXED**. Also: the reorder guard is the reorder's alone (guarding the Add arm
+> reds row **BT27**), `reduce_why` has no caller outside this patch, and
+> `rdw::_hdr_instname` now lives at the top of `src/rdw.tcl` and was DELETED
+> from here.
 >
 > **The counts it reached, each from an actual `^RESULT:` line:** window
 > 76 → **100** `--nogui` / 86 → **111** `:99`, store 102 → **113**, keys
-> 35 → **40** with `KX_FLOOR` raised 35 → 40 in the same edit. T1 zero, T2
+> 35 → **40** with `KX_FLOOR` raised 35 → 40 in the same edit. **RE-MEASURED
+> 2026-09-04 with B5-a underneath and the repaired patch applied:** window
+> 83 → **107** `--nogui` / 94 → **119** `:99`, store 110 → **123**, keys
+> 36 → **41**, all four `RESULT: ALL PASS`. T1 zero, T2
 > `HARNESS: PASS`, audit 369/11/0/2 with the eleven fail names byte-identical.
 > **Every one of those numbers was true while the Delete button edited a device
 > the user was not looking at.** Tenth item running.
@@ -2813,6 +2838,90 @@ and carries no class — this one is a **grammar** change, so it must be settled
 **1280** (Delete trims the deck's `.save` cards, blanking the summary list —
 and its fix carries a **user question**: does Delete stop *drawing*, or stop
 *saving*?). Fix them in `src/op_param_lists.tcl`, not in the button column.
+
+---
+
+## B5-a — the foundations the buttons stand on  ✅ **LANDED, status E, 2026-09-04.** 1322 + the reorder half of 1323 + 1325's headline case + the two dead fences. *(unblocks B5-3; 1327 is now a precondition ON B5-3)*
+
+**Why it existed.** The button column had been built, gone green on every tier,
+and been reverted **three times**, and **not once was the defect in the
+buttons** — it is the first real caller of the store and of the block list, so
+each attempt discovered another latent defect in what it calls. B5-a fixed the
+callees so the fourth attempt is about buttons.
+
+**What landed** (pure Tcl, no build; `grep -c rdw.tcl src/Makefile` = 2 and
+`grep -c op_param_lists.tcl src/Makefile` = 2, unchanged):
+
+* `src/rdw.tcl` — `rdw::push` **captures `{instname type cellname schname}` at
+  dump time** and stamps it into the block's **header entry as a third
+  element**; `rdw::block_subject` is the one reader and a pure function of its
+  argument. `dump_devpath` now `return [rdw::push $blk]`.
+* `src/op_param_lists.tcl` — two published verbs, `reduce_why` (a reorder may
+  not shorten a list) and `conf_tiers` (which tiers a path belongs to).
+* The two dead fences repaired **inside the preserved patch**, so B5-3 inherits
+  them working.
+
+**Counts.** window 76 → **83** `--nogui` / 86 → **94** `:99`, store 102 → **110**
+(both arms), keys 35 → **36** `:99` with `KX_FLOOR` **raised** 35 → 36. Controls
+unmoved (seam 49, op_annot 485/492, declutter 134). T1 zero, T2 `HARNESS: PASS`
+6/6.
+
+### ⚠ WHAT B5-a LEARNED THAT BINDS B5-3, AND IT IS NOT ALL GOOD NEWS
+
+1. **⛔ ISSUE 1327 IS A PRECONDITION ON B5-3, AND IT IS 1325's TITLE COMING
+   BACK.** B5-a's own adversary refuted the 1325 fix and the write-up agent
+   reproduced it independently: `conf_tiers` compares `file normalize`d strings,
+   and **`file normalize` does not resolve a path's FINAL component**. So a
+   project `.conf` that is a **symlink** to the user-global one is reported as a
+   project write while the user-global settings are rewritten —
+   `CONF_TIERS_OF_PROJ=project`, `USER_GLOBAL_FILE_CHANGED=1`. `write_conf`
+   already resolves the chain (`_resolve_target`, issue 1276) and **throws the
+   answer away**. **Issue 1325 is PARTIALLY FIXED, not FIXED — do not cite it as
+   closed.** Fix shape in **1327**: publish `_resolve_target`'s answer, make
+   `conf_tiers` resolve both sides, and fence it **both directions** (with the
+   link, the note fires and names the real file; without it, byte-identical to
+   today). Nothing ships it yet because the only callers are in the patch — that
+   is exactly why it becomes B5-3's.
+2. **THE REORDER GUARD IS THE REORDER'S ALONE, ON A MEASUREMENT.** This plan's
+   own instruction was to guard `rdw::_edit`'s **single** `set_list` call site,
+   covering up/down/delete/add. **That reds window row BT27**, which golds issue
+   **1288**'s ruled *accept-and-report* for a colliding Add — and `_edit`'s own
+   comment had already said so. Verify-C re-implemented the plan's version to
+   check: `BT27` RED, store `ALL PASS`. The guard is now on the `up`/`down` arm
+   only. **Do not "restore" it to the call site.** The Delete residual is filed
+   as **1326** and is the user's to rule.
+3. **`op_param_lists::reduce_why` HAS NO CALLER IN THE TREE.** Its only consumer
+   is the `rdw::_edit` hunk inside the patch. A B5-3 rebase that drops or
+   reshapes that hunk leaves every store row green with the DD-4/DD-6 violation
+   live; only patch row **BE8** catches it. **After rebasing, confirm BE8 is
+   present and reds under `SAB-REDUCE-BLIND`.**
+4. **THE PATCH MOVED.** md5 `c51587ad91d65a05bbd07930ff237f9b` → **`42890cf163dd9ba1e85e312e1801c6ed`**,
+   2781 → **3018** lines, `git apply --check` **rc=0** on top of B5-a. Eight
+   citations were updated in the same commit. `KX_FLOOR` inside it is **41**.
+   Patched-tree counts, measured on a copy: window **107** `--nogui` / **119**
+   `:99`, store **123**, keys **41**, all `RESULT: ALL PASS` — **re-measure after
+   any rebase rather than quoting them.**
+5. **THE PATCH'S `rdw::_hdr_instname` WAS DEFINED TWICE AND THE LAST ONE SILENTLY
+   WON.** B5-a moved it to the top of `src/rdw.tcl` and **deleted the patch's
+   copy**. `rdw::_subject` stays in the patch (it must name
+   `op_param_lists::class`, and rows **S1** and **K11** gold that `src/rdw.tcl`
+   names that namespace zero times) and is now a *reader* of `block_subject`.
+6. **A NEW ROW OF B5-a's OWN WAS DEAD ON ARRIVAL, AND ONLY THE SABOTAGE CAUGHT
+   IT.** Keys row `KS1` passed under the sabotage that restores the shipped 1322
+   defect, because Tcl's `check` evaluates its argument list when it is
+   **called** and the original sheet had already been restored by then. Any row
+   whose subject is *"which sheet was open"* must **snapshot its legs while the
+   other sheet is still open**. Ninth instance of this batch's one recurring
+   failure, met by the item that exists to break it.
+7. **THE `_stamped` GUARD IS AN ARITY TEST** (`llength $e >= 3`). A later change
+   that adds a third element to the header entry for any other purpose silently
+   disables the capture for every block. No row asserts the third element is a
+   dict with the four expected keys — a cheap row for B5-3.
+8. **`schname` IS CAPTURED AND NOTHING READS IT.** The sheet-identity axis is
+   recorded so B5-3 *can* name the sheet; nothing refuses on it, so a cross-sheet
+   edit is still *"the button did something you cannot see"*. **Rule debt on
+   1322, the user's.**
+
 
 ---
 

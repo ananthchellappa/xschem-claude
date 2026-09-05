@@ -1216,7 +1216,7 @@ without a human.
 > `rdw::_subject` re-resolves the block's bare instance name against whatever
 > sheet is open, so a button edits a device the user is not looking at. The work
 > is preserved at `doc/claude/op_param_batch/B5-2_working_tree_REFUTED.patch`
-> (md5 `c51587ad91d65a05bbd07930ff237f9b`).
+> (md5 `42890cf163dd9ba1e85e312e1801c6ed`).
 >
 > **The design conclusions below were each measured and they SURVIVE the
 > revert** — they are what the re-do should build, not what the tree contains.
@@ -1287,6 +1287,82 @@ without a human.
 >   **same path**. `load` already dedupes that collision; a writer that hardcodes
 >   `project` rewrites the user-global file while reporting a project write, and
 >   ruling **DD-7**'s *"one tier's own file"* goes vacuous. Issue **1325**.
+
+#### AS BUILT — item B5-a, 2026-09-04: three of those four, and the two dead fences
+
+Item **B5-a** is the foundations the button column stands on, split out because
+the column had been built, gone green on every tier, and been reverted **three
+times** — and never once for a defect in the buttons. It closes **1322**, the
+reorder half of **1323**, and **1325**, and repairs the two fences that were
+passing with their own subject deleted.
+
+* **A block carries what it was about.** `rdw::push` captures
+  `{instname type cellname schname}` **at dump time**, from the block's own
+  header text and the sheet that is still open, and stamps it into the block's
+  **header entry as a third element** — so the block stays one flat list of
+  entries and `llength $b`, `rdw::block_text` and `render_pane`'s line count are
+  all byte-unchanged. `rdw::block_subject {block}` is the single reader and a
+  **pure function of its argument**: it reads no namespace state, so the three
+  suites that assign `set ::rdw::blocks {}` directly cannot desync it. A
+  parallel subject list was rejected — it has *three* writers to keep aligned,
+  not two. The **class** is deliberately not captured: it is a pure classmap
+  lookup with no sheet dependence, so it keeps its one home and `src/rdw.tcl`
+  keeps naming the store's namespace zero times, which rows S1 and K11 gold.
+  A subject that does not resolve — an unfound symbol answers the literal
+  `missing` — is **not recorded at all**, because `op_param_lists::class`
+  returns the *token* for an unmapped type by contract and blank is available
+  here and nowhere later.
+* **A reorder cannot shorten a list**, through one new published verb:
+  `op_param_lists::reduce_why {scope key listname triples}` -> `{}` when a
+  `set_list` of those triples would store every row, the sentence when it would
+  reduce it. It reuses `_dup_index`, so the duplicate-label RULE keeps one
+  definition and gains a second READER — the `governs` precedent — and
+  `set_list` itself is unchanged, so issue **1288**'s ruling stands.
+  ⚠ **The guard covers `up`/`down` and nothing else, and that is a measurement,
+  not a preference.** Guarding the Add arm as well **reds window row BT27**,
+  which golds issue 1288's ruled *accept-and-report*; `rdw::_edit`'s own comment
+  had already said so (*"the Add is not refused: a third door with a third rule
+  is the disagreement issue 1288 is about"*). A reorder is definitionally
+  length-preserving, so a shortening one is unambiguously a defect; Delete is
+  neither, and its residual is filed as issue **1326** for the user to rule on.
+  ⚠ **And the guard runs BEFORE the write**, which refutes issue 1323's own
+  recommended wording (*"after the write … restore the base and refuse"*): a
+  `set_list` of the base dedupes it identically, so the restore would store a
+  third value nobody chose, and a base that came from the SEED left the key
+  UNOWNED, which no verb in this store can undo.
+* **Save says which tier it really wrote — for the cwd collision, and NOT for a
+  symlinked settings file (issue 1327).** The verb is
+  `op_param_lists::conf_tiers <path>` -> the tiers whose `conf_path` normalizes
+  to this path, in `{user project}` order. Read-only: no file, no directory, no
+  report, no list. `load` is **not** rewritten to consume it — its `seen` dedupe
+  answers a different question over a loop — and store row **CT2** locks the two
+  together by assertion instead. Which tier Save *writes* is unchanged and stays
+  issue **1273**'s, which is the user's.
+  ⚠ **`file normalize` does not resolve a path's FINAL component**, which is the
+  very fact `_resolve_target` exists for (issue 1276). `write_conf` follows the
+  link chain and writes the **real** file; `conf_tiers` compares unresolved
+  strings. So a project `.conf` that is a **symlink** to the user-global one is
+  reported as a project write while the user-global settings are rewritten —
+  issue **1325**'s own title, still reproducing, which is why 1325 is
+  **PARTIALLY FIXED** and not fixed. The cwd collision *is* closed and fenced,
+  and an intermediate symlinked `.xschem` **directory** is caught too (measured
+  `user project`); only the symlinked final component is missed, and no fixture
+  in any suite builds one. **Issue 1327 is a precondition on item B5-3.**
+* **The two dead fences.** `BE3b` passed with `rdw::_apply_now` stubbed to `{}`
+  — every field it asserted is satisfied by the descriptor *as registered* — and
+  now reads `shown` on both type tokens, a key `apply` alone writes. `Q9` passed
+  with the greying forced off, because every one of its terms was a NEGATIVE;
+  it now carries two POSITIVE claims about the sentence `rdw::button` actually
+  emits for a greyed press. Both repaired **inside**
+  `B5-2_working_tree_REFUTED.patch`, so item B5-3 inherits them working; the
+  patch's md5 and line count both moved and every citation was updated in the
+  same commit.
+* ⚠ **And one of B5-a's own new rows was dead on arrival.** Keys row `KS1`
+  passed under the sabotage that restores the shipped 1322 defect, because
+  `check` evaluates its argument list when it is *called* and the original sheet
+  had already been restored by then. The legs are now snapshotted while the
+  other sheet is still open. Recorded because it is the exact failure this item
+  exists to break, met by the item that exists to break it.
 
 #### AS BUILT — item B2d, 2026-09-04: the answer dict is UNTRUSTED INPUT
 

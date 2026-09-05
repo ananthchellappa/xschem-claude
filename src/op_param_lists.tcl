@@ -724,6 +724,64 @@ namespace eval ::op_param_lists {
     return 1
   }
 
+  ## WOULD A `set_list` OF THIS VALUE DROP A ROW? (issue 1323)
+  ##
+  ## ⚠ A REORDER BECAME A DELETION, AND THAT VIOLATES RULINGS DD-4 AND DD-6.
+  ## `op_annot::register` accepts a `params` list carrying two triples that
+  ## share a LABEL; `_params` reads that declaration verbatim (ruling DD-13),
+  ## `seed` returns it undeduped and `effective` hands it out as the base a
+  ## reorder swaps two elements of. `set_list` then applies the duplicate-label
+  ## rule and the list comes back SHORTER. MEASURED end to end at HEAD:
+  ##     base           {id ids 0} {id vgs 2} {gm gm 1}
+  ##     an Up press    {id vgs 2} {id ids 0} {gm gm 1}
+  ##     effective      {id ids 0} {gm gm 1}
+  ##     .save cards    m1[ids] m1[gm]   -- m1[vgs] IS GONE FROM THE DECK
+  ## `apply` unions through `_save_set` and `_merge_declared`, both of which
+  ## dedupe by label again, so nothing downstream can put the row back. An Up
+  ## press is not even a Delete, and DD-4/DD-6 say in one sentence that a
+  ## display decision never changes what the simulator is asked to save.
+  ##
+  ## ⚠ THE GUARD RUNS BEFORE THE WRITE, NOT AFTER IT, AND THAT REFUTES THE
+  ## ISSUE'S OWN RECOMMENDED WORDING. Issue 1323 recommends "after the write,
+  ## if the stored list is shorter than the base, restore the base and refuse".
+  ## THAT CANNOT RESTORE: a `set_list` of the base dedupes it identically, so
+  ## the "restore" would store `{id vgs 2} {gm gm 1}` -- a THIRD value neither
+  ## the user nor the PDK ever chose -- and when the base came from the SEED
+  ## the key was previously UNOWNED, which no verb in this store can undo.
+  ##
+  ## ⚠ ONE RULE, TWO READERS -- the `governs` precedent, applied to
+  ## `_dup_index`. `set_list` is UNCHANGED: issue 1288's ruling stands, both
+  ## doors still reach the same verdict with the same sentence, and this verb
+  ## adds a READER rather than a rule. The three routes the issue rejects are
+  ## rejected here too: making `op_annot::register` refuse (it punishes the PDK
+  ## author), making `seed` dedupe (it re-splits the declaration from the seed,
+  ## which is the split ruling DD-13 exists to remove) and making `set_list`
+  ## keep duplicates (it reopens 1288, and `_key`, `_save_set` and
+  ## `_merge_declared` all assume label uniqueness).
+  ##
+  ## THE WORDING IS NEW BECAUSE THE FACT IS NEW. `_dup_why` says a row WAS
+  ## replaced in place; this says a row WOULD BE DROPPED and the write has not
+  ## happened. Two wordings for two facts, never two for one.
+  ##
+  ## -> {} when a `set_list` of these triples would store every row -- which
+  ##    includes every malformed list, because that is a REFUSAL with its own
+  ##    sentence and not a reduction.
+  ## -> the sentence when it would REDUCE the list.
+  proc reduce_why {scope key listname triples} {
+    if {[catch {llength $triples}]} { return {} }
+    set seen {}
+    foreach t $triples {
+      set tt [_triple $t]
+      if {$tt eq {}} { return {} }
+      set l [lindex $tt 0]
+      if {[_dup_index $seen $l] >= 0} {
+        return "this change would DROP a row: the list carries more than one entry for label \"$l\", and $scope $key $listname keeps one entry per label, so storing it would leave fewer rows than it started with. A reorder must not remove a parameter the simulator is asked to save."
+      }
+      lappend seen $tt
+    }
+    return {}
+  }
+
   ## -----------------------------------------------------------------------
   ## DESCRIPTOR KEY STATE: {present value}
   ## -----------------------------------------------------------------------
@@ -937,6 +995,49 @@ namespace eval ::op_param_lists {
     if {$which eq "project"} { return [file join [pwd] .xschem $basename] }
     _say "unknown settings tier \"$which\"; expected `user` or `project`"
     return {}
+  }
+
+  ## WHICH TIERS DOES THIS PATH ACTUALLY BELONG TO? (issue 1325)
+  ##
+  ## ⚠ THE TWO TIERS CAN BE ONE FILE, AND AT THE ORDINARY LAUNCH CWD THEY ARE.
+  ## `conf_path project` is `[pwd]/.xschem/<basename>`, so with the cwd at
+  ## `$HOME` -- which is how xschem is normally started -- it resolves to the
+  ## SAME file as `conf_path user`. MEASURED at HEAD:
+  ##     user    = /home/analog/.xschem/op_param_lists.conf
+  ##     project = /home/analog/.xschem/op_param_lists.conf
+  ## `load` below already knows it and dedupes with `file normalize` and a
+  ## `seen` list. THE WRITER DID NOT: a Save that reported a project write
+  ## rewrote the USER-GLOBAL settings of every design on this machine, and
+  ## ruling DD-7's "a write touches one tier's own file" went vacuous in
+  ## exactly the case a user meets first. (The measurement was not academic --
+  ## a probe of the reverted caller really did write the developer's own
+  ## `~/.xschem/op_param_lists.conf`.)
+  ##
+  ## This is the accessor that lets a caller SAY SO. It does not change which
+  ## tier Save writes: issue 1273 -- "which directory IS the project" -- is a
+  ## live rule debt and is the USER's to settle. Making `conf_path project`
+  ## answer empty on a collision is rejected by issue 1325 itself, because
+  ## `load` and `write_conf` both depend on that accessor.
+  ##
+  ## READ-ONLY BY CONSTRUCTION: it creates nothing, owns nothing, and pushes no
+  ## report -- a tier reporter that wrote anything would be a second writer
+  ## wearing a reader's name.
+  ##
+  ## -> the tiers whose `conf_path` normalizes to this path, in `{user
+  ##    project}` order; {} for a path that is neither.
+  proc conf_tiers {path} {
+    if {$path eq {}} { return {} }
+    set n {}
+    if {[catch {file normalize $path} n]} { return {} }
+    set out {}
+    foreach which {user project} {
+      set p [conf_path $which]
+      if {$p eq {}} { continue }
+      set pn {}
+      if {[catch {file normalize $p} pn]} { continue }
+      if {$pn eq $n} { lappend out $which }
+    }
+    return $out
   }
 
   ## Read the user-global file, then the project one; the project file wins per

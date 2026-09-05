@@ -1369,6 +1369,16 @@ check {Q1 Q10 ASSERTED: one raw holding an Operating Point plot AND a Transient 
 ## ⚠ THIS ROW IS GREEN BEFORE B2a — it is a missing FENCE, not a defect — so
 ## its red-before proof is the SB-OLDEST-ON-TOP sabotage, which must now red
 ## the --nogui arm and not only the display one.
+## ⚠ TWO TERMS OF THIS ROW MOVED FOR ITEM B5-a (issue 1322), AND THE GOLDEN
+## DID NOT. `rdw::push` now stamps the block's SUBJECT into the header entry as
+## a third element, so `[lindex [lindex $blocks 0] 0]` is `{hdr MQ1B:/ <dict>}`
+## for a resolvable instance. This row passed at HEAD only because its fixture
+## happens to hold no instance named MQ1B — green by accident — so it now
+## compares the header entry's TAG and TEXT, which is what it was ever about.
+## ⚠ AND THE `eq $Q1_BLK` TERM IS A CONSTRAINT ON THE FIX, not a detail:
+## `rdw::dump_devpath` (rdw.tcl:749-750) pushes `$blk` and returns `$blk`, not
+## push's answer. Once push stamps, it must return `[rdw::push $blk]` or the
+## value handed back is not the value stored and this term reds.
 set Q1B_N0 [expr {[info exists ::rdw::blocks] ? [llength $::rdw::blocks] : -1}]
 set Q1B_NEW [rw_ans ::rdw::push \
   [rw_block [rw_ansd [dict create {@m.x1.mq1b} {{id 42}}] {} {} 0 ok] \
@@ -1380,7 +1390,7 @@ check {Q1b the dump is pushed onto ::rdw::blocks, NEWEST FIRST, on BOTH arms: a 
         [expr {[llength $::rdw::blocks] == $Q1B_N0 + 1 ? 1 : 0}] \
         [expr {[lindex $::rdw::blocks 0] eq $Q1B_NEW ? 1 : 0}] \
         [expr {[lindex $::rdw::blocks 1] eq $Q1_BLK ? 1 : 0}] \
-        [lindex [lindex $::rdw::blocks 0] 0]] \
+        [lrange [lindex [lindex $::rdw::blocks 0] 0] 0 1]] \
   {1 1 1 1 1 1 {hdr MQ1B:/}}
 
 ## THE FOUR SILENCES, END TO END. Each is produced by driving the real seam
@@ -1678,7 +1688,7 @@ set W3_IDXB [string first {MB:/} [rw_w .rdw.p.t get 1.0 end]]
 check {W3 NEWEST DUMP ON TOP: the second push is the FIRST block in the store and the FIRST line in the pane, and the older one is pushed below it} \
   [list $W3_FIRST \
         [expr {[info exists ::rdw::blocks] && [llength $::rdw::blocks] > 0
-               && [lindex [lindex $::rdw::blocks 0] 0] eq {hdr MB:/} ? 1 : 0}] \
+               && [lrange [lindex [lindex $::rdw::blocks 0] 0] 0 1] eq {hdr MB:/} ? 1 : 0}] \
         [expr {$W3_IDXB >= 0 && $W3_IDXA > $W3_IDXB ? 1 : 0}]] \
   {MB:/ 1 1}
 
@@ -2413,6 +2423,297 @@ check {K17 STRUCTURAL (issue 1305) rdw::pick_start clears the outstanding suspen
         [expr {$K17_IW >= 0 && $K17_IZ >= 0 && $K17_IU > $K17_IW && $K17_IU < $K17_IZ ? 1 : 0}] \
         [rw_has $K17_PS {![info exists pick(suspended)]}]] \
   {0 1 1 1}
+
+# ============================================================================
+# SECTION BS — ISSUE 1322: A BLOCK MUST CARRY WHAT IT WAS ABOUT
+# ============================================================================
+# THIS IS THE DEFECT THAT REVERTED ITEM B5-2, AND IT REPRODUCES AT HEAD WITH NO
+# BUTTON CODE AT ALL.
+#
+# `rdw::header` (rdw.tcl:654) builds a block header as
+# "<instname>:<cadence path>" — a RENDERING, not an identity. `rdw::push`
+# (:767) is handed ONLY that rendered block and stores nothing else. Nothing in
+# the tree clears `::rdw::blocks` on a schematic load (measured:
+# BLOCKS_SURVIVED_THE_LOAD = 1), and `keep_latest` is its only shortener. So
+# the SOLE surviving trace of which device a block is about is the header
+# STRING — and item B5-3's button column re-resolves the NAME half of that
+# string against WHATEVER SHEET IS OPEN.
+#
+# MEASURED AT HEAD 9945ad43, through the reverted patch's OWN `rdw::_subject`
+# and `rdw::_edit` sourced into a HEAD session (the repo was not modified):
+#   two top-level sheets, each holding an `M1` — the default template name of
+#   EVERY device symbol in this tree, i.e. the ORDINARY case —
+#     the block on screen is about   ncls / vn.sym
+#     _subject answers               type vpdev class pcls cellname vp.sym
+#     Delete's verdict               ok
+#     Delete says                    "removed gm from the annotation list for
+#                                     class pcls."
+#     ncls keeps gm; pcls loses it — a device nobody was looking at.
+#
+# ⚠ THE OBVIOUS GUARD IS ALREADY REFUTED BY MEASUREMENT. Comparing the header's
+# PATH half does not catch this: both sheets are top-level, `xschem get
+# sch_path` is `.` on both, `rdw::_cadence_path` renders `/` on both, and
+# PATHS_EQUAL = 1. THE AXIS IS SHEET IDENTITY, NOT HIERARCHY PATH. Row BS1b is
+# that refutation written down so a later reviewer cannot re-propose it.
+#
+# ⚠ AND THE ADJACENT HOLE IS REAL. `op_param_lists::class` returns the TOKEN
+# for a type nobody mapped, BY CONTRACT (op_param_lists.tcl:399-403), and an
+# instance whose symbol xschem cannot find answers `op_annot::type` =
+# `missing` — the placeholder systemlib/missing.sym (save.c:7281), the same one
+# `descend_missing_sym` (actions.c:6049-6063) guards by name. So a `class eq {}`
+# guard waves it straight through and the user reads a sentence naming a class
+# no PDK ever mapped. Row BS4 closes it AT CAPTURE TIME, which is the only
+# place where blank is available as an honest answer.
+#
+# ============================================================================
+# THE CONTRACT THIS SECTION PINS
+# ============================================================================
+#   rdw::block_subject <block>
+#       -> a dict {instname type cellname schname}, or {} when the block
+#          carries no subject.  A PURE FUNCTION OF ITS ARGUMENT: it never reads
+#          ::rdw::blocks, so a suite that assigns `set ::rdw::blocks {}`
+#          directly — three of them do — cannot desync it.
+#   rdw::push
+#       captures the subject AT PUSH TIME, from the block's OWN header text and
+#       the live editor, and returns the STAMPED block.  Its signature does not
+#       change: every existing fixture in three suites pushes while the right
+#       schematic is loaded, so they all capture the right subject with no
+#       edit.
+#   the stamp rides INSIDE the header entry, as a THIRD element:
+#       {hdr <header text> <subject dict>}
+#       so the block stays ONE FLAT LIST OF ENTRIES.  `llength $b` — which
+#       rdw::_locate and the patch's BE0/BT3 use as a LINE COUNT — does not
+#       move, `block_text` is byte-identical, and render_pane paints the same
+#       number of lines.
+#   a subject that does NOT resolve is NOT recorded: the header entry keeps its
+#       two elements, the block is byte-identical to the unstamped one, and
+#       block_subject answers {}.
+#
+# ⚠ THE CLASS IS DELIBERATELY NOT CAPTURED, AND THAT IS A DECISION, NOT AN
+# OVERSIGHT. `op_param_lists::class` is a pure classmap lookup with no sheet
+# dependence, so it already has exactly one home (invariant I1); only `type` is
+# sheet-dependent. Capturing the class here would also make src/rdw.tcl name
+# the `op_param_lists::` namespace, which rows S1 (:2451) and K11 (:2170) gold
+# at ZERO occurrences — and the preserved patch moves that same term to its own
+# row, so editing it here would guarantee a conflict for item B5-3. B5-3's
+# `_subject` derives the class from the captured type.
+#
+# RED BEFORE THE FIX: BS1 BS1b BS2 BS3 BS4 BS5 (BS6 on the display arm) — every
+# one for the same single reason, that `rdw::block_subject` and the capture do
+# not exist, so rw_ans answers NOPROC and the header entry has two elements
+# instead of three. Nothing here is red for a fixture reason: row BS0 is the
+# control that says so.
+
+set BS_DIR [file join $scratch bs1322]
+file mkdir $BS_DIR
+## Two PRIVATE symbol types, so no shipped symbol and no PDK registration is
+## disturbed — and BOTH carry `name=M1` in their template, which is not a
+## contrivance: it is what every device symbol in this tree ships.
+proc bs_mksym {path type} {
+  set fd [open $path w]
+  puts $fd "v {xschem version=3.4.5 file_version=1.2}"
+  puts $fd "G {}"
+  puts $fd "K {type=$type"
+  puts $fd {format="@spiceprefix@name @pinlist @model"}
+  puts $fd "template=\"name=M1 model=$type spiceprefix=X\""
+  puts $fd "}"
+  puts $fd "V {}"
+  puts $fd "S {}"
+  puts $fd "E {}"
+  puts $fd "L 4 -20 -20 20 -20 {}"
+  puts $fd "B 5 -22.5 -12.5 -17.5 -7.5 {name=d dir=inout}"
+  puts $fd "T {@name} 0 -40 0 0 0.2 0.2 {}"
+  close $fd
+}
+proc bs_mksch {path sym} {
+  set fd [open $path w]
+  puts $fd "v {xschem version=3.4.5 file_version=1.2}"
+  puts $fd "G {}"
+  puts $fd "V {}"
+  puts $fd "S {}"
+  puts $fd "E {}"
+  puts $fd "C \{$sym\} 300 -300 0 0 \{name=M1\}"
+  close $fd
+}
+set BS_VN [file join $BS_DIR vn.sym]
+set BS_VP [file join $BS_DIR vp.sym]
+bs_mksym $BS_VN bs_ndev
+bs_mksym $BS_VP bs_pdev
+set BS_A    [file join $BS_DIR a.sch]
+set BS_B    [file join $BS_DIR b.sch]
+set BS_MISS [file join $BS_DIR miss.sch]
+bs_mksch $BS_A    $BS_VN
+bs_mksch $BS_B    $BS_VP
+bs_mksch $BS_MISS [file join $BS_DIR nosuch.sym]
+## ⚠ THE DEVPATH TEMPLATE IS ESCAPED AND THAT IS NOT A TYPO — section K's own
+## comment carries the measurement.
+set BS_DESC [list devpath {\@m.@path@name} params {{id ids 0} {gm gm 1}}]
+catch {op_annot::register bs_ndev $BS_DESC}
+catch {op_annot::register bs_pdev $BS_DESC}
+
+## The subject, read through the ONE public door and never by poking at the
+## block's shape, so a change of storage inside the header entry moves one proc
+## rather than seven rows.
+proc bs_subj {blk} { return [rw_ans ::rdw::block_subject $blk] }
+proc bs_key {blk k} {
+  set s [bs_subj $blk]
+  if {[rw_bad $s]} { return $s }
+  if {$s eq {}} { return NOSUBJ }
+  if {[catch {dict get $s $k} v]} { return "NOKEY:$k" }
+  return $v
+}
+proc bs_tail {blk k} {
+  set v [bs_key $blk $k]
+  if {[rw_bad $v] || $v eq {NOSUBJ} || [string match {NOKEY:*} $v]} { return $v }
+  return [file tail $v]
+}
+## A body count that CANNOT pass by the proc being absent.
+proc bs_bodycount {cmd needle} {
+  set b [rw_body $cmd]
+  if {[rw_bad $b]} { return $b }
+  return [rw_count $b $needle]
+}
+## One dump-shaped block for an instance name and device path.
+proc bs_mkblk {inst dp} {
+  return [rw_block [rw_ansd [dict create $dp {{ids 1.2e-05} {gm 3.4e-05}}] \
+                            {} {} 0 ok] \
+                   [rw_ctx "$inst:/" $dp op $inst]]
+}
+
+catch {xschem raw clear}
+set ::rdw::blocks {}
+rw_ans ::rdw::close
+
+# --- BS0  THE CONTROL. Without it every row below could be about a fixture ---
+xschem load $BS_A
+catch {update idletasks}
+set BS_ATYPE [rw_ans ::op_annot::type M1]
+set BS_ACELL [file tail [rw_ans xschem getprop instance M1 cell::name]]
+set BS_ASCH  [file tail [rw_ans xschem get schname]]
+set BS_AHDR  [rw_ans ::rdw::header M1]
+check {BS0 CONTROL the two-sheet fixture is what section BS says it is: sheet a holds ONE instance named M1, of a private type, whose symbol is vn.sym, and the ONE name builder resolves it - so no row below can be red for a fixture reason} \
+  [list $BS_ATYPE $BS_ACELL $BS_ASCH $BS_AHDR \
+        [rw_ans xschem get sch_path]] \
+  [list bs_ndev vn.sym a.sch {M1:/ @m.m1} .]
+
+# --- BS1  THE TWO-SHEET REPRO, REPRODUCED AND CLOSED -------------------------
+set BS_ARAW  [bs_mkblk M1 [lindex $BS_AHDR 1]]
+set BS_APUSH [rw_ans ::rdw::push $BS_ARAW]
+xschem load $BS_B
+catch {update idletasks}
+set BS_BTYPE [rw_ans ::op_annot::type M1]
+set BS_BSCH  [file tail [rw_ans xschem get schname]]
+set BS_STORED [lindex $::rdw::blocks 0]
+check {BS1 THE TWO-SHEET REPRO, CLOSED: with two top-level sheets each holding an M1, a block dumped from a.sch still names bs_ndev / vn.sym / a.sch after b.sch is loaded - while a LIVE re-resolution of that same bare name answers bs_pdev, which is the wrong answer item B5-2 shipped} \
+  [list $BS_ATYPE $BS_BTYPE [llength $::rdw::blocks] \
+        [bs_key $BS_STORED instname] [bs_key $BS_STORED type] \
+        [bs_tail $BS_STORED cellname] [bs_tail $BS_STORED schname]] \
+  [list bs_ndev bs_pdev 1 M1 bs_ndev vn.sym a.sch]
+
+# --- BS1b  THE PATH GUARD STAYS REFUTED, IN THE SUITE ------------------------
+## Written down so a later reviewer cannot spend a pass rediscovering that
+## comparing the header's path half catches nothing. The two headers are
+## byte-identical; only the captured sheet separates the sheets.
+set BS1B_LIVE [lindex [rw_ans ::rdw::header M1] 0]
+check {BS1b THE PATH GUARD IS REFUTED BY THE FIXTURE ITSELF: the block's header and the header the OTHER sheet builds for its own M1 are BYTE-IDENTICAL, so hierarchy path separates nothing - the captured sheet identity is the only thing that does, and it names a.sch while the editor is showing b.sch} \
+  [list [lindex [lindex $BS_STORED 0] 1] $BS1B_LIVE \
+        [expr {[lindex [lindex $BS_STORED 0] 1] eq $BS1B_LIVE ? 1 : 0}] \
+        [bs_tail $BS_STORED schname] $BS_BSCH] \
+  [list {M1:/} {M1:/} 1 a.sch b.sch]
+
+# --- BS2  THE STAMP NEVER REACHES THE PASTE OR THE LINE COUNT ----------------
+check {BS2 THE STAMP IS INVISIBLE TO EVERYTHING THAT ALREADY READS A BLOCK: block_text of the stamped block is byte-identical to block_text of the same block before the push, llength is unchanged so the pane's line count and rdw::_locate's arithmetic cannot move, the header entry is still tagged hdr with its header string unchanged - and it really did gain a third element, so this row is not a statement about a stamp that was never applied} \
+  [list [expr {[rw_ans ::rdw::block_text $BS_APUSH] eq
+               [rw_ans ::rdw::block_text $BS_ARAW] ? 1 : 0}] \
+        [expr {[llength $BS_APUSH] == [llength $BS_ARAW] ? 1 : 0}] \
+        [lindex [lindex $BS_APUSH 0] 0] [lindex [lindex $BS_APUSH 0] 1] \
+        [llength [lindex $BS_ARAW 0]] [llength [lindex $BS_APUSH 0]]] \
+  [list 1 1 hdr {M1:/} 2 3]
+
+# --- BS3  A RE-PUSH DOES NOT RE-STAMP AND DOES NOT RE-RESOLVE ----------------
+## b.sch is still the open sheet here, so a push that re-captured would answer
+## bs_pdev / vp.sym and the block would silently change what it is about.
+set BS3_N0 [llength $::rdw::blocks]
+set BS3_AGAIN [rw_ans ::rdw::push $BS_STORED]
+check {BS3 A RE-PUSH OF AN ALREADY-STAMPED BLOCK, WHILE A DIFFERENT SHEET IS OPEN, neither re-stamps nor re-resolves: the header entry is still exactly three elements, the subject is still the FIRST capture, and the store still grew by one so the guard did not swallow the push} \
+  [list [llength [lindex $BS3_AGAIN 0]] [bs_key $BS3_AGAIN type] \
+        [bs_tail $BS3_AGAIN cellname] [bs_tail $BS3_AGAIN schname] \
+        [expr {[llength $::rdw::blocks] == $BS3_N0 + 1 ? 1 : 0}]] \
+  [list 3 bs_ndev vn.sym a.sch 1]
+
+# --- BS4  THE ADJACENT HOLE: NOTHING IS RECORDED THAT CANNOT BE TRUSTED ------
+set ::rdw::blocks {}
+xschem load $BS_MISS
+catch {update idletasks}
+set BS4_TYPE [rw_ans ::op_annot::type M1]
+set BS4_RAW  [bs_mkblk M1 {@m.m1}]
+set BS4_PUSH [rw_ans ::rdw::push $BS4_RAW]
+set BS4_NRAW  [bs_mkblk MNOPE {@m.mnope}]
+set BS4_NPUSH [rw_ans ::rdw::push $BS4_NRAW]
+check {BS4 THE ADJACENT HOLE, CLOSED AT CAPTURE TIME: an instance whose symbol xschem cannot find answers the LITERAL token `missing` and records NO subject, and a header naming an instance that does not exist at all records none either - both blocks come back byte-identical to the unstamped ones, neither raises, and no caller can be handed a class token no PDK maps} \
+  [list $BS4_TYPE [bs_subj $BS4_PUSH] [llength [lindex $BS4_PUSH 0]] \
+        [expr {$BS4_PUSH eq $BS4_RAW ? 1 : 0}] \
+        [bs_subj $BS4_NPUSH] [llength [lindex $BS4_NPUSH 0]] \
+        [expr {$BS4_NPUSH eq $BS4_NRAW ? 1 : 0}] \
+        [rw_bad $BS4_PUSH] [rw_bad $BS4_NPUSH]] \
+  [list missing {} 2 1 {} 2 1 0 0]
+
+# --- BS5  ONE STRUCTURE, NOT TWO --------------------------------------------
+## A PARALLEL `::rdw::subjects` LIST WOULD HAVE THREE WRITERS TO KEEP ALIGNED,
+## NOT TWO: rdw::push, rdw::keep_latest AND the suites, which assign
+## `set ::rdw::blocks {}` DIRECTLY (this file at :1955 and :2420, the keys suite
+## at :283). A desynced parallel list answers about the wrong block while every
+## existing row stays green — which is this batch's own recurring failure. The
+## first leg drives exactly that assignment.
+## ⚠ `rw_body` STRIPS WHOLE-LINE `#` COMMENTS AND NOTHING ELSE (row H3's rule),
+## so `rdw::block_subject` may and should EXPLAIN itself in prose ABOVE its
+## code — what it may not do is name the store in a TRAILING comment, which
+## this row cannot tell from a read.
+xschem load $BS_A
+catch {update idletasks}
+set ::rdw::blocks {}
+rw_ans ::rdw::push [bs_mkblk M1 {@m.m1}]
+set BS5_AFTER_WIPE [bs_key [lindex $::rdw::blocks 0] type]
+set BS5_F [expr {[file isfile $RW_FILE] ? [rw_nocomment [rw_slurp $RW_FILE]] : {NOFILE}}]
+check {BS5 STRUCTURAL ONE STRUCTURE, NOT TWO: after a direct `set ::rdw::blocks {}` - which three suites do - a fresh push still answers the right subject; rdw::block_subject is a PURE FUNCTION of the block it is handed, naming neither `blocks` nor `variable` in its body; the file declares no second store; and the four helpers the sabotage variants target all exist} \
+  [list $BS5_AFTER_WIPE \
+        [bs_bodycount ::rdw::block_subject {blocks}] \
+        [bs_bodycount ::rdw::block_subject {variable}] \
+        [expr {$BS5_F eq {NOFILE} ? {NOFILE} : [rw_count $BS5_F {variable subjects}]}] \
+        [expr {[llength [info commands ::rdw::block_subject]] ? 1 : 0}] \
+        [expr {[llength [info commands ::rdw::_capture_subject]] ? 1 : 0}] \
+        [expr {[llength [info commands ::rdw::_stamped]] ? 1 : 0}] \
+        [expr {[llength [info commands ::rdw::_subject_resolved]] ? 1 : 0}] \
+        [expr {[llength [info commands ::rdw::_hdr_instname]] ? 1 : 0}]] \
+  [list bs_ndev 0 0 0 1 1 1 1 1]
+
+# --- BS6  THE DISPLAY ARM: THE STAMP IS INVISIBLE ON SCREEN TOO --------------
+if {$live_tk} {
+  set ::rdw::blocks {}
+  rw_ans ::rdw::open
+  set BS6_PUSH [rw_ans ::rdw::push [bs_mkblk M1 {@m.m1}]]
+  catch {update idletasks}
+  set BS6_TXT [rw_w .rdw.p.t get 1.0 end]
+  set BS6_IDX [rw_w .rdw.p.t index end-1c]
+  if {[string match {ERR:*} $BS6_IDX]} {
+    set BS6_NLINES -1
+  } else {
+    set BS6_NLINES [expr {[lindex [split $BS6_IDX .] 0] - 1}]
+  }
+  check {BS6 THE DISPLAY ARM: render_pane paints exactly one line per block ENTRY for a stamped block - so the stamp adds no line and shifts no offset - the pane holds no brace-quoted dict and none of the subject's own words, and the pane text is byte-identical to the block's paste shape} \
+    [list [llength [lindex $BS6_PUSH 0]] \
+          [expr {$BS6_NLINES == [llength $BS6_PUSH] ? 1 : 0}] \
+          [rw_count $BS6_TXT {instname}] [rw_count $BS6_TXT {schname}] \
+          [rw_count $BS6_TXT {cellname}] [rw_count $BS6_TXT {bs_ndev}] \
+          [expr {[string trimright $BS6_TXT "\n"] eq
+                 [string trimright [rw_ans ::rdw::block_text $BS6_PUSH] "\n"] ? 1 : 0}]] \
+    [list 3 1 0 0 0 0 1]
+}
+
+# --- section BS leaves nothing behind ----------------------------------------
+rw_ans ::rdw::close
+set ::rdw::blocks {}
+catch {xschem raw clear}
 
 # --- section K leaves nothing behind -----------------------------------------
 rw_ans ::rdw::pick_end

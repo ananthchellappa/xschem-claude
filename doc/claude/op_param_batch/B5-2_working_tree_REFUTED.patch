@@ -1,8 +1,8 @@
 diff --git a/src/op_param_lists.tcl b/src/op_param_lists.tcl
-index a38c3e76..5ae135a5 100644
+index 662bdde..4f56849 100644
 --- a/src/op_param_lists.tcl
 +++ b/src/op_param_lists.tcl
-@@ -909,19 +909,47 @@ namespace eval ::op_param_lists {
+@@ -967,19 +967,47 @@ namespace eval ::op_param_lists {
    ## over globs. `_keys` answers the order the entries were declared in, which
    ## for a settings file IS the order of its rows, so the file is its own
    ## documentation and the user reorders with the buttons they already have.
@@ -56,7 +56,7 @@ index a38c3e76..5ae135a5 100644
  
    ## -----------------------------------------------------------------------
 diff --git a/src/rdw.tcl b/src/rdw.tcl
-index ddd0d85d..7903e091 100644
+index e08cb8b..54bcca6 100644
 --- a/src/rdw.tcl
 +++ b/src/rdw.tcl
 @@ -623,6 +623,18 @@ proc rdw::button_state {id kind} {
@@ -78,7 +78,7 @@ index ddd0d85d..7903e091 100644
  # ---------------------------------------------------------------------------
  # TWO ONE-LINE ACCESSORS THAT NAME A CHOICE THE WHOLE WINDOW RESTS ON.
  # They exist so the choice has ONE place, and so a reviewer can flip either
-@@ -779,9 +791,18 @@ proc rdw::push {block} {
+@@ -923,9 +935,18 @@ proc rdw::push {block} {
  # buttons are drivable under --nogui too; the entry is wired to it by
  # -textvariable, so there is nothing to update by hand.  An empty message
  # clears the field.
@@ -98,7 +98,7 @@ index ddd0d85d..7903e091 100644
      return {}
  }
  
-@@ -932,10 +953,32 @@ proc rdw::build {} {
+@@ -1076,10 +1097,32 @@ proc rdw::build {} {
      pack .rdw.s.msg -side left -fill x -expand 1 -padx 3 -pady 3
      pack .rdw.s -side bottom -fill x
  
@@ -134,7 +134,7 @@ index ddd0d85d..7903e091 100644
          pack .rdw.b.$id -side top -fill x -padx 4 -pady 2
      }
      pack .rdw.b -side right -fill y
-@@ -1016,14 +1059,14 @@ proc rdw::apply_button_states {} {
+@@ -1160,14 +1203,14 @@ proc rdw::apply_button_states {} {
      return {}
  }
  
@@ -157,7 +157,7 @@ index ddd0d85d..7903e091 100644
  
  # ===========================================================================
  # ITEM B4 -- THE KEYS AND THE TWO GRAMMARS
-@@ -1618,3 +1661,767 @@ proc rdw::_register_cmdmode {} {
+@@ -1762,3 +1805,859 @@ proc rdw::_register_cmdmode {} {
      return 1
  }
  rdw::_register_cmdmode
@@ -201,15 +201,15 @@ index ddd0d85d..7903e091 100644
 +#    so the pane's own insert mark is the target and `rdw::set_row` is the one
 +#    setter that moves both it and the headless variable.
 +#
-+# 2. A SUBJECT.  `rdw::push` stores rendered lines and nothing else -- no
-+#    instance, no type, no class.  So the subject is DERIVED from the block the
-+#    cursor is in, by splitting its header back through `rdw::_hdr_instname`,
-+#    the exact inverse of `rdw::header`'s join.  A parallel `::rdw::subjects`
-+#    list would be two structures that must stay aligned across push,
-+#    keep_latest and every later op, which is the drift invariant I1 exists to
-+#    prevent; and a window-global "last device dumped" would edit a different
-+#    device's list than the block the cursor is sitting in, with nothing on
-+#    screen saying so.
++# 2. A SUBJECT.  `rdw::push` RECORDS what a block was about at DUMP TIME
++#    (issue 1322, item B5-a) -- instance, `type=` token, cell and sheet -- and
++#    `rdw::block_subject` reads it back out of the block itself.  This section
++#    derives nothing from the live editor: the earlier attempt split the
++#    header back into a bare name and re-resolved it, which answers about
++#    whatever sheet is open NOW and is the defect that reverted item B5-2.  A
++#    window-global "last device dumped" would be wrong the same way, one block
++#    over: it would edit a different device's list than the block the cursor
++#    is sitting in, with nothing on screen saying so.
 +#
 +# 3. A ROW NAME.  ⚠ THE PANE PRINTS THE RAW PARAMETER, NOT THE LABEL.  IHP's
 +#    first triple is `{id ids 0}` and the block line is `    ids : 1.2e-05`, so
@@ -356,33 +356,55 @@ index ddd0d85d..7903e091 100644
 +# ---------------------------------------------------------------------------
 +# THE SUBJECT.
 +
-+# The exact inverse of rdw::header's join.  An instance name may itself carry
-+# a colon, so the split is on the LAST colon that is followed by the path half
-+# -- which `rdw::_cadence_path` guarantees always begins with `/`, at the top
-+# sheet included (`M1:/`).  A line that is not a header at all answers {}.
-+proc rdw::_hdr_instname {line} {
-+    if {[regexp {^(.*):(/.*)$} $line -> nm path]} { return $nm }
-+    return {}
-+}
-+
-+# {instname type class cellname} for the block the cursor is in, or {}.
++# ⚠ `rdw::_hdr_instname` IS NOT DEFINED HERE ANY MORE, AND ITS ABSENCE IS THE
++# FIX (issue 1322, item B5-a).  It used to be defined twice -- once at the top
++# of this file and once in this section -- and the LAST definition silently
++# won.  It now has exactly one home, beside `rdw::header`, whose join it
++# inverts; `rdw::push` is its other caller.
++#
++# {instname type class cellname schname} for the block the cursor is in, or {}.
 +# ⚠ THE BLOCK INDEX IS AN ARGUMENT AND NOT `[lindex $blocks 0]`.  The newest
 +# dump is on top and the user's cursor is very often in an OLDER one; a subject
 +# read from the newest block would edit a different device's list than the
 +# block on screen, and every single-block row ever written would still pass.
++#
++# ⚠ AND IT RE-RESOLVES NOTHING (issue 1322, item B5-a).  THIS PROC IS THE
++# DEFECT THAT REVERTED ITEM B5-2.  It used to split the block's header back
++# into a bare instance NAME and ask the LIVE EDITOR what that name meant --
++# which answers about whatever sheet is open now, not about the sheet the block
++# was dumped from.  MEASURED with two top-level sheets each holding an `M1`,
++# which is the default template name of every device symbol in this tree:
++#     the block on screen was about   ncls / vn.sym
++#     this proc answered              type vpdev class pcls cellname vp.sym
++#     Delete's verdict                ok, and it edited pcls
++# ⚠ COMPARING THE HEADER'S PATH HALF DOES NOT CATCH IT and no reviewer should
++# spend a pass rediscovering that: both sheets are top-level, so both headers
++# are byte-identical.  THE AXIS IS SHEET IDENTITY, NOT HIERARCHY PATH.
++# `rdw::push` now records the subject AT DUMP TIME and `rdw::block_subject`
++# reads it back, so this proc reads a RECORD and asks the editor nothing.
++#
++# The CLASS is still resolved here, and only here: `op_param_lists::class` is
++# a pure classmap lookup with no sheet dependence, so it has one home already
++# (invariant I1) and is the one field that is still true whenever it is asked.
++# A block whose device could not be resolved at dump time -- a symbol xschem
++# could not find, an instance that had already gone -- carries no subject at
++# all, and `{}` here is what makes rdw::button's existing guard fire with no
++# new sentence.
 +proc rdw::_subject {blockindex} {
 +    variable blocks
-+    set b [lindex $blocks $blockindex]
-+    if {$b eq {}} { return {} }
-+    set inst [rdw::_hdr_instname [lindex [lindex $b 0] 1]]
-+    if {$inst eq {}} { return {} }
++    set subj [rdw::block_subject [lindex $blocks $blockindex]]
++    if {$subj eq {}} { return {} }
 +    set type {}
-+    catch {set type [::op_annot::type $inst]}
++    catch {set type [dict get $subj type]}
++    if {$type eq {}} { return {} }
 +    set cls {}
-+    if {$type ne {}} { catch {set cls [::op_param_lists::class $type]} }
-+    set cell {}
-+    catch {set cell [xschem getprop instance $inst cell::name]}
-+    return [dict create instname $inst type $type class $cls cellname $cell]
++    catch {set cls [::op_param_lists::class $type]}
++    set inst {} ; set cell {} ; set sch {}
++    catch {set inst [dict get $subj instname]}
++    catch {set cell [dict get $subj cellname]}
++    catch {set sch  [dict get $subj schname]}
++    return [dict create instname $inst type $type class $cls cellname $cell \
++                        schname $sch]
 +}
 +
 +# ---------------------------------------------------------------------------
@@ -610,6 +632,45 @@ index ddd0d85d..7903e091 100644
 +            set j [expr {$op eq {up} ? $i - 1 : $i + 1}]
 +            set new [lreplace $base $i $i [lindex $base $j]]
 +            set new [lreplace $new $j $j [lindex $base $i]]
++            ## ⚠ A REORDER MUST NOT BECOME A DELETION (issue 1323, rulings
++            ## DD-4 and DD-6).  `op_annot::register` accepts a declaration
++            ## carrying two triples that share a LABEL; `seed` returns it
++            ## undeduped and `effective` hands it out as the base above -- but
++            ## `set_list` keeps ONE entry per label, so the list comes back
++            ## SHORTER than it went in and `op_annot::_cards_for` stops
++            ## emitting a `.save` card the deck was asking for.  MEASURED at
++            ## HEAD with no button code at all: an UP press turned
++            ##     {id ids 0} {id vgs 2} {gm gm 1}  into  {id ids 0} {gm gm 1}
++            ## and `m1[vgs]` vanished from the deck.  DD-4/DD-6 say a display
++            ## decision NEVER changes what the simulator is asked to save, and
++            ## an Up press is not even a Delete.
++            ##
++            ## ⚠ IT GUARDS THE REORDER AND NOTHING ELSE, AND THAT IS A
++            ## MEASUREMENT, NOT A PREFERENCE.  A reorder is DEFINITIONALLY
++            ## length-preserving, so a shortening one is unambiguously a
++            ## defect.  Delete and Add are not: ruling DD-10 governs Delete's
++            ## last row, and issue 1288 RULED that an Add whose triple collides
++            ## by label is ACCEPTED, replaces the earlier row in place and
++            ## tells the user once -- which row BT27 golds by name.  Refusing
++            ## them here would be a THIRD door with a THIRD rule, which is the
++            ## disagreement issue 1288 exists to remove.  The residual -- a
++            ## Delete on a duplicate-label DECLARATION drops two display rows
++            ## -- is filed as issue 1326, not fixed here.
++            ##
++            ## ⚠ AND IT RUNS BEFORE THE WRITE.  Issue 1323's own recommended
++            ## wording was to check afterwards and restore the base; that
++            ## cannot restore, because a `set_list` of the base dedupes it
++            ## identically -- storing a THIRD value neither the user nor the
++            ## PDK chose -- and a base that came from the SEED left the key
++            ## UNOWNED, which no verb in this store can undo.
++            ##
++            ## The STORE owns the sentence (`op_param_lists::reduce_why`, the
++            ## `governs` precedent: one rule, a second reader); this file mints
++            ## no second wording for a fact the store already words.
++            set drop {}
++            catch {set drop \
++                [::op_param_lists::reduce_why $skey $key $listname $new]}
++            if {$drop ne {}} { return [list refused $drop] }
 +            set did "moved $param $op in the $listname list"
 +        }
 +        delete {
@@ -821,6 +882,28 @@ index ddd0d85d..7903e091 100644
 +# changed and preserves every other row verbatim, rows this build cannot parse
 +# included.  This proc chooses the tier, names the file it wrote, and repeats
 +# the store's own sentence when it refuses.
++# ⚠ THE TWO TIERS CAN BE ONE FILE, AND AT THE ORDINARY LAUNCH CWD THEY ARE
++# (issue 1325, item B5-a).  `op_param_lists::conf_path project` is
++# `[pwd]/.xschem/op_param_lists.conf`, so a session started in `$HOME` -- which
++# is how xschem is normally started -- resolves the PROJECT tier onto the
++# USER-GLOBAL file.  MEASURED: both answer
++# `/home/analog/.xschem/op_param_lists.conf`, and a Save taken there is read
++# back by every other design on the machine.  Ruling DD-7's whole subject is
++# that a write touches ONE TIER'S OWN FILE, so a Save that cannot say the two
++# are the same file is that ruling failing where the user cannot see it.
++#
++# THE FIX IS TO MAKE THE REPORT HONEST, NOT TO CHANGE WHICH TIER SAVE WRITES.
++# Issue 1273 -- "which directory IS the project" -- is a live rule debt on the
++# owed ledger and is the USER's to settle; this note names the collision and
++# points at it.  A named callee rather than three lines inline, so a reviewer
++# can neutralise exactly this sentence and watch a row say so.
++proc rdw::_tier_note {path} {
++    set tiers {}
++    catch {set tiers [::op_param_lists::conf_tiers $path]}
++    if {[llength $tiers] < 2} { return {} }
++    return "That file is both tiers here - this project directory and your user configuration directory are the same directory - so every design on this machine reads it back (issue 1273 asks which directory is the project)."
++}
++
 +proc rdw::_do_save {label} {
 +    set path {}
 +    catch {set path [::op_param_lists::conf_path project]}
@@ -832,6 +915,15 @@ index ddd0d85d..7903e091 100644
 +    set ok 0
 +    catch {set ok [::op_param_lists::write_conf $path]}
 +    if {$ok} {
++        ## ON THE SUCCESS ARM ONLY.  A refused Save changed nothing, so the
++        ## false belief this sentence corrects never forms -- and the refusal
++        ## arm already carries the STORE's own wording, which must not be
++        ## diluted by a second sentence about a file that was not written.
++        set note [rdw::_tier_note $path]
++        if {$note ne {}} {
++            return [rdw::status \
++                "$label: wrote the operating-point parameter lists to $path $note"]
++        }
 +        return [rdw::status "$label: wrote the operating-point parameter lists to $path"]
 +    }
 +    return [rdw::status "$label: [rdw::_store_tail $before \
@@ -926,10 +1018,10 @@ index ddd0d85d..7903e091 100644
 +    return [rdw::status "$label: $sentence"]
 +}
 diff --git a/tests/headless/test_op_param_store_1245.tcl b/tests/headless/test_op_param_store_1245.tcl
-index 78e06c05..17980112 100644
+index a9b7f19..18bc070 100644
 --- a/tests/headless/test_op_param_store_1245.tcl
 +++ b/tests/headless/test_op_param_store_1245.tcl
-@@ -3446,6 +3446,516 @@ check {Z4 a well-formed list holding a malformed ROW is dropped whole, not half-
+@@ -3726,6 +3726,641 @@ check {Z4 a well-formed list holding a malformed ROW is dropped whole, not half-
  
  catch {op_param_lists::reset}
  
@@ -1269,23 +1361,44 @@ index 78e06c05..17980112 100644
 +set ::be_dlg_answer {scope broad list summary}
 +ol_ans ::rdw::set_list summary
 +ol_ans ::rdw::set_row 11
++## ⚠ AND THREE OF ITS LEGS READ `shown`, WHICH IS THE HALF THAT WAS MISSING
++## (item B5-a). MEASURED: with `rdw::_apply_now` renamed away and replaced by
++## `proc rdw::_apply_now {subject} {}` -- so `apply` never runs and
++## `_merge_declared` never runs -- EVERY OTHER LEG OF THIS ROW WAS
++## BYTE-IDENTICAL. `_cards_for`, `params`, `declared` and `seed` are all
++## satisfied by the descriptor AS THE PDK REGISTERED IT, so the row could not
++## tell "the declaration re-entered last" from "nothing happened at all" --
++## which is precisely the ruling DD-13 mechanism it is named for. A fence that
++## survives the deletion of its own subject is this batch's own recurring
++## failure, met for the eighth time.
++## `shown` is written by `op_param_lists::apply` and by nothing else
++## (op_param_lists.tcl:319 says so in the store's own words), so a stubbed
++## `_apply_now` cannot produce it and the registration list cannot satisfy it.
++## Both type tokens, because a class edit that reached only the subject's own
++## token would leave every sibling on the sheet drawing the old list.
 +set BE3B_SAY   [be_press delete]
 +set BE3B_CARDS [ol_ans ::op_annot::_cards_for M1 {}]
 +set BE3B_PARAM [ol_dkey b5ndev params]
 +set BE3B_DECL  [ol_dkey b5ndev declared]
 +set BE3B_SEED  [ol_ans ::op_param_lists::seed b5cls]
 +set BE3B_SUM   [ol_ans ::op_param_lists::get_list class b5cls summary]
++set BE3B_SHOWN_N [ol_dkey b5ndev shown]
++set BE3B_SHOWN_P [ol_dkey b5pdev shown]
 +set ::be_dlg_answer {scope broad list annotation}
 +ol_ans ::rdw::set_list summary
 +ol_ans ::rdw::set_row 11
 +set BE3B_ADD [be_press add]
 +set BE3B_ANN [ol_ans ::op_param_lists::get_list class b5cls annotation]
-+check {BE3b THE SECOND PRESS, WITH NO RESET IN BETWEEN - the row item B5 died on: with `gds` now deleted from BOTH lists the deck STILL emits its .save card, `params` still carries the triple because the declaration re-enters last, `seed` is byte-identical to what the PDK registered, and an Add of that same parameter is ACCEPTED because the declaration is still there to re-add it from} \
++set BE3B_SHOWN_N2 [ol_dkey b5ndev shown]
++check {BE3b THE SECOND PRESS, WITH NO RESET IN BETWEEN - the row item B5 died on: with `gds` now deleted from BOTH lists the deck STILL emits its .save card, `params` still carries the triple because the declaration re-enters last, `seed` is byte-identical to what the PDK registered, an Add of that same parameter is ACCEPTED because the declaration is still there to re-add it from, and the DISPLAY key really moved on both type tokens - a key only `apply` writes, so this row can no longer be satisfied by the descriptor as the PDK registered it} \
 +  [list $BE3B_SUM $BE3B_CARDS \
 +        [expr {[lsearch -exact $BE3B_PARAM {gds gds 1}] >= 0 ? 1 : 0}] \
 +        $BE3B_DECL $BE3B_SEED \
-+        [be_ok1 $BE3B_ADD gds] $BE3B_ANN] \
++        [be_ok1 $BE3B_ADD gds] $BE3B_ANN \
++        $BE3B_SHOWN_N $BE3B_SHOWN_P $BE3B_SHOWN_N2] \
 +  [list {{id ids 0} {gm gm 1}} $BE_CARDS3 1 $BE_SEED $BE_SEED 1 \
++        {{id ids 0} {gm gm 1} {gds gds 1}} \
++        {{id ids 0} {gm gm 1}} {{id ids 0} {gm gm 1}} \
 +        {{id ids 0} {gm gm 1} {gds gds 1}}]
 +
 +# --- BE4  SAVE NAMES THE FILE IT WROTE --------------------------------------
@@ -1429,6 +1542,110 @@ index 78e06c05..17980112 100644
 +        {{gm gm 1} {id ids 0} {gds gds 1}} \
 +        {{gm gm 1} {id ids 0} {gds gds 1}} 1]
 +
++# --- BE8  A REORDER CANNOT BECOME A DELETION (issue 1323) --------------------
++## RULINGS DD-4 AND DD-6, THROUGH THE REAL BUTTON COLUMN AND IN THE
++## SIMULATOR'S OWN UNITS. `op_annot::register` accepts a declaration carrying
++## two triples that share a LABEL; `seed` returns it undeduped and `effective`
++## hands it to the reorder as a THREE-row base, but `set_list` keeps one entry
++## per label (issue 1288's ruling) -- so an UP PRESS used to store a TWO-row
++## list and `op_annot::_cards_for` stopped emitting a `.save` card the deck was
++## asking for. MEASURED at HEAD with no button code at all. An Up press is not
++## even a Delete, and DD-4/DD-6 say a display decision NEVER changes what the
++## simulator is asked to save.
++##
++## ⚠ THE ROW ASSERTS THE LOSS IT PREVENTS, NOT JUST THE REFUSAL: `effective` is
++## byte-identical afterwards, NOTHING is owned, and all THREE cards are still
++## there. Delete the `reduce_why` call from `rdw::_edit` and this row reds -
++## the store still reduces, because `set_list`'s ruled behaviour did not move.
++be_reset
++set BE8_DUP {{id ids 0} {id vgs 2} {gm gm 1}}
++set BE8_DESC [list devpath {\@m.@path@name} params $BE8_DUP]
++ol_ans ::op_annot::register b5ndev $BE8_DESC
++ol_ans ::op_annot::register b5pdev $BE8_DESC
++set ::rdw::blocks {}
++ol_ans ::rdw::push [be_blk M1 @m.m1 {{ids 1.2e-05} {vgs 0.5} {gm 3.4e-05}}]
++ol_ans ::rdw::push [be_blk M2 @m.m2 {{ids 9.9e-06}}]
++set BE8_BASE  [be_eff annotation]
++set BE8_CARDS0 [ol_ans ::op_annot::_cards_for M1 {}]
++ol_ans ::rdw::set_list annotation
++ol_ans ::rdw::set_row 11
++set BE8_SAY [be_press up]
++set BE8_AFTER [be_eff annotation]
++set BE8_CARDS1 [ol_ans ::op_annot::_cards_for M1 {}]
++check {BE8 A REORDER CANNOT BECOME A DELETION (issue 1323, rulings DD-4 and DD-6): with a duplicate-label declaration live the Up press is REFUSED in one line that names the Up button and the repeated label, the annotation list is byte-identical to the base, nothing is owned, and all three .save cards are still standing - the row the store would have dropped is still asked for} \
++  [list $BE8_BASE [llength $BE8_BASE] \
++        [expr {$BE8_SAY ne {} && $BE8_SAY ne {NOVAR} ? 1 : 0}] \
++        [expr {[string first "\n" $BE8_SAY] < 0 ? 1 : 0}] \
++        [be_ok1 $BE8_SAY {Up:}] [be_ok1 $BE8_SAY {"id"}] \
++        [ol_ans ::op_param_lists::owns class b5cls annotation] \
++        [expr {$BE8_AFTER eq $BE8_BASE ? 1 : 0}] \
++        $BE8_CARDS0 [expr {$BE8_CARDS1 eq $BE8_CARDS0 ? 1 : 0}] \
++        [llength $BE8_CARDS1]] \
++  [list {{id ids 0} {id vgs 2} {gm gm 1}} 3 1 1 1 1 0 1 \
++        [list ".save @m.m1\[ids\]" ".save @m.m1\[vgs\]" ".save @m.m1\[gm\]"] 1 3]
++
++ol_ans ::op_annot::register b5ndev $BE_DESC
++ol_ans ::op_annot::register b5pdev $BE_DESC
++
++# --- BE9  SAVE SAYS WHICH TIER IT REALLY WROTE (issue 1325) ------------------
++## `conf_path project` is `[pwd]/.xschem/op_param_lists.conf` and `conf_path
++## user` is `$USER_CONF_DIR/op_param_lists.conf`. AT THE ORDINARY LAUNCH CWD -
++## `$HOME`, which is how xschem is normally started - THOSE TWO ARE THE SAME
++## FILE. `load` already knows it and dedupes with `file normalize`; the WRITER
++## did not, so a Save that reported a project write rewrote the USER-GLOBAL
++## settings of every design on the machine, and ruling DD-7's "a write touches
++## one tier's own file" went vacuous in the case a user meets first.
++##
++## ⚠ THIS ROW DRIVES BOTH ARMS, SO NEITHER CAN PASS VACUOUSLY: a colliding
++## configuration where the sentence MUST appear, and a genuinely distinct
++## project directory where it MUST NOT. A note that were always emitted would
++## red the second arm; one that were never emitted reds the first.
++##
++## ⚠ ISSUE 1325's OWN CLAIM ABOUT ROW BE5 IS WRONG AND IS NOT COPIED. BE5 builds
++## `$BE_ROOT/p5/.xschem` and `$BE_ROOT/home5`, which are genuinely distinct, so
++## it already fences what its title says. The gap was that NO row exercised the
++## COLLIDING configuration on the WRITE path.
++##
++## ⚠ AND WHICH TIER SAVE WRITES IS NOT CHANGED HERE. Issue 1273 - "which
++## directory IS the project" - is a live rule debt on the owed ledger and is
++## THE USER'S to settle; this item's job is to make the code honest about which
++## tier it wrote, whatever that tier turns out to be.
++set BE9_SAME [file join $BE_ROOT same9]
++file mkdir [file join $BE9_SAME .xschem]
++cd $BE9_SAME
++set ::USER_CONF_DIR [file join $BE9_SAME .xschem]
++be_reset
++be_blocks
++ol_ans ::rdw::set_list annotation
++ol_ans ::rdw::set_row 11
++ol_ans ::rdw::button up
++set BE9_SAY [be_press save]
++set BE9_PATH [ol_ans ::op_param_lists::conf_path project]
++set BE9_TIERS [ol_ans ::op_param_lists::conf_tiers $BE9_PATH]
++cd $BE_OLDPWD2
++
++set BE9_PROJ [file join $BE_ROOT p9]
++file mkdir [file join $BE9_PROJ .xschem]
++cd $BE9_PROJ
++set ::USER_CONF_DIR $BE_HOME
++be_reset
++be_blocks
++ol_ans ::rdw::set_list annotation
++ol_ans ::rdw::set_row 11
++ol_ans ::rdw::button up
++set BE9_DSAY [be_press save]
++set BE9_DPATH [ol_ans ::op_param_lists::conf_path project]
++set BE9_DTIERS [ol_ans ::op_param_lists::conf_tiers $BE9_DPATH]
++cd $BE_OLDPWD2
++check {BE9 SAVE SAYS WHICH TIER IT REALLY WROTE (issue 1325): in the colliding configuration - the project directory and the user configuration directory are one directory, which is what the ordinary launch cwd produces - the status line names the file it wrote AND says that file is both tiers, one line; in a genuinely distinct project directory the same Save names its file and that clause is ABSENT, so the note cannot pass by being unconditional} \
++  [list $BE9_TIERS [expr {[file isfile $BE9_PATH] ? 1 : 0}] \
++        [be_ok1 $BE9_SAY $BE9_PATH] [be_ok1 $BE9_SAY {both tiers}] \
++        [expr {[string first "\n" $BE9_SAY] < 0 ? 1 : 0}] \
++        $BE9_DTIERS [expr {[file isfile $BE9_DPATH] ? 1 : 0}] \
++        [be_ok1 $BE9_DSAY $BE9_DPATH] [be_ok1 $BE9_DSAY {both tiers}] \
++        [expr {$BE9_PATH eq $BE9_DPATH ? 1 : 0}]] \
++  [list {user project} 1 1 1 1 {project} 1 1 0 0]
++
 +# --- the section leaves the tree as it found it ------------------------------
 +cd $BE_OLDPWD2
 +set ::USER_CONF_DIR $BE_OLDUCD2
@@ -1447,10 +1664,10 @@ index 78e06c05..17980112 100644
  check {H1 HYGIENE the suite creates no untitled* anywhere and no .xschem directory in the repo root, and it left the cwd where it found it} \
    [list [expr {[lsort [glob -nocomplain -directory $repo -tails untitled*]] eq $H_ROOT0 ? 1 : 0}] \
 diff --git a/tests/headless/test_rdw_keys_1245.tcl b/tests/headless/test_rdw_keys_1245.tcl
-index aa12d3f1..026192fe 100644
+index 436b7d2..5ac3563 100644
 --- a/tests/headless/test_rdw_keys_1245.tcl
 +++ b/tests/headless/test_rdw_keys_1245.tcl
-@@ -1546,6 +1546,272 @@ if {[rdw::have_tk]} {
+@@ -1616,6 +1616,272 @@ if {[rdw::have_tk]} {
      [list [rdw::pick_running] [expr {[winfo exists .rdw] ? 1 : 0}]] {0 1}
  }
  
@@ -1723,21 +1940,21 @@ index aa12d3f1..026192fe 100644
  if {[llength [info commands kx_ciw_echo_real]]} { rename kx_ciw_echo_real ciw_echo }
  catch {xschem raw clear}
  
-@@ -1574,7 +1840,11 @@ catch {xschem raw clear}
- # suite — item B5-2 will add several. Raise the floor when you add them; never
- # lower it to make a run pass, which is the one move that would put the defect
- # straight back.
--set KX_FLOOR 35
-+## ⚠ RAISED 35 -> 40 BY ITEM B5-2, IN THE SAME COMMIT AS THE FIVE ROWS IT
+@@ -1647,7 +1913,11 @@ catch {xschem raw clear}
+ ## ⚠ RAISED 35 -> 36 BY ITEM B5-a, WHICH ADDED ROW KS1. A floor is raised when
+ ## rows are added and NEVER lowered to make a run pass — lowering it is the one
+ ## move that would put the skipped-row defect straight back.
+-set KX_FLOOR 36
++## ⚠ AND RAISED 36 -> 41 BY ITEM B5-2, IN THE SAME COMMIT AS THE FIVE ROWS IT
 +## COVERS: section SD's SD1, SD2, SD3, SD3b and SD4. The whole section is
 +## guarded by `if {[kx_ans ::rdw::have_tk] eq {1}}`, so a display that fails to
 +## come up drops all five silently - which is exactly what a floor is for.
-+set KX_FLOOR 40
++set KX_FLOOR 41
  set KX_RAN [expr {$npass + $fail}]
  if {$KX_RAN < $KX_FLOOR} {
    puts "FAIL: KXFLOOR the suite ran only $KX_RAN checks, below its floor of\
 diff --git a/tests/headless/test_rdw_window_1245.tcl b/tests/headless/test_rdw_window_1245.tcl
-index 76d15a60..d1968119 100644
+index 3dfde82..69ccb14 100644
 --- a/tests/headless/test_rdw_window_1245.tcl
 +++ b/tests/headless/test_rdw_window_1245.tcl
 @@ -611,8 +611,14 @@ check {M3 registered by glob, and full_audit.sh is NOT edited: this suite is in
@@ -1756,7 +1973,7 @@ index 76d15a60..d1968119 100644
             header sim dump dump_devpath format_answer block_text button_state} {
    lappend N_PROCS [expr {[llength [info procs ::rdw::$p]] ? 1 : 0}]
  }
-@@ -1541,20 +1547,50 @@ check {Q8 a backend registered with the five required hooks and NO op_param_set
+@@ -1551,20 +1557,66 @@ check {Q8 a backend registered with the five required hooks and NO op_param_set
  # `rdw::status` a no-op passes the FULL 32-check headless run. Its red-before
  # proof is the sabotage, not the shipped tree. W4b on the display arm is the
  # twin this row is copied from.
@@ -1795,14 +2012,30 @@ index 76d15a60..d1968119 100644
  rw_ans ::rdw::status {}
 -check {Q9 an inert button SAYS SO in the window's own status line with no widget anywhere: Delete names itself and names the item that wires it, Save says something different, and the variable is clearable - a disabled-but-silent button is the failure rdw::inert exists to prevent} \
 +rw_ans ::rdw::set_list $Q9_LK0
-+check {Q9 a greyed button that is invoked anyway SAYS SO in the window's own status line with no widget anywhere: Delete on list 3 names itself, Add on list 1 says something different, neither claims the column is unwired, the store is untouched, the variable is clearable - and rdw::inert is gone} \
++## ⚠ AND TWO OF ITS TERMS ARE POSITIVE CLAIMS ABOUT THE REASON (item B5-a).
++## MEASURED: with `rdw::button_state` forced to return `normal` - the greying
++## deleted - EVERY term of the row as this patch first wrote it still passed.
++## Both presses fall through to the ordinary "nothing has been dumped into this
++## window yet" refusal, which is non-empty, names its own button, differs from
++## its sibling, touches no store and clears; and `not wired yet` appears in
++## neither, because the string it was written to exclude is gone from the file.
++## A fence built entirely out of NEGATIVES cannot tell the sentence it is about
++## from any other sentence. HEAD's own Q9 carried a positive claim about the
++## reason - `[rw_has $Q9_M1 {B5}]` - and this rewrite dropped it; the two terms
++## below put that kind of claim back, over the sentence `rdw::button` actually
++## emits for a greyed press, and they name the LIST each button was greyed on
++## so the two are not the same assertion twice. The `not wired yet` negatives
++## are kept beside them: they fence a different fact.
++check {Q9 a greyed button that is invoked anyway SAYS SO in the window's own status line with no widget anywhere: Delete on list 3 names itself AND says it is greyed on the `all` list, Add on list 1 says it is greyed on the `annotation` list, neither claims the column is unwired, the two sentences differ, the store is untouched, the variable is clearable - and rdw::inert is gone} \
    [list [expr {$Q9_M1 ne {} && $Q9_M1 ne {NOVAR} ? 1 : 0}] \
 -        [rw_has $Q9_M1 {Delete}] [rw_has $Q9_M1 {B5}] \
 -        [rw_has $Q9_M2 {Save}] [rw_has $Q9_M2 {B5}] \
 +        [rw_has $Q9_M1 {Delete}] \
++        [rw_has $Q9_M1 {greyed on the all list}] \
 +        [expr {[string first {not wired yet} $Q9_M1] < 0 ? 1 : 0}] \
 +        [expr {$Q9_M2 ne {} && $Q9_M2 ne {NOVAR} ? 1 : 0}] \
 +        [rw_has $Q9_M2 {Add}] \
++        [rw_has $Q9_M2 {greyed on the annotation list}] \
 +        [expr {[string first {not wired yet} $Q9_M2] < 0 ? 1 : 0}] \
          [expr {$Q9_M1 ne $Q9_M2 ? 1 : 0}] \
 -        [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}]] \
@@ -1810,11 +2043,11 @@ index 76d15a60..d1968119 100644
 +        [expr {[info exists ::rdw::blocks] ? [llength $::rdw::blocks] : -1}] \
 +        [expr {[info exists ::rdw::statusmsg] ? $::rdw::statusmsg : {NOVAR}}] \
 +        [llength [info commands ::rdw::inert]]] \
-+  [list 1 1 1 1 1 1 1 $Q9_NB0 {} 0]
++  [list 1 1 1 1 1 1 1 1 1 $Q9_NB0 {} 0]
  
  # ============================================================================
  # SECTION W — THE WIDGETS. DISPLAY ARM ONLY, AND IT IS NOT OPTIONAL.
-@@ -1725,20 +1761,54 @@ check {W4 the five buttons exist with the spec's labels, and the widget greying
+@@ -1735,20 +1787,54 @@ check {W4 the five buttons exist with the spec's labels, and the widget greying
                   {normal normal normal normal normal} \
                   {normal normal disabled normal normal}]]
  
@@ -1876,7 +2109,7 @@ index 76d15a60..d1968119 100644
  
  ## HYGIENE: hand the X PRIMARY selection back and leave no toplevel behind.
  rw_ans ::rdw::set_list annotation
-@@ -2167,10 +2237,15 @@ foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
+@@ -2177,10 +2263,15 @@ foreach p {::rdw::key ::rdw::show ::rdw::keep_latest ::rdw::pick_start \
      incr K11_TAGS [rw_count $b $t]
    }
  }
@@ -1895,7 +2128,7 @@ index 76d15a60..d1968119 100644
  
  # --- K12  A REFUSED KEY CHANGES NOTHING --------------------------------------
  ## THE HOLE B4 SHIPPED, AND NO ROW SAW IT. rdw::key called rdw::set_list BEFORE
-@@ -2424,6 +2499,855 @@ catch {xschem raw clear}
+@@ -2725,6 +2816,859 @@ catch {xschem raw clear}
  catch {rename ciw_echo {}}
  if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo }
  
@@ -2571,7 +2804,11 @@ index 76d15a60..d1968119 100644
 +set B5_F [expr {[file isfile $RW_FILE] ? [rw_nocomment [rw_slurp $RW_FILE]] : {NOFILE}}]
 +set B5_STORE_ALL [rw_count $B5_F {op_param_lists::}]
 +set B5_STORE_OK 0
-+foreach v {effective set_list get_list owns apply write_conf conf_path said class seed governs} {
++## ⚠ THE ALLOW-LIST GAINED `reduce_why` AND `conf_tiers` (item B5-a). Both are
++## PUBLISHED verbs of the store, minted for issues 1323 and 1325, and the row's
++## point is unchanged: this file may name the store only through verbs the
++## store publishes, and the `op_param_lists::_` term below still golds ZERO.
++foreach v {effective set_list get_list owns apply write_conf conf_path said class seed governs reduce_why conf_tiers} {
 +  incr B5_STORE_OK [rw_count $B5_F "op_param_lists::$v"]
 +}
 +set B5_HANDBUILT 0
@@ -2751,7 +2988,7 @@ index 76d15a60..d1968119 100644
  # ============================================================================
  # SECTION S — THE STRUCTURAL FENCES, AND HYGIENE
  # ============================================================================
-@@ -2447,16 +3371,23 @@ if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo
+@@ -2748,16 +3692,23 @@ if {[llength [info commands k_ciw_echo_real]]} { rename k_ciw_echo_real ciw_echo
  # through it.
  # RED before B3: S1 (the file does not exist).  GREEN before B3: S2.
  
