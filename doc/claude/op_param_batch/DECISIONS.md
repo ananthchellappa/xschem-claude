@@ -547,3 +547,76 @@ enumerated before this was decided — `op_annot::register` (writes,
 preserve-if-present), `op_param_lists::_key_state`, `_declared_rows`,
 `_merge_declared`, and `_params`/`seed`. The unset changes what each one sees to
 the user's new list, which is what a user re-declaring wants.
+
+### DD-15 — issue 1326: a duplicate label is refused AT THE DECLARATION
+
+Taken 2026-09-04. Issue 1326's option **(c)**. On the owed ledger.
+
+When a PDK declares two parameters sharing a label, the store's dedupe rule
+(*"a second entry for a label replaces the earlier one in place"*) means the
+declaration is asking for something the store cannot represent — and a later
+Delete or Up then drops **both** rows and a `.save` card with it.
+
+**Decision: `op_annot::register` refuses a declaration carrying a duplicate
+label, once, where the duplicate is introduced.**
+
+*Why not (a), refuse the Delete:* it leaves the broken declaration live and
+breaks a button instead — a button that refuses **every** press for that class,
+with a sentence about a row the user did not touch. That punishes the wrong
+person, repeatedly, for somebody else's error.
+
+*Why not (d), leave it:* all three shipped PDKs declare distinct labels, so it
+is latent today and reachable only through invariant I5 — which is to say,
+reachable exactly by the user writing their own registration in an rc, which is
+the case this feature exists to serve.
+
+*(b) is impossible in this store and 1323's own recommendation was refuted for
+that reason.*
+
+**The principle, which this batch has now applied four times:** reject an
+ambiguity at the door where it is created, not at the far end where its
+consequences show up. It is the same rule as DD-3 (the settings file is data,
+parsed strictly), the strict reader, and issue 1294's *"both doors must reach
+the same verdict."* A label is what identifies a row **to the user** and to the
+store's dedupe; two rows sharing one are ambiguous by construction, and no
+downstream code can repair that.
+
+*Cost, stated:* a PDK author — or a user's own rc — gets an error at load time
+instead of silence. That is the point. `src/op_annot.tcl` was a forbidden file
+for most of this batch, but item B2e already edited `register` under DD-13, so
+the door is open and this belongs behind it.
+
+### DD-16 — a cross-sheet edit is allowed, and named only when it surprises
+
+Taken 2026-09-04, answering item B5-a's second question.
+
+Item B5-a fixed issue 1322 so a block now carries the subject it was dumped
+about. The remaining question: when the user edits a block dumped from sheet A
+while sheet B is open, should it work, work-and-say-so, or be refused?
+
+**Decision: it works, and the status line names the source sheet ONLY when that
+sheet is not the one currently open.**
+
+*Why not refuse:* the three lists are **class- and flavor-level settings, not
+sheet state**. A block says "this dump was about an nfet of class `mos`", and
+editing the `mos` list is a global action that is correct regardless of which
+sheet happens to be in front. Refusing would block a legitimate edit for a
+reason the user would find arbitrary — and the window deliberately keeps its
+dumps across a close (`rdw::close`'s own comment) precisely so they can be
+worked with later.
+
+*Why name it conditionally rather than always:* in the common case the source
+sheet **is** the open one and saying so is noise on every press. The sentence
+earns its place exactly when the two differ, which is the case a user could
+otherwise misread — and which, before 1322 was fixed, silently edited the wrong
+device.
+
+### 1273 STAYS THE USER'S, AND IS NOT SETTLED HERE
+
+Item B5-a made Save honest about which tier it wrote (issue 1325), which is a
+different question from **which directory is "the project"** (issue 1273). That
+one has been on the user's queue since item B2 and no driver decision touches
+it. Item B5-a's brief said so explicitly and it obeyed. ⚠ Issue **1327** records
+that the tier answer is still wrong through a **symlinked** project conf —
+`file normalize` does not resolve symlinks — found by B5-a's own adversary and
+reproduced before filing.
