@@ -717,3 +717,28 @@ unset _ut
 # ciw_create has already built the window, so only the setter (which reconfigures
 # the live named font) reaches it. See src/ciw.tcl.
 catch {ciw_set_font_size 12}
+
+# --- ASE-L text size --------------------------------------------------------
+# ASE-L derives its four type roles from TkDefaultFont/TkFixedFont and names no
+# family (issue 1398, which fixed it asking for an Arial and a Courier that are
+# not installed on most Linux boxes and getting a silent Nimbus substitution).
+# The shipped default of 0 means "follow TkDefaultFont" -- 10 pt here, which is
+# THREE POINTS SMALLER than the 13 pt the window used to render its pane cells,
+# its entries and its simulation log at. Righting the inverted ladder (10 pt
+# bold headings over 13 pt data) pulled the data down to the headings; this
+# pulls both back up.
+#
+# 12 and not 11, which would be exact pixel parity with the old window (DejaVu
+# Sans 11 is a 19 px line and a 10 px advance, the same as the Nimbus Sans 13 it
+# actually rendered): 12 is what `ciw_set_font_size` above already picked for
+# this workarea, on the grounds that 10 gets skimmed instead of read, and the
+# CIW and the ASE-L window are read side by side.
+#
+# `set`, NOT `set_ne`: xschem.tcl has already run `set_ne ase_font_size 0` by
+# the time this --script rc is sourced, so set_ne is a silent no-op here.
+# Unlike ciw_font_size this needs no setter -- ase::font_size is re-read on
+# every ase::theme call, so the value lands whenever it is written. Band is
+# 6..32 and an out-of-band value is REFUSED (falls back to the system size),
+# never clamped. Drives all four roles: AseEntryFont (data), AseBodyFont
+# (chrome), AseLabelFont (headings, bold) and AseMonoFont (the run log).
+set ::ase_font_size 12
