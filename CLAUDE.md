@@ -243,6 +243,9 @@ owed.sh add suite <name> [why]         # owes a :0 run ("run a GUI feature's
                                        #   suite on :0 once before calling it done")
 owed.sh list | count | show            # `show` = the user's queue: rule + look
 owed.sh drain                          # runs the SUITE debts, one batch, gate live
+owed.sh clear <kind> <id>              # rule/look: ONLY when the USER says so
+owed.sh add|clear … --repo <clone>     # deliberately touch ANOTHER clone's entry
+                                       #   (a clone path, its basename, or `here`)
 ```
 
 **`rule` and `look` are the user's queue; `suite` is not.** A suite debt clears
@@ -252,6 +255,48 @@ another — `drain` does not so much as open the other two lists. A ledger that
 discharged an eyeball because a suite went green would be exactly the defect
 that rule was written about (two defects shipped past 28 passing checks), and
 one that closed a *ruling* that way would be the same defect wearing a tie.
+
+**One ledger, every CLONE — not merely every worktree.** It lives in `$HOME`, which
+cannot tell a second checkout of this repo from a worktree of this one, so two trees
+wrote one ledger and a 4-digit rule id came to mean two different things (issue
+**1400**). Both writing paths destroyed the other tree's entry in silence: `clear` is
+an `rm` by exact filename, and `add` was a bare `>` with no existence check that
+printed `recorded` however much it overwrote — **either could close a ruling the user
+had never answered, and nothing said so.** Now an entry carries the clone that filed
+it, and an `add` or `clear` that would write **another** clone's stamped entry
+**refuses, exit 5**, printing what is standing there, whose it is, and what to type
+instead; `clear` also lists this tree's own ids on that number. When you really do
+mean the other tree's entry, say so: `--repo <clone>` on both `add` and `clear` — a
+clone path, its basename, or `here`.
+
+**Every live entry is stamped, so an UNSTAMPED one is EVIDENCE, not legacy.** Measured
+**2026-09-10 12:40**: `/usr/bin/grep -L '^repo:' ~/.claude/xschem_owed/{rule,look,suite}/*`
+printed **nothing**, and `/usr/bin/grep -h '^repo:' … | sort | uniq -c` split the 196
+entries **182 this clone / 14 op-wcard**. Re-run both rather than quoting the numbers —
+this set has moved every time anyone has measured it. Against a stamped ledger a bare
+entry can only have arrived one way: **another clone's older `owed.sh` wrote over
+something.** Do not claim it for this clone on the strength of its being unstamped — that
+erases the one signal the destroy left, and if `owed.sh` still offers to (*"predates
+origin stamps — claiming it for …"*) that is the old legacy contract talking, not a fact
+about the entry. Reconstruct from **`cleared.log`** in the state dir root: append-only,
+never rotated, the full pre-image of every clear and every overwrite *this* script makes.
+A silent `cleared.log` beside a missing debt means the other clone did it, and there is
+no pre-image anywhere.
+
+**The refusal is one-sided until the repaired script reaches the other clones.** One
+ledger, but each clone runs its **own** `owed.sh`, and the guard lives in the script, not
+in the ledger. op-wcard's copy is dated 2026-09-04 and has never heard of `repo:`;
+measured against the stamped ledger it still overwrites at exit 0 printing `recorded`,
+taking `ref:` and both stamp lines with it. This clone now refuses to write theirs; theirs
+can still destroy all 182 of ours — **and a ruling was destroyed in place at 10:46:14 on
+2026-09-10, surviving only because a backup existed.** Take one before any pass that
+touches the ledger.
+
+**The stamp is an absolute path**, so moving or renaming a clone turns every one of its
+own rulings foreign — run `owed.sh` from this tree at a different path and all 196 read
+as someone else's, `clear` refusing the user's own debts. There is no `rename` and no
+`re-stamp`; the escape is `--repo <clone>` on every command. Mechanism: issue **1400**,
+spec `owed.md` §R6b.
 
 **A rule entry is a pointer, not a copy.** The option set stays in
 `doc/claude/issues/NNNN-*.md`; `add rule` resolves the path from the id. Spec:
@@ -429,15 +474,61 @@ ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
 `doc/claude/FAQ.md` (a running design Q&A, newest entries on top).
 Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).
 
-**Issue numbers: `doc/claude/issues/NUMBERING.md` is the ONLY authority.** Read
-its tail before filing — it carries the next free number, the reserved blocks
-that must be skipped, and why. Do not trust a number quoted anywhere else,
-including here: this paragraph itself said "next 0513" until 2026-09-02, by
-which time the tree had filed through **1243**, and it also told you to file at
-"≥ 0500" when NUMBERING.md reserves **0500–0599** for another branch. A
-duplicated number rots silently and a collision costs a renumbering (0420–0432,
-+80, 2026-08-19). Grep the issues directory before minting, and record the new
-number in NUMBERING.md as part of the same commit.
+**Issue numbers: `doc/claude/issues/NUMBERING.md` is authoritative about what a
+number MEANS, and blind to what is free.** It is a **tracked, per-branch** file, so
+it can see only the checkout you are reading it in, and its `next free number` line
+is a **per-clone pointer** — the line that reads most like an authority is the blind
+one. Measured **2026-09-10 10:47**: two clones of this repo on this machine held
+**twelve** numbers naming two different defects each, and the set was **still growing
+as this was written** — five of the twelve (1349–1353) were filed by the other clone
+during the batch that was measuring the first seven, the last of them two minutes
+before this sentence. Its pointer now reads 1354, and every number from 1349 to 1399
+is already a committed issue file here. Nothing in either tree reports any of it
+(issue **1400**; both pointers were honest, and the rule is what broke). **Any count
+in this paragraph is a timestamp, not a standing fact** — re-measure before quoting it.
+
+So minting takes **two** checks and neither substitutes for the other. The
+**candidate** comes from this clone's `NUMBERING.md`: its `next free number` line for
+the number, and its **reserved-block table at the head** for the bands to skip. A
+band is a **range**, so no per-number grep can see one — that check is separate, and
+first. Only then does a grep prove no *other* checkout has taken the number you
+landed on:
+
+```sh
+N=doc/claude/issues/NUMBERING.md                   # this clone's pointer AND bands
+/usr/bin/grep 'next free number' "$N" | /usr/bin/grep -v '~~' | tail -n1
+n=1401                                             # 1550 to see the other answer
+awk -v n="$n" -F'|' '/^\| \*\*[0-9]/{gsub(/[^0-9]/," ",$2); split($2,b," ")
+  if (n>=b[1] && n<=b[2]) print "!! "n" is in RESERVED band "b[1]"-"b[2]}' "$N"
+
+set -- ~/dev/*/doc/claude/issues/NUMBERING.md      # EVERY clone on this machine
+[ -e "$1" ] || echo "!! glob matched nothing -- fix the path, not the number"
+ls ~/dev/*/doc/claude/issues/"$n"-* 2>/dev/null    # a file in ANY checkout here
+/usr/bin/grep -lw "$n" "$@"                        # or a reservation with no file
+```
+
+Both answers, run today: `n=1401` → silence from the band check and only this clone's
+own `NUMBERING.md` from the last line; `n=1550` → `!! 1550 is in RESERVED band
+1500-1599` **while every grep stays silent**, which is the whole reason the band check
+exists; `n=1349` → two issue files and two `NUMBERING.md`s, the live collision. A
+reserved number often has no file yet, so a bare `NUMBERING.md` hit is a taken number.
+`~/dev/*` is the whole set of checkouts **today**; one living elsewhere must be added
+to that glob, and the `[ -e "$1" ]` line is there because a glob matching nothing
+sends grep's complaint to **stderr** and exits 2 — silent stdout, indistinguishable
+from "free". Use `/usr/bin/grep`, never the bare `grep`: it is a function routing to
+ugrep, and it returns **nothing in either clone** for the anchored-alternation form
+this block used to print (`-lE "(^|[^0-9])$n([^0-9]|$)"`, `n=1349`) where
+`/usr/bin/grep` finds that number taken in **both**.
+
+**`1500–1599` is reserved for the op-wcard branch: after 1499 the next number here
+is 1600.** Do not trust a number quoted anywhere else, including here: this paragraph
+itself said "next 0513" until 2026-09-02, by which time the tree had filed through
+**1243**, and it also told you to file at "≥ 0500" when NUMBERING.md's head table
+lists **0500–0599** as a reserved block — a row whose owner that table names as **the
+fluid-editing branch**, i.e. this one, with 21 issue files already inside it. (This
+sentence said "another branch" until 2026-09-10; it is not one. Read the table.) A
+duplicated number rots silently and a collision costs a renumbering (0420–0432, +80,
+2026-08-19). Record the new number in NUMBERING.md as part of the same commit.
 
 **Wiring work**: before touching anything that creates, moves, deletes, or reroutes wires
 (move.c, the fluid passes, trim/break/merge, connected drag/rotate/flip), read

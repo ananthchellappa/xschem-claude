@@ -1,6 +1,6 @@
 # Issue number reservations — read before filing
 
-Three blocks are reserved for other branches. Filing into them collides with work
+Four blocks are reserved for other branches. Filing into them collides with work
 this branch cannot see, and the 02xx renumbering recorded in `status.md` is what
 that costs to undo.
 
@@ -9,12 +9,71 @@ that costs to undo.
 | **0500–0599** | the fluid-editing branch | after **0499**, the next number is **0600** |
 | **0700–0799** | reserved (user, 2026-08-24) | after **0699**, the next number is **0800** |
 | **1000–1199** | reserved (user, 2026-08-30) | after **0999**, the next number is **1200** |
+| **1500–1599** | the op-wcard branch (hierarchical PDF links) | after **1499**, the next number is **1600** |
 
 So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601 …
 ```
+
+## `1500–1599`, and the absorption map — for the tree that renumbers
+
+`1500–1599` is reserved because a **second checkout of this repository**,
+`~/dev/xschem-op-wcard`, filed into `1333–1348` at the same time this branch did. This
+file is **tracked and per-branch**, so neither tree could see the other and both tails were
+honest. Sixteen numbers in `1333–1348` name two different defects each. **As of 2026-09-10
+10:46 -0700, twelve numbers named two different files** — 1338, 1339 and 1344–1353 — and the
+set was still growing as this sentence was written: the other clone filed four more issue
+files between 10:19 and 10:45 that morning, and its own tail pointer had reached **1354**.
+Every count here is a timestamped observation, not a standing fact. Full record, evidence,
+and the options still open to the user in
+`doc/claude/issues/1400-two-clones-filed-the-same-issue-numbers-and-neither-could-see-the-other.md`.
+
+**This branch does NOT renumber. This map is for the tree that does** — apply it to
+op-wcard's numbers when that work is absorbed. Nothing in `fluid-editing` moves.
+
+```
+1333 → 1500     1337 → 1504     1341 → 1508     1345 → 1512
+1334 → 1501     1338 → 1505     1342 → 1509     1346 → 1513
+1335 → 1502     1339 → 1506     1343 → 1510     1347 → 1514
+1336 → 1503     1340 → 1507     1344 → 1511     1348 → 1515
+```
+
+A single **+167** offset. Source and target bands are **disjoint**, so a rewrite cannot
+alias one number onto another mid-pass, and the arithmetic is checkable by eye.
+
+⚠ **The map is not the whole exposure.** op-wcard's own next-free pointer is already
+inside `1349–1399`, every number of which this branch has committed. Whoever performs the
+absorption settles that band too. Issue **1400** carries the measurement.
+
+⚠ **This has already cost a real ruling, and the ledger did not report it.** The shared
+`owed.sh` rule ledger (`~/.claude/xschem_owed/`) lives in `$HOME`, outside both checkouts,
+so a number that means two things means two things there too. On **2026-09-10 at 10:46:14
+-0700** the other clone's `owed.sh add rule 1351` truncated this branch's standing,
+unanswered ruling **in place** — exit 0, printed `recorded`, no warning, no pre-image — and
+it was recovered only because a hand-taken `cp -a` backup happened to exist. Both 1351
+rulings now stand (`rule/1351`, `rule/1351@xschem-claude`), both unanswered.
+`tests/headless/owed.sh` in **this** checkout now stamps each entry with its clone and
+refuses a cross-clone `add`/`clear`; **the other checkout runs its own older copy, so that
+protection is one-sided until the repaired script reaches it.** Issue **1400** carries the
+measurements. This paragraph is at the head on purpose: a merge of the two trees folds the
+lower half of this file into one conflict hunk and leaves this section alone.
+
+**Who moves is the USER's ruling, not this file's**
+(`doc/claude/numbering_batch/DECISIONS.md` D-3, unratified), carried as a `rule` debt
+against **1400**. The reservation and the map are published so the absorption is ready;
+they do not decide it.
+
+⚠ **The `next free number` pointer at the tail of this file is PER-CLONE.** On a merge
+between two checkouts, prefer the **higher** of the two tails and grep both clones'
+`doc/claude/issues/` before minting. The fuller warning is at the tail, next to the pointer
+— this copy is deliberate duplication, because a merge of these two trees folds the whole
+lower half of this file into a single conflict hunk that swallows the tail copy, and leaves
+this head section untouched.
+
+## The running record
 
 Highest filed on `annotate` as of 2026-08-25: **0805** — the 0689+0690+0698 crew
 filed **0802** (full_audit scores a pass banner followed by a death marker as PASS),
@@ -2950,4 +3009,69 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   display arm. Proved pre-existing against a shadow tree built from `git show HEAD:`. The
   suite is not in `run_regression.tcl`'s case list, so T1 has never covered it.
 
-**The next free number is 1400.**
+- **1400** — **two clones filed the same issue numbers, and neither could see the other.**
+  `~/dev/xschem-claude` and `~/dev/xschem-op-wcard` are both checkouts of this repository,
+  and each read its own `NUMBERING.md` tail honestly, because this file is tracked and
+  per-branch. **Sixteen** numbers in `1333–1348` mean two different defects each. **As of
+  2026-09-10 10:46 -0700, twelve of them named two different files** — 1338, 1339 and
+  1344–1353 — and the set was still growing at that moment: op-wcard filed `1350`–`1353`
+  between 10:19 and 10:45 that morning and its tail then read **1354**. Every count in this
+  bullet is a timestamped observation, not a standing fact. The two reservations overlap
+  outright (`## Reserved: 1337–1341, the RDW batch` here against op-wcard's `**1333-1348 are
+  reserved**`), and op-wcard's pointer is aimed straight into `1349–1399`, all 51 of which
+  this branch has committed with no gaps — so the rest of that band is queued behind it and
+  nothing in either tree reports it. A merge from base `28dabfe8` conflicts on four files
+  (`NUMBERING.md`, `src/ase.tcl`, `src/op_annot.tcl`,
+  `tests/headless/test_op_dump_altshow.tcl`) and takes op-wcard's colliding issue files as
+  **clean adds — 8 of them at 2026-09-10 10:46 -0700, zero conflicts** — leaving a merged
+  tree that holds **16 files carrying 8 duplicated numbers**. The shared `owed.sh` ledger is
+  the live hazard: `clear` resolves by exact filename (`:288-295`), `add` is a bare `>`
+  (`:187`), **six** bare rule ids on collided numbers stood at 10:46 (1337 1339 1344 1351
+  1352 1353) and **35** are loaded inside `1349–1399` — **32 of those stamped to this
+  branch and sitting inside `1354–1399`, directly in front of the other clone's pointer,
+  which read 1354** (`ls ~/.claude/xschem_owed/rule | /usr/bin/grep -xE
+  '13(5[4-9]|[6-9][0-9])'`, each entry then tested for `repo:/home/analog/dev/xschem-claude`;
+  re-measured 2026-09-10 12:41 -0700).
+
+  **A ruling WAS lost here.** At **10:46:14 -0700 on 2026-09-10** the other clone ran
+  `owed.sh add rule 1351` and overwrote this branch's standing, unanswered RDW ruling **in
+  place**: exit 0, the word printed was `recorded`, no warning, no pre-image. It came back
+  only because a hand-taken `cp -a` of the ledger happened to exist
+  (`~/.claude/xschem_owed.bak.2026-09-10`, taken **09:37:32** that morning — not by any
+  automation); it was restored at **12:18:24** as `rule/1351@xschem-claude`, and **both 1351
+  rulings now stand, both unanswered, and only the user may close either.**
+
+  ~~**No ruling has been lost**~~ — that sentence stood in this bullet until 2026-09-10 and
+  is **superseded**. The audit behind it was honest and its own finding still holds:
+  op-wcard cleared its own `rule/1338` at 06:54:10 on 2026-09-10, transcript and directory
+  mtime agreeing to the second, and 1338 survived on a naming coin-flip. It was wrong only
+  because it was written at **10:49:57**, three minutes *after* a loss it structurally could
+  not see — an in-place `>` rewrite moves no directory mtime and changes no file count, so
+  the very forensic that proved 1338 safe is blind to what took 1351. **The lesson is not
+  “1351”. It is that the ledger reports nothing at all when it loses a ruling, and that the
+  only reason this one is recoverable is a backup nothing automates.** Read any “nothing was
+  lost” claim about this ledger as a statement about what its author could see.
+
+  This branch renumbers **nothing**: it reserves `1500–1599`, publishes the
+  `1333–1348` → `1500–1515` map at the head of this file, and carries the who-moves
+  question as a `rule` debt. The reservation and the map are at the **head** on purpose:
+  the merge above folds everything from well above this bullet down to the end of the file
+  into one conflict hunk, so this bullet, the pointer and the tail warning are all inside it
+  and the head section is not. Filed by item **N1** of `doc/claude/numbering_batch/`.
+
+~~**The next free number is 1400.**~~ superseded: **1400** is filed, above.
+
+**The next free number is 1401.**
+
+⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
+file, so it can see only the checkout you are reading it in. It cannot see another clone of
+this repository on the same machine. **As of 2026-09-10 10:46 -0700** two clones here held
+**twelve numbers naming two different files** (1338, 1339, 1344–1353), inside a band of
+**sixteen** numbers that name two different defects each, with the rest of `1349–1399`
+queued behind the other clone's tail — which read **1354** at that moment, five numbers
+further on than it had been that morning. **That set was still growing when this was
+written: it is an observation with a clock on it, not a standing count.** Both tails were
+correct by the rule as written. So before minting, grep **every clone's**
+`doc/claude/issues/`, not this one alone; and skip the reserved bands at the head of this
+file, `1500–1599` included. Issue **1400** has the measurements and the commands for
+re-taking them.
