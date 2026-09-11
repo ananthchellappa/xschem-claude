@@ -554,6 +554,57 @@ first stage carrying one. It has no dependency on 2a–2d, so it landed as its o
 than waiting for the type grid. **Stage 2's remaining items (2a, 2b, 2c, 2d, 2f) are still open**
 and this block is filled when they land.
 
+⚠ **"ONE COMMIT" FOR STAGE 2 IS REFUTED — IT IS SEVEN.** Six recon crews and twelve adversaries
+returned **72 confirmed defects**, and three collisions that no single adversary could see because
+they are *between* specs: `ase::analysis_state` is defined **twice, incompatibly** (2b and 2c, same
+name, different bodies, different reason vocabularies); 2c proposed redefining `ase::analysis_offered`
+to return triples and **spends a ⚠ block in its own spec warning about the trap that rename creates**,
+then adds a row to catch it — which the adversary measured **cannot** (membership and order do not
+depend on `caps`, so warm and cold answers are byte-identical and only the *dependency* moved); and two
+specs claimed the same test-section letter. **A design whose own spec needs a row to catch the defect
+it introduces should not introduce it** — `ase::analysis_offered` is unchanged and the triples proc
+takes a new name, which makes the trap unreachable rather than merely caught.
+
+The order, each commit sabotage-verifiable **on the tree as that commit leaves it**:
+**C1** (2f) → **C2** (cache) → **C3** (2d) → **C4** (2a) → **C5** (2b+2c-core) → **C6** (2c-grid) →
+**C7** (2g).
+
+| landed | commit | subject | floors |
+|---|---|---|---|
+| `4723380f` | **C2** | `fix(1406)` a re-registered backend kept answering from the registry it replaced | simcaps 110 → 111 |
+| `8bfbbd6f` | **C1** | `fix(1407)` ASE-L asked the same question of one dict twenty-eight different ways | simcaps 111 → 126 |
+| `13f5ff71` | **C3** | `fix(1408)` ASE-L described a simulator it had never been told anything about | core 266 → 273; dialogs **display** 215 → 224, headless 37 unmoved |
+
+⚠ **AND A STAGE 1 DEBT LANDED FIRST — `bcb2fc59`, issue 1405** (see the paragraph above Stage 2).
+
+**THE LESSON THIS STAGE KEEPS RE-TEACHING, THREE TIMES IN THREE COMMITS: a test section is not done
+when it is green, it is done when its sabotages redden it.** Twice a sabotage designed to prove a
+row went **green**, and each time the row that now exists was written *because* of that:
+
+* **C1** — respelling `ase::cap_report`'s refusal as `![ase::caps_is $c usable 1]`, the exact defect
+  the vocabulary exists to prevent (issue 0953, in the proc 0953 was filed against), passed **all
+  fourteen** rows of section P. P7 proved the two predicates *differ*; nothing proved the callers had
+  picked the right one. **P15** is that row, and the ban it enforces is deliberately over-broad
+  because *the call site cannot show you which question is being asked*.
+* **C3** — `ase::ui::chana_x_ok`'s membership guard was **unreachable in the row meant to prove it**
+  (that proc returns early unless `anextra` exists, and only `chana_options` sets it — which the
+  previous guard had just refused). Deleting the guard left the suite at `ALL PASS`.
+* **C3, again** — and the first attempt at *that* sabotage was itself malformed: it deleted
+  `set _sim` along with the guard, so the proc **raised** instead of writing and the fixture's
+  `catch` swallowed it. ⚠ **A SABOTAGE THAT BREAKS THE PROC PROVES NOTHING**, and it looks exactly
+  like a sabotage that was correctly refused.
+
+**AND THE DRIVER'S EXPECTATIONS WERE WRONG FOUR TIMES WHILE THE CODE WAS RIGHT** — P8 (2 reads on one
+line, counted as lines), AD2 (`>=0` written as a literal expectation), G14f (the pane contents) and
+the stale-pane fixture (`ase::session_update` does not repaint). Same shape as RG13 in Stage 2e.
+**Measure, then write the expectation.**
+
+**TWO SUITES HAD NO FLOOR PARAGRAPH AT ALL** — `test_ase_simcaps_0948` (added by C2) and
+`test_ase_dialogs` (added by C3). Both now have one, and dialogs' is **two numbers**: 37 headless
+against 224 display reported as one reads as a floor that fell by 187. ⚠ **`run_regression.tcl` runs
+`test_ase_dialogs` on NEITHER arm** — measured — so a receipt quoting a T1 zero has not exercised one
+row in it. That is why C3's contract rows live in `test_ase_core`.
+
 | 2e | |
 |---|---|
 | commit | `fix(1404): Stop succeeds silently, and the user hunts for a rawfile that was never written` |
