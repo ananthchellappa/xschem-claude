@@ -69,10 +69,17 @@
 # rewritten to measure the keyboard and RG13/RG14 were added, 216 when section
 # RT landed (descend_run_batch item A), 224 with section DX (item C) and 230
 # with section C4 (the sim_entry state key, the 2026-09-08 registry/choice
-# ruling), and 248 with section D7 (issue 1401, the analysis type this backend
-# cannot render). RAISED 230 -> 243, then 243 -> 248 when an adversarial review
-# found D7e's "names it once" unpinned and the rank table unscoped to a backend. If a run reports fewer, a row
-# went missing -- do not edit this number down to match it.
+# ruling), 248 with section D7 (issue 1401, the analysis type this backend
+# cannot render), and 257 with section D8 (the emitted analysis line, per type).
+# RAISED 230 -> 243, then 243 -> 248 when an adversarial review found D7e's
+# "names it once" unpinned and the rank table unscoped to a backend, then
+# 248 -> 257 with D8.
+#
+# ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
+# is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
+# `ac`'s hardwired `dec` to `oct`, left this whole suite at ALL PASS (248).
+# If a run reports fewer, a row went missing -- do not edit this number down to
+# match it.
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -527,6 +534,79 @@ check "D7l plot_sim_type_reason is {} when there IS a mapping, and the mapping\
  itself is unchanged" \
   [list [ase::plot_sim_type_reason [nfet_state /models/sky130.lib.spice {}]] \
         [ase::plot_sim_type [nfet_state /models/sky130.lib.spice {}]]] {{} op}
+
+# --- D8: THE EMITTED ANALYSIS LINES, PER TYPE (analyses batch, Stage 1) -------
+# ⚠ D1 IS NOT SUFFICIENT ACCEPTANCE FOR THE DECK, AND THAT WAS MEASURED RATHER
+# THAN SUSPECTED. D1's fixture is OP-ONLY: its golden deck carries the single
+# line `op`, so the `dc`/`ac`/`tran` emit arms are never exercised by it, and D1
+# is nonetheless what the analyses batch named as its byte-identity gate.
+# MEASURED 2026-09-11 by changing the emit path on purpose and re-running the
+# WHOLE suite:
+#
+#   dc emits its sweep as source,STOP,START,step  -> ALL PASS (248)
+#   ac's hardwired sweep-mode word `dec` -> `oct` -> ALL PASS (248)
+#
+# i.e. NOTHING COMMITTED IN THIS TREE would have noticed a change that reversed
+# every DC sweep in the product, or silently moved every AC sweep to octaves.
+# Both were caught only by a 17-case render corpus held outside the repository,
+# which is not a guard anybody inherits. These rows are that corpus's
+# discriminating half, committed.
+#
+# ⚠ THEY PIN BEHAVIOUR, NOT AN IMPLEMENTATION, and that is checkable: this
+# section was committed BEFORE the Stage 1 registry refactor and passes against
+# the hand-written `switch` it was written to guard.
+#
+# ⚠ THESE ARE DECK BYTES, NOT DISPLAY STRINGS. The two display goldens that
+# Stage 1 deliberately moved are test_ase_window P4 and test_ase_dialogs G2.
+proc d8_lines {rows} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  dict set st analyses $rows
+  set out {}
+  foreach l [split [$::render $st $::netlist_text] "\n"] {
+    if {[regexp {^(op|dc |ac |tran )} $l]} { lappend out [string trim $l] }
+  }
+  return $out
+}
+check "D8a dc emits source, start, stop, step IN THAT ORDER" \
+  [d8_lines {{type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}}] \
+  {{dc V2 0 1.8 0.01}}
+check "D8b ac emits the HARDWIRED sweep-mode literal, then points/start/stop" \
+  [d8_lines {{type ac enabled 1 points 10 start 1 stop 1meg}}] \
+  {{ac dec 10 1 1meg}}
+check "D8c tran emits step then stop" \
+  [d8_lines {{type tran enabled 1 step 1n stop 10u}}] {{tran 1n 10u}}
+check "D8d op emits the bare word" [d8_lines {{type op enabled 1}}] {op}
+# ⚠ THE STAGE 3 BOUNDARY, PINNED AS TODAY'S BEHAVIOUR AND NOT AS A GOOD ONE.
+# `ase::ui::anaargs` used to advertise `ac {points start stop dec}` while
+# `chana_fields` returned three fields and render_deck hardwired the word `dec`
+# -- the drift the registry exists to delete. Stage 1 is a PURE REFACTOR and
+# reproduces it exactly: a stored `dec` is still ignored. The sweep-mode field
+# is Stage 3's, where this row is EXPECTED to move and its replacement says so.
+check "D8e a stored `dec` value is still IGNORED (Stage 3 moves this row)" \
+  [d8_lines {{type ac enabled 1 points 20 start 10 stop 1g dec oct}}] \
+  {{ac dec 20 10 1g}}
+check "D8f four enabled types emit in emitorder: op, dc, ac, tran" \
+  [d8_lines {{type op enabled 1} {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}
+             {type ac enabled 1 points 10 start 1 stop 1meg}
+             {type tran enabled 1 step 1n stop 10u}}] \
+  {op {dc V2 0 1.8 0.01} {ac dec 10 1 1meg} {tran 1n 10u}}
+check "D8g the STATE's row order does not change the emit order" \
+  [d8_lines {{type tran enabled 1 step 1n stop 10u}
+             {type ac enabled 1 points 10 start 1 stop 1meg}
+             {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}
+             {type op enabled 1}}] \
+  {op {dc V2 0 1.8 0.01} {ac dec 10 1 1meg} {tran 1n 10u}}
+check "D8h two rows of ONE type keep the state's own order (stable sort)" \
+  [d8_lines {{type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}
+             {type dc enabled 1 source V1 start -1 stop 1 step 0.1}}] \
+  {{dc V2 0 1.8 0.01} {dc V1 -1 1 0.1}}
+# ⚠ AND AN INCOMPLETE ROW MUST NOT RAISE. ase::state_default seeds
+# `{type dc enabled 0}` with no field keys, and the pane renders every row.
+# MEASURED when this was not handled: `key "source" not known in dictionary`,
+# and test_ase_dialogs died at 0 of 215 on the display arm while the headless
+# arm stayed green -- 37 checks against 215.
+check "D8j an incomplete row renders without raising" \
+  [list [catch {ase::ui::arg_summary {type dc enabled 0}} d8e] $d8e] {0 {}}
 
 # --- D3: strip robustness (input without trailing .end) ----------------------
 set noend_lines [lrange [split [string trimright $netlist_text "\n"] "\n"] 0 end-1]
