@@ -3059,9 +3059,25 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   into one conflict hunk, so this bullet, the pointer and the tail warning are all inside it
   and the head section is not. Filed by item **N1** of `doc/claude/numbering_batch/`.
 
+- **1401** — **an analysis type ASE-L cannot render is dropped in silence.**
+  `ase::backend::ngspice::render_deck`'s emit loop walked a literal `{op dc ac tran}` and
+  matched rows against it, so a `.state` row of any other type was never visited at all —
+  the `continue` skipped it once per type and the `switch` has no `default` arm. Measured
+  on a noise-only state: rc **0**, no analysis command, no `$sim_status` guard, no
+  `remzerovec` and **no `write` at all**, so the run produced no raw file whatsoever, while
+  `ase::n_enabled_analyses` counted the row and the Analyses pane went on showing it
+  ticked. The loop now walks the ENABLED ROWS and ranks them (`ase::analysis_emit_rank`,
+  `ase::analysis_emit_order`); an unranked type is a named refusal, raised by
+  `ase::preflight_gate` ahead of the deck write and again by `render_deck`, and **`set
+  ase_preflight 0` does not defeat that clause**. The emit order is unchanged and deck
+  golden D1 does not move. **Stage 0 of `doc/claude/ase_analyses_batch/`** — the only stage
+  of that plan that is urgent, and the only one carrying no ruling.
+
 ~~**The next free number is 1400.**~~ superseded: **1400** is filed, above.
 
-**The next free number is 1401.**
+~~**The next free number is 1401.**~~ superseded: **1401** is filed, above.
+
+**The next free number is 1402.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

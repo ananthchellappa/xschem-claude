@@ -3700,6 +3700,126 @@ proc ase::n_enabled_analyses {state} {
   return $n
 }
 
+# --- 1401: WHICH ANALYSES A BACKEND CAN RENDER, AND IN WHAT ORDER ------------
+#
+# ⚠ ase::n_enabled_analyses ABOVE COUNTS A ROW THIS BACKEND CANNOT RENDER, and
+# it is right to: it answers "how many did the user tick", which is what decides
+# whether the deck needs `set appendwrite`. The question "can this one be
+# rendered at all" is a different one and had NO reader anywhere until the procs
+# below. That gap is the whole of issue 1401: the emit loop skipped an unknown
+# type four times in silence while this counter said the deck had an analysis in
+# it. See doc/claude/issues/1401-*.md for the measured deck.
+
+# THE refusal sentence, minted ONCE. Both sites that refuse an unrenderable type
+# say it with this proc: ase::analysis_emit_order, which raises from inside
+# render_deck, and ase::preflight_gate, which refuses earlier and adds its own
+# second line of context. Two spellings of one refusal is the drift this issue is
+# about, one layer up.
+#
+# ⚠ USER-FACING. Minted by a crew, so it is the USER'S to ratify -- filed as a
+# `rule` debt against issue 1401 the moment it landed, per the batch's standing
+# rule that a new user-facing sentence is never a crew's to keep.
+proc ase::analysis_unrenderable_msg {type} {
+  return "ase: analysis type '$type' is not one this simulator backend can render"
+}
+
+# THE RANK IS THE ORDER, AND THE ORDER IS UNCHANGED. op=0 dc=10 ac=20 tran=30
+# reproduces the `op dc ac tran` literal this backend has always emitted, and
+# `op_last` reproduces issue 0964's `dc ac tran op` variant by moving op to 90.
+# ⚠ op-LAST IS A SEPARATE NAMED RULE AND NOT A PROPERTY OF THESE NUMBERS: its
+# reason is that ngspice's save list is sticky FORWARD ONLY, so the per-device
+# requests sitting immediately before `op` would be recorded again by every
+# analysis after it. It does not generalise to a type added later. Deck golden
+# D1 of tests/headless/test_ase_core.tcl must not move.
+#
+# ⚠ {} MEANS "NO RANK", WHICH IS THE REFUSAL, NOT A DEFAULT. A `return 0` here
+# would put an unknown type first in the emit order and back in the silence this
+# issue is about.
+#
+# The four-entry table is temporary BY DESIGN: the analyses batch's Stage 1
+# replaces it with the `emitorder` column of the per-backend analysis registry,
+# resolved through an optional `analysis_types` hook, so that the answer to
+# "what is a dc analysis" stops being written out in eight places
+# (doc/claude/ase_analyses_batch/PLAN.md Stage 1, decisions D1/D29). The LOOP
+# SHAPE below is final; only this table is Stage 1's to replace.
+proc ase::analysis_emit_rank {type {op_last 0}} {
+  switch -- $type {
+    op   { return [expr {$op_last ? 90 : 0}] }
+    dc   { return 10 }
+    ac   { return 20 }
+    tran { return 30 }
+  }
+  return {}
+}
+
+# The enabled rows, in emit order, as {rank index type} triples -- or a NAMED
+# ERROR naming the first type that has no rank.
+#
+# ITERATE THE ROWS, THEN ORDER THEM. Iterating a fixed order and matching rows
+# against it is what made an unknown type invisible; a row that is walked cannot
+# be skipped without somebody deciding to skip it.
+#
+# ⚠ THE INDEX IS PART OF THE KEY, AND THE SORT MUST BE STABLE. Two enabled rows
+# of the same type emit in the order the state lists them -- the state is the
+# user's document and its order is theirs, not ours. `lsort` is a merge sort and
+# is stable, and row D7i of tests/headless/test_ase_core.tcl pins that rather
+# than trusting it.
+proc ase::analysis_emit_order {state {op_last 0}} {
+  set out {}
+  set i -1
+  foreach a [ase::state_get $state analyses] {
+    incr i
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    set t [ase::state_get $a type]
+    set r [ase::analysis_emit_rank $t $op_last]
+    if {$r eq {}} { return -code error [ase::analysis_unrenderable_msg $t] }
+    lappend out [list $r $i $t]
+  }
+  return [lsort -integer -index 0 [lsort -integer -index 1 $out]]
+}
+
+# ⚠ CORE CARRIES ONE BACKEND'S RANK TABLE, SO IT MAY ONLY ANSWER FOR THAT ONE.
+#
+# ase::analysis_emit_rank's four entries are the `state_default` schema defaults,
+# which are ngspice's -- the same carve-out the header states for every other
+# ngspice literal outside `ase::backend::ngspice`. ase::register_backend is a
+# real extension point (five required hooks, extras tolerated) and src/rdw.tcl
+# names it to the user, so a second backend can exist; its render_deck may well
+# emit a type this table has no rank for, and refusing that run would be **a
+# claim about a backend nobody asked**. The precedent for scoping is two
+# statements above the preflight_gate call in ase::run_deck, where
+# `ase::run_composes_registry` gates the casemode precheck for exactly this
+# reason -- its own header: "a refusal about an entry it never runs would be a
+# lie."
+#
+# The test is the schema's own default rather than the literal `ngspice`, so
+# there is no new simulator name in core: the backend whose analysis defaults
+# `ase::state_default` ships IS the backend this table describes. Stage 1
+# replaces the whole question with the per-backend `analysis_types` hook
+# (doc/claude/ase_analyses_batch/PLAN.md Stage 1a) and this proc goes with it.
+proc ase::analysis_rank_authority {state} {
+  return [expr {[ase::state_get $state simulator] eq
+                [ase::state_get [ase::state_default] simulator]}]
+}
+
+# The enabled types this backend has no rank for -- {} when every enabled row can
+# be rendered, and {} for ANY backend whose analyses core does not describe.
+# Used by ase::preflight_gate, which must name ALL of them in one refusal rather
+# than stopping at the first, because a user who hand-edited a `.state` may well
+# have written more than one.
+proc ase::analysis_unrenderable {state} {
+  if {![ase::analysis_rank_authority $state]} { return {} }
+  set bad {}
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    set t [ase::state_get $a type]
+    if {[ase::analysis_emit_rank $t] eq {} && [lsearch -exact $bad $t] < 0} {
+      lappend bad $t
+    }
+  }
+  return $bad
+}
+
 # --- THE SIMULATOR-PROFILE LAYER WAS HERE AND IS GONE ------------------------
 #
 # `fluid-editing`'s casemode batch item 6 put the requested case mode -- and the
@@ -4739,6 +4859,48 @@ proc ase::preflight_fix_session {key} {
 # .include'd file defines) and a user who is right must not be locked out of
 # their own simulator. Defences (b) and (c) are unaffected by it.
 proc ase::preflight_gate {state netlist_text} {
+  # --- 1401: AN ENABLED ANALYSIS THIS BACKEND CANNOT RENDER IS A REFUSAL -----
+  # It is checked HERE as well as in render_deck because this gate runs ahead of
+  # the deck write, so nothing in the run directory is touched -- and because a
+  # `.state` is a text file a person can hand-edit, and one written by a future
+  # version of ASE-L will arrive carrying types this one has never heard of.
+  #
+  # ⚠ AND IT SITS ABOVE THE `ase_preflight` ESCAPE, DELIBERATELY. That escape is
+  # a real lever for the save-name check below -- a user who knows their netlist
+  # better than the scanner does can switch it off and run. There is nothing for
+  # it to be right about here: a deck that emits no analysis at all is not a run
+  # the user can usefully force. Moving this block below the early return would
+  # hand back the silence this issue closed.
+  set unrend [ase::analysis_unrenderable $state]
+  if {[llength $unrend]} {
+    set lines {}
+    foreach t $unrend {
+      set l [ase::analysis_unrenderable_msg $t]
+      ::ase::echo $l error
+      lappend lines $l
+    }
+    # The rundir sentence every other refusal in this file carries (the ruling
+    # is doc/claude/specs/simulator_profiles.md, "where the gate sits, and what
+    # REFUSE means here"): this gate runs ABOVE run_deck's delete of the previous
+    # raw, so a prior run's artifacts really are still on disk and a user who
+    # looks will find them.
+    # ⚠ NAMED ONLY WHEN IT ALREADY EXISTS. ase::rundir does `file mkdir`, and
+    # the siblings therefore CREATE the directory from inside a refusal whose
+    # whole claim is that nothing was written. This one does not: no rundir, no
+    # sentence about it.
+    set rd [ase::state_get $state rundir]
+    set rdnote {}
+    if {$rd ne {} && [file isdirectory $rd]} {
+      set rdnote " Any files already in [file normalize $rd] are from an earlier\
+ run."
+    }
+    set l "ase: it is enabled on this bench, so the run would have completed,\
+ produced no result for it, and said nothing. Nothing was generated: no deck, no\
+ raw, no log.$rdnote `set ase_preflight 0` does NOT disable this check."
+    ::ase::echo $l error
+    lappend lines $l
+    return -code error [join $lines "\n"]
+  }
   if {[info exists ::ase_preflight] && !$::ase_preflight} { return {} }
   set scan [ase::preflight_scan $state $netlist_text]
   set rows [dict get $scan absent]
@@ -7650,6 +7812,26 @@ proc ase::plot_sim_type {state} {
     }
   }
   return $out
+}
+
+# 1401: WHY IT ANSWERED {} -- a second question, not a different answer.
+#
+# `{}` from ase::plot_sim_type has always meant two different things and the
+# caller could not tell them apart: "nothing is enabled, so nothing ran" and
+# "something IS enabled and this viewer has no mapping for it". The second is the
+# honest answer for every analysis type beyond the four above -- a `noise` row is
+# a real, enabled, rendered analysis with no viewer preference yet -- and until
+# this proc existed it was reported as the first.
+#
+# ⚠ ase::plot_sim_type ITSELF IS UNCHANGED. It walks the same four types in the
+# same order and returns the last enabled one; row R6 of
+# tests/headless/test_ase_optier_0963.tcl pins that ranking, and issue 0964's
+# warning that the coupling to emit order must not be re-established still
+# stands. What is added here is a SECOND question with a second answer.
+proc ase::plot_sim_type_reason {state} {
+  if {[ase::plot_sim_type $state] ne {}} { return {} }
+  if {[ase::n_enabled_analyses $state] == 0} { return nothing-enabled }
+  return no-viewer-mapping
 }
 
 # The raw-file artifact of session `key` when it has results: {} for an
@@ -10860,7 +11042,10 @@ namespace eval ase::backend::ngspice {
     # used to say it must, forever; read the one there before changing either.
     # Both readers pick their plot BY NAME out of the multi-plot results file,
     # so nothing downstream depends on which analysis ran last.
-    set anorder {op dc ac tran}
+    # 1401: the fixed order is now a RANK PER TYPE (ase::analysis_emit_rank), so
+    # the emit loop below can iterate the ENABLED ROWS and still produce exactly
+    # this order. `op_last` is the 0964 variant, unchanged in effect.
+    set op_last 0
     # --- 0967: WHERE THE PRINTED OUTPUTS SIT IS NOT THE REORDER'S TO DECIDE --
     # `print` reads whichever plot the simulator is standing in, and these lines
     # used to sit after every analysis -- so before the 0964 reorder above they
@@ -10936,66 +11121,81 @@ namespace eval ase::backend::ngspice {
       }
     }
     set printsdone 0
-    if {[llength $optier_ctl] || [llength $optier_post]} { set anorder {dc ac tran op} }
-    foreach type $anorder {
-      set ai -1
-      foreach a [ase::state_get $state analyses] {
-        incr ai
-        if {[ase::state_get $a type] ne $type} { continue }
-        if {[ase::state_get $a enabled 0] ne {1}} { continue }
-        # 0964: the device requests, immediately before the analysis that is
-        # the only one able to use them. A `save` COMMAND, not a dot-card:
-        # dot-cards are not commands in here (see the shape switch above).
-        if {$type eq {op}} {
-          foreach opsl $optier_ctl { lappend lines $opsl }
+    if {[llength $optier_ctl] || [llength $optier_post]} { set op_last 1 }
+    # --- 1401: THE LOOP WALKS THE ROWS, AND THE RANK ONLY ORDERS THEM -------
+    # It used to be `foreach type {op dc ac tran} { foreach a [analyses] { if
+    # {[type] ne $type} continue ... } }`, and a row whose type was none of the
+    # four was therefore never visited AT ALL -- the `continue` skipped it once
+    # per type and the `switch` below has no `default` arm. MEASURED before this
+    # was changed, on a state carrying one enabled `noise` row:
+    #
+    #     .control
+    #     set appendwrite
+    #     print -i(v1)
+    #     .endc
+    #
+    # No analysis, no $sim_status guard, no remzerovec, and -- since 0929 moved
+    # the write inside this loop -- NO `write` AT ALL, so the run produced no
+    # raw file whatsoever. rc 0, nothing on either stream, ase::n_enabled_analyses
+    # counting the row (which is what put `set appendwrite` there) and the
+    # Analyses pane still showing it ticked. ase::analysis_emit_order now REFUSES
+    # such a row by name, and ase::preflight_gate refuses it earlier still.
+    set arows [ase::state_get $state analyses]
+    foreach aent [ase::analysis_emit_order $state $op_last] {
+      lassign $aent arank ai type
+      set a [lindex $arows $ai]
+      # 0964: the device requests, immediately before the analysis that is
+      # the only one able to use them. A `save` COMMAND, not a dot-card:
+      # dot-cards are not commands in here (see the shape switch above).
+      if {$type eq {op}} {
+        foreach opsl $optier_ctl { lappend lines $opsl }
+      }
+      switch -- $type {
+        op   {
+          lappend lines "op"
+          # Immediately after the solve and before any other analysis:
+          # `show` reports whatever CKT state is current, and a later
+          # dc/tran would overwrite it (measured: after `op; dc`, show
+          # reports the sweep end point, and `setplot op1` does NOT
+          # rewind it).
+          foreach opsl $optier_post { lappend lines $opsl }
         }
-        switch -- $type {
-          op   {
-            lappend lines "op"
-            # Immediately after the solve and before any other analysis:
-            # `show` reports whatever CKT state is current, and a later
-            # dc/tran would overwrite it (measured: after `op; dc`, show
-            # reports the sweep end point, and `setplot op1` does NOT
-            # rewind it).
-            foreach opsl $optier_post { lappend lines $opsl }
-          }
-          dc   { lappend lines "dc [dict get $a source] [dict get $a start]\
+        dc   { lappend lines "dc [dict get $a source] [dict get $a start]\
  [dict get $a stop] [dict get $a step]" }
-          ac   { lappend lines "ac dec [dict get $a points] [dict get $a start]\
+        ac   { lappend lines "ac dec [dict get $a points] [dict get $a start]\
  [dict get $a stop]" }
-          tran { lappend lines "tran [dict get $a step] [dict get $a stop]" }
-        }
-        # casemode item 10, defence (b), from `fluid-editing`: after EVERY
-        # analysis, never once at the end -- $sim_status is last-writer-wins per
-        # analysis (C4). Measured with a failing `dc` followed by a good `tran`:
-        # one guard at the end -> rc=0 and a 2198-byte raw written, the failure
-        # completely masked; a guard after each -> rc=1, RUN-FAILED, no file.
-        #
-        # ⚠ IT PRECEDES THE WRITE BLOCK BELOW, AND THAT IS THE WHOLE POINT. The
-        # guard's job is to `quit 1` before a failed analysis can put a plot into
-        # the results file; placed after the write it would report the failure and
-        # ship the bad raw anyway, which is the defect it was written against.
-        foreach g [::ase::backend::ngspice::sim_status_guard] { lappend lines $g }
-        # `remzerovec` before every write, not once at the end: `.options
-        # savecurrents` leaves zero-length @m...[ib]-class vectors in the plot
-        # and ngspice's write then aborts SILENTLY (probe-verified, ngspice-42).
-        # It is per-PLOT, so one call at the end would only ever have cleaned
-        # the last analysis's.
-        lappend lines "remzerovec"
-        # 0963 tier b: the device names ride THIS write and no other. A bare
-        # `@dev` on a multi-point write is silently wrong -- dims=1, one
-        # non-zero sample parked at index 0, 0.0 everywhere else, no warning.
-        # Rows E5 and M1 fail if this condition is loosened.
-        if {$type eq {op} && [llength $optier_write]} {
-          lappend lines "write [raw_file $state] all [join $optier_write { }]"
-        } else {
-          lappend lines "write [raw_file $state]"
-        }
-        # 0967: the printed outputs sit with the analysis they have always read.
-        if {[list $type $ai] eq $printanchor} {
-          foreach pl $printlines { lappend lines $pl }
-          set printsdone 1
-        }
+        tran { lappend lines "tran [dict get $a step] [dict get $a stop]" }
+      }
+      # casemode item 10, defence (b), from `fluid-editing`: after EVERY
+      # analysis, never once at the end -- $sim_status is last-writer-wins per
+      # analysis (C4). Measured with a failing `dc` followed by a good `tran`:
+      # one guard at the end -> rc=0 and a 2198-byte raw written, the failure
+      # completely masked; a guard after each -> rc=1, RUN-FAILED, no file.
+      #
+      # ⚠ IT PRECEDES THE WRITE BLOCK BELOW, AND THAT IS THE WHOLE POINT. The
+      # guard's job is to `quit 1` before a failed analysis can put a plot into
+      # the results file; placed after the write it would report the failure and
+      # ship the bad raw anyway, which is the defect it was written against.
+      foreach g [::ase::backend::ngspice::sim_status_guard] { lappend lines $g }
+      # `remzerovec` before every write, not once at the end: `.options
+      # savecurrents` leaves zero-length @m...[ib]-class vectors in the plot
+      # and ngspice's write then aborts SILENTLY (probe-verified, ngspice-42).
+      # It is per-PLOT, so one call at the end would only ever have cleaned
+      # the last analysis's.
+      lappend lines "remzerovec"
+      # 0963 tier b: the device names ride THIS write and no other. A bare
+      # `@dev` on a multi-point write is silently wrong -- dims=1, one
+      # non-zero sample parked at index 0, 0.0 everywhere else, no warning.
+      # Rows E5 and M1 fail if this condition is loosened.
+      if {$type eq {op} && [llength $optier_write]} {
+        lappend lines "write [raw_file $state] all [join $optier_write { }]"
+      } else {
+        lappend lines "write [raw_file $state]"
+      }
+      # 0967: the printed outputs sit with the analysis they have always read.
+      if {[list $type $ai] eq $printanchor} {
+        foreach pl $printlines { lappend lines $pl }
+        set printsdone 1
       }
     }
     # A deck with no enabled analysis at all still carries its print lines, in

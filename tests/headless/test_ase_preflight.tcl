@@ -38,9 +38,19 @@
 #   PF221      THE FIX ROUND — ten reproduced defects and five coverage holes
 #              raised by three reviewers of the first cut
 #   PF220      the real simulator, when there is one (skipped, never failed)
+#   PF222      issue 1401 -- an ENABLED analysis this backend cannot render is
+#              refused here, ahead of the deck write, and `ase_preflight 0`
+#              does NOT defeat that clause (PF221 is a 54-row family above)
 #
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
+#
+# ⚠ FLOOR: 125 checks, and it only ever goes up. This file had declared none
+# until issue 1401 added section PF222, which is the moment a floor becomes worth
+# having: 115 before those rows, 122 after -- measured, both by running it and by
+# name-diffing the `ok:` lines -- then 125 when an adversarial review found the
+# rundir clause dropped and the rank table unscoped. RAISED 115 -> 122 -> 125. If a run reports fewer,
+# a row went missing; do not edit this number down to match it.
 
 set fail 0
 set npass 0
@@ -356,6 +366,81 @@ said_clear
 eqcheck PF216f-ase_preflight-0-disables-the-refusal \
   [list [catch {ase::preflight_gate [mkstate $RD c $TYPO] $NL} e2] [llength $::said]] {0 0}
 set ::ase_preflight 1
+## --- PF222: AN ENABLED ANALYSIS THIS BACKEND CANNOT RENDER (issue 1401) -----
+## (PF221 is taken -- that id is a 54-row family already in this file.)
+## The gate's second refusal, and the one that is NOT defeasible. Until 1401 a
+## state row whose `type` was none of op/dc/ac/tran was skipped by render_deck's
+## emit loop in silence: the run completed, produced no result for it, and the
+## Analyses pane went on showing it ticked. The gate checks it too, and checks it
+## FIRST, because the gate runs before the deck is written -- so nothing in the
+## run directory is touched -- and because a `.state` is a text file a person can
+## hand-edit.
+set UNREND {{type op enabled 1} {type noise enabled 1 source v1}}
+said_clear
+set stU [mkstate $RD c $GOOD]
+dict set stU analyses $UNREND
+set cu1 [catch {ase::preflight_gate $stU $NL} eu1]
+eqcheck PF222a-an-unrenderable-analysis-is-refused $cu1 1
+eqcheck PF222b-the-refusal-names-the-type \
+  [string match "*analysis type 'noise' is not one this simulator backend can render*" $eu1] 1
+eqcheck PF222c-and-says-the-run-would-have-said-nothing \
+  [string match "*said nothing*" $eu1] 1
+eqcheck PF222d-it-reaches-the-action-log-too \
+  [expr {[said_count "*analysis type 'noise'*"] >= 1}] 1
+## ⚠ THE ROW THIS SUB-ITEM EXISTS FOR. `ase_preflight 0` is a real lever for the
+## save-name check above -- a user who knows their netlist better than the map
+## does must not be locked out -- and there is nothing for it to be right about
+## here: a deck that emits no analysis at all is not a run anyone can usefully
+## force. If this row ever goes green with a 0 in the first slot, the clause has
+## drifted BELOW the early return and the silence is back.
+set ::ase_preflight 0
+said_clear
+set cu2 [catch {ase::preflight_gate $stU $NL} eu2]
+eqcheck PF222e-ase_preflight-0-does-NOT-defeat-it \
+  [list $cu2 [string match "*is not one this simulator backend can render*" $eu2]] {1 1}
+set ::ase_preflight 1
+## Non-vacuity: the SAME state with every analysis renderable passes the gate, so
+## PF222a is measuring the analysis rows and not something else about this state.
+said_clear
+set stR [mkstate $RD c $GOOD]
+dict set stR analyses {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}}
+eqcheck PF222f-a-renderable-state-still-passes \
+  [list [catch {ase::preflight_gate $stR $NL} eur] [said_count "*render*"]] {0 0}
+## ... and a DISABLED unrenderable row is not refused either: it emits nothing
+## today and emitted nothing before, so refusing it would break a bench that
+## merely carries a row somebody unticked.
+set stD [mkstate $RD c $GOOD]
+dict set stD analyses {{type op enabled 1} {type noise enabled 0 source v1}}
+eqcheck PF222g-a-disabled-unrenderable-row-is-not-refused \
+  [catch {ase::preflight_gate $stD $NL} eud] 0
+## ⚠ A REFUSAL NAMES THE RUNDIR'S LEFTOVERS when there are any -- the ruling is
+## doc/claude/specs/simulator_profiles.md, "where the gate sits, and what REFUSE
+## means here", and every other refusal in ase.tcl carries this clause. The gate
+## runs ABOVE run_deck's delete of the previous raw, so a prior run's artifacts
+## really are still on disk when it fires.
+set stU2 [mkstate $RD c $GOOD]
+dict set stU2 analyses $UNREND
+set cu3 [catch {ase::preflight_gate $stU2 $NL} eu3]
+eqcheck PF222h-the-refusal-names-the-rundirs-earlier-files \
+  [list $cu3 [string match "*are from an earlier run*" $eu3] \
+        [string match "*[file normalize $RD]*" $eu3]] {1 1 1}
+## ... and it does NOT create the directory in order to name it. ase::rundir does
+## `file mkdir`, so the sibling refusals CREATE a rundir from inside a message
+## whose whole claim is that nothing was written. This one names it only when it
+## is already there -- non-vacuity for the row above.
+set RDGONE [file join $tmp never_created]
+set stU3 [mkstate $RDGONE c $GOOD]
+dict set stU3 analyses $UNREND
+set cu4 [catch {ase::preflight_gate $stU3 $NL} eu4]
+eqcheck PF222i-and-does-not-CREATE-a-rundir-to-name-it \
+  [list $cu4 [string match "*earlier run*" $eu4] [file isdirectory $RDGONE]] {1 0 0}
+## A backend core does not describe is not refused on ngspice's rank table.
+set stU4 [mkstate $RD c $GOOD]
+dict set stU4 analyses $UNREND
+dict set stU4 simulator someoneelsesim
+eqcheck PF222j-another-backends-state-passes-this-gate \
+  [catch {ase::preflight_gate $stU4 $NL} eu5] 0
+
 ## THE REFUSAL WRITES NOTHING — the CS181 shape, and it matters more here than
 ## anywhere: a half-written artefact is literally the defect class this item
 ## exists to kill

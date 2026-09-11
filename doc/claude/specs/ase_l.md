@@ -86,7 +86,13 @@ pre_commands {{cmd {pre_osdi $::SG13G2_OSDI/psp103.osdi}}}
 - `variables` become `.param` lines; schematic references them symbolically
   (`W=Wn`) — plain ngspice resolves `.param` at netlist level.
 - `analyses` render into one `.control` block (op → `op`, dc → `dc V2 0 1.8
-  0.01`, …) in a fixed order; only `enabled 1` entries emit.
+  0.01`, …) in a fixed order; only `enabled 1` entries emit. **The emit loop
+  walks the enabled ROWS and ranks them; it does not walk a list of types**
+  (issue 1401). An enabled row whose `type` this backend has no rank for is a
+  **refusal**, named — `ase: analysis type '<t>' is not one this simulator
+  backend can render` — raised from `ase::preflight_gate` before the deck is
+  written and again from `render_deck`. It used to be skipped in silence: the
+  run completed, produced nothing, and left the row ticked in the pane.
 - `models` render `.lib <file> <section>` lines (corner.sym's job today).
 - `includes` render top-level `.include <file>` lines, emitted **before** the
   `.lib` models so any global `.param`s they define are in scope when the models
@@ -943,9 +949,13 @@ top-level session, `v(x2.mid)` under a session bound to the mid cell. Results >
 Direct Plot also raises the window that is descended into the design instead of
 re-opening the top elsewhere. Two limits ride along: the node must be in the raw
 (Direct Plot deliberately writes no `.save` rows, so probe internals with no
-explicit outputs or with Save-All-Voltages on), and RUNNING is still top-only —
-`ase::netlist` requires the design to be the current schematic, so ascend before
-Run. `Tools > Launch ASE-L` is deliberately NOT hierarchy-aware: it binds a
+explicit outputs or with Save-All-Voltages on). ⚠ **This paragraph used to end
+*"and RUNNING is still top-only — `ase::netlist` requires the design to be the
+current schematic, so ascend before Run"*. That has been false since issue
+0643** (see *Netlist and Run works from any level of the design*, below): the
+equality guard is gone and Netlist and Run works descended, through
+`ase::with_design_current`. Corrected 2026-09-10 with issue 1401; the sentence
+had outlived its own fix by two days in two places. `Tools > Launch ASE-L` is deliberately NOT hierarchy-aware: it binds a
 session to the cellview actually on screen.
 
 **A locked object is READ-able** (issue 0160). `lock=true` makes an object
@@ -994,9 +1004,10 @@ Add-Output dialog. The comma form is left alone, which costs nothing:
 *schematic* still splits, because there the token is known to be a net.
 
 **A pick while DESCENDED is hierarchy-qualified** (issue 0161). Picking is
-allowed at any depth; only the RUN is top-only (`ase::netlist` compares
-`xschem get schname` against the design path, and descending changes
-`schname` to the child — there is no `currsch` guard). The queued expression
+allowed at any depth — and so, since issue 0643, is the **run**. ⚠ This
+sentence used to read *"only the RUN is top-only (`ase::netlist` compares
+`xschem get schname` against the design path …)"*; that comparison is the guard
+0643 removed, and the claim was stale. Corrected 2026-09-10 with issue 1401. The queued expression
 is always **top-relative**, so a pick made while descended stays correct
 after ascending to run.
 

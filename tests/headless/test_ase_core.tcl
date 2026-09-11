@@ -69,8 +69,10 @@
 # rewritten to measure the keyboard and RG13/RG14 were added, 216 when section
 # RT landed (descend_run_batch item A), 224 with section DX (item C) and 230
 # with section C4 (the sim_entry state key, the 2026-09-08 registry/choice
-# ruling). If a run reports fewer, a row went missing -- do not edit this
-# number down to match it.
+# ruling), and 248 with section D7 (issue 1401, the analysis type this backend
+# cannot render). RAISED 230 -> 243, then 243 -> 248 when an adversarial review
+# found D7e's "names it once" unpinned and the rank table unscoped to a backend. If a run reports fewer, a row
+# went missing -- do not edit this number down to match it.
 
 set fail 0; set npass 0
 proc check {name got exp} {
@@ -412,6 +414,119 @@ set deck2 [$render $st $netlist_text]
 set opidx [string first "\nop\n" $deck2]
 set tridx [string first "\ntran 1n 1u\n" $deck2]
 check_true "D2 op renders before tran 1n 1u" [expr {$opidx > 0 && $tridx > 0 && $opidx < $tridx}]
+
+# --- D7: an analysis type this backend cannot render (issue 1401) ------------
+# ⚠ THESE ROWS WERE WRITTEN RED-FIRST AND PASSED AGAINST THE UNFIXED CODE, in
+# the inverted form: one row asserted that a noise-only state rendered WITHOUT
+# error, and another that the deck carried `set appendwrite` and no analysis
+# command. Both were green before the fix and both are the opposite of what is
+# asserted now.
+# ⚠ THE RED-FIRST SECTION HAD FIVE ROWS AND THIS ONE HAS THIRTEEN, so the letters
+# MOVED: today's D7d (`n_enabled_analyses` still counts the row) is NOT the
+# historical D7d, it holds against fixed and unfixed code alike, and it is
+# deliberately absent from this issue's sabotage list for that reason. Name the
+# assertion, never the letter, when citing what went red. The witness matters
+# because this defect leaves NOTHING behind -- no error, no message, not even a
+# file that looks missing -- so a fix landed without one has no evidence the
+# defect was ever there. MEASURED 2026-09-10 against the unfixed render_deck, on
+# a state whose only enabled row is `{type noise enabled 1 ...}`:
+#
+#     ** sch_path: /fixture/nfet_clean.sch
+#     ... netlist, .lib, .param, .options savecurrents, .temp 27, .save -i(v1) ...
+#     .control
+#     set appendwrite
+#     print -i(v1)
+#     .endc
+#     .end
+#
+# -- rc 0, no analysis command, no $sim_status guard, no remzerovec and NO
+# `write` at all, so the run produced no raw file whatsoever while the Analyses
+# pane went on showing the row ticked.
+set st7 [nfet_state /models/sky130.lib.spice {}]
+dict set st7 analyses {{type noise enabled 1 output v(out) source v1 sweep dec points 10 start 1 stop 1meg}}
+set d7rc [catch {$render $st7 $netlist_text} d7err]
+check "D7a a noise-only state REFUSES instead of rendering" $d7rc 1
+check "D7b ... with the type named, in the one minted sentence" $d7err \
+  {ase: analysis type 'noise' is not one this simulator backend can render}
+check "D7c ... which is the sentence ase::analysis_unrenderable_msg mints" \
+  [ase::analysis_unrenderable_msg noise] $d7err
+check "D7d ... and n_enabled_analyses still COUNTS the row -- the counter was\
+ never the gate, which is why the drop was silent" [ase::n_enabled_analyses $st7] 1
+check "D7e ase::analysis_unrenderable names it" \
+  [ase::analysis_unrenderable $st7] {noise}
+
+# ⚠ THE TWO ROWS BELOW EXIST BECAUSE D7e ALONE CANNOT SEE EITHER HALF OF THIS
+# PROC'S CONTRACT. With one unrenderable row in the fixture, dropping the
+# `lsearch` dedup and replacing the whole body with `return [list $t]` on the
+# first hit are BOTH byte-identical -- the row is green for a proc that names
+# duplicates twice and for one that stops at the first. That is this tree's
+# hollow-green class, and a row that cannot be made to fail proves nothing.
+set st7m [nfet_state /models/sky130.lib.spice {}]
+dict set st7m analyses {{type noise enabled 1 source v1} {type op enabled 1} {type noise enabled 1 source v2}}
+check "D7e2 two enabled rows of ONE unrenderable type are named ONCE" \
+  [ase::analysis_unrenderable $st7m] {noise}
+set st7t [nfet_state /models/sky130.lib.spice {}]
+dict set st7t analyses {{type noise enabled 1 source v1} {type pz enabled 1} {type op enabled 1}}
+check "D7e3 TWO distinct unrenderable types are BOTH named, in state order" \
+  [ase::analysis_unrenderable $st7t] {noise pz}
+check "D7e4 ... and render refuses on the FIRST of them, by name" \
+  [list [catch {$render $st7t $netlist_text} e7t] $e7t] \
+  [list 1 {ase: analysis type 'noise' is not one this simulator backend can render}]
+
+# ⚠ CORE CARRIES ONE BACKEND'S RANK TABLE, so it must not refuse for a backend
+# whose analyses it does not describe: ase::register_backend is a real extension
+# point and a second backend's render_deck may emit types this table never had.
+# The precedent is ase::run_composes_registry, which gates the casemode precheck
+# two statements above the preflight_gate call for exactly this reason.
+set st7b [nfet_state /models/sky130.lib.spice {}]
+dict set st7b analyses {{type noise enabled 1 source v1}}
+dict set st7b simulator someoneelsesim
+check "D7e5 a DIFFERENT backend's state is not refused on ngspice's rank table" \
+  [ase::analysis_unrenderable $st7b] {}
+check "D7e6 ... while the schema-default backend still is" \
+  [list [ase::analysis_rank_authority $st7] [ase::analysis_rank_authority $st7b]] {1 0}
+
+# A DISABLED row of an unknown type is NOT a refusal: it emits nothing today and
+# emitted nothing before, so refusing it would break benches that merely carry a
+# row somebody unticked. Non-vacuity for D7a.
+set st7d [nfet_state /models/sky130.lib.spice {}]
+dict set st7d analyses {{type op enabled 1} {type noise enabled 0 source v1}}
+set d7drc [catch {$render $st7d $netlist_text} d7ddeck]
+check "D7f a DISABLED unknown type renders clean" $d7drc 0
+check_true "D7f2 ... and its deck still carries the op analysis" \
+  [regexp -line {^op$} $d7ddeck]
+
+# THE ORDER IS UNCHANGED, asserted as ranks rather than inferred from a golden.
+set st7o [nfet_state /models/sky130.lib.spice {}]
+dict set st7o analyses {{type tran enabled 1 step 1n stop 1u} {type ac enabled 1 points 10 start 1 stop 1meg} {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01} {type op enabled 1}}
+set d7types {}
+foreach e [ase::analysis_emit_order $st7o] { lappend d7types [lindex $e 2] }
+check "D7g the emit order is op dc ac tran whatever order the rows are in" $d7types {op dc ac tran}
+set d7types9 {}
+foreach e [ase::analysis_emit_order $st7o 1] { lappend d7types9 [lindex $e 2] }
+check "D7h ... and 0964's op-last variant is dc ac tran op" $d7types9 {dc ac tran op}
+
+# ⚠ THE SORT MUST BE STABLE, and this row is why that is not a comment. Two
+# enabled rows of ONE type emit in the order the state lists them -- the state is
+# the user's document. `lsort` is a merge sort and is stable; this pins it rather
+# than trusting the manual.
+set st7s [nfet_state /models/sky130.lib.spice {}]
+dict set st7s analyses {{type tran enabled 1 step 1n stop 1u id first} {type op enabled 1} {type tran enabled 1 step 2n stop 2u id second}}
+set d7ids {}
+foreach e [ase::analysis_emit_order $st7s] {
+  lappend d7ids [ase::state_get [lindex [ase::state_get $st7s analyses] [lindex $e 1]] id]
+}
+check "D7i two rows of one type keep the state's own order" $d7ids {{} first second}
+
+# 0c: `{}` from ase::plot_sim_type used to mean two different things.
+check "D7j plot_sim_type_reason: nothing enabled" \
+  [ase::plot_sim_type_reason [dict replace [nfet_state /models/sky130.lib.spice {}] analyses {{type op enabled 0}}]] nothing-enabled
+check "D7k plot_sim_type_reason: enabled, but this viewer has no mapping" \
+  [ase::plot_sim_type_reason $st7] no-viewer-mapping
+check "D7l plot_sim_type_reason is {} when there IS a mapping, and the mapping\
+ itself is unchanged" \
+  [list [ase::plot_sim_type_reason [nfet_state /models/sky130.lib.spice {}]] \
+        [ase::plot_sim_type [nfet_state /models/sky130.lib.spice {}]]] {{} op}
 
 # --- D3: strip robustness (input without trailing .end) ----------------------
 set noend_lines [lrange [split [string trimright $netlist_text "\n"] "\n"] 0 end-1]
