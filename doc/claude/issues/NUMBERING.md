@@ -3093,7 +3093,29 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1402.**~~ superseded: **1402** is filed, above.
 
-**The next free number is 1403.**
+- **1403** — **a hung suite had no upper bound, and T1 had no timeout at all.** On
+  2026-09-11 `test_ase_optier_0963` stopped after row N3 on the display arm and sat there
+  for **8 h 07 m**, because a stall was the ABSENCE of an outcome rather than an outcome.
+  Two holes: `tests/run_regression.tcl` carried no `timeout` on any of its four `exec`
+  sites — the one suite whose baseline is ZERO was the one with no bound, display arm
+  included — and nothing at all bounds a bare
+  `./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl`, which is the
+  command typed most often in a session. Two layers landed. **Layer 1**: `t1_timeout`
+  (`T1_CASE_TIMEOUT`, default 900 s) prefixes all four sites with
+  `timeout --kill-after=20`, inside `devdisplay.sh exec` and not around it, and `t1_why`
+  turns rc 124 into a counted FAIL that says `TIMED OUT`. **Layer 2**: a watchdog in
+  `tests/headless/scratch.tcl` (169 of 384 suites source it) that exits **124** — the code
+  `run_suites.sh` already reads as `TIMEOUT`, so no reader changes — and names the suite
+  and its LAST STDOUT LINE, so the message is *"stops after row N3"* rather than *"it
+  hung"*. ⚠ **It is NOT a general timeout**: an `after` timer reaches only a hang that gets
+  to the event loop (measured: `vwait`/`tkwait` yes — issue 1375's modal — blocking `exec`
+  and busy loops no), and **row W13 pins that limitation** so the prose cannot drift from
+  the code. `test_suite_watchdog_1403.tcl`, 27 checks, both arms, five sabotage passes.
+  Write-up: `doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md`.
+
+~~**The next free number is 1403.**~~ superseded: **1403** is filed, above.
+
+**The next free number is 1404.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

@@ -69,7 +69,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_hash_extra_node_warn_0165" \
                  "headless/test_lib_new_path_guards_0799" \
                  "headless/test_descend_doors_1228" \
-                 "headless/test_ase_simdlg_0937"]
+                 "headless/test_ase_simdlg_0937" \
+                 "headless/test_suite_watchdog_1403"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -129,6 +130,55 @@ proc summarize_all {fn fd} {
 source test_utility.tcl  ;# defines $xschem_cmd (used by the headless cases below) + helpers
 source banner_rule.tcl   ;# banner_complete / banner_died / regression_case_failed (issue 0689)
 
+## ---------------------------------------------------------------------------
+## EVERY CHILD GETS A DEADLINE (issue 1403)
+## ---------------------------------------------------------------------------
+## This driver had NO timeout on any of its four `exec` sites, so one wedged
+## case stopped the whole of T1 for as long as anybody was willing to wait. That
+## is not hypothetical: on 2026-09-11 a hand-rolled loop with the same hole sat
+## on a hung display-arm suite for EIGHT HOURS AND SEVEN MINUTES
+## (doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md). The other
+## two drivers have had this all along -- `run_suites.sh` wraps every arm in
+## `timeout 200` and `full_audit.sh` in `timeout 300` -- and T1, the one suite
+## whose baseline is ZERO, was the one without it.
+##
+## ⚠ THE DISPLAY ARM IS WHY THE NUMBER IS GENEROUS. `dcases` runs six suites
+## under a real X display where a modal dialog can be raised that nothing in a
+## `--script` run can click (issue 1375), and a display-arm case is slower than
+## its headless twin by a wide margin. 900 s is ~3x full_audit's cap, so it
+## bounds a hang without redefining "slow".
+##
+## ⚠ AND IT SIGNALS THE WHOLE PROCESS GROUP. `timeout` puts the child in its own
+## process group and signals the group, so the 16 parallel `xargs` workers that
+## `open_close` fans out are reached too -- measured 2026-09-11. Without that a
+## kill would orphan them and the next run would inherit the mess.
+##
+##     T1_CASE_TIMEOUT   seconds per case; 0 disables; unset -> 900
+proc t1_timeout {} {
+  if {[info exists ::env(T1_CASE_TIMEOUT)]} {
+    set v [string trim $::env(T1_CASE_TIMEOUT)]
+    if {[string is integer -strict $v] && $v >= 0} { return $v }
+  }
+  return 900
+}
+set t1_tmo [t1_timeout]
+## The words every child is prefixed with; empty when disabled. --kill-after
+## upgrades to SIGKILL for a child that ignores SIGTERM, so "timed out" cannot
+## itself become the thing that hangs.
+set t1_pre {}
+if {$t1_tmo > 0} { set t1_pre [list timeout --kill-after=20 $t1_tmo] }
+
+## ⚠ A TIMEOUT IS A NAMED OUTCOME, NEVER A GAP IN THE LOG. rc 124 is the answer
+## "it hung", and it must reach results.log as a counted FAIL that says so --
+## otherwise a killed case leaves only whatever it managed to print, which reads
+## like a case that merely failed some checks.
+proc t1_why {childcode secs} {
+  if {$childcode == 124 || $childcode == 137} {
+    return "TIMED OUT after ${secs}s and was killed -- nothing after this point ran"
+  }
+  return "crashed, aborted mid-script, or a check failed"
+}
+
 set a [catch "open \"$log_fn\" w" fd]
 if {!$a} {
 foreach tc $tcases {
@@ -138,8 +188,20 @@ foreach tc $tcases {
     # if they were this run's -- and it survives a "reproduce on a clean baseline"
     # recheck, which makes phantom failures look confirmed.
     file delete -force ${tc}.log
-    if {[catch {eval exec {tclsh ${tc}.tcl} > ${tc}_output.txt} msg]} {
+    set childcode 0
+    set tccmd [concat $t1_pre [list tclsh ${tc}.tcl]]
+    if {[catch {eval exec $tccmd > ${tc}_output.txt} msg opt]} {
+      set ec [dict get $opt -errorcode]
+      set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
       puts "Something seems to have gone wrong with $tc, but we will ignore it: $msg"
+    }
+    ## A kill leaves ${tc}.log as whatever the case had written by then, which
+    ## summarize_all would read as an ordinary partial result. Say so instead.
+    if {$childcode == 124 || $childcode == 137} {
+      set af [open ${tc}.log a]
+      puts $af "HARNESS: ${tc} [t1_why $childcode $t1_tmo]: FAIL"
+      close $af
+      puts "TIMEOUT: ${tc} killed after ${t1_tmo}s"
     }
     summarize_all ${tc}.log $fd
     puts "Finish source ${tc}.tcl"
@@ -173,7 +235,8 @@ foreach tc $tcases {
   foreach hc $hcases {
     puts "Start ${hc}.tcl (headless)"
     set childcode 0
-    if {[catch {exec $xschem_cmd --nogui --pipe -q --script ${hc}.tcl > ${hc}.log 2>@1} msg opt]} {
+    set hccmd [concat $t1_pre [list $xschem_cmd --nogui --pipe -q --script ${hc}.tcl]]
+    if {[catch {eval exec $hccmd > ${hc}.log 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
@@ -183,7 +246,7 @@ foreach tc $tcases {
     set died     [banner_died $body]
     if {[regression_case_failed $childcode $body]} {
       set af [open ${hc}.log a]
-      puts $af "HARNESS: ${hc} did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- crashed, aborted mid-script, or a check failed: FAIL"
+      puts $af "HARNESS: ${hc} did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- [t1_why $childcode $t1_tmo]: FAIL"
       close $af
     }
     summarize_all ${hc}.log $fd
@@ -231,7 +294,20 @@ foreach tc $tcases {
       continue
     }
     set childcode 0
-    if {[catch {exec $dd exec $xschem_cmd --pipe -q --logdir $dlogdir --script ${dc}.tcl > ${dc}.disp.log 2>@1} msg opt]} {
+    ## ⚠ THE TIMEOUT GOES INSIDE devdisplay.sh's exec, NOT AROUND IT.
+    ## `devdisplay.sh exec` runs the command as an ordinary child and stays its
+    ## parent, so a `timeout` wrapped around the SCRIPT would signal the shell
+    ## and leave xschem orphaned on :99. Prefixed here, `timeout` is xschem's
+    ## own direct parent and its process group is the one that gets signalled.
+    ## ⚠ ON ONE LINE, AND THAT IS LOAD-BEARING. Row V57 of test_op_annot.tcl
+    ## isolates the single line in this loop that names $xschem_cmd and demands
+    ## the devdisplay routing be on THAT line -- because issue 0894 measured that
+    ## a grep over the whole loop answers 1 even with the routing stripped out
+    ## entirely (the liveness var is $dd_alive and the NODISPLAY prose contains
+    ## the words "devdisplay.sh start"). Splitting this across a continuation
+    ## reddened V57 on both arms in T1; do not re-wrap it.
+    set dccmd [concat [list $dd exec] $t1_pre [list $xschem_cmd --pipe -q --logdir $dlogdir --script ${dc}.tcl]]
+    if {[catch {eval exec $dccmd > ${dc}.disp.log 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
@@ -241,7 +317,7 @@ foreach tc $tcases {
     set died     [banner_died $body]
     if {[regression_case_failed $childcode $body]} {
       set af [open ${dc}.disp.log a]
-      puts $af "HARNESS: ${dc} (display arm) did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- crashed, aborted mid-script, or a check failed: FAIL"
+      puts $af "HARNESS: ${dc} (display arm) did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- [t1_why $childcode $t1_tmo]: FAIL"
       close $af
     }
     summarize_all ${dc}.disp.log $fd
@@ -252,8 +328,8 @@ foreach tc $tcases {
   # (e.g. an unresolvable binary) aborted the interpreter with a raw Tcl stack
   # trace and never appeared in the summary at all. Now its outcome is recorded.
   puts "Start xschemtest.tcl"
-  if {[catch {exec $xschem_cmd --nogui --pipe -q --script xschemtest.tcl \
-              > stefan_xschemtest.log 2>@1} msg]} {
+  set xtcmd [concat $t1_pre [list $xschem_cmd --nogui --pipe -q --script xschemtest.tcl]]
+  if {[catch {eval exec $xtcmd > stefan_xschemtest.log 2>@1} msg]} {
     puts $fd "xschemtest.tcl"
     puts $fd "HARNESS: xschemtest.tcl did not run cleanly ($msg): FAIL"
     puts $fd "Total num fail: 1"

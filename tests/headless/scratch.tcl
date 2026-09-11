@@ -212,3 +212,136 @@ proc test_sim_registry_state {} {
   }
   return [list $n $sel $entry $src]
 }
+
+## ---------------------------------------------------------------------------
+## The stall watchdog (issue 1403)
+## ---------------------------------------------------------------------------
+## A SUITE THAT HANGS MUST SAY SO. On 2026-09-11 `test_ase_optier_0963` printed
+## 86 of its 103 rows on the display arm, stopped after row N3, and sat there for
+## EIGHT HOURS AND SEVEN MINUTES. A suite that is slow and a suite that is wedged
+## emit byte-identical output -- none -- so nothing could tell them apart and
+## nothing woke anyone. Write-up:
+## doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md
+##
+## ⚠ THIS IS THE LAYER THAT WORKS WHEN NOTHING WRAPS THE RUN, which is the only
+## gap the shipped drivers leave. `run_suites.sh` already wraps every arm in
+## `timeout 200` and `full_audit.sh` in `timeout 300`, and both print a stall as
+## its own named verdict. Neither can reach the command that is actually typed
+## most often in a working session:
+##
+##     ./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl
+##
+## Nothing arms that and nothing bounds it -- and a hand-rolled `for` loop around
+## it is exactly what was running for those eight hours. This watchdog rides
+## INSIDE the suite, so it is armed by the suite being a suite rather than by the
+## caller remembering anything.
+##
+## ⚠ IT IS NOT A GENERAL TIMEOUT AND MUST NOT BE SOLD AS ONE. A Tcl `after` timer
+## fires only when the interpreter reaches the event loop. Measured 2026-09-11
+## against this binary, three hang shapes:
+##
+##     hang in `vwait` / `tkwait`    watchdog FIRES         <- issue 1375's modal
+##     hang in a blocking `exec`     watchdog does NOT fire
+##     hang in a busy Tcl loop       watchdog does NOT fire
+##
+## The one class it covers is the class that bit: `descend_schematic()` calling
+## `tcl_call("ask_save")` behind a gate that tests `has_x` alone, a `tkwait` under
+## `--script` that nothing can click (issue 1375). For the other two shapes the
+## answer is still an EXTERNAL bound -- `run_suites.sh`, or a bare `timeout` on
+## the command -- and `tests/run_regression.tcl` now carries one on each of its
+## four `exec` sites, which is where the other half of 1403 lives. Row **W13** of
+## `test_suite_watchdog_1403.tcl` pins this limitation by measurement, so the
+## paragraph cannot drift away from the code.
+##
+## ⚠ THE BUDGET IS DELIBERATELY LARGER THAN EITHER SHIPPED DRIVER'S. A run under
+## one of them must report THAT driver's verdict, with that driver's number in
+## it; a watchdog that preempted `run_suites.sh` at a different number would
+## replace an accurate `TIMEOUT | <suite> (after 200s)` with a confusing one.
+## This exists to bound the UNWRAPPED case, not to compete with the wrapped one.
+##
+##     XSCHEM_SUITE_WATCHDOG_MS   milliseconds; 0 disables; unset -> 900000
+##
+## On firing it prints ONE line -- to stdout AND to stderr, because a caller that
+## captured only one of them would otherwise still see a silent death -- and
+## exits **124**, the code `timeout(1)` uses and the code `run_suites.sh` already
+## classifies as `TIMEOUT` (run_suites.sh:195). So a stall stays a NAMED OUTCOME
+## in every reader that already exists, with no reader change required.
+##
+## ⚠ AND IT EXITS CLEANLY, WHICH AN EXTERNAL KILL CANNOT. `exit` here is the
+## WRAPPED exit above, so the scratch dirs are removed on the way out. Measured
+## on the same hang: killed externally by SIGTERM the binary takes its emergency
+## -save path and leaves `/tmp/xschem_emergencysave_*` plus the suite's scratch
+## dir behind. Row **W12** pins the cleanup.
+
+## The budget, in ms. A malformed env value is ignored rather than obeyed: a
+## typo must not silently disarm the only bound on an unwrapped run.
+proc __wd_budget_ms {} {
+  if {[info exists ::env(XSCHEM_SUITE_WATCHDOG_MS)]} {
+    set v [string trim $::env(XSCHEM_SUITE_WATCHDOG_MS)]
+    if {[string is integer -strict $v] && $v >= 0} { return $v }
+  }
+  return 900000
+}
+
+## The suite's own file, not this one. `info script` inside a sourced library
+## names the LIBRARY; frame 1 is the outermost script, which is the suite.
+proc __wd_suite_name {} {
+  if {![catch {info frame 1} d] && [dict exists $d file]} {
+    set f [dict get $d file]
+    if {$f ne {}} { return [file tail $f] }
+  }
+  return [file tail [info script]]
+}
+
+## Remember the last line the suite wrote to stdout, so the watchdog can say
+## WHERE it stopped rather than merely that it stopped. "86 of 103 rows, stops
+## after row N3" is the finding; "it hung" is what an external timeout can
+## already tell you. Cost is one string assignment per `puts`.
+##
+## Every `puts` form is handled: `puts s`, `puts -nonewline s`, `puts chan s`,
+## `puts -nonewline chan s`. Only stdout is recorded -- a suite writing its own
+## log through a file channel is not producing progress output. The delegation
+## is `eval` on a properly-built list, which is quoting-safe and works on 8.4.
+if {[info commands ::__wd_real_puts] eq {}} {
+  rename ::puts ::__wd_real_puts
+  proc ::puts {args} {
+    catch {
+      set a $args
+      if {[string equal [lindex $a 0] {-nonewline}]} { set a [lrange $a 1 end] }
+      if {[llength $a] == 1} {
+        set ::__wd_last [string trim [lindex $a 0]]
+      } elseif {[llength $a] == 2 &&
+                [lsearch -exact {stdout ::stdout} [lindex $a 0]] >= 0} {
+        set ::__wd_last [string trim [lindex $a 1]]
+      }
+    }
+    eval [linsert $args 0 ::__wd_real_puts]
+  }
+}
+
+## Fire: say it once on both streams, then leave through the wrapped exit.
+proc __wd_fire {} {
+  set last {}
+  if {[info exists ::__wd_last] && [string trim $::__wd_last] ne {}} {
+    set last $::__wd_last
+  } else {
+    set last {(the suite printed nothing)}
+  }
+  set who {a suite}
+  if {[info exists ::__wd_suite]} { set who $::__wd_suite }
+  set ms 0
+  if {[info exists ::__wd_budget]} { set ms $::__wd_budget }
+  set msg "###### WATCHDOG TIMEOUT ###### $who exceeded ${ms}ms -- last output: $last"
+  catch { ::__wd_real_puts stdout $msg ; flush stdout }
+  catch { ::__wd_real_puts stderr $msg ; flush stderr }
+  ## 124 is timeout(1)'s code and run_suites.sh already reads it as TIMEOUT.
+  exit 124
+}
+
+## Arm once. A second `source` of this file must not stack a second timer.
+if {![info exists ::__wd_armed]} {
+  set ::__wd_armed 1
+  set ::__wd_budget [__wd_budget_ms]
+  set ::__wd_suite  [__wd_suite_name]
+  if {$::__wd_budget > 0} { catch {after $::__wd_budget ::__wd_fire} ::__wd_token }
+}

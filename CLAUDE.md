@@ -421,6 +421,34 @@ one**, because "no output yet" is indistinguishable from "still working".
 so its display arm had never been walked by anything before it hung. Give any
 such first run a timeout and watch it.
 
+**TWO BOUNDS NOW EXIST, AND NEITHER REPLACES THE OTHER (issue 1403).**
+
+* **`tests/run_regression.tcl` finally has one.** It had NO `timeout` on any of its
+  four `exec` sites — the one suite whose baseline is ZERO was the one with no
+  bound, and that includes its six-suite display arm. `t1_timeout`
+  (`T1_CASE_TIMEOUT`, default **900 s**, `0` disables) now prefixes all four with
+  `timeout --kill-after=20`, and `t1_why` turns rc 124 into a counted `FAIL` that
+  says `TIMED OUT`. Note the display-arm prefix goes **inside** `devdisplay.sh
+  exec`, not around it: `cmd_exec` stays the parent of what it runs, so a timeout
+  around the script would signal the shell and orphan xschem on `:99`.
+* **Every suite that sources `tests/headless/scratch.tcl` (169 of 384) carries its
+  own watchdog**, armed by being a suite — so it reaches the one command no driver
+  wraps, a bare `./src/xschem --nogui --pipe -q --nolog --script <t>.tcl`. Budget
+  `XSCHEM_SUITE_WATCHDOG_MS`, default **900 000 ms** (deliberately above both
+  drivers' caps so it never preempts their verdict), `0` disables. It exits **124**,
+  which `run_suites.sh` already reads as `TIMEOUT`, and prints
+  `###### WATCHDOG TIMEOUT ###### <suite> exceeded <n>ms -- last output: <line>` on
+  both streams. The last-output clause is the point: *"stops after row N3"* is the
+  finding, *"it hung"* is what an external timeout could already tell you.
+
+⚠ **THE IN-SUITE WATCHDOG IS NOT A GENERAL TIMEOUT.** A Tcl `after` timer fires only
+when the interpreter reaches the event loop. Measured: a hang in `vwait`/`tkwait`
+**is** caught (that is issue 1375's modal, the one that cost the night); a hang in a
+blocking `exec` or a busy Tcl loop is **not**. For those the answer is still an
+external bound — `run_suites.sh`, or `timeout` on the command. Row **W13** of
+`test_suite_watchdog_1403.tcl` pins the limitation by measurement, so if anyone makes
+the watchdog general the row goes red and names the paragraph that needs rewriting.
+
 ⚠ **And do not gate a whole report on the last check.** Thirteen of fourteen
 suites were green on both arms hours before anyone knew it. Report — and where
 appropriate commit — the verified majority, naming the outstanding item as
