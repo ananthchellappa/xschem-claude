@@ -509,7 +509,7 @@ proc ase::state_default {} {
     temperature 27 \
     models    [expr {[info exists ::ASE_DEFAULT_MODELS] ? $::ASE_DEFAULT_MODELS : {}}] \
     variables {} \
-    analyses  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}} \
+    analyses  [ase::analysis_seed] \
     outputs   {} \
     save_all_v 0 \
     save_all_i 0 \
@@ -3723,6 +3723,206 @@ proc ase::analysis_unrenderable_msg {type} {
   return "ase: analysis type '$type' is not one this simulator backend can render"
 }
 
+# ─── THE ANALYSIS REGISTRY: ASE-L'S SCHEMA ───────────────────────────────────
+# Stage 1 of doc/claude/ase_analyses_batch/. ASE-L owns the SCHEMA -- this key
+# set, these readers, the one speller and the refusals. A per-simulator ADAPTER
+# owns the CONTENT, and reaches core through the OPTIONAL `analysis_types` hook
+# (D34-D37). `ase::register_backend` requires exactly five hooks and tolerates
+# extras, which is how `capabilities`, `op_param_set` and `op_param_enumerable`
+# already ride; `analysis_types` is the fourth.
+#
+# ⚠ THE FALLBACK IS `{}`, NEVER A LITERAL LIST. A literal fallback would be the
+# ninth copy of "what is a dc analysis" -- the exact defect Stage 1 exists to
+# delete -- and it would be the copy nobody grepped for.
+#
+# KEYS STAGE 1 READS. The full contract is PLAN.md §1a; these are the ones the
+# four shipped types exercise, and a key no reader reads is a key no test can
+# pin:
+#   label      display text. TODAY'S RADIO TEXT, not a human noun -- new
+#              user-facing copy is the user's to ratify (⚖ R9), and a refactor
+#              may not mint any.
+#   registered 1 when the GUI offers the type at all.
+#   baseline   1 when the type is present in every build ASE-L will assume
+#              without a measurement. (Renamed from the plan's `gated`, which
+#              was specified as "1 when an #ifdef in commands.c can remove it"
+#              -- an ngspice SOURCE FILE named inside the schema half. Stage 1's
+#              Xyce paper-validation found it load-bearing in the wrong
+#              direction as well: it is the only steer on the `unknown` arm of
+#              the capability grid, so an adapter that cannot assert an
+#              ngspice-style invariant writes `0` and every unmeasured
+#              capability resolves to "offer it anyway".)
+#   emitorder  ascending int. op=0 dc=10 ac=20 tran=30 reproduces today's order
+#              exactly. ⚠ `op`-LAST IS A SEPARATE NAMED RULE (issue 0964) and is
+#              NOT this number.
+#   viewrank   which analysis the waveform window prefers. SEPARATE FROM
+#              emitorder ON PURPOSE -- issue 0964 broke that coupling and its
+#              own header says it must not be re-established.
+#   fields     ORDERED list of field descriptors. ONE list, THREE roles: form
+#              order, Arguments-column order, emit slot order. Two lists is
+#              exactly how `ac`'s `dec` drifted.
+#   emit       ORDERED LIST of role-tagged cards; exactly one `analysis` role.
+#   results    the destination each surface writes to.
+#   plots      per-result rows. `select` is OPAQUE TO CORE -- it was `match`,
+#              "a glob on the Plotname literal", which is a record type only an
+#              ngspice rawfile has. Core never parses it; Stage 6 gives the
+#              adapter a hook that resolves it.
+#
+# ⚠ WHAT THIS SCHEMA IS NOT YET. Stage 1's Xyce paper-validation (§1e) wrote
+# five families of a second simulator's descriptor against this key set and
+# attacked every "that worked" claim: 157 breakages, 77 of them found only by
+# the adversary. The findings that do NOT land here are recorded in
+# LEDGER.md's Stage 1 block against ⚖ R10, and the largest is that there is no
+# ADAPTER-level descriptor at all -- analysis cardinality, composition, whether
+# the simulator owns its own sweep, and the run-model fact a Stop sentence needs
+# have nowhere to be written. ⚠ AND THE NAMING RULE IS LEXICAL: it catches every
+# ngspice NOUN and misses every ngspice SEMANTIC, which is why `emit`'s `@name!`
+# ("because ngspice's argument lists are POSITIONAL") and `bool`'s "never =1"
+# read as schema and are not.
+variable ase::analysis_cache {}
+
+# The registry for one simulator: the hook's answer, cached, or `{}`.
+# ⚠ THE DEFAULT SIMULATOR IS NAMED HERE AND NOT READ OUT OF `state_default`.
+# `ase::state_default`'s analyses seed is itself a registry reader now, so
+# resolving the default by calling it would be unbounded recursion:
+# state_default -> analysis_seed -> analysis_types -> state_default. MEASURED on
+# the first cut, which failed to load with a Tcl stack overflow. This is the
+# same literal `ase::state_default` carries, under the header's standing
+# carve-out that the schema defaults are the one place an ngspice word may sit
+# outside `ase::backend::ngspice`.
+proc ase::default_simulator {} { return ngspice }
+
+proc ase::analysis_types {{sim {}}} {
+  variable analysis_cache
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  if {[dict exists $analysis_cache $sim]} { return [dict get $analysis_cache $sim] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim analysis_types]
+    if {$h ne {}} { set r [$h] }
+  }
+  dict set analysis_cache $sim $r
+  return $r
+}
+
+# One entry, or `{}` when this simulator does not describe that type.
+proc ase::analysis_entry {sim type} {
+  set d [ase::analysis_types $sim]
+  if {![dict exists $d $type]} { return {} }
+  return [dict get $d $type]
+}
+
+# The ORDERED field names of a type -- the one list the form, the Arguments
+# column and the emit slots all read.
+proc ase::analysis_field_names {sim type} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e fields]} { return {} }
+  set out {}
+  foreach f [dict get $e fields] { lappend out [dict get $f name] }
+  return $out
+}
+
+# One field descriptor, or `{}`.
+proc ase::analysis_field {sim type field} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e fields]} { return {} }
+  foreach f [dict get $e fields] {
+    if {[dict get $f name] eq $field} { return $f }
+  }
+  return {}
+}
+
+# Expand ONE token template against a state row. `@name` is a required slot and
+# every other token is emitted literally -- which is how `ac`'s hardwired `dec`
+# survives Stage 1 byte for byte.
+#
+# ⚠ A MISSING REQUIRED SLOT RAISES `dict get`'s OWN ERROR, deliberately. That is
+# byte-for-byte what render_deck's `[dict get $a source]` raised before this
+# refactor, and Stage 1 is not allowed to change a failure mode any more than an
+# output. ase::ui::chana_ok's D6 validation is what stops a user reaching it.
+proc ase::analysis_expand {row tmpl} {
+  set out {}
+  foreach tok $tmpl {
+    if {[string index $tok 0] eq {@}} {
+      lappend out [dict get $row [string range $tok 1 end]]
+    } else {
+      lappend out $tok
+    }
+  }
+  return [join $out { }]
+}
+
+# Every emitted card for a row, as {role text} pairs.
+proc ase::analysis_cards {sim row} {
+  set e [ase::analysis_entry $sim [ase::state_get $row type]]
+  if {$e eq {} || ![dict exists $e emit]} { return {} }
+  set out {}
+  foreach card [dict get $e emit] {
+    lappend out [list [dict get $card role] \
+                      [ase::analysis_expand $row [dict get $card tmpl]]]
+  }
+  return $out
+}
+
+# The REGISTERED types of a backend, in `emitorder` order. The radio row, the
+# seed and any later type list all read this one answer.
+proc ase::analysis_offered {{sim {}}} {
+  set d [ase::analysis_types $sim]
+  if {$d eq {}} { return {} }
+  set ranked {}
+  foreach ty [dict keys $d] {
+    set e [dict get $d $ty]
+    if {[dict exists $e registered] && ![dict get $e registered]} { continue }
+    set r 0
+    if {[dict exists $e emitorder]} { set r [dict get $e emitorder] }
+    lappend ranked [list $r $ty]
+  }
+  set out {}
+  foreach ent [lsort -integer -index 0 $ranked] { lappend out [lindex $ent 1] }
+  return $out
+}
+
+# The analyses a fresh bench starts with: every REGISTERED type in `emitorder`
+# order, each carrying its declared `seed_enabled`.
+#
+# ⚠ THIS IS THE FIRST COPY, NOT THE LAST. `ase::state_default`'s literal
+# `{{type op enabled 1} {type dc enabled 0} ...}` was one of the eight, and the
+# one whose drift would be least visible: it is what the 104 committed `.state`
+# files were written from, and row R1 of test_ase_core.tcl pins both the order
+# and the enabled flags. WHICH analyses a new bench opens with is adapter
+# CONTENT -- a second simulator may reasonably start somewhere else -- so
+# `seed_enabled` is a registry key and not a rule in core.
+#
+# ⚠ THE FALLBACK IS TODAY'S LITERAL, and it is the ONE literal Stage 1 keeps.
+# A backend that declares no `analysis_types` hook must still produce a usable
+# default state, because `ase::state_default` is called before any simulator is
+# chosen -- including by `ase::state_load` for every file it merges over. It is
+# marked so a later stage can find it.
+proc ase::analysis_seed {{sim {}}} {
+  set d [ase::analysis_types $sim]
+  if {$d eq {}} {
+    ## STAGE-1 FALLBACK LITERAL (the only one; see the header above).
+    return {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+  }
+  set rows {}
+  foreach ty [ase::analysis_offered $sim] {
+    set e [dict get $d $ty]
+    set en 0
+    if {[dict exists $e seed_enabled]} { set en [dict get $e seed_enabled] }
+    lappend rows [list type $ty enabled $en]
+  }
+  return $rows
+}
+
+# THE ONE SPELLER. render_deck emits this; ase::ui::arg_summary RENDERS it. From
+# here it is structurally impossible for the Analyses pane to show a setting the
+# deck does not carry -- which is the whole reason `ac`'s `dec` could drift.
+proc ase::analysis_line {sim row} {
+  foreach c [ase::analysis_cards $sim $row] {
+    if {[lindex $c 0] eq {analysis}} { return [lindex $c 1] }
+  }
+  return {}
+}
+
 # THE RANK IS THE ORDER, AND THE ORDER IS UNCHANGED. op=0 dc=10 ac=20 tran=30
 # reproduces the `op dc ac tran` literal this backend has always emitted, and
 # `op_last` reproduces issue 0964's `dc ac tran op` variant by moving op to 90.
@@ -3742,14 +3942,18 @@ proc ase::analysis_unrenderable_msg {type} {
 # "what is a dc analysis" stops being written out in eight places
 # (doc/claude/ase_analyses_batch/PLAN.md Stage 1, decisions D1/D29). The LOOP
 # SHAPE below is final; only this table is Stage 1's to replace.
-proc ase::analysis_emit_rank {type {op_last 0}} {
-  switch -- $type {
-    op   { return [expr {$op_last ? 90 : 0}] }
-    dc   { return 10 }
-    ac   { return 20 }
-    tran { return 30 }
-  }
-  return {}
+# ── STAGE 1: THE FOUR-ENTRY TABLE IS GONE AND THE RANK READS `emitorder` ──────
+# The table above described what this proc used to be. It is now a READER of the
+# per-backend analysis registry, resolved through the OPTIONAL `analysis_types`
+# hook (doc/claude/ase_analyses_batch/PLAN.md §1a). `op`-LAST IS STILL A SEPARATE
+# NAMED RULE and deliberately NOT a number in the registry: its reason is
+# ngspice's forward-sticky save list (issue 0964) and it does not generalise to a
+# type added later, so it stays an argument here rather than adapter content.
+proc ase::analysis_emit_rank {type {op_last 0} {sim {}}} {
+  if {$op_last && $type eq {op}} { return 90 }
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e emitorder]} { return {} }
+  return [dict get $e emitorder]
 }
 
 # The enabled rows, in emit order, as {rank index type} triples -- or a NAMED
@@ -3764,14 +3968,25 @@ proc ase::analysis_emit_rank {type {op_last 0}} {
 # user's document and its order is theirs, not ours. `lsort` is a merge sort and
 # is stable, and row D7i of tests/headless/test_ase_core.tcl pins that rather
 # than trusting it.
-proc ase::analysis_emit_order {state {op_last 0}} {
+# ⚠ `sim` IS THE BACKEND DOING THE RENDERING, NOT ALWAYS THE STATE'S `simulator`.
+# A state's `simulator` key can name something core has no backend for at all --
+# test_ase_core's E2b and E3 drive exactly that, with a deliberately missing
+# binary and a `nosuchsim`. Before Stage 1 the rank table was a literal in core,
+# so every type had a rank whatever the state said; now the ranks live in the
+# RENDERING BACKEND's registry, and ngspice's render_deck must ask for its own.
+# MEASURED when this defaulted to the state's simulator: `ase: analysis type
+# 'op' is not one this simulator backend can render` aborted test_ase_core at
+# 163 of 248 checks. The default stays the state's simulator for core callers;
+# an adapter passes its own name.
+proc ase::analysis_emit_order {state {op_last 0} {sim {}}} {
+  if {$sim eq {}} { set sim [ase::state_get $state simulator] }
   set out {}
   set i -1
   foreach a [ase::state_get $state analyses] {
     incr i
     if {[ase::state_get $a enabled 0] ne {1}} { continue }
     set t [ase::state_get $a type]
-    set r [ase::analysis_emit_rank $t $op_last]
+    set r [ase::analysis_emit_rank $t $op_last $sim]
     if {$r eq {}} { return -code error [ase::analysis_unrenderable_msg $t] }
     lappend out [list $r $i $t]
   }
@@ -3797,9 +4012,18 @@ proc ase::analysis_emit_order {state {op_last 0}} {
 # `ase::state_default` ships IS the backend this table describes. Stage 1
 # replaces the whole question with the per-backend `analysis_types` hook
 # (doc/claude/ase_analyses_batch/PLAN.md Stage 1a) and this proc goes with it.
+# ⚠ STAGE 1 MAKES THIS A QUESTION ABOUT THE REGISTRY, NOT ABOUT A NAME.
+# It used to compare the state's simulator against the schema default's, because
+# core carried ONE backend's rank table and could only answer for that one. Core
+# now carries no table at all: a backend that declares an `analysis_types` hook
+# describes its own analyses, and absence of a type from ITS registry is a
+# meaningful refusal. A backend that declares no hook gets `{}` -- never a
+# literal, which would be the ninth copy -- and therefore no refusal, which is
+# the same answer the old name comparison gave it and for a better reason.
+# Rows D7e5 / D7e6 of test_ase_core.tcl and PF222j of test_ase_preflight.tcl
+# drive an unregistered `someoneelsesim` and pin exactly that.
 proc ase::analysis_rank_authority {state} {
-  return [expr {[ase::state_get $state simulator] eq
-                [ase::state_get [ase::state_default] simulator]}]
+  return [expr {[ase::analysis_types [ase::state_get $state simulator]] ne {} ? 1 : 0}]
 }
 
 # The enabled types this backend has no rank for -- {} when every enabled row can
@@ -3813,7 +4037,8 @@ proc ase::analysis_unrenderable {state} {
   foreach a [ase::state_get $state analyses] {
     if {[ase::state_get $a enabled 0] ne {1}} { continue }
     set t [ase::state_get $a type]
-    if {[ase::analysis_emit_rank $t] eq {} && [lsearch -exact $bad $t] < 0} {
+    if {[ase::analysis_emit_rank $t 0 [ase::state_get $state simulator]] eq {} &&
+        [lsearch -exact $bad $t] < 0} {
       lappend bad $t
     }
   }
@@ -7803,15 +8028,24 @@ proc ase::last_result {} {
 # is the only place the reorder could have silently changed the user's waveform
 # window.
 proc ase::plot_sim_type {state} {
-  set out {}
-  foreach type {op dc ac tran} {
-    foreach a [ase::state_get $state analyses] {
-      if {[ase::state_get $a type] ne $type} { continue }
-      if {[ase::state_get $a enabled 0] ne {1}} { continue }
-      set out $type
-    }
+  # ── STAGE 1: THE PREFERENCE IS `viewrank`, READ FROM THE REGISTRY. ──────────
+  # This walked its own literal `{op dc ac tran}` and returned the last enabled
+  # one -- the seventh copy. The ranking is UNCHANGED and row R6 of
+  # test_ase_optier_0963.tcl pins it. ⚠ `viewrank` IS A SEPARATE KEY FROM
+  # `emitorder` ON PURPOSE: issue 0964 broke the coupling between the viewer's
+  # preference and the deck's emit order and its header says it must not be
+  # re-established. Highest viewrank among the enabled types wins.
+  set sim [ase::state_get $state simulator]
+  set best {} ; set bestrank {}
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    set ty [ase::state_get $a type]
+    set e [ase::analysis_entry $sim $ty]
+    if {$e eq {} || ![dict exists $e viewrank]} { continue }
+    set vr [dict get $e viewrank]
+    if {$bestrank eq {} || $vr >= $bestrank} { set bestrank $vr ; set best $ty }
   }
-  return $out
+  return $best
 }
 
 # 1401: WHY IT ANSWERED {} -- a second question, not a different answer.
@@ -11110,15 +11344,21 @@ namespace eval ase::backend::ngspice {
     # is a separate ruling, recorded as a `rule` debt rather than guessed at
     # here -- guessing would put an unlabelled number beside a row, which is the
     # defect 0967 was filed about.
+    #
+    # ── STAGE 1: THE EIGHTH COPY IS GONE. This was its OWN `foreach type
+    # {dc ac tran op}` -- a separate literal from the emit order's, twelve lines
+    # below it, governed by issue 1243's ruling rather than 0964's, and the copy
+    # most likely to be missed because it does not look like the other seven.
+    # It is exactly `ase::analysis_emit_order` under the `op`-last variant: that
+    # walk is ranked dc/ac/tran/op and takes the LAST match, which is what
+    # "last-enabled-wins, with op winning whenever it is enabled" means. Two
+    # rows of one type still resolve to the later row, because the index is part
+    # of the sort key and the sort is stable (row D7i).
     set printanchor {}
-    foreach type {dc ac tran op} {
-      set ai -1
-      foreach a [ase::state_get $state analyses] {
-        incr ai
-        if {[ase::state_get $a type] ne $type} { continue }
-        if {[ase::state_get $a enabled 0] ne {1}} { continue }
-        set printanchor [list $type $ai]
-      }
+    set porder [ase::analysis_emit_order $state 1 [namespace tail [namespace current]]]
+    if {[llength $porder]} {
+      set plast [lindex $porder end]
+      set printanchor [list [lindex $plast 2] [lindex $plast 1]]
     }
     set printsdone 0
     if {[llength $optier_ctl] || [llength $optier_post]} { set op_last 1 }
@@ -11141,7 +11381,8 @@ namespace eval ase::backend::ngspice {
     # Analyses pane still showing it ticked. ase::analysis_emit_order now REFUSES
     # such a row by name, and ase::preflight_gate refuses it earlier still.
     set arows [ase::state_get $state analyses]
-    foreach aent [ase::analysis_emit_order $state $op_last] {
+    foreach aent [ase::analysis_emit_order $state $op_last \
+                        [namespace tail [namespace current]]] {
       lassign $aent arank ai type
       set a [lindex $arows $ai]
       # 0964: the device requests, immediately before the analysis that is
@@ -11150,21 +11391,31 @@ namespace eval ase::backend::ngspice {
       if {$type eq {op}} {
         foreach opsl $optier_ctl { lappend lines $opsl }
       }
-      switch -- $type {
-        op   {
-          lappend lines "op"
-          # Immediately after the solve and before any other analysis:
-          # `show` reports whatever CKT state is current, and a later
-          # dc/tran would overwrite it (measured: after `op; dc`, show
-          # reports the sweep end point, and `setplot op1` does NOT
-          # rewind it).
-          foreach opsl $optier_post { lappend lines $opsl }
-        }
-        dc   { lappend lines "dc [dict get $a source] [dict get $a start]\
- [dict get $a stop] [dict get $a step]" }
-        ac   { lappend lines "ac dec [dict get $a points] [dict get $a start]\
- [dict get $a stop]" }
-        tran { lappend lines "tran [dict get $a step] [dict get $a stop]" }
+      # ── STAGE 1: THE SWITCH IS GONE. ONE SPELLER, AND IT IS THE REGISTRY'S ──
+      # This was a four-arm `switch` spelling each analysis line by hand -- one
+      # of EIGHT copies of the answer to "what is a dc analysis", and the copy
+      # that hardwired `ac`'s `dec` while `anaargs` advertised it as a field and
+      # `chana_fields` omitted it. ase::analysis_line is now the only thing in
+      # the tree that spells an analysis line, and ase::ui::arg_summary RENDERS
+      # THE SAME CALL, so the Analyses pane cannot show a setting the deck does
+      # not carry.
+      set aline [ase::analysis_line [namespace tail [namespace current]] $a]
+      if {$aline eq {}} {
+        # Unreachable for a registered type: ase::analysis_emit_order refused an
+        # unrankable row before this loop, and ase::preflight_gate refused it
+        # before the deck was written at all. Here in case a later entry ever
+        # declares `emitorder` without `emit`, and it says so with the sentence
+        # minted once in ase::analysis_unrenderable_msg (issue 1401).
+        return -code error [ase::analysis_unrenderable_msg $type]
+      }
+      lappend lines $aline
+      if {$type eq {op}} {
+        # Immediately after the solve and before any other analysis:
+        # `show` reports whatever CKT state is current, and a later
+        # dc/tran would overwrite it (measured: after `op; dc`, show
+        # reports the sweep end point, and `setplot op1` does NOT
+        # rewind it).
+        foreach opsl $optier_post { lappend lines $opsl }
       }
       # casemode item 10, defence (b), from `fluid-editing`: after EVERY
       # analysis, never once at the end -- $sim_status is last-writer-wins per
@@ -11930,6 +12181,71 @@ show all > probe_c.txt
                         complete $complete state $state]
   }
 
+  # ─── THE ANALYSIS REGISTRY: NGSPICE'S CONTENT ────────────────────────────
+  # Stage 1 of doc/claude/ase_analyses_batch/. ASE-L owns the analysis-descriptor
+  # SCHEMA (the key set, the readers, the one speller, the refusals); THIS proc
+  # owns the CONTENT (D34-D37). Nothing here is reachable from core except
+  # through the optional `analysis_types` hook, which is why these four entries
+  # are a proc in this namespace and NOT a `variable` in ase.tcl.
+  #
+  # ⚠ THESE FOUR REPLACE EIGHT COPIES of the answer to "what is a dc analysis":
+  # state_default's seed, anaargs, the radio foreach, the emit-rank table, the
+  # print anchor's own literal, chana_fields, chana_show's destroy list and
+  # plot_sim_type. Each failed silently when it drifted, and one already had --
+  # `anaargs` advertises `ac {points start stop dec}`, `chana_fields ac` returns
+  # `{points start stop}`, and render_deck hardwires the word `dec`. MEASURED
+  # before this landed, on a state carrying `dec oct`: the deck emitted
+  # `ac dec 20 10 1g`, discarding the stored value in silence. Stage 1 is a PURE
+  # REFACTOR and reproduces that byte for byte; the sweep-mode field is Stage 3's,
+  # where a moved golden is expected and named.
+  #
+  # ⚠ `label` IS TODAY'S RADIO TEXT, NOT A HUMAN NOUN, and that is deliberate.
+  # Stage 1's acceptance is that the window looks identical, and new user-facing
+  # copy is the USER'S to ratify (⚖ R9). Promoting these to `Operating point` /
+  # `DC sweep` is a later stage's ratified change, not a refactor's side effect.
+  #
+  # ⚠ `emit` IS A LIST OF ROLE-TAGGED CARDS, not a single template, and ngspice
+  # declares exactly one card per entry. The arity came out of Stage 1's Xyce
+  # paper-validation (§1e): a runnable Xyce .TRAN is TWO cards -- this very repo
+  # ships `.tran 5n 1000u uic` plus `.print tran format=raw file=…` in
+  # xschem_library/ngspice/solar_panel_xyce.sch:155-156 -- and a one-line `emit`
+  # cannot say so. It is spelled as a list NOW because it changes the one
+  # speller's RETURN TYPE, which is free with one implementation and costs every
+  # reader afterwards. ngspice's one-element list emits today's exact text.
+  proc analysis_types {} {
+    return [dict create \
+      op [dict create \
+        label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
+        fields {} \
+        emit   {{role analysis tmpl {op}}} \
+        results {value {kind opvectors}} \
+        plots  {{select {Operating Point} role scalars results value label op}}] \
+      dc [dict create \
+        label dc  baseline 1  registered 1  seed_enabled 0  emitorder 10 viewrank 20 \
+        fields {{name source kind source required 1} \
+                {name start  kind real   required 1} \
+                {name stop   kind real   required 1} \
+                {name step   kind real   required 1}} \
+        emit   {{role analysis tmpl {dc @source @start @stop @step}}} \
+        results {viewer {kind sweep}} \
+        plots  {{select {DC transfer characteristic} role sweep results viewer label dc}}] \
+      ac [dict create \
+        label ac  baseline 1  registered 1  seed_enabled 0  emitorder 20 viewrank 30 \
+        fields {{name points kind int  required 1} \
+                {name start  kind freq required 1} \
+                {name stop   kind freq required 1}} \
+        emit   {{role analysis tmpl {ac dec @points @start @stop}}} \
+        results {viewer {kind sweep}} \
+        plots  {{select {AC Analysis} role sweep results viewer label ac}}] \
+      tran [dict create \
+        label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
+        fields {{name step kind time required 1} \
+                {name stop kind time required 1}} \
+        emit   {{role analysis tmpl {tran @step @stop}}} \
+        results {viewer {kind sweep}} \
+        plots  {{select {Transient Analysis} role sweep results viewer label tran}}]]
+  }
+
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
@@ -11941,5 +12257,6 @@ show all > probe_c.txt
     raw_file     ::ase::backend::ngspice::raw_file \
     capabilities ::ase::backend::ngspice::capabilities \
     op_param_set        ::ase::backend::ngspice::op_param_set \
-    op_param_enumerable ::ase::backend::ngspice::op_param_enumerable]
+    op_param_enumerable ::ase::backend::ngspice::op_param_enumerable \
+    analysis_types      ::ase::backend::ngspice::analysis_types]
 }

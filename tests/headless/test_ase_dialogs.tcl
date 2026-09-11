@@ -622,11 +622,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # G2: dc quick fields round trip through the dialog OK (dialog is still up
   # and preselected dc from G1)
   foreach {fld val} {source V2 start 0 stop 1.8 step 0.01} {
-    $top.chana.$fld delete 0 end
-    $top.chana.$fld insert 0 $val
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
   }
   set ::ase::ui::dlg($key,anen) 1
-  send_return $top.chana.step {![winfo exists $top.chana]}
+  send_return $top.chana.form.step {![winfo exists $top.chana]}
   check_true "G2 dialog closed on Return" [expr {![winfo exists $top.chana]}]
   set dcrow {}
   foreach a [ase::state_get [ase::session_state $key] analyses] {
@@ -638,9 +638,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [ase::state_get $dcrow step]] \
     {1 V2 0 1.8 0.01}
   set dcit [tv_find $atv type dc]
-  check "G2 Arguments summary shows the fields" \
+  ## ⚠ STAGE 1 MOVED THIS STRING, DELIBERATELY, AND IT IS THE ONE VISIBLE
+  ## CHANGE OF THE WHOLE STAGE. The Arguments column stops being a key dump and
+  ## becomes THE LINE THE DECK WILL CARRY -- ase::ui::arg_summary now calls
+  ## ase::analysis_line, the same proc render_deck emits, so the pane cannot
+  ## show a setting the deck does not have. It is a DISPLAY string, not deck
+  ## output: deck golden D1 and the 17-case render corpus are byte-identical.
+  check "G2 Arguments summary is the line the deck will carry" \
     [expr {$dcit ne {} ? [$atv set $dcit args] : {}}] \
-    {source=V2 start=0 stop=1.8 step=0.01}
+    {dc V2 0 1.8 0.01}
 
   # G2b: D6 rejection — an ENABLED tran with a blank step is refused, the
   # dialog survives, the state is untouched. Driven through the OK BUTTON:
@@ -652,9 +658,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.chana.types.tran invoke
   update
   set ::ase::ui::dlg($key,anen) 1
-  $top.chana.stop delete 0 end
-  $top.chana.stop insert 0 10u
-  $top.chana.step delete 0 end
+  $top.chana.form.stop delete 0 end
+  $top.chana.form.stop insert 0 10u
+  $top.chana.form.step delete 0 end
   set ana_before [ase::state_get [ase::session_state $key] analyses]
   $top.chana.btns.proceed invoke
   update

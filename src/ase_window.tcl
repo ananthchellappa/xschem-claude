@@ -78,10 +78,14 @@ namespace eval ase::ui {
   # the log widget; tracecb(key) = {id callback} of the attached trace
   variable loglen;  array set loglen {}
   variable tracecb; array set tracecb {}
-  # analysis arg fields per type (the spec's v1 schema; also the Arguments
-  # summary order of the Analyses pane)
-  variable anaargs [dict create op {} dc {source start stop step} \
-                                ac {points start stop dec} tran {step stop}]
+  # ── STAGE 1: `anaargs` IS DELETED. ─────────────────────────────────────────
+  # It was the per-type field order for the Arguments column -- one of EIGHT
+  # copies of "what is a dc analysis", and the copy that PROVED the drift: it
+  # advertised `ac {points start stop dec}` while ase::ui::chana_fields returned
+  # `{points start stop}` and render_deck hardwired the word `dec`. The column
+  # now renders ase::analysis_line -- THE SAME CALL render_deck emits -- so it
+  # is structurally impossible for this pane to show a setting the deck does not
+  # carry. See doc/claude/ase_analyses_batch/PLAN.md §1c.
   # pane frame name -> the state list key it views (UI v2: ONLY these three)
   variable panekeys [dict create vars variables ana analyses outs outputs]
   # selclear(key): suppress flag while pane_selected clears the other panes'
@@ -1530,14 +1534,32 @@ proc ase::ui::save_options_cell {state row} {
   return {}
 }
 
-# Analyses Arguments summary (view-only): the row's args in anaargs order as
-# `key=value` joined by spaces, unknown extra keys appended in dict order;
-# type/enabled excluded.
-proc ase::ui::arg_summary {row} {
-  variable anaargs
+# Analyses Arguments summary (view-only): THE LINE THE DECK WILL CARRY.
+#
+# ⚠ THIS IS ase::analysis_line, THE SAME PROC render_deck EMITS. A dc row reads
+# `dc V2 0 1.8 0.01` where it used to read `source=V2 start=0 stop=1.8
+# step=0.01`. That is the one thing Stage 1 deliberately changes on screen, and
+# two rows assert it by value: test_ase_window P4 and test_ase_dialogs G2.
+#
+# ⚠ THE `key=value` DUMP SURVIVES AS THE FALLBACK, for a backend in force that
+# declares no `analysis_types` hook -- there is no registry to spell its line
+# from, and a blank Arguments column would be worse than an honest dump.
+proc ase::ui::arg_summary {row {sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
   set type [ase::state_get $row type]
-  set order {}
-  if {[dict exists $anaargs $type]} { set order [dict get $anaargs $type] }
+  ## ⚠ AN INCOMPLETE ROW HAS NO DECK LINE, AND ASKING FOR ONE RAISES.
+  ## `ase::state_default` seeds `{type dc enabled 0}` with NO field keys at all,
+  ## and ase::analysis_line resolves `@source` with `dict get` -- deliberately,
+  ## because that is byte-for-byte the failure render_deck had before Stage 1 and
+  ## a refactor may not change a failure mode. But this pane renders EVERY row,
+  ## enabled or not, including the three empty seed rows every new bench opens
+  ## with. MEASURED on the display arm when this was not caught: `key "source"
+  ## not known in dictionary`, and test_ase_dialogs died at 0 of 215 checks.
+  ## The dump below is the honest answer for a row that cannot yet be a line.
+  if {[ase::analysis_entry $sim $type] ne {}} {
+    if {![catch {ase::analysis_line $sim $row} line] && $line ne {}} { return $line }
+  }
+  set order [ase::analysis_field_names $sim $type]
   set out {}
   foreach a $order {
     if {[dict exists $row $a]} { lappend out "$a=[dict get $row $a]" }
@@ -4536,16 +4558,14 @@ proc ase::ui::confirm_ok {w oncmd} {
 
 # --- (a) Choose Analyses -----------------------------------------------------
 
-# The dialog's quick fields per analysis type (spec "Choose Analyses
-# dialog"; a subset of anaargs — `dec` for ac is render-hardwired and only
-# reachable through the extra-options editor).
-proc ase::ui::chana_fields {type} {
-  switch -- $type {
-    dc   { return {source start stop step} }
-    ac   { return {points start stop} }
-    tran { return {step stop} }
-  }
-  return {}
+# The dialog's quick fields per analysis type -- now ONE ORDERED LIST read from
+# the registry, serving the form order, the Arguments-column order and the emit
+# slot order at once. Two lists is exactly how `ac`'s `dec` drifted: this proc
+# used to return `{points start stop}` while `anaargs` advertised a fourth field
+# the deck hardwired and ignored.
+proc ase::ui::chana_fields {type {sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  return [ase::analysis_field_names $sim $type]
 }
 
 # The FIRST state row of `type` (the row the dialog addresses; extra
@@ -4571,8 +4591,15 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # the bottom form from state (D4: in-form edits of the previous type are
   # DISCARDED — deterministic, no hidden multi-type writes)
   frame $w.types
-  foreach t {op dc ac tran} {
-    radiobutton $w.types.$t -text $t -value $t \
+  # ── STAGE 1: THE RADIO ROW IS THE REGISTRY'S. ──────────────────────────────
+  # `foreach t {op dc ac tran}` was the third copy. The order is `emitorder`
+  # ascending and the text is the entry's `label`, which for these four IS
+  # today's text -- a refactor may not mint user-facing copy, and promoting them
+  # to human nouns is a ratified change under ⚖ R9, not a side effect.
+  foreach t [ase::analysis_offered] {
+    set _lbl $t
+    catch {set _lbl [dict get [ase::analysis_entry [ase::default_simulator] $t] label]}
+    radiobutton $w.types.$t -text $_lbl -value $t \
       -variable ::ase::ui::dlg($key,antype) \
       -command [list ase::ui::chana_show $key]
     pack $w.types.$t -side left -padx 4
@@ -4599,15 +4626,32 @@ proc ase::ui::chana_show {key} {
   set w [dict get $wins $key].chana
   if {![winfo exists $w]} { return }
   set type $dlg($key,antype)
-  foreach f {source start stop step points} {
-    catch {destroy $w.$f}
-    catch {destroy $w.l$f}
-  }
+  # ── STAGE 1: ONE CHILD FRAME, AND THE FIVE-NAME DESTROY LIST IS GONE. ───────
+  # This used to be `foreach f {source start stop step points} {destroy $w.$f}`
+  # -- a HARDCODED list of exactly the field names the four shipped types
+  # happened to use. evidence/ase-ui.md calls it the single sharpest trap in the
+  # analysis code, and it is: add a sixth field name to any type and the fifth
+  # one's widget SURVIVES the rebuild, because nothing destroys what the list
+  # does not name. There was a ceiling too -- quick fields gridded at rows 2..
+  # while `Options…` sits at row 8 and the button bar at row 9, so a seventh
+  # field collided with the buttons. `destroy $w.form` is exhaustive BY
+  # CONSTRUCTION and the form owns its own row space, which is what lets a later
+  # stage register an analysis with eight fields.
+  #
+  # ⚠ THIS MOVES `$w.<field>` TO `$w.form.<field>`, deliberately and in this
+  # stage. Six lines of tests/headless/test_ase_dialogs.tcl drive those paths
+  # directly and move with it; `$top.chana.types.*`, `$top.chana.opts` and
+  # `$top.chana.btns.*` are untouched -- adding paths is safe, moving them is
+  # not, and these are the only ones moved.
+  catch {destroy $w.form}
+  frame $w.form
+  grid $w.form -row 2 -column 0 -columnspan 2 -sticky we
+  grid columnconfigure $w.form 1 -weight 1
   set row [ase::ui::chana_row $key $type]
   set dlg($key,anen) [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]
-  set r 2
+  set r 0
   foreach f [ase::ui::chana_fields $type] {
-    set e [ase::ui::dialog_row $w $r "[string totitle $f]:" $f]
+    set e [ase::ui::dialog_row $w.form $r "[string totitle $f]:" $f]
     $e insert 0 [ase::state_get $row $f]
     bind $e <Return> [list ase::ui::chana_ok $key]
     incr r
@@ -4629,8 +4673,8 @@ proc ase::ui::chana_ok {key} {
   set en [expr {[info exists dlg($key,anen)] && $dlg($key,anen) ? 1 : 0}]
   set vals [dict create]
   foreach f [ase::ui::chana_fields $type] {
-    if {[winfo exists $w.$f]} {
-      dict set vals $f [string trim [$w.$f get]]
+    if {[winfo exists $w.form.$f]} {
+      dict set vals $f [string trim [$w.form.$f get]]
     }
   }
   if {$en} {

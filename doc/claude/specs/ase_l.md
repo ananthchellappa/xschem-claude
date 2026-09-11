@@ -888,7 +888,19 @@ Design Window does not raise/open the schematic — fix in this rework.
 ### Panes (ONLY these three; log pane REMOVED)
 - **Design Variables** (left): columns Name, Value.
 - **Analyses** (right top): columns Type, Enable (checkbox), Arguments
-  (view-only one-line summary). One row per chosen analysis, row-numbered.
+  (view-only). One row per chosen analysis, row-numbered.
+  ⚠ **The Arguments column is THE LINE THE DECK WILL CARRY, not a summary of
+  it.** It used to render the row's fields as a `key=value` dump — a dc row read
+  `source=V2 start=0 stop=1.8 step=0.01`; it now reads `dc V2 0 1.8 0.01`,
+  because `ase::ui::arg_summary` calls `ase::analysis_line`, the same proc
+  `render_deck` emits. That is what makes it structurally impossible for this
+  pane to show a setting the deck does not carry — the drift that let `ac`'s
+  sweep-mode field be advertised in the pane, omitted from the dialog and
+  hardwired in the deck, all at once. The `key=value` dump survives only as the
+  fallback for a simulator backend that declares no analysis registry. A row
+  that is not yet complete — the three empty rows every new bench opens with —
+  renders blank rather than raising. See
+  `doc/claude/ase_analyses_batch/PLAN.md` Stage 1.
 - **Outputs** (right bottom): columns Name, Value, Plot (checkbox), Save
   (checkbox), Save Options. Value column USER-LOCKED 2026-07-21: filled
   after a successful run (op/scalar results evaluated per row), blank

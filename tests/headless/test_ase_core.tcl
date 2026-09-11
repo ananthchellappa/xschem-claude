@@ -70,10 +70,12 @@
 # RT landed (descend_run_batch item A), 224 with section DX (item C) and 230
 # with section C4 (the sim_entry state key, the 2026-09-08 registry/choice
 # ruling), 248 with section D7 (issue 1401, the analysis type this backend
-# cannot render), and 257 with section D8 (the emitted analysis line, per type).
-# RAISED 230 -> 243, then 243 -> 248 when an adversarial review found D7e's
-# "names it once" unpinned and the rank table unscoped to a backend, then
-# 248 -> 257 with D8.
+# cannot render), 257 with section D8 (the emitted analysis line, per type) and
+# 258 with D8i, which the analyses batch's Stage 1 adds because the Arguments
+# column only becomes the emitted line there. RAISED 230 -> 243, then 243 -> 248
+# when an adversarial review found D7e's "names it once" unpinned and the rank
+# table unscoped to a backend, then 248 -> 257 with D8 and 257 -> 258 with
+# Stage 1.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -600,6 +602,17 @@ check "D8h two rows of ONE type keep the state's own order (stable sort)" \
   [d8_lines {{type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}
              {type dc enabled 1 source V1 start -1 stop 1 step 0.1}}] \
   {{dc V2 0 1.8 0.01} {dc V1 -1 1 0.1}}
+# ⚠ ADDED WITH THE STAGE 1 REGISTRY, because it asserts something that did not
+# exist before it: ase::ui::arg_summary and render_deck now call THE SAME PROC,
+# so the Analyses pane cannot show a setting the deck does not carry. Against
+# this section's parent commit the column was a `key=value` dump and this row
+# would have read `source=V2 start=0 stop=1.8 step=0.01`. The other D8 rows pin
+# deck bytes and hold on both sides of that refactor; this one does not, which
+# is exactly why it is here and not there.
+check "D8i the Arguments column IS the emitted line" \
+  [ase::ui::arg_summary {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}] \
+  {dc V2 0 1.8 0.01}
+
 # ⚠ AND AN INCOMPLETE ROW MUST NOT RAISE. ase::state_default seeds
 # `{type dc enabled 0}` with no field keys, and the pane renders every row.
 # MEASURED when this was not handled: `key "source" not known in dictionary`,

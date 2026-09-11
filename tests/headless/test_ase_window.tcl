@@ -524,7 +524,7 @@ check "P3 blanket off -> blank" \
 # --- P4: arg_summary (pure helper — Analyses Arguments column) ---------------
 check "P4 arg_summary dc row" \
   [ase::ui::arg_summary {type dc enabled 0 source V2 start 0 stop 1.8 step 0.01}] \
-  {source=V2 start=0 stop=1.8 step=0.01}
+  {dc V2 0 1.8 0.01}
 
 
 # =============================================================================

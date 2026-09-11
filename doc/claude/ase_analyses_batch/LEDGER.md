@@ -478,18 +478,51 @@ not on another?* Decisions **D42**, **D46**, **D48**.
 
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| Xyce paper-validation — what broke | *the list of schema fields Xyce could not use as written, and what each became. "Nothing broke" is a suspicious answer and needs the descriptor attached to the receipt so a reader can check it.* |
-| `requires`/`notes`/`lint` — did the paper exercise use them? | *Stage-1-only field, added 2026-09-10. A `requires` predicate written by somebody who is not the ngspice adapter's author is the only cheap test of whether the three-valued contract is a general shape or an ngspice accident. Record which of the three keys Xyce's descriptor actually needed, and which it could not express.* |
-| receipt | |
+| status | **x — landed clean, 2026-09-11** |
+| commit | `feat(ase-l): the analysis registry, byte-identically — analyses batch Stage 1`, on top of `test(ase-core): D8 pins the emitted analysis line per type, because D1 could not`. ⚠ **Two commits, and the order is the evidence** — see *sabotage* |
+| T1 | `run_regression.tcl` **solo**, scratch `HOME` + `XSCHEM_DEVDISPLAY_DIR`, 2026-09-11: **0 counted failures**, 58 cases, 0 launch failures, 0 `exit -1`, **0 `TIMED OUT`**, and `src/ase.tcl` + `src/ase_window.tcl` md5-verified unchanged across the run, so the numbers describe one tree |
+| byte-identity | **MET.** ⚠ **D1 alone does not establish it and was not relied on**: D1's fixture is OP-ONLY, so its golden deck carries the single line `op` and the `dc`/`ac`/`tran` emit arms are never exercised — a registry refactor could move their bytes with D1 still green. A **17-case deck corpus** was captured from the pre-Stage-1 code and re-rendered after: every type alone, all four together, both row orderings, `op`-then-`dc`, duplicate rows of one type, an unknown extra key, and nothing-enabled. **md5 `958abd0ba421f65cc9db21db6b99ea03` before and after, identical.** Separately **105 `.state` files round-trip with 0 mismatches, A/B-confirmed identical against the pre-Stage-1 tree** — which matters because `ase::state_default`'s seed is now a registry reader |
+| suites moved | `test_ase_dialogs` **G2** and `test_ase_window` **P4**: `source=V2 start=0 stop=1.8 step=0.01` → **`dc V2 0 1.8 0.01`**. Both are DISPLAY strings, not deck output. Six widget-path lines of `test_ase_dialogs.tcl` gained `.form` (`:625 :626 :629 :655 :656 :657`, all G2/G2b, `:629` a `send_return`) — exactly the six §0.2 re-measured, not C18's five. **No floor moved and no other row moved**: `test_ase_core` 248, `test_ase_preflight` 125, `test_ase_persist` 44, `test_ase_final` 82, `test_ase_final_gf180` 35, `test_ase_view` 32, `test_ase_optier_0963` 103, `test_ase_simcaps_0948` 110, `test_ase_simreg_0931` 111, `test_rdw_seam_1245` 49, `test_ase_cosim` 341, `test_ase_result_case` 28, `test_ase_sod_case` 53. Display arm: `test_ase_dialogs` **215**, `test_ase_window` **295** — ⚠ **and the display arm is not optional here**, see *What Stage 1 learned* |
+| sabotage | Four passes against the registry, each restored by `cp` from a pristine copy with md5 compared equal (no `git checkout/restore/stash/clean`). ⚠ **Section D8 was committed SEPARATELY AND FIRST**, so that the rows guarding this refactor are provably pinning BEHAVIOUR and not this implementation: they pass against the hand-written `switch`, and sabotaging *that* switch reddens D8a/D8f/D8g/D8h and D8b/D8e/D8f/D8g — four rows each, where the same two edits previously reddened nothing. Only **D8i** (the Arguments column IS the emitted line) belongs to this commit, because the behaviour it asserts does not exist before it. ⚠ **The first two passes are the whole reason section D8 exists**: `dc`'s emit template swapping `@start`/`@stop`, and `ac`'s hardwired `dec` → `oct`, each left `test_ase_core` at **ALL PASS (248)** — the plan's own acceptance would have accepted a refactor that reversed every DC sweep in the product. With D8 committed they redden **D8a/D8f/D8g/D8h/D8i** and **D8b/D8e/D8f/D8g**. `op`'s `emitorder` 0 → 100 reddens four rows (D1 catches it because `op` moves). `tran`'s `viewrank` demoted leaves `test_ase_core` untouched — correct, it is not a deck fact — and reddens **R6** of `test_ase_optier_0963`, the row that pins `ase::plot_sim_type`'s preference ranking |
+| ledger debts | **No look debt** — the one visible change is a display string two rows assert by value, and the plan says so. **No rule debt**: no user-facing sentence is minted. ⚠ `label` deliberately carries TODAY'S RADIO TEXT (`op`/`dc`/`ac`/`tran`) rather than a human noun — a refactor may not mint user-facing copy, so promoting them to `Operating point` / `DC sweep` is a ratified change under ⚖ **R9** in a later stage, not a side effect of this one |
+| spec paragraphs rewritten | `doc/claude/specs/ase_l.md`, the **Analyses** pane bullet: the Arguments column stops being a view-only key dump and becomes the line the deck will carry |
+| Xyce paper-validation — what broke | **Not "nothing broke."** Five families of Xyce analysis (`.OP/.DC/.TRAN`, `.STEP`, output/results, build variants, the run lifecycle) were written against the §1a key set and every "that expressed cleanly" claim was handed to a separate agent told to refute it: **157 breakages, 77 of them found ONLY by the adversary**, consolidating to **23 changes that must land before the key set freezes** and 15 recorded deferrals. All three predicted breakages reproduced and each was **larger** than predicted. THREE landed in this stage's code: **`verb` DELETED** — specified as *"the `.control` command word AND what `help <verb>` probes with"*, two ngspice words in the half §1a says may contain none, and it was never the source of the emitted token, so deleting it moves no byte; **`gated` → `baseline`**, renamed and re-specified after the exercise found it load-bearing IN THE WRONG DIRECTION (it is the only steer on `ase::requires_state`'s `unknown` arm, so an adapter that cannot assert an ngspice-style source-verified invariant writes `0`, every unmeasured capability resolves `{ok baseline}`, and analyses nobody verified get offered — the inverse of Stage 2's stated worst outcome); and **`emit` became an ORDERED LIST of role-tagged cards** with ngspice declaring exactly one, because a runnable Xyce `.TRAN` is TWO cards and **this repo already ships one** — `xschem_library/ngspice/solar_panel_xyce.sch:155-156` carries `.tran 5n 1000u uic` plus `.print tran format=raw file=…`, and `sky130A/xschem_libs/sky130_tests/test_ac/schematic/test_ac.sch:285` carries `.print ac format=raw`. ⚠ **THE META-FINDING IS THE ONE TO CARRY: §1a's naming rule is LEXICAL, so it caught every ngspice NOUN and missed every ngspice SEMANTIC.** `emit`'s `@name!` exists *"because ngspice's argument lists are POSITIONAL"*; `bool`'s *"never `=1`"* is a MEASURED NGSPICE DEFECT (trap T4) promoted into the type system; `plots.match` is a glob on a `Plotname:` record only an ngspice rawfile has. All three pass a grep for simulator words, so **D36's prediction that reaching for a simulator fact surfaces as a finding is false exactly where it cost most**. ⚠ **And the tree itself proves the sharpest case**: §1b's number lexicon `f p n u m k meg g t` is **NARROWER THAN XSCHEM'S OWN C PARSER**, which carries `x` = 1e6 at `src/editprop.c:101` under the literal comment `/* Xyce extension */`, plus `mil` = 25.4e-6. The schema was about to make one simulator's alphabet normative while this repository's own parser already disagreed. **Three defects were found on paper with no Xyce involved at all**, each verified in-tree: `rules` **has no written grammar anywhere** (§1a's cross-reference points at §1d, which is the `.form` child frame); **D30's load-time check would reject the plan's OWN `tran`/`tf`/`pz`/`sens` entries**, which carry only a plot-level `results` token and no entry-level dict; and `requires`' **`raised` arm is unreachable by a conforming adapter** — it appears at `PLAN.md:1206` and in a planned test row at `:1047`, and **zero** times in D42–D52, the decisions that created it. The 20 remaining changes are recorded against ⚖ **R10**, whose input this is; the largest is that **there is no adapter-level descriptor at all** — analysis cardinality, composition, whether the simulator owns its own sweep, and the run-model fact Stage 2e's Stop sentence needs have nowhere to be written. Full output and the five descriptors: see the receipt |
+| `requires`/`notes`/`lint` — did the paper exercise use them? | **`requires` is load-bearing at FIELD level only.** At analysis level Xyce has no per-analysis capability channel — `Xyce -capabilities` reports build ingredients and takes no analysis argument — so every predicate answers `unknown`, which means what the exercise actually exercised is **D6's ungated-baseline fallback, not the three-valued contract**. Its `raised` arm is unreachable (above). **`notes` held as a mechanism and broke as a frame set**: §16a's four frames are all DEFICIT-shaped (*"…can do everything ASE-L offers except…"*) and cannot express a **surplus** — a native `.STEP`, native sampling, `.OPTIONS RESTART` — that switches ASE-L's own machinery OFF. **`lint`'s hook shape, its note/warn/refuse ladder and its adapter-proposes/ASE-L-disposes split all held unchanged**; only its declared DOMAIN (*"user-supplied CONTROL text"*) names a construct a batch-only simulator does not have. ⚠ **None of the three is exercised by Stage 1's four types**, so none is pinned by a row here — they are declared in the contract and graded on paper, which is exactly the gap ⚖ R10 governs |
+| receipt | `receipts/06-stage-1-the-registry.md` |
 
 ### What Stage 1 learned that binds later stages
+
+**1. A stage's stated acceptance is a CLAIM about coverage, and it must be sabotaged before it
+is trusted.** Stage 1's gate was deck golden **D1** under `string equal`. D1's fixture is
+OP-ONLY, so two of the four emit arms are not exercised by it at all, and two sabotage passes
+that changed real deck output left the whole suite green. **Every later stage that names a
+golden as its acceptance owes the same check**: break the thing on purpose and confirm the
+named row goes red. Correction **C43**; the repair is section **D8**, floor 248 → 258.
+
+**2. A widget change cannot be accepted on a headless number.** `test_ase_dialogs` is **37
+checks headless against 215 with a display**. Stage 1 moved the quick fields into a `.form`
+child frame; the headless arm stayed green while the display arm died at **0 of 215**, on a
+defect (`key "source" not known in dictionary`) that only exists because the pane renders rows
+the deck never sees. Stages 3, 5, 7 and 11 all move widgets.
+
+**3. The schema's naming rule catches nouns, not semantics — and that is now written down
+rather than rediscovered.** Correction **C37**. A key can pass every grep for simulator words
+and still be one simulator's behaviour in a schema's clothes: `@name!` exists because ngspice's
+argument lists are positional, `bool`'s *"never `=1`"* is a measured ngspice defect promoted
+into the type system. **Stage 15's conformance harness should test per KEY, not grep for
+words.**
+
+**4. `dict get`'s failure mode is part of the contract.** `ase::analysis_line` resolves a
+required slot with `dict get` deliberately, because that is byte for byte what `render_deck`
+raised before the refactor — a refactor may not change a failure mode any more than an output.
+The consequence is that a caller which renders INCOMPLETE rows (the pane) must catch, and the
+one that renders complete ones (the deck) must not. Row **D8j**.
+
+**5. The state's `simulator` key is not always a backend name.** With the ranks moved out of
+core and into the rendering backend's registry, an adapter must resolve **its own** registry
+(`[namespace tail [namespace current]]`), not the state's `simulator` string — `test_ase_core`
+E2b and E3 drive a missing binary and a `nosuchsim`, and the mistake cost 85 checks. Every
+later adapter-side reader inherits this.
 
 ---
 
