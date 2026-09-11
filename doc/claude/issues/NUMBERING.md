@@ -3075,9 +3075,25 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1400.**~~ superseded: **1400** is filed, above.
 
+- **1402** — **the shipped bandgap bench does not converge reproducibly, so
+  `test_ase_optier_0963` X7 flaps.** The row has been called a flake in that suite's own header
+  since the 1377 sweep, and it is one — measured 2026-09-11 at **one red in three** consecutive
+  runs with identical code, `HOME` and binary. **But the flake is in the simulation, not in the
+  assertion**: on the red run X7's own `MEASURE` line reads `rc=1 raw=-1bytes op-vectors=0`, so
+  the simulator exited non-zero and wrote no results file and there was nothing to read, while
+  the same process had run the same bench successfully three times immediately before. And the
+  answer moves even when it succeeds: the low-threshold passgate's `[vth]` reads **0.42189628**
+  on one green run and **0.485901** on the next (~15 %) while the ordinary passgate holds to
+  four figures — the signature of a bias point with more than one solution, which is what a
+  bandgap reference is. Supersedes the header's *"did not reproduce in three runs"*: three clean
+  trials is the likeliest outcome at that rate. **Not** issue 1375 (that suite's display-arm
+  hang, already filed) and **not** issue 1401.
+
 ~~**The next free number is 1401.**~~ superseded: **1401** is filed, above.
 
-**The next free number is 1402.**
+~~**The next free number is 1402.**~~ superseded: **1402** is filed, above.
+
+**The next free number is 1403.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

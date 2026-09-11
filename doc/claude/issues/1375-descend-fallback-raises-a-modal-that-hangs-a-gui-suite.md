@@ -25,6 +25,22 @@ and **hangs for ever with a display**:
 Both taken on `:99` (Xvfb 1920x1080x24, openbox 3.6.1), and the same hang at
 HEAD in a detached worktree running the same binary.
 
+⚠ **STILL LIVE 2026-09-11, and a third measurement, taken by a crew that walked into it.**
+Reproduced twice more on `:99` with issue 1401 in the tree: **86 of 103 rows printed, stops
+after row N3**, no `RESULT:` line, no `OVERALL:` line, no `ngspice` process alive. One of those
+runs was left unattended and sat there for **8 hours 7 minutes** (`etimes` 29 208 s) before it
+was noticed, because it had been launched from a hand-rolled loop with no `timeout` — where
+`tests/headless/run_suites.sh` would have printed `TIMEOUT | test_ase_optier_0963 … (after
+200s)` and moved on. **The stall point is stable across all four recorded reproductions**, which
+is consistent with this file's root cause: a modal raised at a deterministic place in the
+script, not a race.
+
+Write-up of how the eight hours happened, and the standing rule added to `CLAUDE.md` because of
+it: `doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md`. ⚠ **The suite's own header
+already said `## ⚠ THIS SUITE NEEDS `--nogui`; its GUI arm hangs for ever (issue 1375).`** — the
+warning was twelve lines above the code being read, and was walked past. Anyone adding a suite
+to a both-arms run should grep the suite header for `--nogui` first.
+
 ## Why
 
 `n_dsc_base` calls `xschem descend -fallback 1 2`. The `-fallback` flag exists

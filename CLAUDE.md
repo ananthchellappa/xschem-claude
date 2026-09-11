@@ -388,6 +388,44 @@ drop-in for `./src/xschem` in a hand-written loop. A bare
 cannot reach it — the panel lists such processes as `UNGATED` and the
 **`Halt N xschem`** button (SIGSTOP, resumable) is the only authority over them.
 
+### ⚠ A HAND-ROLLED SUITE LOOP ALSO FORFEITS THE TIMEOUT, AND A STALL THEN HAS NO UPPER BOUND
+
+The gate is not the only thing a private loop loses, and it is not the expensive
+one. **`run_suites.sh` wraps every arm in `timeout "$TIMEOUT"`**
+(`SUITE_TIMEOUT`, default **200 s**) and prints a stall as its own verdict —
+`TIMEOUT | <name> run i/n (after 200s)`. `full_audit.sh` does the same with
+`AUDIT_TIMEOUT` (default 300 s) and counts `crash/timeout` as a column of its
+`SUMMARY:` line. Its own comment already records this failure shape: a startup
+Tcl error popup *"does not fail, it HANGS, and paid AUDIT_TIMEOUT (300 s) plus a
+crash row"*.
+
+**Measured 2026-09-11, and it is why this paragraph exists:** a session that
+hand-rolled `for t in ...; do ./src/xschem --nogui --pipe -q --nolog --script
+tests/headless/$t.tcl; done` to collect per-suite `RESULT:` lines on two arms hit
+a stall in `test_ase_optier_0963`'s **display** arm — 86 of 103 rows, stops after
+row N3, no `ngspice` alive, no verdict line — and sat on it for **8 hours 7
+minutes**, because the loop had no `timeout` and the waiter around it
+(`until grep -q done; do sleep 15; done`) had no deadline. Through
+`run_suites.sh` the same stall is 200 seconds and one printed line. Write-up:
+`doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md`.
+
+So: **use `run_suites.sh`, and extend it rather than replacing it.** If a
+bespoke invocation is genuinely unavoidable, `timeout <n>` goes on **each
+command** (rc 124 is a result, not a gap in the log) and every waiting loop
+carries a deadline that announces itself when it expires. **A stall must be a
+named outcome — `PASS` / `FAIL` / `TIMEOUT` / `NORESULT` — never the absence of
+one**, because "no output yet" is indistinguishable from "still working".
+
+⚠ **A suite's first run on an arm nothing has exercised is unexplored ground.**
+`run_regression.tcl`'s case list runs `test_ase_optier_0963` **headless only**,
+so its display arm had never been walked by anything before it hung. Give any
+such first run a timeout and watch it.
+
+⚠ **And do not gate a whole report on the last check.** Thirteen of fourteen
+suites were green on both arms hours before anyone knew it. Report — and where
+appropriate commit — the verified majority, naming the outstanding item as
+outstanding.
+
 ## Architecture
 
 ### The `xctx` global context
