@@ -91,6 +91,8 @@ frame); **D30 would reject the plan's own `tran`/`tf`/`pz`/`sens` entries** (C38
 `requires`' **`raised` arm is unreachable by a conforming adapter** (C39) — present at
 `PLAN.md:1206` and in a planned test row at `:1047`, absent from all of D42–D52.
 
+⚠ **`ase::requires_state` AND THE ENTRY-LEVEL `requires` KEY ARE NOT IN THE TREE — they are DESIGNED here, not SHIPPED here.** Measured 2026-09-11: `grep -c requires_state src/ase.tcl src/ase_window.tcl` is **0** in both. The sentences above describe what the key is *for*, and a reader has already taken them as a record of something landed. **Stage 2's C5 commit creates it**, with the signature `{req caps baseline}` — not the plan's `{req caps gated}` — because Stage 1 renamed the key and INVERTED its polarity, so an absent `baseline` must default to **0**. Corrected after the Stage 2 recon caught it; the same class of un-measured record cost 100 checks as issue 1405.
+
 **The other 20 changes are recorded against ⚖ R10**, whose input this is. The largest: there is
 **no adapter-level descriptor at all** — analysis cardinality, composition, whether the
 simulator owns its own sweep, and the run-model fact Stage 2e's Stop sentence needs have

@@ -36,6 +36,30 @@
 #   RESULT and never from the exit code.
 #
 # ============================================================================
+# THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP
+# ============================================================================
+# ⚠ THIS FILE HAD NO FLOOR PARAGRAPH AND NO FLOOR CONSTANT UNTIL ISSUE 1406,
+# AND THAT IS ITS OWN DEFECT, NOT A FORMALITY. A suite that records no expected
+# count leaves NO TRACE when a row is silently deleted or when a whole section
+# stops running: `ALL PASS` is printed just as happily over 110 checks as over
+# 80, and nothing in the file or in any driver notices the difference. Sections
+# here are added and reset in place (`a_resetall`), so a section that raises
+# early costs every row below it in the same block -- which is exactly the shape
+# that cost 100 checks in tests/headless/test_ase_persist.tcl (issue 1405).
+#
+# THE HISTORY, so that a number can be argued with:
+#   110  the count as this paragraph was first written (2026-09-11, HEAD
+#        bcb2fc59), measured on BOTH arms -- this suite is arm-independent
+#        because every row drives stand-in simulators and canned files, never
+#        a widget.
+#   111  section L, issue 1406: a re-registered backend must stop answering
+#        from the registry it replaced.
+#
+# ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
+# finding -- say which rows went and why, per row, and do not edit the number
+# downward to make the file agree with itself.
+
+# ============================================================================
 # THE ANSWER DISCIPLINE -- an absent proc must never satisfy a golden
 # ============================================================================
 # Borrowed verbatim from tests/headless/test_ase_simreg_0931.tcl. Every
@@ -2961,6 +2985,57 @@ n_free $N1DIR
 n_free $N3DIR
 n_free $N4DIR
 n_free $N7DIR
+
+# ============================================================================
+# L. A RE-REGISTERED BACKEND MUST NOT KEEP ANSWERING FROM THE REGISTRY IT
+#    REPLACED -- ISSUE 1406
+# ============================================================================
+#
+# Stage 1 of doc/claude/ase_analyses_batch/ gave `ase::analysis_types` a memo
+# keyed on the backend NAME and gave it no invalidator: written by that proc,
+# cleared by nothing -- not by `ase::sim_caps_clear`, not by anything. It was
+# harmless while adapters register exactly once at source time, which is how it
+# shipped green. It is wrong the moment a backend is re-registered, and BOTH of
+# the Stage 2 sub-items that follow register stand-in registries per row.
+#
+# ⚠ L1 WAS RED BEFORE `ase::analysis_cache_clear` EXISTED, which is what makes
+# it a row and not a decoration: the second read returned the FIRST registry's
+# answer. Sabotage: delete the `ase::analysis_cache_clear $name` line from
+# ase::register_backend and L1 reds with {zzl1a zzl1a} -- the replaced registry
+# still speaking.
+#
+# THE ROW READS THE TYPE KEYS, NOT A COUNT. A count is equal for two registries
+# of the same size, so it would pass while the wrong registry answered.
+
+proc l_types {sim} {
+  if {[catch {ase::analysis_types $sim} d]} { return "RAISED:$d" }
+  if {$d eq {}} { return EMPTY }
+  return [lsort [dict keys $d]]
+}
+proc l_reg {name typeproc} {
+  return [a_ans ase::register_backend $name [dict create \
+    render_deck  [a_ans ase::backend_hook ngspice render_deck] \
+    run_cmd      [a_ans ase::backend_hook ngspice run_cmd] \
+    log_file     [a_ans ase::backend_hook ngspice log_file] \
+    result_probe [a_ans ase::backend_hook ngspice result_probe] \
+    raw_file     [a_ans ase::backend_hook ngspice raw_file] \
+    analysis_types $typeproc]]
+}
+proc l_typesA {} { return [dict create zzl1a [dict create label zzl1a registered 1]] }
+proc l_typesB {} { return [dict create zzl1b [dict create label zzl1b registered 1]] }
+
+l_reg zzl1 l_typesA
+set L1FIRST [l_types zzl1]
+l_reg zzl1 l_typesB
+set L1SECOND [l_types zzl1]
+## The control: reading a DIFFERENT name must not have been disturbed, so a
+## clear-everything bug cannot pass this row by accident either.
+set L1NG [l_types ngspice]
+if {[string is list $L1NG] && [llength $L1NG] >= 4} { set L1NG OK }
+check {L1 re-registering a backend replaces what it answers about its analyses, instead of the replaced registry going on speaking} \
+  [list $L1FIRST $L1SECOND $L1NG] \
+  [list zzl1a zzl1b OK]
+a_resetall
 
 # ============================================================================
 # H. NOTHING ELSE MOVED

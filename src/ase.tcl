@@ -668,6 +668,15 @@ proc ase::register_backend {name hooks} {
     }
   }
   dict set backends $name $hooks
+  # ⚠ THE MEMO THIS REPLACES MUST GO WITH IT (issue 1406). `ase::analysis_types`
+  # caches the hook's answer per BACKEND NAME, and registering `$name` is the one
+  # event that changes what that answer should be -- so the memo is dropped HERE,
+  # where the replacement happens, and not on a timer or a guess.
+  # ⚠ THE CALL SITS **BELOW** THE FIVE-HOOK `foreach`, NOT INSIDE IT. Row A3 of
+  # tests/headless/test_ase_simcaps_0948.tcl reads that loop's own source line and
+  # asserts it names exactly the five and does NOT name `capabilities`; anything
+  # added inside it is read by that row as a sixth required hook.
+  ase::analysis_cache_clear $name
   return $name
 }
 
@@ -3790,6 +3799,32 @@ variable ase::analysis_cache {}
 # carve-out that the schema defaults are the one place an ngspice word may sit
 # outside `ase::backend::ngspice`.
 proc ase::default_simulator {} { return ngspice }
+
+# DROP THE MEMO. `{}` means EVERY simulator, not "the default simulator".
+#
+# ⚠ THAT IS DELIBERATELY THE OPPOSITE OF `ase::analysis_types {{sim {}}}` TWELVE
+# LINES BELOW, AND THE ASYMMETRY IS THE SAFE DIRECTION. The two failure modes are
+# not symmetric: a caller who means "clear everything" and gets only ngspice has
+# a stale memo for every OTHER backend and no way to tell; a caller who means
+# "clear ngspice" and gets everything has thrown away a memo that costs one hook
+# call to rebuild. One is a wrong answer, the other is a recomputation, so the
+# default is the recomputation.
+#
+# WHY THIS EXISTS AT ALL (issue 1406). Stage 1 added `analysis_cache` and no
+# invalidator: it was written by `ase::analysis_types` and cleared by NOTHING --
+# not by `ase::sim_caps_clear`, not by anything. Harmless while adapters register
+# once at source time, which is why it shipped; wrong the moment a backend is
+# re-registered, because the replaced registry keeps answering. THREE Stage 2
+# recon crews found it INDEPENDENTLY, which is the tell that a fourth would have
+# found it again -- and a memo whose invalidation rule is "nobody ever does that"
+# is the same shape as the eight copies of "what is a dc analysis" this batch
+# exists to delete.
+proc ase::analysis_cache_clear {{sim {}}} {
+  variable analysis_cache
+  if {$sim eq {}} { set analysis_cache {} ; return {} }
+  if {[dict exists $analysis_cache $sim]} { dict unset analysis_cache $sim }
+  return $sim
+}
 
 proc ase::analysis_types {{sim {}}} {
   variable analysis_cache

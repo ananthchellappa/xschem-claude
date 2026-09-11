@@ -3136,7 +3136,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1405.**~~ superseded: **1405** is filed, above.
 
-**The next free number is 1406.**
+- **1406** — **A re-registered backend kept answering from the registry it replaced.** Stage 1 (issue 1401) gave `ase::analysis_types` a memo keyed on the backend NAME and gave it no invalidator: measured, `analysis_cache` has exactly four hits in the tree — declaration, `variable`, read, write — and `ase::sim_caps_clear` does not touch it. So `ase::register_backend` replaces what a backend IS while the answer to *what analyses does it have* goes on coming from the registry that was replaced. It shipped green because the invalidation rule was **"nobody ever does that"** — adapters are first-party and register once at source time — which is the same shape as the eight copies of *what is a `dc` analysis* this batch exists to delete. Found **independently by three** Stage 2 recon crews. Fixed with `ase::analysis_cache_clear`, called from `register_backend` **below** the five-hook `foreach` (row A3 of test_ase_simcaps_0948 reads that loop's source line and would score anything inside it as a sixth REQUIRED hook). ⚠ Its `{}` means EVERY simulator, the opposite of `analysis_types`'s `{}`, because the failure modes are not symmetric — one is a wrong answer, the other is a recomputation. Row **L1** reads the TYPE KEYS, not a count, with a control on a second backend; two sabotages red it `{zzl1a zzl1a OK}`. Floor 110 → 111, and the suite's **first floor paragraph**, which it had never had.
+
+~~**The next free number is 1406.**~~ superseded: **1406** is filed, above.
+
+**The next free number is 1407.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
