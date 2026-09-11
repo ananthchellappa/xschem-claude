@@ -3140,7 +3140,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1406.**~~ superseded: **1406** is filed, above.
 
-**The next free number is 1407.**
+- **1407** — **ASE-L asked the same question of one dict twenty-eight different ways.** `ase::sim_capabilities`' contract is that a missing key means *not measured*, never *no*, and SIX procs spelled that contract by hand — measured, **28** reads. Every copy is a chance to fuse *nobody asked* with *the answer is no*, which is issue **0953** exactly. Commit C1 of the analyses batch's Stage 2 ships three states as data (`ase::caps_get`), two predicates sharing ONE body so they cannot drift (`caps_is` delegates to `caps_measured_as`), four bands (`caps_keys`, with `defect` shipping EMPTY because a band key with no reader is a key no row can pin), and `unmeasured_keys` wired to the only TWO legs that can be cut without making the whole answer `known 0`. ⚠ `value` is ABSENT rather than empty when unmeasured, so reading it without reading `measured` RAISES in a row instead of fabricating a 0 on a user's screen. ⚠ The predicate follows the DIRECTION OF THE GATE, not the band. ⚠ The comparison is STRING equality — a behaviour change, measured: `appendwrite '0.0'` was a match and is not, and `altshow '1.0'` moves `op_save_tier` from tier d to tier c. `ase::sim_capabilities_at`'s `known` test is a WRITTEN EXEMPTION (the producer's cache-write gate). Floor 111 → 126, eight sabotages. **Row P15 exists only because a sabotage went green**: respelling `cap_report`'s refusal as `![caps_is $c usable 1]` passed all fourteen original rows.
+
+~~**The next free number is 1407.**~~ superseded: **1407** is filed, above.
+
+**The next free number is 1408.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

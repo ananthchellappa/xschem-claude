@@ -2836,6 +2836,145 @@ proc ase::cap_run {exe exeargs workdir secs} {
   return [list $rc $out $cut $ms]
 }
 
+# ─── THE CAPABILITY VOCABULARY: FOUR BANDS, THREE STATES, TWO PREDICATES ─────
+# Stage 2 (item 2f) of doc/claude/ase_analyses_batch/, issue 1407.
+#
+# ⚠ WHAT THIS REPLACES, AND WHY IT IS WORTH A PROC. Before this block the tree
+# asked the capability dict the same question in TWENTY-EIGHT hand-written
+# expressions across six procs -- `[dict exists $c k] && [dict get $c k] == 1`
+# and its variants -- and every copy was a chance to fuse "nobody asked" with
+# "the answer is no". That fusion is not cosmetic: it is what turns a probe
+# nobody ran into a statement about the user's simulator.
+#
+# THE THREE STATES, AS DATA, IN ONE PLACE:
+#
+#   {measured 0}               nobody asked, or the whole answer is `known 0`
+#   {measured 0 why <token>}   nobody asked, AND the probe recorded which leg
+#                              failed -- whole-answer (`unmeasured`) or per-key
+#                              (`unmeasured_keys`)
+#   {measured 1 value <v>}     somebody asked, and this is the answer, 0 included
+#
+# ⚠ `value` IS **ABSENT** RATHER THAN EMPTY WHEN NOTHING WAS MEASURED, and that
+# is deliberate: a caller who reads it without reading `measured` first gets a
+# RAISE, which shows up in a test row, instead of a fabricated 0 that shows up
+# in a user's Outputs pane six months later.
+#
+# THE FOUR BANDS (ase::caps_keys):
+#   identity    display and log ONLY -- NEVER compared, never ordered (D44).
+#               Stock 47 and the fork both answer `ngspice-46+`, so any
+#               ordering operator on a version string is wrong TODAY.
+#   capability  gate UP with ase::caps_is. 1 = proven present, 0 = proven
+#               absent, ABSENT = not measured.
+#   defect      gate MITIGATIONS with ase::caps_measured_as. ⚠ POLARITY IS
+#               "1 = SOUND", and the key is named for the DEFECT, never for the
+#               fix. SHIPS EMPTY -- its keys arrive with leg D and have no
+#               reader until then, and a band key with no reader is a key no
+#               row can pin.
+#   provenance  the absence of an answer, which is itself not a claim.
+#
+# ⚠ THE PREDICATE FOLLOWS THE **DIRECTION OF THE GATE**, NOT THE BAND. This is
+# the rule a reader gets wrong, because the band names suggest otherwise:
+# ase::cap_report reads two BAND-2 keys in the NEGATIVE direction (`usable == 0`
+# fires "not a simulator", `appendwrite == 0` fires "cannot append"), and both
+# must use ase::caps_measured_as. Spelling either as `![ase::caps_is …]` makes
+# it TRUE for a binary nobody measured, which calls an unmeasured program "not
+# a simulator" -- issue 0953, re-filed.
+proc ase::caps_keys {{band {}}} {
+  set k [dict create \
+    identity   {version_line build_date scripts_path curcasemode_default} \
+    capability {usable appendwrite hier_op_names blanket_op_save altshow_op_dump
+                casemode_detected} \
+    defect     {} \
+    provenance {unmeasured unmeasured_keys secs noplace_at noplace_why}]
+  if {$band eq {}} { return $k }
+  if {![dict exists $k $band]} { return {} }
+  return [dict get $k $band]
+}
+
+# THE LIST-VALUED KEYS, NAMED ONCE.
+# ⚠ NEITHER PREDICATE MAY BE POINTED AT ONE, and this is wrong TODAY on a
+# binary a user can have, not in theory: `casemode_detected` is `{fold}` on apt
+# 45.2 and `{fold preserve distinguish}` on the fork, so
+# `ase::caps_is $c casemode_detected fold` answers 1 on one box and 0 on the
+# other. A list is read with ase::caps_get and examined by the caller.
+proc ase::caps_list_valued {} { return {casemode_detected} }
+
+# WHAT IS KNOWN ABOUT ONE KEY. The ONLY reader of a capability key, and the only
+# reader of a list- or dict-valued one -- no boolean predicate can return a list.
+#
+# ⚠ `known` IS META AND ANSWERS ABOUT ITSELF: present -> {measured 1 value <v>},
+# absent -> {measured 0}. Every OTHER key is gated on `known` being exactly 1.
+# A `known` of anything but 1 (2, {}, `yes`) reads as NOT measured -- stricter
+# than the hand-written `!= 0` guards this replaces, and deliberately so: the
+# producer writes 0 or 1 and nothing else, so a third value is a defect and must
+# not be silently believed.
+proc ase::caps_get {caps key} {
+  if {$key eq {known}} {
+    if {![dict exists $caps known]} { return [dict create measured 0] }
+    return [dict create measured 1 value [dict get $caps known]]
+  }
+  if {![dict exists $caps known] || [dict get $caps known] ne {1}} {
+    # The WHOLE answer is unmeasured, and the probe may have said which leg.
+    if {[dict exists $caps unmeasured]} {
+      return [dict create measured 0 why [dict get $caps unmeasured]]
+    }
+    return [dict create measured 0]
+  }
+  if {[dict exists $caps $key]} {
+    return [dict create measured 1 value [dict get $caps $key]]
+  }
+  # A `known 1` answer that omits ONE key: the probe ran and this leg did not
+  # deliver. That is what `unmeasured_keys` is for, and why it is a deliverable
+  # rather than a design note -- without it ase::cap_report can only go quiet.
+  set u [ase::caps_unmeasured_keys $caps]
+  if {[dict exists $u $key]} {
+    return [dict create measured 0 why [dict get $u $key]]
+  }
+  return [dict create measured 0]
+}
+
+# BAND 4, PER KEY: {key token key token ...}, or {}.
+proc ase::caps_unmeasured_keys {caps} {
+  if {![dict exists $caps unmeasured_keys]} { return {} }
+  return [dict get $caps unmeasured_keys]
+}
+
+# THE WRITER, and the ONLY sanctioned one. A leg that is cut records WHICH key
+# it failed to deliver instead of going quiet. Chains: the answer of one call is
+# the input of the next, so a probe that loses two legs records both.
+proc ase::caps_unmeasured {caps key token} {
+  set u [ase::caps_unmeasured_keys $caps]
+  dict set u $key $token
+  dict set caps unmeasured_keys $u
+  return $caps
+}
+
+# THE MITIGATION / REFUSAL PREDICATE, and the shared body of both. True ONLY
+# when the key was measured AND its value matches, so UNMEASURED IS FALSE and a
+# mitigation never fires on a binary nobody measured (D47).
+#
+# ⚠ THE COMPARISON IS STRING EQUALITY, NOT NUMERIC. The guards this replaces
+# were `== 1` / `== 0`, so the two differ on a non-canonical value: measured,
+# `appendwrite '0.0'` was TRUE under `== 0` and is FALSE here, and an
+# `altshow_op_dump` of `'1.0'` moves ase::op_save_tier from tier `d` to tier
+# `c`. Latent for the shipped adapter -- all four values are expr-produced
+# literal 0/1 -- and NOT latent for the second adapter this schema exists for.
+# AN ADAPTER MUST PUBLISH CANONICAL `0` OR `1`; row P13 records it.
+proc ase::caps_measured_as {caps key want} {
+  set g [ase::caps_get $caps $key]
+  if {![dict get $g measured]} { return 0 }
+  return [expr {[dict get $g value] eq $want ? 1 : 0}]
+}
+
+# THE GATE-UP PREDICATE, for "may I offer this?". Same body as
+# ase::caps_measured_as by construction -- ONE body, so the two cannot drift --
+# and a separate NAME because the direction is the whole point: this one is
+# written with `want` 1 and read as a permission, and the other exists so that a
+# NEGATIVE gate has a POSITIVE spelling. ⚠ NEVER `![ase::caps_is …]`.
+proc ase::caps_is {caps key want} {
+  return [ase::caps_measured_as $caps $key $want]
+}
+
 # WHAT THE PROGRAM THAT WILL ACTUALLY START CAN DO -- the front door, lazy and
 # cached. Returns a dict:
 #
@@ -2910,6 +3049,13 @@ proc ase::sim_capabilities_at {backend resolved eargs} {
   if {![dict exists $backends $backend capabilities]} {
     return [dict create known 0]
   }
+  # ⚠ THE `known` TEST BELOW IS THE **PRODUCER'S CACHE-WRITE GATE** AND IT IS THE
+  # ONE HAND-WRITTEN CAPABILITY READ LEFT IN THE TREE ON PURPOSE (issue 1407).
+  # Routing the WRITER through ase::caps_get -- the readers' predicate -- would
+  # make the rule that decides what is REMEMBERED depend on the rule for reading
+  # what was remembered, so a change to the reading rule would silently change
+  # what is stored. Every other capability read in src/ase.tcl goes through the
+  # vocabulary; this one is a written exemption, not an oversight.
   set ckey [ase::cap_key $resolved $eargs]
   set live [ase::cap_stamp $resolved]
   if {[dict exists $sim_caps $ckey]} {
@@ -3111,9 +3257,14 @@ proc ase::sim_casemode_detected {backend} {
 # second door cannot arrive carrying a second copy of it, which is exactly how
 # `fluid-editing`'s eleven `sim_profile_*` procs got out of step.
 proc ase::casemode_detected_in {caps} {
-  if {![dict exists $caps known] || [dict get $caps known] == 0} { return {} }
-  if {![dict exists $caps casemode_detected]} { return {} }
-  set d [dict get $caps casemode_detected]
+  # ⚠ ONE READ, THROUGH ase::caps_get, BECAUSE THIS KEY IS A **LIST** -- neither
+  # predicate may be pointed at it (ase::caps_list_valued names it). An EMPTY
+  # list from a COMPLETE probe still means "measured, and the answer is none",
+  # which is why the `measured` flag is read and the value is not tested for
+  # emptiness here.
+  set g [ase::caps_get $caps casemode_detected]
+  if {![dict get $g measured]} { return {} }
+  set d [dict get $g value]
   set r {}
   foreach m {fold preserve distinguish} {
     if {[lsearch -exact $d $m] >= 0} { lappend r $m }
@@ -3122,8 +3273,9 @@ proc ase::casemode_detected_in {caps} {
 }
 
 proc ase::casemode_selectable_in {caps} {
-  if {[dict exists $caps known] && [dict get $caps known] == 1 \
-      && [dict exists $caps casemode_detected]} {
+  # D47's warn-and-proceed shape: an UNMEASURED build still offers `fold`, and
+  # that must not become a refusal.
+  if {[dict get [ase::caps_get $caps casemode_detected] measured]} {
     return [ase::casemode_detected_in $caps]
   }
   return fold
@@ -3152,10 +3304,33 @@ proc ase::casemode_selectable_in {caps} {
 # that says it honestly, before anything is tried.
 proc ase::casemode_report {backend path caps} {
   if {$path eq {}} { return [ase::sim_why casemode_nopath {} {}] }
-  if {[dict exists $caps known] && [dict get $caps known] == 1} {
-    if {[dict exists $caps casemode_detected]} {
+  # ONE read serves BOTH ladders: ase::caps_get's `why` carries the whole-answer
+  # `unmeasured` token when nothing was measured, and the PER-KEY token out of
+  # `unmeasured_keys` when the probe ran and this one leg did not deliver.
+  set kn [ase::caps_get $caps known]
+  set g  [ase::caps_get $caps casemode_detected]
+  # ⚠ A MEASURED ANSWER MUST NEVER REACH THE LADDER BELOW, and that is why this
+  # branch is structurally separate with a return on every arm. The ladder asks
+  # `ase::sim_check` and `ase::sim_has_probe` -- questions about a build nobody
+  # measured -- so a `known 1` answer falling into it yields `casemode_noprogram`
+  # for a measurement that was actually taken.
+  if {[dict get $kn measured] && [dict get $kn value] eq {1}} {
+    if {[dict get $g measured]} {
       return [ase::sim_why casemode_measured {} $path \
                 [ase::casemode_detected_in $caps]]
+    }
+    # THE PROBE RAN AND THIS LEG DID NOT DELIVER. Without this arm the answer is
+    # `casemode_nokey` whatever happened, and `unmeasured_keys` is a key nothing
+    # reads -- which is the shape this batch exists to delete. It mints NO new
+    # sentence: `casemode_slow` is the one the whole-answer timeout already uses.
+    # ⚠ `timeout` IS THE ONLY TOKEN WITH AN ARM. Anything else falls to
+    # `casemode_nokey`, today's sentence, rather than to `casemode_unmeasured` --
+    # which says "has not been tried yet, press Detect" and would be printed
+    # immediately after the user pressed Detect and a probe ran.
+    if {[dict exists $g why] && [dict get $g why] eq {timeout}} {
+      set secs {}
+      catch {set secs [dict get $caps secs]}
+      return [ase::sim_why casemode_slow {} $path $secs]
     }
     return [ase::sim_why casemode_nokey {} $path]
   }
@@ -3167,8 +3342,8 @@ proc ase::casemode_report {backend path caps} {
   if {![ase::sim_has_probe $backend]} {
     return [ase::sim_why casemode_noprobe {} $p]
   }
-  if {[dict exists $caps unmeasured]} {
-    switch -- [dict get $caps unmeasured] {
+  if {[dict exists $g why]} {
+    switch -- [dict get $g why] {
       timeout {
         set secs {}
         catch {set secs [dict get $caps secs]}
@@ -3320,9 +3495,15 @@ proc ase::cap_report {backend nwrites} {
   # somebody's program, and only the first one was measured. Every OTHER
   # known-0 answer is silent, exactly as before: nothing was measured and
   # nothing is claimed.
-  if {![dict exists $c known] || [dict get $c known] == 0} {
-    if {[dict exists $c unmeasured] && [dict get $c unmeasured] eq {timeout}} {
-      ase::sim_say cap_no_answer $backend $path [dict get $c secs]
+  set kn [ase::caps_get $c known]
+  if {![dict get $kn measured] || [dict get $kn value] ne {1}} {
+    set wa [ase::caps_get $c usable]   ;# any capability key: on a known-0
+                                        # answer its `why` IS the whole-answer
+                                        # `unmeasured` token
+    if {[dict exists $wa why] && [dict get $wa why] eq {timeout}} {
+      set secs {}
+      catch {set secs [dict get $c secs]}
+      ase::sim_say cap_no_answer $backend $path $secs
       return cap_no_answer
     }
     # A PLACE THE PROBE COULD NOT USE GETS ITS OWN SENTENCE TOO (issue 0960),
@@ -3330,7 +3511,7 @@ proc ase::cap_report {backend nwrites} {
     # folder's. Silence here is what switched the whole feature off for the
     # rest of the session, without a word, for a user whose only mistake was a
     # leftover file. Said ONCE for the place -- see ase::cap_noplace_once.
-    if {[dict exists $c unmeasured] && [dict get $c unmeasured] eq {noplace}} {
+    if {[dict exists $wa why] && [dict get $wa why] eq {noplace}} {
       set at {} ; set why {}
       if {[dict exists $c noplace_at]}  { set at  [dict get $c noplace_at] }
       if {[dict exists $c noplace_why]} { set why [dict get $c noplace_why] }
@@ -3340,12 +3521,18 @@ proc ase::cap_report {backend nwrites} {
     }
     return {}
   }
-  if {[dict exists $c usable] && [dict get $c usable] == 0} {
+  # ⚠ BOTH OF THESE ARE **BAND-2 CAPABILITY** KEYS READ IN THE **NEGATIVE**
+  # DIRECTION, AND THAT IS WHY THEY TAKE ase::caps_measured_as AND NOT
+  # ase::caps_is. The band says "gate up with caps_is"; the band is not the rule,
+  # THE DIRECTION OF THE GATE IS. Spelling either of these
+  # `![ase::caps_is $c usable 1]` makes it TRUE for a binary nobody measured, so
+  # a program that never answered is told it is not a circuit simulator -- which
+  # is issue 0953 re-filed, in the one proc 0953 was filed against.
+  if {[ase::caps_measured_as $c usable 0]} {
     ase::sim_say cap_not_a_simulator $backend $path
     return cap_not_a_simulator
   }
-  if {[dict exists $c appendwrite] && [dict get $c appendwrite] == 0 \
-      && $nwrites > 1} {
+  if {[ase::caps_measured_as $c appendwrite 0] && $nwrites > 1} {
     ase::sim_say cap_no_append $backend $path
     return cap_no_append
   }
@@ -6074,11 +6261,17 @@ proc ase::op_save_tier {state} {
                   [ase::state_get $state simulator ngspice]} caps]} {
       set caps [dict create known 0]
     }
-    if {![dict exists $caps known] || [dict get $caps known] != 1} {
+    # ⚠ THE `known` READ STAYS FIRST AND STAYS SPELLED `$caps known`. Row T11 of
+    # tests/headless/test_ase_optier_0963.tcl scans this body for the literal
+    # `$caps <key>` -- the spelling shared by `dict exists`, `dict get` AND these
+    # predicates -- and asserts the known test precedes every capability read. An
+    # earlier T11 matched the bare word `known`, which the `dict create known 0`
+    # fallback above satisfies unconditionally; the S4 sabotage moved the blanket
+    # test above the known test and not one check in twelve suites went red.
+    if {[ase::caps_measured_as $caps known 1] != 1} {
       set tier c
       set reason unknown
-    } elseif {[dict exists $caps altshow_op_dump] &&
-              [dict get $caps altshow_op_dump] == 1 &&
+    } elseif {[ase::caps_is $caps altshow_op_dump 1] &&
               ![ase::op_dump_reachable $state]} {
       # G3b -- THE PRINTER IS SOUND BUT THE PATH IS NOT (issue 1334). Its own
       # reason token, because `c unsafe` would say the shorter way is risky
@@ -6088,8 +6281,7 @@ proc ase::op_save_tier {state} {
       # for a different reason entirely.
       set tier c
       set reason dumppath
-    } elseif {[dict exists $caps altshow_op_dump] &&
-              [dict get $caps altshow_op_dump] == 1} {
+    } elseif {[ase::caps_is $caps altshow_op_dump 1]} {
       # G3a -- THE DUMP SHAPE, AND IT IS ABOVE THE BLANKET GUARD ON PURPOSE.
       # Shape a is gated on `blanket_op_save`, which NO RELEASED NGSPICE
       # answers 1 to -- its own probe comment says so. Shape d is gated on a
@@ -6098,12 +6290,11 @@ proc ase::op_save_tier {state} {
       # measured-working shape wins. Do not reorder these two.
       set tier d
       set reason dump
-    } elseif {[dict exists $caps blanket_op_save] &&
-              [dict get $caps blanket_op_save] == 1} {
+    } elseif {[ase::caps_is $caps blanket_op_save 1]} {
       set tier a
       set reason blanket
-    } elseif {[dict exists $caps appendwrite] && [dict get $caps appendwrite] == 1 &&
-              [dict exists $caps hier_op_names] && [dict get $caps hier_op_names] == 1} {
+    } elseif {[ase::caps_is $caps appendwrite 1] &&
+              [ase::caps_is $caps hier_op_names 1]} {
       set tier c
       set reason unsafe
     } else {
@@ -12032,15 +12223,19 @@ show all > probe_c.txt
     # -- which lands on the per-device form, the one that always works.
     set altshow_ok 0
     set altshow_measured 0
+    set altshow_cut 0
     if {[ase::cap_left $t0] > 0} {
       set rc [ase::cap_run $exe [concat $exeargs [list -b $deckc]] $workdir \
                 [ase::cap_left $t0]]
+      set altshow_cut [lindex $rc 2]
       if {![lindex $rc 2] && [file exists $dumpc]} {
         set fh [open $dumpc r]
         set altshow_ok [ase::cap_altshow_verdict [read $fh]]
         close $fh
         set altshow_measured 1
       }
+    } else {
+      set altshow_cut 1
     }
     # ---- CASE MODE: THE THIRD MEASUREMENT, from `fluid-editing` --------------
     #
@@ -12075,6 +12270,7 @@ show all > probe_c.txt
     # A casemode leg that times out is reported by its own absence.
     set cmdet {}
     set cmok 0
+    set cmcut 0
     if {[ase::cap_left $t0] > 0} {
       if {![catch {sim_probe_capability $exe $exeargs 0 \
                      -cwd $workdir -timeout [expr {[ase::cap_left $t0] * 1000}]} cmr]} {
@@ -12083,11 +12279,32 @@ show all > probe_c.txt
           set cmdet [dict get $cmr detected]
         }
       }
+    } else {
+      set cmcut 1
     }
     set out [dict create known 1 usable $usable appendwrite $appendwrite \
                          blanket_op_save $blanket hier_op_names $hier]
     if {$cmok} { dict set out casemode_detected $cmdet }
     if {$altshow_measured} { dict set out altshow_op_dump $altshow_ok }
+    # ---- WHICH LEG DID NOT DELIVER, AND WHY (issue 1407) -------------------
+    #
+    # ⚠ THESE ARE THE **ONLY TWO** LEGS THAT CAN BE CUT WITHOUT MAKING THE WHOLE
+    # ANSWER `known 0`, AND THAT IS WHY THEY ARE THE ONLY TWO WIRED. Decks A and
+    # B each `return [dict create known 0 unmeasured timeout ...]` on a cut, from
+    # a FRESH dict, under this proc's own rule that a cut-off makes the whole
+    # answer `known 0` deliberately -- so a key whose leg rides deck A can never
+    # be an `unmeasured_keys` customer, and wiring one would ship a key no code
+    # writes and no row can redden.
+    #
+    # ⚠ `timeout` IS THE ONLY TOKEN PUBLISHED. A leg that RAN, was not cut, and
+    # simply did not produce its artifact -- `$dumpc` absent after a clean run,
+    # or a casemode probe that answered `complete 0` -- publishes NO key and NO
+    # provenance, which is exactly today's behaviour. Inventing a token for it
+    # would put a word on the user's screen for a condition nobody characterised;
+    # ase::casemode_report's `default` arm keeps today's sentence for precisely
+    # that reason.
+    if {$cmcut}      { set out [ase::caps_unmeasured $out casemode_detected timeout] }
+    if {$altshow_cut} { set out [ase::caps_unmeasured $out altshow_op_dump timeout] }
     return $out
   }
 

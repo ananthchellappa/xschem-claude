@@ -54,6 +54,11 @@
 #        a widget.
 #   111  section L, issue 1406: a re-registered backend must stop answering
 #        from the registry it replaced.
+#   126  section P, issue 1407: the capability vocabulary -- three states, two
+#        predicates, four bands. FIFTEEN rows, not the fourteen first planned:
+#        P15 was added after a sabotage pass went GREEN against the fourteen,
+#        respelling ase::cap_report's refusal as `![ase::caps_is $c usable 1]`
+#        -- the exact defect the vocabulary exists to prevent.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -2985,6 +2990,247 @@ n_free $N1DIR
 n_free $N3DIR
 n_free $N4DIR
 n_free $N7DIR
+
+# ============================================================================
+# P. THE CAPABILITY VOCABULARY -- THREE STATES, TWO PREDICATES, FOUR BANDS
+#    ISSUE 1407
+# ============================================================================
+#
+# Every row here drives LITERAL DICTS. No simulator is started, no fixture is
+# ordered, no stub is installed -- so a red row is about the vocabulary and can
+# be about nothing else.
+#
+# WHAT THIS SECTION IS FENCING. Before the vocabulary the tree asked the same
+# question of one dict in TWENTY-EIGHT hand-written expressions across six
+# procs. The defect a copy introduces is always the same one: fusing "nobody
+# asked" with "the answer is no". P6/P7 are that fusion, in both directions.
+
+proc p_corpus {} {
+  set out {}
+  foreach ns [list ::ase ::ase::ui] {
+    foreach pr [info procs ${ns}::*] { lappend out $pr }
+  }
+  # ⚠ `info procs` DOES NOT DESCEND. The adapter lives in a CHILD namespace, so
+  # a corpus built from `::ase::*` alone leaves every backend outside the rule.
+  foreach ns [namespace children ::ase::backend] {
+    foreach pr [info procs ${ns}::*] { lappend out $pr }
+  }
+  return [lsort -unique $out]
+}
+# A BARE READ OF ONE KEY, matched as a READ and not as a bare word: the trailing
+# boundary is what stops `known` matching inside `unmeasured_keys`.
+proc p_scan {pr key} {
+  if {![llength [info commands $pr]]} { return NOPROC }
+  if {[catch {info body $pr} b]} { return "RAISED:$b" }
+  return [regexp -all "dict\[ \t\]+(exists|get)\[ \t\]+\\\$\[A-Za-z_\]+\[ \t\]+${key}(\[^A-Za-z0-9_\]|$)" [a_nocomment $b]]
+}
+proc p_scanall {key} {
+  set n 0
+  foreach pr [p_corpus] { set r [p_scan $pr $key] ; if {[string is integer -strict $r]} { incr n $r } }
+  return $n
+}
+proc p_countcall {call} {
+  set n 0
+  foreach pr [p_corpus] {
+    if {[catch {info body $pr} b]} { continue }
+    incr n [a_count [a_nocomment $b] $call]
+  }
+  return $n
+}
+
+## --- P1: THE THREE STATES, as data -----------------------------------------
+check {P1 the three states are data: nothing measured, the whole answer unmeasured, and a measured value -- 0 included} \
+  [list [a_ans ase::caps_get {} usable] \
+        [a_ans ase::caps_get {known 0} usable] \
+        [a_ans ase::caps_get {known 1 usable 1} usable] \
+        [a_ans ase::caps_get {known 1 usable 0} usable]] \
+  [list {measured 0} {measured 0} {measured 1 value 1} {measured 1 value 0}]
+
+## --- P2: `known` is META and answers about ITSELF ---------------------------
+## Every other key is gated on it, so it cannot be gated on itself without the
+## reader having no way to ask whether anything was measured at all.
+check {P2 the known key answers about itself -- present is a measurement even when its value is 0, absent is not} \
+  [list [a_ans ase::caps_get {} known] \
+        [a_ans ase::caps_get {known 0} known] \
+        [a_ans ase::caps_get {known 1} known]] \
+  [list {measured 0} {measured 1 value 0} {measured 1 value 1}]
+
+## --- P3: `value` is ABSENT, never empty, when nothing was measured ----------
+## ⚠ THE RAISE IS THE POINT. A caller who reads `value` without reading
+## `measured` gets an error that shows up in a row, instead of a fabricated 0
+## that shows up in a user's Outputs pane six months later.
+set P3U [a_ans ase::caps_get {known 0} usable]
+check {P3 an unmeasured answer carries NO value key at all, so reading it without reading measured first RAISES rather than fabricating a 0} \
+  [list [dict exists $P3U value] \
+        [catch {dict get $P3U value}] \
+        [dict get $P3U measured]] \
+  [list 0 1 0]
+
+## --- P4: the WHOLE-ANSWER provenance reaches every capability key -----------
+check {P4 when the whole answer is unmeasured the probe's reason reaches every capability key, so a reader can say WHY and not only THAT} \
+  [list [a_ans ase::caps_get {known 0 unmeasured timeout} usable] \
+        [a_ans ase::caps_get {known 0 unmeasured noplace} appendwrite]] \
+  [list {measured 0 why timeout} {measured 0 why noplace}]
+
+## --- P5: the PER-KEY provenance, on an answer that IS known -----------------
+## This is the whole delivery of `unmeasured_keys`: the probe ran, three legs
+## answered and one did not, and the one that did not says so BY NAME while the
+## others stay measured.
+check {P5 a probe that ran and lost one leg records WHICH key it lost, and the legs that answered stay measured} \
+  [list [a_ans ase::caps_get {known 1 usable 1 unmeasured_keys {casemode_detected timeout}} casemode_detected] \
+        [a_ans ase::caps_get {known 1 usable 1 unmeasured_keys {casemode_detected timeout}} usable] \
+        [a_ans ase::caps_get {known 1 usable 1 unmeasured_keys {casemode_detected timeout}} altshow_op_dump]] \
+  [list {measured 0 why timeout} {measured 1 value 1} {measured 0}]
+
+## --- P6: the GATE-UP predicate. UNMEASURED ANSWERS 0 ------------------------
+check {P6 asking may-I-offer-this answers no for a build nobody measured, yes only for a measured yes} \
+  [list [a_ans ase::caps_is {} appendwrite 1] \
+        [a_ans ase::caps_is {known 0} appendwrite 1] \
+        [a_ans ase::caps_is {known 1} appendwrite 1] \
+        [a_ans ase::caps_is {known 1 appendwrite 0} appendwrite 1] \
+        [a_ans ase::caps_is {known 1 appendwrite 1} appendwrite 1]] \
+  [list 0 0 0 0 1]
+
+## --- P7: THE FUSION, IN BOTH DIRECTIONS -- and it is the row that matters ---
+## ⚠ `![caps_is $c usable 1]` AND `caps_measured_as $c usable 0` ARE NOT THE
+## SAME QUESTION, and the difference is exactly a program nobody measured. The
+## first calls it "not a simulator"; the second says nothing. That is issue
+## 0953, and ase::cap_report is the proc it was filed against.
+set P7UN {known 0}
+set P7NO {known 1 usable 0}
+check {P7 a negative gate spelled as NOT-a-positive-gate fires on a program nobody measured, and the mitigation predicate does not -- they differ on exactly that program} \
+  [list [expr {![a_ans ase::caps_is $P7UN usable 1]}] \
+        [a_ans ase::caps_measured_as $P7UN usable 0] \
+        [expr {![a_ans ase::caps_is $P7NO usable 1]}] \
+        [a_ans ase::caps_measured_as $P7NO usable 0]] \
+  [list 1 0 1 1]
+
+## --- P8: STRUCTURAL -- the hand reads are GONE from the five readers --------
+## ⚠ WITH ITS OWN NAMED EXEMPTION. ase::sim_capabilities_at's `known` test is
+## the PRODUCER'S CACHE-WRITE GATE and must NOT convert: routing the writer
+## through the readers' predicate makes what is remembered depend on the rule
+## for reading what was remembered. The control below asserts that exemption is
+## still exactly ONE read, so deleting it or adding a second both redden.
+set P8R {}
+foreach P8P {::ase::casemode_detected_in ::ase::casemode_selectable_in
+             ::ase::casemode_report ::ase::cap_report ::ase::op_save_tier} {
+  set P8N 0
+  foreach P8K {known usable appendwrite hier_op_names blanket_op_save
+               altshow_op_dump casemode_detected unmeasured} {
+    set P8V [p_scan $P8P $P8K]
+    if {[string is integer -strict $P8V]} { incr P8N $P8V } else { set P8N $P8V ; break }
+  }
+  lappend P8R $P8N
+}
+## ⚠ THE EXEMPTION COUNTS **2**, AND MEASURING IT IS WHY THIS ROW IS WORTH
+## HAVING. It is ONE guard on ONE line -- `[dict exists $caps known] && [dict get
+## $caps known] == 1` -- but p_scan counts READS, not lines, and that line makes
+## two of them. The first expectation written here was 1, taken from the count of
+## LINES in the census; the code was right and the expectation was wrong. Keep it
+## at 2: deleting the exemption gives 0 and converting it gives 0, and adding a
+## second guard gives 4, so every direction still reddens.
+check {P8 STRUCTURAL the five capability READERS carry no hand-written dict read of a capability key, and the producer's cache-write gate keeps exactly the one guard it is exempted for -- two reads on one line} \
+  [list $P8R [p_scan ::ase::sim_capabilities_at known]] \
+  [list {0 0 0 0 0} 2]
+
+## --- P9: STRUCTURAL -- and the corpus really reaches the ADAPTER ------------
+## The non-vacuity control is the second element: a corpus that silently failed
+## to descend into ::ase::backend::ngspice would report zero for everything and
+## look like a clean tree.
+check {P9 STRUCTURAL the scanned corpus reaches the adapter's own child namespace, so a hand read hiding there is inside the rule and not outside it} \
+  [list [expr {[llength [p_corpus]] > 200}] \
+        [expr {[lsearch -exact [p_corpus] ::ase::backend::ngspice::capabilities] >= 0}]] \
+  [list 1 1]
+
+## --- P10: the WRITER ---------------------------------------------------------
+check {P10 recording that a leg did not deliver adds the key by name and disturbs nothing that was measured} \
+  [list [a_ans ase::caps_unmeasured {known 1 usable 1} altshow_op_dump timeout] \
+        [a_ans ase::caps_unmeasured_keys {known 1 unmeasured_keys {a b}}] \
+        [a_ans ase::caps_unmeasured_keys {known 1}]] \
+  [list {known 1 usable 1 unmeasured_keys {altshow_op_dump timeout}} {a b} {}]
+
+## --- P11: TWO legs lost, and BOTH recorded ----------------------------------
+## ⚠ THIS ROW IS CHAINED ON PURPOSE. Against a dict with no prior
+## `unmeasured_keys` the correct body and a body that OVERWRITES the dict
+## produce a byte-identical answer, so a single-call row cannot redden its own
+## sabotage. The chain is what a real probe does -- two legs cut in one run --
+## and it is the only shape that tells the two bodies apart.
+set P11 [ase::caps_unmeasured [ase::caps_unmeasured {known 1 usable 1} \
+           casemode_detected timeout] altshow_op_dump timeout]
+check {P11 a probe that loses TWO legs records BOTH, rather than the second erasing the first} \
+  [list [a_ans ase::caps_get $P11 casemode_detected] \
+        [a_ans ase::caps_get $P11 altshow_op_dump] \
+        [a_ans ase::caps_get $P11 usable]] \
+  [list {measured 0 why timeout} {measured 0 why timeout} {measured 1 value 1}]
+
+## --- P12: the ADAPTER uses the sanctioned writer and no other ---------------
+check {P12 STRUCTURAL the adapter records a lost leg through the one sanctioned writer and never by building the provenance dict by hand} \
+  [list [a_count [a_nocomment [a_body ::ase::backend::ngspice::capabilities]] {dict set out unmeasured_keys}] \
+        [expr {[a_count [a_nocomment [a_body ::ase::backend::ngspice::capabilities]] {ase::caps_unmeasured }] >= 2}]] \
+  [list 0 1]
+
+## --- P13: THE COMPARISON IS STRING EQUALITY, AND IT IS NOT WHAT WAS THERE ----
+## ⚠ RECORDED AS A BEHAVIOUR CHANGE, NOT AS AN IDENTITY. The guards this
+## replaced were `== 1` / `== 0`, which are NUMERIC: `appendwrite '0.0'` was a
+## match and is not one now, and an `altshow_op_dump` of `'1.0'` moves
+## ase::op_save_tier from tier d to tier c. Latent for the shipped adapter --
+## measured, all four values are expr-produced literal 0/1 -- and NOT latent for
+## the second adapter this schema exists for. AN ADAPTER MUST PUBLISH CANONICAL
+## 0 OR 1, and this row is where that requirement is written down as a fact.
+check {P13 the predicates compare as STRINGS, so a non-canonical 0.0 or 1.0 is not a match and an adapter must publish canonical 0 or 1} \
+  [list [a_ans ase::caps_measured_as {known 1 appendwrite 0.0} appendwrite 0] \
+        [expr {{0.0} == 0}] \
+        [a_ans ase::caps_is {known 1 altshow_op_dump 1.0} altshow_op_dump 1] \
+        [expr {{1.0} == 1}]] \
+  [list 0 1 0 1]
+
+## --- P14: STRUCTURAL -- NO PREDICATE IS POINTED AT A LIST-VALUED KEY --------
+## ⚠ WRONG **TODAY**, ON A BINARY A USER CAN HAVE, not in theory:
+## `casemode_detected` is {fold} on apt 45.2 and {fold preserve distinguish} on
+## the fork, so `caps_is $c casemode_detected fold` answers 1 on one box and 0 on
+## the other. The second element is the non-vacuity control -- the corpus must
+## contain at least one caps_get on that key, or a corpus that found nothing at
+## all would pass this row.
+check {P14 STRUCTURAL no boolean predicate is pointed at a list-valued capability key, and the list key really is read somewhere by the reader that can serve it} \
+  [list [expr {[p_countcall {ase::caps_is $caps casemode_detected}] \
+             + [p_countcall {ase::caps_measured_as $caps casemode_detected}] \
+             + [p_countcall {ase::caps_is $c casemode_detected}] \
+             + [p_countcall {ase::caps_measured_as $c casemode_detected}]}] \
+        [expr {[p_countcall {ase::caps_get $caps casemode_detected}] >= 1}] \
+        [a_ans ase::caps_list_valued]] \
+  [list 0 1 casemode_detected]
+
+## --- P15: NO GATE-UP PREDICATE UNDER A `!` ---------------------------------
+## ⚠ THIS ROW EXISTS BECAUSE THE SABOTAGE THAT SHOULD HAVE REDDENED SECTION P
+## WENT GREEN. Respelling ase::cap_report's refusal as
+## `![ase::caps_is $c usable 1]` -- the exact defect the vocabulary was written
+## to prevent, issue 0953 re-filed -- passed all fourteen rows. P7 proves the two
+## predicates DIFFER; nothing proved the callers picked the right one.
+##
+## THE RULE IS THE CONSERVATIVE ONE, AND THE REASON IS THAT THE CALL SITE CANNOT
+## SHOW YOU WHICH CASE IT IS. `![caps_is $c k 1]` is honest for "may I OFFER
+## this?" -- you may not offer what nobody measured -- and a defect for "may I
+## ACCUSE this program?", where unmeasured must stay silent. The two read
+## identically. So the positive spelling is required in both: `caps_is` for the
+## permission, `caps_measured_as` for the accusation, and neither under a `!`.
+## Zero uses exist today, so the ban costs nothing now and forces the next author
+## to say which question they are asking.
+proc p_notpred {} {
+  set n 0
+  foreach pr [p_corpus] {
+    if {[catch {info body $pr} b]} { continue }
+    set b [a_nocomment $b]
+    foreach form {{![ase::caps_is} {! [ase::caps_is} {![::ase::caps_is}
+                  {![ase::caps_measured_as} {![::ase::caps_measured_as}} {
+      incr n [a_count $b $form]
+    }
+  }
+  return $n
+}
+check {P15 STRUCTURAL neither predicate is ever read through a NOT -- the permission and the accusation are both spelled positively, because the call site cannot show which one it is} \
+  [list [p_notpred] \
+        [expr {[p_countcall {ase::caps_is $caps}] + [p_countcall {ase::caps_measured_as $c}] >= 3}]] \
+  [list 0 1]
 
 # ============================================================================
 # L. A RE-REGISTERED BACKEND MUST NOT KEEP ANSWERING FROM THE REGISTRY IT
