@@ -3144,7 +3144,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1407.**~~ superseded: **1407** is filed, above.
 
-**The next free number is 1408.**
+- **1408** — **ASE-L described a simulator it had never been told anything about.** The Choose Analyses dialog asked `ase::analysis_offered` with NO argument and defaulted `chana_fields`/`arg_summary` to the default simulator, so a bench whose state named a simulator with no adapter was shown **ngspice's four radios, a committable `dc` form and an ngspice DECK LINE in the Arguments column**. The registry was right throughout (`analysis_offered zznoad` answered `{}`); only the dialog never asked it. Ships `ase::ui::chana_sim` (the ONE resolver, six call expressions threaded — the plan said eight, measured six), `ase::analysis_gap_msg` and membership guards on all THREE commit doors. ⚠ The sentence and the empty grid are keyed on the SAME question, or a backend that declares a type and registers none yields a blank, dead, SILENT dialog. ⚠ THREE arms: "not a backend at all" is the LIKELIER case (a typo) and a different fact. ⚠ `[info exists dlg(antype)]` is TRUE for `{}`, which is how `chana_x_ok` wrote `{type {} enabled 0}` into a bench. Floors: core 266 → **273** (section AD, schema half, arm-independent on purpose — T1 runs test_ase_dialogs on NEITHER arm), dialogs display 215 → **224** (G14), headless 37 unmoved. **Two rows exist only because a sabotage went green**, and the first attempt at that sabotage was itself malformed — it broke the proc instead of reverting the guard, which proves nothing.
+
+~~**The next free number is 1408.**~~ superseded: **1408** is filed, above.
+
+**The next free number is 1409.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

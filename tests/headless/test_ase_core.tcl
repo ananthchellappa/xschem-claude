@@ -76,7 +76,11 @@
 # the Stop warning). RAISED 230 -> 243, then 243 -> 248
 # when an adversarial review found D7e's "names it once" unpinned and the rank
 # table unscoped to a backend, then 248 -> 257 with D8, 257 -> 258 with
-# Stage 1 and 258 -> 266 with Stage 2e.
+# Stage 1, 258 -> 266 with Stage 2e, and 266 -> 273 with section AD (Stage 2
+# item 2d, issue 1408 -- the dialog describing THIS session's simulator). ⚠ AD's
+# rows are the SCHEMA half and are deliberately arm-independent: the widget half
+# is test_ase_dialogs.tcl section G14, which run_regression.tcl runs on NEITHER
+# arm, so the contract survives even where those rows cannot run.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -3864,6 +3868,138 @@ note "DX7 arm taken (1 = a display, arm (c); 0 = --nogui, arm (b))" $dx7gui
 
 catch {xschem raw clear}
 xschem load $dxtop
+
+
+# ============================================================================
+# AD. THE DIALOG DESCRIBES **THIS** SESSION'S SIMULATOR -- ISSUE 1408
+# ============================================================================
+#
+# ⚠ THE DEFECT THESE ROWS FENCE WAS LIVE AND MEASURABLE, not theoretical. The
+# Choose Analyses dialog asked `ase::analysis_offered` with NO ARGUMENT and
+# `ase::analysis_entry [ase::default_simulator] $t` for the label, and
+# chana_fields/arg_summary both defaulted `sim` to the default simulator. So a
+# bench whose state says `simulator <anything else>` was shown NGSPICE's four
+# analyses, a committable `dc` form, and an NGSPICE DECK LINE in the Arguments
+# column -- `dc V2 0 1.8 0.01` -- for a simulator that cannot render it.
+# The registry underneath was already right: `ase::analysis_offered zznoana`
+# answered `{}` the whole time. Only the dialog never asked it.
+#
+# THESE ROWS ARE ARM-INDEPENDENT ON PURPOSE. They drive the SCHEMA half --
+# ase::analysis_gap_msg and ase::analysis_commit_refusal -- so they run headless
+# and cannot be lost to a display-arm skip the way issue 1405's G-block was.
+# The widget half is test_ase_dialogs.tcl section G14.
+
+## Three stand-ins, each isolating one arm.
+##   zznoad    registers with the five hooks and NO `analysis_types` hook
+##   zzunreg   HAS the hook, and every type it returns is `registered 0`
+##   (a typo)  never registered at all -- and by 2d's own reckoning this is the
+##             LIKELIER production case, because the only doors to a non-ngspice
+##             `simulator` key are a hand-edited .state and the CIW.
+proc ad_five {} {
+  return [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      [ase::backend_hook ngspice run_cmd] \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+}
+proc ad_unreg_types {} {
+  return [dict create zzq [dict create label zzq registered 0 emitorder 10]]
+}
+ase::register_backend zznoad  [ad_five]
+ase::register_backend zzunreg [dict merge [ad_five] [dict create analysis_types ad_unreg_types]]
+
+## --- AD1: the KEYING INVARIANT, and it is the row that matters --------------
+## ⚠ THE SENTENCE AND THE EMPTY GRID MUST ANSWER THE SAME QUESTION. An earlier
+## shape keyed the sentence on `ase::analysis_types` and the dialog's disable
+## block on `ase::analysis_offered`; for `zzunreg` -- a backend that DECLARES a
+## type and REGISTERS none -- the two disagree, and the user gets a wholly
+## blank, dead, SILENT dialog. D6's rule is four states and never invisible.
+## This row asserts the biconditional directly, over every simulator in play.
+set AD1 {}
+foreach adsim {ngspice zznoad zzunreg zznosuchsim} {
+  lappend AD1 [list [expr {[ase::analysis_offered $adsim] eq {}}] \
+                    [expr {[ase::analysis_gap_msg $adsim] ne {}}]]
+}
+check "AD1 a sentence is said EXACTLY when the grid is empty -- never a blank\
+ dialog that says nothing, and never a sentence over a working grid" \
+  $AD1 {{0 0} {1 1} {1 1} {1 1}}
+
+## --- AD2: THREE ARMS, AND THEY ARE DIFFERENT FACTS ---------------------------
+## "ASE-L has no adapter for this simulator yet" ASSERTS THE SIMULATOR EXISTS.
+## Said to someone who typed `ngspce`, that is wrong twice over: it blames ASE-L
+## and it confirms a simulator that is not there. The distinguishing fact was
+## already in the tree and unused -- ase::backend_names.
+check "AD2 the three empty-grid reasons are three different sentences: an unknown\
+ backend, a registered one with no adapter, and an adapter offering nothing" \
+  [list [expr {[string first {does not know a simulator backend} [ase::analysis_gap_msg zznosuchsim]] >= 0}] \
+        [expr {[string first {has no adapter}                    [ase::analysis_gap_msg zznoad]] >= 0}] \
+        [expr {[string first {lists no analyses}                 [ase::analysis_gap_msg zzunreg]] >= 0}] \
+        [expr {[ase::analysis_gap_msg zznoad] eq [ase::analysis_gap_msg zzunreg]}]] \
+  {1 1 1 0}
+
+## --- AD3: the unknown-backend sentence NAMES what IS registered -------------
+check "AD3 the unknown-backend sentence names the typed name and lists what IS\
+ registered, so the user can see their typo" \
+  [list [expr {[string first {'zznosuchsim'} [ase::analysis_gap_msg zznosuchsim]] >= 0}] \
+        [expr {[string first {ngspice} [ase::analysis_gap_msg zznosuchsim]] >= 0}]] \
+  {1 1}
+
+## --- AD4: the commit refusal, minted ONCE for three doors -------------------
+check "AD4 a commit door refuses with the gap sentence when nothing is selected,\
+ and names the type when one is" \
+  [list [expr {[string first {has no adapter} [ase::analysis_commit_refusal zznoad {}]] >= 0}] \
+        [ase::analysis_commit_refusal zznoad pss] \
+        [expr {[string range [ase::analysis_commit_refusal zznoad {}] 0 4] eq {ase: }}]] \
+  [list 1 {ase: 'zznoad' cannot run pss, so it was not added to the bench.} 1]
+
+## --- AD5: NO SECOND COPY OF THE DEFAULTING RULE ------------------------------
+## ⚠ `ase::analysis_offered` and `ase::analysis_types` ALREADY resolve an empty
+## simulator to ase::default_simulator. A `$sim eq {}` arm inside the gap message
+## would be a SECOND copy of that rule and a second place for it to drift -- the
+## exact defect Stage 1 spent itself deleting. The first element proves the empty
+## argument really does reach the default; the second is the non-vacuity control,
+## proving the proc distinguishes simulators at all.
+check "AD5 an empty simulator argument resolves the same way everywhere, with no\
+ second copy of the defaulting rule living in the gap message" \
+  [list [expr {[ase::analysis_gap_msg {}] eq [ase::analysis_gap_msg [ase::default_simulator]]}] \
+        [expr {[ase::analysis_gap_msg zznoad] ne [ase::analysis_gap_msg {}]}]] \
+  {1 1}
+
+## --- AD6: the PRESELECT is the first OFFERED type, and for ngspice that is op
+## ⚠ PINNED SO A REGISTRY EDIT SURFACES AS A NAMED RED HERE, rather than as an
+## unexplained failure in a dialog suite that run_regression.tcl does not run on
+## either arm. The dialog preselects `[lindex $offered 0]` instead of the literal
+## `op`, which is what stops an empty grid committing `{type op enabled 1}` to a
+## bench whose backend cannot render `op`.
+check "AD6 the first analysis this backend offers is op, which is what the dialog\
+ preselects -- and a backend offering nothing preselects nothing" \
+  [list [lindex [ase::analysis_offered ngspice] 0] \
+        [lindex [ase::analysis_offered zznoad] 0]] \
+  {op {}}
+
+## --- AD7: the Arguments column under a simulator with no adapter ------------
+## ⚠ THE `op` ROW GOES BLANK, AND THAT IS RECORDED HERE AS A RATIFIED
+## CONSEQUENCE RATHER THAN DISCOVERED LATER. arg_summary's dump arm emits the
+## empty string for a row with no field keys and no extra keys, and `op` -- the
+## one analysis every new bench opens ENABLED -- is exactly that row. Under
+## ngspice the column holds the emitted deck line; under a simulator ASE-L has no
+## adapter for there is no deck line to show, and the Type column already says
+## `op`, so the blank removes a redundant echo rather than information. The
+## control is the `dc` row, which keeps its key=value dump.
+proc ad_pane {sim} {
+  set out {}
+  foreach r {{type op enabled 1} {type dc enabled 0 source V2 start 0 stop 1.8 step 0.01}} {
+    lappend out [ase::ui::arg_summary $r $sim]
+  }
+  return $out
+}
+check "AD7 the Arguments column shows this simulator's deck line, and for one\
+ ASE-L has no adapter for it shows the stored keys -- with op, which has none,\
+ going blank rather than echoing a line no backend emits" \
+  [list [ad_pane ngspice] [ad_pane zznoad]] \
+  [list {op {dc V2 0 1.8 0.01}} {{} {source=V2 start=0 stop=1.8 step=0.01}}]
+
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

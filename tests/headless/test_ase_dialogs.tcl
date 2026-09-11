@@ -60,6 +60,31 @@
 # (env -u DISPLAY for the headless-only run; add DISPLAY for the GUI legs)
 
 set fail 0; set npass 0
+# ============================================================================
+# THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP -- AND IT IS TWO NUMBERS
+# ============================================================================
+# ⚠ THIS FILE HAD NO FLOOR PARAGRAPH UNTIL ISSUE 1408. Two things make that
+# worse here than in most suites:
+#
+#   * THE TWO ARMS MEASURE DIFFERENT THINGS, NOT THE SAME THING TO DIFFERENT
+#     PRECISION. Most of this file is inside `if {[info exists ::has_x] ...}`,
+#     so HEADLESS runs 37 checks and the DISPLAY arm runs 224. Reporting one
+#     number reads as a floor that fell by 187. ALWAYS REPORT PER ARM.
+#   * `run_regression.tcl` RUNS THIS FILE ON **NEITHER** ARM -- measured, it is
+#     in neither `cases` nor `dcases`. So T1 at zero says NOTHING about any row
+#     here, and a receipt that quotes a T1 zero has not exercised one of them.
+#     The suite runs under full_audit.sh's display arm and under run_suites.sh.
+#
+# THE HISTORY:
+#   37 / 215   as this paragraph was written (2026-09-11, HEAD 8bfbbd6f)
+#   37 / 224   section G14, issue 1408: the dialog describes THIS session's
+#              simulator. Headless is UNMOVED because every G14 row is a widget
+#              row and sits inside the display guard, by design -- the schema
+#              half of the same change is test_ase_core.tcl section AD.
+#
+# ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
+# row; do not edit the number downward to make the file agree with itself.
+
 proc check {name got exp} {
   global fail npass
   if {$got eq $exp} { puts "ok:   $name"; incr npass } \
@@ -1665,9 +1690,171 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check_true "G12 session window closed" [expr {![winfo exists $top]}]
 
+  # --- G14: THE DIALOG DESCRIBES **THIS** SESSION'S SIMULATOR -----------------
+  # Issue 1408, Stage 2 item 2d of doc/claude/ase_analyses_batch/.
+  #
+  # ⚠ MEASURED BEFORE THE FIX, ON THIS ARM: a bench whose state said
+  # `simulator zznoad` -- a backend registered with the five hooks and NO
+  # `analysis_types` hook -- was shown NGSPICE's four radio buttons, a
+  # committable `dc` form, and `dc V2 0 1.8 0.01` in the Arguments column. The
+  # registry was right the whole time (`ase::analysis_offered zznoad` answered
+  # `{}`); the dialog asked `ase::analysis_offered` with no argument.
+  #
+  # ⚠ THESE ROWS ARE ON THE DISPLAY ARM AND `run_regression.tcl` RUNS THIS FILE
+  # ON NEITHER OF ITS ARMS -- measured. So a receipt quoting a T1 zero has NOT
+  # exercised one of them. The schema half is in test_ase_core section AD,
+  # deliberately, so the contract survives even where these cannot run.
+  proc g14_five {} {
+    return [dict create \
+      render_deck  [ase::backend_hook ngspice render_deck] \
+      run_cmd      [ase::backend_hook ngspice run_cmd] \
+      log_file     [ase::backend_hook ngspice log_file] \
+      result_probe [ase::backend_hook ngspice result_probe] \
+      raw_file     [ase::backend_hook ngspice raw_file]]
+  }
+  catch {ase::register_backend zznoad [g14_five]}
+  ## ⚠ `ase::session_update` DOES NOT REDRAW THE PANE, measured -- the Arguments
+  ## column still held ngspice's deck lines after the state said `zznoad`. These
+  ## rows set the simulator behind the UI's back (there is no gesture that edits
+  ## the state key directly), so they must repaint the way the product's own
+  ## simulator-choice path does, or they would be measuring a stale treeview.
+  proc g14_setsim {k s} {
+    set st [ase::session_state $k]
+    dict set st simulator $s
+    ase::session_update $k $st
+    ase::ui::populate $k
+    update
+  }
+  proc g14_kids {w} {
+    if {![winfo exists $w]} { return NOWIDGET }
+    set o {} ; foreach c [winfo children $w] { lappend o [winfo name $c] }
+    return [lsort $o]
+  }
+  proc g14_state {w} {
+    if {![winfo exists $w]} { return NOWIDGET }
+    if {[catch {$w cget -state} v]} { return NOSTATE }
+    return $v
+  }
+
+  ## ⚠ A FRESH SESSION AND A FRESH `$top`. By this point in the file the window
+  ## G1 opened is gone -- measured, `$top.mb.analyses` raised
+  ## `invalid command name ".ase5.mb.analyses"` -- so this block re-opens rather
+  ## than inheriting a toplevel whose lifetime it does not control.
+  check "G14 fixture: a session for these rows" \
+    [ase::open_state aselib nfet_clean ngspice_state1] 1
+  update
+  set top [ase::ui::window_for $key]
+  check_true "G14 fixture: its window is up" \
+    [expr {$top ne {} && [winfo exists $top]}]
+  catch {destroy $top.chana}
+  g14_setsim $key zznoad
+  set G14ANA0 [ase::state_get [ase::session_state $key] analyses]
+  $top.mb.analyses invoke "Choose…"
+  update
+
+  ## G14a -- the grid is empty, because this simulator offers nothing.
+  check "G14a a bench naming a simulator ASE-L has no adapter for gets NO analysis\
+ radio buttons, instead of the default simulator's four" \
+    [g14_kids $top.chana.types] {}
+
+  ## G14b -- and it SAYS SO. ⚠ Not a fifth cell state and not a Detect button:
+  ## the states are per ANALYSIS and there are no rows to colour, and no probe
+  ## can help because the gap is in ASE-L rather than in the binary.
+  check "G14b an empty grid says why it is empty, naming the simulator" \
+    [list [expr {[$top.chana.status cget -text] ne {}}] \
+          [expr {[string first {zznoad} [$top.chana.status cget -text]] >= 0}] \
+          [expr {[$top.chana.status cget -text] eq [ase::analysis_gap_msg zznoad]}]] \
+    {1 1 1}
+
+  ## G14c -- every control that could write the bench is disabled.
+  check "G14c with nothing to choose, Enable, Options and OK are all disabled" \
+    [list [g14_state $top.chana.enable] [g14_state $top.chana.opts] \
+          [g14_state $top.chana.btns.proceed]] \
+    {disabled disabled disabled}
+
+  ## G14d -- ⚠ AND THE PRESELECT IS EMPTY, NOT `op`. An unconditional `op` is
+  ## what let OK append `{type op enabled 1}` to a bench whose backend cannot
+  ## render op.
+  check "G14d nothing is preselected when nothing is offered" \
+    $::ase::ui::dlg($key,antype) {}
+
+  ## G14e -- ⚠ THE COMMIT DOORS REFUSE ON **MEMBERSHIP**, NOT ON EXISTENCE.
+  ## `[info exists dlg($key,antype)]` is TRUE for an `antype` of `{}`, which is
+  ## exactly the value an empty grid leaves behind -- so the three doors were
+  ## reachable and `chana_x_ok` would have written `{type {} enabled 0}` into the
+  ## bench: a state key for a type that does not exist, round-tripping through
+  ## the .state file forever. Driving the PROCS and not the buttons is the point,
+  ## because a disabled Tk button's `invoke` returns `{}` and would hide it.
+  set G14SAID {}
+  set ::g14_echo {}
+  set g14_had [expr {[info commands ::ciw_echo] ne {}}]
+  if {$g14_had} { rename ::ciw_echo ::g14_saved_ciw }
+  proc ::ciw_echo {line {tag {}}} { lappend ::g14_echo [list $tag $line] ; return {} }
+  catch {ase::ui::chana_ok $key}
+  catch {ase::ui::chana_options $key}
+  ## ⚠ `anextra` IS PLANTED ON PURPOSE, AND WITHOUT IT THIS ROW IS BLIND.
+  ## `chana_x_ok` returns early unless `dlg($key,anextra)` exists, and only
+  ## `chana_options` sets it -- which the guard above has just refused. MEASURED:
+  ## with `chana_x_ok`'s membership guard DELETED the suite still read ALL PASS,
+  ## because the door was never reached. The state it protects is reachable in
+  ## the product (open Options under one simulator, change the bench's simulator,
+  ## press OK), and it is the door that writes `{type {} enabled 0}` -- a state
+  ## key for a type that does not exist, round-tripping through the .state file
+  ## forever. So the fixture puts the dialog in that state and knocks.
+  set ::ase::ui::dlg($key,anextra) {}
+  catch {ase::ui::chana_x_ok $key}
+  array unset ::ase::ui::dlg $key,anextra
+  set G14SAID $::g14_echo
+  catch {rename ::ciw_echo {}}
+  if {$g14_had} { rename ::g14_saved_ciw ::ciw_echo }
+  update
+  check "G14e all three commit doors refuse: the bench is untouched, no Options\
+ subdialog is built, and each refusal says why" \
+    [list [expr {[ase::state_get [ase::session_state $key] analyses] eq $G14ANA0}] \
+          [winfo exists $top.chana.x] \
+          [expr {[llength $G14SAID] >= 1}] \
+          [expr {[string first {has no adapter} [lindex $G14SAID 0 1]] >= 0}]] \
+    {1 0 1 1}
+
+  ## G14f -- the Arguments column. ⚠ THE `op` ROW GOES BLANK and that is a
+  ## ratified consequence, not an accident: there is no deck line to show, and
+  ## the Type column beside it already says `op`.
+  set G14PANE {}
+  foreach g14r [$top.body.ana.tv children {}] {
+    lappend G14PANE [lindex [$top.body.ana.tv item $g14r -values] 3]
+  }
+  check "G14f the Arguments column shows the stored keys under a simulator with\
+ no adapter, and the op row -- which has no keys -- goes blank rather than\
+ echoing a deck line no backend emits" \
+    $G14PANE {{} {source=V2 start=0 stop=1.8 step=0.01} {} {}}
+
+  catch {destroy $top.chana}
+
+  ## G14g -- THE CONTROL, and it is what makes every row above non-vacuous:
+  ## put ngspice back and the whole dialog works exactly as it did.
+  g14_setsim $key ngspice
+  $top.mb.analyses invoke "Choose…"
+  update
+  set G14PANE2 {}
+  foreach g14r [$top.body.ana.tv children {}] {
+    lappend G14PANE2 [lindex [$top.body.ana.tv item $g14r -values] 3]
+  }
+  check "G14g CONTROL with ngspice back, four radios return, nothing is said,\
+ every control is live, op is preselected and the pane shows deck lines again" \
+    [list [g14_kids $top.chana.types] \
+          [$top.chana.status cget -text] \
+          [list [g14_state $top.chana.enable] [g14_state $top.chana.opts] \
+                [g14_state $top.chana.btns.proceed]] \
+          $::ase::ui::dlg($key,antype) \
+          [lindex $G14PANE2 0]] \
+    [list {ac dc op tran} {} {normal normal normal} op op]
+  $top.chana.btns.cancel invoke
+  update
+
 } else {
   puts "gui legs skipped (no DISPLAY)"
 }
+
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

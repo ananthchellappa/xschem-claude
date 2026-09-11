@@ -4103,6 +4103,57 @@ proc ase::analysis_offered {{sim {}}} {
   return $out
 }
 
+# WHY THE ANALYSIS GRID IS EMPTY, IN ASE-L'S OWN VOICE -- or `{}` when it is not
+# empty. Stage 2 item 2d, issue 1408.
+#
+# ⚠ THE SENTENCE AND THE EMPTY GRID ARE KEYED ON **THE SAME QUESTION**, and that
+# is the whole construction. An earlier shape keyed the sentence on
+# `ase::analysis_types` and the dialog's disable block on `ase::analysis_offered`;
+# for a backend that DECLARES types but REGISTERS none the two disagree, and the
+# user gets a wholly blank, dead, SILENT dialog -- no radios, every control
+# disabled, nothing said. D6's rule is four states and never invisible. So this
+# proc returns non-empty EXACTLY WHEN `analysis_offered` is empty, by asking that
+# question first and returning `{}` on any other answer.
+#
+# ⚠ THREE ARMS, BECAUSE "NOT A BACKEND AT ALL" IS THE **LIKELIER** CASE AND IS A
+# DIFFERENT FACT. The only doors to a non-ngspice `simulator` key are a
+# hand-edited `.state` file and the CIW -- in other words, a TYPO. Telling that
+# user "ASE-L has no adapter for this simulator yet" asserts that their simulator
+# exists and blames ASE-L for not supporting it. The distinguishing fact is
+# already in the tree and was unused: `ase::backend_names`.
+#
+# ⚠ NO `$sim eq {}` DEFAULT HERE. `ase::analysis_offered` and
+# `ase::analysis_types` already resolve an empty simulator to
+# `ase::default_simulator`, and a second copy of that rule is a second place for
+# it to drift -- `ase::ui::chana_sim` is the ONE resolver on the dialog side.
+# Recommended shapes, NOT ratifications: ⚖ R9 batches this stage's sentences.
+# WHAT A COMMIT DOOR SAYS WHEN IT REFUSES. Three doors write the bench --
+# ase::ui::chana_ok, chana_options and chana_x_ok -- and all three must refuse
+# the same way, so the sentence is minted ONCE here rather than three times
+# there. ⚖ R9: recommended shape, not a ratification.
+proc ase::analysis_commit_refusal {sim type} {
+  if {$type eq {}} {
+    set g [ase::analysis_gap_msg $sim]
+    if {$g ne {}} { return "ase: $g" }
+    return {ase: no analysis is selected, so nothing was added to the bench.}
+  }
+  return "ase: '$sim' cannot run $type, so it was not added to the bench."
+}
+
+proc ase::analysis_gap_msg {{sim {}}} {
+  if {[ase::analysis_offered $sim] ne {}} { return {} }
+  set nm $sim
+  if {$nm eq {}} { set nm [ase::default_simulator] }
+  if {[lsearch -exact [ase::backend_names] $nm] < 0} {
+    return "ASE-L does not know a simulator backend called '$nm'.\
+ Registered: [join [ase::backend_names] {, }]."
+  }
+  if {[ase::analysis_types $nm] eq {}} {
+    return "ASE-L has no adapter for '$nm' yet, so it cannot list its analyses."
+  }
+  return "The adapter for '$nm' lists no analyses, so there is nothing to choose."
+}
+
 # The analyses a fresh bench starts with: every REGISTERED type in `emitorder`
 # order, each carrying its declared `seed_enabled`.
 #

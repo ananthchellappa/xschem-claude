@@ -2055,7 +2055,7 @@ proc ase::ui::populate {key} {
     $tv insert {} end -id $i -values [list [expr {$i + 1}] \
       [ase::state_get $row type] \
       [ase::ui::chk_glyph [ase::state_get $row enabled 0]] \
-      [ase::ui::arg_summary $row]]
+      [ase::ui::arg_summary $row [ase::ui::chana_sim $key]]]
     incr i
   }
   set tv $top.body.outs.tv
@@ -4581,11 +4581,60 @@ proc ase::ui::chana_row {key type} {
 # ana double-click): top radio section picks the analysis type, bottom form
 # = Enable + the type's quick fields, `Options…` opens the extra-key editor.
 # `type` {} preselects op.
+# WHICH SIMULATOR THIS SESSION IS USING -- the ONE resolver on the dialog side,
+# and the reason this commit exists (issue 1408).
+#
+# ⚠ BEFORE THIS, THE CHOOSE ANALYSES DIALOG DESCRIBED A SIMULATOR IT HAD NEVER
+# BEEN TOLD ANYTHING ABOUT. `choose_analyses` asked `[ase::analysis_offered]`
+# with NO argument and `[ase::analysis_entry [ase::default_simulator] $t]` for
+# the label, and `chana_fields` / `arg_summary` both defaulted `sim` to
+# `[ase::default_simulator]`. MEASURED against a bench whose state says
+# `simulator zznoana`, a backend with no `analysis_types` hook:
+#
+#   ase::analysis_offered zznoana   ->  {}            the registry is RIGHT
+#   ase::analysis_offered           ->  op dc ac tran what the dialog asked for
+#   ase::ui::arg_summary $row       ->  dc V2 0 1.8 0.01
+#
+# -- four ngspice radio buttons, a committable `dc` form, and **an ngspice DECK
+# LINE in the Arguments column** for a simulator that cannot render it. The
+# machinery underneath was already correct; only the dialog never passed the
+# session's simulator.
+#
+# ⚠ ONE COPY. Every other site takes the answer as an ARGUMENT. A second
+# `$sim eq {}` default anywhere is a second place for the rule to drift, which
+# is the defect Stage 1 spent itself deleting.
+proc ase::ui::chana_sim {key} {
+  set sim {}
+  catch { set sim [ase::state_get [ase::session_state $key] simulator] }
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  return $sim
+}
+
+# THE TYPE THE DIALOG MAY COMMIT, OR `{}`. Membership in what THIS simulator
+# offers -- never `[info exists]`, which is TRUE for an `antype` of `{}` and is
+# how a bench with an empty grid gained a `{type {} enabled 0}` row.
+proc ase::ui::chana_committable {key} {
+  variable dlg
+  if {![info exists dlg($key,antype)]} { return {} }
+  set type $dlg($key,antype)
+  if {$type eq {}} { return {} }
+  if {[lsearch -exact [ase::analysis_offered [ase::ui::chana_sim $key]] $type] < 0} {
+    return {}
+  }
+  return $type
+}
+
 proc ase::ui::choose_analyses {key {type {}}} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
   set w [ase::ui::dialog_frame [dict get $wins $key].chana {Choose Analyses}]
-  if {$type eq {}} { set type op }
+  set sim [ase::ui::chana_sim $key]
+  set offered [ase::analysis_offered $sim]
+  # ⚠ THE PRESELECT COMES FROM THE OFFERED LIST, NOT FROM THE LITERAL `op`.
+  # An unconditional `op` is what made OK append `{type op enabled 1}` to a bench
+  # whose backend cannot render `op`. With nothing offered this stays EMPTY and
+  # every commit door refuses on MEMBERSHIP -- see ase::ui::chana_committable.
+  if {$type eq {}} { set type [lindex $offered 0] }
   set dlg($key,antype) $type
   # top section: one radiobutton per analysis type; switching repopulates
   # the bottom form from state (D4: in-form edits of the previous type are
@@ -4596,9 +4645,9 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # ascending and the text is the entry's `label`, which for these four IS
   # today's text -- a refactor may not mint user-facing copy, and promoting them
   # to human nouns is a ratified change under ⚖ R9, not a side effect.
-  foreach t [ase::analysis_offered] {
+  foreach t $offered {
     set _lbl $t
-    catch {set _lbl [dict get [ase::analysis_entry [ase::default_simulator] $t] label]}
+    catch {set _lbl [dict get [ase::analysis_entry $sim $t] label]}
     radiobutton $w.types.$t -text $_lbl -value $t \
       -variable ::ase::ui::dlg($key,antype) \
       -command [list ase::ui::chana_show $key]
@@ -4607,12 +4656,29 @@ proc ase::ui::choose_analyses {key {type {}}} {
   grid $w.types -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {8 4}
   checkbutton $w.enable -text Enable -variable ::ase::ui::dlg($key,anen)
   grid $w.enable -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  # THE STATUS ROW IS RESERVED WHETHER OR NOT IT HAS TEXT, so the quick-field
+  # rows below never move depending on which simulator is in force.
+  label $w.status -text {} -anchor w -justify left
+  grid $w.status -row 1 -column 1 -sticky w -padx 8 -pady 2
   # quick-field rows land on grid rows 2.. (chana_show); Options/buttons sit
   # on high fixed rows so the rebuilds never collide
   button $w.opts -text "Options…" -command [list ase::ui::chana_options $key]
   grid $w.opts -row 8 -column 0 -sticky w -padx 8 -pady 2
   ase::ui::dialog_buttons $w 9 [list ase::ui::chana_ok $key] \
     [list ase::ui::chana_cancel $key]
+  # ⚠ AN EMPTY GRID SAYS WHY IT IS EMPTY. This is NOT a fifth cell state: the
+  # states are PER ANALYSIS and a simulator with no adapter contributes no rows
+  # at all, so there is nothing to colour. It is also NOT a Detect button -- no
+  # probe can help, because the gap is in ASE-L and not in the binary. The
+  # sentence and this disable block are keyed on the SAME question
+  # (`ase::analysis_offered` being empty), which ase::analysis_gap_msg
+  # guarantees, so the dialog can never be blank AND silent.
+  if {$offered eq {}} {
+    $w.status configure -text [ase::analysis_gap_msg $sim]
+    $w.enable configure -state disabled
+    $w.opts   configure -state disabled
+    catch {$w.btns.proceed configure -state disabled}
+  }
   ase::ui::chana_show $key
   return $w
 }
@@ -4661,7 +4727,7 @@ proc ase::ui::chana_show {key} {
   set row [ase::ui::chana_row $key $type]
   set dlg($key,anen) [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]
   set r 0
-  foreach f [ase::ui::chana_fields $type] {
+  foreach f [ase::ui::chana_fields $type [ase::ui::chana_sim $key]] {
     set e [ase::ui::dialog_row $w.form $r "[string totitle $f]:" $f]
     $e insert 0 [ase::state_get $row $f]
     bind $e <Return> [list ase::ui::chana_ok $key]
@@ -4680,16 +4746,26 @@ proc ase::ui::chana_ok {key} {
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
   set w [dict get $wins $key].chana
   if {![winfo exists $w]} { return }
-  set type $dlg($key,antype)
+  # ⚠ MEMBERSHIP, NOT EXISTENCE. The guard above is `[info exists]`, which is
+  # TRUE for an `antype` of `{}` -- the value an empty grid leaves behind. That
+  # is how a bench whose backend lists no analyses gained a `{type {} enabled 0}`
+  # row: a state key written for a type that does not exist, which then has to
+  # round-trip through the .state file forever.
+  set sim [ase::ui::chana_sim $key]
+  set type [ase::ui::chana_committable $key]
+  if {$type eq {}} {
+    catch {::ase::echo [ase::analysis_commit_refusal $sim $dlg($key,antype)] error}
+    return
+  }
   set en [expr {[info exists dlg($key,anen)] && $dlg($key,anen) ? 1 : 0}]
   set vals [dict create]
-  foreach f [ase::ui::chana_fields $type] {
+  foreach f [ase::ui::chana_fields $type $sim] {
     if {[winfo exists $w.form.$f]} {
       dict set vals $f [string trim [$w.form.$f get]]
     }
   }
   if {$en} {
-    foreach f [ase::ui::chana_fields $type] {
+    foreach f [ase::ui::chana_fields $type $sim] {
       if {![dict exists $vals $f] || [dict get $vals $f] eq {}} {
         catch {::ase::echo "ase: enabled $type analysis needs a non-empty '$f'" error}
         return
@@ -4738,13 +4814,24 @@ proc ase::ui::chana_cancel {key} {
 proc ase::ui::chana_options {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  # ⚠ THE SAME MEMBERSHIP GUARD AS chana_ok, AND IT IS NEEDED HERE TOO. This
+  # door writes the bench through the same ase::session_update, and its
+  # `[info exists dlg($key,antype)]` test is TRUE for an `antype` of `{}`.
+  # Through the GUI it is latent -- `$w.opts` is disabled on an empty grid and a
+  # disabled Tk button's `invoke` returns `{}` -- which is exactly why only a row
+  # can see it, and why the guard goes on the PROC rather than on the button.
+  set _sim [ase::ui::chana_sim $key]
+  if {[ase::ui::chana_committable $key] eq {}} {
+    catch {::ase::echo [ase::analysis_commit_refusal $_sim $dlg($key,antype)] error}
+    return
+  }
   set w [dict get $wins $key].chana.x
   catch {destroy $w}
   toplevel $w
   set type $dlg($key,antype)
   wm title $w "Analysis Options ($type)"
   set row [ase::ui::chana_row $key $type]
-  set skip [concat {type enabled} [ase::ui::chana_fields $type]]
+  set skip [concat {type enabled} [ase::ui::chana_fields $type $_sim]]
   set ex [dict create]
   dict for {k v} $row {
     if {[lsearch -exact $skip $k] < 0} { dict set ex $k $v }
@@ -4839,6 +4926,17 @@ proc ase::ui::chana_x_ok {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)] \
       || ![info exists dlg($key,anextra)]} { return }
+  # ⚠ THE SAME MEMBERSHIP GUARD AS chana_ok, AND IT IS NEEDED HERE TOO. This
+  # door writes the bench through the same ase::session_update, and its
+  # `[info exists dlg($key,antype)]` test is TRUE for an `antype` of `{}`.
+  # Through the GUI it is latent -- `$w.opts` is disabled on an empty grid and a
+  # disabled Tk button's `invoke` returns `{}` -- which is exactly why only a row
+  # can see it, and why the guard goes on the PROC rather than on the button.
+  set _sim [ase::ui::chana_sim $key]
+  if {[ase::ui::chana_committable $key] eq {}} {
+    catch {::ase::echo [ase::analysis_commit_refusal $_sim $dlg($key,antype)] error}
+    return
+  }
   set type $dlg($key,antype)
   set st [ase::session_state $key]
   set rows [ase::state_get $st analyses]
@@ -4850,7 +4948,7 @@ proc ase::ui::chana_x_ok {key} {
   else           { set row [dict create type $type enabled 0] }
   # replace the row's extra-key set with the edited one (a Delete here must
   # really delete), keeping type/enabled + quick fields untouched
-  set skip [concat {type enabled} [ase::ui::chana_fields $type]]
+  set skip [concat {type enabled} [ase::ui::chana_fields $type $_sim]]
   foreach k [dict keys $row] {
     if {[lsearch -exact $skip $k] < 0} { set row [dict remove $row $k] }
   }
