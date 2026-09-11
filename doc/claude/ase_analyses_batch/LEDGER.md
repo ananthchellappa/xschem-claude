@@ -528,6 +528,24 @@ later adapter-side reader inherits this.
 
 ## Stage 2 — The type list is measured
 
+⚠ **2e SHIPPED SEPARATELY AND FIRST, 2026-09-11 — issue 1404.** The Stop warning is the user's
+*right away* item and the plan already says it "is not thematic to Stage 2 and is not pretending
+to be": it rides this stage only because a new user-facing sentence costs ⚖ R9 and Stage 2 is the
+first stage carrying one. It has no dependency on 2a–2d, so it landed as its own commit rather
+than waiting for the type grid. **Stage 2's remaining items (2a, 2b, 2c, 2d, 2f) are still open**
+and this block is filled when they land.
+
+| 2e | |
+|---|---|
+| commit | `fix(1404): Stop succeeds silently, and the user hunts for a rawfile that was never written` |
+| shipped | `ase::backend::ngspice::run_stop_cost` (CONTENT) declared through a new OPTIONAL hook; `ase::run_stop_cost` / `run_stop_warning` / `run_stopped_msg` (SCHEMA); the `stop      :` field in `ase::run_log_header`; a CIW note at the last instant before `execute`; and `ase::ui::do_stop` saying what the stop cost **only on the path that killed something** |
+| ⚠ the design 1e forced | **ASE-L owns the FRAME, the ADAPTER owns the CLAUSE.** Stage 1's Xyce paper-validation caught this item's own plan text asserting *"ngspice in batch mode writes nothing on a stop"* in ASE-L's voice — a run-model fact about one simulator in the half D34–D37 say may hold none. **A backend that declares no hook gets NO SENTENCE**; there is no fallback text, because a guessed warning is worse than silence |
+| suites moved | `test_ase_core` section **SW**, 8 rows, floor **258 → 266**. ⚠ **RG13 does NOT move, and that was the finding**: the first expectation written for this change made RG13's CIW the new sentence and it FAILED — measured, RG12/RG13's fixture runs `simulator holdsim`, which is not a registered backend, so ASE-L correctly says nothing. The code was right and the test expectation was wrong. RG13 keeps `{}` with the reason written in, and **SW7** pins `holdsim` specifically so that silence can never be mistaken for the feature having quietly broken |
+| sabotage | Three passes. The adapter dropping its `before` clause, and the hook never being registered, each redden **SW1/SW2/SW4**. ⚠ **The third is the one that matters**: making core fall back to the DEFAULT backend's clause for an unknown simulator — the tempting wrong fix — reddens **RG13, SW3, SW3b, SW5 and SW7**, which is how the "no guessed sentence" rule is actually enforced rather than merely written down |
+| ledger debts | `owed.sh add rule 1404` — **two** sentences, the launch warning and the moment-of-Stop line, filed the moment they landed and paid with the ⚖ R9 batch. No look debt: both are plain text in the CIW and the run log, and the suite reads them by value |
+| T1 | ⚠ **NOT AT ZERO ON THE RUN TAKEN FOR THIS COMMIT, AND THE FAULT IS THE DRIVER'S.** `run_regression.tcl` on this exact tree read **2 counted failures**, both row **X7** of `test_ase_optier_0963` — `rc=1 raw=-1bytes op-vectors=0`, i.e. the ngspice run died and wrote no raw at all. **Measured cause: four ngspice processes belonging to this batch's own Stage 2 recon crews were live throughout that run**, which is precisely the condition `CLAUDE.md` names — *"a T1 number taken while another agent's suite was live is not evidence"*. The driver launched the crews and T1 in the same window; that is the defect. Standalone, nothing else alive, same tree and the same command T1 uses, the suite reads **ALL PASS (103) twice over**, and X7's own header already records it as a flake that did not reproduce under the 1377 sweep. **The clean solo number is OUTSTANDING and is taken before Stage 2's first commit.** Green and uncontended at commit time: the 13-suite ASE family through `run_suites.sh` (ALL PASS on every one), `test_ase_core` **266**, `test_ase_simreg_0931` **111** |
+
+
 *The `help <verb>` probe leg on the existing capability deck (no new run);
 `analyses_available` + `devices_available`; the four-state wrapping radio grid with reasons
 and a **Detect** button; the ungated-baseline fallback.* Suites: `test_ase_simcaps_0948`

@@ -8163,6 +8163,26 @@ proc ase::ui::do_stop {key} {
     return
   }
   catch {kill_running_cmds $id -9}
+  ## STAGE 2e: SAY WHAT THE STOP COST, AND ONLY ON THE PATH THAT KILLED
+  ## SOMETHING. The two early returns above keep the sentences they have -- the
+  ## nothing-to-stop path must not claim a run was discarded. The clause comes
+  ## from the backend (ase::run_stop_cost); a backend that declares none says
+  ## nothing, because "what a stop costs" is a run-model fact core does not know
+  ## for a simulator it was never told about.
+  ##
+  ## ⚠ THIS MOVES ROW RG13 of tests/headless/test_ase_core.tcl, deliberately.
+  ## RG13 asserted that a successful Stop says NOTHING to the CIW -- which was
+  ## true, and is the defect: the Stop succeeded silently and the user went
+  ## looking for a rawfile that was never written.
+  ## ⚠ ABSOLUTELY QUALIFIED, and this file's own header says why: these procs
+  ## run inside `namespace eval ase::ui`, where the relative name `ase::foo`
+  ## resolves against ase::ui:: first. Written relative and wrapped in a catch,
+  ## the lookup failed SILENTLY and row RG13 read an empty CIW -- the failure
+  ## mode the catch exists to prevent, hiding the defect it was protecting.
+  set stopmsg {}
+  catch {set stopmsg [::ase::run_stopped_msg \
+                        [::ase::state_get [::ase::session_state $key] simulator]]}
+  if {$stopmsg ne {}} { catch {::ase::echo $stopmsg} }
 }
 
 # Simulation > Netlist > Display: the circuit netlist artifact in a read-only

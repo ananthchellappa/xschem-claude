@@ -2461,6 +2461,12 @@ set L10B [a_ans ase::run_log_header [dict remove $L10META using]]
 ## so the log and the sentence cannot be answers about two different instants.
 ## Shape, not literal text, for L9's reason: the field's NAME is what a reader
 ## of the log sees, the local variable's name is not.
+## ⚠ THE LINE COUNT MOVED 5 -> 6 IN STAGE 2e (issue 1404), AND ONLY THAT TERM.
+## ase::run_log_header gained a `stop      :` field carrying what a Stop of this
+## run would cost. It is APPENDED BELOW `deck` rather than inserted among the
+## identifying fields, so the index of `command` -- the fifth term -- is
+## unchanged at 3. Placed above `command` it moved that term too, which is
+## exactly why it is where it is.
 set L10WIRED [regexp -all {\yusing\s+\$\w+} $L0SRCA]
 check {L10 the run log names the simulator you picked on a line of its own, right under the line that says what kind it is -- and a run with nothing of yours in force writes that line not at all} \
   [list [lindex [a_hdrfield $L10A simulator] 1] \
@@ -2468,7 +2474,7 @@ check {L10 the run log names the simulator you picked on a line of its own, righ
         [a_hdrfield $L10B using] \
         [llength [split [string trimright $L10B "\n"] "\n"]] \
         [lindex [a_hdrfield $L10A command] 0] $L10WIRED] \
-  [list ngspice [list 2 ng-l10] [list -1 NOFIELD] 5 3 1]
+  [list ngspice [list 2 ng-l10] [list -1 NOFIELD] 6 3 1]
 
 ## L11 THE TWO LINES THAT USED TO CONTRADICT EACH OTHER. The user's own run log
 ## carried `simulator : ngspice` with `command : .../build-ver_50/src/ngspice`

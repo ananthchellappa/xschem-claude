@@ -3115,7 +3115,24 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1403.**~~ superseded: **1403** is filed, above.
 
-**The next free number is 1404.**
+- **1404** — **Stop succeeds silently, and the user goes looking for a rawfile that was never
+  written.** Both Stop doors call `ase::ui::do_stop` → `kill_running_cmds $id -9`, and ngspice in
+  batch installs a handler for **no signal at all** (`main.c` puts the block inside
+  `if (!ft_batchmode)`), so the process dies at the default disposition in milliseconds with
+  nothing of the analysis in flight on disk — and the window said none of it. Two sentences now
+  say so: one at launch, in the run log header and the CIW, and one at the moment of the Stop,
+  **only on the path that actually killed something**. ⚠ **ASE-L owns the FRAME and the ADAPTER
+  owns the CLAUSE** — Stage 1's Xyce paper-validation caught the plan asserting a run-model fact
+  about ngspice in ASE-L's own voice — so the clause comes from an OPTIONAL `run_stop_cost` hook
+  and **a backend that declares none gets no sentence at all**, because a guessed warning is
+  worse than silence. `test_ase_core` section SW, 8 rows, floor 258 → 266. ⚠ RG13 does NOT move:
+  its fixture runs `simulator holdsim`, which is not a registered backend, so the silence there
+  is the adapter scoping working — row SW7 pins it. **Stage 2e of
+  `doc/claude/ase_analyses_batch/`**; both sentences are the user's to ratify under ⚖ R9.
+
+~~**The next free number is 1404.**~~ superseded: **1404** is filed, above.
+
+**The next free number is 1405.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

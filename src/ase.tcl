@@ -7726,6 +7726,25 @@ proc ase::run_deck {state netlistfile {callback {}}} {
     catch {set using [ase::run_using_report $state]}
   }
 
+  ## --- STAGE 2e: WHAT A STOP WILL COST, SAID BEFORE IT IS PRESSED ----------
+  ## Here for ase::run_using_report's reason and not one line earlier: the gate
+  ## has passed, the deck is written, and what can still go wrong is `execute`
+  ## itself -- which leaves the run log this proc is about to write, so the
+  ## sentence and the header agree about what was attempted. A run that was
+  ## REFUSED must not be told what stopping it would cost.
+  ##
+  ## ⚠ NOT ase::ui::set_status, which sets a ONE-WORD coloured label
+  ## (Running/Ready/Error); a sentence does not fit there. ⚠ And not a modal:
+  ## row RG13 drives ase::ui::do_stop headless and a modal would hang it, which
+  ## is the same reason this plan refuses modal dialogs generally.
+  ##
+  ## CAUGHT and advisory, like the line above it: a defect in a warning must
+  ## never stop a run.
+  catch {
+    set _sw [ase::run_stop_warning $sim]
+    if {$_sw ne {}} { ::ase::echo "ase: $_sw" }
+  }
+
   ## --- 0618: the log's provenance ------------------------------------------
   ## MEASURED BEFORE THE CHANGE: `string equal $logtext $::execute(data,last)`
   ## was 1 — the log file WAS the simulator's stdout and nothing else, and a
@@ -7798,6 +7817,41 @@ proc ase::run_deck {state netlistfile {callback {}}} {
 # file that reads as a complete header. Five of them are 0618's own and always
 # written; `using` (1370) and `notes` (the casemode note) write nothing at all
 # when they are empty, so an ordinary run's log is byte-identical to 0618's.
+# ─── THE STOP WARNING: ASE-L'S FRAME, THE ADAPTER'S CLAUSE ───────────────────
+# Stage 2e. Both Stop doors call ase::ui::do_stop -> `kill_running_cmds $id -9`,
+# and the window said NOTHING about what that costs: the Stop succeeded silently
+# and the user went looking for a rawfile that was never written.
+#
+# ⚠ THE CLAUSE IS THE ADAPTER'S AND THERE IS NO FALLBACK SENTENCE. If a backend
+# declares no `run_stop_cost` hook, ASE-L says nothing at all rather than
+# guessing -- "what a stop costs" is a RUN-MODEL fact and core does not know it
+# for a simulator it has never been told about. A guessed sentence would be
+# exactly the defect Stage 1's Xyce paper-validation found in this item's own
+# plan text. Silence is the honest answer; a wrong warning is not.
+proc ase::run_stop_cost {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim run_stop_cost]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+# The launch sentence -- said once per run, in the log header and in the CIW.
+proc ase::run_stop_warning {{sim {}}} {
+  set c [ase::run_stop_cost $sim]
+  if {$c eq {} || ![dict exists $c before]} { return {} }
+  return "Stopping this run discards it — [dict get $c before]."
+}
+
+# The moment-of-the-Stop sentence -- said ONLY on the path that killed something.
+proc ase::run_stopped_msg {{sim {}}} {
+  set c [ase::run_stop_cost $sim]
+  if {$c eq {} || ![dict exists $c after]} { return {} }
+  return "ase: simulation stopped — [dict get $c after]"
+}
+
 proc ase::run_log_header {meta} {
   set when {}
   catch {set when [clock format [ase::state_get $meta started [clock seconds]]]}
@@ -7820,6 +7874,20 @@ proc ase::run_log_header {meta} {
   append out "command   : [ase::state_get $meta cmd]\n"
   append out "directory : [ase::state_get $meta dir]\n"
   append out "deck      : [ase::state_get $meta deck]\n"
+  ## STAGE 2e: what a Stop costs, in the log the user reads after the fact.
+  ##
+  ## ⚠ BELOW THE IDENTIFYING FIELDS, NOT AMONG THEM. It is PROSE, and this
+  ## header keeps its prose at the end -- `casenote` is explicitly the last
+  ## field for the same reason. Placed above `command` it also moved TWO terms
+  ## of row L10 in test_ase_simreg_0931 (the header's line count AND the index
+  ## of the `command` field) where it need only move one; a field that shifts
+  ## every field after it is a worse neighbour than one that appends.
+  ##
+  ## EMPTY WRITES NOTHING -- the `casenote`/`using` discipline of this proc --
+  ## so a backend that declares no `run_stop_cost` hook produces a log
+  ## byte-identical to 0618's committed framing.
+  set stopwarn [ase::run_stop_warning [ase::state_get $meta simulator]]
+  if {$stopwarn ne {}} { append out "stop      : $stopwarn\n" }
   ## THE CASEMODE NOTE, from `fluid-editing`'s casemode batch item 8 section 3b.
   ## It goes in the HEADER and not above it: item 8 asked for "the head of the
   ## file, the one place a reader who scrolls nothing at all still sees", and
@@ -12246,6 +12314,31 @@ show all > probe_c.txt
         plots  {{select {Transient Analysis} role sweep results viewer label tran}}]]
   }
 
+  # ─── WHAT A STOP COSTS, ON THIS SIMULATOR ────────────────────────────────
+  # Stage 2e of doc/claude/ase_analyses_batch/. ASE-L owns the FRAME of every
+  # user-facing sentence (D5-4); the CLAUSE below is a fact about ngspice and
+  # therefore adapter CONTENT (D34-D37). Stage 1's Xyce paper-validation caught
+  # this one by name: the plan had ASE-L asserting "ngspice in batch mode writes
+  # nothing on a stop" in its OWN voice, which is a RUN-MODEL fact about one
+  # simulator sitting in the half that may hold none.
+  #
+  # ⚠ THE FACT, MEASURED AND NOT ASSUMED: ngspice in batch installs a handler
+  # for NO SIGNAL AT ALL -- main.c puts the whole block inside
+  # `if (!ft_batchmode)`, and SIGTERM, SIGHUP and SIGQUIT are installed in no
+  # mode -- so `kill_running_cmds $id -9` kills it at the default disposition in
+  # a few milliseconds and nothing of the analysis in flight is on disk.
+  #
+  # ⚠ AND THIS IS WHAT IS HONEST *UNTIL SALVAGE LANDS*, not a substitute for it.
+  # Stage 6f adds `stop after <points>` checkpointing under ⚖ R1's always-salvage
+  # requirement; when it does, `before` becomes conditional on whether this run
+  # has checkpoints and `after` gains the salvaged-file case. Same proc, same two
+  # keys, which is why the sentence ships now rather than waiting.
+  proc run_stop_cost {} {
+    return [dict create \
+      before {ngspice in batch mode writes nothing on a stop} \
+      after  {nothing of this run was written}]
+  }
+
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
@@ -12258,5 +12351,6 @@ show all > probe_c.txt
     capabilities ::ase::backend::ngspice::capabilities \
     op_param_set        ::ase::backend::ngspice::op_param_set \
     op_param_enumerable ::ase::backend::ngspice::op_param_enumerable \
-    analysis_types      ::ase::backend::ngspice::analysis_types]
+    analysis_types      ::ase::backend::ngspice::analysis_types \
+    run_stop_cost       ::ase::backend::ngspice::run_stop_cost]
 }

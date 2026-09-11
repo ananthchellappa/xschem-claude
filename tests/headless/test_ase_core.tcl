@@ -72,10 +72,11 @@
 # ruling), 248 with section D7 (issue 1401, the analysis type this backend
 # cannot render), 257 with section D8 (the emitted analysis line, per type) and
 # 258 with D8i, which the analyses batch's Stage 1 adds because the Arguments
-# column only becomes the emitted line there. RAISED 230 -> 243, then 243 -> 248
+# column only becomes the emitted line there, and 266 with section SW (Stage 2e,
+# the Stop warning). RAISED 230 -> 243, then 243 -> 248
 # when an adversarial review found D7e's "names it once" unpinned and the rank
-# table unscoped to a backend, then 248 -> 257 with D8 and 257 -> 258 with
-# Stage 1.
+# table unscoped to a backend, then 248 -> 257 with D8, 257 -> 258 with
+# Stage 1 and 258 -> 266 with Stage 2e.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -1886,6 +1887,16 @@ check "RG13 the session holds no run_id for this run, so only the lock can answe
   [list {} $::rg11id]
 set rg13said [rg_ciw {ase::ui::do_stop $rg12key}]
 catch {ase::wait $::rg11id}
+## ⚠ THE EMPTY CIW HERE IS NOW AN ASSERTION, NOT AN ABSENCE (Stage 2e).
+## A successful Stop DOES say what it cost -- but the sentence's clause comes
+## from the BACKEND (ase::run_stop_cost), and this fixture's simulator is
+## `holdsim`, which is not a registered backend at all. So ASE-L says nothing,
+## because "what a stop costs" is a run-model fact core does not know for a
+## simulator it was never told about, and a guessed warning is worse than
+## silence. MEASURED: the same call with the real backend in force returns
+## `ase: simulation stopped — nothing of this run was written` (row SW2), and
+## row SW7 pins that `holdsim` specifically yields nothing. Change the fixture's
+## simulator and this element MUST become that sentence.
 check "RG13 Stop from a session that did not launch really kills the run and frees the results file" \
   [list $rg13said [ase::run_in_flight $rg1key] \
         [expr {[info exists ::execute(pipe,$::rg11id)] ? 0 : 1}] [rg_tabled $rg1key]] \
@@ -1894,6 +1905,58 @@ check "RG13 Stop from a session that did not launch really kills the run and fre
 check "RG13 with nothing running Stop still says there is nothing to stop" \
   [rg_ciw {ase::ui::do_stop $rg12key}] \
   {{{} {ase: no simulation running for this session}}}
+
+# --- SW: THE STOP WARNING (analyses batch Stage 2e) --------------------------
+# ⚠ WHAT WAS TRUE AND UNSAID. Both Stop doors call ase::ui::do_stop ->
+# `kill_running_cmds $id -9`. ngspice in batch installs a handler for NO SIGNAL
+# AT ALL -- main.c puts the whole block inside `if (!ft_batchmode)`, and SIGTERM,
+# SIGHUP and SIGQUIT are installed in no mode -- so the process dies at the
+# default disposition in a few milliseconds and nothing of the analysis in
+# flight is on disk. The window said none of that.
+#
+# ⚠ ASE-L OWNS THE FRAME; THE ADAPTER OWNS THE CLAUSE. Stage 1's Xyce
+# paper-validation caught this item's own plan text asserting "ngspice in batch
+# mode writes nothing on a stop" in ASE-L's voice -- a RUN-MODEL fact about one
+# simulator, in the half that may hold none (D34-D37). The clause now comes from
+# the `run_stop_cost` backend hook, and A BACKEND THAT DECLARES NONE GETS NO
+# SENTENCE: core does not know what a stop costs on a simulator it was never
+# told about, and a guessed warning is worse than silence. SW3/SW3b are that
+# half, and they are the non-vacuity rows.
+#
+# ⚠ BOTH SENTENCES ARE THE USER'S TO RATIFY (⚖ R9) -- filed as a rule debt the
+# moment they landed, not ratified by their appearing here.
+check "SW1 the launch warning is ASE-L's frame around the backend's clause" \
+  [ase::run_stop_warning] \
+  {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.}
+check "SW2 the moment-of-the-Stop sentence likewise" \
+  [ase::run_stopped_msg] \
+  {ase: simulation stopped — nothing of this run was written}
+check "SW3 a backend with no run_stop_cost hook gets NO launch warning" \
+  [ase::run_stop_warning someoneelsesim] {}
+check "SW3b ... and no stopped sentence either" \
+  [ase::run_stopped_msg someoneelsesim] {}
+# The log header carries it, and EMPTY WRITES NOTHING -- the same discipline
+# `using` and `casenote` already follow, so a backend with no hook produces a
+# header byte-identical to 0618's committed framing.
+set sw_meta [dict create cell nfet_clean simulator ngspice started 0 \
+                         cmd {ngspice -b x.spice} dir /tmp deck x.spice]
+set sw_hdr [ase::run_log_header $sw_meta]
+check "SW4 the run log header carries the stop warning" \
+  [expr {[string first "stop      : Stopping this run discards it" $sw_hdr] >= 0}] 1
+set sw_hdr2 [ase::run_log_header [dict replace $sw_meta simulator someoneelsesim]]
+check "SW5 a backend with no hook adds NO stop line to the header" \
+  [expr {[string first "stop      :" $sw_hdr2] >= 0}] 0
+# The hook is OPTIONAL, exactly like capabilities/op_param_set: registering a
+# backend without it must still succeed (row A3 of test_ase_simcaps_0948 pins
+# that only five hooks are required).
+## ⚠ SW7 IS WHY RG13's CIW IS EMPTY, and it is the row that stops that emptiness
+## being mistaken for the warning having silently stopped working. `holdsim` is
+## RG12/RG13's fixture simulator and is not a registered backend.
+check "SW7 the RG fixture's `holdsim` yields no stop sentence, which is why RG13 is silent" \
+  [list [ase::run_stopped_msg holdsim] [ase::run_stop_warning holdsim]] {{} {}}
+check "SW6 run_stop_cost is an OPTIONAL hook, not a sixth required one" \
+  [catch {ase::register_backend sw6sim [dict create \
+     render_deck x run_cmd x log_file x result_probe x raw_file x]}] 0
 
 # --- RG14: a refusal that arrives as a RAISE must not redden a healthy run ---
 # The door pre-checks are not the whole story, and the gap is the originating
