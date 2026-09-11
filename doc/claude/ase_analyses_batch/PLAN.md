@@ -129,8 +129,16 @@ grep -rn 'chana\.' tests/headless/test_*.tcl | grep -v 'chana\.btns\|chana\.type
   test_ase_dialogs.tcl:657   $top.chana.step delete 0 end
 ```
 
-All six are inside G2/G2b and all six move to `$top.chana.form.<field>` at Stage 1. No other suite in
-the tree touches a Choose Analyses quick field by path.
+All six are inside G2/G2b and all six move to `$top.chana.form.<field>` at Stage 1. ⚠ **THE SENTENCE
+THAT STOOD HERE — *"No other suite in the tree touches a Choose Analyses quick field by path"* — WAS
+FALSE, AND IT COST 100 CHECKS (issue 1405, C47).** `tests/headless/test_ase_persist.tcl` row **G2**
+drives the same widgets through a **variable** — `set w $top.chana`, then `$w.$fld` — so the
+`grep 'chana\.'` this survey was made with could not see the block. Stage 1 moved the six literal
+lines, left G2 behind, and nothing went red: the G-block is inside an `if {!$mainok}` skip so the
+**headless arm reported `ALL PASS (44)` with the break live**, `run_regression.tcl` runs that file on
+**neither** arm, and the raise was swallowed by the enclosing `catch`, taking G3–G11 with it. Display
+arm 47 → **148** after the repair. **THE METHOD CORRECTION, which applies to every later stage: survey
+for the widget LEAF NAMES (`\$w\.source`, `\$w\.step`), never for the toplevel's spelling.**
 
 **0.3 — There are EIGHT hardcoded analysis-type lists in the analyses path, not seven.** The eighth is
 the **print anchor's own** `foreach type {dc ac tran op}` inside `ase::backend::ngspice::render_deck`
@@ -1403,7 +1411,9 @@ condition tells you to change when D1 will not compare equal.
 ### Suites that move
 
 * **`test_ase_dialogs.tcl` — six path lines** (`:625`, `:626`, `:629`, `:655`, `:656`, `:657`), all in
-  G2/G2b, all gaining `.form`. Nothing else in the tree drives a quick field by path.
+  G2/G2b, all gaining `.form`. ⚠ **AND `test_ase_persist.tcl` G2, through a variable** — the sentence
+  *"nothing else in the tree drives a quick field by path"* that stood here was false and is corrected
+  at §0.2; issue **1405** is the repair, and **G2p** now pins both halves of the path.
 * **`test_ase_window.tcl` P4** (`arg_summary dc row`) and **`test_ase_dialogs.tcl` G2**
   (`Arguments summary shows the fields`) — two display-string goldens, `source=V2 start=0 stop=1.8
   step=0.01` → `dc V2 0 1.8 0.01`. **Both are display strings, not deck output.**

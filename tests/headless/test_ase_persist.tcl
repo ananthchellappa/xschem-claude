@@ -575,11 +575,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       $w.enable invoke
     }
     check "G2 Enable checkbutton set" $::ase::ui::dlg($key,anen) 1
+    # --- G2p: WHERE the quick fields live, asserted BEFORE anything drives them.
+    # ⚠ THIS ROW EXISTS BECAUSE ITS ABSENCE COST 100 CHECKS (issue 1405). When
+    # Stage 1 moved the fields under `$w.form` and this file was not moved with
+    # them, `$w.source` raised `invalid command name ".ase4.chana.source"`, the
+    # enclosing `catch ... bigerr` swallowed it, and G3..G11 -- measured, the
+    # display arm ran 47 checks where it now runs 147 -- disappeared with NO row
+    # naming what had gone. A raise is not a verdict. This row turns the next
+    # such move into ONE named red with the old and the new path both in it.
+    check "G2p quick fields are children of the rebuilt .form frame, not of .chana" \
+      [list [winfo exists $w.form.source] [winfo exists $w.form.step] \
+            [winfo exists $w.source]      [winfo exists $w.step]] {1 1 0 0}
+
+    # ⚠ `$w.form.<field>`, NOT `$w.<field>` -- issue 1405. The quick fields moved
+    # into a rebuilt `$w.form` child frame when the Choose Analyses form stopped
+    # being a hardcoded destroy-list (issue 1401, Stage 1 of the analyses batch).
+    # The paths here are the reason that stage's own claim -- "no other suite in
+    # the tree touches a Choose Analyses quick field by path" -- was FALSE: `$w`
+    # is a VARIABLE, so the grep for `chana\.` that the claim rested on could not
+    # see this block. Keep the `$w.form.` prefix on any field added below.
     foreach {fld val} {source V2 start 0 stop 1.8 step 0.01} {
-      $w.$fld delete 0 end
-      $w.$fld insert 0 $val
+      $w.form.$fld delete 0 end
+      $w.form.$fld insert 0 $val
     }
-    send_return $w.step {![winfo exists $top.chana]}
+    send_return $w.form.step {![winfo exists $top.chana]}
     check_true "G2 dialog closed on Return (commit ran)" \
       [expr {![winfo exists $top.chana]}]
     set an2 [ase::state_get [ase::session_state $key] analyses]

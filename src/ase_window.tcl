@@ -4639,10 +4639,21 @@ proc ase::ui::chana_show {key} {
   # stage register an analysis with eight fields.
   #
   # ⚠ THIS MOVES `$w.<field>` TO `$w.form.<field>`, deliberately and in this
-  # stage. Six lines of tests/headless/test_ase_dialogs.tcl drive those paths
-  # directly and move with it; `$top.chana.types.*`, `$top.chana.opts` and
-  # `$top.chana.btns.*` are untouched -- adding paths is safe, moving them is
-  # not, and these are the only ones moved.
+  # stage. `$top.chana.types.*`, `$top.chana.opts` and `$top.chana.btns.*` are
+  # untouched -- adding paths is safe, moving them is not, and these are the
+  # only ones moved.
+  #
+  # ⚠ THE SUITES THAT MOVE WITH IT ARE **TWO** FILES, NOT ONE, AND THE SECOND
+  # COST A LATENT RED (issue 1405). Six lines of test_ase_dialogs.tcl drive the
+  # paths literally. `tests/headless/test_ase_persist.tcl` row G2 drives them
+  # through a VARIABLE -- `set w $top.chana` and then `$w.$fld` -- so the
+  # `grep 'chana\.'` this stage's own survey rested on could not see it, and the
+  # survey concluded "no other suite in the tree touches a Choose Analyses quick
+  # field by path". It was wrong. G2 sits inside an `if {!$mainok}` skip, so the
+  # HEADLESS arm reported ALL PASS while the display arm raised
+  # `invalid command name ".ase4.chana.source"` and silently lost G3..G11 with
+  # it. ⚠ A PATH SURVEY MUST SEARCH FOR THE VARIABLE TOO -- grep the widget
+  # NAMES (`\$w\.source`, `\$w\.step`), not only the toplevel's spelling.
   catch {destroy $w.form}
   frame $w.form
   grid $w.form -row 2 -column 0 -columnspan 2 -sticky we

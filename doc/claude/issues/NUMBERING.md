@@ -3132,7 +3132,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1404.**~~ superseded: **1404** is filed, above.
 
-**The next free number is 1405.**
+- **1405** — **Stage 1 moved a widget path, and a hundred checks vanished without a red.** Issue 1401 relocated the Choose Analyses quick fields from `$w.<field>` to `$w.form.<field>`. `tests/headless/test_ase_dialogs.tcl` moved with them; `tests/headless/test_ase_persist.tcl` row **G2** did not, because it reaches the same widgets through a VARIABLE (`set w $top.chana` then `$w.$fld`) and the survey behind Stage 1's claim *"no other suite in the tree touches a Choose Analyses quick field by path"* grepped for `chana\.`, which that block never writes. Invisible for **three** independent reasons, all of which had to hold: the whole G-block sits inside an `if {!$mainok}` skip so the HEADLESS arm reports `ALL PASS (44)` with the defect live; `run_regression.tcl` does not run this file on either arm, so T1 at zero said nothing about it; and the raise was swallowed by the enclosing `catch`, taking G3–G11 with it silently. **Measured cost: 100 checks** — display arm 47 before, **148** after. Fixed: the three lines take the `$w.form.` prefix, `ase::ui::chana_show`'s comment is corrected to name **two** suites and to say one of them reaches the path through a variable, and new row **G2p** asserts both halves (new paths present AND old paths absent) so a future move is ONE named red instead of a bare `UNEXPECTED ERROR`. Sabotage-verified: putting the fields back on `$w` reds G2p with exactly the inverse `{0 0 1 1}`.
+
+~~**The next free number is 1405.**~~ superseded: **1405** is filed, above.
+
+**The next free number is 1406.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

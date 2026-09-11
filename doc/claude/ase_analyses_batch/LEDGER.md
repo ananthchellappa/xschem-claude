@@ -526,6 +526,23 @@ later adapter-side reader inherits this.
 
 ---
 
+⚠ **STAGE 1 LEFT A DEBT AND STAGE 2'S RECON FOUND IT — issue 1405, fixed and committed before
+any Stage 2 code.** `PLAN.md` §0.2 records *"No other suite in the tree touches a Choose Analyses
+quick field by path"*, Stage 1 acted on it, and `ase::ui::chana_show` repeats it in a comment.
+**It is false.** `tests/headless/test_ase_persist.tcl` row **G2** reaches the same widgets through
+a variable — `set w $top.chana` then `$w.$fld` — so the `grep 'chana\.'` the claim rested on could
+not see it. **Measured cost: 100 checks.** The display arm read `1 FAILED (46 passed)` with
+`UNEXPECTED ERROR: invalid command name ".ase4.chana.source"`; it now reads **ALL PASS (148)**.
+It stayed invisible for **three** reasons that all had to hold: the G-block is inside an
+`if {!$mainok}` skip so the **headless arm reports `ALL PASS (44)` with the defect live**;
+`run_regression.tcl` runs this file on **neither** arm, so **T1 at zero said nothing about it**;
+and the raise was swallowed by the enclosing `catch`, taking G3–G11 with it in silence. New row
+**G2p** asserts both halves — new paths present AND old paths absent — and sabotage-verified reds
+`{0 0 1 1}`. ⚠ **The method lesson, which binds every later stage: a path survey must grep the
+widget LEAF NAMES, not the toplevel's spelling**, and *an arm that skips a block reports ALL PASS
+for it* — headless 44 against display 148 is not a weaker measurement of the same thing, it is a
+measurement of a much smaller thing.
+
 ## Stage 2 — The type list is measured
 
 ⚠ **2e SHIPPED SEPARATELY AND FIRST, 2026-09-11 — issue 1404.** The Stop warning is the user's
