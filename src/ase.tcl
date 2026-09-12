@@ -4358,6 +4358,29 @@ proc ase::analysis_emit_check {sim row} {
       lappend out [list group $g [ase::analysis_emit_msg group $g]]
     }
   }
+  # A KEY THE ROW CARRIES THAT NO TEMPLATE CAN SPEND. Issue 1418.
+  #
+  # ⚠ THIS IS THE STAGE'S WHOLE DEFECT, STATED AS A PROPERTY OF ONE ROW. The
+  # `Options...` editor collected free-text name/value pairs, round-tripped them
+  # through the .state file and rendered them in the Arguments column -- and
+  # NEVER EMITTED THEM. Its own header comment said so. Measured end to end:
+  # type `uic 1`, `tstart 5u`, `tmax 1n` into a tran row, see all three
+  # confirmed in the pane, and the deck says `tran 10n 200u`.
+  #
+  # ⚠ AND IT IS SAFE TO REFUSE, WHICH WAS MEASURED BEFORE IT WAS WRITTEN. Across
+  # all 104 tracked `.state` files and all 416 analysis rows, the key sets are
+  # `{type enabled}` plus declared field names and NOTHING ELSE -- zero rows
+  # carry a key this would reject. Section CP of tests/headless/test_ase_core.tcl
+  # is that measurement, kept as a row so the claim cannot rot.
+  set known [list type enabled]
+  foreach f $flds {
+    if {[dict exists $f name]} { lappend known [dict get $f name] }
+  }
+  foreach k [dict keys $row] {
+    if {[lsearch -exact $known $k] < 0} {
+      lappend out [list unknownkey $k [ase::analysis_emit_msg unknownkey $k]]
+    }
+  }
   return $out
 }
 
@@ -4375,6 +4398,7 @@ proc ase::analysis_emit_msg {token args} {
     fill         { return "cannot read '[lindex $args 1]' as a number for '$f'" }
     unrenderable { return "is not one this simulator backend can set up" }
     group        { return "needs every value of the $f, or none of them" }
+    unknownkey   { return "has a setting named '$f' that ASE-L cannot emit" }
   }
   return {}
 }

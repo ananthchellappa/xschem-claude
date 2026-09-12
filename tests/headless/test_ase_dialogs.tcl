@@ -842,6 +842,94 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [expr {[set i [tv_find $atv type tran]] ne {} ? [$atv set $i args] : {}}]] \
     [list {enabled step stop type} {tran 1n 10u}]
 
+  # G2i/G2j/G2k: THE OPTIONS DOOR CLOSES. Issue 1418.
+  ## ⚠ THIS EDITOR IS THE DEFECT STAGE 3 IS NAMED FOR. It collected free-text
+  ## name/value pairs, round-tripped them through the .state file and showed them
+  ## back to the user -- and NOTHING EVER EMITTED THEM. The fix is not to make
+  ## free text emit; it is to stop accepting a name nothing can spend.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tran invoke
+  update
+  ase::ui::chana_options $key
+  update
+  check_true "G2i the Options subdialog opens on a type ASE-L can set up" \
+    [winfo exists $top.chana.x]
+  set g2i_before [ase::state_get [ase::session_state $key] analyses]
+  set g2i_rows0 [llength [$top.chana.x.tv children {}]]
+  $top.chana.x.row.name delete 0 end
+  $top.chana.x.row.name insert 0 zzmysetting
+  $top.chana.x.row.value delete 0 end
+  $top.chana.x.row.value insert 0 7
+  $top.chana.x.row.add invoke
+  update
+  ## ⚠ REFUSED AT `Add`, NOT AT OK. A pair the user has already watched land in
+  ## the list is a pair they believe they have set; taking it away at OK would be
+  ## a second surprise on top of the first.
+  check "G2i a setting name ASE-L cannot emit never reaches the list, and the\
+ refusal names it" \
+    [list [expr {[llength [$top.chana.x.tv children {}]] == $g2i_rows0}] \
+          [expr {[string first {zzmysetting} \
+                  [$top.chana.status cget -text]] >= 0}] \
+          [ase::state_get [ase::session_state $key] analyses]] \
+    [list 1 1 $g2i_before]
+
+  ## ⚠ AND THE REFUSAL IS NOT BLANKET. A name the type really does declare is
+  ## still accepted -- otherwise this row could not tell "closed the door" from
+  ## "broke the editor", which is the difference a sabotage has to be able to see.
+  $top.chana.x.row.name delete 0 end
+  $top.chana.x.row.name insert 0 tmax
+  $top.chana.x.row.value delete 0 end
+  $top.chana.x.row.value insert 0 0.2n
+  $top.chana.x.row.add invoke
+  update
+  check "G2j a name the type actually declares is still accepted" \
+    [expr {[llength [$top.chana.x.tv children {}]] == $g2i_rows0 + 1}] 1
+  $top.chana.x.btns.cancel invoke
+  update
+
+  ## ⚠ AND AGAIN AT OK, BECAUSE THE EDITOR IS SEEDED FROM THE STORED ROW. A bench
+  ## written by an older ASE-L, or edited by hand, arrives carrying keys `Add`
+  ## never saw -- and writing them straight back would launder them through a
+  ## door that now refuses them at the front.
+  set g2k_st [ase::session_state $key]
+  set g2k_rows [ase::state_get $g2k_st analyses]
+  set g2k_i -1
+  for {set i 0} {$i < [llength $g2k_rows]} {incr i} {
+    if {[ase::state_get [lindex $g2k_rows $i] type] eq {tran}} { set g2k_i $i; break }
+  }
+  set g2k_orig [lindex $g2k_rows $g2k_i]
+  lset g2k_rows $g2k_i [dict merge $g2k_orig [dict create zzplanted 9]]
+  dict set g2k_st analyses $g2k_rows
+  ase::session_update $key $g2k_st
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tran invoke
+  update
+  ase::ui::chana_options $key
+  update
+  set g2k_before [ase::state_get [ase::session_state $key] analyses]
+  $top.chana.x.btns.proceed invoke
+  update
+  check "G2k a hand-edited bench carrying a setting ASE-L cannot emit is refused\
+ at OK rather than written back, and the bench is untouched" \
+    [list [ase::state_get [ase::session_state $key] analyses] \
+          [expr {[string first {zzplanted} \
+                  [$top.chana.status cget -text]] >= 0}]] \
+    [list $g2k_before 1]
+  catch {$top.chana.x.btns.cancel invoke}
+  update
+  catch {$top.chana.btns.cancel invoke}
+  update
+  ## Put the planted key back out of the bench for the rows below.
+  set g2k_st2 [ase::session_state $key]
+  set g2k_rows2 [ase::state_get $g2k_st2 analyses]
+  lset g2k_rows2 $g2k_i $g2k_orig
+  dict set g2k_st2 analyses $g2k_rows2
+  ase::session_update $key $g2k_st2
+  ase::ui::populate $key
+  update
+
   # G2e: THE AC SWEEP MODE IS A CONTROL, AND PICKING ONE RELABELS ITS NEIGHBOUR.
   ## ⚠ THIS IS ngspice's SHARPEST AC TRAP AND THE FORM USED TO SAY `Points:` FOR
   ## BOTH SIDES OF IT: `dec 10` is ten points PER DECADE, `lin 10` is ten points

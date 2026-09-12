@@ -3184,7 +3184,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1417.**~~ superseded: **1417** is filed, above.
 
-**The next free number is 1418.**
+- **1418** — **Options collected settings, round-tripped them, and never emitted them.** Commit C5 of Stage 3: `analysis_emit_check` gains an `unknownkey` offence, and `chana_x_add` / `chana_x_ok` refuse a name nothing can spend. ⚠ THE DEFECT THE WHOLE STAGE IS NAMED FOR, and the editor's own header comment admitted it: *"DECK emission of extra keys stays deferred (v1 limit, documented here)"*. Measured end to end: type `uic 1`, `tstart 5u`, `tmax 1n` into a tran row, see all three confirmed in the pane, and the deck says `tran 10n 200u`. ⚠ REFUSED AT `Add`, not only at OK — a pair the user has watched land in the list is a pair they believe they have set. ⚠ AND AGAIN AT OK, because `anextra` is seeded from the STORED row, so a bench written by an older ASE-L would otherwise be laundered through a door that refuses it at the front. ⚠ Refusing is safe and that was MEASURED FIRST: across all 104 tracked `.state` files and all 416 rows the key sets are `{type enabled}` plus declared field names and nothing else — zero rows carry a key this rejects (section CP). ⚠ **G2j exists so a sabotage can tell "closed the door" from "broke the editor"** — a refusal that rejected EVERY name satisfies G2i perfectly. ⚠ G2k plants the key in the state because `Add` can no longer create one, which is also the real-world case. Floors: core 335 → **337**, dialogs display 261 → **265**.
+
+~~**The next free number is 1418.**~~ superseded: **1418** is filed, above.
+
+**The next free number is 1419.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

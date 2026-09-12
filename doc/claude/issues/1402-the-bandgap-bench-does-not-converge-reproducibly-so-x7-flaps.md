@@ -5,6 +5,23 @@
 since the 1377 sweep. It is a flake. **But the flake is not in the assertion — it is in the
 simulation**, and the row has been telling the truth the whole time.
 
+## A second measurement, 2026-09-12 — nine passes around one red
+
+Taken during Stage 3 of the ASE-L analyses batch, on a tree whose changes are entirely in
+`ase.tcl`'s field tables and refusal reader and `ase_window.tcl`'s form:
+
+```
+standalone, --nogui, five separate runs through the session:  ALL PASS (103) x5
+T1 (solo, 61 cases):                                          X7 RED
+standalone soak immediately afterwards, -n 4:                 ALL PASS (103) x4
+```
+
+**Nine consecutive standalone passes bracketing one red inside T1**, with no code change between
+them. ⚠ **Note the shape of the count**: one X7 failure produces **two** counted lines in
+`results.log` — the `FAIL:` row itself and the `HARNESS: … did not complete cleanly` line that
+follows from the suite's nonzero exit. A T1 reading of **2** here is **one** defect, not two, and
+anyone reading the number without opening `results.log` will overcount it.
+
 ## The measurement, 2026-09-11
 
 Three consecutive runs of the suite, alone, `--nogui`, **identical code, identical scratch

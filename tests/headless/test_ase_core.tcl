@@ -4809,6 +4809,37 @@ check "GR6 a bool is still refused only for a value that is neither on nor off,\
   {boolval {}}
 
 
+
+## --- GR9: A KEY NO TEMPLATE CAN SPEND ---------------------------------------
+## ⚠ THIS IS STAGE 3's WHOLE DEFECT AS A PROPERTY OF ONE ROW. `Options…`
+## collected free-text name/value pairs, round-tripped them through the .state
+## file and rendered them in the Arguments column -- and NEVER EMITTED THEM. Its
+## own header comment said so. Measured end to end: type `uic 1`, `tstart 5u`,
+## `tmax 1n` into a tran row, see all three confirmed in the pane, and the deck
+## says `tran 10n 200u`.
+##
+## ⚠ AND REFUSING IS SAFE, WHICH WAS MEASURED BEFORE IT WAS WRITTEN -- see
+## section CP. Zero of the 416 committed analysis rows carry a key this rejects.
+check "GR9 a row carrying a setting no template can spend is refused, and the\
+ refusal names the setting" \
+  [list [lindex [lindex [ase::analysis_emit_check ngspice \
+            {type tran step 1n stop 10u zzmysetting 7}] 0] 0] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+            {type tran step 1n stop 10u zzmysetting 7}] 0] 1] \
+        [ase::analysis_emit_check ngspice {type tran step 1n stop 10u}]] \
+  {unknownkey zzmysetting {}}
+
+## ⚠ AND `type` AND `enabled` ARE NOT SETTINGS. They are the row's identity and
+## its switch; a check that flagged them would refuse every row in the tree.
+check "GR10 the row's own identity and switch are never mistaken for settings,\
+ and every declared field of every type is spendable" \
+  [list [ase::analysis_emit_check ngspice {type op enabled 1}] \
+        [ase::analysis_emit_check ngspice \
+          {type tran enabled 1 step 1n stop 10u tstart 0 tmax 0.2n uic 1}] \
+        [ase::analysis_emit_check ngspice \
+          {type ac enabled 0 sweep lin points 20 start 10 stop 1g}]] \
+  {{} {} {}}
+
 ## --- GR7/GR8: THE NUMBER CHECK IS AN ALLOW-LIST -----------------------------
 ## ⚠ IT WAS A DENY-LIST UNTIL IT MET A FIELD WHOSE LEGAL VALUES ARE WORDS, AND
 ## THAT WAS A LIVE DEFECT FOR ONE COMMIT. The test read "parse anything that is

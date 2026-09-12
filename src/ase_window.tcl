@@ -5299,6 +5299,27 @@ proc ase::ui::chana_x_add {key} {
     catch {::ase::echo "ase: option name must not be empty" error}
     return
   }
+  # ⚠ THE DOOR CLOSES HERE. ISSUE 1418, AND IT IS THIS STAGE'S WHOLE SUBJECT.
+  # This editor collected free-text name/value pairs, round-tripped them through
+  # the .state file and showed them in the pane -- and NEVER EMITTED THEM. The
+  # fix is not to make free text emit; it is to stop accepting a name nothing
+  # can spend. Measured end to end before this: type `uic 1`, `tstart 5u`,
+  # `tmax 1n` into a tran row, see all three confirmed, and the deck says
+  # `tran 10n 200u`.
+  #
+  # ⚠ REFUSED AT `Add`, NOT AT OK. A pair the user has already seen land in the
+  # list is a pair they believe they have set; taking it away at OK is a second
+  # surprise on top of the first. The refusal belongs at the gesture that would
+  # have created it.
+  set _sim [ase::ui::chana_sim $key]
+  set _ty  $dlg($key,antype)
+  if {[lsearch -exact [ase::ui::chana_fields $_ty $_sim] $n] < 0} {
+    set _c [ase::analysis_emit_msg unknownkey $n]
+    catch {::ase::echo "ase: this $_ty analysis $_c" error}
+    catch {ase::ui::dialog_status [dict get $wins $key].chana $key \
+             "This $_ty analysis $_c."}
+    return
+  }
   dict set dlg($key,anextra) $n $v
   $w.row.name delete 0 end
   $w.row.value delete 0 end
@@ -5359,6 +5380,19 @@ proc ase::ui::chana_x_ok {key} {
   set skip [concat {type enabled} [ase::ui::chana_fields $type $_sim]]
   foreach k [dict keys $row] {
     if {[lsearch -exact $skip $k] < 0} { set row [dict remove $row $k] }
+  }
+  # ⚠ AND AGAIN AT OK, BECAUSE `anextra` IS SEEDED FROM THE STORED ROW. A bench
+  # written by an older ASE-L -- or edited by hand -- arrives here carrying keys
+  # `Add` never saw, and writing them straight back would launder them through a
+  # door that now refuses them at the front.
+  foreach k [dict keys $dlg($key,anextra)] {
+    if {[lsearch -exact [ase::ui::chana_fields $type $_sim] $k] < 0} {
+      set _c [ase::analysis_emit_msg unknownkey $k]
+      catch {::ase::echo "ase: this $type analysis $_c" error}
+      catch {ase::ui::dialog_status [dict get $wins $key].chana $key \
+               "This $type analysis $_c."}
+      return
+    }
   }
   dict for {k v} $dlg($key,anextra) { dict set row $k $v }
   if {$idx >= 0} { lset rows $idx $row } else { lappend rows $row }
