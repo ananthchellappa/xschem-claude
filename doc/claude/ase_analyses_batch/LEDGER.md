@@ -830,16 +830,42 @@ DISTO save-list rule (non-defeasible); the device × analysis matrix with the
 contribution-vs-stamp split.* New suite; `ase::netlist_map_resolve` gains its second **kind**
 of customer. **Ruling: ⚖ R9.** Decisions: **D10, D11, D12**.
 
+⚠ **"ONE COMMIT" FOR STAGE 4 IS REFUTED TOO — IT IS FIVE**, and the first of them is not the
+stage's subject at all: `test_ase_preflight.tcl` is where this stage adds its rows, and T1 had
+**never run it**, on either arm.
+
+| landed | commit | subject | floors |
+|---|---|---|---|
+| `59513850` | **C1** | `fix(1421)` the preflight suite was never in T1, and 21 more ASE suites are not either | T1 61 → **62 cases** |
+| `30a7be00` | **C2** | `feat(1422)` the tokens `netlist_map` throws away are exactly the ones a precondition needs | preflight 125 → 135 |
+| `4adfda9a` | **C3** | `feat(1423)` preconditions become filters, not error messages | preflight 135 → 144 |
+| `99224bc0` | **C4** | `feat(1424)` a precondition that destroys the run is a refusal | preflight 144 → 149 |
+| `fa18442d` | **C5** | `feat(1425)` the precondition is said before the run, with its remedy | preflight 149 → **152** |
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | **COMPLETE** — five commits |
+| commit | `59513850` C1 · `30a7be00` C2 · `4adfda9a` C3 · `99224bc0` C4 · `fa18442d` C5 |
+| T1 | Zero counted failures on every one, taken **solo**, at **62 cases** — and C1 is the reason that number means anything here at all |
+| suites moved | `test_ase_preflight` **125 → 152** (sections PF223–PF226), floor raised four times. **No other suite moved a row**: core 348, simcaps 164, dialogs 265/37, persist 148/44, optier headless 103, re-run entire after every commit |
+| sabotage | **twenty-four**, all verified to redden. ⚠ **Two survived first** — `precheck_worst`'s ordering (every fixture yielded one severity, so a lone `fatal` returns `fatal` under any ordering) and PF225d (its fixture had **no finding at all**, so it could not tell *refuses fatal* from *refuses anything*, and the sabotage was caught by two rows written for something else) |
+| ledger debts | `rule 1423` and `rule 1425` filed — three precondition sentences with their fixes, the static-demotion suffix, and the pre-run advice line shape. **No look debt**: this stage is headless by construction and changes no pixel, exactly as the plan says |
+| spec paragraphs rewritten | **None.** Same standing spec debt as Stages 2 and 3 |
+| receipt | `receipts/09-stage-4-the-netlist-permits.md` |
+
+⚠ **TWO ITEMS ARE DEFERRED AND NAMED RATHER THAN FAKED.** The **DISTO save-list rule** promotes
+`saves_resolve` to `fatal` *when `disto` is enabled*, and `disto` is probe-only until Stage 6 — an
+enabled `disto` row is refused by issue 1401's block long before a precondition is consulted. The
+**precondition banner under the form** needs netlist *text*, which the dialog does not have and can
+only obtain by calling `ase::netlist` — a side effect no dialog may have because a user opened it.
+Both land in Stage 6, with the type and with the grid respectively.
+
+⚠ **AND THE WIDEST FINDING OF THE STAGE IS ABOUT THE HARNESS, NOT THE FEATURE.** Of **29**
+`test_ase_*` suites, **seven** were in T1. The other twenty-one all print `RESULT:` and no
+`OVERALL:` — one cause, twenty-one times, `test_ase_cosim` at 341 checks among them. **Any
+statement of the form "T1 at zero" covers eight of twenty-nine ASE suites.** Issue **1421** carries
+the list, and says why they must be added in measured batches rather than in one commit.
+
 
 ### What Stage 4 learned that binds later stages
 
