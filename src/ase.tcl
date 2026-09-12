@@ -6607,6 +6607,54 @@ proc ase::preflight_gate {state netlist_text} {
     lappend lines $l
     return -code error [join $lines "\n"]
   }
+  # --- 1424: A PRECONDITION THAT DESTROYS THE RUN IS A REFUSAL ---------------
+  #
+  # ⚠ ABOVE THE `ase_preflight` ESCAPE, AND FOR THE SAME REASON AS 1401 AND 1415.
+  # A `fatal` precondition is not "this run will be less useful"; it is "ngspice
+  # will not reach the end of `.control`". The measured case is a CIDER numerical
+  # device under the KLU solver: ngspice calls `exit(1)` -- not an error return,
+  # an EXIT -- so every analysis after it in the deck silently does not happen,
+  # and the run directory is left holding a partial raw file that reads back as a
+  # perfectly valid result. An escape hatch that let a user past this would be
+  # letting them past a silent wrong answer, not past an inconvenience.
+  #
+  # ⚠ ONLY `fatal`. `caution` and `blocked` belong in the window, where the user
+  # can see them next to the control that causes them and decide -- that is the
+  # four-state grid's job and it is Stage 2's. The gate is the last door before a
+  # process starts, and it may only slam for the verdicts that make starting the
+  # process pointless.
+  set pfacts {}
+  catch { set pfacts [ase::netlist_facts $netlist_text] }
+  if {$pfacts ne {}} {
+    set pc [ase::analysis_precheck $simname $state $pfacts]
+    set pfatal {}
+    dict for {pty prows} $pc {
+      foreach pr $prows {
+        if {[lindex $pr 1] eq {fatal}} { lappend pfatal [list $pty $pr] }
+      }
+    }
+    if {[llength $pfatal]} {
+      set plines {}
+      foreach pf $pfatal {
+        set pty [lindex $pf 0]
+        set pr  [lindex $pf 1]
+        set l "ase: the $pty analysis cannot run: [lindex $pr 2]"
+        ::ase::echo $l error
+        lappend plines $l
+        if {[lindex $pr 3] ne {}} {
+          set l "ase:   fix: [lindex $pr 3]"
+          ::ase::echo $l error
+          lappend plines $l
+        }
+      }
+      set l "ase: the simulator would exit part-way through this deck, leaving a\
+ raw file that reads back as a valid result. Nothing was generated: no deck, no\
+ raw, no log. `set ase_preflight 0` does NOT disable this check."
+      ::ase::echo $l error
+      lappend plines $l
+      return -code error [join $plines "\n"]
+    }
+  }
   if {[info exists ::ase_preflight] && !$::ase_preflight} { return {} }
   set scan [ase::preflight_scan $state $netlist_text]
   set rows [dict get $scan absent]
@@ -12488,6 +12536,23 @@ namespace eval ase::backend::ngspice {
   # a print per saved output for log-based result probing, then .end + trailing
   # newline.
   proc render_deck {state netlist_text} {
+    # ⚠ THE `fatal` PRECONDITIONS ARE RE-CHECKED HERE, NOT ONLY IN THE GATE, AND
+    # THAT IS THE PLAN'S THIRD REFUSAL TIER. Issue 1424. A `.state` can be
+    # hand-edited and a netlist can change under a saved analysis, so the dialog
+    # having been happy once is not evidence about this deck. This is also the
+    # only tier a caller reaching render_deck directly passes through at all.
+    #
+    # ⚠ AND IT REFUSES BEFORE A SINGLE LINE IS BUILT. Returning a partial deck,
+    # or building one and refusing afterwards, would leave the caller holding
+    # something that looks like output.
+    if {![catch {ase::netlist_facts $netlist_text} rfacts]} {
+      set rsim [ase::state_get $state simulator [ase::default_simulator]]
+      if {[ase::precheck_worst \
+             [ase::analysis_precheck $rsim $state $rfacts]] eq {fatal}} {
+        return -code error "ase: this deck has a precondition the simulator\
+ exits on; nothing was rendered"
+      }
+    }
     set lines [split [string trimright $netlist_text "\n"] "\n"]
     while {[llength $lines] > 0 && [string trim [lindex $lines end]] eq {}} {
       set lines [lrange $lines 0 end-1]

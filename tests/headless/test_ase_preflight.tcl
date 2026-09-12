@@ -45,13 +45,13 @@
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 144 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 149 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
 # rundir clause dropped and the rank table unscoped. RAISED 115 -> 122 -> 125. If a run reports fewer,
 # a row went missing; do not edit this number down to match it. RAISED 125 -> 135
-# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224.
+# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224, 144 -> 149 with PF225.
 #
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -1271,6 +1271,88 @@ eqcheck PF224i-the-worst-verdict-is-ordered-once-and-the-fixture-disagrees \
         [ase::precheck_worst $PC1] \
         [ase::precheck_worst [pcheck $WITHAC $ACROW]]] \
   {2 blocked fatal fatal caution {}}
+
+
+# ===========================================================================
+# PF225 — a precondition that DESTROYS the run is a refusal (issue 1424)
+# ===========================================================================
+## ⚠ `fatal` IS NOT "this run will be less useful". It is "ngspice will not
+## reach the end of `.control`". The measured case: a CIDER numerical device
+## under the KLU solver makes ngspice call `exit(1)` -- not an error return, an
+## EXIT -- so every analysis after it in the deck silently does not happen, and
+## the run directory is left holding a partial raw file that reads back as a
+## perfectly valid result.
+set KNL "* t\nV1 in 0 dc 1 ac 1\nR1 in out 1k\nD1 out 0 dmod\n.model dmod numd\n.end\n"
+proc kstate {opts} {
+  set st [mkstate $::RD kcell {}]
+  dict set st analyses {{type op enabled 1} \
+                        {type ac enabled 1 points 10 start 1 stop 1k}}
+  dict set st options $opts
+  return $st
+}
+set KBAD  [kstate {{name klu value 1}}]
+set KGOOD [kstate {}]
+
+said_clear
+set KR [pcall ase::preflight_gate $KBAD $KNL]
+eqcheck PF225a-a-fatal-precondition-is-refused-at-the-gate \
+  [list [string range $KR 0 3] \
+        [expr {[said_count {*CIDER*}] >= 1}] \
+        [expr {[said_count {*sparse*}] >= 1}] \
+        [expr {[said_count {*exit part-way*}] >= 1}]] \
+  {ERR: 1 1 1}
+
+## ⚠ AND IT IS NOT DEFEASIBLE. `set ase_preflight 0` exists so a user can run a
+## deck whose save list this tree cannot resolve -- a judgement call about a
+## warning. It may not be a way past a simulator that will not reach the end of
+## its own control block: that would be letting the user past a SILENT WRONG
+## ANSWER, not past an inconvenience. The block sits above the escape, exactly as
+## issues 1401 and 1415 do.
+set ::ase_preflight 0
+said_clear
+set KR0 [pcall ase::preflight_gate $KBAD $KNL]
+set ::ase_preflight 1
+eqcheck PF225b-the-preflight-escape-does-not-defeat-a-fatal-precondition \
+  [list [string range $KR0 0 3] [expr {[said_count {*CIDER*}] >= 1}]] {ERR: 1}
+
+## ⚠ THE THIRD TIER: render_deck RE-CHECKS. A `.state` can be hand-edited and a
+## netlist can change under a saved analysis, so the dialog having been happy
+## once is not evidence about THIS deck -- and a caller reaching render_deck
+## directly passes through no other tier at all.
+eqcheck PF225c-render-deck-refuses-the-same-deck-and-renders-nothing \
+  [string range [pcall ase::backend::ngspice::render_deck $KBAD $KNL] 0 3] {ERR:}
+
+## ⚠ AND THE SAME DECK WITHOUT THE SOLVER OPTION RENDERS NORMALLY. Without this
+## row, "refuses correctly" and "refuses everything" look identical -- and a
+## CIDER device is perfectly fine under the default solver, which is the only
+## reason anyone builds ngspice with CIDER at all.
+set KOK [pcall ase::backend::ngspice::render_deck $KGOOD $KNL]
+set KNOAC "* t\nV1 in 0 1\nR1 in out 1k\n.end\n"
+## ⚠ AND A `caution` MUST STILL RENDER. The first draft of this row used a deck
+## with NO finding at all, so a sabotage making render_deck refuse on ANY verdict
+## passed it -- the fixture could not tell "refuses fatal" from "refuses
+## anything". `$KNOAC` has no AC source, which is a real `ac_source` caution, and
+## a deck carrying one has to reach the file: a warning the user can act on is
+## not a reason to refuse to write their deck.
+set KOKC [pcall ase::backend::ngspice::render_deck [kstate {}] $KNOAC]
+eqcheck PF225d-the-same-deck-without-klu-renders-and-so-does-one-with-a-caution \
+  [list [expr {[string range $KOK 0 3] ne {ERR:}}] \
+        [expr {[string first {ac dec 10 1 1k} $KOK] >= 0}] \
+        [string range [pcall ase::preflight_gate $KGOOD $KNL] 0 3] \
+        [expr {[string range $KOKC 0 3] ne {ERR:}}] \
+        [expr {[string first {ac dec 10 1 1k} $KOKC] >= 0}]] \
+  {1 1 {} 1 1}
+
+## ⚠ THE GATE MAY ONLY SLAM FOR `fatal`. A `caution` or a `blocked` belongs in
+## the window, next to the control that causes it, where the user can see it and
+## decide -- that is the four-state grid's job. This deck has no AC source, which
+## is an `ac_source` finding, and the gate must let it through.
+said_clear
+eqcheck PF225e-a-caution-does-not-slam-the-gate \
+  [list [pcall ase::preflight_gate [kstate {}] $KNOAC] \
+        [lindex [lindex [dgn [ase::analysis_precheck ngspice [kstate {}] \
+                   [ase::netlist_facts $KNOAC]] ac] 0] 1]] \
+  {{} caution}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

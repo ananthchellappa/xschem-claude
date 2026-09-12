@@ -3208,7 +3208,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1423.**~~ superseded: **1423** is filed, above.
 
-**The next free number is 1424.**
+- **1424** — **A precondition that destroys the run is a refusal.** Commit C4 of Stage 4: `preflight_gate` refuses on a `fatal` precheck verdict in a block ABOVE the `ase_preflight` escape, and `render_deck` re-checks before it builds a single line — the plan's second and third refusal tiers. ⚠ `fatal` IS NOT A STRONG `blocked`: caution and blocked mean "this run will be less useful than you think"; fatal means the simulator will not reach the end of `.control`. Measured: CIDER under KLU makes ngspice `exit(1)`, so every later analysis silently does not happen and the run directory holds a PARTIAL RAW FILE THAT READS BACK AS A VALID RESULT. That is why it sits above the escape — `ase_preflight 0` is a judgement call about a warning, not a way past a silent wrong answer. ⚠ AND THE GATE MAY ONLY SLAM FOR `fatal`: a caution or a blocked belongs in the WINDOW next to the control that causes it (PF225e pins that a deck with no AC source goes through). ⚠ ONE SABOTAGE SURVIVED MY OWN ROW AND WAS CAUGHT BY TWO OLDER ONES — making render_deck refuse on ANY verdict left PF225d green, because its fixture had NO FINDING AT ALL and could not tell "refuses fatal" from "refuses anything"; it reddened PF221al/PF221an instead. The row now renders a deck carrying a real caution and requires it through: a warning the user can act on is not a reason to refuse to write their deck. ⚠ And a first draft referencing a fixture defined LOWER in the file surfaced as `FATAL: can't read "KNOAC"` rather than a located failure — this suite wraps its whole body in one `catch`. Floor: preflight 144 → **149**.
+
+~~**The next free number is 1424.**~~ superseded: **1424** is filed, above.
+
+**The next free number is 1425.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
