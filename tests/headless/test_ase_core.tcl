@@ -85,6 +85,10 @@
 # four-state resolver and the registry growing to eleven types). ⚠ R1 does NOT
 # move: `ase::state_default` still seeds exactly four rows, which is ⚖ R4's
 # recommended answer shipping BY CONSTRUCTION rather than by a later edit.
+# 289 -> 298 with section EM (Stage 3 item C1, issue 1414 -- the slot grammar and
+# the expander). ⚠ Every EM fixture registers its OWN backend, so the shipped
+# registry, the 104 committed `.state` files and every deck golden are unmoved BY
+# CONSTRUCTION rather than by hope.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -4267,6 +4271,180 @@ check "AG16 declaring the seed key is what puts a type on a new bench and its\
  offered without joining every bench" \
   [ase::analysis_seed agseed] \
   {{type zzin enabled 0} {type zzon enabled 1}}
+
+
+
+# ============================================================================
+# EM. THE SLOT GRAMMAR AND THE EXPANDER -- ISSUE 1414
+# ============================================================================
+#
+# Stage 3 of doc/claude/ase_analyses_batch/. The form stops lying: every value the
+# window shows must reach the deck. This section fences the layer underneath that
+# -- what a template slot means and what a skipped one emits.
+#
+# ⚠ EVERY FIXTURE REGISTERS ITS OWN BACKEND. The shipped ngspice registry is not
+# touched, so D1, D8a-D8i, the 104 committed `.state` files and every deck golden
+# are unmoved BY CONSTRUCTION rather than by hope. `ase::register_backend` calls
+# `ase::analysis_cache_clear` (issue 1406), so a fixture registry is live at once.
+# ⚠ A SABOTAGE THAT MUTATES NGSPICE'S OWN ENTRY IN PLACE MUST CALL
+# `ase::analysis_cache_clear ngspice` EXPLICITLY, or it silently does nothing --
+# which is the difference between a sabotage that reddens a row and one that
+# proves nothing.
+
+proc em_five {} {
+  return [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      [ase::backend_hook ngspice run_cmd] \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+}
+## ⚠ THE TEMPLATE CARRIES A LITERAL **AFTER** THE OPTIONAL SLOT, AND THAT IS WHY
+## THE ROW CAN FAIL AT ALL. With the optional slot trailing, a body that emits an
+## empty word and then trims produces a byte-identical answer -- the sabotage
+## changes neither the string nor its length. A literal after it makes the empty
+## word observable as the double space it really is.
+proc em_types {} {
+  return [dict create \
+    emt [dict create label emt baseline 1 registered 1 emitorder 10 \
+           fields {{name step kind time required 1} \
+                   {name stop kind time required 1} \
+                   {name tmax kind time} \
+                   {name uic  kind bool when_true uic}} \
+           emit {{role analysis tmpl {tran @step @stop @tmax? @uic! END}}}] \
+    emf [dict create label emf baseline 1 registered 1 emitorder 20 \
+           fields {{name lead kind real default LEADDEF} \
+                   {name tail kind real required 1}} \
+           emit {{role analysis tmpl {emf @lead? @tail}}}]]
+}
+ase::register_backend emsim [dict merge [em_five] [dict create analysis_types em_types]]
+
+## --- EM1: A SKIPPED OPTIONAL SLOT EMITS **NOTHING** -------------------------
+## ⚠ THE DEFECT THIS FENCES IS SILENT AND CHANGES THE PHYSICS. Joining an empty
+## element gives `tran 1n 10u  0.2n` -- a DOUBLE SPACE -- and ngspice reads the
+## next number as **tstart** rather than as tmax: rc 0, no message, and a
+## different simulation. The literal `END` after the optional slot is what makes
+## the empty word visible to this row.
+check "EM1 a value the user did not give contributes NOTHING to the deck line,\
+ rather than an empty word that shifts every value after it" \
+  [list [ase::analysis_line emsim {type emt step 1n stop 10u}] \
+        [ase::analysis_line emsim {type emt step 1n stop 10u tmax 0.2n}] \
+        [ase::analysis_line emsim {type emt step 1n stop 10u tmax {}}]] \
+  [list {tran 1n 10u END} {tran 1n 10u 0.2n END} {tran 1n 10u END}]
+
+## --- EM2: A BOOL EMITS THE ADAPTER'S WORD, NEVER THE STORED VALUE ----------
+## ⚠ MEASURED ON BOTH BINARIES: `uic 0` and `uic=0` BOTH TURN uic ON, silently --
+## the token's PRESENCE is the truth and its value is ignored. So a bool that
+## emitted its stored `0` would switch the feature ON while the form showed it
+## OFF, which is this stage's own defect inverted.
+check "EM2 a switch the user left off puts nothing in the deck, and one they\
+ turned on puts the simulator's own word there rather than a number" \
+  [list [ase::analysis_line emsim {type emt step 1n stop 10u uic 1}] \
+        [ase::analysis_line emsim {type emt step 1n stop 10u uic 0}] \
+        [ase::analysis_line emsim {type emt step 1n stop 10u}]] \
+  [list {tran 1n 10u uic END} {tran 1n 10u END} {tran 1n 10u END}]
+
+## --- EM3: THE WORD IS THE **ADAPTER'S**, NOT THE FIELD'S NAME --------------
+## A schema that hard-coded "the field name is the word" could not express a
+## simulator whose off-state needs a word of its own, and the word a simulator
+## wants is CONTENT.
+proc em_word_types {} {
+  set d [em_types]
+  dict set d emt fields {{name step kind time required 1} \
+                         {name stop kind time required 1} \
+                         {name tmax kind time} \
+                         {name uic kind bool when_true ZZON when_false ZZOFF}}
+  return $d
+}
+ase::register_backend emword [dict merge [em_five] [dict create analysis_types em_word_types]]
+check "EM3 the word a switch puts in the deck is the simulator's, so a simulator\
+ that needs a word for OFF can say one" \
+  [list [ase::analysis_line emword {type emt step 1n stop 10u uic 1}] \
+        [ase::analysis_line emword {type emt step 1n stop 10u uic 0}]] \
+  [list {tran 1n 10u ZZON END} {tran 1n 10u ZZOFF END}]
+
+## --- EM4: A REQUIRED SLOT STILL RAISES, AND THAT IS A CONTRACT -------------
+## ⚠ Row Q2 of tests/headless/test_ase_simcaps_0948.tcl calls the expander with
+## TWO arguments against each shipped template and asserts `{ok RAISES RAISES
+## RAISES}` -- it is the row that proves a row-free reader was needed at all.
+## Making the field table a mandatory third argument would turn its `ok` into a
+## raise and redden the suite that owns the seam, for a reason unrelated to it.
+check "EM4 asking for a deck line without a required value still fails loudly,\
+ and the two-argument form every existing caller uses still works" \
+  [list [catch {ase::analysis_expand {type emt} {tran @step @stop}}] \
+        [catch {ase::analysis_expand {type emt step 1n stop 10u} {tran @step @stop}}] \
+        [ase::analysis_expand {type emt step 1n stop 10u} {tran @step @stop}]] \
+  [list 1 0 {tran 1n 10u}]
+
+## --- EM5: A TEMPLATE WHOSE **FIRST** SLOT IS OPTIONAL ----------------------
+## ⚠ EVERY SHIPPED TEMPLATE HAS A REQUIRED SLOT FIRST, so default semantics are
+## unobservable against them: a wrong body still produces the right string. This
+## fixture puts the optional slot FIRST, which is the only shape where a default
+## that failed to apply is visible.
+check "EM5 a value the adapter declared a default for is used when the user gave\
+ none, even when it is the first thing on the line" \
+  [list [ase::analysis_line emsim {type emf tail 7}] \
+        [ase::analysis_line emsim {type emf lead 3 tail 7}] \
+        [ase::analysis_line emsim {type emf lead {} tail 7}]] \
+  [list {emf LEADDEF 7} {emf 3 7} {emf LEADDEF 7}]
+
+## --- EM6: THE SLOT WALK STRIPS SIGILS, AND IT IS WRITTEN ONCE --------------
+## A reader and a validator that each walked the template themselves would be two
+## copies of the answer to "which fields does this card consume".
+check "EM6 the fields a deck line consumes are read from the template in one\
+ place, whatever marks each slot carries" \
+  [list [ase::analysis_slots {tran @step @stop @tmax? @uic! END}] \
+        [ase::analysis_slots {op}] \
+        [ase::analysis_slots {emf @lead? @tail}]] \
+  [list {step stop tmax uic} {} {lead tail}]
+
+## --- EM7: ⚠ SEVEN OF THE ELEVEN SHIPPED ENTRIES CARRY NO `fields` KEY ------
+## MEASURED: noise, tf, pz, sens, disto, sp and pss are registered probe-only. A
+## bare `[dict get $e fields]` in the card reader raises for every one of them,
+## and `ase::ui::arg_summary`'s catch (row D8j) would swallow that into a silently
+## degraded pane -- THE EXACT FAILURE THIS STAGE DELETES, RE-CREATED BY THE FIX.
+set EM7NOFLD {}
+foreach em7t [ase::analysis_offered ngspice] {
+  if {![dict exists [ase::analysis_entry ngspice $em7t] fields]} { lappend EM7NOFLD $em7t }
+}
+check "EM7 the analyses this adapter describes but cannot yet drive carry no\
+ field table at all, and asking them for a deck line answers empty instead of\
+ blowing up" \
+  [list $EM7NOFLD \
+        [catch {ase::analysis_cards ngspice {type pss enabled 1}}] \
+        [ase::analysis_line ngspice {type pss enabled 1}]] \
+  [list {noise tf pz sens disto sp pss} 0 {}]
+
+## --- EM8: THE SHIPPED FOUR ARE BYTE-IDENTICAL ------------------------------
+## ⚠ THE WHOLE POINT OF FIXTURE BACKENDS. If this row ever moves, the grammar
+## changed what the product emits and the 104 committed benches moved with it.
+check "EM8 the four analyses this adapter already drives emit exactly what they\
+ emitted before the grammar existed" \
+  [list [ase::analysis_line ngspice {type op enabled 1}] \
+        [ase::analysis_line ngspice {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01}] \
+        [ase::analysis_line ngspice {type ac enabled 1 points 10 start 1 stop 1meg}] \
+        [ase::analysis_line ngspice {type tran enabled 1 step 1n stop 10u}]] \
+  [list op {dc V2 0 1.8 0.01} {ac dec 10 1 1meg} {tran 1n 10u}]
+
+## --- EM9: THE REGISTRY CAN BE ASKED WHETHER IT CONTRADICTS ITSELF ----------
+## ⚠ A PURE READER THAT NEVER RAISES AND IS NEVER CALLED AT LOAD. `ase.tcl` is
+## sourced from inside `Tcl_AppInit()`, so a raise there does not surface in a
+## dialog -- it ABORTS XSCHEM AT STARTUP with no layers, colours, menus or undo
+## set up (issue 0663's arm). A registry validator that runs at load is the one
+## shape this must not take.
+proc em_bad_types {} {
+  return [dict create \
+    emb [dict create label emb baseline 1 registered 1 emitorder 10 \
+           fields {{name shown kind real}} \
+           emit {{role analysis tmpl {emb @missing?}}}]]
+}
+ase::register_backend embad [dict merge [em_five] [dict create analysis_types em_bad_types]]
+check "EM9 a registry that offers a field no deck line consumes, or consumes a\
+ slot it never describes, can be asked to say so -- and asking never blows up" \
+  [list [lsort [ase::analysis_schema_errors embad]] \
+        [ase::analysis_schema_errors ngspice] \
+        [catch {ase::analysis_schema_errors zznosuchsim}]] \
+  [list {{emb fieldunused shown} {emb noslotfield missing}} {} 0]
 
 
 } bigerr]} {

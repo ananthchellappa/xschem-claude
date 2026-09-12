@@ -4080,16 +4080,171 @@ proc ase::analysis_field {sim type field} {
 # byte-for-byte what render_deck's `[dict get $a source]` raised before this
 # refactor, and Stage 1 is not allowed to change a failure mode any more than an
 # output. ase::ui::chana_ok's D6 validation is what stops a user reaching it.
-proc ase::analysis_expand {row tmpl} {
+# ONE RESOLVER FOR A FIELD'S VALUE, so a `default` cannot mean one thing in the
+# deck and another on screen. Issue 1414.
+proc ase::field_descriptor {sim type name} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e fields]} { return {} }
+  foreach f [dict get $e fields] {
+    if {[dict exists $f name] && [dict get $f name] eq $name} { return $f }
+  }
+  return {}
+}
+proc ase::field_default {fd} {
+  if {[dict exists $fd default]} { return [dict get $fd default] }
+  return {}
+}
+# THE VALUE THAT WILL BE EMITTED, or `{}` for "this slot contributes nothing".
+#
+# ⚠ A BOOL IS NOT A STRING, AND ngspice HAS NO WAY TO SAY "OFF". MEASURED on both
+# binaries: `uic 0` and `uic=0` BOTH TURN uic ON, silently -- the token's PRESENCE
+# is the truth and its value is ignored. So a bool slot emits the adapter's
+# `when_true` word when the row says exactly `1`, its `when_false` word (usually
+# nothing at all) otherwise, and NEVER the stored `0`.
+#
+# ⚠ `when_true` IS THE ADAPTER'S WORD, NOT "the field's own name". A schema that
+# hard-codes "present means on" cannot express a simulator whose off-state needs a
+# word of its own -- and the word a simulator wants is content, not schema.
+proc ase::field_emits {fd row name} {
+  set kind {}
+  if {[dict exists $fd kind]} { set kind [dict get $fd kind] }
+  if {$kind eq {bool}} {
+    set on 0
+    if {[dict exists $row $name] && [dict get $row $name] eq {1}} { set on 1 }
+    if {$on} {
+      if {[dict exists $fd when_true]} { return [dict get $fd when_true] }
+      return $name
+    }
+    if {[dict exists $fd when_false]} { return [dict get $fd when_false] }
+    return {}
+  }
+  if {[dict exists $row $name]} {
+    set v [dict get $row $name]
+    if {$v ne {}} { return $v }
+  }
+  return [ase::field_default $fd]
+}
+
+# THE SLOT GRAMMAR.
+#
+#   @name    REQUIRED  -- absent raises, which is what `ase::analysis_emit_check`
+#                         exists to catch BEFORE a deck is written
+#   @name?   OPTIONAL  -- absent or empty CONTRIBUTES NOTHING AT ALL
+#   @name!   BOOL      -- resolved through ase::field_emits; may contribute nothing
+#
+# ⚠ A SKIPPED SLOT MUST EMIT **NOTHING**, NOT AN EMPTY WORD, AND THE DIFFERENCE IS
+# A MEASURED SILENT DEFECT. Joining an empty element gives `tran 1n 10u  0.2n` --
+# seventeen characters with a DOUBLE SPACE -- and ngspice reads `0.2n` as
+# **tstart** rather than as tmax: rc 0, no message, and fifty rows of different
+# physics. The fix is to drop the element rather than to emit it empty, and
+# `string trim` on the join is the belt to that braces.
+#
+# ⚠ THE TWO-ARGUMENT FORM STILL RAISES ON A MISSING REQUIRED SLOT, and that is a
+# CONTRACT, not an accident: row Q2 of tests/headless/test_ase_simcaps_0948.tcl
+# calls this proc with two arguments against each shipped template and asserts
+# `{ok RAISES RAISES RAISES}` -- it is the row that proves a row-free reader was
+# necessary at all. Making `fields` mandatory would turn its `ok` into a raise and
+# redden the suite that owns the seam, for a reason unrelated to its subject.
+proc ase::analysis_expand {row tmpl {fields {}}} {
   set out {}
   foreach tok $tmpl {
-    if {[string index $tok 0] eq {@}} {
-      lappend out [dict get $row [string range $tok 1 end]]
-    } else {
-      lappend out $tok
+    if {[string index $tok 0] ne {@}} { lappend out $tok ; continue }
+    set name [string range $tok 1 end]
+    set sig {}
+    set last [string index $name end]
+    if {$last eq {?} || $last eq {!}} {
+      set sig $last
+      set name [string range $name 0 end-1]
+    }
+    set fd {}
+    foreach f $fields {
+      if {[dict exists $f name] && [dict get $f name] eq $name} { set fd $f ; break }
+    }
+    switch -exact -- $sig {
+      {} {
+        # REQUIRED: raise when absent. Callers that cannot tolerate a raise ask
+        # ase::analysis_emit_check first; that is what it is for.
+        lappend out [dict get $row $name]
+      }
+      ? {
+        set v {}
+        if {[dict exists $row $name]} { set v [dict get $row $name] }
+        if {$v eq {} && $fd ne {}} { set v [ase::field_default $fd] }
+        if {$v ne {}} { lappend out $v }
+      }
+      ! {
+        set v [ase::field_emits $fd $row $name]
+        if {$v ne {}} { lappend out $v }
+      }
     }
   }
-  return [join $out { }]
+  return [string trim [join $out { }]]
+}
+
+# EVERY WAY THIS SIMULATOR'S REGISTRY IS SELF-INCONSISTENT, as a list of
+# `{type token detail}` -- or `{}`. Issue 1414.
+#
+# ⚠ A PURE READER. IT NEVER RAISES AND IT IS NEVER CALLED AT LOAD TIME. `ase.tcl`
+# is sourced from inside `Tcl_AppInit()`, so a raise there does not produce a
+# stack trace in a dialog -- it ABORTS XSCHEM AT STARTUP with none of the layers,
+# colours, menus, key bindings or undo set up (issue 0663's arm). A registry
+# validator that runs at load is the one shape this must not take; it is a thing a
+# test row and a conformance pass call, on purpose, when they want the answer.
+proc ase::analysis_schema_errors {{sim {}}} {
+  set out {}
+  set d [ase::analysis_types $sim]
+  if {$d eq {}} { return {} }
+  dict for {ty e} $d {
+    if {![dict exists $e emit]} { continue }
+    set declared {}
+    if {[dict exists $e fields]} {
+      foreach f [dict get $e fields] {
+        if {[dict exists $f name]} { lappend declared [dict get $f name] }
+      }
+    }
+    foreach card [dict get $e emit] {
+      if {![dict exists $card tmpl]} { lappend out [list $ty nocard {}] ; continue }
+      foreach slot [ase::analysis_slots [dict get $card tmpl]] {
+        if {[lsearch -exact $declared $slot] < 0} {
+          # A slot the template consumes and the entry never describes: the form
+          # cannot offer it, so the user can never fill it, so the deck can never
+          # carry it -- and nothing anywhere says so.
+          lappend out [list $ty noslotfield $slot]
+        }
+      }
+    }
+    foreach f $declared {
+      set used 0
+      foreach card [dict get $e emit] {
+        if {[dict exists $card tmpl] \
+            && [lsearch -exact [ase::analysis_slots [dict get $card tmpl]] $f] >= 0} {
+          set used 1
+        }
+      }
+      if {!$used} {
+        # A field the form offers and no template consumes: the user fills it in
+        # and it reaches nothing. That is the Stage 3 defect itself, stated as a
+        # property of the registry rather than found by running a bench.
+        lappend out [list $ty fieldunused $f]
+      }
+    }
+  }
+  return $out
+}
+
+# THE SLOT NAMES A TEMPLATE ACTUALLY USES, with their sigils stripped -- the one
+# place that walk is written, so a reader and a validator cannot disagree about
+# which fields a card consumes.
+proc ase::analysis_slots {tmpl} {
+  set out {}
+  foreach tok $tmpl {
+    if {[string index $tok 0] ne {@}} { continue }
+    set name [string range $tok 1 end]
+    set last [string index $name end]
+    if {$last eq {?} || $last eq {!}} { set name [string range $name 0 end-1] }
+    lappend out $name
+  }
+  return $out
 }
 
 # Every emitted card for a row, as {role text} pairs.
@@ -4097,9 +4252,18 @@ proc ase::analysis_cards {sim row} {
   set e [ase::analysis_entry $sim [ase::state_get $row type]]
   if {$e eq {} || ![dict exists $e emit]} { return {} }
   set out {}
+  # ⚠ THE `fields` KEY IS PASSED BEHIND A GUARD, AND THE GUARD IS NOT DEFENSIVE
+  # DECORATION. MEASURED: seven of the eleven shipped entries -- noise, tf, pz,
+  # sens, disto, sp, pss -- carry NO `fields` key at all, because Stage 2
+  # registered them as probe-only. A bare `[dict get $e fields]` raises for every
+  # one of them, and `ase::ui::arg_summary`'s catch (row D8j) would swallow that
+  # into a silently degraded pane -- the exact failure this stage exists to
+  # delete, re-created by the fix for it.
+  set flds {}
+  if {[dict exists $e fields]} { set flds [dict get $e fields] }
   foreach card [dict get $e emit] {
     lappend out [list [dict get $card role] \
-                      [ase::analysis_expand $row [dict get $card tmpl]]]
+                      [ase::analysis_expand $row [dict get $card tmpl] $flds]]
   }
   return $out
 }

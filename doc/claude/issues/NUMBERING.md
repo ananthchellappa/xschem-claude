@@ -3168,7 +3168,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1413.**~~ superseded: **1413** is filed, above.
 
-**The next free number is 1414.**
+- **1414** — **A skipped value would have emitted an empty word and shifted every value after it.** Commit C1 of Stage 3: the slot grammar (`@x` required, `@x?` optional, `@x!` bool), `ase::field_emits`, `ase::analysis_slots` and `ase::analysis_schema_errors`. ⚠ Joining an empty element gives `tran 1n 10u  0.2n` — a DOUBLE SPACE — and ngspice reads the next number as **tstart** rather than tmax: rc 0, no message, a different simulation. ⚠ Row EM1 only works because its fixture puts a literal AFTER the optional slot; trailing, the sabotage is byte-identical. ⚠ MEASURED on both binaries: `uic 0` and `uic=0` BOTH TURN uic ON, so a bool emits the adapter's `when_true` word and never the stored value — and the word is the ADAPTER's, or a simulator needing a word for OFF cannot say one. ⚠ The field table is an OPTIONAL third argument because Q2 of test_ase_simcaps_0948 calls the expander with two and asserts it RAISES. ⚠ `analysis_cards` guards `fields` because SEVEN of the eleven shipped entries carry no such key, and a bare `dict get` would be swallowed by arg_summary's catch into a silently degraded pane — this stage's defect, re-created by its fix. Floor core 289 → **298**, six sabotages.
+
+~~**The next free number is 1414.**~~ superseded: **1414** is filed, above.
+
+**The next free number is 1415.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
