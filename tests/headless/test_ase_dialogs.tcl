@@ -83,6 +83,16 @@ set fail 0; set npass 0
 #              simulator. Headless is UNMOVED because every G14 row is a widget
 #              row and sits inside the display guard, by design -- the schema
 #              half of the same change is test_ase_core.tcl section AD.
+#   37 / 265   sections G2b-G2k, Stage 3 (issues 1416-1420): the typed form, the
+#              commit door and the Options editor's closed door.
+#   37 / 271   section G2tf, Stage 5 (issue 1426): the transfer function can be
+#              CHOSEN. Headless is unmoved because every G2tf row is a widget
+#              row; the schema half is test_ase_core.tcl section TF.
+#              ⚠ G2tf's last row reads `$top.chana.status` inside its OWN
+#              `catch`, because the one change it exists to catch -- `insrc`
+#              losing `required 1`, after which OK commits and CLOSES -- raised
+#              `invalid command name ".ase5.chana.status"` and killed the file
+#              at 65 of 271 instead of reddening a row. MEASURED, not feared.
 #
 # ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
 # row; do not edit the number downward to make the file agree with itself.
@@ -841,6 +851,111 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [lsort [dict keys $g2hrow2]] \
           [expr {[set i [tv_find $atv type tran]] ne {} ? [$atv set $i args] : {}}]] \
     [list {enabled step stop type} {tran 1n 10u}]
+
+  # G2tf: THE TRANSFER FUNCTION CAN BE CHOSEN AT ALL. Stage 5, issue 1426.
+  ## ⚠ UNTIL THIS COMMIT `tf` WAS A CELL YOU COULD SELECT AND NOT USE. It was
+  ## `registered 1` with a `role probe` card and nothing else, so the grid showed
+  ## it exists, `ase::analysis_renderable` answered 0, the Enable checkbutton was
+  ## disabled and the form below it was empty. A user could see that ngspice has
+  ## a DC small-signal transfer function and could not ask for one.
+  ##
+  ## ⚠ THIS IS THE HALF test_ase_core CANNOT ASSERT. Section TF there pins the
+  ## registry and the deck bytes; only a real widget can say that the two fields
+  ## are BUILT, that the previous type's widgets are GONE from the same frame,
+  ## and that Enable is live. `$w.form` is destroyed whole on every rebuild
+  ## (Stage 1's `.form` child frame) -- the hardcoded five-name destroy list this
+  ## replaced would have left `step` and `stop` standing behind a tf form.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tf invoke
+  update
+  check "G2tf selecting tf builds its two fields, leaves none of tran's behind,\
+ and leaves Enable live" \
+    [list [winfo exists $top.chana.form.out] [winfo exists $top.chana.form.insrc] \
+          [winfo exists $top.chana.form.step] [winfo exists $top.chana.form.stop] \
+          [winfo exists $top.chana.form.uic] \
+          [winfo class $top.chana.form.out] \
+          [string tolower [$top.chana.enable cget -state]]] \
+    {1 1 0 0 0 Entry normal}
+  ## ⚠ THE LABELS ARE THE DECLARED ONES, and they are NEW USER-FACING COPY --
+  ## ⚖ R9, recorded as an `owed.sh add rule 1426` debt rather than ratified here.
+  check "G2tf the two labels are the declared ones" \
+    [list [$top.chana.form.lout cget -text] [$top.chana.form.linsrc cget -text]] \
+    [list {Output:} {Input source:}]
+  ## ⚠ AND THE WHOLE ROUND TRIP, BECAUSE A FORM THAT BUILDS AND DOES NOT COMMIT
+  ## IS THE DEFECT THIS BATCH IS NAMED FOR. Type both values, tick Enable, press
+  ## OK, and follow them to the stored row AND to the Arguments column -- which
+  ## is `ase::analysis_line`, the same proc render_deck emits.
+  set ::ase::ui::dlg($key,anen) 1
+  foreach {fld val} {out v(D) insrc V1} {
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
+  }
+  $top.chana.btns.proceed invoke
+  update
+  check_true "G2tf an enabled tf row with both values is COMMITTED, not refused" \
+    [expr {![winfo exists $top.chana]}]
+  set g2tfrow {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {tf}} { set g2tfrow $a; break }
+  }
+  set g2tfit [tv_find $atv type tf]
+  check "G2tf the tf row round-trips and the Arguments column is the line the\
+ deck will carry" \
+    [list [ase::state_get $g2tfrow enabled] [ase::state_get $g2tfrow out] \
+          [ase::state_get $g2tfrow insrc] [lsort [dict keys $g2tfrow]] \
+          [expr {$g2tfit ne {} ? [$atv set $g2tfit args] : {}}]] \
+    [list 1 {v(D)} V1 {enabled insrc out type} {tf v(D) V1}]
+  ## ⚠ AND THE DOOR STILL SHUTS ON A HALF-FILLED ONE. Without this the row above
+  ## is satisfied by a door that commits anything -- the G2b/G2c pair's lesson,
+  ## which this file learned by having only one side of it.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tf invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.insrc delete 0 end
+  set g2tf_before [ase::state_get [ase::session_state $key] analyses]
+  $top.chana.btns.proceed invoke
+  update
+  ## ⚠ THE STATUS LINE IS READ INSIDE THIS ROW'S OWN `catch`, AND THAT IS NOT
+  ## DEFENSIVE PADDING -- IT IS WHAT THE SABOTAGE ASKED FOR. A bare
+  ## `$top.chana.status cget -text` here is only legal while the dialog is still
+  ## up, so the one change this row exists to catch -- `insrc` losing its
+  ## `required 1`, after which OK COMMITS AND CLOSES -- raised
+  ## `invalid command name ".ase5.chana.status"` and killed the whole file at 65
+  ## of 271 instead of reddening a row. A suite that dies names the defect with a
+  ## line number; a row that reds names it with a sentence.
+  set g2tf_alive [expr {[winfo exists $top.chana] ? 1 : 0}]
+  set g2tf_said 0
+  if {$g2tf_alive} {
+    catch {
+      set g2tf_said [expr {[string first {insrc} \
+        [$top.chana.status cget -text]] >= 0}]
+    }
+  }
+  check "G2tf an enabled tf row with no input source is refused, the dialog\
+ survives and the state is untouched" \
+    [list $g2tf_alive $g2tf_said \
+          [ase::state_get [ase::session_state $key] analyses]] \
+    [list 1 1 $g2tf_before]
+  ## Leave the bench as the rest of this file found it: no tf row. ⚠ The cancel
+  ## is caught for the same reason as the read above -- under the sabotage the
+  ## dialog is already gone, and the cleanup must not become a second casualty.
+  catch {$top.chana.btns.cancel invoke}
+  update
+  set g2tf_st [ase::session_state $key]
+  set g2tf_rows {}
+  foreach a [ase::state_get $g2tf_st analyses] {
+    if {[ase::state_get $a type] ne {tf}} { lappend g2tf_rows $a }
+  }
+  dict set g2tf_st analyses $g2tf_rows
+  ase::session_update $key $g2tf_st
+  ase::ui::populate $key
+  update
+  check "G2tf the fixture is left without a tf row, so the rows below see the\
+ bench they were written against" \
+    [tv_find $atv type tf] {}
 
   # G2i/G2j/G2k: THE OPTIONS DOOR CLOSES. Issue 1418.
   ## ⚠ THIS EDITOR IS THE DEFECT STAGE 3 IS NAMED FOR. It collected free-text

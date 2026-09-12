@@ -69,6 +69,12 @@
 #   158  section V, issue 1412: leg D, the variant probe. ⚠ The `expr` bareword
 #        that aborts this whole file has now cost THREE runs -- sections L, Q and
 #        V. The rule is written beside V6: bare words do not go in `expr`.
+#   164  section W, Stage 3: which kind of thing a dc sweep variable is.
+#   170  section TV, Stage 5 (issue 1426): one ngspice output variable taken
+#        apart, and the three vectors a `tf` row produces. ⚠ TV4's four fixtures
+#        are VERBATIM `display` transcripts, because only the FIRST of the three
+#        names is a constant -- PLAN.md writes all three as literals and the
+#        other two carry the row's own source and node, folded to lower case.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -4074,6 +4080,106 @@ foreach W_REL [split $W_OUT "\n"] {
 }
 check {W6 the committed benches really do sweep current sources, which is the measurement that chose this classifier over the one the plan sketched} \
   [expr {$W_I >= 7}] 1
+
+# --- TV: ONE ngspice OUTPUT VARIABLE, AND THE THREE VECTORS IT PRODUCES -----
+## Stage 5 of doc/claude/ase_analyses_batch/, issue 1426.
+##
+## ⚠ CONTENT, NOT SCHEMA (D34-D37), FOR BOTH PROCS. ASE-L owns the fact that a
+## transfer function HAS an output and an input; `v(node)`, `v(node,ref)` and
+## `i(vsrc)` are ngspice's spelling, and `Transfer_function` /
+## `<uid>#Input_impedance` / `output_impedance_at_V(<node>)` are ngspice's
+## result names. `ase::needs_eval`'s `tf_out` reaches the first through the
+## `out_decompose` hook exactly as `sweep_target` reaches `dc_swkind`.
+set TV_NS ase::backend::ngspice
+
+## ⚠ `malformed` IS NOT `{}`, AND THE DIFFERENCE IS LOAD-BEARING. An empty
+## answer would have to mean both "I cannot read this" and "there is nothing
+## here to read", and the precondition has to tell them apart: a row with no
+## `out` at all is the REQUIRED-FIELD check's business and must not also be
+## reported as bad syntax.
+check {TV1 an ngspice output variable comes apart into a kind and its names} \
+  [list [a_ans ${TV_NS}::out_decompose {v(out)}] \
+        [a_ans ${TV_NS}::out_decompose {v(out,ref)}] \
+        [a_ans ${TV_NS}::out_decompose {i(vsense)}] \
+        [a_ans ${TV_NS}::out_decompose {V(OUT)}] \
+        [a_ans ${TV_NS}::out_decompose { v( out , ref ) }]] \
+  {{voltage out} {voltage out ref} {current vsense} {voltage OUT} {voltage out ref}}
+
+## ⚠ THE MISSING PARENTHESIS IS THE ONE A USER ACTUALLY TYPES, AND ngspice'S
+## ANSWER TO IT NAMES THE WRONG THING. MEASURED 2026-09-12 on the fork and on
+## apt 45.2: `tf v mid V1` fails with `Warning: Transfer function source  not
+## in circuit` -- the EMPTY source name -- because the `v` branch with no `(`
+## consumes nothing and the insrc slot is then never filled. A user reading that
+## goes and looks at their source. APPENDIX §2.7 records the dot-card half of
+## the same defect (`inp2dot.c:372-374` has an empty error arm).
+check {TV2 an output this simulator cannot read is named malformed, including the missing parenthesis that ngspice blames on the source} \
+  [list [a_ans ${TV_NS}::out_decompose {v mid}] \
+        [a_ans ${TV_NS}::out_decompose {x(mid)}] \
+        [a_ans ${TV_NS}::out_decompose {v(}] \
+        [a_ans ${TV_NS}::out_decompose {v()}] \
+        [a_ans ${TV_NS}::out_decompose {i(a,b)}] \
+        [a_ans ${TV_NS}::out_decompose {v(a,b,c)}] \
+        [a_ans ${TV_NS}::out_decompose {v(a,)}] \
+        [a_ans ${TV_NS}::out_decompose {}]] \
+  {malformed malformed malformed malformed malformed malformed malformed malformed}
+
+## ⚠ IT IS REACHABLE THROUGH THE HOOK, NOT ONLY BY ITS FULLY QUALIFIED NAME.
+## `ase::needs_eval` resolves it through `ase::backend_hook`, so a proc that
+## exists and is not registered is a proc the precondition never calls -- and
+## the precondition's own "an adapter with no hook gets no opinion" arm would
+## swallow that into silence.
+check {TV3 out_decompose is registered as a hook, and an unregistered one raises rather than answering} \
+  [list [expr {[a_ans ase::backend_hook ngspice out_decompose] eq \
+                 {::ase::backend::ngspice::out_decompose}}] \
+        [string range [a_ans ase::backend_hook ngspice zznosuchhook] 0 6]] \
+  {1 RAISED:}
+
+## --- TV4/TV5: THE THREE VECTOR NAMES -----------------------------------------
+## ⚠ PLAN.md Stage 5 WRITES THEM AS THREE LITERALS and only the FIRST is one.
+## MEASURED 2026-09-12, `display` after each command on the fork:
+##
+##   tf v(mid) V1     -> Transfer_function / v1#Input_impedance /
+##                       output_impedance_at_V(mid)
+##   tf v(mid,out) V1 -> output_impedance_at_V(mid,out)      [no space]
+##   tf i(Vsense) V1  -> vsense#Output_impedance             [the i() form
+##                       replaces the output-impedance name entirely]
+##   tf v(MID) v1     -> output_impedance_at_V(mid)          [the node is FOLDED
+##                       and `output_impedance_at_V` keeps its capital V]
+check {TV4 the three vectors a tf row will produce are computed from the row, and the UID prefixes are folded while the constants are not} \
+  [list [a_ans ${TV_NS}::tf_vectors {type tf out v(mid) insrc V1}] \
+        [a_ans ${TV_NS}::tf_vectors {type tf out v(mid,out) insrc V1}] \
+        [a_ans ${TV_NS}::tf_vectors {type tf out i(Vsense) insrc V1}] \
+        [a_ans ${TV_NS}::tf_vectors {type tf out v(MID) insrc V1}]] \
+  [list {Transfer_function v1#Input_impedance output_impedance_at_V(mid)} \
+        {Transfer_function v1#Input_impedance output_impedance_at_V(mid,out)} \
+        {Transfer_function v1#Input_impedance vsense#Output_impedance} \
+        {Transfer_function v1#Input_impedance output_impedance_at_V(mid)}]
+
+## ⚠ IT NEVER RAISES AND AN UNREADABLE OR ABSENT FIELD SIMPLY DROPS A NAME. The
+## caller is a results surface, not a validator: `tf_out` is the precondition
+## that has a sentence for bad syntax, and a pane that blew up on a half-filled
+## row would be issue 1405's shape again.
+check {TV5 a half-filled or malformed tf row answers the names it can and does not raise} \
+  [list [a_ans ${TV_NS}::tf_vectors {type tf}] \
+        [a_ans ${TV_NS}::tf_vectors {type tf out v(mid)}] \
+        [a_ans ${TV_NS}::tf_vectors {type tf insrc V1}] \
+        [a_ans ${TV_NS}::tf_vectors {type tf out {v mid} insrc V1}]] \
+  [list {Transfer_function} \
+        {Transfer_function output_impedance_at_V(mid)} \
+        {Transfer_function v1#Input_impedance} \
+        {Transfer_function v1#Input_impedance}]
+
+## ⚠ AND THE REGISTRY REALLY REACHES IT. `plots`' `vectors` key is opaque to
+## core -- nothing reads it before Stage 6 -- so without this row the proc could
+## be renamed and the registry would keep naming a command that does not exist,
+## silently, until Stage 6 went looking.
+set TV_PL [lindex [dict get [ase::analysis_entry ngspice tf] plots] 0]
+check {TV6 the tf entry's plots row names a command that exists, and names the measured Plotname literal} \
+  [list [dict get $TV_PL select] \
+        [expr {[llength [info commands [dict get $TV_PL vectors]]] > 0}] \
+        [a_ans [dict get $TV_PL vectors] {type tf out v(mid) insrc V1}]] \
+  [list {Transfer Function} 1 \
+        {Transfer_function v1#Input_impedance output_impedance_at_V(mid)}]
 
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which

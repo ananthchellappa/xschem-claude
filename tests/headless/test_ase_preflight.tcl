@@ -41,17 +41,28 @@
 #   PF222      issue 1401 -- an ENABLED analysis this backend cannot render is
 #              refused here, ahead of the deck write, and `ase_preflight 0`
 #              does NOT defeat that clause (PF221 is a 54-row family above)
+#   PF223-226  issues 1422-1425 -- netlist_facts, preconditions as filters, a
+#              fatal precondition as a refusal, and the remedy said before the run
+#   PF227      issue 1426 -- the transfer function's two preconditions, and the
+#              measured asymmetry between them: ngspice checks the INPUT source
+#              and aborts, and does NOT check the OUTPUT at all
 #
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 152 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 164 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
 # rundir clause dropped and the rank table unscoped. RAISED 115 -> 122 -> 125. If a run reports fewer,
 # a row went missing; do not edit this number down to match it. RAISED 125 -> 135
-# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224, 144 -> 149 with PF225, 149 -> 152 with PF226.
+# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224, 144 -> 149 with PF225, 149 -> 152 with PF226,
+# and 152 -> 164 with PF227 (Stage 5, issue 1426 -- the transfer function's two
+# preconditions). ⚠ PF227 is the section where the static demotion is measured
+# to be RIGHT for one finding and WRONG for another in the same predicate: a
+# missing node is `blocked`->`caution` with the `.include` caveat, and a
+# malformed output is `fatal` and carries none, because no include can make
+# `v mid` legal.
 #
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -1391,6 +1402,190 @@ set KADV0 [pcall ase::preflight_gate [kstate {}] $KNOAC]
 set ::ase_preflight 1
 eqcheck PF226c-the-escape-turns-off-a-refusal-not-the-advice \
   [list $KADV0 [expr {[said_count {*has no AC source*}] >= 1}]] {{} 1}
+
+
+# ===========================================================================
+# PF227 — the transfer function's two preconditions (Stage 5, issue 1426)
+# ===========================================================================
+## ⚠ ngspice CHECKS THE INPUT AND DOES NOT CHECK THE OUTPUT, AND THE TWO
+## PREDICATES EXIST BECAUSE OF THAT ASYMMETRY. MEASURED 2026-09-12 on the fork
+## (`build-ver_50`) and on apt 45.2 alike, one `-b` deck per line:
+##
+##   tf v(mid) Rnope     -> rc 1, `Warning: Transfer function source rnope not
+##                                 in circuit`
+##   tf v(mid) R1        -> rc 1, `Warning: Transfer function source r1 not of
+##                                 proper type`
+##   tf v(nosuchnode) V1 -> rc 0, Transfer_function = 0.000000e+00
+##   tf v(in,nosuch)  V1 -> rc 0, Transfer_function = 1.000000e+00
+##   tf i(R1)         V1 -> rc 0, r1#Output_impedance = 1.000000e+20
+##   tf i(nosuchsrc)  V1 -> rc 0, nosuchsrc#Output_impedance = 1.000000e+20
+##   tf x(mid)        V1 -> rc 1, `Error: Syntax error: voltage or current
+##                                 expected.`
+##
+## Four of those seven are a run that SUCCEEDED, with a vector named after the
+## thing that does not exist and three plausible numbers in it. Nothing on
+## either stream. `tfanal.c:112-157` solves against the already-factored
+## Jacobian with a unit excitation, so an unmatched name excites nothing and the
+## 1e20 is the `|rhs| < 1e-20` clamp.
+set TFNL "* t\nV1 in 0 dc 1 ac 1\nVsense mid out 0\nR1 in mid 1k\nR2 out 0 2k\n.end\n"
+proc tfrow {args} { return [list [concat {type tf enabled 1} $args]] }
+proc tfn {pc n} { return [lindex [lindex [dgn $pc tf] $n] 0] }
+proc tfv {pc n} { return [lindex [lindex [dgn $pc tf] $n] 1] }
+proc tfs {pc n} { return [lindex [lindex [dgn $pc tf] $n] 2] }
+proc tff {pc n} { return [lindex [lindex [dgn $pc tf] $n] 3] }
+
+eqcheck PF227a-a-tf-row-this-circuit-can-run-says-nothing \
+  [list [dict size [pcheck $TFNL [tfrow out {v(mid)} insrc V1]]] \
+        [dict size [pcheck $TFNL [tfrow out {v(mid,out)} insrc V1]]] \
+        [dict size [pcheck $TFNL [tfrow out {i(Vsense)} insrc V1]]]] \
+  {0 0 0}
+
+## ⚠ THE SHARPER OF THE TWO. ngspice reports three numbers for an output node
+## that is not there, so ASE-L is the only place this can be said at all.
+set TFPB [pcheck $TFNL [tfrow out {v(nosuchnode)} insrc V1]]
+eqcheck PF227b-an-output-node-that-is-not-in-the-circuit-is-reported \
+  [list [tfn $TFPB 0] [tfv $TFPB 0] \
+        [expr {[string first {'nosuchnode'} [tfs $TFPB 0]] >= 0}] \
+        [expr {[string first {three numbers} [tfs $TFPB 0]] >= 0}] \
+        [tff $TFPB 0]] \
+  {tf_out caution 1 1 {name a node that is in the circuit}}
+
+## ⚠ AND IT IS DEMOTED TO `caution` WITH THE `.include` CAVEAT, because an
+## included file really could define that node. This half is the one the static
+## rule is right about.
+eqcheck PF227c-the-missing-node-carries-the-static-caveat \
+  [expr {[string first {cannot see inside an .include} [tfs $TFPB 0]] >= 0}] 1
+
+## ⚠ THE SYNTAX ERROR IS `fatal`, AND THAT IS WHAT KEEPS THE CAVEAT OFF IT. No
+## `.include` can make `v mid` a legal output -- the finding does not rest on the
+## netlist at all -- so a sentence saying the pass "cannot see inside an
+## .include" would be a lie about why ASE-L is unsure. `fatal` is exempt from
+## the demotion and is also the honest severity. MEASURED 2026-09-12 with this
+## tree's own `sim_status` guard wrapped around the analysis:
+##
+##   tf x(mid) V1        -> rc 1, `RUN-FAILED`, the guard's `quit 1` fires and
+##                                NOTHING after it in `.control` runs
+##   tf v(nosuchnode) V1 -> rc 0, `REACHED-THE-END`
+set TFPM [pcheck $TFNL [tfrow out {v mid} insrc V1]]
+eqcheck PF227d-an-output-this-simulator-cannot-read-is-fatal-and-carries-no-include-caveat \
+  [list [tfn $TFPM 0] [tfv $TFPM 0] \
+        [string first {cannot see inside} [tfs $TFPM 0]] \
+        [expr {[string first {parentheses are not optional} [tff $TFPM 0]] >= 0}]] \
+  {tf_out fatal -1 1}
+
+## ⚠ NON-VACUITY FOR PF227d, AND IT IS THE ROW THE MEASUREMENT DEMANDS. The
+## missing parenthesis is the mistake a user actually makes, and ngspice blames
+## it on the SOURCE: `tf v mid V1` fails with `Warning: Transfer function source
+## not in circuit` -- the EMPTY name -- because the `v` branch with no `(`
+## consumes nothing and the insrc slot is never filled. A user reading that goes
+## and looks at their source. So the gate has to refuse it, and refuse it saying
+## something about the OUTPUT.
+said_clear
+set TFG [pcall ase::preflight_gate \
+  [dict replace [mkstate $RD c $TFNL] analyses [tfrow out {v mid} insrc V1]] $TFNL]
+eqcheck PF227e-the-gate-refuses-the-malformed-output-and-names-the-output \
+  [list [string range $TFG 0 3] \
+        [expr {[said_count {*v mid*}] >= 1}] \
+        [expr {[said_count {*parentheses*}] >= 1}]] \
+  {ERR: 1 1}
+
+## ⚠ AND A DECK THE ANALYSIS CAN RUN STILL PASSES THE GATE, so PF227e is
+## measuring the malformed output and not something else about this state.
+eqcheck PF227f-a-runnable-tf-row-passes-the-same-gate \
+  [pcall ase::preflight_gate \
+    [dict replace [mkstate $RD c $TFNL] analyses [tfrow out {v(mid)} insrc V1]] $TFNL] \
+  {}
+
+## ⚠ `i(...)` IS A VOLTAGE SOURCE AND ONLY A VOLTAGE SOURCE, AND THAT WAS
+## MEASURED ACROSS FOUR DEVICE CLASSES RATHER THAN REASONED. `i(L1)` IS a real
+## branch current elsewhere in ngspice -- `op` then `print i(L1)` answers
+## `5.000000e-04` while `print i(R1)` answers `Error: no such function as i, or
+## i(r1) is not available.` -- so "an inductor has no branch current" would have
+## been a FALSE REFUSAL had anyone stopped at the argument. It is not the
+## reason. MEASURED 2026-09-12, `tf i(X) V1` on a divider, reading
+## `Transfer_function`:
+##
+##   i(Vsense)  3.333333e-04   <- correct; 1/3k A/V
+##   i(L1)      0.000000e+00   <- WRONG, and rc 0
+##   i(I1)      0.000000e+00   <- WRONG, and rc 0
+##   i(R1)      0.000000e+00   <- WRONG, and rc 0
+##
+## `tf`'s own `i()` form resolves to a VSOURCE branch equation and nothing else.
+## ⚠ AND THE CURRENT SOURCE IS THE ROW THAT MATTERS: `I1` IS in `facts sources`,
+## so a predicate that asked "is this an independent source" instead of "is this
+## a voltage source" would pass it, silently, at rc 0.
+set TFNLI "* t\nV1 in 0 dc 1 ac 1\nVsense mid out 0\nI1 mid 0 dc 0\nR1 in mid 1k\nR2 out 0 2k\n.end\n"
+set TFPI [pcheck $TFNL [tfrow out {i(R1)} insrc V1]]
+set TFPI2 [pcheck $TFNLI [tfrow out {i(I1)} insrc V1]]
+eqcheck PF227g-a-current-output-that-names-no-voltage-source-is-reported \
+  [list [tfn $TFPI 0] [tfv $TFPI 0] \
+        [expr {[string first {'i(R1)'} [tfs $TFPI 0]] >= 0}] \
+        [tfn $TFPI2 0] \
+        [expr {[string first {'i(I1)'} [tfs $TFPI2 0]] >= 0}] \
+        [dict size [pcheck $TFNL [tfrow out {i(Vsense)} insrc V1]]] \
+        [dict size [pcheck $TFNLI [tfrow out {i(Vsense)} insrc V1]]]] \
+  {tf_out caution 1 tf_out 1 0 0}
+
+## ⚠ TWO SENTENCES, NOT ONE, FOR THE INPUT SOURCE. ngspice has two errors here
+## and they send a user to two different places: "you named something that is
+## not there" and "you named the wrong kind of thing". A predicate answering one
+## sentence for both would make the second look like a typo.
+set TFPN [pcheck $TFNL [tfrow out {v(mid)} insrc Vnope]]
+set TFPT [pcheck $TFNL [tfrow out {v(mid)} insrc R1]]
+## ⚠ AND THE TWO SENTENCES ARE COMPARED CLAUSE BY CLAUSE, NOT JUST FOR BEING
+## DIFFERENT STRINGS. Both carry the name the user typed, so a predicate
+## answering ONE sentence for both conditions still produces two different
+## strings -- and a row asserting only `$a ne $b` passes it. Each clause is
+## asserted present in its own sentence and ABSENT from the other.
+eqcheck PF227h-the-input-source-must-exist-and-must-be-an-independent-source \
+  [list [tfn $TFPN 0] [expr {[string first {'Vnope'} [tfs $TFPN 0]] >= 0}] \
+        [tfn $TFPT 0] [expr {[string first {'R1'} [tfs $TFPT 0]] >= 0}] \
+        [expr {[string first {not an independent source} [tfs $TFPT 0]] >= 0}] \
+        [expr {[string first {not an independent source} [tfs $TFPN 0]] >= 0}] \
+        [expr {[string first {this circuit has no} [tfs $TFPN 0]] >= 0}] \
+        [expr {[string first {this circuit has no} [tfs $TFPT 0]] >= 0}]] \
+  {tf_insrc 1 tf_insrc 1 1 0 1 0}
+
+## ⚠ BOTH INPUT-SOURCE FINDINGS STAY `caution`, AND THAT IS THE ASYMMETRY WITH
+## PF227d STATED AS A ROW. An `.include`d stimulus file really can supply `V1`,
+## so a refusal here would be the false refusal the whole pass is written to
+## avoid -- even though ngspice's own answer to both is a hard rc 1 abort. The
+## severity tracks WHAT THE STATIC PASS CAN KNOW, never how loudly the simulator
+## complains.
+eqcheck PF227i-a-missing-input-source-is-a-caution-however-hard-ngspice-fails \
+  [list [tfv $TFPN 0] [tfv $TFPT 0] \
+        [expr {[string first {cannot see inside an .include} [tfs $TFPN 0]] >= 0}] \
+        [pcall ase::preflight_gate \
+          [dict replace [mkstate $RD c $TFNL] analyses [tfrow out {v(mid)} insrc Vnope]] \
+          $TFNL]] \
+  {caution caution 1 {}}
+
+## ⚠ EACH NODE OF A TWO-NODE OUTPUT IS CHECKED, AND ONLY THE MISSING ONE IS
+## NAMED. `tf v(in,nosuch) V1` is rc 0 with `Transfer_function = 1.0`; a
+## predicate that stopped at the first node would pass it.
+set TFP2 [pcheck $TFNL [tfrow out {v(mid,nosuch)} insrc V1]]
+eqcheck PF227j-the-reference-node-of-a-two-node-output-is-checked-too \
+  [list [tfn $TFP2 0] \
+        [expr {[string first {'nosuch'} [tfs $TFP2 0]] >= 0}] \
+        [expr {[string first {'mid'} [tfs $TFP2 0]] >= 0}]] \
+  {tf_out 1 0}
+
+## ⚠ A SWITCHED-OFF tf ROW MAKES NO CLAIM ABOUT A RUN, and a bench that opens
+## carrying a disabled transfer function must not open wearing a warning about a
+## circuit nobody has asked it to simulate.
+eqcheck PF227k-a-disabled-tf-row-is-not-prechecked \
+  [dict size [pcheck $TFNL {{type tf enabled 0 out {v mid} insrc Rnope}}]] 0
+
+## ⚠ AND A ROW WITH NOTHING FILLED IN IS THE COMMIT DOOR'S BUSINESS, NOT THIS
+## PASS'S. `ase::analysis_emit_check` already refuses an empty required field by
+## name; reporting it here as well would show the user two sentences about one
+## mistake, and reporting an ABSENT `out` as BAD SYNTAX would be the wrong one
+## of the two. That is why `out_decompose` answers `malformed` and the predicate
+## returns early on an empty field rather than folding the two into one answer.
+eqcheck PF227l-an-empty-tf-row-is-left-to-the-commit-door \
+  [list [dict size [pcheck $TFNL {{type tf enabled 1}}]] \
+        [lindex [lindex [ase::analysis_emit_check ngspice {type tf enabled 1}] 0] 0]] \
+  {0 missing}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

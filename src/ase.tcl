@@ -6159,6 +6159,152 @@ proc ase::needs_eval {sim type id row facts opts} {
         "this circuit has no '$nm' to sweep" \
         "name a voltage source, a current source, a resistor, or `temp`"]
     }
+    tf_insrc {
+      # THE TRANSFER FUNCTION'S INPUT SOURCE HAS TO BE AN INDEPENDENT SOURCE,
+      # and ngspice says so twice, in two different sentences, AFTER the run has
+      # started. MEASURED 2026-09-12 on the fork and on apt 45.2 alike:
+      #
+      #   tf v(mid) Rnope -> rc 1, `Warning: Transfer function source rnope not
+      #                             in circuit` + `doAnalyses: not found`
+      #   tf v(mid) R1    -> rc 1, `Warning: Transfer function source r1 not of
+      #                             proper type`
+      #
+      # Both then print `tf simulation(s) aborted` and ngspice's own batch-mode
+      # complaint about an empty netlist, which names neither the analysis nor
+      # the source and is the line a user actually reads. `tfanal.c:49-71` is
+      # the source of both, `E_NOTFOUND` for each.
+      #
+      # ⚠ `facts sources` HOLDS EXACTLY THE `v` AND `i` CARDS, so membership in
+      # it answers BOTH questions at once -- but the two sentences stay apart,
+      # because "you named something that is not there" and "you named the wrong
+      # kind of thing" send a user to two different places.
+      if {![dict exists $row insrc] || [dict get $row insrc] eq {}} { return {} }
+      set nm [dict get $row insrc]
+      dict for {inst rec} [dict get $facts sources] {
+        if {[string equal -nocase $inst $nm]} { return {} }
+      }
+      set seen 0
+      dict for {sc sd} [dict get $facts nodes] {
+        foreach dn [dict keys [dict get $sd devs]] {
+          if {[string equal -nocase $dn $nm]} { set seen 1 ; break }
+        }
+        if {$seen} break
+      }
+      if {$seen} {
+        return [list blocked \
+          "'$nm' is not an independent source, and a transfer function can only\
+ be driven from one" \
+          "name a voltage source or a current source"]
+      }
+      return [list blocked \
+        "this circuit has no '$nm' to drive the transfer function from" \
+        "name a voltage source or a current source"]
+    }
+    tf_out {
+      # ⚠ THIS IS THE ONE THAT MATTERS, AND IT IS THE OPPOSITE FAILURE FROM THE
+      # ONE ABOVE. ngspice validates the transfer function's INPUT and aborts;
+      # it does NOT validate the OUTPUT. MEASURED 2026-09-12, rc 0 every time,
+      # nothing on either stream:
+      #
+      #   tf v(nosuchnode) V1 -> Transfer_function = 0.000000e+00
+      #   tf v(in,nosuch)  V1 -> Transfer_function = 1.000000e+00
+      #   tf i(R1)         V1 -> r1#Output_impedance = 1.000000e+20
+      #   tf i(nosuchsrc)  V1 -> nosuchsrc#Output_impedance = 1.000000e+20
+      #
+      # Three plausible numbers, a vector named after the thing that does not
+      # exist, and a run that "succeeded". `tfanal.c:112-157` solves against the
+      # already-factored Jacobian with a unit excitation, so an unmatched name
+      # simply excites nothing; the 1e20 is the `|rhs| < 1e-20` clamp. A user
+      # has no way at all to learn this from the simulator.
+      #
+      # ⚠ ONLY THE LEADING LETTER IS CHECKED BY ngspice: `tf x(mid) V1` is
+      # `Error: Syntax error: voltage or current expected.`, rc 1. Everything
+      # inside the parentheses is a display string.
+      if {![dict exists $row out] || [dict get $row out] eq {}} { return {} }
+      set outv [dict get $row out]
+      set d {}
+      catch {
+        set h [ase::backend_hook $sim out_decompose]
+        if {$h ne {}} { set d [$h $outv] }
+      }
+      # ⚠ AN ADAPTER WITH NO `out_decompose` GETS NO OPINION, and that is the
+      # same house rule every other optional hook keeps: absent means NOT
+      # MEASURED, never NO. Refusing here would be a claim about a simulator
+      # ASE-L has never seen.
+      if {$d eq {}} { return {} }
+      if {$d eq {malformed}} {
+        # ⚠ `fatal`, AND IT IS THE STATIC DEMOTION THAT MAKES IT SO. Every
+        # other finding in this predicate rests on `ase::netlist_facts`, which
+        # is `exact 0` -- an `.include` really could define the node or the
+        # source it says is missing -- so `blocked` is right and the evaluator
+        # lowers it to `caution` with "cannot see inside an .include" appended.
+        # THAT SENTENCE IS FALSE ABOUT A SYNTAX ERROR. No include can make
+        # `v mid` a legal output; the finding does not depend on the netlist at
+        # all, and a caveat about what the pass could not see is a lie about why
+        # ASE-L is unsure. `fatal` is exempt from the demotion, and it is also
+        # the honest severity. MEASURED 2026-09-12 with this tree's own
+        # `sim_status` guard around the analysis:
+        #
+        #   tf x(mid) V1        -> rc 1, `RUN-FAILED`, the guard's `quit 1`
+        #                                fires and NOTHING after it in
+        #                                `.control` runs
+        #   tf v(nosuchnode) V1 -> rc 0, `REACHED-THE-END`
+        #
+        # which is `fatal`'s definition word for word (issue 1424): not "this
+        # run will be less useful", but "ngspice will not reach the end of
+        # `.control`".
+        return [list fatal \
+          "'$outv' is not an output this simulator can read" \
+          "write it as `v(node)`, `v(node,reference)` or `i(source)` -- the\
+ parentheses are not optional"]
+      }
+      set kind [lindex $d 0]
+      if {$kind eq {current}} {
+        # ⚠ A VOLTAGE SOURCE, AND ONLY A VOLTAGE SOURCE, AND THAT IS MEASURED
+        # ACROSS FOUR DEVICE CLASSES RATHER THAN ASSUMED. `i(L1)` IS a real
+        # branch current elsewhere in ngspice -- `op` then `print i(L1)` answers
+        # `5.000000e-04` while `print i(R1)` answers `Error: no such function as
+        # i, or i(r1) is not available.` -- so "an inductor has no branch
+        # current" would have been a FALSE REFUSAL had it been reasoned rather
+        # than measured. It is not the reason. MEASURED 2026-09-12, `tf i(X) V1`
+        # on a divider, reading `Transfer_function`:
+        #
+        #   i(Vsense)  3.333333e-04   <- correct; 1/3k A/V
+        #   i(L1)      0.000000e+00   <- WRONG, and rc 0
+        #   i(I1)      0.000000e+00   <- WRONG, and rc 0
+        #   i(R1)      0.000000e+00   <- WRONG, and rc 0
+        #
+        # `tf`'s own `i()` form resolves to a VSOURCE branch equation and
+        # nothing else, so everything but a voltage source is a silent zero.
+        set nm [lindex $d 1]
+        dict for {inst rec} [dict get $facts sources] {
+          if {[string equal -nocase $inst $nm] \
+              && [dict get $rec letter] eq {v}} { return {} }
+        }
+        return [list blocked \
+          "'$outv' names no voltage source to read a current through, and this\
+ analysis reports three numbers either way" \
+          "name a voltage source, or measure a voltage with `v(node)` instead"]
+      }
+      # A VOLTAGE OUTPUT: every node it names has to exist somewhere.
+      set missing {}
+      foreach n [lrange $d 1 end] {
+        set seen 0
+        dict for {sc sd} [dict get $facts nodes] {
+          if {[dict exists $sd nodes $n]} { set seen 1 ; break }
+          foreach nn [dict keys [dict get $sd nodes]] {
+            if {[string equal -nocase $nn $n]} { set seen 1 ; break }
+          }
+          if {$seen} break
+        }
+        if {!$seen} { lappend missing $n }
+      }
+      if {![llength $missing]} { return {} }
+      return [list blocked \
+        "this circuit has no node '[join $missing {' and no node '}]', and this\
+ analysis reports three numbers anyway rather than saying so" \
+        "name a node that is in the circuit"]
+    }
     cider_klu {
       # ⚠ FATAL, AND IT IS NOT A STYLE OPINION. A CIDER device under the KLU
       # solver makes ngspice `exit(1)` -- not an error return, an EXIT -- so the
@@ -14312,9 +14458,15 @@ $_leg
   # speller's RETURN TYPE, which is free with one implementation and costs every
   # reader afterwards. ngspice's one-element list emits today's exact text.
   proc analysis_types {} {
-  # -- THE SEVEN ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
+  # -- THE SIX ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
   # -- DRIVE. Stage 2 (issue 1410) LISTS them so the user can see they
   # exist; Stage 6 gives them an `emit` and makes them runnable.
+  #
+  # ⚠ IT WAS SEVEN UNTIL Stage 5 (issue 1426) GAVE `tf` A REAL ENTRY, and the
+  # paragraphs below are written about the ones that are LEFT. `tf` now carries
+  # `emitorder`, `fields` and a `role analysis` card, so every "NO x" below is
+  # answered for it in its own block -- with one exception that is NOT a
+  # relaxation and is measured: it still declares NO `viewrank`. See there.
   #
   # ⚠ NO `emitorder`, AND THAT IS THE GUARD, NOT AN OMISSION. MEASURED:
   # an entry carrying `emitorder` with no `emit` template used to pass
@@ -14346,6 +14498,92 @@ $_leg
   # `baseline 1` for the nine analyses unconditional in every ngspice ever
   # shipped; `baseline 0` for `sp` and `pss`, which are #ifdef-gated and
   # genuinely may be absent.
+  #
+  # ─── `tf`, THE DC SMALL-SIGNAL TRANSFER FUNCTION (Stage 5, issue 1426) ─────
+  #
+  # ⚠ `tf` DECLARES NO `viewrank`, AND THAT IS A MEASUREMENT, NOT A COPY OF THE
+  # PARAGRAPH ABOVE. `tf` CAN emit and DOES produce data -- three scalars in a
+  # plot named `Transfer Function` -- so the "a type nothing can emit produces
+  # no results" argument does not reach it. The reason is one step further on:
+  # `ase::plot_sim_type` answers a type NAME, and the waveform seam spends that
+  # name as `xschem raw read <file> <type>`. MEASURED 2026-09-12 against a raw
+  # carrying an `Operating Point` plot and a `Transfer Function` plot, through
+  # this tree's own binary:
+  #
+  #     xschem raw read both.raw tf                   -> raw_read(): no useful
+  #                                                      data found ... or no
+  #                                                      "tf" analysis      -> 0
+  #     xschem raw read both.raw op                   -> sim_type=op        -> 1
+  #     xschem raw read both.raw {Transfer Function}  -> sim_type=Transfer
+  #                                                      Function          -> 1
+  #
+  # `src/save.c`'s `read_dataset()` maps `Plotname:` to a type with six NAMED
+  # arms (transient / dc transfer characteristic / noise spectral density /
+  # operating point / integrated noise / ac|spectrum|sp) and then falls through
+  # to an EXACT `strcmp` against the plot name itself. `tf` is in neither set.
+  # A `viewrank` would therefore make `ase::plot_sim_type` answer `tf` for a
+  # tf-only bench, `plot_sim_type_reason` answer `{}` -- "there IS a mapping" --
+  # and the viewer open on nothing, saying nothing. ⚠ PLAN.md Stage 5 SPECIFIES
+  # `viewrank 0` FOR THIS ENTRY. The tree refutes it; `viewrank` is what Stage 6
+  # revisits when it teaches a surface to read a scalar plot.
+  #
+  # ⚠ NO `seed_enabled`, for the same reason as the six: `ase::state_default`
+  # stays at four rows and the 104 committed `.state` files keep round-tripping
+  # byte-identically. Section CP of tests/headless/test_ase_core.tcl is the row
+  # that would notice.
+  #
+  # ⚠ TWO FIELDS, NOT THE PLAN'S FIVE, BECAUSE THE `{build <proc>}` ESCAPE IS
+  # NOT IN THIS TREE. PLAN.md §1c specifies `{build <proc>}` as the way an
+  # adapter spells a slot it has to COMPOSE, and Stage 5 spends it on
+  # `{outkind outnode outref outsrc}` -> `v(a,b)`. Stage 1 shipped `@x`, `@x?`
+  # and `@x!` and no `build` arm (`ase::analysis_expand`), so a `{build …}`
+  # token today is emitted as the LITERAL WORDS `build ase::backend::…`. The
+  # slot grammar joins tokens with a space and cannot build `v(mid,out)` out of
+  # three of them, so until that escape exists an emitted token is one field.
+  # `out` is that token, verbatim.
+  #
+  # ⚠ AND ngspice DOES NOT CHECK IT. MEASURED 2026-09-12 on both binaries:
+  #
+  #     tf v(mid) V1       -> rc 0, Transfer_function = 6.250000e-01   (right)
+  #     tf v(nosuchnode) V1-> rc 0, Transfer_function = 0.000000e+00   (silent)
+  #     tf v(in,nosuch) V1 -> rc 0, Transfer_function = 1.000000e+00   (silent)
+  #     tf i(R1) V1        -> rc 0, r1#Output_impedance = 1.000000e+20 (silent)
+  #     tf i(nosuchsrc) V1 -> rc 0, nosuchsrc#Output_impedance = 1e20  (silent)
+  #     tf x(mid) V1       -> rc 1, Error: Syntax error: voltage or current
+  #                                        expected.
+  #     tf v(mid) R1       -> rc 1, Warning: Transfer function source r1 not of
+  #                                          proper type
+  #     tf v(mid) Rnope    -> rc 1, Warning: Transfer function source rnope not
+  #                                          in circuit
+  #     tf v mid V1        -> rc 1, Warning: Transfer function source  not in
+  #                                          circuit   (the EMPTY name -- the
+  #                                          missing parenthesis ate the source)
+  #
+  # The INPUT source is validated and aborts the run; the OUTPUT variable is
+  # validated only for its leading `v`/`i` and otherwise produces three
+  # plausible numbers with nothing on either stream. That asymmetry is why this
+  # entry carries TWO `needs` ids rather than one, and why `tf_out`'s sentence
+  # is the sharper of the two.
+  #
+  # ⚠ `plots`' `vectors` NAMES A PROC, BECAUSE TWO OF THE THREE VECTOR NAMES
+  # ARE COMPUTED FROM THE ROW. PLAN.md writes them as three literals
+  # (`Transfer_function v1#Input_impedance output_impedance_at_V(b)`); measured,
+  # only the FIRST is a constant. The other two carry the row's own input source
+  # and output node, FOLDED TO LOWERCASE even on the case-preserving fork:
+  # `tf v(MID) V1` reports `output_impedance_at_V(mid)`, and `tf i(VSENSE) V1`
+  # reports `vsense#Output_impedance`. `plots` is opaque to core (nothing reads
+  # it before Stage 6), so the proc is the honest shape for what is actually a
+  # template. `ase::backend::ngspice::tf_vectors` is that proc.
+  #
+  # ⚠ AND THE CAPITALS ARE THE FORK'S. MEASURED 2026-09-12, the same deck
+  # written by both binaries: the fork's rawfile carries
+  # `v(Transfer_function)`, `v(output_impedance_at_V(mid))`,
+  # `v(v1#Input_impedance)`; apt 45.2's carries `v(transfer_function)`,
+  # `v(output_impedance_at_v(mid))`, `v(v1#input_impedance)` -- every letter
+  # folded. So the literal in this registry is the SOURCE spelling and a reader
+  # that matches it CASE-SENSITIVELY is wrong on the binary a downloading user
+  # has. (`display` shows the capitals on both; it is `print` and the rawfile
+  # that differ.) Stage 6 folds.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -14403,8 +14641,14 @@ $_leg
         label noise  baseline 1  registered 1 \
         emit {{role probe tmpl {noise}}}] \
       tf [dict create \
-        label tf  baseline 1  registered 1 \
-        emit {{role probe tmpl {tf}}}] \
+        label tf  baseline 1  registered 1  emitorder 50 \
+        needs  {tf_out tf_insrc cider_klu} \
+        fields {{name out   kind outvar required 1 label {Output}} \
+                {name insrc kind source required 1 label {Input source}}} \
+        emit   {{role analysis tmpl {tf @out @insrc}}} \
+        results {value {kind scalars}} \
+        plots  {{select {Transfer Function} role scalars results value label tf \
+                 vectors ::ase::backend::ngspice::tf_vectors}}] \
       pz [dict create \
         label pz  baseline 1  registered 1 \
         emit {{role probe tmpl {pz}}}] \
@@ -14491,6 +14735,92 @@ $_leg
   # a voltage source", mislabels every current-source bench in the tree, and
   # `Vres` proves the test has to be the FIRST letter and not a substring: it
   # is a voltage source whose name contains `res`.
+  # ─── ONE ngspice OUTPUT VARIABLE, TAKEN APART (Stage 5, issue 1426) ────────
+  # `v(node)`, `v(node,ref)` and `i(vsrc)` are ngspice's spelling, so the parse
+  # is CONTENT and sits here (D34-D37). Core asks it through the `out_decompose`
+  # hook exactly as `sweep_target` asks `dc_swkind` -- the existence check
+  # against the netlist is ASE-L's, the syntax is the adapter's.
+  #
+  # Answers `{voltage <node>}`, `{voltage <node> <ref>}`, `{current <name>}`, or
+  # the single word `malformed`.
+  #
+  # ⚠ `malformed` IS NOT `{}`. An empty answer would have to mean both "I cannot
+  # read this" and "there is nothing here to read", and `ase::needs_eval` has to
+  # tell them apart: a row with no `out` at all is the REQUIRED-FIELD check's
+  # business and must not also be reported as bad syntax.
+  #
+  # ⚠ THE PARENTHESES ARE NOT OPTIONAL AND THE MEASUREMENT IS UGLY. `tf v mid
+  # V1` does not fail on the output; it fails with `Warning: Transfer function
+  # source  not in circuit` -- the EMPTY source name -- because ngspice's `v`
+  # branch with no `(` consumes nothing and the insrc slot is then never filled.
+  # APPENDIX §2.7 records the dot-card half of the same defect
+  # (`inp2dot.c:372-374` has an EMPTY error arm). A user reading that message
+  # would go and look at their source.
+  proc out_decompose {text} {
+    set t [string trim $text]
+    if {![regexp {^([a-zA-Z]+)\(([^()]*)\)$} $t -> pfx inner]} { return malformed }
+    set p [string tolower $pfx]
+    if {$p eq {i}} {
+      set n [string trim $inner]
+      if {$n eq {} || [string first , $n] >= 0} { return malformed }
+      return [list current $n]
+    }
+    if {$p ne {v}} { return malformed }
+    set parts [split $inner ,]
+    if {[llength $parts] > 2} { return malformed }
+    set a [string trim [lindex $parts 0]]
+    if {$a eq {}} { return malformed }
+    if {[llength $parts] == 1} { return [list voltage $a] }
+    set b [string trim [lindex $parts 1]]
+    if {$b eq {}} { return malformed }
+    return [list voltage $a $b]
+  }
+
+  # ─── THE THREE VECTORS A `tf` ROW WILL PRODUCE (Stage 5, issue 1426) ───────
+  # Reached through the `vectors` key of the `tf` entry's `plots` row, which is
+  # opaque to core: nothing reads it until Stage 6 teaches a surface to pull
+  # scalars out of a plot. It is here, and it is a PROC rather than three
+  # literals, because two of the three names are computed from the row.
+  #
+  # MEASURED 2026-09-12, `display` after each command (both binaries agree on
+  # what `display` prints):
+  #
+  #   tf v(mid) V1      -> Transfer_function
+  #                        v1#Input_impedance
+  #                        output_impedance_at_V(mid)
+  #   tf v(mid,out) V1  -> output_impedance_at_V(mid,out)     [no space]
+  #   tf i(Vsense) V1   -> vsense#Output_impedance            [the i() form
+  #                        replaces the output-impedance name entirely]
+  #   tf v(MID) v1      -> output_impedance_at_V(mid)         [the node is
+  #                        FOLDED; only `output_impedance_at_V` keeps capitals]
+  #
+  # ⚠ THE UID PREFIX IS ALWAYS LOWER CASE, even on the case-preserving fork and
+  # even when the deck writes `V1`. It is the device's own UID, which ngspice
+  # stores folded, so a reader must fold before it compares. The apt-45.2 build
+  # folds the CONSTANTS too (`transfer_function`); see the registry comment.
+  #
+  # ⚠ IT NEVER RAISES AND AN UNREADABLE `out` SIMPLY DROPS THE THIRD NAME. The
+  # caller is a results surface, not a validator -- `tf_out` is the precondition
+  # that has a sentence for bad syntax.
+  proc tf_vectors {row} {
+    set names [list Transfer_function]
+    set src {}
+    if {[dict exists $row insrc]} { set src [string trim [dict get $row insrc]] }
+    if {$src ne {}} { lappend names "[string tolower $src]#Input_impedance" }
+    set outv {}
+    if {[dict exists $row out]} { set outv [dict get $row out] }
+    set d [out_decompose $outv]
+    switch -exact -- [lindex $d 0] {
+      current { lappend names "[string tolower [lindex $d 1]]#Output_impedance" }
+      voltage {
+        set inner [string tolower [lindex $d 1]]
+        if {[llength $d] > 2} { append inner , [string tolower [lindex $d 2]] }
+        lappend names "output_impedance_at_V($inner)"
+      }
+    }
+    return $names
+  }
+
   proc dc_swkind {name} {
     set n [string trim $name]
     if {[string equal -nocase $n temp]} { return temp }
@@ -14516,5 +14846,6 @@ $_leg
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
     si_suffixes         ::ase::backend::ngspice::si_suffixes \
-    dc_swkind           ::ase::backend::ngspice::dc_swkind]
+    dc_swkind           ::ase::backend::ngspice::dc_swkind \
+    out_decompose       ::ase::backend::ngspice::out_decompose]
 }

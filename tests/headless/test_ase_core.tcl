@@ -94,6 +94,17 @@
 # with that commit: C2 is the one that could make a shipped bench unrunnable at
 # the gate, so the row that would notice lands with it.
 #
+# 309 -> 348 with sections GR, VB and CP (Stage 3 items C3/C5/C6, issues
+# 1416-1420 -- the field tables, the refused unknown key and the committed
+# corpus as a property).
+# 348 -> 360 with section TF (Stage 5, issue 1426 -- the DC small-signal
+# transfer function gains a real entry). ⚠ TWO ROWS MOVED RATHER THAN BEING
+# ADDED, and both were EXPECTED: AG1/AG2 split the offered list at five instead
+# of four because `tf` earned an `emitorder`, and EM7/CP6 count six probe-only
+# types instead of seven. ⚠ R1 does NOT move and CP1-CP4 do not move: `tf`
+# declares no `seed_enabled`, so `ase::state_default` still seeds exactly four
+# rows and the 104 committed `.state` files are untouched.
+#
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
 # `ac`'s hardwired `dec` to `oct`, left this whole suite at ALL PASS (248).
@@ -4054,22 +4065,33 @@ ase::register_backend agnoprobe [dict merge [ag_five] [dict create analysis_type
 ## `[lindex $offered 0]` rather than the literal `op` (issue 1408), so a registry
 ## edit that reordered this list would silently move the preselect. Pinned in a
 ## suite run_regression.tcl DOES run, because it does not run test_ase_dialogs.
+##
+## ⚠ THIS LIST MOVED ONCE, IN Stage 5 (issue 1426), AND THE MOVE IS THE POINT:
+## `tf` gained `emitorder 50` and left the rank-less tail for fifth place. The
+## count is still eleven and `op` is still first. A type that becomes drivable
+## is EXPECTED to move here; a type that moves without becoming drivable is a
+## defect, which is what AG2 below separates.
 check "AG1 the registry offers all eleven analyses, in emit order, with op first\
  -- which is what the dialog preselects" \
   [list [ase::analysis_offered ngspice] [lindex [ase::analysis_offered ngspice] 0]] \
-  [list {op dc ac tran noise tf pz sens disto sp pss} op]
+  [list {op dc ac tran tf noise pz sens disto sp pss} op]
 
 ## --- AG2: A RANK-LESS ENTRY SORTS **LAST**, NOT FIRST -----------------------
 ## ⚠ `set r 0` for a missing `emitorder` made a rank-less type TIE WITH `op`,
 ## whose rank IS 0, and lead the row. The sentinel is above every real rank
 ## including the literal 90 `ase::analysis_emit_rank` returns for `op` under
 ## `op_last` (issue 0964), so a re-ranked `op` still cannot be displaced.
-check "AG2 the seven types with no emit order sort after the four that have one,\
+##
+## ⚠ IT WAS SEVEN RANK-LESS TYPES AND IS NOW SIX (Stage 5, issue 1426). The row
+## is split at FIVE rather than four because `tf` earned a rank; the assertion
+## that matters is unchanged -- everything with a rank comes first, in rank
+## order, and everything without one follows in declaration order.
+check "AG2 the six types with no emit order sort after the five that have one,\
  rather than tying with op at rank zero" \
-  [list [lrange [ase::analysis_offered ngspice] 0 3] \
-        [lrange [ase::analysis_offered ngspice] 4 end] \
+  [list [lrange [ase::analysis_offered ngspice] 0 4] \
+        [lrange [ase::analysis_offered ngspice] 5 end] \
         [ase::analysis_emit_rank op 1 ngspice]] \
-  [list {op dc ac tran} {noise tf pz sens disto sp pss} 90]
+  [list {op dc ac tran tf} {noise pz sens disto sp pss} 90]
 
 ## --- AG3: THE SEED DID NOT MOVE, AND THAT IS ⚖ R4 SHIPPING BY CONSTRUCTION ---
 ## Before the one-line `continue` this proc appended a row for EVERY registered
@@ -4402,11 +4424,17 @@ check "EM6 the fields a deck line consumes are read from the template in one\
         [ase::analysis_slots {emf @lead? @tail}]] \
   [list {step stop tmax uic} {} {lead tail}]
 
-## --- EM7: ⚠ SEVEN OF THE ELEVEN SHIPPED ENTRIES CARRY NO `fields` KEY ------
-## MEASURED: noise, tf, pz, sens, disto, sp and pss are registered probe-only. A
+## --- EM7: ⚠ SIX OF THE ELEVEN SHIPPED ENTRIES CARRY NO `fields` KEY --------
+## MEASURED: noise, pz, sens, disto, sp and pss are registered probe-only. A
 ## bare `[dict get $e fields]` in the card reader raises for every one of them,
 ## and `ase::ui::arg_summary`'s catch (row D8j) would swallow that into a silently
 ## degraded pane -- THE EXACT FAILURE THIS STAGE DELETES, RE-CREATED BY THE FIX.
+##
+## ⚠ IT WAS SEVEN UNTIL Stage 5 (issue 1426) GAVE `tf` A REAL ENTRY. The list
+## below is ORDERED, and the order is `ase::analysis_offered`'s, so a type that
+## gains fields leaves the list at the position it used to hold -- which is why
+## `tf` disappearing from between `noise` and `pz` is the visible half of that
+## change and not a silent shrink.
 set EM7NOFLD {}
 foreach em7t [ase::analysis_offered ngspice] {
   if {![dict exists [ase::analysis_entry ngspice $em7t] fields]} { lappend EM7NOFLD $em7t }
@@ -4417,7 +4445,7 @@ check "EM7 the analyses this adapter describes but cannot yet drive carry no\
   [list $EM7NOFLD \
         [catch {ase::analysis_cards ngspice {type pss enabled 1}}] \
         [ase::analysis_line ngspice {type pss enabled 1}]] \
-  [list {noise tf pz sens disto sp pss} 0 {}]
+  [list {noise pz sens disto sp pss} 0 {}]
 
 ## --- EM8: THE SHIPPED FOUR ARE BYTE-IDENTICAL ------------------------------
 ## ⚠ THE WHOLE POINT OF FIXTURE BACKENDS. If this row ever moves, the grammar
@@ -5060,7 +5088,165 @@ foreach grt [dict keys [ase::analysis_types ngspice]] {
 }
 check "GR8 every kind this registry declares has been classified as a number or\
  not a number, and the four numeric ones are the only ones parsed" \
-  [lsort $GRK] {bool freq int mode real source time}
+  [lsort $GRK] {bool freq int mode outvar real source time}
+
+# --- TF: THE DC SMALL-SIGNAL TRANSFER FUNCTION (Stage 5, issue 1426) --------
+## `tf` was a `role probe` card and nothing else: registered so the four-state
+## grid could show it exists, `blocked/unrenderable` so it could not be enabled.
+## This section is the whole of what changed when it gained a real entry.
+##
+## ⚠ THESE ARE DECK BYTES AND REGISTRY FACTS. The adapter's own two procs --
+## `out_decompose` and `tf_vectors` -- are pinned in
+## tests/headless/test_ase_simcaps_0948.tcl section TV, and the preconditions in
+## tests/headless/test_ase_preflight.tcl section PF226, because those are the
+## suites that own those seams.
+
+check "TF1 tf is offered, is now renderable, and carries a rank that sorts it\
+ after the four drivable types and ahead of the six that still have none" \
+  [list [expr {[lsearch -exact [ase::analysis_offered ngspice] tf] >= 0}] \
+        [ase::analysis_renderable ngspice tf] \
+        [ase::analysis_emit_rank tf 0 ngspice] \
+        [lrange [ase::analysis_offered ngspice] 0 4]] \
+  {1 1 50 {op dc ac tran tf}}
+
+## ⚠ THE THREE OUTPUT FORMS ARE ngspice's THREE, AND THE LINE IS ONE TOKEN PER
+## FIELD. PLAN.md Stage 5 spells the output as four fields
+## (`outkind outnode outref outsrc`) composed by a `{build <proc>}` escape;
+## §1c specifies that escape and STAGE 1 DID NOT SHIP IT. `ase::analysis_expand`
+## has `@x`, `@x?` and `@x!` and no `build` arm, so a `{build …}` token is
+## emitted as the literal words `build ase::backend::…`, and the slot grammar
+## joins tokens with a space and cannot build `v(mid,out)` from three of them.
+## Until the escape exists an emitted token is one field, and `out` is that
+## token verbatim.
+check "TF2 tf emits the output variable and the input source, in that order,\
+ for each of ngspice's three output forms" \
+  [list [ase::analysis_line ngspice {type tf enabled 1 out v(D) insrc V1}] \
+        [ase::analysis_line ngspice {type tf enabled 1 out v(D,G) insrc V1}] \
+        [ase::analysis_line ngspice {type tf enabled 1 out i(V2) insrc V1}]] \
+  {{tf v(D) V1} {tf v(D,G) V1} {tf i(V2) V1}}
+
+check "TF2b the Arguments column IS that line, so the pane cannot show a tf\
+ setting the deck does not carry" \
+  [ase::ui::arg_summary {type tf enabled 1 out v(D) insrc V1}] {tf v(D) V1}
+
+## ⚠ BOTH FIELDS ARE REQUIRED AND THE DOOR NAMES THE ONE THAT IS MISSING. It is
+## the same reader the dialog's OK uses, so a row that cannot be emitted cannot
+## be committed either.
+check "TF3 the commit door refuses a tf row missing either field, by name, and\
+ passes a complete one" \
+  [list [ase::analysis_emit_check ngspice {type tf enabled 1 insrc V1}] \
+        [ase::analysis_emit_check ngspice {type tf enabled 1 out v(D)}] \
+        [ase::analysis_emit_check ngspice {type tf enabled 1 out v(D) insrc V1}]] \
+  [list {{missing out {needs a value for 'out'}}} \
+        {{missing insrc {needs a value for 'insrc'}}} \
+        {}]
+
+## ⚠ AND THE ROW IS REFUSED AT THE GATE BEFORE IT REACHES render_deck. Until
+## this stage a `tf` row was `blocked/unrenderable`; it is now an ordinary cell.
+check "TF3b the four-state grid stops calling tf unrenderable" \
+  [list [dict get [ase::analysis_state ngspice tf {}] state] \
+        [dict get [ase::analysis_state ngspice pz {}] state] \
+        [dict get [ase::analysis_state ngspice pz {}] reason]] \
+  {ok blocked unrenderable}
+
+## THE DECK. ⚠ `d8_lines` MATCHES FOUR VERBS AND tf IS NOT ONE OF THEM, so this
+## section brings its own reader rather than widening D8's and taking D8's rows
+## along with it.
+proc tf_lines {rows} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  dict set st analyses $rows
+  set out {}
+  foreach l [split [$::render $st $::netlist_text] "\n"] {
+    if {[regexp {^(op|dc |ac |tran |tf )} $l]} { lappend out [string trim $l] }
+  }
+  return $out
+}
+check "TF4 an enabled tf row reaches the deck" \
+  [tf_lines {{type tf enabled 1 out v(D) insrc V1}}] {{tf v(D) V1}}
+## ⚠ op-LAST IS A SEPARATE NAMED RULE (issue 0964) and `emitorder 50` does not
+## override it: the device requests sit immediately before `op`, and ngspice's
+## save list is sticky FORWARD ONLY, so anything after `op` would record them
+## again. A tf row therefore emits BEFORE op even though its rank is higher.
+check "TF4b tf emits in rank order among the drivable types, and op still goes\
+ last when the deck asks for device parameters" \
+  [list [tf_lines {{type tf enabled 1 out v(D) insrc V1} \
+                   {type tran enabled 1 step 1n stop 10u} \
+                   {type op enabled 1}}] \
+        [tf_lines {{type op enabled 1} \
+                   {type tf enabled 1 out v(D) insrc V1}}]] \
+  [list {op {tran 1n 10u} {tf v(D) V1}} {op {tf v(D) V1}}]
+check "TF4c a disabled tf row emits nothing at all" \
+  [tf_lines {{type op enabled 1} {type tf enabled 0 out v(D) insrc V1}}] {op}
+
+## --- TF5: `tf` DECLARES NO `viewrank`, AND THAT IS A MEASUREMENT ------------
+## ⚠ PLAN.md Stage 5 SPECIFIES `viewrank 0` FOR THIS ENTRY AND THE TREE REFUTES
+## IT. The six remaining probe-only types have no viewrank because they cannot
+## emit; `tf` CAN emit and DOES produce data, so that argument does not reach
+## it. The reason is one step further on: `ase::plot_sim_type` answers a type
+## NAME and the waveform seam spends it as `xschem raw read <file> <type>`.
+## MEASURED 2026-09-12 against a raw carrying an `Operating Point` plot and a
+## `Transfer Function` plot, through this tree's own binary:
+##
+##   xschem raw read both.raw tf                  -> `no useful data found` ... 0
+##   xschem raw read both.raw op                  -> sim_type=op ............. 1
+##   xschem raw read both.raw {Transfer Function} -> sim_type=Transfer Fun ... 1
+##
+## `src/save.c`'s `read_dataset()` maps six NAMED plot names to a type and then
+## falls through to an exact `strcmp` against the plot name itself. `tf` is in
+## neither set, so a viewrank would make `plot_sim_type` answer `tf`,
+## `plot_sim_type_reason` answer `{}` -- "there IS a mapping" -- and the viewer
+## open on nothing, saying nothing.
+proc tf_state {rows} {
+  return [dict replace [ase::state_default] analyses $rows]
+}
+check "TF5 a tf-only bench has NO viewer mapping, and says which of the two\
+ silences it is" \
+  [list [dict exists [ase::analysis_entry ngspice tf] viewrank] \
+        [ase::plot_sim_type [tf_state {{type tf enabled 1 out v(D) insrc V1}}]] \
+        [ase::plot_sim_type_reason [tf_state {{type tf enabled 1 out v(D) insrc V1}}]] \
+        [ase::plot_sim_type_reason [tf_state {{type tf enabled 0 out v(D) insrc V1}}]]] \
+  {0 {} no-viewer-mapping nothing-enabled}
+## ⚠ NON-VACUITY. TF5's first three answers are also what a registry with no
+## `tf` entry at all would give, so this row proves the ABSENCE of the key is
+## what produces them: the same bench, against a fixture backend whose tf DOES
+## carry a viewrank, answers `tf` and reports a mapping that does not exist.
+## ⚠ THE FIXTURE BORROWS ngspice's FIVE REQUIRED HOOKS (`ag_five`, section AG)
+## AND OVERRIDES ONLY `analysis_types`. Pointing the five at an arbitrary proc
+## would make this entry a second, silently wrong backend that a later row could
+## pick up; borrowing them keeps the ONE difference from the shipped registry the
+## thing the row is about.
+proc tfvr_types {} {
+  return [dict create tf [dict create label tf registered 1 emitorder 50 \
+    viewrank 5 fields {{name out kind outvar required 1}} \
+    emit {{role analysis tmpl {tf @out}}}]]
+}
+ase::register_backend tfvr [dict merge [ag_five] \
+  [dict create analysis_types tfvr_types]]
+check "TF5b a viewrank WOULD change that answer, so TF5 is measuring the key\
+ and not the absence of an entry" \
+  [list [ase::plot_sim_type \
+           [dict replace [tf_state {{type tf enabled 1 out v(D)}}] simulator tfvr]] \
+        [ase::plot_sim_type_reason \
+           [dict replace [tf_state {{type tf enabled 1 out v(D)}}] simulator tfvr]]] \
+  {tf {}}
+
+## ⚠ NO `seed_enabled`, so `tf` joins no fresh bench -- which is what keeps the
+## 104 committed `.state` files round-tripping byte-identically. Section CP is
+## the row that would notice if that stopped being true; this one is the cause
+## rather than the consequence.
+check "TF6 tf is not in the seed, so a fresh bench still carries exactly the\
+ four rows every committed bench carries" \
+  [list [dict exists [ase::analysis_entry ngspice tf] seed_enabled] \
+        [llength [ase::analysis_seed ngspice]] \
+        [lsort [lmap _r [ase::analysis_seed ngspice] {ase::state_get $_r type}]]] \
+  {0 4 {ac dc op tran}}
+
+## ⚠ SCOPED TO tf. CP5 asks the same question of the WHOLE registry and would
+## red for any entry; this one names the type, so a sabotage of tf's own fields
+## or template is reported as a tf defect rather than as "the registry".
+check "TF7 tf's own entry is self-consistent: every slot its template spends is\
+ a field it declares, and every field it declares is spent" \
+  [lsearch -all -inline -index 0 -exact [ase::analysis_schema_errors ngspice] tf] {}
 
 # --- CP: THE COMMITTED CORPUS, AS A PROPERTY --------------------------------
 ## ⚠ THE ACCEPTANCE CRITERION OF THIS WHOLE BATCH IS THAT THE COMMITTED BENCHES
@@ -5166,20 +5352,27 @@ check "CP5 this simulator's registry is self-consistent: no template consumes a\
  field the entry never describes, and no field is offered that no template reads" \
   [ase::analysis_schema_errors ngspice] {}
 
-## ⚠ AND THE PROBE-ONLY ENTRIES MUST NOT BE SWEPT UP BY IT. Seven registered
+## ⚠ AND THE PROBE-ONLY ENTRIES MUST NOT BE SWEPT UP BY IT. Six registered
 ## types carry a `role probe` card and no `fields` at all; they are not a schema
 ## error, they are a type this backend can name and cannot yet set up. A
-## validator that demanded fields of them would red seven entries that are
+## validator that demanded fields of them would red six entries that are
 ## deliberately incomplete until Stage 6 gives them an emit.
+##
+## ⚠ IT WAS SEVEN UNTIL Stage 5 (issue 1426), AND `tf` IS NAMED ON BOTH SIDES
+## RATHER THAN DROPPED FROM THE LIST. Deleting it from the walk would make this
+## row read the same before and after, so the census would stop being a census;
+## keeping it and asserting that it now HAS fields is what makes the change
+## visible here.
 set CPPROBE 0
-foreach cpt {noise tf pz sens disto sp pss} {
+foreach cpt {noise pz sens disto sp pss} {
   set cpe [ase::analysis_entry ngspice $cpt]
   if {$cpe eq {} || [dict exists $cpe fields]} { continue }
   incr CPPROBE
 }
-check "CP6 the seven probe-only types declare no fields and are still not a\
- schema error" \
-  [list $CPPROBE [ase::analysis_schema_errors ngspice]] {7 {}}
+check "CP6 the six probe-only types declare no fields, tf no longer among them,\
+ and none of it is a schema error" \
+  [list $CPPROBE [dict exists [ase::analysis_entry ngspice tf] fields] \
+        [ase::analysis_schema_errors ngspice]] {6 1 {}}
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {

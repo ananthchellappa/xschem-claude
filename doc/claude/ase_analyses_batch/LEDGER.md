@@ -877,16 +877,63 @@ the list, and says why they must be added in measured batches rather than in one
 at all** — each is one plot, so emission stays byte-identical.* New deck goldens only.
 **Ruling: ⚖ R9.** Decisions: **D1, D30**.
 
+⚠ **STAGE 5 IS THREE TASKS, NOT ONE COMMIT** — `tf`, `pz`, `sens (dc)` — and each is handed to its
+own task-crew, which returns its own receipt. **This is also the first stage driven the way the
+batch was set up to be driven**: the driver dispatches one task, the crew implements, tests and
+sabotages it and writes the receipt, and the driver verifies, runs T1 solo and commits. Stages 0–4
+were implemented inline by the driver, which is why `receipts/` shows no crew authorship before
+this one.
+
+| landed | task | subject | floors |
+|---|---|---|---|
+| *pending* | **T1** | `feat(1426)` the transfer function was listed and could not be chosen | core 348 → **360**; simcaps 164 → **170**; preflight 152 → **164**; dialogs **display** 265 → **271** |
+| — | **T2** | `pz` | not started |
+| — | **T3** | `sens (dc)` | not started |
+
+⚠ **FOUR PLAN CLAIMS REFUTED BY THE TREE, and the first is structural.** `PLAN.md` §1c specifies an
+`{build <proc>}` emit token and **Stage 1 never shipped it** — `ase::analysis_expand` implements
+`@x` / `@x?` / `@x!` and nothing else, so a `{build …}` token emits as literal words. Composition is
+therefore impossible today and `tf` ships **two** fields rather than the plan's five. `sens` needs
+the same escape, so the decision belongs to this stage and not to a later one.
+
+⚠ **`viewrank 0` IS WRONG AND THE MEASUREMENT SAYS WHY.** `xschem raw read <raw> tf` finds nothing:
+`save.c`'s `read_dataset()` has six named `Plotname:` arms and then an exact `strcmp`. A viewrank
+would make `plot_sim_type` answer `tf` and `plot_sim_type_reason` answer `{}` — *"there IS a
+mapping"* — with the viewer pointed at nothing. The entry ships with **no viewrank**, which is the
+same lesson D7k taught in Stage 2: a rank is a claim about RESULTS.
+
+⚠ **THE CAPITALS ARE THE FORK'S.** `Transfer_function` / `v1#Input_impedance` are what the fork
+writes; **apt 45.2 writes `transfer_function` and `v1#input_impedance`** — verified independently by
+the driver. A case-sensitive reader is wrong on the binary a downloading user has. And only one of
+the three vector names is a constant: the other two are templates carrying the row's own source and
+node, so `plots`' `vectors` names a **proc**, not three literals.
+
+⚠ **THE BEST FINDING IS ABOUT WHAT ngspice DOES NOT CHECK.** It validates the transfer function's
+*input source* and aborts (rc 1); it does **not** validate the *output* at all. Measured by the
+driver on `/usr/bin/ngspice`: `tf v(nosuchnode) V1` exits **0** and prints
+`output_impedance_at_v(nosuchnode) = 1.000000e+00` — three plausible numbers and a vector **named
+after the node that does not exist**. Hence two `needs` predicates rather than one. A related trap
+was avoided by measurement: `i(L1)` *is* a real branch current elsewhere in ngspice, so *"an
+inductor has no branch current"* would have been a **false reason for a correct rule**; the rule
+rests on measuring `Transfer_function` across V/L/I/R instead.
+
+⚠ **AND STAGE 4's STATIC DEMOTION IS RIGHT FOR ONE FINDING AND FALSE FOR ANOTHER IN THE SAME
+PREDICATE.** A missing node is `blocked` → `caution` with the `.include` caveat, because an include
+could supply it. A malformed output expression is `fatal` and carries no caveat, because **no
+include can make `v mid` legal**. Measured against this tree's own `sim_status` guard: `tf x(mid) V1`
+fires `quit 1` while `tf v(nosuchnode) V1` reaches the end.
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | **IN PROGRESS** — task 1 of 3 |
+| commit | T1 pending |
+| T1 | taken **solo** by the driver, 62 cases |
+| suites moved | `test_ase_core` 348 → **360** · `test_ase_simcaps_0948` 164 → **170** · `test_ase_preflight` 152 → **164** · `test_ase_dialogs` **display** 265 → **271**, headless **37 unmoved**. Four existing rows moved, all expected and named: **AG1**/**AG2** (the offered list splits 5/6 now) and **EM7**/**CP6** (six probe-only types, not seven). **R1, AG3 and CP1–CP4 did NOT move** — the entry declares no `seed_enabled`, so the 104 committed `.state` files gain no `tf` row and stay byte-identical |
+| sabotage | **twenty-one**, twenty reddening a named row. ⚠ **One killed the suite instead of reddening a row** (S21, `insrc required 1→0`): `test_ase_dialogs` died at 65/271 because the row read `$top.chana.status` after an OK that now SUCCEEDS and destroys the dialog. Rewritten to read it inside its own `catch`; it now reds by name. ⚠ **One survived**: S9 passed against PF227h as first written, because **both** refusal sentences carry the user's own name, so *"the strings differ"* was satisfied trivially. The row now compares clause by clause |
+| ledger debts | `rule 1426` — two field labels and six precondition sentences. ⚖ R9, batched with `pz` and `sens`. **No look debt**: `src/ase_window.tcl` is untouched and the form is built from the registry by code that already exists |
+| spec paragraphs rewritten | none — same standing spec debt as Stages 2–4 |
+| receipt | `receipts/10-stage-5-tf.md` — **the first crew-authored receipt in this batch** |
+
 
 ### What Stage 5 learned that binds later stages
 
