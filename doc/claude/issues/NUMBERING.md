@@ -3156,7 +3156,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1410.**~~ superseded: **1410** is filed, above.
 
-**The next free number is 1411.**
+- **1411** — **The Choose Analyses grid says which analyses this build can run, and why not.** `$w.types` becomes a wrapping grid, four per row, **eleven** cells for ngspice (not twelve — the options sheet is `$w.opts`, not an analysis type), each carrying its state as a GLYPH. ⚠ A glyph and not a colour because `_theme_widget`'s Radiobutton arm rewrites `-background` and `populate` ends in `apply_theme`, so a per-cell colour is WIPED — row GG4 proves it by setting one and repainting. ⚠ EVERY CELL STAYS SELECTABLE: `invoke` on a disabled radiobutton is a SILENT no-op, so disabling blocked cells would make a hand-edited `{type pss enabled 1}` impossible to turn OFF and would make a future `types.pss invoke` row pass while doing nothing. What is disabled is the **Enable** checkbutton. ⚠ `$w.types.<type>` DOES NOT MOVE (issue 1405's lesson). Detect PAINTS BEFORE IT BLOCKS — up to 31.2 s with Tk frozen — and is offered only where a measurement could change an answer (`unmeasured` or `baseline`, never `noprobe`). Floor: dialogs display 224 → **236**, headless 37 unmoved. Five sabotages.
+
+~~**The next free number is 1411.**~~ superseded: **1411** is filed, above.
+
+**The next free number is 1412.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

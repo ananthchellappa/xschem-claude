@@ -1127,6 +1127,12 @@ proc ase::sim_why {kind name path {extra {}}} {
     casemode_measuring {
       return "Trying $path now, to find out which spellings of a net name it can hand back."
     }
+    analyses_measuring {
+      ## ⚠ DELIBERATELY THE SIBLING OF `casemode_measuring` ABOVE, so the two read
+      ## as one voice: same opening, same shape, only the question differs. Issue
+      ## 1411, ⚖ R9 -- a recommended shape, not a ratification.
+      return "Trying $path now, to find out which analyses it can run."
+    }
     casemode_measured {
       if {[llength $extra]} {
         return "$path can hand net names back these ways: [join $extra {, }]."
@@ -4372,6 +4378,65 @@ proc ase::analysis_state {sim type caps} {
     if {$cav ne {}} { return [list state caution reason caveat clause $cav] }
   }
   return $r
+}
+
+# WHAT A CELL'S STATE MEANS, IN ONE SENTENCE -- or `{}` for a plain `ok`, which
+# needs none. Issue 1411, ⚖ R9: recommended shapes, not ratifications.
+#
+# ⚠ ASE-L OWNS THE FRAME, THE ADAPTER OWNS THE CLAUSE -- the same split issue
+# 1404 shipped for the Stop warning, and for the same reason: what a build was
+# made without is a fact about one simulator's build system, and ASE-L knows
+# none. A `caution` cell's clause comes from `ase::backend::<sim>::analysis_caveat`
+# and is quoted verbatim; the absent/blocked frames are ASE-L's and name no build
+# flag, because the `help <verb>` probe CANNOT SEE one -- it learns that a verb is
+# missing, never why.
+proc ase::analysis_state_msg {sim type st} {
+  if {$st eq {}} { return {} }
+  set state [dict get $st state]
+  set reason [dict get $st reason]
+  set lbl $type
+  catch { set lbl [dict get [ase::analysis_entry $sim $type] label] }
+  switch -exact -- $reason {
+    measured   { return {} }
+    baseline   { return "Offered because every build of this simulator has it.\
+ Nothing was measured." }
+    notpresent { return "This build cannot run $lbl -- the simulator was asked\
+ and does not have it." }
+    unmeasured { return "Nothing has been measured about this simulator yet.\
+ Press Detect to ask it which analyses it can run." }
+    noprobe    { return "Nothing can be measured about this simulator, so ASE-L\
+ cannot tell whether it has $lbl." }
+    unrenderable { return "ASE-L cannot set up $lbl yet, so it is listed but\
+ cannot be enabled." }
+    caveat {
+      set c {}
+      catch { set c [dict get $st clause] }
+      if {$c eq {}} { return {} }
+      return "$lbl will run, but $c."
+    }
+    requires_raised { return "ASE-L could not work out whether this simulator\
+ has $lbl." }
+  }
+  return {}
+}
+
+# IS THERE ANYTHING A COLD MEASUREMENT WOULD CHANGE? The Detect button's own gate.
+#
+# ⚠ TWO REASONS QUALIFY, NOT ONE, BECAUSE BOTH ARE ASSUMPTIONS. `unmeasured` is
+# the obvious one. `baseline` is the other: the cell is offered *because every
+# build of this simulator has it*, which is a source-verified invariant and still
+# not a measurement of the binary in front of the user -- and Detect is exactly
+# what turns it into one.
+#
+# ⚠ `noprobe` IS THE ONE DETECT CAN NEVER HELP, and it is why that token exists
+# apart from `unmeasured`. A backend with no `capabilities` hook will answer
+# nothing however many times the button is pressed; offering it there is the
+# button that lies.
+proc ase::analysis_detectable {sim {caps _unset_}} {
+  foreach t [ase::analysis_states $sim $caps] {
+    if {[lsearch -exact {unmeasured baseline} [lindex $t 2]] >= 0} { return 1 }
+  }
+  return 0
 }
 
 # EVERY TYPE THIS SIMULATOR DESCRIBES, AS `{type state reason}` TRIPLES, IN THE

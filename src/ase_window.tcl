@@ -4581,6 +4581,54 @@ proc ase::ui::chana_row {key type} {
 # ana double-click): top radio section picks the analysis type, bottom form
 # = Enable + the type's quick fields, `Options…` opens the extra-key editor.
 # `type` {} preselects op.
+# THE GLYPH THAT CARRIES A CELL'S STATE. Issue 1411.
+#
+# ⚠ A GLYPH AND NOT A COLOUR, AND NOT BY PREFERENCE. `ase::ui::_theme_widget`'s
+# Radiobutton arm rewrites `-background` and `-foreground`, and
+# `ase::ui::populate` ends in `apply_theme $top`, which recurses into this child
+# toplevel on EVERY state mutation -- so a per-cell colour is wiped the first time
+# anything changes. A glyph survives the theme pass, reads the same in light and
+# dark, and needs no tenth key in the locked nine-key `ase::palette`.
+#
+# ⚠ `ok` GETS NO GLYPH. Marking the normal case is how a grid becomes noise; the
+# mark is for the exceptions, and the status line carries the sentence.
+proc ase::ui::chana_glyph {state} {
+  switch -exact -- $state {
+    caution { return "⚠ " }
+    blocked { return "⊘ " }
+    absent  { return "· " }
+  }
+  return {}
+}
+
+# DETECT: the one cold door, and it must PAINT BEFORE IT BLOCKS.
+#
+# ⚠ THE ORDER IS ase::ui::simdlg_detect's, LINE FOR LINE, AND IT IS THE WHOLE
+# POINT. The measurement can take up to 31.2 s against a binary that exists, is
+# executable and never answers, and Tk is frozen for all of it. Setting the
+# sentence and then calling `update idletasks` BEFORE the blocking call is what
+# puts it on screen; doing it the other way round shows the user nothing until
+# after the wait is over, which is the same as not saying it.
+proc ase::ui::chana_detect {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].chana
+  if {![winfo exists $w]} { return }
+  set sim [ase::ui::chana_sim $key]
+  catch {$w.status configure -text [::ase::sim_why analyses_measuring {} \
+           [dict get [::ase::sim_status $sim] resolved]]}
+  catch {$w.detect configure -state disabled}
+  update idletasks
+  catch {::ase::analysis_detect $sim}
+  # REBUILD FROM THE NEW ANSWER. The dialog is cheap to rebuild and the grid's
+  # glyphs, the Detect gate and the status line all read the same cache, so
+  # re-entering choose_analyses is what keeps them from drifting apart.
+  set ty {}
+  catch {set ty $::ase::ui::dlg($key,antype)}
+  catch {destroy $w}
+  ase::ui::choose_analyses $key $ty
+}
+
 # WHICH SIMULATOR THIS SESSION IS USING -- the ONE resolver on the dialog side,
 # and the reason this commit exists (issue 1408).
 #
@@ -4630,6 +4678,11 @@ proc ase::ui::choose_analyses {key {type {}}} {
   set w [ase::ui::dialog_frame [dict get $wins $key].chana {Choose Analyses}]
   set sim [ase::ui::chana_sim $key]
   set offered [ase::analysis_offered $sim]
+  # ⚠ THE CACHE IS **PEEKED AT**, NEVER MEASURED. The free peek answers `{}` for a
+  # cold cache; a cold PROBE would make opening this dialog take up to 31.2 s with
+  # Tk frozen, which is the measured worst case for a binary that exists, is
+  # executable and never answers. Detect is the only door to a cold measurement.
+  set caps [ase::sim_caps_cached $sim]
   # ⚠ THE PRESELECT COMES FROM THE OFFERED LIST, NOT FROM THE LITERAL `op`.
   # An unconditional `op` is what made OK append `{type op enabled 1}` to a bench
   # whose backend cannot render `op`. With nothing offered this stays EMPTY and
@@ -4645,13 +4698,41 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # ascending and the text is the entry's `label`, which for these four IS
   # today's text -- a refactor may not mint user-facing copy, and promoting them
   # to human nouns is a ratified change under ⚖ R9, not a side effect.
-  foreach t $offered {
+  #
+  # ── STAGE 2 (issue 1411): A WRAPPING GRID, FOUR PER ROW, ONE CELL PER
+  # ── ANALYSIS THIS SIMULATOR DESCRIBES -- ELEVEN for ngspice, not four.
+  #
+  # ⚠ `$w.types.<type>` DOES NOT MOVE. Four committed rows in three suites drive
+  # those paths (`$top.chana.types.tran invoke`, `$w.types.dc invoke`); adding
+  # cells is safe, moving them is not, and issue 1405 is what that lesson cost.
+  # `pack` becomes `grid` inside the SAME frame, so the children keep their names.
+  #
+  # ⚠ STATE IS A GLYPH ON THE LABEL, **NOT A COLOUR**, and that is forced rather
+  # than chosen. `ase::ui::_theme_widget`'s Radiobutton arm rewrites `-background`
+  # and `-foreground`, and `ase::ui::populate` ends in `apply_theme $top`, which
+  # recurses into this child toplevel on EVERY state mutation -- so a per-cell
+  # colour is wiped the first time anything changes. A glyph is also theme-proof
+  # and needs no tenth key in the locked nine-key `ase::palette`.
+  #
+  # ⚠ EVERY CELL STAYS **SELECTABLE**, INCLUDING `blocked` AND `absent` ONES.
+  # `invoke` on a `-state disabled` radiobutton is a SILENT no-op -- rc 0, the
+  # variable unchanged, `-command` never fired -- so disabling the cell would make
+  # a `.state` file carrying `{type pss enabled 1}` impossible to turn OFF in the
+  # dialog, and would make a future test row written as
+  # `$top.chana.types.pss invoke` pass while doing nothing. What is disabled is
+  # the **Enable** checkbutton, which is the control that would actually commit.
+  # Selecting a blocked cell is how its reason becomes readable.
+  set _col 0 ; set _row 0
+  foreach st [ase::analysis_states $sim $caps] {
+    set t [lindex $st 0]
     set _lbl $t
     catch {set _lbl [dict get [ase::analysis_entry $sim $t] label]}
-    radiobutton $w.types.$t -text $_lbl -value $t \
-      -variable ::ase::ui::dlg($key,antype) \
+    radiobutton $w.types.$t -text "[ase::ui::chana_glyph [lindex $st 1]]$_lbl" \
+      -value $t -variable ::ase::ui::dlg($key,antype) \
       -command [list ase::ui::chana_show $key]
-    pack $w.types.$t -side left -padx 4
+    grid $w.types.$t -row $_row -column $_col -sticky w -padx 4
+    incr _col
+    if {$_col >= 4} { set _col 0 ; incr _row }
   }
   grid $w.types -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {8 4}
   checkbutton $w.enable -text Enable -variable ::ase::ui::dlg($key,anen)
@@ -4664,6 +4745,15 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # on high fixed rows so the rebuilds never collide
   button $w.opts -text "Options…" -command [list ase::ui::chana_options $key]
   grid $w.opts -row 8 -column 0 -sticky w -padx 8 -pady 2
+  # ⚠ DETECT IS OFFERED ONLY WHERE IT CAN CHANGE AN ANSWER -- a cell resting on an
+  # assumption (`unmeasured` or `baseline`). A `noprobe` cell can never be
+  # measured however often the button is pressed, and 2d's no-adapter grid gets no
+  # button at all because the gap is in ASE-L rather than in the binary.
+  button $w.detect -text Detect -command [list ase::ui::chana_detect $key]
+  grid $w.detect -row 8 -column 1 -sticky e -padx 8 -pady 2
+  if {![ase::analysis_detectable $sim $caps]} {
+    $w.detect configure -state disabled
+  }
   ase::ui::dialog_buttons $w 9 [list ase::ui::chana_ok $key] \
     [list ase::ui::chana_cancel $key]
   # ⚠ AN EMPTY GRID SAYS WHY IT IS EMPTY. This is NOT a fifth cell state: the
@@ -4726,6 +4816,24 @@ proc ase::ui::chana_show {key} {
   grid columnconfigure $w.form 1 -weight 1
   set row [ase::ui::chana_row $key $type]
   set dlg($key,anen) [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]
+  # ⚠ THE STATUS LINE AND THE Enable GATE BOTH READ THE **SELECTED CELL'S** STATE,
+  # which is what makes a blocked cell worth selecting: the cell stays clickable
+  # (a disabled radiobutton's `invoke` is a silent no-op) and clicking it is how
+  # its reason becomes readable. Issue 1411.
+  if {[winfo exists $w.status] && $type ne {}} {
+    set _sim [ase::ui::chana_sim $key]
+    set _st [::ase::analysis_state $_sim $type [::ase::sim_caps_cached $_sim]]
+    catch {$w.status configure -text [::ase::analysis_state_msg $_sim $type $_st]}
+    # An analysis this simulator cannot run, or this adapter cannot set up, may
+    # not be TURNED ON -- but a row already in the bench may still be turned OFF,
+    # so the checkbutton is disabled only while the box is clear.
+    set _ok [expr {$_st ne {} && [lsearch -exact {ok caution} [dict get $_st state]] >= 0}]
+    if {$_ok || $dlg($key,anen)} {
+      catch {$w.enable configure -state normal}
+    } else {
+      catch {$w.enable configure -state disabled}
+    }
+  }
   set r 0
   foreach f [ase::ui::chana_fields $type [ase::ui::chana_sim $key]] {
     set e [ase::ui::dialog_row $w.form $r "[string totitle $f]:" $f]

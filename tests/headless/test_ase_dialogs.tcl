@@ -77,6 +77,8 @@ set fail 0; set npass 0
 #
 # THE HISTORY:
 #   37 / 215   as this paragraph was written (2026-09-11, HEAD 8bfbbd6f)
+#   37 / 236   section GG, issue 1411: the wrapping type grid. Headless is
+#              unmoved because every GG row is a widget row.
 #   37 / 224   section G14, issue 1408: the dialog describes THIS session's
 #              simulator. Headless is UNMOVED because every G14 row is a widget
 #              row and sits inside the display guard, by design -- the schema
@@ -1690,6 +1692,163 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check_true "G12 session window closed" [expr {![winfo exists $top]}]
 
+  # --- GG: THE TYPE GRID -- ISSUE 1411 ---------------------------------------
+  # Eleven cells, four per row, each carrying its state as a GLYPH on the label.
+  #
+  # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW, and `run_regression.tcl` runs this file
+  # on NEITHER of its arms -- so a receipt quoting a T1 zero has not exercised one
+  # of them. The resolver's own contract is in test_ase_core.tcl section AG,
+  # deliberately, so it survives that.
+  check "GG fixture: a session for the grid rows" \
+    [ase::open_state aselib nfet_clean ngspice_state1] 1
+  update
+  set top [ase::ui::window_for $key]
+  catch {destroy $top.chana}
+  $top.mb.analyses invoke "Choose…"
+  update
+  set gw $top.chana
+
+  ## GG1 -- ELEVEN CELLS, FOUR PER ROW.
+  ## ⚠ ELEVEN, NOT TWELVE. The plan's "twelve grid rows" counts the options sheet,
+  ## which is `$w.opts` and is not an analysis type -- registering it would put it
+  ## in ase::analysis_offered, in the seed and in the radio variable.
+  ## ⚠ READ `grid info` BY NAME. Its key order is not guaranteed and taking
+  ## `lindex 3`/`lindex 5` gave {row column} transposed on the first attempt --
+  ## a row that would have passed or failed on Tk's option order, not on layout.
+  set GG1COLS {}
+  foreach gc [winfo children $gw.types] {
+    set gi [grid info $gc]
+    lappend GG1COLS [list [dict get $gi -row] [dict get $gi -column]]
+  }
+  check "GG1 every analysis this simulator describes gets a cell, and they wrap\
+ four to a row instead of running off the dialog" \
+    [list [llength [winfo children $gw.types]] \
+          [lrange $GG1COLS 0 3] [lindex $GG1COLS 4]] \
+    [list 11 {{0 0} {0 1} {0 2} {0 3}} {1 0}]
+
+  ## GG2 -- ⚠ THE PATHS DID NOT MOVE. Four committed rows in three suites drive
+  ## `$top.chana.types.<type>`; adding cells is safe, moving them is not, and
+  ## issue 1405 is what that lesson cost. `pack` became `grid` inside the SAME
+  ## frame, so the children keep their names.
+  check "GG2 the cells the rest of the tree drives by name are still there under\
+ those names, with the new ones added beside them" \
+    [list [winfo exists $gw.types.op] [winfo exists $gw.types.dc] \
+          [winfo exists $gw.types.ac] [winfo exists $gw.types.tran] \
+          [winfo exists $gw.types.pss]] \
+    {1 1 1 1 1}
+
+  ## GG3 -- THE GLYPH CARRIES THE STATE, AND `ok` CARRIES NONE.
+  ## Marking the normal case is how a grid becomes noise.
+  check "GG3 a cell this adapter cannot yet drive is marked, and a cell that is\
+ simply available is not" \
+    [list [$gw.types.op cget -text] [$gw.types.pss cget -text] \
+          [ase::ui::chana_glyph ok]] \
+    [list op "⊘ pss" {}]
+
+  ## GG4 -- ⚠ THE MEASUREMENT THAT FORCED THE GLYPH. A per-cell `-background` is
+  ## WIPED: `ase::ui::_theme_widget`'s Radiobutton arm rewrites it and
+  ## `ase::ui::populate` ends in `apply_theme $top`, which recurses into this child
+  ## toplevel on every state mutation. This row sets a colour, repaints, and shows
+  ## it gone -- so nobody re-proposes colour-coded cells.
+  $gw.types.pss configure -background #123456
+  set GG4SET [$gw.types.pss cget -background]
+  ase::ui::apply_theme $top
+  update
+  check "GG4 a colour put on a cell does not survive the theme pass, which is why\
+ the state is a glyph and not a colour" \
+    [list [expr {$GG4SET eq {#123456}}] \
+          [expr {[$gw.types.pss cget -background] eq {#123456}}]] \
+    {1 0}
+
+  ## GG5 -- ⚠ EVERY CELL IS SELECTABLE, INCLUDING A BLOCKED ONE, AND THIS IS THE
+  ## ROW THAT MATTERS. `invoke` on a `-state disabled` radiobutton is a SILENT
+  ## no-op (rc 0, variable unchanged, `-command` never fired), so disabling the
+  ## cell would make a `.state` file carrying `{type pss enabled 1}` impossible to
+  ## turn OFF in the dialog -- and would make a future row written as
+  ## `$top.chana.types.pss invoke` pass while doing nothing at all.
+  $gw.types.pss invoke
+  update
+  check "GG5 a cell for an analysis that cannot be run is still clickable, so its\
+ reason can be read and a bench that already carries it can be edited" \
+    [list [$gw.types.pss cget -state] $::ase::ui::dlg($key,antype)] \
+    {normal pss}
+
+  ## GG6 -- AND SELECTING IT SAYS WHY.
+  check "GG6 selecting a blocked cell explains it in words rather than leaving the\
+ user to guess from a greyed control" \
+    [list [expr {[$gw.status cget -text] ne {}}] \
+          [expr {[$gw.status cget -text] eq \
+                 [ase::analysis_state_msg ngspice pss \
+                   [ase::analysis_state ngspice pss [ase::sim_caps_cached ngspice]]]}]] \
+    {1 1}
+
+  ## GG7 -- WHAT IS DISABLED IS THE **Enable** CHECKBUTTON, not the cell.
+  set GG7BLOCKED [$gw.enable cget -state]
+  $gw.types.op invoke
+  update
+  check "GG7 an analysis that cannot be run cannot be switched on, while one that\
+ can still can" \
+    [list $GG7BLOCKED [$gw.enable cget -state]] \
+    {disabled normal}
+
+  ## GG8 -- ⚠ BUT A ROW ALREADY ON MUST STILL BE TURNABLE OFF. A bench can carry
+  ## `{type pss enabled 1}` from a hand-edited file, and `ase::preflight_gate`
+  ## refuses the run; if the dialog also refused to let it be cleared the user
+  ## would have no way out except editing the file by hand.
+  set GG8ST [ase::session_state $key]
+  set GG8ROWS [ase::state_get $GG8ST analyses]
+  lappend GG8ROWS {type pss enabled 1}
+  dict set GG8ST analyses $GG8ROWS
+  ase::session_update $key $GG8ST
+  catch {destroy $gw}
+  $top.mb.analyses invoke "Choose…"
+  update
+  set gw $top.chana
+  $gw.types.pss invoke
+  update
+  check "GG8 a blocked analysis that is already switched on in the bench can still\
+ be switched off, so a hand-edited state file is never a trap" \
+    [list $::ase::ui::dlg($key,anen) [$gw.enable cget -state]] \
+    {1 normal}
+
+  ## GG9 -- DETECT IS OFFERED ONLY WHERE IT COULD CHANGE AN ANSWER.
+  ## ⚠ A `noprobe` CELL IS ONE DETECT CAN NEVER HELP; offering the button there is
+  ## the button that lies, and it is why `noprobe` is a separate reason token.
+  check "GG9 the Detect button is live while cells rest on an assumption, and the\
+ grid says which cells those are" \
+    [list [winfo exists $gw.detect] \
+          [$gw.detect cget -state] \
+          [ase::analysis_detectable ngspice [ase::sim_caps_cached ngspice]]] \
+    {1 normal 1}
+
+  ## GG10 -- ⚠ DETECT PAINTS BEFORE IT BLOCKS, AND THE ORDER IS THE WHOLE POINT.
+  ## The measurement can take up to 31.2 s against a binary that never answers,
+  ## with Tk frozen throughout; setting the sentence and calling `update idletasks`
+  ## BEFORE the blocking call is what puts it on screen. Structural, because the
+  ## only behavioural way to see it is to own a binary that hangs.
+  set GG10B {}
+  foreach gl [split [info body ase::ui::chana_detect] "\n"] {
+    if {[regexp {^\s*#} $gl]} { continue }
+    append GG10B "$gl\n"
+  }
+  check "GG10 STRUCTURAL Detect puts its sentence on screen before it blocks, not\
+ after the wait is over -- which would be the same as not saying it" \
+    [list [expr {[string first {update idletasks} $GG10B] > \
+                 [string first {analyses_measuring} $GG10B]}] \
+          [expr {[string first {analysis_detect} $GG10B] > \
+                 [string first {update idletasks} $GG10B]}]] \
+    {1 1}
+
+  ## GG11 -- NO TENTH COLOUR.
+  check "GG11 the grid adds no colour to the locked palette, so it reads the same\
+ in every theme" \
+    [llength [dict keys [ase::palette]]] 9
+
+  catch {destroy $gw}
+  ase::ui::close $key
+  update
+
+
   # --- G14: THE DIALOG DESCRIBES **THIS** SESSION'S SIMULATOR -----------------
   # Issue 1408, Stage 2 item 2d of doc/claude/ase_analyses_batch/.
   #
@@ -1845,15 +2004,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## CONTROL -- its job is that putting ngspice back restores the working dialog --
   ## so it tracks the registry rather than naming a number, and `lsort` is why the
   ## order here is alphabetical while the grid's is emit order (AG1 pins that).
-  check "G14g CONTROL with ngspice back the full grid returns, nothing is said,\
- every control is live, op is preselected and the pane shows deck lines again" \
+  ## ⚠ THE SECOND TERM ASSERTS THE GAP SENTENCE IS **GONE**, NOT THAT THE LINE IS
+  ## EMPTY. It was written as "nothing is said" when the status line existed only
+  ## to explain an empty grid; issue 1411 gave every cell a sentence, so with
+  ## ngspice back the line carries the SELECTED cell's own reason -- `op` resting
+  ## on a source-verified invariant nobody has measured. What must not come back
+  ## is the no-adapter line, and that is what is checked.
+  check "G14g CONTROL with ngspice back the full grid returns, the no-adapter\
+ line is gone and the selected cell explains itself instead, every control is\
+ live, op is preselected and the pane shows deck lines again" \
     [list [g14_kids $top.chana.types] \
-          [$top.chana.status cget -text] \
+          [expr {[string first {no adapter} [$top.chana.status cget -text]] < 0}] \
+          [expr {[$top.chana.status cget -text] eq \
+                 [ase::analysis_state_msg ngspice op \
+                   [ase::analysis_state ngspice op [ase::sim_caps_cached ngspice]]]}] \
           [list [g14_state $top.chana.enable] [g14_state $top.chana.opts] \
                 [g14_state $top.chana.btns.proceed]] \
           $::ase::ui::dlg($key,antype) \
           [lindex $G14PANE2 0]] \
-    [list {ac dc disto noise op pss pz sens sp tf tran} {} {normal normal normal} op op]
+    [list {ac dc disto noise op pss pz sens sp tf tran} 1 1 {normal normal normal} op op]
   $top.chana.btns.cancel invoke
   update
 
