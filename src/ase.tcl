@@ -4315,7 +4315,19 @@ proc ase::analysis_emit_check {sim row} {
         }
         continue
       }
-      if {$sufs ne {} && $kind ne {} && [lsearch -exact {source text} $kind] < 0} {
+      # ⚠ AN ALLOW-LIST, NOT A DENY-LIST, AND THE DIFFERENCE WAS A LIVE DEFECT.
+      # This read `[lsearch -exact {source text} $kind] < 0` -- parse anything
+      # that is not one of two named kinds. Issue 1416 then declared `ac`'s
+      # sweep mode with `kind mode`, whose legal values are the WORDS dec, oct
+      # and lin, and every one of them came back `bad notanumber`: a control the
+      # window offered and the gate then refused, which is the exact shape this
+      # whole batch exists to delete. MEASURED: a bench storing `sweep lin` was
+      # refused with "cannot read 'lin' as a number for 'sweep'".
+      #
+      # A deny-list is wrong here by construction -- it assumes every kind
+      # nobody has thought of yet is numeric, so the next `kind` any adapter
+      # invents is born broken. Only these four are numbers.
+      if {$sufs ne {} && [lsearch -exact {real int time freq} $kind] >= 0} {
         set r [ase::si_parse [dict get $row $slot] $sufs]
         if {[lindex $r 0] eq {bad}} {
           lappend out [list fill $slot \

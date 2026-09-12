@@ -699,30 +699,62 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
 
   # G2c: THE CONVERSE OF G2b, AND THE ROW THE D6 REPLACEMENT EXISTS FOR.
-  ## ⚠ G2b ALONE WOULD HAVE STAYED GREEN THROUGH THIS COMMIT. The old door
+  ## ⚠ G2b ALONE WOULD HAVE STAYED GREEN THROUGH ISSUE 1416. The old door
   ## demanded that EVERY field of the type be non-empty, which was only ever
   ## right because every field of every type happened to be `required 1`. tran
-  ## gained three OPTIONAL fields in this commit, so the old loop would refuse a
-  ## row ngspice runs perfectly well -- and refuse it naming a field the user was
-  ## never obliged to fill. Nothing in the suite would have said so: G2b asserts
-  ## a refusal, and a door that refuses everything satisfies it.
+  ## gained three OPTIONAL fields, so the old loop would refuse a row ngspice
+  ## runs perfectly well -- and refuse it naming a field the user was never
+  ## obliged to fill. Nothing in the suite would have said so: G2b asserts a
+  ## REFUSAL, and a door that refuses everything satisfies it.
+  ##
+  ## ⚠ THE DISCLOSURE IS OPENED FIRST, DELIBERATELY. With it closed the three
+  ## optional widgets do not exist, so a fixture that "left them blank" would be
+  ## proving nothing -- it would be proving that a field the form never built
+  ## cannot block a commit. Opening it makes the row assert what it claims.
   $top.strip.ana invoke
   update
   $top.chana.types.tran invoke
   update
+  ## This row asserts the DEFAULT state, so it says so rather than relying on
+  ## being the first row in the file that happens to touch the disclosure.
+  set ::ase::ui::dlg($key,advopen) 0
+  ase::ui::chana_show $key
+  update
+  check_true "G2c the tran form opens with an Advanced disclosure, closed" \
+    [expr {[winfo exists $top.chana.form.advbtn] \
+           && ![winfo exists $top.chana.form.tstart]}]
+  check "G2c closed, the form shows exactly the two REQUIRED fields" \
+    [list [winfo exists $top.chana.form.step] [winfo exists $top.chana.form.stop] \
+          [winfo exists $top.chana.form.tstart] [winfo exists $top.chana.form.tmax] \
+          [winfo exists $top.chana.form.uic]] {1 1 0 0 0}
+  ## The disclosure TOGGLES and is remembered for the window, so every fixture
+  ## that wants it open asks for the state rather than assuming a fresh dialog.
+  if {![winfo exists $top.chana.form.tstart]} {
+    $top.chana.form.advbtn invoke
+    update
+  }
+  check "G2c open, all five are there and uic is a checkbutton, not an entry" \
+    [list [winfo exists $top.chana.form.tstart] [winfo exists $top.chana.form.tmax] \
+          [winfo exists $top.chana.form.uic] \
+          [winfo class $top.chana.form.uic]] {1 1 1 Checkbutton}
+  ## ⚠ AND THE LABELS CARRY THEIR UNITS. `Stop time:` and `Stop time (s):` are
+  ## different questions, and the second is the one the simulator is asking.
+  check "G2c the labels are the declared ones and carry their units" \
+    [list [$top.chana.form.lstep cget -text] [$top.chana.form.lstop cget -text] \
+          [$top.chana.form.ltstart cget -text]] \
+    {{Time step (s):} {Stop time (s):} {Start recording at (s):}}
   set ::ase::ui::dlg($key,anen) 1
   foreach {fld val} {step 1n stop 10u} {
     $top.chana.form.$fld delete 0 end
     $top.chana.form.$fld insert 0 $val
   }
-  foreach fld {tstart tmax uic} {
-    if {[winfo exists $top.chana.form.$fld]} { $top.chana.form.$fld delete 0 end }
-  }
+  foreach fld {tstart tmax} { $top.chana.form.$fld delete 0 end }
+  set ::ase::ui::dlg($key,fld,uic) 0
   set g2c_before [ase::state_get [ase::session_state $key] analyses]
   $top.chana.btns.proceed invoke
   update
   check_true "G2c an enabled tran with its two required values and all three\
- optional ones left blank is COMMITTED, not refused" \
+ optional ones VISIBLE and blank is COMMITTED, not refused" \
     [expr {![winfo exists $top.chana]}]
   set g2crow {}
   foreach a [ase::state_get [ase::session_state $key] analyses] {
@@ -740,25 +772,195 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "G2c and the Arguments column shows the three words the deck will carry" \
     [expr {$g2cit ne {} ? [$atv set $g2cit args] : {}}] {tran 1n 10u}
 
-  # G2d: THE GROUP DOOR. A second sweep variable with no start, stop or step is
-  ## not a smaller sweep -- it is a parse error ngspice reports from the middle
-  ## of a run, after the deck is written and the process started. The door has to
-  ## catch it because no per-field `required` can: each of the four is genuinely
-  ## optional on its own, and 68 committed benches have none of them.
+  # G2h: TICKING THE BOX REACHES THE DECK. THIS IS THE BATCH'S OWN ACCEPTANCE
+  # CRITERION, STATED AS ONE ROW: nothing the window shows may fail to reach the
+  # deck, and nothing the deck contains may be unshowable in the window.
+  ## ⚠ G2c IS NOT THIS ROW AND CANNOT BE. G2c leaves the box CLEAR and asserts
+  ## that no key is written -- which a `form_get` that always answered 0, or a
+  ## checkbutton wired to nothing at all, would satisfy perfectly. MEASURED: a
+  ## sabotage making the bool arm return a constant 0 passes every other row in
+  ## this file. The only thing that catches it is switching the control ON and
+  ## following the value all the way to the emitted line.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tran invoke
+  update
+  if {![winfo exists $top.chana.form.uic]} {
+    $top.chana.form.advbtn invoke
+    update
+  }
+  set ::ase::ui::dlg($key,anen) 1
+  foreach {fld val} {step 1n stop 10u} {
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
+  }
+  foreach fld {tstart tmax} { $top.chana.form.$fld delete 0 end }
+  ## A real gesture, not a poke at the variable: `invoke` is what a click does.
+  if {[ase::ui::form_get $key uic] ne {1}} {
+    $top.chana.form.uic invoke
+    update
+  }
+  check "G2h clicking the box actually turns it on" \
+    [ase::ui::form_get $key uic] 1
+  $top.chana.btns.proceed invoke
+  update
+  set g2hrow {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {tran}} { set g2hrow $a; break }
+  }
+  set g2hit [tv_find $atv type tran]
+  ## ⚠ AND THE BACK-FILL IS VISIBLE HERE TOO. `uic` is the fifth positional slot,
+  ## so turning it on with no start time emits the start time's `whenskipped`
+  ## value -- `tran 1n 10u 0 uic`, not `tran 1n 10u uic`. Issue 1416.
+  check "G2h a ticked box is stored, reaches the emitted line, and back-fills the\
+ positional slot it skipped over" \
+    [list [ase::state_get $g2hrow uic] \
+          [expr {$g2hit ne {} ? [$atv set $g2hit args] : {}}]] \
+    {1 {tran 1n 10u 0 uic}}
+  ## ⚠ AND CLEARING IT AGAIN REMOVES THE KEY, rather than leaving `uic 0` behind.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tran invoke
+  update
+  if {![winfo exists $top.chana.form.uic]} {
+    $top.chana.form.advbtn invoke
+    update
+  }
+  check "G2h reopening shows the box still ticked, because the bench says so" \
+    [ase::ui::form_get $key uic] 1
+  $top.chana.form.uic invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.btns.proceed invoke
+  update
+  set g2hrow2 {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {tran}} { set g2hrow2 $a; break }
+  }
+  check "G2h clearing it removes the key entirely instead of storing an off" \
+    [list [lsort [dict keys $g2hrow2]] \
+          [expr {[set i [tv_find $atv type tran]] ne {} ? [$atv set $i args] : {}}]] \
+    [list {enabled step stop type} {tran 1n 10u}]
+
+  # G2e: THE AC SWEEP MODE IS A CONTROL, AND PICKING ONE RELABELS ITS NEIGHBOUR.
+  ## ⚠ THIS IS ngspice's SHARPEST AC TRAP AND THE FORM USED TO SAY `Points:` FOR
+  ## BOTH SIDES OF IT: `dec 10` is ten points PER DECADE, `lin 10` is ten points
+  ## IN TOTAL, and `lin 2` yields ONE point.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.ac invoke
+  update
+  check "G2e the sweep mode is a readonly combobox offering exactly ngspice's three" \
+    [list [winfo class $top.chana.form.sweep] \
+          [$top.chana.form.sweep cget -values] \
+          [$top.chana.form.sweep cget -state]] {TCombobox {dec oct lin} readonly}
+  ## ⚠ A BENCH THAT STORES NO SWEEP KEY STILL SHOWS `dec`, because the deck it
+  ## renders CARRIES `dec`. A blank picker beside a deck line reading `dec` is
+  ## the window disagreeing with the file.
+  check "G2e a bench with no stored sweep key shows the default the deck emits" \
+    [$top.chana.form.sweep get] dec
+  check "G2e and the neighbour is labelled per decade to match it" \
+    [$top.chana.form.lpoints cget -text] {Points per decade:}
+  $top.chana.form.sweep set lin
+  event generate $top.chana.form.sweep <<ComboboxSelected>>
+  update
+  check "G2e picking a linear sweep relabels the neighbour to say the number is\
+ a TOTAL, which is the defect this control exists to delete" \
+    [$top.chana.form.lpoints cget -text] {Number of points (2 gives ONE point):}
+  $top.chana.form.sweep set oct
+  event generate $top.chana.form.sweep <<ComboboxSelected>>
+  update
+  check "G2e and per octave for oct" \
+    [$top.chana.form.lpoints cget -text] {Points per octave:}
+  $top.chana.btns.cancel invoke
+  update
+
+  # G2g: THE WRITE-BACK RULE, WHICH IS A BYTE-IDENTITY RULE.
+  ## ⚠ A COMBOBOX ANSWERS `dec` WHERE A BENCH STORES NOTHING, and `dec` is
+  ## already what the emitter resolves from the field's own `default`. A door
+  ## that stored it would put a `sweep` key on disk that NONE of the 104
+  ## committed benches carries, changing no deck line whatsoever -- and the round
+  ## trip this batch is measured against would break the first time a user opened
+  ## the dialog and pressed OK. The same shape sank `uic 0` in this commit.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.ac invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  foreach {fld val} {points 20 start 10 stop 1g} {
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
+  }
+  $top.chana.form.sweep set dec
+  event generate $top.chana.form.sweep <<ComboboxSelected>>
+  $top.chana.btns.proceed invoke
+  update
+  set g2gac {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {ac}} { set g2gac $a; break }
+  }
+  check "G2g picking the mode the deck already emits writes NO key, so a bench a\
+ user merely opened is byte-identical to one they never touched" \
+    [list [lsort [dict keys $g2gac]] \
+          [expr {[set i [tv_find $atv type ac]] ne {} ? [$atv set $i args] : {}}]] \
+    [list {enabled points start stop type} {ac dec 20 10 1g}]
+
+  ## ⚠ AND A NON-DEFAULT PICK MUST STILL BE STORED, or the rule above would be
+  ## indistinguishable from a door that silently discards the control -- which is
+  ## the defect this whole stage exists to delete.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.ac invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.sweep set lin
+  event generate $top.chana.form.sweep <<ComboboxSelected>>
+  $top.chana.btns.proceed invoke
+  update
+  set g2gac2 {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {ac}} { set g2gac2 $a; break }
+  }
+  check "G2g a mode that is NOT the default is stored, and reaches the deck line" \
+    [list [ase::state_get $g2gac2 sweep] \
+          [expr {[set i [tv_find $atv type ac]] ne {} ? [$atv set $i args] : {}}]] \
+    [list lin {ac lin 20 10 1g}]
+
+  ## ⚠ AND THE FORM MUST OPEN AGREEING WITH IT. The relabel has to run at BUILD
+  ## time and not only on a pick: this bench now stores `lin`, so a form that
+  ## relabelled only on a <<ComboboxSelected>> would open reading `Points per
+  ## decade` over a bench whose deck line says `lin` -- the window disagreeing
+  ## with the file, which is the one thing this batch forbids.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.ac invoke
+  update
+  check "G2g reopening a bench that stores a non-default mode shows that mode AND\
+ the label that goes with it, without anyone touching the picker" \
+    [list [$top.chana.form.sweep get] [$top.chana.form.lpoints cget -text]] \
+    {lin {Number of points (2 gives ONE point):}}
+  $top.chana.btns.cancel invoke
+  update
+
+  # G2d: THE GROUP DOOR, AND WHERE ITS REFUSAL IS VISIBLE.
+  ## A second sweep variable with no start, stop or step is not a smaller sweep
+  ## -- it is a parse error ngspice reports from the middle of a run, after the
+  ## deck is written and the process started. No per-field `required` can say
+  ## this: each of the four is optional alone, and 68 committed benches have none.
   $top.strip.ana invoke
   update
   $top.chana.types.dc invoke
   update
+  if {![winfo exists $top.chana.form.source2]} {
+    $top.chana.form.advbtn invoke
+    update
+  }
   set ::ase::ui::dlg($key,anen) 1
   foreach {fld val} {source V2 start 0 stop 1.8 step 0.01 source2 temp} {
-    if {[winfo exists $top.chana.form.$fld]} {
-      $top.chana.form.$fld delete 0 end
-      $top.chana.form.$fld insert 0 $val
-    }
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
   }
-  foreach fld {start2 stop2 step2} {
-    if {[winfo exists $top.chana.form.$fld]} { $top.chana.form.$fld delete 0 end }
-  }
+  foreach fld {start2 stop2 step2} { $top.chana.form.$fld delete 0 end }
   set g2d_before [ase::state_get [ase::session_state $key] analyses]
   $top.chana.btns.proceed invoke
   update
@@ -767,25 +969,59 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [winfo exists $top.chana]
   check "G2d and the bench is untouched" \
     [ase::state_get [ase::session_state $key] analyses] $g2d_before
-  ## ⚠ COMPLETING THE NEST LETS IT THROUGH, which is what proves the refusal is
-  ## the GROUP rule and not a blanket refusal of the new fields.
+  ## ⚠ AND THE SENTENCE IS IN THE DIALOG, NOT ONLY IN THE ACTION LOG. Before
+  ## issue 1417 a refusal went only to `ase::echo`, which lands in ANOTHER
+  ## WINDOW -- so from the user's seat OK "did nothing".
+  check "G2d the refusal is written where the user is looking, and names the\
+ GROUP rather than picking one of its three empty fields" \
+    [list [expr {[$top.chana.status cget -text] ne {}}] \
+          [expr {[string first {second sweep} \
+                  [$top.chana.status cget -text]] >= 0}] \
+          [expr {[string first {start2} [$top.chana.status cget -text]] >= 0}]] \
+    {1 1 0}
+  ## ⚠ THE REFUSAL MUST NOT REBUILD THE FORM. chana_show destroys and recreates
+  ## every widget, so a door that reopened the disclosure to point at a hidden
+  ## field would DISCARD everything the user had typed in order to show them
+  ## what was wrong with it. This row proves the four values survived.
+  check "G2d the refusal leaves every value the user typed in place" \
+    [list [$top.chana.form.source get] [$top.chana.form.start get] \
+          [$top.chana.form.stop get] [$top.chana.form.step get] \
+          [$top.chana.form.source2 get]] {V2 0 1.8 0.01 temp}
   foreach {fld val} {start2 -40 stop2 60 step2 50} {
     $top.chana.form.$fld delete 0 end
     $top.chana.form.$fld insert 0 $val
   }
   $top.chana.btns.proceed invoke
   update
-  set g2drow {}
-  foreach a [ase::state_get [ase::session_state $key] analyses] {
-    if {[ase::state_get $a type] eq {dc}} { set g2drow $a; break }
-  }
   check "G2d completing the nest commits it, and the Arguments column carries\
  all eight words" \
     [list [expr {![winfo exists $top.chana]}] \
           [expr {[set i [tv_find $atv type dc]] ne {} ? [$atv set $i args] : {}}]] \
     {1 {dc V2 0 1.8 0.01 temp -40 60 50}}
-  ## Put the bench back the way G2 left it, so the rows below this one keep the
-  ## state they were written against.
+
+  # G2f: A MISSING REQUIRED VALUE PUTS THE CURSOR ON THE FIELD THAT IS MISSING.
+  ## ⚠ THERE WAS NO `focus` CALL ANYWHERE IN THIS DIALOG before issue 1417 --
+  ## measured, across choose_analyses and every proc it calls. A refusal that
+  ## names a field and leaves the cursor where it was makes the user hunt for
+  ## the field their own error message just named.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.dc invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.step delete 0 end
+  $top.chana.btns.proceed invoke
+  update
+  check "G2f a missing required value is refused, said in the dialog, and the\
+ cursor lands on the field that is missing" \
+    [list [winfo exists $top.chana] \
+          [expr {[string first {step} [$top.chana.status cget -text]] >= 0}] \
+          [focus]] \
+    [list 1 1 $top.chana.form.step]
+  $top.chana.btns.cancel invoke
+  update
+  ## Put the bench back the way G2 left it, so the rows below keep the state
+  ## they were written against.
   set g2st [ase::session_state $key]
   dict set g2st analyses $g2c_before
   ase::session_update $key $g2st

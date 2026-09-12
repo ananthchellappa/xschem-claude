@@ -4776,6 +4776,204 @@ proc ase::ui::choose_analyses {key {type {}}} {
 # (Re)build the bottom per-analysis form from the session state for the
 # currently selected type: Enable + one dialog_row per quick field at the
 # deterministic paths $w.<field>.
+# ONE FIELD, AS THE WIDGET ITS DECLARED `kind` ASKS FOR. Issue 1417.
+#
+# ⚠ THE DEFAULT ARM IS AN ENTRY AND THAT IS DELIBERATE. A field table that
+# declares a kind this proc has never heard of still produces a usable control
+# rather than no control at all -- a form that silently omitted a field would be
+# this stage's own defect (a value the user cannot reach) re-created by its fix.
+proc ase::ui::chana_field_row {key parent type field r row} {
+  variable dlg
+  set sim [ase::ui::chana_sim $key]
+  set fd  [ase::field_descriptor $sim $type $field]
+  set kind {}
+  if {[dict exists $fd kind]} { set kind [dict get $fd kind] }
+  set lbl [ase::ui::form_label $sim $type $field]
+  switch -exact -- $kind {
+    bool {
+      label $parent.l$field -text $lbl -font AseLabelFont -anchor w
+      if {[ase::state_get $row $field 0] eq {1}} {
+        set dlg($key,fld,$field) 1
+      } else {
+        set dlg($key,fld,$field) 0
+      }
+      checkbutton $parent.$field -text {} -onvalue 1 -offvalue 0 \
+        -variable ::ase::ui::dlg($key,fld,$field)
+      grid $parent.l$field -row $r -column 0 -sticky w -padx {8 6} -pady 2
+      grid $parent.$field  -row $r -column 1 -sticky w -padx {0 8} -pady 2
+    }
+    mode {
+      label $parent.l$field -text $lbl -font AseLabelFont -anchor w
+      set vals {}
+      if {[dict exists $fd values]} { set vals [dict get $fd values] }
+      ttk::combobox $parent.$field -values $vals -state readonly -width 12
+      # ⚠ THE DEFAULT IS RESOLVED HERE TOO, and it has to be: a bench storing no
+      # sweep key must still SHOW `dec`, because the deck it renders carries
+      # `dec`. A blank picker beside a deck line that says `dec` is the window
+      # disagreeing with the file, which is the one thing this batch forbids.
+      set cur [ase::state_get $row $field]
+      if {$cur eq {}} { set cur [ase::field_default $fd] }
+      catch {$parent.$field set $cur}
+      bind $parent.$field <<ComboboxSelected>> \
+        [list ase::ui::chana_mode_changed $key $type $field]
+      grid $parent.l$field -row $r -column 0 -sticky w -padx {8 6} -pady 2
+      grid $parent.$field  -row $r -column 1 -sticky w -padx {0 8} -pady 2
+    }
+    default {
+      set e [ase::ui::dialog_row $parent $r $lbl $field]
+      $e insert 0 [ase::state_get $row $field]
+      bind $e <Return> [list ase::ui::chana_ok $key]
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# THE FORM, ISSUE 1417. Stage 3's C3 gave the four analysis types real field
+# tables; this is the surface that offers them.
+#
+# ⚠ ONE ADDRESS FOR THE FORM, AND EVERY READER GOES THROUGH IT. Before this,
+# eight sites spelled `[dict get $wins $key].chana.form.$f` by hand, and issue
+# 1405 is what that costs: Stage 1 moved `$w.$field` to `$w.form.$field` and a
+# suite driving the old path through a VARIABLE was invisible to the survey, so
+# the display arm raised `invalid command name` and silently lost nine rows
+# while the headless arm read ALL PASS.
+proc ase::ui::chana_form {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].chana.form
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::form_has {key field} {
+  set w [ase::ui::chana_form $key]
+  return [expr {$w ne {} && [winfo exists $w.$field]}]
+}
+
+# ⚠ A FORM VALUE IS READ BY WIDGET CLASS, NOT BY ASSUMING `get`. A checkbutton
+# has no `get` at all -- reading one the old way raises, and the raise lands
+# inside `chana_ok`'s commit path where the only visible symptom is an OK button
+# that does nothing. The bool's answer lives in the array the checkbutton was
+# given as its `-variable`, which is also what makes it survive a rebuild.
+proc ase::ui::form_get {key field} {
+  variable dlg
+  set w [ase::ui::chana_form $key]
+  if {$w eq {} || ![winfo exists $w.$field]} { return {} }
+  switch -exact -- [winfo class $w.$field] {
+    Checkbutton - TCheckbutton {
+      if {[info exists dlg($key,fld,$field)] && $dlg($key,fld,$field) eq {1}} {
+        return 1
+      }
+      return 0
+    }
+    default { return [string trim [$w.$field get]] }
+  }
+}
+
+# THE WRITE-BACK RULE: A FIELD WRITES A KEY ONLY WHEN ITS VALUE DIFFERS FROM
+# WHAT THE DECK WOULD HAVE SAID WITHOUT IT. Issue 1417.
+#
+# ⚠ THIS IS A BYTE-IDENTITY RULE, NOT A TIDINESS ONE, AND IT WAS MEASURED THE
+# HARD WAY. Making `uic` a checkbutton made it answer `0` instead of the empty
+# string an untouched entry answers, so the door stored `uic 0` -- a key NONE of
+# the 104 committed benches carries. Making `sweep` a combobox has the same
+# shape: it answers `dec` where a bench stores nothing, and `dec` is exactly
+# what the emitter already resolves from the field's own `default`. Both keys
+# change no deck line and both break the round trip this batch is measured
+# against, the first time a user opens the dialog and presses OK.
+#
+# So "absent" is a per-field question: empty for a text field, OFF for a bool,
+# and THE DECLARED DEFAULT for anything that has one.
+proc ase::ui::form_is_absent {sim type field v} {
+  if {$v eq {}} { return 1 }
+  set fd [ase::field_descriptor $sim $type $field]
+  set kind {}
+  if {[dict exists $fd kind]} { set kind [dict get $fd kind] }
+  if {$kind eq {bool}} {
+    if {$v eq {0}} { return 1 }
+    return 0
+  }
+  if {[dict exists $fd default] && $v eq [dict get $fd default]} { return 1 }
+  return 0
+}
+
+# THE LABEL A FIELD WEARS. The field table's `label` if it declares one, else
+# the old `[string totitle $f]` so a field table that has not been written yet
+# still produces a readable form; plus the `unit` in parentheses when there is
+# one, because `Stop time:` and `Stop time (s):` are different questions.
+#
+# ⚠ A `mode` FIELD CAN RELABEL ITS NEIGHBOUR, and the neighbour's text then
+# comes from the neighbour's own `labels` table keyed by the mode's CURRENT
+# value. That is the fix for ngspice's sharpest AC trap: `dec 10` is ten points
+# PER DECADE while `lin 10` is ten points IN TOTAL, and the form said `Points:`
+# for both.
+proc ase::ui::form_label {sim type field {modeval {}}} {
+  set fd [ase::field_descriptor $sim $type $field]
+  set txt {}
+  if {$modeval ne {} && [dict exists $fd labels] \
+      && [dict exists [dict get $fd labels] $modeval]} {
+    set txt [dict get [dict get $fd labels] $modeval]
+  } elseif {[dict exists $fd label] && [dict get $fd label] ne {}} {
+    set txt [dict get $fd label]
+  } else {
+    set txt [string totitle $field]
+  }
+  if {[dict exists $fd unit] && [dict get $fd unit] ne {}} {
+    append txt " ([dict get $fd unit])"
+  }
+  return "$txt:"
+}
+
+# A MODE PICK RELABELS ITS DECLARED NEIGHBOUR. `relabels <field>` on the mode
+# field names the one it governs; `dialog_row` names its label `$w.l$ename`, so
+# the whole operation is one configure.
+proc ase::ui::chana_mode_changed {key type field} {
+  variable dlg
+  set w [ase::ui::chana_form $key]
+  if {$w eq {}} { return }
+  set sim [ase::ui::chana_sim $key]
+  set fd [ase::field_descriptor $sim $type $field]
+  if {![dict exists $fd relabels]} { return }
+  set tgt [dict get $fd relabels]
+  if {![winfo exists $w.l$tgt]} { return }
+  catch {$w.l$tgt configure \
+    -text [ase::ui::form_label $sim $type $tgt [ase::ui::form_get $key $field]]}
+}
+
+# THE ADVANCED DISCLOSURE. Six controls on a tran form is the right number to
+# OFFER and the wrong number to SHOW: `tstart`, `tmax` and `uic` are things a
+# person reaches for deliberately, and putting them beside `Time step` makes the
+# two required values harder to find rather than the three optional ones easier.
+#
+# ⚠ IT IS REMEMBERED FOR THE WINDOW, AND THAT IS A CHOICE. `advopen` is keyed by
+# the window and outlives any one opening of the dialog, so a user who reaches
+# for `tmax` once does not reach for the triangle again every time. The cost is
+# that this proc TOGGLES -- anything driving it has to read the current state
+# rather than assume a fresh dialog is closed.
+proc ase::ui::chana_adv_toggle {key} {
+  variable dlg
+  set w [ase::ui::chana_form $key]
+  if {$w eq {}} { return }
+  set open 0
+  if {[info exists dlg($key,advopen)] && $dlg($key,advopen) eq {1}} { set open 1 }
+  set dlg($key,advopen) [expr {$open ? 0 : 1}]
+  ase::ui::chana_show $key
+}
+
+# THE DIALOG'S OWN STATUS LINE. Generalised from ase::ui::rsel_status, which
+# did exactly this for one dialog and was the only thing in the tree that did.
+#
+# ⚠ AND `ase::echo` STAYS. It is the action log and it is what a HEADLESS
+# assertion can witness; the status line is what a PERSON reads. A refusal that
+# went only to the log lands in another window, which is why OK appeared to "do
+# nothing" -- the sentence existed and was nowhere the user was looking.
+proc ase::ui::dialog_status {w key msg} {
+  variable dlg
+  set dlg($key,dlgstatus) $msg
+  if {[winfo exists $w.status]} { catch {$w.status configure -text $msg} }
+  return $msg
+}
+
 proc ase::ui::chana_show {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
@@ -4834,12 +5032,64 @@ proc ase::ui::chana_show {key} {
       catch {$w.enable configure -state disabled}
     }
   }
+  # ── THE TYPED FORM, ISSUE 1417. ────────────────────────────────────────────
+  # Until this, every field of every type was an `entry` labelled
+  # `[string totitle $f]:` -- no unit, no hint, and a bool the user had to know
+  # to type `1` into. The field table C3 landed already says what each field IS;
+  # this reads it.
+  #
+  # ⚠ THE `advanced` SPLIT IS NOT COSMETIC. Six controls on the tran form is the
+  # right number to OFFER and the wrong number to SHOW: putting `tstart`, `tmax`
+  # and `uic` beside `Time step` makes the two REQUIRED values harder to find,
+  # not the three optional ones easier. It is CLOSED the first time and then
+  # remembered for the window -- see ase::ui::chana_adv_toggle.
+  set _sim2 [ase::ui::chana_sim $key]
+  set _basic {} ; set _advf {}
+  foreach f [ase::ui::chana_fields $type $_sim2] {
+    set fd [ase::field_descriptor $_sim2 $type $f]
+    if {[dict exists $fd advanced] && [dict get $fd advanced] eq {1}} {
+      lappend _advf $f
+    } else {
+      lappend _basic $f
+    }
+  }
+  set _advopen 0
+  if {[info exists dlg($key,advopen)] && $dlg($key,advopen) eq {1}} { set _advopen 1 }
   set r 0
-  foreach f [ase::ui::chana_fields $type [ase::ui::chana_sim $key]] {
-    set e [ase::ui::dialog_row $w.form $r "[string totitle $f]:" $f]
-    $e insert 0 [ase::state_get $row $f]
-    bind $e <Return> [list ase::ui::chana_ok $key]
+  set _shown $_basic
+  foreach f $_basic {
+    ase::ui::chana_field_row $key $w.form $type $f $r $row
     incr r
+  }
+  if {[llength $_advf]} {
+    # ⚠ A GLYPH AND A WORD, not a glyph alone: the triangle says which way it
+    # goes and the word says what is behind it.
+    if {$_advopen} {
+      set _glabel "▾ Advanced"
+    } else {
+      set _glabel "▸ Advanced"
+    }
+    button $w.form.advbtn -text $_glabel -font AseLabelFont -relief flat \
+      -anchor w -command [list ase::ui::chana_adv_toggle $key]
+    grid $w.form.advbtn -row $r -column 0 -columnspan 2 -sticky w \
+      -padx {8 6} -pady 2
+    incr r
+    if {$_advopen} {
+      foreach f $_advf {
+        ase::ui::chana_field_row $key $w.form $type $f $r $row
+        incr r
+        lappend _shown $f
+      }
+    }
+  }
+  # ⚠ THE RELABEL RUNS AT BUILD TIME TOO, NOT ONLY ON A PICK. Otherwise the form
+  # opens reading `Points per decade` for a bench that stored `lin`, which is the
+  # exact sentence the relabel exists to stop being wrong.
+  foreach f $_shown {
+    set fd [ase::field_descriptor $_sim2 $type $f]
+    if {[dict exists $fd relabels]} {
+      ase::ui::chana_mode_changed $key $type $f
+    }
   }
   ase::ui::apply_theme $w
 }
@@ -4870,8 +5120,8 @@ proc ase::ui::chana_ok {key} {
   set en [expr {[info exists dlg($key,anen)] && $dlg($key,anen) ? 1 : 0}]
   set vals [dict create]
   foreach f [ase::ui::chana_fields $type $sim] {
-    if {[winfo exists $w.form.$f]} {
-      dict set vals $f [string trim [$w.form.$f get]]
+    if {[ase::ui::form_has $key $f]} {
+      dict set vals $f [ase::ui::form_get $key $f]
     }
   }
   if {$en} {
@@ -4898,9 +5148,32 @@ proc ase::ui::chana_ok {key} {
     set bad [ase::analysis_emit_check $sim $probe]
     if {[llength $bad]} {
       # The FRAME is the caller's, the CLAUSE is the reader's -- issue 1404's
-      # split. Report the first; the field-by-field surface is C4's.
-      catch {::ase::echo \
-        "ase: enabled $type analysis [lindex [lindex $bad 0] 2]" error}
+      # split. The first offence is the one reported; a field-by-field surface
+      # would need a per-field marker language, which is its own ruling.
+      set _fld    [lindex [lindex $bad 0] 1]
+      set _clause [lindex [lindex $bad 0] 2]
+      catch {::ase::echo "ase: enabled $type analysis $_clause" error}
+      # ⚠ AND IN THE DIALOG, WHERE THE USER IS ACTUALLY LOOKING. Issue 1417.
+      # Before this the sentence went ONLY to the action log, which lands in
+      # ANOTHER WINDOW -- so from the user's seat OK "did nothing". The echo
+      # stays because it is what a headless assertion can witness.
+      set _msg "This $type analysis $_clause."
+      if {$_fld ne {} && ![ase::ui::form_has $key $_fld]} {
+        set _fd [ase::field_descriptor $sim $type $_fld]
+        if {[dict exists $_fd advanced] && [dict get $_fd advanced] eq {1}} {
+          append _msg " It is under Advanced."
+        }
+      }
+      ase::ui::dialog_status $w $key $_msg
+      # ⚠ FOCUS LANDS ON THE OFFENDING WIDGET, and there was no `focus` call
+      # anywhere in this dialog before. ⚠ IT DOES NOT REBUILD THE FORM TO REACH
+      # A HIDDEN FIELD: chana_show destroys and recreates every widget, so
+      # opening the disclosure here would discard everything the user had typed
+      # in order to show them what was wrong with it. The sentence says where it
+      # is instead, and a GROUP offence names no widget at all.
+      if {$_fld ne {} && [ase::ui::form_has $key $_fld]} {
+        catch {focus [ase::ui::chana_form $key].$_fld}
+      }
       return
     }
   }
@@ -4914,8 +5187,11 @@ proc ase::ui::chana_ok {key} {
   else           { set row [dict create type $type] }
   dict set row enabled $en
   dict for {f v} $vals {
-    if {$v eq {}} { set row [dict remove $row $f] } \
-    else          { dict set row $f $v }
+    if {[ase::ui::form_is_absent $sim $type $f $v]} {
+      set row [dict remove $row $f]
+    } else {
+      dict set row $f $v
+    }
   }
   if {$idx >= 0} { lset rows $idx $row } else { lappend rows $row }
   dict set st analyses $rows

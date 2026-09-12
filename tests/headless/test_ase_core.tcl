@@ -4808,6 +4808,47 @@ check "GR6 a bool is still refused only for a value that is neither on nor off,\
         [ase::analysis_emit_check ngspice {type tran step 1n stop 10u}]] \
   {boolval {}}
 
+
+## --- GR7/GR8: THE NUMBER CHECK IS AN ALLOW-LIST -----------------------------
+## ⚠ IT WAS A DENY-LIST UNTIL IT MET A FIELD WHOSE LEGAL VALUES ARE WORDS, AND
+## THAT WAS A LIVE DEFECT FOR ONE COMMIT. The test read "parse anything that is
+## not one of two named kinds". Issue 1416 then declared ac's sweep mode with
+## `kind mode`, whose legal values are dec, oct and lin -- and every one came
+## back `bad notanumber`. MEASURED: a bench storing `sweep lin` was refused with
+## `cannot read 'lin' as a number for 'sweep'`, which is a control the window
+## offers and the gate then rejects: the exact shape this batch exists to delete.
+##
+## A deny-list is wrong here BY CONSTRUCTION. It assumes every kind nobody has
+## thought of yet is numeric, so the next `kind` any adapter invents is born
+## broken, and born broken in the direction that refuses legal work.
+check "GR7 a field whose legal values are words is not number-checked, while the\
+ numeric fields beside it still are" \
+  [list [ase::analysis_emit_check ngspice \
+          {type ac sweep lin points 20 start 10 stop 1g}] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+          {type ac sweep lin points abc start 10 stop 1g}] 0] 0] \
+        [ase::analysis_emit_check ngspice \
+          {type dc source Vres start 0 stop 1 step 0.1}]] \
+  {{} fill {}}
+
+## ⚠ AND THE LIST OF KINDS IS PINNED, so that adding a new one is a decision
+## somebody makes rather than a default somebody inherits. If this row reds, a
+## field table has declared a kind nobody has classified as numeric or not.
+set GRK {}
+foreach grt [dict keys [ase::analysis_types ngspice]] {
+  set gre [ase::analysis_entry ngspice $grt]
+  if {![dict exists $gre fields]} { continue }
+  foreach grf [dict get $gre fields] {
+    if {![dict exists $grf kind]} { continue }
+    if {[lsearch -exact $GRK [dict get $grf kind]] < 0} {
+      lappend GRK [dict get $grf kind]
+    }
+  }
+}
+check "GR8 every kind this registry declares has been classified as a number or\
+ not a number, and the four numeric ones are the only ones parsed" \
+  [lsort $GRK] {bool freq int mode real source time}
+
 # --- CP: THE COMMITTED CORPUS, AS A PROPERTY --------------------------------
 ## ⚠ THE ACCEPTANCE CRITERION OF THIS WHOLE BATCH IS THAT THE COMMITTED BENCHES
 ## ROUND-TRIP BYTE-IDENTICALLY, and this section is the only thing in the tree

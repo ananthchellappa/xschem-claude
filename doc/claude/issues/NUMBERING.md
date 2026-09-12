@@ -3180,7 +3180,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1416.**~~ superseded: **1416** is filed, above.
 
-**The next free number is 1417.**
+- **1417** — **The form offered an entry for everything, and said "Points:" for both AC sweeps.** Commit C4 of Stage 3: `chana_field_row` builds each control from its declared `kind` (bool → checkbutton, mode → readonly combobox, else entry), `form_label` puts the declared label AND ITS UNIT on it, `chana_mode_changed` relabels a mode field's declared neighbour, and `chana_adv_toggle` hides the optional fields behind `▸ Advanced`. New: `chana_form`, `form_has`, `form_get`, `form_is_absent`, `dialog_status`. ⚠ `dec 10` is ten points PER DECADE, `lin 10` is ten IN TOTAL and `lin 2` yields ONE — the form said `Points:` for all three. ⚠ THE WRITE-BACK RULE IS A BYTE-IDENTITY RULE, measured the hard way TWICE inside this commit: a checkbutton answers `0` where an untouched entry answers empty, so the door stored `uic 0`; a combobox answers `dec` where a bench stores nothing, so it stored `sweep dec`. NEITHER key changes a deck line and BOTH break the 104-bench round trip the first time a user presses OK. "Absent" is per field: empty for text, OFF for a bool, THE DECLARED DEFAULT for anything that has one. ⚠ The refusal now appears IN THE DIALOG and focus lands on the offending widget — measured, there was no `focus` call anywhere in `choose_analyses` or any proc it calls, and the sentence went only to the action log, which lands in ANOTHER WINDOW, so OK "did nothing". ⚠ It does NOT rebuild the form to reach a hidden field: `chana_show` destroys every widget, so opening the disclosure there would DISCARD what the user typed in order to show them what was wrong with it. ⚠ The relabel runs at BUILD time too, or the form opens reading `Points per decade` for a bench that stored `lin`. ⚠ The disclosure TOGGLES and is remembered for the window — two of this commit's own fixtures assumed a fresh dialog is closed and were wrong. Floor: dialogs display 242 → **254**.
+
+~~**The next free number is 1417.**~~ superseded: **1417** is filed, above.
+
+**The next free number is 1418.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
