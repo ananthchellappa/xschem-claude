@@ -3172,7 +3172,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1414.**~~ superseded: **1414** is filed, above.
 
-**The next free number is 1415.**
+- **1415** — **One refusal reader, and the number alphabet the simulator actually reads.** Commit C2 of Stage 3: `ase::analysis_emit_check` (ALL offences, not the first), `ase::analysis_emit_msg`, `ase::si_parse` and a new optional `si_suffixes` hook; the gate refuses an unemittable row ABOVE the `ase_preflight` escape. Every suffix value MEASURED with a value harness: `20mil` → 5.08e-4 (a thousandth of an INCH, a factor of ~39), `1a` → 1e-18, and ⚠ **`1M` → 1e-3 with ZERO warning lines** — `M` is milli, users mean Mega, nine orders of magnitude SILENTLY, so ASE-L warns where ngspice does not (the plan claimed ngspice warns; it does not). ⚠ `x` is deliberately ABSENT: `1x` is **1.0** to ngspice and **1e6** to this repo's own `atof_spice` under the comment *Xyce extension*, so including it would make ASE-L agree with xschem and disagree with the simulator. ⚠ A backend with no table gets NO numeric opinion (`ok`, never `bad`). ⚠ Without its `ase_preflight 0` leg row EK3 is vacuous. ⚠ The clause carries NO frame — EK4 asserts the SHAPE, not two substrings. EK6 is the CORPUS INVARIANT and lands with this commit because it is the one that could make a shipped bench unrunnable. Floor core 298 → **309**, seven sabotages. ⚠ Two driver expectations wrong: `20u` is `1.9999999999999998e-5` (compare numbers as numbers), and `ase_preflight` is already set.
+
+~~**The next free number is 1415.**~~ superseded: **1415** is filed, above.
+
+**The next free number is 1416.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

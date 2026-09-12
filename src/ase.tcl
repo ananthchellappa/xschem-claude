@@ -4181,6 +4181,132 @@ proc ase::analysis_expand {row tmpl {fields {}}} {
   return [string trim [join $out { }]]
 }
 
+# READ A NUMBER THE WAY THIS SIMULATOR WILL READ IT. Issue 1415.
+#
+# Answers `{ok <value>}`, `{warn <value> <token>}` or `{bad <token>}`.
+#
+# ⚠ WITH NO DECLARED TABLE THE ANSWER IS `ok` AND NO VALUE -- NOT `bad`. A backend
+# that has not told ASE-L its number alphabet gets NO NUMERIC OPINION: refusing
+# text there would be a claim about a simulator ASE-L has never seen, and there
+# are real ones whose parameters are not numbers at all (a Xyce `.TRAN {tstep}`
+# carries a braced expression and is legal). That is the same house rule as every
+# other optional hook -- absent means NOT MEASURED, never NO.
+#
+# ⚠ THE SUFFIX TABLE IS ADAPTER **CONTENT**. It is one simulator's alphabet, and
+# THIS REPOSITORY'S OWN C PARSER DISAGREES WITH IT -- measured, `1x` is
+# 1.000000e+00 to ngspice and 1e6 to `atof_spice` (src/editprop.c, under the
+# literal comment "Xyce extension"). A schema that made one alphabet normative
+# would have made xschem disagree with itself.
+proc ase::si_parse {text {suffixes {}}} {
+  set t [string trim $text]
+  if {$t eq {}} { return {bad empty} }
+  if {$suffixes eq {}} { return {ok} }
+  if {![regexp -nocase {^([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(.*)$} $t -> num rest]} {
+    return {bad notanumber}
+  }
+  set rest [string tolower [string trim $rest]]
+  if {$rest eq {}} { return [list ok [expr {double($num)}]] }
+  # LONGEST MATCH FIRST, or `meg` is read as `m` and a megahertz becomes a
+  # millihertz -- nine orders of magnitude, silently.
+  set best {} ; set blen -1
+  dict for {suf mul} $suffixes {
+    set sl [string length $suf]
+    if {$sl > $blen && [string first $suf $rest] == 0} { set best $suf ; set blen $sl }
+  }
+  if {$best eq {}} { return {bad unknownsuffix} }
+  set v [expr {double($num) * double([dict get $suffixes $best])}]
+  # ⚠ ONE WARNING, AND IT IS THE ONE ngspice ITSELF DOES NOT GIVE. MEASURED:
+  # `v1 in 0 dc 1M` answers 1.000000e-03 with ZERO warning or error lines -- `M`
+  # is MILLI and users who write it mean MEGA. Nine orders of magnitude, silently,
+  # is exactly the class this batch exists to surface, and ASE-L is the only place
+  # it can be said.
+  if {[string index [string trim $text] end] eq {M} && $best eq {m}} {
+    return [list warn $v caseM]
+  }
+  return [list ok $v]
+}
+
+# THE OFFENCES THAT STOP A ROW REACHING A DECK -- ALL OF THEM, IN ORDER, as
+# `{token field sentence}` triples, or `{}` when the row is emittable.
+#
+# ⚠ **ALL** OF THEM, NOT THE FIRST. A validator that stops at the first offence
+# makes the user press OK once per mistake, and each press re-renders the form.
+#
+# ⚠ AND EVERY OPTIONAL-HOOK RESOLVE GOES INSIDE A `catch`. MEASURED in source:
+# `ase::backend_hook` RAISES both for an unknown hook AND for an unknown
+# simulator; `ase::analysis_types` survives only because it wraps the lookup in
+# its own catch. A call site written to "it falls back" raises instead of
+# answering -- and this one runs on the Run path.
+proc ase::analysis_emit_check {sim row} {
+  set out {}
+  set type [ase::state_get $row type]
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {}} { return {} }
+  if {![ase::analysis_renderable $sim $type]} {
+    lappend out [list unrenderable {} [ase::analysis_emit_msg unrenderable $type]]
+    return $out
+  }
+  set flds {}
+  if {[dict exists $e fields]} { set flds [dict get $e fields] }
+  set sufs {}
+  catch {
+    set h [ase::backend_hook $sim si_suffixes]
+    if {$h ne {}} { set sufs [$h] }
+  }
+  foreach card [dict get $e emit] {
+    if {![dict exists $card tmpl]} { continue }
+    foreach slot [ase::analysis_slots [dict get $card tmpl]] {
+      set fd {}
+      foreach f $flds { if {[dict exists $f name] && [dict get $f name] eq $slot} { set fd $f } }
+      set required 0
+      if {[dict exists $fd required]} { set required [dict get $fd required] }
+      set kind {}
+      if {[dict exists $fd kind]} { set kind [dict get $fd kind] }
+      set have [expr {[dict exists $row $slot] && [dict get $row $slot] ne {}}]
+      if {$kind eq {bool}} {
+        # ⚠ A BOOL'S ONLY WRONG VALUE IS ONE THAT IS NEITHER 1 NOR 0 NOR ABSENT.
+        # It cannot be "missing": absent means off, which is a legal answer.
+        if {$have && [lsearch -exact {0 1} [dict get $row $slot]] < 0} {
+          lappend out [list boolval $slot [ase::analysis_emit_msg boolval $slot]]
+        }
+        continue
+      }
+      if {!$have} {
+        if {$required eq {1}} {
+          lappend out [list missing $slot [ase::analysis_emit_msg missing $slot]]
+        }
+        continue
+      }
+      if {$sufs ne {} && $kind ne {} && [lsearch -exact {source text} $kind] < 0} {
+        set r [ase::si_parse [dict get $row $slot] $sufs]
+        if {[lindex $r 0] eq {bad}} {
+          lappend out [list fill $slot \
+            [ase::analysis_emit_msg fill $slot [dict get $row $slot]]]
+        }
+      }
+    }
+  }
+  return $out
+}
+
+# THE SENTENCES. ⚖ R9: recommended shapes, not ratifications.
+#
+# ⚠ A CLAUSE HERE CARRIES **NO FRAME**. No `ase:` prefix, no "nothing was
+# generated" -- the caller owns the frame, exactly as issue 1404's Stop warning
+# splits frame from clause. A row that asserted two substrings of a composed
+# sentence would stay green when an adapter composed the whole thing itself.
+proc ase::analysis_emit_msg {token args} {
+  set f [lindex $args 0]
+  switch -exact -- $token {
+    missing      { return "needs a value for '$f'" }
+    boolval      { return "'$f' must be on or off" }
+    fill         { return "cannot read '[lindex $args 1]' as a number for '$f'" }
+    unrenderable { return "is not one this simulator backend can set up" }
+    group        { return "needs every value of '$f' or none of them" }
+  }
+  return {}
+}
+
 # EVERY WAY THIS SIMULATOR'S REGISTRY IS SELF-INCONSISTENT, as a list of
 # `{type token detail}` -- or `{}`. Issue 1414.
 #
@@ -5924,6 +6050,50 @@ proc ase::preflight_fix_session {key} {
 # .include'd file defines) and a user who is right must not be locked out of
 # their own simulator. Defences (b) and (c) are unaffected by it.
 proc ase::preflight_gate {state netlist_text} {
+  # --- 1415: AN ENABLED ANALYSIS THAT CANNOT BE EMITTED IS A REFUSAL ---------
+  #
+  # Stage 3. What the window shows must reach the deck -- so a row the form
+  # accepted but the template cannot fill is refused HERE, where nothing in the
+  # run directory has been touched, rather than discovered by `dict get` while the
+  # deck is being written.
+  #
+  # ⚠ ALSO ABOVE THE `ase_preflight` ESCAPE, AND FOR ISSUE 1401's REASON. That
+  # escape lets a user who knows their netlist better than the scanner switch the
+  # save-name check off and run. There is nothing for it to be right about here:
+  # a row with no value for a required slot cannot be emitted by any spelling, so
+  # forcing it would produce exactly the silent nothing this stage deletes.
+  #
+  # ⚠ ONE FRAME, THE ADAPTER'S CLAUSES. `ase::analysis_emit_msg` returns a bare
+  # clause with no `ase:` and no "Nothing was generated" -- the frame is composed
+  # once, here. That is issue 1404's split, and it is what stops an adapter
+  # composing a whole sentence in ASE-L's voice.
+  set simname [ase::state_get $state simulator [ase::default_simulator]]
+  set emitbad {}
+  foreach arow [ase::state_get $state analyses] {
+    if {[ase::state_get $arow enabled 0] ne {1}} { continue }
+    foreach off [ase::analysis_emit_check $simname $arow] {
+      # ⚠ `unrenderable` IS **NOT** THIS BLOCK'S TO ACT ON, and skipping it is not
+      # tidiness. Issue 1401's own block sits immediately below with a different
+      # sentence, a rundir note that names an EARLIER run's files, and a rule that
+      # it must not CREATE the rundir in order to name it -- rows PF222e, PF222h
+      # and PF222i of tests/headless/test_ase_preflight.tcl assert all three.
+      # Acting on the token here preempts that block and reds them, which is what
+      # the first cut of this commit did. `analysis_emit_check` still REPORTS it,
+      # because the dialog wants one reader for every reason a row cannot run.
+      if {[lindex $off 0] eq {unrenderable}} { continue }
+      lappend emitbad [list [ase::state_get $arow type] [lindex $off 2]]
+    }
+  }
+  if {[llength $emitbad]} {
+    foreach eb $emitbad {
+      ::ase::echo "ase: the [lindex $eb 0] analysis [lindex $eb 1]" error
+    }
+    set l "ase: it is enabled on this bench, so the run would have started and\
+ produced nothing for it. Nothing was generated: no deck, no raw, no log.\
+ `set ase_preflight 0` does NOT disable this check."
+    ::ase::echo $l error
+    return [list emit_incomplete $emitbad]
+  }
   # --- 1401: AN ENABLED ANALYSIS THIS BACKEND CANNOT RENDER IS A REFUSAL -----
   # It is checked HERE as well as in render_deck because this gate runs ahead of
   # the deck write, so nothing in the run directory is touched -- and because a
@@ -12685,6 +12855,31 @@ namespace eval ase::backend::ngspice {
   # misread; measured on ngspice-46+, it still appends every analysis. A build
   # free to ignore it is still read correctly -- ase::cap_raw_plots reads both
   # shapes.
+  # THE NUMBER ALPHABET THIS SIMULATOR READS -- adapter CONTENT, and every value
+  # below was MEASURED with a value harness (`v1 in 0 dc <s>` / `op` / `print
+  # v(in)`) rather than read from a manual. Issue 1415.
+  #
+  #   20u     -> 2.000000e-05        0.02m  -> 2.000000e-05
+  #   20mil   -> 5.080000e-04        1a     -> 1.000000e-18
+  #   1meg    -> 1.000000e+06        2k     -> 2.000000e+03
+  #   1M      -> 1.000000e-03        with ZERO warning or error lines
+  #
+  # ⚠ `M` IS MILLI AND ngspice SAYS NOTHING ABOUT IT. Users who write `1M` mean
+  # MEGA; measured, they get a thousandth, silently. That is nine orders of
+  # magnitude and ASE-L is the only place it can be said, which is why
+  # `ase::si_parse` warns on it and ngspice does not.
+  #
+  # ⚠ `x` IS **NOT** HERE, AND ITS ABSENCE IS MEASURED. `1x` answers
+  # 1.000000e+00 to ngspice -- the suffix is ignored -- while this repository's
+  # own `atof_spice` reads it as 1e6 under the comment "Xyce extension"
+  # (src/editprop.c). The same schematic value means two different numbers to the
+  # two parsers, so putting `x` in THIS table would make ASE-L agree with xschem
+  # and disagree with the simulator it is driving.
+  proc si_suffixes {} {
+    return [dict create meg 1e6 mil 25.4e-6 t 1e12 g 1e9 k 1e3 \
+                        m 1e-3 u 1e-6 n 1e-9 p 1e-12 f 1e-15 a 1e-18]
+  }
+
   # ---- LEG D: THE VARIANT PROBE (Stage 2 item 2g, issue 1412) -------------
   #
   # ONE ADDITIONAL `-b` PROCESS, LAST, OUT OF THE SAME BUDGET. Measured cost on
@@ -13708,5 +13903,6 @@ $_leg
     op_param_enumerable ::ase::backend::ngspice::op_param_enumerable \
     analysis_types      ::ase::backend::ngspice::analysis_types \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
-    analysis_caveat     ::ase::backend::ngspice::analysis_caveat]
+    analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
+    si_suffixes         ::ase::backend::ngspice::si_suffixes]
 }

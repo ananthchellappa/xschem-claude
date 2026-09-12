@@ -89,6 +89,10 @@
 # the expander). ⚠ Every EM fixture registers its OWN backend, so the shipped
 # registry, the 104 committed `.state` files and every deck golden are unmoved BY
 # CONSTRUCTION rather than by hope.
+# 298 -> 309 with sections EK and SI (Stage 3 item C2, issue 1415 -- one refusal
+# reader and the number alphabet). ⚠ EK6 is the CORPUS INVARIANT and it belongs
+# with that commit: C2 is the one that could make a shipped bench unrunnable at
+# the gate, so the row that would notice lands with it.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -4445,6 +4449,212 @@ check "EM9 a registry that offers a field no deck line consumes, or consumes a\
         [ase::analysis_schema_errors ngspice] \
         [catch {ase::analysis_schema_errors zznosuchsim}]] \
   [list {{emb fieldunused shown} {emb noslotfield missing}} {} 0]
+
+
+
+# ============================================================================
+# EK. ONE REFUSAL READER, AND SI. THE NUMBER ALPHABET -- ISSUE 1415
+# ============================================================================
+#
+# Stage 3 commit C2. A row the form accepted but the template cannot fill is
+# refused AT THE GATE, where nothing in the run directory has been touched, rather
+# than discovered by `dict get` while the deck is being written.
+
+proc ek_state {rows} {
+  set st [ase::state_default]
+  dict set st design {lib aselib cell nfet_clean view schematic}
+  dict set st rundir {}
+  dict set st models {{file /m/s.lib section tt}}
+  dict set st analyses $rows
+  return $st
+}
+set EKNET {** sch_path: /f/n.sch
+**.subckt n
+V1 D GND 1
+**.ends
+.GLOBAL GND
+.end
+}
+proc ek_gate {rows} {
+  global EKNET
+  set ::ek_said {}
+  set had [expr {[info commands ::ciw_echo] ne {}}]
+  if {$had} { rename ::ciw_echo ::ek_saved }
+  proc ::ciw_echo {line {tag {}}} { lappend ::ek_said [list $tag $line] ; return {} }
+  set v [ase::preflight_gate [ek_state $rows] $EKNET]
+  catch {rename ::ciw_echo {}}
+  if {$had} { rename ::ek_saved ::ciw_echo }
+  return $v
+}
+
+## --- EK1: A ROW THAT CANNOT BE EMITTED IS REFUSED, BY NAME ------------------
+check "EK1 an analysis switched on with a value missing is refused before\
+ anything is written, and the refusal names the value" \
+  [list [lindex [ek_gate {{type tran enabled 1 step 1n}}] 0] \
+        [lindex [ek_gate {{type tran enabled 1 step 1n}}] 1] \
+        [ek_gate {{type tran enabled 1 step 1n stop 10u}}]] \
+  [list emit_incomplete {{tran {needs a value for 'stop'}}} {}]
+
+## --- EK2: **ALL** THE OFFENCES, NOT THE FIRST ------------------------------
+## A validator that stops at the first makes the user press OK once per mistake,
+## and each press re-renders the form.
+check "EK2 every missing value is reported at once, so one press of OK tells the\
+ user everything that is wrong" \
+  [llength [ase::analysis_emit_check ngspice {type dc enabled 1 source V2}]] 3
+
+## --- EK3: ⚠ THE ESCAPE HATCH DOES NOT REACH THIS CHECK ---------------------
+## `set ase_preflight 0` is a real lever for the save-name scanner -- a user who
+## knows their netlist better than it does can switch it off and run. There is
+## nothing for it to be right about here: a row with no value for a required slot
+## cannot be emitted by ANY spelling, so forcing it produces exactly the silent
+## nothing this stage deletes. ⚠ WITHOUT THIS LEG THE ROW IS VACUOUS: the default
+## is `ase_preflight 1`, so a gate placed BELOW the escape behaves identically
+## until someone sets it -- and no other row sets it.
+## ⚠ BARE WORDS DO NOT GO IN `expr`. This has now aborted a suite FOUR times in
+## this batch (simcaps L, Q, V and here). The only symptom is the check count
+## going DOWN, which is what the floor paragraph exists to make visible. Use `if`.
+set EK3SAVE NOVAR
+if {[info exists ::ase_preflight]} { set EK3SAVE $::ase_preflight }
+set ::ase_preflight 0
+set EK3 [lindex [ek_gate {{type tran enabled 1 step 1n}}] 0]
+if {$EK3SAVE eq {NOVAR}} { unset ::ase_preflight } else { set ::ase_preflight $EK3SAVE }
+check "EK3 the switch that turns off the netlist scanner does not turn off this\
+ refusal, because there is no way to force a row that cannot be emitted" \
+  [list $EK3 [info exists ::ase_preflight] \
+        [expr {[info exists ::ase_preflight] ? ($::ase_preflight eq $EK3SAVE) : ($EK3SAVE eq {NOVAR})}]] \
+  [list emit_incomplete 1 1]
+
+## --- EK4: THE CLAUSE CARRIES NO FRAME, AND THE GATE CARRIES BOTH -----------
+## ⚠ ASSERT THE **SHAPE**, NOT TWO SUBSTRINGS OF A COMPOSED SENTENCE. Issue 1404
+## split frame from clause so an adapter cannot write in ASE-L's voice; a row that
+## only checked the finished sentence would stay green when an adapter composed
+## the whole thing itself.
+set EK4C [ase::analysis_emit_msg missing stop]
+set EK4S {}
+ek_gate {{type tran enabled 1 step 1n}}
+foreach ek4 $::ek_said { if {[string first {needs a value} [lindex $ek4 1]] >= 0} { set EK4S [lindex $ek4 1] } }
+check "EK4 the part the adapter supplies is a bare clause with no prefix and no\
+ verdict of its own, and the sentence the user sees is that clause inside ASE-L's\
+ frame" \
+  [list $EK4C \
+        [expr {[string first {ase:} $EK4C] < 0}] \
+        [expr {[string first {Nothing was generated} $EK4C] < 0}] \
+        [expr {[string first $EK4C $EK4S] > 0}] \
+        [expr {[string range $EK4S 0 4] eq {ase: }}]] \
+  [list {needs a value for 'stop'} 1 1 1 1]
+
+## --- EK5: A BOOL'S ONLY WRONG VALUE ---------------------------------------
+## ⚠ A BOOL CANNOT BE "MISSING": absent means off, which is a legal answer. Its
+## only offence is a value that is neither on nor off.
+proc ek_bool_types {} {
+  return [dict create \
+    ekb [dict create label ekb baseline 1 registered 1 emitorder 10 \
+           fields {{name stop kind time required 1} {name uic kind bool when_true uic}} \
+           emit {{role analysis tmpl {ekb @stop @uic!}}}]]
+}
+ase::register_backend ekbool [dict merge [em_five] [dict create analysis_types ek_bool_types]]
+check "EK5 a switch left alone is not a missing value, and only a switch set to\
+ something that is neither on nor off is an offence" \
+  [list [ase::analysis_emit_check ekbool {type ekb stop 1u}] \
+        [ase::analysis_emit_check ekbool {type ekb stop 1u uic 0}] \
+        [ase::analysis_emit_check ekbool {type ekb stop 1u uic 1}] \
+        [lindex [ase::analysis_emit_check ekbool {type ekb stop 1u uic maybe}] 0 0]] \
+  [list {} {} {} boolval]
+
+## --- EK6: THE CORPUS INVARIANT, AND IT BELONGS WITH THIS COMMIT ------------
+## ⚠ C2 IS THE COMMIT THAT COULD BREAK EVERY COMMITTED BENCH AT THE GATE, so the
+## row that would notice lands with it. Every ENABLED analysis row of every
+## tracked `.state` file must pass the check clean -- if one does not, this commit
+## makes a shipped bench unrunnable.
+set EKBAD {}
+set EKN 0
+foreach ekf [glob -nocomplain -directory $repo -join * xschem_libs * * * *.state] {
+  if {[catch {open $ekf r} fh]} { continue }
+  set ektxt [read $fh] ; close $fh
+  foreach ekl [split $ektxt "\n"] {
+    if {[string first {analyses } $ekl] != 0} { continue }
+    if {[catch {lindex $ekl 1} ekrows]} { continue }
+    foreach ekr $ekrows {
+      if {[catch {ase::state_get $ekr enabled 0} eken]} { continue }
+      if {$eken ne {1}} { continue }
+      incr EKN
+      set ekoff [ase::analysis_emit_check ngspice $ekr]
+      if {[llength $ekoff]} { lappend EKBAD [list [file tail $ekf] $ekoff] }
+    }
+  }
+}
+check "EK6 every analysis switched on in every bench committed to this repository\
+ still passes the new refusal, so the commit that adds it makes none of them\
+ unrunnable" \
+  [list $EKBAD [expr {$EKN > 50}]] [list {} 1]
+
+# --- SI: THE NUMBER ALPHABET ------------------------------------------------
+## ⚠ EVERY VALUE BELOW WAS MEASURED with a VALUE harness (`v1 in 0 dc <s>` / `op`
+## / `print v(in)`) against /usr/bin/ngspice, not read from a manual and not taken
+## from a FREQUENCY harness -- a frequency harness collapses an out-of-range value
+## to ngspice's default and announces it, which is how `1mil` gets recorded as
+## `1e+03` by anyone who uses one.
+set SISUF [ase::backend::ngspice::si_suffixes]
+## ⚠ COMPARE THE NUMBER AS A NUMBER. `20u` computes to
+## **1.9999999999999998e-5** and `0.02m` to exactly `2e-5` -- the same quantity,
+## two different strings, because 20 x 1e-6 is not representable. A row that
+## compared the rendered string would be asserting IEEE double formatting, not the
+## suffix table, and would break on a value nobody changed.
+proc si_is {r want} {
+  if {[lindex $r 0] ne {ok}} { return [lindex $r 0] }
+  set v [lindex $r 1]
+  if {$want == 0} { return [expr {$v == 0 ? 1 : 0}] }
+  return [expr {abs(($v - $want) / double($want)) < 1e-12 ? 1 : 0}]
+}
+check "SI1 the suffixes this simulator reads are read the way it reads them,\
+ measured value by measured value" \
+  [list [si_is [ase::si_parse 20u $SISUF] 2e-5] \
+        [si_is [ase::si_parse 0.02m $SISUF] 2e-5] \
+        [si_is [ase::si_parse 1meg $SISUF] 1e6] \
+        [si_is [ase::si_parse 2k $SISUF] 2e3]] \
+  [list 1 1 1 1]
+
+## ⚠ `mil` IS NOT MILLI AND `a` IS ATTO, and both are in ngspice AND in this
+## repository's own `atof_spice`. Reading `mil` as milli is a factor of ~39.
+check "SI2 a thousandth of an inch is not a thousandth, and atto is a real\
+ suffix -- both measured, and both agreeing with xschem's own parser" \
+  [list [si_is [ase::si_parse 20mil $SISUF] 5.08e-4] \
+        [si_is [ase::si_parse 1a $SISUF] 1e-18] \
+        [si_is [ase::si_parse 20mil $SISUF] 2e-5]] \
+  [list 1 1 0]
+
+## ⚠ THE WARNING ngspice ITSELF DOES NOT GIVE. MEASURED: `v1 in 0 dc 1M` answers
+## 1.000000e-03 with ZERO warning or error lines. `M` is MILLI; users who write it
+## mean MEGA. Nine orders of magnitude, silently, and ASE-L is the only place it
+## can be said.
+check "SI3 a capital M is a thousandth and not a million, and ASE-L says so\
+ because the simulator does not" \
+  [list [lindex [ase::si_parse 1M $SISUF] 0] [lindex [ase::si_parse 1M $SISUF] 2] \
+        [si_is [list ok [lindex [ase::si_parse 1M $SISUF] 1]] 1e-3] \
+        [lindex [ase::si_parse 1m $SISUF] 0] \
+        [si_is [ase::si_parse 1m $SISUF] 1e-3]] \
+  [list warn caseM 1 ok 1]
+
+## ⚠ `x` IS NOT IN THIS TABLE AND ITS ABSENCE IS MEASURED. `1x` answers
+## 1.000000e+00 to ngspice -- the suffix is IGNORED -- while this repository's own
+## `atof_spice` reads it as 1e6 under the comment "Xyce extension". The same
+## schematic value means two different numbers to the two parsers, so putting `x`
+## here would make ASE-L agree with xschem and disagree with the simulator it is
+## driving.
+check "SI4 a suffix this simulator ignores is refused rather than quietly read as\
+ something else, even though this repository's own parser accepts it" \
+  [list [ase::si_parse 1x $SISUF] [ase::si_parse abc $SISUF] [ase::si_parse {} $SISUF]] \
+  [list {bad unknownsuffix} {bad notanumber} {bad empty}]
+
+## ⚠ A BACKEND THAT DECLARED NO TABLE GETS **NO NUMERIC OPINION**. Refusing text
+## there would be a claim about a simulator ASE-L has never seen, and there are
+## real ones whose parameters are not numbers at all -- a Xyce `.TRAN {tstep}`
+## carries a braced expression and is legal. Same house rule as every other
+## optional hook: absent means NOT MEASURED, never NO.
+check "SI5 a simulator that has not said what its numbers look like has nothing\
+ refused on its behalf" \
+  [list [ase::si_parse abc] [ase::si_parse 20u] [ase::si_parse {}]] \
+  [list ok ok {bad empty}]
 
 
 } bigerr]} {
