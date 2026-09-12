@@ -45,12 +45,20 @@
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 125 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 135 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
 # rundir clause dropped and the rank table unscoped. RAISED 115 -> 122 -> 125. If a run reports fewer,
-# a row went missing; do not edit this number down to match it.
+# a row went missing; do not edit this number down to match it. RAISED 125 -> 135
+# when section PF223 landed ase::netlist_facts.
+#
+# ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
+# `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
+# not read it and never named it -- 125 checks of the refusal standing between a
+# user and a raw file of twelve mathematical constants, run by nothing but
+# `full_audit.sh`. Both are fixed at the tail of this file. **Twenty-one other
+# `test_ase_*` suites still have the same defect**; the list is in issue 1421.
 
 set fail 0
 set npass 0
@@ -1037,6 +1045,121 @@ if {[auto_execok ngspice] eq {}} {
   eqcheck PF220e-the-unguarded-deck-really-does-write-a-constants-raw \
     [list [file exists [file join $RD3 hand.raw]] [dg $hv ok] [dg $hv constants]] {1 0 1}
 }
+
+
+# ===========================================================================
+# PF223 — ase::netlist_facts: the tokens netlist_map throws away (issue 1422)
+# ===========================================================================
+## ⚠ THIS PASS EXISTS BECAUSE netlist_map IS STRUCTURALLY UNABLE TO ANSWER THE
+## QUESTION. It drops every token containing an `=` -- on element cards and on
+## `.subckt` parameter defaults -- and skips every dot-card but `.subckt`,
+## `.ends`, `.global` and the includes. That is right for its own job ("does this
+## node exist") and it means the answers a precondition needs -- does this source
+## carry an AC magnitude, a `distof1`, a `portnum`, a `trnoise` -- are exactly the
+## tokens it discarded.
+set FNL {** sch_path: /fixture/facts.sch
+x1 TOPNET fmid
+V9 TOPNET 0 1
+V1 in 0 DC 0 AC 1 SIN(0 1 1k)
+I7 a b ac
+V2 p n 0 ac 2 distof1 0.5 distof2
+V3 q r portnum=1 z0=50
++ ac 1
+R1 a b 1k
+QZ c d e somepnp
+A1 [dig_in] dig_out d_and_inst
+.model d_and_inst d_and
+.model nch nmos level=54
+.subckt fmid A
+VSUB A 0 dc 5
+.ends
+.end
+}
+set FF [pcall ase::netlist_facts $FNL]
+
+## ⚠ THE ROW THE PASS EXISTS FOR. `portnum=1` and `z0=50` are written as k=v,
+## which is precisely the form netlist_map discards -- so this row also asserts
+## that netlist_map still does NOT have them, or the two passes would be
+## redundant and one of them should be deleted.
+eqcheck PF223a-the-k-v-tokens-netlist-map-discards-are-kept \
+  [list [dgn $FF sources V3 portnum] [dgn $FF sources V3 z0] \
+        [dex [ase::netlist_map $FNL] scopes {} nodes portnum=1]] \
+  {1 50 0}
+
+## ⚠ A BARE `ac` WITH NO MAGNITUDE IS STILL `acGiven` TO ngspice, and its
+## magnitude is 1. A reader that required a number would report "no AC source"
+## for a deck that has one -- a FALSE REFUSAL, which is the failure this whole
+## pass is written to avoid. `I7 a b ac` is that card.
+eqcheck PF223b-a-bare-ac-keyword-is-an-ac-source-with-magnitude-one \
+  [list [dgn $FF sources I7 ac] [dgn $FF sources I7 letter] \
+        [dgn $FF sources V2 distof2]] \
+  {1 i 1}
+
+## ⚠ THE SAME CONTINUATION FOLD AS netlist_map, AND IT HAS TO BE THE SAME. A
+## source's `ac 1` most often lives on a continuation -- xschem's netlister wraps
+## long device cards -- so a pass that folded differently would answer
+## differently about the same deck than the pass the refusals are aligned with.
+## V3's `ac 1` is on its `+` line.
+eqcheck PF223c-an-ac-value-on-a-continuation-line-is-found \
+  [dgn $FF sources V3 ac] 1
+
+## ⚠ AND A SOURCE CARRIES ITS SCOPE, because "this deck has an AC source" and
+## "the subckt three levels down has one" are different answers to the question
+## a noise analysis asks.
+eqcheck PF223d-a-source-inside-a-subckt-carries-its-scope \
+  [list [dgn $FF sources VSUB scope] [dgn $FF sources VSUB dc] \
+        [dgn $FF sources V9 scope]] \
+  {fmid 5 {}}
+
+## ⚠ A BARE VALUE IN THE THIRD POSITION IS A DC VALUE. `V9 TOPNET 0 1` means
+## `dc 1`, and a precondition refusing it for "no DC value" would be wrong about
+## the commonest card in every bench in this repository.
+eqcheck PF223e-a-bare-third-position-value-is-a-dc-value \
+  [list [dgn $FF sources V9 dc] [dgn $FF sources V1 dc] [dgn $FF sources V1 ac]] \
+  {1 0 1}
+
+## ⚠ AN UNKNOWN DEVICE LETTER IS RECORDED, NOT DISCARDED, and under its own
+## letter. Stage 2's OSDI rule applies here too: a family nothing recognises is a
+## CAUTION and never a block -- and a caller cannot caution about a family this
+## pass silently dropped. `QZ` is a bjt; there is no `z`-prefixed card here, so
+## the unknown arm is exercised by its absence being provable.
+eqcheck PF223f-families-come-from-the-device-letter \
+  [list [dex $FF families resistor] [dex $FF families vsource] \
+        [dex $FF families isource] [dex $FF families bjt] \
+        [dex $FF families subckt] [dex $FF families xspice] \
+        [dex $FF families diode]] \
+  {1 1 1 1 1 1 0}
+eqcheck PF223g-an-unrecognised-device-letter-is-recorded-under-its-own-letter \
+  [dex [pcall ase::netlist_facts "* t\n§1 a b 1\n.end\n"] families {unknown:§}] 1
+
+## ⚠ `events` HOLDS NODES. An XSPICE event MODEL is a fact about the deck, not
+## about a node; putting its name in `events` would make "is this node an event
+## node" answer yes for a string that is not a node at all. The model is in
+## `models` with its type, which is where a caller asks "does this deck have a
+## digital island".
+eqcheck PF223h-event-nodes-come-from-a-cards-and-models-stay-in-models \
+  [list [dex $FF events dig_out] [dex $FF events d_and_inst] \
+        [dgn $FF models d_and_inst type] [dgn $FF models nch level]] \
+  {1 0 d_and 54}
+
+## ⚠ AND THE PASS SAYS IT IS STATIC. `exact 0` is part of the answer, not a
+## footnote: this pass cannot see inside an `.include`, so "no AC source" from a
+## deck that includes a stimulus file is a GUESS. A caller that turns a static
+## fact into a refusal refuses decks that work. Static warns; only an exact leg
+## blocks -- the same stand-down netlist_map_resolve already makes for includes.
+eqcheck PF223i-the-pass-declares-itself-static \
+  [list [dgn $FF exact] \
+        [dgn [pcall ase::netlist_facts $NLX] exact] \
+        [dict size [dgn [pcall ase::netlist_facts $NLX] sources]]] \
+  {0 0 0}
+
+## ⚠ AND THE TWO PASSES AGREE ABOUT THE SHAPE OF THE DECK. They are separate
+## walks over the same text; if their scope stacks ever diverged, a refusal
+## aligned with one would be wrong about the other, and nothing would say so.
+eqcheck PF223j-both-passes-see-the-same-scopes \
+  [list [lsort [dict keys [dgn $FF nodes]]] \
+        [lsort [dict keys [dict get [ase::netlist_map $FNL] scopes]]]] \
+  [list {{} fmid} {{} fmid}]
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

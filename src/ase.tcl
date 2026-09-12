@@ -5907,6 +5907,170 @@ proc ase::preflight_pick {tbl name cs} {
   return [dict create status absent real [lindex $hits 0] ambiguous 0]
 }
 
+# ---------------------------------------------------------------------------
+# A SECOND PASS OVER THE TEXT ase::netlist_map ALREADY WALKS. Issue 1422.
+#
+# ⚠ IT EXISTS BECAUSE netlist_map THROWS AWAY EXACTLY WHAT A PRECONDITION NEEDS.
+# `netlist_map` drops every token containing an `=` -- on element cards and on
+# `.subckt` parameter defaults -- and skips every dot-card but `.subckt`,
+# `.ends`, `.global` and the includes. That is right for its own job (it answers
+# "does this node exist"), and it makes it structurally unable to answer the only
+# questions a precondition asks: does this source carry an AC magnitude, a
+# `distof1`, a `portnum`, a `trnoise`. Those are the dropped tokens.
+#
+# ⚠ CORE, NOT ADAPTER, AND DELIBERATELY (D34-D37). This reads the SPICE netlist
+# XSCHEM ITSELF EMITS -- the device-letter convention is xschem's netlister's,
+# not any one simulator's. What each fact MEANS to a given simulator is the
+# adapter's business; that this deck has a `v` card with an AC magnitude is not.
+#
+# ⚠ STATIC, AND IT SAYS SO. `exact 0` is part of the answer, not a footnote: this
+# pass cannot see inside an `.include`, so "no AC source" from a deck that
+# includes a stimulus file is a guess. A caller that turns a static fact into a
+# REFUSAL is refusing decks that work. Static warns; only an exact leg blocks.
+#
+#  -> {sources  {<inst> {scope <s> letter v|i ac <mag> dc <v> portnum <n> z0 <r>
+#                        distof1 <a> distof2 <a> trnoise <args> trrandom <args>}}
+#      families {resistor 1 vsource 1 mos 1 ...}
+#      events   {<node> 1 ...}
+#      models   {<name> {type <t> level <n>}}
+#      nodes    <ase::netlist_map's scopes>
+#      exact    0}
+proc ase::netlist_facts {netlist_text} {
+  # THE DEVICE LETTER TABLE. SPICE's first-character convention, which is the
+  # one xschem's netlister writes and every SPICE dialect reads.
+  set fam [dict create \
+    r resistor  c capacitor  l inductor   k mutual    v vsource   i isource \
+    d diode     q bjt        m mos        j jfet      z mesfet    e vcvs \
+    g vccs      f cccs       h ccvs       s vswitch   w iswitch   t tranline \
+    o ltra      u urc        b bsource    a xspice    x subckt    n numdev \
+    p port      y txline]
+  set sources [dict create]
+  set families [dict create]
+  set events [dict create]
+  set models [dict create]
+  # ⚠ THE SAME FOLDING AS netlist_map, AND IT HAS TO BE THE SAME. A continuation
+  # is where a source's `ac 1` most often lives -- xschem's netlister wraps long
+  # device cards -- so a pass that folded differently would answer differently
+  # about the same deck than the pass the refusals are aligned with.
+  set logical {}
+  foreach raw [split $netlist_text "\n"] {
+    set t [string trimleft $raw]
+    if {[string index $t 0] eq {+}} {
+      if {[llength $logical]} {
+        lset logical end "[lindex $logical end] [string range $t 1 end]"
+      }
+      continue
+    }
+    lappend logical $raw
+  }
+  set stack [list {}]
+  foreach line $logical {
+    set toks [regexp -all -inline {\S+} $line]
+    if {![llength $toks]} continue
+    set first [lindex $toks 0]
+    set c [string index $first 0]
+    if {$c eq {*} || $c eq {;} || $c eq {+}} continue
+    if {$c eq {.}} {
+      set kw [string tolower $first]
+      if {$kw eq {.subckt}} {
+        lappend stack [string tolower [lindex $toks 1]]
+      } elseif {$kw eq {.ends} || $kw eq {.eom}} {
+        if {[llength $stack] > 1} { set stack [lrange $stack 0 end-1] }
+      } elseif {$kw eq {.model}} {
+        # `.model <name> <type> [level=<n>] [...]`
+        set mn [lindex $toks 1]
+        set mt [string tolower [lindex $toks 2]]
+        set lvl {}
+        foreach p [lrange $toks 3 end] {
+          if {[string match -nocase {level=*} $p]} {
+            set lvl [string range $p 6 end]
+          }
+        }
+        set md [dict create type $mt]
+        if {$lvl ne {}} { dict set md level $lvl }
+        dict set models $mn $md
+        # ⚠ AN XSPICE EVENT MODEL IS A FACT ABOUT THE DECK, NOT ABOUT A NODE,
+        # SO IT DOES NOT GO IN `events`. The declared shape of `events` is NODES,
+        # and putting a model name in it would make "is this node an event node"
+        # answer yes for a string that is not a node at all. The model is already
+        # in `models` with its type; a caller wanting "does this deck have a
+        # digital island" reads that. The event NODES come from the `a` cards.
+      }
+      continue
+    }
+    set scope [lindex $stack end]
+    set letter [string tolower $c]
+    if {[dict exists $fam $letter]} {
+      dict set families [dict get $fam $letter] 1
+    } else {
+      # ⚠ AN UNKNOWN LETTER IS RECORDED, NOT DISCARDED, and it is recorded under
+      # its own letter. Stage 2's OSDI rule applies here too: a family nothing
+      # recognises is a CAUTION, never a block, and a caller cannot caution about
+      # a family this pass silently dropped.
+      dict set families "unknown:$letter" 1
+    }
+    if {$letter eq {a}} {
+      # XSPICE `a` card: every token but the instance and the trailing model
+      # name is an event or analog node.
+      foreach t [lrange $toks 1 end-1] {
+        if {[string first = $t] >= 0} continue
+        dict set events $t 1
+      }
+    }
+    if {$letter ne {v} && $letter ne {i}} { continue }
+    # ── AN INDEPENDENT SOURCE. This is the card every small-signal precondition
+    # actually asks about.
+    #
+    # ⚠ THE KEYWORDS ARE POSITION-FREE AND THE VALUES ARE NOT. SPICE writes
+    #     Vxx n+ n- [DC] <v> [AC <mag> [phase]] [DISTOF1 <mag> [ph]] ...
+    # so a keyword is recognised wherever it stands and consumes the token after
+    # it -- but `ac` with NOTHING after it is still `acGiven` to ngspice, with a
+    # magnitude of 1. A reader that required a number would report "no AC source"
+    # for a deck that has one, which is the false refusal this whole pass is
+    # written to avoid.
+    set rec [dict create scope $scope letter $letter]
+    set rest [lrange $toks 3 end]
+    set n [llength $rest]
+    for {set i 0} {$i < $n} {incr i} {
+      set t [lindex $rest $i]
+      set lt [string tolower $t]
+      # `portnum=1` and `z0=50` are written as k=v, which is precisely the form
+      # netlist_map discards.
+      if {[string first = $t] >= 0} {
+        set k [string tolower [lindex [split $t =] 0]]
+        set v [join [lrange [split $t =] 1 end] =]
+        if {[lsearch -exact {portnum z0 ac dc} $k] >= 0} { dict set rec $k $v }
+        continue
+      }
+      if {[lsearch -exact {ac dc distof1 distof2 portnum z0} $lt] >= 0} {
+        set nxt [lindex $rest [expr {$i + 1}]]
+        if {$nxt eq {} || [lsearch -exact {ac dc distof1 distof2} \
+                            [string tolower $nxt]] >= 0} {
+          dict set rec $lt 1
+        } else {
+          dict set rec $lt $nxt
+          incr i
+        }
+        continue
+      }
+      if {[string match {trnoise*} $lt]} { dict set rec trnoise $t ; continue }
+      if {[string match {trrandom*} $lt]} { dict set rec trrandom $t ; continue }
+    }
+    # ⚠ A BARE VALUE IN THE THIRD POSITION IS A DC VALUE. `V1 in 0 1` means
+    # `dc 1`, and a noise analysis refusing it for "no DC value" would be wrong
+    # about the commonest card in every bench in this repository.
+    if {![dict exists $rec dc] && [llength $rest]} {
+      set v0 [lindex $rest 0]
+      if {[string is double -strict $v0]} { dict set rec dc $v0 }
+    }
+    dict set sources $first $rec
+  }
+  return [dict create \
+    sources $sources families $families events $events models $models \
+    nodes [dict get [ase::netlist_map $netlist_text] scopes] exact 0]
+}
+
+
 # Resolve ONE identifier against the map.
 #
 # -> {status present|absent|unknown  real <the corrected identifier, or {}>

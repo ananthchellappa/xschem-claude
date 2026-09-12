@@ -3200,7 +3200,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1421.**~~ superseded: **1421** is filed, above.
 
-**The next free number is 1422.**
+- **1422** — **The tokens `netlist_map` throws away are exactly the ones a precondition needs.** Commit C2 of Stage 4: `ase::netlist_facts` — a SECOND pass over the same text, returning `sources` (scope/letter/ac/dc/portnum/z0/distof1/distof2/trnoise), `families`, `events`, `models`, `nodes` and `exact`. ⚠ `netlist_map` drops EVERY token containing `=` and every dot-card but four, which is right for "does this node exist" and makes it structurally unable to answer "does this source carry an AC magnitude". Row PF223a asserts BOTH halves so the passes cannot silently become redundant. ⚠ CORE, not adapter: it reads the netlist XSCHEM emits, and the device-letter convention is xschem's. ⚠ A BARE `ac` WITH NO MAGNITUDE IS STILL acGiven, magnitude 1 — requiring a number reports "no AC source" for a deck that has one, the false refusal this pass exists to avoid. ⚠ The continuation fold must be byte-identical to netlist_map's, because a source's `ac 1` usually lives on a `+` line; PF223j pins that both passes see the same scopes. ⚠ A bare third-position value is a DC value — `V9 TOPNET 0 1` is the commonest card in the repository. ⚠ An unknown device letter is RECORDED under its own letter: a family nothing recognises is a caution, never a block, and a caller cannot caution about one this pass dropped. ⚠ `exact 0` is part of the ANSWER — it cannot see inside an `.include`, so static WARNS and only an exact leg blocks. ⚠ `events` holds NODES; an event MODEL name in it would make "is this node an event node" true for a string that is not a node (wrong in the first draft, PF223h is why it is not now). Floor: preflight 125 → **135**, eight sabotages.
+
+~~**The next free number is 1422.**~~ superseded: **1422** is filed, above.
+
+**The next free number is 1423.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
