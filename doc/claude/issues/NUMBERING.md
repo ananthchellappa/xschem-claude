@@ -3196,7 +3196,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1420.**~~ superseded: **1420** is filed, above.
 
-**The next free number is 1421.**
+- **1421** — **The preflight suite was never in T1, and 21 more ASE suites are not either.** Commit C1 of Stage 4, landing before the stage's own subject because Stage 4 ADDS ITS ROWS to `test_ase_preflight.tcl` — 125 checks of the refusal standing between a user and a raw file of twelve mathematical constants, which `run_regression.tcl` had never run on either arm. Adding rows to a suite T1 does not run would be issue **1413** happening a second time. ⚠ TWO HALVES: the suite printed `RESULT:` and no `OVERALL:`, so `banner_rule.tcl` would score it a HARNESS FAILURE at ALL PASS; and it called `exit 0` UNCONDITIONALLY, discarding one of the three independent signals a case passes on — its whole body sits in a `catch` that prints `FATAL:` and increments `fail`, so a fatal error could print, be counted, and still leave the process claiming success. Both fixed; T1 **61 → 62 cases**. ⚠ AND THE AUDIT IS THE OPEN PART: measured across all **29** `test_ase_*` suites, only **7** were in T1 (8 with this one). The other **21 all print `RESULT:` and no `OVERALL:`** — one cause, twenty-one times — including `test_ase_cosim` at 341 checks and `test_ase_window` at 295. They must be measured standalone and added in bounded batches, NOT in one commit: a suite that has never been in T1 has never had its first run under the driver walked, which is exactly how `test_ase_optier_0963`'s display arm cost eight hours. **Any "T1 at zero" claim covers eight of twenty-nine ASE suites and no more.**
+
+~~**The next free number is 1421.**~~ superseded: **1421** is filed, above.
+
+**The next free number is 1422.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

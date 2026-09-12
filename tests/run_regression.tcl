@@ -26,6 +26,7 @@ set tcases [list "create_save" "open_close" "netlisting"]
 # summarize_all greps FAIL$, so failures are counted like the golden cases.
 set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "hilight_xwin_sync_headless" "buried_hilight" \
+                 "headless/test_ase_preflight" \
                  "headless/test_ciw_interactive_load" \
                  "headless/test_select_inside_argc" \
                  "headless/test_callback_argc" \

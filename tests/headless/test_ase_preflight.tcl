@@ -1048,4 +1048,29 @@ if {[info commands ::ciw_echo_orig] ne {}} {
 
 if {$fail} { puts "RESULT: $fail FAILED ($npass passed)" } \
 else        { puts "RESULT: ALL PASS ($npass checks)" }
-exit 0
+# ⚠ THE SECOND SENTINEL, AND IT IS WHAT LETS run_regression.tcl READ THIS FILE
+# AT ALL. Issue 1421, and it is issue 1413's defect found a second time.
+#
+# There are TWO completion banners in this tree: `run_suites.sh` accepts either
+# `RESULT: ALL PASS` or `OVERALL: ok` (issue 0228), while `tests/banner_rule.tcl`
+# -- the rule `run_regression.tcl` consumes -- accepts ONLY a whole-line
+# `OVERALL: ok`. A suite printing `RESULT:` alone is scored a HARNESS FAILURE by
+# T1 however many of its own checks passed.
+#
+# MEASURED: this suite printed `RESULT:` alone AND `exit 0` unconditionally, and
+# it appears in NO list in run_regression.tcl. So 125 checks of preflight
+# behaviour -- the refusal that stands between a user and a raw file holding
+# twelve mathematical constants -- had never been run by the regression driver
+# at all, on either arm. It was in `full_audit.sh`'s nogui list and nowhere else.
+#
+# ⚠ AND `exit 0` UNCONDITIONALLY IS THE SECOND HALF OF THE SAME DEFECT. A case
+# passes only on exit 0 AND a completion banner AND no death marker; a suite that
+# always exits 0 has thrown away one of the three, so a FATAL in its own catch
+# arm could print, be counted, and still leave the process claiming success.
+if {$fail} {
+  puts "OVERALL: notok"
+} else {
+  puts "OVERALL: ok"
+}
+flush stdout
+exit [expr {$fail == 0 ? 0 : 1}]
