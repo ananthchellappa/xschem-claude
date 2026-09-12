@@ -59,6 +59,10 @@
 #        P15 was added after a sabotage pass went GREEN against the fourteen,
 #        respelling ase::cap_report's refusal as `![ase::caps_is $c usable 1]`
 #        -- the exact defect the vocabulary exists to prevent.
+#   141  section Q, issue 1409: which analyses this build actually has. Fifteen
+#        rows, every canned fixture VERBATIM measured text from all three
+#        preflight binaries -- a fixture nobody measured proves the parser agrees
+#        with the fixture and says nothing about ngspice.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -3231,6 +3235,233 @@ check {P15 STRUCTURAL neither predicate is ever read through a NOT -- the permis
   [list [p_notpred] \
         [expr {[p_countcall {ase::caps_is $caps}] + [p_countcall {ase::caps_measured_as $c}] >= 3}]] \
   [list 0 1]
+
+# ============================================================================
+# Q. WHICH ANALYSES THIS BUILD ACTUALLY HAS -- ISSUE 1409
+# ============================================================================
+#
+# ASE-L never asked the simulator which analyses it can run, so the list was a
+# guess -- four types, hardcoded, on every build. This section fences the leg
+# that asks.
+#
+# ⚠ EVERY CANNED FIXTURE BELOW IS **VERBATIM MEASURED TEXT**, taken 2026-09-11
+# from all three preflight binaries (/usr/bin/ngspice 45.2, the fork's
+# build-ver_50, and a bare upstream 47). Nothing here is invented, because a
+# fixture nobody measured proves the parser agrees with the fixture and says
+# nothing about ngspice.
+#
+# THE FOUR RULES, EACH WITH ITS MEASUREMENT:
+#   * the verdict is read from the FILE, never the exit code -- and the measured
+#     reason is sharper than "the deck exits nonzero". Deck C, which carries the
+#     leg and HAS a circuit, exits **0** on all three; a circuit-less probe deck
+#     exits **1**; and BOTH write their files. rc tracks whether a CIRCUIT was
+#     parsed and says nothing about whether the help answers arrived. ⚠ An
+#     earlier revision of this comment said "all three exit 1" -- measured on a
+#     probe deck of the author's own construction rather than on deck C, so true
+#     of that deck and false of this one. A measurement is about the exact
+#     artifact it was taken on;
+#   * a stanza counts only when its FIRST TOKEN is the verb probed -- `help tf`
+#     prints `tf [.tran line args] : Do a transient analysis.` on all three, the
+#     wrong bracket AND the wrong sentence, and a rule matching the DESCRIPTION
+#     would read `tf` as absent on every ngspice ever shipped;
+#   * the comparison is CASE-INSENSITIVE -- ngspice looks the verb up with
+#     `eqc()` = `cieq()`, so `help TRAN` answers the lower-case `tran` stanza and
+#     the failure line echoes the verb FOLDED (`help XXNOSUCH` -> `Sorry, no help
+#     for xxnosuch.`);
+#   * never `help all`.
+
+## The three measured cap.txt shapes, verbatim.
+set Q_APT {== op
+op [.op line args] : Determine the operating point of the circuit.
+== tf
+tf [.tran line args] : Do a transient analysis.
+== pss
+pss [.pss line args] : Do a periodic state analysis.
+== sp
+sp [.sp line args] : Do an S-parameter analysis.
+}
+set Q_STOCK47 {== op
+op [.op line args] : Determine the operating point of the circuit.
+== tf
+tf [.tran line args] : Do a transient analysis.
+== pss
+Sorry, no help for pss.
+== sp
+sp [.sp line args] : Do an S-parameter analysis.
+}
+set Q_TOKS {{op op} {tf tf} {pss pss} {sp sp}}
+## devhelp, verbatim -- name padded to column 21, then `:`, then a TAB.
+set Q_FAM "Capacitor            :\tFixed capacitor
+Resistor             :\tSimple linear resistor
+NUMD                 :\tDiode
+adc_bridge           :\tAnalog to digital bridge
+not a device line at all
+"
+set Q_NS ase::backend::ngspice
+
+## --- Q1: THE PROBE TOKEN HAS A SOURCE AGAIN ---------------------------------
+## ⚠ Stage 1 DELETED the `verb` key (correction C41) as two ngspice words in the
+## schema half, so the token had no source at all. It comes from the FIRST WORD
+## OF WHAT THE ADAPTER EMITS, via ase::analysis_card_tmpl -- which core can ask
+## for without learning any ngspice.
+check {Q1 the word each analysis is probed with is the first word of what this adapter emits, so the schema never has to carry the simulator's vocabulary} \
+  [list [a_ans ase::analysis_card_tmpl ngspice dc] \
+        [lindex [a_ans ase::analysis_card_tmpl ngspice dc] 0] \
+        [a_ans ase::analysis_card_tmpl ngspice zznosuchtype]] \
+  [list {dc @source @start @stop @step} dc {}]
+
+## --- Q2: AND IT MUST NOT GO THROUGH THE ROW-TAKING READER -------------------
+## ⚠ ase::analysis_cards resolves @slots with `dict get $row <field>`, so with
+## only a type in hand it RAISES on every type that has required fields.
+## MEASURED: op answers, dc/ac/tran raise. A driver following the plan's text
+## would have reached for analysis_line and got a raise on three of four types.
+set Q2 {}
+foreach q2t {op dc ac tran} {
+  ## ⚠ BRACE THE WORDS. `expr {... ? RAISES : ok}` is a BAREWORD in Tcl 8.6 and
+  ## aborts the whole file -- which cost this section one run, and cost section L
+  ## one before it. The tell is the count going DOWN, which is what the floor
+  ## paragraph above exists to make visible.
+  if {[catch {ase::analysis_expand [dict create type $q2t] \
+               [ase::analysis_card_tmpl ngspice $q2t]}]} {
+    lappend Q2 RAISES
+  } else {
+    lappend Q2 ok
+  }
+}
+check {Q2 the row-free reader is necessary: expanding a template without a row raises for every type that has required fields, which is three of the four} \
+  [list $Q2 [a_ans ase::analysis_card_tmpl ngspice op]] \
+  [list {ok RAISES RAISES RAISES} op]
+
+## --- Q3: THE FIRST-TOKEN RULE, AGAINST THE UPSTREAM COPY-PASTE BUG ----------
+check {Q3 a stanza counts on its FIRST TOKEN, so tf is found present even though upstream prints the tran bracket and the tran sentence for it} \
+  [a_ans ${Q_NS}::cap_help_verdict $Q_APT $Q_TOKS] {op tf pss sp}
+
+## --- Q4: A `Sorry` LINE IS AN ABSENCE, AND THIS IS THE ONLY LIVE ONE --------
+## ⚠ `pss` ON STOCK 47 IS THE ONLY REPRODUCIBLE `absent` FIXTURE ON THIS
+## MACHINE. Measured: `help sp` ANSWERS on apt 45.2, on the fork AND on stock 47,
+## so PLAN.md's `--enable-rfspice` example cannot be demonstrated here at all.
+check {Q4 the verb a build was made without is absent, and every other verb in the same file is unaffected} \
+  [a_ans ${Q_NS}::cap_help_verdict $Q_STOCK47 $Q_TOKS] {op tf sp}
+
+## --- Q5: THE COMPARISON IS CASE-INSENSITIVE ---------------------------------
+## ngspice resolves the verb with cieq(), so the stanza can come back in a
+## different case from the question. A case-SENSITIVE rule reads it as absent.
+check {Q5 a stanza answered in a different case than it was asked in still counts, because the simulator folds the lookup} \
+  [list [a_ans ${Q_NS}::cap_help_verdict "== TRAN\ntran [list .tran line args] : Do a transient analysis.\n" {{tran TRAN}}] \
+        [a_ans ${Q_NS}::cap_help_verdict "== tran\nTRAN [list .tran line args] : Do a transient analysis.\n" {{tran tran}}]] \
+  {tran tran}
+
+## --- Q6: AN EMPTY VERDICT PUBLISHES **NO KEY** ------------------------------
+## ⚠ THE MOST DANGEROUS LINE IN THE ITEM. An empty list on a `known 1` answer
+## reads as "this binary has NO analyses" and empties the grid; a MISSING key
+## reads as "not measured" and falls back to the source-verified baseline. They
+## are OPPOSITE answers to the user, and the difference is one `ne {}` guard.
+check {Q6 STRUCTURAL the analyses key is published only for a NON-EMPTY verdict, because an empty list would say this binary has no analyses at all} \
+  [list [a_count [a_nocomment [a_body ${Q_NS}::capabilities]] {if {$anames ne {}}}] \
+        [a_ans ${Q_NS}::cap_help_verdict "== op\nSorry, no help for op.\n" {{op op}}]] \
+  [list 1 {}]
+
+## --- Q7: devhelp NAMES ARE MIXED CASE ---------------------------------------
+## Measured on apt 45.2: 56 capitalised against 81 lower-initial. Folding them
+## here would publish a list no reader could match against the binary's own
+## spelling; the readers fold instead (ase::caps_family_state).
+check {Q7 the device list keeps the binary's own spelling, mixed case and all, and lines that are not device lines are not names} \
+  [a_ans ${Q_NS}::cap_devices_verdict $Q_FAM] {Capacitor Resistor NUMD adc_bridge}
+
+## --- Q8: THE spinit TRAP -- AND IT IS A FABRICATED ABSENCE, NOT A SMALL LIST -
+## ⚠ MEASURED: stock 47, uninstalled, logs `Warning: can't find the
+## initialization file spinit.` and its devhelp answers **52** names against 136
+## on apt 45.2 and 138 on the fork -- it loses every XSPICE code model.
+## Publishing 52 as a fact about that binary would make the readers refuse
+## analyses that would have run.
+## ⚠ AND IT IS GREPPED, NEVER COUNTED. The count is exactly what the missing
+## models move, so a threshold would be a guess about a number nobody controls.
+check {Q8 a build whose initialisation file never loaded is not asked what devices it has, because its answer is short by every code model} \
+  [list [a_ans ${Q_NS}::cap_devices_trustworthy {Circuit: probe}] \
+        [a_ans ${Q_NS}::cap_devices_trustworthy \
+          "Warning: can't find the initialization file spinit.\nCircuit: probe"] \
+        [a_count [a_nocomment [a_body ${Q_NS}::cap_devices_trustworthy]] {spinit}]] \
+  {1 0 1}
+
+## --- Q9: CIDER IS GREPPED, NOT COUNTED --------------------------------------
+check {Q9 the CIDER families are found by name in the device list, so a build that lost eighty other rows is still read correctly} \
+  [list [a_ans ase::caps_family_state [dict create known 1 devices_available \
+           [a_ans ${Q_NS}::cap_devices_verdict $Q_FAM]] devices_available NUMD] \
+        [a_ans ase::caps_family_state [dict create known 1 devices_available \
+           [a_ans ${Q_NS}::cap_devices_verdict $Q_FAM]] devices_available numd]] \
+  {present present}
+
+## --- Q10: THE THIRD STATE, AND IT IS NOT `absent` ---------------------------
+## ⚠ `unknown` MUST NEVER BECOME A REFUSAL. `osdi_add_device` appends OpenVAF
+## devices to the device list at LOAD time, so a devhelp taken against a SCRATCH
+## deck CANNOT see a PDK's Verilog-A devices. Fusing unknown with absent produces
+## the worst outcome this design can produce -- refusing something that would
+## have run -- and on any Verilog-A PDK it would be the LIKELY outcome.
+check {Q10 a device family nobody measured reads as unknown and never as absent, because a probe run against a scratch deck cannot see a PDK's own devices} \
+  [list [a_ans ase::caps_family_state {known 0} devices_available NUMD] \
+        [a_ans ase::caps_family_state {known 1} devices_available NUMD] \
+        [a_ans ase::caps_family_state {known 1 devices_available Capacitor} devices_available NUMD]] \
+  {unknown unknown absent}
+
+## --- Q11: `analyses_probed` IS A DIFFERENT FACT FROM `analyses_available` ----
+## A cache taken before a type was registered says nothing about that type.
+## Without this key a reader cannot tell "measured absent" from "was not among
+## the questions" -- the absent-versus-unknown fusion the capability vocabulary
+## exists to prevent, one level up.
+check {Q11 STRUCTURAL the list of types that were ASKED about is published beside the list that answered, so a cache older than a type does not read as a no} \
+  [list [a_count [a_nocomment [a_body ${Q_NS}::capabilities]] {dict set out analyses_probed}] \
+        [a_count [a_nocomment [a_body ${Q_NS}::capabilities]] {dict set out analyses_available}]] \
+  {1 1}
+
+## --- Q12: NEVER `help all`, AND THE REFUSAL IS STRUCTURAL -------------------
+## ⚠ MEASURED, AND THE REASON THIS ROW EXISTS: `help all` TODAY lists every
+## analysis verb and DOES distinguish pss present from absent -- it would
+## accidentally work. Its count loop stops at the first NULL `co_func`, which is
+## `while` in commands.c, and the analysis verbs sit above it. The refusal is ONE
+## table edit away from being load-bearing, so it is fenced now rather than after
+## a later reader "simplifies" eleven help calls into one.
+check {Q12 STRUCTURAL the leg asks one verb at a time and never asks for all of them at once} \
+  [list [a_count [a_nocomment [a_body ${Q_NS}::cap_help_lines]] {help all}] \
+        [expr {[a_count [a_nocomment [a_body ${Q_NS}::cap_help_lines]] {help }] >= 1}]] \
+  {0 1}
+
+## --- Q13: THE PROBED SET IS THE ADAPTER'S, NOT THE DISPLAY SWITCH'S ---------
+## ⚠ `ase::analysis_offered` filters on `registered`, which is ASE-L's DISPLAY
+## switch. Sourcing the probe from it would change the probed set without
+## changing the binary -- and the cache, keyed on the binary's path, mtime and
+## size, would never notice.
+check {Q13 STRUCTURAL the types probed come from what the adapter DESCRIBES, never from what ASE-L currently chooses to display} \
+  [list [a_count [a_nocomment [a_body ${Q_NS}::cap_probe_tokens]] {analysis_types}] \
+        [a_count [a_nocomment [a_body ${Q_NS}::cap_probe_tokens]] {analysis_offered}]] \
+  {1 0}
+
+## --- Q14: THE KEY HOLDS REGISTRY TYPE KEYS, NOT COMMAND WORDS ---------------
+## They coincide for all four shipped ngspice entries and will not for the first
+## adapter whose emitted word differs from its type name. Core compares this list
+## against ase::analysis_offered, which is type keys.
+set Q14 [a_ans ${Q_NS}::cap_help_verdict $Q_APT {{zzalias tf}}]
+check {Q14 the published list names the REGISTRY TYPE, not the word the simulator was asked with, so a type whose command word differs is still reported under its own name} \
+  $Q14 zzalias
+
+## --- Q15: THE REAL BINARY, END TO END ---------------------------------------
+## ⚠ ONE ROW AGAINST THE PROGRAM THE REGISTRY RESOLVES TO, because every row
+## above is a stand-in and a stand-in can never prove another program's parser.
+## SELF-RELATIVE: it asserts the leg agrees with the registry rather than naming
+## a count, so it keeps measuring the tree the day more types are registered.
+a_resetall
+set Q15C [a_ans ase::sim_capabilities ngspice]
+set Q15A [a_ans ase::caps_get $Q15C analyses_available]
+set Q15D [a_ans ase::caps_get $Q15C devices_available]
+if {[string is list $Q15C] && [dict exists $Q15C known] && [dict get $Q15C known] eq {1}} {
+  check {Q15 the real simulator this registry resolves to answers which analyses it has, every one of them is a type this adapter describes, and the device list comes back non-empty} \
+    [list [dict get $Q15A measured] \
+          [expr {[lsort [dict get $Q15A value]] eq [lsort [ase::analysis_offered ngspice]]}] \
+          [expr {[dict get $Q15D measured] && [llength [dict get $Q15D value]] > 20}]] \
+    {1 1 1}
+} else {
+  puts "SKIPPED: Q15 (no usable simulator resolved -- known was not 1)"
+}
+a_resetall
 
 # ============================================================================
 # L. A RE-REGISTERED BACKEND MUST NOT KEEP ANSWERING FROM THE REGISTRY IT

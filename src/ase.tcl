@@ -4085,6 +4085,61 @@ proc ase::analysis_cards {sim row} {
   return $out
 }
 
+# THE EMIT CARD'S **TEMPLATE**, WITHOUT A ROW -- the first token of which is the
+# word this simulator's command language calls the analysis by. Issue 1409.
+#
+# ⚠ THIS EXISTS BECAUSE THE PROBE TOKEN HAS NO OTHER SOURCE. Stage 1's
+# Xyce paper-validation DELETED the `verb` key (correction C41): it was specified
+# as *"the `.control` command word AND what `help <verb>` is probed with"* -- two
+# ngspice words sitting in the half D34-D37 say may contain none -- and deleting
+# it moved no byte, because the emitted token was always `[lindex $tmpl 0]`.
+# Stage 2's probe needs that token back, and taking it from here rather than from
+# a re-added key keeps the SCHEMA free of the simulator's vocabulary: core learns
+# *"the first word of what this adapter emits"*, which is true of any simulator
+# with a command language, and learns nothing about ngspice.
+#
+# ⚠ IT MUST NOT GO THROUGH ase::analysis_cards, AND THAT IS NOT A PREFERENCE.
+# `analysis_cards` resolves `@slots` through ase::analysis_expand, which does
+# `dict get $row <field>` -- so with only a type in hand it RAISES on every type
+# that has required fields. MEASURED on the shipped registry: `op` answers, and
+# `dc` / `ac` / `tran` raise `key "source" not known in dictionary`,
+# `"points"...`, `"step"...`. A caller who reached for `analysis_line` here would
+# get a raise on three of four types.
+proc ase::analysis_card_tmpl {sim type {role analysis}} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e emit]} { return {} }
+  foreach card [dict get $e emit] {
+    if {[dict exists $card role] && [dict get $card role] eq $role \
+        && [dict exists $card tmpl]} {
+      return [dict get $card tmpl]
+    }
+  }
+  return {}
+}
+
+# ⚠ THE THREE-STATE READ OF A **LIST**-VALUED CAPABILITY, and the reason it is
+# not a boolean. `ase::caps_is` cannot serve a list (issue 1407, row P14), and
+# the question here genuinely has three answers, not two:
+#
+#   present   the probe ran AND this member is in the list
+#   absent    the probe ran AND this member is NOT in the list
+#   unknown   nobody measured, or the probe ran before this member existed
+#
+# ⚠ `unknown` IS NOT `absent`, AND CONFLATING THEM IS THE WORST OUTCOME THIS
+# DESIGN CAN PRODUCE -- refusing something that would have run. For device
+# families that is not hypothetical: `osdi_add_device` appends OpenVAF devices to
+# the device list at LOAD time, so a `devhelp` taken against a SCRATCH deck
+# CANNOT see a PDK's Verilog-A devices. An unknown family must therefore be a
+# CAUTION, never a refusal, and the caller can only honour that if the reader
+# tells it which of the three it has.
+proc ase::caps_family_state {caps key member} {
+  set g [ase::caps_get $caps $key]
+  if {![dict get $g measured]} { return unknown }
+  set v [dict get $g value]
+  foreach m $v { if {[string equal -nocase $m $member]} { return present } }
+  return absent
+}
+
 # The REGISTERED types of a backend, in `emitorder` order. The radio row, the
 # seed and any later type list all read this one answer.
 proc ase::analysis_offered {{sim {}}} {
@@ -12118,6 +12173,136 @@ namespace eval ase::backend::ngspice {
   # misread; measured on ngspice-46+, it still appends every analysis. A build
   # free to ignore it is still read correctly -- ase::cap_raw_plots reads both
   # shapes.
+  # ---- THE ANALYSIS-AVAILABILITY LEG (Stage 2 item 2a, issue 1409) --------
+  #
+  # ⚠ NO NEW RUN. These lines ride DECK C, measured free: deck C's answer is a
+  # TEXT file, this leg's answer is two more text files, and the deck already
+  # runs to completion. Measured on all three preflight binaries -- apt 45.2, the
+  # fork and stock 47 -- the leg adds 0 ms within the tool's resolution.
+  #
+  # THE PROBE TOKEN COMES FROM `ase::analysis_card_tmpl`, NOT FROM A KEY. Stage
+  # 1 deleted the `verb` key as two ngspice words in the schema half (C41); the
+  # token is the FIRST WORD OF WHAT THIS ADAPTER EMITS, which core can ask for
+  # without learning any ngspice.
+  #
+  # ⚠ SOURCED FROM `dict keys [ase::analysis_types]`, **NEVER** FROM
+  # `ase::analysis_offered`. The latter filters on `registered`, which is ASE-L's
+  # DISPLAY switch: flipping it would change the probed set without changing the
+  # binary, and the cache -- keyed on the binary's path, mtime and size -- would
+  # never notice.
+  proc cap_probe_tokens {} {
+    set out {}
+    foreach ty [dict keys [::ase::analysis_types ngspice]] {
+      set tok [lindex [::ase::analysis_card_tmpl ngspice $ty] 0]
+      if {$tok eq {}} { continue }
+      lappend out [list $ty $tok]
+    }
+    return $out
+  }
+
+  # ⚠ NEVER `help all`. It counts with `for (numcoms = 0; cp_coms[numcoms].co_func
+  # != NULL; ...)`, so it stops at the first NULL `co_func`. TODAY that is `while`
+  # in commands.c and the analysis verbs sit above it, so `help all` would happen
+  # to work -- which is exactly why this is written down. The refusal is ONE table
+  # edit away from being load-bearing, and a later reader "simplifying" eleven
+  # help calls into one would not find that out until a verb went missing.
+  #
+  # ⚠ EVERY REDIRECT TARGET IS A BARE LOWER-CASE NAME. ngspice case-folds the
+  # whole `>` target, directory component included, and splits it on whitespace
+  # (issue 1334); `ase::cap_workdir` puts the directory under us (issue 0949).
+  proc cap_help_lines {toks} {
+    set out {}
+    foreach pair $toks {
+      set tok [lindex $pair 1]
+      lappend out "echo \"== $tok\" >> cap.txt"
+      lappend out "help $tok >> cap.txt"
+    }
+    return $out
+  }
+  proc cap_devhelp_lines {} { return {{devhelp >> fam.txt}} }
+
+  # ⚠ THE PARSE RULE IS "THE STANZA'S FIRST TOKEN EQUALS THE VERB PROBED",
+  # COMPARED CASE-INSENSITIVELY, AND BOTH HALVES ARE MEASURED FACTS.
+  #
+  #   the FIRST-TOKEN half survives an upstream copy-paste bug. Measured on all
+  #   three binaries: `help tf` prints `tf [.tran line args] : Do a transient
+  #   analysis.` -- the wrong bracket AND the wrong sentence, but the leading
+  #   token is still `tf`. A rule that matched the DESCRIPTION would read `tf` as
+  #   absent on every ngspice ever shipped.
+  #
+  #   the CASE-INSENSITIVE half is required because ngspice looks the verb up
+  #   with `eqc()` = `cieq()`. Measured: `help TRAN` and `help Tran` both answer
+  #   the `tran` stanza, whose first token is lower-case `tran`; and the failure
+  #   line echoes the verb FOLDED -- `help XXNOSUCH` -> `Sorry, no help for
+  #   xxnosuch.`. `echo` does NOT fold, so only the `== <verb>` marker preserves
+  #   the spelling that was asked for.
+  #
+  # ⚠ AND THE VERDICT IS READ FROM THE **FILE**, NEVER FROM THE EXIT CODE -- and
+  # the measurement behind that is sharper than "the deck exits nonzero".
+  # MEASURED on all three preflight binaries:
+  #
+  #   deck C, which carries this leg and HAS a circuit   rc=0, both files written
+  #   a circuit-less probe deck                          rc=1, its file written
+  #
+  # So THE EXIT CODE TRACKS WHETHER A CIRCUIT WAS PARSED AND SAYS NOTHING
+  # WHATEVER ABOUT WHETHER THE HELP ANSWERS ARRIVED. An implementation that gated
+  # on rc would read a perfectly good answer as no answer on one deck shape and a
+  # missing answer as fine on the other. ⚠ An earlier revision of this comment
+  # said "all three exit 1", measured on a probe deck of the author's own
+  # construction rather than on deck C -- true of that deck, false of this one.
+  proc cap_help_verdict {text toks} {
+    set seen {}
+    set cur {}
+    foreach line [split $text "\n"] {
+      set t [string trim $line]
+      if {[string range $t 0 2] eq {== }} {
+        set cur [string trim [string range $t 3 end]]
+        continue
+      }
+      if {$cur eq {} || $t eq {}} { continue }
+      if {[lsearch -exact $seen $cur] < 0 \
+          && [string equal -nocase [lindex $t 0] $cur]} {
+        lappend seen $cur
+      }
+      set cur $cur
+    }
+    set out {}
+    foreach pair $toks {
+      if {[lsearch -exact $seen [lindex $pair 1]] >= 0} {
+        lappend out [lindex $pair 0]
+      }
+    }
+    return $out
+  }
+
+  # ⚠ `devhelp` NAMES ARE MIXED CASE AND MUST NOT BE FOLDED HERE. Measured on apt
+  # 45.2: 56 capitalised (`Capacitor`, `Resistor`, `NUMD`, `BSIM3v32`) against 81
+  # lower-initial (`adc_bridge`, `d_cosim`). The line is the name padded to
+  # column 21, then `:`, then a TAB. Readers compare case-insensitively
+  # (ase::caps_family_state); the published list keeps what the binary said.
+  proc cap_devices_verdict {text} {
+    set out {}
+    foreach line [split $text "\n"] {
+      if {![regexp {^([A-Za-z][A-Za-z0-9_]*)[ \t]*:} $line -> nm]} { continue }
+      if {[lsearch -exact $out $nm] < 0} { lappend out $nm }
+    }
+    return $out
+  }
+
+  # ⚠ A BUILD WHOSE `spinit` NEVER LOADED CANNOT BE ASKED WHAT DEVICES IT HAS.
+  # MEASURED: stock 47, uninstalled, logs `Warning: can't find the initialization
+  # file spinit.` and its devhelp answers **52** names against 136 on apt 45.2 and
+  # 138 on the fork -- it loses every XSPICE code model. Publishing 52 as a fact
+  # about that binary is a FABRICATED ABSENCE of ~84 device families, and the
+  # readers would then refuse analyses that would have run. So the key is not
+  # published at all and its absence is recorded BY NAME.
+  #
+  # ⚠ DO NOT TEST THIS BY ROW COUNT. The count is what the missing models move;
+  # a threshold would be a guess about a number nobody controls. Grep the warning.
+  proc cap_devices_trustworthy {runout} {
+    return [expr {[string first {can't find the initialization file spinit} $runout] < 0}]
+  }
+
   proc capabilities {exe exeargs workdir} {
     set ckt "* ase capability probe (issue 0948): PDK-free, level-1 MOS,\
  two hierarchy levels deep
@@ -12173,12 +12358,15 @@ write probe_b.raw
     set deckc [file join $workdir probe_c.sp]
     set dumpc [file join $workdir probe_c.txt]
     set f [open $deckc w]
+    set _toks [cap_probe_tokens]
+    set _leg [join [concat [cap_help_lines $_toks] [cap_devhelp_lines]] "\n"]
     puts -nonewline $f "${ckt}vpw pw 0 pwl 0 0 1u 1 2u 0
 rpw pw 0 1k
 .control
 op
 set altshow
 show all > probe_c.txt
+$_leg
 .endc
 .end
 "
@@ -12275,6 +12463,7 @@ show all > probe_c.txt
     set altshow_ok 0
     set altshow_measured 0
     set altshow_cut 0
+    set anames {} ; set aprobed {} ; set devs {} ; set devs_why {}
     if {[ase::cap_left $t0] > 0} {
       set rc [ase::cap_run $exe [concat $exeargs [list -b $deckc]] $workdir \
                 [ase::cap_left $t0]]
@@ -12284,6 +12473,28 @@ show all > probe_c.txt
         set altshow_ok [ase::cap_altshow_verdict [read $fh]]
         close $fh
         set altshow_measured 1
+      }
+      # ---- THE ANALYSIS LEG'S VERDICT, READ FROM THE FILES ------------------
+      # ⚠ NOT FROM THE EXIT CODE. Measured on all three preflight binaries, deck C
+      # exits **0** and a circuit-less probe deck exits **1**, and BOTH write
+      # their files -- so rc tracks whether a circuit was parsed and says nothing
+      # about whether the help answers arrived. See cap_help_verdict's header.
+      if {![lindex $rc 2]} {
+        set capf [file join $workdir cap.txt]
+        if {[file exists $capf]} {
+          set fh [open $capf r] ; set captxt [read $fh] ; close $fh
+          set aprobed {}
+          foreach _p $_toks { lappend aprobed [lindex $_p 0] }
+          set anames [cap_help_verdict $captxt $_toks]
+        }
+        set famf [file join $workdir fam.txt]
+        if {[file exists $famf]} {
+          if {[cap_devices_trustworthy [lindex $rc 1]]} {
+            set fh [open $famf r] ; set devs [cap_devices_verdict [read $fh]] ; close $fh
+          } else {
+            set devs_why noinit
+          }
+        }
       }
     } else {
       set altshow_cut 1
@@ -12337,6 +12548,29 @@ show all > probe_c.txt
                          blanket_op_save $blanket hier_op_names $hier]
     if {$cmok} { dict set out casemode_detected $cmdet }
     if {$altshow_measured} { dict set out altshow_op_dump $altshow_ok }
+    # ---- WHICH ANALYSES THIS BUILD HAS, AND WHICH DEVICE FAMILIES -----------
+    #
+    # ⚠ `analyses_available` IS GUARDED NON-EMPTY, AND THAT ONE GUARD IS THE
+    # MOST DANGEROUS LINE IN THE ITEM. An EMPTY list on a `known 1` answer reads
+    # as "this binary has NO analyses" and empties the grid; a MISSING key reads
+    # as "not measured" and falls back to the ungated baseline. The two are
+    # opposite answers to the user, and the difference is this `ne {}`.
+    #
+    # ⚠ IT HOLDS REGISTRY **TYPE KEYS**, NEVER THE SIMULATOR'S COMMAND WORDS.
+    # Core compares it against `ase::analysis_offered`, which is type keys; they
+    # happen to coincide for all four ngspice entries today and will not for the
+    # first adapter whose emitted word differs from its type name.
+    if {$anames ne {}} {
+      dict set out analyses_available $anames
+      # ⚠ AND WHICH TYPES WERE **ASKED ABOUT**, which is a different fact. A
+      # cache taken before a type was registered says nothing about that type,
+      # and without this key a reader cannot tell "measured absent" from
+      # "measured, but this was not among the questions" -- the same
+      # absent-versus-unknown fusion the whole capability vocabulary exists to
+      # prevent, one level up.
+      dict set out analyses_probed $aprobed
+    }
+    if {$devs ne {}} { dict set out devices_available $devs }
     # ---- WHICH LEG DID NOT DELIVER, AND WHY (issue 1407) -------------------
     #
     # ⚠ THESE ARE THE **ONLY TWO** LEGS THAT CAN BE CUT WITHOUT MAKING THE WHOLE
@@ -12356,6 +12590,15 @@ show all > probe_c.txt
     # that reason.
     if {$cmcut}      { set out [ase::caps_unmeasured $out casemode_detected timeout] }
     if {$altshow_cut} { set out [ase::caps_unmeasured $out altshow_op_dump timeout] }
+    # ⚠ A THIRD TOKEN, AND IT IS A DIFFERENT CONDITION FROM THE TWO ABOVE. Those
+    # two record a leg that was CUT. This one records a leg that RAN, finished,
+    # and produced an artifact KNOWN to be incomplete: a build whose `spinit`
+    # never loaded answers `devhelp` with 52 names against 136/138 -- every
+    # XSPICE code model missing -- and publishing that as a fact about the binary
+    # is a fabricated absence of ~84 device families. The condition is
+    # characterised (the run log names it), so it earns a token; the
+    # ran-but-produced-nothing case still publishes neither key nor provenance.
+    if {$devs_why ne {}} { set out [ase::caps_unmeasured $out devices_available $devs_why] }
     return $out
   }
 

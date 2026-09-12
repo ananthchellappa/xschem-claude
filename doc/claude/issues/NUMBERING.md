@@ -3148,7 +3148,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1408.**~~ superseded: **1408** is filed, above.
 
-**The next free number is 1409.**
+- **1409** — **ASE-L never asked the simulator which analyses it has, so the list was a guess.** Deck C gains a per-analysis `help <verb>` plus one `devhelp` — **no new run**, measured 0 ms on all three preflight binaries — publishing `analyses_available`, `analyses_probed` and `devices_available`. The probe token had NO source (Stage 1 deleted `verb` as C41), so `ase::analysis_card_tmpl` returns the emit template row-free; it must NOT go through `analysis_cards`, which RAISES on three of four types when given only a type. Four rules, each measured on all three: the verdict is read from the FILE -- and the measured reason is that deck C exits **0** while a circuit-LESS deck exits **1** and BOTH write their files, so rc tracks whether a CIRCUIT was parsed and says nothing about whether the answers arrived (an earlier draft said "all three exit 1", measured on the wrong deck); a stanza counts on its FIRST TOKEN (`help tf` prints the *tran* bracket AND sentence, so a description match would read `tf` absent on every ngspice ever shipped); the comparison is CASE-INSENSITIVE (`cieq()`); never `help all` (which would accidentally work today, one table edit from load-bearing). ⚠ `pss` on stock-47 is the ONLY reproducible `absent` fixture here — `help sp` answers on all three, so PLAN.md's `--enable-rfspice` example cannot be shown. ⚠ A build whose `spinit` never loaded answers `devhelp` with **52** names against 136/138, so publishing it is a FABRICATED ABSENCE of ~84 device families: the key is withheld and a third provenance token `noinit` records why — grepped, never counted. ⚠ An unknown device family is `unknown`, never `absent` (OSDI appends at LOAD time, so a scratch deck cannot see a PDK's Verilog-A devices). Floor 126 → **141**, eight sabotages.
+
+~~**The next free number is 1409.**~~ superseded: **1409** is filed, above.
+
+**The next free number is 1410.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
