@@ -75,6 +75,12 @@
 #        are VERBATIM `display` transcripts, because only the FIRST of the three
 #        names is a constant -- PLAN.md writes all three as literals and the
 #        other two carry the row's own source and node, folded to lower case.
+#   175  section PV, Stage 5 (issue 1427): one `pz` root name read back. ⚠ IT IS
+#        A READER AND TV's IS A PREDICTOR, and the difference is measured: a `pz`
+#        row cannot know its own vector names, because `pole(1)…pole(n)` has an
+#        `n` the root finder decides -- the same two-pole RC asked for `zer`
+#        produces NO VECTORS AT ALL at rc 0. So the `pz` entry declares no
+#        `vectors` key and PV1-PV3 pin the reader instead.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -4180,6 +4186,85 @@ check {TV6 the tf entry's plots row names a command that exists, and names the m
         [a_ans [dict get $TV_PL vectors] {type tf out v(mid) insrc V1}]] \
   [list {Transfer Function} 1 \
         {Transfer_function v1#Input_impedance output_impedance_at_V(mid)}]
+
+# --- PV: ONE `pz` ROOT NAME, READ BACK ---------------------------------------
+## Stage 5 of doc/claude/ase_analyses_batch/, issue 1427.
+##
+## ⚠ CONTENT, NOT SCHEMA (D34-D37). ASE-L owns the fact that a pole-zero run
+## produces roots; `pole(1)` / `zero(1)`, the parentheses being part of the name,
+## and ngspice's own `v(…)` wrapper around them in the rawfile are ngspice's
+## spelling. `pzan.c:151` and `:155` are the two `sprintf` calls.
+set PV_NS ase::backend::ngspice
+
+## ⚠ IT IS A **READER**, NOT A PREDICTOR, AND THAT IS THE ONE DIFFERENCE FROM
+## `tf_vectors` ABOVE. A `tf` row determines its own three vector names; a `pz`
+## row cannot determine ANY of its names, because the count is whatever the root
+## finder converged on. MEASURED 2026-09-12 on both binaries, one two-pole RC:
+##
+##   pz in 0 out 0 vol pz   -> pole(1) pole(2)               (no zeros at all)
+##   pz in 0 out 0 vol zer  -> NO VECTORS AT ALL, rc 0       (APPENDIX §2.8: a
+##                                                            legitimately empty
+##                                                            result is normal)
+##   pz in 0 in  0 cur pz   -> pole(1) pole(2) zero(1) zero(2)
+##
+## So the `pz` entry declares no `vectors` key and this proc answers about a name
+## somebody already has. Row PZ8 of tests/headless/test_ase_core.tcl is the other
+## half: it asserts the key is ABSENT.
+check {PV1 a pz root name comes apart into which kind of root it is and its index} \
+  [list [a_ans ${PV_NS}::pz_root_kind {pole(1)}] \
+        [a_ans ${PV_NS}::pz_root_kind {zero(12)}] \
+        [a_ans ${PV_NS}::pz_root_kind {POLE(3)}] \
+        [a_ans ${PV_NS}::pz_root_kind { zero(4) }]] \
+  {{pole 1} {zero 12} {pole 3} {zero 4}}
+
+## ⚠ THE RAWFILE WRAPS THE WHOLE NAME AGAIN, and a reader that only knew
+## `pole(1)` would match nothing in one. ngspice types a root as `voltage`, so
+## its own writer emits `v(pole(1))`. MEASURED 2026-09-12, the SAME deck written
+## by the fork (`ngspice-46+`) and by apt 45.2 -- `Variables:` carries
+## `v(pole(1))` and `v(pole(2))` on both, byte-identical, the only difference in
+## either header being the `Command:` version line.
+check {PV2 the rawfile's own v() wrapper is stripped, once} \
+  [list [a_ans ${PV_NS}::pz_root_kind {v(pole(1))}] \
+        [a_ans ${PV_NS}::pz_root_kind {v(zero(2))}] \
+        [a_ans ${PV_NS}::pz_root_kind {V(POLE(9))}]] \
+  {{pole 1} {zero 2} {pole 9}}
+
+## ⚠ AND EVERYTHING ELSE IN THE PLOT ANSWERS `{}`, INCLUDING THE THINGS THAT LOOK
+## CLOSEST. A pz raw written under `keepopinfo` carries an `op` plot full of
+## `v(mid)`; the `const` plot carries `v(boltz)`. A reader that fell back to
+## "anything in parentheses" would label them roots.
+check {PV3 a name that is not a root answers nothing at all, and never raises} \
+  [list [a_ans ${PV_NS}::pz_root_kind {v(mid)}] \
+        [a_ans ${PV_NS}::pz_root_kind {pole}] \
+        [a_ans ${PV_NS}::pz_root_kind {pole()}] \
+        [a_ans ${PV_NS}::pz_root_kind {pole(x)}] \
+        [a_ans ${PV_NS}::pz_root_kind {poles(1)}] \
+        [a_ans ${PV_NS}::pz_root_kind {zero(1)x}] \
+        [a_ans ${PV_NS}::pz_root_kind {}]] \
+  {{} {} {} {} {} {} {}}
+
+## ⚠ AND THE REGISTRY REALLY REACHES IT. `plots`' `rootname` key is opaque to
+## core -- nothing reads it before Stage 6 -- so without this row the proc could
+## be renamed and the registry would keep naming a command that does not exist,
+## silently, until Stage 6 went looking. ⚠ THE `select` LITERAL IS CHECKED HERE
+## TOO, because it is the measured `Plotname:` record and a respelling of it is
+## invisible everywhere else in this suite.
+set PV_PL [lindex [dict get [ase::analysis_entry ngspice pz] plots] 0]
+check {PV4 the pz entry's plots row names a command that exists, and names the measured Plotname literal} \
+  [list [dict get $PV_PL select] \
+        [expr {[llength [info commands [dict get $PV_PL rootname]]] > 0}] \
+        [a_ans [dict get $PV_PL rootname] {v(pole(1))}]] \
+  [list {Pole-Zero Analysis} 1 {pole 1}]
+
+## ⚠ AND THE SECOND ROW CARRIES ngspice's OWN MISLABEL. `pz`'s operating-point
+## plot is written `Distortion Operating Point` -- a copy-paste from `distoan.c`
+## at `pzan.c:52-61`. MEASURED 2026-09-12 on BOTH binaries, `.options keepopinfo`
+## then `setplot`: `op1 … (Distortion Operating Point)`. Spelling it the way it
+## reads would make Stage 6's reader match nothing on every ngspice that exists.
+set PV_PL2 [lindex [dict get [ase::analysis_entry ngspice pz] plots] 1]
+check {PV5 the keepopinfo plot carries the upstream mislabel exactly as ngspice writes it} \
+  [list [dict get $PV_PL2 select] [dict get $PV_PL2 when]] \
+  [list {Distortion Operating Point} {opt keepopinfo}]
 
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which

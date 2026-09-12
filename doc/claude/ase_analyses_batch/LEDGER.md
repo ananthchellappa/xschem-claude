@@ -886,8 +886,8 @@ this one.
 
 | landed | task | subject | floors |
 |---|---|---|---|
-| *pending* | **T1** | `feat(1426)` the transfer function was listed and could not be chosen | core 348 → **360**; simcaps 164 → **170**; preflight 152 → **164**; dialogs **display** 265 → **271** |
-| — | **T2** | `pz` | not started |
+| `1e8e236e` | **T1** | `feat(1426)` the transfer function was listed and could not be chosen | core 348 → 360; simcaps 164 → 170; preflight 152 → 164; dialogs **display** 265 → 271 |
+| *pending* | **T2** | `feat(1427)` the pole-zero analysis was listed and could not be chosen | core 360 → **376**; simcaps 170 → **175**; preflight 164 → **177**; dialogs **display** 271 → **278** |
 | — | **T3** | `sens (dc)` | not started |
 
 ⚠ **FOUR PLAN CLAIMS REFUTED BY THE TREE, and the first is structural.** `PLAN.md` §1c specifies an
@@ -923,16 +923,34 @@ could supply it. A malformed output expression is `fatal` and carries no caveat,
 include can make `v mid` legal**. Measured against this tree's own `sim_status` guard: `tf x(mid) V1`
 fires `quit 1` while `tf v(nosuchnode) V1` reaches the end.
 
+⚠ **AND `pz` REFUTED THE PLAN'S OWN CITATION.** `PLAN.md` rests `pz_devices` on `pzan.c:92-128`'s
+transmission-line check. Measured on both binaries: **`PZinit`'s check cannot fire for an LTRA at
+all** — it stops at the first *name that is a compiled-in device type*, not the first that has
+instances, so on any build with `tra` compiled in the LTRA arm is unreachable. A precondition resting
+on an unreachable guard would have been a rule nobody could trigger.
+
+⚠ **AND THE PLAN'S SINGLE `blocked` WOULD HAVE CALLED A SILENT WRONG ANSWER A REFUSAL.** `Y` and
+`P` lines are **silently omitted from the pz matrix**: measured byte-identical poles, rc 0, against
+the same deck with the line deleted. That is not a refusal — it is a result the user would believe.
+Split into `fatal` (T/O/U) and `caution` (Y/P).
+
+⚠ **A THIRD CASE OF STAGE 4's STATIC DEMOTION, WHICH NEITHER 1423 NOR 1426 HAD A NAME FOR.** A
+finding of the form *"this deck CONTAINS X"* is **proved** by the static pass — an `.include` can
+only ADD devices, never remove one — so it needs no `.include` caveat in either direction. Row
+PF228h. The demotion is therefore not one rule but three: lower it when an include could supply what
+is missing, keep it when no include can make the text legal, and skip it entirely when the finding is
+about something already present.
+
 | | |
 |---|---|
-| status | **IN PROGRESS** — task 1 of 3 |
-| commit | T1 pending |
+| status | **IN PROGRESS** — tasks 1 and 2 of 3 landed |
+| commit | `1e8e236e` T1 · T2 pending |
 | T1 | taken **solo** by the driver, 62 cases |
 | suites moved | `test_ase_core` 348 → **360** · `test_ase_simcaps_0948` 164 → **170** · `test_ase_preflight` 152 → **164** · `test_ase_dialogs` **display** 265 → **271**, headless **37 unmoved**. Four existing rows moved, all expected and named: **AG1**/**AG2** (the offered list splits 5/6 now) and **EM7**/**CP6** (six probe-only types, not seven). **R1, AG3 and CP1–CP4 did NOT move** — the entry declares no `seed_enabled`, so the 104 committed `.state` files gain no `tf` row and stay byte-identical |
-| sabotage | **twenty-one**, twenty reddening a named row. ⚠ **One killed the suite instead of reddening a row** (S21, `insrc required 1→0`): `test_ase_dialogs` died at 65/271 because the row read `$top.chana.status` after an OK that now SUCCEEDS and destroys the dialog. Rewritten to read it inside its own `catch`; it now reds by name. ⚠ **One survived**: S9 passed against PF227h as first written, because **both** refusal sentences carry the user's own name, so *"the strings differ"* was satisfied trivially. The row now compares clause by clause |
+| sabotage | **sixty-two across the two tasks** (tf 21, pz 41), all verified to redden. ⚠ **pz's survivor is the sharpest in the batch so far**: deleting the ground skip from `pz_nodes` left the WHOLE section green, because every fixture deck spells its reference node `0`. A deck spelling it `gnd` exposes it, and PF228m is that deck. ⚠ tf: twenty-one, twenty reddening a named row. ⚠ **One killed the suite instead of reddening a row** (S21, `insrc required 1→0`): `test_ase_dialogs` died at 65/271 because the row read `$top.chana.status` after an OK that now SUCCEEDS and destroys the dialog. Rewritten to read it inside its own `catch`; it now reds by name. ⚠ **One survived**: S9 passed against PF227h as first written, because **both** refusal sentences carry the user's own name, so *"the strings differ"* was satisfied trivially. The row now compares clause by clause |
 | ledger debts | `rule 1426` — two field labels and six precondition sentences. ⚖ R9, batched with `pz` and `sens`. **No look debt**: `src/ase_window.tcl` is untouched and the form is built from the registry by code that already exists |
 | spec paragraphs rewritten | none — same standing spec debt as Stages 2–4 |
-| receipt | `receipts/10-stage-5-tf.md` — **the first crew-authored receipt in this batch** |
+| receipt | `receipts/10-stage-5-tf.md` — **the first crew-authored receipt in this batch** · `receipts/11-stage-5-pz.md` |
 
 
 ### What Stage 5 learned that binds later stages

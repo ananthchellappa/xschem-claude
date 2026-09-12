@@ -93,6 +93,13 @@ set fail 0; set npass 0
 #              losing `required 1`, after which OK commits and CLOSES -- raised
 #              `invalid command name ".ase5.chana.status"` and killed the file
 #              at 65 of 271 instead of reddening a row. MEASURED, not feared.
+#   37 / 278   section G2pz, Stage 5 (issue 1427): the pole-zero analysis can be
+#              CHOSEN. Headless is unmoved for the same reason. It is the first
+#              form in this tree that mixes THREE widget classes -- four `kind
+#              node` entries and two `kind mode` comboboxes -- so it is the first
+#              place a row can say that a picker is a picker. ⚠ Its refusal row
+#              carries G2tf's `catch` from the start rather than learning it
+#              again.
 #
 # ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
 # row; do not edit the number downward to make the file agree with itself.
@@ -956,6 +963,151 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "G2tf the fixture is left without a tf row, so the rows below see the\
  bench they were written against" \
     [tv_find $atv type tf] {}
+
+  # G2pz: THE POLE-ZERO ANALYSIS CAN BE CHOSEN AT ALL. Stage 5, issue 1427.
+  ## ⚠ UNTIL THIS COMMIT `pz` WAS A CELL YOU COULD SELECT AND NOT USE, exactly as
+  ## `tf` was one commit ago: `registered 1` with a `role probe` card and nothing
+  ## else, so the grid showed it exists, `ase::analysis_renderable` answered 0,
+  ## the Enable checkbutton was disabled and the form below it was empty.
+  ##
+  ## ⚠ AND IT IS THE FIRST ANALYSIS WHOSE FORM MIXES THREE WIDGET CLASSES. Four
+  ## entries (`kind node`, a kind this registry had never declared) and TWO
+  ## comboboxes (`kind mode`). `test_ase_core` section PZ pins the registry and
+  ## the deck bytes; only a real widget can say that six controls are BUILT, that
+  ## the two pickers are COMBOBOXES rather than text boxes, and that the previous
+  ## type's widgets are gone from the same `$w.form` frame.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.pz invoke
+  update
+  check "G2pz selecting pz builds four node entries and two pickers, leaves none\
+ of tran's behind, and leaves Enable live" \
+    [list [winfo exists $top.chana.form.inp] [winfo exists $top.chana.form.inn] \
+          [winfo exists $top.chana.form.outp] [winfo exists $top.chana.form.outn] \
+          [winfo exists $top.chana.form.transfer] [winfo exists $top.chana.form.mode] \
+          [winfo exists $top.chana.form.step] [winfo exists $top.chana.form.stop] \
+          [winfo class $top.chana.form.inp] \
+          [winfo class $top.chana.form.mode] \
+          [string tolower [$top.chana.enable cget -state]]] \
+    {1 1 1 1 1 1 0 0 Entry TCombobox normal}
+  ## ⚠ THE PICKERS OPEN SHOWING THE DECLARED DEFAULT, NOT BLANK, AND THAT IS A
+  ## BYTE-IDENTITY RULE RATHER THAN A COSMETIC ONE (issue 1416's `sweep` lesson).
+  ## A bench storing neither key renders `pz in 0 out 0 vol pz`; a blank picker
+  ## beside a deck line that says `vol pz` is the window disagreeing with the
+  ## file.
+  ## ⚠ EVERY `cget` HERE GOES THROUGH `g2pz_cget`, AND THAT IS WHAT THE SABOTAGE
+  ## ASKED FOR. `-values` exists only on a combobox, so the one change this row
+  ## exists to catch -- a picker declared `kind node` and built as a text box --
+  ## raised `unknown option "-values"` and killed the whole file at 67 of 278
+  ## instead of reddening a row. MEASURED (sabotage S33), the same lesson G2tf's
+  ## last row records about reading a destroyed dialog.
+  proc g2pz_cget {w opt} {
+    if {[catch {$w cget $opt} v]} { return NOOPT }
+    return $v
+  }
+  check "G2pz the pickers open on the declared default and offer ngspice's own\
+ words, and the labels are the declared ones" \
+    [list [$top.chana.form.transfer get] [$top.chana.form.mode get] \
+          [g2pz_cget $top.chana.form.transfer -values] \
+          [g2pz_cget $top.chana.form.mode -values] \
+          [g2pz_cget $top.chana.form.linp -text] \
+          [g2pz_cget $top.chana.form.linn -text] \
+          [g2pz_cget $top.chana.form.lmode -text]] \
+    [list vol pz {vol cur} {pz pol zer} {Input +:} {Input -:} {Find:}]
+  ## ⚠ THE WHOLE ROUND TRIP, AND THE PART THAT MATTERS IS WHAT IS **NOT** STORED.
+  ## Typing only the two signal nodes must store only those two keys: the pickers
+  ## answer their own defaults, and `form_is_absent` drops a value that equals the
+  ## declared default. A bench that stored `transfer vol mode pz` would be a bench
+  ## whose `.state` file grew two keys the moment somebody opened the dialog.
+  set ::ase::ui::dlg($key,anen) 1
+  foreach {fld val} {inp in outp out} {
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
+  }
+  $top.chana.btns.proceed invoke
+  update
+  check_true "G2pz an enabled pz row with both signal nodes is COMMITTED, not refused" \
+    [expr {![winfo exists $top.chana]}]
+  set g2pzrow {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {pz}} { set g2pzrow $a; break }
+  }
+  set g2pzit [tv_find $atv type pz]
+  check "G2pz the pz row round-trips storing only what differs from the deck's\
+ own defaults, and the Arguments column is the line the deck will carry" \
+    [list [ase::state_get $g2pzrow enabled] [ase::state_get $g2pzrow inp] \
+          [ase::state_get $g2pzrow outp] [lsort [dict keys $g2pzrow]] \
+          [expr {$g2pzit ne {} ? [$atv set $g2pzit args] : {}}]] \
+    [list 1 in out {enabled inp outp type} {pz in 0 out 0 vol pz}]
+  ## ⚠ AND A NON-DEFAULT PICK **IS** STORED AND **DOES** REACH THE LINE. Without
+  ## this the row above is satisfied by a form whose pickers are decoration.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.pz invoke
+  update
+  ## ⚠ THE TWO GESTURES ARE CAUGHT FOR THE SAME REASON THE READS ABOVE ARE. A
+  ## combobox takes `set`; an Entry does not, and raises `bad option "set"`. So
+  ## a picker declared as the wrong kind would kill the file here even with the
+  ## reads hardened -- which is exactly what sabotage S33 did, twice. The
+  ## RETURN CODE is recorded as an ordinary value, so the row reds naming the
+  ## gesture that could not be made.
+  set ::ase::ui::dlg($key,anen) 1
+  set g2pz_pick [list [catch {$top.chana.form.mode set pol}] \
+                      [catch {$top.chana.form.transfer set cur}]]
+  $top.chana.btns.proceed invoke
+  update
+  set g2pzrow2 {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {pz}} { set g2pzrow2 $a; break }
+  }
+  check "G2pz a non-default pick is made with a real picker gesture, is stored,\
+ and reaches the emitted line" \
+    [list $g2pz_pick [lsort [dict keys $g2pzrow2]] \
+          [expr {[set i [tv_find $atv type pz]] ne {} ? [$atv set $i args] : {}}]] \
+    [list {0 0} {enabled inp mode outp transfer type} {pz in 0 out 0 cur pol}]
+  ## ⚠ AND THE DOOR STILL SHUTS ON A HALF-FILLED ONE. ⚠ THE STATUS LINE IS READ
+  ## INSIDE THIS ROW'S OWN `catch`, for the reason G2tf's last row records: the
+  ## one change this row exists to catch -- `outp` losing its `required 1`, after
+  ## which OK COMMITS AND CLOSES -- would otherwise raise `invalid command name`
+  ## and kill the whole file instead of reddening a row.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.pz invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.outp delete 0 end
+  set g2pz_before [ase::state_get [ase::session_state $key] analyses]
+  $top.chana.btns.proceed invoke
+  update
+  set g2pz_alive [expr {[winfo exists $top.chana] ? 1 : 0}]
+  set g2pz_said 0
+  if {$g2pz_alive} {
+    catch {
+      set g2pz_said [expr {[string first {outp} \
+        [$top.chana.status cget -text]] >= 0}]
+    }
+  }
+  check "G2pz an enabled pz row with no output node is refused, the dialog\
+ survives and the state is untouched" \
+    [list $g2pz_alive $g2pz_said \
+          [ase::state_get [ase::session_state $key] analyses]] \
+    [list 1 1 $g2pz_before]
+  ## Leave the bench as the rest of this file found it: no pz row. ⚠ The cancel
+  ## is caught for the same reason as the read above.
+  catch {$top.chana.btns.cancel invoke}
+  update
+  set g2pz_st [ase::session_state $key]
+  set g2pz_rows {}
+  foreach a [ase::state_get $g2pz_st analyses] {
+    if {[ase::state_get $a type] ne {pz}} { lappend g2pz_rows $a }
+  }
+  dict set g2pz_st analyses $g2pz_rows
+  ase::session_update $key $g2pz_st
+  ase::ui::populate $key
+  update
+  check "G2pz the fixture is left without a pz row, so the rows below see the\
+ bench they were written against" \
+    [tv_find $atv type pz] {}
 
   # G2i/G2j/G2k: THE OPTIONS DOOR CLOSES. Issue 1418.
   ## ⚠ THIS EDITOR IS THE DEFECT STAGE 3 IS NAMED FOR. It collected free-text

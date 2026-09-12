@@ -4125,6 +4125,23 @@ proc ase::field_emits {fd row name} {
   return [ase::field_default $fd]
 }
 
+# THE VALUE A PRECONDITION MUST REASON ABOUT: what this row will actually put in
+# that slot, which is the stored value when there is one and the field's DECLARED
+# DEFAULT when there is not. Issue 1427.
+#
+# ⚠ A PREDICATE THAT READ THE ROW DIRECTLY WOULD BE WRONG ABOUT EVERY DEFAULTED
+# FIELD, AND WRONG IN THE DIRECTION THAT STAYS SILENT. `pz`'s two reference nodes
+# default to `0`, so a bench storing neither emits `pz in 0 out 0 vol pz` -- and
+# `ase::state_get $row inn` answers the empty string for it. A shorted-input
+# check built on that reads `in` vs `{}`, never fires, and the run aborts with
+# ngspice's own `doAnalyses: Input is shorted`, which names no field at all. This
+# is `ase::field_emits`' answer for a non-bool field, trimmed; the two readers
+# agree BY CONSTRUCTION because there is only one of them.
+proc ase::field_value {sim type row name} {
+  return [string trim \
+    [ase::field_emits [ase::field_descriptor $sim $type $name] $row $name]]
+}
+
 # THE SLOT GRAMMAR.
 #
 #   @name    REQUIRED  -- absent raises, which is what `ase::analysis_emit_check`
@@ -6304,6 +6321,213 @@ proc ase::needs_eval {sim type id row facts opts} {
         "this circuit has no node '[join $missing {' and no node '}]', and this\
  analysis reports three numbers anyway rather than saying so" \
         "name a node that is in the circuit"]
+    }
+    pz_shorted {
+      # ⚠ THE ONE `pz` PRECONDITION THAT RESTS ON **NOTHING BUT THE ROW**, which
+      # is exactly what makes it `fatal` rather than `blocked`. Issue 1423 lowers
+      # every `blocked` to `caution` on a static pass and appends "cannot see
+      # inside an .include" -- true of a node that might be defined elsewhere,
+      # and a LIE here: no included file can make the user's own two node boxes
+      # stop holding the same word. `fatal` is exempt from the demotion and is
+      # also the honest severity. MEASURED 2026-09-12 on the fork and on apt
+      # 45.2 alike, with this tree's own `sim_status` guard around the analysis:
+      #
+      #   pz in in  out 0   vol pz -> rc 1, `doAnalyses: Input is shorted`,
+      #                                     RUN-FAILED
+      #   pz in 0   out out vol pz -> rc 1, `doAnalyses: Output is shorted`
+      #   pz in 0   in  0   vol pz -> rc 1, `doAnalyses: Transfer function is
+      #                                     unity`
+      #   pz 0  in  in  0   vol pz -> rc 1, `doAnalyses: Transfer function is -1`
+      #
+      # ⚠ AND THE LAST TWO ARE `vol`-ONLY, WHICH IS MEASURED AND NOT INFERRED.
+      # `pzan.c:117-125` guards both with `PZinput_type == PZ_IN_VOL`, and the
+      # run confirms it: `pz in 0 in 0 cur pz` REACHED-THE-END at rc 0 with four
+      # roots. Refusing the current-input case would refuse a real analysis --
+      # the input admittance of a node, which is the reason `cur` exists.
+      set inp  [ase::field_value $sim $type $row inp]
+      set outp [ase::field_value $sim $type $row outp]
+      # An unfilled row is the commit door's business, not this pass's: it has a
+      # sentence naming the empty field, and two sentences about one mistake is
+      # the shape issue 1420 deleted from the Arguments column.
+      if {$inp eq {} || $outp eq {}} { return {} }
+      set inn  [ase::field_value $sim $type $row inn]
+      set outn [ase::field_value $sim $type $row outn]
+      if {[string equal -nocase $inp $inn]} {
+        return [list fatal \
+          "the input of this pole-zero analysis is shorted: '$inp' is both the\
+ input and its reference" \
+          "give the input two different nodes"]
+      }
+      if {[string equal -nocase $outp $outn]} {
+        return [list fatal \
+          "the output of this pole-zero analysis is shorted: '$outp' is both the\
+ output and its reference" \
+          "give the output two different nodes"]
+      }
+      if {[ase::field_value $sim $type $row transfer] ne {vol}} { return {} }
+      if {[string equal -nocase $inp $outp] && [string equal -nocase $inn $outn]} {
+        return [list fatal \
+          "the input and the output name the same pair of nodes, so the transfer\
+ function is 1 and there is nothing to solve" \
+          "name the node you want the poles of as the output"]
+      }
+      if {[string equal -nocase $inp $outn] && [string equal -nocase $inn $outp]} {
+        return [list fatal \
+          "the output is the input with its nodes swapped, so the transfer\
+ function is -1 and there is nothing to solve" \
+          "name the node you want the poles of as the output"]
+      }
+      return {}
+    }
+    pz_nodes {
+      # ⚠ ngspice ACCEPTS A NODE THAT IS NOT IN THE CIRCUIT AND THEN BLAMES THE
+      # WIRING. MEASURED 2026-09-12 on both binaries:
+      #
+      #   pz nosuch 0 out 0    vol pz -> rc 1, `doAnalyses: The input signal is
+      #                                         shorted on the way to the output`
+      #   pz in 0     nosuch 0 vol pz -> rc 1, the SAME sentence
+      #
+      # That message is `cktpzstr.c:213` -- the root finder reporting that the
+      # transfer function came out identically zero -- and it names neither the
+      # node nor the fact that one was invented. A user reads it and goes to look
+      # at their schematic.
+      #
+      # ⚠ `blocked`, SO THE STATIC PASS DEMOTES IT TO `caution` WITH THE
+      # `.include` CAVEAT, AND THAT IS RIGHT HERE AND WRONG ONE ARM ABOVE. An
+      # included stimulus or PDK file really can define `nosuch`; nothing can
+      # make `pz in in out 0` legal. The severity tracks WHAT THE STATIC PASS CAN
+      # KNOW, never how loudly ngspice complains -- both arms are a hard rc 1
+      # abort and only one of them is `fatal`.
+      #
+      # ⚠ GROUND IS NOT A NODE ANYBODY DECLARES. `0` is the reference every deck
+      # has and no deck writes a card for, so it is skipped rather than looked
+      # up -- and it is the DEFAULT of both reference fields, so a predicate that
+      # missed this would report "this circuit has no node '0'" for the commonest
+      # row there is.
+      set missing {}
+      foreach f {inp inn outp outn} {
+        set n [ase::field_value $sim $type $row $f]
+        if {$n eq {} || $n eq {0}} { continue }
+        set seen 0
+        dict for {sc sd} [dict get $facts nodes] {
+          if {[dict exists $sd nodes $n]} { set seen 1 ; break }
+          foreach nn [dict keys [dict get $sd nodes]] {
+            if {[string equal -nocase $nn $n]} { set seen 1 ; break }
+          }
+          if {$seen} break
+        }
+        if {!$seen && [lsearch -exact $missing $n] < 0} { lappend missing $n }
+      }
+      if {![llength $missing]} { return {} }
+      return [list blocked \
+        "this circuit has no node '[join $missing {' and no node '}]', and\
+ ngspice reports that as the input being shorted to the output" \
+        "name nodes that are in the circuit"]
+    }
+    pz_devices {
+      # ⚠ TWO CLASSES, AND THE SECOND IS THE ONE NOBODY WOULD GUESS. A device
+      # whose model has no `DEVpzLoad` entry point is simply SKIPPED by
+      # `cktpzld.c:29` -- it contributes nothing to the matrix and nothing at all
+      # is said. MEASURED 2026-09-12 on the fork and apt 45.2 alike, the same
+      # two-pole RC with a lossy line hung off a node, against the same deck with
+      # the line deleted:
+      #
+      #   no line at all  -> pole(1) -2.61803e+06   pole(2) -3.81966e+05
+      #   + Y1 (TransLine)-> pole(1) -2.61803e+06   pole(2) -3.81966e+05   rc 0
+      #   + P1 (CplLines) -> pole(1) -2.61803e+06   pole(2) -3.81966e+05   rc 0
+      #
+      # Byte-identical roots, rc 0, nothing on either stream: the analysis
+      # answered for a circuit the user does not have. That is `caution`'s own
+      # definition -- the run works and is worse than the user expects.
+      #
+      # ⚠ AND THE OTHER CLASS ABORTS, WITH A MESSAGE THAT NAMES THE WRONG THING
+      # THREE TIMES OUT OF FOUR. MEASURED, same decks, same two binaries:
+      #
+      #   T1 (Tranline) -> rc 1 `doAnalyses: Transmission lines not supported`
+      #   O1 (LTRA)     -> rc 1 `doAnalyses: The input signal is shorted on the
+      #                          way to the output`
+      #   U1 (URC)      -> rc 1 `doAnalyses: device already exists, existing one
+      #                          being used`
+      #
+      # ⚠ ONLY THE FIRST OF THOSE IS THE CHECK ngspice THINKS IT IS MAKING, AND
+      # PLAN.md's `pzan.c:92-128` CITATION IS WHERE THE REFUTATION LIVES.
+      # `PZinit` looks up `"transmission line"`, then `"Tranline"`, then
+      # `"LTRA"`, and STOPS AT THE FIRST NAME THAT IS A COMPILED-IN DEVICE TYPE
+      # rather than the first with instances -- so on any build that has `tra`
+      # compiled in, `i` is `tra`'s index and the LTRA arm is never reached.
+      # MEASURED: an O-card deck does NOT print "Transmission lines not
+      # supported"; a deck with a T card and an O card does, because the T card
+      # is what the one check that runs can see. So ASE-L says the two other
+      # families outright rather than relying on a check that cannot fire.
+      #
+      # ⚠ MODEL-LEVEL DEVICES SHARE THE SILENT DEFECT AND ARE DELIBERATELY NOT
+      # COVERED. `mos6`, `jfet2` and `soi3` also declare `.DEVpzLoad = NULL`, and
+      # MEASURED: the same topology with `level=6` aborts where `level=1` answers
+      # `pole(1) = -1.00000e+06`. They are selected by a `level=` number, and
+      # ngspice's level-to-device map is a per-build decision (level 8 and 49 are
+      # split between `bsim3` and `bsim3v32` by a `version=` parameter), so a
+      # rule keyed on a level would be a claim about ONE binary's mapping that
+      # ASE-L cannot verify. The device LETTER is a claim about the netlist.
+      #
+      # ⚠ AND `netlist_facts`' OWN LETTER TABLE CALLS `p` A PORT. ngspice's `P`
+      # card is `CplLines` (`inp2p.c:46` LITERRs "Device type CplLines not
+      # supported by this binary"); ngspice's RF port is a VOLTAGE SOURCE with
+      # `portnum=`, which is why `netlist_facts` reads `portnum` off `v` cards.
+      # The table's label is not this stage's to change -- it is read by other
+      # predicates -- so the sentence below names the device rather than the
+      # family key.
+      set fam [dict get $facts families]
+      set stops {}
+      foreach {k noun} {tranline {a transmission line (a `T` card)} \
+                        ltra     {a lossy transmission line (an `O` card)} \
+                        urc      {a uniform RC line (a `U` card)}} {
+        if {[dict exists $fam $k]} { lappend stops $noun }
+      }
+      if {[llength $stops]} {
+        return [list fatal \
+          "this circuit has [join $stops { and }], and pole-zero analysis stops\
+ before it produces anything when one is present" \
+          "run the pole-zero analysis on a copy of the bench with the line\
+ replaced by its lumped equivalent"]
+      }
+      set quiet {}
+      foreach {k noun} {txline {a transmission line (a `Y` card)} \
+                        port   {a coupled transmission line (a `P` card)}} {
+        if {[dict exists $fam $k]} { lappend quiet $noun }
+      }
+      if {[llength $quiet]} {
+        return [list caution \
+          "this circuit has [join $quiet { and }], and pole-zero analysis leaves\
+ it out of the matrix without saying so -- the roots will be the circuit's\
+ without it" \
+          "replace the line with its lumped equivalent before reading the roots"]
+      }
+      return {}
+    }
+    pz_klu {
+      # ⚠ AN OPTION x ANALYSIS RULE, AND IT IS ngspice REFUSING ITSELF RATHER
+      # THAN A DEFECT. `pzan.c:29-34` returns `E_UNSUPP` under `CKTkluMODE` and
+      # says so. MEASURED 2026-09-12 on both binaries, `.options klu` with the
+      # `sim_status` guard:
+      #
+      #   Error: Pole/zero analysis is not (yet) supported with 'option KLU'.
+      #       Use 'option sparse' instead.
+      #   doAnalyses: operation not supported / pz simulation(s) aborted
+      #   -> RUN-FAILED, rc 1
+      #
+      # ⚠ `fatal` FOR THE SAME REASON `cider_klu` IS: the guard's `quit 1` fires
+      # and every analysis after this one in the deck silently does not happen.
+      # ⚠ AND IT RESTS ON THE BENCH'S OWN OPTIONS, NOT ON THE NETLIST, so the
+      # static demotion never touches it and no `.include` can change the answer.
+      # ngspice ITSELF names the fix, so ASE-L says the same words.
+      dict for {on ov} $opts {
+        if {[string equal -nocase $on klu] && $ov ne {0}} {
+          return [list fatal \
+            "ngspice does not support pole-zero analysis under the KLU solver" \
+            "select the `sparse` solver for this run"]
+        }
+      }
+      return {}
     }
     cider_klu {
       # ⚠ FATAL, AND IT IS NOT A STYLE OPINION. A CIDER device under the KLU
@@ -14584,6 +14808,86 @@ $_leg
   # that matches it CASE-SENSITIVELY is wrong on the binary a downloading user
   # has. (`display` shows the capitals on both; it is `print` and the rawfile
   # that differ.) Stage 6 folds.
+  #
+  # ─── `pz`, THE POLE-ZERO ANALYSIS (Stage 5, issue 1427) ────────────────────
+  #
+  # ⚠ SIX SEPARATE TOKENS, SO `pz` NEEDS NO `{build}` ESCAPE AT ALL. `tf`'s own
+  # block above records that PLAN.md §1c's `{build <proc>}` is specified and was
+  # never shipped. PLAN.md Stage 5 spends it here too --
+  # `{pz {build ase::backend::ngspice::an_pz_nodes} @transfer @mode}` -- and for
+  # `pz` it buys NOTHING: `pz NODE1 NODE2 NODE3 NODE4 {cur|vol} {pol|zer|pz}` is
+  # six space-separated words and the slot grammar joins tokens with a space.
+  # Four node fields ARE the four node tokens. So this entry is implementable
+  # today, and it is the shape the grammar already has rather than a rehearsal
+  # for one it does not.
+  #
+  # ⚠ THE TWO REFERENCE NODES DEFAULT TO `0` **AND** DECLARE `whenskipped 0`,
+  # AND THE SECOND IS NOT REDUNDANT. All six slots are POSITIONAL, so a skipped
+  # `inn` would promote `outp` into ngspice's `nodeg` and the analysis would
+  # silently measure a different pair -- issue 1416's back-fill defect, in the
+  # one analysis where every argument is a bare node name and nothing downstream
+  # could notice. `default 0` means the slot never skips today; `whenskipped 0`
+  # means it still cannot shift if a later edit drops the default. Section PB
+  # owns the mechanism; row PZ2c is the one that would notice here.
+  #
+  # ⚠ `pz` DECLARES NO `viewrank`, FOR THE SAME MEASURED REASON AS `tf` AND WITH
+  # ITS OWN MEASUREMENT. MEASURED 2026-09-12 against a raw carrying an
+  # `Operating Point` plot and a `Pole-Zero Analysis` plot, through this tree's
+  # own binary:
+  #
+  #     xschem raw read both.raw pz                   -> raw_read(): no useful
+  #                                                      data found ... or no
+  #                                                      "pz" analysis      -> 0
+  #     xschem raw read both.raw op                   -> sim_type=op        -> 1
+  #     xschem raw read both.raw {Pole-Zero Analysis} -> sim_type=Pole-Zero
+  #                                                      Analysis          -> 1
+  #
+  # `src/save.c`'s `read_dataset()` has six NAMED `Plotname:` arms and then an
+  # exact `strcmp` against the plot name itself; `pz` is in neither set. And a
+  # `pz` plot is a ROOT LIST -- `Flags: complex`, **no scale vector**, one data
+  # row -- so even a mapping would open the waveform viewer on something that is
+  # not a sweep. PLAN.md Stage 5 does not give `pz` a viewrank and the tree
+  # agrees; the row that pins it is PZ5.
+  #
+  # ⚠ THE OPERATING-POINT PLOT REALLY IS LABELLED `Distortion Operating Point`,
+  # AND IT IS CARRIED VERBATIM. An upstream copy-paste from `distoan.c` at
+  # `pzan.c:52-61`. MEASURED 2026-09-12 on BOTH binaries, `.options keepopinfo`
+  # then `setplot`:
+  #
+  #     Current pz1   … (Pole-Zero Analysis)
+  #             op1   … (Distortion Operating Point)
+  #             const Constant values (constants)
+  #
+  # Spelling it `Pole-Zero Operating Point` here would make Stage 6's reader
+  # match nothing on every ngspice that exists.
+  #
+  # ⚠ AND THE ROOT NAMES ARE LOWER CASE ON BOTH BINARIES, WHICH IS THE PLACE
+  # `tf`'s FOLDING WARNING DOES **NOT** REACH. `tf`'s constants are written
+  # `Transfer_function` by the fork and `transfer_function` by apt 45.2;
+  # `pzan.c:151` and `:155` build these with `sprintf(name, "pole(%-u)", i+1)`,
+  # so there are no capitals to fold. MEASURED 2026-09-12, the same deck written
+  # by both binaries: `v(pole(1))` / `v(pole(2))` in the rawfile, byte-identical
+  # `Variables:` blocks, the only difference the `Command:` version line. The
+  # reader below is still case-insensitive, because that costs nothing and the
+  # measurement is about two binaries rather than about all of them.
+  #
+  # ⚠ `plots` NAMES A **READER**, NOT A LIST OF VECTORS, AND THAT IS THE
+  # DIFFERENCE FROM `tf`. `tf` produces exactly three vectors whose names a ROW
+  # determines, so its `plots` row names a proc that computes them. `pz` produces
+  # `pole(1)…pole(n)` and `zero(1)…zero(m)` where **n and m are results of the
+  # run** -- MEASURED: the same two-pole RC answers two poles and, asked for
+  # `zer`, **zero vectors at rc 0**, which APPENDIX §2.8 records as normal. No
+  # proc can predict them, so declaring a `vectors` key here would give one key
+  # two meanings. `pz_root_kind` reads a name back instead.
+  #
+  # ⚠ `results table` IS READ BY NOTHING YET. `ase::ui::resulttable` is Stage 5b
+  # and is not in this commit; the key carries the measured destination so Stage
+  # 6 inherits it rather than re-deriving it, exactly as `tf`'s `results value`
+  # does.
+  #
+  # ⚠ NO `seed_enabled`: `ase::state_default` stays at four rows and the 104
+  # committed `.state` files keep round-tripping byte-identically. Section CP of
+  # tests/headless/test_ase_core.tcl is the row that would notice.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -14650,8 +14954,25 @@ $_leg
         plots  {{select {Transfer Function} role scalars results value label tf \
                  vectors ::ase::backend::ngspice::tf_vectors}}] \
       pz [dict create \
-        label pz  baseline 1  registered 1 \
-        emit {{role probe tmpl {pz}}}] \
+        label pz  baseline 1  registered 1  emitorder 60 \
+        needs  {pz_shorted pz_nodes pz_devices pz_klu cider_klu} \
+        fields {{name inp  kind node required 1 label {Input +}} \
+                {name inn  kind node required 0 default 0 whenskipped 0 \
+                           label {Input -}} \
+                {name outp kind node required 1 label {Output +}} \
+                {name outn kind node required 0 default 0 whenskipped 0 \
+                           label {Output -}} \
+                {name transfer kind mode required 0 default vol values {vol cur} \
+                           label {Input type}} \
+                {name mode kind mode required 0 default pz values {pz pol zer} \
+                           label {Find}}} \
+        emit   {{role analysis \
+                 tmpl {pz @inp @inn? @outp @outn? @transfer? @mode?}}} \
+        results {table {kind roots}} \
+        plots  {{select {Pole-Zero Analysis} role table results table label pz \
+                 rootname ::ase::backend::ngspice::pz_root_kind} \
+                {select {Distortion Operating Point} role opinfo results viewer \
+                 when {opt keepopinfo} label {pz operating point}}}] \
       sens [dict create \
         label sens  baseline 1  registered 1 \
         emit {{role probe tmpl {sens}}}] \
@@ -14821,6 +15142,42 @@ $_leg
     return $names
   }
 
+  # ─── ONE `pz` ROOT NAME, READ BACK (Stage 5, issue 1427) ──────────────────
+  # Answers `{pole <n>}`, `{zero <n>}` or `{}`. Reached through the `rootname`
+  # key of the `pz` entry's `plots` row, which is opaque to core.
+  #
+  # ⚠ IT IS A **READER**, NOT A PREDICTOR, AND THAT IS WHY IT IS NOT SPELLED
+  # LIKE `tf_vectors`. `tf` produces three vectors a ROW determines, so its
+  # `plots` row names a proc that computes them from the row. A `pz` row cannot
+  # know its own vector names: `pzan.c:151`/`:155` emit `pole(i)` and `zero(i)`
+  # for i in 1..n, and n is whatever the root finder converged on. MEASURED
+  # 2026-09-12 on both binaries, one two-pole RC, one row per command:
+  #
+  #     pz in 0 out 0 vol pz   -> pole(1) pole(2)          (no zeros at all)
+  #     pz in 0 out 0 vol zer  -> NO VECTORS, rc 0         (APPENDIX §2.8: a
+  #                                                         legitimately empty
+  #                                                         result is normal)
+  #     pz in 0 in  0 cur pz   -> pole(1) pole(2) zero(1) zero(2)
+  #
+  # ⚠ THE PARENTHESES ARE PART OF THE NAME, and the rawfile wraps the whole
+  # thing again. MEASURED, the same deck written by the fork and by apt 45.2:
+  # `Variables:` carries `v(pole(1))` on both -- ngspice types a root as
+  # `voltage`, so its own writer adds the `v(…)`. A reader that only knew
+  # `pole(1)` would match nothing in a raw file.
+  #
+  # ⚠ AND THE VALUES ARE s-PLANE RADIANS PER SECOND, NOT Hz. `2.61803e+06` above
+  # is 416.7 kHz. Whatever surface Stage 6 gives this has to divide by 2*pi and
+  # say so; this proc names roots and converts nothing.
+  proc pz_root_kind {name} {
+    set n [string trim $name]
+    # the rawfile's own `v(…)` wrapper, which ngspice adds because it types a
+    # root as a voltage. Stripped ONCE: `v(pole(1))` -> `pole(1)`.
+    regexp -nocase {^v\((.*)\)$} $n -> n
+    if {![regexp -nocase {^(pole|zero)\(([0-9]+)\)$} [string trim $n] -> k i]} {
+      return {}
+    }
+    return [list [string tolower $k] [expr {int($i)}]]
+  }
   proc dc_swkind {name} {
     set n [string trim $name]
     if {[string equal -nocase $n temp]} { return temp }

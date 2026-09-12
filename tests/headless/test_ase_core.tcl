@@ -104,6 +104,20 @@
 # types instead of seven. ⚠ R1 does NOT move and CP1-CP4 do not move: `tf`
 # declares no `seed_enabled`, so `ase::state_default` still seeds exactly four
 # rows and the 104 committed `.state` files are untouched.
+# 360 -> 376 with section PZ (Stage 5, issue 1427 -- the pole-zero analysis
+# gains a real entry). ⚠ SEVEN ROWS MOVED RATHER THAN BEING ADDED, every one of
+# them expected and every one named here:
+#   AG1 / AG2   the offered list splits at SIX, `pz` sixth -- it earned rank 60
+#   EM7 / CP6   five probe-only types now, not six
+#   GR8         a new declared kind, `node`, added DELIBERATELY: a pz row names
+#               four bare nodes and `0` is ground, not the integer zero
+#   TF3b        its control type was `pz`, which is no longer unrenderable; it
+#               is `noise` now, which PF222 also rests on
+#   D7e3        same reason; its second unrenderable type is `pss`, the furthest
+#               away (baseline 0 AND `#ifdef`-gated)
+# ⚠ R1, AG3, CP1-CP4 do NOT move: `pz` declares no `seed_enabled` either, so
+# `ase::state_default` still seeds exactly four rows and the 104 committed
+# `.state` files are untouched.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -503,9 +517,17 @@ dict set st7m analyses {{type noise enabled 1 source v1} {type op enabled 1} {ty
 check "D7e2 two enabled rows of ONE unrenderable type are named ONCE" \
   [ase::analysis_unrenderable $st7m] {noise}
 set st7t [nfet_state /models/sky130.lib.spice {}]
-dict set st7t analyses {{type noise enabled 1 source v1} {type pz enabled 1} {type op enabled 1}}
+# ⚠ THE SECOND TYPE HERE MOVES EVERY TIME A STAGE MAKES ONE RENDERABLE, AND IT
+# IS PICKED FOR DISTANCE RATHER THAN CONVENIENCE. It was `pz` until Stage 5's pz
+# commit (issue 1427) gave `pz` a real entry; before that it had never moved.
+# `pss` is the furthest away: it is the only remaining probe-only type that is
+# `baseline 0` AND `#ifdef`-gated (`WITH_PSS`), so it is the last one an adapter
+# stage will reach. When it too becomes renderable, the row wants a FIXTURE
+# backend rather than a fourth shipped type -- the thing this row asserts is a
+# property of `ase::analysis_unrenderable`, not of any particular analysis.
+dict set st7t analyses {{type noise enabled 1 source v1} {type pss enabled 1} {type op enabled 1}}
 check "D7e3 TWO distinct unrenderable types are BOTH named, in state order" \
-  [ase::analysis_unrenderable $st7t] {noise pz}
+  [ase::analysis_unrenderable $st7t] {noise pss}
 check "D7e4 ... and render refuses on the FIRST of them, by name" \
   [list [catch {$render $st7t $netlist_text} e7t] $e7t] \
   [list 1 {ase: analysis type 'noise' is not one this simulator backend can render}]
@@ -4071,10 +4093,14 @@ ase::register_backend agnoprobe [dict merge [ag_five] [dict create analysis_type
 ## count is still eleven and `op` is still first. A type that becomes drivable
 ## is EXPECTED to move here; a type that moves without becoming drivable is a
 ## defect, which is what AG2 below separates.
+## ⚠ THE SPLIT MOVES ONE PLACE PER STAGE-5 COMMIT AND THE ASSERTION DOES NOT.
+## `tf` (issue 1426) put the boundary at five; `pz` (issue 1427) puts it at six.
+## What the row is about is unchanged: everything with an `emitorder` leads, in
+## rank order, and everything without one follows in DECLARATION order.
 check "AG1 the registry offers all eleven analyses, in emit order, with op first\
  -- which is what the dialog preselects" \
   [list [ase::analysis_offered ngspice] [lindex [ase::analysis_offered ngspice] 0]] \
-  [list {op dc ac tran tf noise pz sens disto sp pss} op]
+  [list {op dc ac tran tf pz noise sens disto sp pss} op]
 
 ## --- AG2: A RANK-LESS ENTRY SORTS **LAST**, NOT FIRST -----------------------
 ## ⚠ `set r 0` for a missing `emitorder` made a rank-less type TIE WITH `op`,
@@ -4082,16 +4108,17 @@ check "AG1 the registry offers all eleven analyses, in emit order, with op first
 ## including the literal 90 `ase::analysis_emit_rank` returns for `op` under
 ## `op_last` (issue 0964), so a re-ranked `op` still cannot be displaced.
 ##
-## ⚠ IT WAS SEVEN RANK-LESS TYPES AND IS NOW SIX (Stage 5, issue 1426). The row
-## is split at FIVE rather than four because `tf` earned a rank; the assertion
-## that matters is unchanged -- everything with a rank comes first, in rank
-## order, and everything without one follows in declaration order.
-check "AG2 the six types with no emit order sort after the five that have one,\
+## ⚠ IT WAS SEVEN RANK-LESS TYPES, THEN SIX (Stage 5 `tf`, issue 1426), AND IS
+## NOW FIVE (Stage 5 `pz`, issue 1427). The row is split at SIX rather than five
+## because `pz` earned a rank of 60; the assertion that matters is unchanged --
+## everything with a rank comes first, in rank order, and everything without one
+## follows in declaration order.
+check "AG2 the five types with no emit order sort after the six that have one,\
  rather than tying with op at rank zero" \
-  [list [lrange [ase::analysis_offered ngspice] 0 4] \
-        [lrange [ase::analysis_offered ngspice] 5 end] \
+  [list [lrange [ase::analysis_offered ngspice] 0 5] \
+        [lrange [ase::analysis_offered ngspice] 6 end] \
         [ase::analysis_emit_rank op 1 ngspice]] \
-  [list {op dc ac tran tf} {noise pz sens disto sp pss} 90]
+  [list {op dc ac tran tf pz} {noise sens disto sp pss} 90]
 
 ## --- AG3: THE SEED DID NOT MOVE, AND THAT IS ⚖ R4 SHIPPING BY CONSTRUCTION ---
 ## Before the one-line `continue` this proc appended a row for EVERY registered
@@ -4430,11 +4457,13 @@ check "EM6 the fields a deck line consumes are read from the template in one\
 ## and `ase::ui::arg_summary`'s catch (row D8j) would swallow that into a silently
 ## degraded pane -- THE EXACT FAILURE THIS STAGE DELETES, RE-CREATED BY THE FIX.
 ##
-## ⚠ IT WAS SEVEN UNTIL Stage 5 (issue 1426) GAVE `tf` A REAL ENTRY. The list
-## below is ORDERED, and the order is `ase::analysis_offered`'s, so a type that
-## gains fields leaves the list at the position it used to hold -- which is why
-## `tf` disappearing from between `noise` and `pz` is the visible half of that
-## change and not a silent shrink.
+## ⚠ IT WAS SEVEN, THEN SIX WHEN Stage 5 GAVE `tf` A REAL ENTRY (issue 1426),
+## AND IS NOW FIVE WITH `pz` (issue 1427). The list below is ORDERED, and the
+## order is `ase::analysis_offered`'s, so a type that gains fields leaves the
+## list at the position it used to hold -- which is why `pz` disappearing from
+## between `noise` and `sens` is the visible half of that change and not a silent
+## shrink. ⚠ `pz` ALSO OVERTOOK `noise` in the offered order, because it earned
+## an `emitorder`; that half is AG1/AG2's.
 set EM7NOFLD {}
 foreach em7t [ase::analysis_offered ngspice] {
   if {![dict exists [ase::analysis_entry ngspice $em7t] fields]} { lappend EM7NOFLD $em7t }
@@ -4445,7 +4474,7 @@ check "EM7 the analyses this adapter describes but cannot yet drive carry no\
   [list $EM7NOFLD \
         [catch {ase::analysis_cards ngspice {type pss enabled 1}}] \
         [ase::analysis_line ngspice {type pss enabled 1}]] \
-  [list {noise pz sens disto sp pss} 0 {}]
+  [list {noise sens disto sp pss} 0 {}]
 
 ## --- EM8: THE SHIPPED FOUR ARE BYTE-IDENTICAL ------------------------------
 ## ⚠ THE WHOLE POINT OF FIXTURE BACKENDS. If this row ever moves, the grammar
@@ -5086,9 +5115,16 @@ foreach grt [dict keys [ase::analysis_types ngspice]] {
     }
   }
 }
+## ⚠ `node` JOINED DELIBERATELY (Stage 5 `pz`, issue 1427) AND IS NOT A NUMBER.
+## A pole-zero row names four bare node names -- `pz in 0 out 0 vol pz` -- and
+## `0` is ground, not the integer zero: number-checking it would be an accident
+## waiting for the first net called `1v8`. It falls to `chana_field_row`'s
+## default entry arm today, which is the same arm `outvar` and `source` take;
+## the kind exists so a later stage can make it a net picker without guessing
+## which fields are nets.
 check "GR8 every kind this registry declares has been classified as a number or\
  not a number, and the four numeric ones are the only ones parsed" \
-  [lsort $GRK] {bool freq int mode outvar real source time}
+  [lsort $GRK] {bool freq int mode node outvar real source time}
 
 # --- TF: THE DC SMALL-SIGNAL TRANSFER FUNCTION (Stage 5, issue 1426) --------
 ## `tf` was a `role probe` card and nothing else: registered so the four-state
@@ -5143,10 +5179,16 @@ check "TF3 the commit door refuses a tf row missing either field, by name, and\
 
 ## ⚠ AND THE ROW IS REFUSED AT THE GATE BEFORE IT REACHES render_deck. Until
 ## this stage a `tf` row was `blocked/unrenderable`; it is now an ordinary cell.
+## ⚠ THE CONTROL TYPE WAS `pz` AND IS NOW `noise`, BECAUSE `pz` STOPPED BEING
+## UNRENDERABLE ONE COMMIT LATER (issue 1427). `noise` is the right control for
+## this row for a reason beyond convenience: rows PF222a-e and PF222h-j of
+## tests/headless/test_ase_preflight.tcl are BUILT on `noise` being
+## unrenderable, so the day it changes those rows move too and this one is not
+## the only warning.
 check "TF3b the four-state grid stops calling tf unrenderable" \
   [list [dict get [ase::analysis_state ngspice tf {}] state] \
-        [dict get [ase::analysis_state ngspice pz {}] state] \
-        [dict get [ase::analysis_state ngspice pz {}] reason]] \
+        [dict get [ase::analysis_state ngspice noise {}] state] \
+        [dict get [ase::analysis_state ngspice noise {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ `d8_lines` MATCHES FOUR VERBS AND tf IS NOT ONE OF THEM, so this
@@ -5247,6 +5289,238 @@ check "TF6 tf is not in the seed, so a fresh bench still carries exactly the\
 check "TF7 tf's own entry is self-consistent: every slot its template spends is\
  a field it declares, and every field it declares is spent" \
   [lsearch -all -inline -index 0 -exact [ase::analysis_schema_errors ngspice] tf] {}
+
+# --- PZ: THE POLE-ZERO ANALYSIS (Stage 5, issue 1427) -----------------------
+## `pz` was a `role probe` card and nothing else, exactly as `tf` was one commit
+## ago: registered so the four-state grid could show that ngspice has a pole-zero
+## analysis, `blocked/unrenderable` so nobody could ask for one.
+##
+## ⚠ THESE ARE DECK BYTES AND REGISTRY FACTS. The adapter's own reader --
+## `pz_root_kind` -- is pinned in tests/headless/test_ase_simcaps_0948.tcl
+## section PV, and the four preconditions in tests/headless/test_ase_preflight.tcl
+## section PF228, because those are the suites that own those seams.
+
+check "PZ1 pz is offered, is now renderable, and carries a rank that sorts it\
+ after tf and ahead of the five that still have none" \
+  [list [expr {[lsearch -exact [ase::analysis_offered ngspice] pz] >= 0}] \
+        [ase::analysis_renderable ngspice pz] \
+        [ase::analysis_emit_rank pz 0 ngspice] \
+        [lrange [ase::analysis_offered ngspice] 0 5]] \
+  {1 1 60 {op dc ac tran tf pz}}
+
+## ⚠ SIX TOKENS, ONE PER FIELD, AND NO `{build}` ESCAPE IN SIGHT. PLAN.md Stage 5
+## spells this entry `{pz {build ase::backend::ngspice::an_pz_nodes} @transfer
+## @mode}` -- §1c's composition escape, which Stage 1 never shipped (`tf`'s
+## section above is where that was found). For `pz` it buys nothing at all:
+## `pz NODE1 NODE2 NODE3 NODE4 {cur|vol} {pol|zer|pz}` is six space-separated
+## words and the slot grammar joins tokens with a space, so four node fields ARE
+## the four node tokens.
+check "PZ2 pz emits the four nodes, the input type and the search, in ngspice's\
+ own order, for each of the six combinations a user can pick" \
+  [list [ase::analysis_line ngspice {type pz enabled 1 inp in inn 0 outp out outn 0 transfer vol mode pz}] \
+        [ase::analysis_line ngspice {type pz enabled 1 inp in outp out mode pol}] \
+        [ase::analysis_line ngspice {type pz enabled 1 inp in outp out mode zer}] \
+        [ase::analysis_line ngspice {type pz enabled 1 inp in outp out transfer cur}] \
+        [ase::analysis_line ngspice {type pz enabled 1 inp inp inn inn outp outp outn outn}]] \
+  [list {pz in 0 out 0 vol pz} {pz in 0 out 0 vol pol} {pz in 0 out 0 vol zer} \
+        {pz in 0 out 0 cur pz} {pz inp inn outp outn vol pz}]
+
+check "PZ2b the Arguments column IS that line, so the pane cannot show a pz\
+ setting the deck does not carry" \
+  [ase::ui::arg_summary {type pz enabled 1 inp in outp out}] {pz in 0 out 0 vol pz}
+
+## --- PZ2c: EVERY SLOT IS POSITIONAL, AND THE REFERENCES MAY NEVER VANISH -----
+## ⚠ THIS IS THE ROW THAT WOULD NOTICE THE WORST SILENT DEFECT THIS ENTRY CAN
+## HAVE. ngspice reads `pz` purely by position, so a dropped `inn` would emit
+## `pz in out 0 vol pz` -- five words, rc 0, and ngspice solving between `in` and
+## `out` as the INPUT pair and `0`/`vol` as the output pair. Nothing downstream
+## could tell. `default 0` is what stops it today and `whenskipped 0` is what
+## stops it if a later edit drops the default, so BOTH are asserted, and the
+## second is asserted against `ase::analysis_expand` DIRECTLY -- with no row
+## value and no field default in play, which is the only way to reach the
+## back-fill arm at all.
+set PZFLD [dict get [ase::analysis_entry ngspice pz] fields]
+proc pzfd {flds n} {
+  foreach f $flds { if {[dict get $f name] eq $n} { return $f } }
+  return {}
+}
+## ⚠ THE KEY IS READ ABORT-PROOF, AND THAT IS NOT DEFENSIVE PADDING -- IT IS WHAT
+## THE SABOTAGE ASKED FOR. A bare `dict get $fd whenskipped` is the natural
+## spelling and it is only legal while the key is there, so the one change this
+## row exists to catch -- `whenskipped 0` being deleted as redundant beside a
+## `default` -- raised `key "whenskipped" not known in dictionary` and killed the
+## whole file at 366 of 376 instead of reddening a row. A suite that dies names
+## the defect with a line number; a row that reds names it with a sentence.
+## MEASURED, not feared (sabotage S3).
+proc pzkey {fd k} {
+  if {![dict exists $fd $k]} { return ABSENT }
+  return [dict get $fd $k]
+}
+check "PZ2c the two reference nodes carry a ground default AND a positional\
+ back-fill value, so a pz line is the verb plus SIX arguments however little the\
+ bench stores" \
+  [list [ase::field_default [pzfd $PZFLD inn]] \
+        [ase::field_default [pzfd $PZFLD outn]] \
+        [pzkey [pzfd $PZFLD inn] whenskipped] \
+        [pzkey [pzfd $PZFLD outn] whenskipped] \
+        [llength [ase::analysis_line ngspice {type pz enabled 1 inp in outp out}]] \
+        [ase::analysis_expand {inp in outp out} \
+           {pz @inp @inn? @outp @outn? @mode?} \
+           {{name inn whenskipped 0} {name outn whenskipped 0} \
+            {name mode default pz}}]] \
+  [list 0 0 0 0 7 {pz in 0 out 0 pz}]
+
+## ⚠ AND WITH NOTHING TO ITS RIGHT A SKIPPED REFERENCE STILL VANISHES, which is
+## the back-fill's own contract (section PB) and not a pz exception: the rule is
+## "fill the hole only when something later still emits".
+check "PZ2d a trailing skipped reference is dropped rather than padded" \
+  [ase::analysis_expand {inp in outp out} {pz @inp @outp @outn?} \
+     {{name outn whenskipped 0}}] {pz in out}
+
+## ⚠ THE TWO PICKERS ARE `kind mode`, SO THEY ARE NOT NUMBER-CHECKED AND THEIR
+## LEGAL VALUES ARE DECLARED. `pol`/`zer`/`pz` and `vol`/`cur` are ngspice's own
+## words; the defaults are the ones a user means when they have said nothing.
+## MEASURED 2026-09-12 on both binaries: omitting the search word leaves
+## `PZwhich = 0` and ngspice does NEITHER search -- `Error: no such parameter on
+## this device or parameter is missing`, rc 1 -- so an unset picker must still
+## emit a word.
+check "PZ2e the search and the input type declare their legal values and a\
+ default that is always emitted" \
+  [list [pzkey [pzfd $PZFLD mode] values] \
+        [ase::field_default [pzfd $PZFLD mode]] \
+        [pzkey [pzfd $PZFLD transfer] values] \
+        [ase::field_default [pzfd $PZFLD transfer]] \
+        [ase::analysis_emit_check ngspice {type pz enabled 1 inp in outp out mode zer}]] \
+  [list {pz pol zer} pz {vol cur} vol {}]
+
+## ⚠ ONLY THE TWO SIGNAL NODES ARE REQUIRED, AND THE DOOR NAMES THE ONE THAT IS
+## MISSING. Requiring the references too would make the commonest pole-zero row
+## in existence -- both references ground -- a four-box form.
+check "PZ3 the commit door refuses a pz row missing either signal node, by name,\
+ and passes one that names only those two" \
+  [list [ase::analysis_emit_check ngspice {type pz enabled 1 outp out}] \
+        [ase::analysis_emit_check ngspice {type pz enabled 1 inp in}] \
+        [ase::analysis_emit_check ngspice {type pz enabled 1 inp in outp out}]] \
+  [list {{missing inp {needs a value for 'inp'}}} \
+        {{missing outp {needs a value for 'outp'}}} \
+        {}]
+
+check "PZ3b the four-state grid stops calling pz unrenderable" \
+  [list [dict get [ase::analysis_state ngspice pz {}] state] \
+        [dict get [ase::analysis_state ngspice noise {}] state] \
+        [dict get [ase::analysis_state ngspice noise {}] reason]] \
+  {ok blocked unrenderable}
+
+## THE DECK. ⚠ ITS OWN READER, for the same reason section TF brought one: `pz`
+## is not one of the four verbs `d8_lines` matches, and widening D8's regexp
+## would take D8's rows along with it.
+proc pz_lines {rows} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  dict set st analyses $rows
+  set out {}
+  foreach l [split [$::render $st $::netlist_text] "\n"] {
+    if {[regexp {^(op|dc |ac |tran |tf |pz )} $l]} { lappend out [string trim $l] }
+  }
+  return $out
+}
+check "PZ4 an enabled pz row reaches the deck" \
+  [pz_lines {{type pz enabled 1 inp in outp out}}] {{pz in 0 out 0 vol pz}}
+## ⚠ RANK 60 PUTS IT AFTER `tf` AND op-LAST STILL WINS (issue 0964): the device
+## requests sit immediately before `op` and ngspice's save list is sticky FORWARD
+## ONLY, so `op` goes last however the other ranks sort.
+check "PZ4b pz emits after tf in rank order, and op still goes last when the\
+ deck asks for device parameters" \
+  [list [pz_lines {{type pz enabled 1 inp in outp out} \
+                   {type tf enabled 1 out v(D) insrc V1} \
+                   {type op enabled 1}}] \
+        [pz_lines {{type op enabled 1} {type pz enabled 1 inp in outp out}}]] \
+  [list {op {tf v(D) V1} {pz in 0 out 0 vol pz}} {op {pz in 0 out 0 vol pz}}]
+check "PZ4c a disabled pz row emits nothing at all" \
+  [pz_lines {{type op enabled 1} {type pz enabled 0 inp in outp out}}] {op}
+
+## --- PZ5: `pz` DECLARES NO `viewrank`, AND IT IS MEASURED AGAIN -------------
+## ⚠ THE SAME ANSWER AS `tf` AND NOT A COPY OF ITS ARGUMENT. `pz` CAN emit and
+## DOES produce data, so "a type nothing can emit produces no results" does not
+## reach it either. MEASURED 2026-09-12 against a raw carrying an `Operating
+## Point` plot and a `Pole-Zero Analysis` plot, through this tree's own binary:
+##
+##   xschem raw read both.raw pz                   -> `no useful data found` . 0
+##   xschem raw read both.raw op                   -> sim_type=op ........... 1
+##   xschem raw read both.raw {Pole-Zero Analysis} -> sim_type=Pole-Zero .... 1
+##
+## `src/save.c`'s `read_dataset()` has six NAMED `Plotname:` arms and then an
+## exact `strcmp` against the plot name itself; `pz` is in neither set. ⚠ AND
+## THERE IS A SECOND REASON HERE THAT `tf` DID NOT HAVE: a pz plot is a ROOT
+## LIST -- `Flags: complex`, NO SCALE VECTOR, one data row -- so even a mapping
+## would open the waveform viewer on something that is not a sweep.
+proc pz_state {rows} {
+  return [dict replace [ase::state_default] analyses $rows]
+}
+check "PZ5 a pz-only bench has NO viewer mapping, and says which of the two\
+ silences it is" \
+  [list [dict exists [ase::analysis_entry ngspice pz] viewrank] \
+        [ase::plot_sim_type [pz_state {{type pz enabled 1 inp in outp out}}]] \
+        [ase::plot_sim_type_reason [pz_state {{type pz enabled 1 inp in outp out}}]] \
+        [ase::plot_sim_type_reason [pz_state {{type pz enabled 0 inp in outp out}}]]] \
+  {0 {} no-viewer-mapping nothing-enabled}
+## ⚠ NON-VACUITY. PZ5's first three answers are also what a registry with no `pz`
+## entry at all would give, so this row proves the ABSENCE of the key is what
+## produces them. ⚠ THE FIXTURE BORROWS ngspice's FIVE REQUIRED HOOKS (`ag_five`)
+## and overrides only `analysis_types`, so the ONE difference from the shipped
+## registry is the thing the row is about.
+proc pzvr_types {} {
+  return [dict create pz [dict create label pz registered 1 emitorder 60 \
+    viewrank 5 fields {{name inp kind node required 1}} \
+    emit {{role analysis tmpl {pz @inp}}}]]
+}
+ase::register_backend pzvr [dict merge [ag_five] \
+  [dict create analysis_types pzvr_types]]
+check "PZ5b a viewrank WOULD change that answer, so PZ5 is measuring the key and\
+ not the absence of an entry" \
+  [list [ase::plot_sim_type \
+           [dict replace [pz_state {{type pz enabled 1 inp in}}] simulator pzvr]] \
+        [ase::plot_sim_type_reason \
+           [dict replace [pz_state {{type pz enabled 1 inp in}}] simulator pzvr]]] \
+  {pz {}}
+
+check "PZ6 pz is not in the seed, so a fresh bench still carries exactly the\
+ four rows every committed bench carries" \
+  [list [dict exists [ase::analysis_entry ngspice pz] seed_enabled] \
+        [llength [ase::analysis_seed ngspice]] \
+        [lsort [lmap _r [ase::analysis_seed ngspice] {ase::state_get $_r type}]]] \
+  {0 4 {ac dc op tran}}
+
+## ⚠ SCOPED TO pz, exactly as TF7 is scoped to tf: CP5 asks the same question of
+## the WHOLE registry and would red for any entry, so a sabotage of pz's own
+## fields or template is reported as a pz defect rather than as "the registry".
+check "PZ7 pz's own entry is self-consistent: every slot its template spends is\
+ a field it declares, and every field it declares is spent" \
+  [lsearch -all -inline -index 0 -exact [ase::analysis_schema_errors ngspice] pz] {}
+
+## --- PZ8: THE UPSTREAM MISLABEL, CARRIED VERBATIM ---------------------------
+## ⚠ `pz`'s OPERATING-POINT PLOT IS CALLED `Distortion Operating Point`, and
+## "fixing" it in the registry would make Stage 6's reader match nothing on every
+## ngspice that exists. It is a copy-paste from `distoan.c` at `pzan.c:52-61`.
+## MEASURED 2026-09-12 on the fork AND on apt 45.2, `.options keepopinfo` then
+## `setplot`:
+##
+##   Current pz1   * keepopinfo pz plots (Pole-Zero Analysis)
+##           op1   * keepopinfo pz plots (Distortion Operating Point)
+##           const Constant values (constants)
+##
+## ⚠ AND THE ORDER OF THE TWO ROWS IS THE RESULT ORDER, NOT ALPHABETICAL: the
+## analysis plot is the one that always exists, the operating-point plot arrives
+## only under `keepopinfo` and carries its own `when`.
+set PZPL [dict get [ase::analysis_entry ngspice pz] plots]
+check "PZ8 the pz entry declares both plots ngspice can write, in result order,\
+ and carries the upstream mislabel of the second exactly as ngspice spells it" \
+  [list [llength $PZPL] \
+        [pzkey [lindex $PZPL 0] select] [pzkey [lindex $PZPL 0] role] \
+        [pzkey [lindex $PZPL 1] select] [pzkey [lindex $PZPL 1] role] \
+        [pzkey [lindex $PZPL 1] when] \
+        [dict exists [lindex $PZPL 0] vectors]] \
+  [list 2 {Pole-Zero Analysis} table {Distortion Operating Point} opinfo \
+        {opt keepopinfo} 0]
 
 # --- CP: THE COMMITTED CORPUS, AS A PROPERTY --------------------------------
 ## ⚠ THE ACCEPTANCE CRITERION OF THIS WHOLE BATCH IS THAT THE COMMITTED BENCHES
@@ -5358,21 +5632,23 @@ check "CP5 this simulator's registry is self-consistent: no template consumes a\
 ## validator that demanded fields of them would red six entries that are
 ## deliberately incomplete until Stage 6 gives them an emit.
 ##
-## ⚠ IT WAS SEVEN UNTIL Stage 5 (issue 1426), AND `tf` IS NAMED ON BOTH SIDES
-## RATHER THAN DROPPED FROM THE LIST. Deleting it from the walk would make this
-## row read the same before and after, so the census would stop being a census;
-## keeping it and asserting that it now HAS fields is what makes the change
-## visible here.
+## ⚠ IT WAS SEVEN, THEN SIX (Stage 5 `tf`, issue 1426), AND IS NOW FIVE (Stage 5
+## `pz`, issue 1427). BOTH DEPARTED TYPES ARE NAMED ON BOTH SIDES RATHER THAN
+## DROPPED FROM THE LIST. Deleting them from the walk would make this row read
+## the same before and after, so the census would stop being a census; keeping
+## them and asserting that they now HAVE fields is what makes the change visible
+## here.
 set CPPROBE 0
 foreach cpt {noise pz sens disto sp pss} {
   set cpe [ase::analysis_entry ngspice $cpt]
   if {$cpe eq {} || [dict exists $cpe fields]} { continue }
   incr CPPROBE
 }
-check "CP6 the six probe-only types declare no fields, tf no longer among them,\
- and none of it is a schema error" \
+check "CP6 the five probe-only types declare no fields, tf and pz no longer\
+ among them, and none of it is a schema error" \
   [list $CPPROBE [dict exists [ase::analysis_entry ngspice tf] fields] \
-        [ase::analysis_schema_errors ngspice]] {6 1 {}}
+        [dict exists [ase::analysis_entry ngspice pz] fields] \
+        [ase::analysis_schema_errors ngspice]] {5 1 1 {}}
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {

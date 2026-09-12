@@ -46,11 +46,14 @@
 #   PF227      issue 1426 -- the transfer function's two preconditions, and the
 #              measured asymmetry between them: ngspice checks the INPUT source
 #              and aborts, and does NOT check the OUTPUT at all
+#   PF228      issue 1427 -- the pole-zero analysis's four preconditions, where
+#              every failure is a hard rc 1 abort and only three of the four are
+#              `fatal`, because the severity tracks what the STATIC PASS CAN KNOW
 #
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 164 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 177 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
@@ -63,6 +66,14 @@
 # missing node is `blocked`->`caution` with the `.include` caveat, and a
 # malformed output is `fatal` and carries none, because no include can make
 # `v mid` legal.
+# 164 -> 177 with PF228 (Stage 5, issue 1427 -- the pole-zero analysis's four
+# preconditions). ⚠ PF228m IS THERE BECAUSE A SABOTAGE SURVIVED WITHOUT IT: the
+# `$n eq {0}` ground skip can be deleted and every other PF228 row stays green,
+# because every deck they use writes node `0` on a card. ⚠ PF228 carries the demotion rule's THIRD case, which neither
+# PF227 nor issue 1423 had a name for: a finding of the form "this deck CONTAINS
+# X" is PROVED by the static pass, because an `.include` can only ADD devices and
+# never remove the card just read. Such a finding needs no caveat in either
+# direction, and row PF228h is that sentence as an assertion.
 #
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -1586,6 +1597,242 @@ eqcheck PF227l-an-empty-tf-row-is-left-to-the-commit-door \
   [list [dict size [pcheck $TFNL {{type tf enabled 1}}]] \
         [lindex [lindex [ase::analysis_emit_check ngspice {type tf enabled 1}] 0] 0]] \
   {0 missing}
+
+# ===========================================================================
+# PF228 — the pole-zero analysis's four preconditions (Stage 5, issue 1427)
+# ===========================================================================
+## ⚠ FOUR PREDICATES, AND THEY SPLIT ON **WHAT THE STATIC PASS CAN KNOW** RATHER
+## THAN ON HOW LOUDLY ngspice COMPLAINS. Every one of the failures below is a
+## hard rc 1 abort; only three of the four are `fatal`. MEASURED 2026-09-12 on
+## the fork (`build-ver_50`) and on apt 45.2 alike, one `-b` deck per line, each
+## wrapped in this tree's own `sim_status` guard:
+##
+##   pz in 0     out 0   vol pz  -> rc 0, REACHED-THE-END
+##   pz nosuch 0 out 0   vol pz  -> rc 1, `doAnalyses: The input signal is
+##                                        shorted on the way to the output`
+##   pz in 0     nosuch 0 vol pz -> rc 1, the SAME sentence
+##   pz in in    out 0   vol pz  -> rc 1, `doAnalyses: Input is shorted`
+##   pz 0  0     out 0   vol pz  -> rc 1, `doAnalyses: Input is shorted`
+##   pz in 0     out out vol pz  -> rc 1, `doAnalyses: Output is shorted`
+##   pz in 0     in  0   vol pz  -> rc 1, `doAnalyses: Transfer function is unity`
+##   pz 0  in    in  0   vol pz  -> rc 1, `doAnalyses: Transfer function is -1`
+##   pz in 0     in  0   cur pz  -> rc 0, REACHED-THE-END, four roots
+##
+## ⚠ THE MISSING-NODE MESSAGE IS `cktpzstr.c:213` -- the root finder reporting
+## that the transfer function came out identically zero -- and it names neither
+## the node nor the fact that one was invented. ⚠ AND THE LAST LINE IS WHY THE
+## in==out ARM IS `vol`-ONLY: `pzan.c:117-125` guards both unity arms with
+## `PZinput_type == PZ_IN_VOL`, and refusing the current-input case would refuse
+## a real analysis.
+set PZNL "* t\nV1 in 0 dc 1 ac 1\nR1 in mid 1k\nC1 mid 0 1n\nR2 mid out 1k\nC2 out 0 1n\n.end\n"
+proc pzrow {args} { return [list [concat {type pz enabled 1} $args]] }
+proc pzn {pc n} { return [lindex [lindex [dgn $pc pz] $n] 0] }
+proc pzv {pc n} { return [lindex [lindex [dgn $pc pz] $n] 1] }
+proc pzs {pc n} { return [lindex [lindex [dgn $pc pz] $n] 2] }
+proc pzf {pc n} { return [lindex [lindex [dgn $pc pz] $n] 3] }
+
+## ⚠ THE DISCRIMINATOR FOR EVERY ROW BELOW. Without a row asserting that a
+## runnable pz row says NOTHING, every one of them is satisfied by a predicate
+## that reports on every deck -- the lesson section PF227 paid for as sabotage
+## S19 and Stage 3 paid for before that.
+eqcheck PF228a-a-pz-row-this-circuit-can-run-says-nothing \
+  [list [dict size [pcheck $PZNL [pzrow inp in outp out]]] \
+        [dict size [pcheck $PZNL [pzrow inp in inn 0 outp out outn 0 transfer vol mode pz]]] \
+        [dict size [pcheck $PZNL [pzrow inp mid outp out transfer cur mode zer]]]] \
+  {0 0 0}
+
+## ⚠ ALL FOUR NODE SLOTS ARE CHECKED, AND GROUND IS NEVER ONE OF THEM. `0` is
+## the reference every deck has and no deck writes a card for -- AND it is the
+## declared default of both reference fields -- so a predicate that looked it up
+## would report "this circuit has no node '0'" for the commonest row there is.
+set PZB1 [pcheck $PZNL [pzrow inp nosuch outp out]]
+set PZB3 [pcheck $PZNL [pzrow inp in outp nosuch]]
+set PZB2 [pcheck $PZNL [pzrow inp in inn nosuchref outp out]]
+set PZB4 [pcheck $PZNL [pzrow inp in outp out outn nosuchref]]
+eqcheck PF228b-a-node-that-is-not-in-the-circuit-is-reported-whichever-of-the-four-it-is \
+  [list [pzn $PZB1 0] [pzn $PZB2 0] [pzn $PZB3 0] [pzn $PZB4 0] \
+        [expr {[string first {'nosuch'} [pzs $PZB1 0]] >= 0}] \
+        [expr {[string first {'nosuchref'} [pzs $PZB2 0]] >= 0}] \
+        [expr {[string first {'nosuch'} [pzs $PZB3 0]] >= 0}] \
+        [expr {[string first {'nosuchref'} [pzs $PZB4 0]] >= 0}] \
+        [pzf $PZB1 0]] \
+  {pz_nodes pz_nodes pz_nodes pz_nodes 1 1 1 1 {name nodes that are in the circuit}}
+
+## ⚠ AND IT IS DEMOTED TO `caution` WITH THE `.include` CAVEAT, because an
+## included stimulus or PDK file really could define that node. This is the half
+## the static rule is RIGHT about, and PF228e is the half it is wrong about.
+eqcheck PF228c-the-missing-node-is-a-caution-and-carries-the-static-caveat \
+  [list [pzv $PZB1 0] \
+        [expr {[string first {cannot see inside an .include} [pzs $PZB1 0]] >= 0}] \
+        [expr {[string first {shorted} [pzs $PZB1 0]] >= 0}]] \
+  {caution 1 1}
+
+## ⚠ THE REFERENCE NODES ARE READ THROUGH THEIR DECLARED DEFAULT, NOT OFF THE
+## ROW, and this row is the only thing in the tree that would notice if they
+## stopped being. A bench that stores neither reference emits `pz in 0 out 0 vol
+## pz`; `ase::state_get $row inn` answers the EMPTY STRING for exactly that
+## bench. A predicate reading the row directly would compare `in` against `{}`,
+## never fire, and let ngspice answer `doAnalyses: Input is shorted` -- which
+## names no field at all. ⚠ THE SECOND HALF IS THE NON-VACUITY: with the default
+## resolved, an INPUT of `0` IS shorted, and ngspice agrees (measured above).
+eqcheck PF228d-the-unstored-reference-nodes-are-the-declared-default \
+  [list [dict size [pcheck $PZNL [pzrow inp in outp out]]] \
+        [pzn [pcheck $PZNL [pzrow inp 0 outp out]] 0] \
+        [pzv [pcheck $PZNL [pzrow inp 0 outp out]] 0] \
+        [expr {[string first {'0'} [pzs [pcheck $PZNL [pzrow inp 0 outp out]] 0]] >= 0}]] \
+  {0 pz_shorted fatal 1}
+
+## ⚠ A SHORTED INPUT OR OUTPUT IS `fatal` AND CARRIES NO CAVEAT, AND THAT IS THE
+## ASYMMETRY WITH PF228c STATED AS A ROW. The finding rests on NOTHING BUT THE
+## ROW -- no included file can make the user's own two node boxes stop holding
+## the same word -- so a sentence saying the pass "cannot see inside an .include"
+## would be a lie about why ASE-L is unsure. `fatal` is exempt from the demotion
+## and is independently the honest severity: the guard's `quit 1` fires and
+## nothing after it in `.control` runs.
+## ⚠ AND THE COMPARISON FOLDS CASE, WHICH IS MEASURED RATHER THAN ASSUMED.
+## `pz IN 0 in 0 vol pz` -> rc 1, `doAnalyses: Transfer function is unity`, on
+## the fork AND on apt 45.2: ngspice reads a pz node name folded, so `IN` and
+## `in` ARE the same node. A case-sensitive predicate would let that row through
+## to an abort that names no field.
+set PZSI [pcheck $PZNL [pzrow inp in inn in outp out]]
+set PZSO [pcheck $PZNL [pzrow inp in outp out outn out]]
+set PZSC [pcheck $PZNL [pzrow inp IN inn in outp out]]
+set PZSU [pcheck $PZNL [pzrow inp IN outp in]]
+eqcheck PF228e-a-shorted-input-or-output-is-fatal-and-carries-no-include-caveat \
+  [list [pzn $PZSI 0] [pzv $PZSI 0] \
+        [string first {cannot see inside} [pzs $PZSI 0]] \
+        [expr {[string first {the input} [pzs $PZSI 0]] >= 0}] \
+        [pzn $PZSO 0] [pzv $PZSO 0] \
+        [expr {[string first {the output} [pzs $PZSO 0]] >= 0}] \
+        [expr {[string first {the input} [pzs $PZSO 0]] >= 0}] \
+        [pzn $PZSC 0] [pzn $PZSU 0]] \
+  {pz_shorted fatal -1 1 pz_shorted fatal 1 0 pz_shorted pz_shorted}
+
+## ⚠ INPUT-IS-OUTPUT IS TWO SENTENCES AND IS `vol`-ONLY, AND BOTH HALVES ARE
+## MEASURED. ngspice says `Transfer function is unity` for the same pair and
+## `Transfer function is -1` for the swapped pair -- and RUNS the same row under
+## `cur`, because `pzan.c:117-125` guards both with `PZinput_type == PZ_IN_VOL`.
+## A predicate that refused the current-input case would refuse the input
+## admittance of a node, which is the reason `cur` exists.
+set PZU1 [pcheck $PZNL [pzrow inp in outp in]]
+set PZU2 [pcheck $PZNL [pzrow inp in inn 0 outp 0 outn in]]
+eqcheck PF228f-input-is-output-is-refused-for-a-voltage-input-and-allowed-for-a-current-one \
+  [list [pzn $PZU1 0] [pzv $PZU1 0] \
+        [expr {[string first {transfer function is 1} [pzs $PZU1 0]] >= 0}] \
+        [expr {[string first {transfer function is -1} [pzs $PZU2 0]] >= 0}] \
+        [expr {[string first {transfer function is 1} [pzs $PZU2 0]] >= 0}] \
+        [dict size [pcheck $PZNL [pzrow inp in outp in transfer cur]]] \
+        [dict size [pcheck $PZNL [pzrow inp in inn 0 outp 0 outn in transfer cur]]]] \
+  {pz_shorted fatal 1 1 0 0 0}
+
+## ⚠ THE DEVICE RULE HAS TWO CLASSES AND THE SECOND IS THE ONE NOBODY WOULD
+## GUESS. A device whose model has no `DEVpzLoad` is SKIPPED by `cktpzld.c:29` --
+## it contributes nothing and nothing at all is said. MEASURED 2026-09-12 on both
+## binaries, the same two-pole RC with a line hung off a node, against the same
+## deck with the line deleted:
+##
+##   no line at all   -> pole(1) -2.61803e+06  pole(2) -3.81966e+05
+##   + Y1 (TransLine) -> pole(1) -2.61803e+06  pole(2) -3.81966e+05   rc 0
+##   + P1 (CplLines)  -> pole(1) -2.61803e+06  pole(2) -3.81966e+05   rc 0
+##   + T1 (Tranline)  -> rc 1 `doAnalyses: Transmission lines not supported`
+##   + O1 (LTRA)      -> rc 1 `doAnalyses: The input signal is shorted on the
+##                             way to the output`
+##   + U1 (URC)       -> rc 1 `doAnalyses: device already exists, existing one
+##                             being used`
+##
+## ⚠ AND PLAN.md's `pzan.c:92-128` CITATION IS WHERE THE REFUTATION LIVES.
+## `PZinit` looks up `"transmission line"`, then `"Tranline"`, then `"LTRA"`, and
+## STOPS AT THE FIRST NAME THAT IS A COMPILED-IN DEVICE TYPE rather than the
+## first with instances -- so on any build with `tra` compiled in, the LTRA arm
+## is never reached. MEASURED: an O-card deck does NOT print "Transmission lines
+## not supported"; a deck with a T card AND an O card does.
+set PZNLT "* t\nV1 in 0 dc 1 ac 1\nR1 in mid 1k\nR3 out 0 1k\nT1 mid 0 out 0 Z0=50 TD=1n\n.end\n"
+set PZNLO "* t\nV1 in 0 dc 1 ac 1\nR1 in mid 1k\nR3 out 0 1k\nO1 mid 0 out 0 om\n.model om ltra rel=1 r=1 l=1u g=0 c=1p len=1\n.end\n"
+set PZNLY "* t\nV1 in 0 dc 1 ac 1\nR1 in mid 1k\nR3 out 0 1k\nY1 mid 0 out 0 ym len=1\n.model ym txl R=1 L=1u G=0 C=1p length=1\n.end\n"
+set PZDT [pcheck $PZNLT [pzrow inp in outp out]]
+set PZDO [pcheck $PZNLO [pzrow inp in outp out]]
+set PZDY [pcheck $PZNLY [pzrow inp in outp out]]
+eqcheck PF228g-a-line-that-stops-the-run-is-fatal-and-one-that-is-silently-dropped-is-a-caution \
+  [list [pzn $PZDT 0] [pzv $PZDT 0] \
+        [expr {[string first {`T` card} [pzs $PZDT 0]] >= 0}] \
+        [pzv $PZDO 0] \
+        [expr {[string first {`O` card} [pzs $PZDO 0]] >= 0}] \
+        [pzn $PZDY 0] [pzv $PZDY 0] \
+        [expr {[string first {`Y` card} [pzs $PZDY 0]] >= 0}] \
+        [expr {[string first {without saying so} [pzs $PZDY 0]] >= 0}] \
+        [dict size [pcheck $PZNL [pzrow inp in outp out]]]] \
+  {pz_devices fatal 1 fatal 1 pz_devices caution 1 1 0}
+
+## ⚠ THE SILENT CLASS IS A `caution` AND THE STATIC DEMOTION NEVER TOUCHES IT,
+## WHICH IS NOT AN ACCIDENT OF THE ORDERING. A finding of the form "this deck
+## CONTAINS X" is PROVED by the static pass -- an `.include` can only add more
+## devices, never remove the card we just read -- so the caveat the demotion
+## appends would be wrong about it in the opposite direction from PF228e. The
+## demotion only reaches `blocked`, and neither class is `blocked`.
+eqcheck PF228h-a-positive-device-finding-carries-no-include-caveat-either \
+  [list [string first {cannot see inside} [pzs $PZDY 0]] \
+        [string first {cannot see inside} [pzs $PZDT 0]]] \
+  {-1 -1}
+
+## ⚠ ngspice REFUSES ITSELF UNDER KLU, AND SAYS SO -- so ASE-L says the same
+## words. `pzan.c:29-34` returns `E_UNSUPP` under `CKTkluMODE`. MEASURED on both
+## binaries with `.options klu`: `Error: Pole/zero analysis is not (yet)
+## supported with 'option KLU'. / Use 'option sparse' instead.`, rc 1.
+## ⚠ IT RESTS ON THE BENCH'S OPTIONS, NOT THE NETLIST, so `exact 0` never reaches
+## it and the second half of this row is the non-vacuity: the same deck without
+## the option says nothing.
+set PZK [pcheck $PZNL [pzrow inp in outp out] {{name klu value 1}}]
+eqcheck PF228i-pole-zero-under-the-klu-solver-is-fatal-and-names-sparse \
+  [list [pzn $PZK 0] [pzv $PZK 0] \
+        [expr {[string first {KLU} [pzs $PZK 0]] >= 0}] \
+        [expr {[string first {sparse} [pzf $PZK 0]] >= 0}] \
+        [dict size [pcheck $PZNL [pzrow inp in outp out] {{name klu value 0}}]]] \
+  {pz_klu fatal 1 1 0}
+
+## ⚠ AND A `fatal` REACHES THE GATE, WHERE IT IS NOT DEFEASIBLE. `set
+## ase_preflight 0` turns off a REFUSAL about a save list; it may not be a way
+## past a simulator that will not reach the end of its own control block.
+said_clear
+set PZG [pcall ase::preflight_gate \
+  [dict replace [mkstate $RD c $PZNL] analyses [pzrow inp in inn in outp out]] $PZNL]
+eqcheck PF228j-the-gate-refuses-a-shorted-pz-row-and-names-the-node \
+  [list [string range $PZG 0 3] \
+        [expr {[said_count {*'in'*}] >= 1}] \
+        [expr {[said_count {*shorted*}] >= 1}]] \
+  {ERR: 1 1}
+
+## ⚠ AND A DECK THE ANALYSIS CAN RUN STILL PASSES THE SAME GATE, so PF228j is
+## measuring the shorted input and not something else about this state.
+eqcheck PF228k-a-runnable-pz-row-passes-the-same-gate \
+  [pcall ase::preflight_gate \
+    [dict replace [mkstate $RD c $PZNL] analyses [pzrow inp in outp out]] $PZNL] \
+  {}
+
+## ⚠ A SWITCHED-OFF pz ROW MAKES NO CLAIM ABOUT A RUN, and an empty one is the
+## commit door's business -- `ase::analysis_emit_check` already refuses an empty
+## required field by name, and two sentences about one mistake is the shape issue
+## 1420 deleted from the Arguments column.
+## ⚠ GROUND IS NEVER LOOKED UP, AND THIS ROW EXISTS BECAUSE THE OBVIOUS SABOTAGE
+## SURVIVED WITHOUT IT. Deleting the `$n eq {0}` skip left PF228a-PF228l ALL PASS
+## (sabotage S22), because every deck those rows use writes node `0` on a card
+## and `ase::netlist_map` therefore has it. A deck that spells its reference
+## `gnd` does not -- MEASURED, `ase::netlist_facts` on `V1 in gnd dc 1 / R1 in
+## out 1k / R2 out gnd 1k` answers a node set with no `0` in it -- and the two
+## reference fields DEFAULT to `0`, so without the skip the commonest pz row
+## there is would be reported as naming a node the circuit has not got.
+set PZNLG "* t\nV1 in gnd dc 1\nR1 in out 1k\nR2 out gnd 1k\n.end\n"
+eqcheck PF228m-ground-is-never-looked-up-even-in-a-deck-that-never-writes-node-0 \
+  [list [dict size [pcheck $PZNLG [pzrow inp in outp out]]] \
+        [dict size [pcheck $PZNLG [pzrow inp in inn gnd outp out outn gnd]]] \
+        [pzn [pcheck $PZNLG [pzrow inp in inn 0 outp out]] 0]] \
+  {0 0 NO:pz}
+
+eqcheck PF228l-a-disabled-or-empty-pz-row-is-left-alone \
+  [list [dict size [pcheck $PZNL {{type pz enabled 0 inp in inn in outp out}}]] \
+        [dict size [pcheck $PZNL {{type pz enabled 1}}]] \
+        [dict size [pcheck $PZNL {{type pz enabled 1 inp in}}]] \
+        [lindex [lindex [ase::analysis_emit_check ngspice {type pz enabled 1}] 0] 0]] \
+  {0 0 0 missing}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 
