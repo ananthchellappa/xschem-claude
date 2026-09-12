@@ -3188,7 +3188,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1418.**~~ superseded: **1418** is filed, above.
 
-**The next free number is 1419.**
+- **1419** — **The one escape from a typed form that actually emits.** Commit C6 of Stage 3: the `x` verbatim hatch — a list of lines placed into `.control` immediately above that row's OWN analysis. `ase::analysis_verbatim` (one reader, never raises), a `verbatim` offence in `analysis_emit_check`, and `+ verbatim: <n> line(s)` in the Arguments column. ⚠ EVERY ESCAPE THIS STAGE INHERITED WAS A LIE: `Options…` collected pairs, round-tripped them and emitted nothing (1418), and the Arguments column is what made the lie convincing. ⚠ `x` is a ROW KEY, NOT A FIELD, and the distinction is load-bearing — a field no template spends is exactly what `analysis_schema_errors` refuses, so declaring it a field would make the registry self-inconsistent by its own rule. ⚠ ABOVE ITS OWN ANALYSIS, not at the top of `.control`: a deck with three enabled analyses would otherwise apply one analysis's setup to all three, silently, in run order. ⚠ A malformed list and a BLANK line are both refused — an escape that cannot be wrong is an escape nobody can trust — while the reader itself never raises, because two of its three callers swallow or die on a raise. ⚠ The column shows a COUNT: pasting three control lines into a one-line cell pushes the analysis line off the edge, but staying silent means the user runs something they cannot see. ⚠ **VB3's first draft pinned a whole deck against section D's and failed on the `write` line's RAW-FILE PATH** — D renders before a later fixture moves the rundir into scratch. A row pinning a whole deck across a long file is really pinning every fixture between the two points. Floor: core 337 → **343**.
+
+~~**The next free number is 1419.**~~ superseded: **1419** is filed, above.
+
+**The next free number is 1420.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

@@ -4662,6 +4662,132 @@ check "SI5 a simulator that has not said what its numbers look like has nothing\
   incr fail
 }
 
+
+# --- VB: THE ONE HONEST ESCAPE FROM A TYPED FORM ----------------------------
+## ⚠ EVERY OTHER ESCAPE THIS STAGE FOUND WAS A LIE. `Options…` collected
+## free-text pairs, round-tripped them and emitted nothing (issue 1418); the
+## Arguments column showed them back, which is what made the lie convincing.
+## `x` is the replacement, and the whole difference is that IT EMITS.
+##
+## ⚠ IT IS A ROW KEY, NOT A FIELD, AND THAT DISTINCTION IS LOAD-BEARING. A
+## `field` no template spends is exactly what ase::analysis_schema_errors
+## refuses -- so declaring `x` as a field would make the registry
+## self-inconsistent by its own rule. It is not an unknown key either, because
+## unlike everything C5 shut the door on, something reads it.
+set VBST [nfet_state /models/sky130.lib.spice {}]
+dict set VBST analyses {{type op enabled 1}
+                        {type dc enabled 0}
+                        {type ac enabled 0}
+                        {type tran enabled 1 step 1n stop 1u
+                         x {{alter @m.xm1.msky130_fd_pr__nfet_01v8[w] = 2u}
+                            {set temp = 40}}}}
+set VBDECK [$render $VBST $netlist_text]
+set VBLINES [split $VBDECK "\n"]
+set VBti [lsearch -exact $VBLINES {tran 1n 1u}]
+check "VB1 the verbatim lines are emitted, in order, IMMEDIATELY above their own\
+ analysis" \
+  [list [expr {$VBti > 1}] \
+        [lindex $VBLINES [expr {$VBti - 1}]] \
+        [lindex $VBLINES [expr {$VBti - 2}]]] \
+  [list 1 {set temp = 40} \
+        {alter @m.xm1.msky130_fd_pr__nfet_01v8[w] = 2u}]
+
+## ⚠ ABOVE ITS OWN ANALYSIS, NOT AT THE TOP OF `.control`. These lines exist to
+## set something up for THIS analysis; a deck with two enabled analyses would
+## otherwise apply one analysis's setup to both, silently, in run order. This
+## row puts a different hatch on each and requires each above its own line.
+set VBST2 [nfet_state /models/sky130.lib.spice {}]
+dict set VBST2 analyses {{type op enabled 1 x {{echo FOR-OP}}}
+                         {type dc enabled 0}
+                         {type ac enabled 0}
+                         {type tran enabled 1 step 1n stop 1u x {{echo FOR-TRAN}}}}
+set VBD2 [split [$render $VBST2 $netlist_text] "\n"]
+check "VB2 two analyses each carry their own hatch, and neither borrows the\
+ other's" \
+  [list [expr {[lsearch -exact $VBD2 {echo FOR-OP}] \
+               == [lsearch -exact $VBD2 {op}] - 1}] \
+        [expr {[lsearch -exact $VBD2 {echo FOR-TRAN}] \
+               == [lsearch -exact $VBD2 {tran 1n 1u}] - 1}]] {1 1}
+
+## ⚠ AND A ROW WITHOUT ONE IS BYTE-IDENTICAL TO BEFORE THIS COMMIT, which is
+## what keeps all 104 committed benches where they are: none of them carries an
+## `x` key.
+set VBST3 [nfet_state /models/sky130.lib.spice {}]
+dict set VBST3 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 step 1n stop 1u}}
+## ⚠ THE COMPARISON IS AGAINST A DECK RENDERED HERE, NOT AGAINST D2's. The first
+## draft of this row compared with `$deck2` from section D and failed on ONE
+## thing: the `write` line's raw-file path. D2 rendered while the rundir still
+## resolved to the user's default, and by the time this section runs a later
+## fixture has moved it into the suite's scratch tree. The decks were otherwise
+## identical. A row that pins a whole deck across a file this long is really
+## pinning every fixture between the two points, and it reds for whichever of
+## them moved last.
+##
+## What this asserts instead is order-independent and is the actual claim: the
+## hatch adds EXACTLY its own lines and changes nothing else anywhere in the
+## deck. Strip the two verbatim lines out of the hatched deck and it must equal
+## the unhatched one, byte for byte.
+set VBD3 [$render $VBST3 $netlist_text]
+set VBSTRIP {}
+foreach VBL [split $VBDECK "\n"] {
+  if {$VBL eq {set temp = 40}} { continue }
+  if {$VBL eq {alter @m.xm1.msky130_fd_pr__nfet_01v8[w] = 2u}} { continue }
+  lappend VBSTRIP $VBL
+}
+check "VB3 the hatch adds exactly its own lines and changes nothing else, so a\
+ row without one is byte-identical to before the hatch existed" \
+  [list [string equal [join $VBSTRIP "\n"] $VBD3] \
+        [expr {[llength [split $VBDECK "\n"]] \
+               - [llength [split $VBD3 "\n"]]}]] {1 2}
+
+## ⚠ AN ESCAPE THAT CANNOT BE WRONG IS AN ESCAPE NOBODY CAN TRUST. A malformed
+## list would raise inside render_deck's `foreach`, where there is no sentence
+## to say; it is refused where there is one. A blank line is refused too: it
+## emits an empty line into `.control`, which ngspice accepts and which makes the
+## deck unreadable to the next person who opens it.
+## ⚠ THE READER IS CALLED INSIDE THE ROW'S OWN `catch`, AND THAT IS NOT
+## DEFENSIVE PADDING. MEASURED: with the reader's internal catch removed, this
+## suite does not go red -- it DIES, `unmatched open brace in list`, before the
+## verdict banner, so the only thing naming the defect is a line number. Both
+## banner readers do score that a failure, so the tree notices; but a row that
+## returns rc 1 names the PROC, and that is the difference between a defect
+## someone fixes and a defect someone bisects.
+##
+## ⚠ AND IT IS WHY THE CATCH EXISTS IN THE PRODUCT AT ALL. `arg_summary` renders
+## EVERY row of the pane; a raise there takes the dialog down with it, which is
+## issue 1405's shape exactly -- one bad row in one bench, and the window that
+## would let the user fix it will not open.
+set VBRC [catch {ase::analysis_verbatim {type tran x "unbalanced \{brace"}} VBR]
+check "VB4 a hatch that is not a readable list of non-blank lines is refused,\
+ and the reader answers empty rather than raising" \
+  [list [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tran step 1n stop 1u x "unbalanced \{brace"}] 0] 0] \
+        $VBRC $VBR \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tran step 1n stop 1u x {{echo ok} {}}}] 0] 0]] \
+  {verbatim 0 {} verbatim}
+
+## ⚠ AND `x` IS NOT AN UNKNOWN KEY. C5 refuses every key nothing can spend; this
+## row is what stops that refusal swallowing the one key that CAN be spent.
+check "VB5 the hatch is not mistaken for a setting ASE-L cannot emit" \
+  [ase::analysis_emit_check ngspice \
+    {type tran step 1n stop 1u x {{echo hello}}}] {}
+
+## ⚠ THE COLUMN SHOWS A COUNT, NOT THE CONTENTS. Three `.control` lines pasted
+## into a one-line treeview cell would push the analysis line -- the thing the
+## column is FOR -- off the right-hand edge. But it may not be SILENT either: a
+## deck carrying lines the window never mentions fails the second half of this
+## batch's acceptance criterion, in the direction where the user runs something
+## they cannot see.
+check "VB6 the Arguments column names the hatch by count without losing the deck\
+ line, and says nothing at all when there is no hatch" \
+  [list [ase::ui::arg_summary {type tran step 1n stop 1u x {{echo a} {echo b}}}] \
+        [ase::ui::arg_summary {type tran step 1n stop 1u x {{echo a}}}] \
+        [ase::ui::arg_summary {type tran step 1n stop 1u}]] \
+  [list {tran 1n 1u  + verbatim: 2 lines} \
+        {tran 1n 1u  + verbatim: 1 line} \
+        {tran 1n 1u}]
+
 # --- PB: THE POSITIONAL BACK-FILL -------------------------------------------
 ## ⚠ THIS IS THE OTHER HALF OF ISSUE 1414, AND IT IS THE HALF THAT SURVIVES A
 ## `string trim`. 1414 stopped a skipped slot emitting an EMPTY WORD. It did not

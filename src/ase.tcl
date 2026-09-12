@@ -4372,13 +4372,39 @@ proc ase::analysis_emit_check {sim row} {
   # `{type enabled}` plus declared field names and NOTHING ELSE -- zero rows
   # carry a key this would reject. Section CP of tests/headless/test_ase_core.tcl
   # is that measurement, kept as a row so the claim cannot rot.
-  set known [list type enabled]
+  # ⚠ `x` IS A ROW KEY, NOT A FIELD, AND THAT IS THE POINT. Issue 1419. It is
+  # the ONE honest escape from a typed form: a verbatim list of lines that go
+  # into the .control block immediately above this analysis, exactly as written.
+  # It is not a `field` because no template spends it -- a field no template
+  # reads is precisely what ase::analysis_schema_errors exists to refuse -- and
+  # it is not an "unknown key" because, unlike everything C5 closed the door on,
+  # IT ACTUALLY EMITS.
+  set known [list type enabled x]
   foreach f $flds {
     if {[dict exists $f name]} { lappend known [dict get $f name] }
   }
   foreach k [dict keys $row] {
     if {[lsearch -exact $known $k] < 0} {
       lappend out [list unknownkey $k [ase::analysis_emit_msg unknownkey $k]]
+    }
+  }
+  # ⚠ AND THE HATCH IS CHECKED, BECAUSE AN ESCAPE THAT CANNOT BE WRONG IS AN
+  # ESCAPE NOBODY CAN TRUST. A malformed list raises inside `foreach`, and the
+  # raise would land in render_deck -- so it is caught HERE, where there is a
+  # sentence for it. A blank line among the verbatim lines is refused too: it
+  # emits an empty line into `.control`, which ngspice accepts and which makes
+  # the deck unreadable to the next person who opens it.
+  if {[dict exists $row x]} {
+    set xv [dict get $row x]
+    if {[catch {llength $xv}]} {
+      lappend out [list verbatim x [ase::analysis_emit_msg verbatim]]
+    } else {
+      foreach xl $xv {
+        if {[string trim $xl] eq {}} {
+          lappend out [list verbatim x [ase::analysis_emit_msg verbatim]]
+          break
+        }
+      }
     }
   }
   return $out
@@ -4399,6 +4425,7 @@ proc ase::analysis_emit_msg {token args} {
     unrenderable { return "is not one this simulator backend can set up" }
     group        { return "needs every value of the $f, or none of them" }
     unknownkey   { return "has a setting named '$f' that ASE-L cannot emit" }
+    verbatim     { return "has verbatim lines that are not a readable list of non-blank lines" }
   }
   return {}
 }
@@ -4457,6 +4484,24 @@ proc ase::analysis_schema_errors {{sim {}}} {
 # THE SLOT NAMES A TEMPLATE ACTUALLY USES, with their sigils stripped -- the one
 # place that walk is written, so a reader and a validator cannot disagree about
 # which fields a card consumes.
+# THE VERBATIM LINES A ROW CARRIES, as a list -- or nothing. Issue 1419.
+#
+# ⚠ ONE READER, AND IT NEVER RAISES. render_deck, the Arguments column and the
+# refusal reader all ask this, and two of the three are on paths where a raise
+# is swallowed (arg_summary's catch) or fatal (render_deck). A row whose `x` is
+# not a list answers {} here and is refused by ase::analysis_emit_check, which
+# is the one place that HAS a sentence to say about it.
+proc ase::analysis_verbatim {row} {
+  if {![dict exists $row x]} { return {} }
+  set v [dict get $row x]
+  if {[catch {llength $v}]} { return {} }
+  set out {}
+  foreach l $v {
+    if {[string trim $l] ne {}} { lappend out $l }
+  }
+  return $out
+}
+
 proc ase::analysis_slots {tmpl} {
   set out {}
   foreach tok $tmpl {
@@ -12577,6 +12622,12 @@ namespace eval ase::backend::ngspice {
       # the tree that spells an analysis line, and ase::ui::arg_summary RENDERS
       # THE SAME CALL, so the Analyses pane cannot show a setting the deck does
       # not carry.
+      # ⚠ THE VERBATIM HATCH GOES IMMEDIATELY ABOVE ITS OWN ANALYSIS, NOT AT THE
+      # TOP OF `.control`. Issue 1419. These lines exist to set something up for
+      # THIS analysis -- an `alter`, a `set`, a `save` -- and a deck with three
+      # enabled analyses would otherwise apply one analysis's setup to all three,
+      # silently, in run order.
+      foreach xl [ase::analysis_verbatim $a] { lappend lines $xl }
       set aline [ase::analysis_line [namespace tail [namespace current]] $a]
       if {$aline eq {}} {
         # Unreachable for a registered type: ase::analysis_emit_order refused an

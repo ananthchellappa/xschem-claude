@@ -1556,8 +1556,24 @@ proc ase::ui::arg_summary {row {sim {}}} {
   ## with. MEASURED on the display arm when this was not caught: `key "source"
   ## not known in dictionary`, and test_ase_dialogs died at 0 of 215 checks.
   ## The dump below is the honest answer for a row that cannot yet be a line.
+  ## ⚠ THE VERBATIM HATCH IS SHOWN AS A COUNT, NOT AS ITS CONTENTS. Issue 1419.
+  ## The Arguments column is one line in a treeview; pasting three `.control`
+  ## lines into it would push the analysis line -- the thing the column is FOR --
+  ## off the right-hand edge. But it may not be silent either: a deck carrying
+  ## lines the window never mentions is the second half of this batch's
+  ## acceptance criterion failing, and it fails in the direction where the user
+  ## runs something they cannot see.
+  set vb {}
+  set nvb [llength [ase::analysis_verbatim $row]]
+  if {$nvb == 1} {
+    set vb "  + verbatim: 1 line"
+  } elseif {$nvb > 1} {
+    set vb "  + verbatim: $nvb lines"
+  }
   if {[ase::analysis_entry $sim $type] ne {}} {
-    if {![catch {ase::analysis_line $sim $row} line] && $line ne {}} { return $line }
+    if {![catch {ase::analysis_line $sim $row} line] && $line ne {}} {
+      return "$line$vb"
+    }
   }
   set order [ase::analysis_field_names $sim $type]
   set out {}
@@ -1565,11 +1581,11 @@ proc ase::ui::arg_summary {row {sim {}}} {
     if {[dict exists $row $a]} { lappend out "$a=[dict get $row $a]" }
   }
   dict for {k v} $row {
-    if {$k eq {type} || $k eq {enabled}} { continue }
+    if {$k eq {type} || $k eq {enabled} || $k eq {x}} { continue }
     if {[lsearch -exact $order $k] >= 0} { continue }
     lappend out "$k=$v"
   }
-  return [join $out { }]
+  return "[join $out { }]$vb"
 }
 
 # Select On Design expression builder: kind `voltage` + a net name ->
