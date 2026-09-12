@@ -63,6 +63,9 @@
 #        rows, every canned fixture VERBATIM measured text from all three
 #        preflight binaries -- a fixture nobody measured proves the parser agrees
 #        with the fixture and says nothing about ngspice.
+#   148  section U, issue 1410: the free peek and the one cold door. ⚠ Row U2
+#        took FOUR fixtures -- three of them looked fine and could not fail
+#        against their own named sabotage; the reasons are written into the row.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -3453,11 +3456,24 @@ set Q15C [a_ans ase::sim_capabilities ngspice]
 set Q15A [a_ans ase::caps_get $Q15C analyses_available]
 set Q15D [a_ans ase::caps_get $Q15C devices_available]
 if {[string is list $Q15C] && [dict exists $Q15C known] && [dict get $Q15C known] eq {1}} {
-  check {Q15 the real simulator this registry resolves to answers which analyses it has, every one of them is a type this adapter describes, and the device list comes back non-empty} \
+  ## ⚠ SELF-RELATIVE, AND ITS FIRST FORM WAS WRONG. It asserted
+  ## `analyses_available == analysis_offered`, which held only while the probed set
+  ## and the offered set happened to coincide. They are DIFFERENT QUESTIONS: the
+  ## offered set is what the adapter describes, the available set is what the
+  ## BINARY answered to, and a build missing a verb must make them differ -- that
+  ## is the whole point of measuring. The fourth term is the one that cannot be
+  ## satisfied by accident: a type the adapter never named reads **`unknown`**
+  ## against a real `known 1` answer -- NOT `absent` -- because `analyses_probed`
+  ## does not list it either, and a type that was never ASKED about is not a type
+  ## measured to be missing. That is the absent-versus-unknown distinction this
+  ## commit exists for, proved against the real binary, and the expectation
+  ## written here first said `absent`: the code was right and the row was wrong.
+  check {Q15 the real simulator this registry resolves to answers which analyses it has, its device list comes back non-empty, and a type it was never asked about reads absent against that answer} \
     [list [dict get $Q15A measured] \
-          [expr {[lsort [dict get $Q15A value]] eq [lsort [ase::analysis_offered ngspice]]}] \
-          [expr {[dict get $Q15D measured] && [llength [dict get $Q15D value]] > 20}]] \
-    {1 1 1}
+          [expr {[llength [dict get $Q15A value]] > 0}] \
+          [expr {[dict get $Q15D measured] && [llength [dict get $Q15D value]] > 20}] \
+          [ase::caps_analysis_present zznosuchanalysis $Q15C]] \
+    {1 1 1 unknown}
 } else {
   puts "SKIPPED: Q15 (no usable simulator resolved -- known was not 1)"
 }
@@ -3466,6 +3482,184 @@ a_resetall
 # ============================================================================
 # L. A RE-REGISTERED BACKEND MUST NOT KEEP ANSWERING FROM THE REGISTRY IT
 #    REPLACED -- ISSUE 1406
+# ============================================================================
+# U. THE FREE PEEK, AND THE ONE COLD DOOR -- ISSUE 1410
+# ============================================================================
+#
+# ⚠ THE DIALOG MUST NEVER START A PROGRAM. The measured worst case for a binary
+# that exists, is executable and never answers is **31.2 s with Tk frozen**; a
+# cold probe in front of the analyses list would make opening it take that long.
+# Only Detect may pay that. These rows are about a probe that must NOT happen, so
+# they use the counting hook -- a proc that counts is the only way to see one that
+# did.
+
+set ::UPROBES 0
+proc u_cap_counting {args} {
+  incr ::UPROBES
+  return [dict create known 1 usable 1 appendwrite 1 blanket_op_save 0 \
+                      hier_op_names 1 analyses_available {zzbase} \
+                      analyses_probed {zzbase zzgate}]
+}
+proc u_types {} {
+  return [dict create \
+    zzbase [dict create label zzbase baseline 1 registered 1 emitorder 10 \
+              emit {{role analysis tmpl {zzbase}}}] \
+    zzgate [dict create label zzgate baseline 0 registered 1 emitorder 20 \
+              emit {{role analysis tmpl {zzgate}}}]]
+}
+proc u_five {} {
+  return [dict create \
+    render_deck  [a_ans ase::backend_hook ngspice render_deck] \
+    run_cmd      [a_ans ase::backend_hook ngspice run_cmd] \
+    log_file     [a_ans ase::backend_hook ngspice log_file] \
+    result_probe [a_ans ase::backend_hook ngspice result_probe] \
+    raw_file     [a_ans ase::backend_hook ngspice raw_file]]
+}
+## ⚠ A PROGRAM OF THIS NAME MUST SIT ON THE PATH, or row U2 cannot be built at
+## all. Guard 1 protects the case `ok 0` WITH a non-empty `resolved` -- the file a
+## wrong choice would have started -- and with nothing on the PATH `resolved` comes
+## back EMPTY and the guard one line below catches it instead. Written the same way
+## `zzcapwrong` is, at the head of this file.
+a_wr [file join $BIN zzupeek] "#!/bin/sh\nexit 0\n" 0755
+a_ans ase::register_backend zzupeek [dict merge [u_five] \
+  [dict create analysis_types u_types capabilities u_cap_counting]]
+## ⚠ THE SAME TYPES, NO `capabilities` HOOK. This backend is the one that makes
+## `noprobe` a different fact from `unmeasured`: Detect against it can never learn
+## anything, for ever.
+a_ans ase::register_backend zzunoprobe [dict merge [u_five] \
+  [dict create analysis_types u_types]]
+
+## --- U1: THE PEEK IS FREE, AND IT ANSWERS `{}` RATHER THAN `{known 0}` ------
+## ⚠ `{}` NOT `{known 0}`, AND THE DIFFERENCE IS A CLAIM. With the capability
+## vocabulary in place `[ase::caps_get {} k]` and `[ase::caps_get {known 0} k]` are
+## byte-identical, so `{}` costs a reader nothing -- and `{known 0}` would ASSERT a
+## probe that never ran.
+a_resetall
+set ::UPROBES 0
+a_use ngcap-u1 $S_GOOD
+set U1PEEK [a_ans ase::sim_caps_cached ngspice]
+check {U1 asking what is already known about a simulator starts no program, and answers that nothing is recorded rather than that nothing is true} \
+  [list $U1PEEK $::UPROBES \
+        [expr {[a_ans ase::caps_get $U1PEEK usable] \
+           eq [a_ans ase::caps_get {known 0} usable]}]] \
+  [list {} 0 1]
+
+## --- U2: GUARD 1 -- A REFUSED RESOLUTION IS NOT READ (issue 0935) -----------
+## ⚠ A `sim_status` that says NO still carries a `resolved` naming a real file on
+## the PATH -- the file a WRONG choice would have started. Reading the cache under
+## THAT key hands back an answer measured about a program the resolver has already
+## refused, and attributes it to the simulator the user is actually using.
+##
+## ⚠ THE FIXTURE TOOK **THREE** ATTEMPTS AND THE FIRST TWO WERE BLIND, WHICH IS
+## THE POINT OF WRITING IT DOWN. (1) Nothing registered: `resolved` came back
+## EMPTY and the empty-path guard one line below catches that on its own.
+## (2) A program of the right name on the PATH, but nothing ever cached under its
+## key: the lookup misses and both answers are `{}`. Deleting guard 1 outright left
+## the row GREEN both times. The case the guard exists for needs ALL THREE of
+## `ok 0`, a NON-EMPTY `resolved`, and a cache entry sitting under exactly that
+## key -- so this row WARMS the cache while the entry is honoured, then re-points
+## the selection and asks again.
+a_resetall
+set ::UPROBES 0
+## phase 1 -- the entry IS honoured, so a real answer lands in the cache
+## ⚠ BOTH ENTRIES ARE REGISTERED **BEFORE** THE WARM. `ase::sim_register` calls
+## `ase::sim_caps_clear` (issue 0950), so registering the second entry after the
+## probe would empty the very cache this row needs warm -- and the sabotage would
+## pass for that reason instead of for the guard.
+a_ans ase::sim_register zzupeek [file join $BIN zzupeek] -backend zzupeek
+a_ans ase::sim_register ngcap-u2 $S_GOOD -backend ngspice
+a_ans ase::sim_select zzupeek
+set U2WARM [a_ans ase::sim_capabilities zzupeek]
+set U2N1 $::UPROBES
+## phase 2 -- a DIFFERENT entry is SELECTED (selection does not clear the cache),
+## so the resolver refuses zzupeek while `resolved` still names the same PATH
+## program the warm entry is keyed on
+a_ans ase::sim_select ngcap-u2
+set U2ST [a_ans ase::sim_status zzupeek]
+if {[string is list $U2ST] && [dict exists $U2ST ok]} {
+  set U2OK [dict get $U2ST ok] ; set U2RES [expr {[dict get $U2ST resolved] ne {}}]
+} else { set U2OK $U2ST ; set U2RES $U2ST }
+check {U2 a simulator the resolver has refused is not peeked at, even when a real measurement about a program of that name is sitting in the cache -- because the answer is about the program a WRONG choice would have started} \
+  [list $U2N1 $U2OK $U2RES [a_ans ase::sim_caps_cached zzupeek] \
+        [expr {$::UPROBES - $U2N1}]] \
+  [list 1 0 1 {} 0]
+
+## --- U3: DETECT IS THE ONLY COLD DOOR ---------------------------------------
+a_resetall
+set ::UPROBES 0
+a_use zzupeek-u3 $S_GOOD
+a_ans ase::sim_register zzupeek $S_GOOD
+set U3BEFORE [a_ans ase::sim_caps_cached zzupeek]
+set U3N0 $::UPROBES
+set U3DET [a_ans ase::analysis_detect zzupeek]
+set U3N1 $::UPROBES
+set U3AFTER [a_ans ase::sim_caps_cached zzupeek]
+check {U3 nothing is measured until Detect is pressed, Detect measures exactly once, and the answer is on record afterwards without measuring again} \
+  [list $U3BEFORE $U3N0 [expr {$U3N1 - $U3N0}] \
+        [dict get [a_ans ase::caps_get $U3AFTER analyses_available] measured] \
+        [expr {$::UPROBES - $U3N1}]] \
+  [list {} 0 1 1 0]
+
+## --- U4: AND THE GRID CHANGES BECAUSE OF IT --------------------------------
+## Cold, `zzbase` is offered on a source-verified invariant and `zzgate` -- which
+## claims no such invariant -- is absent-but-askable. After Detect both are facts.
+check {U4 before Detect one type is offered on the claim that every build has it and the other is not offered at all, and after Detect both answers are measurements} \
+  [list [a_ans ase::analysis_states zzupeek [a_ans ase::sim_caps_cached zzupeek]]] \
+  [list {{zzbase ok measured} {zzgate absent notpresent}}]
+
+## --- U5: DETECT ON A BACKEND THAT CANNOT BE MEASURED IS A **PERMANENT** NO-OP
+## ⚠ THIS IS WHY `noprobe` EXISTS AS A SEPARATE TOKEN. `unmeasured` is the token
+## that carries Detect; here Detect can never learn anything, so a cell reading
+## `unmeasured` would put a button in front of the user that does nothing, for
+## ever. MEASURED: the state list is byte-identical before, after, and after a
+## second Detect.
+a_resetall
+set U5A [a_ans ase::analysis_states zzunoprobe [a_ans ase::sim_caps_cached zzunoprobe]]
+a_ans ase::analysis_detect zzunoprobe
+set U5B [a_ans ase::analysis_states zzunoprobe [a_ans ase::sim_caps_cached zzunoprobe]]
+a_ans ase::analysis_detect zzunoprobe
+set U5C [a_ans ase::analysis_states zzunoprobe [a_ans ase::sim_caps_cached zzunoprobe]]
+check {U5 for a simulator nothing can ever measure, the reason says so instead of offering a Detect that will never learn anything -- and pressing it twice changes nothing} \
+  [list $U5A [expr {$U5A eq $U5B}] [expr {$U5B eq $U5C}] \
+        [a_ans ase::sim_has_probe zzunoprobe] \
+        [a_ans ase::sim_has_probe zzupeek]] \
+  [list {{zzbase ok baseline} {zzgate absent noprobe}} 1 1 0 1]
+
+## --- U6: DETECT NEVER RAISES, AND ITS TWO EMPTY ANSWERS DIFFER -------------
+## A Detect on a name nothing knows is a no-op, not an error -- the button is in a
+## dialog and a raise there is a stack trace in front of the user.
+## ⚠ AND `{}` IS NOT `{known 0}` HERE, DELIBERATELY. `{}` means THERE IS NO SUCH
+## SIMULATOR -- nothing to detect and nothing for the dialog to re-read. `{known 0}`
+## means there IS one and nothing is known, which is a measurement OUTCOME and may
+## carry the reason `ase::cap_report` needs (`unmeasured timeout`, `noplace`).
+## Collapsing them would throw that reason away, so the row pins both.
+check {U6 pressing Detect for a simulator that is not registered answers that there is no such simulator, while a registered one that cannot be measured answers that nothing is known -- two different facts} \
+  [list [a_ans ase::analysis_detect zznosuchsimulator] \
+        [a_ans ase::sim_caps_cached zznosuchsimulator] \
+        [dict exists [a_ans ase::analysis_detect zzunoprobe] known]] \
+  [list {} {} 1]
+
+## --- U7: THE PEEK MIRRORS THE PRODUCER'S OWN CACHE KEY ---------------------
+## ⚠ MEASURED AND IT IS THE DEFECT BOTH SPEC DRAFTS SHIPPED. `ase::sim_capabilities`
+## keys on the RAW `resolved` string; `ase::sim_caps_have_path` normalises. Row K5e
+## of this file is the fixture where they differ -- `PATH=":/usr/bin:/bin"` makes
+## `auto_execok` answer a RELATIVE `./name`, which is what lands in the cache -- so
+## a peek built on the normalised key MISSES after a successful Detect, for ever,
+## on that arm, and the dialog says "nothing measured, press Detect" immediately
+## after Detect. This row warms through the producer and then asks the peek.
+a_resetall
+set ::UPROBES 0
+a_ans ase::sim_register zzupeek $S_GOOD
+set U7WARM [a_ans ase::sim_capabilities zzupeek]
+set U7PEEK [a_ans ase::sim_caps_cached zzupeek]
+check {U7 what the peek looks up is what the probe recorded, so a warm cache is found rather than being asked for again} \
+  [list [dict get [a_ans ase::caps_get $U7WARM known] value] \
+        [expr {$U7PEEK ne {}}] \
+        [expr {$U7PEEK eq $U7WARM}] \
+        $::UPROBES] \
+  [list 1 1 1 1]
+a_resetall
+
 # ============================================================================
 #
 # Stage 1 of doc/claude/ase_analyses_batch/ gave `ase::analysis_types` a memo

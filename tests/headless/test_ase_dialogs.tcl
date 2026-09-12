@@ -1839,7 +1839,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   foreach g14r [$top.body.ana.tv children {}] {
     lappend G14PANE2 [lindex [$top.body.ana.tv item $g14r -values] 3]
   }
-  check "G14g CONTROL with ngspice back, four radios return, nothing is said,\
+  ## ⚠ ELEVEN, NOT FOUR. This row asserted four until issue 1410 registered the
+  ## seven analyses ngspice has that ASE-L cannot yet drive; they are LISTED so the
+  ## user can see they exist, and each carries a `blocked` cell. The row is a
+  ## CONTROL -- its job is that putting ngspice back restores the working dialog --
+  ## so it tracks the registry rather than naming a number, and `lsort` is why the
+  ## order here is alphabetical while the grid's is emit order (AG1 pins that).
+  check "G14g CONTROL with ngspice back the full grid returns, nothing is said,\
  every control is live, op is preselected and the pane shows deck lines again" \
     [list [g14_kids $top.chana.types] \
           [$top.chana.status cget -text] \
@@ -1847,7 +1853,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                 [g14_state $top.chana.btns.proceed]] \
           $::ase::ui::dlg($key,antype) \
           [lindex $G14PANE2 0]] \
-    [list {ac dc op tran} {} {normal normal normal} op op]
+    [list {ac dc disto noise op pss pz sens sp tf tran} {} {normal normal normal} op op]
   $top.chana.btns.cancel invoke
   update
 

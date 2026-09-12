@@ -81,6 +81,10 @@
 # rows are the SCHEMA half and are deliberately arm-independent: the widget half
 # is test_ase_dialogs.tcl section G14, which run_regression.tcl runs on NEITHER
 # arm, so the contract survives even where those rows cannot run.
+# 273 -> 289 with section AG (Stage 2 item 2b + 2c's core half, issue 1410 -- the
+# four-state resolver and the registry growing to eleven types). ⚠ R1 does NOT
+# move: `ase::state_default` still seeds exactly four rows, which is ⚖ R4's
+# recommended answer shipping BY CONSTRUCTION rather than by a later edit.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -3999,6 +4003,270 @@ check "AD7 the Arguments column shows this simulator's deck line, and for one\
  going blank rather than echoing a line no backend emits" \
   [list [ad_pane ngspice] [ad_pane zznoad]] \
   [list {op {dc V2 0 1.8 0.01}} {{} {source=V2 start=0 stop=1.8 step=0.01}}]
+
+
+
+# ============================================================================
+# AG. THE FOUR-STATE RESOLVER -- ISSUE 1410
+# ============================================================================
+#
+# Eleven analyses exist and ASE-L offered four. A user who cannot find an
+# analysis in ADE-L has no way to learn why; this is the first place the design is
+# plainly better -- FOUR STATES, NEVER INVISIBLE, each with a reason.
+#
+# ⚠ EVERY ROW PASSES `caps` AS AN ARGUMENT, so the resolver never fetches and no
+# row here starts a program or needs a cache. The peek and Detect are section U of
+# test_ase_simcaps_0948.tcl.
+
+## A hermetic stand-in: two RENDERABLE types, one `baseline 1` and one `baseline 0`.
+## ⚠ IT MUST BE RENDERABLE OR EVERY CELL READS `blocked` AND NO AVAILABILITY ARM
+## IS EVER REACHED -- which is exactly what happens to ngspice's seven today, and
+## is why the ngspice legs below assert 4+7 rather than the plan's predicted mix.
+proc ag_types {} {
+  return [dict create \
+    zzbase [dict create label zzbase baseline 1 registered 1 emitorder 10 \
+              emit {{role analysis tmpl {zzbase}}}] \
+    zzgate [dict create label zzgate baseline 0 registered 1 emitorder 20 \
+              emit {{role analysis tmpl {zzgate}}}]]
+}
+proc ag_caps {exe a w} { return {known 0} }
+proc ag_five {} {
+  return [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      [ase::backend_hook ngspice run_cmd] \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+}
+ase::register_backend agprobe  [dict merge [ag_five] [dict create analysis_types ag_types capabilities ag_caps]]
+ase::register_backend agnoprobe [dict merge [ag_five] [dict create analysis_types ag_types]]
+
+## --- AG1: ELEVEN TYPES, AND `op` STILL FIRST --------------------------------
+## ⚠ `op` FIRST IS PINNED HERE ON PURPOSE. The dialog preselects
+## `[lindex $offered 0]` rather than the literal `op` (issue 1408), so a registry
+## edit that reordered this list would silently move the preselect. Pinned in a
+## suite run_regression.tcl DOES run, because it does not run test_ase_dialogs.
+check "AG1 the registry offers all eleven analyses, in emit order, with op first\
+ -- which is what the dialog preselects" \
+  [list [ase::analysis_offered ngspice] [lindex [ase::analysis_offered ngspice] 0]] \
+  [list {op dc ac tran noise tf pz sens disto sp pss} op]
+
+## --- AG2: A RANK-LESS ENTRY SORTS **LAST**, NOT FIRST -----------------------
+## ⚠ `set r 0` for a missing `emitorder` made a rank-less type TIE WITH `op`,
+## whose rank IS 0, and lead the row. The sentinel is above every real rank
+## including the literal 90 `ase::analysis_emit_rank` returns for `op` under
+## `op_last` (issue 0964), so a re-ranked `op` still cannot be displaced.
+check "AG2 the seven types with no emit order sort after the four that have one,\
+ rather than tying with op at rank zero" \
+  [list [lrange [ase::analysis_offered ngspice] 0 3] \
+        [lrange [ase::analysis_offered ngspice] 4 end] \
+        [ase::analysis_emit_rank op 1 ngspice]] \
+  [list {op dc ac tran} {noise tf pz sens disto sp pss} 90]
+
+## --- AG3: THE SEED DID NOT MOVE, AND THAT IS ⚖ R4 SHIPPING BY CONSTRUCTION ---
+## Before the one-line `continue` this proc appended a row for EVERY registered
+## type, so registering seven more would have grown state_default from four rows
+## to eleven and reddened R1 BY ACCIDENT -- the "this would change by accident"
+## that made R4 a ruling rather than an edit.
+check "AG3 a fresh bench still opens with exactly the four rows the 104 committed\
+ state files carry, even though the registry now describes eleven types" \
+  [ase::state_get [ase::state_default] analyses] \
+  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+
+## --- AG4: AND THE SEED NEVER REACHES THE STATE-COMPUTING PROC ---------------
+## ⚠ THIS IS A SHIM ROW BECAUSE A VALUE ROW CANNOT SEE THE DEFECT. If the seed
+## called the resolver, membership and order would be BYTE-IDENTICAL -- the
+## consequence is a DEPENDENCY, not a value: `ase::state_load` calls
+## `state_default` for every file it merges over, so the seed would start
+## depending on the capability cache. The shim makes the dependency itself fatal.
+rename ase::analysis_states ase::ag_saved_states
+proc ase::analysis_states {args} { error {seed must not consult the resolver} }
+set AG4 [list [catch {ase::state_default} ag4e] \
+              [ase::state_get [ase::state_default] analyses]]
+rename ase::analysis_states {}
+rename ase::ag_saved_states ase::analysis_states
+check "AG4 building a fresh bench never consults the four-state resolver, so a\
+ state file's load path cannot come to depend on the capability cache" \
+  $AG4 \
+  {0 {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}}
+
+## --- AG5: THE HONEST GRID FOR THIS TREE TODAY -------------------------------
+## ⚠ FOUR `ok` AND SEVEN `blocked`, AND THE PLAN PREDICTED OTHERWISE. The
+## renderable test sits ABOVE the availability arms deliberately: a type ASE-L
+## cannot emit is `blocked` whatever the binary says, because offering it would
+## produce a run that emits nothing. So the seven are LISTED -- the user can see
+## they exist -- and blocked until Stage 6 gives them an `emit`.
+set AG5 {}
+foreach ag5 [ase::analysis_states ngspice {}] { lappend AG5 [lrange $ag5 1 2] }
+check "AG5 the eleven cells are four offered on a source-verified invariant and\
+ seven listed-but-not-yet-drivable, which is this tree's honest answer" \
+  [list [lsort -unique $AG5] [llength $AG5]] \
+  [list {{blocked unrenderable} {ok baseline}} 11]
+
+## --- AG6: RENDERABLE IS TESTED **ABOVE** AVAILABILITY -----------------------
+## Even a type the binary was MEASURED to have stays `blocked` while the adapter
+## cannot emit it. Without this ordering the grid would offer a run that emits
+## nothing, which is issue 1401's silent drop wearing a green cell.
+check "AG6 a type this build was measured to HAVE is still blocked while the\
+ adapter cannot emit it, because offering it would produce a run that emits nothing" \
+  [ase::analysis_state ngspice pss \
+     {known 1 analyses_available {pss} analyses_probed {pss}}] \
+  {state blocked reason unrenderable}
+
+## --- AG7: THE FIVE REASON TOKENS, PAIRWISE DISTINCT -------------------------
+## ⚠ `unmeasured` VERSUS `noprobe` IS THE PAIR A READER WILL WANT TO COLLAPSE,
+## AND COLLAPSING IT SHIPS A BUTTON THAT LIES. `unmeasured` is the token that
+## carries Detect; for a backend with no `capabilities` hook Detect is a
+## PERMANENT no-op, so the same cell needs a different sentence.
+set AG7 [list \
+  [lindex [ase::analysis_states agprobe   {}] 1 2] \
+  [lindex [ase::analysis_states agnoprobe {}] 1 2] \
+  [lindex [ase::analysis_states agprobe {known 1 analyses_available {zzbase} analyses_probed {zzbase zzgate}}] 1 2] \
+  [lindex [ase::analysis_states agprobe {known 1 analyses_available {zzbase} analyses_probed {zzbase}}] 1 2] \
+  [lindex [ase::analysis_states agprobe {known 1 analyses_available {zzbase zzgate} analyses_probed {zzbase zzgate}}] 1 2]]
+check "AG7 the absent family is three distinct facts -- nobody measured and\
+ something could, nobody measured and nothing ever can, and measured missing --\
+ and a cache older than the type is none of them" \
+  [list $AG7 [llength [lsort -unique $AG7]] \
+        [expr {[llength [ase::analysis_reasons]] >= 6}]] \
+  [list {unmeasured noprobe notpresent unmeasured measured} 4 1]
+
+## --- AG8: AN ABSENT `baseline` DEFAULTS TO **0** ----------------------------
+## ⚠ THE WHOLE POINT OF STAGE 1's CORRECTION C42. The key was `gated` and meant
+## "an #ifdef could remove this"; renaming it to `baseline` FLIPPED what an absent
+## key must mean. Defaulting the other way makes every unmeasured capability
+## resolve `ok/baseline` and OFFERS ANALYSES NOBODY VERIFIED -- the inverse of
+## this stage's stated worst outcome, one `dict exists` default away.
+proc ag_nobase {} {
+  return [dict create zznb [dict create label zznb registered 1 emitorder 10 \
+            emit {{role analysis tmpl {zznb}}}]]
+}
+ase::register_backend agnobase [dict merge [ag_five] [dict create analysis_types ag_nobase capabilities ag_caps]]
+check "AG8 a type whose entry does not claim to be in every build of its simulator\
+ is NOT offered on that claim -- an absent baseline means no, never yes" \
+  [ase::analysis_states agnobase {}] {{zznb absent unmeasured}}
+
+## --- AG9: THE CAVEAT HOOK IS THE ONLY PRODUCER OF `caution` -----------------
+## ⚠ AND AN UNMEASURED BUILD MUST NOT BE WARNED (D47). The clause asks
+## `caps_measured_as`, so a binary nobody looked at gets no warning about a defect
+## nobody looked for; `![caps_is ...]` would warn on every unmeasured build, which
+## issue 1407's row P15 forbids outright.
+check "AG9 a build measured to lack the one-pass operating-point dump is offered\
+ with a caution, and a build nobody measured is offered with none" \
+  [list [ase::analysis_state ngspice op \
+           {known 1 altshow_op_dump 0 analyses_available {op} analyses_probed {op}}] \
+        [ase::analysis_state ngspice op \
+           {known 1 analyses_available {op} analyses_probed {op}}]] \
+  [list {state caution reason caveat clause {this build cannot dump the operating point in one pass, so each device parameter is asked for separately -- the run is slower and the deck longer}} \
+        {state ok reason measured}]
+
+## --- AG10: THE `requires` PREDICATE, ALL FOUR ARMS -------------------------
+## ⚠ THE `raised` ARM IS ASE-L's OWN CONTAINMENT, NOT A DECLARED ADAPTER REPLY
+## (C39: a conforming adapter cannot produce a fourth answer). An out-of-vocabulary
+## answer lands there too, so a NON-conforming adapter is contained rather than
+## trusted -- and the schema's own predicate is called OUTSIDE that catch, or a
+## fault in it would silently degrade every cell to `baseline`.
+proc ag_req_present {caps} { return present }
+proc ag_req_absent  {caps} { return absent }
+proc ag_req_unknown {caps} { return unknown }
+proc ag_req_garbage {caps} { return zznonsense }
+proc ag_req_raises  {caps} { error boom }
+check "AG10 an entry may answer the availability question itself, and ASE-L\
+ contains an adapter that answers something it does not understand or blows up" \
+  [list [ase::requires_state ag_req_present {} 0] \
+        [ase::requires_state ag_req_absent  {} 0] \
+        [ase::requires_state ag_req_unknown {} 1] \
+        [ase::requires_state ag_req_unknown {} 0] \
+        [ase::requires_state ag_req_garbage {} 1] \
+        [ase::requires_state ag_req_raises  {} 1]] \
+  [list {state ok reason measured} {state absent reason notpresent} \
+        {state ok reason baseline} {state absent reason unmeasured} \
+        {state caution reason requires_raised} {state caution reason requires_raised}]
+
+## --- AG11: A RANK WITHOUT AN EMIT TEMPLATE IS NOT A RANK -------------------
+## ⚠ MOVED UP TO THE RANK ON PURPOSE. An entry with `emitorder` and no `emit`
+## used to pass `ase::preflight_gate` SILENTLY (measured: rc 0, empty verdict) and
+## be caught only by render_deck's backstop, whose own comment calls itself a
+## just-in-case. Stage 2 makes that case reachable seven times, so the answer
+## belongs at the gate -- before a deck is written -- and the backstop goes back to
+## being one.
+proc ag_rank_noemit {} {
+  return [dict create zzr [dict create label zzr baseline 1 registered 1 emitorder 10]]
+}
+ase::register_backend agrank [dict merge [ag_five] [dict create analysis_types ag_rank_noemit]]
+set AG11ST [dict create simulator agrank analyses {{type zzr enabled 1}}]
+check "AG11 a type that declares a position in the deck but no line to put there\
+ is refused where the gate can say so, not discovered while the deck is written" \
+  [list [ase::analysis_emit_rank zzr 0 agrank] \
+        [ase::analysis_unrenderable $AG11ST] \
+        [ase::analysis_renderable agrank zzr]] \
+  [list {} zzr 0]
+
+## --- AG12: `{}` IS A LEGAL caps VALUE, SO THE SENTINEL IS NOT `{}` ---------
+## An empty dict MEANS "nothing measured", and a row must be able to drive that
+## arm without the proc going off and peeking at a live cache.
+check "AG12 an explicitly empty capability answer is honoured as a measurement of\
+ nothing, and is not mistaken for the caller declining to say" \
+  [list [ase::analysis_states agprobe {}] \
+        [expr {[ase::analysis_states agprobe {}] eq [ase::analysis_states agprobe [dict create]]}]] \
+  [list {{zzbase ok baseline} {zzgate absent unmeasured}} 1]
+
+## --- AG13: A TYPE THIS SIMULATOR DOES NOT DESCRIBE GETS NO CELL ------------
+## Not a fifth state and not an `absent` cell: `absent` is a fact about the user's
+## BUILD, and nobody measured anything about a type the adapter never named.
+check "AG13 a type this simulator does not describe contributes no cell at all,\
+ rather than an absent one that would blame the build" \
+  [list [ase::analysis_state ngspice zznosuchtype {}] \
+        [llength [ase::analysis_states agprobe {}]]] \
+  {{} 2}
+
+## --- AG14: THE SEVEN CARRY NO `viewrank`, AND THIS ROW IS WHY -------------
+## ⚠ IT COST A RED TO LEARN. `viewrank` is which analysis THE VIEWER PREFERS -- a
+## claim about RESULTS -- and a type nothing can emit produces none. Giving the
+## seven one made `ase::plot_sim_type` answer `noise` for a bench enabling only
+## noise, so `plot_sim_type_reason` returned `{}` where row D7k asserts
+## `no-viewer-mapping`. THE ROW WAS RIGHT AND THE REGISTRY WAS WRONG.
+check "AG14 a type the adapter cannot emit expresses no preference about which\
+ analysis the viewer should show, because it can never put data there" \
+  [list [ase::plot_sim_type [dict create simulator ngspice analyses {{type noise enabled 1}}]] \
+        [ase::plot_sim_type [dict create simulator ngspice analyses {{type op enabled 1}}]] \
+        [dict exists [ase::analysis_entry ngspice noise] viewrank] \
+        [dict exists [ase::analysis_entry ngspice op] viewrank]] \
+  {{} op 0 1}
+
+## --- AG15: THE PROBE WORD COMES FROM A `role probe` CARD -----------------
+## ⚠ THE ROLE TAG DOING THE JOB IT WAS ADDED FOR, rather than a re-added `verb`
+## key -- which Stage 1 deleted as two ngspice words in the schema half (C41). The
+## card is invisible to `ase::analysis_line`, which selects `role analysis`, so the
+## type stays unrenderable while the probe still gets a word to ask `help` with.
+check "AG15 a type ASE-L cannot yet emit still carries a word the probe can ask\
+ about, and that word is invisible to the deck" \
+  [list [ase::analysis_card_tmpl ngspice pss] \
+        [ase::analysis_card_tmpl ngspice pss probe] \
+        [ase::analysis_line ngspice {type pss enabled 1}] \
+        [ase::analysis_card_tmpl ngspice op] ] \
+  [list {} pss {} op]
+
+## --- AG16: MEMBERSHIP OF A FRESH BENCH IS DECLARING `seed_enabled` ---------
+## ⚠ ONE KEY, NOT TWO. The plan proposed a second key, `seeded`, to gate
+## membership while `seed_enabled` gated the tick -- and then had to explain what
+## `seeded 0` with `seed_enabled 1` means. There is no such corner here: declaring
+## the key puts the type in the seed and its value is the tick.
+proc ag_seed_types {} {
+  return [dict create \
+    zzin  [dict create label zzin  baseline 1 registered 1 emitorder 10 seed_enabled 0 \
+             emit {{role analysis tmpl {zzin}}}] \
+    zzon  [dict create label zzon  baseline 1 registered 1 emitorder 20 seed_enabled 1 \
+             emit {{role analysis tmpl {zzon}}}] \
+    zzout [dict create label zzout baseline 1 registered 1 emitorder 30 \
+             emit {{role analysis tmpl {zzout}}}]]
+}
+ase::register_backend agseed [dict merge [ag_five] [dict create analysis_types ag_seed_types]]
+check "AG16 declaring the seed key is what puts a type on a new bench and its\
+ value is only whether the tick starts on, so a type that declares nothing is\
+ offered without joining every bench" \
+  [ase::analysis_seed agseed] \
+  {{type zzin enabled 0} {type zzon enabled 1}}
 
 
 } bigerr]} {

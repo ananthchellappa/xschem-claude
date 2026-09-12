@@ -4146,15 +4146,260 @@ proc ase::analysis_offered {{sim {}}} {
   set d [ase::analysis_types $sim]
   if {$d eq {}} { return {} }
   set ranked {}
+  set i 0
   foreach ty [dict keys $d] {
     set e [dict get $d $ty]
     if {[dict exists $e registered] && ![dict get $e registered]} { continue }
-    set r 0
+    # ⚠ A RANK-LESS ENTRY SORTS **LAST**, NOT FIRST. `set r 0` made a type with
+    # no `emitorder` TIE WITH `op` -- whose rank IS 0 -- and lead the radio row,
+    # so the seven types Stage 2 registers without an emit template would have
+    # pushed `op` out of first place and moved the dialog's preselect with it.
+    # The sentinel is above every real rank INCLUDING the literal 90 that
+    # `ase::analysis_emit_rank` returns for `op` under `op_last` (issue 0964).
+    set r 100000
     if {[dict exists $e emitorder]} { set r [dict get $e emitorder] }
-    lappend ranked [list $r $ty]
+    lappend ranked [list $r $i $ty]
+    incr i
   }
   set out {}
-  foreach ent [lsort -integer -index 0 $ranked] { lappend out [lindex $ent 1] }
+  # Declaration index is the tiebreak, so two rank-less entries keep the order
+  # the adapter wrote them in rather than a dict-hash order nobody chose.
+  # ⚠ RANK IS THE **OUTER** SORT. Written the other way round -- index outside,
+  # rank inside -- the declaration index wins and the rank is ignored entirely,
+  # which LOOKS correct here only because the four ranked entries happen to be
+  # declared in rank order. A sabotage pass caught it: setting the rank-less
+  # sentinel back to 0 changed nothing, because nothing was sorting by rank.
+  foreach ent [lsort -integer -index 0 [lsort -integer -index 1 $ranked]] {
+    lappend out [lindex $ent 2]
+  }
+  return $out
+}
+
+# ─── THE FOUR-STATE RESOLVER ──────────────────────────────────────────────────
+# Stage 2 (items 2b + 2c's core half) of doc/claude/ase_analyses_batch/, issue
+# 1410. A user who cannot find an analysis in ADE-L has no way to learn why,
+# and that is the first place this design is plainly better: FOUR STATES, NEVER
+# INVISIBLE.
+#
+#   ok       in the registry ∧ the binary has it ∧ this netlist permits it
+#   caution  permitted, with a warning that says what will be wrong
+#   blocked  the binary has it, something here does not permit it -- with the fix
+#   absent   the binary does not have it
+#
+# ⚠ EVERY STATE CARRIES A **REASON TOKEN**, AND THE TOKENS ARE NOT DECORATION.
+# Two of them separate cases a single token would fuse, and each fusion is a
+# specific lie to the user:
+#
+#   ok/measured     the probe ran and this build has it
+#   ok/baseline     offered on a SOURCE-VERIFIED INVARIANT -- nobody measured
+#                   anything. Without this the user cannot tell a measured yes
+#                   from an assumed one.
+#   absent/notpresent  the probe ran and this build does not have it
+#   absent/unmeasured  nobody measured, AND something here could
+#   absent/noprobe     nobody measured, AND NOTHING HERE EVER CAN
+#   blocked/unrenderable  the adapter lists the type but cannot emit it yet
+#
+# ⚠ `unmeasured` VERSUS `noprobe` IS THE ONE A READER WILL WANT TO COLLAPSE, AND
+# COLLAPSING IT SHIPS A BUTTON THAT LIES. `unmeasured` is the token that carries
+# **Detect**; for a backend with no `capabilities` hook Detect is a PERMANENT
+# no-op -- measured, the state list is byte-identical before Detect, after Detect
+# and after a second Detect. `ase::sim_has_probe` is the distinguishing fact and
+# it was already in the tree.
+proc ase::analysis_reasons {} {
+  return {measured baseline notpresent unmeasured noprobe unrenderable caveat
+          requires_raised}
+}
+
+# IS THIS TYPE IN THE BINARY? THREE ANSWERS, AND THE THIRD IS NOT THE SECOND.
+#
+# ⚠ `analyses_probed` IS WHAT MAKES THE THIRD ANSWER POSSIBLE. A cache taken
+# before a type was registered says nothing about that type: `analyses_available`
+# omits it because it was never ASKED, not because the binary lacks it. Without
+# consulting the probed set, a reader cannot tell "measured absent" from "was not
+# among the questions" -- the absent-versus-unknown fusion the capability
+# vocabulary exists to prevent, one level up.
+#
+# ⚠ THE MEMBERSHIP TEST IS `lsearch -exact`, AND THE `-exact` IS LOAD-BEARING.
+# Tcl's DEFAULT mode is `-glob` and the pattern is the LAST argument, so a bare
+# `lsearch $list $type` silently glob-matches: measured, `tr*n` against
+# `{tran}` answers 0 in glob mode and -1 with `-exact`. A registry type is a
+# literal name, never a pattern.
+proc ase::caps_analysis_present {type caps} {
+  set av [ase::caps_get $caps analyses_available]
+  if {![dict get $av measured]} { return unknown }
+  if {[lsearch -exact [dict get $av value] $type] >= 0} { return present }
+  set pr [ase::caps_get $caps analyses_probed]
+  if {[dict get $pr measured] \
+      && [lsearch -exact [dict get $pr value] $type] < 0} { return unknown }
+  return absent
+}
+
+# THE GRADED EVALUATOR FOR AN ENTRY-LEVEL `requires` PREDICATE.
+#
+# ⚠ THE `baseline` ARM IS INVERTED FROM WHAT THE PLAN SPECIFIED, AND THE INVERSION
+# IS THE WHOLE POINT OF Stage 1's correction C42. The key was called `gated` and
+# meant "an #ifdef could remove this"; renaming it to `baseline` flipped what an
+# ABSENT key must mean. An absent `baseline` MUST default to **0**: an adapter
+# that cannot assert a source-verified invariant then has every unmeasured
+# capability resolve to `absent/unmeasured` -- offered nowhere -- rather than to
+# `ok/baseline`, which would OFFER ANALYSES NOBODY VERIFIED. That is the inverse
+# of this stage's stated worst outcome, and it is one `dict exists` default away.
+#
+# ⚠ THE `catch` SCOPE IS THE ADAPTER'S PREDICATE ONLY. A catch around ASE-L's own
+# default reader would swallow a fault in `caps_analysis_present` and silently
+# degrade EVERY cell to `baseline` -- a green suite over a resolver that had
+# stopped working. So the schema's own predicate is called directly by
+# `ase::analysis_state` and never reaches here; this proc exists for the
+# adapter-supplied case, and its catch is the containment for a NON-conforming
+# adapter (C39: a conforming one cannot produce a fourth answer, so the `raised`
+# arm is ASE-L's own guard rather than a declared adapter reply).
+proc ase::requires_state {req caps baseline} {
+  if {[catch {{*}$req $caps} v]} { return {state caution reason requires_raised} }
+  switch -exact -- $v {
+    present { return {state ok reason measured} }
+    absent  { return {state absent reason notpresent} }
+    unknown {
+      if {$baseline eq {1}} { return {state ok reason baseline} }
+      return {state absent reason unmeasured}
+    }
+  }
+  return {state caution reason requires_raised}
+}
+
+# CAN THE ADAPTER ACTUALLY EMIT THIS TYPE? An entry may be LISTED and not yet
+# RENDERABLE -- which is a third axis, about ASE-L's own coverage rather than
+# about the binary or the netlist, and Stage 2d already established that such a
+# gap is said in words rather than made into a fifth cell state.
+proc ase::analysis_renderable {sim type} {
+  return [expr {[ase::analysis_card_tmpl $sim $type] ne {} ? 1 : 0}]
+}
+
+# THE FREE PEEK: what has already been measured about this simulator, or `{}`.
+#
+# ⚠ IT MUST NEVER START A PROGRAM. The measured worst case for a binary that
+# exists, is executable and never answers is **31.2 s** with Tk frozen; a cold
+# probe in front of the analyses list would make opening it take that long. Only
+# Detect may pay that.
+#
+# ⚠ IT RETURNS `{}` ON A MISS, NOT `{known 0}`. With the capability vocabulary in
+# place `[ase::caps_get {} k]` and `[ase::caps_get {known 0} k]` are byte-identical,
+# so `{}` costs a reader nothing -- and `{known 0}` would ASSERT a probe that
+# never ran.
+#
+# ⚠ AND IT MIRRORS `ase::sim_capabilities`' OWN CACHE KEY, not
+# `sim_caps_have_path`'s. That one normalises both sides and is internally
+# consistent; `sim_capabilities` keys on the RAW `resolved` string. Row K5e of
+# tests/headless/test_ase_simcaps_0948.tcl ships the fixture where they differ --
+# `PATH=":/usr/bin:/bin"` makes `auto_execok` answer `./ngspice`, which is what
+# lands in the cache -- so a peek built on the normalised key MISSES after a
+# successful Detect, for ever, on that arm.
+proc ase::sim_caps_cached {backend} {
+  variable sim_caps
+  variable backends
+  if {![dict exists $backends $backend capabilities]} { return {} }
+  set s [ase::sim_status $backend]
+  # GUARD 1 (issue 0935): a REFUSED resolution still carries a `resolved` naming
+  # a real file on the PATH -- the file a WRONG choice would have started. Never
+  # read it.
+  if {![dict get $s ok]} { return {} }
+  set resolved [dict get $s resolved]
+  if {$resolved eq {}} { return {} }
+  set ckey [ase::cap_key $resolved [dict get $s args]]
+  if {![dict exists $sim_caps $ckey]} { return {} }
+  set stored [dict get $sim_caps $ckey]
+  if {[ase::cap_stale [dict get $stored stamp] [ase::cap_stamp $resolved]]} {
+    return {}
+  }
+  return [dict get $stored caps]
+}
+
+# THE ONLY COLD DOOR. `{}` for a simulator nothing can be measured about, and it
+# never raises -- a Detect on an unregistered name is a no-op, not an error.
+proc ase::analysis_detect {backend} {
+  variable backends
+  # ⚠ TWO DIFFERENT EMPTY ANSWERS, KEPT APART. `{}` means THERE IS NO SUCH
+  # SIMULATOR -- nothing to detect, and the dialog has nothing to re-read.
+  # `{known 0}` means there IS one and nothing is known about it, which is a
+  # measurement outcome and may carry a reason (`unmeasured timeout`, `noplace`)
+  # that `ase::cap_report` needs. Collapsing them would throw that reason away.
+  if {![dict exists $backends $backend]} { return {} }
+  if {[catch {ase::sim_capabilities $backend} c]} { return {} }
+  return $c
+}
+
+# ONE CELL: `{state reason}`, or `{}` when this simulator does not describe the
+# type at all (no cell, nothing to colour -- 2d's rule).
+#
+# ⚠ THE RENDERABLE TEST SITS **ABOVE** THE AVAILABILITY ARMS, AND THAT ORDER IS
+# THE DESIGN. A type the adapter cannot emit is `blocked` whatever the binary
+# says, because offering it would produce a run that emits nothing. MEASURED
+# CONSEQUENCE, and it is the honest grid for this tree today: the shipped ngspice
+# registry answers **four `ok/baseline` and seven `blocked/unrenderable`** -- the
+# seven new types are listed so the user can SEE them, and blocked because Stage 6
+# is what gives them an `emit`.
+proc ase::analysis_state {sim type caps} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {}} { return {} }
+  if {![ase::analysis_renderable $sim $type]} {
+    return {state blocked reason unrenderable}
+  }
+  set baseline 0
+  if {[dict exists $e baseline]} { set baseline [dict get $e baseline] }
+  if {[dict exists $e requires]} {
+    set r [ase::requires_state [dict get $e requires] $caps $baseline]
+  } else {
+    # ASE-L'S OWN PREDICATE, CALLED DIRECTLY AND **NOT** THROUGH THE CATCH.
+    switch -exact -- [ase::caps_analysis_present $type $caps] {
+      present { set r {state ok reason measured} }
+      absent  { set r {state absent reason notpresent} }
+      default {
+        if {$baseline eq {1}} {
+          set r {state ok reason baseline}
+        } elseif {[ase::sim_has_probe $sim]} {
+          set r {state absent reason unmeasured}
+        } else {
+          set r {state absent reason noprobe}
+        }
+      }
+    }
+  }
+  if {[dict get $r state] eq {ok}} {
+    set cav {}
+    catch {
+      set h [ase::backend_hook $sim analysis_caveat]
+      if {$h ne {}} { set cav [$h $type $caps] }
+    }
+    if {$cav ne {}} { return [list state caution reason caveat clause $cav] }
+  }
+  return $r
+}
+
+# EVERY TYPE THIS SIMULATOR DESCRIBES, AS `{type state reason}` TRIPLES, IN THE
+# SAME ORDER `ase::analysis_offered` RETURNS.
+#
+# ⚠ A **NEW NAME**, AND `ase::analysis_offered` IS LEFT ALONE. Redefining that
+# proc to return triples was the proposal; its own specification spent a warning
+# block on the trap the rename creates -- `ase::analysis_seed` keeps calling it, so
+# `ase::state_default` (which `ase::state_load` calls for EVERY file it merges
+# over) would start depending on the capability cache -- and then added a row to
+# catch the trap. Measured: THAT ROW CANNOT DETECT IT, because membership and
+# order do not depend on `caps`, so warm and cold answers are byte-identical and
+# only the DEPENDENCY moved. A design whose own spec needs a row to catch the
+# defect it introduces should not introduce it. A new name makes the trap
+# UNREACHABLE rather than merely caught.
+#
+# ⚠ `_unset_` IS THE SENTINEL, NOT `{}`. An empty caps dict is a LEGAL value
+# meaning "nothing measured", and a row must be able to drive that arm without
+# the proc going off and peeking.
+proc ase::analysis_states {{sim {}} {caps _unset_}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  if {$caps eq {_unset_}} { set caps [ase::sim_caps_cached $sim] }
+  set out {}
+  foreach ty [ase::analysis_offered $sim] {
+    set st [ase::analysis_state $sim $ty $caps]
+    if {$st eq {}} { continue }
+    lappend out [list $ty [dict get $st state] [dict get $st reason]]
+  }
   return $out
 }
 
@@ -4234,9 +4479,24 @@ proc ase::analysis_seed {{sim {}}} {
   set rows {}
   foreach ty [ase::analysis_offered $sim] {
     set e [dict get $d $ty]
-    set en 0
-    if {[dict exists $e seed_enabled]} { set en [dict get $e seed_enabled] }
-    lappend rows [list type $ty enabled $en]
+    # ⚠ DECLARING `seed_enabled` IS WHAT PUTS A TYPE IN A FRESH BENCH; ITS VALUE
+    # IS ONLY THE TICK. Before this line the proc appended a row for EVERY
+    # registered type and defaulted a missing `seed_enabled` to 0 -- so
+    # registering seven more types would have grown `ase::state_default` from
+    # four rows to eleven and reddened test_ase_core R1 **BY ACCIDENT**, which is
+    # exactly the "this would change by accident" that made ⚖ R4 a ruling rather
+    # than an edit. With the `continue` the change is BYTE-IDENTICAL today (all
+    # four shipped entries declare it: op 1, dc/ac/tran 0), R4's recommended
+    # answer ships by construction, and the other answer costs one key per entry.
+    #
+    # ⚠ ONE KEY, NOT TWO. The plan proposed a SECOND key, `seeded`, to gate
+    # membership while `seed_enabled` gated the tick -- and then had to explain
+    # what `seeded 0` with `seed_enabled 1` means. There is no such combination
+    # here: an entry that declares `seed_enabled` is in the seed and its value is
+    # the tick. A key pair with an undefined corner is a corner somebody will
+    # reach.
+    if {![dict exists $e seed_enabled]} { continue }
+    lappend rows [list type $ty enabled [dict get $e seed_enabled]]
   }
   return $rows
 }
@@ -4281,6 +4541,16 @@ proc ase::analysis_emit_rank {type {op_last 0} {sim {}}} {
   if {$op_last && $type eq {op}} { return 90 }
   set e [ase::analysis_entry $sim $type]
   if {$e eq {} || ![dict exists $e emitorder]} { return {} }
+  # ⚠ A RANK WITHOUT AN EMIT TEMPLATE IS NOT A RANK, AND THIS REFUSAL MOVED HERE
+  # ON PURPOSE (issue 1410). MEASURED against the shipped tree: an entry
+  # carrying `emitorder` and no `emit` passes `ase::preflight_gate` SILENTLY
+  # (rc 0, empty verdict) and is caught only later, by `render_deck`'s own
+  # backstop, whose comment says it is there "in case a later entry ever declares
+  # emitorder without emit". Stage 2 makes that case REACHABLE SEVEN TIMES, so
+  # the answer belongs at the gate -- before a deck is written -- and the backstop
+  # goes back to being a backstop for a hand-written registry rather than the
+  # front door for this one.
+  if {[ase::analysis_card_tmpl $sim $type] eq {}} { return {} }
   return [dict get $e emitorder]
 }
 
@@ -12193,7 +12463,32 @@ namespace eval ase::backend::ngspice {
   proc cap_probe_tokens {} {
     set out {}
     foreach ty [dict keys [::ase::analysis_types ngspice]] {
+      # ⚠ THE `analysis` CARD IF THERE IS ONE, ELSE THE `probe` CARD. A type ASE-L
+      # cannot yet emit is still ASKED ABOUT, so the ANSWER about the user's build
+      # is on record from the first probe rather than from the first probe after
+      # Stage 6.
+      #
+      # ⚠ SAID PRECISELY, BECAUSE AN EARLIER DRAFT OF THIS COMMENT OVERSTATED IT:
+      # what this arm makes measurable is the KEY, not yet the STATE.
+      # `ase::analysis_state` tests renderability ABOVE the availability arms --
+      # deliberately, because a type ASE-L cannot emit is `blocked` whatever the
+      # binary says -- so all seven read `blocked/unrenderable` today even on a
+      # build that genuinely lacks them. The `absent` STATE becomes reachable for
+      # them when Stage 6 gives them an `emit`; the measurement is banked now and
+      # costs nothing, because the cache is keyed on the binary and not on which
+      # stage ASE-L has reached.
+      #
+      # ⚠ AND IT IS THE **EXISTING ROLE TAG**, NOT A RE-ADDED `verb` KEY. `emit`
+      # is already an ORDERED LIST OF ROLE-TAGGED CARDS (Stage 1, after the Xyce
+      # exercise found a runnable Xyce `.TRAN` is two cards). A `role probe` card
+      # is invisible to `ase::analysis_line`, which selects `role analysis`, so
+      # `ase::analysis_renderable` still answers 0 and the cell stays `blocked` --
+      # while the probe gets its token. Re-adding `verb` would have put two
+      # ngspice words back in the schema half that C41 deleted them from.
       set tok [lindex [::ase::analysis_card_tmpl ngspice $ty] 0]
+      if {$tok eq {}} {
+        set tok [lindex [::ase::analysis_card_tmpl ngspice $ty probe] 0]
+      }
       if {$tok eq {}} { continue }
       lappend out [list $ty $tok]
     }
@@ -12827,6 +13122,40 @@ $_leg
   # speller's RETURN TYPE, which is free with one implementation and costs every
   # reader afterwards. ngspice's one-element list emits today's exact text.
   proc analysis_types {} {
+  # -- THE SEVEN ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
+  # -- DRIVE. Stage 2 (issue 1410) LISTS them so the user can see they
+  # exist; Stage 6 gives them an `emit` and makes them runnable.
+  #
+  # ⚠ NO `emitorder`, AND THAT IS THE GUARD, NOT AN OMISSION. MEASURED:
+  # an entry carrying `emitorder` with no `emit` template used to pass
+  # `ase::preflight_gate` SILENTLY and be caught only by render_deck's own
+  # backstop. `ase::analysis_emit_rank` now refuses a rank without a
+  # template, so withholding the key routes a hand-enabled row to the GATE,
+  # before a deck is written.
+  #
+  # ⚠ NO `viewrank` EITHER, AND THIS ONE COST A RED TO LEARN.
+  # `viewrank` is which analysis THE VIEWER PREFERS -- a claim about
+  # RESULTS -- and a type nothing can emit produces none. Giving the seven a
+  # viewrank made `ase::plot_sim_type` answer `noise` for a bench enabling
+  # only noise, so `plot_sim_type_reason` returned `{}` where row D7k of
+  # tests/headless/test_ase_core.tcl asserts `no-viewer-mapping`. THE ROW WAS
+  # RIGHT AND THE REGISTRY WAS WRONG: a surface may not prefer an analysis
+  # that cannot produce data for it.
+  #
+  # ⚠ NO `seed_enabled`, so none of them joins a fresh bench -- which is
+  # what keeps `ase::state_default` at four rows and the 104 committed
+  # `.state` files round-tripping byte-identically (R4's recommended answer,
+  # shipped by construction).
+  #
+  # ⚠ `emit` CARRIES A `role probe` CARD AND NO `role analysis` CARD. The
+  # probe leg needs a word to ask `help` with; `ase::analysis_line` selects
+  # `role analysis` and finds none, so the type stays unrenderable and its
+  # grid cell stays `blocked`. That is the role tag doing the job it was
+  # added for, rather than a re-added `verb` key.
+  #
+  # `baseline 1` for the nine analyses unconditional in every ngspice ever
+  # shipped; `baseline 0` for `sp` and `pss`, which are #ifdef-gated and
+  # genuinely may be absent.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -12857,7 +13186,58 @@ $_leg
                 {name stop kind time required 1}} \
         emit   {{role analysis tmpl {tran @step @stop}}} \
         results {viewer {kind sweep}} \
-        plots  {{select {Transient Analysis} role sweep results viewer label tran}}]]
+        plots  {{select {Transient Analysis} role sweep results viewer label tran}}] \
+      noise [dict create \
+        label noise  baseline 1  registered 1 \
+        emit {{role probe tmpl {noise}}}] \
+      tf [dict create \
+        label tf  baseline 1  registered 1 \
+        emit {{role probe tmpl {tf}}}] \
+      pz [dict create \
+        label pz  baseline 1  registered 1 \
+        emit {{role probe tmpl {pz}}}] \
+      sens [dict create \
+        label sens  baseline 1  registered 1 \
+        emit {{role probe tmpl {sens}}}] \
+      disto [dict create \
+        label disto  baseline 1  registered 1 \
+        emit {{role probe tmpl {disto}}}] \
+      sp [dict create \
+        label sp  baseline 0  registered 1 \
+        emit {{role probe tmpl {sp}}}] \
+      pss [dict create \
+        label pss  baseline 0  registered 1 \
+        emit {{role probe tmpl {pss}}}]]
+  }
+
+  # WHAT WILL BE WRONG IF YOU RUN THIS ANYWAY -- a clause, or `{}`. CONTENT: it
+  # names a measured ngspice defect and describes an ngspice workaround, and a
+  # hypothetical Xyce adapter would have entirely different sentences here or
+  # none, which is the Xyce paper-validation for putting it on this side of the
+  # line (D34-D37).
+  #
+  # ⚠ THE ONLY PRODUCER OF `caution` IN STAGE 2, and the reason the state exists
+  # at all rather than being folded into `ok`: the run WILL work and something
+  # about it will be worse than the user expects, which is neither a refusal nor
+  # silence.
+  #
+  # ⚠ IT ASKS `caps_measured_as`, NOT `caps_is` UNDER A `!`. The question is
+  # "was this build MEASURED to lack the one-pass dump", and a binary nobody
+  # measured must produce NO caveat -- warning about a defect nobody looked for is
+  # D47's inversion, and `![caps_is ... 1]` would do exactly that. Issue 1407's
+  # row P15 forbids the spelling outright.
+  #
+  # ⚠ MEASURED: `altshow_op_dump` is 0 on every RELEASED ngspice -- the fix is in
+  # no release, `git tag --contains` is empty -- so on a user's own binary `op` is
+  # a `caution` cell and not an `ok` one. That is the honest answer, and it is why
+  # the clause is written for the common case rather than the rare one.
+  proc analysis_caveat {type caps} {
+    if {$type ne {op}} { return {} }
+    if {[::ase::caps_measured_as $caps altshow_op_dump 0]} {
+      return {this build cannot dump the operating point in one pass, so each\
+ device parameter is asked for separately -- the run is slower and the deck longer}
+    }
+    return {}
   }
 
   # ─── WHAT A STOP COSTS, ON THIS SIMULATOR ────────────────────────────────
@@ -12898,5 +13278,6 @@ $_leg
     op_param_set        ::ase::backend::ngspice::op_param_set \
     op_param_enumerable ::ase::backend::ngspice::op_param_enumerable \
     analysis_types      ::ase::backend::ngspice::analysis_types \
-    run_stop_cost       ::ase::backend::ngspice::run_stop_cost]
+    run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
+    analysis_caveat     ::ase::backend::ngspice::analysis_caveat]
 }

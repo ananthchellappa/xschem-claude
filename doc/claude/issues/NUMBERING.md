@@ -3152,7 +3152,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1409.**~~ superseded: **1409** is filed, above.
 
-**The next free number is 1410.**
+- **1410** — **Eleven analyses, each with a state and a reason the user can act on.** Commit C5 of the analyses batch's Stage 2 ships the four-state resolver (`ase::analysis_state` / `analysis_states`), the core availability reader, `ase::requires_state`, the free peek `ase::sim_caps_cached`, `ase::analysis_detect` and the `analysis_caveat` hook; the ngspice registry grows to **eleven**. The honest grid today is **four `ok` and seven `blocked/unrenderable`** — the renderable test sits ABOVE the availability arms deliberately, because offering a type the adapter cannot emit produces a run that emits nothing (issue 1401's silent drop wearing a green cell). ⚠ FIVE reason tokens, and `unmeasured` vs `noprobe` is the pair that ships **a button that lies** if collapsed — `unmeasured` carries Detect, and for a backend with no `capabilities` hook Detect is a PERMANENT no-op. ⚠ An absent `baseline` defaults to **0** (C42's inversion), or every unmeasured capability resolves `ok/baseline` and analyses nobody verified get offered. `state_default` is UNMOVED at four rows, so ⚖ R4's recommended answer ships by construction and the 104 `.state` files round-trip. Floors: core 273 → **289**, simcaps 141 → **148**. Nine sabotages. ⚠ **Four driver errors caught by rows or sabotages**: a `viewrank` on types that can never produce data (D7k red); a `#` comment INSIDE a `dict create` argument list, which is an argument and silently broke `op`; a two-key sort composed backwards so rank was ignored entirely; and the probe skipping all seven types, fixed with a `role probe` card rather than re-adding `verb`. ⚠ **Row U2 took FOUR fixtures** — three looked fine and could not fail.
+
+~~**The next free number is 1410.**~~ superseded: **1410** is filed, above.
+
+**The next free number is 1411.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
