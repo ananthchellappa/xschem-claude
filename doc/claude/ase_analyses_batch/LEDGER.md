@@ -763,7 +763,7 @@ commit has to be sabotage-verifiable on the tree as that commit leaves it. The o
 field tables + the commit door) → **C4** (the typed form and the write-back rule) → **C5** (the door
 closes on an unknown key) → **C6** (the `x` verbatim hatch) → **C7** (the Arguments column).
 
-**SIX COMMITS LANDED SO FAR.**
+**ALL SEVEN COMMITS LANDED. STAGE 3 IS COMPLETE.**
 
 | landed | commit | subject | floors |
 |---|---|---|---|
@@ -772,7 +772,8 @@ closes on an unknown key) → **C6** (the `x` verbatim hatch) → **C7** (the Ar
 | `865c2b08` | **C3** | `feat(1416)` a skipped start time let the maximum step be read as one, and the sweep mode was discarded | core 309 → 333; simcaps 158 → **164**; dialogs **display** 236 → 242 |
 | `14be0470` | **C4** | `feat(1417)` the form offered an entry for everything, and said "Points:" for both AC sweeps | core 333 → 335; dialogs **display** 242 → 261 |
 | `71e4454b` | **C5** | `feat(1418)` Options collected settings, round-tripped them, and never emitted them | core 335 → 337; dialogs **display** 261 → **265** |
-| *pending* | **C6** | `feat(1419)` the one escape from a typed form that actually emits | core 337 → **343** |
+| `0d1be0fe` | **C6** | `feat(1419)` the one escape from a typed form that actually emits | core 337 → 343 |
+| *pending* | **C7** | `feat(1420)` the Arguments column listed values the deck would never carry | core 343 → **348** |
 
 ⚠ **AND `4216c8b2` (issue 1413) LANDED FIRST, BEFORE ANY OF THEM** — not a Stage 3 item at all, but
 the thing without which no Stage 3 number could be trusted: T1 ran `test_ase_core` on **neither
@@ -787,12 +788,12 @@ sigils are **swapped** against the grammar C1 shipped, and the plan's spelling w
 
 | | |
 |---|---|
-| status | **IN PROGRESS** — C1–C6 of seven landed; only **C7** (the Arguments column) remains |
-| commit | `234d1b86` C1 · `5a88836a` C2 · `865c2b08` C3 · `14be0470` C4 · `71e4454b` C5 · C6 pending |
+| status | **COMPLETE** — all seven commits landed |
+| commit | `234d1b86` C1 · `5a88836a` C2 · `865c2b08` C3 · `14be0470` C4 · `71e4454b` C5 · `0d1be0fe` C6 · C7 pending |
 | T1 | C1 and C2 each taken **solo** at **61 cases, all zero** — the first Stage 3 numbers that actually include `test_ase_core`, because issue 1413 landed first |
-| suites moved | `test_ase_core` 289 → **333** · `test_ase_simcaps_0948` 158 → **164** · `test_ase_dialogs` display 236 → **242** · `test_ase_persist` 47 (broken) → **148**, repaired in C1 |
-| sabotage | C1 six, C2 seven, C3 seven, C4 eight, C5 five, C6 seven — all verified to redden. ⚠ C2's first cut **preempted issue 1401's block** and reddened three preflight rows; the gate now defers the `unrenderable` token to the block that owns it. ⚠ C3's row **GR5 SURVIVED its sabotage**: with the group rule deleted the finding was empty, `string first` returned -1 on the empty string, and a row written to prove a clause carried no frame proved it about a clause that did not exist |
-| ledger debts | Stage 2's four rulings (1401, 1404, 1408, 1411) still unpaid and now joined by **1414, 1415, 1416, 1417, 1418, 1419**; all ten to be paid in this stage's ⚖ R9 batch. **A look debt is owed for C4** — the tran form goes from two entries to two entries plus a disclosure plus three controls including a checkbutton, and the AC form gains a combobox that rewrites its neighbour's label |
+| suites moved | `test_ase_core` 289 → **348** · `test_ase_simcaps_0948` 158 → **164** · `test_ase_dialogs` display 236 → **265**, headless **37 unmoved** · `test_ase_persist` 47 (broken) → **148**, repaired in C1. **No other suite moved a row**: the ASE family was re-run entire on both arms after every commit — window 295, final 82, view 36, optier headless 103 |
+| sabotage | C1 six, C2 seven, C3 seven, C4 eight, C5 five, C6 seven, C7 four — **forty-four**, all verified to redden. ⚠ C2's first cut **preempted issue 1401's block** and reddened three preflight rows; the gate now defers the `unrenderable` token to the block that owns it. ⚠ C3's row **GR5 SURVIVED its sabotage**: with the group rule deleted the finding was empty, `string first` returned -1 on the empty string, and a row written to prove a clause carried no frame proved it about a clause that did not exist |
+| ledger debts | Stage 2's four rulings (1401, 1404, 1408, 1411) still unpaid and now joined by **1414–1420**; all eleven to be paid in this stage's ⚖ R9 batch. **A look debt is owed for C4** — the tran form goes from two entries to two entries plus a disclosure plus three controls including a checkbutton, and the AC form gains a combobox that rewrites its neighbour's label |
 | spec paragraphs rewritten | none yet — `### Choose Analyses dialog` in `ase_l.md` is six lines and is rewritten **in full in C4**, when the form's final shape exists to describe |
 | receipt | pending |
 

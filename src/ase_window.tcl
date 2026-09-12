@@ -1574,6 +1574,23 @@ proc ase::ui::arg_summary {row {sim {}}} {
     if {![catch {ase::analysis_line $sim $row} line] && $line ne {}} {
       return "$line$vb"
     }
+    ## ⚠ NO DECK LINE: SAY WHY, DO NOT DUMP THE KEYS. Issue 1420, and it is the
+    ## OTHER half of this batch's acceptance criterion. The fallback below lists
+    ## `step=1n stop=10u` for a row that cannot render -- values the deck will
+    ## NOT carry, shown in the column whose whole job is to say what the deck
+    ## carries. It reads exactly like a setting that is in force. The honest
+    ## answer to "what will this run?" for a row that cannot run is the reason
+    ## it cannot, in the same words the commit door and the gate use.
+    ##
+    ## ⚠ ONLY FOR AN ENABLED ROW. A switched-off row makes no claim about a run,
+    ## so it has nothing to be wrong about -- and every new bench opens with
+    ## three empty disabled rows, which would otherwise each carry a complaint
+    ## about a value nobody has been asked for yet.
+    if {[ase::state_get $row enabled 0] eq {1}} {
+      if {![catch {ase::analysis_emit_check $sim $row} _bad] && [llength $_bad]} {
+        return [lindex [lindex $_bad 0] 2]
+      }
+    }
   }
   set order [ase::analysis_field_names $sim $type]
   set out {}
@@ -5233,8 +5250,13 @@ proc ase::ui::chana_cancel {key} {
 # whole set straight into that state row (immediate commit — the main OK
 # then merges only enabled + quick fields over the SAME row, so both
 # compose). Extra keys round-trip through the state file and show in the
-# Arguments summary (arg_summary's unknown-key arm); DECK emission of extra
-# keys stays deferred (v1 limit, documented here).
+# Arguments summary. ⚠ THE SENTENCE THAT USED TO END THIS COMMENT -- "DECK
+# emission of extra keys stays deferred (v1 limit, documented here)" -- WAS THE
+# DEFECT, WRITTEN DOWN AND SHIPPED. Keys that round-trip and never emit are keys
+# the window confirms and the simulator never sees. Issue 1418 closed this door:
+# a name no template can spend is refused at `Add` and again at OK. Issue 1419
+# opened the honest one: `x`, a verbatim list of `.control` lines that goes into
+# the deck immediately above its own analysis.
 proc ase::ui::chana_options {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }

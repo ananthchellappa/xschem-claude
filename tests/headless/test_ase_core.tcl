@@ -4663,6 +4663,62 @@ check "SI5 a simulator that has not said what its numbers look like has nothing\
 }
 
 
+
+# --- AC: THE ARGUMENTS COLUMN NEVER SHOWS WHAT THE DECK WILL NOT CARRY ------
+## ⚠ THE OTHER HALF OF THIS BATCH'S ACCEPTANCE CRITERION. The first half --
+## nothing the window shows may fail to reach the deck -- is what C5 and C6 were
+## about. This is the second: an ENABLED row that cannot render used to have its
+## keys dumped into the column as `step=1n stop=10u`, which reads exactly like a
+## setting that is in force, in the one column whose entire job is to say what
+## the deck carries. The honest answer to "what will this run?" for a row that
+## cannot run is the reason it cannot.
+check "AC1 an enabled row that cannot render says WHY, in the column that would\
+ otherwise list values the deck will never carry" \
+  [ase::ui::arg_summary {type tran enabled 1 stop 10u} ngspice] \
+  {needs a value for 'step'}
+
+## ⚠ AND THE WORDS ARE THE SAME ONES THE COMMIT DOOR AND THE GATE USE. Three
+## surfaces, one vocabulary: if the pane and the dialog disagreed about why a row
+## will not run, one of them would be wrong and the user could not tell which.
+check "AC2 the column's reason is the identical clause the refusal reader\
+ produces, not a second sentence about the same thing" \
+  [list [ase::ui::arg_summary {type tran enabled 1 stop 10u} ngspice] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+                  {type tran enabled 1 stop 10u}] 0] 2]] \
+  {{needs a value for 'step'} {needs a value for 'step'}}
+
+## ⚠ ONLY FOR AN ENABLED ROW. A switched-off row makes no claim about a run, so
+## it has nothing to be wrong about -- and EVERY NEW BENCH OPENS WITH THREE EMPTY
+## DISABLED ROWS, which would each otherwise carry a complaint about a value
+## nobody has been asked for yet. `ase::state_default` seeds exactly those.
+check "AC3 a switched-off row that cannot render stays silent, so a new bench\
+ does not open wearing three complaints" \
+  [list [ase::ui::arg_summary {type tran enabled 0 stop 10u} ngspice] \
+        [ase::ui::arg_summary {type dc enabled 0} ngspice] \
+        [ase::ui::arg_summary {type ac enabled 0} ngspice]] \
+  [list {stop=10u} {} {}]
+
+## ⚠ AND A ROW THAT CAN RENDER IS UNTOUCHED, which is what keeps the pane's
+## existing meaning -- and the 104 committed benches' display -- exactly where
+## Stage 1 put it.
+check "AC4 a renderable row still shows the line the deck will carry, hatch\
+ count and all" \
+  [list [ase::ui::arg_summary {type tran enabled 1 step 1n stop 10u} ngspice] \
+        [ase::ui::arg_summary {type op enabled 1} ngspice] \
+        [ase::ui::arg_summary \
+          {type tran enabled 1 step 1n stop 10u x {{echo a}}} ngspice]] \
+  [list {tran 1n 10u} {op} {tran 1n 10u  + verbatim: 1 line}]
+
+## ⚠ A TYPE THIS BACKEND CANNOT SET UP READS AS SUCH RATHER THAN AS A MISSING
+## VALUE. Seven of the eleven registered types are probe-only until Stage 6; an
+## enabled one of those has nothing missing -- there is simply nothing ASE-L can
+## write for it, and "needs a value for ..." would send the user hunting for a
+## field that does not exist.
+check "AC5 an enabled row of a type the backend cannot set up says that, not\
+ that some value is missing" \
+  [ase::ui::arg_summary {type noise enabled 1} ngspice] \
+  {is not one this simulator backend can set up}
+
 # --- VB: THE ONE HONEST ESCAPE FROM A TYPED FORM ----------------------------
 ## ⚠ EVERY OTHER ESCAPE THIS STAGE FOUND WAS A LIE. `Options…` collected
 ## free-text pairs, round-tripped them and emitted nothing (issue 1418); the

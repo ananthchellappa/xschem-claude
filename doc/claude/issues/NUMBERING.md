@@ -3192,7 +3192,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1419.**~~ superseded: **1419** is filed, above.
 
-**The next free number is 1420.**
+- **1420** — **The Arguments column listed values the deck would never carry.** Commit C7 of Stage 3, the LAST one. ⚠ The OTHER half of the batch's acceptance criterion: an ENABLED row that cannot render had its keys dumped into the column as `step=1n stop=10u`, which reads exactly like a setting in force, in the one column whose job is to say what the deck carries. It now gives the REASON, in the identical clause the commit door and the gate use — three surfaces, one vocabulary, because a pane and a dialog disagreeing about why a row will not run leaves the user unable to tell which is wrong (row AC2). ⚠ ONLY for an enabled row: `state_default` seeds every new bench with THREE empty disabled rows, each of which would otherwise open wearing a complaint about a value nobody has been asked for. ⚠ A probe-only type says it cannot be set up rather than naming a missing value — seven of eleven registered types have no field to hunt for. ⚠ AND A COMMENT THAT WAS THE DEFECT, WRITTEN DOWN AND SHIPPED: `chana_options`' header ended *"DECK emission of extra keys stays deferred (v1 limit, documented here)"*. ⚠ Two rows failed first time on Tcl LIST QUOTING, not on the code — expectations that compare as lists are now built with `[list …]` on both sides. Floor: core 343 → **348**. **Stage 3 complete: 1414–1420.**
+
+~~**The next free number is 1420.**~~ superseded: **1420** is filed, above.
+
+**The next free number is 1421.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
