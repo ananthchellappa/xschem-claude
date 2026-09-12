@@ -2731,6 +2731,149 @@ proc ase::cap_plot {plots want} {
   return {}
 }
 
+# ─── THE SCALARS A RESULTS FILE HOLDS (⚖ R3, issue 1429) ────────────────────
+# The data layer of the RAW reader half of ⚖ R3's Option C. It answers one
+# question -- "what one-point numbers are in this results file, and in which
+# plot" -- and it answers it about a FILE, so it is schema: no backend word
+# appears in it and no consumer of it is named here.
+#
+# ⚠ IT RETURNS A LIST OF {plotname {var value var value …}} PAIRS, NOT A DICT,
+# because a plot name REPEATS. Measured 2026-09-12: two `sens` rows in one run
+# write two plots both called `Sensitivity Analysis`, and a dict would silently
+# keep the last. The caller is then able to SEE the ambiguity and decline,
+# which is what ase::backend::ngspice::result_probe_raw does.
+#
+# ⚠ THREE KINDS OF PLOT ARE LEFT OUT, AND EACH EXCLUSION IS MEASURED.
+#
+#   `No. Points:` != 1  -- a 20,514-row transient vector is not a scalar. This
+#       is issue 1243's finding arriving from the other side: a multi-point
+#       `print` emits a table that yields nothing, and a multi-point RAW vector
+#       is the same non-answer. Excluding it is what keeps a tran-only run's
+#       Value column exactly as empty as it is today.
+#   `Flags: complex` -- measured, `ac lin 1 1k 1k` writes a ONE-POINT complex
+#       plot and `print v(mid)` echoes `4.999951e-01,-1.57078e-03`: two numbers.
+#       Today's log reader does not match that line either (its regexp ends at
+#       one number), so the cell is empty today and stays empty. A Value column
+#       holds one number; a complex scalar is a surface's problem, not a
+#       reader's.
+#   `Plotname: constants` -- ngspice's own built-in plot of `pi`, `e`, `i`,
+#       `boltz` … It is ONE POINT and it is present in a results file that
+#       holds NOTHING ELSE: measured, `sens v(mid) nosuchdev dc` (a filter that
+#       matches nothing) exits 0 and writes a file whose only record is
+#       `Title: Constant values / Plotname: constants / No. Variables: 12`.
+#       ⚠ A READER THAT DID NOT EXCLUDE IT WOULD PUT A NUMBER IN THE VALUE
+#       COLUMN FOR A RUN THAT COMPUTED NOTHING -- `i` is one of those twelve.
+#       (It is also `Flags: complex`, so the exclusion is doubled by accident;
+#       the name test is the one that is DELIBERATE, and it must stay even if
+#       some build ever writes the constants real.)
+#
+# ⚠ IT STEPS OVER THE NUMBERS IT IS NOT GOING TO USE, exactly as
+# ase::cap_raw_plots does and for the same measured reason (issue 0971): the
+# user's own tb_bandgap results file is ~69 MB and a one-point operating point
+# sits at the end of it. A binary payload is skipped by arithmetic
+# (points x variables x 8, or x 16 when complex); an ASCII one falls through
+# the line loop without being stored.
+#
+# ⚠ THE BINARY ARM READS NATIVE DOUBLES (`binary scan … d`), because the file
+# was written by a program on this machine. The ASCII arm is what the suites
+# use, because a hand-written fixture is a text file.
+proc ase::raw_scalars {path} {
+  set out {}
+  if {$path eq {} || ![file isfile $path]} { return $out }
+  if {[catch {open $path r} f]} { return $out }
+  fconfigure $f -translation binary
+  set have 0 ; set name {} ; set np -1 ; set nv -1 ; set cx 0
+  set vars {} ; set vals {} ; set invars 0 ; set invals 0
+  while {[gets $f rawline] >= 0} {
+    set line [string trimright $rawline "\r"]
+    if {[string match {Plotname:*} $line]} {
+      if {$have} { ase::raw_scalars_add out $name $np $cx $vars $vals }
+      set have 1
+      set name [string trim [string range $line 9 end]]
+      set np -1 ; set nv -1 ; set cx 0
+      set vars {} ; set vals {} ; set invars 0 ; set invals 0
+      continue
+    }
+    if {!$have} { continue }
+    if {$invals} {
+      # ASCII values: `<index>\t<value>` for a point's first variable and a
+      # bare `\t<value>` for the rest. Stop at the declared count so the
+      # `Title:` line of the NEXT appended plot is never eaten as a number.
+      set t [string trim $line]
+      if {$t ne {}} { lappend vals [lindex [split $t "\t "] end] }
+      if {[llength $vals] >= $nv} { set invals 0 }
+      continue
+    }
+    if {[string match {Flags:*} $line]} {
+      set invars 0
+      if {[string first complex [string tolower $line]] >= 0} { set cx 1 }
+      continue
+    }
+    if {[string match {No. Variables:*} $line]} {
+      set invars 0
+      set v [string trim [string range $line 14 end]]
+      set nv [expr {[string is integer -strict $v] ? $v : -1}]
+      continue
+    }
+    if {[string match {No. Points:*} $line]} {
+      set invars 0
+      set v [string trim [string range $line 11 end]]
+      set np [expr {[string is integer -strict $v] ? $v : -1}]
+      continue
+    }
+    if {[string match {Variables:*} $line]} { set invars 1 ; continue }
+    if {[string match {Values:*} $line]} {
+      set invars 0
+      # only an eligible plot's numbers are collected; everyone else's ASCII
+      # value lines fall through this loop and match nothing.
+      if {[ase::raw_scalars_wanted $name $np $cx] && $nv > 0} { set invals 1 }
+      continue
+    }
+    if {[string match {Binary:*} $line]} {
+      set invars 0
+      if {$np <= 0 || $nv <= 0} { continue }
+      if {[ase::raw_scalars_wanted $name $np $cx]} {
+        set blob [read $f [expr {$nv * 8}]]
+        catch {binary scan $blob d* vals}
+      } else {
+        catch {seek $f [expr {$np * $nv * ($cx ? 16 : 8)}] current}
+      }
+      continue
+    }
+    if {$invars} {
+      set nm [lindex [split [string trim $line] "\t"] 1]
+      if {$nm ne {}} { lappend vars $nm }
+    }
+  }
+  catch {close $f}
+  if {$have} { ase::raw_scalars_add out $name $np $cx $vars $vals }
+  return $out
+}
+
+# Is this plot one whose numbers ase::raw_scalars collects? THE THREE
+# EXCLUSIONS LIVE HERE AND NOWHERE ELSE, so the `Values:` arm and the `Binary:`
+# arm cannot drift apart -- which they did in the first draft, where only the
+# binary arm knew about `constants`.
+proc ase::raw_scalars_wanted {name np cx} {
+  if {$np != 1} { return 0 }
+  if {$cx} { return 0 }
+  if {[string equal -nocase [string trim $name] constants]} { return 0 }
+  return 1
+}
+
+# Append one finished plot to ase::raw_scalars' answer, if it is wanted and its
+# variable list and value list agree in length. A short or long value list is
+# DROPPED rather than zipped: a truncated results file (a killed run) would
+# otherwise pair a name with the number belonging to a different variable.
+proc ase::raw_scalars_add {outvar name np cx vars vals} {
+  upvar 1 $outvar out
+  if {![ase::raw_scalars_wanted $name $np $cx]} { return }
+  if {![llength $vars] || [llength $vars] != [llength $vals]} { return }
+  set d {}
+  foreach nm $vars v $vals { lappend d $nm $v }
+  lappend out [list [string trim $name] $d]
+}
+
 # Run ONE program with ONE set of arguments and hand back
 # {exitcode output was-it-cut-off elapsed-milliseconds}.
 #
@@ -10074,6 +10217,109 @@ proc ase::run_log_write {logpath meta data exitcode} {
   return 1
 }
 
+
+# ═══ ⚖ R3 — WHERE ONE OUTPUT ROW'S NUMBER COMES FROM (issue 1429) ═══════════
+#
+# ⚠ THIS PROC IS THE WHOLE OF THE RULE, AND THAT IS DELIBERATE. ⚖ R3 is ASKED
+# AND UNANSWERED; what ships here is `DECISIONS.md`'s RECOMMENDATION, Option C,
+# not a ratification. C is the SUPERSET of A and B, so the shape is built to be
+# reduced rather than rewritten:
+#
+#   ruled A (rawfile only)  -> this body becomes `return raw`, and
+#                              ase::backend::ngspice::result_probe_log is
+#                              deleted whole;
+#   ruled B (print log only)-> this body becomes `return log`, and
+#                              ase::backend::ngspice::result_probe_raw and
+#                              ase::raw_scalars are deleted whole.
+#
+# NEITHER READER CALLS THE OTHER AND NEITHER READS THE OTHER'S SOURCE. The
+# dispatcher (ase::backend::ngspice::result_probe) partitions the output rows by
+# this proc's answer and hands each reader a state carrying only its own rows,
+# so a reader does not know the rule exists. That is the property the receipt
+# claims and rows RS1-RS3 / RD10 are what hold it.
+#
+# ⚠ AND DECISIONS.md RECORDS R3 AS EXTENDING ISSUE 1243, NOT REVERSING IT. 1243
+# is the user's own ruling that the `print` lines go with the operating point.
+# It stands untouched: render_deck's print anchor is not touched by this issue,
+# and every expression row still reads exactly the log 1243 anchored.
+#
+# ── THE RULE ────────────────────────────────────────────────────────────────
+#   A row whose expression NAMES EXACTLY ONE VECTOR reads the results file.
+#   Anything else reads the print log.
+#
+# and it is stated ON SCREEN, once per run, by the dispatcher.
+#
+# ── WHY THE RAW HALF EXISTS, MEASURED 2026-09-12 ────────────────────────────
+# PLAN.md §6e says the gain is that reading the raw "removes result_probe's
+# case-folding ladder". ⚠ IT DOES NOT -- the raw reader needs a fold of its own
+# (the fork writes `v(Transfer_function)` where apt 45.2 writes
+# `v(transfer_function)`; issue 1426's C46). The real gain is one plot deeper.
+#
+# `print` reads WHICHEVER PLOT THE SIMULATOR IS STANDING IN, and issue 1243
+# anchors the print lines on the operating point. Measured, one deck, prints
+# placed exactly where render_deck puts them:
+#
+#   op / write / print v(mid) / print Transfer_function / print onoise_total
+#                             / print r1 / tf v(mid) V1 / write / sens … / write
+#
+#   -> v(mid) = 1.500000e+00
+#   -> NOTHING ON STDOUT for the other three -- no `<name> = <value>` line,
+#   which is the only thing `result_probe` parses. ngspice DOES emit
+#   `Warning from checkvalid: vector <name> is not available or has zero
+#   length` -- but on STDERR, where no reader in this tree looks. Measured
+#   by the driver on /usr/bin/ngspice, correcting this crew's first report
+#   of "no warning at all": the defect is that nothing PARSEABLE is
+#   produced, not that ngspice is silent.
+#
+# The tf and sens vectors are in the results file; they are simply not in the
+# plot the prints stand in. THAT is why TF, SENS and the NOISE integrals have
+# no scalar home today, and no amount of log parsing can give them one.
+# (Move the prints and it is the operating point that loses its column -- which
+# is the defect issue 1243 was filed about.)
+#
+# ── WHAT "NAMES EXACTLY ONE VECTOR" MEANS, AND WHERE THE LINE IS DRAWN ──────
+# 1. The backend's `out_decompose` hook (issue 1426) answers first, because it
+#    is the tree's existing reader of ngspice output syntax and this must not be
+#    a second spelling of it. `{voltage n}` / `{current n}` -> ONE vector.
+#    `{voltage a b}` -> TWO: measured, `print v(in,mid)` echoes
+#    `v(in,mid) = 1.714286e+00` and there is NO `v(in,mid)` vector in the file.
+#    A difference is an expression and belongs to the log.
+# 2. Otherwise the expression is a BARE VECTOR NAME when it is a letter or `_`
+#    followed by letters, digits and `_ . : #` -- which is exactly the namespace
+#    the three analyses use: `Transfer_function`, `v1#Input_impedance`,
+#    `onoise_total`, `inoise_total`, `r1`, `r1:r`, `r1_m`, and the hierarchical
+#    `r.x1.ra:r` (issue 1428's measurement 3). `:` is NOT treated as an operator
+#    because ngspice's only use of it is the `? :` ternary, which cannot occur
+#    without a `?`.
+# 3. ⚠ EVERYTHING ELSE IS AN EXPRESSION, INCLUDING A PARENTHESIS THIS PROC DID
+#    NOT PUT THERE. `abs(v(mid))` and `output_impedance_at_V(mid)` are the same
+#    string shape -- a word, then a parenthesised something -- and no string
+#    test tells a function call from a vector whose name contains brackets.
+#    They are routed to the LOG, which is the direction that loses nothing:
+#    `abs(v(mid))` and `v(a)*2` are exactly what Option B exists to protect and
+#    they keep working, while `output_impedance_at_V(mid)` gets no value today
+#    and gets no value after. Measured: `print output_impedance_at_V(mid)` DOES
+#    work when the simulator is standing in the tf plot -- so the limitation is
+#    the print anchor's, not a parser's, and the fix is the registry's `plots`
+#    key (issue 1426 already computes that name in `tf_vectors`), not a cleverer
+#    regexp here. NOT SHIPPED in this issue; it is Stage 6's results seam.
+# 4. ⚠ `@dev[param]` AND `a[0]` STAY ON THE LOG, deliberately. A bracket is how
+#    ngspice's expression parser spells a SUBSCRIPT (issue 0167: `print a[0]`
+#    reads element 0 of a vector `a` and prints nothing, which is why
+#    `print_arg` quotes it), and `@…` is the op-parameter seam issue 0963/0965
+#    built on the log. Neither shape changes at all.
+proc ase::result_source {sim ex} {
+  set e [string trim $ex]
+  if {$e eq {}} { return log }
+  set d {}
+  catch {set d [[ase::backend_hook $sim out_decompose] $e]}
+  switch -exact -- [lindex $d 0] {
+    current { return raw }
+    voltage { if {[llength $d] == 2} { return raw } ; return log }
+  }
+  if {[regexp {^[A-Za-z_][A-Za-z0-9_.:#]*$} $e]} { return raw }
+  return log
+}
 # Completion hook (runs from execute_fileevent on EOF). execute(data,last) /
 # execute(exitcode,last) are written immediately before the callback in the
 # same event dispatch, so reading them here is race-free.
@@ -13798,7 +14044,7 @@ namespace eval ase::backend::ngspice {
   # a literal vector name: `print "a[0]"` prints `"a[0]" = 1.500000e+00`. The
   # `.save` side is NOT affected — `.save a[0]` saves the vector correctly — and
   # quoting a `@dev[param]` name is harmless (measured), so the rule is simply:
-  # a bracketed expression is quoted. result_probe below accepts the quoted
+  # a bracketed expression is quoted. result_probe_log below accepts the quoted
   # label ngspice then echoes.
   proc print_arg {ex} {
     if {[string first {[} $ex] < 0} { return $ex }
@@ -13806,6 +14052,14 @@ namespace eval ase::backend::ngspice {
     return "\"$ex\""
   }
 
+  # ─── ⚖ R3, THE PRINT-LOG READER (renamed from `result_probe`, issue 1429) ──
+  # ⚠ THE BODY BELOW IS UNCHANGED except for where `mode` comes from. It was
+  # the whole of `result_probe`; `result_probe` is now the dispatcher further
+  # down, and this proc reads only the rows ase::result_source sent here --
+  # every expression that does not name exactly one vector, which is the half
+  # ⚖ R3's Option B exists to protect and issue 1243 is the user's ruling
+  # about. Nothing in this reader knows that ase::result_source exists.
+  #
   # Parse `<expr> = <float>` lines out of the log text (e.g.
   # `-i(v1) = 4.096837e-04`, or `"a[0]" = 1.5` for a print_arg-quoted bit)
   # -> results dict, for every state output whose line appears. Keyed by the
@@ -13869,24 +14123,14 @@ namespace eval ase::backend::ngspice {
   # The KEY is untouched by all of this: `name` when the row has one, else the
   # `expr` exactly as stored. Only the MATCH is case-blind -- fold the key and a
   # named row's value lands where ase::ui::output_result_key will not look.
-  proc result_probe {state logtext} {
+  proc result_probe_log {state logtext {mode {}}} {
     set results [dict create]
-    set mode fold
-    catch {set mode [ase::sim_casemode_requested \
-                      [ase::state_get $state simulator ngspice]]}
-    if {$mode eq {}} { set mode fold }
-    # what the run DELIVERED outranks what it asked for, in the strict
-    # direction only. Announced once per log, because a request that did not
-    # survive contact with the simulator is exactly the surprise a user cannot
-    # otherwise see: a requested `distinguish` says nothing new and stays quiet.
-    if {$mode ne {distinguish} && [regexp -nocase \
-          {casemode[ =]'?distinguish|differs only in case} $logtext]} {
-      ::ase::echo "ase: result -- this log says the simulator ran with\
- casemode=distinguish although the run asked for '$mode', so output\
- expressions are matched case-sensitively: a row whose spelling the simulator\
- refused gets no value rather than a differently-cased one." note
-      set mode distinguish
-    }
+    # ⚠ `mode` IS AN ARGUMENT NOW (issue 1429), AND ITS DEFAULT KEEPS THIS
+    # READER STANDALONE. ⚖ R3's dispatcher resolves the case rule once and
+    # hands the same answer to both readers, so the note below is not echoed
+    # twice per run; a caller that has no dispatcher -- a suite row driving the
+    # log half directly -- passes nothing and gets exactly the old behaviour.
+    if {$mode eq {}} { set mode [result_casemode $state $logtext] }
     foreach o [ase::state_get $state outputs] {
       if {![dict exists $o expr]} { continue }
       set ex [dict get $o expr]
@@ -13922,6 +14166,204 @@ namespace eval ase::backend::ngspice {
       # exactly one spelling on offer -- take its FIRST line, as rung 1 does
       regexp -line -nocase $pat $logtext -> lbl val
       dict set results $rkey $val
+    }
+    return $results
+  }
+
+  # ─── THE CASE RULE, RESOLVED ONCE AND SHARED BY BOTH ⚖ R3 READERS ─────────
+  # The ladder above is the casemode batch's, unchanged; this proc is only its
+  # HEAD, lifted out so the rawfile reader obeys the same rule instead of
+  # growing a second spelling of it. The note is echoed HERE, which is why the
+  # dispatcher resolves the mode once and hands it to both readers: called from
+  # inside each of them it would say the same thing twice per run.
+  #
+  # ⚠ IT IS NOT A READER. If ⚖ R3 is later ruled A or B, this proc stays and
+  # loses one caller.
+  proc result_casemode {state logtext} {
+    set mode fold
+    catch {set mode [ase::sim_casemode_requested \
+                      [ase::state_get $state simulator ngspice]]}
+    if {$mode eq {}} { set mode fold }
+    if {$mode ne {distinguish} && [regexp -nocase \
+          {casemode[ =]'?distinguish|differs only in case} $logtext]} {
+      ::ase::echo "ase: result -- this log says the simulator ran with\
+ casemode=distinguish although the run asked for '$mode', so output\
+ expressions are matched case-sensitively: a row whose spelling the simulator\
+ refused gets no value rather than a differently-cased one." note
+      set mode distinguish
+    }
+    return $mode
+  }
+
+  # ─── ⚖ R3, THE RAWFILE READER ─────────────────────────────────────────────
+  # The other half of Option C. It answers only the rows ase::result_source
+  # sent here, and it does not know that proc exists -- see that proc's header
+  # for why the two readers are kept apart and what a later ruling of A or B
+  # deletes.
+  #
+  # ⚠ WHAT THE VALUE COLUMN SHOWS WHEN A RUN COMPUTED NOTHING: NOTHING.
+  # Measured 2026-09-12, on both binaries: `sens v(mid) nosuchdev dc` -- a
+  # filter matching nothing -- exits 0 and writes a results file whose only
+  # record is `Title: Constant values / Plotname: constants / No. Variables:
+  # 12`, and the same file is what a save list resolving to nothing produces.
+  # ase::raw_scalars excludes that plot by NAME, so this reader finds no vector,
+  # records no value, and SAYS SO. ⚠ A reader that treated "no vector" as zero
+  # would print a number for a run that computed nothing -- and `i` is one of
+  # those twelve constants, so a reader that merely forgot to exclude the plot
+  # would answer `0+1i` for an output row called `i`.
+  #
+  # ⚠ AND IT NEVER FALLS BACK TO THE LOG. The rule on screen says where a row's
+  # number comes from; a fallback would make that sentence false and would make
+  # a later ruling of A two changes instead of one. A single-vector row whose
+  # vector is not in the file has NO value, and the reason is echoed.
+  #
+  # ⚠ THE NUMBER IS RENDERED `%.6e`, WHICH IS `print`'s OWN RENDERING. Measured:
+  # the raw carries `1.285714285714286e+00` where the log carries
+  # `v(mid) = 1.285714e+00`, and `%.6e` of the first IS the second, byte for
+  # byte. So ⚖ R3 does not change the number on screen for any row that already
+  # had one -- it only gives a number to rows that had none. Row RD6.
+  #
+  # ⚠ TWO VECTORS, TWO NUMBERS, NO GUESS. A name can be matched more than once:
+  # two `sens` rows in one run write two plots both called `Sensitivity
+  # Analysis`, and measured (issue 1428's r1_temp finding) ngspice writes the
+  # SAME NAME TWICE INSIDE ONE PLOT for `R1`'s `temp` parameter and `R1_temp`'s
+  # own resistance. Matched values that all agree are one answer; matched values
+  # that differ are a question this reader cannot answer, and the sidecar that
+  # could is Stage 6c's and is not built. It declines and says so, exactly as
+  # the log reader declines on a case collision (D2).
+  proc result_probe_raw {state {mode fold}} {
+    set results [dict create]
+    set path {}
+    catch {set path [raw_file $state]}
+    set plots [ase::raw_scalars $path]
+    set exact [dict create]
+    set folded [dict create]
+    foreach pl $plots {
+      set pname [lindex $pl 0]
+      foreach {nm v} [lindex $pl 1] {
+        foreach sp [raw_spellings $nm] {
+          dict lappend exact $sp [list $pname $v]
+          dict lappend folded [string tolower $sp] [list $pname $v]
+        }
+      }
+    }
+    set missing {}
+    foreach o [ase::state_get $state outputs] {
+      if {![dict exists $o expr]} { continue }
+      set ex [dict get $o expr]
+      set rkey $ex
+      if {[dict exists $o name] && [dict get $o name] ne {}} {
+        set rkey [dict get $o name]
+      }
+      set hits {}
+      if {[dict exists $exact $ex]} { set hits [dict get $exact $ex] }
+      if {![llength $hits] && $mode ne {distinguish}} {
+        set lk [string tolower $ex]
+        if {[dict exists $folded $lk]} { set hits [dict get $folded $lk] }
+      }
+      if {![llength $hits]} { lappend missing $ex ; continue }
+      set vals {}
+      set pls {}
+      foreach h $hits {
+        if {[lsearch -exact $vals [lindex $h 1]] < 0} { lappend vals [lindex $h 1] }
+        if {[lsearch -exact $pls [lindex $h 0]] < 0} { lappend pls [lindex $h 0] }
+      }
+      if {[llength $vals] > 1} {
+        ::ase::echo "ase: result -- output '$ex' matches [llength $vals]\
+ different numbers in the results file ([join [lsort $pls] {, }]), so no value\
+ is recorded for it: which one it means cannot be known, and a guess would put\
+ a wrong number in the Outputs pane." error
+        continue
+      }
+      dict set results $rkey [raw_scalar_format [lindex $vals 0]]
+    }
+    # ⚠ ONLY WHEN THERE IS A FILE. A results file that is not there at all is
+    # already reported, loudly, by ase::attach_dbs and ase::raw_content_verdict;
+    # saying it again per output row would be noise, and a probe called with a
+    # scratch state has no run behind it to describe.
+    if {[llength $missing] && $path ne {} && [file isfile $path]} {
+      ::ase::echo "ase: result -- the results file holds no single-point value\
+ for [join $missing {, }], so [expr {[llength $missing] == 1 ? {that row has}\
+ : {those rows have}}] no value: a multi-point vector is not a scalar, and a\
+ run that computed nothing writes only the constants plot." note
+    }
+    return $results
+  }
+
+  # `%.6e`, and non-numeric text verbatim. See result_probe_raw's header for
+  # why this rendering and no other.
+  proc raw_scalar_format {v} {
+    if {![string is double -strict $v]} { return $v }
+    if {[catch {format %.6e $v} out]} { return $v }
+    return $out
+  }
+
+  # THE SPELLINGS ONE RAWFILE VARIABLE ANSWERS TO.
+  #
+  # ⚠ THE `v(…)` WRAPPER IS THE FILE WRITER'S, NOT THE VECTOR'S NAME. Measured
+  # 2026-09-12 on both binaries: `display` after a `tf` shows
+  # `Transfer_function`, `v1#Input_impedance` and `output_impedance_at_V(mid)`
+  # with no wrapper at all, while the results file spells all three
+  # `v(Transfer_function)` and friends -- ngspice types them `voltage` and the
+  # writer prefixes every voltage-typed vector. The same is true of
+  # `v(onoise_total)` and of every `sens` parameter (`v(r1)`, `v(r1:r)`). So a
+  # user who types the name they can SEE must still find it, and the stripped
+  # form is offered beside the literal one.
+  #
+  # ⚠ THE `i(…)` FORM IS NOT STRIPPED, AND THAT IS MEASURED, NOT SYMMETRY. The
+  # `i()` spelling is already the user-facing one; stripping it would index
+  # `i(v1)` under the bare word `v1`, which is ALSO the name of the `sens`
+  # sensitivity to source V1 -- a manufactured collision between an operating
+  # point current and a sensitivity, in every run that enables both.
+  proc raw_spellings {nm} {
+    set out [list $nm]
+    if {[regexp {^[vV]\((.*)\)$} $nm -> inner] && $inner ne {}} {
+      if {$inner ne $nm} { lappend out $inner }
+    }
+    return $out
+  }
+
+  # ─── ⚖ R3's DISPATCHER — THE REGISTERED `result_probe` HOOK ────────────────
+  # It partitions the output rows by ase::result_source and hands each reader a
+  # state carrying ONLY its own rows, so neither reader knows the rule exists.
+  #
+  # ⚠ IF ⚖ R3 IS RULED A, THIS BODY BECOMES
+  #     `return [result_probe_raw $state [result_casemode $state $logtext]]`
+  # and result_probe_log is deleted. IF RULED B, it becomes
+  #     `return [result_probe_log $state $logtext]`
+  # and result_probe_raw, raw_spellings, raw_scalar_format and ase::raw_scalars
+  # are deleted. Either way ase::result_source goes with the half it chose
+  # between. That is the property Option C was recommended for.
+  #
+  # ⚠ THE RULE IS STATED ON SCREEN, ONCE PER RUN, and it is computed from the
+  # chooser's own answers rather than written out as prose -- so under a later
+  # ruling of A or B the sentence tells the truth without being edited.
+  #
+  # ⚠ RAW WINS A KEY CLASH. Two rows can only share a results key by carrying
+  # the same `name`, which the Outputs pane does not offer; the order is fixed
+  # here so it is not an accident of dict traversal.
+  proc result_probe {state logtext} {
+    set mode [result_casemode $state $logtext]
+    set sim [ase::state_get $state simulator ngspice]
+    set rawrows {}
+    set logrows {}
+    foreach o [ase::state_get $state outputs] {
+      if {![dict exists $o expr]} { continue }
+      if {[ase::result_source $sim [dict get $o expr]] eq {raw}} {
+        lappend rawrows $o
+      } else {
+        lappend logrows $o
+      }
+    }
+    if {[llength $rawrows] || [llength $logrows]} {
+      ::ase::echo "ase: results -- a row whose expression names exactly one\
+ vector is read from the results file; anything else is read from the print\
+ log. This run: [llength $rawrows] from the file, [llength $logrows] from the\
+ log." note
+    }
+    set results [result_probe_log [dict set state outputs $logrows] $logtext $mode]
+    foreach {k v} [result_probe_raw [dict set state outputs $rawrows] $mode] {
+      dict set results $k $v
     }
     return $results
   }

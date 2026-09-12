@@ -90,6 +90,16 @@
 #        subcircuit device is `<letter>.<instance path>.<name>`, so that table's
 #        three rows are a FLAT-deck measurement and every xschem bench has
 #        subcircuits.
+#   189  section RV, Stage 6 (issue 1429): ase::raw_scalars, the data layer of
+#        ⚖ R3's RESULTS-FILE reader. ⚠ The three exclusions are the whole of
+#        it and each has its control: a multi-point vector is not a scalar
+#        (issue 1243 from the other side), a ONE-POINT COMPLEX plot is two
+#        numbers and not one (measured: `ac lin 1 1k 1k`), and the `constants`
+#        plot is excluded BY NAME because it is the ONLY record in the results
+#        file of a run that computed nothing -- a `sens` filter matching
+#        nothing, or a save list resolving to nothing, both rc 0, both measured.
+#        A reader that took "no vector" for zero would print a number for a run
+#        that computed nothing, and `i` is one of those twelve constants.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -4383,6 +4393,255 @@ check {SV5 the sens entry's plots row names a command that exists, and names the
         [llength [dict get [ase::analysis_entry ngspice sens] plots]]] \
   [list {Sensitivity Analysis} 1 {model r1 r} 1]
 
+
+# ===========================================================================
+# RV — ase::raw_scalars, the data layer of ⚖ R3's rawfile reader (issue 1429).
+#
+# It belongs in THIS suite because it is a reader over a canned results FILE,
+# which is this file's idiom (section H is `ase::cap_raw_plots` over the same
+# shapes) and because it needs no simulator at all. The rule that CHOOSES
+# between the two readers, and the readers themselves, are sections RS and RD
+# of test_ase_core.tcl.
+#
+# ⚠ THIS SECTION CARRIES ITS OWN `catch`: this file's outer one closes at the
+# end of section H, several hundred lines above here (issue 1428's S12 measured
+# what that costs — a sabotage that should have reddened a row killed the file
+# with NO `RESULT:` line at all, which in a sabotage log reads as "nothing went
+# red").
+# ===========================================================================
+if {[catch {
+
+## An ASCII results file, written the way ngspice writes one: a complete header
+## per plot, appended. A plot is {plotname flags {var val …}} with an optional
+## fourth element overriding the point count.
+## ⚠ THE VALUE LINES ARE BUILT WITH `if`, NEVER A TERNARY `expr`. An `expr` on
+## two STRING branches evaluates them as ARITHMETIC, which silently writes
+## `1.285714285714286-0.001714285714285714` into the file and makes every row
+## below read as a broken reader instead of a broken fixture.
+proc rv_ascii {plots} {
+  set out {}
+  foreach p $plots {
+    lassign $p pname pflags pvars
+    set np [expr {[llength $p] > 3 ? [lindex $p 3] : 1}]
+    append out "Title: * rv fixture\nDate: Sat Sep 12 00:00:00  2026\n"
+    append out "Plotname: $pname\nFlags: $pflags\n"
+    append out "No. Variables: [expr {[llength $pvars]/2}]\nNo. Points: $np\n"
+    append out "Variables:\n"
+    set i 0
+    foreach {nm v} $pvars { append out "\t$i\t$nm\tvoltage\n" ; incr i }
+    append out "Values:\n"
+    set i 0
+    foreach {nm v} $pvars {
+      if {$i == 0} { append out " 0\t$v\n" } else { append out "\t$v\n" }
+      incr i
+    }
+    append out "\n"
+  }
+  return $out
+}
+## The same file as BINARY — the shape a real run actually produces, since
+## ngspice writes binary unless the deck says otherwise. `pad` appends that many
+## extra all-zero points' worth of bytes, for a plot whose payload has to be
+## stepped over rather than read.
+proc rv_binary {plots} {
+  set out {}
+  foreach p $plots {
+    lassign $p pname pflags pvars
+    set np [expr {[llength $p] > 3 ? [lindex $p 3] : 1}]
+    append out "Title: * rv fixture\nDate: Sat Sep 12 00:00:00  2026\n"
+    append out "Plotname: $pname\nFlags: $pflags\n"
+    append out "No. Variables: [expr {[llength $pvars]/2}]\nNo. Points: $np\n"
+    append out "Variables:\n"
+    set i 0
+    foreach {nm v} $pvars { append out "\t$i\t$nm\tvoltage\n" ; incr i }
+    append out "Binary:\n"
+    set nums {}
+    foreach {nm v} $pvars { lappend nums $v }
+    set per [expr {[string equal $pflags complex] ? 2 : 1}]
+    append out [binary format d* $nums]
+    ## the remaining points, all zero — a real multi-point plot's payload
+    set rest [expr {($np - 1) * [llength $nums] * $per}]
+    if {$rest > 0} { append out [string repeat [binary format d 0.0] $rest] }
+    if {$per == 2} { append out [string repeat [binary format d 0.0] [llength $nums]] }
+  }
+  return $out
+}
+## The value of one variable out of ase::raw_scalars' answer, or ABSENT.
+proc rv_get {ans plot var} {
+  foreach pl $ans {
+    if {[lindex $pl 0] ne $plot} continue
+    if {[dict exists [lindex $pl 1] $var]} { return [dict get [lindex $pl 1] $var] }
+  }
+  return ABSENT
+}
+## ⚠ ABORT-PROOF NUMERIC COMPARE. rv_get answers ABSENT for a plot or variable
+## that is not there, and `abs(ABSENT - 1.28)` RAISES — which, in a section
+## carrying its own catch, turns a row that should have gone red by name into
+## the catch row RV0 plus a lost RESULT count. Measured: the over-seek sabotage
+## (S12t) did exactly that. This is `test_ase_result_case.tcl`'s `approx` rule
+## arriving here.
+proc rv_near {v want} {
+  if {![string is double -strict $v]} { return $v }
+  return [expr {abs($v - $want) < 1e-15 ? 1 : 0}]
+}
+proc rv_names {ans} {
+  set out {}
+  foreach pl $ans { lappend out [lindex $pl 0] }
+  return $out
+}
+
+set RVASC [file join $scratch rv_ascii.raw]
+a_wr $RVASC [rv_ascii {
+  {{Operating Point} real {v(in) 3.000000000000000e+00
+                           v(mid) 1.285714285714286e+00
+                           i(v1) -1.714285714285714e-03}}
+  {{Transfer Function} real {v(Transfer_function) 4.285714285714286e-01}}
+  {{Sensitivity Analysis} real {v(r1) -7.346931428983457e-04}}}]
+set RV1 [ase::raw_scalars $RVASC]
+check {RV1 every one-point real plot in an appended results file is read, in creation order} \
+  [list [rv_names $RV1] [rv_get $RV1 {Operating Point} v(mid)] \
+        [rv_get $RV1 {Transfer Function} v(Transfer_function)] \
+        [rv_get $RV1 {Sensitivity Analysis} v(r1)]] \
+  [list {{Operating Point} {Transfer Function} {Sensitivity Analysis}} \
+        1.285714285714286e+00 4.285714285714286e-01 -7.346931428983457e-04]
+
+## ⚠ THE SHAPE A REAL RUN PRODUCES IS BINARY. ngspice writes binary unless the
+## deck asks otherwise, so the ASCII arm above is the FIXTURE path and this is
+## the one a user's results file actually takes. The two arms must agree to the
+## last digit or a suite proves nothing about the file the user has.
+set RVBIN [file join $scratch rv_bin.raw]
+a_wrbin $RVBIN [rv_binary {
+  {{Operating Point} real {v(in) 3.0 v(mid) 1.285714285714286 i(v1) -0.001714285714285714}}
+  {{Transfer Function} real {v(Transfer_function) 0.4285714285714286}}}]
+set RV2 [ase::raw_scalars $RVBIN]
+check {RV2 the binary arm reads the same numbers as the ASCII one} \
+  [list [rv_names $RV2] \
+        [rv_near [rv_get $RV2 {Operating Point} v(mid)] 1.285714285714286] \
+        [rv_near [rv_get $RV2 {Transfer Function} v(Transfer_function)] 0.4285714285714286]] \
+  [list {{Operating Point} {Transfer Function}} 1 1]
+
+## ⚠ THE THREE EXCLUSIONS, EACH WITH ITS CONTROL. A fixture that only ever
+## contained excluded plots could not tell an exclusion from a reader that reads
+## nothing, so every one of the three sits beside a plot that IS read.
+##   multi-point -> a 20,514-row transient vector is not a scalar (issue 1243,
+##                  from the other side: a multi-point `print` yields nothing)
+##   complex     -> measured, `ac lin 1 1k 1k` writes a ONE-POINT complex plot
+##                  and `print` echoes TWO numbers; a Value column holds one
+##   constants   -> ngspice's own plot of `pi`, `e`, `i`, `boltz` …, and the
+##                  ONLY record in the results file of a run that computed
+##                  nothing (a `sens` filter matching nothing, or a save list
+##                  resolving to nothing — both measured, both rc 0)
+set RVEXC [file join $scratch rv_exclusions.raw]
+a_wr $RVEXC [rv_ascii {
+  {{Transient Analysis} real {v(tr) 1.0} 20514}
+  {{AC Analysis} complex {v(acv) 0.4999951}}
+  {constants complex {i 0.0 pi 3.141592653589793}}
+  {{Operating Point} real {v(mid) 2.000000000000000e+00}}}]
+set RV3 [ase::raw_scalars $RVEXC]
+check {RV3 a multi-point plot, a complex plot and the constants plot are all left out, and the one-point real plot after them is still found} \
+  [list [rv_names $RV3] [rv_get $RV3 {Operating Point} v(mid)]] \
+  [list {{Operating Point}} 2.000000000000000e+00]
+
+## ⚠ AND `constants` IS EXCLUDED BY NAME, NOT BY ITS FLAGS. Both binaries write
+## it `Flags: complex`, so the flags test happens to catch it too — but the name
+## test is the one that is DELIBERATE, and a build that ever wrote the constants
+## real must still not put `i` in a user's Value column.
+set RVCON [file join $scratch rv_constants_real.raw]
+a_wr $RVCON [rv_ascii {{constants real {i 0.0 pi 3.141592653589793}}}]
+check {RV3b constants is excluded by NAME: a real-flagged constants plot is still not read} \
+  [llength [ase::raw_scalars $RVCON]] 0
+
+## ⚠ NON-VACUITY FOR RV3b. The same numbers under any other plot name ARE read,
+## so the row is about the name and not about the file, the variable list or the
+## numbers being unparseable.
+set RVCON2 [file join $scratch rv_constants_named.raw]
+a_wr $RVCON2 [rv_ascii {{{Operating Point} real {i 0.0 pi 3.141592653589793}}}]
+check {RV3c non-vacuity: the same numbers under another plot name are read} \
+  [rv_get [ase::raw_scalars $RVCON2] {Operating Point} pi] 3.141592653589793
+
+## ⚠ A PLOT WHOSE VALUES DO NOT MATCH ITS VARIABLES IS DROPPED, NOT ZIPPED. A
+## truncated results file — a killed run, a full disk — would otherwise pair a
+## name with the number belonging to a different variable, which is the one
+## outcome worse than an empty Value column.
+set RVSHORT [file join $scratch rv_short.raw]
+a_wr $RVSHORT "Title: t\nPlotname: Operating Point\nFlags: real\nNo. Variables: 3\nNo. Points: 1\nVariables:\n\t0\tv(a)\tvoltage\n\t1\tv(b)\tvoltage\n\t2\tv(c)\tvoltage\nValues:\n 0\t1.0\n\t2.0\n"
+check {RV4 a plot whose value list is short of its variable list is dropped, never zipped} \
+  [llength [ase::raw_scalars $RVSHORT]] 0
+
+## ⚠ THE ANSWER IS A LIST, NOT A DICT, BECAUSE A PLOT NAME REPEATS. Two `sens`
+## rows in one run write two plots BOTH called `Sensitivity Analysis`; a dict
+## would keep the last one and the caller could never see there were two. Being
+## able to see it is what lets ⚖ R3's reader DECLINE instead of guessing
+## (test_ase_core RD6).
+set RVDUP [file join $scratch rv_dup.raw]
+a_wr $RVDUP [rv_ascii {
+  {{Sensitivity Analysis} real {v(r1) -7.0e-04}}
+  {{Sensitivity Analysis} real {v(r1) -9.0e-04}}}]
+set RV5 [ase::raw_scalars $RVDUP]
+set RV5VALS {}
+foreach pl $RV5 { lappend RV5VALS [dict get [lindex $pl 1] v(r1)] }
+check {RV5 two plots of the same name both survive, with their own numbers} \
+  [list [llength $RV5] [rv_names $RV5] $RV5VALS] \
+  [list 2 {{Sensitivity Analysis} {Sensitivity Analysis}} {-7.0e-04 -9.0e-04}]
+
+## ⚠ A BINARY PAYLOAD IS STEPPED OVER BY ARITHMETIC, NOT READ (issue 0971's
+## rule, inherited from ase::cap_raw_plots). The user's own tb_bandgap results
+## file is ~69 MB with a one-point operating point at the END of it, so a reader
+## that loaded payloads would cost a run report the whole file. Here a 1,000-row
+## transient sits in front of the operating point: if its 16,000 bytes were not
+## skipped by length, the header after it could not be found at all.
+## ⚠ AND THE PAYLOADS CARRY THE `ZZGHOST` TRAP, section B's idiom, because
+## WITHOUT IT THIS ROW CANNOT SEE ITS OWN SUBJECT. Measured: respelling
+## `($cx ? 16 : 8)` as `8` inside ase::raw_scalars left this file at ALL PASS
+## (190) against a fixture whose payload was all zeros — the short seek lands
+## mid-payload, an all-zero block contains no newline, and the reader simply
+## resynchronises on the next real `Plotname:`. A block that SPELLS A PLOT
+## HEADER in the middle of itself is what turns a short seek into a plot that
+## does not exist, which is exactly what rows B7/B8 say about
+## ase::cap_raw_plots and exactly what this row must say about this reader.
+## The ghost is `Flags: real / No. Points: 1`, so it would be reported as a
+## SCALAR PLOT — the worst shape, a number for an analysis nobody ran.
+set RVTRH "Plotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: 1000\nVariables:\n\t0\ttime\ttime\n\t1\tv(tr)\tvoltage\nBinary:\n"
+set RVACH "Plotname: AC Analysis\nFlags: complex\nNo. Variables: 2\nNo. Points: 200\nVariables:\n\t0\tv(acr)\tvoltage\n\t1\tv(aci)\tvoltage\nBinary:\n"
+set RVOPH "Plotname: Operating Point\nFlags: real\nNo. Variables: 1\nNo. Points: 1\nVariables:\n\t0\tv(mid)\tvoltage\nBinary:\n"
+set RVTRN [expr {1000 * 2 * 8}]
+set RVACN [expr {200 * 2 * 16}]
+set RVBIG [file join $scratch rv_big.raw]
+a_wrbin $RVBIG "$TITLE$RVTRH[a_numblock $RVTRN $ZZGHOST [expr {$RVTRN / 2 + 8}]]\
+$TITLE$RVACH[a_numblock $RVACN $ZZGHOST [expr {$RVACN / 2 + 8}]]\
+$TITLE$RVOPH[binary format d 1.285714285714286]"
+set RV6 [ase::raw_scalars $RVBIG]
+check {RV6 a multi-point binary payload -- real AND complex -- is stepped over by length, so a block that spells a plot header inside itself is never read as one, and the one-point plot behind them is found} \
+  [list [rv_names $RV6] \
+        [expr {[string first ZZGHOST [a_slurp $RVBIG]] >= 0}] \
+        [rv_near [rv_get $RV6 {Operating Point} v(mid)] 1.285714285714286]] \
+  [list {{Operating Point}} 1 1]
+
+## ⚠ THE THREE EXCLUSIONS LIVE IN ONE PROC, AND THIS ROW IS WHY THEY STAY
+## THERE. ase::raw_scalars asks ase::raw_scalars_wanted from BOTH arms -- the
+## ASCII `Values:` one and the `Binary:` one -- and ase::raw_scalars_add asks it
+## a third time. The first draft had the test inlined in only one arm and the
+## two drifted. A sabotage that deletes one CALL is invisible behaviourally
+## (the survivor catches it downstream), so the drift is pinned structurally
+## instead of pretended about.
+set RVBODY [a_body ase::raw_scalars]
+check {RV3d the three exclusions are asked from both arms of the reader, so the two cannot drift} \
+  [list [a_count $RVBODY {ase::raw_scalars_wanted}] \
+        [a_count [a_body ase::raw_scalars_add] {ase::raw_scalars_wanted}]] \
+  {2 1}
+
+## A results file that is not there, and one that is not a results file at all,
+## are both "no scalars" and neither may raise: ⚖ R3's reader is called on every
+## run completion, including the ones that failed.
+check {RV7 a missing path and a file that is not a results file are both empty, and neither raises} \
+  [list [a_ans ase::raw_scalars [file join $scratch rv_nothere.raw]] \
+        [a_ans ase::raw_scalars {}] \
+        [a_ans ase::raw_scalars [file join $scratch rv_ascii.raw].nope]] \
+  {{} {} {}}
+
+} rverr]} {
+  check {RV0 section RV ran to the end} "RAISED:$rverr" {}
+}
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which
 # this file is registered in. banner_complete needs a WHOLE-LINE OVERALL line

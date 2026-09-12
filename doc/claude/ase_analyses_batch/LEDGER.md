@@ -1072,16 +1072,63 @@ literal `all` only** — `allv`/`alli` are ASE-L's own Save-All tokens, not ngsp
 ⚠ **Add one test row per analysis type asserting the run survives a STALE Outputs entry**, which is
 the normal case after a net rename and the case a user will actually hit. Decisions **D46**, **D47**.
 
+⚠ **STAGE 6 IS THE LARGEST STAGE IN THE DOCUMENT AND IS BEING DRIVEN AS TASKS.** Task 1 is the
+⚖ **R3** reader seam and nothing else; the writer, the sidecar, reconciliation, `noise`/`disto`/
+`sens (ac)` and checkpointed salvage are later tasks.
+
+| landed | task | subject | floors |
+|---|---|---|---|
+| *pending* | **T1** | `feat(1429)` the Outputs Value column could not see three analyses' answers | core 391 → **417**; simcaps 180 → **190**; `test_ase_result_case` 28 → **31**; `test_ase_print_bracket_0167` 12 → **14** |
+
+⚠ **⚖ R3 IS STILL UNANSWERED. WHAT SHIPPED IS THE RECOMMENDATION, NOT A RATIFICATION**, and it is
+marked as such in the issue file, six comment blocks, four suite headers and the receipt. Option **C**
+— named vectors from the rawfile, arbitrary expressions from the `print` log, with the rule *a row
+whose expression names exactly one vector reads the raw; anything else reads the log*. `DECISIONS.md`
+records R3 as **extending** the user's own ruling in issue **1243**, not reversing it.
+
+⚠ **AND IT IS BUILT SO THAT ANSWERING A OR B DELETES A READER RATHER THAN INVALIDATING THE WORK.**
+The rule is one proc, `ase::result_source`. Ruling A makes its body `return raw` and deletes
+`result_probe_log` whole; ruling B makes it `return log` and deletes `result_probe_raw`,
+`raw_spellings`, `raw_scalar_format` and `ase::raw_scalars`. The dispatcher partitions rows and hands
+each reader a state containing only its own, so **neither reader knows the rule exists**. Row **RS3**
+performs both rulings by stubbing that one proc, against a fixture whose log and rawfile carry
+*different* numbers for the same name — so the row can say which reader answered.
+
+⚠ **`PLAN.md` §6e's REASON FOR READING THE RAW IS WRONG, AND THE REAL REASON IS NOWHERE IN THE
+BATCH.** §6e says the rawfile *"removes the case-folding ladder"*. It does not — the raw needs its
+own fold, because the fork writes `v(Transfer_function)` where apt 45.2 writes
+`v(transfer_function)`. The actual reason is one plot deeper: **`print` reads only the plot the
+anchor stands in**, and issue 1243 anchors the prints on the `op`. Verified independently by the
+driver on `/usr/bin/ngspice`: from the `tf` plot `print Transfer_function` answers
+`5.000000e-01`; after `setplot op1` the identical command produces **no value at all**, while the
+vector plainly exists one plot away.
+
+⚠ **AND THE CREW'S FIRST REPORT OF THAT FACT WAS OVERSTATED — CORRECTED BEFORE THE COMMIT LANDED.**
+It read *"no value, no warning, no error line"*. ngspice **does** emit
+`Warning from checkvalid: vector <name> is not available or has zero length`, but on **stderr**,
+where no reader in this tree looks. The defect is that nothing **parseable** reaches stdout, not that
+ngspice is silent — and the distinction matters to the next person who goes looking for that warning
+and finds it. Corrected in `src/ase.tcl`, the issue file and the receipt.
+
+⚠ **THE VALUE COLUMN SHOWS NOTHING WHEN A RUN COMPUTED NOTHING, AND THE GUARD WAS NEARLY
+ACCIDENTAL.** `constants` is excluded by name — but deleting that name test left `test_ase_core` at
+ALL PASS, because the plot is **also** `Flags: complex` on both binaries and the accidental guard was
+carrying the deliberate one. Verified by the driver against a real null-filter rawfile. Rows RD5c and
+RV3b therefore use a `constants` plot flagged `real`, which is deliberately **not** what ngspice
+writes. `i` is one of the twelve constants, so this is the difference between an empty cell and a
+plausible number for a run that computed nothing.
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | **IN PROGRESS** — task 1 of N |
+| commit | T1 pending |
+| T1 | taken **solo** by the driver, 62 cases, zero |
+| suites moved | `test_ase_core` 391 → **417** (RS, RD) · `test_ase_simcaps_0948` 180 → **190** (RV) · `test_ase_result_case` 28 → **31** (NCR) · `test_ase_print_bracket_0167` 12 → **14**. **Not one existing row moved.** ⚠ **The last two are NOT IN T1** (issue 1421's list of twenty-one), so the driver ran them standalone — a T1 number does not cover them and must not be quoted as if it did |
+| sabotage | **31 respellings, 42 runs.** 23 reddened a named row first time; **six survived**, one killed a suite. ⚠ **The suite-killer is the sharpest**: a sabotage killed `test_ase_core` at row **P1** — a row a year older than this issue, 4,000 lines above where that file's outer catch closes. **A new seam made an old row fragile and nothing in the diff pointed at it.** RD14 now states the contract: `result_probe` must not raise for a state with no design cell, because `ase::run_done` calls it on every completion |
+| ledger debts | `rule 1429` — three new sentences; the entry says explicitly that it **does not stand in for ⚖ R3** |
+| spec paragraphs rewritten | none — same standing spec debt as Stages 2–5 |
+| receipt | `receipts/13-stage-6-reader-seam.md` |
+
 
 ### What Stage 6 learned that binds later stages
 

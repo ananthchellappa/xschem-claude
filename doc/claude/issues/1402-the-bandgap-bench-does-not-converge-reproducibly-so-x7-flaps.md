@@ -5,6 +5,28 @@
 since the 1377 sweep. It is a flake. **But the flake is not in the assertion — it is in the
 simulation**, and the row has been telling the truth the whole time.
 
+## A third measurement, 2026-09-12 — and it adds a condition the earlier two did not
+
+Taken while collecting a crew's Stage 6 work:
+
+```
+family run (8 suites, --nogui, sequential):   X7 RED   (1 FAILED / 102 passed)
+standalone, immediately after:                ALL PASS (103)
+standalone again:                             ALL PASS (103)
+```
+
+⚠ **Both of this session's X7 reds happened inside a MULTI-SUITE run with other processes live, and
+every standalone run passed.** The first was inside T1 (61 cases) with a second clone's crews alive;
+this one was inside an eight-suite `run_suites.sh` sequence with
+`/home/analog/dev/xschem-op-wcard/src/xschem` running. The 2026-09-11 measurement above found it
+flapping **standalone**, so load is not the only cause — but across this session the correlation is
+**2 of 2 reds under load, 0 of 13 standalone**.
+
+That is worth recording rather than concluding: it suggests the bench's convergence is sensitive to
+machine load or to timing, which would make the row's occasional red a **real fact about the shipped
+bandgap** rather than about the harness — exactly what this issue was filed to say. Anyone reducing
+this should vary load deliberately rather than re-running in a quiet machine and calling it fixed.
+
 ## A second measurement, 2026-09-12 — nine passes around one red
 
 Taken during Stage 3 of the ASE-L analyses batch, on a tree whose changes are entirely in

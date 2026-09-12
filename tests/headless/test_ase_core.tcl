@@ -30,6 +30,9 @@
 #                   ase::hier_instnames and the ase::with_design_current
 #                   ascend/netlist/re-descend, its autosave-backup decision
 #                   table, its read-only snapshot and ase::netlist's four arms.
+#   RS* / RD* ⚖ R3: issue 1429 -- the rule that says where ONE output row's
+#                   number comes from (ase::result_source), the two readers it
+#                   chooses between, and the sentence that states it on screen
 #   DX* at depth:   descend_run_batch item C -- the things that ALREADY worked
 #                   two levels down and must not silently regress: the
 #                   annotation basis (raw_level / sim_sch_path / the built
@@ -139,6 +142,21 @@
 # seeded rows, 104 committed `.state` files untouched. That is now three Stage 5
 # commits in a row, which is ⚖ R4's recommended answer shipping by construction
 # rather than by anybody remembering.
+# 391 -> 411 with sections RS and RD (Stage 6, issue 1429 -- ⚖ R3's reader
+# seam: WHERE one output row's number comes from). ⚠ NO ROW MOVED. Every
+# existing row here reads the log through an expression or a key, and issue
+# 1429 changes neither; what it adds is a second reader and the one proc that
+# chooses between them.
+# ⚠ ⚖ R3 IS ASKED AND UNANSWERED. What is pinned is DECISIONS.md's
+# RECOMMENDATION, Option C -- named vectors from the results file, arbitrary
+# expressions from the print log -- and RS2/RS3 exist to pin the property that
+# makes shipping an unratified recommendation safe: C is the SUPERSET of A and
+# B, so a later ruling moves ONE proc (`ase::result_source`) and deletes one
+# reader. RS3 performs both rulings by stubbing that proc and shows the whole
+# surface following. DECISIONS.md records R3 as EXTENDING the user's own ruling
+# in issue 1243, not reversing it -- render_deck's print anchor is untouched.
+# ⚠ SECTIONS RS AND RD CARRY THEIR OWN `catch`: this file's OUTER one closes at
+# the end of section SI, thousands of lines above them (issue 1428's S10).
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -1277,19 +1295,33 @@ check "D6 pre_commands is in the canonical schema order" \
 # unnamed outputs (no `name` key) are keyed by their expr; named outputs stay
 # keyed by name (backward compatible: F10/E1c read key `id`)
 set probe [ase::backend_hook ngspice result_probe]
+## ⚠ THE CALL IS CAUGHT, AND IT IS NOT PADDING (issue 1429). These two states
+## are `ase::state_default` with an `outputs` key bolted on: no `design`, so no
+## cell, so ase::backend::ngspice::raw_file cannot answer. Since ⚖ R3 made
+## `result_probe` a dispatcher it resolves the results-file path on every call,
+## inside a `catch` whose absence is exactly the change these rows would then
+## be the first to meet -- measured, removing that `catch` killed this whole
+## file HERE with `UNEXPECTED ERROR: ase: state design has no cell (raw_file)`
+## and no `RESULT:` line, which in a sabotage log reads as "nothing went red".
+## Row RD14 is the contract; this wrapper is what lets the file reach it.
+proc p1probe {st log} {
+  set rc [catch {uplevel #0 [list $::probe $st $log]} r]
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+proc p1val {res k} {
+  if {[catch {dict exists $res $k} e] || !$e} { return $res }
+  return [dict get $res $k]
+}
 set logtext_p1 "Some banner line\n-i(v1) = 4.096837e-04\nNo. of Data Rows : 1\n"
 set stp [ase::state_default]
 dict set stp outputs {{expr -i(v1) save 1}}
-set resp [$probe $stp $logtext_p1]
-set got {}
-if {[dict exists $resp -i(v1)]} { set got [dict get $resp -i(v1)] }
-check "P1 result_probe keys unnamed outputs by expr" $got 4.096837e-04
+check "P1 result_probe keys unnamed outputs by expr" \
+  [p1val [p1probe $stp $logtext_p1] -i(v1)] 4.096837e-04
 set stp [ase::state_default]
 dict set stp outputs {{name id expr -i(v1) save 1}}
-set resp [$probe $stp $logtext_p1]
-set got {}
-if {[dict exists $resp id]} { set got [dict get $resp id] }
-check "P1 named output still keyed by name" $got 4.096837e-04
+check "P1 named output still keyed by name" \
+  [p1val [p1probe $stp $logtext_p1] id] 4.096837e-04
 
 # --- F: ase::format_value engineering-notation display (item 09) -------------
 # F1 suffix table, F2 out-of-range %g fallback, F3 non-numeric verbatim,
@@ -5962,6 +5994,512 @@ check "CP6 the four probe-only types declare no fields, tf, pz and sens no\
         [dict exists [ase::analysis_entry ngspice sens] fields] \
         [ase::analysis_schema_errors ngspice]] {4 1 1 1 {}}
 
+
+# ===========================================================================
+# RS / RD — ⚖ R3's reader seam: where ONE output row's number comes from
+# (issue 1429). ⚖ R3 IS ASKED AND UNANSWERED; what is pinned here is
+# DECISIONS.md's RECOMMENDATION, Option C, and the rows are written so that a
+# later ruling of A or B moves ONE proc and deletes one reader.
+#
+# ⚠ SECTIONS RS AND RD CARRY THEIR OWN `catch`, because this file's OUTER one
+# closes at the end of section SI, thousands of lines above here (issue 1428's
+# S10 measured that: a raise below it produced FAILs and then no `RESULT:` and
+# no `OVERALL:` line at all). A raise in here is a NAMED failure and the banner
+# still prints.
+# ===========================================================================
+if {[catch {
+
+## Build an ASCII rawfile the way ngspice writes one: a full header per plot,
+## appended. `plots` is a list of {plotname flags {var val var val …}}; the
+## point count is taken from the caller so a MULTI-point plot can be faked
+## without writing its rows out.
+proc r3_raw {plots {npoints 1}} {
+  set out {}
+  foreach p $plots {
+    lassign $p pname pflags pvars
+    set np [expr {[llength $p] > 3 ? [lindex $p 3] : $npoints}]
+    append out "Title: * r3 fixture\n"
+    append out "Date: Sat Sep 12 00:00:00  2026\n"
+    append out "Plotname: $pname\n"
+    append out "Flags: $pflags\n"
+    append out "No. Variables: [expr {[llength $pvars]/2}]\n"
+    append out "No. Points: $np\n"
+    append out "Variables:\n"
+    set i 0
+    foreach {nm v} $pvars {
+      append out "\t$i\t$nm\tvoltage\n"
+      incr i
+    }
+    append out "Values:\n"
+    set i 0
+    foreach {nm v} $pvars {
+      ## ⚠ `if`, NEVER `expr`. A ternary `expr` on two STRING branches evaluates
+      ## them as arithmetic: the first draft of this fixture wrote
+      ## `1.285714285714286-0.001714285714285714` into the file and every RD row
+      ## read ABSENT, which looks exactly like a broken reader.
+      if {$i == 0} { append out " 0\t$v\n" } else { append out "\t$v\n" }
+      incr i
+    }
+    append out "\n"
+  }
+  return $out
+}
+## A state whose raw_file resolves to <scratch>/<cell>_ase.raw.
+proc r3_state {cell outs} {
+  set s [ase::state_default]
+  dict set s design [dict create lib rl cell $cell view schematic]
+  dict set s rundir $::scratch
+  dict set s outputs $outs
+  return $s
+}
+## ⚠ CAUGHT, for the reason written beside P1 above: the one change these rows
+## exist to catch can make the dispatcher RAISE, and a raise here would kill the
+## file instead of reddening a row.
+proc r3_probe {st log} {
+  set rc [catch {[ase::backend_hook ngspice result_probe] $st $log} r]
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+proc r3_val {res k} { if {[dict exists $res $k]} { return [dict get $res $k] } ; return ABSENT }
+## Run `script` with ase::result_source stubbed to one fixed answer — which is
+## EXACTLY what a later ruling of ⚖ R3 A (raw) or B (log) does to that proc.
+proc r3_ruled {answer script} {
+  rename ::ase::result_source ::r3_saved_source
+  proc ::ase::result_source {sim ex} "return $answer"
+  set rc [catch {uplevel 1 $script} r]
+  catch {rename ::ase::result_source {}}
+  rename ::r3_saved_source ::ase::result_source
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+
+# --- RS: the rule, and the one place it lives -------------------------------
+
+## ⚠ THE RULE, ROW BY SHAPE. `out_decompose` (issue 1426) answers the `v()`/`i()`
+## forms; everything else is a bare vector name or an expression. The three
+## interesting answers are `v(a,b)` (TWO vectors — measured, `print v(in,mid)`
+## echoes a number and there is no such vector in the results file), the bare
+## analysis-result names Stage 5 measured, and the parenthesised shapes that no
+## string test can tell apart from a function call.
+set RSANS {}
+## ⚠ `@r1` AND `-onoise_total` ARE HERE BECAUSE TWO SABOTAGES SURVIVED WITHOUT
+## THEM. Adding `@` or `-` to the name alphabet changed NOTHING against the
+## first draft of this list, because every other `@` shape it held (`@r1[i]`)
+## also carries a bracket and every other `-` shape (`-i(v1)`) also carries a
+## parenthesis — so the row could not see the alphabet it claims to pin. A bare
+## `@dev` is the op-parameter seam's lead character (issue 0963/0965 built that
+## on the LOG and it must stay there), and `-onoise_total` is a negated bare
+## vector, which is an expression and not a name.
+foreach rsx {v(mid) v(In) i(v1) v(in,mid) -i(v1) Transfer_function
+             v1#Input_impedance onoise_total r1:r r.x1.ra:r r1_m
+             {v(a)*2} {abs(v(mid))} output_impedance_at_V(mid)
+             a[0] @r1[i] @r1 -onoise_total {"a[0]"} 42 {}} {
+  lappend RSANS [ase::result_source ngspice $rsx]
+}
+check "RS1 the rule routes every measured output shape: a single vector to the\
+ results file, an expression to the print log" $RSANS \
+  [list raw raw raw log log raw raw raw raw raw raw \
+        log log log log log log log log log log]
+
+## ⚠ AN ADAPTER WITH NO `out_decompose` GETS TODAY'S BEHAVIOUR, NOT A GUESS.
+## Without the hook there is nothing that knows `v(mid)` is one vector and
+## `v(a,b)` is two, so the parenthesised forms fall to the log — which is where
+## every one of them reads from today. The bare-name arm is backend-neutral and
+## still answers, because a bare identifier is a vector name in any simulator
+## that has vectors at all.
+ase::register_backend r3nohook [dict create render_deck x run_cmd x log_file x \
+  result_probe x raw_file x]
+check "RS1b an adapter with no out_decompose sends every parenthesised form to\
+ the log, and the bare-name arm still answers" \
+  [list [ase::result_source r3nohook v(mid)] [ase::result_source r3nohook v(in,mid)] \
+        [ase::result_source r3nohook Transfer_function]] {log log raw}
+
+## ⚠ SEPARABILITY, STRUCTURALLY. This is the property the driver asked for in
+## as many words: C is the SUPERSET of A and B, so a later ruling must remove a
+## reader rather than invalidate the work. Neither reader may name the other,
+## and neither may name the rule — otherwise deleting one of them is an edit to
+## the survivor instead of a deletion.
+set RSRAW [rg_body ::ase::backend::ngspice::result_probe_raw]
+set RSLOG [rg_body ::ase::backend::ngspice::result_probe_log]
+check "RS2 neither ⚖ R3 reader names the other or names the rule, so a ruling\
+ of A or B deletes a proc instead of editing one" \
+  [list [rg_has $RSRAW result_probe_log] [rg_has $RSRAW logtext] \
+        [rg_has $RSRAW ase::result_source] \
+        [rg_has $RSLOG result_probe_raw] [rg_has $RSLOG raw_file] \
+        [rg_has $RSLOG raw_scalars] [rg_has $RSLOG ase::result_source]] \
+  {0 0 0 0 0 0 0}
+
+## ⚠ SEPARABILITY, BEHAVIOURALLY — AND THIS IS THE ROW THAT COSTS SOMETHING.
+## RS2 only says the bodies do not mention each other. This one performs both
+## later rulings by stubbing ase::result_source to one fixed answer, which is
+## literally what ruling A (`return raw`) and ruling B (`return log`) do to that
+## proc, and shows the whole surface changing from that one edit:
+##   ruled A -> `v(a)*2` loses its number and `Transfer_function` keeps its one
+##   ruled B -> `Transfer_function` loses its number and `v(a)*2` keeps its one
+## A fixture whose rows did not DISAGREE could not adjudicate this, so the state
+## deliberately carries one of each.
+rg_wr [file join $scratch rsep_ase.raw] \
+  [r3_raw {{{Operating Point} real {v(mid) 1.285714285714286e+00}}
+           {{Transfer Function} real {v(Transfer_function) 4.285714285714286e-01}}}]
+set RSST [r3_state rsep {{name {} expr v(mid) save 1}
+                         {name {} expr Transfer_function save 1}
+                         {name {} expr {v(a)*2} save 1}}]
+set RSLOGTXT "v(mid) = 1.285714e+00\nTransfer_function = 9.999999e+09\nv(a)*2 = 2.571429e+00\n"
+set RSC [r3_probe $RSST $RSLOGTXT]
+set RSA [r3_ruled raw {r3_probe $RSST $RSLOGTXT}]
+set RSB [r3_ruled log {r3_probe $RSST $RSLOGTXT}]
+## The fixture log carries a DIFFERENT number for `Transfer_function`
+## (9.999999e+09) from the one in the results file (4.285714e-01), so the row
+## can say WHICH READER answered and not merely that a number appeared:
+##   C (ships) -> the results file's number, because the name is one vector
+##   A         -> the same, and the expression row loses its number
+##   B         -> the LOG's rival number, and the expression row keeps its one
+## ⚠ A fixture whose two sources agreed could not adjudicate this at all.
+check "RS3 stubbing the ONE rule proc performs ruling A and ruling B end to\
+ end: A drops the expression, B takes the log's rival number for the vector" \
+  [list [r3_val $RSC v(mid)] [r3_val $RSC Transfer_function] [r3_val $RSC v(a)*2] \
+        [r3_val $RSA Transfer_function] [r3_val $RSA v(a)*2] \
+        [r3_val $RSB Transfer_function] [r3_val $RSB v(a)*2]] \
+  [list 1.285714e+00 4.285714e-01 2.571429e+00 \
+        4.285714e-01 ABSENT 9.999999e+09 2.571429e+00]
+
+## ⚠ AND UNDER RULING A THE tf NUMBER IS STILL THE RAWFILE'S, NOT THE LOG'S.
+## The fixture log deliberately carries a DIFFERENT number for
+## `Transfer_function` (9.999999e+09) so that a reader silently falling back to
+## the log cannot pass RS3 by accident.
+check "RS3b the rawfile answer is the rawfile's: the log's rival number for the\
+ same name is never taken" \
+  [list [r3_val $RSC Transfer_function] [rg_has $RSLOGTXT 9.999999e+09]] \
+  {4.285714e-01 1}
+
+## ⚠ THE RULE IS STATED ON SCREEN, which is what ⚖ R3's recommendation asks for
+## in as many words. Spied at ::ciw_echo, so the row proves the sentence really
+## travelled ase::echo -> notify_safe -> notify -> ciw_echo.
+set RSSAID [rg_ciw {r3_probe $RSST $RSLOGTXT}]
+set RSRULE {}
+foreach s $RSSAID {
+  if {[rg_has [lindex $s 1] {names exactly one vector}]} { set RSRULE $s }
+}
+check "RS4 the rule is said on screen, with the split this run took" \
+  [list [expr {$RSRULE ne {}}] [lindex $RSRULE 0] \
+        [rg_has [lindex $RSRULE 1] {read from the results file}] \
+        [rg_has [lindex $RSRULE 1] {read from the print log}] \
+        [rg_has [lindex $RSRULE 1] {2 from the file, 1 from the log}]] \
+  {1 note 1 1 1}
+
+## ⚠ THE SENTENCE IS COMPUTED FROM THE RULE, NOT WRITTEN OUT AS PROSE, so a
+## later ruling of A or B leaves it telling the truth without being edited.
+set RSSAIDA [r3_ruled raw {rg_ciw {r3_probe $RSST $RSLOGTXT}}]
+set RSRULEA {}
+foreach s $RSSAIDA {
+  if {[rg_has [lindex $s 1] {names exactly one vector}]} { set RSRULEA $s }
+}
+check "RS4b under ruling A the same sentence says 3 from the file and 0 from\
+ the log, with no edit to it" \
+  [rg_has [lindex $RSRULEA 1] {3 from the file, 0 from the log}] 1
+
+# --- RD: the two readers over canned results files --------------------------
+
+## ⚠ THE NUMBER ⚖ R3 PUTS ON SCREEN IS THE NUMBER THAT WAS THERE. Measured
+## 2026-09-12: the results file carries `1.285714285714286e+00` where the log
+## carries `v(mid) = 1.285714e+00`, and `%.6e` of the first IS the second, byte
+## for byte. So Option C gives a number to rows that had none and changes no
+## row that already had one — which is the whole reason it can be recommended
+## without a ruling in hand.
+rg_wr [file join $scratch rd1_ase.raw] \
+  [r3_raw {{{Operating Point} real {v(in) 3.000000000000000e+00
+                                    v(mid) 1.285714285714286e+00
+                                    i(v1) -1.714285714285714e-03}}}]
+set RD1 [r3_probe [r3_state rd1 {{name {} expr v(mid) save 1}
+                                 {name {} expr i(v1) save 1}}] {}]
+check "RD1 the rawfile reader answers a node voltage and a branch current, and\
+ the rendering is `print`'s own" \
+  [list [r3_val $RD1 v(mid)] [r3_val $RD1 i(v1)]] {1.285714e+00 -1.714286e-03}
+
+## ⚠ THE `v(…)` WRAPPER IS THE FILE WRITER'S, NOT THE VECTOR'S NAME. Measured on
+## both binaries: `display` after a `tf` shows `Transfer_function` bare, the
+## results file spells it `v(Transfer_function)`. A user types what they can
+## see, so the stripped spelling answers too.
+rg_wr [file join $scratch rd2_ase.raw] \
+  [r3_raw {{{Transfer Function} real {v(Transfer_function) 4.285714285714286e-01
+                                      v(v1#Input_impedance) 1.750000000000000e+03}}
+           {{Integrated Noise} real {v(onoise_total) 8.958985147582666e-07}}}]
+set RD2 [r3_probe [r3_state rd2 {{name {} expr Transfer_function save 1}
+                                 {name {} expr v1#Input_impedance save 1}
+                                 {name {} expr onoise_total save 1}}] {}]
+check "RD2 the three analyses ⚖ R3 exists for get a scalar home: tf's constant,\
+ tf's input impedance and the noise integral" \
+  [list [r3_val $RD2 Transfer_function] [r3_val $RD2 v1#Input_impedance] \
+        [r3_val $RD2 onoise_total]] \
+  {4.285714e-01 1.750000e+03 8.958985e-07}
+
+## ⚠ THE CAPITALS ARE THE FORK'S AND apt 45.2 FOLDS THEM (issue 1426's C46).
+## The SAME deck written by the two binaries spells the same vector
+## `v(Transfer_function)` and `v(transfer_function)`. A case-sensitive reader
+## works on the fork and is wrong on the binary a downloading user has, so the
+## fixture here is apt 45.2's file read by a row typed in the fork's spelling.
+rg_wr [file join $scratch rd3_ase.raw] \
+  [r3_raw {{{Transfer Function} real {v(transfer_function) 4.285714285714286e-01}}}]
+set RD3 [r3_probe [r3_state rd3 {{name {} expr Transfer_function save 1}}] {}]
+check "RD3 the apt-45.2 folded spelling answers a row typed in the fork's" \
+  [r3_val $RD3 Transfer_function] 4.285714e-01
+
+## ⚠ AND THE FOLD IS THE CASEMODE BATCH'S RULE, NOT A SECOND ONE. Rung 2 is OFF
+## under `distinguish`, for the reason item 11 measured: there the simulator
+## REFUSES a differently-cased name, so a folded match would hand the row a
+## number for a signal the run just said it does not have. Both readers obey the
+## same resolver; this is the raw half of it.
+set RD3B [r3_probe [r3_state rd3 {{name {} expr Transfer_function save 1}}] \
+  "casemode=distinguish\n"]
+check "RD3b …and under a distinguish-DELIVERING log the folded rung is off, so\
+ the same row gets nothing rather than a differently-cased number" \
+  [r3_val $RD3B Transfer_function] ABSENT
+
+## ⚠ AND THE LADDER'S ORDER IS RUNG 1 FIRST, which is only visible in a file
+## that holds BOTH spellings — the `distinguish` case. An exactly-spelled row
+## reads its own vector and is never declined; the collision is the OTHER row's
+## problem. This is the raw half of NC226e in test_ase_result_case.tcl, and the
+## fixture deliberately contains the conflict the row adjudicates: a row whose
+## answers did not disagree could not tell the two orders apart.
+rg_wr [file join $scratch rd3d_ase.raw] \
+  [r3_raw {{{Operating Point} real {v(In) 3.000000000000000e+00
+                                    v(in) 9.000000000000000e+00}}}]
+set RD3D [r3_probe [r3_state rd3d {{name {} expr v(In) save 1}
+                                   {name {} expr v(mixed) save 1}}] {}]
+check "RD3c rung 1 before rung 2: an exactly-spelled row reads its own vector\
+ even though a differently-cased one sits beside it" \
+  [r3_val $RD3D v(In)] 3.000000e+00
+
+## ⚠ A MULTI-POINT VECTOR IS NOT A SCALAR, and that is issue 1243 arriving from
+## the other side: a multi-point `print` emits a table that yields nothing, and
+## a 20,514-row transient vector is the same non-answer. Excluding it is what
+## keeps a tran-only run's Value column exactly as empty as it is today.
+## ⚠ AND A COMPLEX ONE-POINT PLOT IS EXCLUDED TOO. Measured: `ac lin 1 1k 1k`
+## writes a ONE-POINT complex plot and `print v(mid)` echoes
+## `4.999951e-01,-1.57078e-03` — two numbers, which today's log regexp does not
+## match either. A Value column holds one number.
+rg_wr [file join $scratch rd4_ase.raw] \
+  [r3_raw {{{Transient Analysis} real {v(tr) 1.000000000000000e+00} 20514}
+           {{AC Analysis} complex {v(acv) 4.999951000000000e-01}}
+           {{Operating Point} real {v(mid) 2.000000000000000e+00}}}]
+set RD4 [r3_probe [r3_state rd4 {{name {} expr v(tr) save 1}
+                                 {name {} expr v(acv) save 1}
+                                 {name {} expr v(mid) save 1}}] {}]
+check "RD4 a multi-point vector and a complex one are not scalars, and the\
+ one-point real plot after them is still found" \
+  [list [r3_val $RD4 v(tr)] [r3_val $RD4 v(acv)] [r3_val $RD4 v(mid)]] \
+  {ABSENT ABSENT 2.000000e+00}
+
+## ⚠ WHAT THE VALUE COLUMN SHOWS WHEN A RUN COMPUTED NOTHING: NOTHING.
+## Measured 2026-09-12 on both binaries and reproduced independently by the
+## driver: a `sens` filter matching nothing, and a save list resolving to
+## nothing, BOTH exit 0 and write a results file whose only record is
+## `Title: Constant values / Plotname: constants / No. Variables: 12`.
+## ⚠ A READER THAT TREATED "NO VECTOR" AS ZERO WOULD REPORT A NUMBER FOR A RUN
+## THAT COMPUTED NOTHING — and `i` is one of those twelve constants, so a reader
+## that merely forgot to exclude the plot by name would answer for an output row
+## called `i`. The plot is excluded BY NAME; that it is also `Flags: complex` on
+## both binaries is a second, accidental guard and not the one relied on.
+rg_wr [file join $scratch rd5_ase.raw] \
+  [r3_raw {{constants complex {i 0.000000000000000e+00 pi 3.141592653589793e+00
+                               e 2.718281828459045e+00}}}]
+set RD5 [r3_probe [r3_state rd5 {{name {} expr i save 1} {name {} expr pi save 1}
+                                 {name {} expr v(mid) save 1}}] {}]
+check "RD5 a results file holding only the constants plot yields NO value at\
+ all: not a zero, not a constant, nothing" [dict size $RD5] 0
+
+## ⚠ NON-VACUITY FOR RD5. The same twelve numbers under a plot name that is not
+## `constants` ARE read — so RD5 measures the exclusion and not the absence of a
+## file, a variable list or a parseable number.
+rg_wr [file join $scratch rd5b_ase.raw] \
+  [r3_raw {{{Operating Point} real {i 0.000000000000000e+00 pi 3.141592653589793e+00}}}]
+set RD5B [r3_probe [r3_state rd5b {{name {} expr pi save 1}}] {}]
+check "RD5b non-vacuity: the same numbers under a plot name that is not\
+ `constants` are read, so RD5 is about the name" [r3_val $RD5B pi] 3.141593e+00
+
+## ⚠ THIS ROW EXISTS BECAUSE A SABOTAGE SURVIVED. Deleting the `constants` NAME
+## test from ase::raw_scalars_wanted left this whole suite at ALL PASS (411):
+## RD5's fixture is `Flags: complex`, which is what BOTH binaries really write,
+## so the accidental guard was silently carrying the deliberate one. The name
+## test is the one that must hold — a build that ever wrote the constants real
+## must still not put `i` or `pi` in a user's Value column — so the fixture here
+## is the same plot flagged `real`.
+rg_wr [file join $scratch rd5c_ase.raw] \
+  [r3_raw {{constants real {i 0.000000000000000e+00 pi 3.141592653589793e+00}}}]
+set RD5C [r3_probe [r3_state rd5c {{name {} expr i save 1} {name {} expr pi save 1}}] {}]
+check "RD5c the constants plot is excluded BY NAME: flagged `real` it is still\
+ not read" [dict size $RD5C] 0
+
+## ⚠ TWO VECTORS, TWO NUMBERS, NO GUESS — and the fixture contains the conflict
+## the row adjudicates. Two `sens` rows in one run write two plots BOTH called
+## `Sensitivity Analysis` (that is the identity problem Stage 6c's sidecar is
+## for, and it is not built). Matched numbers that agree are one answer; matched
+## numbers that differ are a question this reader cannot answer.
+rg_wr [file join $scratch rd6_ase.raw] \
+  [r3_raw {{{Sensitivity Analysis} real {v(r1) -7.000000000000000e-04
+                                         v(agree) 5.000000000000000e-01}}
+           {{Sensitivity Analysis} real {v(r1) -9.000000000000000e-04
+                                         v(agree) 5.000000000000000e-01}}}]
+set RD6ST [r3_state rd6 {{name {} expr r1 save 1} {name {} expr agree save 1}}]
+set RD6 [r3_probe $RD6ST {}]
+set RD6SAID [rg_ciw {r3_probe $RD6ST {}}]
+set RD6DECL {}
+foreach s $RD6SAID {
+  if {[rg_has [lindex $s 1] {different numbers in the results file}]} { set RD6DECL $s }
+}
+check "RD6 one name, two different numbers: no value and the decline is said\
+ on screen; one name, two EQUAL numbers: one answer" \
+  [list [r3_val $RD6 r1] [r3_val $RD6 agree] [lindex $RD6DECL 0] \
+        [rg_has [lindex $RD6DECL 1] {'r1'}] \
+        [rg_has [lindex $RD6DECL 1] {Sensitivity Analysis}] \
+        [rg_has [lindex $RD6DECL 1] {a guess would put a wrong number}]] \
+  {ABSENT 5.000000e-01 error 1 1 1}
+
+## ⚠ AND THE SAME NAME TWICE INSIDE ONE PLOT IS THE SAME QUESTION. Measured,
+## issue 1428's finding: a deck carrying `R1` and `R1_temp` makes ngspice write
+## `r1_temp` TWICE in one sensitivity plot — once as R1's instance `temp`
+## parameter and once as R1_temp's own resistance. Two quantities, one name.
+rg_wr [file join $scratch rd6b_ase.raw] \
+  [r3_raw {{{Sensitivity Analysis} real {v(r1_temp) -1.000000000000000e-04
+                                         v(r1_temp) 7.000000000000000e-01}}}]
+set RD6B [r3_probe [r3_state rd6b {{name {} expr r1_temp save 1}}] {}]
+check "RD6b the r1_temp collision — one name twice inside ONE plot — declines\
+ too" [r3_val $RD6B r1_temp] ABSENT
+
+## ⚠ THE `i(…)` FORM IS NOT STRIPPED, AND THAT IS MEASURED, NOT SYMMETRY.
+## Stripping it would index `i(v1)` under the bare word `v1`, which is ALSO the
+## sensitivity to source V1 — a manufactured collision between an operating
+## point current and a sensitivity, in every run that enables both. The fixture
+## carries exactly that pair.
+rg_wr [file join $scratch rd7_ase.raw] \
+  [r3_raw {{{Operating Point} real {i(v1) -1.714285714285714e-03}}
+           {{Sensitivity Analysis} real {v(v1) 8.333333000000000e-01}}}]
+set RD7 [r3_probe [r3_state rd7 {{name {} expr v1 save 1}
+                                 {name {} expr i(v1) save 1}}] {}]
+check "RD7 `v1` reads the sensitivity and `i(v1)` reads the current: the i()\
+ wrapper is never stripped, so the two do not collide" \
+  [list [r3_val $RD7 v1] [r3_val $RD7 i(v1)]] {8.333333e-01 -1.714286e-03}
+
+## ⚠ A ROW WHOSE VECTOR IS NOT THERE HAS NO VALUE, AND IT IS SAID — but only
+## when there IS a results file. A file that is not there at all is already
+## reported, loudly, by ase::attach_dbs and ase::raw_content_verdict; saying it
+## again per output row would be noise, and a probe called with a scratch state
+## has no run behind it to describe.
+set RD8ST [r3_state rd1 {{name {} expr nosuchvector save 1}}]
+set RD8SAID [rg_ciw {r3_probe $RD8ST {}}]
+set RD8MISS {}
+foreach s $RD8SAID {
+  if {[rg_has [lindex $s 1] {holds no single-point value}]} { set RD8MISS $s }
+}
+set RD9SAID [rg_ciw {r3_probe [r3_state rd_nofile {{name {} expr v(mid) save 1}}] {}}]
+set RD9MISS 0
+foreach s $RD9SAID {
+  if {[rg_has [lindex $s 1] {holds no single-point value}]} { set RD9MISS 1 }
+}
+check "RD8 a missing vector in a results file that EXISTS is said on screen;\
+ with no results file at all nothing is said twice" \
+  [list [expr {$RD8MISS ne {}}] [lindex $RD8MISS 0] \
+        [rg_has [lindex $RD8MISS 1] nosuchvector] $RD9MISS \
+        [file exists [file join $scratch rd_nofile_ase.raw]]] \
+  {1 note 1 0 0}
+
+## ⚠ AND THE SENTENCE NAMES ONLY THE ROWS THE RAWFILE READER WAS GIVEN. An
+## EXPRESSION never reaches that reader, so it can never be reported as a
+## missing vector — which is the tell for a dispatcher that has stopped
+## partitioning and is handing every row to both halves. Row written because
+## that sabotage survived without it.
+set RD8B [rg_ciw {r3_probe [r3_state rd1 {{name {} expr nosuchvector save 1}
+                                          {name {} expr {v(mid)*7} save 1}}] {}}]
+set RD8BM {}
+foreach s $RD8B {
+  if {[rg_has [lindex $s 1] {holds no single-point value}]} { set RD8BM [lindex $s 1] }
+}
+check "RD8b the missing-vector sentence names the vector row and never the\
+ expression row" \
+  [list [rg_has $RD8BM nosuchvector] [rg_has $RD8BM {v(mid)*7}]] {1 0}
+
+## ⚠ THE READER NEVER FALLS BACK TO THE LOG, AND THIS IS THE ROW THAT SAYS SO.
+## The rule on screen tells a user WHERE a row's number came from; a fallback
+## would make that sentence false, and it would make a later ruling of ⚖ R3 A
+## two changes instead of one. The fixture is the exact trap: `v(gone)` is not
+## in the results file and IS in the log, with a number a fallback would
+## happily show.
+set RD12 [r3_probe [r3_state rd1 {{name {} expr v(gone) save 1}
+                                  {name {} expr {v(gone)*2} save 1}}] \
+  "v(gone) = 4.200000e+00\nv(gone)*2 = 8.400000e+00\n"]
+check "RD12 a single-vector row absent from the results file gets NO value,\
+ even though the log has one for it" \
+  [list [r3_val $RD12 v(gone)] [r3_val $RD12 v(gone)*2]] {ABSENT 8.400000e+00}
+
+## ⚠ THE TWO READERS' ANSWERS MERGE INTO ONE DICT, keyed exactly as
+## ase::ui::output_result_key looks them up: `name` when the row has one, else
+## the `expr` as stored. Nothing about the KEY changes in issue 1429 — only
+## where the number was read.
+rg_wr [file join $scratch rd10_ase.raw] \
+  [r3_raw {{{Operating Point} real {v(mid) 1.285714285714286e+00}}}]
+set RD10 [r3_probe [r3_state rd10 {{name vm expr v(mid) save 1}
+                                   {name {} expr {v(mid)*2} save 1}}] \
+  "v(mid)*2 = 2.571429e+00\n"]
+check "RD10 one dict, both readers, keyed by name-or-expr as the Outputs pane\
+ looks them up" \
+  [list [r3_val $RD10 vm] [r3_val $RD10 v(mid)*2] [r3_val $RD10 v(mid)]] \
+  {1.285714e+00 2.571429e+00 ABSENT}
+
+## ⚠ WHY THE MERGE ORDER IN THE DISPATCHER CANNOT CHANGE AN ANSWER, and the
+## row that keeps it that way. The dispatcher's comment claims RAW WINS A KEY
+## CLASH. Measured: reversing the merge outright left this whole suite at ALL
+## PASS, because a correct PARTITION gives the two readers DISJOINT key sets and
+## there is no clash to win. That is a survivor by construction rather than a
+## hole -- but the construction was unasserted, which is issue 1428's S35 class
+## exactly (a key read by nothing is a key checked by nothing), so it is
+## asserted here. A sabotage that breaks the partition reddens RS3, RD8b and
+## RD12; this row is what says WHY the order beneath it is inert.
+set RD13ST [r3_state rd10 {{name {} expr v(mid) save 1}
+                           {name {} expr {v(mid)*2} save 1}}]
+set RD13R [ase::backend::ngspice::result_probe_raw \
+  [dict set RD13ST outputs {{name {} expr v(mid) save 1}}]]
+set RD13L [ase::backend::ngspice::result_probe_log \
+  [dict set RD13ST outputs {{name {} expr {v(mid)*2} save 1}}] \
+  "v(mid)*2 = 2.571429e+00\n"]
+set RD13BOTH {}
+foreach k [dict keys $RD13R] {
+  if {[dict exists $RD13L $k]} { lappend RD13BOTH $k }
+}
+check "RD13 the two readers' answers have disjoint keys, which is why the\
+ dispatcher's merge order is inert" \
+  [list [dict keys $RD13R] [dict keys $RD13L] $RD13BOTH] \
+  [list v(mid) v(mid)*2 {}]
+
+## ⚠ THE DISPATCHER MUST NOT RAISE FOR A STATE THAT HAS NO RESULTS FILE PATH,
+## and that is a production contract and not a test convenience:
+## `ase::run_done` calls it on EVERY completion, including runs that failed
+## before a design was resolved. ase::backend::ngspice::raw_file raises on a
+## state with no `design cell`, so the path resolution is caught. Removing that
+## `catch` killed this file at row P1 -- see the note there.
+set RD14ST [ase::state_default]
+dict set RD14ST outputs {{name {} expr v(mid) save 1}
+                         {name {} expr {v(mid)*2} save 1}}
+set RD14 [r3_probe $RD14ST "v(mid)*2 = 2.571429e+00\n"]
+check "RD14 a state with no design cell answers its log rows and does not\
+ raise" \
+  [list [r3_val $RD14 v(mid)] [r3_val $RD14 v(mid)*2]] {ABSENT 2.571429e+00}
+
+## ⚠ THE CASEMODE NOTE IS SAID ONCE PER RUN, NOT ONCE PER READER. The dispatcher
+## resolves the case rule and hands the same answer to both halves; a reader
+## resolving it for itself would announce a delivered `distinguish` twice.
+set RD11SAID [rg_ciw {r3_probe [r3_state rd10 {{name {} expr v(mid) save 1}
+                                               {name {} expr {v(mid)*2} save 1}}] \
+  "casemode=distinguish\nv(mid)*2 = 2.571429e+00\n"}]
+set RD11N 0
+foreach s $RD11SAID {
+  if {[rg_has [lindex $s 1] {this log says the simulator ran with}]} { incr RD11N }
+}
+check "RD11 the delivered-casemode note is said once per run, not once per\
+ reader" $RD11N 1
+
+} r3err]} {
+  check "RS0 sections RS and RD ran to the end" "RAISED:$r3err" {}
+}
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

@@ -47,6 +47,17 @@
 #          by a positive control
 #   NC228  the REAL simulator, when there is one (skipped, never failed) —
 #          NC228d is the §15.4b run on the case-capable binary
+#   NCR*   ⚖ R3's DISPATCHER (issue 1429), over this file's own subject: a row
+#          naming exactly one vector reads the RESULTS FILE and an expression
+#          reads this log, the rawfile reader obeys the SAME casemode ladder,
+#          and both answers land in one dict
+#
+# ⚠ EVERY ROW ABOVE NCR DRIVES `result_probe_log` BY NAME (issue 1429), because
+# the registered `result_probe` hook is now a dispatcher and every expression in
+# this file names exactly one vector. THE SWAP IS ONE LINE, and that is the
+# property ⚖ R3's Option C was recommended for: it is the SUPERSET of A and B,
+# so a later ruling deletes a reader rather than invalidating this file.
+# ⚠ THE COUNT IS A FLOOR: 28 -> 31 with section NCR.
 #
 # True headless (no X, no Tk). Run from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_result_case.tcl
@@ -120,7 +131,22 @@ reset_sim
 proc casemode {m} { set ::sim_case_mode $m }
 casemode fold
 
-set probe [ase::backend_hook ngspice result_probe]
+## ⚠ `$probe` IS THE LOG READER BY NAME, SINCE ISSUE 1429 — and the swap being
+## ONE LINE is itself the finding. This suite's subject is the casemode LADDER,
+## which is the print-log half of ⚖ R3's Option C. The registered
+## `result_probe` hook is now a DISPATCHER: it asks ase::result_source where a
+## row's number comes from and sends a row whose expression names exactly one
+## vector to the RESULTS FILE instead. Every expression in this file —
+## `v(In)`, `v(MidNode)`, `v(a.b)` — names exactly one vector, so driving the
+## dispatcher here would measure the rawfile reader under this file's name and
+## leave the ladder it is about untested.
+##
+## ⚠ ⚖ R3 IS ASKED AND UNANSWERED; Option C is DECISIONS.md's RECOMMENDATION.
+## Section NCR at the foot of this file is what keeps the dispatcher honest, and
+## it asserts that the two readers give the SAME number out of two different
+## files — so a later ruling of A or B moves which file is read and not which
+## number is shown.
+set probe ::ase::backend::ngspice::result_probe_log
 proc outstate {outputs} {
   set st [ase::state_default]
   dict set st outputs $outputs
@@ -470,6 +496,83 @@ if {![regexp -nocase {casemode[ =]'?distinguish|differs only in case} $dlog] \
 }
 casemode fold
 
+
+# ===========================================================================
+# NCR — ⚖ R3's DISPATCHER over this file's own subject (issue 1429).
+#
+# Everything above drives the LOG reader by name. These rows drive the
+# REGISTERED hook, so that what a user actually gets is measured too, and so
+# that the one-line swap above cannot quietly stop being equivalent.
+#
+# ⚠ ⚖ R3 IS ASKED AND UNANSWERED. Option C — named vectors from the results
+# file, arbitrary expressions from the print log — is DECISIONS.md's
+# RECOMMENDATION, implemented so that a later ruling of A or B removes one
+# reader rather than invalidating the work. DECISIONS.md records R3 as
+# EXTENDING the user's own ruling in issue 1243, not reversing it.
+#
+# No simulator: the results file is canned, which is this batch's idiom for a
+# reader row.
+# ===========================================================================
+proc ncr_raw {vars} {
+  set out "Title: * ncr\nDate: Sat Sep 12 00:00:00  2026\n"
+  append out "Plotname: Operating Point\nFlags: real\n"
+  append out "No. Variables: [expr {[llength $vars]/2}]\nNo. Points: 1\nVariables:\n"
+  set i 0
+  foreach {nm v} $vars { append out "\t$i\t$nm\tvoltage\n" ; incr i }
+  append out "Values:\n"
+  set i 0
+  foreach {nm v} $vars {
+    if {$i == 0} { append out " 0\t$v\n" } else { append out "\t$v\n" }
+    incr i
+  }
+  return $out
+}
+proc ncr_state {cell outs} {
+  set st [ase::state_default]
+  dict set st design [dict create lib l cell $cell view schematic]
+  dict set st rundir $::scratch
+  dict set st outputs $outs
+  return $st
+}
+set NCRD [ase::backend_hook ngspice result_probe]
+set NCRF [file join $scratch ncr_ase.raw]
+set f [open $NCRF w]
+## the FOLDED spelling a released ngspice writes, against a row drawn `v(In)`
+puts -nonewline $f [ncr_raw {v(in) 3.000000000000000e+00 v(midnode) 1.500000000000000e+00}]
+close $f
+
+reset_sim
+casemode fold
+set NCRST [ncr_state ncr {{expr v(In) save 1 plot 0}}]
+set NCR1 [pcall $NCRD $NCRST {}]
+set NCR2 [pcall $probe $NCRST $LOG_FOLDED]
+check "NCR1 ⚖ R3: `v(In)` names one vector, so the dispatcher reads it from the\
+ RESULTS FILE — with no log at all — and the two readers agree to the digit" \
+  [list [cell $NCR1 {expr v(In) save 1 plot 0}] \
+        [cell $NCR2 {expr v(In) save 1 plot 0}]] \
+  {3.000000e+00 3.000000e+00}
+
+## ⚠ AND THE RAWFILE READER OBEYS THE SAME LADDER, not a second one. The
+## fixture above is the FOLDED spelling; rung 2 is what matches it, and rung 2
+## is OFF when the log says the run delivered `distinguish` — measured for the
+## log half in NC230, asserted for the raw half here.
+set NCR3 [pcall $NCRD $NCRST "Warning: differs only in case\n"]
+check "NCR2 the results-file reader is gated by the SAME delivered-casemode\
+ rule as the log reader: a folded file is not matched under distinguish" \
+  [pcall dict size $NCR3] 0
+
+## ⚠ THE ROUTING IS THE RULE'S, AND IT IS ONE PROC. An expression that does NOT
+## name exactly one vector still reads the log, which is the half issue 1243
+## ruled on and which ⚖ R3 Option C leaves exactly as it was.
+set NCR4 [pcall $NCRD [ncr_state ncr {{expr v(In) save 1 plot 0}
+                                      {expr {v(In)*2} save 1 plot 0}}] \
+  "v(in)*2 = 6.000000e+00\n"]
+check "NCR3 one dict, two sources: the vector from the file and the expression\
+ from the log" \
+  [list [cell $NCR4 {expr v(In) save 1 plot 0}] \
+        [cell $NCR4 {expr {v(In)*2} save 1 plot 0}]] \
+  {3.000000e+00 6.000000e+00}
+casemode fold
 } err]} { puts "FATAL: $err" ; incr fail }
 
 ## restore the real ciw_echo OUTSIDE the catch, so a FATAL cannot leave the stub
