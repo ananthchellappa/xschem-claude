@@ -3212,7 +3212,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1424.**~~ superseded: **1424** is filed, above.
 
-**The next free number is 1425.**
+- **1425** — **The precondition is said before the run, with its remedy.** Commit C5 of Stage 4, the last one. `preflight_gate` emits every non-`fatal` precheck finding BEFORE the run: `ase: the ac analysis: this circuit has no AC source … Fix: put \u0060ac 1\u0060 on the input source`. ⚠ ngspice's own answer to the same condition is `E_NOACINPUT` AFTER the run, in a log the user has to go and read. ⚠ ADVICE, NOT A REFUSAL — the gate still returns {}; a caution is the user's call by definition, which is why a static pass demotes `blocked` to `caution` at all. ⚠ AND IT SITS ABOVE THE ESCAPE: `ase_preflight 0` turns off a REFUSAL, it is not a request to be told less about a circuit. ⚠ WHERE THE BANNER IS NOT: the plan asks for it under the FORM, but `netlist_facts` needs netlist TEXT and the dialog has none — producing it means `ase::netlist`, which loads designs and writes artifacts, a side effect no dialog may have because a user opened it. Deferred to Stage 6, where a cached artifact can be read without generating one. ⚠ AND THE DISTO SAVE-LIST RULE IS UNREACHABLE TODAY: it promotes `saves_resolve` to fatal WHEN `disto` IS ENABLED, and `disto` is probe-only until Stage 6, so an enabled disto row is refused by issue 1401's block long before a precondition is consulted. Named rather than faked. Floor: preflight 149 → **152**. **Stage 4 complete: 1421–1425.**
+
+~~**The next free number is 1425.**~~ superseded: **1425** is filed, above.
+
+**The next free number is 1426.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

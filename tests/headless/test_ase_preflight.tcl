@@ -45,13 +45,13 @@
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 149 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 152 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
 # rundir clause dropped and the rank table unscoped. RAISED 115 -> 122 -> 125. If a run reports fewer,
 # a row went missing; do not edit this number down to match it. RAISED 125 -> 135
-# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224, 144 -> 149 with PF225.
+# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224, 144 -> 149 with PF225, 149 -> 152 with PF226.
 #
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -1353,6 +1353,44 @@ eqcheck PF225e-a-caution-does-not-slam-the-gate \
         [lindex [lindex [dgn [ase::analysis_precheck ngspice [kstate {}] \
                    [ase::netlist_facts $KNOAC]] ac] 0] 1]] \
   {{} caution}
+
+
+# ===========================================================================
+# PF226 — the precondition is said BEFORE the run, with its remedy (issue 1425)
+# ===========================================================================
+## ⚠ THIS IS THE WHOLE POINT OF STAGE 4, IN FOUR LINES OF OUTPUT. ngspice's own
+## answer to a noise analysis with no AC input source is `E_NOACINPUT`, AFTER the
+## run, in a log the user has to go and read. The same fact is knowable from the
+## netlist text before anything starts -- and it comes with the remedy attached.
+said_clear
+set KADV [pcall ase::preflight_gate [kstate {}] $KNOAC]
+eqcheck PF226a-a-caution-is-said-before-the-run-with-its-fix \
+  [list $KADV \
+        [expr {[said_count {*has no AC source*}] >= 1}] \
+        [expr {[said_count {*Fix: put `ac 1`*}] >= 1}] \
+        [expr {[said_count {*the ac analysis*}] >= 1}]] \
+  {{} 1 1 1}
+
+## ⚠ ADVICE, NOT A REFUSAL. Nothing here stops the run -- the gate returned {}
+## above. A `caution` is the user's call by definition: they may know something
+## the netlist text cannot show, which is exactly why a static pass demotes
+## `blocked` to `caution` in the first place.
+said_clear
+eqcheck PF226b-a-deck-with-nothing-to-say-says-nothing \
+  [list [pcall ase::preflight_gate [kstate {}] $WITHAC] \
+        [said_count {*has no AC source*}]] \
+  {{} 0}
+
+## ⚠ AND IT SITS ABOVE THE ESCAPE. `set ase_preflight 0` turns off a REFUSAL; it
+## is not a request to be told less about a circuit. A user who has switched off
+## the save-list check has said "let me run this anyway", not "stop telling me
+## things I can act on".
+set ::ase_preflight 0
+said_clear
+set KADV0 [pcall ase::preflight_gate [kstate {}] $KNOAC]
+set ::ase_preflight 1
+eqcheck PF226c-the-escape-turns-off-a-refusal-not-the-advice \
+  [list $KADV0 [expr {[said_count {*has no AC source*}] >= 1}]] {{} 1}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

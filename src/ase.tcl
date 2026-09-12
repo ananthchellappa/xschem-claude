@@ -6654,6 +6654,30 @@ proc ase::preflight_gate {state netlist_text} {
       lappend plines $l
       return -code error [join $plines "\n"]
     }
+    # --- 1425: AND THE REST IS SAID BEFORE THE RUN, NOT AFTER IT ------------
+    #
+    # ⚠ THIS IS THE WHOLE POINT OF THE STAGE, IN FOUR LINES. ngspice's own
+    # answer to a noise analysis with no AC input source is `E_NOACINPUT`,
+    # AFTER the run, in a log the user has to go and read. The same fact is
+    # knowable from the netlist before anything starts, and it comes with the
+    # remedy attached: put `ac 1` on the input source.
+    #
+    # ⚠ ADVICE, NOT A REFUSAL. Nothing here stops the run. A `caution` is the
+    # user's call by definition -- they may know something the netlist text
+    # cannot show, which is exactly why a static pass demotes `blocked` to
+    # `caution` in the first place.
+    #
+    # ⚠ AND IT SITS ABOVE THE ESCAPE. `set ase_preflight 0` turns off a
+    # REFUSAL; it is not a request to be told less about a circuit. A user who
+    # has switched off the save-list check has said "let me run this anyway",
+    # not "stop telling me things I can act on".
+    dict for {pty prows} $pc {
+      foreach pr $prows {
+        set l "ase: the $pty analysis: [lindex $pr 2]"
+        if {[lindex $pr 3] ne {}} { append l ". Fix: [lindex $pr 3]" }
+        ::ase::echo $l
+      }
+    }
   }
   if {[info exists ::ase_preflight] && !$::ase_preflight} { return {} }
   set scan [ase::preflight_scan $state $netlist_text]
