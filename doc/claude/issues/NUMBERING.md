@@ -3160,7 +3160,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1411.**~~ superseded: **1411** is filed, above.
 
-**The next free number is 1412.**
+- **1412** — **Four defects this ngspice has or has not, measured from files instead of a version string.** Leg D, the last commit of Stage 2. ⚠ This suite's own header records two DIFFERENT builds printing `** ngspice-46+ : Circuit level simulation program` BYTE FOR BYTE, so the variant questions are asked as BEHAVIOUR and the identity keys are display-only (D44). Three Band-3 keys measured 0/1/0 on apt 45.2, the fork and upstream 47: `one_vector_write`, `keyword_case`, `gnd_literal`. ⚠ THE GROUND MARKER IS `@@gref=`, NOT `@@gnd=` — with the old spelling the key SATISFIES ITS OWN SEARCH and the verdict measures nothing. ⚠ The deck asks with `ALL` upper case because `all` SUCCEEDS on apt 45.2, so lower-casing it makes the probe answer 1 everywhere. ⚠ A FOLDER NAME COULD HAVE KILLED THE USER'S RUN: probe text handed to a Tcl LIST command raises on a quote or an unbalanced brace, inside a proc `sim_capabilities_at` deliberately re-raises. Words now come out by regexp; a raise publishes the third provenance token `noanswer`. THREE KEYS DROPPED with reasons: `flags` (half underivable, half a second answer to the same question), `curcasemode_default` (empty on two binaries, one forbidden use, no consumer) and `scripts_path` (empty on all three). Floor 148 → **158**, five sabotages. ⚠ Tcl counts braces INSIDE COMMENTS — an unbalanced one in a comment aborted xschem at startup.
+
+~~**The next free number is 1412.**~~ superseded: **1412** is filed, above.
+
+**The next free number is 1413.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

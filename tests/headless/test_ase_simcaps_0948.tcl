@@ -66,6 +66,9 @@
 #   148  section U, issue 1410: the free peek and the one cold door. ⚠ Row U2
 #        took FOUR fixtures -- three of them looked fine and could not fail
 #        against their own named sabotage; the reasons are written into the row.
+#   158  section V, issue 1412: leg D, the variant probe. ⚠ The `expr` bareword
+#        that aborts this whole file has now cost THREE runs -- sections L, Q and
+#        V. The rule is written beside V6: bare words do not go in `expr`.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -3658,6 +3661,181 @@ check {U7 what the peek looks up is what the probe recorded, so a warm cache is 
         [expr {$U7PEEK eq $U7WARM}] \
         $::UPROBES] \
   [list 1 1 1 1]
+a_resetall
+
+# ============================================================================
+# V. LEG D -- FOUR DEFECTS THIS NGSPICE HAS OR HAS NOT, MEASURED FROM FILES
+#    ISSUE 1412
+# ============================================================================
+#
+# ⚠ A VERSION STRING CANNOT TELL TWO BUILDS APART, AND THIS FILE'S OWN HEADER
+# ALREADY RECORDS THE MEASUREMENT: two different builds both print
+# `** ngspice-46+ : Circuit level simulation program`, byte for byte. So the
+# variant questions are asked as BEHAVIOUR, from FILES, and the identity keys are
+# display and log only -- never compared, never ordered (D44).
+#
+# MEASURED 2026-09-11 on all three preflight binaries:
+#                        apt 45.2   the fork   upstream 47
+#   one_vector_write        0          1           0
+#   keyword_case            0          1           0
+#   gnd_literal             0          1           0
+
+set V_NS ase::backend::ngspice
+## The two measured payload shapes, verbatim.
+set V_FORK "@@gref=M7 my gnd rail\nngspice-46+\nFri Sep 11 03:44:45 UTC 2026\n"
+set V_APT  "@@gref=M7 my 0 rail\nngspice-45.2\nFri Sep 12 11:58:13 UTC 2025\n"
+
+## --- V1: THE DECK'S SHAPE ---------------------------------------------------
+## ⚠ `write probe_k.raw ALL` IS UPPER CASE AND MUST STAY SO. MEASURED on apt
+## 45.2: `write w.raw all` SUCCEEDS while `ALL` and `All` both fail with "vector
+## ALL is not available or has zero length". Lower-casing it turns `keyword_case`
+## into a probe that answers 1 on every binary -- a key that measures nothing.
+set V1DECK [a_ans ${V_NS}::cap_deck_d]
+set V1W {}
+foreach v1l [split $V1DECK "\n"] {
+  set v1t [string trim $v1l]
+  if {[string first {write } $v1t] == 0} { lappend V1W [lrange $v1t 1 end] }
+}
+check {V1 the variant deck asks with a capitalised keyword, writes to bare lower-case names, and carries neither of the two commands the accumulating decks need} \
+  [list $V1W \
+        [a_count $V1DECK {remzerovec}] \
+        [a_count $V1DECK {set appendwrite}] \
+        [a_count $V1DECK {@@gref=}]] \
+  [list {probe_d.raw {probe_k.raw ALL}} 0 0 1]
+
+## --- V2: THE RENAME THAT MAKES THE GROUND VERDICT HONEST -------------------
+## ⚠ THE KEY USED TO BE SPELLED `@@gnd=`, AND THAT MADE ITS OWN VERDICT VACUOUS:
+## the natural test `string first gnd <line>` is TRUE on every binary INCLUDING
+## the two that rewrite, because the KEY satisfies the search. Renaming the marker
+## so it carries no `gnd` is what lets the payload answer the question.
+check {V2 the ground marker's own name contains no ground token, so searching the answer for one is a question about the simulator rather than about the marker} \
+  [list [expr {[string first {@@gnd=} $V1DECK] >= 0}] \
+        [expr {[string first {@@gref=} $V1DECK] >= 0}] \
+        [a_ans ${V_NS}::cap_d_field $V_FORK gref] \
+        [a_ans ${V_NS}::cap_d_field $V_APT gref]] \
+  [list 0 1 {M7 my gnd rail} {M7 my 0 rail}]
+
+## --- V3: THE THREE VERDICTS, FROM THE TWO MEASURED SHAPES ------------------
+proc v_verd {praw kex text} {
+  return [a_ans ${::V_NS}::cap_variant_verdicts $praw $kex $text 1]
+}
+check {V3 a build that hands back one vector for a one-vector save, keeps a capitalised keyword and leaves a ground token alone is measured sound on all three, and a build that does none of them is measured unsound on all three} \
+  [list [v_verd {v(mid)} 1 $V_FORK] \
+        [v_verd {v(mid) v(all)} 0 $V_APT]] \
+  [list {one_vector_write 1 keyword_case 1 gnd_literal 1} \
+        {one_vector_write 0 keyword_case 0 gnd_literal 0}]
+
+## --- V4: POLARITY IS "1 = SOUND", AND THE KEY IS NAMED FOR THE DEFECT -------
+## ⚠ Every reader in the tree is written as `== 1` meaning GOOD; one key with
+## inverted polarity is a defect waiting for a copy-paste. And naming the key for
+## the DEFECT rather than the fix is what makes it survive somebody fixing it a
+## different way -- or the fork being upstreamed.
+check {V4 the defect band is declared, its three keys are the ones leg D writes, and a sound answer is 1 rather than 0} \
+  [list [a_ans ase::caps_keys defect] \
+        [a_ans ase::caps_measured_as {known 1 one_vector_write 1} one_vector_write 1]] \
+  [list {one_vector_write keyword_case gnd_literal} 1]
+
+## --- V5: A LEG THAT RAN AND DID NOT ANSWER IS NOT A LEG THAT WAS CUT -------
+## ⚠ A THIRD PROVENANCE TOKEN, FOR A GENUINELY DIFFERENT CONDITION. `timeout`
+## records a leg that was CUT; `noanswer` records one that RAN, was not cut, and
+## whose artifact did not come back in a readable shape. Collapsing them would
+## tell the user their box was slow when it was not.
+check {V5 a variant leg whose artifact never arrived records that it ran and learned nothing, which is not the same as having been cut short} \
+  [list [a_ans ${V_NS}::cap_variant_verdicts NOFILE UNKNOWN {} 1] \
+        [a_ans ${V_NS}::cap_variant_verdicts {v(mid)} 1 $V_FORK 0]] \
+  [list {} {}]
+
+## --- V6: ⚠ HOSTILE TEXT MUST NOT KILL THE USER'S RUN -----------------------
+## `probe_d.txt` is written by a program ASE-L does not control, and its payload
+## can contain the USER'S OWN FOLDER NAME. Handing that to a Tcl LIST command --
+## `foreach`, `lsearch` -- raises on a double quote or an unbalanced brace, inside
+## `capabilities`, which `ase::sim_capabilities_at` DELIBERATELY RE-RAISES: the
+## exception reaches the Run gesture as a stack trace. That is issue 0949's
+## category error escalated from a silent wrong answer to a crash.
+set V6HOSTILE "@@gref=M7 my \"quoted gnd \{unbalanced rail\nngspice-46+\n"
+set V6RC [catch {${V_NS}::cap_variant_verdicts {v(mid)} 1 $V6HOSTILE 1} V6V]
+## ⚠ BARE WORDS DO NOT GO IN `expr`. `expr {$c ? $x : NOKEY}` is a Tcl 8.6 SYNTAX
+## ERROR that aborts the whole file, and the only symptom is the check count going
+## DOWN -- which is what the floor paragraph at the head of this file exists to
+## make visible. It has cost three runs in this suite alone; use `if`.
+set V6G NOKEY
+if {[string is list $V6V] && [dict exists $V6V gnd_literal]} {
+  set V6G [dict get $V6V gnd_literal]
+}
+check {V6 a payload carrying a quote and an unbalanced brace is read as words rather than as a list, so a folder name cannot reach the user as a Tcl error} \
+  [list $V6RC $V6G [catch {${V_NS}::cap_d_words $V6HOSTILE}]] \
+  [list 0 1 0]
+
+## --- V7: STRUCTURAL -- D52's FORBIDDEN INFERENCE IS NOT MADE ---------------
+## ⚠ `$curcasemode` reports the CURRENT mode, never the supported SET. Populating
+## `casemode_detected` from it would publish {fold} for the fork, NARROW its real
+## {fold preserve distinguish} and SWITCH OFF THE ONE FEATURE THE FORK HAS. The
+## scope is the whole `cap*` family, because a driver who put the identity readers
+## in a fourth proc would land the defect outside a three-proc allowlist.
+## ⚠ THE UNION EXCLUDES `capabilities` ITSELF, AND MEASURING THAT MATTERED:
+## `capabilities` MATCHES `cap*`, and it writes the key TWICE by design -- once to
+## publish the casemode leg's answer and once to record that leg as unmeasured
+## when it is cut. The first scope written here counted those two and reddened a
+## correct tree. The rule being fenced is that no VARIANT reader touches the key;
+## the casemode leg's own writer is the one place it belongs.
+proc v_capunion {} {
+  set out {}
+  foreach pr [info procs ::ase::backend::ngspice::cap*] {
+    if {$pr eq {::ase::backend::ngspice::capabilities}} { continue }
+    if {[catch {info body $pr} b]} { continue }
+    append out [a_nocomment $b] "\n"
+  }
+  return $out
+}
+check {V7 STRUCTURAL no variant reader writes the case-mode key -- the one inference that would narrow a build's real answer to a single mode -- while the casemode leg's own writer still does} \
+  [list [a_count [v_capunion] {casemode_detected}] \
+        [a_count [a_nocomment [a_body ${V_NS}::capabilities]] {casemode_detected}] \
+        [expr {[llength [info procs ::ase::backend::ngspice::cap*]] > 8}]] \
+  [list 0 2 1]
+
+## --- V8: THE IDENTITY KEYS ARE DISPLAY AND LOG ONLY ------------------------
+## ⚠ AND THE TREE ITSELF PROVES WHY: this file's header records two DIFFERENT
+## builds printing the same version string byte for byte. Any ordering operator on
+## it is wrong TODAY, not in principle.
+check {V8 the version line is collected for display and the band that holds it is the one nothing gates on} \
+  [list [a_ans ${V_NS}::cap_d_identity $V_FORK] \
+        [a_ans ase::caps_keys identity]] \
+  [list {version_line ngspice-46+ build_date {Fri Sep 11 03:44:45 UTC 2026}} \
+        {version_line build_date}]
+
+## --- V9: LEG D RUNS **LAST**, AND ITS ABSENCE IS RECORDED BY NAME ----------
+## ⚠ THE ORDERING HAS A COST WORTH NAMING: on a slow box leg D is the FIRST thing
+## a spent budget kills, so Band 3 stays unmeasured for the whole session --
+## `ase::sim_caps` is written only on `known 1` and cleared only by
+## `ase::sim_caps_clear`. Going quiet there would leave the user with three keys
+## silently missing and no way to tell why.
+set V9B [a_nocomment [a_body ${V_NS}::capabilities]]
+check {V9 the variant leg is the last thing the probe does, and a budget that runs out before it says which keys were lost rather than going quiet} \
+  [list [expr {[string first {cap_leg_d} $V9B] > [string first {cap_help_verdict} $V9B]}] \
+        [a_count [a_nocomment [a_body ${V_NS}::cap_leg_d]] {caps_unmeasured}] \
+        [expr {[string first {timeout} [a_nocomment [a_body ${V_NS}::cap_leg_d]]] >= 0}] \
+        [expr {[string first {noanswer} [a_nocomment [a_body ${V_NS}::cap_leg_d]]] >= 0}]] \
+  [list 1 4 1 1]
+
+## --- V10: THE REAL BINARY, END TO END --------------------------------------
+## ⚠ SELF-RELATIVE. It asserts the three keys ARRIVED and agree with each other,
+## not what they equal -- the answer differs by binary and naming one here would
+## stop measuring the tree the day the registry resolves somewhere else.
+a_resetall
+set V10C [a_ans ase::sim_capabilities ngspice]
+if {[string is list $V10C] && [dict exists $V10C known] && [dict get $V10C known] eq {1}} {
+  set V10M {}
+  foreach v10k {one_vector_write keyword_case gnd_literal} {
+    lappend V10M [dict get [a_ans ase::caps_get $V10C $v10k] measured]
+  }
+  check {V10 the real simulator this registry resolves to is asked all three variant questions in the same run that asks what it can do, and answers every one of them} \
+    [list $V10M \
+          [dict get [a_ans ase::caps_get $V10C version_line] measured] \
+          [a_ans ase::caps_unmeasured_keys $V10C]] \
+    [list {1 1 1} 1 {}]
+} else {
+  puts "SKIPPED: V10 (no usable simulator resolved -- known was not 1)"
+}
 a_resetall
 
 # ============================================================================

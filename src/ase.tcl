@@ -2873,9 +2873,21 @@ proc ase::cap_run {exe exeargs workdir secs} {
 #               absent, ABSENT = not measured.
 #   defect      gate MITIGATIONS with ase::caps_measured_as. ⚠ POLARITY IS
 #               "1 = SOUND", and the key is named for the DEFECT, never for the
-#               fix. SHIPS EMPTY -- its keys arrive with leg D and have no
-#               reader until then, and a band key with no reader is a key no
-#               row can pin.
+#               fix -- so it survives somebody fixing it a different way, and
+#               survives the fork being upstreamed. It shipped EMPTY with the
+#               vocabulary itself and was filled by leg D (issue 1412), because a
+#               band key with no reader is a key no row can pin.
+#
+# ⚠ `scripts_path` AND `curcasemode_default` ARE NOT HERE, AND THEIR ABSENCE IS A
+# DECISION. Measured on all three preflight binaries: `$sourcepath` came back
+# EMPTY from inside the probe deck, so `scripts_path` would be an absent key on
+# every binary in this environment; and `curcasemode_default` reports the CURRENT
+# mode rather than the supported SET (it is the empty string on apt 45.2 and on
+# upstream 47, whose logs say `Error: curcasemode: no such variable.`), D52
+# forbids its one tempting use -- populating `casemode_detected` from it would
+# narrow the fork's real {fold preserve distinguish} to {fold} and SWITCH OFF the
+# one feature the fork has -- and nothing in this stage reads it. A key with no
+# consumer, no value on any binary here, and one forbidden use is not a key.
 #   provenance  the absence of an answer, which is itself not a claim.
 #
 # ⚠ THE PREDICATE FOLLOWS THE **DIRECTION OF THE GATE**, NOT THE BAND. This is
@@ -2887,10 +2899,11 @@ proc ase::cap_run {exe exeargs workdir secs} {
 # a simulator" -- issue 0953, re-filed.
 proc ase::caps_keys {{band {}}} {
   set k [dict create \
-    identity   {version_line build_date scripts_path curcasemode_default} \
+    identity   {version_line build_date} \
     capability {usable appendwrite hier_op_names blanket_op_save altshow_op_dump
-                casemode_detected} \
-    defect     {} \
+                casemode_detected analyses_available analyses_probed
+                devices_available} \
+    defect     {one_vector_write keyword_case gnd_literal} \
     provenance {unmeasured unmeasured_keys secs noplace_at noplace_why}]
   if {$band eq {}} { return $k }
   if {![dict exists $k $band]} { return {} }
@@ -12508,6 +12521,187 @@ namespace eval ase::backend::ngspice {
   # misread; measured on ngspice-46+, it still appends every analysis. A build
   # free to ignore it is still read correctly -- ase::cap_raw_plots reads both
   # shapes.
+  # ---- LEG D: THE VARIANT PROBE (Stage 2 item 2g, issue 1412) -------------
+  #
+  # ONE ADDITIONAL `-b` PROCESS, LAST, OUT OF THE SAME BUDGET. Measured cost on
+  # all three preflight binaries: below /usr/bin/time's resolution.
+  #
+  # ⚠ IT MUST NOT BE MERGED INTO DECK A. Deck A's answer is the SHAPE OF ITS RAW
+  # FILE after two appending writes; this deck's raw deliberately answers a
+  # DIFFERENT question -- how a ONE-vector plot comes back -- and merging them
+  # makes each unreadable. Same contract the A/B split already carries.
+  #
+  # ⚠ NO `remzerovec` AND NO `set appendwrite` HERE, and the reason is not the
+  # batch rule. Decks A and B carry `remzerovec` BECAUSE their subject IS what the
+  # writes accumulate; leg D's subject is WHICH VECTORS CAME BACK, so a
+  # vector-removing command would run before the measurement it is measuring. The
+  # sim_status/remzerovec rule is about the deck `render_deck` emits for the USER.
+  #
+  # ⚠ EVERY REDIRECT TARGET IS A BARE LOWER-CASE NAME (issues 1334 and 0949).
+  #
+  # ⚠ THE GROUND MARKER IS `@@gref=`, NOT `@@gnd=`, AND THE RENAME IS WHAT MAKES
+  # THE VERDICT HONEST. With the key itself spelled `@@gnd=`, the natural test
+  # `string first gnd <line>` is TRUE on every binary INCLUDING the two that
+  # rewrite -- the key satisfies its own search. Measured payloads after the
+  # rename: `my 0 rail` on apt 45.2 and on stock 47, `my gnd rail` on the fork.
+  proc cap_deck_d {} {
+    return {* ase variant probe D
+v1 in 0 dc 1
+r1 in mid 3k
+r2 mid 0 1k
+.control
+set filetype=ascii
+save v(mid)
+op
+write probe_d.raw
+write probe_k.raw ALL
+echo "@@gref=M7 my gnd rail" >> probe_d.txt
+version -v >> probe_d.txt
+version -d >> probe_d.txt
+.endc
+.end
+}
+  }
+
+  # ⚠ NEVER HAND PROBE TEXT TO A TCL **LIST** COMMAND. `probe_d.txt` is written by
+  # a program ASE-L does not control, and a payload carrying a double quote or an
+  # unbalanced open brace makes `foreach`/`lsearch` RAISE -- inside `capabilities`,
+  # which
+  # `ase::sim_capabilities_at` DELIBERATELY RE-RAISES, so the exception reaches the
+  # user's Run gesture as a Tcl stack trace. That is issue 0949's category error
+  # escalated from a silent wrong answer to a crash, and the text can contain the
+  # user's own folder name. Words come out by regexp and are compared as strings.
+  #
+  # ⚠ AND THIS COMMENT MAY NOT SHOW YOU THE CHARACTER IT IS ABOUT. Tcl counts
+  # braces INSIDE COMMENTS when it parses a braced block, so writing an unbalanced
+  # one here -- even in backticks, even as an example -- leaves the enclosing
+  # `namespace eval` unclosed and the whole file fails to source with
+  # `missing close-brace: possible unbalanced brace in comment`. Measured: it
+  # aborted xschem at startup, which is issue 0663's arm.
+  proc cap_d_words {line} { return [regexp -all -inline {\S+} $line] }
+
+  proc cap_d_field {text key} {
+    foreach line [split $text "\n"] {
+      set t [string trim $line]
+      if {[string first "@@$key=" $t] == 0} {
+        return [string range $t [expr {[string length $key] + 3}] end]
+      }
+    }
+    return {}
+  }
+
+  # THE THREE BAND-3 DEFECT KEYS, plus the two Band-1 identity lines.
+  #
+  # ⚠ POLARITY IS "1 = SOUND", NEVER "1 = HAS THE BUG", and each key is named for
+  # the DEFECT rather than for the fix -- so it survives somebody fixing it a
+  # different way, and survives the fork being upstreamed.
+  #
+  # MEASURED 2026-09-11 on all three preflight binaries:
+  #                       apt 45.2   fork   upstream 47
+  #   one_vector_write       0        1        0
+  #   keyword_case           0        1        0
+  #   gnd_literal            0        1        0
+  proc cap_variant_verdicts {praw kexists text ran} {
+    set out [dict create]
+    if {!$ran} { return $out }
+    # one_vector_write: a one-save op plot must come back holding ONE vector.
+    # Measured: apt 45.2 and upstream 47 hand back `v(mid)` AND `v(all)`.
+    if {$praw ne {NOFILE}} {
+      set n 0
+      foreach v $praw { if {[string match {v(*} $v]} { incr n } }
+      dict set out one_vector_write [expr {$n == 1 ? 1 : 0}]
+    }
+    # keyword_case: does a CAPITALISED keyword ARGUMENT resolve. ⚠ MEASURED on apt
+    # 45.2, `write w.raw all` SUCCEEDS while `ALL` and `All` both fail with
+    # "vector ALL is not available or has zero length" -- so the deck must ask with
+    # `ALL`, upper case, or the probe answers 1 on every binary.
+    if {$kexists ne {UNKNOWN}} {
+      dict set out keyword_case [expr {$kexists ? 1 : 0}]
+    }
+    # gnd_literal: does a bare `gnd` token survive a control argument list.
+    set g [cap_d_field $text gref]
+    if {$g ne {}} {
+      set hit 0
+      foreach wd [cap_d_words $g] { if {$wd eq {gnd}} { set hit 1 } }
+      dict set out gnd_literal $hit
+    }
+    return $out
+  }
+
+  # BAND 1 -- DISPLAY AND LOG ONLY, NEVER COMPARED (D44).
+  # ⚠ THE TREE ITSELF PROVES WHY: this suite's own header records that two
+  # DIFFERENT builds both print `** ngspice-46+ : Circuit level simulation
+  # program`, byte for byte. One version string, two binaries, measured in-tree --
+  # so any ordering operator on it is wrong TODAY, not in principle.
+  proc cap_d_identity {text} {
+    set out [dict create]
+    set lines {}
+    foreach l [split $text "\n"] {
+      set t [string trim $l]
+      if {$t eq {} || [string first {@@} $t] == 0} { continue }
+      lappend lines $t
+    }
+    foreach l $lines {
+      if {![dict exists $out version_line] && [string first {ngspice-} $l] >= 0} {
+        dict set out version_line $l
+      } elseif {![dict exists $out build_date] && [regexp {[0-9]{4}} $l]} {
+        dict set out build_date $l
+      }
+    }
+    return $out
+  }
+
+  # ⚠ THE WHOLE READER IS WRAPPED, AND A RAISE PUBLISHES `noanswer` RATHER THAN
+  # KILLING THE RUN. `noanswer` is a THIRD provenance token and a genuinely
+  # different condition from the two already wired: those record a leg that was
+  # CUT, this one a leg that RAN, was not cut, and whose artifact did not come
+  # back in a shape that could be read.
+  proc cap_leg_d {exe exeargs workdir t0 out} {
+    if {[::ase::cap_left $t0] <= 0} {
+      foreach k {one_vector_write keyword_case gnd_literal} {
+        set out [::ase::caps_unmeasured $out $k timeout]
+      }
+      return $out
+    }
+    set deck [file join $workdir probe_d.sp]
+    set f [open $deck w] ; puts -nonewline $f [cap_deck_d] ; close $f
+    set rc [::ase::cap_run $exe [concat $exeargs [list -b $deck]] $workdir \
+              [::ase::cap_left $t0]]
+    if {[lindex $rc 2]} {
+      foreach k {one_vector_write keyword_case gnd_literal} {
+        set out [::ase::caps_unmeasured $out $k timeout]
+      }
+      return $out
+    }
+    set praw NOFILE ; set kexists UNKNOWN ; set text {}
+    if {[catch {
+      set rd [file join $workdir probe_d.raw]
+      if {[file exists $rd]} {
+        set pl [::ase::cap_raw_plots $rd]
+        set p [::ase::cap_plot $pl {Operating Point}]
+        if {$p ne {}} { set praw [lindex $p 2] }
+      }
+      set kexists [file exists [file join $workdir probe_k.raw]]
+      set td [file join $workdir probe_d.txt]
+      if {[file exists $td]} {
+        set fh [open $td r] ; set text [read $fh] ; close $fh
+      }
+      set v [cap_variant_verdicts $praw $kexists $text 1]
+      set out [dict merge $out $v]
+      set out [dict merge $out [cap_d_identity $text]]
+      foreach k {one_vector_write keyword_case gnd_literal} {
+        if {![dict exists $out $k]} {
+          set out [::ase::caps_unmeasured $out $k noanswer]
+        }
+      }
+    } legderr]} {
+      foreach k {one_vector_write keyword_case gnd_literal} {
+        set out [::ase::caps_unmeasured $out $k noanswer]
+      }
+    }
+    return $out
+  }
+
   # ---- THE ANALYSIS-AVAILABILITY LEG (Stage 2 item 2a, issue 1409) --------
   #
   # ⚠ NO NEW RUN. These lines ride DECK C, measured free: deck C's answer is a
@@ -12959,6 +13153,12 @@ $_leg
     # characterised (the run log names it), so it earns a token; the
     # ran-but-produced-nothing case still publishes neither key nor provenance.
     if {$devs_why ne {}} { set out [ase::caps_unmeasured $out devices_available $devs_why] }
+    # ⚠ LEG D RUNS **LAST**, AND THAT ORDERING HAS A COST WORTH NAMING: on a slow
+    # box it is the FIRST thing a spent budget kills, so Band 3 then stays
+    # unmeasured for the whole session -- `ase::sim_caps` is written only on
+    # `known 1` and cleared only by `ase::sim_caps_clear`. That is exactly why it
+    # records its own absence by name instead of going quiet.
+    set out [cap_leg_d $exe $exeargs $workdir $t0 $out]
     return $out
   }
 
