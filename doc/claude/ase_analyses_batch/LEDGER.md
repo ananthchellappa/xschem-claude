@@ -569,11 +569,28 @@ The order, each commit sabotage-verifiable **on the tree as that commit leaves i
 **C1** (2f) → **C2** (cache) → **C3** (2d) → **C4** (2a) → **C5** (2b+2c-core) → **C6** (2c-grid) →
 **C7** (2g).
 
+**STAGE 2 IS COMPLETE — ALL SEVEN COMMITS LANDED, T1 AT ZERO ON EVERY ONE.**
+Full receipt: `receipts/07-stage-2-the-type-list-is-measured.md`.
+
 | landed | commit | subject | floors |
 |---|---|---|---|
 | `4723380f` | **C2** | `fix(1406)` a re-registered backend kept answering from the registry it replaced | simcaps 110 → 111 |
 | `8bfbbd6f` | **C1** | `fix(1407)` ASE-L asked the same question of one dict twenty-eight different ways | simcaps 111 → 126 |
 | `13f5ff71` | **C3** | `fix(1408)` ASE-L described a simulator it had never been told anything about | core 266 → 273; dialogs **display** 215 → 224, headless 37 unmoved |
+| `dd6302eb` | **C4** | `feat(1409)` ASE-L never asked the simulator which analyses it has | simcaps 126 → 141 |
+| `df60b0af` | **C5** | `feat(1410)` eleven analyses, each with a state and a reason | core 273 → **289**; simcaps 141 → 148 |
+| `66fdcead` | **C6** | `feat(1411)` the grid says which analyses this build can run, and why not | dialogs **display** 224 → **236** |
+| `391ef0c0` | **C7** | `feat(1412)` four defects measured from files instead of a version string | simcaps 148 → **158** |
+
+**WHAT THE USER SEES WHEN THE WINDOW REOPENS:** eleven analyses instead of four, in a wrapping grid,
+each cell carrying its state as a glyph and its reason as a sentence; a bench naming a simulator
+ASE-L has no adapter for says so instead of showing ngspice's four radios and an ngspice deck line;
+and Detect appears exactly where a measurement could change an answer.
+
+⚠ **THE HONEST GRID TODAY IS FOUR `ok` AND SEVEN `blocked`.** The renderable test sits above the
+availability arms deliberately — offering a type the adapter cannot emit produces a run that emits
+nothing. `absent` becomes reachable when Stage 6 gives the seven an `emit`, which also means the
+plan's four-states-in-one-screenshot **cannot be taken yet**; the look debt says so.
 
 ⚠ **AND A STAGE 1 DEBT LANDED FIRST — `bcb2fc59`, issue 1405** (see the paragraph above Stage 2).
 
