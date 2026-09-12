@@ -3204,7 +3204,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1422.**~~ superseded: **1422** is filed, above.
 
-**The next free number is 1423.**
+- **1423** — **Preconditions become filters, not error messages.** Commit C3 of Stage 4: `ase::analysis_needs` evaluates a type's declared `needs` ids against `netlist_facts` and returns `{id verdict sentence fix}`; `ase::needs_eval` is the per-predicate body; `analysis_precheck` covers every ENABLED analysis; `precheck_worst` is the ordering, written once. Three predicates — `ac_source`, `sweep_target`, `cider_klu` — chosen because they are the three reachable today (noise/disto/sp stay probe-only until Stage 6, so a `needs` on them would be unreachable code with an unreachable test). ⚠ THE GOVERNING RULE IS THAT A FALSE REFUSAL IS WORSE THAN A MISSED ONE: `netlist_facts` answers `exact 0`, so every `blocked` on a static pass is DEMOTED to `caution` and the sentence says the pass could not see inside an `.include`. The demotion lives in ONE place so a predicate author writes the honest verdict and the evaluator lowers it. `fatal` is never demoted — ngspice `exit(1)`s on CIDER-under-KLU, so the rest of `.control` never runs. ⚠ THREE SHAPES THAT WOULD EACH HAVE BEEN A FALSE REFUSAL: the CIDER/KLU pair needs BOTH halves (firing on the device alone refuses every deck the feature exists for); `temp` is a legal sweep target naming no instance; and an UNIMPLEMENTED precondition id is SATISFIED, because a registry naming one nobody wrote must not block a run. ⚠ ONE SABOTAGE SURVIVED AND ITS REPAIR IS THE LESSON: swapping `fatal` and `blocked` in `precheck_worst` passed everything, because every fixture yielded findings of exactly ONE severity — with a lone fatal, any ordering returns fatal. **An ordering row whose fixtures never disagree is a row that cannot fail.** Floor: preflight 135 → **144**.
+
+~~**The next free number is 1423.**~~ superseded: **1423** is filed, above.
+
+**The next free number is 1424.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

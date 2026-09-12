@@ -6070,6 +6070,172 @@ proc ase::netlist_facts {netlist_text} {
     nodes [dict get [ase::netlist_map $netlist_text] scopes] exact 0]
 }
 
+# ---------------------------------------------------------------------------
+# PRECONDITIONS BECOME FILTERS, NOT ERROR MESSAGES. Issue 1423.
+#
+# A `needs` entry on a registry type names a precondition id. This proc
+# EVALUATES those ids against ase::netlist_facts and returns what the user
+# should be told, as a list of
+#
+#     {<id> <verdict> <sentence> <fix>}
+#
+# with `verdict` one of `caution` `blocked` `fatal` -- the same three words the
+# four-state grid and the gate already speak.
+#
+# ⚠ THE EVALUATOR IS ASE-L's AND THE REASONS ARE THE ADAPTER's (D34-D37). That
+# `dc` needs a sweepable target is schema; that ngspice's `dctrcurv.c` accepts a
+# voltage source, a current source, a resistor and the literal `temp` and
+# nothing else is CONTENT, and it arrives through `dc_swkind`.
+#
+# ⚠ AND A STATIC FACT MAY NOT PRODUCE A REFUSAL. `ase::netlist_facts` answers
+# `exact 0`: it cannot see inside an `.include`, so "this deck has no AC source"
+# from a deck that includes a stimulus file is a GUESS. Every verdict this proc
+# would raise to `blocked` on a static pass is lowered to `caution` instead, and
+# the sentence says the pass could not see everything. A FALSE REFUSAL IS WORSE
+# THAN A MISSED ONE -- it stops work that would have succeeded, and the user has
+# no way to tell the tool it is wrong.
+proc ase::analysis_needs {sim row facts {opts {}}} {
+  set type [ase::state_get $row type]
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e needs]} { return {} }
+  set exact 0
+  if {[dict exists $facts exact]} { set exact [dict get $facts exact] }
+  set out {}
+  foreach id [dict get $e needs] {
+    set v [ase::needs_eval $sim $type $id $row $facts $opts]
+    if {$v eq {}} { continue }
+    lassign $v verdict sentence fix
+    # THE STATIC DEMOTION, in one place so no predicate can forget it.
+    if {!$exact && $verdict eq {blocked}} {
+      set verdict caution
+      append sentence " (read from the netlist text, which cannot see inside an\
+ .include)"
+    }
+    lappend out [list $id $verdict $sentence $fix]
+  }
+  return $out
+}
+
+# ONE PRECONDITION, EVALUATED. Returns {verdict sentence fix} or {} when the
+# precondition is satisfied.
+#
+# ⚠ AN ID THIS PROC DOES NOT KNOW RETURNS {} -- SATISFIED -- AND THAT IS THE
+# SAFE DIRECTION. A registry naming a precondition nobody implemented yet must
+# not block a run; `ase::analysis_schema_errors` is where an unimplemented id
+# gets reported, at the time somebody asks about the registry, not at the moment
+# a user presses Run.
+proc ase::needs_eval {sim type id row facts opts} {
+  switch -exact -- $id {
+    ac_source {
+      # ≥1 independent source with an AC magnitude.
+      dict for {inst rec} [dict get $facts sources] {
+        if {[dict exists $rec ac]} { return {} }
+      }
+      return [list blocked \
+        "this circuit has no AC source" \
+        "put `ac 1` on the input source (any magnitude will do)"]
+    }
+    sweep_target {
+      # ngspice sweeps a V source, an I source, a resistor, or `temp`.
+      if {![dict exists $row source] || [dict get $row source] eq {}} { return {} }
+      set nm [dict get $row source]
+      set kind {}
+      catch {
+        set h [ase::backend_hook $sim dc_swkind]
+        if {$h ne {}} { set kind [$h $nm] }
+      }
+      if {$kind eq {temp}} { return {} }
+      # A `temp` sweep names no instance; everything else has to be in the deck.
+      set seen 0
+      dict for {sc sd} [dict get $facts nodes] {
+        if {[dict exists $sd devs $nm]} { set seen 1 ; break }
+        foreach dn [dict keys [dict get $sd devs]] {
+          if {[string equal -nocase $dn $nm]} { set seen 1 ; break }
+        }
+        if {$seen} break
+      }
+      if {$seen} { return {} }
+      return [list blocked \
+        "this circuit has no '$nm' to sweep" \
+        "name a voltage source, a current source, a resistor, or `temp`"]
+    }
+    cider_klu {
+      # ⚠ FATAL, AND IT IS NOT A STYLE OPINION. A CIDER device under the KLU
+      # solver makes ngspice `exit(1)` -- not an error return, an EXIT -- so the
+      # rest of `.control` never runs and nothing after this analysis in the deck
+      # happens either. A `caution` would let the user start a run that cannot
+      # produce anything and cannot say why.
+      #
+      # ⚠ BOTH HALVES, OR IT IS A FALSE REFUSAL. A CIDER device is perfectly
+      # fine under the default solver, and CIDER decks are the ONLY reason
+      # anyone builds ngspice with it. A predicate that fired on the device
+      # alone would refuse every deck the feature exists for. The solver comes
+      # from the bench's own options, which is why this evaluator takes them.
+      set klu 0
+      dict for {on ov} $opts {
+        if {[string equal -nocase $on klu] && $ov ne {0}} { set klu 1 }
+      }
+      if {!$klu} { return {} }
+      set cider 0
+      dict for {mn md} [dict get $facts models] {
+        if {[lsearch -exact {numd nbjt nbjt2 numos} [dict get $md type]] >= 0} {
+          set cider 1 ; break
+        }
+      }
+      if {!$cider} { return {} }
+      return [list fatal \
+        "this circuit has a CIDER numerical device, and the KLU solver exits\
+ outright on one" \
+        "select the `sparse` solver for this run"]
+    }
+  }
+  return {}
+}
+
+# EVERY ENABLED ANALYSIS'S PRECONDITIONS, BY TYPE. The shape the plan leaves
+# open, fixed here: `{<type> {{<id> <verdict> <sentence> <fix>} ...}}`, carrying
+# only the types that have something to say.
+#
+# ⚠ ENABLED ONLY. A switched-off analysis makes no claim about a run, exactly as
+# the Arguments column decided in issue 1420 -- and a bench opening with three
+# disabled rows must not open wearing three warnings about a circuit nobody has
+# asked it to simulate yet.
+proc ase::analysis_precheck {sim state facts} {
+  # The bench's options, flattened to name -> value, because a precondition can
+  # depend on one (the CIDER/KLU pair is the measured case).
+  set opts [dict create]
+  foreach o [ase::state_get $state options] {
+    if {![dict exists $o name]} { continue }
+    set ov 1
+    if {[dict exists $o value]} { set ov [dict get $o value] }
+    dict set opts [dict get $o name] $ov
+  }
+  set out [dict create]
+  foreach row [ase::state_get $state analyses] {
+    if {[ase::state_get $row enabled 0] ne {1}} { continue }
+    set n [ase::analysis_needs $sim $row $facts $opts]
+    if {[llength $n]} { dict set out [ase::state_get $row type] $n }
+  }
+  return $out
+}
+
+# THE WORST VERDICT IN A PRECHECK, as one word -- `fatal`, `blocked`, `caution`
+# or {}. The grid cell and the gate both need "how bad is the worst of these"
+# and neither should re-derive the ordering.
+proc ase::precheck_worst {pc} {
+  set worst {}
+  dict for {ty rows} $pc {
+    foreach r $rows {
+      switch -exact -- [lindex $r 1] {
+        fatal   { return fatal }
+        blocked { set worst blocked }
+        caution { if {$worst eq {}} { set worst caution } }
+      }
+    }
+  }
+  return $worst
+}
+
 
 # Resolve ONE identifier against the map.
 #
@@ -14100,6 +14266,7 @@ $_leg
         plots  {{select {Operating Point} role scalars results value label op}}] \
       dc [dict create \
         label dc  baseline 1  registered 1  seed_enabled 0  emitorder 10 viewrank 20 \
+        needs  {sweep_target cider_klu} \
         fields {{name source kind source required 1 label {Sweep variable}} \
                 {name start  kind real   required 1 label {Start}} \
                 {name stop   kind real   required 1 label {Stop}} \
@@ -14118,6 +14285,7 @@ $_leg
         plots  {{select {DC transfer characteristic} role sweep results viewer label dc}}] \
       ac [dict create \
         label ac  baseline 1  registered 1  seed_enabled 0  emitorder 20 viewrank 30 \
+        needs  {ac_source cider_klu} \
         fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
                              label {Sweep type} relabels points} \
                 {name points kind int  required 1 label {Points per decade} \
@@ -14131,6 +14299,7 @@ $_leg
         plots  {{select {AC Analysis} role sweep results viewer label ac}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
+        needs  {cider_klu} \
         fields {{name step   kind time required 1 label {Time step} unit s} \
                 {name stop   kind time required 1 label {Stop time} unit s} \
                 {name tstart kind time advanced 1 whenskipped 0 \

@@ -45,13 +45,13 @@
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 135 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 144 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
 # rundir clause dropped and the rank table unscoped. RAISED 115 -> 122 -> 125. If a run reports fewer,
 # a row went missing; do not edit this number down to match it. RAISED 125 -> 135
-# when section PF223 landed ase::netlist_facts.
+# when section PF223 landed ase::netlist_facts, 135 -> 144 with PF224.
 #
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -1160,6 +1160,117 @@ eqcheck PF223j-both-passes-see-the-same-scopes \
   [list [lsort [dict keys [dgn $FF nodes]]] \
         [lsort [dict keys [dict get [ase::netlist_map $FNL] scopes]]]] \
   [list {{} fmid} {{} fmid}]
+
+
+# ===========================================================================
+# PF224 — preconditions become filters, not error messages (issue 1423)
+# ===========================================================================
+## ⚠ THE GOVERNING RULE OF THIS SECTION IS THAT A FALSE REFUSAL IS WORSE THAN A
+## MISSED ONE. `ase::netlist_facts` answers `exact 0`: it cannot see inside an
+## `.include`, so "this deck has no AC source" from a deck that includes a
+## stimulus file is a GUESS. A refusal built on a guess stops work that would
+## have succeeded and gives the user no way to tell the tool it is wrong.
+set NOAC "* t\nV1 in 0 1\nR1 in out 1k\n.end\n"
+set WITHAC "* t\nV1 in 0 dc 1 ac 1\nR1 in out 1k\n.end\n"
+set CIDERNL "* t\nV1 in 0 dc 1 ac 1\nD1 in out dmod\n.model dmod numd\n.end\n"
+proc pcheck {nl analyses {opts {}}} {
+  set st [ase::state_default]
+  dict set st analyses $analyses
+  dict set st options $opts
+  return [ase::analysis_precheck ngspice $st [ase::netlist_facts $nl]]
+}
+set ACROW {{type ac enabled 1 points 10 start 1 stop 1k}}
+set PC1 [pcheck $NOAC $ACROW]
+
+eqcheck PF224a-a-deck-with-no-ac-source-warns-an-enabled-ac-analysis \
+  [list [dict exists $PC1 ac] [lindex [lindex [dgn $PC1 ac] 0] 0] \
+        [lindex [lindex [dgn $PC1 ac] 0] 3]] \
+  {1 ac_source {put `ac 1` on the input source (any magnitude will do)}}
+
+## ⚠ A `blocked` VERDICT ON A STATIC PASS IS DEMOTED TO `caution`, AND THE
+## SENTENCE SAYS WHY. The demotion lives in ONE place so that no predicate can
+## forget it -- a predicate author writes the honest verdict and the evaluator
+## lowers it, rather than thirteen authors each remembering the same caveat.
+eqcheck PF224b-a-static-block-is-demoted-to-a-caution-and-says-so \
+  [list [lindex [lindex [dgn $PC1 ac] 0] 1] \
+        [expr {[string first {cannot see inside an .include} \
+                 [lindex [lindex [dgn $PC1 ac] 0] 2]] >= 0}]] \
+  {caution 1}
+
+eqcheck PF224c-a-deck-that-has-what-the-analysis-needs-says-nothing \
+  [list [dict size [pcheck $WITHAC $ACROW]] \
+        [dict size [pcheck $WITHAC {{type dc enabled 1 source V1 start 0 stop 1 step 0.1}}]]] \
+  {0 0}
+
+## ⚠ ENABLED ONLY, exactly as the Arguments column decided in issue 1420. A
+## switched-off analysis makes no claim about a run, and a bench opening with
+## three disabled rows must not open wearing three warnings about a circuit
+## nobody has asked it to simulate.
+eqcheck PF224d-a-switched-off-analysis-is-not-prechecked \
+  [dict size [pcheck $NOAC {{type ac enabled 0 points 10 start 1 stop 1k}}]] 0
+
+## ⚠ `temp` IS A LEGAL SWEEP TARGET AND NAMES NO INSTANCE. A predicate that
+## required the target to be in the deck would refuse `dc v1 0 1 0.5 temp -40 60
+## 50`, which is the cheapest genuine ADE-beater in this whole design.
+set PCD [pcheck $WITHAC {{type dc enabled 1 source Vnope start 0 stop 1 step 0.1}}]
+eqcheck PF224e-the-sweep-target-must-be-in-the-deck-unless-it-is-temp \
+  [list [lindex [lindex [dgn $PCD dc] 0] 0] \
+        [expr {[string first {'Vnope'} [lindex [lindex [dgn $PCD dc] 0] 2]] >= 0}] \
+        [dict size [pcheck $WITHAC {{type dc enabled 1 source temp start 0 stop 1 step 0.1}}]]] \
+  {sweep_target 1 0}
+
+## ⚠ THE CIDER/KLU PAIR NEEDS **BOTH** HALVES OR IT IS A FALSE REFUSAL. A CIDER
+## device is perfectly fine under the default solver, and CIDER decks are the
+## only reason anyone builds ngspice with it -- a predicate firing on the device
+## alone would refuse every deck the feature exists for.
+eqcheck PF224f-a-cider-device-alone-is-not-a-problem \
+  [dict size [pcheck $CIDERNL $ACROW]] 0
+
+## ⚠ AND THE PAIR IS `fatal`, NOT `blocked`, SO IT IS **NOT** DEMOTED BY THE
+## STATIC RULE. ngspice `exit(1)`s on it -- not an error return, an EXIT -- so
+## the rest of `.control` never runs and nothing after this analysis happens
+## either. A caution would let the user start a run that cannot produce anything
+## and cannot say why.
+set PCK [pcheck $CIDERNL $ACROW {{name klu value 1}}]
+eqcheck PF224g-cider-under-klu-is-fatal-and-survives-the-static-demotion \
+  [list [lindex [lindex [dgn $PCK ac] 0] 1] \
+        [expr {[string first {cannot see inside} \
+                 [lindex [lindex [dgn $PCK ac] 0] 2]] >= 0}] \
+        [lindex [lindex [dgn $PCK ac] 0] 3]] \
+  {fatal 0 {select the `sparse` solver for this run}}
+
+## ⚠ AN UNIMPLEMENTED PRECONDITION ID IS **SATISFIED**, AND THAT IS THE SAFE
+## DIRECTION. A registry naming a precondition nobody has written yet must not
+## block a run; an unimplemented id is a fact about the registry, reported when
+## somebody asks about the registry, not at the moment a user presses Run.
+eqcheck PF224h-an-unimplemented-precondition-id-does-not-block-a-run \
+  [pcall ase::needs_eval ngspice ac zz_no_such_precondition {} \
+    {sources {} families {} events {} models {} nodes {} exact 0} {}] {}
+
+## ⚠ ONE ORDERING, IN ONE PLACE. The grid cell and the gate both need "how bad is
+## the worst of these" and neither may re-derive it, or they will disagree about
+## a bench in front of the user.
+##
+## ⚠ AND THE FIXTURE HAS TO CONTAIN A CONFLICT, WHICH THE FIRST DRAFT DID NOT.
+## Every precheck above yields findings of exactly ONE severity, so a sabotage
+## that swapped `fatal` and `blocked` in the ordering PASSED this row: with a
+## lone fatal, any ordering returns fatal. An ordering row whose fixtures never
+## disagree is a row that cannot fail. This one forces `exact 1` -- so the AC
+## finding stays `blocked` instead of being demoted -- on a CIDER deck under KLU,
+## which is `fatal`, and the two arrive in that order.
+set NOACCIDER "* t\nV1 in 0 1\nD1 in out dmod\n.model dmod numd\n.end\n"
+set PCX [ase::analysis_precheck ngspice \
+  [dict replace [dict replace [ase::state_default] analyses $ACROW] \
+     options {{name klu value 1}}] \
+  [dict replace [ase::netlist_facts $NOACCIDER] exact 1]]
+eqcheck PF224i-the-worst-verdict-is-ordered-once-and-the-fixture-disagrees \
+  [list [llength [dgn $PCX ac]] \
+        [lindex [lindex [dgn $PCX ac] 0] 1] \
+        [lindex [lindex [dgn $PCX ac] 1] 1] \
+        [ase::precheck_worst $PCX] \
+        [ase::precheck_worst $PC1] \
+        [ase::precheck_worst [pcheck $WITHAC $ACROW]]] \
+  {2 blocked fatal fatal caution {}}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 
