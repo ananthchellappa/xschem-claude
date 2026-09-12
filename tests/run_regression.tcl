@@ -70,7 +70,10 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_lib_new_path_guards_0799" \
                  "headless/test_descend_doors_1228" \
                  "headless/test_ase_simdlg_0937" \
-                 "headless/test_suite_watchdog_1403"]
+                 "headless/test_suite_watchdog_1403" \
+                 "headless/test_ase_core" \
+                 "headless/test_ase_dialogs" \
+                 "headless/test_ase_persist"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -88,6 +91,22 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # real screen and flooding it is the thing devdisplay.sh exists to stop.
 # devdisplay.sh's own `exec` sets GUI_GATE=0 for the child only, so the user's
 # Pause/Stop panel is left alone.
+# ⚠ AND THREE ASE SUITES JOINED `hcases` ABOVE IN ISSUE 1413, BECAUSE T1 WAS
+# BEING QUOTED FOR COVERAGE IT DID NOT HAVE. Measured before that change: T1 ran
+# exactly FOUR `test_ase_*` suites -- simreg_0931, simcaps_0948, optier_0963 and
+# simdlg_0937 -- and ran `test_ase_core`, `test_ase_dialogs` and `test_ase_persist`
+# on NEITHER arm. Seven commits of the analyses batch were reported as "T1 at
+# zero", which was true and which said NOTHING about test_ase_core's 289 checks --
+# where the analysis registry, the four-state resolver and the Stop warning all
+# live. The suites were run separately every time, so the work was verified; the
+# NUMBER was quoted for more than it covered.
+#
+# ⚠ THEY GO IN `hcases`, NOT HERE. test_ase_dialogs is 37 checks headless against
+# 236 on a display and test_ase_persist is 44 against 148 -- the headless arm of
+# each is a measurement of a MUCH SMALLER THING, not a weaker measurement of the
+# same one (issue 1405 cost 100 checks to that distinction). Putting them in
+# `dcases` as well is a bigger change than this one and wants its own measurement
+# of what the display arm costs in wall-clock here.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \

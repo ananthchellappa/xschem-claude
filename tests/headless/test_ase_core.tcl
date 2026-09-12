@@ -4280,5 +4280,24 @@ if {$fail == 0} {
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"
 }
+# ⚠ THE SECOND SENTINEL, AND IT IS WHAT LETS run_regression.tcl READ THIS FILE
+# AT ALL (issue 1413). There are TWO completion banners in this tree:
+# `run_suites.sh` accepts either `RESULT: ALL PASS` or `OVERALL: ok` (issue 0228),
+# while `tests/banner_rule.tcl` -- the rule `run_regression.tcl` consumes --
+# accepts ONLY a whole-line `OVERALL: ok` with an optional parenthesised trailer.
+# A suite printing `RESULT:` alone is scored a HARNESS FAILURE by T1 however many
+# of its own checks passed, which is issue 0689's shape, filed four times.
+#
+# MEASURED: this suite printed `RESULT:` and nothing else, so it could not be
+# added to T1's case list -- and seven commits of the analyses batch were reported
+# as "T1 at zero" while T1 ran only FOUR test_ase_* suites and never this one.
+# The suites were run separately every time, so the work was verified; the NUMBER
+# was quoted for more than it covered. `test_ase_simcaps_0948` and
+# `test_ase_optier_0963` already emit both, which is exactly why THEY are in T1.
+if {$fail == 0} {
+  puts "OVERALL: ok"
+} else {
+  puts "OVERALL: notok"
+}
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

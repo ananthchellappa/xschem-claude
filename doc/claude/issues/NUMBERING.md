@@ -3164,7 +3164,11 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 ~~**The next free number is 1412.**~~ superseded: **1412** is filed, above.
 
-**The next free number is 1413.**
+- **1413** — **T1 was quoted for coverage it did not have.** `run_regression.tcl` ran exactly FOUR `test_ase_*` suites and ran `test_ase_core`, `test_ase_dialogs` and `test_ase_persist` on NEITHER arm — so seven Stage 2 commits reported as *T1 at zero* said **nothing about test_ase_core's 289 checks**, where the registry, the Stop warning and the four-state resolver all live. (Those suites were run separately every time, so the work was verified; the NUMBER was quoted for more than it covered.) ⚠ They could not simply be added: there are TWO completion banners here — `run_suites.sh` takes `RESULT: ALL PASS` or `OVERALL: ok` (0228) while `banner_rule.tcl` takes only `OVERALL: ok`, so a `RESULT:`-only suite is scored a HARNESS failure at ALL PASS, which is issue **0689**'s shape filed four times. ⚠ The RULE was not the thing to change: `simcaps_0948` and `optier_0963` already print both, which is exactly why THEY were in T1. The three suites now emit the second sentinel and join `hcases`. T1 goes **58 → 61 cases, all zero**. They go in `hcases` and not `dcases` because dialogs is 37 headless against 236 on a display — a measurement of a much smaller thing, not a weaker one (issue 1405's lesson).
+
+~~**The next free number is 1413.**~~ superseded: **1413** is filed, above.
+
+**The next free number is 1414.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
