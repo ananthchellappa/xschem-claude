@@ -6529,6 +6529,177 @@ proc ase::needs_eval {sim type id row facts opts} {
       }
       return {}
     }
+    sens_out {
+      # ⚠ THE THIRD ANALYSIS IN A ROW THAT DOES NOT VALIDATE ITS OUTPUT, AND
+      # THE ONE WHERE THE SILENT ANSWER IS LARGEST. `tf` fills in three numbers
+      # for an output that is not there; `sens` fills in a table of ~90.
+      # MEASURED 2026-09-12 on the fork (`build-ver_50`) and on apt 45.2 alike,
+      # with this tree's own `sim_status` guard wrapped round the analysis:
+      #
+      #   sens v(mid) dc        -> rc 0, correct: r1 -1.38889e-04 …
+      #   sens v(nosuchnode) dc -> rc 0, EVERY vector -0.000000e+00
+      #   sens v(in,nosuch) dc  -> rc 0, v1 1.000000e+00 and the rest 0 -- the
+      #                                  missing REFERENCE is silently ground
+      #   sens i(R1) dc         -> rc 0, every vector 0.000000e+00
+      #   sens i(C1) dc         -> rc 0, every vector 0.000000e+00
+      #   sens i(L1) dc         -> rc 0, every vector 0.000000e+00
+      #   sens i(I1) dc         -> rc 0, every vector 0.000000e+00
+      #   sens i(nosuchsrc) dc  -> rc 0, every vector 0.000000e+00
+      #   sens x(mid) dc        -> rc 1, `Error: Syntax error: voltage or
+      #                                   current expected.`, RUN-FAILED
+      #   sens v mid dc         -> rc 1, `Error: Syntax error: '(' expected
+      #                                   after 'v'`, RUN-FAILED
+      #
+      # A run that succeeded, with a full table of zeros, is the worst of the
+      # three: the user gets a RESULT and reads it.
+      #
+      # ⚠ `i()` IS A VOLTAGE SOURCE AND ONLY A VOLTAGE SOURCE, AND THAT IS FIVE
+      # DEVICE CLASSES RATHER THAN AN ARGUMENT. The inductor and the CURRENT
+      # SOURCE are the two that matter: `i(L1)` is a real branch current
+      # elsewhere in ngspice, so "nothing else has a branch current" is false;
+      # and `I1` IS in `facts sources`, so a predicate asking "is this an
+      # independent source" rather than "is this a voltage source" passes it in
+      # silence at rc 0.
+      if {![dict exists $row out] || [dict get $row out] eq {}} { return {} }
+      set outv [dict get $row out]
+      set d {}
+      catch {
+        set h [ase::backend_hook $sim out_decompose]
+        if {$h ne {}} { set d [$h $outv] }
+      }
+      # ⚠ AN ADAPTER WITH NO `out_decompose` GETS NO OPINION -- the same house
+      # rule every optional hook keeps: absent means NOT MEASURED, never NO.
+      # ⚠ AND THE HOOK IS `tf`'s OWN, REUSED RATHER THAN RESPELLED. That is the
+      # whole point of a registered hook: `v(a)` / `v(a,b)` / `i(src)` is one
+      # simulator's output syntax, not one analysis's.
+      if {$d eq {}} { return {} }
+      if {$d eq {malformed}} {
+        # ⚠ `fatal`, AND FOR ONE REASON ONLY: the run does not reach the end of
+        # `.control`. It is NOT because ngspice misreports it -- and this is
+        # where `sens` differs from `tf` and the argument may not be copied.
+        # `tf v mid V1` blames the SOURCE with an EMPTY name; `sens v mid dc`
+        # says `Error: Syntax error: '(' expected after 'v'`, which names the
+        # output and the missing parenthesis. ASE-L says the same thing earlier,
+        # rather than making up for a misleading message.
+        # ⚠ AND `fatal` IS EXEMPT FROM THE STATIC DEMOTION, which is the other
+        # half: no `.include` can make `v mid` a legal output, so the evaluator's
+        # "cannot see inside an .include" caveat would be a lie about why ASE-L
+        # is unsure. Issue 1426's C47, arriving for the second time.
+        return [list fatal \
+          "'$outv' is not an output this simulator can read" \
+          "write it as `v(node)`, `v(node,reference)` or `i(source)` -- the\
+ parentheses are not optional"]
+      }
+      set kind [lindex $d 0]
+      if {$kind eq {current}} {
+        set nm [lindex $d 1]
+        dict for {inst rec} [dict get $facts sources] {
+          if {[string equal -nocase $inst $nm] \
+              && [dict get $rec letter] eq {v}} { return {} }
+        }
+        return [list blocked \
+          "'$outv' names no voltage source to read a current through, and this\
+ analysis fills in a table of zeros either way" \
+          "name a voltage source, or measure a voltage with `v(node)` instead"]
+      }
+      # A VOLTAGE OUTPUT: every node it names has to exist somewhere.
+      set missing {}
+      foreach n [lrange $d 1 end] {
+        set seen 0
+        dict for {sc sd} [dict get $facts nodes] {
+          if {[dict exists $sd nodes $n]} { set seen 1 ; break }
+          foreach nn [dict keys [dict get $sd nodes]] {
+            if {[string equal -nocase $nn $n]} { set seen 1 ; break }
+          }
+          if {$seen} break
+        }
+        if {!$seen} { lappend missing $n }
+      }
+      if {![llength $missing]} { return {} }
+      return [list blocked \
+        "this circuit has no node '[join $missing {' and no node '}]', and this\
+ analysis fills in a table of sensitivities anyway rather than saying so" \
+        "name a node that is in the circuit"]
+    }
+    sens_filters {
+      # ⚠ A FILTER THAT MATCHES NOTHING PRODUCES **NO PLOT AT ALL**, at rc 0,
+      # with nothing on either stream. This is the sharpest thing measured in
+      # this entry and it has no analogue in `tf` or `pz`. MEASURED 2026-09-12
+      # on the fork and on apt 45.2 alike:
+      #
+      #   sens v(mid) r1 dc        -> $plots `const sens1`, one vector: r1
+      #   sens v(mid) r1 nosuch dc -> $plots `const sens1`, one vector: r1 --
+      #                               the bad filter is DROPPED IN SILENCE
+      #   sens v(mid) nosuch dc    -> $plots `const`, $curplotname `constants`,
+      #                               rc 0, REACHED-THE-END
+      #
+      # On ASE-L's own append-write deck the `write` that follows then writes
+      # the CONSTANTS plot, which `ase::raw_content_verdict` rejects outright --
+      # a successful run that produces a file of mathematical constants.
+      #
+      # ⚠ THE CHECK IS KEYED ON THE **TOP SCOPE'S** DEVICES, AND THAT REFUTES
+      # APPENDIX §2.10's NAMING TABLE. The table (`<inst>`, `<inst>:<param>`,
+      # `<inst>_<param>`) is measured on a FLAT deck; every xschem bench has
+      # subcircuits. MEASURED 2026-09-12 on both binaries -- `V1 / X1 / R9` at
+      # top level, `Ra` and `Rb` inside `.subckt divider` -- the complete
+      # bare-name set of the sens plot is
+      #
+      #     r.x1.ra   r.x1.rb   r9   v1
+      #
+      # A subcircuit device is `<letter>.<instpath>.<name>` and the subckt CALL
+      # `x1` produces nothing. So a user filtering on the name they see inside
+      # their own subcircuit -- `ra` -- matches nothing. Searching every scope
+      # would find `ra` and say nothing, which is the wrong answer in the
+      # direction that stays silent.
+      #
+      # ⚠ A GLOB GETS NO OPINION, AND SO DOES A DOTTED NAME, AND BOTH ARE
+      # DELIBERATE. The candidate vector set is `<inst>`, `<inst>:<param>` and
+      # `<inst>_<param>` over a parameter list ASE-L cannot enumerate without a
+      # run (`devhelp -csv -type -flags`, which is Stage 5b's picker), so
+      # whether `r*` matches something is not decidable from the netlist. An
+      # EXACT name is: it matches a vector if and only if some instance `i`
+      # satisfies `g == i`, `g` begins `i:` or `g` begins `i_`. A dotted name is
+      # the user spelling a hierarchical vector themselves, which this pass
+      # cannot flatten. Refusing either would be a false refusal.
+      #
+      # ⚠ `blocked`, SO THE STATIC PASS DEMOTES IT TO `caution` WITH THE
+      # `.include` CAVEAT, AND THAT IS RIGHT HERE. An `.include`d file really
+      # can add a top-level device with that name. The severity tracks what the
+      # static pass can KNOW; that ngspice says nothing at all is what makes the
+      # finding worth having, not what makes it severe.
+      # ⚠ THE FIELD IS READ AS A LIST AND A MALFORMED ONE ANSWERS NOTHING. This
+      # is a free-text box, so an unbalanced brace is a value a user can type,
+      # and `foreach` over it raises. A raise here lands on the Run path (render_deck
+      # re-checks every `fatal`), so it is caught where there is nothing to say
+      # rather than left to abort a deck write. `ase::analysis_verbatim` guards
+      # the `x` key the same way and for the same reason.
+      set fv [ase::field_value $sim $type $row filters]
+      if {$fv eq {} || [catch {llength $fv}]} { return {} }
+      set devs {}
+      if {[dict exists $facts nodes {}]} {
+        set devs [dict keys [dict get $facts nodes {} devs]]
+      }
+      set dead {}
+      foreach g $fv {
+        if {[string first * $g] >= 0 || [string first ? $g] >= 0} { continue }
+        if {[string first . $g] >= 0} { continue }
+        set f [string tolower $g]
+        set hit 0
+        foreach i $devs {
+          set li [string tolower $i]
+          if {$f eq $li || [string first "${li}:" $f] == 0 \
+              || [string first "${li}_" $f] == 0} { set hit 1 ; break }
+        }
+        if {!$hit && [lsearch -exact $dead $g] < 0} { lappend dead $g }
+      }
+      if {![llength $dead]} { return {} }
+      return [list blocked \
+        "nothing in this circuit is named '[join $dead {' or '}]', and a\
+ sensitivity filter that matches nothing leaves the run with no results at all\
+ rather than failing" \
+        "name a device this netlist has at the top level -- a device inside a\
+ subcircuit is named `<letter>.<instance path>.<name>`"]
+    }
     cider_klu {
       # ⚠ FATAL, AND IT IS NOT A STYLE OPINION. A CIDER device under the KLU
       # solver makes ngspice `exit(1)` -- not an error return, an EXIT -- so the
@@ -14682,15 +14853,22 @@ $_leg
   # speller's RETURN TYPE, which is free with one implementation and costs every
   # reader afterwards. ngspice's one-element list emits today's exact text.
   proc analysis_types {} {
-  # -- THE SIX ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
+  # -- THE FOUR ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
   # -- DRIVE. Stage 2 (issue 1410) LISTS them so the user can see they
   # exist; Stage 6 gives them an `emit` and makes them runnable.
   #
-  # ⚠ IT WAS SEVEN UNTIL Stage 5 (issue 1426) GAVE `tf` A REAL ENTRY, and the
-  # paragraphs below are written about the ones that are LEFT. `tf` now carries
-  # `emitorder`, `fields` and a `role analysis` card, so every "NO x" below is
-  # answered for it in its own block -- with one exception that is NOT a
-  # relaxation and is measured: it still declares NO `viewrank`. See there.
+  # ⚠ IT WAS SEVEN, AND STAGE 5 TOOK THREE OF THEM: `tf` (issue 1426), `pz`
+  # (issue 1427) and `sens` (issue 1428). The paragraphs below are written
+  # about the ones that are LEFT -- `noise`, `disto`, `sp`, `pss`. Each of the
+  # three departed carries `emitorder`, `fields` and a `role analysis` card, so
+  # every "NO x" below is answered for it in its own block -- with one
+  # exception that is NOT a relaxation and is measured three times over: all
+  # three still declare NO `viewrank`. See there.
+  # ⚠ THIS COUNT IS THE ONE THING IN THIS BLOCK THAT ROTS. It read SIX after
+  # `tf` landed and stayed SIX through `pz`'s commit, while row EM7 of
+  # tests/headless/test_ase_core.tcl -- which COUNTS them -- correctly read
+  # five. A prose count beside a counted row is the count that goes stale, so
+  # if the two disagree the row is right.
   #
   # ⚠ NO `emitorder`, AND THAT IS THE GUARD, NOT AN OMISSION. MEASURED:
   # an entry carrying `emitorder` with no `emit` template used to pass
@@ -14888,6 +15066,194 @@ $_leg
   # ⚠ NO `seed_enabled`: `ase::state_default` stays at four rows and the 104
   # committed `.state` files keep round-tripping byte-identically. Section CP of
   # tests/headless/test_ase_core.tcl is the row that would notice.
+  #
+  # ─── `sens`, DC SENSITIVITY (Stage 5, issue 1428) ──────────────────────────
+  #
+  # ⚠ **DC ONLY. THE `ac` MODE IS STAGE 6's**, and that is a scope line with two
+  # measured defects behind it rather than a convenience. Both are AC-ONLY and
+  # both were re-measured 2026-09-12 on the fork AND on apt 45.2:
+  #
+  #   sens v(mid) r1 ac lin 5 1k 5k -> 1.000000e+03  8.000000e+05  6.400000e+08
+  #                                    5.120000e+11  4.096000e+14   (each x800)
+  #   .options klu + sens v(mid) ac dec 1 1k 10k -> rc 139, SIGSEGV
+  #   .options klu + sens v(mid) dc              -> rc 0, and the numbers are
+  #                                    BYTE-FOR-BYTE the sparse ones
+  #
+  # The sweep defect is `inc_freq` (`cktsens.c:829-837`) testing against the
+  # `#define LINEAR 3` pulled in from `noisedef.h` instead of `SENS_LINEAR`, so
+  # the test is always true and there is no linear arm at all. It cannot reach
+  # DC: `count_steps`' `SENS_DC` arm (`cktsens.c:872`) returns n=0 and s=0 and
+  # `sens_sens` sets `freq = 0.0` for the single point, so the value `inc_freq`
+  # computes is never used. The KLU crash is the guard at `cktsens.c:97-105`
+  # being COMMENTED OUT -- and note what the commented guard would have refused:
+  # ALL sensitivity under KLU, DC included. Measured, DC under KLU is safe and
+  # identical, so re-instating it upstream would refuse a run that works.
+  #
+  # ⚠ SO NEITHER OF THE PLAN'S TWO `rules` SHIPS HERE, AND THAT IS NOT A
+  # DEFERRAL OF WORK -- IT IS THE SHAPE CHANGING. PLAN.md Stage 5 writes the
+  # emit as `{sens {build …an_sens_out} @filters? @modeargs}` and then has to
+  # express "do not offer `lin` for SENS AC" as a `rule`, BECAUSE `@modeargs` is
+  # a FREE SLOT: a free slot has no declared value set for a field constraint to
+  # attach to. This entry has no `@modeargs` at all -- the DC case is the
+  # LITERAL token `dc` in the template -- so there is nothing free to constrain,
+  # and when Stage 6 adds the mode it can declare the sweep field
+  # `values {dec oct}` and have the restriction be a FIELD CONSTRAINT the form
+  # cannot offer, rather than a rule the form offers and then refuses. That is
+  # the better answer and it is only available because the mode is modelled.
+  #
+  # ⚠ TWO FIELDS, NOT THE PLAN'S FIVE, AND THE `{build <proc>}` ESCAPE IS STILL
+  # NOT IN THIS TREE. `tf`'s block above records the finding (issue 1426): §1c
+  # specifies `{build <proc>}` and Stage 1 shipped `@x`, `@x?` and `@x!` and no
+  # `build` arm, so a `{build …}` token is emitted as the literal words. Stage 5
+  # spends the escape on `sens` too -- `an_sens_out`, composing
+  # `{outkind outnode outref outsrc}` into one token -- and the `tf` crew left
+  # the decision here because `sens` is the last entry that wants it.
+  # ⚠ THE DECISION IS: DO NOT BUILD IT, AND THE REASON IS A MEASUREMENT RATHER
+  # THAN THE COST. The escape's whole gain would be a STRUCTURED output picker;
+  # `ase::backend::ngspice::out_decompose` -- registered as a hook and shipped
+  # by issue 1426 -- already takes `v(a)`, `v(a,b)` and `i(src)` APART again,
+  # exactly and case-insensitively. So the structured data is recoverable from
+  # the one verbatim token whenever a surface wants it, and composition buys
+  # nothing a reader does not already give. Building a Stage 1 grammar arm with
+  # one consumer, in the last commit of Stage 5, to reach a surface Stage 5b has
+  # not built, is a change with no measurement behind it.
+  #
+  # ⚠ `sens` DOES NOT VALIDATE ITS OUTPUT EITHER, AND THE TABLE IT FILLS IN IS
+  # WORSE THAN `tf`'s THREE NUMBERS. MEASURED 2026-09-12 on both binaries, with
+  # this tree's own `sim_status` guard around the analysis, reading four of the
+  # ~90 vectors a four-device deck produces:
+  #
+  #   sens v(mid) dc        -> rc 0  r1 -1.38889e-04  r2 2.777775e-05
+  #                                  r3  2.777775e-05  v1 8.333333e-01 (right)
+  #   sens v(nosuchnode) dc -> rc 0  EVERY vector -0.000000e+00
+  #   sens v(in,nosuch) dc  -> rc 0  v1 1.000000e+00, everything else 0 -- the
+  #                                  missing REFERENCE is silently ground
+  #   sens i(Vsense) dc     -> rc 0  r1 -2.77778e-08 … v1 1.666667e-04 (right)
+  #   sens i(R1) dc         -> rc 0  every vector 0.000000e+00
+  #   sens i(C1) dc         -> rc 0  every vector 0.000000e+00
+  #   sens i(L1) dc         -> rc 0  every vector 0.000000e+00
+  #   sens i(I1) dc         -> rc 0  every vector 0.000000e+00
+  #   sens i(nosuchsrc) dc  -> rc 0  every vector 0.000000e+00
+  #   sens x(mid) dc        -> rc 1  Error: Syntax error: voltage or current
+  #                                  expected.        -> RUN-FAILED
+  #   sens v mid dc         -> rc 1  Error: Syntax error: '(' expected after 'v'
+  #
+  # ⚠ AND THE LAST LINE IS WHERE `sens` IS **BETTER** THAN `tf`, WHICH IS WHY
+  # THIS BLOCK DOES NOT COPY `tf`'s ARGUMENT. `tf v mid V1` blames the SOURCE
+  # (`Warning: Transfer function source  not in circuit`, with an empty name);
+  # `sens v mid dc` names the output and the missing parenthesis. The verdict is
+  # still `fatal` -- the guard's `quit 1` fires and nothing after it in
+  # `.control` runs -- but the sentence ASE-L says is not making up for a
+  # misleading message, it is saying the same thing earlier.
+  #
+  # ⚠ `i()` IS A VOLTAGE SOURCE AND ONLY A VOLTAGE SOURCE, MEASURED ACROSS FIVE
+  # DEVICE CLASSES. The four zero rows above are a resistor, a capacitor, an
+  # INDUCTOR and a CURRENT SOURCE -- and the last two are the ones that matter:
+  # `i(L1)` is a real branch current elsewhere in ngspice, and `I1` IS in
+  # `facts sources`, so a predicate asking "is this an independent source"
+  # rather than "is this a voltage source" passes it silently at rc 0.
+  #
+  # ⚠ THE FILTER IS THE ONLY THING THAT MAKES `.sens` USABLE, AND A FILTER THAT
+  # MATCHES NOTHING PRODUCES **NO PLOT AT ALL**. This is the sharpest measured
+  # defect in the entry and it has no analogue in `tf` or `pz`. MEASURED
+  # 2026-09-12 on both binaries:
+  #
+  #   sens v(mid) r1 dc            -> $plots = `const sens1`, one vector: r1
+  #   sens v(mid) r1 nosuch dc     -> $plots = `const sens1`, one vector: r1
+  #                                   -- the bad filter is DROPPED IN SILENCE
+  #   sens v(mid) nosuch dc        -> $plots = `const`, $curplotname =
+  #                                   `constants`, rc 0, REACHED-THE-END
+  #   sens v(mid) zzz* dc          -> the same: no plot at all
+  #
+  # On ASE-L's own append-write deck shape the `write` that follows therefore
+  # writes the CONSTANTS plot. FOLLOWED THROUGH THIS TREE'S OWN RENDERER rather
+  # than reasoned about: `render_deck` against a scratch library with an
+  # explicit `rundir`, one enabled row
+  # `{type sens enabled 1 out v(mid) filters nosuchdev}`, on BOTH binaries --
+  #
+  #   rc 0, and the only record in <cell>_ase.raw is
+  #     Title: Constant values / Plotname: constants / No. Variables: 12
+  #   ase::raw_content_verdict -> ok 0  constants 1  plotname constants
+  #
+  # -- the twelve-mathematical-constants artifact the whole of
+  # tests/headless/test_ase_preflight.tcl exists for, reached from a direction
+  # nobody had walked. ⚠ AND DEFENCE (c) CATCHES IT AND GUESSES THE CAUSE WRONG:
+  # its sentence says "the analysis did not run (typically a `.save` of a node
+  # the circuit does not have)". That is what makes the precondition worth
+  # having -- it is the only place the real cause can be said.
+  #
+  # ⚠ AND APPENDIX §2.10's "WRITE FILTERS LOWERCASE" IS EXACTLY BACKWARDS UNDER
+  # THE ONE CASEMODE THAT MAKES CASE MATTER. §2.10 says the glob is
+  # "case-sensitive against already-folded names -- so write filters lowercase".
+  # MEASURED 2026-09-12 under the DEFAULT casemode on both binaries,
+  # `sens v(mid) R1 dc`, `R*` and `RL` ALL MATCH, because the command reader
+  # folds the filter too. MEASURED on the fork under `-D casemode=preserve`,
+  # against a netlist spelling the device `R1`:
+  #
+  #   sens v(mid) R1 dc -> $plots `const sens1`   (the plot exists)
+  #   sens v(mid) r1 dc -> $plots `const`         (NO PLOT AT ALL)
+  #
+  # The honest rule is "the filter is compared against the instance name AS
+  # ngspice STORED IT": under a folding casemode the filter's own case is
+  # irrelevant, and under a preserving one the NETLIST's spelling is the one to
+  # match. Nothing is shipped for it -- ASE-L would have to know the bench's
+  # casemode, which is a PRE-DECK variable and Stage 7's -- and `sens_filters`
+  # compares case-INSENSITIVELY, which is the permissive direction.
+  #
+  # ⚠ AND THE VECTOR NAMESPACE IS HIERARCHICAL, WHICH REFUTES APPENDIX §2.10's
+  # THREE-ROW NAMING TABLE. That table -- `<inst>`, `<inst>:<param>`,
+  # `<inst>_<param>` -- is measured on a FLAT deck, and every xschem bench is
+  # not one. MEASURED 2026-09-12 on both binaries, `V1 / X1 / R9` at top level
+  # with `Ra`, `Rb` inside `.subckt divider`, the complete bare-name set of the
+  # sens plot:
+  #
+  #     r.x1.ra   r.x1.rb   r9   v1
+  #
+  # A subcircuit device is `<letter>.<instpath>.<name>`; the subckt CALL `x1`
+  # produces nothing at all. So a user filtering on the name they see inside
+  # their subcircuit -- `ra` -- matches nothing, gets no plot, and is told
+  # nothing. `sens_filters` is keyed on the TOP scope's devices for exactly that
+  # reason.
+  #
+  # ⚠ AND THE `_` FORM IS AMBIGUOUS IN ngspice's OWN OUTPUT, NOT MERELY TO A
+  # READER. MEASURED 2026-09-12 on both binaries, a deck carrying `R1` and
+  # `R1_temp`: the plot contains the name `r1_temp` **TWICE** -- once as `R1`'s
+  # instance `temp` parameter and once as `R1_temp`'s principal resistance, two
+  # different quantities under one name in one plot. That is why
+  # `sens_param_kind` splits the COLON form and refuses to split the underscore.
+  #
+  # ⚠ `sens` DECLARES NO `viewrank`, FOR THE THIRD TIME AND WITH ITS OWN
+  # MEASUREMENT. Against a raw carrying an `Operating Point` plot and a
+  # `Sensitivity Analysis` plot, through this tree's own binary:
+  #
+  #     xschem raw read both.raw sens                   -> no useful data found
+  #                                                        ... or no "sens"
+  #                                                        analysis         -> 0
+  #     xschem raw read both.raw op                     -> sim_type=op      -> 1
+  #     xschem raw read both.raw {Sensitivity Analysis} -> sim_type=
+  #                                                        Sensitivity Analysis
+  #                                                                         -> 1
+  #
+  # `src/save.c`'s `read_dataset()` has six NAMED `Plotname:` arms and then an
+  # exact `strcmp`; `sens` is in neither set. And like `pz` it has a second
+  # reason: the DC plot is `Flags: real`, ONE data row, no scale vector -- a
+  # table, not a sweep.
+  #
+  # ⚠ AND `Sensitivity Analysis` IS THE PLOT NAME OF **BOTH** MODES, so Stage 6
+  # cannot tell a DC row's results from an AC row's by the literal. APPENDIX
+  # §2.10 and trap `[R-M11]`; §6.3's creation-order sidecar is the join that
+  # does work. Carried here so the reader does not have to find it again.
+  #
+  # ⚠ THERE ARE NO CAPITALS TO FOLD, SO `tf`'s C46 WARNING DOES NOT REACH HERE
+  # EITHER. MEASURED 2026-09-12, the same op+sens deck written by both binaries:
+  # the `Variables:` blocks are BYTE-IDENTICAL -- `v(r1)`, `v(r2)`, ngspice's
+  # own `v(…)` wrapper round a name it types as a voltage -- and the only
+  # difference anywhere in either header is the `Command:` version line. The
+  # reader below folds anyway, because that costs nothing.
+  #
+  # ⚠ NO `seed_enabled`: `ase::state_default` stays at four rows and the 104
+  # committed `.state` files keep round-tripping byte-identically. Section CP of
+  # tests/headless/test_ase_core.tcl is the row that would notice.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -14974,8 +15340,14 @@ $_leg
                 {select {Distortion Operating Point} role opinfo results viewer \
                  when {opt keepopinfo} label {pz operating point}}}] \
       sens [dict create \
-        label sens  baseline 1  registered 1 \
-        emit {{role probe tmpl {sens}}}] \
+        label sens  baseline 1  registered 1  emitorder 70 \
+        needs  {sens_out sens_filters cider_klu} \
+        fields {{name out     kind outvar required 1 label {Output}} \
+                {name filters kind filter required 0 label {Parameters}}} \
+        emit   {{role analysis tmpl {sens @out @filters? dc}}} \
+        results {table {kind params}} \
+        plots  {{select {Sensitivity Analysis} role table results table \
+                 label sens paramname ::ase::backend::ngspice::sens_param_kind}}] \
       disto [dict create \
         label disto  baseline 1  registered 1 \
         emit {{role probe tmpl {disto}}}] \
@@ -15178,6 +15550,58 @@ $_leg
     }
     return [list [string tolower $k] [expr {int($i)}]]
   }
+  # ─── ONE `sens` RESULT NAME, READ BACK (Stage 5, issue 1428) ──────────────
+  # Answers `{model <instance> <parameter>}`, `{instance <name>}` or `{}`.
+  # Reached through the `paramname` key of the `sens` entry's `plots` row, which
+  # is opaque to core.
+  #
+  # ⚠ IT SPLITS THE COLON AND REFUSES TO SPLIT THE UNDERSCORE, AND THAT IS A
+  # MEASUREMENT ABOUT ngspice's OWN OUTPUT RATHER THAN CAUTION IN A READER.
+  # `cktsens.c:222-249` names a MODEL parameter `<instance>:<param>`, the first
+  # `IF_PRINCIPAL` instance parameter `<instance>` bare, and every other
+  # instance parameter `<instance>_<param>`. The last two forms COLLIDE in
+  # ngspice itself. MEASURED 2026-09-12 on the fork AND on apt 45.2, one deck
+  # carrying `R1` and `R1_temp`: the sensitivity plot contains the vector name
+  #
+  #     r1_temp      twice
+  #
+  # -- once as `R1`'s instance `temp` parameter and once as `R1_temp`'s own
+  # principal resistance. Two different quantities, one name, one plot. So
+  # `{instance <name>}` means "the instance side of the namespace, NOT split
+  # further", and a reader that split on `_` would be inventing an answer
+  # ngspice does not have.
+  #
+  # ⚠ THE NAMES ARE HIERARCHICAL AND THE DOTS ARE PART OF THE INSTANCE. MEASURED
+  # on both binaries, `Ra` inside `.subckt divider` instantiated as `X1`:
+  # `r.x1.ra` and `r.x1.ra:r`. The `<letter>.<path>.<name>` shape is what
+  # APPENDIX §2.10's flat-deck table does not say, and it is why `sens_filters`
+  # is keyed on the top scope.
+  #
+  # ⚠ THE RAWFILE WRAPS THE WHOLE NAME IN `v(…)`, exactly as it does `pz`'s
+  # roots -- ngspice types a sensitivity as a voltage. MEASURED, the same op+sens
+  # deck written by both binaries: `Variables:` carries `v(r1)` and `v(r2)`,
+  # BYTE-IDENTICAL between them, the only difference in either header being the
+  # `Command:` version line. Stripped once here, as `pz_root_kind` does.
+  #
+  # ⚠ AND THE VALUES ARE ABSOLUTE, NOT NORMALISED. A `sens` row answers d(out)
+  # per unit of the parameter, so `r1 = -1.38889e-04` is volts per ohm and is
+  # not comparable with `v1 = 8.333333e-01`, which is volts per volt. Whatever
+  # surface Stage 5b gives this owes the user a normalised column; this proc
+  # names parameters and converts nothing. APPENDIX §2.10.
+  proc sens_param_kind {name} {
+    set n [string trim $name]
+    # the rawfile's own `v(…)` wrapper: `v(r1:r)` -> `r1:r`. ONCE.
+    regexp -nocase {^v\((.*)\)$} $n -> n
+    set n [string trim $n]
+    if {$n eq {}} { return {} }
+    set i [string first : $n]
+    if {$i < 0} { return [list instance $n] }
+    set inst [string range $n 0 [expr {$i - 1}]]
+    set par  [string range $n [expr {$i + 1}] end]
+    if {$inst eq {} || $par eq {} || [string first : $par] >= 0} { return {} }
+    return [list model $inst $par]
+  }
+
   proc dc_swkind {name} {
     set n [string trim $name]
     if {[string equal -nocase $n temp]} { return temp }

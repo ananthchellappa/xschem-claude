@@ -49,11 +49,15 @@
 #   PF228      issue 1427 -- the pole-zero analysis's four preconditions, where
 #              every failure is a hard rc 1 abort and only three of the four are
 #              `fatal`, because the severity tracks what the STATIC PASS CAN KNOW
+#   PF229      issue 1428 -- DC sensitivity's two preconditions: an output
+#              ngspice does not validate and fills a ~90-row table of zeros for,
+#              and a parameter filter that matches nothing and leaves the run
+#              with NO PLOT AT ALL at rc 0
 #
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
 #
-# ⚠ FLOOR: 177 checks, and it only ever goes up. This file had declared none
+# ⚠ FLOOR: 192 checks, and it only ever goes up. This file had declared none
 # until issue 1401 added section PF222, which is the moment a floor becomes worth
 # having: 115 before those rows, 122 after -- measured, both by running it and by
 # name-diffing the `ok:` lines -- then 125 when an adversarial review found the
@@ -74,6 +78,16 @@
 # X" is PROVED by the static pass, because an `.include` can only ADD devices and
 # never remove the card just read. Such a finding needs no caveat in either
 # direction, and row PF228h is that sentence as an assertion.
+# 177 -> 192 with PF229 (Stage 5, issue 1428 -- DC sensitivity's two
+# preconditions). ⚠ `sens_filters` IS THE FIRST FINDING IN THIS FILE WHOSE
+# FAILURE MODE IS AN EMPTY RESULT RATHER THAN A WRONG ONE: measured on both
+# binaries, a filter that matches nothing leaves `$plots` = `const` and
+# `$curplotname` = `constants` at rc 0, so ASE-L's own append-write deck then
+# writes the CONSTANTS plot -- the exact artifact the top of this file is about,
+# reached from a new direction. ⚠ AND PF229j REFUTES APPENDIX §2.10's NAMING
+# TABLE: a subcircuit device's sens vector is `<letter>.<instance path>.<name>`,
+# so the check is keyed on the TOP scope and a filter naming a device that
+# exists only inside a subcircuit IS reported.
 #
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -1833,6 +1847,284 @@ eqcheck PF228l-a-disabled-or-empty-pz-row-is-left-alone \
         [dict size [pcheck $PZNL {{type pz enabled 1 inp in}}]] \
         [lindex [lindex [ase::analysis_emit_check ngspice {type pz enabled 1}] 0] 0]] \
   {0 0 0 missing}
+
+# ===========================================================================
+# PF229 — DC sensitivity's two preconditions (Stage 5, issue 1428)
+# ===========================================================================
+## ⚠ TWO PREDICATES, AND THE SECOND HAS NO ANALOGUE ANYWHERE ELSE IN THE
+## REGISTRY. `sens_out` is the third analysis in a row whose output ngspice does
+## not validate; `sens_filters` is about a mistake that leaves the run with NO
+## PLOT AT ALL and still reports success. MEASURED 2026-09-12 on the fork
+## (`build-ver_50`) and on apt 45.2 alike, each `-b` deck wrapped in this tree's
+## own `sim_status` guard, reading four of the ~90 vectors a four-device deck
+## produces:
+##
+##   sens v(mid) dc        -> rc 0  r1 -1.38889e-04  r2 2.777775e-05
+##                                  r3  2.777775e-05  v1 8.333333e-01 (right)
+##   sens v(nosuchnode) dc -> rc 0  EVERY vector -0.000000e+00
+##   sens v(in,nosuch) dc  -> rc 0  v1 1.000000e+00 and the rest 0 -- the
+##                                  missing REFERENCE is silently ground
+##   sens i(Vsense) dc     -> rc 0  r1 -2.77778e-08 … v1 1.666667e-04 (right)
+##   sens i(R1) dc         -> rc 0  every vector 0.000000e+00
+##   sens i(C1) dc         -> rc 0  every vector 0.000000e+00
+##   sens i(L1) dc         -> rc 0  every vector 0.000000e+00
+##   sens i(I1) dc         -> rc 0  every vector 0.000000e+00
+##   sens i(nosuchsrc) dc  -> rc 0  every vector 0.000000e+00
+##   sens x(mid) dc        -> rc 1  `Error: Syntax error: voltage or current
+##                                   expected.`                -> RUN-FAILED
+##   sens v mid dc         -> rc 1  `Error: Syntax error: '(' expected after
+##                                   'v'`                      -> RUN-FAILED
+##
+##   sens v(mid) r1 dc        -> $plots `const sens1`, one vector: r1
+##   sens v(mid) r1 nosuch dc -> $plots `const sens1`, one vector: r1 -- the bad
+##                               filter is DROPPED IN SILENCE
+##   sens v(mid) nosuch dc    -> $plots `const`, $curplotname `constants`, rc 0,
+##                               REACHED-THE-END: NO SENSITIVITY PLOT AT ALL
+##   sens v(mid) zzz* dc      -> the same
+##
+## ⚠ THE LAST BLOCK IS WHY `sens_filters` EXISTS, AND IT WAS FOLLOWED ALL THE
+## WAY THROUGH THIS TREE'S OWN RENDERER RATHER THAN REASONED ABOUT. MEASURED
+## 2026-09-12: `ase::backend::ngspice::render_deck` against a scratch library
+## with an explicit `rundir`, one enabled row
+## `{type sens enabled 1 out v(mid) filters nosuchdev}`, run on BOTH binaries --
+##
+##   rc 0, and the only record in <cell>_ase.raw is
+##     Title: Constant values / Plotname: constants / No. Variables: 12
+##   ase::raw_content_verdict -> ok 0  constants 1  plotname constants
+##
+## -- which is the artifact the top of this file is about, reached from a
+## direction nobody had walked: not a `.save` of a missing node, a FILTER that
+## matched nothing. ⚠ AND DEFENCE (c) CATCHES IT AND GUESSES THE CAUSE WRONG:
+## its sentence says *"the analysis did not run (typically a .save of a node the
+## circuit does not have)"*. That is what makes defence (a) worth having here --
+## `sens_filters` is the only place the real cause can be said.
+set SENL "* t\nV1 in 0 dc 1 ac 1\nR1 in mid 1k\nR2 mid out 2k\nR3 out sns 3k\nVsense sns 0 dc 0\nC1 mid 0 1n\nL1 mid lx 1u\nRL lx 0 10k\nI1 0 mid dc 0\n.end\n"
+proc serow {args} { return [list [concat {type sens enabled 1} $args]] }
+proc sen {pc n} { return [lindex [lindex [dgn $pc sens] $n] 0] }
+proc sev {pc n} { return [lindex [lindex [dgn $pc sens] $n] 1] }
+proc ses {pc n} { return [lindex [lindex [dgn $pc sens] $n] 2] }
+proc sef {pc n} { return [lindex [lindex [dgn $pc sens] $n] 3] }
+
+## ⚠ THE DISCRIMINATOR FOR EVERY ROW BELOW, inherited rather than re-learned:
+## without a row asserting that a runnable sens row says NOTHING, every row here
+## is satisfied by a predicate that reports on every deck (PF227a, PF228a).
+eqcheck PF229a-a-sens-row-this-circuit-can-run-says-nothing \
+  [list [dict size [pcheck $SENL [serow out {v(mid)}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid,out)}]]] \
+        [dict size [pcheck $SENL [serow out {i(Vsense)}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {r1 r2}]]]] \
+  {0 0 0 0}
+
+## ⚠ THE SHARPER HALF OF `sens_out`, AND SHARPER THAN `tf`'s. ngspice reports
+## THREE numbers for a `tf` output that is not there; it reports a table of ~90
+## zeros for a `sens` one, which a user reads as a result.
+set SEPB [pcheck $SENL [serow out {v(nosuchnode)}]]
+eqcheck PF229b-an-output-node-that-is-not-in-the-circuit-is-reported \
+  [list [sen $SEPB 0] [sev $SEPB 0] \
+        [expr {[string first {'nosuchnode'} [ses $SEPB 0]] >= 0}] \
+        [expr {[string first {fills in a table} [ses $SEPB 0]] >= 0}] \
+        [sef $SEPB 0]] \
+  {sens_out caution 1 1 {name a node that is in the circuit}}
+
+## ⚠ AND IT CARRIES THE `.include` CAVEAT, because an included file really could
+## define that node. This is the half the static rule is right about.
+eqcheck PF229c-the-missing-node-carries-the-static-caveat \
+  [expr {[string first {cannot see inside an .include} [ses $SEPB 0]] >= 0}] 1
+
+## ⚠ THE SYNTAX ERROR IS `fatal` AND CARRIES NO CAVEAT -- no `.include` can make
+## `v mid` a legal output. ⚠ AND THE REASON IS **NOT** `tf`'s. `tf v mid V1`
+## blames the SOURCE with an EMPTY name (`Warning: Transfer function source  not
+## in circuit`); `sens v mid dc` answers `Error: Syntax error: '(' expected
+## after 'v'`, which names the output and the missing parenthesis. ngspice is
+## honest here. The verdict is `fatal` for one reason only: MEASURED, the
+## guard's `quit 1` fires and nothing after it in `.control` runs.
+set SEPM [pcheck $SENL [serow out {v mid}]]
+eqcheck PF229d-an-output-this-simulator-cannot-read-is-fatal-and-carries-no-include-caveat \
+  [list [sen $SEPM 0] [sev $SEPM 0] \
+        [string first {cannot see inside} [ses $SEPM 0]] \
+        [expr {[string first {parentheses are not optional} [sef $SEPM 0]] >= 0}]] \
+  {sens_out fatal -1 1}
+
+## ⚠ AND THE GATE REFUSES IT, WHILE A RUNNABLE ROW STILL PASSES -- so PF229d is
+## measuring the malformed output and not something else about this state.
+said_clear
+set SEG [pcall ase::preflight_gate \
+  [dict replace [mkstate $RD c $SENL] analyses [serow out {v mid}]] $SENL]
+eqcheck PF229e-the-gate-refuses-the-malformed-output-and-a-runnable-row-passes \
+  [list [string range $SEG 0 3] \
+        [expr {[said_count {*v mid*}] >= 1}] \
+        [pcall ase::preflight_gate \
+          [dict replace [mkstate $RD c $SENL] analyses [serow out {v(mid)}]] $SENL]] \
+  {ERR: 1 {}}
+
+## ⚠ `i(...)` IS A VOLTAGE SOURCE AND ONLY A VOLTAGE SOURCE, MEASURED ACROSS
+## FIVE DEVICE CLASSES. The INDUCTOR and the CURRENT SOURCE are the two that
+## discriminate: `i(L1)` is a real branch current elsewhere in ngspice, so
+## "nothing else has a branch current" would have been a right answer resting on
+## a wrong reason; and `I1` IS in `facts sources`, so a predicate asking "is this
+## an independent source" instead of "is this a voltage source" passes it in
+## silence at rc 0.
+set SEI1 [pcheck $SENL [serow out {i(R1)}]]
+set SEI2 [pcheck $SENL [serow out {i(I1)}]]
+set SEI3 [pcheck $SENL [serow out {i(L1)}]]
+set SEI4 [pcheck $SENL [serow out {i(C1)}]]
+eqcheck PF229f-a-current-output-that-names-no-voltage-source-is-reported \
+  [list [sen $SEI1 0] [sev $SEI1 0] [sen $SEI2 0] [sen $SEI3 0] [sen $SEI4 0] \
+        [expr {[string first {'i(I1)'} [ses $SEI2 0]] >= 0}] \
+        [expr {[string first {table of zeros} [ses $SEI2 0]] >= 0}] \
+        [dict size [pcheck $SENL [serow out {i(Vsense)}]]]] \
+  {sens_out caution sens_out sens_out sens_out 1 1 0}
+
+## ⚠ EACH NODE OF A TWO-NODE OUTPUT IS CHECKED, AND ONLY THE MISSING ONE IS
+## NAMED. MEASURED: `sens v(in,nosuch) dc` is rc 0 with `v1 = 1.000000e+00` --
+## the missing reference is silently taken as ground -- so a predicate that
+## stopped at the first node would pass it.
+set SEP2 [pcheck $SENL [serow out {v(mid,nosuch)}]]
+eqcheck PF229g-the-reference-node-of-a-two-node-output-is-checked-too \
+  [list [sen $SEP2 0] \
+        [expr {[string first {'nosuch'} [ses $SEP2 0]] >= 0}] \
+        [expr {[string first {'mid'} [ses $SEP2 0]] >= 0}]] \
+  {sens_out 1 0}
+
+## ⚠ `sens_filters`: THE ONE FINDING IN THIS BATCH WHOSE FAILURE MODE IS AN
+## EMPTY RESULT RATHER THAN A WRONG ONE. The sentence has to say so, because
+## "no results at all" is the thing a user cannot diagnose from a run that
+## printed nothing and exited 0.
+set SEF1 [pcheck $SENL [serow out {v(mid)} filters {nosuchdev}]]
+eqcheck PF229h-a-filter-that-names-nothing-in-the-circuit-is-reported \
+  [list [sen $SEF1 0] [sev $SEF1 0] \
+        [expr {[string first {'nosuchdev'} [ses $SEF1 0]] >= 0}] \
+        [expr {[string first {no results at all} [ses $SEF1 0]] >= 0}] \
+        [expr {[string first {subcircuit} [sef $SEF1 0]] >= 0}]] \
+  {sens_filters caution 1 1 1}
+
+## ⚠ AND IT IS `caution` WITH THE CAVEAT AND THE GATE DOES **NOT** REFUSE IT.
+## An `.include`d file really can add a top-level device with that name, so a
+## refusal here would be the false refusal this whole pass avoids -- even though
+## the consequence of being right is a run with nothing in it. ⚠ THE SEVERITY
+## TRACKS WHAT THE STATIC PASS CAN KNOW, NEVER HOW BAD THE OUTCOME IS.
+eqcheck PF229i-the-filter-finding-is-a-caution-and-does-not-refuse-the-run \
+  [list [expr {[string first {cannot see inside an .include} [ses $SEF1 0]] >= 0}] \
+        [pcall ase::preflight_gate \
+          [dict replace [mkstate $RD c $SENL] analyses \
+             [serow out {v(mid)} filters {nosuchdev}]] $SENL]] \
+  {1 {}}
+
+## ⚠ THE HIERARCHY ROW, AND IT IS WHAT REFUTES APPENDIX §2.10's NAMING TABLE.
+## That table -- `<inst>`, `<inst>:<param>`, `<inst>_<param>` -- is measured on a
+## FLAT deck, and every xschem bench has subcircuits. MEASURED 2026-09-12 on both
+## binaries, `V1 / X1 / R9` at top level with `Ra` and `Rb` inside
+## `.subckt divider`, the COMPLETE bare-name set of the sens plot:
+##
+##     r.x1.ra   r.x1.rb   r9   v1
+##
+## A subcircuit device is `<letter>.<instance path>.<name>` and the subckt CALL
+## `x1` produces nothing at all. So filtering on `ra` -- the name the user sees
+## inside their own subcircuit -- matches NOTHING, and a check that searched
+## every scope would find `ra` and say nothing. The predicate is keyed on the
+## TOP scope for exactly that reason.
+set SEHNL "* t\nV1 in 0 dc 1\nX1 in mid divider\nR9 mid 0 5k\n.subckt divider a b\nRa a b 1k\nRb b 0 2k\n.ends\n.end\n"
+set SEH1 [pcheck $SEHNL [serow out {v(mid)} filters {ra}]]
+eqcheck PF229j-a-device-that-exists-only-inside-a-subcircuit-is-reported-and-a-top-level-one-is-not \
+  [list [sen $SEH1 0] \
+        [expr {[string first {'ra'} [ses $SEH1 0]] >= 0}] \
+        [dict size [pcheck $SEHNL [serow out {v(mid)} filters {r9}]]] \
+        [dict size [pcheck $SEHNL [serow out {v(mid)} filters {v1}]]] \
+        [dict size [pcheck $SEHNL [serow out {v(mid)} filters {r.x1.ra}]]]] \
+  {sens_filters 1 0 0 0}
+
+## ⚠ A GLOB AND A DOTTED NAME GET NO OPINION, AND BOTH SILENCES ARE DELIBERATE.
+## The candidate vector set is `<inst>`, `<inst>:<param>` and `<inst>_<param>`
+## over a parameter list ASE-L cannot enumerate without a run, so whether `r*`
+## matches something is NOT decidable from the netlist -- MEASURED, `sens v(mid)
+## zzz* dc` also produces no plot, and ASE-L still may not say so, because the
+## same reasoning that would catch `zzz*` would refuse `m*:vth0` on a deck whose
+## MOS devices are in an `.include`d PDK. A dotted name is the user spelling a
+## hierarchical vector themselves, which this pass cannot flatten.
+eqcheck PF229k-a-glob-and-a-dotted-name-are-left-alone \
+  [list [dict size [pcheck $SENL [serow out {v(mid)} filters {zzz*}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {r?}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {r.x9.nope}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {r1 zzz*}]]]] \
+  {0 0 0 0}
+
+## ⚠ AND AN EXACT NAME IS ACCEPTED IN ALL THREE OF ngspice's SPELLINGS, AND
+## CASE-INSENSITIVELY. `r1` is the principal, `r1:r` a model parameter, `r1_temp`
+## an instance parameter; all three are vectors `R1` produces. A predicate that
+## only compared the bare name would report every parameter-qualified filter a
+## user actually writes.
+eqcheck PF229l-the-three-vector-spellings-of-a-device-that-IS-there-are-accepted \
+  [list [dict size [pcheck $SENL [serow out {v(mid)} filters {r1}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {r1:r}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {r1_temp}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {R1:TC1}]]] \
+        [dict size [pcheck $SENL [serow out {v(mid)} filters {vsense i1 l1}]]] \
+        [sen [pcheck $SENL [serow out {v(mid)} filters {r1 r9:r}]] 0]] \
+  {0 0 0 0 0 sens_filters}
+
+## ⚠ THERE ARE NOW **THREE** COPIES OF THE "DOES THIS CIRCUIT HAVE THIS NODE"
+## WALK -- `tf_out`, `pz_nodes` AND `sens_out` -- AND NOTHING WOULD NOTICE IF ONE
+## DRIFTED. They were written one stage-commit apart and they must agree about
+## exactly one thing: that the comparison FOLDS. `ase::netlist_map`'s scope table
+## stores the netlist's own spelling, so a case-sensitive copy reports "this
+## circuit has no node 'MID'" for a deck that has `mid` -- issue 1401's PF214
+## trap, one layer up. This row is not a refactor and does not pretend to be one:
+## it makes the drift VISIBLE, by asking all three the same two questions.
+## ⚠ THE COPIES ARE DELIBERATELY LEFT IN PLACE. Collapsing them into one core
+## reader is the right change and it is NOT this commit's -- `tf_out` and
+## `pz_nodes` belong to issues 1426 and 1427, and a refactor of two shipped
+## predicates in the last commit of a stage buys tidiness at the price of a
+## regression nobody asked for. The next crew that touches any of the three
+## inherits this row and the reason.
+set SE3W "* t\nV1 IN 0 dc 1\nR1 IN Mid 1k\nR2 Mid 0 2k\nVsense Mid mm 0\n.end\n"
+eqcheck PF229o-the-three-copies-of-the-node-walk-agree-about-folding \
+  [list [dict size [pcheck $SE3W [list {type tf enabled 1 out v(mid) insrc v1}]]] \
+        [dict size [pcheck $SE3W [list {type pz enabled 1 inp in outp mid}]]] \
+        [dict size [pcheck $SE3W [serow out {v(mid,MID)}]]] \
+        [lindex [lindex [dgn [pcheck $SE3W \
+           [list {type tf enabled 1 out v(nope) insrc v1}]] tf] 0] 0] \
+        [lindex [lindex [dgn [pcheck $SE3W \
+           [list {type pz enabled 1 inp nope outp mid}]] pz] 0] 0] \
+        [lindex [lindex [dgn [pcheck $SE3W [serow out {v(nope)}]] sens] 0] 0]] \
+  {0 0 0 tf_out pz_nodes sens_out}
+
+## ⚠ `sens` INHERITS THE CIDER/KLU PAIR, AND THIS ROW EXISTS BECAUSE A SABOTAGE
+## SURVIVED WITHOUT IT (S38). Measured, `cider_klu` can be deleted from this
+## entry's `needs` and `test_ase_core` AND `test_ase_preflight` both stay green:
+## PF224f/PF224g pin the PREDICATE, and nothing pinned which types SUBSCRIBE to
+## it. That matters here more than it looks -- `cider_klu` is `fatal` because a
+## CIDER device under KLU makes ngspice `exit(1)` rather than return an error, so
+## a `sens` row that did not declare it would let the user start a run in which
+## every analysis after the CIDER one silently does not happen.
+## ⚠ AND BOTH HALVES ARE ASSERTED, because a predicate that fired on the device
+## alone would refuse every deck the CIDER build exists for.
+eqcheck PF229n-a-sens-row-inherits-the-cider-klu-pair-and-needs-both-halves-of-it \
+  [list [dict size [pcheck $CIDERNL [serow out {v(out)}]]] \
+        [lindex [lindex [dgn [pcheck $CIDERNL [serow out {v(out)}] \
+                          {{name klu value 1}}] sens] 0] 0] \
+        [lindex [lindex [dgn [pcheck $CIDERNL [serow out {v(out)}] \
+                          {{name klu value 1}}] sens] 0] 1] \
+        [lindex [lindex [dgn [pcheck $CIDERNL [serow out {v(out)}] \
+                          {{name klu value 1}}] sens] 0] 3]] \
+  {0 cider_klu fatal {select the `sparse` solver for this run}}
+
+## ⚠ A SWITCHED-OFF OR EMPTY ROW IS LEFT ALONE, and an UNREADABLE filter value
+## answers nothing rather than raising. The box is free text, so an unbalanced
+## brace is a value a user can type -- and this predicate runs on the Run path,
+## where a raise would abort a deck write instead of saying something.
+## ⚠ THE UNREADABLE LEG GOES THROUGH `pcall` AND ITS ANSWER IS COMPARED AS AN
+## ORDINARY VALUE, AND THAT IS NOT DEFENSIVE PADDING. A bare
+## `[dict size [pcheck …]]` here is only legal while the predicate catches the
+## raise -- and dropping that catch is the exact change this leg exists to
+## catch, so it would abort the whole file inside this suite's outer `catch` and
+## print `FATAL:` instead of reddening a row. A suite that dies names the defect
+## with a line number; a row that reds names it with a sentence.
+eqcheck PF229m-a-disabled-or-empty-or-unreadable-sens-row-is-left-alone \
+  [list [dict size [pcheck $SENL {{type sens enabled 0 out {v mid}}}]] \
+        [dict size [pcheck $SENL {{type sens enabled 1}}]] \
+        [pcall pcheck $SENL [serow out {v(mid)} filters "r1 \{"]] \
+        [lindex [lindex [ase::analysis_emit_check ngspice {type sens enabled 1}] 0] 0]] \
+  {0 0 {} missing}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

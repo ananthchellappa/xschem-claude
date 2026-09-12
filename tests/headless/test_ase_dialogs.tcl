@@ -100,6 +100,14 @@ set fail 0; set npass 0
 #              place a row can say that a picker is a picker. ⚠ Its refusal row
 #              carries G2tf's `catch` from the start rather than learning it
 #              again.
+#   37 / 285   section G2sens, Stage 5 (issue 1428): DC sensitivity can be
+#              CHOSEN. Headless is unmoved for the same reason. It is the first
+#              form whose second field is OPTIONAL AND OMITTED FROM THE LINE
+#              when it is blank -- `tf`'s two fields are both required and
+#              `pz`'s optional four all carry defaults -- so it is the first
+#              place a widget row can say that an empty box produces a SHORTER
+#              deck line rather than a padded one. ⚠ Its refusal row carries
+#              G2tf's `catch` from the start.
 #
 # ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
 # row; do not edit the number downward to make the file agree with itself.
@@ -1108,6 +1116,129 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "G2pz the fixture is left without a pz row, so the rows below see the\
  bench they were written against" \
     [tv_find $atv type pz] {}
+
+  # G2sens: DC SENSITIVITY CAN BE CHOSEN AT ALL. Stage 5, issue 1428.
+  ## ⚠ UNTIL THIS COMMIT `sens` WAS A CELL YOU COULD SELECT AND NOT USE, exactly
+  ## as `tf` and `pz` were: `registered 1` with a `role probe` card and nothing
+  ## else, so the grid showed it exists, `ase::analysis_renderable` answered 0,
+  ## the Enable checkbutton was disabled and the form below it was empty.
+  ##
+  ## ⚠ AND IT IS THE FIRST FORM WHOSE SECOND FIELD IS OPTIONAL AND **OMITTED
+  ## FROM THE LINE** WHEN IT IS BLANK. `tf`'s two fields are both required and
+  ## `pz`'s optional four all carry defaults, so this is the first place a widget
+  ## row can say that leaving a box empty produces a SHORTER deck line rather
+  ## than a padded one -- which is the `whenskipped`-free half of section SE2c,
+  ## driven through the real form.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.sens invoke
+  update
+  check "G2sens selecting sens builds its two fields, leaves none of tran's\
+ behind, and leaves Enable live" \
+    [list [winfo exists $top.chana.form.out] \
+          [winfo exists $top.chana.form.filters] \
+          [winfo exists $top.chana.form.step] [winfo exists $top.chana.form.stop] \
+          [winfo exists $top.chana.form.uic] \
+          [winfo class $top.chana.form.out] \
+          [winfo class $top.chana.form.filters] \
+          [string tolower [$top.chana.enable cget -state]]] \
+    {1 1 0 0 0 Entry Entry normal}
+  ## ⚠ THE LABELS ARE THE DECLARED ONES, and they are NEW USER-FACING COPY --
+  ## ⚖ R9, recorded as an `owed.sh add rule 1428` debt rather than ratified here.
+  ## ⚠ AND `kind filter` RENDERS AS A PLAIN ENTRY TODAY, which is the whole
+  ## reason the kind exists rather than a bare `text`: PLAN.md §5a's computed
+  ## checkbox tree (`devhelp -csv -type -flags`, no run needed) is Stage 5b's,
+  ## and it needs to find this field without guessing which text box it is.
+  check "G2sens the two labels are the declared ones" \
+    [list [$top.chana.form.lout cget -text] \
+          [$top.chana.form.lfilters cget -text]] \
+    [list {Output:} {Parameters:}]
+  ## ⚠ THE WHOLE ROUND TRIP WITH THE OPTIONAL BOX LEFT BLANK, because a form
+  ## that builds and does not commit is the defect this batch is named for, and
+  ## because the blank box is the case that must NOT reach the line.
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.out delete 0 end
+  $top.chana.form.out insert 0 {v(D)}
+  $top.chana.form.filters delete 0 end
+  $top.chana.btns.proceed invoke
+  update
+  check_true "G2sens an enabled sens row with only the output is COMMITTED, not refused" \
+    [expr {![winfo exists $top.chana]}]
+  set g2serow {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {sens}} { set g2serow $a; break }
+  }
+  set g2seit [tv_find $atv type sens]
+  check "G2sens the sens row round-trips storing no key for the blank box, and\
+ the Arguments column is the line the deck will carry" \
+    [list [ase::state_get $g2serow enabled] [ase::state_get $g2serow out] \
+          [lsort [dict keys $g2serow]] \
+          [expr {$g2seit ne {} ? [$atv set $g2seit args] : {}}]] \
+    [list 1 {v(D)} {enabled out type} {sens v(D) dc}]
+  ## ⚠ AND A FILTER THAT **IS** TYPED IS STORED AND **DOES** REACH THE LINE,
+  ## between the output and the mode word. Without this the row above is
+  ## satisfied by a form whose second box is decoration.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.sens invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.filters delete 0 end
+  $top.chana.form.filters insert 0 {r*:r m*:vth0}
+  $top.chana.btns.proceed invoke
+  update
+  set g2serow2 {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {sens}} { set g2serow2 $a; break }
+  }
+  check "G2sens a typed filter list is stored whole and lands between the output\
+ and the mode word" \
+    [list [ase::state_get $g2serow2 filters] [lsort [dict keys $g2serow2]] \
+          [expr {[set i [tv_find $atv type sens]] ne {} ? [$atv set $i args] : {}}]] \
+    [list {r*:r m*:vth0} {enabled filters out type} {sens v(D) r*:r m*:vth0 dc}]
+  ## ⚠ AND THE DOOR STILL SHUTS ON A ROW WITH NO OUTPUT. ⚠ THE STATUS LINE IS
+  ## READ INSIDE THIS ROW'S OWN `catch`, for the reason G2tf's and G2pz's last
+  ## rows record: the one change this row exists to catch -- `out` losing its
+  ## `required 1`, after which OK COMMITS AND CLOSES -- would otherwise raise
+  ## `invalid command name` and kill the whole file instead of reddening a row.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.sens invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  $top.chana.form.out delete 0 end
+  set g2se_before [ase::state_get [ase::session_state $key] analyses]
+  $top.chana.btns.proceed invoke
+  update
+  set g2se_alive [expr {[winfo exists $top.chana] ? 1 : 0}]
+  set g2se_said 0
+  if {$g2se_alive} {
+    catch {
+      set g2se_said [expr {[string first {out} \
+        [$top.chana.status cget -text]] >= 0}]
+    }
+  }
+  check "G2sens an enabled sens row with no output is refused, the dialog\
+ survives and the state is untouched" \
+    [list $g2se_alive $g2se_said \
+          [ase::state_get [ase::session_state $key] analyses]] \
+    [list 1 1 $g2se_before]
+  ## Leave the bench as the rest of this file found it: no sens row. ⚠ The cancel
+  ## is caught for the same reason as the read above.
+  catch {$top.chana.btns.cancel invoke}
+  update
+  set g2se_st [ase::session_state $key]
+  set g2se_rows {}
+  foreach a [ase::state_get $g2se_st analyses] {
+    if {[ase::state_get $a type] ne {sens}} { lappend g2se_rows $a }
+  }
+  dict set g2se_st analyses $g2se_rows
+  ase::session_update $key $g2se_st
+  ase::ui::populate $key
+  update
+  check "G2sens the fixture is left without a sens row, so the rows below see\
+ the bench they were written against" \
+    [tv_find $atv type sens] {}
 
   # G2i/G2j/G2k: THE OPTIONS DOOR CLOSES. Issue 1418.
   ## ⚠ THIS EDITOR IS THE DEFECT STAGE 3 IS NAMED FOR. It collected free-text

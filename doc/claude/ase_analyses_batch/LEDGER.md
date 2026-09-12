@@ -887,8 +887,8 @@ this one.
 | landed | task | subject | floors |
 |---|---|---|---|
 | `1e8e236e` | **T1** | `feat(1426)` the transfer function was listed and could not be chosen | core 348 → 360; simcaps 164 → 170; preflight 152 → 164; dialogs **display** 265 → 271 |
-| *pending* | **T2** | `feat(1427)` the pole-zero analysis was listed and could not be chosen | core 360 → **376**; simcaps 170 → **175**; preflight 164 → **177**; dialogs **display** 271 → **278** |
-| — | **T3** | `sens (dc)` | not started |
+| `326fe7b1` | **T2** | `feat(1427)` the pole-zero analysis was listed and could not be chosen | core 360 → 376; simcaps 170 → 175; preflight 164 → 177; dialogs **display** 271 → 278 |
+| *pending* | **T3** | `feat(1428)` DC sensitivity was listed and could not be chosen | core 376 → **391**; simcaps 175 → **180**; preflight 177 → **192**; dialogs **display** 278 → **285** |
 
 ⚠ **FOUR PLAN CLAIMS REFUTED BY THE TREE, and the first is structural.** `PLAN.md` §1c specifies an
 `{build <proc>}` emit token and **Stage 1 never shipped it** — `ase::analysis_expand` implements
@@ -941,16 +941,43 @@ PF228h. The demotion is therefore not one rule but three: lower it when an inclu
 is missing, keep it when no include can make the text legal, and skip it entirely when the finding is
 about something already present.
 
+⚠ **AND `sens` FOUND THE PREFLIGHT SUITE'S OWN ARTIFACT FROM A NEW DIRECTION.** A `sens` filter
+that matches nothing produces **no plot at all**, at rc 0 — and the rawfile written holds only
+`Plotname: constants / No. Variables: 12 / No. Points: 1`. That is byte-for-byte the artifact
+`ase::preflight_gate`'s own refusal sentence describes: *"a raw file holding TWELVE MATHEMATICAL
+CONSTANTS which reads back as a perfectly valid result."* Reproduced independently by the driver on
+`/usr/bin/ngspice`. **The same silent-success artifact has at least two causes** — a save
+expression that resolves to nothing, and now a filter that matches nothing — and only the first was
+known.
+
+⚠ **THE SENSITIVITY VECTOR NAMESPACE IS HIERARCHICAL** (`r.x1.ra`), which refutes APPENDIX
+§2.10's three-row table as a flat-deck measurement and decides the shape of the filter predicate.
+And §2.10's advice to *"write filters lowercase"* is **exactly backwards** under the fork's
+`casemode=preserve`.
+
+⚠ **`{build …}` WAS NOT BUILT, AND NOT ON COST.** `out_decompose` — the hook 1426 registered —
+already takes `v(a)` / `v(a,b)` / `i(src)` APART, so the structured data the escape would compose is
+already recoverable from the one verbatim token. And the DC entry has no `@modeargs` at all (the mode
+is the literal `dc`), so the plan's `lin` restriction is **not a rule here**: Stage 6 can ship it as a
+field constraint, `values {dec oct}`.
+
+⚠ **AND `test_ase_core`'s OUTER `catch` CLOSES AT SECTION SI** — thousands of lines above Stage
+5's sections. A sabotage reddened six rows and then **killed the file with no banner at all**, which
+both banner readers score as a harness failure rather than as six named rows. The `catch` now covers
+the Stage 5 section bodies alike, and the same sabotage re-run gives eight named failures **and** a
+banner. A suite whose protection stops two thirds of the way down is a suite whose later sections
+report differently from its earlier ones.
+
 | | |
 |---|---|
-| status | **IN PROGRESS** — tasks 1 and 2 of 3 landed |
-| commit | `1e8e236e` T1 · T2 pending |
+| status | **COMPLETE** — all three tasks landed, each by its own crew, each with its own receipt |
+| commit | `1e8e236e` T1 · `326fe7b1` T2 · T3 pending |
 | T1 | taken **solo** by the driver, 62 cases |
-| suites moved | `test_ase_core` 348 → **360** · `test_ase_simcaps_0948` 164 → **170** · `test_ase_preflight` 152 → **164** · `test_ase_dialogs` **display** 265 → **271**, headless **37 unmoved**. Four existing rows moved, all expected and named: **AG1**/**AG2** (the offered list splits 5/6 now) and **EM7**/**CP6** (six probe-only types, not seven). **R1, AG3 and CP1–CP4 did NOT move** — the entry declares no `seed_enabled`, so the 104 committed `.state` files gain no `tf` row and stay byte-identical |
-| sabotage | **sixty-two across the two tasks** (tf 21, pz 41), all verified to redden. ⚠ **pz's survivor is the sharpest in the batch so far**: deleting the ground skip from `pz_nodes` left the WHOLE section green, because every fixture deck spells its reference node `0`. A deck spelling it `gnd` exposes it, and PF228m is that deck. ⚠ tf: twenty-one, twenty reddening a named row. ⚠ **One killed the suite instead of reddening a row** (S21, `insrc required 1→0`): `test_ase_dialogs` died at 65/271 because the row read `$top.chana.status` after an OK that now SUCCEEDS and destroys the dialog. Rewritten to read it inside its own `catch`; it now reds by name. ⚠ **One survived**: S9 passed against PF227h as first written, because **both** refusal sentences carry the user's own name, so *"the strings differ"* was satisfied trivially. The row now compares clause by clause |
+| suites moved | Across all three tasks: `test_ase_core` 348 → **391** · `test_ase_simcaps_0948` 164 → **180** · `test_ase_preflight` 152 → **192** · `test_ase_dialogs` **display** 265 → **285**, headless **37 unmoved**. Four existing rows moved, all expected and named: **AG1**/**AG2** (the offered list splits 5/6 now) and **EM7**/**CP6** (six probe-only types, not seven). **R1, AG3 and CP1–CP4 did NOT move** — the entry declares no `seed_enabled`, so the 104 committed `.state` files gain no `tf` row and stay byte-identical |
+| sabotage | **one hundred and nine across the three tasks** (tf 21, pz 41, sens 47), all verified to redden. ⚠ **pz's survivor is the sharpest in the batch so far**: deleting the ground skip from `pz_nodes` left the WHOLE section green, because every fixture deck spells its reference node `0`. A deck spelling it `gnd` exposes it, and PF228m is that deck. ⚠ tf: twenty-one, twenty reddening a named row. ⚠ **One killed the suite instead of reddening a row** (S21, `insrc required 1→0`): `test_ase_dialogs` died at 65/271 because the row read `$top.chana.status` after an OK that now SUCCEEDS and destroys the dialog. Rewritten to read it inside its own `catch`; it now reds by name. ⚠ **One survived**: S9 passed against PF227h as first written, because **both** refusal sentences carry the user's own name, so *"the strings differ"* was satisfied trivially. The row now compares clause by clause |
 | ledger debts | `rule 1426` — two field labels and six precondition sentences. ⚖ R9, batched with `pz` and `sens`. **No look debt**: `src/ase_window.tcl` is untouched and the form is built from the registry by code that already exists |
 | spec paragraphs rewritten | none — same standing spec debt as Stages 2–4 |
-| receipt | `receipts/10-stage-5-tf.md` — **the first crew-authored receipt in this batch** · `receipts/11-stage-5-pz.md` |
+| receipt | `receipts/10-stage-5-tf.md` — **the first crew-authored receipt in this batch** · `receipts/11-stage-5-pz.md` · `receipts/12-stage-5-sens.md` |
 
 
 ### What Stage 5 learned that binds later stages

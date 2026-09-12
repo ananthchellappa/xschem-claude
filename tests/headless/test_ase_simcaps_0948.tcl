@@ -81,6 +81,15 @@
 #        `n` the root finder decides -- the same two-pole RC asked for `zer`
 #        produces NO VECTORS AT ALL at rc 0. So the `pz` entry declares no
 #        `vectors` key and PV1-PV3 pin the reader instead.
+#   180  section SV, Stage 5 (issue 1428): one `sens` result name read back.
+#        ⚠ SV1's underscore row is a COLLISION IN ngspice, not caution in a
+#        reader -- measured on both binaries, a deck carrying `R1` and
+#        `R1_temp` puts the vector name `r1_temp` in the plot TWICE, once as
+#        `R1`'s instance `temp` parameter and once as `R1_temp`'s principal
+#        resistance. ⚠ AND SV2 REFUTES APPENDIX §2.10's NAMING TABLE: a
+#        subcircuit device is `<letter>.<instance path>.<name>`, so that table's
+#        three rows are a FLAT-deck measurement and every xschem bench has
+#        subcircuits.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -4265,6 +4274,114 @@ set PV_PL2 [lindex [dict get [ase::analysis_entry ngspice pz] plots] 1]
 check {PV5 the keepopinfo plot carries the upstream mislabel exactly as ngspice writes it} \
   [list [dict get $PV_PL2 select] [dict get $PV_PL2 when]] \
   [list {Distortion Operating Point} {opt keepopinfo}]
+
+# --- SV: ONE `sens` RESULT NAME, READ BACK -----------------------------------
+## Stage 5 of doc/claude/ase_analyses_batch/, issue 1428.
+##
+## ⚠ CONTENT, NOT SCHEMA (D34-D37). ASE-L owns the fact that a sensitivity run
+## produces one number per perturbable parameter; that a MODEL parameter is
+## `<instance>:<param>`, that the first `IF_PRINCIPAL` instance parameter is the
+## bare instance name and every other instance parameter is
+## `<instance>_<param>`, is ngspice's spelling. `cktsens.c:222-249` is the code.
+set SV_NS ase::backend::ngspice
+
+## ⚠ IT SPLITS THE COLON AND REFUSES TO SPLIT THE UNDERSCORE, AND THAT IS A
+## MEASUREMENT ABOUT ngspice's OWN OUTPUT RATHER THAN CAUTION IN A READER. The
+## bare form and the underscore form COLLIDE in ngspice itself. MEASURED
+## 2026-09-12 on the fork (`build-ver_50`) AND on apt 45.2, one deck carrying
+## `R1` and `R1_temp`, reading `display` after `sens v(mid) dc`:
+##
+##     r1_temp             : voltage, real, 1 long
+##     r1_temp             : voltage, real, 1 long
+##
+## -- the name appears TWICE in one plot, once as `R1`'s instance `temp`
+## parameter and once as `R1_temp`'s own principal resistance. Two different
+## quantities, one name. So `{instance <name>}` means "the instance side of the
+## namespace, NOT split further", and a reader that split on `_` would be
+## inventing an answer ngspice does not have.
+check {SV1 a sens result name comes apart into a model parameter or an instance-side name, and the underscore form is deliberately not split} \
+  [list [a_ans ${SV_NS}::sens_param_kind {r1:r}] \
+        [a_ans ${SV_NS}::sens_param_kind {d1:is}] \
+        [a_ans ${SV_NS}::sens_param_kind {r1}] \
+        [a_ans ${SV_NS}::sens_param_kind {r1_temp}] \
+        [a_ans ${SV_NS}::sens_param_kind { r1:tc1 }]] \
+  {{model r1 r} {model d1 is} {instance r1} {instance r1_temp} {model r1 tc1}}
+
+## ⚠ THE NAMES ARE HIERARCHICAL, AND THAT REFUTES APPENDIX §2.10's THREE-ROW
+## NAMING TABLE. That table is measured on a FLAT deck and every xschem bench
+## has subcircuits. MEASURED 2026-09-12 on both binaries -- `V1 / X1 / R9` at
+## top level with `Ra` and `Rb` inside `.subckt divider` -- the COMPLETE
+## bare-name set of the sens plot is
+##
+##     r.x1.ra   r.x1.rb   r9   v1
+##
+## A subcircuit device is `<letter>.<instance path>.<name>`; the subckt CALL
+## `x1` produces nothing at all. The dots belong to the instance, so the split
+## is on the FIRST colon and never on a dot.
+check {SV2 a hierarchical instance keeps its dots and still splits on the colon} \
+  [list [a_ans ${SV_NS}::sens_param_kind {r.x1.ra}] \
+        [a_ans ${SV_NS}::sens_param_kind {r.x1.ra:r}] \
+        [a_ans ${SV_NS}::sens_param_kind {r.x1.ra_temp}]] \
+  {{instance r.x1.ra} {model r.x1.ra r} {instance r.x1.ra_temp}}
+
+## ⚠ THE RAWFILE WRAPS THE WHOLE NAME IN `v(…)`, exactly as it does `pz`'s
+## roots: ngspice types a sensitivity as a voltage, so its own writer adds the
+## wrapper. MEASURED 2026-09-12, the SAME op+sens deck written by the fork
+## (`ngspice-46+`) and by apt 45.2 -- `Variables:` carries `v(r1)` and `v(r2)`
+## on both, BYTE-IDENTICAL, the only difference in either header being the
+## `Command:` version line. So there are no capitals to fold here and `tf`'s
+## C46 warning does not reach this entry; the strip is case-insensitive anyway,
+## because that costs nothing.
+check {SV3 the rawfile's own v() wrapper is stripped, once, whatever its case} \
+  [list [a_ans ${SV_NS}::sens_param_kind {v(r1)}] \
+        [a_ans ${SV_NS}::sens_param_kind {v(r1:r)}] \
+        [a_ans ${SV_NS}::sens_param_kind {V(R1:TC1)}] \
+        [a_ans ${SV_NS}::sens_param_kind {v(r.x1.ra:r)}]] \
+  {{instance r1} {model r1 r} {model R1 TC1} {model r.x1.ra r}}
+
+## ⚠ AND `{}` IS RESERVED FOR "I CANNOT READ THIS", NOT FOR "THIS IS NOT A
+## RESULT" -- WHICH IS THE ONE PLACE THIS READER DIFFERS FROM `pz_root_kind` AND
+## THE DIFFERENCE IS MEASURED. A pz plot's roots have a FIXED shape, so anything
+## else in it is not a root and answers `{}`. A sens plot has no fixed shape and
+## nothing else in it: MEASURED, every vector in a `Sensitivity Analysis` plot
+## is a parameter sensitivity and there is no scale vector at all. So an
+## ordinary-looking name is an ordinary answer, and only an empty or
+## undecomposable one is nothing.
+check {SV4 an unreadable name answers nothing at all, and never raises} \
+  [list [a_ans ${SV_NS}::sens_param_kind {}] \
+        [a_ans ${SV_NS}::sens_param_kind {   }] \
+        [a_ans ${SV_NS}::sens_param_kind {:r}] \
+        [a_ans ${SV_NS}::sens_param_kind {r1:}] \
+        [a_ans ${SV_NS}::sens_param_kind {a:b:c}] \
+        [a_ans ${SV_NS}::sens_param_kind {v()}]] \
+  {{} {} {} {} {} {}}
+
+## ⚠ AND THE REGISTRY REALLY REACHES IT. `plots`' `paramname` key is opaque to
+## core -- nothing reads it before Stage 6 -- so without this row the proc could
+## be renamed and the registry would keep naming a command that does not exist,
+## silently, until Stage 6 went looking. ⚠ THE `select` LITERAL IS CHECKED HERE
+## TOO, because it is the measured `Plotname:` record and a respelling of it is
+## invisible everywhere else in this suite. MEASURED 2026-09-12 on both
+## binaries: `sens v(mid) dc` leaves `$plots` = `const sens1` and
+## `$curplotname` = `Sensitivity Analysis`.
+## ⚠ EVERY KEY HERE IS READ ABORT-PROOF, AND THAT IS WHAT THE SABOTAGE ASKED
+## FOR. A bare `dict get $SV_PL paramname` is only legal while the key is there,
+## and the key's RENAMING is the exact change this row exists to catch -- so it
+## raised `key "paramname" not known in dictionary` and killed the whole file
+## with NO `RESULT:` LINE AT ALL, which reads in a sabotage log as "nothing went
+## red". MEASURED (sabotage S12), the same lesson PZ2c's `pzkey` and G2pz's
+## `g2pz_cget` record in their own files.
+set SV_PL [lindex [dict get [ase::analysis_entry ngspice sens] plots] 0]
+proc svkey {d k} {
+  if {[catch {dict exists $d $k} e] || !$e} { return ABSENT }
+  return [dict get $d $k]
+}
+check {SV5 the sens entry's plots row names a command that exists, and names the measured Plotname literal} \
+  [list [svkey $SV_PL select] \
+        [expr {[llength [info commands [svkey $SV_PL paramname]]] > 0}] \
+        [a_ans [svkey $SV_PL paramname] {v(r1:r)}] \
+        [llength [dict get [ase::analysis_entry ngspice sens] plots]]] \
+  [list {Sensitivity Analysis} 1 {model r1 r} 1]
 
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which
