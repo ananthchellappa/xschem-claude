@@ -795,7 +795,7 @@ sigils are **swapped** against the grammar C1 shipped, and the plan's spelling w
 | sabotage | C1 six, C2 seven, C3 seven, C4 eight, C5 five, C6 seven, C7 four — **forty-four**, all verified to redden. ⚠ C2's first cut **preempted issue 1401's block** and reddened three preflight rows; the gate now defers the `unrenderable` token to the block that owns it. ⚠ C3's row **GR5 SURVIVED its sabotage**: with the group rule deleted the finding was empty, `string first` returned -1 on the empty string, and a row written to prove a clause carried no frame proved it about a clause that did not exist |
 | ledger debts | Stage 2's four rulings (1401, 1404, 1408, 1411) still unpaid and now joined by **1414–1420**; all eleven to be paid in this stage's ⚖ R9 batch. **A look debt is owed for C4** — the tran form goes from two entries to two entries plus a disclosure plus three controls including a checkbutton, and the AC form gains a combobox that rewrites its neighbour's label |
 | spec paragraphs rewritten | none yet — `### Choose Analyses dialog` in `ase_l.md` is six lines and is rewritten **in full in C4**, when the form's final shape exists to describe |
-| receipt | pending |
+| receipt | `receipts/08-stage-3-the-form-stops-lying.md` |
 
 ### What Stage 3 learned that binds later stages
 
