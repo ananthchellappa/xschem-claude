@@ -691,16 +691,60 @@ future aborting leg must obey. Decisions **D42–D44**, **D48–D50**, **D52**.
 
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | **COMPLETE** — seven commits, not the planned one. |
+| commit | `4723380f` C2 · `8bfbbd6f` C1 · `13f5ff71` C3 · `dd6302eb` C4 · `df60b0af` C5 · `66fdcead` C6 · `391ef0c0` C7. Alongside: `bcb2fc59` (the Stage 1 debt, issue 1405) and the 2e pre-ship (issue 1404). |
+| T1 | Zero counted failures on every one of the seven — **but the number was narrower than it read.** Issue **1413** later measured that `run_regression.tcl`'s case list ran `test_ase_core` on **neither arm**, so seven commits were gated on a T1 that never touched its 289 checks. Each suite *was* run standalone on every commit, so the work is verified; what was overstated is the **T1 cell**, not the testing. From `4216c8b2` onward T1 is **61 cases** and does include it. One earlier T1 was also contaminated by this session's own live crews (four ngspice processes, X7 red) and was re-run solo rather than waved through — issue **0990**. |
+| suites moved | `test_ase_core` 266 → **289** · `test_ase_simcaps_0948` 110 → **158** · `test_ase_dialogs` **display** 215 → **236**, headless 37 unmoved · `test_ase_persist` not touched by this stage (it was found broken and repaired in Stage 3) |
+| sabotage | Every new section sabotage-verified. **Two sabotages went GREEN, and each minted a row that exists only because it did** — **P15** (C1) and the `chana_x_ok` membership guard (C3). Row **U2** took four fixtures before one of them could fail at all. The three-bullet block above is the record. |
+| ledger debts | `rule 1401`, `rule 1404`, `rule 1408`, `rule 1411` — four rulings, all stamped `repo:/home/analog/dev/xschem-claude`, **all four unpaid**, all four to be paid in Stage 3's ⚖ R9 batch. `look chana_type_grid_1411` — **unpaid**, and note it **cannot** yet show the plan's four-states-in-one-screenshot: `absent` is unreachable until Stage 6 gives the seven types an `emit`. |
+| spec paragraphs rewritten | **None — measured.** No commit in this stage touches `doc/claude/specs/`. The wrapping grid, the four-state vocabulary and the capability predicates are all absent from `ase_l.md`. Recorded here as a **standing Stage 2 spec debt**, deliberately deferred to Stage 6 so the section is written once, against a grid that can reach all four states, rather than twice. |
+| receipt | `receipts/07-stage-2-the-type-list-is-measured.md` |
 
 ### What Stage 2 learned that binds later stages
+
+**A test section is not done when it is green; it is done when its sabotages redden it.** Three
+commits in a row re-taught this, and twice the sabotage passed. The corollary is the expensive half:
+a sabotage that *breaks the proc* proves nothing — it must be a **plausible respelling** that a
+reasonable author might have written. P15 exists because respelling a refusal as `![ase::caps_is …]`
+— the exact defect the capability vocabulary was built to prevent, inside the proc issue 0953 was
+filed against — passed all fourteen rows of section P.
+
+**A green harness is only as wide as its case list.** T1 read "zero" for seven commits while running
+neither arm of the suite those commits were moving. Before a count is used as evidence, measure *what
+the harness runs*, not what it prints — and prefer a per-suite number that names its own file.
+
+**When a row and the code disagree, ask which of them is making a claim about the world.** `viewrank`
+reddened D7k because it was given to seven types that can emit nothing; `viewrank` orders *results*,
+and a type that produces none has no rank. The row was right and the registry was wrong. The reflex
+"a red row means the test is stale" cost real time here.
+
+**The predicate follows the direction of the gate, not the band it reads** (issue 1407), and **neither
+predicate may ever appear under a `!`**. `caps_unmeasured` gates what we do not know; `caps_measured_as`
+gates what we measured and matched. Negating either turns "not measured" and "measured false" into one
+answer, which is the whole defect the vocabulary deletes.
+
+**A backend with no hook gets NO fallback content** (D34–D37). Every `ase::backend_hook` resolve sits
+inside a `catch`, because it raises for an unknown hook *and* for an unknown simulator. ASE-L owns the
+schema; the adapter owns every word that reaches the deck.
+
+**Three Tcl traps, each of which cost a full debugging cycle in this stage** and each of which will
+recur in every later stage that writes a suite:
+
+* a **bare word inside `expr`** (`expr {$x ? PASS : FAIL}`) is a syntax error that aborts the **entire
+  file** — the only symptom is the suite's check count going **down**, never a red row. Hit four times.
+* **Tcl counts braces inside comments.** An unbalanced `{` in a comment left `namespace eval` unclosed
+  and **aborted xschem at startup** (issue 0663's arm). Write "open brace" in prose.
+* a **`#` comment inside a command's argument list is an argument.** A comment block inside a
+  `dict create` silently shifted the dict, `op` lost its `emit`, and a different suite broke in five
+  places.
+
+**Measured ngspice facts that later stages must not re-derive:** `help tf` prints the *tran* bracket on
+all three binaries, so the first-token rule is load-bearing and the comparison must be case-insensitive
+(`cieq()`); `pss` on stock-47 is the **only** reproducible `absent` fixture, because `help sp` answers on
+all three — which makes the plan's `--enable-rfspice` example undemonstrable; and a build whose `spinit`
+never loaded answers `devhelp` with **52** device names against 136/138, a fabricated absence of ~84
+families. That last one is why a probe must verify its own environment before it is allowed to report a
+capability missing.
 
 ---
 
@@ -713,18 +757,65 @@ Apply; the Initial-conditions sub-dialog, because shipping `uic` without it re-c
 Suites: G2's display string; `test_ase_persist`'s `arg_summary` rows; deck goldens gain
 optional tokens. **Rulings: ⚖ R5, ⚖ R9.** Decisions: **D4, D21, D22, D31**.
 
+⚠ **"ONE COMMIT" FOR STAGE 3 IS REFUTED TOO — IT IS SEVEN**, on the same grounds as Stage 2: each
+commit has to be sabotage-verifiable on the tree as that commit leaves it. The order is
+**C1** (the slot grammar) → **C2** (one refusal reader + the number alphabet) → **C3** (the four
+field tables + the commit door) → **C4** (the typed form and the write-back rule) → **C5** (the door
+closes on an unknown key) → **C6** (the `x` verbatim hatch) → **C7** (the Arguments column).
+
+**THREE COMMITS LANDED SO FAR.**
+
+| landed | commit | subject | floors |
+|---|---|---|---|
+| `234d1b86` | **C1** | `feat(1414)` a skipped value would have emitted an empty word and shifted every value after it | core 289 → 298 |
+| `5a88836a` | **C2** | `feat(1415)` one refusal reader, and the number alphabet the simulator actually reads | core 298 → **309** |
+| *pending* | **C3** | `feat(1416)` a skipped start time let the maximum step be read as one, and the sweep mode was discarded | core 309 → **333**; simcaps 158 → **164**; dialogs **display** 236 → **242** |
+
+⚠ **AND `4216c8b2` (issue 1413) LANDED FIRST, BEFORE ANY OF THEM** — not a Stage 3 item at all, but
+the thing without which no Stage 3 number could be trusted: T1 ran `test_ase_core` on **neither
+arm**. It is recorded in Stage 2's block because that is the stage whose numbers it corrected.
+
+⚠ **THE PLAN'S OWN FIELD TABLE WAS WRONG IN THREE PLACES, AND THE CORPUS IS WHAT SAID SO.** All
+three were found by measuring the 104 committed benches rather than by reading the sketch again:
+`@target` appears in **zero** committed rows against `source`'s **36**; the template's `?` and `!`
+sigils are **swapped** against the grammar C1 shipped, and the plan's spelling would have emitted
+`tran 1n 10u 0` for every committed row; and the `dc` sweep-kind classifier the plan sketched
+("literal `temp`, else a voltage source") mislabels **seven** committed current-source benches.
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | **IN PROGRESS** — C1, C2, C3 of seven landed |
+| commit | `234d1b86` C1 · `5a88836a` C2 · C3 pending |
+| T1 | C1 and C2 each taken **solo** at **61 cases, all zero** — the first Stage 3 numbers that actually include `test_ase_core`, because issue 1413 landed first |
+| suites moved | `test_ase_core` 289 → **333** · `test_ase_simcaps_0948` 158 → **164** · `test_ase_dialogs` display 236 → **242** · `test_ase_persist` 47 (broken) → **148**, repaired in C1 |
+| sabotage | C1 six, C2 seven, C3 seven — all verified to redden. ⚠ C2's first cut **preempted issue 1401's block** and reddened three preflight rows; the gate now defers the `unrenderable` token to the block that owns it |
+| ledger debts | Stage 2's four rulings (1401, 1404, 1408, 1411) still unpaid and now joined by **1414, 1415, 1416**; all seven to be paid in this stage's ⚖ R9 batch. **A look debt is owed for C4**, not for C3: C3 changes what the form *contains*, C4 changes what it *looks like* |
+| spec paragraphs rewritten | none yet — `### Choose Analyses dialog` in `ase_l.md` is six lines and is rewritten **in full in C4**, when the form's final shape exists to describe |
+| receipt | pending |
 
 ### What Stage 3 learned that binds later stages
+
+**Measure the corpus before trusting the plan's field names.** Three of this stage's corrections came
+from one census of the 104 committed benches, and each of them would otherwise have been found by a
+reddened suite after the code was written. The census is now a permanent row (section **CP** of
+`test_ase_core.tcl`), so the next stage that adds a field can ask the same question in one run.
+
+**A test that asserts a refusal is satisfied by a door that refuses everything.** Row G2b — *an
+enabled tran with a blank step is rejected* — would have stayed green through a change that made the
+dialog refuse every legal transient in the tree. The converse row is not optional, and it is the row
+that has to be written at the same time, because after the fact nobody remembers the door ever had
+two sides.
+
+**Pin the claim, not the fixture.** Row Q1 asserted the whole `dc` emit template as evidence for a
+statement about its *first word*, and reddened the moment `dc` legitimately gained four slots. A row
+whose expectation is wider than its own sentence will red for reasons unrelated to its subject, and
+a row that reds for the wrong reason is a row that eventually gets deleted rather than fixed.
+
+**Positional grammars need a word for "left out".** ngspice reads `tran`'s optional values purely by
+position, so "skip it" and "emit nothing" are different instructions — the second silently promotes
+whatever stands to the right. `whenskipped` belongs on the **field**, because the field is the thing
+that knows whether it occupies a position; a flag on the card would have made every optional slot in
+every future template answer the same way.
 
 ---
 

@@ -4146,9 +4146,13 @@ proc ase::field_emits {fd row name} {
 # necessary at all. Making `fields` mandatory would turn its `ok` into a raise and
 # redden the suite that owns the seam, for a reason unrelated to its subject.
 proc ase::analysis_expand {row tmpl {fields {}}} {
-  set out {}
+  # PASS 1 -- resolve every token to a {emitted value whenskipped} triple.
+  # It cannot yet decide whether a SKIPPED positional slot has to be filled in,
+  # because that answer depends on slots further right which this pass has not
+  # reached.
+  set res {}
   foreach tok $tmpl {
-    if {[string index $tok 0] ne {@}} { lappend out $tok ; continue }
+    if {[string index $tok 0] ne {@}} { lappend res [list 1 $tok {}] ; continue }
     set name [string range $tok 1 end]
     set sig {}
     set last [string index $name end]
@@ -4164,19 +4168,53 @@ proc ase::analysis_expand {row tmpl {fields {}}} {
       {} {
         # REQUIRED: raise when absent. Callers that cannot tolerate a raise ask
         # ase::analysis_emit_check first; that is what it is for.
-        lappend out [dict get $row $name]
+        lappend res [list 1 [dict get $row $name] {}]
       }
       ? {
         set v {}
         if {[dict exists $row $name]} { set v [dict get $row $name] }
         if {$v eq {} && $fd ne {}} { set v [ase::field_default $fd] }
-        if {$v ne {}} { lappend out $v }
+        if {$v ne {}} {
+          lappend res [list 1 $v {}]
+        } else {
+          set ws {}
+          if {$fd ne {} && [dict exists $fd whenskipped]} {
+            set ws [dict get $fd whenskipped]
+          }
+          lappend res [list 0 {} $ws]
+        }
       }
       ! {
         set v [ase::field_emits $fd $row $name]
-        if {$v ne {}} { lappend out $v }
+        if {$v ne {}} { lappend res [list 1 $v {}] } else { lappend res [list 0 {} {}] }
       }
     }
+  }
+  # PASS 2 -- THE POSITIONAL BACK-FILL, and it is the other half of the defect
+  # issue 1414 named. 1414 stopped a skipped slot emitting an EMPTY WORD; this
+  # stops a skipped slot silently PROMOTING the value to its right.
+  #
+  # MEASURED: ngspice reads `tran tstep tstop [tstart [tmax]] [uic]` purely by
+  # position. A row with a tmax and no tstart, expanded by dropping the skipped
+  # slot, emits `tran 1n 10u 0.2n` -- and ngspice takes 0.2n as TSTART, so the
+  # run records from 0.2n to 10u with the integrator unbounded. rc 0, no
+  # message, and an answer that is wrong in a way no one can see.
+  #
+  # So a field that occupies a POSITION declares `whenskipped <value>`, and a
+  # skipped slot emits that value whenever anything to its right still emits.
+  # A field with no `whenskipped` is genuinely trailing and simply vanishes --
+  # which is why `tmax` declares none and `tstart` declares 0.
+  set out {}
+  set n [llength $res]
+  for {set i 0} {$i < $n} {incr i} {
+    lassign [lindex $res $i] emitted val ws
+    if {$emitted} { lappend out $val ; continue }
+    if {$ws eq {}} { continue }
+    set later 0
+    for {set j [expr {$i + 1}]} {$j < $n} {incr j} {
+      if {[lindex [lindex $res $j] 0]} { set later 1 ; break }
+    }
+    if {$later} { lappend out $ws }
   }
   return [string trim [join $out { }]]
 }
@@ -4286,6 +4324,28 @@ proc ase::analysis_emit_check {sim row} {
       }
     }
   }
+  # THE GROUP RULE: ALL OF A GROUP'S VALUES, OR NONE OF THEM. ngspice's second
+  # DC nest is four words that only mean anything together. `dc V1 0 1 0.1 V2`
+  # -- a second sweep variable with no start, stop or step -- is not a partial
+  # sweep that does less; it is a parse error the simulator reports from the
+  # middle of a run, after the deck has been written and the process started.
+  # A per-field `required` cannot say this, because each of the four is
+  # genuinely optional on its own.
+  set groups {}
+  foreach f $flds {
+    if {![dict exists $f group] || ![dict exists $f name]} { continue }
+    set n [dict get $f name]
+    set h 0
+    if {[dict exists $row $n] && [dict get $row $n] ne {}} { set h 1 }
+    dict lappend groups [dict get $f group] $h
+  }
+  dict for {g hs} $groups {
+    set filled 0
+    foreach h $hs { if {$h} { incr filled } }
+    if {$filled > 0 && $filled < [llength $hs]} {
+      lappend out [list group $g [ase::analysis_emit_msg group $g]]
+    }
+  }
   return $out
 }
 
@@ -4302,7 +4362,7 @@ proc ase::analysis_emit_msg {token args} {
     boolval      { return "'$f' must be on or off" }
     fill         { return "cannot read '[lindex $args 1]' as a number for '$f'" }
     unrenderable { return "is not one this simulator backend can set up" }
-    group        { return "needs every value of '$f' or none of them" }
+    group        { return "needs every value of the $f, or none of them" }
   }
   return {}
 }
@@ -13789,26 +13849,45 @@ $_leg
         plots  {{select {Operating Point} role scalars results value label op}}] \
       dc [dict create \
         label dc  baseline 1  registered 1  seed_enabled 0  emitorder 10 viewrank 20 \
-        fields {{name source kind source required 1} \
-                {name start  kind real   required 1} \
-                {name stop   kind real   required 1} \
-                {name step   kind real   required 1}} \
-        emit   {{role analysis tmpl {dc @source @start @stop @step}}} \
+        fields {{name source kind source required 1 label {Sweep variable}} \
+                {name start  kind real   required 1 label {Start}} \
+                {name stop   kind real   required 1 label {Stop}} \
+                {name step   kind real   required 1 label {Step}} \
+                {name source2 kind source advanced 1 group {second sweep} \
+                              label {Second sweep variable}} \
+                {name start2  kind real  advanced 1 group {second sweep} \
+                              label {Second start}} \
+                {name stop2   kind real  advanced 1 group {second sweep} \
+                              label {Second stop}} \
+                {name step2   kind real  advanced 1 group {second sweep} \
+                              label {Second step}}} \
+        emit   {{role analysis \
+                 tmpl {dc @source @start @stop @step @source2? @start2? @stop2? @step2?}}} \
         results {viewer {kind sweep}} \
         plots  {{select {DC transfer characteristic} role sweep results viewer label dc}}] \
       ac [dict create \
         label ac  baseline 1  registered 1  seed_enabled 0  emitorder 20 viewrank 30 \
-        fields {{name points kind int  required 1} \
-                {name start  kind freq required 1} \
-                {name stop   kind freq required 1}} \
-        emit   {{role analysis tmpl {ac dec @points @start @stop}}} \
+        fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
+                             label {Sweep type} relabels points} \
+                {name points kind int  required 1 label {Points per decade} \
+                             labels {dec {Points per decade} \
+                                     oct {Points per octave} \
+                                     lin {Number of points (2 gives ONE point)}}} \
+                {name start  kind freq required 1 label {Start frequency} unit Hz} \
+                {name stop   kind freq required 1 label {Stop frequency} unit Hz}} \
+        emit   {{role analysis tmpl {ac @sweep? @points @start @stop}}} \
         results {viewer {kind sweep}} \
         plots  {{select {AC Analysis} role sweep results viewer label ac}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
-        fields {{name step kind time required 1} \
-                {name stop kind time required 1}} \
-        emit   {{role analysis tmpl {tran @step @stop}}} \
+        fields {{name step   kind time required 1 label {Time step} unit s} \
+                {name stop   kind time required 1 label {Stop time} unit s} \
+                {name tstart kind time advanced 1 whenskipped 0 \
+                             label {Start recording at} unit s} \
+                {name tmax   kind time advanced 1 label {Maximum time step} unit s} \
+                {name uic    kind bool advanced 1 when_true uic \
+                             label {Use initial conditions}}} \
+        emit   {{role analysis tmpl {tran @step @stop @tstart? @tmax? @uic!}}} \
         results {viewer {kind sweep}} \
         plots  {{select {Transient Analysis} role sweep results viewer label tran}}] \
       noise [dict create \
@@ -13889,6 +13968,29 @@ $_leg
       after  {nothing of this run was written}]
   }
 
+  # WHICH KIND OF THING A DC SWEEP VARIABLE IS, BY ITS SPICE DEVICE LETTER.
+  # CONTENT, so it lives in the adapter (D34-D37): ASE-L owns the fact that a
+  # dc sweep HAS a kind; only ngspice knows that `dctrcurv.c` tells the four
+  # apart the same way the netlist does -- by the instance name's first
+  # character.
+  #
+  # MEASURED ON THE COMMITTED CORPUS, 2026-09-12: the 104 committed benches
+  # carry twelve distinct sweep variables --
+  #   I0 V1 VD Vce Vds Vin Vres i0 i1 temp v2 vd
+  # -- of which THREE spellings (I0, i0, i1) are current sources across SEVEN
+  # rows. So the shape this batch first proposed, "the literal word temp, else
+  # a voltage source", mislabels every current-source bench in the tree, and
+  # `Vres` proves the test has to be the FIRST letter and not a substring: it
+  # is a voltage source whose name contains `res`.
+  proc dc_swkind {name} {
+    set n [string trim $name]
+    if {[string equal -nocase $n temp]} { return temp }
+    switch -exact -- [string tolower [string index $n 0]] {
+      i       { return isource }
+      r       { return resistor }
+      default { return source }
+    }
+  }
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
@@ -13904,5 +14006,6 @@ $_leg
     analysis_types      ::ase::backend::ngspice::analysis_types \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
-    si_suffixes         ::ase::backend::ngspice::si_suffixes]
+    si_suffixes         ::ase::backend::ngspice::si_suffixes \
+    dc_swkind           ::ase::backend::ngspice::dc_swkind]
 }

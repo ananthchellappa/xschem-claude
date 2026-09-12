@@ -4844,11 +4844,13 @@ proc ase::ui::chana_show {key} {
   ase::ui::apply_theme $w
 }
 
-# OK: D6 validation (an ENABLED analysis needs every quick field non-empty,
-# else render_deck's `dict get` would blow up at run time — reject with the
-# dialog kept up), then edit the FIRST state row of the shown type MERGED
-# over its original dict (unknown/extra keys survive); an empty quick field
-# deletes its key, no row of the type appends a fresh one.
+# OK: D6 validation (an ENABLED analysis must satisfy ase::analysis_emit_check
+# -- every REQUIRED slot filled, every bool 0/1/absent, every declared group
+# all-or-none, every value readable in the simulator's own SI alphabet -- else
+# render_deck would raise at run time; reject with the dialog kept up), then
+# edit the FIRST state row of the shown type MERGED over its original dict
+# (unknown/extra keys survive); an empty quick field deletes its key, no row of
+# the type appends a fresh one.
 proc ase::ui::chana_ok {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
@@ -4873,11 +4875,33 @@ proc ase::ui::chana_ok {key} {
     }
   }
   if {$en} {
-    foreach f [ase::ui::chana_fields $type $sim] {
-      if {![dict exists $vals $f] || [dict get $vals $f] eq {}} {
-        catch {::ase::echo "ase: enabled $type analysis needs a non-empty '$f'" error}
-        return
-      }
+    # D6, ISSUE 1416 -- THE DOOR NO LONGER KNOWS WHAT A ROW NEEDS; IT ASKS.
+    #
+    # It used to demand that EVERY field of the type be non-empty, which was
+    # only ever right because every field of every type happened to be
+    # `required 1`. The moment a type declares an optional one -- tran gained
+    # three in this commit -- that loop refuses a row ngspice would have run,
+    # and refuses it with a sentence naming a field the user was never obliged
+    # to fill. The one reader is `ase::analysis_emit_check`: it knows which
+    # slots are required, that a bool cannot be "missing", that a group is all
+    # or none, and that a value has to parse as a number in this simulator's
+    # own alphabet.
+    #
+    # ⚠ THE PROBE ROW IS BUILT FROM `vals`, NOT FROM THE STORED ROW. The whole
+    # point of a commit door is to judge what the user is about to store, and
+    # the stored row is still the PREVIOUS answer at this moment. Judging the
+    # stored row would pass a form the user has just emptied.
+    set probe [dict create type $type]
+    dict for {f v} $vals {
+      if {$v ne {}} { dict set probe $f $v }
+    }
+    set bad [ase::analysis_emit_check $sim $probe]
+    if {[llength $bad]} {
+      # The FRAME is the caller's, the CLAUSE is the reader's -- issue 1404's
+      # split. Report the first; the field-by-field surface is C4's.
+      catch {::ase::echo \
+        "ase: enabled $type analysis [lindex [lindex $bad 0] 2]" error}
+      return
     }
   }
   set st [ase::session_state $key]

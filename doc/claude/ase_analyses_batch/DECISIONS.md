@@ -933,6 +933,50 @@ deck collects `$curcasemode` at all, it is **Band 1 identity** under a different
 
 ---
 
+**D53 — The `tran` emit template's `?` and `!` in the plan are SWAPPED, and the plan's spelling
+would have moved all 104 committed goldens.** §3a writes
+`emit {tran @step @stop @tstart! @tmax! @uic?}`. Under the slot grammar Stage 3's own C1 shipped
+(issue 1414), `!` is resolved through `ase::field_emits`, which for a **non-bool** field returns the
+field's **`default`** when the key is absent — so a `tstart` carrying a default emits
+`tran 1n 10u 0` for **every** committed transient row, and `@uic?` would emit the stored value `1`
+rather than the word `uic`. The shipped template is `{tran @step @stop @tstart? @tmax? @uic!}`:
+optional value slots take `?`, and `!` is the **bool**. The positional obligation the plan was
+reaching for with `!` is carried instead by **`whenskipped` on the field**, which is where it
+belongs — a card-level flag would force every optional slot in every future template to answer the
+same way, and `tmax` and `tstart` answer differently on purpose.
+
+**D54 — The DC sweep variable is `source`, and the corpus is the whole argument.** §3a's sketch
+names it `@target` with a `kind` field beside it. Measured over every tracked `.state` file:
+**36** dc rows carry `source`, **0** carry `target`, and a **required** `@target` slot raises on
+every one of them — reddening `test_ase_core`'s deck goldens, `test_ase_dialogs` G2 and
+`test_ase_persist`'s summary rows for a field name nothing on disk has ever used. The classifier the
+plan wanted from `kind` survives as the adapter hook `dc_swkind`, derived from the name rather than
+stored beside it, which also means a bench edited by hand or written by an older ASE-L still
+classifies correctly instead of carrying a stale second key.
+
+**D55 — `dc_swkind` classifies by the SPICE device letter, never by a literal word list.** The
+plan's shape — *the literal word `temp`, else a voltage source* — is **measured wrong on shipped
+benches**. The 104 committed benches carry twelve distinct sweep variables
+(`I0 V1 VD Vce Vds Vin Vres i0 i1 temp v2 vd`), of which three spellings are **current** sources
+across **seven** rows; the sketch labels every one of them a voltage source and would offer the
+wrong picker on seven benches that ship in this repository. The test is the **first character**,
+lowercased — `i` current source, `r` resistor, else voltage source — with `temp` matched
+case-insensitively as a whole word first. ⚠ **And it must be the first character and not a
+substring**: `Vres` is a committed sweep variable and it is a **voltage source whose name contains
+`res`**.
+
+**D56 — The `grid` field (`native` / `interp` / `linearize`) is deferred from Stage 3 to Stage 6.**
+It is the one item in §3a that is not a *parameter of the analysis card* — `interp` and `linearize`
+are `.control` commands that run before and after the analysis, so shipping it in the field table
+would put a control in the form whose emission has nothing to do with the slot grammar the rest of
+the table uses. Stage 6 already owns the `.control` block's shape. ⚠ **The plan's own M8 row
+anticipates this**: it asks whether `set interp` behaves on a complex AC plot and a nested DC sweep,
+and answers *"the Tran form's `grid` field is Stage 3; the AC and DC arms are Stage 6"* — so the
+field would have shipped in Stage 3 measured on one of its three arms. It ships in Stage 6 with all
+three measured.
+
+---
+
 ## ⚖ The user's rulings — eleven: TWO ANSWERED, nine carried
 
 **House rule, and it is a standing preference recorded in this project: ONE AT A TIME.**

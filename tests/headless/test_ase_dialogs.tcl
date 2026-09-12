@@ -698,6 +698,100 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.chana.btns.cancel invoke
   update
 
+  # G2c: THE CONVERSE OF G2b, AND THE ROW THE D6 REPLACEMENT EXISTS FOR.
+  ## ⚠ G2b ALONE WOULD HAVE STAYED GREEN THROUGH THIS COMMIT. The old door
+  ## demanded that EVERY field of the type be non-empty, which was only ever
+  ## right because every field of every type happened to be `required 1`. tran
+  ## gained three OPTIONAL fields in this commit, so the old loop would refuse a
+  ## row ngspice runs perfectly well -- and refuse it naming a field the user was
+  ## never obliged to fill. Nothing in the suite would have said so: G2b asserts
+  ## a refusal, and a door that refuses everything satisfies it.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.tran invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  foreach {fld val} {step 1n stop 10u} {
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
+  }
+  foreach fld {tstart tmax uic} {
+    if {[winfo exists $top.chana.form.$fld]} { $top.chana.form.$fld delete 0 end }
+  }
+  set g2c_before [ase::state_get [ase::session_state $key] analyses]
+  $top.chana.btns.proceed invoke
+  update
+  check_true "G2c an enabled tran with its two required values and all three\
+ optional ones left blank is COMMITTED, not refused" \
+    [expr {![winfo exists $top.chana]}]
+  set g2crow {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {tran}} { set g2crow $a; break }
+  }
+  ## ⚠ AND THE BLANK OPTIONAL FIELDS LEAVE NO KEY BEHIND. A door that stored an
+  ## empty `tstart` would put a key on disk that every one of the 104 committed
+  ## benches lacks, and the round-trip this batch is measured against would stop
+  ## being byte-identical the first time anyone opened the dialog.
+  check "G2c a blank optional field writes no key at all" \
+    [list [ase::state_get $g2crow enabled] [ase::state_get $g2crow step] \
+          [ase::state_get $g2crow stop] [lsort [dict keys $g2crow]]] \
+    {1 1n 10u {enabled step stop type}}
+  set g2cit [tv_find $atv type tran]
+  check "G2c and the Arguments column shows the three words the deck will carry" \
+    [expr {$g2cit ne {} ? [$atv set $g2cit args] : {}}] {tran 1n 10u}
+
+  # G2d: THE GROUP DOOR. A second sweep variable with no start, stop or step is
+  ## not a smaller sweep -- it is a parse error ngspice reports from the middle
+  ## of a run, after the deck is written and the process started. The door has to
+  ## catch it because no per-field `required` can: each of the four is genuinely
+  ## optional on its own, and 68 committed benches have none of them.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.dc invoke
+  update
+  set ::ase::ui::dlg($key,anen) 1
+  foreach {fld val} {source V2 start 0 stop 1.8 step 0.01 source2 temp} {
+    if {[winfo exists $top.chana.form.$fld]} {
+      $top.chana.form.$fld delete 0 end
+      $top.chana.form.$fld insert 0 $val
+    }
+  }
+  foreach fld {start2 stop2 step2} {
+    if {[winfo exists $top.chana.form.$fld]} { $top.chana.form.$fld delete 0 end }
+  }
+  set g2d_before [ase::state_get [ase::session_state $key] analyses]
+  $top.chana.btns.proceed invoke
+  update
+  check_true "G2d an enabled dc naming a second sweep variable with no start,\
+ stop or step is refused and the dialog survives" \
+    [winfo exists $top.chana]
+  check "G2d and the bench is untouched" \
+    [ase::state_get [ase::session_state $key] analyses] $g2d_before
+  ## ⚠ COMPLETING THE NEST LETS IT THROUGH, which is what proves the refusal is
+  ## the GROUP rule and not a blanket refusal of the new fields.
+  foreach {fld val} {start2 -40 stop2 60 step2 50} {
+    $top.chana.form.$fld delete 0 end
+    $top.chana.form.$fld insert 0 $val
+  }
+  $top.chana.btns.proceed invoke
+  update
+  set g2drow {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {dc}} { set g2drow $a; break }
+  }
+  check "G2d completing the nest commits it, and the Arguments column carries\
+ all eight words" \
+    [list [expr {![winfo exists $top.chana]}] \
+          [expr {[set i [tv_find $atv type dc]] ne {} ? [$atv set $i args] : {}}]] \
+    {1 {dc V2 0 1.8 0.01 temp -40 60 50}}
+  ## Put the bench back the way G2 left it, so the rows below this one keep the
+  ## state they were written against.
+  set g2st [ase::session_state $key]
+  dict set g2st analyses $g2c_before
+  ase::session_update $key $g2st
+  ase::ui::populate $key
+  update
+
   # G3: Setup > Design — View list filtered to SCHEMATIC views (nfet_clean
   # also has ngspice_state* views: the filter proof), round trip via OK
   $top.mb.setup invoke "Design\u2026"

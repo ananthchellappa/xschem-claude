@@ -4662,6 +4662,271 @@ check "SI5 a simulator that has not said what its numbers look like has nothing\
   incr fail
 }
 
+# --- PB: THE POSITIONAL BACK-FILL -------------------------------------------
+## ⚠ THIS IS THE OTHER HALF OF ISSUE 1414, AND IT IS THE HALF THAT SURVIVES A
+## `string trim`. 1414 stopped a skipped slot emitting an EMPTY WORD. It did not
+## stop a skipped slot letting the value to its RIGHT slide left into its place,
+## because that emission has no double space, no empty element, and nothing at
+## all for a reader to notice.
+##
+## MEASURED, on the ngspice manual's own grammar for tran:
+##     tran tstep tstop [tstart [tmax]] [uic]
+## is read PURELY BY POSITION. A row carrying a tmax and no tstart, expanded by
+## dropping the skipped slot, emits
+##     tran 1n 10u 0.2n
+## and ngspice takes `0.2n` as TSTART -- the run records from 0.2n to 10u with
+## the integrator left unbounded. rc 0, no warning, a plot with the right name
+## and the wrong contents. The whole defect is one word in one position.
+##
+## The fix is `whenskipped` on the FIELD, not a flag on the card: a field that
+## occupies a position says what it means when it is left out, and a skipped
+## slot emits that value whenever anything to its right still emits. A field
+## with no `whenskipped` is genuinely trailing and simply vanishes, which is why
+## `tmax` declares none and `tstart` declares 0.
+proc pbline {row} {
+  set e [ase::analysis_entry ngspice [dict get $row type]]
+  set flds {}
+  if {[dict exists $e fields]} { set flds [dict get $e fields] }
+  foreach card [dict get $e emit] {
+    if {[dict get $card role] eq {analysis}} {
+      return [ase::analysis_expand $row [dict get $card tmpl] $flds]
+    }
+  }
+  return {}
+}
+
+check "PB1 a tran row carrying only the two required values emits exactly what it\
+ emitted before this commit, which is what keeps all 104 committed benches\
+ byte-identical" \
+  [pbline {type tran step 1n stop 10u}] {tran 1n 10u}
+
+## ⚠ THE ROW THIS SECTION EXISTS FOR. Without the back-fill this reads
+## `tran 1n 10u 0.2n` -- three words, no empty element, `string trim` perfectly
+## happy -- and 0.2n is TSTART.
+check "PB2 a tran row with a maximum step and no start time back-fills the start\
+ slot, so the maximum step lands in the maximum-step position instead of being\
+ read as a start time" \
+  [pbline {type tran step 1n stop 10u tmax 0.2n}] {tran 1n 10u 0 0.2n}
+
+check "PB3 and the back-filled word is the field's declared whenskipped value,\
+ not the value that would otherwise have slid into that slot" \
+  [lindex [pbline {type tran step 1n stop 10u tmax 0.2n}] 3] 0
+
+check "PB4 both optional times present emits both in their own positions" \
+  [pbline {type tran step 1n stop 10u tstart 1u tmax 0.2n}] {tran 1n 10u 1u 0.2n}
+
+check "PB5 a trailing bool also counts as a later word, so a uic row back-fills\
+ the start slot rather than letting uic be read as a start time" \
+  [pbline {type tran step 1n stop 10u uic 1}] {tran 1n 10u 0 uic}
+
+check "PB6 uic switched OFF contributes nothing at all, so it cannot move a\
+ committed row" \
+  [pbline {type tran step 1n stop 10u uic 0}] {tran 1n 10u}
+
+## ⚠ THE BACK-FILL MUST NOT FIRE WHEN THERE IS NOTHING TO ITS RIGHT. A row with
+## no tmax and no uic must stay three words: back-filling unconditionally would
+## move every committed tran bench, which is the opposite defect.
+check "PB7 a skipped positional slot with nothing emitting to its right stays\
+ skipped" \
+  [pbline {type tran step 1n stop 10u tstart {}}] {tran 1n 10u}
+
+check "PB8 a field that declares no whenskipped is genuinely trailing and\
+ vanishes even when it is skipped before a later word" \
+  [pbline {type tran step 1n stop 10u tstart 1u uic 1}] {tran 1n 10u 1u uic}
+
+## ⚠ THE `dec` DRIFT DIES HERE. `render_deck` used to carry the word `dec` as a
+## LITERAL inside the template, so a state row storing `oct` or `lin` emitted
+## `ac dec ...` and discarded the stored value in silence -- measured, and
+## recorded beside the registry entry before this commit landed. `@sweep?` with
+## `default dec` resolves the same word AT EMIT, which is why all 104 committed
+## ac rows -- none of which carries a `sweep` key at all -- still emit the same
+## five words.
+check "PB9 an ac row with no sweep key emits the same line it emitted when the\
+ sweep word was a hardwired literal" \
+  [pbline {type ac points 20 start 10 stop 1g}] {ac dec 20 10 1g}
+
+check "PB10 and an ac row that stores a sweep mode finally emits it instead of\
+ discarding it" \
+  [pbline {type ac sweep lin points 20 start 10 stop 1g}] {ac lin 20 10 1g}
+
+check "PB11 a dc row with one sweep emits four words after the verb, unchanged" \
+  [pbline {type dc source V1 start -12 stop 1 step 1m}] {dc V1 -12 1 1m}
+
+check "PB12 a dc row with a second nest emits all eight" \
+  [pbline {type dc source V1 start -12 stop 1 step 1m source2 temp start2 -40\
+           stop2 60 step2 50}] {dc V1 -12 1 1m temp -40 60 50}
+
+# --- GR: ALL OF A GROUP'S VALUES, OR NONE OF THEM ---------------------------
+## ⚠ A PER-FIELD `required` CANNOT SAY THIS. Each of the second nest's four
+## values is genuinely optional on its own -- a dc sweep with no second nest is
+## the normal case, and 68 of the 104 committed benches are exactly that. What
+## is not legal is THREE of them. `dc V1 0 1 0.1 temp` is not a smaller sweep
+## that does less; it is a parse error ngspice reports from the middle of a run,
+## after the deck has been written and the process started.
+set GR1 [ase::analysis_emit_check ngspice \
+  {type dc source V1 start 0 stop 1 step 0.1 source2 temp}]
+check "GR1 a second sweep variable with no start, stop or step is refused before\
+ a deck is written" \
+  [list [llength $GR1] [lindex [lindex $GR1 0] 0] [lindex [lindex $GR1 0] 1]] \
+  {1 group {second sweep}}
+
+check "GR2 a complete second nest is not refused" \
+  [ase::analysis_emit_check ngspice \
+    {type dc source V1 start 0 stop 1 step 0.1 source2 temp start2 -40 stop2 60\
+     step2 50}] {}
+
+check "GR3 no second nest at all is not refused, which is 68 of the committed\
+ benches" \
+  [ase::analysis_emit_check ngspice {type dc source V1 start 0 stop 1 step 0.1}] {}
+
+## ⚠ THE FINDING NAMES THE GROUP, NOT A FIELD. Naming one of the four would send
+## the user to fill in that one and leave the other two still missing.
+check "GR4 the refusal names the group rather than picking one of its fields" \
+  [lindex [lindex $GR1 0] 1] {second sweep}
+
+## ⚠ NO FRAME. Issue 1404's split: the reader owns the clause, the caller owns
+## the sentence around it. A row asserting a composed sentence would stay green
+## when an adapter composed the whole thing itself.
+## ⚠ AND IT MUST ASSERT THE CLAUSE IS THERE BEFORE ASSERTING WHAT IT IS NOT.
+## MEASURED: with the group rule DELETED this row went GREEN. `$GR1` was then
+## empty, `[lindex [lindex {} 0] 2]` is the empty string, and `string first`
+## returns -1 on it -- so a row written to prove the clause carries no frame
+## proved it about a clause that did not exist. The non-empty leg is first for
+## that reason, and it is the third sabotage in this batch to pass a row that
+## looked airtight.
+check "GR5 the group clause is real, carries no ase: prefix and no frame of its own" \
+  [list [expr {[lindex [lindex $GR1 0] 2] ne {}}] \
+        [string first {ase:} [lindex [lindex $GR1 0] 2]] \
+        [expr {[lindex [lindex $GR1 0] 2] \
+               eq [ase::analysis_emit_msg group {second sweep}]}]] \
+  {1 -1 1}
+
+check "GR6 a bool is still refused only for a value that is neither on nor off,\
+ because absent means off and that is a legal answer" \
+  [list [lindex [lindex [ase::analysis_emit_check ngspice \
+                  {type tran step 1n stop 10u uic maybe}] 0] 0] \
+        [ase::analysis_emit_check ngspice {type tran step 1n stop 10u}]] \
+  {boolval {}}
+
+# --- CP: THE COMMITTED CORPUS, AS A PROPERTY --------------------------------
+## ⚠ THE ACCEPTANCE CRITERION OF THIS WHOLE BATCH IS THAT THE COMMITTED BENCHES
+## ROUND-TRIP BYTE-IDENTICALLY, and this section is the only thing in the tree
+## that would notice if they stopped.
+##
+## MEASURED 2026-09-12 over every tracked `.state` file: 104 files, 416 analysis
+## rows, exactly four rows per file, and these key sets and NO OTHERS --
+##   ac   {enabled type} {enabled points start stop type}
+##   dc   {enabled type} {enabled source start step stop type}
+##   op   {enabled type}
+##   tran {enabled type} {enabled step stop type}
+## -- which is the fact that lets this stage refuse an unknown key at the commit
+## door without breaking a single committed bench: there are no unknown keys.
+##
+## ⚠ WHY A CENSUS AND NOT A HASH. An opaque digest reds with one bit and tells
+## you nothing about which bit. These rows red with a NAME -- the type whose key
+## set moved, or the type whose emitted word count moved -- which is the whole
+## difference between a row that gets fixed and a row that gets deleted.
+##
+## ⚠ AND WHY THE COUNTS ARE FLOORS WHILE THE SHAPES ARE EXACT. Adding a bench is
+## ordinary work and must not red this suite; changing what a bench's row LOOKS
+## LIKE is this batch's subject and must.
+set CPF {}
+if {[catch {exec git -C $repo ls-files -- *.state} cpout]} {
+  set CPF {GIT-LS-FILES-FAILED}
+} else {
+  foreach cprel [split $cpout "\n"] {
+    if {[string trim $cprel] ne {}} { lappend CPF [file join $repo $cprel] }
+  }
+}
+set CPKEYS [dict create] ; set CPAR [dict create]
+set CPN 0 ; set CPRPF {} ; set CPTARGET 0 ; set CPSOURCE 0
+foreach cpf $CPF {
+  if {[catch {open $cpf r} cpfh]} { continue }
+  set cptxt [read $cpfh] ; close $cpfh
+  foreach cpl [split $cptxt "\n"] {
+    if {[string first {analyses } $cpl] != 0} { continue }
+    if {[catch {lindex $cpl 1} cprows]} { continue }
+    lappend CPRPF [llength $cprows]
+    foreach cpr $cprows {
+      incr CPN
+      set cpty [ase::state_get $cpr type]
+      set cpks [lsort [dict keys $cpr]]
+      if {![dict exists $CPKEYS $cpty] \
+          || [lsearch -exact [dict get $CPKEYS $cpty] $cpks] < 0} {
+        dict lappend CPKEYS $cpty $cpks
+      }
+      if {[dict exists $cpr target]} { incr CPTARGET }
+      if {[dict exists $cpr source]} { incr CPSOURCE }
+      if {![llength [ase::analysis_emit_check ngspice $cpr]]} {
+        set cpw [llength [ase::analysis_line ngspice $cpr]]
+        if {![dict exists $CPAR $cpty] \
+            || [lsearch -exact [dict get $CPAR $cpty] $cpw] < 0} {
+          dict lappend CPAR $cpty $cpw
+        }
+      }
+    }
+  }
+}
+proc cpks {d ty} {
+  if {![dict exists $d $ty]} { return {} }
+  return [lsort [dict get $d $ty]]
+}
+
+check "CP1 every tracked state file in this repository is found and carries four\
+ analysis rows, so the rows below speak for the whole corpus and not for a\
+ subset a broken glob happened to reach" \
+  [list [expr {[llength $CPF] >= 104}] [expr {$CPN >= 416}] \
+        [lsort -unique $CPRPF]] {1 1 4}
+
+check "CP2 the committed benches use these analysis-row key sets and no others,\
+ which is why a commit door that refuses an unknown key breaks none of them" \
+  [list [cpks $CPKEYS ac] [cpks $CPKEYS dc] [cpks $CPKEYS op] [cpks $CPKEYS tran]] \
+  [list {{enabled points start stop type} {enabled type}} \
+        {{enabled source start step stop type} {enabled type}} \
+        {{enabled type}} \
+        {{enabled step stop type} {enabled type}}]
+
+## ⚠ THE BYTE-IDENTITY ROW. Every committed row that can be emitted still emits
+## the same NUMBER OF WORDS it emitted before the field tables landed -- op one,
+## dc five, ac five, tran three. A new default, a new back-fill or a new
+## positional slot leaking into the committed corpus moves one of these four
+## numbers and nothing else in the tree would notice.
+check "CP3 every committed row still emits exactly the words it emitted before\
+ the field tables landed" \
+  [list [cpks $CPAR op] [cpks $CPAR dc] [cpks $CPAR ac] [cpks $CPAR tran]] \
+  {1 5 5 3}
+
+## ⚠ THE MEASUREMENT THAT OVERTURNED THE PLAN. This batch's own design sketch
+## spelled the dc sweep variable `@target`. Not one committed row carries that
+## key; 36 carry `source`. A required `@target` slot would have raised on every
+## one of them.
+check "CP4 no committed row carries a target key and the sweep variable is\
+ spelled source, which is the measurement that chose the field name" \
+  [list $CPTARGET [expr {$CPSOURCE >= 36}]] {0 1}
+
+## ⚠ TF3, RESTATED AS A PROPERTY OF THE REGISTRY. Every field the form offers is
+## consumed by a template, and every slot a template consumes is described by a
+## field. A field no template reads is the Stage 3 defect itself -- a control the
+## user fills in that reaches nothing.
+check "CP5 this simulator's registry is self-consistent: no template consumes a\
+ field the entry never describes, and no field is offered that no template reads" \
+  [ase::analysis_schema_errors ngspice] {}
+
+## ⚠ AND THE PROBE-ONLY ENTRIES MUST NOT BE SWEPT UP BY IT. Seven registered
+## types carry a `role probe` card and no `fields` at all; they are not a schema
+## error, they are a type this backend can name and cannot yet set up. A
+## validator that demanded fields of them would red seven entries that are
+## deliberately incomplete until Stage 6 gives them an emit.
+set CPPROBE 0
+foreach cpt {noise tf pz sens disto sp pss} {
+  set cpe [ase::analysis_entry ngspice $cpt]
+  if {$cpe eq {} || [dict exists $cpe fields]} { continue }
+  incr CPPROBE
+}
+check "CP6 the seven probe-only types declare no fields and are still not a\
+ schema error" \
+  [list $CPPROBE [ase::analysis_schema_errors ngspice]] {7 {}}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

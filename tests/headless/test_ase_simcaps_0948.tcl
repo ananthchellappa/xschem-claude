@@ -3310,11 +3310,21 @@ set Q_NS ase::backend::ngspice
 ## schema half, so the token had no source at all. It comes from the FIRST WORD
 ## OF WHAT THE ADAPTER EMITS, via ase::analysis_card_tmpl -- which core can ask
 ## for without learning any ngspice.
+##
+## ⚠ THE ROW ASSERTS THE FIRST WORD, NOT THE WHOLE TEMPLATE, AND THAT IS A
+## CORRECTION MADE IN STAGE 3. It used to pin `{dc @source @start @stop @step}`
+## verbatim, so the moment dc gained its second sweep nest the row went red for a
+## reason that has nothing to do with its subject -- exactly the failure ase.tcl
+## warns about beside ase::analysis_expand. What it pins now is the CLAIM: the
+## probe token is the template's FIRST word, the template is longer than that one
+## word, and its second token is a slot. A sabotage returning the bare string
+## `dc` instead of reading the template still reds it.
 check {Q1 the word each analysis is probed with is the first word of what this adapter emits, so the schema never has to carry the simulator's vocabulary} \
-  [list [a_ans ase::analysis_card_tmpl ngspice dc] \
-        [lindex [a_ans ase::analysis_card_tmpl ngspice dc] 0] \
+  [list [lindex [a_ans ase::analysis_card_tmpl ngspice dc] 0] \
+        [expr {[llength [a_ans ase::analysis_card_tmpl ngspice dc]] > 1}] \
+        [string index [lindex [a_ans ase::analysis_card_tmpl ngspice dc] 1] 0] \
         [a_ans ase::analysis_card_tmpl ngspice zznosuchtype]] \
-  [list {dc @source @start @stop @step} dc {}]
+  [list dc 1 @ {}]
 
 ## --- Q2: AND IT MUST NOT GO THROUGH THE ROW-TAKING READER -------------------
 ## ⚠ ase::analysis_cards resolves @slots with `dict get $row <field>`, so with
@@ -3985,6 +3995,85 @@ a_resetall
 set ::env(PATH) $PATHSAVE
 if {$NDSAVE eq {ZZUNSET}} { catch {unset ::netlist_dir} } else { set ::netlist_dir $NDSAVE }
 if {$J1BUDGET eq {NOVAR}} { catch {unset ::ase::cap_budget_ms} } else { a_budget_set $J1BUDGET }
+
+# --- W: WHICH KIND OF THING A DC SWEEP VARIABLE IS --------------------------
+## ⚠ CONTENT, NOT SCHEMA (D34-D37). ASE-L owns the fact that a dc sweep HAS a
+## kind -- the form needs it to decide which picker to offer. Only ngspice knows
+## that `dctrcurv.c` accepts exactly four and tells them apart the way the
+## netlist does: by the instance name's FIRST CHARACTER.
+##
+## ⚠ THE SHAPE THIS BATCH FIRST PROPOSED WAS WRONG, AND THE CORPUS IS WHY. The
+## plan's sketch classified "the literal word temp, else a voltage source".
+## MEASURED over the 104 committed benches, the twelve distinct sweep variables
+## are
+##     I0 V1 VD Vce Vds Vin Vres i0 i1 temp v2 vd
+## and three of those spellings are CURRENT sources, across seven committed
+## rows. The sketch would have labelled every one of them a voltage source and
+## offered the wrong picker on seven shipped benches.
+set W_NS ase::backend::ngspice
+
+check {W1 every sweep variable in every committed bench classifies by its SPICE device letter} \
+  [list [a_ans ${W_NS}::dc_swkind I0]   [a_ans ${W_NS}::dc_swkind V1] \
+        [a_ans ${W_NS}::dc_swkind VD]   [a_ans ${W_NS}::dc_swkind Vce] \
+        [a_ans ${W_NS}::dc_swkind Vds]  [a_ans ${W_NS}::dc_swkind Vin] \
+        [a_ans ${W_NS}::dc_swkind Vres] [a_ans ${W_NS}::dc_swkind i0] \
+        [a_ans ${W_NS}::dc_swkind i1]   [a_ans ${W_NS}::dc_swkind temp] \
+        [a_ans ${W_NS}::dc_swkind v2]   [a_ans ${W_NS}::dc_swkind vd]] \
+  {isource source source source source source source isource isource temp source source}
+
+## ⚠ THE ROW THE SUBSTRING BUG WOULD SURVIVE WITHOUT. `Vres` is a committed
+## sweep variable and it is a VOLTAGE SOURCE whose name contains `res`. A
+## classifier matching anywhere in the name calls it a resistor and offers a
+## resistance picker for a voltage.
+check {W2 the test is the first character and not a substring, so a voltage source named Vres is not a resistor} \
+  [list [a_ans ${W_NS}::dc_swkind Vres] [a_ans ${W_NS}::dc_swkind R7] \
+        [a_ans ${W_NS}::dc_swkind r2]] {source resistor resistor}
+
+## ⚠ AND THE LITERAL IS CASE-INSENSITIVE, because a netlist is.
+check {W3 temperature is recognised however it is spelled} \
+  [list [a_ans ${W_NS}::dc_swkind temp] [a_ans ${W_NS}::dc_swkind TEMP] \
+        [a_ans ${W_NS}::dc_swkind Temp] [a_ans ${W_NS}::dc_swkind { temp }]] \
+  {temp temp temp temp}
+
+## ⚠ A NAME THAT IS NONE OF THE THREE FALLS TO `source`, because that is the
+## overwhelmingly common case and because ngspice itself will say so if it is
+## wrong. It must NOT raise: a sweep variable is free text until the netlist is
+## read, and a classifier that raised would take the dialog down.
+check {W4 an unrecognised device letter is a source and never a raise} \
+  [list [a_ans ${W_NS}::dc_swkind x9] [a_ans ${W_NS}::dc_swkind {}] \
+        [a_ans ${W_NS}::dc_swkind 7]] {source source source}
+
+## ⚠ RESOLVED THROUGH THE HOOK, NOT BY NAME. A caller that spelled the namespace
+## itself would keep working for ngspice and silently do nothing for the next
+## adapter -- which is the whole reason ase::backend_hook RAISES rather than
+## returning empty for an unknown simulator.
+check {W5 the classifier is reachable as a backend hook and the unknown-simulator arm still raises} \
+  [list [expr {[a_ans ase::backend_hook ngspice dc_swkind] ne {}}] \
+        [string range [a_ans ase::backend_hook zznosuchsim dc_swkind] 0 6] \
+        [string range [a_ans ase::backend_hook ngspice zznosuchhook] 0 6]] \
+  {1 RAISED: RAISED:}
+
+## ⚠ AND THE MEASUREMENT ITSELF IS A ROW, so the claim above cannot rot. If a
+## later change to the committed benches removes every current-source sweep, the
+## reason this classifier is shaped the way it is has gone, and someone should
+## be told rather than left reading a comment about seven rows that no longer
+## exist.
+set W_I 0
+if {[catch {exec git -C $repo ls-files -- *.state} W_OUT]} { set W_OUT {} }
+foreach W_REL [split $W_OUT "\n"] {
+  if {[string trim $W_REL] eq {}} { continue }
+  if {[catch {open [file join $repo $W_REL] r} W_FH]} { continue }
+  set W_TXT [read $W_FH] ; close $W_FH
+  foreach W_L [split $W_TXT "\n"] {
+    if {[string first {analyses } $W_L] != 0} { continue }
+    foreach W_R [lindex $W_L 1] {
+      if {![dict exists $W_R source]} { continue }
+      if {[a_ans ${W_NS}::dc_swkind [dict get $W_R source]] eq {isource}} { incr W_I }
+    }
+  }
+}
+check {W6 the committed benches really do sweep current sources, which is the measurement that chose this classifier over the one the plan sketched} \
+  [expr {$W_I >= 7}] 1
 
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which
