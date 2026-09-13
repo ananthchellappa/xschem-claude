@@ -977,7 +977,7 @@ three measured.
 
 ---
 
-## ⚖ The user's rulings — eleven: TWO ANSWERED, nine carried
+## ⚖ The user's rulings — eleven: THREE ANSWERED, eight carried
 
 **House rule, and it is a standing preference recorded in this project: ONE AT A TIME.**
 Raise the single most consequential open question, give the evidence and the
@@ -995,8 +995,8 @@ entry).** It ratified the recommendation as written, so nothing in the plan move
 **D18** and **D19** stand; what changes is that the four conditions are now requirements rather
 than advice, and Stage 7's pre-deck class and Stage 11's design-variable axis are unblocked.
 
-**Ask ⚖ R3 next, and stop.** They are ordered below by consequence, not by stage, and with R1 and
-R2 answered the order now puts R3 first. ⚠ **⚖ R11 is new (2026-09-10) and is filed LAST, behind R10.** It arrived
+**⚖ R3 is ANSWERED (2026-09-12, Option C). Ask ⚖ R4 next, and stop.** They are ordered below by
+consequence, not by stage; with R1, R2 and R3 answered the order now puts R4 first. ⚠ **⚖ R11 is new (2026-09-10) and is filed LAST, behind R10.** It arrived
 with the variant amendment, whose ship-first item is a release note — but the *description* in that
 note needs no ruling and ships without one; only its **support sentence** is R11. Nothing about
 R11 jumps the queue, and a crew that asks it out of turn has taken a wrong turn. R1's answer does **not** shrink it: R2's own blocks-line says it
@@ -1172,9 +1172,19 @@ the user's own file is **copied** under a banner, never `source`d (**[R-M7]**); 
 says once that the file exists and what it shadows; and it is **refused** when the rundir is
 the shared `set_netlist_dir 0` fallback (C19) or when `-n` is in force (D18).
 
-### ⚖ R3 — Do the Outputs Value-column numbers come from the rawfile's one-point plots instead of the `print` log?
+### ⚖ R3 — ANSWERED. Do the Outputs Value-column numbers come from the rawfile's one-point plots instead of the `print` log?
 
-*Blocks: Stage 6.*
+**✅ ANSWERED 2026-09-12 — Option C, "both with a rule". The user's words: *"both with a rule is right, keep it"*.**
+
+Named vectors are read from the **rawfile**; arbitrary typed expressions are read from the **`print` log**. This is what shipped in issue **1429** as the recommendation, so **no code changes** — the ruling ratifies the standing behaviour rather than redirecting it.
+
+⚠ **What this closes.** `noise`, `tf` and `sens` get a Value column they could not have had under Option B, because with the prints anchored where the user's own ruling in issue 1243 put them, `print Transfer_function`, `print onoise_total` and `print r1` produce **nothing at all** — no value, no warning, no error line — while all three vectors sit in the results file. And `v(a)*2` keeps working, which Option A would have broken.
+
+⚠ **What stays true regardless.** The separability that let this ship unratified is now load-bearing documentation rather than an escape hatch: the rule lives in one proc, `ase::result_source`, and row **RS3** of `test_ase_core` performs *both* rulings by stubbing it, with a fixture log deliberately carrying a different number from the results file so the row can say which reader answered. Keep that row: it is what makes a future reversal one line instead of an archaeology exercise.
+
+⚠ **Still open and NOT closed by this**: ⚖ **R9**, the standing label ratification, which includes the three sentences the R3 reader seam added. The `owed.sh` entry for issue 1429 says so in as many words, and it remains outstanding.
+
+*Blocked: Stage 6 — now unblocked.*
 
 * **Option A — move to the rawfile.** Every scalar an analysis produces is a one-point plot
   (`Operating Point`, `Integrated Noise`, `Transfer Function`, dc `Sensitivity Analysis`).
@@ -1336,7 +1346,7 @@ ruling is C, Stage 15 moves from terminal-and-optional to scheduled, and Stage 8
 gives up the time.
 
 ⚠ **NOT DECIDED. The user has not answered this.** ⚖ R1 is answered (2026-09-10, Option A) and
-⚖ R2 with it (2026-09-10, yes with four conditions); **⚖ R3 is the next one to ask**, and this one
+⚖ R2 with it (2026-09-10, yes with four conditions); **⚖ R3 is ANSWERED (2026-09-12, Option C); ⚖ R4 is the next one to ask**, and this one
 is filed second-to-last — ⚖ **R11**, added 2026-09-10 with the variant amendment, is now the one
 filed last.
 
@@ -1409,4 +1419,4 @@ tool"*, B is coherent and cheaper. The recommendation is C because a project pag
 sentence and C's sentence is true.
 
 ⚠ **NOT DECIDED. The user has not answered this.** ⚖ R1 and ⚖ R2 are answered (both 2026-09-10);
-**⚖ R3 is the next one to ask**; R10 is filed after the table and this one after R10.
+**⚖ R3 is ANSWERED (2026-09-12, Option C); ⚖ R4 is the next one to ask**; R10 is filed after the table and this one after R10.

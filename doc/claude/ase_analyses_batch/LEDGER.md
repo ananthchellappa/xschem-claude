@@ -335,9 +335,41 @@ machine and `SPICE_USERINIT_DIR` is unset, so condition 2 shadows nothing today.
 therefore optional — it is the condition that becomes load-bearing the first time the user writes
 one, and the `source`-loses-your-variables measurement is what it exists to prevent.
 
-### Still open — nine
+### ⚖ R3 — the Outputs Value column — **ANSWERED 2026-09-12, Option C**
 
-⚖ **R3** through ⚖ **R11** are unanswered as of 2026-09-10. ⚖ **R11 — the minimum supported
+**The user's words: *"both with a rule is right, keep it"*.** Named vectors are read from the
+**rawfile**; arbitrary typed expressions are read from the **`print` log**.
+
+⚠ **No code changed.** Option C is what issue **1429** shipped as the recommendation, so the
+ruling ratifies standing behaviour rather than redirecting it — which is the outcome the
+"ship the recommendation, keep the alternative cheap" discipline exists to make possible.
+Stage 6 was named as blocked on R3 and was never actually blocked, because of it.
+
+**What it closes.** `noise`, `tf` and `sens` keep a Value column they could not have had under
+Option B: with the prints anchored where the user's own ruling in issue **1243** put them,
+`print Transfer_function`, `print onoise_total` and `print r1` produce **nothing at all** — no
+value, no warning, no error line — while all three vectors sit in the results file. And
+`v(a)*2` keeps working, which Option A would have broken.
+
+⚠ **Keep row RS3 of `test_ase_core`.** It *performs both rulings* by stubbing
+`ase::result_source`, with a fixture log deliberately carrying a different number from the
+results file so the row can say which reader answered. That row is what would make a future
+reversal one line rather than an archaeology exercise, and its value does not disappear
+because the ruling landed the way the recommendation pointed.
+
+⚠ **This does NOT close ⚖ R9.** The three user-facing sentences the R3 reader seam added are
+still unratified, and issue 1429's `owed.sh` entry says so explicitly. R9 stays batched with
+1426–1428, 1430, 1432 and 1433.
+
+⚠ **A source-comment debt this created, and it is named so it is not forgotten.**
+`src/ase.tcl`, four suite headers, the issue file and receipt 13 all say R3 is *asked and
+unanswered* and mark Option C as a *recommendation*. Those sentences are now false. They were
+NOT corrected in this pass because a crew held `src/ase.tcl` and two of those suites at the
+moment the ruling arrived; the correction is the first item of the next driver pass.
+
+### Still open — eight
+
+⚖ **R4** through ⚖ **R11** are unanswered. ⚖ **R3 was answered 2026-09-12** — see above. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
