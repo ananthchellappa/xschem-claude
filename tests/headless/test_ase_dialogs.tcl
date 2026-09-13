@@ -40,6 +40,22 @@
 #          names the missing View -- G9d; state-view filter, import + dirty,
 #          dirty-prompt-first); --> strip = Add Output;
 #          no todo_stub left on any rewired item-07 entry.
+#   GR5a-l ⚖ R5 (issue 1445): the Choose Analyses form REMEMBERS. Clicking a
+#          type cell saves the visible form's edits into a per-dialog, per-type
+#          cache and repopulating overlays that cache over the stored row, so
+#          "I typed 500u, clicked the ac radio, clicked back, and 500u was gone"
+#          (doc/claude/ase_l_ux_batch/FINDINGS.md) no longer happens -- GR5a.
+#          The cache is per TYPE and not per field (GR5b), MERGES rather than
+#          replaces so an untouched visible field (GR5c) and a field hidden
+#          behind `▸ Advanced` (GR5d) keep their stored values, covers the
+#          Advanced toggle too (GR5e, GR5l), records only what was TOUCHED
+#          (GR5f), and is not committed for any type but the visible one
+#          (GR5g). It
+#          dies with the dialog, by Cancel (GR5h) and by a bare window-manager
+#          destroy (GR5i); Enable rides with it (GR5j); and clicking all eleven
+#          cells then pressing OK writes the same bytes as never opening the
+#          dialog (GR5k), which is the 104-file byte-identity constraint asked
+#          from the GUI side.
 #   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog OF THE ITEM-10 SET
 #          dismisses on a real generated <Key-Escape> through its CANCEL path
 #          (the results-batch item-7 `Results > Select…` dialog is newer and
@@ -124,6 +140,13 @@ set fail 0; set npass 0
 #              `.note` name is the live one.
 #              ⚠ GN10 IS THE ITEM'S WHOLE CONSTRAINT AS A ROW: opening the
 #              dialog and clicking all eleven cells must start NO netlist.
+#   37 / 313   section GR5, ⚖ R5 (issue 1445): a type click no longer discards
+#              what you typed. Headless is unmoved because every GR5 row drives
+#              widgets -- there is no schema half at all, which is the point:
+#              the cache is per-dialog memory, no new state key and no schema
+#              change. GR5k is the row that would notice one, and it asks the
+#              104-file byte-identity question from the GUI side: click all
+#              eleven cells, press OK, get the same bytes.
 #
 # ⚠ TWO ROWS IN THIS FILE ARE RED ON THE DISPLAY ARM AND WERE RED BEFORE 1435
 # -- verified by restoring src/ase.tcl and src/ase_window.tcl to HEAD 81312742
@@ -3125,6 +3148,309 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list {ac dc disto noise op pss pz sens sp tf tran} 1 1 {normal normal normal} op op]
   $top.chana.btns.cancel invoke
   update
+
+  # --- GR5: WHAT YOU TYPED SURVIVES A TYPE CLICK -- ⚖ R5, ISSUE 1445 ---------
+  # The user ruled on 2026-09-13: *"Make it remember -- that's a more
+  # professional UI. We are trying to be better than Cadence"*. That REVERSES
+  # D4 of `doc/claude/ase_l_batch/prompts/item07_dialogs.md` (*"in-form edits of
+  # the previous type are DISCARDED"*) -- NOT `ase_analyses_batch/DECISIONS.md`'s
+  # own D4, which is about the per-row keys `id` and `x` and would be a schema
+  # change. `doc/claude/ase_l_ux_batch/FINDINGS.md` carries the lived report the
+  # ruling answers: *"I typed 500u, clicked the ac radio, clicked back, and 500u
+  # was gone"*, and GR5a is that sentence as a row.
+  #
+  # ⚠ WHAT THE REVERSAL DID **NOT** CHANGE IS THE COMMIT, and GR5g is the row
+  # that says so. D4's stated reason -- "deterministic, no hidden multi-type
+  # writes" -- defended the commit and was merely attached to the discarding.
+  #
+  # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW and `run_regression.tcl` runs this
+  # file on NEITHER of its arms, so a T1 zero exercises none of them.
+  proc r5_open {key} {
+    set top [ase::ui::window_for $key]
+    # ⚠ A BARE `destroy` AND NOT `chana_cancel`: this is the window manager's
+    # close button, the one close path that runs none of our procs. GR5i rests
+    # on it.
+    catch {destroy $top.chana}
+    ase::ui::choose_analyses $key
+    update
+    return $top.chana
+  }
+  check "GR5 fixture: a session for the remembering rows" \
+    [ase::open_state aselib nfet_clean ngspice_state1] 1
+  update
+  set top [ase::ui::window_for $key]
+  catch {destroy $top.chana}
+  # ⚠ THE TWO ROWS ARE PINNED BY HAND, AND THE FIXTURES MUST DISAGREE. `tran`
+  # gets `stop 1u` and `ac` gets `stop 1meg` -- two DIFFERENT values under the
+  # SAME field name, which is what lets GR5b say the cache is per type rather
+  # than per field. `tran` also gets `tmax 2n`, an `advanced 1` field the
+  # disclosure hides, which is GR5d's whole subject.
+  set R5ST [ase::session_state $key]
+  set R5ROWS {}
+  foreach r5a [ase::state_get $R5ST analyses] {
+    switch -exact -- [ase::state_get $r5a type] {
+      tran { lappend R5ROWS [dict create type tran enabled 0 step 1n stop 1u \
+                               tmax 2n] }
+      ac   { lappend R5ROWS [dict create type ac enabled 0 points 10 start 1 \
+                               stop 1meg] }
+      default { lappend R5ROWS $r5a }
+    }
+  }
+  dict set R5ST analyses $R5ROWS
+  ase::session_update $key $R5ST
+  set R5FIX [ase::session_state $key]
+  set ::ase::ui::dlg($key,advopen) 0
+
+  ## GR5a -- THE LIVED DEFECT, AS A ROW, WITH ITS OWN POSITIVE CONTROL. The
+  ## second term proves the two fixtures DIFFER: a row whose before and after
+  ## are equal passes whatever the code does, and this batch has been bitten by
+  ## that nine times.
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  set R5A_BUILT [$gw.form.stop get]
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 500u
+  $gw.types.ac invoke
+  update
+  set R5A_AC [$gw.form.stop get]
+  $gw.types.tran invoke
+  update
+  check "GR5a typing 500u into tran, clicking the ac cell and clicking back\
+ leaves 500u in the box -- and the value the file gave it is not 500u" \
+    [list $R5A_BUILT [expr {$R5A_BUILT ne {500u}}] [$gw.form.stop get]] \
+    {1u 1 500u}
+
+  ## GR5b -- ONE CACHE PER TYPE. `tran` and `ac` both have a field called
+  ## `stop`; a cache keyed by field rather than by type would show tran's 500u
+  ## in ac's box and nothing would ever say so.
+  check "GR5b the tran edit does not leak into ac's identically named box" \
+    [list $R5A_AC [expr {$R5A_AC ne {500u}}]] {1meg 1}
+
+  ## GR5c -- THE OVERLAY MERGES OVER THE STORED ROW. `step` was never touched,
+  ## so it is in no cache, and it must still read what the file says. A cache
+  ## that REPLACED the row would blank it.
+  check "GR5c a field the user never touched keeps the value the file gave it" \
+    [$gw.form.step get] 1n
+
+  ## GR5d -- THE ADVANCED-FIELD TRAP, WHICH IS THE SHARPEST WAY TO GET THIS
+  ## WRONG. `ase::ui::form_has` is FALSE for a widget that was never built, so
+  ## `tmax` is absent from everything the form can report while the disclosure
+  ## is closed. An overlay that replaced the stored row with "what is on screen"
+  ## would delete it silently -- the form would look exactly right. The first
+  ## term proves it really is hidden, which is the fixture control.
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  set R5D_HIDDEN [ase::ui::form_has $key tmax]
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 500u
+  $gw.types.ac invoke
+  update
+  $gw.types.tran invoke
+  update
+  set R5D_STOP [$gw.form.stop get]
+  ase::ui::chana_adv_toggle $key
+  update
+  check "GR5d the advanced field the disclosure was hiding survives a round trip\
+ through another type -- it really was hidden, and the visible edit really did\
+ come back" \
+    [list $R5D_HIDDEN $R5D_STOP [ase::ui::form_has $key tmax] \
+          [$gw.form.tmax get]] \
+    {0 500u 1 2n}
+
+  ## GR5e -- THE SIDE WIN, AND IT WAS A DEFECT NOBODY REPORTED. The
+  ## `▸ Advanced` toggle rebuilds through the SAME door a radio click does, so
+  ## it discarded the form just as thoroughly; nobody hit it because nobody
+  ## thought to type and then toggle. Saving in `chana_show` rather than on the
+  ## radiobutton's `-command` is what covers it.
+  check "GR5e opening the Advanced disclosure no longer costs the user what was\
+ already in the form" [$gw.form.stop get] 500u
+  set ::ase::ui::dlg($key,advopen) 0
+
+  ## GR5f -- THE CACHE RECORDS WHAT WAS **TOUCHED**, AND THIS ROW IS ALSO THE
+  ## POSITIVE CONTROL ON THE EXTRACTOR: the second term proves it returns
+  ## something when it should, so the first term's emptiness is a measurement
+  ## and not a broken reader.
+  ##
+  ## ⚠ THIS IS THE ROW THE FIRST CUT FAILED. Caching every live value of the
+  ## outgoing form cached a `step` the user had never typed -- as the empty
+  ## string -- and the overlay then DELETED a stored `step 1n`. It reddened
+  ## `GN7b`. An untouched field must never enter the cache, which is also what
+  ## makes GR5k true.
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  $gw.types.ac invoke
+  update
+  set R5F_UNTOUCHED {}
+  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
+    set R5F_UNTOUCHED $::ase::ui::dlg($key,anedit,tran)
+  }
+  $gw.types.tran invoke
+  update
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 500u
+  $gw.types.ac invoke
+  update
+  set R5F_TOUCHED {}
+  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
+    set R5F_TOUCHED $::ase::ui::dlg($key,anedit,tran)
+  }
+  check "GR5f visiting a type caches no key at all; typing into one caches that\
+ key and nothing else" [list $R5F_UNTOUCHED $R5F_TOUCHED] [list {} {stop 500u}]
+
+  ## GR5g -- OK COMMITS THE VISIBLE TYPE AND ONLY IT. D4's reason survives the
+  ## reversal untouched, and the user did not ask for a multi-type write. The
+  ## third term is the positive control that the two values differ.
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 500u
+  $gw.types.ac invoke
+  update
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 2meg
+  $gw.btns.proceed invoke
+  update
+  set R5G_TRAN [ase::ui::chana_row $key tran]
+  set R5G_AC   [ase::ui::chana_row $key ac]
+  check "GR5g OK writes the visible type alone -- the remembered tran edit is\
+ NOT written, and the ac edit is" \
+    [list [ase::state_get $R5G_AC stop] [ase::state_get $R5G_TRAN stop] \
+          [expr {[ase::state_get $R5G_TRAN stop] ne {500u}}]] \
+    {2meg 1u 1}
+
+  ## GR5l -- THE SAVE MERGES OVER THE TYPE'S OWN EARLIER CACHE, and this is the
+  ## journey that needs it: open `▸ Advanced`, type into `tmax`, close the
+  ## disclosure, go to another type, come back, open it again. That is TWO
+  ## saves, and the second one can see no `tmax` widget at all -- so a save that
+  ## REPLACED the type's cache instead of merging into it would throw the typed
+  ## value away at the moment the user folded the section shut.
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  ase::ui::chana_adv_toggle $key
+  update
+  set R5L_BUILT [$gw.form.tmax get]
+  $gw.form.tmax delete 0 end
+  $gw.form.tmax insert 0 7n
+  ase::ui::chana_adv_toggle $key
+  update
+  set R5L_HIDDEN [ase::ui::form_has $key tmax]
+  $gw.types.ac invoke
+  update
+  $gw.types.tran invoke
+  update
+  ase::ui::chana_adv_toggle $key
+  update
+  check "GR5l a value typed under Advanced survives the disclosure being folded\
+ shut and a trip through another type -- and the file's own value is not 7n" \
+    [list $R5L_BUILT [expr {$R5L_BUILT ne {7n}}] $R5L_HIDDEN \
+          [$gw.form.tmax get]] \
+    {2n 1 0 7n}
+  set ::ase::ui::dlg($key,advopen) 0
+
+  ## GR5h -- CANCEL DISCARDS EVERYTHING, INCLUDING WHAT WAS REMEMBERED. The
+  ## cache is the dialog's memory and not the bench's.
+  ##
+  ## ⚠ THE `ac` CLICK IS LOAD-BEARING AND IT WAS ADDED AFTER THE FIRST CUT.
+  ## `chana_cache_save` runs on a REBUILD, so typing and cancelling straight
+  ## away leaves the cache empty -- and a row whose before and after are equal
+  ## passes whatever the code does. The click forces the save, `R5H_CACHED` is
+  ## the positive control that it happened, and `R5H_LEFT` is what reddens if
+  ## `chana_cancel` stops clearing.
+  ase::session_update $key $R5FIX
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 500u
+  $gw.types.ac invoke
+  update
+  set R5H_CACHED \
+    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran]] > 0}]
+  $gw.btns.cancel invoke
+  update
+  set R5H_LEFT [lsort [array names ::ase::ui::dlg $key,anedit,*]]
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  check "GR5h a dialog dismissed with Cancel remembers nothing: the cache really\
+ had something in it, Cancel emptied it, and the reopened dialog starts from\
+ the file" [list $R5H_CACHED $R5H_LEFT [$gw.form.stop get]] [list 1 {} 1u]
+
+  ## GR5i -- AND SO DOES A BARE DESTROY. The window manager's close button runs
+  ## none of our close paths, so `chana_cancel`'s clear cannot be the only one:
+  ## `R5I_SURVIVED` measures that the cache is STILL STANDING after the destroy,
+  ## which is exactly why `choose_analyses` clears on every open. Without that
+  ## clear the reopened dialog shows 500u and this row reds while GR5h does not.
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 500u
+  $gw.types.ac invoke
+  update
+  set R5I_CACHED \
+    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran]] > 0}]
+  destroy $gw
+  update
+  set R5I_SURVIVED \
+    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran]] > 0}]
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  check "GR5i a dialog closed by the window manager -- no Cancel, no OK -- leaves\
+ nothing behind either, and the clear that does it is the one on OPEN" \
+    [list $R5I_CACHED $R5I_SURVIVED [$gw.form.stop get]] [list 1 1 1u]
+
+  ## GR5j -- THE Enable BOX IS PART OF WHAT A TYPE'S FORM REMEMBERS, and
+  ## remembering it still writes nothing. The last term is the one that says the
+  ## bench is untouched.
+  set gw [r5_open $key]
+  $gw.types.tran invoke
+  update
+  set R5J_BEFORE $::ase::ui::dlg($key,anen)
+  $gw.enable invoke
+  update
+  $gw.types.ac invoke
+  update
+  set R5J_AC $::ase::ui::dlg($key,anen)
+  $gw.types.tran invoke
+  update
+  check "GR5j the Enable box is remembered per type, and remembering it writes\
+ nothing to the bench" \
+    [list $R5J_BEFORE $R5J_AC $::ase::ui::dlg($key,anen) \
+          [ase::state_get [ase::ui::chana_row $key tran] enabled]] \
+    {0 0 1 0}
+  $gw.btns.cancel invoke
+  update
+
+  ## GR5k -- THE BYTE-IDENTITY ROW, AND IT IS THE HARDEST CONSTRAINT IN THIS
+  ## BATCH. 104 committed `.state` files round-trip byte-identically because
+  ## `ase::ui::form_is_absent` stops a form writing a key no bench carries
+  ## (`uic 0`, `sweep dec`). A cache that re-supplied a value the user never
+  ## typed would defeat that the first time somebody browsed the grid. This row
+  ## clicks all eleven cells and presses OK, and asks for the SAME BYTES.
+  ##
+  ## ⚠ OK IS PRESSED ON `op`, WHICH THE BENCH ALREADY CARRIES. Pressing it on
+  ## a type with no stored row APPENDS a disabled row -- that is the shipped
+  ## behaviour of the commit door and it is not what this row is about.
+  ase::session_update $key $R5FIX
+  set R5K_BEFORE [ase::state_serialize [ase::session_state $key]]
+  set gw [r5_open $key]
+  foreach r5c [lsort [winfo children $gw.types]] {
+    $r5c invoke
+    update
+  }
+  $gw.types.op invoke
+  update
+  $gw.btns.proceed invoke
+  update
+  check "GR5k clicking every cell in the grid and pressing OK writes the same\
+ bytes as never opening the dialog" \
+    [ase::state_serialize [ase::session_state $key]] $R5K_BEFORE
 
 } else {
   puts "gui legs skipped (no DISPLAY)"

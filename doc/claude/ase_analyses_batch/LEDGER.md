@@ -703,6 +703,53 @@ than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and
 until task 1 releases `tests/headless/test_ase_core.tcl` — it is the first item of the driver
 pass that collects task 1.
 
+### ✅ ⚖ R5 — IMPLEMENTED, issue **1445**, collected 2026-09-13
+
+| | |
+|---|---|
+| **status** | **Done.** The Choose Analyses dialog remembers per-type edits for the dialog's lifetime and commits **only the visible type** at OK, which is ⚖ R5's answer word for word. The cache dies with the dialog: cleared on open **and** on close, so reopening starts from stored state. |
+| **issue** | **1445** — *the form forgot what you typed the moment you clicked another analysis*. `NUMBERING.md` advanced to 1446, both checks run against every clone under `~/dev/*`. |
+| **code** | `src/ase_window.tcl` only, +167/−14: three procs (`chana_cache_clear`, `chana_cache_save`, `chana_cache_apply`) and four call sites — save **before** the destroy in `chana_show`, apply in place of the bare `chana_row`, clear on open and on cancel. **No new state key, nothing serialised, no schema change.** The repopulate comment is rewritten to describe what the code now does, still naming `doc/claude/ase_l_batch/prompts/item07_dialogs.md`'s D4 as the decision reversed — not `DECISIONS.md`'s own D4. |
+| **suites moved** | `tests/headless/test_ase_dialogs.tcl`, new section **GR5**, **twelve** rows. Display floor **300 → 313**; headless unmoved at **37**, because every GR5 row is a widget row. |
+| **driver's own re-run** | Taken by the driver, not quoted from the receipt. Headless: `RESULT: ALL PASS (37 checks)`. Display: `RESULT: 1 FAILED (312 passed)`, and the **one** red is **`G2sens`** — issue **1436**, whose own file records the identical actual value `{1 1 0 1 0 Entry Entry normal}`. The file's other named standing red, `GG9`, **passed**, as its paragraph predicts (cold-cache dependent). All twelve GR5 rows ran; **`GR5k` — click every cell in the grid, press OK, same `state_serialize` bytes as never opening the dialog — passed.** |
+| **byte identity** | `STATE-ROUNDTRIP: 104 files, 0 differ` (crew), and independently: **no tracked `.state` file is modified** in the working tree. `GR5k` asks the same question from the GUI side and sabotage `c` reddens it, so it is not vacuous. |
+| **sabotage** | **Nine**, each restored by `cp` with a printed md5 match. `e` and `e2` are complementary (open-clear reds `GR5i` only; cancel-clear reds `GR5h` only). `c` and `f` each redden the **pre-existing** `GN7b`. |
+| **T1** | ⚠ **DEFERRED, deliberately, and this is the price of running two crews.** Stage 8 task 1's uncommitted `src/ase.tcl` is in the tree, so a T1 taken now would be a number about **both** changes, and `CLAUDE.md` is explicit that a T1 number taken while another agent's suite is live is not evidence. T1 runs **solo**, once, when task 1 is collected, and covers both. |
+| **ledger debts** | ⚖ R5 itself minted **no user-facing sentence** — verified by the driver's own grep: not one added non-comment line in the `src/ase_window.tcl` diff contains a string literal. **No `rule` debt, no `look` debt** (no new widget, nothing newly drawn). A `:0` suite debt was flagged by the crew rather than filed; the driver leaves it flagged, since `test_ase_dialogs` already runs on the dev display every pass. |
+| **new debt** | **Issue 1446** + a `rule` debt, filed by the driver from the crew's residual: *a value the dialog remembered, and OK did not write*. |
+| **receipt** | `receipts/24-r5-remember-per-type-edits.md` |
+
+**Four corrections came back, and three of them are about testing rather than about R5.**
+
+1. ⚠ **The obvious implementation is wrong, and an EXISTING row caught it.** Caching
+   `chana_form_vals` wholesale for the outgoing type reddened **`GN7b`**: a `step` the user
+   never typed was cached as the empty string, and the overlay then **deleted a stored
+   `step 1n`**. The cache now stores only fields whose live value differs from an **as-built
+   snapshot** taken when the form is built — which is also what makes byte-identity hold *by
+   construction* rather than by luck, because an untouched field never enters the cache to be
+   re-supplied. **A row written for a different feature is what stood between this and a
+   silent data loss.**
+2. **The driver's sabotage list was one short.** There are **two** merges — apply-side and
+   save-side — and the save side had no row until the crew wrote `GR5l` (type under
+   `▸ Advanced`, fold the section shut, switch type). This is variant 4 of the batch's four
+   measured sabotage failures: *a sabotage missing from the generator entirely*.
+3. **Two of the crew's own rows could not fail** (`GR5h`, `GR5i`): they closed the dialog
+   without ever triggering a rebuild, so the cache was empty and they would have passed with
+   every `clear` call removed. Variant 1 — *a row whose fixtures never disagree* — for the
+   tenth time in this batch. Both now force a save first and carry a positive control.
+4. **The `▸ Advanced` toggle had the same forgetting defect and nobody had reported it.**
+   `chana_adv_toggle` rebuilds through `chana_show`, so folding the disclosure discarded what
+   you had typed exactly as a radio click did. **Fixed for free** by putting the save inside
+   `chana_show` rather than on the radio.
+
+⚠ **And the residual is now issue 1446, not a paragraph in a receipt.** Two shapes survive:
+**(A)** edit `tran`, click `ac`, press OK — the `tran` edit is dropped, which is the shape
+⚖ R5 ruled and is recorded so the user can see what they chose; and **(B)** type into a field
+behind `▸ Advanced`, fold it shut, press OK — remembered, not committed, because `chana_ok`
+reads live widgets and the fold destroyed them. **(B) does not cross D4's line** — same type,
+same row, one write — so it is a ruling worth putting, with the recommendation to fix it.
+
+
 ### 🔬 Driver verification taken WHILE the two crews held the code — 2026-09-13
 
 A driver with no files to edit is not a driver with nothing to do. Three evidence files

@@ -4724,6 +4724,14 @@ proc ase::ui::choose_analyses {key {type {}}} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
   set w [ase::ui::dialog_frame [dict get $wins $key].chana {Choose Analyses}]
+  # ⚠ THE PER-TYPE EDIT CACHE DIES HERE, AND THIS IS THE LOAD-BEARING CLEAR.
+  # ⚖ R5 remembers edits FOR THE DIALOG'S LIFETIME; a closed and reopened
+  # Choose Analyses starts from the file again. `chana_cancel` clears it too,
+  # but the Cancel path is not the only way this dialog goes away -- the window
+  # manager's close button destroys `$w.chana` without running any of ours, and
+  # a cache that survived THAT would hand a new dialog the last one's typing.
+  # `dialog_frame` destroying the toplevel is the one event every close shares.
+  ase::ui::chana_cache_clear $key
   set sim [ase::ui::chana_sim $key]
   set offered [ase::analysis_offered $sim]
   # ⚠ THE CACHE IS **PEEKED AT**, NEVER MEASURED. The free peek answers `{}` for a
@@ -4737,23 +4745,25 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # every commit door refuses on MEMBERSHIP -- see ase::ui::chana_committable.
   if {$type eq {}} { set type [lindex $offered 0] }
   set dlg($key,antype) $type
-  # top section: one radiobutton per analysis type; switching repopulates
-  # the bottom form from state (D4: in-form edits of the previous type are
-  # DISCARDED — deterministic, no hidden multi-type writes)
+  # top section: one radiobutton per analysis type; switching repopulates the
+  # bottom form from state WITH THIS DIALOG'S OWN EDITS OVERLAID, so what you
+  # typed into a type is still there when you come back to it.
   #
-  # ⚠ ⚖ R5 HAS REVERSED THAT DECISION (2026-09-13). The user ruled: *"Make it
-  # remember — that's a more professional UI. We are trying to be better than
-  # Cadence"*. The comment above still describes what this code DOES, which is
-  # why it is annotated rather than rewritten; the behaviour changes when R5's
-  # task lands and the two lines go together.
+  # ⚖ R5, ISSUE 1445 — THE BEHAVIOUR THIS COMMENT DESCRIBES IS THE REVERSAL OF
+  # D4. D4 was *"in-form edits of the previous type are DISCARDED —
+  # deterministic, no hidden multi-type writes"*, and the user reversed it on
+  # 2026-09-13: *"Make it remember — that's a more professional UI. We are
+  # trying to be better than Cadence"*. `ase::ui::chana_cache_save` /
+  # `ase::ui::chana_cache_apply` are the reversal; this comment is no longer an
+  # annotation on a decision the code still obeyed.
   #
-  # ⚠ D4's OWN REASON SURVIVES THE REVERSAL. "No hidden multi-type writes"
-  # defends the COMMIT, and nothing is written until OK either way — so caching
-  # per-type edits for the dialog's lifetime and committing only the visible
-  # type satisfies it exactly as discarding did. The reason never defended the
+  # ⚠ D4's OWN REASON SURVIVED THE REVERSAL AND STILL HOLDS. "No hidden
+  # multi-type writes" defends the COMMIT, and the commit did not change:
+  # `ase::ui::chana_ok` writes ONLY the visible type and never reads the cache.
+  # Nothing is written until OK either way. The reason never defended the
   # discarding; it was attached to it.
   #
-  # ⚠ AND THE D4 BEING REVERSED IS `doc/claude/ase_l_batch/prompts/item07_dialogs.md`,
+  # ⚠ AND THE D4 THAT WAS REVERSED IS `doc/claude/ase_l_batch/prompts/item07_dialogs.md`,
   # NOT `ase_analyses_batch/DECISIONS.md`'s own D4, which is about the two
   # optional per-row keys `id` and `x`. Reversing that one instead would change
   # the state schema. `doc/claude/ase_l_ux_batch/FINDINGS.md` carries the lived
@@ -5065,6 +5075,103 @@ proc ase::ui::dialog_status {w key msg} {
   return $msg
 }
 
+# ---------------------------------------------------------------------------
+# THE PER-TYPE EDIT CACHE. ⚖ R5, ISSUE 1445.
+#
+# Clicking a cell in the type grid used to DESTROY whatever was in the form.
+# `doc/claude/ase_l_ux_batch/FINDINGS.md` has it from the user's side -- *"I
+# typed 500u, clicked the ac radio, clicked back, and 500u was gone"* -- and
+# issue 1411 made it eleven cells, so clicking across the grid to see what each
+# analysis offers, which is the first thing a new user does, cost them whatever
+# they had typed every time. That discarding was D4 of
+# `doc/claude/ase_l_batch/prompts/item07_dialogs.md`; ⚖ R5 reversed it.
+#
+# ⚠ D4's REASON IS UNTOUCHED. "Deterministic, no hidden multi-type writes"
+# defends the COMMIT, and `ase::ui::chana_ok` still writes ONLY the visible type
+# and never reads this cache -- typing into `tran`, switching to `ac` and
+# pressing OK writes `ac` alone. The reason never defended the discarding.
+#
+# ⚠ IT IS MEMORY, NOT STATE. One array slot per open dialog per type,
+# `dlg($key,anedit,$type)`; no new state key, no schema change, nothing
+# serialised. It dies with the dialog: `choose_analyses` clears it on every open
+# and `chana_cancel` on every close, so a reopened dialog starts from the file.
+#
+# ⚠ IT REMEMBERS WHAT WAS **TOUCHED**, NOT WHAT WAS ON SCREEN, AND THAT WAS
+# MEASURED RATHER THAN PREFERRED. The first cut cached every live value of the
+# outgoing form, which reddened `GN7b` in `tests/headless/test_ase_dialogs.tcl`:
+# a `step` the user had never typed was cached as the empty string and then
+# overlaid on top of a stored `step 1n`, so the cache DELETED a stored value. A
+# field is an edit only when its live value differs from the value this dialog
+# put in it -- `dlg($key,anbuilt)`, snapshotted at the end of every build.
+#
+# ⚠ WHICH IS ALSO WHY IT CANNOT RE-SUPPLY A VALUE THE USER NEVER TYPED. That is
+# the constraint the 104 committed `.state` files rest on: `chana_ok` reads the
+# LIVE widgets and filters through `ase::ui::form_is_absent`, and an untouched
+# field never enters the cache in the first place, so clicking every cell in the
+# grid and pressing OK writes the same bytes as never opening the dialog.
+proc ase::ui::chana_cache_clear {key} {
+  variable dlg
+  array unset dlg $key,anedit,*
+  array unset dlg $key,anshown
+  array unset dlg $key,anbuilt
+}
+
+# SAVE THE FORM THAT IS ON SCREEN INTO THE TYPE IT BELONGS TO. Called from
+# `chana_show` BEFORE the destroy, which is why it catches every rebuild and not
+# only a radio click -- the `▸ Advanced` toggle rebuilds through the same door
+# and discarded the form just as thoroughly, a defect nobody reported because
+# nobody thought to type and then toggle.
+#
+# ⚠ THE TYPE IT SAVES UNDER IS `anshown`, NOT `antype`. Tk sets a radiobutton's
+# `-variable` BEFORE it runs `-command`, so by the time this is reached
+# `dlg($key,antype)` is already the type being switched TO. `anshown` is the
+# type whose widgets are actually standing.
+#
+# ⚠ IT MERGES OVER THE TYPE'S OWN EARLIER CACHE AND MUST. `ase::ui::form_has`
+# is false for a widget that was never built, so a form with `▸ Advanced` CLOSED
+# reports nothing at all about `tstart`, `tmax` or `uic`. A save that REPLACED
+# would delete the values the user opened the disclosure to type: open Advanced,
+# type `tmax 1n`, close it, switch type -- that is two saves, and only the merge
+# survives it.
+proc ase::ui::chana_cache_save {key} {
+  variable dlg
+  if {![info exists dlg($key,anshown)]} { return {} }
+  set shown $dlg($key,anshown)
+  if {$shown eq {}} { return {} }
+  if {[ase::ui::chana_form $key] eq {}} { return {} }
+  set vals [ase::ui::chana_form_vals $key $shown [ase::ui::chana_sim $key]]
+  # Enable is something the user set on THIS type's form, so it is remembered
+  # with the fields rather than beside them. It is spelled `enabled` because
+  # that is the stored row's key and `chana_show` reads the merged row for both.
+  if {[info exists dlg($key,anen)]} {
+    dict set vals enabled [expr {$dlg($key,anen) eq {1} ? 1 : 0}]
+  }
+  set built [dict create]
+  if {[info exists dlg($key,anbuilt)]} { set built $dlg($key,anbuilt) }
+  set edits [dict create]
+  dict for {f v} $vals {
+    if {![dict exists $built $f] || [dict get $built $f] ne $v} {
+      dict set edits $f $v
+    }
+  }
+  set prev [dict create]
+  if {[info exists dlg($key,anedit,$shown)]} { set prev $dlg($key,anedit,$shown) }
+  set dlg($key,anedit,$shown) [dict merge $prev $edits]
+  return $dlg($key,anedit,$shown)
+}
+
+# OVERLAY THE CACHE ON THE STORED ROW -- MERGE, NEVER REPLACE, for the same
+# reason the save merges. The stored row is the ONLY place a hidden advanced
+# field's value lives while the disclosure is closed, so returning the cache
+# alone would delete every key `▸ Advanced` was hiding the first time the user
+# clicked a second cell -- and it would delete them silently, because the form
+# would look exactly right.
+proc ase::ui::chana_cache_apply {key type row} {
+  variable dlg
+  if {$type eq {} || ![info exists dlg($key,anedit,$type)]} { return $row }
+  return [dict merge $row $dlg($key,anedit,$type)]
+}
+
 proc ase::ui::chana_show {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
@@ -5099,11 +5206,32 @@ proc ase::ui::chana_show {key} {
   # `invalid command name ".ase4.chana.source"` and silently lost G3..G11 with
   # it. ⚠ A PATH SURVEY MUST SEARCH FOR THE VARIABLE TOO -- grep the widget
   # NAMES (`\$w\.source`, `\$w\.step`), not only the toplevel's spelling.
+  #
+  # ⚠ AND THE DESTROY IS NO LONGER THE END OF WHAT IS IN THE FORM. ⚖ R5 /
+  # issue 1445: the outgoing form's live values are saved into this dialog's
+  # per-type cache FIRST, so a rebuild moves them rather than losing them. It
+  # goes here, at the one door every rebuild comes through, rather than on the
+  # radiobutton's `-command`, because `chana_adv_toggle` rebuilds too.
+  ase::ui::chana_cache_save $key
   catch {destroy $w.form}
   frame $w.form
   grid $w.form -row 2 -column 0 -columnspan 2 -sticky we
   grid columnconfigure $w.form 1 -weight 1
-  set row [ase::ui::chana_row $key $type]
+  # ⚠ THE MARKER IS SET BEFORE THE FIELDS ARE BUILT, NOT AFTER. It names the
+  # type whose widgets are standing, and a build that raises partway still
+  # leaves it pointing at the widgets that got built rather than at the previous
+  # type's, which no longer exist.
+  set dlg($key,anshown) $type
+  # ⚠ AND THE AS-BUILT SNAPSHOT IS EMPTIED HERE AND REFILLED AT THE END, so a
+  # build that raises partway compares the next save against nothing rather than
+  # against the PREVIOUS type's values, which would score untouched fields as
+  # edits.
+  set dlg($key,anbuilt) [dict create]
+  # ⚖ R5 / ISSUE 1445: THE STORED ROW, WITH THIS DIALOG'S EDITS TO THIS TYPE
+  # OVERLAID. `chana_cache_apply` MERGES, so a field the `▸ Advanced` disclosure
+  # was hiding -- and which is therefore in no cache, because `form_has` is
+  # false for a widget that was never built -- keeps its stored value.
+  set row [ase::ui::chana_cache_apply $key $type [ase::ui::chana_row $key $type]]
   set dlg($key,anen) [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]
   # ⚠ THE STATUS LINE AND THE Enable GATE BOTH READ THE **SELECTED CELL'S** STATE,
   # which is what makes a blocked cell worth selecting: the cell stays clickable
@@ -5182,6 +5310,12 @@ proc ase::ui::chana_show {key} {
       ase::ui::chana_mode_changed $key $type $f
     }
   }
+  # ⚖ R5 / ISSUE 1445: WHAT THIS BUILD PUT IN THE WIDGETS, so the next save can
+  # tell an EDIT from a value the dialog itself supplied. It is taken here,
+  # after the relabel pass and before anything user-driven can run, and it is
+  # the reference `chana_cache_save` diffs against.
+  set dlg($key,anbuilt) [ase::ui::chana_form_vals $key $type $_sim2]
+  dict set dlg($key,anbuilt) enabled $dlg($key,anen)
   # ⚠ AFTER THE FORM IS BUILT, BECAUSE IT READS THE FORM. `chana_merged_row`
   # overlays the widgets' live values on the stored row, so a banner refreshed
   # before the rebuild would describe the PREVIOUS type's widgets.
@@ -5361,6 +5495,11 @@ proc ase::ui::chana_cancel {key} {
   array unset dlg $key,antype
   array unset dlg $key,anen
   array unset dlg $key,anextra
+  # ⚖ R5 / ISSUE 1445: CANCEL DISCARDS EVERYTHING, INCLUDING WHAT WAS
+  # REMEMBERED. The cache is the dialog's memory and not the bench's, so it goes
+  # out with the dialog by the same rule `anextra` does -- and `chana_ok` ends
+  # by calling this proc, so a commit drops it too.
+  ase::ui::chana_cache_clear $key
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].chana}
   }
