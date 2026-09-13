@@ -697,6 +697,16 @@ both briefs: task 1 holds `src/ase.tcl`, `tests/headless/test_ase_core.tcl`,
 would need `run_regression.tcl`), and is forbidden to run `tests/run_regression.tcl` at all —
 **T1 stays the driver's, and solo, which is what issue 0990 requires.** Neither crew commits.
 
+✅ **UPDATE 2, same day: THREE agents now, two of them writing.** Stage 8 task 1 finished and
+is committed (`3f31a33b`), which released `tests/headless/test_ase_core.tcl` — so ⚖ **R4's
+unpaid `seed_enabled` row** went out as its own task (receipt 26), holding that file alone.
+Issue **1446**'s crew still holds `src/ase_window.tcl` and `tests/headless/test_ase_dialogs.tcl`.
+The third agent **writes nothing**: it is extracting issue 1443's user-facing strings for
+`R9_COPY_REVIEW.md`, reading `src/ase.tcl` from git rather than from the tree. ⚠ ⚖ **R6's task
+is NOT dispatched yet on purpose** — its schema half would want rows in `test_ase_core.tcl`,
+which R4's crew is holding, and **a split that is disjoint by construction is the whole reason
+this departure is survivable**. It goes out when R4's row lands.
+
 ✅ **UPDATE, same day: ⚖ R5's crew finished and its work is committed (`0d5f16b1`); the second
 slot is now issue 1446's crew**, on the identical file split that worked for R5 —
 `src/ase_window.tcl` and `tests/headless/test_ase_dialogs.tcl`, no new suite file, no
@@ -715,7 +725,7 @@ pass that collects task 1.
 |---|---|
 | **status** | **Done.** A `measurements` state list beside `outputs`, a four-verdict refusal evaluator, the `meas` speller, the post-processing producers and the sidecar. **The GUI half is task 2** — this task creates no widget, and `src/ase_window.tcl` is untouched by it. |
 | **schema** | `measurements` is **absent by default** and the **fifth** member of `ase::omit_if_empty`, which is how the second named exception to **D3** is paid for: **104/104 committed `.state` files stay byte-identical**, driver-verified as *no tracked `.state` file modified in the working tree*. |
-| **split** | ASE-L owns the SCHEMA (31 `ase::meas_*` procs, **no simulator word in any of them** — section HK, and **HK1b runs HK1's own token list over the adapter and finds them**, so the rule is enforced rather than remembered); the adapter owns CONTENT (19 procs, **four registered as OPTIONAL hooks**). Eighteen kinds; `meas` lines emitted inside `.control` immediately after the analysis they read. |
+| **split** | ASE-L owns the SCHEMA (31 `ase::meas_*` procs — **driver-verified independently at HEAD by brace-scanning every one of them and stripping comments: 31 found, ZERO whose code mentions `ngspice`, `spice`, `xyce` or `spectre`** — — section HK, and **HK1b runs HK1's own token list over the adapter and finds them**, so the rule is enforced rather than remembered); the adapter owns CONTENT (19 procs, **four registered as OPTIONAL hooks**). Eighteen kinds; `meas` lines emitted inside `.control` immediately after the analysis they read. |
 | **suites moved** | New `tests/headless/test_ase_meas_1443.tcl`, registered in `run_regression.tcl`. `test_ase_core` 598 → **600** (R1 re-baselined 18 → 19 keys, R1m added); `test_ase_persist` likewise. |
 | **driver's own re-run** | Every number below taken by the driver from a `RESULT:` line, on both arms. `test_ase_meas_1443` **ALL PASS (100)** headless **and** **ALL PASS (100)** on the dev display. `test_ase_core` **ALL PASS (600)** on both. `test_ase_persist` **ALL PASS (44)** headless, **ALL PASS (148)** display. |
 | **sabotage** | **72 applications on the final tree, ZERO KILLS**, across two campaigns (pass 1: 54 applied, 48 red, 6 survived; pass 2: 71 applied, 67 red, 4 survived; a targeted re-run closed one). Six rows were added for pass 1's survivors, each with its own sabotage. Three survivors remain, each argued behaviour-preserving in the receipt. |
