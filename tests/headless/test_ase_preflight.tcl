@@ -78,6 +78,11 @@
 # X" is PROVED by the static pass, because an `.include` can only ADD devices and
 # never remove the card just read. Such a finding needs no caveat in either
 # direction, and row PF228h is that sentence as an assertion.
+# 192 -> 194 with PF218f2/PF218f3 (Stage 6a, issue 1430 -- the plot sidecar's
+# record sits below the $sim_status guard and immediately above its own write,
+# and goes to the sidecar rather than to the results file). ⚠ NO ROW MOVED:
+# PF218f's own ordering claim is untouched, and PF222a-e / PF222h-j still rest
+# on `noise` being UNRENDERABLE, which this issue does not change.
 # 177 -> 192 with PF229 (Stage 5, issue 1428 -- DC sensitivity's two
 # preconditions). ⚠ `sens_filters` IS THE FIRST FINDING IN THIS FILE WHOSE
 # FAILURE MODE IS AN EMPTY RESULT RATHER THAN A WRONG ONE: measured on both
@@ -606,6 +611,32 @@ eqcheck PF218f-the-guard-precedes-remzerovec-and-write \
   [expr {[lsearch -exact $dl {  quit 1}] > 0 &&
          [lsearch -exact $dl {  quit 1}] < [lsearch -exact $dl {remzerovec}] &&
          [lsearch -exact $dl {remzerovec}] < [lsearch -glob $dl {write *}]}] 1
+## ⚠ AND THE SIDECAR RECORD IS INSIDE THAT SAME BRACKET (issue 1430). The plot
+## sidecar's whole value is that record N names the row that wrote plot N, so a
+## record appended for an analysis that then failed to write would put every
+## later position out by one — silently, because a failed run is the one case
+## nobody re-reads the file for. The record sits BELOW the guard and IMMEDIATELY
+## ABOVE the write it describes, and this row pins both halves at once.
+eqcheck PF218f2-the-sidecar-record-is-below-the-guard-and-above-its-own-write \
+  [expr {[lsearch -glob $dl {echo "PLOT *}] > [lsearch -exact $dl {  quit 1}] &&
+         [lsearch -glob $dl {echo "PLOT *}] > [lsearch -exact $dl {remzerovec}] &&
+         [lsearch -glob $dl {echo "PLOT *}] + 1 == [lsearch -glob $dl {write *}]}] 1
+## ...and it goes to the sidecar, never to the results file: two artefacts, two
+## paths, and an `echo` that landed on the raw would corrupt it beyond reading.
+## ⚠ `pfmap` IS SEEDED BEFORE THE REGEXP, AND A SABOTAGE IS WHY. Respelling
+## ase::plotmap_record without its `|` delimiters made this regexp miss, left
+## `pfmap` unset, and the `string match` below then RAISED -- which this file's
+## outer catch turns into `FATAL: can't read "pfmap"` and `1 FAILED (65 passed)`:
+## an UNNAMED failure that costs 129 of the 194 checks and reads, in a sabotage
+## log, as though almost nothing went red. Issue 1429's S31 is the same lesson
+## one file over. The seed makes the miss a NAMED red.
+set pfmap {NO-RECORD-LINE}
+eqcheck PF218f3-the-record-goes-to-the-sidecar-and-not-to-the-results-file \
+  [list [regexp {^echo "PLOT op 0 \|\$curplotname\|" >> (.*)$} \
+          [lindex $dl [lsearch -glob $dl {echo "PLOT *}]] -> pfmap] \
+        [expr {[string match {*_ase.plotmap} $pfmap] ? 1 : 0}] \
+        [expr {[string match {*_ase.raw} $pfmap] ? 1 : 0}]] \
+  {1 1 0}
 ## CREW_BRIEF §4: the deck SHAPE is unchanged otherwise — no dot card for the
 ## analyses, no `run`, and the `write` line still names NO VECTORS (upstream
 ## 0073, unfixed: naming them writes two identical columns with byte-identical

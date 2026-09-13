@@ -1120,14 +1120,69 @@ plausible number for a run that computed nothing.
 
 | | |
 |---|---|
-| status | **IN PROGRESS** — task 1 of N |
-| commit | T1 pending |
+| status | **LANDED** — task 1 of N |
+| commit | `595ab274` |
 | T1 | taken **solo** by the driver, 62 cases, zero |
 | suites moved | `test_ase_core` 391 → **417** (RS, RD) · `test_ase_simcaps_0948` 180 → **190** (RV) · `test_ase_result_case` 28 → **31** (NCR) · `test_ase_print_bracket_0167` 12 → **14**. **Not one existing row moved.** ⚠ **The last two are NOT IN T1** (issue 1421's list of twenty-one), so the driver ran them standalone — a T1 number does not cover them and must not be quoted as if it did |
 | sabotage | **31 respellings, 42 runs.** 23 reddened a named row first time; **six survived**, one killed a suite. ⚠ **The suite-killer is the sharpest**: a sabotage killed `test_ase_core` at row **P1** — a row a year older than this issue, 4,000 lines above where that file's outer catch closes. **A new seam made an old row fragile and nothing in the diff pointed at it.** RD14 now states the contract: `result_probe` must not raise for a state with no design cell, because `ase::run_done` calls it on every completion |
 | ledger debts | `rule 1429` — three new sentences; the entry says explicitly that it **does not stand in for ⚖ R3** |
 | spec paragraphs rewritten | none — same standing spec debt as Stages 2–5 |
 | receipt | `receipts/13-stage-6-reader-seam.md` |
+
+### Task 2 — the writer, the sidecar and reconciliation
+
+Two `sens` rows in one deck both write `Plotname: Sensitivity Analysis`, and nothing in the
+results file said which row wrote which. The literal cannot separate them **even in
+principle** — two different analyses share it (`sens … dc` and `sens … ac`) — and write
+order is `analysis_emit_order`'s rank, which moves under 0964's `op`-last variant. The
+sidecar tells them apart by row index.
+
+| | |
+|---|---|
+| status | **LANDED** — task 2 of N |
+| issue | **1430** |
+| T1 | taken **solo** by the driver, 62 cases, zero |
+| suites moved | `test_ase_core` 417 → **453** (PM, GP, WK, RC) · `test_ase_preflight` 192 → **194** (PF218f2, PF218f3) · `test_ase_optier_0963` 103 → **105** (E5b, E5c) — forty new rows. **All three are IN T1**, so unlike task 1 nothing here needs a standalone run to be covered |
+| driver's own re-run | core **453 ALL PASS**, preflight **194 ALL PASS**, optier **105** — taken by the driver on the engine arm through `run_suites.sh`, not read off the receipt |
+| deck goldens moved | **one, in one file** — `test_ase_core.tcl`'s D1, with C4/C5 which compare against it. That is the whole of the "every deck golden moves" cost Stage 6 budgeted for: the sidecar record is the only line a single-plot deck gains, and every other rendered-deck assertion in the tree counts writes / `remzerovec`s / `.save` cards rather than comparing whole decks |
+| fixtures moved | **one, without its row moving** — `em_bad_types` (row EM9) gained a valid `plots` key, because `analysis_schema_errors` learned a third refusal and the fixture would otherwise answer three errors, turning a row about one contradiction into a test of two unrelated checks |
+| sabotage | **33 respellings + 9 re-runs, 65 suite runs.** 29 reddened a named row; **two survived** (S23, S29); **two killed a section** (S21, S24, both landing on the unnamed `PM0`); **three more reddened something while proving the row meant to catch them could not** (S05, S06, S14). Between them they bought WK2b, WK8, RC4b, a rewritten GP1, PM4's re-ordered fixture, and caught reads in WK4/WK2/PF218f3 |
+| ledger debts | ⚖ **R9** — the second results file (`<cell>_ase.opinfo.raw`), which C61 shows is the only way to capture an `opinfo` plot without it winning over the real operating point |
+| spec paragraphs rewritten | none — same standing spec debt as Stages 2–6 |
+| receipt | `receipts/14-stage-6-writer.md` |
+
+**Five corrections to the plan, C60–C64.** The two that change what later stages may assume:
+
+* **C60 — `PLAN.md` §6's `keepopinfo` list names `tf`, and `tf` produces no companion** on
+  either binary; neither does `sens`. This is not pedantry, because the walk reads its
+  length from the registry: a `tf` entry declaring two plots would have made every `tf` run
+  **over-walk**, and an over-walk is **silent**. `setplot previous` past the first plot does
+  not fail and does not wrap — it lands on ngspice's built-in `constants` plot and **stays
+  there**, and the next `write` appends the twelve mathematical constants at rc 0, with the
+  only trace a **stderr** warning where nothing in this tree looks. ⚠ **That is the third
+  distinct route this batch has found to the `Plotname: constants` artifact**, after a save
+  list resolving to nothing and a `sens` filter matching nothing.
+* **C61 — the walk CANNOT capture an `opinfo` plot, and the fix cannot live on the reader
+  side** as §6d proposed. `src/save.c`'s `read_dataset()` matches
+  `strstr(lowerline, "operating point")` **above** its AC arm, so `AC Operating Point`,
+  `Distortion Operating Point` and `NOISE Operating Point` all read back as `op`; and
+  `attach_dbs` hands `xschem raw read` the file entire, so there is no per-plot lever there.
+  Measured against a fixture made to **disagree** by an `alter V1 dc` between the two
+  analyses, the companion **wins**: `v(mid)` reads 1 where the real operating point is 0.5.
+  ⚠ **Capturing it would make Annotate Operating Point publish wrong numbers.** So
+  `analysis_plots` predicts it, `analysis_captures` declines it, and the run says so.
+
+⚠ **The walk ships with no production exerciser** (C64) and the receipt says so rather than
+hiding it: every in-scope type captures exactly one plot, because `ac`'s and `pz`'s second
+plots are `opinfo` and declined. It is driven by the issue-1429 **RS3 idiom** — stub the one
+proc the emitter asks, keep the **unstubbed render of the same state beside it as the
+control** — plus a real two-binary end-to-end run. **Stage 6d is what plugs production into
+it**, via `noise` and `disto`.
+
+⚠ **Two sabotages in two different files landed on an unnamed row.** S21 and S24 both killed
+a section rather than reddening a named row, which is issue 1429's S31 one file over — the
+third time in three tasks. The rule is now explicit in the receipt: **a sabotage campaign
+owns the working tree while it runs**, and a floor taken during one is not a measurement.
 
 
 ### What Stage 6 learned that binds later stages

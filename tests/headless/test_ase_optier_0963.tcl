@@ -52,6 +52,12 @@
 #     at index 0 holding the end-of-run value and 0.0 everywhere else, no
 #     warning, well-formed file. It round-trips exactly under .op only.
 #
+# ⚠ FLOOR: 105 checks, and it only ever goes up. It was 103 until issue 1430
+# added E5b/E5c, which carry TRAP 1's rule -- device names ride the operating
+# point's own write and no other -- down into Stage 6a's `setplot previous`
+# walk, where one analysis can now emit more than one write. If a run reports
+# fewer, a row went missing; do not edit this number down to match it.
+#
 # ============================================================================
 # WHAT THIS FILE DOES NOT MEASURE
 # ============================================================================
@@ -617,6 +623,41 @@ check {E5 TRAP 1 -- device names ride the OPERATING-POINT write and nothing\
  else. A bare device name on a transient write is silently wrong: every vector\
  comes back with one non-zero sample parked at index 0 and 0.0 everywhere else} \
   [expr {($DBB eq {NOPROC} || [string match RAISED:* $DBB]) ? $DBB : [o_writeats $DBB]}] \
+  {1 0}
+
+## --- E5b/E5c: AND THE RULE SURVIVES THE MULTI-PLOT WALK (issue 1430) -------
+## Stage 6a gave render_deck a `setplot previous` walk: an analysis whose
+## registry entry declares more than one CAPTURED plot writes once per plot,
+## walking backwards. TRAP 1 is a rule about which write may carry device
+## names, so a second write inside one analysis is exactly where it could be
+## broken again -- and `op` produces one plot, so nothing in the shipped
+## registry would ever exercise it.
+##
+## ⚠ THE STUB IS THE ONLY WAY TO BUILD THE SHAPE, and it is the RS3 idiom of
+## issue 1429: replace the ONE proc the emitter asks for the walk length, and
+## watch the whole emission follow. The control is the unstubbed render two
+## rows above (E5), which emits one write.
+proc o_captures {n script} {
+  rename ::ase::analysis_captures ::o_saved_captures
+  proc ::ase::analysis_captures {sim row state} [list return [lrange {a b c d} 0 [expr {$n - 1}]]]
+  set rc [catch {uplevel 1 $script} r]
+  catch {rename ::ase::analysis_captures {}}
+  rename ::o_saved_captures ::ase::analysis_captures
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+set DBW [o_captures 2 {o_render [o_state $::AN_OP] $::NL}]
+check {E5b the walk emits one write per captured plot -- two here, where the\
+ unstubbed render of the same state emits one} \
+  [expr {($DBW eq {NOPROC} || [string match RAISED:* $DBW]) ? $DBW : \
+         [list [llength [o_writes $DBW]] \
+               [llength [o_writes [o_render [o_state $::AN_OP] $::NL]]]]}] \
+  {2 1}
+check {E5c TRAP 1 again, one level down -- the device names ride the operating\
+ point's FIRST write and not the walk's. A bare device name on the walk's write\
+ would be the same silent corruption E5 refuses, inside one analysis instead of\
+ across two} \
+  [expr {($DBW eq {NOPROC} || [string match RAISED:* $DBW]) ? $DBW : [o_writeats $DBW]}] \
   {1 0}
 
 # --- TRAP 2, the measured line-length wall ----------------------------------

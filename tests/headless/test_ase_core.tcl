@@ -158,6 +158,28 @@
 # ⚠ SECTIONS RS AND RD CARRY THEIR OWN `catch`: this file's OUTER one closes at
 # the end of section SI, thousands of lines above them (issue 1428's S10).
 #
+# ⚠ AND THE NUMBER ABOVE WAS ALREADY STALE. The 1429 paragraph says
+# "391 -> 411"; the suite reported 417 at that commit, because six more rows
+# landed after the sentence was written. Corrected here rather than quietly
+# overwritten, because the whole reason this paragraph exists is that a count
+# nobody re-derives is a count that drifts: 417 is the number 1429 actually
+# left, and it is what the receipt for it records.
+#
+# 417 -> 453 with sections PM, GP, WK and RC (Stage 6a-6c, issue 1430 -- the
+# plot sidecar, the writer's `setplot previous` walk and post-run
+# reconciliation). ⚠ ONE ROW MOVED, AND IT IS A DECK GOLDEN: **D1**, which gains
+# the one line that joins every write. C4 and C5 compare against D1's golden and
+# follow it. Nothing else in this file moved on either arm.
+# ⚠ AND ONE FIXTURE MOVED WITHOUT ITS ROW MOVING: `em_bad_types` (row EM9) gained
+# a valid `plots` key, because ase::analysis_schema_errors learned a third thing
+# to refuse and that fixture would otherwise have answered THREE errors -- turning
+# a row about the field/slot contradiction into a test of two unrelated checks.
+# The three new refusals have their own fixtures, in section GP.
+# ⚠ ⚖ R3 IS STILL UNANSWERED and nothing here touches it: the reader seam is
+# 1429's and this issue neither reads a number nor moves a print line.
+# ⚠ SECTIONS PM, GP, WK AND RC CARRY THEIR OWN `catch`, for the same reason RS
+# and RD do.
+#
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
 # `ac`'s hardwired `dec` to `oct`, left this whole suite at ALL PASS (248).
@@ -449,6 +471,9 @@ V2 G GND 1.8
 # default, resolved through the SAME ase::rundir call render_deck's raw_file
 # hook uses, so the golden stays deterministic on every machine
 set d1_raw [file join [ase::rundir [nfet_state /models/sky130.lib.spice {}]] nfet_clean_ase.raw]
+## ...and the plot sidecar beside it (issue 1430), resolved through the SAME
+## ase::plotmap_path render_deck itself calls, for the same reason.
+set d1_map [ase::plotmap_path [nfet_state /models/sky130.lib.spice {}]]
 ## ⚠ 0929 MOVED THIS GOLDEN. The deck used to end on ONE `remzerovec` + `write`
 ## after the last analysis; ngspice's `write` writes the CURRENT plot, so a deck
 ## with op AND tran stored only the transient and `6` reported "these are from a
@@ -462,7 +487,18 @@ set d1_raw [file join [ase::rundir [nfet_state /models/sky130.lib.spice {}]] nfe
 ## remzerovec/write pair on purpose: its job is to `quit 1` before a failed
 ## analysis can put a plot into the results file. A golden with the two in the
 ## other order would pass while the deck shipped the bad raw.
-set expected_deck [string map [list @RAWFILE@ $d1_raw] {** sch_path: /fixture/nfet_clean.sch
+## ⚠ 1430 MOVED THIS GOLDEN, AND IT IS THE ONLY DECK GOLDEN IN THE TREE THAT
+## MOVES FOR IT. One line joins every `write`: the plot sidecar's record,
+## immediately above the write it describes. The deck is otherwise byte-identical
+## -- `set appendwrite`, the $sim_status guard, `remzerovec` and the `print`
+## anchor are all exactly where 0929, 0964, 0967 and 1243 put them, and this
+## single-analysis deck emits NO `setplot previous` walk because `op` produces
+## one plot (ase::analysis_captures answers 1). The reason the line exists is
+## that a results file with two `Sensitivity Analysis` plots in it -- which is
+## what two enabled `sens` rows write, measured on both binaries -- carries
+## nothing that says which row wrote which. Rows PM*, WK* and RC* are the
+## machinery; this is what it costs the ordinary deck.
+set expected_deck [string map [list @RAWFILE@ $d1_raw @PLOTMAP@ $d1_map] {** sch_path: /fixture/nfet_clean.sch
 **.subckt nfet_clean
 XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
 V1 D GND 1
@@ -486,6 +522,7 @@ if $sim_status ne 0
   quit 1
 end
 remzerovec
+echo "PLOT op 0 |$curplotname|" >> @PLOTMAP@
 write @RAWFILE@
 print -i(v1)
 .endc
@@ -4552,10 +4589,18 @@ check "EM8 the four analyses this adapter already drives emit exactly what they\
 ## dialog -- it ABORTS XSCHEM AT STARTUP with no layers, colours, menus or undo
 ## set up (issue 0663's arm). A registry validator that runs at load is the one
 ## shape this must not take.
+## ⚠ THE FIXTURE CARRIES A VALID `plots` KEY ON PURPOSE (issue 1430). This row
+## is about the FIELD/SLOT contradiction and nothing else, and issue 1430 taught
+## ase::analysis_schema_errors a third thing to refuse -- a renderable type that
+## declares no `plots`, so nothing can name its results. Without the key below
+## this fixture would answer THREE errors and the row would silently become a
+## test of two unrelated checks at once. The `plots` errors have their own
+## fixtures and their own rows, in section GP.
 proc em_bad_types {} {
   return [dict create \
     emb [dict create label emb baseline 1 registered 1 emitorder 10 \
            fields {{name shown kind real}} \
+           plots {{select {Emb Analysis} role sweep results viewer label emb}} \
            emit {{role analysis tmpl {emb @missing?}}}]]
 }
 ase::register_backend embad [dict merge [em_five] [dict create analysis_types em_bad_types]]
@@ -6500,6 +6545,697 @@ check "RD11 the delivered-casemode note is said once per run, not once per\
 } r3err]} {
   check "RS0 sections RS and RD ran to the end" "RAISED:$r3err" {}
 }
+
+# ===========================================================================
+# PM / GP / WK / RC — the plot sidecar, the writer's walk, and post-run
+# reconciliation (Stage 6a–6c, issue 1430).
+#
+# ⚠ WHAT THE SIDECAR IS FOR, IN ONE MEASUREMENT. Two enabled `sens` rows in one
+# run write two plots, and both are called `Sensitivity Analysis` — measured
+# 2026-09-12 on the fork AND on /usr/bin/ngspice. Nothing in the results file
+# says which row wrote which, and the plot literal cannot say it even in
+# principle: two DIFFERENT analyses already share that name (`sens … dc` and
+# `sens … ac`, APPENDIX §0.7). The sidecar is the IDENTITY; the literal is only
+# the LABEL.
+#
+# ⚠ SECTIONS PM, GP, WK AND RC CARRY THEIR OWN `catch`, because this file's
+# OUTER one closes at the end of section SI, thousands of lines above here
+# (issue 1428's S10, and issue 1429's S31 which killed the file at row P1 from
+# four thousand lines away). A raise in here is a NAMED failure and both banners
+# still print.
+# ===========================================================================
+if {[catch {
+
+# --- PM: the sidecar's path and its record format ---------------------------
+
+set PMST [r3_state pmcell {}]
+check "PM1 the sidecar sits beside the results file, one artefact per cell" \
+  [list [ase::plotmap_path $PMST] \
+        [file dirname [ase::plotmap_path $PMST]]] \
+  [list [file join $::scratch pmcell_ase.plotmap] $::scratch]
+
+## ⚠ IT RAISES FOR A STATE WITH NO DESIGN CELL, exactly as its two siblings
+## raw_file and log_file do — and it NAMES ITSELF, because the three messages
+## are otherwise identical and a caught raise is the only thing a reader sees.
+## Issue 1429's sabotage S31 is why this row exists at all: removing one `catch`
+## from a proc that resolves an artefact path killed this whole file at row P1,
+## a row a year older than that seam.
+check "PM1b ... and raises, naming itself, for a state with no design cell" \
+  [list [catch {ase::plotmap_path [ase::state_default]} PM1E] $PM1E] \
+  [list 1 {ase: state design has no cell (plotmap_path)}]
+
+## The format round-trips, INCLUDING the two shapes that break a naive one: a
+## plot name with spaces in it (every literal ngspice writes has them) and one
+## with the delimiter itself. `\|(.*)\|$` is greedy, so the last pipe closes the
+## field and an embedded one survives.
+set PMRT {}
+foreach pmn {{Operating Point} {DC transfer characteristic} {DISTORTION - 2nd harmonic}
+             constants {a|b} {} {Sensitivity Analysis}} {
+  lappend PMRT [ase::plotmap_parse [ase::plotmap_record sens 7 $pmn]]
+}
+check "PM2 record -> parse round-trips every plot name ngspice writes, spaces,\
+ punctuation and the delimiter included" $PMRT \
+  [list {sens 7 {Operating Point}} {sens 7 {DC transfer characteristic}} \
+        {sens 7 {DISTORTION - 2nd harmonic}} {sens 7 constants} {sens 7 a|b} \
+        {sens 7 {}} {sens 7 {Sensitivity Analysis}}]
+
+## ⚠ AND ANYTHING THAT IS NOT A RECORD IS NOT SILENTLY TAKEN FOR ONE. The
+## sidecar is appended to by a deck running under a simulator whose stdout and
+## stderr the same run directory holds; a parser that accepted a near-miss would
+## invent an identity for a plot nobody wrote.
+set PMNO {}
+foreach pmbad {{} {PLOT op 0 |Operating Point} {PLOT op |Operating Point|}
+               {PLOT op x |Operating Point|} {PLOT |Operating Point|}
+               {plot op 0 |Operating Point|} {ZZ PLOT op 0 |Operating Point|}
+               {PLOT o p 0 |Operating Point|} {Warning: something}} {
+  lappend PMNO [ase::plotmap_parse $pmbad]
+}
+check "PM3 a line this format did not write parses to nothing, every way of\
+ nearly being one" $PMNO {{} {} {} {} {} {} {} {} {}}
+
+set PMF [file join $::scratch pm_read.plotmap]
+## ⚠ THE FIXTURE'S FILE ORDER IS DELIBERATELY NOT ITS SORTED ORDER, AND A
+## SABOTAGE IS WHY. The first draft read `op 0 / sens 3 / sens 5`, which is
+## already what `lsort` produces -- so respelling ase::plotmap_read to sort its
+## answer left this row GREEN. It is `tran 1 / op 0 / sens 5 / sens 3` now,
+## which sorting would reorder in two places at once. "Reads back in file order"
+## is only a claim if the file is in some OTHER order.
+rg_wr $PMF "PLOT tran 1 |Transient Analysis|\nWarning: from checkvalid\n\nPLOT op 0 |Operating Point|\nPLOT sens 5 |Sensitivity Analysis|\nPLOT sens 3 |Sensitivity Analysis|\n"
+check "PM4 the sidecar reads back in FILE ORDER, records only, and a missing\
+ one is {} rather than an error" \
+  [list [ase::plotmap_read $PMF] \
+        [ase::plotmap_read [file join $::scratch pm_nosuch.plotmap]] \
+        [ase::plotmap_read {}]] \
+  [list [list {tran 1 {Transient Analysis}} {op 0 {Operating Point}} \
+              {sens 5 {Sensitivity Analysis}} {sens 3 {Sensitivity Analysis}}] {} {}]
+
+## ⚠ THE INDEX IS THE ROW'S POSITION, WHICH IS THE ONLY THING THAT SEPARATES THE
+## TWO RECORDS ABOVE. Strip it and PM4's last two entries become identical —
+## which is exactly the state the results file is in without this file.
+set PM5A [lindex [ase::plotmap_read $PMF] 2]
+set PM5B [lindex [ase::plotmap_read $PMF] 3]
+check "PM5 two rows of ONE type differ in the record by the index and by\
+ nothing else" \
+  [list [expr {$PM5A eq $PM5B ? 1 : 0}] \
+        [expr {[lindex $PM5A 0] eq [lindex $PM5B 0] ? 1 : 0}] \
+        [expr {[lindex $PM5A 2] eq [lindex $PM5B 2] ? 1 : 0}] \
+        [expr {[lindex $PM5A 1] eq [lindex $PM5B 1] ? 1 : 0}]] \
+  {0 1 1 0}
+
+# --- GP: the `plots` key becomes a thing the registry is CHECKED on ----------
+
+## ⚠ `plots` WAS DECLARED BY FOUR ENTRIES AND READ BY NOTHING through Stages
+## 1-5. Issue 1428's sabotage S35 named that class in as many words: *a key read
+## by nothing is a key checked by nothing*. These rows are what changes.
+## ⚠ THE CENSUS IS TAKEN OVER THE REGISTRY, NOT OVER THE VALIDATOR'S ANSWER.
+## Asking `analysis_schema_errors` whether it reported `noplots` is VACUOUS: the
+## shipped registry has none whether the check exists or not, so deleting the
+## check leaves that half green. Walking the entries is what actually notices.
+set GP1MISS {}
+set GP1N 0
+foreach gpt [dict keys [ase::analysis_types ngspice]] {
+  if {![ase::analysis_renderable ngspice $gpt]} { continue }
+  incr GP1N
+  if {![dict exists [ase::analysis_entry ngspice $gpt] plots]} { lappend GP1MISS $gpt }
+}
+check "GP1 all seven renderable types in the shipped registry declare their\
+ plots, and the registry is still self-consistent" \
+  [list $GP1N $GP1MISS [ase::analysis_schema_errors ngspice]] {7 {} {}}
+
+## Three fixtures, three refusals, one per way of getting `plots` wrong — and
+## the entries are otherwise valid, so each row can only red for its own reason.
+proc gp_types {} {
+  return [dict create \
+    gpa [dict create label gpa baseline 1 registered 1 emitorder 10 \
+           emit {{role analysis tmpl {gpa}}}] \
+    gpb [dict create label gpb baseline 1 registered 1 emitorder 20 \
+           plots {{role sweep results viewer label gpb}} \
+           emit {{role analysis tmpl {gpb}}}] \
+    gpc [dict create label gpc baseline 1 registered 1 emitorder 30 \
+           plots {{select {Gpc Analysis} results viewer label gpc}} \
+           emit {{role analysis tmpl {gpc}}}] \
+    gpd [dict create label gpd baseline 1 registered 1 emitorder 40 \
+           plots {{select {Gpd Analysis} role sweep results viewer label gpd \
+                   when {expr {$start ne $stop}}}} \
+           emit {{role analysis tmpl {gpd}}}] \
+    gpe [dict create label gpe baseline 1 registered 1 \
+           emit {{role probe tmpl {gpe}}}]]
+}
+ase::register_backend gpbad [dict merge [em_five] [dict create analysis_types gp_types]]
+check "GP2 a renderable type with no plots, a plots row with no select, one\
+ with no role, and a `when` the evaluator cannot read are each refused BY NAME\
+ -- and a probe-only type is not swept up with them" \
+  [lsort [ase::analysis_schema_errors gpbad]] \
+  [list {gpa noplots {}} {gpb noplotselect {}} {gpc noplotrole {Gpc Analysis}} \
+        {gpd badplotwhen {expr {$start ne $stop}}}]
+
+## ⚠ THE `badplotwhen` REFUSAL IS THE ONE THAT MATTERS, AND THIS IS WHY. An
+## unreadable `when` makes ase::plot_when answer `unknown`, and BOTH consumers
+## then exclude the plot — so the deck silently stops capturing a plot the
+## registry says it captures, at rc 0, with nothing on either stream. A
+## validator is the only place that can be seen.
+check "GP3 an unreadable `when` answers `unknown` rather than guessing, and the\
+ readable forms answer 1/0 from the state's own options" \
+  [list [ase::plot_when {expr {1}} [ase::state_default]] \
+        [ase::plot_when {} [ase::state_default]] \
+        [ase::plot_when {opt keepopinfo} [ase::state_default]] \
+        [ase::plot_when {opt keepopinfo} [dict merge [ase::state_default] \
+           [dict create options {{name keepopinfo}}]]] \
+        [ase::plot_when {opt KEEPOPINFO} [dict merge [ase::state_default] \
+           [dict create options {{name keepopinfo value 1}}]]] \
+        [ase::plot_when {opt keepopinfo} [dict merge [ase::state_default] \
+           [dict create options {{name keepopinfo value 0}}]]]] \
+  {unknown 1 0 1 1 0}
+
+## ⚠ THE MEASURED TABLE, AND IT REFUTES PLAN.md §6. That section lists the types
+## `keepopinfo` prepends an operating point to as *"ac, noise, pz, tf, disto and
+## sp"*. MEASURED 2026-09-12, one analysis per deck, walked with
+## `setplot previous`, IDENTICAL on the fork and on /usr/bin/ngspice:
+##
+##     .options keepopinfo   ac   -> AC Analysis + `AC Operating Point`
+##                           pz   -> Pole-Zero Analysis + `Distortion Operating
+##                                   Point`   (upstream's copy-paste, carried
+##                                   verbatim and never "fixed")
+##                           tf   -> Transfer Function, and NOTHING ELSE
+##                           sens -> Sensitivity Analysis, and NOTHING ELSE
+##
+## So the registry declares what was measured and this row is the census. A
+## registry that guessed from the plan would over-walk `tf` — and an over-walk is
+## SILENT (see WK5's note).
+set GPON [dict merge [ase::state_default] [dict create options {{name keepopinfo value 1}}]]
+set GPOFF [ase::state_default]
+set GP4 {}
+foreach gpt {op dc ac tran tf pz sens} {
+  lappend GP4 [list $gpt [llength [ase::analysis_plots ngspice [list type $gpt] $GPOFF]] \
+                         [llength [ase::analysis_plots ngspice [list type $gpt] $GPON]]]
+}
+check "GP4 the plot count per type, with `keepopinfo` off and on -- `tf` and\
+ `sens` gain NOTHING, which is what was measured and not what the plan says" \
+  $GP4 {{op 1 1} {dc 1 1} {ac 1 2} {tran 1 1} {tf 1 1} {pz 1 2} {sens 1 1}}
+
+## ⚠ PREDICTED AND CAPTURED ARE DIFFERENT NUMBERS, AND THE GAP IS MEASURED.
+## src/save.c's read_dataset() matches `strstr(lowerline, "operating point")`
+## BEFORE its AC arm, so `AC Operating Point` and `Distortion Operating Point`
+## BOTH read back as sim_type `op`. MEASURED 2026-09-12 on a results file
+## holding the companion AND the real operating point, made to DISAGREE by an
+## `alter` between them:
+##
+##     xschem raw read <file> op  -> points=2, vars=3, datasets=2 sim_type=op
+##     xschem raw value v(in) 0   -> 2      <- the AC operating point
+##     xschem raw value v(mid) 0  -> 1      <- ... and the real one is 0.5
+##
+## Capturing the companion would therefore make Annotate Operating Point publish
+## the WRONG numbers onto the schematic. ASE-L cannot filter it on the read side
+## either: the match is in C, over the whole file. So the plot is PREDICTED (so
+## reconciliation knows reality holds it) and NOT CAPTURED (so the results file
+## stays readable), and the run SAYS so.
+check "GP5 an `opinfo` plot is predicted and NOT captured, and the two answers\
+ partition the prediction exactly" \
+  [list [llength [ase::analysis_captures ngspice {type ac} $GPON]] \
+        [llength [ase::analysis_uncaptured ngspice {type ac} $GPON]] \
+        [ase::plot_select [lindex [ase::analysis_uncaptured ngspice {type ac} $GPON] 0]] \
+        [llength [ase::analysis_captures ngspice {type pz} $GPON]] \
+        [ase::plot_select [lindex [ase::analysis_uncaptured ngspice {type pz} $GPON] 0]] \
+        [llength [ase::analysis_uncaptured ngspice {type ac} $GPOFF]]] \
+  [list 1 1 {AC Operating Point} 1 {Distortion Operating Point} 0]
+
+## The partition as a PROPERTY over the whole registry and both option states,
+## so a later entry cannot land outside it.
+set GP6BAD {}
+foreach gpst [list $GPOFF $GPON] {
+  foreach gpt [dict keys [ase::analysis_types ngspice]] {
+    set gpall [llength [ase::analysis_plots ngspice [list type $gpt] $gpst]]
+    set gpc [llength [ase::analysis_captures ngspice [list type $gpt] $gpst]]
+    set gpu [llength [ase::analysis_uncaptured ngspice [list type $gpt] $gpst]]
+    if {$gpc + $gpu != $gpall} { lappend GP6BAD $gpt }
+  }
+}
+check "GP6 captured + uncaptured == predicted, for every registered type and\
+ both option states" $GP6BAD {}
+
+# --- WK: the writer ---------------------------------------------------------
+
+## The four-analysis deck, which is the shape every golden in this file is cut
+## from. One record per write, each IMMEDIATELY above the write it describes.
+set WKST [nfet_state /models/sky130.lib.spice {}]
+dict set WKST analyses {{type op enabled 1}
+                        {type dc enabled 1 source V1 start 0 stop 1 step 0.1}
+                        {type ac enabled 1 sweep dec points 10 start 1 stop 1meg}
+                        {type tran enabled 1 step 1n stop 1u}}
+set WKRENDER [ase::backend_hook ngspice render_deck]
+set WKDECK [$WKRENDER $WKST $::netlist_text]
+set WKSEQ {}
+foreach wl [split $WKDECK "\n"] {
+  if {[regexp {^(echo "PLOT |write |setplot previous$|remzerovec$|set appendwrite$)} $wl]} {
+    if {[string match {echo "PLOT *} $wl]} { lappend WKSEQ ECHO } \
+    elseif {[string match {write *} $wl]} { lappend WKSEQ WRITE } \
+    elseif {$wl eq {setplot previous}} { lappend WKSEQ WALK } \
+    elseif {$wl eq {remzerovec}} { lappend WKSEQ RZV } \
+    else { lappend WKSEQ APPEND }
+  }
+}
+check "WK1 one sidecar record per write, immediately above it, on the ordinary\
+ four-analysis deck -- and no walk, because every one of the four produces a\
+ single plot" $WKSEQ \
+  {APPEND RZV ECHO WRITE RZV ECHO WRITE RZV ECHO WRITE RZV ECHO WRITE}
+
+## ⚠ THE RECORD CARRIES THE ROW INDEX, and the fixture is TWO ROWS OF ONE TYPE
+## precisely because that is the case the type alone cannot answer. Both write a
+## plot called `Sensitivity Analysis` (measured, both binaries).
+set WKST2 [nfet_state /models/sky130.lib.spice {}]
+dict set WKST2 analyses {{type sens enabled 1 out v(D)}
+                         {type sens enabled 1 out v(G)}}
+set WKREC {}
+## ⚠ THE REGEXP'S ANSWER IS READ, NOT ASSUMED -- SECOND SABOTAGE, SECOND FILE,
+## SAME SHAPE. Respelling the redirection `>>` as `>` made this pattern miss,
+## left `wkr` unset, and `lappend` then RAISED -- which killed the whole
+## PM/GP/WK/RC block and arrived as the unnamed row PM0 with 23 checks lost.
+## test_ase_preflight's PF218f3 was bitten by the identical shape one sabotage
+## earlier. An unset capture variable is not a small bug in a suite whose abort
+## handling is a file-level catch.
+foreach wl [split [$WKRENDER $WKST2 $::netlist_text] "\n"] {
+  if {[string match {echo "PLOT *} $wl]} {
+    if {![regexp {^echo "(.*)" >> (.*)$} $wl -> wkr wkp]} { set wkr NO-APPEND-REDIRECT }
+    lappend WKREC $wkr
+  }
+}
+check "WK2 two rows of ONE type are told apart by the record's index, and by\
+ nothing else in the deck" $WKREC \
+  {{PLOT sens 0 |$curplotname|} {PLOT sens 1 |$curplotname|}}
+
+## ⚠ AND WK2 ABOVE CANNOT SEE THE DIFFERENCE BETWEEN A ROW INDEX AND A WRITE
+## COUNTER. Its two rows sit at positions 0 and 1 and are written in that order,
+## so both spellings produce identical text -- sabotage S23 replaced the index
+## with a counter and this whole file stayed at ALL PASS (450). The fixture
+## below makes them disagree two ways at once: a DISABLED row in front, so the
+## enabled rows are at 1 and 2 and no counter can ever reach 2; and `op` AFTER
+## `tran` in the list, where ase::analysis_emit_order writes it FIRST, so the
+## records come out in the opposite order to the list. A counter says `op 0`
+## then `tran 1`; the row index says `op 2` then `tran 1`.
+set WKST3 [nfet_state /models/sky130.lib.spice {}]
+dict set WKST3 analyses {{type dc enabled 0 source V1 start 0 stop 1 step 0.1}
+                         {type tran enabled 1 step 1n stop 1u}
+                         {type op enabled 1}}
+set WKREC3 {}
+foreach wl [split [$WKRENDER $WKST3 $::netlist_text] "\n"] {
+  if {[regexp {^echo "PLOT ([a-z]+) ([0-9]+) } $wl -> w3t w3i]} {
+    lappend WKREC3 "$w3t $w3i"
+  }
+}
+check "WK2b the index is the ROW'S POSITION and never a write counter: a\
+ disabled row in front and `op` last in the list make the two answers disagree" \
+  $WKREC3 {{op 2} {tran 1}}
+
+## The path is ase::plotmap_path's answer and is NEVER the results file's.
+set WKPATHS {}
+foreach wl [split $WKDECK "\n"] {
+  if {[regexp {^echo "PLOT .*" >> (.*)$} $wl -> wkp]} { lappend WKPATHS $wkp }
+}
+check "WK3 every record goes to the sidecar ase::plotmap_path names, and the\
+ sidecar is not the results file" \
+  [list [lsort -unique $WKPATHS] \
+        [expr {[ase::plotmap_path $WKST] eq \
+               [[ase::backend_hook ngspice raw_file] $WKST] ? 1 : 0}]] \
+  [list [list [ase::plotmap_path $WKST]] 0]
+
+## ⚠ A DECK WITH NO ENABLED ANALYSIS RESOLVES NEITHER ARTEFACT PATH, and that is
+## not tidiness: `ase::plotmap_path` RAISES for a state with no design cell, so
+## hoisting it out of the emit loop unconditionally would have made such a state
+## unrenderable where today it renders fine. It is resolved under exactly the
+## condition `set appendwrite` is.
+set WKNONE [ase::state_default]
+dict set WKNONE analyses {}
+dict set WKNONE outputs {{expr v(out) save 1}}
+## ⚠ THE RENDER IS CAUGHT, AND A SABOTAGE IS WHY. Hoisting
+## `ase::plotmap_path` out of the `n_enabled_analyses` guard makes it RAISE for
+## exactly this state -- and an uncaught raise here killed the whole PM/GP/WK/RC
+## block, which the section catch then reported as the unnamed row PM0 with 432
+## of 450 checks lost. Catching it turns the same sabotage into a NAMED red that
+## says what raised. Issue 1429's S31 one more time.
+set WKNODECK RAISED-NOTHING
+if {[catch {$WKRENDER $WKNONE "* wk\nv1 in 0 dc 1\nr1 in out 1k\n.end\n"} WKNODECK]} {
+  set WKNODECK "RAISED:$WKNODECK"
+}
+check "WK4 a deck with no enabled analysis has no sidecar record, no\
+ appendwrite and no write -- and still renders for a state with no design cell,\
+ which is what keeps the sidecar path inside the appendwrite guard" \
+  [list [regexp {echo "PLOT } $WKNODECK] [regexp -line {^set appendwrite$} $WKNODECK] \
+        [regexp -line {^write } $WKNODECK] \
+        [regexp -line {^print v\(out\)$} $WKNODECK] \
+        [string match RAISED:* $WKNODECK]] \
+  {0 0 0 1 0}
+
+## ⚠ THE WALK, AND WHY ITS FIXTURE IS STUBBED. No type in the SHIPPED registry
+## captures more than one plot — `ac`'s and `pz`'s second plots are `opinfo` and
+## deliberately not captured (GP5), and `noise`/`disto`, which do, are not
+## registered yet (Stage 6d). So the walk is machinery 6d plugs into, and a row
+## that waited for 6d would be a row that cannot fail today. It is driven the
+## way issue 1429's RS3 drove ⚖ R3's two rulings: stub the ONE proc the emitter
+## asks, and watch the whole shape follow.
+##
+## ⚠ AND THE CONTROL IS BESIDE IT. The unstubbed render of the SAME state emits
+## no walk at all, so the row cannot pass by the deck simply containing the
+## words.
+proc wk_captures {n script} {
+  rename ::ase::analysis_captures ::wk_saved_captures
+  proc ::ase::analysis_captures {sim row state} "return \[lrange {a b c d} 0 [expr {$n - 1}]\]"
+  set rc [catch {uplevel 1 $script} r]
+  catch {rename ::ase::analysis_captures {}}
+  rename ::wk_saved_captures ::ase::analysis_captures
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+set WKACST [nfet_state /models/sky130.lib.spice {}]
+dict set WKACST analyses {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}}
+set WKWALK [wk_captures 2 {$::WKRENDER $::WKACST $::netlist_text}]
+set WKWSEQ {}
+foreach wl [split $WKWALK "\n"] {
+  if {[string match {echo "PLOT *} $wl]} { lappend WKWSEQ ECHO } \
+  elseif {[string match {write *} $wl]} { lappend WKWSEQ WRITE } \
+  elseif {$wl eq {setplot previous}} { lappend WKWSEQ WALK } \
+  elseif {$wl eq {remzerovec}} { lappend WKWSEQ RZV }
+}
+set WKCTRL {}
+foreach wl [split [$WKRENDER $WKACST $::netlist_text] "\n"] {
+  if {[string match {echo "PLOT *} $wl]} { lappend WKCTRL ECHO } \
+  elseif {[string match {write *} $wl]} { lappend WKCTRL WRITE } \
+  elseif {$wl eq {setplot previous}} { lappend WKCTRL WALK } \
+  elseif {$wl eq {remzerovec}} { lappend WKCTRL RZV }
+}
+check "WK5 an analysis that captures TWO plots walks back to the second one --\
+ setplot previous, remzerovec, record, write, in that order -- and the same\
+ state capturing ONE emits no walk at all" \
+  [list $WKWSEQ $WKCTRL] \
+  [list {RZV ECHO WRITE WALK RZV ECHO WRITE} {RZV ECHO WRITE}]
+
+## ⚠ THE WALK'S WRITE IS BARE, AND THAT ROW LIVES IN test_ase_optier_0963.tcl
+## (section E, row E5c), because the seam it belongs to is issue 0963 tier b's
+## -- the device names ride the operating point's OWN write and no other -- and
+## that file already owns the block capture, the tier resolver and the write
+## reader the claim needs. `op` produces one plot so the walk never runs for it
+## in production; E5c stubs ase::analysis_captures to prove the emitter would
+## still not carry the device list into a walk.
+
+## ⚠ THE PRODUCTION OVER-WALK GUARD, AND IT IS THE ONE ROW NO STUB IS INVOLVED
+## IN. `keepopinfo` is the one shipped option that makes an analysis produce a
+## second plot, and `ac` is a type a user can enable today. The walk length must
+## come from ase::analysis_captures (ONE -- the companion is `opinfo`), never
+## from ase::analysis_plots (TWO). Respelling that one call reads as a tidy-up
+## and is the single most plausible way to get this wrong: the deck would then
+## `setplot previous` past the only plot the analysis made, SATURATE on the
+## built-in `constants` plot (measured, both binaries -- it does not fail) and
+## append ngspice's twelve mathematical constants to the results file at rc 0.
+set WKKO [nfet_state /models/sky130.lib.spice {}]
+dict set WKKO analyses {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}}
+## ⚠ APPENDED, NOT ASSIGNED. `nfet_state` already carries `{name savecurrents
+## value 1}`, so a bare `dict set … options` REPLACES it -- and the byte-identity
+## half of this row then fails for a reason that has nothing to do with the walk.
+## It did, on the first run.
+dict set WKKO options [concat [ase::state_get $WKKO options] \
+                              {{name keepopinfo value 1}}]
+set WKKODECK [$WKRENDER $WKKO $::netlist_text]
+check "WK8 an `ac` row under `keepopinfo` predicts TWO plots, captures ONE, and\
+ emits NO walk -- the deck is byte-identical to the same row without the option" \
+  [list [llength [ase::analysis_plots ngspice {type ac} $WKKO]] \
+        [llength [ase::analysis_captures ngspice {type ac} $WKKO]] \
+        [regexp -all -line {^setplot previous$} $WKKODECK] \
+        [regexp -all -line {^write } $WKKODECK] \
+        [expr {[string map {"\n.options keepopinfo" {}} $WKKODECK] eq \
+               [$WKRENDER $WKACST $::netlist_text] ? 1 : 0}]] \
+  {2 1 0 1 1}
+
+## Everything 0929/0964/0967/1243 put in this block is still where they put it.
+check "WK7 the sidecar changed nothing else about the block: appendwrite once,\
+ one remzerovec per write, and the \$sim_status guard still above both" \
+  [list [regexp -all -line {^set appendwrite$} $WKDECK] \
+        [regexp -all -line {^remzerovec$} $WKDECK] \
+        [regexp -all -line {^write } $WKDECK] \
+        [regexp -all -line {^  quit 1$} $WKDECK] \
+        [expr {[string first "  quit 1" $WKDECK] < \
+               [string first "remzerovec" $WKDECK] ? 1 : 0}]] \
+  {1 4 4 4 1}
+
+# --- RC: post-run reconciliation --------------------------------------------
+
+## Hand-written headers only -- no simulator is started by any row here, which
+## is the `test_ase_simcaps_0948` canned-file idiom.
+proc rc_raw {names} {
+  set out {}
+  foreach n $names {
+    append out "Title: * rc fixture\nDate: Sat Sep 12 00:00:00  2026\n"
+    append out "Plotname: $n\nFlags: real\nNo. Variables: 1\nNo. Points: 1\n"
+    append out "Variables:\n\t0\tv(mid)\tvoltage\nValues:\n 0\t1.0\n\n"
+  }
+  return $out
+}
+proc rc_fix {tag rawnames maprecs} {
+  set d [file join $::scratch rc_$tag]
+  file mkdir $d
+  rg_wr [file join $d rc_ase.raw] [rc_raw $rawnames]
+  set m {}
+  foreach r $maprecs { append m "[ase::plotmap_record [lindex $r 0] [lindex $r 1] [lindex $r 2]]\n" }
+  rg_wr [file join $d rc_ase.plotmap] $m
+  return $d
+}
+proc rc_state {dir rows {opts {}}} {
+  set s [ase::state_default]
+  dict set s design [dict create lib rl cell rc view schematic]
+  dict set s rundir $dir
+  dict set s analyses $rows
+  dict set s options $opts
+  return $s
+}
+proc rc_run {dir rows {opts {}}} {
+  set st [rc_state $dir $rows $opts]
+  return [ase::reconcile_plots ngspice $st [file join $dir rc_ase.raw] \
+                                          [file join $dir rc_ase.plotmap]]
+}
+set RCROWS {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}}
+## ⚠ THE FIXTURES ARE IN `ase::analysis_emit_order`'s ORDER, WHICH IS `op`
+## FIRST, and that is not cosmetic: the sidecar's 1:1 claim is POSITIONAL, so a
+## fixture whose raw and whose records were in different orders would red every
+## row here for a reason that has nothing to do with the code.
+## Run `analysis_captures` with a fixed answer -- the RS3 idiom of issue 1429,
+## used here to build the ONE shape the shipped registry cannot: an analysis
+## whose walk captures two plots.
+proc rc_captures {caps script} {
+  rename ::ase::analysis_captures ::rc_saved_captures
+  proc ::ase::analysis_captures {sim row state} [list return $caps]
+  set rc [catch {uplevel 1 $script} r]
+  catch {rename ::ase::analysis_captures {}}
+  rename ::rc_saved_captures ::ase::analysis_captures
+  if {$rc} { return "RAISED:$r" }
+  return $r
+}
+
+set RCD [rc_fix ok {{Operating Point} {Transient Analysis}} \
+                   {{op 0 {Operating Point}} {tran 1 {Transient Analysis}}}]
+set RC1 [rc_run $RCD $RCROWS]
+check "RC1 prediction == record == reality is `ok` and says nothing" \
+  [list [dict get $RC1 verdict] [dict get $RC1 predicted] [dict get $RC1 mapped] \
+        [dict get $RC1 actual] [dict get $RC1 why]] \
+  {ok 2 2 2 {}}
+
+## ⚠ THE CASE THAT IS SILENT TODAY. ngspice's `write` aborts SILENTLY when a
+## zero-length vector survives into the plot -- which is the entire reason
+## `remzerovec` precedes every write -- so the run exits 0, the log says
+## nothing, and the results file is simply one plot short.
+set RCD2 [rc_fix under {{Operating Point}} \
+                       {{op 0 {Operating Point}} {tran 1 {Transient Analysis}}}]
+set RC2 [rc_run $RCD2 $RCROWS]
+check "RC2 a write that did not land is an `under` verdict that NAMES the type" \
+  [list [dict get $RC2 verdict] [dict get $RC2 missing] \
+        [rg_has [lindex [dict get $RC2 why] 0] {one plot of the tran analysis was not captured}] \
+        [rg_has [lindex [dict get $RC2 why] 0] {recorded 2 and the results file holds 1}]] \
+  {under tran 1 1}
+
+set RCD3 [rc_fix over {{Operating Point} {Transient Analysis} constants} \
+                      {{op 0 {Operating Point}} {tran 1 {Transient Analysis}}}]
+set RC3 [rc_run $RCD3 $RCROWS]
+check "RC3 a results file holding more than this run recorded is `over`, and\
+ the extras are NAMED rather than counted" \
+  [list [dict get $RC3 verdict] [dict get $RC3 extra] \
+        [rg_has [lindex [dict get $RC3 why] 0] {captured 3 plots where the registry expected 2}]] \
+  {over constants 1}
+
+set RCD4 [rc_fix mislabel {{Operating Point} {Operating Point}} \
+                          {{op 0 {Operating Point}} {tran 1 {Transient Analysis}}}]
+set RC4 [rc_run $RCD4 $RCROWS]
+check "RC4 a record that disagrees with the results file at its own position is\
+ `mislabel`, and the sentence says which side holds what" \
+  [list [dict get $RC4 verdict] [llength [dict get $RC4 mislabelled]] \
+        [rg_has [lindex [dict get $RC4 why] 0] \
+          {the tran analysis in row 1 recorded 'Transient Analysis' where the results file holds 'Operating Point'}]] \
+  {mislabel 1 1}
+
+## ⚠ AND A WRONG IDENTITY BEATS A MISSING PLOT, because they can happen at
+## once and only one verdict word is reported. `under` says "something is
+## missing"; `mislabel` says "what IS there is not what it claims to be", which
+## is the worse fact and the one that has to reach the user. Without this
+## fixture the severity order is unasserted -- both arms fire alone in RC2 and
+## RC4 and neither can see the ordering between them.
+set RCD4B [rc_fix both {{Transient Analysis}} \
+                       {{op 0 {Transient Analysis}} {tran 1 {Transient Analysis}}}]
+set RC4B [rc_run $RCD4B $RCROWS]
+check "RC4b when a plot is BOTH missing and mislabelled, the verdict is\
+ `mislabel` -- and the `under` sentence is still said beside it" \
+  [list [dict get $RC4B verdict] [dict get $RC4B missing] \
+        [llength [dict get $RC4B mislabelled]] \
+        [llength [dict get $RC4B why]]] \
+  {mislabel tran 1 2}
+
+## ⚠ THE ARM COUNTING CANNOT SEE, AND THE REASON IT HAD TO EXIST. MEASURED
+## 2026-09-12, both binaries: a walk that asks for one plot more than the
+## analysis produced does NOT fail -- `setplot previous` SATURATES on the
+## built-in `constants` plot (`Warning: No previous plot is available. Plot
+## remains unchanged (const).`, on stderr where nothing in this tree looks) and
+## the next `write` appends ngspice's twelve mathematical constants to the
+## results file under a perfectly plausible record. The record and the file
+## AGREE, all three counts AGREE, and only the registry's own `select`
+## disagrees. A reconciliation built on counting alone would call this run
+## clean.
+##
+## ⚠ THE FIXTURE IS THE PRODUCTION SHAPE, NOT A CONVENIENT ONE: `analysis_captures`
+## answers TWO declared plots, which is what the deck's walk length is computed
+## from, so predicted == recorded == actual == 2 and the row can only red for
+## the name.
+set RCD5 [rc_fix overwalk {{Transient Analysis} constants} \
+                          {{tran 0 {Transient Analysis}} {tran 0 constants}}]
+set RC5 [rc_captures {{select {Transient Analysis} role sweep results viewer label tran}
+                      {select {Noise Spectral Density Curves} role spectrum results viewer label nsd}} \
+          {rc_run $::RCD5 {{type tran enabled 1 step 1n stop 1u}}}]
+check "RC5 an OVER-WALK is caught even though every count agrees -- the record\
+ matches the file and neither matches the registry" \
+  [list [dict get $RC5 verdict] [dict get $RC5 predicted] [dict get $RC5 mapped] \
+        [dict get $RC5 actual] \
+        [rg_has [lindex [dict get $RC5 why] 0] \
+          {recorded 'constants' where the registry declares 'Noise Spectral Density Curves'}]] \
+  {mislabel 2 2 2 1}
+
+## ...and the control beside it: the SAME fixture with the registry's real
+## answer for `tran` is not a mislabel, so the row cannot pass on the stub alone.
+set RC5B [rc_run $RCD5 {{type tran enabled 1 step 1n stop 1u}}]
+check "RC5b ... and the same file read against the registry's real one-plot\
+ answer is not a mislabel: the stub is doing the work the row claims it does" \
+  [dict get $RC5B verdict] predmismatch
+
+set RCD6 [rc_fix nomap {{Operating Point} {Transient Analysis}} {}]
+set RC6 [rc_run $RCD6 $RCROWS]
+check "RC6 a results file with no sidecar beside it is `nomap`: the plots are\
+ there and nothing can say which row asked for them" \
+  [list [dict get $RC6 verdict] \
+        [rg_has [lindex [dict get $RC6 why] 0] {rc_ase.plotmap is missing}] \
+        [rg_has [lindex [dict get $RC6 why] 0] {2 plot(s) in the results file}]] \
+  {nomap 1 1}
+
+set RCD7 [rc_fix norun {} {}]
+check "RC7 a run that produced neither is `norun` and says nothing at all --\
+ ase::raw_content_verdict already speaks for that case" \
+  [list [dict get [rc_run $RCD7 $RCROWS] verdict] \
+        [dict get [rc_run $RCD7 $RCROWS] why]] {norun {}}
+
+## ⚠ THE UNCAPTURED NOTE IS THE HALF THAT HAS NEVER BEEN SAID. It is not a
+## fault and it is said whatever the verdict: the registry knows the run
+## computed a plot the results file deliberately does not hold, and until now
+## nothing anywhere mentioned it.
+set RCD8 [rc_fix unc {{AC Analysis}} {{ac 0 {AC Analysis}}}]
+set RC8ON [rc_run $RCD8 {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}} \
+                        {{name keepopinfo value 1}}]
+set RC8OFF [rc_run $RCD8 {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}}]
+check "RC8 the uncaptured OP companion is named, with the reason, only when\
+ `keepopinfo` is actually on" \
+  [list [dict get $RC8ON verdict] [dict get $RC8ON uncaptured] \
+        [rg_has [lindex [dict get $RC8ON why] 0] {'AC Operating Point'}] \
+        [rg_has [lindex [dict get $RC8ON why] 0] {would replace the real one}] \
+        [dict get $RC8OFF why]] \
+  [list ok {{ac 0 {AC Operating Point}}} 1 1 {}]
+
+## ⚠ IT MUST NOT RAISE FOR A STATE WITH NO DESIGN CELL, and that is a production
+## contract: ase::run_done calls it on EVERY completion, including runs that
+## died before a design was resolved. Both artefact paths raise for such a
+## state, so both resolutions are caught -- exactly the shape issue 1429's
+## sabotage S31 killed this file over.
+check "RC9 the report survives a state with no design cell, and answers `norun`" \
+  [list [catch {ase::reconcile_report [ase::state_default]} RC9V] \
+        [dict get $RC9V verdict]] {0 norun}
+
+## Structural: the call in ase::run_done is CAUGHT, for the reason every other
+## post-run report there is caught -- advisory, read by nothing, and a defect in
+## a report must never break a run.
+## ⚠ AND IT RUNS BEFORE THE COMPLETION CALLBACK, which is what makes it a
+## reconciliation rather than a post-mortem: the callback is where
+## `ase::ui::do_run` attaches the results file, and 6c's whole job is to have an
+## opinion about that file BEFORE anything is attached from it.
+check "RC10 ase::run_done calls the reconciliation inside a catch, after the\
+ other two reports and BEFORE the completion callback that attaches the file" \
+  [list [rg_has [rg_body ase::run_done] {catch {ase::reconcile_report $state}}] \
+        [expr {[string first {op_report_missing} [rg_body ase::run_done]] < \
+               [string first {reconcile_report} [rg_body ase::run_done]] ? 1 : 0}] \
+        [expr {[string first {reconcile_report} [rg_body ase::run_done]] < \
+               [string first {uplevel #0 $callback} [rg_body ase::run_done]] ? 1 : 0}]] \
+  {1 1 1}
+
+## ...and the sentence really travels ase::echo -> notify -> the CIW pane.
+set RC11 [rg_ciw {ase::reconcile_report [rc_state $::RCD2 $::RCROWS]}]
+set RC11N 0
+foreach rcp $RC11 { if {[rg_has [lindex $rcp 1] {not captured}]} { incr RC11N } }
+check "RC11 the verdict reaches the CIW channel, once, as a note" \
+  [list $RC11N [lindex [lindex $RC11 0] 0]] {1 note}
+
+## The prediction and the record can disagree without either being wrong about
+## the FILE, and there are TWO ways in — which is why the sentence names both.
+## ⚠ MEASURED END TO END, and the first draft named the wrong one: a real run of
+## op + ac + two `sens` rows, on BOTH binaries, had its third analysis fail, so
+## the `$sim_status` guard quit before the rest. Four plots predicted, two
+## recorded, nothing wrong with the state at all. (The sidecar stayed 1:1 with
+## the results file at 2 and 2, because the guard precedes the record -- row
+## PF218f2, confirmed against a live simulator rather than against deck text.)
+set RC12 [rc_run $RCD [list {type op enabled 1}]]
+check "RC12 a record that no longer fits the enabled rows is `predmismatch`,\
+ and says which two numbers disagree" \
+  [list [dict get $RC12 verdict] [dict get $RC12 predicted] [dict get $RC12 mapped] \
+        [rg_has [lindex [dict get $RC12 why] 0] {predict 1 plot(s) and this run recorded 2}] \
+        [rg_has [lindex [dict get $RC12 why] 0] {the run stopped before the rest, or}]] \
+  {predmismatch 1 2 1 1}
+
+## ⚠ AND THE SIDECAR IS DELETED BEFORE EVERY RUN, for a sharper version of the
+## reason the results file is. The deck APPENDS to it, so a stale one does not
+## get truncated: this run's records land behind last run's and every position
+## in the file is then off by however many plots the previous run wrote. A
+## sidecar whose whole value is that position N names the row that wrote plot N
+## is WORSE than none when it is stale -- it answers, and it answers wrong.
+if {[auto_execok true] eq {}} {
+  puts "SKIPPED: RC13 pre-run sidecar delete (no true(1))"
+} else {
+  proc rc_quick_run_cmd {state deckpath} { return [list true 2>@1] }
+  ase::register_backend rcsim [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      rc_quick_run_cmd \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+  set RC13D [file normalize [file join $::scratch run_rc13]]
+  file mkdir $RC13D
+  set RC13NL [file join $RC13D nfet_clean.spice]
+  file copy -force -- [file join $::rundir nfet_clean.spice] $RC13NL
+  set RC13ST [nfet_state $::models $RC13D]
+  dict set RC13ST simulator rcsim
+  set RC13MAP [ase::plotmap_path $RC13ST]
+  rg_wr $RC13MAP "PLOT op 99 |ZZRC13 STALE SIDECAR|\n"
+  set RC13WAS [file isfile $RC13MAP]
+  catch {ase::run_deck $RC13ST $RC13NL} RC13E
+  check "RC13 a stale sidecar is deleted before the run, beside the results file" \
+    [list $RC13WAS [file isfile $RC13MAP]] {1 0}
+  check "RC13b ... and run_deck deletes it in the same breath as the raw, under\
+ the same catch discipline" \
+    [rg_has [rg_body ase::run_deck] {catch {file delete -- [ase::plotmap_path $state]}}] 1
+  catch {ase::run_lock_clear [ase::run_lock_key $RC13ST]}
+}
+
+} pm_err]} {
+  check "PM0 sections PM, GP, WK and RC ran to the end" "RAISED:$pm_err" {}
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

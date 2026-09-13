@@ -4637,6 +4637,33 @@ proc ase::analysis_schema_errors {{sim {}}} {
         lappend out [list $ty fieldunused $f]
       }
     }
+    # --- STAGE 6: THE `plots` KEY IS VALIDATED HERE AND NOWHERE ELSE --------
+    # Issue 1430. `plots` was opaque to core through Stages 1-5 -- declared by
+    # four entries, read by nothing -- and issue 1428's sabotage S35 already
+    # named that class: *a key read by nothing is a key checked by nothing*.
+    # The writer and the reconciliation now read it, so the three ways it can
+    # be wrong are refused by the validator this registry already runs rather
+    # than discovered by a run.
+    #
+    # ⚠ A `when` FORM THE EVALUATOR DOES NOT UNDERSTAND IS THE DANGEROUS ONE,
+    # and it is the reason this check exists at all. `ase::plot_when` answers
+    # `unknown` for it and both consumers then EXCLUDE the plot -- so the deck
+    # silently stops capturing a plot it was declared to capture, at rc 0, with
+    # nothing said. Refusing the registry is the only place that can be seen.
+    if {[dict exists $e plots]} {
+      foreach p [dict get $e plots] {
+        if {![dict exists $p select]} { lappend out [list $ty noplotselect {}] ; continue }
+        if {![dict exists $p role]} {
+          lappend out [list $ty noplotrole [dict get $p select]]
+        }
+        if {[dict exists $p when] && ![ase::plot_when_valid [dict get $p when]]} {
+          lappend out [list $ty badplotwhen [dict get $p when]]
+        }
+      }
+    } elseif {[ase::analysis_renderable $sim $ty]} {
+      # A type the user can enable and run, whose results nothing can name.
+      lappend out [list $ty noplots {}]
+    }
   }
   return $out
 }
@@ -4693,6 +4720,417 @@ proc ase::analysis_cards {sim row} {
                       [ase::analysis_expand $row [dict get $card tmpl] $flds]]
   }
   return $out
+}
+
+
+# ─── THE PLOT SIDECAR, AND WHAT IT IS FOR (Stage 6a–6c, issue 1430) ──────────
+#
+# ⚠ THE QUESTION IS NOT "HOW MANY PLOTS" -- IT IS "WHICH ROW WROTE THIS ONE".
+# MEASURED 2026-09-12 on BOTH binaries (the fork, ngspice-46+; /usr/bin/ngspice,
+# ngspice-45.2), one deck, two enabled `sens` rows:
+#
+#     Plotname: Sensitivity Analysis        <- the row filtered on r1
+#     Plotname: Sensitivity Analysis        <- the row filtered on r2
+#
+# NOTHING IN THE RESULTS FILE TELLS THEM APART. Not the plot literal (two
+# different analyses already share `Sensitivity Analysis` -- APPENDIX §0.7 --
+# and two rows of ONE type share it by construction); not the order (which is
+# ase::analysis_emit_order's rank, and moves under the 0964 op-last variant);
+# not the variable list (two filters can resolve to the same parameter names).
+#
+# So the sidecar is the IDENTITY and the plot literal is only the LABEL. One
+# `PLOT` record per `write`, in write order, 1:1 with the results file's
+# `Plotname:` records.
+#
+# VERIFIED END TO END through this file's own render_deck, on BOTH binaries, on
+# a state with TWO enabled `ac` rows -- rc 0, and paste(1) of the two artefacts:
+#
+#     PLOT op   0 |Operating Point|      @ Plotname: Operating Point
+#     PLOT ac   1 |AC Analysis|          @ Plotname: AC Analysis
+#     PLOT ac   2 |AC Analysis|          @ Plotname: AC Analysis
+#     PLOT tran 3 |Transient Analysis|   @ Plotname: Transient Analysis
+#
+# Row for row, byte for byte, the same on the fork and on apt 45.2. The two `AC
+# Analysis` plots are told apart by 1 and by 2 and by nothing else in the file.
+#
+# ⚠ AND A RUN WHOSE ANALYSIS FAILS KEEPS THE 1:1. Measured on a deck whose third
+# analysis failed (`RUN-FAILED`, `quit 1`, rc 1, both binaries): 2 records, 2
+# plots, matching. The `$sim_status` guard quits ABOVE the record, so an analysis
+# that never wrote never recorded -- which is what keeps position N naming the
+# row that wrote plot N even for a run that died half way.
+#
+# ⚠ THE FORMAT IS SCHEMA AND THE EMISSION IS CONTENT, and the split is not
+# decoration. The artefact is ASE-L's own -- rendered by ASE-L's deck, deleted
+# by ASE-L before every run, read by ASE-L and by nothing else -- so the record
+# is spelled ONCE, here, by ase::plotmap_record, and read ONCE, here, by
+# ase::plotmap_parse. What stays in ase::backend::ngspice::render_deck is the
+# three ngspice words that carry it: `echo`, `>>` and `$curplotname`.
+
+# <rundir>/<cell>_ase.plotmap -- beside the results file and the log.
+#
+# ⚠ IT RAISES FOR A STATE WITH NO DESIGN CELL, exactly as its two siblings
+# ase::backend::ngspice::raw_file and log_file do, and every CORE caller of it
+# therefore catches. That is not defensive padding: issue 1429's sabotage S31
+# removed one such `catch` and killed test_ase_core at row P1 -- a row a year
+# older than the seam -- with `UNEXPECTED ERROR` and no `RESULT:` line. Rows
+# PM1/PM1b and RC9 pin both halves.
+proc ase::plotmap_path {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (plotmap_path)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase.plotmap]
+}
+
+# THE RECORD, SPELLED IN ONE PLACE.  `PLOT <type> <row index> |<plot name>|`
+#
+# ⚠ THE PIPES ARE NOT DECORATION. Every plot name ngspice writes contains
+# spaces -- `AC Operating Point`, `DC transfer characteristic`, `DISTORTION -
+# 2nd harmonic` -- so a whitespace-delimited record could not carry one, and the
+# name is the LAST field precisely so the delimiter has to close only once. None
+# of the twelve literals APPENDIX §6.2 tabulates contains a `|`.
+#
+# ⚠ AND THE INDEX IS THE ROW'S POSITION IN `analyses`, NOT A COUNTER. A counter
+# would say "the third plot"; the position says WHICH ROW, which is the whole
+# reason this file exists.
+proc ase::plotmap_record {type idx name} {
+  return "PLOT $type $idx |$name|"
+}
+
+# The inverse -- {type idx name}, or {} for any line this format did not write.
+proc ase::plotmap_parse {line} {
+  if {![regexp {^PLOT ([^ |]+) (-?[0-9]+) \|(.*)\|$} [string trim $line] -> t i n]} {
+    return {}
+  }
+  return [list $t $i $n]
+}
+
+# The sidecar as a list of {type idx name}, in file order == write order.
+# A missing file is {} and is NOT an error: a deck rendered before this issue,
+# a run that died before its first write, and a simulator that ignored the
+# redirection all look the same from here, and ase::reconcile_plots is the one
+# place allowed to have an opinion about which.
+proc ase::plotmap_read {path} {
+  set out {}
+  if {$path eq {} || ![file isfile $path]} { return $out }
+  if {[catch {open $path r} f]} { return $out }
+  while {[gets $f line] >= 0} {
+    set r [ase::plotmap_parse $line]
+    if {[llength $r]} { lappend out $r }
+  }
+  catch {close $f}
+  return $out
+}
+
+# --- 6b: `nplots` IS A PREDICATE ---------------------------------------------
+#
+# ⚠ "ONE ANALYSIS, ONE PLOT" IS WRONG FOR AT LEAST THREE OF THE TWELVE, AND
+# WHICH THREE DEPENDS ON AN OPTION. MEASURED 2026-09-12, both binaries, one
+# analysis per deck, walked with `setplot previous`:
+#
+#   .options keepopinfo   ac    -> AC Analysis + `AC Operating Point`
+#                         pz    -> Pole-Zero Analysis + `Distortion Operating
+#                                  Point`  (an upstream copy-paste; carried
+#                                  verbatim, never "fixed")
+#                         tf    -> Transfer Function, and NOTHING ELSE
+#                         sens  -> Sensitivity Analysis, and NOTHING ELSE
+#   no keepopinfo         every one of the four -> exactly one plot
+#
+# ⚠ THE `tf` AND `sens` RESULTS REFUTE PLAN.md §6, which lists `tf` among the
+# types `keepopinfo` prepends an operating point to. It does not, on either
+# binary. The registry therefore declares what was measured, and this predicate
+# is what keeps the declaration honest: a plot that is only there sometimes is a
+# row with a `when`, never a comment.
+
+# Is a named option enabled in this state? `.options` rows carry {name … value …}
+# and a `value` of exactly 0 is OFF -- the same two lines render_deck uses to
+# decide whether to emit the card at all, so the predicate and the deck cannot
+# disagree about what is switched on.
+proc ase::option_enabled {state name} {
+  foreach o [ase::state_get $state options] {
+    if {[catch {dict exists $o name} ok] || !$ok} { continue }
+    if {![string equal -nocase [dict get $o name] $name]} { continue }
+    set v 1
+    if {[dict exists $o value]} { set v [dict get $o value] }
+    return [expr {$v eq {0} ? 0 : 1}]
+  }
+  return 0
+}
+
+# Is this a `when` form the evaluator understands? State-free, so
+# ase::analysis_schema_errors can refuse an unknown one at validation time
+# rather than leaving every run to discover it.
+proc ase::plot_when_valid {when} {
+  if {$when eq {}} { return 1 }
+  if {[catch {llength $when} n]} { return 0 }
+  if {$n == 2 && [lindex $when 0] eq {opt}} { return 1 }
+  return 0
+}
+
+# 1, 0, or the word `unknown`.
+#
+# ⚠ `unknown` IS EXCLUDED BY BOTH CONSUMERS, AND THE VALIDATOR IS WHY THAT IS
+# SAFE. Counting it would over-walk (below); predicting it would report a plot
+# that may not exist. Neither is a decision a reader should have to make at run
+# time, so ase::analysis_schema_errors refuses the registry that contains one
+# and row GP3 asserts the shipped registry has none.
+proc ase::plot_when {when state} {
+  if {![ase::plot_when_valid $when]} { return unknown }
+  if {$when eq {}} { return 1 }
+  return [ase::option_enabled $state [lindex $when 1]]
+}
+
+# EVERY plot this row's analysis is predicted to produce, in the registry's own
+# order (which is creation order: the analysis's own plot first, then its
+# companions). This is the PREDICTION -- what reconciliation measures reality
+# against -- and it is deliberately larger than what the deck captures.
+proc ase::analysis_plots {sim row state} {
+  set e [ase::analysis_entry $sim [ase::state_get $row type]]
+  if {$e eq {} || ![dict exists $e plots]} { return {} }
+  set out {}
+  foreach p [dict get $e plots] {
+    set w {}
+    if {[catch {dict exists $p when} ok]} { continue }
+    if {$ok} { set w [dict get $p when] }
+    if {[ase::plot_when $w $state] ne {1}} { continue }
+    lappend out $p
+  }
+  return $out
+}
+
+# ─── WHY AN `opinfo` PLOT IS PREDICTED AND NOT CAPTURED ──────────────────────
+#
+# ⚠ THIS IS A MEASURED REFUSAL, NOT A SCOPE CUT, AND IT REFUTES PLAN.md 6a.
+# src/save.c's read_dataset() matches `strstr(lowerline, "operating point")`
+# BEFORE its AC arm, so `AC Operating Point`, `Distortion Operating Point` and
+# `NOISE Operating Point` ALL read back as sim_type `op`. MEASURED 2026-09-12 on
+# a results file holding the companion plot AND the real operating point, the
+# two made to DISAGREE by an `alter` between them (v(in) 2 V against 1 V):
+#
+#     xschem raw read <file> op   ->  points=2, vars=3, datasets=2 sim_type=op
+#     xschem raw value v(in) 0    ->  2        <- the AC operating point
+#     xschem raw value v(mid) 0   ->  1        <- ... not the real one, 0.5
+#
+# So capturing the companion into the results file would make Annotate Operating
+# Point publish the WRONG numbers onto the schematic whenever `keepopinfo` is on
+# and both `ac` (or `pz`) and `op` are enabled. That is issue 0929's defect
+# wearing the other coat, and ASE-L cannot filter it out on the read side: the
+# plot name is matched in C, over the whole file, and `attach_dbs` hands
+# `xschem raw read` the file entire.
+#
+# The companion therefore needs a results file of its OWN before it can be
+# captured at all (`<cell>_ase.opinfo.raw`, deleted per run like this one), and
+# that is a separate artefact with a separate reader. Until then the run SAYS
+# the plot exists and says it is not in the file, which is strictly better than
+# today, where nothing is said at all.
+proc ase::plot_capturable {p} {
+  if {[catch {dict exists $p role} ok] || !$ok} { return 1 }
+  return [expr {[dict get $p role] eq {opinfo} ? 0 : 1}]
+}
+
+# The plots the DECK writes for this row -- the walk length, and one `PLOT`
+# record each.
+proc ase::analysis_captures {sim row state} {
+  set out {}
+  foreach p [ase::analysis_plots $sim $row $state] {
+    if {[ase::plot_capturable $p]} { lappend out $p }
+  }
+  return $out
+}
+
+# ...and the complement, which is the half that used to be silent.
+proc ase::analysis_uncaptured {sim row state} {
+  set out {}
+  foreach p [ase::analysis_plots $sim $row $state] {
+    if {![ase::plot_capturable $p]} { lappend out $p }
+  }
+  return $out
+}
+
+# The `select` literal a plots row declares, or {}.
+proc ase::plot_select {p} {
+  if {[catch {dict exists $p select} ok] || !$ok} { return {} }
+  return [dict get $p select]
+}
+
+# ─── 6c: POST-RUN RECONCILIATION -- THE SAFETY NET ───────────────────────────
+#
+# Three facts, compared after every run and before anything is attached:
+#
+#   the PREDICTION   ase::analysis_captures over the enabled rows
+#   the RECORD       the sidecar the deck wrote, one line per `write`
+#   the REALITY      ase::cap_raw_plots over the results file
+#
+# ⚠ THE CASE THIS EXISTS FOR IS THE ONE THAT IS SILENT TODAY. A `write` that
+# aborts -- which ngspice does SILENTLY when a zero-length vector survives into
+# the plot (the reason `remzerovec` precedes every write) -- leaves a results
+# file with fewer plots than the run asked for, rc 0, nothing on either stream.
+# Today nothing anywhere notices. Here it is an `under` verdict naming the type.
+#
+# ⚠ AND THE ARM NOBODY WOULD PREDICT IS `mislabel`. MEASURED 2026-09-12: when
+# the walk asks for one plot more than the analysis produced, `setplot previous`
+# does NOT fail -- it SATURATES on the built-in `constants` plot (`Warning: No
+# previous plot is available. Plot remains unchanged (const).`, stderr) and the
+# next `write` appends ngspice's twelve mathematical constants to the results
+# file under a perfectly plausible record. Counting alone cannot see that: the
+# record count and the plot count AGREE. Comparing the recorded name against the
+# registry's own `select` is what sees it, and it is the only arm that can.
+proc ase::reconcile_plots {sim state rawpath mappath} {
+  set v [dict create verdict ok predicted 0 mapped 0 actual 0 \
+                     extra {} missing {} mislabelled {} uncaptured {} why {}]
+  set rows [ase::state_get $state analyses]
+  set order {}
+  set orderok 1
+  if {[catch {ase::analysis_emit_order $state 0 $sim} order]} {
+    set orderok 0
+    set order {}
+  }
+  set pred 0
+  set unc {}
+  # which capture a given {type idx} occurrence is expected to be, in walk order
+  set expect {}
+  foreach ent $order {
+    lassign $ent arank ai atype
+    set row [lindex $rows $ai]
+    foreach p [ase::analysis_captures $sim $row $state] {
+      incr pred
+      lappend expect [list $atype $ai [ase::plot_select $p]]
+    }
+    foreach p [ase::analysis_uncaptured $sim $row $state] {
+      lappend unc [list $atype $ai [ase::plot_select $p]]
+    }
+  }
+  set map [ase::plotmap_read $mappath]
+  set raws {}
+  foreach p [ase::cap_raw_plots $rawpath] { lappend raws [lindex $p 0] }
+  set mapped [llength $map]
+  set actual [llength $raws]
+  dict set v predicted $pred
+  dict set v mapped $mapped
+  dict set v actual $actual
+  dict set v uncaptured $unc
+  set why {}
+  # THE UNCAPTURED NOTE IS SAID WHATEVER THE VERDICT, AND ONCE. It is not a
+  # fault -- it is the registry telling the user about a plot the results file
+  # deliberately does not hold, which is the half that has never been said.
+  if {[llength $unc]} {
+    set utypes {}
+    set unames {}
+    foreach u $unc {
+      if {[lsearch -exact $utypes [lindex $u 0]] < 0} { lappend utypes [lindex $u 0] }
+      if {[lsearch -exact $unames [lindex $u 2]] < 0} { lappend unames [lindex $u 2] }
+    }
+    lappend why "the [join $utypes {, }] analysis also computes '[join $unames {', '}]'.\
+ ASE-L leaves it out of the results file: every plot whose name contains 'Operating\
+ Point' reads back as the OP and would replace the real one."
+  }
+  if {$actual == 0 && $mapped == 0} {
+    dict set v verdict norun
+    dict set v why $why
+    return $v
+  }
+  if {$mapped == 0} {
+    dict set v verdict nomap
+    lappend why "the plot sidecar [file tail $mappath] is missing, so the $actual\
+ plot(s) in the results file cannot be matched to the analysis rows that asked for\
+ them."
+    dict set v why $why
+    return $v
+  }
+  # 1:1, position by position, against BOTH the file and the registry
+  set mis {}
+  set n [expr {$mapped < $actual ? $mapped : $actual}]
+  for {set i 0} {$i < $n} {incr i} {
+    set mrec [lindex $map $i]
+    set got [lindex $mrec 2]
+    set onfile [lindex $raws $i]
+    if {![string equal -nocase $got $onfile]} {
+      lappend mis [list [lindex $mrec 0] [lindex $mrec 1] $got $onfile file]
+      continue
+    }
+    if {!$orderok || $i >= [llength $expect]} { continue }
+    set sel [lindex [lindex $expect $i] 2]
+    if {$sel eq {}} { continue }
+    if {![string match -nocase $sel $got]} {
+      lappend mis [list [lindex $mrec 0] [lindex $mrec 1] $got $sel registry]
+    }
+  }
+  dict set v mislabelled $mis
+  if {$actual < $mapped} {
+    set lost {}
+    foreach mrec [lrange $map $actual end] {
+      if {[lsearch -exact $lost [lindex $mrec 0]] < 0} { lappend lost [lindex $mrec 0] }
+    }
+    dict set v missing $lost
+    set k [expr {$mapped - $actual}]
+    ## ⚠ PLAIN if/else, NOT A TERNARY. `expr {$k == 1 ? {one plot} : "$k plots"}`
+    ## evaluates the QUOTED branch as ARITHMETIC -- issue 1429 paid a whole run
+    ## for that exact line shape, which wrote `1.28-0.0017` into a fixture.
+    if {$k == 1} {
+      set kw {one plot} ; set kv was
+    } else {
+      set kw "$k plots" ; set kv were
+    }
+    lappend why "$kw of the [join $lost {, }] analysis $kv not captured: this run\
+ recorded $mapped and the results file holds $actual."
+  } elseif {$actual > $mapped} {
+    dict set v extra [lrange $raws $mapped end]
+    lappend why "this run captured $actual plots where the registry expected $mapped;\
+ the extra ones ([join [lrange $raws $mapped end] {, }]) were ignored."
+  }
+  foreach m $mis {
+    lassign $m mty mai mgot mwant mside
+    if {$mside eq {file}} {
+      set msay "the results file holds"
+    } else {
+      set msay "the registry declares"
+    }
+    lappend why "the $mty analysis in row $mai recorded '$mgot' where $msay\
+ '$mwant', so results cannot be matched to the row that asked for them."
+  }
+  if {$orderok && $pred != $mapped} {
+    ## ⚠ TWO CAUSES, AND THE SENTENCE NAMES BOTH -- MEASURED, NOT GUESSED. An
+    ## end-to-end run whose third analysis failed left this exact shape: four
+    ## plots predicted, two recorded, because the `$sim_status` guard quit
+    ## before the rest (and correctly wrote no record for the analysis that
+    ## failed). The first draft of this line blamed the state changing, which
+    ## is the OTHER cause and was the wrong one that day.
+    lappend why "the enabled rows predict $pred plot(s) and this run recorded\
+ $mapped: the run stopped before the rest, or the analyses changed between\
+ rendering the deck and reading it back."
+  }
+  # severity order: no identity at all, then a wrong identity, then lost data,
+  # then extra data, then a prediction that no longer fits.
+  if {[llength $mis]} {
+    dict set v verdict mislabel
+  } elseif {$actual < $mapped} {
+    dict set v verdict under
+  } elseif {$actual > $mapped} {
+    dict set v verdict over
+  } elseif {$orderok && $pred != $mapped} {
+    dict set v verdict predmismatch
+  }
+  dict set v why $why
+  return $v
+}
+
+# The reconciliation, said once per run.
+#
+# ⚠ CAUGHT BY ITS CALLER AND ADVISORY THROUGHOUT, for ase::cap_report's and
+# ase::op_report_missing's reason: nothing downstream reads its answer and a
+# defect in a report must never break a run. The suite calls it directly and
+# uncaught, so a defect in it is still loud where it should be.
+proc ase::reconcile_report {state} {
+  set sim [ase::state_get $state simulator]
+  set raw {}
+  set map {}
+  catch {set raw [[ase::backend_hook $sim raw_file] $state]}
+  catch {set map [ase::plotmap_path $state]}
+  set v [ase::reconcile_plots $sim $state $raw $map]
+  set tag note
+  if {[dict get $v verdict] eq {ok} || [dict get $v verdict] eq {norun}} { set tag {} }
+  foreach s [dict get $v why] { ::ase::echo "ase: results -- $s" $tag }
+  return $v
 }
 
 # THE EMIT CARD'S **TEMPLATE**, WITHOUT A ROW -- the first token of which is the
@@ -9803,6 +10241,15 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## before it writes leaves no raw, instead of serving last run's numbers as
   ## though they were this one's.
   catch {file delete -- [[ase::backend_hook $sim raw_file] $state]}
+  ## 1430: AND THE PLOT SIDECAR, for a sharper version of the same reason. The
+  ## deck APPENDS to it (`echo … >> path`), so a sidecar left over from the
+  ## previous run does not get truncated -- this run's records land behind last
+  ## run's and every position in the file is then off by however many plots the
+  ## previous run wrote. The sidecar's whole value is that position N names the
+  ## row that wrote plot N, so a stale one is worse than none: it answers, and
+  ## it answers wrong. Caught for ase::plotmap_path's raise on a state with no
+  ## design cell, which is the same shape the line above already tolerates.
+  catch {file delete -- [ase::plotmap_path $state]}
   ## 0948: AND SAY SO IF THE PROGRAM ABOUT TO START CANNOT DO WHAT THIS RUN
   ## NEEDS. The deletion one line up, and the `set appendwrite` the deck is
   ## about to carry, BOTH assume the simulator adds each analysis to the
@@ -10391,6 +10838,17 @@ proc ase::run_done {logpath state callback {meta {}}} {
   ## must never break a run. The suite calls ase::op_report_missing directly,
   ## uncaught.
   catch {ase::op_report_missing $state $meta $exitcode}
+  ## 1430 (6c): AND SAY WHETHER THE RESULTS FILE HOLDS WHAT THIS RUN ASKED FOR.
+  ## A `write` that aborts -- which ngspice does SILENTLY when a zero-length
+  ## vector survives into the plot -- leaves a results file with fewer plots
+  ## than the run recorded, at rc 0, with nothing on either stream. Nothing
+  ## anywhere noticed until this line.
+  ##
+  ## CAUGHT, for ase::cap_report's and ase::op_report_missing's reason:
+  ## everything it says is advisory, nothing downstream reads its answer, and a
+  ## defect in a report must never break a run. The suite calls
+  ## ase::reconcile_plots and ase::reconcile_report directly, uncaught.
+  catch {ase::reconcile_report $state}
   ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
   if {$callback ne {}} { uplevel #0 $callback }
 }
@@ -13686,7 +14144,18 @@ namespace eval ase::backend::ngspice {
     # the run for exactly this reason -- without that, every run's plots pile up
     # on the previous run's and `6` annotates whichever stale operating point
     # happens to come first. See the deletion beside cosim_clear_artifacts.
-    if {[ase::n_enabled_analyses $state] > 0} { lappend lines "set appendwrite" }
+    set pmapf {}
+    if {[ase::n_enabled_analyses $state] > 0} {
+      lappend lines "set appendwrite"
+      ## --- 1430: AND THE SIDECAR PATH, RESOLVED ONCE, UNDER EXACTLY THIS
+      ## CONDITION. The `echo … >> <path>` lines below are 1:1 with the `write`
+      ## lines, and a deck with no enabled analysis emits neither -- so
+      ## resolving the path here rather than in the loop keeps a state with no
+      ## `design cell` renderable for exactly as long as it is today. (It is:
+      ## ase::backend::ngspice::raw_file raises for such a state too, and is
+      ## likewise reached only from inside the loop.)
+      set pmapf [ase::plotmap_path $state]
+    }
     # --- 0964: THE OPERATING POINT RUNS LAST WHEN ITS REQUESTS MOVED IN ------
     # The emit order is normally the fixed `op dc ac tran` this block has always
     # used, and every deck that carries no in-`.control` device requests renders
@@ -13869,6 +14338,25 @@ namespace eval ase::backend::ngspice {
       # It is per-PLOT, so one call at the end would only ever have cleaned
       # the last analysis's.
       lappend lines "remzerovec"
+      # --- 1430: THE SIDECAR RECORD, IMMEDIATELY ABOVE THE WRITE IT DESCRIBES -
+      # One `PLOT` line per `write`, carrying the ROW INDEX -- which is the only
+      # thing that tells two `sens` rows apart, since both write a plot called
+      # `Sensitivity Analysis` (MEASURED, both binaries). `$curplotname` is read
+      # at the moment of the write rather than predicted, so the record says
+      # what ngspice ACTUALLY had in hand; the registry's own `select` is then
+      # what reconciliation compares it against, and a disagreement is a finding
+      # rather than a silent relabel.
+      #
+      # ⚠ `echo … >> path` IS THE ONLY SHAPE THAT WORKS. A capture loop cannot
+      # name the plots from inside the deck (`foreach p $plots` gets `"const` --
+      # the quoting is ngspice's, measured), `.control` `if` takes the FALSE
+      # branch on both `eq` and `ne` for strings, and `$plots` cannot be
+      # subscripted. The three ngspice words are here, in the adapter; the
+      # record FORMAT is ase::plotmap_record, in core, read back by exactly one
+      # parser.
+      if {$pmapf ne {}} {
+        lappend lines "echo \"[ase::plotmap_record $type $ai {$curplotname}]\" >> $pmapf"
+      }
       # 0963 tier b: the device names ride THIS write and no other. A bare
       # `@dev` on a multi-point write is silently wrong -- dims=1, one
       # non-zero sample parked at index 0, 0.0 everywhere else, no warning.
@@ -13876,6 +14364,40 @@ namespace eval ase::backend::ngspice {
       if {$type eq {op} && [llength $optier_write]} {
         lappend lines "write [raw_file $state] all [join $optier_write { }]"
       } else {
+        lappend lines "write [raw_file $state]"
+      }
+      # --- 1430 (6a): THE `setplot previous` WALK ----------------------------
+      # ngspice's `write` writes ONE plot -- the current one -- and several
+      # analyses make more than one. Issue 0929 fixed "one analysis's plot per
+      # RUN"; this is the same defect one level down, "one plot per ANALYSIS".
+      #
+      # ⚠ THE WALK LENGTH IS THE REGISTRY'S ANSWER, NOT A CONSTANT, and it must
+      # never exceed what the analysis produced. MEASURED 2026-09-12, both
+      # binaries: `setplot previous` past the first plot does not fail -- it
+      # SATURATES on the built-in `constants` plot, and the next `write` appends
+      # ngspice's twelve mathematical constants to the results file. So an
+      # over-walk is silent, at rc 0, and ase::reconcile_plots' `mislabel` arm
+      # is what catches it.
+      #
+      # ⚠ AND THE WALK RUNS BACKWARDS, so a multi-plot analysis reaches the file
+      # in REVERSE creation order: `AC Analysis` then `AC Operating Point`. That
+      # costs nothing -- both readers in this tree pick their plot BY NAME out
+      # of the multi-plot results file, and the sidecar records the order that
+      # actually happened rather than the order anything assumed.
+      set ncap [llength [ase::analysis_captures \
+                          [namespace tail [namespace current]] $a $state]]
+      for {set wi 1} {$wi < $ncap} {incr wi} {
+        lappend lines "setplot previous"
+        # per-PLOT, exactly as above: one call at the end would only ever clean
+        # the last plot walked to.
+        lappend lines "remzerovec"
+        if {$pmapf ne {}} {
+          lappend lines "echo \"[ase::plotmap_record $type $ai {$curplotname}]\" >> $pmapf"
+        }
+        # A BARE `write` IS ENOUGH HERE and the device names must NOT ride it:
+        # 0963 tier b's `all @dev…` list belongs to the operating point's own
+        # write and to no other, and `op` produces one plot, so this loop never
+        # runs for it.
         lappend lines "write [raw_file $state]"
       }
       # 0967: the printed outputs sit with the analysis they have always read.
@@ -15735,7 +16257,9 @@ $_leg
                 {name stop   kind freq required 1 label {Stop frequency} unit Hz}} \
         emit   {{role analysis tmpl {ac @sweep? @points @start @stop}}} \
         results {viewer {kind sweep}} \
-        plots  {{select {AC Analysis} role sweep results viewer label ac}}] \
+        plots  {{select {AC Analysis} role sweep results viewer label ac}
+                {select {AC Operating Point} role opinfo results viewer
+                 when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
         needs  {cider_klu} \
