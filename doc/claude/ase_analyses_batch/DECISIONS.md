@@ -1203,23 +1203,52 @@ answer. C keeps both, at the cost of two readers and a rule about which wins.
 exactly one vector reads the raw; anything else reads the log. Issue 1243 was the user's own
 ruling and this extends it rather than reversing it.
 
-### ⚖ R4 — Does `ase::state_default` gain any of the new analysis types?
+### ⚖ R4 — ANSWERED. Does `ase::state_default` gain any of the new analysis types?
 
-*Blocks: Stage 2.*
+**✅ ANSWERED 2026-09-13 — Option A, keep four.** The user's words:
 
-* **Option A — no.** All committed `.state` files carry exactly four rows,
-  `test_ase_core.tcl` R1 asserts "the four types in order", and Cadence does not add
-  analyses to your bench either. New types arrive through the dialog.
-* **Option B — yes**, seeding all twelve as disabled rows so every type is visible on a
-  fresh bench.
+> *"keep four. I don't know how we ended up with this, but it's probably more user-friendly
+> than zero. In Cadence ADE-L it **is** zero"*
+
+⚠ **AND THE ANSWER CORRECTS THE ARGUMENT IT WAS PUT ON.** Option A below was offered with
+*"Cadence does not add analyses to your bench either"*, i.e. as ADE-L **parity**. That is
+wrong: **ADE-L seeds ZERO.** So ASE-L's four seeded rows were never a match — they are a
+deliberate divergence in the user's favour, and the user ratified them as such. The
+recommendation happened to land on the right answer for a reason that was not true, which
+is the worse kind of right.
+
+⚠ **The general rule that follows**, because this batch cites ADE-L constantly: **ADE-L is
+the FLOOR, not the ceiling.** *"ADE-L does not do this"* is an argument for removing a
+**restriction** of ours (the standing rule, and the reason issue 0643 was a defect); it is
+**not** an argument for removing a **convenience** of ours. Check, do not recall, before
+citing ADE-L behaviour in a decision the user is being asked to make.
+
+*Blocked: Stage 2, which shipped Option A by construction long before the ruling arrived —
+so this ratifies eleven commits' worth of existing behaviour rather than changing anything.*
+
+* **Option A — no** (**CHOSEN**). All committed `.state` files carry exactly four rows,
+  `test_ase_core.tcl` R1 asserts "the four types in order". New types arrive through the
+  dialog. ⚠ The original wording of this option also said *"and Cadence does not add
+  analyses to your bench either"* — struck, see above.
+* **Option B — yes**, seeding all the registered types as disabled rows so every type is
+  visible on a fresh bench. ⚠ This option said **twelve**; the registry holds **eleven**
+  (`op`, `dc`, `ac`, `tran`, `noise`, `tf`, `pz`, `sens`, `disto`, `pss`, `sp`), of which
+  four are seeded. The twelve was never re-counted after the registry settled.
 
 *Trade-off.* No keeps every golden and every existing bench identical and costs a user one
 click. Yes makes the whole surface discoverable at a glance and moves R1's assertion, the D1
 golden and every freshly created view.
 
-**Recommendation: A (no).** Discoverability is served by D6's four-state grid, which shows
-all twelve whether or not they are in the state file. **But today this would change by
-accident, so it has to be a decision** (D5).
+**Recommendation was A (no)**, and A is what the user ruled. Discoverability is served by
+D6's four-state grid, which shows all eleven whether or not they are in the state file.
+
+⚠ **WHAT THE RULING NOW OBLIGES.** The reason this was a ruling at all is that *"today
+this would change by accident"* (D5): the registry carries a `seed_enabled` key, and every
+analysis type added across Stages 5–8 could have picked it up silently. Eleven commits
+kept it off by hand. **A ratified decision must not depend on anybody remembering it**, so
+the follow-up is a row that reddens if a twelfth type is ever seeded — not merely the
+existing assertion that four rows come out, but one that names `seed_enabled` as the thing
+that must stay off.
 
 ### ⚖ R5 — Reverse recorded decision D4: should switching the analysis type keep what you typed?
 
@@ -1346,7 +1375,7 @@ ruling is C, Stage 15 moves from terminal-and-optional to scheduled, and Stage 8
 gives up the time.
 
 ⚠ **NOT DECIDED. The user has not answered this.** ⚖ R1 is answered (2026-09-10, Option A) and
-⚖ R2 with it (2026-09-10, yes with four conditions); **⚖ R3 is ANSWERED (2026-09-12, Option C); ⚖ R4 is the next one to ask**, and this one
+⚖ R2 with it (2026-09-10, yes with four conditions); **⚖ R3 is ANSWERED (2026-09-12, Option C); ⚖ R4 is ANSWERED (2026-09-13, Option A, keep four); ⚖ R5 is the next one to ask**, and this one
 is filed second-to-last — ⚖ **R11**, added 2026-09-10 with the variant amendment, is now the one
 filed last.
 
@@ -1419,4 +1448,4 @@ tool"*, B is coherent and cheaper. The recommendation is C because a project pag
 sentence and C's sentence is true.
 
 ⚠ **NOT DECIDED. The user has not answered this.** ⚖ R1 and ⚖ R2 are answered (both 2026-09-10);
-**⚖ R3 is ANSWERED (2026-09-12, Option C); ⚖ R4 is the next one to ask**; R10 is filed after the table and this one after R10.
+**⚖ R3 is ANSWERED (2026-09-12, Option C); ⚖ R4 is ANSWERED (2026-09-13, Option A); ⚖ R5 is the next one to ask**; R10 is filed after the table and this one after R10.

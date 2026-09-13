@@ -367,9 +367,47 @@ unanswered* and mark Option C as a *recommendation*. Those sentences are now fal
 NOT corrected in this pass because a crew held `src/ase.tcl` and two of those suites at the
 moment the ruling arrived; the correction is the first item of the next driver pass.
 
-### Still open — eight
+### ⚖ R4 — the seeded analysis rows — **ANSWERED 2026-09-13, Option A, keep four**
 
-⚖ **R4** through ⚖ **R11** are unanswered. ⚖ **R3 was answered 2026-09-12** — see above. ⚖ **R11 — the minimum supported
+**The user's words: *"keep four. I don't know how we ended up with this, but it's probably
+more user-friendly than zero. In Cadence ADE-L it is zero"*.** A freshly created ASE-L state
+keeps exactly **four** rows — `op`, `dc`, `ac`, `tran` — and the other seven registered types
+arrive through the dialog. The four-state grid shows all eleven whether or not the state file
+mentions them, so nothing becomes unreachable.
+
+⚠ **No code changed, again.** Eleven commits across Stages 5–8 shipped Option A by
+construction, because every one of them deliberately withheld `seed_enabled` from the analysis
+type it added. The ruling ratifies standing behaviour.
+
+⚠ **AND THE RULING CORRECTS THE ARGUMENT IT WAS PUT ON, WHICH IS THE PART WORTH KEEPING.**
+Option A was offered to the user with *"Cadence does not add analyses to your bench either"* —
+i.e. as **ADE-L parity**. **ADE-L seeds ZERO.** So ASE-L's four rows were never a match; they
+are a divergence in the user's favour, and the user ratified them as one. The recommendation
+reached the right answer through a claim that was not true, which is the worse kind of right,
+and the claim was doing persuasive work in a decision that was the user's to make.
+
+⚠ **The general rule, because this batch cites ADE-L constantly: ADE-L is the FLOOR, not the
+ceiling.** *"ADE-L does not do this"* is an argument for removing a **restriction** of ours —
+that is the standing benchmark rule and the reason issue 0643's hierarchy limit was a defect.
+It is **not** an argument for removing a **convenience** of ours. And ADE-L behaviour should be
+checked rather than recalled before it is cited in a ruling.
+
+⚠ **WHAT THE RULING OBLIGES, AND IT IS NOT NOTHING.** The reason R4 existed is D5's: *"today
+this would change by accident."* The registry carries a `seed_enabled` key and eleven commits
+kept it off by hand. **A ratified decision must not rest on anybody remembering it.** The
+follow-up is a row that names `seed_enabled` as the thing that must stay off — stronger than
+the existing assertion that four rows come out, which a twelfth seeded type would also satisfy
+if it were seeded *and* the count updated. ⚠ **NOT DONE IN THIS PASS**: a crew holds
+`src/ase.tcl` and `test_ase_core.tcl` at the moment the ruling arrived. Same shape as R3's
+comment debt, and the same remedy — **it is the first item of the next driver pass.**
+
+⚠ **Two stale counts fixed in `DECISIONS.md` while recording this.** R4's Option B said
+*"seeding all twelve"*; the registry holds **eleven**. The twelve was never re-counted after
+the registry settled.
+
+### Still open — seven
+
+⚖ **R5** through ⚖ **R11** are unanswered — **seven**. ⚖ **R3 was answered 2026-09-12** and ⚖ **R4 on 2026-09-13** — both above. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
