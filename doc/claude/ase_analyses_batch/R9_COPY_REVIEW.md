@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**293 strings, from 19 issues, grouped by where the user sees them** — not by
+**372 strings, from 20 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -38,7 +38,7 @@ than what the source lines look like.
 The extraction was checked rather than trusted. Every string was searched for in the committed source at HEAD, with Tcl line-continuations joined
 the way the interpreter joins them:
 
-* **262 are present as a single literal**, byte for byte.
+* **341 are present as a single literal**, byte for byte — the 262 of the first pass, plus all 79 of issue 1443's, each of which the driver found byte-for-byte in the committed source.
 * **31 are not, and all 31 are RENDERED rather than wrong** — the code composes
   them from pieces. `Time step (s):` is `label {Time step}` plus `unit s` plus
   the colon `form_label` appends. *"Stopping this run discards it — ngspice in
@@ -61,7 +61,7 @@ this document is being written.
 
 ## How to answer
 
-Every string has a **handle** — `R9-001` … `R9-293`. Mark up whatever you want
+Every string has a **handle** — `R9-001` … `R9-372`. Mark up whatever you want
 changed, by handle, in any form: *"R9-011: drop the shouting"*, *"R9-046/047:
 Voltage and Current"*, *"R9-003 → Stop value"*.
 
@@ -76,8 +76,9 @@ a completeness sweep of the commits themselves — the section at the end says h
 
 ## What is deliberately NOT here
 
-* **Issue 1443's strings.** That crew is still running; its issue is not yet
-  committed. Its copy joins this document when its receipt lands.
+* ~~**Issue 1443's strings.**~~ ✅ **They are here now** — the crew finished, the work
+  landed as commit `3f31a33b`, and its 79 strings are the last section of this document,
+  **R9-294 … R9-372**. Every handle above them kept its meaning.
 * **ngspice's own text.** Where ASE-L quotes a simulator error back to the user
   verbatim, the wording is ngspice's and is not ours to ratify. Those are noted
   in place where they matter.
@@ -256,7 +257,8 @@ and — where the extraction found something a reader needs — a **note**.
 | What lands on disk — the deck, the sidecar, the run directory | 3 |
 | Everything else | 1 |
 | Added after the first version — found by a completeness sweep | 2 |
-| **total** | **293** |
+| Issue 1443 — measurements, added after the crew's work landed | 79 |
+| **total** | **372** |
 
 ---
 
@@ -4211,3 +4213,1308 @@ no `cell`.
 does not name a design cell.
 
 *Note:* See R9-292 — same sentence, same family of six, same question.
+
+---
+
+## Issue 1443 — measurements, added after the crew's work landed
+
+*79 strings.*
+
+These are the strings the scope section said were missing: issue **1443** was uncommitted when
+this document was built, and landed as commit `3f31a33b`. Every one was taken from the
+committed source and **all 79 were then found byte-for-byte in `git show HEAD:src/ase.tcl`**
+by the driver — none of them is composed, so an edit lands exactly where the string is.
+
+⚠ **ALMOST NONE OF THEM CAN BE SEEN YET.** That commit is the **deck half**: it builds no
+widget, and `src/ase_window.tcl` carries no reference to measurements at all. The eighteen kind
+labels are declared and read by nothing; the field labels reach a user through exactly one
+sentence today (`'$name' needs a value for $lbl`); the report frames are consumed only by
+`ase::meas_report`, **which has no caller anywhere in the tree**. The four that a user can
+reach now are the deck refusal and its clause, the sidecar filename, and the `meas_path` raise.
+So you are ratifying these **before** the surface exists — which is the right order, because
+Stage 8 task 2 builds that surface next and will otherwise mint a second set of words.
+
+
+### The Measurements list — the eighteen kind labels
+
+
+*18 strings.*
+
+
+**R9-294** · label
+
+```text
+Delay (TRIG ... TARG)
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `trigtarg`.
+
+
+*For:* Names the kind that measures the time between one signal crossing a trigger level and another crossing a target level — the propagation-delay / rise-time measurement.
+
+
+*Note:* The only kind label that puts deck keywords on screen: TRIG and TARG are ngspice's own `meas` words, shouted, with a literal three-dot ellipsis rather than an ellipsis character. §A1 (shouted words) and §A6 (developer vocabulary) both bite here. Every other kind label is plain English.
+
+
+**R9-295** · label
+
+```text
+Value at a point
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `find`.
+
+
+*For:* Names the kind that reads one signal's value at a given abscissa, or at the moment another signal crosses a value (`FIND ... AT=` / `FIND ... WHEN`).
+
+
+*Note:* This one kind carries two grammars and two of the adapter's refusals (the `at`/`when` pair) exist to make the user choose one. The label mentions only the first.
+
+
+**R9-296** · label
+
+```text
+Where a signal crosses a value
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `when`.
+
+
+*For:* Names the kind that reports the abscissa at which a signal reaches a value (`WHEN x=v`).
+
+
+**R9-297** · label
+
+```text
+Average
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `avg`.
+
+
+*For:* Names the window-average statistic over the measured signal.
+
+
+*Note:* One of eight labels passed as the sole argument of `meas_stat_kind {label}`, so all eight share one descriptor and an edit lands at the call site in `meas_kinds`, not in `meas_stat_kind`.
+
+
+**R9-298** · label
+
+```text
+RMS
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `rms`.
+
+
+*For:* Names the root-mean-square statistic over the measured signal.
+
+
+*Note:* Acronym already uppercase, matching the user's standing UI-copy rule — unlike `Power spectral density` below, which spells its acronym out instead. From `meas_stat_kind`.
+
+
+**R9-299** · label
+
+```text
+Minimum
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `min`.
+
+
+*For:* Names the minimum-value statistic over the measured signal.
+
+
+*Note:* From `meas_stat_kind`.
+
+
+**R9-300** · label
+
+```text
+Maximum
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `max`.
+
+
+*For:* Names the maximum-value statistic over the measured signal.
+
+
+*Note:* From `meas_stat_kind`.
+
+
+**R9-301** · label
+
+```text
+Where the minimum is
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `min_at`.
+
+
+*For:* Names the statistic that reports the abscissa at which the minimum occurs, rather than the minimum itself.
+
+
+*Note:* From `meas_stat_kind`. Reads as a question fragment where its six siblings are noun phrases; pairs with `Where the maximum is` and with `Where a signal crosses a value`, so all three should move together.
+
+
+**R9-302** · label
+
+```text
+Where the maximum is
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `max_at`.
+
+
+*For:* Names the statistic that reports the abscissa at which the maximum occurs.
+
+
+*Note:* From `meas_stat_kind`. See `Where the minimum is`.
+
+
+**R9-303** · label
+
+```text
+Peak to peak
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `pp`.
+
+
+*For:* Names the peak-to-peak (max minus min) statistic over the measured signal.
+
+
+*Note:* From `meas_stat_kind`. Unhyphenated, where the usual spelling is `Peak-to-peak`.
+
+
+**R9-304** · label
+
+```text
+Integral
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `integ`.
+
+
+*For:* Names the integral of the signal over the measurement window.
+
+
+*Note:* From `meas_stat_kind`.
+
+
+**R9-305** · label
+
+```text
+Derivative
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `deriv`.
+
+
+*For:* Names the derivative kind in the picker.
+
+
+*Note:* ⚠ The kind it names can NEVER run: the same entry carries an `unsupported` reason, so every row of this kind refuses. A reviewer deciding this label is deciding whether to show a picker entry that always refuses — the alternative the code deliberately rejected is leaving the word out altogether.
+
+
+**R9-306** · label
+
+```text
+Expression over other measurements
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `param`.
+
+
+*For:* Names the kind that computes a new number from measurements already taken — a phase margin as `180 + <measured phase>`, for example.
+
+
+*Note:* The longest kind label. It is emitted as a `let`, not a `meas`, because ngspice's `meas` COMMAND supports neither `param=` nor `expr=` nor `par()` — so the label describes the capability rather than the deck word, deliberately.
+
+
+**R9-307** · label
+
+```text
+Fourier / THD
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `fourier`.
+
+
+*For:* Names the post-processing producer that runs a Fourier analysis on a transient and yields the total harmonic distortion plus the printed harmonic table.
+
+
+*Note:* Mixes a proper name and an acronym across a spaced slash — the only label of either shape in the commit. Compare `FFT spectrum` and `Power spectral density`, which handle the same question two other ways.
+
+
+**R9-308** · label
+
+```text
+Resample onto a uniform time grid
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `linearize`.
+
+
+*For:* Names the producer that re-samples adaptive-step transient data onto an even grid, which `FFT spectrum` and `Power spectral density` need before they are accurate.
+
+
+*Note:* The spectrum caution tells the user to *"Add a Resample row"*, naming this label's first word. Label and caution must move together.
+
+
+**R9-309** · label
+
+```text
+FFT spectrum
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `fft`.
+
+
+*For:* Names the producer that takes an FFT of a transient signal and makes a spectrum plot to measure on.
+
+
+**R9-310** · label
+
+```text
+Power spectral density
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `psd`.
+
+
+*For:* Names the producer that computes a power spectral density from a transient signal.
+
+
+*Note:* The one acronym spelled out rather than shipped as `PSD`, where `RMS` and `FFT spectrum` ship the acronym. Pick one convention across the three.
+
+
+**R9-311** · label
+
+```text
+Spectrum over a frequency band
+```
+
+
+*Where:* The Measurements list — the Kind picker and the Kind column of the Measurements sub-dialog. Declared as the `label` key of one entry of `ase::backend::ngspice::meas_kinds`, so it is the **ngspice adapter's** word, not ASE-L's. Nothing reads the kind `label` at HEAD (`ase::meas_kind_*` read only `form`, `unsupported`, `yields`, `fields` and `counter`): task 1 is the deck half and builds no widget, so these eighteen labels are declared and not yet displayed anywhere. Stage 8 task 2 (§8b) is the surface they are written for. Kind slot `spec`.
+
+
+*For:* Names the producer that computes a spectrum across a user-given start/stop/step frequency band.
+
+
+### The Measurements sub-dialog — field labels
+
+
+*28 strings.*
+
+
+**R9-312** · label
+
+```text
+Trigger signal
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/trig, required`.
+
+
+*For:* Captions the signal whose crossing starts the delay measurement.
+
+
+**R9-313** · label
+
+```text
+Trigger value
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/trigval`.
+
+
+*For:* Captions the level the trigger signal must cross.
+
+
+*Note:* Bare `Value`-family label with no unit, where the analysis forms qualify theirs; the unit here genuinely depends on what is being measured.
+
+
+**R9-314** · label
+
+```text
+Trigger edge
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/trigdir, mode, default rise`.
+
+
+*For:* Captions the rise/fall/cross picker for the trigger crossing.
+
+
+**R9-315** · label
+
+```text
+Trigger edge number
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/trign, default 1`.
+
+
+*For:* Captions which crossing counts — the first, second, nth.
+
+
+*Note:* Four words; the longest field label in the trigtarg form and its twin `Target edge number` sits directly below it.
+
+
+**R9-316** · label
+
+```text
+Trigger delay
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/trigtd, unit s`.
+
+
+*For:* Captions how long to ignore the trigger signal before looking for a crossing.
+
+
+*Note:* Carries `unit s`, so a form using the tree's existing `ase::ui::form_label` convention would render `Trigger delay (s):`. `delay` here means 'ignore before', which is what the SAME concept is called `Ignore before` on the find and when forms — see that entry.
+
+
+**R9-317** · label
+
+```text
+Target signal
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/targ, required`.
+
+
+*For:* Captions the signal whose crossing ends the delay measurement.
+
+
+**R9-318** · label
+
+```text
+Target value
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/targval`.
+
+
+*For:* Captions the level the target signal must cross.
+
+
+**R9-319** · label
+
+```text
+Target edge
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/targdir, mode, default rise`.
+
+
+*For:* Captions the rise/fall/cross picker for the target crossing.
+
+
+**R9-320** · label
+
+```text
+Target edge number
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/targn, default 1`.
+
+
+*For:* Captions which target crossing counts.
+
+
+**R9-321** · label
+
+```text
+Target delay
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `trigtarg/targtd, unit s`.
+
+
+*For:* Captions how long to ignore the target signal before looking for a crossing.
+
+
+*Note:* Carries `unit s`. Same wording question as `Trigger delay`.
+
+
+**R9-322** · label
+
+```text
+Signal
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `target on find, when, the eight statistics, deriv, fourier, fft, psd and spec — 13 of the 18 kinds`.
+
+
+*For:* Captions the vector or expression being measured or transformed. Required on every kind that has it.
+
+
+*Note:* The single most-shown label in the commit. Any edit to it changes thirteen forms at once, and it is the word that must agree with whatever the Outputs pane calls the same thing.
+
+
+**R9-323** · label
+
+```text
+At
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/at`.
+
+
+*For:* Captions the abscissa at which to read the signal's value.
+
+
+*Note:* A bare one-word preposition, no unit — the abscissa is time, frequency or a swept source depending on which analysis the row is bound to. §A4's question (`Stop` vs `Stop time` vs `Stop frequency`) applies with the same answer difficulty.
+
+
+**R9-324** · label
+
+```text
+When signal
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/when`.
+
+
+*For:* Captions the second signal whose crossing picks the moment to read the first one.
+
+
+*Note:* Reads as the opening half of a sentence completed by the `reaches` box beside it — see the next entry.
+
+
+**R9-325** · label
+
+```text
+reaches
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/value`.
+
+
+*For:* Captions the value the `When signal` must reach; it is meant to be read as the middle of the phrase *When signal <x> reaches <v>*.
+
+
+*Note:* ⚠ THE ONLY LOWERCASE LABEL IN THE COMMIT, and deliberately so. It only reads correctly if the form lays `When signal` / `reaches` out on one line; in a right-aligned label column it appears as a stray lowercase word under `When signal`. Since no form exists yet, ratifying this word also ratifies a layout constraint on Stage 8 task 2.
+
+
+**R9-326** · label
+
+```text
+Edge
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/dir and when/dir, mode, NO default`.
+
+
+*For:* Captions the rise/fall/cross picker for the crossing being looked for.
+
+
+*Note:* Unlike `Trigger edge` and `Target edge`, this one declares no default, so the box starts empty and the qualifier is omitted from the deck.
+
+
+**R9-327** · label
+
+```text
+Edge number
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/n and when/n, default 1`.
+
+
+*For:* Captions which crossing counts.
+
+
+**R9-328** · label
+
+```text
+Ignore before
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/td and when/td, unit s`.
+
+
+*For:* Captions the time before which crossings are not counted.
+
+
+*Note:* ⚠ A verb phrase where every neighbour is a noun phrase — §A5's complaint about `Start recording at (s):` exactly. It is also the SAME concept the trigtarg form calls `Trigger delay` / `Target delay`, so the commit ships two names for one idea, one imperative and one nominal. ⚠ And it is deliberately NOT offered on the eight statistics: ngspice honours `TD=` only for WHEN/TRIG/TARG and silently ignores it for AVG, RMS, MIN, MAX, MIN_AT, MAX_AT, PP and INTEG, so a user will meet this box on some kinds and not others.
+
+
+**R9-329** · label
+
+```text
+From
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/from, when/from, and the eight statistics`.
+
+
+*For:* Captions the start of the window the measurement is restricted to.
+
+
+*Note:* Bare, no unit, on ten kinds. With `To`, it is the window control that actually works on the statistics (see `Ignore before`).
+
+
+**R9-330** · label
+
+```text
+To
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `find/to, when/to, and the eight statistics`.
+
+
+*For:* Captions the end of the measurement window.
+
+
+*Note:* Bare, no unit, on ten kinds. ⚠ The commit's own source note records that an `avg`'s echoed `to=` is the last scale value the loop touched rather than the requested one, which is why the sidecar keeps the printed tail as text; the label makes no such claim, and a reviewer may want it to.
+
+
+**R9-331** · label
+
+```text
+Value
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `when/value, required`.
+
+
+*For:* Captions the level the signal must reach for the `when` kind.
+
+
+*Note:* Bare `Value` here, but the same idea is `reaches` on the find form and `Trigger value` / `Target value` on the delay form — three spellings of one concept in one dialog. §A8.
+
+
+**R9-332** · label
+
+```text
+Expression
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `param/expr, required`.
+
+
+*For:* Captions the arithmetic the user writes over measurements already taken, e.g. `180 + phs`.
+
+
+**R9-333** · label
+
+```text
+Fundamental
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `fourier/fund, unit Hz, required`.
+
+
+*For:* Captions the fundamental frequency the Fourier analysis is taken about.
+
+
+*Note:* Carries `unit Hz` → `Fundamental (Hz):` under the existing convention.
+
+
+**R9-334** · label
+
+```text
+Points
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `linearize/np`.
+
+
+*For:* Captions how many points the resampled uniform grid should have.
+
+
+*Note:* ⚠ Near-twin of the analysis forms' `Number of points (2 gives ONE point)` / `(1 gives ONE point)` captions that §A1 is about, but with no arithmetic caveat and a different, shorter wording. Whatever §A1 decides for those should decide this.
+
+
+**R9-335** · label
+
+```text
+Only these signals
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `linearize/vectors`.
+
+
+*For:* Captions the optional list restricting which signals are resampled.
+
+
+*Note:* A sentence fragment used as a caption, and the only label in the commit that begins with an adverb. Compare the Outputs pane's wording for the same idea.
+
+
+**R9-336** · label
+
+```text
+Averaging points
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `psd/avgpts, required, default 1`.
+
+
+*For:* Captions the number of points averaged in the power-spectral-density estimate.
+
+
+*Note:* Required AND defaulted to 1, so the refusal `'$name' needs a value for Averaging points` is unreachable unless the user blanks the box.
+
+
+**R9-337** · label
+
+```text
+Start
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `spec/start, unit Hz, required`.
+
+
+*For:* Captions the first frequency of the spectrum band.
+
+
+*Note:* ⚠ Renders `Start (Hz):` where the ac analysis form says `Start frequency (Hz):` for the same quantity — §A4's inconsistency, one dialog further on. Same for `Stop` and `Step` below.
+
+
+**R9-338** · label
+
+```text
+Stop
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `spec/stop, unit Hz, required`.
+
+
+*For:* Captions the last frequency of the spectrum band.
+
+
+*Note:* See `Start`. §A4 already asks whether `Stop` should be `Stop frequency`; this is a third instance of the same bare word.
+
+
+**R9-339** · label
+
+```text
+Step
+```
+
+
+*Where:* The Measurements sub-dialog — the caption on one entry box of a measurement row's form. Declared as the `label` key of a field descriptor inside `ase::backend::ngspice::meas_kinds`, so the word is the **ngspice adapter's**. No form renders it at HEAD (task 1 builds no widget). The ONE place a field label reaches the user today is composed: ASE-L core's refusal frame `'$name' needs a value for $lbl` takes `$lbl` from this key. Field `spec/step, unit Hz, required`.
+
+
+*For:* Captions the frequency increment across the spectrum band.
+
+
+*Note:* See `Start`. §A4 already contrasts `Step` with `Time step`; this is a fourth instance.
+
+
+### The Measurements sub-dialog — the picker values
+
+
+*1 strings.*
+
+
+**R9-340** · label
+
+```text
+rise fall cross
+```
+
+
+*Where:* The Measurements sub-dialog — the values inside the rise/fall/cross combobox shown under `Trigger edge`, `Target edge` and `Edge`. Declared as `values {rise fall cross}` on the three `mode` field descriptors in `ase::backend::ngspice::meas_kinds`; the **ngspice adapter's** vocabulary. No combobox renders them at HEAD.
+
+
+*For:* The three crossing directions the user picks between when saying which edge of a signal a measurement should look for. `rise` is the declared default on the two delay-form pickers; the find/when picker has no default.
+
+
+*Note:* Shipped lowercase, like the `dc ac` and `dec oct lin` pickers §A2 is about, and for the same reason — the tree's combobox renders `-values` with no display mapping. These are not acronyms, though: they are ordinary words, and the deck spelling is UPPERCASE (`ase::backend::ngspice::meas_edge` emits `RISE=1`), so display and deck already differ and a display mapping costs nothing.
+
+
+### The Measurements sub-dialog — units
+
+
+*2 strings.*
+
+
+**R9-341** · unit
+
+```text
+s
+```
+
+
+*Where:* The Measurements sub-dialog — the parenthesised unit a field label wears. Declared as `unit s` on `Trigger delay`, `Target delay` and `Ignore before` in the **ngspice adapter's** kind catalogue. The tree's existing `ase::ui::form_label` appends ` (<unit>)` and a colon, giving `Ignore before (s):` — but that proc resolves through `ase::field_descriptor`, which reads ANALYSIS field tables, so nothing applies it to a measurement field at HEAD.
+
+
+*For:* Tells the user the three time-window boxes are in seconds.
+
+
+*Note:* Consistent with §A5's approved convention on the tran and ac forms. Flagged only because the composition is not wired yet: ratifying it also asks Stage 8 task 2 to reuse `form_label`'s rule rather than invent a second one.
+
+
+**R9-342** · unit
+
+```text
+Hz
+```
+
+
+*Where:* The Measurements sub-dialog — the parenthesised unit on `Fundamental` (fourier) and on `Start` / `Stop` / `Step` (spec). Declared as `unit Hz` in the **ngspice adapter's** kind catalogue; same unrendered composition as `s` above.
+
+
+*For:* Tells the user the Fourier fundamental and the three spectrum-band boxes are in hertz.
+
+
+*Note:* Uppercase H, lowercase z — matches the ac form's `Start frequency (Hz):`.
+
+
+### Refusals ASE-L core writes
+
+
+*12 strings.*
+
+
+**R9-343** · refusal
+
+```text
+this measurement has no name
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row the user has added but not yet named; the name becomes a vector in the simulator and a key in the sidecar, so nothing can be emitted without it.
+
+
+*Note:* One of four core refusals written in the impersonal `this measurement …` voice; the other eight name the row as `'$name'`. §A8 (siblings that drifted) — pick one voice.
+
+
+**R9-344** · refusal
+
+```text
+'$name' cannot be a measurement name: the simulator makes a vector of it, so it must start with a letter and hold only letters, digits and underscores
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a name with a space, a leading digit or punctuation in it, and says both why the restriction exists and exactly what is allowed.
+
+
+*Note:* Rendered: built across three Tcl line-continuations. Says `the simulator` where three sibling refusals say `'$sim'` (i.e. `'ngspice'`) — §A8.
+
+
+**R9-345** · refusal
+
+```text
+another measurement is already called '$name', and the simulator would overwrite the first one's answer with this one's
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses the second and later rows sharing a name, case-insensitively, because the simulator folds the names it prints back and the sidecar lookup would return one number twice. The FIRST row keeps the name.
+
+
+*Note:* Rendered: joined across two continuations. Does not tell the user that the earlier row is the one that survives, which is the fact that decides which row they should rename.
+
+
+**R9-346** · refusal
+
+```text
+this measurement has no kind
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row before the user has chosen what sort of measurement it is.
+
+
+*Note:* Impersonal voice; see `this measurement has no name`.
+
+
+**R9-347** · refusal
+
+```text
+'$sim' describes no measurements, so ASE-L has no way to spell this one
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses every row when the selected simulator's adapter declares no `meas_kinds` hook at all — a second backend that has not implemented measurements yet.
+
+
+*Note:* Rendered: joined across two continuations. `$sim` is the registered simulator name, single-quoted. Names ASE-L as a product on screen, which has precedent in already-drafted copy (§ options sheet). Unreachable with ngspice selected, which declares eighteen kinds.
+
+
+**R9-348** · refusal
+
+```text
+'$sim' has no measurement of kind '$kind'
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row whose stored kind is not in the selected simulator's vocabulary — reachable by hand-editing a `.state`, or by switching a bench to a simulator with a smaller catalogue.
+
+
+*Note:* `$kind` is the INTERNAL kind token (`fft`, `min_at`, `trigtarg`), not the kind's label — §A3.
+
+
+**R9-349** · refusal
+
+```text
+this measurement names no analysis
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row that has not been pointed at any analysis, so there is no plot for it to read.
+
+
+*Note:* Impersonal voice; see `this measurement has no name`.
+
+
+**R9-350** · refusal
+
+```text
+no enabled $t analysis for '$name' to read
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row bound to an analysis type that the bench has switched off or no longer carries. `$t` is the analysis type word.
+
+
+*Note:* `$t` renders the lowercase deck word (`tran`, `ac`, `dc`) — §A2. This sentence and the one above are the same failure at two depths (no type named vs. no enabled row of that type) and read as unrelated.
+
+
+**R9-351** · refusal
+
+```text
+'$sim' cannot measure a [lindex $bind 0] analysis
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row bound to an analysis the simulator's measure engine rejects outright. ngspice's `meas_analyses` hook answers `tran dc ac sp`, so a measurement on `noise`, `op`, `pz`, `tf`, `sens` or `disto` lands here.
+
+
+*Note:* `[lindex $bind 0]` is a command substitution that renders the lowercase analysis type word — §A2 and §A9 (it is a real substitution, not a placeholder the user is meant to read). The verdict is core's, but the LIST it enforces comes from the ngspice adapter's `meas_analyses` hook.
+
+
+**R9-352** · refusal
+
+```text
+'$name' produces a plot, so it cannot itself be measured on '$on'
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a producer row (FFT, PSD, Resample, Spectrum, Fourier) that has been given an `on` target, since a producer makes the plot others are measured on rather than reading one.
+
+
+*Note:* Rendered: joined across two continuations. `'$on'` is the name of another measurement row.
+
+
+**R9-353** · refusal
+
+```text
+'$name' is measured on '$on', and there is no such post-processing row
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row pointed at a producer that has been deleted, renamed, disabled, or that is not a producer at all.
+
+
+*Note:* Rendered: joined across two continuations. `post-processing row` is the internal name for what the picker will call a producer kind (`FFT spectrum`, `Resample onto a uniform time grid`) — §A6, and it should agree with whatever task 2 captions that column.
+
+
+**R9-354** · refusal
+
+```text
+'$name' needs a value for $lbl
+```
+
+
+*Where:* A measurement row's refusal reason, produced by ASE-L core's `ase::meas_verdict` — core's own structural check, with no simulator word in it. ⚠ AT HEAD THE SENTENCE REACHES NOBODY: a `refuse` verdict makes `ase::meas_for` drop the row from the deck silently, and the only consumer of the reason is `ase::meas_report`'s frame `$nm was not measured: $why`, which has no caller anywhere in the tree. Stage 8 task 2 (§8b) is where the Measurements status line and the run-log block will show it. So every entry below is a frame (core) that will one day be wrapped in a second frame (the report).
+
+
+*For:* Refuses a row with a required box left empty, naming the box.
+
+
+*Note:* ⚠ THE ONE PLACE A FIELD LABEL REACHES THE USER TODAY, and the one refusal that composes core's frame with the **ngspice adapter's** word: `$lbl` is the field descriptor's `label` when it declares one and the RAW SLOT NAME (`trigtd`, `avgpts`, `targval`) when it does not. All eighteen ngspice kinds label every field, so it currently always shows the label — this is the §A3 defect fixed by construction, but the fallback that reintroduces it is still in the code. Compare the older, unfixed siblings `needs a value for '$f'` (R9-062, R9-159), which quote the slot name and put it in quotes; this one does neither.
+
+
+### Refusals and the caution the NGSPICE ADAPTER writes
+
+
+*6 strings.*
+
+
+**R9-355** · refusal
+
+```text
+ngspice names DERIV and refuses it at run time (com_measure2.c:2156, `function 'deriv' currently not supported`). Compute it first with a post-processing expression and measure that instead
+```
+
+
+*Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
+
+
+*For:* Refuses every `Derivative` row, explaining that ngspice recognises the word but rejects it when the measurement runs — so a user who picked it would otherwise get a silently failed measurement with no explanation — and giving the workaround.
+
+
+*Note:* ⚠ Rendered: joined across three continuations. The sharpest §A6 case in the commit: it puts a C source filename and line number (`com_measure2.c:2156`) and a quoted ngspice source string in front of a circuit designer. There IS precedent for that in already-drafted options-sheet copy (`cktntask.c:68`), so this is a consistency ruling rather than a one-off. The backticked clause is ngspice's own text; the rest is ours.
+
+
+**R9-356** · refusal
+
+```text
+'$kind' reads a transient, and this row is bound to a $type analysis
+```
+
+
+*Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
+
+
+*For:* Refuses a Fourier, Resample, FFT, PSD or Spectrum row attached to anything but a transient analysis — all five read time-domain data.
+
+
+*Note:* Rendered: joined across one continuation. ⚠ `'$kind'` renders the INTERNAL token (`fft`, `psd`, `linearize`, `fourier`, `spec`) where the picker beside it shows `FFT spectrum`, `Power spectral density`, `Resample onto a uniform time grid` — §A3 exactly. `$type` renders the lowercase deck word — §A2. Note the asymmetry: the kind is quoted, the analysis type is not.
+
+
+**R9-357** · refusal
+
+```text
+a value measurement needs either a point to read at, or a signal and a value to read it when
+```
+
+
+*Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
+
+
+*For:* Refuses a `Value at a point` row that has filled in neither grammar — ngspice's `FIND` needs either `AT=` or `WHEN <sig>=<val>`, and a row with neither spells a line the simulator answers with `bad syntax`.
+
+
+*Note:* Rendered: joined across one continuation. Describes the boxes by what they do rather than by their captions (`At`, `When signal`, `reaches`); the sibling below does the same. If §A3 is answered 'name the label the user can see', these two are where it lands next.
+
+
+**R9-358** · refusal
+
+```text
+a value measurement reads either at a point or when a signal crosses a value, not both
+```
+
+
+*Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
+
+
+*For:* Refuses a `Value at a point` row that has filled in BOTH grammars, since neither is a default for the other.
+
+
+*Note:* Rendered: joined across one continuation. Near-twin of the sentence above — same opening four words, diverging mid-sentence, which is the §A8 shape. Here the divergence is deliberate and the pair reads well; worth confirming rather than flattening.
+
+
+**R9-359** · refusal
+
+```text
+a spectrum needs a stop frequency above its start; ngspice answers `Error: bad stop freq $b`
+```
+
+
+*Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
+
+
+*For:* Refuses a `Spectrum over a frequency band` row whose stop frequency is not above its start, and shows the error the simulator would have given.
+
+
+*Note:* Rendered: joined across one continuation. The backticked half is **ngspice's own error text** quoted forward (not back — ASE-L is predicting it), with `$b` substituted into the middle of the quoted string, so the quotation is reconstructed rather than captured. Says `stop frequency`/`start` where the boxes are captioned `Stop`/`Start` — §A3/§A4.
+
+
+**R9-360** · refusal
+
+```text
+a spectrum's step must fit inside its band; ngspice answers `Error: bad step freq $c`
+```
+
+
+*Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
+
+
+*For:* Refuses a `Spectrum over a frequency band` row whose step is wider than stop minus start.
+
+
+*Note:* Rendered: joined across one continuation. Same shape and same quoting question as the sentence above; the two should move together.
+
+
+### The deck refusal — the one a user can reach today
+
+
+*3 strings.*
+
+
+**R9-361** · refusal
+
+```text
+on a real S-parameter run ngspice's own measure engine reads a complex frequency scale as if it were real and SEGFAULTS for [string toupper $kind]. Measure FIND, MIN, MAX or AVG there, or measure a spectrum produced from a transient instead
+```
+
+
+*Where:* A measurement row's FATAL reason — the reason half of the deck refusal. Produced by the **ngspice adapter's** `ase::backend::ngspice::meas_rule`, collected by ASE-L core's `ase::meas_fatals`, and composed into the render-refusal frame below. Unlike a `refuse`, this one IS reachable today: it stops the whole deck being written, so the user meets it wherever a `render_deck` error surfaces (the Deck preview pane and the run path).
+
+
+*For:* Refuses to render any deck that would put a `Where a signal crosses a value`, `Delay (TRIG ... TARG)`, `RMS` or `Integral` measurement on a real S-parameter analysis, because ngspice exits 139 on those four. Names the four kinds that are safe there instead.
+
+
+*Note:* ⚠ Rendered: joined across three continuations, and it is a CLAUSE, not a sentence — it is designed to be read after the frame `ase: measurement '<name>'`, so it opens lowercase with `on a real …`. §A1: `SEGFAULTS` is shouted mid-sentence, the second such in the batch (R9-135 is the first) and they should be answered together. §A3: `[string toupper $kind]` renders the INTERNAL token uppercased — `WHEN`, `TRIGTARG`, `RMS`, `INTEG` — so a `Delay (TRIG ... TARG)` row is told it segfaults for `TRIGTARG`, a word that appears nowhere on screen. And the remedy names ngspice's deck function words FIND/MIN/MAX/AVG rather than the kind labels `Value at a point` / `Minimum` / `Maximum` / `Average`, so a user cannot look up any of the six words in the picker. ⚠ Narrowed to a real `.sp` run on purpose: a spectrum produced by fft/spec/psd has a real scale and is safe, which is what the second half offers.
+
+
+**R9-362** · refusal
+
+```text
+ase: measurement '[lindex [lindex $rmfat 0] 0]' [lindex [lindex $rmfat 0] 1]; nothing was rendered
+```
+
+
+*Where:* The Deck preview pane, and the run path — the Tcl error `ase::backend::ngspice::render_deck` raises when a measurement would crash the simulator, so no deck is produced at all. COMPOSED: the frame is the ngspice adapter's `render_deck` (issue 1424's third refusal tier), the first placeholder is the row's name, and the second is the fatal CLAUSE above, also from the ngspice adapter. Renders as e.g. `ase: measurement 'pm' on a real S-parameter run ngspice's own measure engine reads a complex frequency scale as if it were real and SEGFAULTS for WHEN. Measure FIND, MIN, MAX or AVG there, or measure a spectrum produced from a transient instead; nothing was rendered`.
+
+
+*For:* Tells the user that one named measurement is dangerous enough that ASE-L wrote no deck whatever, and that nothing was left half-written. Seen when previewing or running a bench whose state carries such a row — including a hand-edited `.state`, which is the reason the check is repeated here rather than trusted from the dialog.
+
+
+*Note:* Rendered: joined across one continuation; both `[lindex …]` forms are real substitutions, not placeholders the user reads (§A9). ⚠ Near-twin six lines above it in the same proc: `ase: this deck has a precondition the simulator exits on; nothing was rendered` (issue 1424, not among R9's nineteen) — same `…; nothing was rendered` tail, so if that tail is reworded both must move. ⚠ Grammar: the frame butts `'<name>'` straight against a clause that starts `on a real S-parameter run`, and the semicolon then lands after a sentence that already contains a full stop, so the rendered line reads as a run-on. Only one fatal is reported even when several rows are fatal — the first.
+
+
+**R9-363** · other
+
+```text
+ASE-MEAS
+```
+
+
+*Where:* The first line of the `<cell>_ase.meas` sidecar, written into the generated deck as `echo ASE-MEAS >> <path>` by the **ngspice adapter's** `meas_block`, using ASE-L core's `ase::meas_marker`. The user meets it if they open the sidecar, or read the deck in the Deck preview pane.
+
+
+*For:* Opens the sidecar with a command that cannot fail, so that a measurement which fails costs only its own line instead of truncating the whole file — the measured behaviour is that a failing `meas … > file` leaves the file at zero bytes.
+
+
+*Note:* Not prose and probably not for ratification, but included on R9-289's precedent (the plotmap record format, listed because it lands in a file the user can open). Hyphenated uppercase; the plotmap sidecar's equivalent opens with `PLOT`, unprefixed, so the two sidecars announce themselves differently.
+
+
+### The run's measurement report
+
+
+*6 strings.*
+
+
+**R9-364** · status
+
+```text
+$nm = $val
+```
+
+
+*Where:* The run's measurement report — one line per measurement row, produced by `ase::meas_report` (ASE-L core). ⚠ `ase::meas_report` HAS NO CALLER ANYWHERE IN THE TREE AT HEAD: `git show HEAD:src/*.tcl` finds it defined in `src/ase.tcl` and used nowhere, and `src/ase_window.tcl` contains no `meas_` reference at all. These five frames are therefore the shape of the run-log block and/or the Value column that Stage 8 task 2 (§8b) will build, ratified before the surface exists.
+
+
+*For:* The ordinary case: names the measurement and gives the number the simulator reported, parsed out of the `<cell>_ase.meas` sidecar.
+
+
+*Note:* `$val` is the simulator's printed text verbatim (e.g. `-4.500000e+01`), not reformatted — the commit measured that ngspice prints seven significant digits on apt 45.2 and honours `measureprec` only on the fork, so the digit count the user sees is binary-dependent and ASE-L does not normalise it.
+
+
+**R9-365** · status
+
+```text
+$nm = $val -- $why
+```
+
+
+*Where:* The run's measurement report — one line per measurement row, produced by `ase::meas_report` (ASE-L core). ⚠ `ase::meas_report` HAS NO CALLER ANYWHERE IN THE TREE AT HEAD: `git show HEAD:src/*.tcl` finds it defined in `src/ase.tcl` and used nowhere, and `src/ase_window.tcl` contains no `meas_` reference at all. These five frames are therefore the shape of the run-log block and/or the Value column that Stage 8 task 2 (§8b) will build, ratified before the surface exists.
+
+
+*For:* The same line with a caution appended: the number was produced, and something about it is uncertain. Today the only `$why` that can appear is the adaptive-step spectrum caution.
+
+
+*Note:* ⚠ The separator is two ASCII hyphens with spaces, not an em dash, and `$why` begins lowercase, so the line renders `amp = 9.95420e-01 -- this spectrum is taken from …`. §A8 (punctuation drift) — check it against however the run log separates the same kind of aside elsewhere. Composed: ASE-L frame, **ngspice adapter** clause.
+
+
+**R9-366** · status
+
+```text
+$nm: $why
+```
+
+
+*Where:* The run's measurement report — one line per measurement row, produced by `ase::meas_report` (ASE-L core). ⚠ `ase::meas_report` HAS NO CALLER ANYWHERE IN THE TREE AT HEAD: `git show HEAD:src/*.tcl` finds it defined in `src/ase.tcl` and used nowhere, and `src/ase_window.tcl` contains no `meas_` reference at all. These five frames are therefore the shape of the run-log block and/or the Value column that Stage 8 task 2 (§8b) will build, ratified before the surface exists.
+
+
+*For:* The row emitted and the simulator reported nothing back for it — the frame that carries the `failed` explanation below.
+
+
+*Note:* The only one of the five frames that uses a colon rather than a verb, so `f3db: the simulator did not report this measurement: …` renders with TWO colons in one line. §A8.
+
+
+**R9-367** · status
+
+```text
+$nm was not measured: $why
+```
+
+
+*Where:* The run's measurement report — one line per measurement row, produced by `ase::meas_report` (ASE-L core). ⚠ `ase::meas_report` HAS NO CALLER ANYWHERE IN THE TREE AT HEAD: `git show HEAD:src/*.tcl` finds it defined in `src/ase.tcl` and used nowhere, and `src/ase_window.tcl` contains no `meas_` reference at all. These five frames are therefore the shape of the run-log block and/or the Value column that Stage 8 task 2 (§8b) will build, ratified before the surface exists.
+
+
+*For:* The row was refused before the deck was written, so nothing was even attempted; `$why` is one of the twelve core refusals or six adapter refusals above.
+
+
+*Note:* Composed: ASE-L frame plus a clause that is core's for twelve reasons and the **ngspice adapter's** for six. Several of those clauses open with `'$name'`, so the line renders as `pm was not measured: 'pm' needs a value for Signal` — the name twice in one sentence.
+
+
+**R9-368** · status
+
+```text
+$nm cannot be measured: $why
+```
+
+
+*Where:* The run's measurement report — one line per measurement row, produced by `ase::meas_report` (ASE-L core). ⚠ `ase::meas_report` HAS NO CALLER ANYWHERE IN THE TREE AT HEAD: `git show HEAD:src/*.tcl` finds it defined in `src/ase.tcl` and used nowhere, and `src/ase_window.tcl` contains no `meas_` reference at all. These five frames are therefore the shape of the run-log block and/or the Value column that Stage 8 task 2 (§8b) will build, ratified before the surface exists.
+
+
+*For:* The row's verdict was fatal. In practice the deck refusal above fires first, so this frame is reachable only by reporting on a state that was never rendered.
+
+
+*Note:* Composed: ASE-L frame plus the **ngspice adapter's** fatal clause, which opens `on a real S-parameter run …` — so it renders `pm cannot be measured: on a real S-parameter run …`, reading as a stray preposition. The clause was written for the deck-refusal frame, not for this one, and the two cannot both read well without one of them changing.
+
+
+**R9-369** · advice
+
+```text
+the simulator did not report this measurement: the condition it asks about may never occur in this run
+```
+
+
+*Where:* The `failed` explanation carried by `ase::meas_report`'s `$nm: $why` frame — ASE-L core's `ase::meas_results`. It is the answer to "the row was emitted, the run finished, and no number came back". Same delivery caveat: `ase::meas_report` has no caller at HEAD.
+
+
+*For:* Tells the user that a measurement ran and found nothing — a threshold never crossed, an edge that never happened — rather than leaving an empty cell they would read as zero.
+
+
+*Note:* Rendered: joined across one continuation. ⚠ Deliberately NOT said for a producer row: a `Resample` or `FFT spectrum` row yields a plot and never a number, so it is scored `produced` and the report prints nothing at all for it — that silence is a design decision a reviewer may want to see turned into a sentence. The row's own diagnostic from ngspice reaches the run log separately (stdout on apt 45.2, stderr on the fork) and is not quoted here.
+
+
+### What lands on disk, and one raised error
+
+
+*3 strings.*
+
+
+**R9-370** · caution
+
+```text
+this spectrum is taken from adaptive-step transient data, which the transform assumes is evenly spaced. Add a Resample row before it, or read the amplitude as approximate
+```
+
+
+*Where:* A measurement row's caution — the only one in the commit. Produced by the **ngspice adapter's** `ase::backend::ngspice::meas_rule`. A caution EMITS: the row is written into the deck and the run still produces a number, and the sentence is what the run then says about it. Its only consumer at HEAD is `ase::meas_report`'s uncalled frame `$nm = $val -- $why`, so the user meets it as the tail of the value line rather than on its own.
+
+
+*For:* Warns that an `FFT spectrum` or `Power spectral density` row with no `Resample onto a uniform time grid` row ahead of it on the same analysis will report a slightly wrong amplitude and frequency, because fft and psd never look at the time values. Shown after the run, beside the number it is about.
+
+
+*Note:* Rendered: joined across two continuations. ⚠ *"Add a Resample row"* names the first word of the kind label `Resample onto a uniform time grid`, so the label and this sentence must move together. Two sentences joined by a full stop inside one clause, which the report frame then appends after ` -- `, giving `thd = 0.0999 -- this spectrum is taken from …` — a lowercase sentence mid-line. The commit's own measurement of the error is 9.95420e-01 at 999.57 Hz against 9.99885e-01 at 999.50 Hz, and the sentence deliberately does not quote a number because it is circuit-dependent.
+
+
+**R9-371** · refusal
+
+```text
+ase: state design has no cell (meas_path)
+```
+
+
+*Where:* A Tcl error raised by `ase::meas_path` (ASE-L core) for a state whose design has no `cell`. It surfaces as an error string rather than as designed copy; every core caller wraps it in `catch`, so it should normally be unreachable from the GUI.
+
+
+*For:* Refuses to compute the measurement sidecar's path for a state that does not name a design cell, and names the proc that could not do it.
+
+
+*Note:* ⚠ This makes the family SEVEN, not six. R9-292's note lists `ckpt_path` (R9-291), `plotmap_path`, `effective_path` (R9-293), `cosim_file`, `log_file` and `raw_file` as six identically-worded raises and says that if one is changed all six should move together — `meas_path` is the seventh and must move with them. Same §A6 objection: the parenthesised proc name is developer vocabulary.
+
+
+**R9-372** · other
+
+```text
+${cell}_ase.meas
+```
+
+
+*Where:* The run directory — the filename of the new measurement sidecar, written beside the netlist, the results file, the log, the plotmap, the checkpoint and the effective-settings sidecar. Composed by `ase::meas_path` (ASE-L core) as `[file join [ase::rundir $state] ${cell}_ase.meas]`. Deleted at the top of `ase::run_deck`, so it never serves the previous run's numbers.
+
+
+*For:* Names the file the deck appends every measurement line to and that ASE-L parses the numbers back out of. The user meets it only as a file in the run directory.
+
+
+*Note:* Direct twin of R9-290 `${cell}_ase.effective`; also a sibling of the `_ase.plotmap` and `_ase.raw` names. `.meas` is a recognised SPICE-adjacent extension, which may be a feature or a confusion since the file is NOT a `.meas` deck — ASE-L emits no `.meas` card anywhere.

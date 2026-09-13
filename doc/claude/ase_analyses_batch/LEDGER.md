@@ -775,7 +775,7 @@ because the next person to touch seeding is the one who needs to know it.
 | **driver's own re-run** | Every number below taken by the driver from a `RESULT:` line, on both arms. `test_ase_meas_1443` **ALL PASS (100)** headless **and** **ALL PASS (100)** on the dev display. `test_ase_core` **ALL PASS (600)** on both. `test_ase_persist` **ALL PASS (44)** headless, **ALL PASS (148)** display. |
 | **sabotage** | **72 applications on the final tree, ZERO KILLS**, across two campaigns (pass 1: 54 applied, 48 red, 6 survived; pass 2: 71 applied, 67 red, 4 survived; a targeted re-run closed one). Six rows were added for pass 1's survivors, each with its own sabotage. Three survivors remain, each argued behaviour-preserving in the receipt. |
 | **T1** | ⚠ **STILL DEFERRED, for the same reason and now the last one outstanding.** Issue 1446's crew was editing `src/ase_window.tcl` at the moment this was collected, so a T1 taken now would be a number about a tree nobody has finished writing. T1 runs **solo**, once, when 1446 lands — covering ⚖ R5, Stage 8 task 1 and 1446 together. |
-| **ledger debts** | `owed.sh add rule 1443` — ⚖ **R9** copy: eighteen kind labels, the field labels, twelve refusals, the spectrum caution, five report sentences. **These are NOT yet in `R9_COPY_REVIEW.md`**, which says so in its own scope section; they are extracted and appended in the next driver pass. **No `look` debt** — `src/ase_window.tcl` untouched, both arms identical. |
+| **ledger debts** | `owed.sh add rule 1443` — ⚖ **R9** copy: eighteen kind labels, the field labels, twelve refusals, the spectrum caution, five report sentences. ✅ **EXTRACTED AND APPENDED the same day: `R9_COPY_REVIEW.md` is now 372 strings**, the last 79 being 1443's (**R9-294 … R9-372**), and every handle already in front of the user kept its meaning. The debt's own checklist was met and exceeded — the extraction also found six adapter refusals, the S-parameter fatal clause, the `render_deck` frame, the `failed` advice sentence, the `meas_path` raise, the sidecar filename and the `ASE-MEAS` marker. **Driver-verified: all 79 are byte-present in the committed `src/ase.tcl`**, so none is composed and every edit lands where the string is. **No `look` debt** — `src/ase_window.tcl` untouched, both arms identical. |
 | **receipt** | `receipts/23-stage-8-measurements.md` |
 
 **Nine corrections came back (C145–C153). Three were re-measured by the driver rather than taken on trust, and all three hold.**
@@ -802,6 +802,20 @@ because the next person to touch seeding is the one who needs to know it.
 **And the radians trap reproduces through `meas` itself**, on both binaries: a phase read by
 `meas` is `-7.851545e-01` by default and `-4.498604e+01` after `set units=degrees`. A phase
 margin measured without it is wrong by 57.3×, at rc 0, silently.
+
+⚠ **AND THE EXTRACTION FOUND THE SEVENTH MEMBER OF A FAMILY THE DOCUMENT HAD PUT AT SIX.**
+`ase: state design has no cell (meas_path)` joins `ckpt_path`, `plotmap_path`, `effective_path`,
+`cosim_file`, `log_file` and `raw_file` — the same sentence seven times, differing only in the
+parenthesised proc name. R9-292's note says a change to one moves all of them; it now says seven.
+
+⚠ **AND IT NAMED THE DELIVERY PROBLEM PLAINLY, WHICH IS WORTH MORE THAN THE STRINGS.** Task 1 is
+the deck half, so **almost none of its copy can be seen yet**: the eighteen kind labels are
+declared and read by nothing, the report frames are consumed only by `ase::meas_report` — **which
+has no caller anywhere in the tree** — and a `refuse` verdict makes `ase::meas_for` drop the row
+from the deck **silently**. Four strings are reachable today: the deck refusal, its clause, the
+sidecar filename and the `meas_path` raise. **That is the right order to ratify in** — Stage 8
+task 2 builds the surface next, and words settled first are words it consumes rather than
+re-mints.
 
 ⚠ **One stale number was found and corrected by the driver at collection.**
 `tests/run_regression.tcl`'s new comment said the suite is *"86 checks headless and 86 on the
