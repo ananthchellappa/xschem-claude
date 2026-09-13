@@ -104,3 +104,48 @@ name so the crew that rewires the emitter does not have to re-derive it.
 ⚠ **Until that lands, a `wnflag` tick on those five benches is a setting the user made
 and the tool discarded.** That is worth saying out loud rather than leaving in a
 catalogue receipt, which is why this number exists.
+
+---
+
+## ⚠ CORRECTED 2026-09-13 BY ISSUE 1439 — DEFECT 1's MECHANISM ABOVE IS WRONG
+
+**The outcome stands and the explanation does not.** Issue **1439**'s crew re-read all
+three `wnflag` sites and refuted the reasoning this file was filed on; the driver verified
+the refutation in the ngspice source and it is correct.
+
+**What this file said:** that `wnflag` is *"the wrong door twice over"* — that a bare card
+cannot answer a `CP_NUM` read **and** that the read at `inpcom.c:990` happens during card
+reading where *"no `.options` card can reach it at all"*.
+
+**The second half is false, because two of the three sites are DEAD CODE:**
+
+| site | status | verified |
+|---|---|---|
+| `src/frontend/inpcom.c:990` | reads `wnflag` into a **local that `inp_get_w_l_x()` never uses again** | driver-read: `int wnflag;` at `:989`, the `cp_getvar` at `:990`, and **no further mention of the name anywhere in the next 110 lines** |
+| `src/frontend/inp.c:2828` | inside `rem_unused_mos_models()` at `:2685`, which is inside **`#ifdef REM_UNUSED`** opened at `:2683` — and `REM_UNUSED` is **defined nowhere in the ngspice tree** | driver-read: `grep -rn 'define REM_UNUSED' src/` returns **nothing** |
+| `src/spicelib/parser/inpgmod.c:268` | **the only live read**, at model-binning time | ngspice's own comment at `:294-295`: *"We do have nf, but no wnflag on the instance. Now it depends on the default wnflag **or on the `.options wnflag`**"* |
+
+**So `.options` IS the right door.** `wnflag` is a `deck` option, not a pre-deck one, and
+**defect 1 of this file is defect 2 of this file** — a valued option written as a bare
+card. It is fixed by the speller, in `1439`, and needs no pre-deck delivery at all.
+
+⚠ **The user-visible claim is unchanged**: five committed benches carry
+`{name wnflag value 1}`, the deck ASE-L wrote said `.options wnflag`, and a valueless
+boolean cannot answer a `CP_NUM` read — so the value did not arrive. What changes is that
+the repair is one line of spelling rather than a new delivery channel, and it has landed.
+
+⚠ **What the driver did NOT reproduce**: the *behavioural* delta. Issue 1439's crew
+measured `.options wnflag` → `@m1[vth]` 0.9889 / `i(vd)` −1.017 mA against
+`.options wnflag=1` → 0.5889 / −1.737 mA (**71 %**), on a flat `m` line and on the sky130
+`x`-line shape, on both binaries. The driver's own scratch probes used an **unbinned**
+model and then a malformed binned one, and `wnflag` only acts where a model is **binned** —
+so they showed no difference, which is consistent with the source rather than contrary to
+it. **The source evidence above is the driver's; the 71 % is the crew's and was not
+independently re-taken.** Said plainly rather than blurred, because this file has already
+been wrong once about a mechanism.
+
+**Lesson, and it is this file's own:** *a mechanism assembled from grep hits is a
+hypothesis, not a measurement.* Three `cp_getvar("wnflag", …)` call sites were read as
+three live reads. Two were dead — one a dead local, one behind a macro nobody defines —
+and the dead one carried the whole argument. ⚠ **Before building a defect's explanation on
+a call site, establish that the site executes.**

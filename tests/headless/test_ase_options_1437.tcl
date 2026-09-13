@@ -15,10 +15,16 @@
 # one is measured in this file:
 #
 #   * FIVE committed benches carry `{name wnflag value 1}`. `wnflag` chooses
-#     whether a MOS W is the total width or the width per finger. It is read
-#     inside `inp_readall()`, before any `.options` card exists, and it is a
-#     `CP_NUM`, which a bare `set` cannot answer. `.options wnflag` -- the line
-#     ASE-L writes -- is the wrong door TWICE OVER. Section G.
+#     whether a MOS W is the total width or the width per finger, and the line
+#     ASE-L wrote for it -- a bare `.options wnflag` -- is a valueless CP_BOOL
+#     that cannot answer its CP_NUM read. ⚠ THIS FILE ALSO SAID IT WAS "the
+#     wrong door TWICE OVER", read inside `inp_readall()` where no `.options`
+#     card reaches. ISSUE 1439 MEASURED THAT WRONG: two of the three cited read
+#     sites are DEAD (`inpcom.c:990` reads into a local `inp_get_w_l_x` never
+#     uses, `inp.c:2828` is inside `#ifdef REM_UNUSED`, defined nowhere), and
+#     the live one -- `inpgmod.c:268`, at model-binning time -- IS reached by an
+#     `.options` card. So the wrong door was the VALUE, not the phase, and the
+#     fix is the next bullet's. Sections DL and CB carry the re-baselined rows.
 #   * a valued option stored as `1` is written as a BARE card. MEASURED on both
 #     binaries: `.options maxord=1` gives `MaxOrder = 1`, `.options maxord`
 #     leaves it at 2. The user typed 1 and got 2. Section F.
@@ -30,13 +36,18 @@
 # WHAT THIS FILE IS ABOUT, AND WHAT IT IS NOT
 # ============================================================================
 # It is about the CATALOGUE (ngspice's content, reached only through the
-# `sim_options` hook) and the ONE SPELLER (ASE-L's schema, D23). It is NOT
-# about the emitter: `ase::backend::ngspice::render_deck` is deliberately
-# UNCHANGED by issue 1437, so no deck golden moves and no `.state` file moves.
-# Section F is the bridge -- it pins, by name, every row where the shipped
-# emitter and the new speller disagree, so that the crew which rewires the
-# emitter (PLAN.md §7c/§7d/§7e own that surface) knows its exact blast radius
+# `sim_options` hook) and the ONE SPELLER (ASE-L's schema, D23). It was NOT
+# about the emitter: `ase::backend::ngspice::render_deck` was deliberately
+# UNCHANGED by issue 1437, so no deck golden moved and no `.state` file moved.
+# Section BR is the bridge -- it pinned, by name, every row where the shipped
+# emitter and the new speller disagreed, so that the crew which rewires the
+# emitter (PLAN.md §7c/§7d/§7e own that surface) knew its exact blast radius
 # instead of re-deriving it.
+#
+# ⚠ THAT CREW HAS BEEN: ISSUE 1439 (PLAN.md §7d) ROUTED THE EMITTER THROUGH THE
+# SPELLER. Seven rows of this file were re-baselined with it -- CB6, DO2, SP6,
+# SP7, BR6, DL1, DL5 -- and each carries the measurement that moved it. No row
+# was added or removed, so the count is still 75.
 #
 # ⚠ NO SIMULATOR IS STARTED HERE. Every ngspice fact quoted in this file was
 # measured beforehand against BOTH preflight binaries -- the fork
@@ -206,8 +217,14 @@ check {CB5 units is present, is control-only, and names its two values} \
 ## the count omits the ten `ps_*` U-device knobs, which are in the table and are
 ## read from `initialize_udevice()` via `inpcompat.c:478`, inside the netlist
 ## read. `PLAN.md` §7d and the crew brief both quote the 26.
-check {CB6 the pre-deck class is 34 named variables, not 26} \
-  [llength [o_names_where {ase::opt_is_pre_deck ngspice $n}]] 34
+## ⚠ RE-BASELINED 34 -> 32 BY ISSUE 1439, and both departures were measured
+## rather than reasoned. `wnflag` is `deck` (its only live read is reached by
+## an `.options` card -- see CB6c) and `no_spinit` is `cmdline` (`-D no_spinit`
+## was measured NOT to suppress the start-up file on either binary, while `-n`
+## does). Two rows left the class because the class was wrong about them; the
+## GUI group §7c draws is 32.
+check {CB6 the pre-deck class is 32 named variables, not the dossier's 26} \
+  [llength [o_names_where {ase::opt_is_pre_deck ngspice $n}]] 32
 
 ## ⚠ AND THE 35th IS `scale`, WHICH IS NOT PRE-DECK -- MEASURED ON BOTH
 ## BINARIES. `.options scale=0.5` halves a MOS W (@m1[w] 2u -> 1u); `set
@@ -253,9 +270,13 @@ check {DO1 an OPTtbl keyword takes the .options door above the block and the opt
   [list [o_ans ase::opt_door ngspice reltol] [o_ans ase::opt_door ngspice reltol control]] \
   {options control}
 
+## ⚠ `wnflag` WAS THIS ROW'S CP_NUM EXAMPLE UNTIL ISSUE 1439 MEASURED IT OUT
+## OF THE CLASS. `ps_use_mntymx` replaces it: a genuine pre-deck CP_NUM, read
+## from initialize_udevice() during the netlist read, which no `.options` card
+## reaches.
 check {DO2 a pre-deck CP_BOOL or CP_STRING takes -D; a pre-deck CP_NUM, CP_REAL or CP_LIST takes the run-directory file} \
   [list [o_ans ase::opt_door ngspice casemode] [o_ans ase::opt_door ngspice mingwpath] \
-        [o_ans ase::opt_door ngspice wnflag] [o_ans ase::opt_door ngspice ps_tpz_delays] \
+        [o_ans ase::opt_door ngspice ps_use_mntymx] [o_ans ase::opt_door ngspice ps_tpz_delays] \
         [o_ans ase::opt_door ngspice sourcepath]] \
   {predeck predeck predeck-file predeck-file predeck-file}
 
@@ -374,15 +395,25 @@ check {SP5 zero is written for a valued option and omitted for a flag} \
 
 ## T5. MEASURED on both binaries: `-D sqrnoise` works, `-D sqrnoise=1` is
 ## inert, `-D warn=1` is inert. `-D name=value` is ALWAYS a CP_STRING.
+## ⚠ `casemode` WAS THIS ROW'S CP_STRING EXAMPLE AND IS NOW REFUSED BY THE
+## SPELLER (issue 1439): ASE-L already puts one `-D casemode=` on the command
+## line, and MEASURED on the fork the LAST `-D casemode=` wins, so a second one
+## from an options row would beat the request the pre-flight measured.
+## `ngbehavior` replaces it -- a pre-deck CP_STRING with no control of its own,
+## MEASURED to arrive: `-D ngbehavior=hs` prints `Note: Compatibility modes
+## selected: hs` on both binaries.
 check {SP6 -D carries a pre-deck bool without a value and a pre-deck string with one} \
   [list [o_ans ase::opt_line ngspice mingwpath 1] \
-        [o_ans ase::opt_line ngspice casemode preserve]] \
-  {{-D mingwpath} {-D casemode=preserve}}
+        [o_ans ase::opt_line ngspice ngbehavior hs]] \
+  {{-D mingwpath} {-D ngbehavior=hs}}
 
+## ⚠ `wnflag` WAS THIS ROW'S CP_NUM EXAMPLE; issue 1439 measured it out of the
+## pre-deck class, so the example is now `ps_tpz_delays`, which is read during
+## the netlist read and has no `.options` door at all.
 check {SP7 a pre-deck number or list never reaches -D; it takes the run-directory file} \
-  [list [o_ans ase::opt_line ngspice wnflag 1] \
+  [list [o_ans ase::opt_line ngspice ps_tpz_delays 1] \
         [o_ans ase::opt_line ngspice sourcepath {/a /b}]] \
-  {{set wnflag=1} {set sourcepath = ( /a /b )}}
+  {{set ps_tpz_delays=1} {set sourcepath = ( /a /b )}}
 
 ## The second, independent guard on T5: even if the door computation were
 ## wrong, the predeck door declares no num/real/list template at all.
@@ -606,9 +637,21 @@ check {BR5 the disagreement is exactly the valued rows, and never a flag} \
      }
      return [list $flags [expr {$valued > 0}]] }}] {0 1}
 
-check {BR6 render_deck is untouched by this issue -- its option loop still spells the bare card} \
-  [expr {[string first {lappend lines ".options [dict get $o name]"} \
-    [o_nocomment [info body ::ase::backend::ngspice::render_deck]]] >= 0}] 1
+## ⚠ RE-BASELINED BY ISSUE 1439, WHICH IS THE CREW THIS SECTION WAS WRITTEN
+## FOR. The emitter now consults the catalogue: an option this simulator
+## describes is spelled by the ONE speller, an option whose door is not the
+## deck's is left to the pre-deck delivery, and only a name the catalogue does
+## not know still takes the old bare-card rule. The behavioural proof -- a
+## rendered deck carrying `.options wnflag=1` -- is
+## tests/headless/test_ase_predeck_1439.tcl section RD; this row is the
+## lexical half, and it is what says the loop is still routed through the
+## speller rather than through a second spelling.
+check {BR6 the emitter's option loop goes through the one speller, and the bare card survives only as the unknown-name fallback} \
+  [o_ans apply {{} {
+     set b [o_nocomment [info body ::ase::backend::ngspice::render_deck]]
+     return [list [expr {[string first {ase::opt_line $rdopsim $onm $val} $b] >= 0}] \
+                  [expr {[string first {ase::opt_door $rdopsim $onm} $b] >= 0}] \
+                  [expr {[string first {lappend lines ".options $onm"} $b] >= 0}]] }}] {1 1 1}
 
 } brerr]} { check {BR0 section BR ran to the end} "RAISED:$brerr" {} }
 
@@ -617,10 +660,13 @@ check {BR6 render_deck is untouched by this issue -- its option loop still spell
 # ============================================================================
 if {[catch {
 
+## ⚠ `wnflag` WAS THE SUBJECT HERE UNTIL ISSUE 1439 MEASURED IT DELIVERABLE.
+## The claim is unchanged; the example is a row that really is out of the
+## deck's reach.
 check {DL1 a stored option whose door the deck cannot carry is reported, with the door named} \
   [o_ans ase::state_option_delivery ngspice \
-     [dict create options {{name wnflag value 1}}]] \
-  {{wnflag predeck-file {this option needs the 'predeck-file' door; the deck above the analysis block cannot carry it}}}
+     [dict create options {{name ps_tpz_delays value 1}}]] \
+  {{ps_tpz_delays predeck-file {this option needs the 'predeck-file' door; the deck above the analysis block cannot carry it}}}
 
 check {DL2 a stored option this catalogue does not know is reported and left alone, never refused} \
   [lindex [o_ans ase::state_option_delivery ngspice \
@@ -635,9 +681,15 @@ check {DL4 and an option the deck can carry is not reported at all} \
   [o_ans ase::state_option_delivery ngspice \
      [dict create options {{name reltol value 1e-5} {name savecurrents value 1} {name method value gear}}]] {}
 
-## THE MEASUREMENT, over the user's own tree. FIVE committed benches ask for
-## `wnflag` and none of them gets it.
-check {DL5 five committed .state files carry an option that cannot reach the simulator, and wnflag is the reason for all five} \
+## THE MEASUREMENT, over the user's own tree. It read `6 {acct list wnflag} 5`
+## when this file landed: FIVE committed benches asked for `wnflag` and none of
+## them got it. ⚠ RE-BASELINED BY ISSUE 1439, WHICH FIXED IT -- all five now
+## deliver, through `.options wnflag=1`, MEASURED on both binaries to move the
+## selected model bin (@m1[vth] 0.9889 -> 0.5889). What is left is the one
+## bench carrying `acct` and `list`, which do nothing on ASE-L's `.control`
+## route and are inert rows in the catalogue. **This row going back up is a
+## regression**, not a catalogue edit.
+check {DL5 after 1439 exactly one committed bench still stores an option that cannot reach the simulator, and no bench loses wnflag any more} \
   [o_ans apply {{} {
      global repo
      set byname [dict create] ; set files 0
@@ -649,8 +701,9 @@ check {DL5 five committed .state files carry an option that cannot reach the sim
        incr files
        foreach row $d { dict incr byname [lindex $row 0] }
      }
-     return [list $files [lsort [dict keys $byname]] [dict get $byname wnflag]] }}] \
-  {6 {acct list wnflag} 5}
+     set wn 0 ; catch {set wn [dict get $byname wnflag]}
+     return [list $files [lsort [dict keys $byname]] $wn] }}] \
+  {1 {acct list} 0}
 
 } dlerr]} { check {DL0 section DL ran to the end} "RAISED:$dlerr" {} }
 

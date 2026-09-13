@@ -5117,6 +5117,18 @@ proc ase::opt_line {sim name value {where deck}} {
   if {$reason ne {}} {
     return -code error "ase: option '$name' does nothing in this build: $reason"
   }
+  ## ⚠ AN OPTION ASE-L ALREADY DELIVERS THROUGH A CONTROL OF ITS OWN (§7d,
+  ## issue 1439). Spelling it here as well would put a SECOND request on the
+  ## same run, and the second one wins: MEASURED on the fork, `-D
+  ## casemode=preserve -D casemode=fold` answers `fold` and the reverse answers
+  ## `preserve`. The one ASE-L composes is gated by a pre-flight that measured
+  ## what the binary delivers; an options row would land after it, win, and
+  ## bypass the measurement entirely. The row names the real control and the
+  ## speller sends the user there.
+  set own [ase::opt_owner $sim $name]
+  if {$own ne {}} {
+    return -code error "ase: option '$name' is set by $own, not here"
+  }
   set cptype [dict get $d cptype]
   set door [ase::opt_door $sim $name $where]
   set tmpl [ase::opt_template $sim $name $door $cptype]
@@ -5155,6 +5167,10 @@ proc ase::opt_restore_line {sim name {where control}} {
   if {$dflt eq {}} { return {} }
   set d [ase::sim_option_entry $sim $name]
   if {$d eq {} || [ase::opt_inert $sim $name] ne {}} { return {} }
+  ## §7d: and an option ASE-L delivers through a control of its own is not
+  ## this sheet's to put back either -- the speller refuses it, so a restore
+  ## built here would raise out of a run for a row the form never offered.
+  if {[ase::opt_owner $sim $name] ne {}} { return {} }
   if {[string first @value [ase::opt_template $sim $name \
         [ase::opt_door $sim $name $where] [dict get $d cptype]]] < 0} {
     # A valueless option restores by ABSENCE, and absence has no line.
@@ -5189,6 +5205,13 @@ proc ase::state_option_delivery {sim state} {
     }
     set reason [ase::opt_inert $sim $name]
     if {$reason ne {}} { lappend out [list $name inert $reason] ; continue }
+    ## §7d: an option with a control of ASE-L's own is reported as that, and
+    ## not as a door problem -- the door is fine, the SHEET is the wrong place.
+    set own [ase::opt_owner $sim $name]
+    if {$own ne {}} {
+      lappend out [list $name elsewhere "this option is set by $own"]
+      continue
+    }
     if {[catch {ase::opt_door $sim $name} door]} {
       lappend out [list $name refused $door]
       continue
@@ -5245,6 +5268,23 @@ proc ase::option_schema_errors {{sim {}}} {
       }
       continue
     }
+    ## §7d: the same assertions for a row ASE-L delivers through a control of
+    ## its own. TWO of them, and the first is the one that can actually happen:
+    ## `ase::opt_owner` answers `{}` for an EMPTY `owner`, so a row that names
+    ## an owner and leaves it blank is a claim that disappears -- the speller
+    ## spells it, the form offers it, and nobody ever learns it had a control
+    ## elsewhere. The second is a standing guard: a row that names an owner and
+    ## still spells a line can put a second, winning request on the same run.
+    if {[dict exists $row owner]} {
+      if {[dict get $row owner] eq {}} {
+        lappend errs "$name: names an owner and leaves it empty"
+        continue
+      }
+      if {![catch {ase::opt_line $sim $name 1} _]} {
+        lappend errs "$name: owned elsewhere, yet the speller writes a line for it"
+      }
+      continue
+    }
     foreach where {deck control} {
       if {[catch {ase::opt_door $sim $name $where} door]} { continue }
       if {[ase::opt_template $sim $name $door $cptype] eq {}} {
@@ -5259,6 +5299,206 @@ proc ase::option_schema_errors {{sim {}}} {
     }
   }
   return [lsort -unique $errs]
+}
+
+# ═══ §7d: THE PRE-DECK CLASS, AND HOW IT IS DELIVERED (issue 1439) ═══════════
+#
+# THIRTY-THREE of this simulator's options are reachable from NEITHER `.options`
+# NOR `.control`. A GUI that offers them beside `reltol` teaches the user
+# something false: MEASURED on both binaries, `.options casemode=preserve` and
+# `set casemode=preserve` in the block BOTH fold every name anyway, and neither
+# says a word. `ase::opt_door` already computes the two doors that CAN carry
+# them (issue 1437); this section is the DELIVERY, and ⚖ R2's four conditions
+# are its requirements.
+#
+#   predeck       the command line     -- `-D name` / `-D name=<string>`
+#   predeck-file  a file the simulator reads BEFORE the deck, in the run dir
+#
+# ⚠ THE TWO DOORS ARE NOT REFUSED BY THE SAME THINGS, AND THE PLAN SAYS THEY
+# ARE. `PLAN.md` §7d writes "every pre-deck option and the entire campaign
+# mechanism are refused when `-n` is in force". MEASURED on both binaries:
+# `-n` suppresses the FILE and `-D` sails straight through it -- `ngspice -b -n
+# -D ngbehavior=hs <deck>` prints `Note: Compatibility modes selected: hs` and
+# the variable is in force. ⚖ R2's own text refuses THE FILE ("ASE-L writes
+# <rundir>/.spiceinit ... and it is refused when ... `-n` is in force"), which
+# is what is implemented here. Refusing `-D` as well would be refusing a door
+# measured to work -- issue 1437's C107 in a different coat -- and would delete
+# `-D casemode=`, which this tree already emits under `-n` today.
+#
+# ⚠ AND A DOOR THAT IS REFUSED IS REPORTED BY NAME. The whole defect class here
+# is silence: a setting that does not arrive and nothing said. Every pre-deck
+# option that will not reach the simulator comes back from `ase::predeck_plan`
+# in its `refused` list with the reason, and `ase::predeck_report` is what turns
+# that into the one line the run log and the CIW get.
+
+# The row's `owner`: an option this simulator describes but which ASE-L
+# delivers through a control of its OWN, so the options sheet must not also
+# try. `{}` for the ordinary rows, which is nearly all of them.
+#
+# ⚠ IT EXISTS BECAUSE THE LAST `-D` WINS. MEASURED on the fork, reading
+# `$casemode`: `-D casemode=preserve -D casemode=fold` answers `fold`, and the
+# reverse order answers `preserve`. `ase::run_casemode_flag` already puts one
+# `-D casemode=` on the command line, gated by the B4 pre-flight that MEASURES
+# what the binary delivers; a second one from an options row would land after
+# it, win, and bypass the gate entirely. The row names the control that really
+# owns it, and the speller refuses.
+proc ase::opt_owner {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {} || ![dict exists $d owner]} { return {} }
+  return [dict get $d owner]
+}
+
+# WHICH OF THE INERT LIST'S THREE SHAPES THIS ROW IS (§7d, D24). §7c draws it;
+# this is the answer it draws. Five values, and the last is the ordinary one:
+#
+#   no         not offered at all -- the option does nothing in this build
+#   elsewhere  offered by a control of ASE-L's own, not by the options sheet
+#   clamp      offered, with a widget minimum and the reason (itl1/itl2/itl4)
+#   caveat     offered, with the defect named beside it (`defas`, `scale`)
+#   yes        an ordinary option
+#
+# ⚠ `clamp` AND `caveat` ARE NOT `no`. The plan's third shape is "kept as a
+# tombstone OR offered only with the defect named beside it", and collapsing
+# them loses the difference between `nosavecurrents` (a name that exists
+# nowhere in the simulator's source) and `defas` (a name that works and writes
+# the wrong field). A user who cannot see `defas` cannot be warned about it.
+proc ase::opt_offer {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {}} { return yes }
+  if {[dict exists $d inert]} { return no }
+  if {[dict exists $d owner]} { return elsewhere }
+  if {[dict exists $d clamp]} { return clamp }
+  if {[dict exists $d defect] || [dict exists $d caveat]} { return caveat }
+  return yes
+}
+
+# ⚠ IS THIS RUN DIRECTORY THE SHARED FALLBACK? `ase::rundir` answers
+# `set_netlist_dir 0` for a state that names none -- ONE directory shared by
+# every cell, by every state of every cell, and by xschem's own netlister. An
+# audit agent's run into it destroyed a user's 20502-point rawfile once
+# already. ⚖ R2 condition 4 refuses the pre-deck FILE there, and this is the
+# predicate.
+#
+# ⚠ IT ASKS THE STATE, NOT THE PATH. A user who deliberately points `rundir` at
+# that same directory has made a choice, and comparing resolved paths would
+# also call `set_netlist_dir`, which is a live xschem command with a session of
+# its own. What is being refused is the FALLBACK -- the resolution nobody
+# chose.
+proc ase::rundir_is_shared {state} {
+  return [expr {[ase::state_get $state rundir] eq {}}]
+}
+
+# THE WHOLE ANSWER FOR ONE RUN, AS ONE DICT, so the command line, the file and
+# the sentence cannot be three different opinions:
+#
+#   argv     the command-line lines, in the order the bench stores them
+#   file     the lines for the run-directory file, same order
+#   refused  {name why} pairs -- every pre-deck option that will NOT arrive
+#   filewhy  why the file half is refused, or {} when it is not
+#
+# It EMITS NOTHING and starts nothing.
+proc ase::predeck_plan {sim state} {
+  set argv {} ; set flines {} ; set refused {} ; set filewhy {}
+  ## The file half's two refusals, evaluated once. Both NAME what they are
+  ## refusing over, because a refusal the user cannot act on is a silence with
+  ## extra words.
+  if {[ase::rundir_is_shared $state]} {
+    set filewhy "this bench names no run directory, so the file would go in one\
+ shared with every other cell; set a run directory first"
+  } elseif {[ase::sim_nospiceinit $sim]} {
+    set filewhy "the simulator entry is set to skip start-up files, so this\
+ file would be ignored in silence"
+  }
+  dict for {name value} [ase::state_option_map $state] {
+    if {[ase::sim_option_entry $sim $name] eq {}} { continue }
+    if {![ase::opt_is_pre_deck $sim $name]} { continue }
+    set own [ase::opt_owner $sim $name]
+    if {$own ne {}} {
+      lappend refused [list $name "it is set by $own, not by the options sheet"]
+      continue
+    }
+    set reason [ase::opt_inert $sim $name]
+    if {$reason ne {}} { lappend refused [list $name $reason] ; continue }
+    if {[catch {ase::opt_door $sim $name} door]} {
+      lappend refused [list $name $door] ; continue
+    }
+    if {[catch {ase::opt_line $sim $name $value} line]} {
+      lappend refused [list $name $line] ; continue
+    }
+    if {$line eq {}} { continue }   ;# switched off: absence IS the setting
+    if {$door eq {predeck}} { lappend argv $line ; continue }
+    if {$filewhy ne {}} {
+      lappend refused [list $name $filewhy]
+    } else {
+      lappend flines $line
+    }
+  }
+  return [dict create argv $argv file $flines refused $refused filewhy $filewhy]
+}
+
+# The `-D` words for this run, flattened for a command line. Empty for a state
+# with no pre-deck option, which is every state in this tree today -- so a user
+# who sets none gets the command they have always got, byte for byte.
+proc ase::predeck_argv {sim state} {
+  set out {}
+  foreach line [dict get [ase::predeck_plan $sim $state] argv] {
+    foreach w $line { lappend out $w }
+  }
+  return $out
+}
+
+# WRITE THE PRE-DECK FILE, through the backend's optional `predeck_write` hook.
+# Returns the hook's report, or `{}` when this backend declares no hook.
+#
+# ⚠ A BACKEND WITH NO HOOK GETS NO FALLBACK CONTENT (D34/D36). `.spiceinit` is
+# an ngspice filename and the banner is ngspice comment syntax; core knows
+# neither. Core owns WHICH LINES go before the deck and WHETHER the mechanism
+# is allowed to run at all; the adapter owns the file.
+#
+# ⚠ IT IS CALLED EVEN WHEN THERE IS NOTHING TO WRITE, and that is ⚖ R2
+# condition 1. The file is deleted and rewritten per run because a stale one is
+# indistinguishable from a live one -- and a stale one SHADOWS the user's own
+# file for that run, so leaving it is worse than leaving a stale rawfile.
+proc ase::predeck_deliver {sim state plan} {
+  set h {}
+  if {[catch {set h [ase::backend_hook $sim predeck_write]}]} { return {} }
+  if {$h eq {}} { return {} }
+  set lines {}
+  if {[dict get $plan filewhy] eq {}} { set lines [dict get $plan file] }
+  return [$h $state $lines]
+}
+
+# WHAT THE RUN SAYS ABOUT ITS PRE-DECK SETTINGS -- ONCE, and only when there is
+# something to say. Returns a list of sentences; empty is a real answer.
+#
+# ⚖ R2 condition 3 is the second of these: "the run log says once that the file
+# exists and what it shadows". It is not a nicety -- ours is found FIRST
+# (netlist directory, then $SPICE_USERINIT_DIR, then the current directory,
+# then $HOME, first hit wins; main.c's own comment lists that order) so for the
+# length of the run the user's own file is not read at all. A user debugging a
+# variable that "stopped working" has no other way to learn that.
+proc ase::predeck_report {sim state plan report} {
+  set out {}
+  foreach pair [dict get $plan refused] {
+    lassign $pair name why
+    lappend out "option '$name' will not reach the simulator: $why"
+  }
+  if {$report ne {} && [dict exists $report status]} {
+    switch -- [dict get $report status] {
+      written {
+        set s "pre-deck settings for this run are in [dict get $report path]"
+        if {[dict exists $report shadows] && [dict get $report shadows] ne {}} {
+          append s "; it shadows [dict get $report shadows] for this run"
+        }
+        lappend out $s
+      }
+      foreign {
+        lappend out "[dict get $report path] was not written by ASE-L, so it\
+ was left alone and nothing was written into it"
+      }
+    }
+  }
+  return $out
 }
 
 # ─── THE PLOT SIDECAR, AND WHAT IT IS FOR (Stage 6a–6c, issue 1430) ──────────
@@ -12294,6 +12534,34 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## state with no design cell, the shape the two lines above already tolerate.
   catch {file delete -- [ase::ckpt_path $state]}
   catch {file delete -- [ase::ckpt_tmp_path $state]}
+  ## --- §7d (issue 1439): AND THE PRE-DECK FILE, WHICH IS ⚖ R2 CONDITION 1 ---
+  ## It joins the list one line up for the rawfile's reason and for a sharper
+  ## one. A stale rawfile serves last run's numbers; a stale pre-deck file
+  ## serves last run's SETTINGS to this run, and it also SHADOWS the user's own
+  ## start-up file while it sits there -- ours is first in the simulator's
+  ## search order, so for as long as it exists the user's is not read at all.
+  ## So the writer deletes unconditionally and writes only what this run needs,
+  ## and it REFUSES a file in that path it did not write rather than deleting
+  ## somebody else's.
+  ##
+  ## ⚠ HERE, BELOW THE GATE AND ABOVE THE DECK. Everything above
+  ## ase::preflight_gate only reads, so a refused run leaves nothing behind;
+  ## this is the first line that may create a file, and it sits with the other
+  ## artefact deletions for that reason. The command line's half (`-D`) is
+  ## composed later, by run_cmd, from the same plan.
+  ##
+  ## ⚠ AND IT SAYS WHAT IT DID, ONCE. ⚖ R2 condition 3. Every pre-deck option
+  ## that will NOT arrive is named with its reason, because the entire defect
+  ## class here is a setting that does not arrive and nothing said.
+  ##
+  ## CAUGHT: a defect in an option catalogue must never stop a run.
+  catch {
+    set _pdplan [ase::predeck_plan $sim $state]
+    set _pdrep  [ase::predeck_deliver $sim $state $_pdplan]
+    foreach _pds [ase::predeck_report $sim $state $_pdplan $_pdrep] {
+      ::ase::echo "ase: $_pds"
+    }
+  }
   ## 0948: AND SAY SO IF THE PROGRAM ABOUT TO START CANNOT DO WHAT THIS RUN
   ## NEEDS. The deletion one line up, and the `set appendwrite` the deck is
   ## about to carry, BOTH assume the simulator adds each analysis to the
@@ -15929,14 +16197,69 @@ namespace eval ase::backend::ngspice {
     foreach v [ase::state_get $state variables] {
       lappend lines ".param [dict get $v name]=[dict get $v value]"
     }
+    ## ─── §7d/issue 1439: THE OPTION LOOP FINALLY ASKS WHAT KIND OF OPTION
+    ## IT IS WRITING ───────────────────────────────────────────────────────
+    ## The rule this replaced -- value 1 -> a BARE card, value 0 -> nothing,
+    ## anything else -> `name=value` -- is right for a flag and wrong for every
+    ## valued option, and it was wrong in the tree rather than in theory
+    ## (issue 1438). MEASURED on both binaries:
+    ##
+    ##   .options maxord=1    -> MaxOrder = 1
+    ##   .options maxord      -> MaxOrder = 2      <- what value 1 wrote
+    ##   .options gminsteps=0 -> gminsteps = 0
+    ##   (nothing emitted)    -> gminsteps = 1     <- what value 0 wrote
+    ##
+    ## ⚠ AND IT IS WHY FIVE COMMITTED BENCHES ASKED FOR `wnflag` AND GOT
+    ## NOTHING. MEASURED on both binaries, on a flat `m` line AND on the
+    ## sky130 `x`-line shape, with two binned models 0.4 V apart:
+    ##
+    ##   .options wnflag      -> @m1[vth] 0.9889, i(vd) -1.017 mA   <- ours
+    ##   .options wnflag=1    -> @m1[vth] 0.5889, i(vd) -1.737 mA
+    ##
+    ## The user asked for W per finger, the deck asked for nothing, and a 71%
+    ## current difference came back with rc 0 and a clean log.
+    ##
+    ## THREE ARMS, AND THE ORDER MATTERS:
+    ##  1. an option this simulator does not describe keeps the OLD rule. A
+    ##     catalogue is a claim about one simulator and the user may know
+    ##     something it does not; refusing to render a bench because a table is
+    ##     short would be the catalogue outranking the user.
+    ##  2. an option whose door is not the deck's is NOT WRITTEN HERE -- the
+    ##     pre-deck doors carry it (ase::predeck_plan) and the run says so when
+    ##     they cannot. Writing `.options casemode=preserve` is measured to do
+    ##     nothing at all, in silence, which is the whole defect §7d exists for.
+    ##  3. everything else goes through the ONE speller.
+    ## ⚠ ARM 2 IS TESTED BEFORE THE SPELLER, SO A PRE-DECK ROW LEAVES THE DECK
+    ## WHATEVER ELSE IT SAYS -- inert, owned or ordinary. That is the point: its
+    ## card was measured to do nothing, in silence, on both binaries. An inert
+    ## or owned row whose door IS the deck's falls back to arm 1 instead of
+    ## vanishing, because dropping a card the user's bench has carried for a
+    ## year is a deck change with no measurement behind it, and §7c owns the
+    ## surface that stops it being offered in the first place.
+    set rdopsim [ase::state_get $state simulator [ase::default_simulator]]
     foreach o [ase::state_get $state options] {
+      if {![dict exists $o name]} { continue }
+      set onm [dict get $o name]
       set val 1
       if {[dict exists $o value]} { set val [dict get $o value] }
+      set known 0
+      catch {set known [expr {[ase::sim_option_entry $rdopsim $onm] ne {}}]}
+      if {$known} {
+        set door {}
+        catch {set door [ase::opt_door $rdopsim $onm]}
+        if {$door in {predeck predeck-file cmdline}} { continue }
+        set spelled {} ; set ok 0
+        if {![catch {ase::opt_line $rdopsim $onm $val} spelled]} { set ok 1 }
+        if {$ok} {
+          if {$spelled ne {}} { lappend lines $spelled }
+          continue
+        }
+      }
       if {$val eq {0}} { continue }
       if {$val eq {1}} {
-        lappend lines ".options [dict get $o name]"
+        lappend lines ".options $onm"
       } else {
-        lappend lines ".options [dict get $o name]=$val"
+        lappend lines ".options $onm=$val"
       }
     }
     # UI v2 Save-All blanket (item 07 D12): all-terminal-currents ->
@@ -16765,6 +17088,30 @@ namespace eval ase::backend::ngspice {
     foreach a [ase::run_safe_args [dict get $s args]] { lappend cmd $a }
     if {[ase::sim_nospiceinit ngspice]} { lappend cmd -n }
     foreach w [ase::run_casemode_flag $state] { lappend cmd $w }
+    ## ─── §7d: THE PRE-DECK OPTIONS THIS BENCH ASKED FOR (issue 1439) ───────
+    ## `-D name` / `-D name=<string>` is the only door to a CP_BOOL or
+    ## CP_STRING the deck is read too late to carry. The words are spelled by
+    ## the ONE speller (D23) and routed by the computed door, so nothing here
+    ## knows what an option looks like.
+    ##
+    ## ⚠ AFTER `-D casemode=`, AND THE ORDER IS LOAD-BEARING. MEASURED on the
+    ## fork: the LAST `-D casemode=` wins. A bench row for it would therefore
+    ## beat the request the B4 pre-flight measured -- which is why `casemode`
+    ## carries an `owner` and the speller refuses it. The order is the belt to
+    ## that braces: even if a row ever slipped through, ASE-L's own flag would
+    ## have to be the one displaced, deliberately, rather than by accident.
+    ##
+    ## ⚠ AND IT SURVIVES `-n`, MEASURED ON BOTH BINARIES. `-n` suppresses the
+    ## start-up FILE and nothing else: `ngspice -b -n -D ngbehavior=hs <deck>`
+    ## still prints `Note: Compatibility modes selected: hs`. So the `-n`
+    ## refusal in ase::predeck_plan is the FILE's, not this arm's.
+    ##
+    ## EMPTY FOR EVERY STATE IN THIS TREE TODAY, so a user who sets no pre-deck
+    ## option gets the command they have always got, byte for byte. Caught: a
+    ## defect in an option catalogue must never stop a run from starting.
+    catch {
+      foreach w [ase::predeck_argv ngspice $state] { lappend cmd $w }
+    }
     lappend cmd $deckpath 2>@1
     return $cmd
   }
@@ -16813,6 +17160,129 @@ namespace eval ase::backend::ngspice {
       {  echo RUN-FAILED} \
       {  quit 1} \
       {end}]
+  }
+
+
+  # ─── §7d: THE PRE-DECK FILE (issue 1439, ⚖ R2's four conditions) ───────────
+  #
+  # THIRTY-THREE of this simulator's options are reachable from NEITHER
+  # `.options` NOR `.control`. `ase::opt_door` routes the CP_BOOL and CP_STRING
+  # ones to `-D`; the CP_NUM, CP_REAL and CP_LIST ones have exactly one door
+  # left, and it is a file the simulator reads before it opens the deck.
+  #
+  # ⚠ THE SEARCH ORDER IS WHY ONE IN THE RUN DIRECTORY WORKS AT ALL, AND WHY IT
+  # SHADOWS. `main.c`'s own comment lists it: the directory the netlist was
+  # loaded from, then `$SPICE_USERINIT_DIR`, then the current directory, then
+  # `$HOME`, FIRST HIT WINS. ASE-L's deck lives in the run directory, so ours is
+  # hit number one and the user's own file is not read at all for that run.
+  # MEASURED on both binaries from a foreign cwd: `set ours=1` in the run
+  # directory, `set frobnicate` + `set uservar=7` in `$SPICE_USERINIT_DIR` ->
+  # only `ours` is in force. Hence ⚖ R2 condition 3, the one line the run log
+  # owes the user.
+  #
+  # ⚠ COPY, NEVER `source` -- AND THE MEASURED REASON IS NARROWER THAN THE
+  # DOSSIER'S, WHICH MAKES IT WORSE, NOT BETTER. `[R-M7]` says `source <user
+  # file>` "makes ngspice parse the target as a netlist and the user's
+  # variables are lost". MEASURED on both binaries: that is true only when the
+  # path does NOT contain `.spiceinit` or `spice.rc`. `com_source` (inp.c:1984)
+  # is
+  #     if (ft_nutmeg || substring(INITSTR, owl->wl_word)
+  #                   || substring(ALT_INITSTR, owl->wl_word))
+  #         inp_spsource(fp, TRUE, ...);   <- read as COMMANDS
+  #     else
+  #         inp_spsource(fp, FALSE, ...);  <- read as a NETLIST
+  # -- a substring test on the word that was typed. With the real name it works
+  # (`frobnicate` and `uservar 7` both arrive); rename the same bytes to
+  # `myinit.txt` and both binaries print `Circuit: set frobnicate` and `Unable
+  # to find definition of model`, exactly the dossier's transcript, and the
+  # user's variables are gone. A mechanism that depends on a substring of a
+  # path ASE-L composes is not a mechanism. Copying is name-independent, and it
+  # is what lets ASE-L's own lines come LAST so the bench beats the user's
+  # global default.
+  #
+  # ⚠ AND IT IS REFUSED FOR A FILE ASE-L DID NOT WRITE. The first line is the
+  # marker; anything else in that path is the user's, and a task whose subject
+  # is writing `.spiceinit` files is exactly the task that must never destroy
+  # one. `foreign` is reported, not silently worked around.
+
+  # <rundir>/.spiceinit -- ours, per run.
+  proc predeck_file {state} {
+    return [file join [ase::rundir $state] .spiceinit]
+  }
+
+  # The first line of a file ASE-L wrote. Read back to tell ours from theirs.
+  proc predeck_marker {} {
+    return {* ASE-L pre-deck settings -- rewritten every run, deleted every run}
+  }
+
+  # THE USER'S OWN START-UP FILE, or `{}`. Only the two locations that are
+  # THEIRS: `$SPICE_USERINIT_DIR` and `$HOME`. The netlist directory and the
+  # current directory are both the run directory, which is ours.
+  #
+  # ⚠ READ ONLY, EVER. This proc opens nothing; `predeck_write` opens it `r`.
+  # Nothing in ASE-L writes, moves, renames or truncates a file under `$HOME`.
+  proc predeck_user_file {} {
+    set dirs {}
+    if {[info exists ::env(SPICE_USERINIT_DIR)] && $::env(SPICE_USERINIT_DIR) ne {}} {
+      lappend dirs $::env(SPICE_USERINIT_DIR)
+    }
+    if {[info exists ::env(HOME)] && $::env(HOME) ne {}} { lappend dirs $::env(HOME) }
+    foreach d $dirs {
+      foreach n {.spiceinit spice.rc} {
+        set p [file join $d $n]
+        if {[file isfile $p]} { return $p }
+      }
+    }
+    return {}
+  }
+
+  # WRITE (or remove) THE PRE-DECK FILE. `lines` is what core computed through
+  # the one speller; this proc owns the filename, the banner and the copy.
+  # Returns a report dict:
+  #
+  #   status   written | removed | foreign | none
+  #   path     the file this is about
+  #   wrote    how many of OUR lines went in
+  #   shadows  the user's own file this run hides, or {}
+  #
+  # ⚖ R2 condition 1: deleted and rewritten PER RUN, and deleted even when
+  # there is nothing to write -- a stale one is indistinguishable from a live
+  # one, and unlike a stale rawfile it also shadows the user's own file.
+  proc predeck_write {state lines} {
+    if {[catch {predeck_file $state} path]} { return {} }
+    set rep [dict create status none path $path wrote 0 shadows {}]
+    if {[file exists $path]} {
+      set ours 0
+      if {![catch {open $path r} f]} {
+        set first {}
+        catch {set first [gets $f]}
+        close $f
+        if {[string trim $first] eq [string trim [predeck_marker]]} { set ours 1 }
+      }
+      if {!$ours} { return [dict replace $rep status foreign] }
+      if {[catch {file delete -- $path}]} { return [dict replace $rep status foreign] }
+      dict set rep status removed
+    }
+    if {![llength $lines]} { return $rep }
+    set user [predeck_user_file]
+    if {$user ne {} && [file normalize $user] eq [file normalize $path]} { set user {} }
+    set out [list [predeck_marker]]
+    if {$user ne {}} {
+      lappend out "*"
+      lappend out "* copied from $user -- this file shadows it for this run"
+      if {![catch {open $user r} uf]} {
+        set utext [read $uf]
+        close $uf
+        foreach l [split [string trimright $utext "\n"] "\n"] { lappend out $l }
+      }
+    }
+    lappend out "*"
+    lappend out "* set by this bench -- last, so the bench wins"
+    foreach l $lines { lappend out $l }
+    if {[catch {open $path w} f]} { return [dict replace $rep status foreign] }
+    puts -nonewline $f "[join $out "\n"]\n"
+    close $f
+    return [dict replace $rep status written wrote [llength $lines] shadows $user]
   }
 
   # <rundir>/<cell>_ase.log
@@ -19557,7 +20027,7 @@ $_leg
     auto_bridge            {cptype num phase any group numerics scope global results 1 site src/xspice/evt/evtcheck_nodes.c:975}
     autostop               {cptype bool phase any group numerics scope {analysis tran} results 1 site src/spicelib/analysis/dctran.c:200}
     brief                  {cptype bool phase deck group netlist scope global site src/frontend/inp.c:1533}
-    casemode               {cptype string phase pre group netlist scope global values {fold preserve distinguish} site src/frontend/inpcom.c:1238}
+    casemode               {cptype string phase pre group netlist scope global values {fold preserve distinguish} owner {the simulator entry's Case field} site src/frontend/inpcom.c:1238}
     casemodewrite          {cptype bool phase any group run scope global site src/frontend/outitf.c:993}
     controlswait           {cptype bool phase pre group netlist scope global site src/frontend/inp.c:1280}
     cshunt_value           {cptype real phase any group numerics scope global results 1 site src/spicelib/parser/inppas4.c:41}
@@ -19623,7 +20093,7 @@ $_leg
     no_auto_gnd            {cptype bool phase pre group netlist scope global site src/frontend/inpcom.c:2330}
     no_mem_check           {cptype bool phase any group run scope global site src/frontend/outitf.c:143}
     no_spiceinit           {cptype bool phase pre group netlist scope global inert {read only in src/sharedspice.c, so it is a libngspice variable. Use the simulator entry -n flag instead} site src/sharedspice.c:989}
-    no_spinit              {cptype bool phase pre group netlist scope global cmdline --no-spiceinit site src/frontend/cpitf.c:264}
+    no_spinit              {cptype bool phase cmdline group netlist scope global cmdline --no-spiceinit owner {the simulator entry's -n flag} caveat {-D no_spinit does NOT suppress the start-up file -- MEASURED on both binaries, a run with -D no_spinit still read <rundir>/.spiceinit while the same run with -n did not. The command-line flag is the only door} site src/frontend/cpitf.c:264}
     noasciiplotvalue       {cptype bool phase any group display scope global site src/frontend/plotting/agraf.c:61}
     nobreak                {cptype bool phase any group display scope global site src/frontend/postcoms.c:294}
     noisyxspice            {cptype bool phase any group numerics scope {analysis noise} results 1 site src/xspice/evt/evtload.c:253}
@@ -19702,7 +20172,7 @@ $_leg
     wfont                  {cptype string phase any group display scope global site src/frontend/wdisp/windisp.c:207}
     wfont_size             {cptype num phase any group display scope global site src/frontend/wdisp/windisp.c:210}
     width                  {cptype num phase any group display scope global site src/frontend/com_ghelp.c:87}
-    wnflag                 {cptype num phase pre group netlist scope global results 1 site src/spicelib/parser/inpgmod.c:268}
+    wnflag                 {cptype num phase deck group netlist scope global results 1 caveat {the .options card reaches the ONLY live read (INPgetModBin, inpgmod.c:268, at model-binning time) -- MEASURED on both binaries, on a flat m line AND on the sky130 x-line shape: .options wnflag=1 moves the selected bin (@m1[vth] 0.9889 -> 0.5889, i(vd) -1.017mA -> -1.737mA) while a bare .options wnflag, set wnflag=1 in .control and -D wnflag=1 all do nothing. The other two cited read sites are DEAD: inpcom.c:990 reads it into a local inp_get_w_l_x never uses, and inp.c:2828 is inside #ifdef REM_UNUSED, which is defined nowhere in the tree} site src/spicelib/parser/inpgmod.c:268}
     wr_onespace            {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:705}
     wr_singlescale         {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:703}
     wr_vecnames            {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:704}
@@ -19766,6 +20236,7 @@ $_leg
     analysis_types      ::ase::backend::ngspice::analysis_types \
     sim_options         ::ase::backend::ngspice::sim_options \
     option_spell        ::ase::backend::ngspice::option_spell \
+    predeck_write       ::ase::backend::ngspice::predeck_write \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
     si_suffixes         ::ase::backend::ngspice::si_suffixes \

@@ -79,10 +79,20 @@
 #   byte for byte, which is what keeps test_ase_core's E1e/E2b/E4 goldens
 #   green without editing them.
 #
-# ⚠ THE CHECK COUNT IS A FLOOR AND IT ONLY EVER GOES UP: 111 as of 2026-09-08.
-# It was 95 before section S (the registry-is-environment / choice-is-state
-# ruling) and R8b landed. If a run reports fewer, a row went missing -- do not
-# edit this number down to match it.
+# ⚠ THE CHECK COUNT IS A FLOOR AND IT ONLY EVER GOES UP: 111 as of 2026-09-08,
+# AND RAISED 111 -> 117 on 2026-09-13 by issue 1439 (section P, the pre-deck
+# `-D` arm). It was 95 before section S (the registry-is-environment /
+# choice-is-state ruling) and R8b landed. If a run reports fewer, a row went
+# missing -- do not edit this number down to match it.
+#
+# ⚠ AND `PLAN.md` §7 EXPECTED SIX ROWS OF THIS FILE TO MOVE AT 1439 AND THEY DO
+# NOT. Its prediction was that A2 / B5 / B6 / B11 / B12 / D4 would be
+# re-baselined "the first time `-D` is emitted for an option". All six build
+# the command from an EMPTY state, which carries no pre-deck option, so the new
+# arm contributes nothing and every one of those commands is byte-identical.
+# That is 0931's compatibility contract holding -- a user who sets no pre-deck
+# option must not be able to tell the arm exists -- so the arm is pinned by NEW
+# rows in section P instead of by moved goldens.
 #
 # Runs on BOTH arms, unchanged:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_simreg_0931.tcl
@@ -2999,6 +3009,93 @@ check {S13 STRUCTURAL the writer of the saved list cannot reach what is in force
         [expr {[string first {sim_use} $S13BODY] >= 0}] \
         [expr {[string first {sim_choice_decode} $S13BODY] >= 0}]] \
   [list 1 0 1]
+
+# ============================================================================
+# P. THE PRE-DECK OPTIONS THIS BENCH ASKED FOR -- ISSUE 1439, PLAN.md §7d
+# ============================================================================
+# ⚠ THIRTY-TWO of this simulator's options are reachable from NEITHER
+# `.options` NOR `.control`. `-D name` / `-D name=<string>` is the only door to
+# the CP_BOOL and CP_STRING ones. The words are spelled by the ONE speller and
+# routed by the computed door; run_cmd learns nothing about what an option
+# looks like.
+#
+# MEASURED on both binaries for this section: `-D ngbehavior=hs` prints
+# `Note: Compatibility modes selected: hs`; `-D mingwpath` arrives as a
+# valueless CP_BOOL; `-D warn=1` and `-D wnflag=1` are inert because
+# `-D name=value` is ALWAYS a CP_STRING (main.c:984-999).
+a_reset
+set PDECK [file join $scratch p_deck.spice]
+proc p_st {args} {
+  set st [dict create design [dict create lib L cell c1 view schematic] \
+                      simulator ngspice rundir {} options {}]
+  foreach {k v} $args { dict set st $k $v }
+  return $st
+}
+proc p_o {args} {
+  set o {} ; foreach {n v} $args { lappend o [list name $n value $v] } ; return $o
+}
+set PRUN [file join $scratch prun] ; file mkdir $PRUN
+
+## ⚠ THE ROW THE SIX GOLDENS WOULD HAVE BEEN. Same claim, stated as a fact
+## about a bench that sets nothing rather than as six unmoved goldens.
+check {P1 a bench that sets no pre-deck option builds exactly the command A2 pins} \
+  [list [a_runcmd $PDECK] \
+        [ase::backend::ngspice::run_cmd [p_st options [p_o reltol 1e-5]] $PDECK]] \
+  [list [list ngspice -b $PDECK 2>@1] [list ngspice -b $PDECK 2>@1]]
+
+check {P2 a pre-deck string and a pre-deck flag land after ASE-L's own flags and before the deck} \
+  [ase::backend::ngspice::run_cmd \
+     [p_st rundir $PRUN options [p_o ngbehavior hs mingwpath 1]] $PDECK] \
+  [list ngspice -b -D ngbehavior=hs -D mingwpath $PDECK 2>@1]
+
+## A registered binary and the user's own words still come first, and 2>@1 is
+## still last: the arm is inserted, not spliced over anything.
+check {P3 the arm composes with a registered binary and the arguments the user typed} \
+  [a_ans apply {{} {
+     global STUB PDECK PRUN
+     a_reset
+     ase::sim_register ng-pd $STUB -args {-q --foo}
+     set c [ase::backend::ngspice::run_cmd \
+              [p_st rundir $PRUN options [p_o ngbehavior hs]] $PDECK]
+     a_reset
+     return $c }}] \
+  [list $STUB -b -q --foo -D ngbehavior=hs $PDECK 2>@1]
+
+## ⚠ `-D name=value` IS ALWAYS A CP_STRING (main.c:984-999), so a CP_NUM,
+## CP_REAL or CP_LIST pre-deck option must never reach the command line at all.
+## MEASURED on both binaries: `-D wnflag=1` and `-D warn=1` are inert.
+check {P4 a pre-deck number never reaches the command line, whatever the bench stores} \
+  [ase::backend::ngspice::run_cmd \
+     [p_st rundir $PRUN options [p_o ps_tpz_delays 1 sourcepath {/a /b}]] $PDECK] \
+  [list ngspice -b $PDECK 2>@1]
+
+## ⚠ MEASURED ON BOTH BINARIES: `-n` suppresses the START-UP FILE and nothing
+## else. `ngspice -b -n -D ngbehavior=hs <deck>` still prints `Note:
+## Compatibility modes selected: hs`. So `-n` and this arm are independent, and
+## `-n` keeps the slot it has always had.
+check {P5 the entry's -n flag and the pre-deck arm are independent, and -n keeps its slot} \
+  [a_ans apply {{} {
+     global PDECK PRUN
+     rename ::ase::sim_nospiceinit ::ase::__nsi_real
+     proc ::ase::sim_nospiceinit {backend} { return 1 }
+     set c [ase::backend::ngspice::run_cmd \
+              [p_st rundir $PRUN options [p_o ngbehavior hs]] $PDECK]
+     rename ::ase::sim_nospiceinit {}
+     rename ::ase::__nsi_real ::ase::sim_nospiceinit
+     return $c }}] \
+  [list ngspice -b -n -D ngbehavior=hs $PDECK 2>@1]
+
+## ⚠ NON-VACUITY. A catalogue defect must never stop a run, so the arm is
+## caught -- and a `catch` around a call that is no longer made would leave P2
+## the only witness. This row says the router is reached by name.
+check {P6 the command builder reaches the one router, rather than spelling an option itself} \
+  [a_ans apply {{} {
+     set b [info body ::ase::backend::ngspice::run_cmd]
+     set code {}
+     foreach l [split $b "\n"] { if {![regexp {^\s*#} $l]} { lappend code $l } }
+     set code [join $code "\n"]
+     return [list [expr {[string first {ase::predeck_argv ngspice $state} $code] >= 0}] \
+                  [expr {[string first {-D } $code] >= 0}]] }}] {1 0}
 
 # --- teardown ----------------------------------------------------------------
 a_reset
