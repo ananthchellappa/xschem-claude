@@ -916,6 +916,13 @@ proc ase::ui::build {key top} {
     -menu $top.mb.outputs.plotted
   $top.mb.outputs add command -label [ase::ui::lbl_save_all] \
     -command [list ase::ui::save_all_dialog $key]
+  # ── STAGE 8b / issue 1451: `Outputs > Measurements…`. ─────────────────────
+  # Beside `Save All…` because a measurement IS an output -- the `measurements`
+  # state list sits next to `outputs` in the schema, its numbers come back in a
+  # Value column of exactly the Outputs pane's shape, and the question a user
+  # opens this for is the same one: what should this run give me?
+  $top.mb.outputs add command -label [ase::ui::lbl_measurements_menu] \
+    -command [list ase::ui::measurements_dialog $key]
 
   menu $top.mb.sim -tearoff 0
   $top.mb add cascade -label [ase::ui::lbl_simulation] -menu $top.mb.sim
@@ -6090,6 +6097,844 @@ proc ase::ui::analyses_list {key} {
   return $lw
 }
 
+
+# ═══ THE MEASUREMENTS SUB-DIALOG (PLAN.md §8b, issue 1451) ══════════════════
+#
+# Issue 1443 shipped the whole deck half of Stage 8 -- a `measurements` state
+# list, eighteen kinds, a four-verdict refusal evaluator, the `meas` speller,
+# the producers and the sidecar -- and **built no widget at all**. Nothing read
+# a kind's `label`, `ase::meas_report` had no caller anywhere in the tree, and a
+# user could not create one measurement row without hand-editing a `.state`
+# file. This is the surface all of it was written for.
+#
+# ⚠ THE COMMIT MODEL IS `Options…`'s, NOT Choose Analyses'. A WORKING COPY of
+# the whole list lives in `dlg($key,mrows)` while the dialog is up, Add / Delete
+# / Up / Down / the template picker all edit that copy, and **OK writes the list
+# back in one `ase::session_update`**. Choose Analyses' per-row cache exists
+# because that dialog edits ONE row of a list it never otherwise touches
+# (`GR6e` is the row that holds that line and nothing here widens it); a list
+# editor that has to reorder and delete cannot be built that way.
+#
+# ⚠ WHAT IT DOES INHERIT FROM ⚖ R5 IS THE **REMEMBERING**, and through one
+# door. `ase::ui::meas_harvest` reads the live form into the working copy, and
+# every rebuild -- picking another line, changing the kind, Add, Delete, a move,
+# OK -- goes through it first. Typing into a row and clicking another one keeps
+# what you typed, which is ⚖ R5's ruling (*"Make it remember -- that's a more
+# professional UI"*) applied to a second dialog.
+#
+# ⚠ AND THE ANALYSIS IS PICKED BY **HANDLE**, NEVER BY INDEX. The row stores
+# `id <handle>` -- ⚖ R6's word, `ase::analysis_handles`' answer, the same string
+# the Choose Analyses grid shows and `Analyses > List` prints. `row <index>` is
+# the other selector `ase::meas_binding` understands and it is the wrong one for
+# a GUI to write: an index is a POSITION, and inserting an analysis above it
+# makes a measurement silently read a different sweep.
+
+# THE DIALOG'S SIMULATOR -- the session's, exactly as Choose Analyses resolves
+# it, because the kinds, the templates and the refusals are all that
+# simulator's.
+proc ase::ui::meas_sim {key} { return [ase::ui::chana_sim $key] }
+
+# THE WORKING COPY. `{}` when the dialog is not up.
+proc ase::ui::meas_rows {key} {
+  variable dlg
+  if {![info exists dlg($key,mrows)]} { return {} }
+  return $dlg($key,mrows)
+}
+
+# THE SESSION STATE AS THE DIALOG WOULD LEAVE IT -- used for every verdict, for
+# the analysis dropdown and for the Value column, so the window judges the list
+# the user is looking at rather than the one on disk.
+proc ase::ui::meas_state {key} {
+  set st [ase::session_state $key]
+  variable dlg
+  if {[info exists dlg($key,mrows)]} { dict set st measurements $dlg($key,mrows) }
+  return $st
+}
+
+# HAS THIS BENCH BEEN MEASURED AT ALL? The sidecar's existence, and nothing
+# else.
+#
+# ⚠ IT IS WHAT KEEPS THE `failed` SENTENCE OFF A BENCH THAT HAS NEVER RUN.
+# `ase::meas_results` detects a failed measurement as ABSENCE from the sidecar
+# (measured: a failed `meas` is silent on rc, on `$sim_status`, on `display` and
+# on `print` -- stderr is the only channel), so with no sidecar at all EVERY
+# emitting row reads as failed. That is true and useless: nothing has been asked
+# of the simulator yet. A refusal, by contrast, is knowable without running and
+# is shown immediately -- which is the half worth having before a run.
+proc ase::ui::meas_ran {key} {
+  set p {}
+  if {[catch {ase::meas_path [ase::session_state $key]} p]} { return 0 }
+  return [expr {[file isfile $p] ? 1 : 0}]
+}
+
+# ONE Value CELL. ⚠ THE NUMBER IS THE SIMULATOR'S PRINTED TEXT, VERBATIM.
+# MEASURED 2026-09-13 on both binaries, one `meas` line: apt 45.2 prints
+# `6.000000e+01` where the fork prints `6.00000e+01` -- six decimals against
+# five, in the line `meas` echoes for itself. Normalising it here would be
+# inventing precision on one binary and discarding it on the other, and no
+# golden anywhere may key on the digit count.
+#
+# ⚠ AND A FAILED MEASUREMENT IS ITS SENTENCE, NOT A BLANK. An empty cell reads
+# as zero. `ase::meas_results` already distinguishes `failed` (the row emitted
+# and the simulator reported nothing) from `produced` (a row that was never
+# going to answer with a number, such as a Resample); only the first has
+# anything to say.
+proc ase::ui::meas_value_cell {e ran} {
+  lassign $e nm verdict val why
+  switch -exact -- $verdict {
+    ok      -
+    caution { return $val }
+    refused -
+    fatal   { return $why }
+    failed  { if {$ran} { return $why } ; return {} }
+  }
+  return {}
+}
+
+# `{name verdict value why}` PER ROW OF THE WORKING LIST, in the same order.
+#
+# ⚠ IT IS A LIST AND NOT A NAME-KEYED DICT, AND THAT IS NOT A STYLE CHOICE.
+# `ase::meas_results` walks `ase::meas_rows` of the state it is handed, which is
+# the state `ase::ui::meas_state` builds from THIS working list -- so element `i`
+# is row `i` by construction. Keyed by NAME it would collapse the one case where
+# two rows share one: a duplicate name is REFUSED (the sidecar's lookup is
+# case-insensitive, so the second answer would overwrite the first's) but it is
+# still storable and still on screen, and a name-keyed map hands the FIRST row --
+# the one with a real number in it -- the SECOND row's refusal sentence. The
+# user then reads "another measurement is already called 'ugf'" in the cell of
+# the measurement that worked.
+proc ase::ui::meas_results_list {key} {
+  set out {}
+  catch {
+    set out [ase::meas_results [ase::ui::meas_sim $key] [ase::ui::meas_state $key]]
+  }
+  return $out
+}
+
+# THE ANALYSIS DROPDOWN'S LINES -- `{handle line}` pairs, `ase::analysis_handle_line`'s
+# answer and nothing assembled here. Issue 1444's own sentence is *"three
+# surfaces showing three spellings would be worse than none"*, and this is the
+# third surface: the grid column, `Analyses > List`, and now the pick-don't-type
+# dropdown the ledger promised (*"The user never learns the scheme because they
+# never spell it"*).
+proc ase::ui::meas_analysis_lines {key {type {}}} {
+  set sim [ase::ui::meas_sim $key]
+  set st  [ase::session_state $key]
+  set out {}
+  foreach c [ase::meas_analysis_choices $sim $st $type] {
+    lassign $c h t i
+    lappend out [list $h [ase::analysis_handle_line \
+                            [ase::analysis_handle_fields $sim $st $i]]]
+  }
+  return $out
+}
+
+# The producer rows of the working list, by NAME -- what `Measured on` offers.
+# A row may not be measured on itself.
+proc ase::ui::meas_producer_names {key {self -1}} {
+  set sim [ase::ui::meas_sim $key]
+  set out {}
+  set i -1
+  foreach r [ase::ui::meas_rows $key] {
+    incr i
+    if {$i == $self} { continue }
+    if {[ase::meas_kind_form $sim [string trim [ase::state_get $r kind]]] ne {producer}} { continue }
+    set n [ase::meas_name $r]
+    if {$n ne {}} { lappend out $n }
+  }
+  return $out
+}
+
+proc ase::ui::lbl_measurements     {} { return {Measurements} }
+proc ase::ui::lbl_measurements_menu {} { return "[ase::ui::lbl_measurements]…" }
+proc ase::ui::lbl_meas_kind        {} { return {Kind} }
+proc ase::ui::lbl_meas_analysis    {} { return {Analysis} }
+proc ase::ui::lbl_meas_on          {} { return {Measured on} }
+proc ase::ui::lbl_meas_on_own      {} { return {(the analysis)} }
+proc ase::ui::lbl_meas_up          {} { return {Up} }
+proc ase::ui::lbl_meas_down        {} { return {Down} }
+proc ase::ui::lbl_meas_template    {} { return "From Template…" }
+proc ase::ui::lbl_meas_tpl_title   {} { return {Measurement Template} }
+proc ase::ui::lbl_meas_tpl_pick    {} { return {Template} }
+proc ase::ui::lbl_meas_report      {} { return "[ase::ui::lbl_measurements]:" }
+
+# Outputs > Measurements…
+proc ase::ui::measurements_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set w [ase::ui::dialog_frame [dict get $wins $key].meas [ase::ui::lbl_measurements]]
+  set dlg($key,mrows) [ase::meas_rows [ase::session_state $key]]
+  set dlg($key,msel)  [expr {[llength $dlg($key,mrows)] ? 0 : -1}]
+  set _rh [llength $dlg($key,mrows)]
+  if {$_rh < 3} { set _rh 3 }
+  if {$_rh > 8} { set _rh 8 }
+  ttk::treeview $w.rows -columns {enable name kind analysis value} -show headings \
+    -selectmode browse -height $_rh -style Ase.Treeview
+  # ⚠ `Name`, `Value` AND `Enable` ARE THE OUTPUTS PANE'S OWN HEADING WORDS,
+  # reused byte for byte; only `Kind` and `Analysis` are new copy.
+  foreach {_c _hd _g _an} [list enable Enable 3 center name Name 10 w \
+                                kind [ase::ui::lbl_meas_kind] 22 w \
+                                analysis [ase::ui::lbl_meas_analysis] 8 w \
+                                value Value 22 w] {
+    $w.rows heading $_c -text $_hd
+    $w.rows column $_c -width [ase::ui::colw $_g $_hd] \
+                       -minwidth [ase::ui::colw 0 $_hd] \
+                       -anchor $_an -stretch [expr {$_c eq {value}}]
+  }
+  bind $w.rows <<TreeviewSelect>> [list ase::ui::meas_pick $key]
+  grid $w.rows -row 0 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady {8 2}
+  frame $w.bar
+  button $w.bar.add -text Add -command [list ase::ui::meas_add $key]
+  button $w.bar.del -text Delete -command [list ase::ui::meas_del $key]
+  button $w.bar.up -text [ase::ui::lbl_meas_up] \
+    -command [list ase::ui::meas_move $key -1]
+  button $w.bar.down -text [ase::ui::lbl_meas_down] \
+    -command [list ase::ui::meas_move $key 1]
+  button $w.bar.tpl -text [ase::ui::lbl_meas_template] \
+    -command [list ase::ui::meas_tpl_dialog $key]
+  pack $w.bar.add $w.bar.del $w.bar.up $w.bar.down -side left -padx 2
+  pack $w.bar.tpl -side left -padx {14 2}
+  grid $w.bar -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  checkbutton $w.enable -text Enable -variable ::ase::ui::dlg($key,men) \
+    -command [list ase::ui::meas_enable_changed $key]
+  grid $w.enable -row 2 -column 0 -sticky w -padx 8 -pady 2
+  label $w.status -text {} -anchor w -justify left
+  grid $w.status -row 2 -column 1 -sticky w -padx 8 -pady 2
+  # THE VERDICT ROW IS RESERVED WHETHER OR NOT IT HAS TEXT, so the button bar
+  # does not jump as a refusal appears and goes -- issue 1435's `$w.note` rule,
+  # inherited rather than re-derived.
+  label $w.note -text {} -anchor w -justify left -wraplength 620
+  grid $w.note -row 7 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 9 [list ase::ui::meas_ok $key] \
+    [list ase::ui::meas_cancel $key]
+  grid rowconfigure $w 0 -weight 1
+  ase::ui::meas_show $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# THE LIST, REPAINTED FROM THE WORKING COPY. Item ids are the row's index into
+# that copy, the same convention the three main-window panes and the handle grid
+# already use, so a selection addresses the working list directly.
+proc ase::ui::meas_fill {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].meas.rows
+  if {![winfo exists $tv]} { return }
+  set sim [ase::ui::meas_sim $key]
+  set res [ase::ui::meas_results_list $key]
+  set ran [ase::ui::meas_ran $key]
+  $tv delete [$tv children {}]
+  set i -1
+  foreach r [ase::ui::meas_rows $key] {
+    incr i
+    set nm [ase::meas_name $r]
+    set k [string trim [ase::state_get $r kind]]
+    set val {}
+    ## ⚠ AND THE NAME IS CHECKED AGAINST THE ANSWER'S OWN. The correspondence is
+    ## true by construction today; a future reader that walked a different list
+    ## would put one measurement's number in another's cell, silently, and a
+    ## blank is the only honest thing to show if the two ever disagree.
+    set e [lindex $res $i]
+    if {$i < [llength $res] && [lindex $e 0] eq $nm} {
+      set val [ase::ui::meas_value_cell $e $ran]
+    }
+    $tv insert {} end -id $i -values \
+      [list [ase::ui::chk_glyph [ase::meas_enabled $r]] $nm \
+            [ase::meas_kind_label $sim $k] \
+            [string trim [ase::state_get $r id]] $val]
+  }
+  set sel $dlg($key,msel)
+  if {$sel >= 0 && [$tv exists $sel]} {
+    $tv selection set [list $sel]
+    catch {$tv see $sel}
+  } else {
+    $tv selection set {}
+  }
+}
+
+# A LINE WAS PICKED. Idempotent for `ase::ui::chana_rows_pick`'s reason: the
+# fill sets the selection itself and ttk QUEUES `<<TreeviewSelect>>`, so the
+# fill's own selection arrives here one event loop later and an unguarded
+# rebuild would feed itself.
+proc ase::ui::meas_pick {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,msel)]} { return }
+  set tv [dict get $wins $key].meas.rows
+  if {![winfo exists $tv]} { return }
+  set sel [lindex [$tv selection] 0]
+  if {![string is integer -strict $sel]} { return }
+  if {$sel == $dlg($key,msel)} { return }
+  ase::ui::meas_harvest $key
+  set dlg($key,msel) $sel
+  ase::ui::meas_show $key
+}
+
+# ── THE FORM ────────────────────────────────────────────────────────────────
+#
+# ⚠ R9-325's LAYOUT CONSTRAINT LIVES HERE, AND IT IS KEYED ON THE COPY'S OWN
+# SHAPE. `reaches` is the only LOWERCASE field label in the tree: it is the
+# second half of the sentence `When signal <v(out)> reaches <0.9>`, and a
+# right-aligned label column would leave a stray lowercase word sitting under
+# its neighbour. So a field whose label begins with a lowercase letter is
+# rendered as an INLINE CONTINUATION of the row above it, in columns 2 and 3.
+#
+# The rule is about COPY, not about ngspice -- an adapter writes a lowercase
+# label precisely when the label continues the previous one -- so it needs no
+# per-simulator knowledge and no new descriptor key. `MR9` is the row that
+# holds it.
+proc ase::ui::meas_form {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].meas.form
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::meas_flabel {sim kind field} {
+  set fd [ase::meas_kind_field $sim $kind $field]
+  set txt {}
+  if {[dict exists $fd label] && [dict get $fd label] ne {}} {
+    set txt [dict get $fd label]
+  } else {
+    set txt [string totitle $field]
+  }
+  if {[dict exists $fd unit] && [dict get $fd unit] ne {}} {
+    append txt " ([dict get $fd unit])"
+  }
+  return "$txt:"
+}
+
+# Is this field's label a CONTINUATION of the one above it?
+proc ase::ui::meas_inline {sim kind field} {
+  set fd [ase::meas_kind_field $sim $kind $field]
+  if {![dict exists $fd label]} { return 0 }
+  set l [dict get $fd label]
+  if {$l eq {}} { return 0 }
+  return [string is lower [string index $l 0]]
+}
+
+proc ase::ui::meas_fhas {key field} {
+  set w [ase::ui::meas_form $key]
+  return [expr {$w ne {} && [winfo exists $w.f$field]}]
+}
+
+proc ase::ui::meas_fget {key field} {
+  set w [ase::ui::meas_form $key]
+  if {$w eq {} || ![winfo exists $w.f$field]} { return {} }
+  return [string trim [$w.f$field get]]
+}
+
+# THE WRITE-BACK RULE, `ase::ui::form_is_absent`'s one level down: a field
+# writes a key only when its value differs from what the deck would have said
+# without it. It is the same byte-identity constraint and the same reason -- a
+# combobox answering its own declared default would store a key no bench
+# carries.
+proc ase::ui::meas_fabsent {sim kind field v} {
+  if {$v eq {}} { return 1 }
+  set fd [ase::meas_kind_field $sim $kind $field]
+  if {[dict exists $fd default] && $v eq [dict get $fd default]} { return 1 }
+  return 0
+}
+
+# (RE)BUILD the form for the selected row.
+proc ase::ui::meas_show {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,msel)]} { return }
+  set w [dict get $wins $key].meas
+  if {![winfo exists $w]} { return }
+  set sim [ase::ui::meas_sim $key]
+  catch {destroy $w.form}
+  frame $w.form
+  grid $w.form -row 3 -column 0 -columnspan 2 -sticky we
+  grid columnconfigure $w.form 1 -weight 1
+  grid columnconfigure $w.form 3 -weight 1
+  set sel $dlg($key,msel)
+  set rows [ase::ui::meas_rows $key]
+  if {$sel < 0 || $sel >= [llength $rows]} {
+    set dlg($key,men) 0
+    catch {$w.enable configure -state disabled}
+    ase::ui::meas_fill $key
+    ase::ui::meas_note $key
+    ase::ui::apply_theme $w
+    return
+  }
+  catch {$w.enable configure -state normal}
+  set row [lindex $rows $sel]
+  set kind [string trim [ase::state_get $row kind]]
+  set dlg($key,men) [ase::meas_enabled $row]
+  set r 0
+  # Name
+  label $w.form.lname -text Name: -font AseLabelFont -anchor w
+  entry $w.form.name -width 16 -font AseEntryFont
+  $w.form.name insert 0 [ase::meas_name $row]
+  grid $w.form.lname -row $r -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.form.name  -row $r -column 1 -sticky we -padx {0 8} -pady 2
+  incr r
+  # Kind -- the picker, rendering `ase::meas_kind_label`'s answer. Nothing read
+  # that key until this widget existed.
+  set _labels {}
+  set dlg($key,mkindmap) [dict create]
+  foreach k [ase::meas_kind_order $sim] {
+    set l [ase::meas_kind_label $sim $k]
+    lappend _labels $l
+    dict set dlg($key,mkindmap) $l $k
+  }
+  label $w.form.lkind -text "[ase::ui::lbl_meas_kind]:" -font AseLabelFont -anchor w
+  ttk::combobox $w.form.kind -values $_labels -state readonly -width 30
+  catch {$w.form.kind set [ase::meas_kind_label $sim $kind]}
+  bind $w.form.kind <<ComboboxSelected>> [list ase::ui::meas_kind_changed $key]
+  grid $w.form.lkind -row $r -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.form.kind  -row $r -column 1 -columnspan 3 -sticky w -padx {0 8} -pady 2
+  incr r
+  # Analysis -- PICK, DON'T TYPE (issue 1444 surface 1). The value stored is
+  # the HANDLE; the line shown is `ase::analysis_handle_line`'s.
+  set _alines [ase::ui::meas_analysis_lines $key]
+  set _cur [string trim [ase::state_get $row id]]
+  ## ⚠ A HANDLE THAT NO LONGER RESOLVES IS STILL OFFERED, AND THAT IS THIS
+  ## BATCH'S OLDEST RULE RATHER THAN A KINDNESS. Delete the `ac` row a
+  ## measurement reads and the bench still SAYS `id ac1`; a picker that could
+  ## not show it would leave the harvest with an empty box, and the next
+  ## selection change -- or OK -- would quietly strip the binding off a row the
+  ## user only opened the dialog to LOOK at. The row keeps its word, the Analysis
+  ## cell shows it, and `ase::meas_verdict` says in its own sentence what is
+  ## wrong with it ("no analysis called 'ac1' for 'pm' to read").
+  set _known {}
+  foreach a $_alines { lappend _known [lindex $a 0] }
+  if {$_cur ne {} && [lsearch -exact $_known $_cur] < 0} {
+    set _alines [linsert $_alines 0 [list $_cur $_cur]]
+  }
+  set _avals {}
+  set dlg($key,manmap) [dict create]
+  foreach a $_alines {
+    lassign $a h l
+    lappend _avals $l
+    dict set dlg($key,manmap) $l $h
+  }
+  label $w.form.lanalysis -text "[ase::ui::lbl_meas_analysis]:" \
+    -font AseLabelFont -anchor w
+  ttk::combobox $w.form.analysis -values $_avals -state readonly -width 30
+  foreach a $_alines {
+    if {[lindex $a 0] eq $_cur} { catch {$w.form.analysis set [lindex $a 1]} }
+  }
+  bind $w.form.analysis <<ComboboxSelected>> [list ase::ui::meas_an_changed $key]
+  grid $w.form.lanalysis -row $r -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.form.analysis  -row $r -column 1 -columnspan 3 -sticky w -padx {0 8} -pady 2
+  incr r
+  # ⚠ `Measured on` IS OFFERED WHENEVER THE DECK COULD CARRY IT, which is the
+  # batch's oldest rule from the other side: nothing the deck carries may be
+  # unshowable in the window. A row measured on a producer's plot is how a peak
+  # is read off a spectrum rather than off the transient that made it, and
+  # without this control such a row could be stored and never seen.
+  set _prods [ase::ui::meas_producer_names $key $sel]
+  if {[llength $_prods] || [ase::meas_on $row] ne {}} {
+    label $w.form.lon -text "[ase::ui::lbl_meas_on]:" -font AseLabelFont -anchor w
+    ttk::combobox $w.form.on \
+      -values [linsert $_prods 0 [ase::ui::lbl_meas_on_own]] \
+      -state readonly -width 24
+    set _on [ase::meas_on $row]
+    if {$_on eq {}} { set _on [ase::ui::lbl_meas_on_own] }
+    catch {$w.form.on set $_on}
+    grid $w.form.lon -row $r -column 0 -sticky w -padx {8 6} -pady 2
+    grid $w.form.on  -row $r -column 1 -columnspan 3 -sticky w -padx {0 8} -pady 2
+    incr r
+  }
+  # the kind's own fields
+  foreach f [ase::meas_kind_fields $sim $kind] {
+    set fn [dict get $f name]
+    set lbl [ase::ui::meas_flabel $sim $kind $fn]
+    set inline [expr {$r > 0 && [ase::ui::meas_inline $sim $kind $fn]}]
+    label $w.form.lf$fn -text $lbl -font AseLabelFont -anchor w
+    set vals {}
+    if {[dict exists $f values]} { set vals [dict get $f values] }
+    if {[llength $vals]} {
+      ## ⚠ A BLANK IS OFFERED ON A PICKER WITH NO DECLARED DEFAULT, because
+      ## `find`'s and `when`'s `Edge` really has none and an edge the user never
+      ## chose must stay unwritten -- `meas_edge` emits nothing for an empty
+      ## `dir`, and a picker that could not be left empty would put `RISE=1` on
+      ## every crossing measurement in the tree.
+      set _vals $vals
+      set fd [ase::meas_kind_field $sim $kind $fn]
+      if {![dict exists $fd default]} { set _vals [linsert $vals 0 {}] }
+      ttk::combobox $w.form.f$fn -values $_vals -state readonly -width 10
+      catch {$w.form.f$fn set [ase::meas_field_value $sim $kind $row $fn]}
+    } else {
+      entry $w.form.f$fn -width 26 -font AseEntryFont
+      $w.form.f$fn insert 0 [ase::meas_field_value $sim $kind $row $fn]
+      bind $w.form.f$fn <Return> [list ase::ui::meas_ok $key]
+    }
+    if {$inline} {
+      grid $w.form.lf$fn -row [expr {$r - 1}] -column 2 -sticky w -padx {12 6} -pady 2
+      grid $w.form.f$fn  -row [expr {$r - 1}] -column 3 -sticky we -padx {0 8} -pady 2
+    } else {
+      grid $w.form.lf$fn -row $r -column 0 -sticky w -padx {8 6} -pady 2
+      grid $w.form.f$fn  -row $r -column 1 -sticky we -padx {0 8} -pady 2
+      incr r
+    }
+  }
+  ase::ui::meas_fill $key
+  ase::ui::meas_note $key
+  ase::ui::apply_theme $w
+}
+
+# THE LIVE FORM AS A ROW DICT, merged over the stored row so a key the form does
+# not offer -- an `x`-style hatch, or a field belonging to the kind the row had
+# before -- is not silently dropped by the act of looking at it.
+proc ase::ui::meas_row_vals {key} {
+  variable dlg
+  set sel $dlg($key,msel)
+  set rows [ase::ui::meas_rows $key]
+  if {$sel < 0 || $sel >= [llength $rows]} { return {} }
+  set row [lindex $rows $sel]
+  set w [ase::ui::meas_form $key]
+  if {$w eq {}} { return $row }
+  set sim [ase::ui::meas_sim $key]
+  if {[winfo exists $w.name]} {
+    set n [string trim [$w.name get]]
+    if {$n eq {}} { set row [dict remove $row name] } else { dict set row name $n }
+  }
+  if {[winfo exists $w.kind] && [info exists dlg($key,mkindmap)]} {
+    set l [$w.kind get]
+    if {[dict exists $dlg($key,mkindmap) $l]} {
+      dict set row kind [dict get $dlg($key,mkindmap) $l]
+    }
+  }
+  set kind [string trim [ase::state_get $row kind]]
+  if {[winfo exists $w.analysis] && [info exists dlg($key,manmap)]} {
+    set l [$w.analysis get]
+    if {$l eq {}} {
+      set row [dict remove $row id analysis]
+    } elseif {[dict exists $dlg($key,manmap) $l]} {
+      set h [dict get $dlg($key,manmap) $l]
+      ## ⚠ BOTH KEYS, AND `id` IS THE ONE THAT MEANS IT. `ase::meas_binding`
+      ## refuses a row whose stored `analysis` disagrees with the type its
+      ## handle names, so the row is written self-consistent: the handle the
+      ## user picked, and the type that handle turned out to be.
+      dict set row id $h
+      set b [ase::analysis_by_handle [ase::session_state $key] $h]
+      if {$b ne {}} { dict set row analysis [lindex $b 0] }
+      set row [dict remove $row row]
+    }
+  }
+  if {[winfo exists $w.on]} {
+    set v [$w.on get]
+    if {$v eq {} || $v eq [ase::ui::lbl_meas_on_own]} {
+      set row [dict remove $row on]
+    } else {
+      dict set row on $v
+    }
+  }
+  foreach f [ase::meas_kind_fields $sim $kind] {
+    set fn [dict get $f name]
+    if {![ase::ui::meas_fhas $key $fn]} { continue }
+    set v [ase::ui::meas_fget $key $fn]
+    if {[ase::ui::meas_fabsent $sim $kind $fn $v]} {
+      set row [dict remove $row $fn]
+    } else {
+      dict set row $fn $v
+    }
+  }
+  if {[info exists dlg($key,men)]} {
+    ## `enabled 1` is the ABSENT value (`ase::meas_enabled`), so only the OFF
+    ## state costs a key -- the same tri-state discipline `save_op_params` uses,
+    ## and what keeps a bench that never turned a row off byte-identical.
+    if {$dlg($key,men) eq {1}} {
+      set row [dict remove $row enabled]
+    } else {
+      dict set row enabled 0
+    }
+  }
+  return $row
+}
+
+# ⚠ THE ONE DOOR EVERY REBUILD COMES THROUGH. ⚖ R5's ruling applied to this
+# dialog: what is on screen is written into the working copy BEFORE anything
+# destroys it, so picking another line, changing the kind, adding, deleting,
+# moving and OK all keep what was typed.
+proc ase::ui::meas_harvest {key} {
+  variable dlg
+  if {![info exists dlg($key,msel)]} { return }
+  set sel $dlg($key,msel)
+  set rows [ase::ui::meas_rows $key]
+  if {$sel < 0 || $sel >= [llength $rows]} { return }
+  if {[ase::ui::meas_form $key] eq {}} { return }
+  set row [ase::ui::meas_row_vals $key]
+  if {$row eq {}} { return }
+  lset rows $sel $row
+  set dlg($key,mrows) $rows
+}
+
+proc ase::ui::meas_kind_changed {key} {
+  ase::ui::meas_harvest $key
+  ase::ui::meas_show $key
+}
+
+proc ase::ui::meas_an_changed {key} {
+  ase::ui::meas_harvest $key
+  ase::ui::meas_note $key
+  ase::ui::meas_fill $key
+}
+
+proc ase::ui::meas_enable_changed {key} {
+  ase::ui::meas_harvest $key
+  ase::ui::meas_note $key
+  ase::ui::meas_fill $key
+}
+
+# ADD: an empty row of the first kind the simulator describes, selected so the
+# form opens on it. It carries NOTHING but its kind -- a seeded name or a seeded
+# analysis would be ASE-L guessing, and `ase::meas_verdict` says what is still
+# missing in its own sentence.
+proc ase::ui::meas_add {key} {
+  variable dlg
+  if {![info exists dlg($key,mrows)]} { return }
+  ase::ui::meas_harvest $key
+  set k [lindex [ase::meas_kind_order [ase::ui::meas_sim $key]] 0]
+  set row [dict create]
+  if {$k ne {}} { dict set row kind $k }
+  set rows [ase::ui::meas_rows $key]
+  lappend rows $row
+  set dlg($key,mrows) $rows
+  set dlg($key,msel) [expr {[llength $rows] - 1}]
+  ase::ui::meas_show $key
+  catch {focus [ase::ui::meas_form $key].name}
+}
+
+proc ase::ui::meas_del {key} {
+  variable dlg
+  if {![info exists dlg($key,msel)]} { return }
+  set sel $dlg($key,msel)
+  set rows [ase::ui::meas_rows $key]
+  if {$sel < 0 || $sel >= [llength $rows]} { return }
+  set rows [lreplace $rows $sel $sel]
+  set dlg($key,mrows) $rows
+  if {$sel >= [llength $rows]} { set sel [expr {[llength $rows] - 1}] }
+  set dlg($key,msel) $sel
+  ase::ui::meas_show $key
+}
+
+# ⚠ ORDER IS NOT COSMETIC IN THIS LIST. The block emits rows in stored order,
+# so a `param` row computing `180 + pmph` must sit BELOW the row that makes
+# `pmph`, and a measurement taken on a spectrum must sit below the producer.
+# That is why this dialog has Up and Down at all.
+proc ase::ui::meas_move {key dir} {
+  variable dlg
+  if {![info exists dlg($key,msel)]} { return }
+  ase::ui::meas_harvest $key
+  set sel $dlg($key,msel)
+  set rows [ase::ui::meas_rows $key]
+  set to [expr {$sel + $dir}]
+  if {$sel < 0 || $sel >= [llength $rows] || $to < 0 || $to >= [llength $rows]} { return }
+  set a [lindex $rows $sel]
+  set b [lindex $rows $to]
+  lset rows $sel $b
+  lset rows $to $a
+  set dlg($key,mrows) $rows
+  set dlg($key,msel) $to
+  ase::ui::meas_show $key
+}
+
+# THE SELECTED ROW'S VERDICT, AS THE SENTENCE THE EVALUATOR ALREADY MINTED.
+# `ase::meas_verdict` is issue 1443's four-verdict evaluator and this is its
+# first reader with a face: every refusal in `R9_COPY_REVIEW.md`'s R9-343…R9-362
+# reaches the user here, and nothing is re-worded on the way.
+proc ase::ui::meas_note {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].meas
+  if {![winfo exists $w] || ![winfo exists $w.note]} { return {} }
+  set txt {}
+  catch {
+    set sel $dlg($key,msel)
+    set rows [ase::ui::meas_rows $key]
+    if {$sel >= 0 && $sel < [llength $rows]} {
+      set v [ase::meas_verdict [ase::ui::meas_sim $key] \
+               [ase::ui::meas_state $key] [lindex $rows $sel]]
+      if {[lindex $v 0] ne {ok}} { set txt [lindex $v 1] }
+    }
+  }
+  catch {$w.note configure -text $txt}
+  return $txt
+}
+
+proc ase::ui::meas_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,mrows)]} { return }
+  ase::ui::meas_harvest $key
+  set st [ase::session_state $key]
+  dict set st measurements [ase::ui::meas_rows $key]
+  ase::session_update $key $st
+  ase::ui::populate $key
+  ase::ui::meas_cancel $key
+}
+
+proc ase::ui::meas_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,mrows
+  array unset dlg $key,msel
+  array unset dlg $key,men
+  array unset dlg $key,mkindmap
+  array unset dlg $key,manmap
+  array unset dlg $key,mtpl
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].meas.tpl}
+    catch {destroy [dict get $wins $key].meas}
+  }
+}
+
+# ── THE TEMPLATE PICKER ─────────────────────────────────────────────────────
+#
+# §8b: *"The user picks one and fills two fields. This is what better than ADE-L
+# means for the daily task."* The rows it writes are ORDINARY measurement rows
+# afterwards -- nothing remembers which template made them, and they are edited,
+# reordered and deleted like any other.
+proc ase::ui::meas_tpl_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,mrows)]} { return {} }
+  set sim [ase::ui::meas_sim $key]
+  set w [dict get $wins $key].meas.tpl
+  catch {destroy $w}
+  toplevel $w
+  wm title $w [ase::ui::lbl_meas_tpl_title]
+  grid columnconfigure $w 1 -weight 1
+  set _labels {}
+  set dlg($key,mtplmap) [dict create]
+  dict for {t e} [ase::meas_templates $sim] {
+    set l [ase::meas_template_label $sim $t]
+    lappend _labels $l
+    dict set dlg($key,mtplmap) $l $t
+  }
+  label $w.lpick -text "[ase::ui::lbl_meas_tpl_pick]:" -font AseLabelFont -anchor w
+  ttk::combobox $w.pick -values $_labels -state readonly -width 30
+  if {[llength $_labels]} { catch {$w.pick set [lindex $_labels 0]} }
+  bind $w.pick <<ComboboxSelected>> [list ase::ui::meas_tpl_show $key]
+  grid $w.lpick -row 0 -column 0 -sticky w -padx {8 6} -pady {8 2}
+  grid $w.pick  -row 0 -column 1 -sticky w -padx {0 8} -pady {8 2}
+  label $w.note -text {} -anchor w -justify left -wraplength 480
+  grid $w.note -row 8 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 9 [list ase::ui::meas_tpl_ok $key] \
+    [list ase::ui::meas_tpl_cancel $key]
+  ase::ui::meas_tpl_show $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::meas_tpl_show {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].meas.tpl
+  if {![winfo exists $w]} { return }
+  set sim [ase::ui::meas_sim $key]
+  catch {destroy $w.form}
+  frame $w.form
+  grid $w.form -row 1 -column 0 -columnspan 2 -sticky we
+  grid columnconfigure $w.form 1 -weight 1
+  set tpl [ase::ui::meas_tpl_current $key]
+  if {$tpl eq {}} { return }
+  set r 0
+  set dlg($key,mtplan) [dict create]
+  foreach f [ase::meas_template_fields $sim $tpl] {
+    set fn [dict get $f name]
+    set lbl $fn
+    if {[dict exists $f label]} { set lbl [dict get $f label] }
+    if {[dict exists $f unit] && [dict get $f unit] ne {}} {
+      append lbl " ([dict get $f unit])"
+    }
+    label $w.form.l$fn -text "$lbl:" -font AseLabelFont -anchor w
+    if {[dict exists $f kind] && [dict get $f kind] eq {analysis}} {
+      ## ⚠ FILTERED TO THE TEMPLATE'S OWN ANALYSIS TYPE. A phase margin reads an
+      ## AC sweep; offering a `tran` handle would write a row `ase::meas_binding`
+      ## refuses, because the row's stored `analysis` and its handle's type would
+      ## disagree.
+      set _lines [ase::ui::meas_analysis_lines $key \
+                    [ase::meas_template_analysis $sim $tpl]]
+      set _vals {}
+      foreach a $_lines {
+        lappend _vals [lindex $a 1]
+        dict set dlg($key,mtplan) [lindex $a 1] [lindex $a 0]
+      }
+      ttk::combobox $w.form.$fn -values $_vals -state readonly -width 30
+      if {[llength $_vals]} { catch {$w.form.$fn set [lindex $_vals 0]} }
+    } else {
+      entry $w.form.$fn -width 26 -font AseEntryFont
+    }
+    grid $w.form.l$fn -row $r -column 0 -sticky w -padx {8 6} -pady 2
+    grid $w.form.$fn  -row $r -column 1 -sticky we -padx {0 8} -pady 2
+    incr r
+  }
+  ase::ui::apply_theme $w
+}
+
+proc ase::ui::meas_tpl_current {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].meas.tpl
+  if {![winfo exists $w.pick] || ![info exists dlg($key,mtplmap)]} { return {} }
+  set l [$w.pick get]
+  if {![dict exists $dlg($key,mtplmap) $l]} { return {} }
+  return [dict get $dlg($key,mtplmap) $l]
+}
+
+proc ase::ui::meas_tpl_vals {key} {
+  variable wins; variable dlg
+  set w [dict get $wins $key].meas.tpl
+  set sim [ase::ui::meas_sim $key]
+  set tpl [ase::ui::meas_tpl_current $key]
+  set vals [dict create]
+  foreach f [ase::meas_template_fields $sim $tpl] {
+    set fn [dict get $f name]
+    if {![winfo exists $w.form.$fn]} { continue }
+    set v [string trim [$w.form.$fn get]]
+    if {[dict exists $f kind] && [dict get $f kind] eq {analysis}} {
+      if {[info exists dlg($key,mtplan)] && [dict exists $dlg($key,mtplan) $v]} {
+        set v [dict get $dlg($key,mtplan) $v]
+      } else {
+        set v {}
+      }
+    }
+    dict set vals $fn $v
+  }
+  return $vals
+}
+
+proc ase::ui::meas_tpl_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,mrows)]} { return }
+  set w [dict get $wins $key].meas.tpl
+  if {![winfo exists $w]} { return }
+  set sim [ase::ui::meas_sim $key]
+  set tpl [ase::ui::meas_tpl_current $key]
+  if {$tpl eq {}} { return }
+  ase::ui::meas_harvest $key
+  set r [ase::meas_template_expand $sim [ase::ui::meas_state $key] $tpl \
+           [ase::ui::meas_tpl_vals $key]]
+  if {[lindex $r 0] ne {ok}} {
+    ## THE REFUSAL STAYS IN THE DIALOG THE USER IS LOOKING AT, and goes to the
+    ## action log as well -- issue 1417's split, because the log is what a
+    ## headless assertion can witness and the label is what a person reads.
+    catch {::ase::echo "ase: [lindex $r 1]" error}
+    catch {$w.note configure -text [lindex $r 1]}
+    return
+  }
+  set rows [ase::ui::meas_rows $key]
+  foreach row [lindex $r 1] { lappend rows $row }
+  set dlg($key,mrows) $rows
+  set dlg($key,msel) [expr {[llength $rows] - 1}]
+  array unset dlg $key,mtplmap
+  array unset dlg $key,mtplan
+  catch {destroy $w}
+  ase::ui::meas_show $key
+}
+
+proc ase::ui::meas_tpl_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,mtplmap
+  array unset dlg $key,mtplan
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].meas.tpl}
+  }
+}
+
 # --- (b) Setup > Design ------------------------------------------------------
 
 # schematic views of lib/cell: those whose datafile resolves to a .sch (the
@@ -9625,6 +10470,36 @@ proc ase::ui::run_finished {key} {
     # serialized to the state file
     ase::session_setattr $key results [ase::last_result]
     ase::ui::refresh_output_values $key
+    # ── STAGE 8b / issue 1451: THE MEASUREMENT REPORT. ──────────────────────
+    # `ase::meas_report` shipped in issue 1443 with NO CALLER ANYWHERE IN THE
+    # TREE. This is it, and the log is the right place: it is where a run's own
+    # words already go, and the report's five frames are run-time statements
+    # (`pm = 56.14`, `ts was not measured: ...`) rather than dialog copy.
+    #
+    # ⚠ IT IS SILENT ON A BENCH WITH NO MEASUREMENT ROWS, by the proc's own
+    # first line, which is why no committed bench's log moves.
+    #
+    # ⚠ AND IT SAYS SOMETHING NO OTHER CHANNEL CAN. MEASURED 2026-09-13 on both
+    # binaries: a measurement that finds nothing exits 0, leaves `$sim_status`
+    # 0, creates no vector and prints NOTHING -- so without this the run looks
+    # like a complete success and the Value column is simply blank, which reads
+    # as zero.
+    catch {
+      set _mr [ase::meas_report [ase::ui::chana_sim $key] \
+                 [ase::session_state $key]]
+      if {[llength $_mr]} {
+        ase::ui::log_append $key \
+          "\n[ase::ui::lbl_meas_report]\n  [join $_mr "\n  "]\n"
+      }
+    }
+    # and the dialog, if it is standing, gets its Value column repainted --
+    # a run finishing while the window is open is the one moment the numbers
+    # change.
+    catch {
+      if {[winfo exists [dict get $::ase::ui::wins $key].meas]} {
+        ase::ui::meas_fill $key
+      }
+    }
     ase::ui::set_status $key ok
     # item 13 (D5): Plot-checked rows -> the viewer's auto graph. Deferred:
     # this callback can run inside ase::wait's semaphore bracket where

@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**381 strings, from 22 issues, grouped by where the user sees them** — not by
+**410 strings, from 23 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -61,7 +61,7 @@ this document is being written.
 
 ## How to answer
 
-Every string has a **handle** — `R9-001` … `R9-381`. Mark up whatever you want
+Every string has a **handle** — `R9-001` … `R9-410`. Mark up whatever you want
 changed, by handle, in any form: *"R9-011: drop the shouting"*, *"R9-046/047:
 Voltage and Current"*, *"R9-003 → Stop value"*.
 
@@ -310,7 +310,8 @@ and — where the extraction found something a reader needs — a **note**.
 | Issue 1443 — measurements, added after the crew's work landed | 79 |
 | Issue 1447 — how a user names one analysis among several | 5 |
 | Issue 1448 — the handle made visible | 4 |
-| **total** | **381** |
+| Issue 1451 — the Measurements dialog, and the eight templates | 29 |
+| **total** | **410** |
 
 ---
 
@@ -5731,3 +5732,263 @@ No analyses on this bench.
 
 *Note:* A complete sentence with a full stop, where most ASE-L status text has neither. §A8 —
 and worth deciding once for every "nothing here yet" message the batch ends up with.
+
+---
+
+## Issue 1451 — the Measurements dialog, and the eight templates
+
+*29 strings.*
+
+The surface issue 1443's whole deck half was written for. Before it, nothing in the tree read a
+kind's label, `ase::meas_report` had **no caller anywhere**, and a measurement could only be
+created by hand-editing a `.state` file.
+
+**R9-294 … R9-372 are consumed unchanged** — the eighteen kind labels, the field labels, the
+refusals, the caution and the report frames are rendered verbatim, and `R9-369` (*"the simulator
+did not report this measurement"*) lands **in the Value column**, because an empty cell reads as
+zero. These 29 are what the surface itself had to add.
+
+⚠ **Eight of them are template names** (R9-394 … R9-401) and they are **adapter** content, not
+ASE-L's — a second simulator would name its own. The rest are ASE-L's own chrome.
+
+**R9-382** · label
+
+```text
+Measurements
+```
+
+*Where:* the dialog's `wm title`, and the word the menu entry and the log heading are composed from
+
+**R9-383** · label
+
+```text
+Measurements…
+```
+
+*Where:* `Outputs > Measurements…`, the menu entry. **Composed** — `[ase::ui::lbl_measurements]…`, the shape `Save All…` and `Choose…` already use
+
+**R9-384** · label
+
+```text
+Kind
+```
+
+*Where:* the third column heading of the Measurements list, and its form label
+
+**R9-385** · label
+
+```text
+Analysis
+```
+
+*Where:* the fourth column heading, its form label, and the template picker's analysis field
+
+**R9-386** · label
+
+```text
+Measured on
+```
+
+*Where:* the form label on the producer binding
+
+**R9-387** · label
+
+```text
+(the analysis)
+```
+
+*Where:* the `Measured on` value that means *the analysis's own plot* — the blank case, spelled so the picker is never empty
+
+**R9-388** · label
+
+```text
+Up
+```
+
+*Where:* the button bar
+
+**R9-389** · label
+
+```text
+Down
+```
+
+*Where:* the button bar
+
+**R9-390** · label
+
+```text
+From Template…
+```
+
+*Where:* the button that opens the template picker
+
+**R9-391** · label
+
+```text
+Measurement Template
+```
+
+*Where:* the template picker's `wm title`
+
+**R9-392** · label
+
+```text
+Template
+```
+
+*Where:* its one picker's label
+
+**R9-393** · label
+
+```text
+Measurements:
+```
+
+*Where:* the heading `ase::ui::run_finished` puts above the report in the run log. **Composed** from #1
+
+**R9-394** · label
+
+```text
+DC gain
+```
+
+*Where:* template name (adapter)
+
+**R9-395** · label
+
+```text
+-3 dB bandwidth
+```
+
+*Where:* template name (adapter). ⚠ ASCII hyphen-minus, not U+2212
+
+**R9-396** · label
+
+```text
+Unity-gain frequency
+```
+
+*Where:* template name (adapter)
+
+**R9-397** · label
+
+```text
+Phase margin
+```
+
+*Where:* template name (adapter)
+
+**R9-398** · label
+
+```text
+Gain margin
+```
+
+*Where:* template name (adapter)
+
+**R9-399** · label
+
+```text
+Slew rate
+```
+
+*Where:* template name (adapter)
+
+**R9-400** · label
+
+```text
+Settling time
+```
+
+*Where:* template name (adapter)
+
+**R9-401** · label
+
+```text
+THD
+```
+
+*Where:* template name (adapter). Acronym, uppercase, per the house rule
+
+**R9-402** · label
+
+```text
+Output signal
+```
+
+*Where:* template field label — the signal every one of the eight reads
+
+**R9-403** · label
+
+```text
+Passband gain
+```
+
+*Where:* `-3 dB bandwidth`'s third field
+
+*Note:* (unit `dB`)
+
+**R9-404** · label
+
+```text
+Start level
+```
+
+*Where:* `Slew rate`'s trigger level
+
+*Note:* (unit `V`)
+
+**R9-405** · label
+
+```text
+End level
+```
+
+*Where:* `Slew rate`'s target level
+
+*Note:* (unit `V`)
+
+**R9-406** · label
+
+```text
+Final value
+```
+
+*Where:* `Settling time`
+
+*Note:* (unit `V`)
+
+**R9-407** · label
+
+```text
+Tolerance
+```
+
+*Where:* `Settling time`
+
+*Note:* (unit `V`)
+
+**R9-408** · label
+
+```text
+Unwrapped phase
+```
+
+*Where:* the 19th kind's label (adapter)
+
+**R9-409** · refusal
+
+```text
+this template needs a value for $lbl
+```
+
+*Where:* the template picker's one refusal
+
+**R9-410** · refusal
+
+```text
+'$sim' has no measurement template called '$tpl'
+```
+
+*Where:* the other, unreachable from the GUI (the picker offers only what the catalogue declares) and reachable from a script

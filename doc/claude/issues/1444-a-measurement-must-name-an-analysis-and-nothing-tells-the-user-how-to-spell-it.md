@@ -173,3 +173,38 @@ them that. One word in `src/ase.tcl` fixes it; issue **1448** carries the measur
 row `GH13b` of `tests/headless/test_ase_dialogs.tcl` pins it so the fix reddens a row.
 
 Detail: `doc/claude/issues/1448-the-handle-is-visible-and-the-second-row-of-a-type-is-reachable.md`.
+
+---
+
+## ⚠ THE THIRD SURFACE HAS LANDED — 2026-09-13, issue 1451
+
+**This issue still does NOT close.** Surface **1** — the Measurements dropdown —
+is delivered by Stage 8 task 2; the editable `id` field is the one remaining, and
+its blocker is gone.
+
+| surface | status |
+|---|---|
+| **1** — Measurements dropdown | ✅ **delivered** — `Outputs > Measurements…`, the `Analysis` combobox. Its values are `ase::analysis_handle_line`'s answer, one line per measurable analysis row of the bench, `(off)` included, and picking one writes **`id <handle>`** onto the measurement row with the handle's own type beside it. Nothing is minted there and nothing is typed |
+| **2** — handle column in Choose Analyses | ✅ delivered (issue 1448) |
+| **3** — `Analyses > List` | ✅ delivered (issue 1448) |
+| (new) an editable `id` field | ❌ open — **no longer blocked**: issue **1449** taught `ase::analysis_emit_check` the word and issue **1450** collapsed the three copies into `ase::analysis_nonsetting_keys`. `GH13b` was rewritten under 1450 and is green |
+
+**This is the surface the ledger promised would make the scheme invisible** —
+*"The user never learns the scheme because they never spell it"* — and it is the
+one that decided the shape of the renderer. `ase::analysis_handle_text` renders
+the **whole bench** as a padded block, which is right for `Analyses > List` and
+unusable in a combobox; rather than let the dropdown assemble `"$h  $t  $a"` and
+its own `(off)`, the block became a **caller** of a new one-row proc,
+`ase::analysis_handle_line`. So this issue's own sentence — *"three surfaces
+showing three spellings would be worse than none"* — is now enforced by there
+being exactly one place the marker is written.
+
+⚠ **AND THE FILTER IS PART OF THE SURFACE.** The dropdown offers only rows whose
+TYPE this simulator's measure engine accepts (`tran dc ac sp`; `chkAnalysisType()`
+rejects the rest as a hard error) and, inside the template picker, only the type
+the chosen template reads — because `ase::meas_binding` refuses a row whose
+stored `analysis` disagrees with its handle's type. An `op` row is never offered,
+however enabled it is; `test_ase_core` **MT7** and `test_ase_dialogs` **MS4** are
+the rows.
+
+Detail: `doc/claude/issues/1451-a-measurement-could-not-be-created-and-a-gain-margin-could-not-be-measured.md`.

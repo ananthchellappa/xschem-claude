@@ -80,7 +80,18 @@
 # ============================================================================
 # THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP
 # ============================================================================
-#    sections KN VD LN PH PP DK SC HK, all pure Tcl, identical on both arms
+#    sections KN VD LN PH PP DK SC TP HK, all pure Tcl, identical on both arms
+#
+# 100 -> 113 with section TP (issue 1451 -- PLAN.md §8b's eight named templates,
+# as the deck carries them). ⚠ TP EXISTS BECAUSE §8b's GAIN-MARGIN LINE ANSWERS
+# NOTHING: `meas ac gm find vdb(out) when vp(out)=-180` was measured on BOTH
+# binaries against a three-pole amplifier whose phase really does pass through
+# -180 and reported `out of interval`, because `vp()` is WRAPPED. The working
+# form needs the unwrapped phase as a NAMED VECTOR (`meas`'s WHEN operand cannot
+# be an expression: `cph(v(out))` answers `no such vector`), which is the 19th
+# kind `cphase`, and that vector must NOT be printed into the sidecar -- one line
+# per frequency point. TP2/TP2b/TP2c are those three claims and their controls.
+# AND RAISED 100 -> 113.
 #
 # ⚠ NO SIMULATOR IS STARTED HERE. Every ngspice number quoted above was
 # measured beforehand on both binaries; the rows below assert what ASE-L does
@@ -175,9 +186,17 @@ catch {ase::sim_clear}
 # ============================================================================
 if {[catch {
 
-check {KN1 the kind vocabulary is the one evidence/measure.md measured} \
+## ⚠ NINETEEN SINCE ISSUE 1451, NOT EIGHTEEN. `cphase` is the nineteenth and it
+## is not a user-facing measurement at all: it makes the UNWRAPPED phase a NAMED
+## VECTOR so a gain margin can ask where that vector crosses -180. Measured on
+## both binaries, `meas`'s `WHEN` operand must be a vector name -- `WHEN
+## cph(v(out))=-180` answers `no such vector as cph(v(out))` -- and `vp()` is
+## WRAPPED, so `WHEN vp(out)=-180` never fires however many poles the amplifier
+## has. Section TP is where both measurements live.
+check {KN1 the kind vocabulary is the one evidence/measure.md measured, plus the\
+ named vector a gain margin needs} \
   [lsort [dict keys [m_ans ase::meas_kinds ngspice]]] \
-  {avg deriv fft find fourier integ linearize max max_at min min_at param pp psd rms spec trigtarg when}
+  {avg cphase deriv fft find fourier integ linearize max max_at min min_at param pp psd rms spec trigtarg when}
 
 check {KN2 one key decides which half of the block a row lands in} \
   [list [m_ans ase::meas_kind_form ngspice when] \
@@ -214,6 +233,7 @@ check {KN4b a catalogue that is wrong in four ways is reported in four ways} \
          badform {form sideways fields {{name a}}} \
          badctr  {form meas counter c fields {{name a}}} \
          badyld  {form meas yields plot fields {{name a}}} \
+         okyld   {form meas letform 1 yields vector fields {{name a}}} \
          badreq  {form meas fields {{name a required maybe}}} \
          noname  {form meas fields {{label a}}}]
      }
@@ -226,7 +246,7 @@ check {KN4b a catalogue that is wrong in four ways is reported in four ways} \
   [lsort [list {badctr: a counter belongs to a producer} \
                {badform: form 'sideways' is neither meas nor producer} \
                {badreq/a: required must be 0 or 1} \
-               {badyld: only a producer may yield something other than a number} \
+               {badyld: only a producer or a letform kind may yield something other than a number} \
                {noform: no form} {noname: a field has no name}]]
 
 ## ⚠ A BACKEND WITH NO HOOK GETS NO MEASUREMENT CONTENT (D34). Core may not
@@ -1277,6 +1297,283 @@ check {SC7 the deletion sits in the pre-run block, above every other line of run
 
 # ============================================================================
 # SECTION HK -- ASE-L OWNS THE SCHEMA, THE ADAPTER OWNS THE CONTENT (D34)
+
+# ============================================================================
+# SECTION TP -- THE EIGHT TEMPLATES AS DECK LINES, AND THE UNWRAPPED PHASE
+# (issue 1451, PLAN.md §8b)
+# ============================================================================
+# ⚠ THE FINDING THIS SECTION EXISTS FOR: **§8b's GAIN-MARGIN LINE ANSWERS
+# NOTHING ON ANY AMPLIFIER IT IS FOR.** The plan writes
+# `meas ac gm find vdb(out) when vp(out)=-180`. MEASURED 2026-09-13 on BOTH
+# binaries, on a three-pole amplifier whose phase really does pass through -180
+# (60 dB, UGF 915 kHz, two poles at 3 MHz):
+#
+#   meas ac gm FIND vdb(out) WHEN vp(out)=-180
+#       -> `Error: measure gm find(AT) : out of interval`, no vector, rc 0
+#   meas ac gm FIND vdb(out) WHEN cph(v(out))=-180
+#       -> `Error: no such vector as cph(v(out)).`
+#   let gmph = cph(v(out)) ; meas ac gm FIND vdb(out) WHEN gmph=-180
+#       -> gm = -1.556922e+01 at f = 3.001137e+06
+#
+# TWO facts, and the first is the sharper one. `vp()` is **WRAPPED**: on that
+# same sweep the point whose continuous phase reads `-2.36596e+02` has `vp(out)`
+# reading `+1.234040e+02`, so -180 is exactly the discontinuity and no crossing
+# detector can ever see it. The second is that `meas`'s `WHEN` operand must be a
+# vector NAME and not an expression. So the template needs a named vector first,
+# which is what the 19th kind `cphase` is.
+#
+# ⚠ AND THAT VECTOR IS NOT A RESULT. It is one value per frequency point; a
+# `print` of it would put a line per point into the sidecar. `meas_group` now
+# prints a `let`-form row only when its kind YIELDS A NUMBER -- the same
+# `ase::meas_kind_yields` question a producer already answers -- and
+# `ase::meas_results` reports it as `produced` rather than complaining that the
+# simulator said nothing about it.
+#
+# ⚠ EVERY NUMBER QUOTED HERE WAS MEASURED THROUGH `meas_block`'s OWN OUTPUT,
+# pasted into a deck and run on both binaries. No simulator is started by these
+# rows.
+# ============================================================================
+
+proc tp_state {meas {ans {}}} {
+  set st [m_state $meas $ans]
+  dict set st analyses {{type ac enabled 1 sweep dec points 100 start 1 stop 1g}
+                        {type tran enabled 1 step 2u stop 3m}}
+  return $st
+}
+proc tp_vals {tpl} {
+  set v [dict create an ac1 out out gain 60 lo 0.2 hi 1.6 final 1.8 tol 0.018 fund 1k]
+  if {[ase::meas_template_analysis ngspice $tpl] eq {tran}} { dict set v an tran1 }
+  return $v
+}
+## every row the named templates expand to, in order, against one bench
+proc tp_rows {tpls} {
+  set st [tp_state {}]
+  set rows {}
+  foreach t $tpls {
+    set r [ase::meas_template_expand ngspice $st $t [tp_vals $t]]
+    if {[lindex $r 0] ne {ok}} { return "REFUSE:$t:[lindex $r 1]" }
+    foreach row [lindex $r 1] { lappend rows $row }
+    dict set st measurements $rows
+  }
+  return $rows
+}
+## the block one analysis row emits for those templates, scrubbed of the rundir
+proc tp_block {tpls type idx} {
+  set rows [tp_rows $tpls]
+  if {[string match REFUSE:* $rows]} { return $rows }
+  set st [tp_state $rows]
+  set out {}
+  foreach l [ase::backend::ngspice::meas_block $st $type $idx] {
+    lappend out [m_scrub $l]
+  }
+  return $out
+}
+
+## TP1 -- THE 19th KIND. `cphase` is a `meas`-form `letform` kind that yields a
+## VECTOR, which is what keeps it out of the sidecar and out of the `failed`
+## report. ⚠ The last term is the control: `param`, the other `letform` kind,
+## still yields a number and is still printed.
+check {TP1 the unwrapped-phase kind is a letform kind that yields a vector} \
+  [list [m_ans ase::meas_kind_form ngspice cphase] \
+        [m_ans ase::meas_kind_yields ngspice cphase] \
+        [m_ans ase::meas_kind_label ngspice cphase] \
+        [m_ans ase::meas_kind_yields ngspice param]] \
+  [list meas vector {Unwrapped phase} number]
+
+## TP2 -- THE GAIN MARGIN, END TO END, AS THE DECK CARRIES IT. `set units=degrees`
+## ABOVE the `let`, because `cph()` is evaluated under whatever `units` is in
+## force AT THAT MOMENT and there is no `vp(` anywhere in either row for the
+## phase pattern to match. ⚠ NO `print gmph`: that vector is one value per
+## frequency point.
+check {TP2 the Gain margin template renders the unwrapped phase, sets degrees\
+ above it, and does not print it} \
+  [tp_block gm ac 0] \
+  [list {echo ASE-MEAS >> rc_ase.meas} \
+        {set units=degrees} \
+        {let gmph = cph(v(out))} \
+        {meas ac gm FIND vdb(out) WHEN gmph=-180 >> rc_ase.meas}]
+
+## TP2b -- THE NON-VACUITY HALF OF BOTH CLAIMS AT ONCE. A template with no phase
+## in it emits NO units line, and a `letform` row that DOES yield a number is
+## still printed. Without this row TP2 passes over an emitter that wrote the
+## units line unconditionally and over one that never printed a `let` at all.
+check {TP2b a template with no phase emits no units line, and a param row is\
+ still printed} \
+  [tp_block {dcgain sr} ac 0] \
+  [list {echo ASE-MEAS >> rc_ase.meas} \
+        {meas ac gain MAX vdb(out) >> rc_ase.meas}]
+check {TP2c the Slew rate template's param row IS printed, because it yields a\
+ number} \
+  [tp_block {dcgain sr} tran 1] \
+  [list {echo ASE-MEAS >> rc_ase.meas} \
+        {meas tran srt TRIG v(out) VAL=0.2 RISE=1 TARG v(out) VAL=1.6 RISE=1 >> rc_ase.meas} \
+        {let sr = (1.6 - 0.2) / srt} \
+        {print sr >> rc_ase.meas}]
+
+## TP3 -- THE PHASE MARGIN, WHICH IS THE TEMPLATE THAT PROVES THE FEATURE.
+## Three rows, `set units=degrees` above them, and the `let` reading the phase
+## the row above it measured. MEASURED on both binaries with this exact block:
+## `pm = 5.614170e+01` WITH the units line and `pm = 1.778383e+02` WITHOUT it --
+## a 56-degree phase margin reported as 178, at rc 0, with nothing said.
+check {TP3 the Phase margin template emits the degrees line, the measured phase\
+ and the margin that reads it} \
+  [tp_block pm ac 0] \
+  [list {echo ASE-MEAS >> rc_ase.meas} \
+        {set units=degrees} \
+        {meas ac ugf WHEN vdb(out)=0 FALL=1 >> rc_ase.meas} \
+        {meas ac pmph FIND vp(out) WHEN vdb(out)=0 >> rc_ase.meas} \
+        {let pm = 180 + pmph} \
+        {print pm >> rc_ase.meas}]
+
+## TP3b -- ⚠ THE ROW THAT IS ABOUT THE NUMBER, NOT ABOUT THE LINE. A row
+## asserting only that `set units=degrees` is in the block cannot say what
+## dropping it COSTS, and the cost is the whole feature. The two sidecars below
+## are the REAL ones: the same deck, rendered by `meas_block`, run on apt 45.2
+## WITH the units line and WITHOUT it.
+##
+##     with `set units=degrees`     pm2 = 5.614170e+01      <- 56.1 degrees
+##     without it                   pm2 = 1.778383e+02      <- 177.8, rc 0,
+##                                                             nothing said
+##
+## So this row renders the block, decides FROM THE BLOCK which of the two runs
+## it would have been, and asserts the phase margin. Take the units line away
+## anywhere -- the adapter's phase pattern, the `cphase` clause, the group
+## emitter, the option speller -- and the answer becomes 177.8 and the row goes
+## red on a NUMBER.
+set TP3DEG "ASE-MEAS
+ugf                 =  9.149274e+05
+pmph                =  -1.238583e+02
+pm = 5.614170e+01
+"
+set TP3RAD "ASE-MEAS
+ugf                 =  9.149274e+05
+pmph                =  -2.161735e+00
+pm = 1.778383e+02
+"
+proc tp_pm_value {} {
+  set blk [tp_block pm ac 0]
+  if {[string match REFUSE:* $blk]} { return $blk }
+  set deg [expr {[lsearch -exact $blk {set units=degrees}] >= 0}]
+  set text [expr {$deg ? $::TP3DEG : $::TP3RAD}]
+  set st [tp_state [tp_rows pm]]
+  return [ase::meas_result ngspice $st pm [ase::meas_read ngspice $st $text]]
+}
+check {TP3b the phase margin this deck reports is 56 degrees, and it is 56 ONLY\
+ because the block sets the unit -- the radians run of the same deck answers 178} \
+  [list [m_ans tp_pm_value] \
+        [m_ans apply {{} { set st [tp_state [tp_rows pm]]
+          return [ase::meas_result ngspice $st pm \
+                    [ase::meas_read ngspice $st $::TP3RAD]] }}]] \
+  [list {5.614170e+01} {1.778383e+02}]
+
+## TP4 -- ALL EIGHT TEMPLATES' `meas` LINES, from one bench, in deck order. This
+## is the row that would notice a template writing the wrong field into the
+## wrong slot. ⚠ Every line below was pasted into a deck and RUN on both
+## binaries; all eight answered (`gain` 60, `f3db` 999.9994, `ugf` 914927.4,
+## `pm` 56.1417, `gm` -15.56922, `srt` 330.9463u, `sr` 4230.294, `tslo` 2.101708m,
+## `thd` 80.83593), with `tshi` failing because that step never overshoots --
+## which is the measured example of the silent failure the Value column renders.
+check {TP4 the eight templates' AC lines} \
+  [tp_block {dcgain bw3db ugf pm gm} ac 0] \
+  [list {echo ASE-MEAS >> rc_ase.meas} \
+        {set units=degrees} \
+        {meas ac gain MAX vdb(out) >> rc_ase.meas} \
+        {meas ac f3db WHEN vdb(out)=56.9897 FALL=1 >> rc_ase.meas} \
+        {meas ac ugf WHEN vdb(out)=0 FALL=1 >> rc_ase.meas} \
+        {meas ac ugf2 WHEN vdb(out)=0 FALL=1 >> rc_ase.meas} \
+        {meas ac pmph2 FIND vp(out) WHEN vdb(out)=0 >> rc_ase.meas} \
+        {let pm2 = 180 + pmph2} \
+        {print pm2 >> rc_ase.meas} \
+        {let gmph = cph(v(out))} \
+        {meas ac gm FIND vdb(out) WHEN gmph=-180 >> rc_ase.meas}]
+check {TP4b the eight templates' TRAN lines, the Fourier producer included} \
+  [tp_block {sr ts thd} tran 1] \
+  [list {echo ASE-MEAS >> rc_ase.meas} \
+        {meas tran srt TRIG v(out) VAL=0.2 RISE=1 TARG v(out) VAL=1.6 RISE=1 >> rc_ase.meas} \
+        {let sr = (1.6 - 0.2) / srt} \
+        {print sr >> rc_ase.meas} \
+        {meas tran tslo WHEN v(out)=1.782 CROSS=last >> rc_ase.meas} \
+        {meas tran tshi WHEN v(out)=1.818 CROSS=last >> rc_ase.meas} \
+        {fourier 1k v(out)} \
+        {let thd = thd11} \
+        {print thd >> rc_ase.meas}]
+
+## TP5 -- THE SIDECAR THE MEASURED RUN WROTE, READ BACK. ⚠ THE TWO TEXTS ARE THE
+## TWO BINARIES' OWN SPELLINGS OF ONE RUN -- six decimals on apt 45.2, five on
+## the fork -- and the row asserts the VALUES come back as the simulator printed
+## them, byte for byte, and that the two disagree. A parse that normalised, or a
+## golden that keyed on digit count, fails exactly here.
+set TP5APT "ASE-MEAS
+gain                =  6.000000e+01 at=  1.000000e+00
+f3db                =  9.999994e+02
+ugf                 =  9.149274e+05
+ugf2                =  9.149274e+05
+pmph2               =  -1.238583e+02
+pm2 = 5.614170e+01
+gm                  =  -1.556922e+01
+"
+set TP5FORK "ASE-MEAS
+gain                =  6.00000e+01 at=  1.00000e+00
+f3db                =  9.99999e+02
+ugf                 =  9.14927e+05
+ugf2                =  9.14927e+05
+pmph2               =  -1.23858e+02
+pm2 = 5.614170e+01
+gm                  =  -1.55692e+01
+"
+proc tp_vals_of {text tpls} {
+  set rows [tp_rows $tpls]
+  set st [tp_state $rows]
+  set out {}
+  foreach e [ase::meas_results ngspice $st $text] {
+    lassign $e nm verdict val why
+    lappend out [list $nm $verdict $val]
+  }
+  return $out
+}
+check {TP5 the values come back exactly as each binary printed them, and the two\
+ binaries disagree} \
+  [list [tp_vals_of $TP5APT {dcgain bw3db ugf pm gm}] \
+        [tp_vals_of $TP5FORK {dcgain bw3db ugf pm gm}]] \
+  [list [list {gain ok 6.000000e+01} {f3db ok 9.999994e+02} {ugf ok 9.149274e+05} \
+              {ugf2 ok 9.149274e+05} {pmph2 ok -1.238583e+02} {pm2 ok 5.614170e+01} \
+              {gmph produced {}} {gm ok -1.556922e+01}] \
+        [list {gain ok 6.00000e+01} {f3db ok 9.99999e+02} {ugf ok 9.14927e+05} \
+              {ugf2 ok 9.14927e+05} {pmph2 ok -1.23858e+02} {pm2 ok 5.614170e+01} \
+              {gmph produced {}} {gm ok -1.55692e+01}]]
+
+## TP5b -- ⚠ AND A ROW THAT REPORTED NOTHING IS ITS OWN VERDICT, WHICH IS THE
+## WHOLE REASON `produced` EXISTS. The unwrapped-phase helper is ABSENT from the
+## sidecar on purpose and must not be reported as a failure; `tshi` -- the
+## settling row that really did fail on both binaries -- must be. An empty cell
+## for either would read as zero.
+set TP5TRAN "ASE-MEAS
+srt                 =  3.309463e-04 targ=  4.498016e-04 trig=  1.188553e-04
+sr = 4.230294e+03
+tslo                =  2.101708e-03
+thd = 8.083593e+01
+"
+check {TP5b the helper vector is `produced` and the measurement that found\
+ nothing is `failed`, with its sentence} \
+  [tp_vals_of $TP5TRAN {sr ts thd}] \
+  [list {srt ok 3.309463e-04} {sr ok 4.230294e+03} {tslo ok 2.101708e-03} \
+        {tshi failed {}} {thd ok 8.083593e+01}]
+check {TP5c the failed row's sentence is the one the report frames use} \
+  [lindex [lindex [m_ans ase::meas_results ngspice \
+             [tp_state [tp_rows {ts}]] $TP5TRAN] 1] 3] \
+  {the simulator did not report this measurement: the condition it asks about may never occur in this run}
+
+## TP6 -- THE REPORT HAS A CALLER NOW. `ase::meas_report` shipped in issue 1443
+## with none anywhere in the tree; `ase::ui::run_finished` appends it to the run
+## log. These are its five frames over one measured sidecar.
+check {TP6 the run report speaks the measured values and the silent failure} \
+  [m_ans ase::meas_report ngspice [tp_state [tp_rows {sr ts}]] $TP5TRAN] \
+  [list {srt = 3.309463e-04} {sr = 4.230294e+03} {tslo = 2.101708e-03} \
+        {tshi: the simulator did not report this measurement: the condition it asks about may never occur in this run}]
+check {TP6b the report is silent on a bench with no measurements, which is why\
+ no committed bench's log moves} \
+  [m_ans ase::meas_report ngspice [tp_state {}]] {}
+
 # ============================================================================
 if {[catch {
 
@@ -1303,7 +1600,12 @@ set HKPROCS {ase::meas_kinds ase::meas_kind_entry ase::meas_kind_form
              ase::meas_counter_index ase::meas_path ase::meas_marker
              ase::meas_parse ase::meas_read ase::meas_result ase::meas_results
              ase::meas_report ase::meas_needs_degrees ase::meas_schema_errors
-             ase::meas_cache_clear}
+             ase::meas_cache_clear
+             ase::meas_templates ase::meas_template_entry ase::meas_template_label
+             ase::meas_template_analysis ase::meas_template_fields
+             ase::meas_template_field ase::meas_template_expand
+             ase::meas_template_errors ase::meas_subst ase::meas_names_taken
+             ase::meas_kind_label ase::meas_kind_order ase::meas_analysis_choices}
 check {HK1 no core measurement proc spells a single ngspice word} \
   [m_ans apply {{} {
      set bad {}

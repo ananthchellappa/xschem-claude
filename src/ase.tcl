@@ -7331,9 +7331,20 @@ proc ase::meas_schema_errors {{sim {}}} {
         [dict get $e form] ne {producer}} {
       lappend errs "$kind: a counter belongs to a producer"
     }
+    ## ⚠ WIDENED IN ISSUE 1451, AND THE REASON IS A ROW THAT IS NOT A RESULT.
+    ## The rule was *"only a producer may yield something other than a number"*,
+    ## which was true while every `letform` kind answered with a scalar. The
+    ## gain-margin template needs the UNWRAPPED PHASE as a named vector before
+    ## it can ask where that vector crosses -180 -- measured on both binaries:
+    ## `meas ... WHEN cph(v(out))=-180` answers `no such vector as cph(v(out))`,
+    ## because the WHEN operand must be a vector NAME and not an expression. So
+    ## a `letform` kind may declare what it yields too, and `meas_group` reads
+    ## the same key to decide whether the row is worth printing.
     if {[dict exists $e yields] && [dict exists $e form] &&
-        [dict get $e form] ne {producer}} {
-      lappend errs "$kind: only a producer may yield something other than a number"
+        [dict get $e form] ne {producer} &&
+        !([dict exists $e letform] && [dict get $e letform] eq {1})} {
+      lappend errs "$kind: only a producer or a letform kind may yield\
+ something other than a number"
     }
     if {![dict exists $e fields]} { continue }
     if {[catch {llength [dict get $e fields]}]} {
@@ -7348,6 +7359,269 @@ proc ase::meas_schema_errors {{sim {}}} {
     }
   }
   return $errs
+}
+
+# ── THE NAMED TEMPLATES ──────────────────────────────────────────────────────
+#
+# `PLAN.md` §8b: eight derived answers a user picks by name and fills two
+# fields for -- DC gain, -3 dB bandwidth, unity-gain frequency, PHASE MARGIN,
+# gain margin, slew rate, settling time, THD. *"This is what better than ADE-L
+# means for the daily task."*
+#
+# ⚠ THE CATALOGUE IS THE ADAPTER'S AND EVERY WORD IN IT IS. A template's rows
+# are spelled in ONE simulator's function vocabulary -- `vdb()`, `vp()`,
+# `-3.0103`, `180 +` -- so the whole table is CONTENT (D34/D36) and core owns
+# only the SHAPE: what a template declares, how its fields are filled, how the
+# rows it writes are made unique, and the fact that what comes out the other
+# end is an ORDINARY measurement row with no memory of the template at all.
+# `ase::meas_templates` answers `{}` for a backend with no hook, exactly as
+# `ase::meas_kinds` does, and a GUI with no templates then offers none.
+#
+# ⚠ AND THE ROWS IT WRITES ARE ORDINARY. Nothing stores which template made a
+# row, and nothing may: a template is a WAY OF TYPING four rows, not a fifth
+# kind of row. The moment it were remembered, editing one of its rows would
+# raise the question of what the template now means, and `ase::meas_verdict`
+# would have two answers to reconcile instead of one.
+proc ase::meas_templates {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim meas_templates]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+proc ase::meas_template_entry {sim tpl} {
+  set d [ase::meas_templates $sim]
+  if {![dict exists $d $tpl]} { return {} }
+  return [dict get $d $tpl]
+}
+
+# The template's NAME ON SCREEN -- the declared `label`, else its own token so
+# a catalogue that forgot one still offers something pickable.
+proc ase::meas_template_label {sim tpl} {
+  set e [ase::meas_template_entry $sim $tpl]
+  if {$e ne {} && [dict exists $e label]} { return [dict get $e label] }
+  return $tpl
+}
+
+# WHICH ANALYSIS TYPE A TEMPLATE READS -- `ac` for the four small-signal ones,
+# `tran` for the three time-domain ones. It is what filters the Analysis
+# dropdown, and it is why every row a template writes binds to a handle whose
+# type its own `analysis` key already names: `ase::meas_binding` refuses a row
+# whose stored `analysis` disagrees with the handle it carries, so a template
+# that offered every handle would write rows that refuse.
+proc ase::meas_template_analysis {sim tpl} {
+  set e [ase::meas_template_entry $sim $tpl]
+  if {$e ne {} && [dict exists $e analysis]} { return [dict get $e analysis] }
+  return {}
+}
+
+proc ase::meas_template_fields {sim tpl} {
+  set e [ase::meas_template_entry $sim $tpl]
+  if {$e eq {} || ![dict exists $e fields]} { return {} }
+  return [dict get $e fields]
+}
+
+proc ase::meas_template_field {sim tpl name} {
+  foreach f [ase::meas_template_fields $sim $tpl] {
+    if {[dict exists $f name] && [dict get $f name] eq $name} { return $f }
+  }
+  return {}
+}
+
+# EVERY MEASUREMENT NAME ALREADY SPOKEN FOR, folded. The simulator folds the
+# names it prints and `ase::meas_parse` therefore looks them up
+# case-insensitively, so `PM` and `pm` are one name and a template may not mint
+# the second of them.
+proc ase::meas_names_taken {state} {
+  set out {}
+  foreach r [ase::meas_rows $state] {
+    set n [ase::meas_name $r]
+    if {$n ne {}} { lappend out [string tolower $n] }
+  }
+  return $out
+}
+
+# ── EXPANDING ONE TEMPLATE INTO ROWS ─────────────────────────────────────────
+#
+# `{ok <rows>}` or `{refuse <why>}`. The substitution alphabet is `@name@`:
+# every field the user filled, plus **`@n@`, the batch suffix**.
+#
+# ⚠ `@n@` IS WHY THE SECOND PHASE MARGIN ON ONE BENCH DOES NOT REFUSE. A
+# template writes several rows that REFER TO EACH OTHER -- phase margin's
+# `let pm = 180 + pmph` is the whole point of it -- so uniquifying one name at
+# a time would break the reference. One suffix is chosen for the WHOLE batch,
+# tried empty first and then `2`, `3`, ..., and the template spells it into
+# both the names it mints and the references it makes. The result is that the
+# first phase margin is `pm`/`pmph`/`ugf` and the second is `pm2`/`pmph2`/`ugf2`,
+# with `let pm2 = 180 + pmph2` -- which is what a person would have typed.
+#
+# ⚠ AND THE ARITHMETIC IS THE ADAPTER'S. `-3 dB` is `gain - 3.0103` because a
+# decibel is what that simulator's `vdb()` answers in; core would be inventing
+# a unit. The optional `meas_template_derive` hook augments the value dict
+# before substitution, and a backend that declares none simply has no computed
+# fields.
+proc ase::meas_template_expand {sim state tpl vals} {
+  set e [ase::meas_template_entry $sim $tpl]
+  if {$e eq {}} {
+    return [list refuse "'$sim' has no measurement template called '$tpl'"]
+  }
+  foreach f [ase::meas_template_fields $sim $tpl] {
+    if {![dict exists $f required] || [dict get $f required] ne {1}} { continue }
+    set fn [dict get $f name]
+    if {![dict exists $vals $fn] || [string trim [dict get $vals $fn]] eq {}} {
+      set lbl $fn
+      if {[dict exists $f label]} { set lbl [dict get $f label] }
+      return [list refuse "this template needs a value for $lbl"]
+    }
+  }
+  ## THE SIMULATOR'S OWN COMPUTED FIELDS, BEFORE ANY SUBSTITUTION.
+  catch {
+    set h [ase::backend_hook $sim meas_template_derive]
+    if {$h ne {}} { set vals [$h $tpl $vals] }
+  }
+  if {![dict exists $e rows]} { return {ok {}} }
+  set taken [ase::meas_names_taken $state]
+  set sfx {}
+  for {set try 1} {$try < 1000} {incr try} {
+    if {$try > 1} { set sfx $try }
+    set clash 0
+    foreach rt [dict get $e rows] {
+      set nm [string tolower \
+        [string trim [ase::meas_subst [ase::state_get $rt name] $vals $sfx]]]
+      if {$nm ne {} && [lsearch -exact $taken $nm] >= 0} { set clash 1 ; break }
+    }
+    if {!$clash} { break }
+  }
+  set out {}
+  foreach rt [dict get $e rows] {
+    set row [dict create]
+    dict for {k v} $rt {
+      dict set row $k [string trim [ase::meas_subst $v $vals $sfx]]
+    }
+    ## THE BINDING, WRITTEN BY CORE AND NOT BY THE TEMPLATE. ⚠ IT IS
+    ## `id <handle>` AND NEVER `row <index>`: a handle is a NAME the user chose
+    ## or ASE-L minted and it survives a row being enabled, disabled or moved,
+    ## while an index is a POSITION that silently starts naming a different
+    ## sweep the moment one is inserted above it. ⚖ R6 is the ruling and
+    ## `ase::analysis_by_handle` is the reader.
+    set an [ase::meas_template_analysis $sim $tpl]
+    if {$an ne {}} { dict set row analysis $an }
+    set h {}
+    foreach f [ase::meas_template_fields $sim $tpl] {
+      if {[dict exists $f kind] && [dict get $f kind] eq {analysis}} {
+        set fn [dict get $f name]
+        if {[dict exists $vals $fn]} { set h [string trim [dict get $vals $fn]] }
+      }
+    }
+    if {$h ne {}} { dict set row id $h }
+    lappend out $row
+  }
+  return [list ok $out]
+}
+
+# `@field@` and `@n@`, and nothing else. A `@name@` the value dict does not
+# answer for is left ALONE rather than emptied, so a template referring to a
+# field it does not declare shows the reader `@typo@` in the form instead of a
+# silently truncated expression.
+proc ase::meas_subst {text vals sfx} {
+  set map [list @n@ $sfx]
+  dict for {k v} $vals { lappend map "@$k@" [string trim $v] }
+  return [string map $map $text]
+}
+
+# THE ADAPTER'S TEMPLATE CATALOGUE, CHECKED -- ase::meas_schema_errors' sibling
+# and Stage 15's second conformance question. A template with no rows, a row
+# with no name or no kind, a kind this adapter does not describe, an `analysis`
+# its own `meas_analyses` refuses, a field with no name.
+proc ase::meas_template_errors {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set errs {}
+  set d [ase::meas_templates $sim]
+  if {[catch {dict size $d}]} { return [list "meas_templates is not a dict"] }
+  set oka [ase::meas_analyses $sim]
+  dict for {tpl e} $d {
+    if {[catch {dict size $e}]} { lappend errs "$tpl: entry is not a dict" ; continue }
+    if {![dict exists $e label]} { lappend errs "$tpl: no label" }
+    set an {}
+    if {[dict exists $e analysis]} { set an [dict get $e analysis] }
+    if {$an eq {}} { lappend errs "$tpl: no analysis" } \
+    elseif {[llength $oka] && [lsearch -exact $oka $an] < 0} {
+      lappend errs "$tpl: analysis '$an' cannot carry a measurement"
+    }
+    foreach f [ase::meas_template_fields $sim $tpl] {
+      if {[catch {dict size $f}]} { lappend errs "$tpl: a field is not a dict" ; continue }
+      if {![dict exists $f name]} { lappend errs "$tpl: a field has no name" }
+    }
+    if {![dict exists $e rows] || ![llength [dict get $e rows]]} {
+      lappend errs "$tpl: no rows" ; continue
+    }
+    foreach rt [dict get $e rows] {
+      if {[catch {dict size $rt}]} { lappend errs "$tpl: a row is not a dict" ; continue }
+      if {[string trim [ase::state_get $rt name]] eq {}} {
+        lappend errs "$tpl: a row has no name"
+      }
+      set k [string trim [ase::state_get $rt kind]]
+      if {$k eq {}} { lappend errs "$tpl: a row has no kind" ; continue }
+      if {[ase::meas_kind_form $sim $k] eq {}} {
+        lappend errs "$tpl: a row asks for kind '$k', which '$sim' does not describe"
+      }
+    }
+  }
+  return $errs
+}
+
+# THE KIND'S NAME ON SCREEN. ⚠ NOTHING READ THIS KEY UNTIL NOW: issue 1443
+# declared eighteen `label`s and built no widget, so the Kind picker is the
+# first thing that shows one. The fallback is the kind's own token, for the
+# same reason ase::ui::form_label falls back to `[string totitle]` -- a
+# catalogue that has not been written yet still produces a usable picker.
+proc ase::meas_kind_label {sim kind} {
+  set e [ase::meas_kind_entry $sim $kind]
+  if {$e ne {} && [dict exists $e label]} { return [dict get $e label] }
+  return $kind
+}
+
+# The kinds in the order the adapter declared them -- a Tcl dict iterates in
+# insertion order, which is what makes the picker's order the catalogue's
+# rather than alphabetical.
+proc ase::meas_kind_order {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  return [dict keys [ase::meas_kinds $sim]]
+}
+
+# WHICH ANALYSIS ROWS A MEASUREMENT MAY BE BOUND TO, as `{handle type idx}`
+# triples in bench order -- every row whose TYPE this simulator's measure
+# engine accepts, ENABLED OR NOT.
+#
+# ⚠ THE DISABLED ONES ARE OFFERED, AND THAT IS ase::analysis_by_handle's OWN
+# RULE ONE LEVEL UP. A handle is IDENTITY; whether the named analysis will run
+# is a separate question and `ase::meas_verdict` answers it in its own sentence
+# (*"the analysis called 'ac1' is switched off, so 'pm' has nothing to read"*).
+# Hiding the row would leave the user unable to build the measurement BEFORE
+# switching the analysis on, which is the order people actually work in.
+proc ase::meas_analysis_choices {sim state {type {}}} {
+  set ok [ase::meas_analyses $sim]
+  set out {}
+  set n [llength [ase::state_get $state analyses]]
+  for {set i 0} {$i < $n} {incr i} {
+    set f [ase::analysis_handle_fields $sim $state $i]
+    if {$f eq {}} { continue }
+    set h [dict get $f handle]
+    if {$h eq {}} { continue }
+    set t [string tolower [dict get $f type]]
+    ## ⚠ THE MEASURABILITY FILTER IS UNCONDITIONAL AND THE TYPE FILTER IS
+    ## ADDITIONAL. An explicit `type` narrows what is offered; it may not WIDEN
+    ## it past what the simulator's own measure engine accepts, or a caller
+    ## asking for `op` would be handed a handle that refuses the moment it is
+    ## stored (`'ngspice' cannot measure a op analysis`).
+    if {[llength $ok] && [lsearch -exact $ok $t] < 0} { continue }
+    if {$type ne {} && $t ne $type} { continue }
+    lappend out [list $h $t $i]
+  }
+  return $out
 }
 
 # <rundir>/<cell>_ase.plotmap -- beside the results file and the log.
@@ -9447,12 +9721,29 @@ proc ase::analysis_handle_text {sim state} {
   }
   set out {}
   foreach f $rows {
-    set l [format "%-*s  %-*s  %s" $wh [dict get $f handle] \
-                  $wt [dict get $f type] [dict get $f args]]
-    if {![dict get $f enabled]} { set l "[string trimright $l]  (off)" }
-    lappend out [string trimright $l]
+    lappend out [ase::analysis_handle_line $f $wh $wt]
   }
   return [join $out "\n"]
+}
+
+# ONE ROW'S ONE-LINER, from `ase::analysis_handle_fields`' answer. `wh`/`wt`
+# pad the handle and type columns; both `0` gives the single-line form a picker
+# wants.
+#
+# ⚠ IT EXISTS SO THAT `(off)` HAS EXACTLY ONE SPELLING. Issue 1448 put the
+# marker inside `ase::analysis_handle_text`, which renders the WHOLE bench as a
+# padded block -- fine for `Analyses > List` and unusable in a combobox, which
+# needs one row at a time. Stage 8 task 2's Measurements dropdown is that second
+# reader, and a dropdown that assembled `"$h  $t  $a (off)"` for itself would be
+# issue 1444's *"three surfaces showing three spellings"* arriving through the
+# one door that was supposed to prevent it. So the block became a caller of the
+# line rather than the line a copy of the block.
+proc ase::analysis_handle_line {f {wh 0} {wt 0}} {
+  if {$f eq {}} { return {} }
+  set l [format "%-*s  %-*s  %s" $wh [dict get $f handle] \
+                $wt [dict get $f type] [dict get $f args]]
+  if {![dict get $f enabled]} { set l "[string trimright $l]  (off)" }
+  return [string trimright $l]
 }
 
 # --- THE SIMULATOR-PROFILE LAYER WAS HERE AND IS GONE ------------------------
@@ -21830,6 +22121,10 @@ $_leg
         form meas  label {Expression over other measurements} \
         letform 1 \
         fields {{name expr kind expr required 1 label {Expression}}}] \
+      cphase [dict create \
+        form meas  label {Unwrapped phase} \
+        letform 1 yields vector \
+        fields {{name target kind vecexpr required 1 label {Signal}}}] \
       fourier [dict create \
         form producer  label {Fourier / THD} counter fourier \
         fields {{name fund   kind freq    required 1 label {Fundamental} unit Hz}
@@ -21876,6 +22171,128 @@ $_leg
   # measurement on a `noise` row would be offering a run-time failure.
   proc meas_analyses {} { return {tran dc ac sp} }
 
+  # ── THE EIGHT NAMED TEMPLATES (PLAN.md §8b) ─────────────────────────────────
+  #
+  # ⚠ EVERY ROW BELOW IS SPELLED IN NGSPICE'S OWN FUNCTION VOCABULARY -- `vdb()`,
+  # `vp()`, `v()`, the decibel `3.0103`, the `180 +` of a phase margin -- so the
+  # whole catalogue is CONTENT and lives here. Core owns the SHAPE: how the
+  # fields are filled, how one suffix keeps a second phase margin's three rows
+  # referring to each other, and the fact that what comes out is an ORDINARY
+  # measurement row (`ase::meas_template_expand`).
+  #
+  # ⚠ `@n@` IS THE BATCH SUFFIX AND IT MUST APPEAR IN EVERY NAME **AND IN EVERY
+  # REFERENCE TO ONE**. `let pm@n@ = 180 + pmph@n@` is the reason it exists: two
+  # phase margins on one bench need `pm2` to read `pmph2` and not `pmph`, and a
+  # per-row uniquifier could not know that.
+  #
+  # ⚠ AND EVERY TEMPLATE NAMES ITS `analysis`. `ase::meas_binding` refuses a row
+  # whose stored `analysis` disagrees with the handle it carries, so the picker
+  # is filtered to the type the template reads and the row is written with both.
+  #
+  # THREE CORRECTIONS TO §8b's TABLE, ALL OF THEM MEASURED OR FORCED:
+  #
+  #  1. **Phase margin cannot name two rows `pm`.** The plan writes
+  #     `meas ac pm find vp(out) when vdb(out)=0` and then `let pm = 180 + pm`.
+  #     ngspice tolerates the self-assignment; ASE-L does not, and deliberately:
+  #     `ase::meas_verdict`'s duplicate-name rule refuses the second row because
+  #     the sidecar's lookup is case-insensitive and the second answer would
+  #     silently overwrite the first. The measured phase is `pmph@n@` and the
+  #     margin is `pm@n@`.
+  #  2. **"Slew rate" in the plan emits a DELAY.** `trig ... targ ...` answers
+  #     seconds; a slew rate is volts per second. Reporting a time under the
+  #     name `sr` is the silent-wrong-answer class this batch exists to delete,
+  #     so the template writes the delay as `srt@n@` and a `param` row
+  #     `sr@n@ = (hi - lo)/srt@n@` beside it. Both are ordinary rows and either
+  #     can be deleted.
+  #  3. **THD is a COMMAND, not a `.four` CARD.** §8c's card was refuted by
+  #     issue 1443's own measurement -- a dot card beside a `.control` block runs
+  #     the whole simulation a SECOND time, on both binaries -- so the `fourier`
+  #     producer does the work and the card slot stays empty.
+  proc meas_templates {} {
+    return [dict create \
+      dcgain [dict create \
+        label {DC gain} analysis ac \
+        fields {{name an  kind analysis required 1 label {Analysis}}
+                {name out kind vecexpr  required 1 label {Output signal}}} \
+        rows {{name gain@n@ kind max target vdb(@out@)}}] \
+      bw3db [dict create \
+        label {-3 dB bandwidth} analysis ac \
+        fields {{name an   kind analysis required 1 label {Analysis}}
+                {name out  kind vecexpr  required 1 label {Output signal}}
+                {name gain kind real     required 1 label {Passband gain} unit dB}} \
+        rows {{name f3db@n@ kind when target vdb(@out@) value @v3db@ dir fall}}] \
+      ugf [dict create \
+        label {Unity-gain frequency} analysis ac \
+        fields {{name an  kind analysis required 1 label {Analysis}}
+                {name out kind vecexpr  required 1 label {Output signal}}} \
+        rows {{name ugf@n@ kind when target vdb(@out@) value 0 dir fall}}] \
+      pm [dict create \
+        label {Phase margin} analysis ac \
+        fields {{name an  kind analysis required 1 label {Analysis}}
+                {name out kind vecexpr  required 1 label {Output signal}}} \
+        rows {{name ugf@n@  kind when  target vdb(@out@) value 0 dir fall}
+              {name pmph@n@ kind find  target vp(@out@) when vdb(@out@) value 0}
+              {name pm@n@   kind param expr {180 + pmph@n@}}}] \
+      gm [dict create \
+        label {Gain margin} analysis ac \
+        fields {{name an  kind analysis required 1 label {Analysis}}
+                {name out kind vecexpr  required 1 label {Output signal}}} \
+        rows {{name gmph@n@ kind cphase target v(@out@)}
+              {name gm@n@   kind find target vdb(@out@) when gmph@n@ value -180}}] \
+      sr [dict create \
+        label {Slew rate} analysis tran \
+        fields {{name an  kind analysis required 1 label {Analysis}}
+                {name out kind vecexpr  required 1 label {Output signal}}
+                {name lo  kind real     required 1 label {Start level} unit V}
+                {name hi  kind real     required 1 label {End level} unit V}} \
+        rows {{name srt@n@ kind trigtarg
+               trig v(@out@) trigval @lo@ trigdir rise
+               targ v(@out@) targval @hi@ targdir rise}
+              {name sr@n@  kind param expr {(@hi@ - @lo@) / srt@n@}}}] \
+      ts [dict create \
+        label {Settling time} analysis tran \
+        fields {{name an    kind analysis required 1 label {Analysis}}
+                {name out   kind vecexpr  required 1 label {Output signal}}
+                {name final kind real     required 1 label {Final value} unit V}
+                {name tol   kind real     required 1 label {Tolerance} unit V}} \
+        rows {{name tslo@n@ kind when target v(@out@) value @vlo@ dir cross n last}
+              {name tshi@n@ kind when target v(@out@) value @vhi@ dir cross n last}}] \
+      thd [dict create \
+        label {THD} analysis tran \
+        fields {{name an   kind analysis required 1 label {Analysis}}
+                {name out  kind vecexpr  required 1 label {Output signal}}
+                {name fund kind freq     required 1 label {Fundamental} unit Hz}} \
+        rows {{name thd@n@ kind fourier fund @fund@ target v(@out@)}}]]
+  }
+
+  # THE COMPUTED FIELDS, AND THEY ARE ARITHMETIC IN A UNIT ONLY THIS ADAPTER
+  # KNOWS. `-3 dB` is `gain - 3.0103` because `vdb()` answers in decibels; a
+  # settling band is `final ± tol` in whatever `v()` answers in. Core does the
+  # substitution and never the sums (D34).
+  #
+  # ⚠ AN UNREADABLE NUMBER IS LEFT ALONE RATHER THAN GUESSED. `meas_num` answers
+  # `{}` for anything this simulator's own suffix alphabet cannot read, and the
+  # `@v3db@` placeholder then survives into the row -- where the user SEES it in
+  # the form, instead of a silently wrong threshold.
+  proc meas_template_derive {tpl vals} {
+    switch -exact -- $tpl {
+      bw3db {
+        set g [meas_num [::ase::state_get $vals gain]]
+        if {$g ne {}} { dict set vals v3db [expr {$g - 3.0103}] }
+      }
+      ts {
+        set f [meas_num [::ase::state_get $vals final]]
+        set t [meas_num [::ase::state_get $vals tol]]
+        if {$f ne {} && $t ne {}} {
+          dict set vals vlo [expr {$f - $t}]
+          dict set vals vhi [expr {$f + $t}]
+        }
+      }
+    }
+    return $vals
+  }
+
+
   # ⚠ THE PHASE-UNIT TRAP, AND IT IS ANSWERED THROUGH THE ONE SPELLER.
   #
   # MEASURED 2026-09-13 on BOTH binaries, an RC whose phase at 1 kHz is exactly
@@ -21905,6 +22322,14 @@ $_leg
   proc meas_needs_degrees {rows} {
     set pat [meas_phase_pattern]
     foreach r $rows {
+      ## ⚠ A KIND CAN BE A PHASE READER WITHOUT SPELLING ONE. `cphase` emits
+      ## `let <n> = cph(v(out))` -- there is no `vp(` anywhere in the row, and
+      ## `cph()` is evaluated under whatever `units` is in force AT THAT MOMENT.
+      ## Without this clause the gain margin below it would be measured against
+      ## a phase in RADIANS and would look for -180 in a vector whose values run
+      ## to -4.7, which is the 57.2958x trap arriving through the one row that
+      ## does not mention a phase function.
+      if {[string trim [::ase::state_get $r kind]] eq {cphase}} { return 1 }
       foreach k {target trig targ when expr} {
         set v [::ase::state_get $r $k]
         if {$v ne {} && [regexp -nocase $pat $v]} { return 1 }
@@ -22076,6 +22501,28 @@ $_leg
         # nor `expr=` nor `par()`. A `let` is the route the dossier verified, and
         # it makes exactly the same length-1 vector a `meas` would.
         return [list "let $name = [string trim [::ase::meas_field_value $sim $kind $row expr]]"]
+      }
+      cphase {
+        ## ⚠ THE UNWRAPPED PHASE, AS A NAMED VECTOR, AND IT EXISTS BECAUSE
+        ## `meas`'s `WHEN` OPERAND MUST BE A VECTOR NAME. MEASURED 2026-09-13
+        ## on both binaries, on a three-pole amplifier whose phase really does
+        ## pass through -180:
+        ##
+        ##   meas ac gm FIND vdb(out) WHEN vp(out)=-180
+        ##       -> `measure gm find(AT) : out of interval`, on both
+        ##   meas ac gm FIND vdb(out) WHEN cph(v(out))=-180
+        ##       -> `Error: no such vector as cph(v(out)).`, on both
+        ##   let gmph = cph(v(out))
+        ##   meas ac gm FIND vdb(out) WHEN gmph=-180
+        ##       -> gm = -1.556922e+01 at f = 3.001137e+06, on both
+        ##
+        ## TWO separate facts, and the first is the sharper one: `vp()` is
+        ## WRAPPED. Measured on the same sweep, the point where the continuous
+        ## phase reads `-2.36596e+02` has `vp(out)` reading `+1.234040e+02`, so
+        ## the value -180 is exactly the discontinuity and no crossing detector
+        ## can ever see it. `PLAN.md` §8b's gain-margin line is written against
+        ## `vp(out)` and therefore answers NOTHING on any amplifier it is for.
+        return [list "let $name = cph([::ase::meas_field_value $sim $kind $row target])"]
       }
       trigtarg {
         lappend v TRIG [::ase::meas_field_value $sim $kind $row trig]
@@ -22317,11 +22764,22 @@ $_leg
       lappend out [::ase::opt_line $sim units degrees control]
     }
     foreach r $rows {
-      foreach l [meas_line $state $r] {
+        foreach l [meas_line $state $r] {
         if {[string match {let *} $l]} {
           # a `let`-form row prints through `print`, because `let` prints nothing
           lappend out $l
-          lappend out "print [::ase::meas_name $r] >> $path"
+          ## ⚠ AND ONLY WHEN THE ROW IS GOING TO ANSWER WITH A NUMBER. A
+          ## `letform` row that yields a VECTOR -- `cphase`, the unwrapped phase
+          ## a gain margin is measured against -- is a working value for the row
+          ## below it and not a result; `print`ing it would put one line per
+          ## frequency point of the sweep into the sidecar. `ase::meas_kind_yields`
+          ## is the question already asked of a producer for exactly this reason,
+          ## and `ase::meas_results` reports such a row as `produced` rather than
+          ## complaining that the simulator said nothing about it.
+          if {[::ase::meas_kind_yields $sim \
+                 [string trim [::ase::state_get $r kind]]] eq {number}} {
+            lappend out "print [::ase::meas_name $r] >> $path"
+          }
         } else {
           lappend out "$l >> $path"
         }
@@ -23332,6 +23790,8 @@ $_leg
     meas_analyses       ::ase::backend::ngspice::meas_analyses \
     meas_rule           ::ase::backend::ngspice::meas_rule \
     meas_needs_degrees  ::ase::backend::ngspice::meas_needs_degrees \
+    meas_templates      ::ase::backend::ngspice::meas_templates \
+    meas_template_derive ::ase::backend::ngspice::meas_template_derive \
     predeck_write       ::ase::backend::ngspice::predeck_write \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \

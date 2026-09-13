@@ -193,6 +193,18 @@ set fail 0; set npass 0
 #              row drives the real subdialog's widgets. The schema half is
 #              test_ase_core section NS (the proc and the fourth-copy source
 #              scan), which runs on BOTH arms.
+#   37 / 363   section MS, Stage 8b (issue 1451): the Measurements sub-dialog,
+#              the eight named templates and the Value column. Headless is
+#              unmoved for GR5's, GR6's, GH's and NX's reason -- every MS row
+#              drives the real dialog's widgets. The schema half is
+#              test_ase_core section MT (the templates and the one-line handle
+#              renderer) and test_ase_meas_1443 section TP (the same eight
+#              templates as the deck carries them).
+#              ⚠ MS10's Value cells are the SIMULATOR'S PRINTED TEXT: apt 45.2
+#              prints `9.149274e+05` where the fork prints `9.14927e+05` for the
+#              same measurement, and the row asserts both survive untouched. A
+#              golden that keyed on digit count passes on one binary and fails on
+#              the other.
 #   37 / 340   section GH, ⚖ R6's GUI half (issue 1448): the handle is visible
 #              and the second row of a type is reachable. Headless is unmoved
 #              for GR5's and GR6's reason -- every GH row drives widgets, and
@@ -210,6 +222,39 @@ set fail 0; set npass 0
 #              gate is silent on a named enabled row, the row still renders its
 #              card, and a third state carrying a key nothing can spend is the
 #              non-vacuity control, because the original PAIR no longer disagrees.
+#   MS1-17     THE MEASUREMENTS SUB-DIALOG (issue 1451, PLAN.md §8b). Issue 1443
+#              shipped the whole DECK half of Stage 8 and built no widget:
+#              nothing read a kind's `label`, `ase::meas_report` had no caller
+#              anywhere in the tree, and a user could not create one measurement
+#              row without hand-editing a `.state` file. `Outputs > Measurements…`
+#              is that surface -- a list with a Value column (MS1, MS2, MS10),
+#              a Kind picker rendering the adapter's declared labels (MS3), an
+#              Analysis dropdown that is `ase::analysis_handle_line`'s answer and
+#              stores `id <handle>` and never `row <index>` (MS4), add / delete /
+#              reorder whose order reaches the deck (MS5), ⚖ R5's remembering
+#              inherited through one harvest door (MS6), the eight named
+#              templates (MS8), `R9-325`'s one-line `When signal … reaches`
+#              constraint (MS9), the evaluator's own refusal sentences (MS11),
+#              `Measured on` so nothing the deck can carry is unshowable (MS12),
+#              the enable tri-state (MS13) and the 104-file byte-identity
+#              question from the GUI side (MS14).
+#              ⚠ MS15 IS THE ONE THAT MATTERS: a row CREATED IN THE DIALOG,
+#              committed, RENDERED INTO A DECK with `set units=degrees` above it,
+#              and read back into a Value CELL from the sidecar text a real run
+#              wrote. Issue 1449 is the scar it answers -- two halves of a
+#              feature tested in different suites never meet.
+#              ⚠ MS10's FOURTH TERM IS THE OTHER DEFECT THIS SECTION FOUND IN
+#              ITSELF: two rows may share a name -- the second is REFUSED but is
+#              still storable and still on screen -- and a name-keyed Value
+#              lookup hands the FIRST row, the one with a real number in it, the
+#              SECOND row's refusal sentence. The lookup is positional with a
+#              name guard.
+#              ⚠ MS16 IS THE DEFECT THIS SECTION FOUND IN ITSELF: a handle the
+#              bench no longer resolves must still be OFFERED by the Analysis
+#              picker, or the harvest sees an empty box and the next selection
+#              change -- or OK -- strips the binding off a row the user opened
+#              the dialog only to look at. MS17 is the item-10 ESC leg for both
+#              new toplevels.
 #   NX1-NX6    ONE list of non-setting row keys (issue 1450). The `Options...`
 #              subdialog kept its own copy of it -- twice, a reader and a writer,
 #              both `{type enabled}` plus the declared fields -- so a row carrying
@@ -4573,6 +4618,593 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list 1 1]
   catch {destroy $top.chana}
   ase::session_update $key $GHFIX
+  ase::ui::populate $key
+  update
+
+  # --- MS: THE MEASUREMENTS SUB-DIALOG (issue 1451, PLAN.md §8b) -------------
+  #
+  # Issue 1443 shipped the whole DECK half of Stage 8 -- a `measurements` state
+  # list, eighteen kinds, a four-verdict refusal evaluator, the `meas` speller,
+  # the producers and the sidecar -- and BUILT NO WIDGET. Nothing read a kind's
+  # `label`, `ase::meas_report` had no caller anywhere in the tree, and a user
+  # could not create one measurement row without hand-editing a `.state` file.
+  # These rows are that surface.
+  #
+  # ⚠ THE LOAD-BEARING ROW IS MS15 AND IT IS ONE EXPRESSION FROM END TO END:
+  # a row CREATED IN THE DIALOG, committed, rendered into a deck, and read back
+  # into a Value cell from the sidecar text a real run wrote. Issue 1449 is why:
+  # the `id` key passed 622 checks and a clean T1 because one suite's fixtures
+  # declared ids and never enabled anything while another's enabled things and
+  # never declared an id, and the defect lived in the seam. Two halves of a
+  # feature tested in different suites never meet.
+  #
+  # ⚠ MS9 IS `R9-325`'s LAYOUT CONSTRAINT AS A MEASUREMENT. `reaches` is the
+  # only LOWERCASE field label in the tree -- it is the second half of the
+  # sentence `When signal <v(out)> reaches <0.9>` -- and it reads correctly only
+  # if the form puts both on ONE line. The rule is keyed on the copy's own shape
+  # (a lowercase label continues the row above it), so it needs no per-simulator
+  # knowledge, and MS9's control is that an ordinary label is NOT inlined.
+  #
+  # ⚠ THE VALUE COLUMN IS THE SIMULATOR'S PRINTED TEXT, VERBATIM. Measured on
+  # both binaries: apt 45.2 prints `9.149274e+05` where the fork prints
+  # `9.14927e+05` for the same measurement. MS10 asserts both spellings survive
+  # untouched, because a golden that keyed on digit count would pass on one
+  # binary and fail on the other.
+  #
+  # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW, like GR5's, GR6's, GH's and NX's.
+  proc ms_open {key} {
+    set top [ase::ui::window_for $key]
+    catch {destroy $top.meas}
+    ase::ui::measurements_dialog $key
+    update
+    return $top.meas
+  }
+  proc ms_col {mw col} {
+    set out {}
+    foreach it [$mw.rows children {}] { lappend out [$mw.rows set $it col_$col] }
+    return $out
+  }
+  proc ms_cells {mw col} {
+    set out {}
+    foreach it [$mw.rows children {}] { lappend out [$mw.rows set $it $col] }
+    return $out
+  }
+  proc ms_bench {key rows {meas {}}} {
+    set st [ase::session_state $key]
+    dict set st analyses $rows
+    dict set st measurements $meas
+    ase::session_update $key $st
+    ase::ui::populate $key
+    update
+  }
+  ## the grid row/column a form widget sits in, or `-` when it is not there
+  proc ms_grid {w} {
+    if {![winfo exists $w]} { return - }
+    set gi [grid info $w]
+    return [list [dict get $gi -row] [dict get $gi -column]]
+  }
+  ## write a sidecar with exactly the text a measured run produced
+  proc ms_sidecar {key text} {
+    set p {}
+    if {[catch {ase::meas_path [ase::session_state $key]} p]} { return {} }
+    file mkdir [file dirname $p]
+    set fh [::open $p w]
+    puts -nonewline $fh $text
+    close $fh
+    return $p
+  }
+  proc ms_no_sidecar {key} {
+    set p {}
+    if {[catch {ase::meas_path [ase::session_state $key]} p]} { return }
+    catch {file delete -- $p}
+  }
+
+  ## THE BENCH: one AC row, one TRAN row and one DISABLED AC row, so the
+  ## Analysis dropdown has something to disagree about. ⚠ The `op` row is the
+  ## control the dropdown must NEVER offer -- ngspice's `chkAnalysisType()`
+  ## accepts only tran/dc/ac/sp.
+  set MSROWS [list \
+    {type ac enabled 1 sweep dec points 100 start 1 stop 1g} \
+    {type tran enabled 1 step 2u stop 3m} \
+    {type op enabled 1} \
+    {type ac enabled 0 sweep lin points 5 start 1 stop 10}]
+  ms_bench $key $MSROWS
+  set MSFIX [ase::session_state $key]
+  ms_no_sidecar $key
+
+  ## MS1 -- THE DOOR. `Outputs > Measurements…`, and the dialog it opens.
+  set MS1MENU [cx {[ase::ui::window_for $key].mb.outputs index [ase::ui::lbl_measurements_menu]}]
+  set mw [ms_open $key]
+  check "MS1 `Outputs > Measurements…` exists and opens the Measurements dialog\
+ with the list, the button bar and the form" \
+    [list [expr {$MS1MENU ne {} && ![string match ERR:* $MS1MENU]}] \
+          [winfo exists $mw] [winfo exists $mw.rows] [winfo exists $mw.bar.add] \
+          [winfo exists $mw.bar.tpl] [winfo exists $mw.form] \
+          [$mw.rows cget -columns]] \
+    [list 1 1 1 1 1 1 {enable name kind analysis value}]
+  $mw.btns.cancel invoke
+  update
+
+  ## MS2 -- THE LIST RENDERS THE KIND'S DECLARED **LABEL** AND THE ANALYSIS'S
+  ## **HANDLE**. Nothing read a kind `label` before this widget existed. ⚠ The
+  ## third term is the control: the kind COLUMN is not the kind token, so a fill
+  ## that rendered the raw key would still produce three strings.
+  ms_bench $key $MSROWS [list \
+    {name gain kind max target vdb(out) analysis ac id ac1} \
+    {name tr kind trigtarg trig v(out) targ v(out) analysis tran id tran1} \
+    {name off1 kind rms target v(out) analysis tran id tran1 enabled 0}]
+  set mw [ms_open $key]
+  check "MS2 the list renders one line per measurement: the kind's declared\
+ LABEL, the analysis's HANDLE, and the enable glyph" \
+    [list [ms_cells $mw name] [ms_cells $mw kind] [ms_cells $mw analysis] \
+          [ms_cells $mw enable]] \
+    [list {gain tr off1} \
+          [list {Maximum} {Delay (TRIG ... TARG)} {RMS}] \
+          {ac1 tran1 tran1} \
+          [list [ase::ui::chk_glyph 1] [ase::ui::chk_glyph 1] [ase::ui::chk_glyph 0]]]
+
+  ## MS3 -- THE KIND PICKER. All nineteen labels in the catalogue's own order,
+  ## and changing it rebuilds the form from the NEW kind's declared fields and
+  ## stores the kind token, not the label.
+  set MS3V [$mw.form.kind cget -values]
+  $mw.form.kind set [ase::meas_kind_label [ase::ui::meas_sim $key] when]
+  ase::ui::meas_kind_changed $key
+  update
+  ## the kind's own field widgets, in the order the descriptor declares them --
+  ## `$w.form.f<field>`, which is why the fixed Name/Kind/Analysis controls above
+  ## them cannot be mistaken for fields.
+  set MS3F {}
+  foreach f [ase::meas_kind_fields [ase::ui::meas_sim $key] when] {
+    if {[winfo exists $mw.form.f[dict get $f name]]} { lappend MS3F [dict get $f name] }
+  }
+  check "MS3 the Kind picker offers every declared kind in catalogue order, and\
+ picking one rebuilds the form from that kind's own fields" \
+    [list [llength $MS3V] [lrange $MS3V 0 1] \
+          [ase::state_get [lindex [ase::ui::meas_rows $key] 0] kind] $MS3F] \
+    [list 19 [list {Delay (TRIG ... TARG)} {Value at a point}] when \
+          {target value dir n td from to}]
+
+  ## MS4 -- ⚖ R6's RULE AT THE ONE PLACE A USER CAN BREAK IT. The dropdown shows
+  ## `ase::analysis_handle_line`'s answer -- the same string the Choose Analyses
+  ## grid and `Analyses > List` render, `(off)` included -- and picking a line
+  ## stores `id <handle>` with the handle's own type beside it and NO `row` key.
+  ## ⚠ `op1` is the control: it is enabled and it must not be in the list.
+  set MS4V [$mw.form.analysis cget -values]
+  $mw.form.analysis set [lindex $MS4V 2]
+  ase::ui::meas_an_changed $key
+  update
+  set MS4R [lindex [ase::ui::meas_rows $key] 0]
+  check "MS4 the Analysis dropdown is the one speller's answer, never offers an\
+ `op`, and picking a line stores `id <handle>` and never `row <index>`" \
+    [list $MS4V [ase::state_get $MS4R id] [ase::state_get $MS4R analysis] \
+          [dict exists $MS4R row]] \
+    [list [list [ase::analysis_handle_line \
+                   [ase::analysis_handle_fields [ase::ui::meas_sim $key] \
+                      [ase::session_state $key] 0]] \
+                {tran1  TRAN  2u 3m} {ac2  AC  lin 5 1 10  (off)}] \
+          ac2 ac 0]
+  $mw.btns.cancel invoke
+  update
+
+  ## MS5 -- ADD / DELETE / UP / DOWN, and the order REACHES THE DECK. Order is
+  ## not cosmetic in this list: a `param` row computing `180 + pmph` must sit
+  ## below the row that makes `pmph`, and the block emits rows in stored order.
+  ms_bench $key $MSROWS [list \
+    {name a kind max target vdb(out) analysis ac id ac1} \
+    {name b kind min target vdb(out) analysis ac id ac1}]
+  set mw [ms_open $key]
+  $mw.rows selection set 1
+  update
+  ase::ui::meas_move $key -1
+  update
+  set MS5ORDER [ms_cells $mw name]
+  ase::ui::meas_add $key
+  update
+  $mw.form.name delete 0 end
+  $mw.form.name insert 0 c
+  set MS5N [llength [ase::ui::meas_rows $key]]
+  ase::ui::meas_del $key
+  update
+  set MS5N2 [llength [ase::ui::meas_rows $key]]
+  $mw.btns.proceed invoke
+  update
+  set MS5DECK {}
+  foreach l [split [ase::backend::ngspice::render_deck [ase::session_state $key] \
+                     "* t\nv1 out 0 dc 0 ac 1\nr1 out 0 1k\n.end\n"] "\n"] {
+    if {[string match {meas *} [string trim $l]]} {
+      lappend MS5DECK [lindex [string trim $l] 2]
+    }
+  }
+  check "MS5 Up reorders, Add appends, Delete removes, and the order the list\
+ shows is the order the deck emits" \
+    [list $MS5ORDER $MS5N $MS5N2 $MS5DECK] \
+    [list {b a} 3 2 {b a}]
+
+  ## MS6 -- ⚖ R5's RULING, INHERITED. Type into one row, click another, come
+  ## back: what you typed is still there. ⚠ The second term is the control --
+  ## the OTHER row is untouched, so a harvest that wrote the live form into
+  ## whichever row happened to be selected would fail here rather than pass.
+  ms_bench $key $MSROWS [list \
+    {name a kind max target vdb(out) analysis ac id ac1} \
+    {name b kind min target vdb(in) analysis ac id ac1}]
+  set mw [ms_open $key]
+  $mw.form.ftarget delete 0 end
+  $mw.form.ftarget insert 0 vdb(mid)
+  $mw.rows selection set 1
+  update
+  set MS6B [ase::state_get [lindex [ase::ui::meas_rows $key] 1] target]
+  $mw.rows selection set 0
+  update
+  check "MS6 the form REMEMBERS: typing into one row and clicking another keeps\
+ it, and the other row is untouched" \
+    [list [$mw.form.ftarget get] $MS6B \
+          [ase::state_get [lindex [ase::ui::meas_rows $key] 0] target]] \
+    [list {vdb(mid)} {vdb(in)} {vdb(mid)}]
+
+  ## MS7 -- OK WRITES THE LIST; CANCEL WRITES NOTHING.
+  set MS7BEFORE [ase::state_serialize [ase::session_state $key]]
+  $mw.btns.cancel invoke
+  update
+  set MS7CANCEL [ase::state_serialize [ase::session_state $key]]
+  set mw [ms_open $key]
+  $mw.form.ftarget delete 0 end
+  $mw.form.ftarget insert 0 vdb(mid)
+  $mw.btns.proceed invoke
+  update
+  check "MS7 Cancel writes nothing and OK writes the whole list" \
+    [list [expr {$MS7CANCEL eq $MS7BEFORE}] \
+          [ase::state_get [lindex [ase::state_get [ase::session_state $key] measurements] 0] target] \
+          [winfo exists [ase::ui::window_for $key].meas]] \
+    [list 1 {vdb(mid)} 0]
+
+  ## MS8 -- THE TEMPLATE PICKER, AND IT IS THE ONE THAT PROVES THE FEATURE.
+  ## Pick `Phase margin`, name the output, OK: THREE ordinary measurement rows,
+  ## every one bound by handle, and the last one reading the phase the second one
+  ## measures. ⚠ `let pm = 180 + pmph` is the term that matters: the plan writes
+  ## both rows as `pm` and ASE-L refuses a duplicate name outright, so a
+  ## per-row uniquifier would have renamed the measured phase and left the margin
+  ## reading a vector that no longer exists.
+  ms_bench $key $MSROWS {}
+  set mw [ms_open $key]
+  set tw [ase::ui::meas_tpl_dialog $key]
+  update
+  set MS8V [$tw.pick cget -values]
+  $tw.pick set {Phase margin}
+  ase::ui::meas_tpl_show $key
+  update
+  set MS8AN [$tw.form.an cget -values]
+  $tw.form.out insert 0 out
+  $tw.btns.proceed invoke
+  update
+  set MS8ROWS [ase::ui::meas_rows $key]
+  check "MS8 the template picker offers §8b's eight by name, filters the Analysis\
+ dropdown to the type the template reads, and writes ordinary rows that refer to\
+ each other" \
+    [list $MS8V $MS8AN [lmap r $MS8ROWS {ase::meas_name $r}] \
+          [lsort -unique [lmap r $MS8ROWS {ase::state_get $r id}]] \
+          [ase::state_get [lindex $MS8ROWS 2] expr] \
+          [llength [lsearch -all -inline [lmap r $MS8ROWS {dict exists $r row}] 1]]] \
+    [list [list {DC gain} {-3 dB bandwidth} {Unity-gain frequency} {Phase margin} \
+                {Gain margin} {Slew rate} {Settling time} {THD}] \
+          [list {ac1  AC  dec 100 1 1g} {ac2  AC  lin 5 1 10  (off)}] \
+          {ugf pmph pm} ac1 {180 + pmph} 0]
+
+  ## MS9 -- ⚠ `R9-325`'s LAYOUT CONSTRAINT. `When signal` and `reaches` on ONE
+  ## line, because `reaches` is the only lowercase label in the tree and a
+  ## right-aligned label column turns it into a stray lowercase word under its
+  ## neighbour. The rule is keyed on the COPY's own shape; the last two terms
+  ## are the control that an ordinary label is NOT inlined.
+  $mw.rows selection set 1
+  update
+  set MS9WHEN  [ms_grid $mw.form.lfwhen]
+  set MS9VAL   [ms_grid $mw.form.lfvalue]
+  set MS9TARG  [ms_grid $mw.form.lftarget]
+  check "MS9 the form puts `When signal` and `reaches` on one line, and an\
+ ordinary label still starts its own" \
+    [list [lindex $MS9WHEN 0] [lindex $MS9WHEN 1] \
+          [lindex $MS9VAL 0] [lindex $MS9VAL 1] \
+          [expr {[lindex $MS9TARG 0] != [lindex $MS9WHEN 0]}] [lindex $MS9TARG 1] \
+          [ase::ui::meas_inline [ase::ui::meas_sim $key] find value] \
+          [ase::ui::meas_inline [ase::ui::meas_sim $key] find when]] \
+    [list [lindex $MS9WHEN 0] 0 [lindex $MS9WHEN 0] 2 1 0 1 0]
+
+  ## MS10 -- THE VALUE COLUMN. ⚠ THE NUMBER IS THE SIMULATOR'S PRINTED TEXT AND
+  ## IS NOT NORMALISED: measured on both binaries, apt 45.2 prints `9.149274e+05`
+  ## where the fork prints `9.14927e+05` for the same measurement. And a FAILED
+  ## measurement renders its SENTENCE, because an empty cell reads as zero --
+  ## which is the one thing the guard cannot see any other way (rc 0,
+  ## `$sim_status` 0, no vector, `print` prints nothing).
+  ## ⚠ THE BENCH IS SEEDED INTO THE SESSION, not left in the dialog's working
+  ## copy: `Measurements…` reads the STORED list on every open, so a row that
+  ## only ever existed in a previous dialog would give this row zero lines and
+  ## an empty answer it could not tell from a broken Value column.
+  ms_bench $key $MSROWS [list \
+    {name ugf kind when target vdb(out) value 0 dir fall analysis ac id ac1} \
+    {name pmph kind find target vp(out) when vdb(out) value 0 analysis ac id ac1} \
+    {name pm kind param expr {180 + pmph} analysis ac id ac1}]
+  ms_sidecar $key "ASE-MEAS\nugf                 =  9.149274e+05\npm = 5.614170e+01\n"
+  set mw [ms_open $key]
+  set MS10APT [ms_cells $mw value]
+  $mw.btns.cancel invoke
+  update
+  ms_sidecar $key "ASE-MEAS\nugf                 =  9.14927e+05\npm = 5.614170e+01\n"
+  set mw [ms_open $key]
+  set MS10FORK [ms_cells $mw value]
+  $mw.btns.cancel invoke
+  update
+  ms_no_sidecar $key
+  set mw [ms_open $key]
+  set MS10NONE [ms_cells $mw value]
+  ## ⚠ AND THE FOURTH CASE IS THE ONE A NAME-KEYED LOOKUP GETS WRONG. Two rows
+  ## may share a name -- `ase::meas_verdict` REFUSES the second, because the
+  ## sidecar's lookup is case-insensitive and the second answer would overwrite
+  ## the first's -- but the row is still storable and still on screen. The FIRST
+  ## row's cell must carry its NUMBER; only the second carries the refusal.
+  ms_sidecar $key "ASE-MEAS\nugf                 =  9.149274e+05\npm = 5.614170e+01\n"
+  ms_bench $key $MSROWS [list \
+    {name ugf kind when target vdb(out) value 0 dir fall analysis ac id ac1} \
+    {name ugf kind max target vdb(out) analysis ac id ac1}]
+  set mw [ms_open $key]
+  set MS10DUP [ms_cells $mw value]
+  $mw.btns.cancel invoke
+  update
+  ms_bench $key $MSROWS [list \
+    {name ugf kind when target vdb(out) value 0 dir fall analysis ac id ac1} \
+    {name pmph kind find target vp(out) when vdb(out) value 0 analysis ac id ac1} \
+    {name pm kind param expr {180 + pmph} analysis ac id ac1}]
+  ms_no_sidecar $key
+  set mw [ms_open $key]
+  check "MS10 the Value column shows each binary's own printed text verbatim, a\
+ failed measurement shows its sentence, a bench that has never run shows\
+ neither, and a duplicate name does not put the second row's refusal in the\
+ first row's cell" \
+    [list $MS10APT $MS10FORK $MS10NONE $MS10DUP] \
+    [list [list {9.149274e+05} \
+                {the simulator did not report this measurement: the condition it asks about may never occur in this run} \
+                {5.614170e+01}] \
+          [list {9.14927e+05} \
+                {the simulator did not report this measurement: the condition it asks about may never occur in this run} \
+                {5.614170e+01}] \
+          [list {} {} {}] \
+          [list {9.149274e+05} \
+                "another measurement is already called 'ugf', and the simulator\
+ would overwrite the first one's answer with this one's"]]
+
+  ## MS11 -- THE VERDICT SENTENCE, WHICH IS THE EVALUATOR'S OWN AND NOT REWORDED
+  ## HERE. ⚖ R6's three handle refusals reach the user through this label; the
+  ## fourth term is the control that an `ok` row says NOTHING.
+  set MS11R [ase::state_get [ase::session_state $key] measurements]
+  lset MS11R 0 [dict replace [lindex $MS11R 0] id nosuch]
+  set ::ase::ui::dlg($key,mrows) $MS11R
+  set ::ase::ui::dlg($key,msel) 0
+  ase::ui::meas_note $key
+  set MS11A [$mw.note cget -text]
+  lset MS11R 0 [dict replace [lindex $MS11R 0] id ac2]
+  set ::ase::ui::dlg($key,mrows) $MS11R
+  ase::ui::meas_note $key
+  set MS11B [$mw.note cget -text]
+  lset MS11R 0 [dict replace [lindex $MS11R 0] id tran1 analysis ac]
+  set ::ase::ui::dlg($key,mrows) $MS11R
+  ase::ui::meas_note $key
+  set MS11C [$mw.note cget -text]
+  lset MS11R 0 [dict replace [lindex $MS11R 0] id ac1 analysis ac]
+  set ::ase::ui::dlg($key,mrows) $MS11R
+  ase::ui::meas_note $key
+  check "MS11 the selected row's verdict is the evaluator's own sentence, and an\
+ `ok` row says nothing" \
+    [list $MS11A $MS11B $MS11C [$mw.note cget -text]] \
+    [list "no analysis called 'nosuch' for 'ugf' to read" \
+          "the analysis called 'ac2' is switched off, so 'ugf' has nothing to read" \
+          "'ugf' names ac but reads 'tran1', which is tran" \
+          {}]
+  $mw.btns.cancel invoke
+  update
+
+  ## MS12 -- `Measured on`. ⚠ NOTHING THE DECK CARRIES MAY BE UNSHOWABLE IN THE
+  ## WINDOW, which is this batch's oldest rule and the one §8b is easiest to
+  ## break: a row measured on a producer's plot is how a peak is read off a
+  ## spectrum rather than off the transient that made it. The control is that a
+  ## bench with no producer offers no such control at all.
+  ms_bench $key $MSROWS [list \
+    {name sp1 kind fft target v(out) analysis tran id tran1} \
+    {name pk kind max target v(out) analysis tran id tran1}]
+  set mw [ms_open $key]
+  $mw.rows selection set 1
+  update
+  set MS12V [$mw.form.on cget -values]
+  $mw.form.on set sp1
+  ase::ui::meas_harvest $key
+  set MS12ON [ase::meas_on [lindex [ase::ui::meas_rows $key] 1]]
+  $mw.btns.cancel invoke
+  update
+  ms_bench $key $MSROWS {{name pk kind max target v(out) analysis tran id tran1}}
+  set mw [ms_open $key]
+  set MS12NONE [winfo exists $mw.form.on]
+  check "MS12 a bench carrying a producer offers `Measured on` and stores it; a\
+ bench with none offers no such control" \
+    [list $MS12V $MS12ON $MS12NONE] \
+    [list [list [ase::ui::lbl_meas_on_own] sp1] sp1 0]
+
+  ## MS13 -- THE ENABLE TRI-STATE, WHICH IS A BYTE-IDENTITY RULE. `enabled 1` is
+  ## the ABSENT value, so only the OFF state costs a key -- exactly the
+  ## discipline `ase::ui::form_is_absent` states for an analysis field, and what
+  ## keeps a bench that never turned a row off byte-identical.
+  set ::ase::ui::dlg($key,men) 0
+  ase::ui::meas_enable_changed $key
+  set MS13OFF [lindex [ase::ui::meas_rows $key] 0]
+  set ::ase::ui::dlg($key,men) 1
+  ase::ui::meas_enable_changed $key
+  set MS13ON [lindex [ase::ui::meas_rows $key] 0]
+  check "MS13 unticking Enable writes `enabled 0` and re-ticking it removes the\
+ key rather than writing `enabled 1`" \
+    [list [ase::state_get $MS13OFF enabled NONE] [ase::state_get $MS13ON enabled NONE] \
+          [ase::meas_enabled $MS13ON]] \
+    [list 0 NONE 1]
+  $mw.btns.cancel invoke
+  update
+
+  ## MS14 -- THE 104-FILE BYTE-IDENTITY QUESTION, FROM THE GUI SIDE. Open the
+  ## dialog on a bench that carries NO measurements, click through every kind the
+  ## simulator describes, and press OK: the same bytes. ⚠ `measurements` is in
+  ## `ase::omit_if_empty`, so a commit that wrote an empty list -- or a form that
+  ## re-supplied a declared default -- would show up here and nowhere else.
+  ms_bench $key $MSROWS {}
+  set MS14BEFORE [ase::state_serialize [ase::session_state $key]]
+  set mw [ms_open $key]
+  $mw.btns.proceed invoke
+  update
+  set MS14EMPTY [ase::state_serialize [ase::session_state $key]]
+  set mw [ms_open $key]
+  ase::ui::meas_add $key
+  update
+  foreach k [ase::meas_kind_order [ase::ui::meas_sim $key]] {
+    $mw.form.kind set [ase::meas_kind_label [ase::ui::meas_sim $key] $k]
+    ase::ui::meas_kind_changed $key
+    update
+  }
+  ase::ui::meas_del $key
+  update
+  $mw.btns.proceed invoke
+  update
+  set MS14WALK [ase::state_serialize [ase::session_state $key]]
+  ## ⚠ AND THE ROW THAT ACTUALLY COMMITS ONE. The walk above DELETES its row
+  ## before pressing OK, so it can say the empty list is not written and nothing
+  ## about what a committed row carries -- which is where the byte-identity rule
+  ## really bites: a form that answered with a field's DECLARED DEFAULT would
+  ## store a key the deck already resolves for itself, and the row would then be
+  ## fatter than the one a person would have typed. `when`'s `Edge number`
+  ## defaults to 1 and the form shows 1; the stored row must not carry it.
+  ## Sabotage s15 is that rule removed, and it SURVIVED the walk above.
+  ms_bench $key $MSROWS {}
+  set mw [ms_open $key]
+  ase::ui::meas_add $key
+  update
+  $mw.form.kind set [ase::meas_kind_label [ase::ui::meas_sim $key] when]
+  ase::ui::meas_kind_changed $key
+  update
+  $mw.form.name insert 0 d3
+  $mw.form.ftarget insert 0 vdb(out)
+  $mw.form.fvalue insert 0 -3
+  set MS14SHOWN [$mw.form.fn get]
+  $mw.btns.proceed invoke
+  update
+  set MS14DEF [lindex [ase::state_get [ase::session_state $key] measurements] 0]
+  set mw [ms_open $key]
+  ## ⚠ `Edge number` IS AN ENTRY, NOT A PICKER -- `$w set` raises on one, and the
+  ## raise lands inside a check and KILLS THE FILE rather than reddening a row
+  ## (measured here: `bad option "set"`, no MS14, no MS15, no MS16, no MS17).
+  ## That is G2tf's documented failure shape met again.
+  $mw.form.fn delete 0 end
+  $mw.form.fn insert 0 2
+  $mw.btns.proceed invoke
+  update
+  set MS14SET [lindex [ase::state_get [ase::session_state $key] measurements] 0]
+  check "MS14 opening the dialog on a bench with no measurements, walking every\
+ kind and pressing OK writes the same bytes as never opening it -- and a field\
+ left at its declared default writes no key while a changed one does" \
+    [list [expr {$MS14EMPTY eq $MS14BEFORE}] [expr {$MS14WALK eq $MS14BEFORE}] \
+          [string first {measurements} $MS14BEFORE] \
+          $MS14SHOWN [ase::state_get $MS14DEF n NONE] \
+          [ase::state_get $MS14SET n NONE]] \
+    [list 1 1 -1 1 NONE 2]
+
+  ## MS15 -- ⚠ THE END-TO-END ROW, IN ONE EXPRESSION. A measurement CREATED IN
+  ## THE DIALOG -- template picker, real widgets, real OK -- must reach a
+  ## RENDERED DECK and come back into a Value CELL. Issue 1449 is the scar: the
+  ## `id` key passed 622 checks and a clean T1 because one suite's fixtures
+  ## declared ids and never enabled anything while another's enabled things and
+  ## never declared an id, so the two halves never met.
+  ##
+  ## ⚠ THE SIDECAR TEXT IS THE ONE A REAL RUN WROTE, on apt 45.2, for exactly
+  ## these rows: `pm = 5.614170e+01`. WITHOUT the `set units=degrees` the same
+  ## deck answered `pm = 1.778383e+02` on both binaries, at rc 0, with nothing
+  ## said -- a 56-degree phase margin reported as 178.
+  ms_bench $key $MSROWS {}
+  set mw [ms_open $key]
+  set tw [ase::ui::meas_tpl_dialog $key]
+  update
+  $tw.pick set {Phase margin}
+  ase::ui::meas_tpl_show $key
+  update
+  $tw.form.out insert 0 out
+  $tw.btns.proceed invoke
+  update
+  $mw.btns.proceed invoke
+  update
+  set MS15DECK {}
+  foreach l [split [ase::backend::ngspice::render_deck [ase::session_state $key] \
+                     "* t\nv1 out 0 dc 0 ac 1\nr1 out 0 1k\n.end\n"] "\n"] {
+    set l [string trim $l]
+    if {[regexp {^(meas |let pm|set units=degrees)} $l]} {
+      lappend MS15DECK [regsub { >>.*$} $l {}]
+    }
+  }
+  ms_sidecar $key "ASE-MEAS\nugf                 =  9.149274e+05\npmph                =  -1.238583e+02\npm = 5.614170e+01\n"
+  set mw [ms_open $key]
+  set MS15VAL [ms_cells $mw value]
+  check "MS15 a measurement CREATED IN THE DIALOG reaches the rendered deck --\
+ with `set units=degrees` above it -- and its number comes back into the Value\
+ column" \
+    [list $MS15DECK $MS15VAL] \
+    [list [list {set units=degrees} {meas ac ugf WHEN vdb(out)=0 FALL=1} \
+                {meas ac pmph FIND vp(out) WHEN vdb(out)=0} {let pm = 180 + pmph}] \
+          [list {9.149274e+05} {-1.238583e+02} {5.614170e+01}]]
+  $mw.btns.cancel invoke
+  update
+
+  ## MS16 -- ⚠ A BINDING THE BENCH NO LONGER RESOLVES IS NOT SILENTLY THROWN
+  ## AWAY. Delete the analysis a measurement reads and the row still SAYS
+  ## `id ac1`; the Analysis picker must show that word, because a picker that
+  ## could not would leave the harvest with an empty box and the next selection
+  ## change -- or OK -- would strip the binding off a row the user opened the
+  ## dialog only to LOOK at. Nothing the deck carries may be unshowable in the
+  ## window, and this is the one place in this dialog where that rule bites.
+  ##
+  ## ⚠ The last two terms are the control: the row's own verdict is the
+  ## MISSING-ANALYSIS sentence, not the no-analysis-at-all one, which is what
+  ## tells a preserved binding from a stripped one.
+  ms_bench $key [list {type tran enabled 1 step 2u stop 3m}] \
+    [list {name gain kind max target vdb(out) analysis ac id ac1}]
+  set mw [ms_open $key]
+  set MS16V [$mw.form.analysis cget -values]
+  set MS16SHOWN [$mw.form.analysis get]
+  ase::ui::meas_harvest $key
+  set MS16ROW [lindex [ase::ui::meas_rows $key] 0]
+  $mw.btns.proceed invoke
+  update
+  set MS16STORED [lindex [ase::state_get [ase::session_state $key] measurements] 0]
+  check "MS16 a handle the bench no longer resolves is still offered, still\
+ shown, and survives a harvest and an OK -- with the verdict that names it" \
+    [list $MS16V $MS16SHOWN [ase::state_get $MS16ROW id] \
+          [ase::state_get $MS16STORED id] [ase::state_get $MS16STORED analysis] \
+          [lindex [ase::meas_verdict [ase::ui::meas_sim $key] \
+                     [ase::session_state $key] $MS16STORED] 1]] \
+    [list [list ac1 {tran1  TRAN  2u 3m}] ac1 ac1 ac1 ac \
+          "no analysis called 'ac1' for 'gain' to read"]
+
+  ## MS17 -- ESC DISMISSES BOTH NEW TOPLEVELS THROUGH THEIR OWN CANCEL PATH, and
+  ## it comes from `ase::ui::dialog_buttons` BY CONSTRUCTION -- the item-10
+  ## esc-dismiss set that sections GE1-16 hold for every other dialog in this
+  ## file. ⚠ The third and fourth terms are what tells a cancel path from a bare
+  ## destroy: the per-window records go with it.
+  ms_bench $key $MSROWS {{name a kind max target vdb(out) analysis ac id ac1}}
+  set mw [ms_open $key]
+  set tw [ase::ui::meas_tpl_dialog $key]
+  update
+  send_key $tw <Key-Escape> {![winfo exists $tw]}
+  set MS17TPL [winfo exists $tw]
+  set MS17PARENT [winfo exists $mw]
+  send_key $mw <Key-Escape> {![winfo exists $mw]}
+  check "MS17 ESC dismisses the template picker without killing its parent,\
+ and ESC on the dialog itself dismisses it through Cancel and cleans its\
+ records" \
+    [list $MS17TPL $MS17PARENT [winfo exists $mw] \
+          [info exists ::ase::ui::dlg($key,mrows)] \
+          [info exists ::ase::ui::dlg($key,msel)]] \
+    [list 0 1 0 0 0]
+
+  ms_no_sidecar $key
+  ase::session_update $key $MSFIX
   ase::ui::populate $key
   update
 

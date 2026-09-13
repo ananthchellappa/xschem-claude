@@ -130,6 +130,15 @@
 # refusal comes back; stub it wider and a nonsense key is allowed), and NS2 is
 # the FOURTH-COPY GUARD: a scan of both source files that goes red the day a
 # fifth surface spells its own.
+# 626 -> 636 with section MT (issue 1451 -- PLAN.md §8b's eight named templates
+# and the handle they bind by). MT4 is the load-bearing one and it is about a
+# REFERENCE rather than a name: a phase margin is three rows deep and its last
+# one is `let pm = 180 + pmph`, so a per-row uniquifier would rename `pmph` and
+# leave `pm` reading a vector that no longer exists. MT3 is ⚖ R6's rule for all
+# eight templates -- `id <handle>`, never `row <index>` -- and MT8 is the row
+# that says `(off)` is spelled once, now that `ase::analysis_handle_text` is a
+# CALLER of `ase::analysis_handle_line` instead of a second copy of it.
+# AND RAISED 626 -> 636.
 # AND RAISED 624 -> 626.
 # AND RAISED 622 -> 624.
 # AND RAISED 602 -> 622.
@@ -10346,6 +10355,218 @@ check "WD10b a DISABLED `own` row reports no widening, because the deck it would
 
 } wd_err]} {
   check "WD0 section WD ran to the end" "RAISED:$wd_err" {}
+}
+
+
+# ===========================================================================
+# MT — THE EIGHT NAMED TEMPLATES, AND THE HANDLE THEY BIND BY (issue 1451)
+#
+# `PLAN.md` §8b. Issue 1443 shipped the whole deck half of Stage 8 and built no
+# widget; these rows are the SCHEMA half of the surface that shows it -- what a
+# template declares, how one is expanded into ordinary measurement rows, and the
+# one-line handle renderer the Measurements dropdown shares with the Choose
+# Analyses grid and with `Analyses > List`.
+#
+# ⚠ THE LOAD-BEARING ROW IS MT4 AND IT IS ABOUT A REFERENCE, NOT A NAME. A
+# template writes rows that refer TO EACH OTHER -- a phase margin is
+# `let pm = 180 + pmph`, three rows deep -- so a per-row uniquifier would rename
+# `pmph` and leave `pm` reading a vector that no longer exists. One suffix is
+# chosen for the WHOLE batch and the template spells it into both.
+#
+# ⚠ AND MT3 IS ⚖ R6's OWN RULE AS A ROW: the binding a template writes is
+# `id <handle>` and NEVER `row <index>`. Both selectors exist in
+# `ase::meas_binding`; an index is a POSITION and inserting an analysis above it
+# makes the measurement silently read a different sweep.
+# ===========================================================================
+if {[catch {
+
+proc mt_state {{ans {}}} {
+  set st [ase::state_default]
+  dict set st design {lib aselib cell nfet_clean view schematic}
+  if {[llength $ans]} {
+    dict set st analyses $ans
+  } else {
+    dict set st analyses {{type ac enabled 1 sweep dec points 100 start 1 stop 1g}
+                          {type tran enabled 1 step 2u stop 3m}
+                          {type op enabled 0}}
+  }
+  dict set st measurements {}
+  return $st
+}
+proc mt_vals {} {
+  return [dict create an ac1 out out gain 60 lo 0.2 hi 1.6 final 1.8 tol 0.018 fund 1k]
+}
+## expand one template against a state, with the tran templates given the tran
+## handle -- `{ok <rows>}` / `{refuse <why>}` straight through.
+proc mt_exp {tpl st {extra {}}} {
+  set v [mt_vals]
+  if {[ase::meas_template_analysis ngspice $tpl] eq {tran}} { dict set v an tran1 }
+  dict for {k x} $extra { dict set v $k $x }
+  return [ase::meas_template_expand ngspice $st $tpl $v]
+}
+
+## MT1 -- THE CATALOGUE. Eight templates, in the adapter's own declared order,
+## with the labels the R9 review is holding. ⚠ The second term is the control:
+## the labels are read from the CATALOGUE by `ase::meas_template_label`, so a
+## proc that answered with its argument would still produce eight strings.
+set MT1T [dict keys [ase::meas_templates ngspice]]
+set MT1L {}
+foreach t $MT1T { lappend MT1L [ase::meas_template_label ngspice $t] }
+check "MT1 the adapter declares the eight §8b templates in order, and the label\
+ comes from the catalogue rather than from the token" \
+  [list $MT1T $MT1L [ase::meas_template_label ngspice nosuchtemplate]] \
+  [list {dcgain bw3db ugf pm gm sr ts thd} \
+        [list {DC gain} {-3 dB bandwidth} {Unity-gain frequency} {Phase margin} \
+              {Gain margin} {Slew rate} {Settling time} {THD}] \
+        nosuchtemplate]
+
+## MT2 -- THE CATALOGUE IS CHECKED, AND THE CHECKER CAN FAIL. `ase::meas_schema_errors`'
+## sibling. The second half builds a backend that is wrong in five ways and asks
+## for all five sentences, because a checker returning `{}` unconditionally would
+## satisfy the first half exactly as well.
+dict set ::ase::backends mtbad [dict create render_deck x run_cmd x \
+  meas_kinds ::mt_bad_kinds meas_templates ::mt_bad_templates \
+  meas_analyses ::mt_bad_analyses]
+proc ::mt_bad_kinds {} { return [dict create good [dict create form meas]] }
+proc ::mt_bad_analyses {} { return {ac} }
+proc ::mt_bad_templates {} {
+  return [dict create \
+    nolabel  [dict create analysis ac rows {{name a kind good}}] \
+    noan     [dict create label L rows {{name a kind good}}] \
+    badan    [dict create label L analysis tran rows {{name a kind good}}] \
+    norows   [dict create label L analysis ac] \
+    badrow   [dict create label L analysis ac rows {{name {} kind good} {name b kind nope}}] \
+    badfield [dict create label L analysis ac fields {{label X}} rows {{name c kind good}}]]
+}
+ase::meas_cache_clear mtbad
+check "MT2 the template catalogue is clean for ngspice, and the checker names\
+ every way a second adapter's could be wrong" \
+  [list [ase::meas_template_errors ngspice] \
+        [lsort [ase::meas_template_errors mtbad]]] \
+  [list {} [lsort [list \
+    {nolabel: no label} \
+    {noan: no analysis} \
+    {badan: analysis 'tran' cannot carry a measurement} \
+    {norows: no rows} \
+    {badrow: a row has no name} \
+    {badrow: a row asks for kind 'nope', which 'mtbad' does not describe} \
+    {badfield: a field has no name}]]]
+
+## MT3 -- ⚖ R6's RULE, FOR ALL EIGHT: the binding is a HANDLE and there is no
+## `row` key anywhere in what a template writes. The third term is the control --
+## the handle really is the one the caller picked and not a constant.
+set MT3ST [mt_state]
+set MT3IDS {} ; set MT3ROW 0 ; set MT3AN {}
+foreach t [dict keys [ase::meas_templates ngspice]] {
+  foreach r [lindex [mt_exp $t $MT3ST] 1] {
+    lappend MT3IDS [ase::state_get $r id]
+    lappend MT3AN  [ase::state_get $r analysis]
+    if {[dict exists $r row]} { incr MT3ROW }
+  }
+}
+check "MT3 every row of every template binds by `id <handle>`, never by\
+ `row <index>`, and its stored `analysis` agrees with the handle's own type" \
+  [list [lsort -unique $MT3IDS] $MT3ROW [lsort -unique $MT3AN] \
+        [ase::state_get [lindex [lindex [mt_exp dcgain $MT3ST \
+           [dict create an nosuch]] 1] 0] id]] \
+  [list {ac1 tran1} 0 {ac tran} nosuch]
+
+## MT4 -- THE BATCH SUFFIX, AND IT IS ABOUT THE REFERENCE. A second phase margin
+## on the same bench must not collide with the first -- `ase::meas_verdict`
+## refuses a duplicate name outright -- and its `let` must read ITS OWN measured
+## phase. ⚠ The `expr` term is the whole row: a uniquifier that renamed the names
+## and left the expression alone would satisfy every other term here.
+set MT4ST [mt_state]
+dict set MT4ST measurements [lindex [mt_exp pm $MT4ST] 1]
+set MT4B [lindex [mt_exp pm $MT4ST] 1]
+check "MT4 a second Phase margin on one bench takes ONE suffix for the whole\
+ batch, and the expression follows it" \
+  [list [lmap r [ase::state_get $MT4ST measurements] {ase::meas_name $r}] \
+        [lmap r $MT4B {ase::meas_name $r}] \
+        [ase::state_get [lindex $MT4B 2] expr]] \
+  [list {ugf pmph pm} {ugf2 pmph2 pm2} {180 + pmph2}]
+
+## MT5 -- A MISSING REQUIRED FIELD REFUSES AND NAMES ITS LABEL, rather than
+## expanding into rows with an empty hole in them. The second term is the
+## control: with the field filled the same template answers `ok`.
+set MT5ST [mt_state]
+check "MT5 a template with a required field left empty refuses by label" \
+  [list [mt_exp bw3db $MT5ST [dict create gain {}]] \
+        [lindex [mt_exp bw3db $MT5ST] 0] \
+        [lindex [ase::meas_template_expand ngspice $MT5ST nosuch {}] 0]] \
+  [list {refuse {this template needs a value for Passband gain}} ok refuse]
+
+## MT6 -- THE ARITHMETIC IS THE ADAPTER'S, AND IT IS IN A UNIT ONLY THE ADAPTER
+## KNOWS. `-3 dB` is `gain - 3.0103` because `vdb()` answers in decibels; the
+## settling band is `final ∓ tol`. ⚠ The last term is the non-guess control: a
+## number this simulator's own suffix alphabet cannot read leaves the placeholder
+## VISIBLE in the row instead of substituting a wrong threshold silently.
+set MT6ST [mt_state]
+check "MT6 the derived fields are computed, and an unreadable number is left\
+ alone rather than guessed" \
+  [list [ase::state_get [lindex [lindex [mt_exp bw3db $MT6ST] 1] 0] value] \
+        [ase::state_get [lindex [lindex [mt_exp ts $MT6ST] 1] 0] value] \
+        [ase::state_get [lindex [lindex [mt_exp ts $MT6ST] 1] 1] value] \
+        [ase::state_get [lindex [lindex [mt_exp bw3db $MT6ST \
+           [dict create gain twenty]] 1] 0] value]] \
+  [list 56.9897 1.782 1.818 @v3db@]
+
+## MT7 -- WHAT THE ANALYSIS DROPDOWN MAY OFFER. Every row whose TYPE this
+## simulator's measure engine accepts, ENABLED OR NOT -- a handle is identity and
+## `ase::meas_verdict` says separately that the named analysis is switched off.
+## ⚠ `op` IS THE CONTROL: `chkAnalysisType()` accepts only tran/dc/ac/sp, so an
+## `op` row must never be offered however enabled it is.
+set MT7ST [mt_state {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}
+                     {type op enabled 1}
+                     {type tran enabled 0 step 1n stop 1u}}]
+check "MT7 the dropdown offers every measurable row including the switched-off\
+ ones, filters by type on request, and never offers an `op`" \
+  [list [ase::meas_analysis_choices ngspice $MT7ST] \
+        [ase::meas_analysis_choices ngspice $MT7ST tran] \
+        [ase::meas_analysis_choices ngspice $MT7ST op]] \
+  [list {{ac1 ac 0} {tran1 tran 2}} {{tran1 tran 2}} {}]
+
+## MT8 -- ONE SPELLING OF A ROW'S ONE-LINER, AND `(off)` HAS EXACTLY ONE OF THEM.
+## `ase::analysis_handle_text` is now a CALLER of `ase::analysis_handle_line`
+## rather than a second copy of it; the first term is the unpadded form a picker
+## wants and the second is that the block still composes from it byte for byte.
+set MT8ST [mt_state {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}
+                     {type tran enabled 0 step 1n stop 1u}}]
+set MT8L {}
+for {set i 0} {$i < 2} {incr i} {
+  lappend MT8L [ase::analysis_handle_line \
+                  [ase::analysis_handle_fields ngspice $MT8ST $i]]
+}
+check "MT8 one row's one-liner is a proc, the `(off)` marker is spelled once,\
+ and the padded block is built from it" \
+  [list $MT8L [ase::analysis_handle_text ngspice $MT8ST] \
+        [ase::analysis_handle_line {}]] \
+  [list [list {ac1  AC  dec 10 1 1meg} {tran1  TRAN  1n 1u  (off)}] \
+        "ac1    AC    dec 10 1 1meg\ntran1  TRAN  1n 1u  (off)" \
+        {}]
+
+## MT9 -- THE KIND PICKER'S TWO READERS. Nothing in the tree read a kind's
+## `label` until the picker existed (issue 1443 declared eighteen and showed
+## none), and the ORDER is the catalogue's rather than alphabetical, because a
+## Tcl dict iterates in insertion order.
+check "MT9 the kind picker reads the declared label and the declared order" \
+  [list [ase::meas_kind_label ngspice trigtarg] \
+        [ase::meas_kind_label ngspice min_at] \
+        [lrange [ase::meas_kind_order ngspice] 0 2] \
+        [lindex [ase::meas_kind_order ngspice] end]] \
+  [list {Delay (TRIG ... TARG)} {Where the minimum is} {trigtarg find when} spec]
+
+## MT10 -- A BACKEND WITH NO HOOK GETS NO TEMPLATES, which is D34 from the same
+## side `ase::meas_kinds` already states it: core may not invent content.
+dict set ::ase::backends mtnone [dict create render_deck x run_cmd x]
+check "MT10 a backend that declares no meas_templates hook offers none, and\
+ expanding one refuses instead of raising" \
+  [list [ase::meas_templates mtnone] [ase::meas_template_errors mtnone] \
+        [lindex [ase::meas_template_expand mtnone [mt_state] dcgain {}] 0]] \
+  [list {} {} refuse]
+
+} mt_err]} {
+  check "MT0 section MT ran to the end" "RAISED:$mt_err" {}
 }
 
 # --- verdict -----------------------------------------------------------------

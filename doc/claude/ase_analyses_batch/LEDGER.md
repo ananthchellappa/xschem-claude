@@ -862,6 +862,58 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ Stage 8 task 2 — the measurements GUI, issue **1451**, collected 2026-09-13
+
+**`Outputs > Measurements…`** — the surface issue 1443's entire deck half was written for.
+Before it, **nothing in the tree read a kind's `label`**, `ase::meas_report` had **no caller
+anywhere**, and a measurement row could only be created by hand-editing a `.state` file.
+
+| | |
+|---|---|
+| **what landed** | An Enable/Name/Kind/Analysis/**Value** list with Add, Delete, Up and Down; a Kind picker over all **19** kinds; a form built from the picked kind's own descriptor; a `Measured on` control; the selected row's verdict sentence; and **`From Template…`** with §8b's eight templates. `ase::meas_report` now reaches the run log. `src/ase.tcl` **+468/−8**, `src/ase_window.tcl` **+875**. |
+| **driver's own re-run** | `test_ase_core` **636 / 636** ALL PASS (was 626). `test_ase_meas_1443` **113 / 113** ALL PASS (was 100). `test_ase_dialogs` **37** headless, **`1 FAILED (362 passed)`** display (was 345) — the one red is `G2sens` (1436), standing. |
+| **byte identity** | 104/104 round-trip byte-identically with the non-vacuity control; no new state key, no schema bump. |
+| **sabotage** | **30 mutations plus a targeted re-run of 2**: `md5ok=1` on all five files every arm, three `RESULT:` lines every arm, **29 red, 1 survivor** (argued behaviour-preserving), **zero kills**. |
+| **receipt** | `receipts/31-stage-8-measurements-gui.md` |
+| **T1** | ✅ **Run solo after it landed: 69 cases, rc 0, ZERO counted failures**, and `FAIL` / `FATAL` / `TIMED OUT` appear zero times in the log. **Third clean T1 of the day.** |
+
+⚠ ⚠ **THE HEADLINE: §8b's GAIN-MARGIN LINE ANSWERS NOTHING, ON EITHER BINARY.** The plan's
+`meas ac gm find vdb(out) when vp(out)=-180` fails with `out of interval` **because `vp()` is
+wrapped** — a continuous phase of `-2.36596e+02` reads back as `+1.234040e+02`. **Driver-verified
+independently on both binaries**, on a three-pole amp: that line fails, and the obvious repair
+`when cph(v(out))=-180` fails differently — `Error: no such vector as cph(v(out))`, because
+**`WHEN`'s operand must be a vector NAME, not a function call**. The working form needs
+`let gmph = cph(v(out))` first, which is why the task shipped a **19th kind, `cphase`**, and
+moved two of 1443's rules narrowly to allow it (a `let` row is printed only if its kind yields a
+number; `yields` is permitted on a `letform` kind).
+
+⚠ **And the 57.2958× trap was measured on the FINAL NUMBER, not on the deck line.** Same rendered
+block, both binaries: `pm = 5.614170e+01` with `set units=degrees`, `pm = 1.778383e+02` without —
+rc 0, nothing said. Row **`TP3b`** asserts the *number*. A row that checked only for the presence
+of the `set` line would have passed either way, which is the whole reason this batch distrusts
+deck-line assertions.
+
+**Four corrections to §8b's own table**: gain margin (above); **phase margin cannot name two rows
+`pm`**; *"Slew rate"* as written emits **seconds**, not volts per second; and *"the user picks one
+and fills two fields"* is **three or four fields** for half of them. All eight templates were
+rendered through `meas_block` and **run on apt 45.2 and on the fork — all eight answered on both.**
+
+⚠ **The crew found two defects in its OWN code mid-campaign and restarted rather than measuring a
+known-bad tree.** (1) A handle the bench no longer resolves was **stripped off the row** by the
+harvest, because the picker could not show it → `MS16`. (2) A duplicate name put **the second
+row's refusal in the first row's cell**, because the Value lookup was keyed by name →
+`MS10`'s fourth term. And **`s15` survived its first application and changed a row**: `MS14`
+deleted its walked row before OK, so it said nothing about what a committed row carries.
+
+**Debts:** `rule 1451` — **29 new sentences**, now **R9-382 … R9-410** in the review, of which
+**eight are template names and therefore ADAPTER content**, not ASE-L's. `look
+ase_measurements_dialog_1451` — **suites green on both arms, please look.** `suite
+test_ase_dialogs` filed, not drained.
+
+⚠ **`PLAN.md` §8's *"this stage files no `look` debt"* is now measured stale** — exactly as this
+ledger predicted when the stage's task split was written. A whole sub-dialog and a new column are
+pixels, and the crew decided it **by measurement** rather than by quoting the plan.
+
 ### ✅ T1 — RUN SOLO A SECOND TIME, STILL ZERO, 2026-09-13
 
 **`69 Start lines, rc 0, zero counted failures`**, and the literal strings `FAIL`, `FATAL` and
