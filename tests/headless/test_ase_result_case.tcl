@@ -55,8 +55,9 @@
 # ⚠ EVERY ROW ABOVE NCR DRIVES `result_probe_log` BY NAME (issue 1429), because
 # the registered `result_probe` hook is now a dispatcher and every expression in
 # this file names exactly one vector. THE SWAP IS ONE LINE, and that is the
-# property ⚖ R3's Option C was recommended for: it is the SUPERSET of A and B,
-# so a later ruling deletes a reader rather than invalidating this file.
+# property ⚖ R3's Option C was chosen for, and it was ANSWERED 2026-09-12: it
+# is the SUPERSET of A and B, so a ruling of A or B would have deleted a reader
+# rather than invalidating this file.
 # ⚠ THE COUNT IS A FLOOR: 28 -> 31 with section NCR.
 #
 # True headless (no X, no Tk). Run from the repo ROOT:
@@ -141,11 +142,11 @@ casemode fold
 ## dispatcher here would measure the rawfile reader under this file's name and
 ## leave the ladder it is about untested.
 ##
-## ⚠ ⚖ R3 IS ASKED AND UNANSWERED; Option C is DECISIONS.md's RECOMMENDATION.
-## Section NCR at the foot of this file is what keeps the dispatcher honest, and
-## it asserts that the two readers give the SAME number out of two different
-## files — so a later ruling of A or B moves which file is read and not which
-## number is shown.
+## ⚠ ⚖ R3 WAS ANSWERED 2026-09-12 — Option C, RATIFIED, in the user's words
+## *"both with a rule is right, keep it"*. Section NCR at the foot of this file
+## is what keeps the dispatcher honest, and it asserts that the two readers give
+## the SAME number out of two different files — which is why the ruling could
+## only ever have moved which file is read, not which number is shown.
 set probe ::ase::backend::ngspice::result_probe_log
 proc outstate {outputs} {
   set st [ase::state_default]
@@ -504,11 +505,12 @@ casemode fold
 # REGISTERED hook, so that what a user actually gets is measured too, and so
 # that the one-line swap above cannot quietly stop being equivalent.
 #
-# ⚠ ⚖ R3 IS ASKED AND UNANSWERED. Option C — named vectors from the results
-# file, arbitrary expressions from the print log — is DECISIONS.md's
-# RECOMMENDATION, implemented so that a later ruling of A or B removes one
-# reader rather than invalidating the work. DECISIONS.md records R3 as
-# EXTENDING the user's own ruling in issue 1243, not reversing it.
+# ⚠ ⚖ R3 WAS ANSWERED 2026-09-12 — Option C, RATIFIED: named vectors from the
+# results file, arbitrary expressions from the print log. It was implemented
+# ahead of the ruling so that A or B would have removed one reader rather than
+# invalidating the work, which is the shape this file still pins. DECISIONS.md
+# records R3 as EXTENDING the user's own ruling in issue 1243, not reversing
+# it.
 #
 # No simulator: the results file is canned, which is this batch's idiom for a
 # reader row.

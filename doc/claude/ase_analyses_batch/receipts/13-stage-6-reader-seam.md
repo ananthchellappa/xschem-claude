@@ -9,6 +9,13 @@ or checkpointed salvage.
 `test_ase_result_case` 28 → **31** · `test_ase_print_bracket_0167` 12 → **14**
 (`test_ase_preflight` 192 unmoved, `test_ase_dialogs` unmoved on both arms).
 
+> ⚠ **FOOTNOTE ADDED BY THE DRIVER, 2026-09-12 — ⚖ R3 HAS SINCE BEEN ANSWERED.** The
+> user ruled **Option C**: *"both with a rule is right, keep it"*. Everything below is
+> left exactly as this crew wrote it, because a receipt is a dated record of what was
+> known at the time; the *"recommendation"* and *"unanswered"* wording in it is correct
+> for its date and stale for today. The live artefacts — `src/ase.tcl`, the four suite
+> headers and issue 1429 — were corrected in place in the same driver pass.
+
 ⚠ **⚖ R3 IS ASKED AND UNANSWERED.** What ships is `DECISIONS.md`'s **recommendation**,
 Option **C**, marked as a recommendation everywhere it is written down — the issue file,
 the registry comments, four suite headers and this receipt. `DECISIONS.md` records R3 as

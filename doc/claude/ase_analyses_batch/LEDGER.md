@@ -1131,8 +1131,11 @@ the normal case after a net rename and the case a user will actually hit. Decisi
 |---|---|---|---|
 | *pending* | **T1** | `feat(1429)` the Outputs Value column could not see three analyses' answers | core 391 → **417**; simcaps 180 → **190**; `test_ase_result_case` 28 → **31**; `test_ase_print_bracket_0167` 12 → **14** |
 
-⚠ **⚖ R3 IS STILL UNANSWERED. WHAT SHIPPED IS THE RECOMMENDATION, NOT A RATIFICATION**, and it is
-marked as such in the issue file, six comment blocks, four suite headers and the receipt. Option **C**
+⚠ **⚖ R3 WAS ANSWERED ON 2026-09-12 — Option C, RATIFIED.** The user's words were *"both with a rule
+is right, keep it"*. This row said *still unanswered* for as long as that was true; when the ruling
+arrived, the recommendation wording was cleared out of the live artefacts in one pass — the issue
+file, six comment blocks in `src/ase.tcl` and four suite headers — and `receipts/13-stage-6-reader-seam.md`
+was **footnoted rather than rewritten**, because a receipt is a dated record. Option **C**
 — named vectors from the rawfile, arbitrary expressions from the `print` log, with the rule *a row
 whose expression names exactly one vector reads the raw; anything else reads the log*. `DECISIONS.md`
 records R3 as **extending** the user's own ruling in issue **1243**, not reversing it.

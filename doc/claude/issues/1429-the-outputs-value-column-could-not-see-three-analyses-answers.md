@@ -4,9 +4,13 @@
 nothing else.** Stage 5 is issues **1426** (`tf`), **1427** (`pz`) and **1428** (`sens`).
 Nothing here touches any of them, or the writer, or the sidecar, or salvage.
 
-⚠ **⚖ R3 IS ASKED AND UNANSWERED.** What ships is `DECISIONS.md`'s **recommendation**,
-Option **C**, not a ratification. It is built so that a later ruling of A or B **removes a
-reader** rather than invalidating the work — see *Why Option C can ship unratified* below.
+⚠ **⚖ R3 WAS ANSWERED ON 2026-09-12 — Option C, RATIFIED.** The user's words were
+*"both with a rule is right, keep it"*, which answers the "both" and the "rule" halves
+together: both readers stay, and `ase::result_source` is the one place that says which
+one answers a row. This paragraph said *asked and unanswered* until the ruling arrived;
+what shipped ahead of it was built so that a ruling of A or B would have **removed a
+reader** rather than invalidating the work — see *Why Option C can ship unratified*
+below, which is now the record of a risk that did not have to be paid.
 `DECISIONS.md` records R3 as **extending** the user's own ruling in issue **1243**, not
 reversing it: `render_deck`'s print anchor is untouched and every expression row still
 reads exactly the log 1243 anchored.

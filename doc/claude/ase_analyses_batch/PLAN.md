@@ -2677,9 +2677,11 @@ receipt, because this is the stage where a user first sees an analysis name atta
 
 ### Rulings in this stage
 
-**⚖ R3** — where the Value column's numbers come from. Recommendation **both**, with the rule stated on
-screen: *a row whose expression names exactly one vector reads the raw; anything else reads the log*.
-Issue 1243 was the user's own ruling and this extends it rather than reversing it.
+**⚖ R3 — ANSWERED 2026-09-12, Option C.** Where the Value column's numbers come from. The
+recommendation was **both**, with the rule stated on screen: *a row whose expression names exactly one
+vector reads the raw; anything else reads the log* — and the user ruled for it in those terms: *"both
+with a rule is right, keep it"*. Issue 1243 was the user's own ruling and this extends it rather than
+reversing it.
 
 **⚖ R9** — 6f's user-facing sentences, batched: the checkpointed form of 2e's launch warning
 (*"Stopping loses at most the last N % of this run; checkpointing costs about M % more run time"*),

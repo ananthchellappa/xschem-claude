@@ -12000,10 +12000,12 @@ proc ase::run_log_write {logpath meta data exitcode} {
 
 # ═══ ⚖ R3 — WHERE ONE OUTPUT ROW'S NUMBER COMES FROM (issue 1429) ═══════════
 #
-# ⚠ THIS PROC IS THE WHOLE OF THE RULE, AND THAT IS DELIBERATE. ⚖ R3 is ASKED
-# AND UNANSWERED; what ships here is `DECISIONS.md`'s RECOMMENDATION, Option C,
-# not a ratification. C is the SUPERSET of A and B, so the shape is built to be
-# reduced rather than rewritten:
+# ⚠ THIS PROC IS THE WHOLE OF THE RULE, AND THAT IS DELIBERATE. ⚖ R3 was
+# ANSWERED on 2026-09-12 — Option C, in the user's own words: *"both with a
+# rule is right, keep it"*. What ships here is RATIFIED, not a recommendation.
+# C is the SUPERSET of A and B, and the reduction paths below are kept as the
+# record of a shape built to be reduced rather than rewritten — they are no
+# longer a pending outcome:
 #
 #   ruled A (rawfile only)  -> this body becomes `return raw`, and
 #                              ase::backend::ngspice::result_probe_log is

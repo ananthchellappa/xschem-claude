@@ -159,12 +159,14 @@
 # existing row here reads the log through an expression or a key, and issue
 # 1429 changes neither; what it adds is a second reader and the one proc that
 # chooses between them.
-# ⚠ ⚖ R3 IS ASKED AND UNANSWERED. What is pinned is DECISIONS.md's
-# RECOMMENDATION, Option C -- named vectors from the results file, arbitrary
-# expressions from the print log -- and RS2/RS3 exist to pin the property that
-# makes shipping an unratified recommendation safe: C is the SUPERSET of A and
-# B, so a later ruling moves ONE proc (`ase::result_source`) and deletes one
-# reader. RS3 performs both rulings by stubbing that proc and shows the whole
+# ⚠ ⚖ R3 WAS ANSWERED 2026-09-12 -- Option C, the user's words being *"both
+# with a rule is right, keep it"*. What is pinned is therefore RATIFIED: named
+# vectors from the results file, arbitrary expressions from the print log.
+# RS2/RS3 were written to pin the property that made shipping it BEFORE
+# ratification safe -- C is the SUPERSET of A and B, so a ruling of A or B
+# would have moved ONE proc (`ase::result_source`) and deleted one reader --
+# and they are kept, because that property is also what keeps the dispatcher
+# honest now. RS3 performs both rulings by stubbing that proc and shows the whole
 # surface following. DECISIONS.md records R3 as EXTENDING the user's own ruling
 # in issue 1243, not reversing it -- render_deck's print anchor is untouched.
 # ⚠ SECTIONS RS AND RD CARRY THEIR OWN `catch`: this file's OUTER one closes at
@@ -187,8 +189,8 @@
 # to refuse and that fixture would otherwise have answered THREE errors -- turning
 # a row about the field/slot contradiction into a test of two unrelated checks.
 # The three new refusals have their own fixtures, in section GP.
-# ⚠ ⚖ R3 IS STILL UNANSWERED and nothing here touches it: the reader seam is
-# 1429's and this issue neither reads a number nor moves a print line.
+# ⚠ ⚖ R3 (ANSWERED 2026-09-12, Option C) is not touched here: the reader seam
+# is 1429's and this issue neither reads a number nor moves a print line.
 #
 # 453 -> 476 with section MP (Stage 6d, issue 1432 -- `noise`, `disto` and
 # `sens`'s AC mode, and the first PRODUCTION exerciser of issue 1430's
@@ -234,7 +236,7 @@
 # against `set ase_checkpoint 0`, with CK18b as its non-vacuity control.
 # ⚠ AND `deck_of`'s `tran 1n 1u` IN test_ase_preflight IS A HUNDREDTH OF
 # `ase::ckpt_floor`, which is why PF218a-h are unmoved there too.
-# ⚠ ⚖ R3 IS STILL UNANSWERED and nothing here touches it.
+# ⚠ ⚖ R3 (ANSWERED 2026-09-12, Option C) is not touched here.
 #
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
@@ -6189,9 +6191,10 @@ check "CP6 the two probe-only types declare no fields, tf, pz, sens, noise and\
 
 # ===========================================================================
 # RS / RD — ⚖ R3's reader seam: where ONE output row's number comes from
-# (issue 1429). ⚖ R3 IS ASKED AND UNANSWERED; what is pinned here is
-# DECISIONS.md's RECOMMENDATION, Option C, and the rows are written so that a
-# later ruling of A or B moves ONE proc and deletes one reader.
+# (issue 1429). ⚖ R3 WAS ANSWERED 2026-09-12 — Option C, RATIFIED. The rows
+# were written so that a ruling of A or B would have moved ONE proc and deleted
+# one reader; they are kept as written, because the same rows are what stop the
+# ratified dispatcher from quietly stopping being equivalent.
 #
 # ⚠ SECTIONS RS AND RD CARRY THEIR OWN `catch`, because this file's OUTER one
 # closes at the end of section SI, thousands of lines above here (issue 1428's
@@ -6364,7 +6367,7 @@ check "RS3b the rawfile answer is the rawfile's: the log's rival number for the\
   [list [r3_val $RSC Transfer_function] [rg_has $RSLOGTXT 9.999999e+09]] \
   {4.285714e-01 1}
 
-## ⚠ THE RULE IS STATED ON SCREEN, which is what ⚖ R3's recommendation asks for
+## ⚠ THE RULE IS STATED ON SCREEN, which is what ⚖ R3's ANSWER asks for
 ## in as many words. Spied at ::ciw_echo, so the row proves the sentence really
 ## travelled ase::echo -> notify_safe -> notify -> ciw_echo.
 set RSSAID [rg_ciw {r3_probe $RSST $RSLOGTXT}]

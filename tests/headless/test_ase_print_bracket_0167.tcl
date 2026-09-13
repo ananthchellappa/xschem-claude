@@ -33,9 +33,9 @@
 #             back (guarded on auto_execok ngspice); PB12b says which FILE the
 #             plain output's number now comes out of
 #
-# ⚠ THE COUNT IS A FLOOR: 12 -> 14 with issue 1429. ⚖ R3 is ASKED AND
-# UNANSWERED; Option C is DECISIONS.md's RECOMMENDATION, built so that a later
-# ruling of A or B moves one proc and deletes one reader.
+# ⚠ THE COUNT IS A FLOOR: 12 -> 14 with issue 1429. ⚖ R3 was ANSWERED
+# 2026-09-12 — Option C, RATIFIED. It was built so that a ruling of A or B
+# would have moved one proc and deleted one reader.
 #
 # True headless (no X). Run from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_print_bracket_0167.tcl
@@ -117,8 +117,8 @@ set res [$logprobe [bitstate $scratch] $PBLOG]
 check "PB8 quoted log label parsed" [pbkey $res a0] 1.500000e+00
 check "PB9 bare log label still parsed" [pbkey $res vout] 7.500000e-01
 
-## ⚠ THE ROUTING ITSELF (⚖ R3, ASKED AND UNANSWERED — Option C is DECISIONS.md's
-## RECOMMENDATION). With NO results file present, the dispatcher answers the
+## ⚠ THE ROUTING ITSELF (⚖ R3, ANSWERED 2026-09-12 — Option C, RATIFIED).
+## With NO results file present, the dispatcher answers the
 ## bracketed row from the log and the `v(out)` row not at all; the number
 ## `v(out)` gets in PB12 below comes from the results file the real run writes.
 set res [$probe [bitstate $scratch] $PBLOG]
