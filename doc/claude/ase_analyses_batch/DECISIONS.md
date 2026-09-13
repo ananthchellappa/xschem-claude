@@ -77,8 +77,24 @@ extras; `capabilities` already rides that way. `analysis_types` joins it the sam
 without touching `ase.tcl`'s core, and the mechanism already exists and is already
 exercised. Satisfies spec `ase_l.md` **D3**.
 
-**D3 — The state schema does not change in stages 0–8.** `analyses` stays a list of open
-dicts, `version` stays `1`, no new top-level key.
+**D3 — The state schema does not change in stages 0–8, with TWO named exceptions.**
+`analyses` stays a list of open dicts, `version` stays `1`.
+
+⚠ **CORRECTED 2026-09-13. THIS DECISION SAID "NO NEW TOP-LEVEL KEY" AND NAMED THE CAMPAIGN
+KEY AS THE *SINGLE* EXCEPTION. THERE ARE TWO.** Stage 8's **`measurements`** list is the
+other, authorised by `PLAN.md` §8a and shipped by issue 1443 — and it was already in the
+tree when ⚖ R8 was put to the user. Both use the same mechanism and both are safe for the
+same reason: **`ase::omit_if_empty`**, so a bench that has none serialises byte-identically.
+Driver-measured: `omit_if_empty` is `{cosim save_op_params sim_entry measurements}` and
+**no committed `.state` file has moved**.
+
+⚠ **AND §8a's OWN WORDING FOR IT IS WRONG.** The *Files and procs* table calls it *"the
+`measurements` state list (**per-row**, absent by default)"*. It shipped **top-level**, one
+list per state — `ase::meas_rows {state}` reads `[ase::state_get $state measurements]` — and
+top-level is the **right** shape, because a measurement *references* an analysis (via its
+`analysis` and `id` fields) rather than belonging to one. Per-row would duplicate every
+measurement that reads a second analysis. **The code is right and the plan's parenthetical
+is wrong.**
 
 *Reason.* **104 committed** `.state` files — 105 are on disk and the extra one is untracked
 (`LEDGER.md`'s baseline; `PLAN.md` §0.5) — and five byte-identity suite rows
@@ -1379,7 +1395,33 @@ owning a panel whose `Convergence not reached` returns **rc 0 with plausible-loo
 cross-check offered beside the answer, and the sentence that `oscnode` steers nothing
 (correction C17).
 
-### ⚖ R8 — Where does a campaign's configuration live?
+### ⚖ R8 — ANSWERED. Where does a campaign's configuration live?
+
+**✅ ANSWERED 2026-09-13 — Option A, the state file.** The user asked what *"inside the
+bench"* meant before ruling, and their answer carried the requirement:
+
+> *"What does 'inside the bench' mean? Will there be an artifact on the schematic? I want it
+> in the simulation state — so the user can interact with this Monte-carlo 'campaign' in
+> ASE-L"*
+
+⚠ **THE QUESTION WAS ASKED BECAUSE THE DRIVER'S PHRASING WAS AMBIGUOUS, AND THAT IS WORTH
+RECORDING.** *"Inside the bench"* can be read as *"on the schematic"*. It is **not**: the
+`.state` file is a separate **view** (`ngspice_state1/`) sitting beside `schematic/` and
+`symbol/`, and **nothing is written to the schematic at all**. A ruling put in words that
+admit a wrong reading is a ruling that can be answered wrongly; the user caught it.
+
+⚠ **AND THE ANSWER ADDED A SURFACE REQUIREMENT NEITHER OPTION STATED** — *"so the user can
+interact with this campaign in ASE-L."* Option A as written is a **storage** decision; the
+user ruled on it as an **interaction** decision. Stage 11 owes a surface, not merely a key.
+**Third ruling in this batch to arrive carrying a requirement the options did not offer**
+(⚖ R1's *always salvage*, ⚖ R6's analysis-reference discovery, and now this).
+
+⚠ **THE BENCH THE USER NAMED IS ALREADY SHAPED FOR IT.**
+`sky130A/xschem_libs/sky130_tests_ase/tb_bandgap` carries
+`{name VCCGAUSS value {agauss(1.8, 'ABSVAR', 1)}}` in its `variables` — a Monte Carlo
+distribution written **by hand**, which ASE-L today runs exactly **once**. The campaign key
+is what turns that into *"run it 200 times and show me the spread"*, and it lands on a bench
+that already has the distribution in it.
 
 *Blocks: Stage 11.*
 
@@ -1387,6 +1429,13 @@ cross-check offered beside the answer, and the sentence that `oscnode` steers no
   (the `ase::omit_if_empty` variable, hint `:110`, today `{cosim save_op_params sim_entry}`),
   absent on every one of the 104 committed files.
   D3 forbids new top-level keys; this would be the single named exception.
+  ⚠ **NO LONGER SINGLE, AND THE EXCEPTION IS ALREADY PAID.** Driver-measured 2026-09-13
+  while this ruling was being put: Stage 8's `measurements` list is **already** a new
+  top-level key, added by the same `ase::omit_if_empty` mechanism
+  (`{cosim save_op_params sim_entry measurements}`), with **all 104 committed `.state`
+  files still byte-for-byte unchanged**. So the mechanism Option A was costed against is
+  in use and proven safe across every bench in the repository, and **Option A is cheaper
+  than its own trade-off line claims**. See D3, corrected.
 * **Option B — outside the state file**, as a sibling artifact in the run directory.
 
 *Trade-off.* A keeps the campaign with the bench, travels with the cellview, and round-trips

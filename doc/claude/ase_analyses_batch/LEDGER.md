@@ -525,9 +525,52 @@ the user will feel. The user answered by delegating instead. **Stage 14 is last 
 anyway**, so the cost of that is nil today; if the stage ever needs to be cut for time, this
 is the paragraph that says why it is the cheapest one to cut.
 
-### Still open — four
+### ⚖ R8 — where a campaign lives — **ANSWERED 2026-09-13, Option A, the state file**
 
-⚖ **R8** through ⚖ **R11** are unanswered — **four**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4**, ⚖ **R5**, ⚖ **R6** and ⚖ **R7** on 2026-09-13 — all five above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
+**The user ruled after asking what the question meant**, and their answer carried a
+requirement neither option stated:
+
+> *"What does 'inside the bench' mean? Will there be an artifact on the schematic? I want it
+> in the simulation state — so the user can interact with this Monte-carlo 'campaign' in
+> ASE-L"*
+
+⚠ **THE CLARIFYING QUESTION WAS THE DRIVER'S FAULT AND IS RECORDED AS SUCH.** *"Inside the
+bench"* admits a reading the ruling never meant — *on the schematic*. It is **not**: the
+`.state` file is a separate **view** (`ngspice_state1/`, beside `schematic/` and `symbol/`)
+and **nothing is written to the schematic**. **A ruling phrased so that it can be answered
+wrongly is a defect in the asking**, and the user caught it rather than the driver.
+
+⚠ **AND IT IS A SURFACE REQUIREMENT, NOT A STORAGE ONE.** Option A is written as a storage
+decision; the user ruled on it as *"so the user can interact with this campaign in ASE-L"*.
+**Stage 11 owes a surface, not merely a key** — and that is the **third** ruling in this
+batch to arrive carrying something the options did not contain, after ⚖ R1's *always
+salvage* and ⚖ R6's analysis-reference discovery.
+
+⚠ **THE PREMISE THE COST WAS ARGUED ON HAD ALREADY EXPIRED, AND THE DRIVER FOUND IT BY
+CHECKING BEFORE ASKING.** Option A's cost was *"the one schema exception"* — D3 permits no
+new top-level state key and names the campaign as the **single** exception. Measured while
+the ruling was being put: **Stage 8's `measurements` list is already a second one**, added by
+the same `ase::omit_if_empty` mechanism, with **all 104 committed `.state` files still
+byte-for-byte unchanged**. So the exception was already paid and proven across every bench in
+the repository. **Second time today that a ruling drafted against an older tree turned out
+cheaper than its own trade-off line** — ⚖ R7 was the first. ⚠ **The remaining three should
+be re-read against the tree before they are put**, not taken from the page.
+
+⚠ **TWO DOC CORRECTIONS FELL OUT OF IT, BOTH MADE.** **D3** said *"no new top-level key"*
+with one named exception and now records **two**, with the measurement behind them. And
+`PLAN.md` §8a calls the measurements list *"per-row"* where it shipped **top-level** — and
+top-level is **right**, because a measurement *references* an analysis rather than belonging
+to one, so per-row would duplicate every measurement reading a second analysis. **The code is
+right and the plan's parenthetical is wrong.**
+
+⚠ **THE USER'S OWN BENCH IS ALREADY SHAPED FOR THIS.**
+`sky130A/xschem_libs/sky130_tests_ase/tb_bandgap` carries
+`{name VCCGAUSS value {agauss(1.8, 'ABSVAR', 1)}}` — a Monte Carlo distribution written by
+hand, which ASE-L today runs exactly **once**. Stage 11 is what turns that into a spread.
+
+### Still open — three
+
+⚖ **R9**, ⚖ **R10** and ⚖ **R11** are unanswered — **three**, and ⚖ **R9 is the batched copy debt** rather than a single question. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4** through ⚖ **R8** on 2026-09-13 — all six above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
