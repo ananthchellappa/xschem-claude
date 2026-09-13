@@ -137,3 +137,39 @@ all. `ase::analysis_handle_text` marks a disabled row `(off)`.
 
 The one-liner's **words** are still ⚖ R9's, as this issue said; `owed.sh add rule
 1447` carries them.
+
+---
+
+## ⚠ TWO OF THE FOUR SURFACES HAVE LANDED — 2026-09-13, issue 1448
+
+**This issue does NOT close.** Two of its four surfaces are delivered; two are not, and
+one of the two is **blocked by a defect this work found**.
+
+| surface | status |
+|---|---|
+| **2** — handle column in Choose Analyses | ✅ **delivered** — a `ttk::treeview` handle grid, one line per analysis row (`Handle` `Type` `Enable` `Arguments`), rendering `ase::analysis_handle_fields`. Picking a line **edits that row** |
+| **3** — `Analyses > List` | ✅ **delivered** — a read-only viewer whose whole body is `ase::analysis_handle_text`: every row, disabled ones marked `(off)`, Ctrl-W to close |
+| **1** — Measurements dropdown | ❌ open — **Stage 8 task 2**, unchanged. It consumes `ase::analysis_handle_fields` and writes the chosen handle onto the measurement row's `id`; it does not mint anything |
+| (new) an editable `id` field | ❌ open — **and blocked**, see below |
+
+⚠ **THE PROPOSAL'S "one column in the Choose Analyses grid" COULD NOT BE BUILT AS
+WRITTEN, AND THE REASON IS WORTH RECORDING.** The cells in that dialog are
+**types**, not analyses (`$w.types.<type>`, eleven of them for ngspice, four per row).
+A type with two rows has two handles and a type with none has none, so a handle cannot
+be a column of *that* grid. What was built is the grid the handle **is** a column of —
+one line per analysis row of the bench — and it carries the row addressing as well,
+which is the half of this issue nobody had noticed was missing.
+
+⚠ **AND THE ROW THE HANDLE NAMES COULD NOT BE EDITED.** `ase::ui::chana_row` returned
+the **first** row of a type and `ase::ui::pane_dblclick` threw the index away, so a bench
+with two `dc` rows had one that could be deleted from the pane and never opened. That is
+fixed here — `ase::ui::chana_row_idx` is the one reader, and both commit doors ask it.
+
+⚠ **THE EDITABLE `id` FIELD IS BLOCKED BY `ase::analysis_emit_check`.** Its `known` list
+is `{type enabled x}` plus the declared field names and has never heard of the `id` key
+⚖ R6 added, so `ase::preflight_gate` **refuses the whole bench** for an enabled row that
+declares one — no deck, no raw, no log. A field that let a user type an `id` would hand
+them that. One word in `src/ase.tcl` fixes it; issue **1448** carries the measurement and
+row `GH13b` of `tests/headless/test_ase_dialogs.tcl` pins it so the fix reddens a row.
+
+Detail: `doc/claude/issues/1448-the-handle-is-visible-and-the-second-row-of-a-type-is-reachable.md`.

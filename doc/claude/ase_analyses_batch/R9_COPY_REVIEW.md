@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**377 strings, from 21 issues, grouped by where the user sees them** — not by
+**381 strings, from 22 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -61,7 +61,7 @@ this document is being written.
 
 ## How to answer
 
-Every string has a **handle** — `R9-001` … `R9-377`. Mark up whatever you want
+Every string has a **handle** — `R9-001` … `R9-381`. Mark up whatever you want
 changed, by handle, in any form: *"R9-011: drop the shouting"*, *"R9-046/047:
 Voltage and Current"*, *"R9-003 → Stop value"*.
 
@@ -309,7 +309,8 @@ and — where the extraction found something a reader needs — a **note**.
 | Added after the first version — found by a completeness sweep | 2 |
 | Issue 1443 — measurements, added after the crew's work landed | 79 |
 | Issue 1447 — how a user names one analysis among several | 5 |
-| **total** | **377** |
+| Issue 1448 — the handle made visible | 4 |
+| **total** | **381** |
 
 ---
 
@@ -5664,3 +5665,69 @@ the analysis called '$h' is switched off, so '$name' has nothing to read
 
 *Note:* The pair R9-375 and R9-376 must move together: one tells you a measurement cannot run,
 the other is how you find the row it is complaining about.
+
+---
+
+## Issue 1448 — the handle made visible
+
+*4 strings.*
+
+⚖ R6's GUI half renders the scheme: a grid of analysis rows with a **Handle** column, and an
+`Analyses > List` window. It **consumes R9-373 … R9-377 unchanged** — the handle spelling and
+the `(off)` marker are not re-minted — and adds these four.
+
+**R9-378** · label
+
+```text
+Handle
+```
+
+*Where:* The first column heading of the new analysis-row grid in the Choose Analyses dialog,
+beside `Type`, `Enable` and `Arguments`.
+
+*For:* Heads the column showing the name a user types to refer to that analysis — `ac1`,
+`dc2`, or a row's own declared `id`.
+
+*Note:* The word the whole scheme is called. If you would rather the column said `Name`, `Ref`
+or `ID`, this is the one place that decides it — and it should then agree with whatever Stage 8
+task 2's Measurements dropdown calls the same thing.
+
+**R9-379** · label
+
+```text
+List
+```
+
+*Where:* The second entry of the `Analyses` menu cascade, beside `Choose…`.
+
+*For:* Opens the read-only window that dumps one line per analysis row.
+
+*Note:* One word, no ellipsis — unlike its neighbour `Choose…`, which has one because it opens
+a dialog you act in. This one opens a window you only read, so the absence is deliberate.
+
+**R9-380** · label
+
+```text
+Analyses — <design cell>
+```
+
+*Where:* The title bar of the `Analyses > List` window. Composed: `Analyses`, an **em dash**
+(U+2014), and the design's cell name.
+
+*For:* Says which bench the list belongs to, for a user with two windows open.
+
+*Note:* The em dash matches the run-log sentences (R9-262, R9-264) and not the `--` separator
+the measurement report uses (R9-365). §A8.
+
+**R9-381** · status
+
+```text
+No analyses on this bench.
+```
+
+*Where:* The body of the `Analyses > List` window when the bench has no analysis rows.
+
+*For:* Says the window is empty on purpose. Without it an empty window reads as a broken one.
+
+*Note:* A complete sentence with a full stop, where most ASE-L status text has neither. §A8 —
+and worth deciding once for every "nothing here yet" message the batch ends up with.

@@ -72,6 +72,25 @@
 #          (GR6g), because the reader answers in FIELDS. GR6h pins the one
 #          residual: the precondition banner's `chana_merged_row` still reads
 #          live widgets only.
+#   GH1-15 ⚖ R6's GUI half (issue 1448), closing two of issue 1444's three
+#          surfaces. The Choose Analyses dialog gains a HANDLE GRID -- one line
+#          per analysis row, `Handle` first, rendering `ase::analysis_handle_fields`
+#          (GH1, GH2) -- and picking a line is how the SECOND `dc` row of a
+#          bench is edited at all (GH3), which it could not be: `chana_row`
+#          answered with the first row of a type and `pane_dblclick` threw the
+#          index away, so both the context Edit… door (GH4b) and the
+#          double-click door (GH4c) opened `dc1`. The type cell no longer resets
+#          the addressing (GH4), OK writes the addressed row and leaves the rest
+#          byte for byte (GH5, GH7), and ⚖ R5's edit cache is keyed by HANDLE
+#          rather than by type, because a type-keyed cache overlays one dc row's
+#          typing on the other's form (GH6). `Analyses > List` dumps every row
+#          with the switched-off ones marked (GH8, GH9, GH10, GH14). GH11 is the
+#          one-speller row, on the one fixture where a locally minted
+#          `<type><n>` would disagree -- a row declaring `id vinsweep`. GH12 is
+#          that identity surviving an edit; GH13/GH13b are what the commit door
+#          does and does not see about it, the second a KNOWN DEFECT pinned by
+#          measurement. GH15 is the byte-identity question asked of the new
+#          grid.
 #   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog OF THE ITEM-10 SET
 #          dismisses on a real generated <Key-Escape> through its CANCEL path
 #          (the results-batch item-7 `Results > Select…` dialog is newer and
@@ -168,6 +187,21 @@ set fail 0; set npass 0
 #              reason -- there is no schema half, only a second reader on the
 #              commit door -- and GR6f is the row that would notice a key this
 #              change wrote into a bench that never carried one.
+#   37 / 340   section GH, ⚖ R6's GUI half (issue 1448): the handle is visible
+#              and the second row of a type is reachable. Headless is unmoved
+#              for GR5's and GR6's reason -- every GH row drives widgets, and
+#              the schema half shipped separately as test_ase_core section HN /
+#              test_ase_persist section R8 (issue 1447).
+#              ⚠ GH15 is this section's byte-identity row and it presses OK on
+#              `ac`, never on `op`: `op` has no fields, so `chana_ok` writes
+#              nothing whatever the reader answers and such a row cannot fail.
+#              That is GR6f's measured correction to GR5k, inherited rather than
+#              re-learned.
+#              ⚠ GH13b PINS A DEFECT RATHER THAN A FEATURE. `ase::analysis_emit_check`
+#              in src/ase.tcl has never heard of the `id` key ⚖ R6 added, so an
+#              ENABLED analysis row that declares one makes `ase::preflight_gate`
+#              refuse the whole bench. Fixing it turns that row RED, which is
+#              the point.
 #
 # ⚠ TWO ROWS IN THIS FILE ARE RED ON THE DISPLAY ARM AND WERE RED BEFORE 1435
 # -- verified by restoring src/ase.tcl and src/ase_window.tcl to HEAD 81312742
@@ -188,6 +222,11 @@ set fail 0; set npass 0
 #     `ase::sim_status` falls back to `[auto_execok ngspice]`.
 # T1 runs this file's HEADLESS arm only (37 checks, ALL PASS), so neither red is
 # a T1 failure -- and neither is furniture.
+# ⚠ MEASURED 2026-09-13, issue 1448: **one** of the two, not both. `G2sens` reds
+# with the identical actual value `{1 1 0 1 0 Entry Entry normal}` recorded in
+# issue 1436; `GG9` passed on every run of both arms, exactly as the paragraph
+# above predicts (its premise needs a COLD capability cache). So the count in
+# that paragraph is a timestamp and the mechanism is not.
 #
 # ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
 # row; do not edit the number downward to make the file agree with itself.
@@ -2806,13 +2845,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   ## GN3 -- WHERE IT SITS: under the form, above `Options…`, and nothing moved to
   ## make room. Issue 1405 is what moving a path costs.
+  ##
+  ## ⚠ THE FORM IS AT ROW **3** SINCE ISSUE 1448, AND THAT IS A MOVE THIS ROW
+  ## EXISTS TO NOTICE. The handle grid took row 1, so `$w.enable`/`$w.status`
+  ## went to 2 and the form to 3 -- the same WIDGETS in the same frame, one row
+  ## lower, which is not what issue 1405 cost 100 checks over (that was a widget
+  ## PATH moving, `$w.<field>` -> `$w.form.<field>`). The banner's own row, the
+  ## `Options…` row and the button bar are the numbers that must not move, and
+  ## they have not: 7, 8, 9. The handle grid's row is asserted here too, so the
+  ## next thing inserted into this dialog has to come and read this paragraph.
   set GN3 [grid info $gw.note]
-  check "GN3 the banner is at grid row 7, spanning both columns, with the form at\
- 2 and Options/buttons still at 8 and 9" \
+  check "GN3 the banner is at grid row 7, spanning both columns, with the handle\
+ grid at 1, the form at 3 and Options/buttons still at 8 and 9" \
     [list [dict get $GN3 -row] [dict get $GN3 -columnspan] \
+          [dict get [grid info $gw.rows] -row] \
           [dict get [grid info $gw.form] -row] \
           [dict get [grid info $gw.opts] -row] \
-          [dict get [grid info $gw.btns] -row]] {7 2 2 8 9}
+          [dict get [grid info $gw.btns] -row]] {7 2 1 3 8 9}
 
   ## GN4 -- COLD: the dialog has netlisted nothing, and says so rather than
   ## saying nothing. ⚠ THE SLOT IS CLEARED FIRST so this row cannot inherit a
@@ -3192,6 +3241,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   #
   # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW and `run_regression.tcl` runs this
   # file on NEITHER of its arms, so a T1 zero exercises none of them.
+  #
+  # ⚠ THE CACHE SLOT IS SPELLED `anedit,tran1` AND NOT `anedit,tran` SINCE ISSUE
+  # 1448, AND THAT IS THE FEATURE AND NOT A TYPO. ⚖ R5 keyed the cache by TYPE
+  # because a type was the only identity a row had; ⚖ R6 gave every row a
+  # handle and issue 1448 made two rows of one type reachable, at which point a
+  # type-keyed cache would overlay one `dc` row's typing on the other one's
+  # form. `tran1` is what `ase::analysis_handle` answers for the seeded tran row
+  # (`ase::analysis_seed` -> op dc ac tran, one each), so every GR5/GR6 row
+  # below reads the same cache it always did, under the name the user can see.
+  # Section GH is where the two-rows-of-a-type case is measured.
   proc r5_open {key} {
     set top [ase::ui::window_for $key]
     # ⚠ A BARE `destroy` AND NOT `chana_cancel`: this is the window manager's
@@ -3312,8 +3371,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $gw.types.ac invoke
   update
   set R5F_UNTOUCHED {}
-  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
-    set R5F_UNTOUCHED $::ase::ui::dlg($key,anedit,tran)
+  if {[info exists ::ase::ui::dlg($key,anedit,tran1)]} {
+    set R5F_UNTOUCHED $::ase::ui::dlg($key,anedit,tran1)
   }
   $gw.types.tran invoke
   update
@@ -3322,8 +3381,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $gw.types.ac invoke
   update
   set R5F_TOUCHED {}
-  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
-    set R5F_TOUCHED $::ase::ui::dlg($key,anedit,tran)
+  if {[info exists ::ase::ui::dlg($key,anedit,tran1)]} {
+    set R5F_TOUCHED $::ase::ui::dlg($key,anedit,tran1)
   }
   check "GR5f visiting a type caches no key at all; typing into one caches that\
  key and nothing else" [list $R5F_UNTOUCHED $R5F_TOUCHED] [list {} {stop 500u}]
@@ -3399,7 +3458,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $gw.types.ac invoke
   update
   set R5H_CACHED \
-    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran]] > 0}]
+    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran1]] > 0}]
   $gw.btns.cancel invoke
   update
   set R5H_LEFT [lsort [array names ::ase::ui::dlg $key,anedit,*]]
@@ -3420,11 +3479,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $gw.types.ac invoke
   update
   set R5I_CACHED \
-    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran]] > 0}]
+    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran1]] > 0}]
   destroy $gw
   update
   set R5I_SURVIVED \
-    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran]] > 0}]
+    [expr {[llength [array names ::ase::ui::dlg $key,anedit,tran1]] > 0}]
   set gw [r5_open $key]
   $gw.types.tran invoke
   update
@@ -3629,8 +3688,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::ui::chana_adv_toggle $key
   update
   set R6C_CACHED {}
-  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
-    set R6C_CACHED $::ase::ui::dlg($key,anedit,tran)
+  if {[info exists ::ase::ui::dlg($key,anedit,tran1)]} {
+    set R6C_CACHED $::ase::ui::dlg($key,anedit,tran1)
   }
   $gw.btns.proceed invoke
   update
@@ -3691,8 +3750,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     if {[ase::state_get $r6b type] ne {ac}} { lappend R6E_OTHERS $r6b }
   }
   set R6E_CACHED {}
-  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
-    set R6E_CACHED $::ase::ui::dlg($key,anedit,tran)
+  if {[info exists ::ase::ui::dlg($key,anedit,tran1)]} {
+    set R6E_CACHED $::ase::ui::dlg($key,anedit,tran1)
   }
   $gw.form.stop delete 0 end
   $gw.form.stop insert 0 2meg
@@ -3770,8 +3829,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::ui::chana_adv_toggle $key
   update
   set R6G_CACHED {}
-  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
-    set R6G_CACHED $::ase::ui::dlg($key,anedit,tran)
+  if {[info exists ::ase::ui::dlg($key,anedit,tran1)]} {
+    set R6G_CACHED $::ase::ui::dlg($key,anedit,tran1)
   }
   $gw.enable invoke
   update
@@ -3820,6 +3879,453 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     {2n 7n}
   $gw.btns.cancel invoke
   update
+
+  # --- GH: THE HANDLE IS VISIBLE, AND THE SECOND ROW OF A TYPE IS REACHABLE --
+  # ⚖ R6's GUI half (issue 1448), closing two of issue 1444's three surfaces.
+  #
+  # ⚠ THE LOAD-BEARING ROW IS GH3 AND IT IS NOT A DISPLAY FEATURE. Before this,
+  # `ase::ui::chana_row` returned the FIRST row of a type and
+  # `ase::ui::pane_dblclick` threw the index away, so a bench that said "sweep
+  # VIN, **and also** sweep temperature" -- the bench ⚖ R6 was ruled to make
+  # possible -- had a second `dc` row that could be deleted from the pane and
+  # never edited: every door opened the first one. `DECISIONS.md` ⚖ R6 records
+  # it from the other side and calls it "the work".
+  #
+  # ⚠ AND THE CACHE MOVED WITH IT. ⚖ R5's per-dialog edit cache was keyed by
+  # TYPE because a type was the only identity a row had. The moment two rows of
+  # a type are reachable, a type-keyed cache overlays one row's typing on the
+  # other row's form and OK writes it. GH6 is that sentence as a row; the key is
+  # now `ase::analysis_handle`'s answer (`ase::ui::chana_cache_key`).
+  #
+  # ⚠ NOTHING HERE ASSEMBLES A HANDLE. `ase::analysis_handles` is the one
+  # speller (issue 1447) and GH11 is the row that says so, on a bench whose
+  # first `dc` row declares `id vinsweep` -- the ONE fixture where a locally
+  # minted `<type><n>` would disagree with the real answer instead of
+  # accidentally matching it.
+  #
+  # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW, like GR5's and GR6's.
+  proc gh_open {key {idx {}}} {
+    set top [ase::ui::window_for $key]
+    catch {destroy $top.chana}
+    ase::ui::choose_analyses $key {} $idx
+    update
+    return $top.chana
+  }
+  proc gh_col {gw col} {
+    set out {}
+    foreach it [$gw.rows children {}] { lappend out [$gw.rows set $it $col] }
+    return $out
+  }
+
+  ## THE BENCH: FIVE ROWS, TWO OF THEM `dc`, AND THE TWO `dc` ROWS DISAGREE.
+  ## `V2 0 1.8 0.01` against `TEMP -40 125 5` -- a voltage sweep and a
+  ## temperature sweep, which is the user's own example and the reason ⚖ R6 was
+  ## ruled. A fixture whose two rows of a type were equal would pass whatever
+  ## the addressing did, which is this batch's failure mode #1 and has bitten it
+  ## eleven times.
+  ##
+  ## ⚠ THE `ac` ROW STORES NO `sweep`, DELIBERATELY. The form resolves the
+  ## declared default `dec` and `ase::ui::form_is_absent` then writes no key, so
+  ## GH15 can press OK on a type that HAS fields (GR6f's correction to GR5k's
+  ## `op`, which has none and therefore cannot notice a broken reader).
+  set GHROWS [list \
+    {type op enabled 1} \
+    {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01} \
+    {type ac enabled 0 points 10 start 1 stop 1meg} \
+    {type tran enabled 0 step 1n stop 1u} \
+    {type dc enabled 0 source TEMP start -40 stop 125 step 5}]
+  set GHIDROWS [lreplace $GHROWS 1 1 \
+    {type dc enabled 0 source V2 start 0 stop 1.8 step 0.01 id vinsweep}]
+  set GHIDONROWS [lreplace $GHROWS 1 1 \
+    {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01 id vinsweep}]
+  set GHST [ase::session_state $key]
+  dict set GHST analyses $GHROWS
+  ase::session_update $key $GHST
+  ase::ui::populate $key
+  set GHFIX [ase::session_state $key]
+  set ::ase::ui::dlg($key,advopen) 0
+  set top [ase::ui::window_for $key]
+
+  ## GH1 -- THE HANDLE COLUMN EXISTS AND IT IS THE HANDLE, NOT THE INDEX. The
+  ## item ids ARE the indices (the pane convention), so the third and fourth
+  ## terms are the control: a column rendering the index would still be five
+  ## values and would still look like a column.
+  set gw [gh_open $key]
+  set GH1H [gh_col $gw handle]
+  set GH1I [$gw.rows children {}]
+  check "GH1 the Choose Analyses handle grid renders one line per analysis row\
+ with the HANDLE in its first column -- and the handles are not the indices" \
+    [list [llength $GH1I] $GH1H $GH1I [expr {$GH1H ne $GH1I}]] \
+    [list 5 {op1 dc1 ac1 tran1 dc2} {0 1 2 3 4} 1]
+
+  ## GH2 -- AND THE OTHER THREE COLUMNS ARE `ase::analysis_handle_fields`'s
+  ## ANSWER, FOR A DISABLED ROW TOO. Compared BOTH to the proc and to a literal
+  ## golden (the W1t discipline): a constant compared to a constant cannot fail.
+  set GH2F [ase::analysis_handle_fields ngspice $GHFIX 4]
+  set GH2ROW [list [$gw.rows set 4 handle] [$gw.rows set 4 type] \
+                   [$gw.rows set 4 enable] [$gw.rows set 4 args]]
+  set GH2EXP [list [dict get $GH2F handle] [dict get $GH2F type] \
+                   [ase::ui::chk_glyph [dict get $GH2F enabled]] \
+                   [dict get $GH2F args]]
+  check "GH2 the grid's Type, Enable and Arguments columns are the fields proc's\
+ answer -- the switched-off row is listed, with the pane's own off glyph" \
+    [list $GH2ROW [expr {$GH2ROW eq $GH2EXP}] [$gw.rows set 1 enable]] \
+    [list [list dc2 DC "☐" {TEMP -40 125 5}] 1 "☑"]
+
+  ## GH3 -- ⚠ THE ROW THIS WHOLE TASK EXISTS FOR. Picking the SECOND `dc` line
+  ## builds the form from the SECOND `dc` row. Before issue 1448 both lines --
+  ## and both doors into this dialog -- opened `dc1`, and the third term is the
+  ## control that the two rows really do disagree.
+  $gw.rows selection set [list 1]
+  update
+  set GH3A [$gw.form.source get]
+  $gw.rows selection set [list 4]
+  update
+  set GH3B [$gw.form.source get]
+  check "GH3 picking the second dc line in the handle grid builds the form from\
+ the SECOND dc row, and the two rows really do differ" \
+    [list $GH3A $GH3B [expr {$GH3A ne $GH3B}] [ase::ui::chana_row_idx $key dc]] \
+    {V2 TEMP 1 4}
+
+  ## GH4 -- THE TYPE CELL DOES NOT RESET THE ADDRESSING, and the grid's
+  ## highlight follows the form. Clicking away to `ac` and back to `dc` has to
+  ## return to `dc2`: a type cell that silently jumped to the first row would
+  ## put the user back on the row they had just navigated away from.
+  $gw.types.ac invoke
+  update
+  set GH4AC [$gw.rows selection]
+  $gw.types.dc invoke
+  update
+  check "GH4 clicking away to the ac cell and back to dc returns to dc2, and the\
+ grid's highlight tracks the form both times" \
+    [list $GH4AC [$gw.rows selection] [$gw.form.source get] \
+          [ase::ui::chana_row_idx $key dc]] \
+    {2 4 TEMP 4}
+  $gw.btns.cancel invoke
+  update
+
+  ## GH4b -- THE PANE'S CONTEXT `Edit…` DOOR. It reads the pane selection and
+  ## called `choose_analyses` with the row's TYPE only; its own header said the
+  ## dialog "addresses the first row of that type" and that extras "remain
+  ## X-deletable", which is a fair description of a row that can be deleted and
+  ## not edited.
+  set atv $top.body.ana.tv
+  $atv selection set [list 4]
+  update
+  ase::ui::edit_analysis_first $key
+  update
+  set gw $top.chana
+  check "GH4b the pane's context Edit… on the fifth analyses row opens Choose\
+ Analyses on dc2, not on dc1" \
+    [list $::ase::ui::dlg($key,antype) [ase::ui::chana_row_idx $key dc] \
+          [$gw.form.source get] [$gw.rows selection]] \
+    {dc 4 TEMP 4}
+  $gw.btns.cancel invoke
+  update
+
+  ## GH4c -- AND THE DOUBLE-CLICK DOOR, driven at real coordinates off the
+  ## pane's own bbox. The first term is the control that the bbox resolved: a
+  ## row that could not find the cell would otherwise pass by calling
+  ## `pane_dblclick` with coordinates that identify nothing, which returns
+  ## early and opens no dialog at all.
+  catch {destroy $top.chana}
+  set GH4CBB [$atv bbox 4]
+  if {$GH4CBB ne {}} {
+    ase::ui::pane_dblclick $key ana [expr {[lindex $GH4CBB 0] + 2}] \
+      [expr {[lindex $GH4CBB 1] + 2}]
+    update
+  }
+  set gw $top.chana
+  check "GH4c double-clicking the fifth analyses row opens the dialog on dc2 --\
+ the index the pane had and the dialog used to throw away" \
+    [list [expr {$GH4CBB ne {}}] [winfo exists $gw] \
+          [ase::ui::chana_row_idx $key dc] [$gw.form.source get]] \
+    {1 1 4 TEMP}
+  $gw.btns.cancel invoke
+  update
+
+  ## GH5 -- OK WRITES THE ADDRESSED ROW AND LEAVES EVERY OTHER ROW BYTE FOR
+  ## BYTE. Both commit doors walked to the first row of the type; on this bench
+  ## an edit to `dc2` landed on `dc1` and silently changed the voltage sweep.
+  ase::session_update $key $GHFIX
+  set gw [gh_open $key 4]
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 77
+  $gw.btns.proceed invoke
+  update
+  set GH5ROWS [ase::state_get [ase::session_state $key] analyses]
+  check "GH5 OK writes the ADDRESSED dc row: dc2 takes the new stop, dc1 is\
+ untouched, every other row comes back byte for byte, and 77 was not already\
+ anybody's value" \
+    [list [ase::state_get [lindex $GH5ROWS 4] stop] \
+          [expr {[lindex $GH5ROWS 1] eq [lindex $GHROWS 1]}] \
+          [expr {[lreplace $GH5ROWS 4 4] eq [lreplace $GHROWS 4 4]}] \
+          [expr {[ase::state_get [lindex $GHROWS 4] stop] ne {77}}]] \
+    {77 1 1 1}
+
+  ## GH6 -- ⚠ THE CACHE IS PER ROW, NOT PER TYPE, AND THIS IS THE DESIGN
+  ## QUESTION THE SCHEMA HALF DID NOT SETTLE. ⚖ R5 keyed it by type; with two
+  ## `dc` rows reachable that overlays `dc1`'s typing on `dc2`'s form, and the
+  ## user is then looking at a temperature sweep wearing a voltage sweep's
+  ## numbers. The second term is the control that the two stored values differ.
+  ase::session_update $key $GHFIX
+  set gw [gh_open $key 1]
+  set GH6A [$gw.form.stop get]
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 9.9
+  $gw.rows selection set [list 4]
+  update
+  set GH6B [$gw.form.stop get]
+  $gw.rows selection set [list 1]
+  update
+  check "GH6 an edit to dc1 does not surface on dc2's identically named box, and\
+ coming back to dc1 finds it still there" \
+    [list $GH6A $GH6B [expr {$GH6A ne $GH6B}] [$gw.form.stop get]] \
+    {1.8 125 1 9.9}
+  $gw.btns.cancel invoke
+  update
+
+  ## GH7 -- AND THE COMMIT READER MOVED WITH IT (issue 1446 under addressing).
+  ## A value typed under `▸ Advanced` and folded away has no widget left to
+  ## read, so OK reads the cache -- which must be the ADDRESSED row's cache. The
+  ## row is switched off, so the D6 group rule (`second sweep` is all-or-none)
+  ## does not arise; what is being measured is WHICH row the value lands on.
+  ase::session_update $key $GHFIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [gh_open $key 4]
+  ase::ui::chana_adv_toggle $key
+  update
+  set GH7HAD [ase::ui::form_has $key step2]
+  $gw.form.step2 delete 0 end
+  $gw.form.step2 insert 0 7
+  ase::ui::chana_adv_toggle $key
+  update
+  set GH7GONE [ase::ui::form_has $key step2]
+  $gw.btns.proceed invoke
+  update
+  set GH7ROWS [ase::state_get [ase::session_state $key] analyses]
+  check "GH7 a folded-away Advanced edit is committed to the row the dialog was\
+ addressing -- it really was on screen, it really was gone at OK, dc2 has it and\
+ dc1 does not" \
+    [list $GH7HAD $GH7GONE [ase::state_get [lindex $GH7ROWS 4] step2] \
+          [dict exists [lindex $GH7ROWS 1] step2]] \
+    {1 0 7 0}
+  set ::ase::ui::dlg($key,advopen) 0
+
+  ## GH8 -- `Analyses > List` (issue 1444 surface 3). The body is
+  ## `ase::analysis_handle_text` and nothing else, EVERY row is listed, and the
+  ## switched-off ones are marked. 1444 asked for "the enabled analyses"; issue
+  ## 1447's C-R6-1 corrected it, because a measurement bound to a switched-off
+  ## row REFUSES and the reader's next question is which one is off.
+  ase::session_update $key $GHFIX
+  catch {destroy $top.anlist}
+  set GH8W [ase::ui::analyses_list $key]
+  update
+  set GH8TXT [$GH8W.t get 1.0 end-1c]
+  set GH8OFF 0
+  foreach gh8l [split $GH8TXT "\n"] {
+    if {[string match {*(off)} $gh8l]} { incr GH8OFF }
+  }
+  check "GH8 Analyses > List dumps one line per analysis row -- every row, not\
+ only the enabled ones -- with the three switched-off rows marked" \
+    [list [llength [split $GH8TXT "\n"]] $GH8OFF \
+          [expr {$GH8TXT eq [ase::analysis_handle_text ngspice \
+                              [ase::session_state $key]]}] \
+          [lindex [split [lindex [split $GH8TXT "\n"] 4]] 0]] \
+    {5 3 1 dc2}
+
+  ## GH9 -- THE MENU ENTRY IS REAL AND IT IS THE DOOR. Driven through the actual
+  ## cascade rather than by calling the proc, which is the only way to notice an
+  ## entry that was never added.
+  set GH9L {}
+  for {set gh9i 0} {$gh9i <= [$top.mb.analyses index end]} {incr gh9i} {
+    lappend GH9L [$top.mb.analyses entrycget $gh9i -label]
+  }
+  catch {destroy $top.anlist}
+  ## ⚠ THE INVOKE AND EVERY READ OF THE WINDOW ARE CAUGHT, WHICH IS G2tf's
+  ## LESSON AND NOT CAUTION. The one change this row exists to catch -- the menu
+  ## entry never added -- makes `invoke 1` a bad index and `$top.anlist.t` an
+  ## invalid command name; both raise into the display block's outer catch,
+  ## which kills the FILE at this row and loses every row after it instead of
+  ## reddening one. Measured on sabotage s12.
+  catch {$top.mb.analyses invoke 1}
+  update
+  set GH9OPEN 0
+  set GH9SAME 0
+  if {[winfo exists $top.anlist.t]} {
+    set GH9OPEN 1
+    set GH9SAME [expr {[$top.anlist.t get 1.0 end-1c] eq $GH8TXT}]
+  }
+  check "GH9 the Analyses cascade carries List beside Choose…, and invoking it\
+ opens the list window" \
+    [list $GH9L $GH9OPEN $GH9SAME] \
+    [list [list "Choose…" List] 1 1]
+
+  ## GH10 -- IT IS A VIEWER: read-only, and the text is selectable so it can be
+  ## COPIED, which is the whole reason issue 1444 kept this surface (the
+  ## calculator has nothing to pick from).
+  set GH10 {ABSENT ABSENT ABSENT}
+  if {[winfo exists $top.anlist.t]} {
+    set GH10 [list [$top.anlist.t cget -state] [$top.anlist.t cget -wrap] \
+                   [winfo class $top.anlist.t]]
+  }
+  check "GH10 the list window is read-only machine text, not an editor" \
+    $GH10 {disabled none Text}
+
+  ## GH11 -- ⚠ ONE SPELLER, THREE RENDERINGS, ON THE ONE BENCH WHERE A LOCAL
+  ## MINT WOULD DISAGREE. Every other fixture in this file would let a surface
+  ## that assembled `<type><n>` itself pass by accident, because that IS the
+  ## derived scheme. Here the first `dc` row declares `id vinsweep`, so the real
+  ## answer is `{op1 vinsweep ac1 tran1 dc1}` and a local mint says
+  ## `{op1 dc1 ac1 tran1 dc2}` -- the fourth term is that control.
+  set GHIDST [ase::session_state $key]
+  dict set GHIDST analyses $GHIDROWS
+  ase::session_update $key $GHIDST
+  ase::ui::populate $key
+  set GHIDFIX [ase::session_state $key]
+  catch {destroy $top.anlist}
+  set gw [gh_open $key]
+  ase::ui::analyses_list $key
+  update
+  set GH11L {}
+  foreach gh11l [split [$top.anlist.t get 1.0 end-1c] "\n"] {
+    lappend GH11L [lindex [split $gh11l] 0]
+  }
+  check "GH11 the handle grid, the first column of Analyses > List and\
+ ase::analysis_handles are one answer rendered three times -- and a declared id\
+ is what a locally minted <type><n> would have got wrong" \
+    [list [gh_col $gw handle] $GH11L [ase::analysis_handles $GHIDFIX] \
+          [expr {[ase::analysis_handles $GHIDFIX] ne \
+                 {op1 dc1 ac1 tran1 dc2}}]] \
+    [list {op1 vinsweep ac1 tran1 dc1} {op1 vinsweep ac1 tran1 dc1} \
+          {op1 vinsweep ac1 tran1 dc1} 1]
+
+  ## GH12 -- EDITING A ROW DOES NOT COST IT ITS NAME. `id` is an open-dict key
+  ## the form knows nothing about, and `ase::ui::chana_ok` merges over the
+  ## original row -- so the identity survives, and the handle with it.
+  $gw.rows selection set [list 1]
+  update
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 2.5
+  $gw.btns.proceed invoke
+  update
+  set GH12ROWS [ase::state_get [ase::session_state $key] analyses]
+  check "GH12 committing an edit to a row that declares an id keeps the id, and\
+ the handle the user was told to type still names the same row" \
+    [list [ase::state_get [lindex $GH12ROWS 1] id] \
+          [ase::state_get [lindex $GH12ROWS 1] stop] \
+          [ase::analysis_handles [ase::session_state $key]] \
+          [ase::analysis_by_handle [ase::session_state $key] vinsweep]] \
+    [list vinsweep 2.5 {op1 vinsweep ac1 tran1 dc1} {dc 1}]
+
+  ## GH13 -- WHAT THE COMMIT DOOR ACTUALLY SEES, MEASURED RATHER THAN ASSUMED.
+  ## `ase::ui::chana_ok`'s D6 probe is built from `vals` -- the FORM's declared
+  ## fields -- so a row key the form knows nothing about never reaches
+  ## `ase::analysis_emit_check` at all. An enabled row that declares an `id`
+  ## therefore commits and closes, and the identity survives the write. This row
+  ## was first written the other way round, expecting a refusal; the dialog
+  ## disagreed and the dialog was right.
+  set GHIDONST [ase::session_state $key]
+  dict set GHIDONST analyses $GHIDONROWS
+  ase::session_update $key $GHIDONST
+  set gw [gh_open $key 1]
+  set GH13EN $::ase::ui::dlg($key,anen)
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 3.3
+  $gw.btns.proceed invoke
+  update
+  set GH13ROWS [ase::state_get [ase::session_state $key] analyses]
+  check "GH13 the commit door judges the FORM's fields, so the id key is not\
+ something it can refuse: an ENABLED row that declares one commits, closes and\
+ keeps its name" \
+    [list $GH13EN [winfo exists $top.chana] \
+          [ase::state_get [lindex $GH13ROWS 1] id] \
+          [ase::state_get [lindex $GH13ROWS 1] stop] \
+          [ase::state_get [lindex $GH13ROWS 1] enabled]] \
+    {1 0 vinsweep 3.3 1}
+
+  ## GH13b -- ⚠ AND HERE IS WHAT IT COSTS, PINNED SO THAT FIXING IT REDDENS A
+  ## ROW. `ase::analysis_emit_check` judges a key no template can spend as
+  ## `unknownkey`, and its `known` list is `{type enabled x}` plus the declared
+  ## field names -- issue 1447 added `id` to the ROW and not to that list. So
+  ## `ase::preflight_gate`, which runs the same check over every ENABLED stored
+  ## row before a run, refuses the whole bench: no deck, no raw, no log, and
+  ## `set ase_preflight 0` does not disable it. The surface this task ships
+  ## tells a user to name their analyses; naming one and switching it on stops
+  ## the bench running.
+  ##
+  ## ⚠ `src/ase.tcl` IS NOT THIS TASK'S FILE. The fix is one word --
+  ## `set known [list type enabled x id]` -- and issue 1448's "What is still
+  ## owed" carries it. When it lands this row goes red and names the paragraph
+  ## that has to be rewritten.
+  ##
+  ## ⚠ THE STATE IS HAND-BUILT AND PAIRED. Run through the session's own bench
+  ## the gate has other things to refuse about (output names it cannot find in
+  ## a fixture netlist), and a row that accepted ANY refusal would be measuring
+  ## the wrong one. The second term is the same state with the `id` key removed
+  ## and nothing else changed.
+  set GH13ROW {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01 id vinsweep}
+  set GH13ST [dict create version 1 simulator ngspice \
+                design {lib aselib cell nfet_clean view ngspice_state1} \
+                analyses [list $GH13ROW]]
+  set GH13NOID $GH13ST
+  dict set GH13NOID analyses [list [dict remove $GH13ROW id]]
+  set GH13G   [ase::preflight_gate $GH13ST   "* netlist\n.end\n"]
+  set GH13GN  [ase::preflight_gate $GH13NOID "* netlist\n.end\n"]
+  check "GH13b KNOWN DEFECT (issue 1448): the emit check has never heard of the\
+ id key ⚖ R6 added, so an ENABLED analysis that declares one makes the whole\
+ bench refuse to run -- and the identical bench without the key runs" \
+    [list [lindex [lindex [ase::analysis_emit_check ngspice $GH13ROW] 0] 0] \
+          [lindex [lindex [ase::analysis_emit_check ngspice $GH13ROW] 0] 1] \
+          [lindex $GH13G 0] $GH13GN] \
+    {unknownkey id emit_incomplete {}}
+
+  ## GH14 -- AN EMPTY BENCH SAYS SO. A window that opened blank would read as a
+  ## broken one; the sentence is `ase::ui::lbl_no_analyses`, minted in the lbl_*
+  ## family so it cannot drift from wherever it is shown. The second term is the
+  ## control that this is not simply the same text as a full bench's.
+  set GH14ST [ase::session_state $key]
+  dict set GH14ST analyses {}
+  ase::session_update $key $GH14ST
+  catch {destroy $top.anlist}
+  ase::ui::analyses_list $key
+  update
+  set GH14T {ABSENT}
+  if {[winfo exists $top.anlist.t]} { set GH14T [$top.anlist.t get 1.0 end-1c] }
+  check "GH14 Analyses > List on a bench with no analyses says so instead of\
+ opening blank" [list $GH14T [expr {$GH14T ne $GH8TXT}]] \
+    [list {No analyses on this bench.} 1]
+  catch {destroy $top.anlist}
+
+  ## GH15 -- THE BYTE-IDENTITY ROW, WITH ADDRESSING LIVE. GR5k asked it of the
+  ## type grid and GR6f of the disclosure; this asks it of the handle grid,
+  ## which is the new way to move between rows. Clicking every line of it and
+  ## every cell of the type grid and then pressing OK must write the SAME BYTES
+  ## as never opening the dialog -- the 104-file constraint from the GUI side.
+  ##
+  ## ⚠ OK IS PRESSED ON `ac`, NOT ON `op`. `op` has no fields at all, so
+  ## `chana_ok` writes nothing whatever the reader answers and the row cannot
+  ## fail; `ac`'s `sweep` is a `mode` field the form resolves to its declared
+  ## default `dec`, a value no bench stores. That is GR6f's correction to GR5k
+  ## and it is inherited here rather than re-learned.
+  ase::session_update $key $GHFIX
+  set GH15BEFORE [ase::state_serialize [ase::session_state $key]]
+  set gw [gh_open $key]
+  foreach gh15i [$gw.rows children {}] {
+    $gw.rows selection set [list $gh15i]
+    update
+  }
+  foreach gh15c [lsort [winfo children $gw.types]] {
+    $gh15c invoke
+    update
+  }
+  $gw.types.ac invoke
+  update
+  $gw.btns.proceed invoke
+  update
+  check "GH15 clicking every line of the handle grid and every cell of the type\
+ grid and then pressing OK writes the same bytes as never opening the dialog" \
+    [ase::state_serialize [ase::session_state $key]] $GH15BEFORE
 
 } else {
   puts "gui legs skipped (no DISPLAY)"

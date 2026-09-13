@@ -862,6 +862,58 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ ⚖ R6 — GUI HALF SHIPPED, issue **1448**, collected 2026-09-13 — and it found a defect in ⚖ R6's own schema half
+
+| | |
+|---|---|
+| **what landed** | `src/ase_window.tcl` only. **(1)** A `ttk::treeview` grid of **analysis rows** — columns `Handle Type Enable Arguments`, every column rendered from `ase::analysis_handle_fields`, and picking a line edits **that** row. **(2)** `Analyses > List`, a read-only window whose whole body is `ase::analysis_handle_text`. **(3)** Row addressing: `ase::ui::chana_row_idx` is the one reader, and `chana_row`, `chana_ok`, `chana_x_ok`, `pane_dblclick` and `edit_analysis_first` all go through it — **the index they used to discard is now passed**. |
+| **driver's own re-run** | `test_ase_dialogs` headless `ALL PASS (37)`; display `1 FAILED (339 passed)` = **340 checks**, up from 322. The one red is `G2sens` (**1436**) with the identical actual value; **`GG9` passed on every run — one standing red today, not two.** |
+| **byte identity** | 104/104 `.state` files byte-identical, **0 rows carrying `id`**, zero tracked state files modified. `GH15` asks it from the GUI side and presses OK on **`ac`, not `op`** — trap 1 avoided by construction. |
+| **sabotage** | **Sixteen.** `s2` (first-row-of-type again) reds **seven** addressing rows; `s4` (a second speller minted locally) reds `GH11` alone; `s15` reds `GH15` plus eleven rows in four earlier sections. |
+| **receipt** | `receipts/28-r6-gui-handles.md` |
+
+⚠ ⚠ **THE FINDING: ⚖ R6's OWN `id` KEY STOPS A BENCH RUNNING, AND THE DRIVER SHIPPED IT.**
+`ase::analysis_emit_check`'s `known` list is `[list type enabled x]` plus the type's field names
+(`src/ase.tcl:4615`) and **has never heard of `id`** — driver-verified by reading the line, where
+`x` is present and `id` is not. So an **enabled** row that declares an `id` is reported as
+carrying an unknown key, `ase::preflight_gate` answers `emit_incomplete`, and the run is refused:
+**no deck, no raw, no log — and `set ase_preflight 0` does not disable that check.** The
+identical id-less bench runs.
+
+**This is a defect in commit `4a3e1a25`, which the driver verified and committed hours earlier.**
+It got past a task whose own suites went 602 → 622 and past a clean T1, because **no row anywhere
+enabled a row carrying an `id`** — the feature's tests declared ids and the emit tests enabled
+rows, and nothing did both. *A row whose fixtures never disagree cannot fail*, for the eleventh
+time in this batch, and this time the two halves were in different suites.
+
+**One word fixes it** — `id` in that list — in a file this task was forbidden to touch. Row
+`GH13b` pins all three measurements with a paired control, so **the fix reddens it**. Issue
+1444's **editable `id` field** is blocked behind the fix and is deliberately not in this change.
+
+**Corrections to the driver's brief.**
+
+1. ⚠ **"A handle column in the Choose Analyses grid" could not be built as written.** Those cells
+   are **types**, not analyses — one cell per registered type, not one per row. The column exists
+   in a **new grid of analysis rows** instead. The main-window pane deliberately got none:
+   `test_ase_window.tcl:1771` asserts its `-columns` **by value**, and that file was not this
+   task's.
+2. **The cache is keyed by HANDLE, not type** (`ase::ui::chana_cache_key`) — the design question
+   the brief asked the crew to settle. A type-keyed cache overlays `dc1`'s typing on `dc2`'s form,
+   which is the defect ⚖ R5 was written to remove, reappearing one level down. The key is
+   snapshotted at build time for `anshown`'s own reason.
+3. **`GH9`/`GH10`/`GH14` were hardened because a sabotage KILLED THE SUITE FILE at 94 checks**
+   instead of reddening a row — trap 2's shape by a third route.
+4. **`s13a` reddened nothing and became a finding**: the list window's creation-time `-state` is
+   decorative; the fill is what makes it read-only.
+
+**Debts:** `rule 1448` — four new strings (`Handle`, `List`, the composed window title, `No
+analyses on this bench.`), now **R9-378 … R9-381** in the review, with R9-373…377 consumed
+unchanged. `look choose_analyses_handle_grid_1448` — **suites green on both arms, please look.**
+`suite test_ase_dialogs` — reported updated, not drained; the gate is the user's to batch.
+
+⚠ **Issue 1444 CANNOT CLOSE**: two of its four surfaces remain — the Measurements dropdown is
+Stage 8 task 2's, and the editable `id` field is blocked by the `emit_check` defect above.
+
 ### ✅ T1 — RUN SOLO, ZERO FAILURES, 2026-09-13 — the deferral is discharged
 
 **`RESULT: 69 Start lines, rc 0, ZERO counted failures.`** Read by the documented rule — a

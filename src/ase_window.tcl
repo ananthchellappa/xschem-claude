@@ -883,6 +883,14 @@ proc ase::ui::build {key top} {
   # from these two; typing either string twice is how the 0661 drift happened.
   $top.mb.analyses add command -label [ase::ui::lbl_choose] \
     -command [list ase::ui::choose_analyses $key]
+  # ── ISSUE 1444 SURFACE 3 / issue 1448: `Analyses > List`. ─────────────────
+  # The user's own idea, and it earns its place for ONE case the grid and the
+  # dropdown cannot reach: composing an expression BY HAND in `calc::`, where
+  # there is nothing to pick from and the reference has to be typed correctly.
+  # It is a read-only dump, so it is a viewer and not a dialog -- no OK, no
+  # ESC, Ctrl-W like the log window.
+  $top.mb.analyses add command -label [ase::ui::lbl_list] \
+    -command [list ase::ui::analyses_list $key]
 
   menu $top.mb.variables -tearoff 0
   $top.mb add cascade -label Variables -menu $top.mb.variables
@@ -1446,7 +1454,12 @@ proc ase::ui::pane_dblclick {key pane x y} {
           && $item < [llength $rows]} {
         set type [ase::state_get [lindex $rows $item] type]
       }
-      ase::ui::choose_analyses $key $type
+      # ⚠ THE INDEX GOES TOO, AND UNTIL ISSUE 1448 IT DID NOT. Double-clicking
+      # the SECOND `dc` row opened the FIRST one, because the type was all the
+      # dialog was told and `ase::ui::chana_row` answered with the first row of
+      # that type. On a bench that says "sweep VIN, and also sweep temperature"
+      # that made one of the two rows unreachable from every door at once.
+      ase::ui::choose_analyses $key $type $item
     }
   }
 }
@@ -4479,9 +4492,10 @@ proc ase::ui::edit_output_first {key} {
 }
 
 # Context Edit… on the analyses pane: Choose Analyses preselected on the
-# FIRST selected row's type (with several same-type rows the dialog
-# addresses the first row of that type; extras remain X-deletable in the
-# pane).
+# SELECTED ROW -- by index since issue 1448, not by type alone. The comment
+# here used to read *"with several same-type rows the dialog addresses the
+# first row of that type; extras remain X-deletable in the pane"*, which is a
+# fair description of a row that could be deleted and not edited.
 proc ase::ui::edit_analysis_first {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
@@ -4498,7 +4512,7 @@ proc ase::ui::edit_analysis_first {key} {
   if {[string is integer -strict $idx] && $idx >= 0 && $idx < [llength $rows]} {
     set type [ase::state_get [lindex $rows $idx] type]
   }
-  ase::ui::choose_analyses $key $type
+  ase::ui::choose_analyses $key $type $idx
 }
 
 # Variables > Edit… (menu): per-row editor on the first selected variables
@@ -4607,13 +4621,84 @@ proc ase::ui::chana_fields {type {sim {}}} {
   return [ase::analysis_field_names $sim $type]
 }
 
-# The FIRST state row of `type` (the row the dialog addresses; extra
-# same-type rows stay X-deletable in the pane), or a fresh disabled stub.
+# ═══ ⚖ R6 / issue 1448 ── WHICH ROW THIS DIALOG IS EDITING ══════════════════
+#
+# ⚠ UNTIL THIS, THE ANSWER WAS ALWAYS "THE FIRST ROW OF THE TYPE", AND THAT IS
+# WHAT MADE ⚖ R6 UNUSABLE. This proc's own header said so -- *"the FIRST state
+# row of `type` ... extra same-type rows stay X-deletable in the pane"* -- and
+# `ase::ui::pane_dblclick` threw the index away before it ever got here. So a
+# bench carrying two `dc` rows ("sweep VIN, **and also** sweep temperature",
+# which is the bench ⚖ R6 exists to make possible) had one row that could be
+# deleted and never edited: both doors opened the first one. `DECISIONS.md`
+# ⚖ R6 records the same finding from the other side -- *"Option B -- no.
+# `ase::ui::chana_row` returns the first row of a type and `pane_dblclick`
+# discards the index, so the addressing work has to come first either way."*
+#
+# THE ADDRESSING IS `dlg($key,anrow,<type>)`: the index into `analyses` of the
+# row this dialog is editing for that type. It is DIALOG memory, like ⚖ R5's
+# edit cache -- set by a door that names a row (`pane_dblclick`, the pane's
+# context Edit…, the handle grid), cleared with the dialog, and never written to
+# the bench.
+#
+# ⚠ IT IS VALIDATED ON EVERY READ AND FALLS BACK, rather than being trusted. The
+# Options subdialog commits straight into the bench while this dialog is up, so
+# an index taken on open can name a row of a different type by the time it is
+# read; an addressing that went stale silently would edit the wrong analysis,
+# which is the very defect it exists to fix. `-1` means "this type has no row",
+# which is the case `chana_ok` turns into an append.
+proc ase::ui::chana_row_idx {key type} {
+  variable dlg
+  if {$type eq {}} { return -1 }
+  set rows [ase::state_get [ase::session_state $key] analyses]
+  if {[info exists dlg($key,anrow,$type)]} {
+    set i $dlg($key,anrow,$type)
+    if {[string is integer -strict $i] && $i >= 0 && $i < [llength $rows] \
+        && [ase::state_get [lindex $rows $i] type] eq $type} { return $i }
+  }
+  set i -1
+  foreach a $rows {
+    incr i
+    if {[ase::state_get $a type] eq $type} { return $i }
+  }
+  return -1
+}
+
+# The state row this dialog is addressing for `type` -- the one named by
+# `ase::ui::chana_row_idx`, or a fresh disabled stub when the type has no row.
 proc ase::ui::chana_row {key type} {
-  foreach a [ase::state_get [ase::session_state $key] analyses] {
-    if {[ase::state_get $a type] eq $type} { return $a }
+  set i [ase::ui::chana_row_idx $key $type]
+  if {$i >= 0} {
+    return [lindex [ase::state_get [ase::session_state $key] analyses] $i]
   }
   return [dict create type $type enabled 0]
+}
+
+# ── THE EDIT CACHE'S KEY, AND WHY IT IS NOT THE TYPE ANY MORE ───────────────
+#
+# ⚖ R5 keyed the per-dialog edit cache by TYPE, which was the only identity a
+# row had. Under row addressing that is a leak with a straight face: type `5u`
+# into `dc1`, click `dc2`, and a type-keyed cache overlays `dc1`'s edit on
+# `dc2`'s form -- the user is now looking at a temperature sweep wearing a
+# voltage sweep's numbers, and pressing OK writes them. The cache has to be keyed
+# by the thing being edited, and since ⚖ R6 the thing being edited has a NAME.
+#
+# ⚠ THE HANDLE COMES FROM `ase::analysis_handle` AND IS NEVER ASSEMBLED HERE.
+# It is the same word the grid shows and the same word the user types into
+# `calc::`; a second spelling minted for an array key would be a second spelling.
+#
+# ⚠ A TYPE WITH NO ROW GETS `*<type>`, WHICH CANNOT COLLIDE WITH A HANDLE.
+# `ase::analysis_id_ok` requires a bare identifier and a derived handle is
+# `<type><n>`, so no handle can begin with `*`. The stub is per type because
+# there can only ever be one of it: a type with no row has exactly one fresh
+# form, and OK on it appends.
+proc ase::ui::chana_cache_key {key type} {
+  if {$type eq {}} { return {} }
+  set idx [ase::ui::chana_row_idx $key $type]
+  if {$idx >= 0} {
+    set h [ase::analysis_handle [ase::session_state $key] $idx]
+    if {$h ne {}} { return $h }
+  }
+  return "*$type"
 }
 
 # Choose Analyses (menu Analyses > Choose…, strip OP,TR, ana ctx Add…/Edit…,
@@ -4673,8 +4758,13 @@ proc ase::ui::chana_detect {key} {
   # re-entering choose_analyses is what keeps them from drifting apart.
   set ty {}
   catch {set ty $::ase::ui::dlg($key,antype)}
+  # ⚠ AND THE ADDRESSED ROW GOES WITH IT (issue 1448). The rebuild is a
+  # destroy-and-reopen, which clears the dialog's memory -- pressing Detect
+  # while editing `dc2` would otherwise silently drop the user back onto `dc1`.
+  set tix {}
+  catch {set tix [ase::ui::chana_row_idx $key $ty]}
   catch {destroy $w}
-  ase::ui::choose_analyses $key $ty
+  ase::ui::choose_analyses $key $ty $tix
 }
 
 # WHICH SIMULATOR THIS SESSION IS USING -- the ONE resolver on the dialog side,
@@ -4720,7 +4810,7 @@ proc ase::ui::chana_committable {key} {
   return $type
 }
 
-proc ase::ui::choose_analyses {key {type {}}} {
+proc ase::ui::choose_analyses {key {type {}} {idx {}}} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
   set w [ase::ui::dialog_frame [dict get $wins $key].chana {Choose Analyses}]
@@ -4743,8 +4833,23 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # An unconditional `op` is what made OK append `{type op enabled 1}` to a bench
   # whose backend cannot render `op`. With nothing offered this stays EMPTY and
   # every commit door refuses on MEMBERSHIP -- see ase::ui::chana_committable.
+  # ⚠ AN INDEX NAMES A ROW AND OUTRANKS THE TYPE (issue 1448), exactly as a
+  # measurement row's `id` outranks its `row` (issue 1447's C-R6-2). A caller
+  # that knows WHICH row the user double-clicked knows more than one that knows
+  # only its type, and the type is re-derived from the row rather than trusted:
+  # a stale index from a pane that has repopulated since must not open a row of
+  # some other type under this type's form.
+  set _aidx {}
+  if {[string is integer -strict $idx] && $idx >= 0} {
+    set _arows [ase::state_get [ase::session_state $key] analyses]
+    if {$idx < [llength $_arows]} {
+      set _at [ase::state_get [lindex $_arows $idx] type]
+      if {$_at ne {}} { set type $_at ; set _aidx $idx }
+    }
+  }
   if {$type eq {}} { set type [lindex $offered 0] }
   set dlg($key,antype) $type
+  if {$_aidx ne {}} { set dlg($key,anrow,$type) $_aidx }
   # top section: one radiobutton per analysis type; switching repopulates the
   # bottom form from state WITH THIS DIALOG'S OWN EDITS OVERLAID, so what you
   # typed into a type is still there when you come back to it.
@@ -4812,12 +4917,54 @@ proc ase::ui::choose_analyses {key {type {}}} {
     if {$_col >= 4} { set _col 0 ; incr _row }
   }
   grid $w.types -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {8 4}
+  # ── ISSUE 1444 SURFACE 2 / issue 1448: THE HANDLE GRID. ───────────────────
+  #
+  # ⚠ THE CELLS ABOVE ARE **TYPES**, NOT ANALYSES, which is why the handle
+  # could not be a column of THAT grid: a type with two rows has two handles and
+  # a type with none has none. This is the grid the handle is a column of -- one
+  # line per row of the bench, `Handle` first, and clicking a line is how the
+  # second `dc` sweep gets edited at all.
+  #
+  # ⚠ EVERY COLUMN IS `ase::analysis_handle_fields`'s ANSWER, RENDERED. Nothing
+  # here assembles a handle, an uppercase type or an argument summary; issue
+  # 1444's own sentence is *"three surfaces showing three spellings would be
+  # worse than none"*, and the way that is enforced is that no surface is given
+  # the parts to build a second one from.
+  #
+  # ⚠ IT LISTS DISABLED ROWS TOO, and marks them with the pane's own checkbox
+  # glyph. `Analyses > List` marks the same rows `(off)` for the same reason: a
+  # measurement bound to a switched-off analysis REFUSES, and the reader's next
+  # question is which one is off.
+  set _arows [ase::state_get [ase::session_state $key] analyses]
+  set _rh [llength $_arows]
+  if {$_rh < 1} { set _rh 1 }
+  if {$_rh > 6} { set _rh 6 }
+  ttk::treeview $w.rows -columns {handle type enable args} -show headings \
+    -selectmode browse -height $_rh -style Ase.Treeview
+  foreach {_c _hd _g _an} [list handle Handle 8 w type Type 6 w \
+                                enable Enable 3 center args Arguments 26 w] {
+    $w.rows heading $_c -text $_hd
+    $w.rows column $_c -width [ase::ui::colw $_g $_hd] \
+                       -minwidth [ase::ui::colw 0 $_hd] \
+                       -anchor $_an -stretch [expr {$_c eq {args}}]
+  }
+  # ⚠ `<<TreeviewSelect>>` AND NOT `<Button-1>`: the selection is the state this
+  # grid carries, and a coordinate-driven binding cannot be driven by a suite
+  # without pixels. `ase::ui::chana_rows_pick` is idempotent, which is also what
+  # stops `chana_rows_fill`'s own `selection set` from re-entering it.
+  bind $w.rows <<TreeviewSelect>> [list ase::ui::chana_rows_pick $key]
+  grid $w.rows -row 1 -column 0 -columnspan 2 -sticky we -padx 8 -pady {0 4}
+  # ⚠ EVERYTHING BELOW MOVED DOWN ONE GRID ROW AND NO WIDGET PATH MOVED. Issue
+  # 1405's lesson is about PATHS (`$w.<field>` -> `$w.form.<field>`, 100
+  # checks); `$w.enable`, `$w.status`, `$w.form` are the same widgets in the
+  # same frame, one row lower. Rows 4-6 are still free and `$w.note` (7),
+  # `$w.opts`/`$w.detect` (8) and the button bar (9) are untouched.
   checkbutton $w.enable -text Enable -variable ::ase::ui::dlg($key,anen)
-  grid $w.enable -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  grid $w.enable -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   # THE STATUS ROW IS RESERVED WHETHER OR NOT IT HAS TEXT, so the quick-field
   # rows below never move depending on which simulator is in force.
   label $w.status -text {} -anchor w -justify left
-  grid $w.status -row 1 -column 1 -sticky w -padx 8 -pady 2
+  grid $w.status -row 2 -column 1 -sticky w -padx 8 -pady 2
   # ── THE PRECONDITION BANNER, ISSUE 1435. ───────────────────────────────────
   # Stage 4's first user-visible surface, deferred into Stage 6 because it needs
   # netlist TEXT and a dialog may not produce one (see the slot's own header in
@@ -5113,7 +5260,14 @@ proc ase::ui::chana_cache_clear {key} {
   variable dlg
   array unset dlg $key,anedit,*
   array unset dlg $key,anshown
+  array unset dlg $key,anshownkey
   array unset dlg $key,anbuilt
+  # ⚠ THE ROW ADDRESSING GOES OUT WITH THE CACHE (issue 1448). Which row of a
+  # type this dialog is editing is the dialog's memory, exactly as the edits
+  # are: a reopened Choose Analyses starts from the file, and from the first row
+  # of whatever type it is preselected on, unless the door that opened it named
+  # a row.
+  array unset dlg $key,anrow,*
 }
 
 # SAVE THE FORM THAT IS ON SCREEN INTO THE TYPE IT BELONGS TO. Called from
@@ -5138,6 +5292,16 @@ proc ase::ui::chana_cache_save {key} {
   if {![info exists dlg($key,anshown)]} { return {} }
   set shown $dlg($key,anshown)
   if {$shown eq {}} { return {} }
+  # ⚠ AND THE KEY IT SAVES UNDER IS `anshownkey`, FOR `anshown`'s OWN REASON
+  # ONE LEVEL DOWN (issue 1448). Picking a line in the handle grid sets the
+  # addressing and THEN rebuilds, so by the time this runs `chana_cache_key`
+  # would already answer for the row being switched TO -- and `dc1`'s typing
+  # would be filed under `dc2`. `anshownkey` is the key of the form that is
+  # actually standing, snapshotted when it was built.
+  set ck $shown
+  if {[info exists dlg($key,anshownkey)]} { set ck $dlg($key,anshownkey) } \
+  else { set ck [ase::ui::chana_cache_key $key $shown] }
+  if {$ck eq {}} { return {} }
   if {[ase::ui::chana_form $key] eq {}} { return {} }
   set vals [ase::ui::chana_form_vals $key $shown [ase::ui::chana_sim $key]]
   # Enable is something the user set on THIS type's form, so it is remembered
@@ -5155,9 +5319,9 @@ proc ase::ui::chana_cache_save {key} {
     }
   }
   set prev [dict create]
-  if {[info exists dlg($key,anedit,$shown)]} { set prev $dlg($key,anedit,$shown) }
-  set dlg($key,anedit,$shown) [dict merge $prev $edits]
-  return $dlg($key,anedit,$shown)
+  if {[info exists dlg($key,anedit,$ck)]} { set prev $dlg($key,anedit,$ck) }
+  set dlg($key,anedit,$ck) [dict merge $prev $edits]
+  return $dlg($key,anedit,$ck)
 }
 
 # OVERLAY THE CACHE ON THE STORED ROW -- MERGE, NEVER REPLACE, for the same
@@ -5166,10 +5330,70 @@ proc ase::ui::chana_cache_save {key} {
 # alone would delete every key `▸ Advanced` was hiding the first time the user
 # clicked a second cell -- and it would delete them silently, because the form
 # would look exactly right.
-proc ase::ui::chana_cache_apply {key type row} {
+# ⚠ ITS FIRST ARGUMENT IS A CACHE KEY AND NOT A TYPE SINCE ISSUE 1448 -- see
+# `ase::ui::chana_cache_key`. One dc row's edits may not surface on another dc
+# row's form, which is what a type-keyed cache did the moment ⚖ R6 made two
+# rows of a type reachable.
+proc ase::ui::chana_cache_apply {key ck row} {
   variable dlg
-  if {$type eq {} || ![info exists dlg($key,anedit,$type)]} { return $row }
-  return [dict merge $row $dlg($key,anedit,$type)]
+  if {$ck eq {} || ![info exists dlg($key,anedit,$ck)]} { return $row }
+  return [dict merge $row $dlg($key,anedit,$ck)]
+}
+
+# FILL THE HANDLE GRID FROM THE BENCH and put the selection on the row the form
+# is showing. Item ids are the row's index into `analyses`, the same convention
+# the three main-window panes use, so a selection addresses the state directly.
+proc ase::ui::chana_rows_fill {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].chana.rows
+  if {![winfo exists $tv]} { return }
+  set st  [ase::session_state $key]
+  set sim [ase::ui::chana_sim $key]
+  $tv delete [$tv children {}]
+  set n [llength [ase::state_get $st analyses]]
+  for {set i 0} {$i < $n} {incr i} {
+    set f [ase::analysis_handle_fields $sim $st $i]
+    if {$f eq {}} { continue }
+    $tv insert {} end -id $i -values \
+      [list [dict get $f handle] [dict get $f type] \
+            [ase::ui::chk_glyph [dict get $f enabled]] [dict get $f args]]
+  }
+  set type {}
+  if {[info exists dlg($key,antype)]} { set type $dlg($key,antype) }
+  set idx [ase::ui::chana_row_idx $key $type]
+  if {$idx >= 0 && [$tv exists $idx]} {
+    $tv selection set [list $idx]
+    catch {$tv see $idx}
+  } else {
+    $tv selection set {}
+  }
+}
+
+# A LINE OF THE HANDLE GRID WAS PICKED: address that row and rebuild the form.
+#
+# ⚠ IT IS IDEMPOTENT ON PURPOSE, and that is load-bearing rather than tidy.
+# `chana_rows_fill` sets the selection itself, and ttk queues `<<TreeviewSelect>>`
+# rather than delivering it inline -- so the fill's own selection arrives here
+# one event loop later. Answering "that is already the row on screen" is what
+# stops a rebuild from feeding itself.
+proc ase::ui::chana_rows_pick {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set tv [dict get $wins $key].chana.rows
+  if {![winfo exists $tv]} { return }
+  set sel [lindex [$tv selection] 0]
+  if {![string is integer -strict $sel]} { return }
+  set rows [ase::state_get [ase::session_state $key] analyses]
+  if {$sel < 0 || $sel >= [llength $rows]} { return }
+  set t [ase::state_get [lindex $rows $sel] type]
+  if {$t eq {}} { return }
+  if {$dlg($key,antype) eq $t && [ase::ui::chana_row_idx $key $t] == $sel} {
+    return
+  }
+  set dlg($key,antype) $t
+  set dlg($key,anrow,$t) $sel
+  ase::ui::chana_show $key
 }
 
 proc ase::ui::chana_show {key} {
@@ -5215,13 +5439,17 @@ proc ase::ui::chana_show {key} {
   ase::ui::chana_cache_save $key
   catch {destroy $w.form}
   frame $w.form
-  grid $w.form -row 2 -column 0 -columnspan 2 -sticky we
+  grid $w.form -row 3 -column 0 -columnspan 2 -sticky we
   grid columnconfigure $w.form 1 -weight 1
   # ⚠ THE MARKER IS SET BEFORE THE FIELDS ARE BUILT, NOT AFTER. It names the
   # type whose widgets are standing, and a build that raises partway still
   # leaves it pointing at the widgets that got built rather than at the previous
   # type's, which no longer exist.
   set dlg($key,anshown) $type
+  # ⚠ AND THE KEY THOSE WIDGETS' EDITS BELONG TO, taken here for the same reason
+  # `anshown` is (issue 1448): the next save must file the form under the row it
+  # was built from, not under the row the user has just clicked over to.
+  set dlg($key,anshownkey) [ase::ui::chana_cache_key $key $type]
   # ⚠ AND THE AS-BUILT SNAPSHOT IS EMPTIED HERE AND REFILLED AT THE END, so a
   # build that raises partway compares the next save against nothing rather than
   # against the PREVIOUS type's values, which would score untouched fields as
@@ -5231,7 +5459,8 @@ proc ase::ui::chana_show {key} {
   # OVERLAID. `chana_cache_apply` MERGES, so a field the `▸ Advanced` disclosure
   # was hiding -- and which is therefore in no cache, because `form_has` is
   # false for a widget that was never built -- keeps its stored value.
-  set row [ase::ui::chana_cache_apply $key $type [ase::ui::chana_row $key $type]]
+  set row [ase::ui::chana_cache_apply $key $dlg($key,anshownkey) \
+             [ase::ui::chana_row $key $type]]
   set dlg($key,anen) [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]
   # ⚠ THE STATUS LINE AND THE Enable GATE BOTH READ THE **SELECTED CELL'S** STATE,
   # which is what makes a blocked cell worth selecting: the cell stays clickable
@@ -5320,6 +5549,10 @@ proc ase::ui::chana_show {key} {
   # overlays the widgets' live values on the stored row, so a banner refreshed
   # before the rebuild would describe the PREVIOUS type's widgets.
   ase::ui::chana_note $key
+  # ⚠ AFTER THE FORM, so the grid's selection is repainted to match the row the
+  # form is now showing -- a type cell click has to move the highlight too, or
+  # the two halves of this dialog disagree about which analysis is being edited.
+  ase::ui::chana_rows_fill $key
   ase::ui::apply_theme $w
 }
 
@@ -5374,8 +5607,12 @@ proc ase::ui::chana_form_vals {key type sim} {
 proc ase::ui::chana_commit_vals {key type sim} {
   variable dlg
   set vals [dict create]
-  if {$type ne {} && [info exists dlg($key,anedit,$type)]} {
-    set cached $dlg($key,anedit,$type)
+  # ⚠ THIS TYPE'S CACHE IS NOW THIS **ROW**'S CACHE (issue 1448). One OK still
+  # writes one row; what changed is that a bench with two `dc` rows has two of
+  # them and the door must read the addressed one.
+  set ck [ase::ui::chana_cache_key $key $type]
+  if {$ck ne {} && [info exists dlg($key,anedit,$ck)]} {
+    set cached $dlg($key,anedit,$ck)
     foreach f [ase::ui::chana_fields $type $sim] {
       if {[dict exists $cached $f]} { dict set vals $f [dict get $cached $f] }
     }
@@ -5513,10 +5750,11 @@ proc ase::ui::chana_ok {key} {
   }
   set st [ase::session_state $key]
   set rows [ase::state_get $st analyses]
-  set idx -1
-  for {set i 0} {$i < [llength $rows]} {incr i} {
-    if {[ase::state_get [lindex $rows $i] type] eq $type} { set idx $i; break }
-  }
+  # ⚠ THE ROW THIS DIALOG IS ADDRESSING, NOT THE FIRST OF ITS TYPE. Issue 1448.
+  # This was a walk that stopped at the first type match, in both commit doors,
+  # and it is why a second `dc` row could not be edited: whichever row the user
+  # was looking at, OK wrote the first one.
+  set idx [ase::ui::chana_row_idx $key $type]
   if {$idx >= 0} { set row [lindex $rows $idx] } \
   else           { set row [dict create type $type] }
   dict set row enabled $en
@@ -5723,10 +5961,11 @@ proc ase::ui::chana_x_ok {key} {
   set type $dlg($key,antype)
   set st [ase::session_state $key]
   set rows [ase::state_get $st analyses]
-  set idx -1
-  for {set i 0} {$i < [llength $rows]} {incr i} {
-    if {[ase::state_get [lindex $rows $i] type] eq $type} { set idx $i; break }
-  }
+  # ⚠ THE ROW THIS DIALOG IS ADDRESSING, NOT THE FIRST OF ITS TYPE. Issue 1448.
+  # This was a walk that stopped at the first type match, in both commit doors,
+  # and it is why a second `dc` row could not be edited: whichever row the user
+  # was looking at, OK wrote the first one.
+  set idx [ase::ui::chana_row_idx $key $type]
   if {$idx >= 0} { set row [lindex $rows $idx] } \
   else           { set row [dict create type $type enabled 0] }
   # replace the row's extra-key set with the edited one (a Delete here must
@@ -5755,6 +5994,80 @@ proc ase::ui::chana_x_ok {key} {
   ase::ui::populate $key
   array unset dlg $key,anextra
   catch {destroy [dict get $wins $key].chana.x}
+}
+
+# --- (a2) Analyses > List (issue 1444 surface 3, issue 1448) ----------------
+#
+# ⚠ THE ONE CASE THE OTHER TWO SURFACES CANNOT REACH. The handle grid in Choose
+# Analyses answers *"what do I call this one?"* while the user is looking at the
+# dialog, and Stage 8 task 2's dropdown will let them pick without spelling
+# anything. Neither helps the user composing an expression BY HAND in `calc::`
+# (`src/calculator.tcl` -- its own menubar, panes, function pad and buffer),
+# where there is nothing to pick from and the reference has to be TYPED
+# correctly. That is issue 1444's own reason for keeping this entry, and the
+# user's: *"It should be easy for a user to find out how to refer to different
+# analyses for purposes of building measure statements."*
+#
+# ⚠ THE BODY IS `ase::analysis_handle_text` AND NOTHING ELSE IS ASSEMBLED HERE.
+# Padded columns, every row, `(off)` on a disabled one -- one proc mints the
+# block and this window renders it, which is the whole of issue 1444's "three
+# surfaces showing three spellings would be worse than none".
+#
+# ⚠ A VIEWER, NOT A DIALOG: no OK, no Cancel, and NO ESC BINDING. The item-10
+# esc-dismiss set is about dialogs that can CHANGE something and therefore need
+# a cancel path; `tests/headless/test_ase_dialogs.tcl` GE15 records that the log
+# window -- the other read-only toplevel in this file -- is deliberately outside
+# it. Ctrl-W closes, as it does there.
+
+# The text of the list, or the empty-bench sentence.
+proc ase::ui::analyses_list_body {key} {
+  set txt [ase::analysis_handle_text [ase::ui::chana_sim $key] \
+             [ase::session_state $key]]
+  if {[string trim $txt] eq {}} { return [ase::ui::lbl_no_analyses] }
+  return $txt
+}
+
+proc ase::ui::analyses_list_fill {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set t [dict get $wins $key].anlist.t
+  if {![winfo exists $t]} { return }
+  $t configure -state normal
+  $t delete 1.0 end
+  $t insert end [ase::ui::analyses_list_body $key]
+  $t configure -state disabled
+}
+
+# Analyses > List: open (or refill and raise) the session's analysis list.
+#
+# ⚠ IT REFILLS ON EVERY OPEN. A window left up while the bench changed would
+# otherwise be a list of handles that no longer name what it says they name --
+# and this is the one surface whose whole job is to be copied from.
+#
+# ⚠ IT RAISES AND DOES NOT TAKE THE KEYBOARD. Bringing a window forward to show
+# something is not a reason to move the user's focus out of whatever they were
+# typing in.
+proc ase::ui::analyses_list {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set top [dict get $wins $key]
+  set lw $top.anlist
+  if {![winfo exists $lw]} {
+    toplevel $lw
+    wm title $lw "[ase::ui::lbl_analyses] \u2014 [ase::ui::design_cell_name $key]"
+    text $lw.t -height 12 -width 72 -state disabled -wrap none \
+         -font AseMonoFont -yscrollcommand [list $lw.sb set]
+    scrollbar $lw.sb -orient vertical -command [list $lw.t yview]
+    pack $lw.sb -side right -fill y
+    pack $lw.t -side left -fill both -expand 1
+    bind $lw <Control-w> [list destroy $lw]
+    bind $lw <Control-W> [list destroy $lw]
+  }
+  ase::ui::analyses_list_fill $key
+  catch {wm deiconify $lw}
+  catch {raise $lw}
+  ase::ui::apply_theme $lw
+  return $lw
 }
 
 # --- (b) Setup > Design ------------------------------------------------------
@@ -7401,6 +7714,18 @@ proc ase::ui::remedy_op_params_menu {} {
 # W1t discipline -- a constant-compared-to-constant tautology cannot pass.
 proc ase::ui::lbl_analyses         {} { return {Analyses} }
 proc ase::ui::lbl_choose           {} { return "Choose\u2026" }
+# ⚠ `List` IS NEW COPY AND IT IS THE USER'S TO RATIFY (⚖ R9, issue 1448). It is
+# the second entry of the Analyses cascade, beside `Choose…`, and it opens the
+# read-only dump of every analysis row with the handle a measurement or a
+# calculator expression has to spell. Minted HERE and not typed into the
+# menubar, for issue 1391's reason: a label typed twice is a label that drifts.
+proc ase::ui::lbl_list             {} { return {List} }
+# ⚠ ALSO NEW COPY, ALSO ⚖ R9's (issue 1448). A bench with no analyses would
+# otherwise open an empty window, which reads as a broken one. Minted in this
+# family rather than typed into `ase::ui::analyses_list_body` for the reason the
+# block above this one gives at length: issue 0661 is two labels that drifted
+# because each was typed where it was used.
+proc ase::ui::lbl_no_analyses      {} { return {No analyses on this bench.} }
 proc ase::ui::lbl_simulation       {} { return {Simulation} }
 proc ase::ui::lbl_netlist          {} { return {Netlist} }
 proc ase::ui::lbl_netlist_recreate {} { return {Recreate} }
