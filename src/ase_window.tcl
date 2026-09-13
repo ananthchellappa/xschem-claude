@@ -5344,6 +5344,45 @@ proc ase::ui::chana_form_vals {key type sim} {
   return $vals
 }
 
+# WHAT OK COMMITS: THIS TYPE'S LIVE WIDGETS, MERGED OVER THIS TYPE'S CACHE.
+# Issue 1446, and it is `chana_ok`'s reader and nobody else's.
+#
+# ⚠ THE PROBLEM IT SOLVES IS A DESTROYED WIDGET, NOT A FORGOTTEN VALUE. ⚖ R5
+# made the dialog REMEMBER what you typed (issue 1445); what it did not change
+# is that `chana_ok` read the LIVE widgets, and folding `▸ Advanced` shut runs
+# `chana_show`, which does `destroy $w.form`. So a value typed under the
+# disclosure and then folded away was remembered -- unfold it and it is there --
+# and silently not committed. The field belongs to the type being committed, so
+# writing it is the same row and the same OK.
+#
+# ⚠ IT IS STILL A SINGLE-TYPE WRITE AND MUST STAY ONE. Only `anedit,<type>` for
+# the type being committed is read; `item07_dialogs.md`'s D4 reason -- *"no
+# hidden multi-type writes"* -- is what ⚖ R5 preserved and this does not spend.
+# `tests/headless/test_ase_dialogs.tcl` row GR6d is that sentence as a
+# measurement: it presses OK with another type's edit sitting in the cache and
+# asks for every other row of the bench back byte for byte.
+#
+# ⚠ THE LIVE WIDGET WINS WHERE BOTH EXIST, because the user may have typed,
+# folded, unfolded and retyped. The cache is only ever as new as the last
+# rebuild; a standing widget is as new as the last keystroke.
+#
+# ⚠ AND IT ANSWERS IN **FIELDS**, WHICH IS WHY THE LOOP IS NOT A BARE
+# `dict merge`. `chana_cache_save` also stores `enabled` -- the Enable box rides
+# with the form it was set on -- and `chana_ok` owns that key itself from the
+# live `anen`. A merge that let the cached `enabled` through would hand the
+# commit door a stale answer and write it over the checkbutton the user can see.
+proc ase::ui::chana_commit_vals {key type sim} {
+  variable dlg
+  set vals [dict create]
+  if {$type ne {} && [info exists dlg($key,anedit,$type)]} {
+    set cached $dlg($key,anedit,$type)
+    foreach f [ase::ui::chana_fields $type $sim] {
+      if {[dict exists $cached $f]} { dict set vals $f [dict get $cached $f] }
+    }
+  }
+  return [dict merge $vals [ase::ui::chana_form_vals $key $type $sim]]
+}
+
 # THE ROW AS IT WOULD BE STORED IF OK WERE PRESSED NOW: the type's first stored
 # row, with the form's live values overlaid and `ase::ui::form_is_absent`'s
 # fields removed. `enabled` is NOT set here -- the banner does not care and
@@ -5413,7 +5452,12 @@ proc ase::ui::chana_ok {key} {
     return
   }
   set en [expr {[info exists dlg($key,anen)] && $dlg($key,anen) ? 1 : 0}]
-  set vals [ase::ui::chana_form_vals $key $type $sim]
+  # ⚠ ISSUE 1446: THE LIVE WIDGETS **MERGED OVER THIS TYPE'S CACHE**, not the
+  # bare form. A field the user typed into and then folded away behind
+  # `▸ Advanced` has no widget left to read -- `chana_show` destroyed it -- and
+  # reading the form alone dropped it in silence. Still one type and still one
+  # row: see `ase::ui::chana_commit_vals`.
+  set vals [ase::ui::chana_commit_vals $key $type $sim]
   if {$en} {
     # D6, ISSUE 1416 -- THE DOOR NO LONGER KNOWS WHAT A ROW NEEDS; IT ASKS.
     #

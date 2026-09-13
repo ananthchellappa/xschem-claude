@@ -831,6 +831,45 @@ entry with no collision. Two crews plus a committing driver is survivable; it is
 ⚖ **R6's `id` key will need one arm on `ase::meas_binding`** when R6's task lands — recorded
 here so it is not rediscovered.
 
+### ✅ Issue 1446 — OK writes what the dialog remembered, collected 2026-09-13
+
+Filed by the driver out of ⚖ R5's residual, implemented **ahead of the user's answer** because
+the standing instruction on an open ruling is to implement the recommended shape and say so.
+**The `rule` debt stands untouched**; if the user rules Option A this is one small revert, which
+is why the change was required to be small and separable.
+
+| | |
+|---|---|
+| **code** | `src/ase_window.tcl`, **+44 lines of which 12 are code**: `ase::ui::chana_commit_vals` returns the visible type's cache — **filtered to that type's declared field names** — with the live form merged **over** it, and `chana_ok`'s single reader line calls it. The cache procs' contract is untouched. |
+| **driver's own re-run** | headless `RESULT: ALL PASS (37 checks)`; display `RESULT: 1 FAILED (321 passed)`, up from 312. The one red is `G2sens` (issue **1436**) with the identical actual value; `GG9` passed. |
+| **the D4 guard** | ⚠ **"Can one OK write two types?" is answered by a ROW, not by a sentence** — `GR6e` presses OK on `ac` with a folded `tran` edit *proven present in the cache*, asks for the `ac` row written with **no foreign field name in it**, and asks for every other row of the bench back **byte for byte**. Sabotage `s6` (commit every cached type) reddens it **and** ⚖ R5's own `GR5g`. |
+| **byte identity** | 104 tracked `.state` files, **0 differ**; zero modified. |
+| **sabotage** | **Eight**, every `GR6` row witnessed, md5-verified restores. |
+| **receipt** | `receipts/25-1446-ok-writes-what-was-remembered.md` |
+
+**Five corrections, and three of them are about how a test lies rather than about the feature.**
+
+1. **The driver's brief named the wrong proc.** It said `chana_ok` should read
+   `chana_cache_apply`; that proc is **cache over row**, and the commit needs **live over
+   cache**. A crew that followed the brief literally would have made a stale cached value beat
+   what the user had just typed. Hence a new reader rather than a reuse.
+2. ⚠ **The cache contains `enabled`, which is not a field.** A bare `dict merge` writes a stale
+   Enable *after* `chana_ok` has already set it — bench ON, box OFF. **Not in the driver's trap
+   list.** Row `GR6g`, sabotage `s5`, and the fix is that the reader answers in **fields only**.
+3. ⚠ **`GR5k` cannot fail on a `form_is_absent` bypass** — see the corrected row in ⚖ R5's block
+   above. The crew's first cut of `GR6f` copied it and **survived all eight mutations**; retargeted
+   to `ac` it reds. *A row copied from a row that passes inherits whatever that row cannot see.*
+4. **Reading `dlg(…,anen)` after OK raises** — `chana_cancel` unsets it — which **kills the suite
+   file instead of reddening a row**. That is `G2tf`'s shape, met again in a new place.
+5. **A wrong-type cache is nearly inert today**, because the field filter drops it: no two types
+   share an `advanced 1` field name. Recorded with the mechanism, since the day two do, the
+   filter is the only thing standing there.
+
+⚠ **One residual, pinned rather than fixed.** The precondition banner's `chana_merged_row` still
+reads live widgets only, so it judges the **stored** value where OK now writes the **remembered**
+one. No sentence changes today — no `needs` rule reads an advanced field — and row `GR6h` pins it,
+so the day one does, a row goes red instead of a banner going quietly wrong.
+
 ### ✅ ⚖ R5 — IMPLEMENTED, issue **1445**, collected 2026-09-13
 
 | | |
@@ -840,7 +879,7 @@ here so it is not rediscovered.
 | **code** | `src/ase_window.tcl` only, +167/−14: three procs (`chana_cache_clear`, `chana_cache_save`, `chana_cache_apply`) and four call sites — save **before** the destroy in `chana_show`, apply in place of the bare `chana_row`, clear on open and on cancel. **No new state key, nothing serialised, no schema change.** The repopulate comment is rewritten to describe what the code now does, still naming `doc/claude/ase_l_batch/prompts/item07_dialogs.md`'s D4 as the decision reversed — not `DECISIONS.md`'s own D4. |
 | **suites moved** | `tests/headless/test_ase_dialogs.tcl`, new section **GR5**, **twelve** rows. Display floor **300 → 313**; headless unmoved at **37**, because every GR5 row is a widget row. |
 | **driver's own re-run** | Taken by the driver, not quoted from the receipt. Headless: `RESULT: ALL PASS (37 checks)`. Display: `RESULT: 1 FAILED (312 passed)`, and the **one** red is **`G2sens`** — issue **1436**, whose own file records the identical actual value `{1 1 0 1 0 Entry Entry normal}`. The file's other named standing red, `GG9`, **passed**, as its paragraph predicts (cold-cache dependent). All twelve GR5 rows ran; **`GR5k` — click every cell in the grid, press OK, same `state_serialize` bytes as never opening the dialog — passed.** |
-| **byte identity** | `STATE-ROUNDTRIP: 104 files, 0 differ` (crew), and independently: **no tracked `.state` file is modified** in the working tree. `GR5k` asks the same question from the GUI side and sabotage `c` reddens it, so it is not vacuous. |
+| **byte identity** | `STATE-ROUNDTRIP: 104 files, 0 differ` (crew), and independently: **no tracked `.state` file is modified** in the working tree. `GR5k` asks the same question from the GUI side and sabotage `c` reddens it, so it is not vacuous. ⚠ **CORRECTED 2026-09-13 by the NEXT crew, and the correction is the driver's to own: `GR5k` has a blind spot and this row overstated it.** `GR5k` presses OK on **`op`**, which has **no fields** — so it cannot see a `ase::ui::form_is_absent` bypass at all. It proves that browsing the grid with a cache live does not corrupt the bench; it does **not** prove the write-back rule still holds. Issue 1446's `GR6f` is the row that does, because it presses OK on `ac`, whose `sweep` resolves `default dec` at build time. `GR5k` was left as it is, flagged rather than changed. |
 | **sabotage** | **Nine**, each restored by `cp` with a printed md5 match. `e` and `e2` are complementary (open-clear reds `GR5i` only; cancel-clear reds `GR5h` only). `c` and `f` each redden the **pre-existing** `GN7b`. |
 | **T1** | ⚠ **DEFERRED, deliberately, and this is the price of running two crews.** Stage 8 task 1's uncommitted `src/ase.tcl` is in the tree, so a T1 taken now would be a number about **both** changes, and `CLAUDE.md` is explicit that a T1 number taken while another agent's suite is live is not evidence. T1 runs **solo**, once, when task 1 is collected, and covers both. |
 | **ledger debts** | ⚖ R5 itself minted **no user-facing sentence** — verified by the driver's own grep: not one added non-comment line in the `src/ase_window.tcl` diff contains a string literal. **No `rule` debt, no `look` debt** (no new widget, nothing newly drawn). A `:0` suite debt was flagged by the crew rather than filed; the driver leaves it flagged, since `test_ase_dialogs` already runs on the dev display every pass. |

@@ -56,6 +56,22 @@
 #          cells then pressing OK writes the same bytes as never opening the
 #          dialog (GR5k), which is the 104-file byte-identity constraint asked
 #          from the GUI side.
+#   GR6a-h issue 1446, Option B: OK writes what the dialog REMEMBERED. ⚖ R5 made
+#          the form remember and left `ase::ui::chana_ok` reading the LIVE
+#          widgets, so a value typed under `▸ Advanced` and then folded away was
+#          remembered and silently NOT committed -- `chana_show` destroys
+#          `$w.form`. `ase::ui::chana_commit_vals` reads the visible type's live
+#          widgets MERGED OVER THAT TYPE'S CACHE: the folded edit is written
+#          (GR6a), a merged value equal to the field's declared default writes
+#          no key and a non-default one does (GR6b), an emptied field deletes
+#          its stored key (GR6c), and a retyped live widget beats the cache
+#          (GR6d). It is STILL A SINGLE-TYPE WRITE -- GR6e presses OK with
+#          another type's edit cached and asks for every other row of the bench
+#          back byte for byte -- and it writes the same bytes as never opening
+#          the dialog (GR6f). The cached copy of Enable never reaches the row
+#          (GR6g), because the reader answers in FIELDS. GR6h pins the one
+#          residual: the precondition banner's `chana_merged_row` still reads
+#          live widgets only.
 #   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog OF THE ITEM-10 SET
 #          dismisses on a real generated <Key-Escape> through its CANCEL path
 #          (the results-batch item-7 `Results > Select…` dialog is newer and
@@ -147,6 +163,11 @@ set fail 0; set npass 0
 #              change. GR5k is the row that would notice one, and it asks the
 #              104-file byte-identity question from the GUI side: click all
 #              eleven cells, press OK, get the same bytes.
+#   37 / 322   section GR6, issue 1446: OK now writes the folded-away value the
+#              dialog was already remembering. Headless is unmoved for GR5's
+#              reason -- there is no schema half, only a second reader on the
+#              commit door -- and GR6f is the row that would notice a key this
+#              change wrote into a bench that never carried one.
 #
 # ⚠ TWO ROWS IN THIS FILE ARE RED ON THE DISPLAY ARM AND WERE RED BEFORE 1435
 # -- verified by restoring src/ase.tcl and src/ase_window.tcl to HEAD 81312742
@@ -2856,6 +2877,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## GN7b -- AND THE MERGED ROW IS THE ONE OK WOULD STORE: a HIDDEN ADVANCED field
   ## keeps its stored value rather than vanishing because no widget exists.
   ##
+  ## ⚠ SINCE ISSUE 1446 THAT SENTENCE HAS ONE EXCEPTION, AND `GR6h` MEASURES IT.
+  ## `chana_ok` reads `ase::ui::chana_commit_vals` -- the live widgets merged
+  ## over this type's cache -- so when the user has TYPED into an advanced field
+  ## and folded it away, OK stores the remembered value while this banner still
+  ## reads the stored one. Untouched, as here, the two agree.
+  ##
   ## ⚠ THE FIXTURE IS `tran`, NOT `dc`, AND THAT IS A SABOTAGE FINDING. The first
   ## cut asserted this on the `dc` form, which has no advanced field at all, so
   ## "overlay the form on the stored row" and "build from the form alone" gave
@@ -3451,6 +3478,348 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "GR5k clicking every cell in the grid and pressing OK writes the same\
  bytes as never opening the dialog" \
     [ase::state_serialize [ase::session_state $key]] $R5K_BEFORE
+
+  # --- GR6: OK WRITES WHAT THE DIALOG REMEMBERED -- ISSUE 1446, OPTION B -----
+  # ⚖ R5 (GR5, above) made the form REMEMBER. It did not change what OK READS,
+  # and `ase::ui::chana_ok` read the LIVE widgets: a value typed under
+  # `▸ Advanced` and then folded away has no widget left to read, because
+  # `chana_adv_toggle` rebuilds through `chana_show` and `chana_show` does
+  # `destroy $w.form`. So the dialog remembered it -- unfold and it is there --
+  # and OK dropped it in silence. Option B of issue 1446 is
+  # `ase::ui::chana_commit_vals`: the visible type's live widgets merged over
+  # THAT type's cache. Same type, same row, one write.
+  #
+  # ⚠ GR6e IS THE D4 GUARD AND IT IS THE REASON THIS SET EXISTS AT ALL.
+  # `doc/claude/ase_l_batch/prompts/item07_dialogs.md`'s D4 reason -- *"no
+  # hidden multi-type writes"* -- is what ⚖ R5 was careful to preserve, and
+  # widening the reader is exactly how it would get spent by accident. GR6e
+  # presses OK with ANOTHER type's edit sitting in the cache and asks for every
+  # other row of the bench back byte for byte.
+  #
+  # ⚠ AND `ase::ui::form_is_absent` STILL DECIDES WHAT IS WRITTEN -- GR6b and
+  # GR6c. A merged value goes through the identical test a live one does, which
+  # is what keeps the 104 committed `.state` files round-tripping; GR6f asks
+  # that question from the GUI side, as GR5k does for ⚖ R5.
+  #
+  # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW, like GR5's.
+  proc r6_type {key type} {
+    # A radio click ends in `chana_show`, and so does this: the radiobuttons'
+    # `-variable` IS `dlg($key,antype)`. Setting it directly is how GN7b reaches
+    # a type too, and it does not depend on whether the cell is clickable --
+    # a DISABLED radiobutton's `invoke` is a silent no-op.
+    set ::ase::ui::dlg($key,antype) $type
+    ase::ui::chana_show $key
+    update
+  }
+  # THE GR6 BENCH: GR5's, plus a `noise` row. `noise`'s `ptssum` is the one
+  # `advanced 1` field in the registry that DECLARES A DEFAULT, and the
+  # declared-default arm of `ase::ui::form_is_absent` is the arm the byte
+  # identity of the 104 committed `.state` files rests on. Every row stays
+  # `enabled 0`: D6 validation is the commit door's other half and it is not
+  # this section's subject.
+  ase::session_update $key $R5FIX
+  set R6ST [ase::session_state $key]
+  set R6ROWS {}
+  set R6HASNOISE 0
+  foreach r6a [ase::state_get $R6ST analyses] {
+    if {[ase::state_get $r6a type] eq {noise}} {
+      set R6HASNOISE 1
+      lappend R6ROWS [dict create type noise enabled 0 out v(out) insrc V1 \
+                        points 10 start 1 stop 1meg]
+    } else {
+      lappend R6ROWS $r6a
+    }
+  }
+  if {!$R6HASNOISE} {
+    lappend R6ROWS [dict create type noise enabled 0 out v(out) insrc V1 \
+                      points 10 start 1 stop 1meg]
+  }
+  dict set R6ST analyses $R6ROWS
+  ase::session_update $key $R6ST
+  set R6FIX [ase::session_state $key]
+  check "GR6 fixture: the bench carries a noise row, whose ptssum is advanced\
+ AND declares a default" \
+    [list [ase::state_get [ase::ui::chana_row $key noise] type] \
+          [dict exists [ase::field_descriptor ngspice noise ptssum] default] \
+          [dict get [ase::field_descriptor ngspice noise ptssum] advanced]] \
+    {noise 1 1}
+
+  ## GR6a -- THE ROW THE ISSUE WAS FILED FOR. Type into an advanced field, fold
+  ## the disclosure shut, press OK: the key is WRITTEN. Terms 1-3 are the
+  ## fixture controls -- the file's own `tmax` is not `7n` (a row whose before
+  ## and after agree cannot fail) and the widget really is gone by the time OK
+  ## is pressed. Term 5 is the visible field, which must still be written the
+  ## way it always was.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key tran
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6A_BUILT [$gw.form.tmax get]
+  $gw.form.tmax delete 0 end
+  $gw.form.tmax insert 0 7n
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6A_HIDDEN [ase::ui::form_has $key tmax]
+  $gw.btns.proceed invoke
+  update
+  set R6A_ROW [ase::ui::chana_row $key tran]
+  check "GR6a a value typed under Advanced and then folded away is WRITTEN by\
+ OK -- the widget really was gone, and the file's own value was not 7n" \
+    [list $R6A_BUILT [expr {$R6A_BUILT ne {7n}}] $R6A_HIDDEN \
+          [ase::state_get $R6A_ROW tmax] [ase::state_get $R6A_ROW stop]] \
+    {2n 1 0 7n 1u}
+
+  ## GR6b -- TRAP 1: A MERGED VALUE GOES THROUGH `ase::ui::form_is_absent`
+  ## EXACTLY AS A LIVE ONE DOES. `noise`'s `ptssum` is `advanced 1 default 1`,
+  ## so typing `1` and folding it away must write NO KEY -- `uic 0` and
+  ## `sweep dec` are the two measured cases of the same rule, and it is what the
+  ## 104-file round trip rests on.
+  ##
+  ## ⚠ THE SECOND JOURNEY IS THE POSITIVE CONTROL AND IT IS NOT DECORATION.
+  ## "No key" is also what a merge that never happened produces. The same
+  ## journey with `2` -- not the declared default -- must write `ptssum 2`, so
+  ## the two halves together say the merge ran AND the filter ran.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key noise
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6B_BUILT [$gw.form.ptssum get]
+  $gw.form.ptssum delete 0 end
+  $gw.form.ptssum insert 0 1
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.btns.proceed invoke
+  update
+  set R6B_DEF [ase::ui::chana_row $key noise]
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key noise
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.form.ptssum delete 0 end
+  $gw.form.ptssum insert 0 2
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.btns.proceed invoke
+  update
+  set R6B_OTHER [ase::ui::chana_row $key noise]
+  check "GR6b a folded value equal to the field's DECLARED DEFAULT writes no\
+ key, and the same journey with a non-default value writes one" \
+    [list $R6B_BUILT [dict exists $R6B_DEF ptssum] \
+          [dict exists $R6B_OTHER ptssum] [ase::state_get $R6B_OTHER ptssum]] \
+    {{} 0 1 2}
+
+  ## GR6c -- AND THE EMPTY ARM OF THE SAME RULE. Clearing an advanced field and
+  ## folding it away DELETES the stored key, because an empty value is absent
+  ## whatever it arrived through. Term 2 is the control that the cache really
+  ## carried the emptiness -- an edit that never reached the cache would leave
+  ## the stored `2n` standing and this row would pass on nothing at all.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key tran
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.form.tmax delete 0 end
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6C_CACHED {}
+  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
+    set R6C_CACHED $::ase::ui::dlg($key,anedit,tran)
+  }
+  $gw.btns.proceed invoke
+  update
+  set R6C_ROW [ase::ui::chana_row $key tran]
+  check "GR6c clearing an advanced field and folding it away deletes the stored\
+ key -- the cache carried the emptiness and the filter spent it" \
+    [list [dict exists [ase::ui::chana_row $key ac] stop] $R6C_CACHED \
+          [dict exists $R6C_ROW tmax] [ase::state_get $R6C_ROW step]] \
+    [list 1 {tmax {}} 0 1n]
+
+  ## GR6d -- THE LIVE WIDGET WINS. Typed, folded, unfolded, RETYPED: the user
+  ## may have done all four, and the cache is only ever as new as the last
+  ## rebuild while a standing widget is as new as the last keystroke. Term 1 is
+  ## the control that the first value really did survive the fold, so an
+  ## inverted precedence has something to be wrong about.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key tran
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.form.tmax delete 0 end
+  $gw.form.tmax insert 0 7n
+  ase::ui::chana_adv_toggle $key
+  update
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6D_REMEMBERED [$gw.form.tmax get]
+  $gw.form.tmax delete 0 end
+  $gw.form.tmax insert 0 9n
+  $gw.btns.proceed invoke
+  update
+  check "GR6d typed, folded, unfolded, retyped: the live widget wins over the\
+ cache -- and the cache really did carry the first value" \
+    [list $R6D_REMEMBERED [expr {$R6D_REMEMBERED ne {9n}}] \
+          [ase::state_get [ase::ui::chana_row $key tran] tmax]] \
+    {7n 1 9n}
+
+  ## GR6e -- ONE OK WRITES ONE TYPE, AND THIS IS THE D4 GUARD. The remembered
+  ## `tran` edit is sitting in the cache, fully available to the commit door,
+  ## and OK on `ac` must not spend it. Term 1 is the positive control that it
+  ## was there; term 3 asks for EVERY OTHER ROW of the bench back byte for byte,
+  ## so a reader widened to "every cached type" reddens here and not merely on
+  ## the one field a narrower row happened to name.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key tran
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.form.tmax delete 0 end
+  $gw.form.tmax insert 0 7n
+  ase::ui::chana_adv_toggle $key
+  update
+  r6_type $key ac
+  set R6E_OTHERS {}
+  foreach r6b [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $r6b type] ne {ac}} { lappend R6E_OTHERS $r6b }
+  }
+  set R6E_CACHED {}
+  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
+    set R6E_CACHED $::ase::ui::dlg($key,anedit,tran)
+  }
+  $gw.form.stop delete 0 end
+  $gw.form.stop insert 0 2meg
+  $gw.btns.proceed invoke
+  update
+  set R6E_AFTER {}
+  foreach r6b [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $r6b type] ne {ac}} { lappend R6E_AFTER $r6b }
+  }
+  set R6E_AC [ase::ui::chana_row $key ac]
+  check "GR6e one OK writes ONE type: the folded tran edit is cached and\
+ available, the ac row is written, no other type's field lands in it, and every\
+ other row of the bench comes back byte for byte" \
+    [list $R6E_CACHED [ase::state_get $R6E_AC stop] \
+          [dict exists $R6E_AC tmax] [expr {$R6E_AFTER eq $R6E_OTHERS}]] \
+    [list {tmax 7n} 2meg 0 1]
+
+  ## GR6f -- THE BYTE-IDENTITY ROW FOR THE NEW READER: GR5k with the disclosure
+  ## in it. Click every cell, fold `▸ Advanced` open and shut on each one, press
+  ## OK on `op`, and ask for the same bytes. The merge must add NOTHING, because
+  ## the cache holds only what was TOUCHED and nothing here was -- that is
+  ## GR5f's rule seen from the commit door, and it is what stops this change
+  ## writing `uic 0` and `ptssum 1` into 104 benches that carry neither.
+  ##
+  ## ⚠ OK IS PRESSED ON `ac`, NOT ON GR5k's `op`, AND THAT IS A SABOTAGE
+  ## FINDING. `op` has no fields at all, so `chana_ok` writes nothing whatever
+  ## the reader answers and this row passed under EVERY mutation -- *a row that
+  ## cannot fail proves nothing.* `ac` carries `sweep`, a `mode` field whose
+  ## `default dec` the form RESOLVES at build time (a blank picker beside a deck
+  ## line that says `dec` is the window disagreeing with the file), so the form
+  ## offers a value no bench stores. It is one of the two measured cases in the
+  ## write-back rule's own comment, and with `ase::ui::form_is_absent` bypassed
+  ## this row goes red on `sweep dec`.
+  ##
+  ## ⚠ AND `ac` ALREADY HAS A STORED ROW, which is the half of GR5k's note that
+  ## still applies: pressing OK on a type with no row appends a disabled one,
+  ## which is the shipped behaviour of the commit door and not this row's
+  ## subject.
+  ase::session_update $key $R6FIX
+  set R6F_BEFORE [ase::state_serialize [ase::session_state $key]]
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  foreach r6c [lsort [winfo children $gw.types]] {
+    $r6c invoke
+    update
+    ase::ui::chana_adv_toggle $key
+    update
+    ase::ui::chana_adv_toggle $key
+    update
+  }
+  $gw.types.ac invoke
+  update
+  $gw.btns.proceed invoke
+  update
+  check "GR6f clicking every cell, folding Advanced open and shut on each one\
+ and pressing OK writes the same bytes as never opening the dialog" \
+    [ase::state_serialize [ase::session_state $key]] $R6F_BEFORE
+  set ::ase::ui::dlg($key,advopen) 0
+
+  ## GR6g -- THE Enable BOX IS THE LIVE ONE, AND THE CACHE'S COPY MAY NOT WIN.
+  ## `chana_cache_save` stores `enabled` beside the fields, because the box the
+  ## user ticked belongs to the form it was ticked on (GR5j). `chana_ok` owns
+  ## that key itself, from the LIVE `anen` -- so `chana_commit_vals` answers in
+  ## FIELDS and the cached copy never reaches the write loop. Without that the
+  ## journey below ends with a bench that says ON while the box the user is
+  ## looking at says OFF: tick Enable, fold the disclosure (which caches
+  ## `enabled 1`), untick it, press OK.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key tran
+  $gw.enable invoke
+  update
+  set R6G_TICKED $::ase::ui::dlg($key,anen)
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6G_CACHED {}
+  if {[info exists ::ase::ui::dlg($key,anedit,tran)]} {
+    set R6G_CACHED $::ase::ui::dlg($key,anedit,tran)
+  }
+  $gw.enable invoke
+  update
+  # ⚠ READ `anen` BEFORE OK, NOT AFTER. `chana_ok` ends in `chana_cancel`, which
+  # `array unset`s it -- reading it afterwards raises `no such element in array`
+  # INSIDE the block's catch, which kills the file at that row and loses every
+  # row after it rather than reddening one. Measured, this row's first cut.
+  set R6G_UNTICKED $::ase::ui::dlg($key,anen)
+  $gw.btns.proceed invoke
+  update
+  check "GR6g the cache's copy of Enable never reaches the row: the box really\
+ was ticked, the fold really did cache it, and OK writes what the box says NOW" \
+    [list $R6G_TICKED [expr {[dict exists $R6G_CACHED enabled] \
+                             ? [dict get $R6G_CACHED enabled] : {NONE}}] \
+          $R6G_UNTICKED \
+          [ase::state_get [ase::ui::chana_row $key tran] enabled]] \
+    {1 1 0 0}
+
+  ## GR6h -- THE RESIDUAL, MEASURED RATHER THAN ASSUMED. The PRECONDITION
+  ## BANNER's reader `ase::ui::chana_merged_row` (issue 1435) was deliberately
+  ## left reading the live form alone, so while a folded edit sits in the cache
+  ## the banner judges the STORED value and OK writes the REMEMBERED one. It
+  ## changes no sentence today -- no `needs` rule in the ngspice adapter reads
+  ## an `advanced 1` field -- and it was left out of scope because issue 1446 is
+  ## a change to the commit door that the user has not yet ruled on. This row
+  ## pins the divergence so that closing it is a deliberate act with a red row
+  ## to point at rather than a surprise.
+  ase::session_update $key $R6FIX
+  set ::ase::ui::dlg($key,advopen) 0
+  set gw [r5_open $key]
+  r6_type $key tran
+  ase::ui::chana_adv_toggle $key
+  update
+  $gw.form.tmax delete 0 end
+  $gw.form.tmax insert 0 7n
+  ase::ui::chana_adv_toggle $key
+  update
+  set R6H_MERGED [ase::ui::chana_merged_row $key tran]
+  set R6H_COMMIT [ase::ui::chana_commit_vals $key tran [ase::ui::chana_sim $key]]
+  check "GR6h KNOWN RESIDUAL (issue 1446): with a folded edit remembered, the\
+ banner's merged row still reads the STORED value while the commit reader reads\
+ the remembered one" \
+    [list [ase::state_get $R6H_MERGED tmax] \
+          [expr {[dict exists $R6H_COMMIT tmax] \
+                 ? [dict get $R6H_COMMIT tmax] : {NONE}}]] \
+    {2n 7n}
+  $gw.btns.cancel invoke
+  update
 
 } else {
   puts "gui legs skipped (no DISPLAY)"

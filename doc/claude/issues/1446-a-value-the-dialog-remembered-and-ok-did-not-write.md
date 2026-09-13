@@ -56,3 +56,59 @@ which is why it is worth a decision.
 (rebuilds through `chana_show`), `ase::ui::chana_cache_apply` (already exists, added by
 1445). Test rows: `test_ase_dialogs.tcl` section **GR5** — `GR5g` measures shape A,
 `GR5l` measures that the save side merges a folded field.
+
+---
+
+## What landed — Option B, implemented ahead of the ruling (2026-09-13)
+
+⚠ **THE USER HAS NOT RULED. This is the recommended shape built so the work is not
+idle**; a ruling of **A** reverts it, and it was kept small for exactly that reason —
+one new proc, one changed line, and its rows. Rule debt: `owed.sh` id **1446**.
+
+**`src/ase_window.tcl`** — `ase::ui::chana_commit_vals`, new, sitting between
+`chana_form_vals` and `chana_merged_row`; `ase::ui::chana_ok`'s one reader line now
+calls it instead of `chana_form_vals`. Nothing else in the file moved.
+
+```tcl
+proc ase::ui::chana_commit_vals {key type sim} {
+  variable dlg
+  set vals [dict create]
+  if {$type ne {} && [info exists dlg($key,anedit,$type)]} {
+    set cached $dlg($key,anedit,$type)
+    foreach f [ase::ui::chana_fields $type $sim] {
+      if {[dict exists $cached $f]} { dict set vals $f [dict get $cached $f] }
+    }
+  }
+  return [dict merge $vals [ase::ui::chana_form_vals $key $type $sim]]
+}
+```
+
+Three properties, each a row in `tests/headless/test_ase_dialogs.tcl` section **GR6**:
+
+* **one type, one row.** Only `anedit,<the type being committed>` is read. **GR6e**
+  presses OK with another type's edit sitting in the cache and asks for every other
+  row of the bench back byte for byte, plus that no other type's field name landed in
+  the committed row. `item07_dialogs.md`'s D4 reason is not spent.
+* **the live widget wins** where both exist, because the user may have typed, folded,
+  unfolded and retyped (**GR6d**).
+* **it answers in FIELDS, not in cache keys.** `chana_cache_save` also stores
+  `enabled`; `chana_ok` owns that key from the live `anen`. Without the filter the
+  bench ends up ON while the box the user is looking at says OFF (**GR6g**).
+
+`ase::ui::form_is_absent` still decides what is written — a merged value goes through
+the identical test a live one does: **GR6b** (declared default, with the non-default
+positive control), **GR6c** (emptied field deletes its stored key), **GR6f** (click
+every cell, fold `▸ Advanced` open and shut on each, press OK: the same bytes as never
+opening the dialog). The 104 tracked `.state` files still round-trip, 0 differ.
+
+**Shape A is unchanged and remains the ruled behaviour** (GR5g, still green).
+
+### The residual this left — **GR6h**
+
+`ase::ui::chana_merged_row`, the precondition banner's reader (issue 1435), was **not**
+changed: with a folded edit in the cache it judges the **stored** value while OK now
+writes the **remembered** one. It changes no sentence today — no `needs` rule in the
+ngspice adapter reads an `advanced 1` field — and it is out of scope for a commit-door
+change the user has not ruled on. The fix, if the ruling is B, is one line: have
+`chana_merged_row` read `chana_commit_vals` too. GR6h pins the divergence so that
+closing it is deliberate.
