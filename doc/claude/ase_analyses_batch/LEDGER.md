@@ -793,8 +793,19 @@ this batch is run by, and 13 of 17 is not 17 of 17. They are accounted for here.
 `receipts/02-r1-answered-salvage.md` and `receipts/04-dev-build-rebuilt.md` were already
 cited above, in the rulings and baseline sections respectively.
 
-**Running count: 17 receipts on disk, 16 collected, 1 in flight** (`16-stage-6-salvage.md`,
-Stage 6 task 4).
+~~**Running count: 17 receipts on disk, 16 collected, 1 in flight** (`16-stage-6-salvage.md`,
+Stage 6 task 4).~~ *superseded — that count was true on 2026-09-12.*
+
+**Running count, re-measured 2026-09-13 by counting rather than remembering: 24 receipts on
+disk, 24 referenced by this ledger, ZERO gap.** Verified mechanically — every filename under
+`receipts/` was searched for in this file, and none came back unreferenced. **Two more are
+in flight**: Stage 8 task 1 (issue 1443) will be receipt **23**, and issue **1446**'s crew
+will be receipt **25**; 24 is ⚖ R5's, collected above.
+
+**Debt queue the same day: 163 `rule`, 59 `look`, 10 `suite`.** The rule count moved by one
+this session, and it was the driver's own filing of **1446**. ⚠ These numbers are a
+timestamp, not a standing fact — `owed.sh count` is the only honest source and it moves
+every time anyone files.
 
 ## How to fill in a stage section
 
