@@ -1603,6 +1603,16 @@ filed last.
 
 ### ⚖ R11 — ANSWERED. The minimum supported ngspice. Do we promise anything at all?
 
+⚠ **THE EVIDENCE FOR THIS RULING WAS MEASURED AFTER IT, 2026-09-13: `evidence/binary-differences.md`.**
+The two binaries differ in **four** measured places — the `v(all)` phantom column apt 45.2
+writes beside a lone op save, the `meas` echo line's six decimals against five, XSPICE event
+counts and transition times, and one `pss` return code — and **not one of them is a
+capability the older binary lacks**. `sp`, `optran`'s numbers to every digit, seeded
+randomness, all four `meas` readback facts, the `pss` four-argument segfault, `CKTncDump`,
+XSPICE and CIDER all **agree**. So a version floor would have refused work that 45.2 does
+correctly, which is the empirical form of the argument this ruling was answered on.
+
+
 **✅ ANSWERED 2026-09-13 — Option C, the capability floor plus a stated tested set.** The
 user's words: *"go with your recommendation"*. **All three conditions below are ratified with
 it**, and they were restated when the ruling was put except condition 3's re-measurement

@@ -44,6 +44,10 @@ Every one of these was measured on both, in the same sitting:
 * **`CKTncDump`'s table, and the ladder's `Note:` lines, are the same on both** — including
   the stream each one is written to.
 * **XSPICE is compiled into both**, though neither banner says so.
+* **CIDER is in both too** — a `numd level=2` card is parsed and reaches the mesh reader on
+  each, failing identically (`Fatal error: y.mesh card list is empty`) on a deliberately
+  incomplete mesh. Only the fork's config names `--enable-cider`; the apt build has it
+  anyway, which is exactly why capability is probed and not read off a build flag.
 
 ## What this says about ⚖ R11's sentence
 
