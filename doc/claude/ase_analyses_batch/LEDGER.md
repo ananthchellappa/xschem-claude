@@ -1702,6 +1702,110 @@ disabled with the reason and the door. ⚠ **These are RULES, not a hazard regis
 | spec paragraphs rewritten | |
 | receipt | |
 
+### Task 1 — the option catalogue and the one speller (§7a + §7b)
+
+**The first task of the heaviest stage, and it found three shipped defects instead of
+preventing future ones.** `PLAN.md` expected §7 to make the options surface safe. The
+catalogue's first job turned out to be noticing that the emitter has been spelling
+options **without a `cptype`** ever since there was no `cptype` to consult.
+
+| | |
+|---|---|
+| status | **LANDED** — task 1 of 4 |
+| issue | **1437** (and **1438** filed by the driver — see below) |
+| T1 | taken **solo** by the driver, **63 → 64 cases**, **zero** counted failures. ⚠ **T1's membership changed in this commit**: `hcases` gains `headless/test_ase_options_1437`, so T1 now runs **75 more checks** than it did at `08774b2b` |
+| suites moved | **none — a new suite instead.** `tests/headless/test_ase_options_1437.tcl`, **75 checks**, identical on both arms, registered in `run_regression.tcl`'s `hcases`, so **T1 covers all 75**. No existing row moved anywhere |
+| driver's own re-run | **4/4 ALL PASS on the engine arm** — options_1437 **75**, core **598**, preflight **235**, simcaps **199** |
+| deck goldens moved | **NONE**, and no `.state` file moved. ⚠ **`render_deck` is byte-unmoved** — driver-verified: not one diff hunk touches it. The catalogue and the speller exist; nothing yet routes through them, which is exactly why issue 1438 is filed rather than fixed |
+| sabotage | **36 respellings + 4 re-runs = 40 applications, 40/40 restored** by md5, **zero kills, zero survivors**. Four survived pass 1 and **all four were rows whose fixtures never disagreed** — the eighth time in this batch. ⚠ **S31 is a new shape**: `set keepopinfo` reaches a task option on both binaries, so **no amount of running ngspice would have caught that respelling** — only the C source distinguishes them |
+| ledger debts | ⚖ **R9** (rule 1437). **No `look` debt** — nothing here draws a pixel; §7c owns that. Ledger 155/57/9 → **156/57/9** |
+| commit | `d2f4437a` |
+| receipt | `receipts/19-stage-7-catalogue.md` |
+
+**The reporting duty the brief imposed, and the crew met it.** A transcribed row and a
+measured row are different kinds of evidence, and the count must not read wider than the
+work:
+
+| column | verified | how |
+|---|---|---|
+| `cptype` | **247 / 247** | extracted by script from `cktsopt.c`'s `OPTtbl` and every `cp_getvar`/`cp_getvar_policy` site |
+| `site` | **247 / 247** | the `file:line` each row was read from |
+| block A `help` | **57 / 57** | ngspice's own strings |
+| block A `default` | **54 / 57** | from `cktntask.c` |
+| `inert` | **16 / 16** | re-read in source |
+| `phase` | **59 carry a non-`any` phase**; all five classes measured on both binaries with a named member | |
+| **`group`, `scope`, `results`** | **0 / 247** | ⚠ **TRANSCRIBED** — *including the 21 rows §7c's ⚠ badge will rest on* |
+
+⚠ **THAT LAST ROW IS THE ONE TO CARRY FORWARD.** §7c's badge marks the options that
+change numbers, and **not one of those 21 is verified**. Task 3 must not treat `results`
+as measured because the catalogue contains it.
+
+**The driver re-derived the catalogue's own floor from the ngspice source**, independently
+of both the plan and the crew:
+
+```
+OPTtbl rows                                   98      (matches APPENDIX §3.1)
+  of which IF_SET (settable)                  57      (matches the plan)
+distinct cp_getvar + cp_getvar_policy names  163      (162 without _policy)
+union                                        220      <- the plan's floor, confirmed
+overlap between the two sets                   0      <- "provably disjoint", confirmed
+```
+
+So **the plan's 220 is right**, and the shipped **247** is 220 + **27**, each of the 27
+added because a *measurement* found a delivery class the floor has no member of. The
+receipt says so at its own §"Blocks A + B are the plan's 220-row floor".
+
+**Fifteen corrections, C100–C114.** The sharpest is **C103/C104**, and the driver re-took
+it end to end on both binaries with an RC whose phase at 1 kHz is exactly −45°:
+
+```
+                              /usr/bin/ngspice 45.2      fork 46+
+no units setting              vp(out) = -7.85398e-01     same     (radians)
+.options units=degrees        vp(out) = -7.85398e-01     same     <- THE CARD DOES NOTHING
+set units=degrees   (.control) vp(out) = -4.50000e+01    same     <- works
+```
+
+**A phase margin read off a deck that routed `units` to `.options` is wrong by 57.3×, at
+rc 0, with nothing said.** And **`units` is not one of the 220 at all** — driver-verified:
+it is neither an `OPTtbl` keyword nor a `cp_getvar` name; it is read at
+`src/frontend/options.c:419` by a `va_name`/`CP_STRING` comparison, a third mechanism the
+floor's two sets cannot see. The plan's own §7a catalogue excerpt lists it as a row of a
+floor that does not contain it.
+
+⚠ **ISSUE 1438 IS THE DRIVER'S, AND IT EXISTS SO A USER CAN FIND IT.** The crew named
+three silent wrong answers live in the shipped tree, measured them on both binaries, and
+correctly did **not** fix them — the repair is §7d/§7e's. But they were recorded only
+inside a catalogue receipt and inside 1437, which will close as *"the catalogue shipped"*.
+A user asking *"why is my W wrong?"* would never reach either. So they are filed under one
+number, with one root cause:
+
+1. ⚠ **Five committed benches ask for `wnflag` and none of them gets it** — driver-verified
+   by `git ls-files`: five `.state` files, all `{name wnflag value 1}`, all the user's own
+   sky130 benches. `render_deck` spells a stored `1` as a **bare card**, and `wnflag` is
+   read at **`CP_NUM`** at three sites (`inpgmod.c:268`, `inp.c:2828`, `inpcom.c:990`) —
+   all three confirmed by the driver at those exact lines. A `CP_BOOL` cannot answer a
+   `CP_NUM` read, **and** `inpcom.c:990` is inside `inp_get_w_l_x()`, called from
+   `inp_readall_cards()` at `:1535`, i.e. **during card reading, where no `.options` card
+   can reach it at all.** The user asked for W per finger and has been getting W total.
+2. **A valued option stored as `1` becomes a bare card** — `.options maxord` leaves
+   MaxOrder at **2**. Driver-corroborated: `cktsopt.c:314` declares `maxord`
+   `IF_SET|IF_INTEGER` and the `OPT_MAXORD` arm reads `val->iValue`.
+3. **A valued option stored as `0` is dropped entirely** — `.options gminsteps=0` disables
+   gmin stepping; emitting nothing leaves it at 1.
+
+⚠ **`PLAN.md` §7b predicted defect 3 as *"this batch's own defect inside its own
+antidote"*.** It is **older than the prediction** and it is in the **emitter**, not in the
+speller the prediction was about.
+
+**What task 2 inherits, and what it must budget.** The 34-row pre-deck group is already a
+predicate, both its doors are computed and spelled, the sixteen inert rows carry their
+reasons, and `ase::state_option_delivery` already names every stored option that cannot
+reach the simulator. What §7d has to build is the **delivery** — `spiceinit_write`,
+`run_cmd`'s `-D` arm, ⚖ R2's four conditions as requirements, and the two refusals.
+⚠ **And it owns a re-baseline this task did not pay**: `test_ase_simreg_0931`'s six rows
+are expected to move *"the first time `-D` is emitted for an option"*, and nothing emits
+`-D` yet — the suite is **ALL PASS (111)** here.
+
 ### What Stage 7 learned that binds later stages
 
 ---
