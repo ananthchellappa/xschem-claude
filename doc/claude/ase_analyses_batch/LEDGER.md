@@ -651,6 +651,16 @@ the place they live and the order it sets is the order to ask them in — **one 
 a short conversation**, which is the standing preference R1 was asked under. ⚖ **R9** is the
 declared exception: it is batched per stage.
 
+✅ **AND THE DOCUMENT IT NEEDS NOW EXISTS — `R9_COPY_REVIEW.md`, 2026-09-13.** **291
+strings, 19 issues**, handles `R9-001`–`R9-291`, grouped by surface. Built by 12 agents in
+parallel, every string taken **verbatim from the committed source at HEAD** rather than from
+the issue prose — which turned out to be necessary rather than careful: most issue files only
+*describe* their copy, and several quote drafts that were superseded before the commit landed.
+**Section A is the nine cross-cutting choices**, each with a recommendation, so the ruling can
+be answered in one pass instead of 291. Issue **1443**'s strings are excluded and join when
+the Stage 8 crew's receipt lands.
+
+
 ---
 
 ## Receipts from before Stage 0 — collected here so the ledger accounts for all of them

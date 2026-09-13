@@ -1447,6 +1447,36 @@ preserved **by construction**, and `version` still `1`.
 
 ### ⚖ R9 — The standing label ratification. BATCHED PER STAGE.
 
+⚠ **THE DOCUMENT NOW EXISTS: `R9_COPY_REVIEW.md`, written 2026-09-13.** R9 is the only
+ruling left in the batch, and it needs something to read rather than a conversation, so it
+was built: **291 strings from 19 issues**, each with a stable handle `R9-001`–`R9-291`,
+grouped by **where the user sees them** rather than by issue number — every label on one
+form together, every refusal together, the whole options sheet together.
+
+**Two measured facts from building it, both of which change how a copy debt should be paid
+in future.**
+
+1. **The issue files could not be the source.** Most of them only *describe* their copy
+   (*"every label carries its unit"*, *"mints three frames"*, *"four precondition sentences
+   with their four remedies"*), and several quote a draft that was superseded before the
+   commit landed. Every string in the review was therefore taken from the **committed source
+   at HEAD** and cross-checked against the commit that introduced it, with
+   continuation-joined Tcl strings rendered through `tclsh` so the text is what the widget
+   shows. **A `rule` debt that records only a description does not preserve the sentence** —
+   file the string itself.
+2. **The interesting questions are cross-cutting, not per-string.** Reading 291 strings one
+   at a time would ask the user the same question nine times over; reading them by surface
+   surfaced **nine recurring choices** — shouted words mid-sentence, lowercase acronyms in
+   pickers, internal slot names shown where the form shows a label, `Stop` vs `Stop time` vs
+   `Stop frequency`, units in parentheses, developer vocabulary (*"this simulator backend"*,
+   *"readable list"*), two frames for the same event, sibling sentences that drifted apart,
+   and placeholders the user is meant to read as placeholders. **Section A of the review is
+   those nine**, each with a recommendation; the other 282 entries are mostly consequence.
+
+Issue **1443**'s strings are **not** in it: that crew is still running and its issue is not
+committed. They join when its receipt lands.
+
+
 *Blocks: nothing; owed at the end of every stage that mints a sentence.*
 
 Every new user-facing sentence in this plan is the user's to ratify: the four type-state
