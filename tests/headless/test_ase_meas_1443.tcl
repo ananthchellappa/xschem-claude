@@ -1053,26 +1053,40 @@ check {DK4 no dot card is ever emitted for a measurement or for a Fourier reques
 ## SINGLE LINE IS BUILT -- issue 1424's third refusal tier, one level down. A
 ## `.state` can be hand-edited, so the dialog having been happy once is not
 ## evidence about this deck.
+## ⚠ THE `sp` ROW NOW CARRIES A PORTS TABLE, AND DK5b IS WHY. Stage 9 (issue
+## 1452) gave `sp` a real entry, so the row that used to be refused as
+## UNRENDERABLE is now refused -- with no ports -- by the `two_ports`
+## PRECONDITION, whose sentence also ends "nothing was rendered". DK5 went on
+## passing and DK5b went red, which is a non-vacuity control doing exactly its
+## job: DK5 was measuring the wrong refusal. With two ports declared the
+## analysis itself is fine and the ONLY thing left to refuse the deck is the
+## measurement.
+set DK5PORTS {ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50}}}
+set DK5ROW [concat {type sp enabled 1 points 3 start 100meg stop 1g} $DK5PORTS]
 check {DK5 a measurement that would segfault the simulator refuses the deck} \
   [m_ans apply {{} {
-     set st [m_state {{name a analysis sp kind rms target S_2_1}} {{type sp enabled 1}}]
+     set st [m_state {{name a analysis sp kind rms target S_2_1}} [list $::DK5ROW]]
      set rc [catch {m_deck $st} e]
-     return [list $rc [expr {[string first {nothing was rendered} $e] >= 0}]] }}] {1 1}
+     return [list $rc [expr {[string first {measurement 'a'} $e] >= 0}] \
+                      [expr {[string first {nothing was rendered} $e] >= 0}]] }}] {1 1 1}
 
-## ⚠ NON-VACUITY FOR DK5, AND IT SAYS WHAT THE OTHER REFUSAL IS. `sp` is still
-## a probe stub with no `emit` template, so a deck carrying one is refused
-## whatever its measurements say -- by ase::analysis_unrenderable_msg, with a
-## DIFFERENT sentence that names no measurement. DK5 is therefore measuring its
-## own refusal and not that one.
-check {DK5b a SAFE measurement on the same analysis is refused by something else, and by a different sentence} \
+## ⚠ NON-VACUITY FOR DK5: THE SAME ANALYSIS, THE SAME PORTS, A SAFE KIND, AND IT
+## RENDERS. Before Stage 9 this row said "refused by something ELSE, by a
+## different sentence" -- `sp` had no `emit` template, so every deck carrying
+## one was refused whatever its measurements said. Now nothing else is wrong
+## with the bench, so the control is stronger than it was: the fatal row is
+## refused BY NAME and the safe row produces a deck that really carries the
+## `meas` line.
+check {DK5b a SAFE measurement on the same analysis renders, and the deck carries it} \
   [m_ans apply {{} {
-     set fat [m_state {{name a analysis sp kind rms target S_2_1}} {{type sp enabled 1}}]
-     set ok  [m_state {{name a analysis sp kind max target S_2_1}} {{type sp enabled 1}}]
-     catch {m_deck $fat} efat
-     catch {m_deck $ok}  eok
-     return [list [expr {$efat ne $eok}] \
+     set fat [m_state {{name a analysis sp kind rms target S_2_1}} [list $::DK5ROW]]
+     set ok  [m_state {{name a analysis sp kind max target S_2_1}} [list $::DK5ROW]]
+     set rcf [catch {m_deck $fat} efat]
+     set rco [catch {m_deck $ok}  eok]
+     return [list $rcf $rco \
                   [expr {[string first {measurement 'a'} $efat] >= 0}] \
-                  [expr {[string first {measurement} $eok] >= 0}]] }}] {1 1 0}
+                  [regexp -all -line {^meas sp a MAX } $eok] \
+                  [regexp -all -line {^alter v1 portnum = 1$} $eok]] }}] {1 0 1 1 1}
 
 ## ⚠ THE WALK, THE PLOTMAP AND analysis_captures ARE UNTOUCHED BY STAGE 8, and
 ## that is what keeps issue 1430's over-walk guard (test_ase_core WK8) meaning

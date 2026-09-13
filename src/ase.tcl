@@ -4687,6 +4687,20 @@ proc ase::analysis_emit_check {sim row} {
   foreach f $flds {
     if {[dict exists $f name]} { lappend known [dict get $f name] }
   }
+  # --- 1452: AND THE `setup` CONTRACT'S TABLE KEY, FOR THIS TYPE ONLY --------
+  # ⚠ THIS IS DELIBERATELY **NOT** A THIRD ENTRY IN
+  # `ase::analysis_nonsetting_keys`, AND THE DISTINCTION IS D4's. `id` and `x`
+  # are licensed on EVERY row of EVERY type of EVERY simulator, which is what
+  # makes them a change to D4 and what makes NS1 assert the list literally.
+  # `ports` is licensed on ONE type, because ONE registry entry declares that
+  # it carries a table -- so a `ports` key on a `tran` row is still
+  # `unknownkey`, and a simulator whose S-parameter analysis wants a different
+  # word gets a different word without touching core. It is exempt for `x`'s
+  # reason and not for `id`'s: IT ACTUALLY EMITS, through
+  # `ase::analysis_setup_emit`, and row SP7 is the one that would notice if it
+  # stopped.
+  set _sk [ase::analysis_setup_key $sim $type]
+  if {$_sk ne {}} { lappend known $_sk }
   foreach k [dict keys $row] {
     if {[lsearch -exact $known $k] < 0} {
       lappend out [list unknownkey $k [ase::analysis_emit_msg unknownkey $k]]
@@ -4790,9 +4804,26 @@ proc ase::analysis_schema_errors {{sim {}}} {
         }
       }
     }
+    # --- 1452: A FIELD THE `setup` CONTRACT CONSUMES IS CONSUMED ------------
+    # `s2p` and `donoise` are spent by the setup legs, which build lines the
+    # slot grammar cannot produce, so no template names them. Without this the
+    # shipped registry would answer `fieldunused` for both -- and the honest
+    # alternative, dropping the check for them, would delete the guard that
+    # caught Stage 3's whole defect.
+    set _sfl {}
+    if {[dict exists $e setup] && ![catch {dict size [dict get $e setup]}] \
+        && [dict exists [dict get $e setup] fields]} {
+      set _sfl [dict get [dict get $e setup] fields]
+      foreach _sf $_sfl {
+        if {[lsearch -exact $declared $_sf] < 0} {
+          lappend out [list $ty badsetupfield $_sf]
+        }
+      }
+    }
     foreach f $declared {
       set used 0
       if {[lsearch -exact $gates $f] >= 0} { set used 1 }
+      if {[lsearch -exact $_sfl $f] >= 0} { set used 1 }
       foreach card [dict get $e emit] {
         if {[dict exists $card tmpl] \
             && [lsearch -exact [ase::analysis_slots [dict get $card tmpl]] $f] >= 0} {
@@ -4912,6 +4943,41 @@ proc ase::analysis_schema_errors {{sim {}}} {
         lappend out [list $ty badresultvecs $rv]
       }
     }
+    # --- 1452 (Stage 9): AND THE `setup` CONTRACT IS CHECKED ----------------
+    # Same rule as `salvage` and `resultvecs`, for a key whose failure mode is
+    # the same silence: a `lines` proc that is not a command answers `{}` from
+    # `ase::analysis_setup_emit`, the ports never reach the deck, and ngspice
+    # kills the whole run with `No RF Port is present` -- taking every analysis
+    # after it, `op` included. A `key` nobody declares makes the table an
+    # `unknownkey` the user cannot save.
+    if {[dict exists $e setup]} {
+      set sp [dict get $e setup]
+      if {[catch {dict size $sp}]} {
+        lappend out [list $ty badsetup {}]
+      } else {
+        if {![dict exists $sp key] || [string trim [dict get $sp key]] eq {}} {
+          lappend out [list $ty nosetupkey {}]
+        } elseif {[lsearch -exact [ase::analysis_nonsetting_keys] [dict get $sp key]] >= 0 \
+                  || [lsearch -exact $declared [dict get $sp key]] >= 0} {
+          # ⚠ A KEY THAT COLLIDES IS THE DANGEROUS ONE: `ase::analysis_setup_rows`
+          # would read a field's value as a table, or shadow `id`/`x`.
+          lappend out [list $ty setupkeyclash [dict get $sp key]]
+        }
+        if {![dict exists $sp lines]} {
+          lappend out [list $ty nosetuplines {}]
+        } elseif {[info commands [dict get $sp lines]] eq {}} {
+          lappend out [list $ty badsetuplines [dict get $sp lines]]
+        }
+        foreach _leg {post check} {
+          if {[dict exists $sp $_leg] && [info commands [dict get $sp $_leg]] eq {}} {
+            lappend out [list $ty badsetuphook [dict get $sp $_leg]]
+          }
+        }
+        if {[dict exists $sp min] && ![string is integer -strict [dict get $sp min]]} {
+          lappend out [list $ty badsetupmin [dict get $sp min]]
+        }
+      }
+    }
   }
   return $out
 }
@@ -4968,6 +5034,94 @@ proc ase::analysis_cards {sim row} {
                       [ase::analysis_expand $row [dict get $card tmpl] $flds]]
   }
   return $out
+}
+
+# ─── THE `setup` CONTRACT: LINES AN ANALYSIS NEEDS AROUND ITS OWN CARD ──────
+# Stage 9 of doc/claude/ase_analyses_batch/, issue 1452.
+#
+# Some analyses cannot be expressed as one card. ngspice's `sp` is the first:
+# a PORT is an ordinary voltage source carrying `portnum`, and ASE-L's founding
+# doctrine (CREW_BRIEF "do not change designs", sense (a)) forbids putting that
+# on the user's schematic. The route measured in APPENDIX §2.11 [R-M5] is to
+# promote the sources AT RUN TIME, from inside `.control`, immediately above the
+# analysis card -- so the deck carries lines the slot grammar cannot produce:
+# there are N of them, N is the length of a TABLE the user filled in, and each
+# one spells a simulator keyword.
+#
+# ⚠ SO IT IS NOT AN `emit` CARD, AND THAT IS THE POINT OF A SEPARATE KEY.
+# `ase::analysis_expand` joins its tokens with a space and returns ONE line; a
+# `{build <proc>}` slot (PLAN.md §1c, specified and never shipped) would still be
+# one line. A contract that has to produce a VARIABLE NUMBER of lines is a
+# different shape from a card, and pretending otherwise is how a key read by
+# nothing gets checked by nothing.
+#
+# THE FIVE DECLARED PARTS, and which side of D34-D37 each one is on:
+#
+#   key     the per-row state key this type's table lives under. SCHEMA: core
+#           learns the name from the registry and never spells it. It is what
+#           makes the table a legal row key -- see ase::analysis_emit_check --
+#           WITHOUT a third entry in ase::analysis_nonsetting_keys, which would
+#           license the key on EVERY type of EVERY simulator (D4).
+#   noun    what one entry of the table is called, for core's own sentence.
+#   min     how many entries the simulator requires. SCHEMA: a COUNT against a
+#           declared minimum spells nothing.
+#   lines   adapter proc, called `<proc> $state $row $idx`, answering the lines
+#           that go ABOVE the analysis card. CONTENT.
+#   post    adapter proc, same signature, answering the lines that go BELOW the
+#           analysis card and below the `$sim_status` guard. CONTENT.
+#   check   adapter proc, called `<proc> $row`, answering `{}` or one
+#           `{verdict sentence fix}` triple -- the simulator's own rules over the
+#           table. CONTENT, and it is why `two_ports` stays schema: core counts,
+#           the adapter judges.
+#   fields  fields this contract consumes. Without it ase::analysis_schema_errors
+#           answers `fieldunused` for a field no TEMPLATE spends -- which is the
+#           right answer for every other field and the wrong one for a field the
+#           setup lines read directly.
+#
+# ⚠ EVERY READER BELOW ANSWERS `{}` FOR A TYPE THAT DECLARES NO `setup`, so
+# nothing in the ten shipped entries changes and no deck moves.
+proc ase::analysis_setup {sim type} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e setup]} { return {} }
+  set s [dict get $e setup]
+  if {[catch {dict size $s}]} { return {} }
+  return $s
+}
+
+# The row key this type's setup table lives under -- `{}` when there is none.
+proc ase::analysis_setup_key {sim type} {
+  set s [ase::analysis_setup $sim $type]
+  if {$s eq {} || ![dict exists $s key]} { return {} }
+  return [dict get $s key]
+}
+
+# THE TABLE ITSELF, as a list of entries -- `{}` for a type with no contract, a
+# row that carries nothing under the key, or a value that is not a list.
+#
+# ⚠ IT NEVER RAISES AND IT NEVER LOOKS INSIDE AN ENTRY. An entry's own shape is
+# the adapter's (`z0` is an ngspice keyword); core may count them and no more.
+proc ase::analysis_setup_rows {sim type row} {
+  set k [ase::analysis_setup_key $sim $type]
+  if {$k eq {} || ![dict exists $row $k]} { return {} }
+  set v [dict get $row $k]
+  if {[catch {llength $v}]} { return {} }
+  return $v
+}
+
+# The lines one leg of the contract answers, or `{}`. `which` is `lines` or
+# `post`.
+#
+# ⚠ IT DOES NOT CATCH. render_deck is the caller and a setup leg that raises
+# means the deck cannot be written -- which is render_deck's own documented
+# refusal, said before a single line is built. Swallowing it here would emit a
+# deck with the ports silently missing, at rc 0, which is the one outcome this
+# whole stage exists to prevent.
+proc ase::analysis_setup_emit {sim row which {state {}} {idx -1}} {
+  set s [ase::analysis_setup $sim [ase::state_get $row type]]
+  if {$s eq {} || ![dict exists $s $which]} { return {} }
+  set p [dict get $s $which]
+  if {[info commands $p] eq {}} { return {} }
+  return [$p $state $row $idx]
 }
 
 
@@ -11611,6 +11765,81 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
  status, no log and no results file to explain it" \
         "correct the output names, or tick Save all voltages, or switch the\
  distortion analysis off"]
+    }
+    two_ports {
+      # ─── STAGE 9 (issue 1452): THE PRECONDITION THE GUI SATISFIES ─────────
+      #
+      # ⚠ `fatal`, AND IT IS THE SHARPEST ONE IN THE FILE. MEASURED 2026-09-13
+      # on apt 45.2 AND on the fork, with `echo AFTER_SP` and `op` after the
+      # analysis:
+      #
+      #   no source carrying portnum -> stderr `Error: No RF Port is present,
+      #                                 cannot run sp analysis`, then
+      #                                 `ERROR: fatal error in ngspice, exit(1)`
+      #                                 rc 1, and AFTER_SP NEVER PRINTED
+      #   exactly one port           -> `Error: Only one RF Port is found, we
+      #                                 need at least two!` + the same
+      #
+      # `span.c:376-386` calls `controlled_exit(EXIT_BAD)`: the PROCESS dies
+      # where it stands. So this is not "the analysis will not run" -- every
+      # analysis after it dies too, `op` INCLUDED, which this batch keeps last
+      # in emit order (issue 0964) precisely so nothing before it can disturb
+      # it. That is `fatal`'s definition word for word (issue 1424).
+      #
+      # ⚠ AND IT IS EVALUATED OVER THE **TABLE**, NOT OVER THE NETLIST, WHICH
+      # IS THE WHOLE POINT OF THE STAGE. `design-B` made this a fatal with no
+      # route to satisfy it [crit §C11]: a schematic that declares no port
+      # could never run an S-parameter analysis without being edited, and
+      # editing the schematic is what ASE-L exists not to do. The measured
+      # route is `alter <src> portnum = N` from inside `.control`
+      # (APPENDIX §2.11 [R-M5]) -- so the precondition asks the table the user
+      # filled in, the table is what the setup lines are built from, and the
+      # user can fix it in the dialog. A netlist scan can only ADD to that
+      # table, never replace it: `portnum` is declared `IF_INTEGER` and
+      # answered as `rValue` (`vsrcask.c:160-162`), so it CANNOT BE READ BACK
+      # at all -- `show v1 : all` reports `portnum 0` for a source declared
+      # `portnum 1`.
+      #
+      # ⚠ THE COUNT IS ALL CORE DOES, AND THAT IS D34-D37 IN ONE PREDICATE.
+      # `portnum`, `z0` and `alter` are ngspice words; "at least two of the
+      # things this analysis's table holds" is not. `min` and `noun` come from
+      # the registry, the entries are never looked inside, and the simulator's
+      # own rules over them are `setup_check` below.
+      set _sp [ase::analysis_setup $sim $type]
+      if {$_sp eq {} || ![dict exists $_sp min]} { return {} }
+      set _min [dict get $_sp min]
+      if {![string is integer -strict $_min]} { return {} }
+      set _noun port
+      if {[dict exists $_sp noun]} { set _noun [dict get $_sp noun] }
+      set _n [llength [ase::analysis_setup_rows $sim $type $row]]
+      if {$_n >= $_min} { return {} }
+      set _need [expr {$_min - $_n}]
+      return [list fatal \
+        "this analysis needs at least $_min\
+ [ase::sim_plural $_min $_noun ${_noun}s] and names $_n" \
+        "add $_need more [ase::sim_plural $_need $_noun ${_noun}s] --\
+ ${_noun}s are assigned at run time, and nothing is written to your schematic"]
+    }
+    setup_check {
+      # THE SIMULATOR'S OWN RULES OVER THE SAME TABLE, ASKED OF THE ADAPTER.
+      #
+      # ⚠ A SEPARATE ID FROM `two_ports` BECAUSE THEY ARE ON OPPOSITE SIDES OF
+      # D34-D37 -- and because they must both be able to speak. A count is
+      # schema; "a Z0 of zero silently demotes the source and ngspice then
+      # blames a different one" is a fact about one simulator, and core must
+      # not hold it. The hook answers one `{verdict sentence fix}` triple or
+      # nothing, exactly like `out_decompose`'s `malformed`.
+      #
+      # ⚠ AN ADAPTER WITH NO `check` LEG GETS NO OPINION -- absent means NOT
+      # MEASURED, never NO, which is the house rule every optional hook keeps.
+      set _sp [ase::analysis_setup $sim $type]
+      if {$_sp eq {} || ![dict exists $_sp check]} { return {} }
+      set _p [dict get $_sp check]
+      if {[info commands $_p] eq {}} { return {} }
+      set _v {}
+      catch { set _v [$_p $row] }
+      if {[llength $_v] < 2} { return {} }
+      return $_v
     }
     saves_resolve {
       # ⚠ EVERY ANALYSIS IS STARVED BY A SAVE LIST THAT RESOLVES TO NOTHING, AND
@@ -19308,6 +19537,28 @@ namespace eval ase::backend::ngspice {
       }
       foreach _ol $scopepre  { lappend lines $_ol }
       foreach _ol $supprepre { lappend lines $_ol }
+      ## --- 1452 (Stage 9): THIS ANALYSIS'S OWN SETUP LINES ------------------
+      ## ⚠ THE `sp` PORTS LAND HERE, AND "IMMEDIATELY ABOVE THE CARD" IS NOT
+      ## WHAT THAT MEANS. Issue 1419's rows VB1/VB2 assert that the VERBATIM
+      ## HATCH is immediately above its own analysis line, and issue 1433 paid
+      ## a sabotage to learn that anything wedged between them reddens both. So
+      ## the setup lines go with the OPTION lines -- above the checkpoint arm
+      ## and above the hatch -- which is also the right order for a second
+      ## reason: the hatch is the user's own last word, and a user who writes
+      ## `alter v1 z0 = 75` into it must win over the table.
+      ##
+      ## ⚠ ABOVE THE **CARD** IS STILL LOAD-BEARING, AND IT IS MEASURED. The
+      ## same four `alter` lines moved BELOW the `sp` card give
+      ## `Error: No RF Port is present, cannot run sp analysis` +
+      ## `ERROR: fatal error in ngspice, exit(1)` on both binaries -- the
+      ## process dies and every analysis after it dies with it.
+      ##
+      ## Empty for every type that declares no `setup` contract, which is ten
+      ## of the eleven, so no committed deck moves.
+      foreach _pl [ase::analysis_setup_emit \
+                     [namespace tail [namespace current]] $a lines $state $ai] {
+        lappend lines $_pl
+      }
       set ckplan {}
       if {[llength $ckrows]} {
         set ckplan [ase::ckpt_plan [namespace tail [namespace current]] $a $state]
@@ -19448,6 +19699,21 @@ namespace eval ase::backend::ngspice {
       # the results file; placed after the write it would report the failure and
       # ship the bad raw anyway, which is the defect it was written against.
       foreach g [::ase::backend::ngspice::sim_status_guard] { lappend lines $g }
+      ## --- 1452 (Stage 9): AND ITS OWN POST LINES ---------------------------
+      ## ⚠ BELOW THE GUARD, ABOVE `remzerovec` AND THE WRITE, and each of those
+      ## three sides is a decision. BELOW THE GUARD: an analysis that failed
+      ## must not export anything, and the guard's `quit 1` is what makes that
+      ## true. ABOVE THE WRITE: `wrs2p` writes THE CURRENT PLOT, and the
+      ## `setplot previous` walk below moves it. ABOVE `remzerovec`: the export
+      ## creates and destroys its own `Rbase` vector, so it must be finished
+      ## before anything else reads the plot.
+      ##
+      ## Empty for every type with no `post` leg, and empty for an `sp` row with
+      ## the Touchstone box unticked.
+      foreach _pl [ase::analysis_setup_emit \
+                     [namespace tail [namespace current]] $a post $state $ai] {
+        lappend lines $_pl
+      }
       # `remzerovec` before every write, not once at the end: `.options
       # savecurrents` leaves zero-length @m...[ib]-class vectors in the plot
       # and ngspice's write then aborts SILENTLY (probe-verified, ngspice-42).
@@ -21264,12 +21530,14 @@ $_leg
   # -- DRIVE. Stage 2 (issue 1410) LISTS them so the user can see they
   # exist; Stage 6 gives them an `emit` and makes them runnable.
   #
-  # ⚠ IT WAS SEVEN, STAGE 5 TOOK THREE AND STAGE 6d TOOK TWO MORE: `tf`
-  # (issue 1426), `pz` (1427), `sens` (1428), then `noise` AND `disto` together
-  # (issue 1432). The paragraphs below are written about the ones that are LEFT
-  # -- `sp` and `pss`, which are also the only two that are `#ifdef`-gated
-  # (`RFSPICE` and `WITH_PSS`), so the crew that empties this list is also the
-  # one that has to deal with a type the user's binary may not have at all.
+  # ⚠ IT WAS SEVEN, STAGE 5 TOOK THREE, STAGE 6d TOOK TWO MORE AND STAGE 9 TOOK
+  # `sp`: `tf` (issue 1426), `pz` (1427), `sens` (1428), then `noise` AND
+  # `disto` together (issue 1432), then `sp` (**1452**). **`pss` IS THE ONLY ONE
+  # LEFT.** Both of the last two are the `#ifdef`-gated pair (`RFSPICE` and
+  # `WITH_PSS`), so Stage 9 was the first to deal with a type the user's binary
+  # may not have at all -- and measured 2026-09-13, `sp` runs on BOTH binaries,
+  # apt 45.2 included, which is why it still declares `baseline 0` and is still
+  # PROBED rather than assumed.
   # Each departed entry carries `emitorder`, `fields` and a `role analysis`
   # card, so every "NO x" below is answered for it in its own block -- with one
   # exception that is NOT a relaxation and is measured five times over: every
@@ -21806,6 +22074,99 @@ $_leg
   # BYTE-FOR-BYTE the sparse ones. `cktsens.c:97-105`'s guard is commented out,
   # and what the commented guard would have refused is ALL sensitivity under
   # KLU -- including the DC case that demonstrably works.
+  #
+  # ─── `sp`, S-PARAMETERS (Stage 9, issue 1452) ──────────────────────────────
+  #
+  # ⚠ `emitorder 95`, WHICH PUTS IT AFTER `op` -- THE ONE TYPE THAT DOES -- AND
+  # IT IS NOT A RELAXATION OF ISSUE 0964. MEASURED 2026-09-13 on apt 45.2 AND on
+  # the fork, one deck, `v1 in 0 dc 1` into a 50/50/50 attenuator:
+  #
+  #     op                                  -> v(in) = 1.000000e+00
+  #     alter v1 portnum = 1 / z0 = 50
+  #     alter v2 portnum = 2 / z0 = 50
+  #     sp lin 3 100meg 1g
+  #     op                                  -> v(in) = 6.250000e-01
+  #
+  # **Promoting a source to a port changes every DC, AC and transient answer in
+  # the run.** `vsrcset.c:53-79` creates an internal `<name>#res` node per port
+  # and `vsrcload.c:51-64` stamps `g0 = 1/z0` across it -- the vectors
+  # `v(v1#res)` and `v(v2#res)` are visible in the SP plot's own `display`.
+  #
+  # ⚠ AND THE PROMOTION CANNOT BE UNDONE. The obvious repair -- demote the ports
+  # after the analysis and let `op` run last as 0964 requires -- was measured and
+  # it KILLS THE PROCESS, on both binaries:
+  #
+  #     alter v1 portnum = 0
+  #       -> `Internal Error: incomplete CKTunsetup(), this will cause serious
+  #          problems, please report this issue !`
+  #          `ERROR: fatal error in ngspice, exit(1)`, rc 1
+  #
+  # So there are exactly two orders available and only one of them is right:
+  # `op` before `sp` gives the user a correct operating point and leaves the SP
+  # plot carrying the op tier's forward-sticky device columns; `op` after `sp`
+  # gives the user an operating point measured on a circuit that has grown two
+  # resistors, at rc 0, with nothing said. 0964's rule is about which vectors
+  # land in which plot; this is about whether a printed number is true. A rank
+  # of 95 beats `op`'s op-last 90 **and** its non-op-last 0, so `sp` is last
+  # under BOTH variants with no change to ase::analysis_emit_rank.
+  #
+  # ⚠ `viewrank 25` -- BELOW `ac`, AND UNLIKE `tf` AND `pz` IT HAS ONE AT ALL.
+  # `tf` and `pz` declare none because `xschem raw read <file> tf` finds nothing;
+  # `sp` is different and the difference is in this repository's own C:
+  # `src/save.c:889` reads `else if(!my_strcasecmp(type, "sp")) type = "ac";`.
+  # MEASURED 2026-09-13 through this tree's binary against a raw holding an
+  # `SP Analysis` plot and an `Operating Point` plot:
+  #
+  #     xschem raw read both.raw sp   -> 1, sim_type=ac, points=3, vars=80
+  #     xschem raw read both.raw op   -> 1, sim_type=op
+  #
+  # So withholding `viewrank` would make `ase::plot_sim_type_reason` answer
+  # `no-viewer-mapping` for an sp-only bench, which is issue 1401's defect
+  # exactly: a second question answered with the wrong one. BELOW `ac` because
+  # of what happens when BOTH are enabled -- measured on a raw holding an
+  # `AC Analysis` plot and an `SP Analysis` plot: `raw read` loads the FIRST and
+  # refuses the second (`Xschem requires all datasets to be saved with identical
+  # and same number of variables`), and the first is the AC plot because `ac`
+  # emits at 20 and `sp` at 95. The viewer shows AC; the label must say AC.
+  #
+  # ⚠ `resultvecs own`, AND IT IS THE `noise`/`tf`/`pz`/`sens` CLASS WITH ITS
+  # OWN TRANSCRIPT. MEASURED 2026-09-13 on both binaries, `.save v(mid)` above
+  # `.control` and the alter lines inside it:
+  #
+  #     .save v(mid)            -> rc 0, plot `SP Analysis`, and its ONLY
+  #                                vectors are `frequency` and `mid`. No S, no
+  #                                Y, no Z, no message, nothing to say so
+  #     .save all / .save v(mid)-> S_1_1 present
+  #
+  # A narrowed save list starves the analysis of the answer it exists for, at
+  # rc 0. `vecsaves` is what says the leader was added.
+  #
+  # ⚠ THE VECTOR NAMES ARE MIXED CASE **IN THE SOURCE SPELLING ONLY**, and this
+  # is `tf`'s folding finding measured again for `sp`. The same deck written by
+  # both binaries:
+  #
+  #     fork      `S_1_1 s-param`, `NF decibel`, `i(Cy_1_1) current`
+  #     apt 45.2  `s_1_1 s-param`, `nf decibel`, `i(cy_1_1) current`
+  #
+  # `display` shows the capitals on both; it is the RAWFILE that differs. So any
+  # reader of these names is case-insensitive or it is wrong on the binary a
+  # downloading user has.
+  #
+  # ⚠ NO `salvage`. `span.c` has no checkpointable point loop of the shape
+  # `ase::ckpt_plan` arms, and a `salvage` key naming a `points` hook that does
+  # not exist is refused by ase::analysis_schema_errors -- so the honest
+  # declaration is none at all.
+  #
+  # ⚠ NO `seed_enabled`, for the same reason as every type since Stage 5:
+  # `ase::state_default` stays at four rows and the 104 committed `.state` files
+  # keep round-tripping byte-identically. FOUR OF THOSE FILES ARE S-PARAMETER
+  # BENCHES -- `ihp-sg13g2/xschem_libs/sg13g2_tests_ase/sp_*` -- whose sources
+  # already carry `portnum 1 z0 50` and whose ASE-L state says
+  # `{type op enabled 0} {type dc enabled 0} {type ac enabled 0}
+  # {type tran enabled 0}`, because ASE-L had no way to express the analysis the
+  # bench exists for. Enabling `sp` on one of them is a USER GESTURE, not a
+  # migration, and section CP is the row that would notice if this stage made it
+  # one.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -21982,8 +22343,30 @@ $_leg
                 {select {Distortion Operating Point} role opinfo results none \
                  when {opt keepopinfo} label {disto operating point}}}] \
       sp [dict create \
-        label sp  baseline 0  registered 1 \
-        emit {{role probe tmpl {sp}}}] \
+        label sp  baseline 0  registered 1  emitorder 95  viewrank 25 \
+        resultvecs own \
+        needs  {two_ports setup_check lin_points vecsaves saves_resolve cider_klu} \
+        setup  {key ports noun port min 2 fields {donoise s2p} \
+                lines ::ase::backend::ngspice::sp_alter_lines \
+                post  ::ase::backend::ngspice::sp_export_lines \
+                check ::ase::backend::ngspice::sp_row_check} \
+        fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
+                             label {Sweep type} relabels points} \
+                {name points kind int  required 1 min 1 label {Points per decade} \
+                             labels {dec {Points per decade} \
+                                     oct {Points per octave} \
+                                     lin {Number of points (2 gives ONE point)}}} \
+                {name start  kind freq required 1 label {Start frequency} unit Hz} \
+                {name stop   kind freq required 1 label {Stop frequency} unit Hz} \
+                {name donoise kind bool advanced 1 when_true 1 \
+                             label {Noise figure (2 ports only)}} \
+                {name s2p    kind bool advanced 1 when_true 1 \
+                             label {Write Touchstone S2P}}} \
+        emit   {{role analysis tmpl {sp @sweep? @points @start @stop @donoise!}}} \
+        results {viewer {kind sweep}} \
+        plots  {{select {SP Analysis} role sweep results viewer label sp} \
+                {select {AC Operating Point} role opinfo results none \
+                 when {opt keepopinfo} label {sp operating point}}}] \
       pss [dict create \
         label pss  baseline 0  registered 1 \
         emit {{role probe tmpl {pss}}}]]
@@ -23095,6 +23478,230 @@ $_leg
   proc sens_is_ac {row state {sim {}}} {
     return [expr {[string equal -nocase \
       [::ase::field_value ngspice sens $row mode] ac] ? 1 : 0}]
+  }
+
+  # ═══ STAGE 9 (issue 1452): S-PARAMETERS, WITH NO SCHEMATIC EDIT ════════════
+  #
+  # A PORT IS AN ORDINARY VOLTAGE SOURCE CARRYING `portnum`. There is no port
+  # device and no port model (`vsrc.c:31-37`), and ASE-L's founding doctrine
+  # forbids putting `portnum 1 z0 50` on the user's schematic. The measured
+  # route (APPENDIX §2.11 [R-M5], re-measured 2026-09-13 on apt 45.2 and on the
+  # fork) is to promote the sources AT RUN TIME, from inside `.control`:
+  #
+  #     alter v1 portnum = 1 / alter v1 z0 = 50
+  #     alter v2 portnum = 2 / alter v2 z0 = 50
+  #     sp lin 3 100meg 1g
+  #        -> rc 0, $curplotname `SP Analysis`, s_1_1[0] = 2.500000e-01,0
+  #
+  # Four benches in this very tree -- `ihp-sg13g2/xschem_libs/sg13g2_tests_ase/
+  # sp_{mim_cap,rfmim_cap,parasitic_cap,svaricap_test}` -- carry the keywords on
+  # their schematics and an ASE-L state holding only the four seeded rows,
+  # because ASE-L could not say `sp`. They are inside the 104 `.state` files
+  # that round-trip byte-identically, so this stage adds the TYPE and touches
+  # none of them: enabling `sp` on one is a user gesture, not a migration.
+
+  # One field of one entry of the ports table, trimmed -- `{}` for a malformed
+  # entry or a key it does not carry. The table's SHAPE is the adapter's, which
+  # is why this reader is here and not in core: `z0` is an ngspice keyword.
+  proc sp_port_field {p k} {
+    if {[catch {dict size $p}]} { return {} }
+    if {![dict exists $p $k]} { return {} }
+    return [string trim [dict get $p $k]]
+  }
+
+  # The ports table of an `sp` row, through core's reader so a table that is not
+  # a list answers empty rather than raising.
+  proc sp_ports {row} {
+    return [::ase::analysis_setup_rows ngspice [::ase::state_get $row type] $row]
+  }
+
+  # ─── THE `lines` LEG: THE PROMOTION, IMMEDIATELY ABOVE THE `sp` CARD ───────
+  #
+  # ⚠ ABOVE, AND A SABOTAGE IS THE ONLY HONEST WAY TO SAY HOW FAR ABOVE MATTERS.
+  # MEASURED 2026-09-13 on BOTH binaries with the same four lines moved BELOW
+  # the card: `Error: No RF Port is present, cannot run sp analysis`,
+  # `ERROR: fatal error in ngspice, exit(1)`, rc 1, and the `echo` after the
+  # card never printed. The preconditions are evaluated on the circuit AS IT
+  # STANDS WHEN THE CARD RUNS, so these lines are not decoration around the
+  # analysis -- they are what makes it legal.
+  #
+  # ⚠ `z0` IS OMITTED WHEN THE TABLE LEAVES IT BLANK, AND THAT IS MEASURED
+  # RATHER THAN ASSUMED: two ports with `portnum` and no `z0` run at rc 0 and
+  # answer `s_1_1[0] = 1.515152e-01,0.000000e+00`, i.e. `vsrctemp.c:76-77`'s
+  # 50 ohm default is applied silently. Writing `alter v1 z0 = 50` ourselves
+  # would be ASE-L inventing a number the user never typed.
+  proc sp_alter_lines {state row idx} {
+    set out {}
+    foreach p [sp_ports $row] {
+      set src [sp_port_field $p src]
+      set num [sp_port_field $p num]
+      if {$src eq {} || $num eq {}} { continue }
+      lappend out "alter $src portnum = $num"
+      set z [sp_port_field $p z0]
+      if {$z ne {}} { lappend out "alter $src z0 = $z" }
+    }
+    return $out
+  }
+
+  # The Touchstone artifact of one `sp` row. Row-indexed for the reason
+  # ase::plotmap_record is: two `sp` rows on one bench are two different
+  # answers, and a shared filename would silently make them one.
+  proc s2p_file {state idx} {
+    if {![dict exists $state design cell]} {
+      return -code error "ase: state design has no cell (s2p_file)"
+    }
+    set cell [dict get $state design cell]
+    if {![string is integer -strict $idx] || $idx < 0} {
+      return [file join [::ase::rundir $state] ${cell}_ase.s2p]
+    }
+    return [file join [::ase::rundir $state] ${cell}_ase_sp${idx}.s2p]
+  }
+
+  # ─── THE `post` LEG: TOUCHSTONE EXPORT ────────────────────────────────────
+  #
+  # ⚠ `let Rbase` / `unlet Rbase`, **NOT** THE DOCUMENTED `.csparam Rbase=50`,
+  # AND THE DIFFERENCE IS MEASURED. `wrs2p` needs an `Rbase` VECTOR or it writes
+  # nothing at all -- stderr `Error: No Rbase vector given`, rc 0, no file --
+  # and `examples/sp/file.cir:24`'s workaround is a `.csparam` dot card. Three
+  # routes, measured 2026-09-13 on apt 45.2 AND on the fork:
+  #
+  #     nothing                 -> `Error: No Rbase vector given`, NO FILE
+  #     set Rbase = 50          -> the same. A shell variable is not a vector
+  #     .csparam Rbase=50       -> an 8-line .s2p, raw `No. Variables: 20`
+  #     let Rbase = 50 / unlet  -> the SAME 8-line .s2p (identical past the
+  #                                `Generated by ngspice at` line), raw
+  #                                `No. Variables: 20`
+  #
+  # ⚠ AND WITHOUT THE `unlet` IT IS 21. `let` puts the vector in the CURRENT
+  # plot -- the SP plot that is about to be written -- so the results file grows
+  # a `16 rbase notype dims=1` column the user never asked for, which every
+  # surface downstream then has to explain. The `.csparam` route avoids that by
+  # living in the `constants` plot, but it is a DECK-LEVEL card: one per deck,
+  # not one per row, so two `sp` rows with different port-1 impedances could not
+  # both be right. `let`+`unlet` is per row, per Z0, and leaves the deck body
+  # untouched.
+  #
+  # ⚠ `Rbase` IS PORT 1's IMPEDANCE, NOT THE FIRST TABLE ROW'S. The Touchstone
+  # header is `# Hz S RI R <Rbase>` and `span.c:74-178` refers the whole file to
+  # port 1, so a table listing port 2 first must still write port 1's number.
+  proc sp_export_lines {state row idx} {
+    if {[::ase::field_value ngspice sp $row s2p] eq {}} { return {} }
+    set rb {}
+    foreach p [sp_ports $row] {
+      if {[sp_port_field $p num] eq {1}} { set rb [sp_port_field $p z0] ; break }
+    }
+    if {$rb eq {}} { set rb 50 }
+    return [list "let Rbase = $rb" \
+                 "wrs2p [s2p_file $state $idx]" \
+                 {unlet Rbase}]
+  }
+
+  # ─── THE `check` LEG: ngspice's OWN RULES OVER THE PORTS TABLE ─────────────
+  #
+  # Answers ONE `{verdict sentence fix}` triple, worst first, or `{}`. Core's
+  # `two_ports` has already counted; everything here needs a word only ngspice
+  # uses.
+  #
+  # ⚠ EVERY ARM BELOW IS A TRANSCRIPT, TAKEN 2026-09-13 ON BOTH BINARIES with
+  # `echo AFTER_SP` and an `op` after the card and this tree's own `$sim_status`
+  # guard around it:
+  #
+  #   portnum 1,2   -> rc 0
+  #   portnum 1,3   -> `Fatal error: v2: incorrect port ordering`,
+  #                    `sp simulation(s) aborted`, rc 1, guard fires RUN-FAILED
+  #   portnum 2,3   -> the same
+  #   portnum 1,1   -> `Fatal error: v1: duplicate port Index`, rc 1
+  #   z0 = 0        -> **`Fatal error: v2: incorrect port ordering`** -- the
+  #                    WRONG SOURCE and the WRONG PROBLEM. `vsrctemp.c:74-82`
+  #                    requires `z0 > 0` to promote, so a zero silently demotes
+  #                    v1 and ngspice then complains about v2, which is fine
+  #   z0 = -50      -> the same
+  #
+  # ⚠ ALL OF THEM ARE `fatal`, AND NOT BECAUSE THE PROCESS DIES -- IT DOES NOT.
+  # `AFTER_SP` printed every time and the control block ran on. They are fatal
+  # by issue 1424's definition because ASE-L's own deck puts a `$sim_status`
+  # guard after every analysis: measured, the guard's `quit 1` fires and nothing
+  # after it in `.control` runs. `fatal` is also exempt from the static
+  # demotion, which matters here more than anywhere: the demotion appends
+  # "(read from the netlist text, which cannot see inside an .include)", and
+  # this finding does not come from the netlist at all. The ports table is
+  # ASE-L's own state -- `portnum` CANNOT BE READ BACK from a netlist
+  # (`vsrcask.c:160-162`) -- so that caveat would be a lie about why ASE-L is
+  # unsure.
+  proc sp_row_check {row} {
+    set ports [sp_ports $row]
+    set n [llength $ports]
+    if {$n == 0} { return {} }
+    set nums {}
+    set i 0
+    foreach p $ports {
+      incr i
+      set src [sp_port_field $p src]
+      set num [sp_port_field $p num]
+      if {$src eq {}} {
+        return [list fatal \
+          "port $i names no source, so nothing promotes it and the run dies\
+ before it starts" \
+          "name the voltage source this port drives, or delete the row"]
+      }
+      if {![string is integer -strict $num] || $num < 1} {
+        return [list fatal \
+          "port '$src' has the number '$num', and a port number must be a whole\
+ number of 1 or more" \
+          "number the ports 1 upwards, in the order the matrix reports them"]
+      }
+      set z [sp_port_field $p z0]
+      if {$z ne {}} {
+        set zr [::ase::si_parse $z [si_suffixes]]
+        if {[lindex $zr 0] eq {bad} \
+            || ([llength $zr] > 1 \
+                && [string is double -strict [lindex $zr 1]] \
+                && [lindex $zr 1] <= 0)} {
+          return [list fatal \
+            "port '$src' has Z0 '$z'. A Z0 of 0 or less turns that source back\
+ into an ordinary source, and the simulator then blames a DIFFERENT port for\
+ 'incorrect port ordering'" \
+            "give every port a Z0 greater than 0, or leave Z0 empty for the\
+ 50 ohm default"]
+        }
+      }
+      lappend nums $num
+    }
+    set seen {}
+    foreach num $nums {
+      if {[lsearch -exact $seen $num] >= 0} {
+        return [list fatal \
+          "two ports share the number $num" \
+          "give every port a different number, 1 upwards with no gaps"]
+      }
+      lappend seen $num
+    }
+    for {set k 1} {$k <= $n} {incr k} {
+      if {[lsearch -exact $nums $k] < 0} {
+        return [list fatal \
+          "the port numbers are [join [lsort -integer $nums] {, }] -- they have\
+ to run 1 to $n with no gaps" \
+          "renumber the ports 1 upwards, in the order the matrix reports them"]
+      }
+    }
+    # ⚠ THE TWO CAUTIONS ARE BOTH "EXACTLY TWO PORTS", AND BOTH ARE MEASURED IN
+    # SOURCE RATHER THAN GUESSED. `span.c:74-178` computes the noise parameters
+    # only for N == 2, and `rawfile.c:934-1022` prints `Note: only 2 ports 1 and
+    # 2 are supported by wrs2p` on EVERY wrs2p call. Neither stops the run, so
+    # neither may refuse it.
+    if {$n != 2 && [::ase::field_value ngspice sp $row donoise] ne {}} {
+      return [list caution \
+        "the noise figure is computed for exactly 2 ports and this analysis has\
+ $n, so NF, NFmin, Rn and SOpt will not be in the results" \
+        "switch the noise figure off, or reduce the analysis to 2 ports"]
+    }
+    if {$n != 2 && [::ase::field_value ngspice sp $row s2p] ne {}} {
+      return [list caution \
+        "a Touchstone file holds exactly 2 ports and this analysis has $n, so\
+ only ports 1 and 2 will be written" \
+        "reduce the analysis to 2 ports, or read the file as the 2-port it is"]
+    }
+    return {}
   }
 
   # ─── THE TWO CIRCUIT-LEVEL SCALARS OF AN `Integrated Noise` PLOT ───────────

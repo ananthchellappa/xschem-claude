@@ -91,6 +91,10 @@
 # and goes to the sidecar rather than to the results file). ⚠ NO ROW MOVED:
 # PF218f's own ordering claim is untouched, and PF222a-e / PF222h-j still rest
 # on `noise` being UNRENDERABLE, which this issue does not change.
+# ⚠ AND THEY MOVED AGAIN AT STAGE 9 (issue 1452), from `sp` to `pss`, for the
+# third time and the last one available: `sp` earned a real entry and `pss` is
+# now the only probe-only type in the shipped registry. PF232j moved with them.
+# No row was added and no verdict changed -- only the fixture's spelling.
 # 177 -> 192 with PF229 (Stage 5, issue 1428 -- DC sensitivity's two
 # preconditions). ⚠ `sens_filters` IS THE FIRST FINDING IN THIS FILE WHOSE
 # FAILURE MODE IS AN EMPTY RESULT RATHER THAN A WRONG ONE: measured on both
@@ -488,23 +492,24 @@ set ::ase_preflight 1
 ## FIRST, because the gate runs before the deck is written -- so nothing in the
 ## run directory is touched -- and because a `.state` is a text file a person can
 ## hand-edit.
-## ⚠ THE UNRENDERABLE TYPE WAS `noise` AND IS NOW `sp`, BECAUSE ISSUE 1432 GAVE
-## `noise` AND `disto` REAL ENTRIES. `sp` and `pss` are what is left probe-only,
-## and both are #ifdef-gated. Row TF3b of tests/headless/test_ase_core.tcl warned
-## that these rows would move the day `noise` became renderable; it did, and they
-## moved in the same commit.
-set UNREND {{type op enabled 1} {type sp enabled 1 source v1}}
+## ⚠ THE UNRENDERABLE TYPE WAS `noise`, THEN `sp`, AND IS NOW `pss`. Issue 1432
+## gave `noise` and `disto` real entries and Stage 9 (issue 1452) gave `sp` one,
+## so **`pss` is the only probe-only type left in the shipped registry** and this
+## fixture cannot move again without a fixture backend. Row TF3b of
+## tests/headless/test_ase_core.tcl warned in as many words that these rows would
+## move; they have now done so twice, in the commit that caused it each time.
+set UNREND {{type op enabled 1} {type pss enabled 1 source v1}}
 said_clear
 set stU [mkstate $RD c $GOOD]
 dict set stU analyses $UNREND
 set cu1 [catch {ase::preflight_gate $stU $NL} eu1]
 eqcheck PF222a-an-unrenderable-analysis-is-refused $cu1 1
 eqcheck PF222b-the-refusal-names-the-type \
-  [string match "*analysis type 'sp' is not one this simulator backend can render*" $eu1] 1
+  [string match "*analysis type 'pss' is not one this simulator backend can render*" $eu1] 1
 eqcheck PF222c-and-says-the-run-would-have-said-nothing \
   [string match "*said nothing*" $eu1] 1
 eqcheck PF222d-it-reaches-the-action-log-too \
-  [expr {[said_count "*analysis type 'sp'*"] >= 1}] 1
+  [expr {[said_count "*analysis type 'pss'*"] >= 1}] 1
 ## ⚠ THE ROW THIS SUB-ITEM EXISTS FOR. `ase_preflight 0` is a real lever for the
 ## save-name check above -- a user who knows their netlist better than the map
 ## does must not be locked out -- and there is nothing for it to be right about
@@ -528,7 +533,7 @@ eqcheck PF222f-a-renderable-state-still-passes \
 ## today and emitted nothing before, so refusing it would break a bench that
 ## merely carries a row somebody unticked.
 set stD [mkstate $RD c $GOOD]
-dict set stD analyses {{type op enabled 1} {type sp enabled 0 source v1}}
+dict set stD analyses {{type op enabled 1} {type pss enabled 0 source v1}}
 eqcheck PF222g-a-disabled-unrenderable-row-is-not-refused \
   [catch {ase::preflight_gate $stD $NL} eud] 0
 ## ⚠ A REFUSAL NAMES THE RUNDIR'S LEFTOVERS when there are any -- the ruling is
@@ -2726,7 +2731,7 @@ eqcheck PF232i-no-state-and-no-facts-answer-zero-rather-than-raising \
 ## one this backend cannot render. PF230o's rule extended to the two new ids.
 eqcheck PF232j-a-disabled-row-and-an-unrenderable-one-are-left-alone \
   [list [dict size [pcheckx $MPNL {{type tran enabled 0 step 1n stop 1u}} {} $PFBAD]] \
-        [dict size [pcheckx $MPNL {{type sp enabled 1}} {} $PFBAD]]] {0 0}
+        [dict size [pcheckx $MPNL {{type pss enabled 1}} {} $PFBAD]]] {0 0}
 
 } pf232err]} { puts "FATAL: PF232 $pf232err" ; incr fail }
 

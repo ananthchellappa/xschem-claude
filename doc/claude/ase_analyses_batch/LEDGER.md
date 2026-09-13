@@ -862,6 +862,58 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ Stage 9 task 1 — the DECK half of SP, issue **1452**, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | `sp` is a real, renderable analysis. A new registry key **`setup`** carries what a card cannot: `key`/`noun`/`min`/`fields` are **schema** (four core readers that *count* the table and never look inside an entry), `lines`/`post`/`check` are **adapter** procs. `two_ports` is a **fatal** over the ports table, and `render_deck` gains two insertion points — the promotion above the card, the Touchstone export below the `$sim_status` guard. `src/ase.tcl` 23802 → 24409. |
+| **schema cost** | ⚠ **`ports` is a legal row key on an `sp` row and `unknownkey` everywhere else — WITHOUT a third entry in `ase::analysis_nonsetting_keys`.** One registry entry declares that one type carries a table, so **D4's blanket list is untouched** and `NS1` still reads `{type enabled x id}`. That is the right shape: the exception is a property of the type, not of every row in the tree. |
+| **driver's own re-run** | New `test_ase_sp_1452` **ALL PASS (41)** on **both** arms. `test_ase_core` **636/636**, `test_ase_preflight` **235/235**, `test_ase_meas_1443` **113/113**, all both arms. `test_ase_dialogs` 37 headless / one standing red on display. |
+| **byte identity** | 104 tracked `.state` files, **zero not byte-identical, zero `sp` rows, zero `ports` keys**, and `git status --short ihp-sg13g2/` **empty** — the four existing SP benches did not move. |
+| **sabotage** | **Twelve, no survivors.** Two found defects **in the suite itself**. |
+| **T1** | ✅ **Run solo: 70 cases** — up from 69, the new suite joined — **rc 0, zero counted failures.** Fourth clean T1 of the day. |
+| **receipt** | `receipts/32-stage-9-sp-deck.md` |
+
+**Three findings changed the design, and the first one amends a standing rule.**
+
+1. ⚠ ⚠ **`sp` MUST EMIT AFTER `op`, WHICH AMENDS ISSUE 0964 BY MEASUREMENT.** Promoting a source
+   to a port **adds a `z0` series resistance**: `op` reads `v(in) = 1.0` before the promotion and
+   **`6.25e-01`** after. And the promotion **cannot be undone** — `alter v1 portnum = 0` answers
+   `Internal Error: incomplete CKTunsetup()` + `exit(1)` **on both binaries**. 0964 is about which
+   vectors land in which plot; **this is about whether a printed number is true.** `emitorder 95`
+   beats op-last's 90 and non-op-last's 0, so **no core change was needed** — the rule bends by
+   one number rather than breaking.
+2. **The driver's `mislabel` question answers NO, and that is correct.** `mislabel` compares
+   **plot** names, and `Plotname: SP Analysis` is byte-identical on both binaries with both
+   comparisons `-nocase` by construction — proved with `Scattering Parameters` as a positive
+   control (reds) against `sp analysis` (tolerated). ⚠ **The mixed case lives in the VECTOR
+   names**, and the driver re-measured that: `display` says `S_1_1` on **both**, while the
+   **written rawfile** says `s_1_1` on apt 45.2 and `S_1_1` on the fork. **Sixth measured
+   difference between the binaries**, now in `evidence/binary-differences.md`. This half ships no
+   reader of them and row `SM5` **pins that absence**, so §9b's matrix picker cannot be written
+   case-sensitively and stay green.
+3. **`PLAN.md` §9's `lin_two` refusal is NOT shipped.** `lin_points` already exists as a ⚖ D47
+   **caution** and its own comment says it *"covers `sp` the day `sp` gets a sweep"*. A second
+   rule with a different verdict for the same condition is the drift this batch deletes.
+
+**Also**: the Touchstone export uses `let Rbase` / `unlet Rbase` rather than `APPENDIX`'s
+`.csparam` — identical files, but **per-row and without the `rbase` column** `let` alone leaves in
+the results file (`No. Variables: 21` against 20).
+
+⚠ **Two sabotages found defects in the SUITE, not in the feature.** `s1` showed `SL3` passing on
+`sp_at`'s `-1` — failure mode 3, an extractor that returns nothing — now fixed with existence
+terms. And `s10` showed that **`--nogui --pipe` exits 0 on an uncaught mid-script Tcl error**: one
+bare `dict get` killed the suite silently, so every optional-key read now goes through a total
+`s_dget` and the harness scores a missing banner. **That is the fifth time in this batch a raise
+has killed a suite file instead of reddening a row.**
+
+**Departures, declared at the moment rather than found in an audit.** The crew edited
+`tests/headless/test_ase_preflight.tcl`, which its file list did not name: `PF222`'s fixture was
+built on `sp` being **unrenderable** and went red (8 rows). The tree's own precedent is that such
+rows move in the commit that makes them false. And `test_ase_dialogs` `GN1b`'s **title** is now
+imprecise — `sp` is no longer one of *"the two unrenderable cells"* — but the row is **green**, and
+the crew did not touch that file; §9b corrects it.
+
 ### ⏳ Stage 9 — SPLIT IN TWO by the driver, against the plan, and dispatched — issue **1452**
 
 `PLAN.md` §9 says **one commit**. It goes out as **two tasks**, on the same ground that split

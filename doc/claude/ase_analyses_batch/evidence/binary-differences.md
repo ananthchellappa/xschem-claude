@@ -19,6 +19,7 @@ The two:
 | 2 | the `meas` **echo line** | `1.000000e+00` (6 decimals) | `1.00000e+00` (5) | a golden or a parse keyed on digits passes on one and fails on the other. `print name` is byte-identical on both — use it. |
 | 3 | **XSPICE event data** | `dig : d , 10` events; transition at `2.270000000e-08` | **11** events; `2.265000000e-08` | an event golden that pins counts or times is binary-dependent. |
 | 4 | `pss` with **6** arguments | rc 0 | rc 1 | the analysis aborts on one and not the other; the process survives on both. Cosmetic beside #1–#3, recorded so nobody re-measures it. |
+| 6 | **S-parameter vector names in the WRITTEN RAWFILE** | `s_1_1` … **lowercase** | `S_1_1` … **mixed case** | measured 2026-09-13, after Stage 9's crew found it and the driver re-measured. ⚠ **`display` says `S_1_1` on BOTH** — the difference exists only in the file, which is the half a reader parses. Anything reading an S-parameter out of a results file must be case-insensitive. |
 | 5 | **`set measureprec=10`** / `NGSPICE_MEAS_PRECISION=10` | **accepted and INERT** — `meas` still prints `-7.851545e-01` | **honoured** — `-7.8515453642e-01` | measured 2026-09-13 while collecting Stage 8 task 1, both controls, same deck. The older binary **takes the setting without complaint and ignores it**, which is worse than refusing it: a UI that offers "more digits" gets silence and no digits. |
 
 ## They AGREE here — and the agreements are the load-bearing half
@@ -52,7 +53,7 @@ Every one of these was measured on both, in the same sitting:
 
 ## What this says about ⚖ R11's sentence
 
-The differences are **five**, and four of them are about *how a number is printed or
+The differences are **six**, and five of them are about *how a number is printed, named or
 counted* rather than about what the simulator can do. **Not one of them makes an analysis
 unavailable on the older binary.**
 

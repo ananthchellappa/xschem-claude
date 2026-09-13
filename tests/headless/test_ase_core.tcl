@@ -764,23 +764,25 @@ check_true "D2 op renders before tran 1n 1u" [expr {$opidx > 0 && $tridx > 0 && 
 # `write` at all, so the run produced no raw file whatsoever while the Analyses
 # pane went on showing the row ticked.
 set st7 [nfet_state /models/sky130.lib.spice {}]
-# ⚠ THE CONTROL TYPE WAS `noise` AND IS NOW `sp`, BECAUSE ISSUE 1432 GAVE
-# `noise` A REAL ENTRY. Only `sp` and `pss` are probe-only now, and `sp` is the
-# nearer of the two -- `pss` is reserved for D7e3, which needs a SECOND
-# unrenderable type and was picked for distance. The transcript above is `noise`
-# as it was measured; the DEFECT it records is the type-independent one.
-dict set st7 analyses {{type sp enabled 1 output v(out) source v1 sweep dec points 10 start 1 stop 1meg}}
+# ⚠ THE CONTROL TYPE WAS `noise`, THEN `sp`, AND IS NOW `pss` -- Stage 9
+# (issue 1452) gave `sp` a real entry, so **`pss` is the only probe-only type
+# left in the shipped registry**. D7e3 below therefore stops borrowing a second
+# shipped type and names one the registry has never described, which is the
+# fixture the previous spelling of this comment said the row would want. The
+# transcript above is `noise` as it was measured; the DEFECT it records is the
+# type-independent one.
+dict set st7 analyses {{type pss enabled 1 output v(out) source v1 sweep dec points 10 start 1 stop 1meg}}
 set d7rc [catch {$render $st7 $netlist_text} d7err]
 check "D7a a state whose only enabled row is unrenderable REFUSES instead of\
  rendering" $d7rc 1
 check "D7b ... with the type named, in the one minted sentence" $d7err \
-  {ase: analysis type 'sp' is not one this simulator backend can render}
+  {ase: analysis type 'pss' is not one this simulator backend can render}
 check "D7c ... which is the sentence ase::analysis_unrenderable_msg mints" \
-  [ase::analysis_unrenderable_msg sp] $d7err
+  [ase::analysis_unrenderable_msg pss] $d7err
 check "D7d ... and n_enabled_analyses still COUNTS the row -- the counter was\
  never the gate, which is why the drop was silent" [ase::n_enabled_analyses $st7] 1
 check "D7e ase::analysis_unrenderable names it" \
-  [ase::analysis_unrenderable $st7] {sp}
+  [ase::analysis_unrenderable $st7] {pss}
 
 # ⚠ THE TWO ROWS BELOW EXIST BECAUSE D7e ALONE CANNOT SEE EITHER HALF OF THIS
 # PROC'S CONTRACT. With one unrenderable row in the fixture, dropping the
@@ -789,25 +791,27 @@ check "D7e ase::analysis_unrenderable names it" \
 # duplicates twice and for one that stops at the first. That is this tree's
 # hollow-green class, and a row that cannot be made to fail proves nothing.
 set st7m [nfet_state /models/sky130.lib.spice {}]
-dict set st7m analyses {{type sp enabled 1 source v1} {type op enabled 1} {type sp enabled 1 source v2}}
+dict set st7m analyses {{type pss enabled 1 source v1} {type op enabled 1} {type pss enabled 1 source v2}}
 check "D7e2 two enabled rows of ONE unrenderable type are named ONCE" \
-  [ase::analysis_unrenderable $st7m] {sp}
+  [ase::analysis_unrenderable $st7m] {pss}
 set st7t [nfet_state /models/sky130.lib.spice {}]
-# ⚠ THE SECOND TYPE HERE MOVES EVERY TIME A STAGE MAKES ONE RENDERABLE, AND IT
-# IS PICKED FOR DISTANCE RATHER THAN CONVENIENCE. It was `pz` until Stage 5's pz
-# commit (issue 1427) gave `pz` a real entry, then `noise` until Stage 6 (issue
-# 1432) gave `noise` AND `disto` theirs; before 1427 it had never moved.
-# `pss` is the furthest away: it is the only remaining probe-only type that is
-# `baseline 0` AND `#ifdef`-gated (`WITH_PSS`), so it is the last one an adapter
-# stage will reach. When it too becomes renderable, the row wants a FIXTURE
-# backend rather than a fourth shipped type -- the thing this row asserts is a
-# property of `ase::analysis_unrenderable`, not of any particular analysis.
-dict set st7t analyses {{type sp enabled 1 source v1} {type pss enabled 1} {type op enabled 1}}
+# ⚠ THIS ROW USED TO BORROW A SECOND SHIPPED TYPE AND IT MOVED EVERY TIME A
+# STAGE MADE ONE RENDERABLE -- `pz` until issue 1427, `noise` until 1432, `sp`
+# until Stage 9 (issue 1452). **There is no second shipped probe-only type any
+# more**, so it stops borrowing: the second type is `hb`, a real ngspice verb
+# that WILL NEVER BE PRESENT (`HBinfo` is `extern`-declared and defined
+# nowhere, CREW_BRIEF preflight), and which the registry therefore does not
+# describe at all. That is a strictly better fixture than the one it replaces:
+# the two types are now one of EACH class -- a type the registry LISTS and
+# cannot drive, and a type the registry has NEVER HEARD OF -- and
+# `ase::analysis_emit_rank` answers `{}` for both, which is the condition this
+# proc tests. It also never needs moving again.
+dict set st7t analyses {{type pss enabled 1 source v1} {type hb enabled 1} {type op enabled 1}}
 check "D7e3 TWO distinct unrenderable types are BOTH named, in state order" \
-  [ase::analysis_unrenderable $st7t] {sp pss}
+  [ase::analysis_unrenderable $st7t] {pss hb}
 check "D7e4 ... and render refuses on the FIRST of them, by name" \
   [list [catch {$render $st7t $netlist_text} e7t] $e7t] \
-  [list 1 {ase: analysis type 'sp' is not one this simulator backend can render}]
+  [list 1 {ase: analysis type 'pss' is not one this simulator backend can render}]
 
 # ⚠ CORE CARRIES ONE BACKEND'S RANK TABLE, so it must not refuse for a backend
 # whose analyses it does not describe: ase::register_backend is a real extension
@@ -4942,12 +4946,22 @@ check "AG4 building a fresh bench never consults the four-state resolver, so a\
 ## cannot emit is `blocked` whatever the binary says, because offering it would
 ## produce a run that emits nothing. So the seven are LISTED -- the user can see
 ## they exist -- and blocked until Stage 6 gives them an `emit`.
+##
+## ⚠ A **THIRD** CELL KIND APPEARED AT STAGE 9 (issue 1452), AND IT IS THE ONE
+## THE GRID WAS BUILT FOR. `sp` became renderable, so it stops being `blocked
+## unrenderable`; it is `baseline 0` and `#ifdef`-gated (`RFSPICE`) and nothing
+## in this suite measures a binary, so it reads `absent unmeasured` -- the cell
+## that says "ASE-L can drive this and nobody has asked your simulator whether
+## it has it". Ten cells were two kinds because every gated type was also
+## undrivable; this is the first time the two are separable, which is exactly
+## what the four-state resolver exists to express.
 set AG5 {}
 foreach ag5 [ase::analysis_states ngspice {}] { lappend AG5 [lrange $ag5 1 2] }
-check "AG5 the eleven cells are four offered on a source-verified invariant and\
- seven listed-but-not-yet-drivable, which is this tree's honest answer" \
+check "AG5 the eleven cells are four offered on a source-verified invariant,\
+ one drivable-but-unmeasured and six listed-but-not-yet-drivable, which is this\
+ tree's honest answer" \
   [list [lsort -unique $AG5] [llength $AG5]] \
-  [list {{blocked unrenderable} {ok baseline}} 11]
+  [list {{absent unmeasured} {blocked unrenderable} {ok baseline}} 11]
 
 ## --- AG6: RENDERABLE IS TESTED **ABOVE** AVAILABILITY -----------------------
 ## Even a type the binary was MEASURED to have stays `blocked` while the adapter
@@ -5247,13 +5261,14 @@ check "EM6 the fields a deck line consumes are read from the template in one\
 ## degraded pane -- THE EXACT FAILURE THIS STAGE DELETES, RE-CREATED BY THE FIX.
 ##
 ## ⚠ IT WAS SEVEN, THEN SIX WHEN Stage 5 GAVE `tf` A REAL ENTRY (issue 1426),
-## THEN FIVE WITH `pz` (1427), THEN FOUR WITH `sens` (1428), AND IS NOW TWO --
-## Stage 6 (issue 1432) took `noise` and `disto` in one commit. The list below is
-## ORDERED, and the order is `ase::analysis_offered`'s, so a type that gains
-## fields leaves the list at the position it used to hold. ⚠ THE TWO THAT REMAIN
-## ARE THE TWO THAT ARE `#ifdef`-GATED (`RFSPICE` and `WITH_PSS`), so the next
-## crew to empty this list is also the one that has to deal with a type the
-## user's binary may not have at all.
+## THEN FIVE WITH `pz` (1427), THEN FOUR WITH `sens` (1428), THEN TWO WITH
+## `noise` AND `disto` (1432), AND IS NOW ONE -- Stage 9 (issue 1452) took `sp`.
+## The list below is ORDERED, and the order is `ase::analysis_offered`'s, so a
+## type that gains fields leaves the list at the position it used to hold.
+## ⚠ THE ONE THAT REMAINS IS `#ifdef`-GATED (`WITH_PSS`), as `sp` was
+## (`RFSPICE`) -- and Stage 9 measured that `sp` runs on BOTH binaries anyway,
+## so the gating says nothing about whether the user's binary has it. That is
+## what the probe is for and why `sp` still declares `baseline 0`.
 set EM7NOFLD {}
 foreach em7t [ase::analysis_offered ngspice] {
   if {![dict exists [ase::analysis_entry ngspice $em7t] fields]} { lappend EM7NOFLD $em7t }
@@ -5264,7 +5279,7 @@ check "EM7 the analyses this adapter describes but cannot yet drive carry no\
   [list $EM7NOFLD \
         [catch {ase::analysis_cards ngspice {type pss enabled 1}}] \
         [ase::analysis_line ngspice {type pss enabled 1}]] \
-  [list {sp pss} 0 {}]
+  [list {pss} 0 {}]
 
 ## --- EM8: THE SHIPPED FOUR ARE BYTE-IDENTICAL ------------------------------
 ## ⚠ THE WHOLE POINT OF FIXTURE BACKENDS. If this row ever moves, the grammar
@@ -5727,14 +5742,14 @@ check "AC4 a renderable row still shows the line the deck will carry, hatch\
   [list {tran 1n 10u} {op} {tran 1n 10u  + verbatim: 1 line}]
 
 ## ⚠ A TYPE THIS BACKEND CANNOT SET UP READS AS SUCH RATHER THAN AS A MISSING
-## VALUE. Two of the eleven registered types are still probe-only (`sp` and
-## `pss`, issue 1432 having taken `noise` and `disto`); an enabled one of those
+## VALUE. ONE of the eleven registered types is still probe-only (`pss`; issue
+## 1432 took `noise` and `disto`, issue 1452 took `sp`); an enabled one of those
 ## has nothing missing -- there is simply nothing ASE-L can write for it, and
 ## "needs a value for ..." would send the user hunting for a field that does not
 ## exist.
 check "AC5 an enabled row of a type the backend cannot set up says that, not\
  that some value is missing" \
-  [ase::ui::arg_summary {type sp enabled 1} ngspice] \
+  [ase::ui::arg_summary {type pss enabled 1} ngspice] \
   {is not one this simulator backend can set up}
 
 # --- VB: THE ONE HONEST ESCAPE FROM A TYPED FORM ----------------------------
@@ -6152,16 +6167,17 @@ check "TF3 the commit door refuses a tf row missing either field, by name, and\
 
 ## ⚠ AND THE ROW IS REFUSED AT THE GATE BEFORE IT REACHES render_deck. Until
 ## this stage a `tf` row was `blocked/unrenderable`; it is now an ordinary cell.
-## ⚠ THE CONTROL TYPE WAS `pz`, THEN `noise`, AND IS NOW `sp`. `pz` stopped
-## being unrenderable at issue 1427 and `noise` at issue 1432; `sp` and `pss` are
-## what is left, and both are `#ifdef`-gated. The warning that came with the
-## previous spelling held exactly as written -- rows PF222a-e and PF222h-j of
+## ⚠ THE CONTROL TYPE WAS `pz`, THEN `noise`, THEN `sp`, AND IS NOW `pss`. `pz`
+## stopped being unrenderable at issue 1427, `noise` at 1432 and `sp` at 1452;
+## `pss` IS ALL THAT IS LEFT, so this is the last time the spelling can move
+## without a fixture backend. The warning that came with the previous spelling
+## held exactly as written -- rows PF222a-e and PF222h-j of
 ## tests/headless/test_ase_preflight.tcl were built on `noise` being
 ## unrenderable, and they moved in the same commit as this one.
 check "TF3b the four-state grid stops calling tf unrenderable" \
   [list [dict get [ase::analysis_state ngspice tf {}] state] \
-        [dict get [ase::analysis_state ngspice sp {}] state] \
-        [dict get [ase::analysis_state ngspice sp {}] reason]] \
+        [dict get [ase::analysis_state ngspice pss {}] state] \
+        [dict get [ase::analysis_state ngspice pss {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ `d8_lines` MATCHES FOUR VERBS AND tf IS NOT ONE OF THEM, so this
@@ -6402,12 +6418,13 @@ check "PZ3 the commit door refuses a pz row missing either signal node, by name,
         {{missing outp {needs a value for 'outp'}}} \
         {}]
 
-## ⚠ THE CONTROL TYPE WAS `noise` AND IS NOW `sp` (issue 1432 made `noise`
-## renderable). `sp` and `pss` are the two that are left.
+## ⚠ THE CONTROL TYPE WAS `noise`, THEN `sp`, AND IS NOW `pss` (issue 1432 made
+## `noise` renderable and issue 1452 made `sp` renderable). `pss` is the only
+## one left.
 check "PZ3b the four-state grid stops calling pz unrenderable" \
   [list [dict get [ase::analysis_state ngspice pz {}] state] \
-        [dict get [ase::analysis_state ngspice sp {}] state] \
-        [dict get [ase::analysis_state ngspice sp {}] reason]] \
+        [dict get [ase::analysis_state ngspice pss {}] state] \
+        [dict get [ase::analysis_state ngspice pss {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ ITS OWN READER, for the same reason section TF brought one: `pz`
@@ -6652,11 +6669,12 @@ check "SE3 the commit door refuses a sens row with no output, by name, passes\
            {type sens enabled 1 out v(mid) filters {r*:r m*:vth0}}]] \
   [list {{missing out {needs a value for 'out'}}} {} {}]
 
-## ⚠ THE CONTROL TYPE WAS `noise` AND IS NOW `sp` (issue 1432).
+## ⚠ THE CONTROL TYPE WAS `noise`, THEN `sp`, AND IS NOW `pss` (issues 1432 and
+## 1452).
 check "SE3b the four-state grid stops calling sens unrenderable" \
   [list [dict get [ase::analysis_state ngspice sens {}] state] \
-        [dict get [ase::analysis_state ngspice sp {}] state] \
-        [dict get [ase::analysis_state ngspice sp {}] reason]] \
+        [dict get [ase::analysis_state ngspice pss {}] state] \
+        [dict get [ase::analysis_state ngspice pss {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ ITS OWN READER, for the reason sections TF and PZ brought one:
@@ -6936,14 +6954,14 @@ foreach cpt {noise pz sens disto sp pss} {
   if {$cpe eq {} || [dict exists $cpe fields]} { continue }
   incr CPPROBE
 }
-check "CP6 the two probe-only types declare no fields, tf, pz, sens, noise and\
- disto no longer among them, and none of it is a schema error" \
+check "CP6 the ONE probe-only type declares no fields, tf, pz, sens, noise,\
+ disto and sp no longer among them, and none of it is a schema error" \
   [list $CPPROBE [dict exists [ase::analysis_entry ngspice tf] fields] \
         [dict exists [ase::analysis_entry ngspice pz] fields] \
         [dict exists [ase::analysis_entry ngspice sens] fields] \
         [dict exists [ase::analysis_entry ngspice noise] fields] \
         [dict exists [ase::analysis_entry ngspice disto] fields] \
-        [ase::analysis_schema_errors ngspice]] {2 1 1 1 1 1 {}}
+        [ase::analysis_schema_errors ngspice]] {1 1 1 1 1 1 {}}
 
 ## --- CP7: THE WHOLE CORPUS THROUGH load -> serialize, BYTE FOR BYTE ---------
 ## ⚠ CP2 ABOVE READS THE FILES AS TEXT; THIS ROW READS THEM THROUGH THE SCHEMA.
@@ -7960,12 +7978,13 @@ foreach gpt [dict keys [ase::analysis_types ngspice]] {
   incr GP1N
   if {![dict exists [ase::analysis_entry ngspice $gpt] plots]} { lappend GP1MISS $gpt }
 }
-## ⚠ SEVEN RENDERABLE TYPES BECAME NINE AT ISSUE 1432 (`noise`, `disto`). The
-## count is asserted rather than derived so that a type quietly LOSING its
-## `emit` reds this row instead of shrinking the census in silence.
-check "GP1 all nine renderable types in the shipped registry declare their\
+## ⚠ SEVEN RENDERABLE TYPES BECAME NINE AT ISSUE 1432 (`noise`, `disto`) AND TEN
+## AT ISSUE 1452 (`sp`). The count is asserted rather than derived so that a type
+## quietly LOSING its `emit` reds this row instead of shrinking the census in
+## silence.
+check "GP1 all ten renderable types in the shipped registry declare their\
  plots, and the registry is still self-consistent" \
-  [list $GP1N $GP1MISS [ase::analysis_schema_errors ngspice]] {9 {} {}}
+  [list $GP1N $GP1MISS [ase::analysis_schema_errors ngspice]] {10 {} {}}
 
 ## Three fixtures, three refusals, one per way of getting `plots` wrong — and
 ## the entries are otherwise valid, so each row can only red for its own reason.
@@ -8940,12 +8959,19 @@ foreach mpt [dict keys [ase::analysis_types ngspice]] {
     }
   }
 }
-check "MP15 the four companion plots ngspice writes under keepopinfo are named,\
+## ⚠ IT WAS FOUR AND IS FIVE: Stage 9 (issue 1452) gave `sp` an entry, and an
+## `sp` run under `keepopinfo` writes a companion plot called **`AC Operating
+## Point`** -- ngspice reuses the AC string (measured 2026-09-13 on both
+## binaries: `setplot` lists `sp1 (SP Analysis)` and `op1 (AC Operating
+## Point)`). So two different types now declare the SAME `select`, which is the
+## case this row's own "named rather than counted" rule was written for.
+check "MP15 the five companion plots ngspice writes under keepopinfo are named,\
  routed nowhere, and declined by the walk" $MPOPL \
   [list [list ac {AC Operating Point} none 0] \
         [list noise {NOISE Operating Point} none 0] \
         [list pz {Distortion Operating Point} none 0] \
-        [list disto {Distortion Operating Point} none 0]]
+        [list disto {Distortion Operating Point} none 0] \
+        [list sp {AC Operating Point} none 0]]
 
 ## --- MP16: THE FIVE NEW REFUSALS, ONE FIXTURE EACH --------------------------
 ## Each fixture is otherwise valid, so a row can only red for its own reason.
@@ -9962,11 +9988,16 @@ set WD1 {}
 foreach ty {op dc ac tran noise tf pz sens disto sp pss} {
   lappend WD1 [list $ty [ase::analysis_resultvecs ngspice $ty]]
 }
-check "WD1 exactly noise, tf, pz and sens declare that their result vectors are\
- NOT netlist names -- pz IS one of them and disto is NOT, both against what\
+## ⚠ `sp` JOINED THEM AT STAGE 9 (issue 1452), AND IT IS THE SHARPEST MEMBER OF
+## THE CLASS. MEASURED 2026-09-13 on apt 45.2 AND on the fork, `.save v(mid)`
+## above `.control`: the run is rc 0, the `SP Analysis` plot is there, and its
+## only vectors are `frequency` and `mid` -- no S, no Y, no Z, nothing on either
+## stream. A narrowed save list silently removes the entire answer.
+check "WD1 exactly noise, tf, pz, sens and sp declare that their result vectors\
+ are NOT netlist names -- pz IS one of them and disto is NOT, both against what\
  PLAN.md 6g-1, APPENDIX 7.5.2 and 0.13.7 say" $WD1 \
   [list {op netlist} {dc netlist} {ac netlist} {tran netlist} {noise own} \
-        {tf own} {pz own} {sens own} {disto netlist} {sp netlist} {pss netlist}]
+        {tf own} {pz own} {sens own} {disto netlist} {sp own} {pss netlist}]
 check "WD1b an unknown type and an unknown simulator answer `netlist`, which is\
  the safe direction -- a reader that guessed `own` would widen every save list\
  on a bench it knows nothing about" \
@@ -10009,7 +10040,7 @@ check "WD3b a DISABLED `own` row forces nothing, and a bench with no narrowing\
 ## list was widened" into an error about a completely different subject.
 check "WD3c an unrenderable type in the bench is stepped over rather than raised" \
   [list [catch {ase::saves_widen_types ngspice [wd_state \
-           [list {type sp enabled 1} $WDNOISE] $WD1SAVE]} wd3e] $wd3e] \
+           [list {type pss enabled 1} $WDNOISE] $WD1SAVE]} wd3e] $wd3e] \
   {0 noise}
 
 # --- WD4: the one body the emitter and the preconditions share --------------

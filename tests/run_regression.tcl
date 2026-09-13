@@ -79,7 +79,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_predeck_1439" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_effective_1442" \
-                 "headless/test_ase_meas_1443"]
+                 "headless/test_ase_meas_1443" \
+                 "headless/test_ase_sp_1452"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -143,6 +144,20 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # at all: the Measurements sub-dialog, the template picker and the Value-column
 # rows are Stage 8 task 2. The day that lands it earns a line here, and its
 # counts will say so.
+# ⚠ `test_ase_sp_1452` IS NOT HERE EITHER, AND THE MEASUREMENT SAYS SO.
+# Measured 2026-09-13 on both arms from the `RESULT:` line: **41 checks headless
+# and 41 on the dev display, the same rows** (`diff` of the two ok-lists is
+# empty), 0.10 s against 0.30 s. Stage 9's DECK half creates no widget at all --
+# the Ports table, the S-parameter surface, the matrix picker and Smith/polar
+# are the GUI half. The day that lands it earns a line here and its counts will
+# say so.
+# ⚠ AND IT IS THE ONE SUITE IN THIS LIST THAT REALLY STARTS A SIMULATOR, TWICE.
+# Its section SE renders the deck ASE-L writes, runs it on apt 45.2 AND on the
+# fork, and reads `S_1_1` back out of the results file -- issue 1449's lesson
+# that two halves of a feature tested in different suites never meet. A binary
+# that is not there SKIPS with its path printed, so the log can never confuse
+# "not tested" with "tested and fine"; `$ASE_SP_NGSPICE` (colon-separated)
+# overrides the search.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \

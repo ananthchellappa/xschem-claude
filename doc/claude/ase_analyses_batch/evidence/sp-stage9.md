@@ -27,6 +27,18 @@ Plot: `sp1 (SP Analysis)`. Vectors, in ngspice's own capitalisation:
 With the optional noise flag (a trailing `1`: `sp lin 3 1meg 100meg 1`) the plot also
 carries **`NF`, `NFmin`, `Rn`, `SOpt`**.
 
+⚠ **AND THE CASE DIFFERS BETWEEN THE BINARIES — IN THE RAWFILE, NOT IN `display`.** Measured
+2026-09-13 after Stage 9's crew reported it and the driver re-measured both places:
+
+| | `display` says | the written rawfile says |
+|---|---|---|
+| apt 45.2 | `S_1_1` | **`s_1_1`** |
+| the fork | `S_1_1` | `S_1_1` |
+
+So an interactive listing agrees on both and **the file does not**. Anything that reads an
+S-parameter vector **out of the results file** must be case-insensitive, and this is the sixth
+measured difference between the two binaries — see `evidence/binary-differences.md`.
+
 ⚠ **These names are MIXED CASE and carry underscores.** Anything that lowercases a vector
 name on the way in or out — the Outputs list, the plotmap sidecar, the reconciliation
 `mislabel` verdict from Stage 6 — will disagree with the results file about what the plot
