@@ -719,6 +719,31 @@ than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and
 until task 1 releases `tests/headless/test_ase_core.tcl` — it is the first item of the driver
 pass that collects task 1.
 
+### ✅ ⚖ R4's obligation — PAID, 2026-09-13, receipt 26
+
+⚖ R4 kept the four seeded rows (*"keep four … In Cadence ADE-L it is zero"*). Its unpaid half
+was a test row that **names `seed_enabled`** rather than counting to four, and it went out the
+moment Stage 8 task 1 released `tests/headless/test_ase_core.tcl`.
+
+| | |
+|---|---|
+| **what landed** | **AG3b** — a census over the shipped registry (`ase::analysis_types ngspice`) asserting exactly `{op 1 dc 0 ac 0 tran 0}` declare the key, exactly `{noise tf pz sens disto sp pss}` declare none, 11 entries scanned — and **AG3c**, its positive control: the same census with `disto` *given* the key, so a blind extractor cannot pass both. `tests/headless/test_ase_core.tcl` only; **`src/ase.tcl` was not changed**, confirmed by the driver from `git status`. |
+| **the shape** | The dispatch asked which of two shapes the tree has. It is the first: **`seed_enabled` is a literal key in the registry dict**, four types declare it and `op` alone has it on. So the row asserts the **split** — *"no type declares it"* would be false of the four rows the user just ratified, and what must stay off is **declaring it on anything else**. `ase::analysis_seed`'s `if {![dict exists $e seed_enabled]} { continue }` is the mechanism the row guards. |
+| **driver's own re-run** | `RESULT: ALL PASS (602 checks)` on **both** arms, up from 600. Nothing else moved. |
+| **sabotage** | Five, each restored by `cp` with an md5 match. |
+| **receipt** | `receipts/26-r4-seed-enabled-row.md` |
+
+⚠ **The sabotage found something the row was not written for.** A twelfth entry declared
+`registered 0 seed_enabled 1` is **invisible to every other row in the suite** — `ase::analysis_offered`
+drops it and `ase::analysis_seed` iterates *that* — so 600 of 602 checks pass. Flip one word to
+`registered 1` and it becomes **a ticked-on fifth row on every fresh bench**. **AG3b is the only row in
+the tree that can see it**, and only because the census walks `dict keys` rather than the offered list.
+That is D5's *"this would change by accident"* in its least visible form.
+
+⚠ **And the obligation is discharged for the REGISTRY, not for the key's MEANING.** If a later stage
+makes seed membership computable rather than declared, AG3b passes while the seed grows. Recorded here
+because the next person to touch seeding is the one who needs to know it.
+
 ### ✅ Stage 8 task 1 — the DECK half of measurements, issue **1443**, collected 2026-09-13
 
 | | |

@@ -91,7 +91,15 @@
 # serialized form, AND a non-empty one IS written. The second half is the
 # non-vacuity control for the first, and it is what a `measurements` key that
 # never serialized at all would fail.
-# AND RAISED 598 -> 600.
+# 600 -> 602 with AG3b and AG3c (⚖ R4's unpaid obligation, answered
+# 2026-09-13 -- *"keep four"*, ruled knowing ADE-L seeds ZERO). The ruling's
+# own follow-up is *"not merely the existing assertion that four rows come out,
+# but one that names `seed_enabled` as the thing that must stay off"*. AG3 and
+# R1 assert the seed's OUTPUT; nothing in this file named the KEY over the whole
+# registry, so a twelfth type arriving seeded was caught by a count and a change
+# to one of the four existing ticks by nothing that says why. AG3c is AG3b's
+# non-vacuity control and it runs AG3b's own sabotage in process.
+# AND RAISED 600 -> 602.
 # AND RAISED 558 -> 598.
 # AND RAISED 523 -> 558.
 # ⚠ THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. It was 173/172 when this
@@ -4794,6 +4802,73 @@ check "AG3 a fresh bench still opens with exactly the four rows the 104 committe
  state files carry, even though the registry now describes eleven types" \
   [ase::state_get [ase::state_default] analyses] \
   {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+
+## --- AG3b: AND `seed_enabled` IS NAMED, WHICH AG3 CANNOT DO -----------------
+## ⚖ R4 WAS ANSWERED 2026-09-13 -- Option A, *"keep four"*, the user ruling it
+## knowing that ADE-L seeds ZERO. The answer arrived with an obligation and this
+## row is it: *"a ratified decision must not depend on anybody remembering it"*.
+## AG3 above asserts the seed's OUTPUT, and that is the weaker claim in two
+## measurable ways -- a twelfth type arriving with `seed_enabled 1` would be
+## caught only by the COUNT of rows, and a change to one of the four existing
+## types' tick is named `seed_enabled` NOWHERE in this file. Eleven commits kept
+## the key off by hand; TF6, PZ6 and SE6 name it for three types each; `noise`,
+## `disto`, `sp` and `pss` are named by nothing, and neither is the registry as
+## a whole.
+##
+## ⚠ THE SHAPE IS THE FIRST OF THE TWO THE TASK OFFERED: `seed_enabled` IS A
+## LITERAL KEY. Measured live over `ase::analysis_types ngspice` -- eleven
+## entries, every one `registered 1`, four of them declaring the key (`op 1`,
+## `dc 0`, `ac 0`, `tran 0`) and seven declaring nothing at all. So the row
+## asserts the SPLIT rather than "no type declares it", which would be false of
+## the four the user just ratified.
+##
+## ⚠ THE CENSUS WALKS `dict keys`, NOT `ase::analysis_offered`, AND THE
+## DIFFERENCE IS REACHABLE. `analysis_offered` drops `registered 0` entries, so a
+## type declared `registered 0 seed_enabled 1` is invisible to it today and joins
+## every fresh bench the instant somebody registers it -- a two-commit defect
+## with no row in between. `ase::analysis_seed` asks `dict exists $e
+## seed_enabled` and AG16 pins that mechanism; this row asks WHO declares it.
+##
+## ⚠ BOTH DIRECTIONS RED AND THEY MEAN DIFFERENT THINGS. A type appearing in the
+## first list is ⚖ R4 being violated -- read the ruling before touching this
+## line. A type appearing in the second is a twelfth analysis type arriving,
+## which is ordinary: add the name here in the same commit, having LOOKED at
+## whether it should be seeded. That look is the entire mechanism the ruling
+## asked for.
+proc ag_seed_census {d} {
+  set decl {} ; set silent {}
+  foreach ty [dict keys $d] {
+    set e [dict get $d $ty]
+    if {[dict exists $e seed_enabled]} {
+      lappend decl $ty [dict get $e seed_enabled]
+    } else {
+      lappend silent $ty
+    }
+  }
+  return [list $decl $silent [llength [dict keys $d]]]
+}
+check "AG3b exactly four of this registry's eleven entries declare seed_enabled,\
+ op alone with the tick on, and the other seven declare no such key -- so a\
+ twelfth type that arrives seeded reddens a row that NAMES the key" \
+  [ag_seed_census [ase::analysis_types ngspice]] \
+  [list {op 1 dc 0 ac 0 tran 0} {noise tf pz sens disto sp pss} 11]
+
+## --- AG3c: THE POSITIVE CONTROL, ON THE SHIPPED REGISTRY -------------------
+## ⚠ AN EXTRACTOR THAT RETURNS NOTHING CANNOT DISAGREE -- this batch's third
+## named way for a row to fail to fail, and the one a census invites, because
+## `{} {} 0` is what a mistyped key name, a renamed accessor or an empty dict all
+## produce. So the control performs AG3b's OWN sabotage in process, against the
+## real registry rather than a hand-built stand-in: `disto` given the key it does
+## not have. Both halves move -- `disto` joins the declaring list at its
+## declaration position and leaves the silent one -- which is what proves AG3b
+## reads `seed_enabled` rather than reciting a literal that happens to match.
+set AG3C [ase::analysis_types ngspice]
+dict set AG3C disto seed_enabled 1
+check "AG3c the same census over the shipped registry with one type GIVEN the\
+ key reports that type as seeded, so the row above is reading seed_enabled and\
+ not repeating a list" \
+  [ag_seed_census $AG3C] \
+  [list {op 1 dc 0 ac 0 tran 0 disto 1} {noise tf pz sens sp pss} 11]
 
 ## --- AG4: AND THE SEED NEVER REACHES THE STATE-COMPUTING PROC ---------------
 ## ⚠ THIS IS A SHIM ROW BECAUSE A VALUE ROW CANNOT SEE THE DEFECT. If the seed
