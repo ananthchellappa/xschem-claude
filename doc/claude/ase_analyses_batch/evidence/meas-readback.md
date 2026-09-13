@@ -62,3 +62,35 @@ Identical on both binaries. So *"this measurement failed"* is detectable only as
 reading **stderr**. Neither the exit code nor `$sim_status` will ever say so, and a
 producer that reports "no value" and a producer that was never asked look the same from
 stdout.
+
+## 5. ⚠ A DECK-CARD `.measure` NEVER BECOMES A VECTOR — it is stdout text and nothing else
+
+The two spellings are not two ways to say the same thing.
+
+A deck carrying `.tran 0.1n 20n` and `.measure tran dmax MAX v(out)`, with a `.control`
+block that calls `run` and then looks for the result, measured on both binaries:
+
+```
+=== setplot listing ===
+Current tran1  * ... (Transient Analysis)
+        const  Constant values (constants)
+=== display all ===
+    in / out / time / v1#branch            <- no dmax, in any plot
+=== print tran1.dmax ===
+                                           <- prints NOTHING
+```
+
+The measurement line **is** printed — before the control block's own output, as the card
+is evaluated during the run — and then it is gone. `display all` lists no `dmax` in any
+plot, `setplot` shows no extra plot holding it, and `print tran1.dmax` answers with an
+empty line and no error.
+
+**So a producer inside `.control` cannot read back a deck-card `.measure` at all.** The
+control-block form (`meas …`, §1) is the one that creates the vector. The deck-card form
+gives you stdout text in the binary-dependent format of §3, and a `.measure … failed!`
+line on stderr when it does not match.
+
+⚠ And note the second trap visible in the same transcript: a deck that carries **both**
+`.tran` and a `.control` with `run` **runs the analysis twice** in `-b` mode — the control
+block's run, then the deck's own — printing two of every measurement line. That is worth
+knowing before anything greps stdout expecting one.
