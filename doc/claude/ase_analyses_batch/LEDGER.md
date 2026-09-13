@@ -1303,7 +1303,7 @@ computed instead of discarding it.
 | deck goldens moved | ⚠ **NONE — and that is a plan deviation in the opposite direction from the one predicted.** The task-4 brief warned the crew that `PLAN.md` §6f's *"the checkpoint lines ride in the SAME re-baseline as the sidecar line"* was already false, because issue 1430 had spent that budget on D1, and told it to expect D1 to move a **second** time. It did not move at all: D1 is `op`-only, and rows CK18/CK18b assert that a **below-floor** deck is byte-identical to one rendered with `ase_checkpoint 0`. 1430 spent the budget; 6f needed none |
 | sabotage | **72 respellings in two passes**, 72/72 `RESTORED-OK` by `cmp`. Pass 1 (54) bought four code changes, so pass 2 (18) re-ran everything they moved plus four new ones. **Four survivors, every one of which bought a row or a deletion** — the `[2,50]` clamp (→ CK4b, stubbing `ckpt_n`), `ckpt_plan`'s two guards (→ CK27), and **two dead lines deleted**: `ckpt_rows`' `op_last` parameter and `ckpt_plan`'s `info commands` guard. One mis-specified anchor reported as `PATCH-FAILED` rather than quietly re-run, and an earlier whole-campaign attempt that failed 54/54 because **bash arguments cannot carry NUL** was reported rather than hidden |
 | ledger debts | ⚖ **R9** — four new sentences, **two of which REPLACE sentences that read as defect reports for something the user did on purpose** |
-| commit | `PENDING` |
+| commit | `97974b42` |
 | receipt | `receipts/16-stage-6-salvage.md` |
 
 **The headline measurement, on both binaries, through ASE-L's own `render_deck`:** SIGTERM
