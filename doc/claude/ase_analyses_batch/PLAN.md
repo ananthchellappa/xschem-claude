@@ -3057,6 +3057,24 @@ All four are captured by Stage 6's walk and named by the same sidecar. **The car
 rule:** `.four` and `.probe` are cards; `.meas` is a command. Nothing analysis-shaped ever goes in the
 card slot.
 
+⚠ **BOTH STRUCTURAL CLAIMS ABOVE WERE REFUTED BY MEASUREMENT WHEN STAGE 8 TASK 1 SHIPPED
+(2026-09-13, issue 1443), AND THE SHIPPED CODE FOLLOWS THE MEASUREMENT, NOT THIS PARAGRAPH.**
+
+1. **`.four` as a CARD runs the simulation TWICE.** Driver-verified on **both** binaries by
+   counting `Doing analysis` lines in otherwise identical decks: **2** with the card, **1**
+   without. Paying for a harmonic table with a second full transient is not a trade this plan
+   ever costed. So the **`.four` card slot ships EMPTY** and `fourier` is emitted as a
+   **command** instead. The card/command "rule" survives for `.probe`; for `.four` it was
+   wrong.
+2. **A producer's plot is read back as the analysis it MIMICS, not as a producer.** Measured:
+   `xschem raw read … tran` on a results file carrying a producer's plot answers
+   `datasets=2`, and `… ac` answers `sim_type=ac` on a deck that contains **no** `ac`
+   analysis. The sidecar therefore cannot infer what wrote a plot from what the reader calls
+   it, which is why the producer records its own name rather than trusting the file.
+
+**Both corrections came from running the thing rather than from reading ngspice's source**,
+and both are the kind that a suite passing on one arm would never have surfaced.
+
 ### What you see, the moment the window reopens
 
 1. **A Measurements pane with a number in it.** `f3db = 1.0233e+06`, `pm = 62.4 deg`, `sr = 1.83e+07`,
