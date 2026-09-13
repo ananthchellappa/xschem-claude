@@ -76,7 +76,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_dialogs" \
                  "headless/test_ase_persist" \
                  "headless/test_ase_options_1437" \
-                 "headless/test_ase_predeck_1439"]
+                 "headless/test_ase_predeck_1439" \
+                 "headless/test_ase_optsheet_1441"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -110,11 +111,22 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # same one (issue 1405 cost 100 checks to that distinction). Putting them in
 # `dcases` as well is a bigger change than this one and wants its own measurement
 # of what the display arm costs in wall-clock here.
+#
+# ⚠ `test_ase_optsheet_1441` IS IN BOTH, AND THE MEASUREMENT IS WHY (issue 1441).
+# The paragraph above asks for the wall-clock cost before a `test_ase_*` suite
+# joins this list; measured 2026-09-13 on the dev display, its display arm is
+# **0.40 s** against 0.10 s headless -- 87 checks against 62 (driver-measured
+# 2026-09-13; an earlier draft of this comment said 80 against 55). It is the only
+# suite in Stage 7 whose subject is a WINDOW (the options sheet: search,
+# changed-only, groups, the badge and the live deck preview), so a T1 that ran
+# only its headless arm would cover the schema and none of the pixels. That is
+# exactly the gap issue 0891 was filed about, at three tenths of a second.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
                  "headless/test_lib_new_path_guards_0799" \
-                 "headless/test_ase_simdlg_0937"]
+                 "headless/test_ase_simdlg_0937" \
+                 "headless/test_ase_optsheet_1441"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

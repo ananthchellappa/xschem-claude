@@ -133,7 +133,8 @@ namespace eval ase::ui {
     models [dict create win models skey models cols {file section} \
                         heads {File Section} ed modrow edtitle {Model File}] \
     simopt [dict create win simopt skey options cols {name value} \
-                        heads {Name Value} ed optrow edtitle {Simulation Option}]]
+                        heads {Name Value} ed optrow edtitle {Simulation Option} \
+                        fill ase::ui::optsheet_fill]]
   # sod(...): the Select On Design click mode (item 08). ONE mode globally:
   # sod(active) = the owning session key; per key: sod($key,canvas) = the
   # design window's canvas whose <ButtonPress-1>/<ButtonRelease-1>/
@@ -5401,7 +5402,17 @@ proc ase::ui::chana_options {key} {
   frame $w.btns
   button $w.btns.proceed -text OK -command [list ase::ui::chana_x_ok $key]
   button $w.btns.cancel -text Cancel -command [list ase::ui::chana_x_cancel $key]
+  ## ⚠ §7c-4, THE SECOND SURFACE (issue 1441). `PLAN.md` asks for "per-analysis
+  ## options behind the analysis form's `Options…`, filtered by
+  ## `scope {analysis <type>}`" -- and this IS that dialog. The button opens the
+  ## SAME sheet `Simulation > Options…` opens, with the scope preset to the type
+  ## being edited, because a second sheet would be a second opinion about one
+  ## `options` list. ngspice has no per-analysis option scope at all (§7e), so
+  ## what the scope filters is the CATALOGUE, never the storage.
+  button $w.btns.simopts -text "Simulator Options\u2026" \
+    -command [list ase::ui::sim_options_dialog $key $type]
   pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.simopts -side left -padx 12
   pack $w.btns.cancel -side right -padx 5
   pack $w.btns -side bottom -fill x -padx 8 -pady 6
   pack $w.row -side bottom -fill x -padx 8 -pady 2
@@ -5670,12 +5681,369 @@ proc ase::ui::model_files_dialog {key} {
   return [ase::ui::listdlg_open $key models {Model Files}]
 }
 
-# Simulation > Options…: minimal simulator-options dialog on the state's
-# `options` rows {name value}. render_deck semantics of a row (ase.tcl):
-# value 0 = skipped, value 1 = bare `.options name`, anything else =
-# `.options name=value`.
-proc ase::ui::sim_options_dialog {key} {
-  return [ase::ui::listdlg_open $key simopt {Simulation Options}]
+# ═══ §7c: THE OPTIONS SHEET -- FINDING ONE OPTION AMONG 247 (issue 1441) ══════
+#
+# Simulation > Options… used to be the shared two-column list dialog: the rows
+# THIS BENCH STORES, and nothing else. That is a fine editor and a hopeless
+# finder -- the catalogue behind it has 247 rows and the dialog could not show
+# you one of them until you had already typed its name.
+#
+# ⚠ THE DEFAULT VIEW IS STILL EXACTLY THOSE ROWS, IN EXACTLY THAT ORDER, WITH
+# EXACTLY THOSE TREEVIEW IDS. That is not nostalgia: `PLAN.md` §7c-2 asks for
+# "changed only" as the DEFAULT view, and the bench's own stored rows ARE that
+# view (see `ase::opt_stored_verdict`'s header for why storage and not the
+# `default` column decides visibility). So the Add…/Edit…/Delete gestures, the
+# `$w.optrow` row editor and the integer row ids are the ones this tree already
+# had, driven by the very same `ase::ui::listdlg_*` procs -- one editor, not two.
+#
+# WHAT IS NEW IS EVERYTHING AROUND THEM:
+#
+#   Find:      one entry filtering NAME, GROUP and HELP, live and by substring
+#   Show all   the other ~240 rows, in groups rather than in an alphabet
+#   Scope:     Global (everything) or one analysis type (§7c-4)
+#   RESULTS    the ⚠ badge, and it says whether the claim was MEASURED (§7c-5)
+#   the deck preview -- the exact lines this bench will emit, and WHERE (§7c-6)
+#
+# ⚠ THE PREVIEW IS THE POINT OF THE SHEET AND IT IS NOT DRAWN FROM A SECOND
+# OPINION. `ase::opt_preview` reads `ase::opt_deck_plan`, which is the body
+# `ase::backend::ngspice::render_deck` itself now runs. A setting with no line
+# in the preview is a setting that does nothing; a setting whose line is there
+# but cannot take effect gets a NOTE saying so, which is the half people forget.
+#
+# ⚠ AND NO SENTENCE IS COMPOSED IN THIS FILE THAT ASE-L'S CORE ALREADY MINTS.
+# The delivery reasons, the refusals and the measurement behind a badge all come
+# from src/ase.tcl; what is written here is the sheet's own chrome -- column
+# headings, the two badge phrases, the four slot labels and the verdict words.
+
+# The sheet's own per-session widgets state: the live search text, the Show-all
+# tick and the scope pick. ⚠ PER KEY, LIKE `simuse`: two open sessions are two
+# benches, and one shared variable would make their sheets fight.
+namespace eval ase::ui { variable optsheet; array set optsheet {} }
+
+# The scope the sheet is filtering on: `global`, or `{analysis <type>}`.
+proc ase::ui::optsheet_scope {key} {
+  variable optsheet
+  if {![info exists optsheet($key,scope)]} { return global }
+  set v $optsheet($key,scope)
+  if {$v eq {} || $v eq [ase::ui::optsheet_global_label]} { return global }
+  return [list analysis $v]
+}
+
+# The combobox line that means "every option this simulator has".
+proc ase::ui::optsheet_global_label {} { return {Global} }
+
+# THE BADGE, AND IT IS THREE-VALUED BECAUSE THE EVIDENCE IS (§7c-5).
+#
+# ⚠ `PLAN.md` ASKS FOR "a ⚠ badge on every `results 1` row -- the 21 options
+# that change numbers", and issue 1437 shipped that column TRANSCRIBED, 0/247
+# verified. Measuring all 22 on both binaries (issue 1441) refuted three of
+# them: `warn` and `maxwarns` are SOA diagnostics that print more and compute
+# the same, and `num_threads` is an OpenMP thread count. Those three now draw
+# NO badge. Ten more could not be made to fire on any probe deck, and they draw
+# a badge that says so rather than one that claims a measurement nobody took.
+proc ase::ui::optsheet_badge {sim name} {
+  switch -- [ase::opt_results $sim $name] {
+    yes        { return "⚠ CHANGES RESULTS" }
+    unverified { return "⚠ MAY CHANGE RESULTS — UNVERIFIED" }
+  }
+  return {}
+}
+
+# What the `where` column says: the slot this row's line goes into, in ASE-L's
+# own vocabulary. `ase::opt_door` is the simulator-independent answer; these are
+# the four words the user reads.
+proc ase::ui::optsheet_where {sim name} {
+  if {[ase::sim_option_entry $sim $name] eq {}} { return {} }
+  set d {}
+  if {[catch {ase::opt_door $sim $name} d]} {
+    if {[catch {ase::opt_door $sim $name control} d]} { return {NO DOOR} }
+  }
+  switch -- $d {
+    options      { return {DECK} }
+    control      { return {ANALYSIS BLOCK} }
+    predeck      { return {COMMAND LINE} }
+    predeck-file { return {START-UP FILE} }
+    cmdline      { return {COMMAND LINE} }
+  }
+  return {}
+}
+
+# Simulation > Options…: the options sheet. ⚠ SAME TOPLEVEL PATH, SAME
+# TREEVIEW PATH, SAME CONTEXT MENU AND SAME ROW EDITOR as the list dialog it
+# grew out of, so every gesture that worked before works now.
+proc ase::ui::sim_options_dialog {key {scope {}}} {
+  variable wins; variable listdlg; variable optsheet
+  if {![dict exists $wins $key]} { return }
+  set cfg [dict get $listdlg simopt]
+  set w [dict get $wins $key].[dict get $cfg win]
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Simulation Options}
+  set sim [ase::ui::chana_sim $key]
+  if {![info exists optsheet($key,needle)]}  { set optsheet($key,needle) {} }
+  if {![info exists optsheet($key,showall)]} { set optsheet($key,showall) 0 }
+  set optsheet($key,scope) [expr {$scope eq {} ? [ase::ui::optsheet_global_label] : $scope}]
+
+  ## ── the finder bar ────────────────────────────────────────────────────────
+  frame $w.bar
+  label $w.bar.lf -text {Find:} -font AseLabelFont
+  entry $w.bar.find -width 18 -font AseEntryFont \
+    -textvariable ase::ui::optsheet($key,needle)
+  checkbutton $w.bar.all -text {Show all} \
+    -variable ase::ui::optsheet($key,showall) \
+    -command [list ase::ui::optsheet_fill $key]
+  label $w.bar.ls -text {Scope:} -font AseLabelFont
+  ttk::combobox $w.bar.scope -width 10 -state readonly \
+    -textvariable ase::ui::optsheet($key,scope) \
+    -values [ase::ui::optsheet_scopes $key]
+  pack $w.bar.lf $w.bar.find $w.bar.all $w.bar.ls $w.bar.scope -side left -padx 3
+  ## LIVE, not on Return: the whole point is that the list narrows as you type.
+  bind $w.bar.find <KeyRelease> [list ase::ui::optsheet_fill $key]
+  bind $w.bar.scope <<ComboboxSelected>> [list ase::ui::optsheet_fill $key]
+
+  ## ── the rows ──────────────────────────────────────────────────────────────
+  ## `-show {tree headings}` because §7c-3 asks for GROUPS rather than an
+  ## alphabet, and a group is a parent row. In the default (changed) view there
+  ## are no parents and the tree column is empty, which is what keeps that view
+  ## shaped exactly like the list dialog it replaces.
+  set cols {name value results where}
+  ttk::treeview $w.tv -columns $cols -show {tree headings} -selectmode extended \
+    -height 9 -style Ase.Treeview -yscrollcommand [list $w.sb set]
+  set heads {Name Value Results Written}
+  set first 1
+  foreach c $cols h $heads {
+    $w.tv heading $c -text $h
+    $w.tv column $c -width [ase::ui::colw 16 $h] \
+                    -minwidth [ase::ui::colw 0 $h] -anchor w -stretch $first
+    set first 0
+  }
+  $w.tv column #0 -width [ase::ui::colw 12 {Group}] -stretch 0
+  scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+
+  ## ── what the selected row is, in words ────────────────────────────────────
+  label $w.detail -text {} -anchor w -justify left -wraplength 620 -font AseBodyFont
+  bind $w.tv <<TreeviewSelect>> [list ase::ui::optsheet_detail $key]
+
+  ## ── the live deck preview ─────────────────────────────────────────────────
+  labelframe $w.prev -text {Deck preview}
+  text $w.prev.t -height 8 -width 60 -wrap none -font AseMonoFont \
+    -yscrollcommand [list $w.prev.sb set]
+  scrollbar $w.prev.sb -orient vertical -command [list $w.prev.t yview]
+  pack $w.prev.sb -side right -fill y
+  pack $w.prev.t -side left -fill both -expand 1
+
+  frame $w.btns
+  button $w.btns.close -text Close -command [list destroy $w]
+  pack $w.btns.close -side right -padx 5
+
+  grid $w.bar    -row 0 -column 0 -columnspan 2 -sticky w   -padx 8 -pady 4
+  grid $w.tv     -row 1 -column 0 -sticky nsew -padx {8 0} -pady 2
+  grid $w.sb     -row 1 -column 1 -sticky ns   -padx {0 8} -pady 2
+  grid $w.detail -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  grid $w.prev   -row 3 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady 4
+  grid $w.btns   -row 4 -column 0 -columnspan 2 -sticky ew -padx 8 -pady 6
+  grid rowconfigure $w 1 -weight 3
+  grid rowconfigure $w 3 -weight 2
+  grid columnconfigure $w 0 -weight 1
+
+  menu $w.ctx -tearoff 0
+  $w.ctx add command -label "Add…" \
+    -command [list ase::ui::listdlg_editor $key simopt -1]
+  $w.ctx add command -label "Edit…" \
+    -command [list ase::ui::listdlg_edit_first $key simopt]
+  $w.ctx add command -label Delete \
+    -command [list ase::ui::listdlg_delete $key simopt]
+  bind $w.tv <Button-3> [list ase::ui::listdlg_ctx $key simopt %X %Y]
+  bind $w.tv <Delete> [list ase::ui::listdlg_delete $key simopt]
+  ## A catalogue row the bench has NOT stored: double-click opens the row editor
+  ## with the name already in it, which is the gesture that turns "I found it"
+  ## into "I set it".
+  bind $w.tv <Double-Button-1> [list ase::ui::optsheet_pick $key]
+  ase::ui::bind_dialog_esc $w [list destroy $w]
+  ase::ui::optsheet_fill $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# The scope combobox's values: Global plus the analysis types THIS BENCH
+# carries. ⚠ THE BENCH'S OWN TYPES, not the simulator's whole registry -- a
+# scope for an analysis this bench does not have is a filter that can only ever
+# return rows the user cannot act on.
+proc ase::ui::optsheet_scopes {key} {
+  set out [list [ase::ui::optsheet_global_label]]
+  catch {
+    foreach row [ase::state_get [ase::session_state $key] analyses] {
+      set t [ase::state_get $row type]
+      if {$t ne {} && [lsearch -exact $out $t] < 0} { lappend out $t }
+    }
+  }
+  return $out
+}
+
+# ⚠ THE ROW IDS ARE THE CONTRACT. A stored option's id is its INTEGER index in
+# the bench's `options` list, in both views, because that is what
+# `ase::ui::listdlg_editor`, `listdlg_ok` and `listdlg_delete` index with -- one
+# editor for both surfaces, and the gestures this dialog already had keep
+# working. A catalogue row the bench does not store gets `opt:<name>`, which
+# `listdlg_delete`'s `string is integer -strict` guard skips, and a group header
+# gets `grp:<group>`.
+proc ase::ui::optsheet_fill {key} {
+  variable wins; variable optsheet
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simopt
+  if {![winfo exists $w.tv]} { return }
+  set tv $w.tv
+  $tv delete [$tv children {}]
+  set sim [ase::ui::chana_sim $key]
+  set st [ase::session_state $key]
+  set needle {} ; set showall 0
+  if {[info exists optsheet($key,needle)]}  { set needle $optsheet($key,needle) }
+  if {[info exists optsheet($key,showall)]} { set showall $optsheet($key,showall) }
+  set scope [ase::ui::optsheet_scope $key]
+  ## Which index in the bench's own list each stored name has.
+  set idx [dict create] ; set i 0
+  foreach o [ase::state_get $st options] {
+    if {[dict exists $o name]} { dict set idx [dict get $o name] $i }
+    incr i
+  }
+  if {![ase::opt_truthy $showall]} {
+    foreach n [ase::opt_browse $sim -needle $needle -scope $scope \
+                                    -state $st -changed 1] {
+      ase::ui::optsheet_row $key $tv {} $n $idx
+    }
+  } else {
+    foreach {grp names} [ase::opt_group_index $sim \
+          [ase::opt_browse $sim -needle $needle -scope $scope]] {
+      set gid grp:$grp
+      $tv insert {} end -id $gid -open 1 \
+        -text "[string toupper $grp] ([llength $names])"
+      foreach n $names { ase::ui::optsheet_row $key $tv $gid $n $idx }
+    }
+  }
+  ase::ui::optsheet_preview $key
+  ase::ui::optsheet_detail $key
+}
+
+proc ase::ui::optsheet_row {key tv parent name idx} {
+  set sim [ase::ui::chana_sim $key]
+  set st [ase::session_state $key]
+  set id opt:$name
+  set val {}
+  if {[dict exists $idx $name]} {
+    set id [dict get $idx $name]
+    set m [ase::state_option_map $st]
+    if {[dict exists $m $name]} { set val [dict get $m $name] }
+  }
+  $tv insert $parent end -id $id -values [list $name $val \
+    [ase::ui::optsheet_badge $sim $name] [ase::ui::optsheet_where $sim $name]]
+}
+
+# The selected row, in words: what it is, whether the bench has changed it,
+# whether it is offered at all, and -- for a badge -- the measurement behind it.
+proc ase::ui::optsheet_detail {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simopt
+  if {![winfo exists $w.detail]} { return }
+  set sim [ase::ui::chana_sim $key]
+  set st [ase::session_state $key]
+  set sel {}
+  catch {set sel [lindex [$w.tv selection] 0]}
+  if {$sel eq {} || [string match grp:* $sel]} {
+    $w.detail configure -text {}
+    return
+  }
+  set name [lindex [$w.tv item $sel -values] 0]
+  set bits {}
+  set h [ase::opt_help $sim $name]
+  if {$h ne {}} { lappend bits $h }
+  switch -- [ase::opt_offer $sim $name] {
+    no        { lappend bits "NOT OFFERED: [ase::opt_inert $sim $name]" }
+    elsewhere { lappend bits "SET ELSEWHERE: [ase::opt_owner $sim $name]" }
+    clamp     { lappend bits "CLAMPED: [ase::ui::optsheet_key $sim $name clamp]" }
+    caveat    { lappend bits "CAVEAT: [ase::ui::optsheet_key $sim $name defect][ase::ui::optsheet_key $sim $name caveat]" }
+  }
+  set why [ase::opt_results_why $sim $name]
+  if {$why ne {}} { lappend bits $why }
+  ## ⚠ NO `dict exists` GUARD HERE. `ase::opt_stored_verdict` answers `unset`
+  ## for a row the bench does not store, which is the honest answer for the ~240
+  ## rows Show-all lists, and a guard in this file would be a second place that
+  ## decides what "not set" means.
+  switch -- [ase::opt_stored_verdict $sim $st $name] {
+    changed   { lappend bits "CHANGED from the default [ase::opt_default $sim $name]" }
+    default   { lappend bits {SET to this simulator's own default} }
+    nodefault { lappend bits {SET; this simulator declares no default to compare with} }
+    unknown   { lappend bits {SET; this simulator's catalogue has no such option} }
+  }
+  $w.detail configure -text [join $bits {  |  }]
+}
+
+# One catalogue key of a row, or {} -- so the detail line can quote a reason the
+# adapter wrote without this file knowing which rows carry which keys.
+proc ase::ui::optsheet_key {sim name key} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {} || ![dict exists $d $key]} { return {} }
+  return [dict get $d $key]
+}
+
+# ⚠ THE LIVE DECK PREVIEW. Four slots and a notes block, straight out of
+# `ase::opt_preview` -- which reads the body `render_deck` runs, so a line here
+# IS a line there. An empty slot prints nothing but its own heading, because
+# "there is no line for this" is the answer the pane exists to give.
+proc ase::ui::optsheet_preview {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simopt
+  if {![winfo exists $w.prev.t]} { return }
+  set sim [ase::ui::chana_sim $key]
+  set pv {}
+  if {[catch {ase::opt_preview $sim [ase::session_state $key]} pv]} {
+    set pv [dict create deck {} control {} cmdline {} prefile {} \
+                        notes [list [list {} error [ase::ui::simdlg_plain $pv]]]]
+  }
+  set t {}
+  foreach {slot head} {deck    {above the analysis block}
+                       control {inside the analysis block}
+                       cmdline {on the command line}
+                       prefile {in the run-directory start-up file}} {
+    append t "$head\n"
+    set any 0
+    foreach e [dict get $pv $slot] {
+      append t "    [lindex $e 1]\n" ; set any 1
+    }
+    if {!$any} { append t "    (nothing)\n" }
+  }
+  if {[llength [dict get $pv notes]]} {
+    append t "not delivered\n"
+    foreach n [dict get $pv notes] {
+      append t "    [lindex $n 0] — [ase::ui::simdlg_plain [lindex $n 2]]\n"
+    }
+  }
+  $w.prev.t configure -state normal
+  $w.prev.t delete 1.0 end
+  $w.prev.t insert end $t
+  $w.prev.t configure -state disabled
+}
+
+# Double-click. A stored row edits; a catalogue row the bench has not stored
+# opens the Add editor with the name already filled in.
+proc ase::ui::optsheet_pick {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simopt
+  if {![winfo exists $w.tv]} { return }
+  set sel [lindex [$w.tv selection] 0]
+  if {$sel eq {} || [string match grp:* $sel]} { return }
+  if {[string is integer -strict $sel]} {
+    ase::ui::listdlg_editor $key simopt $sel
+    return
+  }
+  set ed [ase::ui::listdlg_editor $key simopt -1]
+  if {$ed ne {} && [winfo exists $ed.name]} {
+    $ed.name delete 0 end
+    $ed.name insert 0 [lindex [$w.tv item $sel -values] 0]
+    catch {focus $ed.value}
+  }
 }
 
 # --- Setup > Simulators… : the front door of the simulator registry -------
@@ -6540,6 +6908,13 @@ proc ase::ui::listdlg_fill {key which} {
   variable wins; variable listdlg
   if {![dict exists $wins $key]} { return }
   set cfg [dict get $listdlg $which]
+  ## ⚠ ONE EDITOR, TWO SURFACES (§7c, issue 1441). `listdlg_ok` and
+  ## `listdlg_delete` repaint through here, and the options sheet is not a
+  ## two-column list any more -- it has groups, a badge column and a deck
+  ## preview to refresh. A cfg that names its own painter keeps the EDITOR
+  ## shared, which is the half that must not fork: two Add… paths writing the
+  ## same state key is how the two doors start disagreeing.
+  if {[dict exists $cfg fill]} { return [[dict get $cfg fill] $key] }
   set tv [dict get $wins $key].[dict get $cfg win].tv
   if {![winfo exists $tv]} { return }
   $tv delete [$tv children {}]

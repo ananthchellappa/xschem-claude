@@ -49,6 +49,14 @@
 # SP7, BR6, DL1, DL5 -- and each carries the measurement that moved it. No row
 # was added or removed, so the count is still 75.
 #
+# ⚠ AND ISSUE 1441 (PLAN.md §7c) MOVED THE LOOP ITSELF into `ase::opt_deck_plan`
+# so the live deck preview shows the lines the deck really carries rather than a
+# second opinion about them. TWO rows were re-baselined for it -- BR6 (the
+# lexical routing row, now over three bodies) and CB6's neighbours are untouched
+# -- and 1441 also MEASURED the `results` column this file shipped transcribed:
+# `warn`, `maxwarns` and `num_threads` were refuted and now carry `results 0`.
+# The count is still 75.
+#
 # ⚠ NO SIMULATOR IS STARTED HERE. Every ngspice fact quoted in this file was
 # measured beforehand against BOTH preflight binaries -- the fork
 # (/home/analog/dev/ngspice/build-ver_50/src/ngspice, ngspice-46+) and the apt
@@ -646,12 +654,25 @@ check {BR5 the disagreement is exactly the valued rows, and never a flag} \
 ## tests/headless/test_ase_predeck_1439.tcl section RD; this row is the
 ## lexical half, and it is what says the loop is still routed through the
 ## speller rather than through a second spelling.
-check {BR6 the emitter's option loop goes through the one speller, and the bare card survives only as the unknown-name fallback} \
+## ⚠ RE-BASELINED AGAIN BY ISSUE 1441 (PLAN.md §7c), AND THE CLAIM IS
+## UNCHANGED -- only where the body lives moved. §7c's live deck preview must
+## show the lines the deck will really carry, and two bodies answering "what
+## does this bench write" is two answers with the preview as the one nobody
+## runs. So the loop itself is now `ase::opt_deck_plan` and `render_deck`
+## CALLS it; the last-resort `.options` spelling is ngspice syntax and moved
+## to the adapter's own `option_fallback` hook, which is where D34 puts it.
+## Three bodies, three halves of the same sentence.
+check {BR6 the option loop goes through the one speller, the emitter delegates to the shared body, and the bare card survives only as the adapter's fallback} \
   [o_ans apply {{} {
-     set b [o_nocomment [info body ::ase::backend::ngspice::render_deck]]
-     return [list [expr {[string first {ase::opt_line $rdopsim $onm $val} $b] >= 0}] \
-                  [expr {[string first {ase::opt_door $rdopsim $onm} $b] >= 0}] \
-                  [expr {[string first {lappend lines ".options $onm"} $b] >= 0}]] }}] {1 1 1}
+     set r [o_nocomment [info body ::ase::backend::ngspice::render_deck]]
+     set p [o_nocomment [info body ::ase::opt_deck_plan]]
+     set f [o_nocomment [info body ::ase::backend::ngspice::option_fallback]]
+     return [list [expr {[string first {ase::opt_deck_plan $rdopsim $state} $r] >= 0}] \
+                  [expr {[string first {lappend lines ".options $onm"} $r] >= 0}] \
+                  [expr {[string first {ase::opt_line $sim $name $value} $p] >= 0}] \
+                  [expr {[string first {ase::opt_door $sim $name} $p] >= 0}] \
+                  [expr {[string first {return ".options $name"} $f] >= 0}]] }}] \
+  {1 0 1 1 1}
 
 } brerr]} { check {BR0 section BR ran to the end} "RAISED:$brerr" {} }
 
