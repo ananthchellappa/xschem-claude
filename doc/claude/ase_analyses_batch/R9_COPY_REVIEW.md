@@ -226,6 +226,56 @@ one screen.
 input source with a magnitude and a phase in degrees"*), so every remaining
 `<…>` on screen is a real value.
 
+## A10 — one idea wearing three names, inside one dialog
+
+The measurements copy (R9-294 onward) ships the same concept under different words
+in forms the user will switch between:
+
+* **"ignore the signal until"** is `Ignore before` on the find and when forms
+  (R9-328) and **`Trigger delay` / `Target delay`** on the delay form
+  (R9-316, R9-321) — and `Ignore before` is also the only verb-phrase label in the
+  set, which is §A5's complaint again.
+* **"the level a signal must reach"** is `Value` on the when form (R9-331),
+  **`reaches`** on the find form (R9-325) and **`Trigger value` / `Target value`**
+  on the delay form (R9-313, R9-318).
+
+*My recommendation:* one word per concept, chosen once — `Ignore before` for the
+first (it says what it does) and `Value` for the second, qualified only where two
+appear in one form.
+
+⚠ **R9-325 `reaches` is the one to look at closely.** It is the only lowercase
+label in the tree, and it only reads correctly if the form lays `When signal` and
+`reaches` out on one line. Ratifying it also ratifies a layout constraint on a
+dialog that does not exist yet.
+
+## A11 — a C source file and a line number, in a refusal
+
+R9-355 tells the user that ngspice *"names DERIV and refuses it at run time
+(com_measure2.c:2156, `function 'deriv' currently not supported`)"*. The options
+sheet already does this — it cites `cktntask.c:68` — so this is a **consistency**
+question, not a one-off: either ASE-L cites the simulator's source when it knows
+exactly where a limit lives, or it never does.
+
+*My recommendation:* keep it, and keep it in parentheses at the end where it is
+now. A designer who hits a refusal they think is wrong can check it in ten
+seconds, and nobody else has to read it.
+
+## A12 — acronyms: expanded, or not?
+
+§A2 asks about **case**. This asks about **expansion**, and the same set of
+strings answers it three ways: **`RMS`** (R9-298), **`FFT spectrum`** (R9-309)
+and **`Power spectral density`** (R9-310) — acronym, acronym-plus-noun, and the
+words instead of the acronym.
+
+*My recommendation:* the acronym where an analog designer would say the acronym —
+`RMS`, `FFT`, `PSD`, `THD` — since that is how they are spoken at a bench.
+
+⚠ **And §A3's family grew.** The measurements refusals show the *internal kind
+token* where a picker shows a label: R9-356 says a row is bound wrong by naming
+`'fft'`, and R9-361 tells a `Delay (TRIG ... TARG)` row (R9-294) that it segfaults for
+**`TRIGTARG`** — a word that appears nowhere on screen. Answering §A3 answers
+these.
+
 ---
 
 # The strings
