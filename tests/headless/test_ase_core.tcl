@@ -66,6 +66,18 @@
 # ase::netlist's arm (c) under a display and its arm (b) headless, because those
 # are the product's own two contracts for the same call from the same place.
 #
+# 523 -> 558 with section WD and row ISO1434 (Stage 6g, issue 1434 -- the four
+# variant mitigations). ⚠ NO DECK GOLDEN MOVED, **and ISO1434 is what makes that
+# true rather than accidental.** The `nfet_state` fixture saves exactly ONE
+# output and enables exactly `op`, which IS 6g-3's own shape, so the leader is
+# withheld only because the capability is UNMEASURED -- and ISO1377's isolation
+# covers the registry, not `auto_execok`, so without ISO1434 a live probe of
+# whatever ngspice is on $PATH decides it. MEASURED 2026-09-12: against
+# `/usr/bin/ngspice` (45.2) the probe answers `one_vector_write 0` and **D1, D5,
+# C4 and C5 all move**; against the fork they do not. From this issue on the
+# goldens declare the capability unmeasured and the gate is pinned three ways in
+# WD6b, which is where a gate belongs.
+# AND RAISED 523 -> 558.
 # ⚠ THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. It was 173/172 when this
 # comment first claimed "differ by exactly one" (issue 0698's era), 184 before
 # the 1389 run-guard section, 197 when section RG landed, 203 once RG6 was
@@ -287,6 +299,38 @@ check "ISO1377b the helper clears the registry, the measured capabilities and bo
   [list [test_sim_registry_state] [dict size $::ase::sim_caps] \
         $::ASE_SIMULATORS $::ASE_SIMULATOR] \
   {{0 {} {} path} 0 {} {}}
+
+## ISO1434 -- AND THE REGISTRY IS NOT THE ONLY LEAK: `auto_execok` IS THE OTHER.
+##
+## ⚠ ISO1377's own comment says the isolation exists so that "every expectation
+## below that touches the run command, **the save tier** or the case of a vector
+## name" is not really an expectation about the developer's own machine. It
+## isolates the REGISTRY, and with no entry in force `ase::sim_status` falls back
+## to `[auto_execok ngspice]` -- so a live capability PROBE of whatever ngspice
+## is on $PATH still runs, and its answers still reach the emitter.
+##
+## Until issue 1434 nothing in this file could see that: `ase::op_save_tier`'s
+## answer only reaches the deck through a NON-EMPTY captured op-cards block, and
+## this fixture has none. **6g-3 reads a capability directly in `render_deck`**,
+## so from this issue on a deck golden taken without this stub says `.save all`
+## on a machine whose ngspice writes the phantom `v(all)` column and does not on
+## one whose ngspice does not. MEASURED 2026-09-12: with the probe live against
+## `/usr/bin/ngspice` (45.2) the answer is `one_vector_write 0` and **D1, D5, C4
+## and C5 all move**; against the fork they do not.
+##
+## So the goldens declare the capability UNMEASURED, which is also the honest
+## description of a suite that registers no simulator. The three capability
+## states themselves are pinned deterministically in **WD6b**, which stubs this
+## same proc three ways -- that is where a gate belongs, not in a golden.
+if {[info commands ::ase::sim_capabilities] ne {}} {
+  rename ::ase::sim_capabilities ::ase_core_real_sim_capabilities
+  proc ::ase::sim_capabilities {args} { return [dict create known 0] }
+}
+check "ISO1434 the suite declares the simulator capability UNMEASURED, so no deck\
+ golden depends on which ngspice is on this machine's PATH" \
+  [list [ase::sim_capabilities ngspice] \
+        [expr {[info commands ::ase_core_real_sim_capabilities] ne {} ? 1 : 0}]] \
+  [list {known 0} 1]
 
 # --- scratch lib/cell/view fixture + registry --------------------------------
 # clean nfet schematic: nfet_test_claude minus corner + simulator_commands_shown
@@ -8685,6 +8729,477 @@ check "CK27 a salvage with no points hook, a hook that is not a command and a\
 
 } ck_err]} {
   check "CK0 section CK ran to the end" "RAISED:$ck_err" {}
+}
+
+# ===========================================================================
+# WD — 6g's four variant mitigations (issue 1434)
+#
+# ⚠ ITS OWN `catch`, deliberately: the outer one in this file closes thousands
+# of lines above, and three Stage 6 tasks in a row paid for sharing it.
+#
+# 6g-1 is the emission rule -- never leave a NARROWED save list in a deck that
+# carries an analysis whose result vectors are not netlist names. Measured
+# 2026-09-12 on the fork (`ngspice-46+`) and on apt 45.2 (`ngspice-45.2`),
+# through render_deck's own `.save`-dot-cards-above-`.control` shape:
+#
+#   .save v(mid) + noise / tf / sens(dc) / sens(ac)  -> rc 1, $sim_status 1,
+#                                        `no data saved for <X>; analysis not run`
+#   .save v(mid) + pz    -> the SAME message AT rc 0 AND $sim_status 0
+#   .save v(mid) + op / dc / ac / tran / disto       -> rc 0
+#   .save all + .save v(mid) + any of them           -> rc 0
+#
+# so `pz` IS in the class (three documents say it is not) and `disto` is NOT
+# (all of them say it is): a `disto` plot's Variables block is
+# `frequency v(in) v(mid) v(out) i(v1)`, netlist names every one.
+# ===========================================================================
+if {[catch {
+
+set WDRENDER [ase::backend_hook ngspice render_deck]
+proc wd_state {rows outs {extra {}}} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  dict set st save_all_v 0
+  dict set st analyses $rows
+  dict set st outputs $outs
+  dict for {k v} $extra { dict set st $k $v }
+  return $st
+}
+proc wd_deck {rows outs {extra {}}} {
+  if {[catch {$::WDRENDER [wd_state $rows $outs $extra] $::netlist_text} d]} {
+    return "RAISED:$d"
+  }
+  return $d
+}
+## the `.save` cards a deck carries, in deck order -- the one thing 6g-1 and
+## 6g-3 both change and nothing else in this file reads
+proc wd_saves {rows outs {extra {}}} {
+  set o {}
+  foreach l [split [wd_deck $rows $outs $extra] "\n"] {
+    if {[string match {.save*} [string trim $l]]} { lappend o [string trim $l] }
+  }
+  return $o
+}
+## ⚠ THE SAVED NODES MUST EXIST IN THIS FILE'S OWN NETLIST, and that is not
+## bookkeeping: `disto_saves` is still `fatal`, so a fixture saving a node the
+## nfet bench does not have makes render_deck REFUSE rather than render, and a
+## row about the leader would then be measuring a refusal. `D` and `G` are the
+## two the netlist above declares. WD5d is the deliberate use of the other case.
+## ⚠ COMMENT LINES ARE STRIPPED FIRST, and the reason is this row's own first
+## run: `ase::cap_raw_plots`' header NAMES the filter in order to say it is not
+## applied, and `info body` hands comments back with the code. A source-scan row
+## that cannot tell a call from a mention asserts the opposite of its name.
+proc wd_code {name} {
+  set o {}
+  foreach l [split [info body $name] "\n"] {
+    if {[string index [string trim $l] 0] eq {#}} { continue }
+    lappend o $l
+  }
+  return [join $o "\n"]
+}
+set WD1SAVE {{name a expr v(D) save 1 plot 1}}
+set WD2SAVE {{name a expr v(D) save 1 plot 1} {name b expr v(G) save 1 plot 1}}
+set WDNOISE {type noise enabled 1 out {v(mid)} insrc V1 sweep dec points 5 start 1k stop 100k}
+
+# --- WD1: the class, per type, over the SHIPPED registry --------------------
+## ⚠ THE REVERSE HALF IS THE POINT. A row that only listed the four `own` types
+## could not tell a registry that declared every type `own` from the right one,
+## and a blanket `own` would widen every save list in the tree.
+set WD1 {}
+foreach ty {op dc ac tran noise tf pz sens disto sp pss} {
+  lappend WD1 [list $ty [ase::analysis_resultvecs ngspice $ty]]
+}
+check "WD1 exactly noise, tf, pz and sens declare that their result vectors are\
+ NOT netlist names -- pz IS one of them and disto is NOT, both against what\
+ PLAN.md 6g-1, APPENDIX 7.5.2 and 0.13.7 say" $WD1 \
+  [list {op netlist} {dc netlist} {ac netlist} {tran netlist} {noise own} \
+        {tf own} {pz own} {sens own} {disto netlist} {sp netlist} {pss netlist}]
+check "WD1b an unknown type and an unknown simulator answer `netlist`, which is\
+ the safe direction -- a reader that guessed `own` would widen every save list\
+ on a bench it knows nothing about" \
+  [list [ase::analysis_resultvecs ngspice nosuchtype] \
+        [catch {ase::analysis_resultvecs nosuchsim noise} wd1e] $wd1e] \
+  {netlist 0 netlist}
+
+# --- WD2: is the deck's save list narrowed ----------------------------------
+check "WD2 a save list is NARROWED only when a Save tick is set and no blanket\
+ is -- a blank expression is not a save, and Save-All is not a narrowing" \
+  [list [ase::saves_narrowed [wd_state {} $WD1SAVE]] \
+        [ase::saves_narrowed [wd_state {} $WD1SAVE {save_all_v 1}]] \
+        [ase::saves_narrowed [wd_state {} {}]] \
+        [ase::saves_narrowed [wd_state {} {{name a expr {} save 1}}]] \
+        [ase::saves_narrowed [wd_state {} {{name a expr v(mid) save 0}}]] \
+        [ase::saves_narrowed {}]] \
+  {1 0 0 0 0 0}
+
+# --- WD3: which types force the widening ------------------------------------
+check "WD3 the widening is forced by the enabled `own` rows, in emit order, and\
+ by nothing else" \
+  [list [ase::saves_widen_types ngspice [wd_state [list $WDNOISE] $WD1SAVE]] \
+        [ase::saves_widen_types ngspice [wd_state \
+           [list {type sens enabled 1 out {v(mid)}} {type tf enabled 1 out {v(mid)} insrc V1} \
+                 $WDNOISE] $WD1SAVE]] \
+        [ase::saves_widen_types ngspice [wd_state \
+           {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}} $WD1SAVE]] \
+        [ase::saves_widen_types ngspice [wd_state \
+           {{type disto enabled 1 points 2 start 1k stop 10k}} $WD1SAVE]]] \
+  [list {noise} {noise tf sens} {} {}]
+check "WD3b a DISABLED `own` row forces nothing, and a bench with no narrowing\
+ forces nothing however many of them are enabled" \
+  [list [ase::saves_widen_types ngspice [wd_state \
+           {{type noise enabled 0 out {v(mid)} insrc V1}} $WD1SAVE]] \
+        [ase::saves_widen_types ngspice [wd_state [list $WDNOISE] $WD1SAVE {save_all_v 1}]] \
+        [ase::saves_widen_types ngspice [wd_state [list $WDNOISE] {}]]] \
+  {{} {} {}}
+## ⚠ AND IT DOES NOT RAISE ON AN UNRENDERABLE TYPE, which ase::analysis_emit_order
+## does. A precondition reads this proc, and a raise there would turn "your save
+## list was widened" into an error about a completely different subject.
+check "WD3c an unrenderable type in the bench is stepped over rather than raised" \
+  [list [catch {ase::saves_widen_types ngspice [wd_state \
+           [list {type sp enabled 1} $WDNOISE] $WD1SAVE]} wd3e] $wd3e] \
+  {0 noise}
+
+# --- WD4: the one body the emitter and the preconditions share --------------
+check "WD4 a `.save all` leader is forced by the user's own tick OR by 6g-1, and\
+ by neither on an ordinary narrowed bench" \
+  [list [ase::saves_all_forced ngspice [wd_state {{type op enabled 1}} $WD1SAVE]] \
+        [ase::saves_all_forced ngspice [wd_state {{type op enabled 1}} $WD1SAVE {save_all_v 1}]] \
+        [ase::saves_all_forced ngspice [wd_state [list $WDNOISE] $WD1SAVE]] \
+        [ase::saves_all_forced ngspice {}]] \
+  {0 1 1 0}
+
+# --- WD5: THE DECK ITSELF ---------------------------------------------------
+check "WD5 the leader reaches the deck for each of the four, ABOVE the\
+ per-output cards, exactly once" \
+  [list [wd_saves [list $WDNOISE] $WD1SAVE] \
+        [wd_saves {{type tf enabled 1 out {v(mid)} insrc V1}} $WD1SAVE] \
+        [wd_saves {{type pz enabled 1 inp in outp mid}} $WD1SAVE] \
+        [wd_saves {{type sens enabled 1 out {v(mid)}}} $WD1SAVE]] \
+  [list {{.save all} {.save v(D)}} {{.save all} {.save v(D)}} \
+        {{.save all} {.save v(D)}} {{.save all} {.save v(D)}}]
+## ⚠ THE NON-VACUITY HALF, AND IT IS THE HALF THAT WOULD CATCH A BLANKET WIDEN.
+## `disto` is measured NOT to be starved by a save list that resolves, and `op`
+## + `tran` are the shape of every committed bench in this tree.
+check "WD5b a bench with no `own` row keeps its narrowed save list, disto\
+ included" \
+  [list [wd_saves {{type op enabled 1}} $WD1SAVE] \
+        [wd_saves {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}} $WD2SAVE] \
+        [wd_saves {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} $WD1SAVE]] \
+  [list {{.save v(D)}} {{.save v(D)} {.save v(G)}} {{.save v(D)}}]
+## ⚠ AND `disto_saves` IS UNMOVED, WHICH IS THE OTHER HALF OF "disto IS NOT IN
+## 6g-1's CLASS". A save list that resolves to NOTHING still refuses the render
+## outright -- rc 139 and no log is not something an emission rule may paper
+## over -- and `v(mid)` is a node this bench does not have.
+check "WD5d disto is still REFUSED outright when the whole save list resolves to\
+ nothing, and the refusal is what stops a deck being built at all" \
+  [list [string match {RAISED:*precondition the simulator exits on*} \
+           [wd_deck {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} \
+                    {{name a expr v(mid) save 1 plot 1}}]] \
+        [string match {RAISED:*} \
+           [wd_deck {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} \
+                    $WD1SAVE]]] \
+  {1 0}
+check "WD5c a bench that ticks Save-All gets ONE leader, not two, and a bench\
+ with no ticked output gets none at all" \
+  [list [wd_saves [list $WDNOISE] $WD1SAVE {save_all_v 1}] \
+        [wd_saves [list $WDNOISE] {}]] \
+  [list {{.save all} {.save v(D)}} {}]
+
+# --- WD6: 6g-3, and its gate is `caps_measured_as` --------------------------
+## ⚠ MEASURED 2026-09-12 on apt 45.2: an op plot holding exactly ONE save comes
+## back with a phantom duplicate column -- `.save v(mid)` -> `v(mid)` AND
+## `v(all)`, both carrying 7.392094525460902e-01; `.save i(v1)` -> `i(v1)` AND
+## **`i(all)`**. Two saves are clean, and a `tran` with one save is clean because
+## `time` is a second vector. The fork writes neither.
+check "WD6 an op plot that would hold exactly one save is the risk, and two\
+ saves, no op, a blanket and a widened bench are not" \
+  [list [ase::saves_op_phantom_risk ngspice [wd_state {{type op enabled 1}} $WD1SAVE]] \
+        [ase::saves_op_phantom_risk ngspice [wd_state {{type op enabled 1}} $WD2SAVE]] \
+        [ase::saves_op_phantom_risk ngspice [wd_state \
+           {{type tran enabled 1 step 1n stop 1u}} $WD1SAVE]] \
+        [ase::saves_op_phantom_risk ngspice [wd_state {{type op enabled 1}} $WD1SAVE {save_all_v 1}]] \
+        [ase::saves_op_phantom_risk ngspice [wd_state \
+           [list {type op enabled 1} $WDNOISE] $WD1SAVE]]] \
+  {1 0 0 0 0}
+## ⚠ THE GATE'S POLARITY IS THE WHOLE OF D48, AND THE UNMEASURED ROW IS THE ONE
+## THAT MATTERS. `![ase::caps_is $c one_vector_write 1]` is the natural spelling
+## and it is TRUE for a binary nobody measured, which inverts D47 -- ASE-L would
+## then rewrite the results file of every user whose simulator it has not probed,
+## to work around a defect there is no evidence they have.
+set WD6CAPS {}
+if {[info commands ::ase::sim_capabilities] ne {}} {
+  rename ::ase::sim_capabilities ::wd_saved_caps
+  foreach wdc [list [dict create known 1 one_vector_write 0] \
+                    [dict create known 1 one_vector_write 1] \
+                    [dict create known 0]] {
+    set ::wd_caps_answer $wdc
+    proc ::ase::sim_capabilities {args} { return $::wd_caps_answer }
+    lappend WD6CAPS [wd_saves {{type op enabled 1}} $WD1SAVE]
+  }
+  rename ::ase::sim_capabilities {}
+  rename ::wd_saved_caps ::ase::sim_capabilities
+}
+check "WD6b 6g-3 emits the leader ONLY where the phantom was MEASURED present --\
+ measured 1 and never measured at all both leave the deck alone" $WD6CAPS \
+  [list {{.save all} {.save v(D)}} {{.save v(D)}} {{.save v(D)}}]
+## ⚠ AND THE UNMEASURED ANSWER IS WHY EVERY DECK GOLDEN IN THIS FILE IS STILL
+## WHERE IT WAS. `nfet_state` saves exactly one output and enables exactly `op`,
+## so it IS 6g-3's fixture -- and no suite probes a simulator, so D1 does not
+## move. That is D47 holding a golden still, not luck.
+check "WD6c the shipped nfet fixture is 6g-3's own shape and its golden is\
+ unmoved, because ISO1434 declares the capability UNMEASURED" \
+  [list [ase::saves_op_phantom_risk ngspice [nfet_state /models/sky130.lib.spice {}]] \
+        [wd_saves {{type op enabled 1}} {{name id expr -i(v1) save 1 plot 0}}]] \
+  [list 1 {{.save -i(v1)}}]
+## ⚠ AND THE OPERATING-POINT TIER'S OWN CARDS STAND 6g-3 DOWN, WHICH A SUITE
+## OUTSIDE THIS ONE HAD TO ASK FOR. `test_ase_final`'s **F12** asserts that
+## `.save all` appears EXACTLY ONCE on a real committed bench (invariant I2/R2),
+## and the first cut of 6g-3 gave that bench a second one -- on the ground that
+## two leaders are measured harmless, which they are, and which is not the same
+## as invisible. The reason it must stand down is the defect's own shape: the
+## phantom exists only where the op plot holds exactly ONE saved vector, and a
+## deck carrying device `.save @dev[param]` cards puts many more in that same
+## plot.
+## ⚠ THE CACHE IS PRIMED FIRST, AND A SABOTAGE IS WHY. With an EMPTY op-cards
+## block every leg of this row answers 0 for the same reason -- there are no
+## cards -- so the row could not tell the three conditions apart, and the
+## sabotage that deleted the `op_analysis_enabled` guard left the suite ALL PASS.
+## *A row whose fixtures never disagree cannot fail*, for the seventh time in
+## this batch. The block is put back empty immediately below, because the C
+## section's own fixtures own that cache.
+set WD6BLK [ase::op_cards_block]
+ase::op_cards_put $::netlist_text ".save all\n.save @m.x1\[id\]"
+check "WD6d a deck that will carry the operating-point tier's own cards is not\
+ at risk, and each of the three conditions is separately load-bearing" \
+  [list [ase::saves_op_phantom_risk ngspice \
+           [wd_state {{type op enabled 1}} $WD1SAVE] 1] \
+        [ase::saves_op_phantom_risk ngspice \
+           [wd_state {{type op enabled 1}} $WD1SAVE] 0] \
+        [ase::saves_op_cards_coming [wd_state {{type op enabled 1}} $WD1SAVE] \
+           $::netlist_text] \
+        [ase::saves_op_cards_coming [wd_state {{type op enabled 1}} $WD1SAVE \
+           {save_op_params 0}] $::netlist_text] \
+        [ase::saves_op_cards_coming [wd_state \
+           {{type tran enabled 1 step 1n stop 1u}} $WD1SAVE] $::netlist_text] \
+        [ase::saves_op_cards_coming [wd_state {{type op enabled 1}} $WD1SAVE] \
+           "* a different netlist\n.end\n"] \
+        [ase::saves_op_cards_coming {} $::netlist_text]] \
+  {0 1 1 0 0 0 0}
+## ⚠ AND THE WHOLE POINT, END TO END: the same bench renders WITHOUT a second
+## leader while the tier is going to emit one, and 6g-3's own arm is still live
+## for the bench that gets no cards. This is `test_ase_final`'s F12 invariant
+## said inside the suite that owns the emitter.
+## ⚠ AND THE CAPABILITY IS STUBBED TO **MEASURED 0** FOR THIS ROW, BECAUSE
+## OTHERWISE IT IS VACUOUS. ISO1434 declares it unmeasured for the whole file, so
+## 6g-3's arm never emits here at all and a single-leader assertion would hold
+## whatever the stand-down did. This is `test_ase_final`'s world -- a real probe
+## of a binary that HAS the phantom -- reproduced inside the suite that owns the
+## emitter, so the F12 invariant has a witness on both sides of the tree.
+set WD6D2 {}
+if {[info commands ::ase::sim_capabilities] ne {}} {
+  rename ::ase::sim_capabilities ::wd6d2_saved_caps
+  proc ::ase::sim_capabilities {args} { return {known 1 one_vector_write 0} }
+  set WD6D2 [list [regexp -all -line {^\.save all$} \
+                     [wd_deck {{type op enabled 1}} $WD1SAVE]] \
+                  [wd_saves {{type op enabled 1}} $WD1SAVE]]
+  rename ::ase::sim_capabilities {}
+  rename ::wd6d2_saved_caps ::ase::sim_capabilities
+}
+check "WD6d2 with the phantom MEASURED PRESENT and the tier's cards in the deck,\
+ there is still EXACTLY ONE `.save all` -- F12's invariant (I2/R2) asserted where\
+ the leader is written" $WD6D2 \
+  [list 1 {{.save v(D)} {.save all} {.save @m.x1[id]}}]
+ase::op_cards_put {} {}
+check "WD6d3 the op-cards cache is handed back empty, so the C section's own\
+ fixtures still own it" [ase::op_cards_block] {}
+check "WD6e and render_deck reads it rather than assuming -- the call carries\
+ the answer, so the emitter and F12's invariant cannot drift apart" \
+  [regexp {saves_op_cards_coming} [wd_code ase::backend::ngspice::render_deck]] 1
+
+# --- WD7: 6g-2, the free half, at the reader ---------------------------------
+check "WD7 the phantom column is dropped whatever wrapper it wears, and ASE-L's\
+ OWN Save-All tokens are not touched" \
+  [list [ase::raw_drop_phantom_all {v(mid) v(all)}] \
+        [ase::raw_drop_phantom_all {i(v1) i(all)}] \
+        [ase::raw_drop_phantom_all {v(mid) all}] \
+        [ase::raw_drop_phantom_all {time v(mid)}] \
+        [ase::raw_drop_phantom_all {allv alli v(all)}] \
+        [ase::raw_drop_phantom_all {v(mid) V(ALL)}]] \
+  [list {v(mid)} {i(v1)} {v(mid)} {time v(mid)} {allv alli} {v(mid)}]
+## ⚠ IT NEVER EMPTIES A LIST, and that clause is PLAN.md 6g-2's "duplicates
+## another column of the same plot" made safe: duplication cannot be proved from
+## a name, so the guarantee that CAN be given is that something always survives.
+check "WD7b a plot whose ONLY column is the token comes back untouched" \
+  [list [ase::raw_drop_phantom_all {all}] [ase::raw_drop_phantom_all {v(all)}] \
+        [ase::raw_drop_phantom_all {}]] \
+  [list {all} {v(all)} {}]
+set WDRAW [file join $scratch wd_phantom.raw]
+set wdfh [open $WDRAW w]
+puts $wdfh "Title: wd\nPlotname: Operating Point\nFlags: real\nNo. Variables: 2\nNo. Points: 1\nVariables:\n\t0\tv(mid)\tvoltage\n\t1\tv(all)\tvoltage\nValues:\n 0\t7.392094525460902e-01\n\t7.392094525460902e-01"
+close $wdfh
+## ⚠ AND `ase::cap_raw_plots` DELIBERATELY DOES **NOT** FILTER, WHICH IS A
+## REFUTATION OF `PLAN.md` §6g-2. It names that proc as one of its two seams --
+## *"the one Tcl proc in the tree that returns a vector list"* -- and that is
+## true and is exactly why it may not filter: it is the CAPABILITY PROBE's own
+## reader (`ase::backend::ngspice::cap_leg_d`), so dropping the phantom there
+## makes `one_vector_write` answer 1 on the binaries that have the defect and
+## **6g-2 would switch 6g-3 off**. Found by the sabotage that took the filter
+## back out: with it in, D1/D5/C4/C5 were green because 6g-3 never fired.
+check "WD7c ase::cap_raw_plots returns the phantom UNFILTERED, because a reader\
+ whose answer feeds a MEASUREMENT may not be improved" \
+  [ase::cap_raw_plots $WDRAW] [list [list {Operating Point} 1 {v(mid) v(all)}]]
+check "WD7d and that is not pedantry: the probe's own verdict is 0 on the\
+ unfiltered list and 1 on the filtered one, so filtering the reader would\
+ measure the defect away" \
+  [list [dict get [::ase::backend::ngspice::cap_variant_verdicts \
+           [lindex [lindex [ase::cap_raw_plots $WDRAW] 0] 2] UNKNOWN {} 1] \
+           one_vector_write] \
+        [dict get [::ase::backend::ngspice::cap_variant_verdicts \
+           [ase::raw_drop_phantom_all [lindex [lindex [ase::cap_raw_plots $WDRAW] 0] 2]] \
+           UNKNOWN {} 1] one_vector_write]] \
+  {0 1}
+## ⚠ THE SEAM IT **IS** APPLIED AT, asserted by reading the body rather than by
+## hoping -- the `xschem raw list` consumer in this file, whose names reach a
+## user through the F2 resolver. The substantial seam is `signal_list` in
+## `src/wave_viewer.tcl`, which Stage 6's *Files and procs* table does not name.
+check "WD7e the filter IS wired into this file's own `xschem raw list` consumer\
+ and is NOT wired into the probe's reader" \
+  [list [regexp {ase::raw_drop_phantom_all} [wd_code ase::cosim_db_inventory]] \
+        [regexp {ase::raw_drop_phantom_all} [wd_code ase::cap_raw_plots]] \
+        [regexp {raw_drop_phantom_all} [info body ase::cap_raw_plots]]] \
+  {1 0 1}
+
+# --- WD8: 6g-4, the keyword-case lint ---------------------------------------
+## ⚠ IT LINTS `.control` AND NOTHING ELSE, WHICH IS MEASURED RATHER THAN CHOSEN.
+## `.SAVE V(MID)` behaves identically to `.save v(mid)` on BOTH binaries -- the
+## netlist parser folds every dot card, and apt still writes its phantom beside
+## it -- while `WRITE <path> ALL` inside `.control` dispatches fine on apt and
+## then writes NO FILE, rc 0, one stderr warning.
+set WD8DECKS {}
+foreach wdr [list {{type op enabled 1}} \
+                  {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}} \
+                  [list $WDNOISE] \
+                  {{type tf enabled 1 out {v(mid)} insrc V1}} \
+                  {{type pz enabled 1 inp in outp mid}} \
+                  {{type sens enabled 1 out {v(mid)}}} \
+                  {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} \
+                  {{type dc enabled 1 source V1 start 0 stop 1 step 0.1}} \
+                  {{type ac enabled 1 sweep dec points 5 start 1k stop 100k}}] {
+  lappend WD8DECKS [ase::deck_case_lint ngspice [wd_deck $wdr $WD1SAVE]]
+}
+check "WD8 no deck this emitter renders, for any of the nine renderable types,\
+ carries a capitalised ngspice keyword inside `.control`" \
+  [lsort -unique $WD8DECKS] {{}}
+## ⚠ A ROW WHOSE FIXTURES NEVER DISAGREE CANNOT FAIL. The lint's alphabet is the
+## emitter's own vocabulary, so it has to be shown catching something.
+check "WD8b the lint is not vacuous: it names the line, the token and the line\
+ number, for a command word and for an argument alike" \
+  [ase::deck_case_lint ngspice ".control\nop\nWRITE /tmp/x.raw ALL\n.endc\n"] \
+  [list {3 {WRITE /tmp/x.raw ALL} WRITE} {3 {WRITE /tmp/x.raw ALL} ALL}]
+check "WD8c it stops at the block -- a capitalised DOT CARD is measured harmless\
+ on both binaries, and blaming ASE-L for a user's own `.INCLUDE` would be wrong" \
+  [list [ase::deck_case_lint ngspice ".SAVE V(MID)\n.control\nop\n.endc\n"] \
+        [ase::deck_case_lint ngspice ".control\nop\n.endc\nWRITE ALL\n"]] \
+  {{} {}}
+check "WD8d a capitalised `.CONTROL` or `.ENDC` IS named, because those two are\
+ the emitter's own lines and nothing else can report them" \
+  [list [llength [ase::deck_case_lint ngspice ".CONTROL\nop\n.endc\n"]] \
+        [llength [ase::deck_case_lint ngspice ".control\nop\n.ENDC\n"]]] {1 1}
+## ⚠ THE VERBATIM HATCH IS THE USER'S TEXT AND IS EXEMPTED BY VALUE, NOT BY
+## POSITION -- issue 1419's hatch moved once already (1433's C80) and a
+## positional exemption would have moved with it in silence.
+check "WD8e a line the caller names as the user's own is skipped, and the same\
+ line unnamed is reported" \
+  [list [ase::deck_case_lint ngspice ".control\nWRITE x ALL\n.endc\n" {{WRITE x ALL}}] \
+        [llength [ase::deck_case_lint ngspice ".control\nWRITE x ALL\n.endc\n" {{write x all}}]]] \
+  {{} 2}
+## ⚠ D34-D37: A BACKEND WITH NO HOOK GETS NO FALLBACK CONTENT. A lint that fell
+## back to ngspice's vocabulary for an unknown simulator would be making a claim
+## about a simulator nobody described.
+check "WD8f a simulator with no `deck_keywords` hook is linted against nothing,\
+ rather than against ngspice's words" \
+  [list [ase::deck_case_lint nosuchsim ".control\nWRITE x ALL\n.endc\n"] \
+        [expr {[llength [ase::backend_hook ngspice deck_keywords]] > 0}]] \
+  {{} 1}
+
+# --- WD9: the registry validator --------------------------------------------
+## ⚠ THE READER IS PERMISSIVE AND THE VALIDATOR IS NOT, AND THAT SPLIT IS THE
+## POINT. `analysis_resultvecs` answers `netlist` for a mistyped key, so no run
+## is refused over a typo; `analysis_schema_errors` is what tells the adapter's
+## author, at the time somebody asks about the registry.
+proc wd_bad_types {} {
+  return [dict create \
+    wda [dict create label wda emit {{role analysis tmpl {wda}}} resultvecs own \
+          plots {{select A role scalars results value label a}} results {value {kind scalars}}] \
+    wdb [dict create label wdb emit {{role analysis tmpl {wdb}}} resultvecs OWN \
+          plots {{select B role scalars results value label b}} results {value {kind scalars}}] \
+    wdc [dict create label wdc emit {{role analysis tmpl {wdc}}} resultvecs {} \
+          plots {{select C role scalars results value label c}} results {value {kind scalars}}] \
+    wdd [dict create label wdd emit {{role analysis tmpl {wdd}}} \
+          needs {vecsaves} \
+          plots {{select D role scalars results value label d}} results {value {kind scalars}}]]
+}
+ase::register_backend wdsim [dict create render_deck x run_cmd x log_file x \
+  result_probe x raw_file x analysis_types wd_bad_types]
+set WD9 {}
+foreach e [ase::analysis_schema_errors wdsim] {
+  if {[lindex $e 1] eq {badresultvecs}} { lappend WD9 [list [lindex $e 0] [lindex $e 2]] }
+}
+check "WD9 the validator refuses a `resultvecs` that is neither word -- case\
+ included -- and says nothing about the valid one" [lsort $WD9] \
+  {{wdb OWN} {wdc {}}}
+check "WD9b the SHIPPED ngspice registry still answers nothing at all" \
+  [ase::analysis_schema_errors ngspice] {}
+check "WD9c and the permissive READER answers `netlist` for both of them, so a\
+ mistyped key narrows nothing and refuses nothing" \
+  [list [ase::analysis_resultvecs wdsim wda] [ase::analysis_resultvecs wdsim wdb] \
+        [ase::analysis_resultvecs wdsim wdc]] \
+  {own netlist netlist}
+
+# --- WD10: the two guards a SABOTAGE had to ask for ------------------------
+## ⚠ BOTH OF THESE SURVIVED THE FIRST SABOTAGE PASS, and neither was a weak row:
+## there was no row at all, because the shipped registry cannot reach either
+## condition. They are reachable through the two doors an ADAPTER and a CALLER
+## have, so each is driven through that door rather than deleted.
+##
+## Door one: an adapter that names `vecsaves` in `needs` on a type whose result
+## vectors ARE netlist names. The sentence would then name the wrong analysis --
+## it would tell the user that `wdd` cannot run under a narrowed save list when
+## the type that cannot is somewhere else on the bench.
+## how many of a row's reported preconditions are the widening one -- the other
+## predicates fire on this deliberately empty `facts`, and a row that counted
+## them all would be measuring `noise_out`
+proc wd_ids {rows} {
+  set n 0
+  foreach r $rows { if {[lindex $r 0] eq {vecsaves}} { incr n } }
+  return $n
+}
+set WD10ST [ase::state_default]
+dict set WD10ST simulator wdsim
+dict set WD10ST outputs {{name a expr v(mid) save 1 plot 1}}
+dict set WD10ST analyses {{type wdd enabled 1} {type wda enabled 1}}
+check "WD10 a type that declares `vecsaves` while its result vectors ARE netlist\
+ names is passed over, so the widening is never reported against the wrong row" \
+  [list [ase::needs_eval wdsim wdd vecsaves {type wdd enabled 1} \
+           [dict create nodes {} sources {} exact 0] {} $WD10ST] \
+        [lindex [ase::needs_eval wdsim wda vecsaves {type wda enabled 1} \
+           [dict create nodes {} sources {} exact 0] {} $WD10ST] 0]] \
+  [list {} caution]
+## Door two: `ase::analysis_needs` is public and its callers do not all filter
+## by `enabled` -- `ase::analysis_precheck` does, a per-row grid cell need not.
+## A `vecsaves` that asked `saves_narrowed` instead of the shared body would
+## answer the same for every enabled row and the WRONG thing for a disabled one.
+set WD10ST2 [wd_state [list [concat $WDNOISE {enabled 0}]] $WD1SAVE]
+check "WD10b a DISABLED `own` row reports no widening, because the deck it would\
+ be rendered into does not widen" \
+  [list [wd_ids [ase::analysis_needs ngspice [concat $WDNOISE {enabled 0}] \
+           [dict create nodes {} sources {} exact 0] {} $WD10ST2]] \
+        [wd_ids [ase::analysis_needs ngspice $WDNOISE \
+           [dict create nodes {} sources {} exact 0] {} \
+           [wd_state [list $WDNOISE] $WD1SAVE]]] \
+        [ase::saves_narrowed $WD10ST2]] \
+  [list 0 1 1]
+
+} wd_err]} {
+  check "WD0 section WD ran to the end" "RAISED:$wd_err" {}
 }
 
 # --- verdict -----------------------------------------------------------------

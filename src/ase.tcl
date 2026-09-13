@@ -2720,6 +2720,31 @@ proc ase::cap_raw_plots {path} {
   }
   catch {close $f}
   if {$have} { lappend plots [list $name $np $vars] }
+  ## ⚠ 6g-2's FILTER IS **NOT** APPLIED HERE, AND `PLAN.md` §6g-2 SAYS IT SHOULD
+  ## BE. It names this proc as one of its two seams -- *"the one Tcl proc in the
+  ## tree that returns a vector list"* -- and that is true and is exactly why it
+  ## must not filter: **this proc is the capability probe's own reader.**
+  ##
+  ## `ase::backend::ngspice::cap_leg_d` reads `probe_d.raw` through here and
+  ## hands the variable list to `cap_variant_verdicts`, which decides
+  ## `one_vector_write` by counting `v(*` entries -- so dropping the phantom
+  ## makes the probe answer **1 (no defect)** on the very binaries that have it,
+  ## and **6g-2 would silently switch 6g-3 off.** MEASURED by sabotage on
+  ## 2026-09-12: with the filter here, `test_ase_core`'s D1/D5/C4/C5 are green
+  ## because 6g-3 never fires; take the filter out and they redden because it
+  ## does, against `/usr/bin/ngspice` (45.2), which is what `auto_execok`
+  ## resolves in a suite with no registered simulator.
+  ##
+  ## The rule this is an instance of: **a READER whose answer feeds a
+  ## MEASUREMENT may not be improved.** `ase::raw_content_verdict` already
+  ## carries the same rule for the same reason -- a diagnosis that lied about
+  ## what the file says would be worse than a phantom.
+  ##
+  ## 6g-2's real seam is the one that shows a vector list to a USER, which in
+  ## this tree is `signal_list` in `src/wave_viewer.tcl` -- a file Stage 6's own
+  ## *Files and procs* table does not name. The filter is
+  ## `ase::raw_drop_phantom_all`, applied at `ase::cosim_db_inventory` below;
+  ## the viewer's reader is named rather than silently skipped.
   return $plots
 }
 
@@ -4788,6 +4813,21 @@ proc ase::analysis_schema_errors {{sim {}}} {
         lappend out [list $ty nosalvagevector {}]
       }
     }
+    # --- 1434 (6g-1): AND THE `resultvecs` DECLARATION IS CHECKED TOO --------
+    # ⚠ THE SAFE DIRECTION FOR THIS KEY IS THE DANGEROUS ONE, WHICH IS WHY IT IS
+    # REFUSED HERE RATHER THAN TOLERATED. ase::analysis_resultvecs answers
+    # `netlist` for anything it does not recognise -- which is right for an entry
+    # that never mentions the key, and is a silent wrong answer for one that
+    # MEANT to say `own` and mistyped it: the deck then carries a narrowed save
+    # list and the analysis does not run at all. The reader stays permissive so
+    # no run is refused over a typo; the registry validator is what tells the
+    # adapter's author, at the time somebody asks about the registry.
+    if {[dict exists $e resultvecs]} {
+      set rv [dict get $e resultvecs]
+      if {[lsearch -exact {netlist own} $rv] < 0} {
+        lappend out [list $ty badresultvecs $rv]
+      }
+    }
   }
   return $out
 }
@@ -5177,6 +5217,369 @@ proc ase::plot_select {p} {
 proc ase::plot_results {p} {
   if {[catch {dict exists $p results} ok] || !$ok} { return {} }
   return [dict get $p results]
+}
+
+# --- 6g-1: AN ANALYSIS WHOSE RESULT VECTORS ARE NOT NETLIST NAMES ------------
+#
+# ⚠ TWO DIFFERENT STARVATIONS WEAR THE SAME ERROR MESSAGE, AND ONLY ONE OF THEM
+# IS THIS BLOCK's. MEASURED 2026-09-12 on the fork (`ngspice-46+`) and on apt
+# 45.2, one analysis per deck, through render_deck's own shape -- `.save` DOT
+# CARDS above `.control`:
+#
+#   CLASS A -- ANY narrowed save list starves it, even one that resolves:
+#     .save v(mid) + noise -> rc 1, `no data saved for Noise analysis`
+#     .save v(mid) + tf    -> rc 1     .save v(mid) + sens (dc) -> rc 1
+#     .save v(mid) + sens … ac -> rc 1
+#     .save v(mid) + pz    -> `Error: no data saved for pole-zero analysis;
+#                              analysis not run`  AT rc 0 AND $sim_status 0
+#   CLASS B -- only a save list that resolves to NOTHING starves it, and then
+#   it starves EVERY type:
+#     .save v(nosuchnode) + op / dc / ac / tran -> rc 1, $sim_status 1
+#     .save v(nosuchnode) + disto               -> rc 139, SIGSEGV
+#     .save v(mid)        + op / dc / ac / tran / disto -> rc 0
+#
+# This block is CLASS A. Class B is `ase::saves_unresolved` and the
+# `disto_saves` / `saves_resolve` preconditions below it.
+#
+# ⚠ THREE CORRECTIONS TO `PLAN.md` §6g-1, `APPENDIX` §7.5.2 AND §0.13.7, ALL
+# MEASURED ABOVE AND ALL IN THE SAME SENTENCE OF EACH. That sentence names
+# `disto, noise, tf, dc sens`.
+#   * `disto` IS NOT IN THIS CLASS. Its result vectors ARE netlist names --
+#     measured, a `disto` plot's `Variables:` block is `frequency v(in) v(mid)
+#     v(out) i(v1)` -- and `.save v(mid)` + `disto` is rc 0 on both binaries.
+#     Its own defect is class B and `disto_saves` already refuses it.
+#   * `pz` IS IN THIS CLASS, and it is the WORST member. Three documents say it
+#     survives (`APPENDIX` §7.5.2's table, `PLAN.md` §0.13.7, and this file's own
+#     `vecsaves` comment as issue 1432 shipped it: *"pz is the exception that
+#     proves it"*). Measured with the save naming the pz output node, naming
+#     another node, and on the appendix's own two-node deck: starved every time,
+#     on both binaries -- and at **rc 0 with `$sim_status` 0**, so the deck's
+#     guard never fires and ASE-L's `RUN-FAILED` never appears. `pz` is the one
+#     type whose starvation is silent end to end.
+#   * `sens` is starved in BOTH modes, not in `dc` alone.
+#
+# ⚠ AND THE MITIGATION IS ONE DECK LINE THAT WAS ALREADY IN THIS FILE. MEASURED
+# on both binaries: a `.save all` leader ABOVE the narrowed cards makes every
+# one of the class A and class B decks above run at rc 0 -- including `disto`'s
+# SIGSEGV. That is guard G-LEADER (issue 0964) again, which the operating-point
+# tier already emits for its own reason, and which `vecsaves` already stood down
+# for. 6g-1 is that stand-down turned the right way up: instead of refusing a
+# run because the leader is missing, EMIT the leader.
+
+# `netlist` (the default) or `own`. An entry saying anything else is refused by
+# ase::analysis_schema_errors as `badresultvecs`, not silently treated as safe.
+#
+# ⚠ IT IS THE ADAPTER's KEY. Whether `onoise_spectrum`, `Transfer_function`,
+# `r1:r` and `pole(1)` are node names is a fact about ngspice (D34-D37). Core
+# learns only that a type MAY declare it.
+proc ase::analysis_resultvecs {sim type} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e resultvecs]} { return netlist }
+  set v [dict get $e resultvecs]
+  if {$v ne {own}} { return netlist }
+  return own
+}
+
+# Would this bench's deck carry a NARROWED save list -- one or more `.save
+# <expr>` cards and no blanket above them?
+#
+# ⚠ ONE BODY, THREE READERS: render_deck's leader, the `vecsaves` caution and
+# the class B preconditions. The drift this prevents is the one this batch keeps
+# paying for -- a precondition refusing a deck the emitter has already fixed.
+proc ase::saves_narrowed {state} {
+  if {$state eq {}} { return 0 }
+  if {[ase::state_get $state save_all_v 0] eq {1}} { return 0 }
+  foreach o [ase::state_get $state outputs] {
+    if {[ase::state_get $o save 0] ne {1}} { continue }
+    if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
+    return 1
+  }
+  return 0
+}
+
+# The enabled class A types on this bench, in emit order -- {} when nothing
+# forces a widening. Non-empty means the deck gets a `.save all` leader it would
+# not otherwise have.
+proc ase::saves_widen_types {sim state} {
+  if {![ase::saves_narrowed $state]} { return {} }
+  ## ⚠ NOT ase::analysis_emit_order, WHICH RAISES ON AN UNRENDERABLE TYPE. A
+  ## bench carrying one is refused by the gate and by render_deck's own 1401
+  ## block; this proc is also read by a PRECONDITION, where raising would turn
+  ## "your save list was widened" into an error from a completely different
+  ## subject. It walks the rows and sorts by rank itself, treating a rank-less
+  ## type as rank-less rather than as a fault.
+  set rk {}
+  set i -1
+  foreach a [ase::state_get $state analyses] {
+    incr i
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    set ty [ase::state_get $a type]
+    if {$ty eq {}} { continue }
+    if {[ase::analysis_resultvecs $sim $ty] ne {own}} { continue }
+    set r 1000000
+    catch { set r [ase::analysis_emit_rank $ty 0 $sim] }
+    if {![string is integer -strict $r]} { set r 1000000 }
+    lappend rk [list $r $i $ty]
+  }
+  set out {}
+  foreach e [lsort -integer -index 0 [lsort -integer -index 1 $rk]] {
+    set ty [lindex $e 2]
+    if {[lsearch -exact $out $ty] < 0} { lappend out $ty }
+  }
+  return $out
+}
+
+# WILL THE DECK CARRY A `.save all` LEADER FOR A REASON ASE-L CONTROLS AND CAN
+# STATE? The user's own Save-All tick, or 6g-1's widening.
+#
+# ⚠ 6g-3's LEADER IS DELIBERATELY NOT IN HERE, AND THE CONSEQUENCE IS NAMED
+# RATHER THAN ENGINEERED AROUND. That one is gated on a capability MEASUREMENT
+# (`one_vector_write`), and a precondition has no capability dict -- so a bench
+# that 6g-3 would rescue on apt 45.2 can still be refused by `disto_saves`,
+# which is correct on the fork (no phantom -> no leader -> SIGSEGV) and
+# over-strict on apt. Over-strict beats a SIGSEGV, and a false FATAL that
+# depended on which binary was registered would be worse than both.
+proc ase::saves_all_forced {sim state} {
+  if {$state eq {}} { return 0 }
+  if {[ase::state_get $state save_all_v 0] eq {1}} { return 1 }
+  if {[ase::saves_widen_types $sim $state] ne {}} { return 1 }
+  return 0
+}
+
+# --- 6g-3: THE PHANTOM COLUMN BESIDE A LONE OP SAVE (T17 / V1) --------------
+#
+# 1 iff this bench's deck would produce an operating-point plot holding exactly
+# one saved vector -- the shape that makes apt 45.2 and stock 47 write a second,
+# DUPLICATE column named after the save-everything token.
+#
+# MEASURED 2026-09-12 on apt 45.2 and on the fork, `.control` + `save …` + `op`
+# + `write`:
+#
+#   .save v(mid)          apt: `0 v(mid) voltage` AND `1 v(all) voltage`, the
+#                              two carrying the SAME number
+#                              (7.392094525460902e-01 twice)
+#                         fork: `0 v(mid) voltage` alone
+#   .save i(v1)           apt: `0 i(v1) current` AND **`1 i(all) current`**
+#   .save v(mid) v(out)   both binaries clean
+#   tran, one save        both binaries clean (`time` is a second vector)
+#   .save all + .save v(mid)  both binaries clean, 4 real vectors
+#
+# ⚠ THE PHANTOM TAKES THE WRAPPER OF THE REAL SAVE, AND NO DOCUMENT IN THIS
+# BATCH HAS THAT. `PLAN.md` §6g-2 says *"a phantom raw column literally named
+# `all`"* and `APPENDIX` §7.5.1's table shows only `v(all)`. A filter written to
+# either would miss `i(all)` entirely -- and a current is exactly what a single
+# ticked output on a bench with `.options savecurrents` off tends to be.
+#
+# ⚠ `opcards` IS THE OPERATING-POINT TIER'S OWN CARDS, AND IT IS A THIRD
+# ARGUMENT BECAUSE A SUITE HAD TO ASK FOR IT. The tick alone is the wrong
+# question: `ase::op_gate_on` defaults to ON, and the tier emits its own
+# deck-level leader (guard G-LEADER, issue 0964) only when its captured block is
+# NON-EMPTY -- so a bench with the tick on and an empty block still gets the
+# phantom and still needs this, while one with a real block does not.
+#
+# ⚠ AND THE REASON IS THE DEFECT ITSELF, NOT TIDINESS. The phantom exists only
+# where the op plot holds EXACTLY ONE saved vector; a deck carrying device
+# `.save @dev[param]` cards puts many more in the SAME plot, so there is nothing
+# to duplicate. A first cut left this out on the ground that a second `.save
+# all` is measured harmless -- and `test_ase_final`'s **F12**, which asserts
+# that `.save all` appears exactly ONCE on a real committed bench (invariant
+# I2/R2), went red on the run that proved it. Harmless is not the same as
+# invisible.
+
+# WILL THE OPERATING-POINT TIER PUT ITS OWN CARDS -- AND THEREFORE ITS OWN
+# `.save all` LEADER -- IN THIS DECK? The same three conditions render_deck's
+# own op-cards block asks, spelled once so the two cannot drift.
+proc ase::saves_op_cards_coming {state netlist_text} {
+  if {$state eq {}} { return 0 }
+  if {![ase::op_gate_on [ase::state_get $state save_op_params {}]]} { return 0 }
+  if {![ase::op_analysis_enabled $state]} { return 0 }
+  set blk {}
+  catch { set blk [ase::op_cards_for $netlist_text] }
+  return [expr {$blk ne {} ? 1 : 0}]
+}
+
+proc ase::saves_op_phantom_risk {sim state {opcards 0}} {
+  if {$state eq {}} { return 0 }
+  if {[ase::saves_all_forced $sim $state]} { return 0 }
+  if {$opcards} { return 0 }
+  if {![ase::saves_narrowed $state]} { return 0 }
+  set opon 0
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    if {[ase::state_get $a type] eq {op}} { set opon 1 ; break }
+  }
+  if {!$opon} { return 0 }
+  set n 0
+  foreach o [ase::state_get $state outputs] {
+    if {[ase::state_get $o save 0] ne {1}} { continue }
+    if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
+    incr n
+  }
+  return [expr {$n == 1 ? 1 : 0}]
+}
+
+# --- 6g-2: THE PHANTOM COLUMN, FILTERED WHERE A VECTOR LIST REACHES A USER ---
+#
+# The free half of T17, and it is the floor: it holds on every binary, including
+# ones nobody measured, and on a results file written by somebody else's ngspice
+# and opened here. M-free by D46 -- it changes no byte of anyone's results file
+# -- so it is UNCONDITIONAL and carries no capability gate at all.
+#
+# ⚠ THE `all` ENTRY IS DROPPED ONLY WHEN SOMETHING ELSE SURVIVES, and that
+# clause is `PLAN.md` §6g-2's *"duplicates another column of the same plot"*
+# made safe. Duplication cannot be proved from a name; what CAN be guaranteed is
+# that this filter never empties a list, so a plot whose only column is called
+# `all` comes back exactly as it was rather than as nothing.
+#
+# ⚠ AND IT IS `all` AND `<wrapper>(all)` ONLY. `allv` and `alli` are ASE-L's
+# OWN Save-All tokens (ase::state_get save_all_v / save_all_i map to them), not
+# ngspice vector names -- `PLAN.md` §6g-2 records an earlier draft that filtered
+# them and would have eaten real columns.
+proc ase::raw_drop_phantom_all {vars} {
+  set keep {}
+  set drop 0
+  foreach v $vars {
+    set t [string trim $v]
+    if {[string equal -nocase $t all] || \
+        [regexp -nocase {^[a-z]+\(\s*all\s*\)$} $t]} {
+      incr drop ; continue
+    }
+    lappend keep $v
+  }
+  if {!$drop || [llength $keep] == 0} { return $vars }
+  return $keep
+}
+
+# --- 6g-4: THE EMITTER'S OWN KEYWORD-CASE LINT (V2 / `keyword_case`) ---------
+#
+# -> a list of {<line number> <the line> <the token>}, empty for a clean deck.
+#
+# ⚠ IT LINTS THE `.control` BLOCK AND NOTHING ELSE, AND THAT IS A CORRECTION TO
+# `PLAN.md` §6g-4, WHICH SAYS *"no rendered deck golden may contain a
+# capitalised ngspice keyword"* WITHOUT SAYING WHERE. MEASURED 2026-09-12 on the
+# fork and on apt 45.2:
+#
+#   .SAVE V(MID) + op       identical to `.save v(mid)` on BOTH binaries --
+#                           the netlist parser folds every dot card, and apt
+#                           still writes its phantom `v(all)` beside it, so the
+#                           fold is complete
+#   WRITE <path> ALL        inside `.control`: fork -> the file is written;
+#                           apt 45.2 -> **NO FILE AT ALL**, rc 0, and the only
+#                           trace is `Warning from checkvalid: vector ALL is not
+#                           available or has zero length.` on STDERR
+#
+# So the command WORD is folded on every binary (`WRITE` dispatched fine) and
+# the ARGUMENT is not. A lint that flagged dot cards would be flagging text that
+# is provably harmless -- and would fire on a USER's own `.INCLUDE` in their own
+# netlist, which ASE-L did not write and must not be blamed for.
+#
+# ⚠ IT HAS NO RUNTIME CONSUMER, DELIBERATELY. `PLAN.md` classes 6g-4 M-free with
+# no gate because *"it is an assertion about goldens, not about a binary"*. A
+# lint that refused a run would be a refusal built on a token-equality guess
+# about a user's own node names; a lint that a suite runs over every rendered
+# fixture costs a user nothing and catches the emitter the day it drifts.
+#
+# ⚠ AND THE KEYWORDS ARE THE ADAPTER'S. Which words ngspice folds and which it
+# does not is content (D34-D37). A backend with no `deck_keywords` hook gets NO
+# fallback list and this proc answers `{}` -- it makes no claim about a
+# simulator nobody described.
+proc ase::deck_case_lint {sim decktext {exempt {}}} {
+  set kw {}
+  catch {
+    set h [ase::backend_hook $sim deck_keywords]
+    if {$h ne {}} { set kw [$h] }
+  }
+  if {$kw eq {}} { return {} }
+  set ex {}
+  foreach e $exempt { lappend ex [string trim $e] }
+  set out {}
+  set inctl 0
+  set n 0
+  foreach rawline [split $decktext "\n"] {
+    incr n
+    set l [string trim $rawline]
+    if {$l eq {}} { continue }
+    if {[string equal -nocase $l {.control}]} {
+      if {$l ne {.control}} { lappend out [list $n $l $l] }
+      set inctl 1 ; continue
+    }
+    if {[string equal -nocase $l {.endc}]} {
+      if {$l ne {.endc}} { lappend out [list $n $l $l] }
+      set inctl 0 ; continue
+    }
+    if {!$inctl} { continue }
+    ## The verbatim hatch (issue 1419) puts the USER's own lines in here. They
+    ## are exempted BY VALUE rather than by position, because the hatch's
+    ## position moved once already (C80) and a positional exemption would have
+    ## moved with it silently.
+    if {[lsearch -exact $ex $l] >= 0} { continue }
+    ## A comment inside `.control` is `*` or `;`-led and carries prose.
+    if {[string index $l 0] eq {*} || [string index $l 0] eq {;}} { continue }
+    foreach t [split $l " \t"] {
+      if {$t eq {}} { continue }
+      if {$t eq [string tolower $t]} { continue }
+      if {[lsearch -exact $kw [string tolower $t]] < 0} { continue }
+      lappend out [list $n $l $t]
+    }
+  }
+  return $out
+}
+
+# --- CLASS B: HOW MANY OF THIS BENCH'S SAVED OUTPUTS NAME SOMETHING REAL -----
+#
+# -> {<ticked> <resolved>}.  `resolved 0` with `ticked` above zero is the shape
+# that starves EVERY analysis type (and SIGSEGVs `disto`).
+#
+# ⚠ ONE BODY FOR TWO PRECONDITIONS AT TWO DIFFERENT TIERS. `disto_saves` is
+# `fatal` and `saves_resolve` is `caution`; they must never disagree about the
+# FACT while disagreeing about the verdict, and before this proc existed the
+# only copy of the walk lived inside `disto_saves` itself.
+#
+# ⚠ ANYTHING THIS READER CANNOT TAKE APART COUNTS AS RESOLVING. An `@dev[param]`
+# request, a bus bit, an expression -- one of the two callers is fatal, so every
+# doubt falls on the side of letting the run start. A false refusal here costs a
+# user their own simulator.
+proc ase::saves_unresolved {sim state facts} {
+  set nsave 0
+  set resolved 0
+  if {$state eq {} || $facts eq {}} { return [list 0 0] }
+  foreach o [ase::state_get $state outputs] {
+    if {[ase::state_get $o save 0] ne {1}} { continue }
+    if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
+    incr nsave
+    set ex [string trim [dict get $o expr]]
+    set d {}
+    catch {
+      set h [ase::backend_hook $sim out_decompose]
+      if {$h ne {}} { set d [$h $ex] }
+    }
+    if {[lindex $d 0] ne {voltage} && [lindex $d 0] ne {current}} {
+      incr resolved ; continue
+    }
+    set ok 1
+    if {[lindex $d 0] eq {voltage}} {
+      foreach nd [lrange $d 1 end] {
+        if {$nd eq {0}} { continue }
+        set seen 0
+        dict for {sc sd} [dict get $facts nodes] {
+          foreach nn [dict keys [dict get $sd nodes]] {
+            if {[string equal -nocase $nn $nd]} { set seen 1 ; break }
+          }
+          if {$seen} break
+        }
+        if {!$seen} { set ok 0 }
+      }
+    } else {
+      set nm [lindex $d 1]
+      set seen 0
+      dict for {inst rec} [dict get $facts sources] {
+        if {[string equal -nocase $inst $nm]} { set seen 1 ; break }
+      }
+      if {!$seen} { set ok 0 }
+    }
+    if {$ok} { incr resolved }
+  }
+  return [list $nsave $resolved]
 }
 
 # --- `depends`: A FIELD THAT IS ONLY REAL WHEN ANOTHER ONE SAYS SO -----------
@@ -8043,74 +8446,42 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       return {}
     }
     vecsaves {
-      # ⚠ AN ANALYSIS WHOSE RESULT VECTORS ARE NOT NETLIST NAMES CANNOT RUN
-      # UNDER A SAVE LIST MADE OF NETLIST NAMES, AND ASE-L's OUTPUTS PANE MAKES
-      # EXACTLY SUCH A LIST. This is APPENDIX §7.5.2's starvation, which that
-      # section assigns to "Stage 6's precondition" by name. MEASURED
-      # 2026-09-12 on the fork AND on apt 45.2, one analysis per deck:
+      # ⚠ THIS PRECONDITION NO LONGER REFUSES, AND THAT IS THE WHOLE OF 6g-1.
+      # Issue 1432 shipped it as `fatal`: a bench with one ticked output and a
+      # `noise` row was REFUSED, and the user was told to go and tick Save all
+      # voltages themselves. Measured 2026-09-12 (see ase::analysis_resultvecs'
+      # block for the transcripts), ASE-L can simply emit the `.save all` leader
+      # and the run works -- on the fork and on apt 45.2 alike. A refusal where
+      # the emitter can make the run correct is a FALSE refusal, and this file's
+      # own rule is that a false refusal is worse than a missed one.
       #
-      #   no save card at all        + noise -> rc 0, both plots
-      #   .save all                  + noise -> rc 0, both plots
-      #   .save all / .save v(mid)   + noise -> rc 0, both plots
-      #   .save v(mid)               + noise -> rc 1, `Error: no data saved for
-      #                                 Noise analysis; analysis not run`,
-      #                                 $sim_status 1, `Plotname: constants`
-      #   .save v(mid)               + tf    -> rc 1, the same shape
-      #   .save v(mid)               + sens  -> rc 1, the same shape
+      # ⚠ SO WHY SAY ANYTHING AT ALL? Because the widening is a change to the
+      # user's results file that the user did not ask for: they ticked two
+      # outputs and the run saves everything. `render_deck` emits the line; this
+      # is the only thing that SAYS so, and without it the deck would contain
+      # something the window cannot show. It is a `caution` -- advice, not a
+      # door -- which is the tier the four-state grid and preflight_gate's
+      # "the rest is said before the run" block already carry to the user.
       #
-      # ⚠ THE VECTOR NAMES ARE THE REASON, NOT THE NARROWING. `onoise_spectrum`,
-      # `onoise_total`, `Transfer_function` and `r1:r` are not nodes, so a
-      # netlist-derived save list can never contain them -- and MEASURED, a save
-      # list that names them EXPLICITLY runs fine. `pz` is the exception that
-      # proves it: its results are `pole(n)`/`zero(n)`, and it survives a
-      # narrowed save (APPENDIX §7.5.2).
-      #
-      # ⚠ IT IS FOUND ON THREE ENTRIES, TWO OF WHICH ARE STAGE 5's. `tf` and
-      # `sens` shipped at issues 1426 and 1428 with this defect live; the
-      # measurement above is what put it in reach, and leaving it on two entries
-      # because of a stage boundary would leave a user's ordinary bench -- one
-      # saved output is enough -- failing with a message that names no cause.
-      #
-      # ⚠ `fatal` FOR `pz_klu`'s REASON: $sim_status is 1, the guard's `quit 1`
-      # fires, and every analysis after this one in the deck silently does not
-      # happen. And it rests on the BENCH's own keys, never on the netlist, so
-      # there is no blind spot and no false refusal to demote.
-      #
-      # ⚠ IT STANDS DOWN FOR `save_op_params`, WHICH IS A MISSED REFUSAL AND
-      # NOT A FALSE ONE. Every arm of render_deck's operating-point tier emits
-      # its own deck-level `.save all` leader (guard G-LEADER, issue 0964), so a
-      # bench with the tick on is rescued -- unless its captured block is empty,
-      # in which case this stands down where it could have spoken. "A FALSE
-      # REFUSAL IS WORSE THAN A MISSED ONE" is ase::analysis_needs' own rule.
+      # ⚠ AND IT IS `ase::saves_widen_types` THAT DECIDES, NOT A SECOND COPY OF
+      # THE CONDITION. One body, two readers -- the emitter and this sentence --
+      # so a deck that widens and a grid that says nothing cannot both be true.
       if {$state eq {}} { return {} }
-      if {[ase::state_get $state save_all_v 0] eq {1}} { return {} }
-      if {[ase::state_get $state save_op_params 0] eq {1}} { return {} }
+      if {[ase::analysis_resultvecs $sim $type] ne {own}} { return {} }
+      if {[ase::saves_widen_types $sim $state] eq {}} { return {} }
       set nsave 0
       foreach o [ase::state_get $state outputs] {
         if {[ase::state_get $o save 0] ne {1}} { continue }
         if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
         incr nsave
       }
-      if {$nsave == 0} { return {} }
-      # ⚠ AND THE VERBATIM HATCH RESCUES IT TOO, which is why this walks every
-      # enabled row rather than only the one being judged. Issue 1419's `x` key
-      # puts lines into `.control` above their own analysis, and MEASURED
-      # 2026-09-12 on both binaries a `save all` COMMAND there undoes a deck-level
-      # `.save v(mid)`: `noise` runs, rc 0, both plots. A user who knows this is
-      # the user least deserving of a refusal.
-      foreach arow [ase::state_get $state analyses] {
-        if {[ase::state_get $arow enabled 0] ne {1}} { continue }
-        foreach xl [ase::analysis_verbatim $arow] {
-          if {[regexp {^[ \t]*save[ \t]+all\M} $xl]} { return {} }
-        }
-      }
-      return [list fatal \
-        "this bench saves $nsave named output[expr {$nsave == 1 ? {} : {s}}] and\
- nothing else, and a $type analysis answers in vectors that are not netlist\
- names -- ngspice refuses to run it at all and every analysis after it in the\
- deck is abandoned with it" \
-        "tick Save all voltages, or clear the per-output Save ticks so the deck\
- carries no save list"]
+      return [list caution \
+        "a $type analysis answers in vectors that are not netlist names, so it\
+ cannot run under a save list made of them -- this run saves everything, and\
+ the $nsave per-output Save tick[expr {$nsave == 1 ? {} : {s}}] on this bench\
+ will not narrow it" \
+        "tick Save all voltages to say so explicitly, or switch the $type\
+ analysis off to keep the narrowed save list"]
     }
     disto_saves {
       # ⚠ THE SHARPEST MEASURED DEFECT IN THIS WHOLE SURFACE, AND MAKING `disto`
@@ -8138,54 +8509,19 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       # ⚠ AND `.save i(vnope)` CRASHES TOO: the branch current of a source that
       # is not there resolves to nothing exactly as a missing node does.
       #
-      # ⚠ THIS IS THE ONE PRECONDITION THAT READS THE BENCH'S OUTPUT ROWS RATHER
-      # THAN THE ROW IT IS ASKED ABOUT, which is why `ase::needs_eval` takes the
-      # state at all. Without a state it answers {} -- a reader that cannot see
-      # the save list may not refuse a run because of it.
+      # ⚠ `disto` IS NOT IN 6g-1's CLASS, WHICH `PLAN.md` §6g-1 GETS WRONG.
+      # Measured 2026-09-12, a `disto` plot's own `Variables:` block is
+      # `frequency v(in) v(mid) v(out) i(v1)` -- netlist names, every one -- and
+      # `.save v(mid)` + `disto` is rc 0 on both binaries. What starves `disto`
+      # is class B, this arm, and nothing else.
       if {$state eq {}} { return {} }
-      if {[ase::state_get $state save_all_v 0] eq {1}} { return {} }
-      set nsave 0
-      set resolved 0
-      foreach o [ase::state_get $state outputs] {
-        if {[ase::state_get $o save 0] ne {1}} { continue }
-        if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
-        incr nsave
-        set ex [string trim [dict get $o expr]]
-        # ⚠ ANYTHING THIS READER CANNOT TAKE APART COUNTS AS RESOLVING. An
-        # `@dev[param]` request, a bus bit, an expression -- the refusal below
-        # is fatal, so every doubt has to fall on the side of letting the run
-        # start. A false refusal here costs a user their own simulator.
-        set d {}
-        catch {
-          set h [ase::backend_hook $sim out_decompose]
-          if {$h ne {}} { set d [$h $ex] }
-        }
-        if {[lindex $d 0] ne {voltage} && [lindex $d 0] ne {current}} {
-          incr resolved ; continue
-        }
-        set ok 1
-        if {[lindex $d 0] eq {voltage}} {
-          foreach nd [lrange $d 1 end] {
-            if {$nd eq {0}} { continue }
-            set seen 0
-            dict for {sc sd} [dict get $facts nodes] {
-              foreach nn [dict keys [dict get $sd nodes]] {
-                if {[string equal -nocase $nn $nd]} { set seen 1 ; break }
-              }
-              if {$seen} break
-            }
-            if {!$seen} { set ok 0 }
-          }
-        } else {
-          set nm [lindex $d 1]
-          set seen 0
-          dict for {inst rec} [dict get $facts sources] {
-            if {[string equal -nocase $inst $nm]} { set seen 1 ; break }
-          }
-          if {!$seen} { set ok 0 }
-        }
-        if {$ok} { incr resolved }
-      }
+      # ⚠ AND THE `.save all` LEADER RESCUES IT, so a bench that gets one for
+      # another reason must not be refused here. MEASURED on both binaries:
+      # `.save all` + `.save v(nosuchnode)` + `disto` is rc 0. This is the same
+      # stand-down `vecsaves` used to make for `save_op_params`, read from
+      # ase::saves_all_forced so there is one body rather than three.
+      if {[ase::saves_all_forced $sim $state]} { return {} }
+      lassign [ase::saves_unresolved $sim $state $facts] nsave resolved
       if {$nsave == 0 || $resolved > 0} { return {} }
       return [list fatal \
         "every saved output names something this circuit does not have (read\
@@ -8194,6 +8530,41 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
  status, no log and no results file to explain it" \
         "correct the output names, or tick Save all voltages, or switch the\
  distortion analysis off"]
+    }
+    saves_resolve {
+      # ⚠ EVERY ANALYSIS IS STARVED BY A SAVE LIST THAT RESOLVES TO NOTHING, AND
+      # ISSUE 1433 HANDED THIS ON AS "`tran` IS A FIFTH TYPE". It is not a fifth
+      # type; it is universal. MEASURED 2026-09-12, one analysis per deck, on the
+      # fork AND on apt 45.2, with `.save v(nosuchnode)` as the only save card:
+      #
+      #   op   -> rc 1, `no data saved for D.C. Operating point analysis`
+      #   dc   -> rc 1, `no data saved for D.C. Transfer curve analysis`
+      #   ac   -> rc 1, `no data saved for A.C. Small signal analysis`
+      #   tran -> rc 1, `no data saved for Transient analysis`
+      #   and the same decks with `.save v(mid)` -> rc 0 for all four
+      #
+      # `$sim_status` is 1 in every case, so ASE-L's guard already turns it into
+      # `RUN-FAILED`. What it does not do is say WHY, and the reason is knowable
+      # from the netlist before anything starts -- which is the whole argument
+      # of Stage 4.
+      #
+      # ⚠ `caution`, NOT `fatal`, AND THE DIFFERENCE IS THE BLIND SPOT. This
+      # rests on ase::netlist_facts, which answers `exact 0`: a hierarchical node
+      # inside an `.include`d subcircuit is unresolvable HERE and perfectly
+      # resolvable in ngspice. `disto_saves` pays that risk because the
+      # alternative is a SIGSEGV with no log; for a type that fails honestly at
+      # rc 1 the cost of a false refusal is far higher than the cost of a
+      # warning nobody needed. Same body, same measurement, different tier --
+      # and the tier is the decision, not the detection.
+      if {$state eq {}} { return {} }
+      if {[ase::saves_all_forced $sim $state]} { return {} }
+      lassign [ase::saves_unresolved $sim $state $facts] nsave resolved
+      if {$nsave == 0 || $resolved > 0} { return {} }
+      return [list caution \
+        "every saved output names something this circuit does not have, and\
+ ngspice will not run the $type analysis at all under a save list that resolves\
+ to nothing -- the run fails with `no data saved`" \
+        "correct the output names, or tick Save all voltages"]
     }
     disto_f1src {
       # ⚠ THE SILENT ZEROS, MEASURED. `CKTdisto`'s `D_RHSF1` walk
@@ -13339,6 +13710,12 @@ proc ase::cosim_db_inventory {{token {}} {statusVar {}}} {
     }
     set names {}
     if {![catch {xschem raw list} rl]} { set names [split [string trimright $rl "\n"] "\n"] }
+    ## ⚠ 6g-2 (issue 1434): the phantom column apt 45.2 and stock 47 write beside
+    ## a lone op save is dropped HERE and not in ase::cap_raw_plots, which is the
+    ## capability probe's own reader and must stay faithful (see its header).
+    ## This is the `xschem raw list` consumer in this file, and its names reach a
+    ## user through the F2 resolver's matching and its refusal sentences.
+    set names [ase::raw_drop_phantom_all $names]
     lappend out [dict create idx $idx path $path names $names]
   }
   # unconditional restore, outside every per-DB failure path
@@ -14866,8 +15243,32 @@ namespace eval ase::backend::ngspice {
     lappend lines ".temp $T"
     # UI v2 Save-All blanket (item 07 D12): all-voltages -> `.save all`,
     # ahead of the per-output .save lines
-    if {[ase::state_get $state save_all_v 0] eq {1}} {
+    #
+    # ⚠ THE SAME LINE NOW HAS THREE REASONS AND THEY ARE NOT INTERCHANGEABLE.
+    # (1) the user's own Save-All tick; (2) **6g-1** -- an enabled analysis whose
+    # result vectors are not netlist names cannot run under a narrowed save list
+    # at all, so the leader is a CORRECTNESS PRECONDITION and is UNCONDITIONAL
+    # (D46: an M-artifact mitigation is gated on a measurement EXCEPT where
+    # without it the analysis does not run); (3) **6g-3** -- the phantom `v(all)`
+    # column apt 45.2 and stock 47 write beside a lone op save, which is a
+    # workaround for a defect only some binaries have, so it is gated on
+    # `ase::caps_measured_as` (D48) and NOT on `![ase::caps_is …]`, which would
+    # be true for every unmeasured binary and invert D47.
+    #
+    # ⚠ (1) AND (2) SHARE ONE BODY WITH THE PRECONDITIONS THAT REPORT THEM,
+    # `ase::saves_all_forced`, so a deck that widens and a grid that says nothing
+    # cannot both be true. (3) is deliberately outside that body -- see its
+    # comment.
+    set rdsim [ase::state_get $state simulator [ase::default_simulator]]
+    if {[ase::saves_all_forced $rdsim $state]} {
       lappend lines ".save all"
+    } elseif {[ase::saves_op_phantom_risk $rdsim $state \
+                 [ase::saves_op_cards_coming $state $netlist_text]]} {
+      set rdcaps [dict create known 0]
+      catch { set rdcaps [ase::sim_capabilities $rdsim] }
+      if {[ase::caps_measured_as $rdcaps one_vector_write 0]} {
+        lappend lines ".save all"
+      }
     }
     foreach o [ase::state_get $state outputs] {
       if {[ase::state_get $o save 0] eq {1}} {
@@ -16112,6 +16513,35 @@ namespace eval ase::backend::ngspice {
   proc si_suffixes {} {
     return [dict create meg 1e6 mil 25.4e-6 t 1e12 g 1e9 k 1e3 \
                         m 1e-3 u 1e-6 n 1e-9 p 1e-12 f 1e-15 a 1e-18]
+  }
+
+  # ─── 6g-4: THE WORDS THIS ADAPTER PUTS INSIDE `.control` ──────────────────
+  #
+  # Content, not schema: which words ngspice has is a fact about ngspice
+  # (D34-D37). `ase::deck_case_lint` is the schema half and makes no claim at all
+  # for a backend that does not answer this.
+  #
+  # ⚠ IT IS THE SET THIS EMITTER ACTUALLY WRITES, NOT ngspice's 134 COMMANDS.
+  # A lint whose alphabet is bigger than the emitter's vocabulary reports on
+  # somebody else's text -- a user's verbatim hatch, a node name, a path -- and
+  # the one thing this lint may not do is blame ASE-L for a word ASE-L did not
+  # write. Every entry below appears in a `lappend lines` in `render_deck`, in
+  # `sim_status_guard`, in the checkpoint block, or as a value an analysis field
+  # can carry into the emitted line.
+  #
+  # ⚠ `all` IS THE ONE THAT MATTERS AND IT IS AN ARGUMENT, NOT A COMMAND.
+  # MEASURED 2026-09-12: `WRITE <path> ALL` dispatches fine on apt 45.2 -- the
+  # command word is folded -- and then writes NO FILE, at rc 0, with one stderr
+  # warning. That is `APPENDIX` §7.5.1's `keyword_case` probe seen from the
+  # emitter's side.
+  proc deck_keywords {} {
+    return [list \
+      set unset let echo write print quit remzerovec setplot previous \
+      stop after resume delete shell if else end while run save alter \
+      source destroy status foreach \
+      all appendwrite filetype ascii binary sim_status \
+      op dc ac tran noise tf pz sens disto sp pss \
+      dec oct lin uic vol cur pol zer]
   }
 
   # ─── 6f: THE TRANSIENT POINT-COUNT ESTIMATE (issue 1433) ──────────────────
@@ -17601,13 +18031,14 @@ $_leg
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
+        needs  {saves_resolve} \
         fields {} \
         emit   {{role analysis tmpl {op}}} \
         results {value {kind opvectors}} \
         plots  {{select {Operating Point} role scalars results value label op}}] \
       dc [dict create \
         label dc  baseline 1  registered 1  seed_enabled 0  emitorder 10 viewrank 20 \
-        needs  {sweep_target cider_klu} \
+        needs  {sweep_target saves_resolve cider_klu} \
         fields {{name source kind source required 1 label {Sweep variable}} \
                 {name start  kind real   required 1 label {Start}} \
                 {name stop   kind real   required 1 label {Stop}} \
@@ -17626,7 +18057,7 @@ $_leg
         plots  {{select {DC transfer characteristic} role sweep results viewer label dc}}] \
       ac [dict create \
         label ac  baseline 1  registered 1  seed_enabled 0  emitorder 20 viewrank 30 \
-        needs  {ac_source cider_klu} \
+        needs  {ac_source saves_resolve cider_klu} \
         fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
                              label {Sweep type} relabels points} \
                 {name points kind int  required 1 label {Points per decade} \
@@ -17642,7 +18073,7 @@ $_leg
                  when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
-        needs  {cider_klu} \
+        needs  {saves_resolve cider_klu} \
         fields {{name step   kind time required 1 label {Time step} unit s} \
                 {name stop   kind time required 1 label {Stop time} unit s} \
                 {name tstart kind time advanced 1 whenskipped 0 \
@@ -17656,6 +18087,7 @@ $_leg
         plots  {{select {Transient Analysis} role sweep results viewer label tran}}] \
       noise [dict create \
         label noise  baseline 1  registered 1  emitorder 40 \
+        resultvecs own \
         needs  {noise_out noise_insrc noise_klu vecsaves cider_klu} \
         fields {{name out    kind outvar required 1 label {Output}} \
                 {name insrc  kind source required 1 label {Input source}} \
@@ -17687,6 +18119,7 @@ $_leg
                  when {opt keepopinfo} label {noise operating point}}}] \
       tf [dict create \
         label tf  baseline 1  registered 1  emitorder 50 \
+        resultvecs own \
         needs  {tf_out tf_insrc vecsaves cider_klu} \
         fields {{name out   kind outvar required 1 label {Output}} \
                 {name insrc kind source required 1 label {Input source}}} \
@@ -17696,7 +18129,8 @@ $_leg
                  vectors ::ase::backend::ngspice::tf_vectors}}] \
       pz [dict create \
         label pz  baseline 1  registered 1  emitorder 60 \
-        needs  {pz_shorted pz_nodes pz_devices pz_klu cider_klu} \
+        resultvecs own \
+        needs  {pz_shorted pz_nodes pz_devices pz_klu vecsaves cider_klu} \
         fields {{name inp  kind node required 1 label {Input +}} \
                 {name inn  kind node required 0 default 0 whenskipped 0 \
                            label {Input -}} \
@@ -17716,6 +18150,7 @@ $_leg
                  when {opt keepopinfo} label {pz operating point}}}] \
       sens [dict create \
         label sens  baseline 1  registered 1  emitorder 70 \
+        resultvecs own \
         needs  {sens_out sens_filters sens_klu vecsaves cider_klu} \
         fields {{name out     kind outvar required 1 label {Output}} \
                 {name filters kind filter required 0 label {Parameters}} \
@@ -18249,5 +18684,6 @@ $_leg
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
     si_suffixes         ::ase::backend::ngspice::si_suffixes \
     dc_swkind           ::ase::backend::ngspice::dc_swkind \
-    out_decompose       ::ase::backend::ngspice::out_decompose]
+    out_decompose       ::ase::backend::ngspice::out_decompose \
+    deck_keywords       ::ase::backend::ngspice::deck_keywords]
 }
