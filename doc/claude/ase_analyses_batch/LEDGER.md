@@ -1459,6 +1459,89 @@ its own: it reaches the user through the four-state grid and `preflight_gate`'s 
 block, and does not grey or mark the Save ticks it overrides. That is a one-row
 follow-up for the next window stage, the same shape as issue 1432's `depends` note.
 
+### Task 6 — the precondition banner, and a plan that contradicted itself
+
+**Stage 4 deferred this item into Stage 6 and named the reason**: the banner needs netlist
+*text*, which the dialog does not have and can only obtain by calling `ase::netlist` — *a
+side effect no dialog may have because a user opened it*. The shipped answer is that the
+dialog **never produces** a netlist; it **peeks at** facts that the run path *donates*, and
+the fill site is `ase::netlist_in_place` — driver-verified as the **only** `xschem netlist`
+call in `src/ase.tcl` (`:11477`), with every arm of `ase::netlist` ending there. *"The
+banner only reads a netlist somebody asked for"* is therefore true **by construction**, not
+by convention.
+
+| | |
+|---|---|
+| status | **LANDED** — task 6 of 6, and **Stage 6 is COMPLETE** |
+| issue | **1435** (and **1436** filed, not fixed) |
+| T1 | taken **solo** by the driver, 62 cases, **zero** counted failures |
+| suites moved | `test_ase_core` 558 → **598** (section BN, 40 rows) · `test_ase_preflight` 229 → **235** (PF233, 6) · `test_ase_dialogs` **display arm** 285 → **300** (GN, 15); its headless arm is unmoved at 37. ⚠ **46 of the 61 new rows are in T1** — `test_ase_dialogs` is in `hcases`, so T1 runs its *headless* arm and never the display arm where the fifteen `GN` rows live. Stated rather than glossed |
+| driver's own re-run | engine arm **4/4 ALL PASS** — core **598**, preflight **235**, persist **44**, simcaps **199**. Display arm, `test_ase_dialogs`: **300 checks, 298 passed, and the two failures are EXACTLY issue 1436's two rows with exactly its recorded values** |
+| deck goldens moved | **NONE**, and no `.state` file moved either — 104 committed, 0 modified. The banner **emits nothing**: it is pure Tcl over netlist text, starts no program, and reads no capability |
+| sabotage | **32 respellings, 36 applications, 36/36 restored** by `cp` with an md5 compare — **zero survivors and zero section kills**. ⚠ **Pass 1's table was re-taken**: it produced 5 survivors and 4 suite kills, and every one of the nine was a defect in a **row**, not in the code. The kills all aborted `test_ase_core` at `invalid command name "ag_five"`, because a bare `dict get … why` on a `{state warm …}` answer raises inside the file's outer catch; every optional key now goes through `bn_get` |
+| ledger debts | ⚖ **R9** (rule 1435 — three frames and the line shape) **and a `look` debt**, `ase_precheck_banner_1435`, filed at the moment the decision was taken and **before any suite was green**. Ledger 154/56/9 → **155/57/9** |
+| commit | `8cab55ff` |
+| receipt | `receipts/18-stage-6-banner.md` |
+
+**⚠ THE DECISION THE BRIEF ASKED FOR CAME BACK (b), AND THE DRIVER CONFIRMED IT FROM THE
+SOURCE RATHER THAN FROM THE CREW'S PIXELS.** `PLAN.md` Stage 4's *"there is no new pixel …
+**No look debt is filed**"* paragraph is the **stale** half; its own *Files and procs*
+table's `.note` banner is the live one. The plan's ground was that everything reaches the
+user through `ase::ui::dialog_status` — i.e. through `$w.status`. Read statically at
+`81312742`:
+
+* `src/ase_window.tcl:4788` — `label $w.status -text {} -anchor w -justify left`. **No
+  `-wraplength`**, so it is 0 and the label does not wrap. One 101-character precondition
+  sentence took the dialog from **667 px to 856 px** in the crew's measurement, and the
+  widget definition is why.
+* `:5043` — `dialog_status` writes that same `$w.status`. A precondition sentence there does
+  not *join* a capability sentence; it **evicts** one that is equally true.
+* `:4812` — the shipped `$w.note` is `-wraplength 600`, at grid row **7**, `columnspan 2`,
+  and **nothing else moved**. A genuinely new widget that grows downward instead of sideways.
+
+⚠ **AND THE ROW THAT MEASURES THE EVICTION FOUND ITS OWN REFINEMENT.** `GN1`'s first cut
+asserted *"occupied on every cell"* without touching the capability cache and **went red**:
+by that point in the display arm the cache is **warm**, nine cells answer `measured`, and
+the status line *looks* free. Both states are real, and the collision exists in the **cold**
+one — which is what a user who has never pressed Detect has. **A surface that shares a
+widget only sometimes is worse than one that never does**, because the eviction then depends
+on whether the user pressed a button elsewhere in the dialog. `GN1` now clears and restores
+the cache and says which state it measures.
+
+**⚠ THE CONTENT HALF IS EMPTY, AND THAT IS THE FINDING RATHER THAN AN OMISSION.**
+`ase::backend::ngspice` is **byte-unmoved** — driver-verified: the diff contains **zero**
+lines mentioning it. Every sentence the banner prints was already minted in `ase::needs_eval`
+by issues 1423/1425/1426/1427/1428/1432/1434. The task added three frames and nothing else.
+That is **D34–D37 paying out**: a surface that is pure schema because the content was put in
+the right place four stages ago.
+
+**Eight corrections, C92–C99.** The one with the longest reach is **C96**: `ase::netlist_facts`
+costs **76.5 ms over a 447 KB netlist**, and **no document in this batch treats it as a cost
+at all**. That number is what decided the lazy parse, the memo and the donation. ⚠ **The
+driver did not re-take it** — it is recorded here as the crew's measurement, because it is a
+performance figure rather than a correctness one and nothing in this commit depends on its
+exact value; a later stage that starts caching on the strength of it should re-measure first.
+
+⚠ **ISSUE 1436 IS FILED, OPEN, AND THE DRIVER VERIFIED ITS ATTRIBUTION CAUSALLY.** The crew
+proved *pre-existing* by restoring both sources from `git show HEAD:` and re-running — the
+same method issue 1431 used. The driver took the stronger check, against the **committed**
+tree at `81312742`: `sens` already carries `out filters mode sweep points start stop` with
+`depends {mode ac}` on the last four (issue **1432** put them there), and `chana_show` at
+that commit has **no `depends` handling at all**, so `$top.chana.form.stop` *must* exist and
+`G2sens` *must* fail. The red is structurally guaranteed by a commit that predates this task.
+Neither red is a T1 failure — T1 runs this file's headless arm only.
+
+⚠ **ONE FILE WAS CREATED IN THE REPO ROOT AND REMOVED, AND IT IS IN THE RECEIPT RATHER THAN
+QUIETLY CLEANED.** `BN4h`'s first cut dirtied the editor buffer without parking
+`autosave_backup` and dropped a 74-byte `untitled~.sch` in the repo root. **Row C11 (issue
+0609) caught it** — a row that exists for exactly that and had never fired. The row now parks
+the knob; `git status` carries no trace.
+
+**Still open, named rather than absorbed:** `signal_list` in `src/wave_viewer.tcl` (§6g-2's
+other named seam, and the substantial user-visible half of 6g-2), a surface for issue 1434's
+widening, and issue 1436's two rows. **Stage 7 — the options surface — is next**, and its
+four-task split is recorded at the head of that stage's block below.
+
 ### ✅ The standing spec debt of Stages 2–6 is DISCHARGED — `1d12c12a`
 
 Every stage from 2 onward recorded *"none — same standing spec debt"* against its
@@ -1489,7 +1572,13 @@ The shipped shape is described in full; it is simply described in the new sectio
 than on top of the old one. The `P1–P5` phasing block was also pointed at this ledger,
 with the reason to read the ledger before the plan.
 
-### ⏭ Stage 6's remaining work — ONE task, and it is the resume point
+### ✅ Stage 6's remaining work — DISCHARGED by task 6 (`8cab55ff`)
+
+⚠ **This section was written while one task was still open, and it is kept rather
+than deleted because it is the record of what the resume point WAS.** The banner landed
+as issue **1435**; the plan contradiction it names below was resolved **(b)** — the
+banner is a genuinely new widget, the *"no look debt"* paragraph is the stale half, and
+a `look` debt is filed. **Stage 6 is COMPLETE.**
 
 **`PLAN.md` §6a–§6g are all landed**: 6a/6b/6c in task 2 (**1430**), 6d in task 3
 (**1432**), 6e in task 1 (**1429**), 6f in task 4 (**1433**), 6g in task 5 (**1434**).

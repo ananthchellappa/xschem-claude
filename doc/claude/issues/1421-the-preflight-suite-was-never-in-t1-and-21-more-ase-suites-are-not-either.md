@@ -126,3 +126,31 @@ before each batch is added:
 **Until that lands, every "T1 at zero" in this batch still means eight of twenty-nine ASE
 suites**, and each stage should keep saying so rather than letting the number read wider
 than it is.
+
+---
+
+## A third shape, found 2026-09-13: a suite T1 DOES run, on only one of its two arms
+
+This issue counts **suites**. It does not count **arms**, and that turns out to hide a
+gap of the same kind.
+
+`test_ase_dialogs` is in `hcases` (`tests/run_regression.tcl:76`, and the file's own
+comment at `:105` says so in as many words: *"THEY GO IN `hcases`, NOT HERE.
+test_ase_dialogs is 37 checks headless"*). So T1 runs its **headless** arm — **37
+checks** — and never its **display** arm, which is **300**.
+
+That mattered immediately. Issue **1435**'s fifteen `GN` rows are the measured evidence
+for a **user-visible ruling** — that the precondition banner needs a widget of its own
+rather than sharing `$w.status` — and every one of them lives on the arm T1 cannot
+reach. So does issue **1436**'s pair of standing reds, which is why they stood unnoticed
+across at least one commit.
+
+⚠ **Neither adding the suite nor fixing its banner would close this**, which is why it is
+recorded separately: `test_ase_dialogs` already emits what T1 needs and is already named
+in `hcases`. What is missing is a **`dcases` entry**, and `dcases` is deliberately short
+because the display arm costs wall-clock (`run_regression.tcl:110`). So this is a
+scheduling decision about T1's budget, not a banner repair — and it belongs with batch 4
+of the order proposed above, where the other X-dependent suites are.
+
+**Until then, "T1 at zero" means eight of twenty-nine ASE suites AND, for at least one of
+those eight, one of its two arms.**
