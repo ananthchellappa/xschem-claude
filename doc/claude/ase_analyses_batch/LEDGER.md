@@ -2098,6 +2098,44 @@ counts that drift.** Take a number from a `RESULT:` line, not from a paragraph.
 
 ## Stage 8 — Measurements and post-processing
 
+### 📋 Stage 8's task split, decided by the driver before the stage opens
+
+`PLAN.md` §8 says *"one or two commits"*. It is **two crew tasks**, on the same principle
+that worked for Stage 7: the deck-side half and the pixel-side half are separated so that
+any **`look` debt is attributable to exactly one commit**.
+
+| task | §items | why it is one task |
+|---|---|---|
+| **1** | **8a + 8c** | The `measurements` state list and the grammar it validates against (SCHEMA), `meas_line` / `meas_needs_degrees` and `render_deck`'s `meas` block (CONTENT), plus 8c's producers — `.four` as a **card**, `fft`/`spec`/`psd`/`linearize` as **commands**. They are one task because **8c's card/command rule is the same rule 8a's third refusal encodes**: *"`.meas` dot cards are refused under `-r`, so this is a command, not a card"*, and *"nothing analysis-shaped ever goes in the card slot."* Split across two tasks, one crew writes the rule and the other writes its exception. Headless by construction — no widget |
+| **2** | **8b** | The eight named templates, the Measurements sub-dialog, the template picker and the Value-column rows. This is the whole GUI half and the whole of ⚖ R9's copy for the stage (eight template names, every measurement label, the degrees sentence) |
+
+⚠ **`PLAN.md` SAYS THIS STAGE FILES NO `look` DEBT, AND STAGE 6 ALREADY CAUGHT THAT EXACT
+CLAIM BEING STALE.** §8's *Re-measure on the dev display* paragraph argues the pane reuses
+Stage 5's `resulttable` and Stage 3's form idiom, so nothing new is drawn — **and in the
+same breath asks someone to check that the `deg` unit reaches the Y-axis label**, which is
+a pixel. Stage 4 made the identical argument about the precondition banner and it was
+**wrong** (issue 1435 shipped a genuinely new widget and a `look` debt). **Task 2 decides
+it by measurement and says which half of the paragraph is stale**, exactly as task 6 of
+Stage 6 did.
+
+⚠ **AND THE RADIANS TRAP IS ALREADY DRIVER-VERIFIED, FROM STAGE 7.** §8a calls
+`set units=degrees` *"the one nobody caught"*. Issue **1437**'s C104 and the driver's own
+re-measurement settle how it must be spelled — measured on **both** binaries with an RC
+whose phase at 1 kHz is exactly −45°:
+
+```
+no units setting          vp(out) = -7.85398e-01   (radians)
+.options units=degrees    vp(out) = -7.85398e-01   <- THE CARD DOES NOTHING
+set units=degrees         vp(out) = -4.50000e+01   <- works
+```
+
+`units` is **not one of the 247 catalogue rows** — it is neither an `OPTtbl` keyword nor a
+`cp_getvar` name, but is read at `src/frontend/options.c:419` through a `va_name` /
+`CP_STRING` comparison. So the auto-emission §8a asks for **must be the `set` form inside
+`.control`**, and a crew that reaches for `.options units=degrees` writes a line that is
+silently inert and a phase margin wrong by **57.2958×**.
+
+
 *The `measurements` state list; the Measurements sub-dialog; `meas` emission; the eight
 derived templates including phase margin with `set units=degrees`; `.four`/`fft`/`spec`/
 `psd`/`linearize` producers; THD and the harmonic table.* New suite; the Value column gains
