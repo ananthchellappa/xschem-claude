@@ -568,9 +568,52 @@ right and the plan's parenthetical is wrong.**
 `{name VCCGAUSS value {agauss(1.8, 'ABSVAR', 1)}}` — a Monte Carlo distribution written by
 hand, which ASE-L today runs exactly **once**. Stage 11 is what turns that into a spread.
 
-### Still open — three
+### ⚖ R10 — how far the adapter contract is formalised — **ANSWERED 2026-09-13, Option B**
 
-⚖ **R9**, ⚖ **R10** and ⚖ **R11** are unanswered — **three**, and ⚖ **R9 is the batched copy debt** rather than a single question. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4** through ⚖ **R8** on 2026-09-13 — all six above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
+**The user's words: *"go with B — your recommendation"*.** A **written adapter-author
+specification** ships; the **Stage 15 conformance harness does not**, until there is a second
+adapter to run it against.
+
+⚠ **THE RECOMMENDATION WAS NOT ONE OF THE THREE OPTIONS**, and the reason is this batch's own
+most expensive lesson. **A conformance harness with ONE implementation behind it cannot tell
+the contract from the implementation.** Run against ngspice it would pass against ngspice and
+codify ngspice's shape as the contract, with nothing able to disagree — *a row whose fixtures
+never disagree cannot fail*, at architecture scale and priced at a whole stage. We have met
+that defect **nine times in test rows and once in a measurement harness**; building it a tenth
+time deliberately, as Stage 15, would be a choice rather than an accident. A written spec has
+no such failure mode: prose that is wrong about a hook is wrong in a way **a second author
+notices and complains about**.
+
+⚠ **SO STAGE 15 LEAVES THIS BATCH'S COMMITTED SCOPE.** It stays in `PLAN.md` as a stage that
+may be **chosen** when a second adapter appears. The batch is **16 committed stages**, not 17.
+
+⚠ **THE MEASUREMENT THAT DECIDED IT.** Option A — *"a second adapter's author reads the
+ngspice one"* — was framed on 2026-09-10 and the driver re-read it against the tree rather
+than the page:
+
+| when | hooks `ase::register_backend ngspice` declares |
+|---|---|
+| **2026-09-10**, when R10 was written | **8** |
+| **2026-09-13** at HEAD | **23** |
+| the same day, Stage 8 in flight | **27** |
+
+`ase::backend::ngspice` is **4,987 lines**. **The contract roughly tripled while the question
+sat on the queue**, with eight stages still to go. Option A was reasonable at eight hooks and
+is not at twenty-seven. ⚠ **Third ruling in one day whose cost had moved since it was
+drafted** — ⚖ R7 and ⚖ R8 were the others, and that is now a pattern rather than a
+coincidence: **re-measure a queued ruling before putting it, always.**
+
+⚠ **WHEN THE DOCUMENT IS WRITTEN IS PART OF THE ANSWER.** Not now. The contract is still
+growing — Stages 9–14 and 16 add hooks — and a specification written against a moving
+contract is stale on arrival. **That is measured, not feared**: `doc/claude/specs/ase_l.md`
+sat **five stages** behind until `1d12c12a` paid it off this same day. **The adapter-author
+specification is written after the last hook-adding stage** — after Stage 14, with or before
+Stage 16 — and it is cheap when it comes, because the contract is already written key-by-key
+in the code's own comment blocks. Collecting and sharpening, not deriving.
+
+### Still open — two
+
+⚖ **R9** and ⚖ **R11** are unanswered — **two**, and ⚖ **R9 is the batched copy debt** rather than a single question, so ⚖ **R11 is the last single ruling in the batch**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4** through ⚖ **R8** on 2026-09-13 — all six above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
@@ -2494,7 +2537,14 @@ the transient+FFT cross-check offer; the `oscnode` hint.* New suite.
 
 ---
 
-## Stage 15 — The adapter conformance harness
+## Stage 15 — The adapter conformance harness — ⚠ **OUT OF COMMITTED SCOPE (⚖ R10, 2026-09-13)**
+
+⚠ **THIS STAGE IS NO LONGER OWED.** ⚖ **R10 was answered Option B** on 2026-09-13: the
+written adapter-author specification ships, **this harness does not**, until there is a second
+adapter to run it against. A conformance suite with one implementation behind it cannot tell
+the contract from the implementation — it would pass against ngspice and prove nothing. The
+stage stays below as a design that may be **chosen** later; it is not a stage this batch owes,
+and the batch is **16 committed stages rather than 17**.
 
 *Added 2026-09-10, terminal, and it is **what the SECOND adapter needs, not what the first one
 does**.* A suite an adapter author runs against their own simulator binary until it goes green:

@@ -1467,10 +1467,49 @@ that has to be answered before they ship. ⚠ **CORRECTION 2026-09-09**: this pa
 say Stages 0 and 1 mint no sentence at all, which collides with CREW_BRIEF's standing rule
 that a new user-facing sentence is the user's ruling and must never live in a write-up only.
 
-### ⚖ R10 — How far is the adapter contract FORMALISED in this batch?
+### ⚖ R10 — ANSWERED. How far is the adapter contract FORMALISED in this batch?
 
-*Blocks: nothing in Stages 0–14. Decides whether Stage 15 is in this batch's scope at all. New
-2026-09-10, from the architecture change that produced D34–D37.*
+**✅ ANSWERED 2026-09-13 — Option B, the written specification. The user's words: *"go with B
+— your recommendation"*.**
+
+⚠ **AND THE RECOMMENDATION WAS NOT ONE OF THE THREE AS WRITTEN.** It was **B now, and C only
+when a second adapter exists to run it against**, for a reason this batch paid for nine times:
+**a conformance harness with ONE implementation behind it cannot tell the contract from the
+implementation.** Written today it would be run against ngspice, pass against ngspice, and
+codify ngspice's shape as *the contract* — with nothing able to disagree with it. That is *a
+row whose fixtures never disagree cannot fail*, at architecture scale and costing a whole
+stage. A written spec has no such failure mode: prose that is wrong about a hook is wrong in a
+way a second author **notices and complains about**, which is the feedback a harness cannot
+give until there are two implementations.
+
+⚠ **SO STAGE 15 IS OUT OF THIS BATCH'S COMMITTED SCOPE.** It stays in `PLAN.md` as a stage
+that may be **chosen** when a second adapter appears; it is no longer a stage this batch owes.
+That is what this ruling was filed to decide, and it decides it.
+
+⚠ **THE MEASUREMENT THAT DECIDED IT, AND IT IS WHY THE RULING WAS RE-READ AGAINST THE TREE
+RATHER THAN THE PAGE.** Option A — *"a second adapter's author reads the ngspice one and the
+contract block"* — was framed on **2026-09-10**. Driver-measured 2026-09-13:
+
+| when | hooks the ngspice backend registers |
+|---|---|
+| 2026-09-10, when R10 was written | **8** |
+| 2026-09-13 at HEAD | **23** |
+| the same day, with Stage 8 in flight | **27** |
+
+and `ase::backend::ngspice` is **4,987 lines**. **The contract has roughly tripled since the
+question was framed, with eight stages still to go.** Option A was reasonable at eight hooks;
+at twenty-seven it means inferring a contract from five thousand lines. ⚠ **Third ruling in
+one day whose cost had moved since drafting** — ⚖ R7 and ⚖ R8 were the others.
+
+*Blocks: nothing in Stages 0–14. Decided whether Stage 15 is in this batch's scope at all —
+it is not. New 2026-09-10, from the architecture change that produced D34–D37.*
+
+⚠ **WHEN OPTION B's DOCUMENT IS WRITTEN MATTERS, AND IT IS NOT NOW.** The contract is still
+growing — Stages 9–14 and 16 will add hooks — and a specification written against a moving
+contract is stale on arrival. That is not a guess: `doc/claude/specs/ase_l.md` sat **five
+stages** behind until 2026-09-13 for exactly that reason. **The adapter-author specification is
+written after the last hook-adding stage**, i.e. after Stage 14 and with or before Stage 16,
+and the ledger carries that as the scheduling note.
 
 D34 settles **that** ASE-L owns a schema and an adapter owns the content. It does not settle how
 much of that schema is written down for somebody who is not in this room.
