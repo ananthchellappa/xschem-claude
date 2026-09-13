@@ -1141,7 +1141,8 @@ sidecar tells them apart by row index.
 |---|---|
 | status | **LANDED** — task 2 of N |
 | issue | **1430** |
-| T1 | taken **solo** by the driver, 62 cases, zero |
+| commit | `7ea9f1dc` |
+| T1 | taken **solo** by the driver, 62 cases, **zero** — `Total num fail: 0` on every case, and X7 did **not** red despite the other clone's GUI xschem being live throughout, which is issue 1402's load condition |
 | suites moved | `test_ase_core` 417 → **453** (PM, GP, WK, RC) · `test_ase_preflight` 192 → **194** (PF218f2, PF218f3) · `test_ase_optier_0963` 103 → **105** (E5b, E5c) — forty new rows. **All three are IN T1**, so unlike task 1 nothing here needs a standalone run to be covered |
 | driver's own re-run | core **453 ALL PASS**, preflight **194 ALL PASS**, optier **105** — taken by the driver on the engine arm through `run_suites.sh`, not read off the receipt |
 | deck goldens moved | **one, in one file** — `test_ase_core.tcl`'s D1, with C4/C5 which compare against it. That is the whole of the "every deck golden moves" cost Stage 6 budgeted for: the sidecar record is the only line a single-plot deck gains, and every other rendered-deck assertion in the tree counts writes / `remzerovec`s / `.save` cards rather than comparing whole decks |
@@ -1150,6 +1151,7 @@ sidecar tells them apart by row index.
 | ledger debts | ⚖ **R9** — the second results file (`<cell>_ase.opinfo.raw`), which C61 shows is the only way to capture an `opinfo` plot without it winning over the real operating point |
 | spec paragraphs rewritten | none — same standing spec debt as Stages 2–6 |
 | receipt | `receipts/14-stage-6-writer.md` |
+| ⚠ found while verifying | **issue 1431** — `test_cosim_golden_e2e`'s row **GE24** is red, deterministically, and was **not filed anywhere**. The driver caught it because PLAN Stage 6 requires `test_ase_cosim`'s RD1–RD11 re-proven and **neither cosim suite is in T1**. Proved older than this commit by re-running in a detached worktree at `595ab274` carrying this tree's own binary — same row, same six differences, same timestamps — so 1430 is innocent. **Not re-baselined**: a 1 ns VCD shift is equally consistent with a stale golden and a real regression |
 
 **Five corrections to the plan, C60–C64.** The two that change what later stages may assume:
 
