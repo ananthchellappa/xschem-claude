@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**372 strings, from 20 issues, grouped by where the user sees them** — not by
+**377 strings, from 21 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -61,7 +61,7 @@ this document is being written.
 
 ## How to answer
 
-Every string has a **handle** — `R9-001` … `R9-372`. Mark up whatever you want
+Every string has a **handle** — `R9-001` … `R9-377`. Mark up whatever you want
 changed, by handle, in any form: *"R9-011: drop the shouting"*, *"R9-046/047:
 Voltage and Current"*, *"R9-003 → Stop value"*.
 
@@ -308,7 +308,8 @@ and — where the extraction found something a reader needs — a **note**.
 | Everything else | 1 |
 | Added after the first version — found by a completeness sweep | 2 |
 | Issue 1443 — measurements, added after the crew's work landed | 79 |
-| **total** | **372** |
+| Issue 1447 — how a user names one analysis among several | 5 |
+| **total** | **377** |
 
 ---
 
@@ -5568,3 +5569,98 @@ ${cell}_ase.meas
 
 
 *Note:* Direct twin of R9-290 `${cell}_ase.effective`; also a sibling of the `_ase.plotmap` and `_ase.raw` names. `.meas` is a recognised SPICE-adjacent extension, which may be a feature or a confusion since the file is NOT a `.meas` deck — ASE-L emits no `.meas` card anywhere.
+
+---
+
+## Issue 1447 — how a user names one analysis among several
+
+*5 strings.*
+
+⚖ **R6**'s schema half (commit pending at the time of writing) settles the one spelling by which
+a measurement, and one day a calculator expression, says *which* analysis it reads. The words are
+new and the scheme itself is a user-facing decision, so both are here.
+
+**R9-377** · label
+
+```text
+ac1  dc1  dc2  tran1  op1
+```
+
+*Where:* The handle column in the Choose Analyses grid, the first column of `Analyses > List`,
+and the value a measurement row stores in its `id` field. One proc mints it —
+`ase::analysis_handles` — and every surface renders that answer.
+
+*For:* Gives every analysis row a name a person can type. A row's handle is its own declared
+`id` when it has one, and **`<type><n>`** otherwise, `n` counting from the top of the list among
+rows of the same type.
+
+*Note:* ⚠ **The case question the crew filed with this debt.** The handle is **lowercase**
+(`dc1`) while the same row's type column in `Analyses > List` is **UPPERCASE** (`DC`) — chosen
+that way because the handle is a thing you *type*, matched case-insensitively, and the type
+column is UI text under your standing acronyms rule. So one line of the list reads
+`dc1   DC   1 VIN 0 1.8 0.05`. §A2 and §A12 are the neighbouring questions. ⚠ Also worth knowing
+what the scheme deliberately does **not** do: `n` counts every row of the type **including
+disabled ones**, so unticking a row never renumbers the one below it — a reference that changed
+meaning because somebody unticked a box is the silent-wrong-answer class this batch exists to
+remove.
+
+**R9-376** · other
+
+```text
+ (off)
+```
+
+*Where:* Appended to a row's line in `Analyses > List`.
+
+*For:* Marks an analysis that is listed but switched off.
+
+*Note:* ⚠ **A departure from issue 1444, and a deliberate one**: 1444 proposed listing only the
+enabled analyses. Every row is listed instead, because a measurement bound to a switched-off row
+**refuses**, and the reader's next question is *which one is off* — a list that omitted it could
+not answer, and it would disagree with the grid beside it. Note the leading spaces: it is
+appended after `string trimright`, so it renders two spaces clear of the last column.
+
+**R9-373** · refusal
+
+```text
+no analysis called '$h' for '$name' to read
+```
+
+*Where:* A measurement row's refusal reason, from `ase::meas_verdict`. Same delivery as
+R9-338 onward — the row is dropped from the deck and the sentence waits for the surface Stage 8
+task 2 builds.
+
+*For:* Refuses a measurement whose `id` names a handle no row answers to — a typo, or a row that
+has since been deleted.
+
+*Note:* Near-twin of R9-349 `no enabled $t analysis for '$name' to read`, which is the same
+failure said about a *type* rather than a *handle*. §A8: the two should read as a pair.
+
+**R9-374** · refusal
+
+```text
+'$name' names $t but reads '$h', which is [lindex $b 0]
+```
+
+*Where:* As R9-373.
+
+*For:* Refuses a measurement whose stored analysis type and whose handle disagree — it says it
+measures a `tran` but points at `ac1`.
+
+*Note:* Both `$t` and `[lindex $b 0]` render the lowercase deck word (§A2), and the sentence
+names the handle in quotes but the two types bare. ⚠ It is also the only refusal in the batch
+that reports a disagreement between two things the user set, rather than one thing being wrong.
+
+**R9-375** · refusal
+
+```text
+the analysis called '$h' is switched off, so '$name' has nothing to read
+```
+
+*Where:* As R9-373.
+
+*For:* Refuses a measurement pointed at a real row that is not enabled — the case R9-376's
+`(off)` marker exists to let the user find.
+
+*Note:* The pair R9-375 and R9-376 must move together: one tells you a measurement cannot run,
+the other is how you find the row it is complaining about.

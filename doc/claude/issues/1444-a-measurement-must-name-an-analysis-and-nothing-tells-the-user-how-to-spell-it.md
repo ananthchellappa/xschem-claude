@@ -95,3 +95,45 @@ first**; task 2 consumes it. If the order ever inverts, task 2 must be told to c
 The one-liner text itself is **new user-facing copy** and rides ⚖ **R9** with the rest of
 the batch's unratified wording. The *shape* — handle plus a human summary — is settled here;
 the exact words are not.
+
+---
+
+## ⚠ WHICH HALF HAS LANDED — 2026-09-13, issue 1447
+
+**The naming scheme shipped. None of the three surfaces did. This issue stays open.**
+
+⚖ R6's addressing task shipped the row `id` key and **the one speller** in
+`src/ase.tcl` — `ase::analysis_handles` / `_handle` / `_by_handle` /
+`_handle_faults` / `_handle_fields` / `_handle_text`, plus one arm on
+`ase::meas_binding` so a measurement row carrying `id` binds by handle. Measured:
+**104 of 104** tracked `.state` files still round-trip byte-identically and **zero**
+committed analysis rows carry the key. `test_ase_core` 602 → 620,
+`test_ase_persist` 44 → 49 / 148 → 153, both arms. Detail:
+`doc/claude/issues/1447-two-sweeps-of-one-type-and-no-word-for-either-of-them.md`.
+
+**The scheme, so a surface author does not have to go and read the code:** a row's
+handle is its `id` if it declares one, and `<type><n>` otherwise, `n` counting 1
+from the top among rows of the same type — `ac1`, `dc1`, `dc2`, `tran1`, `op1`.
+
+**What each of this issue's surfaces owes, and the exact call:**
+
+| surface | the call | owed |
+|---|---|---|
+| **2** — handle column in Choose Analyses | `ase::analysis_handle $state $idx` | `src/ase_window.tcl` |
+| **3** — `Analyses > List` | `ase::analysis_handle_text $sim $state` | `src/ase_window.tcl` |
+| **1** — Measurements dropdown | `ase::analysis_handle_fields $sim $state $idx` per row; write the chosen handle onto the measurement row's `id` | Stage 8 task 2 |
+| (new) an editable `id` field | `ase::analysis_id_ok` to validate, `ase::analysis_handle_faults $state` to report | with surface 2 |
+
+⚠ **THE ONE THING THAT MUST NOT HAPPEN IS STILL THE SAME ONE.** No surface mints a
+display form of its own. The handle a user reads off the grid has to be the word
+they type into `calc::`, and every proc above returns the same answer precisely so
+that there is nothing left to invent.
+
+⚠ **AND `Analyses > List` LISTS EVERY ROW, NOT ONLY THE ENABLED ONES** — a
+correction to the proposal above. A measurement bound to a switched-off row
+REFUSES, and the user's next question is *which one is off*; a list that omitted it
+could not answer, and it would disagree with the grid beside it, which shows them
+all. `ase::analysis_handle_text` marks a disabled row `(off)`.
+
+The one-liner's **words** are still ⚖ R9's, as this issue said; `owed.sh add rule
+1447` carries them.

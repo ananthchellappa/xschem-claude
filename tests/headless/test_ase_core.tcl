@@ -99,6 +99,21 @@
 # registry, so a twelfth type arriving seeded was caught by a count and a change
 # to one of the four existing ticks by nothing that says why. AG3c is AG3b's
 # non-vacuity control and it runs AG3b's own sabotage in process.
+# 602 -> 620 with sections CP7 and HN (⚖ R6 / issue 1447 -- the optional per-row
+# `id` key, the ONE proc that spells a reference to an analysis occurrence, and
+# the arm it puts on ase::meas_binding). CP7 walks the committed corpus through
+# load->serialize and asserts 104 of 104 byte-identical with NO analysis row
+# carrying `id` -- the measurement ⚖ R6 was ruled on -- and CP7c is its in-process
+# control. HN1-HN14 are the scheme: two rows of a type separately addressable, the
+# ordinal counting switched-off rows so unticking one cannot silently re-point a
+# reference, an explicit `id` claimed before any derived handle is minted, and the
+# committed OUTPUT row named `id` proved not to be this key.
+# 620 -> 622 with HN15 and HN15b -- D34's schema/content guard, extended from
+# `ase::meas_*` (section HK of test_ase_meas_1443.tcl, whose proc list cannot see
+# a different prefix) to the eight procs that spell a reference. HN15b runs
+# HN15's own token list against the adapter, so the guard cannot pass by
+# searching for nothing.
+# AND RAISED 602 -> 622.
 # AND RAISED 600 -> 602.
 # AND RAISED 558 -> 598.
 # AND RAISED 523 -> 558.
@@ -6734,6 +6749,401 @@ check "CP6 the two probe-only types declare no fields, tf, pz, sens, noise and\
         [dict exists [ase::analysis_entry ngspice noise] fields] \
         [dict exists [ase::analysis_entry ngspice disto] fields] \
         [ase::analysis_schema_errors ngspice]] {2 1 1 1 1 1 {}}
+
+## --- CP7: THE WHOLE CORPUS THROUGH load -> serialize, BYTE FOR BYTE ---------
+## ⚠ CP2 ABOVE READS THE FILES AS TEXT; THIS ROW READS THEM THROUGH THE SCHEMA.
+## They catch different things. CP2 would see an `id` key appear on a committed
+## analysis row; only this row sees a reader or a serializer that changes what a
+## committed file BECOMES -- a default back-filled on load, a key gaining a
+## value, a list re-quoted. ⚖ R6 / issue 1447 adds an optional per-row `id` key
+## and its whole safety argument is this number: 104 of 104, unchanged.
+##
+## ⚠ AND IT ASSERTS THAT NO COMMITTED ANALYSIS ROW CARRIES `id`, WHICH IS THE
+## PREMISE THE RULING WAS ANSWERED ON. Four benches carry an OUTPUT row whose
+## NAME is `id` (a drain current); none carries the analysis key. If a committed
+## bench ever gains one, that is a bench the corpus rows above describe wrongly.
+set CP7BAD {} ; set CP7N 0 ; set CP7ID 0
+foreach cpf $CPF {
+  if {![file exists $cpf]} { continue }
+  incr CP7N
+  set cpfh [open $cpf rb] ; set cporig [read $cpfh] ; close $cpfh
+  set cpst [ase::state_load $cpf]
+  if {"[ase::state_serialize $cpst]\n" ne $cporig} { lappend CP7BAD [file tail $cpf] }
+  foreach cpr [ase::state_get $cpst analyses] {
+    if {[dict exists $cpr id]} { incr CP7ID }
+  }
+}
+check "CP7 every tracked state file loads and re-serializes byte-identically,\
+ and not one committed analysis row carries an id -- the measurement ⚖ R6's\
+ optional per-row key was ruled on" \
+  [list [expr {$CP7N >= 104}] $CP7BAD $CP7ID] {1 {} 0}
+
+## ⚠ THE NON-VACUITY CONTROL, AND IT IS NOT DECORATION. A `state_load` that
+## returned `{}` for everything, a `state_serialize` that returned the file it
+## was handed, or an empty `$CPF` all make CP7 pass by having nothing to
+## disagree with. Here the FIRST committed file is loaded, given an analysis
+## `id`, and re-serialized: the comparison MUST fail and the count MUST be 1.
+set CP7C {0 0}
+if {[llength $CPF]} {
+  set cpfh [open [lindex $CPF 0] rb] ; set cporig [read $cpfh] ; close $cpfh
+  set cpst [ase::state_load [lindex $CPF 0]]
+  set cpan [ase::state_get $cpst analyses]
+  set cprow [lindex $cpan 0]
+  dict set cprow id zzctl
+  set cpst [dict replace $cpst analyses [lreplace $cpan 0 0 $cprow]]
+  set CP7C [list [expr {"[ase::state_serialize $cpst]\n" ne $cporig}] \
+                 [llength [ase::analysis_handle_faults $cpst]]]
+}
+check "CP7c the corpus comparison can actually disagree: one committed file with\
+ one id added to one analysis row stops round-tripping, and the id is a legal\
+ handle" $CP7C {1 0}
+
+
+# ============================================================================
+# HN. ⚖ R6 / issue 1447 -- ANALYSIS IDENTITY AND THE ONE SPELLING OF IT
+# ============================================================================
+#
+# ⚖ R6 was answered *"Add it"* on 2026-09-13 and the same message added issue
+# **1444**: *"It should be easy for a user to find out how to refer to different
+# analyses for purposes of building measure statements."* This section covers
+# the SCHEMA half of both -- the optional per-row `id` key, the one proc that
+# spells a reference, and the arm it puts on `ase::meas_binding`. The three
+# SURFACES (the handle column in Choose Analyses, `Analyses > List`, and Stage 8
+# task 2's dropdown) are `src/ase_window.tcl`'s and are not exercised here.
+#
+# ⚠ THE ONE THING THIS SECTION EXISTS TO STOP is a second spelling. If a surface
+# ever mints its own display form, the user reads one word in the grid and types
+# another into the calculator. Every row below asks its question through
+# `ase::analysis_handle{s,_fields,_text}` or `ase::analysis_by_handle`, so a
+# second speller has nothing here to agree with.
+if {[catch {
+
+## The bench the rows below share: five rows, TWO of them `dc`, and the SECOND
+## `dc` deliberately SWITCHED OFF -- which is the case a handle has to survive.
+set HNST [ase::state_default]
+dict set HNST analyses \
+  {{type op   enabled 1}
+   {type dc   enabled 1 source V2 start 0 stop 1.8 step 0.01}
+   {type ac   enabled 1 sweep dec points 10 start 1 stop 10meg}
+   {type dc   enabled 0 source TEMP start -40 stop 125 step 5}
+   {type tran enabled 1 step 1n stop 10u}}
+
+## --- HN1: THE SCHEME ITSELF -------------------------------------------------
+## `<type><n>`, n counting 1 from the top among rows of the same type. Two `dc`
+## rows are two different things a measurement can name, which is the whole
+## point of the ruling.
+##
+## ⚠ THE SECOND `dc` IS THE DISABLED ONE AND IT IS STILL `dc2`. Counting only
+## enabled rows would make it `dc1` the moment the row above it was unticked,
+## and every reference to `dc2` -- in a measurement row, or typed by hand into a
+## calculator expression -- would silently start reading a different sweep.
+check "HN1 two rows of one type are separately addressable, and the ordinal\
+ counts every row of the type whether it is switched on or not" \
+  [list [ase::analysis_handles $HNST] [ase::analysis_handle $HNST 3]] \
+  {{op1 dc1 ac1 dc2 tran1} dc2}
+
+## --- HN2: A DERIVED HANDLE IS A POSITION, WHICH IS WHAT `id` IS FOR ---------
+## ⚠ THIS ROW IS ALSO HN1's NON-VACUITY CONTROL. The two `dc` rows are swapped:
+## the handle LIST is byte-identical, and `dc1` now names the other sweep. A
+## `analysis_handles` that recited a literal would pass HN1 and pass this; one
+## that read the rows would pass both AND move the second half.
+set HNROWS [ase::state_get $HNST analyses]
+## ⚠ COPY FIRST. `dict set <var>` MUTATES the variable it names; writing
+## `set HNSW [dict set HNST ...]` would have swapped the shared bench under every
+## row below it, and the rows would still have agreed with each other.
+set HNSW $HNST
+dict set HNSW analyses \
+  [lreplace $HNROWS 1 3 [lindex $HNROWS 3] [lindex $HNROWS 2] [lindex $HNROWS 1]]
+proc hn_src {st h} {
+  set b [ase::analysis_by_handle $st $h]
+  if {$b eq {}} { return {} }
+  return [ase::state_get [lindex [ase::state_get $st analyses] [lindex $b 1]] source]
+}
+check "HN2 reordering two rows of a type leaves the handles spelled the same and\
+ makes dc1 name the other sweep, which is exactly the instability an explicit id\
+ exists to remove" \
+  [list [ase::analysis_handles $HNSW] [hn_src $HNST dc1] [hn_src $HNSW dc1]] \
+  {{op1 dc1 ac1 dc2 tran1} V2 TEMP}
+
+## --- HN3: ONE ROW'S HANDLE, AND WHAT IS NOT A ROW --------------------------
+check "HN3 a handle is asked for by index, and an index that is not a row\
+ answers with nothing rather than raising" \
+  [list [ase::analysis_handle $HNST 0] [ase::analysis_handle $HNST 5] \
+        [ase::analysis_handle $HNST -1] [ase::analysis_handle $HNST zz]] \
+  {op1 {} {} {}}
+
+## --- HN4: THE RESOLVER, WHICH IS THE HALF A TYPED REFERENCE NEEDS -----------
+## ⚠ IT ANSWERS IN `ase::meas_binding`'s OWN SHAPE, `{type idx}`. A reference a
+## user TYPED and a binding the machine COMPUTED are then the same value, which
+## is issue 1444's single requirement: one scheme, not three.
+proc hn_resolves {st} {
+  set rows [ase::state_get $st analyses]
+  set out {} ; set i -1
+  foreach h [ase::analysis_handles $st] {
+    incr i
+    set want [list [ase::state_get [lindex $rows $i] type] $i]
+    lappend out [expr {[ase::analysis_by_handle $st $h] eq $want ? 1 : 0}]
+  }
+  return $out
+}
+check "HN4 every handle resolves back to its own row, the lookup folds case\
+ because the simulator does, and a spelling nobody owns answers with nothing" \
+  [list [hn_resolves $HNST] [ase::analysis_by_handle $HNST DC2] \
+        [ase::analysis_by_handle $HNST zz9] [ase::analysis_by_handle $HNST {}]] \
+  {{1 1 1 1 1} {dc 3} {} {}}
+
+## --- HN5: AN EXPLICIT `id` IS CLAIMED BEFORE ANY DERIVED HANDLE IS MINTED ---
+## ⚠ THE COLLISION ROW. A row that really is called `dc2` takes the spelling and
+## the second derived `dc` becomes `dc3`. Without the claiming pass the two would
+## be the same word and the resolver would have to pick a winner -- a coin toss
+## wearing a rule.
+set HNID [ase::state_default]
+dict set HNID analyses \
+  {{type dc enabled 1 id dc2 source V2   start 0   stop 1.8 step 0.01}
+   {type dc enabled 1        source TEMP start -40 stop 125 step 5}
+   {type dc enabled 1        source V3   start 0   stop 1   step 0.1}}
+check "HN5 an explicit id is claimed over the whole list first, so a derived\
+ handle can never collide with one" \
+  [list [ase::analysis_handles $HNID] [ase::analysis_by_handle $HNID dc2] \
+        [ase::analysis_by_handle $HNID dc1] [ase::analysis_by_handle $HNID dc3]] \
+  {{dc2 dc1 dc3} {dc 0} {dc 1} {dc 2}}
+
+## --- HN5c: HN5's POSITIVE CONTROL, IN PROCESS ------------------------------
+## The same three rows with the one `id` REMOVED. Both halves move -- the list
+## becomes the plain ordinal and `dc2` names the middle row -- which is what
+## proves HN5 reads the key rather than reciting a list that happens to match.
+set HNID2 $HNID
+dict set HNID2 analyses \
+  [lreplace [ase::state_get $HNID analyses] 0 0 \
+            [dict remove [lindex [ase::state_get $HNID analyses] 0] id]]
+check "HN5c with that one id removed the three become the plain ordinal and dc2\
+ names the middle row, so HN5 is reading the key and not a literal" \
+  [list [ase::analysis_handles $HNID2] [ase::analysis_by_handle $HNID2 dc2]] \
+  {{dc1 dc2 dc3} {dc 1}}
+
+## --- HN6: AN ILLEGAL id IS NOT A HANDLE, AND A DUPLICATE IS NAMED -----------
+## ⚠ AN ILLEGAL id DOES NOT COST THE ROW ITS NAME. `id {my sweep}` cannot be
+## typed into an expression, so honouring it hands the user a reference that does
+## not work; dropping the row from the list leaves the analysis they most want to
+## ask about with nothing to call it. It falls back to the derived handle and
+## `ase::analysis_handle_faults` is what SAYS SO, by index and by spelling.
+## ⚠ AND A DUPLICATE IS REPORTED ON THE SECOND ROW, NOT THE FIRST -- the same
+## first-row-keeps-the-name rule `ase::meas_verdict` already applies to two
+## measurements of one name, and for the same reason: somebody has to keep it.
+set HNBAD [ase::state_default]
+dict set HNBAD analyses \
+  {{type dc enabled 1 id {my sweep}} {type dc enabled 1 id a1} {type ac enabled 1 id A1}}
+check "HN6 an id that cannot be typed is not a handle and the row keeps its\
+ derived one, a duplicate is reported against the SECOND row, and both are named\
+ by index rather than described in a sentence core has no business owning" \
+  [list [ase::analysis_handles $HNBAD] [ase::analysis_handle_faults $HNBAD] \
+        [ase::analysis_by_handle $HNBAD a1]] \
+  {{dc1 a1 A1} {{0 illegal {my sweep}} {2 duplicate A1}} {dc 1}}
+
+## --- HN7: ⚠ THE OUTPUT ROW CALLED `id` IS NOT THIS KEY ---------------------
+## FOUR committed benches carry `outputs {{name id expr -i(v1) save 1 plot 0}}`
+## -- a drain current, in a DIFFERENT list, whose NAME happens to be the word.
+## The ruling's whole premise is that no committed bench moves, and it holds only
+## because the reader asks an `analyses` row. A reader that reached into
+## `outputs` would answer something for the first half of this row; a reader that
+## reached nowhere would answer the same for both halves.
+set HNOUT [ase::state_default]
+dict set HNOUT outputs {{name id expr -i(v1) save 1 plot 0}}
+set HNOUT2 $HNOUT
+dict set HNOUT2 analyses \
+  [lreplace [ase::state_get $HNOUT analyses] 2 2 \
+            [dict replace [lindex [ase::state_get $HNOUT analyses] 2] id gainac]]
+check "HN7 an OUTPUT row named id changes no handle and raises no fault, and an\
+ id on the ANALYSIS row changes exactly one -- so a reader that confused the two\
+ lists cannot pass both halves" \
+  [list [ase::analysis_handles $HNOUT] [ase::analysis_handle_faults $HNOUT] \
+        [ase::analysis_handles $HNOUT2]] \
+  {{op1 dc1 ac1 tran1} {} {op1 dc1 gainac tran1}}
+
+## --- HN8: THE ONE-LINER'S FIELDS -------------------------------------------
+## ⚠ `args` COMES FROM `ase::analysis_line`, THE EMITTER'S OWN SPELLER, with the
+## verb stripped only when the first token IS the type. That is the same reason
+## `ase::ui::arg_summary` reads that proc: a summary assembled from the row's
+## keys can describe a setting the deck does not carry, and `ac`'s `dec` is the
+## drift that proved it.
+check "HN8 the one-liner is handle, type in capitals, and the deck line minus\
+ its own verb, with the switched-off row carrying its state rather than\
+ vanishing" \
+  [list [ase::analysis_handle_fields ngspice $HNST 1] \
+        [ase::analysis_handle_fields ngspice $HNST 3] \
+        [ase::analysis_handle_fields ngspice $HNST 9]] \
+  {{handle dc1 type DC args {V2 0 1.8 0.01} enabled 1} {handle dc2 type DC args {TEMP -40 125 5} enabled 0} {}}
+
+## --- HN8c: HN8's POSITIVE CONTROL ------------------------------------------
+## One field of one row changed. If `args` were recited from anywhere but the
+## emitter this row would not move.
+set HNST2 $HNST
+dict set HNST2 analyses \
+  [lreplace [ase::state_get $HNST analyses] 1 1 \
+            [dict replace [lindex [ase::state_get $HNST analyses] 1] stop 3.3]]
+check "HN8c changing one field of one row moves that row's summary and nothing\
+ else, so args is read from the deck line rather than recited" \
+  [list [dict get [ase::analysis_handle_fields ngspice $HNST2 1] args] \
+        [dict get [ase::analysis_handle_fields ngspice $HNST2 3] args]] \
+  {{V2 0 3.3 0.01} {TEMP -40 125 5}}
+
+## --- HN9: A ROW THAT CANNOT BE A DECK LINE STILL HAS A NAME ----------------
+## Every new bench opens with rows carrying no field keys at all, and
+## `ase::analysis_line` raises on them by design (a missing required slot is
+## `dict get`'s own error). The summary catches it and answers with the two
+## things it still knows. `op` lands on the same answer for the opposite reason:
+## its line is the bare verb, so stripping the verb leaves nothing.
+check "HN9 a row with no values yet, and a row whose whole line IS its verb,\
+ both keep a handle and a type and offer no arguments" \
+  [list [ase::analysis_handle_fields ngspice $HNST 0] \
+        [ase::analysis_handle_fields ngspice \
+          [dict replace [ase::state_default] analyses {{type dc enabled 1}}] 0]] \
+  {{handle op1 type OP args {} enabled 1} {handle dc1 type DC args {} enabled 1}}
+
+## --- HN10: ⚠ WHAT A HANDLE LOOKS LIKE WHEN THE TYPE IS NOT OFFERED ---------
+## `ase::analysis_offered` drops a `registered 0` entry, so such a type is
+## invisible to the radio row, to the seed and to every offered-shaped reader in
+## this file -- and a bench can still HOLD a row of it, from a hand-edited state
+## or from an adapter that withdrew a type. A third row goes further: a type this
+## registry has never heard of at all.
+##
+## ⚠ ALL THREE KEEP THEIR HANDLE, AND THAT IS THE DESIGN, NOT AN ACCIDENT.
+## "What do I call this one?" is a question about the BENCH, which the state
+## answers. Deriving the handle from `ase::analysis_offered` would leave exactly
+## the rows a user most needs to ask about with nothing to call them -- and it
+## would do it silently, because every other row in this file would still pass.
+proc hn_types {} {
+  return [dict create \
+    zzon  [dict create label zzon  baseline 1 registered 1 emitorder 10 \
+             fields {{name lvl kind int required 1 label Level}} \
+             emit {{role analysis tmpl {zzon @lvl}}}] \
+    zzoff [dict create label zzoff baseline 1 registered 0 emitorder 20 \
+             fields {{name lvl kind int required 1 label Level}} \
+             emit {{role analysis tmpl {zzoff @lvl}}}]]
+}
+ase::register_backend hnsim [dict merge [ag_five] [dict create analysis_types hn_types]]
+set HNOFF [ase::state_default]
+dict set HNOFF analyses \
+  {{type zzon enabled 1 lvl 3} {type zzoff enabled 1 lvl 4} {type zzgone enabled 1}}
+check "HN10 a type the registry does not offer, and a type it has never heard\
+ of, both keep a handle and a type -- the offered list gates what a user can ADD,\
+ never what a bench they already have can be called" \
+  [list [ase::analysis_offered hnsim] [ase::analysis_handles $HNOFF] \
+        [ase::analysis_handle_fields hnsim $HNOFF 1] \
+        [ase::analysis_handle_fields hnsim $HNOFF 2]] \
+  {zzon {zzon1 zzoff1 zzgone1} {handle zzoff1 type ZZOFF args 4 enabled 1} {handle zzgone1 type ZZGONE args {} enabled 1}}
+
+## --- HN11: THE COPY-PASTEABLE BLOCK ----------------------------------------
+## The body of `Analyses > List` (issue 1444, surface 3), which is the one
+## surface the calculator can use: there is no dropdown to pick from when a user
+## is typing `180 + vp(out)` by hand.
+##
+## ⚠ EVERY ROW, NOT ONLY THE ENABLED ONES -- a correction to 1444, which proposed
+## the enabled ones. A measurement bound to a switched-off row REFUSES, and the
+## user's next question is WHICH one is off; a list that omitted it could not
+## answer, and it would disagree with the grid beside it, which shows them all.
+check "HN11 the whole bench renders as one padded block, every row present, the\
+ switched-off one marked" \
+  [ase::analysis_handle_text ngspice $HNST] \
+  "op1    OP\ndc1    DC    V2 0 1.8 0.01\nac1    AC    dec 10 1 10meg\ndc2    DC    TEMP -40 125 5  (off)\ntran1  TRAN  1n 10u"
+
+## --- HN12: WHAT A FRESH BENCH IS CALLED ------------------------------------
+## ⚖ R4 keeps `ase::state_default` at four rows; this is what they answer to.
+check "HN12 a fresh bench's four rows are op1 dc1 ac1 tran1 and none of them\
+ declares an id, which is the shape all 104 committed benches are in" \
+  [list [ase::analysis_handles [ase::state_default]] \
+        [ase::analysis_handle_faults [ase::state_default]]] \
+  {{op1 dc1 ac1 tran1} {}}
+
+## --- HN13: THE ARM ON `ase::meas_binding` ----------------------------------
+## ⚠ ONE CLAUSE, AND IT OUTRANKS THE INDEX. `id` on a MEASUREMENT row names the
+## analysis row's HANDLE. An index is a POSITION and a handle is a NAME; a row
+## carrying both has been edited by two hands and the NAME is the one a person
+## chose. `row 4` here points at the `tran` row, so the last two entries are the
+## same selector pair answered twice -- once with the handle present and once
+## without.
+proc hn_bind {row} { return [ase::meas_binding ngspice $::HNST $row] }
+check "HN13 a measurement binds by handle, a handle naming a switched-off row\
+ binds to nothing, a stale analysis beside a live handle is not silently\
+ overruled, and the handle beats the index" \
+  [list [hn_bind {name a analysis dc kind max target v(out)}] \
+        [hn_bind {name a analysis dc id dc1 kind max target v(out)}] \
+        [hn_bind {name a id dc1 kind max target v(out)}] \
+        [hn_bind {name a analysis dc id dc2 kind max target v(out)}] \
+        [hn_bind {name a analysis ac id dc1 kind max target v(out)}] \
+        [hn_bind {name a analysis dc id nosuch kind max target v(out)}] \
+        [hn_bind {name a analysis dc row 1 kind max target v(out)}] \
+        [hn_bind {name a analysis dc row 4 kind max target v(out)}] \
+        [hn_bind {name a analysis dc row 4 id dc1 kind max target v(out)}]] \
+  {{dc 1} {dc 1} {dc 1} {} {} {} {dc 1} {} {dc 1}}
+
+## --- HN14: AND THE THREE ANSWERS A HANDLE THAT DID NOT BIND HAS -------------
+## ⚠ COLLAPSING THEM INTO ONE SENTENCE WOULD TELL SOMEBODY WHOSE HANDLE IS
+## MISSPELLED TO GO AND ENABLE AN ANALYSIS THAT IS ALREADY ON. Three failures,
+## three things to do, three sentences. (The WORDS are ⚖ R9's; this row pins
+## that the three cases are told apart at all.)
+proc hn_verdict {row} { return [ase::meas_verdict ngspice $::HNST $row] }
+check "HN14 a misspelled handle, a switched-off one and one naming another type\
+ are three different answers, and a row with neither handle nor analysis still\
+ gets the sentence it always had" \
+  [list [hn_verdict {name a analysis dc id nosuch kind max target v(out)}] \
+        [hn_verdict {name a analysis dc id dc2 kind max target v(out)}] \
+        [hn_verdict {name a analysis ac id dc1 kind max target v(out)}] \
+        [hn_verdict {name a kind max target v(out)}] \
+        [hn_verdict {name a analysis dc kind max target v(out)}]] \
+  {{refuse {no analysis called 'nosuch' for 'a' to read}} {refuse {the analysis called 'dc2' is switched off, so 'a' has nothing to read}} {refuse {'a' names ac but reads 'dc1', which is dc}} {refuse {this measurement names no analysis}} ok}
+
+
+## --- HN15: ⚠ THE SCHEME IS ASE-L's, THE CONTENT IS THE ADAPTER'S (D34) ------
+## `ase::meas_*` already has this guard -- section HK of
+## tests/headless/test_ase_meas_1443.tcl, which runs a token list over its own
+## thirty-one procs. The eight procs ⚖ R6 adds are in a DIFFERENT prefix and that
+## list cannot see them, so the same question is asked here about them.
+##
+## ⚠ THE SPELLING `<type><n>` IS NOT A SIMULATOR WORD. It is built from the row's
+## OWN stored `type` -- data the bench carries -- and the uppercase display form
+## is `string toupper` of the same. Nothing below may contain a verb.
+proc hn_nocomment {t} {
+  set out {}
+  foreach l [split $t "\n"] { if {[regexp {^\s*#} $l]} { continue } ; lappend out $l }
+  return [join $out "\n"]
+}
+set HNTOK {{ac } { dc } {tran } { op } {noise} {disto} {savecurrents} {.control}
+           {.options} {ngspice} {dec } { oct } {@source} {@points} {vdb} {sweep }}
+set HNPROCS {ase::analysis_id ase::analysis_id_ok ase::analysis_handles
+             ase::analysis_handle ase::analysis_by_handle
+             ase::analysis_handle_faults ase::analysis_handle_fields
+             ase::analysis_handle_text}
+check "HN15 not one of the eight procs that spell a reference contains a\
+ simulator word: the handle is built from the row's own stored type and the\
+ arguments come from the emitter's speller" \
+  [apply {{} {
+     set bad {}
+     foreach p $::HNPROCS {
+       if {![llength [info commands ::$p]]} { lappend bad "$p:MISSING" ; continue }
+       set body [hn_nocomment [info body ::$p]]
+       foreach t $::HNTOK {
+         if {[string first $t $body] >= 0} { lappend bad "$p:$t" }
+       }
+     }
+     return $bad }}] {}
+
+## ⚠ HN15's NON-VACUITY, AND IT RUNS HN15's OWN TOKEN LIST. A guard whose list
+## matched nothing anywhere would be measuring its own emptiness. The adapter is
+## where those words BELONG, so that is where they must be found.
+check_true "HN15b the same token list finds those spellings in the adapter, so\
+ HN15 is a guard and not an empty search" \
+  [apply {{} {
+     set n 0
+     foreach p {ase::backend::ngspice::render_deck ase::backend::ngspice::analysis_types} {
+       if {![llength [info commands ::$p]]} { continue }
+       set body [hn_nocomment [info body ::$p]]
+       foreach t $::HNTOK { if {[string first $t $body] >= 0} { incr n } }
+     }
+     return [expr {$n >= 4}] }}]
+} hnerr]} {
+  check "HN0 section HN ran to the end" "RAISED:$hnerr" {}
+}
 
 
 # ===========================================================================

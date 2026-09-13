@@ -61,10 +61,15 @@
 # DISPLAY; run legs additionally self-SKIP without ngspice — the item-14
 # PROOF run must show ZERO SKIPs on G1-G11).
 #
-# FLOOR, raised and never lowered: 44 checks on the headless arm and 147 with
+# FLOOR, raised and never lowered: 49 checks on the headless arm and 153 with
 # a display and ngspice (34 / 137 before the R7 group of 2026-09-08; the one
 # line before that was R1's key count going 17 -> 18 when `sim_entry` joined
-# the schema). Standalone repro from the repo ROOT:
+# the schema).
+# ⚠ AND RAISED 44 -> 49 / 148 -> 153 with the R8 group (⚖ R6 / issue 1447 -- the
+# optional per-row `id` key ON DISK). The display number above read 147 while the
+# arm measured 148 before this group landed; a floor only ever goes up, so it
+# passed while being one behind. Both numbers are re-measured here.
+# Standalone repro from the repo ROOT:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_ase_persist.tcl
 # (headless arm: add --nogui)
 
@@ -461,6 +466,104 @@ check "R7e ...while the bare word `none` is the PATH program, not an entry" \
   [r7_handwrite word none] {path {}}
 check "R7e ...and an entry really called `none` is spelled {name none}" \
   [r7_handwrite braced {{name none}}] {entry none}
+
+# --- R8: THE `id` KEY ON DISK (⚖ R6 / issue 1447) ----------------------------
+# ⚖ R6 was answered *"Add it"* on 2026-09-13: an analysis row may now declare an
+# `id`, so a bench can say "sweep VIN, **and also** sweep temperature" and a
+# measurement can name which of the two it reads.
+#
+# WHY IT BELONGS IN THIS SUITE, for R7's reason exactly. R2 above is one of the
+# FIVE named load->save byte-identity rows (`src/ase.tcl` names F3/G3/R4/V4/R2)
+# and R3 is the old-state-compat row. `id` is governed by the same two rules --
+# and by a THIRD that `sim_entry` did not have to meet: it is a PER-ROW key, not
+# a schema key, so `ase::omit_if_empty` cannot protect it. Nothing omits a key
+# that is never written; what protects the 104 committed files is that the
+# serializer writes the rows it was GIVEN, and a row nobody gave an `id` has
+# none. R8b is the row that measures that and would red the instant a default,
+# a back-fill or a normaliser put one there.
+#
+# ⚠ AND `id` IS NOT THE COMMITTED OUTPUT ROW CALLED `id`. Four benches carry
+# `outputs {{name id expr -i(v1) save 1 plot 0}}` -- a drain current, in another
+# list. R8e drives both at once on disk. (HN7 in test_ase_core.tcl asks the same
+# question of the readers; this asks it of the FILE.)
+proc r8_analine {p} {
+  return [lsearch -inline -glob [r7_lines $p] {analyses *}]
+}
+# save $st, read it back, save again: {the analyses line, 1 when byte-identical,
+# the handles the RELOADED state answers to}
+proc r8_trip {tag st} {
+  global scratch
+  set a [file join $scratch r8_$tag.state]
+  set b [file join $scratch r8_${tag}b.state]
+  ase::state_save $a $st
+  set back [ase::state_load $a]
+  ase::state_save $b $back
+  return [list [r8_analine $a] [expr {[r7_bytes $a] eq [r7_bytes $b]}] \
+               [ase::analysis_handles $back]]
+}
+
+# (a) THE DEFAULT BENCH NEVER GAINS THE KEY. This is the shape all 104 committed
+# files are in, and the `analyses` line below is spelled character for character
+# the way they spell it.
+check "R8a a bench nobody gave an id writes no id, round-trips byte-identically,\
+ and its four rows answer to the derived handles" \
+  [r8_trip plain [ase::state_default]] \
+  [list {analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}} \
+        1 {op1 dc1 ac1 tran1}]
+
+# (b) AND ONE THAT DECLARES ONE WRITES IT, reads it back, and re-saves
+# byte-identically. ⚠ THIS IS (a)'s NON-VACUITY CONTROL: a serializer that
+# silently dropped unknown row keys would pass (a) and fail here, and one that
+# invented them would fail (a) and pass here.
+## ⚠ ONE LINE, AND IT HAS TO BE. A list literal broken across lines carries the
+## NEWLINES into the value, ase::state_serialize quotes them with backslashes and
+## the `analyses` line stops being a line. Measured here before it was fixed.
+set r8st [ase::state_default]
+dict set r8st analyses {{type op enabled 1} {type dc enabled 1 id vinsweep source V2 start 0 stop 1.8 step 0.01} {type dc enabled 1 id tsweep source TEMP start -40 stop 125 step 5}}
+check "R8b a declared id reaches the file, survives the trip and is what the\
+ reloaded bench answers to -- the two dc rows keeping two different names" \
+  [r8_trip id $r8st] \
+  [list {analyses {{type op enabled 1} {type dc enabled 1 id vinsweep source V2 start 0 stop 1.8 step 0.01} {type dc enabled 1 id tsweep source TEMP start -40 stop 125 step 5}}} \
+        1 {op1 vinsweep tsweep}]
+
+# (c) ...and the two files are DIFFERENT files, so (a) cannot be passing by
+# accident of everything serializing the same way.
+check "R8c the two benches produce two different files" \
+  [expr {[r7_bytes [file join $scratch r8_plain.state]] ne \
+         [r7_bytes [file join $scratch r8_id.state]]}] 1
+
+# (d) A STATE FILE WRITTEN BEFORE THE RULING, hand-built the way R3 and R7d
+# build theirs. It must load, keep its derived handles, and re-save WITHOUT
+# gaining the key on any row -- which is the whole of ⚖ R6's safety argument for
+# the committed corpus.
+set r8f  [file join $scratch r8_pre.state]
+set r8f2 [file join $scratch r8_pre_b.state]
+ase::state_save $r8f [ase::state_default]
+set r8back [ase::state_load $r8f]
+ase::state_save $r8f2 $r8back
+check "R8d a pre-ruling file loads, keeps its derived handles, declares no id on\
+ any row and re-saves byte-identically" \
+  [list [expr {[string first { id } [r8_analine $r8f2]] >= 0}] \
+        [ase::analysis_handle_faults $r8back] \
+        [expr {[r7_bytes $r8f] eq [r7_bytes $r8f2]}]] {0 {} 1}
+
+# (e) ⚠ THE OUTPUT ROW NAMED `id`, ON DISK. The file below carries the committed
+# benches' own `outputs` line AND an analysis `id`, and the two must not reach
+# each other: the handles come from the analyses list alone, and the outputs line
+# round-trips untouched.
+set r8out [ase::state_default]
+dict set r8out outputs {{name id expr -i(v1) save 1 plot 0}}
+dict set r8out analyses {{type op enabled 1} {type ac enabled 1 id gainac sweep dec points 10 start 1 stop 10meg}}
+set r8p [file join $scratch r8_out.state]
+ase::state_save $r8p $r8out
+set r8oback [ase::state_load $r8p]
+check "R8e a bench carrying BOTH the committed output row named id and an\
+ analysis id keeps them apart on disk: the handles come from the analyses list\
+ and the outputs line is untouched" \
+  [list [ase::analysis_handles $r8oback] \
+        [lsearch -inline -glob [r7_lines $r8p] {outputs *}] \
+        [ase::analysis_handle_faults $r8oback]] \
+  [list {op1 gainac} {outputs {{name id expr -i(v1) save 1 plot 0}}} {}]
 
 # --- T-E BOOKKEEPING: WHY THE LEGS DID OR DID NOT RUN ------------------------
 # doc/claude/specs/results_selection.md section 12: T-E is the batch's ONE test

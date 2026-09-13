@@ -831,6 +831,110 @@ entry with no collision. Two crews plus a committing driver is survivable; it is
 ⚖ **R6's `id` key will need one arm on `ase::meas_binding`** when R6's task lands — recorded
 here so it is not rediscovered.
 
+### ⚠ Four UNSTAMPED ledger entries — found by a crew, verified by the driver, touched by nobody
+
+⚖ R6's crew reported four entries with no `repo:` line, before its own first `add`. The driver
+re-measured rather than relaying:
+
+```
+rule/1357
+rule/1357@xschem-claude
+look/hier_pdf_nav_1357_H6.1789071932.2875683
+suite/test_hier_pdf_links_1333
+```
+
+and the stamp split is now **216 this clone / 13 op-wcard** (it was 182/14 on 2026-09-10 —
+the numbers move every time anyone measures, which is why `CLAUDE.md` says re-measure rather
+than quote).
+
+**`CLAUDE.md` is explicit that against a stamped ledger an unstamped entry is EVIDENCE, not
+legacy**: it means another clone's older `owed.sh` wrote over something. The prescribed
+reconstruction is `cleared.log` — and `cleared.log` mentions **neither 1357 nor 1333**, so
+there is no pre-image for any of the four.
+
+⚠ **And the two `rule/1357` files are issue 1400's collision shape INSIDE the debt queue.**
+They are two different rulings under one number: one is *"the hierarchical PDF nav strip ships
+ON (item H6)"*, the other is *"pressing Add while the SUMMARY list is in force writes the
+ANNOTATION list"*. Answering *"1357"* is therefore ambiguous — the queue cannot say which
+ruling the user meant.
+
+**Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
+entry for this clone exists precisely because doing so erases the only signal the overwrite
+left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ T1 — RUN SOLO, ZERO FAILURES, 2026-09-13 — the deferral is discharged
+
+**`RESULT: 69 Start lines, rc 0, ZERO counted failures.`** Read by the documented rule — a
+`FAIL` ending a line, a `GOLD?`, a `RESULT?`, or a leading `FATAL` — and by the crash tell:
+**no `couldn't execute` and no `exit 127` anywhere in the log.** The literal strings `FAIL`,
+`FATAL` and `TIMED OUT` appear **zero** times in 69 cases.
+
+**69, up from 68**, because `test_ase_meas_1443` joined the case list with Stage 8 task 1.
+
+⚠ **It was DEFERRED THREE TIMES and that was the right call each time.** The tree carried two
+crews' uncommitted work for most of the day, and `CLAUDE.md` is explicit that *a T1 number taken
+while another agent's suite was live is not evidence*. Run at the first moment nothing else was
+writing, it covers **five** landings in one number: ⚖ **R5** (1445), **Stage 8 task 1** (1443),
+⚖ **R4's row**, **1446**, and ⚖ **R6's schema half** (1447).
+
+**And it was run SOLO**, which is the other half of the rule: issue **0990** means two
+`run_regression.tcl` at once corrupt each other and the loser reports a `FATAL` that never
+happened. Nothing else was running.
+
+`test_ase_dialogs` is in T1's **headless** list, so the standing display-arm red `G2sens`
+(issue **1436**) cannot reach this number — checked before the run rather than explained after
+it.
+
+### ✅ ⚖ R6 — SCHEMA HALF SHIPPED, issue **1447**, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | `src/ase.tcl` **+293**. (1) The optional per-row **`id`** key on an `analyses` row. (2) **The scheme, one speller**: a row's handle is its `id` if it declares one and **`<type><n>`** otherwise — `ac1 dc1 dc2 tran1 op1` — in eight procs at `:9144–9385`, with `ase::analysis_by_handle` returning **`{type idx}`**, `ase::meas_binding`'s own shape. (3) One arm on `meas_binding` so a measurement's `id` names the analysis handle and **outranks** its `row` index, plus three `meas_verdict` clauses so a handle that did not bind says which of three things went wrong. **`src/ase_window.tcl` was never opened** — no widget exists. |
+| **schema cost** | ⚠ **Nothing was added to `ase::omit_if_empty`, and that is the point**: `id` is written **only when a row declares one**, so *a key that is never written cannot need omitting*. A different mechanism from `sim_entry` and `measurements`, which are top-level keys that must exist-and-be-empty. No `version` bump, no new `schema_keys` member. |
+| **driver's own re-run** | Both arms, from `RESULT:` lines. `test_ase_core` **622 / 622** (was 602). `test_ase_persist` **49 headless / 153 display** (was 44/148). `test_ase_meas_1443` **100 / 100**, unmoved. |
+| **byte identity** | `STATEFILES: 104 / MISMATCH: 0 / ANALYSIS-ROWS-WITH-id: 0`, identical before and after, now suite row **`CP7`** with **`CP7c`** as its control. Driver-verified independently: **no tracked `.state` file is modified.** |
+| **sabotage** | **Thirteen**, each restored by `cp` + md5. |
+| **receipt** | `receipts/27-r6-identity-and-naming.md` |
+| **T1** | ✅ **RUN SOLO AND CLEAN — see the block below.** |
+
+**The exact call the GUI half must make** — recorded here so the next crew does not re-derive it:
+
+```tcl
+set handle [ase::analysis_handle $state $idx]              ;# the grid column
+set body   [ase::analysis_handle_text $sim $state]         ;# Analyses > List, already padded
+set f      [ase::analysis_handle_fields $sim $state $idx]  ;# dropdown entry fields
+dict set measrow id $chosen_handle                         ;# NOT `row <index>`
+```
+
+**Do not call `ase::analysis_id` for display** (it answers `{}` for most rows) and **do not
+re-derive `"$type$n"` anywhere.** `HN15`/`HN15b` extend D34's schema/content guard to the eight
+new procs, because section HK's proc list could not see a different prefix.
+
+**Two sabotages are findings rather than confirmations.**
+
+* **S5** — an **output** row named `id` read as the per-row key — reds **`HN7` and `R8e` and
+  nothing else in 771 checks.** That is exactly the confusion the driver's brief named, and it is
+  now caught in the readers *and* in the file.
+* **S6** — deriving handles from `ase::analysis_offered` reds **`HN10` alone**. So a `registered 0`
+  type, or one the registry never heard of, **still gets a handle**, deliberately: *"what do I call
+  this?"* is a question about the **bench**, not about the registry, and the alternative leaves
+  exactly the rows a user most needs to ask about unnameable. ⚠ Note this is the **second** task in
+  a row whose sabotage turned on `registered 0` — ⚖ R4's `AG3b` found the same blind spot from the
+  other side.
+
+**Three corrections.**
+
+1. ⚠ **`Analyses > List` lists EVERY row, not only the enabled ones** — a deliberate departure from
+   issue **1444**, and the reason is the user's own: a measurement bound to a switched-off row
+   refuses, and the next question is *which one*. Disabled rows carry `(off)`.
+2. The measurement selector is a **separate `id` key that beats `row`**, not an extension of `row`.
+   Receipt 23's note could be read either way.
+3. `test_ase_persist`'s floor paragraph said **147** display where the arm measures **148** —
+   corrected in the same diff. **Fourth** stale prose number this batch has caught.
+
+⚖ **R6's GUI half remains**: the handle column in the Choose Analyses grid, `Analyses > List`, and
+the dialog's row addressing. `src/ase_window.tcl` is free now.
+
 ### ✅ Issue 1446 — OK writes what the dialog remembered, collected 2026-09-13
 
 Filed by the driver out of ⚖ R5's residual, implemented **ahead of the user's answer** because

@@ -6851,6 +6851,36 @@ proc ase::meas_field_value {sim kind row name} {
 # second row is added later.
 proc ase::meas_binding {sim state row} {
   set type [string trim [ase::state_get $row analysis]]
+  ## --- ⚖ R6 / issue 1447: THE HANDLE SELECTOR, AND IT OUTRANKS THE INDEX ----
+  ## `id` on a MEASUREMENT row names the analysis row's HANDLE -- the spelling
+  ## ase::analysis_handle mints and the user reads off the grid, off
+  ## `Analyses > List` and out of the Measurements dropdown. PLAN.md §8a's own
+  ## example row carries it: `{name pm analysis ac id a1 kind param ...}`.
+  ##
+  ## ⚠ IT BEATS `row`, RATHER THAN THE TWO BEING RECONCILED. An index is a
+  ## POSITION and a handle is a NAME; a row that carries both has been edited by
+  ## two hands and the NAME is the one a person chose. Reconciling them would
+  ## mean deciding, silently, which of two disagreeing selectors the user meant.
+  ##
+  ## ⚠ AND IT IS THE MEASUREMENT ROW'S `id`, NOT THE ANALYSIS ROW'S. The same
+  ## word on the other side of the reference: `ase::analysis_id` reads an
+  ## `analyses` row, this reads a `measurements` row, and neither ever reads the
+  ## committed `outputs` row whose NAME is `id`.
+  set h [string trim [ase::state_get $row id]]
+  if {$h ne {}} {
+    set b [ase::analysis_by_handle $state $h]
+    if {$b eq {}} { return {} }
+    set a [lindex [ase::state_get $state analyses] [lindex $b 1]]
+    ## A HANDLE IS IDENTITY; BINDING IS ABOUT A RUN. A named row that is
+    ## switched off binds to nothing, exactly as an index naming a disabled row
+    ## already did -- and ase::meas_verdict says WHICH of the two it was.
+    if {[ase::state_get $a enabled 0] ne {1}} { return {} }
+    ## A STALE `analysis` BESIDE A LIVE `id` IS NOT SILENTLY OVERRULED. If the
+    ## row says `ac` and the handle names a `tran`, the deck would otherwise
+    ## carry a measurement reading an analysis its own row does not name.
+    if {$type ne {} && [lindex $b 0] ne $type} { return {} }
+    return $b
+  }
   if {$type eq {}} { return {} }
   set want [string trim [ase::state_get $row row]]
   ## ⚠ IT WALKS THE `analyses` LIST, NOT `ase::analysis_emit_order`, AND THAT IS
@@ -6947,6 +6977,26 @@ proc ase::meas_verdict {sim state row} {
   set bind [ase::meas_binding $sim $state $row]
   if {$bind eq {}} {
     set t [string trim [ase::state_get $row analysis]]
+    ## --- ⚖ R6 / issue 1447: A HANDLE THAT DID NOT BIND HAS THREE ANSWERS ----
+    ## and they are three different things for the user to do. Collapsing them
+    ## into "no enabled $t analysis" would tell somebody whose handle is simply
+    ## MISSPELLED to go and enable an analysis that is already on.
+    set h [string trim [ase::state_get $row id]]
+    if {$h ne {}} {
+      set b [ase::analysis_by_handle $state $h]
+      if {$b eq {}} {
+        return [list refuse "no analysis called '$h' for '$name' to read"]
+      }
+      if {$t ne {} && [lindex $b 0] ne $t} {
+        ## ⚠ ARTICLE-FREE ON PURPOSE: "a ac analysis" is what an article costs
+        ## when the word is data. The sentence next door -- "no enabled $t
+        ## analysis" -- solves it the same way.
+        return [list refuse "'$name' names $t but reads '$h', which is\
+ [lindex $b 0]"]
+      }
+      return [list refuse "the analysis called '$h' is switched off, so '$name'\
+ has nothing to read"]
+    }
     if {$t eq {}} { return {refuse {this measurement names no analysis}} }
     return [list refuse "no enabled $t analysis for '$name' to read"]
   }
@@ -9089,6 +9139,249 @@ proc ase::analysis_unrenderable {state} {
     }
   }
   return $bad
+}
+
+# ═══ ⚖ R6 / issue 1447 ── ANALYSIS IDENTITY, AND THE ONE SPELLING OF IT ═══════
+#
+# doc/claude/ase_analyses_batch/DECISIONS.md ⚖ **R6** (*"Add it"*, 2026-09-13),
+# **D4** (exactly two optional per-row keys, `id` and `x`), **D3** (the schema
+# does not change), and issue **1444** (the three surfaces that render this).
+#
+# ⚠ `id` IS AN OPTIONAL PER-**ROW** KEY ON AN `analyses` ROW, ABSENT ON EVERY
+# COMMITTED FILE. Measured 2026-09-13 over `git ls-files '*.state'`: **104 of
+# 104** round-trip byte-identically and **zero** of them carry an `id` on an
+# analysis row. `analyses` is a list of OPEN dicts, so this is one more key in
+# one of them -- no `version` bump, no new member of `schema_keys`, nothing
+# added to `ase::omit_if_empty` (a key that is never written cannot need
+# omitting).
+#
+# ⚠ AND IT IS NOT THE OUTPUT ROW CALLED `id`. FOUR committed benches carry
+# `outputs {{name id expr -i(v1) save 1 plot 0}}` -- a drain current, in a
+# DIFFERENT list, whose `name` happens to be the word. Every reader below takes
+# an **analyses** row and asks `dict exists $row id`; nothing here reads
+# `outputs` at all. Row HN12 of tests/headless/test_ase_core.tcl drives a state
+# carrying both at once so that a reader which confused them fails loudly.
+#
+# WHY IDENTITY AT ALL: a bench may now say "sweep VIN, **and also** sweep
+# temperature". The moment there are two rows of a type, *"the DC sweep"* stops
+# being a reference -- and `ase::meas_binding` has to answer *"which analysis
+# occurrence does this measurement read"* before a measurement can be spelled.
+# It answers `{type idx}`; everything below is the half a PERSON reads, and it
+# follows that shape exactly.
+
+# THE `id` A ROW DECLARES, or `{}`. One reader, and it never raises.
+proc ase::analysis_id {row} { return [string trim [ase::state_get $row id]] }
+
+# A LEGAL `id`. The user TYPES this -- into a measurement row's `id` field and
+# into a calculator expression -- so it is a bare identifier, which is the same
+# rule `ase::meas_name_ok` states for a measurement name and for the same
+# reason: the reference has to survive being typed by hand into an expression.
+proc ase::analysis_id_ok {id} { return [regexp {^[A-Za-z][A-Za-z0-9_]*$} $id] }
+
+# ── THE ONE SPELLER ──────────────────────────────────────────────────────────
+#
+# ⚠ ONE PROC, AND EVERY SURFACE CALLS IT. The handle column in the Choose
+# Analyses grid, `Analyses > List`, Stage 8 task 2's Measurements dropdown and
+# anything the calculator ever grows all render THIS answer. Issue 1444's own
+# sentence is *"three surfaces showing three spellings would be worse than
+# none"*, and the way that is enforced is that no surface is given the parts to
+# assemble a second one from.
+#
+# THE SCHEME, in one line: **a row's handle is its `id` if it declares one, and
+# `<type><n>` otherwise**, `n` counting 1 from the top of the `analyses` list
+# among rows of the SAME type. `ac1`, `dc1`, `dc2`, `tran1`, `op1`.
+#
+# ⚠ `n` COUNTS EVERY ROW OF THE TYPE, ENABLED OR NOT, AND THAT IS THE WHOLE
+# DIFFERENCE BETWEEN A HANDLE AND A POSITION. Counting only enabled rows would
+# renumber `dc2` to `dc1` the moment somebody unticks the row above it -- and a
+# measurement, or a line a user typed into the calculator, would then silently
+# start reading a DIFFERENT sweep. Unticking a row is an everyday gesture; a
+# reference that changes meaning because of one is the silent-wrong-answer class
+# this batch exists to remove. A derived handle still moves when a row is
+# INSERTED or DELETED, and that is exactly what `id` is for: declare one and the
+# handle is yours for the life of the bench.
+#
+# ⚠ AN EXPLICIT `id` IS CLAIMED OVER THE WHOLE LIST BEFORE ANY DERIVED HANDLE IS
+# MINTED, so a derived handle can never collide with one. A row that really is
+# called `dc2` takes the spelling, and the second `dc` row derives `dc3`. Without
+# that pass the two would be the same word and `ase::analysis_by_handle` would
+# have to pick a winner -- which is a coin toss wearing a rule.
+#
+# ⚠ A ROW WITH NO `type` HAS NO HANDLE (`{}`), rather than a handle spelled `1`.
+# Nothing seeds such a row, but a hand-edited `.state` can carry one and a
+# nameless thing must not acquire a name that looks like a number.
+proc ase::analysis_handles {state} {
+  set rows [ase::state_get $state analyses]
+  set taken {}
+  foreach r $rows {
+    set id [ase::analysis_id $r]
+    if {$id ne {} && [ase::analysis_id_ok $id]} { lappend taken [string tolower $id] }
+  }
+  set seen [dict create]
+  set out {}
+  foreach r $rows {
+    set id [ase::analysis_id $r]
+    ## ⚠ AN ILLEGAL `id` IS NOT A HANDLE, AND THE ROW FALLS BACK TO ITS DERIVED
+    ## ONE RATHER THAN LOSING ITS NAME. `id {my sweep}` cannot be typed into an
+    ## expression, so honouring it would hand the user a reference that does not
+    ## work; dropping the row from the list would leave the one analysis they
+    ## most want to ask about with nothing to call it.
+    ## ase::analysis_handle_faults is what SAYS SO, by name.
+    if {$id ne {} && [ase::analysis_id_ok $id]} { lappend out $id ; continue }
+    set t [string trim [ase::state_get $r type]]
+    if {$t eq {}} { lappend out {} ; continue }
+    set k [expr {[dict exists $seen $t] ? [dict get $seen $t] : 0}]
+    while {1} {
+      incr k
+      set h "$t$k"
+      if {[lsearch -exact $taken [string tolower $h]] < 0} { break }
+    }
+    dict set seen $t $k
+    lappend taken [string tolower $h]
+    lappend out $h
+  }
+  return $out
+}
+
+# THE HANDLE OF ONE ROW, by its index in `analyses`; `{}` for an index that is
+# not one.
+proc ase::analysis_handle {state idx} {
+  if {![string is integer -strict $idx] || $idx < 0} { return {} }
+  return [lindex [ase::analysis_handles $state] $idx]
+}
+
+# THE ROW A HANDLE NAMES, as `{type idx}` -- ase::meas_binding's OWN shape, so a
+# reference the user typed and a binding the machine computed are the same
+# value. `{}` when no row answers to it.
+#
+# ⚠ CASE-INSENSITIVE, BECAUSE THE SIMULATOR IS. A user who types `AC1` into an
+# expression beside vectors the simulator folded means `ac1`; answering "no such
+# analysis" to that is a trap, not a rule.
+#
+# ⚠ IT ANSWERS FOR A DISABLED ROW TOO. A handle is IDENTITY -- the grid shows
+# every row and so does the list. Whether the named analysis will actually RUN
+# is ase::meas_binding's question, and it asks it separately and says so in its
+# own sentence.
+proc ase::analysis_by_handle {state handle} {
+  set h [string trim $handle]
+  if {$h eq {}} { return {} }
+  set rows [ase::state_get $state analyses]
+  set i -1
+  foreach x [ase::analysis_handles $state] {
+    incr i
+    if {$x eq {}} { continue }
+    if {![string equal -nocase $x $h]} { continue }
+    return [list [string trim [ase::state_get [lindex $rows $i] type]] $i]
+  }
+  return {}
+}
+
+# WHAT IS WRONG WITH THE DECLARED `id`s, as `{idx token spelling}` triples and
+# never as a sentence -- `illegal` (declared, unusable as a typed reference) or
+# `duplicate` (two rows claiming one spelling; the FIRST keeps it, exactly as
+# ase::meas_verdict's duplicate-name rule works). `{}` when the bench is clean,
+# which is every committed bench.
+#
+# Core answers the machine question; a surface that wants to complain about it
+# owns the words, the same split D34 draws everywhere else.
+proc ase::analysis_handle_faults {state} {
+  set out {}
+  set i -1
+  set claimed {}
+  foreach r [ase::state_get $state analyses] {
+    incr i
+    set id [ase::analysis_id $r]
+    if {$id eq {}} { continue }
+    if {![ase::analysis_id_ok $id]} { lappend out [list $i illegal $id] ; continue }
+    set k [string tolower $id]
+    if {[lsearch -exact $claimed $k] >= 0} {
+      lappend out [list $i duplicate $id]
+    } else {
+      lappend claimed $k
+    }
+  }
+  return $out
+}
+
+# ONE ROW'S ONE-LINER, AS FIELDS -- `{handle <h> type <TYPE> args <a> enabled
+# <0|1>}`, or `{}` for an index that is not a row. Issue 1444's shape is
+# *"handle plus a human summary"*; these are its parts, and they are handed over
+# as a dict so that the grid column, `Analyses > List` and Stage 8 task 2's
+# dropdown render ONE answer in three widths instead of three answers.
+#
+# `type` IS THE DISPLAY FORM, UPPERCASE -- AC, DC, TRAN, OP -- because the house
+# rule is that acronyms are spelled in capitals in UI text, and every analysis
+# verb this plan describes is one. The stored type is a `ase::state_get $row
+# type` away for anything that wants the DATA; this proc is the display answer
+# and deliberately does not offer both.
+#
+# `args` IS THE DECK LINE WITH ITS OWN VERB REMOVED, which is why it is safe:
+# it comes from `ase::analysis_line`, the emitter's own speller, so the summary
+# cannot describe a setting the deck does not carry -- the identical reason
+# `ase::ui::arg_summary` reads that proc rather than the row's keys. The verb is
+# stripped only when the FIRST TOKEN EQUALS THE TYPE; anything else is shown
+# whole, because a line that does not start with its own verb is a line nobody
+# here understands well enough to edit.
+#
+# ⚠ AND IT ANSWERS FOR A TYPE THE REGISTRY DOES NOT OFFER, ON PURPOSE. A row
+# whose type is `registered 0`, or a backend that declares no `analysis_types`
+# hook at all, yields `args {}` and KEEPS its handle and its type -- because
+# "what do I call this one?" is a question about the BENCH, which the state
+# answers, and not about the registry, which may never have heard of it. Deriving
+# the handle from `ase::analysis_offered` instead would leave exactly the rows a
+# user most needs to ask about with nothing to call them.
+proc ase::analysis_handle_fields {sim state idx} {
+  if {![string is integer -strict $idx] || $idx < 0} { return {} }
+  set rows [ase::state_get $state analyses]
+  if {$idx >= [llength $rows]} { return {} }
+  set row [lindex $rows $idx]
+  set t [string trim [ase::state_get $row type]]
+  set line {}
+  catch { set line [string trim [ase::analysis_line $sim $row]] }
+  set args {}
+  if {$line ne {}} {
+    set args $line
+    if {[regexp {^(\S+)\s*(.*)$} $line -> head rest]
+        && [string equal -nocase $head $t]} {
+      set args [string trim $rest]
+    }
+  }
+  return [list handle [ase::analysis_handle $state $idx] \
+               type [string toupper $t] \
+               args $args \
+               enabled [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]]
+}
+
+# THE WHOLE BENCH AS ONE COPY-PASTEABLE BLOCK -- the body of `Analyses > List`
+# (issue 1444, surface 3), one line per analysis row, columns padded to fit.
+#
+# ⚠ EVERY ROW, NOT ONLY THE ENABLED ONES, AND THAT IS A CORRECTION TO 1444.
+# 1444 proposed *"a dump of one-liners for the enabled analyses"*. But a
+# measurement bound to a switched-off row REFUSES, and the user's next question
+# is *which one is off* -- a list that silently omitted it could not answer, and
+# it would disagree with the grid beside it, which shows every row. A disabled
+# row is listed with its handle and marked `(off)`.
+proc ase::analysis_handle_text {sim state} {
+  set rows {}
+  set wh 0 ; set wt 0
+  set n [llength [ase::state_get $state analyses]]
+  for {set i 0} {$i < $n} {incr i} {
+    set f [ase::analysis_handle_fields $sim $state $i]
+    if {$f eq {}} { continue }
+    set h [dict get $f handle]
+    set t [dict get $f type]
+    if {[string length $h] > $wh} { set wh [string length $h] }
+    if {[string length $t] > $wt} { set wt [string length $t] }
+    lappend rows $f
+  }
+  set out {}
+  foreach f $rows {
+    set l [format "%-*s  %-*s  %s" $wh [dict get $f handle] \
+                  $wt [dict get $f type] [dict get $f args]]
+    if {![dict get $f enabled]} { set l "[string trimright $l]  (off)" }
+    lappend out [string trimright $l]
+  }
+  return [join $out "\n"]
 }
 
 # --- THE SIMULATOR-PROFILE LAYER WAS HERE AND IS GONE ------------------------
