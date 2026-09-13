@@ -1888,6 +1888,88 @@ T1 runs the headless arm only, it has been conflated with issue **1402**'s conve
 reads like the harness working — which it is. The suite is not. Filed with three costed
 options and `owed.sh add rule 1440`.
 
+### Task 3 — finding one option among 247, and the badge nobody had measured (§7c)
+
+**The brief named one outcome it would reject — a badge asserting *"this option changes
+your numbers"* on the strength of a transcription — and the crew answered it by measuring
+the column instead.** All 22 `results` rows, both binaries, each on a deck built to make
+its own documented mechanism fire.
+
+| | |
+|---|---|
+| status | **LANDED** — task 3 of 4 |
+| issue | **1441** |
+| T1 | taken **solo** by the driver, **66 cases**, **zero** counted failures |
+| suites moved | **new** `tests/headless/test_ase_optsheet_1441.tcl`, registered in **`hcases` AND `dcases`** — **62 headless + 87 on `:99` = 149 checks into T1**. `test_ase_options_1437` **75**, one row re-baselined (BR6). Nothing else moved |
+| driver's own re-run | engine arm **5/5 ALL PASS** — optsheet **62**, options_1437 **75**, predeck_1439 **78**, core **598**, preflight **235**; and the **display arm** of the new suite at **87**, taken separately |
+| deck goldens moved | **NONE** — and that is the interesting part, because `render_deck`'s option loop was **lifted out whole** into `ase::opt_deck_plan`, which the emitter now calls and the preview reads. Output byte-identical |
+| sabotage | **44 respellings, 140 applications** (44 + 44 + 8 targeted + 44 on the final tree), **140/140 restored, ZERO KILLS**, and on the final tree **44/44 redden a NAMED ROW with zero survivors**. Twelve of the 44 reproduce a claim the plan, a dossier or this tree's own code makes. ⚠ **S26 is a shape new to this batch: a guard no caller could reach** — `opt_preview` could not be handed both file lines and a refusal, so a branch existed that nothing could enter. ⚠ **And comparing the two campaign passes caught two sabotages reddening the WRONG row** (S21, S22), which a single pass would have scored as clean reds |
+| ledger debts | ⚖ **R9** (rule 1441 — badge phrases, four preview slot labels, column headings, detail-line verdicts, finder-bar labels, one new `units` help sentence) **and a `look` debt**, `ase_options_sheet_1441`. Ledger 158/57/9 → **159/58/10** — the driver added the third: a **`:0` suite debt**, `test_ase_optsheet_1441`, because this is a new WINDOW whose suite has only ever run on Xvfb `:99` and `CLAUDE.md` asks for one `:0` run before a GUI feature is called done. A suite debt clears itself on a pass; the `look` debt does not |
+| commit | `f91c36ae` |
+| receipt | `receipts/21-stage-7-finding.md` |
+
+**⚠ THE HEADLINE: THE BADGE WOULD HAVE LIED ABOUT THREE ROWS, AND THE REASON IS A
+TRANSCRIPTION ERROR ONE LEVEL UP.** `warn=1` takes a deck from **0 to 5 SOA messages with
+every printed value byte-identical**; `maxwarns=2` takes 5 messages to 2 and changes
+nothing; `num_threads=1` is identical to the default. All three are **diagnostic printers**.
+`evidence/hidden-vars.md` §2.1's own R/P column already marks all three **P** — so the
+catalogue had transcribed the **section title** (*"Group R — the 21 that change numerical
+results"*) rather than the **column inside it**. ⚠ **A heading is not data**, and that is
+the shape to remember: the error was not in reading a fact wrongly but in reading a
+container's label as if it were its contents.
+
+**Driver's own check, on both binaries:** a deck with `.options warn=1` against the same
+deck without it — **every printed value byte-identical**, `v(d)`, `v(dd)`, `i(vd)`, `i(v2)`.
+⚠ **The other half was NOT reproduced**: the driver's probe model carries no SOA limits, so
+it produced no SOA messages to count. The *"0 → 5 messages"* half is the crew's; **the "no
+value moves" half — which is the half the badge turns on — is the driver's.**
+
+**What was done with each of the three unverified columns, because the answer differs:**
+
+* **`results` — MEASURED, 22 of 22.** 9 confirmed, **3 refuted**, 10 unmeasurable on this
+  box. `ase::opt_results` is therefore **three-valued**, and a row with no evidence shows
+  `⚠ MAY CHANGE RESULTS — UNVERIFIED` **on the surface**. **No badge anywhere asserts a
+  transcription.** That is exactly what the brief asked for and it was answered by
+  measurement rather than by hedging.
+* **`scope` — cross-checked, and then designed around.** Zero set-level disagreements over
+  27 shared rows; `dyngmin` and `chgtol` corrected. It **cannot** be measured — there is
+  nothing in ngspice to measure a GUI grouping against — so the design carries the risk
+  instead: **the global surface offers every row**, so a wrong scope costs a *shortcut*,
+  never an *option*. Row SC1 asserts that over the whole catalogue, which converts
+  `PLAN.md`'s *"an option shown in the wrong scope is worse than one not shown"* from a
+  warning into a structural impossibility.
+* **`group` — still 0 / 247, and the receipt says so in as many words.** 114 of 205
+  taggable rows disagree with their source, mostly because the catalogue's taxonomy is
+  better than the dossier's. One real **category error** fixed: `numerics` was the
+  `results` column wearing a group's clothes, and all 20 members were re-filed.
+
+**Eleven corrections, C123–C133.** Two bind later work:
+
+* **C126 — §7c-2's *"it is a filter, not a feature, because the catalogue carries
+  `default`"* is wrong in the direction that HIDES A REAL CHANGE.** **Storage** decides
+  visibility; `default` decides only the *annotation*. A view built the plan's way would
+  drop a stored row whose value happens to equal the default — i.e. exactly a setting the
+  user made on purpose.
+* **C127 — only 65 of 247 rows carry a default at all**, and **64 carry help**. A
+  changed-only view over a catalogue that mostly cannot say what "unchanged" means is a
+  different object from the one the plan describes.
+
+⚠ **AND C133 IS THE ONE TO CARRY INTO EVERY LATER MEASUREMENT.** The crew's own probe
+harness hit the vacuity defect: **nine "no difference" results came out of an extractor
+that was returning nothing at all.** A row whose fixtures never disagree cannot fail — and
+a *measurement* whose extractor returns nothing cannot disagree either. **A measurement
+needs a positive control exactly as a row does.** This batch has now met that defect in
+test rows nine times and in a measurement harness once; the second is worse, because a
+measurement is what settles a dispute between a plan and a tree.
+
+⚠ **ONE DRIVER CORRECTION.** The receipt's floor paragraph said *"so T1 covers all 82"*,
+and **82 is not a number this suite produces** — driver-measured, both arms, **62 headless
+and 87 on `:99`**, i.e. **149**, which is what the crew's own summary says elsewhere. The
+same stale pair had reached `tests/run_regression.tcl`'s new comment as *"80 checks against
+55"*. The comment is **live documentation and was corrected in place**; the receipt is a
+dated record and was **footnoted**. The suite counts themselves were always right; only the
+sentences about them were wrong.
+
 ### What Stage 7 learned that binds later stages
 
 ---
