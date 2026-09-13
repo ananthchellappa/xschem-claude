@@ -703,6 +703,26 @@ than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and
 until task 1 releases `tests/headless/test_ase_core.tcl` — it is the first item of the driver
 pass that collects task 1.
 
+### 🔬 Driver verification taken WHILE the two crews held the code — 2026-09-13
+
+A driver with no files to edit is not a driver with nothing to do. Three evidence files
+were measured on **both** binaries (`/usr/bin/ngspice` 45.2 and the fork's 46+) while the
+crews ran, each of them de-risking a stage that has not opened yet or checking a receipt
+that has not arrived yet:
+
+| file | what it settles |
+|---|---|
+| `evidence/meas-readback.md` | `meas` creates a **vector**, not a shell variable (`$name` is empty, `print name` answers). `meas … > file` **writes**, where `option > file` writes zero. The `meas` echo line is **binary-dependent** (six decimals against five) while `print` is byte-identical. A **failed** measurement is invisible to rc, to `$sim_status` and to stdout — `print` of it prints nothing at all — and a **deck-card `.measure` never becomes a vector**, so a `.control` producer cannot read one back. Written for Stage 8 task 1 and sent to that crew as it worked. |
+| `evidence/sp-stage9.md` | `sp` runs on **both** binaries; plot `sp1 (SP Analysis)`, vectors `S_1_1`…`Y_1_1` and `NF`/`NFmin`/`Rn`/`SOpt` in ngspice's **mixed case**; the two preconditions are **refusals** because a missing port `exit(1)`s the whole deck and kills `op` with it; and **four SP benches already exist in this tree** under `ihp-sg13g2/`, carrying `portnum`/`z0`, whose committed `.state` holds only the four seeded rows because ASE-L cannot say `sp`. |
+| `evidence/optran-and-ncdump-verified.md` | §10b's `9.999550e-01` **reproduces exactly on both binaries** — but *on by default* is not *used by default*: the same RC left alone answers exactly `1.000000e+00`, because Newton converges at rung 1. So the proposed OP-form sentence must be **conditional on the ladder having descended**. Also: `Note:` lines are **not all on one stream**, and `CKTncDump`'s table can arrive with **no starred node at all**. |
+
+⚠ **One method correction came out of it.** The first attempt to reproduce §10b's number used
+`option noopiter` alone and got `1.000000e+00`, which looks like a refutation and is not one:
+gmin stepping succeeds at rung 2 and `optran` is never reached. The original measurement said
+`.options noopiter gminsteps=0 srcsteps=0` and meant all three. **A claim is not refuted until
+it has been re-run under its own stated conditions** — the same discipline that corrected issue
+1438's defect-1 mechanism.
+
 
 ---
 
