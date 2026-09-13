@@ -33,6 +33,28 @@ against the commit that introduced it, with continuation-joined Tcl strings
 rendered through `tclsh` so the text is what the widget actually shows rather
 than what the source lines look like.
 
+### What the driver re-measured, independently
+
+The extraction was checked rather than trusted. Every one of the 291 strings was
+searched for in the committed source at HEAD, with Tcl line-continuations joined
+the way the interpreter joins them:
+
+* **260 are present as a single literal**, byte for byte.
+* **31 are not, and all 31 are RENDERED rather than wrong** — the code composes
+  them from pieces. `Time step (s):` is `label {Time step}` plus `unit s` plus
+  the colon `form_label` appends. *"Stopping this run discards it — ngspice in
+  batch mode writes nothing on a stop."* is an ASE-L frame plus a clause the
+  ngspice adapter supplies. A few show a readable placeholder (`<node>`,
+  `<outv>`) where the code writes a variable, or expand a branch variable into
+  the two sentences it can produce.
+
+Those 31 carry a **`Rendered:`** line in their entry. The distinction matters
+only if you want one changed: the words are what the user reads, but the edit
+lands on the pieces, and in two cases one of the pieces belongs to the **ngspice
+adapter** rather than to ASE-L.
+
+Nothing was found that the source does not say.
+
 No working-tree copy of `src/ase.tcl`, `src/ase_window.tcl`,
 `tests/headless/test_ase_core.tcl`, `tests/headless/test_ase_persist.tcl` or
 `tests/run_regression.tcl` was read, because a crew holds those five files while
@@ -537,6 +559,8 @@ Time step (s):
 
 *For:* The tran required step size. One of the two fields shown before the disclosure is opened.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Constant declared by 1416; 1417 is the commit that first renders it, and the " (s)" comes from 1417's `form_label` appending the declared unit. Before 1417 this read "Step:".
 
 
@@ -563,6 +587,8 @@ Start recording at (s):
 
 *For:* Optional tran tstart — the time before which output is discarded.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Constant from 1416, first rendered by 1417. Phrased as an instruction rather than a noun, unlike its neighbours.
 
 
@@ -575,6 +601,8 @@ Maximum time step (s):
 *Where:* Choose Analyses dialog → per-analysis form, tran, behind ▸ Advanced
 
 *For:* Optional tran tmax — the ceiling on the solver's internal step.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Constant from 1416, first rendered by 1417. Sits directly under "Time step (s):" when the disclosure is open; the two are easy to confuse at a glance.
 
@@ -589,6 +617,8 @@ Use initial conditions:
 
 *For:* Optional tran uic flag, now a checkbutton rather than an entry the user had to type `1` into.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Ships WITH the trailing colon even though it labels a checkbox rather than a value field — `form_label` appends ":" unconditionally. The checkbutton itself has `-text {}`, so the colon is the last thing before an unlabelled box.
 
 
@@ -601,6 +631,8 @@ Points per decade:
 *Where:* Choose Analyses dialog → per-analysis form, ac/noise/disto, the points field label while Sweep type is `dec` (also the label a bench with no stored sweep key opens with)
 
 *For:* The count field, labelled for the decade sweep — where the number is points PER DECADE, not in total.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Also the field's plain `label`, so it is what sens (dec-only) always shows.
 
@@ -615,6 +647,8 @@ Points per octave:
 
 *For:* Same field, relabelled for the octave sweep.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Relabel is one `configure` on the neighbour's label widget; it runs on a pick AND at build time.
 
 
@@ -628,6 +662,8 @@ Number of points (2 gives ONE point):
 
 *For:* Same field, relabelled for the linear sweep — where the number is a TOTAL, and ngspice's off-by-one means 2 yields a single point. This relabel is the defect issue 1417 is named for.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* ⚠ THE ONE THE REVIEWER MOST LIKELY WANTS TO CHANGE. Shouty caps mid-label, a parenthetical that is a warning rather than a unit, and it is INCONSISTENT ACROSS TYPES at HEAD: noise ships "Number of points (1 gives ONE point):" and disto ships a bare "Number of points:" for the same `lin` pick. The parenthetical constants are 1416/1432 text; 1417 is the commit that renders them.
 
 
@@ -640,6 +676,8 @@ Start frequency (Hz):
 *Where:* Choose Analyses dialog → per-analysis form, ac/noise/disto/sens, basic field labels
 
 *For:* Sweep start. Paired with "Stop frequency (Hz):".
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Constant from 1416, unit suffix supplied by 1417's `form_label`. Its partner ships as "Stop frequency (Hz):" — same shape, listed here once.
 
@@ -814,6 +852,8 @@ Sweep type:
 *Where:* Choose Analyses dialog → per-analysis form, ac/noise/disto/sens, label of a readonly combobox offering dec oct lin
 
 *For:* Picks the AC-family frequency sweep mode. Picking a value relabels the neighbouring points field.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* The combobox is readonly and its three values ship verbatim as `dec`, `oct`, `lin` — lowercase ngspice keywords shown to the user as-is, not spelled out. sens offers only `dec`.
 
@@ -1056,6 +1096,8 @@ ase: enabled dc analysis needs every value of the second sweep, or none of them
 
 *For:* The headline sentence of this commit: what the user reads when they fill in, say, a second sweep variable and leave its start, stop and step blank. The full composition of the two entries above; shown verbatim here because neither half reads as a sentence alone.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Composed, not a single literal in the source -- frame from ase_window.tcl:5311, clause from ase.tcl:4646. Grammar of the whole: `enabled dc analysis needs every value of the second sweep` has the analysis as the subject that `needs`, which the reviewer may or may not want.
 
 
@@ -1272,6 +1314,8 @@ needs '<field>' to be at least <min>
 
 *For:* Stops the commit and the run when a numeric field is below the lower bound the simulator itself enforces — noise `points` and `ptssum`, disto `points`, sens `points`, each declared `min 1`. ngspice otherwise only refuses after the deck is written and the process has started.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* ⚠ <field> is the INTERNAL SLOT NAME, not the form label: a user who typed 0 into the field captioned "Report every N points:" is told "needs 'ptssum' to be at least 1". The sibling clauses `missing` and `fill` have the same defect and predate this commit, so fixing this one alone would make the set inconsistent. Clause carries no frame and no trailing period by design.
 
 
@@ -1305,6 +1349,8 @@ ase: it is enabled on this bench, so the run would have completed, produced no r
 *Where:* CIW / ASE-L message area, red (error) — the second line of the same preflight refusal, printed once after the per-type lines above, and joined into the raised error text.
 
 *For:* Explains what the refusal saved the user from (a run that would have finished with nothing to show), states that nothing was written this time, disambiguates any leftover files in the run directory, and closes off the usual escape hatch.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Assembled in ase::preflight_gate (src/ase.tcl ~:11230) from a continued string plus $rdnote. THE RUNDIR SENTENCE IS CONDITIONAL: when the rundir does not yet exist the middle sentence is absent entirely and the text reads "...no deck, no raw, no log. `set ase_preflight 0` does NOT disable this check." The path shown is [file normalize $rd], i.e. an absolute directory path. The backticks around set ase_preflight 0 are literal characters in the shipped message, and the shouted NOT is literal too. ⚠ Reviewer should see this beside its near-twin ~20 lines above in the same proc (a DIFFERENT issue, not 1401): "ase: it is enabled on this bench, so the run would have started and produced nothing for it. Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` does NOT disable this check." — two refusals that open with the same nine words and diverge at "completed, produced no result for it, and said nothing" vs "started and produced nothing for it". Also: "it" has no antecedent in this line on its own; the antecedent is the analysis type named in the line before it.
 
@@ -1832,6 +1878,8 @@ a noise analysis measures a VOLTAGE, and '<outv>' is a current
 
 *For:* Says the noise Output field names a current (e.g. i(v1)) when noise can only measure a node voltage. Appears as soon as the form/bench is checked against the netlist, and hard-refuses the run.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* <outv> is the user's own typed Output string, inserted verbatim. "VOLTAGE" is shouted in caps mid-sentence — the only all-caps word in the noise clauses. Clause carries no frame and no trailing period; the caller supplies both.
 
 
@@ -1857,6 +1905,8 @@ name a node, as `v(out)` or `v(out,ref)`
 *Where:* Choose Analyses precondition banner (fatal, "⊘ "), and the pre-run refusal in the run log
 
 *For:* Says the noise Output field is neither a voltage nor a current — it could not be parsed at all. Hard-refuses the run.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Near-twin of the previous refusal; a reviewer may want to see them side by side.
 
@@ -1884,6 +1934,8 @@ this circuit has no '<node>' for the noise analysis to measure, and ngspice answ
 
 *For:* Warns that the node named in Output is not in the netlist, and that ngspice will not complain — it will silently return a whole spectrum computed about ground. Does not stop the run.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* With more than one missing node the list is joined as "no 'a' and no 'b'", i.e. the sentence reads "this circuit has no 'a' and no 'b' for the noise analysis…" — the "no" is repeated inside the join. Verdict is `blocked`, which the grid draws with the same glyph as `fatal` by design.
 
 
@@ -1908,6 +1960,8 @@ name a node this netlist has
 
 *For:* Warns that the source named in Input source exists but has no `ac` on its card, so ngspice will abort the run with a message that names neither the analysis nor the source.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* <name> is the user's typed Input source. This is the refusal the generic `ac_source` precondition cannot make — a bench with ten other AC sources still dies here.
 
 
@@ -1921,6 +1975,8 @@ put `ac 1` on '<name>' (any magnitude will do)
 
 *For:* The remedy paired with the "carries no AC value" caution.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* The parenthetical is doing real work (noise normalises by the AC magnitude), but reads as an aside a user might skip.
 
 
@@ -1933,6 +1989,8 @@ put `ac 1` on '<name>' (any magnitude will do)
 *Where:* Choose Analyses precondition banner (blocked, "⊘ "), and the pre-run advice block in the run log
 
 *For:* Warns that Input source names a device that exists but is not a voltage/current source (e.g. a resistor).
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* "referred to one" is a term of art from ngspice's own noise model (input-referred noise); it may read oddly to a user who does not know it.
 
@@ -1959,6 +2017,8 @@ this circuit has no '<name>' to refer the noise to
 *Where:* Choose Analyses precondition banner (blocked, "⊘ "), and the pre-run advice block in the run log
 
 *For:* Warns that the Input source name is nowhere in the netlist at all.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Shortest of the three Input-source clauses; "refer the noise to" is the same term of art in a different grammatical shape.
 
@@ -2025,6 +2085,8 @@ this bench saves <n> named outputs and nothing else, and a <type> analysis answe
 
 *For:* Refuses the run when the Outputs pane has Save ticked on one or more named signals and "Save all voltages" is off — noise/tf/sens answer in vectors like `onoise_spectrum` that a netlist-derived save list can never contain, so ngspice refuses the analysis outright.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* The plural is computed: with n == 1 it reads "this bench saves 1 named output and nothing else". <type> is the analysis name as the registry spells it, lowercase (`noise`, `tf`, `sens`). Longest sentence in the set at ~230 characters, and it is a single sentence with three clauses joined by commas and a dash.
 
 
@@ -2037,6 +2099,8 @@ tick Save all voltages, or clear the per-output Save ticks so the deck carries n
 *Where:* Banner ". Fix: …" clause / run-log "ase:   fix: …" line
 
 *For:* The remedy paired with the starved-save-list refusal; names the two controls in the Outputs pane.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* "Save all voltages" is quoted bare, with no quotes or capitalisation cue beyond its own capital S — it is the literal checkbox text. "per-output Save ticks" mixes a lowercase compound with a capitalised control name.
 
@@ -2185,6 +2249,8 @@ ASE-L has not netlisted this design yet, so it cannot check this analysis agains
 
 *For:* Appears whenever the netlist-facts slot is cold — ASE-L has never netlisted this design in this session, so the banner has nothing to check the selected analysis against. Tells the user why the form is silent about their circuit and names the menu entry that would make it speak.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* The trailing "Simulation > Netlist > Recreate." is a bare menu path used as a sentence — no verb, no "Use"/"Try". Same shape in all three frames. The path is composed at runtime from ase::ui::menu_path_netlist_recreate; the literal fallback in the code is the identical string. "netlisted" is used as a verb. ASE-L is spelled with the hyphen throughout.
 
 
@@ -2197,6 +2263,8 @@ The schematic has changed since the last netlist, so these checks are out of dat
 *Where:* Choose Analyses dialog — the precondition banner ($w.note), same widget, shown when the slot is stale because the schematic moved or has unsaved edits
 
 *For:* Appears when the design's .sch file stamp has moved since capture, or the buffer was clean at capture and is dirty now — i.e. the user edited the schematic after the netlist ASE-L is reading. Warns that anything the banner would otherwise say about the circuit is stale.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* This is the default stale arm — it covers both the `schmoved` and the `unsaved` reasons with one sentence, so a user with unsaved edits reads "the schematic has changed" rather than "you have unsaved edits". "these checks" refers to the banner's own precondition lines, which are not visible while this sentence is showing (the frames are exclusive).
 
@@ -2211,6 +2279,8 @@ The netlist has changed since ASE-L read it, so these checks are out of date. Si
 
 *For:* Appears when the .spice deck's mtime:size stamp no longer matches what ASE-L captured — something rewrote or replaced the netlist outside ASE-L's own producer path. Same out-of-date warning as the schematic case, with the different cause named.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Distinguished from the previous sentence only by "The netlist" vs "The schematic" and "since ASE-L read it" vs "since the last netlist". A reviewer may want to check the two read as a deliberate pair. Third-person reference to the product ("since ASE-L read it") appears here and in the cold sentence.
 
 
@@ -2223,6 +2293,8 @@ The netlist has changed since ASE-L read it, so these checks are out of date. Si
 *Where:* Choose Analyses dialog — each precondition line inside the banner ($w.note), one line per failing check, worst first (fatal, then blocked, then caution)
 
 *For:* The per-check line shape: a glyph, the precondition sentence for the selected analysis type, and — only when the check supplies a remedy — a period and a "Fix:" clause. Multiple lines are joined with newlines.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* PLACEHOLDER ITEM: only the glyph prefix and the literal ". Fix: " are shipped text from this issue. <sentence> is `[lindex $r 2]` and <fix> is `[lindex $r 3]`, both produced by ase::needs_eval and already on the rule queue under issues 1423/1425/1426/1427/1428/1432/1434 — this issue's "content half" is explicitly empty. The ". Fix: " frame itself is reused verbatim from ase::preflight_gate's advice block (issue 1425, ase.tcl:9122 before this commit), so it is new to THIS surface only. Note the frame appends a period before "Fix:", so a clause that already ends in punctuation would double it. Glyph is "⊘ " instead of "⚠ " for blocked and fatal lines.
 
@@ -3230,6 +3302,8 @@ GATED: [ase::opt_gate_why $sim $name ...]
 
 *For:* Prefix on the sentence explaining why a listed option may not exist in this build.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* The row is always listed, never hidden; the three sentences it can carry follow.
 
 
@@ -3670,6 +3744,8 @@ ase: Stopping this run discards it — ngspice in batch mode writes nothing on a
 
 *For:* Warns, before the user has any reason to press Stop, that Stop is not a pause or a partial save: pressing it throws the whole run away. Said only for a simulator whose backend declares what a stop costs; a run that was refused never sees it.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Composed from two halves that a reviewer may want to edit separately: the FRAME is ase::run_stop_warning — "Stopping this run discards it — <clause>." — and the CLAUSE is ngspice adapter content, the `before` key of ase::backend::ngspice::run_stop_cost, literally "ngspice in batch mode writes nothing on a stop". The "ase: " prefix is added at the echo site, not by the proc. The dash is an em dash (U+2014). A backend that declares no run_stop_cost hook prints nothing at all — there is no fallback wording. Sentence-initial capital "Stopping" after the lowercase "ase: " prefix is inconsistent with the other ASE-L CIW lines, which continue lowercase after the prefix.
 
 
@@ -3683,6 +3759,8 @@ stop      : Stopping this run discards it — ngspice in batch mode writes nothi
 
 *For:* Records in the run's own log what pressing Stop would have cost, so a user reading the log a week later knows a missing rawfile means the run was stopped rather than the simulator having failed.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Same sentence as the CIW line, but with the header's fixed-width field label `stop      : ` instead of the `ase: ` prefix — six spaces pad `stop` to the header's column. The whole line is omitted when the backend declares no run_stop_cost hook, keeping the log byte-identical to the older committed format. Reviewer should decide whether the log field wants the same prose as the CIW line or a shorter value.
 
 
@@ -3695,6 +3773,8 @@ ase: simulation stopped — nothing of this run was written
 *Where:* CIW / ASE-L message area, plain (not error) — printed by ase::ui::do_stop the moment a Stop actually kills a running simulator, from either Stop door (menu or strip button).
 
 *For:* Confirms the Stop took effect and, in the same breath, tells the user not to go looking for a rawfile — there is none. Printed only on the path that really killed a process.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Frame is ase::run_stopped_msg — "ase: simulation stopped — <clause>" — and the clause is ngspice adapter content, the `after` key of ase::backend::ngspice::run_stop_cost, literally "nothing of this run was written". Em dash (U+2014). NO TRAILING FULL STOP, unlike its launch-time sibling above which ends in a period — the inconsistency is in the shipped strings. The two early-return paths keep their existing sentences ("ase: no simulation running for this session", "ase: Stop is not available on Windows"), which are pre-existing and not part of this issue. A backend with no run_stop_cost hook stays silent here, so a successful Stop on an unregistered simulator says nothing at all.
 
@@ -3817,6 +3897,8 @@ the $mty analysis in row $mai recorded '$mgot' where the results file holds '$mw
 
 *For:* Reports that a recorded plot identity and the results file disagree at the same position, naming the row, so the user knows results cannot be trusted to map back to rows.
 
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
+
 *Note:* Assembled from two literals in the same proc: the sentence is `"the $mty analysis in row $mai recorded '$mgot' where $msay '$mwant', so results cannot be matched to the row that asked for them."` with `set msay "the results file holds"` on this arm. $mai is the ROW INDEX in `analyses` (0-based), printed as a bare number — `in row 2` may read to a user as an ordinal rather than a zero-based index.
 
 
@@ -3829,6 +3911,8 @@ the $mty analysis in row $mai recorded '$mgot' where the registry declares '$mwa
 *Where:* ASE-L run log / notice channel — `mislabel` verdict, REGISTRY side: the recorded plot name does not match the registry's declared `select` glob (the `setplot previous` over-walk that saturates on ngspice's `constants` plot)
 
 *For:* Reports that a plot was recorded under a name the registry never declared for that analysis — the only signal that an over-walk appended ngspice's twelve mathematical constants under a plausible record.
+
+*Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* Same literal as the previous row with `set msay "the registry declares"`. Here $mwant is a GLOB pattern from the registry's `select` key, so the quoted value may contain `*` and read oddly to a user, e.g. `where the registry declares 'Sensitivity Analysis*'`.
 

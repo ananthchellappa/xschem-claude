@@ -660,6 +660,34 @@ the issue prose — which turned out to be necessary rather than careful: most i
 be answered in one pass instead of 291. Issue **1443**'s strings are excluded and join when
 the Stage 8 crew's receipt lands.
 
+**The driver re-measured the extraction rather than trusting it.** All 291 strings were
+searched for in the committed source at HEAD with Tcl line-continuations joined the way the
+interpreter joins them: **260 are present as a single literal, byte for byte; 31 are not, and
+all 31 are RENDERED rather than wrong** — `label` + `unit` + the colon `form_label` appends,
+an ASE-L frame + a clause the **ngspice adapter** supplies, a branch variable expanded into
+the two sentences it can produce, or a readable placeholder shown where the code writes a
+variable. Those 31 carry a `Rendered:` line in their entry, because the words are what the
+user reads but the **edit lands on the pieces** — and for two of them one piece belongs to
+the adapter, not to ASE-L. Nothing was found that the source does not say.
+
+⚠ **TWO CREWS ARE LIVE AT ONCE — 2026-09-13, deliberately, and this is a DEPARTURE from
+one-task-at-a-time that is being declared at the moment of departing.** The batch's operating
+model is one task to one crew; the reason to depart is that **Stage 8 task 1 holds five files
+and none of them is `src/ase_window.tcl`**, which is the only file ⚖ R5's reversal touches —
+so the second task is disjoint by construction rather than by care. The split is written into
+both briefs: task 1 holds `src/ase.tcl`, `tests/headless/test_ase_core.tcl`,
+`tests/headless/test_ase_persist.tcl`, `tests/headless/test_ase_meas_1443.tcl` and
+`tests/run_regression.tcl`; ⚖ R5's crew (**issue 1445**) holds `src/ase_window.tcl` and
+`tests/headless/test_ase_dialogs.tcl`, is forbidden to create a suite file (registering one
+would need `run_regression.tcl`), and is forbidden to run `tests/run_regression.tcl` at all —
+**T1 stays the driver's, and solo, which is what issue 0990 requires.** Neither crew commits.
+
+⚖ **R5 is sequenced here on purpose**: Stage 8 task 2 builds the Measurements sub-dialog in
+the same file and the same form idiom, and it should inherit the remembering behaviour rather
+than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and stays unpaid
+until task 1 releases `tests/headless/test_ase_core.tcl` — it is the first item of the driver
+pass that collects task 1.
+
 
 ---
 
