@@ -1806,6 +1806,88 @@ reach the simulator. What §7d has to build is the **delivery** — `spiceinit_w
 are expected to move *"the first time `-D` is emitted for an option"*, and nothing emits
 `-D` yet — the suite is **ALL PASS (111)** here.
 
+### Task 2 — the pre-deck class, and a defect that turned out not to need it (§7d)
+
+**The task was briefed to fix `wnflag` through the pre-deck door. It fixed `wnflag` and
+refuted the door.** Issue **1438** — the driver's own filing — argued that `wnflag` was
+*"the wrong door twice over"*, and the second half of that argument was wrong.
+
+| | |
+|---|---|
+| status | **LANDED** — task 2 of 4 |
+| issue | **1439**. ⚠ Also: **1438 CORRECTED** (the driver's, in place, appended not rewritten) and **1440 FILED** (the driver's, below) |
+| T1 | taken **solo** by the driver, **65 cases**, **zero** counted failures |
+| suites moved | **new** `tests/headless/test_ase_predeck_1439.tcl` **78 checks**, registered in `hcases` → **T1 covers all 78**. `test_ase_simreg_0931` 111 → **117** (six new rows, section P). `test_ase_options_1437` **75**, unchanged in count with **seven rows re-baselined**. `test_ase_core` 598, `test_ase_preflight` 235 unmoved |
+| driver's own re-run | **5/5 ALL PASS on the engine arm** — predeck_1439 **78**, options_1437 **75**, simreg_0931 **117**, core **598**, preflight **235** |
+| deck goldens moved | **NONE**, and no `.state` file moved — even though `render_deck`'s option loop now consults the door and the speller, because no committed bench stores an option the change respells |
+| sabotage | **35 respellings, 76 applications** (35 + 3 survivor re-runs + 35 on the final tree + 3 more), **76/76 restored** by md5, **zero kills, 35/35 named reds, zero survivors**. ⚠ **S21 is a shape this batch has not seen**: its fixtures *did* differ and the row still passed, because the row asked about **position** where `set` is last-writer-wins. That is the ninth variant of *a row whose fixtures never disagree*, and the first where they did |
+| ledger debts | ⚖ **R9** (rule 1439), **plus rule 1440** (the driver's). Ledger 156/57/9 → **158/57/9**. **No `look` debt** — nothing here draws a pixel; §7c owns that |
+| commit | `98beb2b5` |
+| receipt | `receipts/20-stage-7-predeck.md` |
+
+**⚠ THE `wnflag` ANSWER, AND IT CORRECTS THE DRIVER'S OWN ISSUE.** Two of the three
+`wnflag` read sites are **dead code**. Driver-verified in the ngspice source, because this
+is a correction to a claim the driver made:
+
+* `src/frontend/inpcom.c:990` reads `wnflag` into `int wnflag;` declared one line above —
+  and **the name appears nowhere else in the next 110 lines**. A dead local.
+* `src/frontend/inp.c:2828` sits in `rem_unused_mos_models()` at `:2685`, inside
+  **`#ifdef REM_UNUSED`** opened at `:2683`. `grep -rn 'define REM_UNUSED' src/` returns
+  **nothing**.
+* `src/spicelib/parser/inpgmod.c:268` is the only live read, and **ngspice's own comment at
+  `:294-295` says an `.options` card reaches it**: *"We do have nf, but no wnflag on the
+  instance. Now it depends on the default wnflag **or on the `.options wnflag`**."*
+
+So `wnflag` is a **`deck`** option. **Issue 1438's defect 1 is issue 1438's defect 2** — a
+valued option written as a bare card — and the speller fixes it with no pre-deck delivery
+at all. `ase::state_option_delivery` over the 104 committed `.state` files goes
+`6 {acct list wnflag} 5` → **`1 {acct list} 0`**.
+
+⚠ **What the driver did NOT re-take: the behavioural delta.** The crew measured
+`.options wnflag` → `@m1[vth]` 0.9889 / `i(vd)` −1.017 mA against `.options wnflag=1` →
+0.5889 / −1.737 mA, **71 %**, on both binaries. The driver's own scratch probes used an
+**unbinned** model and `wnflag` only acts where a model is **binned**, so they showed no
+difference — consistent with the source, not contrary to it, and **not** an independent
+confirmation. The C-source evidence above is the driver's; the 71 % is the crew's.
+
+**⚠ AND THE LESSON IS THE DRIVER'S TOO.** Issue 1438's mechanism was assembled from three
+`grep` hits read as three live reads. Two were dead — one a dead local, one behind a macro
+nobody defines — and **the dead one carried the whole argument**. *Before building a
+defect's explanation on a call site, establish that the site executes.* Recorded in 1438
+itself, appended rather than rewritten.
+
+**⚠ THE RE-BASELINE THE DRIVER BUDGETED DOES NOT HAPPEN (C119).** `PLAN.md` expects
+`test_ase_simreg_0931`'s six rows to move *"the first time `-D` is emitted for an option"*,
+and this task is the first `-D` emitter — yet the suite is **still ALL PASS at 111** after
+the change, because A2/B5/B6/B11/B12/D4 all build the command from an **empty** state, so
+the `-D` arm contributes nothing. That is 0931's compatibility contract **holding**, which
+is a better outcome than a re-baseline. The crew pinned the arm with **six new rows in a
+new section P** rather than leaving the absence unasserted — which is this batch's own rule
+that *a row explaining why nothing moved is the row to sabotage first*.
+
+**⚠ AND ⚖ R2's CONDITION 4 IS NARROWED BY MEASUREMENT, WHICH IS THE USER'S TO SEE.**
+`PLAN.md` §7d says *"every pre-deck option **and** the entire campaign mechanism are refused
+when `-n` is in force"*. Measured: **`-n` closes the FILE and not `-D`.** The two doors are
+not refused together, so the refusal is narrowed to the file half. R2 was answered **yes
+with four conditions** and those conditions are requirements; a measured narrowing of one
+of them is carried on the rule queue as part of **1439** rather than applied silently.
+
+**Also refuted:** `[R-M7]`'s *"`source` loses the user's variables"* is **conditional on the
+filename** — the copy is still required, for a sharper reason, which the receipt names.
+
+⚠ **ISSUE 1440 IS THE DRIVER'S, AND IT IS THE THIRD TIME THIS STALL HAS BEEN MEASURED
+WITHOUT EVER HAVING A NUMBER.** The crew's display-arm run reproduced
+`test_ase_optier_0963`'s hang: **91 of 108 rows, stops after row N3, rc 124 at 260 s.** The
+first sighting was 86 of 103 rows, also after **N3**, and it cost **8 h 07 m** before issue
+**1403** bounded it. ⚠ **The suite has grown five rows and still stops after N3**, so the
+stopping point is a property of what N3 leaves behind rather than of where the suite runs
+out of something. 1403 makes the stall a *named outcome*; it does not stop it, and nothing
+has forced the race deterministically as `CLAUDE.md` prescribes. Three things each hid it:
+T1 runs the headless arm only, it has been conflated with issue **1402**'s convergence flap
+(a different arm, and one that reds rather than stalls), and since 1403 a `TIMEOUT` line
+reads like the harness working — which it is. The suite is not. Filed with three costed
+options and `owed.sh add rule 1440`.
+
 ### What Stage 7 learned that binds later stages
 
 ---
