@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**291 strings, from 19 issues, grouped by where the user sees them** — not by
+**293 strings, from 19 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -35,11 +35,10 @@ than what the source lines look like.
 
 ### What the driver re-measured, independently
 
-The extraction was checked rather than trusted. Every one of the 291 strings was
-searched for in the committed source at HEAD, with Tcl line-continuations joined
+The extraction was checked rather than trusted. Every string was searched for in the committed source at HEAD, with Tcl line-continuations joined
 the way the interpreter joins them:
 
-* **260 are present as a single literal**, byte for byte.
+* **262 are present as a single literal**, byte for byte.
 * **31 are not, and all 31 are RENDERED rather than wrong** — the code composes
   them from pieces. `Time step (s):` is `label {Time step}` plus `unit s` plus
   the colon `form_label` appends. *"Stopping this run discards it — ngspice in
@@ -62,7 +61,7 @@ this document is being written.
 
 ## How to answer
 
-Every string has a **handle** — `R9-001` … `R9-291`. Mark up whatever you want
+Every string has a **handle** — `R9-001` … `R9-293`. Mark up whatever you want
 changed, by handle, in any form: *"R9-011: drop the shouting"*, *"R9-046/047:
 Voltage and Current"*, *"R9-003 → Stop value"*.
 
@@ -71,6 +70,9 @@ answer — a lot of these are ordinary field labels that are already right.
 
 Section A below is the part worth reading first: nine choices that recur across
 many strings at once. Answering those nine settles most of the document.
+
+The last two handles, **R9-292 and R9-293**, were added after the first version by
+a completeness sweep of the commits themselves — the section at the end says how.
 
 ## What is deliberately NOT here
 
@@ -253,7 +255,8 @@ and — where the extraction found something a reader needs — a **note**.
 | The run log and the CIW notice channel | 26 |
 | What lands on disk — the deck, the sidecar, the run directory | 3 |
 | Everything else | 1 |
-| **total** | **291** |
+| Added after the first version — found by a completeness sweep | 2 |
+| **total** | **293** |
 
 ---
 
@@ -4155,3 +4158,56 @@ ase: state design has no cell (ckpt_path)
 
 *Note:* Included for completeness, flagged as marginal: this is a `return -code error` in internal voice with the proc name in parentheses, not a sentence written for a user. Every caller in `ase::ckpt_report` wraps it in `catch`, so it should normally be unreachable from the GUI — but it is new copy this commit put in the tree and it reads like developer text if it ever does escape.
 
+
+---
+
+## Added after the first version — found by a completeness sweep
+
+*2 strings.*
+
+The first version of this document came from reading the 19 issues. To check it
+for holes, the driver then went at it from the other end: every commit those
+issues name was diffed, every **added** string literal of five words or more that
+carries no variable was extracted, and the result was matched against the 291.
+
+**29 such literals were added by those commits. 27 were already here. These are
+the other two** — and they are the same sentence twice, differing only in the
+name of the proc that raises it.
+
+### from issue 1430 (stage 6)
+
+**R9-292** · refusal
+
+```text
+ase: state design has no cell (plotmap_path)
+```
+
+*Where:* A Tcl error raised by `ase::plotmap_path` for a state whose design has no
+`cell`. It surfaces as an error string rather than as designed copy — wherever that
+error is reported.
+
+*For:* Refuses to compute the plotmap sidecar's path for a state that does not name
+a design cell, and names the proc that could not do it.
+
+*Note:* One of a family of **six** identically-worded raises — `ckpt_path`
+(R9-291), `plotmap_path`, `effective_path` (R9-293), `cosim_file`, `log_file` and
+`raw_file`. Three of the six predate this batch and are therefore not R9's to
+ratify; but the wording is shared, so **if you change one, all six should move
+together**, and the parenthesised proc name is developer vocabulary of the kind
+§A6 is about.
+
+### from issue 1442 (stage 7)
+
+**R9-293** · refusal
+
+```text
+ase: state design has no cell (effective_path)
+```
+
+*Where:* A Tcl error raised by `ase::effective_path` for a state whose design has
+no `cell`.
+
+*For:* Refuses to compute the effective-options sidecar's path for a state that
+does not name a design cell.
+
+*Note:* See R9-292 — same sentence, same family of six, same question.

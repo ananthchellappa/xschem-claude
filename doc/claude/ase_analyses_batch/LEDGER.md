@@ -670,6 +670,21 @@ variable. Those 31 carry a `Rendered:` line in their entry, because the words ar
 user reads but the **edit lands on the pieces** — and for two of them one piece belongs to
 the adapter, not to ASE-L. Nothing was found that the source does not say.
 
+**And the document was then checked for HOLES from the other end.** Reading 19 issues can
+only find what the issues mention, so every commit those issues name was diffed and every
+**added** string literal of five words or more carrying no variable was extracted and matched
+against the review: **29 such literals, 27 already present, 2 missing** — `ase: state design
+has no cell (plotmap_path)` (1430) and `… (effective_path)` (1442). They are now **R9-292**
+and **R9-293**, appended rather than inserted so the handles already in front of the user
+stay stable. The review is **293 strings**.
+
+⚠ **The two gaps were the same sentence twice, and the family has SIX members** —
+`ckpt_path`, `plotmap_path`, `effective_path`, `cosim_file`, `log_file`, `raw_file`. Three
+predate this batch and are not R9's to ratify, but the wording is shared, so a change to one
+moves all six. **A completeness sweep found what nineteen careful readers did not**, and the
+reason is structural: each agent read one issue's worth of surfaces, and this sentence's
+family is spread across six procs and three batches.
+
 ⚠ **TWO CREWS ARE LIVE AT ONCE — 2026-09-13, deliberately, and this is a DEPARTURE from
 one-task-at-a-time that is being declared at the moment of departing.** The batch's operating
 model is one task to one crew; the reason to depart is that **Stage 8 task 1 holds five files
