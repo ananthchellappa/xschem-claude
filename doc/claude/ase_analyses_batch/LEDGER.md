@@ -719,6 +719,26 @@ than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and
 until task 1 releases `tests/headless/test_ase_core.tcl` — it is the first item of the driver
 pass that collects task 1.
 
+### ⏳ ⚖ R6 — DISPATCHED as its SCHEMA half, issue **1447**, 2026-09-13
+
+⚖ R6's task owns four things and only two of them can be written today, because
+`src/ase_window.tcl` is held: **the optional per-row `id` key**, **the canonical naming
+scheme** (issue **1444**'s requirement, which must follow `ase::meas_binding`'s existing
+`{type idx}` shape and live in **one proc everything calls**), and **one arm on
+`ase::meas_binding`** so a row carrying an `id` binds by it. The **handle column in the
+Choose Analyses grid**, **`Analyses > List`**, and the dialog's **row addressing** —
+`ase::ui::chana_row` still returns the *first* row of a type, driver-verified at HEAD —
+follow when the file frees.
+
+⚠ **The scheme is the half that matters for ordering.** Stage 8 task 2's Measurements
+dropdown **consumes** it; if that order ever inverts, task 2 mints its own display form and
+there are two spellings of the same idea in one dialog. The brief says so in as many words,
+and requires the crew to write down *the exact call the GUI half must make*.
+
+⚠ **And the scheme is ⚖ R9 copy**: it is a spelling the user will read and type. The crew
+files `rule 1447` the moment it lands, and it joins `R9_COPY_REVIEW.md` with issue 1443's
+strings.
+
 ### ✅ ⚖ R4's obligation — PAID, 2026-09-13, receipt 26
 
 ⚖ R4 kept the four seeded rows (*"keep four … In Cadence ADE-L it is zero"*). Its unpaid half
