@@ -1554,6 +1554,26 @@ area: `cktsopt.c:111-113`'s `OPT_DEFAS` arm writes `TSKdefaultMosAD`, the same f
 nothing says so. It is trap **T14**, and it is the shape of the *quiet member* rule Stage 6
 paid for twice.
 
+✅ **BOTH OF THOSE ARE DRIVER-VERIFIED IN THE NGSPICE SOURCE, 2026-09-13** — read in
+`/home/analog/dev/ngspice`, not taken from the plan, because this batch has refuted a plan
+claim in every stage so far. Here the plan is **right, in both places and at the cited
+lines**:
+
+```
+src/spicelib/analysis/cktntask.c   tsk->TSKnumSrcSteps  = 1;
+                                   tsk->TSKnumGminSteps = 1;    <- gminsteps default is 1
+                                   tsk->TSKgminFactor   = 10;   <- the 10 is gminfactor
+
+src/spicelib/analysis/cktsopt.c:108  case OPT_DEFAD: task->TSKdefaultMosAD = val->rValue;
+                        :111         case OPT_DEFAS: task->TSKdefaultMosAD = val->rValue;
+                                     ^^ the SAME field. `defas` sets the DRAIN area.
+```
+
+⚠ **Recording a plan claim that HELD is not decoration.** Nine stages of refutations make
+the next reader distrust the plan uniformly, which is its own failure mode: a crew that
+re-measures everything spends its budget on the rows that were already right. These two
+are settled; the other 218 are not.
+
 
 *The **220-row** catalogue with `cptype`/`door`/`phase`/`scope`/`inert`; `ase::opt_line` as the
 only speller; search-first + changed-only + groups + the ⚠ badge + the live deck preview; the
