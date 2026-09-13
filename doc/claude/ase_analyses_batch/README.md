@@ -61,7 +61,10 @@ wrong.
 
 The canonical set is `evidence/ase-conventions.md` §10.1's, and all of it is on disk. The
 adapter amendment added **no document**: the doctrine rides in the files below, and the
-conformance harness rides as `PLAN.md`'s Stage 15. Its only new file is its receipt,
+conformance harness rides as `PLAN.md`'s Stage 15 — ⚠ **which ⚖ R10 took OUT of committed
+scope on 2026-09-13** (Option B, the written specification instead): a conformance harness
+with one implementation behind it cannot tell the contract from the implementation, so it
+waits for a second adapter to run against. **The batch is 16 committed stages, not 17.** Its only new file is its receipt,
 `receipts/01-contract-pivot.md`. The salvage amendment of the same day added **one dossier**,
 `evidence/salvage.md`, plus its receipt `receipts/02-r1-answered-salvage.md`; its plan items
 ride as sub-items **2e** and **6f** inside the stages that own their surfaces. Stages **0–15
@@ -79,7 +82,7 @@ R2 in the ask order, not ahead of it. Stages **0–15 still keep their numbers.*
 |---|---|
 | `README.md` | this file — what was asked, the file table, the one-paragraph version, how it was produced |
 | `CREW_BRIEF.md` | **read before touching anything.** The request again, the standing rules every crew obeys, the "do not change designs" doctrine in its three senses, and the preflight — the facts the driver measured so no crew re-derives them |
-| `PLAN.md` | **THE deliverable, and it is authoritative.** Fifteen stages on three axes, 0 through 14, plus two terminal stages that are on none of them — **Stage 15**, the adapter conformance harness, and **Stage 16**, *"the ngspice you actually have"* — opening with the corrections that did not survive checking, which is also where the adapter pivot and the variant amendment are recorded; the ruling ledger, the costed refuse-list, the ADE-L comparison and what it rests on, the sequencing table. Stage 1 carries the adapter contract, the naming rule that keeps later stages honest, and the paper check of the schema against a second simulator; Stage 2 owns the *Setup > Simulators* gesture and the variant record; Stage 15 is the conformance harness; **Stage 16 is terminal in numbering and first in adoption value** |
+| `PLAN.md` | **THE deliverable, and it is authoritative.** Fifteen stages on three axes, 0 through 14, plus two terminal stages that are on none of them — of which **Stage 15 is OUT of committed scope since ⚖ R10 (2026-09-13), leaving 16** — **Stage 15**, the adapter conformance harness, and **Stage 16**, *"the ngspice you actually have"* — opening with the corrections that did not survive checking, which is also where the adapter pivot and the variant amendment are recorded; the ruling ledger, the costed refuse-list, the ADE-L comparison and what it rests on, the sequencing table. Stage 1 carries the adapter contract, the naming rule that keeps later stages honest, and the paper check of the schema against a second simulator; Stage 2 owns the *Setup > Simulators* gesture and the variant record; Stage 15 is the conformance harness; **Stage 16 is terminal in numbering and first in adoption value** |
 | `APPENDIX_ngspice_analyses.md` | the ngspice side at the **parameter level** — eleven analyses plus the pseudo-analysis, both option catalogues, the results routing, the trap and defect register. Every plan item cites a section here instead of restating it |
 | `DECISIONS.md` | D1–D52, plus ⚖ R1–R11, of which **R1–R8, R10 and R11 are answered** and only R9 waits (R1 Option A, 2026-09-10, with the always-salvage requirement; R2 yes-with-four-conditions, 2026-09-10; R3 Option C, 2026-09-12, *"both with a rule is right, keep it"*; R4 Option A, 2026-09-13, *"keep four"*; R5 Option A, 2026-09-13, *"make it remember"*; R6 Option A, 2026-09-13, *"add it"*; R7 Option A, 2026-09-13, ship PSS experimental; R8 Option A, 2026-09-13, the campaign lives in the state file; R10 Option B, 2026-09-13, the written spec and no Stage 15; R11 Option C, 2026-09-13, a capability floor and a stated tested set) and only R9 waits — carried unresolved with options, trade-off and a recommendation. **D34–D37 and ⚖ R10 are the 2026-09-10 adapter pivot's; D38–D41 and the answer recorded at ⚖ R1 are the salvage amendment of the same day; D42–D52 and ⚖ R11 are the variant-support amendment's** |
 | `LEDGER.md` | the baseline measured **before any crew started**, one empty section per stage, and the debts this batch already knows it will leave |
@@ -163,7 +166,9 @@ capability dict `ase::sim_capabilities` already returns is the whole variant rec
 new keys rather than joined by a second store, and a **version-keyed table has exactly zero rows**
 because stock upstream 47 and this fork are byte-identical on `-v`, on all 134 help strings and on
 `devhelp`. Fifteen stages, 0 through 14, plus two terminal stages outside them, **Stage 15** (the
-conformance harness, outside this pass) and **Stage 16** (*the ngspice you actually have*); stage 0
+conformance harness — ⚠ **removed from committed scope by ⚖ R10, 2026-09-13**, and replaced
+by a written specification authored after the last hook-adding stage) and **Stage 16**
+(*the ngspice you actually have*); stage 0
 (the silent drop dies) and stage 1 (the registry, byte-identically — and, before that byte identity
 is claimed, Xyce's descriptor written **on paper** to find what a second simulator breaks in the
 schema) carry **no rulings** and can ship immediately; stage 15, the conformance harness an adapter
