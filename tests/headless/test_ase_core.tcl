@@ -86,6 +86,12 @@
 # what says so. BN2b is its non-vacuity control. ⚠ AND SECTION BN SITS BELOW N1
 # ON PURPOSE -- N1 is the real `ase::netlist` that fills the slot, and moved
 # above it every warm row in BN would pass vacuously.
+# 598 -> 600 with R1m (Stage 8a, issue 1443 -- the `measurements` state list).
+# Two rows, not one: the key defaults to `{}` and is omitted from the
+# serialized form, AND a non-empty one IS written. The second half is the
+# non-vacuity control for the first, and it is what a `measurements` key that
+# never serialized at all would fail.
+# AND RAISED 598 -> 600.
 # AND RAISED 558 -> 598.
 # AND RAISED 523 -> 558.
 # ⚠ THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. It was 173/172 when this
@@ -401,10 +407,22 @@ set d [ase::state_default]
 # ase::omit_if_empty, so an empty one is NOT serialized and every state file
 # written before it existed still round-trips byte-identically — F3/G3 in
 # test_ase_final{,_gf180} are the golden files that assert exactly that.
-check "R1 default has exactly the 18 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params options includes pre_commands cosim viewer}]
+## ⚠ AND RAISED 18 -> 19 (issue 1443, Stage 8a). `measurements` is the fifth
+## member of ase::omit_if_empty and the fourth key added since this row was
+## written, so the SHAPE of the claim is unchanged: the key exists, its default
+## is `{}`, and an empty one is not serialized -- which is what keeps the 104
+## committed .state files round-tripping byte-identically (verified live, 104
+## of 104, at the moment it was added).
+check "R1 default has exactly the 19 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements options includes pre_commands cosim viewer}]
 check "R1 cosim defaults to empty and is omitted from the serialized form" \
   [list [dict get $d cosim] [expr {[string first "cosim" [ase::state_serialize $d]] >= 0}]] {{} 0}
+check "R1m measurements defaults to empty and is omitted from the serialized form" \
+  [list [dict get $d measurements] \
+        [expr {[string first "measurements" [ase::state_serialize $d]] >= 0}]] {{} 0}
+check "R1m a NON-empty measurements list IS serialized" \
+  [expr {[string first "measurements {{name gain analysis ac kind max target vdb(out)}}" \
+     [ase::state_serialize [dict replace $d measurements {{name gain analysis ac kind max target vdb(out)}}]]] >= 0}] 1
 check "R1 a NON-empty cosim IS serialized" \
   [expr {[string first "cosim {build never}" \
      [ase::state_serialize [dict replace $d cosim {build never}]]] >= 0}] 1

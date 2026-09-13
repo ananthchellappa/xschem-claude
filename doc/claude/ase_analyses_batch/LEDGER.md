@@ -709,6 +709,59 @@ than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and
 until task 1 releases `tests/headless/test_ase_core.tcl` — it is the first item of the driver
 pass that collects task 1.
 
+### ✅ Stage 8 task 1 — the DECK half of measurements, issue **1443**, collected 2026-09-13
+
+| | |
+|---|---|
+| **status** | **Done.** A `measurements` state list beside `outputs`, a four-verdict refusal evaluator, the `meas` speller, the post-processing producers and the sidecar. **The GUI half is task 2** — this task creates no widget, and `src/ase_window.tcl` is untouched by it. |
+| **schema** | `measurements` is **absent by default** and the **fifth** member of `ase::omit_if_empty`, which is how the second named exception to **D3** is paid for: **104/104 committed `.state` files stay byte-identical**, driver-verified as *no tracked `.state` file modified in the working tree*. |
+| **split** | ASE-L owns the SCHEMA (31 `ase::meas_*` procs, **no simulator word in any of them** — section HK, and **HK1b runs HK1's own token list over the adapter and finds them**, so the rule is enforced rather than remembered); the adapter owns CONTENT (19 procs, **four registered as OPTIONAL hooks**). Eighteen kinds; `meas` lines emitted inside `.control` immediately after the analysis they read. |
+| **suites moved** | New `tests/headless/test_ase_meas_1443.tcl`, registered in `run_regression.tcl`. `test_ase_core` 598 → **600** (R1 re-baselined 18 → 19 keys, R1m added); `test_ase_persist` likewise. |
+| **driver's own re-run** | Every number below taken by the driver from a `RESULT:` line, on both arms. `test_ase_meas_1443` **ALL PASS (100)** headless **and** **ALL PASS (100)** on the dev display. `test_ase_core` **ALL PASS (600)** on both. `test_ase_persist` **ALL PASS (44)** headless, **ALL PASS (148)** display. |
+| **sabotage** | **72 applications on the final tree, ZERO KILLS**, across two campaigns (pass 1: 54 applied, 48 red, 6 survived; pass 2: 71 applied, 67 red, 4 survived; a targeted re-run closed one). Six rows were added for pass 1's survivors, each with its own sabotage. Three survivors remain, each argued behaviour-preserving in the receipt. |
+| **T1** | ⚠ **STILL DEFERRED, for the same reason and now the last one outstanding.** Issue 1446's crew was editing `src/ase_window.tcl` at the moment this was collected, so a T1 taken now would be a number about a tree nobody has finished writing. T1 runs **solo**, once, when 1446 lands — covering ⚖ R5, Stage 8 task 1 and 1446 together. |
+| **ledger debts** | `owed.sh add rule 1443` — ⚖ **R9** copy: eighteen kind labels, the field labels, twelve refusals, the spectrum caution, five report sentences. **These are NOT yet in `R9_COPY_REVIEW.md`**, which says so in its own scope section; they are extracted and appended in the next driver pass. **No `look` debt** — `src/ase_window.tcl` untouched, both arms identical. |
+| **receipt** | `receipts/23-stage-8-measurements.md` |
+
+**Nine corrections came back (C145–C153). Three were re-measured by the driver rather than taken on trust, and all three hold.**
+
+1. ⚠ **C145 — `units` IS one of ASE-L's 247 catalogue rows, and this ledger said it was not.**
+   Driver-verified at HEAD: `units {cptype string phase run group output scope global default
+   radians values {radians degrees} …}`. The paragraph above (Stage 7's) **conflated two
+   catalogues** — ngspice's 220 names, which genuinely do not include `units`, and ASE-L's
+   247, which are the 220 **plus 27 measured additions** with `units` among them. Corrected in
+   place. The consequence was real: a reader taking it literally would have spelled a second,
+   competing line instead of going through `ase::opt_line`.
+2. **C146 — the plan's stated reason for the redirect was false, and the crew shipped the
+   reason that is true.** Driver-verified on both binaries, same deck: `set measureprec=10`
+   and `NGSPICE_MEAS_PRECISION=10` are **accepted and INERT on apt 45.2** (`meas` still prints
+   `-7.851545e-01`) and **honoured by the fork** (`-7.8515453642e-01`). So the redirect buys no
+   precision on 45.2. This is now **difference #5** in `evidence/binary-differences.md`, and the
+   only one where the older build genuinely cannot do something — it *accepts the setting and
+   ignores it*, which is worse than refusing.
+3. **The `.four` CARD runs the simulation TWICE** — driver-verified on both binaries by
+   counting `Doing analysis` lines: **2** with the card, **1** without, from otherwise
+   identical decks. That is why the `.four` card slot ships **empty** and `fourier` is emitted
+   as a command instead.
+
+**And the radians trap reproduces through `meas` itself**, on both binaries: a phase read by
+`meas` is `-7.851545e-01` by default and `-4.498604e+01` after `set units=degrees`. A phase
+margin measured without it is wrong by 57.3×, at rc 0, silently.
+
+⚠ **One stale number was found and corrected by the driver at collection.**
+`tests/run_regression.tcl`'s new comment said the suite is *"86 checks headless and 86 on the
+dev display"*; both arms answer **100**. The suite grew after the sentence was written. That
+is the **third** time in this batch a prose number has disagreed with a `RESULT:` line —
+**take a suite's count from its verdict line, never from a paragraph.**
+
+⚠ **HEAD moved six times underneath this task** (⚖ R5's commit, three ruling commits and the
+driver's evidence files), and one of those commits carried this crew's own `NUMBERING.md`
+entry with no collision. Two crews plus a committing driver is survivable; it is survivable
+**because every dispatch names the files it owns**.
+
+⚖ **R6's `id` key will need one arm on `ase::meas_binding`** when R6's task lands — recorded
+here so it is not rediscovered.
+
 ### ✅ ⚖ R5 — IMPLEMENTED, issue **1445**, collected 2026-09-13
 
 | | |
@@ -2544,11 +2597,23 @@ no units setting          vp(out) = -7.85398e-01   (radians)
 set units=degrees         vp(out) = -4.50000e+01   <- works
 ```
 
-`units` is **not one of the 247 catalogue rows** — it is neither an `OPTtbl` keyword nor a
-`cp_getvar` name, but is read at `src/frontend/options.c:419` through a `va_name` /
-`CP_STRING` comparison. So the auto-emission §8a asks for **must be the `set` form inside
-`.control`**, and a crew that reaches for `.options units=degrees` writes a line that is
-silently inert and a phase margin wrong by **57.2958×**.
+⚠ **CORRECTED 2026-09-13 — this paragraph conflated TWO catalogues, and Stage 8 task 1's
+crew caught it (C145), driver-verified at HEAD.** What is true: `units` is **not one of
+ngspice's 220 names** — neither an `OPTtbl` keyword nor a `cp_getvar` name — and is read at
+`src/frontend/options.c:419` through a `va_name` / `CP_STRING` comparison, which is why
+`.options units=degrees` is silently inert and a phase margin taken from such a deck is
+wrong by **57.2958×**. What is **false**: that it is not one of **ASE-L's** 247 catalogue
+rows. It is — `git show HEAD:src/ase.tcl` carries it as
+
+```
+units {cptype string phase run group output scope global default radians values {radians degrees} …}
+```
+
+`phase run` is the adapter already saying *this one is a `set` in `.control`, not a card*.
+The 247 are the 220 **plus 27 measured additions**, and `units` is one of the 27; a reader
+who took this paragraph literally would have spelled a second, competing line for it instead
+of going through `ase::opt_line`. **The auto-emission is still the `set` form — only the
+route changes, and the route was already there.**
 
 
 *The `measurements` state list; the Measurements sub-dialog; `meas` emission; the eight

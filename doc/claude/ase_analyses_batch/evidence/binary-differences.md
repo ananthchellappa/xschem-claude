@@ -19,6 +19,7 @@ The two:
 | 2 | the `meas` **echo line** | `1.000000e+00` (6 decimals) | `1.00000e+00` (5) | a golden or a parse keyed on digits passes on one and fails on the other. `print name` is byte-identical on both — use it. |
 | 3 | **XSPICE event data** | `dig : d , 10` events; transition at `2.270000000e-08` | **11** events; `2.265000000e-08` | an event golden that pins counts or times is binary-dependent. |
 | 4 | `pss` with **6** arguments | rc 0 | rc 1 | the analysis aborts on one and not the other; the process survives on both. Cosmetic beside #1–#3, recorded so nobody re-measures it. |
+| 5 | **`set measureprec=10`** / `NGSPICE_MEAS_PRECISION=10` | **accepted and INERT** — `meas` still prints `-7.851545e-01` | **honoured** — `-7.8515453642e-01` | measured 2026-09-13 while collecting Stage 8 task 1, both controls, same deck. The older binary **takes the setting without complaint and ignores it**, which is worse than refusing it: a UI that offers "more digits" gets silence and no digits. |
 
 ## They AGREE here — and the agreements are the load-bearing half
 
@@ -51,9 +52,16 @@ Every one of these was measured on both, in the same sitting:
 
 ## What this says about ⚖ R11's sentence
 
-The differences are **four**, and three of them are about *how a number is printed or
-counted*, not about what the simulator can do. Not one of them is a capability the older
-binary lacks. That is the empirical case for R11's ruling: **a version number would have
+The differences are **five**, and four of them are about *how a number is printed or
+counted* rather than about what the simulator can do. **Not one of them makes an analysis
+unavailable on the older binary.**
+
+⚠ The honest exception is **#5**: `measureprec` is a control 45.2 **accepts and ignores**, so
+in that one respect the older build genuinely cannot do something the fork can. It does not
+change the ruling — it sharpens it. A version floor would still be the wrong instrument,
+because what a caller needs to know is *"does raising precision work on the binary in front
+of me?"*, and only a probe answers that. A version number would also have refused every
+analysis on a build whose only shortfall is the number of digits it prints. That is the empirical case for R11's ruling: **a version number would have
 refused work that 45.2 does correctly**, while the four real differences are exactly the
 kind a probe or a tolerant parser handles.
 

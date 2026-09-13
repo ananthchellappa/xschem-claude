@@ -68,7 +68,7 @@ namespace eval ase {
   variable schema_keys {version simulator sim_entry design rundir temperature
                         models
                         variables analyses outputs save_all_v save_all_i
-                        save_op_params
+                        save_op_params measurements
                         options includes pre_commands cosim viewer}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
@@ -107,7 +107,14 @@ namespace eval ase {
   # exactly as it did before and the five rows stay green. Note the asymmetry
   # this buys and that the encoding is built around — `{}` is NOT "use the PATH
   # program"; that is `none`, which is a real choice and IS written out.
-  variable omit_if_empty {cosim save_op_params sim_entry}
+  # `measurements` (Stage 8a / issue 1443) is the FIFTH member, and it joins for
+  # the identical reason with the identical consequence: it defaults to `{}`, so
+  # every state written before the key existed serializes exactly as it did
+  # before and the five load->save byte-identity rows stay green. ⚠ AND THERE IS
+  # NO `seed_enabled` EQUIVALENT FOR IT -- nothing seeds a measurement into a
+  # fresh bench, because a measurement is a question about a particular circuit
+  # and ASE-L has none to ask.
+  variable omit_if_empty {cosim save_op_params sim_entry measurements}
   # simulator name -> hooks dict: the five REQUIRED hooks
   # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
   # `capabilities` (issue 0948).
@@ -514,6 +521,7 @@ proc ase::state_default {} {
     save_all_v 0 \
     save_all_i 0 \
     save_op_params {} \
+    measurements {} \
     options   {} \
     includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
     pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
@@ -677,6 +685,11 @@ proc ase::register_backend {name hooks} {
   # asserts it names exactly the five and does NOT name `capabilities`; anything
   # added inside it is read by that row as a sixth required hook.
   ase::analysis_cache_clear $name
+  ## --- 1443: AND THE MEASUREMENT-KIND MEMO, for the identical reason and in
+  ## the identical place. `ase::meas_kinds` caches the hook's answer per BACKEND
+  ## NAME; registering `$name` is the one event that changes it. It sits BELOW
+  ## the five-hook `foreach` for row A3's reason, not inside it.
+  ase::meas_cache_clear $name
   return $name
 }
 
@@ -6692,6 +6705,529 @@ proc ase::opt_preview {sim state {plan {}}} {
 # is spelled ONCE, here, by ase::plotmap_record, and read ONCE, here, by
 # ase::plotmap_parse. What stays in ase::backend::ngspice::render_deck is the
 # three ngspice words that carry it: `echo`, `>>` and `$curplotname`.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 8a + 8c -- MEASUREMENTS AND POST-PROCESSING (issue 1443)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# `grep -c '\bmeas\b' src/ase.tcl` returned ZERO until this block. Two of the
+# six benchmark ADE tasks -- read back the phase margin, and the spread of one
+# measurement over 200 Monte Carlo runs -- ended at "you are on your own".
+#
+# WHAT IS SCHEMA AND WHAT IS CONTENT (D34). Everything in this section is the
+# SCHEMA: the `measurements` state list, the row shape, the refusal evaluator,
+# the sidecar path and its parser, the emission ORDER. Not one simulator word
+# appears below. The KIND VOCABULARY, the line spelling, the phase-unit trap
+# and the producer commands are the adapter's `meas_kinds` / `meas_line` /
+# `meas_needs_degrees` / `postproc_lines` hooks, and a backend that declares
+# none of them gets NO measurement content at all -- `ase::meas_kinds` answers
+# `{}` and every row then refuses as `nokinds`.
+#
+# ⚠ THE LIST IS ABSENT BY DEFAULT AND IS IN `ase::omit_if_empty`. A bench that
+# carries no measurement must serialize byte-identically to what it does today,
+# which is what keeps the 104 committed `.state` files round-tripping and the
+# five F3/G3/R4/V4/R2 rows green.
+
+namespace eval ase { variable meas_cache [dict create] }
+
+# Drop the memo for one simulator, or for all of them. Called from
+# ase::register_backend beside ase::analysis_cache_clear, for that call's
+# reason: registering a backend is the one event that changes what the hook
+# would answer.
+proc ase::meas_cache_clear {{sim {}}} {
+  variable meas_cache
+  if {$sim eq {}} { set meas_cache [dict create] ; return {} }
+  if {[dict exists $meas_cache $sim]} { dict unset meas_cache $sim }
+  return $sim
+}
+
+# THE KIND CATALOGUE, which is the adapter's. `{}` for a backend with no hook,
+# and `{}` is what makes every row refuse rather than what makes core invent a
+# vocabulary.
+proc ase::meas_kinds {{sim {}}} {
+  variable meas_cache
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  if {[dict exists $meas_cache $sim]} { return [dict get $meas_cache $sim] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim meas_kinds]
+    if {$h ne {}} { set r [$h] }
+  }
+  dict set meas_cache $sim $r
+  return $r
+}
+
+proc ase::meas_kind_entry {sim kind} {
+  set d [ase::meas_kinds $sim]
+  if {![dict exists $d $kind]} { return {} }
+  return [dict get $d $kind]
+}
+
+# `meas` (reads a plot and yields one number), `producer` (makes a plot or a
+# vector), or `{}` for a kind this simulator does not describe. ONE key decides
+# which half of the block a row lands in, so core never has to know a verb.
+proc ase::meas_kind_form {sim kind} {
+  set e [ase::meas_kind_entry $sim $kind]
+  if {$e eq {} || ![dict exists $e form]} { return {} }
+  return [dict get $e form]
+}
+
+# A kind the simulator NAMES and cannot RUN -- the reason, or `{}`. This is not
+# the same as an unknown kind and it must not be folded into one: the simulator
+# has a word for it, the manual documents it, and the honest refusal says why
+# and what to do instead.
+proc ase::meas_kind_unsupported {sim kind} {
+  set e [ase::meas_kind_entry $sim $kind]
+  if {$e eq {} || ![dict exists $e unsupported]} { return {} }
+  return [dict get $e unsupported]
+}
+
+# WHAT A KIND PRODUCES: `number` (the default, and what the sidecar carries) or
+# anything else the adapter names. ⚠ IT EXISTS TO STOP A FALSE ALARM, which is
+# the class issue 1442 spent three verdicts on: a Resample row makes a PLOT and
+# never reports a number, so a report that walked every row and complained about
+# the silent ones would say "the simulator did not report this measurement"
+# beside a row that did exactly what it was asked to.
+proc ase::meas_kind_yields {sim kind} {
+  set e [ase::meas_kind_entry $sim $kind]
+  if {$e eq {} || ![dict exists $e yields]} { return number }
+  return [dict get $e yields]
+}
+
+proc ase::meas_kind_fields {sim kind} {
+  set e [ase::meas_kind_entry $sim $kind]
+  if {$e eq {} || ![dict exists $e fields]} { return {} }
+  return [dict get $e fields]
+}
+
+proc ase::meas_kind_field {sim kind name} {
+  foreach f [ase::meas_kind_fields $sim $kind] {
+    if {[dict exists $f name] && [dict get $f name] eq $name} { return $f }
+  }
+  return {}
+}
+
+# WHICH ANALYSIS TYPES CAN CARRY A MEASUREMENT AT ALL -- the adapter's answer,
+# `{}` when it does not say. ⚠ A `{}` here means "no restriction known", not
+# "none allowed": core must not refuse a row because a backend declined to
+# enumerate. The refusal that matters (a type the simulator's measure engine
+# rejects outright) is a claim only the adapter can make.
+proc ase::meas_analyses {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim meas_analyses]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+proc ase::meas_rows {state} { return [ase::state_get $state measurements] }
+
+# Absent means enabled, exactly as `save_op_params`'s tri-state does: the value
+# that costs a key is the one a user has to go out of their way to want.
+proc ase::meas_enabled {row} {
+  return [expr {[ase::state_get $row enabled 1] eq {0} ? 0 : 1}]
+}
+
+proc ase::meas_name {row} { return [string trim [ase::state_get $row name]] }
+
+# THE VALUE A SLOT WILL CARRY: the stored value, else the kind's declared
+# default. Exactly ase::field_value's contract one level down, and it is the
+# SAME proc doing the work, so a `default` cannot mean one thing in the deck
+# and another on screen.
+proc ase::meas_field_value {sim kind row name} {
+  return [string trim \
+    [ase::field_emits [ase::meas_kind_field $sim $kind $name] $row $name]]
+}
+
+# WHICH ANALYSIS OCCURRENCE THIS ROW READS -- `{type idx}`, or `{}` when the
+# bench has no such enabled row.
+#
+# ⚠ THE ROW IS BOUND TO AN OCCURRENCE, NOT TO A TYPE, because a bench may carry
+# two `ac` rows and they write two different plots (the same fact issue 1430's
+# sidecar exists for). An explicit `row <index>` names one; with none, the FIRST
+# enabled row of that type wins, which is the only answer that is stable when a
+# second row is added later.
+proc ase::meas_binding {sim state row} {
+  set type [string trim [ase::state_get $row analysis]]
+  if {$type eq {}} { return {} }
+  set want [string trim [ase::state_get $row row]]
+  ## ⚠ IT WALKS THE `analyses` LIST, NOT `ase::analysis_emit_order`, AND THAT IS
+  ## NOT A SHORTCUT. The emit order RAISES for a type the rendering backend
+  ## cannot rank, so binding through it would make every measurement on such a
+  ## row answer "no enabled analysis" -- and the refusal that matters most,
+  ## the one for the function pair that SEGFAULTS, would then be unreachable
+  ## for exactly the analysis it is about. That is the guard-nobody-can-trip
+  ## shape this batch has now met four times; the fix is to let the caller
+  ## supply the input. Which row the measurement READS is a question about the
+  ## bench, and the bench answers it whether or not the deck can be rendered.
+  set i -1
+  foreach a [ase::state_get $state analyses] {
+    incr i
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    if {[ase::state_get $a type] ne $type} { continue }
+    if {$want eq {}} { return [list $type $i] }
+    if {$want eq $i} { return [list $type $i] }
+  }
+  return {}
+}
+
+# THE ROW THIS MEASUREMENT IS MEASURED ON -- `{}` for the analysis's own plot,
+# or the NAME of a producer row in the same list. It is what lets a peak be
+# measured on a spectrum rather than on the transient that made it, and it is
+# what makes the crash rule below precise instead of blanket.
+proc ase::meas_on {row} { return [string trim [ase::state_get $row on]] }
+
+# THE PRODUCER ROW a `on` names, or `{}`.
+proc ase::meas_producer_of {sim state row} {
+  set on [ase::meas_on $row]
+  if {$on eq {}} { return {} }
+  foreach r [ase::meas_rows $state] {
+    if {[ase::meas_name $r] ne $on} { continue }
+    if {[ase::meas_kind_form $sim [ase::state_get $r kind]] ne {producer}} { return {} }
+    return $r
+  }
+  return {}
+}
+
+# A legal result name: the simulator will make a VECTOR of it, so it has to be
+# a bare identifier. Checked in core because it is a property of the row, not of
+# any one simulator's grammar.
+proc ase::meas_name_ok {name} {
+  return [regexp {^[A-Za-z][A-Za-z0-9_]*$} $name]
+}
+
+# ── THE REFUSAL EVALUATOR ────────────────────────────────────────────────────
+#
+# `{ok}` / `{caution <why>}` / `{refuse <why>}` / `{fatal <why>}`.
+#
+#   refuse   the row cannot be spelled -- it emits NOTHING and is reported
+#   caution  the row emits and the run says what is uncertain about it
+#   fatal    the deck is not written at all (the simulator would CRASH)
+#
+# ⚠ THE STRUCTURAL CHECKS ARE CORE'S AND THE SIMULATOR'S ARE THE ADAPTER'S, in
+# that order. Core can say "this row has no name" without knowing a verb; only
+# the adapter can say "this function segfaults on that plot".
+proc ase::meas_verdict {sim state row} {
+  set name [ase::meas_name $row]
+  if {$name eq {}} { return {refuse {this measurement has no name}} }
+  if {![ase::meas_name_ok $name]} {
+    return [list refuse "'$name' cannot be a measurement name: the simulator\
+ makes a vector of it, so it must start with a letter and hold only letters,\
+ digits and underscores"]
+  }
+  ## ⚠ TWO ROWS OF ONE NAME IS A REFUSAL, NOT A TIE-BREAK. The name becomes a
+  ## VECTOR in the simulator and a KEY in the sidecar, and the sidecar's lookup
+  ## is case-insensitive because the simulator folds what it prints -- so a
+  ## second row of the same name silently overwrites the first's answer and the
+  ## surface would show one number twice. The FIRST row keeps the name.
+  set seen 0
+  foreach r0 [ase::meas_rows $state] {
+    if {$r0 eq $row} { break }
+    if {![ase::meas_enabled $r0]} { continue }
+    if {[string equal -nocase [ase::meas_name $r0] $name]} { set seen 1 ; break }
+  }
+  if {$seen} {
+    return [list refuse "another measurement is already called '$name', and the\
+ simulator would overwrite the first one's answer with this one's"]
+  }
+  set kind [string trim [ase::state_get $row kind]]
+  if {$kind eq {}} { return {refuse {this measurement has no kind}} }
+  if {[llength [ase::meas_kinds $sim]] == 0} {
+    return [list refuse "'$sim' describes no measurements, so ASE-L has no way\
+ to spell this one"]
+  }
+  set form [ase::meas_kind_form $sim $kind]
+  if {$form eq {}} {
+    return [list refuse "'$sim' has no measurement of kind '$kind'"]
+  }
+  set uns [ase::meas_kind_unsupported $sim $kind]
+  if {$uns ne {}} { return [list refuse $uns] }
+  set bind [ase::meas_binding $sim $state $row]
+  if {$bind eq {}} {
+    set t [string trim [ase::state_get $row analysis]]
+    if {$t eq {}} { return {refuse {this measurement names no analysis}} }
+    return [list refuse "no enabled $t analysis for '$name' to read"]
+  }
+  if {$form eq {meas}} {
+    set ok [ase::meas_analyses $sim]
+    if {[llength $ok] && [lsearch -exact $ok [lindex $bind 0]] < 0} {
+      return [list refuse "'$sim' cannot measure a [lindex $bind 0] analysis"]
+    }
+  }
+  set on [ase::meas_on $row]
+  if {$on ne {}} {
+    if {$form eq {producer}} {
+      return [list refuse "'$name' produces a plot, so it cannot itself be\
+ measured on '$on'"]
+    }
+    if {[ase::meas_producer_of $sim $state $row] eq {}} {
+      return [list refuse "'$name' is measured on '$on', and there is no such\
+ post-processing row"]
+    }
+  }
+  foreach f [ase::meas_kind_fields $sim $kind] {
+    if {![dict exists $f required] || [dict get $f required] ne {1}} { continue }
+    set fn [dict get $f name]
+    if {[ase::meas_field_value $sim $kind $row $fn] eq {}} {
+      set lbl $fn
+      if {[dict exists $f label]} { set lbl [dict get $f label] }
+      return [list refuse "'$name' needs a value for $lbl"]
+    }
+  }
+  # THE SIMULATOR'S OWN RULES, LAST. A hook that is absent leaves the row `ok`,
+  # which is D34's "a backend with no hook gets no content" applied to a
+  # refusal: a rule nobody stated is not a rule core may invent.
+  set r {ok}
+  catch {
+    set h [ase::backend_hook $sim meas_rule]
+    if {$h ne {}} { set r [$h $state $row] }
+  }
+  if {[llength $r] == 0} { return {ok} }
+  return $r
+}
+
+# The rows bound to ONE analysis occurrence, in stored order, that will actually
+# emit. `caution` emits; `refuse` and `fatal` do not.
+proc ase::meas_for {sim state type idx} {
+  set out {}
+  foreach r [ase::meas_rows $state] {
+    if {![ase::meas_enabled $r]} { continue }
+    if {[ase::meas_binding $sim $state $r] ne [list $type $idx]} { continue }
+    if {[lindex [ase::meas_verdict $sim $state $r] 0] ni {ok caution}} { continue }
+    lappend out $r
+  }
+  return $out
+}
+
+# Every enabled row whose verdict is `fatal`, with its reason. render_deck
+# refuses on a non-empty answer, BEFORE a single line is built -- issue 1424's
+# third refusal tier, applied to the one measurement class that takes the
+# simulator down with it.
+proc ase::meas_fatals {sim state} {
+  set out {}
+  foreach r [ase::meas_rows $state] {
+    if {![ase::meas_enabled $r]} { continue }
+    set v [ase::meas_verdict $sim $state $r]
+    if {[lindex $v 0] eq {fatal}} { lappend out [list [ase::meas_name $r] [lindex $v 1]] }
+  }
+  return $out
+}
+
+# Is there anything for this run to measure? ⚠ THE SIDECAR AND ITS DELETION ARE
+# ARMED BY THIS, on issue 1433's precedent: a run with nothing to measure has no
+# file to write, and an unconditional pair of lines would move every deck golden
+# in the tree for a report that could only ever be empty.
+proc ase::meas_armed {sim state} {
+  foreach r [ase::meas_rows $state] {
+    if {![ase::meas_enabled $r]} { continue }
+    if {[lindex [ase::meas_verdict $sim $state $r] 0] in {ok caution}} { return 1 }
+  }
+  return 0
+}
+
+# THE RUN-WIDE ORDINAL of a row among every emitted row sharing its `counter`
+# token, in DECK EMISSION ORDER -- 1-based, or 0 for a row with no counter.
+#
+# ⚠ IT EXISTS BECAUSE SOME PRODUCERS NAME THEIR OUTPUT AFTER THE CALL NUMBER,
+# and the call number is run-wide rather than per-analysis. Core counts; which
+# kinds share a counter is the adapter's `counter` token, so core never learns
+# the naming rule itself.
+proc ase::meas_counter_index {sim state row} {
+  set tok {}
+  set e [ase::meas_kind_entry $sim [ase::state_get $row kind]]
+  if {$e ne {} && [dict exists $e counter]} { set tok [dict get $e counter] }
+  if {$tok eq {}} { return 0 }
+  set n 0
+  set order {}
+  if {[catch {ase::analysis_emit_order $state 0 $sim} order]} { return 0 }
+  foreach ent $order {
+    lassign $ent arank ai atype
+    foreach r [ase::meas_for $sim $state $atype $ai] {
+      set re [ase::meas_kind_entry $sim [ase::state_get $r kind]]
+      if {$re eq {} || ![dict exists $re counter]} { continue }
+      if {[dict get $re counter] ne $tok} { continue }
+      incr n
+      if {$r eq $row} { return $n }
+    }
+  }
+  return 0
+}
+
+# ── THE SIDECAR ──────────────────────────────────────────────────────────────
+#
+# <rundir>/<cell>_ase.meas -- beside the results file, the log, the plotmap, the
+# checkpoint and the effective-settings sidecar. ⚠ IT RAISES FOR A STATE WITH NO
+# DESIGN CELL, exactly as its five siblings do, so every core caller catches.
+proc ase::meas_path {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (meas_path)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase.meas]
+}
+
+# The first line of the sidecar, written by a command that CANNOT FAIL.
+#
+# ⚠ THIS IS NOT DECORATION AND IT IS THE WHOLE REASON THE FILE OPENS WITH AN
+# `echo`. MEASURED 2026-09-13 on both binaries: a `meas … > file` whose
+# measurement FAILS creates the file and leaves it at ZERO BYTES. Opening with
+# `>` on the first measurement therefore truncates the whole sidecar whenever
+# that one row fails; opening with an `echo` and appending every measurement
+# means a failed row costs only its own line.
+proc ase::meas_marker {} { return {ASE-MEAS} }
+
+# name -> {value tail} out of the simulator's printed measurement lines.
+#
+# ⚠ THE NAME IS FOLDED, AND THAT IS MEASURED RATHER THAN DEFENSIVE. Under the
+# default case mode the simulator lower-cases the names it prints back: a
+# `print thdA` comes back as `thda`. The lookup is therefore case-insensitive
+# and the STORED name is what the caller asks with.
+#
+# ⚠ AND THE TAIL IS KEPT WHOLE, NOT PARSED INTO FIELDS. The `at=`/`from=`/`to=`
+# tail is function-dependent and one of its fields is measured UNRELIABLE (an
+# `avg`'s echoed `to=` is the last scale value the loop touched, not the
+# requested one). Keeping it as text reports what was printed without claiming
+# to understand it.
+proc ase::meas_parse {text} {
+  set out [dict create]
+  foreach l [split $text "\n"] {
+    set l [string trimright $l]
+    if {[string trim $l] eq {}} { continue }
+    if {![regexp {^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s+(\S+)\s*(.*)$} $l -> nm val tail]} { continue }
+    dict set out [string tolower $nm] [list $val [string trim $tail]]
+  }
+  return $out
+}
+
+# The sidecar as a dict, or `{}` when the run never wrote one.
+proc ase::meas_read {sim state {text {}}} {
+  if {$text eq {}} {
+    set p {}
+    if {[catch {ase::meas_path $state} p]} { return {} }
+    if {![file isfile $p]} { return {} }
+    set fh {}
+    if {[catch {open $p r} fh]} { return {} }
+    set text [read $fh]
+    catch {close $fh}
+  }
+  return [ase::meas_parse $text]
+}
+
+# One measurement's value, or `{}` when this run did not produce it.
+proc ase::meas_result {sim state name {parsed _unset_}} {
+  if {$parsed eq {_unset_}} { set parsed [ase::meas_read $sim $state] }
+  set k [string tolower [string trim $name]]
+  if {![dict exists $parsed $k]} { return {} }
+  return [lindex [dict get $parsed $k] 0]
+}
+
+# WHAT THIS RUN MEASURED, ROW BY ROW: `{name verdict value why}` per enabled
+# row. ⚠ A ROW THAT EMITTED AND PRODUCED NOTHING IS ITS OWN VERDICT (`failed`),
+# not a blank: a measurement whose extractor returns nothing cannot disagree
+# with anything, and saying so is the difference between a number the user can
+# trust and an empty cell they will read as zero.
+proc ase::meas_results {sim state {text {}}} {
+  set parsed [ase::meas_read $sim $state $text]
+  set out {}
+  foreach r [ase::meas_rows $state] {
+    set nm [ase::meas_name $r]
+    if {![ase::meas_enabled $r]} {
+      lappend out [list $nm off {} {}] ; continue
+    }
+    set v [ase::meas_verdict $sim $state $r]
+    switch -exact -- [lindex $v 0] {
+      refuse  { lappend out [list $nm refused {} [lindex $v 1]] ; continue }
+      fatal   { lappend out [list $nm fatal   {} [lindex $v 1]] ; continue }
+    }
+    set val [ase::meas_result $sim $state $nm $parsed]
+    if {$val eq {} &&
+        [ase::meas_kind_yields $sim [string trim [ase::state_get $r kind]]] ne {number}} {
+      ## A row that was never going to report a number. It did its job; there is
+      ## nothing to say about it and nothing to complain about.
+      lappend out [list $nm produced {} {}]
+    } elseif {$val eq {}} {
+      lappend out [list $nm failed {} {the simulator did not report this\
+ measurement: the condition it asks about may never occur in this run}]
+    } elseif {[lindex $v 0] eq {caution}} {
+      lappend out [list $nm caution $val [lindex $v 1]]
+    } else {
+      lappend out [list $nm ok $val {}]
+    }
+  }
+  return $out
+}
+
+# The run's measurement report, as sentences. `{}` when there is nothing to say.
+proc ase::meas_report {sim state {text {}}} {
+  if {![ase::meas_armed $sim $state] && ![llength [ase::meas_rows $state]]} { return {} }
+  set out {}
+  foreach e [ase::meas_results $sim $state $text] {
+    lassign $e nm verdict val why
+    switch -exact -- $verdict {
+      ok       { lappend out "$nm = $val" }
+      caution  { lappend out "$nm = $val -- $why" }
+      produced { }
+      failed   { lappend out "$nm: $why" }
+      refused { lappend out "$nm was not measured: $why" }
+      fatal   { lappend out "$nm cannot be measured: $why" }
+    }
+  }
+  return $out
+}
+
+# Does any of these rows need the simulator's phase unit changed first?
+# THE ANSWER IS THE ADAPTER'S, and there is no fallback: whether `vp()` comes
+# back in radians is a fact about one simulator, and a core that guessed it
+# would be wrong for the next one in exactly the direction that stays silent.
+proc ase::meas_needs_degrees {sim rows} {
+  set r 0
+  catch {
+    set h [ase::backend_hook $sim meas_needs_degrees]
+    if {$h ne {}} { set r [$h $rows] }
+  }
+  return [expr {$r ? 1 : 0}]
+}
+
+# THE ADAPTER'S OWN CATALOGUE, CHECKED. Same shape and same purpose as
+# ase::option_schema_errors: a kind that declares no `form`, a field with no
+# `name`, a `required` field that is not `1`/`0`, a `counter` on a kind that is
+# not a producer. A conformance harness (Stage 15) is what will call it for a
+# second adapter; here it keeps the first one honest.
+proc ase::meas_schema_errors {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set errs {}
+  set d [ase::meas_kinds $sim]
+  if {[catch {dict size $d} n]} { return [list "meas_kinds is not a dict"] }
+  dict for {kind e} $d {
+    if {[catch {dict size $e}]} { lappend errs "$kind: entry is not a dict" ; continue }
+    if {![dict exists $e form]} { lappend errs "$kind: no form" } \
+    elseif {[dict get $e form] ni {meas producer}} {
+      lappend errs "$kind: form '[dict get $e form]' is neither meas nor producer"
+    }
+    if {[dict exists $e counter] && [dict exists $e form] &&
+        [dict get $e form] ne {producer}} {
+      lappend errs "$kind: a counter belongs to a producer"
+    }
+    if {[dict exists $e yields] && [dict exists $e form] &&
+        [dict get $e form] ne {producer}} {
+      lappend errs "$kind: only a producer may yield something other than a number"
+    }
+    if {![dict exists $e fields]} { continue }
+    if {[catch {llength [dict get $e fields]}]} {
+      lappend errs "$kind: fields is not a list" ; continue
+    }
+    foreach f [dict get $e fields] {
+      if {[catch {dict size $f}]} { lappend errs "$kind: a field is not a dict" ; continue }
+      if {![dict exists $f name]} { lappend errs "$kind: a field has no name" ; continue }
+      if {[dict exists $f required] && [dict get $f required] ni {0 1}} {
+        lappend errs "$kind/[dict get $f name]: required must be 0 or 1"
+      }
+    }
+  }
+  return $errs
+}
 
 # <rundir>/<cell>_ase.plotmap -- beside the results file and the log.
 #
@@ -13815,6 +14351,17 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## ase::effective_path's raise on a state with no design cell, the shape the
   ## four lines above already tolerate.
   catch {file delete -- [ase::effective_path $state]}
+  ## --- 1443 (§8a): AND THE MEASUREMENT SIDECAR, for the same reason as the
+  ## five above it. The deck APPENDS to it (`echo … >> path`, then one
+  ## `meas … >> path` per row), so a file left from the previous run is not
+  ## truncated and this run's numbers land behind last run's -- and a row whose
+  ## condition never occurs in THIS run would then be served the PREVIOUS run's
+  ## answer, under its own name, with nothing said. ⚠ AT THE TOP WITH ITS
+  ## SIBLINGS, not just before `eval execute`: issue 1430 learned where, and
+  ## issue 1442's sabotage S24 learned it again when the row's bound admitted
+  ## the wrong placement. Caught for ase::meas_path's raise on a state with no
+  ## design cell, the shape the five lines above already tolerate.
+  catch {file delete -- [ase::meas_path $state]}
   ## --- §7d (issue 1439): AND THE PRE-DECK FILE, WHICH IS ⚖ R2 CONDITION 1 ---
   ## It joins the list one line up for the rawfile's reason and for a sharper
   ## one. A stale rawfile serves last run's numbers; a stale pre-deck file
@@ -17463,6 +18010,21 @@ namespace eval ase::backend::ngspice {
  exits on; nothing was rendered"
       }
     }
+    ## --- 1443 (§8a): AND A MEASUREMENT THE SIMULATOR WOULD CRASH ON --------
+    ## The same tier and the same doctrine one level down: a `.state` can be
+    ## hand-edited, so the dialog having been happy once is not evidence about
+    ## this deck. `ase::meas_fatals` is empty for every bench that carries no
+    ## measurement, so this costs nothing and says nothing until a row asks for
+    ## the one function pair that segfaults.
+    set rmfat {}
+    catch {
+      set rmsim [ase::state_get $state simulator [ase::default_simulator]]
+      set rmfat [ase::meas_fatals $rmsim $state]
+    }
+    if {[llength $rmfat]} {
+      return -code error "ase: measurement '[lindex [lindex $rmfat 0] 0]'\
+ [lindex [lindex $rmfat 0] 1]; nothing was rendered"
+    }
     set lines [split [string trimright $netlist_text "\n"] "\n"]
     while {[llength $lines] > 0 && [string trim [lindex $lines end]] eq {}} {
       set lines [lrange $lines 0 end-1]
@@ -18265,6 +18827,13 @@ namespace eval ase::backend::ngspice {
       } else {
         lappend lines "write [raw_file $state]"
       }
+      ## --- 1443 (§8a + §8c): THE MEASUREMENTS AND THE POST-PROCESSING -------
+      ## ⚠ BELOW THE FIRST `write` AND ABOVE THE WALK, and all four sides of
+      ## that are measured. See ase::backend::ngspice::meas_block's header for
+      ## the four reasons and for the byte counts behind reason 2. Empty for
+      ## every bench that carries no measurement, which is what keeps every
+      ## committed deck golden byte-identical.
+      foreach _mbl [meas_block $state $type $ai] { lappend lines $_mbl }
       # --- 1430 (6a): THE `setplot previous` WALK ----------------------------
       # ngspice's `write` writes ONE plot -- the current one -- and several
       # analyses make more than one. Issue 0929 fixed "one analysis's plot per
@@ -20786,6 +21355,617 @@ $_leg
   # no release, `git tag --contains` is empty -- so on a user's own binary `op` is
   # a `caution` cell and not an `ok` one. That is the honest answer, and it is why
   # the clause is written for the common case rather than the rare one.
+  # ═══════════════════════════════════════════════════════════════════════════
+  # STAGE 8a + 8c -- THE ngspice MEASUREMENT CONTENT (issue 1443)
+  # ═══════════════════════════════════════════════════════════════════════════
+  #
+  # Everything below is CONTENT (D34): ngspice's measure grammar, its four
+  # documented traps, its phase-unit trap and its post-processing verbs. Core
+  # owns the list, the row shape, the refusal evaluator and the sidecar; not one
+  # of the words below appears there.
+  #
+  # ⚠ THE CARD/COMMAND SPLIT IS A RULE AND BOTH HALVES ARE MEASURED.
+  #
+  #  * `.meas` DOT CARDS ARE REFUSED UNDER `-r`. MEASURED 2026-09-13 on both
+  #    binaries: `ngspice -b -r victim.raw deck.cir` prints `No .measure possible
+  #    in batch mode (-b) with -r rawfile set!` and measures nothing, while the
+  #    `meas` COMMAND in the same deck still prints its number. `-r` is not
+  #    ASE-L's transport, but a user may register it in their simulator args.
+  #  * AND A DOT CARD RUNS THE WHOLE SIMULATION A SECOND TIME. MEASURED on both
+  #    binaries, same deck twice: with a `.meas` card OR a `.four` card beside a
+  #    `.control` block the log carries `Doing analysis at TEMP` TWICE; with the
+  #    command form, ONCE. `main.c`'s batch arm calls `ft_dorun(NULL)` whenever
+  #    `ft_savedotargs()` reports any `.print`/`.four`/`.meas` save, even when a
+  #    control block has already run the deck.
+  #
+  # So NOTHING in this section emits a dot card, the `.four` card slot stays
+  # EMPTY, and `fourier` -- the command form, measured to create the identical
+  # `fourier<m><n>` and `thd<m><n>` vectors and print the identical harmonic
+  # table -- is what a THD request emits. Row CC1 holds it.
+
+  # THE KIND CATALOGUE. Every kind is one form shape; `form` is the only key
+  # core reads to decide which half of the block a row lands in.
+  #
+  # ⚠ `expr=` AND `param=` ARE NOT IN IT, AND THAT IS THE PLAN'S FIRST TWO
+  # TRAPS ENCODED AS AN ABSENCE RATHER THAN AS A REFUSAL. RE-MEASURED
+  # 2026-09-13 on both binaries, on the COMMAND form the deck uses:
+  #
+  #     meas tran e1 expr='ok1+7'  -> Error: measure e1 : no such function as
+  #                                   'expr=7.756162e+00'
+  #     meas tran p1 param='ok1+7' -> Error: measure p1 : no such function as
+  #                                   'param=7.756162e+00'
+  #     meas tran r1 FIND par('v(mid)*2') AT=1m
+  #                                -> Error: no such vector as par(v(mid)*2)
+  #
+  # -- the command supports NONE of the three (`measure.c:37` com_meas goes
+  # straight to get_measure2 and never reaches the numparam path the CARD uses).
+  # The plan's `param` KIND therefore ships as a `let`, which IS measured to
+  # work: `let pm1 = 180 + ok1` -> `pm1 = 1.807562e+02` on both binaries. That
+  # also side-steps the plan's second trap entirely -- `param=`'s once-per-
+  # session numparam placeholder does not exist on this route, so a shard runner
+  # re-running one circuit cannot hit it.
+  #
+  # ⚠ `deriv` IS NAMED AND REFUSED, WHICH IS NOT THE SAME AS BEING ABSENT.
+  # `measure_function_type()` RECOGNISES the word and `com_measure2.c:2156`
+  # rejects it at run time -- so a user who types it gets a failed measurement
+  # and no explanation. The `unsupported` sentence is the explanation, and it
+  # carries the workaround the dossier verified.
+  proc meas_kinds {} {
+    return [dict create \
+      trigtarg [dict create \
+        form meas  label {Delay (TRIG ... TARG)} \
+        fields {{name trig     kind vecexpr required 1 label {Trigger signal}}
+                {name trigval  kind real    required 0 label {Trigger value}}
+                {name trigdir  kind mode    required 0 default rise
+                               values {rise fall cross} label {Trigger edge}}
+                {name trign    kind int     required 0 default 1 label {Trigger edge number}}
+                {name trigtd   kind time    required 0 label {Trigger delay} unit s}
+                {name targ     kind vecexpr required 1 label {Target signal}}
+                {name targval  kind real    required 0 label {Target value}}
+                {name targdir  kind mode    required 0 default rise
+                               values {rise fall cross} label {Target edge}}
+                {name targn    kind int     required 0 default 1 label {Target edge number}}
+                {name targtd   kind time    required 0 label {Target delay} unit s}}] \
+      find [dict create \
+        form meas  label {Value at a point} \
+        fields {{name target kind vecexpr required 1 label {Signal}}
+                {name at     kind real    required 0 label {At}}
+                {name when   kind vecexpr required 0 label {When signal}}
+                {name value  kind real    required 0 label {reaches}}
+                {name dir    kind mode    required 0
+                             values {rise fall cross} label {Edge}}
+                {name n      kind int     required 0 default 1 label {Edge number}}
+                {name td     kind time    required 0 label {Ignore before} unit s}
+                {name from   kind real    required 0 label {From}}
+                {name to     kind real    required 0 label {To}}}] \
+      when [dict create \
+        form meas  label {Where a signal crosses a value} \
+        fields {{name target kind vecexpr required 1 label {Signal}}
+                {name value  kind real    required 1 label {Value}}
+                {name dir    kind mode    required 0
+                             values {rise fall cross} label {Edge}}
+                {name n      kind int     required 0 default 1 label {Edge number}}
+                {name td     kind time    required 0 label {Ignore before} unit s}
+                {name from   kind real    required 0 label {From}}
+                {name to     kind real    required 0 label {To}}}] \
+      avg    [meas_stat_kind {Average}] \
+      rms    [meas_stat_kind {RMS}] \
+      min    [meas_stat_kind {Minimum}] \
+      max    [meas_stat_kind {Maximum}] \
+      min_at [meas_stat_kind {Where the minimum is}] \
+      max_at [meas_stat_kind {Where the maximum is}] \
+      pp     [meas_stat_kind {Peak to peak}] \
+      integ  [meas_stat_kind {Integral}] \
+      deriv [dict create \
+        form meas  label {Derivative} \
+        unsupported {ngspice names DERIV and refuses it at run time\
+ (com_measure2.c:2156, `function 'deriv' currently not supported`). Compute it\
+ first with a post-processing expression and measure that instead} \
+        fields {{name target kind vecexpr required 1 label {Signal}}}] \
+      param [dict create \
+        form meas  label {Expression over other measurements} \
+        letform 1 \
+        fields {{name expr kind expr required 1 label {Expression}}}] \
+      fourier [dict create \
+        form producer  label {Fourier / THD} counter fourier \
+        fields {{name fund   kind freq    required 1 label {Fundamental} unit Hz}
+                {name target kind vecexpr required 1 label {Signal}}}] \
+      linearize [dict create \
+        form producer  label {Resample onto a uniform time grid} yields plot \
+        fields {{name np      kind string required 0 label {Points}}
+                {name vectors kind string required 0 label {Only these signals}}}] \
+      fft [dict create \
+        form producer  label {FFT spectrum} yields plot \
+        fields {{name target kind vecexpr required 1 label {Signal}}}] \
+      psd [dict create \
+        form producer  label {Power spectral density} yields plot \
+        fields {{name avgpts kind int     required 1 default 1
+                             label {Averaging points}}
+                {name target kind vecexpr required 1 label {Signal}}}] \
+      spec [dict create \
+        form producer  label {Spectrum over a frequency band} yields plot \
+        fields {{name start  kind freq    required 1 label {Start} unit Hz}
+                {name stop   kind freq    required 1 label {Stop} unit Hz}
+                {name step   kind freq    required 1 label {Step} unit Hz}
+                {name target kind vecexpr required 1 label {Signal}}}]]
+  }
+
+  # The eight window statistics share one form shape exactly, so they share one
+  # descriptor rather than eight copies of it -- the same argument that collapsed
+  # the eight copies of "what is a dc analysis" in Stage 1.
+  #
+  # ⚠ `td` IS NOT OFFERED HERE AND THAT IS MEASURED. `TD=` is honoured only by
+  # com_measure_when() -- i.e. by WHEN, TRIG and TARG -- and is SILENTLY IGNORED
+  # by AVG, MIN, MAX, MIN_AT, MAX_AT, PP, RMS and INTEG. Offering a field the
+  # simulator drops is the class of defect this whole batch exists to delete;
+  # `from` is the field that actually restricts the window here.
+  proc meas_stat_kind {label} {
+    return [dict create form meas label $label \
+      fields {{name target kind vecexpr required 1 label {Signal}}
+              {name from   kind real    required 0 label {From}}
+              {name to     kind real    required 0 label {To}}}]
+  }
+
+  # ⚠ FOUR ANALYSIS WORDS AND NO MORE. `chkAnalysisType()` (`measure.c:146-154`)
+  # accepts only tran/dc/ac/sp; everything else is a hard error, verified in the
+  # dossier against noise, op, pz, tf, sens and disto. A GUI that offered a
+  # measurement on a `noise` row would be offering a run-time failure.
+  proc meas_analyses {} { return {tran dc ac sp} }
+
+  # ⚠ THE PHASE-UNIT TRAP, AND IT IS ANSWERED THROUGH THE ONE SPELLER.
+  #
+  # MEASURED 2026-09-13 on BOTH binaries, an RC whose phase at 1 kHz is exactly
+  # -45 degrees, through `meas` itself:
+  #
+  #     (nothing set)           meas ac p FIND vp(out) AT=1k -> -7.853982e-01
+  #     .options units=degrees  the same line               -> -7.853982e-01
+  #     set units=degrees       the same line               -> -4.500000e+01
+  #
+  # The CARD does nothing, silently -- `units` is read at `options.c:419` through
+  # a `va_name`/`CP_STRING` comparison that the `.options` route never reaches --
+  # and a phase margin computed under it is wrong by 57.2958x with nothing said.
+  #
+  # ⚠ AND THE LINE IS NOT SPELLED HERE. `units` IS row 247 of this adapter's own
+  # catalogue (issue 1437 added it, `phase run`, door `control`, values
+  # {radians degrees}), so `ase::opt_line` already spells `set units=degrees` and
+  # `ase::opt_restore_line` already spells `set units=radians`. Going through the
+  # speller is what keeps ONE answer to "how is an option written" -- and it is
+  # why this proc answers a QUESTION (does anything here read a phase?) rather
+  # than returning a line.
+  #
+  # ⚠ THE BRIEF FOR THIS TASK, AND `LEDGER.md`'s Stage 8 block, BOTH SAY `units`
+  # IS NOT ONE OF THE 247 ROWS. Counted live 2026-09-13: it is, and it is the row
+  # whose `help` already carries the 57.2958 sentence. See the receipt's C145.
+  proc meas_phase_pattern {} { return {(^|[^A-Za-z0-9_])(vp|ip|ph|cph|phase)\s*\(} }
+
+  proc meas_needs_degrees {rows} {
+    set pat [meas_phase_pattern]
+    foreach r $rows {
+      foreach k {target trig targ when expr} {
+        set v [::ase::state_get $r $k]
+        if {$v ne {} && [regexp -nocase $pat $v]} { return 1 }
+      }
+    }
+    return 0
+  }
+
+  # ── THE SIMULATOR'S OWN RULES OVER A MEASUREMENT ROW ────────────────────────
+  #
+  # ⚠ RULE 1 IS A `fatal`, AND IT IS THE ONE THAT TAKES THE SIMULATOR DOWN.
+  # `meas sp` on a REAL `.sp` (RFSPICE) run segfaults for WHEN, TRIG...TARG, RMS
+  # and INTEG: the `frequency` scale of an `.sp` run is COMPLEX and
+  # com_measure_when() reads `v_realdata` unconditionally
+  # (`com_measure2.c:461`), while measure_rms_integral() has no SP branch at all
+  # (`:1073`). The dossier's transcript is exit=139 for all four and exit=0 for
+  # FIND/MIN/MAX/MIN_AT/MAX_AT/AVG/PP, which do test `v_compdata` first.
+  #
+  # ⚠ AND IT IS NARROWED TO A REAL `.sp` RUN, NOT TO THE WORD `sp`. On an
+  # fft/spec/psd SPECTRUM plot the `frequency` scale is REAL and all of them are
+  # safe -- that is `measure.md` §4.6, and it is the whole reason `meas sp` is
+  # the right verb on a spectrum. A row measured `on` a producer is therefore
+  # left alone. A blanket refusal would have taken away the one thing §8c's
+  # producers are for.
+  #
+  # ⚠ RULE 2 IS A `caution`, NOT A REFUSAL, AND THE NUMBER IS MEASURED. `fft`
+  # and `psd` never look at the time values -- they multiply by the window and
+  # hand the array to an FFT that assumes uniform sampling -- so on raw
+  # adaptive-step data the answer is wrong: 9.95420e-01 at 999.57 Hz against
+  # 9.99885e-01 at 999.50 Hz on a pure 1 V 1 kHz sine, and far worse on a
+  # sharp-edged signal. It is a caution because the run still produces a number
+  # and the user may have linearized by other means.
+  # A field's numeric value, or `{}` when it is not a number this simulator's
+  # suffixes can read.
+  proc meas_num {v} {
+    if {[string trim $v] eq {}} { return {} }
+    set r [::ase::si_parse $v [si_suffixes]]
+    if {[lindex $r 0] ne {ok}} { return {} }
+    return [lindex $r 1]
+  }
+
+  proc meas_rule {state row} {
+    set kind [string trim [::ase::state_get $row kind]]
+    set bind [::ase::meas_binding [namespace tail [namespace current]] $state $row]
+    set type [lindex $bind 0]
+    set on [::ase::meas_on $row]
+    if {[meas_word $state $row] eq {sp} && $on eq {} &&
+        $kind in {when trigtarg rms integ}} {
+      return [list fatal "on a real S-parameter run ngspice's own measure\
+ engine reads a complex frequency scale as if it were real and SEGFAULTS for\
+ [string toupper $kind]. Measure FIND, MIN, MAX or AVG there, or measure a\
+ spectrum produced from a transient instead"]
+    }
+    if {$kind in {fourier linearize fft psd spec} && $type ne {tran}} {
+      return [list refuse "'$kind' reads a transient, and this row is bound to\
+ a $type analysis"]
+    }
+    if {$kind in {fft psd}} {
+      set lin 0
+      foreach r [::ase::meas_rows $state] {
+        if {![::ase::meas_enabled $r]} { continue }
+        if {[string trim [::ase::state_get $r kind]] ne {linearize}} { continue }
+        if {[::ase::meas_binding [namespace tail [namespace current]] $state $r] eq $bind} { set lin 1 }
+      }
+      if {!$lin} {
+        return {caution {this spectrum is taken from adaptive-step transient\
+ data, which the transform assumes is evenly spaced. Add a Resample row before\
+ it, or read the amplitude as approximate}}
+      }
+    }
+    if {$kind eq {find}} {
+      ## ⚠ `FIND` HAS TWO GRAMMARS AND EXACTLY ONE OF THEM MUST BE CHOSEN --
+      ## `FIND <vec> AT=<val>` or `FIND <vec> WHEN <vec2>=<val>`. Neither is a
+      ## default for the other, and a row with neither spells a line ngspice
+      ## answers with `bad syntax`.
+      set sim [namespace tail [namespace current]]
+      set at [::ase::meas_field_value $sim find $row at]
+      set wh [::ase::meas_field_value $sim find $row when]
+      set wv [::ase::meas_field_value $sim find $row value]
+      if {$at eq {} && ($wh eq {} || $wv eq {})} {
+        return {refuse {a value measurement needs either a point to read at, or\
+ a signal and a value to read it when}}
+      }
+      if {$at ne {} && $wh ne {}} {
+        return {refuse {a value measurement reads either at a point or when a\
+ signal crosses a value, not both}}
+      }
+    }
+    if {$kind eq {spec}} {
+      set sim [namespace tail [namespace current]]
+      set a [::ase::meas_field_value $sim spec $row start]
+      set b [::ase::meas_field_value $sim spec $row stop]
+      set c [::ase::meas_field_value $sim spec $row step]
+      ## ⚠ `ase::si_parse` ANSWERS `{ok <value>}`, NOT A BARE NUMBER. Read as a
+      ## number it compares two LISTS and every band silently passes -- which is
+      ## what the first cut of this rule did.
+      set na [meas_num $a]
+      set nb [meas_num $b]
+      set nc [meas_num $c]
+      if {$na ne {} && $nb ne {} && $nb <= $na} {
+        return [list refuse "a spectrum needs a stop frequency above its start;\
+ ngspice answers `Error: bad stop freq $b`"]
+      }
+      if {$na ne {} && $nb ne {} && $nc ne {} && $nc > ($nb - $na)} {
+        return [list refuse "a spectrum's step must fit inside its band;\
+ ngspice answers `Error: bad step freq $c`"]
+      }
+    }
+    return {ok}
+  }
+
+  # ── SPELLING ONE `meas` LINE ────────────────────────────────────────────────
+  #
+  # ⚠ EVERY QUALIFIER IS EMITTED AS `KEY=VALUE` WITH NO SURROUNDING WHITESPACE.
+  # `com_meas()` does no token joining, so a command written `VAL= 0.5` is
+  # `bad syntax. equal sign missing ?`. A deck's `.control` lines happen to be
+  # whitespace-stripped by `inp_remove_ws()` on the way in, which is exactly why
+  # this must be a SPELLER rule and not a refusal: the same text typed at a
+  # prompt or sent through libngspice is not stripped, and the day ASE-L drives
+  # either one the lines must already be right.
+  #
+  # ⚠ THE EDGE QUALIFIER IS ONE TOKEN, NOT TWO. `RISE=n`, `FALL=n` and
+  # `CROSS=n` each SET the other two to "not given" (`com_measure2.c:1331-1339`),
+  # so writing more than one is writing over the previous one.
+  proc meas_qual {key val} {
+    if {[string trim $val] eq {}} { return {} }
+    return "$key=[string trim $val]"
+  }
+
+  proc meas_edge {dir n} {
+    set d [string trim $dir]
+    if {$d eq {}} { return {} }
+    set k [string trim $n]
+    if {$k eq {}} { set k 1 }
+    return "[string toupper $d]=$k"
+  }
+
+  # The ANALYSIS WORD this row's `meas` line carries. It is the bound analysis's
+  # own type, EXCEPT for a row measured on a producer's plot, where it is `sp`:
+  # `get_measure2` gates on the CURRENT PLOT's typename and `ft_plotabbrev()`
+  # gives every fft/spec/psd plot the typename `spN` -- `sp` is a substring of
+  # `spectrum` and it shadows `spect`. MEASURED 2026-09-13 on both binaries:
+  # fft -> sp2 (Spectrum), psd -> sp3 (PSD), spec -> sp4 (Spectrum).
+  #
+  # ⚠ A `linearize` PLOT IS NOT A SPECTRUM. MEASURED the same run: it is
+  # `tran2`, named `Transient Analysis (linearized)`, so a row measured on it
+  # keeps the transient's own word.
+  proc meas_word {state row} {
+    set sim [namespace tail [namespace current]]
+    set p [::ase::meas_producer_of $sim $state $row]
+    if {$p eq {}} {
+      return [lindex [::ase::meas_binding $sim $state $row] 0]
+    }
+    if {[string trim [::ase::state_get $p kind]] eq {linearize}} {
+      return [lindex [::ase::meas_binding $sim $state $row] 0]
+    }
+    return sp
+  }
+
+  proc meas_line {state row} {
+    set sim [namespace tail [namespace current]]
+    set kind [string trim [::ase::state_get $row kind]]
+    set name [::ase::meas_name $row]
+    set an [meas_word $state $row]
+    set v [list]
+    switch -exact -- $kind {
+      param {
+        # NOT a `meas` line at all: the command form supports neither `param=`
+        # nor `expr=` nor `par()`. A `let` is the route the dossier verified, and
+        # it makes exactly the same length-1 vector a `meas` would.
+        return [list "let $name = [string trim [::ase::meas_field_value $sim $kind $row expr]]"]
+      }
+      trigtarg {
+        lappend v TRIG [::ase::meas_field_value $sim $kind $row trig]
+        set q [meas_qual VAL [::ase::meas_field_value $sim $kind $row trigval]]
+        if {$q ne {}} { lappend v $q }
+        set q [meas_qual TD [::ase::meas_field_value $sim $kind $row trigtd]]
+        if {$q ne {}} { lappend v $q }
+        set q [meas_edge [::ase::meas_field_value $sim $kind $row trigdir] \
+                         [::ase::meas_field_value $sim $kind $row trign]]
+        if {$q ne {}} { lappend v $q }
+        lappend v TARG [::ase::meas_field_value $sim $kind $row targ]
+        set q [meas_qual VAL [::ase::meas_field_value $sim $kind $row targval]]
+        if {$q ne {}} { lappend v $q }
+        set q [meas_qual TD [::ase::meas_field_value $sim $kind $row targtd]]
+        if {$q ne {}} { lappend v $q }
+        set q [meas_edge [::ase::meas_field_value $sim $kind $row targdir] \
+                         [::ase::meas_field_value $sim $kind $row targn]]
+        if {$q ne {}} { lappend v $q }
+      }
+      find {
+        lappend v FIND [::ase::meas_field_value $sim $kind $row target]
+        set at [::ase::meas_field_value $sim $kind $row at]
+        if {$at ne {}} {
+          lappend v [meas_qual AT $at]
+        } else {
+          lappend v WHEN \
+            "[::ase::meas_field_value $sim $kind $row when]=[::ase::meas_field_value $sim $kind $row value]"
+          foreach q [meas_window $sim $kind $row] { lappend v $q }
+        }
+      }
+      when {
+        lappend v WHEN \
+          "[::ase::meas_field_value $sim $kind $row target]=[::ase::meas_field_value $sim $kind $row value]"
+        foreach q [meas_window $sim $kind $row] { lappend v $q }
+      }
+      default {
+        lappend v [string toupper $kind] [::ase::meas_field_value $sim $kind $row target]
+        set q [meas_qual FROM [::ase::meas_field_value $sim $kind $row from]]
+        if {$q ne {}} { lappend v $q }
+        set q [meas_qual TO [::ase::meas_field_value $sim $kind $row to]]
+        if {$q ne {}} { lappend v $q }
+      }
+    }
+    return [list "meas $an $name [string trim [join $v { }]]"]
+  }
+
+  # The WHEN-family window qualifiers, in the order the dossier's transcripts
+  # print them.
+  proc meas_window {sim kind row} {
+    set out {}
+    foreach {k f} {TD td FROM from TO to} {
+      set q [meas_qual $k [::ase::meas_field_value $sim $kind $row $f]]
+      if {$q ne {}} { lappend out $q }
+    }
+    set q [meas_edge [::ase::meas_field_value $sim $kind $row dir] \
+                     [::ase::meas_field_value $sim $kind $row n]]
+    if {$q ne {}} { lappend out $q }
+    return $out
+  }
+
+  # ── SPELLING ONE POST-PROCESSING PRODUCER ───────────────────────────────────
+  #
+  # ⚠ NO PRODUCER PLOT IS WRITTEN INTO THE RESULTS FILE, AND THAT IS A MEASURED
+  # REFUSAL RATHER THAN A SCOPE CUT. `src/save.c`'s read_dataset() maps a
+  # `Plotname:` to a sim_type by SUBSTRING: `strstr(lowerline, "transient
+  # analysis")` at :957 and `strstr(lowerline, "spectrum")` at :987. So
+  # `Transient Analysis (linearized)` reads back as the TRANSIENT and `Spectrum`
+  # reads back as an AC ANALYSIS. MEASURED 2026-09-13 through this tree's own
+  # reader, on one results file holding a real transient, a linearized copy made
+  # to disagree with it, and an fft spectrum:
+  #
+  #     xschem raw read multi.raw tran  ->  datasets=2   <- the copy joined it
+  #     xschem raw read multi.raw ac    ->  datasets=1 sim_type=ac
+  #                                         ... with no ac analysis in the deck
+  #
+  # That is issue 1430's `AC Operating Point` refusal exactly, one stage later:
+  # a companion plot needs a results file of its OWN before it can be captured.
+  # Until then the producers' RESULTS come back as measurements and as the
+  # printed harmonic table, and the walk, the plotmap and `analysis_captures`
+  # are untouched -- rows PP7 and WK1 are what hold that.
+  proc postproc_lines {state row} {
+    set sim [namespace tail [namespace current]]
+    set kind [string trim [::ase::state_get $row kind]]
+    set name [::ase::meas_name $row]
+    switch -exact -- $kind {
+      linearize {
+        set v {linearize}
+        set np [::ase::meas_field_value $sim $kind $row np]
+        if {$np ne {}} { lappend v "np=$np" }
+        foreach x [::ase::meas_field_value $sim $kind $row vectors] { lappend v $x }
+        return [list [join $v { }]]
+      }
+      fft {
+        return [list "fft [::ase::meas_field_value $sim $kind $row target]"]
+      }
+      psd {
+        return [list "psd [::ase::meas_field_value $sim $kind $row avgpts]\
+ [::ase::meas_field_value $sim $kind $row target]"]
+      }
+      spec {
+        return [list "spec [::ase::meas_field_value $sim $kind $row start]\
+ [::ase::meas_field_value $sim $kind $row stop]\
+ [::ase::meas_field_value $sim $kind $row step]\
+ [::ase::meas_field_value $sim $kind $row target]"]
+      }
+      fourier {
+        # ⚠ THE THD VECTOR IS NAMED AFTER THE CALL NUMBER, RUN-WIDE, AND THE
+        # NAME IS A PLAIN CONCATENATION OF TWO DECIMAL NUMBERS
+        # (`tprintf("thd%d%d", …)`, `fourier.c:199-240`). MEASURED 2026-09-13 on
+        # both binaries: the first `fourier` command in a run makes `thd11`, the
+        # second makes `thd21`. So it is copied into a name of the user's own
+        # IMMEDIATELY, which is what the dossier tells a GUI to do, and the
+        # ordinal comes from ase::meas_counter_index rather than from a guess.
+        set m [::ase::meas_counter_index $sim $state $row]
+        if {$m < 1} { set m 1 }
+        return [list \
+          "fourier [::ase::meas_field_value $sim $kind $row fund]\
+ [::ase::meas_field_value $sim $kind $row target]" \
+          "let $name = thd${m}1"]
+      }
+    }
+    return {}
+  }
+
+  # Does this producer make a NEW PLOT (so the block has to come back), and is
+  # it the one that makes the time-domain SOURCE for the transforms after it?
+  proc postproc_newplot {kind} { return [expr {$kind in {linearize fft psd spec}}] }
+  proc postproc_resamples {kind} { return [expr {$kind eq {linearize}}] }
+
+  # The two shell variables the block uses. Named once, here, because the
+  # asking side and the restoring side must not drift.
+  proc meas_plotvar {} { return aseplt }
+  proc meas_srcvar  {} { return asesrc }
+
+  # ── THE BLOCK ONE ANALYSIS ROW EMITS ────────────────────────────────────────
+  #
+  # ⚠ WHERE THIS BLOCK GOES IS ITSELF A MEASUREMENT, AND ALL FOUR BOUNDS ARE
+  # LOAD-BEARING. render_deck emits it immediately BELOW the row's first
+  # `write` and ABOVE the `setplot previous` walk, because:
+  #
+  #  1. BELOW the `$sim_status` guard, so an analysis that failed never measures
+  #     -- the guard `quit 1`s above here.
+  #  2. BELOW the row's first `write`, so the length-1 result vectors never
+  #     reach the results file. MEASURED 2026-09-13 on both binaries: a
+  #     `fourier` before the write on a 1,000,001-point transient grew the
+  #     rawfile from 48,000,724 to 64,000,905 bytes -- +16 MB for TWO SCALARS --
+  #     because the plot's default scale is imposed and a length-1 vector is
+  #     expanded to the whole record. The same is true of every `meas` vector.
+  #  3. ABOVE the `setplot previous` walk, because `get_measure2` measures the
+  #     CURRENT plot (`com_measure2.c:1661`) and the walk deliberately leaves a
+  #     different one current.
+  #  4. ABOVE the printed outputs (0967/1243) and above the per-analysis option
+  #     restores (§7e), which are end-of-row anchors belonging to other issues.
+  #
+  # Row PP8 asserts all four bounds by position, and the sabotages that move the
+  # block to each of the four wrong sides redden it.
+  proc meas_block {state type idx} {
+    set sim [namespace tail [namespace current]]
+    set rows [::ase::meas_for $sim $state $type $idx]
+    if {![llength $rows]} { return {} }
+    set path [::ase::meas_path $state]
+    set out {}
+    # WHICH ROWS READ THE ANALYSIS'S OWN PLOT, AND WHICH READ A PRODUCER'S
+    set own {}
+    set prod {}
+    foreach r $rows {
+      if {[::ase::meas_kind_form $sim [string trim [::ase::state_get $r kind]]] eq {producer}} {
+        lappend prod $r
+      } elseif {[::ase::meas_on $r] eq {}} {
+        lappend own $r
+      }
+    }
+    ## ⚠ EVERY PRODUCER AFTER THE FIRST IS SENT BACK TO THE TIME-DOMAIN
+    ## SOURCE, AND THAT IS A MEASURED DEFECT REPAIRED RATHER THAN A STYLE.
+    ## `fft`, `psd` and `spec` make their own output the CURRENT plot, so a
+    ## second transform written straight after the first reads a SPECTRUM.
+    ## MEASURED 2026-09-13 on both binaries: `fft v(mid)` then `psd 1 v(mid)`
+    ## gives `Error: fft needs real time scale` on stderr, creates NO plot, and
+    ## the run still exits 0. The source variable is what `linearize` updates,
+    ## so a Resample row ahead of the transforms feeds all of them -- which is
+    ## the order §5.3 of the dossier says is mandatory for `fft` and `psd`.
+    set newplot 0
+    foreach r $prod {
+      if {[postproc_newplot [string trim [::ase::state_get $r kind]]]} { set newplot 1 }
+    }
+    ## ⚠ EACH OF THE TWO IS EMITTED ONLY WHERE THE BLOCK USES IT, because an
+    ## inert line in a generated deck is a line the next reader has to work out.
+    ## The analysis's own plot is remembered only when something will CHANGE it;
+    ## the time-domain source is remembered only when a second producer will be
+    ## sent back to it. A block whose one producer is a Fourier request -- which
+    ## MAKES NO PLOT, measured on both binaries -- emits neither.
+    if {$newplot} { lappend out "set [meas_plotvar] = \$curplot" }
+    if {[llength $prod] > 1} { lappend out "set [meas_srcvar] = \$curplot" }
+    lappend out "echo [::ase::meas_marker] >> $path"
+    foreach l [meas_group $state $own $path] { lappend out $l }
+    set first 1
+    foreach p $prod {
+      set pkind [string trim [::ase::state_get $p kind]]
+      ## The first producer needs no `setplot`: the block sits immediately
+      ## below the analysis's own `write`, and `meas`, `let` and `print` were
+      ## all MEASURED to leave `$curplot` alone (tran1 before and after, both
+      ## binaries).
+      if {!$first} { lappend out "setplot \$[meas_srcvar]" }
+      set first 0
+      foreach l [postproc_lines $state $p] { lappend out $l }
+      if {[postproc_resamples $pkind] && [llength $prod] > 1} {
+        lappend out "set [meas_srcvar] = \$curplot"
+      }
+      if {$pkind eq {fourier}} {
+        lappend out "print [::ase::meas_name $p] >> $path"
+      }
+      set on {}
+      foreach r $rows {
+        if {[::ase::meas_on $r] eq [::ase::meas_name $p]} { lappend on $r }
+      }
+      foreach l [meas_group $state $on $path] { lappend out $l }
+    }
+    if {$newplot} { lappend out "setplot \$[meas_plotvar]" }
+    return $out
+  }
+
+  # One group of `meas` rows that all read the same plot, with the phase-unit
+  # line above them WHEN AND ONLY WHEN one of them reads a phase.
+  #
+  # ⚠ THE NON-VACUITY HALF IS THE POINT. A group with no phase in it emits NO
+  # units line at all -- rows PH1/PH2 are the pair, and PH2 is the one that
+  # would pass over an emitter that wrote the line unconditionally.
+  #
+  # ⚠ AND THE LINE IS NOT TAKEN BACK. `set units=degrees` stays in force for
+  # the rest of the run, which is §7e's `leaks` verdict on an option ASE-L set
+  # rather than the user. Restoring it would be worse: the user's own printed
+  # outputs would then report a phase in the unit the measurement above them
+  # did not use. The leak is reported instead, by ase::meas_report's caller.
+  proc meas_group {state rows path} {
+    if {![llength $rows]} { return {} }
+    set out {}
+    set sim [namespace tail [namespace current]]
+    if {[::ase::meas_needs_degrees $sim $rows]} {
+      lappend out [::ase::opt_line $sim units degrees control]
+    }
+    foreach r $rows {
+      foreach l [meas_line $state $r] {
+        if {[string match {let *} $l]} {
+          # a `let`-form row prints through `print`, because `let` prints nothing
+          lappend out $l
+          lappend out "print [::ase::meas_name $r] >> $path"
+        } else {
+          lappend out "$l >> $path"
+        }
+      }
+    }
+    return $out
+  }
+
   proc analysis_caveat {type caps} {
     if {$type ne {op}} { return {} }
     if {[::ase::caps_measured_as $caps altshow_op_dump 0]} {
@@ -21784,6 +22964,10 @@ $_leg
     effective_emit      ::ase::backend::ngspice::effective_emit \
     effective_lookup    ::ase::backend::ngspice::effective_lookup \
     analysis_suppress   ::ase::backend::ngspice::analysis_suppress \
+    meas_kinds          ::ase::backend::ngspice::meas_kinds \
+    meas_analyses       ::ase::backend::ngspice::meas_analyses \
+    meas_rule           ::ase::backend::ngspice::meas_rule \
+    meas_needs_degrees  ::ase::backend::ngspice::meas_needs_degrees \
     predeck_write       ::ase::backend::ngspice::predeck_write \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \

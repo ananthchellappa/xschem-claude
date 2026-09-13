@@ -78,7 +78,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_options_1437" \
                  "headless/test_ase_predeck_1439" \
                  "headless/test_ase_optsheet_1441" \
-                 "headless/test_ase_effective_1442"]
+                 "headless/test_ase_effective_1442" \
+                 "headless/test_ase_meas_1443"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -131,6 +132,17 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # thing rather than a bigger one -- which is the half of issue 1405's
 # distinction that argues for leaving a suite out. The day it grows a row that
 # maps a window, it earns a line here and the counts will say so.
+# ⚠ `test_ase_meas_1443` IS NOT HERE EITHER, FOR `test_ase_effective_1442`'s
+# REASON AND WITH THE SAME MEASUREMENT. Measured 2026-09-13 on both arms: **100
+# checks headless and 100 on the dev display, the same rows.** (This comment said
+# 86/86 until the driver re-ran it from a `RESULT:` line at collection time: the
+# suite grew after the sentence was written. Take a suite's number from its
+# verdict line, never from a paragraph -- twice already in this batch.) Stage 8 task 1 is
+# the DECK half -- the `measurements` state list, the refusal evaluator, the
+# `meas` speller and the post-processing producers -- and it creates no widget
+# at all: the Measurements sub-dialog, the template picker and the Value-column
+# rows are Stage 8 task 2. The day that lands it earns a line here, and its
+# counts will say so.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \

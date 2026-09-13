@@ -166,10 +166,15 @@ check "R1 state_default has viewer {}" [dict get $d viewer] {}
 # the deck) joined for exactly the same reason and with the same `{}` default:
 # a `0` default would be serialized into all 104 committed .state files and
 # would break R2 here and F3/G3/R4/V4 in the sibling suites.
-check "R1 exactly the 18 schema keys" [lsort [dict keys $d]] \
+## ⚠ AND RAISED 18 -> 19 (issue 1443, Stage 8a). `measurements` is the fifth
+## member of ase::omit_if_empty and joins for the identical reason with the
+## identical `{}` default, so R2's byte-identical round trip below is unaffected
+## and so are the 104 committed .state files (verified live, 104 of 104, at the
+## moment the key was added).
+check "R1 exactly the 19 schema keys" [lsort [dict keys $d]] \
   [lsort {version simulator sim_entry design rundir temperature models variables \
-          analyses outputs save_all_v save_all_i save_op_params options \
-          includes pre_commands cosim viewer}]
+          analyses outputs save_all_v save_all_i save_op_params measurements \
+          options includes pre_commands cosim viewer}]
 
 # --- R2: viewer round-trip byte-stability ------------------------------------
 set vgraphs [list \
