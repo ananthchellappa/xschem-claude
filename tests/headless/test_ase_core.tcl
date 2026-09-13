@@ -574,6 +574,7 @@ set d1_raw [file join [ase::rundir [nfet_state /models/sky130.lib.spice {}]] nfe
 ## ...and the plot sidecar beside it (issue 1430), resolved through the SAME
 ## ase::plotmap_path render_deck itself calls, for the same reason.
 set d1_map [ase::plotmap_path [nfet_state /models/sky130.lib.spice {}]]
+set d1_eff [ase::effective_path [nfet_state /models/sky130.lib.spice {}]]
 ## ⚠ 0929 MOVED THIS GOLDEN. The deck used to end on ONE `remzerovec` + `write`
 ## after the last analysis; ngspice's `write` writes the CURRENT plot, so a deck
 ## with op AND tran stored only the transient and `6` reported "these are from a
@@ -598,7 +599,21 @@ set d1_map [ase::plotmap_path [nfet_state /models/sky130.lib.spice {}]]
 ## what two enabled `sens` rows write, measured on both binaries -- carries
 ## nothing that says which row wrote which. Rows PM*, WK* and RC* are the
 ## machinery; this is what it costs the ordinary deck.
-set expected_deck [string map [list @RAWFILE@ $d1_raw @PLOTMAP@ $d1_map] {** sch_path: /fixture/nfet_clean.sch
+## ⚠ THE GOLDEN MOVED FOR ISSUE 1442's §7f READ-BACK, AND THIS BENCH IS WHY IT
+## MOVED AT ALL. The four lines before `.endc` are armed by the bench STORING an
+## option -- `nfet_state` stores `savecurrents`, which is the `.options
+## savecurrents` card above -- and a bench that stores none gets a deck
+## byte-identical to the one this golden used to hold. That arming rule is issue
+## 1433's precedent on the same question: a run with nothing to verify has no
+## verdict to give, and an unconditional pair of lines would have moved every
+## deck golden in the tree for a report that could only ever be empty.
+##
+## ⚠ AND `option` IS A BARE COMMAND, NOT A REDIRECTION. `option > file` writes
+## ZERO BYTES on both binaries -- `com_option.c` uses bare `printf` while
+## ngspice's `>` rebinds `cp_out` -- so the task dump is bracketed in the run log
+## and only the variable dump reaches the sidecar.
+set expected_deck [string map [list @RAWFILE@ $d1_raw @PLOTMAP@ $d1_map \
+                               @EFFECTIVE@ $d1_eff] {** sch_path: /fixture/nfet_clean.sch
 **.subckt nfet_clean
 XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
 V1 D GND 1
@@ -625,6 +640,10 @@ remzerovec
 echo "PLOT op 0 |$curplotname|" >> @PLOTMAP@
 write @RAWFILE@
 print -i(v1)
+echo ASE-EFFECTIVE-BEGIN
+option
+echo ASE-EFFECTIVE-END
+set >> @EFFECTIVE@
 .endc
 .end
 }]
@@ -798,7 +817,12 @@ proc d8_lines {rows} {
   dict set st analyses $rows
   set out {}
   foreach l [split [$::render $st $::netlist_text] "\n"] {
-    if {[regexp {^(op|dc |ac |tran )} $l]} { lappend out [string trim $l] }
+    ## ⚠ `op` NEEDS ITS WORD BOUNDARY. Without one this alternative also
+    ## matches `option`, the bare task-dump command issue 1442 writes at the
+    ## end of a deck that stores an option -- so the extractor reported a
+    ## line that is not an analysis. The CLAIM below is unchanged; what was
+    ## wrong was the word the extractor thought it was looking for.
+    if {[regexp {^(op($| )|dc |ac |tran )} $l]} { lappend out [string trim $l] }
   }
   return $out
 }
@@ -1073,7 +1097,10 @@ set d6_deck [$render $d6_st $netlist_text]
 set d6_l [split [string trimright $d6_deck "\n"] "\n"]
 set d6_seq {}
 foreach l $d6_l {
-  if {[regexp {^(set appendwrite|op|tran |remzerovec|write )} $l]} {
+  ## ⚠ `op` NEEDS ITS WORD BOUNDARY -- see the note on the first of these
+  ## extractors. Without one it also matches `option`, the bare task-dump
+  ## command issue 1442 writes at the end of a deck that stores an option.
+  if {[regexp {^(set appendwrite|op($| )|tran |remzerovec|write )} $l]} {
     lappend d6_seq [lindex [split [string trim $l]] 0]
   }
 }
@@ -5863,7 +5890,7 @@ proc tf_lines {rows} {
   if {[catch {$::render $st $::netlist_text} _rd]} { return "RAISED:$_rd" }
   set out {}
   foreach l [split $_rd "\n"] {
-    if {[regexp {^(op|dc |ac |tran |tf )} $l]} { lappend out [string trim $l] }
+    if {[regexp {^(op($| )|dc |ac |tran |tf )} $l]} { lappend out [string trim $l] }
   }
   return $out
 }
@@ -6096,7 +6123,7 @@ proc pz_lines {rows} {
   if {[catch {$::render $st $::netlist_text} _rd]} { return "RAISED:$_rd" }
   set out {}
   foreach l [split $_rd "\n"] {
-    if {[regexp {^(op|dc |ac |tran |tf |pz )} $l]} { lappend out [string trim $l] }
+    if {[regexp {^(op($| )|dc |ac |tran |tf |pz )} $l]} { lappend out [string trim $l] }
   }
   return $out
 }
@@ -6345,7 +6372,7 @@ proc sens_lines {rows} {
   if {[catch {$::render $st $::netlist_text} _rd]} { return "RAISED:$_rd" }
   set out {}
   foreach l [split $_rd "\n"] {
-    if {[regexp {^(op|dc |ac |tran |tf |pz |sens )} $l]} { lappend out [string trim $l] }
+    if {[regexp {^(op($| )|dc |ac |tran |tf |pz |sens )} $l]} { lappend out [string trim $l] }
   }
   return $out
 }

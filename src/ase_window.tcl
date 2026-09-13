@@ -134,7 +134,8 @@ namespace eval ase::ui {
                         heads {File Section} ed modrow edtitle {Model File}] \
     simopt [dict create win simopt skey options cols {name value} \
                         heads {Name Value} ed optrow edtitle {Simulation Option} \
-                        fill ase::ui::optsheet_fill]]
+                        fill ase::ui::optsheet_fill \
+                        stamp ase::ui::optsheet_stamp]]
   # sod(...): the Select On Design click mode (item 08). ONE mode globally:
   # sod(active) = the owning session key; per key: sod($key,canvas) = the
   # design window's canvas whose <ButtonPress-1>/<ButtonRelease-1>/
@@ -5752,7 +5753,19 @@ proc ase::ui::optsheet_badge {sim name} {
 # What the `where` column says: the slot this row's line goes into, in ASE-L's
 # own vocabulary. `ase::opt_door` is the simulator-independent answer; these are
 # the four words the user reads.
-proc ase::ui::optsheet_where {sim name} {
+proc ase::ui::optsheet_where {sim name {state {}}} {
+  ## §7e: A ROW THE BENCH STORES AGAINST ONE ANALYSIS IS WRITTEN INSIDE THAT
+  ## ANALYSIS'S BLOCK, WHICHEVER DOOR ITS CATALOGUE ROW WOULD OTHERWISE USE --
+  ## `ase::opt_deck_plan` skips it and `ase::opt_scope_plan` writes it. The
+  ## column has to say so or the sheet and the deck disagree about one row.
+  if {$state ne {}} {
+    foreach o [ase::state_get $state options] {
+      if {![dict exists $o name]} { continue }
+      if {![string equal -nocase [dict get $o name] $name]} { continue }
+      set an [ase::opt_row_analysis $o]
+      if {$an ne {}} { return "[string toupper $an] BLOCK" }
+    }
+  }
   if {[ase::sim_option_entry $sim $name] eq {}} { return {} }
   set d {}
   if {[catch {ase::opt_door $sim $name} d]} {
@@ -5766,6 +5779,25 @@ proc ase::ui::optsheet_where {sim name} {
     cmdline      { return {COMMAND LINE} }
   }
   return {}
+}
+
+# ⚠ §7e: THE PER-ANALYSIS SHEET WRITES A PER-ANALYSIS ROW. Until issue 1442 the
+# analysis form's `Simulator Options…` button opened the same sheet with the
+# scope preset and then wrote into the SAME global list -- so a value the user
+# set "for this tran" was set for the whole run, which is the lie §7e exists to
+# stop. `options` is still ONE list; the scope is a key on the row.
+#
+# ⚠ IT STAMPS ONLY WHAT THE SCOPE CAN ACTUALLY DELIVER. A row scoped to an
+# analysis that cannot be put back afterwards still LEAKS -- that is measured,
+# not arguable -- but the stamp is still right: the line is written where the
+# user asked, and `ase::opt_scope_plan` reports `leaks` so the preview and the
+# detail line both say it outlives the analysis. Refusing the stamp instead
+# would put the value in the global list, which is the same leak with nothing
+# said about it.
+proc ase::ui::optsheet_stamp {key} {
+  set sc [ase::ui::optsheet_scope $key]
+  if {[lindex $sc 0] ne {analysis}} { return {} }
+  return [list analysis [lindex $sc 1]]
 }
 
 # Simulation > Options…: the options sheet. ⚠ SAME TOPLEVEL PATH, SAME
@@ -5935,7 +5967,7 @@ proc ase::ui::optsheet_row {key tv parent name idx} {
     if {[dict exists $m $name]} { set val [dict get $m $name] }
   }
   $tv insert $parent end -id $id -values [list $name $val \
-    [ase::ui::optsheet_badge $sim $name] [ase::ui::optsheet_where $sim $name]]
+    [ase::ui::optsheet_badge $sim $name] [ase::ui::optsheet_where $sim $name $st]]
 }
 
 # The selected row, in words: what it is, whether the bench has changed it,
@@ -5965,6 +5997,19 @@ proc ase::ui::optsheet_detail {key} {
   }
   set why [ase::opt_results_why $sim $name]
   if {$why ne {}} { lappend bits $why }
+  ## --- §7g rule 5 (issue 1442): a capability-gated row is LISTED, never hidden
+  set gw [ase::opt_gate_why $sim $name [ase::sim_caps_cached $sim]]
+  if {$gw ne {}} { lappend bits "GATED: $gw" }
+  ## --- §7e (issue 1442): what a per-analysis scope can actually promise -----
+  set _sc [ase::ui::optsheet_scope $key]
+  if {[lindex $_sc 0] eq {analysis}} {
+    set v [ase::opt_analysis_verdict $sim $name [lindex $_sc 1]]
+    switch -exact -- [lindex $v 0] {
+      scoped { lappend bits "SCOPED: set for this analysis and put back after it" }
+      global { lappend bits {GLOBAL: this option is not offered per analysis} }
+      leaks  { lappend bits "LEAKS: [ase::opt_leak_why $sim $name]" }
+    }
+  }
   ## ⚠ NO `dict exists` GUARD HERE. `ase::opt_stored_verdict` answers `unset`
   ## for a row the bench does not store, which is the honest answer for the ~240
   ## rows Show-all lists, and a guard in this file would be a second place that
@@ -6979,6 +7024,29 @@ proc ase::ui::listdlg_edit_first {key which} {
   ase::ui::listdlg_editor $key $which [lindex $sel 0]
 }
 
+# ⚠ WHAT A ROW BEING ADDED FROM **THIS** SURFACE SHOULD REMEMBER, as `{key value
+# ...}` pairs. Empty for an edit, and empty for a dialog whose config declares no
+# stamp.
+#
+# ⚠ THE STAMP IS FOR NEW ROWS ONLY. Editing a row must not silently move it
+# between scopes because of which sheet happened to be open -- the user opened
+# the tran sheet to change a number, not to re-scope a global. Un-scoping is a
+# Delete and a re-Add, which is visible.
+#
+# ⚠ AND IT IS A PROC RATHER THAN TWO LINES INSIDE `listdlg_ok` BECAUSE OF A
+# SABOTAGE. `listdlg_ok` runs off a live dialog's entry widgets, so a headless
+# row cannot drive it, and the new-row guard was therefore unreachable: the
+# respelling *"stamp every row, new or edited"* SURVIVED a campaign against it.
+# This is the shape issue 1441 found for the same problem -- if a guard cannot
+# be reached, the API is wrong before the test is.
+proc ase::ui::listdlg_stamp_pairs {cfg key idx} {
+  if {$idx >= 0} { return {} }
+  if {![dict exists $cfg stamp]} { return {} }
+  set pairs {}
+  catch {set pairs [[dict get $cfg stamp] $key]}
+  return $pairs
+}
+
 proc ase::ui::listdlg_ok {key which} {
   variable wins; variable listdlg; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,$which)]} { return }
@@ -7003,6 +7071,10 @@ proc ase::ui::listdlg_ok {key which} {
     return
   }
   foreach f $cols { dict set row $f [string trim [$w.$f get]] }
+  ## --- §7e (issue 1442): A NEW ROW REMEMBERS WHICH SURFACE ADDED IT ---------
+  foreach {sk sv} [ase::ui::listdlg_stamp_pairs $cfg $key $idx] {
+    dict set row $sk $sv
+  }
   if {$idx < 0} { lappend rows $row } else { lset rows $idx $row }
   dict set st [dict get $cfg skey] $rows
   ase::session_update $key $st        ;# D15: every mutation commits at once

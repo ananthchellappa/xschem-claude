@@ -2348,11 +2348,30 @@ eqcheck PF230e-noise-under-klu-is-fatal-and-offers-the-sparse-solver \
 set MPSK1 [pcheckx $MPNL {{type sens enabled 1 out {v(mid)} mode ac sweep dec points 2 start 1k stop 10k}} \
                          {{name klu value 1}} $MPBLANKET]
 set MPSK2 [pcheckx $MPNL {{type sens enabled 1 out {v(mid)}}} {{name klu value 1}} $MPBLANKET]
-eqcheck PF230f-ac-sensitivity-under-klu-is-fatal-and-dc-sensitivity-under-klu-is-not \
+## ⚠ RE-BASELINED BY ISSUE 1442: `fatal` -> `caution`, AND IT IS A DECISION
+## RATHER THAN A DRIFT. Stage 6's 6g-1 settled the principle -- a refusal where
+## the emitter can make the run correct is a FALSE refusal, and a false refusal
+## is worse than a missed one -- and issue 1442 measured that the emitter CAN,
+## on both binaries, on the deck shape ASE-L actually writes:
+##
+##   .options klu + tran + AC sens + tran, no suppression   -> rc 139, SIGSEGV
+##   the same deck with `option klu=0` before the sens and
+##   `option klu` after it                                  -> rc 0, and the
+##       solver reads KLU / sparse / KLU across the three jobs
+##
+## and the sens numbers are BYTE-IDENTICAL to the same analysis on a deck that
+## never asked for KLU. So the user keeps KLU for every analysis that can use
+## it and loses it only for the one that cannot.
+##
+## ⚠ THE REFUSAL IS NOT DELETED, IT IS DEMOTED TO THE CASE THE EMITTER CANNOT
+## FIX -- a backend with no `analysis_suppress` hook, or one whose speller
+## cannot write the off-line, still gets `fatal`, because the alternative there
+## is the SIGSEGV. Row RU2 of `test_ase_effective_1442` is that half.
+eqcheck PF230f-ac-sensitivity-under-klu-is-suppressed-and-dc-sensitivity-under-klu-is-untouched \
   [list [mpids $MPSK1 sens] [mpv $MPSK1 sens 0] \
         [string match {*crashes ngspice outright*} [mps $MPSK1 sens 0]] \
         [dict size $MPSK2]] \
-  {sens_klu fatal 1 0}
+  {sens_klu caution 1 0}
 
 ## ⚠ THE SHARPEST DEFECT IN THE WHOLE SURFACE, AND MAKING `disto` RENDERABLE IS
 ## WHAT PUT IT IN REACH. The trigger is the save list RESOLVING TO NOTHING, not

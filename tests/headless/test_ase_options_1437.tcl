@@ -738,11 +738,29 @@ check {RS1 a valued option restores to its catalogue default through the same sp
         [o_ans ase::opt_restore_line ngspice gminsteps]] \
   {{option reltol=1e-3} {option gminsteps=1}}
 
-## A flag restores by ABSENCE, and absence has no line -- so the restore is
-## empty rather than a card that would switch it on again.
-check {RS2 a flag has no restore line} \
+## ⚠ RE-BASELINED BY ISSUE 1442, AND THE CLAIM WAS MEASURED FALSE. This row
+## read *"RS2 a flag has no restore line"* and expected `{} {}`, under the
+## comment *"a flag restores by ABSENCE, and absence has no line"*. That is true
+## of the FORWARD spelling and false of the reverse one: absence is how a flag
+## STARTS, not how it is put back once something has set it.
+##
+## MEASURED 2026-09-13 on BOTH binaries, with §7e's own example:
+##
+##   ac                       -> $plots  const ac1
+##   option keepopinfo ; ac   -> $plots  const ac1 op1 ac2      <- ON
+##   option keepopinfo=0 ; ac -> $plots  const ac1 op1 ac2 ac3  <- OFF AGAIN
+##
+## The third run gained `ac3` and NO `op2`. Source generalises it: every
+## `IF_FLAG` arm in `cktsopt.c` is `task->TSKxxx = (val->iValue != 0)`.
+##
+## ⚠ THE OLD ROW WAS NOT MERELY PEDANTIC -- IT PINNED §7e's MECHANISM SHUT. With
+## no reverse spelling for the flag class, the per-analysis scope could promise
+## nothing for any flag, and §7g rule 1 would have had no way to turn KLU off
+## for one analysis and put it back.
+check {RS2 a flag restores with an explicit zero, because absence is only how it starts} \
   [list [o_ans ase::opt_restore_line ngspice keepopinfo] \
-        [o_ans ase::opt_restore_line ngspice klu]] {{} {}}
+        [o_ans ase::opt_restore_line ngspice klu]] \
+  {{option keepopinfo=0} {option klu=0}}
 
 check {RS3 a row with no known default has no restore line, which is 7e's stated honest limit} \
   [list [o_key maxopalter default] [o_ans ase::opt_restore_line ngspice maxopalter]] {{} {}}

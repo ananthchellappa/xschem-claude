@@ -5171,12 +5171,110 @@ proc ase::opt_restore_line {sim name {where control}} {
   ## this sheet's to put back either -- the speller refuses it, so a restore
   ## built here would raise out of a run for a row the form never offered.
   if {[ase::opt_owner $sim $name] ne {}} { return {} }
-  if {[string first @value [ase::opt_template $sim $name \
-        [ase::opt_door $sim $name $where] [dict get $d cptype]]] < 0} {
-    # A valueless option restores by ABSENCE, and absence has no line.
-    return {}
+  set door [ase::opt_door $sim $name $where]
+  set cptype [dict get $d cptype]
+  if {[string first @value [ase::opt_template $sim $name $door $cptype]] < 0} {
+    ## ⚠ A VALUELESS TEMPLATE DOES **NOT** MEAN THERE IS NO RESTORE, AND THIS
+    ## LINE USED TO SAY IT DID. It read *"a valueless option restores by
+    ## ABSENCE, and absence has no line"*, which is true of the FORWARD
+    ## spelling and false of the reverse one: absence is how a flag starts, not
+    ## how it is put back once something has set it.
+    ##
+    ## ⚠ MEASURED 2026-09-13 ON BOTH BINARIES, with the plan's own example:
+    ##
+    ##   ac                      -> $plots  const ac1
+    ##   option keepopinfo ; ac  -> $plots  const ac1 op1 ac2     <- ON
+    ##   option keepopinfo=0; ac -> $plots  const ac1 op1 ac2 ac3 <- OFF AGAIN
+    ##
+    ## The third run gained `ac3` and NO `op2`, so `option <flag>=0` really does
+    ## put the flag back. Source agrees and generalises it: every `IF_FLAG` arm
+    ## in `cktsopt.c` is `task->TSKxxx = (val->iValue != 0)`, so a `0` clears it
+    ## -- with ONE inversion, `OPT_SPARSE` at `cktsopt.c:181`, which is
+    ## `(val->iValue == 0)` and therefore turns KLU **on** for `sparse=0`.
+    ##
+    ## ⚠ AND THE REVERSE SPELLING IS THE SIMULATOR'S WORD, SO IT IS THE
+    ## ADAPTER'S (D34). Core asks for it through a second, OPTIONAL hook and a
+    ## backend that declares none gets NO restore content -- which is §7e's
+    ## honest limit stated as a return value rather than as a paragraph.
+    set rt [ase::opt_restore_template $sim $door $cptype]
+    if {$rt eq {}} { return {} }
+    return [string map [list @name $name @value $dflt] $rt]
   }
   return [ase::opt_line $sim $name $dflt $where]
+}
+
+# The adapter's REVERSE spelling table -- `{door {cptype template}}` -- or `{}`.
+# Separate from `option_spell` because the two answer different questions: one
+# is *"how is this option asked for"*, the other *"how is it taken back"*, and
+# for the whole flag class they are not each other's mirror image.
+proc ase::opt_restore_spell {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim option_restore_spell]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+# One (door, cptype) reverse template, or `{}`.
+proc ase::opt_restore_template {sim door cptype} {
+  set t [ase::opt_restore_spell $sim]
+  if {![dict exists $t $door]} { return {} }
+  set byt [dict get $t $door]
+  if {![dict exists $byt $cptype]} { return {} }
+  return [dict get $byt $cptype]
+}
+
+# ⚠ CAN THIS OPTION CARRY A PER-ANALYSIS SCOPE AT ALL? `yes`, or `{no <why>}`.
+#
+# §7e's mechanism is *emit it before its analysis, put it back immediately
+# after*, and the second half is what the whole scope rests on: an option that
+# cannot be put back is not scoped to one analysis, it is CHANGED FOR THE REST
+# OF THE RUN. So this is the predicate, and it is deliberately the one the
+# surface reads too -- a row that says "scoped" in the window and leaks in the
+# deck would be the window and the deck disagreeing, which is the one thing
+# this stage is not allowed to ship.
+#
+# ⚠ THE NUMBERS, COUNTED OVER THE SHIPPED CATALOGUE ON 2026-09-13, and they
+# reshape §7e rather than illustrating it:
+#
+#     247  rows in the catalogue
+#      60  carry a `default`                     <- NOT 65; see the receipt's C134
+#      39  can be spelled back through `control`
+#      32  declare an `{analysis ...}` scope
+#      15  are BOTH analysis-scoped AND restorable
+#
+# So a per-analysis surface that offered only what it can truly scope would
+# offer **15 rows of 247**. §7e's escape hatch -- *"an option with no known
+# default is labelled global and offered only on the global surface"* -- would
+# therefore REMOVE 17 rows from a surface issue 1441 already shipped, and a
+# shortcut that disappears is worse than a shortcut that tells you its scope.
+# What ships instead: the per-analysis surface keeps every analysis-scoped row
+# and each row SAYS which of the two it is. See C135.
+proc ase::opt_restorable {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {}} { return [list no unknown] }
+  if {[ase::opt_inert $sim $name] ne {}} { return [list no inert] }
+  if {[ase::opt_owner $sim $name] ne {}} { return [list no owned] }
+  if {[ase::opt_default $sim $name] eq {}} { return [list no nodefault] }
+  set l {}
+  if {[catch {ase::opt_restore_line $sim $name control} l]} { return [list no nospelling] }
+  if {$l eq {}} { return [list no nospelling] }
+  return yes
+}
+
+# The stored option row's analysis scope, or `{}` for a global row.
+#
+# ⚠ THE SCOPE IS A PROPERTY OF THE STORED ROW, NOT A SECOND LIST. `options`
+# stays ONE list and gains no container: a row that names an analysis is written
+# inside that analysis's block, a row that does not is written once for the
+# whole run, exactly as every row is today. That is why the 104 committed
+# `.state` files round-trip byte-identically -- not one of them carries this
+# key, and nothing here adds it to a row that did not ask for it.
+proc ase::opt_row_analysis {row} {
+  if {![dict exists $row analysis]} { return {} }
+  return [string trim [dict get $row analysis]]
 }
 
 # ⚠ WHICH STORED OPTIONS WILL NOT REACH THE SIMULATOR, AND WHY. Returns a list
@@ -5761,6 +5859,20 @@ proc ase::opt_deck_plan {sim state} {
   foreach o [ase::state_get $state options] {
     if {![dict exists $o name]} { continue }
     set name [dict get $o name]
+    ## §7e: A ROW THAT NAMES AN ANALYSIS IS NOT THIS SLOT'S TO WRITE. It is
+    ## emitted inside that analysis's block by `ase::opt_scope_plan` and taken
+    ## back immediately after, so writing it here as well would put the same
+    ## request on the run twice and leave the second one standing for every
+    ## later analysis -- which is the leak the per-analysis scope exists to
+    ## stop. It is REPORTED rather than dropped, because the preview's whole
+    ## contract is that nothing the deck contains is unshowable.
+    set an [ase::opt_row_analysis $o]
+    if {$an ne {}} {
+      set value 1
+      if {[dict exists $o value]} { set value [dict get $o value] }
+      lappend out [list $name $value scoped [list analysis $an] {}]
+      continue
+    }
     set value 1
     if {[dict exists $o value]} { set value [dict get $o value] }
     set known 0
@@ -5789,6 +5901,634 @@ proc ase::opt_deck_plan {sim state} {
   return $out
 }
 
+# ⚠ §7e: PER-ANALYSIS SCOPE IS A GUI FICTION, AND THIS IS THE FICTION'S ENGINE.
+#
+# ngspice has NO per-analysis option scope. MEASURED 2026-09-13 on both
+# binaries: `option keepopinfo` inside `.control` stays set for every later
+# analysis -- the second `ac` in the probe gained `op1` as well. So the GUI
+# emits the option immediately BEFORE its analysis and puts it back immediately
+# AFTER, and the restore is the half that makes the word "scope" true.
+#
+# Returns one record per stored row that names this analysis type:
+#
+#   {name value scoped   <set line> <restore line>}   it really is scoped
+#   {name value leaks    <set line> {}            }   set, and NOT put back
+#   {name value refused  {}         {}            }   nothing could be written
+#
+# ⚠ `leaks` IS A FIRST-CLASS ANSWER AND NOT AN ERROR. 17 of the catalogue's 32
+# analysis-scoped rows have no restore (no `default`, or no reverse spelling),
+# and the honest thing for those is to emit them where the user asked and SAY
+# that the setting outlives the analysis -- not to silently drop the user's
+# value, and not to refuse the run. §7f is what then reports the consequence,
+# which is why these two sections are one task.
+proc ase::opt_scope_plan {sim state type} {
+  set out {}
+  foreach o [ase::state_get $state options] {
+    if {![dict exists $o name]} { continue }
+    if {![string equal -nocase [ase::opt_row_analysis $o] $type]} { continue }
+    set name [dict get $o name]
+    set value 1
+    if {[dict exists $o value]} { set value [dict get $o value] }
+    set setl {}
+    if {[catch {ase::opt_line $sim $name $value control} setl]} { set setl {} }
+    if {$setl eq {}} {
+      lappend out [list $name $value refused {} {}]
+      continue
+    }
+    set rl {}
+    catch {set rl [ase::opt_restore_line $sim $name control]}
+    if {$rl eq {}} {
+      lappend out [list $name $value leaks $setl {}]
+    } else {
+      lappend out [list $name $value scoped $setl $rl]
+    }
+  }
+  return $out
+}
+
+# The two blocks the emitter writes around ONE analysis: `pre` before its card,
+# `post` immediately after it. ⚠ `post` IS IN REVERSE ORDER OF `pre`, so a pair
+# of options that interact is unwound the way it was wound.
+proc ase::opt_scope_lines {sim state type} {
+  set pre {} ; set post {}
+  foreach rec [ase::opt_scope_plan $sim $state $type] {
+    lassign $rec name value status setl rl
+    if {$setl ne {}} { lappend pre $setl }
+    if {$rl ne {}}   { set post [linsert $post 0 $rl] }
+  }
+  return [dict create pre $pre post $post]
+}
+
+# ⚠ WHAT THE PER-ANALYSIS SURFACE SAYS ABOUT A ROW, AND WHY IT SAYS IT.
+# `scoped` / `leaks <why>` / `global`. This is the sentence §7e owes the user,
+# and it is computed from the same two predicates the emitter uses so the
+# window and the deck cannot disagree about one row.
+proc ase::opt_analysis_verdict {sim name type} {
+  if {![ase::opt_in_scope $sim $name [list analysis $type]]} { return global }
+  set r [ase::opt_restorable $sim $name]
+  if {$r eq {yes}} { return scoped }
+  return [list leaks [lindex $r 1]]
+}
+
+# Every row the per-analysis surface offers for `type`, ordered.
+# ⚠ IT OFFERS THE UNRESTORABLE ONES TOO -- see `ase::opt_restorable`'s header
+# and C135. Removing them would take 17 rows off a surface issue 1441 shipped.
+proc ase::opt_scoped_names {sim type} {
+  set out {}
+  foreach n [ase::sim_option_names $sim] {
+    if {[ase::opt_in_scope $sim $n [list analysis $type]]} { lappend out $n }
+  }
+  return $out
+}
+
+# The enabled analysis types of a state, in deck order, de-duplicated -- for a
+# reader that wants the TYPES rather than the rows. ⚠ CAUGHT AND FALLING BACK
+# TO THE PLAIN ROW ORDER: `ase::analysis_emit_order` raises by name on an
+# unrankable row (issue 1401), and a PREVIEW pane must not be the thing that
+# refuses -- `ase::preflight_gate` and `render_deck` already do, where a refusal
+# is an answer rather than a blank window.
+proc ase::preview_analysis_types {state} {
+  set out {}
+  set sim [ase::state_get $state simulator [ase::default_simulator]]
+  set order {}
+  if {![catch {ase::analysis_emit_order $state 0 $sim} order] && [llength $order]} {
+    foreach e $order {
+      set t [lindex $e 2]
+      if {[lsearch -exact $out $t] < 0} { lappend out $t }
+    }
+    return $out
+  }
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    set t [ase::state_get $a type]
+    if {$t ne {} && [lsearch -exact $out $t] < 0} { lappend out $t }
+  }
+  return $out
+}
+
+# Why an option cannot be put back, in words. ⚠ ONE BODY WITH
+# `ase::opt_restorable`, whose second element this renders -- two sentences for
+# one verdict is how a window and a deck start disagreeing.
+proc ase::opt_leak_why {sim name} {
+  set r [ase::opt_restorable $sim $name]
+  if {$r eq {yes}} { return {} }
+  switch -exact -- [lindex $r 1] {
+    nodefault   { return "$sim declares no default for it, so there is nothing\
+ to put it back to" }
+    nospelling  { return "$sim has no way to write it back inside the analysis\
+ block" }
+    inert       { return "it does nothing in this build" }
+    owned       { return "it is set elsewhere, not from this sheet" }
+    unknown     { return "this simulator's catalogue has no such option" }
+  }
+  return {}
+}
+
+# ⚠ §7g RULE 5 -- A CAPABILITY-GATED OPTION ROW, AND IT IS NEVER HIDDEN (D6).
+# `{state ok|absent|caution reason <r>}`, the SAME vocabulary and the SAME
+# evaluator the analysis grid uses -- `ase::requires_state` -- so a row that is
+# listed-and-disabled here reads exactly like an analysis that is.
+#
+# ⚠ `baseline` MEANS THE SAME THING IT MEANS ON AN ANALYSIS ENTRY, INCLUDING ITS
+# DEFAULT OF 0 (Stage 1's correction C42). An adapter that cannot assert a
+# source-verified invariant gets `absent/unmeasured` for an unmeasured
+# capability rather than `ok/baseline` -- so a row is offered on an unmeasured
+# binary only where the adapter SAID it is in every build.
+#
+# ⚠ AND A ROW WITH NO `gated` KEY IS `ok`, UNCONDITIONALLY, WITHOUT ASKING.
+# 247 rows and a capability probe that costs a process start: a gate consulted
+# for every row would make opening the sheet a measurement. The gate is opt-in
+# per row, which is also what keeps the answer honest -- an ungated row is not
+# claiming to have been measured.
+proc ase::opt_gate_state {sim name caps} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {}} { return {state ok reason ungated} }
+  if {![dict exists $d gated] || [dict get $d gated] ne {1}} {
+    return {state ok reason ungated}
+  }
+  set baseline 0
+  if {[dict exists $d baseline]} { set baseline [dict get $d baseline] }
+  if {![dict exists $d requires]} {
+    ## A row that declares itself gated and names no predicate has said "this
+    ## may be absent" and given nobody a way to find out. That is `caution`,
+    ## not `ok` and not `absent`: the row is offered and the surface says the
+    ## claim could not be evaluated.
+    return {state caution reason nopredicate}
+  }
+  return [ase::requires_state [dict get $d requires] $caps $baseline]
+}
+
+# The sentence the sheet puts beside a gated row, or `{}` when there is nothing
+# to say. ⚠ IT NAMES THE DOOR AS WELL AS THE REASON, because §7g asks for both
+# -- a user told only "not available" cannot tell a build that lacks the
+# feature from a setting that goes somewhere else.
+proc ase::opt_gate_why {sim name caps} {
+  set g [ase::opt_gate_state $sim $name $caps]
+  set door {}
+  catch {set door [ase::opt_door $sim $name]}
+  switch -exact -- [dict get $g state] {
+    ok { return {} }
+    absent {
+      if {[dict get $g reason] eq {unmeasured}} {
+        return "$sim has not been measured for this option; it would be written\
+ [ase::opt_door_phrase $door]"
+      }
+      return "this build of $sim does not have this option; it would be written\
+ [ase::opt_door_phrase $door]"
+    }
+    caution {
+      return "ASE-L could not find out whether this build of $sim has this\
+ option; it is offered anyway, and it would be written\
+ [ase::opt_door_phrase $door]"
+    }
+  }
+  return {}
+}
+
+# WHERE a row is written, in words. SCHEMA: these are ASE-L's four slots, named
+# in ASE-L's vocabulary -- the same four the deck preview heads its blocks with.
+proc ase::opt_door_phrase {door} {
+  switch -exact -- $door {
+    options      { return {above the analysis block} }
+    control      { return {inside the analysis block} }
+    predeck      { return {on the command line} }
+    predeck-file { return {in the run-directory start-up file} }
+    cmdline      { return {on the command line} }
+  }
+  return {through no door this simulator offers}
+}
+
+# ⚠ §7g RULE 1 -- AN OPTION THIS ANALYSIS CANNOT RUN UNDER, AND THE ANSWER IS
+# NOT A REFUSAL. Returns `{name ...}`: the options to turn off for THIS
+# analysis and put back immediately after.
+#
+# ⚠ WHY THIS IS NOT A `hazard_table`. §7g says it in as many words -- a table
+# with no key (D43) pretending to be data. The RULE lives in the adapter as one
+# predicate about one simulator; what is shared is the MECHANISM, and the
+# mechanism is §7e's, unchanged: turn it off with the restore line, run the
+# analysis, write the user's own value again. No new spelling exists for this.
+#
+# A BACKEND WITH NO HOOK SUPPRESSES NOTHING (D34), which leaves the precondition
+# that refuses -- so the composition is fail-safe in the direction that matters.
+proc ase::analysis_suppress {sim state type row} {
+  set h {}
+  if {[catch {set h [ase::backend_hook $sim analysis_suppress]}]} { return {} }
+  if {$h eq {}} { return {} }
+  set r {}
+  if {[catch {$h $state $type $row} r]} { return {} }
+  return $r
+}
+
+# Is `name` one of them for this row, AND can it actually be turned off?
+# ⚠ BOTH HALVES. A rule that names an option the speller cannot write would
+# demote a refusal on the strength of a suppression that never reaches the
+# deck, which is the one way this change could hurt somebody.
+proc ase::analysis_suppresses {sim state type row name} {
+  if {[lsearch -exact [ase::analysis_suppress $sim $state $type $row] $name] < 0} {
+    return 0
+  }
+  set off {}
+  if {[catch {ase::opt_restore_line $sim $name control} off]} { return 0 }
+  return [expr {$off ne {} ? 1 : 0}]
+}
+
+# The two blocks §7g rule 1 puts around one analysis: turn the hazard off, put
+# the user's own value back. ⚠ `post` RE-ASSERTS WHAT THE USER ASKED FOR, not
+# the default -- this is the one place in §7e where the restore runs the other
+# way round, because here it is ASE-L that changed the setting and the user who
+# owns it.
+proc ase::analysis_suppress_lines {sim state type row} {
+  set pre {} ; set post {} ; set names {}
+  foreach name [ase::analysis_suppress $sim $state $type $row] {
+    if {![ase::analysis_suppresses $sim $state $type $row $name]} { continue }
+    set want {}
+    foreach o [ase::state_get $state options] {
+      if {![dict exists $o name]} { continue }
+      if {![string equal -nocase [dict get $o name] $name]} { continue }
+      if {[ase::opt_row_analysis $o] ne {}} { continue }
+      set want 1
+      if {[dict exists $o value]} { set want [dict get $o value] }
+    }
+    if {$want eq {} || ![ase::opt_truthy $want]} { continue }
+    set off {} ; set back {}
+    if {[catch {ase::opt_restore_line $sim $name control} off]} { continue }
+    if {$off eq {}} { continue }
+    if {[catch {ase::opt_line $sim $name $want control} back]} { set back {} }
+    lappend pre $off
+    if {$back ne {}} { set post [linsert $post 0 $back] }
+    lappend names $name
+  }
+  return [dict create pre $pre post $post names $names]
+}
+
+# ═══ §7f -- REQUESTED VERSUS EFFECTIVE, AND WHY IT IS MANDATORY ══════════════
+#
+# ⚠ THERE IS NO ERROR CHANNEL FOR A MISSPELLED OPTION ON ASE-L'S ROUTE.
+# RE-MEASURED 2026-09-13 ON BOTH BINARIES, with a positive control in the same
+# batch of decks (`.options reltol=0.05` -> `reltol (current) = 0.05`, so the
+# mechanism demonstrably fires):
+#
+#   .options bogusdot=1  +  option bogusopt=3  inside .control  -> NOT ONE WORD
+#   .options frobnicate  +  .op                                 -> NOT ONE WORD
+#
+# The `Error: unknown option %s - ignored` branch is real -- `inpdoopt.c:75`,
+# and this tree's ngspice even `fprintf`s it to stderr at `:77` -- and NEITHER
+# ROUTE REACHES IT. A name that did not land is indistinguishable from one that
+# did, so a catalogue going stale against an unfamiliar binary is silent. That
+# is why this leg is mandatory rather than a nicety.
+#
+# ⚠⚠ AND THE PLAN'S RECIPE IS HALF BROKEN. `PLAN.md` §7f writes
+#
+#       option   > <cell>_ase.effective
+#       set     >> <cell>_ase.effective
+#
+# MEASURED 2026-09-13 on both binaries, in one deck, with `echo … > f` and
+# `print … > f` beside them as positive controls:
+#
+#       echo   > f   ->  22 bytes        set >> f  ->  440 / 450 bytes
+#       print  > f   ->  22 bytes        option > f  ->  **0 BYTES**
+#
+# `com_option.c` writes its whole dump with bare `printf`, i.e. to **stdout**,
+# while ngspice's `>` rebinds `cp_out` -- which is what `out_printf` uses and
+# what makes `set`'s redirection work. So `option > file` cannot capture
+# anything, by construction, and a deck built to the plan's recipe would have
+# produced a plausible half-empty sidecar whose missing half always diffs
+# clean. That is C133's vacuity defect wearing the feature's own clothes.
+#
+# WHAT SHIPS INSTEAD, each half through the door measured to work:
+#
+#   echo <BEGIN marker>            ->  the run log (stdout), which ASE-L
+#   option                             already captures whole
+#   echo <END marker>
+#   set >> <cell>_ase.effective    ->  the sidecar, which redirection reaches
+#
+# ⚠ Caveat the plan names and which still stands: NEITHER channel reveals a
+# `CP_` class, so task 1's type table cannot be replaced by this.
+
+# Is there anything for the read-back to speak about? The diff's subject is the
+# bench's stored option rows, so this predicate and `ase::effective_diff`'s
+# input are deliberately the SAME list -- an arming rule that covered more than
+# the diff would write a channel nobody reads, and one that covered less would
+# be a report about a run that never armed.
+proc ase::effective_armed {sim state} {
+  foreach o [ase::state_get $state options] {
+    if {[dict exists $o name] && [string trim [dict get $o name]] ne {}} { return 1 }
+  }
+  return 0
+}
+
+# <rundir>/<cell>_ase.effective -- beside the results file, the log and the
+# plotmap. ⚠ IT RAISES FOR A STATE WITH NO DESIGN CELL, exactly as
+# ase::plotmap_path and its two siblings do, so every core caller catches.
+proc ase::effective_path {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (effective_path)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase.effective]
+}
+
+# The two log markers, spelled ONCE. The bracket is what makes the task dump
+# findable in a log that also carries the simulator's own noise and the user's
+# own `print` output.
+proc ase::effective_marker {which} {
+  switch -exact -- $which {
+    begin { return {ASE-EFFECTIVE-BEGIN} }
+    end   { return {ASE-EFFECTIVE-END} }
+  }
+  return -code error "ase: no such effective marker '$which'"
+}
+
+# The bracketed region of a run log, or `{}` when the run never got there.
+# ⚠ THE LAST BRACKET WINS. A log appended to across runs would otherwise serve
+# the first run's settings for every run after it.
+proc ase::effective_region {logtext} {
+  set b [ase::effective_marker begin]
+  set e [ase::effective_marker end]
+  set out {}
+  set cur {} ; set inside 0
+  foreach l [split $logtext "\n"] {
+    set t [string trim $l]
+    if {$t eq $b} { set inside 1 ; set cur {} ; continue }
+    if {$t eq $e} { if {$inside} { set out $cur } ; set inside 0 ; continue }
+    if {$inside} { lappend cur $l }
+  }
+  return $out
+}
+
+# ⚠ THE `set` DUMP'S FIRST CHARACTER IS THE DOOR THE VALUE CAME THROUGH, AND
+# NOBODY IN THIS BATCH KNEW IT. `variable.c`'s `cp_vprint` tags each row:
+#
+#   ' '  a shell variable        -- `set`/`option` inside the analysis block
+#   '+'  a CIRCUIT variable      -- the deck's own `.options` card
+#   '*'  an environment variable -- the plot's or the user's
+#
+# MEASURED: `.options bogusdot=1` came back `+ bogusdot 1` and
+# `option bogusopt=3` came back `  bogusopt 3`, in one deck. So this channel
+# does not merely say a value arrived, it says WHICH DOOR it arrived through --
+# which is precisely what `ase::opt_door` claims and nothing could check.
+#
+# ⚠ ITS ONE LIMIT, SOURCE-READ AND WORTH KNOWING: `cp_vprint` de-duplicates by
+# name (`if (j && eq(name, prev))continue`), so a name set through two doors at
+# once is printed ONCE and the surviving prefix is whichever sorted first.
+#
+# Returns `{name {value origin}}`.
+proc ase::effective_parse_vars {text} {
+  set out [dict create]
+  foreach l [split $text "\n"] {
+    if {![regexp {^(.)[ ]([^ \t]+)(?:\t(.*))?$} [string trimright $l] -> c n v]} {
+      continue
+    }
+    switch -exact -- $c {
+      { }     { set origin control }
+      {+}     { set origin deck }
+      {*}     { set origin env }
+      default { continue }
+    }
+    if {![info exists v]} { set v {} }
+    dict set out $n [list [string trim $v] $origin]
+    unset -nocomplain v
+  }
+  return $out
+}
+
+# The `option` dump, as `{label value}`. Written against the real text, not a
+# guess -- the three shapes measured on both binaries are
+#
+#   reltol      (current) = 0.05          a name, a parenthetical, a value
+#   MaxOrder = 2                          a name and a value
+#   Integration Method = GEAR              a name WITH A SPACE IN IT
+#
+# and the lines that are NOT rows: the banner, the blank lines, the section
+# headings (which end in `:` and carry no `=`), the bare solver word
+# (`Sparse 1.3` / `KLU`) and the `Default M: 1.000000` block, which uses a
+# colon. Everything without an `=` is skipped, deliberately: a heading parsed
+# as a row would put a name in the diff that no option can ever match.
+proc ase::effective_parse_task {text} {
+  set out [dict create]
+  foreach l [split $text "\n"] {
+    set t [string trim $l]
+    if {$t eq {} || [string match {\**} $t]} { continue }
+    if {[string first = $t] < 0} { continue }
+    if {![regexp {^(.*?)[ \t]*=[ \t]*(.*)$} $t -> lbl v]} { continue }
+    set lbl [string trim $lbl]
+    regsub {[ \t]*\([^)]*\)[ \t]*$} $lbl {} lbl
+    set lbl [string trim $lbl]
+    if {$lbl eq {}} { continue }
+    dict set out $lbl [string trim $v]
+  }
+  return $out
+}
+
+# ⚠ THE MERGED PICTURE, AND IT RECORDS WHICH CHANNEL EACH ANSWER CAME FROM.
+# `{name {value origin channel}}` -- `channel` is `vars` or `task`. A reader
+# that could not tell them apart could not tell "ngspice invented a variable
+# from an unknown name" (vars) from "the task really is running at this value"
+# (task), and those are opposite findings.
+proc ase::effective_read {sim state {logtext {}}} {
+  set out [dict create]
+  set path {}
+  catch {set path [ase::effective_path $state]}
+  if {$path ne {} && [file isfile $path]} {
+    if {![catch {open $path r} f]} {
+      set txt [read $f] ; close $f
+      dict for {n pair} [ase::effective_parse_vars $txt] {
+        dict set out $n [list [lindex $pair 0] [lindex $pair 1] vars]
+      }
+    }
+  }
+  foreach {lbl v} [ase::effective_parse_task [join [ase::effective_region $logtext] "\n"]] {
+    dict set out $lbl [list $v task task]
+  }
+  return $out
+}
+
+# The adapter's own lookup: given a catalogue NAME and the merged picture,
+# what did this simulator report for it, in the unit the user typed?
+#
+# ⚠ IT IS THE ADAPTER'S BECAUSE BOTH HALVES ARE NGSPICE FACTS, and both were
+# measured rather than assumed: `option` prints `method` as `Integration
+# Method` and `maxord` as `MaxOrder`, and it prints `temp` in KELVIN
+# (`temp=40` -> `313.150000`, both binaries). A core proc that knew either
+# would be a core proc that knew an ngspice sentence.
+#
+# A BACKEND WITH NO HOOK GETS NO CONTENT: the name is looked up verbatim and
+# nothing is converted, which is the honest floor rather than a guess.
+proc ase::effective_lookup {sim name eff} {
+  set h {}
+  if {![catch {set h [ase::backend_hook $sim effective_lookup]}] && $h ne {}} {
+    set r {}
+    if {![catch {$h $name $eff} r]} { return $r }
+  }
+  if {[dict exists $eff $name]} { return [list [lindex [dict get $eff $name] 0] \
+                                               [lindex [dict get $eff $name] 1]] }
+  return {}
+}
+
+# ⚠ ARE THESE TWO THE SAME VALUE? SCHEMA, not content: "is 7 the same as
+# 7.000000" is arithmetic, and every simulator that prints a number needs the
+# same answer. Falls back to string equality for anything that is not a pair of
+# numbers (`GEAR` against `gear` -- case-folded, because a simulator that
+# upper-cases its own keyword back at you has not changed it).
+proc ase::effective_same {a b} {
+  if {[string equal -nocase [string trim $a] [string trim $b]]} { return 1 }
+  if {[catch {expr {double($a)}} da] || [catch {expr {double($b)}} db]} { return 0 }
+  if {$da == $db} { return 1 }
+  set scale [expr {abs($da) > abs($db) ? abs($da) : abs($db)}]
+  if {$scale == 0} { return 0 }
+  return [expr {abs($da - $db) / $scale < 1e-9 ? 1 : 0}]
+}
+
+# ⚠ REQUESTED AGAINST EFFECTIVE. One row per stored option, plus one per
+# variable the simulator INVENTED that nobody asked for.
+#
+#   ok          it arrived, and it arrived as the value asked for
+#   differs     it arrived as something else -- the T3/T4 silent drops
+#   missing     ⚠ nothing reported it at all: the name did not land
+#   unreported  the channels do not cover it, so nothing is CLAIMED about it
+#   invented    ngspice made a variable out of a name it did not recognise
+#
+# ⚠ `unreported` IS NOT `missing`, AND FUSING THEM WOULD BE THIS FEATURE'S
+# WORST FAILURE. `option` reports the task and `set` reports the variables;
+# between them they do not cover every row of a 247-row catalogue, and a row
+# neither channel mentions is one NOBODY ASKED ABOUT. Reporting that as "your
+# option did not land" would put a false alarm on the user's screen for
+# ordinary settings -- which is how a verification channel gets switched off
+# and stops catching the real one.
+#
+# ⚠ AND IT REPORTS HOW MANY ROWS IT COULD ACTUALLY SPEAK FOR. A diff over a
+# picture that matched nothing is clean, always -- C133 in a feature instead of
+# a harness -- so `ase::effective_coverage` is the positive control, shipped.
+proc ase::effective_diff {sim state eff} {
+  set out {}
+  foreach o [ase::state_get $state options] {
+    if {![dict exists $o name]} { continue }
+    set name [dict get $o name]
+    if {[string trim $name] eq {}} { continue }
+    set want 1
+    if {[dict exists $o value]} { set want [dict get $o value] }
+    ## ⚠ A SCOPED ROW IS NOT COMPARABLE THROUGH THIS CHANNEL, AND SAYING SO IS
+    ## THE DIFFERENCE BETWEEN A USEFUL REPORT AND ONE NOBODY READS. The
+    ## read-back runs at the END of the block, by which time §7e has already put
+    ## the option back -- MEASURED end to end on both binaries: `itl4` scoped to
+    ## `tran` with value 200 reads back as `itl4 (transient iterations) = 10`,
+    ## which is the restore working exactly as designed. Reported as a
+    ## difference it would be a false alarm on every scoped row on every run.
+    if {[ase::opt_row_analysis $o] ne {}} {
+      lappend out [list $name $want {} scoped {}]
+      continue
+    }
+    set known [expr {[ase::sim_option_entry $sim $name] ne {}}]
+    if {!$known} {
+      ## ⚠ A NAME THE CATALOGUE DOES NOT DESCRIBE, AND THE ONLY HONEST ANSWER
+      ## IS THAT NOTHING CAN CONFIRM IT. `.options bogusdot=1` and `option
+      ## bogusopt=3` print NO MESSAGE on either binary and the branch that
+      ## would (`inpdoopt.c:75`) is never reached. What the channel CAN see is
+      ## that the name became a circuit variable -- MEASURED: `+ bogusopt 3`,
+      ## where the `+` is `cp_vprint`'s tag for `ft_curckt->ci_vars`.
+      ##
+      ## ⚠ AND THE `deck` ORIGIN IS WHAT KEEPS THIS FROM BEING TWELVE FALSE
+      ## ALARMS A RUN. MEASURED on the end-to-end deck: 13 of the 24 dumped
+      ## names are outside the catalogue and TWELVE of them are ngspice's own
+      ## shell variables -- `batchmode`, `history`, `inputdir`, `program`,
+      ## `prompt`, `plots`, `curplot*`, `oscompiled`, `xspice_enabled`. Every
+      ## one of those carries `control` or `env`; the one real stray carries
+      ## `deck`. So the origin tag is the discriminator, and without it this
+      ## verdict would fire on every run of every bench.
+      set rec {}
+      if {[dict exists $eff $name]} { set rec [dict get $eff $name] }
+      if {$rec ne {} && [lindex $rec 2] eq {vars} && [lindex $rec 1] eq {deck}} {
+        lappend out [list $name $want [lindex $rec 0] invented deck]
+      } else {
+        lappend out [list $name $want {} unverifiable {}]
+      }
+      continue
+    }
+    set got [ase::effective_lookup $sim $name $eff]
+    if {$got eq {}} {
+      if {[ase::opt_door_reported $sim $name]} {
+        lappend out [list $name $want {} missing {}]
+      } else {
+        lappend out [list $name $want {} unreported {}]
+      }
+      continue
+    }
+    lassign $got v origin
+    ## A FLAG'S VARIABLE HAS NO VALUE, AND ITS PRESENCE **IS** THE VALUE.
+    ## `cp_vprint` prints a `CP_BOOL` as the bare name, so `klu` comes back with
+    ## an empty value -- and comparing `1` against `{}` would report every
+    ## switched-on flag as a difference.
+    if {$v eq {} && [ase::opt_truthy $want]} {
+      lappend out [list $name $want $want ok $origin]
+      continue
+    }
+    if {[ase::effective_same $want $v]} {
+      lappend out [list $name $want $v ok $origin]
+    } else {
+      lappend out [list $name $want $v differs $origin]
+    }
+  }
+  return $out
+}
+
+# Can either channel speak for this option at all? `option` reports the task
+# and `set` reports the variables, so a row whose door is the command line or
+# the start-up file is outside both -- and a `cmdline`/`predeck` row that is
+# missing from the dump says nothing about whether it was delivered.
+proc ase::opt_door_reported {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {}} { return 0 }
+  set door {}
+  if {[catch {ase::opt_door $sim $name} door]} { return 0 }
+  return [expr {$door in {options control} ? 1 : 0}]
+}
+
+# ⚠ THE POSITIVE CONTROL, SHIPPED RATHER THAN PERFORMED ONCE. `{rows matched}`
+# over the whole diff: how many stored options the channels could speak for.
+# A run whose `matched` is 0 has a picture that cannot disagree, and the report
+# says so instead of printing a clean bill of health.
+proc ase::effective_coverage {diff} {
+  set n 0 ; set m 0
+  foreach r $diff {
+    incr n
+    if {[lindex $r 3] in {ok differs}} { incr m }
+  }
+  return [list $n $m]
+}
+
+# ⚠ WHAT THE USER READS, AND IT SAYS NOTHING WHEN THERE IS NOTHING TO SAY. An
+# `ok` row is not news; a run where everything landed prints one line or none.
+proc ase::effective_report {sim state diff} {
+  set out {}
+  lassign [ase::effective_coverage $diff] nrows nmatch
+  foreach r $diff {
+    lassign $r name want got verdict origin
+    switch -exact -- $verdict {
+      differs {
+        lappend out "you asked for $name $want; $sim reports $got"
+      }
+      missing {
+        lappend out "$name did not reach $sim -- it reports no such setting"
+      }
+      invented {
+        lappend out "$sim does not know '$name' and made a variable out of it\
+ ($name = $got); $sim never reports a name it does not recognise, so this is\
+ the only sign you will get"
+      }
+      unverifiable {
+        lappend out "'$name' is not in this simulator's catalogue, and $sim\
+ says nothing about a name it does not recognise -- nothing here can tell you\
+ whether it took effect"
+      }
+    }
+  }
+  if {[llength $out] && $nmatch == 0} {
+    set out [linsert $out 0 "⚠ neither read-back channel reported any stored\
+ option on this run, so nothing below rests on a comparison"]
+  }
+  return $out
+}
+
 # ⚠ THE LIVE DECK PREVIEW (§7c-6), AND IT IS THE POINT OF THE WHOLE SHEET.
 # "A setting with no line in the preview is a setting that does nothing."
 #
@@ -5810,10 +6550,12 @@ proc ase::opt_deck_plan {sim state} {
 # So a row that has a line AND a delivery complaint shows BOTH, and the note is
 # the half that saves the user the 57.2958x error.
 #
-# ⚠ `control` IS EMPTY TODAY AND THAT IS A FACT, NOT A PLACEHOLDER. No option
-# line is written inside the analysis block by this tree -- §7e owns the
-# emit-then-restore that will fill it. The slot exists so the day it fills, the
-# suite that asserts it is empty says so.
+# ⚠ `control` IS FILLED BY §7e AS OF ISSUE 1442, and issue 1441's own row PV7
+# asserted it was empty precisely so that this day would move a NAMED ROW
+# rather than pass silently. What goes in it: the per-analysis option lines,
+# each shown with the analysis it is written around, and the restore line that
+# is what makes the word "scope" true. A row that is set and NOT put back is
+# shown too, with a note -- see `ase::opt_scope_plan`'s `leaks` answer.
 # ⚠ `plan` IS OPTIONAL AND IT IS NOT TEST SCAFFOLDING. `ase::predeck_report`
 # already takes the plan the run computed, for the same reason: the pane and the
 # run must be shown to agree about ONE plan rather than about two calls that
@@ -5829,6 +6571,51 @@ proc ase::opt_preview {sim state {plan {}}} {
     if {$status eq {off}} {
       dict set notes $name [list off \
         "switched off -- absence is the setting, so no line is written"]
+    }
+  }
+  ## §7e: THE IN-BLOCK SLOT. One group per enabled analysis, in the order the
+  ## deck writes them, each line tagged with the analysis it belongs to -- a
+  ## bare `option itl4=200` in a flat list would be unreadable the moment two
+  ## rows of the same type carry different values.
+  ## ⚠ AND THE SUPPRESSION LINES ARE HERE TOO, BECAUSE THE DECK CONTAINS THEM.
+  ## *"Nothing the deck contains may be unshowable in the window"* is the half
+  ## of the non-negotiable that is easy to fail: §7g rule 1 writes two lines
+  ## ASE-L chose, not the user, and a pane that omitted them would show a deck
+  ## running under KLU while the deck turns KLU off. It walks ROWS rather than
+  ## types because the rule is a property of the row -- an AC-mode `sens` and a
+  ## DC-mode one are the same type and only one of them is suppressed.
+  foreach arow [ase::state_get $state analyses] {
+    if {[ase::state_get $arow enabled 0] ne {1}} { continue }
+    set atype [ase::state_get $arow type]
+    if {$atype eq {}} { continue }
+    set su {}
+    if {[catch {ase::analysis_suppress_lines $sim $state $atype $arow} su]} { continue }
+    foreach nm [dict get $su names] {
+      foreach l [concat [dict get $su pre] [dict get $su post]] {
+        lappend ctl [list $nm $l]
+      }
+      dict set notes $nm [list suppressed \
+        "turned off for the $atype analysis, which crashes $sim under it, and\
+ put back immediately after"]
+    }
+  }
+  foreach atype [ase::preview_analysis_types $state] {
+    foreach rec [ase::opt_scope_plan $sim $state $atype] {
+      lassign $rec name value status setl rl
+      if {$setl ne {}} { lappend ctl [list $name $setl] }
+      if {$rl ne {}}   { lappend ctl [list $name $rl] }
+      switch -exact -- $status {
+        leaks {
+          dict set notes $name [list leaks \
+            "set for the $atype analysis and NOT put back afterwards --\
+ [ase::opt_leak_why $sim $name], so it stays in force for every analysis after\
+ it"]
+        }
+        refused {
+          dict set notes $name [list refused \
+            "nothing can be written for it inside the $atype analysis block"]
+        }
+      }
     }
   }
   if {$plan eq {}} { catch {set plan [ase::predeck_plan $sim $state]} }
@@ -6994,6 +7781,21 @@ proc ase::analysis_salvage {sim type} {
   set s [dict get $e salvage]
   if {[catch {dict size $s}]} { return {} }
   return $s
+}
+
+# HOW MANY POINTS WILL THIS ROW PRODUCE? The adapter's own estimate, or `{}`
+# for a type that declares none. ⚠ ONE ESTIMATOR, TWO READERS -- the checkpoint
+# planner and §7g's size rule. A second copy would be a second answer to "how
+# long is this run" and nothing would notice them drifting.
+proc ase::analysis_point_estimate {sim type row {state {}}} {
+  set sv [ase::analysis_salvage $sim $type]
+  if {$sv eq {} || ![dict exists $sv points]} { return {} }
+  set hook [dict get $sv points]
+  if {$hook eq {}} { return {} }
+  set n {}
+  if {[catch {$hook $row $state} n]} { return {} }
+  if {![string is integer -strict $n]} { return {} }
+  return $n
 }
 
 # THE PLAN FOR ONE ROW: {n <N> step <points> points <estimate>}, or {} for a row
@@ -9420,15 +10222,118 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
         return {}
       }
       dict for {on ov} $opts {
-        if {[string equal -nocase $on klu] && $ov ne {0}} {
-          return [list fatal \
-            "AC sensitivity crashes ngspice outright under the KLU solver --\
- the process dies and nothing is written" \
-            "select the `sparse` solver for this run, or use the DC mode, which\
- is safe under KLU"]
+        if {![string equal -nocase $on klu] || $ov eq {0}} { continue }
+        ## ⚠ §7g RULE 1, AND THIS REFUSAL IS NOW THE FALLBACK RATHER THAN THE
+        ## ANSWER. Stage 6's 6g-1 settled the principle -- a refusal where the
+        ## emitter can make the run correct is a FALSE refusal -- and the
+        ## objection to applying it here was real: what gets suppressed is the
+        ## USER'S OWN `klu`, not a save list ASE-L wrote. `PLAN.md` §7g's own
+        ## answer ("the option is simply not emitted for that run") carries that
+        ## objection in full, because it drops KLU for EVERY analysis in the
+        ## deck, and KLU is chosen for speed on exactly the circuits that have
+        ## several.
+        ##
+        ## ⚠ SO THE SUPPRESSION IS SCOPED TO THE ANALYSIS, WHICH IS §7e's OWN
+        ## MECHANISM AND NEEDS NO NEW SPELLING. MEASURED 2026-09-13 on BOTH
+        ## binaries, on the deck shape ASE-L actually writes -- a `.options klu`
+        ## card, a `tran`, the AC `sens`, a second `tran`:
+        ##
+        ##   no suppression                    -> rc 139, SIGSEGV, nothing written
+        ##   `option klu=0` before the `sens`,  -> rc 0, and the solver reads
+        ##   `option klu` after it                 KLU / sparse / KLU across the
+        ##                                         three jobs
+        ##
+        ## and the `sens` numbers are BYTE-IDENTICAL to the same analysis on a
+        ## deck that never asked for KLU at all. So the user keeps KLU for every
+        ## analysis that can use it, loses it only for the one that cannot, and
+        ## is told once. `option sparse` was measured to do the same thing; the
+        ## restore line is used instead because it is the mechanism §7e already
+        ## has, and a second spelling would be a second answer.
+        ##
+        ## ⚠ THE REFUSAL SURVIVES FOR THE CASE THE EMITTER CANNOT FIX. A
+        ## backend that declares no `analysis_suppress` hook, or one whose
+        ## speller cannot write the off-line, gets the `fatal` -- because the
+        ## alternative there is the SIGSEGV, and nothing about this change is
+        ## allowed to end in one.
+        if {[ase::analysis_suppresses $sim $state $type $row klu]} {
+          return [list caution \
+            "AC sensitivity crashes ngspice outright under the KLU solver, so\
+ this run turns KLU off for that one analysis and puts it back immediately\
+ after -- every other analysis in this deck still uses it" \
+            "switch this analysis to the DC mode, which is safe under KLU, or\
+ clear the `klu` option if you would rather choose the solver yourself"]
         }
+        return [list fatal \
+          "AC sensitivity crashes ngspice outright under the KLU solver --\
+ the process dies and nothing is written" \
+          "select the `sparse` solver for this run, or use the DC mode, which\
+ is safe under KLU"]
       }
       return {}
+    }
+    lin_points {
+      # ⚠ §7g RULE 3 -- IT WARNS, IT DOES NOT REFUSE. D47's losing cell is
+      # exactly this: refusing removes a number the user typed into a form.
+      #
+      # MEASURED 2026-09-13 on BOTH binaries, with `lin 3` and `dec 2` beside it
+      # as positive controls so the null result could not be the measurement
+      # failing:
+      #
+      #   ac lin 2 1k 11k  ->  length(frequency) = 1     <- ONE point
+      #   ac lin 3 1k 11k  ->  length(frequency) = 3
+      #   ac lin 1 1k 11k  ->  length(frequency) = 1
+      #   ac dec 2 1k 11k  ->  length(frequency) = 3
+      #
+      # `lin 1` also gives one point and is NOT a defect -- the user asked for
+      # one and got one. `lin 2` is the only value that silently halves, so the
+      # rule fires on it alone and names the fix rather than the symptom.
+      #
+      # ⚠ AND IT IS WRITTEN OVER THE FIELDS, NOT OVER A TYPE LIST, so it covers
+      # `sp` the day `sp` gets a sweep -- which is the second half of §7g's own
+      # "`ac lin 2` / `sp lin 2`" and is unreachable today because `sp` is still
+      # a bare probe stub with no fields at all.
+      if {[string tolower [ase::field_value $sim $type $row sweep]] ne {lin}} {
+        return {}
+      }
+      if {[string trim [ase::field_value $sim $type $row points]] ne {2}} {
+        return {}
+      }
+      return [list caution \
+        "a linear sweep of 2 points yields ONE point, and $sim says nothing\
+ about it" \
+        "use 3 points, or switch the sweep to `dec`"]
+    }
+    points_max {
+      # ⚠ §7g RULE 4, AND ITS STATED REASON IN `PLAN.md` DOES NOT APPLY TO THE
+      # DECK ASE-L WRITES. D4 is `No. Points:` overflowing an 8-character
+      # field: `outitf.c:1011` reserves it with `fprintf(run->fp, "0       \n")`
+      # and `outitf.c:1190` back-fills it with `%d` and no width, so a 9-digit
+      # count eats the newline. THAT IS THE `-r` STREAMING WRITER. ASE-L's deck
+      # writes with the `write` COMMAND, which is `rawfile.c:209` --
+      # `fprintf(fp, "No. Points: %d\n", length)`, no reservation, no
+      # back-fill, nothing to overflow. VERIFIED on both binaries: a 1008-point
+      # `write` produces the header `No. Points: 1008` with no padding at all.
+      #
+      # ⚠ SO THE RULE SHIPS WITH THE REASON THAT IS TRUE, NOT THE ONE THE PLAN
+      # GAVE. A run of that size is hours and gigabytes; that is worth one line
+      # and is not worth a refusal (D47 again). The `-r` half is recorded here
+      # rather than said to the user, so that whoever adds `-r` to `run_cmd` --
+      # which the traps table explicitly contemplates -- finds it.
+      #
+      # ⚠ AND IT USES THE **ONE** POINT ESTIMATOR THIS TREE ALREADY HAS, the
+      # adapter's `salvage {points <hook>}`, which is also what the checkpoint
+      # planner asks. A second estimate would be a second answer to "how long is
+      # this run", and the two would drift. The consequence is that the rule
+      # covers exactly the types whose point count has a MEASURED estimator --
+      # `tran` today -- and says nothing about the ones that do not, which is
+      # the honest scope rather than an invented one.
+      set n [ase::analysis_point_estimate $sim $type $row $state]
+      if {$n eq {} || $n <= 99999999} { return {} }
+      return [list caution \
+        "this analysis asks for about $n points -- gigabytes of results file\
+ and a run measured in hours" \
+        "raise the time step, or lower the stop time, if that is not what you\
+ meant"]
     }
     vecsaves {
       # ⚠ THIS PRECONDITION NO LONGER REFUSES, AND THAT IS THE WHOLE OF 6g-1.
@@ -12896,6 +13801,20 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## state with no design cell, the shape the two lines above already tolerate.
   catch {file delete -- [ase::ckpt_path $state]}
   catch {file delete -- [ase::ckpt_tmp_path $state]}
+  ## §7f (issue 1442): AND THE EFFECTIVE-SETTINGS SIDECAR, for the
+  ## rawfile's reason with the sharpest version of it in the batch. The deck
+  ## APPENDS to it (`set >> path`), so a file left over from the previous run is
+  ## not truncated -- this run's variables land behind last run's and the diff
+  ## then compares this run's REQUEST against last run's EFFECT. A stale
+  ## verification channel does not fail quietly: it answers, confidently, about
+  ## a run that is over.
+  ##
+  ## ⚠ AT THE TOP, WITH ITS FOUR SIBLINGS, AND NOT JUST BEFORE `eval execute`.
+  ## Issue 1430 already learned where and why: a second run arriving mid-flight
+  ## would otherwise delete the live run's file on its way past. Caught for
+  ## ase::effective_path's raise on a state with no design cell, the shape the
+  ## four lines above already tolerate.
+  catch {file delete -- [ase::effective_path $state]}
   ## --- §7d (issue 1439): AND THE PRE-DECK FILE, WHICH IS ⚖ R2 CONDITION 1 ---
   ## It joins the list one line up for the rawfile's reason and for a sharper
   ## one. A stale rawfile serves last run's numbers; a stale pre-deck file
@@ -13543,6 +14462,28 @@ proc ase::run_done {logpath state callback {meta {}}} {
     ase::ckpt_report $csim $state $data
   }
   catch {ase::reconcile_report $state $runstate}
+  ## --- §7f (issue 1442): AND WHAT THE SIMULATOR ACTUALLY USED ---------------
+  ## ⚠ AFTER reconciliation AND BEFORE THE `finished` LINE, because it is about
+  ## the settings rather than the results and because the last line the user
+  ## reads should still be the one naming the log.
+  ##
+  ## ⚠ IT READS THE LOG TEXT THE RUN JUST PRODUCED, not the file on disk. The
+  ## task dump is in `$data` because `option` writes to stdout and cannot be
+  ## redirected -- see ase::effective_path's header for the measurement -- and
+  ## re-reading the log file here would be a second source for one fact.
+  ##
+  ## CAUGHT, for ase::cap_report's reason: everything it says is advisory,
+  ## nothing downstream reads its answer, and a defect in a report must never
+  ## break a run. The suite calls ase::effective_read, ase::effective_diff and
+  ## ase::effective_report directly, uncaught.
+  catch {
+    set esim [ase::state_get $state simulator]
+    set eeff [ase::effective_read $esim $state $data]
+    foreach eline [ase::effective_report $esim $state \
+                     [ase::effective_diff $esim $state $eeff]] {
+      ::ase::echo "ase: $eline"
+    }
+  }
   ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
   if {$callback ne {}} { uplevel #0 $callback }
 }
@@ -17121,6 +18062,35 @@ namespace eval ase::backend::ngspice {
       ## exactly the regime checkpointing exists for -- so a loop tested on short
       ## runs passes and stops working the day it matters. Through `set` the same
       ## value arms correctly.
+      ## --- §7e + §7g rule 1 (issue 1442): THIS ANALYSIS'S OWN OPTIONS ----
+      ## ⚠ ABOVE THE CHECKPOINT ARM AND THEREFORE ABOVE THE VERBATIM HATCH, for
+      ## issue 1419's reason restated: rows VB1/VB2 assert that the hatch is
+      ## IMMEDIATELY above its own analysis line, and the sabotage that put
+      ## 1433's block between them reddened both by name. These lines are the
+      ## user's own option settings for this analysis, so they belong in force
+      ## before anything else this row sets up.
+      ##
+      ## ⚠ AND THE TWO SOURCES ARE DELIBERATELY SEPARATE. `opt_scope_lines` is
+      ## what the USER asked for on the per-analysis surface; `suppress_lines`
+      ## is what ASE-L takes away because the analysis would otherwise crash
+      ## (§7g rule 1). The suppression goes SECOND so it wins over anything the
+      ## per-analysis surface set, and it is put back LAST for the same reason.
+      set scopepre {} ; set scopepost {}
+      catch {
+        set _sl [ase::opt_scope_lines \
+                   [namespace tail [namespace current]] $state $type]
+        set scopepre  [dict get $_sl pre]
+        set scopepost [dict get $_sl post]
+      }
+      set supprepre {} ; set supprepost {}
+      catch {
+        set _su [ase::analysis_suppress_lines \
+                   [namespace tail [namespace current]] $state $type $a]
+        set supprepre  [dict get $_su pre]
+        set supprepost [dict get $_su post]
+      }
+      foreach _ol $scopepre  { lappend lines $_ol }
+      foreach _ol $supprepre { lappend lines $_ol }
       set ckplan {}
       if {[llength $ckrows]} {
         set ckplan [ase::ckpt_plan [namespace tail [namespace current]] $a $state]
@@ -17334,6 +18304,20 @@ namespace eval ase::backend::ngspice {
         foreach pl $printlines { lappend lines $pl }
         set printsdone 1
       }
+      ## --- §7e + §7g rule 1: PUT THEM BACK ----------------------------------
+      ## ⚠ AT THE END OF THIS ROW'S BLOCK AND NOT IMMEDIATELY AFTER THE ANALYSIS
+      ## LINE. Everything between the two -- the `$sim_status` guard, the
+      ## `remzerovec`, the plotmap record, the write and the `setplot previous`
+      ## walk -- is an anchor another issue pinned by position (1430, 1433,
+      ## 1434, 0963, 0967), and an option command placed among them would move
+      ## one of them relative to the rest. Appending here moves nothing: the
+      ## restore still lands before the next analysis, which is the only thing
+      ## a per-analysis scope actually requires.
+      ##
+      ## ⚠ THE SUPPRESSION IS UNDONE FIRST, so the user's own value is back in
+      ## force before this row's per-analysis settings are taken off.
+      foreach _ol $supprepost { lappend lines $_ol }
+      foreach _ol $scopepost  { lappend lines $_ol }
     }
     # A deck with no enabled analysis at all still carries its print lines, in
     # the one place there is for them -- exactly where they were before.
@@ -17361,6 +18345,45 @@ namespace eval ase::backend::ngspice {
     ## move twice"). A run with nothing to salvage has no verdict to give:
     ## ase::run_completed answers `unknown` for it, which is the honest third
     ## state rather than a confident `aborted`.
+    ## --- §7f (issue 1442): WHAT THE SIMULATOR ACTUALLY USED -----------------
+    ## ⚠ ABOVE THE COMPLETION MARKER, AND THE FIRST CUT HAD IT BELOW. Issue
+    ## 1433's row CK17 says the marker is *"the last line inside .control"* and
+    ## a read-back written under it reddened that row by name. The argument for
+    ## below was that the marker would otherwise come to mean "the analyses
+    ## finished AND the read-back finished" -- and that argument is weaker than
+    ## this batch's own standing rule, which is that another issue's pinned
+    ## anchor does not move. It also costs nothing: `option` always prints and
+    ## `set >>` always writes, so there is no failure the marker could absorb.
+    ##
+    ## ⚠ IT IS NOT REACHED BY A FAILED RUN, AND THAT IS CORRECT RATHER THAN A
+    ## GAP. The per-analysis `$sim_status` guard `quit 1`s above here, so a deck
+    ## whose analysis failed writes no read-back -- and a read-back describing a
+    ## run that did not happen is worse than none. `ase::effective_read` answers
+    ## `{}` for it and `ase::effective_diff` then reports every stored option as
+    ## `unreported` rather than as missing.
+    ##
+    ## ⚠ AND ONLY ONE OF THE TWO LINES IS A REDIRECTION, because only one of
+    ## them can be. See ase::effective_path's header for the measurement.
+    ##
+    ## ⚠ AND IT IS ARMED BY THERE BEING SOMETHING TO VERIFY, which is 1433's
+    ## precedent on the same question -- *"a run with nothing to salvage has no
+    ## verdict to give"*. The diff's subject is the bench's stored option rows;
+    ## with none of them there is no requested value to compare anything
+    ## against, and an unconditional pair of lines would put ~45 lines of task
+    ## dump into every run log the user reads and move every deck golden in the
+    ## tree for a report that could only ever be empty.
+    catch {
+      set _effh {}
+      if {[ase::effective_armed [namespace tail [namespace current]] $state]} {
+        set _effh [ase::backend_hook [namespace tail [namespace current]] \
+                     effective_emit]
+      }
+      if {$_effh ne {}} {
+        foreach _effl [$_effh [ase::effective_path $state]] {
+          lappend lines $_effl
+        }
+      }
+    }
     if {[llength $ckrows]} {
       lappend lines "echo [ase::ckpt_marker complete]"
     }
@@ -19588,7 +20611,7 @@ $_leg
         plots  {{select {DC transfer characteristic} role sweep results viewer label dc}}] \
       ac [dict create \
         label ac  baseline 1  registered 1  seed_enabled 0  emitorder 20 viewrank 30 \
-        needs  {ac_source saves_resolve cider_klu} \
+        needs  {ac_source saves_resolve lin_points cider_klu} \
         fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
                              label {Sweep type} relabels points} \
                 {name points kind int  required 1 label {Points per decade} \
@@ -19604,7 +20627,7 @@ $_leg
                  when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
-        needs  {saves_resolve cider_klu} \
+        needs  {saves_resolve points_max cider_klu} \
         fields {{name step   kind time required 1 label {Time step} unit s} \
                 {name stop   kind time required 1 label {Stop time} unit s} \
                 {name tstart kind time advanced 1 whenskipped 0 \
@@ -19619,7 +20642,7 @@ $_leg
       noise [dict create \
         label noise  baseline 1  registered 1  emitorder 40 \
         resultvecs own \
-        needs  {noise_out noise_insrc noise_klu vecsaves cider_klu} \
+        needs  {noise_out noise_insrc noise_klu lin_points vecsaves cider_klu} \
         fields {{name out    kind outvar required 1 label {Output}} \
                 {name insrc  kind source required 1 label {Input source}} \
                 {name sweep  kind mode required 0 default dec values {dec oct lin} \
@@ -19708,7 +20731,7 @@ $_leg
                  paramname ::ase::backend::ngspice::sens_param_kind}}] \
       disto [dict create \
         label disto  baseline 1  registered 1  emitorder 80 \
-        needs  {disto_saves disto_f1src disto_f2src cider_klu} \
+        needs  {disto_saves disto_f1src disto_f2src lin_points cider_klu} \
         fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
                              label {Sweep type} relabels points} \
                 {name points kind int  required 1 min 1 label {Points per decade} \
@@ -20297,6 +21320,159 @@ $_leg
     }
   }
 
+  # ⚠ §7g RULE 5's PREDICATE, AND IT ANSWERS THE THREE-VALUED VOCABULARY
+  # `ase::requires_state` EXPECTS -- `present` / `absent` / `unknown` -- never a
+  # bare boolean. `unknown` is not a polite `absent`: with `baseline 0` on the
+  # row it resolves to "offered nowhere, because nobody measured", and with
+  # `baseline 1` to "offered anyway". Collapsing it would make an unmeasured
+  # binary indistinguishable from one measured to lack the feature.
+  #
+  # CIDER's five device families are what `devhelp` lists when
+  # `--enable-cider` was given. MEASURED 2026-09-13: both preflight binaries
+  # answer `NUMD NUMD2 NBJT NBJT2 NUMOS`, and the preflight's third binary --
+  # the bare-configure upstream 47 build -- has no CIDER at all, which is the
+  # fixture that makes this gate a measurement rather than a decoration.
+  proc requires_cider {caps} {
+    set g [::ase::caps_get $caps devices_available]
+    if {![dict get $g measured]} { return unknown }
+    foreach d [dict get $g value] {
+      if {[string toupper $d] in {NUMD NUMD2 NBJT NBJT2 NUMOS}} { return present }
+    }
+    return absent
+  }
+
+  # ⚠ §7g RULE 1, AS ONE PREDICATE RATHER THAN A REGISTRY. The ONLY option this
+  # simulator cannot run an analysis under, measured: an AC-mode `sens` under
+  # `klu` is rc 139, a SIGSEGV, on both binaries -- while the SAME row in DC
+  # mode under KLU is rc 0 with numbers byte-identical to sparse. The guard
+  # ngspice ships for it is COMMENTED OUT (`cktsens.c:97-105`), and note what
+  # the commented one would have refused: all sensitivity under KLU, DC
+  # included, which would refuse a run that works.
+  #
+  # ⚠ `noise` UNDER KLU IS **NOT** HERE, AND THE DIFFERENCE IS THE POINT.
+  # ngspice refuses that one itself, cleanly, naming the fix
+  # (`noisean.c:73-78`, `E_UNSUPP`, rc 1) -- so the run ends with an error the
+  # user can read, and quietly changing the solver under them would hide a
+  # message the simulator went to the trouble of writing. Suppression is for
+  # the case where the alternative is a crash with nothing said.
+  proc analysis_suppress {state type row} {
+    if {$type ne {sens}} { return {} }
+    if {![string equal -nocase [::ase::field_value ngspice sens $row mode] ac]} {
+      return {}
+    }
+    return {klu}
+  }
+
+  # ⚠ §7f's TWO LINES, AND THEY GO THROUGH TWO DIFFERENT DOORS BECAUSE ONLY ONE
+  # OF THEM WORKS. `option > file` writes ZERO BYTES on both binaries --
+  # `com_option.c` uses bare `printf` while ngspice's `>` rebinds `cp_out` --
+  # so the task dump is bracketed in the run log ASE-L already captures, and
+  # only the variable dump is redirected into the sidecar. The markers are
+  # core's (`ase::effective_marker`); the three words `option`, `set` and `>>`
+  # are ngspice's and are therefore here.
+  proc effective_emit {path} {
+    return [list "echo [::ase::effective_marker begin]" \
+                 {option} \
+                 "echo [::ase::effective_marker end]" \
+                 "set >> $path"]
+  }
+
+  # ⚠ WHAT `option` CALLS EACH SETTING, AND IN WHICH UNIT. Both halves measured
+  # 2026-09-13 on both binaries; neither is guessable from the option's name.
+  #
+  #   .options method=gear   -> `Integration Method = GEAR`
+  #   .options maxord=4      -> `MaxOrder = 4`
+  #   .options temp=40       -> `temp = 313.150000`      ⚠ KELVIN, NOT CELSIUS
+  #
+  # ⚠ THE TEMPERATURE ONE IS THE DANGEROUS ONE, and this catalogue's own
+  # comment had it backwards -- it said `temp` is "read back in CELSIUS ... the
+  # number the user types and the number `option` prints back". It is not: 40
+  # comes back as 313.15. Without the conversion below, §7f would report *"you
+  # asked for temp 40, ngspice is using 313.15"* on every bench that sets a
+  # temperature, which is the false alarm that gets a verification channel
+  # switched off.
+  variable effective_labels {
+    method  {Integration Method}
+    maxord  MaxOrder
+    xmu     xmu
+    gmin    gmin
+    itl1    itl1
+    itl2    itl2
+    itl4    itl4
+    reltol  reltol
+    abstol  abstol
+    vntol   vntol
+    chgtol  chgtol
+    pivtol  pivtol
+    pivrel  pivrel
+    trtol   trtol
+    gshunt  gshunt
+    cshunt  cshunt
+    delmin  delmin
+    gminsteps gminsteps
+    srcsteps  srcsteps
+    temp    temp
+    tnom    tnom
+  }
+
+  proc effective_lookup {name eff} {
+    variable effective_labels
+    set lbl $name
+    if {[dict exists $effective_labels $name]} {
+      set lbl [dict get $effective_labels $name]
+    }
+    if {![dict exists $eff $lbl]} {
+      if {$lbl eq $name || ![dict exists $eff $name]} { return {} }
+      set lbl $name
+    }
+    set rec [dict get $eff $lbl]
+    set v [lindex $rec 0]
+    set origin [lindex $rec 1]
+    ## KELVIN BACK TO THE CELSIUS THE USER TYPED. `cktsopt.c` stores
+    ## `TSKtemp = rValue + CONSTCtoK`, and `com_option` prints the stored
+    ## number.
+    if {$name in {temp tnom} && ![catch {expr {double($v)}} dv]} {
+      if {$dv > 100.0} { set v [format %g [expr {$dv - 273.15}]] }
+    }
+    return [list $v $origin]
+  }
+
+  # ⚠ THE REVERSE SPELLING -- HOW AN OPTION IS TAKEN BACK (§7e). It is a
+  # SEPARATE table from `option_spell` because for the flag class the two are
+  # not mirror images: the forward line is `option @name` with no value slot at
+  # all, and the reverse one needs a value.
+  #
+  # ⚠ MEASURED 2026-09-13 ON BOTH BINARIES. `option keepopinfo` then `ac` puts
+  # `op1` in `$plots`; `option keepopinfo=0` then `ac` does not. Source
+  # generalises the measurement: every `IF_FLAG` arm in `cktsopt.c` is
+  # `task->TSKxxx = (val->iValue != 0)`.
+  #
+  # ⚠ `sparse` IS THE ONE INVERSION AND IT IS NOT IN THIS TABLE'S POWER TO FIX.
+  # `cktsopt.c:181` is `OPT_SPARSE: task->TSKkluMODE = (val->iValue == 0)`, so
+  # `option sparse=0` turns KLU **ON**. The catalogue carries the warning on
+  # the row; a per-name exception here would be a table with one member per key.
+  #
+  # ⚠ AND THERE IS NO `options` DOOR ROW. A `.options` card sits above the
+  # analysis block and is read once while the circuit loads, so there is no
+  # moment "after the analysis" at which it could be written -- `ase::opt_door`
+  # already refuses that pair. The deck slot has no reverse gear, by
+  # construction rather than by omission.
+  proc option_restore_spell {} {
+    return {
+      control {
+        optflag   {option @name=@value}
+        optint    {option @name=@value}
+        optreal   {option @name=@value}
+        optstring {option @name=@value}
+        bool      {set @name=@value}
+        num       {set @name=@value}
+        real      {set @name=@value}
+        string    {set @name=@value}
+        list      {set @name = ( @value )}
+      }
+    }
+  }
+
   # ⚠ THE LAST-RESORT SPELLING, AND IT IS THE ADAPTER'S BECAUSE `.options` IS
   # NGSPICE'S WORD. `ase::opt_deck_plan` reaches it through the optional
   # `option_fallback` hook for exactly two cases: a name this catalogue does not
@@ -20414,7 +21590,7 @@ $_leg
     editor                 {cptype string phase any group display scope global site src/frontend/inp.c:1886}
     enable_noisy_r         {cptype bool phase pre group device scope {analysis noise} results 1 site src/frontend/inpcom.c:7417 results_why {NOT MEASURED: read at netlist-read time and only for a B-source-expanded resistor; a constant r= expression stays an ordinary resistor}}
     event_node_spacing     {cptype real phase any group display scope global site src/frontend/plotting/graf.c:1344}
-    filetype               {cptype string phase any group run scope global site src/ciderlib/support/misc.c:171}
+    filetype               {cptype string phase any group run scope global gated 1 baseline 0 requires ::ase::backend::ngspice::requires_cider site src/ciderlib/support/misc.c:171 help {output file format for CIDER's own device dumps} gated_why {this variable is read by src/ciderlib/support/misc.c, and the whole of src/ciderlib is compiled only under `--enable-cider` (configure.ac:1215, src/Makefile.am:15). It is the ONLY cp_getvar variable in the CIDER sources -- verified by grep over src/ciderlib -- and therefore the one catalogue row whose very existence is a build option}}
     fourgridsize           {cptype num phase any group postproc scope global site src/frontend/fourier.c:75}
     fournosave             {cptype bool phase any group postproc scope global site src/frontend/fourier.c:77}
     gnuplot_terminal       {cptype string phase any group display scope global site src/frontend/plotting/gnuplot.c:303}
@@ -20604,6 +21780,10 @@ $_leg
     sim_options         ::ase::backend::ngspice::sim_options \
     option_spell        ::ase::backend::ngspice::option_spell \
     option_fallback     ::ase::backend::ngspice::option_fallback \
+    option_restore_spell ::ase::backend::ngspice::option_restore_spell \
+    effective_emit      ::ase::backend::ngspice::effective_emit \
+    effective_lookup    ::ase::backend::ngspice::effective_lookup \
+    analysis_suppress   ::ase::backend::ngspice::analysis_suppress \
     predeck_write       ::ase::backend::ngspice::predeck_write \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \

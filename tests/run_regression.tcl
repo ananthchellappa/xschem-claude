@@ -77,7 +77,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_persist" \
                  "headless/test_ase_options_1437" \
                  "headless/test_ase_predeck_1439" \
-                 "headless/test_ase_optsheet_1441"]
+                 "headless/test_ase_optsheet_1441" \
+                 "headless/test_ase_effective_1442"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -121,6 +122,15 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # changed-only, groups, the badge and the live deck preview), so a T1 that ran
 # only its headless arm would cover the schema and none of the pixels. That is
 # exactly the gap issue 0891 was filed about, at three tenths of a second.
+#
+# ⚠ `test_ase_effective_1442` IS DELIBERATELY **NOT** HERE, AND THE SAME
+# MEASUREMENT IS WHY. Measured 2026-09-13 on both arms: **92 checks headless and
+# 92 on the dev display, the same rows.** Its section UI drives two PURE procs
+# (`optsheet_stamp` reads an array, `optsheet_where` reads the catalogue) and
+# creates no widget, so the display arm is a weaker measurement of the SAME
+# thing rather than a bigger one -- which is the half of issue 1405's
+# distinction that argues for leaving a suite out. The day it grows a row that
+# maps a window, it earns a line here and the counts will say so.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
