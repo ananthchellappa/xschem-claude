@@ -187,6 +187,12 @@ set fail 0; set npass 0
 #              reason -- there is no schema half, only a second reader on the
 #              commit door -- and GR6f is the row that would notice a key this
 #              change wrote into a bench that never carried one.
+#   37 / 346   section NX, issue 1450: one list of non-setting row keys, and the
+#              `Options...` subdialog stops refusing every row that carries one.
+#              Headless is unmoved for GR5's, GR6's and GH's reason -- every NX
+#              row drives the real subdialog's widgets. The schema half is
+#              test_ase_core section NS (the proc and the fourth-copy source
+#              scan), which runs on BOTH arms.
 #   37 / 340   section GH, ⚖ R6's GUI half (issue 1448): the handle is visible
 #              and the second row of a type is reachable. Headless is unmoved
 #              for GR5's and GR6's reason -- every GH row drives widgets, and
@@ -197,11 +203,23 @@ set fail 0; set npass 0
 #              nothing whatever the reader answers and such a row cannot fail.
 #              That is GR6f's measured correction to GR5k, inherited rather than
 #              re-learned.
-#              ⚠ GH13b PINS A DEFECT RATHER THAN A FEATURE. `ase::analysis_emit_check`
-#              in src/ase.tcl has never heard of the `id` key ⚖ R6 added, so an
-#              ENABLED analysis row that declares one makes `ase::preflight_gate`
-#              refuse the whole bench. Fixing it turns that row RED, which is
-#              the point.
+#              ⚠ GH13b PINNED A DEFECT AND NOW PINS ITS ABSENCE. It was written
+#              to go RED when `ase::analysis_emit_check` learned about the `id`
+#              key ⚖ R6 added, and it did -- issue 1449 landed that word and this
+#              arm went to 2 FAILED (338 passed). Rewritten under issue 1450: the
+#              gate is silent on a named enabled row, the row still renders its
+#              card, and a third state carrying a key nothing can spend is the
+#              non-vacuity control, because the original PAIR no longer disagrees.
+#   NX1-NX6    ONE list of non-setting row keys (issue 1450). The `Options...`
+#              subdialog kept its own copy of it -- twice, a reader and a writer,
+#              both `{type enabled}` plus the declared fields -- so a row carrying
+#              either of `DECISIONS.md` D4's two optional keys was LISTED there as
+#              a free-text NAME/VALUE pair and then REFUSED at OK (`this dc
+#              analysis has a setting named 'id' that ASE-L cannot emit`), leaving
+#              the editor unusable on that row. `x` had been in that state since
+#              issue 1419. All three sites now ask
+#              `ase::analysis_nonsetting_keys`; NX5 proves they ASK by stubbing
+#              it, and test_ase_core's NS2 is the fourth-copy guard.
 #
 # ⚠ TWO ROWS IN THIS FILE ARE RED ON THE DISPLAY ARM AND WERE RED BEFORE 1435
 # -- verified by restoring src/ase.tcl and src/ase_window.tcl to HEAD 81312742
@@ -4244,41 +4262,58 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [ase::state_get [lindex $GH13ROWS 1] enabled]] \
     {1 0 vinsweep 3.3 1}
 
-  ## GH13b -- ⚠ AND HERE IS WHAT IT COSTS, PINNED SO THAT FIXING IT REDDENS A
-  ## ROW. `ase::analysis_emit_check` judges a key no template can spend as
-  ## `unknownkey`, and its `known` list is `{type enabled x}` plus the declared
-  ## field names -- issue 1447 added `id` to the ROW and not to that list. So
-  ## `ase::preflight_gate`, which runs the same check over every ENABLED stored
-  ## row before a run, refuses the whole bench: no deck, no raw, no log, and
-  ## `set ase_preflight 0` does not disable it. The surface this task ships
-  ## tells a user to name their analyses; naming one and switching it on stops
-  ## the bench running.
+  ## GH13b -- AND THE BENCH RUNS. ⚠ THIS ROW USED TO PIN THE DEFECT AND NOW PINS
+  ## ITS ABSENCE (issues 1448 -> 1449, rewritten under 1450).
   ##
-  ## ⚠ `src/ase.tcl` IS NOT THIS TASK'S FILE. The fix is one word --
-  ## `set known [list type enabled x id]` -- and issue 1448's "What is still
-  ## owed" carries it. When it lands this row goes red and names the paragraph
-  ## that has to be rewritten.
+  ## WHAT IT ASSERTED BEFORE: `{unknownkey id emit_incomplete {}}`. The surface
+  ## GH ships tells a user to name their analyses, and
+  ## `ase::analysis_emit_check`'s allow-list was `{type enabled x}` plus the
+  ## declared field names -- ⚖ R6 added `id` to the ROW and not to that list. So
+  ## `ase::preflight_gate`, which runs that check over every ENABLED stored row,
+  ## refused the whole bench: no deck, no raw, no log, and `set ase_preflight 0`
+  ## does not disable it. Naming an analysis and switching it on stopped the
+  ## bench running. The row was written to go RED when that was fixed, and it
+  ## did: issue 1449 landed the one word and this file's display arm went to
+  ## 2 FAILED (338 passed).
+  ##
+  ## WHAT IT ASSERTS NOW: the gate is SILENT on a bench whose enabled row
+  ## declares a name, that row still renders its analysis card, and the identical
+  ## bench without the key behaves the same way.
+  ##
+  ## ⚠ THE PAIRED CONTROL IS KEPT AND A THIRD STATE IS ADDED, BECAUSE THE PAIR
+  ## NO LONGER DISAGREES. Under the defect `GH13G` and `GH13GN` answered
+  ## differently and that difference WAS the row. Now both answer `{}`, so a
+  ## gate that had stopped running at all would satisfy both terms: `GH13BAD` is
+  ## the same row plus a key nothing can spend, and it must still be refused.
+  ## Terms 6 and 7 are the other half -- the two fixtures disagree about their
+  ## own HANDLE (`vinsweep` against `dc1`), which says the `id` is doing ⚖ R6's
+  ## job rather than sitting there ignored.
   ##
   ## ⚠ THE STATE IS HAND-BUILT AND PAIRED. Run through the session's own bench
   ## the gate has other things to refuse about (output names it cannot find in
   ## a fixture netlist), and a row that accepted ANY refusal would be measuring
-  ## the wrong one. The second term is the same state with the `id` key removed
-  ## and nothing else changed.
+  ## the wrong one.
   set GH13ROW {type dc enabled 1 source V2 start 0 stop 1.8 step 0.01 id vinsweep}
   set GH13ST [dict create version 1 simulator ngspice \
                 design {lib aselib cell nfet_clean view ngspice_state1} \
                 analyses [list $GH13ROW]]
   set GH13NOID $GH13ST
   dict set GH13NOID analyses [list [dict remove $GH13ROW id]]
+  set GH13BAD $GH13ST
+  dict set GH13BAD analyses [list [dict merge $GH13ROW {nonsense 1}]]
   set GH13G   [ase::preflight_gate $GH13ST   "* netlist\n.end\n"]
   set GH13GN  [ase::preflight_gate $GH13NOID "* netlist\n.end\n"]
-  check "GH13b KNOWN DEFECT (issue 1448): the emit check has never heard of the\
- id key ⚖ R6 added, so an ENABLED analysis that declares one makes the whole\
- bench refuse to run -- and the identical bench without the key runs" \
-    [list [lindex [lindex [ase::analysis_emit_check ngspice $GH13ROW] 0] 0] \
-          [lindex [lindex [ase::analysis_emit_check ngspice $GH13ROW] 0] 1] \
-          [lindex $GH13G 0] $GH13GN] \
-    {unknownkey id emit_incomplete {}}
+  set GH13GB  [ase::preflight_gate $GH13BAD  "* netlist\n.end\n"]
+  check "GH13b an analysis the user has NAMED and switched on lets the bench run:\
+ the gate is silent, the row still renders its card, and a key nothing can spend\
+ on the same row is still refused" \
+    [list [ase::analysis_emit_check ngspice $GH13ROW] \
+          [lindex $GH13G 0] $GH13GN \
+          [ase::analysis_line ngspice $GH13ROW] \
+          [lindex $GH13GB 0] \
+          [ase::analysis_handles $GH13ST] \
+          [ase::analysis_handles $GH13NOID]] \
+    [list {} {} {} {dc V2 0 1.8 0.01} emit_incomplete vinsweep dc1]
 
   ## GH14 -- AN EMPTY BENCH SAYS SO. A window that opened blank would read as a
   ## broken one; the sentence is `ase::ui::lbl_no_analyses`, minted in the lbl_*
@@ -4326,6 +4361,220 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "GH15 clicking every line of the handle grid and every cell of the type\
  grid and then pressing OK writes the same bytes as never opening the dialog" \
     [ase::state_serialize [ase::session_state $key]] $GH15BEFORE
+
+
+  # --- NX: ONE LIST OF NON-SETTING KEYS -- THE `Options...` HALF -------------
+  # Issue 1450. `DECISIONS.md` D4 licenses exactly two optional per-row keys,
+  # `id` (⚖ R6's handle) and `x` (issue 1419's verbatim hatch). THREE places kept
+  # a list of "keys on an analysis row that are not settings" and the three
+  # disagreed: `ase::analysis_emit_check` knew both, while THIS subdialog's
+  # reader (`ase::ui::chana_options`) and writer (`ase::ui::chana_x_ok`) each
+  # knew `type enabled` and the declared fields.
+  #
+  # ⚠ MEASURED ON THE UNFIXED TREE, THROUGH THESE VERY WIDGETS. One `dc` row
+  # carrying both keys: the subdialog listed `{id vinsweep}` and `{x {{echo hi}}}`
+  # as free-text NAME/VALUE pairs, and OK then answered `ase: this dc analysis
+  # has a setting named 'id' that ASE-L cannot emit` and returned -- subdialog
+  # left standing, nothing written. The editor could not be opened-and-saved on
+  # such a row at all, and the one gesture that DID get an OK out of it was
+  # deleting the name. `x` had been in that state since issue 1419.
+  #
+  # ⚠ AND THE WRITER'S STRIP WAS THE SHARPER HALF. Its `foreach k [dict keys
+  # $row]` loop deletes every key not in `skip` before writing back, so a `skip`
+  # that had never heard of `id` would have DESTROYED the handle on any commit
+  # that got past the refusal. NX6 is that sentence as a byte-identity row.
+  #
+  # ⚠ EVERY ROW HERE DRIVES THE REAL SUBDIALOG. The pure-Tcl half -- the proc
+  # itself and the guard against a FOURTH copy appearing in the source -- is
+  # test_ase_core section NS, which runs on both arms.
+  proc nx_open {key idx} {
+    set top [ase::ui::window_for $key]
+    catch {destroy $top.chana}
+    ase::ui::choose_analyses $key {} $idx
+    update
+    $top.chana.opts invoke
+    update
+    return $top.chana.x
+  }
+  proc nx_pairs {xw} {
+    set out {}
+    if {![winfo exists $xw.tv]} { return NOSUBDIALOG }
+    foreach it [$xw.tv children {}] {
+      lappend out [list [$xw.tv set $it name] [$xw.tv set $it value]]
+    }
+    return $out
+  }
+
+  ## THE BENCH: the addressed row carries BOTH D4 keys. The `x` value is a real
+  ## one-line verbatim list, not a placeholder -- `ase::analysis_verbatim`
+  ## answers it.
+  ##
+  ## ⚠ AND THE TWO KEYS ARE NOT EQUALLY VISIBLE ELSEWHERE, WHICH IS WHY HIDING
+  ## THEM HERE IS A RULING AND NOT AN EDIT. Measured on this row:
+  ##   handle grid, Handle column          : vinsweep
+  ##   Analyses > List                     : vinsweep  DC  V2 0 1.8 0.01
+  ##   handle grid, Arguments column       : V2 0 1.8 0.01      <- no hatch
+  ##   main window Analyses pane           : dc V2 0 1.8 0.01  + verbatim: 1 line
+  ## So `id` is on screen twice inside the very dialog whose button opens this
+  ## subdialog, while `x` is mentioned only in the MAIN WINDOW's pane -- the
+  ## grid's Arguments column is `ase::analysis_line`'s answer (`ase.tcl`
+  ## analysis_handle_fields) and not `ase::ui::arg_summary`'s, so it never
+  ## carries the `+ verbatim` clause. Filed as ⚖ R9 on issue 1450.
+  set NXROW {type dc enabled 0 source V2 start 0 stop 1.8 step 0.01 id vinsweep x {{echo hi}}}
+  set NXBENCH [list {type op enabled 1} $NXROW {type ac enabled 0 points 10 start 1 stop 1meg}]
+  proc nx_bench {key rows} {
+    set st [ase::session_state $key]
+    dict set st analyses $rows
+    ase::session_update $key $st
+    ase::ui::populate $key
+    update
+  }
+  nx_bench $key $NXBENCH
+
+  ## NX1 -- THE READER. ⚠ THE SECOND TERM IS THE CONTROL AND IT IS WHY THIS ROW
+  ## IS NOT "the list is empty". A bench written by an older ASE-L, or edited by
+  ## hand, really can carry a key nothing can spend, and the editor's whole job
+  ## is to SHOW that one. So the fixture carries three extra keys -- the two D4
+  ## keys and one genuine stray -- and exactly the stray is listed. A reader that
+  ## hid everything would pass a row that only asked for `{}`.
+  set NX1XW [nx_open $key 1]
+  set NX1A [nx_pairs $NX1XW]
+  catch {destroy $top.chana}
+  nx_bench $key [list {type op enabled 1} [dict merge $NXROW {legacykey 7}]]
+  set NX1XW [nx_open $key 1]
+  set NX1B [nx_pairs $NX1XW]
+  catch {destroy $top.chana}
+  nx_bench $key $NXBENCH
+  check "NX1 the Options editor no longer lists a row's name or its verbatim\
+ lines as free-text settings, and still lists a key that really is a stray" \
+    [list $NX1A $NX1B] [list {} {{legacykey 7}}]
+
+  ## NX2 -- THE WRITER. OK COMMITS AND SAYS NOTHING. Under the defect this press
+  ## returned early with an error-tagged sentence and the subdialog still up;
+  ## the third term counts the sentences, because "it committed" and "it
+  ## committed silently" are different claims (issue 0635's subject).
+  set NX2XW [nx_open $key 1]
+  d_echo_arm
+  $NX2XW.btns.proceed invoke
+  update
+  set NX2SAID [d_echoed_n {*cannot emit*}]
+  d_echo_disarm
+  set NX2ROWS [ase::state_get [ase::session_state $key] analyses]
+  check "NX2 OK on a row that carries a name and a verbatim hatch commits, closes\
+ and says nothing -- and the row keeps both keys" \
+    [list [winfo exists $NX2XW] $NX2SAID [lindex $NX2ROWS 1]] \
+    [list 0 0 $NXROW]
+  catch {destroy $top.chana}
+  nx_bench $key $NXBENCH
+
+  ## NX3 -- ⚠ THE DOOR IS STILL SHUT, WHICH IS THE ONLY WAY THIS FIX CAN BE
+  ## WRONG. Issue 1418 closed a door: a name no template can spend is refused at
+  ## `Add` and again at OK, because `anextra` is seeded from the STORED row and
+  ## writing it straight back would launder a stray through a door that refuses
+  ## it at the front. Teaching the list about D4's two keys must not teach it to
+  ## shrug. The fixture is the SAME row plus one stray, so the refusal cannot
+  ## come from anything else -- and the refusal must name the STRAY.
+  nx_bench $key [list {type op enabled 1} [dict merge $NXROW {legacykey 7}]]
+  set NX3XW [nx_open $key 1]
+  d_echo_arm
+  $NX3XW.btns.proceed invoke
+  update
+  set NX3SAID {}
+  foreach nx3e $::d_echo {
+    if {[string first {cannot emit} [lindex $nx3e 1]] >= 0} { set NX3SAID [lindex $nx3e 1] }
+  }
+  d_echo_disarm
+  check "NX3 a key nothing can spend is still refused at OK on the very row that\
+ carries the name and the hatch, and the refusal names that key" \
+    [list [winfo exists $NX3XW] $NX3SAID \
+          [expr {[string first {'id'} $NX3SAID] < 0}] \
+          [expr {[string first {'x'} $NX3SAID] < 0}]] \
+    [list 1 "ase: this dc analysis [ase::analysis_emit_msg unknownkey legacykey]" 1 1]
+  catch {destroy $top.chana}
+  nx_bench $key $NXBENCH
+
+  ## NX4 -- AND `Add` HAS NOT BECOME A BACK DOOR TO THE HANDLE. The two D4 keys
+  ## are not settings, so they are not things this editor sets: `id` is written
+  ## by ⚖ R6's own surfaces and `x` is the hatch. Typing either into the
+  ## NAME/VALUE pair is refused exactly as before the fix, and the stored row is
+  ## untouched. ⚠ WITHOUT THIS ROW "hide them from the list" and "let the list
+  ## edit them" are indistinguishable.
+  set NX4XW [nx_open $key 1]
+  d_echo_arm
+  $NX4XW.row.name  delete 0 end ; $NX4XW.row.name  insert 0 id
+  $NX4XW.row.value delete 0 end ; $NX4XW.row.value insert 0 hijacked
+  $NX4XW.row.add invoke
+  update
+  set NX4N [d_echoed_n {*cannot emit*}]
+  d_echo_disarm
+  set NX4P [nx_pairs $NX4XW]
+  $NX4XW.btns.proceed invoke
+  update
+  set NX4ROWS [ase::state_get [ase::session_state $key] analyses]
+  check "NX4 typing the handle key into the Options name/value pair is still\
+ refused, the pair is not added, and the row's own name is unharmed" \
+    [list $NX4N $NX4P [ase::state_get [lindex $NX4ROWS 1] id]] \
+    [list 1 {} vinsweep]
+  catch {destroy $top.chana}
+  nx_bench $key $NXBENCH
+
+  ## NX5 -- ⚠ BOTH SITES *ASK*, THEY DO NOT COPY, AND THIS IS THE ROW THAT SAYS
+  ## SO. Every row above is satisfied by two sites that happen to hold the right
+  ## literal today, which is exactly the state this issue found the tree in --
+  ## each of the three was right about itself. Stub the one proc NARROWER and the
+  ## defect must come back through both doors at once: the reader lists the two
+  ## keys again and the writer refuses. A site holding its own list would not
+  ## move.
+  rename ase::analysis_nonsetting_keys ase::analysis_nonsetting_keys_nxsaved
+  proc ase::analysis_nonsetting_keys {} { return {type enabled} }
+  set NX5XW [nx_open $key 1]
+  set NX5P [nx_pairs $NX5XW]
+  d_echo_arm
+  $NX5XW.btns.proceed invoke
+  update
+  set NX5N [d_echoed_n {*cannot emit*}]
+  d_echo_disarm
+  set NX5UP [winfo exists $NX5XW]
+  rename ase::analysis_nonsetting_keys {}
+  rename ase::analysis_nonsetting_keys_nxsaved ase::analysis_nonsetting_keys
+  catch {destroy $top.chana}
+  nx_bench $key $NXBENCH
+  check "NX5 the Options reader and the Options writer both ASK the schema which\
+ keys are not settings: narrowing the one proc brings the defect back through\
+ both doors, and restoring it takes it away again" \
+    [list $NX5P $NX5N $NX5UP \
+          [nx_pairs [nx_open $key 1]]] \
+    [list {{id vinsweep} {x {{echo hi}}}} 1 1 {}]
+  catch {destroy $top.chana}
+
+  ## NX6 -- THE BYTE-IDENTITY ROW, FROM THE `Options...` SIDE. GH15 asked it of
+  ## the handle grid; this asks it of the subdialog, and it is the row the
+  ## writer's strip loop would have failed: `foreach k [dict keys $row]` deletes
+  ## every key not in `skip`, so a `skip` without `id` and `x` DESTROYS both on
+  ## the way past. The 104-file constraint does not care that the refusal
+  ## happened to fire first.
+  ##
+  ## ⚠ THE SECOND TERM IS THE NON-VACUITY CONTROL. A serialize that answered the
+  ## same bytes for every bench would satisfy the first term for ever; the same
+  ## bench with the name removed must serialize DIFFERENTLY.
+  nx_bench $key $NXBENCH
+  set NX6BEFORE [ase::state_serialize [ase::session_state $key]]
+  set NX6XW [nx_open $key 1]
+  $NX6XW.btns.proceed invoke
+  update
+  set NX6AFTER [ase::state_serialize [ase::session_state $key]]
+  set NX6ST [ase::session_state $key]
+  dict set NX6ST analyses [list {type op enabled 1} [dict remove $NXROW id] \
+                                {type ac enabled 0 points 10 start 1 stop 1meg}]
+  check "NX6 opening Options on a row that carries a name and a verbatim hatch\
+ and pressing OK writes the same bytes as never opening it" \
+    [list [expr {$NX6AFTER eq $NX6BEFORE}] \
+          [expr {[ase::state_serialize $NX6ST] ne $NX6BEFORE}]] \
+    [list 1 1]
+  catch {destroy $top.chana}
+  ase::session_update $key $GHFIX
+  ase::ui::populate $key
+  update
 
 } else {
   puts "gui legs skipped (no DISPLAY)"

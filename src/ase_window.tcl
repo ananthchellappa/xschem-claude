@@ -5821,7 +5821,19 @@ proc ase::ui::chana_options {key} {
   set type $dlg($key,antype)
   wm title $w "Analysis Options ($type)"
   set row [ase::ui::chana_row $key $type]
-  set skip [concat {type enabled} [ase::ui::chana_fields $type $_sim]]
+  # ⚠ WHAT COUNTS AS AN "EXTRA KEY" IS THE SCHEMA'S ANSWER, NOT THIS DIALOG'S.
+  # Issue 1450. This line used to read `concat {type enabled} ...` -- its own
+  # copy of a list `ase::analysis_emit_check` also kept, and the two drifted
+  # apart without either noticing. `DECISIONS.md` D4's two optional per-row keys
+  # fell through the gap: a row declaring `id` (⚖ R6's handle) or `x` (issue
+  # 1419's verbatim hatch) had the key SEEDED INTO `anextra` here, listed as a
+  # free-text NAME/VALUE pair, and then refused at OK by the very check whose
+  # list this was meant to mirror. Measured: `this dc analysis has a setting
+  # named 'id' that ASE-L cannot emit`, subdialog left standing, nothing
+  # written -- so the editor could not be opened-and-saved on such a row at all,
+  # and the one gesture that got an OK out of it was DELETING the name.
+  set skip [concat [ase::analysis_nonsetting_keys] \
+                   [ase::ui::chana_fields $type $_sim]]
   set ex [dict create]
   dict for {k v} $row {
     if {[lsearch -exact $skip $k] < 0} { dict set ex $k $v }
@@ -5969,8 +5981,16 @@ proc ase::ui::chana_x_ok {key} {
   if {$idx >= 0} { set row [lindex $rows $idx] } \
   else           { set row [dict create type $type enabled 0] }
   # replace the row's extra-key set with the edited one (a Delete here must
-  # really delete), keeping type/enabled + quick fields untouched
-  set skip [concat {type enabled} [ase::ui::chana_fields $type $_sim]]
+  # really delete), keeping the row's non-setting keys + quick fields untouched
+  #
+  # ⚠ THE SAME ONE ANSWER AS THE READER, AND HERE IT IS LOAD-BEARING TWICE OVER.
+  # Issue 1450. With this line's own `{type enabled}` copy the strip below
+  # DELETED `id` and `x` off the row on its way past -- the write-back would have
+  # destroyed ⚖ R6's handle and issue 1419's verbatim lines -- and the loop after
+  # it then refused the commit outright, because the same keys had been seeded
+  # into `anextra` by the reader. Both halves go away by asking the schema.
+  set skip [concat [ase::analysis_nonsetting_keys] \
+                   [ase::ui::chana_fields $type $_sim]]
   foreach k [dict keys $row] {
     if {[lsearch -exact $skip $k] < 0} { set row [dict remove $row $k] }
   }

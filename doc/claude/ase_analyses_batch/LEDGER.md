@@ -862,6 +862,49 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ Issue 1450 — the Options editor refused every row that carried a name, fixed 2026-09-13
+
+**Reproduced through the real widgets first**, on the dev display, on one `dc` row carrying both
+D4 keys: `Options…` listed **`{id vinsweep}`** and **`{x {{echo hi}}}`** as free-text NAME/VALUE
+pairs, and OK then answered *"ase: this dc analysis has a setting named 'id' that ASE-L cannot
+emit"* and **returned** — subdialog still standing, nothing written. Each key reproduces alone;
+the identical row with neither commits and closes.
+
+**Fixed as ONE list, which was the point.** `ase::analysis_nonsetting_keys` (`src/ase.tcl:4518`)
+returns `{type enabled x id}` and **all three sites read it**: `analysis_emit_check`
+(`src/ase.tcl:4686`), the Options… **reader** (`src/ase_window.tcl:5835`) and its **writer**
+(`:5992`). **Eight added non-comment lines in total.**
+
+| | |
+|---|---|
+| **driver's own re-run** | `test_ase_core` **626 / 626** ALL PASS both arms (was 624). `test_ase_dialogs` **37** headless, **`1 FAILED (345 passed)`** display — **back to exactly one red**, `G2sens` (1436), unmoved. |
+| **byte identity** | 104/104, **416 rows, zero with `id`, zero with `x`**, in-process control disagrees. ⚠ `ase::state_serialize` omits the trailing newline, so the comparison is `"$out\n" ne $orig` — worth knowing before anyone writes a fifth round-trip row. |
+| **sabotage** | **Nine**, each from a pristine copy, `cp`-restored, md5-verified on all four files every arm. ⚠ **`s1`/`s2`/`s3` — the three sites reverted in turn — redden THREE DIFFERENT SETS** (`EK7·EK7c·NS1·NS2·GH13b` / `NS2·NX1–NX5` / `NS2·NX2·NX4·NX6`), which is stronger evidence than one row reddening three times. **`s6` — a fourth copy in live code that AGREES with the proc today — reds `NS2` and nothing else**, which is the guard working. **All eighteen runs printed a `RESULT:` line; no suite was killed.** |
+| **receipt** | `receipts/30-1450-one-list-of-non-settings.md` |
+
+**Two things the driver's brief did not know.**
+
+1. ⚠ **The writer's copy is also the STRIP list for write-back**, so the stale copy would have
+   **deleted `id` and `x` off the row** — latent only because the refusal fired first. Row `NX6`.
+   The defect was one refusal away from being silent data loss.
+2. **The two keys are not equally visible elsewhere.** `id` shows twice inside the dialog whose
+   button opens the subdialog; `x` is mentioned only in the **main window's** pane
+   (`+ verbatim: 1 line`), because the handle grid's Arguments column is `ase::analysis_line`'s
+   answer and not `ase::ui::arg_summary`'s.
+
+**`GH13b` was rewritten in the same task**, from `{unknownkey id emit_incomplete {}}` — *"KNOWN
+DEFECT (issue 1448)"* — to `{{} {} {} {dc V2 0 1.8 0.01} emit_incomplete vinsweep dc1}`: gate
+silent, **card still rendered against a literal golden**, a **third** state carrying a key nothing
+can spend still refused, and the handles disagreeing. A third state had to be added **because the
+original pair no longer disagrees once the defect is fixed** — the fixtures-never-disagree trap,
+arriving through the front door this time.
+
+**Debts:** `rule 1450` — ⚖ R9, and it is a question rather than a sentence: *should `Options…`
+tell the user their row carries a name?* Four options in the issue file, **A recommended and
+shipped**. ⚠ **No new user-facing sentence was minted — one stops being shown.**
+`look ase-options-subdialog-1450` — **suites green on both arms, please look.** Queue: **166 rule,
+61 look, 10 suite**.
+
 ### ✅ Issue 1449 — naming an analysis stopped the bench running, fixed 2026-09-13
 
 **The one-word fix, and the reproduction that makes it a fix of something.** `src/ase.tcl:4640`,

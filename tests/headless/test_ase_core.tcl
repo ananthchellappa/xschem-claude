@@ -120,6 +120,17 @@
 # declare ids and never enable anything, EK's rows enable things and never
 # declare an id. EK7c is the over-width control -- a genuinely unknown key on
 # the SAME row is still refused, and is still the only thing refused.
+# 624 -> 626 with section NS (issue 1450 -- ONE list of non-setting row keys).
+# The list `EK7`'s fix touched was copied in THREE places and the three
+# disagreed: `ase::analysis_emit_check` knew `type enabled x id`, while the
+# `Options...` subdialog's reader and writer in src/ase_window.tcl each knew
+# `type enabled` and nothing else -- so that editor listed D4's `id` and `x` as
+# free-text pairs and then refused to save any row that carried one. NS1 asks
+# whether the refusal reader really ASKS the proc (stub it narrower and the
+# refusal comes back; stub it wider and a nonsense key is allowed), and NS2 is
+# the FOURTH-COPY GUARD: a scan of both source files that goes red the day a
+# fifth surface spells its own.
+# AND RAISED 624 -> 626.
 # AND RAISED 622 -> 624.
 # AND RAISED 602 -> 622.
 # AND RAISED 600 -> 602.
@@ -157,6 +168,10 @@
 # the gate, so the row that would notice lands with it. ⚠ EK7/EK7c (issue 1449)
 # are the rows EK6 could NOT notice: no committed bench carries an `id`, so a key
 # that made every NAMED bench unrunnable passed the corpus invariant untouched.
+# ⚠ NS (issue 1450) sits with them for the same reason from the other side: EK7
+# fixed ONE of three copies of the same list, and NS is what stops there being a
+# fourth. NS2 is a SOURCE scan, deliberately -- no runtime row can see a copy
+# that is correct on the day it is written.
 #
 # 309 -> 348 with sections GR, VB and CP (Stage 3 items C3/C5/C6, issues
 # 1416-1420 -- the field tables, the refused unknown key and the committed
@@ -5495,6 +5510,91 @@ check "EK7c naming an analysis did not open the door to every other key: a\
         [lindex [ek_gate [list $EK7BAD]] 0] \
         [llength [ase::analysis_emit_check ngspice $EK7BAD]]] \
   [list unknownkey nonsense emit_incomplete 1]
+
+
+## --- NS: ONE LIST OF NON-SETTING KEYS, AND NOBODY KEEPS A SECOND -----------
+## Issue 1450, and the defect is a CLASS rather than a value.
+##
+## ⚠ THREE SITES KEPT THEIR OWN COPY OF "WHICH KEYS ON AN ANALYSIS ROW ARE NOT
+## SETTINGS", AND THE THREE DISAGREED. `ase::analysis_emit_check` knew
+## `type enabled x id`; `ase::ui::chana_options` (the `Options...` reader) and
+## `ase::ui::chana_x_ok` (its writer) each knew `type enabled` and nothing more.
+## Measured on the unfixed tree against one `dc` row carrying both `DECISIONS.md`
+## D4 keys: the subdialog listed `id` and `x` as free-text NAME/VALUE pairs and
+## then refused to save -- `this dc analysis has a setting named 'id' that ASE-L
+## cannot emit`, subdialog left standing, nothing written. `x` had been in that
+## state since issue 1419; `id` joined it with ⚖ R6.
+##
+## ⚠ THE FIX IS NOT "UPDATE THE TWO STALE COPIES" AND THESE TWO ROWS SAY WHY.
+## NS1 asks whether the readers really ASK (a stub of the proc must move the
+## answer -- a site that copied the list would ignore it); NS2 asks whether a
+## FOURTH copy could appear without anything noticing. A tree where both are
+## green cannot drift the way this one did.
+
+## NS1 -- THE ANSWER, AND THAT `ase::analysis_emit_check` REALLY READS IT.
+## ⚠ TERMS 2 AND 3 ARE THE ROW. Term 1 alone is satisfied by a proc nobody
+## calls, which is exactly the shape this issue is about. Stubbing the proc
+## NARROWER must bring the refusal back, and stubbing it WIDER must make the
+## refusal go away -- neither is possible for a caller holding its own literal.
+## Term 4 is the restore, so a later section does not inherit a stub.
+rename ase::analysis_nonsetting_keys ase::analysis_nonsetting_keys_nssaved
+proc ase::analysis_nonsetting_keys {} { return {type enabled} }
+set NS1NARROW [lindex [lindex [ase::analysis_emit_check ngspice $EK7ROW] 0] 0]
+set NS1NARROWK [lindex [lindex [ase::analysis_emit_check ngspice $EK7ROW] 0] 1]
+rename ase::analysis_nonsetting_keys {}
+proc ase::analysis_nonsetting_keys {} { return {type enabled x id nonsense} }
+set NS1WIDE [ase::analysis_emit_check ngspice $EK7BAD]
+rename ase::analysis_nonsetting_keys {}
+rename ase::analysis_nonsetting_keys_nssaved ase::analysis_nonsetting_keys
+check "NS1 there is ONE answer to which keys of an analysis row are not\
+ settings, it is D4's four, and the refusal reader asks it instead of keeping\
+ its own copy" \
+  [list [ase::analysis_nonsetting_keys] \
+        $NS1NARROW $NS1NARROWK \
+        $NS1WIDE \
+        [ase::analysis_emit_check ngspice $EK7ROW] \
+        [lindex [lindex [ase::analysis_emit_check ngspice $EK7BAD] 0] 1]] \
+  [list {type enabled x id} unknownkey id {} {} nonsense]
+
+## NS2 -- THE FOURTH-COPY GUARD, SCANNED OUT OF THE SOURCE.
+## ⚠ A RUNTIME ROW CANNOT SEE THIS. A fifth surface that writes its own
+## `concat {type enabled} ...` is correct on the day it is written and wrong the
+## day D4 gains a key -- which is precisely how `Options...` spent three weeks
+## refusing every row that carried `x`. So the guard is a scan of the two source
+## files for a HARDCODED one, and there must be exactly ONE: the proc's own.
+##
+## The shape it looks for is the list literal -- an open brace or a `list` word
+## followed by `type enabled` -- on a line that is not wholly a comment. (It is
+## spelled as a regexp rather than quoted here because a stray open brace in a
+## COMMENT unbalances the enclosing block: measured, this file died at line 434
+## with `missing close-brace: possible unbalanced brace in comment`, four
+## thousand lines above the comment that did it.) ⚠ TERM 3 IS THE POSITIVE
+## CONTROL AND TERM 4 IS ITS OPPOSITE NUMBER: a scanner that matched nothing
+## would report "exactly one" for ever once the proc's own line moved, and one
+## that matched everything would flag `dict create type $type enabled 0` -- the
+## empty-row stub, which is a row being BUILT and not a list being copied.
+set NS2FILES [list [file join $repo src ase.tcl] [file join $repo src ase_window.tcl]]
+proc ns_copies {text} {
+  set out {}
+  foreach l [split $text "\n"] {
+    if {[string index [string trim $l] 0] eq {#}} { continue }
+    if {[regexp {(\[list[ \t]+|\{)type[ \t]+enabled\M} $l]} { lappend out [string trim $l] }
+  }
+  return $out
+}
+set NS2HITS {}
+foreach ns2f $NS2FILES {
+  set fh [open $ns2f r] ; set ns2t [read $fh] ; close $fh
+  foreach ns2h [ns_copies $ns2t] { lappend NS2HITS [list [file tail $ns2f] $ns2h] }
+}
+check "NS2 exactly one place in ASE-L's source spells the non-setting key list,\
+ and it is the proc every other site asks -- a fourth copy reddens this row" \
+  [list $NS2HITS \
+        [llength [ns_copies "  set skip \[concat {type enabled} \[chana_fields\]\]"]] \
+        [llength [ns_copies "  set known \[list type enabled x id\]"]] \
+        [llength [ns_copies "  return \[dict create type \$type enabled 0\]"]] \
+        [llength [ns_copies "  # `{type enabled}` plus declared field names"]]] \
+  [list [list [list ase.tcl "return {[ase::analysis_nonsetting_keys]}"]] 1 1 0 0]
 
 # --- SI: THE NUMBER ALPHABET ------------------------------------------------
 ## ⚠ EVERY VALUE BELOW WAS MEASURED with a VALUE harness (`v1 in 0 dc <s>` / `op`

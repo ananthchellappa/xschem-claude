@@ -4480,6 +4480,45 @@ proc ase::si_parse {text {suffixes {}}} {
   return [list ok $v]
 }
 
+# THE KEYS AN ANALYSIS ROW CARRIES THAT ARE NOT SETTINGS -- the ONE answer, so
+# that no surface has to keep its own. Issue 1450.
+#
+# `type` and `enabled` are the row's own bookkeeping; `x` and `id` are
+# `DECISIONS.md` D4's two optional per-row keys, and D4 says there are EXACTLY
+# two. Everything else on a row is a SETTING: a value some template spends,
+# declared as a field by the simulator's adapter.
+#
+# ⚠ THIS EXISTS BECAUSE THREE SITES KEPT THEIR OWN COPY AND THE COPIES
+# DISAGREED -- and the disagreement was invisible from any one of them. Measured
+# on the unfixed tree, on one `dc` row carrying both keys:
+#
+#     ase::analysis_emit_check   knew `type enabled x id`   (`x` since 1419,
+#                                                            `id` since 1449)
+#     ase::ui::chana_options     knew `type enabled`         -- the reader
+#     ase::ui::chana_x_ok        knew `type enabled`         -- the writer
+#
+# So opening `Options...` on a row that declares a name, or a verbatim hatch,
+# listed the key as a free-text NAME/VALUE pair and then REFUSED TO SAVE:
+# `this dc analysis has a setting named 'id' that ASE-L cannot emit`, the
+# subdialog left standing, nothing written. The editor could not be used on that
+# row at all -- and the one way to get an OK out of it was to DELETE the name.
+# `x` had been in that state since issue 1419 and nothing noticed for three
+# weeks, because each site was right about itself.
+#
+# ⚠ THE STRUCTURAL DEFECT WAS NOT THE TWO STALE COPIES. It was that the list was
+# COPIED, which makes a fourth copy the natural way to write the fifth surface.
+# `tests/headless/test_ase_core.tcl` row NS2 scans both source files for a
+# hardcoded one and goes RED if a fourth ever appears.
+#
+# ⚠ AND IT ANSWERS NOTHING ELSE. It is not "keys to ignore". The refusal reader's
+# job is refusing a key that would SILENTLY NOT EMIT -- issue 1418 is what a
+# dropped setting costs and issue 1401 what a dropped analysis costs -- so a
+# third optional key is a change to D4 and to this proc, deliberately, with its
+# own reason written down, and NOT a shrug here.
+proc ase::analysis_nonsetting_keys {} {
+  return {type enabled x id}
+}
+
 # THE OFFENCES THAT STOP A ROW REACHING A DECK -- ALL OF THEM, IN ORDER, as
 # `{token field sentence}` triples, or `{}` when the row is emittable.
 #
@@ -4632,12 +4671,19 @@ proc ase::analysis_emit_check {sim row} {
   # silent, and nothing about it was ever bound for the deck.
   #
   # ⚠ DO NOT GENERALISE THIS INTO "IGNORE UNKNOWN KEYS". `DECISIONS.md` D4 says
-  # there are EXACTLY TWO optional per-row keys, `id` and `x`, and this list is
+  # there are EXACTLY TWO optional per-row keys, `id` and `x`, and this check is
   # the place that sentence is enforced. Issue 1418 is what a silently-dropped
   # setting costs and issue 1401 is what a silently-dropped analysis costs; a
-  # blanket escape here hands both back. A third key means a third clause here,
-  # deliberately, with its own reason written down.
-  set known [list type enabled x id]
+  # blanket escape here hands both back. A third key means a third entry in
+  # `ase::analysis_nonsetting_keys`, deliberately, with its own reason written
+  # down.
+  #
+  # ⚠ AND THE LIST IS NO LONGER SPELLED HERE. Issue 1450: this proc, the
+  # `Options...` reader and the `Options...` writer each kept their own copy of
+  # "which keys are not settings" and the three disagreed -- the two in
+  # `src/ase_window.tcl` had never heard of `x` OR `id`, so the editor refused to
+  # save any row that declared one. One proc answers it now and all three ask.
+  set known [ase::analysis_nonsetting_keys]
   foreach f $flds {
     if {[dict exists $f name]} { lappend known [dict get $f name] }
   }
