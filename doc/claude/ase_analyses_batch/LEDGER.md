@@ -1459,6 +1459,36 @@ its own: it reaches the user through the four-state grid and `preflight_gate`'s 
 block, and does not grey or mark the Save ticks it overrides. That is a one-row
 follow-up for the next window stage, the same shape as issue 1432's `depends` note.
 
+### ✅ The standing spec debt of Stages 2–6 is DISCHARGED — `1d12c12a`
+
+Every stage from 2 onward recorded *"none — same standing spec debt"* against its
+**spec paragraphs rewritten** row, and Stage 2's entry (above) named the reason: write
+the section **once**, against a grid that can reach all four states, rather than twice.
+Stage 6 is where that condition is met, so the debt was paid by the driver in the same
+pass that collected task 5.
+
+`doc/claude/specs/ase_l.md` gains one section, **The analyses subsystem (batch Stages
+1–6)**, written as what *shipped* rather than what was planned, every claim attributed to
+a measurement taken on **both** binaries: the schema/content rule and the
+no-fallback-without-a-hook corollary; the eleven registered types and the four that are
+seeded; the schema's seventeen refusals by name; the twenty-id precondition vocabulary and
+why the **tier** is the decision rather than the detection; the plot sidecar and the
+**silent over-walk** that made it necessary; ⚖ R3's answered reader rule; the
+always-salvage checkpoint shape with the false-branch trap; and the two save-list classes.
+Five traps are stated as rules rather than as history, because each cost this batch time —
+*a row whose fixtures never disagree cannot fail*, *measure the exception before the
+rule*, *read a precondition's stand-down list as a specification for the emitter*, *list a
+reader's callers before filtering in it*, *check the quiet member of every set*.
+
+⚠ **ONE DEVIATION FROM STAGE 3'S OWN PROMISE, RECORDED RATHER THAN QUIET.** Stage 3's row
+said `### Choose Analyses dialog` would be *"rewritten in full in C4, when the form's final
+shape exists to describe"*. It was **marked SUPERSEDED and kept** instead, with a pointer
+to the new section — which is the convention `ase_l.md` already uses for its own v1 UI
+sketch, and which keeps the 2026-07-21 sketch readable as the thing the grid replaced.
+The shipped shape is described in full; it is simply described in the new section rather
+than on top of the old one. The `P1–P5` phasing block was also pointed at this ledger,
+with the reason to read the ledger before the plan.
+
 ### ⏭ Stage 6's remaining work — ONE task, and it is the resume point
 
 **`PLAN.md` §6a–§6g are all landed**: 6a/6b/6c in task 2 (**1430**), 6d in task 3
