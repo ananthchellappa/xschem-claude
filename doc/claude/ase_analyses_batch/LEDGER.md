@@ -862,6 +862,27 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ⏳ Stage 9 — SPLIT IN TWO by the driver, against the plan, and dispatched — issue **1452**
+
+`PLAN.md` §9 says **one commit**. It goes out as **two tasks**, on the same ground that split
+Stages 7 and 8: **a `look` debt must be attributable to exactly one commit**, and §9a is a Ports
+table — a widget. Stage 8 task 2 has just proved the point again by filing the `look` debt
+`PLAN.md` §8 said the stage would not file.
+
+* **Task 1 (dispatched)** — the deck half: the `sp` type registered and renderable; the ports
+  emission `alter <src> portnum = <n>` / `alter <src> z0 = <ohms>` written **before** the `sp`
+  card so that ordinary V sources become ports **at run time with nothing written to the
+  schematic**; the `two_ports` **fatal** evaluated **after** those lines, because the lines are
+  what satisfy it; the `lin_two` refusal; and `wrs2p` with its `.csparam Rbase=50` workaround.
+* **Task 2 (held)** — the Ports table, the S-parameter surface, the matrix picker, Smith/polar.
+
+It opens with **more measured ground than any stage so far**: `evidence/sp-stage9.md` was taken by
+the driver on **both binaries before the stage opened**, and it settles the capability (`sp` runs
+on apt 45.2 too), the vector spellings (**mixed case**, which Stage 6's `mislabel` verdict must
+catch), the two preconditions (**refusals — a missing port `exit(1)`s the whole deck and takes
+`op` with it**), and the fact that **four SP benches already exist in this tree** whose committed
+state cannot say `sp`.
+
 ### ✅ Stage 8 task 2 — the measurements GUI, issue **1451**, collected 2026-09-13
 
 **`Outputs > Measurements…`** — the surface issue 1443's entire deck half was written for.
