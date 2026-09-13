@@ -163,3 +163,31 @@ That suite also **hangs for ever on the display arm**, which is a different defe
 different root cause — `descend_schematic()`'s `ask_save` modal, gated on `has_x` alone,
 raised under `--script` where nothing can click it. It is already filed as **1375**, the
 suite's own header says so, and this issue does not restate it.
+
+## A fourth measurement, 2026-09-12 evening — 3 of 3 under load, 0 of 17 standalone
+
+Taken by the driver of `doc/claude/ase_analyses_batch/` while committing Stage 6d (issue
+1432). The suite's floor is **106** now, not the 103 the measurements above were taken at.
+
+```
+inside T1 (62 cases), other clone's GUI xschem live:   X7 FAIL -> {0 0 0} (exp {1 1 1})
+                                                       + the HARNESS row that follows it
+standalone, --nogui, run before that T1:               ALL PASS (106)
+standalone, --nogui, -n 3 immediately after:           ALL PASS (106) x3
+```
+
+⚠ **Four consecutive standalone passes bracketing one red inside T1, with no code change
+between them** — the same shape as the third measurement, one floor higher. Across the
+sessions that have measured it the correlation is now **3 of 3 reds under load, 0 of 17
+standalone**.
+
+⚠ **One condition worth recording because it narrows "load".** The other clone's
+`xschem-op-wcard` GUI (`--script … cadence_style_rc`) was live throughout **both** the red
+T1 run **and** the four standalone passes. So an idle GUI process is **not** the load that
+matters; what distinguishes the red run is T1 itself running sixty-two cases, i.e.
+**concurrent simulation**, not merely another process existing. That is consistent with the
+convergence explanation and inconsistent with a simple "another xschem is running" one.
+
+⚠ **The red is counted and named, not waved through.** The Stage 6d commit records T1 as
+*one case red, X7, this issue*, with these runs as the evidence — per `CLAUDE.md`'s rule that
+a count is never carried forward as a known quantity.

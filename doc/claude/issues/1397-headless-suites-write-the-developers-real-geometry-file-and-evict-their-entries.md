@@ -72,3 +72,35 @@ that is what the dev display is for, and it holds no user data worth protecting.
 
 The fifty evicted entries are gone. The file was md5'd before the runs but never copied,
 so there is no snapshot to restore from. The next crew snapshots rather than hashes.
+
+## Re-measured 2026-09-12 — and the DISPLAY arm is a path option 1 cannot reach
+
+Found again by the Stage 6d crew of `doc/claude/ase_analyses_batch/` and confirmed by the
+driver. The file moved **today**:
+
+```
+/home/analog/.xschem/geometry   mtime 2026-09-12 19:49:00   size 8196
+```
+
+written inside that batch's `test_ase_optier_0963` **display-arm** run.
+
+⚠ **This is a different route in from the one measured above, and it matters for choosing
+between the two fixes.** The 2026-09-09 measurement was of *headless* suites that open a
+schematic without `tests/headless/scratch.tcl`'s `::USER_CONF_DIR` redirect — a per-suite
+omission, which is what option 1 is designed to close. But `run_suites.sh:125` runs the
+display arm as
+
+```sh
+timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --script "$f"
+```
+
+with **no `--nogui`**. A real window is mapped, and xschem writes its geometry on close
+**whatever any per-suite redirect did**, because the write is the GUI shutting down rather
+than a schematic opening. **Option 1 therefore cannot close this path at all**, and option 2
+— one scratch `HOME` in `run_suites.sh` / `full_audit.sh` / `devdisplay.sh exec` — is the
+only one of the two that covers it. The trap recorded above (the harness keeps its dev-display
+and gate state under `$HOME`) still applies and is still the thing to solve first.
+
+⚠ **Nothing was changed in response.** Both fixes remain the user's call, and the rule debt
+for this issue is already on the `owed.sh` queue. This entry exists so the choice is made
+against the complete set of routes rather than the headless one alone.

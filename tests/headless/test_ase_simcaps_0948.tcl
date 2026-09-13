@@ -101,6 +101,19 @@
 #        A reader that took "no vector" for zero would print a number for a run
 #        that computed nothing, and `i` is one of those twelve constants.
 #
+#   190  row SV5 grew one element, Stage 6d (issue 1432): the `sens` entry
+#        declares TWO plots rows now, one per mode, both naming the one measured
+#        `Plotname:` literal.
+#   199  section NV, Stage 6d (issue 1432): the four adapter readers `noise`,
+#        `disto` and `sens`'s AC mode bring. ⚠ NV1 is the row that refutes
+#        PLAN.md 6b: `noise … lin 1 1k 10k` has start != stop and produces NO
+#        `Integrated Noise`, so the plan's `when {expr {start ne stop}}` would
+#        have declared one capture too many -- and an over-walk is SILENT.
+#        ⚠ NV5-NV8 carry four naming hazards, one of which no dossier names:
+#        `onoise_spectrum` has exactly the shape of a device total, and a reader
+#        that split on the first `_` would count the circuit as a device and
+#        double the table's sum.
+#
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
 # downward to make the file agree with itself.
@@ -4386,12 +4399,19 @@ proc svkey {d k} {
   if {[catch {dict exists $d $k} e] || !$e} { return ABSENT }
   return [dict get $d $k]
 }
-check {SV5 the sens entry's plots row names a command that exists, and names the measured Plotname literal} \
+## ⚠ THE COUNT WENT FROM ONE TO TWO AT ISSUE 1432, AND BOTH ROWS CARRY THE
+## SAME `select`. The AC mode landed there, and MEASURED on both binaries the two
+## modes write the SAME `Plotname:` while routing to two different destinations
+## (APPENDIX §6.2). So the second row is the AC one, its `when` is the
+## complement of the first's, and `paramname` is on both because the parameter
+## namespace is the same in either mode.
+check {SV5 the sens entry's plots rows name a command that exists, and name the measured Plotname literal} \
   [list [svkey $SV_PL select] \
         [expr {[llength [info commands [svkey $SV_PL paramname]]] > 0}] \
         [a_ans [svkey $SV_PL paramname] {v(r1:r)}] \
-        [llength [dict get [ase::analysis_entry ngspice sens] plots]]] \
-  [list {Sensitivity Analysis} 1 {model r1 r} 1]
+        [llength [dict get [ase::analysis_entry ngspice sens] plots]] \
+        [svkey [lindex [dict get [ase::analysis_entry ngspice sens] plots] 1] select]] \
+  [list {Sensitivity Analysis} 1 {model r1 r} 2 {Sensitivity Analysis}]
 
 
 # ===========================================================================
@@ -4641,6 +4661,215 @@ check {RV7 a missing path and a file that is not a results file are both empty, 
 
 } rverr]} {
   check {RV0 section RV ran to the end} "RAISED:$rverr" {}
+}
+
+# ===========================================================================
+# NV — the four adapter readers Stage 6d's multi-plot types bring (issue 1432).
+#
+# They live in THIS suite for the reason sections TV, PV and SV do: each is a
+# reader over one ngspice NAME or one state ROW, with no simulator started, and
+# `test_ase_core` owns the schema half.
+#
+# ⚠ THE SECTION CARRIES ITS OWN `catch`, ending in row NV0.
+if {[catch {
+
+## --- NV1: `noise_integrated` -- THE PREDICATE PLAN.md 6b GOT WRONG ----------
+## MEASURED 2026-09-12 on the fork (`ngspice-46+`) AND on `/usr/bin/ngspice`
+## (`ngspice-45.2`), one analysis per deck, walked with `setplot previous`:
+##
+##   noise v(mid) v1 dec 10 1 10k    -> Integrated Noise + spectrum
+##   noise v(mid) v1 lin 2 1k 10k    -> the same two
+##   noise v(mid) v1 dec 1 1000 1001 -> the same two  (a ratio sweep always
+##                                      reaches a second point)
+##   noise v(mid) v1 oct 1 1k 2k     -> the same two
+##   noise v(mid) v1 lin 1 1k 10k    -> the SPECTRUM ONLY  <- start NE stop
+##   noise v(mid) v1 lin 5 1k 1k     -> the SPECTRUM ONLY
+##   noise v(mid) v1 dec 10 1k 1k    -> the SPECTRUM ONLY
+##
+## PLAN.md 6b specifies `when {expr {start ne stop}}`. Line five refutes it, and
+## it refutes it in the direction that CORRUPTS THE RESULTS FILE: a `lin 1` row
+## would have declared two captures, the walk would have stepped past the only
+## plot the analysis made, `setplot previous` SATURATES on the built-in
+## `constants` plot (it does not fail), and the next `write` appends ngspice's
+## twelve mathematical constants at rc 0.
+##
+## ⚠ THE RULE IS "MORE THAN ONE FREQUENCY POINT", and it has exactly two ways of
+## being one: `noisean.c:93-109` collapses start ≈ stop to a single frequency,
+## and `noisean.c:145-168`'s LINEAR arm divides by `N-1`.
+proc nv_row {args} { return [concat {type noise enabled 1 out v(mid) insrc v1} $args] }
+check {NV1 the Integrated Noise predicate answers "more than one frequency point" and not "start ne stop"} \
+  [list [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep dec points 10 start 1 stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep lin points 2 start 1k stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep dec points 1 start 1000 stop 1001] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep oct points 1 start 1k stop 2k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep lin points 1 start 1k stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep lin points 5 start 1k stop 1k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep dec points 10 start 1k stop 1k] {}]] \
+  {1 1 1 1 0 0 0}
+
+## ⚠ THE SUFFIXES ARE PARSED, THE DEFAULT SWEEP IS RESOLVED, AND AN UNREADABLE
+## ROW ANSWERS 1. `1k` and `1000` are the same frequency; a row storing no sweep
+## emits `dec`, so a `lin`-only test must not read the row directly; and a
+## hand-edited number this table cannot parse keeps BOTH plots rather than
+## silently dropping the scalars -- ase::plot_when turns a raise into `unknown`,
+## which excludes, so the permissive answer is the one that loses nothing.
+check {NV2 the frequencies are compared numerically, the sweep default is resolved, and an unreadable row keeps both plots} \
+  [list [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep dec points 10 start 1k stop 1000] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row points 1 start 1k stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep lin points 1 start 1k stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep lin points zz start 1k stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated [nv_row sweep dec points 10 start zz stop 10k] {}] \
+        [a_ans ase::backend::ngspice::noise_integrated {type noise} {}]] \
+  {0 1 0 1 1 1}
+
+## --- NV3: `sens_is_dc` / `sens_is_ac` ---------------------------------------
+## ⚠ THE TWO MODES SHARE ONE `Plotname:` -- `Sensitivity Analysis`, measured for
+## both on both binaries -- and route to two DIFFERENT destinations (APPENDIX
+## §6.2: DC to a result table, AC to the waveform viewer). So the entry declares
+## two `plots` rows with the same `select` and these two procs are what keeps
+## exactly one of them live.
+## ⚠ THE FIELD IS READ THROUGH `field_value`, NOT OFF THE ROW. `mode` declares
+## `default dc`, so a bench that stores no mode at all emits `dc` -- and a
+## predicate reading the row directly would answer "neither" for it and leave
+## the analysis predicting NO plot, which reconciliation would report as an
+## `over` on a run in which nothing went wrong.
+check {NV3 the sens mode predicates are exactly complementary, resolve the declared default, and fold case} \
+  [list [a_ans ase::backend::ngspice::sens_is_dc {type sens out v(mid)} {}] \
+        [a_ans ase::backend::ngspice::sens_is_ac {type sens out v(mid)} {}] \
+        [a_ans ase::backend::ngspice::sens_is_dc {type sens out v(mid) mode dc} {}] \
+        [a_ans ase::backend::ngspice::sens_is_ac {type sens out v(mid) mode ac} {}] \
+        [a_ans ase::backend::ngspice::sens_is_dc {type sens out v(mid) mode ac} {}] \
+        [a_ans ase::backend::ngspice::sens_is_ac {type sens out v(mid) mode AC} {}] \
+        [a_ans ase::backend::ngspice::sens_is_ac {type sens out v(mid) mode {}} {}]] \
+  {1 0 1 1 0 1 0}
+
+## --- NV4: `noise_total_vectors` ---------------------------------------------
+## ⚠ IT IS A PROC RATHER THAN THE LITERAL LIST PLAN.md 6b WRITES, and the reason
+## is one shape per key. `tf`'s `vectors` MUST be a proc -- two of its three
+## names carry the row's own source and output -- so a literal list here would
+## give one opaque key two shapes and oblige ⚖ R3's Value column, its first
+## reader, to tell them apart. `cktnoise.c:76-82` names these two and nothing
+## about a row changes them.
+check {NV4 the Integrated Noise plot's two circuit-level scalars are named by a proc, as tf's are} \
+  [list [a_ans ase::backend::ngspice::noise_total_vectors {type noise}] \
+        [dict get [lindex [dict get [ase::analysis_entry ngspice noise] plots] 0] vectors] \
+        [expr {[llength [info commands \
+           [dict get [lindex [dict get [ase::analysis_entry ngspice noise] plots] 0] vectors]]] > 0}]] \
+  [list {onoise_total inoise_total} ::ase::backend::ngspice::noise_total_vectors 1]
+
+## --- NV5: `noise_contributor_kind`, AND THE APPENDIX NAMES THE WRONG PLOT ---
+## ⚠ APPENDIX §2.6 GIVES THE CONTRIBUTOR NAMES AS `onoise_total_<inst>_<mech>`
+## WHILE §6.2 ROUTES THE CONTRIBUTOR TABLE TO "INSIDE THE SPECTRUM PLOT". Both
+## spellings are real and they are in DIFFERENT PLOTS. MEASURED 2026-09-12 on
+## both binaries, one deck carrying `rb rc re r9 q1 d1` and `ptspersummary 1`,
+## `display` run in each plot:
+##
+##   spectrum plot          onoise_r9  onoise_r9_thermal  onoise_q1_ib …
+##                          onoise_spectrum  inoise_spectrum
+##   Integrated Noise plot  onoise_total_r9  onoise_total_r9_thermal …
+##                          onoise_total  inoise_total
+##
+## `cktnoise.c` and `resnoise.c:68-82` confirm it: `N_DENS` builds `onoise_%s%s`
+## and `INT_NOIZ` builds `onoise_total_%s%s`. This reader takes either.
+set NVI {rb rc re r9 q1 d1 r1 r1_temp}
+check {NV5 both plots' spellings are read, the reference is named, and the rawfile's v() wrapper is stripped once} \
+  [list [a_ans ase::backend::ngspice::noise_contributor_kind onoise_r9_thermal $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_total_r9_thermal $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind inoise_total_q1_ib $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind {v(onoise_r9_thermal)} $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind ONOISE_R9_THERMAL $NVI]] \
+  [list {output r9 thermal} {output r9 thermal} {input q1 ib} \
+        {output r9 thermal} {output r9 THERMAL}]
+
+## ⚠ THE EMPTY-SUFFIX ENTRY IS THE DEVICE TOTAL, SO A NAIVE SUM DOUBLE-COUNTS.
+## `onoise_r9` is r9's whole contribution and `onoise_r9_thermal` is one of its
+## parts. ⚠ AND `onoise_spectrum` HAS EXACTLY THAT SHAPE: it is the CIRCUIT's
+## spectrum, not a device called `spectrum`, and a reader splitting on the first
+## `_` reports it as a contributor and doubles the total a second time. The four
+## circuit-level names are excluded by name.
+check {NV6 the device total is told from a mechanism by an empty suffix, and the four circuit-level names are not contributors at all} \
+  [list [a_ans ase::backend::ngspice::noise_contributor_kind onoise_r9 $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_total_r9 $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_spectrum $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind inoise_spectrum $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_total $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind inoise_total $NVI] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind {v(mid)} $NVI]] \
+  [list {output r9 {}} {output r9 {}} {} {} {} {} {}]
+
+## ⚠ THE DOT FAMILY IS REAL AND IT IS THE MODERN PDK's. `b4noi.c:145-151` builds
+## `onoise.%s%s` for BSIM4 -- and BSIM3, BSIMSOI and HiSIM do the same -- so on a
+## sky130 bench every MOS contributor carries dots where every resistor carries
+## underscores, IN ONE PLOT.
+## ⚠ AND OSDI'S DEVICE TOTAL CARRIES A TRAILING SPACE, as a string literal in the
+## source: `osdinoise.c:111-113` passes `" "` as the suffix for `INT_NOIZ` (and
+## `""` for `N_DENS`). Trimmed here, so an OSDI total and a resistor's read the
+## same way.
+## ⚠ THE LAST THREE CASES ARE THERE BECAUSE THIS READER HAS **TWO** `string
+## trim`s AND IT TOOK THREE SABOTAGES TO FIND A FIXTURE FOR EACH. The bare
+## `"onoise_total_q1 "` is handled by whichever of the two runs, so deleting
+## either left this row GREEN (S32, S32r). So did `" onoise_total_q1"`: the
+## SECOND trim takes a leading space just as happily as the first. The only
+## input the first trim can take and the second cannot is one whose whitespace
+## sits OUTSIDE a `v(...)` wrapper -- the regexp is anchored `^v\(`, so a
+## leading space stops it matching at all and the name is never unwrapped. And
+## the only input the second can take and the first cannot is one whose
+## whitespace is INSIDE the wrapper. Hence `" v(onoise_total_q1)"` and
+## `"v(onoise_total_q1 )"`, one per line, plus the bare OSDI name they were
+## written for. ⚠ A row whose fixture can be satisfied by either of two lines
+## proves that ONE of them works and says nothing about which.
+check {NV7 the BSIM dot convention and OSDI's trailing space are both read, by both trims} \
+  [list [a_ans ase::backend::ngspice::noise_contributor_kind {onoise.q1.ib} {q1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind {onoise_total.q1.ib} {q1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind {onoise.q1} {q1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind "onoise_total_q1 " {q1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind " v(onoise_total_q1)" {q1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind "v(onoise_total_q1 )" {q1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind "onoise_total_q1_ib" {q1}]] \
+  [list {output q1 ib} {output q1 ib} {output q1 {}} {output q1 {}} \
+        {output q1 {}} {output q1 {}} {output q1 ib}]
+
+## ⚠ THE UNDERSCORE SPLIT IS NOT DECIDABLE FROM THE NAME ALONE, which is
+## `sens_param_kind`'s finding in this analysis. `onoise_r1_temp` is `r1`'s
+## `temp` mechanism if the deck has an `r1`, and device `r1_temp`'s total if it
+## has one of those -- and a deck can have BOTH, measured. So the instance list
+## is a parameter, the LONGEST match wins, and without it the answer is the word
+## `ambiguous` rather than an invented split.
+## ⚠ `ambiguous` IS A WORD AND NOT `{}` for `out_decompose`'s reason: "I cannot
+## split this" and "this is not a contributor at all" are different answers and a
+## table needs to tell them apart.
+check {NV8 the longest instance wins, and with no instance list a real contributor answers `ambiguous` rather than a guess} \
+  [list [a_ans ase::backend::ngspice::noise_contributor_kind onoise_r1_temp {r1 r1_temp}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_r1_temp {r1}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_r1_temp {}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_r9_thermal {r9x}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind onoise_spectrum {}] \
+        [a_ans ase::backend::ngspice::noise_contributor_kind {} {r1}]] \
+  [list {output r1_temp {}} {output r1 temp} ambiguous ambiguous {} {}]
+
+## ⚠ `onoise_total` AND `inoise_total` REACH THE EXCLUSION AS THE WORD `total`,
+## not as an empty suffix: there is no trailing `_` for the `onoise_total_`
+## prefix to match, so the `onoise_` arm takes them. A reader that only excluded
+## `spectrum` would report a device called `total` and double the table's sum a
+## second time.
+## ⚠ AND THE MECHANISM COMES BACK AS ngspice SPELLED IT, which is
+## `sens_param_kind`'s rule: the instance is matched case-insensitively against
+## the list the caller supplied and answered in the CALLER's spelling, and the
+## mechanism is answered in the VECTOR's. Nothing invents a case.
+
+## ⚠ AND THE REGISTRY NAMES IT ON THE SPECTRUM ROW, which is where §6.2 says the
+## contributor table lives. The key is opaque to core, exactly as `tf`'s
+## `vectors`, `pz`'s `rootname` and `sens`'s `paramname` are -- and like them it
+## would be a key nothing checks without this row.
+check {NV9 the noise entry's spectrum row names the contributor reader, and the entry declares all three destinations its plots and its contributor table feed} \
+  [list [a_ans dict get [lindex [dict get [ase::analysis_entry ngspice noise] plots] 1] contributors] \
+        [lsort [dict keys [dict get [ase::analysis_entry ngspice noise] results]]] \
+        [dict get [ase::analysis_entry ngspice noise] results table]] \
+  [list ::ase::backend::ngspice::noise_contributor_kind {table value viewer} \
+        {kind contributors}]
+
+} nverr]} {
+  check {NV0 section NV ran to the end} "RAISED:$nverr" {}
 }
 # --- verdict -----------------------------------------------------------------
 # THE DUAL BANNER IS REQUIRED by tests/run_regression.tcl's hcases list, which

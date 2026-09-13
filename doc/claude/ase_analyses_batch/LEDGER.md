@@ -1187,6 +1187,86 @@ third time in three tasks. The rule is now explicit in the receipt: **a sabotage
 owns the working tree while it runs**, and a floor taken during one is not a measurement.
 
 
+
+### Task 3 — `noise`, `disto` and `sens` (AC), and the routing that had no destination
+
+| | |
+|---|---|
+| status | **LANDED** — task 3 of N |
+| issue | **1432** |
+| commit | (filled at commit) |
+| T1 | taken **solo** by the driver, 62 cases — ⚠ **NOT zero: one case red.** `test_ase_optier_0963` row **X7**, which is issue **1402** (the shipped bandgap bench does not converge reproducibly; the assertion is sound, the simulation is not). Re-measured rather than waved through: **ALL PASS (106) standalone before the T1 run, and ALL PASS (106) three more times immediately after** — four consecutive standalone passes bracketing one red, no code change between. 1402's tally is now **3 of 3 reds under load, 0 of 17 standalone**. ⚠ **And this run narrowed what "load" means**: the other clone's GUI xschem was live through the red run *and* all four passes, so an idle process is not the trigger — concurrent **simulation** is |
+| suites moved | `test_ase_core` 453 → **476** (MP) · `test_ase_preflight` 194 → **210** (PF230) · `test_ase_simcaps_0948` 190 → **199** (NV) · `test_ase_optier_0963` 105 → **106** (E5d) — forty-nine new rows. **Every suite this commit moves is in T1.** `test_ase_cosim` is outside T1 but is **unmoved**, so nothing is owed a standalone run |
+| driver's own re-run | core **476**, preflight **210**, simcaps **199**, optier **106** — taken by the driver on the engine arm, not read off the receipt |
+| sabotage | **51 respellings, 48 reddened a named row, zero FATALs**, every restore md5-verified. **One survivor, S32, and it found a DEAD LINE** — a `string trimright` that could never run because the name is already trimmed twice. Deleted, and NV7 rewritten with one fixture per trim so S32r and S32s each redden it. One PATCH-FAILED on the crew's own anchor, re-run as S24r. ⚠ **S46 is the one that matters**: the over-walk reddens WK5, WK8, **MP7b**, E5b and E5c — the walk task 2 shipped stub-driven now has five production witnesses |
+| ledger debts | ⚖ **R9** extended to ~19 sentences (`owed.sh add rule 1432`), to be batched with 1426–1430 |
+| spec paragraphs rewritten | none — same standing spec debt as Stages 2–6 |
+| receipt | `receipts/15-stage-6-multiplot.md` |
+
+**Seven corrections, C65–C71.** The first is the one that would have shipped a silent
+corruption, and it refutes **this batch's own previous task**:
+
+* **C65 — `PLAN.md` 6b's `when {expr {start ne stop}}` is wrong, and task 2's receipt
+  believed it.** Task 2 measured that `noise … lin 1` writes no `Integrated Noise` plot and
+  read that as the `expr` form confirmed. Measured properly here: `noise … lin 1 1k 10k` has
+  `start ne stop` and still produces **one** plot. The real rule is **more than one frequency
+  point**. Shipping the `expr` form would have made every such run **over-walk** — which is
+  silent, saturating on `constants` and appending the twelve mathematical constants at rc 0
+  with every count agreeing. It now ships as a `{hook …}` and **the `expr` form is refused at
+  validation** so it cannot come back.
+  ⚠ **The driver's own task-3 brief repeated task 2's wrong claim.** It was caught because
+  the brief also said *"re-measure it; do not take it from this brief"* — which is the only
+  reason the error cost nothing. A brief is a starting point, never evidence.
+* **C66 — the registry must list a multi-plot type's plots in WRITE order, not creation
+  order**, refuting `analysis_plots`' own header comment. A creation-ordered registry passes
+  every static row and **mislabels every real run** (row MP19).
+* **C67** — `.options sqrnoise` renames both noise plots, so `select` must be a glob.
+* **C68 — `sens … ac oct` is broken too, and nobody had measured it**: `count_steps` divides
+  by `M_LOG2E` instead of `M_LN2`, giving 2 points where `ac` gives 5. The field therefore
+  declares `values {dec}`, refuting receipt 12's `{dec oct}`.
+* **C69** — the appendix's contributor names belong to the *other* plot, and there are
+  **five** naming hazards, not the three carried in since Stage 6d was written.
+
+**Two defects this put inside a user's reach, both now `fatal` preconditions:**
+
+* ⚠ **`disto` SEGFAULTS — rc 139, no log, no rawfile** — when the save list resolves to
+  nothing, reached through ASE-L's own `.save` dot cards. Guarded by `disto_saves`.
+* ⚠ **One ticked output starves `noise`, `tf` and `sens`** (APPENDIX §7.5.2). Guarded by
+  `vecsaves` — and it **reddened three of this suite's own fixtures**, which had been
+  asserting about decks ngspice would have refused outright.
+
+**End to end on both binaries:** four decks through `render_deck`, byte-identical sidecars
+and `Plotname:` lists on the fork and apt 45.2, `reconcile_plots` → `ok` 5/5/5, **zero
+`constants` records and no over-walk warning anywhere**.
+
+⚠ **Two things this task surfaced that are NOT its own defects:**
+
+1. **`Integrated Noise` reads back as `op`.** A noise-only results file answers
+   `xschem raw read … op` with the noise *scalars*, and asking for `noise` returns the
+   scalars rather than the spectrum. This is reader-seam territory and therefore ⚖ R3's;
+   `noise` declares no `viewrank`, so nothing asks today. Recorded, not fixed.
+2. **The display arm writes `~/.xschem/geometry`** — and this is **issue 1397**, filed
+   2026-09-09, **not a new defect**. ⚠ **The crew reported it as unrecorded and that is the
+   one claim in its report the driver had to correct**: no *receipt in this batch* had
+   recorded it, but the issue tracker had, in detail, with two proposed fixes and a measured
+   trap. What today adds to 1397 is a **new arm**: 1397's measurement was of headless suites
+   missing `scratch.tcl`'s `::USER_CONF_DIR` redirect, whereas `run_suites.sh:125` runs the
+   **display** arm as `--pipe -q --nolog --script` with **no `--nogui`**, so a real window
+   opens and xschem saves geometry on close regardless of any per-suite redirect. That is
+   1397's option 1 (per-suite) being structurally unable to cover this path, and its option 2
+   (a scratch `HOME`, harness-wide) being the only one that does. Measured today at
+   **19:49:00**, 8 196 bytes, inside the `optier` display run. **Both fixes remain the
+   user's call and nothing was changed here.**
+
+⚠ **One loop closed between driver and crew.** The driver's task-3 brief added a hazard the
+task-2 crew had no reason to hit: in `read_dataset()` the `integrated noise` arm claims
+**`op`** whenever it is the *first* `Plotname:` the reader meets, and reads as `noise` only
+if a `Noise Spectral Density Curves` record preceded it — so file order decides the answer.
+This task then measured the write order and found `noise dec 10 1 10k` writes **`Integrated
+Noise` first** (`src/ase.tcl:16839`). The predicted hazard is the production case, which is
+why the crew's finding (1) above reads the way it does. It is recorded against ⚖ R3's reader
+seam rather than patched here.
+
 ### What Stage 6 learned that binds later stages
 
 ---

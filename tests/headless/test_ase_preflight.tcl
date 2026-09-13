@@ -94,6 +94,22 @@
 # so the check is keyed on the TOP scope and a filter naming a device that
 # exists only inside a subcircuit IS reported.
 #
+# 194 -> 210 with PF230 (Stage 6d, issue 1432 -- the seven preconditions the
+# three multi-plot types bring). ⚠ NO ROW MOVED, but PF222a-e / PF222h-j changed
+# their UNRENDERABLE FIXTURE from `noise` to `sp`, because this issue gave
+# `noise` and `disto` real entries. Row TF3b of tests/headless/test_ase_core.tcl
+# warned in as many words that these rows would move the day that happened.
+# ⚠ PF230g IS THE SHARPEST OF THE SEVEN: `disto` SEGFAULTS -- rc 139, no exit
+# status, no log, no results file -- when the save list resolves to NOTHING, and
+# making `disto` renderable is what put that in a user's reach. The trigger is
+# the WHOLE list resolving to nothing, so `design-C`'s proposed refusal (`disto`
+# enabled AND zero saved outputs) would have refused a deck that runs.
+# ⚠ AND PF230l REACHES BACK INTO TWO STAGE-5 ENTRIES. APPENDIX §7.5.2's
+# starvation -- an analysis whose result vectors are not netlist names cannot run
+# under a save list made of netlist names -- is assigned there to "Stage 6's
+# precondition" by name, and it hits `tf` and `sens` exactly as it hits `noise`.
+# One ticked output is enough, which is the shape of every committed bench.
+#
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
 # not read it and never named it -- 125 checks of the refusal standing between a
@@ -424,18 +440,23 @@ set ::ase_preflight 1
 ## FIRST, because the gate runs before the deck is written -- so nothing in the
 ## run directory is touched -- and because a `.state` is a text file a person can
 ## hand-edit.
-set UNREND {{type op enabled 1} {type noise enabled 1 source v1}}
+## ⚠ THE UNRENDERABLE TYPE WAS `noise` AND IS NOW `sp`, BECAUSE ISSUE 1432 GAVE
+## `noise` AND `disto` REAL ENTRIES. `sp` and `pss` are what is left probe-only,
+## and both are #ifdef-gated. Row TF3b of tests/headless/test_ase_core.tcl warned
+## that these rows would move the day `noise` became renderable; it did, and they
+## moved in the same commit.
+set UNREND {{type op enabled 1} {type sp enabled 1 source v1}}
 said_clear
 set stU [mkstate $RD c $GOOD]
 dict set stU analyses $UNREND
 set cu1 [catch {ase::preflight_gate $stU $NL} eu1]
 eqcheck PF222a-an-unrenderable-analysis-is-refused $cu1 1
 eqcheck PF222b-the-refusal-names-the-type \
-  [string match "*analysis type 'noise' is not one this simulator backend can render*" $eu1] 1
+  [string match "*analysis type 'sp' is not one this simulator backend can render*" $eu1] 1
 eqcheck PF222c-and-says-the-run-would-have-said-nothing \
   [string match "*said nothing*" $eu1] 1
 eqcheck PF222d-it-reaches-the-action-log-too \
-  [expr {[said_count "*analysis type 'noise'*"] >= 1}] 1
+  [expr {[said_count "*analysis type 'sp'*"] >= 1}] 1
 ## ⚠ THE ROW THIS SUB-ITEM EXISTS FOR. `ase_preflight 0` is a real lever for the
 ## save-name check above -- a user who knows their netlist better than the map
 ## does must not be locked out -- and there is nothing for it to be right about
@@ -459,7 +480,7 @@ eqcheck PF222f-a-renderable-state-still-passes \
 ## today and emitted nothing before, so refusing it would break a bench that
 ## merely carries a row somebody unticked.
 set stD [mkstate $RD c $GOOD]
-dict set stD analyses {{type op enabled 1} {type noise enabled 0 source v1}}
+dict set stD analyses {{type op enabled 1} {type sp enabled 0 source v1}}
 eqcheck PF222g-a-disabled-unrenderable-row-is-not-refused \
   [catch {ase::preflight_gate $stD $NL} eud] 0
 ## ⚠ A REFUSAL NAMES THE RUNDIR'S LEFTOVERS when there are any -- the ruling is
@@ -2156,6 +2177,246 @@ eqcheck PF229m-a-disabled-or-empty-or-unreadable-sens-row-is-left-alone \
         [pcall pcheck $SENL [serow out {v(mid)} filters "r1 \{"]] \
         [lindex [lindex [ase::analysis_emit_check ngspice {type sens enabled 1}] 0] 0]] \
   {0 0 {} missing}
+
+# ---------------------------------------------------------------------------
+# PF230 — the SEVEN preconditions Stage 6d's three multi-plot types bring with
+# them (issue 1432), and the one that reaches back to two Stage 5 entries.
+#
+# ⚠ THE MEASUREMENTS, all 2026-09-12, on the fork (`ngspice-46+`) AND on
+# `/usr/bin/ngspice` (`ngspice-45.2`), identical on both:
+#
+#   noise v(mid) v1 dec 2 1k 10k         -> rc 0, right
+#   noise v(nosuchnode) v1 dec 2 1k 10k  -> rc 0, A FULL TWO-PLOT RESULT, silent
+#   noise i(v1) v1 dec 2 1k 10k          -> rc 1, `Error: bad syntax [.noise
+#                                           v(OUT) SRC {DEC OCT LIN} …]`
+#   noise v(mid) vnope   …               -> rc 1, `Noise input source vnope not
+#                                           in circuit`
+#   noise v(mid) r1      …               -> rc 1, `… r1 is not of proper type`
+#   noise v(mid) v2      …               -> rc 1, `… v2 has no AC value`
+#   .options klu + noise …               -> rc 1, `Noise simulation is not (yet)
+#                                           supported with 'option KLU'`
+#   .options klu + sens … ac dec 1 1k 10k-> rc 139, SIGSEGV
+#   .options klu + sens … dc             -> rc 0, byte-identical to sparse
+#   .save v(nosuchnode) + disto          -> rc 139, SIGSEGV
+#   .save v(mid) / .save v(nosuchnode)
+#                        + disto         -> rc 0
+#   no save card         + disto         -> rc 0
+#   .save v(mid)         + noise/tf/sens -> rc 1, `Error: no data saved for
+#                                           <analysis>; analysis not run`
+#   .save all            + noise/tf/sens -> rc 0
+#   disto, no source carrying `distof1`  -> rc 0, three rows of meaningless
+#                                           numbers, NOTHING on either stream
+#   disto … 0.9, no source with `distof2`-> rc 1, `incomplete or empty netlist`
+#
+# ⚠ `disto_saves` AND `vecsaves` ARE THE FIRST PREDICATES IN THIS FILE THAT READ
+# THE BENCH'S **OUTPUT ROWS** rather than the analysis row they are asked about,
+# which is why `ase::needs_eval` takes the state at all. `pcheck` builds a
+# default state, so these rows use `pcheckx`, which merges extra keys in.
+proc pcheckx {nl analyses opts extra} {
+  set st [ase::state_default]
+  dict set st analyses $analyses
+  dict set st options $opts
+  dict for {k v} $extra { dict set st $k $v }
+  return [ase::analysis_precheck ngspice $st [ase::netlist_facts $nl]]
+}
+set MPNL "* t\nV1 in 0 dc 0 ac 1 distof1 1 0 distof2 1 0\nV2 bias 0 dc 2\nR1 in mid 1k\nC1 mid 0 1n\nR2 mid 0 2k\n.end\n"
+set MPNLNOD "* t\nV1 in 0 dc 0 ac 1\nV2 bias 0 dc 2\nR1 in mid 1k\nC1 mid 0 1n\n.end\n"
+proc mprow {args} { return [list [concat {type noise enabled 1} $args]] }
+proc mpn {pc ty n} { return [lindex [lindex [dgn $pc $ty] $n] 0] }
+proc mpv {pc ty n} { return [lindex [lindex [dgn $pc $ty] $n] 1] }
+proc mps {pc ty n} { return [lindex [lindex [dgn $pc $ty] $n] 2] }
+proc mpids {pc ty} {
+  set o {}
+  foreach r [dgn $pc $ty] { lappend o [lindex $r 0] }
+  return $o
+}
+set MPGOOD {out {v(mid)} insrc V1 sweep dec points 4 start 1k stop 100k}
+set MPSAVED {outputs {{name m expr v(mid) save 1 plot 1}}}
+set MPBLANKET {save_all_v 1 outputs {{name m expr v(mid) save 1 plot 1}}}
+
+## ⚠ THE DISCRIMINATOR, inherited from PF227a/PF228a/PF229a: without a row
+## asserting that a runnable noise row says NOTHING, every row below is satisfied
+## by a predicate that reports on every deck.
+eqcheck PF230a-a-noise-row-this-circuit-can-run-says-nothing \
+  [list [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPBLANKET]] \
+        [dict size [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {out {v(mid,in)}}]] {} $MPBLANKET]] \
+        [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} {save_all_v 1}]]] \
+  {0 0 0}
+
+## ⚠ THE OUTPUT IS A VOLTAGE AND ONLY A VOLTAGE, which is where `noise` differs
+## from `tf` and `sens`: both of those take `i(<vsrc>)`.
+set MPPI [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {out {i(V1)}}]] {} $MPBLANKET]
+eqcheck PF230b-a-current-output-is-refused-as-fatal-because-noise-measures-a-voltage \
+  [list [mpn $MPPI noise 0] [mpv $MPPI noise 0] \
+        [string match {*measures a VOLTAGE*} [mps $MPPI noise 0]]] \
+  {noise_out fatal 1}
+
+## ⚠ AND A MISSING NODE IS THE SILENT ONE: rc 0 and a whole spectrum of numbers.
+## It is `blocked`, so the static demotion turns it into a `caution` carrying the
+## `.include` caveat -- a node the netlist text cannot see may still exist.
+set MPPN [pcheckx $MPNLNOD [mprow {*}[dict merge $MPGOOD {out {v(nosuchnode)}}]] {} $MPBLANKET]
+eqcheck PF230c-a-missing-output-node-is-reported-and-demoted-with-its-caveat \
+  [list [mpn $MPPN noise 0] [mpv $MPPN noise 0] \
+        [string match {*nosuchnode*} [mps $MPPN noise 0]] \
+        [string match {*cannot see inside an .include*} [mps $MPPN noise 0]]] \
+  {noise_out caution 1 1}
+
+## ⚠ THREE SENTENCES FOR THREE DIFFERENT THINGS, and the third is the one
+## `ac_source` cannot say: V2 IS a source and the deck HAS an AC source, so
+## `ac_source` is satisfied and the run still dies.
+set MPS1 [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {insrc Vnope}]] {} $MPBLANKET]
+set MPS2 [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {insrc R1}]] {} $MPBLANKET]
+set MPS3 [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {insrc V2}]] {} $MPBLANKET]
+eqcheck PF230d-the-input-source-is-refused-three-different-ways \
+  [list [mpn $MPS1 noise 0] [string match {*has no 'Vnope'*} [mps $MPS1 noise 0]] \
+        [mpn $MPS2 noise 0] [string match {*not an independent source*} [mps $MPS2 noise 0]] \
+        [mpn $MPS3 noise 0] [string match {*carries no AC value*} [mps $MPS3 noise 0]]] \
+  {noise_insrc 1 noise_insrc 1 noise_insrc 1}
+
+## ⚠ EXACTLY ONE PREDICATE SPEAKS FOR EACH, AND THAT IS THE NON-VACUITY HALF.
+## `noise_out` is silent for all three because `v(mid)` is a perfectly good
+## output in every one of them -- so these rows measure `noise_insrc` and not
+## "some predicate said something".
+eqcheck PF230d2-only-the-input-source-predicate-speaks-and-the-output-one-stays-silent \
+  [list [mpids $MPS1 noise] [mpids $MPS3 noise] \
+        [llength [dgn $MPS1 noise]] [llength [dgn $MPS3 noise]]] \
+  {noise_insrc noise_insrc 1 1}
+
+## ⚠ ngspice REFUSES ITSELF UNDER KLU AND NAMES THE FIX, so ASE-L says the same
+## words earlier. `fatal`, for `pz_klu`'s reason: the guard's `quit 1` fires and
+## every analysis after this one in the deck silently does not happen.
+set MPK [pcheckx $MPNL [mprow {*}$MPGOOD] {{name klu value 1}} $MPBLANKET]
+eqcheck PF230e-noise-under-klu-is-fatal-and-offers-the-sparse-solver \
+  [list [mpn $MPK noise 0] [mpv $MPK noise 0] [mps $MPK noise 0] \
+        [lindex [lindex [dgn $MPK noise] 0] 3]] \
+  {noise_klu fatal {ngspice does not support noise analysis under the KLU solver} {select the `sparse` solver for this run}}
+
+## ⚠ SENS IS THE ONE CROSS-RULE THAT IS MODE-DEPENDENT, and the mode is the
+## difference between rc 0 and a SIGSEGV. `cktsens.c:97-105`'s guard is commented
+## out -- and note what the commented guard would have refused: ALL sensitivity
+## under KLU, DC included. DC under KLU is measurably safe, so refusing it would
+## refuse a run that works. It is only expressible because the mode is a modelled
+## field rather than free text.
+set MPSK1 [pcheckx $MPNL {{type sens enabled 1 out {v(mid)} mode ac sweep dec points 2 start 1k stop 10k}} \
+                         {{name klu value 1}} $MPBLANKET]
+set MPSK2 [pcheckx $MPNL {{type sens enabled 1 out {v(mid)}}} {{name klu value 1}} $MPBLANKET]
+eqcheck PF230f-ac-sensitivity-under-klu-is-fatal-and-dc-sensitivity-under-klu-is-not \
+  [list [mpids $MPSK1 sens] [mpv $MPSK1 sens 0] \
+        [string match {*crashes ngspice outright*} [mps $MPSK1 sens 0]] \
+        [dict size $MPSK2]] \
+  {sens_klu fatal 1 0}
+
+## ⚠ THE SHARPEST DEFECT IN THE WHOLE SURFACE, AND MAKING `disto` RENDERABLE IS
+## WHAT PUT IT IN REACH. The trigger is the save list RESOLVING TO NOTHING, not
+## a bad entry and not the absence of a save -- `design-C`'s proposed refusal
+## ("`disto` enabled AND zero saved outputs") would refuse the deck on the last
+## line here, which was measured to run.
+set MPDROW {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}}
+set MPD_BAD [pcheckx $MPNL $MPDROW {} {outputs {{name a expr v(nosuchnode) save 1 plot 1}}}]
+set MPD_TWOBAD [pcheckx $MPNL $MPDROW {} \
+  {outputs {{name a expr v(nosuchnode) save 1 plot 1} {name b expr v(alsonone) save 1 plot 1}}}]
+set MPD_MIX [pcheckx $MPNL $MPDROW {} \
+  {outputs {{name a expr v(nosuchnode) save 1 plot 1} {name b expr v(mid) save 1 plot 1}}}]
+set MPD_ALL [pcheckx $MPNL $MPDROW {} \
+  {save_all_v 1 outputs {{name a expr v(nosuchnode) save 1 plot 1}}}]
+set MPD_NONE [pcheckx $MPNL $MPDROW {} {outputs {}}]
+set MPD_UNTICKED [pcheckx $MPNL $MPDROW {} {outputs {{name a expr v(nosuchnode) save 0 plot 1}}}]
+eqcheck PF230g-disto-is-refused-only-when-the-WHOLE-save-list-resolves-to-nothing \
+  [list [mpv $MPD_BAD disto 0] [mpn $MPD_BAD disto 0] \
+        [mpv $MPD_TWOBAD disto 0] \
+        [dict size $MPD_MIX] [dict size $MPD_ALL] [dict size $MPD_NONE] \
+        [dict size $MPD_UNTICKED]] \
+  {fatal disto_saves fatal 0 0 0 0}
+
+## ⚠ AND THE SENTENCE SAYS SEGFAULT IN AS MANY WORDS, because the whole point is
+## that there is no exit status and no log to explain it afterwards.
+eqcheck PF230h-the-disto-refusal-says-what-happens-and-offers-three-ways-out \
+  [list [string match {*SEGFAULT*} [mps $MPD_BAD disto 0]] \
+        [string match {*cannot see inside an .include*} [mps $MPD_BAD disto 0]] \
+        [string match {*Save all voltages*} [lindex [lindex [dgn $MPD_BAD disto] 0] 3]]] \
+  {1 1 1}
+
+## ⚠ A CURRENT SAVE STARVES IT TOO: `.save i(vnope)` is a branch current of a
+## source that is not there, and it resolves to nothing exactly as a node does.
+set MPD_CUR [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(Vnope) save 1 plot 1}}}]
+set MPD_CUROK [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(V1) save 1 plot 1}}}]
+eqcheck PF230i-a-branch-current-of-a-source-that-is-not-there-starves-it-as-well \
+  [list [mpv $MPD_CUR disto 0] [dict size $MPD_CUROK]] {fatal 0}
+
+## ⚠ THE SILENT ZEROS. `CKTdisto`'s `D_RHSF1` walk looks for a source carrying
+## `distof1`; with none it stamps nothing and the analysis runs to completion.
+## `distof1` is `IP` -- input-only, "unquestionable" (`vsrc.c:50-51`) -- so
+## `show` cannot read it back and the netlist card is the only place it is
+## visible, which is why this rests on ase::netlist_facts.
+set MPD_NOF1 [pcheckx $MPNLNOD $MPDROW {} $MPBLANKET]
+set MPD_NOF2 [pcheckx $MPNLNOD {{type disto enabled 1 sweep dec points 2 start 1k stop 10k f2overf1 0.9}} \
+                      {} $MPBLANKET]
+eqcheck PF230j-a-disto-row-with-no-distof1-source-is-reported-and-the-IM-mode-also-wants-a-distof2 \
+  [list [mpids $MPD_NOF1 disto] [mpv $MPD_NOF1 disto 0] \
+        [mpids $MPD_NOF2 disto] \
+        [string match {*distof2*} [mps $MPD_NOF2 disto 1]]] \
+  {disto_f1src caution {disto_f1src disto_f2src} 1}
+
+## ⚠ AND THE DECK THAT HAS BOTH SAYS NOTHING, which is the non-vacuity half.
+eqcheck PF230k-a-deck-carrying-both-excitations-is-not-reported \
+  [list [dict size [pcheckx $MPNL $MPDROW {} $MPBLANKET]] \
+        [dict size [pcheckx $MPNL {{type disto enabled 1 sweep dec points 2 start 1k stop 10k f2overf1 0.9}} \
+                           {} $MPBLANKET]]] \
+  {0 0}
+
+## ⚠ THE STARVATION, AND IT REACHES BACK INTO TWO STAGE-5 ENTRIES. APPENDIX
+## §7.5.2 assigns it to "Stage 6's precondition" by name. An analysis whose
+## result vectors are NOT netlist names -- `onoise_spectrum`, `Transfer_function`,
+## `r1:r` -- cannot run under a save list made of netlist names, and ASE-L's
+## Outputs pane makes exactly such a list: ONE ticked output is enough. `pz` is
+## the exception that proves the rule; its roots are `pole(n)`/`zero(n)` and it
+## survives a narrowed save.
+set MPVS_N [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPSAVED]
+set MPVS_T [pcheckx $MPNL {{type tf enabled 1 out {v(mid)} insrc V1}} {} $MPSAVED]
+set MPVS_S [pcheckx $MPNL {{type sens enabled 1 out {v(mid)}}} {} $MPSAVED]
+set MPVS_P [pcheckx $MPNL {{type pz enabled 1 inp in outp mid}} {} $MPSAVED]
+eqcheck PF230l-noise-tf-and-sens-are-refused-on-a-bench-that-saves-named-outputs-and-nothing-else \
+  [list [mpids $MPVS_N noise] [mpv $MPVS_N noise 0] \
+        [mpids $MPVS_T tf] [mpids $MPVS_S sens] [dict size $MPVS_P]] \
+  {vecsaves fatal vecsaves vecsaves 0}
+
+## ⚠ AND IT STANDS DOWN THREE WAYS, every one of them measured to rescue the run.
+## `save_all_v` emits `.save all`; every arm of the operating-point tier emits
+## its own deck-level `.save all` leader (guard G-LEADER, issue 0964); and a
+## `save all` COMMAND in issue 1419's verbatim hatch undoes the deck-level
+## narrowing from inside `.control` -- MEASURED, `.save v(mid)` plus `save all`
+## in the block runs noise to both plots at rc 0.
+eqcheck PF230m-the-starvation-refusal-stands-down-for-every-way-a-blanket-save-reaches-the-deck \
+  [list [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPBLANKET]] \
+        [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} \
+           [dict merge $MPSAVED {save_op_params 1}]]] \
+        [dict size [pcheckx $MPNL [list [concat {type noise enabled 1} $MPGOOD \
+                                         {x {{save all}}}]] {} $MPSAVED]] \
+        [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} {outputs {}}]]] \
+  {0 0 0 0}
+
+## ⚠ THE SENTENCE COUNTS, AND A BENCH WITH TWO SAVED OUTPUTS SAYS "outputs".
+## A refusal that got the plural wrong would be the one thing a user quotes back.
+set MPVS_2 [pcheckx $MPNL [mprow {*}$MPGOOD] {} \
+  {outputs {{name a expr v(mid) save 1 plot 1} {name b expr v(in) save 1 plot 1}}}]
+eqcheck PF230n-the-starvation-sentence-counts-the-saved-outputs-and-names-the-two-ways-out \
+  [list [string match {*saves 1 named output and*} [mps $MPVS_N noise 0]] \
+        [string match {*saves 2 named outputs and*} [mps $MPVS_2 noise 0]] \
+        [string match {*Save all voltages*} [lindex [lindex [dgn $MPVS_N noise] 0] 3]]] \
+  {1 1 1}
+
+## ⚠ A DISABLED ROW, AN EMPTY ROW AND AN UNREADABLE ONE ARE LEFT ALONE. PF229m's
+## rule, applied to the seven new predicates: none of them may raise, because a
+## raise here does not redden a row -- it prints `FATAL:` and the file dies.
+eqcheck PF230o-a-disabled-or-empty-or-unreadable-row-is-left-alone-by-all-seven \
+  [list [dict size [pcheckx $MPNL {{type noise enabled 0 out {v(nosuchnode)}}} {} $MPSAVED]] \
+        [dict size [pcheckx $MPNL {{type disto enabled 0}} {} \
+                      {outputs {{name a expr v(nosuchnode) save 1 plot 1}}}]] \
+        [pcall pcheckx $MPNL {{type noise enabled 1}} {} $MPBLANKET] \
+        [pcall pcheckx $MPNL {{type disto enabled 1 f2overf1 {}}} {} $MPBLANKET] \
+        [string match {ERR:*} \
+          [pcall pcheckx $MPNL [list [concat {type noise enabled 1} $MPGOOD {x "a \{"}]] {} $MPSAVED]]] \
+  {0 0 {} {} 0}
 
 } err]} { puts "FATAL: $err" ; incr fail }
 

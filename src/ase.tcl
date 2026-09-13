@@ -4324,6 +4324,24 @@ proc ase::analysis_expand {row tmpl {fields {}}} {
     foreach f $fields {
       if {[dict exists $f name] && [dict get $f name] eq $name} { set fd $f ; break }
     }
+    # --- 1432: A FIELD WHOSE `depends` IS NOT SATISFIED EMITS NOTHING --------
+    #
+    # ⚠ IT IS CHECKED BEFORE THE DEFAULT, NOT AFTER, AND THAT IS THE WHOLE
+    # POINT. `ptssum` declares `default 1`, so a `?` slot with no stored value
+    # would otherwise resolve to `1` and put a decimation factor on EVERY noise
+    # line -- turning the contributor table on for every bench that never asked
+    # for one. Before the default, a row with the checkbox off emits nothing and
+    # the line is byte-identical to a registry with no `ptssum` at all.
+    #
+    # ⚠ AND A STORED VALUE IS DROPPED TOO. A bench that switched the table on,
+    # typed 4, and switched it off again still carries `ptssum 4`; the deck must
+    # say what the form says, so the gate wins over the stored value.
+    if {$fd ne {} && ![ase::field_active $row $fd $fields]} {
+      set ws {}
+      if {[dict exists $fd whenskipped]} { set ws [dict get $fd whenskipped] }
+      lappend res [list 0 {} $ws]
+      continue
+    }
     switch -exact -- $sig {
       {} {
         # REQUIRED: raise when absent. Callers that cannot tolerate a raise ask
@@ -4461,6 +4479,11 @@ proc ase::analysis_emit_check {sim row} {
       set kind {}
       if {[dict exists $fd kind]} { set kind [dict get $fd kind] }
       set have [expr {[dict exists $row $slot] && [dict get $row $slot] ne {}}]
+      # --- 1432: AN INACTIVE FIELD IS NOT REQUIRED AND IS NOT VALIDATED ------
+      # It emits nothing (ase::analysis_expand), so demanding a value for it
+      # would refuse a row the deck renders perfectly -- the exact shape issue
+      # 1416 deleted when `required 1` stopped meaning "every field".
+      if {$fd ne {} && ![ase::field_active $row $fd $flds]} { continue }
       if {$kind eq {bool}} {
         # ⚠ A BOOL'S ONLY WRONG VALUE IS ONE THAT IS NEITHER 1 NOR 0 NOR ABSENT.
         # It cannot be "missing": absent means off, which is a legal answer.
@@ -4492,6 +4515,18 @@ proc ase::analysis_emit_check {sim row} {
         if {[lindex $r 0] eq {bad}} {
           lappend out [list fill $slot \
             [ase::analysis_emit_msg fill $slot [dict get $row $slot]]]
+        } elseif {[dict exists $fd min] && [llength $r] >= 2 \
+                  && [string is double -strict [lindex $r 1]]} {
+          # --- 1432: A DECLARED LOWER BOUND, AND ngspice ENFORCES IT LATE ----
+          # MEASURED 2026-09-12 on both binaries: `noise v(mid) v1 dec 0 1k 10k`
+          # -> rc 1, `Number of steps for noise measurement has to be larger
+          # than 0`, from inside the run, after the deck was written and the
+          # process started. The same number is knowable at the moment it is
+          # typed. `min` is declared only where the simulator itself refuses.
+          if {[lindex $r 1] < [dict get $fd min]} {
+            lappend out [list belowmin $slot \
+              [ase::analysis_emit_msg belowmin $slot [dict get $fd min]]]
+          }
         }
       }
     }
@@ -4586,6 +4621,7 @@ proc ase::analysis_emit_msg {token args} {
     group        { return "needs every value of the $f, or none of them" }
     unknownkey   { return "has a setting named '$f' that ASE-L cannot emit" }
     verbatim     { return "has verbatim lines that are not a readable list of non-blank lines" }
+    belowmin     { return "needs '$f' to be at least [lindex $args 1]" }
   }
   return {}
 }
@@ -4622,8 +4658,32 @@ proc ase::analysis_schema_errors {{sim {}}} {
         }
       }
     }
+    # --- 1432: A FIELD NAMED BY ANOTHER FIELD'S `depends` IS CONSUMED -------
+    # `contributors` is spent by `ptssum` depending on it, not by a template,
+    # and without this the shipped registry would answer `fieldunused` for it.
+    # The same walk collects the `depends` errors, so a gate is resolved once.
+    set gates {}
+    if {[dict exists $e fields]} {
+      foreach f [dict get $e fields] {
+        set d [ase::field_depends $f]
+        if {$d eq {}} {
+          if {[dict exists $f depends]} {
+            # ⚠ A `depends` THE READER CANNOT PARSE IS THE DANGEROUS ONE:
+            # ase::field_active answers "active" for it, so the slot emits and
+            # nobody is told the gate was ignored.
+            lappend out [list $ty baddepends [dict get $f depends]]
+          }
+          continue
+        }
+        lappend gates [lindex $d 0]
+        if {[lsearch -exact $declared [lindex $d 0]] < 0} {
+          lappend out [list $ty baddepends [lindex $d 0]]
+        }
+      }
+    }
     foreach f $declared {
       set used 0
+      if {[lsearch -exact $gates $f] >= 0} { set used 1 }
       foreach card [dict get $e emit] {
         if {[dict exists $card tmpl] \
             && [lsearch -exact [ase::analysis_slots [dict get $card tmpl]] $f] >= 0} {
@@ -4658,6 +4718,51 @@ proc ase::analysis_schema_errors {{sim {}}} {
         }
         if {[dict exists $p when] && ![ase::plot_when_valid [dict get $p when]]} {
           lappend out [list $ty badplotwhen [dict get $p when]]
+        } elseif {[dict exists $p when]} {
+          # ⚠ A WELL-FORMED `when` CAN STILL NAME NOTHING, AND THE FAILURE IS
+          # THE SILENT ONE AGAIN: ase::plot_when answers 0 for a `field` naming
+          # a field the entry never declares -- so the plot vanishes from every
+          # prediction, reconciliation reports an `over` for a run in which
+          # nothing went wrong, and no message anywhere names the typo.
+          lassign [dict get $p when] wkind warg
+          switch -exact -- $wkind {
+            field - nofield {
+              if {[lsearch -exact $declared $warg] < 0} {
+                lappend out [list $ty badplotwhenfield $warg]
+              }
+            }
+            hook {
+              if {[llength [info procs $warg]] == 0} {
+                lappend out [list $ty badplotwhenhook $warg]
+              }
+            }
+          }
+        }
+        # --- 1432, D30: EVERY PLOT NAMES A DESTINATION -----------------------
+        if {![dict exists $p results]} {
+          lappend out [list $ty noplotresults [dict get $p select]]
+        } else {
+          # ⚠ AND AN `opinfo` PLOT'S DESTINATION IS `none`, IN BOTH DIRECTIONS.
+          # The deck does not write it (issue 1430's C61), so a route to the
+          # viewer or the Value column would be the registry asserting a path
+          # that does not exist; and a plot that IS captured must not claim to
+          # go nowhere, or D30 buys nothing.
+          set rle [dict get $p results]
+          set isop [expr {[dict exists $p role] && [dict get $p role] eq {opinfo}}]
+          if {$isop && $rle ne {none}} {
+            lappend out [list $ty badplotroute [dict get $p select]]
+          } elseif {!$isop && $rle eq {none}} {
+            lappend out [list $ty badplotroute [dict get $p select]]
+          } elseif {!$isop && (![dict exists $e results] \
+                               || ![dict exists [dict get $e results] $rle])} {
+            # ⚠ AND THE TWO HALVES HAVE TO AGREE. A plots row naming `table` is
+            # naming a destination that is perfectly good SOMEWHERE in this
+            # registry -- just not one its own entry declares, so the surface
+            # that reads the entry's `results` would never look for it. D30 is
+            # about the analysis having somewhere to put its answer, and half a
+            # declaration is not somewhere.
+            lappend out [list $ty badplotroute [dict get $p select]]
+          }
         }
       }
     } elseif {[ase::analysis_renderable $sim $ty]} {
@@ -4860,11 +4965,46 @@ proc ase::option_enabled {state name} {
 # Is this a `when` form the evaluator understands? State-free, so
 # ase::analysis_schema_errors can refuse an unknown one at validation time
 # rather than leaving every run to discover it.
+#
+# ⚠ FOUR FORMS, AND EACH ONE HAS A PRODUCTION CONSUMER IN THE SHIPPED
+# REGISTRY. Issue 1432 added the last three, and it added them because the
+# measured plot sets of `noise` and `disto` cannot be stated without them --
+# not as a generalisation for a future adapter. A fifth form with no consumer
+# would be exactly the `plots`-key smell issue 1428's S35 named.
+#
+#   {}                 always      -- every single-plot analysis
+#   {opt <name>}       a `.options` row is switched on   -- the four `opinfo`
+#                                     companions, under `keepopinfo`
+#   {field <name>}     the row carries a non-empty value -- `disto`'s three IM
+#                                     plots, which exist ONLY with `f2overf1`
+#   {nofield <name>}   ...and its complement             -- `disto`'s two
+#                                     harmonic plots, which exist only WITHOUT
+#   {hook <proc>}      the ADAPTER answers               -- `noise`'s
+#                                     `Integrated Noise`, below
+#
+# ⚠ THE `hook` FORM EXISTS BECAUSE ONE MEASURED PREDICATE IS ARITHMETIC THE
+# SCHEMA MUST NOT OWN. PLAN.md 6b writes `noise`'s second plot as
+# `when {expr {start ne stop}}`. MEASURED 2026-09-12 on BOTH binaries, that is
+# WRONG in the direction that corrupts the results file:
+#
+#     noise v(mid) v1 lin 1 1k 10k  -> ONE plot   (start ne stop, and no
+#                                                  `Integrated Noise`)
+#     noise v(mid) v1 dec 10 1k 1k  -> ONE plot
+#     noise v(mid) v1 lin 2 1k 10k  -> TWO plots
+#     noise v(mid) v1 dec 1 1k 1001 -> TWO plots
+#
+# The real rule is "the sweep has more than one frequency point", and how many
+# points `lin 1`, `dec 1` and `oct 2` place is ngspice's own stepping
+# arithmetic (`noisean.c:145-168`) -- CONTENT (D34-D37), not schema. A schema
+# that shipped the plan's predicate would have declared two captures for every
+# `noise lin 1` run, and an over-walk is SILENT: `setplot previous` saturates on
+# the `constants` plot and the next `write` appends ngspice's twelve
+# mathematical constants at rc 0.
 proc ase::plot_when_valid {when} {
   if {$when eq {}} { return 1 }
   if {[catch {llength $when} n]} { return 0 }
-  if {$n == 2 && [lindex $when 0] eq {opt}} { return 1 }
-  return 0
+  if {$n != 2} { return 0 }
+  return [expr {[lsearch -exact {opt field nofield hook} [lindex $when 0]] >= 0}]
 }
 
 # 1, 0, or the word `unknown`.
@@ -4874,10 +5014,39 @@ proc ase::plot_when_valid {when} {
 # that may not exist. Neither is a decision a reader should have to make at run
 # time, so ase::analysis_schema_errors refuses the registry that contains one
 # and row GP3 asserts the shipped registry has none.
-proc ase::plot_when {when state} {
+#
+# ⚠ `row` AND `sim` ARE OPTIONAL AND THE `field`/`hook` FORMS ANSWER `unknown`
+# WITHOUT THEM. A caller that has no row cannot be told 1 or 0 about a row's own
+# field, and guessing would be the over-walk again. Issue 1430's two-argument
+# callers are unchanged by construction: `{}` and `{opt ...}` need neither.
+proc ase::plot_when {when state {row {}} {sim {}}} {
   if {![ase::plot_when_valid $when]} { return unknown }
   if {$when eq {}} { return 1 }
-  return [ase::option_enabled $state [lindex $when 1]]
+  lassign $when kind arg
+  switch -exact -- $kind {
+    opt { return [ase::option_enabled $state $arg] }
+    field - nofield {
+      if {$row eq {}} { return unknown }
+      set have 0
+      if {[dict exists $row $arg] && [string trim [dict get $row $arg]] ne {}} {
+        set have 1
+      }
+      if {$kind eq {nofield}} { return [expr {$have ? 0 : 1}] }
+      return $have
+    }
+    hook {
+      if {$row eq {}} { return unknown }
+      # ⚠ THE ADAPTER'S ANSWER IS DISTRUSTED, AND THE SAFE DIRECTION IS
+      # `unknown`. A hook that raises, or answers anything but 0 or 1, must not
+      # be allowed to lengthen the walk -- an under-walk loses a plot and
+      # reconciliation SAYS SO, an over-walk silently appends the constants.
+      if {[catch {$arg $row $state $sim} r]} { return unknown }
+      if {$r eq {1}} { return 1 }
+      if {$r eq {0}} { return 0 }
+      return unknown
+    }
+  }
+  return unknown
 }
 
 # EVERY plot this row's analysis is predicted to produce, in the registry's own
@@ -4892,7 +5061,7 @@ proc ase::analysis_plots {sim row state} {
     set w {}
     if {[catch {dict exists $p when} ok]} { continue }
     if {$ok} { set w [dict get $p when] }
-    if {[ase::plot_when $w $state] ne {1}} { continue }
+    if {[ase::plot_when $w $state $row $sim] ne {1}} { continue }
     lappend out $p
   }
   return $out
@@ -4948,9 +5117,105 @@ proc ase::analysis_uncaptured {sim row state} {
 }
 
 # The `select` literal a plots row declares, or {}.
+#
+# ⚠ IT IS A GLOB, AND THAT IS NOT A LATER GENERALISATION -- ase::reconcile_plots
+# HAS MATCHED IT WITH `string match -nocase` SINCE ISSUE 1430. Issue 1432 is the
+# first entry that NEEDS the star, and it needs it for a measured reason:
+# `.options sqrnoise` RENAMES BOTH NOISE PLOTS. MEASURED 2026-09-12 on both
+# binaries, the same deck with and without the option --
+#
+#     Noise Spectral Density Curves       ->  ... - (V^2 or A^2)/Hz
+#     Integrated Noise                    ->  ... - V^2 or A^2
+#
+# -- so an exact literal would make EVERY `sqrnoise` run report `mislabel`, for
+# a run in which nothing whatever went wrong. The star is the honest
+# declaration; `noise`'s two rows carry one and every other row in the registry
+# is a literal that globs to itself.
 proc ase::plot_select {p} {
   if {[catch {dict exists $p select} ok] || !$ok} { return {} }
   return [dict get $p select]
+}
+
+# --- D30: THE DESTINATION IS NORMATIVE, AND THIS IS ITS ONE READER -----------
+#
+# ⚠ "THE WAVEFORM VIEWER" IS NOT AN ANSWER FOR SIX OF THE TWELVE PLOTS.
+# APPENDIX_ngspice_analyses.md §6.2 is the table and it is NORMATIVE rather than
+# evidential: `op` and `tf` and NOISE's `Integrated Noise` are scalars for the
+# Value column, `pz` and dc `sens` and NOISE's contributor table are a result
+# TABLE, and only the sweeps are traces. D30 makes a row without a destination a
+# registry error so that "scalars do not go in the waveform viewer" stops being
+# a thing the next crew has to know.
+#
+# ⚠ AND AN `opinfo` PLOT'S HONEST DESTINATION IS `none`. Issue 1430's
+# correction C61 measured why: the companion is NOT CAPTURED at all, because
+# src/save.c's read_dataset() matches `strstr(lowerline, "operating point")`
+# before its AC arm, so `AC Operating Point`, `NOISE Operating Point` and
+# `Distortion Operating Point` would each read back as `op` and replace the real
+# operating point's numbers. A plot the deck never writes reaches no surface, so
+# declaring it `viewer` would be the registry asserting a route that does not
+# exist. `none` says the true thing, and ase::analysis_schema_errors refuses the
+# other spellings in both directions.
+proc ase::plot_results {p} {
+  if {[catch {dict exists $p results} ok] || !$ok} { return {} }
+  return [dict get $p results]
+}
+
+# --- `depends`: A FIELD THAT IS ONLY REAL WHEN ANOTHER ONE SAYS SO -----------
+#
+# ⚠ THIS EXISTS FOR ONE MEASURED ngspice TRAP AND IT IS THE ARGUMENT FOR THE
+# WHOLE REGISTRY. NOISE's last positional argument is `ptspersummary`, a
+# spectrum DECIMATION factor whose SIDE EFFECT is the per-device contributor
+# table (`resnoise.c:68`, `cktnoise.c:102-103`). Nobody should have to know
+# that, so the registry declares a checkbox named for the thing the user wants
+# (`contributors`) and hides the raw parameter behind it. PLAN.md §6d specifies
+# exactly that shape.
+#
+# ⚠ THE DEPENDENCY IS ALSO WHAT MAKES THE CHECKBOX A USED FIELD. No emit
+# template spends `contributors` -- it is spent by `ptssum` depending on it --
+# and ase::analysis_schema_errors' `fieldunused` arm would otherwise refuse the
+# shipped registry. A field named by another field's `depends` is consumed.
+proc ase::field_depends {fd} {
+  if {[catch {dict exists $fd depends} ok] || !$ok} { return {} }
+  set d [dict get $fd depends]
+  if {[catch {llength $d} n] || $n != 2} { return {} }
+  return $d
+}
+
+# Is this field live in this row? A field with no `depends` always is.
+#
+# ⚠ IT TAKES THE ENTRY'S `fields` LIST, NOT A SIMULATOR AND A TYPE, because
+# BOTH consumers already hold that list and neither holds the other two:
+# ase::analysis_expand is called with two arguments by row Q2 of
+# tests/headless/test_ase_simcaps_0948.tcl and must keep answering there.
+#
+# ⚠ THE GATE IS READ THROUGH ase::field_emits, NOT OFF THE ROW, so a gate that
+# is a bool answers `1`/`{}` here exactly as it does in the deck -- and a row
+# that never stored the checkbox at all reads as OFF, which is what keeps the
+# 104 committed `.state` files emitting what they emit today.
+proc ase::field_active {row fd flds} {
+  set d [ase::field_depends $fd]
+  if {$d eq {}} { return 1 }
+  lassign $d gate want
+  set gd {}
+  foreach f $flds {
+    if {[dict exists $f name] && [dict get $f name] eq $gate} { set gd $f ; break }
+  }
+  # ⚠ A BOOL GATE IS READ AS 1/0, NOT AS THE WORD IT EMITS, AND THIS COST A
+  # MEASURED WRONG DECK BEFORE IT WAS WRITTEN. `ase::field_emits` answers a bool
+  # with the ADAPTER's `when_true` word (or the field's own name) rather than
+  # with `1`, because ngspice has no way to spell "off" -- so a gate compared
+  # through it answered `contributors` where the `depends` says `1`, and
+  # `noise … contributors 1` rendered WITHOUT its `ptssum` argument: the
+  # checkbox was on, the deck did not carry it, and nothing said so.
+  set have {}
+  if {[dict exists $gd kind] && [dict get $gd kind] eq {bool}} {
+    set have 0
+    if {[dict exists $row $gate] && [dict get $row $gate] eq {1}} { set have 1 }
+    if {![dict exists $row $gate] && [ase::field_default $gd] eq {1}} { set have 1 }
+  } else {
+    set have [string trim [ase::field_emits $gd $row $gate]]
+  }
+  return [expr {$have eq $want ? 1 : 0}]
 }
 
 # ─── 6c: POST-RUN RECONCILIATION -- THE SAFETY NET ───────────────────────────
@@ -6692,7 +6957,7 @@ proc ase::netlist_facts {netlist_text} {
 # the sentence says the pass could not see everything. A FALSE REFUSAL IS WORSE
 # THAN A MISSED ONE -- it stops work that would have succeeded, and the user has
 # no way to tell the tool it is wrong.
-proc ase::analysis_needs {sim row facts {opts {}}} {
+proc ase::analysis_needs {sim row facts {opts {}} {state {}}} {
   set type [ase::state_get $row type]
   set e [ase::analysis_entry $sim $type]
   if {$e eq {} || ![dict exists $e needs]} { return {} }
@@ -6700,7 +6965,7 @@ proc ase::analysis_needs {sim row facts {opts {}}} {
   if {[dict exists $facts exact]} { set exact [dict get $facts exact] }
   set out {}
   foreach id [dict get $e needs] {
-    set v [ase::needs_eval $sim $type $id $row $facts $opts]
+    set v [ase::needs_eval $sim $type $id $row $facts $opts $state]
     if {$v eq {}} { continue }
     lassign $v verdict sentence fix
     # THE STATIC DEMOTION, in one place so no predicate can forget it.
@@ -6722,7 +6987,7 @@ proc ase::analysis_needs {sim row facts {opts {}}} {
 # not block a run; `ase::analysis_schema_errors` is where an unimplemented id
 # gets reported, at the time somebody asks about the registry, not at the moment
 # a user presses Run.
-proc ase::needs_eval {sim type id row facts opts} {
+proc ase::needs_eval {sim type id row facts opts {state {}}} {
   switch -exact -- $id {
     ac_source {
       # ≥1 independent source with an AC magnitude.
@@ -7281,6 +7546,343 @@ proc ase::needs_eval {sim type id row facts opts} {
         "name a device this netlist has at the top level -- a device inside a\
  subcircuit is named `<letter>.<instance path>.<name>`"]
     }
+    noise_out {
+      # ⚠ NOISE'S OUTPUT IS A VOLTAGE AND ONLY A VOLTAGE, WHICH `tf` AND `sens`
+      # ARE NOT. MEASURED 2026-09-12 on the fork AND on apt 45.2:
+      #
+      #   noise v(mid) v1 dec 2 1k 10k        -> rc 0, right
+      #   noise v(mid,in) v1 dec 2 1k 10k     -> rc 0, right
+      #   noise i(v1) v1 dec 2 1k 10k         -> rc 1, `Error: bad syntax
+      #                                   [.noise v(OUT) SRC {DEC OCT LIN} …]`
+      #   noise v(nosuchnode) v1 dec 2 1k 10k -> rc 0, A FULL TWO-PLOT RESULT,
+      #                                          nothing on either stream
+      #
+      # ⚠ THE LAST LINE IS THE ONE THIS PREDICATE EXISTS FOR, and it is the
+      # fourth analysis in a row to answer a nonexistent output with confident
+      # numbers (`tf` fills in three, `sens` ~90, `noise` a whole spectrum).
+      # `noisean.c:84-85` dereferences `posOutNode`/`negOutNode` with no NULL
+      # check, and the parser has already resolved the missing name to ground.
+      if {![dict exists $row out] || [dict get $row out] eq {}} { return {} }
+      set outv [dict get $row out]
+      set d {}
+      catch {
+        set h [ase::backend_hook $sim out_decompose]
+        if {$h ne {}} { set d [$h $outv] }
+      }
+      if {[lindex $d 0] eq {current}} {
+        return [list fatal \
+          "a noise analysis measures a VOLTAGE, and '$outv' is a current" \
+          "name a node, as `v(out)` or `v(out,ref)`"]
+      }
+      if {$d eq {malformed}} {
+        return [list fatal \
+          "'$outv' is not a node voltage a noise analysis can measure" \
+          "write it as `v(out)` or `v(out,ref)`"]
+      }
+      if {[lindex $d 0] ne {voltage}} { return {} }
+      set miss {}
+      foreach nd [lrange $d 1 end] {
+        if {$nd eq {0}} { continue }
+        set seen 0
+        dict for {sc sd} [dict get $facts nodes] {
+          foreach nn [dict keys [dict get $sd nodes]] {
+            if {[string equal -nocase $nn $nd]} { set seen 1 ; break }
+          }
+          if {$seen} break
+        }
+        if {!$seen} { lappend miss $nd }
+      }
+      if {![llength $miss]} { return {} }
+      return [list blocked \
+        "this circuit has no '[join $miss {' and no '}]' for the noise analysis\
+ to measure, and ngspice answers a missing node with a full spectrum of\
+ numbers rather than failing" \
+        "name a node this netlist has"]
+    }
+    noise_insrc {
+      # ⚠ THREE DISTINCT REFUSALS, AND THE THIRD IS THE ONE `ac_source` CANNOT
+      # MAKE. MEASURED 2026-09-12 on both binaries:
+      #
+      #   noise v(mid) vnope … -> rc 1 `Noise input source vnope not in circuit`
+      #   noise v(mid) r1    … -> rc 1 `… r1 is not of proper type`
+      #   noise v(mid) v2    … -> rc 1 `… v2 has no AC value`   <- V2 IS a
+      #                           source, and the deck may hold ten others that
+      #                           DO carry `ac`, so `ac_source` is satisfied and
+      #                           the run still dies.
+      #
+      # All three abort the run (`E_NOTFOUND` / `E_NOACINPUT`), and what the
+      # user actually reads is ngspice's `doAnalyses: ac input not found`
+      # (`sperror.c:105`), which names neither the analysis nor the source.
+      if {![dict exists $row insrc] || [dict get $row insrc] eq {}} { return {} }
+      set nm [dict get $row insrc]
+      dict for {inst rec} [dict get $facts sources] {
+        if {![string equal -nocase $inst $nm]} { continue }
+        if {[dict exists $rec ac]} { return {} }
+        return [list blocked \
+          "'$nm' carries no AC value, and a noise analysis is referred to its\
+ input source's AC magnitude" \
+          "put `ac 1` on '$nm' (any magnitude will do)"]
+      }
+      set seen 0
+      dict for {sc sd} [dict get $facts nodes] {
+        foreach dn [dict keys [dict get $sd devs]] {
+          if {[string equal -nocase $dn $nm]} { set seen 1 ; break }
+        }
+        if {$seen} break
+      }
+      if {$seen} {
+        return [list blocked \
+          "'$nm' is not an independent source, and noise can only be referred\
+ to one" \
+          "name a voltage source or a current source carrying `ac`"]
+      }
+      return [list blocked \
+        "this circuit has no '$nm' to refer the noise to" \
+        "name a voltage source or a current source carrying `ac`"]
+    }
+    noise_klu {
+      # ⚠ ngspice REFUSING ITSELF, CLEANLY, AND NAMING THE FIX -- so ASE-L says
+      # the same words earlier. `noisean.c:73-78` returns `E_UNSUPP` under
+      # `CKTkluMODE`. MEASURED 2026-09-12 on both binaries with this tree's own
+      # `sim_status` guard: `Error: Noise simulation is not (yet) supported with
+      # 'option KLU'. Use 'option sparse' instead.`, rc 1, RUN-FAILED.
+      #
+      # ⚠ `fatal` FOR `pz_klu`'s REASON: the guard's `quit 1` fires and every
+      # analysis after this one in the deck silently does not happen. And it
+      # rests on the bench's own options, not on the netlist, so the static
+      # demotion never touches it.
+      dict for {on ov} $opts {
+        if {[string equal -nocase $on klu] && $ov ne {0}} {
+          return [list fatal \
+            "ngspice does not support noise analysis under the KLU solver" \
+            "select the `sparse` solver for this run"]
+        }
+      }
+      return {}
+    }
+    sens_klu {
+      # ⚠ THE ONE CROSS-RULE IN THIS REGISTRY THAT IS MODE-DEPENDENT, AND THE
+      # MODE IS THE DIFFERENCE BETWEEN rc 0 AND A SIGSEGV. MEASURED 2026-09-12
+      # on the fork AND on apt 45.2:
+      #
+      #   .options klu + sens v(mid) r1 ac dec 1 1k 10k -> rc 139, SIGSEGV
+      #   .options klu + sens v(mid) r1 dc              -> rc 0, and the numbers
+      #                                        are BYTE-FOR-BYTE the sparse ones
+      #
+      # `cktsens.c:97-105`'s guard is COMMENTED OUT -- and note what the
+      # commented guard would have refused: ALL sensitivity under KLU, DC
+      # included. DC under KLU is measurably safe, so refusing it would refuse a
+      # run that works. That is why this fires on the AC mode alone, and it is
+      # only expressible because the mode is a modelled field rather than free
+      # text.
+      #
+      # ⚠ A SIGSEGV IS NOT `RUN-FAILED`. The `$sim_status` guard never runs --
+      # the process is gone -- so nothing downstream can say what happened.
+      if {![string equal -nocase [ase::field_value $sim $type $row mode] ac]} {
+        return {}
+      }
+      dict for {on ov} $opts {
+        if {[string equal -nocase $on klu] && $ov ne {0}} {
+          return [list fatal \
+            "AC sensitivity crashes ngspice outright under the KLU solver --\
+ the process dies and nothing is written" \
+            "select the `sparse` solver for this run, or use the DC mode, which\
+ is safe under KLU"]
+        }
+      }
+      return {}
+    }
+    vecsaves {
+      # ⚠ AN ANALYSIS WHOSE RESULT VECTORS ARE NOT NETLIST NAMES CANNOT RUN
+      # UNDER A SAVE LIST MADE OF NETLIST NAMES, AND ASE-L's OUTPUTS PANE MAKES
+      # EXACTLY SUCH A LIST. This is APPENDIX §7.5.2's starvation, which that
+      # section assigns to "Stage 6's precondition" by name. MEASURED
+      # 2026-09-12 on the fork AND on apt 45.2, one analysis per deck:
+      #
+      #   no save card at all        + noise -> rc 0, both plots
+      #   .save all                  + noise -> rc 0, both plots
+      #   .save all / .save v(mid)   + noise -> rc 0, both plots
+      #   .save v(mid)               + noise -> rc 1, `Error: no data saved for
+      #                                 Noise analysis; analysis not run`,
+      #                                 $sim_status 1, `Plotname: constants`
+      #   .save v(mid)               + tf    -> rc 1, the same shape
+      #   .save v(mid)               + sens  -> rc 1, the same shape
+      #
+      # ⚠ THE VECTOR NAMES ARE THE REASON, NOT THE NARROWING. `onoise_spectrum`,
+      # `onoise_total`, `Transfer_function` and `r1:r` are not nodes, so a
+      # netlist-derived save list can never contain them -- and MEASURED, a save
+      # list that names them EXPLICITLY runs fine. `pz` is the exception that
+      # proves it: its results are `pole(n)`/`zero(n)`, and it survives a
+      # narrowed save (APPENDIX §7.5.2).
+      #
+      # ⚠ IT IS FOUND ON THREE ENTRIES, TWO OF WHICH ARE STAGE 5's. `tf` and
+      # `sens` shipped at issues 1426 and 1428 with this defect live; the
+      # measurement above is what put it in reach, and leaving it on two entries
+      # because of a stage boundary would leave a user's ordinary bench -- one
+      # saved output is enough -- failing with a message that names no cause.
+      #
+      # ⚠ `fatal` FOR `pz_klu`'s REASON: $sim_status is 1, the guard's `quit 1`
+      # fires, and every analysis after this one in the deck silently does not
+      # happen. And it rests on the BENCH's own keys, never on the netlist, so
+      # there is no blind spot and no false refusal to demote.
+      #
+      # ⚠ IT STANDS DOWN FOR `save_op_params`, WHICH IS A MISSED REFUSAL AND
+      # NOT A FALSE ONE. Every arm of render_deck's operating-point tier emits
+      # its own deck-level `.save all` leader (guard G-LEADER, issue 0964), so a
+      # bench with the tick on is rescued -- unless its captured block is empty,
+      # in which case this stands down where it could have spoken. "A FALSE
+      # REFUSAL IS WORSE THAN A MISSED ONE" is ase::analysis_needs' own rule.
+      if {$state eq {}} { return {} }
+      if {[ase::state_get $state save_all_v 0] eq {1}} { return {} }
+      if {[ase::state_get $state save_op_params 0] eq {1}} { return {} }
+      set nsave 0
+      foreach o [ase::state_get $state outputs] {
+        if {[ase::state_get $o save 0] ne {1}} { continue }
+        if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
+        incr nsave
+      }
+      if {$nsave == 0} { return {} }
+      # ⚠ AND THE VERBATIM HATCH RESCUES IT TOO, which is why this walks every
+      # enabled row rather than only the one being judged. Issue 1419's `x` key
+      # puts lines into `.control` above their own analysis, and MEASURED
+      # 2026-09-12 on both binaries a `save all` COMMAND there undoes a deck-level
+      # `.save v(mid)`: `noise` runs, rc 0, both plots. A user who knows this is
+      # the user least deserving of a refusal.
+      foreach arow [ase::state_get $state analyses] {
+        if {[ase::state_get $arow enabled 0] ne {1}} { continue }
+        foreach xl [ase::analysis_verbatim $arow] {
+          if {[regexp {^[ \t]*save[ \t]+all\M} $xl]} { return {} }
+        }
+      }
+      return [list fatal \
+        "this bench saves $nsave named output[expr {$nsave == 1 ? {} : {s}}] and\
+ nothing else, and a $type analysis answers in vectors that are not netlist\
+ names -- ngspice refuses to run it at all and every analysis after it in the\
+ deck is abandoned with it" \
+        "tick Save all voltages, or clear the per-output Save ticks so the deck\
+ carries no save list"]
+    }
+    disto_saves {
+      # ⚠ THE SHARPEST MEASURED DEFECT IN THIS WHOLE SURFACE, AND MAKING `disto`
+      # RENDERABLE IS WHAT PUT IT IN REACH. `DISTOan` never captures
+      # `OUTpBeginPlot`'s return at any of its FIVE output-plot sites
+      # (`distoan.c:516, 540, 563, 584, 606`), so a `beginPlot()` that returned
+      # `E_NOTFOUND` leaves `acPlot` NULL and the next `OUTattributes` walks it.
+      #
+      # ⚠ THE TRIGGER IS "THE SAVE LIST RESOLVES TO NOTHING", NOT "A SAVE IS
+      # WRONG" AND NOT "THERE IS NO SAVE". MEASURED 2026-09-12 on the fork AND
+      # on apt 45.2, through ASE-L's own deck shape -- `.save` DOT CARDS above
+      # `.control`, which is what this file emits for an output row:
+      #
+      #   .save v(nosuchnode)                      + disto -> rc 139 SIGSEGV
+      #   .save v(nosuchnode) / .save v(alsonone)  + disto -> rc 139 SIGSEGV
+      #   .save v(mid) / .save v(nosuchnode)       + disto -> rc 0
+      #   .save v(nosuchnode) / .save v(mid)       + disto -> rc 0
+      #   .save all / .save v(nosuchnode)          + disto -> rc 0
+      #   no save card at all                      + disto -> rc 0
+      #   .save @m.x1.m1[id] (absent device)       + disto -> rc 0
+      #
+      # So `design-C`'s proposed refusal -- "`disto` enabled AND zero saved
+      # outputs" -- would refuse the deck on the last line, which works.
+      #
+      # ⚠ AND `.save i(vnope)` CRASHES TOO: the branch current of a source that
+      # is not there resolves to nothing exactly as a missing node does.
+      #
+      # ⚠ THIS IS THE ONE PRECONDITION THAT READS THE BENCH'S OUTPUT ROWS RATHER
+      # THAN THE ROW IT IS ASKED ABOUT, which is why `ase::needs_eval` takes the
+      # state at all. Without a state it answers {} -- a reader that cannot see
+      # the save list may not refuse a run because of it.
+      if {$state eq {}} { return {} }
+      if {[ase::state_get $state save_all_v 0] eq {1}} { return {} }
+      set nsave 0
+      set resolved 0
+      foreach o [ase::state_get $state outputs] {
+        if {[ase::state_get $o save 0] ne {1}} { continue }
+        if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
+        incr nsave
+        set ex [string trim [dict get $o expr]]
+        # ⚠ ANYTHING THIS READER CANNOT TAKE APART COUNTS AS RESOLVING. An
+        # `@dev[param]` request, a bus bit, an expression -- the refusal below
+        # is fatal, so every doubt has to fall on the side of letting the run
+        # start. A false refusal here costs a user their own simulator.
+        set d {}
+        catch {
+          set h [ase::backend_hook $sim out_decompose]
+          if {$h ne {}} { set d [$h $ex] }
+        }
+        if {[lindex $d 0] ne {voltage} && [lindex $d 0] ne {current}} {
+          incr resolved ; continue
+        }
+        set ok 1
+        if {[lindex $d 0] eq {voltage}} {
+          foreach nd [lrange $d 1 end] {
+            if {$nd eq {0}} { continue }
+            set seen 0
+            dict for {sc sd} [dict get $facts nodes] {
+              foreach nn [dict keys [dict get $sd nodes]] {
+                if {[string equal -nocase $nn $nd]} { set seen 1 ; break }
+              }
+              if {$seen} break
+            }
+            if {!$seen} { set ok 0 }
+          }
+        } else {
+          set nm [lindex $d 1]
+          set seen 0
+          dict for {inst rec} [dict get $facts sources] {
+            if {[string equal -nocase $inst $nm]} { set seen 1 ; break }
+          }
+          if {!$seen} { set ok 0 }
+        }
+        if {$ok} { incr resolved }
+      }
+      if {$nsave == 0 || $resolved > 0} { return {} }
+      return [list fatal \
+        "every saved output names something this circuit does not have (read\
+ from the netlist text, which cannot see inside an .include), and a distortion\
+ analysis does not fail on that -- ngspice SEGFAULTS, so there is no exit\
+ status, no log and no results file to explain it" \
+        "correct the output names, or tick Save all voltages, or switch the\
+ distortion analysis off"]
+    }
+    disto_f1src {
+      # ⚠ THE SILENT ZEROS, MEASURED. `CKTdisto`'s `D_RHSF1` walk
+      # (`cktdisto.c:65-166`) looks for a source carrying `distof1`; with none
+      # it stamps nothing and the analysis runs to completion. MEASURED
+      # 2026-09-12 on both binaries, the same BJT deck with and without
+      # `distof1 1 0` on V1: rc 0 both times, three frequency rows both times,
+      # NOTHING on either stream to say the excitation was missing.
+      #
+      # ⚠ `distof1` IS `IP` -- INPUT-ONLY (`vsrc.c:50-51`) -- so `show` cannot
+      # read it back and the netlist card is the only place it can be seen. That
+      # is why this rests on ase::netlist_facts rather than on a run.
+      dict for {inst rec} [dict get $facts sources] {
+        if {[dict exists $rec distof1]} { return {} }
+      }
+      return [list blocked \
+        "no source in this circuit carries a `distof1` excitation, and a\
+ distortion analysis without one runs to completion and answers zeros" \
+        "add `distof1 <mag> <phase>` to the input source (phase is in DEGREES)"]
+    }
+    disto_f2src {
+      # ⚠ THE INTERMODULATION MODE NEEDS A SECOND EXCITATION AND SAYS SO LATE.
+      # Setting `f2overf1` also sets `Df2wanted` (`dsetparm.c:60-63`), and
+      # `DISTOan` then returns `E_NOF2SRC`. MEASURED 2026-09-12 on both
+      # binaries, `disto dec 2 1k 10k 0.9` on a deck whose V1 carries `distof1`
+      # and no `distof2`: rc 1, and what reaches the user is
+      # `Error: incomplete or empty netlist`, which names nothing at all.
+      if {[string trim [ase::field_value $sim $type $row f2overf1]] eq {}} {
+        return {}
+      }
+      dict for {inst rec} [dict get $facts sources] {
+        if {[dict exists $rec distof2]} { return {} }
+      }
+      return [list blocked \
+        "this row asks for intermodulation, which needs a second excitation,\
+ and no source in this circuit carries a `distof2`" \
+        "add `distof2 <mag> <phase>` to a source, or clear the F2/F1 ratio to\
+ measure harmonics instead"]
+    }
     cider_klu {
       # ⚠ FATAL, AND IT IS NOT A STYLE OPINION. A CIDER device under the KLU
       # solver makes ngspice `exit(1)` -- not an error return, an EXIT -- so the
@@ -7335,7 +7937,7 @@ proc ase::analysis_precheck {sim state facts} {
   set out [dict create]
   foreach row [ase::state_get $state analyses] {
     if {[ase::state_get $row enabled 0] ne {1}} { continue }
-    set n [ase::analysis_needs $sim $row $facts $opts]
+    set n [ase::analysis_needs $sim $row $facts $opts $state]
     if {[llength $n]} { dict set out [ase::state_get $row type] $n }
   }
   return $out
@@ -15817,17 +16419,20 @@ $_leg
   # speller's RETURN TYPE, which is free with one implementation and costs every
   # reader afterwards. ngspice's one-element list emits today's exact text.
   proc analysis_types {} {
-  # -- THE FOUR ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
+  # -- THE TWO ANALYSES THIS BUILD MAY HAVE AND THIS ADAPTER CANNOT YET
   # -- DRIVE. Stage 2 (issue 1410) LISTS them so the user can see they
   # exist; Stage 6 gives them an `emit` and makes them runnable.
   #
-  # ⚠ IT WAS SEVEN, AND STAGE 5 TOOK THREE OF THEM: `tf` (issue 1426), `pz`
-  # (issue 1427) and `sens` (issue 1428). The paragraphs below are written
-  # about the ones that are LEFT -- `noise`, `disto`, `sp`, `pss`. Each of the
-  # three departed carries `emitorder`, `fields` and a `role analysis` card, so
-  # every "NO x" below is answered for it in its own block -- with one
-  # exception that is NOT a relaxation and is measured three times over: all
-  # three still declare NO `viewrank`. See there.
+  # ⚠ IT WAS SEVEN, STAGE 5 TOOK THREE AND STAGE 6d TOOK TWO MORE: `tf`
+  # (issue 1426), `pz` (1427), `sens` (1428), then `noise` AND `disto` together
+  # (issue 1432). The paragraphs below are written about the ones that are LEFT
+  # -- `sp` and `pss`, which are also the only two that are `#ifdef`-gated
+  # (`RFSPICE` and `WITH_PSS`), so the crew that empties this list is also the
+  # one that has to deal with a type the user's binary may not have at all.
+  # Each departed entry carries `emitorder`, `fields` and a `role analysis`
+  # card, so every "NO x" below is answered for it in its own block -- with one
+  # exception that is NOT a relaxation and is measured five times over: every
+  # one of them still declares NO `viewrank`. See there.
   # ⚠ THIS COUNT IS THE ONE THING IN THIS BLOCK THAT ROTS. It read SIX after
   # `tf` landed and stayed SIX through `pz`'s commit, while row EM7 of
   # tests/headless/test_ase_core.tcl -- which COUNTS them -- correctly read
@@ -16218,6 +16823,148 @@ $_leg
   # ⚠ NO `seed_enabled`: `ase::state_default` stays at four rows and the 104
   # committed `.state` files keep round-tripping byte-identically. Section CP of
   # tests/headless/test_ase_core.tcl is the row that would notice.
+  #
+  # ─── `noise` (Stage 6d, issue 1432) ──────────────────────────────────
+  #
+  # ⚠ THE FIRST ENTRY IN THIS REGISTRY THAT REALLY CAPTURES TWO PLOTS, which
+  # makes it the first production exerciser of issue 1430's `setplot previous`
+  # walk -- 1430's own correction C64 records that it shipped without one.
+  #
+  # ⚠ THE `plots` LIST IS IN **WRITE** ORDER, WHICH IS REVERSE CREATION ORDER,
+  # AND THAT REFUTES `ase::analysis_plots`' OWN HEADER AS 1430 LEFT IT. The walk
+  # steps BACKWARDS from the plot the analysis left current, and
+  # ase::reconcile_plots compares its prediction POSITIONALLY against a sidecar
+  # written in write order. MEASURED 2026-09-12 on both binaries:
+  #
+  #   noise dec 10 1 10k  ->  W0 Integrated Noise
+  #                           W1 Noise Spectral Density Curves
+  #                           W2 constants   (saturated -- the walk stops at 2)
+  #
+  # A registry listing the spectrum first passes every static row and MISLABELS
+  # EVERY REAL RUN. Row MP19 of tests/headless/test_ase_core.tcl is the reverse
+  # fixture that says so.
+  #
+  # ⚠ THE `Integrated Noise` PLOT'S `when` IS A **HOOK**, BECAUSE PLAN.md 6b's
+  # PREDICATE IS WRONG. The plan writes `when {expr {start ne stop}}`. MEASURED
+  # on both binaries: `noise v(mid) v1 lin 1 1k 10k` has start != stop and
+  # produces ONE plot. The rule is "more than one frequency point" and it is
+  # ngspice's own stepping arithmetic (`noisean.c:93-109`, `:145-168`), which is
+  # CONTENT (D34-D37) -- see `noise_integrated` below. Had the plan's predicate
+  # shipped, every `lin 1` run would have over-walked, and an over-walk does not
+  # fail: it appends the twelve mathematical constants at rc 0.
+  #
+  # ⚠ BOTH CAPTURED `select`s CARRY A STAR, AND THE STAR IS LOAD-BEARING.
+  # `.options sqrnoise` RENAMES BOTH PLOTS -- measured, both binaries:
+  # `Noise Spectral Density Curves - (V^2 or A^2)/Hz` and `Integrated Noise -
+  # V^2 or A^2`. ase::reconcile_plots has matched `select` with
+  # `string match -nocase` since 1430, so an exact literal would report
+  # `mislabel` on every sqrnoise run -- for a run in which nothing went wrong.
+  #
+  # ⚠ `contributors` IS A CHECKBOX NAMED FOR WHAT THE USER WANTS AND `ptssum`
+  # IS THE RAW PARAMETER HIDDEN BEHIND IT, which is PLAN.md §6d's shape and the
+  # single best argument for the whole registry. `ptspersummary` is a spectrum
+  # DECIMATION factor whose SIDE EFFECT is the per-device contributor table
+  # (`resnoise.c:68`, `cktnoise.c:102-103`); nobody should have to know that.
+  # The `depends {contributors 1}` gate is what keeps the argument out of every
+  # deck that did not ask for one -- checked BEFORE the default, so `ptssum`'s
+  # own `default 1` cannot leak in.
+  #
+  # ⚠ THE OUTPUT IS A VOLTAGE AND ONLY A VOLTAGE, unlike `tf`'s and `sens`'s.
+  # MEASURED: `noise i(v1) v1 dec 2 1k 10k` -> rc 1, `Error: bad syntax [.noise
+  # v(OUT) SRC {DEC OCT LIN} NP FSTART FSTOP <PTSPRSUM>]`. And like `tf` and
+  # `sens` it does NOT validate a missing node: `noise v(nosuchnode) v1 …` ->
+  # rc 0 and a full two-plot result, silently. `noise_out` says both.
+  #
+  # ⚠ `noise_insrc` MAKES A REFUSAL `ac_source` CANNOT. MEASURED: `noise
+  # v(mid) v2 …` where V2 is a DC-only source -> rc 1, `Noise input source v2
+  # has no AC value` -- and a deck with ten other AC sources satisfies
+  # `ac_source` while that run still dies.
+  #
+  # ⚠ NO `viewrank`, FOR THE FOURTH TIME AND WITH A NEW REASON. `src/save.c`'s
+  # read_dataset() DOES have a `noise spectral density curves` arm, so unlike
+  # `tf`, `pz` and `sens` a `noise` type name is not simply unmapped. The reason
+  # is one step on: the same function's `integrated noise` arm answers **`op`**
+  # unless a spectrum record preceded it, and this walk writes `Integrated
+  # Noise` FIRST. Which plot a multi-plot file offers a surface is ⚖ R3's
+  # reader question, not the writer's, and `ase::attach_dbs` is in
+  # src/ase_window.tcl, which Stage 6d may not touch.
+  #
+  # ⚠ NO `seed_enabled`: four seeded rows, 104 byte-identical `.state` files.
+  #
+  # ─── `disto` (Stage 6d, issue 1432) ─────────────────────────────────
+  #
+  # ⚠ TWO PLOTS XOR THREE, AND THE SWITCH IS ONE OPTIONAL FIELD. Setting
+  # `f2overf1` also sets `Df2wanted` (`dsetparm.c:60-63`) and changes the whole
+  # analysis from harmonic to intermodulation. MEASURED on both binaries:
+  #
+  #   disto dec 2 1k 10k      -> DISTORTION - 2nd harmonic, - 3rd harmonic
+  #   disto dec 2 1k 10k 0.9  -> - IM: f1+f2, - IM: f1-f2, - IM: 2f1-f2
+  #
+  # never both sets and never five. That is what `{field f2overf1}` and
+  # `{nofield f2overf1}` say, and it is why those two `when` forms exist: the
+  # mode is a FIELD of the row, not an option of the bench.
+  # Both groups are in WRITE order, for `noise`'s reason.
+  #
+  # ⚠ THE SAVE-LIST SEGFAULT IS THE SHARPEST DEFECT IN THIS WHOLE SURFACE AND
+  # MAKING THIS ENTRY RENDERABLE IS WHAT PUT IT IN REACH. `DISTOan` never
+  # captures `OUTpBeginPlot`'s return at any of its FIVE output-plot sites
+  # (`distoan.c:516, 540, 563, 584, 606`). MEASURED on both binaries through
+  # THIS file's own deck shape -- `.save` dot cards above `.control`:
+  # a save list that resolves to NOTHING -> rc 139, SIGSEGV, no log, no raw, no
+  # exit status to explain it. One save that resolves -> rc 0. No save at all ->
+  # rc 0. `disto_saves` is `fatal`, which is what routes it through all three
+  # refusal tiers including the one `set ase_preflight 0` cannot open.
+  #
+  # ⚠ AND A DECK WITH NO `distof1` SOURCE RUNS TO COMPLETION AND ANSWERS ZEROS,
+  # silently, rc 0 (`cktdisto.c:65-166`). `distof1` is declared `IP` --
+  # input-only, "unquestionable" (`vsrc.c:50-51`) -- so `show` cannot read it
+  # back and the netlist card is the only place it is visible at all. That is
+  # why `disto_f1src` rests on ase::netlist_facts.
+  #
+  # ⚠ NO `viewrank` AND NO `seed_enabled`, for the reasons above.
+  #
+  # ─── `sens`, THE AC MODE (Stage 6d, issue 1432) ────────────────────
+  #
+  # ⚠ TWO `plots` ROWS WITH THE SAME `select` AND TWO DIFFERENT DESTINATIONS.
+  # MEASURED on both binaries: `sens … dc` and `sens … ac` BOTH write
+  # `Plotname: Sensitivity Analysis`, and keepopinfo adds nothing to either. But
+  # the DC plot is `Flags: real`, one row, no scale -- a table -- and the AC one
+  # is `Flags: complex` over `frequency` -- a sweep. APPENDIX §6.2 routes them
+  # accordingly, and D30 makes that routing a load-time requirement, so the
+  # entry declares one row per mode with mutually exclusive `{hook …}` `when`s.
+  # Exactly one is ever live, so the walk still writes once.
+  #
+  # ⚠ THE SWEEP FIELD OFFERS `dec` AND NOTHING ELSE, AND THAT REFUTES ISSUE
+  # 1428's OWN RECOMMENDATION OF `{dec oct}`. `lin` was already known broken --
+  # `inc_freq` (`cktsens.c:829-837`) tests against the `#define LINEAR 3` pulled
+  # in from `noisedef.h` while `SENS_LINEAR` is 15, so the sweep is always
+  # geometric. ⚠ `oct` IS BROKEN TOO AND NOBODY HAD MEASURED IT: `count_steps`'
+  # OCTAVE arm divides by `M_LOG2E` (log2 e = 1.4427) where an octave count
+  # needs `M_LN2` (0.6931), so it yields ~48% of the points asked for. MEASURED
+  # on both binaries:
+  #
+  #   sens v(mid) r1 ac oct 2 1k 4k  -> 2 points: 1000 1414   [ac oct: 5 points]
+  #   sens v(mid) r1 ac oct 4 1k 2k  -> 2 points              [ac oct: 5 points]
+  #   sens v(mid) r1 ac oct 1 1k 4k  -> 1 point               [ac oct: 3 points]
+  #   sens v(mid) r1 ac dec N …      -> identical to `ac dec N`
+  #
+  # A restriction the form CANNOT OFFER is better than a rule the form offers
+  # and then refuses, which is the shape issue 1428 said this mode would take.
+  #
+  # ⚠ THE FOUR AC FIELDS ARE GATED BY `depends {mode ac}`, NOT BY `required 0`.
+  # They are genuinely REQUIRED in the AC mode and must not reach a DC deck at
+  # all -- a stored `points 2` leaking into `sens v(mid) dc 2` would be a
+  # positional argument ngspice reads as something else entirely. The gate is
+  # what makes "required in one mode" expressible, and it is why the DC line is
+  # byte-identical to issue 1428's: `@mode?` resolves its `default dc` and the
+  # four slots contribute nothing.
+  #
+  # ⚠ AND THE KLU CROSS-RULE IS MODE-DEPENDENT, which is only expressible
+  # because the mode is modelled. MEASURED on both binaries: `.options klu` with
+  # `sens … ac` -> rc 139 SIGSEGV; with `sens … dc` -> rc 0 and the numbers are
+  # BYTE-FOR-BYTE the sparse ones. `cktsens.c:97-105`'s guard is commented out,
+  # and what the commented guard would have refused is ALL sensitivity under
+  # KLU -- including the DC case that demonstrably works.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -16258,7 +17005,7 @@ $_leg
         emit   {{role analysis tmpl {ac @sweep? @points @start @stop}}} \
         results {viewer {kind sweep}} \
         plots  {{select {AC Analysis} role sweep results viewer label ac}
-                {select {AC Operating Point} role opinfo results viewer
+                {select {AC Operating Point} role opinfo results none
                  when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
@@ -16274,11 +17021,39 @@ $_leg
         results {viewer {kind sweep}} \
         plots  {{select {Transient Analysis} role sweep results viewer label tran}}] \
       noise [dict create \
-        label noise  baseline 1  registered 1 \
-        emit {{role probe tmpl {noise}}}] \
+        label noise  baseline 1  registered 1  emitorder 40 \
+        needs  {noise_out noise_insrc noise_klu vecsaves cider_klu} \
+        fields {{name out    kind outvar required 1 label {Output}} \
+                {name insrc  kind source required 1 label {Input source}} \
+                {name sweep  kind mode required 0 default dec values {dec oct lin} \
+                             label {Sweep type} relabels points} \
+                {name points kind int  required 1 min 1 label {Points per decade} \
+                             labels {dec {Points per decade} \
+                                     oct {Points per octave} \
+                                     lin {Number of points (1 gives ONE point)}}} \
+                {name start  kind freq required 1 label {Start frequency} unit Hz} \
+                {name stop   kind freq required 1 label {Stop frequency} unit Hz} \
+                {name contributors kind bool advanced 1 \
+                             label {Per-device contributor table}} \
+                {name ptssum kind int advanced 1 default 1 min 1 \
+                             depends {contributors 1} \
+                             label {Report every N points}}} \
+        emit   {{role analysis \
+                 tmpl {noise @out @insrc @sweep? @points @start @stop @ptssum?}}} \
+        results {viewer {kind sweep} value {kind scalars} \
+                 table {kind contributors}} \
+        plots  {{select {Integrated Noise*} role scalars results value \
+                 when {hook ::ase::backend::ngspice::noise_integrated} \
+                 label {noise integrated} \
+                 vectors ::ase::backend::ngspice::noise_total_vectors} \
+                {select {Noise Spectral Density Curves*} role sweep results viewer \
+                 label {noise spectral density} \
+                 contributors ::ase::backend::ngspice::noise_contributor_kind} \
+                {select {NOISE Operating Point} role opinfo results none \
+                 when {opt keepopinfo} label {noise operating point}}}] \
       tf [dict create \
         label tf  baseline 1  registered 1  emitorder 50 \
-        needs  {tf_out tf_insrc cider_klu} \
+        needs  {tf_out tf_insrc vecsaves cider_klu} \
         fields {{name out   kind outvar required 1 label {Output}} \
                 {name insrc kind source required 1 label {Input source}}} \
         emit   {{role analysis tmpl {tf @out @insrc}}} \
@@ -16303,20 +17078,62 @@ $_leg
         results {table {kind roots}} \
         plots  {{select {Pole-Zero Analysis} role table results table label pz \
                  rootname ::ase::backend::ngspice::pz_root_kind} \
-                {select {Distortion Operating Point} role opinfo results viewer \
+                {select {Distortion Operating Point} role opinfo results none \
                  when {opt keepopinfo} label {pz operating point}}}] \
       sens [dict create \
         label sens  baseline 1  registered 1  emitorder 70 \
-        needs  {sens_out sens_filters cider_klu} \
+        needs  {sens_out sens_filters sens_klu vecsaves cider_klu} \
         fields {{name out     kind outvar required 1 label {Output}} \
-                {name filters kind filter required 0 label {Parameters}}} \
-        emit   {{role analysis tmpl {sens @out @filters? dc}}} \
-        results {table {kind params}} \
+                {name filters kind filter required 0 label {Parameters}} \
+                {name mode    kind mode required 0 default dc values {dc ac} \
+                              label {Mode}} \
+                {name sweep   kind mode required 1 default dec values {dec} \
+                              depends {mode ac} label {Sweep type}} \
+                {name points  kind int required 1 min 1 depends {mode ac} \
+                              label {Points per decade}} \
+                {name start   kind freq required 1 depends {mode ac} \
+                              label {Start frequency} unit Hz} \
+                {name stop    kind freq required 1 depends {mode ac} \
+                              label {Stop frequency} unit Hz}} \
+        emit   {{role analysis \
+                 tmpl {sens @out @filters? @mode? @sweep? @points? @start? @stop?}}} \
+        results {table {kind params} viewer {kind sweep}} \
         plots  {{select {Sensitivity Analysis} role table results table \
-                 label sens paramname ::ase::backend::ngspice::sens_param_kind}}] \
+                 when {hook ::ase::backend::ngspice::sens_is_dc} \
+                 label {sens dc} \
+                 paramname ::ase::backend::ngspice::sens_param_kind} \
+                {select {Sensitivity Analysis} role sweep results viewer \
+                 when {hook ::ase::backend::ngspice::sens_is_ac} \
+                 label {sens ac} \
+                 paramname ::ase::backend::ngspice::sens_param_kind}}] \
       disto [dict create \
-        label disto  baseline 1  registered 1 \
-        emit {{role probe tmpl {disto}}}] \
+        label disto  baseline 1  registered 1  emitorder 80 \
+        needs  {disto_saves disto_f1src disto_f2src cider_klu} \
+        fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
+                             label {Sweep type} relabels points} \
+                {name points kind int  required 1 min 1 label {Points per decade} \
+                             labels {dec {Points per decade} \
+                                     oct {Points per octave} \
+                                     lin {Number of points}}} \
+                {name start  kind freq required 1 label {Start frequency} unit Hz} \
+                {name stop   kind freq required 1 label {Stop frequency} unit Hz} \
+                {name f2overf1 kind real required 0 advanced 1 \
+                             label {F2/F1 ratio (switches to intermodulation)}}} \
+        emit   {{role analysis \
+                 tmpl {disto @sweep? @points @start @stop @f2overf1?}}} \
+        results {viewer {kind sweep}} \
+        plots  {{select {DISTORTION - 3rd harmonic} role sweep results viewer \
+                 when {nofield f2overf1} label {disto 3rd harmonic}} \
+                {select {DISTORTION - 2nd harmonic} role sweep results viewer \
+                 when {nofield f2overf1} label {disto 2nd harmonic}} \
+                {select {DISTORTION - IM: 2f1-f2} role sweep results viewer \
+                 when {field f2overf1} label {disto IM 2f1-f2}} \
+                {select {DISTORTION - IM: f1-f2} role sweep results viewer \
+                 when {field f2overf1} label {disto IM f1-f2}} \
+                {select {DISTORTION - IM: f1+f2} role sweep results viewer \
+                 when {field f2overf1} label {disto IM f1+f2}} \
+                {select {Distortion Operating Point} role opinfo results none \
+                 when {opt keepopinfo} label {disto operating point}}}] \
       sp [dict create \
         label sp  baseline 0  registered 1 \
         emit {{role probe tmpl {sp}}}] \
@@ -16566,6 +17383,210 @@ $_leg
     set par  [string range $n [expr {$i + 1}] end]
     if {$inst eq {} || $par eq {} || [string first : $par] >= 0} { return {} }
     return [list model $inst $par]
+  }
+
+  # ─── WHETHER A `noise` ROW PRODUCES AN `Integrated Noise` PLOT (issue 1432) ─
+  # Reached through the `{hook …}` form of a `plots` row's `when`. CONTENT
+  # (D34-D37): the answer is ngspice's own frequency-stepping arithmetic, and a
+  # schema that owned it would be asserting how `lin 1` and `dec 1` place
+  # points.
+  #
+  # ⚠ PLAN.md 6b SPECIFIES `when {expr {start ne stop}}` AND IT IS WRONG, IN
+  # THE DIRECTION THAT SILENTLY CORRUPTS THE RESULTS FILE. MEASURED 2026-09-12
+  # on the fork (`ngspice-46+`) AND on apt 45.2, one analysis per deck, walked
+  # with `setplot previous`:
+  #
+  #     noise v(mid) v1 lin 1 1k 10k   -> ONE plot   <-- start NE stop
+  #     noise v(mid) v1 lin 5 1k 1k    -> ONE plot
+  #     noise v(mid) v1 dec 10 1k 1k   -> ONE plot
+  #     noise v(mid) v1 lin 2 1k 10k   -> TWO plots
+  #     noise v(mid) v1 dec 1 1k 1001  -> TWO plots
+  #     noise v(mid) v1 oct 1 1k 2k    -> TWO plots
+  #
+  # A `lin 1` row with two different frequencies has start != stop and no
+  # `Integrated Noise`. Had the plan's predicate shipped, every such run would
+  # have declared two captures and walked one step too far -- and an over-walk
+  # does not fail: `setplot previous` saturates on the `constants` plot and the
+  # next `write` appends ngspice's twelve mathematical constants at rc 0, with
+  # only a stderr warning.
+  #
+  # ⚠ THE REAL RULE IS "MORE THAN ONE FREQUENCY POINT", and it has exactly two
+  # ways of being one: `noisean.c:93-109` collapses start ≈ stop to a single
+  # frequency (`Noise measurement at a single frequency %g only!`, measured on
+  # both binaries), and `noisean.c:145-168`'s LINEAR arm divides by `N-1`, so
+  # `N == 1` is one point. `dec` and `oct` step by a RATIO and always reach a
+  # second point whenever start != stop -- `dec 1 1000 1001` was measured to,
+  # which is why this is not a point-count estimate.
+  #
+  # ⚠ IT ANSWERS 1 WHEN IT CANNOT TELL, AND THAT IS THE WRONG-LOOKING
+  # DIRECTION ON PURPOSE. It is only reached for a row the commit door has
+  # already accepted, so an unreadable number here means a hand-edited `.state`
+  # -- and ase::plot_when turns a RAISE into `unknown`, which excludes the plot.
+  # Answering 1 for an unparseable-but-present pair keeps the common case (a
+  # bench whose numbers use a suffix this table does not know) capturing both
+  # plots rather than silently dropping the scalars.
+  proc noise_integrated {row state {sim {}}} {
+    set sufs [si_suffixes]
+    set st [string trim [::ase::field_value ngspice noise $row start]]
+    set sp [string trim [::ase::field_value ngspice noise $row stop]]
+    if {$st eq {} || $sp eq {}} { return 1 }
+    set a [::ase::si_parse $st $sufs]
+    set b [::ase::si_parse $sp $sufs]
+    if {[llength $a] >= 2 && [llength $b] >= 2 \
+        && [string is double -strict [lindex $a 1]] \
+        && [string is double -strict [lindex $b 1]] \
+        && [lindex $a 1] == [lindex $b 1]} {
+      return 0
+    }
+    if {[string equal -nocase \
+          [::ase::field_value ngspice noise $row sweep] lin]} {
+      set n [::ase::si_parse \
+              [::ase::field_value ngspice noise $row points] $sufs]
+      if {[llength $n] >= 2 && [string is double -strict [lindex $n 1]] \
+          && [lindex $n 1] <= 1} {
+        return 0
+      }
+    }
+    return 1
+  }
+
+  # ─── WHICH MODE A `sens` ROW IS IN (issue 1432) ────────────────────────────
+  # The two modes share ONE `Plotname:` -- `Sensitivity Analysis`, measured for
+  # both -- and route to two DIFFERENT destinations (APPENDIX §6.2: DC to the
+  # result table, AC to the waveform viewer). So the entry declares two `plots`
+  # rows with the same `select` and mutually exclusive `when`s, and these two
+  # procs are what makes them exclusive. The words `dc` and `ac` are ngspice's,
+  # so the predicate is CONTENT.
+  #
+  # ⚠ IT READS THE FIELD THROUGH `field_value`, NOT OFF THE ROW. `mode` declares
+  # `default dc`, so a bench that stores no mode at all emits `dc` -- and a
+  # predicate reading the row directly would answer "neither" for it and leave
+  # the analysis with NO predicted plot. That is `pz`'s `whenskipped` lesson in
+  # a different key.
+  proc sens_is_dc {row state {sim {}}} {
+    return [expr {[string equal -nocase \
+      [::ase::field_value ngspice sens $row mode] ac] ? 0 : 1}]
+  }
+  proc sens_is_ac {row state {sim {}}} {
+    return [expr {[string equal -nocase \
+      [::ase::field_value ngspice sens $row mode] ac] ? 1 : 0}]
+  }
+
+  # ─── THE TWO CIRCUIT-LEVEL SCALARS OF AN `Integrated Noise` PLOT ───────────
+  # Reached through the `vectors` key, exactly as `tf_vectors` is.
+  #
+  # ⚠ IT IS A PROC RATHER THAN THE LITERAL LIST PLAN.md 6b WRITES, AND THE
+  # REASON IS ONE SHAPE PER KEY. `tf`'s `vectors` MUST be a proc (two of its
+  # three names carry the row's own source and output), so a literal list here
+  # would give one opaque key two shapes and oblige the first reader of it --
+  # ⚖ R3's Value column -- to tell them apart. `cktnoise.c:76-82` names these
+  # two and nothing about a row changes them.
+  proc noise_total_vectors {row} {
+    return [list onoise_total inoise_total]
+  }
+
+  # ─── ONE NOISE CONTRIBUTOR VECTOR, READ BACK (issue 1432) ──────────────────
+  # Answers `{output|input <instance> <mechanism>}` with an EMPTY mechanism for
+  # the device total, the single word `ambiguous`, or `{}`. Reached through the
+  # `contributors` key of the `noise` entry's spectrum `plots` row.
+  #
+  # ⚠ THE APPENDIX NAMES ONE PLOT'S SPELLING AND POINTS AT THE OTHER, AND BOTH
+  # EXIST. APPENDIX §2.6 gives the contributor names as
+  # `onoise_total_<inst>_<mech>` while §6.2 routes the contributor table to
+  # "inside the SPECTRUM plot". MEASURED 2026-09-12 on both binaries, one deck
+  # with `rb rc re r9 q1 d1` and `ptspersummary 1`, `display` in each plot:
+  #
+  #     spectrum plot          onoise_r9  onoise_r9_thermal  onoise_q1_ib …
+  #                            onoise_spectrum  inoise_spectrum
+  #     Integrated Noise plot  onoise_total_r9  onoise_total_r9_thermal …
+  #                            onoise_total  inoise_total
+  #
+  # `cktnoise.c` and `resnoise.c:68-82` confirm it: `N_DENS` builds
+  # `onoise_%s%s` and `INT_NOIZ` builds `onoise_total_%s%s`. So BOTH spellings
+  # are real, in different plots, and this reader takes either.
+  #
+  # ⚠ THE EMPTY-SUFFIX ENTRY IS THE DEVICE TOTAL, SO A NAIVE SUM DOUBLE-COUNTS.
+  # `onoise_r9` is `r9`'s whole contribution and `onoise_r9_thermal` is one of
+  # its parts. A table that adds every `onoise_*` row gets twice the answer.
+  #
+  # ⚠ AND `onoise_spectrum` HAS EXACTLY THE SHAPE OF A DEVICE TOTAL. It is the
+  # CIRCUIT's spectrum, not a device called `spectrum`, and a reader splitting
+  # on the first `_` reports it as a contributor and doubles the total a second
+  # time. The four circuit-level names are excluded BY NAME here.
+  #
+  # ⚠ THE DOT FAMILY IS REAL AND IT IS THE MODERN PDK's. `b4noi.c:145-151`
+  # builds `onoise.%s%s` for BSIM4 -- and BSIM3, BSIMSOI and HiSIM do the same
+  # -- so on a sky130 bench every MOS contributor carries dots where every
+  # resistor carries underscores, in one plot.
+  #
+  # ⚠ OSDI'S DEVICE TOTAL CARRIES A TRAILING SPACE, and it is in the source as a
+  # string literal: `osdinoise.c:111-113` passes `" "` as the suffix for
+  # `INT_NOIZ` (and `""` for `N_DENS`). It is handled by the SAME `string trim`
+  # that handles the rawfile's own whitespace, on the line below and again after
+  # the `v(...)` strip -- there is no separate trim for it.
+  #
+  # ⚠ AND THAT SENTENCE IS THE SECOND DRAFT, BECAUSE A SABOTAGE PROVED THE
+  # FIRST ONE WRONG. This proc carried an extra `string trimright` on the
+  # instance-and-mechanism half, written for the OSDI case and commented as
+  # such. Sabotage S32 deleted it and `test_ase_simcaps_0948` stayed at ALL PASS
+  # (199): the leading `string trim` had already taken the space, so the second
+  # trim could never run. A line no fixture can reach is a line that is not
+  # doing the job its comment claims -- it is deleted, and row NV7 now reddens
+  # against the trim that IS load-bearing (sabotage S32r).
+  #
+  # ⚠ AND THE UNDERSCORE SPLIT IS NOT DECIDABLE FROM THE NAME ALONE -- which is
+  # `sens_param_kind`'s finding in this analysis. `onoise_q1_rb` is `q1`'s `rb`
+  # mechanism if the deck has a `q1`, and device `q1_rb`'s total if it has one
+  # of those. So the instance list is a PARAMETER, the longest match wins, and
+  # without it this answers `ambiguous` rather than inventing a split.
+  # `ambiguous` is a word and not `{}` for `out_decompose`'s reason: "I cannot
+  # split this" and "this is not a contributor at all" are different answers and
+  # a table needs to tell them apart.
+  proc noise_contributor_kind {name {insts {}}} {
+    set n [string trim $name]
+    # the rawfile's own `v(…)` wrapper, stripped ONCE, as pz and sens do.
+    regexp -nocase {^v\((.*)\)$} $n -> n
+    set n [string trim $n]
+    set ref {}
+    set rest {}
+    foreach {pfx r} [list onoise_total_ output inoise_total_ input \
+                          onoise_total. output inoise_total. input \
+                          onoise_ output inoise_ input \
+                          onoise. output inoise. input] {
+      if {[string equal -nocase $pfx [string range $n 0 [expr {[string length $pfx] - 1}]]]} {
+        set ref $r
+        set rest [string range $n [string length $pfx] end]
+        break
+      }
+    }
+    if {$ref eq {}} { return {} }
+    # ⚠ THE FOUR CIRCUIT-LEVEL NAMES, WHICH ARE NOT CONTRIBUTORS -- AND TWO OF
+    # THEM SURVIVE THE PREFIX WALK AS THE WORD `total`. `onoise_total` matches
+    # the `onoise_` prefix (there is no trailing `_` for `onoise_total_` to
+    # match), leaving `total`; `onoise_spectrum` leaves `spectrum`. Both are the
+    # CIRCUIT's own number, and a reader that let either through would report a
+    # device called `spectrum` or `total` and double the table's sum.
+    if {[lsearch -exact {spectrum total {}} [string tolower [string trim $rest]]] >= 0} {
+      return {}
+    }
+    if {$rest eq {}} { return {} }
+    set best {}
+    foreach i $insts {
+      set i [string trim $i]
+      if {$i eq {}} { continue }
+      if {![string equal -nocase $i [string range $rest 0 [expr {[string length $i] - 1}]]]} {
+        continue
+      }
+      set tail [string range $rest [string length $i] end]
+      if {$tail ne {} && [string index $tail 0] ne {_} && [string index $tail 0] ne {.}} {
+        continue
+      }
+      if {[string length $i] > [string length $best]} { set best $i }
+    }
+    if {$best eq {}} { return ambiguous }
+    set mech [string range $rest [string length $best] end]
+    if {$mech ne {}} { set mech [string range $mech 1 end] }
+    return [list $ref $best $mech]
   }
 
   proc dc_swkind {name} {

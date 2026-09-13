@@ -52,11 +52,17 @@
 #     at index 0 holding the end-of-run value and 0.0 everywhere else, no
 #     warning, well-formed file. It round-trips exactly under .op only.
 #
-# ⚠ FLOOR: 105 checks, and it only ever goes up. It was 103 until issue 1430
+# ⚠ FLOOR: 106 checks, and it only ever goes up. It was 103 until issue 1430
 # added E5b/E5c, which carry TRAP 1's rule -- device names ride the operating
 # point's own write and no other -- down into Stage 6a's `setplot previous`
 # walk, where one analysis can now emit more than one write. If a run reports
 # fewer, a row went missing; do not edit this number down to match it.
+# 105 -> 106 with E5d (Stage 6d, issue 1432): the same claim against the SHIPPED
+# registry, with no proc replaced. E5b/E5c are stubbed because issue 1430 had
+# nothing that walked -- its own correction C64 says so -- and `noise` is the
+# first type that captures two plots for real. The stubbed pair is KEPT: it is
+# what proves the walk length comes from `ase::analysis_captures` and nothing
+# else, which no unstubbed row can show.
 #
 # ============================================================================
 # WHAT THIS FILE DOES NOT MEASURE
@@ -659,6 +665,35 @@ check {E5c TRAP 1 again, one level down -- the device names ride the operating\
  across two} \
   [expr {($DBW eq {NOPROC} || [string match RAISED:* $DBW]) ? $DBW : [o_writeats $DBW]}] \
   {1 0}
+
+## --- E5d: AND NOW THE SHIPPED REGISTRY WALKS, WITH NO STUB AT ALL -----------
+## ⚠ E5b/E5c ARE STUBBED BECAUSE ISSUE 1430 HAD NOTHING THAT WALKED. Its own
+## correction C64 says so: every type in the registry as it stood captured
+## exactly one plot. Stage 6d (issue 1432) gave `noise` and `disto` real entries
+## and they capture two and three, so the same claim can now be made against the
+## registry AS SHIPPED -- which is a stronger row, and it is kept BESIDE the
+## stubbed pair rather than replacing it, because the stub is what proves the
+## walk length comes from `ase::analysis_captures` and nothing else.
+##
+## ⚠ `save_all_v 1` IS PART OF THE FIXTURE. Issue 1432's `vecsaves` precondition
+## refuses a `noise` row on a bench that saves named outputs and nothing else --
+## MEASURED on both binaries as `Error: no data saved for Noise analysis;
+## analysis not run`, rc 1 -- and this file's `o_state` saves nothing at all,
+## which is the case ngspice runs. The key is set explicitly so that a future
+## default change cannot turn this row's subject into the precondition's.
+set AN_NOISE {{type op enabled 1}
+              {type noise enabled 1 out v(d) insrc V1 sweep dec points 4 start 1k stop 100k}}
+set DBN [o_state $AN_NOISE 1]
+dict set DBN save_all_v 1
+set DBNR [o_render $DBN $NL]
+check {E5d the device names ride the operating point's write and not the walk's,\
+ with the walk driven by the SHIPPED registry and no proc replaced -- a noise\
+ row captures two plots, so this deck has three writes and only the first\
+ carries a device list} \
+  [expr {($DBNR eq {NOPROC} || [string match RAISED:* $DBNR]) ? $DBNR : \
+         [list [llength [o_writes $DBNR]] [o_writeats $DBNR] \
+               [regexp -all -line {^setplot previous$} $DBNR]]}] \
+  {3 {1 0 0} 1}
 
 # --- TRAP 2, the measured line-length wall ----------------------------------
 set BLK999 [o_block 999 {id}]

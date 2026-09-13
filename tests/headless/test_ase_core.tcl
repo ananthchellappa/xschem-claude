@@ -177,6 +177,37 @@
 # The three new refusals have their own fixtures, in section GP.
 # ⚠ ⚖ R3 IS STILL UNANSWERED and nothing here touches it: the reader seam is
 # 1429's and this issue neither reads a number nor moves a print line.
+#
+# 453 -> 476 with section MP (Stage 6d, issue 1432 -- `noise`, `disto` and
+# `sens`'s AC mode, and the first PRODUCTION exerciser of issue 1430's
+# `setplot previous` walk). ⚠ FOURTEEN ROWS MOVED RATHER THAN BEING ADDED, every
+# one of them because a type stopped being probe-only, and every one named here:
+#   AG1 / AG2       the offered list splits at NINE; only `sp` and `pss` are
+#                   rank-less now, and `noise` took its fifth place back from
+#                   `sens` by earning `emitorder 40`
+#   EM7 / CP6       TWO probe-only types now, not four
+#   GP1             NINE renderable types declare their plots, not seven
+#   PZ1 / SE1 / TF1 their leading slices each grew by one for `noise`; not one
+#                   of the three ranks moved
+#   D7a-D7e4        their unrenderable control type was `noise` and is now `sp`,
+#                   with `pss` still the second for D7e3
+#   PZ3b / SE3b / TF3b  the same control type, same reason
+#   SE8 / SE9       `sens` declares TWO plots rows -- one per mode, both naming
+#                   the one measured `Plotname:` literal -- and a second
+#                   destination, because the AC mode is a sweep and the DC one
+#                   is a table
+# ⚠ AND THREE FIXTURES MOVED WITHOUT THEIR ROWS MOVING: `em_bad_types`'s `emb`
+# and `gp_types`' `gpc`/`gpd` each gained an entry-level `results` key, because
+# D30's new `badplotroute` refusal would otherwise have made each of them answer
+# one error more than the row is about. That is issue 1430's `em_bad_types`
+# lesson met a second time.
+# ⚠ AND `tf_lines`, `pz_lines`, `sens_lines` AND `WKST2` GAINED `save_all_v 1`,
+# WHICH IS A DEFECT FIRING AND NOT TIDINESS. `nfet_state` saves one named output
+# and sets no blanket -- exactly the bench shape MEASURED on both binaries to
+# make ngspice answer `Error: no data saved for <analysis>; analysis not run`,
+# rc 1, for `tf`, `sens` and `noise` alike. The decks those rows have been
+# asserting about could never have run.
+# ⚠ SECTION MP CARRIES ITS OWN `catch`, ending in row MP0.
 # ⚠ SECTIONS PM, GP, WK AND RC CARRY THEIR OWN `catch`, for the same reason RS
 # and RD do.
 #
@@ -570,17 +601,23 @@ check_true "D2 op renders before tran 1n 1u" [expr {$opidx > 0 && $tridx > 0 && 
 # `write` at all, so the run produced no raw file whatsoever while the Analyses
 # pane went on showing the row ticked.
 set st7 [nfet_state /models/sky130.lib.spice {}]
-dict set st7 analyses {{type noise enabled 1 output v(out) source v1 sweep dec points 10 start 1 stop 1meg}}
+# ⚠ THE CONTROL TYPE WAS `noise` AND IS NOW `sp`, BECAUSE ISSUE 1432 GAVE
+# `noise` A REAL ENTRY. Only `sp` and `pss` are probe-only now, and `sp` is the
+# nearer of the two -- `pss` is reserved for D7e3, which needs a SECOND
+# unrenderable type and was picked for distance. The transcript above is `noise`
+# as it was measured; the DEFECT it records is the type-independent one.
+dict set st7 analyses {{type sp enabled 1 output v(out) source v1 sweep dec points 10 start 1 stop 1meg}}
 set d7rc [catch {$render $st7 $netlist_text} d7err]
-check "D7a a noise-only state REFUSES instead of rendering" $d7rc 1
+check "D7a a state whose only enabled row is unrenderable REFUSES instead of\
+ rendering" $d7rc 1
 check "D7b ... with the type named, in the one minted sentence" $d7err \
-  {ase: analysis type 'noise' is not one this simulator backend can render}
+  {ase: analysis type 'sp' is not one this simulator backend can render}
 check "D7c ... which is the sentence ase::analysis_unrenderable_msg mints" \
-  [ase::analysis_unrenderable_msg noise] $d7err
+  [ase::analysis_unrenderable_msg sp] $d7err
 check "D7d ... and n_enabled_analyses still COUNTS the row -- the counter was\
  never the gate, which is why the drop was silent" [ase::n_enabled_analyses $st7] 1
 check "D7e ase::analysis_unrenderable names it" \
-  [ase::analysis_unrenderable $st7] {noise}
+  [ase::analysis_unrenderable $st7] {sp}
 
 # ⚠ THE TWO ROWS BELOW EXIST BECAUSE D7e ALONE CANNOT SEE EITHER HALF OF THIS
 # PROC'S CONTRACT. With one unrenderable row in the fixture, dropping the
@@ -589,24 +626,25 @@ check "D7e ase::analysis_unrenderable names it" \
 # duplicates twice and for one that stops at the first. That is this tree's
 # hollow-green class, and a row that cannot be made to fail proves nothing.
 set st7m [nfet_state /models/sky130.lib.spice {}]
-dict set st7m analyses {{type noise enabled 1 source v1} {type op enabled 1} {type noise enabled 1 source v2}}
+dict set st7m analyses {{type sp enabled 1 source v1} {type op enabled 1} {type sp enabled 1 source v2}}
 check "D7e2 two enabled rows of ONE unrenderable type are named ONCE" \
-  [ase::analysis_unrenderable $st7m] {noise}
+  [ase::analysis_unrenderable $st7m] {sp}
 set st7t [nfet_state /models/sky130.lib.spice {}]
 # ⚠ THE SECOND TYPE HERE MOVES EVERY TIME A STAGE MAKES ONE RENDERABLE, AND IT
 # IS PICKED FOR DISTANCE RATHER THAN CONVENIENCE. It was `pz` until Stage 5's pz
-# commit (issue 1427) gave `pz` a real entry; before that it had never moved.
+# commit (issue 1427) gave `pz` a real entry, then `noise` until Stage 6 (issue
+# 1432) gave `noise` AND `disto` theirs; before 1427 it had never moved.
 # `pss` is the furthest away: it is the only remaining probe-only type that is
 # `baseline 0` AND `#ifdef`-gated (`WITH_PSS`), so it is the last one an adapter
 # stage will reach. When it too becomes renderable, the row wants a FIXTURE
 # backend rather than a fourth shipped type -- the thing this row asserts is a
 # property of `ase::analysis_unrenderable`, not of any particular analysis.
-dict set st7t analyses {{type noise enabled 1 source v1} {type pss enabled 1} {type op enabled 1}}
+dict set st7t analyses {{type sp enabled 1 source v1} {type pss enabled 1} {type op enabled 1}}
 check "D7e3 TWO distinct unrenderable types are BOTH named, in state order" \
-  [ase::analysis_unrenderable $st7t] {noise pss}
+  [ase::analysis_unrenderable $st7t] {sp pss}
 check "D7e4 ... and render refuses on the FIRST of them, by name" \
   [list [catch {$render $st7t $netlist_text} e7t] $e7t] \
-  [list 1 {ase: analysis type 'noise' is not one this simulator backend can render}]
+  [list 1 {ase: analysis type 'sp' is not one this simulator backend can render}]
 
 # ⚠ CORE CARRIES ONE BACKEND'S RANK TABLE, so it must not refuse for a backend
 # whose analyses it does not describe: ase::register_backend is a real extension
@@ -4183,19 +4221,20 @@ ase::register_backend agnoprobe [dict merge [ag_five] [dict create analysis_type
 ## count is still eleven and `op` is still first. A type that becomes drivable
 ## is EXPECTED to move here; a type that moves without becoming drivable is a
 ## defect, which is what AG2 below separates.
-## ⚠ THE SPLIT MOVES ONE PLACE PER STAGE-5 COMMIT AND THE ASSERTION DOES NOT.
-## `tf` (issue 1426) put the boundary at five; `pz` (issue 1427) put it at six;
-## `sens` (issue 1428) puts it at seven and is the LAST of Stage 5, so the next
-## move belongs to Stage 6. What the row is about is unchanged: everything with
-## an `emitorder` leads, in rank order, and everything without one follows in
+## ⚠ THE SPLIT MOVES ONE PLACE PER COMMIT THAT MAKES A TYPE DRIVABLE AND THE
+## ASSERTION DOES NOT. `tf` (issue 1426) put the boundary at five; `pz` (1427) at
+## six; `sens` (1428) at seven; Stage 6's `noise` AND `disto` (issue 1432) move it
+## TWO places at once, to NINE. What the row is about is unchanged: everything
+## with an `emitorder` leads, in rank order, and everything without one follows in
 ## DECLARATION order.
-## ⚠ AND `sens` OVERTOOK `noise` HERE, which is the half of its change that is
-## visible in this row rather than in EM7's: in DECLARATION order `sens` sits
-## after `noise`, and `emitorder 70` is what moves it in front.
+## ⚠ AND `noise` TOOK ITS PLACE BACK FROM `sens`. `sens` overtook it at 1428
+## because `noise` had no rank at all; `emitorder 40` puts `noise` fifth, ahead of
+## `tf`, `pz` and `sens`. Only TWO rank-less types are left -- `sp` and `pss`, the
+## two that are `#ifdef`-gated.
 check "AG1 the registry offers all eleven analyses, in emit order, with op first\
  -- which is what the dialog preselects" \
   [list [ase::analysis_offered ngspice] [lindex [ase::analysis_offered ngspice] 0]] \
-  [list {op dc ac tran tf pz sens noise disto sp pss} op]
+  [list {op dc ac tran noise tf pz sens disto sp pss} op]
 
 ## --- AG2: A RANK-LESS ENTRY SORTS **LAST**, NOT FIRST -----------------------
 ## ⚠ `set r 0` for a missing `emitorder` made a rank-less type TIE WITH `op`,
@@ -4204,16 +4243,16 @@ check "AG1 the registry offers all eleven analyses, in emit order, with op first
 ## `op_last` (issue 0964), so a re-ranked `op` still cannot be displaced.
 ##
 ## ⚠ IT WAS SEVEN RANK-LESS TYPES, THEN SIX (Stage 5 `tf`, issue 1426), THEN
-## FIVE (`pz`, issue 1427), AND IS NOW FOUR (`sens`, issue 1428). The row is
-## split at SEVEN rather than six because `sens` earned a rank of 70; the
+## FIVE (`pz`, issue 1427), THEN FOUR (`sens`, issue 1428), AND IS NOW TWO
+## (`noise` and `disto` together, issue 1432). The row is split at NINE; the
 ## assertion that matters is unchanged -- everything with a rank comes first, in
 ## rank order, and everything without one follows in declaration order.
-check "AG2 the four types with no emit order sort after the seven that have one,\
+check "AG2 the two types with no emit order sort after the nine that have one,\
  rather than tying with op at rank zero" \
-  [list [lrange [ase::analysis_offered ngspice] 0 6] \
-        [lrange [ase::analysis_offered ngspice] 7 end] \
+  [list [lrange [ase::analysis_offered ngspice] 0 8] \
+        [lrange [ase::analysis_offered ngspice] 9 end] \
         [ase::analysis_emit_rank op 1 ngspice]] \
-  [list {op dc ac tran tf pz sens} {noise disto sp pss} 90]
+  [list {op dc ac tran noise tf pz sens disto} {sp pss} 90]
 
 ## --- AG3: THE SEED DID NOT MOVE, AND THAT IS ⚖ R4 SHIPPING BY CONSTRUCTION ---
 ## Before the one-line `continue` this proc appended a row for EVERY registered
@@ -4546,20 +4585,20 @@ check "EM6 the fields a deck line consumes are read from the template in one\
         [ase::analysis_slots {emf @lead? @tail}]] \
   [list {step stop tmax uic} {} {lead tail}]
 
-## --- EM7: ⚠ FOUR OF THE ELEVEN SHIPPED ENTRIES CARRY NO `fields` KEY -------
-## MEASURED: noise, disto, sp and pss are registered probe-only. A bare
+## --- EM7: ⚠ TWO OF THE ELEVEN SHIPPED ENTRIES CARRY NO `fields` KEY --------
+## MEASURED: sp and pss are registered probe-only. A bare
 ## `[dict get $e fields]` in the card reader raises for every one of them, and
 ## `ase::ui::arg_summary`'s catch (row D8j) would swallow that into a silently
 ## degraded pane -- THE EXACT FAILURE THIS STAGE DELETES, RE-CREATED BY THE FIX.
 ##
 ## ⚠ IT WAS SEVEN, THEN SIX WHEN Stage 5 GAVE `tf` A REAL ENTRY (issue 1426),
-## THEN FIVE WITH `pz` (issue 1427), AND IS NOW FOUR WITH `sens` (issue 1428) --
-## the last of Stage 5, so the next entry to leave this list is Stage 6's. The
-## list below is ORDERED, and the order is `ase::analysis_offered`'s, so a type
-## that gains fields leaves the list at the position it used to hold -- which is
-## why `sens` disappearing from between `noise` and `disto` is the visible half
-## of that change and not a silent shrink. ⚠ `sens` ALSO OVERTOOK `noise` in the
-## offered order, because it earned an `emitorder`; that half is AG1/AG2's.
+## THEN FIVE WITH `pz` (1427), THEN FOUR WITH `sens` (1428), AND IS NOW TWO --
+## Stage 6 (issue 1432) took `noise` and `disto` in one commit. The list below is
+## ORDERED, and the order is `ase::analysis_offered`'s, so a type that gains
+## fields leaves the list at the position it used to hold. ⚠ THE TWO THAT REMAIN
+## ARE THE TWO THAT ARE `#ifdef`-GATED (`RFSPICE` and `WITH_PSS`), so the next
+## crew to empty this list is also the one that has to deal with a type the
+## user's binary may not have at all.
 set EM7NOFLD {}
 foreach em7t [ase::analysis_offered ngspice] {
   if {![dict exists [ase::analysis_entry ngspice $em7t] fields]} { lappend EM7NOFLD $em7t }
@@ -4570,7 +4609,7 @@ check "EM7 the analyses this adapter describes but cannot yet drive carry no\
   [list $EM7NOFLD \
         [catch {ase::analysis_cards ngspice {type pss enabled 1}}] \
         [ase::analysis_line ngspice {type pss enabled 1}]] \
-  [list {noise disto sp pss} 0 {}]
+  [list {sp pss} 0 {}]
 
 ## --- EM8: THE SHIPPED FOUR ARE BYTE-IDENTICAL ------------------------------
 ## ⚠ THE WHOLE POINT OF FIXTURE BACKENDS. If this row ever moves, the grammar
@@ -4600,6 +4639,7 @@ proc em_bad_types {} {
   return [dict create \
     emb [dict create label emb baseline 1 registered 1 emitorder 10 \
            fields {{name shown kind real}} \
+           results {viewer {kind sweep}} \
            plots {{select {Emb Analysis} role sweep results viewer label emb}} \
            emit {{role analysis tmpl {emb @missing?}}}]]
 }
@@ -4871,13 +4911,14 @@ check "AC4 a renderable row still shows the line the deck will carry, hatch\
   [list {tran 1n 10u} {op} {tran 1n 10u  + verbatim: 1 line}]
 
 ## ⚠ A TYPE THIS BACKEND CANNOT SET UP READS AS SUCH RATHER THAN AS A MISSING
-## VALUE. Seven of the eleven registered types are probe-only until Stage 6; an
-## enabled one of those has nothing missing -- there is simply nothing ASE-L can
-## write for it, and "needs a value for ..." would send the user hunting for a
-## field that does not exist.
+## VALUE. Two of the eleven registered types are still probe-only (`sp` and
+## `pss`, issue 1432 having taken `noise` and `disto`); an enabled one of those
+## has nothing missing -- there is simply nothing ASE-L can write for it, and
+## "needs a value for ..." would send the user hunting for a field that does not
+## exist.
 check "AC5 an enabled row of a type the backend cannot set up says that, not\
  that some value is missing" \
-  [ase::ui::arg_summary {type noise enabled 1} ngspice] \
+  [ase::ui::arg_summary {type sp enabled 1} ngspice] \
   {is not one this simulator backend can set up}
 
 # --- VB: THE ONE HONEST ESCAPE FROM A TYPED FORM ----------------------------
@@ -5248,13 +5289,18 @@ check "GR8 every kind this registry declares has been classified as a number or\
 ## tests/headless/test_ase_preflight.tcl section PF226, because those are the
 ## suites that own those seams.
 
+## ⚠ THE LEADING SLICE GREW BY ONE WHEN `noise` EARNED `emitorder 40` (issue
+## 1432) AND `tf` DID NOT MOVE: rank 50 still sorts it after everything ranked
+## below 50 and ahead of everything above. That is the row's subject; the slice
+## is how it is seen.
 check "TF1 tf is offered, is now renderable, and carries a rank that sorts it\
- after the four drivable types and ahead of the six that still have none" \
+ after the four originally drivable types plus noise, and ahead of everything\
+ ranked higher" \
   [list [expr {[lsearch -exact [ase::analysis_offered ngspice] tf] >= 0}] \
         [ase::analysis_renderable ngspice tf] \
         [ase::analysis_emit_rank tf 0 ngspice] \
-        [lrange [ase::analysis_offered ngspice] 0 4]] \
-  {1 1 50 {op dc ac tran tf}}
+        [lrange [ase::analysis_offered ngspice] 0 5]] \
+  {1 1 50 {op dc ac tran noise tf}}
 
 ## ⚠ THE THREE OUTPUT FORMS ARE ngspice's THREE, AND THE LINE IS ONE TOKEN PER
 ## FIELD. PLAN.md Stage 5 spells the output as four fields
@@ -5290,16 +5336,16 @@ check "TF3 the commit door refuses a tf row missing either field, by name, and\
 
 ## ⚠ AND THE ROW IS REFUSED AT THE GATE BEFORE IT REACHES render_deck. Until
 ## this stage a `tf` row was `blocked/unrenderable`; it is now an ordinary cell.
-## ⚠ THE CONTROL TYPE WAS `pz` AND IS NOW `noise`, BECAUSE `pz` STOPPED BEING
-## UNRENDERABLE ONE COMMIT LATER (issue 1427). `noise` is the right control for
-## this row for a reason beyond convenience: rows PF222a-e and PF222h-j of
-## tests/headless/test_ase_preflight.tcl are BUILT on `noise` being
-## unrenderable, so the day it changes those rows move too and this one is not
-## the only warning.
+## ⚠ THE CONTROL TYPE WAS `pz`, THEN `noise`, AND IS NOW `sp`. `pz` stopped
+## being unrenderable at issue 1427 and `noise` at issue 1432; `sp` and `pss` are
+## what is left, and both are `#ifdef`-gated. The warning that came with the
+## previous spelling held exactly as written -- rows PF222a-e and PF222h-j of
+## tests/headless/test_ase_preflight.tcl were built on `noise` being
+## unrenderable, and they moved in the same commit as this one.
 check "TF3b the four-state grid stops calling tf unrenderable" \
   [list [dict get [ase::analysis_state ngspice tf {}] state] \
-        [dict get [ase::analysis_state ngspice noise {}] state] \
-        [dict get [ase::analysis_state ngspice noise {}] reason]] \
+        [dict get [ase::analysis_state ngspice sp {}] state] \
+        [dict get [ase::analysis_state ngspice sp {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ `d8_lines` MATCHES FOUR VERBS AND tf IS NOT ONE OF THEM, so this
@@ -5321,6 +5367,13 @@ check "TF3b the four-state grid stops calling tf unrenderable" \
 proc tf_lines {rows} {
   set st [nfet_state /models/sky130.lib.spice {}]
   dict set st analyses $rows
+  ## ⚠ `save_all_v 1` IS PART OF THE FIXTURE, NOT TIDINESS, AND IT IS ISSUE 1432's
+  ## `vecsaves` PRECONDITION FIRING ON A DECK THIS SUITE HAD BEEN RENDERING ALL
+  ## ALONG. `nfet_state` saves ONE named output and sets no blanket -- exactly the
+  ## configuration MEASURED (both binaries) to make ngspice answer `Error: no data
+  ## saved for <analysis>; analysis not run`, rc 1, `$sim_status` 1, for tf, sens
+  ## and noise alike. The deck these rows assert about could never have run.
+  dict set st save_all_v 1
   if {[catch {$::render $st $::netlist_text} _rd]} { return "RAISED:$_rd" }
   set out {}
   foreach l [split $_rd "\n"] {
@@ -5425,13 +5478,16 @@ check "TF7 tf's own entry is self-consistent: every slot its template spends is\
 ## section PV, and the four preconditions in tests/headless/test_ase_preflight.tcl
 ## section PF228, because those are the suites that own those seams.
 
+## ⚠ THE SLICE GREW BY ONE AT ISSUE 1432, WHEN `noise` EARNED `emitorder 40`.
+## `pz`'s own rank did not move and neither did its position relative to `tf`;
+## what moved is how many ranked types sit ahead of both.
 check "PZ1 pz is offered, is now renderable, and carries a rank that sorts it\
- after tf and ahead of the five that still have none" \
+ after tf and ahead of everything ranked higher" \
   [list [expr {[lsearch -exact [ase::analysis_offered ngspice] pz] >= 0}] \
         [ase::analysis_renderable ngspice pz] \
         [ase::analysis_emit_rank pz 0 ngspice] \
-        [lrange [ase::analysis_offered ngspice] 0 5]] \
-  {1 1 60 {op dc ac tran tf pz}}
+        [lrange [ase::analysis_offered ngspice] 0 6]] \
+  {1 1 60 {op dc ac tran noise tf pz}}
 
 ## ⚠ SIX TOKENS, ONE PER FIELD, AND NO `{build}` ESCAPE IN SIGHT. PLAN.md Stage 5
 ## spells this entry `{pz {build ase::backend::ngspice::an_pz_nodes} @transfer
@@ -5530,10 +5586,12 @@ check "PZ3 the commit door refuses a pz row missing either signal node, by name,
         {{missing outp {needs a value for 'outp'}}} \
         {}]
 
+## ⚠ THE CONTROL TYPE WAS `noise` AND IS NOW `sp` (issue 1432 made `noise`
+## renderable). `sp` and `pss` are the two that are left.
 check "PZ3b the four-state grid stops calling pz unrenderable" \
   [list [dict get [ase::analysis_state ngspice pz {}] state] \
-        [dict get [ase::analysis_state ngspice noise {}] state] \
-        [dict get [ase::analysis_state ngspice noise {}] reason]] \
+        [dict get [ase::analysis_state ngspice sp {}] state] \
+        [dict get [ase::analysis_state ngspice sp {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ ITS OWN READER, for the same reason section TF brought one: `pz`
@@ -5542,6 +5600,13 @@ check "PZ3b the four-state grid stops calling pz unrenderable" \
 proc pz_lines {rows} {
   set st [nfet_state /models/sky130.lib.spice {}]
   dict set st analyses $rows
+  ## ⚠ `save_all_v 1` IS PART OF THE FIXTURE, NOT TIDINESS, AND IT IS ISSUE 1432's
+  ## `vecsaves` PRECONDITION FIRING ON A DECK THIS SUITE HAD BEEN RENDERING ALL
+  ## ALONG. `nfet_state` saves ONE named output and sets no blanket -- exactly the
+  ## configuration MEASURED (both binaries) to make ngspice answer `Error: no data
+  ## saved for <analysis>; analysis not run`, rc 1, `$sim_status` 1, for tf, sens
+  ## and noise alike. The deck these rows assert about could never have run.
+  dict set st save_all_v 1
   if {[catch {$::render $st $::netlist_text} _rd]} { return "RAISED:$_rd" }
   set out {}
   foreach l [split $_rd "\n"] {
@@ -5683,15 +5748,16 @@ check "PZ8 the pz entry declares both plots ngspice can write, in result order,\
 ## ⚠ AND THE OTHER TEN ENTRIES' LABELS ARE STILL UNASSERTED. This row closes the
 ## hole for `sens` only; whoever does the label-promotion stage inherits the
 ## rest, and inherits the measurement that nothing would have noticed.
+## ⚠ THE SLICE GREW BY ONE AT ISSUE 1432, WHEN `noise` EARNED `emitorder 40`.
+## `sens`'s own rank of 70 did not move and it still sorts after `pz`.
 check "SE1 sens is offered, is now renderable, keeps Stage 2's radio label, and\
- carries a rank that sorts it after pz and ahead of the four that still have\
- none" \
+ carries a rank that sorts it after pz and ahead of everything ranked higher" \
   [list [expr {[lsearch -exact [ase::analysis_offered ngspice] sens] >= 0}] \
         [ase::analysis_renderable ngspice sens] \
         [dict get [ase::analysis_entry ngspice sens] label] \
         [ase::analysis_emit_rank sens 0 ngspice] \
-        [lrange [ase::analysis_offered ngspice] 0 6]] \
-  {1 1 sens 70 {op dc ac tran tf pz sens}}
+        [lrange [ase::analysis_offered ngspice] 0 7]] \
+  {1 1 sens 70 {op dc ac tran noise tf pz sens}}
 
 ## ⚠ TWO FIELDS, NOT THE PLAN'S FIVE, AND THE `{build <proc>}` DECISION IS TAKEN
 ## HERE. PLAN.md Stage 5 spells this entry
@@ -5770,10 +5836,11 @@ check "SE3 the commit door refuses a sens row with no output, by name, passes\
            {type sens enabled 1 out v(mid) filters {r*:r m*:vth0}}]] \
   [list {{missing out {needs a value for 'out'}}} {} {}]
 
+## ⚠ THE CONTROL TYPE WAS `noise` AND IS NOW `sp` (issue 1432).
 check "SE3b the four-state grid stops calling sens unrenderable" \
   [list [dict get [ase::analysis_state ngspice sens {}] state] \
-        [dict get [ase::analysis_state ngspice noise {}] state] \
-        [dict get [ase::analysis_state ngspice noise {}] reason]] \
+        [dict get [ase::analysis_state ngspice sp {}] state] \
+        [dict get [ase::analysis_state ngspice sp {}] reason]] \
   {ok blocked unrenderable}
 
 ## THE DECK. ⚠ ITS OWN READER, for the reason sections TF and PZ brought one:
@@ -5782,6 +5849,13 @@ check "SE3b the four-state grid stops calling sens unrenderable" \
 proc sens_lines {rows} {
   set st [nfet_state /models/sky130.lib.spice {}]
   dict set st analyses $rows
+  ## ⚠ `save_all_v 1` IS PART OF THE FIXTURE, NOT TIDINESS, AND IT IS ISSUE 1432's
+  ## `vecsaves` PRECONDITION FIRING ON A DECK THIS SUITE HAD BEEN RENDERING ALL
+  ## ALONG. `nfet_state` saves ONE named output and sets no blanket -- exactly the
+  ## configuration MEASURED (both binaries) to make ngspice answer `Error: no data
+  ## saved for <analysis>; analysis not run`, rc 1, `$sim_status` 1, for tf, sens
+  ## and noise alike. The deck these rows assert about could never have run.
+  dict set st save_all_v 1
   if {[catch {$::render $st $::netlist_text} _rd]} { return "RAISED:$_rd" }
   set out {}
   foreach l [split $_rd "\n"] {
@@ -5883,16 +5957,26 @@ check "SE7 sens's own entry is self-consistent: every slot its template spends\
 ## `resultname` would be a schema decision taken with ZERO consumers. Stage 6 is
 ## where a consumer arrives and where the generalisation belongs; this row is
 ## what will notice when it does.
+## ⚠ IT WAS ONE PLOTS ROW AND IS NOW TWO, AND BOTH CARRY THE SAME `select`.
+## Issue 1432 added the AC mode, and MEASURED on both binaries that `sens … dc`
+## and `sens … ac` write the SAME `Plotname:` -- `Sensitivity Analysis` -- while
+## APPENDIX §6.2 routes them to DIFFERENT destinations (DC to the result table,
+## AC to the waveform viewer). One `select`, two `results`, two mutually
+## exclusive `when {hook …}` predicates: exactly one of the two is ever live, so
+## `analysis_captures` still answers ONE and the walk still writes once.
 set SEPL [dict get [ase::analysis_entry ngspice sens] plots]
-check "SE8 the sens entry declares the one plot ngspice writes, names the\
- measured Plotname literal, and carries a result-name READER rather than a\
+check "SE8 the sens entry declares one plots row per MODE, both naming the one\
+ measured Plotname literal, and each carrying a result-name READER rather than a\
  vector list" \
   [list [llength $SEPL] \
         [sekey [lindex $SEPL 0] select] [sekey [lindex $SEPL 0] role] \
         [sekey [lindex $SEPL 0] paramname] \
         [dict exists [lindex $SEPL 0] vectors] \
-        [dict exists [lindex $SEPL 0] rootname]] \
-  [list 1 {Sensitivity Analysis} table ::ase::backend::ngspice::sens_param_kind 0 0]
+        [dict exists [lindex $SEPL 0] rootname] \
+        [sekey [lindex $SEPL 1] select] [sekey [lindex $SEPL 1] role] \
+        [sekey [lindex $SEPL 0] results] [sekey [lindex $SEPL 1] results]] \
+  [list 2 {Sensitivity Analysis} table ::ase::backend::ngspice::sens_param_kind \
+        0 0 {Sensitivity Analysis} sweep table viewer]
 
 ## --- SE9: THE `results` DESTINATION, AND IT EXISTS BECAUSE A SABOTAGE SURVIVED
 ## ⚠ MEASURED (sabotage S35): `sens`'s `results {table {kind params}}` can be
@@ -5908,7 +5992,11 @@ check "SE8 the sens entry declares the one plot ngspice writes, names the\
 ## one-row TABLE of one number per perturbable parameter. If Stage 6 changes one
 ## of these it should be because the destination changed, and this row is what
 ## makes that a decision rather than an edit.
-check "SE9 the three Stage 5 entries declare the result destination each of them was measured to produce, and none of them has drifted"   [list [dict get [ase::analysis_entry ngspice tf] results]         [dict get [ase::analysis_entry ngspice pz] results]         [dict get [ase::analysis_entry ngspice sens] results]]   [list {value {kind scalars}} {table {kind roots}} {table {kind params}}]
+## ⚠ `sens` GAINED A SECOND DESTINATION AT ISSUE 1432 AND THE OTHER TWO DID NOT.
+## The AC mode is a frequency SWEEP -- `Flags: complex`, scale `frequency` -- and
+## the DC mode is a one-row table; the entry now declares both, and D30's new
+## `plotrouteundeclared` refusal is what ties each plots row to one of them.
+check "SE9 the three Stage 5 entries declare the result destination each of them was measured to produce, and none of them has drifted"   [list [dict get [ase::analysis_entry ngspice tf] results]         [dict get [ase::analysis_entry ngspice pz] results]         [dict get [ase::analysis_entry ngspice sens] results]]   [list {value {kind scalars}} {table {kind roots}} {table {kind params} viewer {kind sweep}}]
 
 # --- CP: THE COMMITTED CORPUS, AS A PROPERTY --------------------------------
 ## ⚠ THE ACCEPTANCE CRITERION OF THIS WHOLE BATCH IS THAT THE COMMITTED BENCHES
@@ -6032,12 +6120,14 @@ foreach cpt {noise pz sens disto sp pss} {
   if {$cpe eq {} || [dict exists $cpe fields]} { continue }
   incr CPPROBE
 }
-check "CP6 the four probe-only types declare no fields, tf, pz and sens no\
- longer among them, and none of it is a schema error" \
+check "CP6 the two probe-only types declare no fields, tf, pz, sens, noise and\
+ disto no longer among them, and none of it is a schema error" \
   [list $CPPROBE [dict exists [ase::analysis_entry ngspice tf] fields] \
         [dict exists [ase::analysis_entry ngspice pz] fields] \
         [dict exists [ase::analysis_entry ngspice sens] fields] \
-        [ase::analysis_schema_errors ngspice]] {4 1 1 1 {}}
+        [dict exists [ase::analysis_entry ngspice noise] fields] \
+        [dict exists [ase::analysis_entry ngspice disto] fields] \
+        [ase::analysis_schema_errors ngspice]] {2 1 1 1 1 1 {}}
 
 
 # ===========================================================================
@@ -6658,9 +6748,12 @@ foreach gpt [dict keys [ase::analysis_types ngspice]] {
   incr GP1N
   if {![dict exists [ase::analysis_entry ngspice $gpt] plots]} { lappend GP1MISS $gpt }
 }
-check "GP1 all seven renderable types in the shipped registry declare their\
+## ⚠ SEVEN RENDERABLE TYPES BECAME NINE AT ISSUE 1432 (`noise`, `disto`). The
+## count is asserted rather than derived so that a type quietly LOSING its
+## `emit` reds this row instead of shrinking the census in silence.
+check "GP1 all nine renderable types in the shipped registry declare their\
  plots, and the registry is still self-consistent" \
-  [list $GP1N $GP1MISS [ase::analysis_schema_errors ngspice]] {7 {} {}}
+  [list $GP1N $GP1MISS [ase::analysis_schema_errors ngspice]] {9 {} {}}
 
 ## Three fixtures, three refusals, one per way of getting `plots` wrong — and
 ## the entries are otherwise valid, so each row can only red for its own reason.
@@ -6672,9 +6765,11 @@ proc gp_types {} {
            plots {{role sweep results viewer label gpb}} \
            emit {{role analysis tmpl {gpb}}}] \
     gpc [dict create label gpc baseline 1 registered 1 emitorder 30 \
+           results {viewer {kind sweep}} \
            plots {{select {Gpc Analysis} results viewer label gpc}} \
            emit {{role analysis tmpl {gpc}}}] \
     gpd [dict create label gpd baseline 1 registered 1 emitorder 40 \
+           results {viewer {kind sweep}} \
            plots {{select {Gpd Analysis} role sweep results viewer label gpd \
                    when {expr {$start ne $stop}}}} \
            emit {{role analysis tmpl {gpd}}}] \
@@ -6803,6 +6898,11 @@ check "WK1 one sidecar record per write, immediately above it, on the ordinary\
 ## precisely because that is the case the type alone cannot answer. Both write a
 ## plot called `Sensitivity Analysis` (measured, both binaries).
 set WKST2 [nfet_state /models/sky130.lib.spice {}]
+## ⚠ `save_all_v 1` IS PART OF THE FIXTURE. Issue 1432's `vecsaves` precondition
+## refuses a `sens` row on a bench that saves one named output and nothing else
+## -- MEASURED on both binaries as `Error: no data saved for Sensitivity
+## analysis; analysis not run`, rc 1 -- and `nfet_state` is such a bench.
+dict set WKST2 save_all_v 1
 dict set WKST2 analyses {{type sens enabled 1 out v(D)}
                          {type sens enabled 1 out v(G)}}
 set WKREC {}
@@ -7234,6 +7334,590 @@ if {[auto_execok true] eq {}} {
 
 } pm_err]} {
   check "PM0 sections PM, GP, WK and RC ran to the end" "RAISED:$pm_err" {}
+}
+
+# ===========================================================================
+# MP — the three MULTI-PLOT analysis types, and the first production exerciser
+# of issue 1430's `setplot previous` walk (Stage 6d, issue 1432).
+#
+# ⚠ ISSUE 1430 SHIPPED THE WALK WITH NO PRODUCTION EXERCISER AND SAID SO
+# (its correction C64): every type in the registry as it stood captured exactly
+# ONE plot, because `ac`'s and `pz`'s second plots are `role opinfo` and
+# declined. `noise` and `disto` are the first that genuinely capture more, and
+# this section is where the walk is driven by the SHIPPED registry rather than
+# by a stub.
+#
+# ⚠ AND AN OVER-WALK IS SILENT, WHICH IS WHY THE CAPTURE SETS ARE ASSERTED AS
+# SETS AND NOT AS COUNTS. MEASURED 2026-09-12 on the fork AND on apt 45.2:
+# `setplot previous` past an analysis's first plot neither fails nor wraps -- it
+# SATURATES on the built-in `constants` plot and the next `write` appends
+# ngspice's twelve mathematical constants to the results file at rc 0, leaving
+# only a stderr warning. So a registry entry that declares one plot too many is
+# a silent corruption of the results file.
+#
+# ⚠ THE SECTION CARRIES ITS OWN `catch`, ending in row MP0. This file's outer
+# one closes thousands of lines above; issues 1428's S10, 1429's S31 and 1430's
+# S21/S24 all paid for that.
+if {[catch {
+
+set MPRENDER [ase::backend_hook ngspice render_deck]
+## Hoisted, every one of them, so that a raise inside the block names a row
+## rather than arriving as `can't read "X"` from the section catch.
+set MPST {} ; set MPSEQ {} ; set MPDECK {} ; set MPREC {}
+## ⚠ EVERY `plot_when` CALL IN THIS SECTION GOES THROUGH `mp_when`, AND THE
+## REASON IS THE ONE ISSUE 1429's S31 AND ISSUE 1430's S21/S24 BOTH PAID FOR: a
+## sabotage that drops the `catch` around the hook makes `ase::plot_when` RAISE,
+## and a raise here does not redden a row -- it kills the section and arrives as
+## the unnamed MP0 with every check below it lost.
+proc mp_when {args} {
+  if {[catch {uplevel 1 [linsert $args 0 ase::plot_when]} r]} { return "RAISED:$r" }
+  return $r
+}
+
+## --- MP1: THE `when` GRAMMAR, AND THE FORM THE PLAN ASKED FOR IS REFUSED ----
+## ⚠ PLAN.md 6b WRITES `when {expr {start ne stop}}` FOR NOISE'S SECOND PLOT.
+## It is refused here, and issue 1432's registry does not use it, because the
+## predicate it expresses is WRONG -- MEASURED, `noise … lin 1 1k 10k` has
+## start != stop and produces NO `Integrated Noise` (row MP4). Refusing the form
+## is what stops the next crew implementing an evaluator for a wrong rule.
+check "MP1 the `when` grammar takes four forms and refuses everything else,\
+ including the one PLAN.md 6b specifies" \
+  [list [ase::plot_when_valid {}] \
+        [ase::plot_when_valid {opt keepopinfo}] \
+        [ase::plot_when_valid {field f2overf1}] \
+        [ase::plot_when_valid {nofield f2overf1}] \
+        [ase::plot_when_valid {hook ::ase::backend::ngspice::sens_is_dc}] \
+        [ase::plot_when_valid {expr {start ne stop}}] \
+        [ase::plot_when_valid {opt}] \
+        [ase::plot_when_valid {opt a b}] \
+        [ase::plot_when_valid {zzz name}]] \
+  {1 1 1 1 1 0 0 0 0}
+
+## --- MP2: `field` / `nofield`, AND WHAT THEY ANSWER WITH NO ROW -------------
+## ⚠ THE NO-ROW ANSWER IS `unknown`, NOT 0, AND THE DIRECTION MATTERS. Both
+## consumers exclude `unknown`, so a caller with no row UNDER-predicts -- which
+## costs a reported under-count. Answering 0 would look the same here and
+## answering 1 would over-walk.
+check "MP2 `field` is true for a non-empty row value and false for a missing or\
+ blank one, `nofield` is its complement, and both answer `unknown` when there is\
+ no row to ask" \
+  [list [mp_when {field f2overf1} {} {type disto f2overf1 0.9}] \
+        [mp_when {field f2overf1} {} {type disto}] \
+        [mp_when {field f2overf1} {} {type disto f2overf1 { }}] \
+        [mp_when {nofield f2overf1} {} {type disto f2overf1 0.9}] \
+        [mp_when {nofield f2overf1} {} {type disto}] \
+        [mp_when {field f2overf1} {}] \
+        [mp_when {nofield f2overf1} {}]] \
+  {1 0 0 0 1 unknown unknown}
+
+## --- MP3: THE `hook` FORM DISTRUSTS ITS OWN ADAPTER ------------------------
+## ⚠ A HOOK THAT RAISES, OR ANSWERS ANYTHING BUT 0 OR 1, MUST NOT LENGTHEN THE
+## WALK. An under-walk loses a plot and reconciliation reports it; an over-walk
+## appends the twelve constants in silence. So every doubt answers `unknown`,
+## which both consumers exclude.
+proc mp_hook_raise {row state {sim {}}} { error "mp: deliberate" }
+proc mp_hook_junk  {row state {sim {}}} { return maybe }
+proc mp_hook_one   {row state {sim {}}} { return 1 }
+proc mp_hook_zero  {row state {sim {}}} { return 0 }
+check "MP3 a `hook` answers 1 or 0, and a hook that raises, answers a non-boolean\
+ or does not exist answers `unknown` rather than being believed" \
+  [list [mp_when {hook mp_hook_one} {} {type x}] \
+        [mp_when {hook mp_hook_zero} {} {type x}] \
+        [mp_when {hook mp_hook_raise} {} {type x}] \
+        [mp_when {hook mp_hook_junk} {} {type x}] \
+        [mp_when {hook mp_no_such_proc_at_all} {} {type x}] \
+        [mp_when {hook mp_hook_one} {}]] \
+  {1 0 unknown unknown unknown unknown}
+
+## --- MP4: NOISE'S CAPTURE SET, ON THE FOUR MEASURED SWEEPS ------------------
+## MEASURED 2026-09-12 on the fork (`ngspice-46+`) AND on apt 45.2, one analysis
+## per deck, walked with `setplot previous`:
+##
+##   noise v(mid) v1 dec 10 1 10k   -> Integrated Noise + Noise Spectral Density
+##   noise v(mid) v1 lin 2 1k 10k   -> the same two
+##   noise v(mid) v1 lin 1 1k 10k   -> the SPECTRUM ONLY  <- start NE stop
+##   noise v(mid) v1 dec 10 1k 1k   -> the SPECTRUM ONLY
+##
+## ⚠ THE ORDER IS WRITE ORDER, WHICH IS REVERSE CREATION ORDER, AND THAT REFUTES
+## `ase::analysis_plots`' OWN HEADER as issue 1430 left it ("in the registry's
+## own order, which is creation order"). The walk runs BACKWARDS, and
+## `ase::reconcile_plots` compares its prediction POSITIONALLY against a sidecar
+## written in write order -- so a registry listing `noise`'s plots in creation
+## order would make every two-plot noise run report `mislabel`. Measured end to
+## end: the sidecar reads `Integrated Noise` then `Noise Spectral Density
+## Curves`, and reconciliation answers `ok` 5/5/5 only with the registry in this
+## order.
+proc mp_caps {row {st {}}} {
+  set o {}
+  foreach p [ase::analysis_captures ngspice $row $st] { lappend o [ase::plot_select $p] }
+  return $o
+}
+proc mp_uncaps {row {st {}}} {
+  set o {}
+  foreach p [ase::analysis_uncaptured ngspice $row $st] { lappend o [ase::plot_select $p] }
+  return $o
+}
+set MPNBASE {type noise enabled 1 out v(D) insrc V1}
+check "MP4 noise captures TWO plots wherever the sweep has more than one\
+ frequency point and ONE where it does not -- and `start ne stop` is not the\
+ rule" \
+  [list [mp_caps [dict merge $MPNBASE {sweep dec points 10 start 1 stop 10k}]] \
+        [mp_caps [dict merge $MPNBASE {sweep lin points 2 start 1k stop 10k}]] \
+        [mp_caps [dict merge $MPNBASE {sweep lin points 1 start 1k stop 10k}]] \
+        [mp_caps [dict merge $MPNBASE {sweep dec points 10 start 1k stop 1k}]]] \
+  [list [list {Integrated Noise*} {Noise Spectral Density Curves*}] \
+        [list {Integrated Noise*} {Noise Spectral Density Curves*}] \
+        [list {Noise Spectral Density Curves*}] \
+        [list {Noise Spectral Density Curves*}]]
+
+## ⚠ THE SI SUFFIXES ARE PARSED, NOT COMPARED AS STRINGS. `1k` and `1000` are
+## the same frequency and a bench may store either; a string compare would make
+## `start 1k stop 1000` predict two plots for a single-frequency run.
+check "MP4b the single-frequency test is numeric, so `1k` and `1000` are the\
+ same stop frequency" \
+  [list [mp_caps [dict merge $MPNBASE {sweep dec points 10 start 1k stop 1000}]] \
+        [mp_caps [dict merge $MPNBASE {sweep dec points 10 start 1k stop 1001}]]] \
+  [list [list {Noise Spectral Density Curves*}] \
+        [list {Integrated Noise*} {Noise Spectral Density Curves*}]]
+
+## --- MP5: DISTO IS 2 XOR 3, AND THE SWITCH IS ONE OPTIONAL FIELD ------------
+## MEASURED on both binaries: `disto dec 2 1k 10k` writes `DISTORTION - 2nd
+## harmonic` and `- 3rd harmonic`; the same line with a trailing `0.9` writes
+## `- IM: f1+f2`, `- IM: f1-f2` and `- IM: 2f1-f2` and NOT the harmonics. Two
+## plots or three, never five.
+check "MP5 disto captures the two harmonic plots without an F2/F1 ratio and the\
+ three intermodulation plots with one, in write order and never both sets" \
+  [list [mp_caps {type disto enabled 1 sweep dec points 2 start 1k stop 10k}] \
+        [mp_caps {type disto enabled 1 sweep dec points 2 start 1k stop 10k f2overf1 0.9}]] \
+  [list [list {DISTORTION - 3rd harmonic} {DISTORTION - 2nd harmonic}] \
+        [list {DISTORTION - IM: 2f1-f2} {DISTORTION - IM: f1-f2} \
+              {DISTORTION - IM: f1+f2}]]
+
+## --- MP6: `keepopinfo` ADDS A PREDICTED PLOT AND NEVER A CAPTURED ONE -------
+## MEASURED on both binaries, `.options keepopinfo` with one analysis per deck:
+## `noise` gains `NOISE Operating Point`, `disto` gains `Distortion Operating
+## Point` (upstream's copy-paste, carried verbatim), and `sens` gains NOTHING in
+## EITHER mode -- which is the same answer `tf` gave at issue 1430 and refutes
+## PLAN.md §6's list a second time.
+set MPKO [dict create analyses {} options {{name keepopinfo value 1}}]
+check "MP6 keepopinfo adds one UNCAPTURED companion to noise and to disto, none\
+ to sens in either mode, and never changes what the deck writes" \
+  [list [mp_caps [dict merge $MPNBASE {sweep dec points 10 start 1 stop 10k}] $MPKO] \
+        [mp_uncaps [dict merge $MPNBASE {sweep dec points 10 start 1 stop 10k}] $MPKO] \
+        [mp_uncaps {type disto enabled 1 sweep dec points 2 start 1k stop 10k} $MPKO] \
+        [mp_uncaps {type sens enabled 1 out v(D)} $MPKO] \
+        [mp_uncaps {type sens enabled 1 out v(D) mode ac sweep dec points 2 start 1k stop 10k} $MPKO]] \
+  [list [list {Integrated Noise*} {Noise Spectral Density Curves*}] \
+        [list {NOISE Operating Point}] \
+        [list {Distortion Operating Point}] \
+        {} {}]
+
+## --- MP7: THE WALK, IN THE DECK, DRIVEN BY THE SHIPPED REGISTRY ------------
+## ⚠ THIS IS THE ROW ISSUE 1430's C64 SAID DID NOT EXIST YET. No stub is
+## involved: the walk length comes from `ase::analysis_captures` over the
+## registry as shipped, and the three fixtures below are a two-plot analysis, a
+## one-plot analysis of the SAME TYPE, and a three-plot one.
+proc mp_seq {rows} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  ## the `vecsaves` bench shape -- see tf_lines
+  dict set st save_all_v 1
+  dict set st analyses $rows
+  if {[catch {$::ase_mp_render $st $::netlist_text} _d]} { return "RAISED:$_d" }
+  set out {}
+  foreach l [split $_d "\n"] {
+    if {[string match {echo "PLOT *} $l]} { lappend out ECHO } \
+    elseif {[string match {write *} $l]} { lappend out WRITE } \
+    elseif {$l eq {setplot previous}} { lappend out WALK } \
+    elseif {$l eq {remzerovec}} { lappend out RZV }
+  }
+  return $out
+}
+set ::ase_mp_render $MPRENDER
+check "MP7 a two-plot noise row emits ONE walk step and TWO writes, the same row\
+ at a single frequency emits NO walk and one write, and a three-plot disto row\
+ emits TWO walk steps and THREE writes" \
+  [list [mp_seq [list [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}]]] \
+        [mp_seq [list [dict merge $MPNBASE {sweep lin points 1 start 1k stop 100k}]]] \
+        [mp_seq {{type disto enabled 1 sweep dec points 2 start 1k stop 10k f2overf1 0.9}}]] \
+  [list {RZV ECHO WRITE WALK RZV ECHO WRITE} \
+        {RZV ECHO WRITE} \
+        {RZV ECHO WRITE WALK RZV ECHO WRITE WALK RZV ECHO WRITE}]
+
+## ⚠ THE PRODUCTION OVER-WALK GUARD, ONE LEVEL BEYOND WK8's. WK8 makes the
+## claim with `ac`, which captures ONE plot and predicts two; this makes it with
+## `noise`, which captures TWO and predicts THREE -- so a walk length taken from
+## `ase::analysis_plots` instead of `ase::analysis_captures` would here step past
+## the spectrum onto the `constants` plot and append ngspice's twelve
+## mathematical constants to the results file, at rc 0, with the only trace on
+## stderr. MEASURED end to end on both binaries: the deck below runs with NO
+## `Warning: No previous plot is available` on either stream.
+set MPKOST [nfet_state /models/sky130.lib.spice {}]
+dict set MPKOST save_all_v 1
+dict set MPKOST options [concat [ase::state_get $MPKOST options] \
+                                {{name keepopinfo value 1}}]
+dict set MPKOST analyses [list [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}]]
+set MPKODECK [$MPRENDER $MPKOST $::netlist_text]
+check "MP7b a noise row under keepopinfo predicts THREE plots, captures TWO, and\
+ emits exactly ONE walk step -- the third is the operating-point companion and\
+ walking to it would append the constants plot" \
+  [list [llength [ase::analysis_plots ngspice \
+           [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}] $MPKOST]] \
+        [llength [ase::analysis_captures ngspice \
+           [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}] $MPKOST]] \
+        [regexp -all -line {^setplot previous$} $MPKODECK] \
+        [regexp -all -line {^write } $MPKODECK]] \
+  {3 2 1 2}
+
+## ⚠ AND THE RECORD'S ROW INDEX IS THE SAME FOR EVERY PLOT OF ONE ROW, which is
+## what makes the sidecar say WHICH ROW wrote a plot rather than which write it
+## was. Two noise rows in one deck therefore produce 0 0 1 1, not 0 1 2 3.
+set MPIDX {}
+set MPIDXST [nfet_state /models/sky130.lib.spice {}]
+dict set MPIDXST save_all_v 1
+dict set MPIDXST analyses [list [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}] \
+                                [dict merge $MPNBASE {sweep dec points 8 start 1k stop 100k}]]
+foreach l [split [$MPRENDER $MPIDXST $::netlist_text] "\n"] {
+  if {[regexp {^echo "PLOT ([a-z]+) ([0-9]+) } $l -> mpt mpi]} { lappend MPIDX "$mpt$mpi" }
+}
+check "MP8 both plots of one row carry that row's index, so two noise rows read\
+ 0 0 1 1 rather than 0 1 2 3" $MPIDX {noise0 noise0 noise1 noise1}
+
+## --- MP9: `depends` -- THE CHECKBOX THE USER WANTS, THE PARAMETER THEY DO NOT
+## ⚠ `ptspersummary` IS A SPECTRUM DECIMATION FACTOR WHOSE SIDE EFFECT IS THE
+## CONTRIBUTOR TABLE (`resnoise.c:68`, `cktnoise.c:102-103`). PLAN.md §6d's shape
+## is a checkbox named for the thing the user wants with the raw parameter behind
+## `depends`, and these rows are what makes the dependency reach the DECK rather
+## than being a comment.
+check "MP9 the noise line carries its decimation argument only while the\
+ contributor checkbox is on, whatever the row has stored" \
+  [list [ase::analysis_line ngspice [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}]] \
+        [ase::analysis_line ngspice [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k contributors 1}]] \
+        [ase::analysis_line ngspice [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k contributors 1 ptssum 4}]] \
+        [ase::analysis_line ngspice [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k ptssum 4}]] \
+        [ase::analysis_line ngspice [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k contributors 0 ptssum 4}]]] \
+  [list {noise v(D) V1 dec 4 1k 100k} \
+        {noise v(D) V1 dec 4 1k 100k 1} \
+        {noise v(D) V1 dec 4 1k 100k 4} \
+        {noise v(D) V1 dec 4 1k 100k} \
+        {noise v(D) V1 dec 4 1k 100k}]
+
+## ⚠ THE GATE IS READ AS 1/0 AND NOT AS THE WORD IT EMITS, AND THIS COST A WRONG
+## DECK BEFORE THE ROW EXISTED. `ase::field_emits` answers a bool with the
+## adapter's `when_true` word (or the field's own name) because ngspice has no
+## way to spell "off" -- so the first cut compared `contributors` against `1` and
+## `noise … contributors 1` rendered WITHOUT its argument: checkbox on, deck
+## silent.
+set MPFLDS [dict get [ase::analysis_entry ngspice noise] fields]
+set MPPTS {}
+foreach mpf $MPFLDS { if {[dict get $mpf name] eq {ptssum}} { set MPPTS $mpf } }
+check "MP10 ase::field_active reads a bool gate as on/off rather than through the\
+ word it emits, and a field with no `depends` is always active" \
+  [list [ase::field_active {type noise contributors 1} $MPPTS $MPFLDS] \
+        [ase::field_active {type noise contributors 0} $MPPTS $MPFLDS] \
+        [ase::field_active {type noise} $MPPTS $MPFLDS] \
+        [ase::field_active {type noise} [lindex $MPFLDS 0] $MPFLDS] \
+        [ase::field_depends $MPPTS] \
+        [ase::field_depends [lindex $MPFLDS 0]]] \
+  [list 1 0 0 1 {contributors 1} {}]
+
+## --- MP11: `min`, AND AN INACTIVE FIELD IS NOT REQUIRED ---------------------
+## MEASURED on both binaries: `noise v(mid) v1 dec 0 1k 10k` -> rc 1, `Number of
+## steps for noise measurement has to be larger than 0`, from inside the run.
+## The same number is knowable at the moment it is typed.
+check "MP11 a declared lower bound is refused at the commit door by name, a\
+ legal value passes, and a field whose `depends` is unsatisfied is not demanded\
+ even when it is required" \
+  [list [ase::analysis_emit_check ngspice \
+           [dict merge $MPNBASE {sweep dec points 0 start 1k stop 10k}]] \
+        [ase::analysis_emit_check ngspice \
+           [dict merge $MPNBASE {sweep dec points 1 start 1k stop 10k}]] \
+        [ase::analysis_emit_check ngspice {type sens out v(D)}] \
+        [ase::analysis_emit_check ngspice {type sens out v(D) mode ac}]] \
+  [list [list {belowmin points {needs 'points' to be at least 1}}] \
+        {} {} \
+        [list {missing sweep {needs a value for 'sweep'}} \
+              {missing points {needs a value for 'points'}} \
+              {missing start {needs a value for 'start'}} \
+              {missing stop {needs a value for 'stop'}}]]
+
+## --- MP12: SENS GAINS ITS AC MODE AND THE DC LINE DOES NOT MOVE ------------
+## ⚠ BYTE IDENTITY IS THE ACCEPTANCE HERE. Issue 1428 shipped `sens` with the
+## literal word `dc` in its template; this replaces it with `@mode?` whose
+## default is `dc`, and adds four AC slots that `depends {mode ac}` keeps out of
+## every DC deck. A bench that stores no mode emits exactly what it emitted.
+check "MP12 a sens row with no mode emits issue 1428's line unchanged, one with\
+ a stale AC sweep stored under the DC mode still emits it unchanged, and the AC\
+ mode emits the four extra tokens in ngspice's order" \
+  [list [ase::analysis_line ngspice {type sens enabled 1 out v(D) filters r1}] \
+        [ase::analysis_line ngspice {type sens enabled 1 out v(D)}] \
+        [ase::analysis_line ngspice {type sens enabled 1 out v(D) mode dc \
+                                     sweep dec points 2 start 1k stop 10k}] \
+        [ase::analysis_line ngspice {type sens enabled 1 out v(D) filters r1 \
+                                     mode ac sweep dec points 2 start 1k stop 10k}]] \
+  [list {sens v(D) r1 dc} {sens v(D) dc} {sens v(D) dc} \
+        {sens v(D) r1 ac dec 2 1k 10k}]
+
+## --- MP13: THE SWEEP FIELD OFFERS `dec` AND NOTHING ELSE -------------------
+## ⚠ RECEIPT 12 RECOMMENDED `values {dec oct}` AND THE MEASUREMENT REFUTES IT.
+## `lin` was already known broken -- `inc_freq` (`cktsens.c:829-837`) tests
+## against `#define LINEAR 3` pulled in from `noisedef.h` while `SENS_LINEAR` is
+## 15, so the test is always true and the sweep is geometric: `sens v(mid) r1 ac
+## lin 5 1k 5k` swept 1e3, 8e5, 6.4e8, 5.12e11, 4.096e14 Hz, each x800, on BOTH
+## binaries. ⚠ AND `oct` IS BROKEN TOO, WHICH NOBODY HAD MEASURED: `count_steps`'
+## OCTAVE arm divides by `M_LOG2E` (log2 e = 1.4427) where the octave count needs
+## `M_LN2` (0.6931), so it produces 48% of the points asked for. MEASURED on both
+## binaries: `sens … ac oct 2 1k 4k` gave TWO points (1000, 1414) where `ac oct 2
+## 1k 4k` gives five; `oct 4 1k 2k` gave two where `ac` gives five; `oct 1 1k 4k`
+## gave ONE. `dec` matches `ac dec` exactly, on every case tried. So the field
+## offers the one mode that works, and a restriction a form CANNOT offer is
+## better than a rule a form offers and then refuses.
+proc mp_fld {type name key} {
+  set fd [ase::field_descriptor ngspice $type $name]
+  if {[catch {dict exists $fd $key} e] || !$e} { return ABSENT }
+  return [dict get $fd $key]
+}
+check "MP13 sens offers both modes and, in the AC one, only the `dec` sweep --\
+ the two broken step types are not offerable rather than refused after the fact" \
+  [list [mp_fld sens mode values] [mp_fld sens mode default] \
+        [mp_fld sens sweep values] [mp_fld sens sweep depends] \
+        [mp_fld sens points depends] [mp_fld sens start depends] \
+        [mp_fld sens stop depends] \
+        [mp_fld noise sweep values] [mp_fld disto sweep values]] \
+  [list {dc ac} dc {dec} {mode ac} {mode ac} {mode ac} {mode ac} \
+        {dec oct lin} {dec oct lin}]
+
+## --- MP14: D30 -- EVERY PLOT NAMES A DESTINATION ---------------------------
+## ⚠ THE CENSUS IS TAKEN OVER THE REGISTRY, NOT OVER THE VALIDATOR'S ANSWER,
+## for GP1's reason: asking `analysis_schema_errors` whether it reported
+## `noplotresults` is vacuous while the shipped registry produces none.
+## ⚠ AND "THE WAVEFORM VIEWER" IS NOT AN ANSWER FOR SIX OF THE TWELVE PLOTS
+## (APPENDIX §6.2, normative). The three that are neither a sweep nor a scalar
+## go to a result table; the four `opinfo` companions go NOWHERE, because the
+## deck never writes them -- issue 1430's C61 -- and a route to the viewer would
+## be the registry asserting a path that does not exist.
+set MPROUTE {} ; set MPOPINFO {} ; set MPUNDECL {}
+foreach mpt [dict keys [ase::analysis_types ngspice]] {
+  set mpe [ase::analysis_entry ngspice $mpt]
+  if {![dict exists $mpe plots]} { continue }
+  set mpres {}
+  if {[dict exists $mpe results]} { set mpres [dict get $mpe results] }
+  foreach mpp [dict get $mpe plots] {
+    set mpd [ase::plot_results $mpp]
+    if {$mpd eq {}} { lappend MPROUTE "$mpt:[ase::plot_select $mpp]" ; continue }
+    set mpisop [expr {[dict exists $mpp role] && [dict get $mpp role] eq {opinfo}}]
+    if {$mpisop != ($mpd eq {none})} { lappend MPOPINFO "$mpt:$mpd" }
+    if {$mpd ne {none} && ![dict exists $mpres $mpd]} { lappend MPUNDECL "$mpt:$mpd" }
+  }
+}
+check "MP14 every plots row of every registered type names a destination, every\
+ `opinfo` one names `none` and only they do, and every other destination is one\
+ the entry's own `results` declares" \
+  [list $MPROUTE $MPOPINFO $MPUNDECL [ase::analysis_schema_errors ngspice]] \
+  {{} {} {} {}}
+
+## ⚠ THE FOUR `opinfo` PLOTS ARE NAMED, so a route quietly changing from `none`
+## to `viewer` cannot hide behind a census that counts rather than lists.
+set MPOPL {}
+foreach mpt [dict keys [ase::analysis_types ngspice]] {
+  set mpe [ase::analysis_entry ngspice $mpt]
+  if {![dict exists $mpe plots]} { continue }
+  foreach mpp [dict get $mpe plots] {
+    if {[dict exists $mpp role] && [dict get $mpp role] eq {opinfo}} {
+      lappend MPOPL [list $mpt [ase::plot_select $mpp] [ase::plot_results $mpp] \
+                          [ase::plot_capturable $mpp]]
+    }
+  }
+}
+check "MP15 the four companion plots ngspice writes under keepopinfo are named,\
+ routed nowhere, and declined by the walk" $MPOPL \
+  [list [list ac {AC Operating Point} none 0] \
+        [list noise {NOISE Operating Point} none 0] \
+        [list pz {Distortion Operating Point} none 0] \
+        [list disto {Distortion Operating Point} none 0]]
+
+## --- MP16: THE FIVE NEW REFUSALS, ONE FIXTURE EACH --------------------------
+## Each fixture is otherwise valid, so a row can only red for its own reason.
+proc mp_types {} {
+  return [dict create \
+    mpa [dict create label mpa baseline 1 registered 1 emitorder 10 \
+           plots {{select {Mpa Analysis} role sweep label mpa}} \
+           emit {{role analysis tmpl {mpa}}}] \
+    mpb [dict create label mpb baseline 1 registered 1 emitorder 20 \
+           results {viewer {kind sweep}} \
+           plots {{select {Mpb OP} role opinfo results viewer label mpb}} \
+           emit {{role analysis tmpl {mpb}}}] \
+    mpc [dict create label mpc baseline 1 registered 1 emitorder 30 \
+           results {viewer {kind sweep}} \
+           plots {{select {Mpc Analysis} role sweep results none label mpc}} \
+           emit {{role analysis tmpl {mpc}}}] \
+    mpd [dict create label mpd baseline 1 registered 1 emitorder 40 \
+           results {viewer {kind sweep}} \
+           plots {{select {Mpd Analysis} role sweep results table label mpd}} \
+           emit {{role analysis tmpl {mpd}}}] \
+    mpe [dict create label mpe baseline 1 registered 1 emitorder 50 \
+           results {viewer {kind sweep}} \
+           fields {{name zz kind int required 0 label ZZ}} \
+           plots {{select {Mpe Analysis} role sweep results viewer label mpe \
+                   when {field nosuchfield}}} \
+           emit {{role analysis tmpl {mpe @zz?}}}] \
+    mpf [dict create label mpf baseline 1 registered 1 emitorder 60 \
+           results {viewer {kind sweep}} \
+           plots {{select {Mpf Analysis} role sweep results viewer label mpf \
+                   when {hook ::mp::no::such::proc}}} \
+           emit {{role analysis tmpl {mpf}}}] \
+    mpg [dict create label mpg baseline 1 registered 1 emitorder 70 \
+           results {viewer {kind sweep}} \
+           fields {{name aa kind int required 0 label AA \
+                    depends {nosuchgate 1}}} \
+           plots {{select {Mpg Analysis} role sweep results viewer label mpg}} \
+           emit {{role analysis tmpl {mpg @aa?}}}] \
+    mph [dict create label mph baseline 1 registered 1 emitorder 80 \
+           results {viewer {kind sweep}} \
+           plots {{select {Mph One} role sweep results viewer label mph1} \
+                  {select {Mph Two} role sweep results viewer label mph2} \
+                  {select {Mph Three} role sweep results viewer label mph3}} \
+           emit {{role analysis tmpl {mph}}}]]
+}
+ase::register_backend mpsim [dict create \
+  render_deck  [ase::backend_hook ngspice render_deck] \
+  run_cmd      [ase::backend_hook ngspice run_cmd] \
+  log_file     [ase::backend_hook ngspice log_file] \
+  result_probe [ase::backend_hook ngspice result_probe] \
+  raw_file     [ase::backend_hook ngspice raw_file] \
+  analysis_types mp_types]
+set MPERR [ase::analysis_schema_errors mpsim]
+proc mp_tok {errs tok} {
+  set o {}
+  foreach e $errs { if {[lindex $e 1] eq $tok} { lappend o [lindex $e 0] } }
+  return $o
+}
+check "MP16 the five new registry refusals each fire on their own fixture and on\
+ no other" \
+  [list [mp_tok $MPERR noplotresults] [mp_tok $MPERR badplotroute] \
+        [mp_tok $MPERR badplotwhenfield] [mp_tok $MPERR badplotwhenhook] \
+        [mp_tok $MPERR baddepends] [llength $MPERR]] \
+  [list mpa {mpb mpc mpd} mpe mpf mpg 7]
+
+## ⚠ `mpd` IS THE ONE THAT WOULD NOT HAVE BEEN CAUGHT BY A PER-ROW CHECK: its
+## plots row names `table`, which is a perfectly good destination -- just not one
+## its own entry declares. D30 is about the analysis having somewhere to put its
+## answer, so the two halves have to agree.
+check "MP16b a destination the entry's own `results` does not declare is refused\
+ even though the word itself is legal elsewhere in the registry" \
+  [expr {[lsearch -exact [mp_tok $MPERR badplotroute] mpd] >= 0}] 1
+
+## --- MP17: THE `select` GLOB, AND WHY NOISE NEEDS ONE ----------------------
+## ⚠ `.options sqrnoise` RENAMES BOTH NOISE PLOTS. MEASURED 2026-09-12 on both
+## binaries, the same deck with and without it:
+##   Noise Spectral Density Curves  ->  ... - (V^2 or A^2)/Hz
+##   Integrated Noise               ->  ... - V^2 or A^2
+## `ase::reconcile_plots` has matched `select` with `string match -nocase` since
+## issue 1430, so the star costs nothing and an exact literal would make every
+## `sqrnoise` run report `mislabel` for a run in which nothing went wrong.
+set MPSEL {}
+foreach mpp [dict get [ase::analysis_entry ngspice noise] plots] {
+  lappend MPSEL [ase::plot_select $mpp]
+}
+check "MP17 noise's two captured plots declare globs, and each matches both the\
+ plain and the sqrnoise spelling ngspice writes" \
+  [list $MPSEL \
+        [string match -nocase [lindex $MPSEL 0] {Integrated Noise}] \
+        [string match -nocase [lindex $MPSEL 0] {Integrated Noise - V^2 or A^2}] \
+        [string match -nocase [lindex $MPSEL 1] {Noise Spectral Density Curves}] \
+        [string match -nocase [lindex $MPSEL 1] \
+           {Noise Spectral Density Curves - (V^2 or A^2)/Hz}] \
+        [string match -nocase [lindex $MPSEL 0] {Noise Spectral Density Curves}]] \
+  [list {{Integrated Noise*} {Noise Spectral Density Curves*} {NOISE Operating Point}} \
+        1 1 1 1 0]
+
+## --- MP18: RECONCILIATION OVER A REAL TWO-PLOT ROW -------------------------
+## The canned-file idiom: no simulator is started. The sidecar is in WRITE order
+## and the results file's `Plotname:` records follow it, which is what the walk
+## produces and what was measured end to end on both binaries.
+proc mp_fix {tag rawnames maprecs} {
+  set d [file join $::scratch mp_$tag]
+  file mkdir $d
+  set body {}
+  foreach n $rawnames {
+    append body "Title: * mp fixture\nDate: Sat Sep 12 00:00:00  2026\n"
+    append body "Plotname: $n\nFlags: real\nNo. Variables: 1\nNo. Points: 1\n"
+    append body "Variables:\n\t0\tv(mid)\tvoltage\nValues:\n 0\t1.0\n\n"
+  }
+  rg_wr [file join $d mp_ase.raw] $body
+  set m {}
+  foreach r $maprecs { append m "[ase::plotmap_record [lindex $r 0] [lindex $r 1] [lindex $r 2]]\n" }
+  rg_wr [file join $d mp_ase.plotmap] $m
+  return $d
+}
+set MPST [ase::state_default]
+dict set MPST design {lib mplib cell mp view schematic}
+dict set MPST save_all_v 1
+dict set MPST analyses [list [dict merge $MPNBASE {sweep dec points 4 start 1k stop 100k}]]
+set MPD1 [mp_fix ok {{Integrated Noise} {Noise Spectral Density Curves}} \
+                    {{noise 0 {Integrated Noise}} {noise 0 {Noise Spectral Density Curves}}}]
+set MPV1 [ase::reconcile_plots ngspice $MPST [file join $MPD1 mp_ase.raw] \
+                                             [file join $MPD1 mp_ase.plotmap]]
+set MPD2 [mp_fix sqr {{Integrated Noise - V^2 or A^2} \
+                      {Noise Spectral Density Curves - (V^2 or A^2)/Hz}} \
+                     {{noise 0 {Integrated Noise - V^2 or A^2}} \
+                      {noise 0 {Noise Spectral Density Curves - (V^2 or A^2)/Hz}}}]
+set MPV2 [ase::reconcile_plots ngspice $MPST [file join $MPD2 mp_ase.raw] \
+                                             [file join $MPD2 mp_ase.plotmap]]
+## ⚠ THE OVER-WALK FIXTURE IS A REGISTRY THAT DECLARES ONE PLOT TOO MANY, WHICH
+## IS THE DEFECT'S REAL SHAPE, and the first cut of this row got it wrong. A
+## sidecar and a results file with one EXTRA record, against a registry that
+## predicted two, is an `over`/`predmismatch` -- the counters see it. The silent
+## corruption issue 1430 built the `mislabel` arm for is the other way round: the
+## REGISTRY says three, the analysis made two, the walk saturated on `constants`
+## and the next `write` appended the twelve mathematical constants. Then all
+## THREE counts agree -- 3 predicted, 3 recorded, 3 on file -- and only the names
+## disagree. `mph` is a fixture type declaring three plots for that reason.
+set MPOVST [ase::state_default]
+dict set MPOVST design {lib mplib cell mp view schematic}
+dict set MPOVST simulator mpsim
+dict set MPOVST analyses {{type mph enabled 1}}
+set MPD3 [mp_fix over {{Mph One} {Mph Two} constants} \
+                      {{mph 0 {Mph One}} {mph 0 {Mph Two}} {mph 0 constants}}]
+set MPV3 [ase::reconcile_plots mpsim $MPOVST [file join $MPD3 mp_ase.raw] \
+                                             [file join $MPD3 mp_ase.plotmap]]
+check "MP18 a two-plot noise run reconciles to `ok` in write order, still does so\
+ under sqrnoise's renamed plots, and a registry that declares one plot too many\
+ is caught as a mislabel rather than as three agreeing counts" \
+  [list [dict get $MPV1 verdict] [dict get $MPV1 predicted] [dict get $MPV1 actual] \
+        [dict get $MPV2 verdict] \
+        [dict get $MPV3 verdict] [dict get $MPV3 predicted] \
+        [dict get $MPV3 mapped] [dict get $MPV3 actual]] \
+  {ok 2 2 ok mislabel 3 3 3}
+
+## ⚠ AND THE OVER-WALK'S THREE COUNTS ALL AGREE, which is the whole reason
+## reconciliation compares NAMES. A safety net built from counters alone would be
+## green on the exact defect it was written for.
+check "MP18b the over-walk is invisible to every counter and visible only to the\
+ registry comparison, which names the plot the deck actually wrote" \
+  [list [expr {[dict get $MPV3 predicted] == [dict get $MPV3 mapped] \
+               && [dict get $MPV3 mapped] == [dict get $MPV3 actual]}] \
+        [llength [dict get $MPV3 mislabelled]] \
+        [lindex [lindex [dict get $MPV3 mislabelled] 0] 2] \
+        [lindex [lindex [dict get $MPV3 mislabelled] 0] 3]] \
+  [list 1 1 constants {Mph Three}]
+
+## --- MP19: THE WRITE-ORDER CLAIM, STATED WHERE A REORDER WOULD REDDEN IT ----
+## ⚠ A REGISTRY THAT LISTED NOISE'S PLOTS IN CREATION ORDER WOULD PASS EVERY
+## ROW ABOVE AND MISLABEL EVERY REAL RUN. Reconciliation compares its prediction
+## positionally against a sidecar written in WRITE order, and the walk runs
+## backwards -- so the prediction must be reversed relative to creation. This row
+## is the reverse fixture: the same two plots in the other order.
+set MPD4 [mp_fix rev {{Noise Spectral Density Curves} {Integrated Noise}} \
+                     {{noise 0 {Noise Spectral Density Curves}} {noise 0 {Integrated Noise}}}]
+set MPV4 [ase::reconcile_plots ngspice $MPST [file join $MPD4 mp_ase.raw] \
+                                             [file join $MPD4 mp_ase.plotmap]]
+check "MP19 the same two plots recorded in CREATION order instead of write order\
+ are reported as mislabelled, which is what a registry listing them the other way\
+ round would do to every run" \
+  [list [dict get $MPV4 verdict] [llength [dict get $MPV4 mislabelled]]] {mislabel 2}
+
+} mp_err]} {
+  check "MP0 section MP ran to the end" "RAISED:$mp_err" {}
 }
 
 # --- verdict -----------------------------------------------------------------
