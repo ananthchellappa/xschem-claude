@@ -862,6 +862,20 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ T1 — RUN SOLO A SECOND TIME, STILL ZERO, 2026-09-13
+
+**`69 Start lines, rc 0, zero counted failures`**, and the literal strings `FAIL`, `FATAL` and
+`TIMED OUT` appear **zero** times in the log. Run after `fe0c2bdc` with nothing else writing.
+
+This one covers the three landings since the first clean run: ⚖ **R6's GUI half** (1448), the
+**`id` allow-list fix** (1449) and the **one-list fix** (1450) — all three of which touched
+`src/ase.tcl` or `src/ase_window.tcl`, so the earlier number could not stand for them.
+
+⚠ **Two clean T1s in one day is not the same as one**: the first covered five landings, this one
+covers three, and between them sits a defect (**1449**) that a clean T1 **did not catch**. The
+number is a floor, not a proof — what caught 1449 was a crew reading a list, and what caught its
+sibling (**1450**) was that crew measuring one file further.
+
 ### ✅ Issue 1450 — the Options editor refused every row that carried a name, fixed 2026-09-13
 
 **Reproduced through the real widgets first**, on the dev display, on one `dc` row carrying both
