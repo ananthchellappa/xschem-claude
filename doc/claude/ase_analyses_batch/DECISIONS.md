@@ -1359,6 +1359,26 @@ inverts, task 2 consumes `{type idx}` verbatim rather than minting a display for
 
 ### ⚖ R7 — ANSWERED. Do we ship a PSS panel at all, given that the build probes ran it successfully?
 
+⚠ **MEASURED AFTER THE RULING, 2026-09-13, AND IT SHARPENS WHAT "EXPERIMENTAL" HAS TO
+MEAN: `pss` SEGFAULTS ON A SHORT ARGUMENT LIST, ON BOTH BINARIES.** `pss 1meg 1m out 1024`
+— four arguments — dies with **rc 139** on 45.2 *and* on the fork, printing only
+`Error: Strange behavior`. Five arguments or more survive. Full measurement:
+`evidence/pss-stage14.md`.
+
+That is a worse class than anything else this batch has classified: no `$sim_status`, no
+guard, no `remzerovec`, **no salvage** — issue 1433's checkpoint machinery runs *in the
+deck*, and there is no deck left — and everything after it in emit order dies with it,
+**including `op`**, which is kept LAST (0964) exactly so a broken run still leaves it
+behind.
+
+**So the ruling stands and its implementation gains a hard requirement:** the panel ships,
+and the emitter **never writes a `pss` card with fewer than five arguments** — not as a
+default, not for a blank optional field, not for a `.state` file written by an older ASE-L
+or edited by hand. A test row must prove the *shortest possible* emission is five, by
+counting words in the rendered deck. **The experimental wording is not the guard**: a
+sentence warns, it does not stop a four-word card reaching the simulator.
+
+
 **✅ ANSWERED 2026-09-13 — Option A, ship it, explicitly experimental.** The user's words:
 *"follow your recommendation"*.
 
