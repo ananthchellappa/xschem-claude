@@ -4887,6 +4887,380 @@ proc ase::analysis_cards {sim row} {
 }
 
 
+
+
+# ─── THE OPTION CATALOGUE: ASE-L'S SCHEMA (Stage 7a/7b, issue 1437) ──────
+#
+# ASE-L owns the row SHAPE and the ONE SPELLER; a per-simulator ADAPTER owns the
+# CONTENT (D34-D37, and D33's amendment said this stage is where it is settled).
+# Every fact in the catalogue -- what class a name belongs to, what it defaults
+# to, which of them are inert -- is a fact about ONE simulator, so none of it may
+# sit here. Core reaches it through the OPTIONAL `sim_options` hook, exactly like
+# `ase::analysis_types` reaches the analysis registry, and a backend with no hook
+# gets `{}` and NEVER a literal fallback.
+#
+# THE FIVE SCHEMA COLUMNS. `cptype` `phase` `scope` `inert` and -- computed,
+# never typed -- `door`.
+#
+#   cptype  the row's type, in the ADAPTER'S OWN VOCABULARY. Core never
+#           enumerates it: it looks the pair (door, cptype) up in the adapter's
+#           spelling table and a pair with no template is a TYPE ERROR. That is
+#           the whole of `ase::opt_line`, and it is why a simulator with no
+#           `CP_` classes at all can describe itself here.
+#   phase   WHEN the value must reach the simulator, in ASE-L's vocabulary:
+#             pre      before the input file is read
+#             deck     with the input file, and only there
+#             run      after the circuit is loaded, and only there
+#             any      either
+#             cmdline  as a real argv flag
+#           ⚠ THE PLAN WROTE `phase L1` HERE, AND L1 IS AN NGSPICE WORD. A
+#           `door` computed by core from an ngspice phase name is core naming an
+#           ngspice fact. The adapter keeps its own spelling in `ngphase`, which
+#           core never reads.
+#   scope   `global`, or `{analysis <type> ...}` -- which surface offers the row.
+#   inert   the reason this option does nothing in this build. D24: an inert
+#           option is NEVER a live field, so the speller REFUSES it rather than
+#           emitting a line that will be ignored.
+#
+# THERE IS NO MEMO HERE, DELIBERATELY. `ase::analysis_types` caches because its
+# hook BUILDS a dict; this hook returns a namespace variable and Tcl's
+# copy-on-write makes that O(1). Issue 1406 is the scar on the other side: a memo
+# whose invalidation rule is "nobody ever does that" is the same shape as the
+# eight copies of "what is a dc analysis" this batch exists to delete.
+
+# The catalogue for one simulator: the hook's answer, or `{}`.
+proc ase::sim_options {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim sim_options]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+# One row, or `{}` when this simulator does not describe that option.
+proc ase::sim_option_entry {sim name} {
+  set d [ase::sim_options $sim]
+  if {![dict exists $d $name]} { return {} }
+  return [dict get $d $name]
+}
+
+# Every option name this simulator describes, sorted.
+proc ase::sim_option_names {{sim {}}} {
+  return [lsort [dict keys [ase::sim_options $sim]]]
+}
+
+# The adapter's (door x cptype) spelling table, or `{}`.
+proc ase::sim_option_spell {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim option_spell]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+# ONE TRUTH TEST FOR "IS THIS OPTION ON", shared with ase::option_enabled.
+# Two predicates that disagree about a switch are how the deck and the form
+# come to say different things -- this batch has eight copies of that defect in
+# its own history. Empty and `0` are off; every other value is on, which is
+# byte-for-byte the rule ase::option_enabled and render_deck already apply.
+proc ase::opt_truthy {value} {
+  return [expr {$value ne {} && $value ne {0}}]
+}
+
+# The row's `phase`, defaulting to `any` -- a row that says nothing about when
+# it must arrive is a row either door can carry.
+proc ase::opt_phase {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {} || ![dict exists $d phase]} { return any }
+  return [dict get $d phase]
+}
+
+# The row's inert reason, or `{}` (D24).
+proc ase::opt_inert {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {} || ![dict exists $d inert]} { return {} }
+  return [dict get $d inert]
+}
+
+# Is this option one that must be delivered before the input file is read?
+# §7d's group is exactly this predicate; it is here rather than there because
+# the DOOR is computed from it and two answers would be two doors.
+proc ase::opt_is_pre_deck {sim name} {
+  return [expr {[ase::opt_phase $sim $name] eq {pre}}]
+}
+
+# ⚠ THE DOOR IS COMPUTED, NEVER TYPED. A row that STATES its door is a row that
+# can disagree with itself -- and the plan's own catalogue excerpt states one on
+# every row, three paragraphs below the sentence forbidding it.
+#
+# `where` is the SLOT THE CALLER IS FILLING, not a preference: `deck` is the
+# text above the analysis block, `control` is the text inside it. An impossible
+# pair RAISES, and that is the point -- four of this simulator's silent-failure
+# traps are impossible pairs:
+#
+#   pre  + control   `.options casemode=preserve` and `set casemode` in the
+#                    block are BOTH ignored without a word           (T8)
+#   deck + control   MEASURED on both binaries: `.options warn=1` arms the SOA
+#                    check and `set warn=1` inside `.control` does nothing at
+#                    all, because the block runs after the circuit is loaded
+#   run  + deck      MEASURED on both binaries: `set units=degrees` gives
+#                    -44.99 deg and `.options units=degrees` leaves the phase in
+#                    RADIANS -- the 57.2958x error no design in this batch caught
+#   list + deck      MEASURED on both binaries: a list value on a `.options`
+#                    card is not ignored, it ABORTS -- `ERROR: wrong format in
+#                    option ticlist! Aborting...`, rc 1
+proc ase::opt_door {sim name {where deck}} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {}} {
+    return -code error "ase: simulator '$sim' describes no option '$name'"
+  }
+  if {![dict exists $d cptype]} {
+    return -code error "ase: option '$name' has no cptype"
+  }
+  set cptype [dict get $d cptype]
+  set phase  [ase::opt_phase $sim $name]
+  if {$where ni {deck control}} {
+    return -code error "ase: option slot must be 'deck' or 'control', not '$where'"
+  }
+  switch -- $phase {
+    cmdline { return cmdline }
+    pre {
+      if {$where eq {control}} {
+        return -code error "ase: option '$name' must reach '$sim' before the\
+ input file is read, so it cannot be written into the analysis block"
+      }
+      if {$cptype in {bool string}} { return predeck }
+      return predeck-file
+    }
+    deck {
+      if {$where eq {control}} {
+        return -code error "ase: option '$name' is read while '$sim' loads the\
+ circuit, so it cannot be written into the analysis block"
+      }
+      return options
+    }
+    run {
+      if {$where eq {deck}} {
+        return -code error "ase: option '$name' is read by '$sim' after the\
+ circuit is loaded, so it cannot be written above the analysis block"
+      }
+      return control
+    }
+    any {
+      # A list value has no `.options` spelling anywhere -- see the measured
+      # abort above -- so it takes the in-block door whatever slot was asked for.
+      if {$cptype eq {list}} { return control }
+      if {$where eq {control}} { return control }
+      return options
+    }
+  }
+  return -code error "ase: option '$name' has an unknown phase '$phase'"
+}
+
+# The template for one (door, cptype) pair, or `{}` when the pair has no
+# spelling -- which is how a type error is DETECTED rather than declared.
+#
+# ⚠ THE `cmdline` DOOR READS THE ROW, NOT THE TABLE, and it is the one door
+# that does. An argv flag is spelled once per option -- `--soa-log=<file>` is
+# not an instance of any pattern -- so the template is the row's own `cmdline`
+# key. A (door, cptype) table entry for it would be a table with one member per
+# key, which is D43's "a table with no key" wearing the other hat.
+proc ase::opt_template {sim name door cptype} {
+  if {$door eq {cmdline}} {
+    set d [ase::sim_option_entry $sim $name]
+    if {$d eq {} || ![dict exists $d cmdline]} { return {} }
+    return [dict get $d cmdline]
+  }
+  set t [ase::sim_option_spell $sim]
+  if {![dict exists $t $door]} { return {} }
+  set byt [dict get $t $door]
+  if {![dict exists $byt $cptype]} { return {} }
+  return [dict get $byt $cptype]
+}
+
+# ⚠ THE ONE SPELLER (D23). Every option line ASE-L emits for any simulator, in
+# any slot, comes out of here. It returns ONE line, or `{}` for "there is
+# nothing to emit", and it RAISES rather than guessing.
+#
+# THE TRAPS THIS TURNS INTO TYPE ERRORS, each measured on BOTH binaries:
+#
+#   T3  a boolean is KILLED by a value. `set sqrnoise` squares the noise
+#       (1.489e-13); `set sqrnoise=1` and `set sqrnoise=true` leave it at
+#       3.859e-07 with no message. A template with no @value slot CANNOT
+#       produce the second spelling, so the trap is unreachable by construction
+#       rather than guarded against.
+#   T4  a number is KILLED by a bare set. `.options warn=1` prints the SOA
+#       violation; `.options warn` prints nothing. A template WITH a @value slot
+#       and an empty value emits nothing at all, so a half-filled form never
+#       reaches the simulator as a silently-inert card.
+#   T5  `-D name=value` is ALWAYS a CP_STRING. `-D sqrnoise` works, `-D warn=1`
+#       does not. The `predeck` door declares NO template for num/real/list, so
+#       the pair does not exist -- and `ase::opt_door` never routes one there
+#       either. Two independent guards, deliberately.
+#   T8  and the four impossible (phase, slot) pairs in `ase::opt_door`.
+#
+# ⚠ AND THE PLAN'S SKETCH SWITCHES ON `cptype` ALONE, WHICH IS WRONG IN THE
+# DIRECTION THAT MOVES A SHIPPED DECK. It spells every `bool` as `set <name>`;
+# `sqrnoise` is a bool and what ASE-L emits today is `.options sqrnoise`, which
+# is measured to work on both binaries. The spelling is a function of the DOOR
+# and the cptype together, and the door is the half the sketch dropped.
+proc ase::opt_line {sim name value {where deck}} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {}} {
+    return -code error "ase: simulator '$sim' describes no option '$name'"
+  }
+  set reason [ase::opt_inert $sim $name]
+  if {$reason ne {}} {
+    return -code error "ase: option '$name' does nothing in this build: $reason"
+  }
+  set cptype [dict get $d cptype]
+  set door [ase::opt_door $sim $name $where]
+  set tmpl [ase::opt_template $sim $name $door $cptype]
+  if {$tmpl eq {}} {
+    return -code error "ase: simulator '$sim' has no way to write a '$cptype'\
+ option through the '$door' door ('$name')"
+  }
+  if {[string first @value $tmpl] < 0} {
+    # A VALUELESS TEMPLATE. Absence is off, and there is no spelling for "off".
+    if {![ase::opt_truthy $value]} { return {} }
+    return [string map [list @name $name] $tmpl]
+  }
+  if {$value eq {}} { return {} }
+  if {$cptype eq {list}} { set value [join $value { }] }
+  return [string map [list @name $name @value $value] $tmpl]
+}
+
+# The row's catalogue default, or `{}`.
+proc ase::opt_default {sim name} {
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {} || ![dict exists $d default]} { return {} }
+  return [dict get $d default]
+}
+
+# §7e's restore: the line that puts an option back to the catalogue default
+# after the analysis it was set for. It is the SPELLER APPLIED TO THE DEFAULT,
+# deliberately -- a second body here would be a second answer to "how is this
+# option written". WHERE it is called is §7e's; that it exists at all is what
+# makes the `default` column load-bearing rather than decoration.
+#
+# ⚠ A ROW WITH NO KNOWN DEFAULT CANNOT BE RESTORED, and answers `{}`. §7e's own
+# honest limit -- "an option with no known default is labelled global and
+# offered only on the global surface" -- is this return value.
+proc ase::opt_restore_line {sim name {where control}} {
+  set dflt [ase::opt_default $sim $name]
+  if {$dflt eq {}} { return {} }
+  set d [ase::sim_option_entry $sim $name]
+  if {$d eq {} || [ase::opt_inert $sim $name] ne {}} { return {} }
+  if {[string first @value [ase::opt_template $sim $name \
+        [ase::opt_door $sim $name $where] [dict get $d cptype]]] < 0} {
+    # A valueless option restores by ABSENCE, and absence has no line.
+    return {}
+  }
+  return [ase::opt_line $sim $name $dflt $where]
+}
+
+# ⚠ WHICH STORED OPTIONS WILL NOT REACH THE SIMULATOR, AND WHY. Returns a list
+# of `{name reason}` pairs, empty when every stored option has a deck-slot
+# spelling. It EMITS NOTHING and starts nothing; it is the catalogue answering
+# the one question a 241-row table exists to answer.
+#
+# ⚠ IT IS NOT HYPOTHETICAL. `git ls-files | grep '\.state$'` finds FIVE committed
+# benches carrying `{name wnflag value 1}`, and `wnflag` is a pre-deck `CP_NUM`:
+# `.options wnflag` -- the line ASE-L writes today -- is the wrong door twice
+# over (the read is inside `inp_readall`, and a bare `set` cannot answer a
+# `CP_NUM` read anyway). The user asked for MOS W per finger and has been
+# getting W total, with no message from anything. This proc is what notices.
+#
+# ⚠ AN UNKNOWN NAME IS NOT AN ERROR HERE. A catalogue is a claim about one
+# simulator and a user may know something it does not; `ase::opt_line` refuses
+# to SPELL an unknown name, but a stored row for one is reported as `unknown`
+# and left alone. Refusing to run a bench because a table is short would be the
+# catalogue outranking the user.
+proc ase::state_option_delivery {sim state} {
+  set out {}
+  dict for {name value} [ase::state_option_map $state] {
+    if {[ase::sim_option_entry $sim $name] eq {}} {
+      lappend out [list $name unknown {this simulator's catalogue has no such option}]
+      continue
+    }
+    set reason [ase::opt_inert $sim $name]
+    if {$reason ne {}} { lappend out [list $name inert $reason] ; continue }
+    if {[catch {ase::opt_door $sim $name} door]} {
+      lappend out [list $name refused $door]
+      continue
+    }
+    if {$door ne {options}} {
+      lappend out [list $name $door \
+        "this option needs the '$door' door; the deck above the analysis block\
+ cannot carry it"]
+      continue
+    }
+    if {[catch {ase::opt_line $sim $name $value} line]} {
+      lappend out [list $name refused $line]
+      continue
+    }
+    if {$line eq {} && [ase::opt_truthy $value]} {
+      lappend out [list $name silent "no line is written for value '$value'"]
+    }
+  }
+  return $out
+}
+
+# ⚠ EVERY ROW OF A 200-PLUS-ROW CATALOGUE CHECKED AS A SET, because nobody
+# reads 200 rows and a catalogue is a claim about a simulator. Returns a list of
+# complaints, empty when the catalogue is well formed. The counterpart of
+# `ase::analysis_schema_errors`, and for the same reason.
+proc ase::option_schema_errors {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set errs {}
+  set cat [ase::sim_options $sim]
+  dict for {name row} $cat {
+    if {![dict exists $row cptype]} {
+      lappend errs "$name: no cptype"
+      continue
+    }
+    set cptype [dict get $row cptype]
+    set phase [ase::opt_phase $sim $name]
+    if {$phase ni {pre deck run any cmdline}} {
+      lappend errs "$name: unknown phase '$phase'"
+      continue
+    }
+    if {[dict exists $row door]} {
+      lappend errs "$name: states a door; the door is computed"
+    }
+    if {[ase::opt_inert $sim $name] ne {}} {
+      # D24: AN INERT OPTION IS NEVER A LIVE FIELD. The row still needs a
+      # cptype so §7d can list it and disable it with the reason, but the
+      # speller must REFUSE it -- and that is asserted here rather than
+      # assumed, over every inert row at once.
+      if {![catch {ase::opt_line $sim $name 1} _]} {
+        lappend errs "$name: inert, yet the speller writes a line for it"
+      }
+      if {![catch {ase::opt_line $sim $name 1 control} _]} {
+        lappend errs "$name: inert, yet the speller writes an in-block line for it"
+      }
+      continue
+    }
+    foreach where {deck control} {
+      if {[catch {ase::opt_door $sim $name $where} door]} { continue }
+      if {[ase::opt_template $sim $name $door $cptype] eq {}} {
+        lappend errs "$name: no '$door' template for cptype '$cptype'"
+      }
+    }
+    if {[dict exists $row scope]} {
+      set sc [dict get $row scope]
+      if {[lindex $sc 0] ni {global analysis}} {
+        lappend errs "$name: scope must be 'global' or 'analysis ...', not '$sc'"
+      }
+    }
+  }
+  return [lsort -unique $errs]
+}
+
 # ─── THE PLOT SIDECAR, AND WHAT IT IS FOR (Stage 6a–6c, issue 1430) ──────────
 #
 # ⚠ THE QUESTION IS NOT "HOW MANY PLOTS" -- IT IS "WHICH ROW WROTE THIS ONE".
@@ -5016,7 +5390,16 @@ proc ase::option_enabled {state name} {
     if {![string equal -nocase [dict get $o name] $name]} { continue }
     set v 1
     if {[dict exists $o value]} { set v [dict get $o value] }
-    return [expr {$v eq {0} ? 0 : 1}]
+    ## ⚠ ONE BODY WITH THE SPELLER, ISSUE 1437. This arm used to read
+    ## `$v eq {0} ? 0 : 1`, which answers ON for a row stored with an EMPTY
+    ## value -- while `ase::opt_line` writes no line for one, because an empty
+    ## field is a field the user has not filled in. Two predicates disagreeing
+    ## about whether a switch is on is how a form and a deck come to say
+    ## different things, and this batch has eight copies of that defect in its
+    ## own history. No committed .state file and no fixture stores an empty
+    ## value; what the old arm bought for one was `.options <name>=`, a card
+    ## with no value on it.
+    return [ase::opt_truthy $v]
   }
   return 0
 }
@@ -18997,6 +19380,377 @@ $_leg
       default { return source }
     }
   }
+
+
+
+
+
+  # ─── THE OPTION CATALOGUE: NGSPICE'S CONTENT (Stage 7a, issue 1437) ───────
+  # ASE-L owns the row SHAPE (`cptype` `phase` `scope` `inert`, the computed
+  # `door`, the one speller and D24's inert rule); THIS block owns the CONTENT
+  # (D34-D37, and D33's amendment named Stage 7 as where that is settled). Every
+  # row below is a fact about ngspice -- the `CP_` class, the `IF_FLAG`/
+  # `IF_INTEGER`/`IF_REAL` split, `itl4`'s clamp, `gminsteps`' default,
+  # `nosavecurrents`' tombstone -- so none of it may sit in ase.tcl's own
+  # namespace, and core reaches it only through the `sim_options` hook.
+  #
+  # ⚠ GENERATED ONCE FROM THE NGSPICE C SOURCE, HAND-MAINTAINED AFTER, AND THE
+  # PROVENANCE IS IN EVERY ROW. `site` is the file:line the row was read from in
+  # /home/analog/dev/ngspice (ngspice-46+, ver_50 at ccebdf2a2). Blocks A and B
+  # are the plan's 220-row measured floor and are MEASURED, not transcribed:
+  #
+  #   A  57 settable `OPTtbl` keywords. `cktsopt.c`'s table has 98 rows; 57 carry
+  #      IF_SET, 29 carry IF_ASK, `tnom` and `temp` carry both and 14 carry
+  #      neither -- 57+29-2+14 = 98. The cptype comes straight from the row's own
+  #      IF_FLAG / IF_INTEGER / IF_REAL / IF_STRING bit, and `help` is ngspice's
+  #      own description string from that table, verbatim.
+  #   B  163 `cp_getvar` variables, the cptype from the `CP_` constant at the
+  #      call site. ⚠ THE 163rd IS `casemodewrite`, NOT the computed
+  #      `auto_bridge_*` family the appendix names: it is read through
+  #      `cp_getvar_policy()` (`variable.c:753`), the only such read in the tree,
+  #      which a `cp_getvar` grep cannot see.
+  #   A n B is EMPTY, re-measured this pass: 98 + 163 = 261 distinct names.
+  #
+  # Blocks C-F are NOT in the plan's floor and each exists because a measurement
+  # found a delivery class the floor has no member of. They are counted
+  # separately in the receipt, and `help`/`group`/`scope` throughout are
+  # transcribed from evidence/options.md and evidence/hidden-vars.md rather than
+  # re-derived -- those three columns are the GUI's, not the simulator's.
+  proc sim_options {} {
+    variable sim_options
+    return $sim_options
+  }
+
+  # ⚠ THE SPELLING TABLE IS THE ADAPTER'S, AND IT IS WHY CORE NEVER ENUMERATES A
+  # `cptype`. `ase::opt_line` looks up (door, cptype) here; a pair with NO
+  # template is a type error, which is how three of ngspice's silent-failure
+  # traps stop being possible rather than being guarded against:
+  #
+  #   * every `bool`/`optflag` template is VALUELESS, so `set sqrnoise=1` -- the
+  #     spelling that silently turns the option OFF (measured on both binaries:
+  #     onoise_total 1.489e-13 with `set sqrnoise`, 3.859e-07 with `set
+  #     sqrnoise=1` and with `set sqrnoise=true`) -- cannot be produced;
+  #   * `predeck` declares NO num/real/list template, because `-D name=value` is
+  #     always a CP_STRING (`main.c:984-999`; measured, `-D warn=1` prints no SOA
+  #     warning at all while `.options warn=1` prints one);
+  #   * `options` declares NO list template, because a list value on a `.options`
+  #     card does not get ignored -- `inp.c:1407-1411` reaches
+  #     `controlled_exit(EXIT_FAILURE)`. Measured on both binaries:
+  #     `ERROR: wrong format in option ticlist!  Aborting...`, rc 1.
+  #
+  # ⚠ AND `control` SPELLS AN `OPTtbl` KEYWORD `option`, NOT `set`. They are two
+  # different mechanisms -- `option` goes to `cp_usrset` -> `if_option` ->
+  # `OPTtbl`, `set` makes a front-end variable -- and only the first is
+  # documented to set a task parameter.
+  proc option_spell {} {
+    return {
+      options {
+        optflag   {.options @name}
+        optint    {.options @name=@value}
+        optreal   {.options @name=@value}
+        optstring {.options @name=@value}
+        bool      {.options @name}
+        num       {.options @name=@value}
+        real      {.options @name=@value}
+        string    {.options @name=@value}
+      }
+      control {
+        optflag   {option @name}
+        optint    {option @name=@value}
+        optreal   {option @name=@value}
+        optstring {option @name=@value}
+        bool      {set @name}
+        num       {set @name=@value}
+        real      {set @name=@value}
+        string    {set @name=@value}
+        list      {set @name = ( @value )}
+      }
+      predeck {
+        bool      {-D @name}
+        string    {-D @name=@value}
+      }
+      predeck-file {
+        bool      {set @name}
+        num       {set @name=@value}
+        real      {set @name=@value}
+        string    {set @name=@value}
+        list      {set @name = ( @value )}
+      }
+    }
+  }
+
+  # ⚠ THE DEFAULTS IN BLOCK A ARE `CKTnewTask()`'s, cktntask.c:92-145, AND
+  # `gminsteps` IS 1. The 10 in that same block is `gminfactor`
+  # (`TSKnumSrcSteps = 1; TSKnumGminSteps = 1; TSKgminFactor = 10;` at :120-122).
+  # A wrong default makes a SHIPPED value read as "changed" in §7c's
+  # default-only view, which is exactly how a real change gets hidden.
+  #
+  # ⚠ `temp` AND `tnom` ARE STORED IN KELVIN AND READ BACK IN CELSIUS
+  # (`TSKtemp = rValue + CONSTCtoK`, 300.15 K). The default here is 27, the
+  # number the user types and the number `option` prints back.
+  variable sim_options {
+
+    maxopalter             {cptype optint phase any group iteration scope global ngphase task help {Maximum analog/event alternations in DCOP} site cktsopt.c:267}
+    maxevtiter             {cptype optint phase any group iteration scope global ngphase task help {Maximum event iterations at analysis point} site cktsopt.c:268}
+    noopalter              {cptype optflag phase any group xspice scope global default 0 ngphase task help {Do not do analog/event alternation in DCOP} site cktsopt.c:269}
+    ramptime               {cptype optreal phase any group xspice scope global default 0 ngphase task inert {the live code is inside #ifdef XSPICE_EXP and nothing in this tree defines XSPICE_EXP. It is an XSPICE code-model knob, not a supply ramp} help {Transient analysis supply ramping time} site cktsopt.c:270}
+    convlimit              {cptype optflag phase any group convergence scope global default 0 ngphase task help {Enable convergence assistance on code models} site cktsopt.c:271}
+    convstep               {cptype optreal phase any group convergence scope global default 0 ngphase task help {Fractional step allowed by code model inputs between iterations} site cktsopt.c:272}
+    convabsstep            {cptype optreal phase any group convergence scope global default 0 ngphase task help {Absolute step allowed by code model inputs between iterations} site cktsopt.c:273}
+    autopartial            {cptype optflag phase any group xspice scope global default 0 ngphase task help {Use auto-partial computation for all models} site cktsopt.c:274}
+    rshunt                 {cptype optreal phase any group convergence scope global default 0 ngphase task help {Shunt resistance from analog nodes to ground} site cktsopt.c:275}
+    cshunt                 {cptype optreal phase any group convergence scope global default -1 ngphase task help {Shunt capacitor from analog nodes to ground} site cktsopt.c:278}
+    noopiter               {cptype optflag phase any group convergence scope {analysis op} default 0 ngphase task help {Go directly to gmin stepping} site cktsopt.c:279}
+    gmin                   {cptype optreal phase any group convergence scope global default 1e-12 ngphase task help {Minimum conductance} site cktsopt.c:280}
+    gshunt                 {cptype optreal phase any group convergence scope global default 0 ngphase task help {Shunt conductance} site cktsopt.c:281}
+    reltol                 {cptype optreal phase any group tolerances scope global default 1e-3 ngphase task help {Relative error tolerence} site cktsopt.c:282}
+    abstol                 {cptype optreal phase any group tolerances scope global default 1e-12 ngphase task help {Absolute error tolerence} site cktsopt.c:283}
+    vntol                  {cptype optreal phase any group tolerances scope global default 1e-6 ngphase task help {Voltage error tolerence} site cktsopt.c:284}
+    trtol                  {cptype optreal phase any group tolerances scope {analysis tran} default 7 ngphase task help {Truncation error overestimation factor} site cktsopt.c:285}
+    chgtol                 {cptype optreal phase any group tolerances scope global default 1e-14 ngphase task help {Charge error tolerence} site cktsopt.c:286}
+    pivtol                 {cptype optreal phase any group tolerances scope global default 1e-13 ngphase task help {Minimum acceptable pivot} site cktsopt.c:287}
+    pivrel                 {cptype optreal phase any group tolerances scope global default 1e-3 ngphase task help {Minimum acceptable ratio of pivot} site cktsopt.c:288}
+    tnom                   {cptype optreal phase any group temperature scope global default 27 ngphase task help {Nominal temperature} site cktsopt.c:289}
+    temp                   {cptype optreal phase any group temperature scope global default 27 ngphase task help {Operating temperature} site cktsopt.c:290}
+    itl1                   {cptype optint phase any group iteration scope {analysis op} default 100 min 100 ngphase task clamp {niiter.c:38-39 raises every iteration limit below 100 to 100, so the shipped defaults 50 and 10 are already 100} help {DC iteration limit} site cktsopt.c:291}
+    itl2                   {cptype optint phase any group iteration scope {analysis dc} default 50 min 100 ngphase task clamp {niiter.c:38-39 raises every iteration limit below 100 to 100, so the shipped defaults 50 and 10 are already 100} help {DC transfer curve iteration limit} site cktsopt.c:292}
+    itl4                   {cptype optint phase any group iteration scope {analysis tran} default 10 min 100 ngphase task clamp {niiter.c:38-39 raises every iteration limit below 100 to 100, so the shipped defaults 50 and 10 are already 100} help {Upper transient iteration limit} site cktsopt.c:294}
+    itl6                   {cptype optint phase any group iteration scope {analysis op} default 1 ngphase task help {number of source steps} site cktsopt.c:296}
+    srcsteps               {cptype optint phase any group iteration scope {analysis op} default 1 ngphase task help {number of source steps} site cktsopt.c:297}
+    gminsteps              {cptype optint phase any group iteration scope {analysis op} default 1 ngphase task help {number of Gmin steps} site cktsopt.c:298}
+    gminfactor             {cptype optreal phase any group convergence scope {analysis op} default 10 ngphase task help {factor per Gmin step} site cktsopt.c:299}
+    oldlimit               {cptype optflag phase any group convergence scope global default 0 ngphase task inert {CKTnewTask leaves TSKfixLimit uncopied (cktntask.c:68 is the bare comment /* fixLimit */), so the option is dropped the moment an analysis is issued as a .control command, which is the route ASE-L uses} help {use SPICE2 MOSfet limiting} site cktsopt.c:306}
+    method                 {cptype optstring phase any group integration scope {analysis tran} default trap values {trap gear} ngphase task help {Integration method} site cktsopt.c:313}
+    maxord                 {cptype optint phase any group integration scope {analysis tran} default 2 ngphase task help {Maximum integration order} site cktsopt.c:314}
+    indverbosity           {cptype optint phase any group device scope global default 2 ngphase task help {Control Inductive Systems Check (coupling)} site cktsopt.c:315}
+    xmu                    {cptype optreal phase any group integration scope {analysis tran} default 0.5 ngphase task help {Coefficient for trapezoidal method} site cktsopt.c:316}
+    defm                   {cptype optreal phase any group device scope global default 1 ngphase task help {Default MOSfet Multiplier} site cktsopt.c:317}
+    defl                   {cptype optreal phase any group device scope global default 1e-4 ngphase task help {Default MOSfet length} site cktsopt.c:318}
+    defw                   {cptype optreal phase any group device scope global default 1e-4 ngphase task help {Default MOSfet width} site cktsopt.c:319}
+    minbreak               {cptype optreal phase any group integration scope {analysis tran} ngphase task help {Minimum time between breakpoints} site cktsopt.c:320}
+    defad                  {cptype optreal phase any group device scope global default 0 ngphase task help {Default MOSfet area of drain} site cktsopt.c:321}
+    defas                  {cptype optreal phase any group device scope global default 0 ngphase task defect {.options defas sets the DRAIN area: cktsopt.c:111-113 writes TSKdefaultMosAD, the same field the OPT_DEFAD arm three lines above writes} help {Default MOSfet area of source} site cktsopt.c:322}
+    bypass                 {cptype optint phase any group iteration scope global default 0 ngphase task help {Allow bypass of unchanging elements} site cktsopt.c:323}
+    trytocompact           {cptype optflag phase any group integration scope {analysis tran} default 0 ngphase task help {Try compaction for LTRA lines} site cktsopt.c:352}
+    badmos3                {cptype optflag phase any group device scope global default 0 ngphase task help {use old mos3 model (discontinuous with respect to kappa)} site cktsopt.c:354}
+    keepopinfo             {cptype optflag phase any group output scope {analysis ac noise pz tf disto sp} default 0 ngphase task help {Record operating point for each small-signal analysis} site cktsopt.c:356}
+    copynodesets           {cptype optflag phase any group convergence scope {analysis op} default 0 ngphase task help {Copy nodesets from device terminals to internal nodes} site cktsopt.c:358}
+    nodedamping            {cptype optflag phase any group convergence scope {analysis op} default 0 ngphase task help {Limit iteration to iteration node voltage change} site cktsopt.c:360}
+    absdv                  {cptype optreal phase any group tolerances scope global default 0.5 ngphase task help {Maximum absolute iter-iter node voltage change} site cktsopt.c:362}
+    reldv                  {cptype optreal phase any group tolerances scope global default 2.0 ngphase task help {Maximum relative iter-iter node voltage change} site cktsopt.c:364}
+    noopac                 {cptype optflag phase any group convergence scope {analysis ac sp} default 0 ngphase task help {No op calculation in ac if circuit is linear} site cktsopt.c:366}
+    epsmin                 {cptype optreal phase any group tolerances scope global default 1e-28 ngphase task help {Minimum value for log} site cktsopt.c:368}
+    sparse                 {cptype optflag phase any group solver scope global default 1 ngphase task help {Set SPARSE 1.3 as Direct Linear Solver} site cktsopt.c:372}
+    klu                    {cptype optflag phase any group solver scope global default 0 ngphase task help {Set KLU as Direct Linear Solver} site cktsopt.c:374}
+    klu_memgrow_factor     {cptype optreal phase any group solver scope global default 1.2 ngphase task inert {cktsopt.c:187 assigns the BOOLEAN (val->rValue == 1.2) to a double, so every value but 1.2 sets the factor to 0.0. The CKTnewTask default is already 1.2} help {KLU Memory Grow Factor (default is 1.2)} site cktsopt.c:376}
+    ltereltol              {cptype optreal phase any group tolerances scope {analysis tran} default 1e-3 ngphase task help {Relative error tolerence} site cktsopt.c:380}
+    lteabstol              {cptype optreal phase any group tolerances scope {analysis tran} default 1e-6 ngphase task help {Absolute error tolerence} site cktsopt.c:381}
+    ltetrtol               {cptype optreal phase any group tolerances scope {analysis tran} default 500 ngphase task help {Truncation error overestimation factor} site cktsopt.c:382}
+    newtrunc               {cptype optflag phase any group integration scope {analysis tran} default 0 ngphase task inert {cktsopt.c:199-207 needs the PREDICTOR preprocessor flag, which is defined nowhere in this tree; the option forces TSKnewtrunc = 0 and warns} help {voltage controlled truncation} site cktsopt.c:383}
+
+
+    addcontrol             {cptype bool phase pre group netlist scope global site src/frontend/inpcom.c:1547}
+    addescape              {cptype bool phase any group postproc scope global inert {read only in src/sharedspice.c, so it is a libngspice variable. The ngspice executable ASE-L runs never reads it} site src/sharedspice.c:1558}
+    altshow                {cptype bool phase any group postproc scope global site src/frontend/device.c:376}
+    appendwrite            {cptype bool phase any group run scope global site src/frontend/plotting/gnuplot.c:702}
+    askquit                {cptype bool phase any group postproc scope global site src/frontend/misccoms.c:59}
+    auto_bridge            {cptype num phase any group numerics scope global results 1 site src/xspice/evt/evtcheck_nodes.c:975}
+    autostop               {cptype bool phase any group numerics scope {analysis tran} results 1 site src/spicelib/analysis/dctran.c:200}
+    brief                  {cptype bool phase deck group netlist scope global site src/frontend/inp.c:1533}
+    casemode               {cptype string phase pre group netlist scope global values {fold preserve distinguish} site src/frontend/inpcom.c:1238}
+    casemodewrite          {cptype bool phase any group run scope global site src/frontend/outitf.c:993}
+    controlswait           {cptype bool phase pre group netlist scope global site src/frontend/inp.c:1280}
+    cshunt_value           {cptype real phase any group numerics scope global results 1 site src/spicelib/parser/inppas4.c:41}
+    csnumprec              {cptype num phase any group postproc scope global site src/frontend/variable.c:52}
+    debug-out-short        {cptype bool phase pre group display scope global site src/frontend/inpcom.c:1640}
+    device                 {cptype string phase any group display scope global site src/frontend/com_ghelp.c:91}
+    diff_abstol            {cptype real phase any group postproc scope global site src/frontend/diff.c:166}
+    diff_reltol            {cptype real phase any group postproc scope global site src/frontend/diff.c:168}
+    diff_vntol             {cptype real phase any group postproc scope global site src/frontend/diff.c:164}
+    diode_cj0              {cptype real phase any group numerics scope global results 1 site src/spicelib/devices/dio/diosetup.c:89}
+    diode_rser             {cptype real phase any group numerics scope global results 1 site src/spicelib/devices/dio/diosetup.c:241}
+    display                {cptype string phase any group display scope global site src/frontend/plotting/x11.c:160}
+    dpolydegree            {cptype num phase any group postproc scope global site src/maths/cmaths/cmath4.c:263}
+    dyngmin                {cptype bool phase any group numerics scope global results 1 site src/spicelib/analysis/cktop.c:60}
+    editor                 {cptype string phase any group display scope global site src/frontend/inp.c:1886}
+    enable_noisy_r         {cptype bool phase pre group numerics scope {analysis noise} results 1 site src/frontend/inpcom.c:7417}
+    event_node_spacing     {cptype real phase any group display scope global site src/frontend/plotting/graf.c:1344}
+    filetype               {cptype string phase any group run scope global site src/ciderlib/support/misc.c:171}
+    fourgridsize           {cptype num phase any group postproc scope global site src/frontend/fourier.c:75}
+    fournosave             {cptype bool phase any group postproc scope global site src/frontend/fourier.c:77}
+    gnuplot_terminal       {cptype string phase any group display scope global site src/frontend/plotting/gnuplot.c:303}
+    gridsize               {cptype num phase any group display scope global site src/frontend/plotting/plotcurv.c:57}
+    gridstyle              {cptype string phase any group display scope global site src/frontend/plotting/plotit.c:565}
+    hcopydev               {cptype string phase any group display scope global site src/frontend/com_hardcopy.c:40}
+    hcopydevtype           {cptype string phase any group display scope global site src/frontend/com_hardcopy.c:43}
+    hcopyfont              {cptype string phase any group display scope global site src/frontend/postsc.c:207}
+    hcopyfontfamily        {cptype string phase any group display scope global site src/frontend/svg.c:183}
+    hcopyfontsize          {cptype num phase any group display scope global site src/frontend/postsc.c:210}
+    hcopyheight            {cptype num phase any group display scope global site src/frontend/postsc.c:173}
+    hcopypscolor           {cptype num phase any group display scope global site src/frontend/postsc.c:136}
+    hcopypstxcolor         {cptype num phase any group display scope global site src/frontend/postsc.c:145}
+    hcopyscale             {cptype string phase any group display scope global site src/frontend/hpgl.c:90}
+    hcopywidth             {cptype num phase any group display scope global site src/frontend/postsc.c:163}
+    height                 {cptype num phase any group display scope global site src/frontend/postcoms.c:290}
+    helpboldfont           {cptype string phase any group display scope global site src/frontend/com_ghelp.c:64}
+    helpbuttonfont         {cptype string phase any group display scope global site src/frontend/com_ghelp.c:70}
+    helpbuttonstyle        {cptype string phase any group display scope global site src/frontend/com_ghelp.c:76}
+    helpinitxpos           {cptype num phase any group display scope global site src/frontend/com_ghelp.c:72}
+    helpinitypos           {cptype num phase any group display scope global site src/frontend/com_ghelp.c:74}
+    helpitalicfont         {cptype string phase any group display scope global site src/frontend/com_ghelp.c:66}
+    helppath               {cptype string phase any group display scope global site src/frontend/com_ghelp.c:46}
+    helpregfont            {cptype string phase any group display scope global site src/frontend/com_ghelp.c:62}
+    helptitlefont          {cptype string phase any group display scope global site src/frontend/com_ghelp.c:68}
+    histsubst              {cptype bool phase any group postproc scope global site src/frontend/init.c:33}
+    interactive            {cptype bool phase any group display scope global site src/frontend/com_hardcopy.c:185}
+    interp                 {cptype bool phase any group run scope {analysis tran} site src/frontend/outitf.c:211}
+    keep#branch            {cptype bool phase any group run scope global site src/frontend/outitf.c:1091}
+    level                  {cptype string phase any group postproc scope global site src/frontend/com_ahelp.c:41}
+    lprplot5               {cptype string phase any group display scope global site src/frontend/com_hardcopy.c:214}
+    lprps                  {cptype string phase any group display scope global site src/frontend/com_hardcopy.c:231}
+    maxwarns               {cptype num phase deck group numerics scope global results 1 site src/frontend/inp.c:1452}
+    measoutfile            {cptype string phase any group postproc scope global site src/frontend/measure.c:257}
+    mingwpath              {cptype bool phase pre group netlist scope global site src/frontend/inpcom.c:2445}
+    modelcard              {cptype string phase pre group netlist scope global site src/frontend/subckt.c:247}
+    modelline              {cptype string phase pre group netlist scope global site src/frontend/subckt.c:249}
+    moremode               {cptype bool phase any group postproc scope global site src/frontend/terminal.c:77}
+    mtimeavgwindow         {cptype real phase any group postproc scope global site src/maths/cmaths/cmath4.c:1054}
+    nfreqs                 {cptype num phase any group postproc scope global site src/frontend/fourier.c:69}
+    ng_nomodcheck          {cptype bool phase any group numerics scope global results 1 site src/spicelib/devices/bsim3/b3check.c:41}
+    ngbehavior             {cptype string phase pre group netlist scope global values {all hs ps psa spe eg lt ki a} site src/frontend/inpcompat.c:76}
+    no_auto_braces         {cptype bool phase pre group netlist scope global site src/frontend/inpcom.c:9082}
+    no_auto_bridge_family  {cptype bool phase any group numerics scope global results 1 site src/xspice/evt/evtcheck_nodes.c:624}
+    no_auto_gnd            {cptype bool phase pre group netlist scope global site src/frontend/inpcom.c:2330}
+    no_mem_check           {cptype bool phase any group run scope global site src/frontend/outitf.c:143}
+    no_spiceinit           {cptype bool phase pre group netlist scope global inert {read only in src/sharedspice.c, so it is a libngspice variable. Use the simulator entry -n flag instead} site src/sharedspice.c:989}
+    no_spinit              {cptype bool phase pre group netlist scope global cmdline --no-spiceinit site src/frontend/cpitf.c:264}
+    noasciiplotvalue       {cptype bool phase any group display scope global site src/frontend/plotting/agraf.c:61}
+    nobreak                {cptype bool phase any group display scope global site src/frontend/postcoms.c:294}
+    noisyxspice            {cptype bool phase any group numerics scope {analysis noise} results 1 site src/xspice/evt/evtload.c:253}
+    nolegend               {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:347}
+    nopadding              {cptype bool phase any group run scope global site src/frontend/rawfile.c:57}
+    noparse                {cptype bool phase pre group netlist scope global site src/frontend/inp.c:1372}
+    noprintscale           {cptype bool phase any group display scope global site src/frontend/postcoms.c:299}
+    noquotesinoutput       {cptype bool phase any group run scope global site src/frontend/parse.c:129}
+    nosighandling          {cptype bool phase any group postproc scope global inert {read only in src/sharedspice.c, so it is a libngspice variable. The ngspice executable ASE-L runs never reads it} site src/sharedspice.c:913}
+    nosort                 {cptype bool phase any group postproc scope global site src/frontend/com_display.c:70}
+    nostepsizelimit        {cptype bool phase any group numerics scope {analysis tran} results 1 site src/spicelib/analysis/traninit.c:30}
+    nosubckt               {cptype bool phase pre group netlist scope global site src/frontend/nutinp.c:161}
+    notrnoise              {cptype bool phase any group numerics scope {analysis tran} results 1 site src/frontend/trannoise/1-f-code.c:122}
+    nounits                {cptype bool phase any group display scope global site src/frontend/plotting/graf.c:140}
+    nperiods               {cptype num phase any group postproc scope global site src/frontend/fourier.c:71}
+    num_threads            {cptype num phase any group numerics scope global results 1 site src/spicelib/analysis/cktsetup.c:316}
+    plainlet               {cptype bool phase any group postproc scope global site src/frontend/com_let.c:178}
+    plainplot              {cptype bool phase any group display scope global site src/frontend/plotting/plotit.c:730}
+    plainwrite             {cptype bool phase any group run scope global site src/frontend/postcoms.c:606}
+    plot_auto_spacing      {cptype real phase any group display scope global site src/frontend/plotting/plotit.c:901}
+    plothistory            {cptype bool phase any group display scope global site src/frontend/plotting/x11.c:1114}
+    plotstyle              {cptype string phase any group display scope global site src/frontend/plotting/plotit.c:662}
+    pointchars             {cptype string phase any group display scope global site src/frontend/plotting/graf.c:112}
+    pointstyle             {cptype string phase any group display scope global site src/frontend/plotting/gnuplot.c:338}
+    polydegree             {cptype num phase any group postproc scope global site src/frontend/fourier.c:73}
+    polysteps              {cptype num phase any group postproc scope global site src/frontend/plotting/plotcurv.c:342}
+    printinfo              {cptype bool phase any group display scope global site src/frontend/outitf.c:1744}
+    probe_alli_given       {cptype bool phase any group netlist scope global site src/xspice/evt/evtcheck_nodes.c:980}
+    probe_alli_nox         {cptype bool phase pre group netlist scope global site src/frontend/inpc_probe.c:262}
+    probe_is_given         {cptype bool phase deck group netlist scope global site src/frontend/inp.c:1433}
+    ps_global_hash_table   {cptype num phase pre group netlist scope global site src/frontend/udevices.c:944}
+    ps_global_tmodels      {cptype num phase pre group netlist scope global site src/frontend/udevices.c:941}
+    ps_ports_and_pins      {cptype num phase pre group netlist scope global site src/frontend/udevices.c:991}
+    ps_scan_gates_optimize {cptype num phase pre group netlist scope global site src/frontend/udevices.c:1008}
+    ps_tpz_delays          {cptype num phase pre group netlist scope global site src/frontend/udevices.c:951}
+    ps_udevice_exit        {cptype num phase pre group netlist scope global site src/frontend/udevices.c:1005}
+    ps_udevice_msgs        {cptype num phase pre group netlist scope global site src/frontend/udevices.c:999}
+    ps_use_mntymx          {cptype num phase pre group netlist scope global site src/frontend/udevices.c:954}
+    ps_with_inverters      {cptype num phase pre group netlist scope global site src/frontend/udevices.c:1012}
+    ps_with_tri_inverters  {cptype num phase pre group netlist scope global site src/frontend/udevices.c:1016}
+    pyplot_backend         {cptype string phase any group display scope global site src/frontend/plotting/pyplot.c:120}
+    pyplot_figsize         {cptype string phase any group display scope global site src/frontend/plotting/pyplot.c:105}
+    pyplot_linewidth       {cptype real phase any group display scope global site src/frontend/plotting/pyplot.c:140}
+    pyplot_python          {cptype string phase any group display scope global site src/frontend/plotting/pyplot.c:112}
+    pyplot_style           {cptype string phase any group display scope global site src/frontend/plotting/pyplot.c:133}
+    pyplot_subplots        {cptype num phase any group display scope global site src/frontend/plotting/pyplot.c:125}
+    pyplot_terminal        {cptype string phase any group display scope global site src/frontend/plotting/pyplot.c:90}
+    rawfile                {cptype string phase pre group run scope global site src/frontend/inpcom.c:3311}
+    remote_shell           {cptype string phase any group postproc scope global site src/frontend/aspice.c:289}
+    renumber               {cptype bool phase any group netlist scope global site src/frontend/inp.c:252}
+    rhost                  {cptype string phase any group postproc scope global site src/frontend/aspice.c:285}
+    rndseed                {cptype num phase any group postproc scope global site src/maths/misc/randnumb.c:82}
+    rprogram               {cptype string phase any group postproc scope global site src/frontend/aspice.c:287}
+    sanelet                {cptype bool phase any group postproc scope global site src/frontend/com_let.c:142}
+    scale                  {cptype real phase deck group netlist scope global results 1 caveat {MEASURED on both binaries: .options scale=0.5 does halve a MOS W (@m1[w] 2u -> 1u) while set scale=0.5 inside .control does nothing at all. But two of its read sites are earlier than any .options card -- subckt.c:592 and inp.c:2689 -- so a deck with subcircuits is scaled only in part. To scale uniformly, deliver it before the netlist is read as well} site src/spicelib/devices/cap/capparam.c:27}
+    silent_fileio          {cptype bool phase any group postproc scope global site src/frontend/com_fileio.c:33}
+    sim_status             {cptype num phase any group postproc scope global site src/main.c:1559}
+    soacheck               {cptype bool phase pre group numerics scope global results 1 site src/frontend/inpcom.c:4543}
+    sourcepath             {cptype list phase pre group netlist scope global site src/frontend/inpcom.c:10532}
+    spectrace              {cptype bool phase any group postproc scope global site src/frontend/spec.c:236}
+    specwindow             {cptype string phase any group postproc scope global site src/frontend/com_fft.c:95}
+    specwindoworder        {cptype num phase any group postproc scope global site src/frontend/com_fft.c:97}
+    spicepath              {cptype string phase any group postproc scope global site src/frontend/aspice.c:82}
+    sqrnoise               {cptype bool phase any group numerics scope {analysis noise sp} results 1 site src/spicelib/analysis/noisean.c:242}
+    statlocal              {cptype bool phase pre group netlist scope global site src/frontend/inp.c:945}
+    subend                 {cptype string phase pre group netlist scope global site src/frontend/subckt.c:243}
+    subinvoke              {cptype string phase pre group netlist scope global site src/frontend/subckt.c:245}
+    substart               {cptype string phase pre group netlist scope global site src/frontend/subckt.c:241}
+    svg_intopts            {cptype list phase any group display scope global site src/frontend/svg.c:138}
+    svg_stropts            {cptype list phase any group display scope global site src/frontend/svg.c:146}
+    ticchar                {cptype string phase any group display scope global site src/frontend/plotting/graf.c:126}
+    ticlist                {cptype list phase any group display scope global site src/frontend/plotting/graf.c:130}
+    ticmarks               {cptype num phase any group display scope global site src/frontend/plotting/graf.c:117}
+    topo_reduce            {cptype bool phase any group numerics scope global results 1 site src/spicelib/analysis/cktsetup.c:72}
+    warn                   {cptype num phase deck group numerics scope global results 1 site src/frontend/inp.c:1447}
+    wfont                  {cptype string phase any group display scope global site src/frontend/wdisp/windisp.c:207}
+    wfont_size             {cptype num phase any group display scope global site src/frontend/wdisp/windisp.c:210}
+    width                  {cptype num phase any group display scope global site src/frontend/com_ghelp.c:87}
+    wnflag                 {cptype num phase pre group netlist scope global results 1 site src/spicelib/parser/inpgmod.c:268}
+    wr_onespace            {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:705}
+    wr_singlescale         {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:703}
+    wr_vecnames            {cptype bool phase any group display scope global site src/frontend/plotting/gnuplot.c:704}
+    x11lineararcs          {cptype bool phase any group display scope global inert {x11.c:707 reads it inside `if (0 && ...)`, so the read is dead -- and spinit sets it, which makes it a visible lie in `set` output} site src/frontend/plotting/x11.c:707}
+    xbrushwidth            {cptype real phase any group display scope global site src/frontend/postsc.c:185}
+    xfont                  {cptype string phase any group display scope global site src/frontend/plotting/x11.c:525}
+    xfont_size             {cptype num phase any group display scope global site src/frontend/plotting/x11.c:552}
+    xgridwidth             {cptype real phase any group display scope global site src/frontend/postsc.c:191}
+    xtrtol                 {cptype num phase any group numerics scope {analysis tran} results 1 site src/spicelib/analysis/cktdojob.c:83}
+
+
+    units                  {cptype string phase run group output scope global default radians values {radians degrees} ngphase C site options.c}
+    numdgt                 {cptype num phase run group output scope global ngphase C site options.c}
+    rawfileprec            {cptype num phase run group output scope global ngphase C site options.c}
+    measureprec            {cptype num phase run group output scope global ngphase C site options.c}
+    ngdebug                {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    nginfo                 {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    noacct                 {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    noinit                 {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    norefvalue             {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    strict_errorhandling   {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    strictnumparse         {cptype bool phase run group netlist scope global ngphase C site options.c}
+    unixcom                {cptype bool phase run group diagnostics scope global ngphase C site options.c}
+    debug                  {cptype bool phase run group diagnostics scope global ngphase C inert {options.c:346-348 warns `compiled without debug messages` because FTEDEBUG is defined nowhere in this tree} site options.c}
+
+
+    savecurrents           {cptype optflag phase deck group output scope global default 0 ngphase cardtext help {add .save lines for every device terminal current} site inp.c:2417}
+    savecurrents_bsim3     {cptype optflag phase deck group output scope global default 0 ngphase cardtext help {add .save lines for every device terminal current} site inp.c:2417}
+    savecurrents_bsim4     {cptype optflag phase deck group output scope global default 0 ngphase cardtext help {add .save lines for every device terminal current} site inp.c:2417}
+    savecurrents_mos1      {cptype optflag phase deck group output scope global default 0 ngphase cardtext help {add .save lines for every device terminal current} site inp.c:2417}
+    seed                   {cptype optstring phase deck group numerics scope global results 1 ngphase cardtext help {seed for the random number generator; a number, or the word random} site inp.c:442}
+    seedinfo               {cptype optflag phase deck group diagnostics scope global default 0 ngphase cardtext help {print the seed value the random number generator was given} site inp.c:440}
+
+
+    soa_log                {cptype string phase cmdline group diagnostics scope global ngphase argv cmdline --soa-log=@value help {file for SOA warnings; pairs with the warn option, which has a different door} site main.c:970}
+
+
+    acct                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    list                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    nomod                  {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    nopage                 {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    node                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    opts                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+
+
+    nosavecurrents         {cptype optflag phase any group output scope global inert {documented by the ngspice manual as the workaround for savecurrents + AC, and the string appears NOWHERE in the source tree. Tombstone -- do not re-add it} site none}
+  }
+
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
@@ -19010,6 +19764,8 @@ $_leg
     op_param_set        ::ase::backend::ngspice::op_param_set \
     op_param_enumerable ::ase::backend::ngspice::op_param_enumerable \
     analysis_types      ::ase::backend::ngspice::analysis_types \
+    sim_options         ::ase::backend::ngspice::sim_options \
+    option_spell        ::ase::backend::ngspice::option_spell \
     run_stop_cost       ::ase::backend::ngspice::run_stop_cost \
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
     si_suffixes         ::ase::backend::ngspice::si_suffixes \
