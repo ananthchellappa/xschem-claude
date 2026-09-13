@@ -1950,9 +1950,18 @@ value moves" half — which is the half the badge turns on — is the driver's.*
   visibility; `default` decides only the *annotation*. A view built the plan's way would
   drop a stored row whose value happens to equal the default — i.e. exactly a setting the
   user made on purpose.
-* **C127 — only 65 of 247 rows carry a default at all**, and **64 carry help**. A
-  changed-only view over a catalogue that mostly cannot say what "unchanged" means is a
-  different object from the one the plan describes.
+* **C127 — most of the catalogue cannot say what "unchanged" means.** A changed-only view
+  over such a catalogue is a different object from the one the plan describes.
+  ⚠ **THE NUMBERS IN THIS ROW WERE WRONG AND ARE CORRECTED HERE, 2026-09-13.** It read
+  *"only 65 of 247 rows carry a default at all, and 64 carry help"*. Task 4's **C134**
+  caught the transposition and the driver settled it by counting through the shipped
+  readers (`ase::sim_option_names` → `ase::sim_option_entry`, in-tree binary):
+  **247 rows, `default` 60, `help` 66.** So `default` was never 65 — **65 was the `help`
+  count**, attached to the wrong column, and `help` has since moved 64 → 65 → 66 as two
+  tasks added sentences. ⚠ **This is the third time in Stage 7 that a number right about
+  one column was attached to another** (1441's C123 and C130 are the others, and C123 is
+  the one that would have put a false badge on three rows). The driver repeated the wrong
+  65 in a report before task 4 caught it.
 
 ⚠ **AND C133 IS THE ONE TO CARRY INTO EVERY LATER MEASUREMENT.** The crew's own probe
 harness hit the vacuity defect: **nine "no difference" results came out of an extractor
@@ -1969,6 +1978,119 @@ same stale pair had reached `tests/run_regression.tcl`'s new comment as *"80 che
 55"*. The comment is **live documentation and was corrected in place**; the receipt is a
 dated record and was **footnoted**. The suite counts themselves were always right; only the
 sentences about them were wrong.
+
+### Task 4 — scope, verification and the four rules (§7e + §7f + §7g) — STAGE 7 COMPLETE
+
+**The last task of the heaviest stage, and it found that half of §7f's recipe writes
+nothing.** The plan's mandatory verification leg is two lines; one of them is inert on
+both binaries, and the half that was going to report *"you asked for X, the simulator is
+using Y"* would have diffed clean for ever.
+
+| | |
+|---|---|
+| status | **LANDED** — task 4 of 4. **Stage 7 is COMPLETE for §7a–§7g** |
+| issue | **1442** |
+| T1 | taken **solo** by the driver, **67 cases**, **zero** counted failures |
+| suites moved | **new** `tests/headless/test_ase_effective_1442.tcl`, **92 checks**, identical on both arms, registered in **`hcases` only** — and the file records *why not `dcases`*: its UI section drives two **pure** procs and creates no widget, so the display arm would be a weaker measurement of the same thing rather than a bigger one. `test_ase_core` **598**, `test_ase_preflight` **235**, `test_ase_options_1437` **75** — each unchanged in count with **one deliberate re-baseline** (D1's inline golden deck, PF230f `fatal`→`caution`, RS2) |
+| driver's own re-run | **6/6 ALL PASS on the engine arm** — effective_1442 **92**, core **598**, preflight **235**, options_1437 **75**, optsheet_1441 **62**, predeck_1439 **78** |
+| deck goldens moved | **NO COMMITTED GOLDEN FILE, and no `.state` file.** One *inline* golden inside `test_ase_core` (D1) was re-baselined deliberately, which is a different and smaller thing and is named as such |
+| sabotage | **41 respellings, 82 applications, 82/82 restored, zero kills**; on the final tree **41/41 redden a NAMED ROW with zero survivors**. Five survived pass 1 and **all five were one family** — a row asking a coarser question than the code answers — each closed with a new row. ⚠ **S24 was missing from the generator entirely**, and it was the brief's own *"establish exactly where the new lines may go without moving any anchor, and assert it"* case; when finally run it **survived**, because the row's bound admitted the plan's wrong placement. It is now bounded by the pre-deck block |
+| ledger debts | ⚖ **R9** (rule 1442, seven groups of new copy) **and a `look` debt**, `ase_effective_1442`. Ledger 159/58/10 → **160/59/10** |
+| commit | `1a5fefec` |
+| receipt | `receipts/22-stage-7-effective.md` |
+
+**⚠ THE HEADLINE, AND THE DRIVER RE-TOOK IT WITH A POSITIVE CONTROL IN THE SAME DECK.**
+`PLAN.md` §7f asks for `option > <cell>_ase.effective` followed by
+`set >> <cell>_ase.effective`. Measured by the driver, both binaries, one deck, three
+redirections:
+
+```
+echo CONTROL-ECHO-WORKS > ctl.txt     ->   19 bytes    <- the positive control
+option                  > opt.txt     ->    0 bytes    <- §7f's FIRST LINE
+set                    >> setv.txt    ->  434 / 444    <- the half that works
+```
+
+`.options reltol=0.05` was in the deck and `opt.txt` does not contain the string `reltol`.
+**The `echo` proves redirection works in that `.control` block**, so the zero is `option`'s
+and not the shell's — which is precisely the positive control task 3's C133 said every
+measurement needs, applied one task later to the measurement that most needed it. ⚠ **And
+it matters more than an ordinary refutation**, because §7f is the **only** way ASE-L can
+learn that an option name did not land: there is **no error channel** for a misspelled
+option on this route, and the `Error: unknown option %s - ignored` branch at
+`inpdoopt.c:74-78` is reached by neither.
+
+**⚠ THE §7g RULE-1 DECISION CAME BACK (c), AND IT IS BETTER THAN EITHER OPTION THE BRIEF
+OFFERED.** The brief gave (a) keep the `sens_klu` refusal, (b) suppress `klu` for the whole
+run and say so, or (c) argue for something else. The crew took (c): **scope the suppression
+to the ANALYSIS** — `option klu=0` before the AC `sens`, `option klu` after — which is
+§7e's own mechanism and needs **no new spelling at all**.
+
+The argument against (b) is the one the brief itself raised and the crew sharpened: what
+gets suppressed is **the user's own `klu` setting**, and (b) drops it for *every* analysis
+in the deck — yet KLU is chosen for speed on exactly the circuits that carry several
+analyses, so (b) is a **larger** unasked-for change than 1434's save-list widening. (c)
+changes only the solver used by the one analysis that would otherwise crash. Measured on
+both binaries on the deck shape ASE-L writes: **rc 139 SIGSEGV → rc 0**, solver per job
+KLU / sparse / KLU, and the `sens` numbers **byte-identical** to a deck that never asked
+for KLU.
+
+⚠ **And the user can never reach the SIGSEGV, because the `fatal` is DEMOTED rather than
+DELETED.** `ase::analysis_suppresses` requires **both** that the adapter names the option
+**and** that the speller can write the off-line; a backend failing either still gets the
+refusal. Row **RU2** builds that world by removing the hook and asserts the `fatal` returns.
+That is the *"a backend with no hook gets NO fallback content"* rule producing a safety
+property rather than an absence.
+
+**Eleven corrections, C134–C144.** Two are about this stage's own arithmetic and one is
+about its plan:
+
+* **⚠ C134 — the `default` column answers for 60 of 247 rows, not 65, and 65 was the `help`
+  count.** The driver settled it by counting through the shipped readers on the in-tree
+  binary: **247 rows, `default` 60, `help` 66**. So task 3's C127 had the two columns
+  transposed, the driver repeated the wrong 65 in a report, and the task 3 ledger row above
+  is corrected in place. ⚠ **Third time in Stage 7 that a number right about one column was
+  attached to another** — 1441's C123 (which would have put a false badge on three rows)
+  and C130 are the others.
+* **C135 — §7e's escape hatch would have REMOVED 17 rows from a surface task 3 had already
+  shipped.** The plan's *"an option with no known default is labelled global and offered
+  only on the global surface"* is not a tidy edge case at 60/247 coverage; applied
+  literally it takes options away from a pane the user already has.
+* **C141 — §7g rule 4's stated reason is `-r`-only and does not reach the deck ASE-L
+  writes**, so the rule survives with a different justification rather than on the plan's.
+
+⚠ **ONE DRIVER FOOTNOTE, AND IT IS THE SECOND IN A ROW.** Receipt 22's *For the driver*
+section said the new suite adds **`+85`** to T1; it is **92**, agreeing with the same
+receipt's own floor paragraph, with the comment this commit added to `run_regression.tcl`,
+and with the driver's own `RESULT: ALL PASS (92 checks)`. Receipt 21 had the same shape
+(*"T1 covers all 82"* for a suite printing 62 and 87). **The suites have been right every
+time and the driver's re-runs have matched them exactly; it is the sentences about the
+counts that drift.** Take a number from a `RESULT:` line, not from a paragraph.
+
+---
+
+### ✅ STAGE 7 IS COMPLETE — §7a–§7g, in four tasks
+
+| § | task | issue | state |
+|---|---|---|---|
+| 7a catalogue, five columns | 1 | **1437** | 247 rows |
+| 7b one speller | 1 | **1437** | T3/T4/T5 are type errors |
+| 7d pre-deck class and inert list | 2 | **1439** | ⚖ R2's four conditions met, one narrowed by measurement |
+| 7c finding one among 247 | 3 | **1441** | finder, groups, measured badge, live preview |
+| 7e per-analysis scope | 4 | **1442** | shipped with C135's honest limit **on the surface** |
+| 7f requested vs effective | 4 | **1442** | shipped **through the channel that works** |
+| 7g the rules | 4 | **1442** | five: rule 2 already shipped (1434), rule 1 changed shape, 3/4/5 new |
+
+**Four things open, none blocking a later stage:**
+
+1. ⚖ **R9 — thirteen issues' worth of unratified user-facing copy.** This is now the
+   batch's largest standing debt and it is entirely the user's to clear.
+2. **Two `look` debts** — 1441's options sheet and 1442's additions to it — plus the `:0`
+   **suite** debt the driver filed for the sheet. Neither `look` clears on a green suite.
+3. **`group` is 0/247 verified and `scope` cannot be measured.** Both are mitigated by
+   design and both are on the record.
+4. **Ten `results` rows remain `unverified`** and say so on the surface.
+
+**Stage 8 is next.**
 
 ### What Stage 7 learned that binds later stages
 
