@@ -1389,6 +1389,103 @@ measurement named X7 alone. All three passed **ALL PASS (108) standalone, three 
 issue is about the bench not converging reproducibly, so more rows reading the same
 simulation is consistent with it, but the row list in 1402 is now known to be incomplete.
 
+### Task 5 — the four variant mitigations: a refusal turned back into a run
+
+**The task carried one decision and it came back (c).** The brief named three
+alternatives for `PLAN.md` §6g-1 — already satisfied by issue 1432's preconditions,
+needs the `tran` case added, or genuinely needs the emission rule as well — because *a
+precondition that refuses the run and an emission rule that lets the run proceed
+correctly are different user-visible behaviours*. The answer is the third, and it
+carries a consequence the brief did not anticipate: **1432's `vecsaves` is demoted from
+`fatal` to `caution`.** Once ASE-L emits the `.save all` leader itself, a refusal on the
+same condition is a **false** refusal, and this tree's rule is that a false refusal is
+worse than a missed one. It is not deleted — it is the only thing that tells the user
+their narrowing was overridden, and *nothing the deck contains may be unshowable in the
+window* is a non-negotiable.
+
+| | |
+|---|---|
+| status | **LANDED** — task 5 of N |
+| issue | **1434** |
+| T1 | taken **solo** by the driver, 62 cases, **zero** counted failures. `test_ase_optier_0963` was **GREEN**, standalone and inside T1 — issue 1402 did not flap in this run |
+| suites moved | `test_ase_core` 523 → **558** · `test_ase_preflight` 218 → **229**. `test_ase_final` (82), `test_ase_simcaps_0948` (199), `test_ase_optier_0963` (108) and `test_ase_cosim` (341) **unmoved**. **Both moved suites are in T1**, so nothing this commit adds is outside T1's reach |
+| driver's own re-run | **5/5 ALL PASS on the engine arm**, driver-run: core **558**, preflight **229**, final **82**, simcaps **199**, optier **108** |
+| deck goldens moved | **NONE** — and the crew proved it is D47 holding rather than luck: `test_ase_core`'s `nfet_state` fixture *is* 6g-3's own shape (one saved output, `op` only), and the leader is withheld only because no suite probes a simulator. Row **WD6c** asserts both halves. The sabotage that made `analysis_resultvecs` default to `own` reddened **D1, D5, C4 and C5** — the goldens saying in their own voice that they are the control |
+| sabotage | **53 applications, 53/53 restored** to the pristine md5, campaign set to abort on a restore mismatch. **One survivor closed** (the `op_analysis_enabled` guard, closed by priming the op-cards cache so WD6d's legs disagree — *a row whose fixtures never disagree cannot fail*, the **seventh** time in this batch) and **one section kill** reported as such rather than as a clean red. ⚠ **Pass 1's forty-four-row table was thrown away and re-taken**, because it had run against a tree in which the 6g-2 filter sat in `ase::cap_raw_plots` and 6g-3 therefore never fired at all |
+| ledger debts | ⚖ **R9** — two new `caution` sentences, **one of which REPLACES a refusal**. No `look` debt: `src/ase_window.tcl` is untouched and nothing new is drawn |
+| commit | `be23e3cb` |
+| receipt | `receipts/17-stage-6-variants.md` |
+
+**The driver re-took the load-bearing measurement independently**, from raw ngspice
+decks with no ASE-L in the path, on `/usr/bin/ngspice` (45.2) and the fork
+(`build-ver_50`), row-for-row identical on the two:
+
+| deck | rc | `$sim_status` |
+|---|---|---|
+| `.save v(mid)` + `noise` / `tf` / `sens` | **1** | **1** — the guard fires, `RUN-FAILED` reaches the user |
+| `.save v(mid)` + **`pz`** | **0** | **0** — ⚠ **the guard never fires** |
+| `.save v(mid)` + `op` / `dc` / `ac` / `tran` / `disto` | 0 | 0 |
+| `.save v(nosuchnode)` + `op` / `dc` / `ac` / `tran` | **1** | **1** |
+| `.save v(nosuchnode)` + `disto` | **139 SIGSEGV** | — never reached |
+| `.save all` + `.save v(mid)` + `pz` | 0 | 0, and `Plotname: Pole-Zero Analysis` really is written |
+
+That confirms all three of the crew's refutations from an independent direction: **`pz`
+is in the starved class and is its quiet member**, **`disto` is not in it**, and issue
+1433's hand-off of *"`tran` is a fifth type"* understates a rule that is **universal** —
+a save list resolving to nothing starves every analysis, and kills `disto` outright,
+which is why `disto_saves` keeps `fatal` while the new `saves_resolve` is `caution`.
+The driver also confirmed by count that **no committed bench can reach the widening**:
+`git ls-files` finds **104** `.state` files and every one of them enables exactly
+`op`/`dc`/`ac`/`tran` and nothing else.
+
+⚠ **One driver correction to the issue file.** Its user-facing sentence said the silent
+`pz` failure leaves *"a results file holding `Plotname: constants`"*. That is the
+bare-`pz` probe's answer, not the answer an ordinary bench gets: with an `op` row ahead
+of it — which is every committed bench — the second `write` emits **the operating point
+again**, and the sidecar records it as the `pz` row's plot. Both were measured; the
+issue file had quoted the weaker one. `constants` announces itself as junk, a duplicated
+operating point does not, so the sentence was understating its own defect. Corrected in
+place in `1434-*.md`, with the driver's transcript named; the receipt's own table was
+already right and was left as the dated record it is.
+
+**Named and not shipped, so the next stage inherits it rather than rediscovering it:**
+§6g-2's *other* seam is `signal_list` in `src/wave_viewer.tcl` — one call, in a file
+Stage 6's own *Files and procs* table does not name — and **that is where the
+substantial user-visible half of 6g-2 still is.** The widening also has no surface of
+its own: it reaches the user through the four-state grid and `preflight_gate`'s advice
+block, and does not grey or mark the Save ticks it overrides. That is a one-row
+follow-up for the next window stage, the same shape as issue 1432's `depends` note.
+
+### ⏭ Stage 6's remaining work — ONE task, and it is the resume point
+
+**`PLAN.md` §6a–§6g are all landed**: 6a/6b/6c in task 2 (**1430**), 6d in task 3
+(**1432**), 6e in task 1 (**1429**), 6f in task 4 (**1433**), 6g in task 5 (**1434**).
+What is left is not a `PLAN.md` §6 sub-item at all — it is the item **Stage 4 deferred
+into Stage 6**, recorded above in the Stage 4 block:
+
+> the **precondition banner under the form** needs netlist *text*, which the dialog does
+> not have and can only obtain by calling `ase::netlist` — a side effect no dialog may
+> have because a user opened it.
+
+**That constraint is the whole of the task**, and it is Stage 6's **task 6**. Stage 4's
+*other* deferred item, the DISTO save-list rule, is **discharged**: issue 1432 shipped
+`disto_saves` as a `fatal` precondition and task 5 kept it there while giving the
+universal case its own `caution` tier (`saves_resolve`).
+
+⚠ **AND THE PLAN CONTRADICTS ITSELF ABOUT WHETHER THE BANNER COSTS A `look` DEBT.** Its
+*Re-measure on the dev display* paragraph says *"there is no new pixel … No look debt is
+filed"*; its *Files and procs* table, three paragraphs above, adds a **`.note`
+precondition banner** to `src/ase_window.tcl`. Driver-measured 2026-09-12: `grep -c
+'\.note\b' src/ase_window.tcl` is **0** — there is no such widget. The task-6 crew must
+resolve that by measurement and say which half of the plan is stale, because filing a
+`look` debt wrongly and omitting one are both costly and omitting is worse.
+
+**Two follow-ups task 5 named and did not take**, carried here so they are not
+rediscovered: `signal_list` in **`src/wave_viewer.tcl`** (§6g-2's other named seam, and
+where the substantial user-visible half of 6g-2 still is), and **a surface for the
+widening** — the `.save all` leader overrides the user's per-output Save ticks and
+nothing greys or marks them. Both belong to whichever stage owns those files.
+
 ### What Stage 6 learned that binds later stages
 
 ---
