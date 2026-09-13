@@ -50,6 +50,12 @@ produce the same numbers for the same seed**.
 That is worth more than it looks: **a seeded campaign can have a committed golden**, and the
 golden will hold across both binaries this batch verifies against. An unseeded one cannot.
 
+⚠ **AND IT DOES NOT REACH `trnoise`.** Measured separately, three runs per binary with
+`.options seed=5`: a `trrandom` source gives `1.031261e+00` every time on both binaries, and
+a `trnoise` source gives **a different number every single run**, on both. The seed governs
+`agauss`, `sgauss`/`sunif` and `trrandom`; `trnoise` is outside it. Full measurement and the
+consequences for Stage 13's goldens: `evidence/events-and-trnoise.md` Part 2.
+
 ⚠ The measurement is two versions on one platform, one distribution, one draw. It is not a
 promise about every ngspice ever built — Stage 11 should pin the seed in its own fixtures
 rather than rely on the agreement continuing.
