@@ -1341,9 +1341,29 @@ as **`{type idx}`**, and the user-visible spelling must follow that shape and be
 `Analyses > List`; Stage 8 task 2's Measurements dropdown **consumes** it. If that order ever
 inverts, task 2 consumes `{type idx}` verbatim rather than minting a display form.
 
-### ⚖ R7 — Do we ship a PSS panel at all, given that the build probes ran it successfully?
+### ⚖ R7 — ANSWERED. Do we ship a PSS panel at all, given that the build probes ran it successfully?
 
-*Blocks: Stage 14 only.*
+**✅ ANSWERED 2026-09-13 — Option A, ship it, explicitly experimental.** The user's words:
+*"follow your recommendation"*.
+
+⚠ **WHAT "THE RECOMMENDATION" INCLUDES, STATED SO A LATER READER DOES NOT HAVE TO GUESS.**
+The user ratified the **written** recommendation below, which carries four parts: ship it
+**last**, the word **experimental** on the form, the **transient+FFT cross-check offered
+beside the answer**, and **the sentence that `oscnode` steers nothing** (correction C17).
+⚠ The first three were restated to the user when the ruling was put; **the `oscnode`
+sentence was not**, so it is inherited from the written recommendation rather than
+separately ratified. Its *wording* is R9's in any case.
+
+⚠ **AND THE ARGUMENT HAS MOVED SINCE THIS WAS WRITTEN, IN ASE-L's FAVOUR.** The trade-off
+below says not shipping *"avoids owning a panel whose `Convergence not reached` returns rc 0
+with plausible-looking data"* — the silent-wrong-answer class. Three pieces of machinery
+built **after** this ruling was drafted exist to catch exactly that: the `$sim_status` guard
+(0964/1243), issue **1430**'s post-run plot reconciliation, and issue **1442**'s
+requested-versus-effective readback. ASE-L is now materially better placed to own a run that
+lies about itself than it was when the question was framed, and that was put to the user as
+part of the case.
+
+*Blocks: Stage 14 only — five stages away, so nothing is gated on this.*
 
 * **Option A — ship it, explicitly experimental**, gated on `help pss`, with the hard
   validator and the stdout verdict scrape. It runs in under a second on both shipped

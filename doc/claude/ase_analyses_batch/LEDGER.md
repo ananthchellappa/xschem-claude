@@ -491,9 +491,43 @@ addressing is undone: `chana_row` at HEAD still returns the **first** row of a t
 behaviour #9"* — because an ADE-L claim had just been wrong in R4's recommendation. It is
 recorded as the plan's claim, unverified.
 
-### Still open — five
+### ⚖ R7 — the PSS panel — **ANSWERED 2026-09-13, Option A, ship it experimental**
 
-⚖ **R7** through ⚖ **R11** are unanswered — **five**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4**, ⚖ **R5** and ⚖ **R6** on 2026-09-13 — all four above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
+**The user's words: *"follow your recommendation"*.** PSS gets a real form in Stage 14,
+**last**, marked **experimental**, gated on the simulator declaring `pss`, with a hard
+validator and the **transient+FFT cross-check offered beside the answer**.
+
+**What it changes from today:** `pss` is currently `registered 1`, `baseline 0`, probe-only
+— driver-verified in the registry — so the grid lists it and refuses it with *"ASE-L cannot
+set up PSS yet, so it is listed but cannot be enabled."* That is effectively Option B
+already, and Stage 14 replaces it with a form.
+
+⚠ **THE ARGUMENT THAT DECIDED IT HAS MOVED SINCE THE RULING WAS DRAFTED, AND THAT WAS SAID
+WHEN IT WAS PUT.** The reason not to ship was PSS's measured defect: *"Convergence not
+reached"* returns **rc 0 with plausible-looking data** — the silent-wrong-answer class this
+whole batch exists to hunt. Three things built **after** the ruling was written now catch
+exactly that shape: the `$sim_status` guard, issue **1430**'s post-run plot reconciliation,
+and issue **1442**'s requested-versus-effective readback. **A ruling drafted against an older
+tree can become easier to answer without anybody re-costing it** — worth re-reading the
+remaining five for the same reason before they are put.
+
+⚠ **ONE PART OF THE RECOMMENDATION WAS RATIFIED WITHOUT BEING RESTATED.** The written
+recommendation has four parts; three were put to the user (ship last, the word
+*experimental*, the transient+FFT cross-check) and the fourth — **the sentence that
+`oscnode` steers nothing**, correction C17 — was not. It is inherited from the written
+recommendation rather than separately ratified, and its wording rides ⚖ R9 regardless.
+Recorded rather than blurred.
+
+⚠ **AND THE QUESTION BEHIND THE QUESTION WENT UNANSWERED, DELIBERATELY.** The driver asked
+whether the user actually *runs* PSS — oscillators, mixers, switched-capacitor — because
+that is the thing no measurement here can settle and it decides whether Stage 14 is effort
+the user will feel. The user answered by delegating instead. **Stage 14 is last in the plan
+anyway**, so the cost of that is nil today; if the stage ever needs to be cut for time, this
+is the paragraph that says why it is the cheapest one to cut.
+
+### Still open — four
+
+⚖ **R8** through ⚖ **R11** are unanswered — **four**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4**, ⚖ **R5**, ⚖ **R6** and ⚖ **R7** on 2026-09-13 — all five above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
