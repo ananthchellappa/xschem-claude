@@ -54,3 +54,75 @@ with a bound.
 That T1 now covers ASE. It covers **eight of twenty-nine** ASE suites. Any future statement of the
 form "T1 at zero" should be read as covering those eight and no more, and this issue is the list to
 check it against.
+
+---
+
+## Re-measured by the driver 2026-09-13 — and two things have changed
+
+Taken statically over all 29 `test_ase_*.tcl` at commit `3bb4449e`, with no suite run, so
+it cost the running task-crew no load. **The audit above still holds exactly**: 8 in T1,
+21 out, and every one of the 21 prints `RESULT:` and no `OVERALL:`. Two facts are new, and
+they pull in opposite directions.
+
+### 1. ✅ The unbounded-hang hazard this issue was written against is CLOSED
+
+This issue's *"not a licence to add all 21 in one commit"* paragraph rests on the
+`test_ase_optier_0963` display-arm stall — a first run under a driver nobody had exercised,
+which hung for eight hours because nothing bounded it. **Issue 1403 has since bounded both
+layers**, and both are live today:
+
+* `tests/run_regression.tcl:177-189` — `t1_timeout` / `T1_CASE_TIMEOUT`, default **900 s**,
+  prefixing **all four** `exec` sites with `timeout --kill-after=20`, and rc 124 counted as
+  a `FAIL` that says `TIMED OUT`.
+* **All 29** of these suites source `tests/headless/scratch.tcl`, so **all 29 already carry
+  the in-suite watchdog** (`XSCHEM_SUITE_WATCHDOG_MS`, default 900 000 ms, exit **124**,
+  printing the last output line). Measured: `grep -c scratch.tcl` is ≥ 1 for every one.
+
+So the specific eight-hour shape is no longer reachable through T1. ⚠ **The watchdog is
+still not a general timeout** — a hang in a blocking `exec` or a busy Tcl loop does not
+reach the event loop and is not caught (row W13 of `test_suite_watchdog_1403.tcl` pins
+that) — which is precisely why `t1_timeout` matters and why it is the load-bearing one
+here. **Batching is still right**; the reason is now "a suite whose first driver run
+nobody has watched", not "an unbounded wait".
+
+### 2. ⚠ TWO MORE SUITES CARRY THE `exit 0` HALF OF THIS DEFECT, NOT JUST THE BANNER HALF
+
+This issue treated the 21 as a single cause — the missing sentinel. They are not all the
+same. Two of them also discard the exit-code signal, which is the **worse** half and the
+one this issue calls out in as many words for `test_ase_preflight`:
+
+| suite | line | what it does |
+|---|---|---|
+| `test_ase_current_repair` | `:701` | `exit 0` — **unconditional**, after printing `RESULT: $fail FAILED` |
+| `test_ase_result_case` | `:589` | `exit 0` — **unconditional**, after printing `RESULT: $fail FAILED` |
+
+Every other one of the 21 already exits nonzero on failure — `test_ase_cosim:2277` is
+`exit [expr {$fail == 0 ? 0 : 1}]`, and it is the largest of them at 341 checks. So for
+**19 of the 21 the change really is one line**, the `OVERALL: ok` sentinel; for these two
+it is two, and **adding either of them with only the sentinel would put a suite in T1 that
+can fail and still report success to anything reading the exit code.**
+
+⚠ **These two are therefore the ones to fix FIRST and add LAST**, not the reverse: the
+exit-code repair is worth landing whether or not the suite ever joins T1, because
+`run_suites.sh` and `full_audit.sh` read that code today.
+
+### The batching this suggests
+
+Not a licence, a proposal — it is still a task for a crew, measured standalone with a bound
+before each batch is added:
+
+1. **The two exit-code repairs**, alone, with no T1 membership change. They are a live
+   defect in the current harness readers.
+2. **The quiet headless ones** — `print_bracket_0167`, `result_case`, `sod_case`,
+   `unnamed_net`, `bus_bits_0159`, `savestate_adopt` — small, fast, no simulator.
+3. **The simulator ones** — `final`, `final_gf180`, `cosim`, `plot` — where `test_ase_final`
+   is already known to raise issue **1402**'s flap in `test_ase_optier_0963` when run
+   back-to-back with it, so the ORDER inside T1's case list is itself a measurement.
+4. **The X-dependent ones** — `dirty`, `log_seam_0207`, `interact`, `launch`, `view`,
+   `window`, `hier_pick_0161`, `hier_plot_0168`, `locked_wire_pick_0160`, `simchoice_1395`,
+   `current_repair` — last, because the display arm is where the eight-hour stall happened
+   and two of them self-skip without an X connection.
+
+**Until that lands, every "T1 at zero" in this batch still means eight of twenty-nine ASE
+suites**, and each stage should keep saying so rather than letting the number read wider
+than it is.
