@@ -347,6 +347,25 @@ declared exception: it is batched per stage.
 
 ---
 
+## Receipts from before Stage 0 — collected here so the ledger accounts for all of them
+
+⚠ **Found 2026-09-12 by counting rather than remembering: three receipts existed on disk and
+were referenced by the ledger nowhere at all.** They are not stage work, which is why the
+stage table had no row for them — but "receipts collected onto the ledger" is the measure
+this batch is run by, and 13 of 17 is not 17 of 17. They are accounted for here.
+
+| receipt | what it records |
+|---|---|
+| `receipts/00-plan-authored.md` | 2026-09-09 — the plan was authored, verified against three lenses, and repaired. `doc/claude/ase_analyses_batch/` only; no file under `src/` touched and no suite row moved |
+| `receipts/01-contract-pivot.md` | 2026-09-10 — the adapter pivot (D34–D37: ASE-L owns the SCHEMA, a per-simulator adapter owns CONTENT) folded into the documents, verified and repaired. Again documents only |
+| `receipts/03-variant-support.md` | 2026-09-10 — the variant-support amendment, written against the user's own sentence: *"Most users who download our Xschem won't have **our** ngspice."* This is the origin of the probe-capabilities-never-branch-on-a-version-string rule that every stage since has been held to |
+
+`receipts/02-r1-answered-salvage.md` and `receipts/04-dev-build-rebuilt.md` were already
+cited above, in the rulings and baseline sections respectively.
+
+**Running count: 17 receipts on disk, 16 collected, 1 in flight** (`16-stage-6-salvage.md`,
+Stage 6 task 4).
+
 ## How to fill in a stage section
 
 Copy the block, do not restructure it. `status` is the vocabulary the tree already uses:
@@ -1195,7 +1214,7 @@ owns the working tree while it runs**, and a floor taken during one is not a mea
 | status | **LANDED** — task 3 of N |
 | issue | **1432** |
 | commit | (filled at commit) |
-| T1 | taken **solo** by the driver, 62 cases — ⚠ **NOT zero: one case red.** `test_ase_optier_0963` row **X7**, which is issue **1402** (the shipped bandgap bench does not converge reproducibly; the assertion is sound, the simulation is not). Re-measured rather than waved through: **ALL PASS (106) standalone before the T1 run, and ALL PASS (106) three more times immediately after** — four consecutive standalone passes bracketing one red, no code change between. 1402's tally is now **3 of 3 reds under load, 0 of 17 standalone**. ⚠ **And this run narrowed what "load" means**: the other clone's GUI xschem was live through the red run *and* all four passes, so an idle process is not the trigger — concurrent **simulation** is |
+| T1 | taken **solo** by the driver, 62 cases — ⚠ **NOT zero: one case red.** `test_ase_optier_0963` row **X7**, which is issue **1402** (the shipped bandgap bench does not converge reproducibly; the assertion is sound, the simulation is not). Re-measured rather than waved through: **ALL PASS (106) standalone before the T1 run, and ALL PASS (106) three more times immediately after** — four consecutive standalone passes bracketing one red, no code change between. 1402's tally read **3 of 3 reds under load, 0 of 17 standalone** when this block was written — ⚠ **and the very next T1, taken an hour later under the same conditions, came back GREEN**, so the corrected tally is **3 of 4 inside T1, 0 of 20 standalone**: load raises the probability, it does not decide the outcome. See task 4 below. ⚠ **And this run narrowed what "load" means**: the other clone's GUI xschem was live through the red run *and* all four passes, so an idle process is not the trigger — concurrent **simulation** is |
 | suites moved | `test_ase_core` 453 → **476** (MP) · `test_ase_preflight` 194 → **210** (PF230) · `test_ase_simcaps_0948` 190 → **199** (NV) · `test_ase_optier_0963` 105 → **106** (E5d) — forty-nine new rows. **Every suite this commit moves is in T1.** `test_ase_cosim` is outside T1 but is **unmoved**, so nothing is owed a standalone run |
 | driver's own re-run | core **476**, preflight **210**, simcaps **199**, optier **106** — taken by the driver on the engine arm, not read off the receipt |
 | sabotage | **51 respellings, 48 reddened a named row, zero FATALs**, every restore md5-verified. **One survivor, S32, and it found a DEAD LINE** — a `string trimright` that could never run because the name is already trimmed twice. Deleted, and NV7 rewritten with one fixture per trim so S32r and S32s each redden it. One PATCH-FAILED on the crew's own anchor, re-run as S24r. ⚠ **S46 is the one that matters**: the over-walk reddens WK5, WK8, **MP7b**, E5b and E5c — the walk task 2 shipped stub-driven now has five production witnesses |
@@ -1266,6 +1285,77 @@ This task then measured the write order and found `noise dec 10 1 10k` writes **
 Noise` first** (`src/ase.tcl:16839`). The predicted hazard is the production case, which is
 why the crew's finding (1) above reads the way it does. It is recorded against ⚖ R3's reader
 seam rather than patched here.
+
+
+### Task 4 — checkpointed salvage: a Stop keeps what the run had
+
+⚖ **R1's answer implemented.** The user's ruling arrived with a requirement neither offered
+option contained — *always salvage* — and this is it: a Stop now keeps what the run had
+computed instead of discarding it.
+
+| | |
+|---|---|
+| status | **LANDED** — task 4 of N |
+| issue | **1433** |
+| T1 | taken **solo** by the driver, 62 cases, **zero** — `Total num fail: 0`. ⚠ **X7 was GREEN in this run** with the other clone's GUI live exactly as it was for the red one an hour earlier, which is what corrected issue 1402's tally from *3 of 3 under load* to **3 of 4 inside T1**. Load raises the probability; it does not decide the outcome |
+| suites moved | `test_ase_core` 476 → **523** · `test_ase_preflight` 210 → **218** · `test_ase_optier_0963` 106 → **108**. `test_ase_simcaps_0948` (199) and `test_ase_cosim` (341) **unmoved**. **Nothing this commit moves is outside T1** |
+| driver's own re-run | core **523**, preflight **218** — taken by the driver on the engine arm |
+| deck goldens moved | ⚠ **NONE — and that is a plan deviation in the opposite direction from the one predicted.** The task-4 brief warned the crew that `PLAN.md` §6f's *"the checkpoint lines ride in the SAME re-baseline as the sidecar line"* was already false, because issue 1430 had spent that budget on D1, and told it to expect D1 to move a **second** time. It did not move at all: D1 is `op`-only, and rows CK18/CK18b assert that a **below-floor** deck is byte-identical to one rendered with `ase_checkpoint 0`. 1430 spent the budget; 6f needed none |
+| sabotage | **72 respellings in two passes**, 72/72 `RESTORED-OK` by `cmp`. Pass 1 (54) bought four code changes, so pass 2 (18) re-ran everything they moved plus four new ones. **Four survivors, every one of which bought a row or a deletion** — the `[2,50]` clamp (→ CK4b, stubbing `ckpt_n`), `ckpt_plan`'s two guards (→ CK27), and **two dead lines deleted**: `ckpt_rows`' `op_last` parameter and `ckpt_plan`'s `info commands` guard. One mis-specified anchor reported as `PATCH-FAILED` rather than quietly re-run, and an earlier whole-campaign attempt that failed 54/54 because **bash arguments cannot carry NUL** was reported rather than hidden |
+| ledger debts | ⚖ **R9** — four new sentences, **two of which REPLACE sentences that read as defect reports for something the user did on purpose** |
+| commit | `PENDING` |
+| receipt | `receipts/16-stage-6-salvage.md` |
+
+**The headline measurement, on both binaries, through ASE-L's own `render_deck`:** SIGTERM
+six seconds into an 8,000,008-point transient → rc 143, `op` and `ac` **intact**, the plotmap
+still 1:1, and **4,800,000 transient points kept**. Byte-identical across the fork and apt
+45.2. No `ASE-RUN-COMPLETE`, no `.tmp` left behind.
+
+**Nine corrections, C72–C80.** The one that matters most was found by a sabotage, not by
+review:
+
+* ⚠ **C80 — the loop's EXIT must be the FALSE branch, and the first cut SPUN FOREVER AT
+  RC 0.** `.control`'s `if` takes the **false** branch for an *unevaluable* condition
+  (measured for `<`, `>` and `>=`). With a save list resolving to nothing the transient never
+  runs, so there is no `tran1` plot, `length(time)` is unevaluable, and a loop whose
+  continuation was the true branch never terminated — at **exit code 0**, with nothing on
+  either stream. It was found by the sabotage that deleted the eligibility floor, cost a
+  **500 s suite timeout**, and was recorded as **rc 124 + FATAL** rather than as a gap in the
+  log. ⚠ **The eligibility floor of 100,000 points is what had been keeping it out of
+  reach** — nobody knew that until the sabotage removed the floor.
+* **C73 — both directions of the plan's estimate error were silent.** Ten times high meant
+  five wasted whole-rawfile writes *after* the run finished; ten times low left the last 90 %
+  unprotected. Both at rc 0.
+* **C74 — the `set` route rounds to six significant figures**, so a test against `cknext`
+  reads a stop as "finished": an 8,000,008-point run wrote **zero** checkpoints, silently,
+  and only above 1e6 points.
+* **C72 — SV15's `tstop/tstep + 8` is wrong for three of the five shapes the shipped `tran`
+  row can produce**, because `tstart` and `tmax` are advanced fields on it. The rule is
+  `(tstop − tstart) / (tmax ?: tstep)`.
+* **C79 — the arming block must sit ABOVE issue 1419's verbatim hatch**, and rows VB1/VB2
+  were green while it did not.
+
+⚠ **One finding handed on rather than fixed:** `tran` is starved by a save list resolving to
+nothing (rc 1) — the `disto_saves` shape reaching a **fourth** type. Out of this task's scope
+and recorded for whoever owns preconditions.
+
+⚠ **C80 was re-measured by the driver independently, because the whole loop's correctness
+rests on it.** A five-line deck on both binaries:
+
+```
+if length(nosuchvec) < 5   -> FALSE branch    (apt 45.2 AND the fork)
+if length(nosuchvec) > 5   -> FALSE branch    (apt 45.2 AND the fork)
+```
+
+Both comparison directions take the false branch when the vector does not exist, on both
+binaries. So a loop whose **exit** is the false branch terminates when `length(time)` cannot
+be evaluated, and the inverse spins forever. The crew's claim holds as stated.
+
+⚠ **A second 1402 data point, and it widens the row set.** Under the other clone's concurrent
+load, `test_ase_optier_0963` reddened **X1 and X2 as well as X7** — where every previous
+measurement named X7 alone. All three passed **ALL PASS (108) standalone, three times**. The
+issue is about the bench not converging reproducibly, so more rows reading the same
+simulation is consistent with it, but the row list in 1402 is now known to be incomplete.
 
 ### What Stage 6 learned that binds later stages
 

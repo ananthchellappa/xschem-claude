@@ -4769,6 +4769,25 @@ proc ase::analysis_schema_errors {{sim {}}} {
       # A type the user can enable and run, whose results nothing can name.
       lappend out [list $ty noplots {}]
     }
+    # --- 1433 (6f): AND THE `salvage` DECLARATION IS CHECKED, NOT DECORATION -
+    # A `salvage` key that names no `points` hook, or names one that is not a
+    # command, would answer {} from ase::ckpt_plan and the type would silently
+    # never be checkpointed -- the registry claiming a capability the run does
+    # not have. This is issue 1428's S35 rule ("a key read by nothing is a key
+    # checked by nothing") pointed at a key that IS read: it is read in a place
+    # whose failure mode is silence.
+    if {[dict exists $e salvage]} {
+      set sv [dict get $e salvage]
+      if {[catch {dict size $sv}]} {
+        lappend out [list $ty badsalvage {}]
+      } elseif {![dict exists $sv points]} {
+        lappend out [list $ty nosalvagepoints {}]
+      } elseif {[info commands [dict get $sv points]] eq {}} {
+        lappend out [list $ty badsalvagepoints [dict get $sv points]]
+      } elseif {![dict exists $sv vector] || [string trim [dict get $sv vector]] eq {}} {
+        lappend out [list $ty nosalvagevector {}]
+      }
+    }
   }
   return $out
 }
@@ -5240,7 +5259,16 @@ proc ase::field_active {row fd flds} {
 # file under a perfectly plausible record. Counting alone cannot see that: the
 # record count and the plot count AGREE. Comparing the recorded name against the
 # registry's own `select` is what sees it, and it is the only arm that can.
-proc ase::reconcile_plots {sim state rawpath mappath} {
+# ⚠ AND SINCE 1433 IT TAKES THE RUN'S OWN VERDICT. A run the user STOPPED
+# records fewer plots than the enabled rows predict -- that is what being
+# stopped means -- so two of the arms below fire for it, and until `runstate`
+# existed they said so in the language of a defect. PLAN.md §6f asks for exactly
+# this: "6c's reconciliation must be told the run was aborted BEFORE it reports
+# an under-count, or every stopped run logs 'one plot of the tran analysis was
+# not captured' as though something were wrong." `{}` and `unknown` behave
+# exactly as before, so the four-argument callers are unaffected by construction.
+proc ase::reconcile_plots {sim state rawpath mappath {runstate {}}} {
+  set stopped [expr {$runstate eq {aborted}}]
   set v [dict create verdict ok predicted 0 mapped 0 actual 0 \
                      extra {} missing {} mislabelled {} uncaptured {} why {}]
   set rows [ase::state_get $state analyses]
@@ -5336,8 +5364,14 @@ proc ase::reconcile_plots {sim state rawpath mappath} {
     } else {
       set kw "$k plots" ; set kv were
     }
-    lappend why "$kw of the [join $lost {, }] analysis $kv not captured: this run\
+    if {$stopped} {
+      lappend why "$kw of the [join $lost {, }] analysis $kv not written: this run\
+ was STOPPED, and what the analysis had when it stopped is in the checkpoint\
+ beside the results file."
+    } else {
+      lappend why "$kw of the [join $lost {, }] analysis $kv not captured: this run\
  recorded $mapped and the results file holds $actual."
+    }
   } elseif {$actual > $mapped} {
     dict set v extra [lrange $raws $mapped end]
     lappend why "this run captured $actual plots where the registry expected $mapped;\
@@ -5360,20 +5394,35 @@ proc ase::reconcile_plots {sim state rawpath mappath} {
     ## before the rest (and correctly wrote no record for the analysis that
     ## failed). The first draft of this line blamed the state changing, which
     ## is the OTHER cause and was the wrong one that day.
-    lappend why "the enabled rows predict $pred plot(s) and this run recorded\
+    if {$stopped} {
+      ## ⚠ WITH THE VERDICT IN HAND THE SENTENCE NAMES ONE CAUSE, NOT TWO. The
+      ## two-cause wording below is what has to be said when nothing measured
+      ## which one it was; here the completion marker's absence measured it.
+      lappend why "the enabled rows predict $pred plot(s) and this run recorded\
+ $mapped: the run was STOPPED before the rest."
+    } else {
+      lappend why "the enabled rows predict $pred plot(s) and this run recorded\
  $mapped: the run stopped before the rest, or the analyses changed between\
  rendering the deck and reading it back."
+    }
   }
   # severity order: no identity at all, then a wrong identity, then lost data,
   # then extra data, then a prediction that no longer fits.
+  ## ⚠ `mislabel` STILL WINS OVER `aborted`, AND THAT IS DELIBERATE. A plot
+  ## recorded under the wrong name is wrong whether or not the run was stopped --
+  ## a Stop cannot make a name right -- so the identity arm keeps the top of the
+  ## severity order. `under` and `predmismatch` are the two a Stop EXPLAINS, and
+  ## they are the two that become `aborted`. `over` does not: a stopped run
+  ## cannot produce MORE plots than it recorded, so an `over` beside a Stop is
+  ## still a finding.
   if {[llength $mis]} {
     dict set v verdict mislabel
   } elseif {$actual < $mapped} {
-    dict set v verdict under
+    dict set v verdict [expr {$stopped ? {aborted} : {under}}]
   } elseif {$actual > $mapped} {
     dict set v verdict over
   } elseif {$orderok && $pred != $mapped} {
-    dict set v verdict predmismatch
+    dict set v verdict [expr {$stopped ? {aborted} : {predmismatch}}]
   }
   dict set v why $why
   return $v
@@ -5385,17 +5434,318 @@ proc ase::reconcile_plots {sim state rawpath mappath} {
 # ase::op_report_missing's reason: nothing downstream reads its answer and a
 # defect in a report must never break a run. The suite calls it directly and
 # uncaught, so a defect in it is still loud where it should be.
-proc ase::reconcile_report {state} {
+proc ase::reconcile_report {state {runstate {}}} {
   set sim [ase::state_get $state simulator]
   set raw {}
   set map {}
   catch {set raw [[ase::backend_hook $sim raw_file] $state]}
   catch {set map [ase::plotmap_path $state]}
-  set v [ase::reconcile_plots $sim $state $raw $map]
+  set v [ase::reconcile_plots $sim $state $raw $map $runstate]
   set tag note
-  if {[dict get $v verdict] eq {ok} || [dict get $v verdict] eq {norun}} { set tag {} }
+  ## ⚠ `aborted` IS NOT AN ERROR TAG. The user pressed Stop; the sentence is
+  ## telling them what survived, not reporting a fault.
+  if {[lsearch -exact {ok norun aborted} [dict get $v verdict]] >= 0} { set tag {} }
   foreach s [dict get $v why] { ::ase::echo "ase: results -- $s" $tag }
   return $v
+}
+
+# ─── 6f: CHECKPOINTED SALVAGE -- A STOP KEEPS WHAT THE RUN HAD ───────────────
+#
+# ⚖ R1's always-salvage requirement, ruled by the user on 2026-09-10 with the
+# transport answer and in words neither offered option contained: *"always
+# salvage, and alert user that her sittings will cause loss of simulation effort
+# 'thus far'"*. The mechanism is DECK lines -- `stop after` / `write` /
+# `shell mv` / `resume` -- so the loop itself is the adapter's, in
+# ase::backend::ngspice::render_deck. What lives here is everything that is
+# ASE-L's own: the artefact's PATH, the PLAN (how many checkpoints and how far
+# apart), and the VERDICT (did this run finish, or was it stopped).
+#
+# ⚠ WHY A DECK LOOP AT ALL, AND WHY IT IS NOT NEGOTIABLE. `ngspice -b` installs
+# NO signal handler: src/main.c puts its whole signal() block inside
+# `if (!ft_batchmode)`, so every signal takes its default disposition and the
+# process dies where it stands with everything in flight. Nothing is being
+# traded away for that -- batch was written for scripted use where nobody
+# presses Stop -- which is why the requirement can be stated flatly. The deck
+# stopping ITSELF and writing is the only way in, and `-r` is not a second way:
+# on a `.control` deck it DELETES the path it is given (PLAN.md §0.1, D41.3).
+#
+# ⚠ AND THE MEASUREMENTS BELOW ARE THIS COMMIT'S OWN, ON BOTH BINARIES. Every
+# SV row of PLAN.md §0.1 was re-run 2026-09-12 against the fork
+# (build-ver_50, ngspice-46+) AND /usr/bin/ngspice (45.2) before a line of this
+# was written, because §6f had never been re-measured since it was drafted.
+# Where a number below disagrees with the dossier, the number below was
+# measured through this file's own render_deck. See
+# doc/claude/ase_analyses_batch/receipts/16-stage-6-salvage.md.
+
+# <rundir>/<cell>_ase.raw.ckpt -- beside the results file, the log and the
+# plotmap, and NEVER the results file itself.
+#
+# ⚠ THE SEPARATE PATH IS A MEASUREMENT, NOT TIDINESS. render_deck emits
+# `set appendwrite` (issue 0929), and under it a `write` to an existing path
+# APPENDS a plot instead of replacing it. MEASURED 2026-09-12, both binaries,
+# four checkpoints plus the final write to ONE path: FIVE stacked plots of
+# 2000/4000/6000/8000/8008 points, 897,796 bytes where the single plot is
+# 256,526 -- quadratic in the checkpoint count, and ASE-L reads results BY PLOT
+# NAME, so the run's answer stops being findable. With the `unset appendwrite`
+# bracket this file emits and its own path: ONE plot, always the latest.
+#
+# ⚠ IT RAISES FOR A STATE WITH NO DESIGN CELL, exactly as ase::plotmap_path and
+# ase::backend::ngspice::raw_file do, and every core caller therefore catches.
+# ⚠ AND IT IS BUILT HERE, NOT THROUGH THE ADAPTER'S `raw_file` HOOK, for
+# ase::plotmap_path's reason: the checkpoint is ASE-L's OWN artefact -- written
+# by ASE-L's deck, deleted by ASE-L before every run, read by ASE-L and by
+# nothing else -- so its name is schema. Going through the hook would also make
+# a core path proc raise for a state whose simulator is not registered, which is
+# a different failure from the one its siblings have.
+proc ase::ckpt_path {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (ckpt_path)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase.raw.ckpt]
+}
+
+# The path the checkpoint is WRITTEN to before it is renamed into place.
+#
+# ⚠ THE TWO-STEP IS THE WHOLE OF THE PROTECTION AND IT IS MEASURED. `raw_write`
+# puts the true point count in the header and THEN streams the body, so a kill
+# landing inside a write leaves a header that over-claims and a loader that
+# recovers NOTHING -- `Error: bad rawfile / load aborted / no data read` over
+# millions of good points. One kill in five caught the `fopen(..., "wb")` window
+# and left ZERO bytes where the previous good checkpoint had been, which is the
+# case that matters: that failure destroys the FALLBACK, not the new file.
+# ngspice has no rename, move or copy primitive of its own -- `spcp_coms[]`
+# offers `write`, `fopen`/`fread`/`fclose`, `cd`, `getcwd` and `shell` and
+# nothing else -- so the atomicity comes from `shell mv -f` in the deck.
+proc ase::ckpt_tmp_path {state} {
+  return "[ase::ckpt_path $state].tmp"
+}
+
+# The three literals the deck echoes, spelled ONCE, here, and read back by
+# ase::run_completed and by the suites.
+#
+# ⚠ COMPLETENESS CANNOT BE INFERRED FROM THE EXIT STATUS OR FROM $sim_status,
+# AND THAT IS MEASURED ON BOTH BINARIES. After `stop after 2000` fires and the
+# deck falls through to its guard: `$?sim_status` is 1 and `$sim_status` is 0 --
+# so the guard prints NOTHING -- `remzerovec` runs, the `write` succeeds, a
+# valid 2000-point plot lands in the file and the process exits **rc 0**.
+# dosim() maps "simulation interrupted" to err = 0 deliberately. The only thing
+# that can tell a finished run from a stopped one is a marker the deck itself
+# emits after the last analysis, read by its ABSENCE.
+proc ase::ckpt_marker {which} {
+  switch -- $which {
+    complete { return {ASE-RUN-COMPLETE} }
+    armed    { return {ASE-CKPT-ARMED} }
+    done     { return {ASE-CKPT-DONE} }
+  }
+  return {}
+}
+
+# The hidden escape hatch, the way `ase_preflight` is one: a real lever, named
+# in the code, not a preference and not a state key. `set ase_checkpoint 0`
+# renders the deck exactly as it was before this issue -- which is what a crew
+# comparing against an old golden needs, and what a user who wants the emitted
+# block to be byte-for-byte what it was needs.
+#
+# ⚠ NO NEW STATE KEY. ⚖ R8 named `sweep` as the SINGLE exception to "no new
+# top-level keys", and a per-bench checkpoint interval would be a second one.
+# The 104 committed `.state` files stay byte-identical.
+proc ase::ckpt_enabled {} {
+  if {[info exists ::ase_checkpoint] && !$::ase_checkpoint} { return 0 }
+  return 1
+}
+set_ne ase_checkpoint 1
+
+# THE ELIGIBILITY FLOOR, IN POINTS, AND IT IS A NUMBER THIS CREW PICKED.
+#
+# PLAN.md §6f says in as many words that the floor "is a number the crew picks
+# and states in the code", and supplies one anchor: the 800,008-point reference
+# deck is already worth three checkpoints by SV14's formula, so the floor sits
+# below it. MEASURED here, both binaries, on that same RC: 8,008 points in
+# 0.11 s, 80,008 in 0.11-0.21 s, 800,008 in 0.91 s -- about 900k output rows a
+# second on the FASTEST circuit shape there is. At 100,000 points such a run is
+# a tenth of a second and there is nothing a user could press Stop during; a
+# transistor-level deck of the same length takes minutes, and that is the run
+# this exists for. Below the floor the block is not emitted at all, which is
+# also what keeps every small rendered-deck golden from moving a second time.
+proc ase::ckpt_floor {} { return 100000 }
+
+# THE DEFAULT CHECKPOINT COUNT. N = 4 -- a checkpoint every 20 % of the run, so
+# a Stop costs at most 20 % -- clamped [2, 50].
+#
+# ⚠ SV14's FORMULA IS NOT SHIPPED, AND THE REASON IS THAT ITS INPUTS DO NOT
+# EXIST YET. `N + 1 = sqrt(T x B / S)` needs T (the expected runtime) and S (the
+# expected rawfile size) from a PREVIOUS run of this bench, which ASE-L does not
+# record; and B is page-cache throughput that moved +/-30 % between sittings on
+# one machine, so it is a planning constant and not a bound. PLAN.md's own
+# answer for "T and S unknown" is this number. A later stage that keeps a
+# per-bench run history is where the formula lands, and it lands HERE, in one
+# proc, with the clamp already written.
+proc ase::ckpt_n {} { return 4 }
+
+# The `salvage` declaration of an analysis type, or {} for a type that declares
+# none -- which is every type but `tran` today, and deliberately.
+#
+# ⚠ ABSENT MEANS NOT MEASURED, NEVER "NO SALVAGE NEEDED". D41.4: no analysis
+# advertises salvage without a measured stop/resume row. `op` is one point and
+# there is nothing to keep; `noise` and `disto` produce a plot SET, so a stopped
+# one is an INCOMPLETE SET and not a short plot -- presenting it as truncated
+# would be a wrong answer wearing a partial one's label; `dc` and `ac` both stop
+# and resume correctly but the full loop has never been run against either;
+# `pz`, `sens`, `tf`, `sp` and `pss` are unmeasured, and evidence/builds.md
+# already records `sens` not honouring `bg_halt` and `pz` probably being
+# uninterruptible. Each of those is one measurement away from a `salvage` key.
+#
+# ⚠ AND IT IS THE ADAPTER'S KEY, NOT CORE'S TABLE. Whether an analysis can be
+# stopped and resumed, and how its point count is estimated, are facts about a
+# simulator (D34-D37). Core learns only that a type MAY declare `{points
+# <hook>}`; the hook is the adapter's.
+proc ase::analysis_salvage {sim type} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e salvage]} { return {} }
+  set s [dict get $e salvage]
+  if {[catch {dict size $s}]} { return {} }
+  return $s
+}
+
+# THE PLAN FOR ONE ROW: {n <N> step <points> points <estimate>}, or {} for a row
+# that gets no checkpoint block -- with the reason available to the caller
+# through ase::ckpt_why so the GUI can SAY why rather than being silent.
+#
+# ⚠ IT TAKES THE STATE, NOT AN OPTIONS LIST, AND THAT IS PLAN.md §6f's
+# SIGNATURE CORRECTED FOR THE SAME REASON C63 CORRECTED ase::analysis_plots'.
+# The plan writes `ase::ckpt_plan {row opts}`. Two callers need this answer and
+# neither holds an options list: render_deck holds the state, and
+# ase::run_completed has to re-derive after the run from the state alone.
+proc ase::ckpt_plan {sim row state} {
+  if {![ase::ckpt_enabled]} { return {} }
+  set type [ase::state_get $row type]
+  set sv [ase::analysis_salvage $sim $type]
+  if {$sv eq {} || ![dict exists $sv points] || ![dict exists $sv vector]} { return {} }
+  set hook [dict get $sv points]
+  if {$hook eq {}} { return {} }
+  ## ⚠ NO `info commands` GUARD HERE, AND A SABOTAGE IS WHY. The first cut had
+  ## one; deleting it left the suite at ALL PASS **even with a row written for
+  ## it**, because the `catch` one line down already answers `{}` for a hook
+  ## that is not a command -- "invalid command name" is an error like any other.
+  ## A line whose whole effect another line has already had is deleted rather
+  ## than given a fixture (issue 1432's S32). The REGISTRY-facing half is a
+  ## different line and is separately tested: `analysis_schema_errors` refuses a
+  ## `badsalvagepoints` at load time, which is what tells the adapter's author.
+  set est {}
+  if {[catch {$hook $row $state} est]} { return {} }
+  if {![string is double -strict $est] || $est < [ase::ckpt_floor]} { return {} }
+  set n [ase::ckpt_n]
+  if {$n < 2} { set n 2 }
+  if {$n > 50} { set n 50 }
+  set step [expr {int(double($est) / ($n + 1))}]
+  if {$step < 1} { return {} }
+  ## `vector` IS THE SIMULATOR'S NAME FOR THE THING THE DECK COUNTS -- `time`
+  ## for a transient, `frequency` for the `ac` this stage does not ship. The KEY
+  ## is schema; the WORD is the adapter's, which is why it is carried through
+  ## the plan rather than spelled in render_deck's loop.
+  return [dict create n $n step $step points [expr {wide($est)}] \
+                      vector [dict get $sv vector]]
+}
+
+# Every enabled row that gets a checkpoint block, as {rank rowindex type plan}
+# in EMIT ORDER -- the one answer render_deck, ase::run_completed and
+# ase::ckpt_report all read, so the deck, the verdict and the sentence cannot
+# disagree about which analyses were checkpointed.
+#
+# ⚠ IT TAKES NO `op_last`, AND A SABOTAGE IS WHY. The first cut carried one,
+# because `ase::analysis_emit_order` does -- and the sabotage that dropped it
+# left this suite at ALL PASS, because MEMBERSHIP does not depend on the emit
+# order and no caller ever passed anything but the default. A parameter no
+# caller varies is a parameter no row can defend, which is issue 1432's S32
+# lesson about a dead line: it is deleted rather than given a fixture. The
+# ordering that matters is render_deck's own loop, which walks
+# `ase::analysis_emit_order` with its own `op_last` and asks this proc nothing.
+proc ase::ckpt_rows {sim state} {
+  set rows [ase::state_get $state analyses]
+  set out {}
+  if {[catch {ase::analysis_emit_order $state 0 $sim} order]} { return {} }
+  foreach ent $order {
+    lassign $ent arank ai atype
+    set plan [ase::ckpt_plan $sim [lindex $rows $ai] $state]
+    if {$plan eq {}} continue
+    lappend out [list $arank $ai $atype $plan]
+  }
+  return $out
+}
+
+# DID THIS RUN FINISH? `complete` / `aborted` / `unknown`, and the third state
+# is not padding.
+#
+# ⚠ THE MARKER IS ONLY EMITTED BY A DECK THAT CARRIES A CHECKPOINT BLOCK, so a
+# run with nothing to salvage must answer `unknown` rather than `aborted`. A
+# two-state reader would mark EVERY ordinary run aborted, which is the exact
+# defect class this tree keeps finding: an answer that is confident and wrong.
+# Whether a marker was asked for is re-derived FROM THE STATE, not from a second
+# echo in the log, because ngspice's stdout is block-buffered when redirected
+# and the last echoes before a kill can die in the buffer -- measured: a run
+# that completed and renamed its third checkpoint logged only the first two
+# `ASE-CKPT-DONE` lines. The COMPLETION marker is unaffected, because what is
+# read is its absence.
+proc ase::run_completed {sim state logtext} {
+  if {[llength [ase::ckpt_rows $sim $state]] == 0} { return unknown }
+  foreach ln [split $logtext "\n"] {
+    if {[string trim $ln] eq [ase::ckpt_marker complete]} { return complete }
+  }
+  return aborted
+}
+
+# WHAT THE USER IS TOLD ABOUT SALVAGE, once per run, through the channel every
+# other result note in this file already uses.
+#
+# ⚠ THE PIXEL HALF IS NOT HERE AND IS NOT PRETENDED TO BE. PLAN.md §6f puts
+# "the partial-result label with how far it got" in src/ase_window.tcl, which
+# this task may not touch, so what the window DRAWS after a Stop is unchanged.
+# What is said is said in the log and the CIW, which is where `ase::echo` goes.
+proc ase::ckpt_report {sim state logtext} {
+  set out {}
+  set verdict [ase::run_completed $sim $state $logtext]
+  if {$verdict eq {unknown}} { return $out }
+  set ck {}
+  catch {set ck [ase::ckpt_path $state]}
+  if {$verdict eq {complete}} {
+    ## A COMPLETED RUN'S CHECKPOINT IS DEAD WEIGHT AND IT IS DELETED HERE.
+    ## MEASURED: a 8,000,008-point run left a 204,800,612-byte `.ckpt` beside a
+    ## 256,039,607-byte results file that already holds every point of it. The
+    ## pre-run delete would clear it at the NEXT run, which is one run too late
+    ## to matter to a disk.
+    if {$ck ne {}} { catch {file delete -- $ck} }
+    catch {file delete -- [ase::ckpt_tmp_path $state]}
+    return $out
+  }
+  ## ABORTED. Say what survived, and say it in points rather than in a
+  ## percentage: the estimate is an estimate, and a percentage of an estimate
+  ## reads like a measurement.
+  set held {}
+  set name {}
+  if {$ck ne {} && [file isfile $ck]} {
+    foreach p [ase::cap_raw_plots $ck] {
+      set name [lindex $p 0]
+      set held [lindex $p 1]
+    }
+  }
+  set est {}
+  foreach ent [ase::ckpt_rows $sim $state] {
+    set est [dict get [lindex $ent 3] points]
+  }
+  if {$held eq {} || $held <= 0} {
+    lappend out "this run was stopped before its first checkpoint, so the\
+ analysis that was running kept nothing. The analyses that had already finished\
+ are in the results file."
+  } else {
+    set of {}
+    if {$est ne {}} { set of " of an estimated $est" }
+    lappend out "this run was stopped: the analyses that finished are in the\
+ results file, and the '$name' plot the simulator was still filling was kept at\
+ $held points$of, in [file tail $ck]."
+  }
+  foreach s $out { ::ase::echo "ase: salvage -- $s" note }
+  return $out
 }
 
 # THE EMIT CARD'S **TEMPLATE**, WITHOUT A ROW -- the first token of which is the
@@ -10852,6 +11202,16 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## it answers wrong. Caught for ase::plotmap_path's raise on a state with no
   ## design cell, which is the same shape the line above already tolerates.
   catch {file delete -- [ase::plotmap_path $state]}
+  ## 1433 (6f): AND THE CHECKPOINT AND ITS TEMP, for the reason the rawfile is
+  ## deleted and one more. A `.ckpt` left over from the previous run is a
+  ## COMPLETE-LOOKING partial result of a DIFFERENT run: ase::ckpt_report reads
+  ## the verdict from this run's log and would then describe last run's file as
+  ## what this one salvaged. And the `.tmp` is swept here rather than by the
+  ## deck, because the case it exists for is a kill that lands mid-write, and a
+  ## killed deck runs no more lines. Caught for ase::ckpt_path's raise on a
+  ## state with no design cell, the shape the two lines above already tolerate.
+  catch {file delete -- [ase::ckpt_path $state]}
+  catch {file delete -- [ase::ckpt_tmp_path $state]}
   ## 0948: AND SAY SO IF THE PROGRAM ABOUT TO START CANNOT DO WHAT THIS RUN
   ## NEEDS. The deletion one line up, and the `set appendwrite` the deck is
   ## about to carry, BOTH assume the simulator adds each analysis to the
@@ -11450,7 +11810,25 @@ proc ase::run_done {logpath state callback {meta {}}} {
   ## everything it says is advisory, nothing downstream reads its answer, and a
   ## defect in a report must never break a run. The suite calls
   ## ase::reconcile_plots and ase::reconcile_report directly, uncaught.
-  catch {ase::reconcile_report $state}
+  ## 1433 (6f): AND SAY WHAT A STOP KEPT, BEFORE reconciliation SPEAKS.
+  ## ⚖ R1's always-salvage requirement. The order is load-bearing: a stopped run
+  ## records fewer plots than the enabled rows predict, so reconciliation's
+  ## `predmismatch` arm fires for it -- and until this line existed it said so
+  ## in the language of a defect. ase::ckpt_report answers the verdict, and the
+  ## verdict is handed to ase::reconcile_report so the same two numbers are
+  ## reported as what they are.
+  ##
+  ## CAUGHT, for ase::cap_report's and ase::op_report_missing's reason:
+  ## everything it says is advisory, nothing downstream reads its answer, and a
+  ## defect in a report must never break a run. The suite calls
+  ## ase::ckpt_report and ase::run_completed directly, uncaught.
+  set runstate unknown
+  catch {
+    set csim [ase::state_get $state simulator]
+    set runstate [ase::run_completed $csim $state $data]
+    ase::ckpt_report $csim $state $data
+  }
+  catch {ase::reconcile_report $state $runstate}
   ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
   if {$callback ne {}} { uplevel #0 $callback }
 }
@@ -14758,6 +15136,36 @@ namespace eval ase::backend::ngspice {
       ## likewise reached only from inside the loop.)
       set pmapf [ase::plotmap_path $state]
     }
+    ## --- 1433 (6f): THE CHECKPOINT COUNTERS, BEFORE THE FIRST ANALYSIS ------
+    ## ⚖ R1's always-salvage requirement. A `-b` run installs no signal
+    ## handler, so a Stop kills the process where it stands and everything the
+    ## running analysis had is lost; a deck that stops ITSELF and writes is the
+    ## only way to keep it.
+    ##
+    ## ⚠ THE COUNTERS MUST BE CREATED HERE, BEFORE ANY ANALYSIS, AND THE REASON
+    ## IS MEASURED TWICE OVER ON BOTH BINARIES. A `let` made while `op1` is the
+    ## current plot lands IN `op1` and is INVISIBLE from `tran1` -- `Error:
+    ## &cknext: no such variable.`, the counter never advances, no further
+    ## checkpoint is armed, rc 0. And one made after the `tran` is a vector OF
+    ## `tran1`, so every `write` from then on emits it: measured `No. Variables:
+    ## 5` and a `ckdone notype dims=1` column beside time and the circuit
+    ## quantities, in the checkpoint AND in <cell>_ase.raw, which ASE-L reads by
+    ## enumerating a plot's vectors.
+    ##
+    ## ⚠ AND RE-ASSIGNING THEM PER ANALYSIS IS SAFE, WHICH IS **NOT** WHAT THE
+    ## FIRST HALF IMPLIES AND HAD TO BE MEASURED SEPARATELY. `let ckstep = N` on
+    ## a name that ALREADY EXISTS in the const plot writes THROUGH to the const
+    ## vector -- it does not shadow it in the current plot. Measured: assigned
+    ## 222 while `op1` was current, read back 222 from `tran1` and from
+    ## `const.ckstep`, and the written plot stayed at `No. Variables: 4`. That is
+    ## what lets two enabled `tran` rows each carry their own interval.
+    set ckrows [ase::ckpt_rows [namespace tail [namespace current]] $state]
+    if {[llength $ckrows]} {
+      lappend lines "* ASE-L checkpointed salvage: a Stop keeps what this run had"
+      lappend lines "let ckstep = 0"
+      lappend lines "let cknext = 0"
+      lappend lines "let ckdone = 0"
+    }
     # --- 0964: THE OPERATING POINT RUNS LAST WHEN ITS REQUESTS MOVED IN ------
     # The emit order is normally the fixed `op dc ac tran` this block has always
     # used, and every deck that carries no in-`.control` device requests renders
@@ -14904,6 +15312,43 @@ namespace eval ase::backend::ngspice {
       # THIS analysis -- an `alter`, a `set`, a `save` -- and a deck with three
       # enabled analyses would otherwise apply one analysis's setup to all three,
       # silently, in run order.
+      ## --- 1433 (6f): ARM THE CHECKPOINT FOR **THIS** ANALYSIS ---------------
+      ## ⚠ ABOVE THE VERBATIM HATCH, AND A SABOTAGE IS WHY. Issue 1419 put the
+      ## hatch IMMEDIATELY above its own analysis line and rows VB1/VB2 assert
+      ## exactly that adjacency. The first cut of this block sat between them --
+      ## which is invisible at the shipped floor, because every `x`-carrying
+      ## fixture in the tree is a short `tran` -- and the sabotage that lowered
+      ## ase::ckpt_floor to 1000 reddened VB1 and VB2 by name. A user with a long
+      ## transient AND a verbatim hatch would have got the same deck, silently.
+      ## Row CK10b is the fixture that now holds it at the shipped floor.
+      ##
+      ## The cost is named rather than hidden: a hatch that itself contains
+      ## `delete all` or a `stop` now disarms this analysis's checkpointing. That
+      ## is the user writing ngspice commands into their own deck and getting
+      ## them, which is what the hatch is for; the alternative was breaking
+      ## another issue's tested invariant to defend against it.
+      ##
+      ## ⚠ THE THRESHOLD REACHES `stop after` THROUGH A `set` VARIABLE, NEVER
+      ## `$&`. MEASURED on both binaries: `$&` formats 1500000 as `1.5E+06` and
+      ## com_stop() parses digits only, so `stop after $&cknext` prints "Syntax
+      ## error parsing breakpoint specification.", ARMS NOTHING, and the run
+      ## finishes unchecked at rc 0. This bites only above 1,000,000 points --
+      ## exactly the regime checkpointing exists for -- so a loop tested on short
+      ## runs passes and stops working the day it matters. Through `set` the same
+      ## value arms correctly.
+      set ckplan {}
+      if {[llength $ckrows]} {
+        set ckplan [ase::ckpt_plan [namespace tail [namespace current]] $a $state]
+      }
+      if {$ckplan ne {}} {
+        lappend lines "let ckstep = [dict get $ckplan step]"
+        lappend lines "let cknext = ckstep"
+        lappend lines "let ckdone = 0"
+        lappend lines {set cktgt = $&cknext}
+        lappend lines "echo [ase::ckpt_marker armed] $type $ai\
+ [dict get $ckplan step] [dict get $ckplan points]"
+        lappend lines {stop after $cktgt}
+      }
       foreach xl [ase::analysis_verbatim $a] { lappend lines $xl }
       set aline [ase::analysis_line [namespace tail [namespace current]] $a]
       if {$aline eq {}} {
@@ -14915,6 +15360,103 @@ namespace eval ase::backend::ngspice {
         return -code error [ase::analysis_unrenderable_msg $type]
       }
       lappend lines $aline
+      ## --- 1433 (6f): THE CHECKPOINT LOOP ------------------------------------
+      ## Every line of it is measured, and four of them are the difference
+      ## between a loop that works and one that fails at rc 0.
+      ##
+      ## ⚠ THE TERMINATION TEST IS A MEASUREMENT, NOT THE ESTIMATE, AND THAT IS
+      ## THIS COMMIT'S CORRECTION TO PLAN.md §6f's RECIPE. The plan's loop ends
+      ## on `if cknext < <total>` with `<total>` estimated from the deck. Both
+      ## directions of estimate error are then SILENT, measured on both
+      ## binaries: an estimate 10x too HIGH made the loop spin five more times
+      ## after the run had already finished, each iteration writing the WHOLE
+      ## rawfile again (`resume` on a finished analysis is a no-op that says
+      ## nothing); an estimate 10x too LOW stopped checkpointing at 8,005 points
+      ## of an 80,008-point run and left the last 90 % unprotected. Asking the
+      ## simulator whether ITS breakpoint fired removes both: fewer points than
+      ## the armed threshold means the analysis ended on its own.
+      ##
+      ## ⚠ AND THE POLARITY IS FAIL-SAFE, WHICH COST AN INFINITE LOOP TO LEARN.
+      ## The exit must be the FALSE branch, because `.control`'s `if` takes the
+      ## false branch for a condition it cannot EVALUATE -- the same shape the
+      ## trap table records for string `eq`/`ne`, met here on a number.
+      ## MEASURED on both binaries: with `.save v(nosuchnode)` above the block
+      ## the transient does not run at all (`Error: no data saved for Transient
+      ## analysis; analysis not run`), there is no `tran1` plot, `length(time)`
+      ## is unevaluable -- `Warning from checkvalid: vector time is not available
+      ## or has zero length`, on **stderr**, where nothing in this tree looks --
+      ## and `if length(time) < $cktgt` therefore took the FALSE branch on every
+      ## pass. The loop then checkpointed, re-armed and `resume`d **forever**, at
+      ## rc 0, rewriting the same file every three seconds. Found by the sabotage
+      ## that deleted the eligibility floor, on a fixture this suite already had.
+      ## With `>=` the same unevaluable condition exits the loop: measured 0
+      ## checkpoints and `LOOPDONE` on that deck, against 5 checkpoints and
+      ## 800,000 points on the healthy one, on both binaries. `<`, `>` and `>=`
+      ## were each measured to take the false branch when unevaluable.
+      ##
+      ## ⚠ AND THE LOOP IS THEN PROVABLY FINITE: `cknext` grows by `ckstep`
+      ## every pass, `ckstep` is at least 1 by ase::ckpt_plan's own check and is
+      ## in practice a fifth of the estimate -- far above the `set` route's six
+      ## significant figures -- so the target must eventually exceed any bounded
+      ## `length()`. That is why no iteration cap is emitted.
+      ##
+      ## ⚠ AND IT COMPARES AGAINST `$cktgt`, THE ARMED VALUE, NOT AGAINST
+      ## `cknext`. The `set` route rounds to SIX SIGNIFICANT FIGURES -- measured,
+      ## both binaries: `let cknext = 1600002` then `set cktgt = $&cknext` gives
+      ## `1600000`. The run therefore stops two points BELOW `cknext`, and a test
+      ## against `cknext` reads that as "the analysis finished": measured, a
+      ## 8,000,008-point run wrote ZERO checkpoints, completed, and said nothing.
+      ## It is invisible below 1,000,000 points, which is where a short test deck
+      ## lives.
+      ##
+      ## ⚠ THE WRITE GOES TO ITS OWN PATH, BRACKETED BY `unset appendwrite`.
+      ## Under the `set appendwrite` this block emits, a `write` to an existing
+      ## path APPENDS -- measured, four checkpoints plus the final write to one
+      ## path gave FIVE stacked plots and 897,796 bytes where the single plot is
+      ## 256,526.
+      ##
+      ## ⚠ AND IT GOES THROUGH A `.tmp` AND `shell mv -f`. A kill inside a plain
+      ## checkpoint write tears the file and the loader then recovers NOTHING
+      ## (`raw_write` puts the true count in the header and then streams), and
+      ## one kill in five caught the `fopen(..., "wb")` window and left ZERO
+      ## bytes where the previous good checkpoint had been -- destroying the
+      ## FALLBACK. ngspice has no rename primitive; `shell mv` is the only one.
+      ##
+      ## ⚠ THE CHECKPOINT WRITE EMITS **NO** `PLOT` RECORD. The plotmap is 1:1
+      ## and in write order with the RESULTS file (issue 1430); a record here
+      ## would put that identity out by one for every run.
+      ##
+      ## ⚠ AND `delete all` FOLLOWS THE LOOP, UNCONDITIONALLY. A stop armed once
+      ## is armed for every analysis after it in the same block, and ASE-L
+      ## renders op/dc/ac/tran in ONE block. MEASURED on both binaries:
+      ## `stop after 2000` left armed truncated the FOLLOWING `ac` to exactly
+      ## 2000 points where it should have had 6001, at rc 0. ⚠ And it is
+      ## invisible on a small next analysis -- an `ac` of 601 points showed no
+      ## leak at all, because the leak only bites when the next analysis is
+      ## LONGER than the threshold. A short probe deck passes with this line
+      ## missing.
+      if {$ckplan ne {}} {
+        set ckf [ase::ckpt_path $state]
+        set ckt [ase::ckpt_tmp_path $state]
+        set ckv [dict get $ckplan vector]
+        lappend lines {while ckdone = 0}
+        lappend lines "  if length($ckv) >= \$cktgt"
+        lappend lines {    unset appendwrite}
+        lappend lines {    remzerovec}
+        lappend lines "    write $ckt"
+        lappend lines "    shell mv -f $ckt $ckf"
+        lappend lines {    set appendwrite}
+        lappend lines "    echo [ase::ckpt_marker done] \$cktgt"
+        lappend lines {    let cknext = cknext + ckstep}
+        lappend lines {    set cktgt = $&cknext}
+        lappend lines {    stop after $cktgt}
+        lappend lines {    resume}
+        lappend lines {  else}
+        lappend lines {    let ckdone = 1}
+        lappend lines {  end}
+        lappend lines {end}
+        lappend lines {delete all}
+      }
       if {$type eq {op}} {
         # Immediately after the solve and before any other analysis:
         # `show` reports whatever CKT state is current, and a later
@@ -15018,6 +15560,25 @@ namespace eval ase::backend::ngspice {
     # block and no explicit `write`, `-r` produces NO raw file at all), so the
     # writes are emitted explicitly — see the per-analysis block above, which
     # replaced the single trailing `write` this comment used to describe.
+    ## --- 1433 (6f): THE COMPLETION MARKER -----------------------------------
+    ## ⚠ IT IS THE ONLY THING THAT CAN TELL A FINISHED RUN FROM A STOPPED ONE.
+    ## MEASURED on both binaries: after `stop after 2000` fires, `$?sim_status`
+    ## is 1 and `$sim_status` is 0, so the guard above prints nothing, the write
+    ## succeeds, a valid 2000-point plot lands in the file and the process exits
+    ## **rc 0**. dosim() maps "simulation interrupted" to err = 0 deliberately.
+    ## The GUI reads this marker's ABSENCE.
+    ##
+    ## ⚠ AND IT IS EMITTED ONLY BY A DECK THAT CHECKPOINTS. PLAN.md §6f writes
+    ## it unqualified -- "the deck echoes a completion marker after the last
+    ## analysis" -- but an unconditional line would move EVERY deck golden a
+    ## second time, and the plan's own eligibility-floor paragraph forbids
+    ## exactly that ("they move at this stage for 6a's PLOT line; they must not
+    ## move twice"). A run with nothing to salvage has no verdict to give:
+    ## ase::run_completed answers `unknown` for it, which is the honest third
+    ## state rather than a confident `aborted`.
+    if {[llength $ckrows]} {
+      lappend lines "echo [ase::ckpt_marker complete]"
+    }
     lappend lines ".endc"
     lappend lines ".end"
     return "[join $lines "\n"]\n"
@@ -15551,6 +16112,78 @@ namespace eval ase::backend::ngspice {
   proc si_suffixes {} {
     return [dict create meg 1e6 mil 25.4e-6 t 1e12 g 1e9 k 1e3 \
                         m 1e-3 u 1e-6 n 1e-9 p 1e-12 f 1e-15 a 1e-18]
+  }
+
+  # ─── 6f: THE TRANSIENT POINT-COUNT ESTIMATE (issue 1433) ──────────────────
+  #
+  # How many rows a `tran` row will put in the rawfile. ADAPTER CONTENT: it is
+  # ngspice's own output-grid rule, and it is what `stop after <points>` is
+  # counted in.
+  #
+  # ⚠ PLAN.md §6f AND SV15 GIVE THIS AS `tstop/tstep + 8`, AND THAT IS WRONG FOR
+  # THREE OF THE FIVE SHAPES ASE-L's OWN `tran` ROW CAN PRODUCE. MEASURED
+  # 2026-09-12 on both binaries, one deck per line, identical answers on the two:
+  #
+  #     tran 10n 80u              ->  8008       tstop/tstep + 8
+  #     tran 10n 80u 40u          ->  4001       the formula says 8008
+  #     tran 10n 80u 0 5n         -> 16007       the formula says 8008
+  #     tran 10n 80u 0 20n        ->  4009       the formula says 8008
+  #     tran 10n 80u 40u 5n       ->  8001       the formula says 8008
+  #     tran 10n 80u uic          ->  8011       the formula says 8008
+  #     tran 10n 160u 80u         ->  8001       tran 5n 80u -> 16008
+  #     tran 10n 80u 20u 4n       -> 15001       tran 10n 80u 0 2n -> 40006
+  #
+  # `tstart` and `tmax` are ADVANCED fields on the shipped `tran` entry, so the
+  # plan's formula is wrong for any bench that uses one. The rule the numbers
+  # actually fit is (tstop - tstart) / (tmax if given else tstep), plus a
+  # constant under twelve that is noise above the eligibility floor.
+  #
+  # ⚠ AND BOTH DIRECTIONS OF ERROR USED TO BE SILENT, WHICH IS WHY THIS MATTERS.
+  # MEASURED with the plan's own loop shape: an estimate 10x too HIGH made the
+  # loop spin five times after the run had already finished, each iteration
+  # writing the whole rawfile again; an estimate 10x too LOW stopped
+  # checkpointing at 8,005 points of an 80,008-point run, leaving the last 90 %
+  # unprotected -- both at rc 0 with nothing said. render_deck's loop terminates
+  # on a MEASUREMENT now (see there), so neither is reachable; the estimate only
+  # sets the interval.
+  #
+  # ⚠ A BREAKPOINT SOURCE ADDS ROWS AND THE TWO BINARIES DISAGREE ABOUT HOW
+  # MANY. MEASURED, same deck, `pulse(0 1 0 1n 1n 7u 15u)` instead of the sine:
+  # 8,126 rows on the fork and 8,116 on apt 45.2 against the formula's 8,008 --
+  # 1.5 %. `pwl` gave 8,017 on both and `.options interp` 8,001 on both. A point
+  # count can therefore never be exact across binaries, which is a second reason
+  # the loop must not terminate on it.
+  proc tran_points {row {state {}}} {
+    set sufs [si_suffixes]
+    set stop [ase::field_value ngspice tran $row stop]
+    set step [ase::field_value ngspice tran $row step]
+    set tstart [ase::field_value ngspice tran $row tstart]
+    set tmax [ase::field_value ngspice tran $row tmax]
+    set vstop [ase::si_parse $stop $sufs]
+    set vstep [ase::si_parse $step $sufs]
+    if {[lindex $vstop 0] eq {bad} || [llength $vstop] < 2} { return {} }
+    if {[lindex $vstep 0] eq {bad} || [llength $vstep] < 2} { return {} }
+    set nstop [lindex $vstop 1]
+    set nstep [lindex $vstep 1]
+    set nstart 0
+    if {$tstart ne {}} {
+      set v [ase::si_parse $tstart $sufs]
+      if {[lindex $v 0] ne {bad} && [llength $v] >= 2} { set nstart [lindex $v 1] }
+    }
+    if {$tmax ne {}} {
+      set v [ase::si_parse $tmax $sufs]
+      if {[lindex $v 0] ne {bad} && [llength $v] >= 2 && [lindex $v 1] > 0} {
+        set nstep [lindex $v 1]
+      }
+    }
+    if {$nstep <= 0 || $nstop <= $nstart} { return {} }
+    ## ⚠ ROUNDED, NOT TRUNCATED, AND THE DIFFERENCE IS VISIBLE. `80e-6 / 10e-9`
+    ## is 7999.9999999999991 in IEEE double, so a bare `int()` answers 7999 for
+    ## a deck that makes 8008 rows. Nothing downstream breaks -- an
+    ## under-estimate only buys more checkpoints than asked for -- but a formula
+    ## that reads as exact and is not is the sort of thing a later reader
+    ## "fixes" by changing the wrong end.
+    return [expr {int(double($nstop - $nstart) / $nstep + 0.5)}]
   }
 
   # ---- LEG D: THE VARIANT PROBE (Stage 2 item 2g, issue 1412) -------------
@@ -17019,6 +17652,7 @@ $_leg
                              label {Use initial conditions}}} \
         emit   {{role analysis tmpl {tran @step @stop @tstart? @tmax? @uic!}}} \
         results {viewer {kind sweep}} \
+        salvage {points ::ase::backend::ngspice::tran_points vector time} \
         plots  {{select {Transient Analysis} role sweep results viewer label tran}}] \
       noise [dict create \
         label noise  baseline 1  registered 1  emitorder 40 \

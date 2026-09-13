@@ -191,3 +191,27 @@ convergence explanation and inconsistent with a simple "another xschem is runnin
 ⚠ **The red is counted and named, not waved through.** The Stage 6d commit records T1 as
 *one case red, X7, this issue*, with these runs as the evidence — per `CLAUDE.md`'s rule that
 a count is never carried forward as a known quantity.
+
+## A fifth measurement, same evening — and it CORRECTS the fourth
+
+The Stage 6f commit's T1, taken solo an hour after the one above, with the other clone's GUI
+xschem live exactly as before:
+
+```
+inside T1 (62 cases), other clone's GUI live:   Total num fail: 0   <- X7 GREEN
+```
+
+⚠ **So "3 of 3 reds under load" was an artefact of a small sample, and this entry says so
+rather than leaving the earlier tally standing.** Four T1 runs have now been taken under
+comparable conditions and **three reddened, one did not**. The correlation with load is real
+but it is **not** deterministic: load raises the probability, it does not decide the outcome.
+That is a better fit for the convergence explanation than the earlier tally was — a bench
+that does not converge reproducibly should flap, not switch.
+
+⚠ **And the row list in this issue is incomplete.** In the Stage 6d/6f window, under the
+other clone's concurrent load, `test_ase_optier_0963` reddened **X1 and X2 as well as X7**,
+where every earlier measurement named X7 alone. All three passed **ALL PASS (108) standalone,
+three times**. Any row that reads this simulation can flap; X7 is simply the one that was
+noticed first, and the title of this issue should not be taken to mean it is the only one.
+
+**Standing tally: 3 of 4 reds inside T1, 0 of 20 standalone.**

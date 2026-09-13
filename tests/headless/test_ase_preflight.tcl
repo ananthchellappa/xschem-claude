@@ -78,6 +78,14 @@
 # X" is PROVED by the static pass, because an `.include` can only ADD devices and
 # never remove the card just read. Such a finding needs no caveat in either
 # direction, and row PF228h is that sentence as an assertion.
+# 210 -> 217 with PF231 (Stage 6f, issue 1433 -- the checkpoint block, as deck
+# text: `stop after` and never `stop when`, the threshold through a `set`
+# variable and never `$&`, the counters above the first analysis, the loop
+# between the transient and its own guard, no `PLOT` record from a checkpoint,
+# and the completion marker last inside `.control`). ⚠ NO ROW MOVED: `deck_of`'s
+# own fixture is `tran 1n 1u`, a thousand estimated points against
+# `ase::ckpt_floor`'s 100,000, so every PF218 row still describes a deck with no
+# checkpoint block in it -- and PF231a is what says so rather than assuming it.
 # 192 -> 194 with PF218f2/PF218f3 (Stage 6a, issue 1430 -- the plot sidecar's
 # record sits below the $sim_status guard and immediately above its own write,
 # and goes to the sidecar rather than to the results file). ⚠ NO ROW MOVED:
@@ -2419,6 +2427,119 @@ eqcheck PF230o-a-disabled-or-empty-or-unreadable-row-is-left-alone-by-all-seven 
   {0 0 {} {} 0}
 
 } err]} { puts "FATAL: $err" ; incr fail }
+
+
+# --- PF231: THE CHECKPOINT BLOCK, AS DECK TEXT (Stage 6f, issue 1433) --------
+#
+# ⚖ R1's always-salvage requirement. This file's subject is the deck a state
+# renders, and 6f adds lines to it, so the DECK-SHAPE half of the claim belongs
+# here beside PF218's guard/remzerovec/record ordering. The plan half, the
+# verdict half and the reporting half are section CK of test_ase_core.tcl.
+#
+# ⚠ THE ORDERING ROWS ABOVE MUST NOT HAVE MOVED, and that is asserted rather
+# than hoped: `deck_of`'s own fixture is `tran 1n 1u`, a thousand estimated
+# points, which is a hundredth of ase::ckpt_floor. PF218a-PF218h therefore
+# describe a deck with no checkpoint block in it at all, exactly as they did
+# before this issue -- and PF231a is what says so out loud.
+#
+# ⚠ THIS BLOCK CARRIES ITS OWN `catch`. This file's outer one closes at the
+# `} err]}` above and turns a raise into `FATAL:` with the rest of its checks
+# lost -- which in a sabotage log reads as "almost nothing went red".
+if {[catch {
+
+set PFCKSMALL {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}}
+set PFCKBIG   {{type op enabled 1} {type tran enabled 1 step 10n stop 8m}}
+set PFDS [deck_of $PFCKSMALL]
+set PFDB [deck_of $PFCKBIG]
+eqcheck PF231a-a-transient-under-the-eligibility-floor-renders-exactly-as-it-did \
+  [list [regexp -all {ckstep|cktgt|stop after|ASE-CKPT|ASE-RUN-COMPLETE} $PFDS] \
+        [expr {[regexp -all {ckstep|cktgt|stop after|ASE-CKPT|ASE-RUN-COMPLETE} $PFDB] > 0}]] \
+  {0 1}
+
+## ⚠ `stop after`, NEVER `stop when`. MEASURED on both binaries: `stop when
+## time > X` hands the integrator a breakpoint through CKTsetBreak() and forces a
+## timepoint -- 8,011 rows against `stop after`'s 8,008 for the same
+## `tran 10n 80u`, and a different timestep grid from that point on. A checkpoint
+## that changes the answer is not a checkpoint. And a `stop when` is not disarmed
+## when it fires, so it re-fires on the next point and `resume` advances ONE
+## point: a deck written that way covers 12.5 % of its run at rc 0.
+eqcheck PF231b-the-primitive-is-stop-after-and-stop-when-appears-nowhere \
+  [list [regexp -all -line {^stop after \$cktgt$} $PFDB] \
+        [regexp -all -line {^ +stop after \$cktgt$} $PFDB] \
+        [regexp -all {stop when} $PFDB]] {1 1 0}
+
+## ⚠ THE THRESHOLD GOES THROUGH A `set` VARIABLE, NEVER `$&`. MEASURED, both
+## binaries: `$&` formats 1500000 as `1.5E+06` and com_stop() parses digits only,
+## so `stop after $&cknext` prints "Syntax error parsing breakpoint
+## specification.", arms NOTHING, and the run finishes unchecked at rc 0. It
+## bites only above 1,000,000 points -- exactly the regime checkpointing exists
+## for -- so a loop tested on short runs passes and stops working when it matters.
+eqcheck PF231c-every-threshold-reaches-stop-after-through-the-set-variable \
+  [list [regexp -all {stop after \$&} $PFDB] \
+        [regexp -all -line {^set cktgt = \$&cknext$} $PFDB] \
+        [regexp -all -line {^ +set cktgt = \$&cknext$} $PFDB]] {0 1 1}
+
+## ⚠ THE COUNTERS ARE CREATED BEFORE THE FIRST ANALYSIS. A `let` made while
+## `op1` is current lands in `op1` and is invisible from `tran1`; one made after
+## the `tran` is a vector OF `tran1` and every `write` from then on emits it
+## (measured: `No. Variables: 5`, a `ckdone notype dims=1` column in the
+## checkpoint AND in <cell>_ase.raw). The fixture's `op` runs first precisely so
+## a declaration that drifted would land in the wrong plot and this row see it.
+set PFDBL [split [string trimright $PFDB "\n"] "\n"]
+eqcheck PF231d-the-counters-are-declared-above-the-first-analysis \
+  [list [expr {[lsearch -exact $PFDBL {let ckstep = 0}] <
+               [lsearch -exact $PFDBL {op}]}] \
+        [expr {[lsearch -exact $PFDBL {let ckstep = 0}] >
+               [lsearch -exact $PFDBL {set appendwrite}]}] \
+        [llength [lsearch -all -exact $PFDBL {let ckstep = 0}]]] {1 1 1}
+
+## ⚠ THE GUARD AND THE RECORD DID NOT MOVE, AND THE LOOP SITS ABOVE BOTH. The
+## guard's job is to `quit 1` before a failed analysis can put a plot in the
+## results file, so a checkpoint loop below it would never run for the analysis
+## it belongs to. This is PF218f's claim re-stated for the one analysis whose
+## deck text this issue changed.
+eqcheck PF231e-the-loop-sits-between-the-transient-and-its-own-guard \
+  [expr {[lsearch -exact $PFDBL {tran 10n 8m}] <
+         [lsearch -exact $PFDBL {while ckdone = 0}] &&
+         [lsearch -exact $PFDBL {while ckdone = 0}] <
+         [lsearch -exact $PFDBL {delete all}] &&
+         [lsearch -exact $PFDBL {delete all}] <
+         [lsearch -start [lsearch -exact $PFDBL {tran 10n 8m}] -exact $PFDBL {remzerovec}]}] 1
+
+## ⚠ THE LOOP'S EXIT IS THE FALSE BRANCH, AND AN INFINITE LOOP IS WHY. This
+## file's own `run_real` fixture saves `v(nosuchnode)` and nothing else, which
+## MEASURED on both binaries makes ngspice answer `Error: no data saved for
+## Transient analysis; analysis not run` -- no `tran1` plot at all. `length(time)`
+## is then unevaluable, `.control`'s `if` takes the FALSE branch for a condition
+## it cannot evaluate (the trap table's string `eq`/`ne` shape, met on a number),
+## and a loop whose EXIT was the true branch checkpointed, re-armed and
+## `resume`d forever at rc 0. The eligibility floor keeps that deck out of reach
+## in the shipped configuration; the polarity is what makes it harmless if it is
+## ever reached.
+eqcheck PF231h-the-loop-exits-on-the-false-branch-so-an-unevaluable-condition-stops-checkpointing \
+  [list [regexp -all -line {^ +if length\(time\) >= \$cktgt$} $PFDB] \
+        [regexp -all -line {^ +let ckdone = 1$} $PFDB] \
+        [expr {[lsearch -exact $PFDBL {    let ckdone = 1}] >
+               [lsearch -exact $PFDBL {    resume}]}]] {1 1 1}
+
+## ⚠ AND THE CHECKPOINT WRITE EMITS NO `PLOT` RECORD. The sidecar is 1:1 and in
+## write order with the RESULTS file (issue 1430); one record per checkpoint
+## would put that identity out by one for every run. Counted against the results
+## writes rather than asserted in the abstract.
+eqcheck PF231f-the-plotmap-gains-nothing-from-the-checkpoints \
+  [list [regexp -all -line {^echo "PLOT } $PFDB] \
+        [regexp -all -line {^write } $PFDB] \
+        [regexp -all -line {^ +write } $PFDB]] {2 2 1}
+
+## ⚠ THE COMPLETION MARKER IS THE ONLY THING THAT CAN SEE A STOP. MEASURED on
+## both binaries: after `stop after 2000` fires, `$?sim_status` is 1 and
+## `$sim_status` is 0, so the guard PF218 pins prints nothing, the write succeeds,
+## a valid 2000-point plot lands in the file and the process exits **rc 0**.
+eqcheck PF231g-the-completion-marker-is-the-last-line-inside-control \
+  [list [regexp -all -line {^echo ASE-RUN-COMPLETE$} $PFDB] \
+        [expr {[string match "*echo ASE-RUN-COMPLETE\n.endc\n.end\n" $PFDB] ? 1 : 0}]] {1 1}
+
+} pf231err]} { puts "FATAL: PF231 $pf231err" ; incr fail }
 
 ## restore the real ciw_echo OUTSIDE the catch, so a FATAL cannot leave the stub
 if {[info commands ::ciw_echo_orig] ne {}} {

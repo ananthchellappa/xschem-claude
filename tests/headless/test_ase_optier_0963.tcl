@@ -57,6 +57,10 @@
 # point's own write and no other -- down into Stage 6a's `setplot previous`
 # walk, where one analysis can now emit more than one write. If a run reports
 # fewer, a row went missing; do not edit this number down to match it.
+# 106 -> 108 with E5e/E5f (Stage 6f, issue 1433): a checkpointed transient adds
+# a THIRD write to the deck -- to the checkpoint path -- and TRAP 1's rule still
+# holds, the device names riding the operating point's write and no other, with
+# the emit order unmoved. E5f is the under-the-floor control beside it.
 # 105 -> 106 with E5d (Stage 6d, issue 1432): the same claim against the SHIPPED
 # registry, with no proc replaced. E5b/E5c are stubbed because issue 1430 had
 # nothing that walked -- its own correction C64 says so -- and `noise` is the
@@ -694,6 +698,35 @@ check {E5d the device names ride the operating point's write and not the walk's,
          [list [llength [o_writes $DBNR]] [o_writeats $DBNR] \
                [regexp -all -line {^setplot previous$} $DBNR]]}] \
   {3 {1 0 0} 1}
+
+## --- E5e: A CHECKPOINTED TRANSIENT DOES NOT TOUCH THE OPERATING POINT'S WRITE
+## ⚠ THIS FILE'S WHOLE SUBJECT IS THAT THE DEVICE NAMES RIDE THE `op` WRITE AND
+## NO OTHER (issue 0963 TRAP 1: a bare `@dev` on a multi-point write comes back
+## dims=1, one non-zero sample parked at index 0 and 0.0 at every other point,
+## no warning, well-formed file). Stage 6f (issue 1433) wraps the TRANSIENT in a
+## `stop after` / `write` / `resume` loop, which adds a THIRD write to the deck
+## -- to the checkpoint path -- and the claim is that it carries no device list
+## and that `op`'s own line is byte-unchanged.
+##
+## ⚠ AND THE EMIT ORDER IS UNMOVED. This fixture reaches tier **b** -- the
+## one-line shape, where the device names ride the operating point's own write
+## line and `optier_ctl` stays empty -- so `op_last` is NOT set and `op` runs
+## FIRST, exactly as it does without a checkpoint block. The row asserts the
+## order it measured rather than the one 0964's reorder produces, because a
+## checkpoint loop that silently flipped the emit order would show here either
+## way.
+set AN_CKT {{type op enabled 1}
+            {type tran enabled 1 step 10n stop 8m}}
+set DBCK [o_state $AN_CKT 1]
+dict set DBCK save_all_v 1
+set DBCKR [o_render $DBCK $NL]
+check {E5e a checkpointed transient adds its own write and the device names still ride the operating point's alone -- with `op` last, as 0964 left it}   [expr {($DBCKR eq {NOPROC} || [string match RAISED:* $DBCKR]) ? $DBCKR :          [list [llength [o_writes $DBCKR]] [o_writeats $DBCKR]                [o_analines $DBCKR]                [regexp -all -line {^ +shell mv -f } $DBCKR]]}]   {3 {1 0 0} {op tran} 1}
+## ...and the control: the same deck below the eligibility floor has TWO writes
+## and no loop, so E5e is measuring the loop rather than restating E5.
+set DBCKS [o_state {{type op enabled 1} {type tran enabled 1 step 10n stop 80u}} 1]
+dict set DBCKS save_all_v 1
+set DBCKSR [o_render $DBCKS $NL]
+check {E5f ... and the same deck under the floor has no loop and two writes, which is what makes E5e an assertion about the checkpoint block}   [expr {($DBCKSR eq {NOPROC} || [string match RAISED:* $DBCKSR]) ? $DBCKSR :          [list [llength [o_writes $DBCKSR]] [o_writeats $DBCKSR]                [regexp -all {shell mv} $DBCKSR]]}]   {2 {1 0} 0}
 
 # --- TRAP 2, the measured line-length wall ----------------------------------
 set BLK999 [o_block 999 {id}]

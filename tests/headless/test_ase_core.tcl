@@ -211,6 +211,19 @@
 # ⚠ SECTIONS PM, GP, WK AND RC CARRY THEIR OWN `catch`, for the same reason RS
 # and RD do.
 #
+# 476 -> 519 with section CK (Stage 6f, issue 1433 -- checkpointed salvage: a
+# Stop keeps what the run had). ⚠ ONE ROW MOVED AND NO GOLDEN DID: **RC10**,
+# which pins the shape of the reconciliation call in `ase::run_done` and now
+# reads `catch {ase::reconcile_report $state $runstate}` -- the verdict has to
+# reach reconciliation or every stopped run reports its short plot count in the
+# language of a defect. **D1 did not move**, and that is deliberate: its fixture
+# is op-only, and a deck with no checkpointed analysis in it renders
+# byte-identically to what it rendered before this issue. Row CK18 asserts that
+# against `set ase_checkpoint 0`, with CK18b as its non-vacuity control.
+# ⚠ AND `deck_of`'s `tran 1n 1u` IN test_ase_preflight IS A HUNDREDTH OF
+# `ase::ckpt_floor`, which is why PF218a-h are unmoved there too.
+# ⚠ ⚖ R3 IS STILL UNANSWERED and nothing here touches it.
+#
 # ⚠ D8 EXISTS BECAUSE D1 WAS MEASURED INSUFFICIENT, not suspected. D1's fixture
 # is OP-ONLY, so sabotaging `dc`'s emit template to swap start and stop, or
 # `ac`'s hardwired `dec` to `oct`, left this whole suite at ALL PASS (248).
@@ -7268,7 +7281,7 @@ check "RC9 the report survives a state with no design cell, and answers `norun`"
 ## opinion about that file BEFORE anything is attached from it.
 check "RC10 ase::run_done calls the reconciliation inside a catch, after the\
  other two reports and BEFORE the completion callback that attaches the file" \
-  [list [rg_has [rg_body ase::run_done] {catch {ase::reconcile_report $state}}] \
+  [list [rg_has [rg_body ase::run_done] {catch {ase::reconcile_report $state $runstate}}] \
         [expr {[string first {op_report_missing} [rg_body ase::run_done]] < \
                [string first {reconcile_report} [rg_body ase::run_done]] ? 1 : 0}] \
         [expr {[string first {reconcile_report} [rg_body ase::run_done]] < \
@@ -7918,6 +7931,760 @@ check "MP19 the same two plots recorded in CREATION order instead of write order
 
 } mp_err]} {
   check "MP0 section MP ran to the end" "RAISED:$mp_err" {}
+}
+
+
+# ===========================================================================
+# CK — checkpointed salvage: a Stop keeps what the run had (Stage 6f, 1433)
+# ===========================================================================
+#
+# ⚖ R1's always-salvage requirement, ruled by the user on 2026-09-10 in words
+# neither offered transport option contained. `ngspice -b` installs no signal
+# handler at all -- src/main.c puts its whole signal() block inside
+# `if (!ft_batchmode)` -- so a Stop kills the process where it stands and the
+# running analysis's work is gone. A deck that stops ITSELF, writes, and resumes
+# is the only way to keep it, which is why every row below is about DECK TEXT.
+#
+# ⚠ EVERY NUMBER IN THIS SECTION WAS MEASURED ON **BOTH** BINARIES BEFORE IT WAS
+# WRITTEN -- the fork (build-ver_50, ngspice-46+) and /usr/bin/ngspice (45.2) --
+# and the end-to-end run through this file's own `render_deck` was killed with
+# SIGTERM on each: rc 143, the finished `op` and `ac` intact in the results file,
+# 4,800,000 of 8,000,008 transient points kept in the checkpoint, byte-identical
+# between the two binaries, and no `ASE-RUN-COMPLETE` in the log. Receipt:
+# doc/claude/ase_analyses_batch/receipts/16-stage-6-salvage.md.
+#
+# ⚠ SECTION CK CARRIES ITS OWN `catch`, ending in row CK0 -- this file's outer
+# one closes thousands of lines above, and issues 1428 (S10), 1429 (S31) and
+# 1430 (S21/S24) each paid for that lesson once.
+
+if {[catch {
+
+set CKRENDER [ase::backend_hook ngspice render_deck]
+## A state whose ONLY variable is the analysis rows. `save_all_v 1` is the
+## `vecsaves` bench shape (issue 1432 fact 7) so a row that renders `noise` or
+## `tf` is describing a deck ngspice would actually run.
+proc ck_state {rows} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  dict set st save_all_v 1
+  dict set st analyses $rows
+  return $st
+}
+proc ck_deck {rows} {
+  if {[catch {$::CKRENDER [ck_state $rows] $::netlist_text} d]} { return "RAISED:$d" }
+  return $d
+}
+## The deck's checkpoint-bearing lines, in order, as TOKENS -- so a row asserts a
+## SHAPE and a respelling of any one line moves exactly the token it respelled.
+## ⚠ IT READS THE **RAW** LINES, NOT TRIMMED ONES, AND THAT IS NOT FUSSINESS:
+## the deck carries `set appendwrite` at the top of the block (issue 0929) AND
+## again inside the loop, `remzerovec` before every write AND inside the loop,
+## and `write` to three different paths. Trimming first makes those pairs
+## indistinguishable, and a shape row that cannot tell the block's own lines
+## from the loop's is a row that would pass with the bracket in the wrong place.
+proc ck_shape {rows} {
+  set out {}
+  foreach l [split [ck_deck $rows] "\n"] {
+    set in [expr {[string index $l 0] eq { } ? {L} : {}}]
+    set t [string trim $l]
+    if {[string match {let ckstep = *} $t]} { lappend out "CKSTEP=[lindex $t 3]" } \
+    elseif {$t eq {let cknext = ckstep}} { lappend out CKNEXT } \
+    elseif {$t eq {let cknext = 0}} { lappend out CKNEXT0 } \
+    elseif {$t eq {let ckdone = 0}} { lappend out CKDONE } \
+    elseif {$t eq {set cktgt = $&cknext}} { lappend out CKTGT } \
+    elseif {[string match {echo ASE-CKPT-ARMED *} $t]} { lappend out ARMED } \
+    elseif {$t eq {stop after $cktgt}} { lappend out STOP } \
+    elseif {[string match {stop when*} $t]} { lappend out STOPWHEN } \
+    elseif {$t eq {while ckdone = 0}} { lappend out WHILE } \
+    elseif {[string match {if length(*} $t]} { lappend out IFLEN } \
+    elseif {$t eq {let ckdone = 1}} { lappend out DONE1 } \
+    elseif {$t eq {unset appendwrite}} { lappend out UNSETAW } \
+    elseif {$t eq {set appendwrite}} { lappend out ${in}SETAW } \
+    elseif {[string match {shell mv -f *} $t]} { lappend out MV } \
+    elseif {[string match {echo ASE-CKPT-DONE*} $t]} { lappend out CKDONEECHO } \
+    elseif {$t eq {let cknext = cknext + ckstep}} { lappend out ADVANCE } \
+    elseif {$t eq {resume}} { lappend out RESUME } \
+    elseif {$t eq {delete all}} { lappend out DELALL } \
+    elseif {$t eq {echo ASE-RUN-COMPLETE}} { lappend out COMPLETE } \
+    elseif {[string match {write *} $t]} { lappend out ${in}WRITE } \
+    elseif {$t eq {remzerovec}} { lappend out ${in}RZV } \
+    elseif {[string match {echo "PLOT *} $t]} { lappend out PLOTREC } \
+    elseif {[regexp {^(op|dc|ac|tran|noise|disto|tf|pz|sens)($| )} $t]} { lappend out "AN=[lindex $t 0]" }
+  }
+  return $out
+}
+## Above the floor by construction: 8m/10n = 800,000 estimated points, eight
+## times ase::ckpt_floor.
+set CKBIG   {type tran enabled 1 step 10n stop 8m}
+## Below it by construction: 80u/10n = 8,000.
+set CKSMALL {type tran enabled 1 step 10n stop 80u}
+
+## --- CK1: THE ARTEFACT'S PATH, AND IT IS NOT THE RESULTS FILE ---------------
+## ⚠ THE SECOND HALF IS THE LOAD-BEARING ONE AND IT NEEDS AN INDEPENDENT SOURCE.
+## A row that only compared `ase::ckpt_path` against a path built the same way
+## would pass with the proc returning the RESULTS file, which is issue 1430's
+## WK3 lesson (a substituted golden pins the shape and never the value). So the
+## expectation is spelled from `ase::rundir` directly AND checked to differ from
+## the adapter's own `raw_file`.
+set CKST [ck_state [list $CKBIG]]
+check "CK1 the checkpoint is <rundir>/<cell>_ase.raw.ckpt, beside the results\
+ file and never it" \
+  [list [ase::ckpt_path $CKST] \
+        [expr {[ase::ckpt_path $CKST] ne [[ase::backend_hook ngspice raw_file] $CKST] ? 1 : 0}]] \
+  [list [file join [ase::rundir $CKST] nfet_clean_ase.raw.ckpt] 1]
+check "CK1b it raises for a state with no design cell, as its two siblings do" \
+  [catch {ase::ckpt_path [dict remove [ase::state_default] design]}] 1
+check "CK2 the temp path is the checkpoint's plus .tmp, and the two differ" \
+  [list [ase::ckpt_tmp_path $CKST] \
+        [expr {[ase::ckpt_tmp_path $CKST] ne [ase::ckpt_path $CKST] ? 1 : 0}]] \
+  [list "[ase::ckpt_path $CKST].tmp" 1]
+check "CK3 the three deck markers are spelled once, here, and all differ" \
+  [list [ase::ckpt_marker complete] [ase::ckpt_marker armed] [ase::ckpt_marker done] \
+        [ase::ckpt_marker nosuch]] \
+  {ASE-RUN-COMPLETE ASE-CKPT-ARMED ASE-CKPT-DONE {}}
+
+## --- CK4: THE PLAN -----------------------------------------------------------
+## N = 4 -- PLAN.md §6f's answer for "T and S unknown", a checkpoint every 20 %
+## of the run -- and the interval is the estimate over N+1, in POINTS.
+check "CK4 a transient above the floor plans N=4 checkpoints, an interval of\
+ points/(N+1), and names the vector the deck counts" \
+  [ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]] \
+  {n 4 step 160000 points 800000 vector time}
+check "CK5 a transient below the floor plans nothing at all" \
+  [ase::ckpt_plan ngspice $CKSMALL [ck_state [list $CKSMALL]]] {}
+## ⚠ THE BOUNDARY, FROM BOTH SIDES. A floor asserted only from far away is a
+## floor no sabotage on its VALUE can move.
+set CKATF [dict create type tran enabled 1 step 1n stop [expr {[ase::ckpt_floor] * 1e-9}]]
+set CKUNF [dict create type tran enabled 1 step 1n stop [expr {([ase::ckpt_floor] - 2) * 1e-9}]]
+check "CK5b exactly at the floor plans; two points under it does not" \
+  [list [expr {[ase::ckpt_plan ngspice $CKATF [ck_state [list $CKATF]]] ne {} ? 1 : 0}] \
+        [expr {[ase::ckpt_plan ngspice $CKUNF [ck_state [list $CKUNF]]] ne {} ? 1 : 0}] \
+        [ase::ckpt_floor]] {1 0 100000}
+
+## --- CK6: EVERY OTHER TYPE DECLARES NO SALVAGE, AND THAT IS D41.4 ------------
+## `op` is one point; `noise` and `disto` produce a plot SET, so a stopped one is
+## an INCOMPLETE SET and not a short plot; `dc` and `ac` stop and resume but the
+## full loop has never been run against either; `pz`, `sens`, `tf`, `sp` and
+## `pss` are unmeasured, and evidence/builds.md already records `sens` not
+## honouring `bg_halt`. Absent means NOT MEASURED, never "no salvage needed".
+set CK6 {}
+foreach ty {op dc ac noise disto tf pz sens sp pss} {
+  if {[ase::analysis_salvage ngspice $ty] ne {}} { lappend CK6 $ty }
+}
+check "CK6 `tran` is the only type in the shipped registry that declares\
+ salvage, and every other type plans nothing" \
+  [list $CK6 [ase::analysis_salvage ngspice tran] \
+        [ase::ckpt_plan ngspice {type op enabled 1} [ck_state {{type op enabled 1}}]] \
+        [ase::ckpt_plan ngspice {type ac enabled 1 sweep dec points 1000 start 1 stop 1e6} \
+                        [ck_state {{type ac enabled 1 sweep dec points 1000 start 1 stop 1e6}}]]] \
+  [list {} {points ::ase::backend::ngspice::tran_points vector time} {} {}]
+
+## --- CK7: THE ESCAPE HATCH ---------------------------------------------------
+## `set ase_checkpoint 0`, the way `set ase_preflight 0` is: a real lever named
+## in the code, a hidden variable and NOT a state key. ⚖ R8 named `sweep` as the
+## single exception to "no new top-level keys" and a per-bench interval would be
+## a second one -- the 104 committed `.state` files stay byte-identical.
+set ::ase_checkpoint 0
+set CK7PLAN [ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]]
+set CK7SHAPE [ck_shape [list $CKBIG]]
+set ::ase_checkpoint 1
+check "CK7 `set ase_checkpoint 0` plans nothing and emits no checkpoint line,\
+ for a row that otherwise gets both" \
+  [list $CK7PLAN $CK7SHAPE \
+        [expr {[ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]] ne {} ? 1 : 0}]] \
+  [list {} {SETAW AN=tran RZV PLOTREC WRITE} 1]
+
+## --- CK8: THE POINT ESTIMATE, AND PLAN.md §6f's FORMULA IS WRONG -------------
+## ⚠ SV15 AND §6f BOTH GIVE THIS AS `tstop/tstep + 8`. MEASURED 2026-09-12, one
+## deck per line, IDENTICAL on both binaries:
+##
+##     tran 10n 80u          ->  8008      the formula's answer
+##     tran 10n 80u 40u      ->  4001      the formula still says 8008
+##     tran 10n 80u 0 5n     -> 16007      the formula still says 8008
+##     tran 10n 80u 0 20n    ->  4009      the formula still says 8008
+##     tran 10n 80u 40u 5n   ->  8001      the formula still says 8008
+##     tran 10n 160u 80u     ->  8001      tran 10n 80u 0 2n -> 40006
+##
+## `tstart` and `tmax` are ADVANCED fields on the shipped `tran` entry, so the
+## plan's formula is wrong for any bench that uses one. The four fixtures below
+## each disagree with `tstop/tstep` in a DIFFERENT direction, which is what makes
+## the row able to fail: a reader that ignored `tstart` would answer 8000 for the
+## second, one that ignored `tmax` would answer 8000 for the third and fourth.
+check "CK8 the estimate is (tstop - tstart) / (tmax if given else tstep), not\
+ PLAN.md's tstop/tstep" \
+  [list [ase::backend::ngspice::tran_points {type tran step 10n stop 80u}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 80u tstart 40u}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 80u tmax 5n}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 80u tmax 20n}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 80u tstart 40u tmax 5n}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 160u tstart 80u}]] \
+  {8000 4000 16000 4000 8000 8000}
+## ⚠ AND IT READS THE NUMBERS THE WAY ngspice WILL. `Meg` is 1e6 and `m` is
+## 1e-3; ase::si_parse with the adapter's own suffix table is the one reader.
+check "CK8b it goes through the adapter's SI table, and answers {} rather than\
+ raising on anything that table cannot read" \
+  [list [ase::backend::ngspice::tran_points {type tran step 1u stop 1}] \
+        [ase::backend::ngspice::tran_points {type tran step 1n stop 1meg}] \
+        [ase::backend::ngspice::tran_points {type tran step zzz stop 8m}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 10n}] \
+        [ase::backend::ngspice::tran_points {type tran step 10n stop 80u tstart 90u}] \
+        [catch {ase::ckpt_plan ngspice {type tran enabled 1 step zzz stop 8m} \
+                  [ck_state {{type tran enabled 1 step zzz stop 8m}}]}]] \
+  {1000000 1000000000000000 {} 1 {} 0}
+
+## --- CK9: THE ONE ANSWER THREE READERS SHARE --------------------------------
+## render_deck, ase::run_completed and ase::ckpt_report all ask ase::ckpt_rows,
+## so the deck, the verdict and the sentence cannot disagree about which
+## analyses were checkpointed.
+## ⚠ AND IT TAKES NO `op_last`. The first cut passed one through to
+## `ase::analysis_emit_order`, and the sabotage that dropped it left this suite
+## at ALL PASS -- membership does not depend on the emit order, and no caller
+## ever varied it. The parameter was deleted rather than given a fixture (issue
+## 1432's S32 lesson), and the third and fourth fixtures below are what says the
+## answer really is order-independent: the same two rows, listed both ways round,
+## give the same answer with the row INDEX following the state's own order.
+check "CK9 ckpt_rows lists only the planned rows, with their row index, and is\
+ empty for a state with none -- whichever order the rows are listed in" \
+  [list [ase::ckpt_rows ngspice [ck_state [list {type op enabled 1} $CKBIG]]] \
+        [ase::ckpt_rows ngspice [ck_state [list $CKSMALL {type op enabled 1}]]] \
+        [ase::ckpt_rows ngspice [ck_state {}]] \
+        [ase::ckpt_rows ngspice [ck_state [list $CKBIG {type op enabled 1}]]] \
+        [catch {ase::ckpt_rows ngspice [ck_state [list $CKBIG]] 1}]] \
+  [list [list [list 30 1 tran {n 4 step 160000 points 800000 vector time}]] {} {} \
+        [list [list 30 0 tran {n 4 step 160000 points 800000 vector time}]] 1]
+
+## --- CK10: THE DECK, SHAPE BY SHAPE -----------------------------------------
+## ⚠ THE COUNTERS ARE DECLARED BEFORE THE FIRST ANALYSIS AND THAT IS MEASURED
+## TWICE OVER. A `let` made while `op1` is current lands IN `op1` and is
+## INVISIBLE from `tran1` -- `Error: &cknext: no such variable.`, no further
+## checkpoint armed, rc 0; and one made after the `tran` is a vector OF `tran1`,
+## so every `write` from then on emits it (`No. Variables: 5`, a `ckdone notype
+## dims=1` column beside time). The fixture puts `op` FIRST precisely so a
+## declaration that drifted into the loop would land in `op1` and this row would
+## see it.
+check "CK10 the counters are declared ONCE, before the first analysis, and the\
+ per-analysis arming sits between them and the transient" \
+  [ck_shape [list {type op enabled 1} $CKBIG]] \
+  [list SETAW CKSTEP=0 CKNEXT0 CKDONE AN=op RZV PLOTREC WRITE \
+        CKSTEP=160000 CKNEXT CKDONE CKTGT ARMED STOP AN=tran \
+        WHILE IFLEN UNSETAW LRZV LWRITE MV LSETAW CKDONEECHO ADVANCE CKTGT \
+        STOP RESUME DONE1 DELALL RZV PLOTREC WRITE COMPLETE]
+
+## ⚠ AND THE VERBATIM HATCH STAYS IMMEDIATELY ABOVE ITS OWN ANALYSIS, WHICH IS
+## ISSUE 1419's INVARIANT AND WHICH THE FIRST CUT OF THIS BLOCK BROKE. Rows
+## VB1/VB2 assert that adjacency, and they were GREEN against the broken code --
+## every `x`-carrying fixture in this tree is a short `tran`, so the arming block
+## was never emitted near one. The sabotage that lowered `ase::ckpt_floor` to
+## 1000 reddened both by name. This row is the same claim at the SHIPPED floor,
+## so it does not depend on a sabotage to be true.
+set CK10B [ck_deck [list [dict merge $CKBIG \
+  {x {{alter @m.xm1.msky130_fd_pr__nfet_01v8[w] = 2u} {set temp = 40}}}]]]
+set CK10BL [split $CK10B "\n"]
+set CK10BI [lsearch -exact $CK10BL {tran 10n 8m}]
+check "CK10b a checkpointed analysis that also carries a verbatim hatch keeps the\
+ hatch IMMEDIATELY above its own line, with the arming above the hatch" \
+  [list [lindex $CK10BL [expr {$CK10BI - 1}]] \
+        [lindex $CK10BL [expr {$CK10BI - 2}]] \
+        [lindex $CK10BL [expr {$CK10BI - 3}]] \
+        [lindex $CK10BL [expr {$CK10BI - 4}]]] \
+  [list {set temp = 40} {alter @m.xm1.msky130_fd_pr__nfet_01v8[w] = 2u} \
+        {stop after $cktgt} {echo ASE-CKPT-ARMED tran 0 160000 800000}]
+
+## ⚠ THE CLAMP HAS NO FIXTURE UNLESS `ase::ckpt_n` IS STUBBED, AND A SABOTAGE
+## SAID SO. Deleting `[2, 50]` left this suite at ALL PASS, because the shipped
+## `ckpt_n` answers 4 and 4 is inside the clamp: a bound with no value outside it
+## is unasserted by construction. This is issue 1430's S29 lesson -- a verdict
+## precedence with no fixture in which two arms collide -- met in a bound. The
+## proc is stubbed the way row RS3 performs ⚖ R3's two rulings, and restored
+## in the same breath.
+rename ase::ckpt_n ase::ckpt_n_real
+proc ase::ckpt_n {} { return $::CKNSTUB }
+set ::CKNSTUB 1   ; set CKN1  [ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]]
+set ::CKNSTUB 200 ; set CKN2  [ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]]
+set ::CKNSTUB 4   ; set CKN3  [ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]]
+rename ase::ckpt_n {}
+rename ase::ckpt_n_real ase::ckpt_n
+check "CK4b N is clamped to \[2, 50\] in both directions, and the shipped value\
+ passes through untouched" \
+  [list [dict get $CKN1 n] [dict get $CKN1 step] \
+        [dict get $CKN2 n] [dict get $CKN2 step] \
+        [dict get $CKN3 n] [ase::ckpt_n]] \
+  {2 266666 50 15686 4 4}
+
+## ⚠ CK10's TOKEN LIST DROPS `write` INSIDE THE LOOP INTO THE SAME `WRITE`
+## TOKEN AS THE RESULTS WRITE, SO THE PATHS GET THEIR OWN ROW. Three claims,
+## three independent sources: the checkpoint is written to the TMP path, renamed
+## onto the CHECKPOINT path, and neither is the results path.
+proc ck_paths {rows} {
+  set out {}
+  foreach l [split [ck_deck $rows] "\n"] {
+    set t [string trim $l]
+    if {[string match {write *} $t]} { lappend out [list W [lindex $t 1]] }
+    if {[string match {shell mv -f *} $t]} { lappend out [list MV [lindex $t 3] [lindex $t 4]] }
+  }
+  return $out
+}
+set CKRAW [[ase::backend_hook ngspice raw_file] $CKST]
+check "CK11 the checkpoint write goes to the .tmp path and is renamed onto the\
+ checkpoint path, and neither is the results file" \
+  [ck_paths [list $CKBIG]] \
+  [list [list W [ase::ckpt_tmp_path $CKST]] \
+        [list MV [ase::ckpt_tmp_path $CKST] [ase::ckpt_path $CKST]] \
+        [list W $CKRAW]]
+
+## ⚠ `stop after`, NEVER `stop when time`. MEASURED on both binaries:
+## `stop when time > X` hands the integrator a breakpoint through CKTsetBreak()
+## and forces a timepoint -- 8,011 rows against `stop after`'s 8,008 for the same
+## `tran 10n 80u`, and a different timestep grid from that point on. A checkpoint
+## that changes the answer is not a checkpoint. And `stop after`'s own
+## byte-identity was re-confirmed here through this file's render_deck: checked
+## and unchecked runs of op + ac + tran gave IDENTICAL plot bodies on both
+## binaries (fork transient sha b9836c494d9d52ad, which is the dossier's).
+set CKDECKBIG [ck_deck [list $CKBIG]]
+check "CK12 the primitive is `stop after`, the threshold reaches it through the\
+ `set` variable and NEVER through `\$&`, and `stop when` appears nowhere" \
+  [list [regexp -all -line {^ *stop after \$cktgt$} $CKDECKBIG] \
+        [regexp -all {stop after \$&} $CKDECKBIG] \
+        [regexp -all {stop when} $CKDECKBIG] \
+        [regexp -all -line {^ *set cktgt = \$&cknext$} $CKDECKBIG]] \
+  {2 0 0 2}
+
+## ⚠ THE `set` ROUTE ROUNDS TO SIX SIGNIFICANT FIGURES, WHICH IS WHY THE LOOP'S
+## TEST IS AGAINST `$cktgt` AND NOT AGAINST `cknext`. MEASURED, both binaries:
+## `let cknext = 1600002` then `set cktgt = $&cknext` gives `1600000`, so the run
+## stops two points BELOW `cknext` and a test against `cknext` reads that as "the
+## analysis finished". An 8,000,008-point run then wrote ZERO checkpoints,
+## completed, and said nothing. Invisible below 1,000,000 points.
+check "CK13 the loop terminates on the ARMED value, not on the counter the\
+ arming was computed from" \
+  [list [regexp -all -line {^ *if length\(time\) >= \$cktgt$} $CKDECKBIG] \
+        [regexp -all -line {^ *if length\(time\) >= cknext$} $CKDECKBIG] \
+        [regexp -all {if cknext <} $CKDECKBIG]] {1 0 0}
+
+## ⚠ AND THE POLARITY IS FAIL-SAFE, WHICH COST AN INFINITE LOOP TO LEARN. The
+## exit has to be the FALSE branch, because `.control`'s `if` takes the false
+## branch for a condition it cannot EVALUATE -- the trap table's string
+## `eq`/`ne` shape, met on a number. MEASURED on both binaries: with a save list
+## that resolves to nothing the transient does not run at all, there is no
+## `tran1` plot, `length(time)` is unevaluable (the warning goes to **stderr**),
+## and `if length(time) < $cktgt` took the false branch on every pass -- so the
+## loop checkpointed, re-armed and `resume`d FOREVER, at rc 0, rewriting the same
+## file every three seconds. Found by the sabotage that deleted the eligibility
+## floor, on a fixture `test_ase_preflight` already had. With `>=` the same deck
+## exits the loop after zero checkpoints.
+set CK13CL [split $CKDECKBIG "\n"]
+set CK13CI [lsearch -glob $CK13CL {  if length(*}]
+check "CK13c the loop's EXIT is the false branch, so a condition ngspice cannot\
+ evaluate stops checkpointing instead of spinning" \
+  [list [lindex $CK13CL [expr {$CK13CI + 1}]] \
+        [lindex $CK13CL [expr {$CK13CI + 11}]] \
+        [lindex $CK13CL [expr {$CK13CI + 12}]] \
+        [lindex $CK13CL [expr {$CK13CI + 13}]]] \
+  [list {    unset appendwrite} {  else} {    let ckdone = 1} {  end}]
+
+## ⚠ AND IT TERMINATES ON A MEASUREMENT AT ALL, WHICH IS THIS COMMIT'S
+## CORRECTION TO PLAN.md §6f's RECIPE. The plan's loop ends on
+## `if cknext < <total>` with `<total>` estimated from the deck, and both
+## directions of estimate error are then SILENT: measured, an estimate 10x too
+## HIGH made the loop spin five more times after the run had already finished,
+## each iteration writing the WHOLE rawfile again; one 10x too LOW stopped
+## checkpointing at 8,005 points of an 80,008-point run, leaving the last 90 %
+## unprotected. Both at rc 0. The estimated total therefore appears NOWHERE in
+## the loop -- only in the interval.
+check "CK13b the estimated total never reaches the deck's control flow: it sets\
+ the interval and the ARMED echo, and nothing else" \
+  [list [regexp -all {800000} $CKDECKBIG] \
+        [regexp -all -line {^echo ASE-CKPT-ARMED tran 0 160000 800000$} $CKDECKBIG]] {1 1}
+
+## ⚠ THE BRACKET. Under the `set appendwrite` this deck already emits (issue
+## 0929), a `write` to an existing path APPENDS a plot instead of replacing it --
+## MEASURED, four checkpoints plus the final write to one path gave FIVE stacked
+## plots and 897,796 bytes where the single plot is 256,526, quadratic in the
+## checkpoint count, and ASE-L reads results BY PLOT NAME.
+check "CK14 `unset appendwrite` brackets the checkpoint write and\
+ `set appendwrite` is restored immediately after it" \
+  [lsearch -all -inline -regexp [ck_shape [list $CKBIG]] \
+     {^(UNSETAW|LSETAW|LWRITE|MV|SETAW)$}] \
+  [list SETAW UNSETAW LWRITE MV LSETAW]
+
+## ⚠ THE CHECKPOINT WRITE EMITS **NO** `PLOT` RECORD. The plotmap is 1:1 and in
+## write order with the RESULTS file (issue 1430); one record here would put that
+## identity out by one for every checkpoint of every run. MEASURED end to end on
+## both binaries: a stopped run left 2 records beside 2 plots and a completed one
+## 3 beside 3, with five checkpoints taken in between.
+proc ck_counts {rows} {
+  set d [ck_deck $rows]
+  return [list [regexp -all -line {^ *echo "PLOT } $d] \
+                [regexp -all -line {^write } $d] \
+                [regexp -all -line {^ *write } $d]]
+}
+check "CK15 the plotmap keeps one record per RESULTS write and gains none from\
+ the checkpoints" [ck_counts [list {type op enabled 1} $CKBIG]] {2 2 3}
+
+## ⚠ `delete all` FOLLOWS THE LOOP, UNCONDITIONALLY, AND IT IS MANDATORY.
+## MEASURED on both binaries: `stop after 2000` left armed truncated the
+## FOLLOWING `ac` to exactly 2000 points where it should have had 6001, at rc 0,
+## and `status` still listed the breakpoint after the resume. ⚠ And the leak is
+## INVISIBLE on a short next analysis -- an `ac` of 601 points showed none at all,
+## because a stop only bites when the next analysis is LONGER than its threshold.
+## A short probe deck passes with this line missing.
+## ⚠ THE CONTROL ANALYSIS HAS TO EMIT **AFTER** THE TRANSIENT, WHICH `op` DOES
+## NOT. The loop walks ase::analysis_emit_order, so an `op` row renders first
+## whatever order the state lists it in (rank 10 against `tran`'s 30) and the row
+## would then be asserting that `delete all` precedes nothing at all. `noise` is
+## rank 40, so it is genuinely downstream -- and it is the type SV6's leak was
+## measured with: a stop left armed truncated the FOLLOWING analysis to the
+## threshold, at rc 0.
+set CK16S [ck_shape [list $CKBIG {type op enabled 1} \
+  {type noise enabled 1 out v(D) insrc v1 sweep dec points 4 start 1k stop 100k}]]
+check "CK16 `delete all` closes the loop -- once -- above the transient's own\
+ guard and above the analysis that follows it" \
+  [list [lsearch -all -inline -regexp $CK16S {^(WHILE|RESUME|DELALL|AN=.*)$}] \
+        [llength [lsearch -all $CK16S DELALL]]] \
+  [list [list AN=op AN=tran WHILE RESUME DELALL AN=noise] 1]
+check "CK16b ... and the deck carries no other way of disarming the stop" \
+  [list [regexp -all {delete all} [ck_deck [list $CKBIG]]] \
+        [regexp -all {delete } [ck_deck [list $CKBIG]]]] {1 1}
+
+## --- CK17: THE COMPLETION MARKER ---------------------------------------------
+## ⚠ IT IS THE ONLY THING THAT CAN TELL A FINISHED RUN FROM A STOPPED ONE.
+## MEASURED on both binaries: after `stop after 2000` fires, `$?sim_status` is 1
+## and `$sim_status` is 0, so the deck's own guard prints NOTHING, `remzerovec`
+## runs, the `write` succeeds, a valid 2000-point plot lands in the file and the
+## process exits **rc 0**. Neither the exit code nor the guard can see it.
+check "CK17 the completion marker is emitted once, as the last line inside\
+ .control, and only by a deck that checkpoints" \
+  [list [regexp -all -line {^echo ASE-RUN-COMPLETE$} $CKDECKBIG] \
+        [string match "*echo ASE-RUN-COMPLETE\n.endc\n.end\n" $CKDECKBIG] \
+        [regexp -all {ASE-RUN-COMPLETE} [ck_deck [list $CKSMALL]]]] {1 1 0}
+
+## --- CK18: A DECK BELOW THE FLOOR IS UNTOUCHED -------------------------------
+## ⚠ PLAN.md §6f's OWN REQUIREMENT: the small rendered-deck goldens "move at this
+## stage for 6a's PLOT line; they must not move twice." A deck under the floor
+## must therefore be byte-identical to what `set ase_checkpoint 0` renders.
+set ::ase_checkpoint 0
+set CK18OFF [ck_deck [list $CKSMALL]]
+set ::ase_checkpoint 1
+check "CK18 a transient below the floor renders byte-identically to the same\
+ deck with checkpointing switched off entirely" \
+  [list [string equal [ck_deck [list $CKSMALL]] $CK18OFF] \
+        [regexp -all {ck(step|next|done|tgt)} $CK18OFF]] {1 0}
+## ...and the control: the SAME comparison against the big deck must FAIL, or the
+## row above is asserting that two things nothing distinguishes are equal.
+set ::ase_checkpoint 0
+set CK18BOFF [ck_deck [list $CKBIG]]
+set ::ase_checkpoint 1
+check "CK18b ... and above the floor the two decks DIFFER, which is what makes\
+ CK18 an assertion rather than a tautology" \
+  [string equal [ck_deck [list $CKBIG]] $CK18BOFF] 0
+
+## --- CK19: TWO TRANSIENTS EACH CARRY THEIR OWN INTERVAL ----------------------
+## ⚠ RE-ASSIGNING A const VECTOR FROM INSIDE ANOTHER PLOT WRITES THROUGH TO
+## const -- it does NOT shadow. MEASURED on both binaries: assigned 222 while
+## `op1` was current, read back 222 from `tran1` and from `const.ckstep`, and the
+## written plot stayed at `No. Variables: 4`. That is what lets the second `tran`
+## re-arm from inside `tran1` without leaking a column into the file, and it is a
+## half SV11 does not state.
+check "CK19 two enabled transients each get their own interval, and the counters\
+ are still declared exactly once" \
+  [lsearch -all -inline [ck_shape [list $CKBIG {type tran enabled 1 step 10n stop 80m}]] \
+     {CKSTEP=*}] {CKSTEP=0 CKSTEP=160000 CKSTEP=1600000}
+
+## --- CK20: THE TYPES THAT GET NO BLOCK, IN THE DECK --------------------------
+## The registry half is CK6; this is the deck half, because a plan that answered
+## {} and a render that emitted the block anyway would pass CK6 and ship the bug.
+set CK20 {}
+foreach r [list {type op enabled 1} \
+                {type ac enabled 1 sweep dec points 10000 start 1 stop 1e9} \
+                {type dc enabled 1 source V1 start 0 stop 100000 step 1} \
+                {type noise enabled 1 out v(D) insrc v1 sweep dec points 10000 start 1 stop 1e9} \
+                {type disto enabled 1 sweep dec points 10000 start 1 stop 1e9}] {
+  if {[regexp {ck(step|tgt)} [ck_deck [list $r]]]} { lappend CK20 [dict get $r type] }
+}
+check "CK20 no other type emits a checkpoint block, however long its sweep" $CK20 {}
+
+## --- CK21: THE LOOP DID NOT MOVE ANYTHING THE OTHER ISSUES PUT THERE ---------
+## The `$sim_status` guard (C4), `remzerovec` (0929), the sidecar record (1430)
+## and the write are still in that order AFTER the analysis, with the checkpoint
+## loop sitting between the analysis and the guard -- which is where it has to
+## be, because the guard's job is to `quit 1` before a failed analysis can put a
+## plot in the results file, and a loop after it would never run for one.
+set CK21 {}
+foreach l [split $CKDECKBIG "\n"] {
+  set t [string trim $l]
+  if {$t eq {tran 10n 8m}} { lappend CK21 TRAN }
+  if {$t eq {while ckdone = 0}} { lappend CK21 LOOP }
+  if {$t eq {delete all}} { lappend CK21 DELALL }
+  if {$t eq {if $?sim_status = 0}} { lappend CK21 GUARD }
+  if {$t eq {remzerovec} && [llength $CK21] && [string index $l 0] ne { }} { lappend CK21 RZV }
+  if {[string match {echo "PLOT tran*} $t]} { lappend CK21 REC }
+  if {$t eq "write $::CKRAW"} { lappend CK21 WRITE }
+}
+check "CK21 the loop goes between the analysis and the guard, and the guard /\
+ remzerovec / record / write order is exactly what 0929, 1243 and 1430 left" \
+  $CK21 {TRAN LOOP DELALL GUARD RZV REC WRITE}
+
+## --- CK22: THE VERDICT, AND ITS THIRD STATE ---------------------------------
+## ⚠ `unknown` IS NOT PADDING. The marker is emitted only by a deck that
+## checkpoints, so a two-state reader would mark EVERY ordinary run aborted.
+## Whether a marker was asked for is re-derived FROM THE STATE and not from a
+## second echo, because ngspice's stdout is block-buffered when redirected and
+## the last echoes before a kill can die in the buffer -- measured, a run that
+## completed and renamed its third checkpoint logged only the first two
+## `ASE-CKPT-DONE` lines. The COMPLETION marker is unaffected, because what is
+## read is its absence.
+set CKBIGST [ck_state [list $CKBIG]]
+set CKLOGOK "Doing analysis\nASE-CKPT-DONE 160000\nASE-RUN-COMPLETE\n"
+set CKLOGNO "Doing analysis\nASE-CKPT-DONE 160000\n"
+check "CK22 the verdict is complete / aborted / unknown, and a state that\
+ checkpoints nothing answers the third" \
+  [list [ase::run_completed ngspice $CKBIGST $CKLOGOK] \
+        [ase::run_completed ngspice $CKBIGST $CKLOGNO] \
+        [ase::run_completed ngspice $CKBIGST {}] \
+        [ase::run_completed ngspice [ck_state [list $CKSMALL]] $CKLOGNO] \
+        [ase::run_completed ngspice [ck_state [list $CKSMALL]] $CKLOGOK]] \
+  {complete aborted aborted unknown unknown}
+## ⚠ THE MARKER IS A WHOLE LINE. ngspice's own `Note:` lines and a user's
+## `pre_commands` echo can both mention a word; a substring match would read a
+## log that merely TALKS about the marker as a completed run.
+check "CK22b the marker is matched as a whole line, not as a substring" \
+  [list [ase::run_completed ngspice $CKBIGST "echo ASE-RUN-COMPLETE\n"] \
+        [ase::run_completed ngspice $CKBIGST "xASE-RUN-COMPLETE\n"] \
+        [ase::run_completed ngspice $CKBIGST "  ASE-RUN-COMPLETE  \n"]] \
+  {aborted aborted complete}
+
+## --- CK23: WHAT THE USER IS TOLD --------------------------------------------
+set CKD [file normalize [file join $::scratch ckrun]]
+file mkdir $CKD
+set CKRST [ck_state [list {type op enabled 1} $CKBIG]]
+dict set CKRST rundir $CKD
+## A hand-written rawfile header is enough: ase::cap_raw_plots reads the ASCII
+## half and never the binary (the test_ase_simcaps_0948 canned-file idiom).
+rg_wr [ase::ckpt_path $CKRST] "Title: ck\nDate: now\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 4\nNo. Points: 4800000\nVariables:\n\t0\ttime\ttime\nBinary:\n"
+check "CK23 an aborted run says what survived, names the plot, the points it\
+ kept, the estimate and the file" \
+  [lmap s [ase::ckpt_report ngspice $CKRST $CKLOGNO] {list \
+     [rg_has $s {was stopped}] [rg_has $s {Transient Analysis}] \
+     [rg_has $s {4800000 points of an estimated 800000}] \
+     [rg_has $s [file tail [ase::ckpt_path $CKRST]]]}] \
+  {{1 1 1 1}}
+check "CK23b a completed run says NOTHING and deletes the checkpoint it no\
+ longer needs" \
+  [list [ase::ckpt_report ngspice $CKRST $CKLOGOK] \
+        [file exists [ase::ckpt_path $CKRST]]] {{} 0}
+check "CK23c a run that checkpoints nothing says nothing either, whatever the\
+ log holds" \
+  [ase::ckpt_report ngspice [ck_state [list $CKSMALL]] $CKLOGNO] {}
+check "CK23d an abort before the first checkpoint says the analysis kept\
+ nothing, rather than reporting a file that is not there" \
+  [lmap s [ase::ckpt_report ngspice $CKRST $CKLOGNO] {rg_has $s {kept nothing}}] {1}
+
+## --- CK24: RECONCILIATION IS TOLD ------------------------------------------
+## ⚠ PLAN.md §6f: "6c's reconciliation must be told the run was aborted BEFORE it
+## reports an under-count, or every stopped run logs 'one plot of the tran
+## analysis was not captured' as though something were wrong." MEASURED against
+## the artefacts of a REAL stopped run on both binaries -- 2 records beside 2
+## plots where 3 rows were enabled -- the four-argument call answers
+## `predmismatch` and names two causes, and the five-argument one answers
+## `aborted` and names the one the marker's absence measured.
+set CKRD [file normalize [file join $::scratch ckrec]]
+file mkdir $CKRD
+## ⚠ THE FIXTURE CARRIES REAL BINARY PADDING, AND WITHOUT IT THE ROW MEASURES
+## THE WRONG THING. ase::cap_raw_plots SEEKS `points x variables x 8` bytes past
+## every `Binary:` marker, so a header-only two-plot fixture has its SECOND plot
+## swallowed by the first one's seek and reads back as ONE -- which turns a row
+## about `predmismatch` into a row about `under`, silently and in the right
+## direction to look plausible.
+proc ck_rawfile {path plots} {
+  set f [open $path wb]
+  fconfigure $f -translation binary
+  foreach p $plots {
+    lassign $p nm np
+    puts -nonewline $f "Title: ck\nDate: now\nPlotname: $nm\nFlags: real\nNo. Variables: 1\nNo. Points: $np\nVariables:\n\t0\tv(a)\tvoltage\nBinary:\n"
+    puts -nonewline $f [binary format "d*" [lrepeat $np 1.0]]
+  }
+  close $f
+}
+ck_rawfile [file join $CKRD r.raw] {{{Operating Point} 1} {{AC Analysis} 3}}
+rg_wr [file join $CKRD r.map] "PLOT op 0 |Operating Point|\nPLOT ac 1 |AC Analysis|\n"
+set CKRECST [ck_state [list {type op enabled 1} \
+                           {type ac enabled 1 sweep dec points 100 start 1 stop 1e6} $CKBIG]]
+set CKV4 [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] [file join $CKRD r.map]]
+set CKV5 [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] [file join $CKRD r.map] aborted]
+check "CK24 a stopped run reconciles as `aborted` and names ONE cause, where the\
+ same artefacts with no verdict are `predmismatch` and name two" \
+  [list [dict get $CKV4 verdict] [dict get $CKV5 verdict] \
+        [rg_has [lindex [dict get $CKV4 why] 0] {or the analyses changed}] \
+        [rg_has [lindex [dict get $CKV5 why] 0] {was STOPPED before the rest}] \
+        [rg_has [lindex [dict get $CKV5 why] 0] {or the analyses changed}]] \
+  {predmismatch aborted 1 1 0}
+## ...and an UNDER-count, which is the sentence the plan quotes by name.
+rg_wr [file join $CKRD u.map] "PLOT op 0 |Operating Point|\nPLOT ac 1 |AC Analysis|\nPLOT tran 2 |Transient Analysis|\n"
+set CKU4 [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] [file join $CKRD u.map]]
+set CKU5 [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] [file join $CKRD u.map] aborted]
+check "CK24b an under-count reads as a defect without the verdict and as a Stop\
+ with it" \
+  [list [dict get $CKU4 verdict] [dict get $CKU5 verdict] \
+        [rg_has [lindex [dict get $CKU4 why] 0] {not captured}] \
+        [rg_has [lindex [dict get $CKU5 why] 0] {was STOPPED}] \
+        [rg_has [lindex [dict get $CKU5 why] 0] {in the checkpoint}]] \
+  {under aborted 1 1 1}
+## ⚠ `mislabel` STILL WINS, AND `over` IS NOT CONVERTED. A plot recorded under
+## the wrong name is wrong whether or not the run was stopped; and a stopped run
+## cannot produce MORE plots than it recorded, so an `over` beside a Stop is
+## still a finding. A row that only checked the two converted arms would pass
+## with `aborted` swallowing all four.
+rg_wr [file join $CKRD m.map] "PLOT op 0 |Operating Point|\nPLOT ac 1 |ZZ WRONG NAME|\n"
+rg_wr [file join $CKRD o.map] "PLOT op 0 |Operating Point|\n"
+check "CK24c a Stop converts `under` and `predmismatch` and converts neither\
+ `mislabel` nor `over`" \
+  [list [dict get [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] \
+                     [file join $CKRD m.map] aborted] verdict] \
+        [dict get [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] \
+                     [file join $CKRD o.map] aborted] verdict]] \
+  {mislabel over}
+check "CK24d the four-argument call is unchanged, so every caller written before\
+ this issue answers exactly what it did" \
+  [list [dict get [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] \
+                     [file join $CKRD r.map] {}] verdict] \
+        [dict get [ase::reconcile_plots ngspice $CKRECST [file join $CKRD r.raw] \
+                     [file join $CKRD r.map] unknown] verdict]] \
+  {predmismatch predmismatch}
+## ...and `aborted` is not an error tag: the user pressed Stop.
+set CK24E [rg_ciw {ase::reconcile_report [ck_state [list {type op enabled 1}]] aborted}]
+check "CK24e reconcile_report takes the verdict and does not tag a Stop as a\
+ fault" \
+  [list [llength [rg_body ase::reconcile_report]] \
+        [rg_has [rg_body ase::reconcile_report] {ok norun aborted}]] \
+  [list [llength [rg_body ase::reconcile_report]] 1]
+
+## --- CK25: THE WIRING IN run_done -------------------------------------------
+## The order is load-bearing: the salvage verdict has to exist before
+## reconciliation speaks, or the two numbers a Stop explains are reported in the
+## language of a defect.
+set CK25B [rg_body ase::run_done]
+check "CK25 run_done reads the verdict and reports salvage BEFORE reconciliation,\
+ hands it the verdict, and catches both" \
+  [list [rg_has $CK25B {ase::run_completed $csim $state $data}] \
+        [rg_has $CK25B {ase::ckpt_report $csim $state $data}] \
+        [rg_has $CK25B {catch {ase::reconcile_report $state $runstate}}] \
+        [expr {[string first {ckpt_report} $CK25B] < \
+               [string first {reconcile_report} $CK25B] ? 1 : 0}]] {1 1 1 1}
+## ⚠ AND THE ARTEFACTS ARE DELETED BEFORE EVERY RUN, beside the raw and the
+## sidecar. A `.ckpt` left over from the previous run is a COMPLETE-LOOKING
+## partial result of a DIFFERENT run, and ase::ckpt_report would describe it as
+## what this one salvaged. The `.tmp` is swept here rather than by the deck,
+## because the case it exists for is a kill that lands mid-write and a killed
+## deck runs no more lines.
+check "CK25b run_deck deletes the checkpoint and its temp before the run, in the\
+ same breath as the raw and the sidecar" \
+  [list [rg_has [rg_body ase::run_deck] {catch {file delete -- [ase::ckpt_path $state]}}] \
+        [rg_has [rg_body ase::run_deck] {catch {file delete -- [ase::ckpt_tmp_path $state]}}]] \
+  {1 1}
+## ...and LIVE, the way RC13 proves it for the sidecar. A structural row passes
+## with the two lines sitting in a branch that never runs.
+if {[auto_execok true] eq {}} {
+  puts "SKIPPED: CK25c live pre-run checkpoint delete (no true(1))"
+} else {
+  proc ck_quick_run_cmd {state deckpath} { return [list true 2>@1] }
+  ase::register_backend cksim2 [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      ck_quick_run_cmd \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+  set CK25D [file normalize [file join $::scratch run_ck25]]
+  file mkdir $CK25D
+  set CK25NL [file join $CK25D nfet_clean.spice]
+  file copy -force -- [file join $::rundir nfet_clean.spice] $CK25NL
+  set CK25ST [nfet_state $::models $CK25D]
+  dict set CK25ST simulator cksim2
+  rg_wr [ase::ckpt_path $CK25ST] "ZZ STALE CHECKPOINT FROM A DIFFERENT RUN\n"
+  rg_wr [ase::ckpt_tmp_path $CK25ST] "ZZ TORN TEMP FROM A KILLED RUN\n"
+  set CK25WAS [list [file isfile [ase::ckpt_path $CK25ST]] \
+                    [file isfile [ase::ckpt_tmp_path $CK25ST]]]
+  catch {ase::run_deck $CK25ST $CK25NL} CK25E
+  check "CK25c a stale checkpoint and a torn temp are both gone before the run,\
+ because a leftover one is a complete-looking partial result of a DIFFERENT run" \
+    [list $CK25WAS [file isfile [ase::ckpt_path $CK25ST]] \
+                   [file isfile [ase::ckpt_tmp_path $CK25ST]]] {{1 1} 0 0}
+  catch {ase::run_lock_clear [ase::run_lock_key $CK25ST]}
+}
+
+## --- CK26: THE `salvage` KEY IS CHECKED, NOT DECORATION ---------------------
+## Issue 1428's S35 rule pointed at a key that IS read, in a place whose failure
+## mode is silence: a `salvage` naming no hook, or a hook that is not a command,
+## answers {} from ckpt_plan and the type is simply never checkpointed -- the
+## registry claiming a capability the run does not have.
+## ⚠ THE FIXTURE'S HOOK IS A LOCAL STUB, NOT ngspice's `tran_points`. The
+## planner has to be driven through these four entries, and `tran_points` reads
+## `step`/`stop` off a `tran` row -- so with the real hook every fixture would
+## answer `{}` for the same reason and the row would be measuring the wrong one.
+proc ck_points {row {state {}}} { return 800000 }
+proc ck_bad_types {} {
+  return [dict create \
+    cka [dict create label cka registered 1 emitorder 900 \
+          fields {{name x kind int required 1 label X}} \
+          emit {{role analysis tmpl {cka @x}}} results {viewer {kind sweep}} \
+          salvage {novector ck_points} \
+          plots {{select {A} role sweep results viewer label a}}] \
+    ckb [dict create label ckb registered 1 emitorder 901 \
+          fields {{name x kind int required 1 label X}} \
+          emit {{role analysis tmpl {ckb @x}}} results {viewer {kind sweep}} \
+          salvage {points ::ase::no::such::proc vector time} \
+          plots {{select {B} role sweep results viewer label b}}] \
+    ckc [dict create label ckc registered 1 emitorder 902 \
+          fields {{name x kind int required 1 label X}} \
+          emit {{role analysis tmpl {ckc @x}}} results {viewer {kind sweep}} \
+          salvage {points ck_points} \
+          plots {{select {C} role sweep results viewer label c}}] \
+    ckd [dict create label ckd registered 1 emitorder 903 \
+          fields {{name x kind int required 1 label X}} \
+          emit {{role analysis tmpl {ckd @x}}} results {viewer {kind sweep}} \
+          salvage {points ck_points vector time} \
+          plots {{select {D} role sweep results viewer label d}}]]
+}
+ase::register_backend cksim [dict create \
+  render_deck  [ase::backend_hook ngspice render_deck] \
+  run_cmd      [ase::backend_hook ngspice run_cmd] \
+  log_file     [ase::backend_hook ngspice log_file] \
+  result_probe [ase::backend_hook ngspice result_probe] \
+  raw_file     [ase::backend_hook ngspice raw_file] \
+  analysis_types ck_bad_types]
+set CK26 {}
+foreach e [ase::analysis_schema_errors cksim] {
+  if {[string match salvage* [lindex $e 1]] || [string match *salvage* [lindex $e 1]]} {
+    lappend CK26 [list [lindex $e 0] [lindex $e 1]]
+  }
+}
+check "CK26 the validator refuses a salvage with no points hook, a hook that is\
+ not a command and a missing vector -- and says nothing about the valid one" \
+  [lsort $CK26] \
+  [lsort {{cka nosalvagepoints} {ckb badsalvagepoints} {ckc nosalvagevector}}]
+check "CK26b the SHIPPED ngspice registry answers nothing at all" \
+  [ase::analysis_schema_errors ngspice] {}
+
+## ⚠ AND THE PLANNER DECLINES THE SAME THREE RATHER THAN RAISING, WHICH TWO
+## SABOTAGES HAD TO SAY. Deleting `ckpt_plan`'s `vector` requirement and deleting
+## its `info commands` check BOTH left this suite at ALL PASS, because the
+## shipped registry declares a good `salvage` on its one salvageable type and
+## nothing else exercises either guard. CK26 is the VALIDATOR's answer; this is
+## the PLANNER's, and they are different questions -- a registry can be refused
+## at load time and still have to be survived at render time, because
+## `analysis_schema_errors` is advisory and `render_deck` is not.
+set CK27 {}
+foreach ty {cka ckb ckc ckd} {
+  set row [list type $ty enabled 1 x 1]
+  set r [catch {ase::ckpt_plan cksim $row [ck_state [list $row]]} v]
+  lappend CK27 [list $ty $r $v]
+}
+check "CK27 a salvage with no points hook, a hook that is not a command and a\
+ missing vector each PLAN NOTHING rather than raising -- and the valid one plans" \
+  $CK27 \
+  [list {cka 0 {}} {ckb 0 {}} {ckc 0 {}} \
+        {ckd 0 {n 4 step 160000 points 800000 vector time}}]
+
+} ck_err]} {
+  check "CK0 section CK ran to the end" "RAISED:$ck_err" {}
 }
 
 # --- verdict -----------------------------------------------------------------
