@@ -77,6 +77,16 @@
 # C4 and C5 all move**; against the fork they do not. From this issue on the
 # goldens declare the capability unmeasured and the gate is pinned three ways in
 # WD6b, which is where a gate belongs.
+#
+# 558 -> 598 with section BN (Stage 6, issue 1435 -- the precondition banner under
+# the Choose Analyses form, and the netlist-facts slot that lets a dialog have
+# one without netlisting). ⚠ BN2 IS THE ROW THAT MATTERS MOST HERE: it stubs
+# `ase::netlist` to raise and drives the banner eleven times, so if anything on
+# that path ever starts netlisting because a user opened a window, that row is
+# what says so. BN2b is its non-vacuity control. ⚠ AND SECTION BN SITS BELOW N1
+# ON PURPOSE -- N1 is the real `ase::netlist` that fills the slot, and moved
+# above it every warm row in BN would pass vacuously.
+# AND RAISED 558 -> 598.
 # AND RAISED 523 -> 558.
 # ⚠ THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. It was 173/172 when this
 # comment first claimed "differ by exactly one" (issue 0698's era), 184 before
@@ -1537,6 +1547,423 @@ set ::netlist_dir [file join $scratch simdefault]
 set stn [ase::state_default]
 check "N2 empty rundir falls back to netlist_dir" [ase::rundir $stn] [file join $scratch simdefault]
 check_true "N2 default rundir was created" [file isdirectory [file join $scratch simdefault]]
+
+# ============================================================================
+# BN -- THE NETLIST-FACTS SLOT AND THE PRECONDITION BANNER. Stage 6, issue 1435.
+# ============================================================================
+# Stage 4 shipped `ase::netlist_facts`, `ase::analysis_needs` and
+# `ase::analysis_precheck` and TWO of its three user-visible surfaces. The third
+# -- the banner under the Choose Analyses form -- was deferred because it needs
+# netlist TEXT and `ase::netlist` is not a read: it deletes and rewrites
+# <rundir>/<cell>.spice, its arm (b) does `xschem load`, its arm (c) walks the
+# user's hierarchy and can REFUSE. A dialog may not do any of that because a user
+# opened it.
+#
+# So the banner PEEKS. These rows are what say so, and BN2 is the one that keeps
+# saying so: it stubs `ase::netlist` to raise and then drives the banner eleven
+# times.
+#
+# ⚠ THE FIXTURE HAS A REAL NETLIST BEHIND IT. N1 above netlisted `nfet_clean`
+# through `ase::netlist`, which is the ONE `xschem netlist` in ASE-L, so the slot
+# is warm here by exactly the mechanism the product uses. That ordering is
+# load-bearing: moved above N1 this whole section would measure a cold slot and
+# every warm row would pass vacuously.
+set bn_st [nfet_state $models $rundir]
+
+## ⚠ EVERY OPTIONAL KEY IN THIS SECTION IS READ THROUGH `bn_get`, AND THAT IS A
+## SABOTAGE FINDING RATHER THAN STYLE. `ase::facts_status` answers three shapes
+## and only `state` is in all of them; a bare `dict get ... why` on a `warm`
+## answer RAISES, and a raise inside this file's outer catch skips every section
+## after it -- measured, sabotages S04, S05, S13 and S20 each killed the suite at
+## `invalid command name "ag_five"`, 4 000 lines further on, instead of
+## reddening the row they were aimed at. **A row that raises is a weaker result
+## than a row that fails**, because the abort names a proc that has nothing to do
+## with the defect.
+proc bn_get {d k {dflt {}}} {
+  if {[catch {dict exists $d $k} _e] || !$_e} { return $dflt }
+  return [dict get $d $k]
+}
+
+check "BN1 a netlist somebody asked for fills the slot, and it names the design\
+ it was taken from" \
+  [list [bn_get [ase::facts_status $bn_st] state] \
+        [bn_get [ase::facts_status $bn_st] cell]] \
+  {warm aselib/nfet_clean/schematic}
+
+## BN1d -- ⚠ THE STAMP CARRIES THE SIZE AS WELL AS THE MTIME, and this row exists
+## because the sabotage that dropped the size SURVIVED without it. Two files
+## given the SAME mtime and different lengths must not share a stamp:
+## `ase::op_cards_put`'s own header records the 1-second-mtime hazard, and a
+## netlist rewritten inside one second almost always changes length.
+set bn_s1 [file join $rundir bn_stamp_a.txt]
+set bn_s2 [file join $rundir bn_stamp_b.txt]
+set bn_fh [open $bn_s1 w]; puts -nonewline $bn_fh "short"; close $bn_fh
+set bn_fh [open $bn_s2 w]; puts -nonewline $bn_fh "a good deal longer"; close $bn_fh
+file mtime $bn_s2 [file mtime $bn_s1]
+check "BN1d two files with one mtime and two lengths get two stamps, and a\
+ missing file gets none" \
+  [list [expr {[file mtime $bn_s1] == [file mtime $bn_s2]}] \
+        [expr {[ase::facts_stamp $bn_s1] ne [ase::facts_stamp $bn_s2]}] \
+        [ase::facts_stamp [file join $rundir bn_no_such_file.txt]]] {1 1 {}}
+
+set bn_facts [ase::netlist_facts_cached $bn_st]
+## ⚠ READ THROUGH `bn_get` LIKE THE REST. A cold peek answers `{}`, and
+## `dict keys [dict get {} sources]` RAISES -- which is how sabotage S20 (the
+## capture seam deleted) killed this file at `ag_five` instead of reddening BN1.
+check "BN1b the peek answers the same facts ase::netlist_facts would, taken from\
+ the artifact ase::netlist wrote" \
+  [list [expr {$bn_facts ne {}}] [lsort [dict keys [bn_get $bn_facts sources]]] \
+        [bn_get $bn_facts exact]] \
+  {1 {V1 V2} 0}
+
+## BN1c -- THE MEMO. The second peek must not re-parse; `ase::netlist_facts` is
+## 76.5 ms over a 447 KB netlist (measured on this box) and `chana_show` runs on
+## every radio click. Driven by making the parse RAISE: a memoised answer is
+## returned without going near it.
+rename ase::netlist_facts ase::netlist_facts_bnsaved
+proc ase::netlist_facts {args} { error "BN1c: the peek re-parsed a memoised slot" }
+set bn_memo [ase::netlist_facts_cached $bn_st]
+rename ase::netlist_facts {}
+rename ase::netlist_facts_bnsaved ase::netlist_facts
+check "BN1c the facts are parsed once and memoised into the slot" \
+  [list [expr {$bn_memo eq $bn_facts}] [expr {$bn_memo ne {}}]] {1 1}
+
+## BN2 -- THE WHOLE POINT OF THE ITEM. ⚠ IF THIS ROW EVER GOES RED, SOMETHING ON
+## THE BANNER PATH HAS STARTED NETLISTING BECAUSE A USER OPENED A WINDOW.
+rename ase::netlist ase::netlist_bnsaved
+set ::bn_netlisted 0
+proc ase::netlist {args} { set ::bn_netlisted 1 ; error "BN2: the banner netlisted" }
+set bn_states {}
+foreach bn_t {op dc ac tran noise tf pz sens disto sp pss} {
+  lappend bn_states [bn_get [ase::precheck_banner ngspice $bn_st $bn_t \
+                                 [dict create type $bn_t]] state]
+}
+catch {ase::netlist_facts_cached $bn_st}
+catch {ase::facts_status $bn_st}
+rename ase::netlist {}
+rename ase::netlist_bnsaved ase::netlist
+check "BN2 eleven banner evaluations, a peek and a status call start NO netlist" \
+  $::bn_netlisted 0
+## ⚠ AND THE NON-VACUITY CONTROL. A row asserting an absence proves nothing
+## unless the same fixture can produce the presence -- that is 1434's own "a row
+## that explains why nothing moved is a row to sabotage FIRST".
+check "BN2b the stub really does fire when something netlists (non-vacuity)" \
+  [list [catch {
+     rename ase::netlist ase::netlist_bnsaved2
+     set ::bn_netlisted 0
+     proc ase::netlist {args} { set ::bn_netlisted 1 ; error stub }
+     catch {ase::netlist $bn_st}
+     rename ase::netlist {}
+     rename ase::netlist_bnsaved2 ase::netlist
+   }] $::bn_netlisted] {0 1}
+
+## BN3 -- COLD IS NOT STALE, AND NEITHER IS A DIFFERENT DESIGN.
+set bn_other [dict replace $bn_st design {lib aselib cell no_such_cell view schematic}]
+check "BN3 a design this slot was not taken from reads COLD, never warm and\
+ never stale" [ase::facts_status $bn_other] {state cold}
+ase::facts_clear
+check "BN3b an empty slot reads COLD and the peek answers {}" \
+  [list [ase::facts_status $bn_st] [ase::netlist_facts_cached $bn_st]] {{state cold} {}}
+## BN3d -- ⚠ A CAPTURE THAT CANNOT NAME A DESIGN MUST LEAVE NOTHING STANDING,
+## and this row exists because the sabotage that removed `ase::facts_clear` from
+## `ase::facts_capture` SURVIVED without it. The final `set` replaces the whole
+## slot, so the clear looks redundant -- until the `$sch eq {}` early return,
+## where it is the only thing between a failed capture and the PREVIOUS design's
+## facts still answering. *A row whose fixtures never disagree cannot fail*, for
+## the eighth time in this batch.
+ase::facts_capture $bn_st [file join $rundir nfet_clean.spice]
+set bn_nodesign [dict remove $bn_st design]
+ase::facts_capture $bn_nodesign [file join $rundir nfet_clean.spice]
+check "BN3d a capture whose design does not resolve empties the slot instead of\
+ leaving the last one answering" \
+  [list [ase::facts_status $bn_st] [ase::facts_status $bn_nodesign]] \
+  {{state cold} {state cold}}
+
+check "BN3c and the banner says COLD for every type, whatever the row holds" \
+  [list [bn_get [ase::precheck_banner ngspice $bn_st noise \
+           [dict create type noise insrc V1]] state] \
+        [bn_get [ase::precheck_banner ngspice $bn_st op [dict create type op]] state]] \
+  {cold cold}
+
+## BN4 -- STALENESS, BY THE SCHEMATIC'S OWN STAMP.
+##
+## ⚠ THE SLOT IS RE-PRIMED BY HAND HERE RATHER THAN BY A SECOND `ase::netlist`,
+## because this row is about `ase::facts_status`' comparison and a second netlist
+## would also rewrite the artifact -- two moving stamps and no way to say which
+## one the verdict came from.
+set bn_sch [file normalize [xschem cellview_path aselib/nfet_clean schematic]]
+set bn_deck [file join $rundir nfet_clean.spice]
+ase::facts_capture $bn_st $bn_deck
+check "BN4 a freshly captured slot is warm" \
+  [bn_get [ase::facts_status $bn_st] state] warm
+set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                 schstamp {1:1}]
+check "BN4b a schematic whose stamp has moved makes the slot STALE, and says so" \
+  [list [bn_get [ase::facts_status $bn_st] state] \
+        [bn_get [ase::facts_status $bn_st] why]] {stale schmoved}
+check "BN4c and a stale slot answers {} on the peek -- stale facts are not\
+ better than none" [ase::netlist_facts_cached $bn_st] {}
+ase::facts_capture $bn_st $bn_deck
+set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                 deckstamp {1:1}]
+check "BN4d a netlist artifact rewritten under ASE-L is its OWN staleness, and\
+ it is a different sentence" \
+  [list [bn_get [ase::facts_status $bn_st] state] \
+        [bn_get [ase::facts_status $bn_st] why]] {stale deckmoved}
+ase::facts_capture $bn_st $bn_deck
+set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                 path [file join $rundir bn_no_such.spice]]
+check "BN4e a netlist artifact that is GONE is stale, not warm-with-no-facts" \
+  [bn_get [ase::facts_status $bn_st] state] stale
+
+## BN4f -- THE UNSAVED-EDIT TEST IS ONE-SIDED AND THE ROW SAYS WHICH SIDE.
+## Clean-at-capture + dirty-now proves an edit landed after the netlist.
+## Dirty-at-capture proves NOTHING and must claim nothing -- a slot that went
+## stale for a buffer that was already dirty when it was captured would send the
+## user to Netlist > Recreate for ever.
+##
+## ⚠ THE DIRTY LEG IS DRIVEN THROUGH `ase::facts_modified_now`, WHICH IS A PROC
+## FOR THIS REASON. The only other way to reach it is to make a real edit to this
+## suite's fixture schematic, which every later row in this file would inherit.
+## The first cut of BN4f asserted the dirty-at-capture arm without stubbing
+## anything and the sabotage that DELETED that arm survived it: headless the
+## editor's buffer is clean, so both spellings answered `warm` for the same
+## reason. *A row whose fixtures never disagree cannot fail.*
+ase::facts_capture $bn_st $bn_deck
+set bn_wascur [dict get $::ase::netlist_facts_slot schcur]
+rename ase::facts_modified_now ase::facts_modified_now_bnsaved
+proc ase::facts_modified_now {sch} { return 1 }
+set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                 schcur 1 schmod 0]
+set bn_dirty_after_clean [ase::facts_status $bn_st]
+set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                 schcur 1 schmod 1]
+set bn_dirty_after_dirty [ase::facts_status $bn_st]
+set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                 schcur 0 schmod 0]
+set bn_dirty_elsewhere [ase::facts_status $bn_st]
+rename ase::facts_modified_now {}
+rename ase::facts_modified_now_bnsaved ase::facts_modified_now
+check "BN4f clean-at-capture + dirty-now is the ONE sound direction, and it says\
+ `unsaved`" \
+  [list [bn_get $bn_dirty_after_clean state] [bn_get $bn_dirty_after_clean why]] \
+  {stale unsaved}
+check "BN4f2 dirty-at-capture claims nothing on its own, and a design that was\
+ not the current schematic claims nothing either" \
+  [list [bn_get $bn_dirty_after_dirty state] [bn_get $bn_dirty_elsewhere state]] \
+  {warm warm}
+check "BN4g and the capture records whether the design was the current\
+ schematic, which is what makes that test possible at all" \
+  [expr {$bn_wascur in {0 1}}] 1
+check "BN4g2 ase::facts_status reads the dirty flag through that one proc, so a\
+ row can stand where the editor stands" \
+  [expr {[string first {ase::facts_modified_now} \
+            [info body ase::facts_status]] >= 0}] 1
+
+## BN4h -- ⚠ AND THE GUARD INSIDE `ase::facts_modified_now` ITSELF, ON A REALLY
+## DIRTY BUFFER. `xschem get modified` is about the CURRENT schematic and nothing
+## else, so a proc that read it without asking whose schematic it is would report
+## one cell's unsaved edit against another cell's netlist. The sabotage that
+## deleted that guard survived every row above, because headless the buffer is
+## clean and both spellings answered 0 for the same reason.
+##
+## ⚠ THE BUFFER IS DIRTIED FOR REAL AND RELOADED IMMEDIATELY. `xschem align`
+## sets the modify flag; `xschem load` of the same path reloads from disk and
+## clears it. **Nothing is saved**, so the file on disk is untouched -- and the
+## reload is what keeps every later section in this file working against the same
+## buffer it expected.
+##
+## ⚠ AND `autosave_backup` IS PARKED FOR THE THREE STATEMENTS IN BETWEEN,
+## BECAUSE THE FIRST CUT OF THIS ROW REDDENED **C11**. A modified buffer gets a
+## `<cell>~.sch` written beside it, the current schematic at this point in the
+## suite is the repo root's `untitled.sch`, and C11 -- issue 0609, a row that has
+## been in this file far longer than this section -- exists to catch exactly that
+## droppings-in-the-repo-root defect. An existing row caught a new row littering:
+## park the knob the way `ase::with_design_current` parks it, and restore it on
+## the way out.
+set bn_auto_was 1
+catch {set bn_auto_was $::autosave_backup}
+set ::autosave_backup 0
+set bn_cur_before [xschem get schname]
+set bn_mod_before [xschem get modified]
+catch {xschem align}
+set bn_mod_dirty [xschem get modified]
+set bn_now_here  [ase::facts_modified_now [file normalize $bn_cur_before]]
+set bn_now_other [ase::facts_modified_now [file join $rundir bn_not_the_design.sch]]
+catch {xschem load $bn_cur_before}
+set bn_mod_after [xschem get modified]
+set ::autosave_backup $bn_auto_was
+check "BN4h a dirty buffer is reported for the design that IS current and for no\
+ other, and the row leaves the buffer as it found it" \
+  [list $bn_mod_before $bn_mod_dirty $bn_now_here $bn_now_other $bn_mod_after \
+        [expr {[file normalize [xschem get schname]] eq \
+               [file normalize $bn_cur_before]}]] \
+  {0 1 1 0 0 1}
+
+## BN5 -- `ase::facts_donate` FILLS AN EXISTING SLOT AND NEVER CREATES ONE.
+## ase::run_existing reaches ase::run_deck without netlisting; a donate that
+## created a slot would stamp facts about an artifact this session did not write.
+ase::facts_clear
+check "BN5 a donate against an empty slot writes nothing and says so" \
+  [list [ase::facts_donate $bn_st $bn_deck {sources {} exact 1}] \
+        [ase::facts_status $bn_st]] {0 {state cold}}
+ase::facts_capture $bn_st $bn_deck
+check "BN5b a donate naming a DIFFERENT deck path is refused" \
+  [ase::facts_donate $bn_st [file join $rundir bn_elsewhere.spice] \
+     {sources {} exact 1}] 0
+check "BN5c a donate naming THIS deck is taken, and the peek returns it without\
+ parsing anything" \
+  [list [ase::facts_donate $bn_st $bn_deck {sources {donated 1} exact 1}] \
+        [dict get [ase::netlist_facts_cached $bn_st] sources]] \
+  {1 {donated 1}}
+ase::facts_capture $bn_st $bn_deck
+
+## BN6 -- ONE OPTION MAP, SHARED. `ase::analysis_precheck` used to carry this
+## loop inline and the banner needs the identical answer; "an option with no
+## `value` key means 1" may not have two spellings.
+check "BN6 state_option_map flattens options, and a bare option means 1" \
+  [ase::state_option_map [dict replace $bn_st options \
+     {{name klu} {name savecurrents value 1} {name temp value 27} {novalue x}}]] \
+  {klu 1 savecurrents 1 temp 27}
+check "BN6b analysis_precheck reads the same body (structural)" \
+  [expr {[string first {ase::state_option_map} \
+            [info body ase::analysis_precheck]] >= 0}] 1
+
+## BN7 -- THE BANNER, WARM, ONE TYPE AT A TIME.
+##
+## ⚠ THE ROWS IT JUDGES ARE DISABLED, AND THAT IS THE POINT. `ase::analysis_precheck`
+## is bench-wide and ENABLED-only, deliberately -- "a bench opening with three
+## disabled rows must not open wearing three warnings". The dialog is the
+## opposite case: the user selected the cell, which IS the asking, and the
+## commonest reason to be looking at the form is to decide whether to turn the
+## analysis ON.
+set bn_ac   [ase::precheck_banner ngspice $bn_st ac   {type ac enabled 0}]
+set bn_noi  [ase::precheck_banner ngspice $bn_st noise \
+               {type noise enabled 0 out v(D) insrc V1 sweep dec points 10 start 1k stop 100k}]
+set bn_op   [ase::precheck_banner ngspice $bn_st op   {type op enabled 0}]
+check "BN7 a bench with no AC source is told so before the run, for a DISABLED\
+ ac row" \
+  [list [bn_get $bn_ac state] [lindex [lindex [bn_get $bn_ac lines] 0] 0]] \
+  {caution ac_source}
+check "BN7b and the noise row gets Stage 4's own headline sentence, with its fix" \
+  [list [bn_get $bn_noi state] \
+        [lindex [lindex [bn_get $bn_noi lines] 0] 0] \
+        [string match "*no AC value*" [lindex [lindex [bn_get $bn_noi lines] 0] 2]] \
+        [string match "*ac 1*" [lindex [lindex [bn_get $bn_noi lines] 0] 3]]] \
+  {caution noise_insrc 1 1}
+check "BN7c a type with nothing to say is CLEAR, not a warning with empty text" \
+  [bn_get $bn_op state] clear
+check "BN7d no type selected is CLEAR and never a raise" \
+  [bn_get [ase::precheck_banner ngspice $bn_st {} {}] state] clear
+## ⚠ THE STATIC DEMOTION REACHES THE BANNER TOO. `ase::netlist_facts` answers
+## `exact 0`, so every `blocked` becomes a `caution` with the ".include" suffix.
+## A banner that said `blocked` here would be claiming a proof the pass cannot
+## make.
+check "BN7e a static pass never shows the user a blocked verdict" \
+  [list [bn_get $bn_ac state] \
+        [string match "*cannot see inside an*" \
+           [lindex [lindex [bn_get $bn_ac lines] 0] 2]]] {caution 1}
+
+## BN8 -- THE TEXT.
+set bn_txt [ase::precheck_banner_text $bn_noi]
+check "BN8 a finding renders as its glyph, its sentence and its fix, on one line" \
+  [list [string range $bn_txt 0 1] \
+        [string match "*. Fix: put `ac 1`*" $bn_txt] \
+        [llength [split $bn_txt "\n"]]] \
+  [list [ase::ui::chana_glyph caution] 1 1]
+check "BN8b a CLEAR banner renders as nothing at all -- marking the normal case\
+ is how a form becomes noise" [ase::precheck_banner_text $bn_op] {}
+## BN8c -- ⚠ THE DOOR IS COMPOSED, NOT SPELLED, AND THE ROW HAS TO PROVE IT BY
+## MOVING THE LABEL. A `string match` for the path is satisfied by a hardcoded
+## copy of it -- measured: the sabotage that replaced the composition with the
+## literal `Simulation > Netlist > Recreate…` passed the first cut of this row,
+## because the literal CONTAINS the composed path. So the label proc is renamed
+## away under the banner and the sentence has to follow it.
+rename ase::ui::lbl_netlist_recreate ase::ui::lbl_netlist_recreate_bnsaved
+proc ase::ui::lbl_netlist_recreate {} { return {Regenerate} }
+set bn_moved [ase::precheck_banner_text {state cold}]
+set bn_moved_stale [ase::precheck_banner_text {state stale why schmoved}]
+rename ase::ui::lbl_netlist_recreate {}
+rename ase::ui::lbl_netlist_recreate_bnsaved ase::ui::lbl_netlist_recreate
+check "BN8c the cold sentence names the door, composed from the menu's own\
+ labels -- rename the label and the sentence follows" \
+  [list [ase::ui::menu_path_netlist_recreate] \
+        [string match "*Simulation > Netlist > Regenerate.*" $bn_moved] \
+        [string match "*Recreate*" $bn_moved] \
+        [string match "*Simulation > Netlist > Regenerate.*" $bn_moved_stale]] \
+  {{Simulation > Netlist > Recreate} 1 0 1}
+check "BN8d the two stale sentences are DIFFERENT, because a changed schematic\
+ and a rewritten netlist are different facts" \
+  [list [expr {[ase::precheck_banner_text {state stale why schmoved}] ne \
+               [ase::precheck_banner_text {state stale why deckmoved}]}] \
+        [string match "*schematic has changed*" \
+           [ase::precheck_banner_text {state stale why schmoved}]] \
+        [string match "*netlist has changed*" \
+           [ase::precheck_banner_text {state stale why deckmoved}]]] {1 1 1}
+check "BN8e an empty banner renders as nothing and never raises" \
+  [ase::precheck_banner_text {}] {}
+## BN8f -- WORST FIRST. A form carrying a fatal and a caution must lead with the
+## fatal; a user who reads one line has to read the one that stops the run.
+set bn_order [ase::precheck_banner_text \
+  {state fatal lines {{a caution {a caution sentence} {}} \
+                      {b fatal {a fatal sentence} {}} \
+                      {c blocked {a blocked sentence} {}}}}]
+check "BN8f findings are ordered fatal, blocked, caution" \
+  [list [string match "*fatal sentence*" [lindex [split $bn_order "\n"] 0]] \
+        [string match "*blocked sentence*" [lindex [split $bn_order "\n"] 1]] \
+        [string match "*caution sentence*" [lindex [split $bn_order "\n"] 2]]] \
+  {1 1 1}
+## BN8g -- `fatal` WEARS `blocked`'s GLYPH, ON PURPOSE. To a reader both mean
+## "this will not run"; minting a third mark for a distinction the user cannot
+## act on differently is how a grid becomes noise. They stay apart in the
+## VERDICT, where ase::preflight_gate acts on them differently.
+check "BN8g fatal and blocked share one glyph and `ok` still gets none" \
+  [list [ase::ui::chana_glyph fatal] [ase::ui::chana_glyph blocked] \
+        [ase::ui::chana_glyph ok]] [list "⊘ " "⊘ " {}]
+
+## BN9 -- `set ase_preflight 0` DOES NOT REACH THE BANNER. The gate's own ruling
+## (issue 1425, re-stated by 1434's C88): that lever turns off a REFUSAL; it is
+## not a request to be told less about a circuit. Nothing here refuses anything.
+set bn_lever_was [info exists ::ase_preflight]
+if {$bn_lever_was} { set bn_lever_old $::ase_preflight }
+set ::ase_preflight 0
+set bn_muted [ase::precheck_banner ngspice $bn_st ac {type ac enabled 0}]
+if {$bn_lever_was} { set ::ase_preflight $bn_lever_old } else { unset ::ase_preflight }
+check "BN9 the escape hatch silences no advice" \
+  [list [bn_get $bn_muted state] [expr {$bn_muted eq $bn_ac}]] {caution 1}
+
+## BN10 -- THE FILL SITE IS `ase::netlist_in_place`, AND IT IS THE ONLY ONE.
+## Structural, because the behavioural proof is BN1 and what this pins is that
+## there is no SECOND producer to go stale against. Measured 2026-09-12:
+## `xschem netlist` appears exactly once in src/ase.tcl and not at all in
+## src/ase_window.tcl.
+## ⚠ COMMENTS ARE STRIPPED FIRST, and the first cut of this row did not do it:
+## src/ase_window.tcl mentions `xschem netlist` in a prose comment about a
+## fixture, which counted as a second producer. Same class as 1434's WD7e, where
+## a header that NAMED a filter in order to say it was not applied read as a
+## call.
+proc bn_nocomment {txt} {
+  set out {}
+  foreach l [split $txt "\n"] {
+    if {[regexp {^\s*(#|##)} $l]} { continue }
+    append out "$l\n"
+  }
+  return $out
+}
+set bn_f [open [file join $repo src ase.tcl] r]; set bn_src [bn_nocomment [read $bn_f]]; close $bn_f
+set bn_wf [open [file join $repo src ase_window.tcl] r]; set bn_wsrc [bn_nocomment [read $bn_wf]]; close $bn_wf
+check "BN10 there is exactly ONE `xschem netlist` in ASE-L and the facts capture\
+ sits beside it" \
+  [list [regexp -all {xschem netlist } $bn_src] \
+        [regexp -all {xschem netlist } $bn_wsrc] \
+        [expr {[string first {ase::facts_capture $state $nl} \
+                  [info body ase::netlist_in_place]] >= 0}]] {1 0 1}
+check "BN10b and the dialog's own painter goes through the peek, never the\
+ producer" \
+  [list [expr {[string first {ase::precheck_banner} \
+                  [info body ase::ui::chana_note]] >= 0}] \
+        [expr {[string first {ase::netlist} \
+                  [info body ase::ui::chana_note]] >= 0}]] {1 0}
 
 # --- 0618: the simulation log's provenance framing ---------------------------
 # MEASURED BEFORE THE FIX: `string equal $logtext $::execute(data,last)` is 1 --

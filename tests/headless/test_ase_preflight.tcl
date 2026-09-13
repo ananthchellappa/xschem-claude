@@ -133,6 +133,13 @@
 #           it -- the gate has said so in a comment since issue 1425 and until
 #           `saves_resolve` reached `op` nothing exercised it on this fixture.
 #           PF216f2 is its new discriminator.
+# 229 -> 235 with section PF233 (Stage 6, issue 1435 -- the precondition banner
+# under the Choose Analyses form). ⚠ THE ROWS ARE HERE RATHER THAN WITH THE REST
+# OF 1435 BECAUSE THIS FILE IS THE HAZARD: every `deck_of`/`pcheckx` call below
+# passes a hand-written netlist string that nobody netlisted, and the gate's new
+# optional third argument exists precisely so those donate nothing to the slot a
+# dialog reads.
+# AND RAISED 229 -> 235.
 # AND RAISED 218 -> 229.
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
 # `OVERALL:` and called `exit 0` unconditionally, so `run_regression.tcl` could
@@ -2703,6 +2710,72 @@ eqcheck PF232j-a-disabled-row-and-an-unrenderable-one-are-left-alone \
         [dict size [pcheckx $MPNL {{type sp enabled 1}} {} $PFBAD]]] {0 0}
 
 } pf232err]} { puts "FATAL: PF232 $pf232err" ; incr fail }
+
+## ===========================================================================
+## PF233 -- THE GATE'S THIRD ARGUMENT IS OPTIONAL, AND A FIXTURE STRING DONATES
+## NOTHING. Stage 6, issue 1435.
+## ===========================================================================
+## `ase::preflight_gate` gained `{netlistpath {}}` so that the ONE caller which
+## knows which file the text came from -- `ase::run_deck`, which is handed the
+## path -- can hand the facts it has already computed to the peek slot the
+## precondition banner reads. Everything else omits it.
+##
+## ⚠ THAT DEFAULT IS LOAD-BEARING AND THIS FILE IS THE PLACE TO PIN IT. Every
+## `deck_of`/`pcheckx` call in this suite passes a HAND-WRITTEN netlist string
+## that nobody netlisted. If the gate donated for those, the dialog would start
+## reporting on a circuit that exists only inside a test fixture -- and on a
+## user's machine, on whatever string the last script happened to pass.
+if {[catch {
+
+ase::facts_clear
+set PF233ST [dict create design {lib aselib cell pf233 view schematic} \
+               rundir /tmp analyses {{type op enabled 1}} outputs {}]
+catch {ase::preflight_gate $PF233ST $MPNL}
+eqcheck PF233a-a-two-argument-gate-call-donates-nothing \
+  [ase::facts_status $PF233ST] {state cold}
+eqcheck PF233b-and-the-gate-still-takes-two-arguments \
+  [expr {[llength [info args ase::preflight_gate]] == 3 \
+         && [info default ase::preflight_gate netlistpath _pf233d] == 1 \
+         && $_pf233d eq {}}] 1
+## PF233c -- AND A DONATE INTO A SLOT THIS SESSION DID NOT OPEN IS REFUSED. That
+## is `ase::run_existing`'s shape: ADE-L's Run reaches ase::run_deck without ever
+## re-netlisting, so the path it passes names an artifact nobody captured.
+eqcheck PF233c-a-donate-with-no-slot-open-is-refused \
+  [list [ase::facts_donate $PF233ST /tmp/pf233_nobody_wrote_this.spice \
+           {sources {} exact 1}] [ase::facts_status $PF233ST]] {0 {state cold}}
+## PF233d -- THE NON-VACUITY CONTROL. The same donate IS taken once a slot names
+## that deck, so PF233a/c are refusals and not a proc that never works.
+set ::ase::netlist_facts_slot [dict create sch /pf233/x.sch cell a/b/c \
+  path [file normalize /tmp/pf233_nobody_wrote_this.spice] schstamp {} \
+  deckstamp {} schcur 0 schmod 0 when 0]
+eqcheck PF233d-the-same-donate-is-taken-when-a-slot-names-that-deck \
+  [ase::facts_donate $PF233ST /tmp/pf233_nobody_wrote_this.spice \
+     {sources {} exact 1}] 1
+## PF233e -- ⚠ THE `$netlistpath ne {}` HALF OF THE GATE'S GUARD, PINNED WITH A
+## CONSTRUCTED FIXTURE AND SAID TO BE CONSTRUCTED. MEASURED, and the measurement
+## is the interesting part: `file normalize {}` answers the EMPTY STRING, not the
+## cwd -- so a path-less caller and a slot that `ase::netlist_in_place` opened can
+## never collide, the guard is defence in depth, and the sabotage that removed it
+## SURVIVED. The only fixture that can tell the two spellings apart is a slot
+## whose `path` is itself empty, which `ase::facts_capture` cannot produce. The
+## row exists so the line cannot be deleted as dead. Same shape as issue 1434's
+## S50, which earned a fixture rather than a deletion for the same reason.
+set ::ase::netlist_facts_slot [dict create sch /pf233/x.sch cell a/b/c \
+  path {} schstamp {} deckstamp {} schcur 0 schmod 0 when 0]
+catch {ase::preflight_gate $PF233ST $MPNL}
+eqcheck PF233e-a-path-less-gate-call-donates-nothing-even-into-an-open-slot \
+  [list [file normalize {}] [dict exists $::ase::netlist_facts_slot facts]] {{} 0}
+## PF233f -- THE NON-VACUITY CONTROL, on a slot of the shape the product really
+## opens: the same gate call, given the path, DOES donate.
+set ::ase::netlist_facts_slot [dict create sch /pf233/x.sch cell a/b/c \
+  path [file normalize /tmp/pf233_gate_donation.spice] schstamp {} deckstamp {} \
+  schcur 0 schmod 0 when 0]
+catch {ase::preflight_gate $PF233ST $MPNL /tmp/pf233_gate_donation.spice}
+eqcheck PF233f-and-the-same-call-WITH-the-path-does-donate-non-vacuity \
+  [dict exists $::ase::netlist_facts_slot facts] 1
+ase::facts_clear
+
+} pf233err]} { puts "FATAL: PF233 $pf233err" ; incr fail }
 
 ## restore the real ciw_echo OUTSIDE the catch, so a FATAL cannot leave the stub
 if {[info commands ::ciw_echo_orig] ne {}} {

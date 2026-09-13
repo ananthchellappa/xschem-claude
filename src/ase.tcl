@@ -8648,13 +8648,12 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
 proc ase::analysis_precheck {sim state facts} {
   # The bench's options, flattened to name -> value, because a precondition can
   # depend on one (the CIDER/KLU pair is the measured case).
-  set opts [dict create]
-  foreach o [ase::state_get $state options] {
-    if {![dict exists $o name]} { continue }
-    set ov 1
-    if {[dict exists $o value]} { set ov [dict get $o value] }
-    dict set opts [dict get $o name] $ov
-  }
+  #
+  # ⚠ 1435: ONE BODY, SHARED WITH THE BANNER. This loop was inline here and the
+  # banner needs the identical answer; two copies is two places for "an option
+  # with no `value` key means 1" to drift, which is the defect Stage 1 spent
+  # itself deleting.
+  set opts [ase::state_option_map $state]
   set out [dict create]
   foreach row [ase::state_get $state analyses] {
     if {[ase::state_get $row enabled 0] ne {1}} { continue }
@@ -8681,6 +8680,315 @@ proc ase::precheck_worst {pc} {
   return $worst
 }
 
+
+# ---------------------------------------------------------------------------
+# THE NETLIST-FACTS SLOT, AND WHY A DIALOG MAY NOT FILL IT. Issue 1435.
+# ---------------------------------------------------------------------------
+#
+# Stage 4 shipped `ase::netlist_facts`, `ase::analysis_needs` and
+# `ase::analysis_precheck`, and TWO of its three user-visible surfaces:
+# ase::preflight_gate's `fatal` refusal (1424) and its advice block (1425).
+# The third -- the precondition banner under the Choose Analyses form -- did not
+# land, and LEDGER.md named the reason rather than hiding it: the banner needs
+# netlist TEXT, which the dialog does not have and could only obtain by calling
+# `ase::netlist`.
+#
+# ⚠ AND THAT CALL IS NOT A READ. `ase::netlist` deletes and rewrites
+# `<rundir>/<cell>.spice`; with an empty `rundir` key `ase::rundir` answers
+# `set_netlist_dir 0`, i.e. ~/.xschem/simulations, one global directory shared by
+# every state of every cell. Its arm (b) does `xschem load`, replacing the
+# current schematic buffer. Its arm (c) is `ase::with_design_current`, which
+# ascends the user's hierarchy, parks autosave_backup and puts them back -- and
+# REFUSES outright for a modified buffer with autosave off. None of that may
+# happen because a user opened a window.
+#
+# So the banner PEEKS and never measures, which is the shape this file already
+# uses twice:
+#
+#   * `ase::sim_caps_cached` -- "THE FREE PEEK ... IT MUST NEVER START A
+#     PROGRAM", with `ase::analysis_detect` as the one cold door;
+#   * `ase::op_cards_put/_hit/_for` -- a slot filled as a BY-PRODUCT of a
+#     netlist somebody asked for, read by whoever needs it afterwards.
+#
+# ⚠ THE FILL SITE IS `ase::netlist_in_place`, AND IT IS THE ONLY ONE. Measured:
+# `xschem netlist` appears EXACTLY ONCE in src/ase.tcl and src/ase_window.tcl,
+# inside that proc, and all four arms of `ase::netlist` end there. So every
+# legitimate producer of an ASE-L netlist artifact -- Simulation > Netlist >
+# Recreate, Netlist > Display, Netlist and Run, the descend round trip -- fills
+# this slot, and nothing else can. `ase::op_cards_capture` is captured on the
+# line above for the same reason.
+#
+# ⚠ THE FACTS ARE COMPUTED LAZILY, NOT AT CAPTURE. MEASURED on this box:
+# `ase::netlist_facts` costs 0.9 ms over 200 lines, 7.5 ms over 2 000 and
+# **76.5 ms over 20 000** (447 KB) -- linear, and a cost the RUN path already
+# pays inside `ase::preflight_gate`. Paying it again at every netlist would
+# double it for the many netlists nobody ever opens a dialog after; paying it at
+# every `chana_show` would pay it per radio click. It is paid once, on the first
+# peek after a netlist, and memoised -- and `ase::facts_donate` lets the run path
+# hand over the copy it has already computed so that path pays nothing at all.
+#
+# The slot: {sch <design .sch path> cell <lib/cell/view> path <the .spice>
+#            schstamp <mtime:size> deckstamp <mtime:size> schcur 0|1
+#            schmod 0|1 when <epoch> facts <computed, or absent>}
+# Empty = nothing held. ONE slot, cleared on every capture, exactly as
+# `ase::op_cards_clear` is -- a previous cell's facts must never answer about
+# another design.
+namespace eval ase { variable netlist_facts_slot [dict create] }
+
+proc ase::facts_clear {} {
+  variable netlist_facts_slot
+  set netlist_facts_slot [dict create]
+}
+
+# A file's identity as one string, or {} when it is not there. mtime AND size,
+# because `ase::op_cards_put`'s own header records the 1-second-mtime hazard and
+# a netlist rewritten within the same second almost always changes length.
+proc ase::facts_stamp {path} {
+  if {$path eq {} || ![file isfile $path]} { return {} }
+  if {[catch {file mtime $path} m]} { return {} }
+  if {[catch {file size  $path} s]} { return {} }
+  return "$m:$s"
+}
+
+# WHERE THIS STATE'S DESIGN LIVES, resolved the way `ase::netlist` resolves it
+# and with none of its side effects: `xschem cellview_path` is a library.defs
+# lookup, it loads nothing and writes nothing. {} whenever the state cannot name
+# a design or the design does not resolve -- never a raise, because every caller
+# here is on a peek path.
+proc ase::facts_design_path {state} {
+  set design [ase::state_get $state design]
+  if {$design eq {} || ![dict exists $design lib] || ![dict exists $design cell]} {
+    return {}
+  }
+  set view schematic
+  if {[dict exists $design view] && [dict get $design view] ne {}} {
+    set view [dict get $design view]
+  }
+  set p {}
+  catch {set p [xschem cellview_path [dict get $design lib]/[dict get $design cell] $view]}
+  if {$p eq {}} { return {} }
+  return [file normalize $p]
+}
+
+# 1 iff `$path` is the schematic the editor is showing right now.
+# IS THE DESIGN'S BUFFER DIRTY RIGHT NOW? 0 whenever it is not the schematic the
+# editor is showing, because `xschem get modified` is then about a different cell.
+#
+# ⚠ IT IS ITS OWN PROC SO A TEST ROW CAN STAND WHERE THE EDITOR STANDS. The only
+# other way to drive the dirty leg of `ase::facts_status` is to make a real edit
+# to the suite's fixture schematic, which every later row in that file then
+# inherits -- row BN4f stubs this instead.
+proc ase::facts_modified_now {sch} {
+  if {![ase::facts_is_current $sch]} { return 0 }
+  set mod 0
+  catch {set mod [expr {[xschem get modified] ? 1 : 0}]}
+  return $mod
+}
+
+proc ase::facts_is_current {path} {
+  if {$path eq {}} { return 0 }
+  set cur {}
+  catch {set cur [file normalize [xschem get schname]]}
+  return [expr {$cur ne {} && $cur eq $path ? 1 : 0}]
+}
+
+# THE PRIMING SEAM -- one line inside ase::netlist_in_place, under a catch.
+proc ase::facts_capture {state netlistpath} {
+  variable netlist_facts_slot
+  ase::facts_clear
+  set sch [ase::facts_design_path $state]
+  if {$sch eq {}} { return }
+  set cell {}
+  catch {
+    set d [ase::state_get $state design]
+    set v schematic
+    if {[dict exists $d view] && [dict get $d view] ne {}} { set v [dict get $d view] }
+    set cell "[dict get $d lib]/[dict get $d cell]/$v"
+  }
+  set cur [ase::facts_is_current $sch]
+  set mod [ase::facts_modified_now $sch]
+  set netlist_facts_slot [dict create \
+    sch $sch cell $cell path [file normalize $netlistpath] \
+    schstamp [ase::facts_stamp $sch] \
+    deckstamp [ase::facts_stamp $netlistpath] \
+    schcur $cur schmod $mod when [clock seconds]]
+}
+
+# THE RUN PATH'S DONATION. `ase::preflight_gate` computes the facts already; this
+# hands them to the slot so the first peek afterwards costs nothing.
+#
+# ⚠ IT FILLS AN EXISTING SLOT AND NEVER CREATES ONE. `ase::run_deck` is reachable
+# without a netlist -- `ase::run_existing` is ADE-L's Run and deliberately never
+# re-netlists -- so a donate that created a slot would stamp facts about an
+# artifact this session did not produce with a schematic stamp taken now. The
+# guard is the deck PATH: donate only into the slot that names the same file.
+proc ase::facts_donate {state netlistpath facts} {
+  variable netlist_facts_slot
+  if {![dict exists $netlist_facts_slot path]} { return 0 }
+  if {[dict get $netlist_facts_slot path] ne [file normalize $netlistpath]} { return 0 }
+  dict set netlist_facts_slot facts $facts
+  return 1
+}
+
+# WHAT ASE-L LEGITIMATELY KNOWS ABOUT THIS DESIGN'S CIRCUIT RIGHT NOW, as
+#   {state cold}
+#   {state stale why schmoved|unsaved|deckmoved when <epoch>}
+#   {state warm when <epoch> cell <lib/cell/view>}
+# and NOTHING ELSE. It reads two `file stat`s and one `xschem get`; it starts no
+# program, loads no schematic and writes nothing.
+#
+# ⚠ `cold` AND `stale` ARE DIFFERENT USER SITUATIONS and are kept apart for the
+# same reason `ase::op_cards_hit` is separate from `ase::op_cards_for`: "ASE-L
+# has not looked at your circuit yet" and "ASE-L looked, and you have changed it
+# since" send a user to the same menu entry for different reasons, and a banner
+# that said the first when the second was true would be lying about their edit.
+#
+# ⚠ THE UNSAVED-EDIT TEST IS ONE-SIDED, AND THAT IS THE HONEST DIRECTION.
+# `xschem netlist` netlists the IN-MEMORY buffer, so a netlist taken over unsaved
+# edits is accurate for them -- the question is only whether the buffer has moved
+# SINCE. The file stamp cannot see that, and there is no modification counter to
+# read. What there is: `xschem get modified`, about the CURRENT schematic. So the
+# slot records whether the design was current at capture and what the flag said
+# then, and a clean-at-capture buffer that is dirty now proves an edit landed
+# after the netlist. Dirty-at-capture proves nothing either way and claims
+# nothing. ⚠ A SAVED edit is caught by the stamp whatever the flag says.
+proc ase::facts_status {state} {
+  variable netlist_facts_slot
+  if {![dict exists $netlist_facts_slot sch]} { return {state cold} }
+  set sch [ase::facts_design_path $state]
+  if {$sch eq {} || $sch ne [dict get $netlist_facts_slot sch]} { return {state cold} }
+  set when [dict get $netlist_facts_slot when]
+  if {[ase::facts_stamp $sch] ne [dict get $netlist_facts_slot schstamp]} {
+    return [list state stale why schmoved when $when]
+  }
+  if {[dict get $netlist_facts_slot schcur] && [dict get $netlist_facts_slot schmod] eq {0} \
+      && [ase::facts_modified_now $sch]} {
+    return [list state stale why unsaved when $when]
+  }
+  if {[ase::facts_stamp [dict get $netlist_facts_slot path]] \
+        ne [dict get $netlist_facts_slot deckstamp]} {
+    return [list state stale why deckmoved when $when]
+  }
+  return [list state warm when $when cell [dict get $netlist_facts_slot cell]]
+}
+
+# THE FREE PEEK: `ase::netlist_facts` for this design, or {}. Computed on the
+# first call after a netlist and memoised into the slot; {} for a cold or stale
+# slot, and for a netlist artifact that has since become unreadable.
+#
+# ⚠ IT MUST NEVER NETLIST. Row BN2 of tests/headless/test_ase_core.tcl stubs
+# `ase::netlist` to raise and opens the dialog; if anything on this path ever
+# reaches for one, that row is what says so.
+proc ase::netlist_facts_cached {state} {
+  variable netlist_facts_slot
+  if {[dict get [ase::facts_status $state] state] ne {warm}} { return {} }
+  if {[dict exists $netlist_facts_slot facts]} {
+    return [dict get $netlist_facts_slot facts]
+  }
+  set p [dict get $netlist_facts_slot path]
+  if {[catch {open $p r} f]} { return {} }
+  set txt [read $f]
+  close $f
+  if {[catch {ase::netlist_facts $txt} fx]} { return {} }
+  dict set netlist_facts_slot facts $fx
+  return $fx
+}
+
+# The bench's options flattened to name -> value. ONE body: `ase::analysis_precheck`
+# and the banner both need it and neither may re-derive it -- a second copy is a
+# second place for "an option with no `value` key means 1" to drift.
+proc ase::state_option_map {state} {
+  set opts [dict create]
+  foreach o [ase::state_get $state options] {
+    if {![dict exists $o name]} { continue }
+    set ov 1
+    if {[dict exists $o value]} { set ov [dict get $o value] }
+    dict set opts [dict get $o name] $ov
+  }
+  return $opts
+}
+
+# ---------------------------------------------------------------------------
+# WHAT THE FORM SAYS ABOUT THE ANALYSIS IT IS SHOWING. Issue 1435, ⚖ R9.
+# ---------------------------------------------------------------------------
+#
+#   {state cold}
+#   {state stale why <...>}
+#   {state clear}
+#   {state caution|blocked|fatal lines {{<id> <verdict> <sentence> <fix>} ...}}
+#
+# ⚠ ONE ROW, NOT THE BENCH, AND NOT ONLY THE ENABLED ONES. `ase::analysis_precheck`
+# is deliberately bench-wide and ENABLED-only -- "a bench opening with three
+# disabled rows must not open wearing three warnings about a circuit nobody has
+# asked it to simulate yet". A dialog is the opposite case: the user selected
+# this cell, which IS the asking, and the commonest reason to be looking at the
+# form is to decide whether to turn the analysis ON. Judging only enabled rows
+# here would stay silent at exactly the moment the advice is worth having.
+#
+# The two surfaces are complementary and neither replaces the other: this one is
+# per-type and answers before the user commits; `ase::preflight_gate`'s advice
+# block (issue 1425) is bench-wide and answers before the run.
+#
+# ⚠ `set ase_preflight 0` DOES NOT REACH THIS. The gate's own ruling, from issue
+# 1425 and re-stated by 1434's C88: that lever turns off a REFUSAL; it is not a
+# request to be told less about a circuit. Nothing here refuses anything.
+proc ase::precheck_banner {sim state type row} {
+  set st [ase::facts_status $state]
+  if {[dict get $st state] ne {warm}} { return $st }
+  set facts [ase::netlist_facts_cached $state]
+  if {$facts eq {}} { return {state cold} }
+  if {$type eq {}} { return {state clear} }
+  if {![dict exists $row type]} { dict set row type $type }
+  set n {}
+  catch {set n [ase::analysis_needs $sim $row $facts [ase::state_option_map $state] $state]}
+  if {![llength $n]} { return {state clear} }
+  set worst [ase::precheck_worst [dict create $type $n]]
+  return [list state $worst lines $n]
+}
+
+# THE BANNER'S TEXT, or {} when there is nothing to say. ⚖ R9: recommended
+# wording, not a ratification -- `owed.sh add rule 1435`.
+#
+# ⚠ ASE-L OWNS THE FRAME AND THE CLAUSE COMES FROM `ase::needs_eval`, which is
+# where the adapter's content already arrives (D34-D37). This proc mints THREE
+# sentences and no fourth: the cold one, the two stale ones and the line shape.
+# Every precondition sentence it prints was minted by issues 1423/1425/1428/1432
+# and is already on the user's rule queue under those numbers.
+#
+# ⚠ THE GLYPHS ARE `ase::ui::chana_glyph`'s, so the banner and the grid cell
+# above it speak one vocabulary rather than two.
+proc ase::precheck_banner_text {banner} {
+  if {$banner eq {}} { return {} }
+  set door {Simulation > Netlist > Recreate}
+  catch {set door [ase::ui::menu_path_netlist_recreate]}
+  switch -exact -- [dict get $banner state] {
+    clear { return {} }
+    cold  { return "ASE-L has not netlisted this design yet, so it cannot check\
+ this analysis against the circuit. $door." }
+    stale {
+      set why {}
+      catch {set why [dict get $banner why]}
+      if {$why eq {deckmoved}} {
+        return "The netlist has changed since ASE-L read it, so these checks are\
+ out of date. $door."
+      }
+      return "The schematic has changed since the last netlist, so these checks\
+ are out of date. $door."
+    }
+  }
+  set out {}
+  foreach v {fatal blocked caution} {
+    foreach r [dict get $banner lines] {
+      if {[lindex $r 1] ne $v} { continue }
+      set g {}
+      catch {set g [ase::ui::chana_glyph [lindex $r 1]]}
+      set l "$g[lindex $r 2]"
+      if {[lindex $r 3] ne {}} { append l ". Fix: [lindex $r 3]" }
+      lappend out $l
+    }
+  }
+  return [join $out "\n"]
+}
 
 # Resolve ONE identifier against the map.
 #
@@ -8965,7 +9273,14 @@ proc ase::preflight_fix_session {key} {
 # message, because the map's blind spot is real (a top-level node that only an
 # .include'd file defines) and a user who is right must not be locked out of
 # their own simulator. Defences (b) and (c) are unaffected by it.
-proc ase::preflight_gate {state netlist_text} {
+## ⚠ 1435 ADDED THE THIRD ARGUMENT AND IT IS OPTIONAL BY DESIGN. Only a caller
+## that knows WHICH FILE this text came from may donate the facts to the peek
+## slot, and `ase::run_deck` is the only one that does (it is handed the path).
+## Every other caller -- and every suite fixture that passes a hand-written
+## netlist string -- omits it and donates nothing, which is the right answer: a
+## string nobody netlisted must not become what the dialog reports about a
+## circuit.
+proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   # --- 1415: AN ENABLED ANALYSIS THAT CANNOT BE EMITTED IS A REFUSAL ---------
   #
   # Stage 3. What the window shows must reach the deck -- so a row the form
@@ -9070,6 +9385,12 @@ proc ase::preflight_gate {state netlist_text} {
   # process pointless.
   set pfacts {}
   catch { set pfacts [ase::netlist_facts $netlist_text] }
+  ## 1435: HAND THEM TO THE SLOT SO THE DIALOG NEVER RECOMPUTES THEM. A donate
+  ## fills only a slot ase::netlist_in_place already opened for THIS deck path,
+  ## so ase::run_existing -- which never re-netlists -- donates nothing.
+  if {$pfacts ne {} && $netlistpath ne {}} {
+    catch { ase::facts_donate $state $netlistpath $pfacts }
+  }
   if {$pfacts ne {}} {
     set pc [ase::analysis_precheck $simname $state $pfacts]
     set pfatal {}
@@ -11158,6 +11479,13 @@ proc ase::netlist_in_place {state cell} {
     return -code error "ase: netlist not produced: $nl"
   }
   catch {ase::op_cards_capture $state $nl}
+  ## 1435: AND THE SAME BY-PRODUCT, FOR THE CIRCUIT'S OWN FACTS. This is the one
+  ## `xschem netlist` in ASE-L and every arm of ase::netlist ends here, so this
+  ## line is what makes "the precondition banner only ever reads a netlist
+  ## somebody asked for" true BY CONSTRUCTION rather than by convention. It
+  ## records a stamp and a path; ase::netlist_facts_cached does the parsing, once,
+  ## on the first peek.
+  catch {ase::facts_capture $state $nl}
   return $nl
 }
 
@@ -11534,7 +11862,7 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   # line only READS, so a refusal leaves no deck, no raw, no log, no deleted
   # VCD, no rebuilt .so and no started process. It needs the netlist text, so it
   # cannot be item 8's neighbour any earlier than this.
-  ase::preflight_gate $state $netlist_text
+  ase::preflight_gate $state $netlist_text $netlistfile
 
   set rd   [ase::rundir $state]
   set cell [dict get [dict get $state design] cell]

@@ -108,6 +108,42 @@ set fail 0; set npass 0
 #              place a widget row can say that an empty box produces a SHORTER
 #              deck line rather than a padded one. ⚠ Its refusal row carries
 #              G2tf's `catch` from the start.
+#   37 / 300   section GN, Stage 6 (issue 1435): the PRECONDITION BANNER under
+#              the form -- Stage 4's first user-visible surface, deferred
+#              because it needs netlist TEXT and a dialog may not produce one.
+#              Headless is unmoved for the usual reason; the schema half is
+#              test_ase_core.tcl section BN.
+#              ⚠ GN1 IS WHY THE `look` DEBT EXISTS. PLAN.md's Stage 4 says of
+#              this item "there is no new pixel ... No look debt is filed", on
+#              the ground that everything reaches the user through
+#              `ase::ui::dialog_status`. GN1 clears the capability cache -- what
+#              a user who has never pressed Detect has -- and measures ALL
+#              ELEVEN cells carrying a capability sentence in that very widget,
+#              so the two sentences would evict each other; GN2 measures that it
+#              does not wrap. The plan's paragraph is the stale half and its
+#              `.note` name is the live one.
+#              ⚠ GN10 IS THE ITEM'S WHOLE CONSTRAINT AS A ROW: opening the
+#              dialog and clicking all eleven cells must start NO netlist.
+#
+# ⚠ TWO ROWS IN THIS FILE ARE RED ON THE DISPLAY ARM AND WERE RED BEFORE 1435
+# -- verified by restoring src/ase.tcl and src/ase_window.tcl to HEAD 81312742
+# and re-running: the same two rows, the same actual values, 283 passed either
+# way. They are issue **1436**, filed rather than carried:
+#   * `G2sens` expects `$top.chana.form.stop` NOT to exist for `sens`. Issue 1432
+#     gave `sens` its AC mode -- `mode sweep points start stop`, every one
+#     `depends {mode ac}` -- and `ase::ui::chana_show` builds every non-advanced
+#     field whatever its `depends` says. So the widget is there and the row,
+#     written for 1428's two-field `sens`, still says it is not. This is the
+#     visible face of receipt 17's own deferred note: **`depends` has no
+#     surface.**
+#   * `GG9` expects `ase::analysis_detectable` to be 1 and Detect to be live. By
+#     that point in this arm the capability cache is WARM. In a fresh process it
+#     is cold and the row's premise holds; under a scratch HOME a THIRD row
+#     (`GG3`) reds as well, so the leak is environmental. That is ISO1434's
+#     lesson from the other side: a suite's isolation covers the REGISTRY, and
+#     `ase::sim_status` falls back to `[auto_execok ngspice]`.
+# T1 runs this file's HEADLESS arm only (37 checks, ALL PASS), so neither red is
+# a T1 failure -- and neither is furniture.
 #
 # ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
 # row; do not edit the number downward to make the file agree with itself.
@@ -2659,6 +2695,254 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "GG11 the grid adds no colour to the locked palette, so it reads the same\
  in every theme" \
     [llength [dict keys [ase::palette]]] 9
+
+  # ==========================================================================
+  # GN -- THE PRECONDITION BANNER UNDER THE FORM. Stage 6, issue 1435.
+  # ==========================================================================
+  # ⚠ IT IS A NEW WIDGET, AND THAT WAS MEASURED RATHER THAN PREFERRED.
+  # PLAN.md's Stage 4 says of this item "there is no new pixel ... No look debt
+  # is filed", on the ground that everything reaches the user through
+  # `ase::ui::dialog_status`. Measured on :99 against this very dialog,
+  # 2026-09-12: `$w.status` is OCCUPIED ON ALL ELEVEN CELLS of a fresh bench --
+  # nine `baseline` cells carry "Offered because every build of this simulator
+  # has it. Nothing was measured." and the two `unrenderable` ones carry theirs
+  # -- so a precondition sentence there would EVICT a capability sentence that is
+  # equally true, and `$w.status` has `-wraplength 0`, which took the dialog from
+  # 667 px to 856 px with one 101-character sentence in it. GN1 and GN2 are those
+  # two facts as rows, so the plan's paragraph cannot be re-derived from nothing.
+  # A `look` debt is filed.
+
+  ## GN1 -- THE STATUS LINE IS ALREADY SPOKEN FOR, AND THE FIRST-RUN USER IS THE
+  ## ONE IT IS SPOKEN FOR ON EVERY CELL.
+  ##
+  ## ⚠ THE CAPABILITY CACHE IS CLEARED FOR THIS ROW, AND THE FIRST CUT DID NOT
+  ## DO IT -- which is how this row found its own refinement. With capabilities
+  ## MEASURED, nine of the eleven cells answer `measured` and
+  ## `ase::analysis_state_msg` returns {} for them, so the status line looks free.
+  ## With a COLD cache -- what a user who has never pressed Detect has, which is
+  ## also the state `test_ase_core`'s ISO1434 pins as the honest one for a suite
+  ## -- all eleven carry a sentence. Both states are real; the collision exists
+  ## in one of them, and a surface that shares a widget only SOMETIMES is worse
+  ## than one that never does, because the eviction then depends on whether the
+  ## user pressed a button in an unrelated part of the dialog.
+  set GN1CAPS $::ase::sim_caps
+  set ::ase::sim_caps [dict create]
+  set GN1 {}
+  set GN1N 0
+  foreach gnt [ase::analysis_states ngspice [ase::sim_caps_cached ngspice]] {
+    incr GN1N
+    set ::ase::ui::dlg($key,antype) [lindex $gnt 0]
+    ase::ui::chana_show $key
+    if {[string trim [$gw.status cget -text]] eq {}} { lappend GN1 [lindex $gnt 0] }
+  }
+  check "GN1 with nothing measured -- the state a first-run user is in -- the\
+ existing status line carries a sentence on EVERY cell, so the banner cannot be\
+ a second tenant of it" [list $GN1N $GN1] {11 {}}
+  set ::ase::sim_caps $GN1CAPS
+  ## GN1b -- AND TWO CELLS CARRY ONE WHATEVER THE CACHE SAYS. `unrenderable` is
+  ## decided above the availability arms, so no measurement can empty these two.
+  set GN1B {}
+  foreach gnt {sp pss} {
+    set ::ase::ui::dlg($key,antype) $gnt
+    ase::ui::chana_show $key
+    lappend GN1B [expr {[string trim [$gw.status cget -text]] ne {}}]
+  }
+  check "GN1b and the two unrenderable cells carry one whatever has been\
+ measured" $GN1B {1 1}
+
+  ## GN2 -- AND IT DOES NOT WRAP, so a precondition sentence in it widens the
+  ## dialog. The banner's own `-wraplength` is what keeps it from doing that.
+  update idletasks
+  set GN2W [winfo reqwidth $gw]
+  check "GN2 the banner is its own wrapping label and costs the dialog no width" \
+    [list [winfo class $gw.note] [$gw.status cget -wraplength] \
+          [expr {[$gw.note cget -wraplength] > 0}] \
+          [expr {[winfo reqwidth $gw.note] <= $GN2W}]] \
+    {Label 0 1 1}
+
+  ## GN3 -- WHERE IT SITS: under the form, above `Options…`, and nothing moved to
+  ## make room. Issue 1405 is what moving a path costs.
+  set GN3 [grid info $gw.note]
+  check "GN3 the banner is at grid row 7, spanning both columns, with the form at\
+ 2 and Options/buttons still at 8 and 9" \
+    [list [dict get $GN3 -row] [dict get $GN3 -columnspan] \
+          [dict get [grid info $gw.form] -row] \
+          [dict get [grid info $gw.opts] -row] \
+          [dict get [grid info $gw.btns] -row]] {7 2 2 8 9}
+
+  ## GN4 -- COLD: the dialog has netlisted nothing, and says so rather than
+  ## saying nothing. ⚠ THE SLOT IS CLEARED FIRST so this row cannot inherit a
+  ## warm slot from an earlier section and pass vacuously.
+  ase::facts_clear
+  set ::ase::ui::dlg($key,antype) noise
+  ase::ui::chana_show $key
+  check "GN4 with nothing netlisted the banner says so, and names the door" \
+    [list [expr {[$gw.note cget -text] ne {}}] \
+          [string match "*[ase::ui::menu_path_netlist_recreate]*" \
+             [$gw.note cget -text]]] {1 1}
+  ## GN4b -- AND THE STATUS LINE IS UNTOUCHED BY IT. This is the eviction that
+  ## did NOT happen, asserted rather than assumed -- before and after a repaint,
+  ## plus the structural half, because "it happens not to write it today" and "it
+  ## cannot write it" are different guarantees.
+  set GN4BEFORE [$gw.status cget -text]
+  ase::ui::chana_note $key
+  check "GN4b painting the banner does not touch the status line, and cannot" \
+    [list [expr {[$gw.status cget -text] eq $GN4BEFORE}] \
+          [expr {[string first {.status} [info body ase::ui::chana_note]] >= 0}] \
+          [expr {[string first {dialog_status} [info body ase::ui::chana_note]] >= 0}]] \
+    {1 0 0}
+
+  ## GN5 -- WARM: a netlist somebody asked for, through the menu entry the banner
+  ## names, and the advice arrives. ⚠ `ase::ui::do_netlist_recreate` IS THE
+  ## PRODUCT'S OWN GESTURE, not a direct ase::netlist -- the point of the item is
+  ## that a legitimate gesture is the only filler.
+  ase::ui::do_netlist_recreate $key
+  set GN5FACTS [ase::netlist_facts_cached [ase::session_state $key]]
+  set ::ase::ui::dlg($key,antype) ac
+  ase::ui::chana_show $key
+  check "GN5 Netlist > Recreate fills the slot and the ac cell gains its\
+ precondition -- the run has not started" \
+    [list [expr {$GN5FACTS ne {}}] \
+          [string match "*no AC source*" [$gw.note cget -text]] \
+          [string match "*Fix: put `ac 1`*" [$gw.note cget -text]]] {1 1 1}
+
+  ## GN6 -- IT FOLLOWS THE SELECTED CELL. An `op` row has nothing to say and the
+  ## banner goes quiet; picking `ac` again brings it back. A banner that stuck
+  ## would be describing the previous analysis.
+  set ::ase::ui::dlg($key,antype) op
+  ase::ui::chana_show $key
+  set GN6OP [$gw.note cget -text]
+  set ::ase::ui::dlg($key,antype) ac
+  ase::ui::chana_show $key
+  set GN6AC [$gw.note cget -text]
+  check "GN6 the banner follows the selected cell and clears when there is\
+ nothing to say" [list $GN6OP [expr {$GN6AC ne {}}]] {{} 1}
+
+  ## GN7 -- IT READS THE FORM, NOT THE STORED ROW. Type a source name that is not
+  ## in the circuit into the dc form and the banner says so BEFORE OK is pressed.
+  ## ⚠ THIS IS THE HALF THAT MAKES IT ADVICE RATHER THAN A POST-MORTEM.
+  set ::ase::ui::dlg($key,antype) dc
+  ase::ui::chana_show $key
+  set GN7BEFORE [$gw.note cget -text]
+  $gw.form.source delete 0 end
+  $gw.form.source insert 0 Vnope
+  ase::ui::chana_note $key
+  check "GN7 the banner judges what is TYPED in the form, before OK" \
+    [list $GN7BEFORE [string match "*no 'Vnope' to sweep*" [$gw.note cget -text]]] \
+    {{} 1}
+  ## GN7b -- AND THE MERGED ROW IS THE ONE OK WOULD STORE: a HIDDEN ADVANCED field
+  ## keeps its stored value rather than vanishing because no widget exists.
+  ##
+  ## ⚠ THE FIXTURE IS `tran`, NOT `dc`, AND THAT IS A SABOTAGE FINDING. The first
+  ## cut asserted this on the `dc` form, which has no advanced field at all, so
+  ## "overlay the form on the stored row" and "build from the form alone" gave
+  ## the same answer and the sabotage survived. `tran`'s `tmax` is `advanced 1`
+  ## and the disclosure opens CLOSED, so `form_has` is false for it while the
+  ## state carries a value -- the one shape that can tell the two apart. *A row
+  ## whose fixtures never disagree cannot fail.*
+  set GN7ST [ase::session_state $key]
+  set GN7ROWS [ase::state_get $GN7ST analyses]
+  for {set GN7I 0} {$GN7I < [llength $GN7ROWS]} {incr GN7I} {
+    if {[ase::state_get [lindex $GN7ROWS $GN7I] type] eq {tran}} {
+      lset GN7ROWS $GN7I [dict create type tran enabled 0 step 1n stop 1u tmax 2n]
+    }
+  }
+  dict set GN7ST analyses $GN7ROWS
+  ase::session_update $key $GN7ST
+  set ::ase::ui::dlg($key,advopen) 0
+  set ::ase::ui::dlg($key,antype) tran
+  ase::ui::chana_show $key
+  set GN7MERGED [ase::ui::chana_merged_row $key tran]
+  check "GN7b the merged row overlays the form on the STORED row, so a hidden\
+ advanced field is not lost -- and it really is hidden" \
+    [list [ase::ui::form_has $key step] [ase::ui::form_has $key tmax] \
+          [expr {[dict exists $GN7MERGED tmax] ? [dict get $GN7MERGED tmax] : {LOST}}] \
+          [expr {[dict exists $GN7MERGED step] ? [dict get $GN7MERGED step] : {LOST}}]] \
+    {1 0 2n 1n}
+  ## GN7c -- the merged row and the banner read the SAME typed value, which is
+  ## what makes the banner's answer the answer OK would act on. ⚠ The form is
+  ## re-typed here because GN7b rebuilt it: `chana_show` destroys `$w.form`, so
+  ## anything typed before it is gone by construction.
+  set ::ase::ui::dlg($key,antype) dc
+  ase::ui::chana_show $key
+  $gw.form.source delete 0 end
+  $gw.form.source insert 0 Vnope
+  ase::ui::chana_note $key
+  check "GN7c the merged row and the banner read the same typed value" \
+    [list [dict get [ase::ui::chana_merged_row $key dc] source] \
+          [string match "*no 'Vnope' to sweep*" [$gw.note cget -text]]] {Vnope 1}
+  $gw.form.source delete 0 end
+  $gw.form.source insert 0 V2
+  ase::ui::chana_note $key
+
+  ## GN8 -- A DISABLED ROW STILL GETS THE ADVICE, and that is where it parts
+  ## company with `ase::analysis_precheck` (bench-wide, enabled-only). The
+  ## commonest reason to be looking at this form is to decide whether to turn the
+  ## analysis ON.
+  set ::ase::ui::dlg($key,antype) ac
+  ase::ui::chana_show $key
+  check "GN8 the ac cell is advised while its row is still switched off" \
+    [list [ase::state_get [ase::ui::chana_row $key ac] enabled 0] \
+          [expr {[$gw.note cget -text] ne {}}]] {0 1}
+
+  ## GN9 -- STALE: the banner does not go on quoting a netlist the schematic has
+  ## outgrown. Driven through the slot's own stamp, because touching the fixture
+  ## schematic here would move it under every later row in this file.
+  set ::ase::netlist_facts_slot [dict replace $::ase::netlist_facts_slot \
+                                   schstamp {1:1}]
+  ase::ui::chana_show $key
+  check "GN9 a schematic that has moved since the netlist is said to have moved,\
+ rather than quoted" \
+    [list [string match "*schematic has changed*" [$gw.note cget -text]] \
+          [string match "*no AC source*" [$gw.note cget -text]]] {1 0}
+  ase::ui::do_netlist_recreate $key
+  ase::ui::chana_show $key
+
+  ## GN10 -- ⚠ OPENING THIS DIALOG NETLISTS NOTHING. The schema half of this is
+  ## test_ase_core's BN2; this is the same claim driven through the real dialog,
+  ## because that is the gesture the constraint is about.
+  ase::facts_clear
+  rename ase::netlist ase::netlist_gnsaved
+  set ::gn_netlisted 0
+  proc ase::netlist {args} { set ::gn_netlisted 1 ; error "GN10: the dialog netlisted" }
+  catch {destroy $gw}
+  set gw [ase::ui::choose_analyses $key]
+  foreach gnt {op dc ac tran noise tf pz sens disto sp pss} {
+    catch {$gw.types.$gnt invoke}
+  }
+  update
+  rename ase::netlist {}
+  rename ase::netlist_gnsaved ase::netlist
+  check "GN10 opening the dialog and clicking all eleven cells starts NO netlist" \
+    [list $::gn_netlisted [winfo exists $gw.note]] {0 1}
+  ase::ui::do_netlist_recreate $key
+
+  ## GN11 -- ⚠ THE DOOR THE BANNER NAMES AND THE MENU ENTRY IT NAMES ARE ONE
+  ## STRING, AND THIS ROW IS WHY THE MENU WAS REWIRED. The banner composes
+  ## `Simulation > Netlist > Recreate` from `lbl_simulation`, `lbl_netlist` and
+  ## `lbl_netlist_recreate`; before issue 1435 the menu spelled the last two as
+  ## bare literals, so renaming the entry would have left the banner pointing at
+  ## a menu item that no longer existed. Invariant I1, the rule the three labels
+  ## beside them already carry.
+  ##
+  ## ⚠ BOTH HALVES, AND THE STRUCTURAL ONE IS NOT OPTIONAL. Comparing the
+  ## rendered labels to the procs' answers passes just as well when the builder
+  ## holds a hardcoded copy -- measured: the sabotage that put `-label Recreate`
+  ## back reddened NOTHING until this row existed. So the builder's body is read
+  ## too, the way GG10 reads `chana_detect`'s.
+  set GN11B {}
+  foreach gnl [split [info body ase::ui::build] "\n"] {
+    if {[regexp {^\s*#} $gnl]} { continue }
+    append GN11B "$gnl\n"
+  }
+  check "GN11 the Netlist menu is BUILT from the same two labels the banner's\
+ door is composed from, and the rendered entries agree with them" \
+    [list [$top.mb.sim.netlist entrycget 0 -label] \
+          [ase::ui::lbl_netlist_recreate] \
+          [expr {[string first {[ase::ui::lbl_netlist_recreate]} $GN11B] >= 0}] \
+          [expr {[string first {[ase::ui::lbl_netlist]} $GN11B] >= 0}] \
+          [ase::ui::menu_path_netlist_recreate]] \
+    {Recreate Recreate 1 1 {Simulation > Netlist > Recreate}}
 
   catch {destroy $gw}
   ase::ui::close $key

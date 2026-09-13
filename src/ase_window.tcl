@@ -910,11 +910,15 @@ proc ase::ui::build {key top} {
   menu $top.mb.sim -tearoff 0
   $top.mb add cascade -label [ase::ui::lbl_simulation] -menu $top.mb.sim
   menu $top.mb.sim.netlist -tearoff 0
-  $top.mb.sim.netlist add command -label Recreate \
+  # ⚠ THESE TWO LABELS ARE READ BY MORE THAN THIS MENU (issue 1435, the same
+  # rule the three below already carry). The precondition banner under the
+  # Choose Analyses form names this entry as the door to a netlist, and it
+  # composes the path from these constants -- so a rename here follows.
+  $top.mb.sim.netlist add command -label [ase::ui::lbl_netlist_recreate] \
     -command [list ase::ui::do_netlist_recreate $key]
   $top.mb.sim.netlist add command -label Display \
     -command [list ase::ui::view_netlist $key]
-  $top.mb.sim add cascade -label Netlist -menu $top.mb.sim.netlist
+  $top.mb.sim add cascade -label [ase::ui::lbl_netlist] -menu $top.mb.sim.netlist
   # ⚠ THESE THREE LABELS ARE READ BY MORE THAN THIS MENU (issue 1391). The
   # `N&>` / `>` / `!` strip buttons tip from the composed paths, and issue
   # 1389's second-launch refusal names `[ase::ui::menu_path_stop]` as the way
@@ -4625,10 +4629,19 @@ proc ase::ui::chana_row {key type} {
 #
 # ⚠ `ok` GETS NO GLYPH. Marking the normal case is how a grid becomes noise; the
 # mark is for the exceptions, and the status line carries the sentence.
+#
+# ⚠ `fatal` JOINED IN ISSUE 1435 AND IT IS NOT A FIFTH CELL STATE. No grid cell
+# is ever `fatal` -- `ase::analysis_state` cannot answer it. It is a PRECONDITION
+# verdict, and the banner under the form speaks it. It wears `blocked`'s glyph on
+# purpose: to a reader they mean the same thing (this will not run), and minting
+# a third mark for a distinction the user cannot act on differently is how a grid
+# becomes noise. The two are kept apart in the VERDICT, where the gate acts on
+# them differently, not in the glyph.
 proc ase::ui::chana_glyph {state} {
   switch -exact -- $state {
     caution { return "⚠ " }
     blocked { return "⊘ " }
+    fatal   { return "⊘ " }
     absent  { return "· " }
   }
   return {}
@@ -4774,6 +4787,30 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # rows below never move depending on which simulator is in force.
   label $w.status -text {} -anchor w -justify left
   grid $w.status -row 1 -column 1 -sticky w -padx 8 -pady 2
+  # ── THE PRECONDITION BANNER, ISSUE 1435. ───────────────────────────────────
+  # Stage 4's first user-visible surface, deferred into Stage 6 because it needs
+  # netlist TEXT and a dialog may not produce one (see the slot's own header in
+  # src/ase.tcl). It reads `ase::precheck_banner`, which PEEKS.
+  #
+  # ⚠ IT IS A NEW WIDGET AND NOT A SECOND TENANT OF `$w.status`, AND THAT WAS
+  # MEASURED RATHER THAN PREFERRED. PLAN.md's Stage 4 says "there is no new
+  # pixel ... No look debt is filed", on the grounds that everything reaches the
+  # user through `ase::ui::dialog_status`. Measured on the dev display against
+  # this dialog, 2026-09-12: `$w.status` is OCCUPIED ON ALL ELEVEN CELLS of a
+  # fresh bench -- nine carry `baseline`'s "Offered because every build of this
+  # simulator has it. Nothing was measured." and two carry `unrenderable`'s
+  # sentence -- so a precondition sentence there would EVICT a capability
+  # sentence that is equally true. And `$w.status` has `-wraplength 0`: putting
+  # one 101-character precondition sentence in it took the dialog from 667 px to
+  # 856 px wide. Two facts, two lines.
+  #
+  # ⚠ ROW 7, WHICH IS UNDER THE FORM AND ABOVE `Options…`. Rows 3-7 were free;
+  # nothing existing moves, which is the rule issue 1405 cost 100 checks to
+  # learn. The row is RESERVED whether or not the label has text, exactly as
+  # `$w.status`'s is, so `Options…` and the button bar do not jump as the
+  # sentence appears and goes.
+  label $w.note -text {} -anchor w -justify left -wraplength 600
+  grid $w.note -row 7 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   # quick-field rows land on grid rows 2.. (chana_show); Options/buttons sit
   # on high fixed rows so the rebuilds never collide
   button $w.opts -text "Options…" -command [list ase::ui::chana_options $key]
@@ -5124,6 +5161,10 @@ proc ase::ui::chana_show {key} {
       ase::ui::chana_mode_changed $key $type $f
     }
   }
+  # ⚠ AFTER THE FORM IS BUILT, BECAUSE IT READS THE FORM. `chana_merged_row`
+  # overlays the widgets' live values on the stored row, so a banner refreshed
+  # before the rebuild would describe the PREVIOUS type's widgets.
+  ase::ui::chana_note $key
   ase::ui::apply_theme $w
 }
 
@@ -5134,6 +5175,72 @@ proc ase::ui::chana_show {key} {
 # edit the FIRST state row of the shown type MERGED over its original dict
 # (unknown/extra keys survive); an empty quick field deletes its key, no row of
 # the type appends a fresh one.
+# THE FORM'S LIVE VALUES, field -> value, for the fields this rebuild actually
+# put on screen. Factored out of `ase::ui::chana_ok` in issue 1435 because the
+# precondition banner needs the identical answer and a second copy of "read by
+# widget class, never by assuming `get`" is a second place for it to drift.
+proc ase::ui::chana_form_vals {key type sim} {
+  set vals [dict create]
+  foreach f [ase::ui::chana_fields $type $sim] {
+    if {[ase::ui::form_has $key $f]} {
+      dict set vals $f [ase::ui::form_get $key $f]
+    }
+  }
+  return $vals
+}
+
+# THE ROW AS IT WOULD BE STORED IF OK WERE PRESSED NOW: the type's first stored
+# row, with the form's live values overlaid and `ase::ui::form_is_absent`'s
+# fields removed. `enabled` is NOT set here -- the banner does not care and
+# `chana_ok` owns that key.
+#
+# ⚠ IT STARTS FROM THE STORED ROW AND NOT FROM THE FORM, and both halves matter.
+# From the form alone it would lose every ADVANCED field the disclosure is
+# hiding, because `form_has` is false for a widget that was never built. From the
+# stored row alone it would judge the PREVIOUS answer -- `chana_ok`'s own comment
+# on its `probe` says exactly that about the commit door, and the banner sits
+# next to the widgets the user is typing into.
+proc ase::ui::chana_merged_row {key type} {
+  set sim [ase::ui::chana_sim $key]
+  set row [ase::ui::chana_row $key $type]
+  dict for {f v} [ase::ui::chana_form_vals $key $type $sim] {
+    if {[ase::ui::form_is_absent $sim $type $f $v]} {
+      set row [dict remove $row $f]
+    } else {
+      dict set row $f $v
+    }
+  }
+  return $row
+}
+
+# (RE)PAINT THE PRECONDITION BANNER. Issue 1435.
+#
+# ⚠ IT PEEKS AND NEVER NETLISTS, and that constraint is the whole item. See the
+# netlist-facts slot's header in src/ase.tcl for why `ase::netlist` is not a read
+# and may not happen because a user opened a window.
+#
+# ⚠ IT REPORTS ON THE SELECTED TYPE WHETHER OR NOT IT IS ENABLED, which is where
+# it parts company with `ase::analysis_precheck` (bench-wide, enabled-only). The
+# commonest reason to be looking at this form is to decide whether to turn the
+# analysis on; staying silent until after it is on would be silent at exactly
+# the moment the advice is worth having.
+proc ase::ui::chana_note {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].chana
+  if {![winfo exists $w] || ![winfo exists $w.note]} { return {} }
+  set type {}
+  if {[info exists dlg($key,antype)]} { set type $dlg($key,antype) }
+  set txt {}
+  catch {
+    set txt [ase::precheck_banner_text \
+      [ase::precheck_banner [ase::ui::chana_sim $key] \
+        [ase::session_state $key] $type [ase::ui::chana_merged_row $key $type]]]
+  }
+  catch {$w.note configure -text $txt}
+  return $txt
+}
+
 proc ase::ui::chana_ok {key} {
   variable wins; variable dlg
   if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
@@ -5151,12 +5258,7 @@ proc ase::ui::chana_ok {key} {
     return
   }
   set en [expr {[info exists dlg($key,anen)] && $dlg($key,anen) ? 1 : 0}]
-  set vals [dict create]
-  foreach f [ase::ui::chana_fields $type $sim] {
-    if {[ase::ui::form_has $key $f]} {
-      dict set vals $f [ase::ui::form_get $key $f]
-    }
-  }
+  set vals [ase::ui::chana_form_vals $key $type $sim]
   if {$en} {
     # D6, ISSUE 1416 -- THE DOOR NO LONGER KNOWS WHAT A ROW NEEDS; IT ASKS.
     #
@@ -6651,6 +6753,8 @@ proc ase::ui::remedy_op_params_menu {} {
 proc ase::ui::lbl_analyses         {} { return {Analyses} }
 proc ase::ui::lbl_choose           {} { return "Choose\u2026" }
 proc ase::ui::lbl_simulation       {} { return {Simulation} }
+proc ase::ui::lbl_netlist          {} { return {Netlist} }
+proc ase::ui::lbl_netlist_recreate {} { return {Recreate} }
 proc ase::ui::lbl_netlist_and_run  {} { return {Netlist and Run} }
 proc ase::ui::lbl_run              {} { return {Run} }
 proc ase::ui::lbl_stop             {} { return {Stop} }
@@ -6706,6 +6810,12 @@ proc ase::ui::menu_path_choose_analyses {} {
 }
 proc ase::ui::menu_path_netlist_and_run {} {
   return "[ase::ui::lbl_simulation] > [ase::ui::lbl_netlist_and_run]"
+}
+# Issue 1435: the door the precondition banner sends the user to for a netlist.
+# THREE segments, because this one is a cascade -- the only path in this family
+# that is.
+proc ase::ui::menu_path_netlist_recreate {} {
+  return "[ase::ui::lbl_simulation] > [ase::ui::lbl_netlist] > [ase::ui::lbl_netlist_recreate]"
 }
 proc ase::ui::menu_path_run {} {
   return "[ase::ui::lbl_simulation] > [ase::ui::lbl_run]"
