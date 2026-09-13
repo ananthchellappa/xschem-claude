@@ -611,9 +611,39 @@ specification is written after the last hook-adding stage** — after Stage 14, 
 Stage 16 — and it is cheap when it comes, because the contract is already written key-by-key
 in the code's own comment blocks. Collecting and sharpening, not deriving.
 
-### Still open — two
+### ⚖ R11 — the minimum supported ngspice — **ANSWERED 2026-09-13, Option C**
 
-⚖ **R9** and ⚖ **R11** are unanswered — **two**, and ⚖ **R9 is the batched copy debt** rather than a single question, so ⚖ **R11 is the last single ruling in the batch**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4** through ⚖ **R8** on 2026-09-13 — all six above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
+**The user's words: *"go with your recommendation"*.** The floor is a **capability** floor
+(`known 1 && usable 1`), enforced by the probe, with **no version comparison anywhere**; and
+the release note carries one sentence naming the **tested set as binaries**, not versions.
+**All three conditions ratified**: never a version comparison, below the floor ASE-L still runs
+and says why once, and the tested set is re-measured when it moves.
+
+⚠ **OPTION A WAS NOT PUT TO THE USER AS LIVE.** `DECISIONS.md` already records the version
+floor as listed-to-show-why-rejected — it needs the comparison **D44** forbids and gets the
+stock-47/fork pair wrong by construction, both answering `ngspice-46+`. **Offering a dead
+option makes a choice look wider than it is**, so it was presented as rejected with the reason,
+and the live choice was B against C.
+
+⚠ **RE-MEASURING STRENGTHENED THE RECOMMENDATION, WHICH IS THE OPPOSITE OF THE LAST THREE.**
+⚖ R7, R8 and R10 each turned out **cheaper** than their drafted trade-off. R11's ground held
+— apt **45.2** is still installed here and still above every capability floor — **and the
+batch has since found it is not identical to the fork**: it writes a phantom duplicate column
+beside a lone op save, and issue **1434** emits a deck line to work around it, gated on a
+measured capability. **So C's sentence is a description of existing practice rather than a
+promise about the future** — every measurement in Stages 1–8 was taken on both binaries for
+precisely that reason. That makes the sentence *more* worth having, not less.
+
+### ✅ ALL SINGLE RULINGS ARE ANSWERED — only ⚖ R9 remains
+
+⚖ **R1–R8, R10 and R11: answered.** ⚖ **R9** is the standing **batched** copy debt and is not
+a question — it is every user-facing sentence this batch has put on screen without ratification,
+carried on `owed.sh`'s rule queue one issue at a time so that it can be answered in **one pass**
+rather than per sentence. It needs a **document** to read through, not a conversation, and the
+one-ruling-at-a-time preference names label ratification as its single declared exception for
+exactly this reason.
+
+⚖ **R9** is the only ruling left, and it is the **batched copy debt** rather than a single question. Every single ruling — ⚖ R1–R8, R10, R11 — is answered, **seven of them on 2026-09-13**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4** through ⚖ **R8** on 2026-09-13 — all six above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is

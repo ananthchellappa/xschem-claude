@@ -1551,7 +1551,31 @@ filed last.
 
 ---
 
-### ⚖ R11 — The minimum supported ngspice. Do we promise anything at all?
+### ⚖ R11 — ANSWERED. The minimum supported ngspice. Do we promise anything at all?
+
+**✅ ANSWERED 2026-09-13 — Option C, the capability floor plus a stated tested set.** The
+user's words: *"go with your recommendation"*. **All three conditions below are ratified with
+it**, and they were restated when the ruling was put except condition 3's re-measurement
+clause, which is inherited.
+
+⚠ **OPTION A WAS NOT OFFERED TO THE USER AS LIVE**, because this entry already records it as
+listed-to-show-why-rejected: a version floor requires the comparison **D44** forbids and gets
+the stock-47/fork pair wrong **by construction**, since both answer `ngspice-46+`. Putting a
+dead option in front of a ruling makes the choice look wider than it is.
+
+⚠ **AND RE-MEASURING STRENGTHENED C RATHER THAN WEAKENING IT.** This entry's ground was that
+apt **45.2** — what a downloading Ubuntu user gets, and still what is installed on this
+machine (`apt-cache policy ngspice` → `45.2+ds-1`) — sits above every capability floor ASE-L
+has. Still true. **But the eight stages since have measured that it is NOT identical to the
+fork**: apt 45.2 writes a phantom duplicate column beside a lone operating-point save, and
+issue **1434** emits a deck line specifically to work around it, gated on a measured
+capability rather than a version. **So C's sentence describes something the project is
+demonstrably already doing** — every measurement in Stages 1–8 was taken on both binaries for
+exactly this reason — rather than an aspiration. A promise about **what we test** can be kept;
+a promise about **what works** cannot, for archives nobody here has seen.
+
+⚠ **THIS WAS THE LAST SINGLE RULING IN THE BATCH.** ⚖ R1–R8, R10 and R11 are answered. Only
+⚖ **R9** remains, and it is the standing batched copy debt rather than a question.
 
 *New 2026-09-10, with the variant amendment. **Blocks: one sentence** — the support statement in
 the release note — **and Stage 16's mint.** Blocks nothing else, and it is filed LAST, behind
