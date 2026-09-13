@@ -1298,20 +1298,48 @@ deliberately: task 2 builds the Measurements sub-dialog in the same file and the
 idiom, and it should **inherit** the remembering behaviour rather than be retrofitted with
 it afterwards.
 
-### ⚖ R6 — Do analysis rows gain identity (`id`) — i.e. two DC sweeps or two AC sweeps at once?
+### ⚖ R6 — ANSWERED. Do analysis rows gain identity (`id`) — i.e. two DC sweeps or two AC sweeps at once?
 
-*Blocks: nothing; wanted after Stage 3.*
+**✅ ANSWERED 2026-09-13 — Option A, add it.** The user's words: *"Add it"* — **and the same
+message added a requirement neither option contained**, which is now issue **1444**:
 
-* **Option A — yes.** One optional per-row key, absent on every committed file, no schema
-  version bump. It is the difference between a bench that can say "sweep VIN **and also**
-  sweep temperature" and one that cannot, and it is ADE-L behaviour #9.
+> *"also plan for a way for measure statements (pending work) that could be used in the
+> calculator to refer to different analyses. It should be easy for a user to find out how to
+> refer to different analyses for purposes of building measure statements."*
+
+⚠ **THAT IS THE SECOND TIME A RULING IN THIS BATCH HAS ARRIVED CARRYING A REQUIREMENT THE
+OPTIONS DID NOT OFFER** — ⚖ R1's *always salvage* was the first. **A ruling is a
+conversation, not a selection**, and the offered options are the floor of the answer rather
+than its shape.
+
+*Blocked: nothing; wanted after Stage 3, which is complete — so it is unblocked now.*
+
+* **Option A — yes** (**CHOSEN**). One optional per-row key, **absent on every committed
+  file** — driver-verified 2026-09-13: the four `.state` files that match `id` carry an
+  **output row named `id`** (a drain current), not a per-analysis key, so the premise holds
+  and no committed bench moves. No schema version bump. It is the difference between a bench
+  that can say "sweep VIN **and also** sweep temperature" and one that cannot.
+  ⚠ The original wording also claimed *"it is ADE-L behaviour #9"*. **That was NOT asserted
+  to the user when the ruling was put**, deliberately — an ADE-L claim had just been wrong in
+  R4's recommendation — and it is recorded here as the plan's claim, unverified.
 * **Option B — no.** `ase::ui::chana_row` returns the **first** row of a type and
   `pane_dblclick` discards the index, so the addressing work has to come first either way.
+  ⚠ **Driver-verified at HEAD**: `chana_row` still walks `analyses` and returns on the first
+  type match. The addressing is genuinely not done.
 
 *Trade-off.* Yes needs the dialog to address rows by index before the key is useful; no
 leaves a common bench shape unsayable for the life of the plan.
 
-**Recommendation: A**, sequenced after Stage 3 so the addressing lands with the form work.
+**Recommendation was A**, and A is what the user ruled. ⚠ **The honest content of "yes" is
+the sequencing, not the key**: the key is nearly free and the row addressing is the work,
+and it was required under either option.
+
+⚠ **WHAT R6's TASK NOW OWNS, BECAUSE OF 1444.** The naming scheme is R6's deliverable, not
+Stage 8's: `ase::meas_binding` already answers *"which analysis occurrence this row reads"*
+as **`{type idx}`**, and the user-visible spelling must follow that shape and be settled
+**once**. R6's task ships the scheme, a handle column in the Choose Analyses grid, and
+`Analyses > List`; Stage 8 task 2's Measurements dropdown **consumes** it. If that order ever
+inverts, task 2 consumes `{type idx}` verbatim rather than minting a display form.
 
 ### ⚖ R7 — Do we ship a PSS panel at all, given that the build probes ran it successfully?
 

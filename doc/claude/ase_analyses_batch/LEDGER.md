@@ -442,9 +442,58 @@ reversal must name `doc/claude/ase_l_batch/prompts/item07_dialogs.md`**, which i
 `D4` lives — it is *not* `DECISIONS.md`'s own D4, and a reader who reverses that one changes
 the per-row key rules instead.
 
-### Still open — six
+### ⚖ R6 — per-analysis identity — **ANSWERED 2026-09-13, Option A, add it**
 
-⚖ **R6** through ⚖ **R11** are unanswered — **six**. ⚖ **R3 was answered 2026-09-12**, ⚖ **R4** and ⚖ **R5** on 2026-09-13 — all three above. ⚖ **R11 — the minimum supported
+**The user's words: *"Add it"*** — one bench may hold two DC sweeps, or a DC sweep and a
+temperature sweep, and each becomes addressable.
+
+⚠ **AND THE RULING ARRIVED CARRYING A REQUIREMENT NEITHER OPTION OFFERED**, which is the
+part worth the ledger's space:
+
+> *"also plan for a way for measure statements (pending work) that could be used in the
+> calculator to refer to different analyses. It should be easy for a user to find out how to
+> refer to different analyses … One way could be … Analysis > List which will dump one
+> liners on each of the enabled analyses. Just thinking aloud here. If there is a better way,
+> you may pursue that. If it's cheap to include, then include now. Else, just plan by adding
+> an issue."*
+
+**Filed as issue 1444**, with the driver's answer to *"is it cheap now?"* being **no, and for
+a nameable reason**: the handles such a lister would show **do not exist yet**. ⚖ R6's `id`
+is ruled and unimplemented, Stage 8 task 2's dialog is unwritten, and a lister built today
+would render an unsettled naming scheme over rows that cannot be told apart — the *green but
+hollow* shape this batch has spent the year removing. So it is **sequenced**, and the
+sequencing is the deliverable.
+
+⚠ **A BETTER WAY THAN THE MENU DUMP ALONE, AND THE USER'S IDEA SURVIVES INSIDE IT.** Three
+surfaces, **one** naming scheme — three spellings would be worse than none:
+
+1. **Pick, don't type** (Stage 8 task 2). The Measurements dialog's *which analysis* field is
+   a dropdown of enabled analyses, each as handle plus a human one-liner. The user never
+   learns the scheme because they never spell it.
+2. **The handle where the user already is** (R6's task). One column in the Choose Analyses
+   grid. No new window, no new menu entry.
+3. **`Analyses > List`** (R6's task) — the user's own proposal, and it **earns its place
+   because of the calculator**. `src/calculator.tcl`'s `calc::` namespace is where an
+   expression is *typed*; a dropdown does nothing for someone composing `180 + vp(out)` by
+   hand or writing a verbatim `x` block. Weakest for discovery, **strongest for the one case
+   the other two cannot reach.**
+
+⚠ **SECOND TIME A RULING HAS ARRIVED WITH A REQUIREMENT THE OPTIONS DID NOT CONTAIN.** ⚖
+R1's *always salvage* was the first, and that one refuted the premise the question had been
+costed on. **A ruling is a conversation and not a selection** — which is exactly why the
+standing preference is one at a time.
+
+⚠ **TWO PREMISES DRIVER-VERIFIED BEFORE ASKING.** R6's Option A claims `id` is *"absent on
+every committed file"*: the four `.state` files matching `id` carry an **output row named
+`id`**, not a per-analysis key, so the premise holds. And Option B's claim that the
+addressing is undone: `chana_row` at HEAD still returns the **first** row of a type.
+⚠ **One premise was deliberately NOT repeated to the user** — the plan's *"it is ADE-L
+behaviour #9"* — because an ADE-L claim had just been wrong in R4's recommendation. It is
+recorded as the plan's claim, unverified.
+
+### Still open — five
+
+⚖ **R7** through ⚖ **R11** are unanswered — **five**. ⚖ **R3 was answered 2026-09-12**, and ⚖ **R4**, ⚖ **R5** and ⚖ **R6** on 2026-09-13 — all four above. ⚖ R6's answer also minted issue **1444**. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
