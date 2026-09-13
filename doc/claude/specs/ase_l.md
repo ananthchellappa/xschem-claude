@@ -557,6 +557,203 @@ was in a position to know (issue 0960).
     Giving that its own sentence belongs with deck emission, which is what would
     have to do something different about it.
 
+## The analyses subsystem (batch Stages 1–6, 2026-09)
+
+`doc/claude/ase_analyses_batch/` is the plan; this section is what has actually
+shipped and is the part a reader should trust. Stages 1–6 are landed; 7–16 are
+still a plan. Every claim below was measured on **two** ngspice binaries —
+`/usr/bin/ngspice` (apt, 45.2) and the fork
+`/home/analog/dev/ngspice/build-ver_50/src/ngspice` (46+) — because a fact that
+holds only on the developer's build is not a fact about the feature.
+
+### The one architectural rule: ASE-L owns the SCHEMA, an adapter owns the CONTENT
+
+Recorded as **D34–D37**, and it is the rule every later decision is measured
+against. A core `ase::` proc may know that an analysis type has plots, that a
+plot has a `select` pattern and a `role`, and that a precondition has a tier. It
+may not know a single ngspice sentence. Everything simulator-specific lives in
+`ase::backend::<name>` and reaches the core only through a registry entry or a
+named hook.
+
+Two consequences worth stating because they are easy to erode:
+
+* **A backend with no hook gets NO fallback content.** Not a default, not a
+  best guess, not ngspice's answer borrowed. A missing hook is a missing
+  capability, and the surface says so.
+* **Capabilities are PROBED, never inferred from a version string.** Issue 0948
+  is the machinery; the rule is in `no-guessing-simulator-capabilities` terms —
+  offer a feature only where the simulator itself declares support.
+
+### The registry, and the eleven types
+
+`op`, `dc`, `ac`, `tran`, `noise`, `tf`, `pz`, `sens`, `disto`, `pss`, `sp`.
+Each carries a label, a card template, its form fields, its `needs` list, its
+`plots` list, an emit order and a view rank.
+
+⚠ **`op` is emitted LAST** among the analyses that produce a plot the reader
+walks back to (issue 0964), and **a `sim_status` guard AND a `remzerovec` follow
+EVERY analysis**. Those three placements are load-bearing and are asserted by
+name in `test_ase_core.tcl` (rows WK7, CK15, CK21) precisely so that a tidy-up
+reddens a row rather than shipping.
+
+**Only four types are seeded.** `ase::state_default` produces exactly `op`,
+`dc`, `ac` and `tran`, and all **104** committed `.state` files carry those four
+and nothing else. Discoverability of the other seven is the four-state grid's
+job, not the state file's: the grid shows all eleven whether or not the file
+mentions them. (⚖ R4 is the ruling that makes this a decision rather than an
+accident.)
+
+**The schema refuses rather than guesses.** `ase::analysis_schema_errors` is the
+gate, and its vocabulary is the list of ways a registry entry can be wrong:
+`nocard`, `noslotfield`, `fieldunused`, `baddepends`, `noplots`,
+`noplotselect`, `noplotrole`, `noplotresults`, `badplotroute`, `badplotwhen`,
+`badplotwhenfield`, `badplotwhenhook`, `badsalvage`, `nosalvagepoints`,
+`badsalvagepoints`, `nosalvagevector`, `badresultvecs`. An entry that trips any
+of them does not render a deck — it is reported.
+
+### Preconditions: what will be wrong, said BEFORE the run
+
+Stage 4's subject. `ase::netlist_facts` reads the SPICE netlist **xschem itself
+emits**; `ase::analysis_needs` and `ase::analysis_precheck` evaluate the
+schema's `needs` vocabulary over those facts. The vocabulary is twenty ids:
+`ac_source`, `cider_klu`, `disto_f1src`, `disto_f2src`, `disto_saves`,
+`noise_insrc`, `noise_klu`, `noise_out`, `pz_devices`, `pz_klu`, `pz_nodes`,
+`pz_shorted`, `saves_resolve`, `sens_filters`, `sens_klu`, `sens_out`,
+`sweep_target`, `tf_insrc`, `tf_out`, `vecsaves`.
+
+**Three tiers, and the tier is the decision — not the detection.** `fatal`
+refuses the run; `caution` advises and lets it proceed; silence means nothing is
+known to be wrong. The evaluator is ASE-L's; each *reason* is the adapter's
+sentence.
+
+⚠ **`netlist_facts` answers `exact 0`.** A hierarchical node inside an
+`.include`d subcircuit is unresolvable here and perfectly resolvable in ngspice.
+That blind spot is why `saves_resolve` is `caution` and not `fatal`: **a false
+refusal is worse than a missed one**, and the only precondition that pays the
+false-refusal risk anyway is `disto_saves`, because the alternative there is a
+SIGSEGV that leaves no log to read.
+
+### The writer: one results file, many plots, and a sidecar that says which is which
+
+Stage 6's subject, and the least obvious part of the system.
+
+ngspice writes every plot into one rawfile, and `write` emits **the current
+plot**. An analysis that produces several plots therefore needs the deck to walk
+`setplot previous` back to each one. `render_deck` emits that walk, and emits
+
+```
+echo "PLOT <type> <idx> |$curplotname|" >> <cell>_ase.plotmap
+```
+
+per `write`, so the mapping from an analysis row to a plot in the file is
+**recorded by the run itself** rather than reconstructed afterwards.
+
+⚠ **THE WALK LENGTH COMES FROM `ase::analysis_captures`, NOT `analysis_plots`,
+AND AN OVER-WALK IS SILENT.** Walking too far saturates on ngspice's built-in
+`constants` plot and appends twelve mathematical constants at rc 0, with every
+count agreeing and only a stderr warning — which is nowhere anything in this
+tree looks. Row **WK8** of `test_ase_core.tcl` is the production guard and is
+written without a stub for exactly that reason.
+
+`ase::reconcile_plots` is the post-run safety net: it compares what the registry
+predicted against what the file actually holds and names the disagreement
+(`mislabel`, and its siblings) rather than letting a wrong number reach the
+Value column.
+
+⚠ **`opinfo` plots are predicted and DECLINED.** `src/save.c`'s `read_dataset()`
+matches `strstr(lowerline,"operating point")` **above** its AC arm, so `AC
+Operating Point`, `Distortion Operating Point` and `NOISE Operating Point` all
+read back as a plain `op`. Capturing one would make Annotate Operating Point
+publish the wrong numbers, so the registry marks them and the walk skips them.
+
+### Where one output row's number comes from (⚖ R3, ANSWERED 2026-09-12)
+
+Both readers ship, and one proc states the rule:
+
+> **a row whose expression names exactly one vector reads the results file;
+> anything else reads the `print` log.**
+
+`ase::result_source` is the whole of that rule, deliberately — it is the single
+place a later change would have to touch. The rule is also **stated on screen**,
+which is what the ruling asked for. Issue **1243** was the user's own earlier
+ruling about the print anchor, and this extends it rather than reversing it:
+`render_deck`'s print anchor is untouched and every expression row still reads
+exactly the log 1243 anchored.
+
+### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
+
+Stage 6f. A long transient is checkpointed so that stopping it yields the points
+already computed instead of nothing: `stop after <points>`, never `stop when
+time` — which hands the integrator a breakpoint, changes both the grid and the
+byte count, and is **not disarmed when it fires**. Eligibility floor: **100,000
+points**; below it the deck is byte-identical to one rendered with checkpointing
+off.
+
+⚠ **AN EMITTED LOOP'S EXIT MUST BE THE FALSE BRANCH.** `.control`'s `if` takes
+the **false** branch for an *unevaluable* condition — measured on both binaries,
+for `<`, `>` and `>=`. A loop whose *continuation* was the true branch spins
+forever at **rc 0**, with nothing on either stream, the moment the analysis it
+tests never ran.
+
+### The save list, and the four analyses one ticked output used to stop
+
+Stage 6g, issue **1434**, and the sharpest measured behaviour in the subsystem.
+
+ASE-L emits one `.save <expr>` card per ticked row of the Outputs pane, and one
+ticked output is the shape of every committed bench here. Measured on both
+binaries, identically:
+
+| deck | result |
+|---|---|
+| a narrowed save + `noise` / `tf` / `sens` | rc 1, `$sim_status` 1 — the guard fires |
+| a narrowed save + **`pz`** | **rc 0, `$sim_status` 0** — ⚠ the guard NEVER fires |
+| a narrowed save + `op` / `dc` / `ac` / `tran` / `disto` | rc 0 — not in the class |
+| a save list resolving to **nothing**, any of `op`/`dc`/`ac`/`tran` | rc 1 |
+| a save list resolving to **nothing**, `disto` | **rc 139, SIGSEGV** |
+
+**Two classes, and they are not the same defect.** Class A is "these analyses
+answer in vectors that are not netlist names, so they cannot run under a save
+list made of them" — `noise`, `tf`, `pz`, `sens`. Class B is "the save list
+resolves to nothing", which starves *everything*.
+
+⚠ **`pz` IS IN CLASS A AND IS ITS QUIET MEMBER.** Three documents in the batch
+recorded it as the exception that survives. It does not, and on an ordinary
+bench — where an `op` row precedes it — the second `write` emits **the operating
+point again** while the sidecar labels it as the `pz` row's plot. A wrong answer
+wearing a right answer's label, at rc 0, with no guard to catch it.
+
+The mitigation is one deck line. `render_deck` forces a `.save all` leader, with
+**three separate grounds** that are not interchangeable: the user's own Save-All
+tick; class A's correctness need (unconditional — the run does not happen
+without it); and the phantom duplicate column some builds write beside a lone op
+save (gated on a measured capability, never a version).
+
+⚠ **AND SO `vecsaves` ADVISES RATHER THAN REFUSES.** It shipped as `fatal` in
+issue 1432 and was demoted to `caution` in 1434. Once the emitter makes the run
+correct, a refusal on the same condition is a **false** refusal. It is not
+deleted, because it is the only thing that tells the user their narrowing was
+overridden — *nothing the deck contains may be unshowable in the window*.
+
+### What binds anyone working here
+
+* **A row whose fixtures never disagree cannot fail.** Seven separate sections
+  of this batch shipped a green row that asserted nothing, and each was found by
+  a sabotage that should have reddened it and did not. Check a new row's
+  fixtures actually differ **before** the campaign, not after.
+* **Measure the exception before the rule.** The exception is what makes a rule
+  feel finished, so it is the claim nobody re-takes — and `pz` was both wrong
+  and the worst case in its set.
+* **Read a precondition's stand-down list as a specification for the emitter.**
+  `vecsaves` stood down three ways, and every one of them was *"…because
+  something else emitted the leader"*. The fix sat inside the refusal, written
+  out, for a whole commit.
+* **Before adding a filter to a reader, list its CALLERS and ask which of them
+  is measuring something.** A filter added to the capability probe's own reader
+  makes the probe answer wrong about the very defect it detects — and the deck
+  goldens stay green, because the emitter it feeds has been switched off.
+* **Check the quiet member of every set.** A fix that only moves an error code
+  is not finished.
+
 ## Migration tool (cluttered testbench → clean + state view)
 
 `tools/migrate/ase_migrate.py` (stdlib-only, OO; tests `test_ase_migrate.py`)
@@ -1114,10 +1311,18 @@ Kicking off a run opens a NEW toplevel showing the live log (existing
 live-follow machinery from v1 moves here). Ctrl-W closes it;
 Simulation > Log reopens on the current log file.
 
-### Choose Analyses dialog
-Two vertical sections: top = analysis types with radio buttons (selects
-which analysis the bottom shows); bottom = per-analysis form: Enable
-checkbox + quick fields (e.g. DC: source/start/stop/step; TRAN:
+### Choose Analyses dialog — SUPERSEDED by the analyses batch (Stages 2–3)
+⚠ **The sketch below is the 2026-07-21 one and is kept for history only.** What
+shipped is a **four-state grid** over all eleven registered types plus a
+per-type form, in `ase::ui::chana_*` (`chana_show`, `chana_row`, `chana_form`,
+`chana_fields`, `chana_glyph`, `chana_committable`, `chana_options`, …). The
+grid's four states are the precondition tiers, not an enable checkbox: a type
+can be enabled, available, `caution` with a reason, or `blocked` **carrying its
+fix** rather than only its reason. See *The analyses subsystem* above.
+
+The superseded sketch: two vertical sections: top = analysis types with radio
+buttons (selects which analysis the bottom shows); bottom = per-analysis form:
+Enable checkbox + quick fields (e.g. DC: source/start/stop/step; TRAN:
 step/stop; AC: points/start/stop) + an Options button for nuanced options.
 
 ### Dialog style
@@ -1192,6 +1397,13 @@ main window and the log window are exempt (2026-07-21, item 10).
   test in tests/headless/ + registered in run_regression.tcl.
 - **P5 (deferred) — results.** Plot outputs via create_graph/gaw; op
   back-annotation onto schematic via ngspice_backannotate.tcl.
+
+⚠ **P1–P5 are the pre-batch phasing and are complete or superseded.** The live
+plan is `doc/claude/ase_analyses_batch/PLAN.md`, seventeen stages, of which 1–6
+are landed; `LEDGER.md` in that directory is the account and carries the resume
+point. Read the ledger before the plan — the plan is what was intended and the
+ledger records where it was measured wrong, which has happened in every stage so
+far.
 
 ## Testing
 
