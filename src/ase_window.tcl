@@ -4740,6 +4740,25 @@ proc ase::ui::choose_analyses {key {type {}}} {
   # top section: one radiobutton per analysis type; switching repopulates
   # the bottom form from state (D4: in-form edits of the previous type are
   # DISCARDED — deterministic, no hidden multi-type writes)
+  #
+  # ⚠ ⚖ R5 HAS REVERSED THAT DECISION (2026-09-13). The user ruled: *"Make it
+  # remember — that's a more professional UI. We are trying to be better than
+  # Cadence"*. The comment above still describes what this code DOES, which is
+  # why it is annotated rather than rewritten; the behaviour changes when R5's
+  # task lands and the two lines go together.
+  #
+  # ⚠ D4's OWN REASON SURVIVES THE REVERSAL. "No hidden multi-type writes"
+  # defends the COMMIT, and nothing is written until OK either way — so caching
+  # per-type edits for the dialog's lifetime and committing only the visible
+  # type satisfies it exactly as discarding did. The reason never defended the
+  # discarding; it was attached to it.
+  #
+  # ⚠ AND THE D4 BEING REVERSED IS `doc/claude/ase_l_batch/prompts/item07_dialogs.md`,
+  # NOT `ase_analyses_batch/DECISIONS.md`'s own D4, which is about the two
+  # optional per-row keys `id` and `x`. Reversing that one instead would change
+  # the state schema. `doc/claude/ase_l_ux_batch/FINDINGS.md` carries the lived
+  # report ("I typed 500u, clicked the ac radio, clicked back, and 500u was
+  # gone"), and `ase_analyses_batch/DECISIONS.md` carries the ruling.
   frame $w.types
   # ── STAGE 1: THE RADIO ROW IS THE REGISTRY'S. ──────────────────────────────
   # `foreach t {op dc ac tran}` was the third copy. The order is `emitorder`

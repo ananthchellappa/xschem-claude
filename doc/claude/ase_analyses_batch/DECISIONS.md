@@ -1250,19 +1250,53 @@ the follow-up is a row that reddens if a twelfth type is ever seeded — not mer
 existing assertion that four rows come out, but one that names `seed_enabled` as the thing
 that must stay off.
 
-### ⚖ R5 — Reverse recorded decision D4: should switching the analysis type keep what you typed?
+### ⚖ R5 — ANSWERED. Reverse recorded decision D4: should switching the analysis type keep what you typed?
 
-*Blocks: Stage 3.*
+**✅ ANSWERED 2026-09-13 — Option A, reverse it.** The user's words:
 
-* **Option A — reverse it.** Cache per-type edits for the dialog's lifetime and commit only
-  the visible type at OK. D4's stated reason — *"deterministic, no hidden multi-type
-  writes"* — is still satisfied, because nothing is written until OK.
+> *"Make it remember — that's a more professional UI. We are trying to be better than
+> Cadence"*
+
+⚠ **THIS IS THE FIRST RULING IN THIS BATCH THAT CHANGES BEHAVIOUR RATHER THAN RATIFYING
+IT.** ⚖ R1, R2, R3 and R4 all landed on what the tree already did. D4 is what shipped, and
+the recommendation was its opposite, so this one is **work**, not a rubber stamp.
+
+*Blocked: Stage 3, which shipped **Option B** — so Stage 3's form is the thing being
+changed.*
+
+* **Option A — reverse it** (**CHOSEN**). Cache per-type edits for the dialog's lifetime and
+  commit only the visible type at OK. D4's stated reason — *"deterministic, no hidden
+  multi-type writes"* — is still satisfied, because **nothing is written until OK either
+  way**. D4's reasoning defends the **commit**, and the commit does not change; it never
+  defended the discarding.
 * **Option B — keep D4.** A radio click discards the form.
 
 *Trade-off.* Reversing costs one dict per dialog and makes the type row explorable; keeping
 it is defensible with four types and a trap with twelve.
 
-**Recommendation: A (reverse).**
+**Recommendation was A (reverse)**, and A is what the user ruled.
+
+⚠ **THE TRADE-OFF LINE UNDERSTATED ITS OWN CASE, AND THE TREE HAD ALREADY MEASURED IT FROM
+THE USER'S SIDE.** *"Defensible with four types"* was written when the radio row held four.
+Issue **1411** made it a wrapping grid of **eleven**, four per row — so clicking across the
+grid to see what each analysis offers, which is the first thing a new user does, costs them
+whatever they had typed, every time. And `doc/claude/ase_l_ux_batch/FINDINGS.md` had already
+recorded it as a lived defect rather than a hypothetical:
+
+> *"PROBE after ac->tran round trip, stop = '200u' — typing survived? 0 — I typed 500u,
+> clicked the ac radio, clicked back, and 500u was gone."*
+
+⚠ **WHICH `D4` THIS IS.** Not `DECISIONS.md`'s own **D4** (*"exactly two optional per-row
+keys: `id` and `x`"*) — a different batch's. R5's D4 is
+`doc/claude/ase_l_batch/prompts/item07_dialogs.md`, and it is quoted in `src/ase_window.tcl`
+at the `chana_show` repopulate comment. **The reversal must name that file**, or the next
+reader reverses the wrong decision.
+
+⚠ **WHERE IT LANDS.** `src/ase_window.tcl` only; one dict per open dialog; no new widget
+and nothing newly drawn, so **no `look` debt**. It is sequenced **before Stage 8 task 2**,
+deliberately: task 2 builds the Measurements sub-dialog in the same file and the same form
+idiom, and it should **inherit** the remembering behaviour rather than be retrofitted with
+it afterwards.
 
 ### ⚖ R6 — Do analysis rows gain identity (`id`) — i.e. two DC sweeps or two AC sweeps at once?
 

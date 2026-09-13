@@ -405,9 +405,46 @@ comment debt, and the same remedy — **it is the first item of the next driver 
 *"seeding all twelve"*; the registry holds **eleven**. The twelve was never re-counted after
 the registry settled.
 
-### Still open — seven
+### ⚖ R5 — the form's memory across a type switch — **ANSWERED 2026-09-13, Option A, reverse D4**
 
-⚖ **R5** through ⚖ **R11** are unanswered — **seven**. ⚖ **R3 was answered 2026-09-12** and ⚖ **R4 on 2026-09-13** — both above. ⚖ **R11 — the minimum supported
+**The user's words: *"Make it remember — that's a more professional UI. We are trying to be
+better than Cadence"*.** Switching the analysis radio will keep what you typed, per type, for
+the dialog's lifetime; OK still commits only the visible type.
+
+⚠ **THE FIRST RULING IN THIS BATCH THAT IS WORK RATHER THAN RATIFICATION.** R1, R2, R3 and
+R4 each landed on behaviour the tree already had — twice because the recommendation had been
+shipped ahead of the ruling on purpose. **R5 is the opposite**: D4 shipped in Stage 3, the
+recommendation was to reverse it, and the user reversed it. So this one has a crew task
+attached.
+
+⚠ **D4's REASON SURVIVES THE REVERSAL INTACT, WHICH IS WHY THE REVERSAL IS CHEAP.** D4 was
+recorded as *"deterministic, no hidden multi-type writes"* — and **nothing is written until
+OK either way.** That sentence defends the **commit**, not the discarding; the commit is
+unchanged. A decision's stated reason turning out to defend a different thing from the
+behaviour it was attached to is worth noticing, because it is how a cheap change looks
+expensive for a year.
+
+⚠ **THE TREE HAD ALREADY MEASURED THE DEFECT FROM THE USER'S SIDE AND NOBODY CONNECTED IT.**
+`doc/claude/ase_l_ux_batch/FINDINGS.md` records *"I typed 500u, clicked the ac radio, clicked
+back, and 500u was gone"* — a lived failure sitting in one batch's findings while another
+batch carried it as an open ruling with a recommendation. **A UX finding and a ruling about
+the same behaviour are the same item**; neither directory knew about the other.
+
+⚠ **AND THE CASE GOT STRONGER AFTER THE RULING WAS WRITTEN.** Its trade-off line says
+*"defensible with four types and a trap with twelve"*. Issue **1411** made the radio row a
+wrapping grid of **eleven**, four per row — so the exploration a new user does first is
+exactly what costs them their typing.
+
+**Where it lands:** `src/ase_window.tcl` only, one dict per open dialog, no new widget, **no
+`look` debt**. Sequenced **before Stage 8 task 2**, so the Measurements sub-dialog that task 2
+builds in the same file **inherits** the behaviour instead of being retrofitted. ⚠ **The
+reversal must name `doc/claude/ase_l_batch/prompts/item07_dialogs.md`**, which is where this
+`D4` lives — it is *not* `DECISIONS.md`'s own D4, and a reader who reverses that one changes
+the per-row key rules instead.
+
+### Still open — six
+
+⚖ **R6** through ⚖ **R11** are unanswered — **six**. ⚖ **R3 was answered 2026-09-12**, ⚖ **R4** and ⚖ **R5** on 2026-09-13 — all three above. ⚖ **R11 — the minimum supported
 ngspice — is new that day**, from the variant-support amendment, and is filed **last of all**,
 behind R10: it gates **one sentence** (Stage 16e's support promise), not a stage, and the
 *description* half of that release note ships without any ruling at all. `DECISIONS.md`'s ruling ledger is
