@@ -113,6 +113,14 @@
 # a different prefix) to the eight procs that spell a reference. HN15b runs
 # HN15's own token list against the adapter, so the guard cannot pass by
 # searching for nothing.
+# 622 -> 624 with EK7 and EK7c (issue 1449 -- ⚖ R6's own `id` key stopped the
+# bench running). EK7 is an ENABLED row carrying an `id` walked to a rendered
+# deck IN ONE EXPRESSION, because the defect got past 622 green checks and a
+# clean T1 purely by living in the seam between two suites' fixtures: HN's rows
+# declare ids and never enable anything, EK's rows enable things and never
+# declare an id. EK7c is the over-width control -- a genuinely unknown key on
+# the SAME row is still refused, and is still the only thing refused.
+# AND RAISED 622 -> 624.
 # AND RAISED 602 -> 622.
 # AND RAISED 600 -> 602.
 # AND RAISED 558 -> 598.
@@ -146,7 +154,9 @@
 # 298 -> 309 with sections EK and SI (Stage 3 item C2, issue 1415 -- one refusal
 # reader and the number alphabet). ⚠ EK6 is the CORPUS INVARIANT and it belongs
 # with that commit: C2 is the one that could make a shipped bench unrunnable at
-# the gate, so the row that would notice lands with it.
+# the gate, so the row that would notice lands with it. ⚠ EK7/EK7c (issue 1449)
+# are the rows EK6 could NOT notice: no committed bench carries an `id`, so a key
+# that made every NAMED bench unrunnable passed the corpus invariant untouched.
 #
 # 309 -> 348 with sections GR, VB and CP (Stage 3 items C3/C5/C6, issues
 # 1416-1420 -- the field tables, the refused unknown key and the committed
@@ -5409,6 +5419,82 @@ check "EK6 every analysis switched on in every bench committed to this repositor
  still passes the new refusal, so the commit that adds it makes none of them\
  unrunnable" \
   [list $EKBAD [expr {$EKN > 50}]] [list {} 1]
+
+## --- EK7: ⚖ R6's OWN KEY, ON A ROW THAT IS SWITCHED ON, REACHING A DECK -----
+## Issue 1449, and the shape of the row is the point.
+##
+## ⚠ THIS DEFECT SURVIVED A TASK WHOSE SUITES WENT 602 -> 622 AND A T1 OF 69
+## CASES WITH ZERO FAILURES, because NO ROW ANYWHERE ENABLED A ROW CARRYING AN
+## `id`. Section HN's fixtures declare ids and never switch a row on; section EK's
+## fixtures switch rows on and never declare an id. Each half was watched by a
+## suite and the seam between them by nothing -- and the two halves lived in
+## DIFFERENT FILES, which is the first time in this batch that has been true. So
+## this row is deliberately NOT "does ase::analysis_emit_check accept `id`". It is
+## an ENABLED row carrying an `id` walked all the way to a rendered deck, in one
+## expression, so that the two fixtures have to agree with each other.
+##
+## WHAT IT WAS. `ase::analysis_emit_check`'s allow-list was `{type enabled x}`
+## plus the declared field names -- issue 1447 added `id` to the ROW and not to
+## that list. `ase::preflight_gate` runs that check over every ENABLED stored row
+## and answers `emit_incomplete`, so a user who NAMED an analysis and switched it
+## on could not run the bench: no deck, no raw, no log, and the sentence ends
+## `set ase_preflight 0` does NOT disable this check. Measured against the
+## unfixed tree:
+##     emit_check : {unknownkey id {has a setting named 'id' that ASE-L cannot emit}}
+##     gate       : emit_incomplete
+##     gate, the identical bench with the `id` removed : {}   (it runs)
+##
+## ⚠ AND THE FOURTH AND FIFTH TERMS ARE WHY THE REFUSAL WAS NOT MERELY EARLY, IT
+## WAS EMPTY. The id-ful and id-less benches render the SAME DECK, byte for byte
+## -- `id` is a name, not a setting, and no template was ever going to spend it.
+## The gate was withholding a deck it had no complaint about. The length term is
+## the positive control: `string equal` on two empty strings is also 1, so the
+## row would pass on a render_deck that returned nothing.
+##
+## ⚠ THE LAST TWO TERMS MAKE THE FIXTURE DISAGREE WITH ITS OWN CONTROL. Without
+## them `$EK7ROW` and `$EK7BARE` are interchangeable and every term above is
+## satisfied by a row that ignores `id` completely; with them the `id` is proved
+## to be doing ⚖ R6's job -- the row is called `vinsweep`, and the same row
+## without the key is called `dc1`.
+set EK7ROW  {type dc enabled 1 id vinsweep source V2 start 0 stop 1.8 step 0.01}
+set EK7BARE [dict remove $EK7ROW id]
+set EK7REND [ase::backend_hook ngspice render_deck]
+set EK7DECK [$EK7REND [ek_state [list $EK7ROW]]  $EKNET]
+set EK7DBAR [$EK7REND [ek_state [list $EK7BARE]] $EKNET]
+set EK7LINE {}
+foreach ek7l [split $EK7DECK "\n"] { if {[string first {dc } $ek7l] == 0} { set EK7LINE $ek7l } }
+check "EK7 an analysis the user has NAMED and switched on still runs: the handle\
+ key is not a setting the deck was ever going to carry, so the bench renders the\
+ same deck it would have rendered without the name" \
+  [list [ase::analysis_emit_check ngspice $EK7ROW] \
+        [lindex [ek_gate [list $EK7ROW]] 0] \
+        $EK7LINE \
+        [string equal $EK7DECK $EK7DBAR] \
+        [expr {[string length $EK7DECK] > 100}] \
+        [ase::analysis_handles [ek_state [list $EK7ROW]]] \
+        [ase::analysis_handles [ek_state [list $EK7BARE]]]] \
+  [list {} {} {dc V2 0 1.8 0.01} 1 1 vinsweep dc1]
+
+## --- EK7c: AND THE DOOR IS STILL SHUT ---------------------------------------
+## ⚠ THE ONLY WAY A ONE-WORD FIX CAN BE WRONG IS BY BEING TOO WIDE. This check's
+## whole job is refusing a key that would silently not emit (issue 1418: the
+## Options editor collected free-text pairs, round-tripped them and never emitted
+## them). `DECISIONS.md` D4 says there are EXACTLY TWO optional per-row keys,
+## `id` and `x`; teaching the list about `id` must not teach it to shrug.
+##
+## The fixture is `$EK7ROW` ITSELF plus one nonsense key, so the row cannot pass
+## by the two benches differing in something else -- and the FOURTH term is the
+## sharp one: exactly ONE offence is reported, which says the `id` on the very
+## same row was not counted while the nonsense was.
+set EK7BAD [dict merge $EK7ROW {nonsense 1}]
+check "EK7c naming an analysis did not open the door to every other key: a\
+ setting nothing can spend is still refused on the same row that carries the\
+ name, and it is still the only thing refused" \
+  [list [lindex [lindex [ase::analysis_emit_check ngspice $EK7BAD] 0] 0] \
+        [lindex [lindex [ase::analysis_emit_check ngspice $EK7BAD] 0] 1] \
+        [lindex [ek_gate [list $EK7BAD]] 0] \
+        [llength [ase::analysis_emit_check ngspice $EK7BAD]]] \
+  [list unknownkey nonsense emit_incomplete 1]
 
 # --- SI: THE NUMBER ALPHABET ------------------------------------------------
 ## ⚠ EVERY VALUE BELOW WAS MEASURED with a VALUE harness (`v1 in 0 dc <s>` / `op`

@@ -4612,7 +4612,32 @@ proc ase::analysis_emit_check {sim row} {
   # reads is precisely what ase::analysis_schema_errors exists to refuse -- and
   # it is not an "unknown key" because, unlike everything C5 closed the door on,
   # IT ACTUALLY EMITS.
-  set known [list type enabled x]
+  #
+  # ⚠ AND `id` IS THE SECOND ROW KEY, WHICH THIS LIST DID NOT KNOW. Issue 1449.
+  # ⚖ R6 (issue 1447) gave a row an optional `id` -- the stable handle that makes
+  # two `dc` rows separately addressable -- and added it to the ROW without adding
+  # it here. So this check answered `unknownkey id`, ase::preflight_gate turned
+  # that into `emit_incomplete`, and a user who NAMED an analysis and switched it
+  # on could not run the bench: no deck, no raw, no log, and the sentence says
+  # `set ase_preflight 0` does not disable it. Measured before the fix: the id-ful
+  # and id-less benches render the SAME deck line, `dc V2 0 1.8 0.01` -- so the
+  # refusal was withholding a deck it had no complaint about.
+  #
+  # ⚠ IT IS EXEMPT FOR THE OPPOSITE REASON TO `x`, AND THAT DISTINCTION IS THE
+  # WHOLE GUARD. `x` is exempt because it emits. `id` is exempt because it is not
+  # a setting at all: it is the row's NAME, spent by ase::analysis_handle, by the
+  # Choose Analyses handle grid, by `Analyses > List` and by a measurement's
+  # `id` binding. `unknownkey` refuses a key that would SILENTLY NOT EMIT; a
+  # handle the user can see in three places and type into an expression is not
+  # silent, and nothing about it was ever bound for the deck.
+  #
+  # ⚠ DO NOT GENERALISE THIS INTO "IGNORE UNKNOWN KEYS". `DECISIONS.md` D4 says
+  # there are EXACTLY TWO optional per-row keys, `id` and `x`, and this list is
+  # the place that sentence is enforced. Issue 1418 is what a silently-dropped
+  # setting costs and issue 1401 is what a silently-dropped analysis costs; a
+  # blanket escape here hands both back. A third key means a third clause here,
+  # deliberately, with its own reason written down.
+  set known [list type enabled x id]
   foreach f $flds {
     if {[dict exists $f name]} { lappend known [dict get $f name] }
   }

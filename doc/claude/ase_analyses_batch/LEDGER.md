@@ -862,6 +862,39 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ Issue 1449 — naming an analysis stopped the bench running, fixed 2026-09-13
+
+**The one-word fix, and the reproduction that makes it a fix of something.** `src/ase.tcl:4640`,
+`set known [list type enabled x]` → `set known [list type enabled x id]`. The only non-comment
+line the diff adds.
+
+⚠ **The sharpest measurement is what the gate was withholding.** `render_deck` on the enabled
+`id` bench and on the identical id-less bench produces the **same deck, byte for byte**
+(`dc V2 0 1.8 0.01`) — so the gate was refusing to write a deck it had **no complaint about**.
+What the user saw instead: `ase: the dc analysis has a setting named 'id' that ASE-L cannot emit`
+followed by *"no deck, no raw, no log"*, and `set ase_preflight 0` did not disable it.
+
+| | |
+|---|---|
+| **rows** | `EK7` + `EK7c` in `test_ase_core.tcl`, **beside the emit checks and not beside the handle checks** — the defect existed because those two families never met. `EK7` walks an enabled `id` row to a **rendered deck** in one expression: seven terms, a literal deck-line golden, byte-equality of the two decks, a **length floor** (two empty strings are also `string equal`), and the two fixtures **disagreeing** about their handle. `EK7c` is the over-width control: `nonsense` is still refused and the offence count is exactly **1**. |
+| **driver's own re-run** | `test_ase_core` **624 / 624**, ALL PASS on both arms, up from 622. |
+| **byte identity** | 104/104, **416 analysis rows, 0 carrying `id`**, control disagrees, zero tracked `.state` modified. |
+| **sabotage** | Six plus a finding. Reverting the word reds `EK7` **and** `EK7c`. Accepting **everything** reds `EK7c` **and `GR9`** — a 1418 row in a section the crew never wrote, which is the allow-list's real guard showing up. ⚠ `s4x` (`analysis_line` → `{}`) **kills the suite at check 41, rc 0, no `RESULT:` line** — `G2tf`'s shape for the fourth time in this batch. |
+| **receipt** | `receipts/29-1449-the-id-key-refused-the-run.md` |
+
+⚠ **`GH13b` IS NOW RED, BY DESIGN, AND THAT IS THE ROW WORKING.** Receipt 28 wrote it to pin this
+defect and its own header says *"fixing it turns that row RED, which is the point."* Measured by
+the driver after the fix: `test_ase_dialogs` display **2 FAILED (338 passed)** — `G2sens` (1436,
+standing) and `GH13b`. Headless unmoved at 37, so **T1 cannot see it**. The row and its paragraph
+now describe a defect that no longer exists and must be rewritten; that file was not 1449's.
+
+⚠ **AND A SECOND DEFECT OF THE SAME CLASS WAS MEASURED ON THE WAY PAST.** `src/ase_window.tcl`
+`:5824`/`:5973` — the **Options… subdialog's** `skip` list is `{type enabled}` plus declared
+fields and knows **neither `id` nor `x`**, so opening `Options…` on a row carrying either shows it
+as a free-text pair and then **refuses to save**. ⚠ **`x` has been that way since issue 1419**:
+this is the **third instance of one class** — a list of "keys that are not settings", maintained
+in three places, that nobody updates together. It gets its own number rather than riding this fix.
+
 ### ✅ ⚖ R6 — GUI HALF SHIPPED, issue **1448**, collected 2026-09-13 — and it found a defect in ⚖ R6's own schema half
 
 | | |
