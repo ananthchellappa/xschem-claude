@@ -3028,6 +3028,39 @@ precision matters the GUI redirects `meas … > file` and parses the printed lin
 
 ### 8b. Eight derived answers, as named templates
 
+⚠ **WHAT TASK 2 INHERITS — written down 2026-09-13, when task 1 and two dialog commits landed,
+so the next crew starts from measurements instead of rediscovering them.**
+
+1. **Task 1 built no widget, and its copy is already ratified-in-waiting.** The eighteen kind
+   labels, twenty-eight field labels, three picker values, twelve core refusals, six adapter
+   refusals, the caution and five report frames are all in `R9_COPY_REVIEW.md` as
+   **R9-294 … R9-372**. **Consume those words; do not mint a second set.** Most of them are
+   *declared and read by nothing* today — nothing reads a kind's `label`, and
+   `ase::meas_report` **has no caller in the tree** — so task 2 is the first code that shows
+   any of them.
+2. ⚠ **`R9-325` is the word `reaches`, and it carries a LAYOUT CONSTRAINT.** It is the only
+   lowercase label in the tree and reads correctly only if the form puts `When signal` and
+   `reaches` on **one line**. A right-aligned label column turns it into a stray lowercase word.
+3. **The form remembers now, and OK writes what it remembered.** ⚖ R5 (issue 1445) gave the
+   dialog a per-type cache cleared on open and close; issue 1446 made `chana_ok` read
+   `ase::ui::chana_commit_vals` — the type's cache filtered to its declared fields, with the
+   live form merged over it. **The Measurements sub-dialog inherits both**, which is why R5 was
+   sequenced before this task. It is still a **single-type write**, and `GR6e` is the row that
+   holds that line.
+4. ⚠ **Two test traps, both measured, both cheap to repeat.** `GR5k` — the byte-identity row —
+   presses OK on **`op`, which has no fields**, so it cannot see a `form_is_absent` bypass; a row
+   copied from it inherits the blind spot, which is exactly what happened to 1446's first cut.
+   And **reading `dlg(…,anen)` after OK raises**, because `chana_cancel` unsets it — that kills
+   the suite file instead of reddening a row.
+5. **One residual is pinned, not fixed**: the precondition banner's `chana_merged_row` reads
+   **live widgets only**, so it judges the stored value where OK now writes the remembered one.
+   Row `GR6h` pins it. If task 2's Measurements form has any `needs` rule that reads a field
+   behind `▸ Advanced`, this becomes visible and the fix is one line.
+6. **The Value column is binary-dependent by design.** `$val` is the simulator's printed text
+   verbatim: apt 45.2 prints seven significant digits and ignores `measureprec`, the fork
+   honours it. **Do not normalise it and do not golden it by digit count** —
+   `evidence/binary-differences.md` #2 and #5.
+
 The user picks one and fills two fields. This is what *"better than ADE-L"* means for the daily task.
 
 | template | emits |
