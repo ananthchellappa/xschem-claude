@@ -697,6 +697,12 @@ both briefs: task 1 holds `src/ase.tcl`, `tests/headless/test_ase_core.tcl`,
 would need `run_regression.tcl`), and is forbidden to run `tests/run_regression.tcl` at all —
 **T1 stays the driver's, and solo, which is what issue 0990 requires.** Neither crew commits.
 
+✅ **UPDATE, same day: ⚖ R5's crew finished and its work is committed (`0d5f16b1`); the second
+slot is now issue 1446's crew**, on the identical file split that worked for R5 —
+`src/ase_window.tcl` and `tests/headless/test_ase_dialogs.tcl`, no new suite file, no
+`run_regression.tcl`, no T1. Stage 8 task 1 still holds its five. **The departure is
+therefore ongoing rather than finished**, and it has now been run twice with no collision.
+
 ⚖ **R5 is sequenced here on purpose**: Stage 8 task 2 builds the Measurements sub-dialog in
 the same file and the same form idiom, and it should inherit the remembering behaviour rather
 than be retrofitted with it. ⚖ **R4's `seed_enabled` row is still unpaid** and stays unpaid

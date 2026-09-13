@@ -61,3 +61,15 @@ kind a probe or a tolerant parser handles.
 found by running the same deck twice — none of them by reading source, and none of them
 would have been visible to a test suite that ran on one binary. **A batch that verified on
 one would have shipped a golden for #1, #2 and #3 and never known.**
+
+## Appendix — what a probe costs, measured
+
+Five trivial `-b` runs (a 1 kΩ divider and an `op`) took **27 ms** on 45.2 and **28 ms** on
+the fork: **≈5 ms per launch**, on both.
+
+So **probing a capability by launching the simulator is cheap** — the expensive case named in
+`src/ase_window.tcl`'s "peeked at, never measured" comment (**31.2 s**, Tk frozen) is a
+binary that *exists, is executable and never answers*, not the normal cost of asking. That
+distinction belongs in Stage 16's panel design: a probe budget sized from the pathological
+case would conclude that probing must be rare, and the measurement says the opposite — what
+must be rare is **blocking Tk on a probe that may never return**.
