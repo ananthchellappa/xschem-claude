@@ -1525,6 +1525,36 @@ nothing greys or marks them. Both belong to whichever stage owns those files.
 
 ## Stage 7 — The options surface
 
+### 📋 Stage 7's task split, decided by the driver before the stage opens
+
+`PLAN.md` §7 says *"One commit, or two"*. It is **seven sub-items and a 220-row measured
+catalogue** — by a wide margin the heaviest section in the plan — and the two previous
+stages both taught that a task whose scope spans a schema change, a content catalogue and
+a new GUI surface produces a receipt nobody can verify in one pass. It is split into
+**four crew tasks**, dispatched one at a time in this order:
+
+| task | §items | why it is one task |
+|---|---|---|
+| **1** | **7a + 7b** | The catalogue (CONTENT, declared in `ase::backend::ngspice` and reached **only** through the hook, per D34) and `ase::opt_line` (SCHEMA, the one speller). They are one task because **7b is where 7a's columns become type errors**: T3, T4 and T5 die inside that `switch`, and a `cptype` vocabulary with no speller asserts nothing. Headless by construction |
+| **2** | **7d** | The pre-deck class — the 26 variables reachable from neither `.options` nor `.control` — plus the inert list's three shapes. Its own task because the delivery mechanism is a **file ASE-L writes into the rundir** (⚖ R2's four conditions are requirements) and it carries **two refusals**, `sim_nospiceinit` and the shared-`set_netlist_dir` rundir. Nothing about it is a widget |
+| **3** | **7c** | Finding one option among 220: live search, *changed-only* as the DEFAULT view, groups, the two scopes on two surfaces, the ⚠ badge on the 21 `results 1` rows, and the **live deck preview**. This is the whole GUI half and the **only** one of the four that draws a pixel — so it is the only one that can incur a `look` debt, and isolating it keeps that debt attributable |
+| **4** | **7e + 7f + 7g** | Per-analysis scope is a GUI fiction and the form says so; post-run *requested vs effective* verification; and a `rules` clause reading `caps`. All three are about what ASE-L **claims** versus what the simulator **did**, and 7f is the channel that reports 7e's own honest limit — the restore that writes a default and thereby changes a global |
+
+⚠ **Task 1 is the one to brief hardest.** The plan's own catalogue excerpt already contains
+the correction that makes the point: **`gminsteps`' default is 1, not 10** —
+`cktntask.c:120-122` sets `TSKnumGminSteps = 1` and the 10 in that same block is
+`gminfactor`. Getting it wrong makes a shipped value read as *"changed"* in 7c's
+default-only view, *"which is exactly how a real change gets hidden."* Every one of the
+220 rows is an ngspice fact of that kind, and **none of them may sit in ASE-L's own
+source**.
+
+⚠ **And `defas` is the row to check the crew on.** `.options defas=<v>` sets the DRAIN
+area: `cktsopt.c:111-113`'s `OPT_DEFAS` arm writes `TSKdefaultMosAD`, the same field the
+`OPT_DEFAD` arm three lines above writes. A user who sets it today changes `defad` and
+nothing says so. It is trap **T14**, and it is the shape of the *quiet member* rule Stage 6
+paid for twice.
+
+
 *The **220-row** catalogue with `cptype`/`door`/`phase`/`scope`/`inert`; `ase::opt_line` as the
 only speller; search-first + changed-only + groups + the ⚠ badge + the live deck preview; the
 pre-deck class; `<rundir>/.spiceinit` (copy-chained); the `-n` refusal; the post-run
