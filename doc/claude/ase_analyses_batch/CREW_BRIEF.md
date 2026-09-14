@@ -18,6 +18,36 @@ picking up Stage 1 reads `receipts/05-stage-0-silent-drop.md` first — it carri
 correction Stage 0 made to this plan (**C36**) and the two harness traps that cost two T1
 baselines before one was clean.
 
+## ⚠ A GUARD AGAINST ABSENCE MUST ITSELF BE TESTED AGAINST ABSENCE
+
+This batch's most-met defect is **a defect hiding in the absence of a signal** — a suite that dies
+at rc 0 and looks like a pass, an extractor that returns nothing and cannot disagree, a default
+column that holds no numbers so no row over it can discriminate. Crews now write guards against it
+routinely.
+
+⚠ **And issue 1464's crew found that the guard it had written for exactly that purpose had exactly
+that hole.** Its sabotage gate was, in effect:
+
+```sh
+case "$h$d" in *FAIL*|*NORESULT*) ... ;; esac      # ← the hole
+```
+
+When **both** variables are empty — which is what a silent suite produces — `"$h$d"` is the empty
+string, it matches **neither** pattern, and **the check whose only purpose was to catch a silent
+suite waved one through.** Five results had to be discarded once it was found.
+
+**So the rule is one level up from the one everybody already follows.** A positive control on the
+*row* is not enough; the *guard* needs one too:
+
+* **Feed your gate the empty case before you trust it.** One line: run it against `h=""` `d=""` and
+  require it to complain. If it does not, it is decoration.
+* **Prefer a positive assertion to a negative match.** *"I saw a `RESULT:` line and it said ALL
+  PASS"* cannot be satisfied by silence; *"I did not see FAIL"* is satisfied by silence, by a
+  crashed process, by a typo in the filename, and by an empty variable.
+* ⚠ **Ask of every check you write: what does this do when it is handed nothing?** If the answer is
+  *"passes"*, it is not a check — and this is the one question that would have caught all four of
+  the defect shapes above at the moment each guard was written.
+
 ## ⚠ DO NOT WRITE THE `.state` BYTE-IDENTITY MEASUREMENT YOURSELF — SOURCE IT
 
 Every stage has to show its change did not move the 104 committed `.state` files, and **three
