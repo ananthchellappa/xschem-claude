@@ -21,6 +21,7 @@ The two:
 | 4 | `pss` with **6** arguments | rc 0 | rc 1 | the analysis aborts on one and not the other; the process survives on both. Cosmetic beside #1–#3, recorded so nobody re-measures it. |
 | 6 | **S-parameter vector names in the WRITTEN RAWFILE** | `s_1_1` … **lowercase** | `S_1_1` … **mixed case** | measured 2026-09-13, after Stage 9's crew found it and the driver re-measured. ⚠ **`display` says `S_1_1` on BOTH** — the difference exists only in the file, which is the half a reader parses. Anything reading an S-parameter out of a results file must be case-insensitive. |
 | 5 | **`set measureprec=10`** / `NGSPICE_MEAS_PRECISION=10` | **accepted and INERT** — `meas` still prints `-7.851545e-01` | **honoured** — `-7.8515453642e-01` | measured 2026-09-13 while collecting Stage 8 task 1, both controls, same deck. The older binary **takes the setting without complaint and ignores it**, which is worse than refusing it: a UI that offers "more digits" gets silence and no digits. |
+| 7 | **the point count of an identical transient** | `tran 1u 20u` → **118** points | the same deck → **121** | measured 2026-09-13 paying debt M8. The timestep controllers disagree, so **any golden that pins a transient point count is build-dependent**. ⚠ **And `set interp` removes the difference**: both binaries answer exactly **21** with it on. That makes `interp` the one setting that buys reproducibility across builds — which is a better argument for offering it than the one the plan gives. |
 
 ## They AGREE here — and the agreements are the load-bearing half
 
