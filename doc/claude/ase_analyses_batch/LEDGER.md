@@ -37,8 +37,8 @@ vanishes gets re-opened by the next reader.
 | **Stages remaining** | **11** (campaigns), 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | nothing — **Stage 11 task 1** landed (issue **1462**, `d5295c24`); `src/ase.tcl` is free |
-| **Next** | **Stage 11 task 2** — the campaign editor and §11c's *"the campaign ends with a NUMBER, not a directory"*. Then Stages 12, 13, 14, 16, and ⚖ R10's adapter-author specification |
+| **In flight** | a crew on **Stage 11 task 2** — the campaign dialog, the `k/N` readout and §11c's result table (histogram, mean, sigma, yield, scatter, **all computed in Tcl** because ngspice has none of them). It owns `src/ase_window.tcl` and its own new suite |
+| **Next** | **Stage 12** — event-driven results (XSPICE, the VCD attach). ⚠ Debt **M9** is its gate and **M13** is a permanent caution with a reproducer and no root cause. Then 13, 14, 16, and ⚖ R10's adapter-author specification |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **518 strings from 28 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
 | **Debt queue** | **176 rule / 66 look / 10 suite.** ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
