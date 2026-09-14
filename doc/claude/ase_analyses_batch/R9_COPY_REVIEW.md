@@ -6227,7 +6227,7 @@ the noise figure is computed for exactly 2 ports and this analysis has 3, so NF,
 *Where:* `sp_row_check`, and a **caution** rather than a refusal because `span.c:74-178` simply does not compute them — the run still succeeds.
 
 
-*Note:* Rendered (the count varies). ⚠ Names the four vectors in the simulator's own capitalisation, deliberately: they are names a user types into the calculator. Incomplete as shipped — the `Cy` matrix is also absent at N ≠ 2 and the sentence does not say so.
+*Note:* Rendered (the count varies). ⚠ Names the four vectors in the simulator's own capitalisation, deliberately: they are names a user types into the calculator. ⚠ **An earlier version of this note said the sentence was incomplete because the `Cy` matrix is also absent at N ≠ 2. That was WRONG and is withdrawn** — the driver measured all four shapes on both binaries and `Cy` is **present** at N ≠ 2, N×N (issue **1457**). The sentence as written names only the four scalars, which is exactly correct, and it needs no second clause: a family that is present needs no warning.
 
 
 **R9-426** · advice

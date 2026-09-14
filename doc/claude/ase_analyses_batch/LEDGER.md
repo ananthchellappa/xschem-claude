@@ -1008,12 +1008,38 @@ a setting?" and each had to learn a **second** question. A fourth per-type row k
    an ordinary one with the next free number and a **blank** Z0, because 50 Ω is the simulator's
    default and ASE-L does not invent a number the user never typed (1452's `SL2`). Sabotage **s6**
    *is the plan as written*, and it reds two rows.
-3. ⚠ **`evidence/sp-stage9.md` was one family short.** With the noise flag on and exactly two
-   ports, an `sp` run answers **20** vectors, not 16: the four scalars **and** a `Cy_i_j` **noise
-   correlation matrix**. Driver-verified on both binaries. `Cy` is also the one family whose plot
-   expression is **not** its name — it is typed `current`, so the rawfile writes `i(Cy_1_1)` and
-   `wviewer::validate_rpn` rejects the bare name against either binary. That is why a matrix entry
-   carries `vector` **and** `expr`. Appended to the evidence file.
+3. ⚠ **`evidence/sp-stage9.md` was one family short — AND THE CREW'S CORRECTION WAS ITSELF ONE
+   SHAPE SHORT, WHICH IS A SHIPPED DEFECT.** With the noise flag on and exactly two ports, an `sp`
+   run answers **20** vectors, not 16: the four scalars **and** a `Cy_i_j` **noise correlation
+   matrix**. `Cy` is also the one family whose plot expression is **not** its name — typed
+   `current`, so the rawfile writes `i(Cy_1_1)` and `wviewer::validate_rpn` rejects the bare name
+   against either binary. That much the crew measured and it holds.
+
+   ⚠ **What it did not measure is the fourth shape, and that is where the defect is.** The driver
+   re-measured all four on both binaries before appending the table — because a correction is the
+   last thing to take on trust — and they agree exactly:
+
+   | ports | noise flag | S/Y/Z | `Cy` | scalars | total |
+   |---|---|---|---|---|---|
+   | 2 | off | 12 | 0 | 0 | **12** |
+   | 2 | on | 12 | **4** | **4** | **20** |
+   | 3 | off | 27 | 0 | 0 | **27** |
+   | 3 | **on** | 27 | **9** | 0 | **36** |
+
+   **`Cy` follows the noise flag at ANY port count, N×N; only the four SCALARS are restricted to
+   N == 2.** `sp_matrix` gates `Cy` on `donoise && $n == 2`, so **a three-port row with the flag on
+   writes 36 vectors and ASE-L's picker offers 27** — nine the user is never shown. That is the
+   exact defect class receipt 33 named in order to avoid it, avoided for two ports and reintroduced
+   for every other count. Filed as issue **1457**.
+
+   ⚠ **And row `SX2` asserts the defect**: *"a three-port row's matrix is 27, and the noise families
+   do NOT appear on it even with the flag on"* is **green and wrong**, which means sabotage **s4**
+   was scoring a mutation that moved the code *towards* correctness as caught. **This is a fifth
+   way a row fails to fail, and it is not on the batch's list**: the row's fixtures disagree, it has
+   a positive control and it has a sabotage — it is simply **pinned to a fact nobody measured**. The
+   claim came from reading `span.c:74-178`, which is true of the noise *parameters* and not of the
+   correlation matrix. **Transcribed source is not measured behaviour, and a row built on one is a
+   row that defends the bug.**
 4. **Receipt 32's C8 is paid** — `test_ase_dialogs` `GN1b`'s stale title. It was rewritten to ask
    **renderability** rather than the cell's state word, because the state word depends on whether
    the capability cache is warm: `pss` reads `blocked` warm and `unrenderable` cold.

@@ -25,7 +25,35 @@ Plot: `sp1 (SP Analysis)`. Vectors, in ngspice's own capitalisation:
 ```
 
 With the optional noise flag (a trailing `1`: `sp lin 3 1meg 100meg 1`) the plot also
-carries **`NF`, `NFmin`, `Rn`, `SOpt`**.
+carries **`NF`, `NFmin`, `Rn`, `SOpt`** — **and a `Cy_i_j` NOISE CORRELATION MATRIX, which this
+document did not have until 2026-09-13.**
+
+### ⚠ 2a. The full matrix, measured by the driver on BOTH binaries, four decks, one per shape
+
+Counted from the written rawfile's `Variables:` block, `/usr/bin/ngspice` (apt 45.2) and
+`build-ver_50` (the fork) **agreeing on every count**:
+
+| ports | noise flag | S/Y/Z | `Cy` | `NF NFmin Rn SOpt` | total |
+|---|---|---|---|---|---|
+| 2 | off | 12 | 0 | 0 | **12** |
+| 2 | **on** | 12 | **4** | **4** | **20** |
+| 3 | off | 27 | 0 | 0 | **27** |
+| 3 | **on** | 27 | **9** | 0 | **36** |
+
+⚠ **`Cy` FOLLOWS THE NOISE FLAG AT ANY PORT COUNT, N×N. Only the four SCALARS are restricted to
+N == 2.** Issue 1454's crew reported the flag's effect as N == 2 only — a reading of
+`span.c:74-178`, which is true of the noise *parameters* and not of the correlation matrix — and
+ASE-L shipped a picker that hides nine real vectors on a three-port run. That is issue **1457**,
+and row `SX2` of `test_ase_sp_1452.tcl` currently asserts the defect.
+
+⚠ **`Cy` is the one family whose plot expression is not its name.** It is typed `current`, so the
+writer emits **`i(Cy_1_1)`** — and `wviewer::validate_rpn` rejects the bare `Cy_1_1` against either
+binary's variable list while accepting the wrapped form. Every other family's vector name and plot
+expression are equal.
+
+⚠ **And the port promotion is visible in the vector list**: a promoted source brings a
+`v(v1#res)` node with it — the `z0` series resistance, which is why `op` must be emitted before
+`sp` and not after (issue 1452).
 
 ⚠ **AND THE CASE DIFFERS BETWEEN THE BINARIES — IN THE RAWFILE, NOT IN `display`.** Measured
 2026-09-13 after Stage 9's crew reported it and the driver re-measured both places:
@@ -34,6 +62,10 @@ carries **`NF`, `NFmin`, `Rn`, `SOpt`**.
 |---|---|---|
 | apt 45.2 | `S_1_1` | **`s_1_1`** |
 | the fork | `S_1_1` | `S_1_1` |
+
+⚠ **And the fold covers EVERY name in the plot, not just the S matrix** — re-measured with the
+matrix table above: apt 45.2 writes `i(cy_1_1)`, `nf`, `nfmin`, `rn`, `sopt`, `y_1_1`, `z_1_1`,
+where the fork writes `i(Cy_1_1)`, `NF`, `NFmin`, `Rn`, `SOpt`, `Y_1_1`, `Z_1_1`.
 
 So an interactive listing agrees on both and **the file does not**. Anything that reads an
 S-parameter vector **out of the results file** must be case-insensitive, and this is the sixth
