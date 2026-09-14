@@ -111,3 +111,58 @@ paying before the stage rather than during it.
 * Both binaries print the same ladder text; this file was measured on
   `/home/analog/dev/ngspice/build-ver_50/src/ngspice` and the fold order was confirmed identical on
   `/usr/bin/ngspice`.
+
+---
+
+## 4. Fixture text for §10a/§10b, and one warning the stage will need
+
+Captured while paying M1, on the fork, `set ngdebug` in the `.control` block. All of it is
+**stderr**.
+
+**Rung 2, gmin stepping** — the shape §10b's pane parses:
+
+```
+Note: Starting spice3 gmin stepping
+Trying gmin =   1.0000E-02 Note: One successful gmin step
+Trying gmin =   1.0000E-03 Note: One successful gmin step
+...
+Note: spice3 gmin stepping completed
+```
+
+**Rung 4, the transient operating point** — two lines, and they are how a user could be told
+their operating point came from a transient:
+
+```
+Note: Transient op started
+Note: Transient op finished successfully
+```
+
+### ⚠ AND `optran` RESCUED EVERY DECK THAT WAS BUILT TO FAIL
+
+`.options noopiter gminsteps=0 srcsteps=0 itl1=1` on three series diodes — Newton skipped, both
+stepping ladders disabled, one iteration allowed — **still converges**, because rung 4 runs and
+succeeds. This is `PLAN.md` §10b's *"⚠ ON BY DEFAULT in this ngspice"* confirmed by measurement
+rather than by reading `init.c:77-94`.
+
+⚠ **Three deck spellings failed to turn it off**, all at rc 0 with no complaint:
+
+```
+.options optran 0 0 0 0 0 0
+.options optran=0
+.options optran = 0 0 0 0 0 0
+```
+
+Each one left `Note: Transient op started` / `finished successfully` in the log. **Not a proof that
+it cannot be done from a deck** — it is a measurement that the obvious spellings do not, silently.
+
+That matters to §10b directly, because its rung-4 checkbox is a control that must be able to mean
+**off**. Whoever builds it must find the spelling that works and **prove it with a deck that fails
+to converge when the box is cleared** — a checkbox that silently does nothing would be worse than
+no checkbox, and this is exactly the class of defect this batch keeps finding (an accepted-and-inert
+setting: `measureprec` on 45.2, difference #5).
+
+It is also why **§10a's starred `CKTncDump` table could not be captured here**: with `optran` on by
+default and unkillable by the spellings above, the deck never reaches the failure path that prints
+it. `PLAN.md` §10's suite is specified to run on **canned log text** for determinism, so this does
+not block the stage — but the canned text still has to come from somewhere, and whoever writes it
+will meet this first.
