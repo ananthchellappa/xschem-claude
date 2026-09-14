@@ -18,6 +18,44 @@ picking up Stage 1 reads `receipts/05-stage-0-silent-drop.md` first — it carri
 correction Stage 0 made to this plan (**C36**) and the two harness traps that cost two T1
 baselines before one was clean.
 
+## ⚠ EVERY WAITING LOOP NEEDS A DEADLINE, AND HERE IS THE ONE TO COPY
+
+Telling crews *"give every waiting loop a deadline"* has not worked. Measured across this batch:
+**five deadline-less waiters** of the form
+
+```sh
+until grep -q 'SABOTAGE DONE' results.txt; do sleep 10; done     # ← NO
+```
+
+have had to be killed by the driver, **every one of them belonging to a crew that had already been
+collected**, and two of them written by a crew whose own brief said not to. One of that shape cost
+this user an eight-hour night (`doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md`).
+
+The problem is not that crews disagree; it is that the instruction is an exhortation and the wrong
+thing is shorter to type. **So here is the right thing, at the same length. Copy it.**
+
+```sh
+D=1500; S=$(date +%s)                      # deadline in seconds, and the start
+while :; do
+  N=$(wc -l < results.txt 2>/dev/null || echo 0)
+  grep -q 'SABOTAGE DONE' results.txt 2>/dev/null && { echo "FINISHED ($N)"; break; }
+  [ $(( $(date +%s) - S )) -ge $D ] && { echo "DEADLINE ${D}s — at $N, runner alive: $(pgrep -c -f sab.sh)"; break; }
+  sleep 30
+done
+```
+
+**Three properties the short version does not have**, and each is why a wait becomes a stall:
+
+* **It ends.** A hung job and a slow job produce identical silence; a deadline is the only thing
+  that tells them apart.
+* **It reports PROGRESS on the way out** — `at $N` — so the deadline firing is a finding
+  (*"stopped after 21 of 48"*) and not merely an absence.
+* **It says whether the runner is still alive**, which decides whether you wait again or go looking.
+
+⚠ **And never `pkill -f` to clean up afterwards.** A crew reached for `pkill -f 'sleep 37'` and
+**`-f` matched its own shell's command line and killed it.** Walk `ps`, match the exact argv, and
+kill only what you started.
+
 ## ⚠ DISARM YOUR SABOTAGE SNAPSHOTS WHEN YOU HAND OVER
 
 Every crew in this batch takes `cp` snapshots of `src/ase.tcl` and `src/ase_window.tcl` before its
