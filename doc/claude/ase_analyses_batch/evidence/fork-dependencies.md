@@ -666,6 +666,43 @@ free.
    already overturned by three; the survey adds **one more free deck probe and two free file
    probes**, and shows the remaining eight are unprobeable for a reason rather than by neglect.
 
-**What is NOT done:** none of the three new probes has been written or run. Each is one line plus a
-comparison, and each must be measured on **both** binaries before it is believed — this section is
-a map, not a result.
+## ⚠ AND THE THREE NEW PROBES ARE NOW MEASURED — same day, both binaries
+
+The paragraph that stood here said none of them had been written or run. They have been, because a
+map this section itself calls untrustworthy is worth less than an hour's measurement.
+
+### B2.4 — the vector-name probe. One deck, no extra process.
+
+```
+op
+let MyVec = 5
+write <f> MyVec        ->  read the `Variables:` block
+```
+
+| | |
+|---|---|
+| `/usr/bin/ngspice` (45.2) | **`myvec`** |
+| the fork | **`MyVec`** |
+
+✅ **It discriminates.** ASE-L already writes and reads raws, so this rides in a deck that is
+already running and costs a single `let`.
+
+### B4.1 and B4.2 — the file probes. **No simulator process at all.**
+
+| probe | apt's installed tree | the fork |
+|---|---|---|
+| `grep -c verilated_vcd_c <sharedir>/scripts/vlnggen` | **0** | **1** |
+| `grep -c 'contextp.release()' <sharedir>/scripts/src/verilator_shim.cpp` | **0** | **1** |
+
+✅ **Both discriminate**, and they answer **before the first run** — which is the right moment,
+because B4.1's symptom is a *build* failure in the user's own wrapper and B4.2's is undefined
+behaviour that may never announce itself.
+
+⚠ **The share directory must be resolved from the REGISTERED binary, not hardcoded.** The two
+paths above are `/usr/share/ngspice/...` for the apt build and the fork's own source and
+`stage/share` trees; a probe that assumed `/usr/share` would answer *"stock"* for every fork the
+user registers. That is the same defect as branching on a version string, wearing a path.
+
+**Still not done:** B2.5 was not written, deliberately — it is free and useless, because ASE-L
+emits no `diff`. And **B1.6 stays UNKNOWN**: its symptom is observable but needs an XSPICE event
+circuit stood up, so it is not a free line and was not classified without measuring it.
